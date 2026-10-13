@@ -5,6 +5,7 @@ import type { RepositoryBackend } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { configStamp, gitmodulesStamp, indexStamp, refsStamp, stashStamp } from '../git/stamp.ts';
 import type { StatusEntry, StatusResult } from '../git/status.ts';
+import { UndoLog } from './undo.ts';
 
 export type Section = 'workingCopy' | 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules';
 
@@ -45,6 +46,7 @@ interface Stamps {
  */
 export class Repository implements vscode.Disposable {
   readonly backend: RepositoryBackend;
+  readonly undo: UndoLog;
   private readonly log: vscode.LogOutputChannel;
   private readonly state: RepositoryState = {};
   /** 最後に取得した時点の更新時刻 */
@@ -68,6 +70,7 @@ export class Repository implements vscode.Disposable {
 
   constructor(backend: RepositoryBackend, log: vscode.LogOutputChannel) {
     this.backend = backend;
+    this.undo = new UndoLog(backend);
     this.log = log;
   }
 

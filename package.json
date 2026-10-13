@@ -100,6 +100,13 @@
         "category": "Amon Hen",
         "icon": "$(check)",
         "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.undo",
+        "title": "Undo Last Operation",
+        "category": "Amon Hen",
+        "icon": "$(discard)",
+        "enablement": "amonhen.hasRepository"
       }
     ],
     "menus": {
@@ -108,6 +115,11 @@
           "command": "amonhen.commit",
           "when": "view == amonhen.sidebar",
           "group": "navigation@0"
+        },
+        {
+          "command": "amonhen.undo",
+          "when": "view == amonhen.sidebar",
+          "group": "navigation@1"
         },
         {
           "command": "amonhen.selectRepository",

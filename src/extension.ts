@@ -7,6 +7,7 @@ import { ChangeDecorationProvider } from './ui/decorations.ts';
 import { openChangeDiff, trackActiveDiff } from './ui/diff.ts';
 import { SidebarProvider, type Change, type Node } from './ui/sidebar.ts';
 import { registerStageCommands } from './ui/stageCommands.ts';
+import { registerUndoCommand } from './ui/undoCommand.ts';
 
 /** 戻り値は結合テストから中身を確かめるためのもの */
 export async function activate(context: vscode.ExtensionContext): Promise<{ manager: RepositoryManager; sidebar: SidebarProvider }> {
@@ -36,6 +37,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ mana
     trackActiveDiff(),
     registerStageCommands(manager),
     registerCommitCommand(manager),
+    registerUndoCommand(manager),
   );
 
   await manager.initialize();
