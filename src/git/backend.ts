@@ -30,6 +30,19 @@ export interface HeadState {
   oid?: string;
 }
 
+/** 途中で止まっている操作 */
+export type Sequence = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+
+/** merge や rebase がコンフリクトで止まったら conflict */
+export type MergeResult = 'done' | 'conflict';
+
+export interface PushOptions {
+  /** `--force-with-lease`。rebase したブランチを上書きするとき */
+  force?: boolean;
+  /** upstream に設定する */
+  setUpstream?: boolean;
+}
+
 export interface RepositoryBackend {
   readonly root: string;
   readonly dirs: GitDirs;
@@ -58,7 +71,25 @@ export interface RepositoryBackend {
   /** branch に切り替える。branch が無ければ oid で detached HEAD にする */
   switchTo(target: HeadState & { oid: string }): Promise<void>;
   isAncestor(ancestor: string, descendant: string): Promise<boolean>;
+  /** 現在のブランチに rev を merge する */
+  merge(rev: string): Promise<MergeResult>;
+  /** branch（省略時は現在のブランチ）を onto の上に rebase する。branch を指定すると checkout される */
+  rebase(onto: string, branch?: string): Promise<MergeResult>;
+  sequenceInProgress(): Promise<Sequence | undefined>;
+  abort(sequence: Sequence): Promise<void>;
+  /** ローカルブランチ branch を remote の remoteBranch へ push する */
+  push(remote: string, branch: string, remoteBranch: string, opts?: PushOptions): Promise<void>;
+  fetch(): Promise<void>;
   dispose(): void;
+}
+
+async function exists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** `git` を spawn する実装 */
@@ -198,6 +229,52 @@ export class CliBackend implements RepositoryBackend {
       }
       throw err;
     }
+  }
+
+  merge(rev: string): Promise<MergeResult> {
+    return this.sequence(['merge', '--no-edit', rev]);
+  }
+
+  rebase(onto: string, branch?: string): Promise<MergeResult> {
+    return this.sequence(branch ? ['rebase', onto, branch] : ['rebase', onto]);
+  }
+
+  /** 失敗したとき、途中で止まっていればコンフリクトとして扱う */
+  private async sequence(args: readonly string[]): Promise<MergeResult> {
+    try {
+      await this.git.exec(args, { cwd: this.root });
+      return 'done';
+    } catch (err) {
+      if (await this.sequenceInProgress()) {
+        return 'conflict';
+      }
+      throw err;
+    }
+  }
+
+  async sequenceInProgress(): Promise<Sequence | undefined> {
+    const d = this.dirs.gitDir;
+    if ((await exists(join(d, 'rebase-merge'))) || (await exists(join(d, 'rebase-apply')))) return 'rebase';
+    if (await exists(join(d, 'MERGE_HEAD'))) return 'merge';
+    if (await exists(join(d, 'CHERRY_PICK_HEAD'))) return 'cherry-pick';
+    if (await exists(join(d, 'REVERT_HEAD'))) return 'revert';
+    return undefined;
+  }
+
+  async abort(sequence: Sequence): Promise<void> {
+    await this.git.exec([sequence, '--abort'], { cwd: this.root });
+  }
+
+  async push(remote: string, branch: string, remoteBranch: string, opts: PushOptions = {}): Promise<void> {
+    const args = ['push'];
+    if (opts.force) args.push('--force-with-lease');
+    if (opts.setUpstream) args.push('--set-upstream');
+    args.push(remote, `refs/heads/${branch}:refs/heads/${remoteBranch}`);
+    await this.git.exec(args, { cwd: this.root });
+  }
+
+  async fetch(): Promise<void> {
+    await this.git.exec(['fetch', '--all', '--prune'], { cwd: this.root });
   }
 
   /** パスに `*` などが含まれても pathspec として解釈させない */
