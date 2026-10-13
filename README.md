@@ -47,11 +47,32 @@ Branches・Remotes・Tags の項目をドラッグして、ほかの項目にド
 
 - ドロップ先が checkout されていないとき、fast-forward で済むなら checkout せずにブランチだけ進める。そうでなければ checkout してから実行する。
 - upstream が無いブランチを push すると、push 先を upstream に設定する。
-- コンフリクトで止まったときは、中止（Abort）するか、自分で解決して `git merge --continue` / `git rebase --continue` を実行する。
+- コンフリクトで止まったときは、中止（Abort）するか、自分で解決して stage し、Working Copy の先頭に出る「Merge / Rebase in progress」の Continue で続ける。
+
+### History
+
+ビューのタイトルの History ボタンで、エディタ領域にコミットの履歴とグラフを開く。上部で「Current Branch」と「All Branches」を切り替える。
+
+- ダブルクリックか Enter で、そのコミットの変更を標準の複数ファイル diff エディタで開く。
+- 上下の矢印キーと PageUp / PageDown で選択を動かす。
+- 履歴は 200 件ずつ、スクロールに合わせて読み込む。
+
+HEAD から first-parent で辿れるコミット（最初の merge コミットの手前まで）は、右クリックで編集できる。どれも非対話の rebase で行い、Undo で戻せる。作業中の変更は自動で退避して戻す。
+
+| メニュー | 内容 |
+| --- | --- |
+| Reword… | メッセージを書き換える。編集欄は `⌘Enter` / `Ctrl+Enter` で保存、`Esc` で取り消し |
+| Squash into Parent… | 親コミットにまとめる。2 つのメッセージをつないだものを編集してから実行する |
+| Fixup into Parent | 親コミットにまとめ、親のメッセージを残す |
+| Edit (Stop Here) | そのコミットで止める。直してコミット（amend）してから Continue |
+| Split… | そのコミットを取り消して変更を Working Copy に戻し、止める。分けてコミットしてから Continue |
+| Drop… | 履歴から取り除く |
+| Move Up / Move Down | 1 つ新しい側 / 古い側へ動かす。行をドラッグしても並べ替えられる |
+| Copy Commit ID | コミット ID をコピーする |
 
 ### Undo
 
-ビューのタイトルの Undo ボタンで、直前の操作を戻す。対象はコミット、Merge、Rebase、fast-forward。
+ビューのタイトルの Undo ボタンで、直前の操作を戻す。対象はコミット、Merge、Rebase、fast-forward、History でのコミットの編集。Edit や Split で止めた操作は、Continue で終わった時点で Undo の対象になる。
 
 - コミットを戻すと、その変更は stage された状態に戻る。
 - Merge や Rebase を戻すと、作業中の変更は残したまま、ブランチと checkout していたブランチを操作の前に戻す。
@@ -64,6 +85,7 @@ Branches・Remotes・Tags の項目をドラッグして、ほかの項目にド
 
 - コミットメッセージは 1 行だけ。
 - コンフリクトの解決画面はまだ無い。
+- History で編集できるのは、HEAD から最初の merge コミットまでの範囲だけ。
 - Push は Undo できない。
 - 認証の入力を求められる push・fetch はできない（SSH の鍵や credential helper で認証できる必要がある）。
 - 行単位の stage は、autocrlf などの git のフィルターを考慮しない。
