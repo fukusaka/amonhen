@@ -57,6 +57,9 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - reword / squash / fixup / drop / reorder / edit / split はすべて非対話の rebase で実現する。`GIT_SEQUENCE_EDITOR` に todo を書き換えるスクリプトを指定し、メッセージの書き換えは `GIT_EDITOR` で注入する。
 - split は「edit で停止 → `reset HEAD^` → Working Copy で分割してコミット → `rebase --continue`」の流れ。
 - 操作前に `HEAD` と関係する ref を記録し、1 操作単位で Undo できるようにする。
+  - 記録は操作の前後の両方を取り、`<gitDir>/amonhen/undo.json` に最大 50 件残す。Undo するときは今の状態が「操作後」と一致することを確かめ、違えば何もしない。
+  - checkout 中のブランチは `reset`（commit は `--soft`、merge や rebase は `--keep`）で戻し、そうでないブランチは `update-ref` に旧値を条件として渡して戻す。操作の中でブランチを切り替えていたら、元のブランチに戻る。
+  - コンフリクトで止まった操作は記録しない。戻すのは abort の役目。push は Undo の対象にしない。
 
 ### 差分ビューから細かくコミットを作る
 
@@ -99,6 +102,6 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 - [x] 1. git 実行レイヤーと状態の管理、サイドバーの TreeView
 - [x] 2. Working Copy と diff の表示、hunk・行単位の stage
-- [ ] 3. ドラッグ＆ドロップによる merge / rebase / push と Undo の基盤
+- [x] 3. ドラッグ＆ドロップによる merge / rebase / push と Undo の基盤
 - [ ] 4. History の Webview とコミット編集（rebase 操作）
 - [ ] 5. コンフリクト解決の UI
