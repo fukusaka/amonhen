@@ -5,7 +5,7 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
-import type { GitExecutor } from './exec.ts';
+import { GitError, type GitExecutor } from './exec.ts';
 import {
   forEachRefArgs,
   parseRefs,
@@ -22,6 +22,13 @@ import {
 } from './refs.ts';
 import type { GitDirs } from './stamp.ts';
 import { parseStatus, STATUS_ARGS, type StatusResult } from './status.ts';
+
+export interface HeadState {
+  /** `refs/heads/main` など。detached HEAD のときは undefined */
+  branch?: string;
+  /** まだコミットが無いときは undefined */
+  oid?: string;
+}
 
 export interface RepositoryBackend {
   readonly root: string;
@@ -41,6 +48,16 @@ export interface RepositoryBackend {
   /** index のエントリを指定した内容で置き換える（行単位の stage に使う） */
   writeIndex(path: string, mode: string, content: Buffer): Promise<void>;
   commit(message: string): Promise<void>;
+  head(): Promise<HeadState>;
+  /** 完全な名前の ref の現在の値。存在しなければ null */
+  resolveRefs(names: readonly string[]): Promise<Map<string, string | null>>;
+  /** 現在の値が expected のときだけ書き換える。value が null なら削除する */
+  updateRef(name: string, value: string | null, expected: string | null): Promise<void>;
+  /** 現在のブランチ（detached なら HEAD）を oid に戻す。keep は作業中の変更を残し、衝突するなら失敗する */
+  reset(mode: 'soft' | 'keep', oid: string): Promise<void>;
+  /** branch に切り替える。branch が無ければ oid で detached HEAD にする */
+  switchTo(target: HeadState & { oid: string }): Promise<void>;
+  isAncestor(ancestor: string, descendant: string): Promise<boolean>;
   dispose(): void;
 }
 
@@ -122,6 +139,65 @@ export class CliBackend implements RepositoryBackend {
 
   async commit(message: string): Promise<void> {
     await this.git.exec(['commit', '--file=-'], { cwd: this.root, input: message });
+  }
+
+  async head(): Promise<HeadState> {
+    const [branch, oid] = await Promise.all([
+      this.read(['symbolic-ref', '-q', 'HEAD'], [1]),
+      this.read(['rev-parse', '-q', '--verify', 'HEAD'], [1]),
+    ]);
+    const head: HeadState = {};
+    if (branch.trim()) head.branch = branch.trim();
+    if (oid.trim()) head.oid = oid.trim();
+    return head;
+  }
+
+  async resolveRefs(names: readonly string[]): Promise<Map<string, string | null>> {
+    const result = new Map<string, string | null>(names.map((n) => [n, null]));
+    if (names.length === 0) {
+      return result;
+    }
+    // for-each-ref のパターンは前方一致（refs/heads/a で refs/heads/a/b も一致）なので、完全一致だけ拾う
+    const out = await this.read(['for-each-ref', '--format=%(refname)%00%(objectname)', ...names]);
+    for (const line of out.split('\n')) {
+      const [name = '', oid = ''] = line.split('\0');
+      if (result.has(name)) {
+        result.set(name, oid);
+      }
+    }
+    return result;
+  }
+
+  async updateRef(name: string, value: string | null, expected: string | null): Promise<void> {
+    const args =
+      value === null
+        ? ['update-ref', '-d', name, expected ?? '']
+        : // expected が空文字なら「まだ存在しないこと」を条件にする
+          ['update-ref', name, value, expected ?? ''];
+    await this.git.exec(args, { cwd: this.root });
+  }
+
+  async reset(mode: 'soft' | 'keep', oid: string): Promise<void> {
+    await this.git.exec(['reset', `--${mode}`, oid], { cwd: this.root });
+  }
+
+  async switchTo(target: HeadState & { oid: string }): Promise<void> {
+    const args = target.branch
+      ? ['switch', target.branch.replace(/^refs\/heads\//, '')]
+      : ['switch', '--detach', target.oid];
+    await this.git.exec(args, { cwd: this.root });
+  }
+
+  async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
+    try {
+      await this.read(['merge-base', '--is-ancestor', ancestor, descendant]);
+      return true;
+    } catch (err) {
+      if (err instanceof GitError && err.exitCode === 1) {
+        return false;
+      }
+      throw err;
+    }
   }
 
   /** パスに `*` などが含まれても pathspec として解釈させない */

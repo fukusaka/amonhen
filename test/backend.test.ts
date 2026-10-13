@@ -193,3 +193,33 @@ test('cat-file sees index updates made after it started', async () => {
   assert.equal((await backend.object(':a.txt'))?.data.toString(), 'second\n');
   git('reset', '-q', '--hard');
 });
+
+test('head, resolveRefs, updateRef, reset, switchTo and isAncestor', async () => {
+  git('switch', '-q', 'main');
+  const head = await backend.head();
+  assert.equal(head.branch, 'refs/heads/main');
+  const main = head.oid!;
+
+  const refs = await backend.resolveRefs(['refs/heads/main', 'refs/heads/feature', 'refs/heads/nope']);
+  assert.equal(refs.get('refs/heads/main'), main);
+  // refs/heads/feature/x に前方一致しても拾わない
+  assert.equal(refs.get('refs/heads/feature'), null);
+  assert.equal(refs.get('refs/heads/nope'), null);
+
+  await backend.updateRef('refs/heads/tmp', main, null);
+  await assert.rejects(backend.updateRef('refs/heads/tmp', main, null), 'must not overwrite an existing ref');
+  await backend.updateRef('refs/heads/tmp', null, main);
+  assert.equal((await backend.resolveRefs(['refs/heads/tmp'])).get('refs/heads/tmp'), null);
+
+  git('commit', '-q', '--allow-empty', '-m', 'third');
+  const third = (await backend.head()).oid!;
+  assert.equal(await backend.isAncestor(main, third), true);
+  assert.equal(await backend.isAncestor(third, main), false);
+  await backend.reset('soft', main);
+  assert.equal((await backend.head()).oid, main);
+
+  await backend.switchTo({ oid: main });
+  assert.deepEqual(await backend.head(), { oid: main });
+  await backend.switchTo({ branch: 'refs/heads/main', oid: main });
+  assert.equal((await backend.head()).branch, 'refs/heads/main');
+});
