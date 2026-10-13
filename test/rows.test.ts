@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Commit } from '../src/git/log.ts';
 import type { Ref } from '../src/git/refs.ts';
-import { editableOids, refLabels } from '../src/history/rows.ts';
+import { editableChain, refLabels } from '../src/history/rows.ts';
 
 const ref = (name: string, oid: string, extra: Partial<Ref> = {}): Ref => ({
   name,
@@ -32,8 +32,11 @@ test('refLabels shows HEAD when detached', () => {
   assert.deepEqual(refLabels({ oid: 'x' }, [], [], []).get('x'), [{ name: 'HEAD', kind: 'head', current: true }]);
 });
 
-test('editableOids stops at the first merge', () => {
+test('editableChain stops at the first merge', () => {
   const c = (oid: string, parents: string[]): Commit => ({ oid, parents, author: '', email: '', date: 0, subject: '' });
-  assert.deepEqual([...editableOids([c('d', ['c']), c('c', ['b', 'x']), c('b', ['a'])])], ['d']);
-  assert.deepEqual([...editableOids([c('b', ['a']), c('a', [])])], ['b', 'a']);
+  assert.deepEqual([...editableChain([c('d', ['c']), c('c', ['b', 'x']), c('b', ['a'])])], [['d', 0]]);
+  assert.deepEqual([...editableChain([c('b', ['a']), c('a', [])])], [
+    ['b', 0],
+    ['a', 1],
+  ]);
 });

@@ -45,16 +45,16 @@ function shorten(ref: string): string {
 }
 
 /**
- * 非対話の rebase で編集できるコミット。
+ * 非対話の rebase で編集できるコミットと、その位置（新しい順、HEAD が 0）。
  * HEAD から first-parent で辿り、最初の merge コミットの手前まで（merge をまたぐ rebase は扱わない）。
  */
-export function editableOids(firstParentChain: readonly Commit[]): Set<string> {
-  const result = new Set<string>();
+export function editableChain(firstParentChain: readonly Commit[]): Map<string, number> {
+  const result = new Map<string, number>();
   for (const c of firstParentChain) {
     if (c.parents.length > 1) {
       break;
     }
-    result.add(c.oid);
+    result.set(c.oid, result.size);
   }
   return result;
 }

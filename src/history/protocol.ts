@@ -20,18 +20,26 @@ export interface RowData {
   graph: GraphRow;
   /** 非対話の rebase で編集できるか（HEAD から first-parent で辿れ、間に merge が無い） */
   editable: boolean;
+  /** 編集できる範囲での位置（新しい順、HEAD が 0）。並べ替えの移動先に使う */
+  chain?: number;
+  /** 親も編集できる範囲にあり、squash / fixup できる */
+  canSquash: boolean;
 }
+
+/** メッセージを編集してから行う操作 */
+export type MessageEdit = 'reword' | 'squash';
 
 export type HostMessage =
   | { type: 'reset'; title: string; scope: Scope }
   | { type: 'rows'; start: number; rows: RowData[]; done: boolean }
   | { type: 'busy'; busy: boolean }
-  | { type: 'editMessage'; oid: string; title: string; message: string };
+  | { type: 'editMessage'; oid: string; kind: MessageEdit; title: string; message: string };
 
 export type WebviewMessage =
   | { type: 'ready' }
   | { type: 'more' }
   | { type: 'open'; oid: string }
   | { type: 'scope'; scope: Scope }
-  | { type: 'saveMessage'; oid: string; message: string }
+  | { type: 'saveMessage'; oid: string; kind: MessageEdit; message: string }
+  /** 編集できる範囲の中で、新しい順の to 番目に動かす */
   | { type: 'move'; oid: string; to: number };

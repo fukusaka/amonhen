@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import type { Commit } from '../git/log.ts';
 import { GraphBuilder } from '../history/graph.ts';
 import type { HostMessage, RefLabel, RowData, Scope, WebviewMessage } from '../history/protocol.ts';
-import { editableOids, refLabels } from '../history/rows.ts';
+import { editableChain, refLabels } from '../history/rows.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository, Section } from '../state/repository.ts';
 import { openCommitChanges } from './commitChanges.ts';
@@ -32,7 +32,8 @@ export class HistoryPanel implements vscode.Disposable {
   private commits: Commit[] = [];
   private graph = new GraphBuilder();
   private labels = new Map<string, RefLabel[]>();
-  private editable = new Set<string>();
+  /** 編集できるコミットと、その位置（新しい順） */
+  private chain = new Map<string, number>();
   private done = false;
   private loading = false;
   /** reset のたびに増やし、古い読み込みの結果を捨てる */
@@ -151,9 +152,9 @@ export class HistoryPanel implements vscode.Disposable {
       const state = repo.current;
       this.headOid = head.oid;
       this.labels = refLabels(head, state.branches ?? [], state.remoteBranches ?? [], state.tags ?? []);
-      this.editable = head.oid
-        ? editableOids(await repo.backend.log(['--first-parent', 'HEAD'], 0, EDITABLE_LIMIT))
-        : new Set();
+      this.chain = head.oid
+        ? editableChain(await repo.backend.log(['--first-parent', 'HEAD'], 0, EDITABLE_LIMIT))
+        : new Map();
     } catch (err) {
       showError(err);
     }
@@ -181,15 +182,20 @@ export class HistoryPanel implements vscode.Disposable {
     }
     const start = this.commits.length;
     this.commits.push(...page);
-    const rows: RowData[] = page.map((c) => ({
-      oid: c.oid,
-      subject: c.subject,
-      author: c.author,
-      date: c.date,
-      refs: this.labels.get(c.oid) ?? [],
-      graph: this.graph.add(c.oid, c.parents),
-      editable: this.editable.has(c.oid),
-    }));
+    const rows: RowData[] = page.map((c) => {
+      const chain = this.chain.get(c.oid);
+      return {
+        oid: c.oid,
+        subject: c.subject,
+        author: c.author,
+        date: c.date,
+        refs: this.labels.get(c.oid) ?? [],
+        graph: this.graph.add(c.oid, c.parents),
+        editable: chain !== undefined,
+        chain,
+        canSquash: chain !== undefined && this.chain.size > chain + 1,
+      };
+    });
     this.done = page.length < PAGE;
     this.loading = false;
     this.post({ type: 'rows', start, rows, done: this.done });
