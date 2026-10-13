@@ -178,6 +178,18 @@
         "command": "amonhen.history.copyId",
         "title": "Copy Commit ID",
         "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.acceptCurrent",
+        "title": "Accept Current",
+        "category": "Amon Hen",
+        "icon": "$(arrow-left)"
+      },
+      {
+        "command": "amonhen.acceptIncoming",
+        "title": "Accept Incoming",
+        "category": "Amon Hen",
+        "icon": "$(arrow-right)"
       }
     ],
     "menus": {
@@ -253,6 +265,16 @@
           "command": "amonhen.abortSequence",
           "when": "view == amonhen.sidebar && viewItem == sequence",
           "group": "inline@2"
+        },
+        {
+          "command": "amonhen.acceptCurrent",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(change|group)\\.conflicts$/",
+          "group": "2_conflict@1"
+        },
+        {
+          "command": "amonhen.acceptIncoming",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(change|group)\\.conflicts$/",
+          "group": "2_conflict@2"
         }
       ],
       "commandPalette": [
@@ -322,6 +344,14 @@
         },
         {
           "command": "amonhen.history.copyId",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.acceptCurrent",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.acceptIncoming",
           "when": "false"
         }
       ],

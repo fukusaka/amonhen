@@ -17,6 +17,12 @@ export function registerStageCommands(manager: RepositoryManager): vscode.Dispos
     vscode.commands.registerCommand('amonhen.unstage', (node?: Node, nodes?: Node[]) =>
       stageFiles(manager.current, nodes ?? (node ? [node] : []), 'unstage'),
     ),
+    vscode.commands.registerCommand('amonhen.acceptCurrent', (node?: Node, nodes?: Node[]) =>
+      acceptSide(manager.current, nodes ?? (node ? [node] : []), 'current'),
+    ),
+    vscode.commands.registerCommand('amonhen.acceptIncoming', (node?: Node, nodes?: Node[]) =>
+      acceptSide(manager.current, nodes ?? (node ? [node] : []), 'incoming'),
+    ),
     vscode.commands.registerCommand('amonhen.stageSelection', () => stageSelection(manager, 'stage')),
     vscode.commands.registerCommand('amonhen.unstageSelection', () => stageSelection(manager, 'unstage')),
   );
@@ -31,12 +37,61 @@ async function stageFiles(repo: Repository | undefined, nodes: readonly Node[], 
   if (!repo || changes.length === 0) {
     return;
   }
+  if (op === 'stage' && !(await confirmMarkers(repo, changes))) {
+    return;
+  }
   // rename を unstage するときは元のパスも戻す
   const paths = [...new Set(changes.flatMap((c) => (op === 'unstage' && c.origPath ? [c.path, c.origPath] : [c.path])))];
   const set = new Set(paths);
   repo.patchStatus((entries) => (op === 'stage' ? predictStage(entries, set) : predictUnstage(entries, set)));
   try {
     await (op === 'stage' ? repo.backend.stage(paths) : repo.backend.unstage(paths));
+  } catch (err) {
+    showError(err);
+  } finally {
+    await repo.refresh();
+  }
+}
+
+const MARKER = /^(<{7}|>{7})( |$)/m;
+
+/** コンフリクトを解決済みにするとき、マーカーが残っていれば確かめる */
+async function confirmMarkers(repo: Repository, changes: readonly Change[]): Promise<boolean> {
+  const withMarkers: string[] = [];
+  for (const c of changes) {
+    if (c.group !== 'conflicts') continue;
+    const text = await readFile(join(repo.root, c.path), 'utf8').catch(() => '');
+    if (MARKER.test(text)) withMarkers.push(c.path);
+  }
+  if (withMarkers.length === 0) {
+    return true;
+  }
+  const choice = await vscode.window.showWarningMessage(
+    `コンフリクトのマーカーが残っています: ${withMarkers.join(', ')}`,
+    { modal: true, detail: 'このまま解決済みにしますか？' },
+    'Mark as Resolved',
+  );
+  return choice === 'Mark as Resolved';
+}
+
+/** コンフリクトしたファイルを、現在の側か取り込む側の内容で解決する */
+async function acceptSide(repo: Repository | undefined, nodes: readonly Node[], side: 'current' | 'incoming'): Promise<void> {
+  const files = changesOf(nodes).flatMap((c) => (c.conflict ? [{ path: c.path, conflict: c.conflict }] : []));
+  if (!repo || files.length === 0) {
+    return;
+  }
+  const name = side === 'current' ? 'Current（HEAD 側）' : 'Incoming（取り込む側）';
+  const target = files.length === 1 ? files[0]!.path : `${files.length} 個のファイル`;
+  const choice = await vscode.window.showWarningMessage(
+    `${target} を ${name} の内容で解決しますか？`,
+    { modal: true, detail: 'もう一方の変更と、ファイルに加えた編集は失われます。' },
+    'Accept',
+  );
+  if (choice !== 'Accept') {
+    return;
+  }
+  try {
+    await repo.backend.resolveConflicts(files, side);
   } catch (err) {
     showError(err);
   } finally {
