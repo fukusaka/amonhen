@@ -1,6 +1,7 @@
 /** History の右クリックメニューと、Webview でのメッセージ編集・並べ替えから、コミットを編集する */
 import * as vscode from 'vscode';
 import type { RebaseResult } from '../git/backend.ts';
+import { parseCommitObject } from '../git/commitObject.ts';
 import type { HistoryEdit } from '../history/rebasePlan.ts';
 import { rewriteHistory } from '../state/rewrite.ts';
 import type { Repository } from '../state/repository.ts';
@@ -86,9 +87,7 @@ async function move(panel: HistoryPanel, repo: Repository, oid: string, delta: n
 /** コミットのメッセージ全体（subject と本文） */
 async function fullMessage(repo: Repository, oid: string): Promise<string> {
   const obj = await repo.backend.object(oid);
-  const text = obj?.data.toString('utf8') ?? '';
-  const blank = text.indexOf('\n\n');
-  return blank < 0 ? '' : text.slice(blank + 2);
+  return obj ? parseCommitObject(obj.data.toString('utf8')).message : '';
 }
 
 async function run(panel: HistoryPanel, repo: Repository, label: string, edit: HistoryEdit): Promise<void> {
