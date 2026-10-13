@@ -24,8 +24,8 @@ const contexts = await Promise.all([
   // Webview
   esbuild.context({
     ...common,
-    entryPoints: ['src/webview/history.ts'],
-    outfile: 'dist/webview/history.js',
+    entryPoints: ['src/webview/main.ts'],
+    outfile: 'dist/webview/main.js',
     format: 'iife',
     platform: 'browser',
     target: 'es2022',

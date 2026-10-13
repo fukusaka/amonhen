@@ -5,7 +5,8 @@ import { parseCommitObject } from '../git/commitObject.ts';
 import type { HistoryEdit } from '../history/rebasePlan.ts';
 import { rewriteHistory } from '../state/rewrite.ts';
 import type { Repository } from '../state/repository.ts';
-import { HistoryPanel } from './historyPanel.ts';
+import { HistoryController } from './historyController.ts';
+import { MainPanel } from './mainPanel.ts';
 import { showError } from './stageCommands.ts';
 
 /** Webview の右クリックメニューから渡される情報（data-vscode-context） */
@@ -14,9 +15,9 @@ interface CommitContext {
 }
 
 export function registerHistoryCommands(): vscode.Disposable {
-  const command = (id: string, fn: (panel: HistoryPanel, repo: Repository, oid: string) => Promise<void>) =>
+  const command = (id: string, fn: (panel: HistoryController, repo: Repository, oid: string) => Promise<void>) =>
     vscode.commands.registerCommand(id, async (ctx?: CommitContext) => {
-      const panel = HistoryPanel.active;
+      const panel = MainPanel.active?.history;
       const repo = panel?.repository;
       if (panel && repo && ctx?.oid) {
         await fn(panel, repo, ctx.oid);
@@ -59,8 +60,8 @@ export function registerHistoryCommands(): vscode.Disposable {
       await vscode.env.clipboard.writeText(oid);
       vscode.window.setStatusBarMessage(`$(copy) ${oid.slice(0, 8)}`, 3000);
     }),
-    HistoryPanel.onDidReceiveEdit(async (message) => {
-      const panel = HistoryPanel.active;
+    HistoryController.onDidReceiveEdit(async (message) => {
+      const panel = MainPanel.active?.history;
       const repo = panel?.repository;
       if (!panel || !repo) return;
       if (message.type === 'saveMessage') {
@@ -73,12 +74,12 @@ export function registerHistoryCommands(): vscode.Disposable {
   );
 }
 
-function short(panel: HistoryPanel, oid: string): string {
+function short(panel: HistoryController, oid: string): string {
   const subject = panel.commit(oid)?.subject;
   return subject ? `"${subject}"` : oid.slice(0, 8);
 }
 
-async function move(panel: HistoryPanel, repo: Repository, oid: string, delta: number): Promise<void> {
+async function move(panel: HistoryController, repo: Repository, oid: string, delta: number): Promise<void> {
   const index = panel.chainIndex(oid);
   if (index === undefined) return;
   await run(panel, repo, `Move ${short(panel, oid)}`, { kind: 'move', oid, to: index + delta });
@@ -90,7 +91,7 @@ async function fullMessage(repo: Repository, oid: string): Promise<string> {
   return obj ? parseCommitObject(obj.data.toString('utf8')).message : '';
 }
 
-async function run(panel: HistoryPanel, repo: Repository, label: string, edit: HistoryEdit): Promise<void> {
+async function run(panel: HistoryController, repo: Repository, label: string, edit: HistoryEdit): Promise<void> {
   let result: RebaseResult | undefined;
   panel.post({ type: 'busy', busy: true });
   try {

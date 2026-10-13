@@ -1,4 +1,4 @@
-/** History の Webview と拡張ホストの間のメッセージ。Remote-SSH では SSH を通るので最小限にする */
+/** メインビューの History と拡張ホストの間のメッセージ。Remote-SSH では SSH を通るので最小限にする */
 import type { Signature } from '../git/commitObject.ts';
 import type { FileChange } from '../git/log.ts';
 import type { GraphRow } from './graph.ts';
@@ -44,15 +44,14 @@ export interface CommitDetails {
 /** メッセージを編集してから行う操作 */
 export type MessageEdit = 'reword' | 'squash';
 
-export type HostMessage =
+export type HistoryHostMessage =
   | { type: 'reset'; title: string; scope: Scope }
   | { type: 'rows'; start: number; rows: RowData[]; done: boolean }
   | { type: 'busy'; busy: boolean }
   | { type: 'details'; details: CommitDetails }
   | { type: 'editMessage'; oid: string; kind: MessageEdit; title: string; message: string };
 
-export type WebviewMessage =
-  | { type: 'ready' }
+export type HistoryWebviewMessage =
   | { type: 'more' }
   /** コミットの変更をまとめて開く */
   | { type: 'open'; oid: string }

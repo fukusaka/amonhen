@@ -1,12 +1,17 @@
-import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import { parseCommitObject } from '../git/commitObject.ts';
 import type { Commit } from '../git/log.ts';
 import { GraphBuilder } from '../history/graph.ts';
-import type { CommitDetails, HostMessage, RefLabel, RowData, Scope, WebviewMessage } from '../history/protocol.ts';
+import type {
+  CommitDetails,
+  HistoryHostMessage,
+  HistoryWebviewMessage,
+  RefLabel,
+  RowData,
+  Scope,
+} from '../history/protocol.ts';
 import { editableChain, refLabels } from '../history/rows.ts';
-import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository, Section } from '../state/repository.ts';
 import { openCommitChanges, openCommitFile } from './commitChanges.ts';
 import { showError } from './stageCommands.ts';
@@ -19,18 +24,18 @@ const EDITABLE_LIMIT = 500;
 const DETAILS_CACHE = 100;
 
 /**
- * コミット履歴をエディタ領域の Webview に表示する。
+ * メインビューの History の拡張ホスト側。
  * log は分割して読み込み、グラフのレーンはこちらで計算して、描画に必要な最小限の配列だけ送る。
  */
-export class HistoryPanel implements vscode.Disposable {
-  private static current: HistoryPanel | undefined;
-  private static readonly edits = new vscode.EventEmitter<Extract<WebviewMessage, { type: 'saveMessage' | 'move' }>>();
+export class HistoryController implements vscode.Disposable {
+  private static readonly edits = new vscode.EventEmitter<
+    Extract<HistoryWebviewMessage, { type: 'saveMessage' | 'move' }>
+  >();
   /** Webview でメッセージの編集や並べ替えが行われた。処理は historyCommands が受け持つ */
-  static readonly onDidReceiveEdit = HistoryPanel.edits.event;
+  static readonly onDidReceiveEdit = HistoryController.edits.event;
 
-  private readonly panel: vscode.WebviewPanel;
-  private readonly manager: RepositoryManager;
-  private readonly disposables: vscode.Disposable[] = [];
+  /** Webview へ送る。historyCommands からも使う */
+  readonly post: (message: HistoryHostMessage) => void;
   private repoListener: vscode.Disposable | undefined;
   private repo: Repository | undefined;
   private scope: Scope = 'head';
@@ -49,36 +54,17 @@ export class HistoryPanel implements vscode.Disposable {
   /** 一度取ったコミットの詳細。コミットの内容は変わらないので、ref のラベル以外はそのまま使える */
   private readonly details = new Map<string, Omit<CommitDetails, 'refs'>>();
 
-
-  static show(extensionUri: vscode.Uri, manager: RepositoryManager): HistoryPanel {
-    if (HistoryPanel.current) {
-      HistoryPanel.current.panel.reveal();
-      return HistoryPanel.current;
-    }
-    const panel = vscode.window.createWebviewPanel('amonhen.history', 'History', vscode.ViewColumn.Active, {
-      enableScripts: true,
-      localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'dist', 'webview'), vscode.Uri.joinPath(extensionUri, 'media')],
-    });
-    HistoryPanel.current = new HistoryPanel(panel, extensionUri, manager);
-    return HistoryPanel.current;
+  constructor(post: (message: HistoryHostMessage) => void) {
+    this.post = post;
   }
 
-  /** 開いていれば返す（Webview の右クリックメニューのコマンドから使う） */
-  static get active(): HistoryPanel | undefined {
-    return HistoryPanel.current;
-  }
-
-  private constructor(panel: vscode.WebviewPanel, extensionUri: vscode.Uri, manager: RepositoryManager) {
-    this.panel = panel;
-    this.manager = manager;
-    panel.iconPath = new vscode.ThemeIcon('history');
-    panel.webview.html = html(panel.webview, extensionUri);
-    this.disposables.push(
-      panel.onDidDispose(() => this.dispose()),
-      panel.webview.onDidReceiveMessage((m: WebviewMessage) => void this.onMessage(m)),
-      manager.onDidChangeCurrent((r) => this.watch(r)),
-    );
-    this.watch(manager.current);
+  /** 表示するリポジトリを切り替えて読み直す */
+  setRepository(repo: Repository | undefined): void {
+    this.repoListener?.dispose();
+    this.repo = repo;
+    this.repoListener = repo?.onDidChange((changed) => this.onRepositoryChange(changed));
+    this.details.clear();
+    void this.reset();
   }
 
   get repository(): Repository | undefined {
@@ -94,18 +80,6 @@ export class HistoryPanel implements vscode.Disposable {
     return this.chain.get(oid);
   }
 
-  post(message: HostMessage): void {
-    void this.panel.webview.postMessage(message);
-  }
-
-  private watch(repo: Repository | undefined): void {
-    this.repoListener?.dispose();
-    this.repo = repo;
-    this.repoListener = repo?.onDidChange((changed) => this.onRepositoryChange(changed));
-    this.panel.title = repo ? `History: ${basename(repo.root)}` : 'History';
-    void this.reset();
-  }
-
   /** ブランチやタグ、HEAD が動いたときだけ読み直す。stage などでは読み直さない */
   private onRepositoryChange(changed: ReadonlySet<Section>): void {
     const headOid = this.repo?.current.status?.branch.oid;
@@ -116,11 +90,8 @@ export class HistoryPanel implements vscode.Disposable {
     }
   }
 
-  private async onMessage(message: WebviewMessage): Promise<void> {
+  async handle(message: HistoryWebviewMessage): Promise<void> {
     switch (message.type) {
-      case 'ready':
-        await this.reset();
-        break;
       case 'more':
         await this.loadMore();
         break;
@@ -148,7 +119,7 @@ export class HistoryPanel implements vscode.Disposable {
       }
       case 'saveMessage':
       case 'move':
-        HistoryPanel.edits.fire(message);
+        HistoryController.edits.fire(message);
         break;
     }
   }
@@ -251,40 +222,7 @@ export class HistoryPanel implements vscode.Disposable {
   }
 
   dispose(): void {
-    HistoryPanel.current = undefined;
     clearTimeout(this.resetTimer);
     this.repoListener?.dispose();
-    vscode.Disposable.from(...this.disposables).dispose();
-    this.panel.dispose();
   }
-}
-
-function html(webview: vscode.Webview, extensionUri: vscode.Uri): string {
-  const nonce = randomBytes(16).toString('base64');
-  const script = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'dist', 'webview', 'history.js'));
-  const style = webview.asWebviewUri(vscode.Uri.joinPath(extensionUri, 'media', 'history.css'));
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${webview.cspSource}; script-src 'nonce-${nonce}';">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<link rel="stylesheet" href="${style}">
-</head>
-<body>
-<header>
-  <select id="scope" aria-label="Scope">
-    <option value="head">Current Branch</option>
-    <option value="all">All Branches</option>
-  </select>
-  <span id="status"></span>
-</header>
-<main>
-  <div id="list" tabindex="0"><div id="spacer"></div></div>
-  <div id="splitter" role="separator" aria-orientation="vertical"></div>
-  <aside id="details"></aside>
-</main>
-<script nonce="${nonce}" src="${script}"></script>
-</body>
-</html>`;
 }

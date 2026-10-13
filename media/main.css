@@ -7,20 +7,126 @@ body {
 }
 
 body {
-  display: flex;
-  flex-direction: column;
   color: var(--vscode-foreground);
   background: var(--vscode-editor-background);
   font-family: var(--vscode-font-family);
   font-size: var(--vscode-font-size);
 }
 
-body.busy #list {
+/* メインビューの骨組み: 左のナビと右の画面 */
+
+.app {
+  display: flex;
+  height: 100%;
+}
+
+.nav {
+  flex: none;
+  width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-sideBar-background, var(--vscode-editor-background));
+}
+
+.nav-head {
+  padding: 0 12px 10px;
+}
+
+.repo-name {
+  font-weight: bold;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-branch {
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.repo-branch.warning {
+  color: var(--vscode-notificationsWarningIcon-foreground, var(--vscode-charts-orange));
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 4px 12px;
+  border: none;
+  border-radius: 0;
+  color: var(--vscode-foreground);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav-item:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.nav-item.active {
+  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--vscode-list-activeSelectionBackground);
+}
+
+.nav-item .icon {
+  width: 1em;
+  text-align: center;
+  opacity: 0.8;
+}
+
+.nav-item .label {
+  flex: 1;
+}
+
+.nav-item .badge:not(:empty) {
+  padding: 0 6px;
+  border-radius: 8px;
+  font-size: 0.85em;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+}
+
+.view {
+  flex: 1;
+  min-width: 0;
+  display: none;
+  flex-direction: column;
+}
+
+.view.active {
+  display: flex;
+}
+
+.placeholder {
+  padding: 24px;
+  color: var(--vscode-descriptionForeground);
+}
+
+/* History */
+
+.history.busy .list {
   opacity: 0.6;
   pointer-events: none;
 }
 
-header {
+.toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -35,32 +141,32 @@ select {
   padding: 2px 4px;
 }
 
-#status {
+.status {
   color: var(--vscode-descriptionForeground);
 }
 
-main {
+.split {
   flex: 1;
   display: flex;
   min-height: 0;
 }
 
-#list {
+.list {
   flex: 1;
   min-width: 200px;
   overflow-y: auto;
   outline: none;
 }
 
-#splitter {
+.splitter {
   flex: none;
   width: 4px;
   cursor: col-resize;
   border-left: 1px solid var(--vscode-panel-border);
 }
 
-#splitter:hover,
-body.resizing #splitter {
+.splitter:hover,
+body.resizing .splitter {
   background: var(--vscode-sash-hoverBorder, var(--vscode-focusBorder));
 }
 
@@ -69,7 +175,7 @@ body.resizing {
   user-select: none;
 }
 
-#details {
+aside.details {
   flex: none;
   overflow: auto;
   padding: 12px 16px;
@@ -77,48 +183,48 @@ body.resizing {
   user-select: text;
 }
 
-#details .empty {
+aside.details .empty {
   color: var(--vscode-descriptionForeground);
 }
 
-#details .subject {
+aside.details .subject {
   margin-bottom: 10px;
   font-size: 1.1em;
   font-weight: bold;
   line-height: 1.5;
 }
 
-#details .meta {
+aside.details .meta {
   display: grid;
   grid-template-columns: max-content 1fr;
   gap: 2px 12px;
   margin: 0 0 12px;
 }
 
-#details dt {
+aside.details dt {
   color: var(--vscode-descriptionForeground);
 }
 
-#details dd {
+aside.details dd {
   margin: 0;
   overflow-wrap: anywhere;
 }
 
-#details code,
-#details .parent {
+aside.details code,
+aside.details .parent {
   font-family: var(--vscode-editor-font-family);
 }
 
-#details a {
+aside.details a {
   color: var(--vscode-textLink-foreground);
   text-decoration: none;
 }
 
-#details a:hover {
+aside.details a:hover {
   text-decoration: underline;
 }
 
-#details .body {
+aside.details .body {
   margin: 0 0 12px;
   white-space: pre-wrap;
   font-family: var(--vscode-editor-font-family);
@@ -197,7 +303,7 @@ button.secondary {
   background: var(--vscode-button-secondaryBackground);
 }
 
-#spacer {
+.spacer {
   position: relative;
 }
 
@@ -222,7 +328,7 @@ button.secondary {
   background: var(--vscode-list-inactiveSelectionBackground);
 }
 
-#list:focus .row.selected {
+.list:focus .row.selected {
   color: var(--vscode-list-activeSelectionForeground);
   background: var(--vscode-list-activeSelectionBackground);
 }
