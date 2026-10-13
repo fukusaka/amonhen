@@ -67,6 +67,18 @@
         "command": "amonhen.openChange",
         "title": "Open File",
         "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stage",
+        "title": "Stage",
+        "category": "Amon Hen",
+        "icon": "$(add)"
+      },
+      {
+        "command": "amonhen.unstage",
+        "title": "Unstage",
+        "category": "Amon Hen",
+        "icon": "$(remove)"
       }
     ],
     "menus": {
@@ -87,6 +99,26 @@
           "command": "amonhen.checkout",
           "when": "view == amonhen.sidebar && viewItem == branch",
           "group": "1_branch@1"
+        },
+        {
+          "command": "amonhen.stage",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(change|group)\\.(unstaged|conflicts)$/",
+          "group": "inline"
+        },
+        {
+          "command": "amonhen.unstage",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(change|group)\\.staged$/",
+          "group": "inline"
+        },
+        {
+          "command": "amonhen.stage",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(change|group)\\.(unstaged|conflicts)$/",
+          "group": "1_stage@1"
+        },
+        {
+          "command": "amonhen.unstage",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(change|group)\\.staged$/",
+          "group": "1_stage@1"
         }
       ],
       "commandPalette": [
@@ -96,6 +128,14 @@
         },
         {
           "command": "amonhen.openChange",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stage",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.unstage",
           "when": "false"
         }
       ]

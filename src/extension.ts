@@ -5,6 +5,7 @@ import { registerContentProvider } from './ui/content.ts';
 import { ChangeDecorationProvider } from './ui/decorations.ts';
 import { openChangeDiff, trackActiveDiff } from './ui/diff.ts';
 import { SidebarProvider, type Change, type Node } from './ui/sidebar.ts';
+import { registerStageCommands } from './ui/stageCommands.ts';
 
 /** 戻り値は結合テストから中身を確かめるためのもの */
 export async function activate(context: vscode.ExtensionContext): Promise<{ manager: RepositoryManager; sidebar: SidebarProvider }> {
@@ -12,7 +13,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ mana
   const log = vscode.window.createOutputChannel('Amon Hen', { log: true });
   const manager = new RepositoryManager(log);
   const sidebar = new SidebarProvider(manager);
-  const view = vscode.window.createTreeView('amonhen.sidebar', { treeDataProvider: sidebar });
+  const view = vscode.window.createTreeView('amonhen.sidebar', { treeDataProvider: sidebar, canSelectMany: true });
 
   const updateDescription = () => {
     view.description = manager.repositories.length > 1 ? manager.current?.root.split(/[\\/]/).pop() : undefined;
@@ -32,6 +33,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ mana
     vscode.commands.registerCommand('amonhen.checkout', (node: Node) => checkout(manager, node)),
     vscode.commands.registerCommand('amonhen.openChange', (root: string, change: Change) => openChangeDiff(root, change)),
     trackActiveDiff(),
+    registerStageCommands(manager),
   );
 
   await manager.initialize();

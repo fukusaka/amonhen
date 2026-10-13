@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import type { RepositoryBackend } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { configStamp, gitmodulesStamp, refsStamp, stashStamp } from '../git/stamp.ts';
-import type { StatusResult } from '../git/status.ts';
+import type { StatusEntry, StatusResult } from '../git/status.ts';
 
 export type Section = 'workingCopy' | 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules';
 
@@ -49,6 +49,8 @@ export class Repository implements vscode.Disposable {
   private readonly stamps: Stamps = {};
   private readonly wanted = new Set<LazySection>();
   private running: Promise<void> | undefined;
+  /** patchStatus のたびに増やす。それより前に始めた status の取得結果は古いので捨てる */
+  private patchGeneration = 0;
   private queued = false;
 
   private readonly _onDidChange = new vscode.EventEmitter<ReadonlySet<Section>>();
@@ -113,8 +115,8 @@ export class Repository implements vscode.Disposable {
 
     const tasks: Promise<void>[] = [
       // worktree の変化は検知できないので status は毎回取る
-      this.backend.status().then((status) => {
-        if (this.replace('status', status)) {
+      this.statusSince(this.patchGeneration).then((status) => {
+        if (status && this.replace('status', status)) {
           changed.add('workingCopy');
           if (this.wanted.has('submodules')) {
             changed.add('submodules');
@@ -201,6 +203,25 @@ export class Repository implements vscode.Disposable {
     }
     this.state[key] = value;
     return true;
+  }
+
+  /**
+   * git の結果を待たずに status を書き換えて画面に反映する（楽観的更新）。
+   * 操作のあとに refresh すれば正しい値に置き換わる。
+   */
+  patchStatus(fn: (entries: readonly StatusEntry[]) => StatusEntry[]): void {
+    const status = this.state.status;
+    if (!status) {
+      return;
+    }
+    this.patchGeneration++;
+    this.state.status = { ...status, entries: fn(status.entries) };
+    this.fire(new Set(['workingCopy']));
+  }
+
+  private async statusSince(generation: number): Promise<StatusResult | undefined> {
+    const status = await this.backend.status();
+    return generation === this.patchGeneration ? status : undefined;
   }
 
   private fire(changed: Set<Section>): void {
