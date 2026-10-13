@@ -4,41 +4,25 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 ## 機能
 
-アクティビティバーの Amon Hen アイコンからサイドバーを開く。
+アクティビティバーの Amon Hen アイコンを押すと、エディタ領域にメインビューが開く（コマンドパレットの「Amon Hen: Open Amon Hen」でも開ける）。左のナビで画面を切り替え、右にその内容を出す。切り替えは Webview の中だけで行うので待ち時間が無い。
 
-### サイドバー
+### ナビ
 
-| セクション | 内容 |
+| 項目 | 内容 |
 | --- | --- |
-| Working Copy | Conflicts / Staged / Changes に分けて変更ファイルを表示 |
-| Branches | `feature/x` のような名前はフォルダにまとめる。現在のブランチに ✓、upstream との差を ↑↓ で表示。右クリックで Checkout |
-| Remotes | リモートごとのブランチ |
-| Tags | 新しい順。展開したときに初めて取得する |
-| Stashes | 展開したときに初めて取得する |
-| Submodules | 初期化済みか、変更があるか |
+| リポジトリ名とブランチ | merge や rebase の途中ならその旨を出す |
+| ツールバー | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。無ければ origin へ送って upstream に設定）、Undo |
+| Working Copy / History | 画面の切り替え。Working Copy には変更の数が出る |
+| Branches | 現在のブランチに ✓、upstream との差（↑↓）、upstream が消えていれば gone |
+| Remotes / Tags / Stashes / Submodules | 開いたときに取得する |
 
-複数のリポジトリを開いているときは、ビューのタイトルのボタンで切り替える。
-
-### 差分と stage
-
-- Working Copy のファイルをクリックすると、標準の diff エディタで開く。Changes は「index ↔ 作業中のファイル」（右側はそのまま編集できる）、Staged は「HEAD ↔ index」。
-- ファイル単位の stage / unstage は、各行やグループの `+` / `−` ボタンで行う。複数選択もできる。
-- diff エディタでは、選んだ行だけを stage / unstage できる。
-
-| 操作 | キー | 対象 |
-| --- | --- | --- |
-| Stage Selected Lines | `ctrl+alt+s` | Changes の diff。行を選べばその行だけ、カーソルだけならその hunk |
-| Unstage Selected Lines | `ctrl+alt+u` | Staged の diff。同上 |
-
-削除した行を選ぶときは左側（変更前）のエディタで選ぶ。どちらの操作も diff エディタ右上のボタンからも実行できる。
-
-### コミット
-
-Working Copy の見出しかビューのタイトルにある ✓ ボタンから、stage 済みの変更をコミットする。
+- ブランチ・リモートブランチ・タグを選ぶと、History にその履歴が出る。
+- ダブルクリックで切り替える。リモートブランチなら、追跡するローカルブランチを作って切り替える。
+- 右クリックで Checkout、Merge into Current Branch、Rebase Current Branch onto This、Delete Branch（Undo で戻せる）。
 
 ### ドラッグ＆ドロップ
 
-Branches・Remotes・Tags の項目をドラッグして、ほかの項目にドロップする。ドロップすると操作の候補が出るので選ぶ。どの操作もドロップ先を書き換える。
+ナビのブランチ・リモートブランチ・タグを、ほかの項目にドロップすると操作の候補が出る。どの操作もドロップ先を書き換える。
 
 | ドラッグするもの | ドロップ先 | 選べる操作 |
 | --- | --- | --- |
@@ -47,24 +31,23 @@ Branches・Remotes・Tags の項目をドラッグして、ほかの項目にド
 
 - ドロップ先が checkout されていないとき、fast-forward で済むなら checkout せずにブランチだけ進める。そうでなければ checkout してから実行する。
 - upstream が無いブランチを push すると、push 先を upstream に設定する。
-- コンフリクトで止まったときは、中止（Abort）するか、下の「コンフリクトの解決」の手順で解決して続ける。
 
-### コンフリクトの解決
+### Working Copy
 
-merge や rebase がコンフリクトで止まると、Working Copy の先頭に「Merge in progress」「Rebase in progress (2/5)」のような行が出て、その下の Conflicts にコンフリクトしたファイルが並ぶ。ファイルの横には「both modified」「deleted by them」などの種類が出る。
+左に Conflicts / Staged / Changes のファイル、下にコミット欄、右に選んだファイルの差分が出る。差分は hunk ごとに並び、変わった部分は単語単位で強調する。
 
-1. Conflicts のファイルをクリックすると、標準の 3-way マージエディタで開く（Current は HEAD 側、Incoming は取り込む側。rebase では HEAD が rebase 先で、Incoming が自分のコミット）。片側で削除されたファイルは普通に開く。
-2. 解決したら `+` で解決済みにする。コンフリクトのマーカーが残っていれば確認される。
-3. ファイルを丸ごとどちらかの内容にするなら、右クリックの Accept Current / Accept Incoming を使う。選んだ側で削除されていれば削除として解決する。
-4. 全部解決したら、先頭の行の Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
+- 差分の行をクリックで選び（Shift+クリックで範囲）、Stage N Lines で選んだ行だけを stage する。Staged のファイルでは同じ操作で unstage になる。
+- hunk ごとの Stage Hunk、Stage File、一覧の `+` / `−`、Stage All でもできる。一覧では上下キーで選び、Space か Enter で stage / unstage する。
+- コミット欄は Summary と Description（複数行）。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。
+- コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Accept Current、Accept Incoming、Mark as Resolved を選べる。片側で削除されたファイルも Accept で解決できる。解決済みにするとき、マーカーが残っていれば確認する。
 
 ### History
 
-ビューのタイトルの History ボタンで、エディタ領域に History を開く。左にコミットの一覧とグラフ、右に選んだコミットの詳細が出る。境目はドラッグで動かせて、幅は覚えておく。上部で「Current Branch」と「All Branches」を切り替える。
+左にコミットの一覧とグラフ、右に選んだコミットの詳細が出る。境目はドラッグで動かせて、幅は覚えておく。上部で Current Branch / All Branches / ナビで選んだ ref を切り替える。
 
-- 一覧はクリックか、上下の矢印キーと PageUp / PageDown で選ぶ。履歴は 200 件ずつ、スクロールに合わせて読み込む。
-- 右の詳細には、メッセージ全体、ブランチやタグ、作者と日時、コミット ID、親コミット（クリックでそのコミットへ移る）、変更ファイルが出る。merge コミットは最初の親との差分。
-- 変更ファイルをクリックすると、そのファイルの差分を History の横に開く。Open All か、一覧のダブルクリック・Enter で、変更をまとめて複数ファイル diff エディタで開く。
+- 一覧はクリックか、上下キーと PageUp / PageDown で選ぶ。履歴は 200 件ずつ、スクロールに合わせて読み込む。
+- 詳細には、メッセージ全体、ブランチやタグ、作者と日時、コミット ID、親コミット（クリックでそのコミットへ移る）、変更ファイルと、ファイルごとの差分が並ぶ。差分は画面に入ったファイルから読み込む。merge コミットは最初の親との差分。
+- 各ファイルの Open、Open All、一覧のダブルクリック・Enter で、標準の diff エディタでも開ける。
 
 HEAD から first-parent で辿れるコミット（最初の merge コミットの手前まで）は、右クリックで編集できる。どれも非対話の rebase で行い、Undo で戻せる。作業中の変更は自動で退避して戻す。
 
@@ -79,25 +62,32 @@ HEAD から first-parent で辿れるコミット（最初の merge コミット
 | Move Up / Move Down | 1 つ新しい側 / 古い側へ動かす。行をドラッグしても並べ替えられる |
 | Copy Commit ID | コミット ID をコピーする |
 
+### 途中で止まった merge / rebase
+
+コンフリクトや Edit・Split で止まると、サイドバーの Changes の先頭に「Rebase in progress (2/5)」のような行が出る。解決して stage したら Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
+
 ### Undo
 
-ビューのタイトルの Undo ボタンで、直前の操作を戻す。対象はコミット、Merge、Rebase、fast-forward、History でのコミットの編集。Edit や Split で止めた操作は、Continue で終わった時点で Undo の対象になる。
+ナビの Undo で、直前の操作を戻す。対象はコミット（amend を含む）、Merge、Rebase、fast-forward、Pull、ブランチの削除、History でのコミットの編集。
 
 - コミットを戻すと、その変更は stage された状態に戻る。
 - Merge や Rebase を戻すと、作業中の変更は残したまま、ブランチと checkout していたブランチを操作の前に戻す。
 - 操作のあとでブランチが動いていたら、壊さないように Undo しない。
+- Edit や Split で止めた操作は、Continue で終わった時点で Undo の対象になる。
 - 記録は `.git/amonhen/undo.json` に残るので、VSCode を再起動しても戻せる。
 
-ビューのタイトルにはほかに、Fetch（すべてのリモートから取得し、消えたリモートブランチを片付ける）と Refresh がある。
+### サイドバー（Changes）
+
+メインビューを開かなくても変更を確かめられるよう、サイドバーには途中で止まっている merge / rebase と、Conflicts / Staged / Changes のファイルだけを出す。ファイルをクリックすると標準の diff エディタで開き、diff エディタでは `ctrl+alt+s` / `ctrl+alt+u` で選んだ行を stage / unstage できる。複数のリポジトリを開いているときは、ビューのタイトルのボタンで切り替える。
 
 ### 今の制限
 
-- コミットメッセージは 1 行だけ。
 - History で編集できるのは、HEAD から最初の merge コミットまでの範囲だけ。
 - Push は Undo できない。
 - 認証の入力を求められる push・fetch はできない（SSH の鍵や credential helper で認証できる必要がある）。
 - 行単位の stage は、autocrlf などの git のフィルターを考慮しない。
-- 外部での変更がサイドバーに反映されるまで約 1 秒かかる（組み込みの Git 拡張の通知を待っているため）。
+- 差分にシンタックスハイライトは付かない。
+- 外部での変更が反映されるまで約 1 秒かかる（組み込みの Git 拡張の通知を待っているため）。
 
 ## インストール・更新
 
@@ -146,6 +136,8 @@ VSCode で F5 を押すと、拡張を読み込んだウィンドウが開く。
 | `src/git/` | git 実行層。プロセス起動、常駐 `cat-file`、出力のパース、`.git` の更新時刻による変化検知 |
 | `src/diff/` | 行単位の差分と、選んだ変更だけを当てる処理 |
 | `src/state/` | 状態管理層。リポジトリごとのキャッシュと更新 |
-| `src/ui/` | サイドバー、diff の表示、コマンド |
+| `src/history/`, `src/workingCopy/`, `src/view/` | メインビューの各画面と拡張ホストの間のメッセージ、History のグラフと rebase の組み立て |
+| `src/ui/` | メインビューのパネルと画面ごとのコントローラー、サイドバー、コマンド |
+| `src/webview/` | メインビューの Webview（ナビ、Working Copy、History、差分の描画） |
 | `test/` | `node --test` で動くテスト。git 実行層は一時ディレクトリの実リポジトリで確かめる |
 | `scripts/` | インストールと snapshot のバージョン計算 |
