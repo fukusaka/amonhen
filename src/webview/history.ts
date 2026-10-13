@@ -3,9 +3,11 @@
  * 一覧は見えている行だけを描く仮想スクロールで、グラフは行ごとの canvas に描く。
  * 末尾に近づいたら次のページを要求する。
  */
+import type { FileDiff } from '../diff/fileDiff.ts';
 import type { CommitDetails, MessageEdit, RowData, Scope } from '../history/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, getState, post, updateState, type View } from './api.ts';
+import { renderDiffBody } from './diffView.ts';
 
 const ROW_HEIGHT = 24;
 const LANE_WIDTH = 14;
@@ -258,6 +260,11 @@ export function createHistoryView(): View {
     selectTimer = window.setTimeout(() => post({ type: 'select', oid }), 60);
   }
 
+  /** 詳細に並べたファイルごとの差分の場所 */
+  let sections = new Map<string, HTMLElement>();
+  let requestedDiffs = new Set<string>();
+  let diffObserver: IntersectionObserver | undefined;
+
   function showDetails(d: CommitDetails): void {
     if (d.oid !== rows[selected]?.oid) {
       return;
@@ -323,18 +330,61 @@ export function createHistoryView(): View {
       const slash = f.path.lastIndexOf('/');
       row.append(el('span', 'name', f.path.slice(slash + 1)));
       if (slash >= 0) row.append(el('span', 'dir', f.path.slice(0, slash)));
+      // その差分の位置へ移る
       row.addEventListener('click', () => {
         for (const other of files.querySelectorAll('.file.active')) other.classList.remove('active');
         row.classList.add('active');
-        post({ type: 'openFile', oid: d.oid, path: f.path });
+        sections.get(f.path)?.scrollIntoView({ block: 'start' });
       });
       files.append(row);
     }
 
+    // ファイルごとの差分。画面に入ったものから順に求める
+    diffObserver?.disconnect();
+    diffObserver = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          const path = (entry.target as HTMLElement).dataset.path!;
+          if (entry.isIntersecting && !requestedDiffs.has(path)) {
+            requestedDiffs.add(path);
+            post({ type: 'commitDiff', oid: d.oid, path });
+          }
+        }
+      },
+      { root: detailsPane, rootMargin: '200px' },
+    );
+    requestedDiffs = new Set();
+    sections = new Map();
+    const diffs = el('div', 'commit-diffs');
+    for (const f of d.files) {
+      const section = el('section', 'file-diff');
+      section.dataset.path = f.path;
+      const sectionHead = el('div', 'diff-head');
+      sectionHead.append(el('span', `status s-${f.status}`, f.status));
+      sectionHead.append(el('span', 'path', f.origPath ? `${f.origPath} → ${f.path}` : f.path));
+      const open = el('button', 'secondary', 'Open');
+      open.title = 'エディタで差分を開く';
+      open.addEventListener('click', () => post({ type: 'openFile', oid: d.oid, path: f.path }));
+      sectionHead.append(open);
+      section.append(sectionHead, el('div', 'empty', '読み込み中…'));
+      diffs.append(section);
+      sections.set(f.path, section);
+      diffObserver.observe(section);
+    }
+
     const parts: Node[] = [head, meta];
     if (body) parts.push(el('pre', 'body', body));
-    parts.push(files);
+    parts.push(files, diffs);
     detailsPane.replaceChildren(...parts);
+    detailsPane.scrollTop = 0;
+  }
+
+  function showCommitDiff(oid: string, path: string, diff: FileDiff): void {
+    const section = sections.get(path);
+    if (oid !== shownOid || !section) {
+      return;
+    }
+    section.replaceChildren(section.firstElementChild!, ...renderDiffBody(diff));
   }
 
   function clearDetails(): void {
@@ -482,6 +532,9 @@ export function createHistoryView(): View {
         break;
       case 'details':
         showDetails(message.details);
+        return;
+      case 'commitDiff':
+        showCommitDiff(message.oid, message.path, message.diff);
         return;
       case 'editMessage':
         editMessage(message.oid, message.kind, message.title, message.message);
