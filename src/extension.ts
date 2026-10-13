@@ -4,18 +4,26 @@ import { RepositoryManager } from './state/manager.ts';
 import { registerCommitCommand } from './ui/commit.ts';
 import { registerContentProvider } from './ui/content.ts';
 import { ChangeDecorationProvider } from './ui/decorations.ts';
+import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { openChangeDiff, trackActiveDiff } from './ui/diff.ts';
 import { SidebarProvider, type Change, type Node } from './ui/sidebar.ts';
 import { registerStageCommands } from './ui/stageCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
 
 /** 戻り値は結合テストから中身を確かめるためのもの */
-export async function activate(context: vscode.ExtensionContext): Promise<{ manager: RepositoryManager; sidebar: SidebarProvider }> {
+export async function activate(
+  context: vscode.ExtensionContext,
+): Promise<{ manager: RepositoryManager; sidebar: SidebarProvider; dragAndDrop: SidebarDragAndDrop }> {
   const start = performance.now();
   const log = vscode.window.createOutputChannel('Amon Hen', { log: true });
   const manager = new RepositoryManager(log);
   const sidebar = new SidebarProvider(manager);
-  const view = vscode.window.createTreeView('amonhen.sidebar', { treeDataProvider: sidebar, canSelectMany: true });
+  const dragAndDrop = new SidebarDragAndDrop(manager);
+  const view = vscode.window.createTreeView('amonhen.sidebar', {
+    treeDataProvider: sidebar,
+    canSelectMany: true,
+    dragAndDropController: dragAndDrop,
+  });
 
   const updateDescription = () => {
     view.description = manager.repositories.length > 1 ? manager.current?.root.split(/[\\/]/).pop() : undefined;
@@ -43,7 +51,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ mana
   await manager.initialize();
   updateDescription();
   log.info(`activated in ${Math.round(performance.now() - start)}ms`);
-  return { manager, sidebar };
+  return { manager, sidebar, dragAndDrop };
 }
 
 export function deactivate(): void {}
