@@ -234,3 +234,14 @@ test('log pages and commit files', async () => {
   assert.deepEqual(root.parents, []);
   assert.deepEqual(await backend.commitFiles(root.oid, undefined), [{ status: 'A', path: 'a.txt' }]);
 });
+
+test('commit with amend replaces the last commit', async () => {
+  git('switch', '-q', 'main');
+  const parent = git('rev-parse', 'HEAD~1');
+  writeFileSync(join(dir, 'amend.txt'), 'x\n');
+  git('add', 'amend.txt');
+  await backend.commit('amended message', { amend: true });
+  assert.equal(git('rev-parse', 'HEAD~1'), parent);
+  assert.equal(git('log', '-1', '--format=%s').trim(), 'amended message');
+  assert.match(git('show', '--format=', '--name-only', 'HEAD'), /amend\.txt/);
+});

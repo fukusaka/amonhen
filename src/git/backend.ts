@@ -64,7 +64,8 @@ export interface RepositoryBackend {
   unstage(paths: readonly string[]): Promise<void>;
   /** index のエントリを指定した内容で置き換える（行単位の stage に使う） */
   writeIndex(path: string, mode: string, content: Buffer): Promise<void>;
-  commit(message: string): Promise<void>;
+  /** amend なら直前のコミットを置き換える（stage したものと message で） */
+  commit(message: string, opts?: { amend?: boolean }): Promise<void>;
   head(): Promise<HeadState>;
   /** 完全な名前の ref の現在の値。存在しなければ null */
   resolveRefs(names: readonly string[]): Promise<Map<string, string | null>>;
@@ -189,8 +190,9 @@ export class CliBackend implements RepositoryBackend {
     await this.write(['update-index', '--add', '--cacheinfo', `${mode},${oid},${path}`]);
   }
 
-  async commit(message: string): Promise<void> {
-    await this.git.exec(['commit', '--file=-'], { cwd: this.root, input: message });
+  async commit(message: string, opts: { amend?: boolean } = {}): Promise<void> {
+    const args = opts.amend ? ['commit', '--amend', '--file=-'] : ['commit', '--file=-'];
+    await this.git.exec(args, { cwd: this.root, input: message });
   }
 
   async head(): Promise<HeadState> {
