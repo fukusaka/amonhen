@@ -2,7 +2,7 @@ import { basename, join } from 'node:path';
 import * as vscode from 'vscode';
 import type { Sequence } from '../git/backend.ts';
 import { conflictSides } from '../git/status.ts';
-import type { Change } from './sidebar.ts';
+import type { Change } from '../state/changes.ts';
 import { gitUri, parseGitUri } from './uri.ts';
 
 /**

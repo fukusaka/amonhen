@@ -7,7 +7,8 @@ import type { RepositoryManager } from '../state/manager.ts';
 import { predictStage, predictUnstage } from '../state/predict.ts';
 import type { Repository } from '../state/repository.ts';
 import { activeDiff } from './diff.ts';
-import type { Change, Node } from './sidebar.ts';
+import type { Change } from '../state/changes.ts';
+import type { Node } from './sidebar.ts';
 
 export function registerStageCommands(manager: RepositoryManager): vscode.Disposable {
   return vscode.Disposable.from(
