@@ -79,6 +79,20 @@
         "title": "Unstage",
         "category": "Amon Hen",
         "icon": "$(remove)"
+      },
+      {
+        "command": "amonhen.stageSelection",
+        "title": "Stage Selected Lines",
+        "category": "Amon Hen",
+        "icon": "$(add)",
+        "enablement": "amonhen.diffKind == unstaged"
+      },
+      {
+        "command": "amonhen.unstageSelection",
+        "title": "Unstage Selected Lines",
+        "category": "Amon Hen",
+        "icon": "$(remove)",
+        "enablement": "amonhen.diffKind == staged"
       }
     ],
     "menus": {
@@ -137,9 +151,41 @@
         {
           "command": "amonhen.unstage",
           "when": "false"
+        },
+        {
+          "command": "amonhen.stageSelection",
+          "when": "amonhen.diffKind == unstaged"
+        },
+        {
+          "command": "amonhen.unstageSelection",
+          "when": "amonhen.diffKind == staged"
+        }
+      ],
+      "editor/title": [
+        {
+          "command": "amonhen.stageSelection",
+          "when": "amonhen.diffKind == unstaged",
+          "group": "navigation@1"
+        },
+        {
+          "command": "amonhen.unstageSelection",
+          "when": "amonhen.diffKind == staged",
+          "group": "navigation@1"
         }
       ]
-    }
+    },
+    "keybindings": [
+      {
+        "command": "amonhen.stageSelection",
+        "key": "ctrl+alt+s",
+        "when": "editorTextFocus && amonhen.diffKind == unstaged"
+      },
+      {
+        "command": "amonhen.unstageSelection",
+        "key": "ctrl+alt+u",
+        "when": "editorTextFocus && amonhen.diffKind == staged"
+      }
+    ]
   },
   "scripts": {
     "build": "node esbuild.mjs",
