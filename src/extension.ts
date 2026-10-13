@@ -7,6 +7,7 @@ import { ChangeDecorationProvider } from './ui/decorations.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { openChangeDiff, trackActiveDiff } from './ui/diff.ts';
 import { SidebarProvider, type Change, type Node } from './ui/sidebar.ts';
+import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerStageCommands } from './ui/stageCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
 
@@ -46,6 +47,7 @@ export async function activate(
     registerStageCommands(manager),
     registerCommitCommand(manager),
     registerUndoCommand(manager),
+    registerFetchCommand(manager),
   );
 
   await manager.initialize();

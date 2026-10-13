@@ -107,6 +107,13 @@
         "category": "Amon Hen",
         "icon": "$(discard)",
         "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.fetch",
+        "title": "Fetch",
+        "category": "Amon Hen",
+        "icon": "$(cloud-download)",
+        "enablement": "amonhen.hasRepository"
       }
     ],
     "menus": {
@@ -127,9 +134,14 @@
           "group": "navigation@1"
         },
         {
-          "command": "amonhen.refresh",
+          "command": "amonhen.fetch",
           "when": "view == amonhen.sidebar",
           "group": "navigation@2"
+        },
+        {
+          "command": "amonhen.refresh",
+          "when": "view == amonhen.sidebar",
+          "group": "navigation@3"
         }
       ],
       "view/item/context": [
