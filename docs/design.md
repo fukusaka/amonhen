@@ -89,14 +89,9 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 ## 配布
 
-- `.github/workflows/release.yml`: `v*` タグの push で `npm ci` → `npx @vscode/vsce package` → `gh release create "$GITHUB_REF_NAME" *.vsix --generate-notes`
-- 各端末でのインストール・更新:
-  ```sh
-  dir=$(mktemp -d)
-  gh release download --repo fukusaka/vscode-amonhen --pattern '*.vsix' --dir "$dir"
-  code --install-extension "$dir"/*.vsix --force
-  rm -rf "$dir"
-  ```
+- 正式版: `.github/workflows/release.yml`。`v*` タグの push で、タグと `package.json` の version が一致するか確かめ、テスト → `vsce package` → Release に添付する。
+- snapshot: `.github/workflows/snapshot.yml`。main への push のたびに `scripts/snapshot-version.mjs` で `<次の patch>-snapshot.<前回リリースからのコミット数>+<sha>` を作り、`snapshot` という pre-release を置き換える。SemVer の比較で正式版より古くなるので、正式版を入れると上書きされる。
+- 各端末でのインストール・更新: `scripts/install.sh [stable|snapshot]`。`gh release download` → `code --install-extension --force`。
 
 ## 実装順序
 
