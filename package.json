@@ -19,6 +19,88 @@
   "extensionKind": [
     "workspace"
   ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "amonhen",
+          "title": "Amon Hen",
+          "icon": "media/amonhen.svg"
+        }
+      ]
+    },
+    "views": {
+      "amonhen": [
+        {
+          "id": "amonhen.sidebar",
+          "name": "Repository"
+        }
+      ]
+    },
+    "viewsWelcome": [
+      {
+        "view": "amonhen.sidebar",
+        "contents": "Git リポジトリが見つかりません。\n[フォルダーを開く](command:vscode.openFolder)",
+        "when": "!amonhen.hasRepository"
+      }
+    ],
+    "commands": [
+      {
+        "command": "amonhen.refresh",
+        "title": "Refresh",
+        "category": "Amon Hen",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "amonhen.selectRepository",
+        "title": "Select Repository",
+        "category": "Amon Hen",
+        "icon": "$(repo)"
+      },
+      {
+        "command": "amonhen.checkout",
+        "title": "Checkout",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.openChange",
+        "title": "Open File",
+        "category": "Amon Hen"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "amonhen.selectRepository",
+          "when": "view == amonhen.sidebar && amonhen.multipleRepositories",
+          "group": "navigation@1"
+        },
+        {
+          "command": "amonhen.refresh",
+          "when": "view == amonhen.sidebar",
+          "group": "navigation@2"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "amonhen.checkout",
+          "when": "view == amonhen.sidebar && viewItem == branch",
+          "group": "1_branch@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "amonhen.checkout",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.openChange",
+          "when": "false"
+        }
+      ]
+    }
+  },
   "scripts": {
     "build": "node esbuild.mjs",
     "watch": "node esbuild.mjs --watch",
