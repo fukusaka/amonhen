@@ -52,11 +52,20 @@ export class UndoLog {
 
   /**
    * fn を実行し、成功して ref が動いたら記録する。
-   * fn が失敗したとき（コンフリクトで止まったときを含む）は記録しない。
+   * fn が失敗したときと、skip が true を返したとき（コンフリクトで止まったときなど）は記録しない。
    */
-  async record<T>(label: string, refs: readonly string[], mode: UndoEntry['mode'], fn: () => Promise<T>): Promise<T> {
+  async record<T>(
+    label: string,
+    refs: readonly string[],
+    mode: UndoEntry['mode'],
+    fn: () => Promise<T>,
+    skip?: (result: T) => boolean,
+  ): Promise<T> {
     const before = await this.snapshot(refs);
     const result = await fn();
+    if (skip?.(result)) {
+      return result;
+    }
     const after = await this.snapshot(refs);
     if (!sameSnapshot(before, after)) {
       const entries = await this.load();
