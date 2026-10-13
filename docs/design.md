@@ -71,7 +71,16 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 ## 速度対策
 
+小さな git コマンドの所要時間は、ほぼプロセス起動のコスト（macOS で 1 回 約 6 ms）。常駐 `cat-file` への問い合わせは 約 0.08 ms。言語より「spawn の回数」と「更新範囲」が効くので、以下を徹底する。
+
 - `git cat-file --batch-command` を常駐させ、オブジェクト取得のたびに spawn しない。
+- ref・config・stash の変化は `.git` 内のファイル（`HEAD`、`refs/` 以下のディレクトリ、`packed-refs`、`reftable/tables.list`、`config`、`logs/refs/stash`）の更新時刻で検知し、spawn しない。git は ref を lock ファイルの rename で更新するので、ディレクトリの更新時刻で足りる。
+- 変化があった部分だけ取り直す。ref は ahead/behind も含めて `for-each-ref` 1 回で取る。worktree の変化は検知できないので status は毎回取る。独立したコマンドは並列で実行する。
+- Tags / Stashes / Submodules は展開されるまで取得しない。TreeView は前回との差分を取り、変わったノードだけ更新する。
+- stage / unstage などは先に UI へ反映し、git の結果で確定させる（楽観的更新）。
+- esbuild で 1 ファイルに bundle し、実行時の依存パッケージは持たない。Webview は React を使わず、仮想スクロールとグラフの canvas 描画で軽くする。
+- git コマンドと再描画の所要時間を Output に記録し、「通常のリポジトリでサイドバーの更新は 30 ms 以内」を目安に計測しながら作る。
+- git 実行層はインターフェースで切り離す。計測して TS で足りない箇所が出たら、その部分だけ Rust（gitoxide）などの WASM／ネイティブ実装に差し替えられるようにする。
 - status は `git status --porcelain=v2 -z` で取得する。大きなリポジトリでは `core.untrackedCache` と fsmonitor の有効化を案内する。
 - 読み取り系コマンドには `--no-optional-locks` を付け、ユーザー自身の git 操作とロックを奪い合わない。
 - log は 200 件程度ずつ取得する。グラフのレーン計算は拡張ホスト側で少しずつ進め、Webview には最小限の配列だけ送る。Webview 側は仮想スクロールで描画する。
