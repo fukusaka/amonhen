@@ -3,7 +3,7 @@ import * as vscode from 'vscode';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
 import type { Sequence } from '../git/backend.ts';
-import type { StatusEntry } from '../git/status.ts';
+import { conflictSides, type StatusEntry } from '../git/status.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { shortName } from '../state/operations.ts';
 import type { LazySection, Repository, Section, Submodule } from '../state/repository.ts';
@@ -17,6 +17,8 @@ export interface Change {
   origPath?: string;
   /** バッジに出す 1 文字 */
   letter: string;
+  /** コンフリクトしているときの XY（UU、DU など） */
+  conflict?: string;
 }
 
 interface Folder<T> {
@@ -278,7 +280,7 @@ export function groupChanges(entries: readonly StatusEntry[]): [ChangeGroup, Cha
   for (const e of entries) {
     switch (e.kind) {
       case 'unmerged':
-        conflicts.push({ group: 'conflicts', path: e.path, letter: '!' });
+        conflicts.push({ group: 'conflicts', path: e.path, letter: '!', conflict: e.index + e.worktree });
         break;
       case 'untracked':
         unstaged.push({ group: 'unstaged', path: e.path, letter: 'U' });
@@ -306,7 +308,9 @@ function changeItem(change: Change, root: string): vscode.TreeItem {
   const item = new vscode.TreeItem(basename(change.path));
   item.id = `change:${change.group}:${change.path}`;
   const dir = dirname(change.path);
-  item.description = dir === '.' ? undefined : dir;
+  const parts = [dir === '.' ? '' : dir];
+  if (change.conflict) parts.unshift(conflictSides(change.conflict).label);
+  item.description = parts.filter(Boolean).join('  ') || undefined;
   // ファイルアイコンとバッジのため
   item.resourceUri = decorationUri(abs, change.letter);
   item.tooltip = change.origPath ? `${change.origPath} → ${change.path}` : change.path;

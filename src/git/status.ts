@@ -156,3 +156,30 @@ function parseHeader(result: StatusResult, key: string, value: string): void {
       break;
   }
 }
+
+/** コンフリクトしたファイルに、どちら側の内容があるか */
+export interface ConflictSides {
+  /** 「both modified」など、種類の説明 */
+  label: string;
+  /** 共通の祖先（stage 1） */
+  base: boolean;
+  /** 現在の側（HEAD、stage 2） */
+  current: boolean;
+  /** 取り込む側（stage 3） */
+  incoming: boolean;
+}
+
+const CONFLICTS: Record<string, ConflictSides> = {
+  UU: { label: 'both modified', base: true, current: true, incoming: true },
+  AA: { label: 'both added', base: false, current: true, incoming: true },
+  DD: { label: 'both deleted', base: true, current: false, incoming: false },
+  AU: { label: 'added by us', base: false, current: true, incoming: false },
+  UA: { label: 'added by them', base: false, current: false, incoming: true },
+  UD: { label: 'deleted by them', base: true, current: true, incoming: false },
+  DU: { label: 'deleted by us', base: true, current: false, incoming: true },
+};
+
+/** unmerged エントリの XY からコンフリクトの種類を返す */
+export function conflictSides(xy: string): ConflictSides {
+  return CONFLICTS[xy] ?? CONFLICTS.UU!;
+}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseStatus } from '../src/git/status.ts';
+import { conflictSides, parseStatus } from '../src/git/status.ts';
 
 test('parseStatus: headers and every record type', () => {
   const out = [
@@ -46,4 +46,10 @@ test('parseStatus: headers and every record type', () => {
 test('parseStatus: initial commit and detached HEAD', () => {
   const r = parseStatus('# branch.oid (initial)\0# branch.head (detached)\0');
   assert.deepEqual(r.branch, {});
+});
+
+test('conflictSides', () => {
+  assert.deepEqual(conflictSides('UD'), { label: 'deleted by them', base: true, current: true, incoming: false });
+  assert.equal(conflictSides('AA').base, false);
+  assert.equal(conflictSides('??').label, 'both modified');
 });
