@@ -47,7 +47,16 @@ Branches・Remotes・Tags の項目をドラッグして、ほかの項目にド
 
 - ドロップ先が checkout されていないとき、fast-forward で済むなら checkout せずにブランチだけ進める。そうでなければ checkout してから実行する。
 - upstream が無いブランチを push すると、push 先を upstream に設定する。
-- コンフリクトで止まったときは、中止（Abort）するか、自分で解決して stage し、Working Copy の先頭に出る「Merge / Rebase in progress」の Continue で続ける。
+- コンフリクトで止まったときは、中止（Abort）するか、下の「コンフリクトの解決」の手順で解決して続ける。
+
+### コンフリクトの解決
+
+merge や rebase がコンフリクトで止まると、Working Copy の先頭に「Merge in progress」「Rebase in progress (2/5)」のような行が出て、その下の Conflicts にコンフリクトしたファイルが並ぶ。ファイルの横には「both modified」「deleted by them」などの種類が出る。
+
+1. Conflicts のファイルをクリックすると、標準の 3-way マージエディタで開く（Current は HEAD 側、Incoming は取り込む側。rebase では HEAD が rebase 先で、Incoming が自分のコミット）。片側で削除されたファイルは普通に開く。
+2. 解決したら `+` で解決済みにする。コンフリクトのマーカーが残っていれば確認される。
+3. ファイルを丸ごとどちらかの内容にするなら、右クリックの Accept Current / Accept Incoming を使う。選んだ側で削除されていれば削除として解決する。
+4. 全部解決したら、先頭の行の Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
 
 ### History
 
@@ -84,7 +93,6 @@ HEAD から first-parent で辿れるコミット（最初の merge コミット
 ### 今の制限
 
 - コミットメッセージは 1 行だけ。
-- コンフリクトの解決画面はまだ無い。
 - History で編集できるのは、HEAD から最初の merge コミットまでの範囲だけ。
 - Push は Undo できない。
 - 認証の入力を求められる push・fetch はできない（SSH の鍵や credential helper で認証できる必要がある）。
