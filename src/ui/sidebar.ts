@@ -2,6 +2,7 @@ import { basename, dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
+import type { Sequence } from '../git/backend.ts';
 import type { StatusEntry } from '../git/status.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import { shortName } from '../state/operations.ts';
@@ -33,7 +34,8 @@ export type Node =
   | { kind: 'remote'; remote: Remote; folder: Folder<Ref> }
   | { kind: 'tag'; ref: Ref }
   | { kind: 'stash'; stash: Stash }
-  | { kind: 'submodule'; submodule: Submodule; state?: string };
+  | { kind: 'submodule'; submodule: Submodule; state?: string }
+  | { kind: 'sequence'; sequence: Sequence };
 
 const SECTION_LABELS: Record<Section, string> = {
   workingCopy: 'Working Copy',
@@ -117,10 +119,14 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
   private sectionChildren(repo: Repository, section: Section): Node[] {
     const state = repo.current;
     switch (section) {
-      case 'workingCopy':
-        return groupChanges(state.status?.entries ?? [])
-          .filter(([, changes]) => changes.length > 0)
-          .map(([group, changes]) => ({ kind: 'group', group, changes }));
+      case 'workingCopy': {
+        const nodes: Node[] = state.sequence ? [{ kind: 'sequence', sequence: state.sequence }] : [];
+        return nodes.concat(
+          groupChanges(state.status?.entries ?? [])
+            .filter(([, changes]) => changes.length > 0)
+            .map(([group, changes]) => ({ kind: 'group', group, changes })),
+        );
+      }
       case 'branches': {
         const nodes: Node[] = [];
         const status = state.status;
@@ -215,6 +221,15 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         item.tooltip = `${node.stash.name}\n${node.stash.subject}`;
         item.iconPath = new vscode.ThemeIcon('archive');
         item.contextValue = 'stash';
+        return item;
+      }
+      case 'sequence': {
+        const name = node.sequence[0]!.toUpperCase() + node.sequence.slice(1);
+        const item = new vscode.TreeItem(`${name} in progress`);
+        item.id = 'sequence';
+        item.description = '解決・コミットしてから Continue';
+        item.iconPath = new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('notificationsWarningIcon.foreground'));
+        item.contextValue = 'sequence';
         return item;
       }
       case 'submodule': {

@@ -135,11 +135,11 @@ async function runAction(repo: Repository, action: Action): Promise<void> {
   }
 }
 
-/** コンフリクトの解決 UI はまだ無いので、abort するか、自分で解決するかを選ばせる */
+/** コンフリクトの解決画面はまだ無いので、ここで中止するか、自分で解決して Continue するかを選ばせる */
 async function handleConflict(repo: Repository, title: string): Promise<void> {
   const sequence = await repo.backend.sequenceInProgress();
   const choice = await vscode.window.showWarningMessage(
-    `${title}: コンフリクトが発生しました。解決してから git ${sequence ?? ''} --continue を実行するか、中止してください`,
+    `${title}: コンフリクトが発生しました。解決して stage してから、サイドバーの Continue で続けるか、中止してください`,
     'Abort',
   );
   if (choice === 'Abort' && sequence) {

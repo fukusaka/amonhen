@@ -121,6 +121,18 @@
         "category": "Amon Hen",
         "icon": "$(history)",
         "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.continueSequence",
+        "title": "Continue",
+        "category": "Amon Hen",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "amonhen.abortSequence",
+        "title": "Abort",
+        "category": "Amon Hen",
+        "icon": "$(close)"
       }
     ],
     "menus": {
@@ -186,6 +198,16 @@
           "command": "amonhen.commit",
           "when": "view == amonhen.sidebar && viewItem == section.workingCopy",
           "group": "inline"
+        },
+        {
+          "command": "amonhen.continueSequence",
+          "when": "view == amonhen.sidebar && viewItem == sequence",
+          "group": "inline@1"
+        },
+        {
+          "command": "amonhen.abortSequence",
+          "when": "view == amonhen.sidebar && viewItem == sequence",
+          "group": "inline@2"
         }
       ],
       "commandPalette": [
@@ -212,6 +234,14 @@
         {
           "command": "amonhen.unstageSelection",
           "when": "amonhen.diffKind == staged"
+        },
+        {
+          "command": "amonhen.continueSequence",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.abortSequence",
+          "when": "amonhen.hasRepository"
         }
       ],
       "editor/title": [

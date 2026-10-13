@@ -9,6 +9,7 @@ import { openChangeDiff, trackActiveDiff } from './ui/diff.ts';
 import { SidebarProvider, type Change, type Node } from './ui/sidebar.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { HistoryPanel } from './ui/historyPanel.ts';
+import { registerSequenceCommands } from './ui/sequenceCommands.ts';
 import { registerStageCommands } from './ui/stageCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
 
@@ -49,6 +50,7 @@ export async function activate(
     registerCommitCommand(manager),
     registerUndoCommand(manager),
     registerFetchCommand(manager),
+    registerSequenceCommands(manager),
     vscode.commands.registerCommand('amonhen.showHistory', () => HistoryPanel.show(context.extensionUri, manager)),
   );
 

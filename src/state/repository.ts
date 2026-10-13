@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
-import type { RepositoryBackend } from '../git/backend.ts';
+import type { RepositoryBackend, Sequence } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { configStamp, gitmodulesStamp, indexStamp, refsStamp, stashStamp } from '../git/stamp.ts';
 import type { StatusEntry, StatusResult } from '../git/status.ts';
@@ -28,6 +28,8 @@ export interface RepositoryState {
   tags?: Ref[];
   stashes?: Stash[];
   submodules?: Submodule[];
+  /** 途中で止まっている merge や rebase */
+  sequence?: Sequence;
 }
 
 interface Stamps {
@@ -129,6 +131,16 @@ export class Repository implements vscode.Disposable {
     this.stamps.contents = contents;
 
     const tasks: Promise<void>[] = [
+      this.backend.sequenceInProgress().then(async (sequence) => {
+        if (this.state.sequence !== sequence) {
+          this.state.sequence = sequence;
+          changed.add('workingCopy');
+        }
+        // edit や split で止まっていた rebase が終わっていれば、Undo の記録を確定する
+        if (!sequence) {
+          await this.undo.settlePending();
+        }
+      }),
       // worktree の変化は検知できないので status は毎回取る
       this.statusSince(this.patchGeneration).then((status) => {
         if (status && this.replace('status', status)) {
