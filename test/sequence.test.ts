@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
+import { pullCurrent, pushCurrent } from '../src/state/operations.ts';
+import { UndoLog } from '../src/state/undo.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -115,4 +117,26 @@ test('push, force push and fetch', async () => {
   git('update-ref', '-d', 'refs/remotes/origin/main');
   await backend.fetch();
   assert.equal(git('rev-parse', 'origin/main'), git('rev-parse', 'main'));
+});
+
+test('pushCurrent sets the upstream, and pullCurrent fast-forwards from it', async () => {
+  assert.deepEqual(await pushCurrent(backend), { remote: 'origin', branch: 'main' });
+  assert.equal(git('rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+
+  // 別の clone から 1 つ進めておく
+  const other = join(tmp, 'other');
+  execFileSync('git', ['clone', '-q', join(tmp, 'remote.git'), other]);
+  writeFileSync(join(other, 'b.txt'), 'b\n');
+  execFileSync('git', ['add', 'b.txt'], { cwd: other });
+  execFileSync('git', ['commit', '-q', '-m', 'from other'], { cwd: other });
+  execFileSync('git', ['push', '-q'], { cwd: other });
+
+  const undo = new UndoLog(backend);
+  assert.equal(await pullCurrent(backend, undo), 'done');
+  assert.equal(git('log', '-1', '--format=%s'), 'from other');
+  assert.equal((await undo.peek())?.label, 'Fast-forward main to origin/main');
+});
+
+test('pullCurrent without an upstream', async () => {
+  assert.equal(await pullCurrent(backend, new UndoLog(backend)), 'no-upstream');
 });

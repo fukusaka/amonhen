@@ -4,6 +4,7 @@
  * それ以外は checkout してから実行する。
  */
 import type { MergeResult, RepositoryBackend } from '../git/backend.ts';
+import { splitRemoteRef } from '../git/refs.ts';
 import type { UndoLog } from './undo.ts';
 
 export type OperationResult = MergeResult | 'up-to-date';
@@ -85,4 +86,52 @@ async function planUpdate(backend: RepositoryBackend, source: string, target: st
   }
   const kind = (await backend.isAncestor(targetOid, sourceOid)) ? 'fast-forward' : 'diverged';
   return { kind, checkedOut: head.branch === target, sourceOid, targetOid };
+}
+
+/** 現在のブランチの upstream（`refs/remotes/...`）。無ければ undefined */
+async function upstreamOf(backend: RepositoryBackend, branch: string): Promise<string | undefined> {
+  const [ref] = (await backend.refs([branch])).filter((r) => r.name === branch);
+  return ref?.upstream;
+}
+
+/**
+ * fetch してから、現在のブランチに upstream を merge する（fast-forward で済めばそうなる）。
+ * upstream が無ければ no-upstream
+ */
+export async function pullCurrent(backend: RepositoryBackend, undo: UndoLog): Promise<OperationResult | 'no-upstream'> {
+  const branch = (await backend.head()).branch;
+  const upstream = branch && (await upstreamOf(backend, branch));
+  if (!branch || !upstream) {
+    return 'no-upstream';
+  }
+  await backend.fetch();
+  return mergeInto(backend, undo, upstream, branch);
+}
+
+/**
+ * 現在のブランチを push する。upstream があればそこへ、無ければ remote（1 つだけなら、それか origin）へ同じ名前で push し、
+ * upstream に設定する。送り先を決められなければ no-remote
+ */
+export async function pushCurrent(
+  backend: RepositoryBackend,
+  opts: { force?: boolean } = {},
+): Promise<{ remote: string; branch: string } | 'no-remote' | 'detached'> {
+  const branch = (await backend.head()).branch;
+  if (!branch) {
+    return 'detached';
+  }
+  const name = shortName(branch);
+  const remotes = (await backend.remotes()).map((r) => r.name);
+  const upstream = await upstreamOf(backend, branch);
+  const split = upstream ? splitRemoteRef(upstream, remotes) : undefined;
+  if (split) {
+    await backend.push(split.remote, name, split.branch, { force: opts.force });
+    return { remote: split.remote, branch: split.branch };
+  }
+  const remote = remotes.length === 1 ? remotes[0] : remotes.find((r) => r === 'origin');
+  if (!remote) {
+    return 'no-remote';
+  }
+  await backend.push(remote, name, name, { force: opts.force, setUpstream: true });
+  return { remote, branch: name };
 }
