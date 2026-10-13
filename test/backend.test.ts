@@ -223,3 +223,14 @@ test('head, resolveRefs, updateRef, reset, switchTo and isAncestor', async () =>
   await backend.switchTo({ branch: 'refs/heads/main', oid: main });
   assert.equal((await backend.head()).branch, 'refs/heads/main');
 });
+
+test('log pages and commit files', async () => {
+  git('switch', '-q', 'main');
+  const all = await backend.log(['HEAD'], 0, 100);
+  assert.ok(all.length >= 2);
+  const page = await backend.log(['HEAD'], 1, 1);
+  assert.deepEqual(page, [all[1]]);
+  const root = all[all.length - 1]!;
+  assert.deepEqual(root.parents, []);
+  assert.deepEqual(await backend.commitFiles(root.oid, undefined), [{ status: 'A', path: 'a.txt' }]);
+});

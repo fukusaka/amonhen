@@ -6,6 +6,7 @@ import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
 import { GitError, type GitExecutor } from './exec.ts';
+import { diffTreeArgs, logArgs, parseLog, parseNameStatus, type Commit, type FileChange } from './log.ts';
 import {
   forEachRefArgs,
   parseRefs,
@@ -80,6 +81,10 @@ export interface RepositoryBackend {
   /** ローカルブランチ branch を remote の remoteBranch へ push する */
   push(remote: string, branch: string, remoteBranch: string, opts?: PushOptions): Promise<void>;
   fetch(): Promise<void>;
+  /** revs から辿れるコミットを、トポロジカル順で skip 件飛ばして max 件 */
+  log(revs: readonly string[], skip: number, max: number): Promise<Commit[]>;
+  /** コミットで変わったファイル。parent が無ければ root コミットとして扱う */
+  commitFiles(oid: string, parent: string | undefined): Promise<FileChange[]>;
   dispose(): void;
 }
 
@@ -275,6 +280,14 @@ export class CliBackend implements RepositoryBackend {
 
   async fetch(): Promise<void> {
     await this.git.exec(['fetch', '--all', '--prune'], { cwd: this.root });
+  }
+
+  async log(revs: readonly string[], skip: number, max: number): Promise<Commit[]> {
+    return parseLog(await this.read(logArgs(revs, skip, max)));
+  }
+
+  async commitFiles(oid: string, parent: string | undefined): Promise<FileChange[]> {
+    return parseNameStatus(await this.read(diffTreeArgs(oid, parent)));
   }
 
   /** パスに `*` などが含まれても pathspec として解釈させない */
