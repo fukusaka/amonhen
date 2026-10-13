@@ -1,36 +1,12 @@
 /** メインビューの Working Copy と拡張ホストの間のメッセージ */
+import type { FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { Change, ChangeGroup } from '../state/changes.ts';
-
-export interface DiffLine {
-  kind: ' ' | '-' | '+';
-  /** 表示用の行番号（1 始まり）。古い側 */
-  old?: number;
-  /** 表示用の行番号（1 始まり）。新しい側 */
-  new?: number;
-  text: string;
-}
-
-export interface DiffHunk {
-  header: string;
-  lines: DiffLine[];
-}
-
-export interface FileDiff {
-  group: ChangeGroup;
-  path: string;
-  /** 両側の内容から作る。行単位の stage のときに、表示している差分と今の内容が同じかを確かめる */
-  version: string;
-  hunks: DiffHunk[];
-  binary?: boolean;
-  tooLarge?: boolean;
-}
-
-/** 選んだ行。kind と、その側の行番号 */
-export type SelectedLine = { kind: '-'; old: number } | { kind: '+'; new: number };
 
 export type WorkingCopyHostMessage =
   | { type: 'wcFiles'; files: Change[]; branch?: string; lastMessage?: string }
-  | { type: 'wcDiff'; diff: FileDiff | undefined }
+  /** 選んでいるファイルの差分。group は今そのファイルがあるグループ */
+  | { type: 'wcDiff'; group: ChangeGroup; diff: FileDiff }
+  | { type: 'wcDiff'; group?: undefined; diff: undefined }
   | { type: 'wcCommitted' };
 
 export type WorkingCopyWebviewMessage =

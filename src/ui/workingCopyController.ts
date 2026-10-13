@@ -4,7 +4,7 @@ import * as vscode from 'vscode';
 import { parseCommitObject } from '../git/commitObject.ts';
 import { groupChanges, type Change, type ChangeGroup } from '../state/changes.ts';
 import type { Repository } from '../state/repository.ts';
-import { applyDiffSelection, computeDiff, type ComputedDiff } from '../workingCopy/fileDiff.ts';
+import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 import { commitStaged } from './commit.ts';
 import { openChangeDiff } from './diff.ts';
@@ -84,7 +84,7 @@ export class WorkingCopyController implements vscode.Disposable {
     }
     this.selected = { group: change.group, path: change.path };
     const computed = await this.loadDiff(change);
-    this.post({ type: 'wcDiff', diff: computed.diff });
+    this.post({ type: 'wcDiff', group: change.group, diff: computed.diff });
   }
 
   private async loadDiff(change: Change): Promise<ComputedDiff> {
@@ -93,17 +93,17 @@ export class WorkingCopyController implements vscode.Disposable {
     switch (change.group) {
       case 'conflicts':
         // コンフリクトはマージエディタで解決する。差分は出さない
-        return computeDiff('conflicts', change.path, undefined, undefined);
+        return computeDiff(change.path, undefined, undefined);
       case 'unstaged': {
         const old = change.letter === 'U' ? undefined : await object(`:${change.path}`);
         const now =
           change.letter === 'D' ? undefined : await readFile(join(repo.root, change.path)).catch(() => undefined);
-        return computeDiff('unstaged', change.path, old, now);
+        return computeDiff(change.path, old, now);
       }
       case 'staged': {
         const old = change.letter === 'A' ? undefined : await object(`HEAD:${change.origPath ?? change.path}`);
         const now = change.letter === 'D' ? undefined : await object(`:${change.path}`);
-        return computeDiff('staged', change.path, old, now);
+        return computeDiff(change.path, old, now);
       }
     }
   }
@@ -163,7 +163,7 @@ export class WorkingCopyController implements vscode.Disposable {
     // 表示している差分と今の内容が違えば、選んだ行がずれるので当てない
     const fresh = await this.loadDiff(change);
     if (fresh.diff.version !== version) {
-      this.post({ type: 'wcDiff', diff: fresh.diff });
+      this.post({ type: 'wcDiff', group: change.group, diff: fresh.diff });
       vscode.window.setStatusBarMessage('ファイルが変わったので差分を更新しました。もう一度選んでください', 4000);
       return;
     }

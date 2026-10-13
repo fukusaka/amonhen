@@ -1,12 +1,36 @@
 /**
- * Working Copy の 1 ファイルの差分を、Webview に送る形に組み立てる。vscode に依存しない。
+ * 1 ファイルの差分を、Webview に送る形に組み立てる。Working Copy と History の両方で使う。vscode に依存しない。
  * 行の計算は latin1 で行い（バイトと 1 対 1 で内容を壊さない）、表示する文字列だけ UTF-8 で読む。
  */
 import { createHash } from 'node:crypto';
-import { buildHunks } from '../diff/hunks.ts';
-import { applyLineSets, diffLines, splitLines, type LineChange } from '../diff/lineDiff.ts';
-import type { ChangeGroup } from '../state/changes.ts';
-import type { DiffHunk, FileDiff, SelectedLine } from './protocol.ts';
+import { buildHunks } from './hunks.ts';
+import { applyLineSets, diffLines, splitLines, type LineChange } from './lineDiff.ts';
+
+export interface DiffLine {
+  kind: ' ' | '-' | '+';
+  /** 表示用の行番号（1 始まり）。古い側 */
+  old?: number;
+  /** 表示用の行番号（1 始まり）。新しい側 */
+  new?: number;
+  text: string;
+}
+
+export interface DiffHunk {
+  header: string;
+  lines: DiffLine[];
+}
+
+export interface FileDiff {
+  path: string;
+  /** 両側の内容から作る。行単位の stage のときに、表示している差分と今の内容が同じかを確かめる */
+  version: string;
+  hunks: DiffHunk[];
+  binary?: boolean;
+  tooLarge?: boolean;
+}
+
+/** 選んだ行。kind と、その側の行番号 */
+export type SelectedLine = { kind: '-'; old: number } | { kind: '+'; new: number };
 
 /** これより大きいファイルは差分を出さない */
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -19,19 +43,15 @@ export interface ComputedDiff {
 }
 
 /**
- * old と new の差分。Changes では old が index、new が作業中のファイル。Staged では old が HEAD、new が index。
- * 無い側は undefined
+ * old と new の差分。無い側は undefined。
+ * Working Copy の Changes では old が index、new が作業中のファイル。Staged では old が HEAD、new が index。
+ * History では old が親、new がそのコミット
  */
-export function computeDiff(
-  group: ChangeGroup,
-  path: string,
-  oldData: Buffer | undefined,
-  newData: Buffer | undefined,
-): ComputedDiff {
+export function computeDiff(path: string, oldData: Buffer | undefined, newData: Buffer | undefined): ComputedDiff {
   const o = oldData ?? Buffer.alloc(0);
   const n = newData ?? Buffer.alloc(0);
   const version = createHash('sha1').update(o).update('\0').update(n).digest('hex');
-  const base = { group, path, version };
+  const base = { path, version };
   if (o.length + n.length > MAX_BYTES) {
     return { diff: { ...base, hunks: [], tooLarge: true }, oldLines: [], newLines: [], changes: [] };
   }

@@ -5,11 +5,9 @@
  */
 import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
-import type { DiffHunk, DiffLine, FileDiff, SelectedLine } from '../workingCopy/protocol.ts';
+import type { FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import { el, post, type View } from './api.ts';
-
-/** これより多い行は描かない（重くなるので） */
-const MAX_LINES = 5000;
+import { lineKey, renderDiffBody } from './diffView.ts';
 
 const GROUPS: { group: ChangeGroup; title: string }[] = [
   { group: 'conflicts', title: 'Conflicts' },
@@ -48,6 +46,8 @@ export function createWorkingCopyView(): View {
   let lastMessage = '';
   let selected: { group: ChangeGroup; path: string } | undefined;
   let diff: FileDiff | undefined;
+  /** diff のファイルが今あるグループ */
+  let diffGroup: ChangeGroup | undefined;
   /** 選んでいる行。キーは `old:12` / `new:7` */
   let picked = new Set<string>();
   let anchor: string | undefined;
@@ -126,10 +126,6 @@ export function createWorkingCopyView(): View {
 
   // ---- 差分 ----
 
-  function key(line: DiffLine): string {
-    return line.kind === '-' ? `old:${line.old}` : `new:${line.new}`;
-  }
-
   function renderDiff(): void {
     if (!diff) {
       diffPane.replaceChildren(el('div', 'empty', files.length ? 'ファイルを選ぶと差分が出ます' : ''));
@@ -139,11 +135,12 @@ export function createWorkingCopyView(): View {
     const head = el('div', 'diff-head');
     head.append(el('span', 'path', d.path));
     const actions = el('span', 'actions');
-    if (d.group === 'conflicts') {
+    const group = diffGroup!;
+    if (group === 'conflicts') {
       diffPane.replaceChildren(head, renderConflict(d));
       return;
     }
-    const staged = d.group === 'staged';
+    const staged = group === 'staged';
     if (picked.size > 0) {
       const lines = el(
         'button',
@@ -155,7 +152,7 @@ export function createWorkingCopyView(): View {
     }
     const file = el('button', 'secondary', staged ? 'Unstage File' : 'Stage File');
     file.addEventListener('click', () => {
-      const f = files.find((x) => x.group === d.group && x.path === d.path);
+      const f = files.find((x) => x.group === group && x.path === d.path);
       if (f) stageFiles(staged ? 'unstage' : 'stage', [f]);
     });
     const open = el('button', 'secondary', 'Open File');
@@ -164,60 +161,16 @@ export function createWorkingCopyView(): View {
     head.append(actions);
 
     const content: HTMLElement[] = [head];
-    if (d.binary) content.push(el('div', 'empty', 'バイナリファイルです'));
-    else if (d.tooLarge) content.push(el('div', 'empty', 'ファイルが大きいので差分を出しません'));
-    else if (d.hunks.length === 0) content.push(el('div', 'empty', '差分はありません'));
-    let budget = MAX_LINES;
-    for (const hunk of d.hunks) {
-      if (budget <= 0) {
-        content.push(el('div', 'empty', '残りの差分は省略しました。Open File で確認してください'));
-        break;
-      }
-      content.push(renderHunk(hunk, staged, budget));
-      budget -= hunk.lines.length;
-    }
+    content.push(
+      ...renderDiffBody(d, {
+        picked,
+        hunkAction: {
+          label: staged ? 'Unstage Hunk' : 'Stage Hunk',
+          run: (hunk) => stageLines(hunk.lines.filter((l) => l.kind !== ' ').map(lineKey)),
+        },
+      }),
+    );
     diffPane.replaceChildren(...content);
-  }
-
-  function renderHunk(hunk: DiffHunk, staged: boolean, budget: number): HTMLElement {
-    const box = el('div', 'hunk');
-    const head = el('div', 'hunk-head');
-    head.append(el('span', 'range', hunk.header));
-    const button = el('button', 'secondary', staged ? 'Unstage Hunk' : 'Stage Hunk');
-    button.addEventListener('click', () => stageLines(hunk.lines.filter((l) => l.kind !== ' ').map(key)));
-    head.append(button);
-    box.append(head);
-
-    const table = el('div', 'lines');
-    const words = wordRanges(hunk.lines);
-    hunk.lines.slice(0, budget).forEach((line, i) => {
-      const row = el('div', `line ${line.kind === '+' ? 'add' : line.kind === '-' ? 'del' : 'ctx'}`);
-      if (line.kind !== ' ') {
-        const k = key(line);
-        row.dataset.key = k;
-        if (picked.has(k)) row.classList.add('picked');
-      }
-      row.append(
-        el('span', 'no', line.old ? String(line.old) : ''),
-        el('span', 'no', line.new ? String(line.new) : ''),
-      );
-      row.append(el('span', 'sign', line.kind === ' ' ? '' : line.kind));
-      const text = el('span', 'code');
-      const range = words.get(i);
-      if (range) {
-        text.append(
-          line.text.slice(0, range[0]),
-          el('span', 'word', line.text.slice(range[0], range[1])),
-          line.text.slice(range[1]),
-        );
-      } else {
-        text.textContent = line.text;
-      }
-      row.append(text);
-      table.append(row);
-    });
-    box.append(table);
-    return box;
   }
 
   function renderConflict(d: FileDiff): HTMLElement {
@@ -255,7 +208,7 @@ export function createWorkingCopyView(): View {
       const [side, no] = k.split(':') as [string, string];
       return side === 'old' ? { kind: '-', old: Number(no) } : { kind: '+', new: Number(no) };
     });
-    post({ type: 'wcStageLines', group: diff.group, path: diff.path, version: diff.version, lines });
+    post({ type: 'wcStageLines', group: diffGroup!, path: diff.path, version: diff.version, lines });
     picked = new Set();
   }
 
@@ -347,8 +300,8 @@ export function createWorkingCopyView(): View {
           anchor = undefined;
         }
         diff = m.diff;
-        if (diff) selected = { group: diff.group, path: diff.path };
-        else selected = undefined;
+        diffGroup = m.group;
+        selected = m.diff ? { group: m.group!, path: m.diff.path } : undefined;
         renderFiles();
         renderDiff();
         break;
@@ -370,40 +323,4 @@ export function createWorkingCopyView(): View {
       fileList.focus();
     },
   };
-}
-
-/**
- * 削除行の並びと追加行の並びが同じ数で続くところでは、対応する行どうしで変わった部分を強調する。
- * 行の位置 → [変わった部分の始まり, 終わり]
- */
-function wordRanges(lines: readonly DiffLine[]): Map<number, [number, number]> {
-  const result = new Map<number, [number, number]>();
-  let i = 0;
-  while (i < lines.length) {
-    if (lines[i]!.kind !== '-') {
-      i++;
-      continue;
-    }
-    let d = i;
-    while (d < lines.length && lines[d]!.kind === '-') d++;
-    let a = d;
-    while (a < lines.length && lines[a]!.kind === '+') a++;
-    if (a - d === d - i) {
-      for (let k = 0; k < d - i; k++) {
-        const x = lines[i + k]!.text;
-        const y = lines[d + k]!.text;
-        let p = 0;
-        while (p < x.length && p < y.length && x[p] === y[p]) p++;
-        let s = 0;
-        while (s < x.length - p && s < y.length - p && x[x.length - 1 - s] === y[y.length - 1 - s]) s++;
-        // ほとんど全部が変わっている行は強調しない
-        if (p + s > 0) {
-          result.set(i + k, [p, x.length - s]);
-          result.set(d + k, [p, y.length - s]);
-        }
-      }
-    }
-    i = a;
-  }
-  return result;
 }
