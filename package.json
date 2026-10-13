@@ -34,7 +34,7 @@
       "amonhen": [
         {
           "id": "amonhen.sidebar",
-          "name": "Repository"
+          "name": "Changes"
         }
       ]
     },
@@ -57,11 +57,6 @@
         "title": "Select Repository",
         "category": "Amon Hen",
         "icon": "$(repo)"
-      },
-      {
-        "command": "amonhen.checkout",
-        "title": "Checkout",
-        "category": "Amon Hen"
       },
       {
         "command": "amonhen.openChange",
@@ -253,11 +248,6 @@
           "group": "navigation@0"
         },
         {
-          "command": "amonhen.showHistory",
-          "when": "view == amonhen.sidebar",
-          "group": "navigation@0"
-        },
-        {
           "command": "amonhen.commit",
           "when": "view == amonhen.sidebar",
           "group": "navigation@0"
@@ -273,22 +263,12 @@
           "group": "navigation@1"
         },
         {
-          "command": "amonhen.fetch",
-          "when": "view == amonhen.sidebar",
-          "group": "navigation@2"
-        },
-        {
           "command": "amonhen.refresh",
           "when": "view == amonhen.sidebar",
           "group": "navigation@3"
         }
       ],
       "view/item/context": [
-        {
-          "command": "amonhen.checkout",
-          "when": "view == amonhen.sidebar && viewItem == branch",
-          "group": "1_branch@1"
-        },
         {
           "command": "amonhen.stage",
           "when": "view == amonhen.sidebar && viewItem =~ /^(change|group)\\.(unstaged|conflicts)$/",
@@ -341,10 +321,6 @@
         }
       ],
       "commandPalette": [
-        {
-          "command": "amonhen.checkout",
-          "when": "false"
-        },
         {
           "command": "amonhen.openChange",
           "when": "false"
