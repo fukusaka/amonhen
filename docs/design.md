@@ -1,0 +1,100 @@
+# Amon Hen 設計メモ
+
+## 概要
+
+VSCode 上で快適に Git を操作するための自分用の拡張。Marketplace には公開せず、GitHub Releases で `.vsix` を配布する。
+
+| 要件 | 区分 |
+| --- | --- |
+| サイドバー（Branches / Remotes / Tags / Stashes / Submodules） | 必須 |
+| ブランチのドラッグ＆ドロップで merge / rebase / push | 必須 |
+| コミットを柔軟に編集できる（reword / squash / fixup / drop / reorder / split） | 必須 |
+| 差分ビューから hunk・行単位で細かくコミットを作れる | 必須 |
+| コンフリクト解決 | 必須 |
+| 充実した差分表示 | 希望 |
+| Remote-SSH 越しで動く | 希望 |
+| 大きなリポジトリでも速い | 希望 |
+
+VSCode の UI 部品は自由度が低いため、専用 Git クライアントの画面を丸ごと作り込むのではなく、操作の核を VSCode の部品（TreeView、標準 diff エディタ、Webview）に割り当てて作る。
+
+## 全体構成
+
+`extensionKind: ["workspace"]` にすると、Remote-SSH 接続時に拡張ホストが SSH 先で動き、git もそこで実行される。over SSH 対応はこれでほぼ済む。
+
+```
+ローカル（VSCode の UI）              リモート（拡張ホスト、Remote-SSH の接続先）
+┌──────────────────────┐            ┌─────────────────────────────────────┐
+│ TreeView             │            │ UI 層                               │
+│ 標準 diff エディタ    │──postMessage──▶ Provider 群・Webview との通信      │
+│ Webview              │   (SSH 経由) │        ▼                            │
+└──────────────────────┘            │ 状態管理層 ◀──── vscode.git API      │
+                                    │ status キャッシュ・Undo 記録 (変更通知)│
+                                    │        ▼                            │
+                                    │ git 実行層                          │
+                                    │ 常駐 cat-file・非対話 rebase         │
+                                    │        ▼                            │
+                                    │ git CLI / リポジトリ                 │
+                                    └─────────────────────────────────────┘
+```
+
+Webview はローカルで描画され、拡張ホストとの通信だけが SSH を経由する。大きな差分やログは分割して送る。
+
+## 必須要素の実装方針
+
+### サイドバー
+
+- 独自の View Container に TreeView を置く。項目は Working Copy / Branches / Remotes / Tags / Stashes / Submodules。
+- 状態変化の検知は `vscode.git` の `onDidChange` に任せ、自前の file watcher は持たない。
+
+### ドラッグ＆ドロップによる merge / rebase / push
+
+- `TreeDragAndDropController` で実装する。ブランチをブランチにドロップしたら「Merge A into B」「Rebase B onto A」を QuickPick で選ばせる。リモートにドロップしたら push。
+- ドロップ先が現在のブランチでなければ checkout してから実行する。fast-forward で済む場合は checkout せず `update-ref` だけで処理する。
+- 制約: TreeView と Webview の間ではドラッグ＆ドロップできない。History 内の並べ替えは Webview の中で完結させる。
+
+### コミットの柔軟な編集
+
+- reword / squash / fixup / drop / reorder / edit / split はすべて非対話の rebase で実現する。`GIT_SEQUENCE_EDITOR` に todo を書き換えるスクリプトを指定し、メッセージの書き換えは `GIT_EDITOR` で注入する。
+- split は「edit で停止 → `reset HEAD^` → Working Copy で分割してコミット → `rebase --continue`」の流れ。
+- 操作前に `HEAD` と関係する ref を記録し、1 操作単位で Undo できるようにする。
+
+### 差分ビューから細かくコミットを作る
+
+- 差分表示は標準の diff エディタを使う。`TextDocumentContentProvider` で `amonhen:` スキームを作って HEAD 版と index 版を提供し、`vscode.diff` で開く。シンタックスハイライト、単語単位の差分、インライン／左右分割の切り替えがそのまま使える。
+- hunk・行単位の stage は、選択範囲から部分パッチを生成して `git apply --cached --unidiff-zero` に渡す。unstage は `-R` を付ける。
+- 標準 diff エディタにはチェックボックスを置けないので、エディタ上部のボタン、キーバインド、ガターのデコレーションで補う。全 hunk を 1 画面でスクロールしたい場合は、Webview の差分ビューを別途用意する。
+
+### コンフリクト解決
+
+- 標準の 3-way マージエディタを流用する。拡張側は、コンフリクト中のファイル一覧、ファイル単位の ours / theirs 採用（`checkout --ours/--theirs`）、merge / rebase 中の表示と continue / abort / skip ボタンを担当する。
+- 拡張からマージエディタを直接開く公開 API は無いかもしれない（未確認）。その場合はファイルを開き、標準 UI の「Resolve in Merge Editor」に任せる。
+
+## 速度対策
+
+- `git cat-file --batch-command` を常駐させ、オブジェクト取得のたびに spawn しない。
+- status は `git status --porcelain=v2 -z` で取得する。大きなリポジトリでは `core.untrackedCache` と fsmonitor の有効化を案内する。
+- 読み取り系コマンドには `--no-optional-locks` を付け、ユーザー自身の git 操作とロックを奪い合わない。
+- log は 200 件程度ずつ取得する。グラフのレーン計算は拡張ホスト側で少しずつ進め、Webview には最小限の配列だけ送る。Webview 側は仮想スクロールで描画する。
+- `git commit-graph write --reachable` の実行を案内すると、グラフ表示と ancestry 判定が速くなる。
+- Remote-SSH では postMessage が SSH を経由するため、大きな差分やログは分割して送る。
+
+## 配布
+
+- `.github/workflows/release.yml`: `v*` タグの push で `npm ci` → `npx @vscode/vsce package` → `gh release create "$GITHUB_REF_NAME" *.vsix --generate-notes`
+- 各端末でのインストール・更新:
+  ```sh
+  dir=$(mktemp -d)
+  gh release download --repo fukusaka/vscode-amonhen --pattern '*.vsix' --dir "$dir"
+  code --install-extension "$dir"/*.vsix --force
+  rm -rf "$dir"
+  ```
+
+## 実装順序
+
+毎日使う Working Copy と差分ビューからの stage を早めに作り、手応えを確かめる。
+
+- [ ] 1. git 実行レイヤーと状態の管理、サイドバーの TreeView
+- [ ] 2. Working Copy と diff の表示、hunk・行単位の stage
+- [ ] 3. ドラッグ＆ドロップによる merge / rebase / push と Undo の基盤
+- [ ] 4. History の Webview とコミット編集（rebase 操作）
+- [ ] 5. コンフリクト解決の UI
