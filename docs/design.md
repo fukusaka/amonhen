@@ -75,7 +75,8 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 ### コンフリクト解決
 
 - 標準の 3-way マージエディタを流用する。拡張側は、コンフリクト中のファイル一覧、ファイル単位の ours / theirs 採用（`checkout --ours/--theirs`）、merge / rebase 中の表示と continue / abort / skip ボタンを担当する。
-- 拡張からマージエディタを直接開く公開 API は無いかもしれない（未確認）。その場合はファイルを開き、標準 UI の「Resolve in Merge Editor」に任せる。
+- マージエディタを開く公開 API は無いので、組み込みの Git 拡張も使っている内部コマンド `_open.mergeEditor` に、base・input1・input2（index の stage 1・2・3 を `amonhen:` で返す）と output（実ファイル）を渡して開く。失敗したら、または片側で削除されたコンフリクトなら、ファイルを開いて標準 UI の「Resolve in Merge Editor」とサイドバーの Accept Current / Incoming に任せる。
+- 解決済みにするとき、コンフリクトのマーカーが残っていれば確認する。rebase 中は進み具合（`rebase-merge/msgnum`・`end`）を表示し、Skip もできるようにする。
 
 ## 速度対策
 
@@ -109,4 +110,4 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - [x] 2. Working Copy と diff の表示、hunk・行単位の stage
 - [x] 3. ドラッグ＆ドロップによる merge / rebase / push と Undo の基盤
 - [x] 4. History の Webview とコミット編集（rebase 操作）
-- [ ] 5. コンフリクト解決の UI
+- [x] 5. コンフリクト解決の UI
