@@ -129,3 +129,72 @@ select {
 .oid {
   font-family: var(--vscode-editor-font-family);
 }
+
+.row.drop-above {
+  box-shadow: inset 0 2px 0 var(--vscode-focusBorder);
+}
+
+.row.drop-below {
+  box-shadow: inset 0 -2px 0 var(--vscode-focusBorder);
+}
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 10vh;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: min(640px, 90vw);
+  padding: 12px;
+  border: 1px solid var(--vscode-widget-border, var(--vscode-panel-border));
+  border-radius: 6px;
+  background: var(--vscode-editorWidget-background);
+  box-shadow: 0 4px 16px var(--vscode-widget-shadow);
+}
+
+.editor .heading {
+  font-weight: bold;
+}
+
+.editor textarea {
+  height: 180px;
+  resize: vertical;
+  padding: 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+}
+
+.editor textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.editor .buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.editor button {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 2px;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+  cursor: pointer;
+}
+
+.editor button.secondary {
+  color: var(--vscode-button-secondaryForeground);
+  background: var(--vscode-button-secondaryBackground);
+}

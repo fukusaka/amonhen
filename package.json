@@ -133,6 +133,51 @@
         "title": "Abort",
         "category": "Amon Hen",
         "icon": "$(close)"
+      },
+      {
+        "command": "amonhen.history.reword",
+        "title": "Reword…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.squash",
+        "title": "Squash into Parent…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.fixup",
+        "title": "Fixup into Parent",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.edit",
+        "title": "Edit (Stop Here)",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.split",
+        "title": "Split…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.drop",
+        "title": "Drop…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.moveUp",
+        "title": "Move Up",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.moveDown",
+        "title": "Move Down",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.copyId",
+        "title": "Copy Commit ID",
+        "category": "Amon Hen"
       }
     ],
     "menus": {
@@ -242,6 +287,42 @@
         {
           "command": "amonhen.abortSequence",
           "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.history.reword",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.squash",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.fixup",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.edit",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.split",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.drop",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.moveUp",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.moveDown",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.copyId",
+          "when": "false"
         }
       ],
       "editor/title": [
@@ -254,6 +335,53 @@
           "command": "amonhen.unstageSelection",
           "when": "amonhen.diffKind == staged",
           "group": "navigation@1"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "amonhen.history.reword",
+          "when": "webviewId == 'amonhen.history' && webviewSection == 'commit' && commitEditable",
+          "group": "1_message@1"
+        },
+        {
+          "command": "amonhen.history.squash",
+          "when": "webviewId == 'amonhen.history' && webviewSection == 'commit' && commitCanSquash",
+          "group": "1_message@2"
+        },
+        {
+          "command": "amonhen.history.fixup",
+          "when": "webviewId == 'amonhen.history' && webviewSection == 'commit' && commitCanSquash",
+          "group": "1_message@3"
+        },
+        {
+          "command": "amonhen.history.edit",
+          "when": "webviewId == 'amonhen.history' && webviewSection == 'commit' && commitEditable",
+          "group": "2_rewrite@1"
+        },
+        {
+          "command": "amonhen.history.split",
+          "when": "webviewId == 'amonhen.history' && webviewSection == 'commit' && commitEditable",
+          "group": "2_rewrite@2"
+        },
+        {
+          "command": "amonhen.history.drop",
+          "when": "webviewId == 'amonhen.history' && webviewSection == 'commit' && commitEditable",
+          "group": "2_rewrite@3"
+        },
+        {
+          "command": "amonhen.history.moveUp",
+          "when": "webviewId == 'amonhen.history' && webviewSection == 'commit' && commitEditable",
+          "group": "3_move@1"
+        },
+        {
+          "command": "amonhen.history.moveDown",
+          "when": "webviewId == 'amonhen.history' && webviewSection == 'commit' && commitEditable",
+          "group": "3_move@2"
+        },
+        {
+          "command": "amonhen.history.copyId",
+          "when": "webviewId == 'amonhen.history' && webviewSection == 'commit'",
+          "group": "9_copy@1"
         }
       ]
     },

@@ -21,6 +21,9 @@ const EDITABLE_LIMIT = 500;
  */
 export class HistoryPanel implements vscode.Disposable {
   private static current: HistoryPanel | undefined;
+  private static readonly edits = new vscode.EventEmitter<Extract<WebviewMessage, { type: 'saveMessage' | 'move' }>>();
+  /** Webview でメッセージの編集や並べ替えが行われた。処理は historyCommands が受け持つ */
+  static readonly onDidReceiveEdit = HistoryPanel.edits.event;
 
   private readonly panel: vscode.WebviewPanel;
   private readonly manager: RepositoryManager;
@@ -41,9 +44,6 @@ export class HistoryPanel implements vscode.Disposable {
   private headOid: string | undefined;
   private resetTimer: NodeJS.Timeout | undefined;
 
-  private readonly _onDidReceiveEdit = new vscode.EventEmitter<Extract<WebviewMessage, { type: 'saveMessage' | 'move' }>>();
-  /** Webview でメッセージの編集や並べ替えが行われた */
-  readonly onDidReceiveEdit = this._onDidReceiveEdit.event;
 
   static show(extensionUri: vscode.Uri, manager: RepositoryManager): HistoryPanel {
     if (HistoryPanel.current) {
@@ -82,6 +82,11 @@ export class HistoryPanel implements vscode.Disposable {
 
   commit(oid: string): Commit | undefined {
     return this.commits.find((c) => c.oid === oid);
+  }
+
+  /** 編集できる範囲での位置（新しい順） */
+  chainIndex(oid: string): number | undefined {
+    return this.chain.get(oid);
   }
 
   post(message: HostMessage): void {
@@ -127,8 +132,7 @@ export class HistoryPanel implements vscode.Disposable {
       }
       case 'saveMessage':
       case 'move':
-        // コミットの編集は historyCommands が受け取る
-        this._onDidReceiveEdit.fire(message);
+        HistoryPanel.edits.fire(message);
         break;
     }
   }
@@ -205,7 +209,6 @@ export class HistoryPanel implements vscode.Disposable {
     HistoryPanel.current = undefined;
     clearTimeout(this.resetTimer);
     this.repoListener?.dispose();
-    this._onDidReceiveEdit.dispose();
     vscode.Disposable.from(...this.disposables).dispose();
     this.panel.dispose();
   }

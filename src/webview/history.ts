@@ -2,7 +2,7 @@
  * History の Webview。見えている行だけを描く仮想スクロールで、グラフは行ごとの canvas に描く。
  * 末尾に近づいたら次のページを要求する。
  */
-import type { HostMessage, RowData, Scope, WebviewMessage } from '../history/protocol.ts';
+import type { HostMessage, MessageEdit, RowData, Scope, WebviewMessage } from '../history/protocol.ts';
 
 declare function acquireVsCodeApi(): { postMessage(message: WebviewMessage): void };
 
@@ -87,8 +87,13 @@ function renderRow(row: RowData, index: number, graphWidth: number): HTMLElement
     webviewSection: 'commit',
     oid: row.oid,
     commitEditable: row.editable,
+    commitCanSquash: row.canSquash,
     preventDefaultContextMenuItems: true,
   });
+  // 編集できるコミットはドラッグで並べ替えられる
+  if (row.editable) {
+    el.draggable = true;
+  }
 
   el.append(drawGraph(row, graphWidth));
   const text = document.createElement('div');
@@ -174,6 +179,57 @@ function select(index: number, reveal: boolean): void {
   scheduleRender();
 }
 
+/** メッセージの編集欄。保存は Ctrl/Cmd+Enter、取り消しは Esc */
+function editMessage(oid: string, kind: MessageEdit, title: string, message: string): void {
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  const box = document.createElement('div');
+  box.className = 'editor';
+  const heading = document.createElement('div');
+  heading.className = 'heading';
+  heading.textContent = title;
+  const textarea = document.createElement('textarea');
+  textarea.value = message;
+  textarea.spellcheck = false;
+  const buttons = document.createElement('div');
+  buttons.className = 'buttons';
+  const save = document.createElement('button');
+  save.textContent = 'Save';
+  const cancel = document.createElement('button');
+  cancel.textContent = 'Cancel';
+  cancel.className = 'secondary';
+  buttons.append(cancel, save);
+  box.append(heading, textarea, buttons);
+  overlay.append(box);
+  document.body.append(overlay);
+  textarea.focus();
+  textarea.setSelectionRange(0, textarea.value.indexOf('\n') < 0 ? textarea.value.length : textarea.value.indexOf('\n'));
+
+  const close = () => {
+    overlay.remove();
+    list.focus();
+  };
+  const submit = () => {
+    if (!textarea.value.trim()) {
+      textarea.focus();
+      return;
+    }
+    post({ type: 'saveMessage', oid, kind, message: textarea.value });
+    close();
+  };
+  save.addEventListener('click', submit);
+  cancel.addEventListener('click', close);
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      submit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      close();
+    }
+  });
+}
+
 function rowIndex(event: Event): number | undefined {
   const row = (event.target as HTMLElement).closest<HTMLElement>('.row');
   return row ? Number(row.dataset.index) : undefined;
@@ -200,6 +256,67 @@ list.addEventListener('keydown', (e) => {
   }
 });
 scopeSelect.addEventListener('change', () => post({ type: 'scope', scope: scopeSelect.value as Scope }));
+
+// ドラッグでの並べ替え。編集できるコミットの上にだけ落とせる
+let dragging: RowData | undefined;
+let dropTarget: HTMLElement | undefined;
+const clearDropTarget = () => {
+  dropTarget?.classList.remove('drop-above', 'drop-below');
+  dropTarget = undefined;
+};
+list.addEventListener('dragstart', (e) => {
+  const index = rowIndex(e);
+  dragging = index === undefined ? undefined : rows[index];
+  if (!dragging?.editable || !e.dataTransfer) {
+    e.preventDefault();
+    return;
+  }
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', dragging.oid);
+});
+list.addEventListener('dragover', (e) => {
+  const index = rowIndex(e);
+  const target = index === undefined ? undefined : rows[index];
+  if (!dragging || target?.chain === undefined || target.oid === dragging.oid) {
+    clearDropTarget();
+    return;
+  }
+  e.preventDefault();
+  const el = (e.target as HTMLElement).closest<HTMLElement>('.row')!;
+  const above = isUpperHalf(e, el);
+  clearDropTarget();
+  dropTarget = el;
+  el.classList.add(above ? 'drop-above' : 'drop-below');
+});
+list.addEventListener('dragleave', clearDropTarget);
+list.addEventListener('drop', (e) => {
+  e.preventDefault();
+  const index = rowIndex(e);
+  const target = index === undefined ? undefined : rows[index];
+  const el = dropTarget;
+  clearDropTarget();
+  if (!dragging || dragging.chain === undefined || target?.chain === undefined || !el) {
+    return;
+  }
+  // 上半分なら target の上（より新しい側）、下半分なら下に置く
+  const above = isUpperHalf(e, el);
+  let to = above ? target.chain : target.chain + 1;
+  // 自分より下に動かすときは、自分が抜けた分だけ詰まる
+  if (to > dragging.chain) to -= 1;
+  if (to !== dragging.chain) {
+    post({ type: 'move', oid: dragging.oid, to });
+  }
+  dragging = undefined;
+});
+list.addEventListener('dragend', () => {
+  dragging = undefined;
+  clearDropTarget();
+});
+
+function isUpperHalf(e: MouseEvent, el: HTMLElement): boolean {
+  const rect = el.getBoundingClientRect();
+  return e.clientY < rect.top + rect.height / 2;
+}
 
 // テーマが変わったら色を取り直す
 new MutationObserver(() => {
@@ -228,7 +345,8 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
       document.body.classList.toggle('busy', message.busy);
       break;
     case 'editMessage':
-      break;
+      editMessage(message.oid, message.kind, message.title, message.message);
+      return;
   }
   scheduleRender();
 });
