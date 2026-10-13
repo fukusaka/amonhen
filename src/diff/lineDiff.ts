@@ -203,6 +203,8 @@ export function applySelection(
 /**
  * base に、選んだ行の変更だけを当てた内容を返す。
  * removeBase は消す base の行、addTarget は足す target の行（どちらも 0 始まり）。変更に含まれない行は無視する。
+ * 1 つの変更の中では、残す base の行のあとに足す行を置く。addedFirst なら足す行を先に置く
+ * （unstage のように、差分の表示で上にある側を戻すとき）。
  */
 export function applyLineSets(
   base: readonly string[],
@@ -210,6 +212,7 @@ export function applyLineSets(
   changes: readonly LineChange[],
   removeBase: ReadonlySet<number>,
   addTarget: ReadonlySet<number>,
+  addedFirst = false,
 ): string {
   const out: string[] = [];
   let pos = 0;
@@ -217,17 +220,15 @@ export function applyLineSets(
     for (; pos < c.baseStart; pos++) {
       out.push(base[pos]!);
     }
-    // 削除しない行を先に残し、そのあとに追加する行を置く
+    const kept: string[] = [];
     for (let i = c.baseStart; i < c.baseEnd; i++) {
-      if (!removeBase.has(i)) {
-        out.push(base[i]!);
-      }
+      if (!removeBase.has(i)) kept.push(base[i]!);
     }
+    const added: string[] = [];
     for (let i = c.targetStart; i < c.targetEnd; i++) {
-      if (addTarget.has(i)) {
-        out.push(target[i]!);
-      }
+      if (addTarget.has(i)) added.push(target[i]!);
     }
+    out.push(...(addedFirst ? [...added, ...kept] : [...kept, ...added]));
     pos = c.baseEnd;
   }
   for (; pos < base.length; pos++) {
