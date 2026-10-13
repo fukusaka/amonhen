@@ -78,6 +78,18 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - マージエディタを開く公開 API は無いので、組み込みの Git 拡張も使っている内部コマンド `_open.mergeEditor` に、base・input1・input2（index の stage 1・2・3 を `amonhen:` で返す）と output（実ファイル）を渡して開く。失敗したら、または片側で削除されたコンフリクトなら、ファイルを開いて標準 UI の「Resolve in Merge Editor」とサイドバーの Accept Current / Incoming に任せる。
 - 解決済みにするとき、コンフリクトのマーカーが残っていれば確認する。rebase 中は進み具合（`rebase-merge/msgnum`・`end`）を表示し、Skip もできるようにする。
 
+## UI を 1 つの Webview にまとめる
+
+ステップ 1〜5 では、Working Copy をサイドバーの TreeView と標準 diff エディタで、History をエディタ領域の Webview で作った。表現がまったく違う部品に分かれているため、Working Copy と History を同じ画面の中で切り替える操作感にならなかった。そこで UI 層を作り直し、エディタ領域の 1 つの Webview（メインビュー）にまとめる。git 実行層・状態管理層・Undo・rebase の仕組みはそのまま使う。
+
+- メインビューは左にナビ（Working Copy / History / Branches / Remotes / Tags / Stashes）、右に内容を出す。切り替えは Webview の中だけで行い、拡張ホストとの往復を待たない。
+- 差分は Webview の中に描く。軽さを優先してシンタックスハイライトは付けず、単語単位の差分の強調と、hunk・行の選択による stage / unstage を持たせる。差分の計算と index への書き込みは拡張ホスト側（`src/diff/lineDiff.ts`）で行う。
+- コミット欄は複数行のメッセージと amend を扱う。
+- History の詳細にも同じ差分の部品を使い、変更ファイルの差分をスクロールで続けて見られるようにする。
+- ブランチのドラッグ＆ドロップ（merge / rebase / push）はナビの中で行う。
+- コンフリクトの解決は、引き続き標準の 3-way マージエディタを開く。
+- Remote-SSH では postMessage が SSH を通るので、差分はファイル単位で求められたときに送り、大きなファイルは分割する。
+
 ## 速度対策
 
 小さな git コマンドの所要時間は、ほぼプロセス起動のコスト（macOS で 1 回 約 6 ms）。常駐 `cat-file` への問い合わせは 約 0.08 ms。言語より「spawn の回数」と「更新範囲」が効くので、以下を徹底する。
@@ -111,3 +123,11 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - [x] 3. ドラッグ＆ドロップによる merge / rebase / push と Undo の基盤
 - [x] 4. History の Webview とコミット編集（rebase 操作）
 - [x] 5. コンフリクト解決の UI
+
+UI を 1 つの Webview にまとめる（「UI を 1 つの Webview にまとめる」を参照）:
+
+- [ ] 6. メインビューの土台（左ナビと右の領域）。History をその中に移す
+- [ ] 7. Working Copy: ファイル一覧、差分、ファイル・hunk・行単位の stage、複数行のコミット欄
+- [ ] 8. History の詳細に差分を表示する
+- [ ] 9. ナビのブランチ類とドラッグ＆ドロップ、ツールバー（Undo・Fetch など）
+- [ ] 10. サイドバーの TreeView の整理とドキュメント
