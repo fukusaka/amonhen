@@ -61,7 +61,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 ### 差分ビューから細かくコミットを作る
 
 - 差分表示は標準の diff エディタを使う。`TextDocumentContentProvider` で `amonhen:` スキームを作って HEAD 版と index 版を提供し、`vscode.diff` で開く。シンタックスハイライト、単語単位の差分、インライン／左右分割の切り替えがそのまま使える。
-- hunk・行単位の stage は、選択範囲から部分パッチを生成して `git apply --cached --unidiff-zero` に渡す。unstage は `-R` を付ける。
+- hunk・行単位の stage は、index と working tree の行差分を自前で計算し（Myers 法）、選択範囲の変更だけを当てた新しい index の内容を作って `hash-object -w` → `update-index --cacheinfo` で書き込む。unstage は HEAD との差分で同じことをする。部分パッチを `git apply` に渡す方式より、文脈行や改行の扱いでつまずかない。
 - 標準 diff エディタにはチェックボックスを置けないので、エディタ上部のボタン、キーバインド、ガターのデコレーションで補う。全 hunk を 1 画面でスクロールしたい場合は、Webview の差分ビューを別途用意する。
 
 ### コンフリクト解決
@@ -73,7 +73,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 小さな git コマンドの所要時間は、ほぼプロセス起動のコスト（macOS で 1 回 約 6 ms）。常駐 `cat-file` への問い合わせは 約 0.08 ms。言語より「spawn の回数」と「更新範囲」が効くので、以下を徹底する。
 
-- `git cat-file --batch-command` を常駐させ、オブジェクト取得のたびに spawn しない。
+- `git cat-file --batch-command` を常駐させ、オブジェクト取得のたびに spawn しない。cat-file は index を最初の 1 回しか読まないので、`:path` を問い合わせる前に index の更新時刻を確かめ、変わっていれば起動し直す。
 - ref・config・stash の変化は `.git` 内のファイル（`HEAD`、`refs/` 以下のディレクトリ、`packed-refs`、`reftable/tables.list`、`config`、`logs/refs/stash`）の更新時刻で検知し、spawn しない。git は ref を lock ファイルの rename で更新するので、ディレクトリの更新時刻で足りる。
 - 変化があった部分だけ取り直す。ref は ahead/behind も含めて `for-each-ref` 1 回で取る。worktree の変化は検知できないので status は毎回取る。独立したコマンドは並列で実行する。
 - Tags / Stashes / Submodules は展開されるまで取得しない。TreeView は前回との差分を取り、変わったノードだけ更新する。
@@ -103,7 +103,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 毎日使う Working Copy と差分ビューからの stage を早めに作り、手応えを確かめる。
 
 - [x] 1. git 実行レイヤーと状態の管理、サイドバーの TreeView
-- [ ] 2. Working Copy と diff の表示、hunk・行単位の stage
+- [x] 2. Working Copy と diff の表示、hunk・行単位の stage
 - [ ] 3. ドラッグ＆ドロップによる merge / rebase / push と Undo の基盤
 - [ ] 4. History の Webview とコミット編集（rebase 操作）
 - [ ] 5. コンフリクト解決の UI
