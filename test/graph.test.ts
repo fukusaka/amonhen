@@ -58,12 +58,20 @@ test('two branch tips sharing a parent', () => {
   assert.deepEqual(lines(a), ['0,0>0,1']);
 });
 
-test('freed lanes are reused', () => {
+test('the first-parent line stays on the left when a branch on the right waits for the same parent', () => {
+  //   m        (merge of b and f)
+  //   | \
+  //   |  f     f が先に並ぶので、a はまずレーン 1 で待たれる
+  //   b  |
+  //   | /
+  //   a
   const g = new GraphBuilder();
   g.add('m', ['b', 'f']);
   g.add('f', ['a']);
-  // b は a を待つレーン 1 に合流し、レーン 0 が空く
-  g.add('b', ['a']);
-  assert.equal(g.add('a', ['z']).col, 1);
-  assert.equal(g.add('t', ['z']).col, 0);
+  const b = g.add('b', ['a']);
+  // b はレーン 1 を自分のレーン 0 に寄せる
+  assert.deepEqual(lines(b), ['0,0>0,1', '1,0>0,2', '0,1>0,2']);
+  assert.equal(g.add('a', ['z']).col, 0);
+  // 空いたレーン 1 は再利用される
+  assert.equal(g.add('t', ['z']).col, 1);
 });

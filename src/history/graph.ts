@@ -39,6 +39,11 @@ export class GraphBuilder {
       color = this.colors[col]!;
     }
 
+    // 最初の親が右側のレーンで待たれていたら、そのレーンをこちらに寄せる。
+    // first-parent の流れ（たいていは main）を左に保つため
+    const first = parents[0];
+    const absorb = first === undefined ? -1 : lanes.indexOf(first);
+
     // 上半分: このコミットに来るレーンはノードへ、それ以外はまっすぐ下へ
     for (let j = 0; j < lanes.length; j++) {
       const expected = lanes[j];
@@ -47,6 +52,9 @@ export class GraphBuilder {
       }
       if (expected === oid) {
         segs.push(j, 0, col, 1, this.colors[j]!);
+        lanes[j] = null;
+      } else if (j === absorb && j > col) {
+        segs.push(j, 0, col, 2, this.colors[j]!);
         lanes[j] = null;
       } else {
         segs.push(j, 0, j, 2, this.colors[j]!);
