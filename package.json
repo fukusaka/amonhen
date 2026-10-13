@@ -1,0 +1,37 @@
+{
+  "name": "amonhen",
+  "displayName": "Amon Hen",
+  "description": "VSCode 上で快適に Git を操作するための自分用の拡張",
+  "version": "0.0.1",
+  "publisher": "fukusaka",
+  "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fukusaka/vscode-amonhen.git"
+  },
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "categories": [
+    "SCM Providers"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "package": "vsce package --skip-license",
+    "vscode:prepublish": "npm run typecheck && node esbuild.mjs --production"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/vscode": "~1.120.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}
