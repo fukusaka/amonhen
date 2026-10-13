@@ -203,6 +203,26 @@
         "category": "Amon Hen",
         "icon": "$(window)",
         "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.pull",
+        "title": "Pull",
+        "category": "Amon Hen",
+        "icon": "$(repo-pull)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.push",
+        "title": "Push",
+        "category": "Amon Hen",
+        "icon": "$(repo-push)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.forcePush",
+        "title": "Force Push",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
       }
     ],
     "menus": {

@@ -13,6 +13,7 @@ import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
 import { registerSequenceCommands } from './ui/sequenceCommands.ts';
 import { registerStageCommands } from './ui/stageCommands.ts';
+import { registerSyncCommands } from './ui/syncCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
 
 /** 戻り値は結合テストから中身を確かめるためのもの */
@@ -54,6 +55,7 @@ export async function activate(
     registerCommitCommand(manager),
     registerUndoCommand(manager),
     registerFetchCommand(manager),
+    registerSyncCommands(manager),
     registerSequenceCommands(manager),
     registerHistoryCommands(),
     vscode.commands.registerCommand('amonhen.open', () => MainPanel.show(context.extensionUri, manager)),

@@ -26,7 +26,7 @@ export type DropTarget =
   | { kind: 'remote'; remote: string }
   | { kind: 'remoteBranch'; remote: string; ref: string };
 
-interface Action {
+export interface Action {
   label: string;
   detail?: string;
   run: () => Promise<OperationResult | 'pushed'>;
@@ -134,7 +134,8 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
   ];
 }
 
-async function runAction(repo: Repository, action: Action): Promise<void> {
+/** 操作を進捗付きで実行し、結果（最新・コンフリクト・完了）に合わせて知らせる */
+export async function runAction(repo: Repository, action: Action): Promise<void> {
   const title = action.label.replace(/^\$\([\w-]+\) /, '');
   let result: OperationResult | 'pushed' | undefined;
   try {
@@ -166,7 +167,7 @@ async function runAction(repo: Repository, action: Action): Promise<void> {
   }
 }
 
-/** コンフリクトの解決画面はまだ無いので、ここで中止するか、自分で解決して Continue するかを選ばせる */
+/** コンフリクトしたら、ここで中止するか、解決して Continue するかを選ばせる */
 async function handleConflict(repo: Repository, title: string): Promise<void> {
   const sequence = await repo.backend.sequenceInProgress();
   const choice = await vscode.window.showWarningMessage(
