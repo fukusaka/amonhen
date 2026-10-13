@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { GitError } from './git/exec.ts';
 import { RepositoryManager } from './state/manager.ts';
+import { registerCommitCommand } from './ui/commit.ts';
 import { registerContentProvider } from './ui/content.ts';
 import { ChangeDecorationProvider } from './ui/decorations.ts';
 import { openChangeDiff, trackActiveDiff } from './ui/diff.ts';
@@ -34,6 +35,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ mana
     vscode.commands.registerCommand('amonhen.openChange', (root: string, change: Change) => openChangeDiff(root, change)),
     trackActiveDiff(),
     registerStageCommands(manager),
+    registerCommitCommand(manager),
   );
 
   await manager.initialize();

@@ -93,10 +93,22 @@
         "category": "Amon Hen",
         "icon": "$(remove)",
         "enablement": "amonhen.diffKind == staged"
+      },
+      {
+        "command": "amonhen.commit",
+        "title": "Commit",
+        "category": "Amon Hen",
+        "icon": "$(check)",
+        "enablement": "amonhen.hasRepository"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "amonhen.commit",
+          "when": "view == amonhen.sidebar",
+          "group": "navigation@0"
+        },
         {
           "command": "amonhen.selectRepository",
           "when": "view == amonhen.sidebar && amonhen.multipleRepositories",
@@ -133,6 +145,11 @@
           "command": "amonhen.unstage",
           "when": "view == amonhen.sidebar && viewItem =~ /^(change|group)\\.staged$/",
           "group": "1_stage@1"
+        },
+        {
+          "command": "amonhen.commit",
+          "when": "view == amonhen.sidebar && viewItem == section.workingCopy",
+          "group": "inline"
         }
       ],
       "commandPalette": [
