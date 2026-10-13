@@ -47,6 +47,11 @@ export async function refsStamp(dirs: GitDirs): Promise<string> {
   return parts.join('|');
 }
 
+/** index の変化。stage や commit、checkout で変わる */
+export async function indexStamp(dirs: GitDirs): Promise<string> {
+  return fileStamp(join(dirs.gitDir, 'index'));
+}
+
 /** remote と upstream の設定の変化 */
 export async function configStamp(dirs: GitDirs): Promise<string> {
   const parts = await Promise.all([

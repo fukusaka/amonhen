@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { RepositoryBackend } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
-import { configStamp, gitmodulesStamp, refsStamp, stashStamp } from '../git/stamp.ts';
+import { configStamp, gitmodulesStamp, indexStamp, refsStamp, stashStamp } from '../git/stamp.ts';
 import type { StatusEntry, StatusResult } from '../git/status.ts';
 
 export type Section = 'workingCopy' | 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules';
@@ -31,6 +31,8 @@ export interface RepositoryState {
 
 interface Stamps {
   refs?: string;
+  /** HEAD・index のファイル内容が変わりうるもの（ref と index） */
+  contents?: string;
   tags?: string;
   config?: string;
   stash?: string;
@@ -56,6 +58,13 @@ export class Repository implements vscode.Disposable {
   private readonly _onDidChange = new vscode.EventEmitter<ReadonlySet<Section>>();
   /** 変化したセクションを通知する */
   readonly onDidChange = this._onDidChange.event;
+
+  private readonly _onDidChangeContents = new vscode.EventEmitter<void>();
+  /**
+   * HEAD や index にあるファイルの内容が変わったかもしれない。
+   * status の表示が同じままでも（M のまま別の行を stage したなど）通知する。
+   */
+  readonly onDidChangeContents = this._onDidChangeContents.event;
 
   constructor(backend: RepositoryBackend, log: vscode.LogOutputChannel) {
     this.backend = backend;
@@ -111,7 +120,10 @@ export class Repository implements vscode.Disposable {
     const start = performance.now();
     const changed = new Set<Section>();
     const d = this.backend.dirs;
-    const [refs, config] = await Promise.all([refsStamp(d), configStamp(d)]);
+    const [refs, config, index] = await Promise.all([refsStamp(d), configStamp(d), indexStamp(d)]);
+    const contents = `${refs}|${index}`;
+    const contentsChanged = this.stamps.contents !== undefined && contents !== this.stamps.contents;
+    this.stamps.contents = contents;
 
     const tasks: Promise<void>[] = [
       // worktree の変化は検知できないので status は毎回取る
@@ -156,6 +168,9 @@ export class Repository implements vscode.Disposable {
     }
     this.log.debug(`refresh ${Math.round(performance.now() - start)}ms changed=[${[...changed].join(',')}]`);
     this.fire(changed);
+    if (contentsChanged) {
+      this._onDidChangeContents.fire();
+    }
   }
 
   private async loadLazy(section: LazySection, changed: Set<Section>, refs?: string): Promise<void> {
@@ -232,6 +247,7 @@ export class Repository implements vscode.Disposable {
 
   dispose(): void {
     this._onDidChange.dispose();
+    this._onDidChangeContents.dispose();
     this.backend.dispose();
   }
 }

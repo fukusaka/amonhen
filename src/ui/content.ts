@@ -12,7 +12,7 @@ export class GitContentProvider implements vscode.TextDocumentContentProvider, v
   constructor(manager: RepositoryManager) {
     this.manager = manager;
     // index や HEAD が変わったら、開いている文書を取り直させる
-    this.listener = manager.onDidChangeRepository((repo) => {
+    this.listener = manager.onDidChangeContents((repo) => {
       for (const doc of vscode.workspace.textDocuments) {
         const parsed = parseGitUri(doc.uri);
         if (parsed && parsed.side !== 'empty' && parsed.root === repo.root) {
