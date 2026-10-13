@@ -54,8 +54,13 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 ### コミットの柔軟な編集
 
-- reword / squash / fixup / drop / reorder / edit / split はすべて非対話の rebase で実現する。`GIT_SEQUENCE_EDITOR` に todo を書き換えるスクリプトを指定し、メッセージの書き換えは `GIT_EDITOR` で注入する。
-- split は「edit で停止 → `reset HEAD^` → Working Copy で分割してコミット → `rebase --continue`」の流れ。
+- reword / squash / fixup / drop / reorder / edit / split はすべて非対話の rebase で実現する。todo はこちらで丸ごと作り（`src/history/rebasePlan.ts`）、`GIT_SEQUENCE_EDITOR="cp <todo>"` で git の todo に上書きする。
+  - メッセージの書き換えは、対象のコミットの直後に `exec git commit --amend -F <file>` を挟んで行う。どのコミットのメッセージかを `GIT_EDITOR` 側で判別しなくて済む。
+  - squash は `fixup` ＋ メッセージの amend、fixup は `fixup` だけ、edit は `pick` ＋ `break`。
+  - 編集できるのは HEAD から first-parent で辿り、最初の merge コミットの手前まで。merge をまたぐ rebase は扱わない。
+  - `--autostash` で作業中の変更を退避し、`--no-autosquash` でユーザーの設定に todo を並べ替えさせない。
+- split は「`pick` → `exec git reset HEAD^` → `break`」で止め、Working Copy で分割してコミット → Continue の流れ。
+- merge や rebase が止まっている間は、Working Copy の先頭に Continue / Abort を出す。edit や split で止まった操作の Undo の記録は保留しておき（`undo-pending.json`）、終わった時点で確定する。
 - 操作前に `HEAD` と関係する ref を記録し、1 操作単位で Undo できるようにする。
   - 記録は操作の前後の両方を取り、`<gitDir>/amonhen/undo.json` に最大 50 件残す。Undo するときは今の状態が「操作後」と一致することを確かめ、違えば何もしない。
   - checkout 中のブランチは `reset`（commit は `--soft`、merge や rebase は `--keep`）で戻し、そうでないブランチは `update-ref` に旧値を条件として渡して戻す。操作の中でブランチを切り替えていたら、元のブランチに戻る。
@@ -103,5 +108,5 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - [x] 1. git 実行レイヤーと状態の管理、サイドバーの TreeView
 - [x] 2. Working Copy と diff の表示、hunk・行単位の stage
 - [x] 3. ドラッグ＆ドロップによる merge / rebase / push と Undo の基盤
-- [ ] 4. History の Webview とコミット編集（rebase 操作）
+- [x] 4. History の Webview とコミット編集（rebase 操作）
 - [ ] 5. コンフリクト解決の UI
