@@ -2,7 +2,7 @@
  * git 実行層のインターフェース。状態管理層と UI 層はこれだけに依存する。
  * 計測して足りない箇所が出たら、その部分だけ別実装（WASM やネイティブ）に差し替える。
  */
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
 import { GitError, shellQuote, type GitExecutor } from './exec.ts';
@@ -22,7 +22,7 @@ import {
   type SubmoduleConfig,
 } from './refs.ts';
 import type { GitDirs } from './stamp.ts';
-import { parseStatus, STATUS_ARGS, type StatusResult } from './status.ts';
+import { conflictSides, parseStatus, STATUS_ARGS, type StatusResult } from './status.ts';
 
 export interface HeadState {
   /** `refs/heads/main` など。detached HEAD のときは undefined */
@@ -83,6 +83,15 @@ export interface RepositoryBackend {
   abort(sequence: Sequence): Promise<void>;
   /** コンフリクトの解決や break のあとで続ける */
   continueSequence(sequence: Sequence): Promise<RebaseResult>;
+  /** rebase などで、今のコミットを飛ばして続ける */
+  skipSequence(sequence: Sequence): Promise<RebaseResult>;
+  /** rebase の進み具合。rebase 中でなければ undefined */
+  rebaseProgress(): Promise<{ current: number; total: number } | undefined>;
+  /**
+   * コンフリクトしたファイルを、現在の側（HEAD）か取り込む側の内容で解決して stage する。
+   * 選んだ側で削除されていれば、削除として解決する。conflict は status の XY
+   */
+  resolveConflicts(files: readonly { path: string; conflict: string }[], side: 'current' | 'incoming'): Promise<void>;
   /** todo ファイルの内容で非対話の rebase をする。base が null なら --root */
   rebaseTodo(base: string | null, todoPath: string): Promise<RebaseResult>;
   /** ローカルブランチ branch を remote の remoteBranch へ push する */
@@ -279,6 +288,46 @@ export class CliBackend implements RepositoryBackend {
 
   continueSequence(sequence: Sequence): Promise<RebaseResult> {
     return this.stoppable([sequence, '--continue']);
+  }
+
+  skipSequence(sequence: Sequence): Promise<RebaseResult> {
+    return this.stoppable([sequence, '--skip']);
+  }
+
+  async rebaseProgress(): Promise<{ current: number; total: number } | undefined> {
+    for (const dir of ['rebase-merge', 'rebase-apply']) {
+      const base = join(this.dirs.gitDir, dir);
+      try {
+        const [current, total] = await Promise.all(
+          dir === 'rebase-merge'
+            ? [readFile(join(base, 'msgnum'), 'utf8'), readFile(join(base, 'end'), 'utf8')]
+            : [readFile(join(base, 'next'), 'utf8'), readFile(join(base, 'last'), 'utf8')],
+        );
+        return { current: Number(current.trim()), total: Number(total.trim()) };
+      } catch {
+        // この形式の rebase ではない
+      }
+    }
+    return undefined;
+  }
+
+  async resolveConflicts(
+    files: readonly { path: string; conflict: string }[],
+    side: 'current' | 'incoming',
+  ): Promise<void> {
+    const keep: string[] = [];
+    const remove: string[] = [];
+    for (const f of files) {
+      const sides = conflictSides(f.conflict);
+      (side === 'current' ? sides.current : sides.incoming) ? keep.push(f.path) : remove.push(f.path);
+    }
+    if (keep.length > 0) {
+      await this.write(['checkout', side === 'current' ? '--ours' : '--theirs', '--', ...keep]);
+      await this.write(['add', '--', ...keep]);
+    }
+    if (remove.length > 0) {
+      await this.write(['rm', '--quiet', '--', ...remove]);
+    }
   }
 
   rebaseTodo(base: string | null, todoPath: string): Promise<RebaseResult> {
