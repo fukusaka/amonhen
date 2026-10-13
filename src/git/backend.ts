@@ -34,6 +34,13 @@ export interface RepositoryBackend {
   submodules(): Promise<SubmoduleConfig[]>;
   object(rev: string): Promise<GitObject | undefined>;
   switchBranch(name: string): Promise<void>;
+  /** ファイル単位で stage する。削除も含む */
+  stage(paths: readonly string[]): Promise<void>;
+  /** ファイル単位で unstage する。HEAD がまだ無くてもよい */
+  unstage(paths: readonly string[]): Promise<void>;
+  /** index のエントリを指定した内容で置き換える（行単位の stage に使う） */
+  writeIndex(path: string, mode: string, content: Buffer): Promise<void>;
+  commit(message: string): Promise<void>;
   dispose(): void;
 }
 
@@ -97,6 +104,29 @@ export class CliBackend implements RepositoryBackend {
   async switchBranch(name: string): Promise<void> {
     // branch 名は `-` で始められないので、オプションと誤認されることはない
     await this.git.exec(['switch', name], { cwd: this.root });
+  }
+
+  async stage(paths: readonly string[]): Promise<void> {
+    await this.write(['add', '-A', '--', ...paths]);
+  }
+
+  async unstage(paths: readonly string[]): Promise<void> {
+    await this.write(['reset', '-q', '--', ...paths]);
+  }
+
+  async writeIndex(path: string, mode: string, content: Buffer): Promise<void> {
+    // 内容は index から作ったものなので、clean フィルターは通さない
+    const oid = (await this.git.text(['hash-object', '-w', '--no-filters', '--stdin'], { cwd: this.root, input: content })).trim();
+    await this.write(['update-index', '--add', '--cacheinfo', `${mode},${oid},${path}`]);
+  }
+
+  async commit(message: string): Promise<void> {
+    await this.git.exec(['commit', '--file=-'], { cwd: this.root, input: message });
+  }
+
+  /** パスに `*` などが含まれても pathspec として解釈させない */
+  private write(args: readonly string[]): Promise<Buffer> {
+    return this.git.exec(['--literal-pathspecs', ...args], { cwd: this.root });
   }
 
   dispose(): void {

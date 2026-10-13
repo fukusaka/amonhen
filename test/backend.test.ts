@@ -12,20 +12,18 @@ import { configStamp, refsStamp, stashStamp } from '../src/git/stamp.ts';
 let dir: string;
 let backend: CliBackend;
 
+// テスト対象の backend が起動する git にも効くよう、プロセス全体で設定を固定する
+Object.assign(process.env, {
+  GIT_CONFIG_GLOBAL: '/dev/null',
+  GIT_CONFIG_NOSYSTEM: '1',
+  GIT_AUTHOR_NAME: 'a',
+  GIT_AUTHOR_EMAIL: 'a@example.com',
+  GIT_COMMITTER_NAME: 'a',
+  GIT_COMMITTER_EMAIL: 'a@example.com',
+});
+
 function git(...args: string[]): string {
-  return execFileSync('git', args, {
-    cwd: dir,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      GIT_CONFIG_GLOBAL: '/dev/null',
-      GIT_CONFIG_NOSYSTEM: '1',
-      GIT_AUTHOR_NAME: 'a',
-      GIT_AUTHOR_EMAIL: 'a@example.com',
-      GIT_COMMITTER_NAME: 'a',
-      GIT_COMMITTER_EMAIL: 'a@example.com',
-    },
-  });
+  return execFileSync('git', args, { cwd: dir, encoding: 'utf8' });
 }
 
 before(async () => {
@@ -143,4 +141,45 @@ test('switchBranch', async () => {
   await backend.switchBranch('feature/x');
   assert.equal((await backend.status()).branch.head, 'feature/x');
   await assert.rejects(backend.switchBranch('does-not-exist'));
+});
+
+test('stage, unstage and writeIndex', async () => {
+  const entry = async (path: string) => (await backend.status()).entries.find((e) => e.path === path);
+  writeFileSync(join(dir, 'a.txt'), 'changed\n');
+  writeFileSync(join(dir, 'b[1].txt'), 'new\n');
+  await backend.stage(['a.txt', 'b[1].txt']);
+  assert.equal((await entry('a.txt'))?.index, 'M');
+  assert.equal((await entry('b[1].txt'))?.index, 'A');
+
+  await backend.unstage(['a.txt', 'b[1].txt']);
+  assert.deepEqual([(await entry('a.txt'))?.index, (await entry('a.txt'))?.worktree], ['.', 'M']);
+  assert.equal((await entry('b[1].txt'))?.kind, 'untracked');
+
+  await backend.writeIndex('a.txt', '100644', Buffer.from('partial\n'));
+  assert.equal((await backend.object(':a.txt'))?.data.toString(), 'partial\n');
+  const e = await entry('a.txt');
+  assert.deepEqual([e?.index, e?.worktree], ['M', 'M']);
+
+  await backend.commit('partial commit\n\nbody');
+  const head = await backend.object('HEAD');
+  assert.match(head!.data.toString(), /\n\npartial commit\n\nbody\n?$/);
+  assert.equal((await backend.object('HEAD:a.txt'))?.data.toString(), 'partial\n');
+  git('checkout', '-q', '--', 'a.txt');
+  rmSync(join(dir, 'b[1].txt'));
+});
+
+test('unstage works before the first commit', async () => {
+  const fresh = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-test-')));
+  try {
+    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: fresh });
+    writeFileSync(join(fresh, 'x'), 'x\n');
+    const b = await CliBackend.open(new GitExecutor('git'), fresh);
+    await b.stage(['x']);
+    assert.equal((await b.status()).entries[0]?.index, 'A');
+    await b.unstage(['x']);
+    assert.equal((await b.status()).entries[0]?.kind, 'untracked');
+    b.dispose();
+  } finally {
+    rmSync(fresh, { recursive: true, force: true });
+  }
 });
