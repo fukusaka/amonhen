@@ -5,7 +5,7 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
-import { GitError, type GitExecutor } from './exec.ts';
+import { GitError, shellQuote, type GitExecutor } from './exec.ts';
 import { diffTreeArgs, logArgs, parseLog, parseNameStatus, type Commit, type FileChange } from './log.ts';
 import {
   forEachRefArgs,
@@ -36,6 +36,9 @@ export type Sequence = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
 
 /** merge や rebase がコンフリクトで止まったら conflict */
 export type MergeResult = 'done' | 'conflict';
+
+/** todo の break で止まったら stopped */
+export type RebaseResult = MergeResult | 'stopped';
 
 export interface PushOptions {
   /** `--force-with-lease`。rebase したブランチを上書きするとき */
@@ -78,6 +81,10 @@ export interface RepositoryBackend {
   rebase(onto: string, branch?: string): Promise<MergeResult>;
   sequenceInProgress(): Promise<Sequence | undefined>;
   abort(sequence: Sequence): Promise<void>;
+  /** コンフリクトの解決や break のあとで続ける */
+  continueSequence(sequence: Sequence): Promise<RebaseResult>;
+  /** todo ファイルの内容で非対話の rebase をする。base が null なら --root */
+  rebaseTodo(base: string | null, todoPath: string): Promise<RebaseResult>;
   /** ローカルブランチ branch を remote の remoteBranch へ push する */
   push(remote: string, branch: string, remoteBranch: string, opts?: PushOptions): Promise<void>;
   fetch(): Promise<void>;
@@ -268,6 +275,30 @@ export class CliBackend implements RepositoryBackend {
 
   async abort(sequence: Sequence): Promise<void> {
     await this.git.exec([sequence, '--abort'], { cwd: this.root });
+  }
+
+  continueSequence(sequence: Sequence): Promise<RebaseResult> {
+    return this.stoppable([sequence, '--continue']);
+  }
+
+  rebaseTodo(base: string | null, todoPath: string): Promise<RebaseResult> {
+    // git は `$GIT_SEQUENCE_EDITOR <todo>` を sh で実行するので、用意した todo を上書きコピーさせる
+    return this.stoppable(['rebase', '--interactive', '--autostash', '--no-autosquash', base ?? '--root'], {
+      GIT_SEQUENCE_EDITOR: `cp ${shellQuote(todoPath)}`,
+    });
+  }
+
+  /** 成功しても途中で止まっていれば stopped、失敗して止まっていれば conflict */
+  private async stoppable(args: readonly string[], env?: Record<string, string>): Promise<RebaseResult> {
+    try {
+      await this.git.exec(args, { cwd: this.root, env });
+    } catch (err) {
+      if (await this.sequenceInProgress()) {
+        return 'conflict';
+      }
+      throw err;
+    }
+    return (await this.sequenceInProgress()) ? 'stopped' : 'done';
   }
 
   async push(remote: string, branch: string, remoteBranch: string, opts: PushOptions = {}): Promise<void> {

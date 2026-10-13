@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import type { Commit } from '../src/git/log.ts';
-import { planRebase, shellQuote } from '../src/history/rebasePlan.ts';
+import { shellQuote } from '../src/git/exec.ts';
+import { planRebase } from '../src/history/rebasePlan.ts';
 
 const c = (oid: string, parent?: string): Commit => ({
   oid,

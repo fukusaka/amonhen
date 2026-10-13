@@ -3,6 +3,7 @@
  * todo はこちらで丸ごと書き、GIT_SEQUENCE_EDITOR で git の todo に上書きする。
  * メッセージの書き換えは、対象のコミットの直後に `exec git commit --amend -F <file>` を挟んで行う。
  */
+import { shellQuote } from '../git/exec.ts';
 import type { Commit } from '../git/log.ts';
 
 export type HistoryEdit =
@@ -105,8 +106,4 @@ export function planRebase(chain: readonly Commit[], edit: HistoryEdit, messageP
     }
   }
   return { base, todo: `${lines.join('\n')}\n`, messages };
-}
-
-export function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`;
 }

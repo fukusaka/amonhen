@@ -76,3 +76,8 @@ export class GitExecutor {
     return (await this.exec(args, opts)).toString('utf8');
   }
 }
+
+/** sh に渡す文字列を単一引用符で囲む */
+export function shellQuote(s: string): string {
+  return `'${s.replace(/'/g, `'\\''`)}'`;
+}
