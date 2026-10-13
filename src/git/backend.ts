@@ -58,6 +58,10 @@ export interface RepositoryBackend {
   submodules(): Promise<SubmoduleConfig[]>;
   object(rev: string): Promise<GitObject | undefined>;
   switchBranch(name: string): Promise<void>;
+  /** リモートブランチ（`origin/x`）から、同じ名前で追跡するローカルブランチを作って切り替える */
+  trackBranch(remoteBranch: string): Promise<void>;
+  /** ローカルブランチを削除する。force でなければ merge されていないと失敗する */
+  deleteBranch(name: string, force: boolean): Promise<void>;
   /** ファイル単位で stage する。削除も含む */
   stage(paths: readonly string[]): Promise<void>;
   /** ファイル単位で unstage する。HEAD がまだ無くてもよい */
@@ -174,6 +178,14 @@ export class CliBackend implements RepositoryBackend {
   async switchBranch(name: string): Promise<void> {
     // branch 名は `-` で始められないので、オプションと誤認されることはない
     await this.git.exec(['switch', name], { cwd: this.root });
+  }
+
+  async trackBranch(remoteBranch: string): Promise<void> {
+    await this.git.exec(['switch', '--track', remoteBranch], { cwd: this.root });
+  }
+
+  async deleteBranch(name: string, force: boolean): Promise<void> {
+    await this.git.exec(['branch', force ? '-D' : '-d', '--', name], { cwd: this.root });
   }
 
   async stage(paths: readonly string[]): Promise<void> {

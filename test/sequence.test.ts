@@ -140,3 +140,19 @@ test('pushCurrent sets the upstream, and pullCurrent fast-forwards from it', asy
 test('pullCurrent without an upstream', async () => {
   assert.equal(await pullCurrent(backend, new UndoLog(backend)), 'no-upstream');
 });
+
+test('trackBranch and deleteBranch', async () => {
+  await backend.push('origin', 'main', 'topic');
+  await backend.fetch();
+  await backend.trackBranch('origin/topic');
+  assert.equal(git('branch', '--show-current'), 'topic');
+  assert.equal(git('rev-parse', '--abbrev-ref', 'topic@{upstream}'), 'origin/topic');
+  git('switch', '-q', 'main');
+  git('switch', '-q', '-c', 'unmerged');
+  git('commit', '-q', '--allow-empty', '-m', 'only here');
+  git('switch', '-q', 'main');
+  await assert.rejects(backend.deleteBranch('unmerged', false));
+  await backend.deleteBranch('unmerged', true);
+  await backend.deleteBranch('topic', false);
+  assert.equal(git('branch', '--list', 'unmerged', 'topic'), '');
+});
