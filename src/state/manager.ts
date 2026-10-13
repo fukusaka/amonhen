@@ -29,6 +29,10 @@ export class RepositoryManager implements vscode.Disposable {
   private readonly _onDidChangeCurrent = new vscode.EventEmitter<Repository | undefined>();
   readonly onDidChangeCurrent = this._onDidChangeCurrent.event;
 
+  private readonly _onDidChangeRepository = new vscode.EventEmitter<Repository>();
+  /** どれかのリポジトリの状態が変わった */
+  readonly onDidChangeRepository = this._onDidChangeRepository.event;
+
   constructor(log: vscode.LogOutputChannel) {
     this.log = log;
   }
@@ -39,6 +43,10 @@ export class RepositoryManager implements vscode.Disposable {
 
   get repositories(): Repository[] {
     return [...this.entries.values()].map((e) => e.repository);
+  }
+
+  get(root: string): Repository | undefined {
+    return this.entries.get(root)?.repository;
   }
 
   async initialize(): Promise<void> {
@@ -75,7 +83,11 @@ export class RepositoryManager implements vscode.Disposable {
       return;
     }
     const repository = new Repository(backend, this.log);
-    const entry: Entry = { repository, apiRepo, disposables: [repository] };
+    const entry: Entry = {
+      repository,
+      apiRepo,
+      disposables: [repository, repository.onDidChange(() => this._onDidChangeRepository.fire(repository))],
+    };
     if (apiRepo) {
       let timer: NodeJS.Timeout | undefined;
       entry.disposables.push(
@@ -140,6 +152,7 @@ export class RepositoryManager implements vscode.Disposable {
     this.entries.clear();
     vscode.Disposable.from(...this.disposables).dispose();
     this._onDidChangeCurrent.dispose();
+    this._onDidChangeRepository.dispose();
   }
 }
 

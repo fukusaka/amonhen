@@ -2,6 +2,7 @@ import { access } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { GitError } from './git/exec.ts';
 import { RepositoryManager } from './state/manager.ts';
+import { registerContentProvider } from './ui/content.ts';
 import { ChangeDecorationProvider } from './ui/decorations.ts';
 import { SidebarProvider, type Node } from './ui/sidebar.ts';
 
@@ -25,6 +26,7 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ mana
     view.onDidExpandElement((e) => sidebar.onDidExpand(e.element)),
     manager.onDidChangeCurrent(updateDescription),
     vscode.window.registerFileDecorationProvider(new ChangeDecorationProvider()),
+    registerContentProvider(manager),
     vscode.commands.registerCommand('amonhen.refresh', () => manager.current?.refresh()),
     vscode.commands.registerCommand('amonhen.selectRepository', () => manager.pick()),
     vscode.commands.registerCommand('amonhen.checkout', (node: Node) => checkout(manager, node)),

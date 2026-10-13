@@ -5,7 +5,7 @@ import { splitRemoteRef } from '../git/refs.ts';
 import type { StatusEntry } from '../git/status.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { LazySection, Repository, Section, Submodule } from '../state/repository.ts';
-import { decorationUri } from './decorations.ts';
+import { decorationUri } from './uri.ts';
 
 export type ChangeGroup = 'conflicts' | 'staged' | 'unstaged';
 
