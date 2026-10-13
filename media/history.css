@@ -1,0 +1,131 @@
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+  color: var(--vscode-foreground);
+  background: var(--vscode-editor-background);
+  font-family: var(--vscode-font-family);
+  font-size: var(--vscode-font-size);
+}
+
+body.busy #list {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+select {
+  color: var(--vscode-dropdown-foreground);
+  background: var(--vscode-dropdown-background);
+  border: 1px solid var(--vscode-dropdown-border);
+  padding: 2px 4px;
+}
+
+#status {
+  color: var(--vscode-descriptionForeground);
+}
+
+#list {
+  flex: 1;
+  overflow-y: auto;
+  outline: none;
+}
+
+#spacer {
+  position: relative;
+}
+
+.row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-right: 12px;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.row:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.row.selected {
+  background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+#list:focus .row.selected {
+  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--vscode-list-activeSelectionBackground);
+}
+
+.row canvas {
+  flex: none;
+}
+
+.text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ref {
+  display: inline-block;
+  margin-right: 4px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 0.9em;
+  line-height: 16px;
+  color: var(--vscode-badge-foreground);
+  background: var(--vscode-badge-background);
+}
+
+.ref.remote {
+  opacity: 0.75;
+}
+
+.ref.tag {
+  color: var(--vscode-editor-background);
+  background: var(--vscode-charts-yellow);
+}
+
+.ref.current,
+.ref.head {
+  font-weight: bold;
+  color: var(--vscode-button-foreground);
+  background: var(--vscode-button-background);
+}
+
+.author,
+.date,
+.oid {
+  flex: none;
+  color: var(--vscode-descriptionForeground);
+}
+
+.author {
+  width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.oid {
+  font-family: var(--vscode-editor-font-family);
+}

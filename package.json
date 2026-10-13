@@ -114,10 +114,22 @@
         "category": "Amon Hen",
         "icon": "$(cloud-download)",
         "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.showHistory",
+        "title": "Show History",
+        "category": "Amon Hen",
+        "icon": "$(history)",
+        "enablement": "amonhen.hasRepository"
       }
     ],
     "menus": {
       "view/title": [
+        {
+          "command": "amonhen.showHistory",
+          "when": "view == amonhen.sidebar",
+          "group": "navigation@0"
+        },
         {
           "command": "amonhen.commit",
           "when": "view == amonhen.sidebar",
