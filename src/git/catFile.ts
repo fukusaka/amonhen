@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { stat } from 'node:fs/promises';
 
 export interface ObjectInfo {
   oid: string;
@@ -18,73 +19,123 @@ interface Request {
 
 /**
  * 常駐させた `git cat-file --batch-command`。
- * オブジェクトを取得するたびに spawn しないためのもの。要求は送った順に応答が返る。
+ * オブジェクトを取得するたびに spawn しないためのもの。
+ *
+ * cat-file は index を最初の 1 回しか読まない（ref は毎回読み直す）。
+ * そのため `:path` の問い合わせの前に index の更新時刻を確かめ、変わっていれば起動し直す。
  */
 export class CatFileBatch {
   private readonly gitPath: string;
   private readonly cwd: string;
-  private child: ChildProcessWithoutNullStreams | undefined;
+  private readonly indexPath: string;
+  private process: CatFileProcess | undefined;
+
+  constructor(gitPath: string, cwd: string, indexPath: string) {
+    this.gitPath = gitPath;
+    this.cwd = cwd;
+    this.indexPath = indexPath;
+  }
+
+  async info(rev: string): Promise<ObjectInfo | undefined> {
+    return (await this.send('info', rev)) as ObjectInfo | undefined;
+  }
+
+  async contents(rev: string): Promise<GitObject | undefined> {
+    return (await this.send('contents', rev)) as GitObject | undefined;
+  }
+
+  dispose(): void {
+    this.process?.kill();
+    this.process = undefined;
+  }
+
+  private async send(kind: Request['kind'], rev: string): Promise<GitObject | ObjectInfo | undefined> {
+    if (/[\n\0]/.test(rev)) {
+      throw new Error(`invalid revision: ${JSON.stringify(rev)}`);
+    }
+    const readsIndex = rev.startsWith(':');
+    let proc = this.process;
+    if (!proc?.alive || readsIndex) {
+      const stamp = await indexStamp(this.indexPath);
+      // 待っている間に、同時に来た別の要求が起動し直しているかもしれない
+      proc = this.process;
+      if (proc?.alive && readsIndex && proc.indexStamp !== stamp) {
+        // 受け付け済みの問い合わせに答え終えてから終了させる
+        proc.end();
+      }
+      if (!proc?.alive) {
+        proc = this.start(stamp);
+      }
+    }
+    return proc!.send(kind, rev);
+  }
+
+  private start(stamp: string): CatFileProcess {
+    const proc = new CatFileProcess(this.gitPath, this.cwd, stamp);
+    this.process = proc;
+    return proc;
+  }
+}
+
+async function indexStamp(path: string): Promise<string> {
+  try {
+    const s = await stat(path, { bigint: true });
+    return `${s.mtimeNs}:${s.size}:${s.ino}`;
+  } catch {
+    return '-';
+  }
+}
+
+/** 1 つの cat-file プロセス。要求は送った順に応答が返る */
+class CatFileProcess {
+  /** 起動前に見た index の更新時刻 */
+  readonly indexStamp: string;
+  alive = true;
+  private readonly child: ChildProcessWithoutNullStreams;
   private readonly queue: Request[] = [];
   private chunks: Buffer[] = [];
   private length = 0;
   /** 次の応答を処理するのに最低限必要なバイト数 */
   private need = 1;
 
-  constructor(gitPath: string, cwd: string) {
-    this.gitPath = gitPath;
-    this.cwd = cwd;
-  }
-
-  info(rev: string): Promise<ObjectInfo | undefined> {
-    return this.send('info', rev) as Promise<ObjectInfo | undefined>;
-  }
-
-  contents(rev: string): Promise<GitObject | undefined> {
-    return this.send('contents', rev) as Promise<GitObject | undefined>;
-  }
-
-  dispose(): void {
-    this.child?.kill();
-    this.child = undefined;
-  }
-
-  private send(kind: Request['kind'], rev: string): Promise<GitObject | ObjectInfo | undefined> {
-    if (/[\n\0]/.test(rev)) {
-      return Promise.reject(new Error(`invalid revision: ${JSON.stringify(rev)}`));
-    }
-    return new Promise((resolve, reject) => {
-      const child = this.ensureChild();
-      this.queue.push({ kind, resolve, reject });
-      child.stdin.write(`${kind} ${rev}\n`);
-    });
-  }
-
-  private ensureChild(): ChildProcessWithoutNullStreams {
-    if (this.child) {
-      return this.child;
-    }
-    const child = spawn(this.gitPath, ['--no-optional-locks', 'cat-file', '--batch-command'], {
-      cwd: this.cwd,
+  constructor(gitPath: string, cwd: string, indexStamp: string) {
+    this.indexStamp = indexStamp;
+    this.child = spawn(gitPath, ['--no-optional-locks', 'cat-file', '--batch-command'], {
+      cwd,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
     });
-    child.stdout.on('data', (c: Buffer) => this.onData(c));
-    child.stdin.on('error', () => {});
-    const fail = (err: Error) => {
-      if (this.child !== child) {
-        return;
-      }
-      this.child = undefined;
-      this.chunks = [];
-      this.length = 0;
-      this.need = 1;
-      for (const req of this.queue.splice(0)) {
-        req.reject(err);
-      }
-    };
-    child.on('error', fail);
-    child.on('close', (code) => fail(new Error(`git cat-file exited with ${code}`)));
-    this.child = child;
-    return child;
+    this.child.stdout.on('data', (c: Buffer) => this.onData(c));
+    this.child.stdin.on('error', () => {});
+    this.child.on('error', (err) => this.fail(err));
+    this.child.on('close', (code) => this.fail(new Error(`git cat-file exited with ${code}`)));
+  }
+
+  send(kind: Request['kind'], rev: string): Promise<GitObject | ObjectInfo | undefined> {
+    if (!this.alive) {
+      return Promise.reject(new Error('git cat-file is not running'));
+    }
+    return new Promise((resolve, reject) => {
+      this.queue.push({ kind, resolve, reject });
+      this.child.stdin.write(`${kind} ${rev}\n`);
+    });
+  }
+
+  /** 新しい要求は受け付けず、残りに答えたら終了する */
+  end(): void {
+    this.alive = false;
+    this.child.stdin.end();
+  }
+
+  kill(): void {
+    this.alive = false;
+    this.child.kill();
+  }
+
+  private fail(err: Error): void {
+    this.alive = false;
+    for (const req of this.queue.splice(0)) {
+      req.reject(err);
+    }
   }
 
   private onData(chunk: Buffer): void {

@@ -183,3 +183,13 @@ test('unstage works before the first commit', async () => {
     rmSync(fresh, { recursive: true, force: true });
   }
 });
+
+test('cat-file sees index updates made after it started', async () => {
+  writeFileSync(join(dir, 'a.txt'), 'first\n');
+  git('add', 'a.txt');
+  assert.equal((await backend.object(':a.txt'))?.data.toString(), 'first\n');
+  writeFileSync(join(dir, 'a.txt'), 'second\n');
+  git('add', 'a.txt');
+  assert.equal((await backend.object(':a.txt'))?.data.toString(), 'second\n');
+  git('reset', '-q', '--hard');
+});

@@ -55,7 +55,7 @@ export class CliBackend implements RepositoryBackend {
     this.git = git;
     this.root = root;
     this.dirs = dirs;
-    this.catFile = new CatFileBatch(git.path, root);
+    this.catFile = new CatFileBatch(git.path, root, join(dirs.gitDir, 'index'));
   }
 
   static async open(git: GitExecutor, cwd: string): Promise<CliBackend> {
