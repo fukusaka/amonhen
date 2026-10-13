@@ -1,19 +1,22 @@
 import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
+import { parseCommitObject } from '../git/commitObject.ts';
 import type { Commit } from '../git/log.ts';
 import { GraphBuilder } from '../history/graph.ts';
-import type { HostMessage, RefLabel, RowData, Scope, WebviewMessage } from '../history/protocol.ts';
+import type { CommitDetails, HostMessage, RefLabel, RowData, Scope, WebviewMessage } from '../history/protocol.ts';
 import { editableChain, refLabels } from '../history/rows.ts';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository, Section } from '../state/repository.ts';
-import { openCommitChanges } from './commitChanges.ts';
+import { openCommitChanges, openCommitFile } from './commitChanges.ts';
 import { showError } from './stageCommands.ts';
 
 /** 1 回に読み込むコミットの数 */
 const PAGE = 200;
 /** 編集できるかを調べる範囲 */
 const EDITABLE_LIMIT = 500;
+/** 詳細を覚えておくコミットの数 */
+const DETAILS_CACHE = 100;
 
 /**
  * コミット履歴をエディタ領域の Webview に表示する。
@@ -43,6 +46,8 @@ export class HistoryPanel implements vscode.Disposable {
   private generation = 0;
   private headOid: string | undefined;
   private resetTimer: NodeJS.Timeout | undefined;
+  /** 一度取ったコミットの詳細。コミットの内容は変わらないので、ref のラベル以外はそのまま使える */
+  private readonly details = new Map<string, Omit<CommitDetails, 'refs'>>();
 
 
   static show(extensionUri: vscode.Uri, manager: RepositoryManager): HistoryPanel {
@@ -123,6 +128,17 @@ export class HistoryPanel implements vscode.Disposable {
         this.scope = message.scope;
         await this.reset();
         break;
+      case 'select':
+        await this.sendDetails(message.oid).catch(showError);
+        break;
+      case 'openFile': {
+        const details = this.details.get(message.oid);
+        const file = details?.files.find((f) => f.path === message.path);
+        if (this.repo && details && file) {
+          await openCommitFile(this.repo, details.oid, details.parents[0], file).catch(showError);
+        }
+        break;
+      }
       case 'open': {
         const commit = this.commit(message.oid);
         if (this.repo && commit) {
@@ -135,6 +151,35 @@ export class HistoryPanel implements vscode.Disposable {
         HistoryPanel.edits.fire(message);
         break;
     }
+  }
+
+  private async sendDetails(oid: string): Promise<void> {
+    const repo = this.repo;
+    if (!repo) {
+      return;
+    }
+    let details = this.details.get(oid);
+    if (!details) {
+      const obj = await repo.backend.object(oid);
+      if (!obj) {
+        return;
+      }
+      const commit = parseCommitObject(obj.data.toString('utf8'));
+      const files = await repo.backend.commitFiles(oid, commit.parents[0]);
+      details = {
+        oid,
+        parents: commit.parents,
+        author: commit.author,
+        committer: commit.committer,
+        message: commit.message,
+        files,
+      };
+      this.details.set(oid, details);
+      if (this.details.size > DETAILS_CACHE) {
+        this.details.delete(this.details.keys().next().value!);
+      }
+    }
+    this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] } });
   }
 
   /** 最初から読み直す */
@@ -234,7 +279,11 @@ function html(webview: vscode.Webview, extensionUri: vscode.Uri): string {
   </select>
   <span id="status"></span>
 </header>
-<div id="list" tabindex="0"><div id="spacer"></div></div>
+<main>
+  <div id="list" tabindex="0"><div id="spacer"></div></div>
+  <div id="splitter" role="separator" aria-orientation="vertical"></div>
+  <aside id="details"></aside>
+</main>
 <script nonce="${nonce}" src="${script}"></script>
 </body>
 </html>`;
