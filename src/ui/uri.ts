@@ -4,21 +4,25 @@ import * as vscode from 'vscode';
 
 export const SCHEME = 'amonhen';
 
-/** HEAD・index のどちらの内容か。empty は存在しない側（追加・削除されたファイル）に使う */
-export type Side = 'HEAD' | 'index' | 'empty';
+/**
+ * どこの内容か。rev は任意のコミット（rev パラメーターで指定）。
+ * empty は存在しない側（追加・削除されたファイル）に使う。
+ */
+export type Side = 'HEAD' | 'index' | 'rev' | 'empty';
 
 export interface GitUri {
   root: string;
   /** リポジトリのルートからの相対パス */
   path: string;
   side: Side;
+  /** side が rev のときのコミット */
+  rev?: string;
 }
 
-export function gitUri(root: string, path: string, side: Side): vscode.Uri {
-  return vscode.Uri.file(join(root, path)).with({
-    scheme: SCHEME,
-    query: new URLSearchParams({ root, path, side }).toString(),
-  });
+export function gitUri(root: string, path: string, side: Side, rev?: string): vscode.Uri {
+  const params: Record<string, string> = { root, path, side };
+  if (rev) params.rev = rev;
+  return vscode.Uri.file(join(root, path)).with({ scheme: SCHEME, query: new URLSearchParams(params).toString() });
 }
 
 export function parseGitUri(uri: vscode.Uri): GitUri | undefined {
@@ -29,10 +33,11 @@ export function parseGitUri(uri: vscode.Uri): GitUri | undefined {
   const root = q.get('root');
   const path = q.get('path');
   const side = q.get('side');
-  if (root === null || path === null || (side !== 'HEAD' && side !== 'index' && side !== 'empty')) {
+  if (root === null || path === null || (side !== 'HEAD' && side !== 'index' && side !== 'rev' && side !== 'empty')) {
     return undefined;
   }
-  return { root, path, side };
+  const rev = q.get('rev');
+  return rev ? { root, path, side, rev } : { root, path, side };
 }
 
 /** サイドバーの変更ファイルに付けるバッジ用の URI。ファイルアイコンはパスから決まる */

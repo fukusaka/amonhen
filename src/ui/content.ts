@@ -15,7 +15,8 @@ export class GitContentProvider implements vscode.TextDocumentContentProvider, v
     this.listener = manager.onDidChangeContents((repo) => {
       for (const doc of vscode.workspace.textDocuments) {
         const parsed = parseGitUri(doc.uri);
-        if (parsed && parsed.side !== 'empty' && parsed.root === repo.root) {
+        // コミットの内容は変わらないので取り直さない
+        if (parsed && (parsed.side === 'HEAD' || parsed.side === 'index') && parsed.root === repo.root) {
           this._onDidChange.fire(doc.uri);
         }
       }
@@ -28,7 +29,8 @@ export class GitContentProvider implements vscode.TextDocumentContentProvider, v
       return '';
     }
     const repo = this.manager.get(parsed.root);
-    const rev = parsed.side === 'HEAD' ? `HEAD:${parsed.path}` : `:${parsed.path}`;
+    const rev =
+      parsed.side === 'HEAD' ? `HEAD:${parsed.path}` : parsed.side === 'rev' ? `${parsed.rev}:${parsed.path}` : `:${parsed.path}`;
     const obj = await repo?.backend.object(rev);
     return obj?.data.toString('utf8') ?? '';
   }

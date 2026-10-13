@@ -60,7 +60,7 @@ export function activeDiff(): ActiveDiff | undefined {
   const right = parseGitUri(input.modified);
   const uris = { original: input.original, modified: input.modified };
   // 左が index か empty（untracked）で、右が実ファイルか empty（削除）なら unstaged
-  if (left.side !== 'HEAD' && (input.modified.scheme === 'file' || right?.side === 'empty')) {
+  if ((left.side === 'index' || left.side === 'empty') && (input.modified.scheme === 'file' || right?.side === 'empty')) {
     return { kind: 'unstaged', root: left.root, path: left.path, headPath: left.path, ...uris };
   }
   // 右が index か、左が HEAD で右が empty（削除を stage 済み）なら staged
