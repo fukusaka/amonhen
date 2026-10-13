@@ -40,7 +40,8 @@ export async function mergeInto(
       if (!plan.checkedOut) {
         await backend.switchTo({ branch: target, oid: plan.targetOid });
       }
-      return backend.merge(source);
+      // 短い名前で渡すと、merge コミットのメッセージが git の通常どおり「Merge branch 'feature'」になる
+      return backend.merge(shortName(source));
     },
     { skip: (r) => r === 'conflict' },
   );

@@ -68,6 +68,7 @@ test('merge into a branch that is not checked out switches to it, and undo switc
   assert.equal(await mergeInto(backend, undo, H('feature'), H('main')), 'done');
   assert.equal(git('branch', '--show-current'), 'main');
   assert.equal(git('rev-list', '--count', '--merges', 'main'), '1');
+  assert.equal(git('log', '-1', '--format=%s', 'main'), "Merge branch 'feature'");
 
   assert.equal((await undo.undo())?.label, 'Merge feature into main');
   assert.equal(git('rev-parse', 'main'), main);
