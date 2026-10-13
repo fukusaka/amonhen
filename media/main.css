@@ -446,3 +446,293 @@ button.secondary {
 .editor button {
   padding: 4px 12px;
 }
+
+/* Working Copy */
+
+.working-copy .split {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.wc-side {
+  flex: none;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--vscode-panel-border);
+}
+
+.wc-files {
+  flex: 1;
+  overflow-y: auto;
+  outline: none;
+  padding-bottom: 8px;
+}
+
+.wc-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px 2px;
+  font-size: 0.85em;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: var(--vscode-descriptionForeground);
+}
+
+.wc-group .count {
+  font-weight: normal;
+}
+
+.wc-group .link {
+  margin-left: auto;
+  padding: 0;
+  color: var(--vscode-textLink-foreground);
+  background: none;
+  font-size: 0.95em;
+  text-transform: none;
+  font-weight: normal;
+}
+
+.wc-file {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+  padding: 0 8px 0 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.wc-file:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.wc-file.selected {
+  background: var(--vscode-list-inactiveSelectionBackground);
+}
+
+.wc-files:focus .wc-file.selected {
+  color: var(--vscode-list-activeSelectionForeground);
+  background: var(--vscode-list-activeSelectionBackground);
+}
+
+.wc-file .status,
+.file .status {
+  width: 1em;
+  flex: none;
+  text-align: center;
+  font-weight: bold;
+}
+
+.wc-file .dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--vscode-descriptionForeground);
+  font-size: 0.9em;
+}
+
+.s-A,
+.s-C {
+  color: var(--vscode-gitDecoration-addedResourceForeground);
+}
+
+.s-M,
+.s-T {
+  color: var(--vscode-gitDecoration-modifiedResourceForeground);
+}
+
+.s-D {
+  color: var(--vscode-gitDecoration-deletedResourceForeground);
+}
+
+.s-R {
+  color: var(--vscode-gitDecoration-renamedResourceForeground);
+}
+
+.s-U {
+  color: var(--vscode-gitDecoration-untrackedResourceForeground, var(--vscode-gitDecoration-addedResourceForeground));
+}
+
+.icon-button {
+  visibility: hidden;
+  width: 20px;
+  height: 18px;
+  padding: 0;
+  line-height: 18px;
+  color: var(--vscode-foreground);
+  background: transparent;
+}
+
+.wc-file:hover .icon-button,
+.wc-file.selected .icon-button {
+  visibility: visible;
+}
+
+.icon-button:hover {
+  background: var(--vscode-toolbar-hoverBackground, var(--vscode-list-hoverBackground));
+}
+
+.wc-commit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.wc-commit input.subject,
+.wc-commit textarea {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 4px 6px;
+  color: var(--vscode-input-foreground);
+  background: var(--vscode-input-background);
+  border: 1px solid var(--vscode-input-border, transparent);
+  font: inherit;
+}
+
+.wc-commit textarea {
+  resize: vertical;
+  font-family: var(--vscode-editor-font-family);
+}
+
+.wc-commit input.subject:focus,
+.wc-commit textarea:focus {
+  outline: 1px solid var(--vscode-focusBorder);
+}
+
+.commit-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.commit-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.wc-diff {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  outline: none;
+}
+
+.wc-diff .empty,
+.wc-files .empty {
+  padding: 16px;
+  color: var(--vscode-descriptionForeground);
+}
+
+.diff-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editor-background);
+}
+
+.diff-head .path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: bold;
+}
+
+.diff-head .actions {
+  display: flex;
+  gap: 6px;
+}
+
+.hunk {
+  margin: 8px 12px 12px;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.hunk-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 8px;
+  color: var(--vscode-descriptionForeground);
+  background: var(--vscode-editorGroupHeader-tabsBackground, var(--vscode-sideBar-background));
+  font-family: var(--vscode-editor-font-family);
+  font-size: 0.9em;
+}
+
+.lines {
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  line-height: 1.5;
+}
+
+.line {
+  display: flex;
+  white-space: pre;
+}
+
+.line .no {
+  flex: none;
+  width: 4ch;
+  padding: 0 6px;
+  text-align: right;
+  color: var(--vscode-editorLineNumber-foreground);
+  user-select: none;
+}
+
+.line .sign {
+  flex: none;
+  width: 2ch;
+  text-align: center;
+  user-select: none;
+}
+
+.line .code {
+  flex: 1;
+}
+
+.line.add {
+  background: var(--vscode-diffEditor-insertedLineBackground, rgba(155, 185, 85, 0.2));
+  cursor: pointer;
+}
+
+.line.del {
+  background: var(--vscode-diffEditor-removedLineBackground, rgba(255, 0, 0, 0.2));
+  cursor: pointer;
+}
+
+.line.add .word {
+  background: var(--vscode-diffEditor-insertedTextBackground, rgba(155, 185, 85, 0.4));
+}
+
+.line.del .word {
+  background: var(--vscode-diffEditor-removedTextBackground, rgba(255, 0, 0, 0.4));
+}
+
+.line.picked {
+  box-shadow: inset 3px 0 0 var(--vscode-focusBorder);
+  filter: brightness(1.25);
+}
+
+.conflict {
+  padding: 16px;
+}
+
+.conflict .buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

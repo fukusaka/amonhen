@@ -5,17 +5,12 @@
 import type { HostMessage, RepoSummary, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 import { createHistoryView } from './history.ts';
+import { createWorkingCopyView } from './workingCopy.ts';
 
 const NAV: { view: ViewName; label: string; icon: string }[] = [
   { view: 'workingCopy', label: 'Working Copy', icon: '●' },
   { view: 'history', label: 'History', icon: '◷' },
 ];
-
-function createWorkingCopyView(): View {
-  const root = el('div', 'view placeholder');
-  root.append(el('p', undefined, 'Working Copy は次のステップでこの画面に移します。'));
-  return { root, onMessage() {}, onShow() {} };
-}
 
 const views: Record<ViewName, View> = {
   workingCopy: createWorkingCopyView(),
@@ -68,7 +63,11 @@ function show(view: ViewName): void {
 
 function showRepo(repo: RepoSummary | undefined): void {
   repoName.textContent = repo?.name ?? 'No Repository';
-  repoBranch.textContent = repo ? (repo.sequence ? `${repo.sequence} in progress` : (repo.branch ?? 'detached HEAD')) : '';
+  repoBranch.textContent = repo
+    ? repo.sequence
+      ? `${repo.sequence} in progress`
+      : (repo.branch ?? 'detached HEAD')
+    : '';
   repoBranch.classList.toggle('warning', !!repo?.sequence);
   const changes = navItems.get('workingCopy')!.badge;
   changes.textContent = repo?.changes ? String(repo.changes) : '';
