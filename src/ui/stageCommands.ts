@@ -33,8 +33,16 @@ function changesOf(nodes: readonly Node[]): Change[] {
   return nodes.flatMap((n) => (n.kind === 'change' ? [n.change] : n.kind === 'group' ? n.changes : []));
 }
 
-async function stageFiles(repo: Repository | undefined, nodes: readonly Node[], op: 'stage' | 'unstage'): Promise<void> {
-  const changes = changesOf(nodes);
+function stageFiles(repo: Repository | undefined, nodes: readonly Node[], op: 'stage' | 'unstage'): Promise<void> {
+  return stageChanges(repo, changesOf(nodes), op);
+}
+
+/** ファイル単位で stage / unstage する。git の結果を待たずに画面を先に更新する */
+export async function stageChanges(
+  repo: Repository | undefined,
+  changes: readonly Change[],
+  op: 'stage' | 'unstage',
+): Promise<void> {
   if (!repo || changes.length === 0) {
     return;
   }
@@ -75,9 +83,17 @@ async function confirmMarkers(repo: Repository, changes: readonly Change[]): Pro
   return choice === 'Mark as Resolved';
 }
 
-/** コンフリクトしたファイルを、現在の側か取り込む側の内容で解決する */
-async function acceptSide(repo: Repository | undefined, nodes: readonly Node[], side: 'current' | 'incoming'): Promise<void> {
-  const files = changesOf(nodes).flatMap((c) => (c.conflict ? [{ path: c.path, conflict: c.conflict }] : []));
+function acceptSide(repo: Repository | undefined, nodes: readonly Node[], side: 'current' | 'incoming'): Promise<void> {
+  return acceptConflicts(repo, changesOf(nodes), side);
+}
+
+/** コンフリクトしたファイルを、現在の側か取り込む側の内容で解決する。確認してから行う */
+export async function acceptConflicts(
+  repo: Repository | undefined,
+  changes: readonly Change[],
+  side: 'current' | 'incoming',
+): Promise<void> {
+  const files = changes.flatMap((c) => (c.conflict ? [{ path: c.path, conflict: c.conflict }] : []));
   if (!repo || files.length === 0) {
     return;
   }
@@ -181,7 +197,7 @@ function isBinary(data: Buffer): boolean {
 }
 
 /** index にあればそのモード、無ければ実ファイルの実行ビットから決める */
-async function indexMode(repo: Repository, path: string, abs: string): Promise<string> {
+export async function indexMode(repo: Repository, path: string, abs: string): Promise<string> {
   const entry = repo.current.status?.entries.find((e) => e.path === path);
   if (entry?.modeIndex && entry.modeIndex !== '000000') {
     return entry.modeIndex;
