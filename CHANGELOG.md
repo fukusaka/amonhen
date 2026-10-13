@@ -20,4 +20,7 @@
   - コンフリクトで止まったら、Abort で中止できる。
 - 直前の操作（コミット、Merge、Rebase、fast-forward）を Undo する。記録は VSCode を再起動しても残る。
 - Fetch ボタン（すべてのリモートから取得し、消えたリモートブランチを片付ける）。
+- History ビュー。コミットのグラフを表示し、200 件ずつ読み込む。ダブルクリックでコミットの変更を複数ファイル diff で開く。
+- History の右クリックから、コミットを Reword / Squash / Fixup / Edit / Split / Drop / 並べ替えする（ドラッグでも並べ替えられる）。どれも Undo できる。
+- merge や rebase が途中で止まっているとき、Working Copy の先頭に表示し、Continue / Abort できる。
 - GitHub Releases から正式版または snapshot 版を入れるスクリプト（`scripts/install.sh`）。
