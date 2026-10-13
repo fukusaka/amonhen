@@ -15,4 +15,9 @@
 - ファイル単位の stage / unstage。複数選択やグループ単位でもできる。
 - diff エディタで選んだ行、またはカーソルのある hunk だけを stage / unstage する（`ctrl+alt+s` / `ctrl+alt+u`）。
 - stage 済みの変更をコミットする（メッセージは 1 行）。
+- ブランチのドラッグ＆ドロップで Merge / Rebase / Push / Force Push する。
+  - ドロップ先が checkout されていなくても、fast-forward で済むなら checkout せずに進める。
+  - コンフリクトで止まったら、Abort で中止できる。
+- 直前の操作（コミット、Merge、Rebase、fast-forward）を Undo する。記録は VSCode を再起動しても残る。
+- Fetch ボタン（すべてのリモートから取得し、消えたリモートブランチを片付ける）。
 - GitHub Releases から正式版または snapshot 版を入れるスクリプト（`scripts/install.sh`）。
