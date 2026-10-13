@@ -3,8 +3,12 @@ import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
-import type { HostMessage, RepoSummary, ViewName, WebviewMessage } from '../view/protocol.ts';
+import { splitRemoteRef, type Ref } from '../git/refs.ts';
+import { shortName } from '../state/operations.ts';
+import type { HostMessage, NavRef, NavRefs, RepoSummary, ViewName, WebviewMessage } from '../view/protocol.ts';
+import { pickAndRun } from './dragDrop.ts';
 import { HistoryController } from './historyController.ts';
+import { showError } from './stageCommands.ts';
 import { WorkingCopyController } from './workingCopyController.ts';
 
 /**
@@ -88,10 +92,16 @@ export class MainPanel implements vscode.Disposable {
   private watch(repo: Repository | undefined): void {
     this.repoListener?.dispose();
     this.repo = repo;
-    this.repoListener = repo?.onDidChange(() => this.postSummary());
+    this.repoListener = repo?.onDidChange((changed) => {
+      this.postSummary();
+      if (changed.has('branches') || changed.has('remotes') || changed.has('tags') || changed.has('stashes')) {
+        this.postRefs();
+      }
+    });
     this.panel.title = repo ? `Amon Hen: ${basename(repo.root)}` : 'Amon Hen';
     if (this.ready) {
       this.postSummary();
+      this.postRefs();
       this.history.setRepository(repo);
       this.workingCopy.setRepository(repo);
     }
@@ -112,11 +122,39 @@ export class MainPanel implements vscode.Disposable {
     this.post({ type: 'repo', repo: summary });
   }
 
+  private postRefs(): void {
+    const state = this.repo?.current;
+    if (!state) {
+      this.post({ type: 'refs', refs: { branches: [], remotes: [] } });
+      return;
+    }
+    const nav = (r: Ref): NavRef => {
+      const item: NavRef = { ref: r.name, name: shortName(r.name) };
+      if (r.isHead) item.current = true;
+      if (r.ahead) item.ahead = r.ahead;
+      if (r.behind) item.behind = r.behind;
+      if (r.gone) item.gone = true;
+      if (r.upstream) item.upstream = r.upstream;
+      return item;
+    };
+    const names = (state.remotes ?? []).map((r) => r.name);
+    const remotes = names.map((name) => ({ name, branches: [] as NavRef[] }));
+    for (const r of state.remoteBranches ?? []) {
+      const split = r.symref ? undefined : splitRemoteRef(r.name, names);
+      remotes.find((x) => x.name === split?.remote)?.branches.push(nav(r));
+    }
+    const refs: NavRefs = { branches: (state.branches ?? []).map(nav), remotes };
+    if (state.tags) refs.tags = [...state.tags].sort((a, b) => b.date - a.date).map(nav);
+    if (state.stashes) refs.stashes = state.stashes.map((s) => ({ name: s.name, subject: s.subject }));
+    this.post({ type: 'refs', refs });
+  }
+
   private async onMessage(message: WebviewMessage): Promise<void> {
     switch (message.type) {
       case 'ready':
         this.ready = true;
         this.postSummary();
+        this.postRefs();
         if (this.pendingView) {
           this.post({ type: 'show', view: this.pendingView });
           this.pendingView = undefined;
@@ -125,6 +163,21 @@ export class MainPanel implements vscode.Disposable {
         this.workingCopy.setRepository(this.repo);
         break;
       case 'view':
+        break;
+      case 'navExpand':
+        await this.repo?.want(message.section);
+        break;
+      case 'showRef':
+        this.history.setScope(`ref:${message.ref}`);
+        break;
+      case 'checkout':
+        await this.checkout(message.ref);
+        break;
+      case 'dropRef':
+        if (this.repo) await pickAndRun(this.repo, message.source, message.target);
+        break;
+      case 'command':
+        await vscode.commands.executeCommand(`amonhen.${message.command}`);
         break;
       case 'wcSelect':
       case 'wcStageFiles':
@@ -136,6 +189,24 @@ export class MainPanel implements vscode.Disposable {
         break;
       default:
         await this.history.handle(message);
+    }
+  }
+
+  /** ローカルブランチなら切り替え、リモートブランチなら追跡するブランチを作って切り替える */
+  async checkout(ref: string): Promise<void> {
+    const repo = this.repo;
+    if (!repo) return;
+    try {
+      if (ref.startsWith('refs/heads/')) {
+        await repo.backend.switchBranch(shortName(ref));
+      } else if (ref.startsWith('refs/remotes/')) {
+        const local = (repo.current.branches ?? []).find((b) => b.upstream === ref);
+        await (local ? repo.backend.switchBranch(shortName(local.name)) : repo.backend.trackBranch(shortName(ref)));
+      }
+    } catch (err) {
+      showError(err);
+    } finally {
+      await repo.refresh();
     }
   }
 

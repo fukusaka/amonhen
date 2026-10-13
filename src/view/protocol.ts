@@ -16,12 +16,51 @@ export interface RepoSummary {
   sequence?: string;
 }
 
+/** ナビに出すブランチ・リモートブランチ・タグ */
+export interface NavRef {
+  /** `refs/heads/main` など */
+  ref: string;
+  /** 表示名（`main`、`origin/main`、`v1.0`） */
+  name: string;
+  current?: boolean;
+  ahead?: number;
+  behind?: number;
+  /** upstream がリモートから消えている */
+  gone?: boolean;
+  upstream?: string;
+}
+
+export interface NavRefs {
+  branches: NavRef[];
+  remotes: { name: string; branches: NavRef[] }[];
+  /** 展開されるまで送らない */
+  tags?: NavRef[];
+  stashes?: { name: string; subject: string }[];
+}
+
+/** ドラッグしたもの。tag とリモートブランチは local でない */
+export interface DragSource {
+  ref: string;
+  local: boolean;
+  upstream?: string;
+}
+
+/** ドロップ先 */
+export type DropTarget =
+  | { kind: 'branch'; ref: string }
+  | { kind: 'remote'; remote: string }
+  | { kind: 'remoteBranch'; remote: string; ref: string };
+
+/** ナビのツールバーから実行するコマンド（`amonhen.<name>`） */
+export type ToolbarCommand = 'fetch' | 'pull' | 'push' | 'undo';
+
 export type HostMessage =
   | HistoryHostMessage
   | WorkingCopyHostMessage
   | { type: 'repo'; repo: RepoSummary | undefined }
   /** 指定した画面に切り替える */
-  | { type: 'show'; view: ViewName };
+  | { type: 'show'; view: ViewName }
+  | { type: 'refs'; refs: NavRefs };
 
 export type WebviewMessage =
   | HistoryWebviewMessage
@@ -29,4 +68,12 @@ export type WebviewMessage =
   /** Webview の準備ができた */
   | { type: 'ready' }
   /** 画面を切り替えた */
-  | { type: 'view'; view: ViewName };
+  | { type: 'view'; view: ViewName }
+  /** Tags や Stashes を展開した */
+  | { type: 'navExpand'; section: 'tags' | 'stashes' }
+  /** ブランチなどを選んだ。History でその履歴を見る */
+  | { type: 'showRef'; ref: string }
+  /** ブランチをダブルクリックした。ローカルなら切り替え、リモートなら追跡するブランチを作る */
+  | { type: 'checkout'; ref: string }
+  | { type: 'dropRef'; source: DragSource; target: DropTarget }
+  | { type: 'command'; command: ToolbarCommand };

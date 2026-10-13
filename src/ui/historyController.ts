@@ -63,6 +63,12 @@ export class HistoryController implements vscode.Disposable {
     this.post = post;
   }
 
+  /** 履歴の範囲を変えて読み直す */
+  setScope(scope: Scope): void {
+    this.scope = scope;
+    void this.reset();
+  }
+
   /** 表示するリポジトリを切り替えて読み直す */
   setRepository(repo: Repository | undefined): void {
     this.repoListener?.dispose();
@@ -221,7 +227,12 @@ export class HistoryController implements vscode.Disposable {
     }
     this.loading = true;
     const generation = this.generation;
-    const revs = this.scope === 'all' ? ['HEAD', '--branches', '--remotes', '--tags'] : ['HEAD'];
+    const revs =
+      this.scope === 'all'
+        ? ['HEAD', '--branches', '--remotes', '--tags']
+        : this.scope.startsWith('ref:')
+          ? [this.scope.slice('ref:'.length)]
+          : ['HEAD'];
     let page: Commit[] = [];
     try {
       page = this.headOid ? await repo.backend.log(revs, this.commits.length, PAGE) : [];

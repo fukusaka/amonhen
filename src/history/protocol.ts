@@ -4,7 +4,8 @@ import type { FileDiff } from '../diff/fileDiff.ts';
 import type { FileChange } from '../git/log.ts';
 import type { GraphRow } from './graph.ts';
 
-export type Scope = 'head' | 'all';
+/** 履歴の範囲。現在のブランチ、すべて、または `ref:refs/heads/x` のような 1 つの ref */
+export type Scope = 'head' | 'all' | `ref:${string}`;
 
 export interface RefLabel {
   name: string;

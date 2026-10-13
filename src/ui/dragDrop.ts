@@ -8,23 +8,11 @@ import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
 import { mergeInto, rebaseOnto, shortName, type OperationResult } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
+import type { DragSource, DropTarget } from '../view/protocol.ts';
 import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 
 const MIME = 'application/vnd.code.tree.amonhen.sidebar';
-
-/** ドラッグしたもの。tag とリモートブランチは local でない */
-export interface DragSource {
-  ref: string;
-  local: boolean;
-  upstream?: string;
-}
-
-/** ドロップ先 */
-export type DropTarget =
-  | { kind: 'branch'; ref: string }
-  | { kind: 'remote'; remote: string }
-  | { kind: 'remoteBranch'; remote: string; ref: string };
 
 export interface Action {
   label: string;
