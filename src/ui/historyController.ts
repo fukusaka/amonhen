@@ -1,5 +1,6 @@
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
+import { computeDiff, type FileDiff } from '../diff/fileDiff.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
 import type { Commit } from '../git/log.ts';
 import { GraphBuilder } from '../history/graph.ts';
@@ -22,6 +23,8 @@ const PAGE = 200;
 const EDITABLE_LIMIT = 500;
 /** 詳細を覚えておくコミットの数 */
 const DETAILS_CACHE = 100;
+/** 差分を覚えておくファイルの数 */
+const DIFF_CACHE = 200;
 
 /**
  * メインビューの History の拡張ホスト側。
@@ -53,6 +56,8 @@ export class HistoryController implements vscode.Disposable {
   private resetTimer: NodeJS.Timeout | undefined;
   /** 一度取ったコミットの詳細。コミットの内容は変わらないので、ref のラベル以外はそのまま使える */
   private readonly details = new Map<string, Omit<CommitDetails, 'refs'>>();
+  /** 一度求めたファイルの差分。キーは `oid:path` */
+  private readonly diffs = new Map<string, FileDiff>();
 
   constructor(post: (message: HistoryHostMessage) => void) {
     this.post = post;
@@ -101,6 +106,9 @@ export class HistoryController implements vscode.Disposable {
         break;
       case 'select':
         await this.sendDetails(message.oid).catch(showError);
+        break;
+      case 'commitDiff':
+        await this.sendCommitDiff(message.oid, message.path).catch(showError);
         break;
       case 'openFile': {
         const details = this.details.get(message.oid);
@@ -151,6 +159,29 @@ export class HistoryController implements vscode.Disposable {
       }
     }
     this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] } });
+  }
+
+  private async sendCommitDiff(oid: string, path: string): Promise<void> {
+    const repo = this.repo;
+    const details = this.details.get(oid);
+    const file = details?.files.find((f) => f.path === path);
+    if (!repo || !details || !file) {
+      return;
+    }
+    const key = `${oid}:${path}`;
+    let diff = this.diffs.get(key);
+    if (!diff) {
+      const parent = details.parents[0];
+      const object = async (rev: string) => (await repo.backend.object(rev))?.data;
+      const old = file.status === 'A' || !parent ? undefined : await object(`${parent}:${file.origPath ?? file.path}`);
+      const now = file.status === 'D' ? undefined : await object(`${oid}:${file.path}`);
+      diff = computeDiff(path, old, now).diff;
+      this.diffs.set(key, diff);
+      if (this.diffs.size > DIFF_CACHE) {
+        this.diffs.delete(this.diffs.keys().next().value!);
+      }
+    }
+    this.post({ type: 'commitDiff', oid, path, diff });
   }
 
   /** 最初から読み直す */
