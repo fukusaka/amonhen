@@ -45,7 +45,9 @@ export async function activate(
     vscode.commands.registerCommand('amonhen.refresh', () => manager.current?.refresh()),
     vscode.commands.registerCommand('amonhen.selectRepository', () => manager.pick()),
     vscode.commands.registerCommand('amonhen.checkout', (node: Node) => checkout(manager, node)),
-    vscode.commands.registerCommand('amonhen.openChange', (root: string, change: Change) => openChangeDiff(root, change)),
+    vscode.commands.registerCommand('amonhen.openChange', (root: string, change: Change) =>
+      openChangeDiff(root, change, manager.get(root)?.current.sequence),
+    ),
     trackActiveDiff(),
     registerStageCommands(manager),
     registerCommitCommand(manager),

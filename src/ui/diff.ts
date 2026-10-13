@@ -1,5 +1,7 @@
 import { basename, join } from 'node:path';
 import * as vscode from 'vscode';
+import type { Sequence } from '../git/backend.ts';
+import { conflictSides } from '../git/status.ts';
 import type { Change } from './sidebar.ts';
 import { gitUri, parseGitUri } from './uri.ts';
 
@@ -7,14 +9,18 @@ import { gitUri, parseGitUri } from './uri.ts';
  * Working Copy の変更を標準の diff エディタで開く。
  * - Changes: index ↔ working tree（右側は実ファイルなので、そのまま編集できる）
  * - Staged: HEAD ↔ index
+ * - Conflicts: 標準の 3-way マージエディタ
  */
-export async function openChangeDiff(root: string, change: Change): Promise<void> {
+export async function openChangeDiff(root: string, change: Change, sequence?: Sequence): Promise<void> {
   const file = vscode.Uri.file(join(root, change.path));
   const name = basename(change.path);
   const opts: vscode.TextDocumentShowOptions = { preview: true };
   switch (change.group) {
     case 'conflicts':
-      await vscode.commands.executeCommand('vscode.open', file);
+      if (!(await openMergeEditor(root, change, sequence))) {
+        // 片側が削除されたコンフリクトなど。サイドバーの Accept Current / Incoming で解決する
+        await vscode.commands.executeCommand('vscode.open', file);
+      }
       return;
     case 'unstaged': {
       const left = gitUri(root, change.path, change.letter === 'U' ? 'empty' : 'index');
@@ -29,6 +35,34 @@ export async function openChangeDiff(root: string, change: Change): Promise<void
       await vscode.commands.executeCommand('vscode.diff', left, right, `${name} (HEAD ↔ Index)`, opts);
       return;
     }
+  }
+}
+
+/**
+ * 標準の 3-way マージエディタで開く。base・current・incoming は index の stage 1・2・3。
+ * マージエディタを開く公開 API は無いので、組み込みの Git 拡張と同じ内部コマンドを使う。
+ * 開けなかったら false
+ */
+async function openMergeEditor(root: string, change: Change, sequence: Sequence | undefined): Promise<boolean> {
+  const sides = conflictSides(change.conflict ?? 'UU');
+  if (!sides.current || !sides.incoming) {
+    return false;
+  }
+  // rebase では HEAD が rebase 先で、取り込む側が自分のコミットになる
+  const [current, incoming] =
+    sequence === 'rebase'
+      ? ['rebase 先（HEAD）', '当てているコミット']
+      : ['現在のブランチ（HEAD）', `${sequence ?? 'merge'} で取り込む側`];
+  try {
+    await vscode.commands.executeCommand('_open.mergeEditor', {
+      base: sides.base ? gitUri(root, change.path, 'rev', ':1') : gitUri(root, change.path, 'empty'),
+      input1: { uri: gitUri(root, change.path, 'rev', ':2'), title: 'Current', description: current },
+      input2: { uri: gitUri(root, change.path, 'rev', ':3'), title: 'Incoming', description: incoming },
+      output: vscode.Uri.file(join(root, change.path)),
+    });
+    return true;
+  } catch {
+    return false;
   }
 }
 
