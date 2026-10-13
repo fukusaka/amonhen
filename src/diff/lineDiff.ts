@@ -186,25 +186,45 @@ export function applySelection(
   collapsed: boolean,
 ): string {
   const inRanges = (line: number) => selection.ranges.some((r) => r.start <= line && line <= r.end);
+  const removeBase = new Set<number>();
+  const addTarget = new Set<number>();
+  for (const c of changes) {
+    const whole = collapsed && touches(c, selection);
+    for (let i = c.baseStart; i < c.baseEnd; i++) {
+      if (whole || (!collapsed && selection.side === 'base' && inRanges(i))) removeBase.add(i);
+    }
+    for (let i = c.targetStart; i < c.targetEnd; i++) {
+      if (whole || (!collapsed && selection.side === 'target' && inRanges(i))) addTarget.add(i);
+    }
+  }
+  return applyLineSets(base, target, changes, removeBase, addTarget);
+}
+
+/**
+ * base に、選んだ行の変更だけを当てた内容を返す。
+ * removeBase は消す base の行、addTarget は足す target の行（どちらも 0 始まり）。変更に含まれない行は無視する。
+ */
+export function applyLineSets(
+  base: readonly string[],
+  target: readonly string[],
+  changes: readonly LineChange[],
+  removeBase: ReadonlySet<number>,
+  addTarget: ReadonlySet<number>,
+): string {
   const out: string[] = [];
   let pos = 0;
   for (const c of changes) {
     for (; pos < c.baseStart; pos++) {
       out.push(base[pos]!);
     }
-    const whole = collapsed && touches(c, selection);
-    const removed: boolean[] = [];
-    for (let i = c.baseStart; i < c.baseEnd; i++) {
-      removed.push(whole || (!collapsed && selection.side === 'base' && inRanges(i)));
-    }
     // 削除しない行を先に残し、そのあとに追加する行を置く
     for (let i = c.baseStart; i < c.baseEnd; i++) {
-      if (!removed[i - c.baseStart]) {
+      if (!removeBase.has(i)) {
         out.push(base[i]!);
       }
     }
     for (let i = c.targetStart; i < c.targetEnd; i++) {
-      if (whole || (!collapsed && selection.side === 'target' && inRanges(i))) {
+      if (addTarget.has(i)) {
         out.push(target[i]!);
       }
     }
