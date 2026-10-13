@@ -30,7 +30,11 @@ export class GitError extends Error {
   }
 }
 
-const BASE_ENV = { GIT_TERMINAL_PROMPT: '0' };
+const BASE_ENV = {
+  GIT_TERMINAL_PROMPT: '0',
+  // エディタを待って止まらないようにする。メッセージが必要な操作は引数で渡す
+  GIT_EDITOR: 'true',
+};
 
 export class GitExecutor {
   readonly path: string;
