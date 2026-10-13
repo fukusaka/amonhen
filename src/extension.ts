@@ -11,6 +11,7 @@ import { SidebarProvider, type Node } from './ui/sidebar.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
+import { registerNavCommands } from './ui/navCommands.ts';
 import { registerSequenceCommands } from './ui/sequenceCommands.ts';
 import { registerStageCommands } from './ui/stageCommands.ts';
 import { registerSyncCommands } from './ui/syncCommands.ts';
@@ -58,6 +59,7 @@ export async function activate(
     registerSyncCommands(manager),
     registerSequenceCommands(manager),
     registerHistoryCommands(),
+    registerNavCommands(),
     vscode.commands.registerCommand('amonhen.open', () => MainPanel.show(context.extensionUri, manager)),
     vscode.commands.registerCommand('amonhen.showHistory', () => MainPanel.show(context.extensionUri, manager, 'history')),
   );
