@@ -2,57 +2,43 @@
  * メインビュー。左のナビで画面を切り替え、右に出す。
  * 切り替えはこの中だけで行い、拡張ホストとの往復を待たない。
  */
-import type { HostMessage, RepoSummary, ViewName } from '../view/protocol.ts';
+import type { HostMessage, ViewName } from '../view/protocol.ts';
 import { el, getState, post, updateState, type View } from './api.ts';
 import { createHistoryView } from './history.ts';
+import { createNav } from './nav.ts';
 import { createWorkingCopyView } from './workingCopy.ts';
-
-const NAV: { view: ViewName; label: string; icon: string }[] = [
-  { view: 'workingCopy', label: 'Working Copy', icon: '●' },
-  { view: 'history', label: 'History', icon: '◷' },
-];
 
 const views: Record<ViewName, View> = {
   workingCopy: createWorkingCopyView(),
   history: createHistoryView(),
 };
 
+const nav = createNav(
+  (view) => show(view),
+  (ref) => {
+    // ブランチなどを選んだら、その履歴を History に出す
+    show('history', ref);
+    post({ type: 'showRef', ref });
+  },
+);
+
 const app = el('div', 'app');
-const nav = el('nav', 'nav');
-const repoName = el('div', 'repo-name');
-const repoBranch = el('div', 'repo-branch');
-const navHead = el('div', 'nav-head');
-navHead.append(repoName, repoBranch);
-nav.append(navHead);
-
-const navItems = new Map<ViewName, { item: HTMLElement; badge: HTMLElement }>();
-for (const { view, label, icon } of NAV) {
-  const item = el('button', 'nav-item');
-  item.type = 'button';
-  const badge = el('span', 'badge');
-  item.append(el('span', 'icon', icon), el('span', 'label', label), badge);
-  item.addEventListener('click', () => show(view));
-  nav.append(item);
-  navItems.set(view, { item, badge });
-}
-
 const content = el('div', 'content');
 for (const view of Object.values(views)) {
   content.append(view.root);
 }
-app.append(nav, content);
+app.append(nav.root, content);
 document.body.append(app);
 
 let current: ViewName | undefined;
 
-function show(view: ViewName): void {
+/** 画面を切り替える。ref を渡すと、ナビではその ref を選んだ状態にする */
+function show(view: ViewName, ref?: string): void {
+  nav.setActive(ref ? { ref } : { view });
   if (view === current) {
     return;
   }
   current = view;
-  for (const [name, { item }] of navItems) {
-    item.classList.toggle('active', name === view);
-  }
   for (const [name, v] of Object.entries(views)) {
     v.root.classList.toggle('active', name === view);
   }
@@ -61,23 +47,14 @@ function show(view: ViewName): void {
   views[view].onShow();
 }
 
-function showRepo(repo: RepoSummary | undefined): void {
-  repoName.textContent = repo?.name ?? 'No Repository';
-  repoBranch.textContent = repo
-    ? repo.sequence
-      ? `${repo.sequence} in progress`
-      : (repo.branch ?? 'detached HEAD')
-    : '';
-  repoBranch.classList.toggle('warning', !!repo?.sequence);
-  const changes = navItems.get('workingCopy')!.badge;
-  changes.textContent = repo?.changes ? String(repo.changes) : '';
-}
-
 window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
   const message = event.data;
   switch (message.type) {
     case 'repo':
-      showRepo(message.repo);
+      nav.setRepo(message.repo);
+      break;
+    case 'refs':
+      nav.setRefs(message.refs);
       break;
     case 'show':
       show(message.view);

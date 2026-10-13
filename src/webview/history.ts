@@ -39,6 +39,18 @@ export function createHistoryView(): View {
     option.value = value;
     scopeSelect.append(option);
   }
+  // ナビでブランチなどを選んだときは、その ref の選択肢を足す
+  const refOption = el('option');
+  function setScope(scope: Scope): void {
+    if (scope.startsWith('ref:')) {
+      refOption.value = scope;
+      refOption.textContent = scope.slice('ref:'.length).replace(/^refs\/(heads|remotes|tags)\//, '');
+      if (!refOption.parentElement) scopeSelect.append(refOption);
+    } else {
+      refOption.remove();
+    }
+    scopeSelect.value = scope;
+  }
   const status = el('span', 'status');
   toolbar.append(scopeSelect, status);
   const body = el('div', 'split');
@@ -515,7 +527,7 @@ export function createHistoryView(): View {
         requested = true;
         selected = -1;
         clearDetails();
-        scopeSelect.value = message.scope;
+        setScope(message.scope);
         list.scrollTop = 0;
         break;
       case 'rows':
