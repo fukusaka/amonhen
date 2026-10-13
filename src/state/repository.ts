@@ -30,6 +30,8 @@ export interface RepositoryState {
   submodules?: Submodule[];
   /** 途中で止まっている merge や rebase */
   sequence?: Sequence;
+  /** rebase の進み具合 */
+  progress?: { current: number; total: number };
 }
 
 interface Stamps {
@@ -132,8 +134,12 @@ export class Repository implements vscode.Disposable {
 
     const tasks: Promise<void>[] = [
       this.backend.sequenceInProgress().then(async (sequence) => {
+        const progress = sequence === 'rebase' ? await this.backend.rebaseProgress() : undefined;
         if (this.state.sequence !== sequence) {
           this.state.sequence = sequence;
+          changed.add('workingCopy');
+        }
+        if (this.replace('progress', progress)) {
           changed.add('workingCopy');
         }
         // edit や split で止まっていた rebase が終わっていれば、Undo の記録を確定する

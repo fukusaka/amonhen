@@ -37,7 +37,7 @@ export type Node =
   | { kind: 'tag'; ref: Ref }
   | { kind: 'stash'; stash: Stash }
   | { kind: 'submodule'; submodule: Submodule; state?: string }
-  | { kind: 'sequence'; sequence: Sequence };
+  | { kind: 'sequence'; sequence: Sequence; progress?: { current: number; total: number } };
 
 const SECTION_LABELS: Record<Section, string> = {
   workingCopy: 'Working Copy',
@@ -122,7 +122,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
     const state = repo.current;
     switch (section) {
       case 'workingCopy': {
-        const nodes: Node[] = state.sequence ? [{ kind: 'sequence', sequence: state.sequence }] : [];
+        const nodes: Node[] = state.sequence
+          ? [{ kind: 'sequence', sequence: state.sequence, progress: state.progress }]
+          : [];
         return nodes.concat(
           groupChanges(state.status?.entries ?? [])
             .filter(([, changes]) => changes.length > 0)
@@ -227,11 +229,12 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       }
       case 'sequence': {
         const name = node.sequence[0]!.toUpperCase() + node.sequence.slice(1);
-        const item = new vscode.TreeItem(`${name} in progress`);
+        const step = node.progress ? ` (${node.progress.current}/${node.progress.total})` : '';
+        const item = new vscode.TreeItem(`${name} in progress${step}`);
         item.id = 'sequence';
         item.description = '解決・コミットしてから Continue';
         item.iconPath = new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('notificationsWarningIcon.foreground'));
-        item.contextValue = 'sequence';
+        item.contextValue = `sequence.${node.sequence}`;
         return item;
       }
       case 'submodule': {

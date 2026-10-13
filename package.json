@@ -190,6 +190,12 @@
         "title": "Accept Incoming",
         "category": "Amon Hen",
         "icon": "$(arrow-right)"
+      },
+      {
+        "command": "amonhen.skipSequence",
+        "title": "Skip",
+        "category": "Amon Hen",
+        "icon": "$(debug-step-over)"
       }
     ],
     "menus": {
@@ -258,13 +264,13 @@
         },
         {
           "command": "amonhen.continueSequence",
-          "when": "view == amonhen.sidebar && viewItem == sequence",
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\./",
           "group": "inline@1"
         },
         {
           "command": "amonhen.abortSequence",
-          "when": "view == amonhen.sidebar && viewItem == sequence",
-          "group": "inline@2"
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\./",
+          "group": "inline@3"
         },
         {
           "command": "amonhen.acceptCurrent",
@@ -275,6 +281,11 @@
           "command": "amonhen.acceptIncoming",
           "when": "view == amonhen.sidebar && viewItem =~ /^(change|group)\\.conflicts$/",
           "group": "2_conflict@2"
+        },
+        {
+          "command": "amonhen.skipSequence",
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\.(rebase|cherry-pick|revert)$/",
+          "group": "inline@2"
         }
       ],
       "commandPalette": [
@@ -353,6 +364,10 @@
         {
           "command": "amonhen.acceptIncoming",
           "when": "false"
+        },
+        {
+          "command": "amonhen.skipSequence",
+          "when": "amonhen.hasRepository"
         }
       ],
       "editor/title": [
