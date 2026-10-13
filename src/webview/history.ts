@@ -1,10 +1,19 @@
 /**
- * History の Webview。見えている行だけを描く仮想スクロールで、グラフは行ごとの canvas に描く。
+ * History の Webview。左にコミットの一覧とグラフ、右に選んだコミットの詳細を出す。
+ * 一覧は見えている行だけを描く仮想スクロールで、グラフは行ごとの canvas に描く。
  * 末尾に近づいたら次のページを要求する。
  */
-import type { HostMessage, MessageEdit, RowData, Scope, WebviewMessage } from '../history/protocol.ts';
+import type { CommitDetails, HostMessage, MessageEdit, RowData, Scope, WebviewMessage } from '../history/protocol.ts';
 
-declare function acquireVsCodeApi(): { postMessage(message: WebviewMessage): void };
+interface State {
+  detailsWidth?: number;
+}
+
+declare function acquireVsCodeApi(): {
+  postMessage(message: WebviewMessage): void;
+  getState(): State | undefined;
+  setState(state: State): void;
+};
 
 const vscode = acquireVsCodeApi();
 const ROW_HEIGHT = 24;
@@ -28,6 +37,8 @@ const list = document.getElementById('list')!;
 const spacer = document.getElementById('spacer')!;
 const scopeSelect = document.getElementById('scope') as HTMLSelectElement;
 const status = document.getElementById('status')!;
+const detailsPane = document.getElementById('details')!;
+const splitter = document.getElementById('splitter')!;
 
 let rows: RowData[] = [];
 let done = false;
@@ -163,11 +174,15 @@ function formatDate(seconds: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+let selectTimer = 0;
+let shownOid: string | undefined;
+
 function select(index: number, reveal: boolean): void {
   if (index < 0 || index >= rows.length) {
     return;
   }
   selected = index;
+  requestDetails();
   if (reveal) {
     const top = index * ROW_HEIGHT;
     if (top < list.scrollTop) {
@@ -229,6 +244,122 @@ function editMessage(oid: string, kind: MessageEdit, title: string, message: str
     }
   });
 }
+
+/** 選択が落ち着いてから詳細を求める。矢印キーを押し続けても要求が溜まらないように */
+function requestDetails(): void {
+  const oid = rows[selected]?.oid;
+  if (!oid || oid === shownOid) {
+    return;
+  }
+  clearTimeout(selectTimer);
+  selectTimer = window.setTimeout(() => post({ type: 'select', oid }), 60);
+}
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, className?: string, text?: string): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function showDetails(d: CommitDetails): void {
+  if (d.oid !== rows[selected]?.oid) {
+    return;
+  }
+  shownOid = d.oid;
+  const [subject = '', ...rest] = d.message.replace(/\n+$/, '').split('\n');
+  const body = rest.join('\n').replace(/^\n+/, '');
+
+  const head = el('div', 'subject');
+  for (const ref of d.refs) {
+    head.append(el('span', `ref ${ref.kind}${ref.current ? ' current' : ''}`, ref.name));
+  }
+  head.append(el('span', '', subject));
+
+  const meta = el('dl', 'meta');
+  const add = (label: string, value: Node | string) => {
+    const dd = el('dd');
+    dd.append(value);
+    meta.append(el('dt', '', label), dd);
+  };
+  add('Author', `${d.author.name} <${d.author.email}>`);
+  add('Date', formatDate(d.author.date));
+  if (d.committer.name !== d.author.name || d.committer.date !== d.author.date) {
+    add('Committer', `${d.committer.name}  ${formatDate(d.committer.date)}`);
+  }
+  add('Commit', el('code', '', d.oid));
+  if (d.parents.length > 0) {
+    const parents = el('span');
+    for (const p of d.parents) {
+      const link = el('a', 'parent', p.slice(0, 8));
+      link.href = '#';
+      link.title = p;
+      link.addEventListener('click', (e) => {
+        e.preventDefault();
+        const index = rows.findIndex((r) => r.oid === p);
+        if (index >= 0) select(index, true);
+      });
+      parents.append(link, ' ');
+    }
+    add(d.parents.length > 1 ? 'Parents' : 'Parent', parents);
+  }
+
+  const files = el('div', 'files');
+  const filesHead = el('div', 'files-head');
+  const count = d.files.length;
+  filesHead.append(el('span', '', `${count} file${count === 1 ? '' : 's'} changed${d.parents.length > 1 ? '（最初の親との差分）' : ''}`));
+  if (count > 0) {
+    const all = el('button', 'secondary', 'Open All');
+    all.addEventListener('click', () => post({ type: 'open', oid: d.oid }));
+    filesHead.append(all);
+  }
+  files.append(filesHead);
+  for (const f of d.files) {
+    const row = el('div', 'file');
+    row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
+    row.append(el('span', `status s-${f.status}`, f.status));
+    const slash = f.path.lastIndexOf('/');
+    row.append(el('span', 'name', f.path.slice(slash + 1)));
+    if (slash >= 0) row.append(el('span', 'dir', f.path.slice(0, slash)));
+    row.addEventListener('click', () => {
+      for (const other of files.querySelectorAll('.file.active')) other.classList.remove('active');
+      row.classList.add('active');
+      post({ type: 'openFile', oid: d.oid, path: f.path });
+    });
+    files.append(row);
+  }
+
+  const parts: Node[] = [head, meta];
+  if (body) parts.push(el('pre', 'body', body));
+  parts.push(files);
+  detailsPane.replaceChildren(...parts);
+}
+
+function clearDetails(): void {
+  shownOid = undefined;
+  detailsPane.replaceChildren(el('div', 'empty', 'コミットを選ぶと、ここに詳細が出ます'));
+}
+
+// 左右の境目をドラッグして、詳細の幅を変える。幅は覚えておく
+function setDetailsWidth(width: number): void {
+  const max = Math.max(240, document.body.clientWidth - 240);
+  const clamped = Math.min(max, Math.max(240, width));
+  detailsPane.style.width = `${clamped}px`;
+  vscode.setState({ ...vscode.getState(), detailsWidth: clamped });
+}
+splitter.addEventListener('mousedown', (e) => {
+  e.preventDefault();
+  const onMove = (m: MouseEvent) => setDetailsWidth(document.body.clientWidth - m.clientX);
+  const onUp = () => {
+    window.removeEventListener('mousemove', onMove);
+    window.removeEventListener('mouseup', onUp);
+    document.body.classList.remove('resizing');
+    scheduleRender();
+  };
+  document.body.classList.add('resizing');
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+});
 
 function rowIndex(event: Event): number | undefined {
   const row = (event.target as HTMLElement).closest<HTMLElement>('.row');
@@ -332,6 +463,7 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
       done = false;
       requested = true;
       selected = -1;
+      clearDetails();
       scopeSelect.value = message.scope;
       list.scrollTop = 0;
       break;
@@ -339,11 +471,17 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
       rows.splice(message.start, rows.length - message.start, ...message.rows);
       done = message.done;
       requested = false;
-      if (selected < 0 && rows.length > 0) selected = 0;
+      if (selected < 0 && rows.length > 0) {
+        selected = 0;
+        requestDetails();
+      }
       break;
     case 'busy':
       document.body.classList.toggle('busy', message.busy);
       break;
+    case 'details':
+      showDetails(message.details);
+      return;
     case 'editMessage':
       editMessage(message.oid, message.kind, message.title, message.message);
       return;
@@ -352,4 +490,6 @@ window.addEventListener('message', (event: MessageEvent<HostMessage>) => {
 });
 
 resolveColors();
+clearDetails();
+setDetailsWidth(vscode.getState()?.detailsWidth ?? Math.round(document.body.clientWidth * 0.4));
 post({ type: 'ready' });
