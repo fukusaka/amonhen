@@ -4,6 +4,7 @@ import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import { splitRemoteRef, type Ref } from '../git/refs.ts';
+import { describeSubmodule } from '../git/status.ts';
 import { shortName } from '../state/operations.ts';
 import type { HostMessage, NavRef, NavRefs, RepoSummary, ViewName, WebviewMessage } from '../view/protocol.ts';
 import { pickAndRun } from './dragDrop.ts';
@@ -94,7 +95,13 @@ export class MainPanel implements vscode.Disposable {
     this.repo = repo;
     this.repoListener = repo?.onDidChange((changed) => {
       this.postSummary();
-      if (changed.has('branches') || changed.has('remotes') || changed.has('tags') || changed.has('stashes')) {
+      if (
+        changed.has('branches') ||
+        changed.has('remotes') ||
+        changed.has('tags') ||
+        changed.has('stashes') ||
+        changed.has('submodules')
+      ) {
         this.postRefs();
       }
     });
@@ -146,6 +153,13 @@ export class MainPanel implements vscode.Disposable {
     const refs: NavRefs = { branches: (state.branches ?? []).map(nav), remotes };
     if (state.tags) refs.tags = [...state.tags].sort((a, b) => b.date - a.date).map(nav);
     if (state.stashes) refs.stashes = state.stashes.map((s) => ({ name: s.name, subject: s.subject }));
+    if (state.submodules) {
+      const entries = new Map((state.status?.entries ?? []).map((e) => [e.path, e]));
+      refs.submodules = state.submodules.map((m) => ({
+        path: m.path,
+        state: m.initialized ? describeSubmodule(entries.get(m.path)) : 'not initialized',
+      }));
+    }
     this.post({ type: 'refs', refs });
   }
 

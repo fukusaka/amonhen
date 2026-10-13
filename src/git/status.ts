@@ -183,3 +183,16 @@ const CONFLICTS: Record<string, ConflictSides> = {
 export function conflictSides(xy: string): ConflictSides {
   return CONFLICTS[xy] ?? CONFLICTS.UU!;
 }
+
+/** サブモジュールの状態（`S<c><m><u>`）を短い説明にする。変化が無ければ undefined */
+export function describeSubmodule(entry: StatusEntry | undefined): string | undefined {
+  const s = entry?.submodule;
+  if (!s || s[0] !== 'S') {
+    return undefined;
+  }
+  const parts: string[] = [];
+  if (s[1] === 'C') parts.push('new commits');
+  if (s[2] === 'M') parts.push('modified');
+  if (s[3] === 'U') parts.push('untracked');
+  return parts.join(', ') || undefined;
+}

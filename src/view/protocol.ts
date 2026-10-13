@@ -36,6 +36,7 @@ export interface NavRefs {
   /** 展開されるまで送らない */
   tags?: NavRef[];
   stashes?: { name: string; subject: string }[];
+  submodules?: { path: string; state?: string }[];
 }
 
 /** ドラッグしたもの。tag とリモートブランチは local でない */
@@ -69,8 +70,8 @@ export type WebviewMessage =
   | { type: 'ready' }
   /** 画面を切り替えた */
   | { type: 'view'; view: ViewName }
-  /** Tags や Stashes を展開した */
-  | { type: 'navExpand'; section: 'tags' | 'stashes' }
+  /** Tags・Stashes・Submodules を展開した */
+  | { type: 'navExpand'; section: 'tags' | 'stashes' | 'submodules' }
   /** ブランチなどを選んだ。History でその履歴を見る */
   | { type: 'showRef'; ref: string }
   /** ブランチをダブルクリックした。ローカルなら切り替え、リモートなら追跡するブランチを作る */

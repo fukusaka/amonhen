@@ -25,7 +25,7 @@ const TOOLBAR: { command: ToolbarCommand; label: string; title: string }[] = [
   { command: 'undo', label: 'Undo', title: '直前の操作を戻す' },
 ];
 
-type Section = 'branches' | 'remotes' | 'tags' | 'stashes';
+type Section = 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules';
 
 const DRAG_TYPE = 'application/x-amonhen-ref';
 
@@ -69,12 +69,12 @@ export function createNav(onView: (view: ViewName) => void, onRef: (ref: string)
 
   let refs: NavRefs = { branches: [], remotes: [] };
   let active: { view: ViewName } | { ref: string } = { view: 'workingCopy' };
-  const collapsed = new Set<string>(getState().collapsed ?? ['remotes', 'tags', 'stashes']);
+  const collapsed = new Set<string>(getState().collapsed ?? ['remotes', 'tags', 'stashes', 'submodules']);
 
   function toggle(key: string): void {
     if (collapsed.has(key)) {
       collapsed.delete(key);
-      if (key === 'tags' || key === 'stashes') post({ type: 'navExpand', section: key });
+      if (key === 'tags' || key === 'stashes' || key === 'submodules') post({ type: 'navExpand', section: key });
     } else {
       collapsed.add(key);
     }
@@ -169,11 +169,20 @@ export function createNav(onView: (view: ViewName) => void, onRef: (ref: string)
         return item;
       }),
     );
+    section('submodules', 'Submodules', refs.submodules?.length, () =>
+      (refs.submodules ?? []).map((m) => {
+        const item = el('div', 'nav-ref submodule');
+        item.title = m.state ? `${m.path} (${m.state})` : m.path;
+        item.append(el('span', 'icon', '⧉'), el('span', 'label', m.path));
+        if (m.state) item.append(el('span', 'sync', m.state));
+        return item;
+      }),
+    );
     refsBox.replaceChildren(...parts);
   }
 
   // 開いた状態で始まる Tags / Stashes は最初から取得する
-  for (const key of ['tags', 'stashes'] as const) {
+  for (const key of ['tags', 'stashes', 'submodules'] as const) {
     if (!collapsed.has(key)) post({ type: 'navExpand', section: key });
   }
 
