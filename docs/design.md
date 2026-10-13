@@ -102,7 +102,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 毎日使う Working Copy と差分ビューからの stage を早めに作り、手応えを確かめる。
 
-- [ ] 1. git 実行レイヤーと状態の管理、サイドバーの TreeView
+- [x] 1. git 実行レイヤーと状態の管理、サイドバーの TreeView
 - [ ] 2. Working Copy と diff の表示、hunk・行単位の stage
 - [ ] 3. ドラッグ＆ドロップによる merge / rebase / push と Undo の基盤
 - [ ] 4. History の Webview とコミット編集（rebase 操作）
