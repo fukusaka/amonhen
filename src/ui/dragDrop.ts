@@ -13,6 +13,19 @@ import { showError } from './stageCommands.ts';
 
 const MIME = 'application/vnd.code.tree.amonhen.sidebar';
 
+/** ドラッグしたもの。tag とリモートブランチは local でない */
+export interface DragSource {
+  ref: string;
+  local: boolean;
+  upstream?: string;
+}
+
+/** ドロップ先 */
+export type DropTarget =
+  | { kind: 'branch'; ref: string }
+  | { kind: 'remote'; remote: string }
+  | { kind: 'remoteBranch'; remote: string; ref: string };
+
 interface Action {
   label: string;
   detail?: string;
@@ -41,52 +54,70 @@ export class SidebarDragAndDrop implements vscode.TreeDragAndDropController<Node
     if (!repo || !source || !target || (source.kind !== 'branch' && source.kind !== 'tag')) {
       return;
     }
-    const actions = dropActions(repo, source, target);
-    if (actions.length === 0) {
-      return;
-    }
-    const picked = await vscode.window.showQuickPick(actions, { placeHolder: 'ドロップしたときの操作を選ぶ' });
-    if (picked) {
-      await runAction(repo, picked);
+    const drop = toDropTarget(target);
+    if (drop) {
+      await pickAndRun(
+        repo,
+        { ref: source.ref.name, local: source.kind === 'branch' && !source.remote, upstream: source.ref.upstream },
+        drop,
+      );
     }
   }
 }
 
-function dropActions(repo: Repository, source: Extract<Node, { kind: 'branch' | 'tag' }>, target: Node): Action[] {
-  const sourceRef = source.ref.name;
+function toDropTarget(node: Node): DropTarget | undefined {
+  if (node.kind === 'branch') {
+    return node.remote
+      ? { kind: 'remoteBranch', remote: node.remote, ref: node.ref.name }
+      : { kind: 'branch', ref: node.ref.name };
+  }
+  if (node.kind === 'remote') {
+    return { kind: 'remote', remote: node.remote.name };
+  }
+  return undefined;
+}
+
+/** ドロップしたときの操作を選ばせて実行する */
+export async function pickAndRun(repo: Repository, source: DragSource, target: DropTarget): Promise<void> {
+  const actions = dropActions(repo, source, target);
+  if (actions.length === 0) {
+    return;
+  }
+  const picked = await vscode.window.showQuickPick(actions, { placeHolder: 'ドロップしたときの操作を選ぶ' });
+  if (picked) {
+    await runAction(repo, picked);
+  }
+}
+
+function dropActions(repo: Repository, source: DragSource, target: DropTarget): Action[] {
+  const sourceRef = source.ref;
   const src = shortName(sourceRef);
   const { backend, undo } = repo;
 
   // ローカルブランチへ: merge / rebase
-  if (target.kind === 'branch' && !target.remote) {
-    const targetRef = target.ref.name;
+  if (target.kind === 'branch') {
+    const targetRef = target.ref;
     if (targetRef === sourceRef) {
       return [];
     }
     const tgt = shortName(targetRef);
     return [
       { label: `$(git-merge) Merge ${src} into ${tgt}`, run: () => mergeInto(backend, undo, sourceRef, targetRef) },
-      { label: `$(git-pull-request) Rebase ${tgt} onto ${src}`, run: () => rebaseOnto(backend, undo, targetRef, sourceRef) },
+      {
+        label: `$(git-pull-request) Rebase ${tgt} onto ${src}`,
+        run: () => rebaseOnto(backend, undo, targetRef, sourceRef),
+      },
     ];
   }
 
   // リモートへ: push。送れるのはローカルブランチだけ
-  if (source.kind !== 'branch' || source.remote) {
+  if (!source.local) {
     return [];
   }
-  let remote: string;
-  let remoteBranch: string;
-  if (target.kind === 'remote') {
-    remote = target.remote.name;
-    remoteBranch = src;
-  } else if (target.kind === 'branch' && target.remote) {
-    remote = target.remote;
-    remoteBranch = target.ref.name.slice(`refs/remotes/${remote}/`.length);
-  } else {
-    return [];
-  }
+  const remote = target.remote;
+  const remoteBranch = target.kind === 'remote' ? src : target.ref.slice(`refs/remotes/${remote}/`.length);
   // upstream が無ければ、push 先を upstream にする
-  const setUpstream = !source.ref.upstream;
+  const setUpstream = !source.upstream;
   const dest = `${remote}/${remoteBranch}`;
   const detail = setUpstream ? `${dest} を upstream に設定する` : undefined;
   const push = (force: boolean) => async () => {
