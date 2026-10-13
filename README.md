@@ -36,9 +36,36 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 Working Copy の見出しかビューのタイトルにある ✓ ボタンから、stage 済みの変更をコミットする。
 
+### ドラッグ＆ドロップ
+
+Branches・Remotes・Tags の項目をドラッグして、ほかの項目にドロップする。ドロップすると操作の候補が出るので選ぶ。どの操作もドロップ先を書き換える。
+
+| ドラッグするもの | ドロップ先 | 選べる操作 |
+| --- | --- | --- |
+| ブランチ・リモートブランチ・タグ | ローカルブランチ | Merge（ドラッグしたものをドロップ先に merge）、Rebase（ドロップ先をドラッグしたものの上に rebase） |
+| ローカルブランチ | リモート、リモートブランチ | Push、Force Push（`--force-with-lease`） |
+
+- ドロップ先が checkout されていないとき、fast-forward で済むなら checkout せずにブランチだけ進める。そうでなければ checkout してから実行する。
+- upstream が無いブランチを push すると、push 先を upstream に設定する。
+- コンフリクトで止まったときは、中止（Abort）するか、自分で解決して `git merge --continue` / `git rebase --continue` を実行する。
+
+### Undo
+
+ビューのタイトルの Undo ボタンで、直前の操作を戻す。対象はコミット、Merge、Rebase、fast-forward。
+
+- コミットを戻すと、その変更は stage された状態に戻る。
+- Merge や Rebase を戻すと、作業中の変更は残したまま、ブランチと checkout していたブランチを操作の前に戻す。
+- 操作のあとでブランチが動いていたら、壊さないように Undo しない。
+- 記録は `.git/amonhen/undo.json` に残るので、VSCode を再起動しても戻せる。
+
+ビューのタイトルにはほかに、Fetch（すべてのリモートから取得し、消えたリモートブランチを片付ける）と Refresh がある。
+
 ### 今の制限
 
 - コミットメッセージは 1 行だけ。
+- コンフリクトの解決画面はまだ無い。
+- Push は Undo できない。
+- 認証の入力を求められる push・fetch はできない（SSH の鍵や credential helper で認証できる必要がある）。
 - 行単位の stage は、autocrlf などの git のフィルターを考慮しない。
 - 外部での変更がサイドバーに反映されるまで約 1 秒かかる（組み込みの Git 拡張の通知を待っているため）。
 
