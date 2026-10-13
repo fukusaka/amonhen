@@ -291,11 +291,11 @@ function changeItem(change: Change, root: string): vscode.TreeItem {
   item.id = `change:${change.group}:${change.path}`;
   const dir = dirname(change.path);
   item.description = dir === '.' ? undefined : dir;
-  // ファイルアイコンとバッジのため。クリックで開くのは実ファイル
+  // ファイルアイコンとバッジのため
   item.resourceUri = decorationUri(abs, change.letter);
   item.tooltip = change.origPath ? `${change.origPath} → ${change.path}` : change.path;
   item.contextValue = `change.${change.group}`;
-  item.command = { command: 'amonhen.openChange', title: 'Open', arguments: [abs, change] };
+  item.command = { command: 'amonhen.openChange', title: 'Open Diff', arguments: [root, change] };
   return item;
 }
 

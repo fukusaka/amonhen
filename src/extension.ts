@@ -1,10 +1,10 @@
-import { access } from 'node:fs/promises';
 import * as vscode from 'vscode';
 import { GitError } from './git/exec.ts';
 import { RepositoryManager } from './state/manager.ts';
 import { registerContentProvider } from './ui/content.ts';
 import { ChangeDecorationProvider } from './ui/decorations.ts';
-import { SidebarProvider, type Node } from './ui/sidebar.ts';
+import { openChangeDiff, trackActiveDiff } from './ui/diff.ts';
+import { SidebarProvider, type Change, type Node } from './ui/sidebar.ts';
 
 /** 戻り値は結合テストから中身を確かめるためのもの */
 export async function activate(context: vscode.ExtensionContext): Promise<{ manager: RepositoryManager; sidebar: SidebarProvider }> {
@@ -30,7 +30,8 @@ export async function activate(context: vscode.ExtensionContext): Promise<{ mana
     vscode.commands.registerCommand('amonhen.refresh', () => manager.current?.refresh()),
     vscode.commands.registerCommand('amonhen.selectRepository', () => manager.pick()),
     vscode.commands.registerCommand('amonhen.checkout', (node: Node) => checkout(manager, node)),
-    vscode.commands.registerCommand('amonhen.openChange', (path: string) => openChange(path)),
+    vscode.commands.registerCommand('amonhen.openChange', (root: string, change: Change) => openChangeDiff(root, change)),
+    trackActiveDiff(),
   );
 
   await manager.initialize();
@@ -57,14 +58,4 @@ async function checkout(manager: RepositoryManager, node: Node): Promise<void> {
   } finally {
     await repo.refresh();
   }
-}
-
-async function openChange(path: string): Promise<void> {
-  try {
-    await access(path);
-  } catch {
-    void vscode.window.showInformationMessage('ファイルは削除されています');
-    return;
-  }
-  await vscode.commands.executeCommand('vscode.open', vscode.Uri.file(path));
 }
