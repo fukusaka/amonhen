@@ -13,6 +13,8 @@ export interface StatusEntry {
   worktree: string;
   /** サブモジュールの状態（`N...` または `S<c><m><u>`） */
   submodule?: string;
+  /** index 側のファイルモード（`100644` など）。index に無いときは `000000` */
+  modeIndex?: string;
 }
 
 export interface BranchStatus {
@@ -78,6 +80,7 @@ export function parseStatus(output: string): StatusResult {
           index: xy[0]!,
           worktree: xy[1]!,
           submodule: submoduleField(tokens[2]!),
+          modeIndex: tokens[4],
         });
         break;
       }
@@ -91,6 +94,7 @@ export function parseStatus(output: string): StatusResult {
           index: xy[0]!,
           worktree: xy[1]!,
           submodule: submoduleField(tokens[2]!),
+          modeIndex: tokens[4],
         });
         break;
       }

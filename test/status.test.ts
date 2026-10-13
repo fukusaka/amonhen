@@ -10,7 +10,7 @@ test('parseStatus: headers and every record type', () => {
     '# branch.ab +2 -3',
     '# stash 4',
     '1 .M N... 100644 100644 100644 aaaa bbbb src/with space.ts',
-    '2 R. N... 100644 100644 100644 aaaa bbbb R100 new name.ts',
+    '2 R. N... 100644 100755 100755 aaaa bbbb R100 new name.ts',
     'old name.ts',
     'u UU N... 100644 100644 100644 100644 a b c conflict.ts',
     '1 .M S.M. 160000 160000 160000 aaaa bbbb sub',
@@ -27,10 +27,18 @@ test('parseStatus: headers and every record type', () => {
   });
   assert.equal(r.stashCount, 4);
   assert.deepEqual(r.entries, [
-    { kind: 'changed', path: 'src/with space.ts', index: '.', worktree: 'M', submodule: undefined },
-    { kind: 'renamed', path: 'new name.ts', origPath: 'old name.ts', index: 'R', worktree: '.', submodule: undefined },
+    { kind: 'changed', path: 'src/with space.ts', index: '.', worktree: 'M', submodule: undefined, modeIndex: '100644' },
+    {
+      kind: 'renamed',
+      path: 'new name.ts',
+      origPath: 'old name.ts',
+      index: 'R',
+      worktree: '.',
+      submodule: undefined,
+      modeIndex: '100755',
+    },
     { kind: 'unmerged', path: 'conflict.ts', index: 'U', worktree: 'U', submodule: undefined },
-    { kind: 'changed', path: 'sub', index: '.', worktree: 'M', submodule: 'S.M.' },
+    { kind: 'changed', path: 'sub', index: '.', worktree: 'M', submodule: 'S.M.', modeIndex: '160000' },
     { kind: 'untracked', path: 'untracked file', index: '?', worktree: '?' },
   ]);
 });
