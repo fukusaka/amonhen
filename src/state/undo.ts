@@ -3,7 +3,7 @@
  * 操作の前後で HEAD と関係する ref を記録し、`<gitDir>/amonhen/undo.json` に残す。
  * Undo するときは、今の状態が記録した「操作後」と一致することを確かめてから戻す。
  */
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { HeadState, RepositoryBackend } from '../git/backend.ts';
 
@@ -38,11 +38,15 @@ const MAX_ENTRIES = 50;
 export class UndoLog {
   private readonly backend: RepositoryBackend;
   private readonly file: string;
+  private readonly pendingFile: string;
   private entries: UndoEntry[] | undefined;
+  /** undefined はまだ読んでいない、null は無い */
+  private pending: Omit<UndoEntry, 'after'> | null | undefined;
 
   constructor(backend: RepositoryBackend) {
     this.backend = backend;
     this.file = join(backend.dirs.gitDir, 'amonhen', 'undo.json');
+    this.pendingFile = join(backend.dirs.gitDir, 'amonhen', 'undo-pending.json');
   }
 
   /** 次に Undo される操作 */
@@ -51,29 +55,55 @@ export class UndoLog {
   }
 
   /**
-   * fn を実行し、成功して ref が動いたら記録する。
-   * fn が失敗したときと、skip が true を返したとき（コンフリクトで止まったときなど）は記録しない。
+   * fn を実行し、成功して ref が動いたら記録する。fn が失敗したときは記録しない。
+   * - skip が true を返したら記録しない（コンフリクトで止まったときなど。戻すのは abort の役目）
+   * - pending が true を返したら、操作の前の状態だけを保留しておき、settlePending で確定する
+   *   （edit や split で rebase が途中で止まったとき）
    */
   async record<T>(
     label: string,
     refs: readonly string[],
     mode: UndoEntry['mode'],
     fn: () => Promise<T>,
-    skip?: (result: T) => boolean,
+    opts: { skip?: (result: T) => boolean; pending?: (result: T) => boolean } = {},
   ): Promise<T> {
     const before = await this.snapshot(refs);
     const result = await fn();
-    if (skip?.(result)) {
+    if (opts.pending?.(result)) {
+      this.pending = { label, time: Date.now(), mode, before };
+      await this.savePending();
       return result;
     }
-    const after = await this.snapshot(refs);
-    if (!sameSnapshot(before, after)) {
-      const entries = await this.load();
-      entries.push({ label, time: Date.now(), mode, before, after });
-      entries.splice(0, Math.max(0, entries.length - MAX_ENTRIES));
-      await this.save();
+    if (opts.skip?.(result)) {
+      return result;
     }
+    await this.push({ label, time: Date.now(), mode, before }, await this.snapshot(refs));
     return result;
+  }
+
+  /**
+   * 保留している操作があり、rebase などがもう終わっていれば確定する。
+   * abort した場合は操作の前と同じ状態なので、記録は残らない。確定したら true
+   */
+  async settlePending(): Promise<boolean> {
+    const pending = await this.loadPending();
+    if (!pending || (await this.backend.sequenceInProgress())) {
+      return false;
+    }
+    await this.push(pending, await this.snapshot(Object.keys(pending.before.refs)));
+    this.pending = null;
+    await rm(this.pendingFile, { force: true });
+    return true;
+  }
+
+  private async push(entry: Omit<UndoEntry, 'after'>, after: RefSnapshot): Promise<void> {
+    if (sameSnapshot(entry.before, after)) {
+      return;
+    }
+    const entries = await this.load();
+    entries.push({ ...entry, after });
+    entries.splice(0, Math.max(0, entries.length - MAX_ENTRIES));
+    await this.save();
   }
 
   /** 最後の操作を戻す。戻したものを返す */
@@ -139,6 +169,22 @@ export class UndoLog {
       }
     }
     return this.entries;
+  }
+
+  private async loadPending(): Promise<Omit<UndoEntry, 'after'> | null> {
+    if (this.pending === undefined) {
+      try {
+        this.pending = JSON.parse(await readFile(this.pendingFile, 'utf8')) as Omit<UndoEntry, 'after'>;
+      } catch {
+        this.pending = null;
+      }
+    }
+    return this.pending;
+  }
+
+  private async savePending(): Promise<void> {
+    await mkdir(dirname(this.pendingFile), { recursive: true });
+    await writeFile(this.pendingFile, JSON.stringify(this.pending, null, 2));
   }
 
   private async save(): Promise<void> {

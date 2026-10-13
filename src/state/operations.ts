@@ -41,7 +41,7 @@ export async function mergeInto(
       }
       return backend.merge(source);
     },
-    (r) => r === 'conflict',
+    { skip: (r) => r === 'conflict' },
   );
 }
 
@@ -65,7 +65,7 @@ export async function rebaseOnto(
     [target],
     'keep',
     () => backend.rebase(onto, plan.checkedOut ? undefined : shortName(target)),
-    (r) => r === 'conflict',
+    { skip: (r) => r === 'conflict' },
   );
 }
 
