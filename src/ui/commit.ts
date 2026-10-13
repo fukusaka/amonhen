@@ -30,8 +30,11 @@ async function commit(manager: RepositoryManager): Promise<void> {
     return;
   }
   try {
+    // Undo すると、コミットした変更は stage された状態に戻る
+    const branch = (await repo.backend.head()).branch;
+    const subject = message.split('\n')[0]!;
     await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: 'Commit' }, () =>
-      repo.backend.commit(message),
+      repo.undo.record(`Commit "${subject}"`, branch ? [branch] : [], 'soft', () => repo.backend.commit(message)),
     );
   } catch (err) {
     showError(err);
