@@ -4,6 +4,7 @@ import type { Ref, Remote, Stash } from '../git/refs.ts';
 import { splitRemoteRef } from '../git/refs.ts';
 import type { StatusEntry } from '../git/status.ts';
 import type { RepositoryManager } from '../state/manager.ts';
+import { shortName } from '../state/operations.ts';
 import type { LazySection, Repository, Section, Submodule } from '../state/repository.ts';
 import { decorationUri } from './uri.ts';
 
@@ -137,12 +138,12 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
           // `origin/HEAD` は表示しない
           if (ref.symref) continue;
           const split = splitRemoteRef(ref.name, names);
-          if (split) byRemote.get(split.remote)?.push({ ...ref, name: `${split.remote}/${split.branch}` });
+          if (split) byRemote.get(split.remote)?.push(ref);
         }
         return remotes.map((remote) => ({
           kind: 'remote',
           remote,
-          folder: buildFolder(byRemote.get(remote.name) ?? [], (r) => r.name.slice(remote.name.length + 1)),
+          folder: buildFolder(byRemote.get(remote.name) ?? [], (r) => r.name.slice(`refs/remotes/${remote.name}/`.length)),
         }));
       }
       case 'tags':
@@ -309,7 +310,7 @@ function branchItem(node: Extract<Node, { kind: 'branch' }>): vscode.TreeItem {
   if (ref.gone) parts.push('gone');
   item.description = parts.join(' ') || undefined;
   item.iconPath = new vscode.ThemeIcon(ref.isHead ? 'check' : 'git-branch');
-  const name = node.remote ? ref.name : ref.name.slice('refs/heads/'.length);
+  const name = shortName(ref.name);
   const lines = [name];
   if (ref.upstream) lines.push(`upstream: ${ref.upstream.replace(/^refs\/remotes\//, '')}`);
   lines.push(`${ref.oid.slice(0, 8)}  ${ref.subject}`);
