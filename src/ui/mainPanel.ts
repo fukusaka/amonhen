@@ -5,6 +5,7 @@ import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { HostMessage, RepoSummary, ViewName, WebviewMessage } from '../view/protocol.ts';
 import { HistoryController } from './historyController.ts';
+import { WorkingCopyController } from './workingCopyController.ts';
 
 /**
  * メインビュー。エディタ領域の 1 つの Webview に、左のナビと右の画面（Working Copy、History）をまとめる。
@@ -14,6 +15,7 @@ export class MainPanel implements vscode.Disposable {
   private static current: MainPanel | undefined;
 
   readonly history: HistoryController;
+  readonly workingCopy: WorkingCopyController;
   private readonly panel: vscode.WebviewPanel;
   private readonly manager: RepositoryManager;
   private readonly disposables: vscode.Disposable[] = [];
@@ -31,7 +33,10 @@ export class MainPanel implements vscode.Disposable {
       const panel = vscode.window.createWebviewPanel('amonhen.main', 'Amon Hen', vscode.ViewColumn.Active, {
         enableScripts: true,
         retainContextWhenHidden: true,
-        localResourceRoots: [vscode.Uri.joinPath(extensionUri, 'dist', 'webview'), vscode.Uri.joinPath(extensionUri, 'media')],
+        localResourceRoots: [
+          vscode.Uri.joinPath(extensionUri, 'dist', 'webview'),
+          vscode.Uri.joinPath(extensionUri, 'media'),
+        ],
       });
       current = new MainPanel(panel, extensionUri, manager);
       MainPanel.current = current;
@@ -51,10 +56,12 @@ export class MainPanel implements vscode.Disposable {
     this.panel = panel;
     this.manager = manager;
     this.history = new HistoryController((m) => this.post(m));
+    this.workingCopy = new WorkingCopyController((m) => this.post(m));
     panel.iconPath = vscode.Uri.joinPath(extensionUri, 'media', 'amonhen.svg');
     panel.webview.html = html(panel.webview, extensionUri);
     this.disposables.push(
       this.history,
+      this.workingCopy,
       panel.onDidDispose(() => this.dispose()),
       panel.webview.onDidReceiveMessage((m: WebviewMessage) => void this.onMessage(m)),
       manager.onDidChangeCurrent((r) => this.watch(r)),
@@ -86,6 +93,7 @@ export class MainPanel implements vscode.Disposable {
     if (this.ready) {
       this.postSummary();
       this.history.setRepository(repo);
+      this.workingCopy.setRepository(repo);
     }
   }
 
@@ -114,8 +122,17 @@ export class MainPanel implements vscode.Disposable {
           this.pendingView = undefined;
         }
         this.history.setRepository(this.repo);
+        this.workingCopy.setRepository(this.repo);
         break;
       case 'view':
+        break;
+      case 'wcSelect':
+      case 'wcStageFiles':
+      case 'wcStageLines':
+      case 'wcCommit':
+      case 'wcOpenFile':
+      case 'wcResolve':
+        await this.workingCopy.handle(message);
         break;
       default:
         await this.history.handle(message);
