@@ -59,6 +59,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     /// 入力イベントから画面に表示されるまでの時間（秒）。
     var onLatency: ((CFTimeInterval) -> Void)?
+    /// 選んだコミット（20 バイト）。選択がなくなれば nil。
+    var onSelectCommit: ((Data?) -> Void)?
 
     init(repository: Repository, renderer: GraphRenderer) {
         self.repository = repository
@@ -69,7 +71,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        let container = NSView()
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 420))
         tableView.headerView = NSTableHeaderView()
         tableView.rowHeight = CGFloat(renderer.metrics.rowHeight)
         tableView.intercellSpacing = NSSize(width: 6, height: 0)
@@ -147,7 +149,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.selectRowIndexes([row], byExtendingSelection: false)
         let clip = scrollView.contentView
         let rect = tableView.rect(ofRow: row)
-        let y = max(0, rect.midY - clip.bounds.height / 2)
+        // 上端はヘッダーの分だけ負になる（表の 0 行目がヘッダーのすぐ下に来る位置）。
+        let top = -clip.contentInsets.top
+        let bottom = max(top, tableView.bounds.height - clip.bounds.height)
+        let y = min(max(top, rect.midY - clip.bounds.height / 2), bottom)
         clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
         scrollView.reflectScrolledClipView(clip)
     }
@@ -243,7 +248,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private var pendingPresentStart: CFTimeInterval?
 
     /// `root` の中身にグラフを重ねた画像（`--snapshot` 用）。
-    func snapshot(of root: NSView) -> NSBitmapImageRep? {
+    func snapshot(of root: NSView, extra: [(CGImage, NSView)] = []) -> NSBitmapImageRep? {
         guard let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { return nil }
         root.cacheDisplay(in: root.bounds, to: rep)
         guard let history else { return rep }
@@ -251,11 +256,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let scrollY = Float(tableView.convert(NSPoint(x: 0, y: 0), from: graphView).y)
         guard let graph = renderer.image(history: history, size: graphView.bounds.size, scale: scale, scrollY: scrollY),
               let context = NSGraphicsContext(bitmapImageRep: rep) else { return rep }
-        var frame = root.convert(graphView.bounds, from: graphView)
-        if root.isFlipped { frame.origin.y = root.bounds.height - frame.maxY }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
-        context.cgContext.draw(graph, in: frame)
+        for (image, view) in [(graph, graphView as NSView)] + extra {
+            var frame = root.convert(view.bounds, from: view)
+            if root.isFlipped { frame.origin.y = root.bounds.height - frame.maxY }
+            context.cgContext.draw(image, in: frame)
+        }
         NSGraphicsContext.restoreGraphicsState()
         return rep
     }
@@ -291,6 +298,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 }
             }
         }
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        let row = tableView.selectedRow
+        onSelectCommit?(row >= 0 ? history?.commitID(row: row) : nil)
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {

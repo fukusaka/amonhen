@@ -41,7 +41,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             sidebarItem.minimumThickness = 180
             sidebarItem.maximumThickness = 400
             split.addSplitViewItem(sidebarItem)
-            split.addSplitViewItem(NSSplitViewItem(viewController: controller))
+            // 上に History、下に選んだコミットの詳細。
+            guard let text = TextRenderer(device: renderer.device) else { throw AmonhenError(description: "Metal を使えない") }
+            let detail = CommitDetailViewController(repository: repository, renderer: text)
+            let content = NSSplitViewController()
+            content.splitView.isVertical = false
+            content.addSplitViewItem(NSSplitViewItem(viewController: controller))
+            let detailItem = NSSplitViewItem(viewController: detail)
+            detailItem.minimumThickness = 160
+            content.addSplitViewItem(detailItem)
+            controller.onSelectCommit = { [weak detail] commit in detail?.show(commit: commit) }
+            split.addSplitViewItem(NSSplitViewItem(viewController: content))
             sidebar.onSelect = { [weak controller] item in
                 guard let controller, let target = item.target,
                       let row = controller.currentHistory?.row(of: target) else { return }
@@ -90,9 +100,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 }
             }
             if let output = Self.option("--snapshot") {
+                let selectFirst = CommandLine.arguments.contains("--select-first")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    let png = controller.snapshot(of: window.contentView!)?.representation(using: .png, properties: [:])
-                    try? png?.write(to: URL(fileURLWithPath: output))
+                    if selectFirst { controller.select(row: 0) }
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + (selectFirst ? 1.5 : 0.5)) {
+                    let rep = controller.snapshot(of: window.contentView!, extra: detail.overlays())
+                    try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
                     NSApp.terminate(nil)
                 }
             }
