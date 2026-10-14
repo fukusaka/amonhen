@@ -35,6 +35,8 @@ export interface UndoEntry {
   after: RefSnapshot;
   /** あれば、ref ではなく作業中のファイルを戻す操作 */
   files?: FileBackup[];
+  /** あれば、消した stash を戻す操作 */
+  stash?: { oid: string; message: string };
 }
 
 /** 記録した後に、ほかの操作でブランチや HEAD が動いている */
@@ -127,6 +129,23 @@ export class UndoLog {
     return result;
   }
 
+  /** stash を消し、Undo で戻せるように記録する */
+  async recordStashDrop(name: string, oid: string, message: string): Promise<void> {
+    await this.backend.stashDrop(name);
+    const snapshot = await this.snapshot([]);
+    const entries = await this.load();
+    entries.push({
+      label: `Drop ${message}`,
+      time: Date.now(),
+      mode: 'keep',
+      before: snapshot,
+      after: snapshot,
+      stash: { oid, message },
+    });
+    entries.splice(0, Math.max(0, entries.length - MAX_ENTRIES));
+    await this.save();
+  }
+
   /** ファイルを操作の前の内容に戻す。ほかで書き換えられていたら何もしない */
   private async undoFiles(entry: UndoEntry, files: readonly FileBackup[]): Promise<void> {
     const root = this.backend.root;
@@ -182,6 +201,12 @@ export class UndoLog {
     const entry = entries.at(-1);
     if (!entry) {
       return undefined;
+    }
+    if (entry.stash) {
+      await this.backend.stashStore(entry.stash.oid, entry.stash.message);
+      entries.pop();
+      await this.save();
+      return entry;
     }
     if (entry.files) {
       await this.undoFiles(entry, entry.files);

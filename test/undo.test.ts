@@ -127,3 +127,13 @@ test('the log survives a reload', async () => {
   const reloaded = new UndoLog(backend);
   assert.equal((await reloaded.peek())?.label, 'Commit');
 });
+
+test('undo a dropped stash', async () => {
+  writeFileSync(join(dir, 'a.txt'), 'stashed\n');
+  git('stash', '-q');
+  const oid = git('rev-parse', 'stash@{0}');
+  await log.recordStashDrop('stash@{0}', oid, 'On main: stashed');
+  assert.equal(git('stash', 'list'), '');
+  await log.undo();
+  assert.equal(git('rev-parse', 'stash@{0}'), oid);
+});
