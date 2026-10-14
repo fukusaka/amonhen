@@ -69,9 +69,19 @@ typedef struct AmonhenRefs AmonhenRefs;
 typedef struct AmonhenRepo AmonhenRepo;
 
 /**
+ * 作業ツリーと index の状態。
+ */
+typedef struct AmonhenStatus AmonhenStatus;
+
+/**
  * リポジトリの監視。
  */
 typedef struct AmonhenWatch AmonhenWatch;
+
+/**
+ * Working Copy の 1 ファイルの差分。
+ */
+typedef struct AmonhenWorkingDiff AmonhenWorkingDiff;
 
 /**
  * グラフの点（コミット 1 つ）。
@@ -244,6 +254,43 @@ typedef struct {
   uint32_t added;
   uint32_t removed;
 } AmonhenDiffView;
+
+/**
+ * status の 1 項目。文字列は `AmonhenStatusView::strings` の中の UTF-8。
+ */
+typedef struct {
+  /**
+   * 0: 変更、1: 名前の変更、2: コンフリクト、3: untracked。
+   */
+  uint8_t kind;
+  /**
+   * git の XY。変更なしは `.`、untracked は `?`。
+   */
+  uint8_t index;
+  uint8_t worktree;
+  uint8_t submodule;
+  uint32_t path_off;
+  uint32_t path_len;
+  /**
+   * 名前を変えたときの元のパス。なければ `orig_path_len` が `u32::MAX`。
+   */
+  uint32_t orig_path_off;
+  uint32_t orig_path_len;
+} AmonhenStatusEntry;
+
+typedef struct {
+  uint64_t generation;
+  const AmonhenStatusEntry *entries;
+  uint32_t count;
+  const uint8_t *strings;
+  /**
+   * チェックアウト中のブランチ。detached HEAD なら `branch_len` が `u32::MAX`。
+   */
+  uint32_t branch_off;
+  uint32_t branch_len;
+  uint32_t ahead;
+  uint32_t behind;
+} AmonhenStatusView;
 
 #ifdef __cplusplus
 extern "C" {
@@ -450,6 +497,90 @@ void amonhen_diff_free(AmonhenDiff *diff);
 bool amonhen_history_commit_id(const AmonhenHistory *history_ptr,
                                uint32_t row,
                                uint8_t *out);
+
+/**
+ * 作業ツリーと index の状態を読み直す（`amonhen_status_release` で手放す）。前回と同じなら同じ世代。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+const AmonhenStatus *amonhen_status_load(const AmonhenRepo *repo_ptr);
+
+/**
+ * # Safety
+ * `status` は `amonhen_status_load` が返したもので、まだ手放していないこと。
+ */
+void amonhen_status_release(const AmonhenStatus *status);
+
+/**
+ * # Safety
+ * `status` は有効であること。返したポインタは手放すまで有効。
+ */
+AmonhenStatusView amonhen_status_view(const AmonhenStatus *status);
+
+/**
+ * `status` の `index` 番目のファイルの差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー
+ * （`amonhen_working_diff_free` で解放する）。
+ *
+ * # Safety
+ * `repo` と `status` は有効であること。
+ */
+AmonhenWorkingDiff *amonhen_working_diff(const AmonhenRepo *repo_ptr,
+                                         const AmonhenStatus *status,
+                                         uint32_t index,
+                                         bool staged,
+                                         AmonhenEncoding encoding);
+
+/**
+ * # Safety
+ * `diff` は有効であること。返したポインタは解放するまで有効。
+ */
+AmonhenDiffView amonhen_working_diff_view(const AmonhenWorkingDiff *diff);
+
+/**
+ * # Safety
+ * `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。
+ */
+void amonhen_working_diff_free(AmonhenWorkingDiff *diff);
+
+/**
+ * `paths` の変更（追加・削除を含む）を stage する。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`paths` は NUL 終端の文字列 `count` 個の配列であること。
+ */
+bool amonhen_stage(const AmonhenRepo *repo_ptr,
+                   const char *const *paths_ptr,
+                   uint32_t count);
+
+/**
+ * `paths` を unstage する（index を HEAD の状態に戻す）。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`paths` は NUL 終端の文字列 `count` 個の配列であること。
+ */
+bool amonhen_unstage(const AmonhenRepo *repo_ptr,
+                     const char *const *paths_ptr,
+                     uint32_t count);
+
+/**
+ * `diff` の `rows` 行目の変更だけを stage する（stage 済みの差分なら unstage する）。
+ *
+ * # Safety
+ * `repo` と `diff` は有効、`rows` は `count` 個の `u32` を読める領域であること。
+ */
+bool amonhen_stage_rows(const AmonhenRepo *repo_ptr,
+                        const AmonhenWorkingDiff *diff,
+                        const uint32_t *rows,
+                        uint32_t count);
+
+/**
+ * stage した変更をコミットする。`amend` なら直前のコミットを作り直す。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`message` は NUL 終端の文字列であること。
+ */
+bool amonhen_commit(const AmonhenRepo *repo_ptr, const char *message, bool amend);
 
 #ifdef __cplusplus
 }  // extern "C"

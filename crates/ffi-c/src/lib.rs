@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use amonhen_backend_gix::GixBackend;
 use amonhen_core::diff::DiffView;
-use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository, cache};
+use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository, StatusSnapshot, WorkingDiff, cache};
 use amonhen_layout::{DiffRow, Edge, Node, StrRef};
 use amonhen_model::{FileChange, Oid};
 use amonhen_projection::{FrontendProfile, HistoryChunk, StringEncoding};
@@ -39,6 +39,16 @@ pub struct AmonhenWatch {
 
 /// コミットで変わったファイルの一覧。
 pub struct AmonhenChanges {
+    _private: [u8; 0],
+}
+
+/// 作業ツリーと index の状態。
+pub struct AmonhenStatus {
+    _private: [u8; 0],
+}
+
+/// Working Copy の 1 ファイルの差分。
+pub struct AmonhenWorkingDiff {
     _private: [u8; 0],
 }
 
@@ -648,7 +658,10 @@ pub unsafe extern "C" fn amonhen_file_diff(
 /// `diff` は有効であること。返したポインタは解放するまで有効。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_diff_view(diff: *const AmonhenDiff) -> AmonhenDiffView {
-    let d = unsafe { &*diff.cast::<DiffView>() };
+    diff_view(unsafe { &*diff.cast::<DiffView>() })
+}
+
+fn diff_view(d: &DiffView) -> AmonhenDiffView {
     AmonhenDiffView {
         rows: d.rows.as_ptr(),
         row_count: d.rows.len() as u32,
@@ -685,5 +698,246 @@ pub unsafe extern "C" fn amonhen_history_commit_id(
             true
         }
         None => false,
+    }
+}
+
+/// status の 1 項目。文字列は `AmonhenStatusView::strings` の中の UTF-8。
+#[repr(C)]
+pub struct AmonhenStatusEntry {
+    /// 0: 変更、1: 名前の変更、2: コンフリクト、3: untracked。
+    pub kind: u8,
+    /// git の XY。変更なしは `.`、untracked は `?`。
+    pub index: u8,
+    pub worktree: u8,
+    pub submodule: u8,
+    pub path_off: u32,
+    pub path_len: u32,
+    /// 名前を変えたときの元のパス。なければ `orig_path_len` が `u32::MAX`。
+    pub orig_path_off: u32,
+    pub orig_path_len: u32,
+}
+
+#[repr(C)]
+pub struct AmonhenStatusView {
+    pub generation: u64,
+    pub entries: *const AmonhenStatusEntry,
+    pub count: u32,
+    pub strings: *const u8,
+    /// チェックアウト中のブランチ。detached HEAD なら `branch_len` が `u32::MAX`。
+    pub branch_off: u32,
+    pub branch_len: u32,
+    pub ahead: u32,
+    pub behind: u32,
+}
+
+struct StatusHandle {
+    snapshot: Arc<StatusSnapshot>,
+    entries: Vec<AmonhenStatusEntry>,
+    strings: Vec<u8>,
+    branch: (u32, u32),
+}
+
+/// 作業ツリーと index の状態を読み直す（`amonhen_status_release` で手放す）。前回と同じなら同じ世代。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_status_load(repo_ptr: *const AmonhenRepo) -> *const AmonhenStatus {
+    let snapshot = match repo(repo_ptr).load_status() {
+        Ok(s) => s,
+        Err(e) => {
+            set_error(e);
+            return std::ptr::null();
+        }
+    };
+    let mut strings = Vec::new();
+    let mut put = |s: Option<&str>| match s {
+        Some(s) => {
+            let off = strings.len() as u32;
+            strings.extend_from_slice(s.as_bytes());
+            (off, s.len() as u32)
+        }
+        None => (0, u32::MAX),
+    };
+    let branch = put(snapshot.status.branch.as_deref());
+    let entries = snapshot
+        .status
+        .entries
+        .iter()
+        .map(|e| {
+            let (path_off, path_len) = put(Some(&e.path));
+            let (orig_path_off, orig_path_len) = put(e.orig_path.as_deref());
+            AmonhenStatusEntry {
+                kind: e.kind as u8,
+                index: e.index,
+                worktree: e.worktree,
+                submodule: u8::from(e.submodule),
+                path_off,
+                path_len,
+                orig_path_off,
+                orig_path_len,
+            }
+        })
+        .collect();
+    Arc::into_raw(Arc::new(StatusHandle {
+        snapshot,
+        entries,
+        strings,
+        branch,
+    }))
+    .cast()
+}
+
+/// # Safety
+/// `status` は `amonhen_status_load` が返したもので、まだ手放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_status_release(status: *const AmonhenStatus) {
+    if !status.is_null() {
+        drop(unsafe { Arc::from_raw(status.cast::<StatusHandle>()) });
+    }
+}
+
+/// # Safety
+/// `status` は有効であること。返したポインタは手放すまで有効。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_status_view(status: *const AmonhenStatus) -> AmonhenStatusView {
+    let s = unsafe { &*status.cast::<StatusHandle>() };
+    AmonhenStatusView {
+        generation: s.snapshot.generation,
+        entries: s.entries.as_ptr(),
+        count: s.entries.len() as u32,
+        strings: s.strings.as_ptr(),
+        branch_off: s.branch.0,
+        branch_len: s.branch.1,
+        ahead: s.snapshot.status.ahead,
+        behind: s.snapshot.status.behind,
+    }
+}
+
+/// `status` の `index` 番目のファイルの差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー
+/// （`amonhen_working_diff_free` で解放する）。
+///
+/// # Safety
+/// `repo` と `status` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_working_diff(
+    repo_ptr: *const AmonhenRepo,
+    status: *const AmonhenStatus,
+    index: u32,
+    staged: bool,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenWorkingDiff {
+    let s = unsafe { &*status.cast::<StatusHandle>() };
+    let Some(entry) = s.snapshot.status.entries.get(index as usize) else {
+        set_error("ファイルの番号が範囲外");
+        return std::ptr::null_mut();
+    };
+    match repo(repo_ptr).working_diff(entry, staged, &profile(encoding)) {
+        Ok(d) => Box::into_raw(Box::new(d)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// # Safety
+/// `diff` は有効であること。返したポインタは解放するまで有効。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_working_diff_view(
+    diff: *const AmonhenWorkingDiff,
+) -> AmonhenDiffView {
+    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    diff_view(&d.view)
+}
+
+/// # Safety
+/// `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_working_diff_free(diff: *mut AmonhenWorkingDiff) {
+    if !diff.is_null() {
+        drop(unsafe { Box::from_raw(diff.cast::<WorkingDiff>()) });
+    }
+}
+
+fn paths<'a>(paths: *const *const c_char, count: u32) -> Result<Vec<&'a str>, std::str::Utf8Error> {
+    (0..count as usize)
+        .map(|i| str_arg(unsafe { *paths.add(i) }))
+        .collect()
+}
+
+fn done(result: amonhen_model::Result<()>) -> bool {
+    match result {
+        Ok(()) => true,
+        Err(e) => {
+            set_error(e);
+            false
+        }
+    }
+}
+
+/// `paths` の変更（追加・削除を含む）を stage する。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`paths` は NUL 終端の文字列 `count` 個の配列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stage(
+    repo_ptr: *const AmonhenRepo,
+    paths_ptr: *const *const c_char,
+    count: u32,
+) -> bool {
+    match paths(paths_ptr, count) {
+        Ok(p) => done(repo(repo_ptr).stage(&p)),
+        Err(e) => done(Err(e.into())),
+    }
+}
+
+/// `paths` を unstage する（index を HEAD の状態に戻す）。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`paths` は NUL 終端の文字列 `count` 個の配列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_unstage(
+    repo_ptr: *const AmonhenRepo,
+    paths_ptr: *const *const c_char,
+    count: u32,
+) -> bool {
+    match paths(paths_ptr, count) {
+        Ok(p) => done(repo(repo_ptr).unstage(&p)),
+        Err(e) => done(Err(e.into())),
+    }
+}
+
+/// `diff` の `rows` 行目の変更だけを stage する（stage 済みの差分なら unstage する）。
+///
+/// # Safety
+/// `repo` と `diff` は有効、`rows` は `count` 個の `u32` を読める領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stage_rows(
+    repo_ptr: *const AmonhenRepo,
+    diff: *const AmonhenWorkingDiff,
+    rows: *const u32,
+    count: u32,
+) -> bool {
+    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    let rows: Vec<usize> = (0..count as usize)
+        .map(|i| unsafe { *rows.add(i) } as usize)
+        .collect();
+    done(repo(repo_ptr).stage_rows(d, &rows))
+}
+
+/// stage した変更をコミットする。`amend` なら直前のコミットを作り直す。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`message` は NUL 終端の文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_commit(
+    repo_ptr: *const AmonhenRepo,
+    message: *const c_char,
+    amend: bool,
+) -> bool {
+    match str_arg(message) {
+        Ok(m) => done(repo(repo_ptr).commit(m, amend)),
+        Err(e) => done(Err(e.into())),
     }
 }
