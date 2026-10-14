@@ -7,7 +7,7 @@ import type { Repository } from '../state/repository.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 import { commitStaged } from './commit.ts';
-import { openChangeDiff } from './diff.ts';
+import { openConflict } from './diff.ts';
 import { acceptConflicts, indexMode, showError, stageChanges } from './stageCommands.ts';
 
 /**
@@ -145,7 +145,7 @@ export class WorkingCopyController implements vscode.Disposable {
         const change = find('conflicts', message.path);
         if (!change) break;
         if (message.action === 'merge') {
-          await openChangeDiff(repo.root, change, repo.current.sequence);
+          await openConflict(repo.root, change, repo.current.sequence);
         } else {
           await acceptConflicts(repo, [change], message.action);
         }

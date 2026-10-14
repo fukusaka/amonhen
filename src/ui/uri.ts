@@ -39,12 +39,3 @@ export function parseGitUri(uri: vscode.Uri): GitUri | undefined {
   const rev = q.get('rev');
   return rev ? { root, path, side, rev } : { root, path, side };
 }
-
-/** サイドバーの変更ファイルに付けるバッジ用の URI。ファイルアイコンはパスから決まる */
-export function decorationUri(path: string, letter: string): vscode.Uri {
-  return vscode.Uri.file(path).with({ scheme: SCHEME, query: new URLSearchParams({ decoration: letter }).toString() });
-}
-
-export function parseDecorationUri(uri: vscode.Uri): string | null {
-  return uri.scheme === SCHEME ? new URLSearchParams(uri.query).get('decoration') : null;
-}

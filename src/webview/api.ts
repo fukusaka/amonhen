@@ -5,8 +5,6 @@ export interface State {
   view?: ViewName;
   /** History の詳細の幅 */
   detailsWidth?: number;
-  /** ナビで閉じているセクション */
-  collapsed?: string[];
 }
 
 declare function acquireVsCodeApi(): {

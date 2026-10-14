@@ -1,14 +1,61 @@
 /**
- * ブランチのドラッグ＆ドロップで行う操作。ドロップはメインビューのナビで受ける。
+ * サイドバーのナビでの、ブランチのドラッグ＆ドロップ。
  * - ブランチ（またはタグ）をローカルブランチにドロップ: Merge / Rebase を選ぶ
  * - ローカルブランチをリモート（またはリモートのブランチ）にドロップ: Push / Force Push を選ぶ
  * どちらもドロップ先を書き換える操作になる。
  */
 import * as vscode from 'vscode';
 import { mergeInto, rebaseOnto, shortName, type OperationResult } from '../state/operations.ts';
+import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { DragSource, DropTarget } from '../view/protocol.ts';
+import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
+
+const MIME = 'application/vnd.code.tree.amonhen.sidebar';
+
+/** サイドバーのナビでのドラッグ＆ドロップ */
+export class SidebarDragAndDrop implements vscode.TreeDragAndDropController<Node> {
+  readonly dragMimeTypes = [MIME];
+  readonly dropMimeTypes = [MIME];
+  private readonly manager: RepositoryManager;
+
+  constructor(manager: RepositoryManager) {
+    this.manager = manager;
+  }
+
+  handleDrag(source: readonly Node[], data: vscode.DataTransfer): void {
+    const node = source.length === 1 ? source[0] : undefined;
+    if (node && (node.kind === 'branch' || node.kind === 'tag')) {
+      data.set(MIME, new vscode.DataTransferItem(node));
+    }
+  }
+
+  async handleDrop(target: Node | undefined, data: vscode.DataTransfer): Promise<void> {
+    const source = data.get(MIME)?.value as Node | undefined;
+    const repo = this.manager.current;
+    if (!repo || !source || !target || (source.kind !== 'branch' && source.kind !== 'tag')) {
+      return;
+    }
+    const drop = toDropTarget(target);
+    if (drop) {
+      const local = source.kind === 'branch' && !source.remote;
+      await pickAndRun(repo, { ref: source.ref.name, local, upstream: source.ref.upstream }, drop);
+    }
+  }
+}
+
+function toDropTarget(node: Node): DropTarget | undefined {
+  if (node.kind === 'branch') {
+    return node.remote
+      ? { kind: 'remoteBranch', remote: node.remote, ref: node.ref.name }
+      : { kind: 'branch', ref: node.ref.name };
+  }
+  if (node.kind === 'remote') {
+    return { kind: 'remote', remote: node.remote.name };
+  }
+  return undefined;
+}
 
 export interface Action {
   label: string;

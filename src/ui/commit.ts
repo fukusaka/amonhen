@@ -1,28 +1,6 @@
 import * as vscode from 'vscode';
-import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import { showError } from './stageCommands.ts';
-
-export function registerCommitCommand(manager: RepositoryManager): vscode.Disposable {
-  return vscode.commands.registerCommand('amonhen.commit', () => commit(manager));
-}
-
-async function commit(manager: RepositoryManager): Promise<void> {
-  const repo = manager.current;
-  const status = repo?.current.status;
-  if (!repo || !status || !canCommit(repo, false)) {
-    return;
-  }
-  const staged = stagedCount(repo);
-  const message = await vscode.window.showInputBox({
-    title: `Commit ${staged} file${staged > 1 ? 's' : ''} to ${status.branch.head ?? 'detached HEAD'}`,
-    placeHolder: 'Commit message',
-    validateInput: (v) => (v.trim() ? undefined : 'メッセージを入力してください'),
-  });
-  if (message) {
-    await commitStaged(repo, message, false);
-  }
-}
 
 function stagedCount(repo: Repository): number {
   return (repo.current.status?.entries ?? []).filter(

@@ -3,18 +3,13 @@ import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
-import { splitRemoteRef, type Ref } from '../git/refs.ts';
-import { describeSubmodule } from '../git/status.ts';
-import { shortName } from '../state/operations.ts';
-import type { HostMessage, NavRef, NavRefs, RepoSummary, ViewName, WebviewMessage } from '../view/protocol.ts';
-import { pickAndRun } from './dragDrop.ts';
+import type { HostMessage, ViewName, WebviewMessage } from '../view/protocol.ts';
 import { HistoryController } from './historyController.ts';
-import { showError } from './stageCommands.ts';
 import { WorkingCopyController } from './workingCopyController.ts';
 
 /**
- * メインビュー。エディタ領域の 1 つの Webview に、左のナビと右の画面（Working Copy、History）をまとめる。
- * 画面の切り替えは Webview の中だけで行い、こちらは画面ごとのコントローラーにメッセージを振り分ける。
+ * メインビュー。エディタ領域の 1 つの Webview に、Working Copy か History を出す。
+ * どちらを出すかはサイドバーのナビで選ぶ。こちらは画面ごとのコントローラーにメッセージを振り分ける。
  */
 export class MainPanel implements vscode.Disposable {
   private static current: MainPanel | undefined;
@@ -24,13 +19,13 @@ export class MainPanel implements vscode.Disposable {
   private readonly panel: vscode.WebviewPanel;
   private readonly manager: RepositoryManager;
   private readonly disposables: vscode.Disposable[] = [];
-  private repoListener: vscode.Disposable | undefined;
   private repo: Repository | undefined;
   private ready = false;
   /** 準備ができる前に求められた画面 */
   private pendingView: ViewName | undefined;
 
-  static show(extensionUri: vscode.Uri, manager: RepositoryManager, view?: ViewName): MainPanel {
+  /** 開いて、view を出す。ref を渡すと History にその ref の履歴を出す */
+  static show(extensionUri: vscode.Uri, manager: RepositoryManager, view?: ViewName, ref?: string): MainPanel {
     let current = MainPanel.current;
     if (current) {
       current.panel.reveal();
@@ -45,6 +40,9 @@ export class MainPanel implements vscode.Disposable {
       });
       current = new MainPanel(panel, extensionUri, manager);
       MainPanel.current = current;
+    }
+    if (view === 'history') {
+      current.history.showScope(ref ? `ref:${ref}` : undefined);
     }
     if (view) {
       current.showView(view);
@@ -91,84 +89,18 @@ export class MainPanel implements vscode.Disposable {
   }
 
   private watch(repo: Repository | undefined): void {
-    this.repoListener?.dispose();
     this.repo = repo;
-    this.repoListener = repo?.onDidChange((changed) => {
-      this.postSummary();
-      if (
-        changed.has('branches') ||
-        changed.has('remotes') ||
-        changed.has('tags') ||
-        changed.has('stashes') ||
-        changed.has('submodules')
-      ) {
-        this.postRefs();
-      }
-    });
     this.panel.title = repo ? `Amon Hen: ${basename(repo.root)}` : 'Amon Hen';
     if (this.ready) {
-      this.postSummary();
-      this.postRefs();
       this.history.setRepository(repo);
       this.workingCopy.setRepository(repo);
     }
-  }
-
-  private postSummary(): void {
-    const repo = this.repo;
-    const state = repo?.current;
-    let summary: RepoSummary | undefined;
-    if (repo && state) {
-      summary = {
-        name: basename(repo.root),
-        branch: state.status?.branch.head,
-        changes: state.status?.entries.filter((e) => e.kind !== 'ignored').length ?? 0,
-        sequence: state.sequence,
-      };
-    }
-    this.post({ type: 'repo', repo: summary });
-  }
-
-  private postRefs(): void {
-    const state = this.repo?.current;
-    if (!state) {
-      this.post({ type: 'refs', refs: { branches: [], remotes: [] } });
-      return;
-    }
-    const nav = (r: Ref): NavRef => {
-      const item: NavRef = { ref: r.name, name: shortName(r.name) };
-      if (r.isHead) item.current = true;
-      if (r.ahead) item.ahead = r.ahead;
-      if (r.behind) item.behind = r.behind;
-      if (r.gone) item.gone = true;
-      if (r.upstream) item.upstream = r.upstream;
-      return item;
-    };
-    const names = (state.remotes ?? []).map((r) => r.name);
-    const remotes = names.map((name) => ({ name, branches: [] as NavRef[] }));
-    for (const r of state.remoteBranches ?? []) {
-      const split = r.symref ? undefined : splitRemoteRef(r.name, names);
-      remotes.find((x) => x.name === split?.remote)?.branches.push(nav(r));
-    }
-    const refs: NavRefs = { branches: (state.branches ?? []).map(nav), remotes };
-    if (state.tags) refs.tags = [...state.tags].sort((a, b) => b.date - a.date).map(nav);
-    if (state.stashes) refs.stashes = state.stashes.map((s) => ({ name: s.name, subject: s.subject }));
-    if (state.submodules) {
-      const entries = new Map((state.status?.entries ?? []).map((e) => [e.path, e]));
-      refs.submodules = state.submodules.map((m) => ({
-        path: m.path,
-        state: m.initialized ? describeSubmodule(entries.get(m.path)) : 'not initialized',
-      }));
-    }
-    this.post({ type: 'refs', refs });
   }
 
   private async onMessage(message: WebviewMessage): Promise<void> {
     switch (message.type) {
       case 'ready':
         this.ready = true;
-        this.postSummary();
-        this.postRefs();
         if (this.pendingView) {
           this.post({ type: 'show', view: this.pendingView });
           this.pendingView = undefined;
@@ -177,21 +109,6 @@ export class MainPanel implements vscode.Disposable {
         this.workingCopy.setRepository(this.repo);
         break;
       case 'view':
-        break;
-      case 'navExpand':
-        await this.repo?.want(message.section);
-        break;
-      case 'showRef':
-        this.history.setScope(`ref:${message.ref}`);
-        break;
-      case 'checkout':
-        await this.checkout(message.ref);
-        break;
-      case 'dropRef':
-        if (this.repo) await pickAndRun(this.repo, message.source, message.target);
-        break;
-      case 'command':
-        await vscode.commands.executeCommand(`amonhen.${message.command}`);
         break;
       case 'wcSelect':
       case 'wcStageFiles':
@@ -206,27 +123,8 @@ export class MainPanel implements vscode.Disposable {
     }
   }
 
-  /** ローカルブランチなら切り替え、リモートブランチなら追跡するブランチを作って切り替える */
-  async checkout(ref: string): Promise<void> {
-    const repo = this.repo;
-    if (!repo) return;
-    try {
-      if (ref.startsWith('refs/heads/')) {
-        await repo.backend.switchBranch(shortName(ref));
-      } else if (ref.startsWith('refs/remotes/')) {
-        const local = (repo.current.branches ?? []).find((b) => b.upstream === ref);
-        await (local ? repo.backend.switchBranch(shortName(local.name)) : repo.backend.trackBranch(shortName(ref)));
-      }
-    } catch (err) {
-      showError(err);
-    } finally {
-      await repo.refresh();
-    }
-  }
-
   dispose(): void {
     MainPanel.current = undefined;
-    this.repoListener?.dispose();
     vscode.Disposable.from(...this.disposables).dispose();
     this.panel.dispose();
   }

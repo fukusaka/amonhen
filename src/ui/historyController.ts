@@ -63,10 +63,16 @@ export class HistoryController implements vscode.Disposable {
     this.post = post;
   }
 
-  /** 履歴の範囲を変えて読み直す */
-  setScope(scope: Scope): void {
-    this.scope = scope;
-    void this.reset();
+  /**
+   * サイドバーから History を開いたときの範囲。ref を選んだならその ref、そうでなければ
+   * ref の履歴を出していたときだけ現在のブランチに戻す（All Branches は保つ）
+   */
+  showScope(scope: Scope | undefined): void {
+    const next = scope ?? (this.scope.startsWith('ref:') ? 'head' : this.scope);
+    if (next !== this.scope) {
+      this.scope = next;
+      void this.reset();
+    }
   }
 
   /** 表示するリポジトリを切り替えて読み直す */
