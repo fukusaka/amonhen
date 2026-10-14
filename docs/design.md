@@ -354,7 +354,7 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 本体:
 
 - [x] 6. 永続キャッシュ（mmap）と起動直後の即時表示
-- [ ] 7. サイドバー（Branches / Remotes / Tags / Stashes / Submodules）と FSEvents による変更検知
+- [x] 7. サイドバー（Branches / Remotes / Tags / Stashes / Submodules）と FSEvents による変更検知
 - [ ] 8. 差分表示（Metal、History と共有するグリフアトラス、CTLine キャッシュ）と後追いの色付け
 - [ ] 9. Working Copy: status、ファイル・hunk・行単位の stage、コミット入力
 - [ ] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ

@@ -21,11 +21,16 @@ Amon Hen のスタンドアロン版。徹底的な低遅延を最優先にし�
 - `crates/projection`: FE ごとの形への変換、`FrontendProfile`
 - `crates/platform`: `Platform` トレイト
 - `crates/backend-gix`: gix による `GitBackend`
+- `crates/watch`: リポジトリの変化の検知（notify、デスクトップ向け）
+- `crates/ffi-c`: C ABI。`build.rs` が `include/amonhen.h` を生成する（コミットする）
+- `apps/macos`: SwiftPM のパッケージ。`AmonhenKit`（コアの Swift ラッパー）と `AmonHen`（AppKit のアプリ）
 
 ## 確認
 
 - `cargo test --workspace`
 - `cargo clippy --workspace --all-targets -- -D warnings`
+- `scripts/build-core.sh && (cd apps/macos && swift test)`
+- 見た目: `apps/macos/.build/debug/AmonHen <repo> --snapshot out.png`、速さ: `--measure-scroll`
 
 ## 進捗
 
