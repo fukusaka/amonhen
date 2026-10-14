@@ -5,4 +5,4 @@ pub mod diff;
 pub mod graph;
 mod repository;
 
-pub use repository::{HistorySnapshot, RefsSnapshot, Repository};
+pub use repository::{HistorySnapshot, RefsSnapshot, Repository, StatusSnapshot, WorkingDiff};

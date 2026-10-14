@@ -3,13 +3,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
 use amonhen_model::{
-    CommitGraph, FileChange, GitBackend, Oid, OidMap, Refs, RepoPaths, Result, topo,
+    CommitGraph, FileChange, GitBackend, Oid, OidMap, Refs, RepoPaths, Result, Status, StatusEntry,
+    topo,
 };
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use arc_swap::ArcSwapOption;
 
 use crate::cache::{self, CachedHistory};
-use crate::diff::{self, DiffView};
+use crate::diff::{self, DiffView, FileDiff};
 use crate::graph::{self, GraphLayout};
 
 /// History の不変のスナップショット。公開したら書き換えない。
@@ -22,6 +23,21 @@ pub struct HistorySnapshot {
     pub layout: GraphLayout,
     /// コミット ID から行への索引。次に読み直すとき、既知のコミットで走査を止めるのに使う。
     rows: OnceLock<OidMap<u32>>,
+}
+
+/// 作業ツリーと index の状態の不変のスナップショット。
+pub struct StatusSnapshot {
+    pub generation: u64,
+    pub status: Status,
+}
+
+/// Working Copy の 1 ファイルの差分。行を選んで stage・unstage するために、元の差分も持つ。
+pub struct WorkingDiff {
+    pub entry: StatusEntry,
+    /// stage 済みの変更（HEAD と index の差分）か、stage していない変更（index と作業ツリー）か。
+    pub staged: bool,
+    pub file: FileDiff,
+    pub view: DiffView,
 }
 
 /// サイドバーの ref の一覧の不変のスナップショット。
@@ -53,6 +69,7 @@ pub struct Repository {
     backend: Box<dyn GitBackend>,
     history: ArcSwapOption<HistorySnapshot>,
     refs: ArcSwapOption<RefsSnapshot>,
+    status: ArcSwapOption<StatusSnapshot>,
     generation: AtomicU64,
     cache_path: Option<PathBuf>,
 }
@@ -63,6 +80,7 @@ impl Repository {
             backend: Box::new(backend),
             history: ArcSwapOption::empty(),
             refs: ArcSwapOption::empty(),
+            status: ArcSwapOption::empty(),
             generation: AtomicU64::new(0),
             cache_path: None,
         }
@@ -196,6 +214,87 @@ impl Repository {
         Ok(DiffView::new(&file, profile))
     }
 
+    /// 作業ツリーと index の状態を読み直す。前回と同じなら前回のものを返す。
+    pub fn load_status(&self) -> Result<Arc<StatusSnapshot>> {
+        let status = self.backend.status()?;
+        if let Some(current) = self.status.load_full()
+            && current.status == status
+        {
+            return Ok(current);
+        }
+        let snapshot = Arc::new(StatusSnapshot {
+            generation: self.generation.fetch_add(1, Ordering::Relaxed) + 1,
+            status,
+        });
+        self.status.store(Some(snapshot.clone()));
+        Ok(snapshot)
+    }
+
+    /// Working Copy の 1 ファイルの差分。`staged` なら HEAD と index、そうでなければ index と作業ツリー。
+    pub fn working_diff(
+        &self,
+        entry: &StatusEntry,
+        staged: bool,
+        profile: &FrontendProfile,
+    ) -> Result<WorkingDiff> {
+        let blob = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
+            match id {
+                Some(id) if entry.submodule => {
+                    Ok(Arc::new(format!("Subproject commit {id}\n").into_bytes()))
+                }
+                Some(id) => self.backend.blob(id),
+                None => Ok(Arc::default()),
+            }
+        };
+        let (old, new) = if staged {
+            (blob(&entry.head_id)?, blob(&entry.index_id)?)
+        } else {
+            let worktree = match entry.worktree {
+                b'D' => Arc::default(),
+                _ if entry.submodule => Arc::default(),
+                _ => self.backend.worktree_file(&entry.path)?,
+            };
+            (blob(&entry.index_id)?, worktree)
+        };
+        let file = diff::file_diff(old, new, 3);
+        let view = DiffView::new(&file, profile);
+        Ok(WorkingDiff {
+            entry: entry.clone(),
+            staged,
+            file,
+            view,
+        })
+    }
+
+    pub fn stage(&self, paths: &[&str]) -> Result<()> {
+        self.backend.stage(paths)
+    }
+
+    pub fn unstage(&self, paths: &[&str]) -> Result<()> {
+        self.backend.unstage(paths)
+    }
+
+    /// `diff` の `rows` 行目の変更だけを stage する（stage 済みの差分なら unstage する）。
+    pub fn stage_rows(&self, diff: &WorkingDiff, rows: &[usize]) -> Result<()> {
+        let selected = |r: usize| rows.contains(&r);
+        let content = if diff.staged {
+            // index から選んだ変更を取り除く = HEAD に選ばなかった変更だけを反映する。
+            diff::apply_selection(&diff.file, |r| !selected(r))
+        } else {
+            diff::apply_selection(&diff.file, selected)
+        };
+        let mode = match diff.entry.index_mode {
+            0 => 0o100644,
+            mode => mode,
+        };
+        self.backend
+            .set_index_content(&diff.entry.path, mode, &content)
+    }
+
+    pub fn commit(&self, message: &str, amend: bool) -> Result<()> {
+        self.backend.commit(message, amend)
+    }
+
     /// commit-graph がなければ書き出し、書き出したら true を返す。リポジトリの `.git` に書き込むので、
     /// 利用者が設定で選んだときだけ呼ぶ。大きなリポジトリでは数十秒かかるので裏のスレッドで呼ぶこと。
     pub fn write_commit_graph_if_missing(&self) -> Result<bool> {
@@ -324,6 +423,48 @@ mod tests {
         for r in 0..incremental.graph.len() {
             assert!(incremental.graph.parents(r).iter().all(|&p| p as usize > r));
         }
+    }
+
+    #[test]
+    fn stages_and_unstages_selected_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "first"]);
+        std::fs::write(dir.join("a.txt"), "one\n2\nthree\n").unwrap();
+
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        let status = repo.load_status().unwrap();
+        let entry = &status.status.entries[0];
+        let unstaged = repo
+            .working_diff(entry, false, &FrontendProfile::MACOS)
+            .unwrap();
+        // @@, -1, +one, 2, -3, +three
+        assert_eq!(unstaged.view.rows.len(), 6);
+        repo.stage_rows(&unstaged, &[1, 2]).unwrap();
+        let show = |spec: &str| {
+            let out = Command::new("git")
+                .args(["show", spec])
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        assert_eq!(show(":a.txt"), "one\n2\n3\n");
+
+        let status = repo.load_status().unwrap();
+        let entry = &status.status.entries[0];
+        let staged = repo
+            .working_diff(entry, true, &FrontendProfile::MACOS)
+            .unwrap();
+        repo.stage_rows(&staged, &[1, 2]).unwrap();
+        assert_eq!(show(":a.txt"), "1\n2\n3\n");
+
+        repo.stage(&["a.txt"]).unwrap();
+        repo.commit("change a", false).unwrap();
+        assert!(repo.load_status().unwrap().status.entries.is_empty());
     }
 
     #[test]
