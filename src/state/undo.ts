@@ -3,7 +3,8 @@
  * 操作の前後で HEAD と関係する ref を記録し、`<gitDir>/amonhen/undo.json` に残す。
  * Undo するときは、今の状態が記録した「操作後」と一致することを確かめてから戻す。
  */
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { HeadState, RepositoryBackend } from '../git/backend.ts';
 
@@ -13,6 +14,18 @@ export interface RefSnapshot {
   refs: Record<string, string | null>;
 }
 
+/** 作業中のファイルの、操作の前後の内容（変更の破棄を Undo で戻すため） */
+export interface FileBackup {
+  /** リポジトリのルートからの相対パス */
+  path: string;
+  /** 操作の前の内容を保存した blob。ファイルが無ければ null */
+  before: string | null;
+  /** 操作の前のファイルのモード */
+  mode?: number;
+  /** 操作の後の内容の sha1。ファイルが無ければ null。Undo の前に、ほかで変わっていないかを確かめる */
+  after: string | null;
+}
+
 export interface UndoEntry {
   label: string;
   time: number;
@@ -20,6 +33,8 @@ export interface UndoEntry {
   mode: 'soft' | 'keep';
   before: RefSnapshot;
   after: RefSnapshot;
+  /** あれば、ref ではなく作業中のファイルを戻す操作 */
+  files?: FileBackup[];
 }
 
 /** 記録した後に、ほかの操作でブランチや HEAD が動いている */
@@ -82,6 +97,61 @@ export class UndoLog {
   }
 
   /**
+   * 作業中のファイルを書き換える操作（変更の破棄）を実行し、変わったファイルの前の内容を記録する。
+   * paths はリポジトリのルートからの相対パス
+   */
+  async recordFiles<T>(label: string, paths: readonly string[], fn: () => Promise<T>): Promise<T> {
+    const root = this.backend.root;
+    const before = await Promise.all(
+      paths.map(async (path) => {
+        const data = await readFile(join(root, path)).catch(() => undefined);
+        const mode = data ? (await stat(join(root, path))).mode : undefined;
+        return { path, data, mode, blob: data ? await this.backend.writeBlob(data) : null };
+      }),
+    );
+    const result = await fn();
+    const files: FileBackup[] = [];
+    for (const b of before) {
+      const after = await contentHash(join(root, b.path));
+      if (after !== (b.data ? sha1(b.data) : null)) {
+        files.push({ path: b.path, before: b.blob, mode: b.mode, after });
+      }
+    }
+    if (files.length > 0) {
+      const snapshot = await this.snapshot([]);
+      const entries = await this.load();
+      entries.push({ label, time: Date.now(), mode: 'keep', before: snapshot, after: snapshot, files });
+      entries.splice(0, Math.max(0, entries.length - MAX_ENTRIES));
+      await this.save();
+    }
+    return result;
+  }
+
+  /** ファイルを操作の前の内容に戻す。ほかで書き換えられていたら何もしない */
+  private async undoFiles(entry: UndoEntry, files: readonly FileBackup[]): Promise<void> {
+    const root = this.backend.root;
+    for (const f of files) {
+      if ((await contentHash(join(root, f.path))) !== f.after) {
+        throw new UndoConflictError(entry);
+      }
+    }
+    for (const f of files) {
+      const abs = join(root, f.path);
+      if (f.before === null) {
+        await rm(abs, { force: true });
+        continue;
+      }
+      const obj = await this.backend.object(f.before);
+      if (!obj) {
+        throw new Error(`${f.path} の元の内容が見つかりません`);
+      }
+      await mkdir(dirname(abs), { recursive: true });
+      await writeFile(abs, obj.data);
+      if (f.mode !== undefined) await chmod(abs, f.mode & 0o777);
+    }
+  }
+
+  /**
    * 保留している操作があり、rebase などがもう終わっていれば確定する。
    * abort した場合は操作の前と同じ状態なので、記録は残らない。確定したら true
    */
@@ -112,6 +182,12 @@ export class UndoLog {
     const entry = entries.at(-1);
     if (!entry) {
       return undefined;
+    }
+    if (entry.files) {
+      await this.undoFiles(entry, entry.files);
+      entries.pop();
+      await this.save();
+      return entry;
     }
     const { before, after, mode } = entry;
     if (!sameSnapshot(await this.snapshot(Object.keys(after.refs)), after)) {
@@ -191,6 +267,16 @@ export class UndoLog {
     await mkdir(dirname(this.file), { recursive: true });
     await writeFile(this.file, JSON.stringify(this.entries ?? [], null, 2));
   }
+}
+
+function sha1(data: Buffer): string {
+  return createHash('sha1').update(data).digest('hex');
+}
+
+/** ファイルの内容の sha1。無ければ null */
+async function contentHash(path: string): Promise<string | null> {
+  const data = await readFile(path).catch(() => undefined);
+  return data ? sha1(data) : null;
 }
 
 function sameSnapshot(a: RefSnapshot, b: RefSnapshot): boolean {
