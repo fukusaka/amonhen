@@ -1,4 +1,4 @@
-use crate::{CommitGraph, CommitText, Oid};
+use crate::{CommitGraph, CommitText, Oid, RawCommit, topo};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -13,8 +13,18 @@ pub trait GitBackend: Send + Sync {
     /// History の起点（HEAD・ローカルとリモートのブランチ・タグが指すコミット）。
     fn tips(&self) -> Result<Vec<Oid>>;
 
+    /// `tips` から辿れるコミットを順不同で読む。`known` が真を返すコミットとその先は辿らない
+    /// （前回読んだ History に当たったら止めるため）。各コミットは 1 回だけ読む。
+    fn read_commits(
+        &self,
+        tips: &[Oid],
+        known: &(dyn Fn(&Oid) -> bool + Sync),
+    ) -> Result<Vec<RawCommit>>;
+
     /// `tips` から辿れるコミットを、子が親より先に来るトポロジカル順で返す。
-    fn commit_graph(&self, tips: &[Oid]) -> Result<CommitGraph>;
+    fn commit_graph(&self, tips: &[Oid]) -> Result<CommitGraph> {
+        Ok(topo::sort(self.read_commits(tips, &|_| false)?))
+    }
 
     /// コミットの本文。History で見えている行の分だけ呼ぶ。
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>>;

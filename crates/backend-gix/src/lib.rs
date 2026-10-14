@@ -6,9 +6,9 @@ use std::path::Path;
 use std::ops::Range;
 use std::sync::Arc;
 
-use amonhen_model::{CommitGraph, CommitGraphBuilder, CommitText, GitBackend, Oid, Result};
+use amonhen_model::{CommitText, GitBackend, Oid, RawCommit, Result};
 use gix::objs::Find;
-use gix::traverse::commit::topo;
+use rayon::prelude::*;
 
 pub struct GixBackend {
     repo: gix::ThreadSafeRepository,
@@ -29,6 +29,46 @@ fn range_in(whole: &[u8], part: &[u8]) -> Range<u32> {
 
 fn trim(bytes: &[u8]) -> &[u8] {
     bytes.trim_ascii()
+}
+
+/// コミット 1 つの親と日時。commit-graph にあればオブジェクトを展開せずに済ませる。
+fn read_commit(
+    repo: &gix::Repository,
+    graph: Option<&gix::commitgraph::Graph>,
+    hash: gix::hash::Kind,
+    buf: &mut Vec<u8>,
+    id: &Oid,
+) -> Result<RawCommit> {
+    let oid = gix::ObjectId::from_bytes_or_panic(&id.0);
+    if let Some(graph) = graph
+        && let Some(pos) = graph.lookup(oid)
+    {
+        let commit = graph.commit_at(pos);
+        let parents = commit
+            .iter_parents()
+            .map(|p| to_oid(graph.id_at(p?)))
+            .collect::<Result<_>>()?;
+        return Ok(RawCommit {
+            id: *id,
+            commit_time: commit.committer_timestamp() as i64,
+            parents,
+        });
+    }
+    let data = repo
+        .objects
+        .try_find(&oid, buf)?
+        .ok_or_else(|| format!("コミット {id} が見つからない"))?;
+    let iter = || gix::objs::CommitRefIter::from_bytes(data.data, hash);
+    let parents = iter()
+        .parent_ids()
+        .map(|p| to_oid(&p))
+        .collect::<Result<_>>()?;
+    let commit_time = iter().committer()?.time()?.seconds;
+    Ok(RawCommit {
+        id: *id,
+        commit_time,
+        parents,
+    })
 }
 
 fn to_oid(id: &gix::oid) -> Result<Oid> {
@@ -72,33 +112,42 @@ impl GitBackend for GixBackend {
         Ok(tips)
     }
 
-    fn commit_graph(&self, tips: &[Oid]) -> Result<CommitGraph> {
-        let mut repo = self.repo.to_thread_local();
-        repo.object_cache_size_if_unset(64 * 1024 * 1024);
-        let walk = topo::Builder::new(&repo.objects)
-            .with_tips(
-                tips.iter()
-                    .map(|t| gix::ObjectId::from_bytes_or_panic(&t.0)),
-            )
-            .sorting(topo::Sorting::TopoOrder)
-            .with_commit_graph(repo.commit_graph_if_enabled()?)
-            .build()?;
+    fn read_commits(
+        &self,
+        tips: &[Oid],
+        known: &(dyn Fn(&Oid) -> bool + Sync),
+    ) -> Result<Vec<RawCommit>> {
+        let repo = self.repo.to_thread_local();
+        let graph = repo.commit_graph_if_enabled()?;
+        let hash = repo.object_hash();
+        let mut seen: HashSet<Oid> = HashSet::new();
+        let mut frontier: Vec<Oid> = tips
+            .iter()
+            .copied()
+            .filter(|t| !known(t) && seen.insert(*t))
+            .collect();
+        let mut out = Vec::new();
 
-        let mut builder = CommitGraphBuilder::default();
-        for info in walk {
-            let info = info?;
-            let parents = info
-                .parent_ids
-                .iter()
-                .map(|p| to_oid(p.as_ref()))
-                .collect::<Result<Vec<_>>>()?;
-            builder.push(
-                to_oid(info.id.as_ref())?,
-                info.commit_time.unwrap_or(0),
-                parents,
-            );
+        // 幅優先で辿り、同じ深さのコミットはまとめて並列に読む（展開が時間の大半を占める）。
+        while !frontier.is_empty() {
+            let read: Vec<RawCommit> = frontier
+                .par_iter()
+                .map_init(
+                    || (self.repo.to_thread_local(), Vec::new()),
+                    |(repo, buf), id| read_commit(repo, graph.as_ref(), hash, buf, id),
+                )
+                .collect::<Result<_>>()?;
+            frontier.clear();
+            for commit in &read {
+                for p in &commit.parents {
+                    if !known(p) && seen.insert(*p) {
+                        frontier.push(*p);
+                    }
+                }
+            }
+            out.extend(read);
         }
-        Ok(builder.build())
+        Ok(out)
     }
 
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
