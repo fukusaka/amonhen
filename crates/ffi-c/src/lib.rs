@@ -9,9 +9,11 @@ use std::ffi::{CStr, CString, c_char};
 use std::sync::Arc;
 
 use amonhen_backend_gix::GixBackend;
-use amonhen_core::{HistorySnapshot, Repository, cache};
+use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository, cache};
 use amonhen_layout::{Edge, Node, StrRef};
+use amonhen_model::Oid;
 use amonhen_projection::{FrontendProfile, HistoryChunk, StringEncoding};
+use amonhen_watch::Watcher;
 use std::path::Path;
 
 /// 開いたリポジトリ。
@@ -21,6 +23,16 @@ pub struct AmonhenRepo {
 
 /// History のスナップショット。
 pub struct AmonhenHistory {
+    _private: [u8; 0],
+}
+
+/// ref の一覧。
+pub struct AmonhenRefs {
+    _private: [u8; 0],
+}
+
+/// リポジトリの監視。
+pub struct AmonhenWatch {
     _private: [u8; 0],
 }
 
@@ -307,5 +319,176 @@ pub unsafe extern "C" fn amonhen_chunk_view(chunk: *const AmonhenChunk) -> Amonh
 pub unsafe extern "C" fn amonhen_chunk_free(chunk: *mut AmonhenChunk) {
     if !chunk.is_null() {
         drop(unsafe { Box::from_raw(chunk.cast::<HistoryChunk>()) });
+    }
+}
+
+/// `history` で `oid`（20 バイト）が何行目か。なければ -1。
+///
+/// # Safety
+/// `history` は有効なスナップショット、`oid` は 20 バイト読める領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_row_of(
+    history_ptr: *const AmonhenHistory,
+    oid: *const u8,
+) -> i64 {
+    let id = Oid(unsafe { *oid.cast::<[u8; 20]>() });
+    history(history_ptr).row_of(&id).map_or(-1, i64::from)
+}
+
+/// ref の 1 項目。文字列は `AmonhenRefsView::strings` の中の UTF-8。
+#[repr(C)]
+pub struct AmonhenRefEntry {
+    /// 0: ローカルブランチ、1: リモートブランチ、2: タグ、3: stash、4: サブモジュール。
+    pub kind: u8,
+    pub has_target: u8,
+    pub _pad: [u8; 2],
+    pub name_off: u32,
+    pub name_len: u32,
+    /// 上流ブランチ・stash のメッセージ。なければ `detail_len` が `u32::MAX`。
+    pub detail_off: u32,
+    pub detail_len: u32,
+    pub target: [u8; 20],
+}
+
+#[repr(C)]
+pub struct AmonhenRefsView {
+    pub generation: u64,
+    pub entries: *const AmonhenRefEntry,
+    pub count: u32,
+    pub strings: *const u8,
+    /// チェックアウト中のブランチ。detached HEAD なら `head_branch_len` が `u32::MAX`。
+    pub head_branch_off: u32,
+    pub head_branch_len: u32,
+}
+
+/// 一覧は数百〜数千件なので、文字列は 1 つの領域に詰めて渡す。
+struct RefsHandle {
+    snapshot: Arc<RefsSnapshot>,
+    entries: Vec<AmonhenRefEntry>,
+    strings: Vec<u8>,
+    head_branch: (u32, u32),
+}
+
+impl RefsHandle {
+    fn new(snapshot: Arc<RefsSnapshot>) -> Self {
+        let mut strings = Vec::new();
+        let mut put = |s: Option<&str>| match s {
+            Some(s) => {
+                let off = strings.len() as u32;
+                strings.extend_from_slice(s.as_bytes());
+                (off, s.len() as u32)
+            }
+            None => (0, u32::MAX),
+        };
+        let head_branch = put(snapshot.refs.head_branch.as_deref());
+        let entries = snapshot
+            .refs
+            .entries
+            .iter()
+            .map(|e| {
+                let (name_off, name_len) = put(Some(&e.name));
+                let (detail_off, detail_len) = put(e.detail.as_deref());
+                AmonhenRefEntry {
+                    kind: e.kind as u8,
+                    has_target: u8::from(e.target.is_some()),
+                    _pad: [0; 2],
+                    name_off,
+                    name_len,
+                    detail_off,
+                    detail_len,
+                    target: e.target.map_or([0; 20], |o| o.0),
+                }
+            })
+            .collect();
+        Self {
+            snapshot,
+            entries,
+            strings,
+            head_branch,
+        }
+    }
+}
+
+/// ref の一覧を読み直して返す（`amonhen_refs_release` で手放す）。前回と同じなら同じ世代。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_refs_load(repo_ptr: *const AmonhenRepo) -> *const AmonhenRefs {
+    match repo(repo_ptr).load_refs() {
+        Ok(snapshot) => Arc::into_raw(Arc::new(RefsHandle::new(snapshot))).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null()
+        }
+    }
+}
+
+/// # Safety
+/// `refs` は `amonhen_refs_load` が返したもので、まだ手放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_refs_release(refs: *const AmonhenRefs) {
+    if !refs.is_null() {
+        drop(unsafe { Arc::from_raw(refs.cast::<RefsHandle>()) });
+    }
+}
+
+/// # Safety
+/// `refs` は有効であること。返したポインタは手放すまで有効。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_refs_view(refs: *const AmonhenRefs) -> AmonhenRefsView {
+    let r = unsafe { &*refs.cast::<RefsHandle>() };
+    AmonhenRefsView {
+        generation: r.snapshot.generation,
+        entries: r.entries.as_ptr(),
+        count: r.entries.len() as u32,
+        strings: r.strings.as_ptr(),
+        head_branch_off: r.head_branch.0,
+        head_branch_len: r.head_branch.1,
+    }
+}
+
+/// 変化の種類（`amonhen_repo_watch` のコールバックに渡すビット）。
+pub const AMONHEN_CHANGE_REFS: u32 = 1 << 0;
+pub const AMONHEN_CHANGE_INDEX: u32 = 1 << 1;
+pub const AMONHEN_CHANGE_WORKTREE: u32 = 1 << 2;
+pub const AMONHEN_CHANGE_CONFIG: u32 = 1 << 3;
+
+struct Context(*mut std::ffi::c_void);
+
+// FE が渡す文脈。コールバックで FE に返すだけで、Rust 側では触らない。
+unsafe impl Send for Context {}
+
+/// リポジトリの監視を始める。変化があると、短い間の変化をまとめてから `callback(context, 変化の種類)`
+/// を監視用のスレッドから呼ぶ。`amonhen_watch_free` で止める。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ。`callback` は `amonhen_watch_free` まで、どのスレッドから呼んでもよいこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_repo_watch(
+    repo_ptr: *const AmonhenRepo,
+    callback: extern "C" fn(*mut std::ffi::c_void, u32),
+    context: *mut std::ffi::c_void,
+) -> *mut AmonhenWatch {
+    let context = Context(context);
+    let watcher = Watcher::new(repo(repo_ptr).paths(), move |changes| {
+        let context = &context;
+        callback(context.0, changes.0);
+    });
+    match watcher {
+        Ok(w) => Box::into_raw(Box::new(w)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// # Safety
+/// `watch` は `amonhen_repo_watch` が返したもので、まだ止めていないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_watch_free(watch: *mut AmonhenWatch) {
+    if !watch.is_null() {
+        drop(unsafe { Box::from_raw(watch.cast::<Watcher>()) });
     }
 }

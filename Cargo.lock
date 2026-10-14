@@ -57,7 +57,9 @@ dependencies = [
  "amonhen-backend-gix",
  "amonhen-core",
  "amonhen-layout",
+ "amonhen-model",
  "amonhen-projection",
+ "amonhen-watch",
  "cbindgen",
  "tempfile",
 ]

@@ -12,6 +12,8 @@ crate-type = ["staticlib", "rlib"]
 amonhen-backend-gix.workspace = true
 amonhen-core.workspace = true
 amonhen-layout.workspace = true
+amonhen-model.workspace = true
+amonhen-watch.workspace = true
 amonhen-projection.workspace = true
 
 [build-dependencies]

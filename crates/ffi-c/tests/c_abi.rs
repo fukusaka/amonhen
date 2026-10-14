@@ -95,3 +95,38 @@ fn shows_the_cached_history_on_the_next_open() {
         amonhen_repo_free(repo);
     }
 }
+
+#[test]
+fn lists_refs_and_finds_their_rows() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["commit", "--allow-empty", "-q", "-m", "first"]);
+    git(dir, &["branch", "topic"]);
+    git(dir, &["commit", "--allow-empty", "-q", "-m", "second"]);
+    unsafe {
+        let path = CString::new(dir.to_str().unwrap()).unwrap();
+        let repo = amonhen_repo_open(path.as_ptr(), std::ptr::null());
+        let history = amonhen_history_load(repo);
+        let refs = amonhen_refs_load(repo);
+        let v = amonhen_refs_view(refs);
+        assert_eq!(v.count, 2);
+        let text = |off: u32, len: u32| {
+            std::str::from_utf8(std::slice::from_raw_parts(v.strings.add(off as usize), len as usize)).unwrap()
+        };
+        assert_eq!(text(v.head_branch_off, v.head_branch_len), "main");
+        let entries = std::slice::from_raw_parts(v.entries, v.count as usize);
+        assert_eq!(text(entries[1].name_off, entries[1].name_len), "topic");
+        assert_eq!(entries[1].detail_len, u32::MAX);
+        assert_eq!(amonhen_history_row_of(history, entries[0].target.as_ptr()), 0);
+        assert_eq!(amonhen_history_row_of(history, entries[1].target.as_ptr()), 1);
+        assert_eq!(amonhen_history_row_of(history, [0u8; 20].as_ptr()), -1);
+
+        let again = amonhen_refs_load(repo);
+        assert_eq!(amonhen_refs_view(again).generation, v.generation, "変わっていなければ同じ世代");
+        amonhen_refs_release(again);
+        amonhen_refs_release(refs);
+        amonhen_history_release(history);
+        amonhen_repo_free(repo);
+    }
+}

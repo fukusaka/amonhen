@@ -9,6 +9,17 @@
 #include <stdlib.h>
 
 /**
+ * 変化の種類（`amonhen_repo_watch` のコールバックに渡すビット）。
+ */
+#define AMONHEN_CHANGE_REFS (1 << 0)
+
+#define AMONHEN_CHANGE_INDEX (1 << 1)
+
+#define AMONHEN_CHANGE_WORKTREE (1 << 2)
+
+#define AMONHEN_CHANGE_CONFIG (1 << 3)
+
+/**
  * ASCII 以外の文字列の符号化。
  */
 enum AmonhenEncoding
@@ -38,9 +49,19 @@ typedef struct AmonhenChunk AmonhenChunk;
 typedef struct AmonhenHistory AmonhenHistory;
 
 /**
+ * ref の一覧。
+ */
+typedef struct AmonhenRefs AmonhenRefs;
+
+/**
  * 開いたリポジトリ。
  */
 typedef struct AmonhenRepo AmonhenRepo;
+
+/**
+ * リポジトリの監視。
+ */
+typedef struct AmonhenWatch AmonhenWatch;
 
 /**
  * グラフの点（コミット 1 つ）。
@@ -122,6 +143,38 @@ typedef struct {
   const uint8_t *const *bases;
   uint32_t base_count;
 } AmonhenChunkView;
+
+/**
+ * ref の 1 項目。文字列は `AmonhenRefsView::strings` の中の UTF-8。
+ */
+typedef struct {
+  /**
+   * 0: ローカルブランチ、1: リモートブランチ、2: タグ、3: stash、4: サブモジュール。
+   */
+  uint8_t kind;
+  uint8_t has_target;
+  uint8_t _pad[2];
+  uint32_t name_off;
+  uint32_t name_len;
+  /**
+   * 上流ブランチ・stash のメッセージ。なければ `detail_len` が `u32::MAX`。
+   */
+  uint32_t detail_off;
+  uint32_t detail_len;
+  uint8_t target[20];
+} AmonhenRefEntry;
+
+typedef struct {
+  uint64_t generation;
+  const AmonhenRefEntry *entries;
+  uint32_t count;
+  const uint8_t *strings;
+  /**
+   * チェックアウト中のブランチ。detached HEAD なら `head_branch_len` が `u32::MAX`。
+   */
+  uint32_t head_branch_off;
+  uint32_t head_branch_len;
+} AmonhenRefsView;
 
 #ifdef __cplusplus
 extern "C" {
@@ -228,6 +281,52 @@ AmonhenChunkView amonhen_chunk_view(const AmonhenChunk *chunk);
  * `chunk` は `amonhen_history_chunk` が返したもので、まだ解放していないこと。
  */
 void amonhen_chunk_free(AmonhenChunk *chunk);
+
+/**
+ * `history` で `oid`（20 バイト）が何行目か。なければ -1。
+ *
+ * # Safety
+ * `history` は有効なスナップショット、`oid` は 20 バイト読める領域であること。
+ */
+int64_t amonhen_history_row_of(const AmonhenHistory *history_ptr,
+                               const uint8_t *oid);
+
+/**
+ * ref の一覧を読み直して返す（`amonhen_refs_release` で手放す）。前回と同じなら同じ世代。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+const AmonhenRefs *amonhen_refs_load(const AmonhenRepo *repo_ptr);
+
+/**
+ * # Safety
+ * `refs` は `amonhen_refs_load` が返したもので、まだ手放していないこと。
+ */
+void amonhen_refs_release(const AmonhenRefs *refs);
+
+/**
+ * # Safety
+ * `refs` は有効であること。返したポインタは手放すまで有効。
+ */
+AmonhenRefsView amonhen_refs_view(const AmonhenRefs *refs);
+
+/**
+ * リポジトリの監視を始める。変化があると、短い間の変化をまとめてから `callback(context, 変化の種類)`
+ * を監視用のスレッドから呼ぶ。`amonhen_watch_free` で止める。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ。`callback` は `amonhen_watch_free` まで、どのスレッドから呼んでもよいこと。
+ */
+AmonhenWatch *amonhen_repo_watch(const AmonhenRepo *repo_ptr,
+                                 void (*callback)(void*, uint32_t),
+                                 void *context);
+
+/**
+ * # Safety
+ * `watch` は `amonhen_repo_watch` が返したもので、まだ止めていないこと。
+ */
+void amonhen_watch_free(AmonhenWatch *watch);
 
 #ifdef __cplusplus
 }  // extern "C"
