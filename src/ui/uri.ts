@@ -5,17 +5,17 @@ import * as vscode from 'vscode';
 export const SCHEME = 'amonhen';
 
 /**
- * どこの内容か。rev は任意のコミット（rev パラメーターで指定）。
+ * どこの内容か。rev は rev パラメーターで指定したもの（コミット、または `:1` のような index の stage）。
  * empty は存在しない側（追加・削除されたファイル）に使う。
  */
-export type Side = 'HEAD' | 'index' | 'rev' | 'empty';
+export type Side = 'rev' | 'empty';
 
 export interface GitUri {
   root: string;
   /** リポジトリのルートからの相対パス */
   path: string;
   side: Side;
-  /** side が rev のときのコミット */
+  /** side が rev のときの rev */
   rev?: string;
 }
 
@@ -33,7 +33,7 @@ export function parseGitUri(uri: vscode.Uri): GitUri | undefined {
   const root = q.get('root');
   const path = q.get('path');
   const side = q.get('side');
-  if (root === null || path === null || (side !== 'HEAD' && side !== 'index' && side !== 'rev' && side !== 'empty')) {
+  if (root === null || path === null || (side !== 'rev' && side !== 'empty')) {
     return undefined;
   }
   const rev = q.get('rev');
