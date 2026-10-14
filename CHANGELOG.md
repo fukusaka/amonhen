@@ -4,6 +4,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Working Copy で、stage していない変更をファイル・hunk・行の単位で破棄する（Discard）。破棄した内容は Undo で戻せる。
+- ブランチ・タグの作成（New Branch / New Tag）とブランチ名の変更。サイドバーのブランチ・タグと、History のコミットの右クリックから。
+- Stash の保存・適用・pop・削除と、中身の表示（untracked のファイルも含む）。削除は Undo で戻せる。
+- History のコミットの右クリックで Cherry-pick / Revert。
+- サブモジュールの Update と、別のウィンドウで開く。
+
 ### Changed
 
 - ナビ（Working Copy / History の入口、途中の merge / rebase、ブランチ類）をサイドバーに移し、メインビューは Working Copy か History だけを広く出すようにした。Fetch / Pull / Push / Undo はサイドバーのタイトルのボタンになった。
