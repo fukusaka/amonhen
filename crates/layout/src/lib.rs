@@ -113,6 +113,14 @@ impl DiffRow {
     pub const REMOVED: u8 = 2;
     /// `@@ -1,3 +1,4 @@`
     pub const HUNK: u8 = 3;
+    /// コンフリクトの Current 側。
+    pub const OURS: u8 = 4;
+    /// コンフリクトの Incoming 側。
+    pub const THEIRS: u8 = 5;
+    /// コンフリクトの共通の祖先（diff3）。
+    pub const BASE: u8 = 6;
+    /// `<<<<<<<` などのマーカーの行。
+    pub const MARKER: u8 = 7;
 }
 
 unsafe impl Pod for StrRef {}

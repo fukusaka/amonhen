@@ -241,6 +241,22 @@ typedef struct {
  * `@@ -1,3 +1,4 @@`
  */
 #define AmonhenDiffRow_HUNK 3
+/**
+ * コンフリクトの Current 側。
+ */
+#define AmonhenDiffRow_OURS 4
+/**
+ * コンフリクトの Incoming 側。
+ */
+#define AmonhenDiffRow_THEIRS 5
+/**
+ * コンフリクトの共通の祖先（diff3）。
+ */
+#define AmonhenDiffRow_BASE 6
+/**
+ * `<<<<<<<` などのマーカーの行。
+ */
+#define AmonhenDiffRow_MARKER 7
 
 typedef struct {
   const AmonhenDiffRow *rows;

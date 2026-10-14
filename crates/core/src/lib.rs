@@ -2,6 +2,7 @@
 
 pub mod cache;
 pub mod command;
+pub mod conflict;
 pub mod diff;
 pub mod graph;
 mod repository;
