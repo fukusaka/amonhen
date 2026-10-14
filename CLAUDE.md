@@ -12,14 +12,14 @@ VSCode 上で快適に Git を操作するための、自分用の Git 拡張。
 - 独自 URI スキームは `amonhen:`
 - `extensionKind: ["workspace"]`。Remote-SSH 接続時は拡張ホストが SSH 先で動き、git もそこで実行される
 - git の操作とデータ取得は `git` を直接 spawn する。状態変化の検知だけ組み込みの `vscode.git` 拡張 API（`getAPI(1)` の `onDidChange` 系）を使う
-- 差分表示とコンフリクト解決は、VSCode 標準の diff エディタと 3-way マージエディタを流用する
+- ナビはサイドバーの TreeView、中身（Working Copy・History と差分）はエディタ領域の 1 つの Webview（メインビュー）に出す。コンフリクト解決は VSCode 標準の 3-way マージエディタを流用する
 - 履歴を書き換える操作（rebase、amend、reset など）は、実行前に `HEAD` と関係する ref を記録し、Undo できるようにする
 
 ## 構成
 
 - git 実行層: プロセス起動、常駐 `git cat-file --batch-command`、出力のパース
 - 状態管理層: ref・status のキャッシュ、Undo 用の操作ログ
-- UI 層: TreeDataProvider、TextDocumentContentProvider、Webview との通信
+- UI 層: サイドバーのナビ（TreeDataProvider）、メインビュー（Webview）との通信、TextDocumentContentProvider
 
 ## 速度に関する方針
 
