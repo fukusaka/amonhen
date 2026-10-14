@@ -60,7 +60,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.init("fetch"), .init("push"), .flexibleSpace, .init("undo")]
+        [.init("fetch"), .init("pull"), .init("push"), .init("stash"), .flexibleSpace, .init("undo")]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -74,6 +74,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         switch id.rawValue {
         case "fetch": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "arrow.down.circle", #selector(fetch))
         case "push": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "arrow.up.circle", #selector(push))
+        case "pull": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "arrow.down.to.line.circle", #selector(pull))
+        case "stash": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "tray.and.arrow.down", #selector(stash))
         case "undo": (item, symbol, action) = (undoItem, "arrow.uturn.backward.circle", #selector(undo))
         default: return nil
         }
@@ -86,6 +88,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
 
     @objc private func fetch() { actions.fetch() }
     @objc private func push() { actions.push() }
+    @objc private func pull() { actions.pull() }
+    @objc private func stash() { actions.stash() }
     @objc private func undo() { actions.undo() }
 }
 

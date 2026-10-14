@@ -187,6 +187,32 @@ final class Actions {
         perform(["op": "fetch"])
     }
 
+    func pull() {
+        perform(["op": "pull"])
+    }
+
+    /// 作業中の変更を stash する。untracked のファイルを含めるかを選べる。
+    func stash() {
+        let alert = NSAlert()
+        alert.messageText = "Stash Changes"
+        alert.informativeText = "メッセージ（空でもよい）"
+        alert.addButton(withTitle: "Stash")
+        alert.addButton(withTitle: "キャンセル")
+        let field = NSTextField(frame: NSRect(x: 0, y: 30, width: 300, height: 24))
+        let untracked = NSButton(checkboxWithTitle: "untracked のファイルも含める", target: nil, action: nil)
+        untracked.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 56))
+        box.addSubview(field)
+        box.addSubview(untracked)
+        alert.accessoryView = box
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        var command: [String: Any] = ["op": "stashPush", "includeUntracked": untracked.state == .on]
+        let message = field.stringValue.trimmingCharacters(in: .whitespaces)
+        if !message.isEmpty { command["message"] = message }
+        perform(command)
+    }
+
     /// 今のブランチを上流に push する。上流がなければ origin に同じ名前で作る。
     func push(force: Bool = false) {
         let repository = self.repository

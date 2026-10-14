@@ -13,6 +13,11 @@ public struct RefItem: Hashable, Sendable {
     public let target: Data?
     /// ローカルブランチの上流、stash のメッセージ。
     public let detail: String?
+    /// ローカルブランチの、上流より先・後ろにあるコミットの数。
+    public var ahead = 0
+    public var behind = 0
+    /// 上流のリモートブランチがもうない。
+    public var gone = false
 }
 
 /// ブランチ・リモートブランチ・タグ・stash・サブモジュールの一覧。数百〜数千件なので文字列はコピーする。
@@ -38,7 +43,8 @@ extension Repository {
                 kind: RefKind(rawValue: e.kind) ?? .local,
                 name: text(e.name_off, e.name_len) ?? "",
                 target: e.has_target != 0 ? withUnsafeBytes(of: &target) { Data($0) } : nil,
-                detail: text(e.detail_off, e.detail_len))
+                detail: text(e.detail_off, e.detail_len),
+                ahead: Int(e.ahead), behind: Int(e.behind), gone: e.gone != 0)
         }
         return Refs(generation: v.generation, headBranch: text(v.head_branch_off, v.head_branch_len), items: items)
     }

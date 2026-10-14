@@ -182,6 +182,16 @@ typedef struct {
   uint32_t detail_off;
   uint32_t detail_len;
   uint8_t target[20];
+  /**
+   * ローカルブランチの、上流より先・後ろにあるコミットの数。
+   */
+  uint32_t ahead;
+  uint32_t behind;
+  /**
+   * 上流のリモートブランチがもうない。
+   */
+  uint8_t gone;
+  uint8_t _pad2[3];
 } AmonhenRefEntry;
 
 typedef struct {

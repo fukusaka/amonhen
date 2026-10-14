@@ -67,17 +67,30 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func show(_ refs: Refs) {
         guard refs.generation != generation else { return }
+        let first = generation == nil
         generation = refs.generation
         headBranch = refs.headBranch
         let expanded = Set(groups.filter { outline.isItemExpanded($0) }.map(\.title))
-        let first = groups.isEmpty
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
         var groups: [Node] = []
-        let branches = items(.local).map {
-            Node(title: $0.name, item: $0, isHead: $0.name == refs.headBranch)
+        // feature/x のような名前はフォルダにまとめる。
+        let branchRoot = Node(title: "Branches")
+        for item in items(.local) {
+            var parent = branchRoot
+            let parts = item.name.split(separator: "/").map(String.init)
+            for folder in parts.dropLast() {
+                if let existing = parent.children.first(where: { $0.item == nil && $0.title == folder }) {
+                    parent = existing
+                } else {
+                    let node = Node(title: folder)
+                    parent.children.append(node)
+                    parent = node
+                }
+            }
+            parent.children.append(Node(title: parts.last ?? item.name, item: item, isHead: item.name == refs.headBranch))
         }
-        if !branches.isEmpty { groups.append(Node(title: "Branches", children: branches)) }
+        if !branchRoot.children.isEmpty { groups.append(branchRoot) }
 
         // リモートごとにまとめる（origin/main → origin の下の main）。
         var remotes: [String: [Node]] = [:]
@@ -164,7 +177,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             ])
             return cell
         }()
-        cell.textField?.stringValue = node.isHead ? "● \(node.title)" : node.title
+        var title = node.isHead ? "✓ \(node.title)" : node.title
+        if let item = node.item, item.kind == .local {
+            if item.gone {
+                title += "  gone"
+            } else {
+                if item.ahead > 0 { title += "  ↑\(item.ahead)" }
+                if item.behind > 0 { title += " ↓\(item.behind)" }
+            }
+        }
+        cell.textField?.stringValue = title
         cell.textField?.font = node.isHead ? .boldSystemFont(ofSize: NSFont.systemFontSize) : .systemFont(ofSize: NSFont.systemFontSize)
         cell.toolTip = node.item?.detail
         return cell

@@ -372,6 +372,12 @@ pub struct AmonhenRefEntry {
     pub detail_off: u32,
     pub detail_len: u32,
     pub target: [u8; 20],
+    /// ローカルブランチの、上流より先・後ろにあるコミットの数。
+    pub ahead: u32,
+    pub behind: u32,
+    /// 上流のリモートブランチがもうない。
+    pub gone: u8,
+    pub _pad2: [u8; 3],
 }
 
 #[repr(C)]
@@ -421,6 +427,10 @@ impl RefsHandle {
                     detail_off,
                     detail_len,
                     target: e.target.map_or([0; 20], |o| o.0),
+                    ahead: e.ahead,
+                    behind: e.behind,
+                    gone: u8::from(e.gone),
+                    _pad2: [0; 3],
                 }
             })
             .collect();
