@@ -69,6 +69,13 @@ export interface RepositoryBackend {
   createTag(name: string, target: string, message?: string): Promise<void>;
   /** ブランチ名として使えるか。使えなければ git の説明を返す */
   checkBranchName(name: string): Promise<string | undefined>;
+  /** 作業中の変更を stash に保存する */
+  stashPush(opts: { message?: string; includeUntracked?: boolean }): Promise<void>;
+  /** stash を当てる。pop なら当てたあとで消す。コンフリクトしたら conflict（pop でも stash は残る） */
+  stashApply(name: string, pop: boolean): Promise<MergeResult>;
+  stashDrop(name: string): Promise<void>;
+  /** 消した stash を戻す */
+  stashStore(oid: string, message: string): Promise<void>;
   /** ファイル単位で stage する。削除も含む */
   stage(paths: readonly string[]): Promise<void>;
   /** ファイル単位で unstage する。HEAD がまだ無くてもよい */
@@ -220,6 +227,45 @@ export class CliBackend implements RepositoryBackend {
     } catch (err) {
       return err instanceof GitError ? err.message : String(err);
     }
+  }
+
+  async stashPush(opts: { message?: string; includeUntracked?: boolean }): Promise<void> {
+    const args = ['stash', 'push'];
+    if (opts.includeUntracked) args.push('--include-untracked');
+    if (opts.message) args.push('--message', opts.message);
+    await this.git.exec(args, { cwd: this.root });
+  }
+
+  async stashApply(name: string, pop: boolean): Promise<MergeResult> {
+    // stage していた状態も戻す。--index で当てられなければ、作業中のファイルにだけ当てる
+    for (const args of [
+      ['stash', pop ? 'pop' : 'apply', '--index', name],
+      ['stash', pop ? 'pop' : 'apply', name],
+    ]) {
+      try {
+        await this.git.exec(args, { cwd: this.root });
+        return 'done';
+      } catch (err) {
+        const status = await this.status();
+        if (status.entries.some((e) => e.kind === 'unmerged')) {
+          return 'conflict';
+        }
+        // stage していた変更を index に戻せないときは「Try without --index」と言われる
+        if (args.includes('--index') && err instanceof GitError && /without --index/.test(err.stderr)) {
+          continue;
+        }
+        throw err;
+      }
+    }
+    return 'done';
+  }
+
+  async stashDrop(name: string): Promise<void> {
+    await this.git.exec(['stash', 'drop', name], { cwd: this.root });
+  }
+
+  async stashStore(oid: string, message: string): Promise<void> {
+    await this.git.exec(['stash', 'store', '--message', message, oid], { cwd: this.root });
   }
 
   async stage(paths: readonly string[]): Promise<void> {

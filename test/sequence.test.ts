@@ -176,3 +176,39 @@ test('createBranch, renameBranch, createTag and checkBranchName', async () => {
   assert.ok(await backend.checkBranchName('bad..name'));
   assert.ok(await backend.checkBranchName('with space'));
 });
+
+test('stash push, apply, pop, drop and store', async () => {
+  writeFileSync(join(dir, 'a.txt'), 'staged\n');
+  git('add', 'a.txt');
+  writeFileSync(join(dir, 'new.txt'), 'untracked\n');
+  await backend.stashPush({ message: 'work in progress', includeUntracked: true });
+  assert.equal(git('status', '--porcelain'), '');
+  const [stash] = await backend.stashes();
+  assert.equal(stash?.subject, 'On main: work in progress');
+
+  assert.equal(await backend.stashApply('stash@{0}', false), 'done');
+  // --index で、stage していた状態も戻る
+  assert.equal(git('status', '--porcelain'), 'M  a.txt\n?? new.txt');
+  assert.equal((await backend.stashes()).length, 1);
+  git('reset', '-q', '--hard');
+  rmSync(join(dir, 'new.txt'));
+
+  assert.equal(await backend.stashApply('stash@{0}', true), 'done');
+  assert.equal((await backend.stashes()).length, 0);
+  await backend.stashPush({});
+  const [again] = await backend.stashes();
+  await backend.stashDrop('stash@{0}');
+  assert.equal((await backend.stashes()).length, 0);
+  await backend.stashStore(again!.oid, again!.subject);
+  assert.equal((await backend.stashes())[0]?.oid, again!.oid);
+});
+
+test('stash apply reports conflicts', async () => {
+  writeFileSync(join(dir, 'a.txt'), 'stashed\n');
+  await backend.stashPush({});
+  writeFileSync(join(dir, 'a.txt'), 'committed\n');
+  git('commit', '-q', '-am', 'conflicting');
+  assert.equal(await backend.stashApply('stash@{0}', true), 'conflict');
+  // pop でコンフリクトしたら stash は残る
+  assert.equal((await backend.stashes()).length, 1);
+});
