@@ -107,6 +107,17 @@ pub enum Command {
     SquashMessage {
         oid: String,
     },
+    /// `path` の `index` 番目のコンフリクトを解決する（Undo できる）。
+    ResolveConflict {
+        path: String,
+        index: usize,
+        choice: crate::conflict::Choice,
+    },
+    /// `path` を片側にして解決済みにする。
+    TakeSide {
+        path: String,
+        ours: bool,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -480,6 +491,32 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::ResolveConflict {
+                path,
+                index,
+                choice,
+            } => {
+                let workdir = self
+                    .backend()
+                    .paths()
+                    .workdir
+                    .ok_or("作業ツリーのないリポジトリ")?;
+                let file = workdir.join(&path);
+                let data = std::fs::read(&file)?;
+                let resolved = crate::conflict::resolve(&data, index, choice)
+                    .ok_or("そのコンフリクトはもうない")?;
+                undo.record_files(
+                    ops,
+                    &format!("Resolve conflict in {path}"),
+                    &[&path],
+                    || Ok(std::fs::write(&file, &resolved)?),
+                )?;
+                ok()
+            }
+            Command::TakeSide { path, ours } => {
+                ops.take_side(&path, ours)?;
+                ok()
+            }
             Command::Sequence => Ok(Response {
                 ok: true,
                 text: ops.sequence_in_progress()?.map(|s| s.command().to_owned()),
@@ -635,6 +672,63 @@ mod tests {
         assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "edit");
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["z", "x and y", "first"]);
+    }
+
+    #[test]
+    fn resolves_merge_conflicts() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "a.txt", "1\nTOPIC\n3\n");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "a.txt", "1\nMAIN\n3\n");
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+
+        let v = repo
+            .conflict_view("a.txt", &FrontendProfile::MACOS)
+            .unwrap();
+        assert_eq!(v.removed, 1, "コンフリクトの数");
+        let r = run(
+            &repo,
+            r#"{"op":"resolveConflict","path":"a.txt","index":0,"choice":"theirs"}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\nTOPIC\n3\n"
+        );
+        // 解決は Undo できる。
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert!(
+            std::fs::read_to_string(dir.join("a.txt"))
+                .unwrap()
+                .contains("<<<<<<<")
+        );
+
+        assert_eq!(
+            run(&repo, r#"{"op":"takeSide","path":"a.txt","ours":true}"#)["ok"],
+            true
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\nMAIN\n3\n"
+        );
+        let status = repo.load_status().unwrap();
+        assert!(
+            status
+                .status
+                .entries
+                .iter()
+                .all(|e| e.kind != amonhen_model::StatusKind::Unmerged)
+        );
+        assert_eq!(run(&repo, r#"{"op":"continue"}"#)["outcome"], "done");
+        assert_eq!(
+            run(&repo, r#"{"op":"sequence"}"#)["text"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]

@@ -639,6 +639,17 @@ bool amonhen_discard_rows(const AmonhenRepo *repo_ptr,
  */
 char *amonhen_repo_workdir(const AmonhenRepo *repo_ptr);
 
+/**
+ * コンフリクトのある作業ツリーのファイルを、差分と同じ形の行にする（`amonhen_diff_free` で解放する）。
+ * 行の `kind` は Current・Incoming・Base・マーカーを表し、コンフリクトの行の `old_no` はその番号 + 1。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`path` は NUL 終端の UTF-8 文字列であること。
+ */
+AmonhenDiff *amonhen_conflict_view(const AmonhenRepo *repo_ptr,
+                                   const char *path,
+                                   AmonhenEncoding encoding);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

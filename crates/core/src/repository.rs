@@ -319,6 +319,14 @@ impl Repository {
         )
     }
 
+    /// コンフリクトのある作業ツリーのファイルを、FE 向けの行にする。
+    pub fn conflict_view(&self, path: &str, profile: &FrontendProfile) -> Result<DiffView> {
+        Ok(crate::conflict::view(
+            self.backend.worktree_file(path)?,
+            profile,
+        ))
+    }
+
     /// `diff` の `rows` 行目の変更を作業ツリーから取り除く（Undo できる）。stage していない差分にだけ使える。
     pub fn discard_rows(&self, diff: &WorkingDiff, rows: &[usize]) -> Result<()> {
         if diff.staged {

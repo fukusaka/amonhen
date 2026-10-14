@@ -82,6 +82,10 @@ pub trait Operations: Send + Sync {
     fn continue_sequence(&self, sequence: Sequence) -> Result<Outcome>;
     fn skip_sequence(&self, sequence: Sequence) -> Result<Outcome>;
 
+    /// コンフリクトしたファイルを片側（`ours` なら Current、そうでなければ Incoming）にして解決済みにする。
+    /// その側でファイルが消えていれば、消して解決済みにする。
+    fn take_side(&self, path: &str, ours: bool) -> Result<()>;
+
     fn fetch(&self) -> Result<()>;
     fn push(
         &self,

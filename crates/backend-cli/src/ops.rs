@@ -218,6 +218,15 @@ impl Operations for Git {
         self.stoppable(&[sequence.command(), "--skip"], &[])
     }
 
+    fn take_side(&self, path: &str, ours: bool) -> Result<()> {
+        let side = if ours { "--ours" } else { "--theirs" };
+        match self.write(&["checkout", side, "--", path]) {
+            Ok(_) => self.write(&["add", "--", path]).map(drop),
+            // その側にファイルがない（片方で消されていた）。
+            Err(_) => self.write(&["rm", "--quiet", "--", path]).map(drop),
+        }
+    }
+
     fn fetch(&self) -> Result<()> {
         self.write(&["fetch", "--all", "--prune"]).map(drop)
     }

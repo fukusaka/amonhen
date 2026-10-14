@@ -1007,3 +1007,26 @@ pub unsafe extern "C" fn amonhen_repo_workdir(repo_ptr: *const AmonhenRepo) -> *
         .and_then(|p| CString::new(p.display().to_string()).ok())
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
+
+/// コンフリクトのある作業ツリーのファイルを、差分と同じ形の行にする（`amonhen_diff_free` で解放する）。
+/// 行の `kind` は Current・Incoming・Base・マーカーを表し、コンフリクトの行の `old_no` はその番号 + 1。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`path` は NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_conflict_view(
+    repo_ptr: *const AmonhenRepo,
+    path: *const c_char,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenDiff {
+    let result = str_arg(path)
+        .map_err(Into::into)
+        .and_then(|p| repo(repo_ptr).conflict_view(p, &profile(encoding)));
+    match result {
+        Ok(view) => Box::into_raw(Box::new(view)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
