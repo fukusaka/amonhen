@@ -1,5 +1,6 @@
 use std::hint::black_box;
 
+use amonhen_core::cache::{self, CachedHistory};
 use amonhen_core::graph::{Layouter, layout, relayout, synthetic};
 use criterion::{Criterion, criterion_group, criterion_main};
 
@@ -26,6 +27,12 @@ fn bench(c: &mut Criterion) {
     c.bench_function("relayout 1M after 10 new commits", |b| {
         b.iter(|| relayout(black_box(&old), &old_g, &g, head))
     });
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.bin");
+    let history = CachedHistory { tips: vec![old_g.ids()[0]], head: None, graph: old_g.clone(), layout: old.clone() };
+    c.bench_function("cache write 1M", |b| b.iter(|| cache::write(&path, &history).unwrap()));
+    c.bench_function("cache read 1M", |b| b.iter(|| cache::read(black_box(&path)).unwrap()));
 
     let l = layout(&old_g, old_head);
     c.bench_function("edges_in 60 rows", |b| {
