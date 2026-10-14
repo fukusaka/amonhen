@@ -4,5 +4,6 @@ pub mod cache;
 pub mod diff;
 pub mod graph;
 mod repository;
+pub mod undo;
 
 pub use repository::{HistorySnapshot, RefsSnapshot, Repository, StatusSnapshot, WorkingDiff};

@@ -357,6 +357,10 @@ impl GitBackend for GixBackend {
         Ok(Arc::new(buf))
     }
 
+    fn operations(&self) -> Result<&dyn amonhen_model::Operations> {
+        Ok(self.git()?)
+    }
+
     fn status(&self) -> Result<amonhen_model::Status> {
         self.git()?.status()
     }

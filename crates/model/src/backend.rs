@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use crate::{CommitGraph, CommitText, FileChange, Oid, RawCommit, Refs, RepoPaths, Status, topo};
+use crate::{
+    CommitGraph, CommitText, FileChange, Oid, Operations, RawCommit, Refs, RepoPaths, Status, topo,
+};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -39,6 +41,9 @@ pub trait GitBackend: Send + Sync {
 
     /// blob の中身。展開したバッファをそのまま返し、差分の各行はここを直接指す。
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>>;
+
+    /// 書き込み系の操作。対応しない実装（作業ツリーがない・モバイル）はエラー。
+    fn operations(&self) -> Result<&dyn Operations>;
 
     /// 作業ツリーと index の状態。
     fn status(&self) -> Result<Status>;
