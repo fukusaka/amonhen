@@ -2,7 +2,7 @@
   "name": "amonhen",
   "displayName": "Amon Hen",
   "description": "VSCode 上で快適に Git を操作するための自分用の拡張",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "publisher": "fukusaka",
   "private": true,
   "license": "UNLICENSED",
