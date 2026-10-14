@@ -3,11 +3,13 @@
 mod backend;
 mod graph;
 mod oid;
+mod refs;
 mod text;
 pub mod topo;
 
 pub use backend::{Error, GitBackend, Result};
 pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use oid::{Oid, OidMap, OidSet};
+pub use refs::{RefEntry, RefKind, Refs};
 pub use text::CommitText;
 pub use topo::RawCommit;

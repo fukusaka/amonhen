@@ -122,3 +122,91 @@ fn writes_a_commit_graph_on_request() {
     backend.write_commit_graph().unwrap();
     assert!(GixBackend::open(dir).unwrap().has_commit_graph().unwrap());
 }
+
+#[test]
+fn lists_branches_remotes_tags_stashes_and_submodules() {
+    use amonhen_model::RefKind;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let sub = tmp.path().join("sub");
+    std::fs::create_dir(&sub).unwrap();
+    git(&sub, &["init", "-q", "-b", "main"]);
+    commit(&sub, "sub");
+
+    let dir = tmp.path().join("repo");
+    std::fs::create_dir(&dir).unwrap();
+    let dir = dir.as_path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "a").unwrap();
+    git(dir, &["add", "a.txt"]);
+    commit(dir, "first");
+    git(dir, &["branch", "topic"]);
+    git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(
+        dir,
+        &[
+            "symbolic-ref",
+            "refs/remotes/origin/HEAD",
+            "refs/remotes/origin/main",
+        ],
+    );
+    git(
+        dir,
+        &["config", "remote.origin.url", "https://example.com/r.git"],
+    );
+    git(
+        dir,
+        &[
+            "config",
+            "remote.origin.fetch",
+            "+refs/heads/*:refs/remotes/origin/*",
+        ],
+    );
+    git(dir, &["config", "branch.main.remote", "origin"]);
+    git(dir, &["config", "branch.main.merge", "refs/heads/main"]);
+    git(dir, &["tag", "v1"]);
+    git(dir, &["tag", "-a", "-m", "tree", "tree-tag", "HEAD^{tree}"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "-q",
+            sub.to_str().unwrap(),
+            "libs/sub",
+        ],
+    );
+    commit(dir, "add submodule");
+    std::fs::write(dir.join("a.txt"), "changed").unwrap();
+    git(dir, &["stash", "push", "-q", "-m", "wip"]);
+
+    let refs = GixBackend::open(dir).unwrap().refs().unwrap();
+    assert_eq!(refs.head_branch.as_deref(), Some("main"));
+    let names: Vec<(RefKind, &str, Option<&str>)> = refs
+        .entries
+        .iter()
+        .map(|e| (e.kind, e.name.as_str(), e.detail.as_deref()))
+        .collect();
+    assert_eq!(
+        names[..2],
+        [
+            (RefKind::Local, "main", Some("origin/main")),
+            (RefKind::Local, "topic", None)
+        ]
+    );
+    assert_eq!(names[2], (RefKind::Remote, "origin/main", None));
+    assert_eq!(
+        names[3..5],
+        [(RefKind::Tag, "tree-tag", None), (RefKind::Tag, "v1", None)]
+    );
+    assert_eq!(names[5].0, RefKind::Stash);
+    assert_eq!(names[5].1, "stash@{0}");
+    assert!(names[5].2.unwrap().contains("wip"));
+    assert_eq!(names[6], (RefKind::Submodule, "libs/sub", None));
+    assert_eq!(names.len(), 7);
+
+    assert!(refs.entries[3].target.is_none(), "ツリーを指すタグ");
+    assert!(refs.entries[6].target.is_some(), "サブモジュールのコミット");
+}

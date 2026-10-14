@@ -5,7 +5,9 @@ use std::path::Path;
 use std::ops::Range;
 use std::sync::Arc;
 
-use amonhen_model::{CommitText, GitBackend, Oid, OidSet, RawCommit, Result};
+use amonhen_model::{
+    CommitText, GitBackend, Oid, OidSet, RawCommit, RefEntry, RefKind, Refs, Result,
+};
 use gix::objs::Find;
 use rayon::prelude::*;
 
@@ -147,6 +149,89 @@ impl GitBackend for GixBackend {
             out.extend(read);
         }
         Ok(out)
+    }
+
+    fn refs(&self) -> Result<Refs> {
+        let repo = self.repo.to_thread_local();
+        let mut entries = Vec::new();
+        let platform = repo.references()?;
+        let mut push = |kind, iter: gix::reference::iter::Iter<'_, '_>| -> Result<()> {
+            for r in iter {
+                let mut r = r?;
+                // origin/HEAD のような別名は出さない。
+                if r.target().try_id().is_none() && kind == RefKind::Remote {
+                    continue;
+                }
+                let name = r.name().shorten().to_string();
+                let detail = (kind == RefKind::Local)
+                    .then(|| {
+                        repo.branch_remote_tracking_ref_name(
+                            r.name(),
+                            gix::remote::Direction::Fetch,
+                        )
+                    })
+                    .flatten()
+                    .and_then(|upstream| upstream.ok())
+                    .map(|upstream| upstream.as_ref().shorten().to_string());
+                let target = r
+                    .peel_to_commit()
+                    .ok()
+                    .map(|c| to_oid(c.id().as_ref()))
+                    .transpose()?;
+                entries.push(RefEntry {
+                    kind,
+                    name,
+                    target,
+                    detail,
+                });
+            }
+            Ok(())
+        };
+        push(RefKind::Local, platform.local_branches()?)?;
+        push(RefKind::Remote, platform.remote_branches()?)?;
+        push(RefKind::Tag, platform.tags()?)?;
+        entries.sort_by(|a, b| (a.kind, &a.name).cmp(&(b.kind, &b.name)));
+
+        if let Ok(stash) = repo.find_reference("refs/stash") {
+            let mut log = stash.log_iter();
+            if let Some(lines) = log.all()? {
+                let lines: Vec<_> = lines.collect::<std::result::Result<_, _>>()?;
+                for (i, line) in lines.iter().rev().enumerate() {
+                    entries.push(RefEntry {
+                        kind: RefKind::Stash,
+                        name: format!("stash@{{{i}}}"),
+                        target: Some(to_oid(&line.new_oid())?),
+                        detail: Some(line.message.to_string()),
+                    });
+                }
+            }
+        }
+
+        if let Some(submodules) = repo.submodules()? {
+            let mut subs = Vec::new();
+            for sm in submodules {
+                let target = sm
+                    .index_id()
+                    .ok()
+                    .flatten()
+                    .map(|id| to_oid(id.as_ref()))
+                    .transpose()?;
+                subs.push(RefEntry {
+                    kind: RefKind::Submodule,
+                    name: sm.path()?.to_string(),
+                    target,
+                    detail: None,
+                });
+            }
+            subs.sort_by(|a, b| a.name.cmp(&b.name));
+            entries.extend(subs);
+        }
+
+        Ok(Refs {
+            head_branch: repo.head_name()?.map(|n| n.as_ref().shorten().to_string()),
+            head: self.head()?,
+            entries,
+        })
     }
 
     fn has_commit_graph(&self) -> Result<bool> {
