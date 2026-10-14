@@ -1,0 +1,21 @@
+language = "C"
+include_guard = "AMONHEN_H"
+header = "/* cbindgen が生成する。手で編集しないこと。 */"
+style = "type"
+cpp_compat = true
+
+[parse]
+parse_deps = true
+include = ["amonhen-layout"]
+
+[export]
+include = ["StrRef", "Node", "Edge"]
+prefix = ""
+
+[export.rename]
+"StrRef" = "AmonhenStrRef"
+"Node" = "AmonhenNode"
+"Edge" = "AmonhenEdge"
+
+[enum]
+prefix_with_name = true

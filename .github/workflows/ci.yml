@@ -24,6 +24,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # build.rs が生成する C のヘッダーがコミット済みのものと一致するか。
+      - run: git diff --exit-code crates/ffi-c/include
 
   # コアに OS 固有のコードが紛れ込まないよう、全ターゲットで型検査だけ通す。
   targets:

@@ -1,0 +1,21 @@
+[package]
+name = "amonhen-ffi-c"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[lib]
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
+amonhen-backend-gix.workspace = true
+amonhen-core.workspace = true
+amonhen-layout.workspace = true
+amonhen-projection.workspace = true
+
+[build-dependencies]
+cbindgen = { version = "0.29", default-features = false }
+
+[dev-dependencies]
+tempfile = "3"
