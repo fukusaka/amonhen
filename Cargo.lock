@@ -20,6 +20,10 @@ dependencies = [
 [[package]]
 name = "amonhen-core"
 version = "0.1.0"
+dependencies = [
+ "amonhen-layout",
+ "amonhen-model",
+]
 
 [[package]]
 name = "amonhen-layout"
