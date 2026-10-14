@@ -256,6 +256,18 @@ History の読み込み（起点の収集＋トポロジカル順の走査、`cr
 - gix のオブジェクトキャッシュを有効にしないと、commit-graph なしで 1.3 秒かかる（`object_cache_size_if_unset` で 64 MB を指定）。
 - commit-graph の有無で 1 桁違う。commit-graph がないリポジトリでは、書き出しを案内するか、コア自身の永続キャッシュで補う。
 
+グラフのレイアウト（`crates/core/benches/graph.rs`、合成した履歴、criterion）:
+
+| 項目 | 時間 |
+| --- | --- |
+| 10 万コミットの全レイアウト | 9.4 ms |
+| 100 万コミットの全レイアウト | 90 ms |
+| 100 万コミットのうち最初の 60 行 | 1.3 ms |
+| 100 万コミットに 10 コミット足した後の再計算 | 6.9 ms |
+| 見えている 60 行に重なる線の検索 | 0.9 µs |
+
+実際のリポジトリ（`crates/core/examples/layout.rs`）では、coreutils（30,176 コミット）で 1.2 ms、android/development（34,261 コミット、起点 318 個）で 17 ms。後者はリリースブランチが多くレーンが 673 本まで広がるので、未使用レーンを詰める・魚眼で広げるなどの表現の工夫（実装順序の 13）が要る。
+
 ## 配布
 
 - arm64 の `.app` を GitHub Releases に置く。拡張と同じく `v*` タグの push で GitHub Actions がビルドして添付し、main への push で `snapshot` の pre-release を作り直す。
@@ -289,7 +301,7 @@ History の読み込み（起点の収集＋トポロジカル順の走査、`cr
 試作:
 
 - [x] 1. Rust の workspace と `model` / `core` / `layout` の骨組み、`GitBackend` / `Platform` / `FrontendProfile` の形、gix による commit-graph の読み取り。全ターゲットのビルドを CI で通す
-- [ ] 2. グラフのレイアウト（順次計算、チェックポイント、区間表現）と criterion のベンチ
+- [x] 2. グラフのレイアウト（順次計算、チェックポイント、区間表現）と criterion のベンチ
 - [ ] 3. プロジェクション（macOS の形式だけ）と C ABI でのスナップショット公開、Swift からのゼロコピー読み取り
 - [ ] 4. AppKit の History（`NSTableView`）と Metal のグラフ描画、入力から表示までの計測
 - [ ] 5. linux リポジトリで速度目標を検証。満たせなければ設計を見直す
