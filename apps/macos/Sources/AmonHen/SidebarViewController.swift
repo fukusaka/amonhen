@@ -19,6 +19,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var title: String
         let item: RefItem?
         let page: Page?
+        /// Remotes の下のリモートそのもの（ブランチを落とすと push する）。
+        var remote: String?
         var children: [Node]
         let isHead: Bool
 
@@ -53,6 +55,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
+        outline.registerForDraggedTypes([.branchName])
+        outline.setDraggingSourceOperationMask([.move, .copy], forLocal: true)
 
         let scroll = NSScrollView()
         scroll.documentView = outline
@@ -83,7 +87,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if !remotes.isEmpty {
             groups.append(Node(title: "Remotes", children: remotes.keys.sorted().map {
-                Node(title: $0, children: remotes[$0]!)
+                let node = Node(title: $0, children: remotes[$0]!)
+                node.remote = $0
+                return node
             }))
         }
         for (kind, title) in [(RefKind.tag, "Tags"), (.stash, "Stashes"), (.submodule, "Submodules")] {
@@ -164,6 +170,72 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return cell
     }
 
+    // MARK: - ドラッグ＆ドロップ: merge・rebase・push
+
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
+        guard let node = item as? Node, let ref = node.item, ref.kind == .local || ref.kind == .remote else { return nil }
+        let p = NSPasteboardItem()
+        // 種類も渡す（ローカルブランチの名前にも / は入りうる）。
+        p.setString("\(ref.kind == .local ? "local" : "remote"):\(ref.name)", forType: .branchName)
+        return p
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView, validateDrop info: any NSDraggingInfo, proposedItem item: Any?,
+        proposedChildIndex index: Int
+    ) -> NSDragOperation {
+        guard let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return [] }
+        // ブランチの上に落とす（間に落とすのではない）。
+        outlineView.setDropItem(node, dropChildIndex: NSOutlineViewDropOnItemIndex)
+        if let ref = node.item, ref.kind == .local, ref.name != dragged { return .move }
+        // push できるのはローカルブランチだけ。
+        if isLocal, node.remote != nil || node.item?.kind == .remote { return .copy }
+        return []
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView, acceptDrop info: any NSDraggingInfo, item: Any?, childIndex index: Int
+    ) -> Bool {
+        guard let actions, let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return false }
+        let menu = NSMenu()
+        func add(_ title: String, _ action: @escaping () -> Void) {
+            menu.addItem(ClosureMenuItem(title: title, action: action))
+        }
+        if let ref = node.item, ref.kind == .local {
+            let target = ref.name
+            // 落とした先が今のブランチでなければ、先にチェックアウトする。
+            let checkout: [[String: Any]] = target == headBranch ? [] : [["op": "checkout", "branch": target]]
+            add("Merge \(dragged) into \(target)") {
+                actions.perform(sequence: checkout + [["op": "merge", "rev": dragged]])
+            }
+            add("Rebase \(target) onto \(dragged)") {
+                actions.perform(sequence: checkout + [["op": "rebase", "onto": dragged]])
+            }
+        } else if isLocal, let remote = node.remote ?? node.item.map({ String($0.name.split(separator: "/")[0]) }) {
+            let remoteBranch = node.item.map { String($0.name.dropFirst(remote.count + 1)) } ?? dragged
+            add("Push \(dragged) to \(remote)/\(remoteBranch)") {
+                actions.perform(["op": "push", "remote": remote, "branch": dragged, "remoteBranch": remoteBranch,
+                                 "force": false, "setUpstream": node.item == nil])
+            }
+            add("Force Push \(dragged) to \(remote)/\(remoteBranch)") {
+                actions.perform(["op": "push", "remote": remote, "branch": dragged, "remoteBranch": remoteBranch,
+                                 "force": true, "setUpstream": false])
+            }
+        }
+        guard !menu.items.isEmpty else { return false }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "キャンセル", action: nil, keyEquivalent: "")
+        menu.popUp(positioning: nil, at: outlineView.convert(info.draggingLocation, from: nil), in: outlineView)
+        return true
+    }
+
+    /// ドラッグしているブランチ（ローカルか, 名前）。
+    private func draggedBranch(_ info: any NSDraggingInfo) -> (Bool, String)? {
+        guard let value = info.draggingPasteboard.string(forType: .branchName),
+              let colon = value.firstIndex(of: ":") else { return nil }
+        return (value[..<colon] == "local", String(value[value.index(after: colon)...]))
+    }
+
     // MARK: - 右クリックメニュー
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -240,4 +312,8 @@ final class MenuAction: NSObject {
     @objc func fire() {
         handler()
     }
+}
+
+extension NSPasteboard.PasteboardType {
+    static let branchName = NSPasteboard.PasteboardType("io.github.fukusaka.amonhen.branch")
 }

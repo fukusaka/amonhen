@@ -38,6 +38,16 @@ final class Actions {
         }
     }
 
+    /// 命令を順に実行する。失敗したり、途中で止まったりしたら、そこでやめる。
+    func perform(sequence commands: [[String: Any]]) {
+        guard let first = commands.first else { return }
+        perform(first) { [weak self] result in
+            if result.outcome == nil || result.outcome == .done {
+                self?.perform(sequence: Array(commands.dropFirst()))
+            }
+        }
+    }
+
     /// 裏で実行し、終わったら読み直す（JSON の命令以外の操作）。
     func perform(_ work: @escaping @Sendable () throws -> Void) {
         Task {
