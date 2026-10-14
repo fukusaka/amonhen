@@ -17,6 +17,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let discardButton = NSButton(title: "Discard Lines", target: nil, action: nil)
     var actions: Actions?
     private let titleLabel = NSTextField(labelWithString: "")
+    /// merge・rebase などの途中のときに出す帯。
+    private let sequenceBar = NSStackView()
+    private let sequenceLabel = NSTextField(labelWithString: "")
 
     private final class Group {
         let staged: Bool
@@ -91,12 +94,21 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         amend.action = #selector(toggleAmend)
         let commitRow = NSStackView(views: [amend, NSView(), commitButton])
 
-        let left = NSStackView(views: [filesScroll, messageScroll, commitRow])
+        sequenceLabel.textColor = .systemOrange
+        sequenceLabel.lineBreakMode = .byTruncatingTail
+        let buttons = [("Continue", "continue"), ("Skip", "skip"), ("Abort", "abort")].map { title, op in
+            let b = NSButton(title: title, target: self, action: #selector(sequenceAction(_:)))
+            b.identifier = .init(op)
+            return b
+        }
+        sequenceBar.setViews([sequenceLabel] + buttons, in: .leading)
+        sequenceBar.isHidden = true
+        let left = NSStackView(views: [sequenceBar, filesScroll, messageScroll, commitRow])
         left.orientation = .vertical
         left.alignment = .leading
         left.spacing = 6
         left.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 8, right: 8)
-        for v in [filesScroll, messageScroll, commitRow] {
+        for v in [sequenceBar, filesScroll, messageScroll, commitRow] {
             v.widthAnchor.constraint(equalTo: left.widthAnchor, constant: -8).isActive = true
         }
         messageScroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
@@ -141,6 +153,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// status を裏で読み直す。
     func refresh() {
         let repository = self.repository
+        Task {
+            let sequence = try? await Task.detached { try repository.run(["op": "sequence"]).text }.value
+            showSequence(sequence ?? nil)
+        }
         Task {
             guard let status = try? await Task.detached(priority: .userInitiated, operation: { try repository.loadStatus() }).value
             else { return }
@@ -271,7 +287,30 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// 作業ツリーのルート（untracked のファイルを消すときに使う）。
     var repositoryRoot = ""
 
+    private func showSequence(_ sequence: String?) {
+        sequenceBar.isHidden = sequence == nil
+        if let sequence {
+            sequenceLabel.stringValue = "\(sequence) の途中です"
+        }
+    }
+
+    @objc private func sequenceAction(_ sender: NSButton) {
+        guard let op = sender.identifier?.rawValue else { return }
+        actions?.perform(["op": op])
+    }
+
     @objc private func toggleAmend() {
+        // 直前のコミットのメッセージを入れて直せるようにする。
+        if amend.state == .on, message.string.isEmpty {
+            let repository = self.repository
+            Task {
+                let text = try? await Task.detached { try repository.run(["op": "commitMessage", "oid": "HEAD"]).text }.value
+                if amend.state == .on, message.string.isEmpty, let text = text ?? nil {
+                    message.string = text.trimmingCharacters(in: .newlines)
+                }
+                updateButtons()
+            }
+        }
         updateButtons()
     }
 

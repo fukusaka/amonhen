@@ -95,6 +95,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let menu = NSMenu()
         menu.delegate = self
         tableView.menu = menu
+        // コミットをドラッグして並べ替える。
+        tableView.registerForDraggedTypes([.commitID])
+        tableView.setDraggingSourceOperationMask(.move, forLocal: true)
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -323,6 +326,18 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         add("New Tag at \(short)…") { actions.newTag(at: hex) }
         add("Checkout \(short) (Detached)") { actions.perform(["op": "detach", "oid": hex]) }
         menu.addItem(.separator())
+        if !isMerge {
+            add("Edit Message…") { actions.reword(hex) }
+            add("Squash into Parent…") { actions.squash(hex) }
+            add("Fixup into Parent") { actions.rewrite("Fixup \(short)", ["kind": "fixup", "oid": hex]) }
+            add("Edit (Stop Here)") { actions.rewrite("Edit \(short)", ["kind": "edit", "oid": hex]) }
+            add("Split…") { actions.rewrite("Split \(short)", ["kind": "split", "oid": hex]) }
+            add("Drop") {
+                guard actions.confirm("\(short) を取り除きますか？", message: "Undo で戻せます。", ok: "取り除く") else { return }
+                actions.rewrite("Drop \(short)", ["kind": "drop", "oid": hex])
+            }
+            menu.addItem(.separator())
+        }
         add("Cherry-pick \(short)") { actions.perform(["op": "cherryPick", "oid": hex, "isMerge": isMerge]) }
         add("Revert \(short)") { actions.perform(["op": "revert", "oid": hex, "isMerge": isMerge]) }
         menu.addItem(.separator())
@@ -335,6 +350,48 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     func tableViewSelectionDidChange(_ notification: Notification) {
         let row = tableView.selectedRow
         onSelectCommit?(row >= 0 ? history?.commitID(row: row) : nil)
+    }
+
+    // MARK: - ドラッグで並べ替え
+
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        guard let id = history?.commitID(row: row) else { return nil }
+        let item = NSPasteboardItem()
+        item.setString(id.map { String(format: "%02x", $0) }.joined(), forType: .commitID)
+        return item
+    }
+
+    func tableView(
+        _ tableView: NSTableView, validateDrop info: any NSDraggingInfo, proposedRow row: Int,
+        proposedDropOperation op: NSTableView.DropOperation
+    ) -> NSDragOperation {
+        guard info.draggingSource as? NSTableView === tableView else { return [] }
+        tableView.setDropRow(row, dropOperation: .above)
+        return .move
+    }
+
+    func tableView(
+        _ tableView: NSTableView, acceptDrop info: any NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation
+    ) -> Bool {
+        guard let actions, let history, let oid = info.draggingPasteboard.string(forType: .commitID) else { return false }
+        // 落とした位置の下にあるコミット（なければ上）が、編集できる並びの何番目かで移動先を決める。
+        let below = history.commitID(row: min(row, history.rowCount - 1)).map { $0.map { String(format: "%02x", $0) }.joined() }
+        Task {
+            let chain = await actions.editableCommits()
+            guard let from = chain.firstIndex(of: oid), let below, var to = chain.firstIndex(of: below) else {
+                await MainActor.run {
+                    let alert = NSAlert()
+                    alert.messageText = "ここには動かせません"
+                    alert.informativeText = "HEAD から最初の merge までのコミットの間でだけ並べ替えられます。"
+                    alert.runModal()
+                }
+                return
+            }
+            if row >= history.rowCount { to = chain.count - 1 } else if from < to { to -= 1 }
+            if from == to { return }
+            actions.rewrite("Move \(oid.prefix(8))", ["kind": "move", "oid": oid, "to": to])
+        }
+        return true
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -407,4 +464,8 @@ final class ScrollMeasurement {
         presented frames: \(presented.count)  dropped: \(dropped)
         """
     }
+}
+
+extension NSPasteboard.PasteboardType {
+    static let commitID = NSPasteboard.PasteboardType("io.github.fukusaka.amonhen.commit")
 }

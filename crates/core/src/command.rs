@@ -101,6 +101,12 @@ pub enum Command {
     },
     /// 途中の操作（`text` に "rebase"・"merge"・"cherry-pick"・"revert"、なければなし）。
     Sequence,
+    /// 編集できるコミット（HEAD から first-parent で最初の merge の手前まで、新しい順）。`text` に改行区切り。
+    EditableCommits,
+    /// `oid` を親にまとめるときの、メッセージの初期値（親のメッセージ ＋ `oid` のメッセージ）。
+    SquashMessage {
+        oid: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -429,11 +435,51 @@ impl Repository {
                 })
             }
             Command::Rewrite { label, edit } => done(self.rewrite(&label, &edit)?),
-            Command::CommitMessage { oid: o } => Ok(Response {
-                ok: true,
-                text: Some(self.commit_message(&oid(&o)?)?),
-                ..Default::default()
-            }),
+            Command::CommitMessage { oid: o } => {
+                // "HEAD" なら今のコミット（Amend の初期値）。
+                let id = if o == "HEAD" {
+                    self.backend().head()?.ok_or("まだコミットがありません")?
+                } else {
+                    oid(&o)?
+                };
+                Ok(Response {
+                    ok: true,
+                    text: Some(self.commit_message(&id)?),
+                    ..Default::default()
+                })
+            }
+            Command::EditableCommits => {
+                let chain = self.editable_chain()?;
+                let text = chain
+                    .iter()
+                    .map(|c| c.oid.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                Ok(Response {
+                    ok: true,
+                    text: Some(text),
+                    ..Default::default()
+                })
+            }
+            Command::SquashMessage { oid: o } => {
+                let id = oid(&o)?;
+                let chain = self.editable_chain()?;
+                let parent = chain
+                    .iter()
+                    .find(|c| c.oid == id)
+                    .and_then(|c| c.parent)
+                    .ok_or("親が編集できる範囲にないので、まとめられません")?;
+                let text = format!(
+                    "{}\n\n{}",
+                    self.commit_message(&parent)?.trim_end(),
+                    self.commit_message(&id)?.trim_end()
+                );
+                Ok(Response {
+                    ok: true,
+                    text: Some(text),
+                    ..Default::default()
+                })
+            }
             Command::Sequence => Ok(Response {
                 ok: true,
                 text: ops.sequence_in_progress()?.map(|s| s.command().to_owned()),

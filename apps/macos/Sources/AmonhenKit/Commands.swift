@@ -10,6 +10,8 @@ public struct CommandResult: Sendable {
     public let outcome: Outcome?
     /// Undo した・次に Undo される操作の名前。
     public let label: String?
+    /// コミットのメッセージなど、命令ごとの結果。
+    public let text: String?
 }
 
 extension Repository {
@@ -34,7 +36,8 @@ extension Repository {
             throw AmonhenError(description: response["error"] as? String ?? "失敗した")
         }
         return CommandResult(
-            outcome: (response["outcome"] as? String).flatMap(Outcome.init), label: response["label"] as? String)
+            outcome: (response["outcome"] as? String).flatMap(Outcome.init), label: response["label"] as? String,
+            text: response["text"] as? String)
     }
 }
 

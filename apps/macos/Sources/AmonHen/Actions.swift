@@ -101,6 +101,66 @@ final class Actions {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
+    /// 複数行のメッセージを編集してもらう。キャンセルなら nil。
+    func editMessage(_ title: String, initial: String, ok: String) -> String? {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.addButton(withTitle: ok)
+        alert.addButton(withTitle: "キャンセル")
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 180))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let text = NSTextView(frame: scroll.bounds)
+        text.isRichText = false
+        text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        text.isAutomaticQuoteSubstitutionEnabled = false
+        text.autoresizingMask = [.width]
+        text.string = initial
+        scroll.documentView = text
+        alert.accessoryView = scroll
+        alert.window.initialFirstResponder = text
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let value = text.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
+    /// 命令を実行して `text` を受け取る（メッセージの初期値など）。
+    private func text(_ command: [String: Any]) async -> String? {
+        let repository = self.repository
+        do {
+            let json = try Repository.json(command)
+            return try await Task.detached { try repository.run(json: json).text }.value
+        } catch {
+            await alert("読み込めません", "\(error)")
+            return nil
+        }
+    }
+
+    func rewrite(_ label: String, _ edit: [String: Any]) {
+        perform(["op": "rewrite", "label": label, "edit": edit])
+    }
+
+    func reword(_ oid: String) {
+        Task {
+            guard let message = await text(["op": "commitMessage", "oid": oid]),
+                  let edited = editMessage("Edit Message", initial: message, ok: "変更") else { return }
+            rewrite("Reword \(oid.prefix(8))", ["kind": "reword", "oid": oid, "message": edited])
+        }
+    }
+
+    func squash(_ oid: String) {
+        Task {
+            guard let message = await text(["op": "squashMessage", "oid": oid]),
+                  let edited = editMessage("Squash into Parent", initial: message, ok: "まとめる") else { return }
+            rewrite("Squash \(oid.prefix(8))", ["kind": "squash", "oid": oid, "message": edited])
+        }
+    }
+
+    /// 編集できるコミット（新しい順）。
+    func editableCommits() async -> [String] {
+        await text(["op": "editableCommits"])?.split(separator: "\n").map(String.init) ?? []
+    }
+
     // MARK: - よく使う操作
 
     func newBranch(at start: String) {
