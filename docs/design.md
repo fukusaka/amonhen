@@ -359,7 +359,7 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 - [x] 9. Working Copy: status、ファイル・hunk・行単位の stage、コミット入力
 - [x] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ
 - [x] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
-- [ ] 12. 3-way マージ
+- [x] 12. 3-way マージ（コンフリクトごと・ファイルごとの解決。3 ペインのマージエディタは後で）
 - [ ] 13. グラフ表現の工夫（祖先の強調、折りたたみ、魚眼、アニメーション、密度表示）
 - [ ] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）
 
