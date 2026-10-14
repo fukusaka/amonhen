@@ -8,3 +8,11 @@ publish.workspace = true
 [dependencies]
 amonhen-layout.workspace = true
 amonhen-model.workspace = true
+
+[dev-dependencies]
+amonhen-backend-gix = { path = "../backend-gix" }
+criterion = "0.8.2"
+
+[[bench]]
+name = "graph"
+harness = false
