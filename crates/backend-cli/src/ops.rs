@@ -231,6 +231,35 @@ impl Operations for Git {
         self.write(&["fetch", "--all", "--prune"]).map(drop)
     }
 
+    fn pull(&self) -> Result<Outcome> {
+        self.stoppable(&["pull", "--no-edit", "--no-rebase"], &[])
+    }
+
+    fn branch_tracking(&self) -> Result<Vec<(String, u32, u32, bool)>> {
+        let out = text(self.read(&[
+            "for-each-ref",
+            "--format=%(refname:short)%00%(upstream:track,nobracket)",
+            "refs/heads",
+        ])?)?;
+        Ok(out
+            .lines()
+            .filter_map(|line| {
+                let (name, track) = line.split_once('\0')?;
+                // "ahead 1, behind 2"・"ahead 1"・"behind 2"・"gone"・""
+                let mut ahead = 0;
+                let mut behind = 0;
+                for part in track.split(", ") {
+                    if let Some(n) = part.strip_prefix("ahead ") {
+                        ahead = n.parse().unwrap_or(0);
+                    } else if let Some(n) = part.strip_prefix("behind ") {
+                        behind = n.parse().unwrap_or(0);
+                    }
+                }
+                Some((name.to_owned(), ahead, behind, track == "gone"))
+            })
+            .collect())
+    }
+
     fn push(
         &self,
         remote: &str,

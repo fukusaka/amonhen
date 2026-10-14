@@ -22,6 +22,11 @@ pub struct RefEntry {
     pub target: Option<Oid>,
     /// ローカルブランチの上流（`origin/main`）、stash のメッセージ。
     pub detail: Option<String>,
+    /// ローカルブランチの、上流より先にあるコミットの数と、上流にあって取り込んでいないコミットの数。
+    pub ahead: u32,
+    pub behind: u32,
+    /// 上流が設定されているのに、そのリモートブランチがもうない。
+    pub gone: bool,
 }
 
 /// ブランチ・リモートブランチ・タグ・stash・サブモジュールの一覧。

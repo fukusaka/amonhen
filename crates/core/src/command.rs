@@ -61,6 +61,8 @@ pub enum Command {
     Continue,
     Skip,
     Fetch,
+    /// 今のブランチに上流を取り込む（Undo できる）。
+    Pull,
     Push {
         remote: String,
         branch: String,
@@ -383,6 +385,7 @@ impl Repository {
                 ops.fetch()?;
                 ok()
             }
+            Command::Pull => done(undo.record(ops, "Pull", &[], false, || ops.pull(), not_done)?),
             Command::Push {
                 remote,
                 branch,

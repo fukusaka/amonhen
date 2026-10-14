@@ -181,6 +181,9 @@ fn lists_branches_remotes_tags_stashes_and_submodules() {
     commit(dir, "add submodule");
     std::fs::write(dir.join("a.txt"), "changed").unwrap();
     git(dir, &["stash", "push", "-q", "-m", "wip"]);
+    // topic の上流は消えたリモートブランチ。
+    git(dir, &["config", "branch.topic.remote", "origin"]);
+    git(dir, &["config", "branch.topic.merge", "refs/heads/gone"]);
 
     let refs = GixBackend::open(dir).unwrap().refs().unwrap();
     assert_eq!(refs.head_branch.as_deref(), Some("main"));
@@ -193,7 +196,7 @@ fn lists_branches_remotes_tags_stashes_and_submodules() {
         names[..2],
         [
             (RefKind::Local, "main", Some("origin/main")),
-            (RefKind::Local, "topic", None)
+            (RefKind::Local, "topic", Some("origin/gone"))
         ]
     );
     assert_eq!(names[2], (RefKind::Remote, "origin/main", None));
@@ -207,6 +210,16 @@ fn lists_branches_remotes_tags_stashes_and_submodules() {
     assert_eq!(names[6], (RefKind::Submodule, "libs/sub", None));
     assert_eq!(names.len(), 7);
 
+    // main は origin/main の後に「add submodule」を 1 つコミットしている。
+    assert_eq!(
+        (
+            refs.entries[0].ahead,
+            refs.entries[0].behind,
+            refs.entries[0].gone
+        ),
+        (1, 0, false)
+    );
+    assert!(refs.entries[1].gone);
     assert!(refs.entries[3].target.is_none(), "ツリーを指すタグ");
     assert!(refs.entries[6].target.is_some(), "サブモジュールのコミット");
 }

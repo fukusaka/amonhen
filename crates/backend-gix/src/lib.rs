@@ -5,6 +5,7 @@ use std::path::Path;
 use std::ops::Range;
 use std::sync::Arc;
 
+use amonhen_model::Operations as _;
 use amonhen_model::{
     ChangeKind, CommitText, FileChange, GitBackend, Oid, OidSet, RawCommit, RefEntry, RefKind,
     Refs, RepoPaths, Result,
@@ -205,6 +206,9 @@ impl GitBackend for GixBackend {
                     name,
                     target,
                     detail,
+                    ahead: 0,
+                    behind: 0,
+                    gone: false,
                 });
             }
             Ok(())
@@ -224,6 +228,9 @@ impl GitBackend for GixBackend {
                         name: format!("stash@{{{i}}}"),
                         target: Some(to_oid(&line.new_oid())?),
                         detail: Some(line.message.to_string()),
+                        ahead: 0,
+                        behind: 0,
+                        gone: false,
                     });
                 }
             }
@@ -243,10 +250,27 @@ impl GitBackend for GixBackend {
                     name: sm.path()?.to_string(),
                     target,
                     detail: None,
+                    ahead: 0,
+                    behind: 0,
+                    gone: false,
                 });
             }
             subs.sort_by(|a, b| a.name.cmp(&b.name));
             entries.extend(subs);
+        }
+
+        // 上流との差は git に数えさせる（gix で数えるより速く、git と同じ結果になる）。
+        if let Some(git) = &self.git
+            && let Ok(tracking) = git.branch_tracking()
+        {
+            for (name, ahead, behind, gone) in tracking {
+                if let Some(e) = entries
+                    .iter_mut()
+                    .find(|e| e.kind == RefKind::Local && e.name == name)
+                {
+                    (e.ahead, e.behind, e.gone) = (ahead, behind, gone);
+                }
+            }
         }
 
         Ok(Refs {

@@ -87,6 +87,10 @@ pub trait Operations: Send + Sync {
     fn take_side(&self, path: &str, ours: bool) -> Result<()>;
 
     fn fetch(&self) -> Result<()>;
+    /// 今のブランチに上流を取り込む（`git pull`）。
+    fn pull(&self) -> Result<Outcome>;
+    /// ローカルブランチごとの、上流との差（名前, ahead, behind, gone）。
+    fn branch_tracking(&self) -> Result<Vec<(String, u32, u32, bool)>>;
     fn push(
         &self,
         remote: &str,
