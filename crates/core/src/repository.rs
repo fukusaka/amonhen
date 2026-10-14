@@ -1,8 +1,9 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 
-use amonhen_model::{CommitGraph, GitBackend, Oid, Result};
+use amonhen_model::{CommitGraph, GitBackend, Oid, Result, topo};
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use arc_swap::ArcSwapOption;
 
@@ -17,6 +18,21 @@ pub struct HistorySnapshot {
     pub head: Option<Oid>,
     pub graph: CommitGraph,
     pub layout: GraphLayout,
+    /// コミット ID から行への索引。次に読み直すとき、既知のコミットで走査を止めるのに使う。
+    rows: OnceLock<HashMap<Oid, u32>>,
+}
+
+impl HistorySnapshot {
+    fn rows(&self) -> &HashMap<Oid, u32> {
+        self.rows.get_or_init(|| {
+            self.graph
+                .ids()
+                .iter()
+                .enumerate()
+                .map(|(r, id)| (*id, r as u32))
+                .collect()
+        })
+    }
 }
 
 /// 1 つのリポジトリの状態。読み取りはロックなしで、最新のスナップショットを取るだけ。
@@ -58,6 +74,7 @@ impl Repository {
             head,
             graph,
             layout,
+            rows: OnceLock::new(),
         });
         self.history.store(Some(snapshot.clone()));
         snapshot
@@ -74,7 +91,8 @@ impl Repository {
     }
 
     /// History を読み直して公開する。起点と HEAD が前回と同じなら何もしない。
-    /// 変わっていれば、前回のレイアウトから変わった所だけ計算し直す。
+    /// 変わっていれば、新しい起点から前回の History に当たるまでだけ辿り、レイアウトも
+    /// 変わった所だけ計算し直す。
     pub fn load_history(&self) -> Result<Arc<HistorySnapshot>> {
         let tips = self.backend.tips()?;
         let head = self.backend.head()?;
@@ -85,7 +103,16 @@ impl Repository {
         {
             return Ok(current.clone());
         }
-        let graph = self.backend.commit_graph(&tips)?;
+        let graph = match &current {
+            Some(old) => {
+                let rows = old.rows();
+                let new = self
+                    .backend
+                    .read_commits(&tips, &|id| rows.contains_key(id))?;
+                topo::extend(new, &old.graph, rows, &tips)
+            }
+            None => self.backend.commit_graph(&tips)?,
+        };
         let head_row = head
             .and_then(|h| graph.ids().iter().position(|id| *id == h))
             .map(|r| r as u32);
@@ -178,6 +205,57 @@ mod tests {
         assert_eq!((updated.generation, updated.graph.len()), (2, 2));
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache);
         assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
+    }
+
+    #[test]
+    fn reads_only_new_commits_and_drops_deleted_branches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["commit", "--allow-empty", "-q", "-m", "root"]);
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        git(dir, &["commit", "--allow-empty", "-q", "-m", "topic"]);
+        git(dir, &["switch", "-q", "main"]);
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        assert_eq!(repo.load_history().unwrap().graph.len(), 2);
+
+        git(dir, &["commit", "--allow-empty", "-q", "-m", "main 1"]);
+        git(
+            dir,
+            &["merge", "-q", "--no-ff", "-m", "merge topic", "topic"],
+        );
+        git(dir, &["branch", "-q", "-D", "topic"]);
+        git(dir, &["switch", "-q", "-c", "gone"]);
+        git(dir, &["commit", "--allow-empty", "-q", "-m", "gone"]);
+        git(dir, &["switch", "-q", "main"]);
+        git(dir, &["branch", "-q", "-D", "gone"]);
+        let incremental = repo.load_history().unwrap();
+        let full = GixBackend::open(dir)
+            .unwrap()
+            .commit_graph(&incremental.tips)
+            .unwrap();
+
+        // 同じコミットと親子関係（並び順は違ってよい）。
+        let edges = |g: &CommitGraph| {
+            let mut e: Vec<_> = (0..g.len())
+                .map(|r| {
+                    (
+                        g.ids()[r],
+                        g.parents(r)
+                            .iter()
+                            .map(|&p| g.ids()[p as usize])
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect();
+            e.sort();
+            e
+        };
+        assert_eq!(incremental.graph.len(), 4);
+        assert_eq!(edges(&incremental.graph), edges(&full));
+        for r in 0..incremental.graph.len() {
+            assert!(incremental.graph.parents(r).iter().all(|&p| p as usize > r));
+        }
     }
 
     #[test]
