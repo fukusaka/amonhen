@@ -1,6 +1,7 @@
 //! `git` を起動して行う操作（デスクトップ向け）。書き込み系の操作は正しさと互換性を優先して
 //! git 本体に任せる。読み取りでも、git の仕組み（untracked cache・fsmonitor）が効く status はここ。
 
+mod ops;
 mod status;
 
 use std::io::Write;
@@ -185,5 +186,117 @@ mod tests {
         git.commit("second (amended)", true).unwrap();
         let log = git.read(&["log", "--format=%s"]).unwrap();
         assert_eq!(String::from_utf8(log).unwrap(), "second (amended)\nfirst\n");
+    }
+}
+
+#[cfg(test)]
+mod ops_tests {
+    use super::*;
+    use amonhen_model::{HeadState, Oid, Operations, Outcome, ResetMode, Sequence};
+
+    fn repo() -> (tempfile::TempDir, Git) {
+        let tmp = tempfile::tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        for args in [
+            &["init", "-q", "-b", "main"][..],
+            &["config", "user.name", "a"],
+            &["config", "user.email", "a@example.com"],
+        ] {
+            git.write(args).unwrap();
+        }
+        (tmp, git)
+    }
+
+    fn commit_file(tmp: &tempfile::TempDir, git: &Git, name: &str, content: &str) -> Oid {
+        std::fs::write(tmp.path().join(name), content).unwrap();
+        git.stage(&[name]).unwrap();
+        git.commit(&format!("{name}: {content}"), false).unwrap();
+        git.head_state().unwrap().oid.unwrap()
+    }
+
+    #[test]
+    fn merges_rebases_and_aborts_conflicts() {
+        let (tmp, git) = repo();
+        let base = commit_file(&tmp, &git, "a.txt", "base\n");
+        assert_eq!(
+            git.head_state().unwrap(),
+            HeadState {
+                branch: Some("refs/heads/main".into()),
+                oid: Some(base)
+            }
+        );
+
+        git.create_branch("topic", "main", true).unwrap();
+        commit_file(&tmp, &git, "a.txt", "topic\n");
+        git.switch_branch("main").unwrap();
+        commit_file(&tmp, &git, "a.txt", "main\n");
+
+        assert_eq!(git.merge("topic").unwrap(), Outcome::Conflict);
+        assert_eq!(git.sequence_in_progress().unwrap(), Some(Sequence::Merge));
+        git.abort(Sequence::Merge).unwrap();
+        assert_eq!(git.sequence_in_progress().unwrap(), None);
+
+        commit_file(&tmp, &git, "b.txt", "b\n");
+        git.switch_branch("topic").unwrap();
+        assert_eq!(git.rebase("main").unwrap(), Outcome::Conflict);
+        assert_eq!(git.sequence_in_progress().unwrap(), Some(Sequence::Rebase));
+        git.abort(Sequence::Rebase).unwrap();
+    }
+
+    #[test]
+    fn moves_refs_only_when_they_are_where_we_expect() {
+        let (tmp, git) = repo();
+        let first = commit_file(&tmp, &git, "a.txt", "1\n");
+        let second = commit_file(&tmp, &git, "a.txt", "2\n");
+        let name = "refs/heads/other".to_string();
+
+        git.update_ref(&name, Some(&first), None).unwrap();
+        assert!(
+            git.update_ref(&name, Some(&second), Some(&second)).is_err(),
+            "期待した値と違う"
+        );
+        git.update_ref(&name, Some(&second), Some(&first)).unwrap();
+        assert_eq!(
+            git.resolve_refs(std::slice::from_ref(&name)).unwrap(),
+            [(name.clone(), Some(second))]
+        );
+        git.update_ref(&name, None, Some(&second)).unwrap();
+        assert_eq!(
+            git.resolve_refs(std::slice::from_ref(&name)).unwrap(),
+            [(name, None)]
+        );
+
+        git.reset(ResetMode::Soft, &first).unwrap();
+        assert_eq!(git.head_state().unwrap().oid, Some(first));
+        assert!(
+            git.status().unwrap().entries[0].is_staged(),
+            "soft なので変更は index に残る"
+        );
+    }
+
+    #[test]
+    fn drops_and_restores_stashes() {
+        let (tmp, git) = repo();
+        commit_file(&tmp, &git, "a.txt", "1\n");
+        std::fs::write(tmp.path().join("a.txt"), "changed\n").unwrap();
+        git.stash_push(Some("wip"), false).unwrap();
+        let oid =
+            Oid::from_hex(&text(git.read(&["rev-parse", "stash@{0}"]).unwrap()).unwrap()).unwrap();
+        git.stash_drop("stash@{0}").unwrap();
+        assert!(
+            git.read(&["rev-parse", "-q", "--verify", "refs/stash"])
+                .is_err()
+        );
+
+        git.stash_store(&oid, "wip").unwrap();
+        assert_eq!(git.stash_apply("stash@{0}", true).unwrap(), Outcome::Done);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("a.txt")).unwrap(),
+            "changed\n"
+        );
+    }
+
+    fn text(out: Vec<u8>) -> Result<String> {
+        Ok(String::from_utf8(out)?.trim().to_owned())
     }
 }
