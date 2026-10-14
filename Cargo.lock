@@ -42,7 +42,10 @@ dependencies = [
  "amonhen-backend-gix",
  "amonhen-layout",
  "amonhen-model",
+ "amonhen-projection",
+ "arc-swap",
  "criterion",
+ "tempfile",
 ]
 
 [[package]]

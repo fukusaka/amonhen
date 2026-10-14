@@ -8,10 +8,13 @@ publish.workspace = true
 [dependencies]
 amonhen-layout.workspace = true
 amonhen-model.workspace = true
+amonhen-projection.workspace = true
+arc-swap = "1.9.2"
 
 [dev-dependencies]
 amonhen-backend-gix = { path = "../backend-gix" }
 criterion = "0.8.2"
+tempfile = "3.27.0"
 
 [[bench]]
 name = "graph"
