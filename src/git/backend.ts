@@ -62,6 +62,13 @@ export interface RepositoryBackend {
   trackBranch(remoteBranch: string): Promise<void>;
   /** ローカルブランチを削除する。force でなければ merge されていないと失敗する */
   deleteBranch(name: string, force: boolean): Promise<void>;
+  /** start からブランチを作る。checkout なら切り替える（作業中の変更は持っていく） */
+  createBranch(name: string, start: string, checkout: boolean): Promise<void>;
+  renameBranch(from: string, to: string): Promise<void>;
+  /** target にタグを付ける。message があれば annotated tag */
+  createTag(name: string, target: string, message?: string): Promise<void>;
+  /** ブランチ名として使えるか。使えなければ git の説明を返す */
+  checkBranchName(name: string): Promise<string | undefined>;
   /** ファイル単位で stage する。削除も含む */
   stage(paths: readonly string[]): Promise<void>;
   /** ファイル単位で unstage する。HEAD がまだ無くてもよい */
@@ -190,6 +197,29 @@ export class CliBackend implements RepositoryBackend {
 
   async deleteBranch(name: string, force: boolean): Promise<void> {
     await this.git.exec(['branch', force ? '-D' : '-d', '--', name], { cwd: this.root });
+  }
+
+  async createBranch(name: string, start: string, checkout: boolean): Promise<void> {
+    const args = checkout ? ['switch', '--create', name, start] : ['branch', '--', name, start];
+    await this.git.exec(args, { cwd: this.root });
+  }
+
+  async renameBranch(from: string, to: string): Promise<void> {
+    await this.git.exec(['branch', '--move', '--', from, to], { cwd: this.root });
+  }
+
+  async createTag(name: string, target: string, message?: string): Promise<void> {
+    const args = message ? ['tag', '--annotate', '--file=-', '--', name, target] : ['tag', '--', name, target];
+    await this.git.exec(args, { cwd: this.root, input: message });
+  }
+
+  async checkBranchName(name: string): Promise<string | undefined> {
+    try {
+      await this.read(['check-ref-format', '--branch', name]);
+      return undefined;
+    } catch (err) {
+      return err instanceof GitError ? err.message : String(err);
+    }
   }
 
   async stage(paths: readonly string[]): Promise<void> {

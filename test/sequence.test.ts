@@ -156,3 +156,23 @@ test('trackBranch and deleteBranch', async () => {
   await backend.deleteBranch('topic', false);
   assert.equal(git('branch', '--list', 'unmerged', 'topic'), '');
 });
+
+test('createBranch, renameBranch, createTag and checkBranchName', async () => {
+  const head = git('rev-parse', 'HEAD');
+  await backend.createBranch('topic', 'main', false);
+  assert.equal(git('branch', '--show-current'), 'main');
+  await backend.createBranch('work', 'topic', true);
+  assert.equal(git('branch', '--show-current'), 'work');
+  await backend.renameBranch('work', 'renamed');
+  assert.equal(git('branch', '--show-current'), 'renamed');
+
+  await backend.createTag('light', head);
+  await backend.createTag('heavy', head, 'Release notes\n');
+  assert.equal(git('cat-file', '-t', 'light'), 'commit');
+  assert.equal(git('cat-file', '-t', 'heavy'), 'tag');
+  assert.equal(git('tag', '-l', '--format=%(contents:subject)', 'heavy'), 'Release notes');
+
+  assert.equal(await backend.checkBranchName('feature/ok'), undefined);
+  assert.ok(await backend.checkBranchName('bad..name'));
+  assert.ok(await backend.checkBranchName('with space'));
+});
