@@ -2,12 +2,13 @@
 
 ## 概要
 
-VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約なしに作り込んだ macOS ネイティブの Git クライアント。徹底的な低遅延を最優先にする。拡張と同じく自分用で、GitHub Releases で配布する。
+VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約なしに作り込んだネイティブの Git クライアント。徹底的な低遅延を最優先にする。コアは Rust で書いて各 OS で使い回し、最初の FE（フロントエンド）は macOS で作る。拡張と同じく自分用で、GitHub Releases で配布する。
 
 | 方針 | 内容 |
 | --- | --- |
 | 速度 | 入力から表示まで 1 フレーム（120Hz で 8.3 ms）以内。UI スレッドで git を待たない |
 | 構成 | コアロジックは Rust、UI は各 OS のネイティブ。まず macOS（AppKit）だけ |
+| 使い回し | コアは macOS / iOS / Windows / Linux / Android で動かす。FE に渡すデータの形式は FE ごとに最適なものを選べる |
 | 妥協しない | SwiftUI・Qt・WebView は重い画面に使わない。History と差分は自前で描画する |
 | 段階的に広げる | コアは同一プロセス・ローカル daemon・SSH 越しのどれでも動く形にしておき、最初は同一プロセスだけ作る |
 
@@ -20,6 +21,8 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 | 10 万〜100 万コミットのリポジトリで History を 120fps でスクロールできる | 必須 |
 | 起動直後に前回の History を即座に表示する（永続キャッシュ） | 必須 |
 | 日本語入力・アクセシビリティは OS 標準の挙動 | 必須 |
+| コアを macOS / iOS / Windows / Linux / Android で流用できる | 必須 |
+| FE ごとに最適なデータ形式（文字列の符号化・列・GPU の頂点形式）を選べ、変換で無駄なコピーをしない | 必須 |
 | History のグラフ表現の工夫（幹線の強調、祖先のハイライト、折りたたみ、アニメーション） | 必須 |
 | CLI（`amonhen`）から同じコアを使える | 希望 |
 | SSH 先のリポジトリを手元と同じ速さで操作できる | 希望 |
@@ -27,7 +30,7 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 
 ### 非目標
 
-- Windows / Linux の UI（コアは使い回せるように作るが、当面作らない）
+- macOS 以外の FE（コアと抽象化は最初から対応させ、全ターゲットのビルドを CI で通すが、FE は当面作らない）
 - Qt・Electron・Tauri・Flutter による実装（検討の上で外した）
 - 全画面を Metal で描くこと（入力欄・設定・ダイアログは標準部品）
 
@@ -37,14 +40,16 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 | --- | --- | --- |
 | コア | Rust | GC 停止がなく、メモリ配置を制御できる |
 | git の読み取り | gix（gitoxide）を同一プロセスで | spawn のコスト（1 回 約 6 ms）とパイプのコピーをなくす。commit-graph を直接読める |
-| git の書き込み | `git` を spawn | rebase・merge・push などは本家に任せて正しさと互換性を保つ |
+| git の書き込み | デスクトップは `git` を spawn、iOS / Android は gix と libgit2 | rebase・merge・push などは本家に任せて正しさと互換性を保つ。モバイルでは git を起動できない。`GitBackend` で差し替える |
 | 非同期 | tokio（I/O・プロセス）＋ rayon（CPU） | 古い要求は即キャンセルする |
 | 差分 | imara-diff、色付けは tree-sitter | 色付けは後追いで、まず色なしで即表示 |
-| 橋渡し | UniFFI ＋ 速さが要る経路だけ C ABI | 操作系は型安全に、行データはゼロコピーで |
+| 橋渡し | C ABI（cbindgen）を土台に、UniFFI（Swift / Kotlin）、Linux・Windows は Rust から直接 | 操作系は型安全に、行データはゼロコピーで |
+| OS の機能 | `Platform` トレイトで FE から注入。ファイル監視は notify | メインスレッドの起こし方・認証情報・SSH・保存先を OS ごとに差し替える |
 | UI の骨格・重い画面 | AppKit | 表示行の使い回し、描画範囲、レイヤーを直接制御できる |
 | UI の周辺 | SwiftUI（`NSHostingView` で埋め込む） | 設定・ダイアログ・Welcome を手早く作る |
 | GPU | History と差分表示を Metal で描く（文字のグリフアトラスを共有）。ほかは Core Animation と標準部品 | History のラベル用に Metal の文字描画は必ず作るので、差分表示でも使い回す |
-| 対象 OS | macOS 14.4 以降、Apple Silicon | `os_sync_wait_on_address`、`NSView.displayLink` を使う |
+| 最初の FE | macOS 14.4 以降、Apple Silicon | `os_sync_wait_on_address`、`NSView.displayLink` を使う |
+| コアのビルド対象 | `aarch64-apple-darwin`、`aarch64-apple-ios`、`x86_64` / `aarch64-pc-windows-msvc`、`x86_64` / `aarch64-unknown-linux-gnu`、`aarch64-linux-android` | コアに OS 固有のコードが紛れ込むのを CI で防ぐ |
 
 ## 全体構成
 
@@ -62,12 +67,15 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 │ ① 同一プロセス: C ABI   ② ローカル daemon: XPC＋共有メモリ   ③ SSH: stdio     │
 └──────────────▲───────────────────────────────────────────────┬───────────────┘
 ┌──────────────┴──────────────────── Rust コア ─────────────────▼───────────────┐
-│ core    状態・スナップショット・Intent の処理（一方向のデータの流れ）          │
-│ repo    読み取りは gix、書き込みは git を spawn                              │
+│ model      内部モデル（FE を知らない。UTF-8、展開済みバッファへの参照）       │
+│ core       状態・スナップショット・Intent の処理（一方向のデータの流れ）       │
+│ projection FE ごとの形への変換（変わったチャンクだけ・1 回だけ）              │
+│ backend    GitBackend: gix / git CLI / libgit2                               │
+│ platform   Platform: 起こし方・認証情報・SSH・保存先（FE から注入）          │
 │ index   コミット情報の永続キャッシュ（mmap、メモリ上と同じ配置）              │
 │ graph   レーンの順次計算・差分だけの再計算                                   │
 │ diff    imara-diff・単語差分・tree-sitter の色付け                           │
-│ watch   FSEvents で .git と作業ツリーを監視、まとめて再読込                   │
+│ watch   notify（FSEvents / inotify / ReadDirectoryChangesW）で監視            │
 │ oplog   Undo 用の操作ログ（操作前の HEAD と関係する ref を記録）              │
 │ search  log・pickaxe 検索（rayon で並列）                                    │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -79,17 +87,25 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 
 ```
 crates/
-  core/              コアのロジック（通信手段に依存しない）
-  layout/            #[repr(C)] のレコード定義（メモリ上の形 = ファイルの形 = 通信の形）
+  model/             内部モデル（FE のことを知らない）
+  core/              状態・スナップショット・Intent の処理（通信手段に依存しない）
+  layout/            全 FE で共通の #[repr(C)] レコード（数値の列、グラフの Node / Edge）
+  projection/        FE ごとの形への変換（文字列の符号化、列の選択、配置の揃え方）
+  platform/          Platform トレイト
+  backend-gix/       GixBackend
+  backend-cli/       CliBackend
+  backend-git2/      Git2Backend（モバイル向け、後で）
   client/            CoreClient の共通 API
   transport-inproc/  ① C ABI
   transport-local/   ② XPC / Unix ドメインソケット＋共有メモリ（後で）
   transport-remote/  ③ stdio（後で）
+  ffi-c/             C ABI ＋ cbindgen のヘッダー
+  ffi-uniffi/        Swift / Kotlin 向けのバインディング
 bins/
   amonhend/          daemon（後で）
   amonhen/           CLI
-ffi/                 Swift 向け静的ライブラリ（xcframework）
-app/                 Xcode プロジェクト（AppKit）
+apps/
+  macos/             Xcode プロジェクト（AppKit）。ffi を xcframework にして取り込む
 bench/               criterion のベンチと大規模リポジトリでの計測
 ```
 
@@ -101,24 +117,73 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 - 行データは 4096 行ごとのチャンクに分け、変わったチャンクだけ作り直す（残りは前の世代と共有）。
 - 各スナップショットは `generation` を持つ。UI は世代番号で古いデータでの描画を検出する。
 
-### ゼロコピーの受け渡し
+### 内部モデルとプロジェクション
 
-- 行は `#[repr(C)]` の固定長レコード、可変長の文字列は 1 つのバイト列にまとめてオフセットと長さで指す。参照はポインタではなく、領域の先頭からのオフセットで持つ（共有メモリ・ファイル・ネットワークでそのまま通用させるため）。
-- Swift は `UnsafeBufferPointer` で直接読み、生ポインタは `withSnapshot { }` の外に出さない。
-- 表示用の文字列は ASCII なら 8 ビット、それ以外は UTF-16 で持つ。`CFStringCreateWithBytesNoCopy`（ASCII）/ `CFStringCreateWithCharactersNoCopy`（UTF-16）に渡し、表示時に変換しない。
-- グラフの点と線の配列は `MTLBuffer(bytesNoCopy:)` で GPU にそのまま載せる。
-- 永続キャッシュもメモリ上と同じ配置で書き、起動時は mmap するだけにする。
+- 内部モデルは git の処理と計算に都合の良い形だけを持ち、FE を知らない。文字列は gix が展開した `Arc<[u8]>` を位置と長さで参照し、コピーしない。
+- FE は接続時に `FrontendProfile`（文字列の符号化・必要な列・GPU の頂点形式・配置の揃え方）を宣言する。プロジェクション層がその形にチャンク単位で変換する。
+- 変換するのは見えている範囲と先読みの範囲だけ。結果は「世代＋チャンク＋形式」でキャッシュし、変わっていないチャンクは前の世代と共有する。同じ形式の FE が複数あれば共有する。
+- 変換結果は形式ごとに永続キャッシュにも書き、次の起動では mmap するだけにする。内部の永続キャッシュ（チェックポイント、ref の索引など Rust の中で閉じるもの）は rkyv を使ってもよいが、FE に渡す形は自前で定義する（rkyv は配置が言語をまたいで文書化されておらず、文字列も UTF-8 固定のため）。
+
+### ゼロコピーの規則
+
+- 形が同じなら変換しない。数値の列（日時・添字・レーン・フラグ）とグラフの `Node` / `Edge` は全 FE で同じ `#[repr(C)]` レコードを共有し、GPU 側は頂点ディスクリプタで読み方を合わせる。
+- データは列ごとの配列（SoA）で持つ。FE が列を選ぶのはポインタを選ぶだけで、詰め直さない。
+- 文字列は「ASCII なら共通のバイト列、それ以外だけ FE の好む符号化」に統一する。ASCII はそのまま UTF-8 でも Latin-1 でもあるので、大半の文字列（ハッシュ、パス、英語のメッセージ、ブランチ名）は全 FE でコピーなし。変換が要るのは ASCII 以外の文字列を UTF-16 系の FE に渡すときだけで、展開済みバッファから FE 向けの領域へ直接 1 回だけ書く。
+- 参照はポインタではなく領域の先頭からのオフセットで持つ（共有メモリ・ファイル・ネットワークでそのまま通用させるため）。別プロセス・リモートでは、連続した領域に集める処理と符号化の変換を同時に行い、書き込みを 1 回にする。
+- チャンクの領域は全 FE でページ境界に揃えて確保する（`MTLBuffer(bytesNoCopy:)`、`VK_EXT_external_memory_host` でそのまま GPU に見せるため）。独立 GPU では PCIe 越しの転送 1 回だけは避けられない。
 - 原理的に残る処理は「git オブジェクトの展開」と「描画」だけ。どちらも 1 回きりにしてキャッシュする。
+
+| FE | 文字列 | コピーなしの受け渡し | 描画 |
+| --- | --- | --- | --- |
+| macOS / iOS | ASCII＋UTF-16 | `UnsafeBufferPointer` で直接読む（生ポインタは `withSnapshot { }` の外に出さない）。`CFStringCreateWithBytesNoCopy`（ASCII）/ `CFStringCreateWithCharactersNoCopy`（UTF-16） | Metal ＋ Core Text |
+| Windows | ASCII＋UTF-16 | UTF-16 はそのまま `PCWSTR`。ASCII は描画時に見えている行だけスタック上で広げる | Direct2D / D3D ＋ DirectWrite |
+| Linux | UTF-8 | UI も Rust（gtk-rs）で書き、FFI なしで参照する | GTK4（GSK）/ Vulkan |
+| Android | ASCII（Latin-1）＋UTF-16 | JNI の `NewDirectByteBuffer`。Java の `String` は作らず、バッファを参照する `CharSequence` を描画 API に渡す | Compose / Canvas、必要なら Vulkan |
+| VSCode / Web | UTF-16 または UTF-8 | daemon 経由の `ArrayBuffer`、または WASM のメモリを直接参照 | Canvas / WebGL |
+
+同一プロセスでの書き込み回数は、数値の列・グラフ・ASCII の文字列が全 FE で 0 回、ASCII 以外の文字列が UTF-8 の FE で 0 回・UTF-16 系の FE で 1 回（変わったときだけ）になる。
 
 ### 変更通知
 
-- コアの作業スレッドから SPSC のリングバッファ（`rtrb`）にイベントを積み、`DispatchSource`（`.data_add`）でメインスレッドを起こす。合図は自動でまとまるので、UI の更新は 1 フレームに 1 回で済む。
+- コアの作業スレッドから SPSC のリングバッファ（`rtrb`）にイベントを積み、`Platform` から受け取った waker で FE のメインスレッドを起こす。macOS / iOS は `DispatchSource`（`.data_add`）で、合図が自動でまとまるので UI の更新は 1 フレームに 1 回で済む。ほかの OS は `PostMessage`（Windows）、GLib のメインループ（Linux）、Looper / Handler（Android）。
 
 ### 別プロセス・リモートにするとき（後で）
 
 - ② ローカル daemon: スナップショットを共有メモリに作り、領域は XPC で 1 回だけ渡す。Intent と通知も共有メモリのリングで送り、相手が寝ているときだけ `os_sync_wake_by_address_any` で起こす。要求処理のスレッドは `QOS_CLASS_USER_INTERACTIVE`。共有メモリの領域は使い回す。
 - ③ SSH: 手元にスナップショットの複製を持ち、UI は常に手元を読む。daemon からは変わったチャンクだけを zstd（辞書つき）で送る。大きな転送は細切れにして、操作系の通知を優先する。複製はディスクにも永続化し、再接続時は世代の差分だけ同期する。
 - どの動かし方でも、UI が読むのは手元のメモリだけ。通信は裏の同期にしか使わない。
+
+## マルチプラットフォーム
+
+### GitBackend
+
+iOS / Android では `git` を起動できないので、git の操作をトレイトで抽象化して差し替える。
+
+| 実装 | 用途 |
+| --- | --- |
+| `GixBackend` | 読み取りは全 OS。書き込みも gix が対応した操作から順に移す |
+| `CliBackend` | デスクトップでの書き込み（rebase・merge・push）。正しさを優先 |
+| `Git2Backend`（libgit2） | モバイルで gix が未対応の書き込み（merge・push など）を補う |
+
+非対話 rebase も、デスクトップは `GIT_SEQUENCE_EDITOR` で todo を差し込む方式、モバイルは gix / libgit2 でコミットを積み直す方式と、バックエンドごとに実装する。
+
+### Platform
+
+FE が実装してコアに渡す。
+
+| 機能 | macOS / iOS | Windows | Linux | Android |
+| --- | --- | --- | --- | --- |
+| メインスレッドの起こし方 | DispatchSource | `PostMessage` | GLib のメインループ | Looper / Handler |
+| ファイル監視（notify） | FSEvents | `ReadDirectoryChangesW` | inotify | inotify |
+| 認証情報 | キーチェーン | 資格情報マネージャー | libsecret | Android Keystore |
+| SSH | OS の ssh / russh（iOS） | OS の ssh | OS の ssh | russh |
+| 保存先 | `~/Library/Caches/<バンドル ID>` など | `%LOCALAPPDATA%` | `$XDG_CACHE_HOME` | アプリの cache ディレクトリ |
+
+### バインディング
+
+- C ABI（`cbindgen` でヘッダーを生成）がすべての土台。速さが要る経路（行データ・グラフ・通知）はここを通す。
+- UniFFI で Swift（macOS / iOS）と Kotlin（Android）向けの型付き API を生成する。
+- Linux（gtk-rs）と Windows（windows-rs で UI も Rust にする場合）は Rust から直接使う。
 
 ## History のグラフ
 
@@ -199,6 +264,8 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 | gix が書き込み系・特殊な設定（reftable、sparse checkout、partial clone など）に追いつかない | 読み取りだけ gix、書き込みは git。読めない場合は git の spawn に落とす経路を残す |
 | 自前の差分表示で日本語入力・選択・アクセシビリティの作り込みが重い | 入力欄は標準の `NSTextView`。差分表示は読み取り専用にして、`NSAccessibility` は行単位で提供する |
 | UniFFI と C ABI の二本立てで境界が複雑になる | 行データ以外は UniFFI に寄せ、C ABI は History・差分・status の行取得だけにする |
+| プロジェクションの形式が増えるとテストの組み合わせが増える | 形式ごとに「内部モデルから変換 → 元に戻して比較」するテストを用意する。試作では macOS の形式だけ実装する |
+| モバイルで gix・libgit2 の書き込みが git と食い違う | 同じ操作を CliBackend と比べるテストを用意する。未対応の操作はモバイルでは出さない |
 | 共有メモリ・リングバッファでのメモリ安全性 | Swift 側は範囲を限定した API で包み、Rust 側は Miri と AddressSanitizer で境界をテストする |
 | macOS 14.4 未満の端末 | 対象外とする |
 
@@ -208,9 +275,9 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 
 試作:
 
-- [ ] 1. Rust の workspace と `layout` / `core` の骨組み、gix による commit-graph の読み取り
+- [ ] 1. Rust の workspace と `model` / `core` / `layout` の骨組み、`GitBackend` / `Platform` / `FrontendProfile` の形、gix による commit-graph の読み取り。全ターゲットのビルドを CI で通す
 - [ ] 2. グラフのレイアウト（順次計算、チェックポイント、区間表現）と criterion のベンチ
-- [ ] 3. C ABI でのスナップショット公開と、Swift からのゼロコピー読み取り
+- [ ] 3. プロジェクション（macOS の形式だけ）と C ABI でのスナップショット公開、Swift からのゼロコピー読み取り
 - [ ] 4. AppKit の History（`NSTableView`）と Metal のグラフ描画、入力から表示までの計測
 - [ ] 5. linux リポジトリで速度目標を検証。満たせなければ設計を見直す
 
@@ -232,7 +299,4 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 - [ ] 16. ローカル daemon（XPC＋共有メモリ）
 - [ ] 17. SSH 越しの daemon と手元の複製
 - [ ] 18. VSCode 拡張からの daemon 利用
-
-## 未決事項
-
-- 永続キャッシュの形式を rkyv にするか自前にするか
+- [ ] 19. ほかの OS の FE（iOS / Linux / Android / Windows）。プロジェクションの形式と Platform の実装、モバイルは Git2Backend を足す
