@@ -173,6 +173,60 @@ pub fn file_diff(old: Arc<Vec<u8>>, new: Arc<Vec<u8>>, context: u32) -> FileDiff
     diff
 }
 
+/// 行ごとの、改行まで含めたバイト範囲。
+fn full_line_ranges(data: &[u8]) -> Vec<Range<usize>> {
+    let mut lines = Vec::new();
+    let mut start = 0;
+    while start < data.len() {
+        let end = data[start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map_or(data.len(), |i| start + i + 1);
+        lines.push(start..end);
+        start = end;
+    }
+    lines
+}
+
+/// 変更前の中身に、`apply` が真を返す行の変更（追加・削除）だけを反映した中身。
+/// stage では選んだ行を、unstage では選ばなかった行を反映する（stage 済みの差分に対して）。
+pub fn apply_selection(diff: &FileDiff, apply: impl Fn(usize) -> bool) -> Vec<u8> {
+    let old = full_line_ranges(&diff.old);
+    let new = full_line_ranges(&diff.new);
+    let mut out = Vec::with_capacity(diff.old.len().max(diff.new.len()));
+    let push = |out: &mut Vec<u8>, bytes: &[u8]| {
+        // 改行のない最後の行の後ろに行を足すときは、改行を補う。
+        if out.last().is_some_and(|&b| b != b'\n') {
+            out.push(b'\n');
+        }
+        out.extend_from_slice(bytes);
+    };
+    // 次に写す変更前の行（0 始まり）。
+    let mut next_old = 0usize;
+    for (row, line) in diff.lines.iter().enumerate() {
+        match line.kind {
+            DiffRow::CONTEXT | DiffRow::REMOVED => {
+                let at = line.old_no as usize - 1;
+                for r in &old[next_old..at] {
+                    push(&mut out, &diff.old[r.clone()]);
+                }
+                next_old = at + 1;
+                if line.kind == DiffRow::CONTEXT || !apply(row) {
+                    push(&mut out, &diff.old[old[at].clone()]);
+                }
+            }
+            DiffRow::ADDED if apply(row) => {
+                push(&mut out, &diff.new[new[line.new_no as usize - 1].clone()])
+            }
+            _ => {}
+        }
+    }
+    for r in &old[next_old..] {
+        push(&mut out, &diff.old[r.clone()]);
+    }
+    out
+}
+
 impl FileDiff {
     pub fn text(&self, line: &Line) -> &[u8] {
         let r = line.range.start as usize..line.range.end as usize;
@@ -284,6 +338,35 @@ mod tests {
         let added = v.rows[3];
         assert!(!added.text.is_ascii());
         assert_eq!(v.strings.bytes(v.rows[0].text), b"@@ -1,2 +1,2 @@");
+    }
+
+    #[test]
+    fn applies_only_the_selected_lines() {
+        let old = "1\n2\n3\n4\n5\n6\n7\n8\n9\n";
+        let new = "1\nTWO\n3\n4\n5\n6\n7\n8\nNINE\nten\n";
+        let d = diff(old, new, 1);
+        // 行: @@, 1, -2, +TWO, 3, @@, 8, -9, +NINE, +ten
+        let rows: Vec<&[u8]> = d.lines.iter().map(|l| d.text(l)).collect();
+        assert_eq!(rows[2], b"2");
+        assert_eq!(rows[9], b"ten");
+
+        let all = apply_selection(&d, |_| true);
+        assert_eq!(all, new.as_bytes());
+        let none = apply_selection(&d, |_| false);
+        assert_eq!(none, old.as_bytes());
+        // 2 → TWO だけ（hunk 1 つ分）。
+        let first = apply_selection(&d, |r| (2..=3).contains(&r));
+        assert_eq!(first, b"1\nTWO\n3\n4\n5\n6\n7\n8\n9\n");
+        // ten の追加だけ。
+        let ten = apply_selection(&d, |r| r == 9);
+        assert_eq!(ten, b"1\n2\n3\n4\n5\n6\n7\n8\n9\nten\n");
+    }
+
+    #[test]
+    fn appending_after_a_last_line_without_newline() {
+        let d = diff("a", "a\nb\n", 3);
+        let added_b = d.lines.iter().position(|l| d.text(l) == b"b").unwrap();
+        assert_eq!(apply_selection(&d, |r| r == added_b), b"a\nb\n");
     }
 
     #[test]

@@ -87,7 +87,9 @@ fn to_oid(id: &gix::oid) -> Result<Oid> {
 
 impl GixBackend {
     fn git(&self) -> Result<&amonhen_backend_cli::Git> {
-        self.git.as_ref().ok_or_else(|| "作業ツリーのないリポジトリ".into())
+        self.git
+            .as_ref()
+            .ok_or_else(|| "作業ツリーのないリポジトリ".into())
     }
 }
 
