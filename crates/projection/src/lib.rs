@@ -4,8 +4,10 @@
 //! 形が同じ部分（数値の列、グラフの Node / Edge、ASCII の文字列）は変換せず参照で渡す。
 
 mod history;
+mod strings;
 
 pub use history::HistoryChunk;
+pub use strings::{StringTable, StringTableBuilder};
 
 /// ASCII 以外の文字列の符号化。ASCII の文字列はどれでも共通のバイト列を参照する。
 #[non_exhaustive]

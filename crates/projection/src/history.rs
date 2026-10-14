@@ -1,49 +1,23 @@
-use std::sync::Arc;
-
 use amonhen_layout::StrRef;
 use amonhen_model::CommitText;
 
-use crate::{ColumnSet, FrontendProfile, StringEncoding};
+use crate::{ColumnSet, FrontendProfile, StringTable, StringTableBuilder};
 
-enum Buffer {
-    Utf8(Vec<u8>),
-    Utf16(Vec<u16>),
-    Commit(Arc<Vec<u8>>),
-}
-
-impl Buffer {
-    fn as_ptr(&self) -> *const u8 {
-        match self {
-            Buffer::Utf8(v) => v.as_ptr(),
-            Buffer::Utf16(v) => v.as_ptr().cast(),
-            Buffer::Commit(v) => v.as_ptr(),
-        }
-    }
-}
-
-/// History の連続した行の、FE 向けの列。
-///
-/// 文字列置き場の 0 番は変換した文字列（UTF-16 の FE なら ASCII 以外、UTF-8 の FE なら
-/// 不正なバイト列を置き換えたもの）。1 番以降は各コミットの本文のバッファで、ASCII の文字列
-/// （UTF-8 の FE なら正しい UTF-8 の文字列すべて）はここを直接指す。
+/// History の連続した行の、FE 向けの列。文字列置き場の 1 番以降は各コミットの本文。
 pub struct HistoryChunk {
     pub start_row: u32,
     pub subjects: Vec<StrRef>,
     pub author_names: Vec<StrRef>,
     pub author_times: Vec<i64>,
-    buffers: Vec<Buffer>,
-    bases: Vec<*const u8>,
+    pub strings: StringTable,
 }
-
-// `bases` は `buffers` が持つ、変更されないメモリを指すだけ。
-unsafe impl Send for HistoryChunk {}
-unsafe impl Sync for HistoryChunk {}
 
 impl HistoryChunk {
     pub fn new(start_row: u32, texts: &[CommitText], profile: &FrontendProfile) -> Self {
-        let mut converted = Converted::new(profile.string);
-        let mut buffers = Vec::with_capacity(texts.len() + 1);
-        buffers.push(Buffer::Utf8(Vec::new())); // 0 番は最後に差し替える
+        let mut strings = StringTableBuilder::new(profile.string);
+        for text in texts {
+            strings.share(text.raw.clone());
+        }
         let mut column = |wanted: ColumnSet, part: fn(&CommitText) -> &[u8]| -> Vec<StrRef> {
             if !profile.columns.contains(wanted) {
                 return Vec::new();
@@ -51,7 +25,7 @@ impl HistoryChunk {
             texts
                 .iter()
                 .enumerate()
-                .map(|(i, text)| converted.add(1 + i as u32, &text.raw, part(text)))
+                .map(|(i, text)| strings.add(1 + i as u32, part(text)))
                 .collect()
         };
         let subjects = column(ColumnSet::SUBJECT, CommitText::subject);
@@ -61,92 +35,37 @@ impl HistoryChunk {
         } else {
             Vec::new()
         };
-
-        buffers[0] = converted.into_buffer();
-        buffers.extend(texts.iter().map(|t| Buffer::Commit(t.raw.clone())));
-        let bases = buffers.iter().map(Buffer::as_ptr).collect();
         Self {
             start_row,
             subjects,
             author_names,
             author_times,
-            buffers,
-            bases,
+            strings: strings.finish(),
         }
     }
 
     pub fn len(&self) -> usize {
-        self.buffers.len() - 1
+        self.strings.bases().len() - 1
     }
 
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// 文字列置き場の先頭アドレス。`StrRef::buf` で引く。
     pub fn bases(&self) -> &[*const u8] {
-        &self.bases
+        self.strings.bases()
     }
 
-    /// `s` のバイト列。ASCII なら 1 バイト、ASCII 以外は FE の符号化の符号単位で `len()` 個。
     pub fn bytes(&self, s: StrRef) -> &[u8] {
-        let unit = match (&self.buffers[s.buf as usize], s.is_ascii()) {
-            (Buffer::Utf16(_), false) => 2,
-            _ => 1,
-        };
-        let base = self.bases[s.buf as usize];
-        // `bases` は `buffers` の中身を指し、`s` はその範囲内で作ったもの。
-        unsafe { std::slice::from_raw_parts(base.add(s.off as usize), s.len() as usize * unit) }
-    }
-}
-
-/// 変換が要る文字列を詰める 0 番の文字列置き場。
-enum Converted {
-    Utf8(Vec<u8>),
-    Utf16(Vec<u16>),
-}
-
-impl Converted {
-    fn new(encoding: StringEncoding) -> Self {
-        match encoding {
-            StringEncoding::Utf8 => Self::Utf8(Vec::new()),
-            StringEncoding::Utf16 => Self::Utf16(Vec::new()),
-        }
-    }
-
-    fn add(&mut self, buf: u32, raw: &[u8], part: &[u8]) -> StrRef {
-        let off = (part.as_ptr() as usize - raw.as_ptr() as usize) as u32;
-        if part.is_ascii() {
-            return StrRef::ascii(buf, off, part.len() as u32);
-        }
-        match self {
-            Self::Utf8(out) => match std::str::from_utf8(part) {
-                Ok(_) => StrRef::non_ascii(buf, off, part.len() as u32),
-                Err(_) => {
-                    let start = out.len() as u32;
-                    out.extend_from_slice(String::from_utf8_lossy(part).as_bytes());
-                    StrRef::non_ascii(0, start, out.len() as u32 - start)
-                }
-            },
-            Self::Utf16(out) => {
-                let start = out.len();
-                out.extend(String::from_utf8_lossy(part).encode_utf16());
-                StrRef::non_ascii(0, (start * 2) as u32, (out.len() - start) as u32)
-            }
-        }
-    }
-
-    fn into_buffer(self) -> Buffer {
-        match self {
-            Self::Utf8(v) => Buffer::Utf8(v),
-            Self::Utf16(v) => Buffer::Utf16(v),
-        }
+        self.strings.bytes(s)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::StringEncoding;
+    use std::sync::Arc;
 
     fn text(raw: &[u8], subject: std::ops::Range<u32>, author: std::ops::Range<u32>) -> CommitText {
         CommitText {
