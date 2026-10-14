@@ -241,7 +241,7 @@ FE が実装してコアに渡す。
 - Rust は criterion、Swift は `os_signpost` ＋ Instruments で計測する。
 - 入力イベントのタイムスタンプから `MTLDrawable.addPresentedHandler` の表示時刻までを常に計測し、デバッグ表示に出す。
 - CI で linux・chromium 規模のリポジトリを使い、起動時間・フレーム落ち・入力遅延の悪化を検出する。
-- `CFString` の NoCopy が実際にコピーしていないことを Instruments の Allocations で確かめる。
+- `CFString` の NoCopy が実際にコピーしていないことを確かめる。`apps/macos/Tests` で、UTF-16 は `CFStringGetCharactersPtr` が元の配列を返すこと、ASCII は元のバッファを書き換えると内容も変わることをテストしている。短い ASCII 文字列は CoreFoundation が tagged pointer（ポインタの値に文字を埋め込む）にするので参照はしないが、ヒープ確保もないので問題ない。
 
 ### 計測の記録
 
@@ -302,7 +302,7 @@ History の読み込み（起点の収集＋トポロジカル順の走査、`cr
 
 - [x] 1. Rust の workspace と `model` / `core` / `layout` の骨組み、`GitBackend` / `Platform` / `FrontendProfile` の形、gix による commit-graph の読み取り。全ターゲットのビルドを CI で通す
 - [x] 2. グラフのレイアウト（順次計算、チェックポイント、区間表現）と criterion のベンチ
-- [ ] 3. プロジェクション（macOS の形式だけ）と C ABI でのスナップショット公開、Swift からのゼロコピー読み取り
+- [x] 3. プロジェクション（macOS の形式だけ）と C ABI でのスナップショット公開、Swift からのゼロコピー読み取り
 - [ ] 4. AppKit の History（`NSTableView`）と Metal のグラフ描画、入力から表示までの計測
 - [ ] 5. linux リポジトリで速度目標を検証。満たせなければ設計を見直す
 
