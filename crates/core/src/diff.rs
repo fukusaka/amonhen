@@ -4,13 +4,14 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use amonhen_layout::DiffRow;
+use amonhen_projection::{FrontendProfile, StringTable, StringTableBuilder};
 use imara_diff::{Algorithm, Diff, InternedInput};
 
 /// 差分の 1 行が指す文字列の場所。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Source {
-    Old,
-    New,
+    Old = 0,
+    New = 1,
     /// `FileDiff::headers` の中（hunk の見出し）。
     Header,
 }
@@ -183,6 +184,48 @@ impl FileDiff {
     }
 }
 
+/// FE 向けの差分。行の文字列は、変更前・変更後の blob（文字列置き場の 1・2 番）を直接指す。
+pub struct DiffView {
+    pub rows: Vec<DiffRow>,
+    pub strings: StringTable,
+    pub binary: bool,
+    pub added: u32,
+    pub removed: u32,
+}
+
+impl DiffView {
+    pub fn new(diff: &FileDiff, profile: &FrontendProfile) -> Self {
+        let headers = Arc::new(diff.headers.clone().into_bytes());
+        let mut strings = StringTableBuilder::new(profile.string);
+        let sources = [
+            (strings.share(diff.old.clone()), &diff.old),
+            (strings.share(diff.new.clone()), &diff.new),
+            (strings.share(headers.clone()), &headers),
+        ];
+        let rows = diff
+            .lines
+            .iter()
+            .map(|l| {
+                let (buf, data) = sources[l.source as usize];
+                DiffRow {
+                    kind: l.kind,
+                    _pad: [0; 3],
+                    old_no: l.old_no,
+                    new_no: l.new_no,
+                    text: strings.add(buf, &data[l.range.start as usize..l.range.end as usize]),
+                }
+            })
+            .collect();
+        Self {
+            rows,
+            strings: strings.finish(),
+            binary: diff.binary,
+            added: diff.added,
+            removed: diff.removed,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -229,6 +272,18 @@ mod tests {
     fn close_changes_share_a_hunk_and_crlf_is_not_shown() {
         let d = diff("a\r\nb\r\nc\r\n", "A\r\nb\r\nC\r\n", 1);
         assert_eq!(render(&d), "@@ -1,3 +1,3 @@\n-a\n+A\n b\n-c\n+C\n");
+    }
+
+    #[test]
+    fn the_view_points_ascii_lines_into_the_blobs() {
+        let d = diff("a\nb\n", "a\n日本\n", 3);
+        let v = DiffView::new(&d, &FrontendProfile::MACOS);
+        assert_eq!(v.rows.len(), 4);
+        let ctx = v.rows[1];
+        assert_eq!(v.strings.bytes(ctx.text).as_ptr(), d.new.as_ptr());
+        let added = v.rows[3];
+        assert!(!added.text.is_ascii());
+        assert_eq!(v.strings.bytes(v.rows[0].text), b"@@ -1,2 +1,2 @@");
     }
 
     #[test]

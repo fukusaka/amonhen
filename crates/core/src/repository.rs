@@ -2,11 +2,14 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use amonhen_model::{CommitGraph, GitBackend, Oid, OidMap, Refs, RepoPaths, Result, topo};
+use amonhen_model::{
+    CommitGraph, FileChange, GitBackend, Oid, OidMap, Refs, RepoPaths, Result, topo,
+};
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use arc_swap::ArcSwapOption;
 
 use crate::cache::{self, CachedHistory};
+use crate::diff::{self, DiffView};
 use crate::graph::{self, GraphLayout};
 
 /// History の不変のスナップショット。公開したら書き換えない。
@@ -170,6 +173,27 @@ impl Repository {
         });
         self.refs.store(Some(snapshot.clone()));
         Ok(snapshot)
+    }
+
+    /// `commit` で変わったファイル。
+    pub fn commit_changes(&self, commit: &Oid) -> Result<Vec<FileChange>> {
+        self.backend.commit_changes(commit)
+    }
+
+    /// 変わったファイル 1 つの、前後 3 行の文脈つきの差分。
+    pub fn file_diff(&self, change: &FileChange, profile: &FrontendProfile) -> Result<DiffView> {
+        let side = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
+            match id {
+                None => Ok(Arc::default()),
+                // サブモジュールは git と同じく、指すコミットを 1 行の文字列にして比べる。
+                Some(id) if change.submodule => {
+                    Ok(Arc::new(format!("Subproject commit {id}\n").into_bytes()))
+                }
+                Some(id) => self.backend.blob(id),
+            }
+        };
+        let file = diff::file_diff(side(&change.old_id)?, side(&change.new_id)?, 3);
+        Ok(DiffView::new(&file, profile))
     }
 
     /// commit-graph がなければ書き出し、書き出したら true を返す。リポジトリの `.git` に書き込むので、

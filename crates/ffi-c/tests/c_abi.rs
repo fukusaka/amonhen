@@ -144,3 +144,60 @@ fn lists_refs_and_finds_their_rows() {
         amonhen_repo_free(repo);
     }
 }
+
+#[test]
+fn shows_the_files_a_commit_changed_and_their_diffs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-q", "-m", "first"]);
+    std::fs::write(dir.join("a.txt"), "one\n二\n").unwrap();
+    git(dir, &["commit", "-q", "-am", "second"]);
+    unsafe {
+        let path = CString::new(dir.to_str().unwrap()).unwrap();
+        let repo = amonhen_repo_open(path.as_ptr(), std::ptr::null());
+        let history = amonhen_history_load(repo);
+        let head = amonhen_history_view(history);
+        let refs = amonhen_refs_load(repo);
+        let target = (*amonhen_refs_view(refs).entries).target;
+        assert_eq!(amonhen_history_row_of(history, target.as_ptr()), 0);
+        assert_eq!(head.row_count, 2);
+
+        let changes = amonhen_commit_changes(repo, target.as_ptr());
+        let cv = amonhen_changes_view(changes);
+        assert_eq!(cv.count, 1);
+        let e = &*cv.entries;
+        assert_eq!(
+            std::slice::from_raw_parts(cv.strings.add(e.path_off as usize), e.path_len as usize),
+            b"a.txt"
+        );
+        assert_eq!((e.kind, e.old_path_len), (2, u32::MAX));
+
+        let diff = amonhen_file_diff(repo, changes, 0, AmonhenEncoding::Utf8);
+        let dv = amonhen_diff_view(diff);
+        assert_eq!(
+            (dv.row_count, dv.added, dv.removed, dv.binary),
+            (4, 1, 1, 0)
+        );
+        let rows = std::slice::from_raw_parts(dv.rows, dv.row_count as usize);
+        let text = |r: &amonhen_layout::DiffRow| {
+            std::str::from_utf8(std::slice::from_raw_parts(
+                (*dv.bases.add(r.text.buf as usize)).add(r.text.off as usize),
+                r.text.len() as usize,
+            ))
+            .unwrap()
+            .to_owned()
+        };
+        let lines: Vec<String> = rows.iter().map(text).collect();
+        assert_eq!(lines, ["@@ -1,2 +1,2 @@", "one", "two", "二"]);
+        assert!(amonhen_file_diff(repo, changes, 9, AmonhenEncoding::Utf8).is_null());
+
+        amonhen_diff_free(diff);
+        amonhen_changes_free(changes);
+        amonhen_refs_release(refs);
+        amonhen_history_release(history);
+        amonhen_repo_free(repo);
+    }
+}

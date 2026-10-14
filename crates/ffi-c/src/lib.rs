@@ -9,9 +9,10 @@ use std::ffi::{CStr, CString, c_char};
 use std::sync::Arc;
 
 use amonhen_backend_gix::GixBackend;
+use amonhen_core::diff::DiffView;
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository, cache};
-use amonhen_layout::{Edge, Node, StrRef};
-use amonhen_model::Oid;
+use amonhen_layout::{DiffRow, Edge, Node, StrRef};
+use amonhen_model::{FileChange, Oid};
 use amonhen_projection::{FrontendProfile, HistoryChunk, StringEncoding};
 use amonhen_watch::Watcher;
 use std::path::Path;
@@ -33,6 +34,16 @@ pub struct AmonhenRefs {
 
 /// リポジトリの監視。
 pub struct AmonhenWatch {
+    _private: [u8; 0],
+}
+
+/// コミットで変わったファイルの一覧。
+pub struct AmonhenChanges {
+    _private: [u8; 0],
+}
+
+/// ファイル 1 つの差分。
+pub struct AmonhenDiff {
     _private: [u8; 0],
 }
 
@@ -98,6 +109,16 @@ fn history<'a>(history: *const AmonhenHistory) -> &'a HistorySnapshot {
 
 fn into_history(snapshot: Arc<HistorySnapshot>) -> *const AmonhenHistory {
     Arc::into_raw(snapshot).cast()
+}
+
+fn profile(encoding: AmonhenEncoding) -> FrontendProfile {
+    FrontendProfile {
+        string: match encoding {
+            AmonhenEncoding::Utf16 => StringEncoding::Utf16,
+            AmonhenEncoding::Utf8 => StringEncoding::Utf8,
+        },
+        ..FrontendProfile::MACOS
+    }
 }
 
 fn non_null<T>(slice: &[T]) -> *const T {
@@ -281,14 +302,7 @@ pub unsafe extern "C" fn amonhen_history_chunk(
     count: u32,
     encoding: AmonhenEncoding,
 ) -> *mut AmonhenChunk {
-    let profile = FrontendProfile {
-        string: match encoding {
-            AmonhenEncoding::Utf16 => StringEncoding::Utf16,
-            AmonhenEncoding::Utf8 => StringEncoding::Utf8,
-        },
-        ..FrontendProfile::MACOS
-    };
-    match repo(repo_ptr).history_chunk(history(history_ptr), start, count, &profile) {
+    match repo(repo_ptr).history_chunk(history(history_ptr), start, count, &profile(encoding)) {
         Ok(chunk) => Box::into_raw(Box::new(chunk)).cast(),
         Err(e) => {
             set_error(e);
@@ -490,5 +504,167 @@ pub unsafe extern "C" fn amonhen_repo_watch(
 pub unsafe extern "C" fn amonhen_watch_free(watch: *mut AmonhenWatch) {
     if !watch.is_null() {
         drop(unsafe { Box::from_raw(watch.cast::<Watcher>()) });
+    }
+}
+
+/// 変わったファイル 1 つ。文字列は `AmonhenChangesView::strings` の中の UTF-8。
+#[repr(C)]
+pub struct AmonhenChangeEntry {
+    /// 0: 追加、1: 削除、2: 変更、3: 名前の変更、4: コピー。
+    pub kind: u8,
+    pub submodule: u8,
+    pub _pad: [u8; 2],
+    pub path_off: u32,
+    pub path_len: u32,
+    /// 名前を変えた・コピーしたときの元のパス。なければ `old_path_len` が `u32::MAX`。
+    pub old_path_off: u32,
+    pub old_path_len: u32,
+}
+
+#[repr(C)]
+pub struct AmonhenChangesView {
+    pub entries: *const AmonhenChangeEntry,
+    pub count: u32,
+    pub strings: *const u8,
+}
+
+struct ChangesHandle {
+    changes: Vec<FileChange>,
+    entries: Vec<AmonhenChangeEntry>,
+    strings: Vec<u8>,
+}
+
+/// `commit`（20 バイト）で変わったファイル（`amonhen_changes_free` で解放する）。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`commit` は 20 バイト読める領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_commit_changes(
+    repo_ptr: *const AmonhenRepo,
+    commit: *const u8,
+) -> *mut AmonhenChanges {
+    let id = Oid(unsafe { *commit.cast::<[u8; 20]>() });
+    let changes = match repo(repo_ptr).commit_changes(&id) {
+        Ok(c) => c,
+        Err(e) => {
+            set_error(e);
+            return std::ptr::null_mut();
+        }
+    };
+    let mut strings = Vec::new();
+    let mut put = |s: Option<&str>| match s {
+        Some(s) => {
+            let off = strings.len() as u32;
+            strings.extend_from_slice(s.as_bytes());
+            (off, s.len() as u32)
+        }
+        None => (0, u32::MAX),
+    };
+    let entries = changes
+        .iter()
+        .map(|c| {
+            let (path_off, path_len) = put(Some(&c.path));
+            let (old_path_off, old_path_len) = put(c.old_path.as_deref());
+            AmonhenChangeEntry {
+                kind: c.kind as u8,
+                submodule: u8::from(c.submodule),
+                _pad: [0; 2],
+                path_off,
+                path_len,
+                old_path_off,
+                old_path_len,
+            }
+        })
+        .collect();
+    Box::into_raw(Box::new(ChangesHandle {
+        changes,
+        entries,
+        strings,
+    }))
+    .cast()
+}
+
+/// # Safety
+/// `changes` は有効であること。返したポインタは解放するまで有効。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_changes_view(
+    changes: *const AmonhenChanges,
+) -> AmonhenChangesView {
+    let c = unsafe { &*changes.cast::<ChangesHandle>() };
+    AmonhenChangesView {
+        entries: c.entries.as_ptr(),
+        count: c.entries.len() as u32,
+        strings: c.strings.as_ptr(),
+    }
+}
+
+/// # Safety
+/// `changes` は `amonhen_commit_changes` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_changes_free(changes: *mut AmonhenChanges) {
+    if !changes.is_null() {
+        drop(unsafe { Box::from_raw(changes.cast::<ChangesHandle>()) });
+    }
+}
+
+#[repr(C)]
+pub struct AmonhenDiffView {
+    pub rows: *const DiffRow,
+    pub row_count: u32,
+    /// 文字列置き場の先頭アドレス。`StrRef::buf` で引く。
+    pub bases: *const *const u8,
+    pub base_count: u32,
+    pub binary: u8,
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// `changes` の `index` 番目のファイルの差分（`amonhen_diff_free` で解放する）。
+///
+/// # Safety
+/// `repo` と `changes` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_file_diff(
+    repo_ptr: *const AmonhenRepo,
+    changes: *const AmonhenChanges,
+    index: u32,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenDiff {
+    let c = unsafe { &*changes.cast::<ChangesHandle>() };
+    let Some(change) = c.changes.get(index as usize) else {
+        set_error("ファイルの番号が範囲外");
+        return std::ptr::null_mut();
+    };
+    match repo(repo_ptr).file_diff(change, &profile(encoding)) {
+        Ok(view) => Box::into_raw(Box::new(view)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// # Safety
+/// `diff` は有効であること。返したポインタは解放するまで有効。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_diff_view(diff: *const AmonhenDiff) -> AmonhenDiffView {
+    let d = unsafe { &*diff.cast::<DiffView>() };
+    AmonhenDiffView {
+        rows: d.rows.as_ptr(),
+        row_count: d.rows.len() as u32,
+        bases: d.strings.bases().as_ptr(),
+        base_count: d.strings.bases().len() as u32,
+        binary: u8::from(d.binary),
+        added: d.added,
+        removed: d.removed,
+    }
+}
+
+/// # Safety
+/// `diff` は `amonhen_file_diff` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_diff_free(diff: *mut AmonhenDiff) {
+    if !diff.is_null() {
+        drop(unsafe { Box::from_raw(diff.cast::<DiffView>()) });
     }
 }

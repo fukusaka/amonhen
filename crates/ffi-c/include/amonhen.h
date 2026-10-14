@@ -39,9 +39,19 @@ typedef uint8_t AmonhenEncoding;
 #endif // __cplusplus
 
 /**
+ * コミットで変わったファイルの一覧。
+ */
+typedef struct AmonhenChanges AmonhenChanges;
+
+/**
  * History の連続した行の、FE 向けの列。
  */
 typedef struct AmonhenChunk AmonhenChunk;
+
+/**
+ * ファイル 1 つの差分。
+ */
+typedef struct AmonhenDiff AmonhenDiff;
 
 /**
  * History のスナップショット。
@@ -175,6 +185,65 @@ typedef struct {
   uint32_t head_branch_off;
   uint32_t head_branch_len;
 } AmonhenRefsView;
+
+/**
+ * 変わったファイル 1 つ。文字列は `AmonhenChangesView::strings` の中の UTF-8。
+ */
+typedef struct {
+  /**
+   * 0: 追加、1: 削除、2: 変更、3: 名前の変更、4: コピー。
+   */
+  uint8_t kind;
+  uint8_t submodule;
+  uint8_t _pad[2];
+  uint32_t path_off;
+  uint32_t path_len;
+  /**
+   * 名前を変えた・コピーしたときの元のパス。なければ `old_path_len` が `u32::MAX`。
+   */
+  uint32_t old_path_off;
+  uint32_t old_path_len;
+} AmonhenChangeEntry;
+
+typedef struct {
+  const AmonhenChangeEntry *entries;
+  uint32_t count;
+  const uint8_t *strings;
+} AmonhenChangesView;
+
+/**
+ * 差分の 1 行。
+ */
+typedef struct {
+  uint8_t kind;
+  uint8_t _pad[3];
+  /**
+   * 変更前・変更後の行番号（1 始まり）。その側にない行は 0。
+   */
+  uint32_t old_no;
+  uint32_t new_no;
+  AmonhenStrRef text;
+} DiffRow;
+#define DiffRow_CONTEXT 0
+#define DiffRow_ADDED 1
+#define DiffRow_REMOVED 2
+/**
+ * `@@ -1,3 +1,4 @@`
+ */
+#define DiffRow_HUNK 3
+
+typedef struct {
+  const DiffRow *rows;
+  uint32_t row_count;
+  /**
+   * 文字列置き場の先頭アドレス。`StrRef::buf` で引く。
+   */
+  const uint8_t *const *bases;
+  uint32_t base_count;
+  uint8_t binary;
+  uint32_t added;
+  uint32_t removed;
+} AmonhenDiffView;
 
 #ifdef __cplusplus
 extern "C" {
@@ -327,6 +396,50 @@ AmonhenWatch *amonhen_repo_watch(const AmonhenRepo *repo_ptr,
  * `watch` は `amonhen_repo_watch` が返したもので、まだ止めていないこと。
  */
 void amonhen_watch_free(AmonhenWatch *watch);
+
+/**
+ * `commit`（20 バイト）で変わったファイル（`amonhen_changes_free` で解放する）。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`commit` は 20 バイト読める領域であること。
+ */
+AmonhenChanges *amonhen_commit_changes(const AmonhenRepo *repo_ptr,
+                                       const uint8_t *commit);
+
+/**
+ * # Safety
+ * `changes` は有効であること。返したポインタは解放するまで有効。
+ */
+AmonhenChangesView amonhen_changes_view(const AmonhenChanges *changes);
+
+/**
+ * # Safety
+ * `changes` は `amonhen_commit_changes` が返したもので、まだ解放していないこと。
+ */
+void amonhen_changes_free(AmonhenChanges *changes);
+
+/**
+ * `changes` の `index` 番目のファイルの差分（`amonhen_diff_free` で解放する）。
+ *
+ * # Safety
+ * `repo` と `changes` は有効であること。
+ */
+AmonhenDiff *amonhen_file_diff(const AmonhenRepo *repo_ptr,
+                               const AmonhenChanges *changes,
+                               uint32_t index,
+                               AmonhenEncoding encoding);
+
+/**
+ * # Safety
+ * `diff` は有効であること。返したポインタは解放するまで有効。
+ */
+AmonhenDiffView amonhen_diff_view(const AmonhenDiff *diff);
+
+/**
+ * # Safety
+ * `diff` は `amonhen_file_diff` が返したもので、まだ解放していないこと。
+ */
+void amonhen_diff_free(AmonhenDiff *diff);
 
 #ifdef __cplusplus
 }  // extern "C"
