@@ -178,6 +178,7 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 
 - arm64 の `.app` を GitHub Releases に置く。拡張と同じく `v*` タグの push で GitHub Actions がビルドして添付し、main への push で `snapshot` の pre-release を作り直す。
 - 署名は自己署名のコード署名用証明書で行う。ad-hoc 署名だとビルドのたびに身元が変わり、macOS のアクセス許可（フォルダへのアクセス、キーチェーンなど）が更新のたびにリセットされるため。証明書と秘密鍵は GitHub Actions の secret に置く。
+- アプリ名は `Amon Hen`、バンドル ID は `io.github.fukusaka.amonhen`。バンドル ID は設定・キャッシュ・アクセス許可のひも付け先なので変えない。snapshot 版は `Amon Hen Snapshot`（`io.github.fukusaka.amonhen.snapshot`）にして、正式版と並べて入れられるようにする。
 - インストール・更新は `scripts/install.sh [stable|snapshot]`。`gh release download` で取得して `/Applications` に置く。quarantine 属性が付かないので、公証なしで起動できる（最初の配布で確かめる。付いていたら `xattr -d com.apple.quarantine` で外す）。
 - Developer ID の取得と公証、自動更新（Sparkle）は、人に配りたくなったときに検討する。
 
@@ -232,4 +233,3 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 
 - 差分表示を最初から Metal にするか、Core Text＋CALayer で始めて計測後に上げるか（現案は後者）
 - 永続キャッシュの形式を rkyv にするか自前にするか
-- アプリ名・バンドル ID（`Amon Hen`、`dev.amonhen.app` など）
