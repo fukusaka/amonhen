@@ -27,6 +27,16 @@ jobs:
       # build.rs が生成する C のヘッダーがコミット済みのものと一致するか。
       - run: git diff --exit-code crates/ffi-c/include
 
+  swift:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/build-core.sh
+      - run: swift test
+        working-directory: apps/macos
+
   # コアに OS 固有のコードが紛れ込まないよう、全ターゲットで型検査だけ通す。
   targets:
     runs-on: ubuntu-latest

@@ -1,0 +1,4 @@
+module CAmonhen {
+    header "../../../../crates/ffi-c/include/amonhen.h"
+    export *
+}
