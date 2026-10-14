@@ -212,3 +212,23 @@ test('stash apply reports conflicts', async () => {
   // pop でコンフリクトしたら stash は残る
   assert.equal((await backend.stashes()).length, 1);
 });
+
+test('cherry-pick and revert', async () => {
+  git('switch', '-q', '-c', 'feature');
+  commitFile('f.txt', 'f\n', 'feature work');
+  const picked = git('rev-parse', 'HEAD');
+  git('switch', '-q', 'main');
+  assert.equal(await backend.cherryPick(picked, false), 'done');
+  assert.equal(git('log', '-1', '--format=%s'), 'feature work');
+  assert.equal(await backend.revert(git('rev-parse', 'HEAD'), false), 'done');
+  assert.match(git('log', '-1', '--format=%s'), /^Revert "feature work"/);
+});
+
+test('cherry-pick conflict stops as a sequence', async () => {
+  divergeWithConflict();
+  const feature = git('rev-parse', 'feature');
+  assert.equal(await backend.cherryPick(feature, false), 'conflict');
+  assert.equal(await backend.sequenceInProgress(), 'cherry-pick');
+  await backend.abort('cherry-pick');
+  assert.equal(await backend.sequenceInProgress(), undefined);
+});

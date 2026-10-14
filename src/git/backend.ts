@@ -69,6 +69,10 @@ export interface RepositoryBackend {
   createTag(name: string, target: string, message?: string): Promise<void>;
   /** ブランチ名として使えるか。使えなければ git の説明を返す */
   checkBranchName(name: string): Promise<string | undefined>;
+  /** コミットを現在のブランチに当てる。merge コミットなら最初の親との差分を当てる */
+  cherryPick(oid: string, isMerge: boolean): Promise<RebaseResult>;
+  /** コミットを打ち消すコミットを作る。merge コミットなら最初の親の側に戻す */
+  revert(oid: string, isMerge: boolean): Promise<RebaseResult>;
   /** 作業中の変更を stash に保存する */
   stashPush(opts: { message?: string; includeUntracked?: boolean }): Promise<void>;
   /** stash を当てる。pop なら当てたあとで消す。コンフリクトしたら conflict（pop でも stash は残る） */
@@ -227,6 +231,14 @@ export class CliBackend implements RepositoryBackend {
     } catch (err) {
       return err instanceof GitError ? err.message : String(err);
     }
+  }
+
+  cherryPick(oid: string, isMerge: boolean): Promise<RebaseResult> {
+    return this.stoppable(isMerge ? ['cherry-pick', '-m', '1', oid] : ['cherry-pick', oid]);
+  }
+
+  revert(oid: string, isMerge: boolean): Promise<RebaseResult> {
+    return this.stoppable(isMerge ? ['revert', '--no-edit', '-m', '1', oid] : ['revert', '--no-edit', oid]);
   }
 
   async stashPush(opts: { message?: string; includeUntracked?: boolean }): Promise<void> {
