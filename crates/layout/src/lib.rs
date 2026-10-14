@@ -3,6 +3,10 @@
 //! ここにある型はメモリ上の形・ファイルの形・通信の形を兼ねる。フィールドの並びとサイズを変えたら、
 //! 永続キャッシュの形式のバージョンを上げること。参照はポインタではなく、領域の先頭からのオフセットで持つ。
 
+mod slab;
+
+pub use slab::{Pod, Slab};
+
 /// 文字列置き場の中の 1 つの文字列。
 ///
 /// ASCII の文字列は全 FE で共通のバイト列を指し、`len` はバイト数。
@@ -90,6 +94,10 @@ impl Edge {
     /// first-parent の線（幹線として太く描く）。
     pub const FIRST_PARENT: u16 = 1 << 0;
 }
+
+unsafe impl Pod for StrRef {}
+unsafe impl Pod for Node {}
+unsafe impl Pod for Edge {}
 
 const _: () = {
     assert!(size_of::<StrRef>() == 12 && align_of::<StrRef>() == 4);

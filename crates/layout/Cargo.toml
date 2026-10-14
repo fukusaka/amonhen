@@ -6,3 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+memmap2 = "0.9.11"
+
+[dev-dependencies]
+tempfile = "3.27.0"

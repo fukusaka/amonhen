@@ -63,6 +63,10 @@ dependencies = [
 [[package]]
 name = "amonhen-layout"
 version = "0.1.0"
+dependencies = [
+ "memmap2",
+ "tempfile",
+]
 
 [[package]]
 name = "amonhen-model"
