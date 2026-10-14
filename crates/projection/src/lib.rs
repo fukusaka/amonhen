@@ -3,6 +3,10 @@
 //! FE は接続時に `FrontendProfile` を宣言し、この crate がその形にチャンク単位で変換する。
 //! 形が同じ部分（数値の列、グラフの Node / Edge、ASCII の文字列）は変換せず参照で渡す。
 
+mod history;
+
+pub use history::HistoryChunk;
+
 /// ASCII 以外の文字列の符号化。ASCII の文字列はどれでも共通のバイト列を参照する。
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

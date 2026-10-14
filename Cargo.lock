@@ -60,6 +60,10 @@ version = "0.1.0"
 [[package]]
 name = "amonhen-projection"
 version = "0.1.0"
+dependencies = [
+ "amonhen-layout",
+ "amonhen-model",
+]
 
 [[package]]
 name = "anes"
