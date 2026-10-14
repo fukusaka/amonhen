@@ -22,7 +22,11 @@ pub struct Slab<T: Pod>(Inner<T>);
 
 enum Inner<T> {
     Owned(Vec<T>),
-    Mapped { map: Arc<Mmap>, offset: usize, len: usize },
+    Mapped {
+        map: Arc<Mmap>,
+        offset: usize,
+        len: usize,
+    },
 }
 
 impl<T: Pod> Slab<T> {
@@ -112,6 +116,9 @@ mod tests {
         assert_eq!(slab, Slab::from(vec![2, 3, 4, 5]));
 
         assert!(Slab::<u32>::mapped(map.clone(), 8, 9).is_none(), "範囲外");
-        assert!(Slab::<u32>::mapped(map, 2, 1).is_none(), "境界に揃っていない");
+        assert!(
+            Slab::<u32>::mapped(map, 2, 1).is_none(),
+            "境界に揃っていない"
+        );
     }
 }

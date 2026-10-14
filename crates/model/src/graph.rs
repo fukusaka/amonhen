@@ -1,3 +1,5 @@
+use amonhen_layout::Slab;
+
 use crate::Oid;
 
 /// コミットの親子関係。列ごとの配列（SoA）で持ち、行の並びは子が親より先に来るトポロジカル順。
@@ -5,14 +7,52 @@ use crate::Oid;
 /// 親は行番号で指す。読み込んだ範囲の外にある親（shallow clone の境界など）は持たない。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CommitGraph {
-    ids: Vec<Oid>,
-    commit_times: Vec<i64>,
+    ids: Slab<Oid>,
+    commit_times: Slab<i64>,
     /// `parents[parent_offsets[i]..parent_offsets[i + 1]]` が行 `i` の親。
-    parent_offsets: Vec<u32>,
-    parents: Vec<u32>,
+    parent_offsets: Slab<u32>,
+    parents: Slab<u32>,
 }
 
 impl CommitGraph {
+    /// 永続キャッシュなどから組み立てる。配列の大きさと親の行番号が正しくなければ `None`。
+    pub fn from_parts(
+        ids: Slab<Oid>,
+        commit_times: Slab<i64>,
+        parent_offsets: Slab<u32>,
+        parents: Slab<u32>,
+    ) -> Option<Self> {
+        let n = ids.len();
+        let valid = commit_times.len() == n
+            && parent_offsets.len() == n + 1
+            && parent_offsets.first() == Some(&0)
+            && parent_offsets.windows(2).all(|w| w[0] <= w[1])
+            && *parent_offsets.last()? as usize == parents.len()
+            && parents.iter().all(|&p| (p as usize) < n);
+        valid.then_some(Self {
+            ids,
+            commit_times,
+            parent_offsets,
+            parents,
+        })
+    }
+
+    pub fn parent_offsets(&self) -> &Slab<u32> {
+        &self.parent_offsets
+    }
+
+    pub fn parent_rows(&self) -> &Slab<u32> {
+        &self.parents
+    }
+
+    pub fn ids_slab(&self) -> &Slab<Oid> {
+        &self.ids
+    }
+
+    pub fn commit_times_slab(&self) -> &Slab<i64> {
+        &self.commit_times
+    }
+
     pub fn len(&self) -> usize {
         self.ids.len()
     }
@@ -87,10 +127,10 @@ impl CommitGraphBuilder {
         }
 
         CommitGraph {
-            ids: self.ids,
-            commit_times: self.commit_times,
-            parent_offsets,
-            parents,
+            ids: self.ids.into(),
+            commit_times: self.commit_times.into(),
+            parent_offsets: parent_offsets.into(),
+            parents: parents.into(),
         }
     }
 }
@@ -119,5 +159,20 @@ mod tests {
         assert_eq!(g.parents(2), &[3]);
         assert_eq!(g.parents(3), &[] as &[u32]);
         assert_eq!(g.commit_times(), &[30, 20, 10, 0]);
+
+        let rebuilt = CommitGraph::from_parts(
+            g.ids_slab().clone(),
+            g.commit_times_slab().clone(),
+            g.parent_offsets().clone(),
+            g.parent_rows().clone(),
+        );
+        assert_eq!(rebuilt.as_ref(), Some(&g));
+        let broken = CommitGraph::from_parts(
+            g.ids_slab().clone(),
+            g.commit_times_slab().clone(),
+            g.parent_offsets().clone(),
+            vec![9].into(),
+        );
+        assert!(broken.is_none());
     }
 }

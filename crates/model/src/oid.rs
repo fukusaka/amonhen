@@ -1,9 +1,13 @@
 use std::fmt;
 
+use amonhen_layout::Pod;
+
 /// オブジェクト ID（SHA-1）。SHA-256 のリポジトリに対応するときに見直す。
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub struct Oid(pub [u8; 20]);
+
+unsafe impl Pod for Oid {}
 
 impl fmt::Display for Oid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

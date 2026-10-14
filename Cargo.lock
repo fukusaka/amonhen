@@ -71,6 +71,9 @@ dependencies = [
 [[package]]
 name = "amonhen-model"
 version = "0.1.0"
+dependencies = [
+ "amonhen-layout",
+]
 
 [[package]]
 name = "amonhen-platform"
