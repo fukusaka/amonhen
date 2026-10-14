@@ -94,6 +94,8 @@ impl std::error::Error for UndoConflict {}
 
 pub struct UndoLog {
     file: PathBuf,
+    /// 途中で止まった操作（edit・split）の、操作の前の状態。rebase が終わったら確定する。
+    pending_file: PathBuf,
     workdir: Option<PathBuf>,
     /// 書き込みを 1 つずつにする（読み込み → 追記 → 保存）。
     lock: Mutex<()>,
@@ -117,6 +119,7 @@ impl UndoLog {
     pub fn new(git_dir: &Path, workdir: Option<&Path>) -> Self {
         Self {
             file: git_dir.join("amonhen").join("undo.json"),
+            pending_file: git_dir.join("amonhen").join("undo-pending.json"),
             workdir: workdir.map(ToOwned::to_owned),
             lock: Mutex::new(()),
         }
@@ -201,6 +204,94 @@ impl UndoLog {
             })?;
         }
         Ok(result)
+    }
+
+    /// `record` と同じだが、`pending` が真を返したら操作の前の状態だけを保留しておき、
+    /// `settle_pending` で確定する（edit や split で rebase が途中で止まったとき）。
+    pub fn record_stoppable<T>(
+        &self,
+        ops: &dyn Operations,
+        label: &str,
+        f: impl FnOnce() -> Result<T>,
+        skip: impl FnOnce(&T) -> bool,
+        pending: impl FnOnce(&T) -> bool,
+    ) -> Result<T> {
+        let refs: Vec<String> = ops.head_state()?.branch.into_iter().collect();
+        let before = Self::snapshot(ops, &refs)?;
+        let result = f()?;
+        if pending(&result) {
+            #[derive(Serialize)]
+            struct Pending<'a> {
+                label: &'a str,
+                time: u64,
+                mode: Mode,
+                before: &'a RefSnapshot,
+            }
+            if let Some(dir) = self.pending_file.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            let p = Pending {
+                label,
+                time: now_ms(),
+                mode: Mode::Keep,
+                before: &before,
+            };
+            std::fs::write(&self.pending_file, serde_json::to_vec_pretty(&p)?)?;
+            return Ok(result);
+        }
+        if skip(&result) {
+            return Ok(result);
+        }
+        let after = Self::snapshot(ops, &refs)?;
+        if !before.same(&after) {
+            self.push(Entry {
+                label: label.to_owned(),
+                time: now_ms(),
+                mode: Mode::Keep,
+                before,
+                after,
+                files: None,
+                stash: None,
+            })?;
+        }
+        Ok(result)
+    }
+
+    /// 保留している操作があり、rebase などがもう終わっていれば確定する。abort した場合は
+    /// 操作の前と同じ状態なので、記録は残らない。確定したら true。
+    pub fn settle_pending(&self, ops: &dyn Operations) -> Result<bool> {
+        #[derive(Deserialize)]
+        struct Pending {
+            label: String,
+            time: u64,
+            mode: Mode,
+            before: RefSnapshot,
+        }
+        let Some(pending) = std::fs::read(&self.pending_file)
+            .ok()
+            .and_then(|d| serde_json::from_slice::<Pending>(&d).ok())
+        else {
+            return Ok(false);
+        };
+        if ops.sequence_in_progress()?.is_some() {
+            return Ok(false);
+        }
+        let refs: Vec<String> = pending.before.refs.keys().cloned().collect();
+        let after = Self::snapshot(ops, &refs)?;
+        let changed = !pending.before.same(&after);
+        if changed {
+            self.push(Entry {
+                label: pending.label,
+                time: pending.time,
+                mode: pending.mode,
+                before: pending.before,
+                after,
+                files: None,
+                stash: None,
+            })?;
+        }
+        std::fs::remove_file(&self.pending_file)?;
+        Ok(changed)
     }
 
     /// 作業中のファイルを書き換える操作（変更の破棄）を実行し、変わったファイルの前の内容を記録する。

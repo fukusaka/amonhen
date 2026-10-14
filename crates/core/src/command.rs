@@ -4,6 +4,10 @@ use amonhen_model::{Oid, Outcome, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::Repository;
+use crate::rewrite::{self, ChainCommit, HistoryEdit};
+
+/// 編集できる範囲を調べるときに辿るコミットの数。
+const CHAIN_LIMIT: usize = 500;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -86,6 +90,17 @@ pub enum Command {
     Undo,
     /// 次に Undo される操作の名前。
     UndoPeek,
+    /// コミットの編集（reword・squash・fixup・drop・edit・split・move）。
+    Rewrite {
+        label: String,
+        edit: HistoryEdit,
+    },
+    /// コミットのメッセージ全文（`text`）。
+    CommitMessage {
+        oid: String,
+    },
+    /// 途中の操作（`text` に "rebase"・"merge"・"cherry-pick"・"revert"、なければなし）。
+    Sequence,
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -98,6 +113,8 @@ pub struct Response {
     /// Undo した・次に Undo される操作の名前。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -119,6 +136,77 @@ fn heads(name: &str) -> String {
 }
 
 impl Repository {
+    /// コミットのメッセージ全文。
+    pub fn commit_message(&self, commit: &Oid) -> Result<String> {
+        let text = self
+            .backend()
+            .commit_texts(std::slice::from_ref(commit))?
+            .remove(0);
+        // ヘッダーの後の最初の空行から後ろがメッセージ。
+        let raw = &text.raw[..];
+        let start = raw
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .map_or(raw.len(), |i| i + 2);
+        Ok(String::from_utf8_lossy(&raw[start..]).into_owned())
+    }
+
+    /// HEAD から first-parent で辿り、最初の merge の手前まで（新しい順）。
+    fn editable_chain(&self) -> Result<Vec<ChainCommit>> {
+        let history = match self.history() {
+            Some(h) => h,
+            None => self.load_history()?,
+        };
+        let head = self.backend().head()?.ok_or("まだコミットがありません")?;
+        let mut row = history
+            .row_of(&head)
+            .ok_or("HEAD が History にない（読み直してください）")? as usize;
+        let graph = &history.graph;
+        let mut chain = Vec::new();
+        while chain.len() < CHAIN_LIMIT {
+            let parents = graph.parents(row);
+            if parents.len() > 1 {
+                break;
+            }
+            let parent = parents.first().map(|&p| graph.ids()[p as usize]);
+            chain.push(ChainCommit {
+                oid: graph.ids()[row],
+                parent,
+            });
+            match parents.first() {
+                Some(&p) => row = p as usize,
+                None => break,
+            }
+        }
+        Ok(chain)
+    }
+
+    /// コミットを編集する。非対話の rebase で行い、Undo できるように記録する。
+    pub fn rewrite(&self, label: &str, edit: &HistoryEdit) -> Result<Outcome> {
+        let ops = self.backend().operations()?;
+        if ops.sequence_in_progress()?.is_some() {
+            return Err("merge や rebase の途中です。先に終わらせるか中止してください".into());
+        }
+        // 書き換える前に、最新の History で範囲を決める。
+        self.load_history()?;
+        let chain = self.editable_chain()?;
+        let dir = self.backend().paths().git_dir.join("amonhen");
+        let plan = rewrite::plan_rebase(&chain, edit, &dir)?;
+        std::fs::create_dir_all(&dir)?;
+        for (name, message) in &plan.messages {
+            std::fs::write(dir.join(name), message)?;
+        }
+        let todo = dir.join("rebase-todo");
+        std::fs::write(&todo, &plan.todo)?;
+        self.undo_log()?.record_stoppable(
+            ops,
+            label,
+            || ops.rebase_todo(plan.base.as_ref(), &todo),
+            |o| *o == Outcome::Conflict,
+            |o| *o == Outcome::Stopped,
+        )
+    }
+
     /// JSON の命令を実行し、JSON の結果を返す。
     pub fn run_json(&self, json: &str) -> String {
         let response = match serde_json::from_str::<Command>(json) {
@@ -259,15 +347,20 @@ impl Repository {
             Command::Abort => {
                 let sequence = ops.sequence_in_progress()?.ok_or("途中の操作がない")?;
                 ops.abort(sequence)?;
+                undo.settle_pending(ops)?;
                 ok()
             }
             Command::Continue => {
                 let sequence = ops.sequence_in_progress()?.ok_or("途中の操作がない")?;
-                done(ops.continue_sequence(sequence)?)
+                let outcome = ops.continue_sequence(sequence)?;
+                undo.settle_pending(ops)?;
+                done(outcome)
             }
             Command::Skip => {
                 let sequence = ops.sequence_in_progress()?.ok_or("途中の操作がない")?;
-                done(ops.skip_sequence(sequence)?)
+                let outcome = ops.skip_sequence(sequence)?;
+                undo.settle_pending(ops)?;
+                done(outcome)
             }
             Command::Fetch => {
                 ops.fetch()?;
@@ -326,9 +419,24 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::UndoPeek => Ok(Response {
+            Command::UndoPeek => {
+                // 外で rebase を終わらせた場合も、ここで確定させる。
+                undo.settle_pending(ops)?;
+                Ok(Response {
+                    ok: true,
+                    label: undo.peek(),
+                    ..Default::default()
+                })
+            }
+            Command::Rewrite { label, edit } => done(self.rewrite(&label, &edit)?),
+            Command::CommitMessage { oid: o } => Ok(Response {
                 ok: true,
-                label: undo.peek(),
+                text: Some(self.commit_message(&oid(&o)?)?),
+                ..Default::default()
+            }),
+            Command::Sequence => Ok(Response {
+                ok: true,
+                text: ops.sequence_in_progress()?.map(|s| s.command().to_owned()),
                 ..Default::default()
             }),
         }
@@ -398,6 +506,89 @@ mod tests {
         assert_eq!(bad["ok"], false);
         assert!(!bad["error"].as_str().unwrap().is_empty());
         assert_eq!(run(&repo, r#"{"op":"nonsense"}"#)["ok"], false);
+    }
+
+    fn log(dir: &std::path::Path) -> Vec<String> {
+        git(dir, &["log", "--format=%s"])
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn commit_file(dir: &std::path::Path, name: &str, subject: &str) -> String {
+        std::fs::write(dir.join(name), subject).unwrap();
+        git(dir, &["add", name]);
+        git(dir, &["commit", "-q", "-m", subject]);
+        git(dir, &["rev-parse", "HEAD"])
+    }
+
+    fn rewrite(repo: &Repository, edit: serde_json::Value) -> serde_json::Value {
+        let json = serde_json::json!({"op": "rewrite", "label": "edit", "edit": edit});
+        run(repo, &json.to_string())
+    }
+
+    #[test]
+    fn rewrites_history_and_undoes_it() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let b = commit_file(dir, "b.txt", "b");
+        let c = commit_file(dir, "c.txt", "c");
+        commit_file(dir, "d.txt", "d");
+        assert_eq!(log(dir), ["d", "c", "b", "first"]);
+
+        assert_eq!(
+            run(&repo, &format!(r#"{{"op":"commitMessage","oid":"{c}"}}"#))["text"],
+            "c\n"
+        );
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "reword", "oid": c, "message": "C!"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["d", "C!", "b", "first"]);
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(log(dir), ["d", "c", "b", "first"]);
+
+        rewrite(&repo, serde_json::json!({"kind": "fixup", "oid": c}));
+        assert_eq!(log(dir), ["d", "b", "first"]);
+        run(&repo, r#"{"op":"undo"}"#);
+        rewrite(&repo, serde_json::json!({"kind": "drop", "oid": b}));
+        assert_eq!(log(dir), ["d", "c", "first"]);
+        run(&repo, r#"{"op":"undo"}"#);
+        rewrite(
+            &repo,
+            serde_json::json!({"kind": "move", "oid": b, "to": 0}),
+        );
+        assert_eq!(log(dir), ["b", "d", "c", "first"]);
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(log(dir), ["d", "c", "b", "first"]);
+    }
+
+    #[test]
+    fn splits_a_commit_and_records_undo_after_continuing() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join("x.txt"), "x").unwrap();
+        std::fs::write(dir.join("y.txt"), "y").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "x and y"]);
+        let xy = git(dir, &["rev-parse", "HEAD"]);
+        commit_file(dir, "z.txt", "z");
+
+        let r = rewrite(&repo, serde_json::json!({"kind": "split", "oid": xy}));
+        assert_eq!(r["outcome"], "stopped", "{r}");
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase");
+        // 止まっている間は記録しない（保留）。
+        assert!(run(&repo, r#"{"op":"undoPeek"}"#)["label"].is_null());
+        git(dir, &["add", "x.txt"]);
+        git(dir, &["commit", "-q", "-m", "x"]);
+        git(dir, &["add", "y.txt"]);
+        git(dir, &["commit", "-q", "-m", "y"]);
+        assert_eq!(run(&repo, r#"{"op":"continue"}"#)["outcome"], "done");
+        assert_eq!(log(dir), ["z", "y", "x", "first"]);
+        assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "edit");
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(log(dir), ["z", "x and y", "first"]);
     }
 
     #[test]

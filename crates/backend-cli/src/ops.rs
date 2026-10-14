@@ -29,16 +29,6 @@ impl Git {
         let dir = text(self.read(&["rev-parse", "--absolute-git-dir"])?)?;
         Ok(dir.into())
     }
-
-    /// rebase に todo を差し込む（コミットの編集）。git は `$GIT_SEQUENCE_EDITOR <todo>` を sh で
-    /// 実行するので、用意した todo を上書きコピーさせる。
-    pub fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome> {
-        let base = base.map(hex);
-        let editor = format!("cp '{}'", todo.display().to_string().replace('\'', r"'\''"));
-        let mut args = vec!["rebase", "--interactive", "--autostash", "--no-autosquash"];
-        args.push(base.as_deref().unwrap_or("--root"));
-        self.stoppable(&args, &[("GIT_SEQUENCE_EDITOR", &editor)])
-    }
 }
 
 impl Operations for Git {
@@ -185,6 +175,15 @@ impl Operations for Git {
         } else {
             self.stoppable(&["revert", "--no-edit", &oid], &[])
         }
+    }
+
+    fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome> {
+        // git は `$GIT_SEQUENCE_EDITOR <todo>` を sh で実行するので、用意した todo を上書きコピーさせる。
+        let base = base.map(hex);
+        let editor = format!("cp '{}'", todo.display().to_string().replace('\'', r"'\''"));
+        let mut args = vec!["rebase", "--interactive", "--autostash", "--no-autosquash"];
+        args.push(base.as_deref().unwrap_or("--root"));
+        self.stoppable(&args, &[("GIT_SEQUENCE_EDITOR", &editor)])
     }
 
     fn sequence_in_progress(&self) -> Result<Option<Sequence>> {
