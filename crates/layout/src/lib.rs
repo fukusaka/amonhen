@@ -95,14 +95,36 @@ impl Edge {
     pub const FIRST_PARENT: u16 = 1 << 0;
 }
 
+/// 差分の 1 行。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiffRow {
+    pub kind: u8,
+    pub _pad: [u8; 3],
+    /// 変更前・変更後の行番号（1 始まり）。その側にない行は 0。
+    pub old_no: u32,
+    pub new_no: u32,
+    pub text: StrRef,
+}
+
+impl DiffRow {
+    pub const CONTEXT: u8 = 0;
+    pub const ADDED: u8 = 1;
+    pub const REMOVED: u8 = 2;
+    /// `@@ -1,3 +1,4 @@`
+    pub const HUNK: u8 = 3;
+}
+
 unsafe impl Pod for StrRef {}
 unsafe impl Pod for Node {}
 unsafe impl Pod for Edge {}
+unsafe impl Pod for DiffRow {}
 
 const _: () = {
     assert!(size_of::<StrRef>() == 12 && align_of::<StrRef>() == 4);
     assert!(size_of::<Node>() == 12 && align_of::<Node>() == 4);
     assert!(size_of::<Edge>() == 16 && align_of::<Edge>() == 4);
+    assert!(size_of::<DiffRow>() == 24 && align_of::<DiffRow>() == 4);
 };
 
 #[cfg(test)]
