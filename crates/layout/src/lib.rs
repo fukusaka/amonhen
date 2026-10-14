@@ -7,9 +7,14 @@
 ///
 /// ASCII の文字列は全 FE で共通のバイト列を指し、`len` はバイト数。
 /// ASCII 以外は FE の好む符号化（UTF-8 か UTF-16）の領域を指し、`len` はその符号単位の数。
+///
+/// `buf` は文字列置き場の番号、`off` はその中のバイト位置。同じプロセス内では、ASCII の文字列は
+/// git オブジェクトを展開したバッファをそのまま指す（集め直さない）。共有メモリ・ファイル・
+/// ネットワークに出すときは 1 つの領域に集め、`buf` はすべて 0 にする。
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct StrRef {
+    pub buf: u32,
     pub off: u32,
     /// 最上位ビットが立っていれば ASCII 以外。残りの 31 ビットが長さ。
     len_and_kind: u32,
@@ -19,17 +24,19 @@ impl StrRef {
     const NON_ASCII: u32 = 1 << 31;
     pub const MAX_LEN: u32 = Self::NON_ASCII - 1;
 
-    pub const fn ascii(off: u32, len: u32) -> Self {
+    pub const fn ascii(buf: u32, off: u32, len: u32) -> Self {
         assert!(len <= Self::MAX_LEN);
         Self {
+            buf,
             off,
             len_and_kind: len,
         }
     }
 
-    pub const fn non_ascii(off: u32, len: u32) -> Self {
+    pub const fn non_ascii(buf: u32, off: u32, len: u32) -> Self {
         assert!(len <= Self::MAX_LEN);
         Self {
+            buf,
             off,
             len_and_kind: len | Self::NON_ASCII,
         }
@@ -85,7 +92,7 @@ impl Edge {
 }
 
 const _: () = {
-    assert!(size_of::<StrRef>() == 8 && align_of::<StrRef>() == 4);
+    assert!(size_of::<StrRef>() == 12 && align_of::<StrRef>() == 4);
     assert!(size_of::<Node>() == 12 && align_of::<Node>() == 4);
     assert!(size_of::<Edge>() == 16 && align_of::<Edge>() == 4);
 };
@@ -96,11 +103,11 @@ mod tests {
 
     #[test]
     fn str_ref_keeps_length_and_kind_apart() {
-        let a = StrRef::ascii(10, 5);
+        let a = StrRef::ascii(2, 10, 5);
         assert!(a.is_ascii());
-        assert_eq!((a.off, a.len()), (10, 5));
+        assert_eq!((a.buf, a.off, a.len()), (2, 10, 5));
 
-        let n = StrRef::non_ascii(3, StrRef::MAX_LEN);
+        let n = StrRef::non_ascii(0, 3, StrRef::MAX_LEN);
         assert!(!n.is_ascii());
         assert_eq!(n.len(), StrRef::MAX_LEN);
     }
