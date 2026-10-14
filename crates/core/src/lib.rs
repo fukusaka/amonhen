@@ -8,5 +8,6 @@ pub mod graph;
 mod repository;
 pub mod rewrite;
 pub mod undo;
+pub mod words;
 
 pub use repository::{HistorySnapshot, RefsSnapshot, Repository, StatusSnapshot, WorkingDiff};

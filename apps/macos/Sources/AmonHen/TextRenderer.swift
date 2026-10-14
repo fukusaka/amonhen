@@ -125,6 +125,8 @@ final class TextRenderer {
 
         var glyphs: [Glyph]
         var width: CGFloat
+        /// 求めた文字の範囲の、行の左端からの横位置（ポイント）。
+        var spans: [(CGFloat, CGFloat)] = []
     }
 
     let device: MTLDevice
@@ -160,7 +162,8 @@ final class TextRenderer {
     }
 
     /// `string` を `font` で並べる。フォントにない文字は Core Text が代わりのフォントを選ぶ。
-    func shape(_ string: CFString, font: CTFont, scale: CGFloat) -> ShapedLine {
+    /// `ranges`（UTF-16 の符号単位）を渡すと、その横位置も求める（単語の強調に使う）。
+    func shape(_ string: CFString, font: CTFont, scale: CGFloat, ranges: [Range<Int>] = []) -> ShapedLine {
         let attributed = CFAttributedStringCreate(
             nil, string, [kCTFontAttributeName: font] as CFDictionary)!
         let line = CTLineCreateWithAttributedString(attributed)
@@ -183,7 +186,10 @@ final class TextRenderer {
                 }
             }
         }
-        return ShapedLine(glyphs: glyphs, width: CTLineGetTypographicBounds(line, nil, nil, nil))
+        let spans = ranges.map { r in
+            (CTLineGetOffsetForStringIndex(line, r.lowerBound, nil), CTLineGetOffsetForStringIndex(line, r.upperBound, nil))
+        }
+        return ShapedLine(glyphs: glyphs, width: CTLineGetTypographicBounds(line, nil, nil, nil), spans: spans)
     }
 
     func addRect(_ rect: CGRect, color: SIMD4<Float>) {

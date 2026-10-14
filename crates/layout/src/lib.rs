@@ -123,10 +123,20 @@ impl DiffRow {
     pub const MARKER: u8 = 7;
 }
 
+/// 差分の行の中で強調する範囲（単語単位の変更）。位置は FE の文字列の符号単位。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Highlight {
+    pub row: u32,
+    pub start: u32,
+    pub end: u32,
+}
+
 unsafe impl Pod for StrRef {}
 unsafe impl Pod for Node {}
 unsafe impl Pod for Edge {}
 unsafe impl Pod for DiffRow {}
+unsafe impl Pod for Highlight {}
 
 const _: () = {
     assert!(size_of::<StrRef>() == 12 && align_of::<StrRef>() == 4);

@@ -3,8 +3,8 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use amonhen_layout::DiffRow;
-use amonhen_projection::{FrontendProfile, StringTable, StringTableBuilder};
+use amonhen_layout::{DiffRow, Highlight};
+use amonhen_projection::{FrontendProfile, StringEncoding, StringTable, StringTableBuilder};
 use imara_diff::{Algorithm, Diff, InternedInput};
 
 /// 差分の 1 行が指す文字列の場所。
@@ -227,6 +227,49 @@ pub fn apply_selection(diff: &FileDiff, apply: impl Fn(usize) -> bool) -> Vec<u8
     out
 }
 
+/// 続けて並ぶ削除行と追加行を 1 行ずつ組にして、変わった単語を FE の符号単位で返す。
+fn word_highlights(diff: &FileDiff, encoding: StringEncoding) -> Vec<Highlight> {
+    // バイトの位置を FE の符号単位の位置に直す。
+    let units = |text: &[u8], at: usize| -> u32 {
+        if encoding == StringEncoding::Utf8 || text[..at].is_ascii() {
+            at as u32
+        } else {
+            String::from_utf8_lossy(&text[..at]).encode_utf16().count() as u32
+        }
+    };
+    let mut out = Vec::new();
+    let lines = &diff.lines;
+    let mut i = 0;
+    while i < lines.len() {
+        if lines[i].kind != DiffRow::REMOVED {
+            i += 1;
+            continue;
+        }
+        let removed_start = i;
+        while i < lines.len() && lines[i].kind == DiffRow::REMOVED {
+            i += 1;
+        }
+        let added_start = i;
+        while i < lines.len() && lines[i].kind == DiffRow::ADDED {
+            i += 1;
+        }
+        for (r, a) in (removed_start..added_start).zip(added_start..i) {
+            let (old, new) = (diff.text(&lines[r]), diff.text(&lines[a]));
+            let Some((removed, added)) = crate::words::changed_words(old, new) else {
+                continue;
+            };
+            for (row, text, ranges) in [(r, old, removed), (a, new, added)] {
+                out.extend(ranges.into_iter().map(|x| Highlight {
+                    row: row as u32,
+                    start: units(text, x.start),
+                    end: units(text, x.end),
+                }));
+            }
+        }
+    }
+    out
+}
+
 impl FileDiff {
     pub fn text(&self, line: &Line) -> &[u8] {
         let r = line.range.start as usize..line.range.end as usize;
@@ -241,6 +284,8 @@ impl FileDiff {
 /// FE 向けの差分。行の文字列は、変更前・変更後の blob（文字列置き場の 1・2 番）を直接指す。
 pub struct DiffView {
     pub rows: Vec<DiffRow>,
+    /// 削除行と追加行の組の中で、変わった単語の範囲。
+    pub highlights: Vec<Highlight>,
     pub strings: StringTable,
     pub binary: bool,
     pub added: u32,
@@ -270,8 +315,10 @@ impl DiffView {
                 }
             })
             .collect();
+        let highlights = word_highlights(diff, profile.string);
         Self {
             rows,
+            highlights,
             strings: strings.finish(),
             binary: diff.binary,
             added: diff.added,
@@ -367,6 +414,39 @@ mod tests {
         let d = diff("a", "a\nb\n", 3);
         let added_b = d.lines.iter().position(|l| d.text(l) == b"b").unwrap();
         assert_eq!(apply_selection(&d, |r| r == added_b), b"a\nb\n");
+    }
+
+    #[test]
+    fn highlights_changed_words_in_paired_lines() {
+        let d = diff("let x = foo(1);\nkeep\n", "let x = bar(1);\nkeep\n", 1);
+        let v = DiffView::new(&d, &FrontendProfile::MACOS);
+        // @@, -let x = foo(1);, +let x = bar(1);, keep
+        assert_eq!(
+            v.highlights,
+            [
+                Highlight {
+                    row: 1,
+                    start: 8,
+                    end: 11
+                },
+                Highlight {
+                    row: 2,
+                    start: 8,
+                    end: 11
+                }
+            ]
+        );
+        // UTF-16 の FE では、日本語の後ろの位置は UTF-16 の符号単位で数える。
+        let d = diff("名前 = foo\n", "名前 = bar\n", 1);
+        let v = DiffView::new(&d, &FrontendProfile::MACOS);
+        assert_eq!(
+            v.highlights[0],
+            Highlight {
+                row: 1,
+                start: 5,
+                end: 8
+            }
+        );
     }
 
     #[test]

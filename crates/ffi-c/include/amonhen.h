@@ -273,6 +273,15 @@ typedef struct {
  */
 #define AmonhenDiffRow_MARKER 7
 
+/**
+ * 差分の行の中で強調する範囲（単語単位の変更）。位置は FE の文字列の符号単位。
+ */
+typedef struct {
+  uint32_t row;
+  uint32_t start;
+  uint32_t end;
+} AmonhenHighlight;
+
 typedef struct {
   const AmonhenDiffRow *rows;
   uint32_t row_count;
@@ -284,6 +293,11 @@ typedef struct {
   uint8_t binary;
   uint32_t added;
   uint32_t removed;
+  /**
+   * 削除行と追加行の組の中で、変わった単語の範囲（行の順）。
+   */
+  const AmonhenHighlight *highlights;
+  uint32_t highlight_count;
 } AmonhenDiffView;
 
 /**

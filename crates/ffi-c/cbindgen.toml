@@ -9,7 +9,7 @@ parse_deps = true
 include = ["amonhen-layout"]
 
 [export]
-include = ["StrRef", "Node", "Edge", "DiffRow"]
+include = ["StrRef", "Node", "Edge", "DiffRow", "Highlight"]
 prefix = ""
 
 [export.rename]
@@ -17,6 +17,7 @@ prefix = ""
 "Node" = "AmonhenNode"
 "Edge" = "AmonhenEdge"
 "DiffRow" = "AmonhenDiffRow"
+"Highlight" = "AmonhenHighlight"
 
 [enum]
 prefix_with_name = true

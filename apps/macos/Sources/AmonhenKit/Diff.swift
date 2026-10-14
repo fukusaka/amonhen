@@ -80,6 +80,13 @@ public class FileDiff: @unchecked Sendable {
         try withExtendedLifetime(self) { try body(UnsafeBufferPointer(start: view.rows, count: rowCount)) }
     }
 
+    /// 変わった単語の範囲（行の順、位置は UTF-16 の符号単位）。
+    public func withHighlights<R>(_ body: (UnsafeBufferPointer<AmonhenHighlight>) throws -> R) rethrows -> R {
+        try withExtendedLifetime(self) {
+            try body(UnsafeBufferPointer(start: view.highlights, count: Int(view.highlight_count)))
+        }
+    }
+
     /// `row` 行目の文字列を、コアのメモリを指したままの CFString として渡す（コピーしない）。
     public func withText<R>(row: Int, _ body: (CFString) throws -> R) rethrows -> R {
         try withExtendedLifetime(self) {

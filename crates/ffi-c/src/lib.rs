@@ -11,7 +11,7 @@ use std::sync::Arc;
 use amonhen_backend_gix::GixBackend;
 use amonhen_core::diff::DiffView;
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository, StatusSnapshot, WorkingDiff, cache};
-use amonhen_layout::{DiffRow, Edge, Node, StrRef};
+use amonhen_layout::{DiffRow, Edge, Highlight, Node, StrRef};
 use amonhen_model::{FileChange, Oid};
 use amonhen_projection::{FrontendProfile, HistoryChunk, StringEncoding};
 use amonhen_watch::Watcher;
@@ -659,6 +659,9 @@ pub struct AmonhenDiffView {
     pub binary: u8,
     pub added: u32,
     pub removed: u32,
+    /// 削除行と追加行の組の中で、変わった単語の範囲（行の順）。
+    pub highlights: *const Highlight,
+    pub highlight_count: u32,
 }
 
 /// `changes` の `index` 番目のファイルの差分（`amonhen_diff_free` で解放する）。
@@ -702,6 +705,8 @@ fn diff_view(d: &DiffView) -> AmonhenDiffView {
         binary: u8::from(d.binary),
         added: d.added,
         removed: d.removed,
+        highlights: d.highlights.as_ptr(),
+        highlight_count: d.highlights.len() as u32,
     }
 }
 

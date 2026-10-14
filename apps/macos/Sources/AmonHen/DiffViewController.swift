@@ -21,6 +21,7 @@ final class DiffViewController: NSViewController {
     private var shaped: [Int: TextRenderer.ShapedLine] = [:]
     private var numberCache: [UInt32: TextRenderer.ShapedLine] = [:]
     private var message: String?
+    private var highlights: [Int: [Range<Int>]] = [:]
 
     /// 行を選べるか（Working Copy で行単位の stage に使う）。
     var isSelectable = false
@@ -69,6 +70,11 @@ final class DiffViewController: NSViewController {
 
     func show(_ diff: FileDiff?, message: String? = nil, keepScroll: Bool = false) {
         self.diff = diff
+        // 行ごとの強調する範囲。
+        highlights = [:]
+        diff?.withHighlights { all in
+            for h in all { highlights[Int(h.row), default: []].append(Int(h.start)..<Int(h.end)) }
+        }
         self.message = message
         shaped.removeAll()
         selectedRows.removeAll()
@@ -179,6 +185,8 @@ final class DiffViewController: NSViewController {
         let added = NSColor.systemGreen.withAlphaComponent(0.16).rgba
         let removed = NSColor.systemRed.withAlphaComponent(0.16).rgba
         let hunk = NSColor.systemBlue.withAlphaComponent(0.10).rgba
+        let strongAdded = NSColor.systemGreen.withAlphaComponent(0.38).rgba
+        let strongRemoved = NSColor.systemRed.withAlphaComponent(0.38).rgba
         let ours = NSColor.systemBlue.withAlphaComponent(0.18).rgba
         let theirs = NSColor.systemGreen.withAlphaComponent(0.18).rgba
         let base = NSColor.systemGray.withAlphaComponent(0.18).rgba
@@ -212,8 +220,17 @@ final class DiffViewController: NSViewController {
                     numberCache[number] = line
                     renderer.addLine(line, origin: CGPoint(x: right - line.width, y: baseline), color: secondary, scale: scale)
                 }
-                let line = shaped[row] ?? diff.withText(row: row) { renderer.shape($0, font: font, scale: scale) }
+                let line = shaped[row] ?? diff.withText(row: row) {
+                    renderer.shape($0, font: font, scale: scale, ranges: highlights[row] ?? [])
+                }
                 shaped[row] = line
+                // 変わった単語を、行の色より濃くする。
+                let strong = r.kind == UInt8(AmonhenDiffRow_ADDED) ? strongAdded : strongRemoved
+                for (x0, x1) in line.spans {
+                    renderer.addRect(
+                        CGRect(x: gutterWidth + 8 - origin.x + x0, y: top + 1, width: max(1, x1 - x0), height: lineHeight - 2),
+                        color: strong)
+                }
                 let isHunk = r.kind == UInt8(AmonhenDiffRow_HUNK) || r.kind == UInt8(AmonhenDiffRow_MARKER)
                 renderer.addLine(
                     line, origin: CGPoint(x: gutterWidth + 8 - origin.x, y: baseline), color: isHunk ? secondary : text,

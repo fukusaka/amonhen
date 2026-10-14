@@ -185,6 +185,7 @@ pub fn view(data: Arc<Vec<u8>>, profile: &FrontendProfile) -> DiffView {
     }
     DiffView {
         rows,
+        highlights: Vec::new(),
         strings: strings.finish(),
         binary: false,
         added: 0,
