@@ -12,6 +12,7 @@ use arc_swap::ArcSwapOption;
 use crate::cache::{self, CachedHistory};
 use crate::diff::{self, DiffView, FileDiff};
 use crate::graph::{self, GraphLayout};
+use crate::undo::UndoLog;
 
 /// History の不変のスナップショット。公開したら書き換えない。
 pub struct HistorySnapshot {
@@ -72,6 +73,7 @@ pub struct Repository {
     status: ArcSwapOption<StatusSnapshot>,
     generation: AtomicU64,
     cache_path: Option<PathBuf>,
+    undo: OnceLock<UndoLog>,
 }
 
 impl Repository {
@@ -83,7 +85,19 @@ impl Repository {
             status: ArcSwapOption::empty(),
             generation: AtomicU64::new(0),
             cache_path: None,
+            undo: OnceLock::new(),
         }
+    }
+
+    pub(crate) fn backend(&self) -> &dyn GitBackend {
+        &*self.backend
+    }
+
+    pub(crate) fn undo_log(&self) -> Result<&UndoLog> {
+        Ok(self.undo.get_or_init(|| {
+            let paths = self.backend.paths();
+            UndoLog::new(&paths.git_dir, paths.workdir.as_deref())
+        }))
     }
 
     /// History を `cache_path` に永続化する。
@@ -291,8 +305,38 @@ impl Repository {
             .set_index_content(&diff.entry.path, mode, &content)
     }
 
+    /// コミットする（Undo できる。index と作業ツリーはそのままでブランチだけ戻る）。
     pub fn commit(&self, message: &str, amend: bool) -> Result<()> {
-        self.backend.commit(message, amend)
+        let label = if amend { "Amend commit" } else { "Commit" };
+        let ops = self.backend.operations()?;
+        self.undo_log()?.record(
+            ops,
+            label,
+            &[],
+            true,
+            || self.backend.commit(message, amend),
+            |_| false,
+        )
+    }
+
+    /// `diff` の `rows` 行目の変更を作業ツリーから取り除く（Undo できる）。stage していない差分にだけ使える。
+    pub fn discard_rows(&self, diff: &WorkingDiff, rows: &[usize]) -> Result<()> {
+        if diff.staged {
+            return Err("stage 済みの変更は破棄できない（先に unstage する）".into());
+        }
+        let content = diff::apply_selection(&diff.file, |r| !rows.contains(&r));
+        // 作業ツリーの内容を、選ばなかった変更だけを index に当てたものにする = 選んだ行を戻す。
+        let workdir = self
+            .backend
+            .paths()
+            .workdir
+            .ok_or("作業ツリーのないリポジトリ")?;
+        let path = diff.entry.path.clone();
+        let ops = self.backend.operations()?;
+        self.undo_log()?
+            .record_files(ops, &format!("Discard lines in {path}"), &[&path], || {
+                Ok(std::fs::write(workdir.join(&path), &content)?)
+            })
     }
 
     /// commit-graph がなければ書き出し、書き出したら true を返す。リポジトリの `.git` に書き込むので、
