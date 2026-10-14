@@ -93,6 +93,7 @@ dependencies = [
 name = "amonhen-watch"
 version = "0.1.0"
 dependencies = [
+ "amonhen-model",
  "notify",
  "tempfile",
 ]

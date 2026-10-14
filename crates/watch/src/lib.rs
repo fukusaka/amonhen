@@ -9,6 +9,7 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::Duration;
 
+pub use amonhen_model::RepoPaths;
 use notify::{RecursiveMode, Watcher as _};
 
 /// 変化の種類（ビットの組み合わせ）。
@@ -46,17 +47,6 @@ impl std::ops::BitOrAssign for Changes {
     fn bitor_assign(&mut self, other: Self) {
         self.0 |= other.0;
     }
-}
-
-/// 監視するリポジトリの場所。
-#[derive(Clone, Debug)]
-pub struct RepoPaths {
-    /// worktree ごとの .git（HEAD と index がある）。
-    pub git_dir: PathBuf,
-    /// refs・packed-refs・config がある .git。worktree でなければ `git_dir` と同じ。
-    pub common_dir: PathBuf,
-    /// 作業ツリー。bare リポジトリなら `None`。
-    pub workdir: Option<PathBuf>,
 }
 
 /// `path` の変化がどの種類か。気にしなくてよい変化（オブジェクトの書き込み、ロックファイルなど）は空。

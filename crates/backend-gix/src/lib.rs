@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use amonhen_model::{
-    CommitText, GitBackend, Oid, OidSet, RawCommit, RefEntry, RefKind, Refs, Result,
+    CommitText, GitBackend, Oid, OidSet, RawCommit, RefEntry, RefKind, Refs, RepoPaths, Result,
 };
 use gix::objs::Find;
 use rayon::prelude::*;
@@ -149,6 +149,15 @@ impl GitBackend for GixBackend {
             out.extend(read);
         }
         Ok(out)
+    }
+
+    fn paths(&self) -> RepoPaths {
+        let repo = self.repo.to_thread_local();
+        RepoPaths {
+            git_dir: repo.git_dir().to_owned(),
+            common_dir: repo.common_dir().to_owned(),
+            workdir: repo.workdir().map(ToOwned::to_owned),
+        }
     }
 
     fn refs(&self) -> Result<Refs> {

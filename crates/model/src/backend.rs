@@ -1,4 +1,4 @@
-use crate::{CommitGraph, CommitText, Oid, RawCommit, Refs, topo};
+use crate::{CommitGraph, CommitText, Oid, RawCommit, Refs, RepoPaths, topo};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -25,6 +25,8 @@ pub trait GitBackend: Send + Sync {
     fn commit_graph(&self, tips: &[Oid]) -> Result<CommitGraph> {
         Ok(topo::sort(self.read_commits(tips, &|_| false)?))
     }
+
+    fn paths(&self) -> RepoPaths;
 
     /// サイドバーに出す ref の一覧。
     fn refs(&self) -> Result<Refs>;

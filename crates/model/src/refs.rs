@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use crate::Oid;
 
 /// サイドバーの項目の種類。
@@ -30,4 +32,15 @@ pub struct Refs {
     pub head: Option<Oid>,
     /// 種類ごとにまとめ、種類の中は名前順（stash は新しい順）。
     pub entries: Vec<RefEntry>,
+}
+
+/// リポジトリの場所。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RepoPaths {
+    /// worktree ごとの .git（HEAD と index がある）。
+    pub git_dir: PathBuf,
+    /// refs・packed-refs・config がある .git。worktree でなければ `git_dir` と同じ。
+    pub common_dir: PathBuf,
+    /// 作業ツリー。bare リポジトリなら `None`。
+    pub workdir: Option<PathBuf>,
 }

@@ -4,4 +4,4 @@ pub mod cache;
 pub mod graph;
 mod repository;
 
-pub use repository::{HistorySnapshot, Repository};
+pub use repository::{HistorySnapshot, RefsSnapshot, Repository};

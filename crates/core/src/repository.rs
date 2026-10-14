@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use amonhen_model::{CommitGraph, GitBackend, Oid, OidMap, Result, topo};
+use amonhen_model::{CommitGraph, GitBackend, Oid, OidMap, Refs, RepoPaths, Result, topo};
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use arc_swap::ArcSwapOption;
 
@@ -21,7 +21,18 @@ pub struct HistorySnapshot {
     rows: OnceLock<OidMap<u32>>,
 }
 
+/// サイドバーの ref の一覧の不変のスナップショット。
+pub struct RefsSnapshot {
+    pub generation: u64,
+    pub refs: Refs,
+}
+
 impl HistorySnapshot {
+    /// コミットの行。初回は索引を作る（150 万コミットで 80 ms ほど）。
+    pub fn row_of(&self, id: &Oid) -> Option<u32> {
+        self.rows().get(id).copied()
+    }
+
     fn rows(&self) -> &OidMap<u32> {
         self.rows.get_or_init(|| {
             self.graph
@@ -38,6 +49,7 @@ impl HistorySnapshot {
 pub struct Repository {
     backend: Box<dyn GitBackend>,
     history: ArcSwapOption<HistorySnapshot>,
+    refs: ArcSwapOption<RefsSnapshot>,
     generation: AtomicU64,
     cache_path: Option<PathBuf>,
 }
@@ -47,6 +59,7 @@ impl Repository {
         Self {
             backend: Box::new(backend),
             history: ArcSwapOption::empty(),
+            refs: ArcSwapOption::empty(),
             generation: AtomicU64::new(0),
             cache_path: None,
         }
@@ -100,6 +113,8 @@ impl Repository {
             && current.tips == tips
             && current.head == head
         {
+            // 行の索引を裏のスレッドで作っておく（サイドバーから History の行に飛ぶときに使う）。
+            current.rows();
             return Ok(current.clone());
         }
         let graph = match &current {
@@ -135,6 +150,26 @@ impl Repository {
 
     pub fn history(&self) -> Option<Arc<HistorySnapshot>> {
         self.history.load_full()
+    }
+
+    pub fn paths(&self) -> RepoPaths {
+        self.backend.paths()
+    }
+
+    /// ref の一覧を読み直して公開する。前回と同じなら前回のものを返す。
+    pub fn load_refs(&self) -> Result<Arc<RefsSnapshot>> {
+        let refs = self.backend.refs()?;
+        if let Some(current) = self.refs.load_full()
+            && current.refs == refs
+        {
+            return Ok(current);
+        }
+        let snapshot = Arc::new(RefsSnapshot {
+            generation: self.generation.fetch_add(1, Ordering::Relaxed) + 1,
+            refs,
+        });
+        self.refs.store(Some(snapshot.clone()));
+        Ok(snapshot)
     }
 
     /// commit-graph がなければ書き出し、書き出したら true を返す。リポジトリの `.git` に書き込むので、
