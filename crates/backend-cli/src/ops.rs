@@ -222,6 +222,23 @@ impl Operations for Git {
         })
     }
 
+    fn rebase_progress(&self) -> Result<Option<(u32, u32)>> {
+        let dir = self.git_dir()?;
+        let read = |path: std::path::PathBuf| -> Option<u32> {
+            std::fs::read_to_string(path).ok()?.trim().parse().ok()
+        };
+        for (sub, current, total) in [
+            ("rebase-merge", "msgnum", "end"),
+            ("rebase-apply", "next", "last"),
+        ] {
+            let base = dir.join(sub);
+            if let (Some(c), Some(t)) = (read(base.join(current)), read(base.join(total))) {
+                return Ok(Some((c, t)));
+            }
+        }
+        Ok(None)
+    }
+
     fn abort(&self, sequence: Sequence) -> Result<()> {
         self.write(&[sequence.command(), "--abort"]).map(drop)
     }

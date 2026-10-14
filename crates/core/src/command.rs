@@ -620,11 +620,21 @@ impl Repository {
                 ops.take_side(&path, ours)?;
                 ok()
             }
-            Command::Sequence => Ok(Response {
-                ok: true,
-                text: ops.sequence_in_progress()?.map(|s| s.command().to_owned()),
-                ..Default::default()
-            }),
+            Command::Sequence => {
+                // rebase なら何番目かも添える（"rebase (2/5)"）。
+                let text = match ops.sequence_in_progress()? {
+                    Some(amonhen_model::Sequence::Rebase) => Some(match ops.rebase_progress()? {
+                        Some((current, total)) => format!("rebase ({current}/{total})"),
+                        None => "rebase".to_owned(),
+                    }),
+                    other => other.map(|s| s.command().to_owned()),
+                };
+                Ok(Response {
+                    ok: true,
+                    text,
+                    ..Default::default()
+                })
+            }
         }
     }
 }
@@ -763,7 +773,8 @@ mod tests {
 
         let r = rewrite(&repo, serde_json::json!({"kind": "split", "oid": xy}));
         assert_eq!(r["outcome"], "stopped", "{r}");
-        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase");
+        // todo は pick・exec・break・pick の 4 行で、break まで進んだところで止まる。
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase (3/4)");
         // 止まっている間は記録しない（保留）。
         assert!(run(&repo, r#"{"op":"undoPeek"}"#)["label"].is_null());
         git(dir, &["add", "x.txt"]);

@@ -82,6 +82,8 @@ pub trait Operations: Send + Sync {
     /// 用意した todo で非対話の rebase を行う（コミットの編集）。`base` が `None` なら `--root`。
     fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome>;
     fn sequence_in_progress(&self) -> Result<Option<Sequence>>;
+    /// rebase の途中なら、何番目か（今, 全体）。
+    fn rebase_progress(&self) -> Result<Option<(u32, u32)>>;
     fn abort(&self, sequence: Sequence) -> Result<()>;
     fn continue_sequence(&self, sequence: Sequence) -> Result<Outcome>;
     fn skip_sequence(&self, sequence: Sequence) -> Result<Outcome>;
