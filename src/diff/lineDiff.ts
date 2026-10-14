@@ -162,44 +162,6 @@ function myers(a: Int32Array, b: Int32Array): LineChange[] {
   return changes;
 }
 
-/** 選択範囲。行番号は 0 始まりで、両端を含む */
-export interface LineRange {
-  start: number;
-  end: number;
-}
-
-export interface Selection {
-  side: 'base' | 'target';
-  ranges: readonly LineRange[];
-}
-
-/**
- * base に、選んだ部分の変更だけを当てた内容を返す。
- * - collapsed（カーソルだけで何も選んでいない）なら、カーソル行を含む変更（hunk）全体を当てる
- * - そうでなければ、選んだ行だけを当てる。base 側の選択は削除、target 側の選択は追加になる
- */
-export function applySelection(
-  base: readonly string[],
-  target: readonly string[],
-  changes: readonly LineChange[],
-  selection: Selection,
-  collapsed: boolean,
-): string {
-  const inRanges = (line: number) => selection.ranges.some((r) => r.start <= line && line <= r.end);
-  const removeBase = new Set<number>();
-  const addTarget = new Set<number>();
-  for (const c of changes) {
-    const whole = collapsed && touches(c, selection);
-    for (let i = c.baseStart; i < c.baseEnd; i++) {
-      if (whole || (!collapsed && selection.side === 'base' && inRanges(i))) removeBase.add(i);
-    }
-    for (let i = c.targetStart; i < c.targetEnd; i++) {
-      if (whole || (!collapsed && selection.side === 'target' && inRanges(i))) addTarget.add(i);
-    }
-  }
-  return applyLineSets(base, target, changes, removeBase, addTarget);
-}
-
 /**
  * base に、選んだ行の変更だけを当てた内容を返す。
  * removeBase は消す base の行、addTarget は足す target の行（どちらも 0 始まり）。変更に含まれない行は無視する。
@@ -235,12 +197,6 @@ export function applyLineSets(
     out.push(base[pos]!);
   }
   return fixLastNewline(out);
-}
-
-/** 変更が選択範囲に触れているか。削除だけの変更は、その前後の行に触れていれば対象にする */
-function touches(c: LineChange, selection: Selection): boolean {
-  const [start, end] = selection.side === 'base' ? [c.baseStart, c.baseEnd] : [c.targetStart, c.targetEnd];
-  return selection.ranges.some((r) => (start === end ? r.start <= start && start - 1 <= r.end : r.start < end && start <= r.end));
 }
 
 /** 途中に改行の無い行が来た場合（元の最終行のあとに行を足したとき）は改行を補う */

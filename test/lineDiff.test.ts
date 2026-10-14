@@ -1,19 +1,30 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { applySelection, diffLines, splitLines, type Selection } from '../src/diff/lineDiff.ts';
+import { applyLineSets, diffLines, splitLines, type LineChange } from '../src/diff/lineDiff.ts';
 
 const L = (s: string) => splitLines(s);
 
-/** 全部の hunk にカーソルを置いて当てると target に戻ることを確かめる */
+/** 変更に含まれる行をすべて選んだときの集合 */
+function everything(changes: readonly LineChange[]): [Set<number>, Set<number>] {
+  const removed = new Set<number>();
+  const added = new Set<number>();
+  for (const c of changes) {
+    for (let i = c.baseStart; i < c.baseEnd; i++) removed.add(i);
+    for (let i = c.targetStart; i < c.targetEnd; i++) added.add(i);
+  }
+  return [removed, added];
+}
+
+/** 変更をすべて当てると target に戻ることを確かめる */
 function roundTrip(base: string, target: string): void {
   const b = L(base);
   const t = L(target);
   const changes = diffLines(b, t);
-  const cursors: Selection = {
-    side: 'target',
-    ranges: changes.map((c) => ({ start: c.targetStart, end: c.targetStart })),
-  };
-  assert.equal(applySelection(b, t, changes, cursors, true), target, `${JSON.stringify(base)} -> ${JSON.stringify(target)}`);
+  assert.equal(
+    applyLineSets(b, t, changes, ...everything(changes)),
+    target,
+    `${JSON.stringify(base)} -> ${JSON.stringify(target)}`,
+  );
 }
 
 test('splitLines keeps line endings', () => {
@@ -26,8 +37,12 @@ test('diffLines finds minimal changes', () => {
   assert.deepEqual(diffLines(L('a\nb\nc\n'), L('a\nx\nc\n')), [
     { baseStart: 1, baseEnd: 2, targetStart: 1, targetEnd: 2 },
   ]);
-  assert.deepEqual(diffLines(L('a\nb\nc\n'), L('a\nc\n')), [{ baseStart: 1, baseEnd: 2, targetStart: 1, targetEnd: 1 }]);
-  assert.deepEqual(diffLines(L('a\nc\n'), L('a\nb\nc\n')), [{ baseStart: 1, baseEnd: 1, targetStart: 1, targetEnd: 2 }]);
+  assert.deepEqual(diffLines(L('a\nb\nc\n'), L('a\nc\n')), [
+    { baseStart: 1, baseEnd: 2, targetStart: 1, targetEnd: 1 },
+  ]);
+  assert.deepEqual(diffLines(L('a\nc\n'), L('a\nb\nc\n')), [
+    { baseStart: 1, baseEnd: 1, targetStart: 1, targetEnd: 2 },
+  ]);
   assert.deepEqual(diffLines(L('a\nb\n'), L('a\nb\n')), []);
   assert.deepEqual(diffLines([], L('a\n')), [{ baseStart: 0, baseEnd: 0, targetStart: 0, targetEnd: 1 }]);
 });
@@ -61,43 +76,18 @@ test('random edits round-trip', () => {
   }
 });
 
-test('cursor stages only the hunk under it', () => {
+test('only the chosen change is applied', () => {
   const base = L('a\nb\nc\nd\ne\n');
   const target = L('a\nB\nc\nd\nE\n');
   const changes = diffLines(base, target);
-  const out = applySelection(base, target, changes, { side: 'target', ranges: [{ start: 4, end: 4 }] }, true);
-  assert.equal(out, 'a\nb\nc\nd\nE\n');
-});
-
-test('selected lines stage only those additions and deletions', () => {
-  const base = L('keep\nold1\nold2\nend\n');
-  const target = L('keep\nnew1\nnew2\nend\n');
-  const changes = diffLines(base, target);
-  // 追加側の new2 だけを選ぶ：削除はしない
-  assert.equal(
-    applySelection(base, target, changes, { side: 'target', ranges: [{ start: 2, end: 2 }] }, false),
-    'keep\nold1\nold2\nnew2\nend\n',
-  );
-  // 削除側の old1 だけを選ぶ
-  assert.equal(
-    applySelection(base, target, changes, { side: 'base', ranges: [{ start: 1, end: 1 }] }, false),
-    'keep\nold2\nend\n',
-  );
-});
-
-test('cursor next to a pure deletion selects it', () => {
-  const base = L('a\nb\nc\n');
-  const target = L('a\nc\n');
-  const changes = diffLines(base, target);
-  assert.equal(applySelection(base, target, changes, { side: 'target', ranges: [{ start: 1, end: 1 }] }, true), 'a\nc\n');
-  assert.equal(applySelection(base, target, changes, { side: 'target', ranges: [{ start: 0, end: 0 }] }, true), 'a\nc\n');
+  assert.equal(applyLineSets(base, target, changes, new Set([4]), new Set([4])), 'a\nb\nc\nd\nE\n');
 });
 
 test('adding a line after a final line without newline inserts one', () => {
   const base = L('a');
   const target = L('a\nb\n');
   const changes = diffLines(base, target);
-  assert.equal(applySelection(base, target, changes, { side: 'target', ranges: [{ start: 1, end: 1 }] }, false), 'a\nb\n');
+  assert.equal(applyLineSets(base, target, changes, new Set(), new Set([1])), 'a\nb\n');
 });
 
 test('too many edits fall back to one change and still round-trip', () => {
