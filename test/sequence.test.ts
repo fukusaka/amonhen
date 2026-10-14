@@ -1,7 +1,7 @@
 /** merge・rebase・push・fetch を一時ディレクトリの実リポジトリで確かめる */
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -231,4 +231,26 @@ test('cherry-pick conflict stops as a sequence', async () => {
   assert.equal(await backend.sequenceInProgress(), 'cherry-pick');
   await backend.abort('cherry-pick');
   assert.equal(await backend.sequenceInProgress(), undefined);
+});
+
+test('updateSubmodules initializes a submodule', async () => {
+  const lib = join(tmp, 'lib');
+  execFileSync('git', ['init', '-q', '-b', 'main', lib]);
+  writeFileSync(join(lib, 'l.txt'), 'l\n');
+  execFileSync('git', ['add', '.'], { cwd: lib });
+  execFileSync('git', ['commit', '-q', '-m', 'lib'], { cwd: lib });
+  git('-c', 'protocol.file.allow=always', 'submodule', 'add', '-q', lib, 'vendor/lib');
+  git('commit', '-q', '-m', 'add submodule');
+  // 初期化していない clone を作る
+  const clone = join(tmp, 'clone');
+  execFileSync('git', ['clone', '-q', dir, clone]);
+  const b = await CliBackend.open(new GitExecutor('git'), clone);
+  try {
+    process.env.GIT_CONFIG_PARAMETERS = "'protocol.file.allow=always'";
+    await b.updateSubmodules(['vendor/lib']);
+    assert.equal(readFileSync(join(clone, 'vendor/lib/l.txt'), 'utf8'), 'l\n');
+  } finally {
+    delete process.env.GIT_CONFIG_PARAMETERS;
+    b.dispose();
+  }
 });

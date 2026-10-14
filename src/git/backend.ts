@@ -73,6 +73,8 @@ export interface RepositoryBackend {
   cherryPick(oid: string, isMerge: boolean): Promise<RebaseResult>;
   /** コミットを打ち消すコミットを作る。merge コミットなら最初の親の側に戻す */
   revert(oid: string, isMerge: boolean): Promise<RebaseResult>;
+  /** サブモジュールを初期化し、記録されているコミットに合わせる */
+  updateSubmodules(paths: readonly string[]): Promise<void>;
   /** 作業中の変更を stash に保存する */
   stashPush(opts: { message?: string; includeUntracked?: boolean }): Promise<void>;
   /** stash を当てる。pop なら当てたあとで消す。コンフリクトしたら conflict（pop でも stash は残る） */
@@ -239,6 +241,10 @@ export class CliBackend implements RepositoryBackend {
 
   revert(oid: string, isMerge: boolean): Promise<RebaseResult> {
     return this.stoppable(isMerge ? ['revert', '--no-edit', '-m', '1', oid] : ['revert', '--no-edit', oid]);
+  }
+
+  async updateSubmodules(paths: readonly string[]): Promise<void> {
+    await this.write(['submodule', 'update', '--init', '--', ...paths]);
   }
 
   async stashPush(opts: { message?: string; includeUntracked?: boolean }): Promise<void> {
