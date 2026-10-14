@@ -8,6 +8,10 @@ import Foundation
 public struct AmonhenError: Error, CustomStringConvertible {
     public let description: String
 
+    public init(description: String) {
+        self.description = description
+    }
+
     static func last() -> AmonhenError {
         AmonhenError(description: String(cString: amonhen_last_error()))
     }
