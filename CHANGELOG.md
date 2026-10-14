@@ -4,6 +4,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- ナビ（Working Copy / History の入口、途中の merge / rebase、ブランチ類）をサイドバーに移し、メインビューは Working Copy か History だけを広く出すようにした。Fetch / Pull / Push / Undo はサイドバーのタイトルのボタンになった。
+- ブランチを `/` 区切りでフォルダにまとめて表示する。
+
+### Removed
+
+- サイドバーの変更ファイル一覧と、そこから開く標準の diff エディタでの行単位の stage（`ctrl+alt+s` / `ctrl+alt+u`）。stage はメインビューの Working Copy で行う。
+- サイドバーの 1 行のコミット欄。コミットはメインビューの Working Copy で行う。
+
 ## [0.0.2] - 2026-10-14
 
 ### Added
