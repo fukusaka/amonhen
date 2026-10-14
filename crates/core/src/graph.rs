@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use amonhen_layout::{Edge, Node};
+use amonhen_layout::{Edge, Node, Slab};
 use amonhen_model::{CommitGraph, Oid};
 
 pub const CHECKPOINT_INTERVAL: u32 = 4096;
@@ -77,10 +77,11 @@ struct Checkpoint {
 
 #[derive(Clone, Debug)]
 pub struct GraphLayout {
-    nodes: Vec<Node>,
-    edges: Vec<Edge>,
-    lane_count: u16,
-    mainline: Vec<bool>,
+    pub(crate) nodes: Slab<Node>,
+    pub(crate) edges: Slab<Edge>,
+    pub(crate) lane_count: u16,
+    /// HEAD から first-parent で辿れる行なら 1。
+    pub(crate) mainline: Slab<u8>,
     checkpoints: Vec<Checkpoint>,
     /// `BUCKET_ROWS` 行ごとに、その範囲に重なる線の添字。
     buckets: Vec<Vec<u32>>,
@@ -195,10 +196,15 @@ impl<'g> Layouter<'g> {
     pub fn finish(mut self) -> GraphLayout {
         self.advance(u32::MAX);
         let mut layout = GraphLayout {
-            nodes: self.nodes,
-            edges: self.edges,
+            nodes: self.nodes.into(),
+            edges: self.edges.into(),
             lane_count: self.lane_count,
-            mainline: self.mainline,
+            mainline: self
+                .mainline
+                .iter()
+                .map(|&m| u8::from(m))
+                .collect::<Vec<_>>()
+                .into(),
             checkpoints: self.checkpoints,
             buckets: Vec::new(),
         };
@@ -412,7 +418,10 @@ fn relayout_inner(
         let ro = ck.row as usize;
         let delta = r as i64 - ro as i64;
         let converged = graph.ids()[r..] == old_graph.ids()[ro..]
-            && l.mainline[r..] == old.mainline[ro..]
+            && l.mainline[r..]
+                .iter()
+                .copied()
+                .eq(old.mainline[ro..].iter().map(|&m| m != 0))
             && ck.state.shifted(delta) == l.state;
         if converged {
             return (splice(l, old, k, delta), Some(r));
@@ -446,10 +455,15 @@ fn splice(l: Layouter<'_>, old: &GraphLayout, k: usize, delta: i64) -> GraphLayo
     }));
 
     let mut layout = GraphLayout {
-        nodes,
-        edges,
+        nodes: nodes.into(),
+        edges: edges.into(),
         lane_count: l.lane_count.max(old.lane_count),
-        mainline: l.mainline,
+        mainline: l
+            .mainline
+            .iter()
+            .map(|&m| u8::from(m))
+            .collect::<Vec<_>>()
+            .into(),
         checkpoints,
         buckets: Vec::new(),
     };
@@ -554,7 +568,7 @@ mod tests {
         for (row, node) in layout.nodes().iter().enumerate() {
             assert_eq!(node.row as usize, row);
             assert!(node.lane < layout.lane_count());
-            if layout.mainline[row] {
+            if layout.mainline[row] != 0 {
                 assert_eq!(node.lane, 0);
             }
         }
