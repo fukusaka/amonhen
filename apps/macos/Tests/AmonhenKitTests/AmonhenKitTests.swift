@@ -122,6 +122,25 @@ private func makeRepo() throws -> URL {
     withExtendedLifetime(watch) {}
 }
 
+@Test func showsTheDiffOfASelectedCommit() throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try "one\ntwo\n".write(to: dir.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    try git(dir, "add", ".")
+    try git(dir, "commit", "-q", "-m", "add a")
+    try "one\n二\n".write(to: dir.appendingPathComponent("a.txt"), atomically: true, encoding: .utf8)
+    try git(dir, "commit", "-q", "-am", "change a")
+
+    let repo = try Repository(path: dir.path)
+    let history = try repo.loadHistory()
+    let changes = try repo.changes(of: try #require(history.commitID(row: 0)))
+    #expect(changes.items.map(\.path) == ["a.txt"])
+    let diff = try changes.diff(at: 0)
+    #expect((diff.rowCount, diff.added, diff.removed) == (4, 1, 1))
+    #expect((0..<4).map { diff.text(row: $0) } == ["@@ -1,2 +1,2 @@", "one", "two", "二"])
+    #expect(diff.withRows { $0.map(\.kind) } == [3, 0, 2, 1])
+}
+
 @Test func reportsOpenErrors() {
     #expect(throws: AmonhenError.self) {
         try Repository(path: "/nonexistent/amonhen")

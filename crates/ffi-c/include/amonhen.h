@@ -223,17 +223,17 @@ typedef struct {
   uint32_t old_no;
   uint32_t new_no;
   AmonhenStrRef text;
-} DiffRow;
-#define DiffRow_CONTEXT 0
-#define DiffRow_ADDED 1
-#define DiffRow_REMOVED 2
+} AmonhenDiffRow;
+#define AmonhenDiffRow_CONTEXT 0
+#define AmonhenDiffRow_ADDED 1
+#define AmonhenDiffRow_REMOVED 2
 /**
  * `@@ -1,3 +1,4 @@`
  */
-#define DiffRow_HUNK 3
+#define AmonhenDiffRow_HUNK 3
 
 typedef struct {
-  const DiffRow *rows;
+  const AmonhenDiffRow *rows;
   uint32_t row_count;
   /**
    * 文字列置き場の先頭アドレス。`StrRef::buf` で引く。

@@ -165,17 +165,6 @@ public final class HistoryChunk: @unchecked Sendable {
     }
 
     func withString<R>(_ s: AmonhenStrRef, _ body: (CFString) throws -> R) rethrows -> R {
-        let length = Int(s.len_and_kind & 0x7fff_ffff)
-        let isASCII = s.len_and_kind & 0x8000_0000 == 0
-        let start = view.bases[Int(s.buf)]!.advanced(by: Int(s.off))
-        let string: CFString = if isASCII {
-            CFStringCreateWithBytesNoCopy(
-                nil, start, length, CFStringBuiltInEncodings.ASCII.rawValue, false, kCFAllocatorNull)
-        } else {
-            UnsafeRawPointer(start).withMemoryRebound(to: UniChar.self, capacity: length) {
-                CFStringCreateWithCharactersNoCopy(nil, $0, length, kCFAllocatorNull)
-            }
-        }
-        return try withExtendedLifetime(self) { try body(string) }
+        try withExtendedLifetime(self) { try withNoCopyString(s, bases: view.bases, body) }
     }
 }
