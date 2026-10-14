@@ -68,6 +68,10 @@ export interface RepositoryBackend {
   unstage(paths: readonly string[]): Promise<void>;
   /** index のエントリを指定した内容で置き換える（行単位の stage に使う） */
   writeIndex(path: string, mode: string, content: Buffer): Promise<void>;
+  /** 内容を blob として保存し、oid を返す（破棄した内容を Undo で戻すために残す） */
+  writeBlob(content: Buffer): Promise<string>;
+  /** 作業中のファイルを index の内容に戻す（stage していない変更を破棄する） */
+  restoreWorktree(paths: readonly string[]): Promise<void>;
   /** amend なら直前のコミットを置き換える（stage したものと message で） */
   commit(message: string, opts?: { amend?: boolean }): Promise<void>;
   head(): Promise<HeadState>;
@@ -198,8 +202,18 @@ export class CliBackend implements RepositoryBackend {
 
   async writeIndex(path: string, mode: string, content: Buffer): Promise<void> {
     // 内容は index から作ったものなので、clean フィルターは通さない
-    const oid = (await this.git.text(['hash-object', '-w', '--no-filters', '--stdin'], { cwd: this.root, input: content })).trim();
+    const oid = await this.writeBlob(content);
     await this.write(['update-index', '--add', '--cacheinfo', `${mode},${oid},${path}`]);
+  }
+
+  async writeBlob(content: Buffer): Promise<string> {
+    return (
+      await this.git.text(['hash-object', '-w', '--no-filters', '--stdin'], { cwd: this.root, input: content })
+    ).trim();
+  }
+
+  async restoreWorktree(paths: readonly string[]): Promise<void> {
+    await this.write(['checkout', '--', ...paths]);
   }
 
   async commit(message: string, opts: { amend?: boolean } = {}): Promise<void> {
