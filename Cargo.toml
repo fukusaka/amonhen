@@ -17,7 +17,7 @@ amonhen-platform = { path = "crates/platform" }
 amonhen-backend-gix = { path = "crates/backend-gix" }
 amonhen-ffi-c = { path = "crates/ffi-c" }
 amonhen-watch = { path = "crates/watch" }
-gix = { version = "0.89", default-features = false, features = ["sha1", "max-performance-safe", "revision", "attributes"] }
+gix = { version = "0.89", default-features = false, features = ["sha1", "max-performance-safe", "revision", "attributes", "blob-diff"] }
 
 [profile.release]
 lto = "thin"

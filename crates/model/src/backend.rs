@@ -1,4 +1,6 @@
-use crate::{CommitGraph, CommitText, Oid, RawCommit, Refs, RepoPaths, topo};
+use std::sync::Arc;
+
+use crate::{CommitGraph, CommitText, FileChange, Oid, RawCommit, Refs, RepoPaths, topo};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -30,6 +32,13 @@ pub trait GitBackend: Send + Sync {
 
     /// サイドバーに出す ref の一覧。
     fn refs(&self) -> Result<Refs>;
+
+    /// `commit` で変わったファイル（最初の親との差分。親がなければ全ファイルの追加）。
+    /// 名前の変更も見つける。
+    fn commit_changes(&self, commit: &Oid) -> Result<Vec<FileChange>>;
+
+    /// blob の中身。展開したバッファをそのまま返し、差分の各行はここを直接指す。
+    fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>>;
 
     /// commit-graph ファイルがあるか。なければ History の初回の読み込みが数倍遅い。
     fn has_commit_graph(&self) -> Result<bool> {

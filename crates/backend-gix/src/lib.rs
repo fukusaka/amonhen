@@ -6,7 +6,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use amonhen_model::{
-    CommitText, GitBackend, Oid, OidSet, RawCommit, RefEntry, RefKind, Refs, RepoPaths, Result,
+    ChangeKind, CommitText, FileChange, GitBackend, Oid, OidSet, RawCommit, RefEntry, RefKind,
+    Refs, RepoPaths, Result,
 };
 use gix::objs::Find;
 use rayon::prelude::*;
@@ -241,6 +242,107 @@ impl GitBackend for GixBackend {
             head: self.head()?,
             entries,
         })
+    }
+
+    fn commit_changes(&self, commit: &Oid) -> Result<Vec<FileChange>> {
+        use gix::object::tree::diff::ChangeDetached as C;
+        let repo = self.repo.to_thread_local();
+        let commit = repo.find_commit(gix::ObjectId::from_bytes_or_panic(&commit.0))?;
+        let new_tree = commit.tree()?;
+        let old_tree = match commit.parent_ids().next() {
+            Some(parent) => Some(parent.object()?.into_commit().tree()?),
+            None => None,
+        };
+        let opt = |id: gix::ObjectId| -> Result<Option<Oid>> { to_oid(id.as_ref()).map(Some) };
+        let is_commit = |mode: gix::object::tree::EntryMode| mode.is_commit();
+        let mut changes = Vec::new();
+        for change in repo.diff_tree_to_tree(old_tree.as_ref(), Some(&new_tree), None)? {
+            let (mode, previous) = match &change {
+                C::Addition { entry_mode, .. } | C::Deletion { entry_mode, .. } => {
+                    (*entry_mode, *entry_mode)
+                }
+                C::Modification {
+                    entry_mode,
+                    previous_entry_mode,
+                    ..
+                } => (*entry_mode, *previous_entry_mode),
+                C::Rewrite {
+                    entry_mode,
+                    source_entry_mode,
+                    ..
+                } => (*entry_mode, *source_entry_mode),
+            };
+            // ディレクトリそのものの変化は、中のファイルの変化として出る。
+            if mode.is_tree() || previous.is_tree() {
+                continue;
+            }
+            let submodule = is_commit(mode) || is_commit(previous);
+            changes.push(match change {
+                C::Addition { location, id, .. } => FileChange {
+                    kind: ChangeKind::Added,
+                    path: location.to_string(),
+                    old_path: None,
+                    old_id: None,
+                    new_id: opt(id)?,
+                    submodule,
+                },
+                C::Deletion { location, id, .. } => FileChange {
+                    kind: ChangeKind::Deleted,
+                    path: location.to_string(),
+                    old_path: None,
+                    old_id: opt(id)?,
+                    new_id: None,
+                    submodule,
+                },
+                C::Modification {
+                    location,
+                    previous_id,
+                    id,
+                    ..
+                } => FileChange {
+                    kind: ChangeKind::Modified,
+                    path: location.to_string(),
+                    old_path: None,
+                    old_id: opt(previous_id)?,
+                    new_id: opt(id)?,
+                    submodule,
+                },
+                C::Rewrite {
+                    source_location,
+                    source_id,
+                    location,
+                    id,
+                    copy,
+                    ..
+                } => FileChange {
+                    kind: if copy {
+                        ChangeKind::Copied
+                    } else {
+                        ChangeKind::Renamed
+                    },
+                    path: location.to_string(),
+                    old_path: Some(source_location.to_string()),
+                    old_id: opt(source_id)?,
+                    new_id: opt(id)?,
+                    submodule,
+                },
+            });
+        }
+        changes.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(changes)
+    }
+
+    fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
+        let repo = self.repo.to_thread_local();
+        let mut buf = Vec::new();
+        let len = repo
+            .objects
+            .try_find(&gix::ObjectId::from_bytes_or_panic(&id.0), &mut buf)?
+            .ok_or_else(|| format!("blob {id} が見つからない"))?
+            .data
+            .len();
+        buf.truncate(len);
+        Ok(Arc::new(buf))
     }
 
     fn has_commit_graph(&self) -> Result<bool> {

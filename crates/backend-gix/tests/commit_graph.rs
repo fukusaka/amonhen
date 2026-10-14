@@ -210,3 +210,63 @@ fn lists_branches_remotes_tags_stashes_and_submodules() {
     assert!(refs.entries[3].target.is_none(), "ツリーを指すタグ");
     assert!(refs.entries[6].target.is_some(), "サブモジュールのコミット");
 }
+
+#[test]
+fn lists_changed_files_with_renames_and_reads_blobs() {
+    use amonhen_model::ChangeKind;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    let long = "line\n".repeat(20);
+    std::fs::write(dir.join("keep.txt"), "a\n").unwrap();
+    std::fs::write(dir.join("gone.txt"), "x\n").unwrap();
+    std::fs::write(dir.join("old-name.txt"), &long).unwrap();
+    git(dir, &["add", "."]);
+    commit(dir, "first");
+
+    let backend = GixBackend::open(dir).unwrap();
+    let first = backend.head().unwrap().unwrap();
+    let root = backend.commit_changes(&first).unwrap();
+    assert_eq!(root.len(), 3);
+    assert!(root.iter().all(|c| c.kind == ChangeKind::Added));
+
+    std::fs::write(dir.join("keep.txt"), "a\nb\n").unwrap();
+    std::fs::write(dir.join("new.txt"), "n\n").unwrap();
+    std::fs::remove_file(dir.join("gone.txt")).unwrap();
+    std::fs::rename(dir.join("old-name.txt"), dir.join("sub/new-name.txt")).unwrap_or_else(|_| {
+        std::fs::create_dir(dir.join("sub")).unwrap();
+        std::fs::rename(dir.join("old-name.txt"), dir.join("sub/new-name.txt")).unwrap();
+    });
+    git(dir, &["add", "-A"]);
+    commit(dir, "second");
+
+    let second = GixBackend::open(dir).unwrap().head().unwrap().unwrap();
+    let changes = backend.commit_changes(&second).unwrap();
+    let summary: Vec<(ChangeKind, &str, Option<&str>)> = changes
+        .iter()
+        .map(|c| (c.kind, c.path.as_str(), c.old_path.as_deref()))
+        .collect();
+    assert_eq!(
+        summary,
+        [
+            (ChangeKind::Deleted, "gone.txt", None),
+            (ChangeKind::Modified, "keep.txt", None),
+            (ChangeKind::Added, "new.txt", None),
+            (
+                ChangeKind::Renamed,
+                "sub/new-name.txt",
+                Some("old-name.txt")
+            ),
+        ]
+    );
+    let keep = &changes[1];
+    assert_eq!(
+        &**backend.blob(keep.old_id.as_ref().unwrap()).unwrap(),
+        b"a\n"
+    );
+    assert_eq!(
+        &**backend.blob(keep.new_id.as_ref().unwrap()).unwrap(),
+        b"a\nb\n"
+    );
+}
