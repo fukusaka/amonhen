@@ -197,10 +197,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     // MARK: - ドラッグ＆ドロップ: merge・rebase・push
 
     func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> (any NSPasteboardWriting)? {
-        guard let node = item as? Node, let ref = node.item, ref.kind == .local || ref.kind == .remote else { return nil }
+        guard let node = item as? Node, let ref = node.item, [.local, .remote, .tag].contains(ref.kind) else { return nil }
         let p = NSPasteboardItem()
         // 種類も渡す（ローカルブランチの名前にも / は入りうる）。
-        p.setString("\(ref.kind == .local ? "local" : "remote"):\(ref.name)", forType: .branchName)
+        p.setString("\(ref.kind == .local ? "local" : "other"):\(ref.name)", forType: .branchName)
         return p
     }
 
@@ -229,8 +229,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let target = ref.name
             // 落とした先が今のブランチでなければ、先にチェックアウトする。
             let checkout: [[String: Any]] = target == headBranch ? [] : [["op": "checkout", "branch": target]]
+            // checkout していなくても、fast-forward で済むならブランチだけ進める。
             add("Merge \(dragged) into \(target)") {
-                actions.perform(sequence: checkout + [["op": "merge", "rev": dragged]])
+                actions.perform(["op": "mergeInto", "target": target, "rev": dragged])
             }
             add("Rebase \(target) onto \(dragged)") {
                 actions.perform(sequence: checkout + [["op": "rebase", "onto": dragged]])
