@@ -4,25 +4,26 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 ## 機能
 
-アクティビティバーの Amon Hen アイコンを押すと、エディタ領域にメインビューが開く（コマンドパレットの「Amon Hen: Open Amon Hen」でも開ける）。左のナビで画面を切り替え、右にその内容を出す。切り替えは Webview の中だけで行うので待ち時間が無い。
+アクティビティバーの Amon Hen アイコンを押すと、サイドバーにナビが、エディタ領域にメインビューが開く（コマンドパレットの「Amon Hen: Open Amon Hen」でもメインビューを開ける）。ナビで選んだものをメインビューに出す。
 
-### ナビ
+### ナビ（サイドバー）
 
 | 項目 | 内容 |
 | --- | --- |
-| リポジトリ名とブランチ | merge や rebase の途中ならその旨を出す |
-| ツールバー | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。無ければ origin へ送って upstream に設定）、Undo |
-| Working Copy / History | 画面の切り替え。Working Copy には変更の数が出る |
-| Branches | 現在のブランチに ✓、upstream との差（↑↓）、upstream が消えていれば gone |
+| タイトルのボタン | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。無ければ origin へ送って upstream に設定）、Undo。`…` の中に Open Amon Hen、Refresh、Force Push |
+| Working Copy | 変更の数。選ぶとメインビューに Working Copy を出す |
+| History | 現在のブランチ。選ぶとメインビューに History を出す |
+| merge / rebase の途中 | 「Rebase in progress (2/5)」のような行。Continue / Skip / Abort |
+| Branches | `feature/x` はフォルダにまとめる。現在のブランチに ✓、upstream との差（↑↓）、upstream が消えていれば gone |
 | Remotes / Tags / Stashes / Submodules | 開いたときに取得する |
 
-- ブランチ・リモートブランチ・タグを選ぶと、History にその履歴が出る。
-- ダブルクリックで切り替える。リモートブランチなら、追跡するローカルブランチを作って切り替える。
-- 右クリックで Checkout、Merge into Current Branch、Rebase Current Branch onto This、Delete Branch（Undo で戻せる）。
+- ブランチ・リモートブランチ・タグを選ぶと、メインビューの History にその履歴が出る。
+- 右クリックで Checkout（リモートブランチなら追跡するローカルブランチを作って切り替える）、Merge into Current Branch、Rebase Current Branch onto This、Delete Branch（Undo で戻せる）。
+- 複数のリポジトリを開いているときは、タイトルのボタンで切り替える。
 
 ### ドラッグ＆ドロップ
 
-ナビのブランチ・リモートブランチ・タグを、ほかの項目にドロップすると操作の候補が出る。どの操作もドロップ先を書き換える。
+ナビのブランチ・リモートブランチ・タグを、ナビのほかの項目にドロップすると操作の候補が出る。どの操作もドロップ先を書き換える。
 
 | ドラッグするもの | ドロップ先 | 選べる操作 |
 | --- | --- | --- |
@@ -64,7 +65,7 @@ HEAD から first-parent で辿れるコミット（最初の merge コミット
 
 ### 途中で止まった merge / rebase
 
-コンフリクトや Edit・Split で止まると、サイドバーの Changes の先頭に「Rebase in progress (2/5)」のような行が出る。解決して stage したら Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
+コンフリクトや Edit・Split で止まると、ナビに「Rebase in progress (2/5)」のような行が出る。解決して stage したら Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
 
 ### Undo
 
@@ -75,10 +76,6 @@ HEAD から first-parent で辿れるコミット（最初の merge コミット
 - 操作のあとでブランチが動いていたら、壊さないように Undo しない。
 - Edit や Split で止めた操作は、Continue で終わった時点で Undo の対象になる。
 - 記録は `.git/amonhen/undo.json` に残るので、VSCode を再起動しても戻せる。
-
-### サイドバー（Changes）
-
-メインビューを開かなくても変更を確かめられるよう、サイドバーには途中で止まっている merge / rebase と、Conflicts / Staged / Changes のファイルだけを出す。ファイルをクリックすると標準の diff エディタで開き、diff エディタでは `ctrl+alt+s` / `ctrl+alt+u` で選んだ行を stage / unstage できる。複数のリポジトリを開いているときは、ビューのタイトルのボタンで切り替える。
 
 ### 今の制限
 
@@ -137,7 +134,7 @@ VSCode で F5 を押すと、拡張を読み込んだウィンドウが開く。
 | `src/diff/` | 行単位の差分と、選んだ変更だけを当てる処理 |
 | `src/state/` | 状態管理層。リポジトリごとのキャッシュと更新 |
 | `src/history/`, `src/workingCopy/`, `src/view/` | メインビューの各画面と拡張ホストの間のメッセージ、History のグラフと rebase の組み立て |
-| `src/ui/` | メインビューのパネルと画面ごとのコントローラー、サイドバー、コマンド |
-| `src/webview/` | メインビューの Webview（ナビ、Working Copy、History、差分の描画） |
+| `src/ui/` | サイドバーのナビ、メインビューのパネルと画面ごとのコントローラー、コマンド |
+| `src/webview/` | メインビューの Webview（Working Copy、History、差分の描画） |
 | `test/` | `node --test` で動くテスト。git 実行層は一時ディレクトリの実リポジトリで確かめる |
 | `scripts/` | インストールと snapshot のバージョン計算 |
