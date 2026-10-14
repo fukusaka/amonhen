@@ -243,6 +243,19 @@ FE が実装してコアに渡す。
 - CI で linux・chromium 規模のリポジトリを使い、起動時間・フレーム落ち・入力遅延の悪化を検出する。
 - `CFString` の NoCopy が実際にコピーしていないことを Instruments の Allocations で確かめる。
 
+### 計測の記録
+
+History の読み込み（起点の収集＋トポロジカル順の走査、`crates/backend-gix/examples/walk.rs`、Apple Silicon、release ビルド）:
+
+| リポジトリ | コミット数 | gix | `git rev-list --all --topo-order` |
+| --- | --- | --- | --- |
+| android/development（commit-graph なし） | 34,261 | 267 ms | 286 ms |
+| 同上（commit-graph あり） | 34,261 | 31 ms | 111 ms |
+| coreutils（commit-graph なし） | 30,176 | 157 ms | 225 ms |
+
+- gix のオブジェクトキャッシュを有効にしないと、commit-graph なしで 1.3 秒かかる（`object_cache_size_if_unset` で 64 MB を指定）。
+- commit-graph の有無で 1 桁違う。commit-graph がないリポジトリでは、書き出しを案内するか、コア自身の永続キャッシュで補う。
+
 ## 配布
 
 - arm64 の `.app` を GitHub Releases に置く。拡張と同じく `v*` タグの push で GitHub Actions がビルドして添付し、main への push で `snapshot` の pre-release を作り直す。
@@ -275,7 +288,7 @@ FE が実装してコアに渡す。
 
 試作:
 
-- [ ] 1. Rust の workspace と `model` / `core` / `layout` の骨組み、`GitBackend` / `Platform` / `FrontendProfile` の形、gix による commit-graph の読み取り。全ターゲットのビルドを CI で通す
+- [x] 1. Rust の workspace と `model` / `core` / `layout` の骨組み、`GitBackend` / `Platform` / `FrontendProfile` の形、gix による commit-graph の読み取り。全ターゲットのビルドを CI で通す
 - [ ] 2. グラフのレイアウト（順次計算、チェックポイント、区間表現）と criterion のベンチ
 - [ ] 3. プロジェクション（macOS の形式だけ）と C ABI でのスナップショット公開、Swift からのゼロコピー読み取り
 - [ ] 4. AppKit の History（`NSTableView`）と Metal のグラフ描画、入力から表示までの計測
