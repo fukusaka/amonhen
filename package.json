@@ -199,6 +199,24 @@
         "command": "amonhen.showRef",
         "title": "Show History of Ref",
         "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.newBranch",
+        "title": "New Branch…",
+        "category": "Amon Hen",
+        "icon": "$(git-branch-create)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.newTag",
+        "title": "New Tag…",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.renameBranch",
+        "title": "Rename Branch…",
+        "category": "Amon Hen"
       }
     ],
     "menus": {
@@ -242,6 +260,11 @@
           "command": "amonhen.forcePush",
           "when": "view == amonhen.sidebar",
           "group": "2_sync@1"
+        },
+        {
+          "command": "amonhen.newBranch",
+          "when": "view == amonhen.sidebar",
+          "group": "1_view@0"
         }
       ],
       "view/item/context": [
@@ -279,6 +302,21 @@
           "command": "amonhen.nav.delete",
           "when": "view == amonhen.sidebar && viewItem == branch",
           "group": "3_ref@1"
+        },
+        {
+          "command": "amonhen.newBranch",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current|remoteBranch|tag)$/",
+          "group": "4_create@1"
+        },
+        {
+          "command": "amonhen.newTag",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current|remoteBranch|tag)$/",
+          "group": "4_create@2"
+        },
+        {
+          "command": "amonhen.renameBranch",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current)$/",
+          "group": "3_ref@0"
         }
       ],
       "commandPalette": [
@@ -349,6 +387,10 @@
         {
           "command": "amonhen.showRef",
           "when": "false"
+        },
+        {
+          "command": "amonhen.renameBranch",
+          "when": "false"
         }
       ],
       "webview/context": [
@@ -396,6 +438,16 @@
           "command": "amonhen.history.copyId",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
           "group": "9_copy@1"
+        },
+        {
+          "command": "amonhen.newBranch",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "group": "8_create@1"
+        },
+        {
+          "command": "amonhen.newTag",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "group": "8_create@2"
         }
       ]
     }

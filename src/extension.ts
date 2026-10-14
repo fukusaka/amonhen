@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { RepositoryManager } from './state/manager.ts';
+import { registerBranchCommands } from './ui/branchCommands.ts';
 import { registerContentProvider } from './ui/content.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
@@ -53,6 +54,7 @@ export async function activate(
     registerSequenceCommands(manager),
     registerHistoryCommands(),
     registerNavCommands(manager),
+    registerBranchCommands(manager),
   );
 
   await manager.initialize();
