@@ -83,3 +83,30 @@ fn unborn_head_has_no_commit() {
     assert_eq!(backend.head().unwrap(), None);
     assert!(backend.tips().unwrap().is_empty());
 }
+
+#[test]
+fn reads_subject_and_author_without_copying() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    git(
+        dir,
+        &[
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-m",
+            "  日本語の件名  \n\n本文",
+        ],
+    );
+    commit(dir, "second");
+
+    let backend = GixBackend::open(dir).unwrap();
+    let tips = backend.tips().unwrap();
+    let graph = backend.commit_graph(&tips).unwrap();
+    let texts = backend.commit_texts(graph.ids()).unwrap();
+    assert_eq!(texts[0].subject(), b"second");
+    assert_eq!(texts[1].subject(), "日本語の件名".as_bytes());
+    assert_eq!(texts[1].author_name(), b"a");
+    assert!(texts[1].author_time > 0);
+}

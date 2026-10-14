@@ -3,7 +3,11 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use amonhen_model::{CommitGraph, CommitGraphBuilder, GitBackend, Oid, Result};
+use std::ops::Range;
+use std::sync::Arc;
+
+use amonhen_model::{CommitGraph, CommitGraphBuilder, CommitText, GitBackend, Oid, Result};
+use gix::objs::Find;
 use gix::traverse::commit::topo;
 
 pub struct GixBackend {
@@ -15,6 +19,16 @@ impl GixBackend {
         let repo = gix::ThreadSafeRepository::discover(path.as_ref())?;
         Ok(Self { repo })
     }
+}
+
+/// `part` が `whole` の中で占める位置。
+fn range_in(whole: &[u8], part: &[u8]) -> Range<u32> {
+    let start = part.as_ptr() as usize - whole.as_ptr() as usize;
+    start as u32..(start + part.len()) as u32
+}
+
+fn trim(bytes: &[u8]) -> &[u8] {
+    bytes.trim_ascii()
 }
 
 fn to_oid(id: &gix::oid) -> Result<Oid> {
@@ -85,5 +99,45 @@ impl GitBackend for GixBackend {
             );
         }
         Ok(builder.build())
+    }
+
+    fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
+        let mut repo = self.repo.to_thread_local();
+        repo.object_cache_size_if_unset(64 * 1024 * 1024);
+        let hash = repo.object_hash();
+        ids.iter()
+            .map(|id| {
+                let oid = gix::ObjectId::from_bytes_or_panic(&id.0);
+                // 展開先のバッファをそのまま持ち続ける（これが唯一の書き込み）。
+                let mut buf = Vec::new();
+                let len = repo
+                    .objects
+                    .try_find(&oid, &mut buf)?
+                    .ok_or_else(|| format!("コミット {id} が見つからない"))?
+                    .data
+                    .len();
+                buf.truncate(len);
+                let (subject, author_name, author_time) = {
+                    let commit = gix::objs::CommitRef::from_bytes(&buf, hash)?;
+                    let author = commit.author()?;
+                    let first_line = commit
+                        .message
+                        .split(|&b| b == b'\n')
+                        .next()
+                        .unwrap_or_default();
+                    (
+                        range_in(&buf, trim(first_line)),
+                        range_in(&buf, trim(author.name)),
+                        author.time()?.seconds,
+                    )
+                };
+                Ok(CommitText {
+                    raw: Arc::new(buf),
+                    subject,
+                    author_name,
+                    author_time,
+                })
+            })
+            .collect()
     }
 }

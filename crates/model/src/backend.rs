@@ -1,4 +1,4 @@
-use crate::{CommitGraph, Oid};
+use crate::{CommitGraph, CommitText, Oid};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -15,4 +15,7 @@ pub trait GitBackend: Send + Sync {
 
     /// `tips` から辿れるコミットを、子が親より先に来るトポロジカル順で返す。
     fn commit_graph(&self, tips: &[Oid]) -> Result<CommitGraph>;
+
+    /// コミットの本文。History で見えている行の分だけ呼ぶ。
+    fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>>;
 }

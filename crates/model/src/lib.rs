@@ -3,7 +3,9 @@
 mod backend;
 mod graph;
 mod oid;
+mod text;
 
 pub use backend::{Error, GitBackend, Result};
 pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use oid::Oid;
+pub use text::CommitText;
