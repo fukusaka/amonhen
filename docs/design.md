@@ -1,0 +1,235 @@
+# Amon Hen Standalone 計画
+
+## 概要
+
+VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約なしに作り込んだ macOS ネイティブの Git クライアント。徹底的な低遅延を最優先にする。拡張と同じく自分用で、GitHub Releases で配布する。
+
+| 方針 | 内容 |
+| --- | --- |
+| 速度 | 入力から表示まで 1 フレーム（120Hz で 8.3 ms）以内。UI スレッドで git を待たない |
+| 構成 | コアロジックは Rust、UI は各 OS のネイティブ。まず macOS（AppKit）だけ |
+| 妥協しない | SwiftUI・Qt・WebView は重い画面に使わない。History と差分は自前で描画する |
+| 段階的に広げる | コアは同一プロセス・ローカル daemon・SSH 越しのどれでも動く形にしておき、最初は同一プロセスだけ作る |
+
+### 要件
+
+拡張の要件（vscode-amonhen の `docs/design.md` の「概要」）をすべて引き継ぎ、以下を足す。
+
+| 要件 | 区分 |
+| --- | --- |
+| 10 万〜100 万コミットのリポジトリで History を 120fps でスクロールできる | 必須 |
+| 起動直後に前回の History を即座に表示する（永続キャッシュ） | 必須 |
+| 日本語入力・アクセシビリティは OS 標準の挙動 | 必須 |
+| History のグラフ表現の工夫（幹線の強調、祖先のハイライト、折りたたみ、アニメーション） | 必須 |
+| CLI（`amonhen`）から同じコアを使える | 希望 |
+| SSH 先のリポジトリを手元と同じ速さで操作できる | 希望 |
+| VSCode 拡張の git 実行層・状態管理層をコアの daemon に置き換えられる | 希望 |
+
+### 非目標
+
+- Windows / Linux の UI（コアは使い回せるように作るが、当面作らない）
+- Qt・Electron・Tauri・Flutter による実装（検討の上で外した）
+- 全画面を Metal で描くこと（入力欄・設定・ダイアログは標準部品）
+
+## 技術選定
+
+| 層 | 選択 | 理由 |
+| --- | --- | --- |
+| コア | Rust | GC 停止がなく、メモリ配置を制御できる |
+| git の読み取り | gix（gitoxide）を同一プロセスで | spawn のコスト（1 回 約 6 ms）とパイプのコピーをなくす。commit-graph を直接読める |
+| git の書き込み | `git` を spawn | rebase・merge・push などは本家に任せて正しさと互換性を保つ |
+| 非同期 | tokio（I/O・プロセス）＋ rayon（CPU） | 古い要求は即キャンセルする |
+| 差分 | imara-diff、色付けは tree-sitter | 色付けは後追いで、まず色なしで即表示 |
+| 橋渡し | UniFFI ＋ 速さが要る経路だけ C ABI | 操作系は型安全に、行データはゼロコピーで |
+| UI の骨格・重い画面 | AppKit | 表示行の使い回し、描画範囲、レイヤーを直接制御できる |
+| UI の周辺 | SwiftUI（`NSHostingView` で埋め込む） | 設定・ダイアログ・Welcome を手早く作る |
+| GPU | Core Animation を基本に、History のグラフと差分の文字だけ Metal | 実装コストと快適さの落としどころ |
+| 対象 OS | macOS 14.4 以降、Apple Silicon | `os_sync_wait_on_address`、`NSView.displayLink` を使う |
+
+## 全体構成
+
+```
+┌──────────────────────── macOS アプリ（Swift / AppKit）────────────────────────┐
+│ サイドバー        History               差分表示            コミット入力     │
+│ NSOutlineView   NSTableView           自前の NSView        NSTextView        │
+│                 + Metal のグラフ       Core Text / Metal    （IME は OS）     │
+│ 3-way マージ（自前の NSView） · 設定・ダイアログ（SwiftUI）                  │
+│ ──────────────────────────────────────────────────────────────────────────── │
+│ Swift の薄い層: 見えている行だけ読む → 描く / 操作を Intent として送る       │
+└──────────────▲───────────────────────────────────────────────┬───────────────┘
+               │ 変更通知（変わった行の範囲） / 行データ（ゼロコピー）│ Intent
+┌──────────────┴────────── CoreClient（通信手段を抽象化）──────────▼───────────────┐
+│ ① 同一プロセス: C ABI   ② ローカル daemon: XPC＋共有メモリ   ③ SSH: stdio     │
+└──────────────▲───────────────────────────────────────────────┬───────────────┘
+┌──────────────┴──────────────────── Rust コア ─────────────────▼───────────────┐
+│ core    状態・スナップショット・Intent の処理（一方向のデータの流れ）          │
+│ repo    読み取りは gix、書き込みは git を spawn                              │
+│ index   コミット情報の永続キャッシュ（mmap、メモリ上と同じ配置）              │
+│ graph   レーンの順次計算・差分だけの再計算                                   │
+│ diff    imara-diff・単語差分・tree-sitter の色付け                           │
+│ watch   FSEvents で .git と作業ツリーを監視、まとめて再読込                   │
+│ oplog   Undo 用の操作ログ（操作前の HEAD と関係する ref を記録）              │
+│ search  log・pickaxe 検索（rayon で並列）                                    │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### リポジトリ構成
+
+拡張（vscode-amonhen）とは別のこのリポジトリで作る。
+
+```
+crates/
+  core/              コアのロジック（通信手段に依存しない）
+  layout/            #[repr(C)] のレコード定義（メモリ上の形 = ファイルの形 = 通信の形）
+  client/            CoreClient の共通 API
+  transport-inproc/  ① C ABI
+  transport-local/   ② XPC / Unix ドメインソケット＋共有メモリ（後で）
+  transport-remote/  ③ stdio（後で）
+bins/
+  amonhend/          daemon（後で）
+  amonhen/           CLI
+ffi/                 Swift 向け静的ライブラリ（xcframework）
+app/                 Xcode プロジェクト（AppKit）
+bench/               criterion のベンチと大規模リポジトリでの計測
+```
+
+## データ設計
+
+### 不変のスナップショット
+
+- コアは状態が変わるたびに新しいスナップショットを作り、`arc-swap` で公開する。公開したものは書き換えない。UI の読み取りにロックは要らない。
+- 行データは 4096 行ごとのチャンクに分け、変わったチャンクだけ作り直す（残りは前の世代と共有）。
+- 各スナップショットは `generation` を持つ。UI は世代番号で古いデータでの描画を検出する。
+
+### ゼロコピーの受け渡し
+
+- 行は `#[repr(C)]` の固定長レコード、可変長の文字列は 1 つのバイト列にまとめてオフセットと長さで指す。参照はポインタではなく、領域の先頭からのオフセットで持つ（共有メモリ・ファイル・ネットワークでそのまま通用させるため）。
+- Swift は `UnsafeBufferPointer` で直接読み、生ポインタは `withSnapshot { }` の外に出さない。
+- 表示用の文字列は ASCII なら 8 ビット、それ以外は UTF-16 で持つ。`CFStringCreateWithBytesNoCopy`（ASCII）/ `CFStringCreateWithCharactersNoCopy`（UTF-16）に渡し、表示時に変換しない。
+- グラフの点と線の配列は `MTLBuffer(bytesNoCopy:)` で GPU にそのまま載せる。
+- 永続キャッシュもメモリ上と同じ配置で書き、起動時は mmap するだけにする。
+- 原理的に残る処理は「git オブジェクトの展開」と「描画」だけ。どちらも 1 回きりにしてキャッシュする。
+
+### 変更通知
+
+- コアの作業スレッドから SPSC のリングバッファ（`rtrb`）にイベントを積み、`DispatchSource`（`.data_add`）でメインスレッドを起こす。合図は自動でまとまるので、UI の更新は 1 フレームに 1 回で済む。
+
+### 別プロセス・リモートにするとき（後で）
+
+- ② ローカル daemon: スナップショットを共有メモリに作り、領域は XPC で 1 回だけ渡す。Intent と通知も共有メモリのリングで送り、相手が寝ているときだけ `os_sync_wake_by_address_any` で起こす。要求処理のスレッドは `QOS_CLASS_USER_INTERACTIVE`。共有メモリの領域は使い回す。
+- ③ SSH: 手元にスナップショットの複製を持ち、UI は常に手元を読む。daemon からは変わったチャンクだけを zstd（辞書つき）で送る。大きな転送は細切れにして、操作系の通知を優先する。複製はディスクにも永続化し、再接続時は世代の差分だけ同期する。
+- どの動かし方でも、UI が読むのは手元のメモリだけ。通信は裏の同期にしか使わない。
+
+## History のグラフ
+
+### レイアウト（Rust）
+
+- commit-graph から親と世代番号を読む。メッセージ・作者は見えている行の分だけ後で取る。
+- 新しい順に順次レイアウトし、最初の 1 画面分ができた時点で表示する。4096 行ごとにレーンの状態をチェックポイントとして保存する。
+- 新しいコミットが増えたら先頭から計算し直し、チェックポイントと状態が一致した時点で打ち切る。
+- first-parent の幹線はレーン 0 に固定する。色はレーン番号ではなくブランチの出自で決め、スクロールや再計算で変わらないようにする。
+- 長い線は行ごとに分けず、区間（`row_start..row_end`）1 つとして持つ。見えている範囲の線は区間の索引で O(log n) で引く。
+
+### 描画（Metal）
+
+- 点・線・曲線・ラベルの背景を四角形のインスタンスとして、1 回の描画命令で描く。形は fragment シェーダーの SDF で描き、解析的にアンチエイリアスする。
+- インスタンスは表示範囲 ± 数画面分を GPU に置き、スクロールでは定数バッファのオフセットだけを変える。
+- `CAMetalLayer.maximumDrawableCount = 2`。入力を受けたら次の vsync を待たずに描いて表示する。
+
+### 入力
+
+- `scrollWheel` を直接受け、イベントのタイムスタンプと速度から表示時刻の位置を予測して描く。慣性は `momentumPhase` に従う。
+- 当たり判定は行 = `y / 行の高さ`、レーン = `x / レーンの幅` で O(1)。
+
+### 表現の工夫
+
+- 幹線を太く、枝を細く描く。
+- ホバーしたコミットの祖先の道筋を強調し、ほかを薄くする（祖先判定は Rust でビット集合を作り、GPU にはテクスチャ 1 枚で渡す）。
+- ブランチに焦点を当てるモード、マージ済みブランチの折りたたみ。
+- レーンが多いときは未使用レーンを詰め、ホバー位置の周辺を魚眼で広げる。
+- 未コミットの変更を先頭の点線の仮ノードで、stash を専用の形で、ahead / behind の区間を色分けで示す。
+- レイアウトが変わったら新旧をコミット ID で対応付け、頂点シェーダーで位置を補間してアニメーションする。
+- スクロールバーにグラフの密度（コミットの頻度、ブランチの活動量）を描く。
+
+## 差分表示
+
+- `NSTextView` は使わない。見えている行だけ Core Text でレイアウトし、CTLine を「世代＋行番号」でキャッシュする。タイル状の CALayer で描画し、スクロールは GPU の合成に任せる。
+- 計測して足りなければ、文字をグリフアトラスにして Metal のインスタンス描画に上げる。
+- ファイル内容は gix が展開した `Arc<[u8]>` を差分計算・色付け・表示で共有する。
+- テキスト選択・コピー・検索・右クリックメニュー・hunk / 行単位の stage を自前で実装する。
+
+## 速度目標と計測
+
+| 項目 | 目標 |
+| --- | --- |
+| 起動して History を表示 | 数 ms（永続キャッシュあり） |
+| 130 万コミット（linux）の全レイアウト | 裏で 100 ms 前後 |
+| スクロール中の GPU へのデータ転送 | 定数 1 つ |
+| 1 フレームの描画命令 | History は 1 回 |
+| 入力から表示まで | 8.3 ms 以内 |
+| Rust と Swift の境界のコスト | 1 フレームあたり µs 未満 |
+
+- Rust は criterion、Swift は `os_signpost` ＋ Instruments で計測する。
+- 入力イベントのタイムスタンプから `MTLDrawable.addPresentedHandler` の表示時刻までを常に計測し、デバッグ表示に出す。
+- CI で linux・chromium 規模のリポジトリを使い、起動時間・フレーム落ち・入力遅延の悪化を検出する。
+- `CFString` の NoCopy が実際にコピーしていないことを Instruments の Allocations で確かめる。
+
+## 配布
+
+- arm64 の `.app` を GitHub Releases に置く。拡張と同じく `v*` タグの push で GitHub Actions がビルドして添付し、main への push で `snapshot` の pre-release を作り直す。
+- 署名は自己署名のコード署名用証明書で行う。ad-hoc 署名だとビルドのたびに身元が変わり、macOS のアクセス許可（フォルダへのアクセス、キーチェーンなど）が更新のたびにリセットされるため。証明書と秘密鍵は GitHub Actions の secret に置く。
+- インストール・更新は `scripts/install.sh [stable|snapshot]`。`gh release download` で取得して `/Applications` に置く。quarantine 属性が付かないので、公証なしで起動できる（最初の配布で確かめる。付いていたら `xattr -d com.apple.quarantine` で外す）。
+- Developer ID の取得と公証、自動更新（Sparkle）は、人に配りたくなったときに検討する。
+
+## 既存の拡張との関係
+
+- 拡張は今のまま保守する。Standalone は別製品として作る。
+- 設計の考え方（spawn を減らす、分割取得、楽観的更新、Undo の操作ログ、非対話 rebase の todo 生成）はそのまま移す。非対話 rebase の手順（vscode-amonhen の `src/history/rebasePlan.ts`）は Rust に移植する。
+- daemon ができたら、拡張の git 実行層・状態管理層を daemon への接続に置き換えることを検討する（Remote-SSH では SSH 先で `amonhend --stdio` を起動する）。
+
+## リスクと検証
+
+| リスク | 検証の方法 |
+| --- | --- |
+| gix が書き込み系・特殊な設定（reftable、sparse checkout、partial clone など）に追いつかない | 読み取りだけ gix、書き込みは git。読めない場合は git の spawn に落とす経路を残す |
+| 自前の差分表示で日本語入力・選択・アクセシビリティの作り込みが重い | 入力欄は標準の `NSTextView`。差分表示は読み取り専用にして、`NSAccessibility` は行単位で提供する |
+| UniFFI と C ABI の二本立てで境界が複雑になる | 行データ以外は UniFFI に寄せ、C ABI は History・差分・status の行取得だけにする |
+| 共有メモリ・リングバッファでのメモリ安全性 | Swift 側は範囲を限定した API で包み、Rust 側は Miri と AddressSanitizer で境界をテストする |
+| macOS 14.4 未満の端末 | 対象外とする |
+
+## 実装順序
+
+いちばん重い History を最初に試作し、境界の設計と速度目標を満たせるかを確かめてから広げる。
+
+試作:
+
+- [ ] 1. Rust の workspace と `layout` / `core` の骨組み、gix による commit-graph の読み取り
+- [ ] 2. グラフのレイアウト（順次計算、チェックポイント、区間表現）と criterion のベンチ
+- [ ] 3. C ABI でのスナップショット公開と、Swift からのゼロコピー読み取り
+- [ ] 4. AppKit の History（`NSTableView`）と Metal のグラフ描画、入力から表示までの計測
+- [ ] 5. linux リポジトリで速度目標を検証。満たせなければ設計を見直す
+
+本体:
+
+- [ ] 6. 永続キャッシュ（mmap）と起動直後の即時表示
+- [ ] 7. サイドバー（Branches / Remotes / Tags / Stashes / Submodules）と FSEvents による変更検知
+- [ ] 8. 差分表示（Core Text、タイル、CTLine キャッシュ）と後追いの色付け
+- [ ] 9. Working Copy: status、ファイル・hunk・行単位の stage、コミット入力
+- [ ] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ
+- [ ] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
+- [ ] 12. 3-way マージ
+- [ ] 13. グラフ表現の工夫（祖先の強調、折りたたみ、魚眼、アニメーション、密度表示）
+- [ ] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）
+
+拡張:
+
+- [ ] 15. CLI（`amonhen`）
+- [ ] 16. ローカル daemon（XPC＋共有メモリ）
+- [ ] 17. SSH 越しの daemon と手元の複製
+- [ ] 18. VSCode 拡張からの daemon 利用
+
+## 未決事項
+
+- 差分表示を最初から Metal にするか、Core Text＋CALayer で始めて計測後に上げるか（現案は後者）
+- 永続キャッシュの形式を rkyv にするか自前にするか
+- アプリ名・バンドル ID（`Amon Hen`、`dev.amonhen.app` など）
