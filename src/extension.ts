@@ -10,6 +10,7 @@ import { registerNavCommands } from './ui/navCommands.ts';
 import { registerSequenceCommands } from './ui/sequenceCommands.ts';
 import { SidebarProvider } from './ui/sidebar.ts';
 import { registerStashCommands } from './ui/stashCommands.ts';
+import { registerSubmoduleCommands } from './ui/submoduleCommands.ts';
 import { registerSyncCommands } from './ui/syncCommands.ts';
 import { registerUndoCommand } from './ui/undoCommand.ts';
 
@@ -57,6 +58,7 @@ export async function activate(
     registerNavCommands(manager),
     registerBranchCommands(manager),
     registerStashCommands(manager),
+    registerSubmoduleCommands(manager),
   );
 
   await manager.initialize();

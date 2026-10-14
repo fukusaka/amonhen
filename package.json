@@ -254,6 +254,17 @@
         "command": "amonhen.history.revert",
         "title": "Revert",
         "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodule.update",
+        "title": "Update Submodule",
+        "category": "Amon Hen",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "amonhen.submodule.open",
+        "title": "Open Submodule in New Window",
+        "category": "Amon Hen"
       }
     ],
     "menus": {
@@ -379,6 +390,21 @@
           "command": "amonhen.stash.drop",
           "when": "view == amonhen.sidebar && viewItem == stash",
           "group": "2_stash@1"
+        },
+        {
+          "command": "amonhen.submodule.update",
+          "when": "view == amonhen.sidebar && viewItem == submodule",
+          "group": "inline"
+        },
+        {
+          "command": "amonhen.submodule.update",
+          "when": "view == amonhen.sidebar && viewItem == submodule",
+          "group": "1_submodule@1"
+        },
+        {
+          "command": "amonhen.submodule.open",
+          "when": "view == amonhen.sidebar && viewItem == submodule",
+          "group": "1_submodule@2"
         }
       ],
       "commandPalette": [
@@ -476,6 +502,14 @@
         },
         {
           "command": "amonhen.history.revert",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodule.update",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodule.open",
           "when": "false"
         }
       ],
