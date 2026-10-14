@@ -10,7 +10,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 | 項目 | 内容 |
 | --- | --- |
-| タイトルのボタン | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。無ければ origin へ送って upstream に設定）、Undo。`…` の中に Open Amon Hen、Refresh、Force Push |
+| タイトルのボタン | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。無ければ origin へ送って upstream に設定）、Undo。`…` の中に New Branch、Stash Changes、Open Amon Hen、Refresh、Force Push |
 | Working Copy | 変更の数。選ぶとメインビューに Working Copy を出す |
 | History | 現在のブランチ。選ぶとメインビューに History を出す |
 | merge / rebase の途中 | 「Rebase in progress (2/5)」のような行。Continue / Skip / Abort |
@@ -18,7 +18,9 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 | Remotes / Tags / Stashes / Submodules | 開いたときに取得する |
 
 - ブランチ・リモートブランチ・タグを選ぶと、メインビューの History にその履歴が出る。
-- 右クリックで Checkout（リモートブランチなら追跡するローカルブランチを作って切り替える）、Merge into Current Branch、Rebase Current Branch onto This、Delete Branch（Undo で戻せる）。
+- ブランチ・タグの右クリックで Checkout（リモートブランチなら追跡するローカルブランチを作って切り替える）、Merge into Current Branch、Rebase Current Branch onto This、Rename Branch、Delete Branch、New Branch（そこから作って切り替える）、New Tag（メッセージを入れれば annotated tag）。作成と削除は Undo で戻せる。
+- Stashes の見出しの `+` で、作業中の変更を stash する（untracked のファイルを含めるかを選べる）。stash を選ぶと中身を複数ファイル diff で開き、右クリックで Apply / Pop / Drop（Undo で戻せる）。Apply と Pop は stage していた状態も戻す。
+- Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。
 - 複数のリポジトリを開いているときは、タイトルのボタンで切り替える。
 
 ### ドラッグ＆ドロップ
@@ -39,6 +41,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 - 差分の行をクリックで選び（Shift+クリックで範囲）、Stage N Lines で選んだ行だけを stage する。Staged のファイルでは同じ操作で unstage になる。
 - hunk ごとの Stage Hunk、Stage File、一覧の `+` / `−`、Stage All でもできる。一覧では上下キーで選び、Space か Enter で stage / unstage する。
+- Changes のファイルは、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す。破棄した内容は Undo で戻せる。
 - コミット欄は Summary と Description（複数行）。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。
 - コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Accept Current、Accept Incoming、Mark as Resolved を選べる。片側で削除されたファイルも Accept で解決できる。解決済みにするとき、マーカーが残っていれば確認する。
 
@@ -63,17 +66,19 @@ HEAD から first-parent で辿れるコミット（最初の merge コミット
 | Move Up / Move Down | 1 つ新しい側 / 古い側へ動かす。行をドラッグしても並べ替えられる |
 | Copy Commit ID | コミット ID をコピーする |
 
+どのコミットでも、右クリックで New Branch / New Tag（そのコミットから作る）、Revert（打ち消すコミットを作る）ができる。現在のブランチに無いコミットは Cherry-pick で現在のブランチに当てられる。どれも Undo で戻せる。
+
 ### 途中で止まった merge / rebase
 
 コンフリクトや Edit・Split で止まると、ナビに「Rebase in progress (2/5)」のような行が出る。解決して stage したら Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
 
 ### Undo
 
-ナビの Undo で、直前の操作を戻す。対象はコミット（amend を含む）、Merge、Rebase、fast-forward、Pull、ブランチの削除、History でのコミットの編集。
+ナビの Undo で、直前の操作を戻す。対象はコミット（amend を含む）、Merge、Rebase、fast-forward、Pull、ブランチ・タグの作成と削除、Cherry-pick、Revert、変更の破棄、stash の削除、History でのコミットの編集。
 
 - コミットを戻すと、その変更は stage された状態に戻る。
 - Merge や Rebase を戻すと、作業中の変更は残したまま、ブランチと checkout していたブランチを操作の前に戻す。
-- 操作のあとでブランチが動いていたら、壊さないように Undo しない。
+- 操作のあとでブランチが動いていたら、壊さないように Undo しない。変更の破棄も、破棄したあとでファイルを書き換えていたら Undo しない。
 - Edit や Split で止めた操作は、Continue で終わった時点で Undo の対象になる。
 - 記録は `.git/amonhen/undo.json` に残るので、VSCode を再起動しても戻せる。
 
