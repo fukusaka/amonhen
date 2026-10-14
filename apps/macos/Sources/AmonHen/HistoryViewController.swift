@@ -61,6 +61,19 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 入力イベントから画面に表示されるまでの時間（秒）。
     var onLatency: ((CFTimeInterval) -> Void)?
     var actions: Actions?
+
+    /// 表示する範囲。
+    enum Scope: Equatable {
+        case all
+        case current
+        /// サイドバーで選んだ ref（名前, コミット）。
+        case ref(String, Data)
+    }
+
+    private(set) var scope: Scope = .all
+    private let scopePopup = NSPopUpButton()
+    /// HEAD のコミット（Current Branch で使う）。
+    var head: Data?
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
     var onSelectCommit: ((Data?) -> Void)?
 
@@ -111,15 +124,66 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             object: tableView)
 
         graphView.metalLayer.device = renderer.device
+        scopePopup.target = self
+        scopePopup.action = #selector(scopeChanged)
+        scopePopup.controlSize = .small
+        updateScopePopup()
         container.addSubview(scrollView)
         container.addSubview(graphView)
+        container.addSubview(scopePopup)
         view = container
     }
 
     override func viewDidLayout() {
         super.viewDidLayout()
-        scrollView.frame = view.bounds
+        // 上に範囲の切り替え、その下に表。
+        let barHeight: CGFloat = 26
+        scopePopup.frame = NSRect(x: 6, y: view.bounds.height - barHeight + 2, width: 240, height: barHeight - 4)
+        scrollView.frame = NSRect(x: 0, y: 0, width: view.bounds.width, height: view.bounds.height - barHeight)
         layoutGraphView()
+    }
+
+    private func updateScopePopup() {
+        scopePopup.removeAllItems()
+        scopePopup.addItems(withTitles: ["All Branches", "Current Branch"])
+        if case let .ref(name, _) = scope {
+            scopePopup.addItem(withTitle: name)
+            scopePopup.selectItem(at: 2)
+        } else {
+            scopePopup.selectItem(at: scope == .current ? 1 : 0)
+        }
+    }
+
+    @objc private func scopeChanged() {
+        switch scopePopup.indexOfSelectedItem {
+        case 0: set(scope: .all)
+        case 1: set(scope: .current)
+        default: break
+        }
+    }
+
+    /// 表示する範囲を変えて読み直す。
+    func set(scope: Scope, select commit: Data? = nil) {
+        self.scope = scope
+        updateScopePopup()
+        reloadScope(select: commit)
+    }
+
+    private func reloadScope(select commit: Data? = nil) {
+        let repository = self.repository
+        let tips: [Data]? = switch scope {
+        case .all: nil
+        case .current: head.map { [$0] }
+        case let .ref(_, target): [target]
+        }
+        Task {
+            let next: History? = await Task.detached(priority: .userInitiated) {
+                if let tips { try? repository.filteredHistory(tips: tips) } else { repository.latestHistory() }
+            }.value
+            guard let next else { return }
+            show(next, resetScroll: true)
+            if let commit, let row = next.row(of: commit) { select(row: row) }
+        }
     }
 
     /// 前回の History を永続キャッシュからすぐ表示し、最新にするのは裏で行う。
@@ -131,7 +195,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         Task {
             do {
                 let latest = try await Task.detached(priority: .userInitiated) { try repository.loadHistory() }.value
-                if latest.generation != history?.generation { show(latest) }
+                if scope != .all {
+                    reloadScope()
+                } else if latest.generation != history?.generation {
+                    show(latest)
+                }
                 completion(nil)
             } catch {
                 completion(error)
@@ -146,9 +214,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     func refresh() {
         let repository = self.repository
         Task {
-            guard let latest = try? await Task.detached(priority: .userInitiated, operation: { try repository.loadHistory() }).value,
-                  latest.generation != history?.generation else { return }
-            show(latest)
+            guard let latest = try? await Task.detached(priority: .userInitiated, operation: { try repository.loadHistory() }).value
+            else { return }
+            if scope != .all {
+                reloadScope()
+            } else if latest.generation != history?.generation {
+                show(latest)
+            }
         }
     }
 
@@ -165,8 +237,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         scrollView.reflectScrolledClipView(clip)
     }
 
-    private func show(_ history: History) {
-        let first = self.history == nil
+    private func show(_ history: History, resetScroll: Bool = false) {
+        let first = self.history == nil || resetScroll
         self.history = history
         chunks.removeAll()
         loadingChunks.removeAll()

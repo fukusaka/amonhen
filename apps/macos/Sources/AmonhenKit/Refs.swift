@@ -24,6 +24,8 @@ public struct RefItem: Hashable, Sendable {
 public struct Refs: Sendable {
     public let generation: UInt64
     public let headBranch: String?
+    /// HEAD のコミット（20 バイト）。
+    public var head: Data?
     public let items: [RefItem]
 }
 
@@ -46,7 +48,22 @@ extension Repository {
                 detail: text(e.detail_off, e.detail_len),
                 ahead: Int(e.ahead), behind: Int(e.behind), gone: e.gone != 0)
         }
-        return Refs(generation: v.generation, headBranch: text(v.head_branch_off, v.head_branch_len), items: items)
+        var head = v.head
+        return Refs(
+            generation: v.generation, headBranch: text(v.head_branch_off, v.head_branch_len),
+            head: v.has_head != 0 ? withUnsafeBytes(of: &head) { Data($0) } : nil, items: items)
+    }
+}
+
+extension Repository {
+    /// `tips`（20 バイトの ID）から辿れるコミットだけの History。裏のスレッドで呼ぶ。
+    public func filteredHistory(tips: [Data]) throws -> History {
+        let bytes = tips.reduce(Data(), +)
+        let raw = bytes.withUnsafeBytes {
+            amonhen_history_filtered(self.raw, $0.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(tips.count))
+        }
+        guard let raw else { throw AmonhenError.last() }
+        return History(raw: raw, repository: self)
     }
 }
 

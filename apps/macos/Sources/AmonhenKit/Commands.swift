@@ -50,3 +50,35 @@ extension WorkingFileDiff {
         if !ok { throw AmonhenError.last() }
     }
 }
+
+/// コミットの詳細。
+public struct CommitInfo: Decodable, Sendable {
+    public let oid: String
+    public let message: String
+    public let author: String
+    public let authorEmail: String
+    public let authorTime: Int64
+    public let committer: String
+    public let committerTime: Int64
+    public let parents: [String]
+    public let refs: [String]
+}
+
+extension Repository {
+    /// コミットの詳細。裏のスレッドで呼ぶ。
+    public func commitInfo(oid: String) throws -> CommitInfo {
+        let json = try Repository.json(["op": "commitInfo", "oid": oid])
+        guard let out = amonhen_command(raw, json) else { throw AmonhenError(description: "結果がない") }
+        defer { amonhen_string_free(out) }
+        struct Response: Decodable {
+            let ok: Bool
+            let info: CommitInfo?
+            let error: String?
+        }
+        let response = try JSONDecoder().decode(Response.self, from: Data(String(cString: out).utf8))
+        guard response.ok, let info = response.info else {
+            throw AmonhenError(description: response.error ?? "失敗した")
+        }
+        return info
+    }
+}

@@ -389,6 +389,9 @@ pub struct AmonhenRefsView {
     /// チェックアウト中のブランチ。detached HEAD なら `head_branch_len` が `u32::MAX`。
     pub head_branch_off: u32,
     pub head_branch_len: u32,
+    /// HEAD のコミット。まだなければ `has_head` が 0。
+    pub has_head: u8,
+    pub head: [u8; 20],
 }
 
 /// 一覧は数百〜数千件なので、文字列は 1 つの領域に詰めて渡す。
@@ -479,6 +482,8 @@ pub unsafe extern "C" fn amonhen_refs_view(refs: *const AmonhenRefs) -> AmonhenR
         strings: r.strings.as_ptr(),
         head_branch_off: r.head_branch.0,
         head_branch_len: r.head_branch.1,
+        has_head: u8::from(r.snapshot.refs.head.is_some()),
+        head: r.snapshot.refs.head.map_or([0; 20], |o| o.0),
     }
 }
 

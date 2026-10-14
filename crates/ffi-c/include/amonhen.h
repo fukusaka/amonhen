@@ -204,6 +204,11 @@ typedef struct {
    */
   uint32_t head_branch_off;
   uint32_t head_branch_len;
+  /**
+   * HEAD のコミット。まだなければ `has_head` が 0。
+   */
+  uint8_t has_head;
+  uint8_t head[20];
 } AmonhenRefsView;
 
 /**

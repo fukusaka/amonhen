@@ -136,14 +136,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             detailItem.minimumThickness = 160
             content.addSplitViewItem(detailItem)
             controller.onSelectCommit = { [weak detail] commit in detail?.show(commit: commit) }
+            // 詳細の親コミットのリンク。
+            detail.onSelectCommit = { [weak controller] hex in
+                guard let controller, let id = Data(hex: hex) else { return }
+                if let row = controller.currentHistory?.row(of: id) {
+                    controller.select(row: row)
+                } else {
+                    controller.set(scope: .all, select: id)
+                }
+            }
             let workingCopy = WorkingCopyViewController(repository: repository, renderer: text)
             let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy])
             sidebar.onSelectPage = { [weak pages] page in pages?.show(page) }
             split.addSplitViewItem(NSSplitViewItem(viewController: pages))
+            // ブランチ・タグを選ぶと、その履歴に絞り込む。stash などはそのコミットを選ぶだけ。
             sidebar.onSelect = { [weak controller] item in
-                guard let controller, let target = item.target,
-                      let row = controller.currentHistory?.row(of: target) else { return }
-                controller.select(row: row)
+                guard let controller, let target = item.target else { return }
+                if [.local, .remote, .tag].contains(item.kind) {
+                    controller.set(scope: .ref(item.name, target), select: target)
+                } else if let row = controller.currentHistory?.row(of: target) {
+                    controller.select(row: row)
+                }
             }
             window.contentViewController = split
             window.setContentSize(NSSize(width: 1100, height: 720))
@@ -243,6 +256,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
                 sidebar?.show(refs)
+                history?.head = refs.head
             } catch {
                 NSLog("ref を読めない: \(error)")
             }
@@ -298,3 +312,18 @@ let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)
 app.run()
+
+extension Data {
+    /// 16 進数の文字列から。
+    init?(hex: String) {
+        var bytes = [UInt8]()
+        var index = hex.startIndex
+        while index < hex.endIndex {
+            let next = hex.index(index, offsetBy: 2, limitedBy: hex.endIndex) ?? hex.endIndex
+            guard let byte = UInt8(hex[index..<next], radix: 16) else { return nil }
+            bytes.append(byte)
+            index = next
+        }
+        self.init(bytes)
+    }
+}

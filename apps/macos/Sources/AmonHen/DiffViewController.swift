@@ -254,12 +254,19 @@ final class DiffDocumentView: NSView {
 }
 
 /// 選んだコミットの詳細: 変わったファイルの一覧と、選んだファイルの差分。
-final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSource, NSTableViewDelegate,
+    NSTextViewDelegate
+{
+    /// 親コミットのリンクを押したとき（40 桁の ID）。
+    var onSelectCommit: ((String) -> Void)?
+    /// メッセージ・作者・ID・親コミット。
+    private let header = NSTextView(frame: NSRect(x: 0, y: 0, width: 240, height: 150))
     private let repository: Repository
     private let files = NSTableView()
     private let diffView: DiffViewController
     private var changes: CommitChanges?
     private var request = 0
+    private var headerRequest = 0
 
     init(repository: Repository, renderer: TextRenderer) {
         self.repository = repository
@@ -281,8 +288,28 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 240, height: 300))
         scroll.documentView = files
         scroll.hasVerticalScroller = true
+        header.isEditable = false
+        header.drawsBackground = true
+        header.backgroundColor = .textBackgroundColor
+        header.textContainerInset = NSSize(width: 6, height: 6)
+        header.delegate = self
+        header.autoresizingMask = [.width]
+        header.isVerticallyResizable = true
+        header.minSize = NSSize(width: 0, height: 0)
+        header.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        header.textContainer?.widthTracksTextView = true
+        let headerScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 240, height: 150))
+        headerScroll.documentView = header
+        headerScroll.hasVerticalScroller = true
+        headerScroll.drawsBackground = false
+        let leftColumn = NSSplitView(frame: NSRect(x: 0, y: 0, width: 240, height: 300))
+        leftColumn.isVertical = false
+        leftColumn.dividerStyle = .thin
+        leftColumn.addArrangedSubview(headerScroll)
+        leftColumn.addArrangedSubview(scroll)
+        leftColumn.setHoldingPriority(.init(260), forSubviewAt: 0)
         let list = NSViewController()
-        list.view = scroll
+        list.view = leftColumn
         let listItem = NSSplitViewItem(viewController: list)
         listItem.minimumThickness = 160
         // ウィンドウの大きさを変えたとき、ファイル一覧の幅は保ち、差分の側を伸び縮みさせる。
@@ -305,9 +332,19 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             changes = nil
             files.reloadData()
             diffView.show(nil)
+            header.string = ""
             return
         }
         let repository = self.repository
+        let hex = commit.map { String(format: "%02x", $0) }.joined()
+        // ファイルの差分の読み込みとは別の番号で、古い結果を捨てる。
+        headerRequest += 1
+        let headerRequest = self.headerRequest
+        Task {
+            guard let info = try? await Task.detached(priority: .userInitiated, operation: { try repository.commitInfo(oid: hex) }).value,
+                  headerRequest == self.headerRequest else { return }
+            showHeader(info)
+        }
         Task {
             let changes = try? await Task.detached(priority: .userInitiated) { try repository.changes(of: commit) }.value
             guard request == self.request else { return }
@@ -319,6 +356,49 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
                 files.selectRowIndexes([0], byExtendingSelection: false)
             }
         }
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .medium
+        return f
+    }()
+
+    private func showHeader(_ info: CommitInfo) {
+        let text = NSMutableAttributedString()
+        func add(_ s: String, _ attrs: [NSAttributedString.Key: Any]) {
+            text.append(NSAttributedString(string: s, attributes: attrs))
+        }
+        let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
+        let dim: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+        let mono: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor]
+        let message = info.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let (subject, rest) = message.firstIndex(of: "\n").map { (String(message[..<$0]), String(message[$0...])) } ?? (message, "")
+        add(subject, [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
+        add(rest + "\n\n", body)
+        if !info.refs.isEmpty {
+            add(info.refs.joined(separator: ", ") + "\n", [.font: NSFont.boldSystemFont(ofSize: 11), .foregroundColor: NSColor.systemBlue])
+        }
+        let date = Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(info.authorTime)))
+        add("\(info.author) <\(info.authorEmail)>  \(date)\n", dim)
+        if info.committer != info.author {
+            add("Committed by \(info.committer)\n", dim)
+        }
+        add("Commit  \(info.oid)\n", mono)
+        for parent in info.parents {
+            add("Parent  ", mono)
+            var link = mono
+            link[.link] = "amonhen-commit:\(parent)"
+            add(String(parent.prefix(12)) + "\n", link)
+        }
+        header.textStorage?.setAttributedString(text)
+    }
+
+    func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
+        guard let s = (link as? String) ?? (link as? URL)?.absoluteString, s.hasPrefix("amonhen-commit:") else { return false }
+        onSelectCommit?(String(s.dropFirst("amonhen-commit:".count)))
+        return true
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
