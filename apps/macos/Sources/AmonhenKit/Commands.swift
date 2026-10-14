@@ -17,7 +17,16 @@ extension Repository {
     /// 命令の形は `crates/core/src/command.rs` の `Command`。
     @discardableResult
     public func run(_ command: [String: Any]) throws -> CommandResult {
-        let json = String(decoding: try JSONSerialization.data(withJSONObject: command), as: UTF8.self)
+        try run(json: Self.json(command))
+    }
+
+    /// 命令を JSON の文字列にする（スレッドをまたいで渡すため）。
+    public static func json(_ command: [String: Any]) throws -> String {
+        String(decoding: try JSONSerialization.data(withJSONObject: command), as: UTF8.self)
+    }
+
+    @discardableResult
+    public func run(json: String) throws -> CommandResult {
         guard let out = amonhen_command(raw, json) else { throw AmonhenError(description: "結果がない") }
         defer { amonhen_string_free(out) }
         let response = try JSONSerialization.jsonObject(with: Data(String(cString: out).utf8)) as? [String: Any] ?? [:]

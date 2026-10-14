@@ -14,6 +14,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let commitButton = NSButton(title: "Commit", target: nil, action: nil)
     private let fileButton = NSButton(title: "Stage File", target: nil, action: nil)
     private let linesButton = NSButton(title: "Stage Lines", target: nil, action: nil)
+    private let discardButton = NSButton(title: "Discard Lines", target: nil, action: nil)
+    var actions: Actions?
     private let titleLabel = NSTextField(labelWithString: "")
 
     private final class Group {
@@ -112,7 +114,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         linesButton.target = self
         linesButton.action = #selector(stageLines)
         titleLabel.lineBreakMode = .byTruncatingMiddle
-        let bar = NSStackView(views: [titleLabel, NSView(), linesButton, fileButton])
+        discardButton.target = self
+        discardButton.action = #selector(discard)
+        let bar = NSStackView(views: [titleLabel, NSView(), discardButton, linesButton, fileButton])
         bar.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
         diffView.isSelectable = true
         diffView.onSelectionChange = { [weak self] in self?.updateButtons() }
@@ -209,6 +213,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         fileButton.isEnabled = selectedKey != nil
         linesButton.title = staged ? "Unstage Lines" : "Stage Lines"
         linesButton.isEnabled = current != nil && !diffView.selectedChangeRows.isEmpty
+        // 選んだ行があれば行を、なければファイルを破棄する。stage 済みの変更は破棄しない。
+        discardButton.isHidden = staged
+        discardButton.title = diffView.selectedChangeRows.isEmpty ? "Discard File" : "Discard Lines"
+        discardButton.isEnabled = selectedKey != nil
         commitButton.isEnabled = !(stagedGroup.items.isEmpty && amend.state == .off)
             && !message.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -244,6 +252,24 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard !rows.isEmpty else { return }
         run { try current.stage(rows: rows) }
     }
+
+    @objc private func discard() {
+        guard let key = selectedKey, !key.staged, let actions else { return }
+        let rows = diffView.selectedChangeRows
+        if let current, !rows.isEmpty {
+            actions.perform { try current.discard(rows: rows) }
+        } else if current?.item.kind == .untracked {
+            guard actions.confirm(
+                "\(key.path) を削除しますか？", message: "untracked のファイルなので、Undo では戻せません。", ok: "削除") else { return }
+            let url = URL(fileURLWithPath: repositoryRoot).appendingPathComponent(key.path)
+            actions.perform { try FileManager.default.removeItem(at: url) }
+        } else {
+            actions.perform(["op": "discard", "paths": [key.path]])
+        }
+    }
+
+    /// 作業ツリーのルート（untracked のファイルを消すときに使う）。
+    var repositoryRoot = ""
 
     @objc private func toggleAmend() {
         updateButtons()

@@ -35,6 +35,13 @@ public final class Repository: @unchecked Sendable {
         amonhen_repo_free(raw)
     }
 
+    /// 作業ツリーのルート。bare リポジトリなら nil。
+    public var workdir: String? {
+        guard let s = amonhen_repo_workdir(raw) else { return nil }
+        defer { amonhen_string_free(s) }
+        return String(cString: s)
+    }
+
     /// History を読み直して公開する。前回の結果があれば、変わった所だけ計算し直す。
     public func loadHistory() throws -> History {
         guard let raw = amonhen_history_load(raw) else { throw AmonhenError.last() }

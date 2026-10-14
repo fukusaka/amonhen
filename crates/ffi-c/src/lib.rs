@@ -726,6 +726,9 @@ pub struct AmonhenStatusView {
     /// チェックアウト中のブランチ。detached HEAD なら `branch_len` が `u32::MAX`。
     pub branch_off: u32,
     pub branch_len: u32,
+    /// 上流ブランチ（`origin/main`）。なければ `upstream_len` が `u32::MAX`。
+    pub upstream_off: u32,
+    pub upstream_len: u32,
     pub ahead: u32,
     pub behind: u32,
 }
@@ -735,6 +738,7 @@ struct StatusHandle {
     entries: Vec<AmonhenStatusEntry>,
     strings: Vec<u8>,
     branch: (u32, u32),
+    upstream: (u32, u32),
 }
 
 /// 作業ツリーと index の状態を読み直す（`amonhen_status_release` で手放す）。前回と同じなら同じ世代。
@@ -760,6 +764,7 @@ pub unsafe extern "C" fn amonhen_status_load(repo_ptr: *const AmonhenRepo) -> *c
         None => (0, u32::MAX),
     };
     let branch = put(snapshot.status.branch.as_deref());
+    let upstream = put(snapshot.status.upstream.as_deref());
     let entries = snapshot
         .status
         .entries
@@ -784,6 +789,7 @@ pub unsafe extern "C" fn amonhen_status_load(repo_ptr: *const AmonhenRepo) -> *c
         entries,
         strings,
         branch,
+        upstream,
     }))
     .cast()
 }
@@ -809,6 +815,8 @@ pub unsafe extern "C" fn amonhen_status_view(status: *const AmonhenStatus) -> Am
         strings: s.strings.as_ptr(),
         branch_off: s.branch.0,
         branch_len: s.branch.1,
+        upstream_off: s.upstream.0,
+        upstream_len: s.upstream.1,
         ahead: s.snapshot.status.ahead,
         behind: s.snapshot.status.behind,
     }
@@ -985,4 +993,17 @@ pub unsafe extern "C" fn amonhen_discard_rows(
         .map(|i| unsafe { *rows.add(i) } as usize)
         .collect();
     done(repo(repo_ptr).discard_rows(d, &rows))
+}
+
+/// 作業ツリーのルート（`amonhen_string_free` で解放する）。bare リポジトリなら NULL。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_repo_workdir(repo_ptr: *const AmonhenRepo) -> *mut c_char {
+    repo(repo_ptr)
+        .paths()
+        .workdir
+        .and_then(|p| CString::new(p.display().to_string()).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
 }

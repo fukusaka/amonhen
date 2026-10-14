@@ -39,6 +39,56 @@ final class PageViewController: NSViewController {
     }
 }
 
+/// ツールバー: Fetch・Push・Undo。
+final class MainToolbar: NSObject, NSToolbarDelegate {
+    let toolbar = NSToolbar(identifier: "main")
+    private let actions: Actions
+    private let undoItem = NSToolbarItem(itemIdentifier: .init("undo"))
+
+    init(actions: Actions) {
+        self.actions = actions
+        super.init()
+        toolbar.delegate = self
+        toolbar.displayMode = .iconAndLabel
+        setUndo(nil)
+    }
+
+    func setUndo(_ label: String?) {
+        undoItem.isEnabled = label != nil
+        undoItem.toolTip = label.map { "Undo \($0)" } ?? "Undo できる操作はありません"
+        undoItem.label = label.map { "Undo \($0)" } ?? "Undo"
+    }
+
+    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        [.init("fetch"), .init("push"), .flexibleSpace, .init("undo")]
+    }
+
+    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
+        toolbarDefaultItemIdentifiers(toolbar)
+    }
+
+    func toolbar(
+        _ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool
+    ) -> NSToolbarItem? {
+        let item: NSToolbarItem, symbol: String, action: Selector
+        switch id.rawValue {
+        case "fetch": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "arrow.down.circle", #selector(fetch))
+        case "push": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "arrow.up.circle", #selector(push))
+        case "undo": (item, symbol, action) = (undoItem, "arrow.uturn.backward.circle", #selector(undo))
+        default: return nil
+        }
+        if item.label.isEmpty { item.label = id.rawValue.capitalized }
+        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: item.label)
+        item.target = self
+        item.action = action
+        return item
+    }
+
+    @objc private func fetch() { actions.fetch() }
+    @objc private func push() { actions.push() }
+    @objc private func undo() { actions.undo() }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var history: HistoryViewController?
@@ -46,6 +96,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var repository: Repository?
     private var watch: RepositoryWatch?
     private var workingCopy: WorkingCopyViewController?
+    private var actions: Actions?
+    private var toolbar: MainToolbar?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -116,6 +168,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.sidebar = sidebar
             self.repository = repository
             self.workingCopy = workingCopy
+            let actions = Actions(repository: repository)
+            actions.window = window
+            actions.onChange = { [weak self] in
+                self?.history?.refresh()
+                self?.reloadRefs()
+                self?.workingCopy?.refresh()
+            }
+            sidebar.actions = actions
+            controller.actions = actions
+            workingCopy.actions = actions
+            workingCopy.repositoryRoot = repository.workdir ?? path
+            let toolbar = MainToolbar(actions: actions)
+            window.toolbar = toolbar.toolbar
+            actions.onUndoChange = { [weak toolbar] label in toolbar?.setUndo(label) }
+            actions.refreshUndo()
+            self.actions = actions
+            self.toolbar = toolbar
             sidebar.select(page: CommandLine.arguments.contains("--working-copy") ? .workingCopy : .history)
             workingCopy.refresh()
             reloadRefs()

@@ -1,3 +1,4 @@
+import CAmonhen
 import AmonhenKit
 import AppKit
 import QuartzCore
@@ -44,7 +45,7 @@ final class GraphView: NSView {
     }
 }
 
-final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     private let repository: Repository
     private var history: History?
     private let renderer: GraphRenderer
@@ -59,6 +60,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     /// 入力イベントから画面に表示されるまでの時間（秒）。
     var onLatency: ((CFTimeInterval) -> Void)?
+    var actions: Actions?
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
     var onSelectCommit: ((Data?) -> Void)?
 
@@ -90,6 +92,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         tableView.dataSource = self
         tableView.delegate = self
+        let menu = NSMenu()
+        menu.delegate = self
+        tableView.menu = menu
 
         scrollView.documentView = tableView
         scrollView.hasVerticalScroller = true
@@ -301,6 +306,29 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     self.tableView.reloadData(forRowIndexes: IndexSet(integersIn: overlap), columnIndexes: columns)
                 }
             }
+        }
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let row = tableView.clickedRow
+        guard let actions, let history, row >= 0, let id = history.commitID(row: row) else { return }
+        let hex = id.map { String(format: "%02x", $0) }.joined()
+        let short = String(hex.prefix(8))
+        let isMerge = history.withNodes { $0[row].flags & UInt16(AmonhenNode_MERGE) != 0 }
+        func add(_ title: String, _ action: @escaping () -> Void) {
+            menu.addItem(ClosureMenuItem(title: title, action: action))
+        }
+        add("New Branch at \(short)…") { actions.newBranch(at: hex) }
+        add("New Tag at \(short)…") { actions.newTag(at: hex) }
+        add("Checkout \(short) (Detached)") { actions.perform(["op": "detach", "oid": hex]) }
+        menu.addItem(.separator())
+        add("Cherry-pick \(short)") { actions.perform(["op": "cherryPick", "oid": hex, "isMerge": isMerge]) }
+        add("Revert \(short)") { actions.perform(["op": "revert", "oid": hex, "isMerge": isMerge]) }
+        menu.addItem(.separator())
+        add("Copy Commit ID") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(hex, forType: .string)
         }
     }
 

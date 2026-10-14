@@ -26,6 +26,8 @@ public final class WorkingStatus: @unchecked Sendable {
     let repository: Repository
     public let generation: UInt64
     public let branch: String?
+    /// 上流ブランチ（`origin/main`）。
+    public let upstream: String?
     public let ahead: Int
     public let behind: Int
     public let items: [StatusItem]
@@ -40,6 +42,7 @@ public final class WorkingStatus: @unchecked Sendable {
         }
         generation = v.generation
         branch = text(v.branch_off, v.branch_len)
+        upstream = text(v.upstream_off, v.upstream_len)
         ahead = Int(v.ahead)
         behind = Int(v.behind)
         items = UnsafeBufferPointer(start: v.entries, count: Int(v.count)).enumerated().map { i, e in

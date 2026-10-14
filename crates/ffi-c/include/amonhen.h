@@ -288,6 +288,11 @@ typedef struct {
    */
   uint32_t branch_off;
   uint32_t branch_len;
+  /**
+   * 上流ブランチ（`origin/main`）。なければ `upstream_len` が `u32::MAX`。
+   */
+  uint32_t upstream_off;
+  uint32_t upstream_len;
   uint32_t ahead;
   uint32_t behind;
 } AmonhenStatusView;
@@ -609,6 +614,14 @@ bool amonhen_discard_rows(const AmonhenRepo *repo_ptr,
                           const AmonhenWorkingDiff *diff,
                           const uint32_t *rows,
                           uint32_t count);
+
+/**
+ * 作業ツリーのルート（`amonhen_string_free` で解放する）。bare リポジトリなら NULL。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+char *amonhen_repo_workdir(const AmonhenRepo *repo_ptr);
 
 #ifdef __cplusplus
 }  // extern "C"
