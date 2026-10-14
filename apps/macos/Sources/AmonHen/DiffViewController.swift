@@ -324,8 +324,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         view.window == nil ? [] : diffView.overlay().map { [$0] } ?? []
     }
 
-    /// `commit` の変更を裏で読んで表示する。
-    func show(commit: Data?) {
+    /// `commit` の変更を裏で読んで表示する。`stash` なら stash の中身（untracked のファイルを含む）。
+    func show(commit: Data?, stash: Bool = false) {
         request += 1
         let request = self.request
         guard let commit else {
@@ -346,7 +346,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             showHeader(info)
         }
         Task {
-            let changes = try? await Task.detached(priority: .userInitiated) { try repository.changes(of: commit) }.value
+            let changes = try? await Task.detached(priority: .userInitiated) {
+                try stash ? repository.stashChanges(of: commit) : repository.changes(of: commit)
+            }.value
             guard request == self.request else { return }
             self.changes = changes
             files.reloadData()

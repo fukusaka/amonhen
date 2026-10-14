@@ -101,6 +101,15 @@ extension Repository {
     }
 }
 
+extension Repository {
+    /// stash（20 バイト）の中身。untracked のファイルを含めていればそれも。
+    public func stashChanges(of stash: Data) throws -> CommitChanges {
+        let raw = stash.withUnsafeBytes { amonhen_stash_changes(self.raw, $0.baseAddress!.assumingMemoryBound(to: UInt8.self)) }
+        guard let raw else { throw AmonhenError.last() }
+        return CommitChanges(raw: raw, repository: self)
+    }
+}
+
 extension History {
     /// `row` 行目のコミット ID（20 バイト）。
     public func commitID(row: Int) -> Data? {

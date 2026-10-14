@@ -154,6 +154,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 guard let controller, let target = item.target else { return }
                 if [.local, .remote, .tag].contains(item.kind) {
                     controller.set(scope: .ref(item.name, target), select: target)
+                } else if item.kind == .stash {
+                    // stash は History にないので、詳細にだけ中身を出す。
+                    detail.show(commit: target, stash: true)
                 } else if let row = controller.currentHistory?.row(of: target) {
                     controller.select(row: row)
                 }

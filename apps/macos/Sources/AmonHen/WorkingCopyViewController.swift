@@ -8,8 +8,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 {
     private let repository: Repository
     private let diffView: DiffViewController
-    private let files = NSOutlineView()
+    private let files = KeyOutlineView()
+    /// コミットメッセージの 1 行目と、2 行目以降。
+    private let summary = NSTextField()
     private let message = NSTextView()
+    private let stageAllButton = NSButton(title: "Stage All", target: nil, action: nil)
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
     private let commitButton = NSButton(title: "Commit", target: nil, action: nil)
     private let fileButton = NSButton(title: "Stage File", target: nil, action: nil)
@@ -78,6 +81,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         files.floatsGroupRows = false
         files.dataSource = self
         files.delegate = self
+        // Space か Enter で、選んだファイルを stage / unstage する。
+        files.onToggle = { [weak self] in self?.toggleFile() }
         let filesScroll = NSScrollView()
         filesScroll.documentView = files
         filesScroll.hasVerticalScroller = true
@@ -88,6 +93,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         message.isAutomaticDashSubstitutionEnabled = false
         message.delegate = self
         message.textContainerInset = NSSize(width: 4, height: 4)
+        summary.placeholderString = "Summary"
+        summary.font = .systemFont(ofSize: 13)
+        summary.target = self
+        summary.action = #selector(summaryChanged)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(summaryChanged), name: NSControl.textDidChangeNotification, object: summary)
         let messageScroll = NSScrollView()
         messageScroll.documentView = message
         messageScroll.hasVerticalScroller = true
@@ -102,7 +113,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         commitButton.keyEquivalentModifierMask = .command
         amend.target = self
         amend.action = #selector(toggleAmend)
-        let commitRow = NSStackView(views: [amend, NSView(), commitButton])
+        stageAllButton.target = self
+        stageAllButton.action = #selector(stageAll)
+        let commitRow = NSStackView(views: [amend, stageAllButton, NSView(), commitButton])
 
         sequenceLabel.textColor = .systemOrange
         sequenceLabel.lineBreakMode = .byTruncatingTail
@@ -113,15 +126,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
         sequenceBar.setViews([sequenceLabel] + buttons, in: .leading)
         sequenceBar.isHidden = true
-        let left = NSStackView(views: [sequenceBar, filesScroll, messageScroll, commitRow])
+        let left = NSStackView(views: [sequenceBar, filesScroll, summary, messageScroll, commitRow])
         left.orientation = .vertical
         left.alignment = .leading
         left.spacing = 6
         left.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 8, right: 8)
-        for v in [sequenceBar, filesScroll, messageScroll, commitRow] {
+        for v in [sequenceBar, filesScroll, summary, messageScroll, commitRow] {
             v.widthAnchor.constraint(equalTo: left.widthAnchor, constant: -8).isActive = true
         }
-        messageScroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
+        messageScroll.heightAnchor.constraint(equalToConstant: 72).isActive = true
         left.frame = NSRect(x: 0, y: 0, width: 280, height: 500)
         let leftController = NSViewController()
         leftController.view = left
@@ -272,7 +285,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         discardButton.title = diffView.selectedChangeRows.isEmpty ? "Discard File" : "Discard Lines"
         discardButton.isEnabled = selectedKey != nil
         commitButton.isEnabled = !(stagedGroup.items.isEmpty && amend.state == .off)
-            && !message.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !composedMessage.isEmpty
+        stageAllButton.isEnabled = !unstagedGroup.items.isEmpty
     }
 
     // MARK: - 操作
@@ -358,6 +372,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func markResolved() {
         guard let key = selectedKey else { return }
+        let file = URL(fileURLWithPath: repositoryRoot).appendingPathComponent(key.path)
+        if let text = try? String(contentsOf: file, encoding: .utf8), text.contains("<<<<<<<"),
+           actions?.confirm("\(key.path) にコンフリクトのマーカーが残っています", message: "このまま解決済みにしますか？", ok: "解決済みにする") != true {
+            return
+        }
         let repository = self.repository
         let path = key.path
         actions?.perform { try repository.stage(paths: [path]) }
@@ -365,12 +384,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func toggleAmend() {
         // 直前のコミットのメッセージを入れて直せるようにする。
-        if amend.state == .on, message.string.isEmpty {
+        if amend.state == .on, message.string.isEmpty, summary.stringValue.isEmpty {
             let repository = self.repository
             Task {
                 let text = try? await Task.detached { try repository.run(["op": "commitMessage", "oid": "HEAD"]).text }.value
-                if amend.state == .on, message.string.isEmpty, let text = text ?? nil {
-                    message.string = text.trimmingCharacters(in: .newlines)
+                if amend.state == .on, message.string.isEmpty, summary.stringValue.isEmpty, let text = text ?? nil {
+                    // 1 行目を Summary、空行の後を Description に分ける。
+                    let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let parts = trimmed.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+                    summary.stringValue = String(parts.first ?? "")
+                    message.string = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
                 }
                 updateButtons()
             }
@@ -378,14 +401,34 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         updateButtons()
     }
 
+    /// Summary と Description をつないだメッセージ。
+    private var composedMessage: String {
+        let head = summary.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let body = message.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return body.isEmpty ? head : head.isEmpty ? body : "\(head)\n\n\(body)"
+    }
+
+    @objc private func summaryChanged() {
+        updateButtons()
+    }
+
+    /// stage していない変更（untracked を含む）をすべて stage する。
+    @objc private func stageAll() {
+        let paths = unstagedGroup.items.map(\.path)
+        guard !paths.isEmpty else { return }
+        let repository = self.repository
+        actions?.perform { try repository.stage(paths: paths) }
+    }
+
     @objc private func commit() {
-        let text = message.string
+        let text = composedMessage
         let isAmend = amend.state == .on
         let repository = self.repository
         Task {
             do {
                 try await Task.detached(priority: .userInitiated) { try repository.commit(message: text, amend: isAmend) }.value
                 message.string = ""
+                summary.stringValue = ""
                 amend.state = .off
             } catch {
                 _ = await NSAlert(error: error).beginSheetModal(for: view.window!)
@@ -489,5 +532,19 @@ final class BarAndContentView: NSView {
     private func arrange() {
         bar.frame = NSRect(x: 0, y: 0, width: bounds.width, height: barHeight)
         content.frame = NSRect(x: 0, y: barHeight, width: bounds.width, height: max(0, bounds.height - barHeight))
+    }
+}
+
+/// Space・Enter でファイルを stage / unstage する一覧。
+final class KeyOutlineView: NSOutlineView {
+    var onToggle: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        switch event.charactersIgnoringModifiers {
+        case " ", "\r":
+            onToggle?()
+        default:
+            super.keyDown(with: event)
+        }
     }
 }
