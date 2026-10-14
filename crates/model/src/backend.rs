@@ -26,6 +26,17 @@ pub trait GitBackend: Send + Sync {
         Ok(topo::sort(self.read_commits(tips, &|_| false)?))
     }
 
+    /// commit-graph ファイルがあるか。なければ History の初回の読み込みが数倍遅い。
+    fn has_commit_graph(&self) -> Result<bool> {
+        Ok(true)
+    }
+
+    /// commit-graph を書き出す（`git commit-graph write --reachable`）。リポジトリの `.git` に
+    /// 書き込むので、利用者が設定で選んだときだけ呼ぶ。対応しない実装は何もしない。
+    fn write_commit_graph(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// コミットの本文。History で見えている行の分だけ呼ぶ。
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>>;
 }

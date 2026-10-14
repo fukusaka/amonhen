@@ -110,3 +110,15 @@ fn reads_subject_and_author_without_copying() {
     assert_eq!(texts[1].author_name(), b"a");
     assert!(texts[1].author_time > 0);
 }
+
+#[test]
+fn writes_a_commit_graph_on_request() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    commit(dir, "first");
+    let backend = GixBackend::open(dir).unwrap();
+    assert!(!backend.has_commit_graph().unwrap());
+    backend.write_commit_graph().unwrap();
+    assert!(GixBackend::open(dir).unwrap().has_commit_graph().unwrap());
+}

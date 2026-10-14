@@ -149,6 +149,31 @@ impl GitBackend for GixBackend {
         Ok(out)
     }
 
+    fn has_commit_graph(&self) -> Result<bool> {
+        Ok(self
+            .repo
+            .to_thread_local()
+            .commit_graph_if_enabled()?
+            .is_some())
+    }
+
+    // gix には commit-graph を書く機能がないので git に任せる。書き込み系の CliBackend を作ったら移す。
+    fn write_commit_graph(&self) -> Result<()> {
+        let repo = self.repo.to_thread_local();
+        let out = std::process::Command::new("git")
+            .arg("--git-dir")
+            .arg(repo.common_dir())
+            .args(["commit-graph", "write", "--reachable", "--no-progress"])
+            .output()?;
+        if !out.status.success() {
+            return Err(String::from_utf8_lossy(&out.stderr)
+                .trim()
+                .to_owned()
+                .into());
+        }
+        Ok(())
+    }
+
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
         let mut repo = self.repo.to_thread_local();
         repo.object_cache_size_if_unset(64 * 1024 * 1024);
