@@ -1,12 +1,11 @@
 //! gix による GitBackend の実装。
 
-use std::collections::HashSet;
 use std::path::Path;
 
 use std::ops::Range;
 use std::sync::Arc;
 
-use amonhen_model::{CommitText, GitBackend, Oid, RawCommit, Result};
+use amonhen_model::{CommitText, GitBackend, Oid, OidSet, RawCommit, Result};
 use gix::objs::Find;
 use rayon::prelude::*;
 
@@ -91,7 +90,7 @@ impl GitBackend for GixBackend {
 
     fn tips(&self) -> Result<Vec<Oid>> {
         let repo = self.repo.to_thread_local();
-        let mut seen = HashSet::new();
+        let mut seen = OidSet::default();
         let mut tips = Vec::new();
         let mut add = |id: Oid| {
             if seen.insert(id) {
@@ -120,7 +119,7 @@ impl GitBackend for GixBackend {
         let repo = self.repo.to_thread_local();
         let graph = repo.commit_graph_if_enabled()?;
         let hash = repo.object_hash();
-        let mut seen: HashSet<Oid> = HashSet::new();
+        let mut seen = OidSet::default();
         let mut frontier: Vec<Oid> = tips
             .iter()
             .copied()

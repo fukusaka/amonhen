@@ -14,7 +14,7 @@ use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
 use amonhen_layout::{Edge, Node, Slab};
-use amonhen_model::{CommitGraph, Oid};
+use amonhen_model::{CommitGraph, Oid, OidMap};
 
 pub const CHECKPOINT_INTERVAL: u32 = 4096;
 const BUCKET_ROWS: u32 = 1024;
@@ -474,7 +474,7 @@ fn relayout_inner(
     graph: &CommitGraph,
     head_row: Option<u32>,
 ) -> (GraphLayout, Option<usize>) {
-    let old_rows: HashMap<Oid, usize> = old
+    let old_rows: OidMap<usize> = old
         .checkpoints
         .iter()
         .enumerate()

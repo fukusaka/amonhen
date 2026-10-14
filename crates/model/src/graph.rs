@@ -106,7 +106,7 @@ impl CommitGraphBuilder {
     }
 
     pub fn build(self) -> CommitGraph {
-        let row_of: std::collections::HashMap<Oid, u32> = self
+        let row_of: crate::OidMap<u32> = self
             .ids
             .iter()
             .enumerate()

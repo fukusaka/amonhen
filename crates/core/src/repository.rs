@@ -1,9 +1,8 @@
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use amonhen_model::{CommitGraph, GitBackend, Oid, Result, topo};
+use amonhen_model::{CommitGraph, GitBackend, Oid, OidMap, Result, topo};
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use arc_swap::ArcSwapOption;
 
@@ -19,11 +18,11 @@ pub struct HistorySnapshot {
     pub graph: CommitGraph,
     pub layout: GraphLayout,
     /// コミット ID から行への索引。次に読み直すとき、既知のコミットで走査を止めるのに使う。
-    rows: OnceLock<HashMap<Oid, u32>>,
+    rows: OnceLock<OidMap<u32>>,
 }
 
 impl HistorySnapshot {
-    fn rows(&self) -> &HashMap<Oid, u32> {
+    fn rows(&self) -> &OidMap<u32> {
         self.rows.get_or_init(|| {
             self.graph
                 .ids()

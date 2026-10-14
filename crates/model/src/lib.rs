@@ -8,6 +8,6 @@ pub mod topo;
 
 pub use backend::{Error, GitBackend, Result};
 pub use graph::{CommitGraph, CommitGraphBuilder};
-pub use oid::Oid;
+pub use oid::{Oid, OidMap, OidSet};
 pub use text::CommitText;
 pub use topo::RawCommit;

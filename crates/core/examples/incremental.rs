@@ -9,7 +9,12 @@ use amonhen_backend_gix::GixBackend;
 use amonhen_core::Repository;
 
 fn git(repo: &str, args: &[&str]) -> String {
-    let out = Command::new("git").arg("-C").arg(repo).args(args).output().unwrap();
+    let out = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .unwrap();
     assert!(out.status.success(), "git {args:?}");
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
@@ -28,11 +33,18 @@ fn main() -> amonhen_model::Result<()> {
 
     let head = git(&path, &["rev-parse", "HEAD"]);
     let tree = git(&path, &["rev-parse", "HEAD^{tree}"]);
-    let commit = git(&path, &["commit-tree", &tree, "-p", &head, "-m", "amonhen bench"]);
+    let commit = git(
+        &path,
+        &["commit-tree", &tree, "-p", &head, "-m", "amonhen bench"],
+    );
     git(&path, &["update-ref", "HEAD", &commit]);
 
     let t = Instant::now();
     let second = repo.load_history()?;
-    println!("1 コミット追加: {} コミット {:?}", second.graph.len(), t.elapsed());
+    println!(
+        "1 コミット追加: {} コミット {:?}",
+        second.graph.len(),
+        t.elapsed()
+    );
     Ok(())
 }

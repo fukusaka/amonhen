@@ -14,8 +14,13 @@ fn main() -> amonhen_model::Result<()> {
     let t = Instant::now();
     let tips = backend.tips()?;
     let head = backend.head()?;
-    let graph = backend.commit_graph(&tips)?;
-    let walk = t.elapsed();
+    let raw = backend.read_commits(&tips, &|_| false)?;
+    let read = t.elapsed();
+    let t = Instant::now();
+    let graph = amonhen_model::topo::sort(raw);
+    let sort = t.elapsed();
+    let walk = read + sort;
+    println!("read: {read:?}  sort: {sort:?}");
 
     let head_row = head
         .and_then(|h| graph.ids().iter().position(|id| *id == h))

@@ -1,6 +1,6 @@
-use std::collections::{BinaryHeap, HashMap};
+use std::collections::BinaryHeap;
 
-use crate::{CommitGraph, CommitGraphBuilder, Oid};
+use crate::{CommitGraph, Oid, OidMap};
 
 /// 走査で読んだコミット 1 つ。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -14,31 +14,74 @@ pub struct RawCommit {
 /// （`git log --date-order` と同じ）。`commits` にない親は持たない。
 pub fn sort(commits: Vec<RawCommit>) -> CommitGraph {
     let index = index_of(&commits);
-    let mut builder = CommitGraphBuilder::with_capacity(commits.len());
-    for i in order(&commits, &index) {
-        let c = &commits[i as usize];
-        builder.push(c.id, c.commit_time, c.parents.iter().copied());
+    let parents = Parents::resolve(&commits, |id| index.get(id).copied());
+    let order = order(&commits, &parents);
+    let mut row = vec![0u32; commits.len()];
+    for (r, &i) in order.iter().enumerate() {
+        row[i as usize] = r as u32;
     }
-    builder.build()
+    let mut ids = Vec::with_capacity(order.len());
+    let mut times = Vec::with_capacity(order.len());
+    let mut offsets = Vec::with_capacity(order.len() + 1);
+    let mut rows = Vec::with_capacity(parents.indices.len());
+    offsets.push(0u32);
+    for &i in &order {
+        let c = &commits[i as usize];
+        ids.push(c.id);
+        times.push(c.commit_time);
+        rows.extend(
+            parents
+                .of(i)
+                .iter()
+                .filter(|&&j| j != Parents::NONE)
+                .map(|&j| row[j as usize]),
+        );
+        offsets.push(rows.len() as u32);
+    }
+    CommitGraph::from_parts(ids.into(), times.into(), offsets.into(), rows.into())
+        .expect("並べた History は正しい")
 }
 
-fn index_of(commits: &[RawCommit]) -> HashMap<Oid, u32> {
-    commits
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.id, i as u32))
-        .collect()
+fn index_of(commits: &[RawCommit]) -> OidMap<u32> {
+    let mut index = OidMap::with_capacity_and_hasher(commits.len(), Default::default());
+    index.extend(commits.iter().enumerate().map(|(i, c)| (c.id, i as u32)));
+    index
+}
+
+/// 親を `commits` の添字にしたもの。ハッシュ表を引くのはここで 1 回だけにする
+/// （100 万件を超えると表がキャッシュに収まらず、1 回ごとの読み込みが重い）。
+struct Parents {
+    offsets: Vec<u32>,
+    /// `commits` にない親は `NONE`。
+    indices: Vec<u32>,
+}
+
+impl Parents {
+    const NONE: u32 = u32::MAX;
+
+    fn resolve(commits: &[RawCommit], find: impl Fn(&Oid) -> Option<u32>) -> Self {
+        let mut offsets = Vec::with_capacity(commits.len() + 1);
+        let mut indices = Vec::with_capacity(commits.len() + commits.len() / 8);
+        offsets.push(0);
+        for c in commits {
+            indices.extend(c.parents.iter().map(|p| find(p).unwrap_or(Self::NONE)));
+            offsets.push(indices.len() as u32);
+        }
+        Self { offsets, indices }
+    }
+
+    fn of(&self, i: u32) -> &[u32] {
+        &self.indices[self.offsets[i as usize] as usize..self.offsets[i as usize + 1] as usize]
+    }
 }
 
 /// `commits` の添字を、子が親より先・新しい順に並べる。
-fn order(commits: &[RawCommit], index: &HashMap<Oid, u32>) -> Vec<u32> {
+fn order(commits: &[RawCommit], parents: &Parents) -> Vec<u32> {
     // 子の数。0 になったら並べられる。
     let mut pending_children = vec![0u32; commits.len()];
-    for c in commits {
-        for p in &c.parents {
-            if let Some(&i) = index.get(p) {
-                pending_children[i as usize] += 1;
-            }
+    for &p in &parents.indices {
+        if p != Parents::NONE {
+            pending_children[p as usize] += 1;
         }
     }
     let mut ready: BinaryHeap<(i64, u32)> = pending_children
@@ -50,12 +93,12 @@ fn order(commits: &[RawCommit], index: &HashMap<Oid, u32>) -> Vec<u32> {
 
     let mut order = Vec::with_capacity(commits.len());
     while let Some((_, i)) = ready.pop() {
-        for p in &commits[i as usize].parents {
-            if let Some(&pi) = index.get(p) {
-                let n = &mut pending_children[pi as usize];
+        for &p in parents.of(i) {
+            if p != Parents::NONE {
+                let n = &mut pending_children[p as usize];
                 *n -= 1;
                 if *n == 0 {
-                    ready.push((commits[pi as usize].commit_time, pi));
+                    ready.push((commits[p as usize].commit_time, p));
                 }
             }
         }
@@ -71,11 +114,11 @@ fn order(commits: &[RawCommit], index: &HashMap<Oid, u32>) -> Vec<u32> {
 pub fn extend(
     new: Vec<RawCommit>,
     old: &CommitGraph,
-    old_rows: &HashMap<Oid, u32>,
+    old_rows: &OidMap<u32>,
     tips: &[Oid],
 ) -> CommitGraph {
     let index = index_of(&new);
-    let order = order(&new, &index);
+    let order = order(&new, &Parents::resolve(&new, |id| index.get(id).copied()));
     // Ok は new の添字、Err は old の行。
     let locate = |id: &Oid| -> Option<Result<u32, u32>> {
         index
@@ -186,7 +229,7 @@ mod tests {
             c(3, 30, &[2]),
             c(5, 25, &[1]),
         ]);
-        let rows: HashMap<Oid, u32> = old
+        let rows: OidMap<u32> = old
             .ids()
             .iter()
             .enumerate()
