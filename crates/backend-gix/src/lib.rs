@@ -26,6 +26,15 @@ fn to_oid(id: &gix::oid) -> Result<Oid> {
 }
 
 impl GitBackend for GixBackend {
+    fn head(&self) -> Result<Option<Oid>> {
+        let repo = self.repo.to_thread_local();
+        match repo.head_id() {
+            Ok(id) => Ok(Some(to_oid(id.as_ref())?)),
+            Err(_) if repo.head()?.is_unborn() => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn tips(&self) -> Result<Vec<Oid>> {
         let repo = self.repo.to_thread_local();
         let mut seen = HashSet::new();
@@ -36,9 +45,8 @@ impl GitBackend for GixBackend {
             }
         };
 
-        // 生まれたばかりのブランチなど、HEAD がまだコミットを指さないこともある。
-        if let Ok(head) = repo.head_id() {
-            add(to_oid(head.as_ref())?);
+        if let Some(head) = self.head()? {
+            add(head);
         }
         for reference in repo.references()?.all()? {
             let mut reference = reference?;

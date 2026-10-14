@@ -55,6 +55,9 @@ fn reads_branches_and_merges_in_topological_order() {
     // HEAD（side）・main・topic。ツリーを指すタグは除く。
     assert_eq!(tips.len(), 3);
 
+    let side = git(dir, &["rev-parse", "HEAD"]);
+    assert_eq!(backend.head().unwrap().unwrap().to_string(), side);
+
     let graph = backend.commit_graph(&tips).unwrap();
     assert_eq!(graph.len(), 6);
     for row in 0..graph.len() {
@@ -70,4 +73,13 @@ fn reads_branches_and_merges_in_topological_order() {
         .position(|id| id.to_string() == merge)
         .unwrap();
     assert_eq!(graph.parents(merge_row).len(), 2);
+}
+
+#[test]
+fn unborn_head_has_no_commit() {
+    let tmp = tempfile::tempdir().unwrap();
+    git(tmp.path(), &["init", "-q", "-b", "main"]);
+    let backend = GixBackend::open(tmp.path()).unwrap();
+    assert_eq!(backend.head().unwrap(), None);
+    assert!(backend.tips().unwrap().is_empty());
 }
