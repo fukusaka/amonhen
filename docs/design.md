@@ -318,6 +318,7 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 - arm64 の `.app` を GitHub Releases に置く。拡張と同じく `v*` タグの push で GitHub Actions がビルドして添付し、main への push で `snapshot` の pre-release を作り直す。
 - 署名は自己署名のコード署名用証明書で行う。ad-hoc 署名だとビルドのたびに身元が変わり、macOS のアクセス許可（フォルダへのアクセス、キーチェーンなど）が更新のたびにリセットされるため。証明書と秘密鍵は GitHub Actions の secret に置く。
 - アプリ名は `Amon Hen`、バンドル ID は `io.github.fukusaka.amonhen`。バンドル ID は設定・キャッシュ・アクセス許可のひも付け先なので変えない。snapshot 版は `Amon Hen Snapshot`（`io.github.fukusaka.amonhen.snapshot`）にして、正式版と並べて入れられるようにする。
+- `.app` の組み立ては `scripts/build-app.sh [stable|snapshot]`（`dist/` に zip）。証明書は secret の `AMONHEN_CERT_P12`・`AMONHEN_CERT_PASSWORD`・`AMONHEN_CERT_NAME` から CI の一時キーチェーンに入れる（`scripts/import-signing-certificate.sh`）。
 - インストール・更新は `scripts/install.sh [stable|snapshot]`。`gh release download` で取得して `/Applications` に置く。quarantine 属性が付かないので、公証なしで起動できる（最初の配布で確かめる。付いていたら `xattr -d com.apple.quarantine` で外す）。
 - Developer ID の取得と公証、自動更新（Sparkle）は、人に配りたくなったときに検討する。
 
@@ -361,7 +362,7 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 - [x] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
 - [x] 12. 3-way マージ（コンフリクトごと・ファイルごとの解決。3 ペインのマージエディタは後で）
 - [ ] 13. グラフ表現の工夫（祖先の強調、折りたたみ、魚眼、アニメーション、密度表示）
-- [ ] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）
+- [x] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）
 
 拡張:
 

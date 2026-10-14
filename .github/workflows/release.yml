@@ -1,0 +1,32 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    env:
+      # 自己署名のコード署名用証明書（.p12 を base64 にしたもの）とそのパスワード。なければ ad-hoc 署名。
+      AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
+      AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
+      AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: タグと Cargo.toml の version が一致するか
+        run: test "${GITHUB_REF_NAME#v}" = "$(scripts/version.sh stable)"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --workspace
+      - run: scripts/import-signing-certificate.sh
+      - id: build
+        run: echo "zip=$(scripts/build-app.sh stable | tail -1)" >> "$GITHUB_OUTPUT"
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.build.outputs.zip }}" --title "$GITHUB_REF_NAME" --verify-tag

@@ -1,0 +1,40 @@
+name: Snapshot
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+# 新しい push が来たら、前の snapshot の作成はやめる。
+concurrency:
+  group: snapshot
+  cancel-in-progress: true
+
+jobs:
+  snapshot:
+    runs-on: macos-latest
+    env:
+      AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
+      AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
+      AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/import-signing-certificate.sh
+      - id: build
+        run: |
+          echo "zip=$(scripts/build-app.sh snapshot | tail -1)" >> "$GITHUB_OUTPUT"
+          echo "version=$(scripts/version.sh snapshot)" >> "$GITHUB_OUTPUT"
+      # snapshot という pre-release を、このコミットで作り直す。
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete snapshot --yes --cleanup-tag || true
+          gh release create snapshot "${{ steps.build.outputs.zip }}" --prerelease \
+            --target "$GITHUB_SHA" --title "Snapshot ${{ steps.build.outputs.version }}" \
+            --notes "main の最新（${{ steps.build.outputs.version }}）。scripts/install.sh snapshot で入れられる。"
