@@ -4,6 +4,8 @@
 
 ## [Unreleased]
 
+## [0.0.2] - 2026-10-14
+
 ### Added
 
 - メインビュー。エディタ領域の 1 つの Webview に、左のナビ（Working Copy / History / ブランチ類）と右の画面をまとめる。アクティビティバーの Amon Hen アイコンで開く。
