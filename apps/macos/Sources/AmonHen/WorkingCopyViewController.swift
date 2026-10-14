@@ -23,29 +23,39 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     private final class Group {
         let staged: Bool
+        let conflicts: Bool
         var items: [StatusItem] = []
-        init(staged: Bool) { self.staged = staged }
-        var title: String { staged ? "Staged" : "Unstaged" }
+        init(staged: Bool, conflicts: Bool = false) {
+            self.staged = staged
+            self.conflicts = conflicts
+        }
+        var title: String { conflicts ? "Conflicts" : staged ? "Staged" : "Unstaged" }
     }
 
     /// 一覧の項目。同じファイルが両方の組に出ることがある。
     private final class Entry {
         let item: StatusItem
         let staged: Bool
-        init(item: StatusItem, staged: Bool) {
+        let conflict: Bool
+        init(item: StatusItem, staged: Bool, conflict: Bool) {
             self.item = item
             self.staged = staged
+            self.conflict = conflict
         }
     }
 
     private var status: WorkingStatus?
     private let stagedGroup = Group(staged: true)
     private let unstagedGroup = Group(staged: false)
+    private let conflictGroup = Group(staged: false, conflicts: true)
+    /// コンフリクトの解決のボタン。
+    private let conflictButtons = NSStackView()
     private var entries: [ObjectIdentifier: [Entry]] = [:]
     private var current: WorkingFileDiff?
     /// 選んでいたファイル（読み直した後に選び直す）。
     private var selectedKey: (path: String, staged: Bool)?
     private var request = 0
+    private var isConflict = false
 
     init(repository: Repository, renderer: TextRenderer) {
         self.repository = repository
@@ -128,7 +138,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         titleLabel.lineBreakMode = .byTruncatingMiddle
         discardButton.target = self
         discardButton.action = #selector(discard)
-        let bar = NSStackView(views: [titleLabel, NSView(), discardButton, linesButton, fileButton])
+        let conflictActions: [(String, Selector)] = [
+            ("Use Current", #selector(useOurs)), ("Use Incoming", #selector(useTheirs)), ("Use Both", #selector(useBoth)),
+            ("Take Current File", #selector(takeOursFile)), ("Take Incoming File", #selector(takeTheirsFile)),
+            ("Mark Resolved", #selector(markResolved)),
+        ]
+        conflictButtons.setViews(conflictActions.map { NSButton(title: $0.0, target: self, action: $0.1) }, in: .leading)
+        conflictButtons.isHidden = true
+        let bar = NSStackView(views: [titleLabel, NSView(), conflictButtons, discardButton, linesButton, fileButton])
         bar.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
         diffView.isSelectable = true
         diffView.onSelectionChange = { [weak self] in self?.updateButtons() }
@@ -166,14 +183,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     private func show(_ status: WorkingStatus) {
         self.status = status
-        stagedGroup.items = status.items.filter(\.isStaged)
-        unstagedGroup.items = status.items.filter(\.isUnstaged)
+        conflictGroup.items = status.items.filter { $0.kind == .unmerged }
+        stagedGroup.items = status.items.filter { $0.kind != .unmerged && $0.isStaged }
+        unstagedGroup.items = status.items.filter { $0.kind != .unmerged && $0.isUnstaged }
         entries.removeAll()
         files.reloadData()
         files.expandItem(nil, expandChildren: true)
 
         // 同じファイル・同じ組を選び直す。なければ同じファイルのもう一方の組、それもなければ最初のもの。
-        let groups = [stagedGroup, unstagedGroup]
+        let groups = [conflictGroup, stagedGroup, unstagedGroup]
         let target = selectedKey.flatMap { key in
             groups.first { $0.staged == key.staged }.flatMap { g in entry(in: g, path: key.path) }
                 ?? groups.lazy.compactMap { self.entry(in: $0, path: key.path) }.first
@@ -193,7 +211,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     private func entries(of group: Group) -> [Entry] {
         if let cached = entries[ObjectIdentifier(group)] { return cached }
-        let made = group.items.map { Entry(item: $0, staged: group.staged) }
+        let made = group.items.map { Entry(item: $0, staged: group.staged, conflict: group.conflicts) }
         entries[ObjectIdentifier(group)] = made
         return made
     }
@@ -208,6 +226,20 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         titleLabel.stringValue = entry.item.path
         request += 1
         let request = self.request
+        isConflict = entry.conflict
+        diffView.isConflictView = entry.conflict
+        if entry.conflict {
+            let repository = self.repository
+            let path = entry.item.path
+            Task {
+                let view = try? await Task.detached(priority: .userInitiated) { try repository.conflictView(path: path) }.value
+                guard request == self.request else { return }
+                current = nil
+                diffView.show(view, keepScroll: keepScroll)
+                updateButtons()
+            }
+            return
+        }
         Task {
             let diff = try? await Task.detached(priority: .userInitiated) {
                 try status.diff(of: entry.item, staged: entry.staged)
@@ -224,13 +256,19 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     private func updateButtons() {
+        conflictButtons.isHidden = !isConflict
+        for v in [discardButton, linesButton, fileButton] { v.isHidden = isConflict }
+        if isConflict {
+            let hasConflict = diffView.selectedConflict != nil
+            for case let b as NSButton in conflictButtons.views.prefix(3) { b.isEnabled = hasConflict }
+        }
         let staged = selectedKey?.staged ?? false
         fileButton.title = staged ? "Unstage File" : "Stage File"
         fileButton.isEnabled = selectedKey != nil
         linesButton.title = staged ? "Unstage Lines" : "Stage Lines"
         linesButton.isEnabled = current != nil && !diffView.selectedChangeRows.isEmpty
         // 選んだ行があれば行を、なければファイルを破棄する。stage 済みの変更は破棄しない。
-        discardButton.isHidden = staged
+        discardButton.isHidden = staged || isConflict
         discardButton.title = diffView.selectedChangeRows.isEmpty ? "Discard File" : "Discard Lines"
         discardButton.isEnabled = selectedKey != nil
         commitButton.isEnabled = !(stagedGroup.items.isEmpty && amend.state == .off)
@@ -299,6 +337,32 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         actions?.perform(["op": op])
     }
 
+    private func resolve(_ choice: String) {
+        guard let key = selectedKey, let index = diffView.selectedConflict else { return }
+        actions?.perform(["op": "resolveConflict", "path": key.path, "index": index, "choice": choice])
+    }
+
+    @objc private func useOurs() { resolve("ours") }
+    @objc private func useTheirs() { resolve("theirs") }
+    @objc private func useBoth() { resolve("both") }
+
+    @objc private func takeOursFile() {
+        guard let key = selectedKey else { return }
+        actions?.perform(["op": "takeSide", "path": key.path, "ours": true])
+    }
+
+    @objc private func takeTheirsFile() {
+        guard let key = selectedKey else { return }
+        actions?.perform(["op": "takeSide", "path": key.path, "ours": false])
+    }
+
+    @objc private func markResolved() {
+        guard let key = selectedKey else { return }
+        let repository = self.repository
+        let path = key.path
+        actions?.perform { try repository.stage(paths: [path]) }
+    }
+
     @objc private func toggleAmend() {
         // 直前のコミットのメッセージを入れて直せるようにする。
         if amend.state == .on, message.string.isEmpty {
@@ -337,7 +401,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     // MARK: - NSOutlineView
 
-    private var groups: [Group] { [stagedGroup, unstagedGroup].filter { !$0.items.isEmpty } }
+    private var groups: [Group] { [conflictGroup, stagedGroup, unstagedGroup].filter { !$0.items.isEmpty } }
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
         switch item {

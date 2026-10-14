@@ -128,3 +128,14 @@ func withNoCopyString<R>(
     }
     return try body(string)
 }
+
+extension Repository {
+    /// コンフリクトのある作業ツリーのファイル。行の `kind` は Current・Incoming・Base・マーカーで、
+    /// コンフリクトの行の `old_no` はその番号 + 1。裏のスレッドで呼ぶ。
+    public func conflictView(path: String) throws -> FileDiff {
+        guard let raw = amonhen_conflict_view(self.raw, path, UInt8(AmonhenEncoding_Utf16.rawValue)) else {
+            throw AmonhenError.last()
+        }
+        return FileDiff(raw: raw, owner: self, view: amonhen_diff_view(raw), free: { amonhen_diff_free($0) })
+    }
+}

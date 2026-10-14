@@ -19,11 +19,13 @@ final class DiffViewController: NSViewController {
     private var diff: FileDiff?
     /// 行ごとの並べたグリフ。表示し直すまで使い回す。
     private var shaped: [Int: TextRenderer.ShapedLine] = [:]
-    private var numbers: [UInt32: TextRenderer.ShapedLine] = [:]
+    private var numberCache: [UInt32: TextRenderer.ShapedLine] = [:]
     private var message: String?
 
     /// 行を選べるか（Working Copy で行単位の stage に使う）。
     var isSelectable = false
+    /// コンフリクトの表示か（`old_no` はコンフリクトの番号 + 1 で、クリックするとコンフリクト全体を選ぶ）。
+    var isConflictView = false
     /// 選んだ行。
     private(set) var selectedRows: Set<Int> = []
     private var anchorRow: Int?
@@ -99,11 +101,29 @@ final class DiffViewController: NSViewController {
         }
     }
 
+    /// 選んだコンフリクト（0 始まり）。
+    var selectedConflict: Int? {
+        guard isConflictView, let diff, let row = selectedRows.min() else { return nil }
+        let id = diff.withRows { Int($0[row].old_no) }
+        return id > 0 ? id - 1 : nil
+    }
+
     /// クリックで行を選ぶ。hunk の見出しなら hunk 全体、Shift で範囲、Command で追加・解除。
     private func mouseDown(_ event: NSEvent, at point: NSPoint) {
         guard isSelectable, let diff else { return }
         let row = Int(point.y / lineHeight)
         guard row >= 0, row < diff.rowCount else { return }
+        if isConflictView {
+            // コンフリクトの行なら、そのコンフリクト全体を選ぶ。
+            selectedRows = diff.withRows { all in
+                let id = all[row].old_no
+                guard id > 0 else { return [] }
+                return Set(all.indices.filter { all[$0].old_no == id })
+            }
+            onSelectionChange?()
+            redraw()
+            return
+        }
         let rows: Set<Int> = diff.withRows { all in
             guard all[row].kind == UInt8(AmonhenDiffRow_HUNK) else { return [row] }
             var end = row + 1
@@ -159,6 +179,10 @@ final class DiffViewController: NSViewController {
         let added = NSColor.systemGreen.withAlphaComponent(0.16).rgba
         let removed = NSColor.systemRed.withAlphaComponent(0.16).rgba
         let hunk = NSColor.systemBlue.withAlphaComponent(0.10).rgba
+        let ours = NSColor.systemBlue.withAlphaComponent(0.18).rgba
+        let theirs = NSColor.systemGreen.withAlphaComponent(0.18).rgba
+        let base = NSColor.systemGray.withAlphaComponent(0.18).rgba
+        let marker = NSColor.systemOrange.withAlphaComponent(0.14).rgba
         let text = NSColor.labelColor.rgba
         let secondary = NSColor.secondaryLabelColor.rgba
         let width = textView.bounds.width
@@ -174,17 +198,23 @@ final class DiffViewController: NSViewController {
                 case UInt8(AmonhenDiffRow_ADDED): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: added)
                 case UInt8(AmonhenDiffRow_REMOVED): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: removed)
                 case UInt8(AmonhenDiffRow_HUNK): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: hunk)
+                case UInt8(AmonhenDiffRow_OURS): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: ours)
+                case UInt8(AmonhenDiffRow_THEIRS): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: theirs)
+                case UInt8(AmonhenDiffRow_BASE): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: base)
+                case UInt8(AmonhenDiffRow_MARKER): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: marker)
                 default: break
                 }
                 let baseline = top + 2 + ascent
-                for (number, right) in [(r.old_no, gutterWidth / 2 - 6), (r.new_no, gutterWidth - 6)] where number > 0 {
-                    let line = numbers[number] ?? renderer.shape("\(number)" as CFString, font: font, scale: scale)
-                    numbers[number] = line
+                // コンフリクトの表示では old_no はコンフリクトの番号なので、行番号は new_no だけ出す。
+                let numbers = isConflictView ? [(r.new_no, gutterWidth - 6)] : [(r.old_no, gutterWidth / 2 - 6), (r.new_no, gutterWidth - 6)]
+                for (number, right) in numbers where number > 0 {
+                    let line = numberCache[number] ?? renderer.shape("\(number)" as CFString, font: font, scale: scale)
+                    numberCache[number] = line
                     renderer.addLine(line, origin: CGPoint(x: right - line.width, y: baseline), color: secondary, scale: scale)
                 }
                 let line = shaped[row] ?? diff.withText(row: row) { renderer.shape($0, font: font, scale: scale) }
                 shaped[row] = line
-                let isHunk = r.kind == UInt8(AmonhenDiffRow_HUNK)
+                let isHunk = r.kind == UInt8(AmonhenDiffRow_HUNK) || r.kind == UInt8(AmonhenDiffRow_MARKER)
                 renderer.addLine(
                     line, origin: CGPoint(x: gutterWidth + 8 - origin.x, y: baseline), color: isHunk ? secondary : text,
                     scale: scale)
