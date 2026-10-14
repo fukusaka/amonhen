@@ -12,14 +12,18 @@ use amonhen_model::{
 use gix::objs::Find;
 use rayon::prelude::*;
 
+/// 読み取りは gix で同じプロセスの中で行い、書き込みと status は git に任せる（`amonhen_backend_cli`）。
 pub struct GixBackend {
     repo: gix::ThreadSafeRepository,
+    /// bare リポジトリでは `None`。
+    git: Option<amonhen_backend_cli::Git>,
 }
 
 impl GixBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let repo = gix::ThreadSafeRepository::discover(path.as_ref())?;
-        Ok(Self { repo })
+        let git = repo.work_dir().map(amonhen_backend_cli::Git::new);
+        Ok(Self { repo, git })
     }
 }
 
@@ -79,6 +83,12 @@ fn to_oid(id: &gix::oid) -> Result<Oid> {
         .try_into()
         .map_err(|_| "SHA-1 以外のリポジトリには未対応")?;
     Ok(Oid(bytes))
+}
+
+impl GixBackend {
+    fn git(&self) -> Result<&amonhen_backend_cli::Git> {
+        self.git.as_ref().ok_or_else(|| "作業ツリーのないリポジトリ".into())
+    }
 }
 
 impl GitBackend for GixBackend {
@@ -343,6 +353,30 @@ impl GitBackend for GixBackend {
             .len();
         buf.truncate(len);
         Ok(Arc::new(buf))
+    }
+
+    fn status(&self) -> Result<amonhen_model::Status> {
+        self.git()?.status()
+    }
+
+    fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>> {
+        Ok(Arc::new(std::fs::read(self.git()?.workdir().join(path))?))
+    }
+
+    fn stage(&self, paths: &[&str]) -> Result<()> {
+        self.git()?.stage(paths)
+    }
+
+    fn unstage(&self, paths: &[&str]) -> Result<()> {
+        self.git()?.unstage(paths)
+    }
+
+    fn set_index_content(&self, path: &str, mode: u32, content: &[u8]) -> Result<()> {
+        self.git()?.set_index_content(path, mode, content)
+    }
+
+    fn commit(&self, message: &str, amend: bool) -> Result<()> {
+        self.git()?.commit(message, amend)
     }
 
     fn has_commit_graph(&self) -> Result<bool> {

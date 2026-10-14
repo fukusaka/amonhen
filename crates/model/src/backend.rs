@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{CommitGraph, CommitText, FileChange, Oid, RawCommit, Refs, RepoPaths, topo};
+use crate::{CommitGraph, CommitText, FileChange, Oid, RawCommit, Refs, RepoPaths, Status, topo};
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
@@ -39,6 +39,24 @@ pub trait GitBackend: Send + Sync {
 
     /// blob の中身。展開したバッファをそのまま返し、差分の各行はここを直接指す。
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>>;
+
+    /// 作業ツリーと index の状態。
+    fn status(&self) -> Result<Status>;
+
+    /// 作業ツリーのファイルの中身。
+    fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>>;
+
+    /// `paths` の変更（追加・削除を含む）を index に入れる。
+    fn stage(&self, paths: &[&str]) -> Result<()>;
+
+    /// `paths` を HEAD の状態に戻す（index だけ）。
+    fn unstage(&self, paths: &[&str]) -> Result<()>;
+
+    /// `path` の index の中身を `content` にする（hunk・行単位の stage・unstage）。
+    fn set_index_content(&self, path: &str, mode: u32, content: &[u8]) -> Result<()>;
+
+    /// stage した変更をコミットする。
+    fn commit(&self, message: &str, amend: bool) -> Result<()>;
 
     /// commit-graph ファイルがあるか。なければ History の初回の読み込みが数倍遅い。
     fn has_commit_graph(&self) -> Result<bool> {

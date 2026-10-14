@@ -38,6 +38,7 @@ dependencies = [
 name = "amonhen-backend-gix"
 version = "0.1.0"
 dependencies = [
+ "amonhen-backend-cli",
  "amonhen-model",
  "gix",
  "rayon",

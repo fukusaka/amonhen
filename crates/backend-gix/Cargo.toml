@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+amonhen-backend-cli.workspace = true
 amonhen-model.workspace = true
 gix.workspace = true
 rayon = "1.12.0"
