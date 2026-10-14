@@ -170,6 +170,21 @@ private func makeRepo() throws -> URL {
     #expect(status.items.map { "\($0.indexState)\($0.worktreeState)" } == [".M", "??"])
 }
 
+@Test func runsCommandsAndUndoes() throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let repo = try Repository(path: dir.path)
+    try repo.run(["op": "createBranch", "name": "topic", "start": "main", "checkout": true])
+    #expect(try repo.loadRefs().headBranch == "topic")
+    #expect(try repo.run(["op": "undoPeek"]).label == "Create branch topic")
+    #expect(throws: AmonhenError.self) { try repo.run(["op": "merge", "rev": "no-such-branch"]) }
+    // 作って切り替えたブランチの Undo は、元のブランチに戻ってからブランチを消す。
+    #expect(try repo.run(["op": "undo"]).label == "Create branch topic")
+    let refs = try repo.loadRefs()
+    #expect(refs.headBranch == "main")
+    #expect(refs.items.map(\.name) == ["main"])
+}
+
 @Test func reportsOpenErrors() {
     #expect(throws: AmonhenError.self) {
         try Repository(path: "/nonexistent/amonhen")

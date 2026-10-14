@@ -582,6 +582,34 @@ bool amonhen_stage_rows(const AmonhenRepo *repo_ptr,
  */
 bool amonhen_commit(const AmonhenRepo *repo_ptr, const char *message, bool amend);
 
+/**
+ * JSON の命令（`{"op":"merge","rev":"topic"}` など）を実行し、JSON の結果
+ * （`{"ok":true,"outcome":"done"}` か `{"ok":false,"error":"…"}`）を返す。結果は
+ * `amonhen_string_free` で解放する。頻度の低い操作はすべてここを通す。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`command` は NUL 終端の UTF-8 文字列であること。
+ */
+char *amonhen_command(const AmonhenRepo *repo_ptr,
+                      const char *command);
+
+/**
+ * # Safety
+ * `s` は `amonhen_command` が返したもので、まだ解放していないこと。
+ */
+void amonhen_string_free(char *s);
+
+/**
+ * `diff` の `rows` 行目の変更を作業ツリーから取り除く（Undo できる）。stage していない差分にだけ使える。
+ *
+ * # Safety
+ * `repo` と `diff` は有効、`rows` は `count` 個の `u32` を読める領域であること。
+ */
+bool amonhen_discard_rows(const AmonhenRepo *repo_ptr,
+                          const AmonhenWorkingDiff *diff,
+                          const uint32_t *rows,
+                          uint32_t count);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

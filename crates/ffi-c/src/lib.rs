@@ -941,3 +941,48 @@ pub unsafe extern "C" fn amonhen_commit(
         Err(e) => done(Err(e.into())),
     }
 }
+
+/// JSON の命令（`{"op":"merge","rev":"topic"}` など）を実行し、JSON の結果
+/// （`{"ok":true,"outcome":"done"}` か `{"ok":false,"error":"…"}`）を返す。結果は
+/// `amonhen_string_free` で解放する。頻度の低い操作はすべてここを通す。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`command` は NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_command(
+    repo_ptr: *const AmonhenRepo,
+    command: *const c_char,
+) -> *mut c_char {
+    let response = match str_arg(command) {
+        Ok(json) => repo(repo_ptr).run_json(json),
+        Err(e) => format!(r#"{{"ok":false,"error":"{e}"}}"#),
+    };
+    CString::new(response).unwrap_or_default().into_raw()
+}
+
+/// # Safety
+/// `s` は `amonhen_command` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_string_free(s: *mut c_char) {
+    if !s.is_null() {
+        drop(unsafe { CString::from_raw(s) });
+    }
+}
+
+/// `diff` の `rows` 行目の変更を作業ツリーから取り除く（Undo できる）。stage していない差分にだけ使える。
+///
+/// # Safety
+/// `repo` と `diff` は有効、`rows` は `count` 個の `u32` を読める領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_discard_rows(
+    repo_ptr: *const AmonhenRepo,
+    diff: *const AmonhenWorkingDiff,
+    rows: *const u32,
+    count: u32,
+) -> bool {
+    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    let rows: Vec<usize> = (0..count as usize)
+        .map(|i| unsafe { *rows.add(i) } as usize)
+        .collect();
+    done(repo(repo_ptr).discard_rows(d, &rows))
+}
