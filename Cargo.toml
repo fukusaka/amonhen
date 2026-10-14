@@ -1,0 +1,22 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[workspace.dependencies]
+amonhen-layout = { path = "crates/layout" }
+amonhen-model = { path = "crates/model" }
+amonhen-core = { path = "crates/core" }
+amonhen-projection = { path = "crates/projection" }
+amonhen-platform = { path = "crates/platform" }
+amonhen-backend-gix = { path = "crates/backend-gix" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"
