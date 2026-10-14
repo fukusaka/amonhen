@@ -45,6 +45,7 @@ dependencies = [
  "amonhen-projection",
  "arc-swap",
  "criterion",
+ "memmap2",
  "tempfile",
 ]
 

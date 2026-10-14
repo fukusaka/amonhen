@@ -10,6 +10,7 @@ amonhen-layout.workspace = true
 amonhen-model.workspace = true
 amonhen-projection.workspace = true
 arc-swap = "1.9.2"
+memmap2 = "0.9.11"
 
 [dev-dependencies]
 amonhen-backend-gix = { path = "../backend-gix" }

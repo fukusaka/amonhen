@@ -1,5 +1,6 @@
 //! 状態・スナップショット・Intent の処理。通信手段にも FE にも依存しない。
 
+pub mod cache;
 pub mod graph;
 mod repository;
 

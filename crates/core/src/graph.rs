@@ -22,12 +22,12 @@ const MAINLINE_COLOR: u16 = 0;
 
 /// まだ親に届いていない線。`target` の行に来たら `Edge` にする。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Track {
-    target: u32,
-    child_row: u32,
-    child_lane: u16,
-    color: u16,
-    first_parent: bool,
+pub(crate) struct Track {
+    pub(crate) target: u32,
+    pub(crate) child_row: u32,
+    pub(crate) child_lane: u16,
+    pub(crate) color: u16,
+    pub(crate) first_parent: bool,
 }
 
 impl Track {
@@ -41,12 +41,12 @@ impl Track {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct State {
+pub(crate) struct State {
     /// レーンごとの線。`None` は空きレーン。
-    lanes: Vec<Option<Track>>,
+    pub(crate) lanes: Vec<Option<Track>>,
     /// ほかの線が待っている親に合流する線。縦の部分と終わりの曲線はレーンの持ち主が描くので、
     /// 始まりの曲線だけを出す。
-    riders: Vec<(u16, Track)>,
+    pub(crate) riders: Vec<(u16, Track)>,
 }
 
 impl State {
@@ -67,12 +67,12 @@ impl State {
 }
 
 #[derive(Clone, Debug)]
-struct Checkpoint {
+pub(crate) struct Checkpoint {
     /// 再計算で前回の結果を継ぎ足すと、`CHECKPOINT_INTERVAL` の倍数からずれる。
-    row: u32,
-    state: State,
+    pub(crate) row: u32,
+    pub(crate) state: State,
     /// この行より前に確定した線の数。
-    edges_len: usize,
+    pub(crate) edges_len: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -82,12 +82,50 @@ pub struct GraphLayout {
     pub(crate) lane_count: u16,
     /// HEAD から first-parent で辿れる行なら 1。
     pub(crate) mainline: Slab<u8>,
-    checkpoints: Vec<Checkpoint>,
+    pub(crate) checkpoints: Vec<Checkpoint>,
     /// `BUCKET_ROWS` 行ごとに、その範囲に重なる線の添字。
     buckets: Vec<Vec<u32>>,
 }
 
 impl GraphLayout {
+    /// 永続キャッシュから組み立てる。点・線の行やレーンが範囲外なら `None`。
+    pub(crate) fn from_parts(
+        nodes: Slab<Node>,
+        edges: Slab<Edge>,
+        lane_count: u16,
+        mainline: Slab<u8>,
+        checkpoints: Vec<Checkpoint>,
+    ) -> Option<Self> {
+        let rows = nodes.len() as u32;
+        let valid = mainline.len() == nodes.len()
+            && nodes
+                .iter()
+                .enumerate()
+                .all(|(i, n)| n.row == i as u32 && n.lane < lane_count)
+            && edges.iter().all(|e| {
+                e.row_start <= e.row_end
+                    && e.row_end < rows
+                    && e.lane_start < lane_count
+                    && e.lane_end < lane_count
+            })
+            && checkpoints
+                .iter()
+                .all(|c| c.row < rows.max(1) && c.edges_len <= edges.len());
+        if !valid {
+            return None;
+        }
+        let mut layout = Self {
+            nodes,
+            edges,
+            lane_count,
+            mainline,
+            checkpoints,
+            buckets: Vec::new(),
+        };
+        layout.build_buckets();
+        Some(layout)
+    }
+
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
     }
