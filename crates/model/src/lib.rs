@@ -5,6 +5,7 @@ mod change;
 mod graph;
 mod oid;
 mod refs;
+mod status;
 mod text;
 pub mod topo;
 
@@ -13,5 +14,6 @@ pub use change::{ChangeKind, FileChange};
 pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use oid::{Oid, OidMap, OidSet};
 pub use refs::{RefEntry, RefKind, Refs, RepoPaths};
+pub use status::{Status, StatusEntry, StatusKind};
 pub use text::CommitText;
 pub use topo::RawCommit;

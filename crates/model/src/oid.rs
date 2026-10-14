@@ -43,6 +43,26 @@ pub type OidSet = HashSet<Oid, BuildHasherDefault<OidHasher>>;
 
 unsafe impl Pod for Oid {}
 
+impl Oid {
+    /// 40 桁の 16 進数から。
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        let bytes = hex.as_bytes();
+        if bytes.len() != 40 {
+            return None;
+        }
+        let digit = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
+        let mut out = [0; 20];
+        for (i, pair) in bytes.chunks_exact(2).enumerate() {
+            out[i] = digit(pair[0])? << 4 | digit(pair[1])?;
+        }
+        Some(Self(out))
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == [0; 20]
+    }
+}
+
 impl fmt::Display for Oid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for b in self.0 {
