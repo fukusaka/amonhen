@@ -183,6 +183,29 @@ impl Repository {
         Ok(self.publish(tips, head, graph, layout))
     }
 
+    /// `tips` から辿れるコミットだけの History（ブランチで絞り込む）。最新の History から作り、公開はしない。
+    pub fn history_filtered(&self, tips: &[Oid]) -> Result<Arc<HistorySnapshot>> {
+        let full = match self.history.load_full() {
+            Some(h) => h,
+            None => self.load_history()?,
+        };
+        let roots: Vec<u32> = tips.iter().filter_map(|t| full.row_of(t)).collect();
+        let graph = full.graph.reachable_from(&roots);
+        let head_row = full
+            .head
+            .and_then(|h| graph.ids().iter().position(|id| *id == h))
+            .map(|r| r as u32);
+        let layout = graph::layout(&graph, head_row);
+        Ok(Arc::new(HistorySnapshot {
+            generation: self.generation.fetch_add(1, Ordering::Relaxed) + 1,
+            tips: tips.to_vec(),
+            head: full.head,
+            graph,
+            layout,
+            rows: OnceLock::new(),
+        }))
+    }
+
     pub fn history(&self) -> Option<Arc<HistorySnapshot>> {
         self.history.load_full()
     }

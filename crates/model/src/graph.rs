@@ -53,6 +53,45 @@ impl CommitGraph {
         &self.commit_times
     }
 
+    /// `roots` の行から辿れる行だけを、順番を変えずに残した History。
+    pub fn reachable_from(&self, roots: &[u32]) -> CommitGraph {
+        let mut keep = vec![false; self.len()];
+        let mut stack: Vec<u32> = roots
+            .iter()
+            .copied()
+            .filter(|&r| (r as usize) < self.len())
+            .collect();
+        while let Some(r) = stack.pop() {
+            if !std::mem::replace(&mut keep[r as usize], true) {
+                stack.extend_from_slice(self.parents(r as usize));
+            }
+        }
+        let mut new_row = vec![u32::MAX; self.len()];
+        let mut next = 0;
+        for (r, &k) in keep.iter().enumerate() {
+            if k {
+                new_row[r] = next;
+                next += 1;
+            }
+        }
+        let mut ids = Vec::with_capacity(next as usize);
+        let mut times = Vec::with_capacity(next as usize);
+        let mut offsets = vec![0u32];
+        let mut parents = Vec::new();
+        for r in (0..self.len()).filter(|&r| keep[r]) {
+            ids.push(self.ids[r]);
+            times.push(self.commit_times[r]);
+            parents.extend(self.parents(r).iter().map(|&p| new_row[p as usize]));
+            offsets.push(parents.len() as u32);
+        }
+        CommitGraph {
+            ids: ids.into(),
+            commit_times: times.into(),
+            parent_offsets: offsets.into(),
+            parents: parents.into(),
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.ids.len()
     }
@@ -141,6 +180,22 @@ mod tests {
 
     fn oid(n: u8) -> Oid {
         Oid([n; 20])
+    }
+
+    #[test]
+    fn keeps_only_commits_reachable_from_the_roots() {
+        // 3 は 2 と 1 の merge、4 は 0 の子（別のブランチ）。
+        let mut b = CommitGraphBuilder::default();
+        b.push(oid(4), 40, [oid(0)]);
+        b.push(oid(3), 30, [oid(2), oid(1)]);
+        b.push(oid(2), 20, [oid(0)]);
+        b.push(oid(1), 10, [oid(0)]);
+        b.push(oid(0), 0, []);
+        let g = b.build();
+        let sub = g.reachable_from(&[1]);
+        assert_eq!(sub.ids(), &[oid(3), oid(2), oid(1), oid(0)]);
+        assert_eq!(sub.parents(0), &[1, 2]);
+        assert_eq!(sub.parents(1), &[3]);
     }
 
     #[test]

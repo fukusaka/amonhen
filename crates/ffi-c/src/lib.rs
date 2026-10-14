@@ -1040,3 +1040,26 @@ pub unsafe extern "C" fn amonhen_conflict_view(
         }
     }
 }
+
+/// `tips`（20 バイトの ID が `count` 個）から辿れるコミットだけの History（ブランチで絞り込む）。
+/// `amonhen_history_release` で手放す。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`tips` は `count * 20` バイト読める領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_filtered(
+    repo_ptr: *const AmonhenRepo,
+    tips: *const u8,
+    count: u32,
+) -> *const AmonhenHistory {
+    let tips: Vec<Oid> = (0..count as usize)
+        .map(|i| Oid(unsafe { *tips.add(i * 20).cast::<[u8; 20]>() }))
+        .collect();
+    match repo(repo_ptr).history_filtered(&tips) {
+        Ok(s) => into_history(s),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null()
+        }
+    }
+}

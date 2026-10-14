@@ -660,6 +660,17 @@ AmonhenDiff *amonhen_conflict_view(const AmonhenRepo *repo_ptr,
                                    const char *path,
                                    AmonhenEncoding encoding);
 
+/**
+ * `tips`（20 バイトの ID が `count` 個）から辿れるコミットだけの History（ブランチで絞り込む）。
+ * `amonhen_history_release` で手放す。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`tips` は `count * 20` バイト読める領域であること。
+ */
+const AmonhenHistory *amonhen_history_filtered(const AmonhenRepo *repo_ptr,
+                                               const uint8_t *tips,
+                                               uint32_t count);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

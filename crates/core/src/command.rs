@@ -115,6 +115,10 @@ pub enum Command {
         index: usize,
         choice: crate::conflict::Choice,
     },
+    /// コミットの詳細（`info`: message・author・authorEmail・authorTime・committer・committerTime・parents・refs）。
+    CommitInfo {
+        oid: String,
+    },
     /// `path` を片側にして解決済みにする。
     TakeSide {
         path: String,
@@ -134,6 +138,8 @@ pub struct Response {
     pub label: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub info: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -168,6 +174,61 @@ impl Repository {
             .position(|w| w == b"\n\n")
             .map_or(raw.len(), |i| i + 2);
         Ok(String::from_utf8_lossy(&raw[start..]).into_owned())
+    }
+
+    /// コミットの詳細。ヘッダーの行（parent・author・committer）とメッセージ、そのコミットを指す ref。
+    pub fn commit_info(&self, commit: &Oid) -> Result<serde_json::Value> {
+        let text = self
+            .backend()
+            .commit_texts(std::slice::from_ref(commit))?
+            .remove(0);
+        let raw = String::from_utf8_lossy(&text.raw).into_owned();
+        let (header, message) = raw.split_once("\n\n").unwrap_or((&raw, ""));
+        // "Name <email> 1700000000 +0900" を名前・メール・時刻に分ける。
+        let signature = |line: &str| -> (String, String, i64) {
+            let (name, rest) = line.split_once(" <").unwrap_or((line, ""));
+            let (email, rest) = rest.split_once("> ").unwrap_or((rest, ""));
+            let time = rest
+                .split(' ')
+                .next()
+                .and_then(|t| t.parse().ok())
+                .unwrap_or(0);
+            (name.to_owned(), email.to_owned(), time)
+        };
+        let mut parents = Vec::new();
+        let (mut author, mut committer) = (None, None);
+        for line in header.lines() {
+            if let Some(p) = line.strip_prefix("parent ") {
+                parents.push(p.to_owned());
+            } else if let Some(a) = line.strip_prefix("author ") {
+                author = Some(signature(a));
+            } else if let Some(c) = line.strip_prefix("committer ") {
+                committer = Some(signature(c));
+            }
+        }
+        let (author, email, author_time) = author.unwrap_or_default();
+        let (committer, _, committer_time) = committer.unwrap_or_default();
+        let refs: Vec<String> = self
+            .load_refs()?
+            .refs
+            .entries
+            .iter()
+            .filter(|e| {
+                e.target.as_ref() == Some(commit) && e.kind != amonhen_model::RefKind::Stash
+            })
+            .map(|e| e.name.clone())
+            .collect();
+        Ok(serde_json::json!({
+            "oid": commit.to_string(),
+            "message": message,
+            "author": author,
+            "authorEmail": email,
+            "authorTime": author_time,
+            "committer": committer,
+            "committerTime": committer_time,
+            "parents": parents,
+            "refs": refs,
+        }))
     }
 
     /// HEAD から first-parent で辿り、最初の merge の手前まで（新しい順）。
@@ -516,6 +577,11 @@ impl Repository {
                 )?;
                 ok()
             }
+            Command::CommitInfo { oid: o } => Ok(Response {
+                ok: true,
+                info: Some(self.commit_info(&oid(&o)?)?),
+                ..Default::default()
+            }),
             Command::TakeSide { path, ours } => {
                 ops.take_side(&path, ours)?;
                 ok()
