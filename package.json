@@ -244,6 +244,16 @@
         "command": "amonhen.stash.show",
         "title": "Show Stash",
         "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.cherryPick",
+        "title": "Cherry-pick onto Current Branch",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.revert",
+        "title": "Revert",
+        "category": "Amon Hen"
       }
     ],
     "menus": {
@@ -459,6 +469,14 @@
         {
           "command": "amonhen.stash.show",
           "when": "false"
+        },
+        {
+          "command": "amonhen.history.cherryPick",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.revert",
+          "when": "false"
         }
       ],
       "webview/context": [
@@ -516,6 +534,16 @@
           "command": "amonhen.newTag",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
           "group": "8_create@2"
+        },
+        {
+          "command": "amonhen.history.cherryPick",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && !commitEditable",
+          "group": "5_apply@1"
+        },
+        {
+          "command": "amonhen.history.revert",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "group": "5_apply@2"
         }
       ]
     }

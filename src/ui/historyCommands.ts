@@ -7,6 +7,7 @@ import { rewriteHistory } from '../state/rewrite.ts';
 import type { Repository } from '../state/repository.ts';
 import { HistoryController } from './historyController.ts';
 import { MainPanel } from './mainPanel.ts';
+import { runAction } from './dragDrop.ts';
 import { showError } from './stageCommands.ts';
 
 /** Webview の右クリックメニューから渡される情報（data-vscode-context） */
@@ -56,6 +57,8 @@ export function registerHistoryCommands(): vscode.Disposable {
     ),
     command('amonhen.history.moveUp', (panel, repo, oid) => move(panel, repo, oid, -1)),
     command('amonhen.history.moveDown', (panel, repo, oid) => move(panel, repo, oid, +1)),
+    command('amonhen.history.cherryPick', (panel, repo, oid) => applyCommit(panel, repo, oid, 'cherry-pick')),
+    command('amonhen.history.revert', (panel, repo, oid) => applyCommit(panel, repo, oid, 'revert')),
     command('amonhen.history.copyId', async (_panel, _repo, oid) => {
       await vscode.env.clipboard.writeText(oid);
       vscode.window.setStatusBarMessage(`$(copy) ${oid.slice(0, 8)}`, 3000);
@@ -72,6 +75,31 @@ export function registerHistoryCommands(): vscode.Disposable {
       }
     }),
   );
+}
+
+/** コミットを現在のブランチに当てる（cherry-pick）か、打ち消す（revert）。Undo で戻せる */
+async function applyCommit(
+  panel: HistoryController,
+  repo: Repository,
+  oid: string,
+  kind: 'cherry-pick' | 'revert',
+): Promise<void> {
+  const isMerge = (panel.commit(oid)?.parents.length ?? 0) > 1;
+  const branch = (await repo.backend.head()).branch;
+  const label = `${kind === 'cherry-pick' ? 'Cherry-pick' : 'Revert'} ${short(panel, oid)}`;
+  await runAction(repo, {
+    label: `$(${kind === 'cherry-pick' ? 'git-commit' : 'discard'}) ${label}`,
+    run: async () => {
+      const result = await repo.undo.record(
+        label,
+        branch ? [branch] : [],
+        'keep',
+        () => (kind === 'cherry-pick' ? repo.backend.cherryPick(oid, isMerge) : repo.backend.revert(oid, isMerge)),
+        { skip: (r) => r !== 'done' },
+      );
+      return result === 'stopped' ? 'conflict' : result;
+    },
+  });
 }
 
 function short(panel: HistoryController, oid: string): string {
