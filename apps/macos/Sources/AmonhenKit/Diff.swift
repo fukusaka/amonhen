@@ -48,19 +48,26 @@ public final class CommitChanges: @unchecked Sendable {
 }
 
 /// ファイル 1 つの差分。行の文字列はコアのメモリ（blob）を直接指す。
-public final class FileDiff: @unchecked Sendable {
+public class FileDiff: @unchecked Sendable {
     let raw: OpaquePointer
-    let changes: CommitChanges
+    /// コアのメモリを持つ側（解放されないように保持する）。
+    let owner: AnyObject
     let view: AmonhenDiffView
+    private let free: (OpaquePointer) -> Void
 
-    init(raw: OpaquePointer, changes: CommitChanges) {
+    init(raw: OpaquePointer, owner: AnyObject, view: AmonhenDiffView, free: @escaping (OpaquePointer) -> Void) {
         self.raw = raw
-        self.changes = changes
-        self.view = amonhen_diff_view(raw)
+        self.owner = owner
+        self.view = view
+        self.free = free
+    }
+
+    convenience init(raw: OpaquePointer, changes: CommitChanges) {
+        self.init(raw: raw, owner: changes, view: amonhen_diff_view(raw), free: { amonhen_diff_free($0) })
     }
 
     deinit {
-        amonhen_diff_free(raw)
+        free(raw)
     }
 
     public var rowCount: Int { Int(view.row_count) }

@@ -141,6 +141,35 @@ private func makeRepo() throws -> URL {
     #expect(diff.withRows { $0.map(\.kind) } == [3, 0, 2, 1])
 }
 
+@Test func stagesLinesAndCommits() throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let file = dir.appendingPathComponent("a.txt")
+    try "1\n2\n3\n".write(to: file, atomically: true, encoding: .utf8)
+    try git(dir, "add", ".")
+    try git(dir, "commit", "-q", "-m", "add a")
+    try "one\n2\nthree\n".write(to: file, atomically: true, encoding: .utf8)
+    try "new\n".write(to: dir.appendingPathComponent("b.txt"), atomically: true, encoding: .utf8)
+
+    let repo = try Repository(path: dir.path)
+    var status = try repo.loadStatus()
+    #expect(status.branch == "main")
+    #expect(status.items.map(\.path) == ["a.txt", "b.txt"])
+    #expect(status.items[1].kind == .untracked)
+
+    let diff = try status.diff(of: status.items[0], staged: false)
+    #expect(diff.rowCount == 6)
+    try diff.stage(rows: [1, 2])
+    try repo.stage(paths: ["b.txt"])
+
+    status = try repo.loadStatus()
+    #expect(status.items.map { "\($0.indexState)\($0.worktreeState)" } == ["MM", "A."])
+    try repo.unstage(paths: ["b.txt"])
+    try repo.commit(message: "first line only", amend: false)
+    status = try repo.loadStatus()
+    #expect(status.items.map { "\($0.indexState)\($0.worktreeState)" } == [".M", "??"])
+}
+
 @Test func reportsOpenErrors() {
     #expect(throws: AmonhenError.self) {
         try Repository(path: "/nonexistent/amonhen")
