@@ -4,8 +4,10 @@ mod backend;
 mod graph;
 mod oid;
 mod text;
+pub mod topo;
 
 pub use backend::{Error, GitBackend, Result};
 pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use oid::Oid;
 pub use text::CommitText;
+pub use topo::RawCommit;
