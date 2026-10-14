@@ -20,8 +20,14 @@ public struct AmonhenError: Error, CustomStringConvertible {
 public final class Repository: @unchecked Sendable {
     let raw: OpaquePointer
 
-    public init(path: String) throws {
-        guard let raw = amonhen_repo_open(path) else { throw AmonhenError.last() }
+    /// `cacheDirectory` を渡すと、History をそこに永続化し、次に開いたときすぐ表示できる。
+    public init(path: String, cacheDirectory: URL? = nil) throws {
+        let raw = if let cacheDirectory {
+            amonhen_repo_open(path, cacheDirectory.path)
+        } else {
+            amonhen_repo_open(path, nil)
+        }
+        guard let raw else { throw AmonhenError.last() }
         self.raw = raw
     }
 
@@ -33,6 +39,11 @@ public final class Repository: @unchecked Sendable {
     public func loadHistory() throws -> History {
         guard let raw = amonhen_history_load(raw) else { throw AmonhenError.last() }
         return History(raw: raw, repository: self)
+    }
+
+    /// 永続キャッシュにある前回の History。mmap するだけなので、メインスレッドで呼んでよい。
+    public func loadCachedHistory() -> History? {
+        amonhen_history_load_cached(raw).map { History(raw: $0, repository: self) }
     }
 
     /// 最新のスナップショット。まだ読んでいなければ nil。

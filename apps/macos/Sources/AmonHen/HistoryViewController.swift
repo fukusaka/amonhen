@@ -53,6 +53,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let graphView = GraphView()
     private let graphColumn = NSTableColumn(identifier: .init("graph"))
     private var chunks: [Int: HistoryChunk] = [:]
+    /// 裏で読んでいるチャンク。
+    private var loadingChunks: Set<Int> = []
     private static let chunkRows = 256
 
     /// 入力イベントから画面に表示されるまでの時間（秒）。
@@ -110,11 +112,30 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         layoutGraphView()
     }
 
-    func reload() throws {
-        history = try repository.loadHistory()
+    /// 前回の History を永続キャッシュからすぐ表示し、最新にするのは裏で行う。
+    func load(completion: @escaping (Error?) -> Void) {
+        if let cached = repository.loadCachedHistory() {
+            show(cached)
+        }
+        let repository = self.repository
+        Task {
+            do {
+                let latest = try await Task.detached(priority: .userInitiated) { try repository.loadHistory() }.value
+                if latest.generation != history?.generation { show(latest) }
+                completion(nil)
+            } catch {
+                completion(error)
+            }
+        }
+    }
+
+    private func show(_ history: History) {
+        let first = self.history == nil
+        self.history = history
         chunks.removeAll()
+        loadingChunks.removeAll()
         tableView.reloadData()
-        tableView.scrollRowToVisible(0)
+        if first { tableView.scrollRowToVisible(0) }
         redrawGraph()
     }
 
@@ -215,14 +236,35 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     // MARK: - 表のデータ
 
+    /// 読み終えていれば返す。まだなら裏で読み始め（前後のチャンクも先読みし）、読めたら行を描き直す。
     private func chunk(row: Int) -> HistoryChunk? {
-        guard let history else { return nil }
         let index = row / Self.chunkRows
-        if let chunk = chunks[index] { return chunk }
-        let start = index * Self.chunkRows
-        let chunk = try? history.chunk(rows: start..<min(history.rowCount, start + Self.chunkRows))
-        chunks[index] = chunk
-        return chunk
+        for i in [index, index + 1, index - 1] { prefetch(chunk: i) }
+        return chunks[index]
+    }
+
+    private func prefetch(chunk index: Int) {
+        guard let history, index >= 0, index * Self.chunkRows < history.rowCount,
+              chunks[index] == nil, !loadingChunks.contains(index) else { return }
+        loadingChunks.insert(index)
+        let rows = index * Self.chunkRows..<min(history.rowCount, (index + 1) * Self.chunkRows)
+        Task {
+            let chunk = await Task.detached(priority: .userInitiated) { try? history.chunk(rows: rows) }.value
+            do {
+                // 読んでいる間に History が入れ替わっていたら捨てる。
+                guard self.history === history else { return }
+                self.loadingChunks.remove(index)
+                self.chunks[index] = chunk
+                let visible = self.tableView.rows(in: self.tableView.visibleRect)
+                let lower = max(rows.lowerBound, visible.location)
+                let upper = min(rows.upperBound, visible.location + visible.length)
+                if lower < upper {
+                    let overlap = lower..<upper
+                    let columns = IndexSet(integersIn: 1..<self.tableView.numberOfColumns)
+                    self.tableView.reloadData(forRowIndexes: IndexSet(integersIn: overlap), columnIndexes: columns)
+                }
+            }
+        }
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -237,9 +279,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }()
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let id = tableColumn?.identifier, id != graphColumn.identifier, let chunk = chunk(row: row) else {
-            return nil
-        }
+        guard let id = tableColumn?.identifier, id != graphColumn.identifier else { return nil }
+        let chunk = chunk(row: row)
         let field = tableView.makeView(withIdentifier: id, owner: nil) as? NSTextField ?? {
             let f = NSTextField(labelWithString: "")
             f.identifier = id
@@ -250,10 +291,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }()
         // 表のセルは文字列を持ち続けるので、コアのメモリを指したままの CFString は渡さずコピーする。
         // 見えている行の分だけ。差分表示と同じく Metal で文字を描くようになったら置き換える。
-        switch id.rawValue {
-        case "subject": field.stringValue = chunk.subject(row: row)
-        case "author": field.stringValue = chunk.authorName(row: row)
-        default: field.stringValue = Self.dateFormatter.string(from: chunk.authorTime(row: row))
+        switch (id.rawValue, chunk) {
+        case (_, nil): field.stringValue = ""
+        case ("subject", let chunk?): field.stringValue = chunk.subject(row: row)
+        case ("author", let chunk?): field.stringValue = chunk.authorName(row: row)
+        case (_, let chunk?): field.stringValue = Self.dateFormatter.string(from: chunk.authorTime(row: row))
         }
         return field
     }

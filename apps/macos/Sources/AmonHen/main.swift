@@ -11,7 +11,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         do {
-            let repository = try Repository(path: path)
+            let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent(Bundle.main.bundleIdentifier ?? "io.github.fukusaka.amonhen")
+            let repository = try Repository(path: path, cacheDirectory: cacheDirectory)
             guard let renderer = GraphRenderer() else { throw AmonhenError(description: "Metal を使えない") }
             let controller = HistoryViewController(repository: repository, renderer: renderer)
             let window = NSWindow(
@@ -27,8 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 window.subtitle = String(format: "入力→表示 %.1f ms", latency * 1000)
             }
             let start = Date()
-            try controller.reload()
-            NSLog("History を %.0f ms で表示", Date().timeIntervalSince(start) * 1000)
+            controller.load { error in
+                if let error { NSAlert(error: error).runModal() }
+                NSLog("History を最新にするまで %.0f ms", Date().timeIntervalSince(start) * 1000)
+            }
+            NSLog("History を %.0f ms で表示（キャッシュ）", Date().timeIntervalSince(start) * 1000)
             self.window = window
             self.history = controller
             if CommandLine.arguments.contains("--measure-scroll") {

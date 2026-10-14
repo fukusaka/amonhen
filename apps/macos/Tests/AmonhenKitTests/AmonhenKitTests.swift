@@ -81,6 +81,23 @@ private func makeRepo() throws -> URL {
     }
 }
 
+@Test func showsTheCachedHistoryOnTheNextOpen() throws {
+    let dir = try makeRepo()
+    let cache = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    defer {
+        try? FileManager.default.removeItem(at: dir)
+        try? FileManager.default.removeItem(at: cache)
+    }
+    let first = try Repository(path: dir.path, cacheDirectory: cache)
+    #expect(first.loadCachedHistory() == nil)
+    _ = try first.loadHistory()
+
+    let second = try Repository(path: dir.path, cacheDirectory: cache)
+    let cached = try #require(second.loadCachedHistory())
+    #expect(cached.rowCount == 2)
+    #expect(try cached.chunk(rows: 0..<1).subject(row: 0) == "日本語の件名")
+}
+
 @Test func reportsOpenErrors() {
     #expect(throws: AmonhenError.self) {
         try Repository(path: "/nonexistent/amonhen")
