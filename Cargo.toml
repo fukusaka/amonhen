@@ -15,6 +15,7 @@ amonhen-core = { path = "crates/core" }
 amonhen-projection = { path = "crates/projection" }
 amonhen-platform = { path = "crates/platform" }
 amonhen-backend-gix = { path = "crates/backend-gix" }
+gix = { version = "0.89", default-features = false, features = ["sha1", "max-performance-safe", "revision"] }
 
 [profile.release]
 lto = "thin"
