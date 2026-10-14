@@ -43,7 +43,7 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 | 橋渡し | UniFFI ＋ 速さが要る経路だけ C ABI | 操作系は型安全に、行データはゼロコピーで |
 | UI の骨格・重い画面 | AppKit | 表示行の使い回し、描画範囲、レイヤーを直接制御できる |
 | UI の周辺 | SwiftUI（`NSHostingView` で埋め込む） | 設定・ダイアログ・Welcome を手早く作る |
-| GPU | Core Animation を基本に、History のグラフと差分の文字だけ Metal | 実装コストと快適さの落としどころ |
+| GPU | History と差分表示を Metal で描く（文字のグリフアトラスを共有）。ほかは Core Animation と標準部品 | History のラベル用に Metal の文字描画は必ず作るので、差分表示でも使い回す |
 | 対象 OS | macOS 14.4 以降、Apple Silicon | `os_sync_wait_on_address`、`NSView.displayLink` を使う |
 
 ## 全体構成
@@ -52,7 +52,7 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 ┌──────────────────────── macOS アプリ（Swift / AppKit）────────────────────────┐
 │ サイドバー        History               差分表示            コミット入力     │
 │ NSOutlineView   NSTableView           自前の NSView        NSTextView        │
-│                 + Metal のグラフ       Core Text / Metal    （IME は OS）     │
+│                 + Metal のグラフ       Metal（文字は共有）  （IME は OS）     │
 │ 3-way マージ（自前の NSView） · 設定・ダイアログ（SwiftUI）                  │
 │ ──────────────────────────────────────────────────────────────────────────── │
 │ Swift の薄い層: 見えている行だけ読む → 描く / 操作を Intent として送る       │
@@ -153,8 +153,12 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 
 ## 差分表示
 
-- `NSTextView` は使わない。見えている行だけ Core Text でレイアウトし、CTLine を「世代＋行番号」でキャッシュする。タイル状の CALayer で描画し、スクロールは GPU の合成に任せる。
-- 計測して足りなければ、文字をグリフアトラスにして Metal のインスタンス描画に上げる。
+- `NSTextView` は使わず、最初から Metal で描く。文字の描画の仕組みは History のラベルと共有する。
+  1. 文字の並べ方は Core Text の CTLine に任せる（日本語・合字・フォントの代替を OS と同じ品質で）。
+  2. CTRun からグリフ番号・位置・フォントを取り出す。
+  3. 未登録のグリフだけ `CTFontDrawGlyphs` でラスタライズしてアトラスに足す（OS と同じ描画処理なので見た目が揃う）。絵文字はカラーのアトラスに分ける。
+  4. グリフ 1 つを四角形のインスタンス 1 つとして、1 回の描画命令で描く。横位置は 1/4 ピクセル単位に丸める。
+- CTLine は「世代＋行番号」でキャッシュし、スクロールでは History と同じく定数のオフセットだけを変える。
 - ファイル内容は gix が展開した `Arc<[u8]>` を差分計算・色付け・表示で共有する。
 - テキスト選択・コピー・検索・右クリックメニュー・hunk / 行単位の stage を自前で実装する。
 
@@ -214,7 +218,7 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 
 - [ ] 6. 永続キャッシュ（mmap）と起動直後の即時表示
 - [ ] 7. サイドバー（Branches / Remotes / Tags / Stashes / Submodules）と FSEvents による変更検知
-- [ ] 8. 差分表示（Core Text、タイル、CTLine キャッシュ）と後追いの色付け
+- [ ] 8. 差分表示（Metal、History と共有するグリフアトラス、CTLine キャッシュ）と後追いの色付け
 - [ ] 9. Working Copy: status、ファイル・hunk・行単位の stage、コミット入力
 - [ ] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ
 - [ ] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
@@ -231,5 +235,4 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 
 ## 未決事項
 
-- 差分表示を最初から Metal にするか、Core Text＋CALayer で始めて計測後に上げるか（現案は後者）
 - 永続キャッシュの形式を rkyv にするか自前にするか
