@@ -490,6 +490,15 @@ AmonhenChanges *amonhen_commit_changes(const AmonhenRepo *repo_ptr,
                                        const uint8_t *commit);
 
 /**
+ * stash（20 バイト）の中身。untracked のファイルを含めていればそれも（`amonhen_changes_free` で解放する）。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`stash` は 20 バイト読める領域であること。
+ */
+AmonhenChanges *amonhen_stash_changes(const AmonhenRepo *repo_ptr,
+                                      const uint8_t *stash);
+
+/**
  * # Safety
  * `changes` は有効であること。返したポインタは解放するまで有効。
  */

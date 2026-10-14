@@ -119,6 +119,10 @@ impl GitBackend for GixBackend {
         }
         for reference in repo.references()?.all()? {
             let mut reference = reference?;
+            // stash はサイドバーで扱い、History には出さない。
+            if reference.name().as_bstr() == "refs/stash" {
+                continue;
+            }
             // コミット以外（ツリーや blob）を指すタグは History に出さない。
             if let Ok(commit) = reference.peel_to_commit() {
                 add(to_oid(commit.id().as_ref())?);
@@ -365,6 +369,37 @@ impl GitBackend for GixBackend {
             });
         }
         changes.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(changes)
+    }
+
+    fn stash_changes(&self, stash: &Oid) -> Result<Vec<FileChange>> {
+        let mut changes = self.commit_changes(stash)?;
+        // untracked のファイルを含めた stash は、3 番目の親にそれらだけを持つ。
+        let repo = self.repo.to_thread_local();
+        let commit = repo.find_commit(gix::ObjectId::from_bytes_or_panic(&stash.0))?;
+        if let Some(untracked) = commit.parent_ids().nth(2) {
+            let tree = untracked.object()?.into_commit().tree()?;
+            for change in repo.diff_tree_to_tree(None, Some(&tree), None)? {
+                if let gix::object::tree::diff::ChangeDetached::Addition {
+                    location,
+                    id,
+                    entry_mode,
+                    ..
+                } = change
+                    && !entry_mode.is_tree()
+                {
+                    changes.push(FileChange {
+                        kind: ChangeKind::Added,
+                        path: location.to_string(),
+                        old_path: None,
+                        old_id: None,
+                        new_id: Some(to_oid(id.as_ref())?),
+                        submodule: false,
+                    });
+                }
+            }
+            changes.sort_by(|a, b| a.path.cmp(&b.path));
+        }
         Ok(changes)
     }
 

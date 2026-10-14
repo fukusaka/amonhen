@@ -235,6 +235,11 @@ impl Repository {
         self.backend.commit_changes(commit)
     }
 
+    /// stash の中身（作業中の変更と、含めていれば untracked のファイル）。
+    pub fn stash_changes(&self, stash: &Oid) -> Result<Vec<FileChange>> {
+        self.backend.stash_changes(stash)
+    }
+
     /// 変わったファイル 1 つの、前後 3 行の文脈つきの差分。
     pub fn file_diff(&self, change: &FileChange, profile: &FrontendProfile) -> Result<DiffView> {
         let side = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {

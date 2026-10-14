@@ -39,6 +39,11 @@ pub trait GitBackend: Send + Sync {
     /// 名前の変更も見つける。
     fn commit_changes(&self, commit: &Oid) -> Result<Vec<FileChange>>;
 
+    /// stash の中身（作業中の変更と、含めていれば untracked のファイル）。
+    fn stash_changes(&self, stash: &Oid) -> Result<Vec<FileChange>> {
+        self.commit_changes(stash)
+    }
+
     /// blob の中身。展開したバッファをそのまま返し、差分の各行はここを直接指す。
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>>;
 

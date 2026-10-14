@@ -283,3 +283,39 @@ fn lists_changed_files_with_renames_and_reads_blobs() {
         b"a\nb\n"
     );
 }
+
+#[test]
+fn shows_stash_contents_including_untracked_files_but_keeps_them_out_of_history() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+    git(dir, &["add", "."]);
+    commit(dir, "first");
+    std::fs::write(dir.join("a.txt"), "2\n").unwrap();
+    std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+    git(
+        dir,
+        &["stash", "push", "-q", "--include-untracked", "-m", "wip"],
+    );
+
+    let backend = GixBackend::open(dir).unwrap();
+    let tips = backend.tips().unwrap();
+    assert_eq!(tips.len(), 1, "stash は History の起点にしない");
+    let stash = backend
+        .refs()
+        .unwrap()
+        .entries
+        .iter()
+        .find(|e| e.name == "stash@{0}")
+        .unwrap()
+        .target
+        .unwrap();
+    let paths: Vec<String> = backend
+        .stash_changes(&stash)
+        .unwrap()
+        .into_iter()
+        .map(|c| c.path)
+        .collect();
+    assert_eq!(paths, ["a.txt", "new.txt"]);
+}

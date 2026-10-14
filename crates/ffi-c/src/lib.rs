@@ -569,7 +569,24 @@ pub unsafe extern "C" fn amonhen_commit_changes(
     commit: *const u8,
 ) -> *mut AmonhenChanges {
     let id = Oid(unsafe { *commit.cast::<[u8; 20]>() });
-    let changes = match repo(repo_ptr).commit_changes(&id) {
+    changes_handle(repo(repo_ptr).commit_changes(&id))
+}
+
+/// stash（20 バイト）の中身。untracked のファイルを含めていればそれも（`amonhen_changes_free` で解放する）。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`stash` は 20 バイト読める領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stash_changes(
+    repo_ptr: *const AmonhenRepo,
+    stash: *const u8,
+) -> *mut AmonhenChanges {
+    let id = Oid(unsafe { *stash.cast::<[u8; 20]>() });
+    changes_handle(repo(repo_ptr).stash_changes(&id))
+}
+
+fn changes_handle(result: amonhen_model::Result<Vec<FileChange>>) -> *mut AmonhenChanges {
+    let changes = match result {
         Ok(c) => c,
         Err(e) => {
             set_error(e);
