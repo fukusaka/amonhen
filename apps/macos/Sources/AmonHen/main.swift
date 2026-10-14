@@ -94,14 +94,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var window: NSWindow?
-    private var history: HistoryViewController?
-    private var sidebar: SidebarViewController?
-    private var repository: Repository?
-    private var watch: RepositoryWatch?
-    private var workingCopy: WorkingCopyViewController?
-    private var actions: Actions?
-    private var toolbar: MainToolbar?
+    /// 開いているリポジトリのウィンドウ。
+    private var windows: [RepositoryWindow] = []
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -109,160 +103,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
-        do {
-            let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent(Bundle.main.bundleIdentifier ?? "io.github.fukusaka.amonhen")
-            let repository = try Repository(path: path, cacheDirectory: cacheDirectory)
-            guard let renderer = GraphRenderer() else { throw AmonhenError(description: "Metal を使えない") }
-            let controller = HistoryViewController(repository: repository, renderer: renderer)
-            let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
-                styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-            let name = URL(fileURLWithPath: path).lastPathComponent
-            window.title = name
-            let sidebar = SidebarViewController()
-            let split = NSSplitViewController()
-            let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
-            sidebarItem.minimumThickness = 180
-            sidebarItem.maximumThickness = 400
-            split.addSplitViewItem(sidebarItem)
-            // 上に History、下に選んだコミットの詳細。
-            guard let text = TextRenderer(device: renderer.device) else { throw AmonhenError(description: "Metal を使えない") }
-            let detail = CommitDetailViewController(repository: repository, renderer: text)
-            let content = NSSplitViewController()
-            content.splitView.isVertical = false
-            content.addSplitViewItem(NSSplitViewItem(viewController: controller))
-            let detailItem = NSSplitViewItem(viewController: detail)
-            detailItem.minimumThickness = 160
-            content.addSplitViewItem(detailItem)
-            controller.onSelectCommit = { [weak detail] commit in detail?.show(commit: commit) }
-            // 詳細の親コミットのリンク。
-            detail.onSelectCommit = { [weak controller] hex in
-                guard let controller, let id = Data(hex: hex) else { return }
-                if let row = controller.currentHistory?.row(of: id) {
-                    controller.select(row: row)
-                } else {
-                    controller.set(scope: .all, select: id)
-                }
-            }
-            let workingCopy = WorkingCopyViewController(repository: repository, renderer: text)
-            let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy])
-            sidebar.onSelectPage = { [weak pages] page in pages?.show(page) }
-            split.addSplitViewItem(NSSplitViewItem(viewController: pages))
-            // ブランチ・タグを選ぶと、その履歴に絞り込む。stash などはそのコミットを選ぶだけ。
-            sidebar.onSelect = { [weak controller] item in
-                guard let controller, let target = item.target else { return }
-                if [.local, .remote, .tag].contains(item.kind) {
-                    controller.set(scope: .ref(item.name, target), select: target)
-                } else if item.kind == .stash {
-                    // stash は History にないので、詳細にだけ中身を出す。
-                    detail.show(commit: target, stash: true)
-                } else if let row = controller.currentHistory?.row(of: target) {
-                    controller.select(row: row)
-                }
-            }
-            window.contentViewController = split
-            window.setContentSize(NSSize(width: 1100, height: 720))
-            window.center()
-            window.makeKeyAndOrderFront(nil)
-            controller.onLatency = { latency in
-                window.subtitle = String(format: "入力→表示 %.1f ms", latency * 1000)
-            }
-            let start = Date()
-            controller.load { error in
-                if let error { NSAlert(error: error).runModal() }
-                NSLog("History を最新にするまで %.0f ms", Date().timeIntervalSince(start) * 1000)
-                if error == nil, Settings.writeCommitGraph {
-                    Task.detached(priority: .utility) {
-                        do {
-                            if try repository.writeCommitGraphIfMissing() { NSLog("commit-graph を書き出した") }
-                        } catch {
-                            NSLog("commit-graph を書き出せない: \(error)")
-                        }
-                    }
-                }
-            }
-            NSLog("History を %.0f ms で表示（キャッシュ）", Date().timeIntervalSince(start) * 1000)
-            self.window = window
-            self.history = controller
-            self.sidebar = sidebar
-            self.repository = repository
-            self.workingCopy = workingCopy
-            let actions = Actions(repository: repository)
-            actions.window = window
-            actions.onChange = { [weak self] in
-                self?.history?.refresh()
-                self?.reloadRefs()
-                self?.workingCopy?.refresh()
-            }
-            sidebar.actions = actions
-            controller.actions = actions
-            workingCopy.actions = actions
-            workingCopy.repositoryRoot = repository.workdir ?? path
-            let toolbar = MainToolbar(actions: actions)
-            window.toolbar = toolbar.toolbar
-            actions.onUndoChange = { [weak toolbar] label in toolbar?.setUndo(label) }
-            actions.refreshUndo()
-            self.actions = actions
-            self.toolbar = toolbar
-            sidebar.select(page: CommandLine.arguments.contains("--working-copy") ? .workingCopy : .history)
-            workingCopy.refresh()
-            reloadRefs()
-            do {
-                watch = try RepositoryWatch(repository: repository) { [weak self] changes in
-                    Task { @MainActor in self?.repositoryDidChange(changes) }
-                }
-            } catch {
-                NSLog("リポジトリを監視できない: \(error)")
-            }
-            if CommandLine.arguments.contains("--measure-scroll") {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    controller.measureScroll(frames: 600, rowsPerFrame: 1.5) { summary in
-                        print(summary)
-                        NSApp.terminate(nil)
-                    }
-                }
-            }
-            if let output = Self.option("--snapshot") {
-                let selectFirst = CommandLine.arguments.contains("--select-first")
-                    || CommandLine.arguments.contains("--working-copy")
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    if CommandLine.arguments.contains("--select-first") { controller.select(row: 0) }
-                }
-                DispatchQueue.main.asyncAfter(deadline: .now() + (selectFirst ? 1.5 : 0.5)) {
-                    let rep = controller.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays())
-                    try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
-                    NSApp.terminate(nil)
-                }
-            }
-        } catch {
-            let alert = NSAlert(error: error)
-            alert.runModal()
-            NSApp.terminate(nil)
-        }
+        open(path: path, debug: true)
         NSApp.activate()
     }
 
-    private func repositoryDidChange(_ changes: Changes) {
-        if !changes.intersection([.refs, .config]).isEmpty {
-            history?.refresh()
-            reloadRefs()
+    /// リポジトリを新しいウィンドウで開く。すでに開いていれば前に出す。
+    func open(path: String, debug: Bool = false) {
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        if let existing = windows.first(where: { $0.url == url }) {
+            existing.window.makeKeyAndOrderFront(nil)
+            return
         }
-        if !changes.intersection([.refs, .index, .worktree]).isEmpty {
-            workingCopy?.refresh()
+        do {
+            let window = try RepositoryWindow(url: url, debug: debug)
+            window.onOpenRepository = { [weak self] path in self?.open(path: path) }
+            window.onClose = { [weak self, weak window] in self?.windows.removeAll { $0 === window } }
+            windows.append(window)
+        } catch {
+            NSAlert(error: error).runModal()
+            if windows.isEmpty { NSApp.terminate(nil) }
         }
     }
 
-    private func reloadRefs() {
-        guard let repository else { return }
-        Task {
-            do {
-                let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
-                sidebar?.show(refs)
-                history?.head = refs.head
-            } catch {
-                NSLog("ref を読めない: \(error)")
-            }
+    @objc private func openDocument(_ sender: Any?) {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.message = "リポジトリを選んでください"
+        if panel.runModal() == .OK, let url = panel.url {
+            open(path: url.path)
         }
     }
 
@@ -280,6 +149,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(commitGraph)
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Amon Hen を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+
+        let fileItem = NSMenuItem()
+        main.addItem(fileItem)
+        let fileMenu = NSMenu(title: "File")
+        fileItem.submenu = fileMenu
+        let open = NSMenuItem(title: "Open…", action: #selector(openDocument(_:)), keyEquivalent: "o")
+        open.target = self
+        fileMenu.addItem(open)
+        fileMenu.addItem(NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+
+        // テキスト欄でのコピーや取り消しのため、標準の Edit メニューを置く。
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editItem.submenu = editMenu
+        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
+        editMenu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
         NSApp.mainMenu = main
     }
 
@@ -290,7 +181,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
-    private static func option(_ name: String) -> String? {
+    static func option(_ name: String) -> String? {
         let args = CommandLine.arguments
         guard let i = args.firstIndex(of: name), i + 1 < args.count else { return nil }
         return args[i + 1]

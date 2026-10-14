@@ -8,6 +8,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var actions: Actions?
     /// チェックアウト中のブランチ。
     private var headBranch: String?
+    /// サブモジュールを新しいウィンドウで開く（作業ツリーからのパス）。
+    var onOpenSubmodule: ((String) -> Void)?
     /// Working Copy か History を選んだとき。
     var onSelectPage: ((Page) -> Void)?
 
@@ -300,6 +302,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add("Drop \(name)") { actions.perform(["op": "stashDrop", "name": name]) }
         case .submodule:
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
+            add("Open \(name) in New Window") { [weak self] in self?.onOpenSubmodule?(name) }
         }
     }
 
