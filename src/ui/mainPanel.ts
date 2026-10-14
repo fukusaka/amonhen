@@ -113,6 +113,8 @@ export class MainPanel implements vscode.Disposable {
       case 'wcSelect':
       case 'wcStageFiles':
       case 'wcStageLines':
+      case 'wcDiscardFiles':
+      case 'wcDiscardLines':
       case 'wcCommit':
       case 'wcOpenFile':
       case 'wcResolve':

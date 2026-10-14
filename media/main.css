@@ -688,3 +688,8 @@ button.secondary {
   padding: 8px 16px;
   color: var(--vscode-descriptionForeground);
 }
+
+.hunk-head .actions {
+  display: flex;
+  gap: 6px;
+}

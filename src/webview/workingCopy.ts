@@ -5,7 +5,7 @@
  */
 import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
-import type { FileDiff, SelectedLine } from '../diff/fileDiff.ts';
+import type { DiffHunk, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody } from './diffView.ts';
 
@@ -95,6 +95,15 @@ export function createWorkingCopyView(): View {
       });
       row.append(button);
     }
+    if (f.group === 'unstaged') {
+      const discard = el('button', 'icon-button', '↺');
+      discard.title = 'Discard Changes';
+      discard.addEventListener('click', (e) => {
+        e.stopPropagation();
+        post({ type: 'wcDiscardFiles', paths: [f.path] });
+      });
+      row.insertBefore(discard, row.lastElementChild);
+    }
     row.addEventListener('click', () => select(f));
     row.addEventListener('dblclick', () => post({ type: 'wcOpenFile', path: f.path }));
     return row;
@@ -149,6 +158,11 @@ export function createWorkingCopyView(): View {
       );
       lines.addEventListener('click', () => stageLines([...picked]));
       actions.append(lines);
+      if (!staged) {
+        const discardLines = el('button', 'secondary', `Discard ${picked.size} Line${picked.size > 1 ? 's' : ''}`);
+        discardLines.addEventListener('click', () => discard([...picked]));
+        actions.append(discardLines);
+      }
     }
     const file = el('button', 'secondary', staged ? 'Unstage File' : 'Stage File');
     file.addEventListener('click', () => {
@@ -157,17 +171,33 @@ export function createWorkingCopyView(): View {
     });
     const open = el('button', 'secondary', 'Open File');
     open.addEventListener('click', () => post({ type: 'wcOpenFile', path: d.path }));
-    actions.append(file, open);
+    actions.append(file);
+    if (!staged) {
+      const discardFile = el('button', 'secondary', 'Discard File');
+      discardFile.addEventListener('click', () => post({ type: 'wcDiscardFiles', paths: [d.path] }));
+      actions.append(discardFile);
+    }
+    actions.append(open);
     head.append(actions);
 
     const content: HTMLElement[] = [head];
     content.push(
       ...renderDiffBody(d, {
         picked,
-        hunkAction: {
-          label: staged ? 'Unstage Hunk' : 'Stage Hunk',
-          run: (hunk) => stageLines(hunk.lines.filter((l) => l.kind !== ' ').map(lineKey)),
-        },
+        hunkActions: [
+          {
+            label: staged ? 'Unstage Hunk' : 'Stage Hunk',
+            run: (hunk) => stageLines(hunk.lines.filter((l) => l.kind !== ' ').map(lineKey)),
+          },
+          ...(staged
+            ? []
+            : [
+                {
+                  label: 'Discard Hunk',
+                  run: (hunk: DiffHunk) => discard(hunk.lines.filter((l) => l.kind !== ' ').map(lineKey)),
+                },
+              ]),
+        ],
       }),
     );
     diffPane.replaceChildren(...content);
@@ -202,14 +232,23 @@ export function createWorkingCopyView(): View {
     return box;
   }
 
-  function stageLines(keys: string[]): void {
-    if (!diff || keys.length === 0) return;
-    const lines: SelectedLine[] = keys.map((k) => {
+  function toLines(keys: string[]): SelectedLine[] {
+    return keys.map((k) => {
       const [side, no] = k.split(':') as [string, string];
       return side === 'old' ? { kind: '-', old: Number(no) } : { kind: '+', new: Number(no) };
     });
-    post({ type: 'wcStageLines', group: diffGroup!, path: diff.path, version: diff.version, lines });
+  }
+
+  function stageLines(keys: string[]): void {
+    if (!diff || keys.length === 0) return;
+    post({ type: 'wcStageLines', group: diffGroup!, path: diff.path, version: diff.version, lines: toLines(keys) });
     picked = new Set();
+  }
+
+  /** 選んだ行を破棄する。確認は拡張ホストで行う */
+  function discard(keys: string[]): void {
+    if (!diff || keys.length === 0) return;
+    post({ type: 'wcDiscardLines', path: diff.path, version: diff.version, lines: toLines(keys) });
   }
 
   // 行をクリックして選ぶ。Shift で前に選んだ行からの範囲

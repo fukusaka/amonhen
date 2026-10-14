@@ -9,7 +9,7 @@ export interface DiffOptions {
   /** 選んでいる行（lineKey）。行を選べるときだけ渡す */
   picked?: ReadonlySet<string>;
   /** hunk の見出しに置くボタン */
-  hunkAction?: { label: string; run: (hunk: DiffHunk) => void };
+  hunkActions?: { label: string; run: (hunk: DiffHunk) => void; secondary?: boolean }[];
 }
 
 /** 行を表す文字列。削除行は古い側、追加行は新しい側の行番号で表す */
@@ -39,11 +39,14 @@ function renderHunk(hunk: DiffHunk, opts: DiffOptions, budget: number): HTMLElem
   const box = el('div', 'hunk');
   const head = el('div', 'hunk-head');
   head.append(el('span', 'range', hunk.header));
-  if (opts.hunkAction) {
-    const { label, run } = opts.hunkAction;
-    const button = el('button', 'secondary', label);
-    button.addEventListener('click', () => run(hunk));
-    head.append(button);
+  if (opts.hunkActions?.length) {
+    const actions = el('span', 'actions');
+    for (const { label, run } of opts.hunkActions) {
+      const button = el('button', 'secondary', label);
+      button.addEventListener('click', () => run(hunk));
+      actions.append(button);
+    }
+    head.append(actions);
   }
   box.append(head);
 

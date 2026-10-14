@@ -5,6 +5,7 @@ import { parseCommitObject } from '../git/commitObject.ts';
 import { groupChanges, type Change, type ChangeGroup } from '../state/changes.ts';
 import type { Repository } from '../state/repository.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
+import { discardFiles, discardLines } from '../state/discard.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
 import { commitStaged } from './commit.ts';
 import { openConflict } from './diff.ts';
@@ -131,6 +132,28 @@ export class WorkingCopyController implements vscode.Disposable {
         }
         break;
       }
+      case 'wcDiscardFiles': {
+        const changes = message.paths.flatMap((p) => find('unstaged', p) ?? []);
+        await this.discard(repo, changes.length === 1 ? changes[0]!.path : `${changes.length} 個のファイル`, () =>
+          discardFiles(repo.backend, repo.undo, changes),
+        );
+        break;
+      }
+      case 'wcDiscardLines': {
+        const change = find('unstaged', message.path);
+        if (!change) break;
+        const fresh = await this.loadDiff(change);
+        if (fresh.diff.version !== message.version) {
+          this.post({ type: 'wcDiff', group: change.group, diff: fresh.diff });
+          vscode.window.setStatusBarMessage('ファイルが変わったので差分を更新しました。もう一度選んでください', 4000);
+          break;
+        }
+        const n = message.lines.length;
+        await this.discard(repo, `${change.path} の ${n} 行`, () =>
+          discardLines(repo.backend, repo.undo, change.path, fresh, message.lines),
+        );
+        break;
+      }
       case 'wcCommit':
         if (await commitStaged(repo, message.message, message.amend)) {
           this.post({ type: 'wcCommitted' });
@@ -151,6 +174,25 @@ export class WorkingCopyController implements vscode.Disposable {
         }
         break;
       }
+    }
+  }
+
+  /** 確かめてから破棄する。破棄した内容は Undo で戻せる */
+  private async discard(repo: Repository, target: string, run: () => Promise<void>): Promise<void> {
+    const choice = await vscode.window.showWarningMessage(
+      `${target}の変更を破棄しますか？`,
+      { modal: true, detail: 'stage していない変更が失われます。Undo で戻せます。' },
+      'Discard',
+    );
+    if (choice !== 'Discard') {
+      return;
+    }
+    try {
+      await run();
+    } catch (err) {
+      showError(err);
+    } finally {
+      await repo.refresh();
     }
   }
 
