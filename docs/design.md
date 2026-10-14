@@ -235,7 +235,7 @@ FE が実装してコアに渡す。
 | 130 万コミット（linux）の全レイアウト | 裏で 100 ms 前後 |
 | スクロール中の GPU へのデータ転送 | 定数 1 つ |
 | 1 フレームの描画命令 | History は 1 回 |
-| 入力から表示まで | 8.3 ms 以内 |
+| 入力から GPU が描き終えるまで | 8.3 ms 以内（表示はさらに WindowServer の合成で 2 フレーム後） |
 | Rust と Swift の境界のコスト | 1 フレームあたり µs 未満 |
 
 - Rust は criterion、Swift は `os_signpost` ＋ Instruments で計測する。
@@ -265,6 +265,17 @@ History の読み込み（起点の収集＋トポロジカル順の走査、`cr
 | 100 万コミットのうち最初の 60 行 | 1.3 ms |
 | 100 万コミットに 10 コミット足した後の再計算 | 6.9 ms |
 | 見えている 60 行に重なる線の検索 | 0.9 µs |
+
+History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フレーム、1.5 行ずつ、60Hz のディスプレイ、release ビルド）:
+
+| リポジトリ | メインスレッドの処理 p50 / p95 | GPU が描き終えるまで p50 / p95 | 表示まで | フレーム落ち |
+| --- | --- | --- | --- | --- |
+| coreutils | 1.9 / 2.5 ms | 2.2 / 2.8 ms | 33.3 ms | 0 |
+| android/development | 2.2 / 4.2 ms | 2.3 / 4.2 ms | 33.3 ms | 0 |
+
+- 表示までは 2 フレーム。ウィンドウ表示では、WindowServer が次の vsync で合成し、その次の vsync で画面に出るので、アプリ側では縮められない。`presentsWithTransaction` の有無でも変わらなかったので、表とグラフを同じフレームで動かせる有効の方を使う。
+- 最大値（8〜12 ms）は、新しいチャンクの件名を同期で読む瞬間。先読みを裏のスレッドに移す。
+- グラフの点と線は、見えている範囲だけ毎フレーム GPU のバッファに書いている（数 KB）。レイアウトの配列をページ境界に揃えて `MTLBuffer(bytesNoCopy:)` で渡し、スクロールでは定数だけ変える形にするのは後で。
 
 実際のリポジトリ（`crates/core/examples/layout.rs`）では、coreutils（30,176 コミット）で 1.2 ms、android/development（34,261 コミット、起点 318 個）で 17 ms。後者はリリースブランチが多くレーンが 673 本まで広がるので、未使用レーンを詰める・魚眼で広げるなどの表現の工夫（実装順序の 13）が要る。
 
@@ -303,7 +314,7 @@ History の読み込み（起点の収集＋トポロジカル順の走査、`cr
 - [x] 1. Rust の workspace と `model` / `core` / `layout` の骨組み、`GitBackend` / `Platform` / `FrontendProfile` の形、gix による commit-graph の読み取り。全ターゲットのビルドを CI で通す
 - [x] 2. グラフのレイアウト（順次計算、チェックポイント、区間表現）と criterion のベンチ
 - [x] 3. プロジェクション（macOS の形式だけ）と C ABI でのスナップショット公開、Swift からのゼロコピー読み取り
-- [ ] 4. AppKit の History（`NSTableView`）と Metal のグラフ描画、入力から表示までの計測
+- [x] 4. AppKit の History（`NSTableView`）と Metal のグラフ描画、入力から表示までの計測
 - [ ] 5. linux リポジトリで速度目標を検証。満たせなければ設計を見直す
 
 本体:
