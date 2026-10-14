@@ -251,14 +251,18 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     func snapshot(of root: NSView, extra: [(CGImage, NSView)] = []) -> NSBitmapImageRep? {
         guard let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { return nil }
         root.cacheDisplay(in: root.bounds, to: rep)
-        guard let history else { return rep }
+        guard let context = NSGraphicsContext(bitmapImageRep: rep) else { return rep }
+        var overlays = extra
         let scale = view.window?.backingScaleFactor ?? 2
         let scrollY = Float(tableView.convert(NSPoint(x: 0, y: 0), from: graphView).y)
-        guard let graph = renderer.image(history: history, size: graphView.bounds.size, scale: scale, scrollY: scrollY),
-              let context = NSGraphicsContext(bitmapImageRep: rep) else { return rep }
+        // History の画面が隠れているときはグラフを描かない。
+        if let history, graphView.window != nil,
+           let graph = renderer.image(history: history, size: graphView.bounds.size, scale: scale, scrollY: scrollY) {
+            overlays.insert((graph, graphView), at: 0)
+        }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
-        for (image, view) in [(graph, graphView as NSView)] + extra {
+        for (image, view) in overlays {
             var frame = root.convert(view.bounds, from: view)
             if root.isFlipped { frame.origin.y = root.bounds.height - frame.maxY }
             context.cgContext.draw(image, in: frame)

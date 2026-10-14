@@ -14,13 +14,20 @@ extension NSColor {
 final class DiffViewController: NSViewController {
     private let renderer: TextRenderer
     private let scrollView = NSScrollView()
-    private let document = FlippedView()
+    private let document = DiffDocumentView()
     private let textView = GraphView()
     private var diff: FileDiff?
     /// 行ごとの並べたグリフ。表示し直すまで使い回す。
     private var shaped: [Int: TextRenderer.ShapedLine] = [:]
     private var numbers: [UInt32: TextRenderer.ShapedLine] = [:]
     private var message: String?
+
+    /// 行を選べるか（Working Copy で行単位の stage に使う）。
+    var isSelectable = false
+    /// 選んだ行。
+    private(set) var selectedRows: Set<Int> = []
+    private var anchorRow: Int?
+    var onSelectionChange: (() -> Void)?
 
     private let font = CTFontCreateWithName("Menlo" as CFString, 12, nil)
     private var lineHeight: CGFloat { ceil(CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)) + 4 }
@@ -35,7 +42,8 @@ final class DiffViewController: NSViewController {
 
     override func loadView() {
         // 分割の最初の大きさは、中のビューの大きさで決まる。
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 700, height: 300))
+        let container = LayoutView(frame: NSRect(x: 0, y: 0, width: 700, height: 300))
+        container.onLayout = { [weak self] in self?.layoutSubviews() }
         scrollView.documentView = document
         scrollView.hasVerticalScroller = true
         scrollView.hasHorizontalScroller = true
@@ -44,23 +52,31 @@ final class DiffViewController: NSViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
         textView.metalLayer.device = renderer.device
+        document.onMouseDown = { [weak self] event, point in self?.mouseDown(event, at: point) }
         container.addSubview(scrollView)
         container.addSubview(textView)
         view = container
     }
 
-    override func viewDidLayout() {
-        super.viewDidLayout()
+    private func layoutSubviews() {
         scrollView.frame = view.bounds
         textView.frame = view.convert(scrollView.contentView.frame, from: scrollView)
         updateDocumentSize()
         redraw()
     }
 
-    func show(_ diff: FileDiff?, message: String? = nil) {
+    func show(_ diff: FileDiff?, message: String? = nil, keepScroll: Bool = false) {
         self.diff = diff
         self.message = message
         shaped.removeAll()
+        selectedRows.removeAll()
+        anchorRow = nil
+        onSelectionChange?()
+        if keepScroll {
+            updateDocumentSize()
+            redraw()
+            return
+        }
         updateDocumentSize()
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
@@ -71,6 +87,40 @@ final class DiffViewController: NSViewController {
         let rows = CGFloat(diff?.rowCount ?? 0)
         let clip = scrollView.contentView.bounds.size
         document.frame.size = NSSize(width: max(clip.width, 3000), height: max(clip.height, rows * lineHeight))
+    }
+
+    /// 選んだ行のうち、追加・削除の行。
+    var selectedChangeRows: [Int] {
+        guard let diff else { return [] }
+        return diff.withRows { rows in
+            selectedRows.sorted().filter {
+                rows[$0].kind == UInt8(AmonhenDiffRow_ADDED) || rows[$0].kind == UInt8(AmonhenDiffRow_REMOVED)
+            }
+        }
+    }
+
+    /// クリックで行を選ぶ。hunk の見出しなら hunk 全体、Shift で範囲、Command で追加・解除。
+    private func mouseDown(_ event: NSEvent, at point: NSPoint) {
+        guard isSelectable, let diff else { return }
+        let row = Int(point.y / lineHeight)
+        guard row >= 0, row < diff.rowCount else { return }
+        let rows: Set<Int> = diff.withRows { all in
+            guard all[row].kind == UInt8(AmonhenDiffRow_HUNK) else { return [row] }
+            var end = row + 1
+            while end < all.count, all[end].kind != UInt8(AmonhenDiffRow_HUNK) { end += 1 }
+            return Set(row..<end)
+        }
+        if event.modifierFlags.contains(.shift), let anchor = anchorRow {
+            selectedRows = Set(min(anchor, row)...max(anchor, row))
+        } else if event.modifierFlags.contains(.command) {
+            selectedRows = selectedRows.isSuperset(of: rows) ? selectedRows.subtracting(rows) : selectedRows.union(rows)
+            anchorRow = row
+        } else {
+            selectedRows = rows
+            anchorRow = row
+        }
+        onSelectionChange?()
+        redraw()
     }
 
     /// 今の表示を画像にする（`--snapshot` 用）。
@@ -112,10 +162,14 @@ final class DiffViewController: NSViewController {
         let text = NSColor.labelColor.rgba
         let secondary = NSColor.secondaryLabelColor.rgba
         let width = textView.bounds.width
+        let selection = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.35).rgba
         diff.withRows { all in
             for row in rows {
                 let r = all[row]
                 let top = CGFloat(row) * lineHeight - origin.y
+                if selectedRows.contains(row) {
+                    renderer.addRect(CGRect(x: 0, y: top, width: gutterWidth, height: lineHeight), color: selection)
+                }
                 switch r.kind {
                 case UInt8(AmonhenDiffRow_ADDED): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: added)
                 case UInt8(AmonhenDiffRow_REMOVED): renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: removed)
@@ -139,8 +193,34 @@ final class DiffViewController: NSViewController {
     }
 }
 
+/// 大きさが変わるたびに並べ直す（親がフレームを直接決めると layout() が呼ばれないことがあるため）。
+final class LayoutView: NSView {
+    var onLayout: (() -> Void)?
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        onLayout?()
+    }
+
+    override func layout() {
+        super.layout()
+        onLayout?()
+    }
+}
+
 final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// 差分のスクロール用の中身。描くのは上に重ねた Metal のビューで、ここはクリックを受けるだけ。
+final class DiffDocumentView: NSView {
+    var onMouseDown: ((NSEvent, NSPoint) -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        onMouseDown?(event, convert(event.locationInWindow, from: nil))
+    }
 }
 
 /// 選んだコミットの詳細: 変わったファイルの一覧と、選んだファイルの差分。
@@ -184,7 +264,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     func overlays() -> [(CGImage, NSView)] {
-        diffView.overlay().map { [$0] } ?? []
+        view.window == nil ? [] : diffView.overlay().map { [$0] } ?? []
     }
 
     /// `commit` の変更を裏で読んで表示する。

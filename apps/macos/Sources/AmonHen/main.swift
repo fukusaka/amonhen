@@ -11,12 +11,41 @@ enum Settings {
     }
 }
 
+/// 子の画面を 1 つだけ表示し、切り替える。
+final class PageViewController: NSViewController {
+    private let pages: [SidebarViewController.Page: NSViewController]
+    private var current: NSViewController?
+
+    init(pages: [SidebarViewController.Page: NSViewController]) {
+        self.pages = pages
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func loadView() {
+        view = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 700))
+    }
+
+    func show(_ page: SidebarViewController.Page) {
+        guard let next = pages[page], next !== current else { return }
+        current?.view.removeFromSuperview()
+        current?.removeFromParent()
+        addChild(next)
+        next.view.frame = view.bounds
+        next.view.autoresizingMask = [.width, .height]
+        view.addSubview(next.view)
+        current = next
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var history: HistoryViewController?
     private var sidebar: SidebarViewController?
     private var repository: Repository?
     private var watch: RepositoryWatch?
+    private var workingCopy: WorkingCopyViewController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -51,7 +80,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             detailItem.minimumThickness = 160
             content.addSplitViewItem(detailItem)
             controller.onSelectCommit = { [weak detail] commit in detail?.show(commit: commit) }
-            split.addSplitViewItem(NSSplitViewItem(viewController: content))
+            let workingCopy = WorkingCopyViewController(repository: repository, renderer: text)
+            let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy])
+            sidebar.onSelectPage = { [weak pages] page in pages?.show(page) }
+            split.addSplitViewItem(NSSplitViewItem(viewController: pages))
             sidebar.onSelect = { [weak controller] item in
                 guard let controller, let target = item.target,
                       let row = controller.currentHistory?.row(of: target) else { return }
@@ -83,6 +115,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.history = controller
             self.sidebar = sidebar
             self.repository = repository
+            self.workingCopy = workingCopy
+            sidebar.select(page: CommandLine.arguments.contains("--working-copy") ? .workingCopy : .history)
+            workingCopy.refresh()
             reloadRefs()
             do {
                 watch = try RepositoryWatch(repository: repository) { [weak self] changes in
@@ -101,11 +136,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if let output = Self.option("--snapshot") {
                 let selectFirst = CommandLine.arguments.contains("--select-first")
+                    || CommandLine.arguments.contains("--working-copy")
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    if selectFirst { controller.select(row: 0) }
+                    if CommandLine.arguments.contains("--select-first") { controller.select(row: 0) }
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + (selectFirst ? 1.5 : 0.5)) {
-                    let rep = controller.snapshot(of: window.contentView!, extra: detail.overlays())
+                    let rep = controller.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays())
                     try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
                     NSApp.terminate(nil)
                 }
@@ -122,6 +158,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !changes.intersection([.refs, .config]).isEmpty {
             history?.refresh()
             reloadRefs()
+        }
+        if !changes.intersection([.refs, .index, .worktree]).isEmpty {
+            workingCopy?.refresh()
         }
     }
 
@@ -171,7 +210,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func repositoryPath() -> String? {
         var args = Array(CommandLine.arguments.dropFirst())
         if let i = args.firstIndex(of: "--snapshot") { args.removeSubrange(i...min(i + 1, args.count - 1)) }
-        args.removeAll { $0 == "--measure-scroll" }
+        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy"].contains($0) }
         if let path = args.first { return path }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true

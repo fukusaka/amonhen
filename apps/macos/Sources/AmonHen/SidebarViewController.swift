@@ -5,20 +5,32 @@ import AppKit
 final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate {
     /// 項目を選んだとき（指すコミットがあれば History でその行を選ぶ）。
     var onSelect: ((RefItem) -> Void)?
+    /// Working Copy か History を選んだとき。
+    var onSelectPage: ((Page) -> Void)?
+
+    enum Page {
+        case workingCopy, history
+    }
 
     private final class Node {
-        let title: String
+        var title: String
         let item: RefItem?
+        let page: Page?
         var children: [Node]
         let isHead: Bool
 
-        init(title: String, item: RefItem? = nil, children: [Node] = [], isHead: Bool = false) {
+        init(title: String, item: RefItem? = nil, page: Page? = nil, children: [Node] = [], isHead: Bool = false) {
             self.title = title
             self.item = item
+            self.page = page
             self.children = children
             self.isHead = isHead
         }
     }
+
+    private let workingCopyNode = Node(title: "Working Copy", page: .workingCopy)
+    private let historyNode = Node(title: "History", page: .history)
+    private lazy var workspace = Node(title: "Workspace", children: [workingCopyNode, historyNode])
 
     private let outline = NSOutlineView()
     private var groups: [Node] = []
@@ -72,8 +84,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if !nodes.isEmpty { groups.append(Node(title: title, children: nodes)) }
         }
 
-        self.groups = groups
+        self.groups = [workspace] + groups
         outline.reloadData()
+        outline.expandItem(workspace)
         for group in groups where first ? group.title == "Branches" : expanded.contains(group.title) {
             outline.expandItem(group)
         }
@@ -100,7 +113,23 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        (item as? Node)?.item != nil
+        (item as? Node).map { $0.item != nil || $0.page != nil } ?? false
+    }
+
+    /// Working Copy の変更の数を表示する。
+    func setWorkingCopyCount(_ count: Int) {
+        workingCopyNode.title = count > 0 ? "Working Copy (\(count))" : "Working Copy"
+        outline.reloadItem(workingCopyNode)
+    }
+
+    func select(page: Page) {
+        let node = page == .workingCopy ? workingCopyNode : historyNode
+        if groups.isEmpty {
+            groups = [workspace]
+            outline.reloadData()
+            outline.expandItem(workspace)
+        }
+        outline.selectRowIndexes([outline.row(forItem: node)], byExtendingSelection: false)
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -129,7 +158,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
-        guard let node = outline.item(atRow: outline.selectedRow) as? Node, let item = node.item else { return }
-        onSelect?(item)
+        guard let node = outline.item(atRow: outline.selectedRow) as? Node else { return }
+        if let page = node.page {
+            onSelectPage?(page)
+        } else if let item = node.item {
+            onSelectPage?(.history)
+            onSelect?(item)
+        }
     }
 }
