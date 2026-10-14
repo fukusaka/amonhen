@@ -229,6 +229,7 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         item.tooltip = `${node.stash.name}\n${node.stash.subject}`;
         item.iconPath = new vscode.ThemeIcon('archive');
         item.contextValue = 'stash';
+        item.command = { command: 'amonhen.stash.show', title: 'Show Stash', arguments: [node] };
         return item;
       }
       case 'submodule': {

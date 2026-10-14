@@ -217,6 +217,33 @@
         "command": "amonhen.renameBranch",
         "title": "Rename Branch…",
         "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stash",
+        "title": "Stash Changes…",
+        "category": "Amon Hen",
+        "icon": "$(add)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.stash.apply",
+        "title": "Apply Stash",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stash.pop",
+        "title": "Pop Stash",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stash.drop",
+        "title": "Drop Stash…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stash.show",
+        "title": "Show Stash",
+        "category": "Amon Hen"
       }
     ],
     "menus": {
@@ -265,6 +292,11 @@
           "command": "amonhen.newBranch",
           "when": "view == amonhen.sidebar",
           "group": "1_view@0"
+        },
+        {
+          "command": "amonhen.stash",
+          "when": "view == amonhen.sidebar",
+          "group": "1_view@1"
         }
       ],
       "view/item/context": [
@@ -317,6 +349,26 @@
           "command": "amonhen.renameBranch",
           "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current)$/",
           "group": "3_ref@0"
+        },
+        {
+          "command": "amonhen.stash",
+          "when": "view == amonhen.sidebar && viewItem == section.stashes",
+          "group": "inline"
+        },
+        {
+          "command": "amonhen.stash.apply",
+          "when": "view == amonhen.sidebar && viewItem == stash",
+          "group": "1_stash@1"
+        },
+        {
+          "command": "amonhen.stash.pop",
+          "when": "view == amonhen.sidebar && viewItem == stash",
+          "group": "1_stash@2"
+        },
+        {
+          "command": "amonhen.stash.drop",
+          "when": "view == amonhen.sidebar && viewItem == stash",
+          "group": "2_stash@1"
         }
       ],
       "commandPalette": [
@@ -390,6 +442,22 @@
         },
         {
           "command": "amonhen.renameBranch",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.apply",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.pop",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.drop",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.show",
           "when": "false"
         }
       ],
