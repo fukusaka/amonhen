@@ -441,6 +441,16 @@ AmonhenDiffView amonhen_diff_view(const AmonhenDiff *diff);
  */
 void amonhen_diff_free(AmonhenDiff *diff);
 
+/**
+ * `history` の `row` 行目のコミット ID を `out`（20 バイト）に書く。範囲外なら false。
+ *
+ * # Safety
+ * `history` は有効なスナップショット、`out` は 20 バイト書ける領域であること。
+ */
+bool amonhen_history_commit_id(const AmonhenHistory *history_ptr,
+                               uint32_t row,
+                               uint8_t *out);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

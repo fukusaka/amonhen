@@ -668,3 +668,22 @@ pub unsafe extern "C" fn amonhen_diff_free(diff: *mut AmonhenDiff) {
         drop(unsafe { Box::from_raw(diff.cast::<DiffView>()) });
     }
 }
+
+/// `history` の `row` 行目のコミット ID を `out`（20 バイト）に書く。範囲外なら false。
+///
+/// # Safety
+/// `history` は有効なスナップショット、`out` は 20 バイト書ける領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_commit_id(
+    history_ptr: *const AmonhenHistory,
+    row: u32,
+    out: *mut u8,
+) -> bool {
+    match history(history_ptr).graph.ids().get(row as usize) {
+        Some(id) => {
+            unsafe { out.cast::<[u8; 20]>().write(id.0) };
+            true
+        }
+        None => false,
+    }
+}
