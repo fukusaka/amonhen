@@ -90,6 +90,13 @@ impl Watcher {
         paths: RepoPaths,
         on_change: impl Fn(Changes) + Send + 'static,
     ) -> notify::Result<Self> {
+        // FSEvents は実パス（macOS の /var は /private/var）で知らせてくるので、比べる側も揃える。
+        let real = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_owned());
+        let paths = RepoPaths {
+            git_dir: real(&paths.git_dir),
+            common_dir: real(&paths.common_dir),
+            workdir: paths.workdir.as_deref().map(real),
+        };
         let (tx, rx) = mpsc::channel::<Changes>();
         let classify_paths = paths.clone();
         let mut watcher =
@@ -167,7 +174,8 @@ mod tests {
     #[test]
     fn reports_a_burst_of_changes_once() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().canonicalize().unwrap();
+        // 正規化していないパス（macOS の一時ディレクトリは /var → /private/var）を渡しても届くこと。
+        let root = tmp.path().to_owned();
         std::fs::create_dir_all(root.join(".git/refs/heads")).unwrap();
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();

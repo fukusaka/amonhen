@@ -14,6 +14,9 @@ enum Settings {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var history: HistoryViewController?
+    private var sidebar: SidebarViewController?
+    private var repository: Repository?
+    private var watch: RepositoryWatch?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
@@ -32,7 +35,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
             let name = URL(fileURLWithPath: path).lastPathComponent
             window.title = name
-            window.contentViewController = controller
+            let sidebar = SidebarViewController()
+            let split = NSSplitViewController()
+            let sidebarItem = NSSplitViewItem(sidebarWithViewController: sidebar)
+            sidebarItem.minimumThickness = 180
+            sidebarItem.maximumThickness = 400
+            split.addSplitViewItem(sidebarItem)
+            split.addSplitViewItem(NSSplitViewItem(viewController: controller))
+            sidebar.onSelect = { [weak controller] item in
+                guard let controller, let target = item.target,
+                      let row = controller.currentHistory?.row(of: target) else { return }
+                controller.select(row: row)
+            }
+            window.contentViewController = split
             window.setContentSize(NSSize(width: 1100, height: 720))
             window.center()
             window.makeKeyAndOrderFront(nil)
@@ -56,6 +71,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSLog("History を %.0f ms で表示（キャッシュ）", Date().timeIntervalSince(start) * 1000)
             self.window = window
             self.history = controller
+            self.sidebar = sidebar
+            self.repository = repository
+            reloadRefs()
+            do {
+                watch = try RepositoryWatch(repository: repository) { [weak self] changes in
+                    Task { @MainActor in self?.repositoryDidChange(changes) }
+                }
+            } catch {
+                NSLog("リポジトリを監視できない: \(error)")
+            }
             if CommandLine.arguments.contains("--measure-scroll") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                     controller.measureScroll(frames: 600, rowsPerFrame: 1.5) { summary in
@@ -66,7 +91,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if let output = Self.option("--snapshot") {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                    let png = controller.snapshot()?.representation(using: .png, properties: [:])
+                    let png = controller.snapshot(of: window.contentView!)?.representation(using: .png, properties: [:])
                     try? png?.write(to: URL(fileURLWithPath: output))
                     NSApp.terminate(nil)
                 }
@@ -77,6 +102,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
         }
         NSApp.activate()
+    }
+
+    private func repositoryDidChange(_ changes: Changes) {
+        if !changes.intersection([.refs, .config]).isEmpty {
+            history?.refresh()
+            reloadRefs()
+        }
+    }
+
+    private func reloadRefs() {
+        guard let repository else { return }
+        Task {
+            do {
+                let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
+                sidebar?.show(refs)
+            } catch {
+                NSLog("ref を読めない: \(error)")
+            }
+        }
     }
 
     private func buildMenu() {

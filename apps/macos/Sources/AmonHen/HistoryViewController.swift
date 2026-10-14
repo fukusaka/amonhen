@@ -129,6 +129,29 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    /// 表示中の History。
+    var currentHistory: History? { history }
+
+    /// 裏で読み直し、変わっていれば表示し直す。
+    func refresh() {
+        let repository = self.repository
+        Task {
+            guard let latest = try? await Task.detached(priority: .userInitiated, operation: { try repository.loadHistory() }).value,
+                  latest.generation != history?.generation else { return }
+            show(latest)
+        }
+    }
+
+    /// `row` を選び、表の中ほどに見えるようにする。
+    func select(row: Int) {
+        tableView.selectRowIndexes([row], byExtendingSelection: false)
+        let clip = scrollView.contentView
+        let rect = tableView.rect(ofRow: row)
+        let y = max(0, rect.midY - clip.bounds.height / 2)
+        clip.scroll(to: NSPoint(x: clip.bounds.minX, y: y))
+        scrollView.reflectScrolledClipView(clip)
+    }
+
     private func show(_ history: History) {
         let first = self.history == nil
         self.history = history
@@ -219,17 +242,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 次の描画で、表示までの時間を測る起点。
     private var pendingPresentStart: CFTimeInterval?
 
-    /// 表とグラフを重ねた画像。
-    func snapshot() -> NSBitmapImageRep? {
-        guard let history, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
-        view.cacheDisplay(in: view.bounds, to: rep)
+    /// `root` の中身にグラフを重ねた画像（`--snapshot` 用）。
+    func snapshot(of root: NSView) -> NSBitmapImageRep? {
+        guard let rep = root.bitmapImageRepForCachingDisplay(in: root.bounds) else { return nil }
+        root.cacheDisplay(in: root.bounds, to: rep)
+        guard let history else { return rep }
         let scale = view.window?.backingScaleFactor ?? 2
         let scrollY = Float(tableView.convert(NSPoint(x: 0, y: 0), from: graphView).y)
         guard let graph = renderer.image(history: history, size: graphView.bounds.size, scale: scale, scrollY: scrollY),
               let context = NSGraphicsContext(bitmapImageRep: rep) else { return rep }
+        var frame = root.convert(graphView.bounds, from: graphView)
+        if root.isFlipped { frame.origin.y = root.bounds.height - frame.maxY }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
-        context.cgContext.draw(graph, in: graphView.frame)
+        context.cgContext.draw(graph, in: frame)
         NSGraphicsContext.restoreGraphicsState()
         return rep
     }

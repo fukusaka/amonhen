@@ -98,6 +98,30 @@ private func makeRepo() throws -> URL {
     #expect(try cached.chunk(rows: 0..<1).subject(row: 0) == "日本語の件名")
 }
 
+@Test func listsRefsAndFindsTheirRows() throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try git(dir, "branch", "topic", "HEAD~1")
+    let repo = try Repository(path: dir.path)
+    let history = try repo.loadHistory()
+    let refs = try repo.loadRefs()
+    #expect(refs.headBranch == "main")
+    #expect(refs.items.map(\.name) == ["main", "topic"])
+    #expect(history.row(of: refs.items[1].target!) == 1)
+}
+
+@Test(.timeLimit(.minutes(1))) func reportsChangesToRefs() async throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let repo = try Repository(path: dir.path)
+    let changes = AsyncStream<Changes>.makeStream()
+    let watch = try RepositoryWatch(repository: repo) { changes.continuation.yield($0) }
+    try await Task.sleep(for: .milliseconds(300))
+    try git(dir, "branch", "new-branch")
+    for await c in changes.stream where c.contains(.refs) { break }
+    withExtendedLifetime(watch) {}
+}
+
 @Test func reportsOpenErrors() {
     #expect(throws: AmonhenError.self) {
         try Repository(path: "/nonexistent/amonhen")
