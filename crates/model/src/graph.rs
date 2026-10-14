@@ -61,7 +61,8 @@ impl CommitGraphBuilder {
         self.commit_times.push(commit_time);
         let before = self.parent_ids.len();
         self.parent_ids.extend(parents);
-        self.parent_counts.push((self.parent_ids.len() - before) as u32);
+        self.parent_counts
+            .push((self.parent_ids.len() - before) as u32);
     }
 
     pub fn build(self) -> CommitGraph {

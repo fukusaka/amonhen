@@ -54,7 +54,10 @@ impl GitBackend for GixBackend {
         let mut repo = self.repo.to_thread_local();
         repo.object_cache_size_if_unset(64 * 1024 * 1024);
         let walk = topo::Builder::new(&repo.objects)
-            .with_tips(tips.iter().map(|t| gix::ObjectId::from_bytes_or_panic(&t.0)))
+            .with_tips(
+                tips.iter()
+                    .map(|t| gix::ObjectId::from_bytes_or_panic(&t.0)),
+            )
             .sorting(topo::Sorting::TopoOrder)
             .with_commit_graph(repo.commit_graph_if_enabled()?)
             .build()?;
@@ -67,7 +70,11 @@ impl GitBackend for GixBackend {
                 .iter()
                 .map(|p| to_oid(p.as_ref()))
                 .collect::<Result<Vec<_>>>()?;
-            builder.push(to_oid(info.id.as_ref())?, info.commit_time.unwrap_or(0), parents);
+            builder.push(
+                to_oid(info.id.as_ref())?,
+                info.commit_time.unwrap_or(0),
+                parents,
+            );
         }
         Ok(builder.build())
     }

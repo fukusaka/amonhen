@@ -16,7 +16,11 @@ fn git(dir: &Path, args: &[&str]) -> String {
         .env("GIT_COMMITTER_EMAIL", "a@example.com")
         .output()
         .unwrap();
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     String::from_utf8(out.stdout).unwrap().trim().to_owned()
 }
 
@@ -35,10 +39,16 @@ fn reads_branches_and_merges_in_topological_order() {
     commit(dir, "topic 2");
     git(dir, &["switch", "-q", "main"]);
     commit(dir, "main 1");
-    git(dir, &["merge", "-q", "--no-ff", "-m", "merge topic", "topic"]);
+    git(
+        dir,
+        &["merge", "-q", "--no-ff", "-m", "merge topic", "topic"],
+    );
     git(dir, &["switch", "-q", "-c", "side", "HEAD~1"]);
     commit(dir, "side 1");
-    git(dir, &["tag", "-a", "-m", "tree tag", "tree-tag", "HEAD^{tree}"]);
+    git(
+        dir,
+        &["tag", "-a", "-m", "tree tag", "tree-tag", "HEAD^{tree}"],
+    );
 
     let backend = GixBackend::open(dir).unwrap();
     let tips = backend.tips().unwrap();
@@ -54,6 +64,10 @@ fn reads_branches_and_merges_in_topological_order() {
     }
 
     let merge = git(dir, &["rev-parse", "main"]);
-    let merge_row = graph.ids().iter().position(|id| id.to_string() == merge).unwrap();
+    let merge_row = graph
+        .ids()
+        .iter()
+        .position(|id| id.to_string() == merge)
+        .unwrap();
     assert_eq!(graph.parents(merge_row).len(), 2);
 }

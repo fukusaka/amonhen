@@ -21,12 +21,18 @@ impl StrRef {
 
     pub const fn ascii(off: u32, len: u32) -> Self {
         assert!(len <= Self::MAX_LEN);
-        Self { off, len_and_kind: len }
+        Self {
+            off,
+            len_and_kind: len,
+        }
     }
 
     pub const fn non_ascii(off: u32, len: u32) -> Self {
         assert!(len <= Self::MAX_LEN);
-        Self { off, len_and_kind: len | Self::NON_ASCII }
+        Self {
+            off,
+            len_and_kind: len | Self::NON_ASCII,
+        }
     }
 
     pub const fn len(self) -> u32 {
