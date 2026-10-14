@@ -46,6 +46,16 @@ public final class Repository: @unchecked Sendable {
         amonhen_history_load_cached(raw).map { History(raw: $0, repository: self) }
     }
 
+    /// commit-graph がなければ書き出し、書き出したら true を返す。リポジトリの `.git` に書き込むので、
+    /// 設定で選ばれたときだけ、裏のスレッドから呼ぶこと。
+    public func writeCommitGraphIfMissing() throws -> Bool {
+        switch amonhen_repo_write_commit_graph_if_missing(raw) {
+        case 1: return true
+        case 0: return false
+        default: throw AmonhenError.last()
+        }
+    }
+
     /// 最新のスナップショット。まだ読んでいなければ nil。
     public func latestHistory() -> History? {
         amonhen_history_acquire(raw).map { History(raw: $0, repository: self) }

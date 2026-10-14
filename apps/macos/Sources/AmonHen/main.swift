@@ -1,11 +1,22 @@
 import AmonhenKit
 import AppKit
 
+/// 利用者の設定。
+enum Settings {
+    /// commit-graph がないリポジトリで `git commit-graph write --reachable` を実行するか。
+    /// リポジトリの `.git` に書き込むので、既定では行わない。
+    static var writeCommitGraph: Bool {
+        get { UserDefaults.standard.bool(forKey: "writeCommitGraph") }
+        set { UserDefaults.standard.set(newValue, forKey: "writeCommitGraph") }
+    }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: NSWindow?
     private var history: HistoryViewController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        buildMenu()
         guard let path = repositoryPath() else {
             NSApp.terminate(nil)
             return
@@ -32,6 +43,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             controller.load { error in
                 if let error { NSAlert(error: error).runModal() }
                 NSLog("History を最新にするまで %.0f ms", Date().timeIntervalSince(start) * 1000)
+                if error == nil, Settings.writeCommitGraph {
+                    Task.detached(priority: .utility) {
+                        do {
+                            if try repository.writeCommitGraphIfMissing() { NSLog("commit-graph を書き出した") }
+                        } catch {
+                            NSLog("commit-graph を書き出せない: \(error)")
+                        }
+                    }
+                }
             }
             NSLog("History を %.0f ms で表示（キャッシュ）", Date().timeIntervalSince(start) * 1000)
             self.window = window
@@ -57,6 +77,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
         }
         NSApp.activate()
+    }
+
+    private func buildMenu() {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appItem.submenu = appMenu
+        let commitGraph = NSMenuItem(
+            title: "commit-graph を自動で書き出す", action: #selector(toggleWriteCommitGraph(_:)), keyEquivalent: "")
+        commitGraph.target = self
+        commitGraph.state = Settings.writeCommitGraph ? .on : .off
+        commitGraph.toolTip = "commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable を実行する（.git に書き込む）"
+        appMenu.addItem(commitGraph)
+        appMenu.addItem(.separator())
+        appMenu.addItem(NSMenuItem(title: "Amon Hen を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        NSApp.mainMenu = main
+    }
+
+    @objc private func toggleWriteCommitGraph(_ item: NSMenuItem) {
+        Settings.writeCommitGraph.toggle()
+        item.state = Settings.writeCommitGraph ? .on : .off
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
