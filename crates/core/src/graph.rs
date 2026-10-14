@@ -10,7 +10,7 @@
 //! - `CHECKPOINT_INTERVAL` 行ごとにレーンの状態を保存し、コミットが増えたときは
 //!   先頭から計算し直して、状態が前回と一致した所で打ち切る（`relayout`）。
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::ops::Range;
 
 use amonhen_layout::{Edge, Node, Slab};
@@ -194,6 +194,12 @@ pub struct Layouter<'g> {
     edges: Vec<Edge>,
     lane_count: u16,
     checkpoints: Vec<Checkpoint>,
+    /// 行 → その行を待っているレーン。レーンが数百本あっても、各行で全レーンを走査しないため。
+    waiting: HashMap<u32, Vec<u16>>,
+    /// `state.lanes` のうち空いているレーン（幹線用のレーン 0 は除く）。
+    free: BTreeSet<u16>,
+    /// 行 → その行で終わる合流の線の数。
+    rider_targets: HashMap<u32, u32>,
 }
 
 impl<'g> Layouter<'g> {
@@ -209,6 +215,9 @@ impl<'g> Layouter<'g> {
             edges: Vec::with_capacity(graph.len() + graph.len() / 4),
             lane_count: 0,
             checkpoints: Vec::new(),
+            waiting: HashMap::new(),
+            free: BTreeSet::new(),
+            rider_targets: HashMap::new(),
         }
     }
 
@@ -250,17 +259,47 @@ impl<'g> Layouter<'g> {
         layout
     }
 
+    /// いちばん左の空きレーン。返したレーンは `set_lane` で埋めること。
     fn alloc_lane(&mut self) -> u16 {
+        if let Some(&lane) = self.free.first() {
+            return lane;
+        }
         let start = usize::from(self.has_mainline);
         let lanes = &mut self.state.lanes;
-        let lane = match lanes.iter().skip(start).position(Option::is_none) {
-            Some(i) => i + start,
-            None => {
-                lanes.resize(lanes.len().max(start) + 1, None);
-                lanes.len() - 1
+        lanes.resize(lanes.len().max(start) + 1, None);
+        (lanes.len() - 1) as u16
+    }
+
+    fn set_lane(&mut self, lane: u16, track: Track) {
+        let l = lane as usize;
+        if self.state.lanes.len() <= l {
+            let start = usize::from(self.has_mainline) as u16;
+            for i in self.state.lanes.len() as u16..lane {
+                if i >= start {
+                    self.free.insert(i);
+                }
             }
-        };
-        lane as u16
+            self.state.lanes.resize(l + 1, None);
+        }
+        debug_assert!(self.state.lanes[l].is_none());
+        self.free.remove(&lane);
+        self.state.lanes[l] = Some(track);
+        self.waiting.entry(track.target).or_default().push(lane);
+    }
+
+    fn take_lane(&mut self, lane: u16) -> Track {
+        let track = self.state.lanes[lane as usize].take().unwrap();
+        if lane > 0 || !self.has_mainline {
+            self.free.insert(lane);
+        }
+        track
+    }
+
+    /// `row` を待っている、いちばん左のレーン。
+    fn first_waiting(&self, row: u32) -> Option<u16> {
+        self.waiting
+            .get(&row)
+            .and_then(|lanes| lanes.iter().copied().min())
     }
 
     fn push_edge(&mut self, rows: (u32, u32), lanes: (u16, u16), color: u16, first_parent: bool) {
@@ -318,11 +357,9 @@ impl<'g> Layouter<'g> {
         let id = &graph.ids()[r as usize];
         let is_main = self.mainline[r as usize];
 
-        // この行の点で終わる線のレーン。
-        let arrivals: Vec<u16> = (0..self.state.lanes.len())
-            .filter(|&l| matches!(self.state.lanes[l], Some(t) if t.target == r))
-            .map(|l| l as u16)
-            .collect();
+        // この行の点で終わる線のレーン（左から）。
+        let mut arrivals = self.waiting.remove(&r).unwrap_or_default();
+        arrivals.sort_unstable();
         let first_parent_arrival = arrivals
             .iter()
             .copied()
@@ -334,29 +371,28 @@ impl<'g> Layouter<'g> {
         } else {
             self.alloc_lane()
         };
-        if self.state.lanes.len() <= node_lane as usize {
-            self.state.lanes.resize(node_lane as usize + 1, None);
-        }
-        let color = match self.state.lanes[node_lane as usize] {
+        let color = match self.state.lanes.get(node_lane as usize).copied().flatten() {
             Some(t) if t.target == r => t.color,
             _ if is_main => MAINLINE_COLOR,
             _ => color_of(id),
         };
 
         for lane in arrivals {
-            let t = self.state.lanes[lane as usize].take().unwrap();
+            let t = self.take_lane(lane);
             self.finish_track(t, lane, r, node_lane);
         }
-        let mut riders = std::mem::take(&mut self.state.riders);
-        riders.retain(|&(lane, t)| {
-            if t.target == r {
-                self.finish_rider(t, lane, r, node_lane);
-                false
-            } else {
-                true
-            }
-        });
-        self.state.riders = riders;
+        if self.rider_targets.remove(&r).is_some() {
+            let mut riders = std::mem::take(&mut self.state.riders);
+            riders.retain(|&(lane, t)| {
+                if t.target == r {
+                    self.finish_rider(t, lane, r, node_lane);
+                    false
+                } else {
+                    true
+                }
+            });
+            self.state.riders = riders;
+        }
 
         let parents = graph.parents(r as usize);
         self.nodes.push(Node {
@@ -371,14 +407,9 @@ impl<'g> Layouter<'g> {
             let first_parent = i == 0;
             let p_main = self.mainline[p as usize];
             // 同じ親を待っている線があれば合流する。幹線のコミットにはレーン 0 でだけ合流する。
-            let shared = self
-                .state
-                .lanes
-                .iter()
-                .position(|t| t.is_some_and(|t| t.target == p))
-                .filter(|&l| !p_main || l == 0);
+            let shared = self.first_waiting(p).filter(|&l| !p_main || l == 0);
             if let Some(lane) = shared {
-                let lane_color = self.state.lanes[lane].unwrap().color;
+                let lane_color = self.state.lanes[lane as usize].unwrap().color;
                 let track = Track {
                     target: p,
                     child_row: r,
@@ -386,7 +417,8 @@ impl<'g> Layouter<'g> {
                     color: if first_parent { color } else { lane_color },
                     first_parent,
                 };
-                self.state.riders.push((lane as u16, track));
+                self.state.riders.push((lane, track));
+                *self.rider_targets.entry(p).or_default() += 1;
                 continue;
             }
             let (lane, track_color) = if first_parent {
@@ -394,19 +426,27 @@ impl<'g> Layouter<'g> {
             } else {
                 (self.alloc_lane(), color_of(&graph.ids()[p as usize]))
             };
-            self.state.lanes[lane as usize] = Some(Track {
-                target: p,
-                child_row: r,
-                child_lane: node_lane,
-                color: track_color,
-                first_parent,
-            });
+            self.set_lane(
+                lane,
+                Track {
+                    target: p,
+                    child_row: r,
+                    child_lane: node_lane,
+                    color: track_color,
+                    first_parent,
+                },
+            );
         }
 
-        self.lane_count = self.lane_count.max(self.state.lanes.len() as u16);
+        // 親のない点は線を持たないので、点のレーンも数に入れる。
+        self.lane_count = self
+            .lane_count
+            .max(self.state.lanes.len() as u16)
+            .max(node_lane + 1);
         // 末尾の空きレーンを残すと、再計算で状態が一致しなくなる。
         while self.state.lanes.last().is_some_and(Option::is_none) {
             self.state.lanes.pop();
+            self.free.remove(&(self.state.lanes.len() as u16));
         }
         self.row += 1;
     }
