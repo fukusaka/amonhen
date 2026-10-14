@@ -151,6 +151,26 @@ impl Operations for Git {
             .map(|e| e.to_string()))
     }
 
+    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
+        let mut cmd = self.command(&["merge-base", "--is-ancestor", ancestor, descendant]);
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
+        let status = cmd
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()?;
+        match status.code() {
+            Some(0) => Ok(true),
+            Some(1) => Ok(false),
+            _ => Err(format!("{ancestor} と {descendant} を比べられない").into()),
+        }
+    }
+
+    fn resolve(&self, rev: &str) -> Result<Oid> {
+        let spec = format!("{rev}^{{commit}}");
+        let out = text(self.read(&["rev-parse", "--verify", "--quiet", &spec])?)?;
+        Oid::from_hex(&out).ok_or_else(|| format!("{rev} が見つからない").into())
+    }
+
     fn merge(&self, rev: &str) -> Result<Outcome> {
         self.stoppable(&["merge", "--no-edit", rev], &[])
     }

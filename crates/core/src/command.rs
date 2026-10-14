@@ -45,6 +45,12 @@ pub enum Command {
     Merge {
         rev: String,
     },
+    /// ブランチ `target` に `rev` を merge する。`target` を checkout していなくても、fast-forward で
+    /// 済むならブランチだけ進める。そうでなければ checkout してから merge する。
+    MergeInto {
+        target: String,
+        rev: String,
+    },
     /// 今のブランチを `onto` の上に rebase する。
     Rebase {
         onto: String,
@@ -394,6 +400,34 @@ impl Repository {
                 || ops.merge(&rev),
                 not_done,
             )?),
+            Command::MergeInto { target, rev } => {
+                let current = ops.head_state()?.branch;
+                let full = heads(&target);
+                if current.as_deref() != Some(full.as_str()) && ops.is_ancestor(&full, &rev)? {
+                    let from = ops.resolve(&full)?;
+                    let to = ops.resolve(&rev)?;
+                    undo.record(
+                        ops,
+                        &format!("Fast-forward {target} to {rev}"),
+                        std::slice::from_ref(&full),
+                        false,
+                        || ops.update_ref(&full, Some(&to), Some(&from)),
+                        |_| false,
+                    )?;
+                    return ok();
+                }
+                if current.as_deref() != Some(full.as_str()) {
+                    ops.switch_branch(&target)?;
+                }
+                done(undo.record(
+                    ops,
+                    &format!("Merge {rev} into {target}"),
+                    &[],
+                    false,
+                    || ops.merge(&rev),
+                    not_done,
+                )?)
+            }
             Command::Rebase { onto } => done(undo.record(
                 ops,
                 &format!("Rebase onto {onto}"),
@@ -798,6 +832,25 @@ mod tests {
             run(&repo, r#"{"op":"sequence"}"#)["text"],
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn fast_forwards_a_branch_without_checking_it_out() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["branch", "old"]);
+        commit_file(dir, "b.txt", "b");
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        let r = run(&repo, r#"{"op":"mergeInto","target":"old","rev":"main"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(git(dir, &["rev-parse", "old"]), head);
+        assert_eq!(
+            git(dir, &["symbolic-ref", "--short", "HEAD"]),
+            "main",
+            "checkout しない"
+        );
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_ne!(git(dir, &["rev-parse", "old"]), head);
     }
 
     #[test]

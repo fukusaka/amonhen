@@ -71,6 +71,10 @@ pub trait Operations: Send + Sync {
     /// ブランチ名として使えなければ理由。
     fn check_branch_name(&self, name: &str) -> Result<Option<String>>;
 
+    /// `ancestor` が `descendant` の祖先か（fast-forward できるか）。
+    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool>;
+    /// 名前（`main`・`origin/main`・コミット ID など）が指すコミット。
+    fn resolve(&self, rev: &str) -> Result<Oid>;
     fn merge(&self, rev: &str) -> Result<Outcome>;
     fn rebase(&self, onto: &str) -> Result<Outcome>;
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;

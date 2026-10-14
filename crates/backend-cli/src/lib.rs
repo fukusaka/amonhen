@@ -29,7 +29,7 @@ impl Git {
         &self.workdir
     }
 
-    fn command(&self, args: &[&str]) -> Command {
+    pub(crate) fn command(&self, args: &[&str]) -> Command {
         let mut cmd = Command::new("git");
         cmd.current_dir(&self.workdir)
             // 利用者の端末に依存しない出力にする。
