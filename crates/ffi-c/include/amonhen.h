@@ -133,12 +133,13 @@ extern "C" {
 const char *amonhen_last_error(void);
 
 /**
- * `path`（UTF-8）を含むリポジトリを開く。
+ * `path`（UTF-8）を含むリポジトリを開く。`cache_dir` を渡すと、History をそこに永続化する。
  *
  * # Safety
- * `path` は NUL 終端の文字列であること。
+ * `path` は NUL 終端の文字列、`cache_dir` は NULL か NUL 終端の文字列であること。
  */
-AmonhenRepo *amonhen_repo_open(const char *path);
+AmonhenRepo *amonhen_repo_open(const char *path,
+                               const char *cache_dir);
 
 /**
  * # Safety
@@ -153,6 +154,15 @@ void amonhen_repo_free(AmonhenRepo *repo);
  * `repo` は有効なリポジトリであること。
  */
 const AmonhenHistory *amonhen_history_load(const AmonhenRepo *repo_ptr);
+
+/**
+ * 永続キャッシュにある前回の History を公開して返す。キャッシュがなければ NULL。
+ * mmap するだけなので、起動直後にメインスレッドから呼んでよい。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+const AmonhenHistory *amonhen_history_load_cached(const AmonhenRepo *repo_ptr);
 
 /**
  * 最新のスナップショット。まだ読んでいなければ NULL。

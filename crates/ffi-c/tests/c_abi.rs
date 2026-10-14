@@ -29,7 +29,7 @@ fn reads_history_through_the_c_abi() {
 
     unsafe {
         let path = CString::new(dir.to_str().unwrap()).unwrap();
-        let repo = amonhen_repo_open(path.as_ptr());
+        let repo = amonhen_repo_open(path.as_ptr(), std::ptr::null());
         assert!(!repo.is_null());
         assert!(amonhen_history_acquire(repo).is_null());
 
@@ -67,7 +67,31 @@ fn reports_why_opening_failed() {
     let tmp = tempfile::tempdir().unwrap();
     let path = CString::new(tmp.path().join("missing").to_str().unwrap()).unwrap();
     unsafe {
-        assert!(amonhen_repo_open(path.as_ptr()).is_null());
+        assert!(amonhen_repo_open(path.as_ptr(), std::ptr::null()).is_null());
         assert!(!CStr::from_ptr(amonhen_last_error()).to_bytes().is_empty());
+    }
+}
+
+#[test]
+fn shows_the_cached_history_on_the_next_open() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("repo");
+    std::fs::create_dir(&dir).unwrap();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    git(&dir, &["commit", "--allow-empty", "-q", "-m", "first"]);
+    let path = CString::new(dir.to_str().unwrap()).unwrap();
+    let cache = CString::new(tmp.path().join("cache").to_str().unwrap()).unwrap();
+    unsafe {
+        let repo = amonhen_repo_open(path.as_ptr(), cache.as_ptr());
+        assert!(amonhen_history_load_cached(repo).is_null());
+        amonhen_history_release(amonhen_history_load(repo));
+        amonhen_repo_free(repo);
+
+        let repo = amonhen_repo_open(path.as_ptr(), cache.as_ptr());
+        let cached = amonhen_history_load_cached(repo);
+        assert!(!cached.is_null());
+        assert_eq!(amonhen_history_view(cached).row_count, 1);
+        amonhen_history_release(cached);
+        amonhen_repo_free(repo);
     }
 }

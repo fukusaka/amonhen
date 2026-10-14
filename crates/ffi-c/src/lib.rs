@@ -9,9 +9,10 @@ use std::ffi::{CStr, CString, c_char};
 use std::sync::Arc;
 
 use amonhen_backend_gix::GixBackend;
-use amonhen_core::{HistorySnapshot, Repository};
+use amonhen_core::{HistorySnapshot, Repository, cache};
 use amonhen_layout::{Edge, Node, StrRef};
 use amonhen_projection::{FrontendProfile, HistoryChunk, StringEncoding};
+use std::path::Path;
 
 /// 開いたリポジトリ。
 pub struct AmonhenRepo {
@@ -95,21 +96,41 @@ fn non_null<T>(slice: &[T]) -> *const T {
     }
 }
 
-/// `path`（UTF-8）を含むリポジトリを開く。
+fn str_arg<'a>(s: *const c_char) -> Result<&'a str, std::str::Utf8Error> {
+    unsafe { CStr::from_ptr(s) }.to_str()
+}
+
+/// `path`（UTF-8）を含むリポジトリを開く。`cache_dir` を渡すと、History をそこに永続化する。
 ///
 /// # Safety
-/// `path` は NUL 終端の文字列であること。
+/// `path` は NUL 終端の文字列、`cache_dir` は NULL か NUL 終端の文字列であること。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_repo_open(path: *const c_char) -> *mut AmonhenRepo {
-    let path = match unsafe { CStr::from_ptr(path) }.to_str() {
-        Ok(p) => p,
-        Err(e) => {
+pub unsafe extern "C" fn amonhen_repo_open(
+    path: *const c_char,
+    cache_dir: *const c_char,
+) -> *mut AmonhenRepo {
+    let (path, cache_dir) = match (
+        str_arg(path),
+        (!cache_dir.is_null())
+            .then(|| str_arg(cache_dir))
+            .transpose(),
+    ) {
+        (Ok(p), Ok(c)) => (p, c),
+        (Err(e), _) | (_, Err(e)) => {
             set_error(e);
             return std::ptr::null_mut();
         }
     };
     match GixBackend::open(path) {
-        Ok(backend) => Box::into_raw(Box::new(Repository::new(backend))).cast(),
+        Ok(backend) => {
+            let key = std::fs::canonicalize(path)
+                .map_or_else(|_| path.to_owned(), |p| p.display().to_string());
+            let repo = match cache_dir {
+                Some(dir) => Repository::with_cache(backend, cache::path_for(Path::new(dir), &key)),
+                None => Repository::new(backend),
+            };
+            Box::into_raw(Box::new(repo)).cast()
+        }
         Err(e) => {
             set_error(e);
             std::ptr::null_mut()
@@ -141,6 +162,20 @@ pub unsafe extern "C" fn amonhen_history_load(
             std::ptr::null()
         }
     }
+}
+
+/// 永続キャッシュにある前回の History を公開して返す。キャッシュがなければ NULL。
+/// mmap するだけなので、起動直後にメインスレッドから呼んでよい。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_load_cached(
+    repo_ptr: *const AmonhenRepo,
+) -> *const AmonhenHistory {
+    repo(repo_ptr)
+        .load_cached_history()
+        .map_or(std::ptr::null(), into_history)
 }
 
 /// 最新のスナップショット。まだ読んでいなければ NULL。
