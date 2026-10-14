@@ -358,7 +358,7 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 - [ ] 8. 差分表示（Metal、History と共有するグリフアトラス、CTLine キャッシュ）と後追いの色付け。Metal の描画・アトラス・CTLine キャッシュは済み。History の件名の Metal 化、色付け、選択・コピー・検索が残り
 - [x] 9. Working Copy: status、ファイル・hunk・行単位の stage、コミット入力
 - [x] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ
-- [ ] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
+- [x] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
 - [ ] 12. 3-way マージ
 - [ ] 13. グラフ表現の工夫（祖先の強調、折りたたみ、魚眼、アニメーション、密度表示）
 - [ ] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）
