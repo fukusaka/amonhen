@@ -795,11 +795,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 読み終えていれば返す。まだなら裏で読み始め（前後のチャンクも先読みし）、読めたら行を描き直す。
     private func chunk(row: Int) -> HistoryChunk? {
         let index = row / Self.chunkRows
-        for i in [index, index + 1, index - 1] { prefetch(chunk: i) }
+        // 見えている行のチャンクは急ぎ、前後は先読みとして、コミットの詳細の読み込みより後回しにする。
+        prefetch(chunk: index, priority: .userInitiated)
+        for i in [index + 1, index - 1] { prefetch(chunk: i, priority: .utility) }
         return chunks[index]
     }
 
-    private func prefetch(chunk index: Int) {
+    private func prefetch(chunk index: Int, priority: TaskPriority) {
         guard let history, index >= 0, index * Self.chunkRows < history.rowCount,
               chunks[index] == nil, !loadingChunks.contains(index) else { return }
         loadingChunks.insert(index)
@@ -808,7 +810,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let compact = Settings.compactHistoryRows
         Task {
             // 件名などを読んだら、同じ裏のスレッドで行の文字も並べておく（Core Text の処理をメインスレッドから外す）。
-            let (chunk, prepared) = await Task.detached(priority: .userInitiated) {
+            let (chunk, prepared) = await Task.detached(priority: priority) {
                 () -> (HistoryChunk?, [Int: RowPreparation.Row]) in
                 guard let chunk = try? history.chunk(rows: rows) else { return (nil, [:]) }
                 var prepared: [Int: RowPreparation.Row] = [:]
