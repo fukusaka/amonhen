@@ -198,7 +198,7 @@ bench/               criterion のベンチと大規模リポジトリでの計�
   | X・Y | clock.badge.exclamationmark | 橙 | Expired | — |
   | R | exclamationmark.shield.fill | 赤 | Revoked key | — |
   | B | xmark.seal.fill | 赤 | Bad signature | — |
-  | E | key | 灰 | No key | — |
+  | E | questionmark.circle | 灰 | No key | — |
   | 検証中 | seal | 薄い灰 | Checking… | — |
 
   署名者がコミッターと一致するかは、git の `%GS`（鍵の主なユーザー ID だけ）ではなく、署名した鍵に登録されたすべてのメールアドレスで決める。GPG は主鍵の指紋（`%GP`）で `gpg --list-keys --with-colons` を引き（鍵がいくつあっても gpg は 1 回）、ユーザー ID ごとの有効性も読む。SSH は git が allowed signers から見つけたプリンシパル（`%GS`）を使う。吹き出しの「コミッターのメール」の行に、コミッターのメールアドレスが鍵に登録されているかを出す。有効なユーザー ID（u・f・m）にあれば「鍵に登録されている」、有効性が不明なものにだけあれば「鍵に登録されている。ただし、そのユーザー ID は確認されていない」（誰でも他人のアドレスをユーザー ID に書けるため）、失効・期限切れのものにだけある、またはどこにもなければ「鍵に登録されていない」、鍵のメールアドレスを読めなければ「確かめられない」。
