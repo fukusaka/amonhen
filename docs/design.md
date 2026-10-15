@@ -178,7 +178,7 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 
 - 署名があるか・どの種類か（GPG・SSH・X.509）は、コミットのヘッダーの `gpgsig` で分かるので、History の行を読むときに一緒に取る（`CommitText::signature`、チャンクの `signatures` の列）。gpg は使わない。
 - 検証の結果（`git log --format=%G?` の 1 文字）は git に頼む。gpg を 1 件ずつ起動するので 1 件 15 ms ほどかかる。
-  - History: 見えている署名つきの行だけを、スクロールが止まって 0.15 秒たってから、8 件ずつ 1 回の git でまとめて検証する（`git log --no-walk=unsorted --format='%H %G?' --stdin`）。終わった分から丸の色を変える（緑 G、黄 U、橙 X・Y・R、赤 B、灰 E、薄い灰はまだ）。描画は覚えた結果を読むだけで、gpg を待たない。
+  - History: 見えている署名つきの行だけを、スクロールが止まって 0.15 秒たってから、8 件ずつ 1 回の git でまとめて検証する（`git log --no-walk=unsorted --format=%H%x00%G?%x00%GS%x00%GK%x00%GF%x00%GT --stdin`。正しい署名にはコミッターのメールを添えて返す）。終わった分からアイコンを替える。描画は覚えた結果を読むだけで、gpg を待たない。アイコンは SF Symbols を Metal の文字のアトラスに入れて描く。
   - 詳細の欄: 署名者・鍵・信用度を、ヘッダーを出した後に裏で読む（`commitExtras`）。
 - どこで検証するか:
   - 手元のリポジトリ: 手元の git と鍵（`~/.gnupg`、`gpg.ssh.allowedSignersFile`、`gpg.minTrustLevel` など）。
@@ -186,6 +186,21 @@ bench/               criterion のベンチと大規模リポジトリでの計�
     - 手元（既定）: コミットのオブジェクト（数 KB）を受け取り、手元の作業用の bare リポジトリ（`$TMPDIR/amonhen-verify.git`）に書いて、手元の git に `%G?` で検証させる。木やほかのオブジェクトは要らない。手元のリポジトリと同じ規則・鍵・信用度になる。書いたオブジェクトの ID が元の ID と違えば断る。
     - SSH 先: daemon に要求を送り、SSH 先の git と鍵で検証する。SSH 先に公開鍵がなければ「検証できない」になる。
   - 信用度は「自分がその鍵をどれだけ信用するか」なので、手元の鍵束で判断するのを既定にした。
+- 見せ方（`SignatureStatus`）は、`%G?` に信用度（`%GT`）と「署名者のメールアドレスがコミッターと一致するか」を加えて決める。言葉は GitHub に合わせて英語。
+
+  | 状態 | アイコン（SF Symbols） | 色 | 言葉 | 信用度の目盛り |
+  | --- | --- | --- | --- | --- |
+  | G・信用 ultimate・full（SSH は allowed signers にあれば） | checkmark.seal.fill | 緑 | Verified | 3 |
+  | G・信用 marginal | checkmark.seal | 緑 | Verified | 2 |
+  | U、または信用 undefined・never | checkmark.shield | 黄 | Untrusted key | 1 |
+  | G で署名者がコミッターと違う | person.crop.circle.badge.questionmark | 黄 | Unverified signer | — |
+  | X・Y | clock.badge.exclamationmark | 橙 | Expired | — |
+  | R | exclamationmark.shield.fill | 赤 | Revoked key | — |
+  | B | xmark.seal.fill | 赤 | Bad signature | — |
+  | E | key | 灰 | No key | — |
+  | 検証中 | seal | 薄い灰 | Checking… | — |
+
+  詳細の欄の Signature の行は、アイコン・言葉・目盛り・方式と署名者。かざすと短い説明、押すと吹き出し（説明、署名者、コミッターとの一致、方式、鍵 ID、4 文字ずつ区切った指紋、信用度、検証した場所）を出す。History の行はアイコンだけ（信用度はアイコンの形で分かる）。
 - 結果はコア（手元の `Repository`）がコミットごとに覚える（コミットは変わらないため）。アプリを終えると消える。
 - 検証する側を変えたら、覚えていた結果はすべて捨てる。鍵や信用度が違うので、結果を引き継がない。コアは番号を進め、変える前に始めた検証の結果が後から届いても覚えない。History の丸と詳細の欄も、結果を捨てて検証し直す。
 
