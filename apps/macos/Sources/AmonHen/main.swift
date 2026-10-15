@@ -30,6 +30,16 @@ enum Settings {
         }
     }
 
+    /// コミットの詳細に作者・コミッターの Gravatar のアバターを出すか（既定は出す。メールアドレスの MD5 を
+    /// gravatar.com に送る）。変えたら `commitMessageStyleChanged` を知らせる。
+    static var showAvatars: Bool {
+        get { UserDefaults.standard.object(forKey: "showAvatars") as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "showAvatars")
+            NotificationCenter.default.post(name: .commitMessageStyleChanged, object: nil)
+        }
+    }
+
     /// コミットの本文を等幅で出すか（既定は等幅）。変えたら `commitMessageStyleChanged` を知らせる。
     static var monospacedCommitMessage: Bool {
         get { UserDefaults.standard.object(forKey: "monospacedCommitMessage") as? Bool ?? true }
@@ -386,6 +396,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         mono.state = Settings.monospacedCommitMessage ? .on : .off
         mono.toolTip = "コミットの本文を等幅の字体で出す（72 桁で改行した本文が崩れない）"
         viewMenu.addItem(mono)
+        let avatars = NSMenuItem(title: "Show Avatars", action: #selector(toggleAvatars(_:)), keyEquivalent: "")
+        avatars.target = self
+        avatars.state = Settings.showAvatars ? .on : .off
+        avatars.toolTip = "コミットの詳細に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）"
+        viewMenu.addItem(avatars)
 
         // テキスト欄でのコピーや取り消しのため、標準の Edit メニューを置く。
         let editItem = NSMenuItem()
@@ -404,6 +419,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "Find Next", action: #selector(DiffDocumentView.findNext(_:)), keyEquivalent: "g"))
         editMenu.addItem(NSMenuItem(title: "Find Previous", action: #selector(DiffDocumentView.findPrevious(_:)), keyEquivalent: "G"))
         NSApp.mainMenu = main
+    }
+
+    @objc private func toggleAvatars(_ item: NSMenuItem) {
+        Settings.showAvatars.toggle()
+        item.state = Settings.showAvatars ? .on : .off
     }
 
     @objc private func toggleMonospacedMessage(_ item: NSMenuItem) {
