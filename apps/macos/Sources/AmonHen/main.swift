@@ -100,11 +100,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
-        guard let path = repositoryPath() else {
-            NSApp.terminate(nil)
-            return
+        RepositoryManagerWindowController.shared.onOpen = { [weak self] path in self?.open(path: path) }
+        // 引数でリポジトリを渡されなければ、リポジトリの一覧を出す。
+        if let path = repositoryPath() {
+            open(path: path, debug: true)
+        } else {
+            RepositoryManagerWindowController.shared.show()
         }
-        open(path: path, debug: true)
         NSApp.activate()
     }
 
@@ -118,11 +120,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let window = try RepositoryWindow(url: url, debug: debug)
             window.onOpenRepository = { [weak self] path in self?.open(path: path) }
-            window.onClose = { [weak self, weak window] in self?.windows.removeAll { $0 === window } }
+            window.onClose = { [weak self, weak window] in
+                self?.windows.removeAll { $0 === window }
+                // 最後のリポジトリを閉じたら、終わらずにリポジトリの一覧を出す。
+                if self?.windows.isEmpty == true { RepositoryManagerWindowController.shared.show() }
+            }
             windows.append(window)
+            RepositoryList.touch(url.path)
+            RepositoryManagerWindowController.shared.close()
         } catch {
             NSAlert(error: error).runModal()
-            if windows.isEmpty { NSApp.terminate(nil) }
+            if windows.isEmpty { RepositoryManagerWindowController.shared.show() }
         }
     }
 
@@ -158,6 +166,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let open = NSMenuItem(title: "Open…", action: #selector(openDocument(_:)), keyEquivalent: "o")
         open.target = self
         fileMenu.addItem(open)
+        let manager = NSMenuItem(title: "Repositories…", action: #selector(showRepositories(_:)), keyEquivalent: "O")
+        manager.target = self
+        fileMenu.addItem(manager)
         fileMenu.addItem(NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
 
         // テキスト欄でのコピーや取り消しのため、標準の Edit メニューを置く。
@@ -179,12 +190,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = main
     }
 
+    @objc private func showRepositories(_ sender: Any?) {
+        RepositoryManagerWindowController.shared.show()
+    }
+
     @objc private func toggleWriteCommitGraph(_ item: NSMenuItem) {
         Settings.writeCommitGraph.toggle()
         item.state = Settings.writeCommitGraph ? .on : .off
     }
 
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
+    /// リポジトリをすべて閉じても終わらない（リポジトリの一覧から開き直せる）。終えるのは ⌘Q。
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     static func option(_ name: String) -> String? {
         let args = CommandLine.arguments
@@ -192,19 +208,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return args[i + 1]
     }
 
-    /// 引数で渡されたリポジトリ。なければ選ばせる。
+    /// 引数で渡されたリポジトリ。
     private func repositoryPath() -> String? {
         var args = Array(CommandLine.arguments.dropFirst())
         for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
         args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--log-scroll", "--show-latency"].contains($0) }
-        if let path = args.first { return path }
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.message = "リポジトリを選んでください"
-        return panel.runModal() == .OK ? panel.url?.path : nil
+        return args.first
     }
 }
 
