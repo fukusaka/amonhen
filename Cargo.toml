@@ -18,6 +18,7 @@ amonhen-backend-gix = { path = "crates/backend-gix" }
 amonhen-backend-cli = { path = "crates/backend-cli" }
 amonhen-ffi-c = { path = "crates/ffi-c" }
 amonhen-watch = { path = "crates/watch" }
+amonhen-syntax = { path = "crates/syntax" }
 gix = { version = "0.89", default-features = false, features = ["sha1", "max-performance-safe", "revision", "attributes", "blob-diff"] }
 
 [profile.release]
