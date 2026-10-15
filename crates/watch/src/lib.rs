@@ -76,6 +76,11 @@ pub fn classify(paths: &RepoPaths, path: &Path) -> Changes {
     }
 }
 
+/// 中身を変えないイベント（開いた・読んだ・閉じた）。
+fn is_read_only(kind: &notify::EventKind) -> bool {
+    matches!(kind, notify::EventKind::Access(_))
+}
+
 /// 監視を止めるには落とす。
 pub struct Watcher {
     _watcher: notify::RecommendedWatcher,
@@ -102,6 +107,11 @@ impl Watcher {
         let mut watcher =
             notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
                 let Ok(event) = event else { return };
+                // Linux の inotify は読んだだけでも知らせる（git status が作業ツリーを読むたびに届き、
+                // 読み直すとまた届く）。書き込みは Modify などで別に届くので、Access はすべて捨てる。
+                if is_read_only(&event.kind) {
+                    return;
+                }
                 let mut changes = Changes::default();
                 for path in &event.paths {
                     changes |= classify(&classify_paths, path);
@@ -153,6 +163,16 @@ mod tests {
             common_dir: root.join(".git"),
             workdir: Some(root.to_owned()),
         }
+    }
+
+    #[test]
+    fn ignores_reads() {
+        use notify::event::{AccessKind, AccessMode, CreateKind, ModifyKind};
+        use notify::EventKind;
+        assert!(is_read_only(&EventKind::Access(AccessKind::Open(AccessMode::Read))));
+        assert!(is_read_only(&EventKind::Access(AccessKind::Close(AccessMode::Write))));
+        assert!(!is_read_only(&EventKind::Modify(ModifyKind::Any)));
+        assert!(!is_read_only(&EventKind::Create(CreateKind::File)));
     }
 
     #[test]
