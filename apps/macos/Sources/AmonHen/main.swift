@@ -20,6 +20,15 @@ enum Settings {
         }
     }
 
+    /// 選んだコミットの祖先を強調するか（既定はする）。変えたら `highlightAncestorsChanged` を知らせる。
+    static var highlightAncestors: Bool {
+        get { UserDefaults.standard.object(forKey: "highlightAncestors") as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "highlightAncestors")
+            NotificationCenter.default.post(name: .highlightAncestorsChanged, object: nil)
+        }
+    }
+
     /// History の行を 1 行にするか（既定は件名と作者・日時の 2 行）。変えたら `historyRowsChanged` を知らせる。
     static var compactHistoryRows: Bool {
         get { UserDefaults.standard.bool(forKey: "compactHistoryRows") }
@@ -32,6 +41,7 @@ enum Settings {
 
 extension Notification.Name {
     static let historyRowsChanged = Notification.Name("historyRowsChanged")
+    static let highlightAncestorsChanged = Notification.Name("highlightAncestorsChanged")
 }
 
 /// daemon 越しに開くときに起動する `amonhend`。アプリの中（Contents/MacOS）にあればそれを、開発中は
@@ -326,6 +336,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         compact.target = self
         compact.state = Settings.compactHistoryRows ? .on : .off
         viewMenu.addItem(compact)
+        let ancestors = NSMenuItem(
+            title: "Highlight Ancestors", action: #selector(toggleHighlightAncestors(_:)), keyEquivalent: "")
+        ancestors.target = self
+        ancestors.state = Settings.highlightAncestors ? .on : .off
+        ancestors.toolTip = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする"
+        viewMenu.addItem(ancestors)
 
         // テキスト欄でのコピーや取り消しのため、標準の Edit メニューを置く。
         let editItem = NSMenuItem()
@@ -344,6 +360,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "Find Next", action: #selector(DiffDocumentView.findNext(_:)), keyEquivalent: "g"))
         editMenu.addItem(NSMenuItem(title: "Find Previous", action: #selector(DiffDocumentView.findPrevious(_:)), keyEquivalent: "G"))
         NSApp.mainMenu = main
+    }
+
+    @objc private func toggleHighlightAncestors(_ item: NSMenuItem) {
+        Settings.highlightAncestors.toggle()
+        item.state = Settings.highlightAncestors ? .on : .off
     }
 
     @objc private func toggleCompactRows(_ item: NSMenuItem) {

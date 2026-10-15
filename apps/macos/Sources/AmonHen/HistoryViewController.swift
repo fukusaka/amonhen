@@ -184,6 +184,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         applyRowStyle()
         NotificationCenter.default.addObserver(
             self, selector: #selector(rowStyleChanged), name: .historyRowsChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(highlightAncestorsChanged), name: .highlightAncestorsChanged, object: nil)
         tableView.intercellSpacing = NSSize(width: 6, height: 0)
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.allowsTypeSelect = false
@@ -408,7 +410,36 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         if tableView.selectedRow < 0, history.rowCount > 0 {
             tableView.selectRowIndexes([0], byExtendingSelection: false)
         }
+        updateLineage()
         redrawGraph()
+    }
+
+    /// 頼んだ祖先の計算の回数（古い結果を捨てるため）。
+    private var lineageRequest = 0
+
+    /// 選んだコミットの祖先を裏で求め、求まったらグラフを描き直す（linux で 10〜25 ms）。
+    private func updateLineage() {
+        lineageRequest += 1
+        let request = lineageRequest
+        let row = tableView.selectedRow
+        guard Settings.highlightAncestors, let history, row >= 0, row < history.rowCount else {
+            if renderer.lineage != nil {
+                renderer.lineage = nil
+                redrawGraph()
+            }
+            return
+        }
+        if let current = renderer.lineage, current.history === history, current.row == row { return }
+        Task {
+            let lineage = await Task.detached(priority: .userInitiated) { history.lineage(of: row) }.value
+            guard request == lineageRequest else { return }
+            renderer.lineage = lineage
+            redrawGraph()
+        }
+    }
+
+    @objc private func highlightAncestorsChanged() {
+        updateLineage()
     }
 
     /// グラフの列と、その右の文字の列のうち、ヘッダーの下で見えている範囲に重ねる。
@@ -899,6 +930,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         redrawText()
+        updateLineage()
         let row = tableView.selectedRow
         onSelectCommit?(row >= 0 ? history?.commitID(row: row) : nil)
     }

@@ -47,6 +47,10 @@ final class GraphRenderer {
     private var buffers: [MTLBuffer] = []
     private var bufferIndex = 0
     private var instances: [Instance] = []
+    /// 強調する祖先。描く History と同じものから求めたときだけ使う。
+    var lineage: Lineage?
+    /// 祖先でない点と線の不透明度。
+    private let dimmedAlpha: Float = 0.18
     var metrics = Metrics()
     /// 描いたフレームと、描き先を取れずに飛ばしたフレームの数。
     private(set) var drawnFrames = 0
@@ -252,31 +256,54 @@ final class GraphRenderer {
     private func buildInstances(history: History, rows: Range<Int>, scrollY: Float) {
         let m = metrics
         let edgeIndices = FrameProfile.measure("graph: edge indices (FFI)") { history.edgeIndices(in: rows) }
+        let lineage = self.lineage.flatMap { $0.history === history ? $0 : nil }
         history.withEdges { edges in
             for i in edgeIndices {
                 let e = edges[Int(i)]
                 let a = SIMD2(laneX(e.lane_start), rowY(e.row_start, scrollY: scrollY))
                 let b = SIMD2(laneX(e.lane_end), rowY(e.row_end, scrollY: scrollY))
-                let firstParent = e.kind & UInt16(AmonhenEdge_FIRST_PARENT) != 0
-                var width = firstParent ? m.firstParentWidth : m.lineWidth
-                var alpha: Float = 1
-                // 詰めたレーンの線は、間隔に合わせて細く薄くし、点を隠さない帯にする。
-                let spacing = max(laneSpacing(e.lane_start), laneSpacing(e.lane_end))
-                if spacing < m.laneWidth / 2 {
-                    width = min(width, max(0.6, spacing * 0.8))
-                    alpha = 0.45
+                // 祖先を強調するときは、光らない線（や縦線の光らない上の部分）を薄くする。
+                var dimmed = false
+                if let lineage {
+                    if let from = lineage.litFrom(edge: Int(i)) {
+                        if from > e.row_start, e.lane_start == e.lane_end {
+                            let mid = SIMD2(a.x, rowY(from, scrollY: scrollY))
+                            appendEdge(e, a, mid, alpha: dimmedAlpha)
+                            appendEdge(e, mid, b, alpha: 1)
+                            continue
+                        }
+                    } else {
+                        dimmed = true
+                    }
                 }
-                instances.append(Instance(
-                    a: a, b: b, width: width, color: UInt32(e.color),
-                    kind: e.lane_start == e.lane_end ? Instance.line : Instance.curve, alpha: alpha))
+                appendEdge(e, a, b, alpha: dimmed ? dimmedAlpha : 1)
             }
         }
         history.withNodes { nodes in
             for n in nodes[rows] {
                 let p = SIMD2(laneX(n.lane), rowY(n.row, scrollY: scrollY))
-                instances.append(Instance(a: p, b: p, width: m.nodeRadius, color: UInt32(n.color), kind: Instance.circle))
+                let alpha: Float = lineage.map { $0.contains(row: Int(n.row)) ? 1 : dimmedAlpha } ?? 1
+                instances.append(Instance(
+                    a: p, b: p, width: m.nodeRadius, color: UInt32(n.color), kind: Instance.circle, alpha: alpha))
             }
         }
+    }
+
+    /// 線 1 本（またはその一部）を `a` から `b` まで描く。`alpha` は祖先の強調による不透明度。
+    private func appendEdge(_ e: AmonhenEdge, _ a: SIMD2<Float>, _ b: SIMD2<Float>, alpha lineageAlpha: Float) {
+        let m = metrics
+        let firstParent = e.kind & UInt16(AmonhenEdge_FIRST_PARENT) != 0
+        var width = firstParent ? m.firstParentWidth : m.lineWidth
+        var alpha: Float = 1
+        // 詰めたレーンの線は、間隔に合わせて細く薄くし、点を隠さない帯にする。
+        let spacing = max(laneSpacing(e.lane_start), laneSpacing(e.lane_end))
+        if spacing < m.laneWidth / 2 {
+            width = min(width, max(0.6, spacing * 0.8))
+            alpha = 0.45
+        }
+        instances.append(Instance(
+            a: a, b: b, width: width, color: UInt32(e.color),
+            kind: e.lane_start == e.lane_end ? Instance.line : Instance.curve, alpha: alpha * lineageAlpha))
     }
 
     /// 3 つを順に使い回す（GPU が前のフレームを読んでいる間に書き換えないため）。
