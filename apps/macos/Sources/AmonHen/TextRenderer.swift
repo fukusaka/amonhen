@@ -127,6 +127,20 @@ final class TextRenderer {
         var width: CGFloat
         /// 求めた文字の範囲の、行の左端からの横位置（ポイント）。
         var spans: [(CGFloat, CGFloat)] = []
+        /// 文字の位置と横位置の変換（選択や検索で使う）。
+        var line: CTLine?
+
+        /// 行の左端から `x`（ポイント）の位置にある文字の境目（UTF-16）。
+        func index(at x: CGFloat) -> Int {
+            guard let line, x > 0 else { return 0 }
+            return max(0, CTLineGetStringIndexForPosition(line, CGPoint(x: x, y: 0)))
+        }
+
+        /// 文字の境目 `index`（UTF-16）の、行の左端からの横位置（ポイント）。
+        func offset(of index: Int) -> CGFloat {
+            guard let line else { return 0 }
+            return CTLineGetOffsetForStringIndex(line, index, nil)
+        }
     }
 
     let device: MTLDevice
@@ -189,7 +203,7 @@ final class TextRenderer {
         let spans = ranges.map { r in
             (CTLineGetOffsetForStringIndex(line, r.lowerBound, nil), CTLineGetOffsetForStringIndex(line, r.upperBound, nil))
         }
-        return ShapedLine(glyphs: glyphs, width: CTLineGetTypographicBounds(line, nil, nil, nil), spans: spans)
+        return ShapedLine(glyphs: glyphs, width: CTLineGetTypographicBounds(line, nil, nil, nil), spans: spans, line: line)
     }
 
     func addRect(_ rect: CGRect, color: SIMD4<Float>) {
