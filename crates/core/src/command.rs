@@ -1091,6 +1091,10 @@ fn signature_json(s: &amonhen_model::SignatureCheck) -> serde_json::Value {
         "key": s.key,
         "fingerprint": s.fingerprint,
         "trust": s.trust,
+        "emails": s.emails.iter().map(|e| serde_json::json!({
+            "email": e.email,
+            "validity": e.validity.to_string(),
+        })).collect::<Vec<_>>(),
     })
 }
 

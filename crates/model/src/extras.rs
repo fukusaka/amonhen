@@ -17,6 +17,18 @@ pub struct SignatureCheck {
     pub fingerprint: String,
     /// 信用の度合い（`%GT`。ultimate・full・marginal・never・undefined）。
     pub trust: String,
+    /// 署名した鍵に登録されたメールアドレス（GPG はすべてのユーザー ID、SSH は allowed signers のプリンシパル）。
+    /// 読めなければ空（そのときはコミッターと一致するかを言い切れない）。
+    pub emails: Vec<SignerEmail>,
+}
+
+/// 署名した鍵のメールアドレスと、その有効性（gpg の uid 行の 2 番目の欄。u・f・m は有効、r は失効、e は期限切れ、
+/// `-`・q・空は不明。SSH の allowed signers のプリンシパルは f）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SignerEmail {
+    pub email: String,
+    pub validity: char,
 }
 
 /// 1 つのファイルの変更の行数。バイナリなら `None`。

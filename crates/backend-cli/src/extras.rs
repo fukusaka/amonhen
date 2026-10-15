@@ -1,6 +1,6 @@
 //! コミットの詳細のうち git に頼む分（署名の検証・notes・変更の行数）。
 
-use amonhen_model::{CommitExtras, FileStat, Oid, Result, SignatureCheck};
+use amonhen_model::{CommitExtras, FileStat, Oid, Result, SignatureCheck, SignerEmail};
 
 use crate::Git;
 
@@ -13,10 +13,11 @@ impl Git {
             "log.showSignature=false",
             "log",
             "-1",
-            "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%N",
+            "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00%N",
             &hex,
         ])?;
-        let (signature, notes) = parse_signature_and_notes(&String::from_utf8_lossy(&log));
+        let (signature, primary, notes) = parse_signature_and_notes(&String::from_utf8_lossy(&log));
+        let signature = signature.map(|s| self.with_emails(vec![(s, primary)]).remove(0));
         // 最初の親と比べる（merge でも、変わったファイルの一覧と同じ比べ方にする）。
         let numstat = self.read(&[
             "diff-tree",
@@ -50,12 +51,12 @@ impl Git {
                 "log.showSignature=false",
                 "log",
                 "--no-walk=unsorted",
-                "--format=%H%x00%G?%x00%GS%x00%GK%x00%GF%x00%GT",
+                "--format=%H%x00%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP",
                 "--stdin",
             ],
             input.as_bytes(),
         )?;
-        let found: std::collections::HashMap<String, SignatureCheck> =
+        let found: std::collections::HashMap<String, (SignatureCheck, String)> =
             String::from_utf8_lossy(&out)
                 .lines()
                 .filter_map(|line| {
@@ -63,34 +64,101 @@ impl Git {
                     let mut f = rest.split('\0');
                     let mut next = || f.next().unwrap_or_default().to_owned();
                     let status = next().chars().next()?;
-                    Some((
-                        hex.to_owned(),
-                        SignatureCheck {
-                            status,
-                            signer: next(),
-                            key: next(),
-                            fingerprint: next(),
-                            trust: next(),
-                        },
-                    ))
+                    let check = SignatureCheck {
+                        status,
+                        signer: next(),
+                        key: next(),
+                        fingerprint: next(),
+                        trust: next(),
+                        emails: Vec::new(),
+                    };
+                    Some((hex.to_owned(), (check, next())))
                 })
                 .collect();
-        Ok(ids
+        let checks = ids
             .iter()
             .map(|id| {
-                found
-                    .get(&id.to_string())
-                    .cloned()
-                    .unwrap_or(SignatureCheck {
+                found.get(&id.to_string()).cloned().unwrap_or_else(|| {
+                    let check = SignatureCheck {
                         status: 'E',
                         ..Default::default()
-                    })
+                    };
+                    (check, String::new())
+                })
             })
-            .collect())
+            .collect();
+        Ok(self.with_emails(checks))
     }
 }
 
 impl Git {
+    /// 検証の結果に、署名した鍵のメールアドレスを足す（`primary` は主鍵の指紋 `%GP`）。GPG は gpg で鍵の
+    /// ユーザー ID をすべて読み（鍵が何個あっても gpg は 1 回）、SSH は git が allowed signers から見つけた
+    /// プリンシパル（`%GS`）を使う。読めなければ空のまま。
+    fn with_emails(&self, checks: Vec<(SignatureCheck, String)>) -> Vec<SignatureCheck> {
+        let signed = |c: &SignatureCheck| matches!(c.status, 'G' | 'U' | 'X' | 'Y' | 'R');
+        let primaries: Vec<&str> = checks
+            .iter()
+            .filter(|(c, p)| signed(c) && !p.is_empty() && !c.key.starts_with("SHA256:"))
+            .map(|(_, p)| p.as_str())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let uids = if primaries.is_empty() {
+            Default::default()
+        } else {
+            self.key_uids(&primaries)
+        };
+        checks
+            .into_iter()
+            .map(|(mut c, primary)| {
+                if c.key.starts_with("SHA256:") {
+                    if signed(&c) {
+                        c.emails = c
+                            .signer
+                            .split(',')
+                            .map(str::trim)
+                            .filter(|p| !p.is_empty())
+                            .map(|p| SignerEmail {
+                                email: p.to_owned(),
+                                validity: 'f',
+                            })
+                            .collect();
+                    }
+                } else if let Some(emails) = uids.get(&primary) {
+                    c.emails = emails.clone();
+                }
+                c
+            })
+            .collect()
+    }
+
+    /// `primaries`（主鍵の指紋）の鍵のユーザー ID のメールアドレスと有効性。gpg を 1 回だけ起動する。
+    fn key_uids(&self, primaries: &[&str]) -> std::collections::HashMap<String, Vec<SignerEmail>> {
+        let program = self
+            .read(&["config", "--get", "gpg.program"])
+            .ok()
+            .map(|p| String::from_utf8_lossy(&p).trim().to_owned())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| "gpg".to_owned());
+        let out = std::process::Command::new(&program)
+            .args([
+                "--batch",
+                "--no-tty",
+                "--list-keys",
+                "--with-colons",
+                "--fixed-list-mode",
+            ])
+            .args(primaries)
+            .env("LC_ALL", "C")
+            .stderr(std::process::Stdio::null())
+            .output();
+        match out {
+            Ok(out) => parse_key_uids(&String::from_utf8_lossy(&out.stdout)),
+            Err(_) => Default::default(),
+        }
+    }
+
     /// 1 つのコミットの署名の検証の詳細（署名者・鍵・信用度）。
     pub fn signature_details(&self, commit: &Oid) -> Result<Option<SignatureCheck>> {
         let out = self.read(&[
@@ -98,19 +166,20 @@ impl Git {
             "log.showSignature=false",
             "log",
             "-1",
-            "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00",
+            "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00",
             &commit.to_string(),
         ])?;
-        Ok(parse_signature_and_notes(&String::from_utf8_lossy(&out)).0)
+        let (signature, primary, _) = parse_signature_and_notes(&String::from_utf8_lossy(&out));
+        Ok(signature.map(|s| self.with_emails(vec![(s, primary)]).remove(0)))
     }
 }
 
-/// `%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%N` を読む。署名がなければ（N）`None`。
-fn parse_signature_and_notes(out: &str) -> (Option<SignatureCheck>, String) {
-    let mut fields = out.splitn(6, '\0');
+/// `%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00%N` を読む（署名と主鍵の指紋と notes）。署名がなければ（N）`None`。
+fn parse_signature_and_notes(out: &str) -> (Option<SignatureCheck>, String, String) {
+    let mut fields = out.splitn(7, '\0');
     let mut next = || fields.next().unwrap_or_default().to_owned();
-    let (status, signer, key, fingerprint, trust, notes) =
-        (next(), next(), next(), next(), next(), next());
+    let (status, signer, key, fingerprint, trust, primary, notes) =
+        (next(), next(), next(), next(), next(), next(), next());
     let status = status.trim().chars().next().unwrap_or('N');
     let signature = (status != 'N').then_some(SignatureCheck {
         status,
@@ -118,8 +187,50 @@ fn parse_signature_and_notes(out: &str) -> (Option<SignatureCheck>, String) {
         key,
         fingerprint,
         trust,
+        emails: Vec::new(),
     });
-    (signature, notes.trim().to_owned())
+    (signature, primary, notes.trim().to_owned())
+}
+
+/// `gpg --list-keys --with-colons --fixed-list-mode` を読み、主鍵の指紋ごとにユーザー ID のメールアドレスと
+/// 有効性を返す。ユーザー ID の `:` は `\x3a` と書かれる。
+fn parse_key_uids(out: &str) -> std::collections::HashMap<String, Vec<SignerEmail>> {
+    let mut keys: std::collections::HashMap<String, Vec<SignerEmail>> = Default::default();
+    let mut current: Option<String> = None;
+    let mut want_fpr = false;
+    for line in out.lines() {
+        let fields: Vec<&str> = line.split(':').collect();
+        match fields.first().copied() {
+            Some("pub") => {
+                current = None;
+                want_fpr = true;
+            }
+            Some("sub") | Some("ssb") => want_fpr = false,
+            Some("fpr") if want_fpr => {
+                let fpr = fields.get(9).copied().unwrap_or_default().to_owned();
+                keys.entry(fpr.clone()).or_default();
+                current = Some(fpr);
+                want_fpr = false;
+            }
+            Some("uid") => {
+                let (Some(fpr), Some(uid)) = (&current, fields.get(9)) else {
+                    continue;
+                };
+                let uid = uid.replace("\\x3a", ":");
+                let email = match (uid.rfind('<'), uid.rfind('>')) {
+                    (Some(a), Some(b)) if a < b => uid[a + 1..b].to_owned(),
+                    _ if uid.contains('@') => uid.trim().to_owned(),
+                    _ => continue,
+                };
+                let validity = fields.get(1).and_then(|v| v.chars().next()).unwrap_or('-');
+                keys.get_mut(fpr)
+                    .unwrap()
+                    .push(SignerEmail { email, validity });
+            }
+            _ => {}
+        }
+    }
+    keys
 }
 
 /// `git diff-tree -z --numstat` を読む。名前の変わったファイルは `追加\t削除\t\0元\0先\0`。
@@ -158,9 +269,10 @@ mod tests {
 
     #[test]
     fn reads_signature_and_notes() {
-        let (sig, notes) = parse_signature_and_notes(
-            "G\0Alice <a@example.com>\x003BDF373F5DD89FBB\0B9CF3D7E\0ultimate\0reviewed\n\n",
+        let (sig, primary, notes) = parse_signature_and_notes(
+            "G\0Alice <a@example.com>\x003BDF373F5DD89FBB\0B9CF3D7E\0ultimate\0ABCD\0reviewed\n\n",
         );
+        assert_eq!(primary, "ABCD");
         let sig = sig.unwrap();
         assert_eq!(
             (sig.status, sig.signer.as_str()),
@@ -172,9 +284,23 @@ mod tests {
         );
         assert_eq!(notes, "reviewed");
         assert_eq!(
-            parse_signature_and_notes("N\0\0\0\0\0\n"),
-            (None, String::new())
+            parse_signature_and_notes("N\0\0\0\0\0\0\n"),
+            (None, String::new(), String::new())
         );
+    }
+
+    #[test]
+    fn reads_every_user_id_of_a_key() {
+        let out = "tru::1:1:0:3:1:5\npub:-:4096:1:7B3C391EFEA93624:1:::-:::scESC::::::23::0:\nfpr:::::::::4880B8C9BD0E5106FC070F4F7B3C391EFEA93624:\nuid:-::::1::A::Christian Brauner <christian@brauner.io>::::::::::0:\nuid:f::::1::B::Christian Brauner <brauner@kernel.org>::::::::::0:\nuid:r::::1::C::Old <old@x.org>::::::::::0:\nsub:-:4096:1:91C61BC06578DCA2:1::::::s::::::23:\nfpr:::::::::408734571EA70C78B332692891C61BC06578DCA2:\n";
+        let keys = parse_key_uids(out);
+        let emails = &keys["4880B8C9BD0E5106FC070F4F7B3C391EFEA93624"];
+        assert_eq!(emails.len(), 3, "副鍵の指紋は主鍵にしない");
+        assert_eq!(
+            (emails[1].email.as_str(), emails[1].validity),
+            ("brauner@kernel.org", 'f')
+        );
+        assert_eq!(emails[2].validity, 'r');
+        assert!(!keys.contains_key("408734571EA70C78B332692891C61BC06578DCA2"));
     }
 
     #[test]
