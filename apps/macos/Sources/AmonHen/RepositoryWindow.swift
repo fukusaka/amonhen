@@ -305,6 +305,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         }
     }
 
+    /// View > Refresh（⌘R）。変化の知らせを待たずに、History・ブランチ・Working Copy を読み直す。
+    /// ウィンドウの delegate はレスポンダチェーンに入るので、メニューから届く。
+    @objc func refreshRepository(_ sender: Any?) {
+        repositoryDidChange(Changes(rawValue: ~0))
+        actions.refreshUndo()
+    }
+
     private func repositoryDidChange(_ changes: Changes) {
         if !changes.intersection([.refs, .config]).isEmpty {
             history.refresh()

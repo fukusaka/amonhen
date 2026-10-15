@@ -335,6 +335,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let compact = NSMenuItem(title: "One Line per Commit", action: #selector(toggleCompactRows(_:)), keyEquivalent: "")
         compact.target = self
         compact.state = Settings.compactHistoryRows ? .on : .off
+        let refresh = NSMenuItem(
+            title: "Refresh", action: #selector(RepositoryWindow.refreshRepository(_:)), keyEquivalent: "r")
+        refresh.toolTip = "History・ブランチ・Working Copy を読み直す（ふだんは変化を検知して自動で読み直す）"
+        viewMenu.addItem(refresh)
+        viewMenu.addItem(.separator())
         viewMenu.addItem(compact)
         let ancestors = NSMenuItem(
             title: "Highlight Ancestors", action: #selector(toggleHighlightAncestors(_:)), keyEquivalent: "")
