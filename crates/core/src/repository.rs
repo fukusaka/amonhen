@@ -403,7 +403,7 @@ impl Repository {
         let ids = snapshot.graph.ids();
         let start = (start as usize).min(ids.len());
         let end = start.saturating_add(count as usize).min(ids.len());
-        let texts = self.backend.commit_texts(&ids[start..end])?;
+        let texts = self.backend.commit_summaries(&ids[start..end])?;
         Ok(HistoryChunk::new(start as u32, &texts, profile))
     }
 
@@ -491,87 +491,46 @@ impl Repository {
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Vec<RowSet>> {
         use crate::query::Field;
-        let ids = snapshot.graph.ids();
-        // 大文字・小文字を区別しない。ASCII ならバイトのまま比べる。
-        let needles: Vec<(Field, String)> = terms
+        use amonhen_model::search::{TextField, TextTerm};
+        let terms: Vec<TextTerm> = terms
             .iter()
-            .map(|t| (t.field.clone(), t.value.to_lowercase()))
+            .map(|t| {
+                let field = match t.field {
+                    Field::Author => TextField::Author,
+                    Field::Subject => TextField::Subject,
+                    Field::Commit => TextField::Commit,
+                    _ => TextField::Any,
+                };
+                TextTerm::new(field, &t.value)
+            })
             .collect();
-        let contains = |text: &[u8], needle: &str| -> bool {
-            if needle.is_ascii() {
-                let n = needle.as_bytes();
-                text.len() >= n.len() && text.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
-            } else {
-                String::from_utf8_lossy(text)
-                    .to_lowercase()
-                    .contains(needle)
-            }
-        };
-        let id_matches = |row: usize, needle: &str| {
-            needle.len() >= 4
-                && needle.bytes().all(|b| b.is_ascii_hexdigit())
-                && ids[row].to_string().starts_with(needle)
-        };
-        // バッチは 64 の倍数にして、ビット列の語をスレッドどうしで分け合わないようにする。
-        const BATCH: usize = 4096;
-        let threads = std::thread::available_parallelism()
-            .map_or(4, |n| n.get())
-            .min(16);
-        let next = std::sync::atomic::AtomicUsize::new(0);
-        let parts = std::sync::Mutex::new(Vec::new());
-        let failed = std::sync::Mutex::new(None);
-        std::thread::scope(|scope| {
-            for _ in 0..threads {
-                scope.spawn(|| {
-                    loop {
-                        let start = next.fetch_add(BATCH, Ordering::Relaxed);
-                        if start >= ids.len() || cancelled() {
-                            break;
+        let rows = snapshot.graph.len();
+        // daemon 越しなら daemon の側で探してもらい、合ったコミットの ID を行に直す。
+        if let Some(found) = self
+            .backend
+            .search_texts(&snapshot.tips, &terms, cancelled)?
+        {
+            return Ok(found
+                .iter()
+                .map(|ids| {
+                    let mut set = RowSet::new(rows);
+                    for id in ids {
+                        if let Some(row) = snapshot.row_of(id) {
+                            set.insert(row as usize);
                         }
-                        let end = (start + BATCH).min(ids.len());
-                        let texts = match self.backend.commit_texts(&ids[start..end]) {
-                            Ok(t) => t,
-                            Err(e) => {
-                                *failed.lock().unwrap() = Some(e.to_string());
-                                break;
-                            }
-                        };
-                        let mut words = vec![vec![0u64; (end - start).div_ceil(64)]; needles.len()];
-                        for (i, t) in texts.iter().enumerate() {
-                            for (k, (field, needle)) in needles.iter().enumerate() {
-                                let hit = match field {
-                                    Field::Author => contains(t.author_name(), needle),
-                                    Field::Subject => contains(t.subject(), needle),
-                                    Field::Commit => id_matches(start + i, needle),
-                                    _ => {
-                                        contains(t.subject(), needle)
-                                            || contains(t.author_name(), needle)
-                                            || id_matches(start + i, needle)
-                                    }
-                                };
-                                if hit {
-                                    words[k][i / 64] |= 1 << (i % 64);
-                                }
-                            }
-                        }
-                        parts.lock().unwrap().push((start, words));
                     }
-                });
-            }
-        });
-        if let Some(e) = failed.into_inner().unwrap() {
-            return Err(e.into());
+                    set
+                })
+                .collect());
         }
-        if cancelled() {
-            return Err("検索を取り消しました".into());
-        }
-        let mut sets = vec![RowSet::new(ids.len()); needles.len()];
-        for (start, words) in parts.into_inner().unwrap() {
-            for (k, w) in words.into_iter().enumerate() {
-                sets[k].words[start / 64..start / 64 + w.len()].copy_from_slice(&w);
-            }
-        }
-        Ok(sets)
+        let ids = snapshot.graph.ids();
+        let words = amonhen_model::search::scan(
+            ids,
+            &terms,
+            &|batch| self.backend.commit_texts(batch),
+            cancelled,
+        )?;
+        Ok(words.into_iter().map(|words| RowSet { words }).collect())
     }
 }
 

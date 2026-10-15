@@ -113,6 +113,23 @@ pub trait GitBackend: Send + Sync {
         false
     }
 
+    /// 件名・作者・日時だけを読む（History の行に出す分）。daemon 越しでは本文を送らずに済む。
+    fn commit_summaries(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
+        self.commit_texts(ids)
+    }
+
+    /// `tips` から辿れるコミットを、本文の条件で探す（条件ごとに合ったコミット）。daemon 越しの実装は
+    /// daemon の側で探して ID だけを返す。`None` なら呼び出し側が `commit_texts` を読んで探す。
+    fn search_texts(
+        &self,
+        tips: &[Oid],
+        terms: &[crate::search::TextTerm],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Option<Vec<Vec<Oid>>>> {
+        let _ = (tips, terms, cancelled);
+        Ok(None)
+    }
+
     /// コミットの本文。History で見えている行の分だけ呼ぶ。
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>>;
 }
