@@ -6,7 +6,7 @@ use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use amonhen_model::{GitBackend, Result};
+use amonhen_model::{GitBackend, Oid, Result};
 use serde::Serialize;
 
 use crate::frame::{self, Kind};
@@ -16,8 +16,12 @@ use crate::wire::{
 
 type Writer = Arc<Mutex<Box<dyn Write + Send>>>;
 
+/// 検索のために数えたコミット（同じ起点で何度も探すときに読み直さない）。
+type CommitList = Mutex<Option<(Vec<Oid>, Arc<Vec<Oid>>)>>;
+
 pub struct Server {
     backend: Arc<dyn GitBackend>,
+    commits: Arc<CommitList>,
     writer: Writer,
     /// 走っている要求の、取り消しの印。
     cancels: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
@@ -29,6 +33,7 @@ impl Server {
             backend,
             writer: Arc::new(Mutex::new(Box::new(output))),
             cancels: Arc::default(),
+            commits: Arc::default(),
         }
     }
 
@@ -59,8 +64,9 @@ impl Server {
                     let backend = self.backend.clone();
                     let writer = self.writer.clone();
                     let cancels = self.cancels.clone();
+                    let commits = self.commits.clone();
                     std::thread::spawn(move || {
-                        let result = handle(&*backend, request, &cancel);
+                        let result = handle(&*backend, &commits, request, &cancel);
                         cancels.lock().unwrap().remove(&f.id);
                         write_reply(&writer, f.id, result);
                     });
@@ -97,7 +103,34 @@ fn encode(value: &impl Serialize) -> Result<Vec<u8>> {
     Ok(postcard::to_allocvec(value)?)
 }
 
-fn handle(backend: &dyn GitBackend, request: Request, cancel: &AtomicBool) -> Result<Vec<u8>> {
+/// `tips` から辿れるコミット（並びは問わない）。前回と同じ起点なら数え直さない。
+fn commits_from(
+    backend: &dyn GitBackend,
+    cache: &CommitList,
+    tips: &[Oid],
+) -> Result<Arc<Vec<Oid>>> {
+    if let Some((cached_tips, ids)) = &*cache.lock().unwrap()
+        && cached_tips == tips
+    {
+        return Ok(ids.clone());
+    }
+    let ids: Arc<Vec<Oid>> = Arc::new(
+        backend
+            .read_commits(tips, &|_| false)?
+            .into_iter()
+            .map(|c| c.id)
+            .collect(),
+    );
+    *cache.lock().unwrap() = Some((tips.to_vec(), ids.clone()));
+    Ok(ids)
+}
+
+fn handle(
+    backend: &dyn GitBackend,
+    commits: &CommitList,
+    request: Request,
+    cancel: &AtomicBool,
+) -> Result<Vec<u8>> {
     let files = || backend.files();
     match request {
         Request::Hello { version } => {
@@ -143,6 +176,33 @@ fn handle(backend: &dyn GitBackend, request: Request, cancel: &AtomicBool) -> Re
             let texts: Vec<CommitTextWire> =
                 backend.commit_texts(&ids)?.iter().map(Into::into).collect();
             encode(&texts)
+        }
+        Request::CommitSummaries(ids) => {
+            let texts: Vec<CommitTextWire> = backend
+                .commit_texts(&ids)?
+                .iter()
+                .map(CommitTextWire::summary)
+                .collect();
+            encode(&texts)
+        }
+        Request::SearchTexts { tips, terms } => {
+            let ids = commits_from(backend, commits, &tips)?;
+            let words = amonhen_model::search::scan(
+                &ids,
+                &terms,
+                &|batch| backend.commit_texts(batch),
+                &|| cancel.load(Ordering::Relaxed),
+            )?;
+            let found: Vec<Vec<Oid>> = words
+                .iter()
+                .map(|w| {
+                    (0..ids.len())
+                        .filter(|&i| w[i / 64] & (1 << (i % 64)) != 0)
+                        .map(|i| ids[i])
+                        .collect()
+                })
+                .collect();
+            encode(&found)
         }
         Request::FileRead { root, path } => encode(&files().read(root, &path)?.map(Bytes)),
         Request::FileWrite { root, path, data } => encode(&files().write(root, &path, &data.0)?),

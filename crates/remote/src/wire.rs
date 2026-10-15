@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use amonhen_layout::{Pod, Slab};
+use amonhen_model::search::TextTerm;
 use amonhen_model::{CommitGraph, CommitText, HeadState, Oid, ResetMode, Result, Root, Sequence};
 use serde::{Deserialize, Serialize};
 
@@ -58,6 +59,13 @@ pub enum Request {
     WriteCommitGraph,
     /// → `Vec<CommitTextWire>`
     CommitTexts(Vec<Oid>),
+    /// → `Vec<CommitTextWire>`（`raw` は件名と作者名だけ）
+    CommitSummaries(Vec<Oid>),
+    /// → `Vec<Vec<Oid>>`（条件ごとに合ったコミット。取り消せる）
+    SearchTexts {
+        tips: Vec<Oid>,
+        terms: Vec<TextTerm>,
+    },
     // RepoFiles
     /// → `Option<Bytes>`
     FileRead { root: Root, path: String },
@@ -213,6 +221,21 @@ impl From<&CommitText> for CommitTextWire {
             raw: Bytes(t.raw.to_vec()),
             subject: (t.subject.start, t.subject.end),
             author_name: (t.author_name.start, t.author_name.end),
+            author_time: t.author_time,
+        }
+    }
+}
+
+impl CommitTextWire {
+    /// 件名と作者名だけを残した本文（History の行に出す分）。
+    pub fn summary(t: &CommitText) -> Self {
+        let mut raw = t.subject().to_vec();
+        let subject = (0, raw.len() as u32);
+        raw.extend_from_slice(t.author_name());
+        Self {
+            raw: Bytes(raw.clone()),
+            subject,
+            author_name: (subject.1, raw.len() as u32),
             author_time: t.author_time,
         }
     }

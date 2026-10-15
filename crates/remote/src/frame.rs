@@ -1,4 +1,5 @@
 //! ストリームの上のフレーム。`長さ（u32）・種類（u8）・番号（u64）・中身` を並べる。長さは種類から後ろ。
+//! 大きな中身は LZ4 で圧縮し、種類の最上位のビットで示す（SSH の帯域を節約する）。
 
 use std::io::{self, Read, Write};
 
@@ -34,21 +35,35 @@ pub struct Frame {
     pub kind: Kind,
     pub id: u64,
     pub payload: Vec<u8>,
+    /// ストリームの上の大きさ（圧縮した後）。
+    pub wire_len: usize,
 }
 
 /// 1 つのフレームの上限（壊れた入力で巨大な領域を取らないため）。
 const MAX_FRAME: u32 = 1 << 30;
+/// これより大きな中身は圧縮する（小さな要求・応答は圧縮しても縮まず、遅れが増えるだけ）。
+const COMPRESS_FROM: usize = 16 * 1024;
+const COMPRESSED: u8 = 0x80;
 
-pub fn write(out: &mut impl Write, kind: Kind, id: u64, payload: &[u8]) -> io::Result<()> {
+/// 書いたバイト数（圧縮した後）を返す。
+pub fn write(out: &mut impl Write, kind: Kind, id: u64, payload: &[u8]) -> io::Result<usize> {
+    let compressed = (payload.len() >= COMPRESS_FROM)
+        .then(|| lz4_flex::compress_prepend_size(payload))
+        .filter(|c| c.len() < payload.len());
+    let (flag, payload) = match &compressed {
+        Some(c) => (COMPRESSED, c.as_slice()),
+        None => (0, payload),
+    };
     let len = u32::try_from(1 + 8 + payload.len())
         .map_err(|_| io::Error::other("フレームが大きすぎる"))?;
     let mut head = [0u8; 13];
     head[..4].copy_from_slice(&len.to_le_bytes());
-    head[4] = kind as u8;
+    head[4] = kind as u8 | flag;
     head[5..].copy_from_slice(&id.to_le_bytes());
     out.write_all(&head)?;
     out.write_all(payload)?;
-    out.flush()
+    out.flush()?;
+    Ok(head.len() + payload.len())
 }
 
 /// 次のフレーム。相手が閉じたら `None`。
@@ -65,11 +80,28 @@ pub fn read(input: &mut impl Read) -> io::Result<Option<Frame>> {
     }
     let mut head = [0u8; 9];
     input.read_exact(&mut head)?;
-    let kind = Kind::from_u8(head[0]).ok_or_else(|| io::Error::other("知らないフレームの種類"))?;
+    let kind = Kind::from_u8(head[0] & !COMPRESSED)
+        .ok_or_else(|| io::Error::other("知らないフレームの種類"))?;
     let id = u64::from_le_bytes(head[1..].try_into().unwrap());
     let mut payload = vec![0u8; len as usize - 9];
     input.read_exact(&mut payload)?;
-    Ok(Some(Frame { kind, id, payload }))
+    let wire_len = 4 + len as usize;
+    if head[0] & COMPRESSED != 0 {
+        // 展開した大きさが上限を超えるものは読まない。
+        let size = payload
+            .get(..4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()));
+        if size.is_none_or(|s| s > MAX_FRAME) {
+            return Err(io::Error::other("圧縮したフレームの大きさがおかしい"));
+        }
+        payload = lz4_flex::decompress_size_prepended(&payload).map_err(io::Error::other)?;
+    }
+    Ok(Some(Frame {
+        kind,
+        id,
+        payload,
+        wire_len,
+    }))
 }
 
 #[cfg(test)]
@@ -90,6 +122,16 @@ mod tests {
         let b = read(&mut input).unwrap().unwrap();
         assert_eq!((b.kind, b.payload.len()), (Kind::Notify, 0));
         assert!(read(&mut input).unwrap().is_none());
+        // 大きな中身は圧縮して送り、受け取ったら元に戻す。
+        let big = "line of text\n".repeat(10_000);
+        let mut buf = Vec::new();
+        write(&mut buf, Kind::Ok, 9, big.as_bytes()).unwrap();
+        assert!(buf.len() < big.len() / 4, "圧縮して {} バイト", buf.len());
+        let f = read(&mut &buf[..]).unwrap().unwrap();
+        assert_eq!(
+            (f.kind, f.id, f.payload.as_slice()),
+            (Kind::Ok, 9, big.as_bytes())
+        );
         // 壊れた長さは読まない。
         let mut bad = &[0xff, 0xff, 0xff, 0xff][..];
         assert!(read(&mut bad).is_err());

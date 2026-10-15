@@ -105,7 +105,7 @@ impl Connection {
 
     fn dispatch(&self, f: frame::Frame) {
         self.received
-            .fetch_add(f.payload.len() as u64 + 13, Ordering::Relaxed);
+            .fetch_add(f.wire_len as u64, Ordering::Relaxed);
         match f.kind {
             Kind::Ok | Kind::Err => {
                 let reply = if f.kind == Kind::Ok {
@@ -143,16 +143,19 @@ impl Connection {
         let (tx, rx) = mpsc::channel();
         self.pending.lock().unwrap().insert(id, tx);
         let payload = postcard::to_allocvec(request)?;
-        self.sent
-            .fetch_add(payload.len() as u64 + 13, Ordering::Relaxed);
-        if let Err(e) = frame::write(
+        match frame::write(
             &mut *self.writer.lock().unwrap(),
             Kind::Request,
             id,
             &payload,
         ) {
-            self.pending.lock().unwrap().remove(&id);
-            return Err(format!("daemon に送れない: {e}").into());
+            Ok(n) => {
+                self.sent.fetch_add(n as u64, Ordering::Relaxed);
+            }
+            Err(e) => {
+                self.pending.lock().unwrap().remove(&id);
+                return Err(format!("daemon に送れない: {e}").into());
+            }
         }
         Ok((id, rx))
     }
@@ -352,6 +355,24 @@ impl GitBackend for RemoteBackend {
             Notification::Changed(bits) => f(bits),
         });
         true
+    }
+
+    fn commit_summaries(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
+        let texts: Vec<CommitTextWire> = self.conn.call(&Request::CommitSummaries(ids.to_vec()))?;
+        Ok(texts.into_iter().map(Into::into).collect())
+    }
+
+    fn search_texts(
+        &self,
+        tips: &[Oid],
+        terms: &[amonhen_model::search::TextTerm],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Option<Vec<Vec<Oid>>>> {
+        let request = Request::SearchTexts {
+            tips: tips.to_vec(),
+            terms: terms.to_vec(),
+        };
+        Ok(Some(self.conn.call_cancellable(&request, cancelled)?))
     }
 
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
