@@ -246,6 +246,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func add(_ window: RepositoryWindow) {
         window.onOpenRepository = { [weak self] path in self?.open(path: path) }
+        window.onReconnect = { [weak self, weak window] in
+            guard let self, let window else { return }
+            // 先につなぎ始めてから閉じる（閉じたときにリポジトリの一覧を出さないため）。
+            connect(location: window.location, debug: false)
+            window.window.close()
+        }
         window.onClose = { [weak self, weak window] in
             self?.windows.removeAll { $0 === window }
             // 最後のリポジトリを閉じたら、終わらずにリポジトリの一覧を出す。

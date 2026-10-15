@@ -12,6 +12,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
     /// ほかのリポジトリ（サブモジュールなど）を新しいウィンドウで開く。
     var onOpenRepository: ((String) -> Void)?
     var onClose: (() -> Void)?
+    /// 切れた daemon 越しのリポジトリをつなぎ直す（AppDelegate がこのウィンドウを閉じて開き直す）。
+    var onReconnect: (() -> Void)?
+    /// daemon 越しのとき、受け取った量と切断を見張る。
+    private var connectionTimer: Timer?
 
     private let repository: Repository
     private let history: HistoryViewController
@@ -157,8 +161,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         }
         let repository = self.repository
         let started = Date()
-        history.load { error in
-            if let error { NSAlert(error: error).runModal() }
+        history.load { [weak self] error in
+            self?.history.loadingMessage = nil
+            if let error, self?.isDisconnected != true { NSAlert(error: error).runModal() }
             NSLog("History を最新にするまで %.0f ms", Date().timeIntervalSince(started) * 1000)
             if error == nil, Settings.writeCommitGraph {
                 Task.detached(priority: .utility) {
@@ -182,7 +187,68 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         } catch {
             NSLog("リポジトリを監視できない: \(error)")
         }
+        watchConnection()
         if debug { startDebugOptions() }
+    }
+
+    private var isDisconnected: Bool {
+        if case .closed = repository.connectionState { true } else { false }
+    }
+
+    /// daemon 越しなら、初めての読み込みの進み具合と、接続が切れたことを出す。
+    private func watchConnection() {
+        guard RepositoryLocation.isRemote(location) else { return }
+        updateConnection()
+        connectionTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.updateConnection() }
+        }
+    }
+
+    private func updateConnection() {
+        switch repository.connectionState {
+        case .local:
+            connectionTimer?.invalidate()
+        case let .connected(received):
+            // キャッシュがなく、まだ何も出せないときだけ（キャッシュがあれば差分だけで済み、すぐ終わる）。
+            if history.currentHistory == nil {
+                let size = ByteCountFormatter.string(fromByteCount: Int64(received), countStyle: .file)
+                history.loadingMessage = "History を読み込んでいます… \(size) 受信"
+            }
+        case let .closed(reason):
+            connectionTimer?.invalidate()
+            connectionTimer = nil
+            history.loadingMessage = nil
+            showDisconnected(reason: reason)
+        }
+    }
+
+    /// ツールバーの下に、切れたことと「つなぎ直す」を出す。
+    private func showDisconnected(reason: String) {
+        let icon = NSImageView(image: NSImage(systemSymbolName: "bolt.horizontal.circle", accessibilityDescription: nil) ?? NSImage())
+        icon.contentTintColor = .systemOrange
+        let host = RepositoryLocation.host(location) ?? location
+        let label = NSTextField(labelWithString: "\(host) との接続が切れました")
+        label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+        let detail = NSTextField(labelWithString: reason)
+        detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        detail.textColor = .secondaryLabelColor
+        detail.lineBreakMode = .byTruncatingTail
+        detail.toolTip = reason
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let button = NSButton(title: "つなぎ直す", target: self, action: #selector(reconnect))
+        button.controlSize = .small
+        let stack = NSStackView(views: [icon, label, detail, NSView(), button])
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
+        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
+        let bar = NSTitlebarAccessoryViewController()
+        bar.view = stack
+        bar.layoutAttribute = .bottom
+        window.addTitlebarAccessoryViewController(bar)
+    }
+
+    @objc private func reconnect() {
+        onReconnect?()
     }
 
     /// `--measure-scroll`・`--snapshot` など、確認用の起動オプション。
@@ -327,6 +393,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
     }
 
     func windowWillClose(_ notification: Notification) {
+        connectionTimer?.invalidate()
         watch = nil
         onClose?()
     }
