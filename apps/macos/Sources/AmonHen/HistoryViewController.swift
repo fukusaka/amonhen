@@ -46,13 +46,70 @@ final class GraphView: NSView {
     }
 }
 
+/// 選択の色は表にフォーカスがあるかで変わるので、文字を描き直せるように知らせる。
+final class FocusTableView: NSTableView {
+    var onFocusChange: (() -> Void)?
+    /// ドラッグする行の文字。セルを置いていないので、ドラッグの画像はこれから作る。
+    var dragLabel: ((IndexSet) -> String?)?
+
+    override func dragImageForRows(
+        with dragRows: IndexSet, tableColumns: [NSTableColumn], event: NSEvent, offset: NSPointPointer
+    ) -> NSImage {
+        guard let label = dragLabel?(dragRows) else {
+            return super.dragImageForRows(with: dragRows, tableColumns: tableColumns, event: event, offset: offset)
+        }
+        let text = NSAttributedString(string: label, attributes: [.font: NSFont.systemFont(ofSize: NSFont.systemFontSize)])
+        let size = NSSize(width: min(ceil(text.size().width) + 12, 480), height: rowHeight)
+        return NSImage(size: size, flipped: false) { rect in
+            NSColor.controlBackgroundColor.withAlphaComponent(0.85).setFill()
+            NSBezierPath(roundedRect: rect, xRadius: 4, yRadius: 4).fill()
+            text.draw(with: rect.insetBy(dx: 6, dy: (rect.height - text.size().height) / 2),
+                      options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+            return true
+        }
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        defer { onFocusChange?() }
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        defer { onFocusChange?() }
+        return super.resignFirstResponder()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        NotificationCenter.default.removeObserver(self)
+        guard let window else { return }
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(keyChanged), name: name, object: window)
+        }
+    }
+
+    @objc private func keyChanged() { onFocusChange?() }
+}
+
 final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     private let repository: Repository
     private var history: History?
     private let renderer: GraphRenderer
     private let scrollView = NSScrollView()
-    private let tableView = NSTableView()
+    private let tableView = FocusTableView()
     private let graphView = GraphView()
+    /// 件名・作者・日時を描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。
+    private let textView = GraphView()
+    private let text: TextRenderer
+    /// 行ごとに並べた文字。History が変わったら捨てる。
+    private var rowText: [Int: RowText] = [:]
+    private struct RowText {
+        var subject: TextRenderer.ShapedLine
+        var author: TextRenderer.ShapedLine
+        var date: TextRenderer.ShapedLine
+    }
+    private var ellipsis: TextRenderer.ShapedLine?
+    private let font = CTFontCreateUIFontForLanguage(.system, NSFont.systemFontSize, nil)!
     private let graphColumn = NSTableColumn(identifier: .init("graph"))
     private var chunks: [Int: HistoryChunk] = [:]
     /// 裏で読んでいるチャンク。
@@ -78,9 +135,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
     var onSelectCommit: ((Data?) -> Void)?
 
-    init(repository: Repository, renderer: GraphRenderer) {
+    init(repository: Repository, renderer: GraphRenderer, text: TextRenderer) {
         self.repository = repository
         self.renderer = renderer
+        self.text = text
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -106,6 +164,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         tableView.dataSource = self
         tableView.delegate = self
+        tableView.dragLabel = { [weak self] rows in
+            guard let row = rows.first, let chunk = self?.chunks[row / Self.chunkRows] else { return nil }
+            return chunk.subject(row: row)
+        }
+        tableView.onFocusChange = { [weak self] in
+            // フォーカスが移り終えてから（first responder が入れ替わった後で）描く。
+            DispatchQueue.main.async { self?.redrawText() }
+        }
         let menu = NSMenu()
         menu.delegate = self
         tableView.menu = menu
@@ -125,12 +191,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             object: tableView)
 
         graphView.metalLayer.device = renderer.device
+        textView.metalLayer.device = text.device
         scopePopup.target = self
         scopePopup.action = #selector(scopeChanged)
         scopePopup.controlSize = .small
         updateScopePopup()
         container.addSubview(scrollView)
         container.addSubview(graphView)
+        container.addSubview(textView)
         container.addSubview(scopePopup)
         view = container
     }
@@ -243,20 +311,75 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         self.history = history
         chunks.removeAll()
         loadingChunks.removeAll()
+        rowText.removeAll()
         tableView.reloadData()
         if first { tableView.scrollRowToVisible(0) }
         redrawGraph()
     }
 
-    /// グラフの列のうち、ヘッダーの下で見えている範囲に重ねる。
+    /// グラフの列と、その右の文字の列のうち、ヘッダーの下で見えている範囲に重ねる。
     private func layoutGraphView() {
         let clip = scrollView.contentView
         let clipFrame = view.convert(clip.frame, from: scrollView)
         let column = tableView.rect(ofColumn: tableView.column(withIdentifier: graphColumn.identifier))
         let x = view.convert(column.origin, from: tableView).x
-        let top = clip.contentInsets.top
-        graphView.frame = NSRect(x: x, y: clipFrame.minY, width: column.width, height: max(0, clipFrame.height - top))
+        let height = max(0, clipFrame.height - clip.contentInsets.top)
+        graphView.frame = NSRect(x: x, y: clipFrame.minY, width: column.width, height: height)
+        let textX = x + column.width
+        textView.frame = NSRect(x: textX, y: clipFrame.minY, width: max(0, clipFrame.maxX - textX), height: height)
         redrawGraph()
+        redrawText()
+    }
+
+    private func redrawText() {
+        guard history != nil, textView.window != nil else { return }
+        buildText(scale: textView.metalLayer.contentsScale)
+        text.draw(layer: textView.metalLayer, background: .zero)
+    }
+
+    /// 見えている行の文字を積む。まだ読めていない行は空けておき、読めたら描き直す。
+    private func buildText(scale: CGFloat) {
+        text.instances.removeAll(keepingCapacity: true)
+        guard let history else { return }
+        let scrollY = tableView.convert(NSPoint(x: 0, y: 0), from: textView).y
+        let originX = tableView.convert(NSPoint(x: 0, y: 0), from: textView).x
+        let rows = tableView.rows(in: NSRect(x: 0, y: scrollY, width: 1, height: textView.bounds.height))
+        guard rows.length > 0 else { return }
+        // 表のセルの文字の位置に合わせる（列の左右の余白）。
+        let columns = (1..<tableView.numberOfColumns).map { tableView.rect(ofColumn: $0).insetBy(dx: 5, dy: 0) }
+        let ellipsis = self.ellipsis ?? text.shape("…" as CFString, font: font, scale: scale)
+        self.ellipsis = ellipsis
+        let rowHeight = tableView.rowHeight
+        let baselineOffset = ((rowHeight + CTFontGetAscent(font) - CTFontGetDescent(font)) / 2).rounded()
+        let focused = view.window?.isKeyWindow == true && view.window?.firstResponder === tableView
+        let primary = NSColor.labelColor.rgba, secondary = NSColor.secondaryLabelColor.rgba
+        let selected = (focused ? NSColor.alternateSelectedControlTextColor : NSColor.labelColor).rgba
+        let selection = tableView.selectedRowIndexes
+        if rowText.count > 4096 { rowText.removeAll() }
+        for row in rows.location..<min(history.rowCount, rows.location + rows.length) {
+            guard let line = shapedRow(row, scale: scale) else { continue }
+            let baseline = tableView.rect(ofRow: row).minY - scrollY + baselineOffset
+            let isSelected = selection.contains(row)
+            for (i, (shaped, color)) in [(line.subject, primary), (line.author, secondary), (line.date, secondary)].enumerated()
+            where i < columns.count {
+                let column = columns[i]
+                text.addLine(
+                    shaped, origin: CGPoint(x: column.minX - originX, y: baseline),
+                    color: isSelected ? selected : color, scale: scale, maxWidth: column.width, ellipsis: ellipsis)
+            }
+        }
+    }
+
+    private func shapedRow(_ row: Int, scale: CGFloat) -> RowText? {
+        if let cached = rowText[row] { return cached }
+        guard let chunk = chunk(row: row) else { return nil }
+        let date = Self.dateFormatter.string(from: chunk.authorTime(row: row)) as CFString
+        let line = RowText(
+            subject: chunk.withSubject(row: row) { text.shape($0, font: font, scale: scale) },
+            author: chunk.withAuthorName(row: row) { text.shape($0, font: font, scale: scale) },
+            date: text.shape(date, font: font, scale: scale))
+        rowText[row] = line
+        return line
     }
 
     @objc private func contentDidScroll() {
@@ -340,6 +463,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         if let history, graphView.window != nil,
            let graph = renderer.image(history: history, size: graphView.bounds.size, scale: scale, scrollY: scrollY) {
             overlays.insert((graph, graphView), at: 0)
+            buildText(scale: scale)
+            if let image = text.image(size: textView.bounds.size, scale: scale, background: .zero) {
+                overlays.insert((image, textView), at: 1)
+            }
         }
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = context
@@ -376,11 +503,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 let visible = self.tableView.rows(in: self.tableView.visibleRect)
                 let lower = max(rows.lowerBound, visible.location)
                 let upper = min(rows.upperBound, visible.location + visible.length)
-                if lower < upper {
-                    let overlap = lower..<upper
-                    let columns = IndexSet(integersIn: 1..<self.tableView.numberOfColumns)
-                    self.tableView.reloadData(forRowIndexes: IndexSet(integersIn: overlap), columnIndexes: columns)
-                }
+                if lower < upper { self.redrawText() }
             }
         }
     }
@@ -421,6 +544,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
+        redrawText()
         let row = tableView.selectedRow
         onSelectCommit?(row >= 0 ? history?.commitID(row: row) : nil)
     }
@@ -478,26 +602,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         return f
     }()
 
+    /// 文字は `textView` に描くので、セルは置かない。
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let id = tableColumn?.identifier, id != graphColumn.identifier else { return nil }
-        let chunk = chunk(row: row)
-        let field = tableView.makeView(withIdentifier: id, owner: nil) as? NSTextField ?? {
-            let f = NSTextField(labelWithString: "")
-            f.identifier = id
-            f.lineBreakMode = .byTruncatingTail
-            f.cell?.truncatesLastVisibleLine = true
-            if id.rawValue != "subject" { f.textColor = .secondaryLabelColor }
-            return f
-        }()
-        // 表のセルは文字列を持ち続けるので、コアのメモリを指したままの CFString は渡さずコピーする。
-        // 見えている行の分だけ。差分表示と同じく Metal で文字を描くようになったら置き換える。
-        switch (id.rawValue, chunk) {
-        case (_, nil): field.stringValue = ""
-        case ("subject", let chunk?): field.stringValue = chunk.subject(row: row)
-        case ("author", let chunk?): field.stringValue = chunk.authorName(row: row)
-        case (_, let chunk?): field.stringValue = Self.dateFormatter.string(from: chunk.authorTime(row: row))
-        }
-        return field
+        nil
     }
 }
 

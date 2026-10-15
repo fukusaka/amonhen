@@ -28,7 +28,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         guard let renderer = GraphRenderer(), let text = TextRenderer(device: renderer.device) else {
             throw AmonhenError(description: "Metal を使えない")
         }
-        history = HistoryViewController(repository: repository, renderer: renderer)
+        history = HistoryViewController(repository: repository, renderer: renderer, text: text)
         sidebar = SidebarViewController()
         detail = CommitDetailViewController(repository: repository, renderer: text)
         workingCopy = WorkingCopyViewController(repository: repository, renderer: text)
