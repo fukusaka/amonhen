@@ -22,6 +22,10 @@ jobs:
       - name: タグと Cargo.toml の version が一致するか
         run: test "${GITHUB_REF_NAME#v}" = "$(scripts/version.sh stable)"
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # SSH 先に送り込む Linux 用の amonhend（musl で静的リンク、リンクは zig）。
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      - run: brew install zig
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
       - run: scripts/import-signing-certificate.sh

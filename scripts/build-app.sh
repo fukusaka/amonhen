@@ -22,14 +22,18 @@ esac
 build_number=$(echo "$version" | sed -E 's/-snapshot\.([0-9]+).*/.\1/')
 
 scripts/build-core.sh
+scripts/build-linux-daemon.sh
 (cd apps/macos && swift build -c release --product AmonHen)
 
 app="dist/$name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp apps/macos/.build/release/AmonHen "$app/Contents/MacOS/AmonHen"
-# daemon 越しに開くときに起動する（`daemon:` の場所。SSH 先では、その環境の amonhend を使う）。
+# daemon 越しに開くときに起動する（`daemon:` の場所）。
 cp target/release/amonhend "$app/Contents/MacOS/amonhend"
+# SSH 先に送り込む Linux 用の amonhend。
+mkdir -p "$app/Contents/Resources/linux"
+cp dist/linux/amonhend-linux-* "$app/Contents/Resources/linux/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

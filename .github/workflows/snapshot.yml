@@ -24,6 +24,10 @@ jobs:
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          # SSH 先に送り込む Linux 用の amonhend（musl で静的リンク、リンクは zig）。
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      - run: brew install zig
       - uses: Swatinem/rust-cache@v2
       - run: scripts/import-signing-certificate.sh
       - id: build
