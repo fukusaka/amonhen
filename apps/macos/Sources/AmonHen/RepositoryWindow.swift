@@ -3,7 +3,8 @@ import AppKit
 
 /// 1 つのリポジトリのウィンドウ。サイドバー・History・Working Copy・ツールバー・監視を持つ。
 final class RepositoryWindow: NSObject, NSWindowDelegate {
-    let url: URL
+    /// 手元のパスか、daemon 越しの場所（`daemon:/path`・`ssh://host/path`）。
+    let location: String
     /// 差分の文字を描く（ファイルの履歴のウィンドウでも使う）。
     private let textRenderer: TextRenderer
     private var pages: PageViewController?
@@ -22,12 +23,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
     private var watch: RepositoryWatch?
 
     /// `debug` なら、起動時の引数（`--snapshot` など）の確認用の動きをする。
-    init(url: URL, debug: Bool) throws {
-        self.url = url
-        let path = url.path
+    init(location: String, debug: Bool) throws {
+        self.location = location
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "io.github.fukusaka.amonhen")
-        repository = try Repository(path: path, cacheDirectory: cacheDirectory)
+        repository = if RepositoryLocation.isRemote(location) {
+            try Repository(location: location, daemon: Daemon.path, cacheDirectory: cacheDirectory)
+        } else {
+            try Repository(path: location, cacheDirectory: cacheDirectory)
+        }
         guard let renderer = GraphRenderer(), let text = TextRenderer(device: renderer.device) else {
             throw AmonhenError(description: "Metal を使えない")
         }
@@ -42,13 +46,19 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 1440, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init()
-        window.title = url.lastPathComponent
-        window.representedURL = url
+        let path = RepositoryLocation.path(location)
+        window.title = (path as NSString).lastPathComponent
+        if let host = RepositoryLocation.host(location) {
+            // daemon 越しなら、タイトルに接続先を添える（手元のリポジトリと見分ける）。
+            window.title += " — \(host)"
+        } else {
+            window.representedURL = URL(fileURLWithPath: path)
+        }
         window.isReleasedWhenClosed = false
         window.delegate = self
         assemble()
         // リポジトリごとに、前回の位置と大きさで開く（初めてなら真ん中に）。
-        let frameName = "Repository \(url.path)"
+        let frameName = "Repository \(location)"
         window.setContentSize(NSSize(width: 1440, height: 820))
         if !window.setFrameUsingName(frameName) { window.center() }
         window.setFrameAutosaveName(frameName)
@@ -104,9 +114,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
                 history.select(row: row)
             }
         }
-        let root = repository.workdir ?? url.path
+        let root = repository.workdir ?? RepositoryLocation.path(location)
+        let remote = RepositoryLocation.isRemote(location)
         sidebar.onOpenSubmodule = { [weak self] path in
-            self?.onOpenRepository?(URL(fileURLWithPath: root).appendingPathComponent(path).path)
+            // サブモジュールは、同じ接続先の上の相対パスとして開く。
+            let full = (root as NSString).appendingPathComponent(path)
+            self?.onOpenRepository?(remote ? Self.replacingPath(of: self?.location ?? "", with: full) : full)
         }
 
         actions.window = window
@@ -268,6 +281,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
             DispatchQueue.main.async { next() }
         }
         next()
+    }
+
+    /// daemon 越しの場所の、パスの部分を差し替える（サブモジュールを同じ接続先で開く）。
+    private static func replacingPath(of location: String, with path: String) -> String {
+        let old = RepositoryLocation.path(location)
+        guard location.hasSuffix(old) else { return location }
+        return String(location.dropLast(old.count)) + path
     }
 
     // MARK: - blame・ファイルの履歴

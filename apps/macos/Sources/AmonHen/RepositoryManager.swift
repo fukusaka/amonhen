@@ -1,3 +1,4 @@
+import AmonhenKit
 import AppKit
 
 /// 開いたことのあるリポジトリの一覧（新しく開いた順）。UserDefaults に置く。
@@ -24,13 +25,16 @@ enum RepositoryList {
         paths = paths.filter { $0 != path }
     }
 
-    /// `path` が Git のリポジトリ（作業ツリーの直下に `.git` がある）か。
+    /// `path` が Git のリポジトリ（作業ツリーの直下に `.git` がある）か。daemon 越しの場所は、つなぐまで
+    /// わからないので、あるものとする。
     static func isRepository(_ path: String) -> Bool {
-        FileManager.default.fileExists(atPath: (path as NSString).appendingPathComponent(".git"))
+        if RepositoryLocation.isRemote(path) { return true }
+        return FileManager.default.fileExists(atPath: (path as NSString).appendingPathComponent(".git"))
     }
 
     /// 今のブランチ。`.git/HEAD` を読むだけで、git は起動しない（一覧を開くたびに数十件を読むため）。
     static func branch(of path: String) -> String? {
+        if RepositoryLocation.isRemote(path) { return nil }
         var gitDir = (path as NSString).appendingPathComponent(".git")
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(atPath: gitDir, isDirectory: &isDirectory) else { return nil }
@@ -195,9 +199,11 @@ final class RepositoryManagerWindowController: NSWindowController, NSTableViewDa
         let cell = tableView.makeView(withIdentifier: .init("repo"), owner: nil) as? RepositoryCell ?? RepositoryCell()
         let path = shown[row]
         let exists = RepositoryList.isRepository(path)
-        cell.name.stringValue = (path as NSString).lastPathComponent
+        cell.name.stringValue = (RepositoryLocation.path(path) as NSString).lastPathComponent
+            + (RepositoryLocation.host(path).map { " — \($0)" } ?? "")
         cell.name.textColor = exists ? .labelColor : .tertiaryLabelColor
-        cell.path.stringValue = exists ? (path as NSString).abbreviatingWithTildeInPath : "見つかりません — \(path)"
+        cell.path.stringValue = RepositoryLocation.isRemote(path) ? path
+            : exists ? (path as NSString).abbreviatingWithTildeInPath : "見つかりません — \(path)"
         cell.branch.stringValue = exists ? RepositoryList.branch(of: path) ?? "" : ""
         return cell
     }

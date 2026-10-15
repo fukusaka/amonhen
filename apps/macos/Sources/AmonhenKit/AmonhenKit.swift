@@ -31,6 +31,15 @@ public final class Repository: @unchecked Sendable {
         self.raw = raw
     }
 
+    /// daemon 越しのリポジトリを開く。`location` は `daemon:/path` か `ssh://[user@]host[:port]/path`、
+    /// `daemon` は手元の `amonhend` のパス（`daemon:` のときに起動する）。
+    public init(location: String, daemon: String, cacheDirectory: URL? = nil) throws {
+        guard let raw = amonhen_repo_open_location(location, daemon, cacheDirectory?.path) else {
+            throw AmonhenError.last()
+        }
+        self.raw = raw
+    }
+
     deinit {
         amonhen_repo_free(raw)
     }
@@ -70,6 +79,34 @@ public final class Repository: @unchecked Sendable {
 }
 
 /// History の不変のスナップショット。どのスレッドから読んでもよい。
+/// リポジトリの場所の書き方（手元のパス、`daemon:/path`、`ssh://host/path`）。
+public enum RepositoryLocation {
+    /// daemon 越しに開く場所か。
+    public static func isRemote(_ location: String) -> Bool {
+        location.hasPrefix("daemon:") || location.hasPrefix("ssh://")
+    }
+
+    /// リポジトリのパス（daemon 越しなら、その向こうのパス）。
+    public static func path(_ location: String) -> String {
+        if let rest = location.split(separator: ":", maxSplits: 1).last, location.hasPrefix("daemon:") {
+            return String(rest)
+        }
+        if location.hasPrefix("ssh://") {
+            let rest = location.dropFirst("ssh://".count)
+            return rest.firstIndex(of: "/").map { String(rest[$0...]) } ?? ""
+        }
+        return location
+    }
+
+    /// 接続先（`ssh://` のホスト、`daemon:` は "daemon"）。手元なら nil。
+    public static func host(_ location: String) -> String? {
+        if location.hasPrefix("daemon:") { return "daemon" }
+        guard location.hasPrefix("ssh://") else { return nil }
+        let rest = location.dropFirst("ssh://".count)
+        return String(rest.prefix { $0 != "/" })
+    }
+}
+
 public final class History: @unchecked Sendable {
     let raw: OpaquePointer
     let repository: Repository

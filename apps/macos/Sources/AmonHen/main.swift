@@ -24,6 +24,23 @@ extension Notification.Name {
     static let historyRowsChanged = Notification.Name("historyRowsChanged")
 }
 
+/// daemon 越しに開くときに起動する `amonhend`。アプリの中（Contents/MacOS）にあればそれを、開発中は
+/// リポジトリの target/release のものを使う。`AMONHEN_DAEMON` で差し替えられる。
+enum Daemon {
+    static var path: String {
+        if let override = ProcessInfo.processInfo.environment["AMONHEN_DAEMON"] { return override }
+        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "amonhend") { return bundled.path }
+        // 開発中: 実行ファイルの場所から上へ辿り、リポジトリの target/release/amonhend を探す。
+        var dir = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
+        while dir.path != "/" {
+            let candidate = dir.appendingPathComponent("target/release/amonhend")
+            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate.path }
+            dir.deleteLastPathComponent()
+        }
+        return "amonhend"
+    }
+}
+
 /// 子の画面を 1 つだけ表示し、切り替える。
 final class PageViewController: NSViewController {
     private let pages: [SidebarViewController.Page: NSViewController]
@@ -128,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windows: [RepositoryWindow] = [] {
         didSet {
             // 終了するときにウィンドウが閉じても、開いていたものの記録は消さない（次の起動で開き直す）。
-            if !isTerminating, !Self.isCheckRun { RepositoryList.open = windows.map(\.url.path) }
+            if !isTerminating, !Self.isCheckRun { RepositoryList.open = windows.map(\.location) }
         }
     }
     private var isTerminating = false
@@ -156,14 +173,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// リポジトリを新しいウィンドウで開く。すでに開いていれば前に出す。
+    /// `path` は手元のパスか、daemon 越しの場所（`daemon:/path`・`ssh://host/path`）。
     func open(path: String, debug: Bool = false) {
-        let url = URL(fileURLWithPath: path).standardizedFileURL
-        if let existing = windows.first(where: { $0.url == url }) {
+        let location = RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).standardizedFileURL.path
+        if let existing = windows.first(where: { $0.location == location }) {
             existing.window.makeKeyAndOrderFront(nil)
             return
         }
         do {
-            let window = try RepositoryWindow(url: url, debug: debug)
+            let window = try RepositoryWindow(location: location, debug: debug)
             window.onOpenRepository = { [weak self] path in self?.open(path: path) }
             window.onClose = { [weak self, weak window] in
                 self?.windows.removeAll { $0 === window }
@@ -171,7 +189,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if self?.windows.isEmpty == true { RepositoryManagerWindowController.shared.show() }
             }
             windows.append(window)
-            RepositoryList.touch(url.path)
+            RepositoryList.touch(location)
             RepositoryManagerWindowController.shared.close()
         } catch {
             NSAlert(error: error).runModal()
