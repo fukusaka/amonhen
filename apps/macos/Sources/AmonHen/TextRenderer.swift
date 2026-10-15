@@ -110,7 +110,7 @@ final class TextRenderer {
         /// アトラスの中の位置と大きさ（ピクセル）。
         var uv: SIMD4<Float>
         var color: SIMD4<Float>
-        /// 0: 塗りつぶし、1: 単色のグリフ、2: カラーのグリフ。
+        /// 0: 塗りつぶし、1: 単色のグリフ、2: カラーのグリフ、3: 角の丸い塗りつぶし（半径は `uv.x`）。
         var kind: UInt32
         var pad: SIMD3<UInt32> = .zero
     }
@@ -214,6 +214,12 @@ final class TextRenderer {
         instances.append(Instance(
             rect: [Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)], uv: .zero,
             color: color, kind: 0))
+    }
+
+    func addRoundedRect(_ rect: CGRect, radius: CGFloat, color: SIMD4<Float>) {
+        instances.append(Instance(
+            rect: [Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)],
+            uv: [Float(radius), 0, 0, 0], color: color, kind: 3))
     }
 
     /// `line` を、ベースラインの左端が `origin`（ポイント）になるように置く。
@@ -351,7 +357,11 @@ final class TextRenderer {
     using namespace metal;
 
     struct Instance { float4 rect; float4 uv; float4 color; uint kind; uint3 pad; };
-    struct VOut { float4 position [[position]]; float2 uv; float4 color; uint kind [[flat]]; };
+    struct VOut {
+        float4 position [[position]]; float2 uv; float4 color; uint kind [[flat]];
+        // 角の丸い塗りつぶし用: 四角形の中の位置と大きさ（ポイント）、半径。
+        float2 local; float2 size [[flat]]; float radius [[flat]];
+    };
 
     vertex VOut text_vertex(uint vid [[vertex_id]], uint iid [[instance_id]],
                             const device Instance *instances [[buffer(0)]],
@@ -366,6 +376,9 @@ final class TextRenderer {
         o.uv = (i.uv.xy + corner * i.uv.zw) / atlasSize;
         o.color = i.color;
         o.kind = i.kind;
+        o.local = corner * i.rect.zw;
+        o.size = i.rect.zw;
+        o.radius = i.uv.x;
         return o;
     }
 
@@ -373,6 +386,13 @@ final class TextRenderer {
         constexpr sampler s(coord::normalized, filter::nearest);
         if (in.kind == 0) {
             return float4(in.color.rgb * in.color.a, in.color.a);
+        }
+        if (in.kind == 3) {
+            // 角の丸い四角形の距離。境界の 1 ピクセルほどをなめらかにする。
+            float2 q = abs(in.local - in.size * 0.5) - (in.size * 0.5 - in.radius);
+            float d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - in.radius;
+            float a = clamp(0.5 - d * 2.0, 0.0, 1.0) * in.color.a;
+            return float4(in.color.rgb * a, a);
         }
         float4 t = atlas.sample(s, in.uv);
         if (in.kind == 2) {
