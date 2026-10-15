@@ -525,11 +525,18 @@ struct CommitHeaderRenderer {
         }
     }
 
-    /// 色を付けた SF Symbols の画像（文字の中に置く）。
+    /// 色を付けた SF Symbols の画像（文字の中に置く）。形に色を塗るだけにして、塗りつぶしの seal の中の
+    /// チェックや × は抜いたまま残す（色を指定して描かせると、中の印まで同じ色になって塊に見える）。
     static func symbolImage(_ name: String, color: NSColor, size: CGFloat) -> NSImage? {
         let config = NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
-            .applying(.init(paletteColors: [color]))
-        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        guard let symbol = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        else { return nil }
+        return NSImage(size: symbol.size, flipped: false) { rect in
+            symbol.draw(in: rect)
+            color.set()
+            rect.fill(using: .sourceAtop)
+            return true
+        }
     }
 
     /// 信用度の 3 段の目盛り（`bars` 段を色で塗る）。

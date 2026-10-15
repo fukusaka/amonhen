@@ -66,7 +66,8 @@ enum SignatureStatus: Equatable {
         case .expired: "clock.badge.exclamationmark"
         case .revoked: "exclamationmark.shield.fill"
         case .bad: "xmark.seal.fill"
-        case .noKey: "key"
+        // 縦長の鍵は、ほかのアイコンと大きさが揃わないので丸に「?」にする。
+        case .noKey: "questionmark.circle"
         case .pending: "seal"
         }
     }
