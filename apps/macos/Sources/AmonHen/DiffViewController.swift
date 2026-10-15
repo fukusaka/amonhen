@@ -154,7 +154,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     /// ファイル全体の解析は時間がかかることがあるので、色なしで表示した後に裏で求めて描き直す。
     private func loadSyntax(of diff: FileDiff) {
         Task {
-            let spans = await Task.detached(priority: .userInitiated) { diff.syntax() }.value
+            // 色付けは後追いなので、ほかの読み込み（選んだコミットの詳細など）を先にする。
+            let spans = await Task.detached(priority: .utility) { diff.syntax() }.value
             guard let spans, self.diff === diff else { return }
             var byRow: [Int: [(range: Range<Int32>, kind: UInt8)]] = [:]
             spans.withSpans { all in
@@ -670,6 +671,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     var onFileHistory: ((String) -> Void)?
     /// 表示しているコミット（40 桁）。stash のときは nil（blame の起点にしない）。
     private var commitHex: String?
+    /// コミットを選んでから最初のファイルの差分を出すまでを測る（`--measure-select`）。
+    private var selectedAt: CFTimeInterval = 0
+    /// コミットの変更と一緒に読んだ、最初のファイルの差分。
+    private var preloadedDiff: FileDiff?
+    var onDiffShown: (() -> Void)?
     /// 親コミットのリンクを押したとき（40 桁の ID）。
     var onSelectCommit: ((String) -> Void)?
     /// メッセージ・作者・ID・親コミット。
@@ -765,24 +771,42 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let repository = self.repository
         let hex = commit.map { String(format: "%02x", $0) }.joined()
         commitHex = stash ? nil : hex
+        selectedAt = CACurrentMediaTime()
         // ファイルの差分の読み込みとは別の番号で、古い結果を捨てる。
         headerRequest += 1
         let headerRequest = self.headerRequest
-        Task {
-            guard let info = try? await Task.detached(priority: .userInitiated, operation: { try repository.commitInfo(oid: hex) }).value,
-                  headerRequest == self.headerRequest else { return }
-            showHeader(info)
+        let selectedAt = self.selectedAt
+        // 裏の読み込みはここですぐ始める（メインスレッドが表のスクロールや描画をしている間に進める）。
+        let infoTask = Task.detached(priority: .userInitiated) { try repository.commitInfo(oid: hex) }
+        // 変わったファイルと、最初のファイルの差分を続けて読む（メインスレッドとの往復を 1 回で済ませる）。
+        let changesTask = Task.detached(priority: .userInitiated) {
+            () -> (CommitChanges?, FileDiff?, CFTimeInterval, CFTimeInterval) in
+            let t = CACurrentMediaTime()
+            let changes = try? stash ? repository.stashChanges(of: commit) : repository.changes(of: commit)
+            let first = changes.flatMap { $0.items.isEmpty ? nil : try? $0.diff(at: 0) }
+            return (changes, first, t, CACurrentMediaTime())
         }
         Task {
-            let changes = try? await Task.detached(priority: .userInitiated) {
-                try stash ? repository.stashChanges(of: commit) : repository.changes(of: commit)
-            }.value
+            guard let info = try? await infoTask.value, headerRequest == self.headerRequest else { return }
+            FrameProfile.add("select: commit info (JSON)", CACurrentMediaTime() - selectedAt)
+            FrameProfile.measure("select: header layout") { showHeader(info) }
+            FrameProfile.add("select: → header shown", CACurrentMediaTime() - selectedAt)
+        }
+        Task {
+            let (changes, firstDiff, callStart, callEnd) = await changesTask.value
             guard request == self.request else { return }
+            let resumed = CACurrentMediaTime()
+            FrameProfile.add("select: changed files: start delay", callStart - selectedAt)
+            FrameProfile.add("select: changed files: in call", callEnd - callStart)
+            FrameProfile.add("select: changed files: main resume delay", resumed - callEnd)
             self.changes = changes
             files.reloadData()
             if changes?.items.isEmpty ?? true {
                 diffView.show(nil, message: "変更なし")
+                onDiffShown?()
             } else {
+                // 最初のファイルの差分は読んであるので、選んだときに読み直さない。
+                preloadedDiff = firstDiff
                 files.selectRowIndexes([0], byExtendingSelection: false)
             }
         }
@@ -837,6 +861,14 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         changes?.items.count ?? 0
     }
 
+    private func showFileDiff(_ diff: FileDiff?) {
+        if let diff, diff.isBinary {
+            diffView.show(nil, message: "バイナリファイル")
+        } else {
+            diffView.show(diff)
+        }
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = files.clickedRow
@@ -873,14 +905,23 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let index = files.selectedRow
         request += 1
         let request = self.request
+        if index == 0, let diff = preloadedDiff {
+            preloadedDiff = nil
+            FrameProfile.measure("select: diff draw") { showFileDiff(diff) }
+            FrameProfile.add("select: → diff shown", CACurrentMediaTime() - selectedAt)
+            onDiffShown?()
+            return
+        }
+        preloadedDiff = nil
+        let selectedAt = self.selectedAt
         Task {
+            let started = CACurrentMediaTime()
             let diff = try? await Task.detached(priority: .userInitiated) { try changes.diff(at: index) }.value
             guard request == self.request else { return }
-            if let diff, diff.isBinary {
-                diffView.show(nil, message: "バイナリファイル")
-            } else {
-                diffView.show(diff)
-            }
+            FrameProfile.add("select: file diff (FFI)", CACurrentMediaTime() - started)
+            FrameProfile.measure("select: diff draw") { showFileDiff(diff) }
+            FrameProfile.add("select: → diff shown", CACurrentMediaTime() - selectedAt)
+            onDiffShown?()
         }
     }
 }
