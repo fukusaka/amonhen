@@ -4,6 +4,9 @@ import AppKit
 /// 1 つのリポジトリのウィンドウ。サイドバー・History・Working Copy・ツールバー・監視を持つ。
 final class RepositoryWindow: NSObject, NSWindowDelegate {
     let url: URL
+    /// 差分の文字を描く（ファイルの履歴のウィンドウでも使う）。
+    private let textRenderer: TextRenderer
+    private var pages: PageViewController?
     let window: NSWindow
     /// ほかのリポジトリ（サブモジュールなど）を新しいウィンドウで開く。
     var onOpenRepository: ((String) -> Void)?
@@ -28,6 +31,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         guard let renderer = GraphRenderer(), let text = TextRenderer(device: renderer.device) else {
             throw AmonhenError(description: "Metal を使えない")
         }
+        textRenderer = text
         history = HistoryViewController(repository: repository, renderer: renderer, text: text)
         sidebar = SidebarViewController()
         detail = CommitDetailViewController(repository: repository, renderer: text)
@@ -70,6 +74,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         detailItem.minimumThickness = 420
         content.addSplitViewItem(detailItem)
         let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy])
+        self.pages = pages
         split.addSplitViewItem(NSSplitViewItem(viewController: pages))
         window.contentViewController = split
 
@@ -84,6 +89,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
             }
         }
         sidebar.onSelectPage = { [weak pages] page in pages?.show(page) }
+        detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
+        detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
+        workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
+        workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。stash は詳細にだけ中身を出す。
         sidebar.onSelect = { [weak history, weak detail] item in
             guard let history, let target = item.target else { return }
@@ -166,6 +175,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
             }
         }
         if CommandLine.arguments.contains("--log-scroll") { history.logScrollGestures() }
+        // --blame PATH・--file-history PATH で、そのファイルの blame・履歴を開く（見た目の確認用）。
+        if let path = AppDelegate.option("--blame") { openBlame(path: path, rev: nil) }
+        if let path = AppDelegate.option("--file-history") { openFileHistory(path: path) }
         if let output = AppDelegate.option("--snapshot") {
             let selectFirst = CommandLine.arguments.contains("--select-first")
             // --select-row N で、N 行目を選んで表の中ほどに出す（履歴の途中の見た目を確かめる）。
@@ -226,6 +238,30 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
                 NSLog("ref を読めない: \(error)")
             }
         }
+    }
+
+    // MARK: - blame・ファイルの履歴
+
+    private func openBlame(path: String, rev: String?) {
+        BlameWindowController.show(path: path, rev: rev, repository: repository) { [weak self] id in self?.reveal(commit: id) }
+    }
+
+    private func openFileHistory(path: String) {
+        FileHistoryWindowController.show(path: path, repository: repository, renderer: textRenderer) { [weak self] id in
+            self?.reveal(commit: id)
+        }
+    }
+
+    /// History に切り替えて `commit` を選ぶ。今の範囲になければ全ブランチにする。
+    private func reveal(commit: Data) {
+        sidebar.select(page: .history)
+        pages?.show(.history)
+        if let row = history.currentHistory?.row(of: commit) {
+            history.select(row: row)
+        } else {
+            history.set(scope: .all, select: commit)
+        }
+        window.makeKeyAndOrderFront(nil)
     }
 
     func windowWillClose(_ notification: Notification) {
