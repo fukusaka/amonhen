@@ -72,6 +72,8 @@ pub struct Repository {
     refs: ArcSwapOption<RefsSnapshot>,
     status: ArcSwapOption<StatusSnapshot>,
     generation: AtomicU64,
+    /// 検索のたびに進める。進んだら、走っている検索はやめる。
+    search_generation: AtomicU64,
     cache_path: Option<PathBuf>,
     undo: OnceLock<UndoLog>,
 }
@@ -84,6 +86,7 @@ impl Repository {
             refs: ArcSwapOption::empty(),
             status: ArcSwapOption::empty(),
             generation: AtomicU64::new(0),
+            search_generation: AtomicU64::new(0),
             cache_path: None,
             undo: OnceLock::new(),
         }
@@ -397,40 +400,125 @@ impl Repository {
         Ok(HistoryChunk::new(start as u32, &texts, profile))
     }
 
-    /// `query` に合うコミットの行（昇順）。件名・作者名に大文字・小文字を区別せずに含むか、コミット ID が
-    /// `query` で始まる（16 進数 4 文字以上のとき）。コミットを読みながら探すので、行を分けて並列に読む。
+    /// 走っている検索をやめる。
+    pub fn cancel_search(&self) {
+        self.search_generation.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// `query`（`crate::query` の構文）に合うコミットの行（昇順）。件名・作者・ID はコミットを読みながら
+    /// 行を分けて並列に、パス・内容は git に問い合わせて探し、行の集合を組み合わせる。新しい検索を始めるか
+    /// `cancel_search` すると、走っている検索は `Err` で終わる。
     pub fn search_history(&self, snapshot: &HistorySnapshot, query: &str) -> Result<Vec<u32>> {
-        let query = query.trim();
-        if query.is_empty() {
+        let generation = self.search_generation.fetch_add(1, Ordering::Relaxed) + 1;
+        let cancelled = || self.search_generation.load(Ordering::Relaxed) != generation;
+        let Some(expr) = crate::query::parse(query)? else {
             return Ok(Vec::new());
+        };
+        let rows = snapshot.graph.len();
+        let terms = expr.terms();
+        // 葉の条件ごとの、合う行の集合（ビット列）。
+        let mut sets: Vec<Option<RowSet>> = vec![None; terms.len()];
+        let textual: Vec<usize> = (0..terms.len())
+            .filter(|&i| terms[i].field.is_textual())
+            .collect();
+        let ops = self.backend.operations()?;
+        // パス・内容の問い合わせ（git）は、件名・作者を読む走査と同時に進める。
+        let (scanned, queried) = std::thread::scope(|scope| {
+            let queries: Vec<_> = terms
+                .iter()
+                .enumerate()
+                .filter(|(_, t)| !t.field.is_textual())
+                .map(|(i, term)| {
+                    let (path, contents) = match term.field {
+                        crate::query::Field::Path => (Some(term.value.as_str()), None),
+                        _ => (None, Some(term.value.as_str())),
+                    };
+                    let cancelled = &cancelled;
+                    let handle = scope
+                        .spawn(move || ops.log_matching(&snapshot.tips, path, contents, cancelled));
+                    (i, handle)
+                })
+                .collect();
+            let scanned = if textual.is_empty() {
+                Ok(Vec::new())
+            } else {
+                let textual_terms: Vec<_> = textual.iter().map(|&i| terms[i]).collect();
+                self.scan_texts(snapshot, &textual_terms, &cancelled)
+            };
+            let queried: Vec<_> = queries
+                .into_iter()
+                .map(|(i, handle)| {
+                    let ids = handle
+                        .join()
+                        .unwrap_or_else(|_| Err("検索が異常終了しました".into()));
+                    (i, ids)
+                })
+                .collect();
+            (scanned, queried)
+        });
+        for (i, set) in textual.iter().zip(scanned?) {
+            sets[*i] = Some(set);
         }
-        let needle = query.to_lowercase();
-        let hex = (query.len() >= 4 && query.bytes().all(|b| b.is_ascii_hexdigit()))
-            .then(|| query.to_ascii_lowercase());
+        for (i, ids) in queried {
+            let mut set = RowSet::new(rows);
+            for id in &ids? {
+                if let Some(row) = snapshot.row_of(id) {
+                    set.insert(row as usize);
+                }
+            }
+            sets[i] = Some(set);
+        }
+        if cancelled() {
+            return Err("検索を取り消しました".into());
+        }
+        let mut next = 0;
+        let result = combine(&expr, &mut sets, &mut next, rows);
+        Ok(result.rows())
+    }
+
+    /// 件名・作者・ID の条件を、コミットを読みながら行を分けて並列に調べる。
+    fn scan_texts(
+        &self,
+        snapshot: &HistorySnapshot,
+        terms: &[&crate::query::Term],
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Vec<RowSet>> {
+        use crate::query::Field;
         let ids = snapshot.graph.ids();
-        let matches = |text: &[u8]| -> bool {
+        // 大文字・小文字を区別しない。ASCII ならバイトのまま比べる。
+        let needles: Vec<(Field, String)> = terms
+            .iter()
+            .map(|t| (t.field.clone(), t.value.to_lowercase()))
+            .collect();
+        let contains = |text: &[u8], needle: &str| -> bool {
             if needle.is_ascii() {
                 let n = needle.as_bytes();
                 text.len() >= n.len() && text.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
             } else {
                 String::from_utf8_lossy(text)
                     .to_lowercase()
-                    .contains(&needle)
+                    .contains(needle)
             }
         };
+        let id_matches = |row: usize, needle: &str| {
+            needle.len() >= 4
+                && needle.bytes().all(|b| b.is_ascii_hexdigit())
+                && ids[row].to_string().starts_with(needle)
+        };
+        // バッチは 64 の倍数にして、ビット列の語をスレッドどうしで分け合わないようにする。
         const BATCH: usize = 4096;
         let threads = std::thread::available_parallelism()
             .map_or(4, |n| n.get())
             .min(16);
         let next = std::sync::atomic::AtomicUsize::new(0);
-        let found = std::sync::Mutex::new(Vec::new());
+        let parts = std::sync::Mutex::new(Vec::new());
         let failed = std::sync::Mutex::new(None);
         std::thread::scope(|scope| {
             for _ in 0..threads {
                 scope.spawn(|| {
                     loop {
-                        let start = next.fetch_add(BATCH, std::sync::atomic::Ordering::Relaxed);
-                        if start >= ids.len() {
+                        let start = next.fetch_add(BATCH, Ordering::Relaxed);
+                        if start >= ids.len() || cancelled() {
                             break;
                         }
                         let end = (start + BATCH).min(ids.len());
@@ -441,18 +529,25 @@ impl Repository {
                                 break;
                             }
                         };
-                        let rows: Vec<u32> = texts
-                            .iter()
-                            .enumerate()
-                            .filter(|(i, t)| {
-                                let by_id = hex.as_ref().is_some_and(|h| {
-                                    ids[start + i].to_string().starts_with(h.as_str())
-                                });
-                                by_id || matches(t.subject()) || matches(t.author_name())
-                            })
-                            .map(|(i, _)| (start + i) as u32)
-                            .collect();
-                        found.lock().unwrap().extend(rows);
+                        let mut words = vec![vec![0u64; (end - start).div_ceil(64)]; needles.len()];
+                        for (i, t) in texts.iter().enumerate() {
+                            for (k, (field, needle)) in needles.iter().enumerate() {
+                                let hit = match field {
+                                    Field::Author => contains(t.author_name(), needle),
+                                    Field::Subject => contains(t.subject(), needle),
+                                    Field::Commit => id_matches(start + i, needle),
+                                    _ => {
+                                        contains(t.subject(), needle)
+                                            || contains(t.author_name(), needle)
+                                            || id_matches(start + i, needle)
+                                    }
+                                };
+                                if hit {
+                                    words[k][i / 64] |= 1 << (i % 64);
+                                }
+                            }
+                        }
+                        parts.lock().unwrap().push((start, words));
                     }
                 });
             }
@@ -460,9 +555,80 @@ impl Repository {
         if let Some(e) = failed.into_inner().unwrap() {
             return Err(e.into());
         }
-        let mut rows = found.into_inner().unwrap();
-        rows.sort_unstable();
-        Ok(rows)
+        if cancelled() {
+            return Err("検索を取り消しました".into());
+        }
+        let mut sets = vec![RowSet::new(ids.len()); needles.len()];
+        for (start, words) in parts.into_inner().unwrap() {
+            for (k, w) in words.into_iter().enumerate() {
+                sets[k].words[start / 64..start / 64 + w.len()].copy_from_slice(&w);
+            }
+        }
+        Ok(sets)
+    }
+}
+
+/// 行の集合（行番号のビット列）。
+#[derive(Clone, Debug)]
+struct RowSet {
+    words: Vec<u64>,
+}
+
+impl RowSet {
+    fn new(rows: usize) -> Self {
+        Self {
+            words: vec![0; rows.div_ceil(64)],
+        }
+    }
+
+    fn insert(&mut self, row: usize) {
+        self.words[row / 64] |= 1 << (row % 64);
+    }
+
+    fn rows(&self) -> Vec<u32> {
+        let mut out = Vec::new();
+        for (i, &w) in self.words.iter().enumerate() {
+            let mut w = w;
+            while w != 0 {
+                out.push((i * 64 + w.trailing_zeros() as usize) as u32);
+                w &= w - 1;
+            }
+        }
+        out
+    }
+}
+
+/// 葉の集合（`terms()` の順）を、式に従って組み合わせる。
+fn combine(
+    expr: &crate::query::Expr,
+    sets: &mut [Option<RowSet>],
+    next: &mut usize,
+    rows: usize,
+) -> RowSet {
+    use crate::query::Expr;
+    match expr {
+        Expr::Term(_) => {
+            let set = sets[*next].take().unwrap_or_else(|| RowSet::new(rows));
+            *next += 1;
+            set
+        }
+        Expr::And(all) | Expr::Or(all) => {
+            let is_and = matches!(expr, Expr::And(_));
+            let mut acc: Option<RowSet> = None;
+            for e in all {
+                let set = combine(e, sets, next, rows);
+                acc = Some(match acc {
+                    None => set,
+                    Some(mut a) => {
+                        for (x, y) in a.words.iter_mut().zip(&set.words) {
+                            if is_and { *x &= y } else { *x |= y }
+                        }
+                        a
+                    }
+                });
+            }
+            acc.unwrap_or_else(|| RowSet::new(rows))
+        }
     }
 }
 
@@ -550,6 +716,64 @@ mod tests {
         assert_eq!(repo.search_history(&history, "a").unwrap().len(), 4);
         let id = history.graph.ids()[2].to_string();
         assert_eq!(repo.search_history(&history, &id[..7]).unwrap(), [2]);
+        assert_eq!(
+            repo.search_history(&history, &format!("commit:{}", &id[..7]))
+                .unwrap(),
+            [2]
+        );
+        // 構文: AND・OR・括弧・接頭辞。
+        assert_eq!(repo.search_history(&history, "parse more").unwrap(), [1]);
+        assert_eq!(
+            repo.search_history(&history, "typo or release").unwrap(),
+            [0, 2]
+        );
+        assert_eq!(
+            repo.search_history(&history, "subject:parse (add or more)")
+                .unwrap(),
+            [1, 3]
+        );
+        assert_eq!(
+            repo.search_history(&history, "author:nobody").unwrap(),
+            Vec::<u32>::new()
+        );
+        assert!(repo.search_history(&history, "(unclosed").is_err());
+    }
+
+    #[test]
+    fn searches_paths_and_contents_through_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        std::fs::create_dir(dir.join("src")).unwrap();
+        std::fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "add a"]);
+        std::fs::write(dir.join("README"), "spin_lock(x)\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "readme"]);
+        std::fs::write(dir.join("src/a.rs"), "fn a() { spin_lock(y); }\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "lock in a"]);
+        let repo =
+            Repository::with_cache(GixBackend::open(dir).unwrap(), tmp.path().join("cache.bin"));
+        let history = repo.load_history().unwrap();
+        // 新しい順: lock in a, readme, add a。
+        assert_eq!(repo.search_history(&history, "path:src").unwrap(), [0, 2]);
+        // 正規表現の記号もそのままの文字として探す。
+        assert_eq!(
+            repo.search_history(&history, r#"contents:"spin_lock(""#)
+                .unwrap(),
+            [0, 1]
+        );
+        assert_eq!(
+            repo.search_history(&history, r#"path:src contents:"spin_lock(""#)
+                .unwrap(),
+            [0]
+        );
+        assert_eq!(
+            repo.search_history(&history, "path:README or subject:add")
+                .unwrap(),
+            [1, 2]
+        );
     }
 
     #[test]
