@@ -41,7 +41,9 @@ impl LocalVerifier {
         // 同時に検証することがある（ウィンドウごと）ので、呼ぶたびに別のフォルダにする。
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let scratch = self.dir.join(format!("incoming-{}-{n}", std::process::id()));
+        let scratch = self
+            .dir
+            .join(format!("incoming-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&scratch)?;
         let result = (|| -> Result<()> {
             let mut paths = String::new();
