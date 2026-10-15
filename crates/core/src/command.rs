@@ -320,9 +320,19 @@ impl Repository {
     /// コミットの詳細のうち時間のかかる分。署名の検証・notes・行数は git に頼み、子コミット・含むブランチと
     /// タグ・前後のタグは History のグラフから求める（History をまだ読んでいなければ空）。
     pub fn commit_extras(&self, commit: &Oid) -> Result<serde_json::Value> {
-        let extras = self.backend().commit_extras(commit)?;
+        let generation = self.signature_generation();
+        let mut extras = self.backend().commit_extras(commit)?;
+        // 手元で検証するなら、署名の結果だけは手元の鍵で求め直す（notes と行数はリポジトリ側のまま）。
+        let generation = match self.local_signature_details(commit) {
+            Some(result) => {
+                let (g, signature) = result?;
+                extras.signature = signature;
+                g
+            }
+            None => generation,
+        };
         if let Some(s) = &extras.signature {
-            self.remember_signatures([(*commit, s.status)]);
+            self.remember_signatures(generation, [(*commit, s.status)]);
         }
         let mut children = Vec::new();
         let (mut branches, mut tags) = (Vec::new(), Vec::new());
@@ -1033,6 +1043,45 @@ mod tests {
 
     fn run(repo: &Repository, json: &str) -> serde_json::Value {
         serde_json::from_str(&repo.run_json(json)).unwrap()
+    }
+
+    /// 何を渡されても G を返し、呼ばれた回数を数える検証。
+    struct AlwaysGood(std::sync::atomic::AtomicUsize);
+
+    impl amonhen_model::SignatureVerifier for AlwaysGood {
+        fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<char>> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            Ok(vec!['G'; commits.len()])
+        }
+        fn details(&self, _: &Oid, _: &[u8]) -> Result<Option<amonhen_model::SignatureCheck>> {
+            Ok(Some(amonhen_model::SignatureCheck {
+                status: 'G',
+                ..Default::default()
+            }))
+        }
+    }
+
+    #[test]
+    fn does_not_carry_signature_results_over_when_the_checker_changes() {
+        let (tmp, repo) = setup();
+        let head = Oid::from_hex(&git(tmp.path(), &["rev-parse", "HEAD"])).unwrap();
+        // リポジトリ側の git では、署名がないので N。
+        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['N']);
+        // 手元で検証するものに替えると、覚えていた N は使わずに検証し直す。2 回目は覚えている。
+        let local = std::sync::Arc::new(AlwaysGood(Default::default()));
+        repo.set_signature_verifier(Some(local.clone()));
+        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['G']);
+        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['G']);
+        assert_eq!(local.0.load(std::sync::atomic::Ordering::Relaxed), 1);
+        let extras = run(&repo, &format!(r#"{{"op":"commitExtras","oid":"{head}"}}"#));
+        assert_eq!(extras["info"]["signature"]["status"], "G");
+        // 戻すと、手元の G は引き継がない。
+        let before = repo.signature_generation();
+        repo.set_signature_verifier(None);
+        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['N']);
+        // 替える前に始めた検証の結果が後から届いても覚えない。
+        repo.remember_signatures(before, [(head, 'G')]);
+        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['N']);
     }
 
     #[test]

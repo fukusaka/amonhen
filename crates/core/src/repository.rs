@@ -76,8 +76,11 @@ pub struct Repository {
     search_generation: AtomicU64,
     cache_path: Option<PathBuf>,
     undo: OnceLock<UndoLog>,
-    /// 署名の検証の結果（`%G?`）。コミットは変わらないので、一度検証したら覚えておく。
-    signatures: std::sync::Mutex<std::collections::HashMap<Oid, char>>,
+    /// 署名の検証の結果（`%G?`）。コミットは変わらないので、一度検証したら覚えておく。検証する側を変えたら
+    /// 捨てる（番号を進め、変える前に始めた検証の結果は覚えない）。
+    signatures: std::sync::Mutex<(u64, std::collections::HashMap<Oid, char>)>,
+    /// 手元で検証するもの。あれば、daemon 越しのリポジトリでもコミットのオブジェクトを受け取って手元で検証する。
+    verifier: std::sync::Mutex<Option<Arc<dyn amonhen_model::SignatureVerifier>>>,
 }
 
 impl Repository {
@@ -92,33 +95,102 @@ impl Repository {
             cache_path: None,
             undo: OnceLock::new(),
             signatures: Default::default(),
+            verifier: Default::default(),
         }
     }
 
-    /// `ids` の署名の検証の結果（`%G?` の 1 文字）を同じ順に返す。覚えていないものだけを git に検証させる。
+    /// 署名を手元で検証するもの（`None` ならリポジトリのある側の git で検証する）。変えると、覚えていた
+    /// 検証の結果を捨てる（検証する側によって鍵や信用度が違うので、結果を引き継がない）。
+    pub fn set_signature_verifier(
+        &self,
+        verifier: Option<Arc<dyn amonhen_model::SignatureVerifier>>,
+    ) {
+        let mut signatures = self.signatures.lock().unwrap();
+        *self.verifier.lock().unwrap() = verifier;
+        signatures.0 += 1;
+        signatures.1.clear();
+    }
+
+    /// 今の検証する側の番号と、手元で検証するもの。
+    fn signature_checker(&self) -> (u64, Option<Arc<dyn amonhen_model::SignatureVerifier>>) {
+        let signatures = self.signatures.lock().unwrap();
+        (signatures.0, self.verifier.lock().unwrap().clone())
+    }
+
+    /// 今の検証する側の番号（検証を始める前に読み、`remember_signatures` に渡す）。
+    pub(crate) fn signature_generation(&self) -> u64 {
+        self.signatures.lock().unwrap().0
+    }
+
+    /// 1 つのコミットの検証の詳細を手元で求める。手元で検証するものがなければ `None`。
+    pub(crate) fn local_signature_details(
+        &self,
+        commit: &Oid,
+    ) -> Option<Result<(u64, Option<amonhen_model::SignatureCheck>)>> {
+        let (generation, verifier) = self.signature_checker();
+        let verifier = verifier?;
+        Some((|| {
+            let text = self
+                .backend
+                .commit_texts(std::slice::from_ref(commit))?
+                .remove(0);
+            Ok((generation, verifier.details(commit, &text.raw)?))
+        })())
+    }
+
+    /// `ids` の署名の検証の結果（`%G?` の 1 文字）を同じ順に返す。覚えていないものだけを検証する。
     pub fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
         let unknown: Vec<Oid> = {
             let known = self.signatures.lock().unwrap();
             let mut seen = std::collections::HashSet::new();
             ids.iter()
-                .filter(|id| !known.contains_key(id) && seen.insert(**id))
+                .filter(|id| !known.1.contains_key(id) && seen.insert(**id))
                 .copied()
                 .collect()
         };
+        let mut fresh = std::collections::HashMap::new();
         if !unknown.is_empty() {
-            let found = self.backend.verify_signatures(&unknown)?;
-            self.remember_signatures(unknown.iter().copied().zip(found));
+            let (generation, verifier) = self.signature_checker();
+            let found = match verifier {
+                // コミットのオブジェクトを受け取り（daemon 越しなら数 KB ずつ）、手元の鍵で検証する。
+                Some(verifier) => {
+                    let texts = self.backend.commit_texts(&unknown)?;
+                    let commits: Vec<(Oid, &[u8])> = unknown
+                        .iter()
+                        .zip(&texts)
+                        .map(|(id, t)| (*id, &t.raw[..]))
+                        .collect();
+                    verifier.verify(&commits)?
+                }
+                None => self.backend.verify_signatures(&unknown)?,
+            };
+            fresh.extend(unknown.iter().copied().zip(found));
+            self.remember_signatures(generation, fresh.clone());
         }
         let known = self.signatures.lock().unwrap();
         Ok(ids
             .iter()
-            .map(|id| known.get(id).copied().unwrap_or('E'))
+            .map(|id| {
+                fresh
+                    .get(id)
+                    .or_else(|| known.1.get(id))
+                    .copied()
+                    .unwrap_or('E')
+            })
             .collect())
     }
 
-    /// 検証の結果を覚える（コミットの詳細で検証したときにも呼ぶ）。
-    pub(crate) fn remember_signatures(&self, results: impl IntoIterator<Item = (Oid, char)>) {
-        self.signatures.lock().unwrap().extend(results);
+    /// 検証の結果を覚える（コミットの詳細で検証したときにも呼ぶ）。`generation` は検証を始めたときの番号で、
+    /// その後に検証する側が変わっていたら覚えない。
+    pub(crate) fn remember_signatures(
+        &self,
+        generation: u64,
+        results: impl IntoIterator<Item = (Oid, char)>,
+    ) {
+        let mut signatures = self.signatures.lock().unwrap();
+        if signatures.0 == generation {
+            signatures.1.extend(results);
+        }
     }
 
     /// リポジトリの変化を知らせてもらう（daemon 越しなら true。手元なら false で、呼び出し側が監視する）。
