@@ -185,6 +185,7 @@ fn handle(
                 .collect();
             encode(&texts)
         }
+        Request::CommitExtras(id) => encode(&backend.commit_extras(&id)?),
         Request::SearchTexts { tips, terms } => {
             let ids = commits_from(backend, commits, &tips)?;
             let words = amonhen_model::search::scan(

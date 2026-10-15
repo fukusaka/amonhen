@@ -9,7 +9,7 @@ use amonhen_model::{CommitGraph, CommitText, HeadState, Oid, ResetMode, Result, 
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -61,6 +61,8 @@ pub enum Request {
     CommitTexts(Vec<Oid>),
     /// → `Vec<CommitTextWire>`（`raw` は件名と作者名だけ）
     CommitSummaries(Vec<Oid>),
+    /// → `CommitExtras`
+    CommitExtras(Oid),
     /// → `Vec<Vec<Oid>>`（条件ごとに合ったコミット。取り消せる）
     SearchTexts {
         tips: Vec<Oid>,

@@ -392,6 +392,10 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::WriteCommitGraph)
     }
 
+    fn commit_extras(&self, commit: &Oid) -> Result<amonhen_model::CommitExtras> {
+        self.conn.call(&Request::CommitExtras(*commit))
+    }
+
     fn connection_state(&self) -> Option<ConnectionState> {
         let (sent, received) = self.conn.traffic();
         Some(ConnectionState {

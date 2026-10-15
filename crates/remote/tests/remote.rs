@@ -116,6 +116,12 @@ fn a_remote_repository_matches_the_local_one() {
             .rows
             .len()
     );
+    // 署名・notes・行数は daemon の git に、子・含むブランチは手元のグラフで求める。
+    remote.load_refs().unwrap();
+    local.load_refs().unwrap();
+    let extras = format!(r#"{{"op":"commitExtras","oid":"{head}"}}"#);
+    assert_eq!(remote.run_json(&extras), local.run_json(&extras));
+    assert!(remote.run_json(&extras).contains("\"stats\":[{"));
     let chunk = remote
         .history_chunk(&r, 0, 5, &FrontendProfile::MACOS)
         .unwrap();
