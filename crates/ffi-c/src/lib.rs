@@ -305,6 +305,49 @@ pub unsafe extern "C" fn amonhen_history_edges_in(
     count
 }
 
+/// レーンの幅の決め方（`amonhen_history_lane_positions`）。単位は FE の座標。
+#[repr(C)]
+pub struct AmonhenLaneMetrics {
+    /// 点のあるレーンの幅。
+    pub full: f32,
+    /// 線だけのレーンの幅。
+    pub thin: f32,
+    pub min_full: f32,
+    pub min_thin: f32,
+    /// 使える幅。
+    pub available: f32,
+}
+
+/// `start..end` 行を表示するときの、レーンごとの中心の横位置（魚眼）を `out` に書く。見えている範囲に点の
+/// あるレーンを広く、線だけのレーンを細く、何もないレーンを幅 0 にする。
+/// レーンの数を返す（`capacity` を超えた分は書かない）。
+///
+/// # Safety
+/// `history` は有効なスナップショット、`out` は `capacity` 個の `float` を書ける領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_lane_positions(
+    history_ptr: *const AmonhenHistory,
+    start: u32,
+    end: u32,
+    metrics: AmonhenLaneMetrics,
+    out: *mut f32,
+    capacity: u32,
+) -> u32 {
+    let m = amonhen_core::lanes::LaneMetrics {
+        full: metrics.full,
+        thin: metrics.thin,
+        min_full: metrics.min_full,
+        min_thin: metrics.min_thin,
+        available: metrics.available,
+    };
+    let positions =
+        amonhen_core::lanes::lane_positions(&history(history_ptr).layout, start..end, &m);
+    for (i, x) in positions.iter().take(capacity as usize).enumerate() {
+        unsafe { out.add(i).write(*x) };
+    }
+    positions.len() as u32
+}
+
 /// `start` 行から `count` 行分の列を作る（`amonhen_chunk_free` で解放する）。
 ///
 /// # Safety

@@ -135,6 +135,26 @@ typedef struct {
 } AmonhenHistoryView;
 
 /**
+ * レーンの幅の決め方（`amonhen_history_lane_positions`）。単位は FE の座標。
+ */
+typedef struct {
+  /**
+   * 点のあるレーンの幅。
+   */
+  float full;
+  /**
+   * 線だけのレーンの幅。
+   */
+  float thin;
+  float min_full;
+  float min_thin;
+  /**
+   * 使える幅。
+   */
+  float available;
+} AmonhenLaneMetrics;
+
+/**
  * 文字列置き場の中の 1 つの文字列。
  *
  * ASCII の文字列は全 FE で共通のバイト列を指し、`len` はバイト数。
@@ -467,6 +487,21 @@ uint32_t amonhen_history_edges_in(const AmonhenHistory *history_ptr,
                                   uint32_t end,
                                   uint32_t *out,
                                   uint32_t capacity);
+
+/**
+ * `start..end` 行を表示するときの、レーンごとの中心の横位置（魚眼）を `out` に書く。見えている範囲に点の
+ * あるレーンを広く、線だけのレーンを細く、何もないレーンを幅 0 にする。
+ * レーンの数を返す（`capacity` を超えた分は書かない）。
+ *
+ * # Safety
+ * `history` は有効なスナップショット、`out` は `capacity` 個の `float` を書ける領域であること。
+ */
+uint32_t amonhen_history_lane_positions(const AmonhenHistory *history_ptr,
+                                        uint32_t start,
+                                        uint32_t end,
+                                        AmonhenLaneMetrics metrics,
+                                        float *out,
+                                        uint32_t capacity);
 
 /**
  * `start` 行から `count` 行分の列を作る（`amonhen_chunk_free` で解放する）。
