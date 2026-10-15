@@ -750,7 +750,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         guard let commit else {
             changes = nil
             files.reloadData()
-            diffView.show(nil)
+            diffView.show(nil, message: "コミットを選ぶと、変更が表示されます")
             header.string = ""
             return
         }
