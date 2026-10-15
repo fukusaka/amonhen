@@ -69,6 +69,11 @@ typedef struct AmonhenRefs AmonhenRefs;
 typedef struct AmonhenRepo AmonhenRepo;
 
 /**
+ * 行番号の並び（検索の結果）。
+ */
+typedef struct AmonhenRows AmonhenRows;
+
+/**
  * 作業ツリーと index の状態。
  */
 typedef struct AmonhenStatus AmonhenStatus;
@@ -153,6 +158,11 @@ typedef struct {
    */
   float available;
 } AmonhenLaneMetrics;
+
+typedef struct {
+  const uint32_t *rows;
+  uint32_t count;
+} AmonhenRowsView;
 
 /**
  * 文字列置き場の中の 1 つの文字列。
@@ -502,6 +512,30 @@ uint32_t amonhen_history_lane_positions(const AmonhenHistory *history_ptr,
                                         AmonhenLaneMetrics metrics,
                                         float *out,
                                         uint32_t capacity);
+
+/**
+ * `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。件名・作者名を大文字・小文字を
+ * 区別せずに探し、16 進数 4 文字以上ならコミット ID の先頭も見る。すべてのコミットを読むので裏のスレッドで呼ぶ
+ * （linux の 148 万コミットで約 1.2 秒）。
+ *
+ * # Safety
+ * `repo` と `history` は有効、`query` は NUL 終端の UTF-8 であること。
+ */
+AmonhenRows *amonhen_history_search(const AmonhenRepo *repo_ptr,
+                                    const AmonhenHistory *history_ptr,
+                                    const char *query);
+
+/**
+ * # Safety
+ * `rows` は有効であること。返したポインタは解放するまで有効。
+ */
+AmonhenRowsView amonhen_rows_view(const AmonhenRows *rows);
+
+/**
+ * # Safety
+ * `rows` は `amonhen_history_search` が返したもので、まだ解放していないこと。
+ */
+void amonhen_rows_free(AmonhenRows *rows);
 
 /**
  * `start` 行から `count` 行分の列を作る（`amonhen_chunk_free` で解放する）。

@@ -62,6 +62,11 @@ pub struct AmonhenSyntax {
     _private: [u8; 0],
 }
 
+/// 行番号の並び（検索の結果）。
+pub struct AmonhenRows {
+    _private: [u8; 0],
+}
+
 /// History の連続した行の、FE 向けの列。
 pub struct AmonhenChunk {
     _private: [u8; 0],
@@ -346,6 +351,56 @@ pub unsafe extern "C" fn amonhen_history_lane_positions(
         unsafe { out.add(i).write(*x) };
     }
     positions.len() as u32
+}
+
+#[repr(C)]
+pub struct AmonhenRowsView {
+    pub rows: *const u32,
+    pub count: u32,
+}
+
+/// `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。件名・作者名を大文字・小文字を
+/// 区別せずに探し、16 進数 4 文字以上ならコミット ID の先頭も見る。すべてのコミットを読むので裏のスレッドで呼ぶ
+/// （linux の 148 万コミットで約 1.2 秒）。
+///
+/// # Safety
+/// `repo` と `history` は有効、`query` は NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_search(
+    repo_ptr: *const AmonhenRepo,
+    history_ptr: *const AmonhenHistory,
+    query: *const c_char,
+) -> *mut AmonhenRows {
+    let result = str_arg(query)
+        .map_err(Into::into)
+        .and_then(|q| repo(repo_ptr).search_history(history(history_ptr), q));
+    match result {
+        Ok(rows) => Box::into_raw(Box::new(rows)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// # Safety
+/// `rows` は有効であること。返したポインタは解放するまで有効。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_rows_view(rows: *const AmonhenRows) -> AmonhenRowsView {
+    let rows = unsafe { &*rows.cast::<Vec<u32>>() };
+    AmonhenRowsView {
+        rows: rows.as_ptr(),
+        count: rows.len() as u32,
+    }
+}
+
+/// # Safety
+/// `rows` は `amonhen_history_search` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_rows_free(rows: *mut AmonhenRows) {
+    if !rows.is_null() {
+        drop(unsafe { Box::from_raw(rows.cast::<Vec<u32>>()) });
+    }
 }
 
 /// `start` 行から `count` 行分の列を作る（`amonhen_chunk_free` で解放する）。
