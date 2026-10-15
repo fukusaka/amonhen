@@ -209,7 +209,9 @@ final class GraphRenderer {
         let last = min(history.rowCount, Int((scrollY + Float(size.height)) / rowHeight) + 2)
         instances.removeAll(keepingCapacity: true)
         if first < last {
-            updateLanes(history: history, rows: first..<last, width: Float(size.width), animate: animate)
+            FrameProfile.measure("graph: lane positions") {
+                updateLanes(history: history, rows: first..<last, width: Float(size.width), animate: animate)
+            }
             buildInstances(history: history, rows: first..<last, scrollY: scrollY)
         }
 
@@ -249,7 +251,7 @@ final class GraphRenderer {
 
     private func buildInstances(history: History, rows: Range<Int>, scrollY: Float) {
         let m = metrics
-        let edgeIndices = history.edgeIndices(in: rows)
+        let edgeIndices = FrameProfile.measure("graph: edge indices (FFI)") { history.edgeIndices(in: rows) }
         history.withEdges { edges in
             for i in edgeIndices {
                 let e = edges[Int(i)]
