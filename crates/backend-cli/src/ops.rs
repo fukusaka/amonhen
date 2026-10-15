@@ -47,6 +47,29 @@ fn literal_regex(text: &str) -> String {
 }
 
 impl Operations for Git {
+    fn blame(&self, path: &str, rev: Option<&Oid>) -> Result<Vec<u8>> {
+        let rev = rev.map(|r| r.to_string());
+        let mut args = vec!["blame", "--porcelain"];
+        if let Some(r) = &rev {
+            args.push(r);
+        }
+        args.extend(["--", path]);
+        self.read(&args)
+    }
+
+    fn file_log(&self, path: &str) -> Result<Vec<u8>> {
+        self.read(&[
+            "log",
+            "--follow",
+            "-z",
+            "--name-only",
+            "--format=%x01%H%x00%s%x00%an%x00%at",
+            "HEAD",
+            "--",
+            path,
+        ])
+    }
+
     fn log_matching(
         &self,
         tips: &[Oid],
