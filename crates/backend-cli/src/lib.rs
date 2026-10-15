@@ -76,6 +76,13 @@ impl Git {
         run(self.command(args), None)
     }
 
+    /// 読み取り系で、標準入力を渡す。
+    pub fn read_with_input(&self, args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
+        let mut cmd = self.command(args);
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
+        run(cmd, Some(input))
+    }
+
     /// 書き込み系で、標準入力を渡す。
     pub fn write_with_input(&self, args: &[&str], input: &[u8]) -> Result<Vec<u8>> {
         run(self.command(args), Some(input))

@@ -119,6 +119,12 @@ pub trait GitBackend: Send + Sync {
         Ok(CommitExtras::default())
     }
 
+    /// `ids` の署名をまとめて検証し、`git log --format=%G?` の 1 文字を同じ順に返す。対応しない実装は
+    /// すべて E（検証できない）を返す。
+    fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
+        Ok(vec!['E'; ids.len()])
+    }
+
     /// daemon とのつながりの様子。手元の実装は `None`。
     fn connection_state(&self) -> Option<ConnectionState> {
         None

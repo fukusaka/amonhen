@@ -9,6 +9,8 @@ pub struct HistoryChunk {
     pub subjects: Vec<StrRef>,
     pub author_names: Vec<StrRef>,
     pub author_times: Vec<i64>,
+    /// 行ごとの署名の種類（`CommitText::SIGNED_*`、なければ 0）。
+    pub signatures: Vec<u8>,
     pub strings: StringTable,
 }
 
@@ -40,6 +42,7 @@ impl HistoryChunk {
             subjects,
             author_names,
             author_times,
+            signatures: texts.iter().map(|t| t.signature).collect(),
             strings: strings.finish(),
         }
     }
@@ -69,6 +72,7 @@ mod tests {
 
     fn text(raw: &[u8], subject: std::ops::Range<u32>, author: std::ops::Range<u32>) -> CommitText {
         CommitText {
+            signature: 0,
             raw: Arc::new(raw.to_vec()),
             subject,
             author_name: author,

@@ -186,6 +186,7 @@ fn handle(
             encode(&texts)
         }
         Request::CommitExtras(id) => encode(&backend.commit_extras(&id)?),
+        Request::VerifySignatures(ids) => encode(&backend.verify_signatures(&ids)?),
         Request::SearchTexts { tips, terms } => {
             let ids = commits_from(backend, commits, &tips)?;
             let words = amonhen_model::search::scan(

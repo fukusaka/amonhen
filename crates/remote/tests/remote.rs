@@ -122,6 +122,8 @@ fn a_remote_repository_matches_the_local_one() {
     let extras = format!(r#"{{"op":"commitExtras","oid":"{head}"}}"#);
     assert_eq!(remote.run_json(&extras), local.run_json(&extras));
     assert!(remote.run_json(&extras).contains("\"stats\":[{"));
+    let verify = format!(r#"{{"op":"verifySignatures","oids":["{head}"]}}"#);
+    assert_eq!(remote.run_json(&verify), local.run_json(&verify));
     let chunk = remote
         .history_chunk(&r, 0, 5, &FrontendProfile::MACOS)
         .unwrap();

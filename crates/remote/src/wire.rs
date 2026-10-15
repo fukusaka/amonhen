@@ -9,7 +9,7 @@ use amonhen_model::{CommitGraph, CommitText, HeadState, Oid, ResetMode, Result, 
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -63,6 +63,8 @@ pub enum Request {
     CommitSummaries(Vec<Oid>),
     /// → `CommitExtras`
     CommitExtras(Oid),
+    /// → `Vec<char>`（`ids` と同じ順の `%G?`）
+    VerifySignatures(Vec<Oid>),
     /// → `Vec<Vec<Oid>>`（条件ごとに合ったコミット。取り消せる）
     SearchTexts {
         tips: Vec<Oid>,
@@ -215,6 +217,7 @@ pub struct CommitTextWire {
     pub subject: (u32, u32),
     pub author_name: (u32, u32),
     pub author_time: i64,
+    pub signature: u8,
 }
 
 impl From<&CommitText> for CommitTextWire {
@@ -224,6 +227,7 @@ impl From<&CommitText> for CommitTextWire {
             subject: (t.subject.start, t.subject.end),
             author_name: (t.author_name.start, t.author_name.end),
             author_time: t.author_time,
+            signature: t.signature,
         }
     }
 }
@@ -239,6 +243,7 @@ impl CommitTextWire {
             subject,
             author_name: (subject.1, raw.len() as u32),
             author_time: t.author_time,
+            signature: t.signature,
         }
     }
 }
@@ -250,6 +255,7 @@ impl From<CommitTextWire> for CommitText {
             subject: w.subject.0..w.subject.1,
             author_name: w.author_name.0..w.author_name.1,
             author_time: w.author_time,
+            signature: w.signature,
         }
     }
 }

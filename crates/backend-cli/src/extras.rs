@@ -37,6 +37,38 @@ impl Git {
     }
 }
 
+impl Git {
+    /// `ids` の署名をまとめて検証し、`%G?` の 1 文字を同じ順に返す（署名がなければ N）。git を 1 回だけ起動する。
+    pub fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
+        let out = self.read_with_input(
+            &[
+                "-c",
+                "log.showSignature=false",
+                "log",
+                "--no-walk=unsorted",
+                "--format=%H %G?",
+                "--stdin",
+            ],
+            input.as_bytes(),
+        )?;
+        let found: std::collections::HashMap<String, char> = String::from_utf8_lossy(&out)
+            .lines()
+            .filter_map(|line| {
+                let (hex, status) = line.split_once(' ')?;
+                Some((hex.to_owned(), status.chars().next()?))
+            })
+            .collect();
+        Ok(ids
+            .iter()
+            .map(|id| found.get(&id.to_string()).copied().unwrap_or('E'))
+            .collect())
+    }
+}
+
 /// `%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%N` を読む。署名がなければ（N）`None`。
 fn parse_signature_and_notes(out: &str) -> (Option<SignatureCheck>, String) {
     let mut fields = out.splitn(6, '\0');
@@ -148,6 +180,8 @@ mod tests {
         let extras = git.commit_extras(&head).unwrap();
         assert_eq!(extras.signature, None);
         assert_eq!(extras.notes, "a note");
+        assert_eq!(git.verify_signatures(&[head, head]).unwrap(), ['N', 'N']);
+        assert!(git.verify_signatures(&[]).unwrap().is_empty());
         assert_eq!(
             extras.stats,
             [FileStat {

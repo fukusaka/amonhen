@@ -396,6 +396,10 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::CommitExtras(*commit))
     }
 
+    fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
+        self.conn.call(&Request::VerifySignatures(ids.to_vec()))
+    }
+
     fn connection_state(&self) -> Option<ConnectionState> {
         let (sent, received) = self.conn.traffic();
         Some(ConnectionState {

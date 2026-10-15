@@ -441,6 +441,10 @@ impl GitBackend for GixBackend {
         self.git()?.commit_extras(commit)
     }
 
+    fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
+        self.git()?.verify_signatures(ids)
+    }
+
     fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>> {
         Ok(Arc::new(std::fs::read(self.git()?.workdir().join(path))?))
     }
@@ -509,8 +513,13 @@ impl GitBackend for GixBackend {
                     .data
                     .len();
                 buf.truncate(len);
-                let (subject, author_name, author_time) = {
+                let (subject, author_name, author_time, signature) = {
                     let commit = gix::objs::CommitRef::from_bytes(&buf, hash)?;
+                    let signature = commit
+                        .extra_headers
+                        .iter()
+                        .find(|(name, _)| *name == "gpgsig" || *name == "gpgsig-sha256")
+                        .map_or(0, |(_, value)| CommitText::signature_kind(value));
                     let author = commit.author()?;
                     let first_line = commit
                         .message
@@ -521,6 +530,7 @@ impl GitBackend for GixBackend {
                         range_in(&buf, trim(first_line)),
                         range_in(&buf, trim(author.name)),
                         author.time()?.seconds,
+                        signature,
                     )
                 };
                 Ok(CommitText {
@@ -528,6 +538,7 @@ impl GitBackend for GixBackend {
                     subject,
                     author_name,
                     author_time,
+                    signature,
                 })
             })
             .collect()

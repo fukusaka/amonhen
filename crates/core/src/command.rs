@@ -131,6 +131,10 @@ pub enum Command {
     CommitExtras {
         oid: String,
     },
+    /// 署名の検証の結果（`info`: `statuses` に `oids` と同じ順の `%G?` の 1 文字）。一度検証したものは覚えている。
+    VerifySignatures {
+        oids: Vec<String>,
+    },
     /// 名前や短い ID が指すコミット（`text`: 40 桁の ID）。メッセージの中の ID のリンクに使う。
     ResolveCommit {
         rev: String,
@@ -317,6 +321,9 @@ impl Repository {
     /// タグ・前後のタグは History のグラフから求める（History をまだ読んでいなければ空）。
     pub fn commit_extras(&self, commit: &Oid) -> Result<serde_json::Value> {
         let extras = self.backend().commit_extras(commit)?;
+        if let Some(s) = &extras.signature {
+            self.remember_signatures([(*commit, s.status)]);
+        }
         let mut children = Vec::new();
         let (mut branches, mut tags) = (Vec::new(), Vec::new());
         let (mut first_tag, mut previous_tag) = (None, None);
@@ -772,6 +779,19 @@ impl Repository {
                 info: Some(self.commit_info(&oid(&o)?)?),
                 ..Default::default()
             }),
+            Command::VerifySignatures { oids } => {
+                let ids = oids.iter().map(|o| oid(o)).collect::<Result<Vec<_>>>()?;
+                let statuses: Vec<String> = self
+                    .verify_signatures(&ids)?
+                    .iter()
+                    .map(char::to_string)
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "statuses": statuses })),
+                    ..Default::default()
+                })
+            }
             Command::ResolveCommit { rev } => Ok(Response {
                 ok: true,
                 text: Some(ops.resolve(&format!("{rev}^{{commit}}"))?.to_string()),
@@ -1092,6 +1112,11 @@ mod tests {
             &format!(r#"{{"op":"resolveCommit","rev":"{}"}}"#, &first[..8]),
         );
         assert_eq!(resolved["text"], first.as_str());
+        let verified = run(
+            &repo,
+            &format!(r#"{{"op":"verifySignatures","oids":["{first}","{second}"]}}"#),
+        );
+        assert_eq!(verified["info"]["statuses"], serde_json::json!(["N", "N"]));
         assert_eq!(extras["stats"][0]["added"], 1);
     }
 

@@ -76,6 +76,8 @@ pub struct Repository {
     search_generation: AtomicU64,
     cache_path: Option<PathBuf>,
     undo: OnceLock<UndoLog>,
+    /// 署名の検証の結果（`%G?`）。コミットは変わらないので、一度検証したら覚えておく。
+    signatures: std::sync::Mutex<std::collections::HashMap<Oid, char>>,
 }
 
 impl Repository {
@@ -89,7 +91,34 @@ impl Repository {
             search_generation: AtomicU64::new(0),
             cache_path: None,
             undo: OnceLock::new(),
+            signatures: Default::default(),
         }
+    }
+
+    /// `ids` の署名の検証の結果（`%G?` の 1 文字）を同じ順に返す。覚えていないものだけを git に検証させる。
+    pub fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
+        let unknown: Vec<Oid> = {
+            let known = self.signatures.lock().unwrap();
+            let mut seen = std::collections::HashSet::new();
+            ids.iter()
+                .filter(|id| !known.contains_key(id) && seen.insert(**id))
+                .copied()
+                .collect()
+        };
+        if !unknown.is_empty() {
+            let found = self.backend.verify_signatures(&unknown)?;
+            self.remember_signatures(unknown.iter().copied().zip(found));
+        }
+        let known = self.signatures.lock().unwrap();
+        Ok(ids
+            .iter()
+            .map(|id| known.get(id).copied().unwrap_or('E'))
+            .collect())
+    }
+
+    /// 検証の結果を覚える（コミットの詳細で検証したときにも呼ぶ）。
+    pub(crate) fn remember_signatures(&self, results: impl IntoIterator<Item = (Oid, char)>) {
+        self.signatures.lock().unwrap().extend(results);
     }
 
     /// リポジトリの変化を知らせてもらう（daemon 越しなら true。手元なら false で、呼び出し側が監視する）。
