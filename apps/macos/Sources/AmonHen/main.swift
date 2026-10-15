@@ -9,6 +9,19 @@ enum Settings {
         get { UserDefaults.standard.bool(forKey: "writeCommitGraph") }
         set { UserDefaults.standard.set(newValue, forKey: "writeCommitGraph") }
     }
+
+    /// History の行を 1 行にするか（既定は件名と作者・日時の 2 行）。変えたら `historyRowsChanged` を知らせる。
+    static var compactHistoryRows: Bool {
+        get { UserDefaults.standard.bool(forKey: "compactHistoryRows") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "compactHistoryRows")
+            NotificationCenter.default.post(name: .historyRowsChanged, object: nil)
+        }
+    }
+}
+
+extension Notification.Name {
+    static let historyRowsChanged = Notification.Name("historyRowsChanged")
 }
 
 /// 子の画面を 1 つだけ表示し、切り替える。
@@ -203,6 +216,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fileMenu.addItem(manager)
         fileMenu.addItem(NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
 
+        let viewItem = NSMenuItem()
+        main.addItem(viewItem)
+        let viewMenu = NSMenu(title: "View")
+        viewItem.submenu = viewMenu
+        let compact = NSMenuItem(title: "One Line per Commit", action: #selector(toggleCompactRows(_:)), keyEquivalent: "")
+        compact.target = self
+        compact.state = Settings.compactHistoryRows ? .on : .off
+        viewMenu.addItem(compact)
+
         // テキスト欄でのコピーや取り消しのため、標準の Edit メニューを置く。
         let editItem = NSMenuItem()
         main.addItem(editItem)
@@ -220,6 +242,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "Find Next", action: #selector(DiffDocumentView.findNext(_:)), keyEquivalent: "g"))
         editMenu.addItem(NSMenuItem(title: "Find Previous", action: #selector(DiffDocumentView.findPrevious(_:)), keyEquivalent: "G"))
         NSApp.mainMenu = main
+    }
+
+    @objc private func toggleCompactRows(_ item: NSMenuItem) {
+        Settings.compactHistoryRows.toggle()
+        item.state = Settings.compactHistoryRows ? .on : .off
     }
 
     @objc private func showRepositories(_ sender: Any?) {

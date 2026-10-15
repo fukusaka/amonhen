@@ -113,10 +113,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private var ellipsis: TextRenderer.ShapedLine?
     private var metaEllipsis: TextRenderer.ShapedLine?
     private let font = CTFontCreateUIFontForLanguage(.system, NSFont.systemFontSize, nil)!
-    private let metaFont = CTFontCreateUIFontForLanguage(.system, NSFont.smallSystemFontSize, nil)!
-    private let labelFont = CTFontCreateWithName(
-        NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium).fontName as CFString,
-        NSFont.smallSystemFontSize, nil)
+    // 数字の幅をそろえ、1 行表示で右に寄せた日時の桁が縦にそろうようにする。
+    private let metaFont = NSFont.monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular) as CTFont
+    private let labelFont = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium) as CTFont
 
     /// コミットに付いている ref のラベル（ブランチ・リモートブランチ・タグ）。
     struct RefLabel {
@@ -176,7 +175,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         // 分割の最初の幅は、このビューの幅で決まる。
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 700))
         tableView.headerView = NSTableHeaderView()
-        tableView.rowHeight = CGFloat(renderer.metrics.rowHeight)
+        applyRowStyle()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(rowStyleChanged), name: .historyRowsChanged, object: nil)
         tableView.intercellSpacing = NSSize(width: 6, height: 0)
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.allowsTypeSelect = false
@@ -395,6 +396,22 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         text.draw(layer: textView.metalLayer, background: .zero)
     }
 
+    /// 1 行・2 行の表示に合わせて、行の高さ（表とグラフで共通）を決める。
+    private func applyRowStyle() {
+        renderer.metrics.rowHeight = Settings.compactHistoryRows ? 24 : 38
+        tableView.rowHeight = CGFloat(renderer.metrics.rowHeight)
+    }
+
+    @objc private func rowStyleChanged() {
+        // 見ていたコミットが同じ位置に来るように、選んだ行を見える位置に戻す。
+        let selected = tableView.selectedRow
+        applyRowStyle()
+        rowText.removeAll()
+        tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tableView.numberOfRows))
+        if selected >= 0 { select(row: selected) }
+        layoutGraphView()
+    }
+
     /// ref の一覧が変わった。各コミットのラベルを作り直して描き直す。
     func show(refs: Refs) {
         var labels: [Data: [RefLabel]] = [:]
@@ -423,13 +440,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         self.ellipsis = ellipsis
         let metaEllipsis = self.metaEllipsis ?? text.shape("…" as CFString, font: metaFont, scale: scale)
         self.metaEllipsis = metaEllipsis
-        // 2 行を行の高さの中ほどに置く。
+        // 2 行なら行の高さの中ほどに 2 行を、1 行なら件名と同じ高さに作者・日時を置く。
+        let compact = Settings.compactHistoryRows
         let subjectHeight = CTFontGetAscent(font) + CTFontGetDescent(font)
         let metaHeight = CTFontGetAscent(metaFont) + CTFontGetDescent(metaFont)
         let gap: CGFloat = 2
-        let top = ((tableView.rowHeight - subjectHeight - gap - metaHeight) / 2).rounded()
+        let top = ((tableView.rowHeight - subjectHeight - (compact ? 0 : gap + metaHeight)) / 2).rounded()
         let subjectBaseline = top + CTFontGetAscent(font)
-        let metaBaseline = (subjectBaseline + CTFontGetDescent(font) + gap + CTFontGetAscent(metaFont)).rounded()
+        let metaBaseline = compact
+            ? subjectBaseline
+            : (subjectBaseline + CTFontGetDescent(font) + gap + CTFontGetAscent(metaFont)).rounded()
         let focused = view.window?.isKeyWindow == true && view.window?.firstResponder === tableView
         let primary = NSColor.labelColor.rgba, secondary = NSColor.secondaryLabelColor.rgba
         let selected = (focused ? NSColor.alternateSelectedControlTextColor : NSColor.labelColor).rgba
@@ -452,13 +472,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 x = drawLabels(labels, x: x, maxX: end - 40, baseline: rowTop + subjectBaseline, scale: scale,
                                selected: isSelected && focused)
             }
+            // 1 行なら、作者・日時・ID を右に寄せ、件名はその手前まで。
+            let metaWidth = compact ? min(line.meta.width, column.width * 0.45) : 0
+            let subjectEnd = compact ? end - metaWidth - 12 : end
             text.addLine(
                 line.subject, origin: CGPoint(x: x, y: rowTop + subjectBaseline), color: isSelected ? selected : primary,
-                scale: scale, maxWidth: max(0, end - x), ellipsis: ellipsis)
+                scale: scale, maxWidth: max(0, subjectEnd - x), ellipsis: ellipsis)
             text.addLine(
-                line.meta, origin: CGPoint(x: column.minX - originX, y: rowTop + metaBaseline),
-                color: isSelected ? selectedSecondary : secondary, scale: scale, maxWidth: column.width,
-                ellipsis: metaEllipsis)
+                line.meta, origin: CGPoint(x: compact ? end - metaWidth : column.minX - originX, y: rowTop + metaBaseline),
+                color: isSelected ? selectedSecondary : secondary, scale: scale,
+                maxWidth: compact ? metaWidth : column.width, ellipsis: metaEllipsis)
         }
     }
 
@@ -496,6 +519,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         return (base.withAlphaComponent(selected ? 0.45 : 0.22).rgba, (selected ? NSColor.white : NSColor.labelColor).rgba)
     }
 
+    private static let shortDateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .none
+        return f
+    }()
+
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateStyle = .medium
@@ -507,9 +537,15 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         if let cached = rowText[row] { return cached }
         guard let chunk = chunk(row: row) else { return nil }
         let subject = chunk.withSubject(row: row) { text.shape($0, font: font, scale: scale) }
-        let short = history?.commitID(row: row).map { $0.prefix(4).map { String(format: "%02x", $0) }.joined() } ?? ""
-        let date = Self.dateFormatter.string(from: chunk.authorTime(row: row))
-        let meta = "\(chunk.authorName(row: row))  ·  \(date)  ·  \(short)" as CFString
+        let date = chunk.authorTime(row: row)
+        let meta: CFString
+        if Settings.compactHistoryRows {
+            // 1 行では件名に幅を譲り、作者と短い日時だけにする（ID は詳細に出る）。
+            meta = "\(chunk.authorName(row: row))  \(Self.shortDateFormatter.string(from: date))" as CFString
+        } else {
+            let short = history?.commitID(row: row).map { $0.prefix(4).map { String(format: "%02x", $0) }.joined() } ?? ""
+            meta = "\(chunk.authorName(row: row))  ·  \(Self.dateFormatter.string(from: date))  ·  \(short)" as CFString
+        }
         let line = RowText(subject: subject, meta: text.shape(meta, font: metaFont, scale: scale))
         rowText[row] = line
         return line
