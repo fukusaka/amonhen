@@ -142,6 +142,74 @@ struct CommitHeaderRenderer {
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
+    /// HEAD との位置。詳細を読み終えるまでは nil。
+    private var positionSummary: String? {
+        guard let extras else { return nil }
+        switch extras.headDistance {
+        case 0: return "HEAD"
+        case let n?: return "HEAD の \(n) コミット前"
+        case nil: return "HEAD に含まれない"
+        }
+    }
+
+    /// どのリモートブランチにも含まれていなければ「未 push」（リモートがないリポジトリでは出さない）。
+    private var isUnpushed: Bool {
+        guard let extras, extras.originUrl != nil else { return false }
+        return extras.remoteBranches.isEmpty
+    }
+
+    /// 作者の日時からコミットの日時まで 1 時間より空いていれば、書き直した（rebase・amend・cherry-pick）とみなす。
+    private var rewriteSummary: String? {
+        let gap = info.committerTime - info.authorTime
+        guard gap > 3600 else { return nil }
+        let f = DateComponentsFormatter()
+        f.unitsStyle = .full
+        f.maximumUnitCount = 1
+        f.allowedUnits = [.year, .month, .day, .hour]
+        guard let span = f.string(from: TimeInterval(gap)) else { return nil }
+        return "作成の \(span)後にコミット（rebase・amend・cherry-pick など）"
+    }
+
+    /// `Co-authored-by` のトレーラーの名前。
+    private var coAuthors: [String] {
+        info.trailers
+            .filter { $0.key.lowercased() == "co-authored-by" }
+            .map { $0.value.components(separatedBy: " <").first ?? $0.value }
+    }
+
+    /// メッセージに書かれたコミットを、書かれた順に、書かれ方（cherry-pick・revert・Fixes）と一緒に。
+    private var relatedCommits: [(kind: String, commit: CommitExtras.CommitSummary)] {
+        guard let references = extras?.references, !references.isEmpty else { return [] }
+        let message = info.message
+        return references
+            .compactMap { token, commit -> (Int, String, CommitExtras.CommitSummary)? in
+                guard let range = message.range(of: token) else { return nil }
+                let line = message[message.lineRange(for: range)].lowercased()
+                let kind = if line.contains("cherry picked from") {
+                    "cherry-pick 元"
+                } else if line.contains("reverts commit") {
+                    "revert 元"
+                } else if line.hasPrefix("fixes:") {
+                    "修正対象"
+                } else {
+                    "参照"
+                }
+                return (message.distance(from: message.startIndex, to: range.lowerBound), kind, commit)
+            }
+            .sorted { $0.0 < $1.0 }
+            .map { ($0.1, $0.2) }
+    }
+
+    private func summaryLine(_ commit: CommitExtras.CommitSummary) {
+        commitLink(commit.oid, length: 10)
+        add("  \(commit.subject)", body)
+        if let author = commit.author { add(" — \(author)", dim) }
+    }
+
+    private var unpushedAttrs: [NSAttributedString.Key: Any] {
+        [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.systemOrange]
+    }
+
     /// 本文。URL・コミット ID・`#123` をリンクにする。
     private func linkedBody(_ string: String) {
         let start = text.length
@@ -212,6 +280,7 @@ struct CommitHeaderRenderer {
             add(info.refs.joined(separator: ", "), refAttrs)
         }
         if let stats = statsSummary { add(" · " + stats, dim) }
+        if isUnpushed { add(" · 未 push", unpushedAttrs) }
         add("\n" + subject, subjectAttrs)
     }
 
@@ -223,6 +292,7 @@ struct CommitHeaderRenderer {
         if info.committer != info.author {
             add("  committed by \(info.committer)", dim)
         }
+        if !coAuthors.isEmpty { add("\n共同作者: " + coAuthors.joined(separator: ", "), dim) }
         if let sig = signatureSummary {
             var attrs = dim
             attrs[.foregroundColor] = sig.color
@@ -238,8 +308,26 @@ struct CommitHeaderRenderer {
             add(children.count > 1 ? "  Children " : "  Child ", mono)
             commitLinks(children)
         }
-        let facts = [tagSummary, statsSummary].compactMap { $0 }
+        let facts = [positionSummary, tagSummary, statsSummary].compactMap { $0 }
         if !facts.isEmpty { add("\n" + facts.joined(separator: " · "), dim) }
+        if isUnpushed { add(facts.isEmpty ? "\n未 push" : " · 未 push", unpushedAttrs) }
+        if let rewrite = rewriteSummary { add("\n" + rewrite, dim) }
+        for tag in info.mergedTags {
+            add("\n\(tag.signed ? "署名付きの" : "")タグ \(tag.name)（\(tag.tagger)）を merge", dim)
+            if !tag.subject.isEmpty { add(" — \(tag.subject)", dim) }
+        }
+        if let extras, extras.mergedCount > 0 {
+            add("\n取り込んだコミット \(extras.mergedCount) 件", dim)
+            for commit in extras.merged.prefix(5) {
+                add("\n  ", dim)
+                summaryLine(commit)
+            }
+            if extras.mergedCount > 5 { add("\n  ほか \(extras.mergedCount - 5) 件", dim) }
+        }
+        for (kind, commit) in relatedCommits {
+            add("\n\(kind): ", dim)
+            summaryLine(commit)
+        }
         add("\n\n" + subject, subjectAttrs)
         if !bodyText.isEmpty {
             add("\n\n", body)
@@ -279,6 +367,8 @@ struct CommitHeaderRenderer {
         row("Author Date", plain("\(date(info.authorTime)) (\(info.authorTz))  \(relative(info.authorTime))"))
         row("Committer", plain("\(info.committer) <\(info.committerEmail)>"))
         row("Commit Date", plain("\(date(info.committerTime)) (\(info.committerTz))  \(relative(info.committerTime))"))
+        if !coAuthors.isEmpty { row("Co-authors", plain(coAuthors.joined(separator: ", "))) }
+        if let rewrite = rewriteSummary { row("Rewritten", plain(rewrite)) }
         row("Commit") { add(info.oid, mono) }
         if !info.parents.isEmpty { row(info.parents.count > 1 ? "Parents" : "Parent") { commitLinks(info.parents) } }
         if let children = extras?.children, !children.isEmpty {
@@ -298,7 +388,10 @@ struct CommitHeaderRenderer {
                 }
             }
         }
-        if info.mergetag { row("Merged Tag", plain("署名付きのタグを merge したコミット")) }
+        for tag in info.mergedTags {
+            let subject = tag.subject.isEmpty ? "" : "\n\(tag.subject)"
+            row("Merged Tag", plain("\(tag.name)（\(tag.tagger)、\(tag.signed ? "署名付き" : "署名なし")）\(subject)"))
+        }
         if !info.refs.isEmpty { row("Refs") { add(info.refs.joined(separator: ", "), refAttrs) } }
         if let extras {
             if !extras.branches.isEmpty { row("Branches", plain(extras.branches.joined(separator: ", "))) }
@@ -308,6 +401,32 @@ struct CommitHeaderRenderer {
                 row("Tags", plain("\(shown)\(more)"))
             }
             if let previous = extras.previousTag { row("Previous Tag", plain(previous)) }
+            if let position = positionSummary { row("Position", plain(position)) }
+            if extras.originUrl != nil {
+                row("Pushed") {
+                    if isUnpushed {
+                        add("未 push（どのリモートブランチにも含まれない）", unpushedAttrs)
+                    } else {
+                        plain(extras.remoteBranches.joined(separator: ", "))()
+                    }
+                }
+            }
+            if extras.mergedCount > 0 {
+                row("Merged") {
+                    plain("\(extras.mergedCount) コミット")()
+                    for commit in extras.merged.prefix(20) {
+                        add("\u{2028}", dim)
+                        summaryLine(commit)
+                    }
+                    if extras.mergedCount > 20 { add("\u{2028}ほか \(extras.mergedCount - 20) 件", dim) }
+                }
+            }
+            for (kind, commit) in relatedCommits {
+                row("Related") {
+                    add("\(kind)  ", dim)
+                    summaryLine(commit)
+                }
+            }
             if let stats = statsSummary { row("Changes", plain(stats)) }
         } else {
             row("", plain("…"))
