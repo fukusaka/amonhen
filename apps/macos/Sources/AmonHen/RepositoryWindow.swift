@@ -119,7 +119,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         sidebar.actions = actions
         history.actions = actions
         workingCopy.actions = actions
-        workingCopy.repositoryRoot = root
         window.toolbar = toolbar.toolbar
     }
 

@@ -435,15 +435,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         } else if current?.item.kind == .untracked {
             guard actions.confirm(
                 "\(key.path) を削除しますか？", message: "untracked のファイルなので、Undo では戻せません。", ok: "削除") else { return }
-            let url = URL(fileURLWithPath: repositoryRoot).appendingPathComponent(key.path)
-            actions.perform { try FileManager.default.removeItem(at: url) }
+            // ファイルの操作はコアに任せる（SSH 越しのリポジトリでも同じに動く）。
+            actions.perform(["op": "deleteUntracked", "paths": [key.path]])
         } else {
             actions.perform(["op": "discard", "paths": [key.path]])
         }
     }
-
-    /// 作業ツリーのルート（untracked のファイルを消すときに使う）。
-    var repositoryRoot = ""
 
     private func showSequence(_ sequence: String?) {
         sequenceBar.isHidden = sequence == nil
@@ -483,9 +480,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func markResolved() {
         guard let key = selectedKey else { return }
-        let file = URL(fileURLWithPath: repositoryRoot).appendingPathComponent(key.path)
-        if let text = try? String(contentsOf: file, encoding: .utf8), text.contains("<<<<<<<"),
-           actions?.confirm("\(key.path) にコンフリクトのマーカーが残っています", message: "このまま解決済みにしますか？", ok: "解決済みにする") != true {
+        struct Count: Decodable { let count: Int }
+        let remaining = (try? repository.info(["op": "conflictCount", "path": key.path], as: Count.self))?.count ?? 0
+        if remaining > 0,
+           actions?.confirm("\(key.path) にコンフリクトが \(remaining) 個残っています", message: "このまま解決済みにしますか？", ok: "解決済みにする") != true {
             return
         }
         let repository = self.repository
