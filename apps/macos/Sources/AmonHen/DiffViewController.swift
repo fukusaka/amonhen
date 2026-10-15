@@ -684,6 +684,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private var fileColumnPlaced = false
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        placeFileColumnOnce(&fileColumnPlaced)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         splitView.isVertical = true
@@ -710,16 +717,18 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         headerScroll.documentView = header
         headerScroll.hasVerticalScroller = true
         headerScroll.drawsBackground = false
-        let leftColumn = NSSplitView(frame: NSRect(x: 0, y: 0, width: 240, height: 300))
+        // Working Copy の左の列と同じ幅から始める。
+        let leftColumn = NSSplitView(frame: NSRect(x: 0, y: 0, width: 280, height: 300))
         leftColumn.isVertical = false
         leftColumn.dividerStyle = .thin
-        leftColumn.addArrangedSubview(headerScroll)
+        // Working Copy と同じく、上にファイル、下にメッセージ（Working Copy ではコミットの入力）。
         leftColumn.addArrangedSubview(scroll)
-        leftColumn.setHoldingPriority(.init(260), forSubviewAt: 0)
+        leftColumn.addArrangedSubview(headerScroll)
+        leftColumn.setHoldingPriority(.init(260), forSubviewAt: 1)
         let list = NSViewController()
         list.view = leftColumn
         let listItem = NSSplitViewItem(viewController: list)
-        listItem.minimumThickness = 160
+        listItem.minimumThickness = 220
         // ウィンドウの大きさを変えたとき、ファイル一覧の幅は保ち、差分の側を伸び縮みさせる。
         listItem.holdingPriority = .init(260)
         addSplitViewItem(listItem)

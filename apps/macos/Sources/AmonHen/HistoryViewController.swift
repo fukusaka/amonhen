@@ -98,16 +98,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let scrollView = NSScrollView()
     private let tableView = FocusTableView()
     private let graphView = GraphView()
-    /// 件名・作者・日時を描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。
+    /// 件名を描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。
     private let textView = GraphView()
     private let text: TextRenderer
-    /// 行ごとに並べた文字。History が変わったら捨てる。
-    private var rowText: [Int: RowText] = [:]
-    private struct RowText {
-        var subject: TextRenderer.ShapedLine
-        var author: TextRenderer.ShapedLine
-        var date: TextRenderer.ShapedLine
-    }
+    /// 行ごとに並べた件名。History が変わったら捨てる。作者・日時は詳細の側に出す。
+    private var rowText: [Int: TextRenderer.ShapedLine] = [:]
     private var ellipsis: TextRenderer.ShapedLine?
     private let font = CTFontCreateUIFontForLanguage(.system, NSFont.systemFontSize, nil)!
     private let graphColumn = NSTableColumn(identifier: .init("graph"))
@@ -145,7 +140,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     required init?(coder: NSCoder) { fatalError() }
 
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 420))
+        // 分割の最初の幅は、このビューの幅で決まる。
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 700))
         tableView.headerView = NSTableHeaderView()
         tableView.rowHeight = CGFloat(renderer.metrics.rowHeight)
         tableView.intercellSpacing = NSSize(width: 6, height: 0)
@@ -156,12 +152,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         graphColumn.title = ""
         graphColumn.width = 120
         tableView.addTableColumn(graphColumn)
-        for (id, title, width) in [("subject", "Message", 520.0), ("author", "Author", 140.0), ("date", "Date", 140.0)] {
-            let column = NSTableColumn(identifier: .init(id))
-            column.title = title
-            column.width = width
-            tableView.addTableColumn(column)
-        }
+        let subject = NSTableColumn(identifier: .init("subject"))
+        subject.title = "Message"
+        subject.width = 240
+        tableView.addTableColumn(subject)
         tableView.dataSource = self
         tableView.delegate = self
         tableView.dragLabel = { [weak self] rows in
@@ -209,6 +203,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let barHeight: CGFloat = 26
         scopePopup.frame = NSRect(x: 6, y: view.bounds.height - barHeight + 2, width: 240, height: barHeight - 4)
         scrollView.frame = NSRect(x: 0, y: 0, width: view.bounds.width, height: view.bounds.height - barHeight)
+        // 件名の列を表の幅いっぱいにする。
+        tableView.sizeLastColumnToFit()
         layoutGraphView()
     }
 
@@ -346,38 +342,30 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let rows = tableView.rows(in: NSRect(x: 0, y: scrollY, width: 1, height: textView.bounds.height))
         guard rows.length > 0 else { return }
         // 表のセルの文字の位置に合わせる（列の左右の余白）。
-        let columns = (1..<tableView.numberOfColumns).map { tableView.rect(ofColumn: $0).insetBy(dx: 5, dy: 0) }
+        let column = tableView.rect(ofColumn: 1).insetBy(dx: 5, dy: 0)
         let ellipsis = self.ellipsis ?? text.shape("…" as CFString, font: font, scale: scale)
         self.ellipsis = ellipsis
         let rowHeight = tableView.rowHeight
         let baselineOffset = ((rowHeight + CTFontGetAscent(font) - CTFontGetDescent(font)) / 2).rounded()
         let focused = view.window?.isKeyWindow == true && view.window?.firstResponder === tableView
-        let primary = NSColor.labelColor.rgba, secondary = NSColor.secondaryLabelColor.rgba
+        let primary = NSColor.labelColor.rgba
         let selected = (focused ? NSColor.alternateSelectedControlTextColor : NSColor.labelColor).rgba
         let selection = tableView.selectedRowIndexes
         if rowText.count > 4096 { rowText.removeAll() }
         for row in rows.location..<min(history.rowCount, rows.location + rows.length) {
             guard let line = shapedRow(row, scale: scale) else { continue }
             let baseline = tableView.rect(ofRow: row).minY - scrollY + baselineOffset
-            let isSelected = selection.contains(row)
-            for (i, (shaped, color)) in [(line.subject, primary), (line.author, secondary), (line.date, secondary)].enumerated()
-            where i < columns.count {
-                let column = columns[i]
-                text.addLine(
-                    shaped, origin: CGPoint(x: column.minX - originX, y: baseline),
-                    color: isSelected ? selected : color, scale: scale, maxWidth: column.width, ellipsis: ellipsis)
-            }
+            text.addLine(
+                line, origin: CGPoint(x: column.minX - originX, y: baseline),
+                color: selection.contains(row) ? selected : primary, scale: scale, maxWidth: column.width,
+                ellipsis: ellipsis)
         }
     }
 
-    private func shapedRow(_ row: Int, scale: CGFloat) -> RowText? {
+    private func shapedRow(_ row: Int, scale: CGFloat) -> TextRenderer.ShapedLine? {
         if let cached = rowText[row] { return cached }
         guard let chunk = chunk(row: row) else { return nil }
-        let date = Self.dateFormatter.string(from: chunk.authorTime(row: row)) as CFString
-        let line = RowText(
-            subject: chunk.withSubject(row: row) { text.shape($0, font: font, scale: scale) },
-            author: chunk.withAuthorName(row: row) { text.shape($0, font: font, scale: scale) },
-            date: text.shape(date, font: font, scale: scale))
+        let line = chunk.withSubject(row: row) { text.shape($0, font: font, scale: scale) }
         rowText[row] = line
         return line
     }
@@ -629,13 +617,6 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     func numberOfRows(in tableView: NSTableView) -> Int {
         history?.rowCount ?? 0
     }
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
 
     /// 文字は `textView` に描くので、セルは置かない。
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

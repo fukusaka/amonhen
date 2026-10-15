@@ -11,6 +11,19 @@ enum Settings {
     }
 }
 
+/// Working Copy と History の詳細で共通の、左の列（ファイル）の最初の幅。2 つの画面の並びをそろえる。
+let fileColumnWidth: CGFloat = 280
+
+extension NSSplitViewController {
+    /// 最初に幅が決まったときに 1 回だけ、左の列を `fileColumnWidth` にする（分割は最初、中のビューの
+    /// 幅の比で配分されるので、画面ごとにずれる）。
+    func placeFileColumnOnce(_ placed: inout Bool) {
+        guard !placed, splitView.bounds.width > fileColumnWidth * 2 else { return }
+        placed = true
+        splitView.setPosition(fileColumnWidth, ofDividerAt: 0)
+    }
+}
+
 /// 子の画面を 1 つだけ表示し、切り替える。
 final class PageViewController: NSViewController {
     private let pages: [SidebarViewController.Page: NSViewController]

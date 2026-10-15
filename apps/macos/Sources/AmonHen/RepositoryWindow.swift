@@ -35,7 +35,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         actions = Actions(repository: repository)
         toolbar = MainToolbar(actions: actions)
         window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 720),
+            contentRect: NSRect(x: 0, y: 0, width: 1440, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init()
         window.title = url.lastPathComponent
@@ -55,12 +55,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         sidebarItem.minimumThickness = 180
         sidebarItem.maximumThickness = 400
         split.addSplitViewItem(sidebarItem)
-        // 上に History、下に選んだコミットの詳細。
+        // 左に History、右に選んだコミットの詳細（ファイルとメッセージ、差分）。Working Copy の
+        // 「ファイルとコミットの入力、差分」と同じ並びにする。
         let content = NSSplitViewController()
-        content.splitView.isVertical = false
-        content.addSplitViewItem(NSSplitViewItem(viewController: history))
+        content.splitView.isVertical = true
+        let historyItem = NSSplitViewItem(viewController: history)
+        historyItem.minimumThickness = 280
+        // ウィンドウの大きさを変えたとき、一覧の幅は保ち、差分の側を伸び縮みさせる。
+        historyItem.holdingPriority = .init(260)
+        content.addSplitViewItem(historyItem)
         let detailItem = NSSplitViewItem(viewController: detail)
-        detailItem.minimumThickness = 160
+        // 狭いウィンドウでは一覧の側を縮め、ファイルの列（Working Copy と同じ幅）と差分を残す。
+        detailItem.minimumThickness = fileColumnWidth + 320
         content.addSplitViewItem(detailItem)
         let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy])
         split.addSplitViewItem(NSSplitViewItem(viewController: pages))

@@ -68,6 +68,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     required init?(coder: NSCoder) { fatalError() }
 
+    private var fileColumnPlaced = false
+
+    override func viewDidLayout() {
+        super.viewDidLayout()
+        placeFileColumnOnce(&fileColumnPlaced)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         splitView.isVertical = true
