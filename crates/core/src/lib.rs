@@ -5,6 +5,7 @@ pub mod command;
 pub mod conflict;
 pub mod diff;
 pub mod graph;
+pub mod lanes;
 mod repository;
 pub mod rewrite;
 pub mod undo;
