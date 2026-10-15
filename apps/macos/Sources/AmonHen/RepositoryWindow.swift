@@ -158,9 +158,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         if CommandLine.arguments.contains("--log-scroll") { history.logScrollGestures() }
         if let output = AppDelegate.option("--snapshot") {
             let selectFirst = CommandLine.arguments.contains("--select-first")
-            let wait = selectFirst || CommandLine.arguments.contains("--working-copy")
+            // --select-row N で、N 行目を選んで表の中ほどに出す（履歴の途中の見た目を確かめる）。
+            let selectRow = AppDelegate.option("--select-row").flatMap(Int.init) ?? (selectFirst ? 0 : nil)
+            let wait = selectRow != nil || CommandLine.arguments.contains("--working-copy")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if selectFirst { history.select(row: 0) }
+                if let selectRow { history.select(row: selectRow) }
             }
             if let query = AppDelegate.option("--find") {
                 // 選んだコミットの差分を検索した状態（検索欄と強調）を確かめる。
