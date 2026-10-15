@@ -2,7 +2,7 @@ import AmonhenKit
 import AppKit
 
 /// 1 つのリポジトリのウィンドウ。サイドバー・History・Working Copy・ツールバー・監視を持つ。
-final class RepositoryWindow: NSObject, NSWindowDelegate {
+final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, NSToolbarItemValidation {
     /// 手元のパスか、daemon 越しの場所（`daemon:/path`・`ssh://host/path`）。
     let location: String
     /// 差分の文字を描く（ファイルの履歴のウィンドウでも使う）。
@@ -27,6 +27,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
     private var watch: RepositoryWatch?
     /// 最後に読んだ ref（詳細の欄で ref の名前を押したときに引く）。
     private var latestRefs: Refs?
+    /// History で選んでいるコミット（Merge・Rebase の相手の候補）。
+    private var selectedCommit: Data?
+    /// 次に Undo される操作の名前。
+    private var undoLabel: String?
 
     /// リポジトリを開く。daemon 越しなら SSH でつなぎ、daemon を送り込んで起動するので数秒かかる（裏で呼ぶこと）。
     /// `daemon`・`daemons` は `Daemon.path`・`Daemon.bundledDirectory`（メインスレッドで読んで渡す）。
@@ -59,7 +63,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         detail = CommitDetailViewController(repository: repository, renderer: text)
         workingCopy = WorkingCopyViewController(repository: repository, renderer: text)
         actions = Actions(repository: repository)
-        toolbar = MainToolbar(actions: actions)
+        toolbar = MainToolbar()
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1440, height: 820),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -106,7 +110,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         split.addSplitViewItem(NSSplitViewItem(viewController: pages))
         window.contentViewController = split
 
-        history.onSelectCommit = { [weak detail] commit in detail?.show(commit: commit) }
+        history.onSelectCommit = { [weak self] commit in
+            self?.selectedCommit = commit
+            self?.detail.show(commit: commit)
+        }
         history.onSearchChanged = { [weak detail] query in detail?.searchQuery = query }
         detail.onSearch = { [weak history] query in history?.search(query) }
         detail.onSelectRef = { [weak self] name in self?.selectRef(named: name) }
@@ -153,7 +160,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
             self?.reloadRefs()
             self?.workingCopy.refresh()
         }
-        actions.onUndoChange = { [weak toolbar] label in toolbar?.setUndo(label) }
+        actions.onUndoChange = { [weak self] label in
+            self?.undoLabel = label
+            self?.toolbar.setUndo(label)
+        }
         sidebar.actions = actions
         history.actions = actions
         workingCopy.actions = actions
@@ -350,6 +360,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
 
     private func goTo(_ hex: String?) {
         guard let hex, let id = Data(hex: hex) else { return NSSound.beep() }
+        goTo(id: id)
+    }
+
+    private func goTo(id: Data) {
         if let row = history.currentHistory?.row(of: id) {
             history.select(row: row)
         } else {
@@ -453,9 +467,182 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    // MARK: - メニューとツールバーの操作（レスポンダチェーンで届く）
+
+    private var isLocal: Bool { !RepositoryLocation.isRemote(location) }
+    private var showsWorkingCopy: Bool { pages?.page == .workingCopy }
+
+    @objc func fetch(_ sender: Any?) { actions.fetch() }
+    @objc func pull(_ sender: Any?) { pull(mode: Settings.pullMode) }
+    @objc func pullMerge(_ sender: Any?) { pull(mode: .merge) }
+    @objc func pullRebase(_ sender: Any?) { pull(mode: .rebase) }
+    @objc func pullFastForward(_ sender: Any?) { pull(mode: .fastForwardOnly) }
+
+    private func pull(mode: PullMode) {
+        actions.perform(["op": "pull", "mode": mode.rawValue])
+    }
+
+    @objc func push(_ sender: Any?) { actions.push() }
+
+    @objc func forcePush(_ sender: Any?) {
+        let branch = latestRefs?.headBranch ?? "HEAD"
+        guard actions.confirm(
+            "\(branch) を force push しますか？",
+            message: "上流のブランチを手元の内容で置き換えます（--force-with-lease。ほかの人が先に push していたら失敗します）。",
+            ok: "Force Push") else { return }
+        actions.push(force: true)
+    }
+
+    @objc func stashChanges(_ sender: Any?) { actions.stash() }
+
+    /// 最新の stash（`stash@{0}`）を戻して消す。
+    @objc func popStash(_ sender: Any?) {
+        guard let name = latestStash else { return NSSound.beep() }
+        actions.perform(["op": "stashApply", "name": name, "pop": true])
+    }
+
+    private var latestStash: String? {
+        latestRefs?.items.first { $0.kind == .stash }?.name
+    }
+
+    @objc func mergeIntoCurrent(_ sender: Any?) {
+        let current = latestRefs?.headBranch ?? "HEAD"
+        guard let rev = chooseRevision(
+            title: "\(current) に merge する", message: "取り込むブランチ・タグ・コミット", ok: "Merge") else { return }
+        actions.perform(["op": "merge", "rev": rev])
+    }
+
+    @objc func rebaseCurrent(_ sender: Any?) {
+        let current = latestRefs?.headBranch ?? "HEAD"
+        guard let rev = chooseRevision(
+            title: "\(current) を rebase する", message: "上に載せる先のブランチ・タグ・コミット", ok: "Rebase") else { return }
+        actions.perform(["op": "rebase", "onto": rev])
+    }
+
+    /// 新しいブランチ・タグの起点。History で選んでいるコミットがあればそれ、なければ HEAD。
+    private var startPoint: String {
+        if pages?.page == .history, let selectedCommit {
+            return String(selectedCommit.map { String(format: "%02x", $0) }.joined().prefix(12))
+        }
+        return latestRefs?.headBranch ?? "HEAD"
+    }
+
+    @objc func newBranch(_ sender: Any?) { actions.newBranch(at: startPoint) }
+    @objc func newTag(_ sender: Any?) { actions.newTag(at: startPoint) }
+
+    @objc func continueSequence(_ sender: Any?) { actions.perform(["op": "continue"]) }
+    @objc func skipSequence(_ sender: Any?) { actions.perform(["op": "skip"]) }
+    @objc func abortSequence(_ sender: Any?) { actions.perform(["op": "abort"]) }
+
+    /// Repository > Undo（⌥⌘Z）・ツールバーの Undo。git の操作を操作ログで戻す（テキストの ⌘Z とは別）。
+    @objc func undoOperation(_ sender: Any?) { actions.undo() }
+
+    @objc func showWorkingCopy(_ sender: Any?) { sidebar.select(page: .workingCopy) }
+    @objc func showHistory(_ sender: Any?) { sidebar.select(page: .history) }
+
+    @objc func findInHistory(_ sender: Any?) {
+        sidebar.select(page: .history)
+        history.showFindBar(sender)
+    }
+
+    @objc func goToHead(_ sender: Any?) {
+        guard let head = latestRefs?.head else { return NSSound.beep() }
+        sidebar.select(page: .history)
+        goTo(id: head)
+    }
+
+    @objc func commitChanges(_ sender: Any?) { workingCopy.commitFromMenu() }
+    @objc func stageAllChanges(_ sender: Any?) { workingCopy.stageAllFromMenu() }
+
+    @objc func openInTerminal(_ sender: Any?) {
+        guard isLocal, let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal")
+        else { return NSSound.beep() }
+        let url = URL(fileURLWithPath: RepositoryLocation.path(location))
+        NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
+    }
+
+    @objc func revealInFinder(_ sender: Any?) {
+        guard isLocal else { return NSSound.beep() }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: RepositoryLocation.path(location))])
+    }
+
+    /// Merge・Rebase の相手を選んでもらう。候補は History で選んでいるコミット（あれば先頭）、
+    /// 今のブランチ以外のローカルブランチ、リモートブランチ、タグ。キャンセルなら nil。
+    private func chooseRevision(title: String, message: String, ok: String) -> String? {
+        var choices: [(title: String, rev: String)] = []
+        if let selectedCommit, selectedCommit != latestRefs?.head {
+            let hex = selectedCommit.map { String(format: "%02x", $0) }.joined()
+            choices.append(("選んでいるコミット \(hex.prefix(8))", hex))
+        }
+        let items = latestRefs?.items ?? []
+        for kind in [RefKind.local, .remote, .tag] {
+            for item in items where item.kind == kind && item.name != latestRefs?.headBranch {
+                choices.append((item.name, item.name))
+            }
+        }
+        guard !choices.isEmpty else {
+            NSSound.beep()
+            return nil
+        }
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
+        for (i, choice) in choices.enumerated() {
+            popup.addItem(withTitle: choice.title)
+            popup.lastItem?.tag = i
+        }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: ok)
+        alert.addButton(withTitle: "キャンセル")
+        alert.accessoryView = popup
+        alert.window.initialFirstResponder = popup
+        guard alert.runModal() == .alertFirstButtonReturn, let item = popup.selectedItem else { return nil }
+        return choices[item.tag].rev
+    }
+
+    /// メニューの項目とツールバーのボタンを使えるか。
+    private func validate(_ action: Selector?) -> Bool {
+        let sequence = workingCopy.sequence
+        switch action {
+        case #selector(continueSequence(_:)), #selector(abortSequence(_:)): return sequence != nil
+        case #selector(skipSequence(_:)): return sequence.map { $0.hasPrefix("rebase") || $0 == "cherry-pick" } ?? false
+        case #selector(push(_:)), #selector(forcePush(_:)): return latestRefs?.headBranch != nil
+        case #selector(pull(_:)), #selector(pullMerge(_:)), #selector(pullRebase(_:)), #selector(pullFastForward(_:)):
+            return latestRefs?.headBranch != nil && sequence == nil
+        case #selector(mergeIntoCurrent(_:)), #selector(rebaseCurrent(_:)): return latestRefs != nil && sequence == nil
+        case #selector(popStash(_:)): return latestStash != nil
+        case #selector(undoOperation(_:)): return undoLabel != nil
+        case #selector(goToHead(_:)): return latestRefs?.head != nil
+        case #selector(commitChanges(_:)): return showsWorkingCopy && workingCopy.canCommit
+        case #selector(stageAllChanges(_:)): return showsWorkingCopy && workingCopy.canStageAll
+        case #selector(openInTerminal(_:)), #selector(revealInFinder(_:)): return isLocal
+        default: return true
+        }
+    }
+
     func windowWillClose(_ notification: Notification) {
         connectionTimer?.invalidate()
         watch = nil
         onClose?()
+    }
+}
+
+extension RepositoryWindow {
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(undoOperation(_:)):
+            item.title = undoLabel.map { "Undo \($0)" } ?? "Undo"
+        case #selector(showWorkingCopy(_:)):
+            item.state = pages?.page == .workingCopy ? .on : .off
+        case #selector(showHistory(_:)):
+            item.state = pages?.page == .history ? .on : .off
+        default:
+            break
+        }
+        return validate(item.action)
+    }
+
+    func validateToolbarItem(_ item: NSToolbarItem) -> Bool {
+        validate(item.action)
     }
 }

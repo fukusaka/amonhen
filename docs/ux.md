@@ -352,16 +352,17 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | --- | --- |
 | Amon Hen | About、Settings… ⌘,、Services、隠す、終了 |
 | File | New Window ⌘N、New Tab ⌘T、Open… ⌘O、Quick Open… ⌘⇧O、Open Recent ▸、Clone… ⌃⌘C、Add Remote Repository…、Init…、Close Tab ⌘W、Close Window ⌘⇧W |
-| Edit | 標準（Undo の名前に操作名）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
+| Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
 | View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行・アバター・祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
-| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Repository Settings… ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
+| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings… ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Create Patch… |
 | Window | 標準（最小化・タブ・すべてのウィンドウを結合）、Repositories ⌘⇧R、Activity ⌥⌘A |
 | Help | ショートカットの一覧、ログの場所を開く |
 
 - 右クリックのメニューは、同じ操作をメニューバーと同じ名前で出す（覚える名前を 1 つにする）。
 - 使えない項目は消さずに無効にする（ある場所を覚えられるように）。
+- git の操作の Undo は Repository > Undo（⌥⌘Z）に置き、Edit の ⌘Z（テキストの取り消し）とは分ける。⌘Z で思わぬ git の操作が戻らないように。
 
 ## 12. GitHub などとの連携
 
@@ -381,8 +382,8 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 
 体感の効果が大きく、依存の少ないものから。各ステップで `docs/design.md` の「実装順序」と同じくチェックボックスを更新する。
 
-- [ ] U1. メニューの網羅とショートカットの整理、Settings ウィンドウ（今のトグルを移す）
-- [ ] U2. ツールバーの再編（メニュー付きボタン、Merge・Rebase・Pop、Activity のスピナー、検索欄、カスタマイズ）
+- [ ] U1. メニューの網羅とショートカットの整理、Settings ウィンドウ（今のトグルを移す）。メニュー（File・Edit・View・Navigate・Repository・Commit・Window・Help）、規則に沿ったショートカット、Settings（Git・Appearance・Performance・Advanced）は済み。残りはほかのステップで足す項目（タブ、Quick Open、Clone、Repository Settings など）
+- [ ] U2. ツールバーの再編（メニュー付きボタン、Merge・Rebase・Pop、Activity のスピナー、検索欄、カスタマイズ）。Pull ▾（merge / rebase / ff-only、コアの `pull` に `mode`）・Push ▾（force-with-lease）・Merge・Rebase・Stash・Pop・Refresh・Undo・カスタマイズは済み。残りはブランチの切り替えパネル、検索欄、Activity のスピナー
 - [ ] U3. Working Copy の左の列の再配置（コミットの入力を上、チェックボックスの 1 群、List / Tree / Flat、絞り込み）とコミットの入力の強化
 - [ ] U4. HEAD → 作業ツリーの 1 本の差分と行ごとのチェック（コアで 2 つの差分を重ねる）、ガターでの行選択・キー操作
 - [ ] U5. History の詳細の全文表示と、境目のドラッグ

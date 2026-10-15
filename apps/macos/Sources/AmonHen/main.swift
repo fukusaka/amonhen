@@ -1,80 +1,6 @@
 import AmonhenKit
 import AppKit
 
-/// 利用者の設定。
-enum Settings {
-    /// commit-graph がないリポジトリで `git commit-graph write --reachable` を実行するか。
-    /// リポジトリの `.git` に書き込むので、既定では行わない。
-    static var writeCommitGraph: Bool {
-        get { UserDefaults.standard.bool(forKey: "writeCommitGraph") }
-        set { UserDefaults.standard.set(newValue, forKey: "writeCommitGraph") }
-    }
-
-    /// 手元のリポジトリの status で git の fsmonitor を使うか（既定は使う）。リポジトリごとに
-    /// `git fsmonitor--daemon` が常駐し、status が速くなる。
-    static var useFSMonitor: Bool {
-        get { UserDefaults.standard.object(forKey: "useFSMonitor") as? Bool ?? true }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "useFSMonitor")
-            Repository.setFSMonitor(newValue)
-        }
-    }
-
-    /// SSH 先のリポジトリのコミットの署名を、手元の鍵で検証するか（既定は手元）。false なら SSH 先の git と鍵で
-    /// 検証する。変えたら `signatureCheckChanged` を知らせる。
-    static var checkRemoteSignaturesLocally: Bool {
-        get { UserDefaults.standard.object(forKey: "checkRemoteSignaturesLocally") as? Bool ?? true }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "checkRemoteSignaturesLocally")
-            NotificationCenter.default.post(name: .signatureCheckChanged, object: nil)
-        }
-    }
-
-    /// コミットの詳細に作者・コミッターの Gravatar のアバターを出すか（既定は出す。メールアドレスの MD5 を
-    /// gravatar.com に送る）。変えたら `commitMessageStyleChanged` を知らせる。
-    static var showAvatars: Bool {
-        get { UserDefaults.standard.object(forKey: "showAvatars") as? Bool ?? true }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "showAvatars")
-            NotificationCenter.default.post(name: .commitMessageStyleChanged, object: nil)
-        }
-    }
-
-    /// コミットの本文を等幅で出すか（既定は等幅）。変えたら `commitMessageStyleChanged` を知らせる。
-    static var monospacedCommitMessage: Bool {
-        get { UserDefaults.standard.object(forKey: "monospacedCommitMessage") as? Bool ?? true }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "monospacedCommitMessage")
-            NotificationCenter.default.post(name: .commitMessageStyleChanged, object: nil)
-        }
-    }
-
-    /// 選んだコミットの祖先を強調するか（既定はする）。変えたら `highlightAncestorsChanged` を知らせる。
-    static var highlightAncestors: Bool {
-        get { UserDefaults.standard.object(forKey: "highlightAncestors") as? Bool ?? true }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "highlightAncestors")
-            NotificationCenter.default.post(name: .highlightAncestorsChanged, object: nil)
-        }
-    }
-
-    /// History の行を 1 行にするか（既定は件名と作者・日時の 2 行）。変えたら `historyRowsChanged` を知らせる。
-    static var compactHistoryRows: Bool {
-        get { UserDefaults.standard.bool(forKey: "compactHistoryRows") }
-        set {
-            UserDefaults.standard.set(newValue, forKey: "compactHistoryRows")
-            NotificationCenter.default.post(name: .historyRowsChanged, object: nil)
-        }
-    }
-}
-
-extension Notification.Name {
-    static let historyRowsChanged = Notification.Name("historyRowsChanged")
-    static let highlightAncestorsChanged = Notification.Name("highlightAncestorsChanged")
-    static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
-    static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
-}
-
 /// daemon 越しに開くときに起動する `amonhend`。アプリの中（Contents/MacOS）にあればそれを、開発中は
 /// リポジトリの target/release のものを使う。`AMONHEN_DAEMON` で差し替えられる。
 enum Daemon {
@@ -109,6 +35,8 @@ enum Daemon {
 final class PageViewController: NSViewController {
     private let pages: [SidebarViewController.Page: NSViewController]
     private var current: NSViewController?
+    /// 表示している画面。
+    private(set) var page: SidebarViewController.Page?
 
     init(pages: [SidebarViewController.Page: NSViewController]) {
         self.pages = pages
@@ -130,78 +58,8 @@ final class PageViewController: NSViewController {
         next.view.autoresizingMask = [.width, .height]
         view.addSubview(next.view)
         current = next
+        self.page = page
     }
-}
-
-/// ツールバー: Fetch・Push・Undo。
-final class MainToolbar: NSObject, NSToolbarDelegate {
-    let toolbar = NSToolbar(identifier: "main")
-    private let actions: Actions
-    private let undoItem = NSToolbarItem(itemIdentifier: .init("undo"))
-    private let pushItem = NSToolbarItem(itemIdentifier: .init("push"))
-    private let pullItem = NSToolbarItem(itemIdentifier: .init("pull"))
-
-    init(actions: Actions) {
-        self.actions = actions
-        super.init()
-        toolbar.delegate = self
-        toolbar.displayMode = .iconAndLabel
-        setUndo(nil)
-    }
-
-    func setUndo(_ label: String?) {
-        undoItem.isEnabled = label != nil
-        // ラベルの長さでツールバーの幅が変わらないよう、操作の名前はツールチップに出す。
-        undoItem.toolTip = label.map { "Undo: \($0)" } ?? "Undo できる操作はありません"
-        undoItem.label = "Undo"
-    }
-
-    /// 今のブランチが上流より先（push できる）・後ろ（pull できる）にあるコミットの数を、ボタンのバッジに出す。
-    func setTracking(ahead: Int, behind: Int) {
-        if #available(macOS 26.0, *) {
-            pushItem.badge = ahead > 0 ? .count(ahead) : nil
-            pullItem.badge = behind > 0 ? .count(behind) : nil
-        } else {
-            // バッジのない macOS では、ラベルに数を添える。
-            pushItem.label = ahead > 0 ? "Push ↑\(ahead)" : "Push"
-            pullItem.label = behind > 0 ? "Pull ↓\(behind)" : "Pull"
-        }
-        pushItem.toolTip = ahead > 0 ? "上流より \(ahead) コミット先にあります" : "Push"
-        pullItem.toolTip = behind > 0 ? "上流より \(behind) コミット後ろにあります" : "Pull"
-    }
-
-    func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.init("fetch"), .init("pull"), .init("push"), .init("stash"), .flexibleSpace, .init("undo")]
-    }
-
-    func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        toolbarDefaultItemIdentifiers(toolbar)
-    }
-
-    func toolbar(
-        _ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool
-    ) -> NSToolbarItem? {
-        let item: NSToolbarItem, symbol: String, action: Selector
-        switch id.rawValue {
-        case "fetch": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "arrow.down.circle", #selector(fetch))
-        case "push": (item, symbol, action) = (pushItem, "arrow.up.circle", #selector(push))
-        case "pull": (item, symbol, action) = (pullItem, "arrow.down.to.line.circle", #selector(pull))
-        case "stash": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "tray.and.arrow.down", #selector(stash))
-        case "undo": (item, symbol, action) = (undoItem, "arrow.uturn.backward.circle", #selector(undo))
-        default: return nil
-        }
-        if item.label.isEmpty { item.label = id.rawValue.capitalized }
-        item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: item.label)
-        item.target = self
-        item.action = action
-        return item
-    }
-
-    @objc private func fetch() { actions.fetch() }
-    @objc private func push() { actions.push() }
-    @objc private func pull() { actions.pull() }
-    @objc private func stash() { actions.stash() }
-    @objc private func undo() { actions.undo() }
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -316,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RepositoryManagerWindowController.shared.close()
     }
 
-    @objc private func openDocument(_ sender: Any?) {
+    @objc func openDocument(_ sender: Any?) {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -324,140 +182,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if panel.runModal() == .OK, let url = panel.url {
             open(path: url.path)
         }
-    }
-
-    private func buildMenu() {
-        let main = NSMenu()
-        let appItem = NSMenuItem()
-        main.addItem(appItem)
-        let appMenu = NSMenu()
-        appItem.submenu = appMenu
-        let commitGraph = NSMenuItem(
-            title: "commit-graph を自動で書き出す", action: #selector(toggleWriteCommitGraph(_:)), keyEquivalent: "")
-        commitGraph.target = self
-        commitGraph.state = Settings.writeCommitGraph ? .on : .off
-        commitGraph.toolTip = "commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable --changed-paths を実行する（.git に書き込む。履歴の読み込みと path: での検索が速くなる）"
-        appMenu.addItem(commitGraph)
-        let fsmonitor = NSMenuItem(
-            title: "fsmonitor で status を速くする", action: #selector(toggleFSMonitor(_:)), keyEquivalent: "")
-        fsmonitor.target = self
-        fsmonitor.state = Settings.useFSMonitor ? .on : .off
-        fsmonitor.toolTip = "この Mac のリポジトリの status で git の fsmonitor を使う（リポジトリごとに git fsmonitor--daemon が常駐し、.git にソケットを作る）"
-        appMenu.addItem(fsmonitor)
-        let signatures = NSMenuItem(
-            title: "SSH 先のリポジトリの署名をこの Mac の鍵で検証する", action: #selector(toggleRemoteSignatureCheck(_:)), keyEquivalent: "")
-        signatures.target = self
-        signatures.state = Settings.checkRemoteSignaturesLocally ? .on : .off
-        signatures.toolTip = "SSH 先のリポジトリのコミットの署名を、この Mac の gpg・allowed_signers・信用度で検証する（外すと SSH 先の git と鍵で検証する）。この Mac にあるリポジトリは、いつもこの Mac で検証する"
-        appMenu.addItem(signatures)
-        appMenu.addItem(.separator())
-        appMenu.addItem(NSMenuItem(title: "Amon Hen を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
-
-        let fileItem = NSMenuItem()
-        main.addItem(fileItem)
-        let fileMenu = NSMenu(title: "File")
-        fileItem.submenu = fileMenu
-        let open = NSMenuItem(title: "Open…", action: #selector(openDocument(_:)), keyEquivalent: "o")
-        open.target = self
-        fileMenu.addItem(open)
-        let manager = NSMenuItem(title: "Repositories…", action: #selector(showRepositories(_:)), keyEquivalent: "O")
-        manager.target = self
-        fileMenu.addItem(manager)
-        fileMenu.addItem(NSMenuItem(title: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
-
-        let viewItem = NSMenuItem()
-        main.addItem(viewItem)
-        let viewMenu = NSMenu(title: "View")
-        viewItem.submenu = viewMenu
-        let compact = NSMenuItem(title: "One Line per Commit", action: #selector(toggleCompactRows(_:)), keyEquivalent: "")
-        compact.target = self
-        compact.state = Settings.compactHistoryRows ? .on : .off
-        let refresh = NSMenuItem(
-            title: "Refresh", action: #selector(RepositoryWindow.refreshRepository(_:)), keyEquivalent: "r")
-        refresh.toolTip = "History・ブランチ・Working Copy を読み直す（ふだんは変化を検知して自動で読み直す）"
-        viewMenu.addItem(refresh)
-        let parent = NSMenuItem(title: "Go to Parent", action: #selector(RepositoryWindow.goToParent(_:)), keyEquivalent: String(UnicodeScalar(NSDownArrowFunctionKey)!))
-        parent.keyEquivalentModifierMask = [.command, .option]
-        viewMenu.addItem(parent)
-        let child = NSMenuItem(title: "Go to Child", action: #selector(RepositoryWindow.goToChild(_:)), keyEquivalent: String(UnicodeScalar(NSUpArrowFunctionKey)!))
-        child.keyEquivalentModifierMask = [.command, .option]
-        viewMenu.addItem(child)
-        viewMenu.addItem(.separator())
-        viewMenu.addItem(compact)
-        let ancestors = NSMenuItem(
-            title: "Highlight Ancestors", action: #selector(toggleHighlightAncestors(_:)), keyEquivalent: "")
-        ancestors.target = self
-        ancestors.state = Settings.highlightAncestors ? .on : .off
-        ancestors.toolTip = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする"
-        viewMenu.addItem(ancestors)
-        let mono = NSMenuItem(
-            title: "Monospaced Commit Message", action: #selector(toggleMonospacedMessage(_:)), keyEquivalent: "")
-        mono.target = self
-        mono.state = Settings.monospacedCommitMessage ? .on : .off
-        mono.toolTip = "コミットの本文を等幅の字体で出す（72 桁で改行した本文が崩れない）"
-        viewMenu.addItem(mono)
-        let avatars = NSMenuItem(title: "Show Avatars", action: #selector(toggleAvatars(_:)), keyEquivalent: "")
-        avatars.target = self
-        avatars.state = Settings.showAvatars ? .on : .off
-        avatars.toolTip = "コミットの詳細に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）"
-        viewMenu.addItem(avatars)
-
-        // テキスト欄でのコピーや取り消しのため、標準の Edit メニューを置く。
-        let editItem = NSMenuItem()
-        main.addItem(editItem)
-        let editMenu = NSMenu(title: "Edit")
-        editItem.submenu = editMenu
-        editMenu.addItem(NSMenuItem(title: "Undo", action: Selector(("undo:")), keyEquivalent: "z"))
-        editMenu.addItem(NSMenuItem(title: "Redo", action: Selector(("redo:")), keyEquivalent: "Z"))
-        editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
-        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
-        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
-        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
-        editMenu.addItem(.separator())
-        editMenu.addItem(NSMenuItem(title: "Find…", action: #selector(DiffDocumentView.showFindBar(_:)), keyEquivalent: "f"))
-        editMenu.addItem(NSMenuItem(title: "Find Next", action: #selector(DiffDocumentView.findNext(_:)), keyEquivalent: "g"))
-        editMenu.addItem(NSMenuItem(title: "Find Previous", action: #selector(DiffDocumentView.findPrevious(_:)), keyEquivalent: "G"))
-        NSApp.mainMenu = main
-    }
-
-    @objc private func toggleAvatars(_ item: NSMenuItem) {
-        Settings.showAvatars.toggle()
-        item.state = Settings.showAvatars ? .on : .off
-    }
-
-    @objc private func toggleMonospacedMessage(_ item: NSMenuItem) {
-        Settings.monospacedCommitMessage.toggle()
-        item.state = Settings.monospacedCommitMessage ? .on : .off
-    }
-
-    @objc private func toggleHighlightAncestors(_ item: NSMenuItem) {
-        Settings.highlightAncestors.toggle()
-        item.state = Settings.highlightAncestors ? .on : .off
-    }
-
-    @objc private func toggleCompactRows(_ item: NSMenuItem) {
-        Settings.compactHistoryRows.toggle()
-        item.state = Settings.compactHistoryRows ? .on : .off
-    }
-
-    @objc private func showRepositories(_ sender: Any?) {
-        RepositoryManagerWindowController.shared.show()
-    }
-
-    @objc private func toggleRemoteSignatureCheck(_ item: NSMenuItem) {
-        Settings.checkRemoteSignaturesLocally.toggle()
-        item.state = Settings.checkRemoteSignaturesLocally ? .on : .off
-    }
-
-    @objc private func toggleFSMonitor(_ item: NSMenuItem) {
-        Settings.useFSMonitor.toggle()
-        item.state = Settings.useFSMonitor ? .on : .off
-    }
-
-    @objc private func toggleWriteCommitGraph(_ item: NSMenuItem) {
-        Settings.writeCommitGraph.toggle()
-        item.state = Settings.writeCommitGraph ? .on : .off
     }
 
     /// リポジトリをすべて閉じても終わらない（リポジトリの一覧から開き直せる）。終えるのは ⌘Q。

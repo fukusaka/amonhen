@@ -187,10 +187,6 @@ final class Actions {
         perform(["op": "fetch"])
     }
 
-    func pull() {
-        perform(["op": "pull"])
-    }
-
     /// 作業中の変更を stash する。untracked のファイルを含めるかを選べる。
     func stash() {
         let alert = NSAlert()

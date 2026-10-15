@@ -455,7 +455,19 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
     }
 
+    /// merge・rebase などの途中なら、その名前（Repository > Continue・Skip・Abort を使えるか）。
+    private(set) var sequence: String?
+
+    /// Commit > Commit（⌘↩）・Stage All を使えるか。
+    var canCommit: Bool { commitButton.isEnabled }
+    var canStageAll: Bool { stageAllButton.isEnabled }
+
+    /// メニューから: ボタンと同じ。
+    func commitFromMenu() { if canCommit { commit() } }
+    func stageAllFromMenu() { stageAll() }
+
     private func showSequence(_ sequence: String?) {
+        self.sequence = sequence
         sequenceBar.isHidden = sequence == nil
         if let sequence {
             sequenceLabel.stringValue = "\(sequence) の途中です"
