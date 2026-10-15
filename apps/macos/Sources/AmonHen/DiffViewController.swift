@@ -170,25 +170,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     /// 構文の種類ごとの色（`AmonhenSyntaxSpan` の定数の順）。明るい・暗い外観で変わる。
     private static func syntaxPalette() -> [SIMD4<Float>] {
-        var colors = [SIMD4<Float>](repeating: NSColor.labelColor.rgba, count: 16)
-        let pairs: [(Int32, NSColor)] = [
-            (AmonhenSyntaxSpan_KEYWORD, .systemPink),
-            (AmonhenSyntaxSpan_STRING, .systemRed),
-            (AmonhenSyntaxSpan_COMMENT, .systemGray),
-            (AmonhenSyntaxSpan_NUMBER, .systemPurple),
-            (AmonhenSyntaxSpan_FUNCTION, .systemBlue),
-            (AmonhenSyntaxSpan_TYPE, .systemTeal),
-            (AmonhenSyntaxSpan_CONSTANT, .systemPurple),
-            (AmonhenSyntaxSpan_PROPERTY, .systemCyan),
-            (AmonhenSyntaxSpan_ATTRIBUTE, .systemOrange),
-            (AmonhenSyntaxSpan_TAG, .systemPink),
-            (AmonhenSyntaxSpan_OPERATOR, .labelColor),
-            (AmonhenSyntaxSpan_VARIABLE, .systemPink),
-            (AmonhenSyntaxSpan_ESCAPE, .systemOrange),
-            (AmonhenSyntaxSpan_MODULE, .systemBrown),
-        ]
-        for (kind, color) in pairs { colors[Int(kind)] = color.rgba }
-        return colors
+        SyntaxColors.palette.map(\.rgba)
     }
 
     private func updateDocumentSize() {
