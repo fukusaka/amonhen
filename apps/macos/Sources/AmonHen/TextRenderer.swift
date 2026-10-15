@@ -37,9 +37,9 @@ final class GlyphAtlas {
     }
 
     /// 空白などで描くものがなければ nil。アトラスが一杯になったら空にして詰め直す（呼び出し側は描き直す）。
-    func entry(font: CTFont, glyph: CGGlyph, subpixel: Int, scale: CGFloat) -> Entry? {
-        let key = Key(font: CTFontCopyPostScriptName(font) as String, size: CTFontGetSize(font), glyph: glyph,
-                      subpixel: UInt8(subpixel))
+    /// `fontName` はフォントの PostScript 名（グリフごとに作らないよう、呼び出し側が run ごとに 1 回求める）。
+    func entry(font: CTFont, fontName: String, glyph: CGGlyph, subpixel: Int, scale: CGFloat) -> Entry? {
+        let key = Key(font: fontName, size: CTFontGetSize(font), glyph: glyph, subpixel: UInt8(subpixel))
         if let cached = entries[key] { return cached }
         let entry = rasterize(font: font, glyph: glyph, subpixel: subpixel, scale: scale)
         entries[key] = entry
@@ -180,10 +180,29 @@ final class TextRenderer {
     /// `string` を `font` で並べる。フォントにない文字は Core Text が代わりのフォントを選ぶ。
     /// `ranges`（UTF-16 の符号単位）を渡すと、その横位置も求める（単語の強調に使う）。
     func shape(_ string: CFString, font: CTFont, scale: CGFloat, ranges: [Range<Int>] = []) -> ShapedLine {
-        let attributed = CFAttributedStringCreate(
-            nil, string, [kCTFontAttributeName: font] as CFDictionary)!
+        shape(Self.prepare(string, font: font), scale: scale, ranges: ranges)
+    }
+
+    /// Core Text で並べた結果（アトラスに入れる前）。どのスレッドで作ってもよい（History は裏で作っておく）。
+    nonisolated struct PreparedLine: @unchecked Sendable {
+        nonisolated struct Run {
+            let font: CTFont
+            let fontName: String
+            let glyphs: [CGGlyph]
+            let positions: [CGFloat]
+            let indices: [Int32]
+        }
+
+        let runs: [Run]
+        let width: CGFloat
+        let line: CTLine
+    }
+
+    /// `string` を `font` で並べる（アトラスに触れないので、メインスレッド以外でも呼べる）。
+    nonisolated static func prepare(_ string: CFString, font: CTFont) -> PreparedLine {
+        let attributed = CFAttributedStringCreate(nil, string, [kCTFontAttributeName: font] as CFDictionary)!
         let line = CTLineCreateWithAttributedString(attributed)
-        var glyphs: [ShapedLine.Glyph] = []
+        var runs: [PreparedLine.Run] = []
         for run in CTLineGetGlyphRuns(line) as! [CTRun] {
             let count = CTRunGetGlyphCount(run)
             guard count > 0 else { continue }
@@ -195,19 +214,32 @@ final class TextRenderer {
             CTRunGetGlyphs(run, CFRange(location: 0, length: count), &ids)
             CTRunGetPositions(run, CFRange(location: 0, length: count), &positions)
             CTRunGetStringIndices(run, CFRange(location: 0, length: count), &indices)
-            for i in 0..<count {
-                let x = positions[i].x * scale
+            runs.append(.init(
+                font: runFont, fontName: CTFontCopyPostScriptName(runFont) as String, glyphs: ids,
+                positions: positions.map(\.x), indices: indices.map { Int32($0) }))
+        }
+        return PreparedLine(runs: runs, width: CTLineGetTypographicBounds(line, nil, nil, nil), line: line)
+    }
+
+    /// 並べた結果のグリフをアトラスから引く（足りないグリフはここでラスタライズする）。メインスレッドで呼ぶ。
+    func shape(_ prepared: PreparedLine, scale: CGFloat, ranges: [Range<Int>] = []) -> ShapedLine {
+        var glyphs: [ShapedLine.Glyph] = []
+        glyphs.reserveCapacity(prepared.runs.reduce(0) { $0 + $1.glyphs.count })
+        for run in prepared.runs {
+            for i in run.glyphs.indices {
+                let x = run.positions[i] * scale
                 let whole = floor(x)
                 let subpixel = Int(((x - whole) * CGFloat(GlyphAtlas.subpixelSteps)).rounded()) % GlyphAtlas.subpixelSteps
-                if let entry = atlas.entry(font: runFont, glyph: ids[i], subpixel: subpixel, scale: scale) {
-                    glyphs.append(.init(entry: entry, penX: Float(whole), index: Int32(indices[i])))
+                if let entry = atlas.entry(font: run.font, fontName: run.fontName, glyph: run.glyphs[i], subpixel: subpixel, scale: scale) {
+                    glyphs.append(.init(entry: entry, penX: Float(whole), index: run.indices[i]))
                 }
             }
         }
+        let line = prepared.line
         let spans = ranges.map { r in
             (CTLineGetOffsetForStringIndex(line, r.lowerBound, nil), CTLineGetOffsetForStringIndex(line, r.upperBound, nil))
         }
-        return ShapedLine(glyphs: glyphs, width: CTLineGetTypographicBounds(line, nil, nil, nil), spans: spans, line: line)
+        return ShapedLine(glyphs: glyphs, width: prepared.width, spans: spans, line: line)
     }
 
     func addRect(_ rect: CGRect, color: SIMD4<Float>) {
