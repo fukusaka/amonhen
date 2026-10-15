@@ -9,6 +9,7 @@ publish.workspace = true
 crate-type = ["staticlib", "rlib"]
 
 [dependencies]
+amonhen-backend-cli.workspace = true
 amonhen-backend-gix.workspace = true
 amonhen-core.workspace = true
 amonhen-layout.workspace = true

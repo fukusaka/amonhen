@@ -426,6 +426,12 @@ extern "C" {
 const char *amonhen_last_error(void);
 
 /**
+ * 手元のリポジトリの status で、git の fsmonitor（`git fsmonitor--daemon`）を使うか（macOS と Windows）。
+ * リポジトリごとに daemon が常駐し、`.git` にソケットを作る。
+ */
+void amonhen_set_fsmonitor(bool enabled);
+
+/**
  * daemon 越しのリポジトリを開く。`location` は `daemon:/path`（手元の `daemon` を起動）か
  * `ssh://[user@]host[:port]/path`（SSH 先に daemon を送り込んで起動）。SSH 先に送る daemon は
  * `daemons_dir` の `amonhend-<os>-<arch>`（SSH 先が手元と同じ OS と CPU なら `daemon`）。ssh のコマンドは

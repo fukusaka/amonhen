@@ -82,6 +82,7 @@ dependencies = [
 name = "amonhen-ffi-c"
 version = "0.1.0"
 dependencies = [
+ "amonhen-backend-cli",
  "amonhen-backend-gix",
  "amonhen-core",
  "amonhen-layout",

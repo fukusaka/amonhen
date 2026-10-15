@@ -20,6 +20,12 @@ public struct AmonhenError: Error, CustomStringConvertible {
 public final class Repository: @unchecked Sendable {
     let raw: OpaquePointer
 
+    /// 手元のリポジトリの status で、git の fsmonitor を使うか。リポジトリごとに `git fsmonitor--daemon` が
+    /// 常駐して変化を覚えておき、status が全ファイルを調べずに済む。
+    public static func setFSMonitor(_ enabled: Bool) {
+        amonhen_set_fsmonitor(enabled)
+    }
+
     /// `cacheDirectory` を渡すと、History をそこに永続化し、次に開いたときすぐ表示できる。
     public init(path: String, cacheDirectory: URL? = nil) throws {
         let raw = if let cacheDirectory {
