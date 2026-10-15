@@ -86,6 +86,7 @@ dependencies = [
  "amonhen-layout",
  "amonhen-model",
  "amonhen-projection",
+ "amonhen-remote",
  "amonhen-watch",
  "cbindgen",
  "tempfile",
