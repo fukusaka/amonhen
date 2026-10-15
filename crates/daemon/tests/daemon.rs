@@ -61,3 +61,78 @@ fn refuses_a_missing_repository() {
     .unwrap();
     assert!(RemoteBackend::connect(conn).is_err());
 }
+
+/// SSH の代わりに、送られたコマンドを手元で（偽の HOME で）実行するスクリプト。
+fn fake_ssh(dir: &Path, home: &Path) -> std::path::PathBuf {
+    let script = dir.join("fake-ssh");
+    std::fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -T) shift ;;
+        -o|-p) shift 2 ;;
+        *) break ;;
+    esac
+done
+shift
+HOME='{}' exec sh -c "$*"
+"#,
+            home.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+#[cfg(unix)]
+#[test]
+fn sends_the_daemon_once_and_reuses_it() {
+    use amonhen_remote::ssh;
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_dir = tmp.path().join("repo");
+    std::fs::create_dir(&repo_dir).unwrap();
+    git(&repo_dir, &["init", "-q", "-b", "main"]);
+    git(&repo_dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    let home = tmp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let ssh_program = fake_ssh(tmp.path(), &home);
+    // 送り込む daemon の置き場所。手元の OS 向けに、テストで作った amonhend を置く。
+    let bundled = tmp.path().join("daemons");
+    std::fs::create_dir(&bundled).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_amonhend"),
+        bundled.join(format!("amonhend-{}", ssh::local_platform())),
+    )
+    .unwrap();
+    let daemons = ssh::Daemons {
+        dir: bundled,
+        local: None,
+    };
+    let target = ssh::Target::parse(&format!("ssh://dev{}", repo_dir.display())).unwrap();
+
+    let conn = ssh::connect(ssh_program.to_str().unwrap(), &target, &daemons).unwrap();
+    let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
+    assert_eq!(repo.load_history().unwrap().graph.len(), 1);
+    let cache = home.join(".cache/amonhen");
+    let sent: Vec<_> = std::fs::read_dir(&cache)
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(sent.len(), 1, "daemon を 1 つ送った: {sent:?}");
+    let first = std::fs::metadata(&sent[0]).unwrap().modified().unwrap();
+    drop(repo);
+
+    // 2 回目は送らずに、置いてある daemon を使う。
+    let conn = ssh::connect(ssh_program.to_str().unwrap(), &target, &daemons).unwrap();
+    let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
+    assert_eq!(repo.load_history().unwrap().graph.len(), 1);
+    assert_eq!(
+        std::fs::metadata(&sent[0]).unwrap().modified().unwrap(),
+        first
+    );
+    assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 1);
+}
