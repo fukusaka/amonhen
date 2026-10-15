@@ -32,9 +32,10 @@ public final class Repository: @unchecked Sendable {
     }
 
     /// daemon 越しのリポジトリを開く。`location` は `daemon:/path` か `ssh://[user@]host[:port]/path`、
-    /// `daemon` は手元の `amonhend` のパス（`daemon:` のときに起動する）。
-    public init(location: String, daemon: String, cacheDirectory: URL? = nil) throws {
-        guard let raw = amonhen_repo_open_location(location, daemon, cacheDirectory?.path) else {
+    /// `daemon` は手元の `amonhend` のパス（`daemon:` のときに起動する）、`daemons` は SSH 先に送り込む
+    /// `amonhend-<os>-<arch>` を置いたディレクトリ。
+    public init(location: String, daemon: String, daemons: String, cacheDirectory: URL? = nil) throws {
+        guard let raw = amonhen_repo_open_location(location, daemon, daemons, cacheDirectory?.path) else {
             throw AmonhenError.last()
         }
         self.raw = raw

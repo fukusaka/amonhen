@@ -30,14 +30,27 @@ enum Daemon {
     static var path: String {
         if let override = ProcessInfo.processInfo.environment["AMONHEN_DAEMON"] { return override }
         if let bundled = Bundle.main.url(forAuxiliaryExecutable: "amonhend") { return bundled.path }
-        // 開発中: 実行ファイルの場所から上へ辿り、リポジトリの target/release/amonhend を探す。
+        return developmentFile("target/release/amonhend") ?? "amonhend"
+    }
+
+    /// SSH 先に送り込む `amonhend-<os>-<arch>` の置き場所（アプリの Resources/daemons、開発中は dist/linux）。
+    static var bundledDirectory: String {
+        if let resources = Bundle.main.resourceURL?.appendingPathComponent("daemons"),
+           FileManager.default.fileExists(atPath: resources.path) {
+            return resources.path
+        }
+        return developmentFile("dist/linux") ?? ""
+    }
+
+    /// 開発中: 実行ファイルの場所から上へ辿り、リポジトリの中の `relative` を探す。
+    private static func developmentFile(_ relative: String) -> String? {
         var dir = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
         while dir.path != "/" {
-            let candidate = dir.appendingPathComponent("target/release/amonhend")
-            if FileManager.default.isExecutableFile(atPath: candidate.path) { return candidate.path }
+            let candidate = dir.appendingPathComponent(relative)
+            if FileManager.default.fileExists(atPath: candidate.path) { return candidate.path }
             dir.deleteLastPathComponent()
         }
-        return "amonhend"
+        return nil
     }
 }
 

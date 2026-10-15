@@ -160,21 +160,34 @@ fn str_arg<'a>(s: *const c_char) -> Result<&'a str, std::str::Utf8Error> {
 }
 
 /// daemon 越しのリポジトリを開く。`location` は `daemon:/path`（手元の `daemon` を起動）か
-/// `ssh://[user@]host[:port]/path`（SSH 先の `amonhend` を起動）。`cache_dir` を渡すと History を永続化する。
+/// `ssh://[user@]host[:port]/path`（SSH 先に daemon を送り込んで起動）。SSH 先に送る daemon は
+/// `daemons_dir` の `amonhend-<os>-<arch>`（SSH 先が手元と同じ OS と CPU なら `daemon`）。ssh のコマンドは
+/// 環境変数 `AMONHEN_SSH` で差し替えられる。`cache_dir` を渡すと History を永続化する。
 ///
 /// # Safety
-/// `location`・`daemon` は NUL 終端の UTF-8、`cache_dir` は NULL か NUL 終端の UTF-8 であること。
+/// `location`・`daemon`・`daemons_dir` は NUL 終端の UTF-8、`cache_dir` は NULL か NUL 終端の UTF-8 であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_repo_open_location(
     location: *const c_char,
     daemon: *const c_char,
+    daemons_dir: *const c_char,
     cache_dir: *const c_char,
 ) -> *mut AmonhenRepo {
     let result = (|| -> amonhen_model::Result<Repository> {
         let location = str_arg(location)?;
         let daemon = str_arg(daemon)?;
-        let (program, args) = amonhen_remote::location::launch_command(location, daemon)?;
-        let conn = amonhen_remote::Connection::spawn(&program, &args)?;
+        let conn = if location.starts_with("ssh://") {
+            use amonhen_remote::ssh;
+            let daemons = ssh::Daemons {
+                dir: str_arg(daemons_dir)?.into(),
+                local: Some((ssh::local_platform(), daemon.into())),
+            };
+            let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+            ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)?
+        } else {
+            let (program, args) = amonhen_remote::location::launch_command(location, daemon)?;
+            amonhen_remote::Connection::spawn(&program, &args)?
+        };
         let backend = amonhen_remote::RemoteBackend::connect(conn)?;
         // 永続キャッシュは場所の文字列ごとに手元に持つ（つなぎ直したら新しいコミットだけを受け取る）。
         Ok(if cache_dir.is_null() {

@@ -31,9 +31,9 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp apps/macos/.build/release/AmonHen "$app/Contents/MacOS/AmonHen"
 # daemon 越しに開くときに起動する（`daemon:` の場所）。
 cp target/release/amonhend "$app/Contents/MacOS/amonhend"
-# SSH 先に送り込む Linux 用の amonhend。
-mkdir -p "$app/Contents/Resources/linux"
-cp dist/linux/amonhend-linux-* "$app/Contents/Resources/linux/"
+# SSH 先に送り込む amonhend（Linux 用。SSH 先が macOS なら、上の amonhend を送る）。
+mkdir -p "$app/Contents/Resources/daemons"
+cp dist/linux/amonhend-linux-* "$app/Contents/Resources/daemons/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

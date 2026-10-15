@@ -28,7 +28,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "io.github.fukusaka.amonhen")
         repository = if RepositoryLocation.isRemote(location) {
-            try Repository(location: location, daemon: Daemon.path, cacheDirectory: cacheDirectory)
+            try Repository(location: location, daemon: Daemon.path, daemons: Daemon.bundledDirectory, cacheDirectory: cacheDirectory)
         } else {
             try Repository(path: location, cacheDirectory: cacheDirectory)
         }

@@ -427,13 +427,16 @@ const char *amonhen_last_error(void);
 
 /**
  * daemon 越しのリポジトリを開く。`location` は `daemon:/path`（手元の `daemon` を起動）か
- * `ssh://[user@]host[:port]/path`（SSH 先の `amonhend` を起動）。`cache_dir` を渡すと History を永続化する。
+ * `ssh://[user@]host[:port]/path`（SSH 先に daemon を送り込んで起動）。SSH 先に送る daemon は
+ * `daemons_dir` の `amonhend-<os>-<arch>`（SSH 先が手元と同じ OS と CPU なら `daemon`）。ssh のコマンドは
+ * 環境変数 `AMONHEN_SSH` で差し替えられる。`cache_dir` を渡すと History を永続化する。
  *
  * # Safety
- * `location`・`daemon` は NUL 終端の UTF-8、`cache_dir` は NULL か NUL 終端の UTF-8 であること。
+ * `location`・`daemon`・`daemons_dir` は NUL 終端の UTF-8、`cache_dir` は NULL か NUL 終端の UTF-8 であること。
  */
 AmonhenRepo *amonhen_repo_open_location(const char *location,
                                         const char *daemon,
+                                        const char *daemons_dir,
                                         const char *cache_dir);
 
 /**
