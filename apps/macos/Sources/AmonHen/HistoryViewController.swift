@@ -110,6 +110,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
     /// 行ごとに並べた文字。History が変わったら捨てる。
     private var rowText: [Int: RowText] = [:]
+    /// 裏で並べておいた行（アトラスに入れる前）。画面に出すときに `rowText` に移す。
+    private var preparedRows: [Int: RowPreparation.Row] = [:]
+    private var rowFonts: RowPreparation.Fonts { RowPreparation.Fonts(subject: font, meta: metaFont) }
     private var ellipsis: TextRenderer.ShapedLine?
     private var metaEllipsis: TextRenderer.ShapedLine?
     private let font = CTFontCreateUIFontForLanguage(.system, NSFont.systemFontSize, nil)!
@@ -370,6 +373,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         chunks.removeAll()
         loadingChunks.removeAll()
         rowText.removeAll()
+        preparedRows.removeAll()
         // 行が変わるので、検索の結果は捨てる（問い合わせは残し、Enter で探し直せる）。
         clearSearchResults()
         tableView.reloadData()
@@ -397,8 +401,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private func redrawText() {
         guard history != nil, textView.window != nil else { return }
-        buildText(scale: textView.metalLayer.contentsScale)
-        text.draw(layer: textView.metalLayer, background: .zero)
+        FrameProfile.measure("text: build") { buildText(scale: textView.metalLayer.contentsScale) }
+        FrameProfile.measure("text: submit") { text.draw(layer: textView.metalLayer, background: .zero) }
     }
 
     /// 1 行・2 行の表示に合わせて、行の高さ（表とグラフで共通）を決める。
@@ -412,6 +416,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let selected = tableView.selectedRow
         applyRowStyle()
         rowText.removeAll()
+        // 並べ直しが要るので、行の情報は読み直す（裏で並べ直される）。
+        preparedRows.removeAll()
+        chunks.removeAll()
+        loadingChunks.removeAll()
         tableView.noteHeightOfRows(withIndexesChanged: IndexSet(integersIn: 0..<tableView.numberOfRows))
         if selected >= 0 { select(row: selected) }
         layoutGraphView()
@@ -463,7 +471,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let selection = tableView.selectedRowIndexes
         if rowText.count > 4096 { rowText.removeAll() }
         for row in rows.location..<min(history.rowCount, rows.location + rows.length) {
-            guard let line = shapedRow(row, scale: scale) else { continue }
+            guard let line = FrameProfile.measure("text: row text", { shapedRow(row, scale: scale) }) else { continue }
             let rowTop = tableView.rect(ofRow: row).minY - scrollY
             let isSelected = selection.contains(row)
             if !isSelected, searchRowSet.contains(row) {
@@ -473,7 +481,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             }
             var x = column.minX - originX
             let end = column.maxX - originX
-            if let id = history.commitID(row: row), let labels = refLabels[id] {
+            let labels = FrameProfile.measure("text: commit id + labels (FFI)") {
+                history.commitID(row: row).flatMap { refLabels[$0] }
+            }
+            if let labels {
                 x = drawLabels(labels, x: x, maxX: end - 40, baseline: rowTop + subjectBaseline, scale: scale,
                                selected: isSelected && focused)
             }
@@ -524,34 +535,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         return (base.withAlphaComponent(selected ? 0.45 : 0.22).rgba, (selected ? NSColor.white : NSColor.labelColor).rgba)
     }
 
-    private static let shortDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .short
-        f.timeStyle = .none
-        return f
-    }()
-
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .short
-        return f
-    }()
-
     private func shapedRow(_ row: Int, scale: CGFloat) -> RowText? {
         if let cached = rowText[row] { return cached }
-        guard let chunk = chunk(row: row) else { return nil }
-        let subject = chunk.withSubject(row: row) { text.shape($0, font: font, scale: scale) }
-        let date = chunk.authorTime(row: row)
-        let meta: CFString
-        if Settings.compactHistoryRows {
-            // 1 行では件名に幅を譲り、作者と短い日時だけにする（ID は詳細に出る）。
-            meta = "\(chunk.authorName(row: row))  \(Self.shortDateFormatter.string(from: date))" as CFString
-        } else {
-            let short = history?.commitID(row: row).map { $0.prefix(4).map { String(format: "%02x", $0) }.joined() } ?? ""
-            meta = "\(chunk.authorName(row: row))  ·  \(Self.dateFormatter.string(from: date))  ·  \(short)" as CFString
+        // 裏で並べておいた行なら、アトラスからグリフを引くだけで済む。
+        let prepared = preparedRows.removeValue(forKey: row) ?? chunk(row: row).map { chunk in
+            RowPreparation.prepare(row: row, chunk: chunk, history: history, fonts: rowFonts, compact: Settings.compactHistoryRows)
         }
-        let line = RowText(subject: subject, meta: text.shape(meta, font: metaFont, scale: scale))
+        guard let prepared else { return nil }
+        let line = RowText(subject: text.shape(prepared.subject, scale: scale), meta: text.shape(prepared.meta, scale: scale))
         rowText[row] = line
         return line
     }
@@ -600,6 +591,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 Task { @MainActor in self?.measurement?.gpuDone.append(gpuEnd - eventTime) }
             }
         }
+        FrameProfile.measure("graph: total") {
         renderer.draw(history: history, layer: graphView.metalLayer, scrollY: scrollY, onCompleted: onCompleted) {
             [weak self] presented in
             guard let eventTime, presented > 0 else { return }
@@ -608,6 +600,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 measurement?.latency.append(presented - eventTime)
                 self?.onLatency?(presented - eventTime)
             }
+        }
         }
     }
 
@@ -731,6 +724,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     func measureScroll(frames: Int, rowsPerFrame: Double, completion: @escaping (String) -> Void) {
         let m = ScrollMeasurement(frames: frames, step: rowsPerFrame * Double(renderer.metrics.rowHeight), completion: completion)
         measurement = m
+        FrameProfile.reset()
+        FrameProfile.enabled = true
         m.link = view.displayLink(target: self, selector: #selector(measureFrame(_:)))
         m.link?.add(to: .main, forMode: .common)
     }
@@ -741,8 +736,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             link.invalidate()
             // 最後のフレームが表示されるのを待ってからまとめる。
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                FrameProfile.enabled = false
                 m.completion(m.summary(refresh: link.duration)
-                    + "\nrenderer: drawn \(self.renderer.drawnFrames)  skipped \(self.renderer.skippedFrames)")
+                    + "\nrenderer: drawn \(self.renderer.drawnFrames)  skipped \(self.renderer.skippedFrames)"
+                    + "\nbreakdown per frame:\n" + FrameProfile.summary())
                 self.measurement = nil
             }
             return
@@ -756,6 +753,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         scrollView.reflectScrolledClipView(clip)
         tableView.displayIfNeeded()
         let end = CACurrentMediaTime()
+        FrameProfile.endFrame()
         m.work.append(end - start)
         m.frame += 1
         if m.frame >= m.frames { m.link = nil }
@@ -806,13 +804,28 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
               chunks[index] == nil, !loadingChunks.contains(index) else { return }
         loadingChunks.insert(index)
         let rows = index * Self.chunkRows..<min(history.rowCount, (index + 1) * Self.chunkRows)
+        let fonts = rowFonts
+        let compact = Settings.compactHistoryRows
         Task {
-            let chunk = await Task.detached(priority: .userInitiated) { try? history.chunk(rows: rows) }.value
+            // 件名などを読んだら、同じ裏のスレッドで行の文字も並べておく（Core Text の処理をメインスレッドから外す）。
+            let (chunk, prepared) = await Task.detached(priority: .userInitiated) {
+                () -> (HistoryChunk?, [Int: RowPreparation.Row]) in
+                guard let chunk = try? history.chunk(rows: rows) else { return (nil, [:]) }
+                var prepared: [Int: RowPreparation.Row] = [:]
+                for row in rows {
+                    prepared[row] = RowPreparation.prepare(
+                        row: row, chunk: chunk, history: history, fonts: fonts, compact: compact)
+                }
+                return (chunk, prepared)
+            }.value
             do {
-                // 読んでいる間に History が入れ替わっていたら捨てる。
+                // 読んでいる間に History や行の表示が変わっていたら捨てる。
                 guard self.history === history else { return }
                 self.loadingChunks.remove(index)
                 self.chunks[index] = chunk
+                if compact == Settings.compactHistoryRows {
+                    self.preparedRows.merge(prepared) { new, _ in new }
+                }
                 let visible = self.tableView.rows(in: self.tableView.visibleRect)
                 let lower = max(rows.lowerBound, visible.location)
                 let upper = min(rows.upperBound, visible.location + visible.length)
@@ -947,6 +960,48 @@ final class ScrollMotionLog {
             (last.t - first.t) * 1000, abs(last.y - first.y), peak?.v ?? 0, (peak?.t ?? 0) * 1000, tailSpeed))
         print("速度の推移（100 ms ごと）: " + profile.joined(separator: " ") + "\n")
         fflush(stdout)
+    }
+}
+
+/// History の行の文字を並べる（どのスレッドからでも呼べる）。チャンクを裏で読んだときに一緒に行う。
+enum RowPreparation {
+    nonisolated struct Fonts: @unchecked Sendable {
+        let subject: CTFont
+        let meta: CTFont
+    }
+
+    nonisolated struct Row: @unchecked Sendable {
+        let subject: TextRenderer.PreparedLine
+        let meta: TextRenderer.PreparedLine
+    }
+
+    // DateFormatter は書式を変えなければ複数のスレッドから使える。
+    nonisolated(unsafe) private static let shortDate: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .short
+        f.timeStyle = .none
+        return f
+    }()
+
+    nonisolated(unsafe) private static let date: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
+    nonisolated static func prepare(row: Int, chunk: HistoryChunk, history: History?, fonts: Fonts, compact: Bool) -> Row {
+        let subject = chunk.withSubject(row: row) { TextRenderer.prepare($0, font: fonts.subject) }
+        let time = chunk.authorTime(row: row)
+        let meta: String
+        if compact {
+            // 1 行では件名に幅を譲り、作者と短い日時だけにする（ID は詳細に出る）。
+            meta = "\(chunk.authorName(row: row))  \(shortDate.string(from: time))"
+        } else {
+            let short = history?.commitID(row: row).map { $0.prefix(4).map { String(format: "%02x", $0) }.joined() } ?? ""
+            meta = "\(chunk.authorName(row: row))  ·  \(date.string(from: time))  ·  \(short)"
+        }
+        return Row(subject: subject, meta: TextRenderer.prepare(meta as CFString, font: fonts.meta))
     }
 }
 
