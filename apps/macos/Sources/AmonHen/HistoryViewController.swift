@@ -383,6 +383,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc private func contentDidScroll() {
+        motion?.add(y: scrollView.contentView.bounds.minY)
         layoutGraphView()
     }
 
@@ -413,6 +414,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     // MARK: - 計測
 
     private var measurement: ScrollMeasurement?
+    private var motion: ScrollMotionLog?
+
+    /// トラックパッドでのスクロールを 1 回ずつ記録する（`--log-scroll`）。NSScrollView は続くイベントを
+    /// 自分で受け取るのでイベントは見えない。代わりに表の位置の動きを記録し、減速の仕方を確かめる。
+    func logScrollGestures() {
+        view.window?.title += "（スクロールを記録中）"
+        motion = ScrollMotionLog()
+    }
 
     /// 表示のリフレッシュごとに `rowsPerFrame` 行ずつ、`frames` フレーム分スクロールして測る。
     func measureScroll(frames: Int, rowsPerFrame: Double, completion: @escaping (String) -> Void) {
@@ -605,6 +614,42 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 文字は `textView` に描くので、セルは置かない。
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         nil
+    }
+}
+
+/// スクロール位置の動きの記録。0.3 秒止まったら 1 回分としてまとめる。
+final class ScrollMotionLog {
+    private var samples: [(t: CFTimeInterval, y: CGFloat)] = []
+    private var idle: DispatchWorkItem?
+
+    func add(y: CGFloat) {
+        samples.append((CACurrentMediaTime(), y))
+        idle?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.finish() }
+        idle = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+    }
+
+    private func finish() {
+        defer { samples.removeAll() }
+        guard samples.count > 3, let first = samples.first, let last = samples.last else { return }
+        // 約 25 ms ごとの速度（pt/s）。
+        var speeds: [(t: CFTimeInterval, v: CGFloat)] = []
+        var a = first
+        for s in samples.dropFirst() where s.t - a.t >= 0.025 {
+            speeds.append((s.t - first.t, abs(s.y - a.y) / CGFloat(s.t - a.t)))
+            a = s
+        }
+        let peak = speeds.max { $0.v < $1.v }
+        // 最後の 50 ms の速度。滑らかに止まれば小さく、途中で打ち切られれば大きいまま。
+        let tail = samples.last { last.t - $0.t >= 0.05 }
+        let tailSpeed = tail.map { abs(last.y - $0.y) / CGFloat(last.t - $0.t) } ?? 0
+        let profile = speeds.enumerated().filter { $0.offset % 4 == 0 }.map { String(format: "%.0f", $0.element.v) }
+        print(String(
+            format: "動いた時間 %.0f ms、距離 %.0f pt、最高速度 %.0f pt/s（%.0f ms 時点）、最後の 50 ms の速度 %.0f pt/s",
+            (last.t - first.t) * 1000, abs(last.y - first.y), peak?.v ?? 0, (peak?.t ?? 0) * 1000, tailSpeed))
+        print("速度の推移（100 ms ごと）: " + profile.joined(separator: " ") + "\n")
+        fflush(stdout)
     }
 }
 

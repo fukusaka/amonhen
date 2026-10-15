@@ -155,6 +155,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
                 }
             }
         }
+        if CommandLine.arguments.contains("--log-scroll") { history.logScrollGestures() }
         if let output = AppDelegate.option("--snapshot") {
             let selectFirst = CommandLine.arguments.contains("--select-first")
             let wait = selectFirst || CommandLine.arguments.contains("--working-copy")

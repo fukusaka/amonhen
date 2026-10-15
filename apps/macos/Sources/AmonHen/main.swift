@@ -193,7 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for option in ["--snapshot", "--scroll-rows"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
-        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy"].contains($0) }
+        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--log-scroll"].contains($0) }
         if let path = args.first { return path }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
