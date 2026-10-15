@@ -387,8 +387,34 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         layoutGraphView()
     }
 
+    /// レーンの位置が動いている間だけ、表示のリフレッシュごとに描き直す。
+    private var laneAnimation: CADisplayLink?
+    private var lastGraphDraw: CFTimeInterval = 0
+
+    private func updateLaneAnimation() {
+        guard renderer.isAnimating else {
+            laneAnimation?.isPaused = true
+            return
+        }
+        if laneAnimation == nil {
+            let link = graphView.displayLink(target: self, selector: #selector(laneAnimationTick))
+            link.add(to: .main, forMode: .common)
+            laneAnimation = link
+        }
+        laneAnimation?.isPaused = false
+    }
+
+    @objc private func laneAnimationTick() {
+        // スクロールで同じフレームにもう描いていれば描かない。
+        if CACurrentMediaTime() - lastGraphDraw > 0.004 { redrawGraph() }
+    }
+
     private func redrawGraph() {
         guard let history else { return }
+        defer {
+            lastGraphDraw = CACurrentMediaTime()
+            updateLaneAnimation()
+        }
         // グラフのビューの上端が、表の座標でどこに当たるか。
         let scrollY = Float(tableView.convert(NSPoint(x: 0, y: 0), from: graphView).y)
         let eventTime = pendingPresentStart ?? NSApp.currentEvent?.timestamp

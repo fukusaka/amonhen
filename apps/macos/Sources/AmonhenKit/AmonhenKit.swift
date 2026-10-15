@@ -118,6 +118,15 @@ public final class History: @unchecked Sendable {
         }
     }
 
+    /// `rows` を表示するときの、レーンごとの中心の横位置（魚眼）を `positions` に書く（レーンの数に合わせる）。
+    public func lanePositions(rows: Range<Int>, metrics: AmonhenLaneMetrics, into positions: inout [Float]) {
+        if positions.count != laneCount { positions = [Float](repeating: 0, count: laneCount) }
+        _ = positions.withUnsafeMutableBufferPointer {
+            amonhen_history_lane_positions(
+                raw, UInt32(rows.lowerBound), UInt32(rows.upperBound), metrics, $0.baseAddress, UInt32($0.count))
+        }
+    }
+
     /// `rows` の件名・作者・日時。
     public func chunk(rows: Range<Int>) throws -> HistoryChunk {
         let start = UInt32(clamping: rows.lowerBound)

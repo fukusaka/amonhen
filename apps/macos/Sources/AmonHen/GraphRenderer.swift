@@ -13,7 +13,8 @@ final class GraphRenderer {
         var width: Float
         var color: UInt32
         var kind: UInt32
-        var pad: UInt32 = 0
+        /// 不透明度（詰めたレーンの線は薄くする）。
+        var alpha: Float = 1
 
         static let line: UInt32 = 0
         static let circle: UInt32 = 1
@@ -33,6 +34,10 @@ final class GraphRenderer {
         var nodeRadius: Float = 4
         var lineWidth: Float = 1.6
         var firstParentWidth: Float = 2.4
+        /// 線だけのレーンの幅（魚眼で詰めたとき）。入りきらなければ 0 まで詰めて、薄い帯にする。
+        var thinLaneWidth: Float = 3
+        var minLaneWidth: Float = 7
+        var minThinLaneWidth: Float = 0
     }
 
     let device: MTLDevice
@@ -77,8 +82,60 @@ final class GraphRenderer {
         }
     }
 
+    // MARK: - レーンの横位置（魚眼）
+
+    /// 今描いているレーンの位置と、向かっている位置（コアが見えている範囲から決める）。
+    private var currentX: [Float] = []
+    private var targetX: [Float] = []
+    private var targetKey: (history: ObjectIdentifier, rows: Range<Int>, width: Float)?
+    private var lastAdvance: CFTimeInterval = 0
+    /// レーンの位置がまだ動いている（FE は止まるまで描き直す）。
+    private(set) var isAnimating = false
+
     func laneX(_ lane: UInt16) -> Float {
-        metrics.leftInset + Float(lane) * metrics.laneWidth
+        let i = Int(lane)
+        let x = i < currentX.count ? currentX[i] : Float(i) * metrics.laneWidth + metrics.laneWidth / 2
+        return metrics.leftInset - metrics.laneWidth / 2 + x
+    }
+
+    /// 見えている行 `rows` に合わせてレーンの位置を決め、`animate` なら今の位置から少しずつ近づける。
+    private func updateLanes(history: History, rows: Range<Int>, width: Float, animate: Bool) {
+        // 少し先の行まで含めて決め、スクロールで点が入ってくる直前に広げ始める。
+        let margin = 4
+        let window = max(0, rows.lowerBound - margin)..<min(history.rowCount, rows.upperBound + margin)
+        let key = (ObjectIdentifier(history), window, width)
+        let historyChanged = targetKey?.history != key.0
+        if targetKey == nil || historyChanged || targetKey!.rows != window || targetKey!.width != width {
+            let m = AmonhenLaneMetrics(
+                full: metrics.laneWidth, thin: metrics.thinLaneWidth, min_full: metrics.minLaneWidth,
+                min_thin: metrics.minThinLaneWidth,
+                available: width - (metrics.leftInset - metrics.laneWidth / 2) - 4)
+            history.lanePositions(rows: window, metrics: m, into: &targetX)
+            targetKey = key
+            // 別の History に替わったときは、動かさずにその位置から始める。
+            if historyChanged || currentX.count != targetX.count { currentX = targetX }
+        }
+        let now = CACurrentMediaTime()
+        let dt = min(Float(now - lastAdvance), 0.05)
+        lastAdvance = now
+        guard animate else {
+            currentX = targetX
+            isAnimating = false
+            return
+        }
+        // 約 0.15 秒で近づく指数的な動き。
+        let k = min(1, dt * 18)
+        var moving = false
+        for i in currentX.indices {
+            let d = targetX[i] - currentX[i]
+            if abs(d) < 0.05 {
+                currentX[i] = targetX[i]
+            } else {
+                currentX[i] += d * k
+                moving = true
+            }
+        }
+        isAnimating = moving
     }
 
     func rowY(_ row: UInt32, scrollY: Float) -> Float {
@@ -99,7 +156,7 @@ final class GraphRenderer {
         }
         drawnFrames += 1
         encode(history: history, into: drawable.texture, size: size, scale: Float(layer.contentsScale),
-               scrollY: scrollY, commands: commands)
+               scrollY: scrollY, animate: true, commands: commands)
         if let onPresented {
             drawable.addPresentedHandler { onPresented($0.presentedTime) }
         }
@@ -128,7 +185,8 @@ final class GraphRenderer {
         guard let texture = device.makeTexture(descriptor: desc), let commands = queue.makeCommandBuffer() else {
             return nil
         }
-        encode(history: history, into: texture, size: size, scale: Float(scale), scrollY: scrollY, commands: commands)
+        encode(history: history, into: texture, size: size, scale: Float(scale), scrollY: scrollY, animate: false,
+               commands: commands)
         commands.commit()
         commands.waitUntilCompleted()
 
@@ -142,7 +200,7 @@ final class GraphRenderer {
     }
 
     private func encode(
-        history: History, into texture: MTLTexture, size: CGSize, scale: Float, scrollY: Float,
+        history: History, into texture: MTLTexture, size: CGSize, scale: Float, scrollY: Float, animate: Bool,
         commands: MTLCommandBuffer
     ) {
         let rowHeight = metrics.rowHeight
@@ -150,6 +208,7 @@ final class GraphRenderer {
         let last = min(history.rowCount, Int((scrollY + Float(size.height)) / rowHeight) + 2)
         instances.removeAll(keepingCapacity: true)
         if first < last {
+            updateLanes(history: history, rows: first..<last, width: Float(size.width), animate: animate)
             buildInstances(history: history, rows: first..<last, scrollY: scrollY)
         }
 
@@ -178,6 +237,15 @@ final class GraphRenderer {
         encoder.endEncoding()
     }
 
+    /// レーンの今の幅（隣のレーンとの間隔）。
+    private func laneSpacing(_ lane: UInt16) -> Float {
+        let i = Int(lane)
+        guard i < currentX.count else { return metrics.laneWidth }
+        let left = i > 0 ? currentX[i] - currentX[i - 1] : metrics.laneWidth
+        let right = i + 1 < currentX.count ? currentX[i + 1] - currentX[i] : metrics.laneWidth
+        return min(left, right)
+    }
+
     private func buildInstances(history: History, rows: Range<Int>, scrollY: Float) {
         let m = metrics
         let edgeIndices = history.edgeIndices(in: rows)
@@ -187,11 +255,17 @@ final class GraphRenderer {
                 let a = SIMD2(laneX(e.lane_start), rowY(e.row_start, scrollY: scrollY))
                 let b = SIMD2(laneX(e.lane_end), rowY(e.row_end, scrollY: scrollY))
                 let firstParent = e.kind & UInt16(AmonhenEdge_FIRST_PARENT) != 0
+                var width = firstParent ? m.firstParentWidth : m.lineWidth
+                var alpha: Float = 1
+                // 詰めたレーンの線は、間隔に合わせて細く薄くし、点を隠さない帯にする。
+                let spacing = max(laneSpacing(e.lane_start), laneSpacing(e.lane_end))
+                if spacing < m.laneWidth / 2 {
+                    width = min(width, max(0.6, spacing * 0.8))
+                    alpha = 0.45
+                }
                 instances.append(Instance(
-                    a: a, b: b,
-                    width: firstParent ? m.firstParentWidth : m.lineWidth,
-                    color: UInt32(e.color),
-                    kind: e.lane_start == e.lane_end ? Instance.line : Instance.curve))
+                    a: a, b: b, width: width, color: UInt32(e.color),
+                    kind: e.lane_start == e.lane_end ? Instance.line : Instance.curve, alpha: alpha))
             }
         }
         history.withNodes { nodes in
@@ -219,7 +293,7 @@ final class GraphRenderer {
     #include <metal_stdlib>
     using namespace metal;
 
-    struct Instance { float2 a; float2 b; float width; uint color; uint kind; uint pad; };
+    struct Instance { float2 a; float2 b; float width; uint color; uint kind; float alpha; };
     struct Uniforms { float2 viewport; float scale; float pad; };
     struct VOut { float4 position [[position]]; float2 p; uint instance [[flat]]; };
 
@@ -270,7 +344,7 @@ final class GraphRenderer {
             }
             d -= i.width * 0.5;
         }
-        float alpha = clamp(0.5 - d * u.scale, 0.0, 1.0);
+        float alpha = clamp(0.5 - d * u.scale, 0.0, 1.0) * i.alpha;
         float4 c = palette[i.color % paletteCount];
         return float4(c.rgb * alpha, alpha);
     }
