@@ -28,6 +28,8 @@ app="dist/$name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp apps/macos/.build/release/AmonHen "$app/Contents/MacOS/AmonHen"
+# daemon 越しに開くときに起動する（`daemon:` の場所。SSH 先では、その環境の amonhend を使う）。
+cp target/release/amonhend "$app/Contents/MacOS/amonhend"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -47,6 +49,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
+# 中の実行ファイル（amonhend）を先に署名してから、アプリ全体に署名する。
+codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/MacOS/amonhend"
 codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app"
 codesign --verify --strict "$app"
 
