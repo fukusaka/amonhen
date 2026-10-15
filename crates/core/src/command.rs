@@ -383,7 +383,14 @@ impl Repository {
             "tags": tags.into_iter().take(MAX_TAGS).collect::<Vec<_>>(),
             "firstTag": first_tag,
             "previousTag": previous_tag,
+            "originUrl": self.origin_url(),
         }))
+    }
+
+    /// `remote.origin.url`（メッセージの `#123` をリンクにするため）。読めなければ `None`。
+    fn origin_url(&self) -> Option<String> {
+        let config = self.backend().files().read(Root::GitDir, "config").ok()??;
+        origin_url(&String::from_utf8_lossy(&config))
     }
 
     /// HEAD から first-parent で辿り、最初の merge の手前まで（新しい順）。
@@ -898,6 +905,23 @@ impl Repository {
     }
 }
 
+/// git の config の `[remote "origin"]` の `url`。
+fn origin_url(config: &str) -> Option<String> {
+    let mut in_origin = false;
+    for line in config.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_origin = line.replace(' ', "") == r#"[remote"origin"]"#;
+        } else if in_origin
+            && let Some((key, value)) = line.split_once('=')
+            && key.trim() == "url"
+        {
+            return Some(value.trim().to_owned());
+        }
+    }
+    None
+}
+
 /// メッセージの最後の段落にあるトレーラー（`Signed-off-by: 名前 <メール>` など）。段落のすべての行が
 /// `キー: 値`（か、その続きの字下げした行）のときだけトレーラーとみなす。
 fn trailers(message: &str) -> Vec<(String, String)> {
@@ -980,6 +1004,16 @@ mod tests {
 
     fn run(repo: &Repository, json: &str) -> serde_json::Value {
         serde_json::from_str(&repo.run_json(json)).unwrap()
+    }
+
+    #[test]
+    fn reads_the_origin_url_from_the_config() {
+        let config = "[core]\n\turl = no\n[remote \"upstream\"]\n\turl = u\n[remote \"origin\"]\n\turl = git@github.com:a/b.git\n";
+        assert_eq!(
+            origin_url(config).as_deref(),
+            Some("git@github.com:a/b.git")
+        );
+        assert_eq!(origin_url("[core]\n"), None);
     }
 
     #[test]
