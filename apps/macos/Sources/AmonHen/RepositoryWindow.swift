@@ -178,6 +178,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         // --blame PATH・--file-history PATH で、そのファイルの blame・履歴を開く（見た目の確認用）。
         if let path = AppDelegate.option("--blame") { openBlame(path: path, rev: nil) }
         if let path = AppDelegate.option("--file-history") { openFileHistory(path: path) }
+        // --measure-select N で、History の行を N 個順に選び、詳細が出るまでの各段階の時間を測る。
+        if let count = AppDelegate.option("--measure-select").flatMap(Int.init) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in measureSelection(count: count) }
+        }
         if let output = AppDelegate.option("--snapshot") {
             let selectFirst = CommandLine.arguments.contains("--select-first")
             // --select-row N で、N 行目を選んで表の中ほどに出す（履歴の途中の見た目を確かめる）。
@@ -238,6 +242,33 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
                 NSLog("ref を読めない: \(error)")
             }
         }
+    }
+
+    private func measureSelection(count: Int) {
+        let total = history.currentHistory?.rowCount ?? 0
+        guard total > 0 else { return }
+        FrameProfile.reset()
+        FrameProfile.enabled = true
+        var done = 0
+        // 前の差分が出てから次を選ぶ。行は History 全体に散らす（キャッシュに乗らないように）。
+        func next() {
+            guard done < count else {
+                detail.onDiffShown = nil
+                FrameProfile.enabled = false
+                print("selections: \(count)\n" + FrameProfile.summary())
+                NSApp.terminate(nil)
+                return
+            }
+            // 起動時に選んである先頭の行は避ける（選び直しても読み込みが起きない）。
+            let row = 1 + (done * 7919) % max(1, total - 1)
+            done += 1
+            history.select(row: row)
+        }
+        detail.onDiffShown = {
+            FrameProfile.endFrame()
+            DispatchQueue.main.async { next() }
+        }
+        next()
     }
 
     // MARK: - blame・ファイルの履歴

@@ -20,6 +20,13 @@ enum FrameProfile {
         return try body()
     }
 
+    /// 裏のスレッドで測った時間などを `name` に足す（メインスレッドで呼ぶ）。
+    static func add(_ name: String, _ duration: CFTimeInterval) {
+        guard enabled else { return }
+        if current[name] == nil, !order.contains(name) { order.append(name) }
+        current[name, default: 0] += duration
+    }
+
     /// 1 フレームの区切り。
     static func endFrame() {
         guard enabled else { return }
