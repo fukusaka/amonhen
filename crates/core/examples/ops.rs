@@ -43,5 +43,9 @@ fn main() -> amonhen_model::Result<()> {
     time("history_chunk 256 行", || {
         repo.history_chunk(&history, 0, 256, &FrontendProfile::MACOS)
     })?;
+    let found = time("search_history \"fix\"", || {
+        repo.search_history(&history, "fix")
+    })?;
+    println!("  {} 件", found.len());
     Ok(())
 }

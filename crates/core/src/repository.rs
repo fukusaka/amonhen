@@ -396,6 +396,74 @@ impl Repository {
         let texts = self.backend.commit_texts(&ids[start..end])?;
         Ok(HistoryChunk::new(start as u32, &texts, profile))
     }
+
+    /// `query` に合うコミットの行（昇順）。件名・作者名に大文字・小文字を区別せずに含むか、コミット ID が
+    /// `query` で始まる（16 進数 4 文字以上のとき）。コミットを読みながら探すので、行を分けて並列に読む。
+    pub fn search_history(&self, snapshot: &HistorySnapshot, query: &str) -> Result<Vec<u32>> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(Vec::new());
+        }
+        let needle = query.to_lowercase();
+        let hex = (query.len() >= 4 && query.bytes().all(|b| b.is_ascii_hexdigit()))
+            .then(|| query.to_ascii_lowercase());
+        let ids = snapshot.graph.ids();
+        let matches = |text: &[u8]| -> bool {
+            if needle.is_ascii() {
+                let n = needle.as_bytes();
+                text.len() >= n.len() && text.windows(n.len()).any(|w| w.eq_ignore_ascii_case(n))
+            } else {
+                String::from_utf8_lossy(text)
+                    .to_lowercase()
+                    .contains(&needle)
+            }
+        };
+        const BATCH: usize = 4096;
+        let threads = std::thread::available_parallelism()
+            .map_or(4, |n| n.get())
+            .min(16);
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let found = std::sync::Mutex::new(Vec::new());
+        let failed = std::sync::Mutex::new(None);
+        std::thread::scope(|scope| {
+            for _ in 0..threads {
+                scope.spawn(|| {
+                    loop {
+                        let start = next.fetch_add(BATCH, std::sync::atomic::Ordering::Relaxed);
+                        if start >= ids.len() {
+                            break;
+                        }
+                        let end = (start + BATCH).min(ids.len());
+                        let texts = match self.backend.commit_texts(&ids[start..end]) {
+                            Ok(t) => t,
+                            Err(e) => {
+                                *failed.lock().unwrap() = Some(e.to_string());
+                                break;
+                            }
+                        };
+                        let rows: Vec<u32> = texts
+                            .iter()
+                            .enumerate()
+                            .filter(|(i, t)| {
+                                let by_id = hex.as_ref().is_some_and(|h| {
+                                    ids[start + i].to_string().starts_with(h.as_str())
+                                });
+                                by_id || matches(t.subject()) || matches(t.author_name())
+                            })
+                            .map(|(i, _)| (start + i) as u32)
+                            .collect();
+                        found.lock().unwrap().extend(rows);
+                    }
+                });
+            }
+        });
+        if let Some(e) = failed.into_inner().unwrap() {
+            return Err(e.into());
+        }
+        let mut rows = found.into_inner().unwrap();
+        rows.sort_unstable();
+        Ok(rows)
+    }
 }
 
 #[cfg(test)]
@@ -459,6 +527,29 @@ mod tests {
         assert_eq!((updated.generation, updated.graph.len()), (2, 2));
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache);
         assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
+    }
+
+    #[test]
+    fn searches_subjects_authors_and_commit_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        for message in ["Add Parser", "fix typo", "parse more", "release"] {
+            git(dir, &["commit", "--allow-empty", "-q", "-m", message]);
+        }
+        let repo =
+            Repository::with_cache(GixBackend::open(dir).unwrap(), tmp.path().join("cache.bin"));
+        let history = repo.load_history().unwrap();
+        // 新しい順: release, parse more, fix typo, Add Parser。
+        assert_eq!(repo.search_history(&history, "PARSE").unwrap(), [1, 3]);
+        assert_eq!(
+            repo.search_history(&history, "  ").unwrap(),
+            Vec::<u32>::new()
+        );
+        // 作者名（テストでは "a"）。
+        assert_eq!(repo.search_history(&history, "a").unwrap().len(), 4);
+        let id = history.graph.ids()[2].to_string();
+        assert_eq!(repo.search_history(&history, &id[..7]).unwrap(), [2]);
     }
 
     #[test]
