@@ -10,8 +10,16 @@ extension NSColor {
     }
 }
 
+/// 差分の中の文字の位置（行と、行の中の UTF-16 の位置）。
+struct TextPosition: Comparable {
+    var row: Int
+    var index: Int
+
+    static func < (a: Self, b: Self) -> Bool { (a.row, a.index) < (b.row, b.index) }
+}
+
 /// 差分の表示。スクロールは NSScrollView に任せ、見えている行だけを Metal で描く。
-final class DiffViewController: NSViewController {
+final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private let renderer: TextRenderer
     private let scrollView = NSScrollView()
     private let document = DiffDocumentView()
@@ -31,6 +39,18 @@ final class DiffViewController: NSViewController {
     private(set) var selectedRows: Set<Int> = []
     private var anchorRow: Int?
     var onSelectionChange: (() -> Void)?
+    /// 文字の選択（行を選ぶ表示では使わない）。
+    private var textSelection: (anchor: TextPosition, head: TextPosition)?
+    /// 単語・行単位で選び始めたときの最初の範囲（ドラッグでその単位のまま広げる）。
+    private var selectionUnit: (start: TextPosition, end: TextPosition)?
+
+    // 検索
+    private let findBar = NSView()
+    private let findField = NSSearchField()
+    private let findCount = NSTextField(labelWithString: "")
+    private var isFindBarVisible = false
+    private var matches: [(row: Int, range: Range<Int>)] = []
+    private var currentMatch: Int?
 
     private let font = CTFontCreateWithName("Menlo" as CFString, 12, nil)
     private var lineHeight: CGFloat { ceil(CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)) + 4 }
@@ -55,14 +75,48 @@ final class DiffViewController: NSViewController {
         NotificationCenter.default.addObserver(
             self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
         textView.metalLayer.device = renderer.device
-        document.onMouseDown = { [weak self] event, point in self?.mouseDown(event, at: point) }
+        document.owner = self
+        buildFindBar()
         container.addSubview(scrollView)
         container.addSubview(textView)
+        container.addSubview(findBar)
         view = container
     }
 
+    private func buildFindBar() {
+        findBar.isHidden = true
+        findField.placeholderString = "差分を検索"
+        findField.sendsSearchStringImmediately = true
+        findField.delegate = self
+        findField.target = self
+        findField.action = #selector(findFieldChanged)
+        findField.controlSize = .small
+        findCount.textColor = .secondaryLabelColor
+        findCount.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let previous = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "前へ")!,
+                                target: self, action: #selector(findPrevious))
+        let next = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "次へ")!,
+                            target: self, action: #selector(findNext))
+        let done = NSButton(title: "完了", target: self, action: #selector(hideFindBar))
+        for b in [previous, next, done] {
+            b.bezelStyle = .accessoryBarAction
+            b.controlSize = .small
+        }
+        let stack = NSStackView(views: [findField, findCount, previous, next, done])
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 8, bottom: 0, right: 8)
+        stack.frame = findBar.bounds
+        stack.autoresizingMask = [.width, .height]
+        findField.widthAnchor.constraint(greaterThanOrEqualToConstant: 180).isActive = true
+        findBar.addSubview(stack)
+    }
+
+    private static let findBarHeight: CGFloat = 30
+
     private func layoutSubviews() {
-        scrollView.frame = view.bounds
+        let barHeight = isFindBarVisible ? Self.findBarHeight : 0
+        findBar.frame = NSRect(x: 0, y: view.bounds.height - barHeight, width: view.bounds.width, height: barHeight)
+        scrollView.frame = NSRect(x: 0, y: 0, width: view.bounds.width, height: view.bounds.height - barHeight)
         textView.frame = view.convert(scrollView.contentView.frame, from: scrollView)
         updateDocumentSize()
         redraw()
@@ -79,7 +133,9 @@ final class DiffViewController: NSViewController {
         shaped.removeAll()
         selectedRows.removeAll()
         anchorRow = nil
+        textSelection = nil
         onSelectionChange?()
+        if isFindBarVisible { updateMatches(scrollToCurrent: false) }
         if keepScroll {
             updateDocumentSize()
             redraw()
@@ -115,8 +171,12 @@ final class DiffViewController: NSViewController {
     }
 
     /// クリックで行を選ぶ。hunk の見出しなら hunk 全体、Shift で範囲、Command で追加・解除。
-    private func mouseDown(_ event: NSEvent, at point: NSPoint) {
-        guard isSelectable, let diff else { return }
+    fileprivate func mouseDown(_ event: NSEvent, at point: NSPoint) {
+        guard let diff else { return }
+        guard isSelectable else {
+            beginTextSelection(event, at: point)
+            return
+        }
         let row = Int(point.y / lineHeight)
         guard row >= 0, row < diff.rowCount else { return }
         if isConflictView {
@@ -149,6 +209,230 @@ final class DiffViewController: NSViewController {
         redraw()
     }
 
+    // MARK: - 文字の選択とコピー
+
+    /// 行の並べたグリフ。まだなければ並べてキャッシュする。
+    private func shapedLine(_ row: Int, scale: CGFloat? = nil) -> TextRenderer.ShapedLine? {
+        if let line = shaped[row] { return line }
+        guard let diff, row >= 0, row < diff.rowCount else { return nil }
+        let scale = scale ?? view.window?.backingScaleFactor ?? 2
+        let line = diff.withText(row: row) { renderer.shape($0, font: font, scale: scale, ranges: highlights[row] ?? []) }
+        shaped[row] = line
+        return line
+    }
+
+    private func text(row: Int) -> String {
+        diff?.withText(row: row) { $0 as String } ?? ""
+    }
+
+    private func position(at point: NSPoint) -> TextPosition? {
+        guard let diff, diff.rowCount > 0 else { return nil }
+        if point.y < 0 { return TextPosition(row: 0, index: 0) }
+        let row = Int(point.y / lineHeight)
+        if row >= diff.rowCount { return TextPosition(row: diff.rowCount - 1, index: text(row: diff.rowCount - 1).utf16.count) }
+        return TextPosition(row: row, index: shapedLine(row)?.index(at: point.x - gutterWidth - 8) ?? 0)
+    }
+
+    /// クリックの回数で、文字・単語・行の単位で選ぶ。
+    private func unitRange(at p: TextPosition, clicks: Int) -> (start: TextPosition, end: TextPosition) {
+        let string = text(row: p.row)
+        switch clicks {
+        case 2:
+            let r = NSAttributedString(string: string).doubleClick(at: min(p.index, max(0, string.utf16.count - 1)))
+            return (TextPosition(row: p.row, index: r.location), TextPosition(row: p.row, index: r.location + r.length))
+        case 3...:
+            return (TextPosition(row: p.row, index: 0), TextPosition(row: p.row, index: string.utf16.count))
+        default:
+            return (p, p)
+        }
+    }
+
+    private func beginTextSelection(_ event: NSEvent, at point: NSPoint) {
+        guard let p = position(at: point) else { return }
+        if event.modifierFlags.contains(.shift), let current = textSelection {
+            textSelection = (current.anchor, p)
+        } else {
+            let unit = unitRange(at: p, clicks: event.clickCount)
+            selectionUnit = event.clickCount > 1 ? unit : nil
+            textSelection = (unit.start, unit.end)
+        }
+        redraw()
+    }
+
+    fileprivate func mouseDragged(_ event: NSEvent, at point: NSPoint) {
+        guard !isSelectable, let p = position(at: point), let current = textSelection else { return }
+        if let unit = selectionUnit {
+            let extended = unitRange(at: p, clicks: event.clickCount)
+            textSelection = p < unit.start ? (unit.end, extended.start) : (unit.start, max(unit.end, extended.end))
+        } else {
+            textSelection = (current.anchor, p)
+        }
+        redraw()
+    }
+
+    /// 選んだ文字。行を選ぶ表示では、選んだ行の文字。
+    var selectedText: String? {
+        if isSelectable {
+            guard !selectedRows.isEmpty else { return nil }
+            return selectedRows.sorted().map { text(row: $0) }.joined(separator: "\n")
+        }
+        guard let (start, end) = orderedSelection, start != end else { return nil }
+        return (start.row...end.row).map { row in
+            let units = Array(text(row: row).utf16)
+            let from = row == start.row ? min(start.index, units.count) : 0
+            let to = row == end.row ? min(end.index, units.count) : units.count
+            return String(utf16CodeUnits: Array(units[from..<max(from, to)]), count: max(0, to - from))
+        }.joined(separator: "\n")
+    }
+
+    private var orderedSelection: (TextPosition, TextPosition)? {
+        textSelection.map { $0.anchor < $0.head ? ($0.anchor, $0.head) : ($0.head, $0.anchor) }
+    }
+
+    fileprivate func copySelection() {
+        guard let text = selectedText else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    fileprivate func selectAllText() {
+        guard let diff, diff.rowCount > 0 else { return }
+        if isSelectable {
+            selectedRows = Set(0..<diff.rowCount)
+            onSelectionChange?()
+        } else {
+            let last = diff.rowCount - 1
+            textSelection = (TextPosition(row: 0, index: 0), TextPosition(row: last, index: text(row: last).utf16.count))
+        }
+        redraw()
+    }
+
+    fileprivate func clearTextSelection() {
+        textSelection = nil
+        redraw()
+    }
+
+    fileprivate var hasSelection: Bool { selectedText != nil }
+
+    // MARK: - 検索
+
+    @objc func showFindBar() {
+        if let selected = selectedText, !selected.contains("\n") { findField.stringValue = selected }
+        if !isFindBarVisible {
+            isFindBarVisible = true
+            findBar.isHidden = false
+            layoutSubviews()
+        }
+        view.window?.makeFirstResponder(findField)
+        findField.currentEditor()?.selectAll(nil)
+        updateMatches(scrollToCurrent: true)
+    }
+
+    @objc func hideFindBar() {
+        isFindBarVisible = false
+        findBar.isHidden = true
+        matches = []
+        currentMatch = nil
+        layoutSubviews()
+        view.window?.makeFirstResponder(document)
+    }
+
+    /// 検索欄に文字を入れたまま、検索だけ行う（`--snapshot` の確認用）。
+    func find(_ query: String) {
+        findField.stringValue = query
+        showFindBar()
+    }
+
+    @objc private func findFieldChanged() {
+        updateMatches(scrollToCurrent: true)
+    }
+
+    @objc func findNext() { moveMatch(by: 1) }
+    @objc func findPrevious() { moveMatch(by: -1) }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            moveMatch(by: NSEvent.modifierFlags.contains(.shift) ? -1 : 1)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            hideFindBar()
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// 大文字・小文字を区別せずに、すべての行から探す。今の一致は、見えている位置より後の最初のもの。
+    private func updateMatches(scrollToCurrent: Bool) {
+        matches = []
+        let query = findField.stringValue
+        if let diff, !query.isEmpty {
+            for row in 0..<diff.rowCount {
+                diff.withText(row: row) { cf in
+                    let s = cf as NSString
+                    var search = NSRange(location: 0, length: s.length)
+                    while true {
+                        let r = s.range(of: query, options: [.caseInsensitive], range: search)
+                        guard r.location != NSNotFound else { break }
+                        matches.append((row, r.location..<r.location + r.length))
+                        let next = r.location + max(r.length, 1)
+                        guard next < s.length else { break }
+                        search = NSRange(location: next, length: s.length - next)
+                    }
+                }
+            }
+        }
+        let firstVisible = Int(scrollView.contentView.bounds.minY / lineHeight)
+        currentMatch = matches.isEmpty ? nil : (matches.firstIndex { $0.row >= firstVisible } ?? 0)
+        updateFindCount()
+        if scrollToCurrent { revealCurrentMatch() }
+        redraw()
+    }
+
+    private func moveMatch(by step: Int) {
+        if !isFindBarVisible { showFindBar() }
+        guard !matches.isEmpty else { return NSSound.beep() }
+        currentMatch = ((currentMatch ?? -step) + step + matches.count) % matches.count
+        updateFindCount()
+        revealCurrentMatch()
+        redraw()
+    }
+
+    private func updateFindCount() {
+        if findField.stringValue.isEmpty {
+            findCount.stringValue = ""
+        } else if let current = currentMatch {
+            findCount.stringValue = "\(current + 1) / \(matches.count)"
+        } else {
+            findCount.stringValue = "見つかりません"
+        }
+    }
+
+    /// 今の一致を選び（⌘C でコピーできるように）、見える位置までスクロールする。
+    private func revealCurrentMatch() {
+        guard let current = currentMatch, let line = shapedLine(matches[current].row) else { return }
+        let m = matches[current]
+        if !isSelectable {
+            textSelection = (TextPosition(row: m.row, index: m.range.lowerBound), TextPosition(row: m.row, index: m.range.upperBound))
+        }
+        let x0 = gutterWidth + 8 + line.offset(of: m.range.lowerBound)
+        let x1 = gutterWidth + 8 + line.offset(of: m.range.upperBound)
+        let clip = scrollView.contentView
+        var origin = clip.bounds.origin
+        let top = CGFloat(m.row) * lineHeight
+        if top < origin.y || top + lineHeight > origin.y + clip.bounds.height {
+            origin.y = max(0, min(top - clip.bounds.height / 3, document.frame.height - clip.bounds.height))
+        }
+        if x0 < origin.x + gutterWidth || x1 > origin.x + clip.bounds.width {
+            origin.x = max(0, x0 - gutterWidth - 40)
+        }
+        if origin != clip.bounds.origin {
+            clip.scroll(to: origin)
+            scrollView.reflectScrolledClipView(clip)
+        }
+    }
+
     /// 今の表示を画像にする（`--snapshot` 用）。
     func overlay() -> (CGImage, NSView)? {
         buildInstances()
@@ -156,6 +440,8 @@ final class DiffViewController: NSViewController {
         return renderer.image(size: textView.bounds.size, scale: scale, background: NSColor.textBackgroundColor.rgba)
             .map { ($0, textView) }
     }
+
+    fileprivate func redrawFocus() { redraw() }
 
     @objc private func redraw() {
         buildInstances()
@@ -195,6 +481,26 @@ final class DiffViewController: NSViewController {
         let secondary = NSColor.secondaryLabelColor.rgba
         let width = textView.bounds.width
         let selection = NSColor.selectedContentBackgroundColor.withAlphaComponent(0.35).rgba
+        let focused = view.window?.isKeyWindow == true && view.window?.firstResponder === document
+        let selectedText = (focused ? NSColor.selectedTextBackgroundColor : NSColor.unemphasizedSelectedTextBackgroundColor).rgba
+        let matchColor = NSColor.systemYellow.withAlphaComponent(0.35).rgba
+        let currentMatchColor = NSColor.systemOrange.withAlphaComponent(0.7).rgba
+        let textRange = orderedSelection
+        // 見えている行の一致（番号つき）。
+        var matchesByRow: [Int: [(Int, Range<Int>)]] = [:]
+        if !matches.isEmpty {
+            // 一致は行の順に並んでいるので、見えている最初の行を二分探索する。
+            var lo = 0, hi = matches.count
+            while lo < hi {
+                let mid = (lo + hi) / 2
+                if matches[mid].row < rows.lowerBound { lo = mid + 1 } else { hi = mid }
+            }
+            var i = lo
+            while i < matches.count, matches[i].row < rows.upperBound {
+                matchesByRow[matches[i].row, default: []].append((i, matches[i].range))
+                i += 1
+            }
+        }
         diff.withRows { all in
             for row in rows {
                 let r = all[row]
@@ -220,16 +526,28 @@ final class DiffViewController: NSViewController {
                     numberCache[number] = line
                     renderer.addLine(line, origin: CGPoint(x: right - line.width, y: baseline), color: secondary, scale: scale)
                 }
-                let line = shaped[row] ?? diff.withText(row: row) {
-                    renderer.shape($0, font: font, scale: scale, ranges: highlights[row] ?? [])
-                }
-                shaped[row] = line
+                guard let line = shapedLine(row, scale: scale) else { continue }
                 // 変わった単語を、行の色より濃くする。
                 let strong = r.kind == UInt8(AmonhenDiffRow_ADDED) ? strongAdded : strongRemoved
                 for (x0, x1) in line.spans {
                     renderer.addRect(
                         CGRect(x: gutterWidth + 8 - origin.x + x0, y: top + 1, width: max(1, x1 - x0), height: lineHeight - 2),
                         color: strong)
+                }
+                let textX = gutterWidth + 8 - origin.x
+                // 文字の選択。次の行に続くときは、改行の分として少し右まで塗る。
+                if let (start, end) = textRange, start.row <= row, row <= end.row {
+                    let x0 = row == start.row ? line.offset(of: start.index) : 0
+                    let x1 = row == end.row ? line.offset(of: end.index) : line.width + 6
+                    if x1 > x0 {
+                        renderer.addRect(CGRect(x: textX + x0, y: top, width: x1 - x0, height: lineHeight), color: selectedText)
+                    }
+                }
+                for (i, m) in matchesByRow[row] ?? [] {
+                    let x0 = line.offset(of: m.lowerBound), x1 = line.offset(of: m.upperBound)
+                    renderer.addRect(
+                        CGRect(x: textX + x0, y: top + 1, width: max(2, x1 - x0), height: lineHeight - 2),
+                        color: i == currentMatch ? currentMatchColor : matchColor)
                 }
                 let isHunk = r.kind == UInt8(AmonhenDiffRow_HUNK) || r.kind == UInt8(AmonhenDiffRow_MARKER)
                 renderer.addLine(
@@ -259,14 +577,42 @@ final class FlippedView: NSView {
     override var isFlipped: Bool { true }
 }
 
-/// 差分のスクロール用の中身。描くのは上に重ねた Metal のビューで、ここはクリックを受けるだけ。
-final class DiffDocumentView: NSView {
-    var onMouseDown: ((NSEvent, NSPoint) -> Void)?
+/// 差分のスクロール用の中身。描くのは上に重ねた Metal のビューで、ここはクリック・コピー・検索を受ける。
+final class DiffDocumentView: NSView, NSMenuItemValidation {
+    weak var owner: DiffViewController?
 
     override var isFlipped: Bool { true }
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        defer { DispatchQueue.main.async { self.owner?.redrawFocus() } }
+        return super.becomeFirstResponder()
+    }
+
+    override func resignFirstResponder() -> Bool {
+        defer { DispatchQueue.main.async { self.owner?.redrawFocus() } }
+        return super.resignFirstResponder()
+    }
 
     override func mouseDown(with event: NSEvent) {
-        onMouseDown?(event, convert(event.locationInWindow, from: nil))
+        window?.makeFirstResponder(self)
+        owner?.mouseDown(event, at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        autoscroll(with: event)
+        owner?.mouseDragged(event, at: convert(event.locationInWindow, from: nil))
+    }
+
+    @objc func copy(_ sender: Any?) { owner?.copySelection() }
+    override func selectAll(_ sender: Any?) { owner?.selectAllText() }
+    @objc func showFindBar(_ sender: Any?) { owner?.showFindBar() }
+    @objc func findNext(_ sender: Any?) { owner?.findNext() }
+    @objc func findPrevious(_ sender: Any?) { owner?.findPrevious() }
+    override func cancelOperation(_ sender: Any?) { owner?.clearTextSelection() }
+
+    func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        item.action == #selector(copy(_:)) ? owner?.hasSelection == true : true
     }
 }
 
@@ -342,6 +688,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     /// `commit` の変更を裏で読んで表示する。`stash` なら stash の中身（untracked のファイルを含む）。
+    /// 差分を検索する（`--find` の確認用）。
+    func find(_ query: String) { diffView.find(query) }
+
     func show(commit: Data?, stash: Bool = false) {
         request += 1
         let request = self.request

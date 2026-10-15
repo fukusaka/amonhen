@@ -162,6 +162,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
                 if selectFirst { history.select(row: 0) }
             }
+            if let query = AppDelegate.option("--find") {
+                // 選んだコミットの差分を検索した状態（検索欄と強調）を確かめる。
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in detail.find(query) }
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + (wait ? 1.5 : 0.5)) { [self] in
                 let rep = history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays())
                 try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))

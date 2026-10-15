@@ -171,6 +171,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
         editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
         editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editMenu.addItem(.separator())
+        editMenu.addItem(NSMenuItem(title: "Find…", action: #selector(DiffDocumentView.showFindBar(_:)), keyEquivalent: "f"))
+        editMenu.addItem(NSMenuItem(title: "Find Next", action: #selector(DiffDocumentView.findNext(_:)), keyEquivalent: "g"))
+        editMenu.addItem(NSMenuItem(title: "Find Previous", action: #selector(DiffDocumentView.findPrevious(_:)), keyEquivalent: "G"))
         NSApp.mainMenu = main
     }
 
@@ -190,7 +194,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 引数で渡されたリポジトリ。なければ選ばせる。
     private func repositoryPath() -> String? {
         var args = Array(CommandLine.arguments.dropFirst())
-        for option in ["--snapshot", "--scroll-rows"] {
+        for option in ["--snapshot", "--scroll-rows", "--find"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
         args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--log-scroll"].contains($0) }
