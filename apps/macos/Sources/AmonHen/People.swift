@@ -23,7 +23,8 @@ final class PeopleStrip: NSView {
 
     override func layout() {
         super.layout()
-        let half = (bounds.width / 2).rounded()
+        // コミッターを出さないときは、作者だけで幅を使う。
+        let half = committer.isHidden ? bounds.width : (bounds.width / 2).rounded()
         author.frame = NSRect(x: 0, y: 0, width: half, height: bounds.height)
         committer.frame = NSRect(x: half, y: 0, width: bounds.width - half, height: bounds.height)
     }
@@ -31,6 +32,10 @@ final class PeopleStrip: NSView {
     func show(_ info: CommitInfo, date: (Int64) -> String) {
         author.show(name: info.author, email: info.authorEmail, date: "\(date(info.authorTime)) (\(info.authorTz))")
         committer.show(name: info.committer, email: info.committerEmail, date: "\(date(info.committerTime)) (\(info.committerTz))")
+        // 作者とコミッターが同じ人（名前とメールが同じ）なら、作者だけを出す。
+        committer.isHidden = info.committer == info.author
+            && info.committerEmail.lowercased() == info.authorEmail.lowercased()
+        needsLayout = true
     }
 }
 
