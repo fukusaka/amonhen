@@ -81,6 +81,55 @@ pub fn lineage(graph: &CommitGraph, layout: &GraphLayout, row: u32) -> Lineage {
     Lineage { rows, edge_from }
 }
 
+/// `row` のコミットとその祖先（行ごとのビット）。
+pub fn ancestors(graph: &CommitGraph, row: u32) -> Vec<u64> {
+    let n = graph.len();
+    let mut rows = vec![0u64; n.div_ceil(64)];
+    if (row as usize) < n {
+        rows[row as usize / 64] |= 1 << (row % 64);
+        for r in row as usize..n {
+            if rows[r / 64] & (1 << (r % 64)) != 0 {
+                for &p in graph.parents(r) {
+                    rows[p as usize / 64] |= 1 << (p % 64);
+                }
+            }
+        }
+    }
+    rows
+}
+
+/// merge の `row` が取り込んだコミット（2 つ目以降の親から辿れて、1 つ目の親から辿れないもの）を、行の順に。
+/// merge でなければ空。
+pub fn merged_commits(graph: &CommitGraph, row: u32) -> Vec<u32> {
+    let parents = graph.parents(row as usize);
+    if parents.len() < 2 {
+        return Vec::new();
+    }
+    let mainline = ancestors(graph, parents[0]);
+    let on_mainline = |r: u32| mainline[r as usize / 64] & (1 << (r % 64)) != 0;
+    let mut merged = vec![0u64; mainline.len()];
+    let mut start = graph.len();
+    for &p in &parents[1..] {
+        if !on_mainline(p) {
+            merged[p as usize / 64] |= 1 << (p % 64);
+            start = start.min(p as usize);
+        }
+    }
+    let mut out = Vec::new();
+    for r in start..graph.len() {
+        if merged[r / 64] & (1 << (r % 64)) == 0 {
+            continue;
+        }
+        out.push(r as u32);
+        for &p in graph.parents(r) {
+            if !on_mainline(p) {
+                merged[p as usize / 64] |= 1 << (p % 64);
+            }
+        }
+    }
+    out
+}
+
 /// `row` のコミットを含む（`row` から辿れる側の）コミットと、直接の子。子は親より上の行にあるので、
 /// `row` から上へ 1 回なめるだけで済む。返すビット集合は `row` 自身を含む。
 pub fn descendants(graph: &CommitGraph, row: u32) -> (Vec<u64>, Vec<u32>) {
@@ -217,6 +266,27 @@ mod tests {
         );
         assert_eq!(nearest_ancestor(&g, 1, |r| r == 4 || r == 2), Some(2));
         assert_eq!(nearest_ancestor(&g, 3, |r| r == 2), None);
+    }
+
+    #[test]
+    fn lists_the_commits_a_merge_brought_in() {
+        // 行は 5, 4, 3, 2, 1, 0 の順。5 は 4 と 2 の merge、2 → 1 → 0、4 → 3 → 0。
+        let g = graph(&[
+            (5, &[4, 2]),
+            (4, &[3]),
+            (3, &[0]),
+            (2, &[1]),
+            (1, &[0]),
+            (0, &[]),
+        ]);
+        assert_eq!(
+            merged_commits(&g, 0),
+            [3, 4],
+            "2 と 1（3 行目と 4 行目）。0 は 1 つ目の親から辿れる"
+        );
+        assert!(merged_commits(&g, 1).is_empty(), "merge でない");
+        let a = ancestors(&g, 1);
+        assert_eq!(a[0], 0b100110, "4、3、0（1・2・5 行目）");
     }
 
     #[test]

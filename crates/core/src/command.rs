@@ -280,6 +280,17 @@ impl Repository {
                 mergetag = true;
             }
         }
+        let merged_tags: Vec<serde_json::Value> = merged_tags(header)
+            .into_iter()
+            .map(|t| {
+                serde_json::json!({
+                    "name": t.name,
+                    "tagger": t.tagger,
+                    "subject": t.subject,
+                    "signed": t.signed,
+                })
+            })
+            .collect();
         let (author, email, author_time, author_tz) = author.unwrap_or_default();
         let (committer, committer_email, committer_time, committer_tz) =
             committer.unwrap_or_default();
@@ -313,6 +324,7 @@ impl Repository {
             "refs": refs,
             "signed": signed,
             "mergetag": mergetag,
+            "mergedTags": merged_tags,
             "trailers": trailers,
         }))
     }
@@ -320,6 +332,7 @@ impl Repository {
     /// コミットの詳細のうち時間のかかる分。署名の検証・notes・行数は git に頼み、子コミット・含むブランチと
     /// タグ・前後のタグは History のグラフから求める（History をまだ読んでいなければ空）。
     pub fn commit_extras(&self, commit: &Oid) -> Result<serde_json::Value> {
+        const MAX_MERGED: usize = 50;
         let generation = self.signature_generation();
         let mut extras = self.backend().commit_extras(commit)?;
         // 手元で検証するなら、署名の結果だけは手元の鍵で求め直す（notes と行数はリポジトリ側のまま）。
@@ -336,7 +349,10 @@ impl Repository {
         }
         let mut children = Vec::new();
         let (mut branches, mut tags) = (Vec::new(), Vec::new());
+        let (mut local_branches, mut remote_branches) = (Vec::new(), Vec::new());
         let (mut first_tag, mut previous_tag) = (None, None);
+        let (mut merged_rows, mut head_distance) = (Vec::new(), None);
+        let mut summaries: Vec<Oid> = Vec::new();
         if let Some(history) = self.history()
             && let Some(row) = history.row_of(commit)
         {
@@ -354,8 +370,13 @@ impl Repository {
             for e in &refs.refs.entries {
                 let Some(r) = row_of(e) else { continue };
                 match e.kind {
-                    amonhen_model::RefKind::Local | amonhen_model::RefKind::Remote if in_set(r) => {
-                        branches.push(e.name.clone())
+                    amonhen_model::RefKind::Local if in_set(r) => {
+                        branches.push(e.name.clone());
+                        local_branches.push(e.name.clone());
+                    }
+                    amonhen_model::RefKind::Remote if in_set(r) => {
+                        branches.push(e.name.clone());
+                        remote_branches.push(e.name.clone());
                     }
                     amonhen_model::RefKind::Tag if in_set(r) => tag_rows.push((r, e.name.clone())),
                     _ => {}
@@ -377,7 +398,58 @@ impl Repository {
                 r != row && tagged.contains_key(&r)
             })
             .map(|r| tagged[&r].to_owned());
+            // HEAD が含むなら、HEAD から何コミット前か（HEAD の祖先のうち、このコミットを含むものの数 - 1）。
+            if let Some(head) = refs.refs.head.and_then(|h| history.row_of(&h))
+                && in_set(head)
+            {
+                let ancestors = crate::lineage::ancestors(graph, head);
+                let both: u32 = ancestors
+                    .iter()
+                    .zip(&contains)
+                    .map(|(a, c)| (a & c).count_ones())
+                    .sum();
+                head_distance = Some(both.saturating_sub(1));
+            }
+            merged_rows = crate::lineage::merged_commits(graph, row);
+            summaries = merged_rows
+                .iter()
+                .take(MAX_MERGED)
+                .map(|&r| graph.ids()[r as usize])
+                .collect();
         }
+        // メッセージが参照するコミット（cherry-pick・revert の元、Fixes: など）。件名を添える。
+        let references = self.message_references(commit)?;
+        summaries.extend(references.iter().map(|(_, id)| *id));
+        let texts = if summaries.is_empty() {
+            Vec::new()
+        } else {
+            self.backend().commit_summaries(&summaries)?
+        };
+        let summary = |i: usize| {
+            let t = &texts[i];
+            (
+                String::from_utf8_lossy(t.subject()).into_owned(),
+                String::from_utf8_lossy(t.author_name()).into_owned(),
+            )
+        };
+        let shown_merged = summaries.len() - references.len();
+        let merged: Vec<serde_json::Value> = (0..shown_merged)
+            .map(|i| {
+                let (subject, author) = summary(i);
+                serde_json::json!({ "oid": summaries[i].to_string(), "subject": subject, "author": author })
+            })
+            .collect();
+        let references: serde_json::Map<String, serde_json::Value> = references
+            .iter()
+            .enumerate()
+            .map(|(i, (token, id))| {
+                let (subject, _) = summary(shown_merged + i);
+                (
+                    token.clone(),
+                    serde_json::json!({ "oid": id.to_string(), "subject": subject }),
+                )
+            })
+            .collect();
         let signature = extras.signature.map(|s| {
             serde_json::json!({
                 "status": s.status.to_string(),
@@ -405,7 +477,48 @@ impl Repository {
             "firstTag": first_tag,
             "previousTag": previous_tag,
             "originUrl": self.origin_url(),
+            "localBranches": local_branches,
+            "remoteBranches": remote_branches,
+            "headDistance": head_distance,
+            "mergedCount": merged_rows.len(),
+            "merged": merged,
+            "references": references,
         }))
+    }
+
+    /// メッセージに出てくるコミット ID（7〜40 桁の 16 進）のうち、引けたもの（書かれていた文字列と ID）。
+    /// 多すぎるメッセージは先頭の 10 個まで。
+    fn message_references(&self, commit: &Oid) -> Result<Vec<(String, Oid)>> {
+        let message = self.commit_message(commit)?;
+        let mut tokens: Vec<&str> = Vec::new();
+        for word in message.split(|c: char| !c.is_ascii_alphanumeric()) {
+            let hex = word.len() >= 7
+                && word.len() <= 40
+                && word.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+                // 数字だけの語（日付・番号）は ID とみなさない。
+                && word.bytes().any(|b| b.is_ascii_alphabetic());
+            if hex && !tokens.contains(&word) && word != commit.to_string() {
+                tokens.push(word);
+            }
+            if tokens.len() == 10 {
+                break;
+            }
+        }
+        let history = self.history();
+        let ops = self.backend().operations()?;
+        let mut out = Vec::new();
+        for token in tokens {
+            let full = Oid::from_hex(token)
+                .filter(|id| history.as_ref().is_some_and(|h| h.row_of(id).is_some()));
+            let id = match full {
+                Some(id) => Some(id),
+                None => ops.resolve(&format!("{token}^{{commit}}")).ok(),
+            };
+            if let Some(id) = id {
+                out.push((token.to_owned(), id));
+            }
+        }
+        Ok(out)
     }
 
     /// `remote.origin.url`（メッセージの `#123` をリンクにするため）。読めなければ `None`。
@@ -944,6 +1057,58 @@ impl Repository {
     }
 }
 
+/// merge したタグ（ヘッダーの `mergetag`）。
+struct MergedTag {
+    name: String,
+    tagger: String,
+    subject: String,
+    signed: bool,
+}
+
+/// ヘッダーの `mergetag` を読む。値は複数行で、続きの行は空白 1 つで始まる（タグのオブジェクトそのもの）。
+fn merged_tags(header: &str) -> Vec<MergedTag> {
+    let mut blocks: Vec<Vec<&str>> = Vec::new();
+    let mut in_tag = false;
+    for line in header.lines() {
+        if let Some(first) = line.strip_prefix("mergetag ") {
+            blocks.push(vec![first]);
+            in_tag = true;
+        } else if let Some(rest) = line.strip_prefix(' ')
+            && in_tag
+        {
+            blocks.last_mut().unwrap().push(rest);
+        } else {
+            in_tag = false;
+        }
+    }
+    blocks
+        .into_iter()
+        .map(|lines| {
+            let field = |key: &str| {
+                lines
+                    .iter()
+                    .find_map(|l| l.strip_prefix(key))
+                    .unwrap_or_default()
+                    .to_owned()
+            };
+            let tagger = field("tagger ");
+            let tagger = tagger.split(" <").next().unwrap_or_default().to_owned();
+            // ヘッダーの後の空行の次がタグのメッセージ。
+            let subject = lines
+                .iter()
+                .skip_while(|l| !l.is_empty())
+                .find(|l| !l.is_empty())
+                .map_or_else(String::new, |l| (*l).to_owned());
+            MergedTag {
+                name: field("tag "),
+                tagger,
+                subject,
+                signed: lines.iter().any(|l| l.starts_with("-----BEGIN ")),
+            }
+        })
+        .collect()
+}
+
 /// git の config の `[remote "origin"]` の `url`。
 fn origin_url(config: &str) -> Option<String> {
     let mut in_origin = false;
@@ -1062,6 +1227,59 @@ mod tests {
     }
 
     #[test]
+    fn reports_merged_commits_head_distance_and_references() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let first = git(dir, &["rev-parse", "HEAD"]);
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        std::fs::write(dir.join("b.txt"), "b\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "topic work"]);
+        git(dir, &["switch", "-q", "main"]);
+        git(
+            dir,
+            &[
+                "merge",
+                "-q",
+                "--no-ff",
+                "-m",
+                "Merge branch 'topic'",
+                "topic",
+            ],
+        );
+        let merge = git(dir, &["rev-parse", "HEAD"]);
+        let short = &first[..10];
+        git(
+            dir,
+            &[
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                &format!("Follow up\n\nFixes: {short} (\"first\")"),
+            ],
+        );
+        let follow = git(dir, &["rev-parse", "HEAD"]);
+        repo.load_history().unwrap();
+        repo.load_refs().unwrap();
+        let extras = |oid: &str| {
+            run(&repo, &format!(r#"{{"op":"commitExtras","oid":"{oid}"}}"#))["info"].clone()
+        };
+
+        let m = extras(&merge);
+        assert_eq!(m["mergedCount"], 1);
+        assert_eq!(m["merged"][0]["subject"], "topic work");
+        assert_eq!(m["headDistance"], 1, "HEAD の 1 つ前");
+        assert_eq!(m["localBranches"], serde_json::json!(["main"]));
+        assert_eq!(m["remoteBranches"], serde_json::json!([]));
+        let f = extras(&follow);
+        assert_eq!(f["headDistance"], 0);
+        assert_eq!(f["references"][short]["oid"], first.as_str());
+        assert_eq!(f["references"][short]["subject"], "first");
+        assert_eq!(extras(&first)["mergedCount"], 0);
+    }
+
+    #[test]
     fn does_not_carry_signature_results_over_when_the_checker_changes() {
         let (tmp, repo) = setup();
         let head = Oid::from_hex(&git(tmp.path(), &["rev-parse", "HEAD"])).unwrap();
@@ -1082,6 +1300,20 @@ mod tests {
         // 替える前に始めた検証の結果が後から届いても覚えない。
         repo.remember_signatures(before, [(head, 'G')]);
         assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['N']);
+    }
+
+    #[test]
+    fn reads_merged_tags_from_the_header() {
+        let header = "tree t\nparent a\nparent b\nauthor x <x@y> 1 +0000\nmergetag object b\n type commit\n tag v6.5-fixes\n tagger Greg <g@k> 2 +0200\n \n USB fixes for 6.5\n \n -----BEGIN PGP SIGNATURE-----\n abc\n -----END PGP SIGNATURE-----\ncommitter x <x@y> 3 +0000";
+        let tags = merged_tags(header);
+        assert_eq!(tags.len(), 1);
+        assert_eq!(
+            (tags[0].name.as_str(), tags[0].tagger.as_str()),
+            ("v6.5-fixes", "Greg")
+        );
+        assert_eq!(tags[0].subject, "USB fixes for 6.5");
+        assert!(tags[0].signed);
+        assert!(merged_tags("tree t\nauthor x <x@y> 1 +0000").is_empty());
     }
 
     #[test]
