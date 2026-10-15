@@ -1,6 +1,7 @@
 //! `git` を起動して行う操作（デスクトップ向け）。書き込み系の操作は正しさと互換性を優先して
 //! git 本体に任せる。読み取りでも、git の仕組み（untracked cache・fsmonitor）が効く status はここ。
 
+mod extras;
 mod ops;
 mod status;
 

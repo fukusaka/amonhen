@@ -437,6 +437,10 @@ impl GitBackend for GixBackend {
         self.git()?.status()
     }
 
+    fn commit_extras(&self, commit: &Oid) -> Result<amonhen_model::CommitExtras> {
+        self.git()?.commit_extras(commit)
+    }
+
     fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>> {
         Ok(Arc::new(std::fs::read(self.git()?.workdir().join(path))?))
     }

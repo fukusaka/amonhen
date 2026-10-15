@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    CommitGraph, CommitText, FileChange, Oid, Operations, RawCommit, Refs, RepoFiles, RepoPaths,
-    Status, topo,
+    CommitExtras, CommitGraph, CommitText, FileChange, Oid, Operations, RawCommit, Refs, RepoFiles,
+    RepoPaths, Status, topo,
 };
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -111,6 +111,12 @@ pub trait GitBackend: Send + Sync {
     fn subscribe_changes(&self, f: Box<dyn Fn(u32) + Send + Sync>) -> bool {
         let _ = f;
         false
+    }
+
+    /// 署名の検証・notes・変更の行数。git を起動するので時間がかかる（裏で呼ぶ）。対応しない実装は空を返す。
+    fn commit_extras(&self, commit: &Oid) -> Result<CommitExtras> {
+        let _ = commit;
+        Ok(CommitExtras::default())
     }
 
     /// daemon とのつながりの様子。手元の実装は `None`。
