@@ -74,6 +74,11 @@ typedef struct AmonhenRepo AmonhenRepo;
 typedef struct AmonhenStatus AmonhenStatus;
 
 /**
+ * 差分の構文の色付け。
+ */
+typedef struct AmonhenSyntax AmonhenSyntax;
+
+/**
  * リポジトリの監視。
  */
 typedef struct AmonhenWatch AmonhenWatch;
@@ -299,6 +304,45 @@ typedef struct {
   const AmonhenHighlight *highlights;
   uint32_t highlight_count;
 } AmonhenDiffView;
+
+/**
+ * 差分の行の中の、構文の色付けの範囲。位置は FE の文字列の符号単位。
+ */
+typedef struct {
+  uint32_t row;
+  uint32_t start;
+  uint32_t end;
+  uint8_t kind;
+  uint8_t _pad[3];
+} AmonhenSyntaxSpan;
+#define AmonhenSyntaxSpan_KEYWORD 1
+#define AmonhenSyntaxSpan_STRING 2
+#define AmonhenSyntaxSpan_COMMENT 3
+#define AmonhenSyntaxSpan_NUMBER 4
+#define AmonhenSyntaxSpan_FUNCTION 5
+#define AmonhenSyntaxSpan_TYPE 6
+#define AmonhenSyntaxSpan_CONSTANT 7
+#define AmonhenSyntaxSpan_PROPERTY 8
+#define AmonhenSyntaxSpan_ATTRIBUTE 9
+#define AmonhenSyntaxSpan_TAG 10
+#define AmonhenSyntaxSpan_OPERATOR 11
+/**
+ * `self`・`this` などの組み込みの変数や、引数。
+ */
+#define AmonhenSyntaxSpan_VARIABLE 12
+/**
+ * 文字列の中のエスケープや正規表現など。
+ */
+#define AmonhenSyntaxSpan_ESCAPE 13
+#define AmonhenSyntaxSpan_MODULE 14
+
+typedef struct {
+  /**
+   * 行の順、行の中では位置の順。
+   */
+  const AmonhenSyntaxSpan *spans;
+  uint32_t span_count;
+} AmonhenSyntaxView;
 
 /**
  * status の 1 項目。文字列は `AmonhenStatusView::strings` の中の UTF-8。
@@ -546,6 +590,33 @@ AmonhenDiffView amonhen_diff_view(const AmonhenDiff *diff);
  * `diff` は `amonhen_file_diff` が返したもので、まだ解放していないこと。
  */
 void amonhen_diff_free(AmonhenDiff *diff);
+
+/**
+ * 差分の構文の色付け（`amonhen_syntax_free` で解放する）。ファイル全体を解析するので、差分を表示してから
+ * 裏のスレッドで呼ぶ。言語がわからなければ空。
+ *
+ * # Safety
+ * `diff` は `amonhen_file_diff`・`amonhen_conflict_view` が返したもので、まだ解放していないこと。
+ */
+AmonhenSyntax *amonhen_diff_syntax(const AmonhenDiff *diff);
+
+/**
+ * # Safety
+ * `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。
+ */
+AmonhenSyntax *amonhen_working_diff_syntax(const AmonhenWorkingDiff *diff);
+
+/**
+ * # Safety
+ * `syntax` は有効であること。返したポインタは解放するまで有効。
+ */
+AmonhenSyntaxView amonhen_syntax_view(const AmonhenSyntax *syntax);
+
+/**
+ * # Safety
+ * `syntax` は `amonhen_diff_syntax`・`amonhen_working_diff_syntax` が返したもので、まだ解放していないこと。
+ */
+void amonhen_syntax_free(AmonhenSyntax *syntax);
 
 /**
  * `history` の `row` 行目のコミット ID を `out`（20 バイト）に書く。範囲外なら false。

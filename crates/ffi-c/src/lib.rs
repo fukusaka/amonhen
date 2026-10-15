@@ -11,7 +11,7 @@ use std::sync::Arc;
 use amonhen_backend_gix::GixBackend;
 use amonhen_core::diff::DiffView;
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository, StatusSnapshot, WorkingDiff, cache};
-use amonhen_layout::{DiffRow, Edge, Highlight, Node, StrRef};
+use amonhen_layout::{DiffRow, Edge, Highlight, Node, StrRef, SyntaxSpan};
 use amonhen_model::{FileChange, Oid};
 use amonhen_projection::{FrontendProfile, HistoryChunk, StringEncoding};
 use amonhen_watch::Watcher;
@@ -54,6 +54,11 @@ pub struct AmonhenWorkingDiff {
 
 /// ファイル 1 つの差分。
 pub struct AmonhenDiff {
+    _private: [u8; 0],
+}
+
+/// 差分の構文の色付け。
+pub struct AmonhenSyntax {
     _private: [u8; 0],
 }
 
@@ -716,6 +721,54 @@ fn diff_view(d: &DiffView) -> AmonhenDiffView {
 pub unsafe extern "C" fn amonhen_diff_free(diff: *mut AmonhenDiff) {
     if !diff.is_null() {
         drop(unsafe { Box::from_raw(diff.cast::<DiffView>()) });
+    }
+}
+
+#[repr(C)]
+pub struct AmonhenSyntaxView {
+    /// 行の順、行の中では位置の順。
+    pub spans: *const SyntaxSpan,
+    pub span_count: u32,
+}
+
+/// 差分の構文の色付け（`amonhen_syntax_free` で解放する）。ファイル全体を解析するので、差分を表示してから
+/// 裏のスレッドで呼ぶ。言語がわからなければ空。
+///
+/// # Safety
+/// `diff` は `amonhen_file_diff`・`amonhen_conflict_view` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_diff_syntax(diff: *const AmonhenDiff) -> *mut AmonhenSyntax {
+    let spans = unsafe { &*diff.cast::<DiffView>() }.syntax();
+    Box::into_raw(Box::new(spans)).cast()
+}
+
+/// # Safety
+/// `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_working_diff_syntax(
+    diff: *const AmonhenWorkingDiff,
+) -> *mut AmonhenSyntax {
+    let spans = unsafe { &*diff.cast::<WorkingDiff>() }.view.syntax();
+    Box::into_raw(Box::new(spans)).cast()
+}
+
+/// # Safety
+/// `syntax` は有効であること。返したポインタは解放するまで有効。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_syntax_view(syntax: *const AmonhenSyntax) -> AmonhenSyntaxView {
+    let spans = unsafe { &*syntax.cast::<Vec<SyntaxSpan>>() };
+    AmonhenSyntaxView {
+        spans: spans.as_ptr(),
+        span_count: spans.len() as u32,
+    }
+}
+
+/// # Safety
+/// `syntax` は `amonhen_diff_syntax`・`amonhen_working_diff_syntax` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_syntax_free(syntax: *mut AmonhenSyntax) {
+    if !syntax.is_null() {
+        drop(unsafe { Box::from_raw(syntax.cast::<Vec<SyntaxSpan>>()) });
     }
 }
 
