@@ -88,6 +88,18 @@ public struct CommitInfo: Decodable, Sendable {
     }
 }
 
+/// 署名の検証の結果（History の一覧用）。
+public struct SignatureCheck: Decodable, Sendable {
+    /// `git log --format=%G?` の 1 文字（署名がなければ N）。
+    public let status: String
+    public let signer: String
+    public let key: String
+    public let fingerprint: String
+    public let trust: String
+    /// コミッターのメールアドレス（正しい署名のときだけ。署名者と一致するかを確かめる）。
+    public let committerEmail: String
+}
+
 /// コミットの詳細のうち時間のかかる分（署名の検証・notes・行数・子・含むブランチとタグ）。
 public struct CommitExtras: Decodable, Sendable {
     public let signature: Signature?
@@ -169,11 +181,11 @@ extension Repository {
         try info(["op": "commitExtras", "oid": oid])
     }
 
-    /// 署名の検証の結果（`git log --format=%G?` の 1 文字）を `oids` と同じ順に返す。一度検証したものはコアが
-    /// 覚えているので速い。覚えていないものは 1 件 15 ms ほどかかるので、裏のスレッドで少しずつ呼ぶ。
-    public func verifySignatures(_ oids: [String]) throws -> [String] {
-        struct Statuses: Decodable { let statuses: [String] }
-        return try info(["op": "verifySignatures", "oids": oids], as: Statuses.self).statuses
+    /// 署名の検証の結果を `oids` と同じ順に返す。一度検証したものはコアが覚えているので速い。覚えていない
+    /// ものは 1 件 15 ms ほどかかるので、裏のスレッドで少しずつ呼ぶ。
+    public func verifySignatures(_ oids: [String]) throws -> [SignatureCheck] {
+        struct Checks: Decodable { let checks: [SignatureCheck] }
+        return try info(["op": "verifySignatures", "oids": oids], as: Checks.self).checks
     }
 
     /// 名前や短い ID が指すコミット（40 桁）。裏のスレッドで呼ぶ。

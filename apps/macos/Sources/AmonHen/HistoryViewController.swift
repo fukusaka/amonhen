@@ -129,7 +129,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
     private var refLabels: [Data: [RefLabel]] = [:]
     /// 署名の検証の結果（コミット ID → `%G?` の 1 文字）。コミットは変わらないので、History を読み直しても残す。
-    private var verifiedSignatures: [Data: Character] = [:]
+    private var verifiedSignatures: [Data: SignatureStatus] = [:]
     private var verifyingSignatures: Set<Data> = []
     private var verifyWork: DispatchWorkItem?
     /// 検証する側を変えた回数。変える前に始めた検証の結果は捨てる。
@@ -565,11 +565,15 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                                selected: isSelected && focused)
             }
             // 署名があれば、作者・日時の行に検証の結果の色の丸を置く。結果をまだ知らなければ、裏で検証する。
-            let signed = (chunks[row / Self.chunkRows]?.signature(row: row) ?? 0) != 0
-            var status: Character?
+            let kind = chunks[row / Self.chunkRows]?.signature(row: row) ?? 0
+            let signed = kind != 0
+            var status = SignatureStatus.pending
             if signed, let id {
-                status = verifiedSignatures[id]
-                if status == nil, !verifyingSignatures.contains(id) { unverified.append(id) }
+                if let known = verifiedSignatures[id] {
+                    status = known
+                } else if !verifyingSignatures.contains(id) {
+                    unverified.append(id)
+                }
             }
             let dot: CGFloat = signed ? 12 : 0
             // 1 行なら、作者・日時・ID を右に寄せ、件名はその手前まで。
@@ -583,29 +587,17 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 color: isSelected ? selectedSecondary : secondary, scale: scale,
                 maxWidth: compact ? metaWidth : column.width - dot, ellipsis: metaEllipsis)
             if signed {
-                let size: CGFloat = 7
-                let dotX = compact
-                    ? end - metaWidth - 10
-                    : column.minX - originX + min(line.meta.width, column.width - dot) + 6
+                // 署名の状態のアイコン（信用度は形で分かる。塗りつぶしの seal は強い信用）。
+                let centerX = compact
+                    ? end - metaWidth - 7
+                    : column.minX - originX + min(line.meta.width, column.width - dot) + 9
                 let centerY = rowTop + metaBaseline - CTFontGetXHeight(metaFont) / 2
-                text.addRoundedRect(
-                    CGRect(x: dotX, y: (centerY - size / 2).rounded(), width: size, height: size),
-                    radius: size / 2, color: Self.signatureColor(status).rgba)
+                text.addSymbol(
+                    status.symbol, pointSize: 9.5, center: CGPoint(x: centerX, y: centerY),
+                    color: (isSelected && focused ? selected : status.color.rgba), scale: scale)
             }
         }
         if !unverified.isEmpty { verifySoon(unverified) }
-    }
-
-    /// 署名の検証の結果の色。まだ検証していなければ薄い灰色。
-    private static func signatureColor(_ status: Character?) -> NSColor {
-        switch status {
-        case "G": .systemGreen
-        case "U": .systemYellow
-        case "X", "Y", "R": .systemOrange
-        case "B": .systemRed
-        case nil: .systemGray.withAlphaComponent(0.35)
-        default: .systemGray
-        }
     }
 
     /// スクロールが落ち着いてから、見えている署名を 8 件ずつ裏で検証し、終わった分から色を付ける
@@ -623,12 +615,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 for start in stride(from: 0, to: pending.count, by: 8) {
                     let batch = Array(pending[start..<min(pending.count, start + 8)])
                     let hexes = batch.map { $0.map { String(format: "%02x", $0) }.joined() }
-                    let statuses = await Task.detached(priority: .utility) {
+                    let checks = await Task.detached(priority: .utility) {
                         (try? repository.verifySignatures(hexes)) ?? []
                     }.value
                     guard generation == signatureGeneration else { return }
-                    for (id, status) in zip(batch, statuses) {
-                        verifiedSignatures[id] = status.first ?? "E"
+                    for (id, c) in zip(batch, checks) {
+                        verifiedSignatures[id] = SignatureStatus(
+                            status: c.status, trust: c.trust, signer: c.signer, committerEmail: c.committerEmail,
+                            kind: c.signer.contains("<") ? "gpg" : (c.key.hasPrefix("SHA256:") ? "ssh" : "gpg"))
                     }
                     verifyingSignatures.subtract(batch)
                     redrawText()

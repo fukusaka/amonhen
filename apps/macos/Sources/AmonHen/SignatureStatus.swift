@@ -1,0 +1,134 @@
+import AmonhenKit
+import AppKit
+
+/// コミットの署名の見せ方。git の検証結果（`%G?`）に、信用度と「署名者がコミッターと一致するか」を加えて決める。
+/// ヘッダー・吹き出し・History の一覧で同じアイコンと言葉を使う。
+enum SignatureStatus: Equatable {
+    /// 正しい署名で、鍵を信用している。`trust` は 3（ultimate・full、SSH の allowed signers）か 2（marginal）。
+    case verified(trust: Int)
+    /// 署名は正しいが、鍵の信用度が決まっていない（U、または信用度 undefined・never）。
+    case untrusted
+    /// 署名は正しいが、署名した人のメールアドレスがコミッターと違う。
+    case signerMismatch
+    /// 期限切れの署名（X）か、期限切れの鍵（Y）。
+    case expired
+    /// 失効した鍵（R）。
+    case revoked
+    /// 不正な署名（B）。
+    case bad
+    /// 鍵がないなどで検証できない（E）。
+    case noKey
+    /// 署名はあるが、まだ検証していない。
+    case pending
+
+    /// 検証の結果から決める。`signer` は `%GS`（`名前 <メール>` か、SSH ならプリンシパル）、`trust` は `%GT`。
+    /// `signer` か `committerEmail` が空なら、一致は確かめない。
+    init(status: String?, trust: String = "", signer: String = "", committerEmail: String = "", kind: String? = nil) {
+        guard let status else {
+            self = .pending
+            return
+        }
+        switch status {
+        case "G", "U":
+            let level = Self.trustLevel(trust, ssh: kind == "ssh")
+            if status == "U" || level < 2 {
+                self = .untrusted
+            } else if Self.mismatch(signer: signer, committerEmail: committerEmail) {
+                self = .signerMismatch
+            } else {
+                self = .verified(trust: level)
+            }
+        case "X", "Y": self = .expired
+        case "R": self = .revoked
+        case "B": self = .bad
+        default: self = .noKey
+        }
+    }
+
+    /// 信用度の段階（3 は ultimate・full、2 は marginal、1 は undefined、0 は never）。SSH の署名は allowed signers に
+    /// 載っていれば正しい（G）になるので、信用しているものとして 3 にする。
+    static func trustLevel(_ trust: String, ssh: Bool) -> Int {
+        if ssh { return 3 }
+        switch trust.lowercased() {
+        case "ultimate", "full", "fully": return 3
+        case "marginal": return 2
+        case "never": return 0
+        default: return 1
+        }
+    }
+
+    private static func mismatch(signer: String, committerEmail: String) -> Bool {
+        let email = committerEmail.lowercased()
+        guard !signer.isEmpty, !email.isEmpty else { return false }
+        // GPG は `名前 <メール>`、SSH はプリンシパル（たいていメールアドレス）。
+        let signed = signer.range(of: "<").map { signer[$0.upperBound...].prefix { $0 != ">" } }.map(String.init) ?? signer
+        return signed.lowercased() != email
+    }
+
+    /// SF Symbols の名前。信用度はアイコンの形でも分かる（塗りつぶしの seal は強い信用、縁だけは弱い信用）。
+    var symbol: String {
+        switch self {
+        case let .verified(trust): trust >= 3 ? "checkmark.seal.fill" : "checkmark.seal"
+        case .untrusted: "checkmark.shield"
+        case .signerMismatch: "person.crop.circle.badge.questionmark"
+        case .expired: "clock.badge.exclamationmark"
+        case .revoked: "exclamationmark.shield.fill"
+        case .bad: "xmark.seal.fill"
+        case .noKey: "key"
+        case .pending: "seal"
+        }
+    }
+
+    var color: NSColor {
+        switch self {
+        case .verified: .systemGreen
+        case .untrusted, .signerMismatch: .systemYellow
+        case .expired: .systemOrange
+        case .revoked, .bad: .systemRed
+        case .noKey: .secondaryLabelColor
+        case .pending: .tertiaryLabelColor
+        }
+    }
+
+    /// 短い言葉（GitHub に合わせて英語）。
+    var label: String {
+        switch self {
+        case .verified: "Verified"
+        case .untrusted: "Untrusted key"
+        case .signerMismatch: "Unverified signer"
+        case .expired: "Expired"
+        case .revoked: "Revoked key"
+        case .bad: "Bad signature"
+        case .noKey: "No key"
+        case .pending: "Checking…"
+        }
+    }
+
+    /// 吹き出しの説明（日本語）。
+    var explanation: String {
+        switch self {
+        case let .verified(trust):
+            trust >= 3 ? "このコミットは、信用している鍵による正しい署名を持っています。"
+                : "このコミットは正しい署名を持っています。鍵の信用度は marginal（部分的に信用）です。"
+        case .untrusted: "署名は正しいですが、鍵の信用度が決まっていません。鍵の持ち主を確かめて信用度を設定すると Verified になります。"
+        case .signerMismatch: "署名は正しいですが、署名した鍵のメールアドレスがコミッターと一致しません。"
+        case .expired: "署名か鍵の期限が切れています。署名した時点では正しかった可能性があります。"
+        case .revoked: "署名した鍵は失効しています。この署名は信用できません。"
+        case .bad: "署名が正しくありません。コミットが署名の後に書き換えられたか、署名が壊れています。"
+        case .noKey: "署名を検証する公開鍵がありません（GPG の鍵束、SSH の allowed signers に入っていない）。"
+        case .pending: "署名を検証しています。"
+        }
+    }
+
+    /// かざしたときの短い説明。
+    var toolTip: String { "\(label) — \(explanation)（押すと詳細）" }
+
+    /// 信用度の目盛りの段数（0〜3）。信用度に意味がない状態は nil。
+    var trustBars: Int? {
+        switch self {
+        case let .verified(trust): trust
+        case .untrusted: 1
+        default: nil
+        }
+    }
+}
