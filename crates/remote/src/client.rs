@@ -35,6 +35,8 @@ pub struct Connection {
     /// 送った・受け取ったバイト数（フレームの中身。SSH での転送量の見積もりに使う）。
     sent: AtomicU64,
     received: AtomicU64,
+    /// daemon（や ssh）が標準エラーに書いた最後の部分。つながらなかったときの理由に添える。
+    stderr: Arc<Mutex<String>>,
 }
 
 impl Connection {
@@ -52,6 +54,7 @@ impl Connection {
             child: Mutex::new(None),
             sent: AtomicU64::new(0),
             received: AtomicU64::new(0),
+            stderr: Arc::default(),
         });
         let weak = Arc::downgrade(&conn);
         std::thread::Builder::new()
@@ -64,7 +67,15 @@ impl Connection {
                     match frame {
                         Ok(Some(f)) => conn.dispatch(f),
                         _ => {
-                            conn.close("daemon との接続が切れました");
+                            // 標準エラーの最後の行を読み終えるのを少し待ってから、理由に添える。
+                            std::thread::sleep(Duration::from_millis(100));
+                            let detail = conn.stderr.lock().unwrap().trim().to_owned();
+                            let reason = if detail.is_empty() {
+                                "daemon との接続が切れました".to_owned()
+                            } else {
+                                format!("daemon との接続が切れました: {detail}")
+                            };
+                            conn.close(&reason);
                             break;
                         }
                     }
@@ -80,12 +91,31 @@ impl Connection {
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("{program} を起動できない: {e}"))?;
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
+        let stderr = child.stderr.take().unwrap();
         let conn = Self::new(stdout, std::io::BufWriter::new(stdin));
+        // 標準エラーは最後の 2000 文字ほどを残す（つながらなかった理由を伝えるため）。
+        let tail = conn.stderr.clone();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::BufReader::new(stderr)
+                .lines()
+                .map_while(std::result::Result::ok)
+            {
+                let mut t = tail.lock().unwrap();
+                t.push_str(&line);
+                t.push('\n');
+                if t.len() > 2000 {
+                    let cut = t.len() - 2000;
+                    let cut = (cut..t.len()).find(|&i| t.is_char_boundary(i)).unwrap_or(0);
+                    t.drain(..cut);
+                }
+            }
+        });
         *conn.child.lock().unwrap() = Some(child);
         Ok(conn)
     }

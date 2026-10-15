@@ -12,6 +12,7 @@ lz4_flex = "0.14.0"
 postcard = { version = "1.1.3", features = ["use-std"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_bytes = "0.11.19"
+sha1_smol = "1.0.1"
 
 [dev-dependencies]
 amonhen-backend-gix.workspace = true

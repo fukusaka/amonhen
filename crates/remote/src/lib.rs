@@ -6,6 +6,7 @@ mod client;
 pub mod frame;
 pub mod location;
 mod server;
+pub mod ssh;
 pub mod wire;
 
 pub use client::{Connection, RemoteBackend};
