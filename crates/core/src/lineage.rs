@@ -81,6 +81,58 @@ pub fn lineage(graph: &CommitGraph, layout: &GraphLayout, row: u32) -> Lineage {
     Lineage { rows, edge_from }
 }
 
+/// `row` のコミットを含む（`row` から辿れる側の）コミットと、直接の子。子は親より上の行にあるので、
+/// `row` から上へ 1 回なめるだけで済む。返すビット集合は `row` 自身を含む。
+pub fn descendants(graph: &CommitGraph, row: u32) -> (Vec<u64>, Vec<u32>) {
+    let n = graph.len();
+    let mut rows = vec![0u64; n.div_ceil(64)];
+    let mut children = Vec::new();
+    if (row as usize) >= n {
+        return (rows, children);
+    }
+    rows[row as usize / 64] |= 1 << (row % 64);
+    for r in (0..row as usize).rev() {
+        let parents = graph.parents(r);
+        if parents.contains(&row) {
+            children.push(r as u32);
+        }
+        if parents
+            .iter()
+            .any(|&p| rows[p as usize / 64] & (1 << (p % 64)) != 0)
+        {
+            rows[r / 64] |= 1 << (r % 64);
+        }
+    }
+    children.reverse();
+    (rows, children)
+}
+
+/// `row` から辿れる祖先のうち、`marked` が真を返すいちばん上の行（`row` 自身を含む）。
+pub fn nearest_ancestor(
+    graph: &CommitGraph,
+    row: u32,
+    marked: impl Fn(u32) -> bool,
+) -> Option<u32> {
+    let n = graph.len();
+    let mut rows = vec![0u64; n.div_ceil(64)];
+    if (row as usize) >= n {
+        return None;
+    }
+    rows[row as usize / 64] |= 1 << (row % 64);
+    for r in row as usize..n {
+        if rows[r / 64] & (1 << (r % 64)) == 0 {
+            continue;
+        }
+        if marked(r as u32) {
+            return Some(r as u32);
+        }
+        for &p in graph.parents(r) {
+            rows[p as usize / 64] |= 1 << (p % 64);
+        }
+    }
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -147,6 +199,24 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn finds_descendants_children_and_the_nearest_marked_ancestor() {
+        // 行は 4, 3, 2, 1, 0 の順。4 は 3 と 1 の merge。
+        let g = graph(&[(4, &[3, 1]), (3, &[2]), (2, &[0]), (1, &[0]), (0, &[])]);
+        let (rows, children) = descendants(&g, 4);
+        assert_eq!(children, [2, 3], "0 の子は 2 と 1（2 行目と 3 行目）");
+        let set: Vec<u32> = (0..5).filter(|&r| rows[0] & (1 << r) != 0).collect();
+        assert_eq!(set, [0, 1, 2, 3, 4], "すべてが 0 を含む");
+        let (rows, children) = descendants(&g, 3);
+        assert_eq!(
+            (rows[0], children),
+            (0b1001, vec![0]),
+            "1 を含むのは 1 と 4"
+        );
+        assert_eq!(nearest_ancestor(&g, 1, |r| r == 4 || r == 2), Some(2));
+        assert_eq!(nearest_ancestor(&g, 3, |r| r == 2), None);
     }
 
     #[test]
