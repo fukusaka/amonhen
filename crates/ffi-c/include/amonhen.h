@@ -705,6 +705,17 @@ AmonhenSyntax *amonhen_diff_syntax(const AmonhenDiff *diff);
 AmonhenSyntax *amonhen_working_diff_syntax(const AmonhenWorkingDiff *diff);
 
 /**
+ * テキスト全体の構文の色付け（`amonhen_syntax_free` で解放する）。範囲はテキストの先頭からの UTF-16 の
+ * 位置で、`row` は 0。言語は `path` の拡張子で決め、わからなければ空。時間がかかるので裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `path` は NUL 終端の UTF-8、`text` は `len` バイト読める（`len` が 0 なら NULL でもよい）こと。
+ */
+AmonhenSyntax *amonhen_text_syntax(const char *path,
+                                   const uint8_t *text,
+                                   uintptr_t len);
+
+/**
  * # Safety
  * `syntax` は有効であること。返したポインタは解放するまで有効。
  */
@@ -712,7 +723,8 @@ AmonhenSyntaxView amonhen_syntax_view(const AmonhenSyntax *syntax);
 
 /**
  * # Safety
- * `syntax` は `amonhen_diff_syntax`・`amonhen_working_diff_syntax` が返したもので、まだ解放していないこと。
+ * `syntax` は `amonhen_diff_syntax`・`amonhen_working_diff_syntax`・`amonhen_text_syntax` が返したもので、
+ * まだ解放していないこと。
  */
 void amonhen_syntax_free(AmonhenSyntax *syntax);
 

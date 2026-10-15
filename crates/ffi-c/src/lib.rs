@@ -935,6 +935,26 @@ pub unsafe extern "C" fn amonhen_working_diff_syntax(
     Box::into_raw(Box::new(spans)).cast()
 }
 
+/// テキスト全体の構文の色付け（`amonhen_syntax_free` で解放する）。範囲はテキストの先頭からの UTF-16 の
+/// 位置で、`row` は 0。言語は `path` の拡張子で決め、わからなければ空。時間がかかるので裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `path` は NUL 終端の UTF-8、`text` は `len` バイト読める（`len` が 0 なら NULL でもよい）こと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_text_syntax(
+    path: *const c_char,
+    text: *const u8,
+    len: usize,
+) -> *mut AmonhenSyntax {
+    let path = str_arg(path).unwrap_or_default();
+    let text = if len == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(text, len) }
+    };
+    Box::into_raw(Box::new(amonhen_core::diff::text_syntax(path, text))).cast()
+}
+
 /// # Safety
 /// `syntax` は有効であること。返したポインタは解放するまで有効。
 #[unsafe(no_mangle)]
@@ -947,7 +967,8 @@ pub unsafe extern "C" fn amonhen_syntax_view(syntax: *const AmonhenSyntax) -> Am
 }
 
 /// # Safety
-/// `syntax` は `amonhen_diff_syntax`・`amonhen_working_diff_syntax` が返したもので、まだ解放していないこと。
+/// `syntax` は `amonhen_diff_syntax`・`amonhen_working_diff_syntax`・`amonhen_text_syntax` が返したもので、
+/// まだ解放していないこと。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_syntax_free(syntax: *mut AmonhenSyntax) {
     if !syntax.is_null() {

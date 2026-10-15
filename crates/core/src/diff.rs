@@ -403,9 +403,68 @@ impl DiffView {
     }
 }
 
+/// テキスト全体の構文の色付け（マージエディタなど、行に分けずに表示するもの）。`start..end` はテキストの
+/// 先頭からの UTF-16 の位置で、`row` は 0。言語がわからなければ空。
+#[cfg(feature = "syntax")]
+pub fn text_syntax(path: &str, text: &[u8]) -> Vec<SyntaxSpan> {
+    if amonhen_syntax::Language::from_path(path).is_none() {
+        return Vec::new();
+    }
+    let tokens = amonhen_syntax::highlight(path, text);
+    // トークンは位置の順なので、バイト位置から UTF-16 の位置へは前から順に数えて進める。
+    let (mut byte, mut unit) = (0usize, 0u32);
+    let mut to_units = |at: usize| {
+        let chunk = &text[byte..at];
+        unit += if chunk.is_ascii() {
+            chunk.len() as u32
+        } else {
+            String::from_utf8_lossy(chunk).encode_utf16().count() as u32
+        };
+        byte = at;
+        unit
+    };
+    tokens
+        .iter()
+        .map(|t| SyntaxSpan {
+            row: 0,
+            start: to_units(t.start as usize),
+            end: to_units(t.end as usize),
+            kind: t.kind,
+            _pad: [0; 3],
+        })
+        .collect()
+}
+
+#[cfg(not(feature = "syntax"))]
+pub fn text_syntax(_path: &str, _text: &[u8]) -> Vec<SyntaxSpan> {
+    Vec::new()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn colors_whole_text_in_utf16_units() {
+        let text = "// é\nfn main() {}\n";
+        let spans = text_syntax("a.rs", text.as_bytes());
+        let comment = spans
+            .iter()
+            .find(|s| s.kind == SyntaxSpan::COMMENT)
+            .unwrap();
+        assert_eq!((comment.start, comment.end), (0, 4), "é は UTF-16 で 1 つ");
+        let keyword = spans
+            .iter()
+            .find(|s| s.kind == SyntaxSpan::KEYWORD)
+            .unwrap();
+        let utf16: Vec<u16> = text.encode_utf16().collect();
+        assert_eq!(
+            String::from_utf16(&utf16[keyword.start as usize..keyword.end as usize]).unwrap(),
+            "fn"
+        );
+        assert!(text_syntax("a.unknown", text.as_bytes()).is_empty());
+    }
 
     fn render(d: &FileDiff) -> String {
         d.lines
