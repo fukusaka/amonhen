@@ -913,6 +913,16 @@ bool amonhen_discard_rows(const AmonhenRepo *repo_ptr,
 char *amonhen_repo_workdir(const AmonhenRepo *repo_ptr);
 
 /**
+ * daemon 越しのリポジトリのコミットの署名を、手元の鍵で検証するか（false なら SSH 先の git と鍵で検証する）。
+ * 手元のリポジトリには効かない（いつも手元で検証する）。変えると、覚えていた検証の結果は捨てる。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+void amonhen_repo_set_local_signature_check(const AmonhenRepo *repo_ptr,
+                                            bool local);
+
+/**
  * daemon とのつながりの様子。手元のリポジトリなら -1、つながっていれば 0、切れていれば 1 を返す。
  * `received` が NULL でなければ、これまでに受け取ったバイト数を書く。切れた理由は
  * `amonhen_repo_disconnect_reason` で読む。

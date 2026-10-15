@@ -1357,6 +1357,34 @@ pub unsafe extern "C" fn amonhen_repo_workdir(repo_ptr: *const AmonhenRepo) -> *
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// daemon 越しのリポジトリのコミットの署名を、手元の鍵で検証するか（false なら SSH 先の git と鍵で検証する）。
+/// 手元のリポジトリには効かない（いつも手元で検証する）。変えると、覚えていた検証の結果は捨てる。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_repo_set_local_signature_check(
+    repo_ptr: *const AmonhenRepo,
+    local: bool,
+) {
+    static VERIFIER: std::sync::OnceLock<Arc<amonhen_backend_cli::LocalVerifier>> =
+        std::sync::OnceLock::new();
+    let repo = repo(repo_ptr);
+    if repo.connection_state().is_none() {
+        return;
+    }
+    let verifier = local.then(|| {
+        let v = VERIFIER.get_or_init(|| {
+            // コミットのオブジェクトだけを書く作業用のリポジトリ（同じ ID は 1 回だけ書かれる）。
+            Arc::new(amonhen_backend_cli::LocalVerifier::new(
+                std::env::temp_dir().join("amonhen-verify.git"),
+            ))
+        });
+        v.clone() as Arc<dyn amonhen_model::SignatureVerifier>
+    });
+    repo.set_signature_verifier(verifier);
+}
+
 /// daemon とのつながりの様子。手元のリポジトリなら -1、つながっていれば 0、切れていれば 1 を返す。
 /// `received` が NULL でなければ、これまでに受け取ったバイト数を書く。切れた理由は
 /// `amonhen_repo_disconnect_reason` で読む。
