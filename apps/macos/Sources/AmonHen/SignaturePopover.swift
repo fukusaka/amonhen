@@ -53,11 +53,25 @@ final class SignaturePopover: NSViewController {
         }
         if let s = signature {
             if !s.signer.isEmpty { rows.append(("署名者", value(s.signer))) }
-            // 署名者のメールアドレスとコミッターを、状態に関係なく比べて出す。
-            if let matches = Self.signerMatches(signer: s.signer, committerEmail: committerEmail) {
-                rows.append(matches
-                    ? ("コミッター", value("一致（\(committerEmail)）", color: .systemGreen))
-                    : ("コミッター", value("一致しない（\(committerEmail)）", color: .systemYellow)))
+            // 署名した鍵のすべてのメールアドレスとコミッターを、状態に関係なく比べて出す。
+            switch CommitterMatch(emails: s.emails, committerEmail: committerEmail) {
+            case let .matched(email):
+                rows.append(("コミッター", value("一致（\(email)）", color: .systemGreen)))
+            case let .unconfirmed(email):
+                rows.append(("コミッター", value("一致（\(email)）。ただし鍵のユーザー ID は確認されていない", color: .systemYellow)))
+            case .mismatched:
+                rows.append(("コミッター", value("一致しない（\(committerEmail) は鍵に登録されていない）", color: .systemOrange)))
+            case .unknown:
+                if !committerEmail.isEmpty {
+                    rows.append(("コミッター", value("確かめられない（鍵のメールアドレスを読めない）", color: .secondaryLabelColor)))
+                }
+            }
+            let others = s.emails.filter { $0.email.lowercased() != committerEmail.lowercased() }
+            if kind != "ssh", !others.isEmpty {
+                let lines = others.map { e in
+                    e.validity == "r" ? "\(e.email)（失効）" : e.validity == "e" ? "\(e.email)（期限切れ）" : e.email
+                }
+                rows.append(("鍵のほかの ID", value(lines.joined(separator: "\n"))))
             }
         }
         rows.append(("方式", value(kind == "ssh" ? "SSH" : kind == "x509" ? "X.509（S/MIME）" : "GPG（OpenPGP）")))
@@ -90,14 +104,6 @@ final class SignaturePopover: NSViewController {
         header.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -32).isActive = true
         stack.widthAnchor.constraint(equalToConstant: 420).isActive = true
         view = stack
-    }
-
-    /// 署名者のメールアドレスがコミッターと同じか。どちらかが分からなければ nil。
-    static func signerMatches(signer: String, committerEmail: String) -> Bool? {
-        let email = committerEmail.lowercased()
-        guard !signer.isEmpty, !email.isEmpty else { return nil }
-        let signed = signer.range(of: "<").map { String(signer[$0.upperBound...].prefix { $0 != ">" }) } ?? signer
-        return signed.lowercased() == email
     }
 
     /// 指紋を 4 文字ずつに区切る（読み上げて照らし合わせやすくする）。

@@ -229,7 +229,7 @@ struct CommitHeaderRenderer {
         guard let extras else { return .pending }
         guard let s = extras.signature else { return info.signed == nil ? nil : .noKey }
         return SignatureStatus(
-            status: s.status, trust: s.trust, signer: s.signer, committerEmail: info.committerEmail, kind: info.signed)
+            status: s.status, trust: s.trust, emails: s.emails, committerEmail: info.committerEmail, kind: info.signed)
     }
 
     /// 署名の行を押すと、詳細の吹き出しを出す。

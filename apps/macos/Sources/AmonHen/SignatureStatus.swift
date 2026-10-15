@@ -21,9 +21,9 @@ enum SignatureStatus: Equatable {
     /// 署名はあるが、まだ検証していない。
     case pending
 
-    /// 検証の結果から決める。`signer` は `%GS`（`名前 <メール>` か、SSH ならプリンシパル）、`trust` は `%GT`。
-    /// `signer` か `committerEmail` が空なら、一致は確かめない。
-    init(status: String?, trust: String = "", signer: String = "", committerEmail: String = "", kind: String? = nil) {
+    /// 検証の結果から決める。`trust` は `%GT`、`emails` は署名した鍵に登録されたメールアドレス。
+    /// 署名者がコミッターと違うとするのは、鍵のメールアドレスを読めて、どれも一致しないときだけ。
+    init(status: String?, trust: String = "", emails: [SignerEmail] = [], committerEmail: String = "", kind: String? = nil) {
         guard let status else {
             self = .pending
             return
@@ -33,7 +33,7 @@ enum SignatureStatus: Equatable {
             let level = Self.trustLevel(trust, ssh: kind == "ssh")
             if status == "U" || level < 2 {
                 self = .untrusted
-            } else if Self.mismatch(signer: signer, committerEmail: committerEmail) {
+            } else if CommitterMatch(emails: emails, committerEmail: committerEmail) == .mismatched {
                 self = .signerMismatch
             } else {
                 self = .verified(trust: level)
@@ -55,14 +55,6 @@ enum SignatureStatus: Equatable {
         case "never": return 0
         default: return 1
         }
-    }
-
-    private static func mismatch(signer: String, committerEmail: String) -> Bool {
-        let email = committerEmail.lowercased()
-        guard !signer.isEmpty, !email.isEmpty else { return false }
-        // GPG は `名前 <メール>`、SSH はプリンシパル（たいていメールアドレス）。
-        let signed = signer.range(of: "<").map { signer[$0.upperBound...].prefix { $0 != ">" } }.map(String.init) ?? signer
-        return signed.lowercased() != email
     }
 
     /// SF Symbols の名前。信用度はアイコンの形でも分かる（塗りつぶしの seal は強い信用、縁だけは弱い信用）。
@@ -129,6 +121,34 @@ enum SignatureStatus: Equatable {
         case let .verified(trust): trust
         case .untrusted: 1
         default: nil
+        }
+    }
+}
+
+/// 署名した鍵のメールアドレスと、コミッターのメールアドレスの関係。
+enum CommitterMatch: Equatable {
+    /// 有効なユーザー ID（u・f・m、SSH のプリンシパル）と一致する。
+    case matched(String)
+    /// 有効性が分からないユーザー ID とだけ一致する（誰でも他人のアドレスを書けるので、言い切らない）。
+    case unconfirmed(String)
+    /// 鍵のメールアドレスを読めたが、どれとも一致しない（失効・期限切れのユーザー ID との一致は数えない）。
+    case mismatched
+    /// 鍵のメールアドレスが読めない（鍵がないなど）か、コミッターのメールアドレスが分からない。
+    case unknown
+
+    init(emails: [SignerEmail], committerEmail: String) {
+        let email = committerEmail.lowercased()
+        guard !emails.isEmpty, !email.isEmpty else {
+            self = .unknown
+            return
+        }
+        let same = emails.filter { $0.email.lowercased() == email }
+        if same.contains(where: { ["u", "f", "m"].contains($0.validity) }) {
+            self = .matched(committerEmail)
+        } else if same.contains(where: { !["r", "e", "n"].contains($0.validity) }) {
+            self = .unconfirmed(committerEmail)
+        } else {
+            self = .mismatched
         }
     }
 }

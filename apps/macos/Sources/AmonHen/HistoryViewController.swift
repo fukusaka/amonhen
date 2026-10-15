@@ -621,7 +621,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     guard generation == signatureGeneration else { return }
                     for (id, c) in zip(batch, checks) {
                         verifiedSignatures[id] = SignatureStatus(
-                            status: c.status, trust: c.trust, signer: c.signer, committerEmail: c.committerEmail,
+                            status: c.status, trust: c.trust, emails: c.emails, committerEmail: c.committerEmail,
                             kind: c.signer.contains("<") ? "gpg" : (c.key.hasPrefix("SHA256:") ? "ssh" : "gpg"))
                     }
                     verifyingSignatures.subtract(batch)

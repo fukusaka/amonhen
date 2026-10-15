@@ -98,6 +98,14 @@ public struct SignatureCheck: Decodable, Sendable {
     public let trust: String
     /// コミッターのメールアドレス（正しい署名のときだけ。署名者と一致するかを確かめる）。
     public let committerEmail: String
+    /// 署名した鍵に登録されたメールアドレス（GPG はすべてのユーザー ID、SSH はプリンシパル）。
+    public let emails: [SignerEmail]
+}
+
+/// 署名した鍵のメールアドレスと、その有効性（gpg の uid の欄。u・f・m は有効、r は失効、e は期限切れ、`-` は不明）。
+public struct SignerEmail: Decodable, Sendable {
+    public let email: String
+    public let validity: String
 }
 
 /// コミットの詳細のうち時間のかかる分（署名の検証・notes・行数・子・含むブランチとタグ）。
@@ -139,6 +147,7 @@ public struct CommitExtras: Decodable, Sendable {
         public let key: String
         public let fingerprint: String
         public let trust: String
+        public let emails: [SignerEmail]
     }
 
     public struct FileStat: Decodable, Sendable {
