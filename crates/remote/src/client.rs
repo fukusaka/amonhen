@@ -11,8 +11,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use amonhen_model::{
-    CommitGraph, CommitText, FileChange, GitBackend, HeadState, Oid, Operations, Outcome,
-    RawCommit, Refs, RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, Status,
+    CommitGraph, CommitText, ConnectionState, FileChange, GitBackend, HeadState, Oid, Operations,
+    Outcome, RawCommit, Refs, RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, Status,
 };
 use serde::de::DeserializeOwned;
 
@@ -34,7 +34,10 @@ pub struct Connection {
     child: Mutex<Option<Child>>,
     /// 送った・受け取ったバイト数（フレームの中身。SSH での転送量の見積もりに使う）。
     sent: AtomicU64,
-    received: AtomicU64,
+    /// 読んだ分だけ増やす（大きな応答を受け取っている途中の進み具合も分かる）。
+    received: Arc<AtomicU64>,
+    /// 切れた理由。
+    reason: Mutex<Option<String>>,
     /// daemon（や ssh）が標準エラーに書いた最後の部分。つながらなかったときの理由に添える。
     stderr: Arc<Mutex<String>>,
 }
@@ -53,10 +56,15 @@ impl Connection {
             listeners: Mutex::default(),
             child: Mutex::new(None),
             sent: AtomicU64::new(0),
-            received: AtomicU64::new(0),
+            received: Arc::default(),
+            reason: Mutex::default(),
             stderr: Arc::default(),
         });
         let weak = Arc::downgrade(&conn);
+        let reader = Counting {
+            inner: reader,
+            count: conn.received.clone(),
+        };
         std::thread::Builder::new()
             .name("amonhen-remote".into())
             .spawn(move || {
@@ -134,8 +142,6 @@ impl Connection {
     }
 
     fn dispatch(&self, f: frame::Frame) {
-        self.received
-            .fetch_add(f.wire_len as u64, Ordering::Relaxed);
         match f.kind {
             Kind::Ok | Kind::Err => {
                 let reply = if f.kind == Kind::Ok {
@@ -158,7 +164,13 @@ impl Connection {
         }
     }
 
+    /// 切れていれば、その理由。
+    pub fn closed(&self) -> Option<String> {
+        self.reason.lock().unwrap().clone()
+    }
+
     fn close(&self, reason: &str) {
+        *self.reason.lock().unwrap() = Some(reason.to_owned());
         self.closed.store(true, Ordering::Relaxed);
         for (_, tx) in self.pending.lock().unwrap().drain() {
             let _ = tx.send(Err(reason.to_owned()));
@@ -378,6 +390,15 @@ impl GitBackend for RemoteBackend {
 
     fn write_commit_graph(&self) -> Result<()> {
         self.conn.call(&Request::WriteCommitGraph)
+    }
+
+    fn connection_state(&self) -> Option<ConnectionState> {
+        let (sent, received) = self.conn.traffic();
+        Some(ConnectionState {
+            sent,
+            received,
+            closed: self.conn.closed(),
+        })
     }
 
     fn subscribe_changes(&self, f: Box<dyn Fn(u32) + Send + Sync>) -> bool {
@@ -703,5 +724,19 @@ impl Operations for RemoteOperations {
 
     fn update_submodules(&self, paths: &[&str]) -> Result<()> {
         self.op(Op::UpdateSubmodules(owned(paths)))
+    }
+}
+
+/// 読んだバイト数を数える。
+struct Counting<R> {
+    inner: R,
+    count: Arc<AtomicU64>,
+}
+
+impl<R: Read> Read for Counting<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.count.fetch_add(n as u64, Ordering::Relaxed);
+        Ok(n)
     }
 }

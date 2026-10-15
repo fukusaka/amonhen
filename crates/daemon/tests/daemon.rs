@@ -53,6 +53,41 @@ fn talks_to_the_daemon_process_and_hears_about_changes() {
 }
 
 #[test]
+fn reports_progress_and_the_reason_when_the_daemon_goes_away() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
+
+    // 2 秒たったら daemon を止める（ネットワークが切れた代わり）。
+    let conn = Connection::spawn(
+        "sh",
+        &[
+            "-c".to_owned(),
+            r#""$0" --stdio "$1" <&0 & sleep 2; kill $!; echo 'gone' >&2"#.to_owned(),
+            env!("CARGO_BIN_EXE_amonhend").to_owned(),
+            dir.display().to_string(),
+        ],
+    )
+    .unwrap();
+    let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
+    assert_eq!(repo.load_history().unwrap().graph.len(), 1);
+    let state = repo.connection_state().unwrap();
+    assert!(state.received > 0 && state.closed.is_none());
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    let reason = loop {
+        if let Some(r) = repo.connection_state().unwrap().closed {
+            break r;
+        }
+        assert!(std::time::Instant::now() < deadline, "切れたことに気づかない");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    assert!(reason.contains("gone"), "{reason}");
+    assert!(repo.load_status().is_err());
+}
+
+#[test]
 fn refuses_a_missing_repository() {
     let conn = Connection::spawn(
         env!("CARGO_BIN_EXE_amonhend"),

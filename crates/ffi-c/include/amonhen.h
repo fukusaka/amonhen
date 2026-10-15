@@ -841,6 +841,25 @@ bool amonhen_discard_rows(const AmonhenRepo *repo_ptr,
 char *amonhen_repo_workdir(const AmonhenRepo *repo_ptr);
 
 /**
+ * daemon とのつながりの様子。手元のリポジトリなら -1、つながっていれば 0、切れていれば 1 を返す。
+ * `received` が NULL でなければ、これまでに受け取ったバイト数を書く。切れた理由は
+ * `amonhen_repo_disconnect_reason` で読む。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`received` は NULL か書き込める `u64` を指すこと。
+ */
+int32_t amonhen_repo_connection(const AmonhenRepo *repo_ptr,
+                                uint64_t *received);
+
+/**
+ * daemon との接続が切れた理由（`amonhen_string_free` で解放する）。切れていなければ NULL。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+char *amonhen_repo_disconnect_reason(const AmonhenRepo *repo_ptr);
+
+/**
  * コンフリクトのある作業ツリーのファイルを、差分と同じ形の行にする（`amonhen_diff_free` で解放する）。
  * 行の `kind` は Current・Incoming・Base・マーカーを表し、コンフリクトの行の `old_no` はその番号 + 1。
  *

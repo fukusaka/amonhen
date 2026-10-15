@@ -113,6 +113,11 @@ pub trait GitBackend: Send + Sync {
         false
     }
 
+    /// daemon とのつながりの様子。手元の実装は `None`。
+    fn connection_state(&self) -> Option<ConnectionState> {
+        None
+    }
+
     /// 件名・作者・日時だけを読む（History の行に出す分）。daemon 越しでは本文を送らずに済む。
     fn commit_summaries(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
         self.commit_texts(ids)
@@ -132,4 +137,14 @@ pub trait GitBackend: Send + Sync {
 
     /// コミットの本文。History で見えている行の分だけ呼ぶ。
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>>;
+}
+
+/// daemon とのつながりの様子（FE が読み込みの進み具合や切断を出すのに使う）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ConnectionState {
+    /// これまでに送った・受け取ったバイト数（通信路の上の大きさ）。
+    pub sent: u64,
+    pub received: u64,
+    /// 切れていれば、その理由。
+    pub closed: Option<String>,
 }

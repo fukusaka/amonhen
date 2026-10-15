@@ -12,7 +12,7 @@ mod status;
 mod text;
 pub mod topo;
 
-pub use backend::{Error, GitBackend, Result};
+pub use backend::{ConnectionState, Error, GitBackend, Result};
 pub use change::{ChangeKind, FileChange};
 pub use files::{LocalFiles, RepoFiles, Root};
 pub use graph::{CommitGraph, CommitGraphBuilder};

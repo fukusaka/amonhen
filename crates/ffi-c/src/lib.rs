@@ -1274,6 +1274,41 @@ pub unsafe extern "C" fn amonhen_repo_workdir(repo_ptr: *const AmonhenRepo) -> *
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// daemon とのつながりの様子。手元のリポジトリなら -1、つながっていれば 0、切れていれば 1 を返す。
+/// `received` が NULL でなければ、これまでに受け取ったバイト数を書く。切れた理由は
+/// `amonhen_repo_disconnect_reason` で読む。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`received` は NULL か書き込める `u64` を指すこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_repo_connection(
+    repo_ptr: *const AmonhenRepo,
+    received: *mut u64,
+) -> i32 {
+    let Some(state) = repo(repo_ptr).connection_state() else {
+        return -1;
+    };
+    if !received.is_null() {
+        unsafe { *received = state.received };
+    }
+    i32::from(state.closed.is_some())
+}
+
+/// daemon との接続が切れた理由（`amonhen_string_free` で解放する）。切れていなければ NULL。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_repo_disconnect_reason(
+    repo_ptr: *const AmonhenRepo,
+) -> *mut c_char {
+    repo(repo_ptr)
+        .connection_state()
+        .and_then(|s| s.closed)
+        .and_then(|r| CString::new(r.replace('\0', " ")).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// コンフリクトのある作業ツリーのファイルを、差分と同じ形の行にする（`amonhen_diff_free` で解放する）。
 /// 行の `kind` は Current・Incoming・Base・マーカーを表し、コンフリクトの行の `old_no` はその番号 + 1。
 ///

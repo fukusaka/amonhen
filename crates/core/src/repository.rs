@@ -97,6 +97,11 @@ impl Repository {
         self.backend.subscribe_changes(f)
     }
 
+    /// daemon とのつながりの様子。手元なら `None`。
+    pub fn connection_state(&self) -> Option<amonhen_model::ConnectionState> {
+        self.backend.connection_state()
+    }
+
     pub(crate) fn backend(&self) -> &dyn GitBackend {
         &*self.backend
     }
