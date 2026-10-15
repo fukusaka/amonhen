@@ -178,6 +178,11 @@ impl GitBackend for GixBackend {
         }
     }
 
+    fn files(&self) -> Arc<dyn amonhen_model::RepoFiles> {
+        let paths = self.paths();
+        amonhen_model::LocalFiles::new(paths.git_dir, paths.workdir)
+    }
+
     fn refs(&self) -> Result<Refs> {
         let repo = self.repo.to_thread_local();
         let mut entries = Vec::new();

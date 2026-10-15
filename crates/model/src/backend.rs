@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    CommitGraph, CommitText, FileChange, Oid, Operations, RawCommit, Refs, RepoPaths, Status, topo,
+    CommitGraph, CommitText, FileChange, Oid, Operations, RawCommit, Refs, RepoFiles, RepoPaths,
+    Status, topo,
 };
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -31,6 +32,9 @@ pub trait GitBackend: Send + Sync {
     }
 
     fn paths(&self) -> RepoPaths;
+
+    /// 作業ツリーと `.git` の中のファイルの読み書き（コアはファイルに直接触れない）。
+    fn files(&self) -> Arc<dyn RepoFiles>;
 
     /// サイドバーに出す ref の一覧。
     fn refs(&self) -> Result<Refs>;

@@ -2,6 +2,7 @@
 
 mod backend;
 mod change;
+mod files;
 mod graph;
 mod oid;
 mod ops;
@@ -12,6 +13,7 @@ pub mod topo;
 
 pub use backend::{Error, GitBackend, Result};
 pub use change::{ChangeKind, FileChange};
+pub use files::{LocalFiles, RepoFiles, Root};
 pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use oid::{Oid, OidMap, OidSet};
 pub use ops::{HeadState, Operations, Outcome, ResetMode, Sequence};
