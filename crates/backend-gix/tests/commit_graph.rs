@@ -21,7 +21,18 @@ fn git(dir: &Path, args: &[&str]) -> String {
         "git {args:?}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
-    String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    let out = String::from_utf8(out.stdout).unwrap().trim().to_owned();
+    // テスト用のリポジトリは、CI の環境（利用者名がない・Windows の autocrlf）に左右されないようにする。
+    if args.first() == Some(&"init") {
+        for (key, value) in [
+            ("user.name", "a"),
+            ("user.email", "a@example.com"),
+            ("core.autocrlf", "false"),
+        ] {
+            git(dir, &["config", key, value]);
+        }
+    }
+    out
 }
 
 fn commit(dir: &Path, message: &str) {

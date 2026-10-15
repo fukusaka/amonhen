@@ -421,6 +421,16 @@ mod tests {
             .unwrap()
             .success();
         assert!(ok, "git {args:?}");
+        // テスト用のリポジトリは、CI の環境（利用者名がない・Windows の autocrlf）に左右されないようにする。
+        if args.first() == Some(&"init") {
+            for (key, value) in [
+                ("user.name", "a"),
+                ("user.email", "a@example.com"),
+                ("core.autocrlf", "false"),
+            ] {
+                git(dir, &["config", key, value]);
+            }
+        }
     }
 
     #[test]

@@ -148,6 +148,8 @@ mod tests {
             &["init", "-q", "-b", "main"][..],
             &["config", "user.name", "a"],
             &["config", "user.email", "a@example.com"],
+            // Windows の CI では autocrlf が有効で、取り出したファイルの改行が変わる。
+            &["config", "core.autocrlf", "false"],
         ] {
             git.write(args).unwrap();
         }
@@ -201,6 +203,8 @@ mod ops_tests {
             &["init", "-q", "-b", "main"][..],
             &["config", "user.name", "a"],
             &["config", "user.email", "a@example.com"],
+            // Windows の CI では autocrlf が有効で、取り出したファイルの改行が変わる。
+            &["config", "core.autocrlf", "false"],
         ] {
             git.write(args).unwrap();
         }
