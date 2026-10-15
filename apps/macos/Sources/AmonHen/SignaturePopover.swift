@@ -8,9 +8,9 @@ final class SignaturePopover: NSViewController {
     private let signature: CommitExtras.Signature?
     private let kind: String
     private let committerEmail: String
-    private let place: String
+    private let place: SignaturePlace
 
-    init(status: SignatureStatus, signature: CommitExtras.Signature?, kind: String, committerEmail: String, place: String) {
+    init(status: SignatureStatus, signature: CommitExtras.Signature?, kind: String, committerEmail: String, place: SignaturePlace) {
         self.status = status
         self.signature = signature
         self.kind = kind
@@ -26,7 +26,7 @@ final class SignaturePopover: NSViewController {
         icon.image = CommitHeaderRenderer.symbolImage(status.symbol, color: status.color, size: 18)
         let title = NSTextField(labelWithString: status.label)
         title.font = .systemFont(ofSize: 14, weight: .semibold)
-        let badge = NSTextField(labelWithString: " \(place)で検証 ")
+        let badge = NSTextField(labelWithString: " \(place.name)で検証 ")
         badge.font = .systemFont(ofSize: 10, weight: .medium)
         badge.textColor = status.color
         badge.wantsLayer = true
@@ -68,7 +68,8 @@ final class SignaturePopover: NSViewController {
             }
             if kind != "ssh", !s.trust.isEmpty { rows.append(("信用", value(Self.trustText(s.trust)))) }
         }
-        rows.append(("検証した場所", value(place == "この Mac" ? "この Mac（\(kind == "ssh" ? "allowed signers" : "~/.gnupg")）" : place)))
+        let keys = kind == "ssh" ? "allowed signers" : "~/.gnupg"
+        rows.append(("検証した場所", value("\(place.name)の \(keys)（\(place.detail)）")))
 
         let grid = NSGridView(views: rows.map { label, view in
             let l = NSTextField(labelWithString: label)
@@ -117,4 +118,13 @@ final class SignaturePopover: NSViewController {
         default: "\(trust)（信用度が決まっていない）"
         }
     }
+}
+
+/// 署名を検証した場所と、そこになった理由（吹き出しに出す）。
+struct SignaturePlace {
+    var local: Bool
+    var host: String = ""
+    var detail: String
+
+    var name: String { local ? "この Mac" : "\(host)（SSH 先）" }
 }

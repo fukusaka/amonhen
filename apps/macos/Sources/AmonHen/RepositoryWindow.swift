@@ -242,13 +242,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         detail.reloadSignature()
     }
 
-    /// 署名をどこで検証しているか（詳細の吹き出しに出す）。
+    /// 署名をどこで検証しているか（詳細の吹き出しに出す）。設定が効くのは SSH 先のリポジトリだけなので、
+    /// 理由も添える。
     private func updateSignaturePlace() {
-        if let host = RepositoryLocation.host(location), !Settings.checkRemoteSignaturesLocally {
-            detail.signaturePlace = "\(host)（SSH 先）"
-        } else {
-            detail.signaturePlace = "この Mac"
+        guard let host = RepositoryLocation.host(location) else {
+            detail.signaturePlace = SignaturePlace(local: true, detail: "リポジトリがこの Mac にある")
+            return
         }
+        detail.signaturePlace = Settings.checkRemoteSignaturesLocally
+            ? SignaturePlace(local: true, detail: "設定で選択")
+            : SignaturePlace(local: false, host: host, detail: "設定で選択")
     }
 
     /// ツールバーの下に、切れたことと「つなぎ直す」を出す。
