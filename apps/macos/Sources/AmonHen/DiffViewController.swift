@@ -668,6 +668,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private var changes: CommitChanges?
     private var request = 0
     private var headerRequest = 0
+    /// 表示しているコミットの情報と、裏で読んだ詳細（見せ方を変えたときに描き直す）。
+    private var info: CommitInfo?
+    private var extras: CommitExtras?
+    private let styleControl = NSSegmentedControl(
+        labels: CommitHeaderStyle.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
 
     init(repository: Repository, renderer: TextRenderer) {
         self.repository = repository
@@ -718,8 +723,27 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         headerScroll.documentView = header
         headerScroll.hasVerticalScroller = true
         headerScroll.drawsBackground = false
+        headerScroll.autoresizingMask = [.width, .height]
+        // 右上に見せ方の切り替え（簡潔・標準・詳細）を重ねる。文字は右端を空けて折り返す。
+        let headerContainer = NSView(frame: headerScroll.frame)
+        headerContainer.addSubview(headerScroll)
+        styleControl.controlSize = .mini
+        styleControl.font = .systemFont(ofSize: NSFont.systemFontSize(for: .mini))
+        styleControl.selectedSegment = CommitHeaderStyle.saved.rawValue
+        styleControl.target = self
+        styleControl.action = #selector(styleChanged)
+        styleControl.sizeToFit()
+        styleControl.frame.origin = NSPoint(
+            x: headerContainer.bounds.width - styleControl.frame.width - 16,
+            y: headerContainer.bounds.height - styleControl.frame.height - 4)
+        styleControl.autoresizingMask = [.minXMargin, .minYMargin]
+        headerContainer.addSubview(styleControl)
+        if CommitHeaderStyle.saved == .compact {
+            // 簡潔で始めるなら、最初から低くしておく。
+            headerContainer.frame.size.height = 48
+        }
         // ウィンドウの高さを変えたとき、メッセージと変更ファイルの高さは保ち、差分の側を伸び縮みさせる。
-        for (content, minimum) in [(headerScroll as NSView, 60.0), (scroll, 60.0)] {
+        for (content, minimum) in [(headerContainer, 40.0), (scroll, 60.0)] {
             let controller = NSViewController()
             controller.view = content
             let item = NSSplitViewItem(viewController: controller)
@@ -747,6 +771,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             changes = nil
             files.reloadData()
             diffView.show(nil, message: "コミットを選ぶと、変更が表示されます")
+            info = nil
+            extras = nil
             header.string = ""
             return
         }
@@ -768,11 +794,18 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             let first = changes.flatMap { $0.items.isEmpty ? nil : try? $0.diff(at: 0) }
             return (changes, first, t, CACurrentMediaTime())
         }
+        // 署名の検証や含むタグなど時間のかかる分は、ヘッダーを出した後に足す（stash では読まない）。
+        let extrasTask = stash ? nil : Task.detached(priority: .utility) { try? repository.commitExtras(oid: hex) }
         Task {
             guard let info = try? await infoTask.value, headerRequest == self.headerRequest else { return }
             FrameProfile.add("select: commit info (JSON)", CACurrentMediaTime() - selectedAt)
-            FrameProfile.measure("select: header layout") { showHeader(info) }
+            self.info = info
+            extras = nil
+            FrameProfile.measure("select: header layout") { renderHeader() }
             FrameProfile.add("select: → header shown", CACurrentMediaTime() - selectedAt)
+            guard let extras = await extrasTask?.value, headerRequest == self.headerRequest else { return }
+            self.extras = extras
+            renderHeader()
         }
         Task {
             let (changes, firstDiff, callStart, callEnd) = await changesTask.value
@@ -794,49 +827,63 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
     }
 
-    private static let dateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateStyle = .medium
-        f.timeStyle = .medium
-        return f
-    }()
-
-    private func showHeader(_ info: CommitInfo) {
-        let text = NSMutableAttributedString()
-        func add(_ s: String, _ attrs: [NSAttributedString.Key: Any]) {
-            text.append(NSAttributedString(string: s, attributes: attrs))
-        }
-        let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
-        let dim: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
-        let mono: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor]
-        let message = info.message.trimmingCharacters(in: .whitespacesAndNewlines)
-        let (subject, rest) = message.firstIndex(of: "\n").map { (String(message[..<$0]), String(message[$0...])) } ?? (message, "")
-        // 件名、メタ情報（ref・作者・日時・ID・親）、本文の順。欄が低くてもメタ情報までは見えるようにする。
-        add(subject + "\n", [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
-        if !info.refs.isEmpty {
-            add(info.refs.joined(separator: ", ") + "\n", [.font: NSFont.boldSystemFont(ofSize: 11), .foregroundColor: NSColor.systemBlue])
-        }
-        let date = Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(info.authorTime)))
-        add("\(info.author) <\(info.authorEmail)>  \(date)", dim)
-        if info.committer != info.author {
-            add("  (committed by \(info.committer))", dim)
-        }
-        add("\n\(info.oid)", mono)
-        for (i, parent) in info.parents.enumerated() {
-            add(i == 0 ? "  Parent " : ", ", mono)
-            var link = mono
-            link[.link] = "amonhen-commit:\(parent)"
-            add(String(parent.prefix(12)), link)
-        }
-        let bodyText = rest.trimmingCharacters(in: .newlines)
-        add(bodyText.isEmpty ? "" : "\n\n" + bodyText, body)
+    private func renderHeader() {
+        guard let info else { return }
+        let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
+        let text = NSMutableAttributedString(attributedString: CommitHeaderRenderer(info: info, extras: extras, style: style).render())
+        // 右上の切り替えに文字が重ならないよう、最初の行の右端を空ける。
+        let first = NSMutableParagraphStyle()
+        first.tailIndent = -(styleControl.frame.width + 12)
+        let firstLine = (text.string as NSString).lineRange(for: NSRange(location: 0, length: 0))
+        text.addAttribute(.paragraphStyle, value: first, range: firstLine)
         header.textStorage?.setAttributedString(text)
     }
 
+    @objc private func styleChanged() {
+        let previous = CommitHeaderStyle.saved
+        let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
+        CommitHeaderStyle.saved = style
+        renderHeader()
+        fitHeader(from: previous, to: style)
+    }
+
+    /// 簡潔にしたら欄を文字の高さまで縮め、ほかに戻したら前の高さに戻す。
+    private var expandedHeaderHeight: CGFloat = 170
+
+    private func fitHeader(from previous: CommitHeaderStyle, to style: CommitHeaderStyle) {
+        guard splitViewItems.count > 1 else { return }
+        let current = splitViewItems[0].viewController.view.frame.height
+        if previous != .compact { expandedHeaderHeight = current }
+        let target: CGFloat
+        if style == .compact {
+            guard let layout = header.layoutManager, let container = header.textContainer else { return }
+            layout.ensureLayout(for: container)
+            target = ceil(layout.usedRect(for: container).height + header.textContainerInset.height * 2 + 4)
+        } else {
+            target = expandedHeaderHeight
+        }
+        splitView.setPosition(max(splitViewItems[0].minimumThickness, target), ofDividerAt: 0)
+    }
+
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
-        guard let s = (link as? String) ?? (link as? URL)?.absoluteString, s.hasPrefix("amonhen-commit:") else { return false }
-        onSelectCommit?(String(s.dropFirst("amonhen-commit:".count)))
-        return true
+        guard let s = (link as? String) ?? (link as? URL)?.absoluteString else { return false }
+        if s.hasPrefix(CommitHeaderRenderer.commitScheme) {
+            onSelectCommit?(String(s.dropFirst(CommitHeaderRenderer.commitScheme.count)))
+            return true
+        }
+        if s.hasPrefix(CommitHeaderRenderer.revScheme) {
+            // メッセージの中の短い ID。コミットを引けたら選ぶ（引けなければ何もしない）。
+            let rev = String(s.dropFirst(CommitHeaderRenderer.revScheme.count))
+            let repository = self.repository
+            Task {
+                guard let hex = try? await Task.detached(priority: .userInitiated) { try repository.resolveCommit(rev) }.value
+                else { NSSound.beep(); return }
+                onSelectCommit?(hex)
+            }
+            return true
+        }
+        // URL は既定どおりブラウザで開く。
+        return false
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
