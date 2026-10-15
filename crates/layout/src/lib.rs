@@ -132,17 +132,49 @@ pub struct Highlight {
     pub end: u32,
 }
 
+/// 差分の行の中の、構文の色付けの範囲。位置は FE の文字列の符号単位。
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SyntaxSpan {
+    pub row: u32,
+    pub start: u32,
+    pub end: u32,
+    pub kind: u8,
+    pub _pad: [u8; 3],
+}
+
+impl SyntaxSpan {
+    pub const KEYWORD: u8 = 1;
+    pub const STRING: u8 = 2;
+    pub const COMMENT: u8 = 3;
+    pub const NUMBER: u8 = 4;
+    pub const FUNCTION: u8 = 5;
+    pub const TYPE: u8 = 6;
+    pub const CONSTANT: u8 = 7;
+    pub const PROPERTY: u8 = 8;
+    pub const ATTRIBUTE: u8 = 9;
+    pub const TAG: u8 = 10;
+    pub const OPERATOR: u8 = 11;
+    /// `self`・`this` などの組み込みの変数や、引数。
+    pub const VARIABLE: u8 = 12;
+    /// 文字列の中のエスケープや正規表現など。
+    pub const ESCAPE: u8 = 13;
+    pub const MODULE: u8 = 14;
+}
+
 unsafe impl Pod for StrRef {}
 unsafe impl Pod for Node {}
 unsafe impl Pod for Edge {}
 unsafe impl Pod for DiffRow {}
 unsafe impl Pod for Highlight {}
+unsafe impl Pod for SyntaxSpan {}
 
 const _: () = {
     assert!(size_of::<StrRef>() == 12 && align_of::<StrRef>() == 4);
     assert!(size_of::<Node>() == 12 && align_of::<Node>() == 4);
     assert!(size_of::<Edge>() == 16 && align_of::<Edge>() == 4);
     assert!(size_of::<DiffRow>() == 24 && align_of::<DiffRow>() == 4);
+    assert!(size_of::<SyntaxSpan>() == 16 && align_of::<SyntaxSpan>() == 4);
 };
 
 #[cfg(test)]
