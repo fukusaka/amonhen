@@ -193,12 +193,14 @@ bench/               criterion のベンチと大規模リポジトリでの計�
   | G・信用 ultimate・full（SSH は allowed signers にあれば） | checkmark.seal.fill | 緑 | Verified | 3 |
   | G・信用 marginal | checkmark.seal | 緑 | Verified | 2 |
   | U、または信用 undefined・never | checkmark.shield | 黄 | Untrusted key | 1 |
-  | G で署名者がコミッターと違う | person.crop.circle.badge.questionmark | 黄 | Unverified signer | — |
+  | G で、鍵のどのメールアドレスもコミッターと違う | person.crop.circle.badge.questionmark | 黄 | Unverified signer | — |
   | X・Y | clock.badge.exclamationmark | 橙 | Expired | — |
   | R | exclamationmark.shield.fill | 赤 | Revoked key | — |
   | B | xmark.seal.fill | 赤 | Bad signature | — |
   | E | key | 灰 | No key | — |
   | 検証中 | seal | 薄い灰 | Checking… | — |
+
+  署名者がコミッターと一致するかは、git の `%GS`（鍵の主なユーザー ID だけ）ではなく、署名した鍵に登録されたすべてのメールアドレスで決める。GPG は主鍵の指紋（`%GP`）で `gpg --list-keys --with-colons` を引き（鍵がいくつあっても gpg は 1 回）、ユーザー ID ごとの有効性も読む。SSH は git が allowed signers から見つけたプリンシパル（`%GS`）を使う。有効なユーザー ID（u・f・m）が一致すれば「一致」、有効性が不明なものだけが一致すれば「一致（ユーザー ID は未確認）」（誰でも他人のアドレスをユーザー ID に書けるため）、失効・期限切れのものだけ、またはどれも一致しなければ「一致しない」、鍵のメールアドレスを読めなければ「確かめられない」。
 
   詳細の欄の Signature の行は、アイコン・言葉・目盛り・方式と署名者。かざすと短い説明、押すと吹き出し（説明、署名者、コミッターとの一致、方式、鍵 ID、4 文字ずつ区切った指紋、信用度、検証した場所）を出す。History の行はアイコンだけ（信用度はアイコンの形で分かる）。
 - 結果はコア（手元の `Repository`）がコミットごとに覚える（コミットは変わらないため）。アプリを終えると消える。
