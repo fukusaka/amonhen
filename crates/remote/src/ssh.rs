@@ -98,6 +98,19 @@ impl Daemons {
     }
 }
 
+/// ControlMaster のソケットの場所。Unix ソケットのパスは 104 バイトまでなので、`$TMPDIR` が長い
+/// （macOS の `/var/folders/...`）ときは `/tmp` に置く。`%C` は 40 文字で、ssh はさらに 17 文字ほどの
+/// 一時的な接尾辞を付ける。`/tmp` では、ほかの利用者と分けるため `%i`（手元の uid）を入れる。
+fn control_path() -> String {
+    let tmp = std::env::temp_dir().join("amonhen-ssh-%C");
+    let tmp = tmp.display().to_string();
+    if tmp.len() - "%C".len() + 40 + 17 <= 100 {
+        tmp
+    } else {
+        "/tmp/amonhen-ssh-%i-%C".to_owned()
+    }
+}
+
 /// SSH の共通の引数（接続先まで）。
 fn base_args(target: &Target) -> Vec<String> {
     let mut args = vec![
@@ -109,10 +122,7 @@ fn base_args(target: &Target) -> Vec<String> {
         "-o".into(),
         "ControlMaster=auto".into(),
         "-o".into(),
-        format!(
-            "ControlPath={}",
-            std::env::temp_dir().join("amonhen-ssh-%C").display()
-        ),
+        format!("ControlPath={}", control_path()),
         "-o".into(),
         "ControlPersist=60".into(),
     ];
@@ -194,6 +204,13 @@ pub fn local_platform() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn control_path_fits_a_unix_socket() {
+        // %C は 40 文字の hash、%i は uid に置き換わる。
+        let path = control_path().replace("%C", &"0".repeat(40)).replace("%i", "4294967295");
+        assert!(path.len() + 17 <= 104, "{path}");
+    }
     use std::path::Path;
 
     #[test]
