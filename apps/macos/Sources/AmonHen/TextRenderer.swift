@@ -46,6 +46,62 @@ final class GlyphAtlas {
         return entry
     }
 
+    /// SF Symbols のアイコン（`pointSize` の大きさ）。白で描いておき、色はシェーダーで付ける。
+    func symbol(_ name: String, pointSize: CGFloat, scale: CGFloat) -> Entry? {
+        let key = Key(font: "symbol:" + name, size: pointSize * scale, glyph: 0, subpixel: 0)
+        if let cached = entries[key] { return cached }
+        let config = NSImage.SymbolConfiguration(pointSize: pointSize, weight: .medium)
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+        else {
+            entries[key] = .some(nil)
+            return nil
+        }
+        let width = Int(ceil(image.size.width * scale)) + 2, height = Int(ceil(image.size.height * scale)) + 2
+        guard let slot = reserve(width: width, height: height) else { return nil }
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let info = CGBitmapInfo.byteOrder32Little.rawValue | CGImageAlphaInfo.premultipliedFirst.rawValue
+        pixels.withUnsafeMutableBytes { buf in
+            guard let ctx = CGContext(
+                data: buf.baseAddress, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: info) else { return }
+            NSGraphicsContext.saveGraphicsState()
+            NSGraphicsContext.current = NSGraphicsContext(cgContext: ctx, flipped: false)
+            let rect = NSRect(x: 1, y: 1, width: CGFloat(width - 2), height: CGFloat(height - 2))
+            image.draw(in: rect)
+            // テンプレートの画像を白にする（形だけを残す）。
+            NSColor.white.set()
+            rect.fill(using: .sourceIn)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        texture.replace(
+            region: MTLRegionMake2D(slot.x, slot.y, width, height), mipmapLevel: 0, withBytes: pixels, bytesPerRow: width * 4)
+        let entry = Entry(
+            x: Float(slot.x), y: Float(slot.y), width: Float(width), height: Float(height),
+            left: 0, top: Float(height), isColor: false)
+        entries[key] = entry
+        return entry
+    }
+
+    /// アトラスに `width`×`height` の場所を取る。一杯なら空にして詰め直す。
+    private func reserve(width: Int, height: Int) -> (x: Int, y: Int)? {
+        guard width < Self.size, height < Self.size else { return nil }
+        if cursorX + width + 1 > Self.size {
+            cursorX = 1
+            cursorY += shelfHeight + 1
+            shelfHeight = 0
+        }
+        if cursorY + height + 1 > Self.size {
+            entries.removeAll()
+            cursorX = 1
+            cursorY = 1
+            shelfHeight = 0
+        }
+        let slot = (cursorX, cursorY)
+        cursorX += width + 1
+        shelfHeight = max(shelfHeight, height)
+        return slot
+    }
+
     private func rasterize(font: CTFont, glyph: CGGlyph, subpixel: Int, scale: CGFloat) -> Entry? {
         var g = glyph
         var bounds = CGRect.zero
@@ -252,6 +308,16 @@ final class TextRenderer {
         instances.append(Instance(
             rect: [Float(rect.minX), Float(rect.minY), Float(rect.width), Float(rect.height)],
             uv: [Float(radius), 0, 0, 0], color: color, kind: 3))
+    }
+
+    /// SF Symbols のアイコンを、中心が `center`（ポイント）になるように `color` で置く。
+    func addSymbol(_ name: String, pointSize: CGFloat, center: CGPoint, color: SIMD4<Float>, scale: CGFloat) {
+        guard let e = atlas.symbol(name, pointSize: pointSize, scale: scale) else { return }
+        let s = Float(scale)
+        let w = e.width / s, h = e.height / s
+        let x = (Float(center.x * scale).rounded() / s) - w / 2
+        let y = (Float(center.y * scale).rounded() / s) - h / 2
+        instances.append(Instance(rect: [x, y, w, h], uv: [e.x, e.y, e.width, e.height], color: color, kind: 1))
     }
 
     /// `line` を、ベースラインの左端が `origin`（ポイント）になるように置く。
