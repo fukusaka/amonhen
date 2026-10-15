@@ -366,6 +366,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "Refresh", action: #selector(RepositoryWindow.refreshRepository(_:)), keyEquivalent: "r")
         refresh.toolTip = "History・ブランチ・Working Copy を読み直す（ふだんは変化を検知して自動で読み直す）"
         viewMenu.addItem(refresh)
+        let parent = NSMenuItem(title: "Go to Parent", action: #selector(RepositoryWindow.goToParent(_:)), keyEquivalent: String(UnicodeScalar(NSDownArrowFunctionKey)!))
+        parent.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(parent)
+        let child = NSMenuItem(title: "Go to Child", action: #selector(RepositoryWindow.goToChild(_:)), keyEquivalent: String(UnicodeScalar(NSUpArrowFunctionKey)!))
+        child.keyEquivalentModifierMask = [.command, .option]
+        viewMenu.addItem(child)
         viewMenu.addItem(.separator())
         viewMenu.addItem(compact)
         let ancestors = NSMenuItem(

@@ -33,6 +33,9 @@ struct CommitHeaderRenderer {
     /// リンクの URL の形。`amonhen-commit:<40 桁>` は History で選び、`amonhen-rev:<短い ID>` は引いてから選ぶ。
     static let commitScheme = "amonhen-commit:"
     static let revScheme = "amonhen-rev:"
+    /// 作者で History を絞り込む・ref の履歴に絞り込むリンク。
+    static let authorScheme = "amonhen-author:"
+    static let refScheme = "amonhen-ref:"
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -205,6 +208,7 @@ struct CommitHeaderRenderer {
     private func commitLink(_ hex: String, length: Int = 12) {
         var link = mono
         link[.link] = Self.commitScheme + hex
+        link[.foregroundColor] = NSColor.linkColor
         add(String(hex.prefix(length)), link)
     }
 
@@ -306,6 +310,25 @@ struct CommitHeaderRenderer {
             .map { ($0.1, $0.2) }
     }
 
+    /// 作者の名前（押すと、その人のコミットで絞り込む）。
+    private func authorLink(_ name: String, _ attrs: [NSAttributedString.Key: Any]) {
+        var link = attrs
+        link[.link] = Self.authorScheme + name
+        link[.toolTip] = "\(name) のコミットで絞り込む"
+        add(name, link)
+    }
+
+    /// ref の名前を並べる（押すと、その ref の履歴に絞り込む）。
+    private func refLinks(_ names: [String], _ attrs: [NSAttributedString.Key: Any]) {
+        for (i, name) in names.enumerated() {
+            if i > 0 { add(", ", attrs) }
+            var link = attrs
+            link[.link] = Self.refScheme + name
+            link[.toolTip] = "\(name) の履歴に絞り込む"
+            add(name, link)
+        }
+    }
+
     private func summaryLine(_ commit: CommitExtras.CommitSummary) {
         commitLink(commit.oid, length: 10)
         add("  \(commit.subject)", [.font: NSFont.systemFont(ofSize: 11.5), .foregroundColor: NSColor.labelColor])
@@ -320,7 +343,9 @@ struct CommitHeaderRenderer {
     private func linkURLs(in range: NSRange) {
         if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
             for match in detector.matches(in: text.string, range: range) {
-                if let url = match.url { text.addAttribute(.link, value: url, range: match.range) }
+                if let url = match.url {
+                    text.addAttributes([.link: url, .foregroundColor: NSColor.linkColor], range: match.range)
+                }
             }
         }
     }
@@ -335,7 +360,8 @@ struct CommitHeaderRenderer {
         if let regex = try? NSRegularExpression(pattern: "(?<![0-9A-Za-z/])[0-9a-f]{7,40}(?![0-9A-Za-z])") {
             for match in regex.matches(in: text.string, range: range)
             where text.attribute(.link, at: match.range.location, effectiveRange: nil) == nil {
-                text.addAttribute(.link, value: Self.revScheme + ns.substring(with: match.range), range: match.range)
+                text.addAttributes(
+                    [.link: Self.revScheme + ns.substring(with: match.range), .foregroundColor: NSColor.linkColor], range: match.range)
             }
         }
         if let web = Self.webURL(extras?.originUrl),
@@ -344,7 +370,8 @@ struct CommitHeaderRenderer {
             where text.attribute(.link, at: match.range.location, effectiveRange: nil) == nil {
                 let number = ns.substring(with: match.range(at: 1))
                 let path = web.host?.contains("gitlab") == true ? "-/issues" : "issues"
-                text.addAttribute(.link, value: web.appendingPathComponent("\(path)/\(number)"), range: match.range)
+                text.addAttributes(
+                    [.link: web.appendingPathComponent("\(path)/\(number)"), .foregroundColor: NSColor.linkColor], range: match.range)
             }
         }
     }
@@ -383,11 +410,12 @@ struct CommitHeaderRenderer {
             attrs[.toolTip] = sig.text
             add(sig.mark + " ", attrs)
         }
-        add("\(info.author) · \(relative(info.authorTime)) · ", dim)
+        authorLink(info.author, dim)
+        add(" · \(relative(info.authorTime)) · ", dim)
         commitLink(info.oid, length: 10)
         if !info.refs.isEmpty {
             add(" · ", dim)
-            add(info.refs.joined(separator: ", "), refAttrs)
+            refLinks(info.refs, refAttrs)
         }
         if let stats = statsSummary { add(" · " + stats, dim) }
         if isUnpushed { add(" · 未 push", unpushedAttrs) }
@@ -399,9 +427,11 @@ struct CommitHeaderRenderer {
 
     private func renderStandard() {
         if !info.refs.isEmpty {
-            add(info.refs.joined(separator: ", ") + "\n", refAttrs)
+            refLinks(info.refs, refAttrs)
+            add("\n", refAttrs)
         }
-        add("\(info.author) <\(info.authorEmail)>  \(date(info.authorTime))（\(relative(info.authorTime))）", dim)
+        authorLink(info.author, dim)
+        add(" <\(info.authorEmail)>  \(date(info.authorTime))（\(relative(info.authorTime))）", dim)
         if info.committer != info.author {
             add("  committed by \(info.committer)", dim)
         }
@@ -469,7 +499,10 @@ struct CommitHeaderRenderer {
             { add(s.replacingOccurrences(of: "\n", with: "\u{2028}"), [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor]) }
         }
 
-        row("Author", plain("\(info.author) <\(info.authorEmail)>"))
+        row("Author") {
+            authorLink(info.author, [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor])
+            plain(" <\(info.authorEmail)>")()
+        }
         row("Author Date", plain("\(date(info.authorTime)) (\(info.authorTz))  \(relative(info.authorTime))"))
         row("Committer", plain("\(info.committer) <\(info.committerEmail)>"))
         row("Commit Date", plain("\(date(info.committerTime)) (\(info.committerTz))  \(relative(info.committerTime))"))
@@ -498,9 +531,11 @@ struct CommitHeaderRenderer {
             let subject = tag.subject.isEmpty ? "" : "\n\(tag.subject)"
             row("Merged Tag", plain("\(tag.name)（\(tag.tagger)、\(tag.signed ? "署名付き" : "署名なし")）\(subject)"))
         }
-        if !info.refs.isEmpty { row("Refs") { add(info.refs.joined(separator: ", "), refAttrs) } }
+        if !info.refs.isEmpty { row("Refs") { refLinks(info.refs, refAttrs) } }
         if let extras {
-            if !extras.branches.isEmpty { row("Branches", plain(extras.branches.joined(separator: ", "))) }
+            if !extras.branches.isEmpty {
+                row("Branches") { refLinks(extras.branches, [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor]) }
+            }
             if extras.tagCount > 0 {
                 let shown = extras.tags.prefix(12).joined(separator: ", ")
                 let more = extras.tagCount > 12 ? " ほか \(extras.tagCount - 12) 個" : ""
@@ -513,7 +548,7 @@ struct CommitHeaderRenderer {
                     if isUnpushed {
                         add("未 push（どのリモートブランチにも含まれない）", unpushedAttrs)
                     } else {
-                        plain(extras.remoteBranches.joined(separator: ", "))()
+                        refLinks(extras.remoteBranches, [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor])
                     }
                 }
             }

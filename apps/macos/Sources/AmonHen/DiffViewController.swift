@@ -660,6 +660,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     var onDiffShown: (() -> Void)?
     /// 親コミットのリンクを押したとき（40 桁の ID）。
     var onSelectCommit: ((String) -> Void)?
+    /// 作者の名前を押したとき（History を検索する問い合わせ）と、ref の名前を押したとき。
+    var onSearch: ((String) -> Void)?
+    var onSelectRef: ((String) -> Void)?
+
+    /// 表示中のコミットの親と子（キーボードで移るため）。子は詳細を読み終えるまで空。
+    var currentParents: [String] { info?.parents ?? [] }
+    var currentChildren: [String] { extras?.children ?? [] }
     /// メッセージ・作者・ID・親コミット。
     private let header = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 170))
     private let repository: Repository
@@ -720,6 +727,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         header.backgroundColor = .textBackgroundColor
         header.textContainerInset = NSSize(width: 6, height: 6)
         header.delegate = self
+        // リンクの色は文字ごとに決める（作者・ref は元の色のまま押せる）。
+        header.linkTextAttributes = [.cursor: NSCursor.pointingHand]
         header.autoresizingMask = [.width]
         header.isVerticallyResizable = true
         header.minSize = NSSize(width: 0, height: 0)
@@ -767,6 +776,28 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     @objc private func messageStyleChanged() { renderHeader() }
+
+    /// ヘッダーの右クリック: ID・件名・メッセージ・git show のコピーを先頭に足す。
+    func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
+        guard view === header, let info else { return menu }
+        let message = info.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        let subject = message.components(separatedBy: "\n").first ?? message
+        let items: [(String, String)] = [
+            ("ID をコピー", info.oid),
+            ("短い ID をコピー", String(info.oid.prefix(10))),
+            ("件名をコピー", subject),
+            ("メッセージをコピー", message),
+            ("git show コマンドをコピー", "git show \(info.oid)"),
+        ]
+        for (i, (title, value)) in items.enumerated() {
+            menu.insertItem(ClosureMenuItem(title: title) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(value, forType: .string)
+            }, at: i)
+        }
+        menu.insertItem(.separator(), at: items.count)
+        return menu
+    }
 
     func overlays() -> [(CGImage, NSView)] {
         view.window == nil ? [] : diffView.overlay().map { [$0] } ?? []
@@ -914,6 +945,15 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         guard let s = (link as? String) ?? (link as? URL)?.absoluteString else { return false }
+        if s.hasPrefix(CommitHeaderRenderer.authorScheme) {
+            let name = String(s.dropFirst(CommitHeaderRenderer.authorScheme.count)).replacingOccurrences(of: "\"", with: "")
+            onSearch?("author:\"\(name)\"")
+            return true
+        }
+        if s.hasPrefix(CommitHeaderRenderer.refScheme) {
+            onSelectRef?(String(s.dropFirst(CommitHeaderRenderer.refScheme.count)))
+            return true
+        }
         if s == CommitHeaderRenderer.expandLink {
             bodyExpanded.toggle()
             renderHeader()

@@ -25,6 +25,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
     private let actions: Actions
     private let toolbar: MainToolbar
     private var watch: RepositoryWatch?
+    /// 最後に読んだ ref（詳細の欄で ref の名前を押したときに引く）。
+    private var latestRefs: Refs?
 
     /// リポジトリを開く。daemon 越しなら SSH でつなぎ、daemon を送り込んで起動するので数秒かかる（裏で呼ぶこと）。
     /// `daemon`・`daemons` は `Daemon.path`・`Daemon.bundledDirectory`（メインスレッドで読んで渡す）。
@@ -106,6 +108,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
 
         history.onSelectCommit = { [weak detail] commit in detail?.show(commit: commit) }
         history.onSearchChanged = { [weak detail] query in detail?.searchQuery = query }
+        detail.onSearch = { [weak history] query in history?.search(query) }
+        detail.onSelectRef = { [weak self] name in self?.selectRef(named: name) }
         // 詳細の親コミットのリンク。
         detail.onSelectCommit = { [weak history] hex in
             guard let history, let id = Data(hex: hex) else { return }
@@ -316,6 +320,26 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         }
     }
 
+    /// 詳細の欄で押した ref の履歴に絞り込み、ref が指すコミットを選ぶ（サイドバーで選んだときと同じ）。
+    private func selectRef(named name: String) {
+        guard let item = latestRefs?.items.first(where: { $0.name == name && [.local, .remote, .tag].contains($0.kind) }),
+              let target = item.target else { return NSSound.beep() }
+        history.set(scope: .ref(item.name, target), select: target)
+    }
+
+    /// View > Go to Parent（⌥⌘↓）・Go to Child（⌥⌘↑）。最初の親・最初の子へ移る。
+    @objc func goToParent(_ sender: Any?) { goTo(detail.currentParents.first) }
+    @objc func goToChild(_ sender: Any?) { goTo(detail.currentChildren.first) }
+
+    private func goTo(_ hex: String?) {
+        guard let hex, let id = Data(hex: hex) else { return NSSound.beep() }
+        if let row = history.currentHistory?.row(of: id) {
+            history.select(row: row)
+        } else {
+            history.set(scope: .all, select: id)
+        }
+    }
+
     /// View > Refresh（⌘R）。変化の知らせを待たずに、History・ブランチ・Working Copy を読み直す。
     /// ウィンドウの delegate はレスポンダチェーンに入るので、メニューから届く。
     @objc func refreshRepository(_ sender: Any?) {
@@ -338,6 +362,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         Task {
             do {
                 let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
+                latestRefs = refs
                 sidebar.show(refs)
                 if !CommandLine.arguments.contains("--show-latency") {
                     window.subtitle = refs.headBranch ?? "detached HEAD"
