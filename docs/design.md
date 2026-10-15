@@ -88,6 +88,8 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 | Working Copy | ファイル（上）とコミットの入力（下） | 差分 |
 | History | コミットの一覧（グラフと件名） | 上から、メッセージとメタ情報（ref・作者・日時・ID・親）、変更ファイル、差分 |
 
+コンフリクトのあるファイルは、Working Copy から 3 ペインのマージエディタ（別ウィンドウ）で開ける。上に Incoming・（diff3 なら）Base・Current を並べ（すべてのコンフリクトをその側にした内容）、下の Result（作業ツリーの内容から始める）をコンフリクトごとの採用ボタンや手で編集して、保存・解決済みにする。解決の計算はコア（`mergeSides`・`resolveText`・`conflictRegions`・`saveMerge`）が行う。
+
 History の右の列は、件名のすぐ下にメタ情報を置き、本文はその後に続ける（欄が低くてもメタ情報までは見える）。
 
 ### リポジトリ構成
@@ -383,7 +385,7 @@ linux（148 万コミット）では、1 行を横切る線が中央値で 365 �
 - [x] 9. Working Copy: status、ファイル・hunk・行単位の stage、コミット入力
 - [x] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ
 - [x] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
-- [x] 12. 3-way マージ（コンフリクトごと・ファイルごとの解決。3 ペインのマージエディタは後で）
+- [x] 12. 3-way マージ（コンフリクトごと・ファイルごとの解決、3 ペインのマージエディタ）
 - [ ] 13. グラフ表現の工夫（祖先の強調、折りたたみ、魚眼、アニメーション、密度表示）。魚眼（`crates/core/src/lanes.rs`）とレーンの動きのアニメーションは済み
 - [x] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）
 
