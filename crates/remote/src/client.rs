@@ -347,6 +347,13 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::WriteCommitGraph)
     }
 
+    fn subscribe_changes(&self, f: Box<dyn Fn(u32) + Send + Sync>) -> bool {
+        self.conn.on_notification(move |n| match n {
+            Notification::Changed(bits) => f(bits),
+        });
+        true
+    }
+
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
         let texts: Vec<CommitTextWire> = self.conn.call(&Request::CommitTexts(ids.to_vec()))?;
         Ok(texts.into_iter().map(Into::into).collect())

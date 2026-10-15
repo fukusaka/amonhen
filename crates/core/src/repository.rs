@@ -92,6 +92,11 @@ impl Repository {
         }
     }
 
+    /// リポジトリの変化を知らせてもらう（daemon 越しなら true。手元なら false で、呼び出し側が監視する）。
+    pub fn subscribe_changes(&self, f: Box<dyn Fn(u32) + Send + Sync>) -> bool {
+        self.backend.subscribe_changes(f)
+    }
+
     pub(crate) fn backend(&self) -> &dyn GitBackend {
         &*self.backend
     }

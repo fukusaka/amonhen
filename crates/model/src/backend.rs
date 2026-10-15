@@ -106,6 +106,13 @@ pub trait GitBackend: Send + Sync {
         Ok(())
     }
 
+    /// リポジトリの変化を `f` に知らせてもらう（ビットは `amonhen_watch::Changes`）。daemon 越しの実装は
+    /// daemon の知らせを渡して true を返す。手元の実装は false を返し、呼び出し側がファイルを監視する。
+    fn subscribe_changes(&self, f: Box<dyn Fn(u32) + Send + Sync>) -> bool {
+        let _ = f;
+        false
+    }
+
     /// コミットの本文。History で見えている行の分だけ呼ぶ。
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>>;
 }

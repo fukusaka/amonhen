@@ -4,6 +4,7 @@
 
 mod client;
 pub mod frame;
+pub mod location;
 mod server;
 pub mod wire;
 
