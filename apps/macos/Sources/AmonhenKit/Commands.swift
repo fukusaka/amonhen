@@ -70,7 +70,17 @@ public struct CommitInfo: Decodable, Sendable {
     public let signed: String?
     /// 署名付きのタグを merge したコミットか。
     public let mergetag: Bool
+    /// merge した署名付きのタグ（ヘッダーの mergetag）。
+    public let mergedTags: [MergedTag]
     public let trailers: [Trailer]
+
+    public struct MergedTag: Decodable, Sendable {
+        public let name: String
+        public let tagger: String
+        /// タグのメッセージの 1 行目。
+        public let subject: String
+        public let signed: Bool
+    }
 
     public struct Trailer: Decodable, Sendable {
         public let key: String
@@ -92,6 +102,21 @@ public struct CommitExtras: Decodable, Sendable {
     public let firstTag: String?
     public let previousTag: String?
     public let originUrl: String?
+    public let localBranches: [String]
+    public let remoteBranches: [String]
+    /// HEAD から何コミット前か。HEAD が含まなければ nil。
+    public let headDistance: Int?
+    /// merge が取り込んだコミットの数と、その先頭（多ければ 50 件まで）。
+    public let mergedCount: Int
+    public let merged: [CommitSummary]
+    /// メッセージに書かれた ID（書かれたままの文字列）から、引けたコミット。
+    public let references: [String: CommitSummary]
+
+    public struct CommitSummary: Decodable, Sendable {
+        public let oid: String
+        public let subject: String
+        public let author: String?
+    }
 
     public struct Signature: Decodable, Sendable {
         /// `git log --format=%G?` の 1 文字（G・B・U・X・Y・R・E）。
