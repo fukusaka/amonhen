@@ -212,6 +212,26 @@ final class TextRenderer {
         }
     }
 
+    /// `line` を `maxWidth`（ポイント）に収まる分だけ置き、はみ出すなら続きの代わりに `ellipsis` を置く。
+    func addLine(
+        _ line: ShapedLine, origin: CGPoint, color: SIMD4<Float>, scale: CGFloat, maxWidth: CGFloat,
+        ellipsis: ShapedLine
+    ) {
+        guard line.width > maxWidth else {
+            addLine(line, origin: origin, color: color, scale: scale)
+            return
+        }
+        let limit = Float((maxWidth - ellipsis.width) * scale)
+        let kept = line.glyphs.prefix { $0.penX + $0.entry.left + $0.entry.width <= limit }
+        guard limit > 0 else { return }
+        var clipped = line
+        clipped.glyphs = Array(kept)
+        addLine(clipped, origin: origin, color: color, scale: scale)
+        let next = kept.count < line.glyphs.count ? line.glyphs[kept.count].penX : limit
+        let x = origin.x + CGFloat(min(next, limit)) / scale
+        addLine(ellipsis, origin: CGPoint(x: x, y: origin.y), color: color, scale: scale)
+    }
+
     /// 積んだインスタンスを描く。
     func draw(
         layer: CAMetalLayer, background: SIMD4<Float>, onPresented: (@Sendable (CFTimeInterval) -> Void)? = nil
