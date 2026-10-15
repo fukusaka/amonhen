@@ -147,6 +147,16 @@ pub enum Command {
     ConflictRegions {
         text: String,
     },
+    /// `path` の各行を最後に変えたコミット（`info`: `commits` と、各行の `c`（commits の添字）・`t`（内容））。
+    /// `rev` がなければ作業ツリーの内容。
+    Blame {
+        path: String,
+        rev: Option<String>,
+    },
+    /// HEAD から `path` を変えたコミット（`info.entries`: oid・subject・author・time・その時点の path）。
+    FileHistory {
+        path: String,
+    },
     /// マージエディタの結果を `path` に書く（Undo できる）。`stage` なら解決済みにする（index に入れる）。
     SaveMerge {
         path: String,
@@ -712,6 +722,23 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::Blame { path, rev } => {
+                let rev = rev.map(|r| oid(&r)).transpose()?;
+                let blame = crate::blame::parse_blame(&ops.blame(&path, rev.as_ref())?);
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::to_value(blame)?),
+                    ..Default::default()
+                })
+            }
+            Command::FileHistory { path } => {
+                let entries = crate::blame::parse_file_log(&ops.file_log(&path)?);
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "entries": entries })),
+                    ..Default::default()
+                })
+            }
             Command::SaveMerge { path, text, stage } => {
                 let file = self.workdir_file(&path)?;
                 undo.record_files(ops, &format!("Merge {path}"), &[&path], || {
@@ -1019,6 +1046,43 @@ mod tests {
                 .all(|e| e.kind != amonhen_model::StatusKind::Unmerged)
         );
         assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "Merge a.txt");
+    }
+
+    #[test]
+    fn blames_lines_and_follows_a_renamed_file() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        commit_file(dir, "old.txt", "one\ntwo\n");
+        git(dir, &["mv", "old.txt", "new.txt"]);
+        git(dir, &["commit", "-q", "-m", "rename"]);
+        commit_file(dir, "new.txt", "one\nTWO\n");
+        std::fs::write(dir.join("new.txt"), "one\nTWO\nthree\n").unwrap();
+
+        let blame = run(&repo, r#"{"op":"blame","path":"new.txt"}"#);
+        let lines = blame["info"]["lines"].as_array().unwrap();
+        assert_eq!(lines.len(), 3, "{blame}");
+        let commits = blame["info"]["commits"].as_array().unwrap();
+        let oid_of = |i: usize| {
+            commits[lines[i]["c"].as_u64().unwrap() as usize]["oid"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        };
+        assert_eq!(lines[1]["t"], "TWO");
+        assert_ne!(oid_of(0), oid_of(1), "1 行目と 2 行目は別のコミット");
+        assert!(
+            oid_of(2).bytes().all(|b| b == b'0'),
+            "まだコミットしていない行"
+        );
+
+        let history = run(&repo, r#"{"op":"fileHistory","path":"new.txt"}"#);
+        let entries = history["info"]["entries"].as_array().unwrap();
+        let paths: Vec<&str> = entries
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths.first(), Some(&"new.txt"), "{history}");
+        assert_eq!(paths.last(), Some(&"old.txt"), "名前を変える前も追う");
     }
 
     #[test]
