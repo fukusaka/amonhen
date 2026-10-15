@@ -302,45 +302,56 @@ impl<'g> Layouter<'g> {
             .and_then(|lanes| lanes.iter().copied().min())
     }
 
-    fn push_edge(&mut self, rows: (u32, u32), lanes: (u16, u16), color: u16, first_parent: bool) {
+    /// `t` の線の一部（`rows` の間、`lanes` のレーン）を出す。
+    fn push_edge(&mut self, t: &Track, rows: (u32, u32), lanes: (u16, u16), rider: bool) {
+        let mut kind = if t.first_parent {
+            Edge::FIRST_PARENT
+        } else {
+            0
+        };
+        if rider {
+            kind |= Edge::RIDER;
+        }
         self.edges.push(Edge {
             row_start: rows.0,
             row_end: rows.1,
             lane_start: lanes.0,
             lane_end: lanes.1,
-            color,
-            kind: if first_parent { Edge::FIRST_PARENT } else { 0 },
+            color: t.color,
+            kind,
+            child: t.child_row,
+            parent: t.target,
         });
     }
 
     /// レーン `lane` を通ってきた線を、`row` の `node_lane` にある点で終える。
     fn finish_track(&mut self, t: Track, lane: u16, row: u32, node_lane: u16) {
-        let (cr, cl, c, fp) = (t.child_row, t.child_lane, t.color, t.first_parent);
+        let (cr, cl) = (t.child_row, t.child_lane);
         if cr + 1 == row {
-            self.push_edge((cr, row), (cl, node_lane), c, fp);
+            self.push_edge(&t, (cr, row), (cl, node_lane), false);
             return;
         }
         let vstart = if cl != lane {
-            self.push_edge((cr, cr + 1), (cl, lane), c, fp);
+            self.push_edge(&t, (cr, cr + 1), (cl, lane), false);
             cr + 1
         } else {
             cr
         };
         let vend = if node_lane != lane { row - 1 } else { row };
         if vend > vstart {
-            self.push_edge((vstart, vend), (lane, lane), c, fp);
+            self.push_edge(&t, (vstart, vend), (lane, lane), false);
         }
         if node_lane != lane {
-            self.push_edge((row - 1, row), (lane, node_lane), c, fp);
+            self.push_edge(&t, (row - 1, row), (lane, node_lane), false);
         }
     }
 
     fn finish_rider(&mut self, t: Track, lane: u16, row: u32, node_lane: u16) {
         let (cr, cl) = (t.child_row, t.child_lane);
         if cr + 1 == row {
-            self.push_edge((cr, row), (cl, node_lane), t.color, t.first_parent);
+            self.push_edge(&t, (cr, row), (cl, node_lane), false);
         } else {
-            self.push_edge((cr, cr + 1), (cl, lane), t.color, t.first_parent);
+            self.push_edge(&t, (cr, cr + 1), (cl, lane), true);
         }
     }
 
@@ -523,6 +534,8 @@ fn splice(l: Layouter<'_>, old: &GraphLayout, k: usize, delta: i64) -> GraphLayo
     edges.extend(old.edges[ck.edges_len..].iter().map(|e| Edge {
         row_start: shift(e.row_start),
         row_end: shift(e.row_end),
+        child: shift(e.child),
+        parent: shift(e.parent),
         ..*e
     }));
     let mut checkpoints = l.checkpoints;
@@ -657,6 +670,9 @@ mod tests {
             if e.lane_start != e.lane_end {
                 assert_eq!(e.row_end - e.row_start, 1);
             }
+            // 線は子と親の間にあり、子と親は親子の組。
+            assert!(e.child <= e.row_start && e.row_end <= e.parent);
+            assert!(graph.parents(e.child as usize).contains(&e.parent));
         }
         // 親子のどの組にも、子の点から出る線と、親の点に入る線がある。
         for child in 0..graph.len() {

@@ -88,11 +88,17 @@ pub struct Edge {
     pub lane_end: u16,
     pub color: u16,
     pub kind: u16,
+    /// この線がつなぐ子と親の行（祖先の強調に使う）。縦線と終わりの曲線はレーンの持ち主の子のもの。
+    pub child: u32,
+    pub parent: u32,
 }
 
 impl Edge {
     /// first-parent の線（幹線として太く描く）。
     pub const FIRST_PARENT: u16 = 1 << 0;
+    /// ほかの線が待っている親に合流する線の、始まりの曲線。そこから先の縦線と終わりの曲線は、
+    /// 合流先のレーンの持ち主が描く。
+    pub const RIDER: u16 = 1 << 1;
 }
 
 /// 差分の 1 行。
@@ -172,7 +178,7 @@ unsafe impl Pod for SyntaxSpan {}
 const _: () = {
     assert!(size_of::<StrRef>() == 12 && align_of::<StrRef>() == 4);
     assert!(size_of::<Node>() == 12 && align_of::<Node>() == 4);
-    assert!(size_of::<Edge>() == 16 && align_of::<Edge>() == 4);
+    assert!(size_of::<Edge>() == 24 && align_of::<Edge>() == 4);
     assert!(size_of::<DiffRow>() == 24 && align_of::<DiffRow>() == 4);
     assert!(size_of::<SyntaxSpan>() == 16 && align_of::<SyntaxSpan>() == 4);
 };

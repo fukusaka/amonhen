@@ -121,11 +121,21 @@ typedef struct {
   uint16_t lane_end;
   uint16_t color;
   uint16_t kind;
+  /**
+   * この線がつなぐ子と親の行（祖先の強調に使う）。縦線と終わりの曲線はレーンの持ち主の子のもの。
+   */
+  uint32_t child;
+  uint32_t parent;
 } AmonhenEdge;
 /**
  * first-parent の線（幹線として太く描く）。
  */
 #define AmonhenEdge_FIRST_PARENT (1 << 0)
+/**
+ * ほかの線が待っている親に合流する線の、始まりの曲線。そこから先の縦線と終わりの曲線は、
+ * 合流先のレーンの持ち主が描く。
+ */
+#define AmonhenEdge_RIDER (1 << 1)
 
 typedef struct {
   uint64_t generation;

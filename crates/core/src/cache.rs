@@ -17,7 +17,7 @@ use crate::graph::{Checkpoint, GraphLayout, State, Track};
 
 const MAGIC: [u8; 8] = *b"AMONHIST";
 /// 形式を変えたら上げる。違うバージョンのキャッシュは読まずに作り直す。
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
 const ALIGN: usize = 16;
 
 #[repr(usize)]
