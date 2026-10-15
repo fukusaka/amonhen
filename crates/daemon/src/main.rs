@@ -8,6 +8,18 @@ use amonhen_model::GitBackend;
 use amonhen_remote::{Notification, Server};
 
 fn main() {
+    // macOS のアプリ（AppKit）は SIGTERM などを無視・保留する設定にしていて、子のプロセスはそれを引き継ぐ。
+    // 手元で起動されたときにも、ふつうに止められるよう既定に戻す（スレッドを作る前に）。
+    // SAFETY: 既定の動作に戻し、保留を解くだけで、ハンドラは登録しない。
+    unsafe {
+        let mut set: libc::sigset_t = std::mem::zeroed();
+        libc::sigemptyset(&mut set);
+        for signal in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+            libc::signal(signal, libc::SIG_DFL);
+            libc::sigaddset(&mut set, signal);
+        }
+        libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     let repo = match args.as_slice() {
         [flag, repo] if flag == "--stdio" => repo.clone(),

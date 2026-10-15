@@ -74,6 +74,7 @@ dependencies = [
  "amonhen-model",
  "amonhen-remote",
  "amonhen-watch",
+ "libc",
  "tempfile",
 ]
 

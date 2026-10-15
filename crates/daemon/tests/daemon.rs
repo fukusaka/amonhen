@@ -80,7 +80,10 @@ fn reports_progress_and_the_reason_when_the_daemon_goes_away() {
         if let Some(r) = repo.connection_state().unwrap().closed {
             break r;
         }
-        assert!(std::time::Instant::now() < deadline, "切れたことに気づかない");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "切れたことに気づかない"
+        );
         std::thread::sleep(Duration::from_millis(50));
     };
     assert!(reason.contains("gone"), "{reason}");
