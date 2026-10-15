@@ -372,6 +372,58 @@ pub unsafe extern "C" fn amonhen_history_edges_in(
     count
 }
 
+pub enum AmonhenLineage {}
+
+/// 祖先の強調の結果（`amonhen_lineage_view` で読む）。
+#[repr(C)]
+pub struct AmonhenLineageView {
+    /// 行ごとのビット（64 行ずつ）。立っていれば、選んだコミット（を含む）の祖先。
+    pub rows: *const u64,
+    pub row_word_count: u32,
+    /// 線ごとの、光らせ始める行（`u32::MAX` なら光らせない）。添字は History の線と同じ。
+    pub edge_from: *const u32,
+    pub edge_count: u32,
+}
+
+/// `row` 行目のコミットとその祖先、祖先をつなぐ線（`amonhen_lineage_free` で解放する）。History の大きさに
+/// 比例した時間がかかる（linux で 10〜25 ms）ので、裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `history` は有効なスナップショットであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_lineage(
+    history_ptr: *const AmonhenHistory,
+    row: u32,
+) -> *mut AmonhenLineage {
+    let h = history(history_ptr);
+    let lineage = amonhen_core::lineage::lineage(&h.graph, &h.layout, row);
+    Box::into_raw(Box::new(lineage)).cast()
+}
+
+/// # Safety
+/// `lineage` は有効であること。返したポインタは解放するまで有効。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_lineage_view(
+    lineage: *const AmonhenLineage,
+) -> AmonhenLineageView {
+    let l = unsafe { &*lineage.cast::<amonhen_core::lineage::Lineage>() };
+    AmonhenLineageView {
+        rows: non_null(&l.rows),
+        row_word_count: l.rows.len() as u32,
+        edge_from: non_null(&l.edge_from),
+        edge_count: l.edge_from.len() as u32,
+    }
+}
+
+/// # Safety
+/// `lineage` は `amonhen_history_lineage` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_lineage_free(lineage: *mut AmonhenLineage) {
+    if !lineage.is_null() {
+        drop(unsafe { Box::from_raw(lineage.cast::<amonhen_core::lineage::Lineage>()) });
+    }
+}
+
 /// レーンの幅の決め方（`amonhen_history_lane_positions`）。単位は FE の座標。
 #[repr(C)]
 pub struct AmonhenLaneMetrics {

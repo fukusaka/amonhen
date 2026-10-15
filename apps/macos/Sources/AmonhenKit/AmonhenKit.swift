@@ -185,6 +185,11 @@ public final class History: @unchecked Sendable {
         }
     }
 
+    /// `row` 行目のコミットの祖先と、祖先をつなぐ線。History の大きさに比例した時間がかかるので、裏で呼ぶ。
+    public func lineage(of row: Int) -> Lineage {
+        Lineage(raw: amonhen_history_lineage(raw, UInt32(row)), history: self, row: row)
+    }
+
     /// `rows` に重なる線の添字。
     public func edgeIndices(in rows: Range<Int>) -> [UInt32] {
         var indices = [UInt32](repeating: 0, count: 64)
@@ -229,6 +234,41 @@ public final class History: @unchecked Sendable {
 }
 
 /// History の連続した行の列。文字列はコアのメモリを直接指す。
+/// 選んだコミットの祖先（`History.lineage(of:)`）。どのスレッドから読んでもよい。
+public final class Lineage: @unchecked Sendable {
+    let raw: OpaquePointer
+    let view: AmonhenLineageView
+    /// 求めたときの History（行と線の添字はこの History のもの）。
+    public let history: History
+    /// 選んだコミットの行。
+    public let row: Int
+
+    init(raw: OpaquePointer, history: History, row: Int) {
+        self.raw = raw
+        self.history = history
+        self.row = row
+        self.view = amonhen_lineage_view(raw)
+    }
+
+    deinit {
+        amonhen_lineage_free(raw)
+    }
+
+    /// `row` 行目のコミットが祖先か。
+    public func contains(row: Int) -> Bool {
+        let word = row / 64
+        guard row >= 0, word < Int(view.row_word_count) else { return false }
+        return view.rows[word] & (1 << UInt64(row % 64)) != 0
+    }
+
+    /// `edge` 番目の線を光らせ始める行。光らせなければ nil。
+    public func litFrom(edge: Int) -> UInt32? {
+        guard edge >= 0, edge < Int(view.edge_count) else { return nil }
+        let from = view.edge_from[edge]
+        return from == UInt32.max ? nil : from
+    }
+}
+
 public final class HistoryChunk: @unchecked Sendable {
     let raw: OpaquePointer
     let history: History

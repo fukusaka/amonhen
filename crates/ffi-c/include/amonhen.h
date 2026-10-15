@@ -58,6 +58,8 @@ typedef struct AmonhenDiff AmonhenDiff;
  */
 typedef struct AmonhenHistory AmonhenHistory;
 
+typedef struct AmonhenLineage AmonhenLineage;
+
 /**
  * ref の一覧。
  */
@@ -148,6 +150,22 @@ typedef struct {
   const AmonhenEdge *edges;
   uint32_t edge_count;
 } AmonhenHistoryView;
+
+/**
+ * 祖先の強調の結果（`amonhen_lineage_view` で読む）。
+ */
+typedef struct {
+  /**
+   * 行ごとのビット（64 行ずつ）。立っていれば、選んだコミット（を含む）の祖先。
+   */
+  const uint64_t *rows;
+  uint32_t row_word_count;
+  /**
+   * 線ごとの、光らせ始める行（`u32::MAX` なら光らせない）。添字は History の線と同じ。
+   */
+  const uint32_t *edge_from;
+  uint32_t edge_count;
+} AmonhenLineageView;
 
 /**
  * レーンの幅の決め方（`amonhen_history_lane_positions`）。単位は FE の座標。
@@ -527,6 +545,28 @@ uint32_t amonhen_history_edges_in(const AmonhenHistory *history_ptr,
                                   uint32_t end,
                                   uint32_t *out,
                                   uint32_t capacity);
+
+/**
+ * `row` 行目のコミットとその祖先、祖先をつなぐ線（`amonhen_lineage_free` で解放する）。History の大きさに
+ * 比例した時間がかかる（linux で 10〜25 ms）ので、裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `history` は有効なスナップショットであること。
+ */
+AmonhenLineage *amonhen_history_lineage(const AmonhenHistory *history_ptr,
+                                        uint32_t row);
+
+/**
+ * # Safety
+ * `lineage` は有効であること。返したポインタは解放するまで有効。
+ */
+AmonhenLineageView amonhen_lineage_view(const AmonhenLineage *lineage);
+
+/**
+ * # Safety
+ * `lineage` は `amonhen_history_lineage` が返したもので、まだ解放していないこと。
+ */
+void amonhen_lineage_free(AmonhenLineage *lineage);
 
 /**
  * `start..end` 行を表示するときの、レーンごとの中心の横位置（魚眼）を `out` に書く。見えている範囲に点の
