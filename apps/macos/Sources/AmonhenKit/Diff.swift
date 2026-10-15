@@ -54,12 +54,17 @@ public class FileDiff: @unchecked Sendable {
     let owner: AnyObject
     let view: AmonhenDiffView
     private let free: (OpaquePointer) -> Void
+    private let makeSyntax: (OpaquePointer) -> OpaquePointer?
 
-    init(raw: OpaquePointer, owner: AnyObject, view: AmonhenDiffView, free: @escaping (OpaquePointer) -> Void) {
+    init(
+        raw: OpaquePointer, owner: AnyObject, view: AmonhenDiffView, free: @escaping (OpaquePointer) -> Void,
+        syntax: @escaping (OpaquePointer) -> OpaquePointer? = { amonhen_diff_syntax($0) }
+    ) {
         self.raw = raw
         self.owner = owner
         self.view = view
         self.free = free
+        self.makeSyntax = syntax
     }
 
     convenience init(raw: OpaquePointer, changes: CommitChanges) {
@@ -96,6 +101,32 @@ public class FileDiff: @unchecked Sendable {
 
     public func text(row: Int) -> String {
         withText(row: row) { $0 as String }
+    }
+
+    /// 構文の色付け。ファイル全体を解析するので、裏のスレッドで呼ぶ。
+    public func syntax() -> SyntaxSpans? {
+        withExtendedLifetime(self) { makeSyntax(raw).map(SyntaxSpans.init) }
+    }
+}
+
+/// 差分の構文の色付け（行の順、位置は UTF-16 の符号単位）。
+public final class SyntaxSpans: @unchecked Sendable {
+    let raw: OpaquePointer
+    let view: AmonhenSyntaxView
+
+    init(raw: OpaquePointer) {
+        self.raw = raw
+        self.view = amonhen_syntax_view(raw)
+    }
+
+    deinit {
+        amonhen_syntax_free(raw)
+    }
+
+    public var count: Int { Int(view.span_count) }
+
+    public func withSpans<R>(_ body: (UnsafeBufferPointer<AmonhenSyntaxSpan>) throws -> R) rethrows -> R {
+        try withExtendedLifetime(self) { try body(UnsafeBufferPointer(start: view.spans, count: count)) }
     }
 }
 

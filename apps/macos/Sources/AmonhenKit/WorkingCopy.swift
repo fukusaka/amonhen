@@ -77,7 +77,9 @@ public final class WorkingFileDiff: FileDiff, @unchecked Sendable {
         self.item = item
         self.staged = staged
         self.repository = status.repository
-        super.init(raw: raw, owner: status, view: amonhen_working_diff_view(raw), free: { amonhen_working_diff_free($0) })
+        super.init(
+            raw: raw, owner: status, view: amonhen_working_diff_view(raw), free: { amonhen_working_diff_free($0) },
+            syntax: { amonhen_working_diff_syntax($0) })
     }
 
     /// `rows` 行目の変更だけを stage する（stage 済みの差分なら unstage する）。

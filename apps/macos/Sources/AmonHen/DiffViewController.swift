@@ -30,6 +30,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private var numberCache: [UInt32: TextRenderer.ShapedLine] = [:]
     private var message: String?
     private var highlights: [Int: [Range<Int>]] = [:]
+    /// 行ごとの構文の色付け（UTF-16 の範囲と種類）。差分を表示した後に裏で求める。
+    private var syntax: [Int: [(range: Range<Int32>, kind: UInt8)]] = [:]
 
     /// 行を選べるか（Working Copy で行単位の stage に使う）。
     var isSelectable = false
@@ -130,6 +132,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
             for h in all { highlights[Int(h.row), default: []].append(Int(h.start)..<Int(h.end)) }
         }
         self.message = message
+        syntax = [:]
+        if let diff { loadSyntax(of: diff) }
         shaped.removeAll()
         selectedRows.removeAll()
         anchorRow = nil
@@ -145,6 +149,45 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
         redraw()
+    }
+
+    /// ファイル全体の解析は時間がかかることがあるので、色なしで表示した後に裏で求めて描き直す。
+    private func loadSyntax(of diff: FileDiff) {
+        Task {
+            let spans = await Task.detached(priority: .userInitiated) { diff.syntax() }.value
+            guard let spans, self.diff === diff else { return }
+            var byRow: [Int: [(range: Range<Int32>, kind: UInt8)]] = [:]
+            spans.withSpans { all in
+                for s in all where s.start < s.end {
+                    byRow[Int(s.row), default: []].append((Int32(s.start)..<Int32(s.end), s.kind))
+                }
+            }
+            self.syntax = byRow
+            self.redraw()
+        }
+    }
+
+    /// 構文の種類ごとの色（`AmonhenSyntaxSpan` の定数の順）。明るい・暗い外観で変わる。
+    private static func syntaxPalette() -> [SIMD4<Float>] {
+        var colors = [SIMD4<Float>](repeating: NSColor.labelColor.rgba, count: 16)
+        let pairs: [(Int32, NSColor)] = [
+            (AmonhenSyntaxSpan_KEYWORD, .systemPink),
+            (AmonhenSyntaxSpan_STRING, .systemRed),
+            (AmonhenSyntaxSpan_COMMENT, .systemGray),
+            (AmonhenSyntaxSpan_NUMBER, .systemPurple),
+            (AmonhenSyntaxSpan_FUNCTION, .systemBlue),
+            (AmonhenSyntaxSpan_TYPE, .systemTeal),
+            (AmonhenSyntaxSpan_CONSTANT, .systemPurple),
+            (AmonhenSyntaxSpan_PROPERTY, .systemCyan),
+            (AmonhenSyntaxSpan_ATTRIBUTE, .systemOrange),
+            (AmonhenSyntaxSpan_TAG, .systemPink),
+            (AmonhenSyntaxSpan_OPERATOR, .labelColor),
+            (AmonhenSyntaxSpan_VARIABLE, .systemPink),
+            (AmonhenSyntaxSpan_ESCAPE, .systemOrange),
+            (AmonhenSyntaxSpan_MODULE, .systemBrown),
+        ]
+        for (kind, color) in pairs { colors[Int(kind)] = color.rgba }
+        return colors
     }
 
     private func updateDocumentSize() {
@@ -485,6 +528,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         let selectedText = (focused ? NSColor.selectedTextBackgroundColor : NSColor.unemphasizedSelectedTextBackgroundColor).rgba
         let matchColor = NSColor.systemYellow.withAlphaComponent(0.35).rgba
         let currentMatchColor = NSColor.systemOrange.withAlphaComponent(0.7).rgba
+        let palette = syntax.isEmpty ? [] : Self.syntaxPalette()
         let textRange = orderedSelection
         // 見えている行の一致（番号つき）。
         var matchesByRow: [Int: [(Int, Range<Int>)]] = [:]
@@ -550,9 +594,10 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                         color: i == currentMatch ? currentMatchColor : matchColor)
                 }
                 let isHunk = r.kind == UInt8(AmonhenDiffRow_HUNK) || r.kind == UInt8(AmonhenDiffRow_MARKER)
+                let spans = (syntax[row] ?? []).map { (range: $0.range, color: palette[Int($0.kind) & 15]) }
                 renderer.addLine(
                     line, origin: CGPoint(x: gutterWidth + 8 - origin.x, y: baseline), color: isHunk ? secondary : text,
-                    scale: scale)
+                    scale: scale, spans: spans)
             }
         }
     }

@@ -121,6 +121,8 @@ final class TextRenderer {
             var entry: GlyphAtlas.Entry
             /// 行の左端からのペン位置（ピクセル、1/4 ピクセルに丸めた後の整数部）。
             var penX: Float
+            /// 元の文字列の中の位置（UTF-16）。色付けの範囲と突き合わせる。
+            var index: Int32
         }
 
         var glyphs: [Glyph]
@@ -189,14 +191,16 @@ final class TextRenderer {
             let runFont = attrs[kCTFontAttributeName] as! CTFont
             var ids = [CGGlyph](repeating: 0, count: count)
             var positions = [CGPoint](repeating: .zero, count: count)
+            var indices = [CFIndex](repeating: 0, count: count)
             CTRunGetGlyphs(run, CFRange(location: 0, length: count), &ids)
             CTRunGetPositions(run, CFRange(location: 0, length: count), &positions)
+            CTRunGetStringIndices(run, CFRange(location: 0, length: count), &indices)
             for i in 0..<count {
                 let x = positions[i].x * scale
                 let whole = floor(x)
                 let subpixel = Int(((x - whole) * CGFloat(GlyphAtlas.subpixelSteps)).rounded()) % GlyphAtlas.subpixelSteps
                 if let entry = atlas.entry(font: runFont, glyph: ids[i], subpixel: subpixel, scale: scale) {
-                    glyphs.append(.init(entry: entry, penX: Float(whole)))
+                    glyphs.append(.init(entry: entry, penX: Float(whole), index: Int32(indices[i])))
                 }
             }
         }
@@ -214,6 +218,25 @@ final class TextRenderer {
 
     /// `line` を、ベースラインの左端が `origin`（ポイント）になるように置く。
     func addLine(_ line: ShapedLine, origin: CGPoint, color: SIMD4<Float>, scale: CGFloat) {
+        addLine(line, origin: origin, scale: scale) { _ in color }
+    }
+
+    /// `spans`（文字列の UTF-16 の範囲の順に並べたもの）に入る文字はその色で、ほかは `color` で置く。
+    func addLine(
+        _ line: ShapedLine, origin: CGPoint, color: SIMD4<Float>, scale: CGFloat,
+        spans: [(range: Range<Int32>, color: SIMD4<Float>)]
+    ) {
+        guard !spans.isEmpty else { return addLine(line, origin: origin, color: color, scale: scale) }
+        var i = 0
+        addLine(line, origin: origin, scale: scale) { index in
+            // グリフはほぼ文字列の順に並ぶので、前のグリフの範囲から探し始める。
+            if i > 0, index < spans[i - 1].range.upperBound { i = 0 }
+            while i < spans.count, spans[i].range.upperBound <= index { i += 1 }
+            return i < spans.count && spans[i].range.contains(index) ? spans[i].color : color
+        }
+    }
+
+    private func addLine(_ line: ShapedLine, origin: CGPoint, scale: CGFloat, color: (Int32) -> SIMD4<Float>) {
         let s = Float(scale)
         let ox = Float((origin.x * scale).rounded()), oy = Float((origin.y * scale).rounded())
         for g in line.glyphs {
@@ -221,7 +244,7 @@ final class TextRenderer {
             let x = (ox + g.penX + e.left) / s
             let y = (oy - e.top) / s
             instances.append(Instance(
-                rect: [x, y, e.width / s, e.height / s], uv: [e.x, e.y, e.width, e.height], color: color,
+                rect: [x, y, e.width / s, e.height / s], uv: [e.x, e.y, e.width, e.height], color: color(g.index),
                 kind: e.isColor ? 2 : 1))
         }
     }
