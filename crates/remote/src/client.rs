@@ -1,0 +1,649 @@
+//! 手元の側: daemon につなぎ、`GitBackend`・`Operations`・`RepoFiles` を要求に置き換える。
+//! コア（レイアウト・キャッシュ・差分・色付け）はこれまでどおり手元で動き、git に触れる所だけが通信になる。
+
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use amonhen_model::{
+    CommitGraph, CommitText, FileChange, GitBackend, HeadState, Oid, Operations, Outcome,
+    RawCommit, Refs, RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, Status,
+};
+use serde::de::DeserializeOwned;
+
+use crate::frame::{self, Kind};
+use crate::wire::{
+    Bytes, CommitTextWire, GraphWire, Hello, Notification, Op, PROTOCOL_VERSION, Request,
+};
+
+type Reply = std::result::Result<Vec<u8>, String>;
+type Listener = Box<dyn Fn(Notification) + Send + Sync>;
+
+/// daemon とのつながり。要求に番号を振り、応答を番号で待ち手に渡す（複数のスレッドから同時に呼べる）。
+pub struct Connection {
+    writer: Mutex<Box<dyn Write + Send>>,
+    pending: Mutex<HashMap<u64, mpsc::Sender<Reply>>>,
+    next: AtomicU64,
+    closed: AtomicBool,
+    listeners: Mutex<Vec<Listener>>,
+    child: Mutex<Option<Child>>,
+    /// 送った・受け取ったバイト数（フレームの中身。SSH での転送量の見積もりに使う）。
+    sent: AtomicU64,
+    received: AtomicU64,
+}
+
+impl Connection {
+    /// `reader`・`writer` の上でつなぐ。読む側は裏のスレッドで回す。
+    pub fn new(
+        reader: impl Read + Send + 'static,
+        writer: impl Write + Send + 'static,
+    ) -> Arc<Self> {
+        let conn = Arc::new(Self {
+            writer: Mutex::new(Box::new(writer)),
+            pending: Mutex::default(),
+            next: AtomicU64::new(1),
+            closed: AtomicBool::new(false),
+            listeners: Mutex::default(),
+            child: Mutex::new(None),
+            sent: AtomicU64::new(0),
+            received: AtomicU64::new(0),
+        });
+        let weak = Arc::downgrade(&conn);
+        std::thread::Builder::new()
+            .name("amonhen-remote".into())
+            .spawn(move || {
+                let mut reader = std::io::BufReader::new(reader);
+                loop {
+                    let frame = frame::read(&mut reader);
+                    let Some(conn) = weak.upgrade() else { break };
+                    match frame {
+                        Ok(Some(f)) => conn.dispatch(f),
+                        _ => {
+                            conn.close("daemon との接続が切れました");
+                            break;
+                        }
+                    }
+                }
+            })
+            .expect("通信のスレッドを作れない");
+        conn
+    }
+
+    /// `program args...` を起動し、その標準入出力でつなぐ（`amonhend --stdio <repo>`、`ssh host amonhend ...`）。
+    pub fn spawn(program: &str, args: &[String]) -> Result<Arc<Self>> {
+        let mut child = Command::new(program)
+            .args(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .map_err(|e| format!("{program} を起動できない: {e}"))?;
+        let stdin = child.stdin.take().unwrap();
+        let stdout = child.stdout.take().unwrap();
+        let conn = Self::new(stdout, std::io::BufWriter::new(stdin));
+        *conn.child.lock().unwrap() = Some(child);
+        Ok(conn)
+    }
+
+    /// daemon からの知らせを受け取る。
+    pub fn on_notification(&self, f: impl Fn(Notification) + Send + Sync + 'static) {
+        self.listeners.lock().unwrap().push(Box::new(f));
+    }
+
+    /// これまでに送った・受け取ったバイト数。
+    pub fn traffic(&self) -> (u64, u64) {
+        (
+            self.sent.load(Ordering::Relaxed),
+            self.received.load(Ordering::Relaxed),
+        )
+    }
+
+    fn dispatch(&self, f: frame::Frame) {
+        self.received
+            .fetch_add(f.payload.len() as u64 + 13, Ordering::Relaxed);
+        match f.kind {
+            Kind::Ok | Kind::Err => {
+                let reply = if f.kind == Kind::Ok {
+                    Ok(f.payload)
+                } else {
+                    Err(String::from_utf8_lossy(&f.payload).into_owned())
+                };
+                if let Some(tx) = self.pending.lock().unwrap().remove(&f.id) {
+                    let _ = tx.send(reply);
+                }
+            }
+            Kind::Notify => {
+                if let Ok(n) = postcard::from_bytes::<Notification>(&f.payload) {
+                    for l in self.listeners.lock().unwrap().iter() {
+                        l(n.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn close(&self, reason: &str) {
+        self.closed.store(true, Ordering::Relaxed);
+        for (_, tx) in self.pending.lock().unwrap().drain() {
+            let _ = tx.send(Err(reason.to_owned()));
+        }
+    }
+
+    fn send(&self, request: &Request) -> Result<(u64, mpsc::Receiver<Reply>)> {
+        if self.closed.load(Ordering::Relaxed) {
+            return Err("daemon との接続が切れています".into());
+        }
+        let id = self.next.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = mpsc::channel();
+        self.pending.lock().unwrap().insert(id, tx);
+        let payload = postcard::to_allocvec(request)?;
+        self.sent
+            .fetch_add(payload.len() as u64 + 13, Ordering::Relaxed);
+        if let Err(e) = frame::write(
+            &mut *self.writer.lock().unwrap(),
+            Kind::Request,
+            id,
+            &payload,
+        ) {
+            self.pending.lock().unwrap().remove(&id);
+            return Err(format!("daemon に送れない: {e}").into());
+        }
+        Ok((id, rx))
+    }
+
+    fn decode<T: DeserializeOwned>(reply: Reply) -> Result<T> {
+        match reply {
+            Ok(payload) => Ok(postcard::from_bytes(&payload)?),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn call<T: DeserializeOwned>(&self, request: &Request) -> Result<T> {
+        let (_, rx) = self.send(request)?;
+        Self::decode(rx.recv().map_err(|_| "daemon との接続が切れました")?)
+    }
+
+    /// `cancelled` が true になったら daemon に取り消しを送り、`Err` を返す。
+    pub fn call_cancellable<T: DeserializeOwned>(
+        &self,
+        request: &Request,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<T> {
+        let (id, rx) = self.send(request)?;
+        loop {
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(reply) => return Self::decode(reply),
+                Err(RecvTimeoutError::Timeout) => {
+                    if cancelled() {
+                        self.pending.lock().unwrap().remove(&id);
+                        let _ =
+                            frame::write(&mut *self.writer.lock().unwrap(), Kind::Cancel, id, &[]);
+                        return Err("検索を取り消しました".into());
+                    }
+                }
+                Err(RecvTimeoutError::Disconnected) => {
+                    return Err("daemon との接続が切れました".into());
+                }
+            }
+        }
+    }
+}
+
+impl Drop for Connection {
+    fn drop(&mut self) {
+        // daemon の標準入力（書く側）を閉じれば daemon は終わる。子プロセスは待って片付ける。
+        if let Some(mut child) = self.child.lock().unwrap().take() {
+            *self.writer.lock().unwrap() = Box::new(std::io::sink());
+            let _ = child.wait();
+        }
+    }
+}
+
+/// daemon の向こうのリポジトリ。
+pub struct RemoteBackend {
+    conn: Arc<Connection>,
+    paths: RepoPaths,
+    ops: RemoteOperations,
+    files: Arc<RemoteFiles>,
+}
+
+impl RemoteBackend {
+    /// つないで通信の形を確かめ、リポジトリの場所を受け取る。
+    pub fn connect(conn: Arc<Connection>) -> Result<Self> {
+        let _: Hello = conn.call(&Request::Hello {
+            version: PROTOCOL_VERSION,
+        })?;
+        let paths: RepoPaths = conn.call(&Request::Paths)?;
+        Ok(Self {
+            ops: RemoteOperations { conn: conn.clone() },
+            files: Arc::new(RemoteFiles { conn: conn.clone() }),
+            conn,
+            paths,
+        })
+    }
+
+    pub fn connection(&self) -> &Arc<Connection> {
+        &self.conn
+    }
+}
+
+impl GitBackend for RemoteBackend {
+    fn head(&self) -> Result<Option<Oid>> {
+        self.conn.call(&Request::Head)
+    }
+
+    fn tips(&self) -> Result<Vec<Oid>> {
+        self.conn.call(&Request::Tips)
+    }
+
+    /// 関数は送れないので、`known` は使わずにすべて読む（コアは `read_new_commits` を使う）。
+    fn read_commits(
+        &self,
+        tips: &[Oid],
+        _known: &(dyn Fn(&Oid) -> bool + Sync),
+    ) -> Result<Vec<RawCommit>> {
+        self.conn.call(&Request::NewCommits {
+            tips: tips.to_vec(),
+            known_tips: Vec::new(),
+        })
+    }
+
+    fn read_new_commits(
+        &self,
+        tips: &[Oid],
+        known_tips: &[Oid],
+        _known: &(dyn Fn(&Oid) -> bool + Sync),
+    ) -> Result<Vec<RawCommit>> {
+        self.commits_since(tips, known_tips)
+    }
+
+    fn commits_since(&self, tips: &[Oid], known_tips: &[Oid]) -> Result<Vec<RawCommit>> {
+        self.conn.call(&Request::NewCommits {
+            tips: tips.to_vec(),
+            known_tips: known_tips.to_vec(),
+        })
+    }
+
+    /// 初めての読み込みは、daemon が並べた History を親を行番号にした形で受け取る（ID を繰り返さない）。
+    fn commit_graph(&self, tips: &[Oid]) -> Result<CommitGraph> {
+        let wire: GraphWire = self.conn.call(&Request::CommitGraph {
+            tips: tips.to_vec(),
+        })?;
+        wire.into_graph()
+    }
+
+    fn paths(&self) -> RepoPaths {
+        self.paths.clone()
+    }
+
+    fn files(&self) -> Arc<dyn RepoFiles> {
+        self.files.clone()
+    }
+
+    fn refs(&self) -> Result<Refs> {
+        self.conn.call(&Request::Refs)
+    }
+
+    fn commit_changes(&self, commit: &Oid) -> Result<Vec<FileChange>> {
+        self.conn.call(&Request::CommitChanges(*commit))
+    }
+
+    fn stash_changes(&self, stash: &Oid) -> Result<Vec<FileChange>> {
+        self.conn.call(&Request::StashChanges(*stash))
+    }
+
+    fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
+        let bytes: Bytes = self.conn.call(&Request::Blob(*id))?;
+        Ok(Arc::new(bytes.0))
+    }
+
+    fn operations(&self) -> Result<&dyn Operations> {
+        Ok(&self.ops)
+    }
+
+    fn status(&self) -> Result<Status> {
+        self.conn.call(&Request::Status)
+    }
+
+    fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>> {
+        let bytes: Bytes = self.conn.call(&Request::WorktreeFile(path.to_owned()))?;
+        Ok(Arc::new(bytes.0))
+    }
+
+    fn stage(&self, paths: &[&str]) -> Result<()> {
+        self.conn.call(&Request::Stage(owned(paths)))
+    }
+
+    fn unstage(&self, paths: &[&str]) -> Result<()> {
+        self.conn.call(&Request::Unstage(owned(paths)))
+    }
+
+    fn set_index_content(&self, path: &str, mode: u32, content: &[u8]) -> Result<()> {
+        self.conn.call(&Request::SetIndexContent {
+            path: path.to_owned(),
+            mode,
+            content: Bytes(content.to_vec()),
+        })
+    }
+
+    fn commit(&self, message: &str, amend: bool) -> Result<()> {
+        self.conn.call(&Request::Commit {
+            message: message.to_owned(),
+            amend,
+        })
+    }
+
+    fn has_commit_graph(&self) -> Result<bool> {
+        self.conn.call(&Request::HasCommitGraph)
+    }
+
+    fn write_commit_graph(&self) -> Result<()> {
+        self.conn.call(&Request::WriteCommitGraph)
+    }
+
+    fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
+        let texts: Vec<CommitTextWire> = self.conn.call(&Request::CommitTexts(ids.to_vec()))?;
+        Ok(texts.into_iter().map(Into::into).collect())
+    }
+}
+
+fn owned(paths: &[&str]) -> Vec<String> {
+    paths.iter().map(|p| (*p).to_owned()).collect()
+}
+
+pub struct RemoteFiles {
+    conn: Arc<Connection>,
+}
+
+impl RepoFiles for RemoteFiles {
+    fn read(&self, root: Root, path: &str) -> Result<Option<Vec<u8>>> {
+        let data: Option<Bytes> = self.conn.call(&Request::FileRead {
+            root,
+            path: path.to_owned(),
+        })?;
+        Ok(data.map(|b| b.0))
+    }
+
+    fn write(&self, root: Root, path: &str, data: &[u8]) -> Result<()> {
+        self.conn.call(&Request::FileWrite {
+            root,
+            path: path.to_owned(),
+            data: Bytes(data.to_vec()),
+        })
+    }
+
+    fn remove(&self, root: Root, path: &str) -> Result<()> {
+        self.conn.call(&Request::FileRemove {
+            root,
+            path: path.to_owned(),
+        })
+    }
+
+    fn mode(&self, root: Root, path: &str) -> Result<Option<u32>> {
+        self.conn.call(&Request::FileMode {
+            root,
+            path: path.to_owned(),
+        })
+    }
+
+    fn set_mode(&self, root: Root, path: &str, mode: u32) -> Result<()> {
+        self.conn.call(&Request::FileSetMode {
+            root,
+            path: path.to_owned(),
+            mode,
+        })
+    }
+}
+
+pub struct RemoteOperations {
+    conn: Arc<Connection>,
+}
+
+impl RemoteOperations {
+    fn op<T: DeserializeOwned>(&self, op: Op) -> Result<T> {
+        self.conn.call(&Request::Op(op))
+    }
+}
+
+impl Operations for RemoteOperations {
+    fn log_matching(
+        &self,
+        tips: &[Oid],
+        path: Option<&str>,
+        contents: Option<&str>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Oid>> {
+        let op = Op::LogMatching {
+            tips: tips.to_vec(),
+            path: path.map(str::to_owned),
+            contents: contents.map(str::to_owned),
+        };
+        self.conn.call_cancellable(&Request::Op(op), cancelled)
+    }
+
+    fn blame(&self, path: &str, rev: Option<&Oid>) -> Result<Vec<u8>> {
+        let bytes: Bytes = self.op(Op::Blame {
+            path: path.to_owned(),
+            rev: rev.copied(),
+        })?;
+        Ok(bytes.0)
+    }
+
+    fn file_log(&self, path: &str) -> Result<Vec<u8>> {
+        let bytes: Bytes = self.op(Op::FileLog {
+            path: path.to_owned(),
+        })?;
+        Ok(bytes.0)
+    }
+
+    fn head_state(&self) -> Result<HeadState> {
+        self.op(Op::HeadState)
+    }
+
+    fn resolve_refs(&self, names: &[String]) -> Result<Vec<(String, Option<Oid>)>> {
+        self.op(Op::ResolveRefs(names.to_vec()))
+    }
+
+    fn update_ref(&self, name: &str, value: Option<&Oid>, expected: Option<&Oid>) -> Result<()> {
+        self.op(Op::UpdateRef {
+            name: name.to_owned(),
+            value: value.copied(),
+            expected: expected.copied(),
+        })
+    }
+
+    fn reset(&self, mode: ResetMode, oid: &Oid) -> Result<()> {
+        self.op(Op::Reset { mode, oid: *oid })
+    }
+
+    fn switch_to(&self, head: &HeadState) -> Result<()> {
+        self.op(Op::SwitchTo(head.clone()))
+    }
+
+    fn write_blob(&self, content: &[u8]) -> Result<Oid> {
+        self.op(Op::WriteBlob(Bytes(content.to_vec())))
+    }
+
+    fn read_blob(&self, oid: &Oid) -> Result<Vec<u8>> {
+        let bytes: Bytes = self.op(Op::ReadBlob(*oid))?;
+        Ok(bytes.0)
+    }
+
+    fn switch_branch(&self, name: &str) -> Result<()> {
+        self.op(Op::SwitchBranch(name.to_owned()))
+    }
+
+    fn track_branch(&self, remote_branch: &str) -> Result<()> {
+        self.op(Op::TrackBranch(remote_branch.to_owned()))
+    }
+
+    fn create_branch(&self, name: &str, start: &str, checkout: bool) -> Result<()> {
+        self.op(Op::CreateBranch {
+            name: name.to_owned(),
+            start: start.to_owned(),
+            checkout,
+        })
+    }
+
+    fn delete_branch(&self, name: &str, force: bool) -> Result<()> {
+        self.op(Op::DeleteBranch {
+            name: name.to_owned(),
+            force,
+        })
+    }
+
+    fn rename_branch(&self, from: &str, to: &str) -> Result<()> {
+        self.op(Op::RenameBranch {
+            from: from.to_owned(),
+            to: to.to_owned(),
+        })
+    }
+
+    fn create_tag(&self, name: &str, target: &str, message: Option<&str>) -> Result<()> {
+        self.op(Op::CreateTag {
+            name: name.to_owned(),
+            target: target.to_owned(),
+            message: message.map(str::to_owned),
+        })
+    }
+
+    fn check_branch_name(&self, name: &str) -> Result<Option<String>> {
+        self.op(Op::CheckBranchName(name.to_owned()))
+    }
+
+    fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
+        self.op(Op::IsAncestor {
+            ancestor: ancestor.to_owned(),
+            descendant: descendant.to_owned(),
+        })
+    }
+
+    fn resolve(&self, rev: &str) -> Result<Oid> {
+        self.op(Op::Resolve(rev.to_owned()))
+    }
+
+    fn merge(&self, rev: &str) -> Result<Outcome> {
+        self.op(Op::Merge(rev.to_owned()))
+    }
+
+    fn rebase(&self, onto: &str) -> Result<Outcome> {
+        self.op(Op::Rebase(onto.to_owned()))
+    }
+
+    fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
+        self.op(Op::CherryPick {
+            oid: *oid,
+            is_merge,
+        })
+    }
+
+    fn revert(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
+        self.op(Op::Revert {
+            oid: *oid,
+            is_merge,
+        })
+    }
+
+    /// `todo` は daemon の側のパス（コアは daemon から受け取った `.git` の場所で組み立てる）。
+    fn rebase_todo(&self, base: Option<&Oid>, todo: &Path) -> Result<Outcome> {
+        self.op(Op::RebaseTodo {
+            base: base.copied(),
+            todo: todo.to_owned(),
+        })
+    }
+
+    fn sequence_in_progress(&self) -> Result<Option<Sequence>> {
+        self.op(Op::SequenceInProgress)
+    }
+
+    fn rebase_progress(&self) -> Result<Option<(u32, u32)>> {
+        self.op(Op::RebaseProgress)
+    }
+
+    fn abort(&self, sequence: Sequence) -> Result<()> {
+        self.op(Op::Abort(sequence))
+    }
+
+    fn continue_sequence(&self, sequence: Sequence) -> Result<Outcome> {
+        self.op(Op::ContinueSequence(sequence))
+    }
+
+    fn skip_sequence(&self, sequence: Sequence) -> Result<Outcome> {
+        self.op(Op::SkipSequence(sequence))
+    }
+
+    fn take_side(&self, path: &str, ours: bool) -> Result<()> {
+        self.op(Op::TakeSide {
+            path: path.to_owned(),
+            ours,
+        })
+    }
+
+    fn fetch(&self) -> Result<()> {
+        self.op(Op::Fetch)
+    }
+
+    fn pull(&self) -> Result<Outcome> {
+        self.op(Op::Pull)
+    }
+
+    fn branch_tracking(&self) -> Result<Vec<(String, u32, u32, bool)>> {
+        self.op(Op::BranchTracking)
+    }
+
+    fn push(
+        &self,
+        remote: &str,
+        branch: &str,
+        remote_branch: &str,
+        force: bool,
+        set_upstream: bool,
+    ) -> Result<()> {
+        self.op(Op::Push {
+            remote: remote.to_owned(),
+            branch: branch.to_owned(),
+            remote_branch: remote_branch.to_owned(),
+            force,
+            set_upstream,
+        })
+    }
+
+    fn restore_worktree(&self, paths: &[&str]) -> Result<()> {
+        self.op(Op::RestoreWorktree(owned(paths)))
+    }
+
+    fn stash_push(&self, message: Option<&str>, include_untracked: bool) -> Result<()> {
+        self.op(Op::StashPush {
+            message: message.map(str::to_owned),
+            include_untracked,
+        })
+    }
+
+    fn stash_apply(&self, name: &str, pop: bool) -> Result<Outcome> {
+        self.op(Op::StashApply {
+            name: name.to_owned(),
+            pop,
+        })
+    }
+
+    fn stash_drop(&self, name: &str) -> Result<()> {
+        self.op(Op::StashDrop(name.to_owned()))
+    }
+
+    fn stash_store(&self, oid: &Oid, message: &str) -> Result<()> {
+        self.op(Op::StashStore {
+            oid: *oid,
+            message: message.to_owned(),
+        })
+    }
+
+    fn update_submodules(&self, paths: &[&str]) -> Result<()> {
+        self.op(Op::UpdateSubmodules(owned(paths)))
+    }
+}
