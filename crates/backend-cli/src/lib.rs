@@ -7,21 +7,44 @@ mod status;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use amonhen_model::Result;
 
 pub use status::parse_status;
 
+/// status で git の fsmonitor（`git fsmonitor--daemon`）を使うか。macOS と Windows でだけ効く。
+static FSMONITOR: AtomicBool = AtomicBool::new(false);
+
+/// status で fsmonitor を使うかを決める（アプリの設定から呼ぶ）。リポジトリごとに daemon が常駐し、
+/// `.git` にソケットを作る。
+pub fn set_fsmonitor(enabled: bool) {
+    FSMONITOR.store(enabled, Ordering::Relaxed);
+}
+
+fn fsmonitor_enabled() -> bool {
+    cfg!(any(target_os = "macos", target_os = "windows")) && FSMONITOR.load(Ordering::Relaxed)
+}
+
+/// status の結果（untracked cache・fsmonitor の状態）を index に書き残す間隔。ふだんの status は
+/// 利用者の git とロックを奪い合わないよう index に書かないので、ときどきだけ書いてキャッシュを新しくする。
+const SAVE_STATUS_EVERY: Duration = Duration::from_secs(60);
+
 /// 1 つのリポジトリで git を実行する。
 #[derive(Clone, Debug)]
 pub struct Git {
     workdir: PathBuf,
+    /// status の結果を最後に index に書き残した時刻。
+    status_saved: Arc<Mutex<Option<Instant>>>,
 }
 
 impl Git {
     pub fn new(workdir: impl Into<PathBuf>) -> Self {
         Self {
             workdir: workdir.into(),
+            status_saved: Arc::default(),
         }
     }
 
@@ -125,13 +148,39 @@ impl Git {
 /// 作業ツリーと index の操作。
 impl Git {
     pub fn status(&self) -> Result<amonhen_model::Status> {
-        parse_status(&self.read(&[
+        // 追跡していないファイルを探した結果をディレクトリごとに覚えておく（untracked cache）。
+        // `--untracked-files=all` と設定が揃っていないとキャッシュを使わないので、両方を渡す。
+        let mut args = vec![
+            "-c",
+            "core.untrackedCache=true",
+            "-c",
+            "status.showUntrackedFiles=all",
+        ];
+        if fsmonitor_enabled() {
+            args.extend(["-c", "core.fsmonitor=true"]);
+        }
+        args.extend([
             "status",
             "--porcelain=v2",
             "-z",
             "--branch",
             "--untracked-files=all",
-        ])?)
+        ]);
+        // 初めてと、前に書き残してから時間がたったときだけ、結果を index に書き残す（ロックは任意なので、
+        // 取れなければ git は書かずに済ませる）。それ以外は書かずに、残してあるキャッシュを読むだけ。
+        let save = {
+            let mut saved = self.status_saved.lock().unwrap();
+            let due = saved.is_none_or(|t| t.elapsed() >= SAVE_STATUS_EVERY);
+            if due {
+                *saved = Some(Instant::now());
+            }
+            due
+        };
+        parse_status(&if save {
+            self.write(&args)?
+        } else {
+            self.read(&args)?
+        })
     }
 
     /// `paths` の変更（追加・削除を含む）を index に入れる。
