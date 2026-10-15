@@ -11,7 +11,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let files = KeyOutlineView()
     /// コミットメッセージの 1 行目と、2 行目以降。
     private let summary = NSTextField()
-    private let message = NSTextView()
+    private let summaryCount = NSTextField(labelWithString: "")
+    private let message = PlaceholderTextView()
+    /// ファイルの一覧をディレクトリの木で見せるか。
+    private let layoutControl = NSSegmentedControl()
+    private var showsTree: Bool {
+        get { UserDefaults.standard.bool(forKey: "workingCopyTree") }
+        set { UserDefaults.standard.set(newValue, forKey: "workingCopyTree") }
+    }
+    private let emptyLabel = NSTextField(labelWithString: "変更はありません")
+    private var diffBar: TitleAndButtonsBar?
     private let stageAllButton = NSButton(title: "Stage All", target: nil, action: nil)
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
     private let commitButton = NSButton(title: "Commit", target: nil, action: nil)
@@ -54,6 +63,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// コンフリクトの解決のボタン。
     private let conflictButtons = NSStackView()
     private var entries: [ObjectIdentifier: [Entry]] = [:]
+
+    /// 木で見せるときのディレクトリ。子が 1 つのディレクトリだけなら名前をつないで 1 段にする。
+    private final class Dir {
+        var name: String
+        var dirs: [Dir] = []
+        var files: [Entry] = []
+        init(name: String) { self.name = name }
+        var children: [Any] { dirs as [Any] + files as [Any] }
+    }
+    private var trees: [ObjectIdentifier: Dir] = [:]
     private var current: WorkingFileDiff?
     /// 選んでいたファイル（読み直した後に選び直す）。
     private var selectedKey: (path: String, staged: Bool)?
@@ -86,6 +105,22 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let filesScroll = NSScrollView()
         filesScroll.documentView = files
         filesScroll.hasVerticalScroller = true
+        emptyLabel.textColor = .secondaryLabelColor
+        emptyLabel.alignment = .center
+        emptyLabel.translatesAutoresizingMaskIntoConstraints = false
+        filesScroll.addSubview(emptyLabel)
+        emptyLabel.centerXAnchor.constraint(equalTo: filesScroll.centerXAnchor).isActive = true
+        emptyLabel.centerYAnchor.constraint(equalTo: filesScroll.centerYAnchor).isActive = true
+        layoutControl.segmentCount = 2
+        layoutControl.setImage(NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "リスト"), forSegment: 0)
+        layoutControl.setImage(NSImage(systemSymbolName: "list.bullet.indent", accessibilityDescription: "ツリー"), forSegment: 1)
+        layoutControl.setToolTip("ファイルをパスの一覧で表示", forSegment: 0)
+        layoutControl.setToolTip("ファイルをディレクトリの木で表示", forSegment: 1)
+        layoutControl.controlSize = .small
+        layoutControl.selectedSegment = showsTree ? 1 : 0
+        layoutControl.target = self
+        layoutControl.action = #selector(layoutChanged)
+        let filesHeader = NSStackView(views: [NSView(), layoutControl])
 
         message.isRichText = false
         message.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -93,7 +128,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         message.isAutomaticDashSubstitutionEnabled = false
         message.delegate = self
         message.textContainerInset = NSSize(width: 4, height: 4)
+        message.placeholder = "Description（任意）"
         summary.placeholderString = "Summary"
+        summaryCount.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        summaryCount.textColor = .tertiaryLabelColor
+        summaryCount.alignment = .right
         summary.font = .systemFont(ofSize: 13)
         summary.target = self
         summary.action = #selector(summaryChanged)
@@ -115,7 +154,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         amend.action = #selector(toggleAmend)
         stageAllButton.target = self
         stageAllButton.action = #selector(stageAll)
-        let commitRow = NSStackView(views: [amend, stageAllButton, NSView(), commitButton])
+        commitButton.toolTip = "⌘↩ でコミット"
+        let commitRow = NSStackView(views: [amend, NSView(), stageAllButton, commitButton])
+        let summaryRow = NSStackView(views: [summary, summaryCount])
+        summaryCount.setContentHuggingPriority(.required, for: .horizontal)
+        summaryCount.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        let separator = NSBox()
+        separator.boxType = .separator
 
         sequenceLabel.textColor = .systemOrange
         sequenceLabel.lineBreakMode = .byTruncatingTail
@@ -126,12 +171,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
         sequenceBar.setViews([sequenceLabel] + buttons, in: .leading)
         sequenceBar.isHidden = true
-        let left = NSStackView(views: [sequenceBar, filesScroll, summary, messageScroll, commitRow])
+        let left = NSStackView(views: [sequenceBar, filesHeader, filesScroll, separator, summaryRow, messageScroll, commitRow])
         left.orientation = .vertical
         left.alignment = .leading
         left.spacing = 6
-        left.edgeInsets = NSEdgeInsets(top: 0, left: 0, bottom: 8, right: 8)
-        for v in [sequenceBar, filesScroll, summary, messageScroll, commitRow] {
+        left.edgeInsets = NSEdgeInsets(top: 4, left: 0, bottom: 8, right: 8)
+        for v in [sequenceBar, filesHeader, filesScroll, separator, summaryRow, messageScroll, commitRow] {
             v.widthAnchor.constraint(equalTo: left.widthAnchor, constant: -8).isActive = true
         }
         messageScroll.heightAnchor.constraint(equalToConstant: 72).isActive = true
@@ -159,8 +204,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         ]
         conflictButtons.setViews(conflictActions.map { NSButton(title: $0.0, target: self, action: $0.1) }, in: .leading)
         conflictButtons.isHidden = true
-        let bar = NSStackView(views: [titleLabel, NSView(), conflictButtons, discardButton, linesButton, fileButton])
-        bar.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
+        let actionButtons = NSStackView(views: [conflictButtons, discardButton, linesButton, fileButton])
+        let bar = TitleAndButtonsBar(title: titleLabel, buttons: actionButtons)
+        diffBar = bar
         diffView.isSelectable = true
         diffView.onSelectionChange = { [weak self] in self?.updateButtons() }
         let right = BarAndContentView(bar: bar, content: diffView.view)
@@ -201,8 +247,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         stagedGroup.items = status.items.filter { $0.kind != .unmerged && $0.isStaged }
         unstagedGroup.items = status.items.filter { $0.kind != .unmerged && $0.isUnstaged }
         entries.removeAll()
+        trees.removeAll()
         files.reloadData()
         files.expandItem(nil, expandChildren: true)
+        emptyLabel.isHidden = !groups.isEmpty
 
         // 同じファイル・同じ組を選び直す。なければ同じファイルのもう一方の組、それもなければ最初のもの。
         let groups = [conflictGroup, stagedGroup, unstagedGroup]
@@ -217,7 +265,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         } else {
             current = nil
             selectedKey = nil
-            diffView.show(nil, message: "変更なし")
+            diffView.show(nil, message: "変更はありません")
             titleLabel.stringValue = ""
             updateButtons()
         }
@@ -228,6 +276,45 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let made = group.items.map { Entry(item: $0, staged: group.staged, conflict: group.conflicts) }
         entries[ObjectIdentifier(group)] = made
         return made
+    }
+
+    /// 組のファイルをディレクトリの木にする。
+    private func tree(of group: Group) -> Dir {
+        if let cached = trees[ObjectIdentifier(group)] { return cached }
+        let root = Dir(name: "")
+        for entry in entries(of: group) {
+            var dir = root
+            let parts = entry.item.path.split(separator: "/").map(String.init)
+            for part in parts.dropLast() {
+                if let next = dir.dirs.first(where: { $0.name == part }) {
+                    dir = next
+                } else {
+                    let next = Dir(name: part)
+                    dir.dirs.append(next)
+                    dir = next
+                }
+            }
+            dir.files.append(entry)
+        }
+        func compact(_ dir: Dir) {
+            while dir.files.isEmpty, dir.dirs.count == 1, !dir.name.isEmpty {
+                let only = dir.dirs[0]
+                dir.name += "/" + only.name
+                dir.dirs = only.dirs
+                dir.files = only.files
+            }
+            dir.dirs.sort { $0.name < $1.name }
+            dir.dirs.forEach(compact)
+        }
+        root.dirs.forEach(compact)
+        root.dirs.sort { $0.name < $1.name }
+        trees[ObjectIdentifier(group)] = root
+        return root
+    }
+
+    @objc private func layoutChanged() {
+        showsTree = layoutControl.selectedSegment == 1
+        if let status { show(status) }
     }
 
     private func entry(in group: Group, path: String) -> Entry? {
@@ -278,17 +365,28 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             for case let b as NSButton in conflictButtons.views.dropFirst().prefix(3) { b.isEnabled = hasConflict }
         }
         let staged = selectedKey?.staged ?? false
+        // 選んだファイルがなければ、ファイルの操作は出さない。
+        for v in [fileButton, linesButton] { v.isHidden = isConflict || selectedKey == nil }
         fileButton.title = staged ? "Unstage File" : "Stage File"
         fileButton.isEnabled = selectedKey != nil
         linesButton.title = staged ? "Unstage Lines" : "Stage Lines"
         linesButton.isEnabled = current != nil && !diffView.selectedChangeRows.isEmpty
         // 選んだ行があれば行を、なければファイルを破棄する。stage 済みの変更は破棄しない。
-        discardButton.isHidden = staged || isConflict
+        discardButton.isHidden = staged || isConflict || selectedKey == nil
         discardButton.title = diffView.selectedChangeRows.isEmpty ? "Discard File" : "Discard Lines"
         discardButton.isEnabled = selectedKey != nil
         commitButton.isEnabled = !(stagedGroup.items.isEmpty && amend.state == .off)
             && !composedMessage.isEmpty
         stageAllButton.isEnabled = !unstagedGroup.items.isEmpty
+        // ボタンの数や名前が変わると幅が変わるので、並べ直す。
+        diffBar?.needsLayout = true
+        let count = stagedGroup.items.count
+        commitButton.title = amend.state == .on ? "Amend Commit"
+            : count == 0 ? "Commit" : count == 1 ? "Commit 1 File" : "Commit \(count) Files"
+        // 1 行目の長さ。72 文字を超えたら目立たせる（git の慣習）。
+        let length = summary.stringValue.count
+        summaryCount.stringValue = length == 0 ? "" : "\(length)"
+        summaryCount.textColor = length > 72 ? .systemOrange : .tertiaryLabelColor
     }
 
     // MARK: - 操作
@@ -453,23 +551,25 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     private var groups: [Group] { [conflictGroup, stagedGroup, unstagedGroup].filter { !$0.items.isEmpty } }
 
-    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+    private func children(of item: Any?) -> [Any] {
         switch item {
-        case nil: groups.count
-        case let group as Group: entries(of: group).count
-        default: 0
+        case nil: groups
+        case let group as Group: showsTree ? tree(of: group).children : entries(of: group)
+        case let dir as Dir: dir.children
+        default: []
         }
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        children(of: item).count
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        switch item {
-        case let group as Group: entries(of: group)[index]
-        default: groups[index]
-        }
+        children(of: item)[index]
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        item is Group
+        item is Group || item is Dir
     }
 
     func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
@@ -487,13 +587,20 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             f.lineBreakMode = .byTruncatingMiddle
             return f
         }()
+        field.textColor = .labelColor
         switch item {
         case let group as Group:
             field.stringValue = "\(group.title) (\(group.items.count))"
+        case let dir as Dir:
+            field.stringValue = dir.name + "/"
+            field.textColor = .secondaryLabelColor
+            field.toolTip = nil
         case let entry as Entry:
             let state = entry.staged ? entry.item.indexState : entry.item.worktreeState
             let mark = state == "?" ? "U" : String(state)
-            field.stringValue = "\(mark)  \(entry.item.path)"
+            // 木ではディレクトリが上に出るので、ファイル名だけにする。
+            let name = showsTree ? (entry.item.path.split(separator: "/").last.map(String.init) ?? entry.item.path) : entry.item.path
+            field.stringValue = "\(mark)  \(name)"
             field.toolTip = entry.item.origPath.map { "\($0) → \(entry.item.path)" } ?? entry.item.path
         default:
             break
@@ -505,6 +612,64 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
         if selectedKey?.path == entry.item.path, selectedKey?.staged == entry.staged, current != nil { return }
         showDiff(of: entry)
+    }
+}
+
+/// 左に見出し、右にボタン。ボタンは元の幅のまま右に寄せ、見出しは残りの幅に収める（長いパスは途中を省く）。
+final class TitleAndButtonsBar: NSView {
+    private let title: NSTextField
+    private let buttons: NSStackView
+
+    init(title: NSTextField, buttons: NSStackView) {
+        self.title = title
+        self.buttons = buttons
+        super.init(frame: .zero)
+        addSubview(title)
+        addSubview(buttons)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        arrange()
+    }
+
+    override func layout() {
+        super.layout()
+        arrange()
+    }
+
+    private func arrange() {
+        let inset: CGFloat = 8
+        let size = buttons.fittingSize
+        buttons.frame = NSRect(
+            x: max(inset, bounds.width - inset - size.width), y: (bounds.height - size.height) / 2,
+            width: size.width, height: size.height)
+        let titleHeight = title.intrinsicContentSize.height
+        title.frame = NSRect(
+            x: inset, y: (bounds.height - titleHeight) / 2, width: max(0, buttons.frame.minX - inset * 2),
+            height: titleHeight)
+    }
+}
+
+/// 空のときに薄い案内を出すテキスト欄。
+final class PlaceholderTextView: NSTextView {
+    var placeholder = "" { didSet { needsDisplay = true } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        guard string.isEmpty, !placeholder.isEmpty else { return }
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: font ?? NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.placeholderTextColor,
+        ]
+        let origin = NSPoint(x: textContainerInset.width + (textContainer?.lineFragmentPadding ?? 0), y: textContainerInset.height)
+        placeholder.draw(at: origin, withAttributes: attrs)
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        needsDisplay = true
     }
 }
 
