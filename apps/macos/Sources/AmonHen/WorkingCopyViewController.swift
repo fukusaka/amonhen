@@ -234,16 +234,29 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     // MARK: - 読み直し
 
     /// status を裏で読み直す。
+    /// 読み直している途中か。途中に頼まれたら、終わってからもう 1 回だけ読み直す
+    /// （ビルドなどで変化の知らせが続いても、status を重ねて走らせない）。
+    private var isRefreshing = false
+    private var needsRefresh = false
+
     func refresh() {
+        if isRefreshing {
+            needsRefresh = true
+            return
+        }
+        isRefreshing = true
         let repository = self.repository
         Task {
-            let sequence = try? await Task.detached { try repository.run(["op": "sequence"]).text }.value
-            showSequence(sequence ?? nil)
-        }
-        Task {
-            guard let status = try? await Task.detached(priority: .userInitiated, operation: { try repository.loadStatus() }).value
-            else { return }
-            if status.generation != self.status?.generation { show(status) }
+            async let sequence = Task.detached { try? repository.run(["op": "sequence"]).text }.value
+            async let status = Task.detached(priority: .userInitiated) { try? repository.loadStatus() }.value
+            let (s, w) = await (sequence, status)
+            showSequence(s ?? nil)
+            if let w, w.generation != self.status?.generation { show(w) }
+            isRefreshing = false
+            if needsRefresh {
+                needsRefresh = false
+                refresh()
+            }
         }
     }
 
