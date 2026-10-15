@@ -56,14 +56,14 @@ final class SignaturePopover: NSViewController {
             // 署名した鍵のすべてのメールアドレスとコミッターを、状態に関係なく比べて出す。
             switch CommitterMatch(emails: s.emails, committerEmail: committerEmail) {
             case let .matched(email):
-                rows.append(("コミッター", value("一致（\(email)）", color: .systemGreen)))
+                rows.append(("コミッターのメール", value("鍵に登録されている（\(email)）", color: .systemGreen)))
             case let .unconfirmed(email):
-                rows.append(("コミッター", value("一致（\(email)）。ただし鍵のユーザー ID は確認されていない", color: .systemYellow)))
+                rows.append(("コミッターのメール", value("鍵に登録されている（\(email)）。ただし、そのユーザー ID は確認されていない", color: .systemYellow)))
             case .mismatched:
-                rows.append(("コミッター", value("一致しない（\(committerEmail) は鍵に登録されていない）", color: .systemOrange)))
+                rows.append(("コミッターのメール", value("鍵に登録されていない（\(committerEmail)）", color: .systemOrange)))
             case .unknown:
                 if !committerEmail.isEmpty {
-                    rows.append(("コミッター", value("確かめられない（鍵のメールアドレスを読めない）", color: .secondaryLabelColor)))
+                    rows.append(("コミッターのメール", value("鍵のメールアドレスを読めず、確かめられない", color: .secondaryLabelColor)))
                 }
             }
             let others = s.emails.filter { $0.email.lowercased() != committerEmail.lowercased() }
