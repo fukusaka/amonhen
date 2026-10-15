@@ -149,6 +149,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 裏で読んでいるチャンク。
     private var loadingChunks: Set<Int> = []
     private static let chunkRows = 256
+    /// 覚えておくチャンクの数（約 6,000 行）。超えたら、見えている所から遠いものから捨てる。チャンクは
+    /// コミットのオブジェクトの中身を指しているので、linux を上から下まで見て全部持つと数 GB になる。
+    private static let maxChunks = 24
 
     /// 入力イベントから画面に表示されるまでの時間（秒）。
     var onLatency: ((CFTimeInterval) -> Void)?
@@ -960,12 +963,25 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 if compact == Settings.compactHistoryRows {
                     self.preparedRows.merge(prepared) { new, _ in new }
                 }
+                self.trimChunks()
                 let visible = self.tableView.rows(in: self.tableView.visibleRect)
                 let lower = max(rows.lowerBound, visible.location)
                 let upper = min(rows.upperBound, visible.location + visible.length)
                 if lower < upper { self.redrawText() }
             }
         }
+    }
+
+    /// 見えている所から遠いチャンクと、その範囲の並べた行を捨てる（戻ってきたら読み直す）。
+    private func trimChunks() {
+        guard chunks.count > Self.maxChunks else { return }
+        let visible = tableView.rows(in: tableView.visibleRect)
+        let center = (visible.location + visible.length / 2) / Self.chunkRows
+        let keep = Set(chunks.keys.sorted { abs($0 - center) < abs($1 - center) }.prefix(Self.maxChunks))
+        for index in Array(chunks.keys) where !keep.contains(index) {
+            chunks.removeValue(forKey: index)
+        }
+        preparedRows = preparedRows.filter { keep.contains($0.key / Self.chunkRows) }
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
