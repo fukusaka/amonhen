@@ -31,7 +31,87 @@ impl Git {
     }
 }
 
+/// `-G` に渡す正規表現（git は拡張正規表現として読む）で、`text` をそのままの文字列として探すための書き方。
+fn literal_regex(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() * 2);
+    for c in text.chars() {
+        if matches!(
+            c,
+            '\\' | '.' | '*' | '[' | ']' | '^' | '$' | '(' | ')' | '+' | '?' | '{' | '}' | '|'
+        ) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
 impl Operations for Git {
+    fn log_matching(
+        &self,
+        tips: &[Oid],
+        path: Option<&str>,
+        contents: Option<&str>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Oid>> {
+        use std::io::{BufRead, Write};
+        let pattern = contents.map(|c| format!("-G{}", literal_regex(c)));
+        let mut args = vec!["log", "--format=%H", "--stdin"];
+        if let Some(p) = &pattern {
+            args.push(p);
+        }
+        args.push("--");
+        if let Some(p) = path {
+            args.push(p);
+        }
+        let mut cmd = self.command(&args);
+        cmd.env("GIT_OPTIONAL_LOCKS", "0")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn()?;
+        let mut stderr = child.stderr.take().unwrap();
+        let errors = std::thread::spawn(move || {
+            let mut text = String::new();
+            let _ = std::io::Read::read_to_string(&mut stderr, &mut text);
+            text
+        });
+        // 起点は引数に並べず標準入力で渡す（ref が数千あっても長さの制限にかからない）。
+        let mut stdin = child.stdin.take().unwrap();
+        let revs: String = tips.iter().map(|t| format!("{t}\n")).collect();
+        std::thread::spawn(move || stdin.write_all(revs.as_bytes()));
+        // 結果がなかなか出ない検索（内容の検索）でも取り消しに応えられるよう、読むのは別のスレッドで行う。
+        let stdout = child.stdout.take().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stdout).lines() {
+                let Ok(line) = line else { break };
+                if tx.send(line).is_err() {
+                    break;
+                }
+            }
+        });
+        let mut found = Vec::new();
+        loop {
+            if cancelled() {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("検索を取り消しました".into());
+            }
+            match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                Ok(line) => found.extend(Oid::from_hex(line.trim())),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        let status = child.wait()?;
+        if !status.success() {
+            let message = errors.join().unwrap_or_default();
+            return Err(format!("git log が失敗した: {}", message.trim()).into());
+        }
+        Ok(found)
+    }
+
     fn head_state(&self) -> Result<HeadState> {
         let branch = self
             .read(&["symbolic-ref", "-q", "HEAD"])

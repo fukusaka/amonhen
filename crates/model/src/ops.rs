@@ -50,6 +50,19 @@ pub enum ResetMode {
 
 /// 書き込み系の操作。デスクトップは `git` を起動して行う。
 pub trait Operations: Send + Sync {
+    /// `tips` から辿れるコミットのうち、`path`（の下）を変えたもの、差分に `contents` を含む行があるもの
+    /// （どちらも指定したときは両方を満たすもの）。`cancelled` が true を返したら途中でやめて `Err` を返す。
+    fn log_matching(
+        &self,
+        tips: &[Oid],
+        path: Option<&str>,
+        contents: Option<&str>,
+        cancelled: &dyn Fn() -> bool,
+    ) -> Result<Vec<Oid>> {
+        let _ = (tips, path, contents, cancelled);
+        Err("この環境ではパス・内容で探せません".into())
+    }
+
     fn head_state(&self) -> Result<HeadState>;
     /// 完全な ref 名の値。なければ `None`。
     fn resolve_refs(&self, names: &[String]) -> Result<Vec<(String, Option<Oid>)>>;
