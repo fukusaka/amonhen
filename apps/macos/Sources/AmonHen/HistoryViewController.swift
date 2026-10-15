@@ -132,6 +132,17 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private var verifiedSignatures: [Data: Character] = [:]
     private var verifyingSignatures: Set<Data> = []
     private var verifyWork: DispatchWorkItem?
+    /// 検証する側を変えた回数。変える前に始めた検証の結果は捨てる。
+    private var signatureGeneration = 0
+
+    /// 検証する側が変わったので、覚えていた結果を捨てて検証し直す（結果を引き継がない）。
+    func forgetSignatures() {
+        signatureGeneration += 1
+        verifyWork?.cancel()
+        verifiedSignatures.removeAll()
+        verifyingSignatures.removeAll()
+        redrawText()
+    }
     private var labelText: [String: TextRenderer.ShapedLine] = [:]
     private let graphColumn = NSTableColumn(identifier: .init("graph"))
     private var chunks: [Int: HistoryChunk] = [:]
@@ -603,6 +614,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             guard !pending.isEmpty else { return }
             verifyingSignatures.formUnion(pending)
             let repository = self.repository
+            let generation = signatureGeneration
             Task {
                 for start in stride(from: 0, to: pending.count, by: 8) {
                     let batch = Array(pending[start..<min(pending.count, start + 8)])
@@ -610,6 +622,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     let statuses = await Task.detached(priority: .utility) {
                         (try? repository.verifySignatures(hexes)) ?? []
                     }.value
+                    guard generation == signatureGeneration else { return }
                     for (id, status) in zip(batch, statuses) {
                         verifiedSignatures[id] = status.first ?? "E"
                     }

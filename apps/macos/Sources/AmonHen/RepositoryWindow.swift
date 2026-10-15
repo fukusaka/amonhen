@@ -198,6 +198,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
     /// daemon 越しなら、初めての読み込みの進み具合と、接続が切れたことを出す。
     private func watchConnection() {
         guard RepositoryLocation.isRemote(location) else { return }
+        repository.setLocalSignatureCheck(Settings.checkRemoteSignaturesLocally)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(signatureCheckChanged), name: .signatureCheckChanged, object: nil)
         updateConnection()
         connectionTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.updateConnection() }
@@ -220,6 +223,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
             history.loadingMessage = nil
             showDisconnected(reason: reason)
         }
+    }
+
+    /// 署名を検証する側が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す。
+    @objc private func signatureCheckChanged() {
+        repository.setLocalSignatureCheck(Settings.checkRemoteSignaturesLocally)
+        history.forgetSignatures()
+        detail.reloadSignature()
     }
 
     /// ツールバーの下に、切れたことと「つなぎ直す」を出す。

@@ -20,6 +20,16 @@ enum Settings {
         }
     }
 
+    /// SSH 先のリポジトリのコミットの署名を、手元の鍵で検証するか（既定は手元）。false なら SSH 先の git と鍵で
+    /// 検証する。変えたら `signatureCheckChanged` を知らせる。
+    static var checkRemoteSignaturesLocally: Bool {
+        get { UserDefaults.standard.object(forKey: "checkRemoteSignaturesLocally") as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "checkRemoteSignaturesLocally")
+            NotificationCenter.default.post(name: .signatureCheckChanged, object: nil)
+        }
+    }
+
     /// 選んだコミットの祖先を強調するか（既定はする）。変えたら `highlightAncestorsChanged` を知らせる。
     static var highlightAncestors: Bool {
         get { UserDefaults.standard.object(forKey: "highlightAncestors") as? Bool ?? true }
@@ -42,6 +52,7 @@ enum Settings {
 extension Notification.Name {
     static let historyRowsChanged = Notification.Name("historyRowsChanged")
     static let highlightAncestorsChanged = Notification.Name("highlightAncestorsChanged")
+    static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
 }
 
 /// daemon 越しに開くときに起動する `amonhend`。アプリの中（Contents/MacOS）にあればそれを、開発中は
@@ -313,6 +324,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         fsmonitor.state = Settings.useFSMonitor ? .on : .off
         fsmonitor.toolTip = "手元のリポジトリの status で git の fsmonitor を使う（リポジトリごとに git fsmonitor--daemon が常駐し、.git にソケットを作る）"
         appMenu.addItem(fsmonitor)
+        let signatures = NSMenuItem(
+            title: "SSH 先の署名を手元の鍵で検証する", action: #selector(toggleRemoteSignatureCheck(_:)), keyEquivalent: "")
+        signatures.target = self
+        signatures.state = Settings.checkRemoteSignaturesLocally ? .on : .off
+        signatures.toolTip = "SSH 先のリポジトリのコミットの署名を、手元の gpg・allowed_signers・信用度で検証する（外すと SSH 先の git と鍵で検証する）"
+        appMenu.addItem(signatures)
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Amon Hen を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -379,6 +396,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showRepositories(_ sender: Any?) {
         RepositoryManagerWindowController.shared.show()
+    }
+
+    @objc private func toggleRemoteSignatureCheck(_ item: NSMenuItem) {
+        Settings.checkRemoteSignaturesLocally.toggle()
+        item.state = Settings.checkRemoteSignaturesLocally ? .on : .off
     }
 
     @objc private func toggleFSMonitor(_ item: NSMenuItem) {

@@ -839,6 +839,22 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         header.textStorage?.setAttributedString(text)
     }
 
+    /// 検証する側が変わったので、表示中のコミットの署名を検証し直す（前の結果は使わない）。
+    func reloadSignature() {
+        guard let info, info.signed != nil else { return }
+        headerRequest += 1
+        let request = headerRequest
+        extras = nil
+        renderHeader()
+        let repository = self.repository, hex = info.oid
+        Task {
+            guard let extras = await Task.detached(priority: .utility, operation: { try? repository.commitExtras(oid: hex) }).value,
+                  request == headerRequest else { return }
+            self.extras = extras
+            renderHeader()
+        }
+    }
+
     @objc private func styleChanged() {
         let previous = CommitHeaderStyle.saved
         let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
