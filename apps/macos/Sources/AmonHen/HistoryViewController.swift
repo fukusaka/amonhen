@@ -13,8 +13,9 @@ final class GraphView: NSView {
         metalLayer.pixelFormat = .bgra8Unorm
         metalLayer.isOpaque = false
         metalLayer.framebufferOnly = true
-        // 表示待ちのフレームを減らし、入力から表示までの遅れを 1 フレーム縮める。
-        metalLayer.maximumDrawableCount = 2
+        // 描画先は 3 枚（標準）。2 枚だと 120Hz では表示まで約 3 フレームかかる間ずっと描画先がふさがり、
+        // 速くスクロールすると nextDrawable でメインスレッドが止まってフレームを落とす（linux で計測）。
+        metalLayer.maximumDrawableCount = 3
         // 表のスクロールと同じフレームで表示して、表とグラフをずらさない。遅れは変わらない（計測済み）。
         metalLayer.presentsWithTransaction = true
         layer = metalLayer

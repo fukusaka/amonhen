@@ -190,7 +190,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 引数で渡されたリポジトリ。なければ選ばせる。
     private func repositoryPath() -> String? {
         var args = Array(CommandLine.arguments.dropFirst())
-        if let i = args.firstIndex(of: "--snapshot") { args.removeSubrange(i...min(i + 1, args.count - 1)) }
+        for option in ["--snapshot", "--scroll-rows"] {
+            if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
+        }
         args.removeAll { ["--measure-scroll", "--select-first", "--working-copy"].contains($0) }
         if let path = args.first { return path }
         let panel = NSOpenPanel()

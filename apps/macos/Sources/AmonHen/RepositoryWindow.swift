@@ -147,7 +147,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         let history = self.history
         if CommandLine.arguments.contains("--measure-scroll") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                history.measureScroll(frames: 600, rowsPerFrame: 1.5) { summary in
+                // --scroll-rows N で 1 フレームに進む行数を変える（勢いよくスクロールしたときの確認）。
+                let rows = AppDelegate.option("--scroll-rows").flatMap(Double.init) ?? 1.5
+                history.measureScroll(frames: 600, rowsPerFrame: rows) { summary in
                     print(summary)
                     NSApp.terminate(nil)
                 }
