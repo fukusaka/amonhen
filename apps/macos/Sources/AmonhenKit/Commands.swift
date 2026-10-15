@@ -106,6 +106,8 @@ public struct CommitExtras: Decodable, Sendable {
     public let remoteBranches: [String]
     /// HEAD から何コミット前か。HEAD が含まなければ nil。
     public let headDistance: Int?
+    /// HEAD からの道のり（`HEAD~2^2~1` の形。そのまま git に渡せる）。HEAD が含まなければ nil。
+    public let headRev: String?
     /// merge が取り込んだコミットの数と、その先頭（多ければ 50 件まで）。
     public let mergedCount: Int
     public let merged: [CommitSummary]
