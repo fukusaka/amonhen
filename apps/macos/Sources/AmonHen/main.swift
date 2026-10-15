@@ -10,6 +10,16 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "writeCommitGraph") }
     }
 
+    /// 手元のリポジトリの status で git の fsmonitor を使うか（既定は使う）。リポジトリごとに
+    /// `git fsmonitor--daemon` が常駐し、status が速くなる。
+    static var useFSMonitor: Bool {
+        get { UserDefaults.standard.object(forKey: "useFSMonitor") as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "useFSMonitor")
+            Repository.setFSMonitor(newValue)
+        }
+    }
+
     /// History の行を 1 行にするか（既定は件名と作者・日時の 2 行）。変えたら `historyRowsChanged` を知らせる。
     static var compactHistoryRows: Bool {
         get { UserDefaults.standard.bool(forKey: "compactHistoryRows") }
@@ -172,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        Repository.setFSMonitor(Settings.useFSMonitor)
         RepositoryManagerWindowController.shared.onOpen = { [weak self] path in self?.open(path: path) }
         // 引数でリポジトリを渡されたらそれを、なければ前回開いていたものを開く。どれもなければ一覧を出す。
         if let path = repositoryPath() {
@@ -286,6 +297,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         commitGraph.state = Settings.writeCommitGraph ? .on : .off
         commitGraph.toolTip = "commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable --changed-paths を実行する（.git に書き込む。履歴の読み込みと path: での検索が速くなる）"
         appMenu.addItem(commitGraph)
+        let fsmonitor = NSMenuItem(
+            title: "fsmonitor で status を速くする", action: #selector(toggleFSMonitor(_:)), keyEquivalent: "")
+        fsmonitor.target = self
+        fsmonitor.state = Settings.useFSMonitor ? .on : .off
+        fsmonitor.toolTip = "手元のリポジトリの status で git の fsmonitor を使う（リポジトリごとに git fsmonitor--daemon が常駐し、.git にソケットを作る）"
+        appMenu.addItem(fsmonitor)
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Amon Hen を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
 
@@ -336,6 +353,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func showRepositories(_ sender: Any?) {
         RepositoryManagerWindowController.shared.show()
+    }
+
+    @objc private func toggleFSMonitor(_ item: NSMenuItem) {
+        Settings.useFSMonitor.toggle()
+        item.state = Settings.useFSMonitor ? .on : .off
     }
 
     @objc private func toggleWriteCommitGraph(_ item: NSMenuItem) {
