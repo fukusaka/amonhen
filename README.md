@@ -25,7 +25,7 @@ scripts/install.sh snapshot   # main の最新（Amon Hen Snapshot、正式版�
 - 差分: ドラッグで文字を選んで ⌘C、⌘F で検索。構文の色付けは表示の後に裏で付く。
 - History の検索の構文: 語は件名・作者・ID から探す。空白で区切ると AND、`or` で OR、括弧でまとめる。`author:` `subject:` `commit:` `path:` `contents:"..."`（例: `path:fs/ (author:linus or author:greg)`）。
 - ファイルの右クリック（Working Copy・History の変更ファイル）で Blame と File History（名前の変更も追う）。行やコミットをダブルクリックすると History で選ぶ。
-- SSH 先のリポジトリ: `AmonHen ssh://[user@]host[:port]/path/to/repo`（ホームからなら `/~/src/repo`）。初めての SSH 先には、同梱の `amonhend`（Linux の x86_64・aarch64、macOS）を `~/.cache/amonhen/` に送り込んでから起動する。鍵か ssh-agent でパスワードなしにつながること。`AmonHen daemon:/path` は手元で daemon を起動して開く（確認用）。
+- SSH 先のリポジトリ: リポジトリの一覧（File > Repositories…）の「Add Remote…」で接続先とパスを入れるか、`AmonHen ssh://[user@]host[:port]/path/to/repo`（ホームからなら `/~/src/repo`）。初めての SSH 先には、同梱の `amonhend`（Linux の x86_64・aarch64、macOS）を `~/.cache/amonhen/` に送り込んでから起動する。鍵か ssh-agent でパスワードなしにつながること。`AmonHen daemon:/path` は手元で daemon を起動して開く（確認用）。
 - View > One Line per Commit で History の行を 1 行にする。終了したときに開いていたリポジトリは、次の起動で開き直す。
 
 ## 開発
