@@ -5,10 +5,9 @@
 //! ファイルも共有する（どちらで行った操作も、どちらからでも Undo できる）。
 
 use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
-use amonhen_model::{HeadState, Oid, Operations, ResetMode, Result};
+use amonhen_model::{HeadState, Oid, Operations, RepoFiles, ResetMode, Result, Root};
 use serde::{Deserialize, Serialize};
 
 const MAX_ENTRIES: usize = 50;
@@ -92,11 +91,14 @@ impl std::fmt::Display for UndoConflict {
 
 impl std::error::Error for UndoConflict {}
 
+/// 記録（`.git` からの相対）。
+const LOG_FILE: &str = "amonhen/undo.json";
+/// 途中で止まった操作（edit・split）の、操作の前の状態。rebase が終わったら確定する。
+const PENDING_FILE: &str = "amonhen/undo-pending.json";
+
 pub struct UndoLog {
-    file: PathBuf,
-    /// 途中で止まった操作（edit・split）の、操作の前の状態。rebase が終わったら確定する。
-    pending_file: PathBuf,
-    workdir: Option<PathBuf>,
+    /// 記録と作業ツリーのファイルの読み書き（SSH 越しのリポジトリでも同じに扱う）。
+    files: Arc<dyn RepoFiles>,
     /// 書き込みを 1 つずつにする（読み込み → 追記 → 保存）。
     lock: Mutex<()>,
 }
@@ -111,33 +113,31 @@ fn sha1_hex(data: &[u8]) -> String {
     sha1_smol::Sha1::from(data).digest().to_string()
 }
 
-fn content_hash(path: &Path) -> Option<String> {
-    std::fs::read(path).ok().map(|d| sha1_hex(&d))
-}
-
 impl UndoLog {
-    pub fn new(git_dir: &Path, workdir: Option<&Path>) -> Self {
+    pub fn new(files: Arc<dyn RepoFiles>) -> Self {
         Self {
-            file: git_dir.join("amonhen").join("undo.json"),
-            pending_file: git_dir.join("amonhen").join("undo-pending.json"),
-            workdir: workdir.map(ToOwned::to_owned),
+            files,
             lock: Mutex::new(()),
         }
     }
 
+    /// 作業ツリーのファイルの中身のハッシュ。なければ `None`。
+    fn content_hash(&self, path: &str) -> Result<Option<String>> {
+        Ok(self.files.read(Root::Workdir, path)?.map(|d| sha1_hex(&d)))
+    }
+
     fn load(&self) -> Vec<Entry> {
-        std::fs::read(&self.file)
+        self.files
+            .read(Root::GitDir, LOG_FILE)
             .ok()
+            .flatten()
             .and_then(|d| serde_json::from_slice(&d).ok())
             .unwrap_or_default()
     }
 
     fn save(&self, entries: &[Entry]) -> Result<()> {
-        if let Some(dir) = self.file.parent() {
-            std::fs::create_dir_all(dir)?;
-        }
-        std::fs::write(&self.file, serde_json::to_vec_pretty(entries)?)?;
-        Ok(())
+        self.files
+            .write(Root::GitDir, LOG_FILE, &serde_json::to_vec_pretty(entries)?)
     }
 
     fn push(&self, entry: Entry) -> Result<()> {
@@ -227,16 +227,14 @@ impl UndoLog {
                 mode: Mode,
                 before: &'a RefSnapshot,
             }
-            if let Some(dir) = self.pending_file.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
             let p = Pending {
                 label,
                 time: now_ms(),
                 mode: Mode::Keep,
                 before: &before,
             };
-            std::fs::write(&self.pending_file, serde_json::to_vec_pretty(&p)?)?;
+            self.files
+                .write(Root::GitDir, PENDING_FILE, &serde_json::to_vec_pretty(&p)?)?;
             return Ok(result);
         }
         if skip(&result) {
@@ -267,8 +265,9 @@ impl UndoLog {
             mode: Mode,
             before: RefSnapshot,
         }
-        let Some(pending) = std::fs::read(&self.pending_file)
-            .ok()
+        let Some(pending) = self
+            .files
+            .read(Root::GitDir, PENDING_FILE)?
             .and_then(|d| serde_json::from_slice::<Pending>(&d).ok())
         else {
             return Ok(false);
@@ -290,7 +289,7 @@ impl UndoLog {
                 stash: None,
             })?;
         }
-        std::fs::remove_file(&self.pending_file)?;
+        self.files.remove(Root::GitDir, PENDING_FILE)?;
         Ok(changed)
     }
 
@@ -302,19 +301,20 @@ impl UndoLog {
         paths: &[&str],
         f: impl FnOnce() -> Result<T>,
     ) -> Result<T> {
-        let root = self.workdir.as_ref().ok_or("作業ツリーのないリポジトリ")?;
         let mut before = Vec::new();
         for path in paths {
-            let abs = root.join(path);
-            let data = std::fs::read(&abs).ok();
-            let mode = data.as_ref().and_then(|_| file_mode(&abs));
+            let data = self.files.read(Root::Workdir, path)?;
+            let mode = match data {
+                Some(_) => self.files.mode(Root::Workdir, path)?,
+                None => None,
+            };
             let blob = data.as_deref().map(|d| ops.write_blob(d)).transpose()?;
             before.push((path.to_string(), data, mode, blob));
         }
         let result = f()?;
         let mut files = Vec::new();
         for (path, data, mode, blob) in before {
-            let after = content_hash(&root.join(&path));
+            let after = self.content_hash(&path)?;
             if after != data.as_deref().map(sha1_hex) {
                 files.push(FileBackup {
                     path,
@@ -439,53 +439,25 @@ impl UndoLog {
 
     /// ファイルを操作の前の内容に戻す。ほかで書き換えられていたら何もしない。
     fn undo_files(&self, ops: &dyn Operations, entry: &Entry, files: &[FileBackup]) -> Result<()> {
-        let root = self.workdir.as_ref().ok_or("作業ツリーのないリポジトリ")?;
-        if files
-            .iter()
-            .any(|f| content_hash(&root.join(&f.path)) != f.after)
-        {
-            return Err(UndoConflict(entry.label.clone()).into());
+        for f in files {
+            if self.content_hash(&f.path)? != f.after {
+                return Err(UndoConflict(entry.label.clone()).into());
+            }
         }
         for f in files {
-            let abs = root.join(&f.path);
             let Some(before) = &f.before else {
-                let _ = std::fs::remove_file(&abs);
+                let _ = self.files.remove(Root::Workdir, &f.path);
                 continue;
             };
             let blob = Oid::from_hex(before).ok_or("記録の blob を読めない")?;
-            if let Some(dir) = abs.parent() {
-                std::fs::create_dir_all(dir)?;
-            }
-            std::fs::write(&abs, ops.read_blob(&blob)?)?;
+            self.files
+                .write(Root::Workdir, &f.path, &ops.read_blob(&blob)?)?;
             if let Some(mode) = f.mode {
-                set_file_mode(&abs, mode)?;
+                self.files.set_mode(Root::Workdir, &f.path, mode & 0o777)?;
             }
         }
         Ok(())
     }
-}
-
-#[cfg(unix)]
-fn file_mode(path: &Path) -> Option<u32> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path).ok().map(|m| m.permissions().mode())
-}
-
-#[cfg(not(unix))]
-fn file_mode(_path: &Path) -> Option<u32> {
-    None
-}
-
-#[cfg(unix)]
-fn set_file_mode(path: &Path, mode: u32) -> Result<()> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode & 0o777))?;
-    Ok(())
-}
-
-#[cfg(not(unix))]
-fn set_file_mode(_path: &Path, _mode: u32) -> Result<()> {
-    Ok(())
 }
 
 #[cfg(test)]
@@ -506,7 +478,10 @@ mod tests {
         ] {
             git.write(args).unwrap();
         }
-        let log = UndoLog::new(&tmp.path().join(".git"), Some(tmp.path()));
+        let log = UndoLog::new(amonhen_model::LocalFiles::new(
+            tmp.path().join(".git"),
+            Some(tmp.path().to_owned()),
+        ));
         (tmp, git, log)
     }
 

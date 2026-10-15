@@ -1,6 +1,6 @@
 //! FE から受け取る操作。頻度の低い操作はまとめてここを通し、Undo の記録もここで行う。
 
-use amonhen_model::{Oid, Outcome, Result};
+use amonhen_model::{Oid, Outcome, Result, Root};
 use serde::{Deserialize, Serialize};
 
 use crate::Repository;
@@ -157,6 +157,14 @@ pub enum Command {
     FileHistory {
         path: String,
     },
+    /// untracked のファイルを消す（git の記録にないので Undo では戻せない）。
+    DeleteUntracked {
+        paths: Vec<String>,
+    },
+    /// `path` に残っているコンフリクトの数（`info.count`）。
+    ConflictCount {
+        path: String,
+    },
     /// マージエディタの結果を `path` に書く（Undo できる）。`stage` なら解決済みにする（index に入れる）。
     SaveMerge {
         path: String,
@@ -200,16 +208,6 @@ fn heads(name: &str) -> String {
 }
 
 impl Repository {
-    /// 作業ツリーの中の `path`。
-    fn workdir_file(&self, path: &str) -> Result<std::path::PathBuf> {
-        let workdir = self
-            .backend()
-            .paths()
-            .workdir
-            .ok_or("作業ツリーのないリポジトリ")?;
-        Ok(workdir.join(path))
-    }
-
     /// コミットのメッセージ全文。
     pub fn commit_message(&self, commit: &Oid) -> Result<String> {
         let text = self
@@ -320,14 +318,15 @@ impl Repository {
         // 書き換える前に、最新の History で範囲を決める。
         self.load_history()?;
         let chain = self.editable_chain()?;
+        // メッセージと todo は `.git/amonhen` に書く。git に渡すのはリポジトリ側の絶対パス。
         let dir = self.backend().paths().git_dir.join("amonhen");
         let plan = rewrite::plan_rebase(&chain, edit, &dir)?;
-        std::fs::create_dir_all(&dir)?;
+        let files = self.backend().files();
         for (name, message) in &plan.messages {
-            std::fs::write(dir.join(name), message)?;
+            files.write(Root::GitDir, &format!("amonhen/{name}"), message.as_bytes())?;
         }
+        files.write(Root::GitDir, "amonhen/rebase-todo", plan.todo.as_bytes())?;
         let todo = dir.join("rebase-todo");
-        std::fs::write(&todo, &plan.todo)?;
         self.undo_log()?.record_stoppable(
             ops,
             label,
@@ -638,20 +637,15 @@ impl Repository {
                 index,
                 choice,
             } => {
-                let workdir = self
-                    .backend()
-                    .paths()
-                    .workdir
-                    .ok_or("作業ツリーのないリポジトリ")?;
-                let file = workdir.join(&path);
-                let data = std::fs::read(&file)?;
+                let files = self.backend().files();
+                let data = files.read(Root::Workdir, &path)?.ok_or("ファイルがない")?;
                 let resolved = crate::conflict::resolve(&data, index, choice)
                     .ok_or("そのコンフリクトはもうない")?;
                 undo.record_files(
                     ops,
                     &format!("Resolve conflict in {path}"),
                     &[&path],
-                    || Ok(std::fs::write(&file, &resolved)?),
+                    || files.write(Root::Workdir, &path, &resolved),
                 )?;
                 ok()
             }
@@ -665,7 +659,11 @@ impl Repository {
                 ok()
             }
             Command::MergeSides { path } => {
-                let data = std::fs::read(self.workdir_file(&path)?)?;
+                let data = self
+                    .backend()
+                    .files()
+                    .read(Root::Workdir, &path)?
+                    .ok_or("ファイルがない")?;
                 let side = |choice| {
                     crate::conflict::side(&data, choice).map(|s| {
                         serde_json::json!({
@@ -740,10 +738,29 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::DeleteUntracked { paths } => {
+                let files = self.backend().files();
+                for path in &paths {
+                    files.remove(Root::Workdir, path)?;
+                }
+                ok()
+            }
+            Command::ConflictCount { path } => {
+                let data = self
+                    .backend()
+                    .files()
+                    .read(Root::Workdir, &path)?
+                    .unwrap_or_default();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "count": crate::conflict::parse(&data).len() })),
+                    ..Default::default()
+                })
+            }
             Command::SaveMerge { path, text, stage } => {
-                let file = self.workdir_file(&path)?;
+                let files = self.backend().files();
                 undo.record_files(ops, &format!("Merge {path}"), &[&path], || {
-                    Ok(std::fs::write(&file, text.as_bytes())?)
+                    files.write(Root::Workdir, &path, text.as_bytes())
                 })?;
                 if stage {
                     self.stage(&[&path])?;

@@ -97,10 +97,7 @@ impl Repository {
     }
 
     pub(crate) fn undo_log(&self) -> Result<&UndoLog> {
-        Ok(self.undo.get_or_init(|| {
-            let paths = self.backend.paths();
-            UndoLog::new(&paths.git_dir, paths.workdir.as_deref())
-        }))
+        Ok(self.undo.get_or_init(|| UndoLog::new(self.backend.files())))
     }
 
     /// History を `cache_path` に永続化する。
@@ -371,16 +368,12 @@ impl Repository {
         }
         let content = diff::apply_selection(&diff.file, |r| !rows.contains(&r));
         // 作業ツリーの内容を、選ばなかった変更だけを index に当てたものにする = 選んだ行を戻す。
-        let workdir = self
-            .backend
-            .paths()
-            .workdir
-            .ok_or("作業ツリーのないリポジトリ")?;
         let path = diff.entry.path.clone();
         let ops = self.backend.operations()?;
+        let files = self.backend.files();
         self.undo_log()?
             .record_files(ops, &format!("Discard lines in {path}"), &[&path], || {
-                Ok(std::fs::write(workdir.join(&path), &content)?)
+                files.write(amonhen_model::Root::Workdir, &path, &content)
             })
     }
 
