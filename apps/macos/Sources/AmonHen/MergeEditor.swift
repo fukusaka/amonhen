@@ -82,6 +82,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
         current.string = sides.current?.text ?? ""
         base.string = sides.base?.text ?? ""
         updateConflicts(initial: true)
+        for text in [incoming, current, base, result] { colorSyntax(text) }
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -240,6 +241,32 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
         }
     }
 
+    /// 欄ごとの、色付けを頼んだ回数（古い結果を捨てるため）。
+    private var syntaxGeneration: [ObjectIdentifier: Int] = [:]
+
+    /// 構文の色を、文字の一時的な属性として付ける（中身や取り消しの履歴は変えない）。解析は裏で行う。
+    private func colorSyntax(_ text: NSTextView) {
+        let key = ObjectIdentifier(text)
+        let generation = (syntaxGeneration[key] ?? 0) + 1
+        syntaxGeneration[key] = generation
+        let string = text.string, path = self.path
+        Task {
+            let spans = await Task.detached(priority: .utility) { SyntaxSpans.highlight(path: path, text: string) }.value
+            // 解析している間に書き換わっていたら、次の色付けに任せる。
+            guard let spans, syntaxGeneration[key] == generation, let layout = text.layoutManager else { return }
+            let length = (text.string as NSString).length
+            layout.removeTemporaryAttribute(.foregroundColor, forCharacterRange: NSRange(location: 0, length: length))
+            let palette = SyntaxColors.palette
+            spans.withSpans { spans in
+                for span in spans where Int(span.end) <= length {
+                    layout.addTemporaryAttribute(
+                        .foregroundColor, value: palette[Int(span.kind) & 15],
+                        forCharacterRange: NSRange(location: Int(span.start), length: Int(span.end - span.start)))
+                }
+            }
+        }
+    }
+
     /// 各行の先頭の位置（UTF-16）。最後に文章の長さを足す。
     private static func lineStarts(_ string: String) -> [Int] {
         var starts = [0]
@@ -330,7 +357,11 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
         guard notification.object as? NSTextView === result else { return }
         // 打つたびに解析しないよう、少し待ってから読み直す。
         reparse?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.updateConflicts() }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            updateConflicts()
+            colorSyntax(result)
+        }
         reparse = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
