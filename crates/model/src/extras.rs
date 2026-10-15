@@ -42,8 +42,8 @@ pub struct CommitExtras {
 /// コミットのオブジェクトを受け取って署名を検証するもの。daemon 越しのリポジトリでも、手元の鍵で検証する
 /// ために FE（デスクトップ）が注入する。結果は `git log --format=%G?` と同じ 1 文字。
 pub trait SignatureVerifier: Send + Sync {
-    /// `commits`（ID とコミットのオブジェクトの中身）を検証し、同じ順に `%G?` を返す。
-    fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<char>>;
+    /// `commits`（ID とコミットのオブジェクトの中身）を検証し、同じ順に結果を返す（署名がなければ N）。
+    fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<SignatureCheck>>;
     /// 1 つのコミットの検証の詳細（署名者・鍵・信用度）。署名がなければ `None`。
     fn details(&self, id: &Oid, raw: &[u8]) -> Result<Option<SignatureCheck>>;
 }

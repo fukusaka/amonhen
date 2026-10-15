@@ -38,8 +38,8 @@ impl Git {
 }
 
 impl Git {
-    /// `ids` の署名をまとめて検証し、`%G?` の 1 文字を同じ順に返す（署名がなければ N）。git を 1 回だけ起動する。
-    pub fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
+    /// `ids` の署名をまとめて検証し、結果を同じ順に返す（署名がなければ N）。git を 1 回だけ起動する。
+    pub fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<SignatureCheck>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -50,21 +50,42 @@ impl Git {
                 "log.showSignature=false",
                 "log",
                 "--no-walk=unsorted",
-                "--format=%H %G?",
+                "--format=%H%x00%G?%x00%GS%x00%GK%x00%GF%x00%GT",
                 "--stdin",
             ],
             input.as_bytes(),
         )?;
-        let found: std::collections::HashMap<String, char> = String::from_utf8_lossy(&out)
-            .lines()
-            .filter_map(|line| {
-                let (hex, status) = line.split_once(' ')?;
-                Some((hex.to_owned(), status.chars().next()?))
-            })
-            .collect();
+        let found: std::collections::HashMap<String, SignatureCheck> =
+            String::from_utf8_lossy(&out)
+                .lines()
+                .filter_map(|line| {
+                    let (hex, rest) = line.split_once('\0')?;
+                    let mut f = rest.split('\0');
+                    let mut next = || f.next().unwrap_or_default().to_owned();
+                    let status = next().chars().next()?;
+                    Some((
+                        hex.to_owned(),
+                        SignatureCheck {
+                            status,
+                            signer: next(),
+                            key: next(),
+                            fingerprint: next(),
+                            trust: next(),
+                        },
+                    ))
+                })
+                .collect();
         Ok(ids
             .iter()
-            .map(|id| found.get(&id.to_string()).copied().unwrap_or('E'))
+            .map(|id| {
+                found
+                    .get(&id.to_string())
+                    .cloned()
+                    .unwrap_or(SignatureCheck {
+                        status: 'E',
+                        ..Default::default()
+                    })
+            })
             .collect())
     }
 }
@@ -195,7 +216,11 @@ mod tests {
         let extras = git.commit_extras(&head).unwrap();
         assert_eq!(extras.signature, None);
         assert_eq!(extras.notes, "a note");
-        assert_eq!(git.verify_signatures(&[head, head]).unwrap(), ['N', 'N']);
+        let checks = git.verify_signatures(&[head, head]).unwrap();
+        assert_eq!(
+            checks.iter().map(|c| c.status).collect::<Vec<_>>(),
+            ['N', 'N']
+        );
         assert!(git.verify_signatures(&[]).unwrap().is_empty());
         assert_eq!(
             extras.stats,

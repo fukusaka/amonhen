@@ -345,7 +345,7 @@ impl Repository {
             None => generation,
         };
         if let Some(s) = &extras.signature {
-            self.remember_signatures(generation, [(*commit, s.status)]);
+            self.remember_signatures(generation, [(*commit, s.clone())]);
         }
         let mut children = Vec::new();
         let (mut branches, mut tags) = (Vec::new(), Vec::new());
@@ -453,15 +453,7 @@ impl Repository {
                 )
             })
             .collect();
-        let signature = extras.signature.map(|s| {
-            serde_json::json!({
-                "status": s.status.to_string(),
-                "signer": s.signer,
-                "key": s.key,
-                "fingerprint": s.fingerprint,
-                "trust": s.trust,
-            })
-        });
+        let signature = extras.signature.as_ref().map(signature_json);
         let stats: Vec<serde_json::Value> = extras
             .stats
             .iter()
@@ -908,14 +900,33 @@ impl Repository {
             }),
             Command::VerifySignatures { oids } => {
                 let ids = oids.iter().map(|o| oid(o)).collect::<Result<Vec<_>>>()?;
-                let statuses: Vec<String> = self
-                    .verify_signatures(&ids)?
+                let found = self.verify_signatures(&ids)?;
+                // 署名者がコミッターと一致するかを FE が確かめられるよう、正しい署名にはコミッターのメールを添える。
+                let signed: Vec<Oid> = ids
                     .iter()
-                    .map(char::to_string)
+                    .zip(&found)
+                    .filter(|(_, c)| matches!(c.status, 'G' | 'U'))
+                    .map(|(id, _)| *id)
+                    .collect();
+                let mut committers = std::collections::HashMap::new();
+                if !signed.is_empty() {
+                    for (id, text) in signed.iter().zip(self.backend().commit_texts(&signed)?) {
+                        committers.insert(*id, committer_email(&text.raw));
+                    }
+                }
+                let checks: Vec<serde_json::Value> = ids
+                    .iter()
+                    .zip(&found)
+                    .map(|(id, c)| {
+                        let mut json = signature_json(c);
+                        json["committerEmail"] =
+                            committers.get(id).cloned().unwrap_or_default().into();
+                        json
+                    })
                     .collect();
                 Ok(Response {
                     ok: true,
-                    info: Some(serde_json::json!({ "statuses": statuses })),
+                    info: Some(serde_json::json!({ "checks": checks })),
                     ..Default::default()
                 })
             }
@@ -1059,6 +1070,28 @@ impl Repository {
             }
         }
     }
+}
+
+/// コミットのオブジェクトの `committer` の行のメールアドレス。
+fn committer_email(raw: &[u8]) -> String {
+    let text = String::from_utf8_lossy(raw);
+    text.lines()
+        .take_while(|l| !l.is_empty())
+        .find_map(|l| l.strip_prefix("committer "))
+        .and_then(|l| l.split_once('<'))
+        .and_then(|(_, rest)| rest.split_once('>'))
+        .map_or_else(String::new, |(email, _)| email.to_owned())
+}
+
+/// 署名の検証の結果を JSON に（`status` は `%G?` の 1 文字）。
+fn signature_json(s: &amonhen_model::SignatureCheck) -> serde_json::Value {
+    serde_json::json!({
+        "status": s.status.to_string(),
+        "signer": s.signer,
+        "key": s.key,
+        "fingerprint": s.fingerprint,
+        "trust": s.trust,
+    })
 }
 
 /// merge したタグ（ヘッダーの `mergetag`）。
@@ -1218,9 +1251,15 @@ mod tests {
     struct AlwaysGood(std::sync::atomic::AtomicUsize);
 
     impl amonhen_model::SignatureVerifier for AlwaysGood {
-        fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<char>> {
+        fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<amonhen_model::SignatureCheck>> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Ok(vec!['G'; commits.len()])
+            Ok(vec![
+                amonhen_model::SignatureCheck {
+                    status: 'G',
+                    ..Default::default()
+                };
+                commits.len()
+            ])
         }
         fn details(&self, _: &Oid, _: &[u8]) -> Result<Option<amonhen_model::SignatureCheck>> {
             Ok(Some(amonhen_model::SignatureCheck {
@@ -1284,27 +1323,44 @@ mod tests {
         assert_eq!(extras(&first)["mergedCount"], 0);
     }
 
+    fn statuses(repo: &Repository, id: Oid) -> Vec<char> {
+        repo.verify_signatures(&[id])
+            .unwrap()
+            .iter()
+            .map(|c| c.status)
+            .collect()
+    }
+
     #[test]
     fn does_not_carry_signature_results_over_when_the_checker_changes() {
         let (tmp, repo) = setup();
         let head = Oid::from_hex(&git(tmp.path(), &["rev-parse", "HEAD"])).unwrap();
         // リポジトリ側の git では、署名がないので N。
-        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['N']);
+        assert_eq!(statuses(&repo, head), ['N']);
         // 手元で検証するものに替えると、覚えていた N は使わずに検証し直す。2 回目は覚えている。
         let local = std::sync::Arc::new(AlwaysGood(Default::default()));
         repo.set_signature_verifier(Some(local.clone()));
-        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['G']);
-        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['G']);
+        assert_eq!(statuses(&repo, head), ['G']);
+        assert_eq!(statuses(&repo, head), ['G']);
         assert_eq!(local.0.load(std::sync::atomic::Ordering::Relaxed), 1);
         let extras = run(&repo, &format!(r#"{{"op":"commitExtras","oid":"{head}"}}"#));
         assert_eq!(extras["info"]["signature"]["status"], "G");
         // 戻すと、手元の G は引き継がない。
         let before = repo.signature_generation();
         repo.set_signature_verifier(None);
-        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['N']);
+        assert_eq!(statuses(&repo, head), ['N']);
         // 替える前に始めた検証の結果が後から届いても覚えない。
-        repo.remember_signatures(before, [(head, 'G')]);
-        assert_eq!(repo.verify_signatures(&[head]).unwrap(), ['N']);
+        repo.remember_signatures(
+            before,
+            [(
+                head,
+                amonhen_model::SignatureCheck {
+                    status: 'G',
+                    ..Default::default()
+                },
+            )],
+        );
+        assert_eq!(statuses(&repo, head), ['N']);
     }
 
     #[test]
@@ -1402,7 +1458,12 @@ mod tests {
             &repo,
             &format!(r#"{{"op":"verifySignatures","oids":["{first}","{second}"]}}"#),
         );
-        assert_eq!(verified["info"]["statuses"], serde_json::json!(["N", "N"]));
+        assert_eq!(verified["info"]["checks"][0]["status"], "N");
+        assert_eq!(
+            committer_email(b"tree t\ncommitter A B <a@x.y> 1 +0000\n\nmsg"),
+            "a@x.y"
+        );
+        assert_eq!(verified["info"]["checks"][1]["status"], "N");
         assert_eq!(extras["stats"][0]["added"], 1);
     }
 

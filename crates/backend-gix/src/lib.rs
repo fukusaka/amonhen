@@ -441,7 +441,7 @@ impl GitBackend for GixBackend {
         self.git()?.commit_extras(commit)
     }
 
-    fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
+    fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<amonhen_model::SignatureCheck>> {
         self.git()?.verify_signatures(ids)
     }
 

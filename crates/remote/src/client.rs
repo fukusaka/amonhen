@@ -396,7 +396,7 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::CommitExtras(*commit))
     }
 
-    fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
+    fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<amonhen_model::SignatureCheck>> {
         self.conn.call(&Request::VerifySignatures(ids.to_vec()))
     }
 

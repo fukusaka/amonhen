@@ -78,7 +78,10 @@ pub struct Repository {
     undo: OnceLock<UndoLog>,
     /// 署名の検証の結果（`%G?`）。コミットは変わらないので、一度検証したら覚えておく。検証する側を変えたら
     /// 捨てる（番号を進め、変える前に始めた検証の結果は覚えない）。
-    signatures: std::sync::Mutex<(u64, std::collections::HashMap<Oid, char>)>,
+    signatures: std::sync::Mutex<(
+        u64,
+        std::collections::HashMap<Oid, amonhen_model::SignatureCheck>,
+    )>,
     /// 手元で検証するもの。あれば、daemon 越しのリポジトリでもコミットのオブジェクトを受け取って手元で検証する。
     verifier: std::sync::Mutex<Option<Arc<dyn amonhen_model::SignatureVerifier>>>,
 }
@@ -139,7 +142,7 @@ impl Repository {
     }
 
     /// `ids` の署名の検証の結果（`%G?` の 1 文字）を同じ順に返す。覚えていないものだけを検証する。
-    pub fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<char>> {
+    pub fn verify_signatures(&self, ids: &[Oid]) -> Result<Vec<amonhen_model::SignatureCheck>> {
         let unknown: Vec<Oid> = {
             let known = self.signatures.lock().unwrap();
             let mut seen = std::collections::HashSet::new();
@@ -174,8 +177,11 @@ impl Repository {
                 fresh
                     .get(id)
                     .or_else(|| known.1.get(id))
-                    .copied()
-                    .unwrap_or('E')
+                    .cloned()
+                    .unwrap_or(amonhen_model::SignatureCheck {
+                        status: 'E',
+                        ..Default::default()
+                    })
             })
             .collect())
     }
@@ -185,7 +191,7 @@ impl Repository {
     pub(crate) fn remember_signatures(
         &self,
         generation: u64,
-        results: impl IntoIterator<Item = (Oid, char)>,
+        results: impl IntoIterator<Item = (Oid, amonhen_model::SignatureCheck)>,
     ) {
         let mut signatures = self.signatures.lock().unwrap();
         if signatures.0 == generation {

@@ -78,7 +78,7 @@ impl LocalVerifier {
 }
 
 impl SignatureVerifier for LocalVerifier {
-    fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<char>> {
+    fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<SignatureCheck>> {
         let git = self.git()?;
         self.store(&git, commits)?;
         let ids: Vec<Oid> = commits.iter().map(|(id, _)| *id).collect();
@@ -117,7 +117,7 @@ mod tests {
         let raw = source.read(&["cat-file", "commit", "HEAD"]).unwrap();
 
         let verifier = LocalVerifier::new(tmp.path().join("verify.git"));
-        assert_eq!(verifier.verify(&[(id, &raw)]).unwrap(), ['N']);
+        assert_eq!(verifier.verify(&[(id, &raw)]).unwrap()[0].status, 'N');
         assert_eq!(verifier.details(&id, &raw).unwrap(), None);
         // 中身が ID と合わなければ断る。
         assert!(verifier.verify(&[(id, b"tree 0\n\nbroken\n")]).is_err());
