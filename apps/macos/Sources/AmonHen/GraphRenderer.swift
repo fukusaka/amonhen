@@ -28,7 +28,8 @@ final class GraphRenderer {
     }
 
     struct Metrics {
-        var rowHeight: Float = 24
+        /// History の行の高さ（件名と、作者・日時の 2 行）。
+        var rowHeight: Float = 38
         var laneWidth: Float = 14
         var leftInset: Float = 10
         var nodeRadius: Float = 4

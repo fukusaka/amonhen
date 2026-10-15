@@ -98,13 +98,33 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let scrollView = NSScrollView()
     private let tableView = FocusTableView()
     private let graphView = GraphView()
-    /// 件名を描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。
+    /// 件名などを描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。
     private let textView = GraphView()
     private let text: TextRenderer
-    /// 行ごとに並べた件名。History が変わったら捨てる。作者・日時は詳細の側に出す。
-    private var rowText: [Int: TextRenderer.ShapedLine] = [:]
+    /// 行は 2 行: 1 行目に ref のラベルと件名、2 行目に作者・日時・短い ID。
+    private struct RowText {
+        var subject: TextRenderer.ShapedLine
+        var meta: TextRenderer.ShapedLine
+    }
+    /// 行ごとに並べた文字。History が変わったら捨てる。
+    private var rowText: [Int: RowText] = [:]
     private var ellipsis: TextRenderer.ShapedLine?
+    private var metaEllipsis: TextRenderer.ShapedLine?
     private let font = CTFontCreateUIFontForLanguage(.system, NSFont.systemFontSize, nil)!
+    private let metaFont = CTFontCreateUIFontForLanguage(.system, NSFont.smallSystemFontSize, nil)!
+    private let labelFont = CTFontCreateWithName(
+        NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium).fontName as CFString,
+        NSFont.smallSystemFontSize, nil)
+
+    /// コミットに付いている ref のラベル（ブランチ・リモートブランチ・タグ）。
+    struct RefLabel {
+        let name: String
+        let kind: RefKind
+        /// 今のブランチ。
+        let isHead: Bool
+    }
+    private var refLabels: [Data: [RefLabel]] = [:]
+    private var labelText: [String: TextRenderer.ShapedLine] = [:]
     private let graphColumn = NSTableColumn(identifier: .init("graph"))
     private var chunks: [Int: HistoryChunk] = [:]
     /// 裏で読んでいるチャンク。
@@ -310,6 +330,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         rowText.removeAll()
         tableView.reloadData()
         if first { tableView.scrollRowToVisible(0) }
+        // 何も選んでいなければ先頭（いちばん新しいコミット）を選び、詳細が空のままにならないようにする。
+        if tableView.selectedRow < 0, history.rowCount > 0 {
+            tableView.selectRowIndexes([0], byExtendingSelection: false)
+        }
         redrawGraph()
     }
 
@@ -333,6 +357,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         text.draw(layer: textView.metalLayer, background: .zero)
     }
 
+    /// ref の一覧が変わった。各コミットのラベルを作り直して描き直す。
+    func show(refs: Refs) {
+        var labels: [Data: [RefLabel]] = [:]
+        for item in refs.items {
+            guard let target = item.target, [.local, .remote, .tag].contains(item.kind) else { continue }
+            labels[target, default: []].append(
+                RefLabel(name: item.name, kind: item.kind, isHead: item.kind == .local && item.name == refs.headBranch))
+        }
+        // 今のブランチ、ローカル、リモート、タグの順。
+        let order: (RefLabel) -> Int = { $0.isHead ? 0 : [.local: 1, .remote: 2, .tag: 3][$0.kind] ?? 4 }
+        refLabels = labels.mapValues { $0.sorted { (order($0), $0.name) < (order($1), $1.name) } }
+        redrawText()
+    }
+
     /// 見えている行の文字を積む。まだ読めていない行は空けておき、読めたら描き直す。
     private func buildText(scale: CGFloat) {
         text.instances.removeAll(keepingCapacity: true)
@@ -345,27 +383,91 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let column = tableView.rect(ofColumn: 1).insetBy(dx: 5, dy: 0)
         let ellipsis = self.ellipsis ?? text.shape("…" as CFString, font: font, scale: scale)
         self.ellipsis = ellipsis
-        let rowHeight = tableView.rowHeight
-        let baselineOffset = ((rowHeight + CTFontGetAscent(font) - CTFontGetDescent(font)) / 2).rounded()
+        let metaEllipsis = self.metaEllipsis ?? text.shape("…" as CFString, font: metaFont, scale: scale)
+        self.metaEllipsis = metaEllipsis
+        // 2 行を行の高さの中ほどに置く。
+        let subjectHeight = CTFontGetAscent(font) + CTFontGetDescent(font)
+        let metaHeight = CTFontGetAscent(metaFont) + CTFontGetDescent(metaFont)
+        let gap: CGFloat = 2
+        let top = ((tableView.rowHeight - subjectHeight - gap - metaHeight) / 2).rounded()
+        let subjectBaseline = top + CTFontGetAscent(font)
+        let metaBaseline = (subjectBaseline + CTFontGetDescent(font) + gap + CTFontGetAscent(metaFont)).rounded()
         let focused = view.window?.isKeyWindow == true && view.window?.firstResponder === tableView
-        let primary = NSColor.labelColor.rgba
+        let primary = NSColor.labelColor.rgba, secondary = NSColor.secondaryLabelColor.rgba
         let selected = (focused ? NSColor.alternateSelectedControlTextColor : NSColor.labelColor).rgba
+        let selectedSecondary = (focused ? NSColor.alternateSelectedControlTextColor.withAlphaComponent(0.75)
+            : NSColor.secondaryLabelColor).rgba
         let selection = tableView.selectedRowIndexes
         if rowText.count > 4096 { rowText.removeAll() }
         for row in rows.location..<min(history.rowCount, rows.location + rows.length) {
             guard let line = shapedRow(row, scale: scale) else { continue }
-            let baseline = tableView.rect(ofRow: row).minY - scrollY + baselineOffset
+            let rowTop = tableView.rect(ofRow: row).minY - scrollY
+            let isSelected = selection.contains(row)
+            var x = column.minX - originX
+            let end = column.maxX - originX
+            if let id = history.commitID(row: row), let labels = refLabels[id] {
+                x = drawLabels(labels, x: x, maxX: end - 40, baseline: rowTop + subjectBaseline, scale: scale,
+                               selected: isSelected && focused)
+            }
             text.addLine(
-                line, origin: CGPoint(x: column.minX - originX, y: baseline),
-                color: selection.contains(row) ? selected : primary, scale: scale, maxWidth: column.width,
-                ellipsis: ellipsis)
+                line.subject, origin: CGPoint(x: x, y: rowTop + subjectBaseline), color: isSelected ? selected : primary,
+                scale: scale, maxWidth: max(0, end - x), ellipsis: ellipsis)
+            text.addLine(
+                line.meta, origin: CGPoint(x: column.minX - originX, y: rowTop + metaBaseline),
+                color: isSelected ? selectedSecondary : secondary, scale: scale, maxWidth: column.width,
+                ellipsis: metaEllipsis)
         }
     }
 
-    private func shapedRow(_ row: Int, scale: CGFloat) -> TextRenderer.ShapedLine? {
+    /// 件名の前に ref のラベルを並べ、件名を始める位置を返す。入りきらない分は「+N」にまとめる。
+    private func drawLabels(
+        _ labels: [RefLabel], x start: CGFloat, maxX: CGFloat, baseline: CGFloat, scale: CGFloat, selected: Bool
+    ) -> CGFloat {
+        let ascent = CTFontGetAscent(labelFont), descent = CTFontGetDescent(labelFont)
+        let height = (ascent + descent + 4).rounded()
+        let top = (baseline - ascent - 2).rounded()
+        var x = start
+        for (i, label) in labels.enumerated() {
+            let shown = i < 3 ? label.name : "+\(labels.count - i)"
+            let line = labelText[shown] ?? text.shape(shown as CFString, font: labelFont, scale: scale)
+            labelText[shown] = line
+            let width = (line.width + 10).rounded()
+            if x + width > maxX, i > 0 { break }
+            let (fill, ink) = labelColors(i < 3 ? label : nil, selected: selected)
+            text.addRoundedRect(CGRect(x: x, y: top, width: width, height: height), radius: 4, color: fill)
+            text.addLine(line, origin: CGPoint(x: x + 5, y: baseline - 1), color: ink, scale: scale)
+            x += width + 4
+            if i >= 3 { break }
+        }
+        return x + 2
+    }
+
+    private func labelColors(_ label: RefLabel?, selected: Bool) -> (SIMD4<Float>, SIMD4<Float>) {
+        guard let label else { return (NSColor.systemGray.withAlphaComponent(0.25).rgba, NSColor.labelColor.rgba) }
+        let base: NSColor = switch label.kind {
+        case .local: .systemBlue
+        case .remote: .systemPurple
+        default: .systemOrange
+        }
+        if label.isHead { return (base.withAlphaComponent(0.85).rgba, NSColor.white.rgba) }
+        return (base.withAlphaComponent(selected ? 0.45 : 0.22).rgba, (selected ? NSColor.white : NSColor.labelColor).rgba)
+    }
+
+    private static let dateFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.dateStyle = .medium
+        f.timeStyle = .short
+        return f
+    }()
+
+    private func shapedRow(_ row: Int, scale: CGFloat) -> RowText? {
         if let cached = rowText[row] { return cached }
         guard let chunk = chunk(row: row) else { return nil }
-        let line = chunk.withSubject(row: row) { text.shape($0, font: font, scale: scale) }
+        let subject = chunk.withSubject(row: row) { text.shape($0, font: font, scale: scale) }
+        let short = history?.commitID(row: row).map { $0.prefix(4).map { String(format: "%02x", $0) }.joined() } ?? ""
+        let date = Self.dateFormatter.string(from: chunk.authorTime(row: row))
+        let meta = "\(chunk.authorName(row: row))  ·  \(date)  ·  \(short)" as CFString
+        let line = RowText(subject: subject, meta: text.shape(meta, font: metaFont, scale: scale))
         rowText[row] = line
         return line
     }

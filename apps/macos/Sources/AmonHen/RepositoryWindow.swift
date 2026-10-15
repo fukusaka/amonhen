@@ -204,6 +204,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
                 let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
                 sidebar.show(refs)
                 history.head = refs.head
+                history.show(refs: refs)
             } catch {
                 NSLog("ref を読めない: \(error)")
             }
