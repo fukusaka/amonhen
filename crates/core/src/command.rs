@@ -352,6 +352,7 @@ impl Repository {
         let (mut local_branches, mut remote_branches) = (Vec::new(), Vec::new());
         let (mut first_tag, mut previous_tag) = (None, None);
         let (mut merged_rows, mut head_distance) = (Vec::new(), None);
+        let mut head_rev: Option<String> = None;
         let mut summaries: Vec<Oid> = Vec::new();
         if let Some(history) = self.history()
             && let Some(row) = history.row_of(commit)
@@ -409,6 +410,8 @@ impl Repository {
                     .map(|(a, c)| (a & c).count_ones())
                     .sum();
                 head_distance = Some(both.saturating_sub(1));
+                head_rev =
+                    crate::lineage::rev_path(graph, head, row).map(|path| format!("HEAD{path}"));
             }
             merged_rows = crate::lineage::merged_commits(graph, row);
             summaries = merged_rows
@@ -480,6 +483,7 @@ impl Repository {
             "localBranches": local_branches,
             "remoteBranches": remote_branches,
             "headDistance": head_distance,
+            "headRev": head_rev,
             "mergedCount": merged_rows.len(),
             "merged": merged,
             "references": references,
@@ -1270,6 +1274,7 @@ mod tests {
         assert_eq!(m["mergedCount"], 1);
         assert_eq!(m["merged"][0]["subject"], "topic work");
         assert_eq!(m["headDistance"], 1, "HEAD の 1 つ前");
+        assert_eq!(m["headRev"], "HEAD~1");
         assert_eq!(m["localBranches"], serde_json::json!(["main"]));
         assert_eq!(m["remoteBranches"], serde_json::json!([]));
         let f = extras(&follow);

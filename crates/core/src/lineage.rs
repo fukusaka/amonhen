@@ -81,6 +81,69 @@ pub fn lineage(graph: &CommitGraph, layout: &GraphLayout, row: u32) -> Lineage {
     Lineage { rows, edge_from }
 }
 
+/// `from` から `to` への、`HEAD~2^2~1` の形の道のり（`~n` は 1 つ目の親を n 回、`^k` は k 番目の親）。
+/// git の name-rev と同じく、1 つ目の親を辿る道を優先し、merge の 2 つ目以降の親へ移るのは重く数える。
+/// `to` が `from` の祖先でなければ `None`。`from` と `to` が同じなら空文字列。
+pub fn rev_path(graph: &CommitGraph, from: u32, to: u32) -> Option<String> {
+    use std::cmp::Reverse;
+    use std::collections::{BinaryHeap, HashMap};
+    /// 2 つ目以降の親へ移る重み（name-rev の MERGE_TRAVERSAL_WEIGHT と同じ）。
+    const MERGE_WEIGHT: u64 = 65535;
+    if from == to {
+        return Some(String::new());
+    }
+    // 親は子より下の行にあるので、`to` より下には行かない。
+    let mut best: HashMap<u32, (u64, u32, u32)> = HashMap::new(); // 行 → (重さ, 前の行, 何番目の親か)
+    let mut queue = BinaryHeap::new();
+    best.insert(from, (0, from, 0));
+    queue.push(Reverse((0u64, from)));
+    while let Some(Reverse((cost, row))) = queue.pop() {
+        if row == to {
+            break;
+        }
+        if best.get(&row).is_some_and(|b| b.0 < cost) {
+            continue;
+        }
+        for (i, &p) in graph.parents(row as usize).iter().enumerate() {
+            if p > to {
+                continue;
+            }
+            let next = cost + if i == 0 { 1 } else { MERGE_WEIGHT };
+            if best.get(&p).is_none_or(|b| next < b.0) {
+                best.insert(p, (next, row, i as u32 + 1));
+                queue.push(Reverse((next, p)));
+            }
+        }
+    }
+    best.get(&to)?;
+    // 道を逆に辿り、`~n` と `^k` を組み立てる。
+    let mut steps = Vec::new();
+    let mut row = to;
+    while row != from {
+        let (_, prev, nth) = best[&row];
+        steps.push(nth);
+        row = prev;
+    }
+    steps.reverse();
+    let mut out = String::new();
+    let mut run = 0;
+    for nth in steps {
+        if nth == 1 {
+            run += 1;
+            continue;
+        }
+        if run > 0 {
+            out.push_str(&format!("~{run}"));
+            run = 0;
+        }
+        out.push_str(&format!("^{nth}"));
+    }
+    if run > 0 {
+        out.push_str(&format!("~{run}"));
+    }
+    Some(out)
+}
+
 /// `row` のコミットとその祖先（行ごとのビット）。
 pub fn ancestors(graph: &CommitGraph, row: u32) -> Vec<u64> {
     let n = graph.len();
@@ -287,6 +350,29 @@ mod tests {
         assert!(merged_commits(&g, 1).is_empty(), "merge でない");
         let a = ancestors(&g, 1);
         assert_eq!(a[0], 0b100110, "4、3、0（1・2・5 行目）");
+    }
+
+    #[test]
+    fn names_a_commit_relative_to_head_like_name_rev() {
+        // 行は 5, 4, 3, 2, 1, 0 の順。5 は 4 と 2 の merge、2 → 1 → 0、4 → 3 → 0。
+        let g = graph(&[
+            (5, &[4, 2]),
+            (4, &[3]),
+            (3, &[0]),
+            (2, &[1]),
+            (1, &[0]),
+            (0, &[]),
+        ]);
+        assert_eq!(rev_path(&g, 0, 0).as_deref(), Some(""));
+        assert_eq!(rev_path(&g, 0, 2).as_deref(), Some("~2"), "コミット 3");
+        assert_eq!(rev_path(&g, 0, 3).as_deref(), Some("^2"), "コミット 2");
+        assert_eq!(rev_path(&g, 0, 4).as_deref(), Some("^2~1"), "コミット 1");
+        assert_eq!(
+            rev_path(&g, 0, 5).as_deref(),
+            Some("~3"),
+            "コミット 0 は 1 つ目の親を辿る道を選ぶ"
+        );
+        assert_eq!(rev_path(&g, 1, 3), None, "4 から 2 へは辿れない");
     }
 
     #[test]
