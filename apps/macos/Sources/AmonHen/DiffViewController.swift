@@ -663,6 +663,12 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     /// 作者の名前を押したとき（History を検索する問い合わせ）と、ref の名前を押したとき。
     var onSearch: ((String) -> Void)?
     var onSelectRef: ((String) -> Void)?
+    /// メッセージを書き直して保存したとき（コミットの ID と新しいメッセージ）。
+    var onReword: ((String, String) -> Void)?
+    /// 書き直している間だけ出す編集欄。
+    private var rewordEditor: NSView?
+    private var rewordText: NSTextView?
+    private var headerContainer: NSView?
 
     /// 表示中のコミットの親と子（キーボードで移るため）。子は詳細を読み終えるまで空。
     var currentParents: [String] { info?.parents ?? [] }
@@ -744,6 +750,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         // 右上に見せ方の切り替え（簡潔・標準・詳細）を重ねる。文字は右端を空けて折り返す。
         let headerContainer = NSView(frame: headerScroll.frame)
         headerContainer.addSubview(headerScroll)
+        self.headerContainer = headerContainer
         styleControl.controlSize = .mini
         styleControl.font = .systemFont(ofSize: NSFont.systemFontSize(for: .mini))
         styleControl.selectedSegment = CommitHeaderStyle.saved.rawValue
@@ -796,7 +803,97 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             }, at: i)
         }
         menu.insertItem(.separator(), at: items.count)
+        if extras?.headDistance != nil, info.parents.count <= 1 {
+            menu.insertItem(ClosureMenuItem(title: "メッセージを書き直す…") { [weak self] in self?.beginReword() }, at: items.count + 1)
+            menu.insertItem(.separator(), at: items.count + 2)
+        }
         return menu
+    }
+
+    // MARK: - その場で書き直す
+
+    /// メッセージの欄を編集欄に替える。保存（⌘↩）で書き直し、キャンセル（esc）で戻す。
+    func beginReword() {
+        guard rewordEditor == nil, let info, let container = headerContainer else { return }
+        // 低い（簡潔の）ときは、書き直す間だけ広げる。
+        if container.frame.height < 160 { splitView.setPosition(220, ofDividerAt: 0) }
+        let editor = NSView(frame: container.bounds)
+        editor.autoresizingMask = [.width, .height]
+        editor.wantsLayer = true
+        editor.layer?.backgroundColor = NSColor.textBackgroundColor.cgColor
+        let barHeight: CGFloat = 30
+        let scroll = NSScrollView(frame: NSRect(
+            x: 0, y: barHeight, width: editor.bounds.width, height: editor.bounds.height - barHeight))
+        scroll.autoresizingMask = [.width, .height]
+        scroll.hasVerticalScroller = true
+        let text = NSTextView(frame: scroll.bounds)
+        text.isRichText = false
+        text.allowsUndo = true
+        text.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        text.textContainerInset = NSSize(width: 6, height: 6)
+        for flag in [\NSTextView.isAutomaticQuoteSubstitutionEnabled, \.isAutomaticDashSubstitutionEnabled,
+                     \.isAutomaticTextReplacementEnabled, \.isAutomaticSpellingCorrectionEnabled] {
+            text[keyPath: flag] = false
+        }
+        text.autoresizingMask = [.width]
+        text.string = info.message.trimmingCharacters(in: .whitespacesAndNewlines)
+        scroll.documentView = text
+        let save = NSButton(title: "保存", target: self, action: #selector(saveReword))
+        save.keyEquivalent = "\r"
+        save.keyEquivalentModifierMask = .command
+        save.bezelColor = .controlAccentColor
+        let cancel = NSButton(title: "キャンセル", target: self, action: #selector(cancelReword))
+        cancel.keyEquivalent = "\u{1b}"
+        let hint = NSTextField(labelWithString: "⌘↩ で保存、esc でやめる。Undo で戻せる")
+        hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        hint.textColor = .secondaryLabelColor
+        // 下の帯: 左に説明、右端に「キャンセル」「保存」。
+        var right = editor.bounds.width - 8
+        for b in [save, cancel] {
+            b.controlSize = .small
+            b.sizeToFit()
+            right -= b.frame.width
+            b.frame.origin = NSPoint(x: right, y: (barHeight - b.frame.height) / 2)
+            b.autoresizingMask = [.minXMargin]
+            editor.addSubview(b)
+            right -= 6
+        }
+        hint.sizeToFit()
+        hint.frame = NSRect(x: 10, y: (barHeight - hint.frame.height) / 2, width: max(0, right - 16), height: hint.frame.height)
+        hint.autoresizingMask = [.width]
+        hint.lineBreakMode = .byTruncatingTail
+        editor.addSubview(hint)
+        editor.addSubview(scroll)
+        container.addSubview(editor)
+        rewordEditor = editor
+        rewordText = text
+        view.window?.makeFirstResponder(text)
+    }
+
+    @objc private func saveReword() {
+        guard let info, let text = rewordText else { return }
+        let message = text.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return NSSound.beep() }
+        guard message != info.message.trimmingCharacters(in: .whitespacesAndNewlines) else { return endReword() }
+        if extras.map({ !$0.remoteBranches.isEmpty }) ?? false {
+            let alert = NSAlert()
+            alert.messageText = "push 済みのコミットを書き直しますか？"
+            alert.informativeText = "このコミットは \(extras?.remoteBranches.joined(separator: ", ") ?? "") に含まれています。書き直すとリモートと食い違い、push には force が要ります。"
+            alert.addButton(withTitle: "書き直す")
+            alert.addButton(withTitle: "キャンセル")
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        let oid = info.oid
+        endReword()
+        onReword?(oid, message)
+    }
+
+    @objc private func cancelReword() { endReword() }
+
+    private func endReword() {
+        rewordEditor?.removeFromSuperview()
+        rewordEditor = nil
+        rewordText = nil
     }
 
     func overlays() -> [(CGImage, NSView)] {
@@ -808,6 +905,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     func find(_ query: String) { diffView.find(query) }
 
     func show(commit: Data?, stash: Bool = false) {
+        // ほかのコミットを選んだら、書き直しはやめる。
+        endReword()
         request += 1
         let request = self.request
         guard let commit else {
@@ -884,6 +983,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         renderer.monospacedBody = Settings.monospacedCommitMessage
         renderer.expanded = bodyExpanded
         renderer.highlight = CommitHeaderRenderer.highlightTerms(of: searchQuery)
+        renderer.canReword = extras?.headDistance != nil && info.parents.count <= 1
         let text = NSMutableAttributedString(attributedString: renderer.render())
         // 右上の切り替えに文字が重ならないよう、最初の行の右端を空ける。
         let first = NSMutableParagraphStyle()
@@ -891,6 +991,18 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let firstLine = (text.string as NSString).lineRange(for: NSRange(location: 0, length: 0))
         text.addAttribute(.paragraphStyle, value: first, range: firstLine)
         header.textStorage?.setAttributedString(text)
+    }
+
+    /// ref が変わったので、表示中のコミットの情報（ref の一覧など）を読み直す。
+    func reloadInfo() {
+        guard let hex = info?.oid else { return }
+        let request = headerRequest, repository = self.repository
+        Task {
+            guard let info = try? await Task.detached(priority: .utility, operation: { try repository.commitInfo(oid: hex) }).value,
+                  request == headerRequest, info.oid == self.info?.oid else { return }
+            self.info = info
+            renderHeader()
+        }
     }
 
     /// 検証する側が変わったので、表示中のコミットの署名を検証し直す（前の結果は使わない）。コミットの情報を
@@ -952,6 +1064,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
         if s.hasPrefix(CommitHeaderRenderer.refScheme) {
             onSelectRef?(String(s.dropFirst(CommitHeaderRenderer.refScheme.count)))
+            return true
+        }
+        if s == CommitHeaderRenderer.rewordLink {
+            beginReword()
             return true
         }
         if s == CommitHeaderRenderer.expandLink {

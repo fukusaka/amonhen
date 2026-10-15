@@ -36,6 +36,8 @@ struct CommitHeaderRenderer {
     /// 作者で History を絞り込む・ref の履歴に絞り込むリンク。
     static let authorScheme = "amonhen-author:"
     static let refScheme = "amonhen-ref:"
+    /// メッセージをその場で書き直すリンク。
+    static let rewordLink = "amonhen-reword:"
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -68,6 +70,8 @@ struct CommitHeaderRenderer {
     var expanded = false
     /// 件名と本文の中で強調する語（History の検索の語）。
     var highlight: [String] = []
+    /// 「メッセージを書き直す」のリンクを出すか（HEAD に含まれる、merge でないコミット）。
+    var canReword = false
 
     /// 本文がこの行数を超えたら、`collapsedLines` 行で折りたたむ。
     static let collapseAbove = 16
@@ -310,6 +314,15 @@ struct CommitHeaderRenderer {
             .map { ($0.1, $0.2) }
     }
 
+    private func rewordLinkLine() {
+        var link = dim
+        link[.link] = Self.rewordLink
+        link[.foregroundColor] = NSColor.linkColor
+        add("\n", dim)
+        let pushed = !(extras?.remoteBranches.isEmpty ?? true)
+        add(pushed ? "メッセージを書き直す（push 済み）" : "メッセージを書き直す", link)
+    }
+
     /// 作者の名前（押すと、その人のコミットで絞り込む）。
     private func authorLink(_ name: String, _ attrs: [NSAttributedString.Key: Any]) {
         var link = attrs
@@ -455,6 +468,7 @@ struct CommitHeaderRenderer {
         if !facts.isEmpty { add("\n" + facts.joined(separator: " · "), dim) }
         if isUnpushed { add(facts.isEmpty ? "\n未 push" : " · 未 push", unpushedAttrs) }
         if let rewrite = rewriteSummary { add("\n" + rewrite, dim) }
+        if canReword { rewordLinkLine() }
         for tag in info.mergedTags {
             add("\n\(tag.signed ? "署名付きの" : "")タグ \(tag.name)（\(tag.tagger)）を merge", dim)
             if !tag.subject.isEmpty { add(" — \(tag.subject)", dim) }
@@ -576,6 +590,7 @@ struct CommitHeaderRenderer {
             row(trailer.key, plain(trailer.value))
         }
         if let notes = extras?.notes, !notes.isEmpty { row("Notes", plain(notes)) }
+        if canReword { rewordLinkLine() }
         add("\n", dim)
         renderMessage(trailers: false, notes: false)
     }

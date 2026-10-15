@@ -110,6 +110,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         history.onSearchChanged = { [weak detail] query in detail?.searchQuery = query }
         detail.onSearch = { [weak history] query in history?.search(query) }
         detail.onSelectRef = { [weak self] name in self?.selectRef(named: name) }
+        detail.onReword = { [weak actions] oid, message in
+            actions?.rewrite("Reword \(oid.prefix(8))", ["kind": "reword", "oid": oid, "message": message])
+        }
         // 詳細の親コミットのリンク。
         detail.onSelectCommit = { [weak history] hex in
             guard let history, let id = Data(hex: hex) else { return }
@@ -364,6 +367,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
                 let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
                 latestRefs = refs
                 sidebar.show(refs)
+                detail.reloadInfo()
                 if !CommandLine.arguments.contains("--show-latency") {
                     window.subtitle = refs.headBranch ?? "detached HEAD"
                 }
