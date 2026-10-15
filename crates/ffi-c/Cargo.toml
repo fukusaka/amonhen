@@ -15,6 +15,7 @@ amonhen-layout.workspace = true
 amonhen-model.workspace = true
 amonhen-watch.workspace = true
 amonhen-projection.workspace = true
+amonhen-remote.workspace = true
 
 [features]
 default = ["syntax"]

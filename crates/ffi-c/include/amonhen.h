@@ -426,6 +426,17 @@ extern "C" {
 const char *amonhen_last_error(void);
 
 /**
+ * daemon 越しのリポジトリを開く。`location` は `daemon:/path`（手元の `daemon` を起動）か
+ * `ssh://[user@]host[:port]/path`（SSH 先の `amonhend` を起動）。`cache_dir` を渡すと History を永続化する。
+ *
+ * # Safety
+ * `location`・`daemon` は NUL 終端の UTF-8、`cache_dir` は NULL か NUL 終端の UTF-8 であること。
+ */
+AmonhenRepo *amonhen_repo_open_location(const char *location,
+                                        const char *daemon,
+                                        const char *cache_dir);
+
+/**
  * `path`（UTF-8）を含むリポジトリを開く。`cache_dir` を渡すと、History をそこに永続化する。
  *
  * # Safety

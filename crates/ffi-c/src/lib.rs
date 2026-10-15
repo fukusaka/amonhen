@@ -37,6 +37,12 @@ pub struct AmonhenWatch {
     _private: [u8; 0],
 }
 
+/// 手元ならファイルの監視、daemon 越しなら知らせを受けているかの印。
+enum WatchHandle {
+    Local(#[allow(dead_code)] Watcher),
+    Remote(Arc<std::sync::atomic::AtomicBool>),
+}
+
 /// コミットで変わったファイルの一覧。
 pub struct AmonhenChanges {
     _private: [u8; 0],
@@ -151,6 +157,42 @@ fn non_null<T>(slice: &[T]) -> *const T {
 
 fn str_arg<'a>(s: *const c_char) -> Result<&'a str, std::str::Utf8Error> {
     unsafe { CStr::from_ptr(s) }.to_str()
+}
+
+/// daemon 越しのリポジトリを開く。`location` は `daemon:/path`（手元の `daemon` を起動）か
+/// `ssh://[user@]host[:port]/path`（SSH 先の `amonhend` を起動）。`cache_dir` を渡すと History を永続化する。
+///
+/// # Safety
+/// `location`・`daemon` は NUL 終端の UTF-8、`cache_dir` は NULL か NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_repo_open_location(
+    location: *const c_char,
+    daemon: *const c_char,
+    cache_dir: *const c_char,
+) -> *mut AmonhenRepo {
+    let result = (|| -> amonhen_model::Result<Repository> {
+        let location = str_arg(location)?;
+        let daemon = str_arg(daemon)?;
+        let (program, args) = amonhen_remote::location::launch_command(location, daemon)?;
+        let conn = amonhen_remote::Connection::spawn(&program, &args)?;
+        let backend = amonhen_remote::RemoteBackend::connect(conn)?;
+        // 永続キャッシュは場所の文字列ごとに手元に持つ（つなぎ直したら新しいコミットだけを受け取る）。
+        Ok(if cache_dir.is_null() {
+            Repository::new(backend)
+        } else {
+            Repository::with_cache(
+                backend,
+                cache::path_for(Path::new(str_arg(cache_dir)?), location),
+            )
+        })
+    })();
+    match result {
+        Ok(repo) => Box::into_raw(Box::new(repo)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
 }
 
 /// `path`（UTF-8）を含むリポジトリを開く。`cache_dir` を渡すと、History をそこに永続化する。
@@ -610,6 +652,7 @@ struct Context(*mut std::ffi::c_void);
 
 // FE が渡す文脈。コールバックで FE に返すだけで、Rust 側では触らない。
 unsafe impl Send for Context {}
+unsafe impl Sync for Context {}
 
 /// リポジトリの監視を始める。変化があると、短い間の変化をまとめてから `callback(context, 変化の種類)`
 /// を監視用のスレッドから呼ぶ。`amonhen_watch_free` で止める。
@@ -622,13 +665,22 @@ pub unsafe extern "C" fn amonhen_repo_watch(
     callback: extern "C" fn(*mut std::ffi::c_void, u32),
     context: *mut std::ffi::c_void,
 ) -> *mut AmonhenWatch {
-    let context = Context(context);
+    let context = Arc::new(Context(context));
+    // daemon 越しなら daemon の知らせを使う。止めたら（`amonhen_watch_free`）呼ばない。
+    let active = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let (remote_context, remote_active) = (context.clone(), active.clone());
+    if repo(repo_ptr).subscribe_changes(Box::new(move |bits| {
+        if remote_active.load(std::sync::atomic::Ordering::Relaxed) {
+            callback(remote_context.0, bits);
+        }
+    })) {
+        return Box::into_raw(Box::new(WatchHandle::Remote(active))).cast();
+    }
     let watcher = Watcher::new(repo(repo_ptr).paths(), move |changes| {
-        let context = &context;
         callback(context.0, changes.0);
     });
     match watcher {
-        Ok(w) => Box::into_raw(Box::new(w)).cast(),
+        Ok(w) => Box::into_raw(Box::new(WatchHandle::Local(w))).cast(),
         Err(e) => {
             set_error(e);
             std::ptr::null_mut()
@@ -641,7 +693,10 @@ pub unsafe extern "C" fn amonhen_repo_watch(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_watch_free(watch: *mut AmonhenWatch) {
     if !watch.is_null() {
-        drop(unsafe { Box::from_raw(watch.cast::<Watcher>()) });
+        let handle = unsafe { Box::from_raw(watch.cast::<WatchHandle>()) };
+        if let WatchHandle::Remote(active) = &*handle {
+            active.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 }
 
