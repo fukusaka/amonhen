@@ -22,6 +22,7 @@ Amon Hen のスタンドアロン版。徹底的な低遅延を最優先にし�
 - `crates/platform`: `Platform` トレイト
 - `crates/backend-gix`: gix による `GitBackend`
 - `crates/watch`: リポジトリの変化の検知（notify、デスクトップ向け）
+- `crates/syntax`: tree-sitter による構文の色付け。文法が C なので、コアの `syntax` フィーチャーで切り離せる
 - `crates/ffi-c`: C ABI。`build.rs` が `include/amonhen.h` を生成する（コミットする）
 - `apps/macos`: SwiftPM のパッケージ。`AmonhenKit`（コアの Swift ラッパー）と `AmonHen`（AppKit のアプリ）
 

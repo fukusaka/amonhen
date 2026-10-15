@@ -300,6 +300,17 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 - linux（140 万コミット）、120Hz のディスプレイ、1 フレームに 40 行ずつの速いスクロールでは、表のセル（NSTextField）を CPU で描く処理が CA のコミットの約 6 割を占め、600 フレームのうち表示できたのは 532（49 フレーム落ち）だった。描画先を 3 枚にし、件名・作者・日時をグラフと同じく Metal で描く（差分表示と共有するグリフアトラス、行ごとに並べたグリフをキャッシュ）ようにして、599 フレーム表示（1 フレーム落ち）、メインスレッドの処理は p50 2.1 / p95 2.5 ms になった。
 - グラフの点と線は、見えている範囲だけ毎フレーム GPU のバッファに書いている（数 KB）。レイアウトの配列をページ境界に揃えて `MTLBuffer(bytesNoCopy:)` で渡し、スクロールでは定数だけ変える形にするのは後で。
 
+構文の色付け（`cargo run --release -p amonhen-syntax --example highlight -- <file>`、linux のファイル）:
+
+| ファイル | 大きさ | 時間 |
+| --- | --- | --- |
+| kernel/fork.c | 3,431 行・84 KB | 16 ms |
+| kernel/workqueue.c | 8,644 行・245 KB | 29 ms |
+| drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c | 10,253 行・451 KB | 58 ms |
+
+- 言語ごとの最初の 1 回は、クエリの読み込みで 8〜14 ms 足される。
+- 差分は色なしで先に表示し、変更前・変更後のファイル全体を裏で解析してから描き直す。断片ではなく全体を解析するので、hunk の外から続くコメントや文字列にも正しく色が付く。
+
 永続キャッシュ（`crates/core/src/cache.rs`）:
 
 | 項目 | 時間 |
@@ -357,7 +368,7 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 
 - [x] 6. 永続キャッシュ（mmap）と起動直後の即時表示
 - [x] 7. サイドバー（Branches / Remotes / Tags / Stashes / Submodules）と FSEvents による変更検知
-- [ ] 8. 差分表示（Metal、History と共有するグリフアトラス、CTLine キャッシュ）と後追いの色付け。Metal の描画・アトラス・CTLine キャッシュは済み。History の件名・作者・日時も Metal で描く。色付け、選択・コピー・検索が残り
+- [x] 8. 差分表示（Metal、History と共有するグリフアトラス、CTLine キャッシュ）と後追いの色付け（tree-sitter、`crates/syntax`）。History の件名・作者・日時も Metal で描く。差分の文字の選択・コピー・検索
 - [x] 9. Working Copy: status、ファイル・hunk・行単位の stage、コミット入力
 - [x] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ
 - [x] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
