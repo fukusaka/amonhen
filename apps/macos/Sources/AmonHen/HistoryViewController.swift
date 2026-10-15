@@ -357,6 +357,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     private func show(_ history: History, resetScroll: Bool = false) {
+        // ウィンドウを組み立てる前にキャッシュから表示することがある。表がまだなければ先に作る。
+        loadViewIfNeeded()
         let first = self.history == nil || resetScroll
         self.history = history
         chunks.removeAll()
