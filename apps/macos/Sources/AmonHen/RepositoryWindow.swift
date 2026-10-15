@@ -113,8 +113,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
 
     private func start(debug: Bool) {
         let window = self.window
-        history.onLatency = { latency in
-            window.subtitle = String(format: "入力→表示 %.1f ms", latency * 1000)
+        // --show-latency で、入力から表示までの時間をタイトルの下に出す（ふだんは今のブランチ）。
+        if CommandLine.arguments.contains("--show-latency") {
+            history.onLatency = { latency in
+                window.subtitle = String(format: "入力→表示 %.1f ms", latency * 1000)
+            }
         }
         let repository = self.repository
         let started = Date()
@@ -209,6 +212,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
             do {
                 let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
                 sidebar.show(refs)
+                if !CommandLine.arguments.contains("--show-latency") {
+                    window.subtitle = refs.headBranch ?? "detached HEAD"
+                }
                 history.head = refs.head
                 history.show(refs: refs)
             } catch {

@@ -55,8 +55,9 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
 
     func setUndo(_ label: String?) {
         undoItem.isEnabled = label != nil
-        undoItem.toolTip = label.map { "Undo \($0)" } ?? "Undo できる操作はありません"
-        undoItem.label = label.map { "Undo \($0)" } ?? "Undo"
+        // ラベルの長さでツールバーの幅が変わらないよう、操作の名前はツールチップに出す。
+        undoItem.toolTip = label.map { "Undo: \($0)" } ?? "Undo できる操作はありません"
+        undoItem.label = "Undo"
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -197,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
-        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--log-scroll"].contains($0) }
+        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--log-scroll", "--show-latency"].contains($0) }
         if let path = args.first { return path }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
