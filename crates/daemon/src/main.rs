@@ -10,6 +10,7 @@ use amonhen_remote::{Notification, Server};
 fn main() {
     // macOS のアプリ（AppKit）は SIGTERM などを無視・保留する設定にしていて、子のプロセスはそれを引き継ぐ。
     // 手元で起動されたときにも、ふつうに止められるよう既定に戻す（スレッドを作る前に）。
+    #[cfg(unix)]
     // SAFETY: 既定の動作に戻し、保留を解くだけで、ハンドラは登録しない。
     unsafe {
         let mut set: libc::sigset_t = std::mem::zeroed();

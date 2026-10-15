@@ -1,4 +1,6 @@
 //! `amonhend` を子プロセスとして起動してつなぐ（SSH の代わりに手元で起動するだけで、通信は同じ）。
+//! 偽の ssh や daemon の停止に sh を使うので、Unix だけで動かす。
+#![cfg(unix)]
 
 use std::path::Path;
 use std::process::Command;
@@ -64,7 +66,7 @@ fn reports_progress_and_the_reason_when_the_daemon_goes_away() {
         "sh",
         &[
             "-c".to_owned(),
-            r#""$0" --stdio "$1" <&0 & sleep 2; kill $!; echo 'gone' >&2"#.to_owned(),
+            r#"(sleep 2; echo 'gone' >&2; kill $$) & exec "$0" --stdio "$1""#.to_owned(),
             env!("CARGO_BIN_EXE_amonhend").to_owned(),
             dir.display().to_string(),
         ],
