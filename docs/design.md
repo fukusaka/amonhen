@@ -297,6 +297,7 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 
 - 表示までは 2 フレーム。ウィンドウ表示では、WindowServer が次の vsync で合成し、その次の vsync で画面に出るので、アプリ側では縮められない。`presentsWithTransaction` の有無でも変わらなかったので、表とグラフを同じフレームで動かせる有効の方を使う。
 - 最大値（8〜12 ms）は、新しいチャンクの件名を同期で読む瞬間だった。裏で読んで前後のチャンクも先読みするようにして、p95 2.0 ms・最大 2.6 ms になった。
+- linux（140 万コミット）、120Hz のディスプレイ、1 フレームに 40 行ずつの速いスクロールでは、表のセル（NSTextField）を CPU で描く処理が CA のコミットの約 6 割を占め、600 フレームのうち表示できたのは 532（49 フレーム落ち）だった。描画先を 3 枚にし、件名・作者・日時をグラフと同じく Metal で描く（差分表示と共有するグリフアトラス、行ごとに並べたグリフをキャッシュ）ようにして、599 フレーム表示（1 フレーム落ち）、メインスレッドの処理は p50 2.1 / p95 2.5 ms になった。
 - グラフの点と線は、見えている範囲だけ毎フレーム GPU のバッファに書いている（数 KB）。レイアウトの配列をページ境界に揃えて `MTLBuffer(bytesNoCopy:)` で渡し、スクロールでは定数だけ変える形にするのは後で。
 
 永続キャッシュ（`crates/core/src/cache.rs`）:
@@ -356,7 +357,7 @@ History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フ�
 
 - [x] 6. 永続キャッシュ（mmap）と起動直後の即時表示
 - [x] 7. サイドバー（Branches / Remotes / Tags / Stashes / Submodules）と FSEvents による変更検知
-- [ ] 8. 差分表示（Metal、History と共有するグリフアトラス、CTLine キャッシュ）と後追いの色付け。Metal の描画・アトラス・CTLine キャッシュは済み。History の件名の Metal 化、色付け、選択・コピー・検索が残り
+- [ ] 8. 差分表示（Metal、History と共有するグリフアトラス、CTLine キャッシュ）と後追いの色付け。Metal の描画・アトラス・CTLine キャッシュは済み。History の件名・作者・日時も Metal で描く。色付け、選択・コピー・検索が残り
 - [x] 9. Working Copy: status、ファイル・hunk・行単位の stage、コミット入力
 - [x] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ
 - [x] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
