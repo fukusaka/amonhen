@@ -196,8 +196,9 @@ struct CommitHeaderRenderer {
 
     // MARK: - 見せ方
 
+    // どの見せ方も、メタ情報、件名、本文の残りの順に並べる。
+
     private func renderCompact() {
-        add(subject + "\n", subjectAttrs)
         if let sig = signatureSummary {
             var attrs = dim
             attrs[.foregroundColor] = sig.color
@@ -211,11 +212,10 @@ struct CommitHeaderRenderer {
             add(info.refs.joined(separator: ", "), refAttrs)
         }
         if let stats = statsSummary { add(" · " + stats, dim) }
+        add("\n" + subject, subjectAttrs)
     }
 
     private func renderStandard() {
-        // 件名、メタ情報、本文の順。欄が低くてもメタ情報までは見えるようにする。
-        add(subject + "\n", subjectAttrs)
         if !info.refs.isEmpty {
             add(info.refs.joined(separator: ", ") + "\n", refAttrs)
         }
@@ -240,6 +240,7 @@ struct CommitHeaderRenderer {
         }
         let facts = [tagSummary, statsSummary].compactMap { $0 }
         if !facts.isEmpty { add("\n" + facts.joined(separator: " · "), dim) }
+        add("\n\n" + subject, subjectAttrs)
         if !bodyText.isEmpty {
             add("\n\n", body)
             linkedBody(bodyText)
@@ -251,7 +252,6 @@ struct CommitHeaderRenderer {
     }
 
     private func renderDetailed() {
-        add(subject + "\n\n", subjectAttrs)
         // 見出しの列を揃え、値が折り返したら値の列に揃える。
         let paragraph = NSMutableParagraphStyle()
         let labelWidth: CGFloat = 92
@@ -316,8 +316,9 @@ struct CommitHeaderRenderer {
             row(trailer.key, plain(trailer.value))
         }
         if let notes = extras?.notes, !notes.isEmpty { row("Notes", plain(notes)) }
+        add("\n" + subject, subjectAttrs)
         if !bodyText.isEmpty {
-            add("\n", body)
+            add("\n\n", body)
             linkedBody(bodyText)
         }
     }
