@@ -180,7 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             for path in RepositoryList.open where RepositoryList.isRepository(path) {
                 open(path: path)
             }
-            if windows.isEmpty { RepositoryManagerWindowController.shared.show() }
+            if windows.isEmpty, connecting.isEmpty { RepositoryManagerWindowController.shared.show() }
         }
         NSApp.activate()
     }
@@ -193,21 +193,69 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             existing.window.makeKeyAndOrderFront(nil)
             return
         }
+        if RepositoryLocation.isRemote(location) {
+            connect(location: location, debug: debug)
+            return
+        }
         do {
-            let window = try RepositoryWindow(location: location, debug: debug)
-            window.onOpenRepository = { [weak self] path in self?.open(path: path) }
-            window.onClose = { [weak self, weak window] in
-                self?.windows.removeAll { $0 === window }
-                // 最後のリポジトリを閉じたら、終わらずにリポジトリの一覧を出す。
-                if self?.windows.isEmpty == true { RepositoryManagerWindowController.shared.show() }
-            }
-            windows.append(window)
-            RepositoryList.touch(location)
-            RepositoryManagerWindowController.shared.close()
+            add(try RepositoryWindow(location: location, debug: debug))
         } catch {
             NSAlert(error: error).runModal()
-            if windows.isEmpty { RepositoryManagerWindowController.shared.show() }
+            if windows.isEmpty, connecting.isEmpty { RepositoryManagerWindowController.shared.show() }
         }
+    }
+
+    /// つないでいる daemon 越しのリポジトリ（同じ場所を二重につながない）。
+    private var connecting: [ConnectingWindow] = []
+
+    /// daemon 越しのリポジトリに裏でつなぎ、つながったらウィンドウを開く。その間は接続中のウィンドウを出す。
+    private func connect(location: String, debug: Bool) {
+        if let existing = connecting.first(where: { $0.location == location }) {
+            existing.window.makeKeyAndOrderFront(nil)
+            return
+        }
+        let progress = ConnectingWindow(location: location)
+        progress.onCancel = { [weak self, weak progress] in
+            self?.connecting.removeAll { $0 === progress }
+            if self?.windows.isEmpty == true, self?.connecting.isEmpty == true {
+                RepositoryManagerWindowController.shared.show()
+            }
+        }
+        connecting.append(progress)
+        RepositoryManagerWindowController.shared.close()
+        let daemon = Daemon.path, daemons = Daemon.bundledDirectory
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try RepositoryWindow.openRepository(location: location, daemon: daemon, daemons: daemons) }
+            }.value
+            // 取り消されていたら、つないだ結果を捨てる（Repository を手放すと daemon も終わる）。
+            guard !progress.isCancelled else { return }
+            progress.finish()
+            connecting.removeAll { $0 === progress }
+            do {
+                add(try RepositoryWindow(location: location, repository: try result.get(), debug: debug))
+            } catch {
+                let alert = NSAlert(error: error)
+                alert.messageText = "\(RepositoryLocation.host(location) ?? location) に接続できませんでした"
+                alert.informativeText = String(describing: error)
+                alert.runModal()
+                if windows.isEmpty, connecting.isEmpty { RepositoryManagerWindowController.shared.show() }
+            }
+        }
+    }
+
+    private func add(_ window: RepositoryWindow) {
+        window.onOpenRepository = { [weak self] path in self?.open(path: path) }
+        window.onClose = { [weak self, weak window] in
+            self?.windows.removeAll { $0 === window }
+            // 最後のリポジトリを閉じたら、終わらずにリポジトリの一覧を出す。
+            if self?.windows.isEmpty == true, self?.connecting.isEmpty == true {
+                RepositoryManagerWindowController.shared.show()
+            }
+        }
+        windows.append(window)
+        RepositoryList.touch(window.location)
+        RepositoryManagerWindowController.shared.close()
     }
 
     @objc private func openDocument(_ sender: Any?) {

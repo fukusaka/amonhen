@@ -22,16 +22,28 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
     private let toolbar: MainToolbar
     private var watch: RepositoryWatch?
 
-    /// `debug` なら、起動時の引数（`--snapshot` など）の確認用の動きをする。
-    init(location: String, debug: Bool) throws {
-        self.location = location
+    /// リポジトリを開く。daemon 越しなら SSH でつなぎ、daemon を送り込んで起動するので数秒かかる（裏で呼ぶこと）。
+    /// `daemon`・`daemons` は `Daemon.path`・`Daemon.bundledDirectory`（メインスレッドで読んで渡す）。
+    nonisolated static func openRepository(location: String, daemon: String, daemons: String) throws -> Repository {
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "io.github.fukusaka.amonhen")
-        repository = if RepositoryLocation.isRemote(location) {
-            try Repository(location: location, daemon: Daemon.path, daemons: Daemon.bundledDirectory, cacheDirectory: cacheDirectory)
+        return if RepositoryLocation.isRemote(location) {
+            try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory)
         } else {
             try Repository(path: location, cacheDirectory: cacheDirectory)
         }
+    }
+
+    /// `debug` なら、起動時の引数（`--snapshot` など）の確認用の動きをする。
+    convenience init(location: String, debug: Bool) throws {
+        let repository = try Self.openRepository(location: location, daemon: Daemon.path, daemons: Daemon.bundledDirectory)
+        try self.init(location: location, repository: repository, debug: debug)
+    }
+
+    /// 開いた `repository` のウィンドウを作る。
+    init(location: String, repository: Repository, debug: Bool) throws {
+        self.location = location
+        self.repository = repository
         guard let renderer = GraphRenderer(), let text = TextRenderer(device: renderer.device) else {
             throw AmonhenError(description: "Metal を使えない")
         }
