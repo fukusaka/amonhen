@@ -52,7 +52,7 @@ impl Oid {
         }
         let digit = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
         let mut out = [0; 20];
-        for (i, pair) in bytes.chunks_exact(2).enumerate() {
+        for (i, pair) in bytes.as_chunks::<2>().0.iter().enumerate() {
             out[i] = digit(pair[0])? << 4 | digit(pair[1])?;
         }
         Some(Self(out))

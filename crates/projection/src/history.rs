@@ -79,8 +79,10 @@ mod tests {
     fn utf16(chunk: &HistoryChunk, s: StrRef) -> String {
         let units: Vec<u16> = chunk
             .bytes(s)
-            .chunks_exact(2)
-            .map(|c| u16::from_ne_bytes([c[0], c[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&c| u16::from_ne_bytes(c))
             .collect();
         String::from_utf16(&units).unwrap()
     }
