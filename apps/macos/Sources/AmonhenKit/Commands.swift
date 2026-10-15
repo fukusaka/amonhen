@@ -65,20 +65,54 @@ public struct CommitInfo: Decodable, Sendable {
 }
 
 extension Repository {
-    /// コミットの詳細。裏のスレッドで呼ぶ。
-    public func commitInfo(oid: String) throws -> CommitInfo {
-        let json = try Repository.json(["op": "commitInfo", "oid": oid])
+    /// 命令を実行し、結果の `info` を `T` として読む。裏のスレッドで呼ぶ。
+    public func info<T: Decodable>(_ command: [String: Any], as type: T.Type = T.self) throws -> T {
+        let json = try Repository.json(command)
         guard let out = amonhen_command(raw, json) else { throw AmonhenError(description: "結果がない") }
         defer { amonhen_string_free(out) }
-        struct Response: Decodable {
-            let ok: Bool
-            let info: CommitInfo?
-            let error: String?
-        }
-        let response = try JSONDecoder().decode(Response.self, from: Data(String(cString: out).utf8))
+        let response = try JSONDecoder().decode(InfoResponse<T>.self, from: Data(String(cString: out).utf8))
         guard response.ok, let info = response.info else {
             throw AmonhenError(description: response.error ?? "失敗した")
         }
         return info
     }
+
+    /// コミットの詳細。裏のスレッドで呼ぶ。
+    public func commitInfo(oid: String) throws -> CommitInfo {
+        try info(["op": "commitInfo", "oid": oid])
+    }
+}
+
+private struct InfoResponse<T: Decodable>: Decodable {
+    let ok: Bool
+    let info: T?
+    let error: String?
+}
+
+/// マージエディタの中身（`mergeSides`）。
+public struct MergeSides: Decodable, Sendable {
+    /// すべてのコンフリクトをその側にした内容と、各コンフリクトの行範囲（`[開始, 終わり)`、0 始まり）。
+    public struct Side: Decodable, Sendable {
+        public let text: String
+        public let regions: [[Int]]
+    }
+
+    public let current: Side?
+    public let incoming: Side?
+    /// diff3 のときだけ。
+    public let base: Side?
+    /// 今の作業ツリーの内容（マーカーつき）。
+    public let result: String
+}
+
+/// 結果の文章に残っているコンフリクト（`conflictRegions`）。
+public struct ConflictRegions: Decodable, Sendable {
+    public struct Conflict: Decodable, Sendable {
+        /// マーカーを含む行範囲。
+        public let lines: [Int]
+        public let current: String
+        public let incoming: String
+    }
+
+    public let conflicts: [Conflict]
 }
