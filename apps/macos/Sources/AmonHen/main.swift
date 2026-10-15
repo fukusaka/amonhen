@@ -96,16 +96,32 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 開いているリポジトリのウィンドウ。
-    private var windows: [RepositoryWindow] = []
+    private var windows: [RepositoryWindow] = [] {
+        didSet {
+            // 終了するときにウィンドウが閉じても、開いていたものの記録は消さない（次の起動で開き直す）。
+            if !isTerminating, !Self.isCheckRun { RepositoryList.open = windows.map(\.url.path) }
+        }
+    }
+    private var isTerminating = false
+    /// 確認用の起動（画面を撮る・計測する）。開いていたリポジトリの記録を書き換えない。
+    static let isCheckRun = ["--snapshot", "--measure-scroll", "--log-scroll"].contains { CommandLine.arguments.contains($0) }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        isTerminating = true
+        return .terminateNow
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
         RepositoryManagerWindowController.shared.onOpen = { [weak self] path in self?.open(path: path) }
-        // 引数でリポジトリを渡されなければ、リポジトリの一覧を出す。
+        // 引数でリポジトリを渡されたらそれを、なければ前回開いていたものを開く。どれもなければ一覧を出す。
         if let path = repositoryPath() {
             open(path: path, debug: true)
         } else {
-            RepositoryManagerWindowController.shared.show()
+            for path in RepositoryList.open where RepositoryList.isRepository(path) {
+                open(path: path)
+            }
+            if windows.isEmpty { RepositoryManagerWindowController.shared.show() }
         }
         NSApp.activate()
     }

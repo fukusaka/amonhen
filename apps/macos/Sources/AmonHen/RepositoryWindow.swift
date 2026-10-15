@@ -43,8 +43,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         assemble()
-        window.setContentSize(NSSize(width: 1100, height: 720))
-        window.center()
+        // リポジトリごとに、前回の位置と大きさで開く（初めてなら真ん中に）。
+        let frameName = "Repository \(url.path)"
+        window.setContentSize(NSSize(width: 1440, height: 820))
+        if !window.setFrameUsingName(frameName) { window.center() }
+        window.setFrameAutosaveName(frameName)
         window.makeKeyAndOrderFront(nil)
         start(debug: debug)
     }

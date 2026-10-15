@@ -9,6 +9,12 @@ enum RepositoryList {
         set { UserDefaults.standard.set(newValue, forKey: key) }
     }
 
+    /// 開いているリポジトリ（次の起動で開き直す）。
+    static var open: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "openRepositories") ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: "openRepositories") }
+    }
+
     /// 開いたリポジトリを先頭に置く。
     static func touch(_ path: String) {
         paths = [path] + paths.filter { $0 != path }
