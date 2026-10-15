@@ -200,7 +200,9 @@ impl Operations for Git {
     fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome> {
         // git は `$GIT_SEQUENCE_EDITOR <todo>` を sh で実行するので、用意した todo を上書きコピーさせる。
         let base = base.map(hex);
-        let editor = format!("cp '{}'", todo.display().to_string().replace('\'', r"'\''"));
+        // sh で実行されるので、Windows でも / 区切りにして引用符で囲む。
+        let path = todo.display().to_string().replace('\\', "/");
+        let editor = format!("cp '{}'", path.replace('\'', r"'\''"));
         let mut args = vec!["rebase", "--interactive", "--autostash", "--no-autosquash"];
         args.push(base.as_deref().unwrap_or("--root"));
         self.stoppable(&args, &[("GIT_SEQUENCE_EDITOR", &editor)])

@@ -78,6 +78,12 @@ pub struct RebasePlan {
     pub messages: Vec<(String, String)>,
 }
 
+/// sh に渡すパス。git は exec や `GIT_SEQUENCE_EDITOR` を sh で実行するので、Windows でも `/` 区切りにする
+/// （Git for Windows の sh は `C:/...` を受け付ける）。
+pub fn shell_path(path: &Path) -> String {
+    path.display().to_string().replace('\\', "/")
+}
+
 pub fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
@@ -136,7 +142,7 @@ pub fn plan_rebase(
         messages.push((name, message.to_owned()));
         lines.push(format!(
             "exec git commit --amend --allow-empty --no-verify --file={}",
-            shell_quote(&path.display().to_string())
+            shell_quote(&shell_path(&path))
         ));
     };
     for c in &seq[start..] {
