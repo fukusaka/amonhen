@@ -105,6 +105,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         window.contentViewController = split
 
         history.onSelectCommit = { [weak detail] commit in detail?.show(commit: commit) }
+        history.onSearchChanged = { [weak detail] query in detail?.searchQuery = query }
         // 詳細の親コミットのリンク。
         detail.onSelectCommit = { [weak history] hex in
             guard let history, let id = Data(hex: hex) else { return }

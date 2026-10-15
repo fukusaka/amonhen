@@ -673,6 +673,12 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private var extras: CommitExtras?
     /// 署名を検証する側を変えた回数。変える前に始めた詳細の読み込みの結果は使わない。
     private var signatureGeneration = 0
+    /// 長い本文を開いているか（コミットを替えたら閉じる）。
+    private var bodyExpanded = false
+    /// History の検索の問い合わせ。件名と本文の中の一致を強調する。
+    var searchQuery: String? {
+        didSet { if searchQuery != oldValue { renderHeader() } }
+    }
     private let styleControl = NSSegmentedControl(
         labels: CommitHeaderStyle.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
 
@@ -756,7 +762,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let diffItem = NSSplitViewItem(viewController: diffView)
         diffItem.minimumThickness = 200
         addSplitViewItem(diffItem)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(messageStyleChanged), name: .commitMessageStyleChanged, object: nil)
     }
+
+    @objc private func messageStyleChanged() { renderHeader() }
 
     func overlays() -> [(CGImage, NSView)] {
         view.window == nil ? [] : diffView.overlay().map { [$0] } ?? []
@@ -804,6 +814,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             FrameProfile.add("select: commit info (JSON)", CACurrentMediaTime() - selectedAt)
             self.info = info
             extras = nil
+            bodyExpanded = false
             FrameProfile.measure("select: header layout") { renderHeader() }
             FrameProfile.add("select: → header shown", CACurrentMediaTime() - selectedAt)
             guard let extras = await extrasTask?.value, headerRequest == self.headerRequest else { return }
@@ -838,7 +849,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private func renderHeader() {
         guard let info else { return }
         let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
-        let text = NSMutableAttributedString(attributedString: CommitHeaderRenderer(info: info, extras: extras, style: style).render())
+        var renderer = CommitHeaderRenderer(info: info, extras: extras, style: style)
+        renderer.monospacedBody = Settings.monospacedCommitMessage
+        renderer.expanded = bodyExpanded
+        renderer.highlight = CommitHeaderRenderer.highlightTerms(of: searchQuery)
+        let text = NSMutableAttributedString(attributedString: renderer.render())
         // 右上の切り替えに文字が重ならないよう、最初の行の右端を空ける。
         let first = NSMutableParagraphStyle()
         first.tailIndent = -(styleControl.frame.width + 12)
@@ -899,6 +914,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         guard let s = (link as? String) ?? (link as? URL)?.absoluteString else { return false }
+        if s == CommitHeaderRenderer.expandLink {
+            bodyExpanded.toggle()
+            renderHeader()
+            return true
+        }
         if s.hasPrefix(CommitHeaderRenderer.commitScheme) {
             onSelectCommit?(String(s.dropFirst(CommitHeaderRenderer.commitScheme.count)))
             return true

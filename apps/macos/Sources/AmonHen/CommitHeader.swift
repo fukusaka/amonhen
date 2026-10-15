@@ -48,13 +48,29 @@ struct CommitHeaderRenderer {
     }()
 
     private let text = NSMutableAttributedString()
-    private let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
+    private var body: [NSAttributedString.Key: Any] {
+        [.font: monospacedBody ? NSFont.monospacedSystemFont(ofSize: 11.5, weight: .regular) : NSFont.systemFont(ofSize: 12),
+         .foregroundColor: NSColor.labelColor]
+    }
     private let dim: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
     private let mono: [NSAttributedString.Key: Any] = [
         .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor,
     ]
     private let subjectAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
     private let refAttrs: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 11), .foregroundColor: NSColor.systemBlue]
+
+    /// 本文を等幅で出すか（git の慣習の 72 桁の改行が崩れない）。
+    var monospacedBody = true
+    /// 長い本文を折りたたまずに出すか。
+    var expanded = false
+    /// 件名と本文の中で強調する語（History の検索の語）。
+    var highlight: [String] = []
+
+    /// 本文がこの行数を超えたら、`collapsedLines` 行で折りたたむ。
+    static let collapseAbove = 16
+    static let collapsedLines = 12
+    /// 「続きを表示」「折りたたむ」のリンク。
+    static let expandLink = "amonhen-expand:"
 
     init(info: CommitInfo, extras: CommitExtras?, style: CommitHeaderStyle) {
         self.info = info
@@ -69,6 +85,96 @@ struct CommitHeaderRenderer {
         case .detailed: renderDetailed()
         }
         return text
+    }
+
+    /// 件名・本文（トレーラーは除く）・トレーラー・notes。どの見せ方でも最後に置く。
+    private func renderMessage(trailers: Bool, notes: Bool) {
+        let messageStart = text.length
+        add(subject, subjectAttrs)
+        let lines = bodyWithoutTrailers.components(separatedBy: "\n")
+        if !bodyWithoutTrailers.isEmpty {
+            add("\n\n", body)
+            let collapse = lines.count > Self.collapseAbove && !expanded
+            linkedBody(collapse ? lines.prefix(Self.collapsedLines).joined(separator: "\n") : bodyWithoutTrailers)
+            if lines.count > Self.collapseAbove {
+                var link = dim
+                link[.link] = Self.expandLink
+                add("\n", body)
+                add(collapse ? "続きを表示（あと \(lines.count - Self.collapsedLines) 行）" : "折りたたむ", link)
+            }
+        }
+        if trailers, !info.trailers.isEmpty {
+            add("\n", body)
+            for trailer in info.trailers {
+                add("\n\(trailer.key): ", [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
+                let start = text.length
+                add(trailer.value, dim)
+                linkURLs(in: NSRange(location: start, length: text.length - start))
+            }
+        }
+        if notes, let notes = extras?.notes, !notes.isEmpty {
+            add("\n\nNotes:\n", [.font: NSFont.boldSystemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
+            linkedBody(notes)
+        }
+        highlightTerms(from: messageStart)
+    }
+
+    /// 本文から、最後の段落のトレーラー（`Signed-off-by:` など）を除いたもの。トレーラーは別に並べる。
+    private var bodyWithoutTrailers: String {
+        let body = bodyText
+        guard !info.trailers.isEmpty else { return body }
+        guard let split = body.range(of: "\n\n", options: .backwards) else {
+            // 本文がトレーラーだけ。
+            return ""
+        }
+        return String(body[..<split.lowerBound]).trimmingCharacters(in: .newlines)
+    }
+
+    /// `from` から後ろで、検索の語に背景の色を付ける（大文字・小文字は区別しない）。
+    private func highlightTerms(from start: Int) {
+        let ns = text.string as NSString
+        let range = NSRange(location: start, length: ns.length - start)
+        for term in highlight where !term.isEmpty {
+            var search = range
+            while true {
+                let found = ns.range(of: term, options: .caseInsensitive, range: search)
+                guard found.location != NSNotFound else { break }
+                text.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.35), range: found)
+                search = NSRange(location: found.upperBound, length: range.upperBound - found.upperBound)
+            }
+        }
+    }
+
+    /// History の検索の問い合わせから、件名と本文で強調する語を取り出す（`author:`・`path:` などは除く）。
+    static func highlightTerms(of query: String?) -> [String] {
+        guard let query else { return [] }
+        var terms: [String] = []
+        var word = "", quoted = false
+        func flush() {
+            defer { word = "" }
+            let lower = word.lowercased()
+            guard !word.isEmpty, lower != "or", lower != "and" else { return }
+            if let colon = word.firstIndex(of: ":") {
+                let key = word[..<colon].lowercased(), value = String(word[word.index(after: colon)...])
+                if ["subject", "message"].contains(key), !value.isEmpty { terms.append(value) }
+                if !["author", "commit", "id", "path", "file", "contents", "content", "subject", "message"].contains(key) {
+                    terms.append(word)
+                }
+            } else {
+                terms.append(word)
+            }
+        }
+        for c in query {
+            if c == "\"" {
+                quoted.toggle()
+            } else if !quoted, c.isWhitespace || "()|".contains(c) {
+                flush()
+            } else {
+                word.append(c)
+            }
+        }
+        flush()
+        return terms
     }
 
     // MARK: - 部品
@@ -202,7 +308,7 @@ struct CommitHeaderRenderer {
 
     private func summaryLine(_ commit: CommitExtras.CommitSummary) {
         commitLink(commit.oid, length: 10)
-        add("  \(commit.subject)", body)
+        add("  \(commit.subject)", [.font: NSFont.systemFont(ofSize: 11.5), .foregroundColor: NSColor.labelColor])
         if let author = commit.author { add(" — \(author)", dim) }
     }
 
@@ -211,16 +317,20 @@ struct CommitHeaderRenderer {
     }
 
     /// 本文。URL・コミット ID・`#123` をリンクにする。
-    private func linkedBody(_ string: String) {
-        let start = text.length
-        add(string, body)
-        let range = NSRange(location: start, length: (string as NSString).length)
-        let ns = text.string as NSString
+    private func linkURLs(in range: NSRange) {
         if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
             for match in detector.matches(in: text.string, range: range) {
                 if let url = match.url { text.addAttribute(.link, value: url, range: match.range) }
             }
         }
+    }
+
+    private func linkedBody(_ string: String) {
+        let start = text.length
+        add(string, body)
+        let range = NSRange(location: start, length: (string as NSString).length)
+        let ns = text.string as NSString
+        linkURLs(in: range)
         // 7〜40 桁の 16 進（前後が英数字でないもの）は、コミット ID とみなす。
         if let regex = try? NSRegularExpression(pattern: "(?<![0-9A-Za-z/])[0-9a-f]{7,40}(?![0-9A-Za-z])") {
             for match in regex.matches(in: text.string, range: range)
@@ -281,7 +391,10 @@ struct CommitHeaderRenderer {
         }
         if let stats = statsSummary { add(" · " + stats, dim) }
         if isUnpushed { add(" · 未 push", unpushedAttrs) }
-        add("\n" + subject, subjectAttrs)
+        add("\n", dim)
+        let start = text.length
+        add(subject, subjectAttrs)
+        highlightTerms(from: start)
     }
 
     private func renderStandard() {
@@ -328,15 +441,8 @@ struct CommitHeaderRenderer {
             add("\n\(kind): ", dim)
             summaryLine(commit)
         }
-        add("\n\n" + subject, subjectAttrs)
-        if !bodyText.isEmpty {
-            add("\n\n", body)
-            linkedBody(bodyText)
-        }
-        if let notes = extras?.notes, !notes.isEmpty {
-            add("\n\nNotes:\n", [.font: NSFont.boldSystemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor])
-            linkedBody(notes)
-        }
+        add("\n\n", dim)
+        renderMessage(trailers: true, notes: true)
     }
 
     private func renderDetailed() {
@@ -435,10 +541,7 @@ struct CommitHeaderRenderer {
             row(trailer.key, plain(trailer.value))
         }
         if let notes = extras?.notes, !notes.isEmpty { row("Notes", plain(notes)) }
-        add("\n" + subject, subjectAttrs)
-        if !bodyText.isEmpty {
-            add("\n\n", body)
-            linkedBody(bodyText)
-        }
+        add("\n", dim)
+        renderMessage(trailers: false, notes: false)
     }
 }

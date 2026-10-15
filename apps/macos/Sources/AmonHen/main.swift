@@ -30,6 +30,15 @@ enum Settings {
         }
     }
 
+    /// コミットの本文を等幅で出すか（既定は等幅）。変えたら `commitMessageStyleChanged` を知らせる。
+    static var monospacedCommitMessage: Bool {
+        get { UserDefaults.standard.object(forKey: "monospacedCommitMessage") as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "monospacedCommitMessage")
+            NotificationCenter.default.post(name: .commitMessageStyleChanged, object: nil)
+        }
+    }
+
     /// 選んだコミットの祖先を強調するか（既定はする）。変えたら `highlightAncestorsChanged` を知らせる。
     static var highlightAncestors: Bool {
         get { UserDefaults.standard.object(forKey: "highlightAncestors") as? Bool ?? true }
@@ -53,6 +62,7 @@ extension Notification.Name {
     static let historyRowsChanged = Notification.Name("historyRowsChanged")
     static let highlightAncestorsChanged = Notification.Name("highlightAncestorsChanged")
     static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
+    static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
 }
 
 /// daemon 越しに開くときに起動する `amonhend`。アプリの中（Contents/MacOS）にあればそれを、開発中は
@@ -364,6 +374,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ancestors.state = Settings.highlightAncestors ? .on : .off
         ancestors.toolTip = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする"
         viewMenu.addItem(ancestors)
+        let mono = NSMenuItem(
+            title: "Monospaced Commit Message", action: #selector(toggleMonospacedMessage(_:)), keyEquivalent: "")
+        mono.target = self
+        mono.state = Settings.monospacedCommitMessage ? .on : .off
+        mono.toolTip = "コミットの本文を等幅の字体で出す（72 桁で改行した本文が崩れない）"
+        viewMenu.addItem(mono)
 
         // テキスト欄でのコピーや取り消しのため、標準の Edit メニューを置く。
         let editItem = NSMenuItem()
@@ -382,6 +398,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(NSMenuItem(title: "Find Next", action: #selector(DiffDocumentView.findNext(_:)), keyEquivalent: "g"))
         editMenu.addItem(NSMenuItem(title: "Find Previous", action: #selector(DiffDocumentView.findPrevious(_:)), keyEquivalent: "G"))
         NSApp.mainMenu = main
+    }
+
+    @objc private func toggleMonospacedMessage(_ item: NSMenuItem) {
+        Settings.monospacedCommitMessage.toggle()
+        item.state = Settings.monospacedCommitMessage ? .on : .off
     }
 
     @objc private func toggleHighlightAncestors(_ item: NSMenuItem) {

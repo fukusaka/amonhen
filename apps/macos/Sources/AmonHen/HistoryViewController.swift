@@ -173,7 +173,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let loadingLabel = NSTextField(labelWithString: "")
     private let loadingSpinner = NSProgressIndicator()
     /// 結果を出した問い合わせと、合ったコミットの行（昇順）。
-    private var searchQuery: String?
+    private var searchQuery: String? {
+        didSet { if searchQuery != oldValue { onSearchChanged?(searchQuery) } }
+    }
+    /// 検索の問い合わせが決まった・消えたとき（詳細の欄で一致を強調する）。
+    var onSearchChanged: ((String?) -> Void)?
     private var searchRows: [Int] = []
     private var searchRowSet: Set<Int> = []
     private var searchIndex: Int?
