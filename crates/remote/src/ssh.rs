@@ -4,7 +4,7 @@
 //! 1. SSH の接続は使い回す（ControlMaster）。調べる・送る・起動するを 1 回のログインで済ませる。
 //! 2. SSH 先の OS と CPU（`uname -sm`）を調べ、同じ daemon がもう置いてあるかを見る。
 //! 3. なければ `~/.cache/amonhen/amonhend-<中身のハッシュ>` に送る（版が変われば別の名前になる）。
-//! 4. それを `--stdio <パス>` で起動し、標準入出力でつなぐ。
+//! 4. 前の版の daemon を消してから、それを `--stdio <パス>` で起動し、標準入出力でつなぐ。
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -188,8 +188,21 @@ pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Conn
         run(ssh, target, &script, Some(&data))?;
     }
     let mut args = base_args(target);
-    args.push(format!("{DIR}/{name} --stdio {}", target.shell_path()));
+    args.push(format!(
+        "{}; exec {DIR}/{name} --stdio {}",
+        cleanup_script(DIR, &name),
+        target.shell_path()
+    ));
     Connection::spawn(ssh, &args)
+}
+
+/// `dir` にある、`keep` 以外の daemon を消すシェルの文。動いている daemon のファイルを消しても、
+/// そのプロセスはそのまま動く（Linux・macOS）。ほかの接続が書いている途中かもしれない一時ファイルは、
+/// 1 日たったものだけ消す。
+fn cleanup_script(dir: &str, keep: &str) -> String {
+    format!(
+        r#"for f in {dir}/amonhend-*; do case "$f" in */{keep}) ;; *.tmp.*) [ -n "$(find "$f" -mtime +0 2>/dev/null)" ] && rm -f "$f" ;; *) rm -f "$f" ;; esac; done 2>/dev/null"#
+    )
 }
 
 /// 手元の OS と CPU を、`uname -sm` から作る名前と同じ形で（`darwin-aarch64` など）。

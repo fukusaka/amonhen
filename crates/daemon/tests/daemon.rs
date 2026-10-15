@@ -166,7 +166,22 @@ fn sends_the_daemon_once_and_reuses_it() {
     let first = std::fs::metadata(&sent[0]).unwrap().modified().unwrap();
     drop(repo);
 
-    // 2 回目は送らずに、置いてある daemon を使う。
+    // 前の版の daemon と、書きかけの一時ファイル（新しいもの・1 日より前のもの）を置いておく。
+    let old = cache.join("amonhend-0000000000000000");
+    let fresh_tmp = cache.join("amonhend-1111111111111111.tmp.42");
+    let stale_tmp = cache.join("amonhend-2222222222222222.tmp.43");
+    for f in [&old, &fresh_tmp, &stale_tmp] {
+        std::fs::write(f, b"").unwrap();
+    }
+    let ok = Command::new("touch")
+        .args(["-t", "202001010000"])
+        .arg(&stale_tmp)
+        .status()
+        .unwrap()
+        .success();
+    assert!(ok);
+
+    // 2 回目は送らずに、置いてある daemon を使う。前の版と古い一時ファイルは消える。
     let conn = ssh::connect(ssh_program.to_str().unwrap(), &target, &daemons).unwrap();
     let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
     assert_eq!(repo.load_history().unwrap().graph.len(), 1);
@@ -174,5 +189,7 @@ fn sends_the_daemon_once_and_reuses_it() {
         std::fs::metadata(&sent[0]).unwrap().modified().unwrap(),
         first
     );
-    assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 1);
+    assert!(!old.exists() && !stale_tmp.exists());
+    assert!(fresh_tmp.exists(), "書いている途中かもしれないので残す");
+    assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 2);
 }
