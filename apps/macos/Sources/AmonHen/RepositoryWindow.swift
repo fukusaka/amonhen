@@ -172,12 +172,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
                 // 選んだコミットの差分を検索した状態（検索欄と強調）を確かめる。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in detail.find(query) }
             }
+            // --search QUERY で、History を検索した状態を撮る（すべてのコミットを読むので長めに待つ）。
+            let query = AppDelegate.option("--search")
+            if let query {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { history.search(query) }
+            }
             // --merge-editor PATH で、そのファイルのマージエディタを開いて撮る。
             let mergePath = AppDelegate.option("--merge-editor")
             if let mergePath {
                 MergeEditorWindowController.show(path: mergePath, repository: repository, actions: actions)
             }
-            DispatchQueue.main.asyncAfter(deadline: .now() + (wait || mergePath != nil ? 1.5 : 0.5)) { [self] in
+            let delay = query != nil ? 3.5 : wait || mergePath != nil ? 1.5 : 0.5
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
                 let rep = mergePath != nil
                     ? MergeEditorWindowController.snapshot()
                     : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays())
