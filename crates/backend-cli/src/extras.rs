@@ -69,6 +69,21 @@ impl Git {
     }
 }
 
+impl Git {
+    /// 1 つのコミットの署名の検証の詳細（署名者・鍵・信用度）。
+    pub fn signature_details(&self, commit: &Oid) -> Result<Option<SignatureCheck>> {
+        let out = self.read(&[
+            "-c",
+            "log.showSignature=false",
+            "log",
+            "-1",
+            "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00",
+            &commit.to_string(),
+        ])?;
+        Ok(parse_signature_and_notes(&String::from_utf8_lossy(&out)).0)
+    }
+}
+
 /// `%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%N` を読む。署名がなければ（N）`None`。
 fn parse_signature_and_notes(out: &str) -> (Option<SignatureCheck>, String) {
     let mut fields = out.splitn(6, '\0');

@@ -4,6 +4,7 @@
 mod extras;
 mod ops;
 mod status;
+mod verify;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 use amonhen_model::Result;
 
 pub use status::parse_status;
+pub use verify::LocalVerifier;
 
 /// status で git の fsmonitor（`git fsmonitor--daemon`）を使うか。macOS と Windows でだけ効く。
 static FSMONITOR: AtomicBool = AtomicBool::new(false);

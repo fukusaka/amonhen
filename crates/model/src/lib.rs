@@ -15,7 +15,7 @@ pub mod topo;
 
 pub use backend::{ConnectionState, Error, GitBackend, Result};
 pub use change::{ChangeKind, FileChange};
-pub use extras::{CommitExtras, FileStat, SignatureCheck};
+pub use extras::{CommitExtras, FileStat, SignatureCheck, SignatureVerifier};
 pub use files::{LocalFiles, RepoFiles, Root};
 pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use oid::{Oid, OidMap, OidSet};

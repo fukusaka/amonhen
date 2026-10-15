@@ -1,6 +1,8 @@
 //! コミットの詳細のうち、git に頼んで求める分（署名の検証・notes・変更の行数）。どれも時間がかかるので、
 //! FE はコミットの情報を先に出し、これは裏で読んでから足す。
 
+use crate::{Oid, Result};
+
 /// 署名の検証の結果（`git log --format=%G?` など）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -35,4 +37,13 @@ pub struct CommitExtras {
     pub notes: String,
     /// 最初の親との差分の、ファイルごとの行数（`commit_changes` と同じ比べ方）。
     pub stats: Vec<FileStat>,
+}
+
+/// コミットのオブジェクトを受け取って署名を検証するもの。daemon 越しのリポジトリでも、手元の鍵で検証する
+/// ために FE（デスクトップ）が注入する。結果は `git log --format=%G?` と同じ 1 文字。
+pub trait SignatureVerifier: Send + Sync {
+    /// `commits`（ID とコミットのオブジェクトの中身）を検証し、同じ順に `%G?` を返す。
+    fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<char>>;
+    /// 1 つのコミットの検証の詳細（署名者・鍵・信用度）。署名がなければ `None`。
+    fn details(&self, id: &Oid, raw: &[u8]) -> Result<Option<SignatureCheck>>;
 }
