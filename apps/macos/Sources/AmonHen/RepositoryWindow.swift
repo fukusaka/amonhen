@@ -220,6 +220,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
                 }
                 history.head = refs.head
                 history.show(refs: refs)
+                let current = refs.items.first { $0.kind == .local && $0.name == refs.headBranch }
+                toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0)
             } catch {
                 NSLog("ref を読めない: \(error)")
             }

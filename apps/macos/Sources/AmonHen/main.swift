@@ -44,6 +44,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     let toolbar = NSToolbar(identifier: "main")
     private let actions: Actions
     private let undoItem = NSToolbarItem(itemIdentifier: .init("undo"))
+    private let pushItem = NSToolbarItem(itemIdentifier: .init("push"))
+    private let pullItem = NSToolbarItem(itemIdentifier: .init("pull"))
 
     init(actions: Actions) {
         self.actions = actions
@@ -60,6 +62,20 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         undoItem.label = "Undo"
     }
 
+    /// 今のブランチが上流より先（push できる）・後ろ（pull できる）にあるコミットの数を、ボタンのバッジに出す。
+    func setTracking(ahead: Int, behind: Int) {
+        if #available(macOS 26.0, *) {
+            pushItem.badge = ahead > 0 ? .count(ahead) : nil
+            pullItem.badge = behind > 0 ? .count(behind) : nil
+        } else {
+            // バッジのない macOS では、ラベルに数を添える。
+            pushItem.label = ahead > 0 ? "Push ↑\(ahead)" : "Push"
+            pullItem.label = behind > 0 ? "Pull ↓\(behind)" : "Pull"
+        }
+        pushItem.toolTip = ahead > 0 ? "上流より \(ahead) コミット先にあります" : "Push"
+        pullItem.toolTip = behind > 0 ? "上流より \(behind) コミット後ろにあります" : "Pull"
+    }
+
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
         [.init("fetch"), .init("pull"), .init("push"), .init("stash"), .flexibleSpace, .init("undo")]
     }
@@ -74,8 +90,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         let item: NSToolbarItem, symbol: String, action: Selector
         switch id.rawValue {
         case "fetch": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "arrow.down.circle", #selector(fetch))
-        case "push": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "arrow.up.circle", #selector(push))
-        case "pull": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "arrow.down.to.line.circle", #selector(pull))
+        case "push": (item, symbol, action) = (pushItem, "arrow.up.circle", #selector(push))
+        case "pull": (item, symbol, action) = (pullItem, "arrow.down.to.line.circle", #selector(pull))
         case "stash": (item, symbol, action) = (NSToolbarItem(itemIdentifier: id), "tray.and.arrow.down", #selector(stash))
         case "undo": (item, symbol, action) = (undoItem, "arrow.uturn.backward.circle", #selector(undo))
         default: return nil
