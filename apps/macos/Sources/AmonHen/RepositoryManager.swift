@@ -107,10 +107,12 @@ final class RepositoryManagerWindowController: NSWindowController, NSTableViewDa
         filter.target = self
         filter.action = #selector(filterChanged)
         let add = NSButton(title: "Add…", target: self, action: #selector(addRepository))
+        let addRemote = NSButton(title: "Add Remote…", target: self, action: #selector(addRemote))
+        addRemote.toolTip = "SSH の先のリポジトリを加える（初めてのホストには amonhend を送り込む）"
         let remove = NSButton(title: "Remove", target: self, action: #selector(removeSelected))
         let open = NSButton(title: "Open", target: self, action: #selector(openSelected))
         open.keyEquivalent = "\r"
-        let buttons = NSStackView(views: [add, remove, NSView(), open])
+        let buttons = NSStackView(views: [add, addRemote, remove, NSView(), open])
 
         for v in [filter, scroll, buttons] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -164,6 +166,46 @@ final class RepositoryManagerWindowController: NSWindowController, NSTableViewDa
             alert.messageText = "Git のリポジトリではありません"
             alert.informativeText = rejected.joined(separator: "、")
             alert.runModal()
+        }
+    }
+
+    /// 前回入れた接続先（続けて同じホストのリポジトリを加えやすくする）。
+    private static let lastHostKey = "lastRemoteHost"
+
+    @objc private func addRemote() {
+        let host = NSTextField(string: UserDefaults.standard.string(forKey: Self.lastHostKey) ?? "")
+        host.placeholderString = "user@host:port（~/.ssh/config の名前でもよい）"
+        let path = NSTextField(string: "")
+        path.placeholderString = "~/src/repo や /srv/git/repo"
+        let grid = NSGridView(views: [
+            [NSTextField(labelWithString: "接続先:"), host],
+            [NSTextField(labelWithString: "パス:"), path],
+        ])
+        grid.column(at: 0).xPlacement = .trailing
+        grid.rowSpacing = 8
+        grid.column(at: 1).width = 300
+        grid.frame = NSRect(x: 0, y: 0, width: 370, height: 56)
+
+        let alert = NSAlert()
+        alert.messageText = "リモートのリポジトリを加える"
+        alert.informativeText = "SSH で接続します。鍵か ssh-agent でパスワードなしに入れるホストにしてください。"
+        alert.accessoryView = grid
+        alert.addButton(withTitle: "加えて開く")
+        alert.addButton(withTitle: "キャンセル")
+        alert.window.initialFirstResponder = host.stringValue.isEmpty ? host : path
+        alert.beginSheetModal(for: window!) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            guard let location = RepositoryLocation.ssh(host: host.stringValue, path: path.stringValue) else {
+                let error = NSAlert()
+                error.messageText = "接続先とパスを入れてください"
+                error.informativeText = "接続先には空白や / を含められません。"
+                error.beginSheetModal(for: self.window!)
+                return
+            }
+            UserDefaults.standard.set(host.stringValue.trimmingCharacters(in: .whitespaces), forKey: Self.lastHostKey)
+            RepositoryList.touch(location)
+            reload()
+            onOpen?(location)
         }
     }
 
