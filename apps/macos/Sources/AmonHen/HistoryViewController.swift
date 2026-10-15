@@ -154,6 +154,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let searchField = NSSearchField()
     private let searchCount = NSTextField(labelWithString: "")
     private let searchSpinner = NSProgressIndicator()
+    /// 初めて読み込むまでの間、表の真ん中に出す（daemon 越しでは数十 MB を受け取るので数秒かかる）。
+    private let loadingLabel = NSTextField(labelWithString: "")
+    private let loadingSpinner = NSProgressIndicator()
     /// 結果を出した問い合わせと、合ったコミットの行（昇順）。
     private var searchQuery: String?
     private var searchRows: [Int] = []
@@ -251,6 +254,15 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         container.addSubview(graphView)
         container.addSubview(textView)
         container.addSubview(scopePopup)
+        loadingLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+        loadingLabel.textColor = .secondaryLabelColor
+        loadingLabel.alignment = .center
+        loadingSpinner.style = .spinning
+        loadingSpinner.controlSize = .small
+        loadingSpinner.isDisplayedWhenStopped = false
+        loadingLabel.isHidden = true
+        container.addSubview(loadingLabel)
+        container.addSubview(loadingSpinner)
         view = container
     }
 
@@ -269,6 +281,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         // 件名の列を表の幅いっぱいにする。
         tableView.sizeLastColumnToFit()
         layoutGraphView()
+        let mid = scrollView.frame.midY
+        loadingSpinner.frame = NSRect(x: scrollView.frame.midX - 8, y: mid + 4, width: 16, height: 16)
+        loadingLabel.frame = NSRect(x: 0, y: mid - 22, width: scrollView.frame.width, height: 20)
+    }
+
+    /// 読み込み中の知らせ（nil で消す）。
+    var loadingMessage: String? {
+        get { loadingLabel.isHidden ? nil : loadingLabel.stringValue }
+        set {
+            loadViewIfNeeded()
+            loadingLabel.stringValue = newValue ?? ""
+            loadingLabel.isHidden = newValue == nil
+            if newValue == nil { loadingSpinner.stopAnimation(nil) } else { loadingSpinner.startAnimation(nil) }
+        }
     }
 
     private func updateScopePopup() {
