@@ -223,23 +223,17 @@ struct CommitHeaderRenderer {
         }
     }
 
-    /// 署名の状態の短い言い方と色。
-    private var signatureSummary: (mark: String, text: String, color: NSColor)? {
-        let kind = (info.signed ?? "gpg").uppercased()
-        if let s = extras?.signature {
-            switch s.status {
-            case "G": return ("✓", "正しい \(kind) 署名", .systemGreen)
-            case "U": return ("✓", "正しい \(kind) 署名（鍵の信用度は不明）", .systemGreen)
-            case "X": return ("!", "期限切れの \(kind) 署名", .systemOrange)
-            case "Y": return ("!", "期限切れの鍵による \(kind) 署名", .systemOrange)
-            case "R": return ("!", "失効した鍵による \(kind) 署名", .systemOrange)
-            case "B": return ("✗", "不正な \(kind) 署名", .systemRed)
-            default: return ("?", "\(kind) 署名（検証できない。鍵がないなど）", .secondaryLabelColor)
-            }
-        }
-        guard info.signed != nil else { return nil }
-        return ("…", "\(kind) 署名（検証中）", .secondaryLabelColor)
+    /// 署名の状態。署名がなければ nil。検証の結果が届くまでは `.pending`。
+    var signatureStatus: SignatureStatus? {
+        guard info.signed != nil || extras?.signature != nil else { return nil }
+        guard let extras else { return .pending }
+        guard let s = extras.signature else { return info.signed == nil ? nil : .noKey }
+        return SignatureStatus(
+            status: s.status, trust: s.trust, signer: s.signer, committerEmail: info.committerEmail, kind: info.signed)
     }
+
+    /// 署名の行を押すと、詳細の吹き出しを出す。
+    static let signatureLink = "amonhen-signature:"
 
     /// どのリモートブランチにも含まれていなければ「未 push」（リモートがないリポジトリでは出さない）。
     private var isUnpushed: Bool {
@@ -502,17 +496,52 @@ struct CommitHeaderRenderer {
         }
     }
 
-    /// 署名を 1 行に（結果・署名者・鍵・信用度）。
+    /// 署名を 1 行に: アイコン・短い言葉・信用度の目盛り・方式と署名者。押すと詳細の吹き出し。
     private func signatureRow(_ table: Rows) {
-        guard let sig = signatureSummary else { return }
+        guard let status = signatureStatus else { return }
         table.row("Signature") {
-            var attrs = value
-            attrs[.foregroundColor] = sig.color
-            add("\(sig.mark) \(sig.text)", attrs)
-            if let s = extras?.signature {
-                let details = [s.signer, s.key.isEmpty ? "" : "鍵 \(s.key)", s.trust].filter { !$0.isEmpty }
-                if !details.isEmpty { add(" · " + details.joined(separator: " · "), dim) }
+            let start = text.length
+            if let image = Self.symbolImage(status.symbol, color: status.color, size: 13) {
+                let attachment = NSTextAttachment()
+                attachment.image = image
+                attachment.bounds = NSRect(x: 0, y: -2.5, width: image.size.width, height: image.size.height)
+                text.append(NSAttributedString(attachment: attachment))
             }
+            add(" \(status.label)", [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: status.color])
+            text.addAttributes(
+                [.link: Self.signatureLink, .toolTip: status.toolTip, .cursor: NSCursor.pointingHand],
+                range: NSRange(location: start, length: text.length - start))
+            if let bars = status.trustBars {
+                add(" ", value)
+                let attachment = NSTextAttachment()
+                let meter = Self.trustMeter(bars, color: status.color)
+                attachment.image = meter
+                attachment.bounds = NSRect(x: 0, y: -1, width: meter.size.width, height: meter.size.height)
+                text.append(NSAttributedString(attachment: attachment))
+            }
+            let kind = (info.signed ?? "gpg").uppercased()
+            let signer = extras?.signature?.signer ?? ""
+            add("  \(kind)" + (signer.isEmpty ? "" : " · \(signer)"), dim)
+        }
+    }
+
+    /// 色を付けた SF Symbols の画像（文字の中に置く）。
+    static func symbolImage(_ name: String, color: NSColor, size: CGFloat) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
+            .applying(.init(paletteColors: [color]))
+        return NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config)
+    }
+
+    /// 信用度の 3 段の目盛り（`bars` 段を色で塗る）。
+    static func trustMeter(_ bars: Int, color: NSColor) -> NSImage {
+        let width: CGFloat = 4, height: CGFloat = 10, gap: CGFloat = 2
+        return NSImage(size: NSSize(width: width * 3 + gap * 2, height: height), flipped: false) { _ in
+            for i in 0..<3 {
+                let rect = NSRect(x: CGFloat(i) * (width + gap), y: 0, width: width, height: height)
+                (i < bars ? color : NSColor.tertiaryLabelColor.withAlphaComponent(0.4)).setFill()
+                NSBezierPath(roundedRect: rect, xRadius: 1.5, yRadius: 1.5).fill()
+            }
+            return true
         }
     }
 

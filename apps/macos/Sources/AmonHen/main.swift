@@ -342,13 +342,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "fsmonitor で status を速くする", action: #selector(toggleFSMonitor(_:)), keyEquivalent: "")
         fsmonitor.target = self
         fsmonitor.state = Settings.useFSMonitor ? .on : .off
-        fsmonitor.toolTip = "手元のリポジトリの status で git の fsmonitor を使う（リポジトリごとに git fsmonitor--daemon が常駐し、.git にソケットを作る）"
+        fsmonitor.toolTip = "この Mac のリポジトリの status で git の fsmonitor を使う（リポジトリごとに git fsmonitor--daemon が常駐し、.git にソケットを作る）"
         appMenu.addItem(fsmonitor)
         let signatures = NSMenuItem(
-            title: "SSH 先の署名を手元の鍵で検証する", action: #selector(toggleRemoteSignatureCheck(_:)), keyEquivalent: "")
+            title: "SSH 先の署名をこの Mac の鍵で検証する", action: #selector(toggleRemoteSignatureCheck(_:)), keyEquivalent: "")
         signatures.target = self
         signatures.state = Settings.checkRemoteSignaturesLocally ? .on : .off
-        signatures.toolTip = "SSH 先のリポジトリのコミットの署名を、手元の gpg・allowed_signers・信用度で検証する（外すと SSH 先の git と鍵で検証する）"
+        signatures.toolTip = "SSH 先のリポジトリのコミットの署名を、この Mac の gpg・allowed_signers・信用度で検証する（外すと SSH 先の git と鍵で検証する）"
         appMenu.addItem(signatures)
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Amon Hen を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))

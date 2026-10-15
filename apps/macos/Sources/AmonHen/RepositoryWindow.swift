@@ -110,6 +110,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
         history.onSearchChanged = { [weak detail] query in detail?.searchQuery = query }
         detail.onSearch = { [weak history] query in history?.search(query) }
         detail.onSelectRef = { [weak self] name in self?.selectRef(named: name) }
+        updateSignaturePlace()
         detail.onReword = { [weak actions] oid, message in
             actions?.rewrite("Reword \(oid.prefix(8))", ["kind": "reword", "oid": oid, "message": message])
         }
@@ -236,8 +237,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate {
     /// 署名を検証する側が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す。
     @objc private func signatureCheckChanged() {
         repository.setLocalSignatureCheck(Settings.checkRemoteSignaturesLocally)
+        updateSignaturePlace()
         history.forgetSignatures()
         detail.reloadSignature()
+    }
+
+    /// 署名をどこで検証しているか（詳細の吹き出しに出す）。
+    private func updateSignaturePlace() {
+        if let host = RepositoryLocation.host(location), !Settings.checkRemoteSignaturesLocally {
+            detail.signaturePlace = "\(host)（SSH 先）"
+        } else {
+            detail.signaturePlace = "この Mac"
+        }
     }
 
     /// ツールバーの下に、切れたことと「つなぎ直す」を出す。

@@ -663,6 +663,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     /// 作者の名前を押したとき（History を検索する問い合わせ）と、ref の名前を押したとき。
     var onSearch: ((String) -> Void)?
     var onSelectRef: ((String) -> Void)?
+    /// 署名をどこで検証しているか（吹き出しに出す。RepositoryWindow が決める）。
+    var signaturePlace = "この Mac"
+    private var signaturePopover: NSPopover?
     /// メッセージを書き直して保存したとき（コミットの ID と新しいメッセージ）。
     var onReword: ((String, String) -> Void)?
     /// 書き直している間だけ出す編集欄。
@@ -835,6 +838,26 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             menu.insertItem(.separator(), at: items.count + 2)
         }
         return menu
+    }
+
+    // MARK: - 署名の詳細
+
+    /// 署名の行の、押した文字のところに詳細の吹き出しを出す。
+    private func showSignaturePopover(at charIndex: Int) {
+        guard let info, let layout = header.layoutManager, let container = header.textContainer else { return }
+        let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
+        guard let status = CommitHeaderRenderer(info: info, extras: extras, style: style).signatureStatus else { return }
+        let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
+        var rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
+        rect.origin.x += header.textContainerOrigin.x
+        rect.origin.y += header.textContainerOrigin.y
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = SignaturePopover(
+            status: status, signature: extras?.signature, kind: info.signed ?? "gpg",
+            committerEmail: info.committerEmail, place: signaturePlace)
+        popover.show(relativeTo: rect, of: header, preferredEdge: .maxY)
+        signaturePopover = popover
     }
 
     // MARK: - その場で書き直す
@@ -1108,6 +1131,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
         if s.hasPrefix(CommitHeaderRenderer.refScheme) {
             onSelectRef?(String(s.dropFirst(CommitHeaderRenderer.refScheme.count)))
+            return true
+        }
+        if s == CommitHeaderRenderer.signatureLink {
+            showSignaturePopover(at: charIndex)
             return true
         }
         if s == CommitHeaderRenderer.expandLink {
