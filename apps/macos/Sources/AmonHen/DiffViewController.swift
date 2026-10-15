@@ -669,6 +669,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private var rewordEditor: NSView?
     private var rewordText: NSTextView?
     private var headerContainer: NSView?
+    private var headerScroll: NSScrollView?
+    /// 標準・詳細のとき、上に作者とコミッターを並べる帯。
+    private let peopleStrip = PeopleStrip(frame: .zero)
 
     /// 表示中のコミットの親と子（キーボードで移るため）。子は詳細を読み終えるまで空。
     var currentParents: [String] { info?.parents ?? [] }
@@ -683,7 +686,15 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private var headerRequest = 0
     /// 表示しているコミットの情報と、裏で読んだ詳細（見せ方を変えたときに描き直す）。
     private var info: CommitInfo?
-    private var extras: CommitExtras?
+    private var extras: CommitExtras? {
+        didSet {
+            // ファイルの一覧の行数（+/−）は詳細と一緒に読むので、届いたら一覧を描き直す。
+            fileStats = Dictionary((extras?.stats ?? []).map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+            // 選択を保つため、行を入れ替えずに描き直す。
+            files.reloadData(forRowIndexes: IndexSet(integersIn: 0..<files.numberOfRows), columnIndexes: [0])
+        }
+    }
+    private var fileStats: [String: CommitExtras.FileStat] = [:]
     /// 署名を検証する側を変えた回数。変える前に始めた詳細の読み込みの結果は使わない。
     private var signatureGeneration = 0
     /// 長い本文を開いているか（コミットを替えたら閉じる）。
@@ -751,6 +762,12 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let headerContainer = NSView(frame: headerScroll.frame)
         headerContainer.addSubview(headerScroll)
         self.headerContainer = headerContainer
+        self.headerScroll = headerScroll
+        peopleStrip.isHidden = true
+        peopleStrip.onSelectPerson = { [weak self] name in
+            self?.onSearch?("author:\"\(name.replacingOccurrences(of: "\"", with: ""))\"")
+        }
+        headerContainer.addSubview(peopleStrip)
         styleControl.controlSize = .mini
         styleControl.font = .systemFont(ofSize: NSFont.systemFontSize(for: .mini))
         styleControl.selectedSegment = CommitHeaderStyle.saved.rawValue
@@ -780,9 +797,19 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         addSplitViewItem(diffItem)
         NotificationCenter.default.addObserver(
             self, selector: #selector(messageStyleChanged), name: .commitMessageStyleChanged, object: nil)
+        // アバターを読み終えたら、表示中のコミットの人なら描き直す。
+        Avatars.shared.onLoad.append { [weak self] email in
+            guard let self, let info,
+                  [info.authorEmail, info.committerEmail].contains(where: { $0.lowercased() == email }) else { return }
+            peopleStrip.updateAvatars()
+            renderHeader()
+        }
     }
 
-    @objc private func messageStyleChanged() { renderHeader() }
+    @objc private func messageStyleChanged() {
+        peopleStrip.updateAvatars()
+        renderHeader()
+    }
 
     /// ヘッダーの右クリック: ID・件名・メッセージ・git show のコピーを先頭に足す。
     func textView(_ view: NSTextView, menu: NSMenu, for event: NSEvent, at charIndex: Int) -> NSMenu? {
@@ -983,13 +1010,18 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         renderer.monospacedBody = Settings.monospacedCommitMessage
         renderer.expanded = bodyExpanded
         renderer.highlight = CommitHeaderRenderer.highlightTerms(of: searchQuery)
-        renderer.canReword = extras?.headDistance != nil && info.parents.count <= 1
         let text = NSMutableAttributedString(attributedString: renderer.render())
-        // 右上の切り替えに文字が重ならないよう、最初の行の右端を空ける。
-        let first = NSMutableParagraphStyle()
-        first.tailIndent = -(styleControl.frame.width + 12)
-        let firstLine = (text.string as NSString).lineRange(for: NSRange(location: 0, length: 0))
-        text.addAttribute(.paragraphStyle, value: first, range: firstLine)
+        let showPeople = style != .compact
+        layoutPeopleStrip(visible: showPeople)
+        if showPeople {
+            peopleStrip.show(info, date: CommitHeaderRenderer.date)
+        } else {
+            // 右上の切り替えに文字が重ならないよう、最初の行の右端を空ける。
+            let first = NSMutableParagraphStyle()
+            first.tailIndent = -(styleControl.frame.width + 12)
+            let firstLine = (text.string as NSString).lineRange(for: NSRange(location: 0, length: 0))
+            text.addAttribute(.paragraphStyle, value: first, range: firstLine)
+        }
         header.textStorage?.setAttributedString(text)
     }
 
@@ -1029,6 +1061,18 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
     }
 
+    /// 作者とコミッターの帯を上に置き（右上の切り替えの手前まで）、文字の欄をその下にする。
+    private func layoutPeopleStrip(visible: Bool) {
+        guard let container = headerContainer, let scroll = headerScroll else { return }
+        peopleStrip.isHidden = !visible
+        let height = visible ? PeopleStrip.height : 0
+        let bounds = container.bounds
+        peopleStrip.frame = NSRect(
+            x: 0, y: bounds.height - height, width: max(0, styleControl.frame.minX - 8), height: height)
+        peopleStrip.autoresizingMask = [.width, .minYMargin]
+        scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - height)
+    }
+
     @objc private func styleChanged() {
         let previous = CommitHeaderStyle.saved
         let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
@@ -1064,10 +1108,6 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
         if s.hasPrefix(CommitHeaderRenderer.refScheme) {
             onSelectRef?(String(s.dropFirst(CommitHeaderRenderer.refScheme.count)))
-            return true
-        }
-        if s == CommitHeaderRenderer.rewordLink {
-            beginReword()
             return true
         }
         if s == CommitHeaderRenderer.expandLink {
@@ -1119,12 +1159,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let item = changes?.items[row] else { return nil }
-        let field = tableView.makeView(withIdentifier: .init("file"), owner: nil) as? NSTextField ?? {
-            let f = NSTextField(labelWithString: "")
-            f.identifier = .init("file")
-            f.lineBreakMode = .byTruncatingMiddle
-            return f
-        }()
+        let cell = tableView.makeView(withIdentifier: .init("file"), owner: nil) as? FileCell ?? FileCell()
+        let field = cell.path
         let mark = switch item.kind {
         case .added: "A"
         case .deleted: "D"
@@ -1134,7 +1170,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
         field.stringValue = "\(mark)  \(item.path)"
         field.toolTip = item.oldPath.map { "\($0) → \(item.path)" } ?? item.path
-        return field
+        cell.show(stat: fileStats[item.path])
+        return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -1160,5 +1197,53 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             FrameProfile.add("select: → diff shown", CACurrentMediaTime() - selectedAt)
             onDiffShown?()
         }
+    }
+}
+
+/// 変更ファイルの一覧の行: 左に種類とパス、右に行数（+ 緑・− 赤、バイナリは「バイナリ」）。
+final class FileCell: NSTableCellView {
+    let path = NSTextField(labelWithString: "")
+    private let stat = NSTextField(labelWithString: "")
+
+    init() {
+        super.init(frame: .zero)
+        identifier = .init("file")
+        path.lineBreakMode = .byTruncatingMiddle
+        stat.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        stat.alignment = .right
+        for v in [path, stat] {
+            v.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(v)
+        }
+        path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        stat.setContentCompressionResistancePriority(.required, for: .horizontal)
+        stat.setContentHuggingPriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            path.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            path.centerYAnchor.constraint(equalTo: centerYAnchor),
+            stat.leadingAnchor.constraint(greaterThanOrEqualTo: path.trailingAnchor, constant: 8),
+            stat.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            stat.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    func show(stat value: CommitExtras.FileStat?) {
+        guard let value else {
+            stat.stringValue = ""
+            return
+        }
+        guard let added = value.added, let removed = value.removed else {
+            stat.attributedStringValue = NSAttributedString(string: "バイナリ", attributes: [.foregroundColor: NSColor.secondaryLabelColor])
+            return
+        }
+        let text = NSMutableAttributedString()
+        if added > 0 { text.append(NSAttributedString(string: "+\(added)", attributes: [.foregroundColor: NSColor.systemGreen])) }
+        if removed > 0 {
+            if added > 0 { text.append(NSAttributedString(string: " ")) }
+            text.append(NSAttributedString(string: "−\(removed)", attributes: [.foregroundColor: NSColor.systemRed]))
+        }
+        stat.attributedStringValue = text
     }
 }

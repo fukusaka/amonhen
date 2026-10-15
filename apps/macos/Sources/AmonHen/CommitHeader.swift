@@ -36,8 +36,6 @@ struct CommitHeaderRenderer {
     /// 作者で History を絞り込む・ref の履歴に絞り込むリンク。
     static let authorScheme = "amonhen-author:"
     static let refScheme = "amonhen-ref:"
-    /// メッセージをその場で書き直すリンク。
-    static let rewordLink = "amonhen-reword:"
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
@@ -70,8 +68,6 @@ struct CommitHeaderRenderer {
     var expanded = false
     /// 件名と本文の中で強調する語（History の検索の語）。
     var highlight: [String] = []
-    /// 「メッセージを書き直す」のリンクを出すか（HEAD に含まれる、merge でないコミット）。
-    var canReword = false
 
     /// 本文がこの行数を超えたら、`collapsedLines` 行で折りたたむ。
     static let collapseAbove = 16
@@ -95,7 +91,7 @@ struct CommitHeaderRenderer {
     }
 
     /// 件名・本文（トレーラーは除く）・トレーラー・notes。どの見せ方でも最後に置く。
-    private func renderMessage(trailers: Bool, notes: Bool) {
+    private func renderMessage(notes: Bool) {
         let messageStart = text.length
         add(subject, subjectAttrs)
         let lines = bodyWithoutTrailers.components(separatedBy: "\n")
@@ -110,7 +106,7 @@ struct CommitHeaderRenderer {
                 add(collapse ? "続きを表示（あと \(lines.count - Self.collapsedLines) 行）" : "折りたたむ", link)
             }
         }
-        if trailers, !info.trailers.isEmpty {
+        if !info.trailers.isEmpty {
             add("\n", body)
             for trailer in info.trailers {
                 add("\n\(trailer.key): ", [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor])
@@ -201,6 +197,10 @@ struct CommitHeaderRenderer {
         return String(message[newline...]).trimmingCharacters(in: .newlines)
     }
 
+    static func date(_ time: Int64) -> String {
+        dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(time)))
+    }
+
     private func date(_ time: Int64) -> String {
         Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(time)))
     }
@@ -241,54 +241,10 @@ struct CommitHeaderRenderer {
         return ("…", "\(kind) 署名（検証中）", .secondaryLabelColor)
     }
 
-    private var statsSummary: String? {
-        guard let stats = extras?.stats, !stats.isEmpty else { return nil }
-        let added = stats.compactMap(\.added).reduce(0, +)
-        let removed = stats.compactMap(\.removed).reduce(0, +)
-        return "\(stats.count) ファイル  +\(added) −\(removed)"
-    }
-
-    private var tagSummary: String? {
-        guard let extras else { return nil }
-        var parts: [String] = []
-        if let first = extras.firstTag { parts.append("\(first) で初めて入った") }
-        if let previous = extras.previousTag { parts.append("直前のタグ \(previous)") }
-        return parts.isEmpty ? nil : parts.joined(separator: " · ")
-    }
-
-    /// HEAD との位置。詳細を読み終えるまでは nil。
-    private var positionSummary: String? {
-        guard let extras else { return nil }
-        switch extras.headDistance {
-        case 0: return "HEAD"
-        case let n?: return "HEAD の \(n) コミット前"
-        case nil: return "HEAD に含まれない"
-        }
-    }
-
     /// どのリモートブランチにも含まれていなければ「未 push」（リモートがないリポジトリでは出さない）。
     private var isUnpushed: Bool {
         guard let extras, extras.originUrl != nil else { return false }
         return extras.remoteBranches.isEmpty
-    }
-
-    /// 作者の日時からコミットの日時まで 1 時間より空いていれば、書き直した（rebase・amend・cherry-pick）とみなす。
-    private var rewriteSummary: String? {
-        let gap = info.committerTime - info.authorTime
-        guard gap > 3600 else { return nil }
-        let f = DateComponentsFormatter()
-        f.unitsStyle = .full
-        f.maximumUnitCount = 1
-        f.allowedUnits = [.year, .month, .day, .hour]
-        guard let span = f.string(from: TimeInterval(gap)) else { return nil }
-        return "作成の \(span)後にコミット（rebase・amend・cherry-pick など）"
-    }
-
-    /// `Co-authored-by` のトレーラーの名前。
-    private var coAuthors: [String] {
-        info.trailers
-            .filter { $0.key.lowercased() == "co-authored-by" }
-            .map { $0.value.components(separatedBy: " <").first ?? $0.value }
     }
 
     /// メッセージに書かれたコミットを、書かれた順に、書かれ方（cherry-pick・revert・Fixes）と一緒に。
@@ -312,15 +268,6 @@ struct CommitHeaderRenderer {
             }
             .sorted { $0.0 < $1.0 }
             .map { ($0.1, $0.2) }
-    }
-
-    private func rewordLinkLine() {
-        var link = dim
-        link[.link] = Self.rewordLink
-        link[.foregroundColor] = NSColor.linkColor
-        add("\n", dim)
-        let pushed = !(extras?.remoteBranches.isEmpty ?? true)
-        add(pushed ? "メッセージを書き直す（push 済み）" : "メッセージを書き直す", link)
     }
 
     /// 作者の名前（押すと、その人のコミットで絞り込む）。
@@ -416,182 +363,166 @@ struct CommitHeaderRenderer {
 
     // どの見せ方も、メタ情報、件名、本文の残りの順に並べる。
 
+    /// 簡潔: 小さなアバター・作者・作者の日時・ref・親の 1 行と、件名。
     private func renderCompact() {
-        if let sig = signatureSummary {
-            var attrs = dim
-            attrs[.foregroundColor] = sig.color
-            attrs[.toolTip] = sig.text
-            add(sig.mark + " ", attrs)
-        }
-        authorLink(info.author, dim)
-        add(" · \(relative(info.authorTime)) · ", dim)
-        commitLink(info.oid, length: 10)
+        avatar(info.authorEmail, name: info.author, size: 16)
+        add(" ", dim)
+        authorLink(info.author, [.font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.labelColor])
+        add("  \(date(info.authorTime))", dim)
         if !info.refs.isEmpty {
-            add(" · ", dim)
+            add("  ", dim)
             refLinks(info.refs, refAttrs)
         }
-        if let stats = statsSummary { add(" · " + stats, dim) }
-        if isUnpushed { add(" · 未 push", unpushedAttrs) }
+        if !info.parents.isEmpty {
+            add(info.parents.count > 1 ? "  Parents " : "  Parent ", dim)
+            commitLinks(info.parents)
+        }
         add("\n", dim)
         let start = text.length
         add(subject, subjectAttrs)
         highlightTerms(from: start)
     }
 
+    /// 標準: 詳細と同じ形で、項目を絞ったもの（作者とコミッターは上の帯）。
     private func renderStandard() {
-        if !info.refs.isEmpty {
-            refLinks(info.refs, refAttrs)
-            add("\n", refAttrs)
-        }
-        authorLink(info.author, dim)
-        add(" <\(info.authorEmail)>  \(date(info.authorTime))（\(relative(info.authorTime))）", dim)
-        if info.committer != info.author {
-            add("  committed by \(info.committer)", dim)
-        }
-        if !coAuthors.isEmpty { add("\n共同作者: " + coAuthors.joined(separator: ", "), dim) }
-        if let sig = signatureSummary {
-            var attrs = dim
-            attrs[.foregroundColor] = sig.color
-            add("\n\(sig.mark) \(sig.text)", attrs)
-            if let signer = extras?.signature?.signer, !signer.isEmpty { add(" — \(signer)", dim) }
-        }
-        add("\n\(info.oid)", mono)
-        if !info.parents.isEmpty {
-            add(info.parents.count > 1 ? "  Parents " : "  Parent ", mono)
-            commitLinks(info.parents)
-        }
-        if let children = extras?.children, !children.isEmpty {
-            add(children.count > 1 ? "  Children " : "  Child ", mono)
-            commitLinks(children)
-        }
-        let facts = [positionSummary, tagSummary, statsSummary].compactMap { $0 }
-        if !facts.isEmpty { add("\n" + facts.joined(separator: " · "), dim) }
-        if isUnpushed { add(facts.isEmpty ? "\n未 push" : " · 未 push", unpushedAttrs) }
-        if let rewrite = rewriteSummary { add("\n" + rewrite, dim) }
-        if canReword { rewordLinkLine() }
-        for tag in info.mergedTags {
-            add("\n\(tag.signed ? "署名付きの" : "")タグ \(tag.name)（\(tag.tagger)）を merge", dim)
-            if !tag.subject.isEmpty { add(" — \(tag.subject)", dim) }
-        }
+        let table = rows()
+        table.row("Commit") { add(info.oid, mono) }
+        if !info.parents.isEmpty { table.row(info.parents.count > 1 ? "Parents" : "Parent") { fullCommitLinks(info.parents) } }
+        signatureRow(table)
+        if !info.refs.isEmpty { table.row("Refs") { refLinks(info.refs, refAttrs) } }
+        mergedTagRows(table)
         if let extras, extras.mergedCount > 0 {
-            add("\n取り込んだコミット \(extras.mergedCount) 件", dim)
-            for commit in extras.merged.prefix(5) {
-                add("\n  ", dim)
-                summaryLine(commit)
-            }
-            if extras.mergedCount > 5 { add("\n  ほか \(extras.mergedCount - 5) 件", dim) }
+            table.row("Merged") { add("\(extras.mergedCount) コミット", value) }
         }
-        for (kind, commit) in relatedCommits {
-            add("\n\(kind): ", dim)
-            summaryLine(commit)
-        }
-        add("\n\n", dim)
-        renderMessage(trailers: true, notes: true)
+        add("\n", dim)
+        renderMessage(notes: true)
     }
 
+    /// 詳細: 項目ごとの表（作者とコミッターは、上の帯に左右に並べる）。
     private func renderDetailed() {
-        // 見出しの列を揃え、値が折り返したら値の列に揃える。
-        let paragraph = NSMutableParagraphStyle()
-        let labelWidth: CGFloat = 92
-        paragraph.tabStops = [NSTextTab(textAlignment: .left, location: labelWidth)]
-        paragraph.headIndent = labelWidth
-        paragraph.paragraphSpacing = 2
-        let labelAttrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor,
-            .paragraphStyle: paragraph,
-        ]
-        func row(_ label: String, _ value: () -> Void) {
-            let start = text.length
-            add(label + "\t", labelAttrs)
-            value()
-            add("\n", [:])
-            // 値の中の改行の後も、値の列に揃える。
-            text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: start, length: text.length - start))
-        }
-        // 値の中の改行は行の区切り（U+2028）にする。段落が分かれると、値の列に揃わない。
-        func plain(_ s: String) -> () -> Void {
-            { add(s.replacingOccurrences(of: "\n", with: "\u{2028}"), [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor]) }
-        }
-
-        row("Author") {
-            authorLink(info.author, [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor])
-            plain(" <\(info.authorEmail)>")()
-        }
-        row("Author Date", plain("\(date(info.authorTime)) (\(info.authorTz))  \(relative(info.authorTime))"))
-        row("Committer", plain("\(info.committer) <\(info.committerEmail)>"))
-        row("Commit Date", plain("\(date(info.committerTime)) (\(info.committerTz))  \(relative(info.committerTime))"))
-        if !coAuthors.isEmpty { row("Co-authors", plain(coAuthors.joined(separator: ", "))) }
-        if let rewrite = rewriteSummary { row("Rewritten", plain(rewrite)) }
-        row("Commit") { add(info.oid, mono) }
-        if !info.parents.isEmpty { row(info.parents.count > 1 ? "Parents" : "Parent") { commitLinks(info.parents) } }
+        let table = rows()
+        table.row("Commit") { add(info.oid, mono) }
+        if !info.parents.isEmpty { table.row(info.parents.count > 1 ? "Parents" : "Parent") { fullCommitLinks(info.parents) } }
         if let children = extras?.children, !children.isEmpty {
-            row(children.count > 1 ? "Children" : "Child") { commitLinks(children) }
+            table.row(children.count > 1 ? "Children" : "Child") { fullCommitLinks(children) }
         }
-        if let sig = signatureSummary {
-            row("Signature") {
-                var attrs = dim
-                attrs[.foregroundColor] = sig.color
-                attrs[.font] = NSFont.systemFont(ofSize: 11)
-                add("\(sig.mark) \(sig.text)", attrs)
-                if let s = extras?.signature {
-                    var details = [s.signer]
-                    if !s.key.isEmpty { details.append("鍵 \(s.key)") }
-                    if !s.trust.isEmpty { details.append("信用 \(s.trust)") }
-                    add("\u{2028}" + details.filter { !$0.isEmpty }.joined(separator: " · "), dim)
-                }
-            }
-        }
-        for tag in info.mergedTags {
-            let subject = tag.subject.isEmpty ? "" : "\n\(tag.subject)"
-            row("Merged Tag", plain("\(tag.name)（\(tag.tagger)、\(tag.signed ? "署名付き" : "署名なし")）\(subject)"))
-        }
-        if !info.refs.isEmpty { row("Refs") { refLinks(info.refs, refAttrs) } }
+        if let rev = extras?.headRev, !rev.isEmpty { table.row("Rev") { add(rev, mono) } }
+        signatureRow(table)
+        if !info.refs.isEmpty { table.row("Refs") { refLinks(info.refs, refAttrs) } }
         if let extras {
-            if !extras.branches.isEmpty {
-                row("Branches") { refLinks(extras.branches, [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor]) }
-            }
+            if !extras.branches.isEmpty { table.row("Branches") { refLinks(extras.branches, value) } }
             if extras.tagCount > 0 {
                 let shown = extras.tags.prefix(12).joined(separator: ", ")
                 let more = extras.tagCount > 12 ? " ほか \(extras.tagCount - 12) 個" : ""
-                row("Tags", plain("\(shown)\(more)"))
+                table.row("Tags") { add(shown + more, value) }
             }
-            if let previous = extras.previousTag { row("Previous Tag", plain(previous)) }
-            if let position = positionSummary { row("Position", plain(position)) }
+            if let previous = extras.previousTag { table.row("Previous Tag") { add(previous, value) } }
             if extras.originUrl != nil {
-                row("Pushed") {
+                table.row("Pushed") {
                     if isUnpushed {
                         add("未 push（どのリモートブランチにも含まれない）", unpushedAttrs)
                     } else {
-                        refLinks(extras.remoteBranches, [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor])
+                        refLinks(extras.remoteBranches, value)
                     }
                 }
             }
-            if extras.mergedCount > 0 {
-                row("Merged") {
-                    plain("\(extras.mergedCount) コミット")()
-                    for commit in extras.merged.prefix(20) {
-                        add("\u{2028}", dim)
-                        summaryLine(commit)
-                    }
-                    if extras.mergedCount > 20 { add("\u{2028}ほか \(extras.mergedCount - 20) 件", dim) }
-                }
-            }
-            for (kind, commit) in relatedCommits {
-                row("Related") {
-                    add("\(kind)  ", dim)
+        }
+        mergedTagRows(table)
+        if let extras, extras.mergedCount > 0 {
+            table.row("Merged") {
+                add("\(extras.mergedCount) コミット", value)
+                for commit in extras.merged.prefix(20) {
+                    add("\u{2028}", value)
                     summaryLine(commit)
                 }
+                if extras.mergedCount > 20 { add("\u{2028}ほか \(extras.mergedCount - 20) 件", dim) }
             }
-            if let stats = statsSummary { row("Changes", plain(stats)) }
-        } else {
-            row("", plain("…"))
         }
-        for trailer in info.trailers {
-            row(trailer.key, plain(trailer.value))
+        for (kind, commit) in relatedCommits {
+            table.row("Related") {
+                add("\(kind)  ", dim)
+                summaryLine(commit)
+            }
         }
-        if let notes = extras?.notes, !notes.isEmpty { row("Notes", plain(notes)) }
-        if canReword { rewordLinkLine() }
         add("\n", dim)
-        renderMessage(trailers: false, notes: false)
+        renderMessage(notes: true)
+    }
+
+    // MARK: - 表の部品
+
+    /// 表の値の文字。
+    private var value: [NSAttributedString.Key: Any] {
+        [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.labelColor]
+    }
+
+    /// 見出しを右揃えにした 2 列の表。値が折り返したら値の列に揃える。
+    private struct Rows {
+        let renderer: CommitHeaderRenderer
+        let paragraph: NSParagraphStyle
+
+        func row(_ label: String, _ content: () -> Void) {
+            let text = renderer.text
+            let start = text.length
+            text.append(NSAttributedString(string: "\t\(label)\t", attributes: [
+                .font: NSFont.systemFont(ofSize: 11, weight: .medium), .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+            content()
+            text.append(NSAttributedString(string: "\n"))
+            text.addAttribute(.paragraphStyle, value: paragraph, range: NSRange(location: start, length: text.length - start))
+        }
+    }
+
+    private func rows() -> Rows {
+        let labelEnd: CGFloat = 84, valueStart: CGFloat = 94
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.tabStops = [
+            NSTextTab(textAlignment: .right, location: labelEnd),
+            NSTextTab(textAlignment: .left, location: valueStart),
+        ]
+        paragraph.headIndent = valueStart
+        paragraph.paragraphSpacing = 2
+        return Rows(renderer: self, paragraph: paragraph)
+    }
+
+    /// アバターの画像（丸）。読み終えていなければ頭文字の丸。
+    private func avatar(_ email: String, name: String, size: CGFloat) {
+        guard Settings.showAvatars else { return }
+        let attachment = NSTextAttachment()
+        attachment.image = Avatars.shared.circle(for: email, name: name, size: size)
+        // 文字の高さの中ほどに置く。
+        attachment.bounds = NSRect(x: 0, y: size > 20 ? -size + 12 : -4, width: size, height: size)
+        text.append(NSAttributedString(attachment: attachment))
+    }
+
+    /// 40 桁の ID を 1 行ずつ（選んでコピーでき、押すとそのコミットへ移る）。
+    private func fullCommitLinks(_ ids: [String]) {
+        for (i, id) in ids.enumerated() {
+            if i > 0 { add("\u{2028}", mono) }
+            commitLink(id, length: 40)
+        }
+    }
+
+    /// 署名を 1 行に（結果・署名者・鍵・信用度）。
+    private func signatureRow(_ table: Rows) {
+        guard let sig = signatureSummary else { return }
+        table.row("Signature") {
+            var attrs = value
+            attrs[.foregroundColor] = sig.color
+            add("\(sig.mark) \(sig.text)", attrs)
+            if let s = extras?.signature {
+                let details = [s.signer, s.key.isEmpty ? "" : "鍵 \(s.key)", s.trust].filter { !$0.isEmpty }
+                if !details.isEmpty { add(" · " + details.joined(separator: " · "), dim) }
+            }
+        }
+    }
+
+    private func mergedTagRows(_ table: Rows) {
+        for tag in info.mergedTags {
+            table.row("Merged Tag") {
+                add("\(tag.name)", value)
+                add("（\(tag.tagger)、\(tag.signed ? "署名付き" : "署名なし")）", dim)
+                if !tag.subject.isEmpty { add(" — \(tag.subject)", dim) }
+            }
+        }
     }
 }
