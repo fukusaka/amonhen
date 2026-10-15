@@ -167,10 +167,14 @@ mod tests {
 
     #[test]
     fn ignores_reads() {
-        use notify::event::{AccessKind, AccessMode, CreateKind, ModifyKind};
         use notify::EventKind;
-        assert!(is_read_only(&EventKind::Access(AccessKind::Open(AccessMode::Read))));
-        assert!(is_read_only(&EventKind::Access(AccessKind::Close(AccessMode::Write))));
+        use notify::event::{AccessKind, AccessMode, CreateKind, ModifyKind};
+        assert!(is_read_only(&EventKind::Access(AccessKind::Open(
+            AccessMode::Read
+        ))));
+        assert!(is_read_only(&EventKind::Access(AccessKind::Close(
+            AccessMode::Write
+        ))));
         assert!(!is_read_only(&EventKind::Modify(ModifyKind::Any)));
         assert!(!is_read_only(&EventKind::Create(CreateKind::File)));
     }

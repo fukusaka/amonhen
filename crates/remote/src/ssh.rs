@@ -204,14 +204,16 @@ pub fn local_platform() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn control_path_fits_a_unix_socket() {
         // %C は 40 文字の hash、%i は uid に置き換わる。
-        let path = control_path().replace("%C", &"0".repeat(40)).replace("%i", "4294967295");
+        let path = control_path()
+            .replace("%C", &"0".repeat(40))
+            .replace("%i", "4294967295");
         assert!(path.len() + 17 <= 104, "{path}");
     }
-    use std::path::Path;
 
     #[test]
     fn parses_ssh_locations() {
