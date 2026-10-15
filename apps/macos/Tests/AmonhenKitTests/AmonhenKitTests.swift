@@ -190,3 +190,15 @@ private func makeRepo() throws -> URL {
         try Repository(path: "/nonexistent/amonhen")
     }
 }
+
+@Test func buildsSSHLocations() {
+    #expect(RepositoryLocation.ssh(host: "dev", path: "/srv/repo/") == "ssh://dev/srv/repo")
+    #expect(RepositoryLocation.ssh(host: " me@dev:2222 ", path: "~/src/repo") == "ssh://me@dev:2222/~/src/repo")
+    #expect(RepositoryLocation.ssh(host: "dev", path: "src/repo") == "ssh://dev/~/src/repo")
+    #expect(RepositoryLocation.ssh(host: "", path: "/r") == nil)
+    #expect(RepositoryLocation.ssh(host: "dev/x", path: "/r") == nil)
+    #expect(RepositoryLocation.ssh(host: "dev", path: " ") == nil)
+    let location = RepositoryLocation.ssh(host: "me@dev", path: "~/repo")!
+    #expect(RepositoryLocation.host(location) == "me@dev")
+    #expect(RepositoryLocation.path(location) == "/~/repo")
+}

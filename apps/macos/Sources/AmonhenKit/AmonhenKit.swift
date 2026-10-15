@@ -120,6 +120,21 @@ public enum RepositoryLocation {
         return location
     }
 
+    /// SSH の場所を組み立てる。`host` は `[user@]host[:port]`、`path` は向こうの絶対パスか `~/` から始まるパス
+    /// （`/` で始まらなければホームからの相対とみなす）。書き方がおかしければ nil。
+    public static func ssh(host: String, path: String) -> String? {
+        let host = host.trimmingCharacters(in: .whitespaces)
+        var path = path.trimmingCharacters(in: .whitespaces)
+        guard !host.isEmpty, !path.isEmpty, !host.contains(where: { $0 == "/" || $0.isWhitespace }) else { return nil }
+        if path == "~" || path.hasPrefix("~/") {
+            path = "/" + path
+        } else if !path.hasPrefix("/") {
+            path = "/~/" + path
+        }
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        return "ssh://\(host)\(path)"
+    }
+
     /// 接続先（`ssh://` のホスト、`daemon:` は "daemon"）。手元なら nil。
     public static func host(_ location: String) -> String? {
         if location.hasPrefix("daemon:") { return "daemon" }
