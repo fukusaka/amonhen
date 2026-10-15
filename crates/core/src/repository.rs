@@ -218,6 +218,15 @@ impl Repository {
     }
 
     /// ref の一覧を読み直して公開する。前回と同じなら前回のものを返す。
+    /// 最後に読んだ ref の一覧。まだ読んでいなければ読む（変化の検知で `load_refs` が読み直すので、
+    /// コミットの詳細のような頻繁な問い合わせではこちらを使う）。
+    pub fn refs(&self) -> Result<Arc<RefsSnapshot>> {
+        match self.refs.load_full() {
+            Some(refs) => Ok(refs),
+            None => self.load_refs(),
+        }
+    }
+
     pub fn load_refs(&self) -> Result<Arc<RefsSnapshot>> {
         let refs = self.backend.refs()?;
         if let Some(current) = self.refs.load_full()

@@ -257,8 +257,9 @@ impl Repository {
         }
         let (author, email, author_time) = author.unwrap_or_default();
         let (committer, _, committer_time) = committer.unwrap_or_default();
+        // ref はディスクから読み直さず、最後に読んだものを使う（linux では読み直すと 15〜30 ms かかる）。
         let refs: Vec<String> = self
-            .load_refs()?
+            .refs()?
             .refs
             .entries
             .iter()
