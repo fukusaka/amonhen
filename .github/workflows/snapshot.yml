@@ -20,7 +20,7 @@ jobs:
       AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
       AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
