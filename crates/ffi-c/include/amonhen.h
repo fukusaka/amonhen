@@ -221,6 +221,10 @@ typedef struct {
   const AmonhenStrRef *author_names;
   const int64_t *author_times;
   /**
+   * 行ごとの署名の種類（0 はなし、1 GPG、2 SSH、3 X.509）。`row_count` 個。検証の結果ではない。
+   */
+  const uint8_t *signatures;
+  /**
    * 文字列置き場の先頭アドレス。`StrRef::buf` で引き、`off` バイト進めた所から読む。
    */
   const uint8_t *const *bases;

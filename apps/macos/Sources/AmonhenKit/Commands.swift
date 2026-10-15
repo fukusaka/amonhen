@@ -142,6 +142,13 @@ extension Repository {
         try info(["op": "commitExtras", "oid": oid])
     }
 
+    /// 署名の検証の結果（`git log --format=%G?` の 1 文字）を `oids` と同じ順に返す。一度検証したものはコアが
+    /// 覚えているので速い。覚えていないものは 1 件 15 ms ほどかかるので、裏のスレッドで少しずつ呼ぶ。
+    public func verifySignatures(_ oids: [String]) throws -> [String] {
+        struct Statuses: Decodable { let statuses: [String] }
+        return try info(["op": "verifySignatures", "oids": oids], as: Statuses.self).statuses
+    }
+
     /// 名前や短い ID が指すコミット（40 桁）。裏のスレッドで呼ぶ。
     public func resolveCommit(_ rev: String) throws -> String {
         guard let text = try run(["op": "resolveCommit", "rev": rev]).text else {

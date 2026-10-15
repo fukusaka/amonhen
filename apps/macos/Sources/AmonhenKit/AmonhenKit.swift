@@ -288,6 +288,12 @@ public final class HistoryChunk: @unchecked Sendable {
     public var count: Int { Int(view.row_count) }
     public var rows: Range<Int> { startRow..<startRow + count }
 
+    /// 署名の種類（0 はなし、1 GPG、2 SSH、3 X.509）。検証の結果は `Repository.verifySignatures`。
+    public func signature(row: Int) -> UInt8 {
+        guard let signatures = view.signatures else { return 0 }
+        return signatures[row - startRow]
+    }
+
     public func authorTime(row: Int) -> Date {
         Date(timeIntervalSince1970: TimeInterval(view.author_times[row - startRow]))
     }

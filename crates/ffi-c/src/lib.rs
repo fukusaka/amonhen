@@ -105,6 +105,8 @@ pub struct AmonhenChunkView {
     pub subjects: *const StrRef,
     pub author_names: *const StrRef,
     pub author_times: *const i64,
+    /// 行ごとの署名の種類（0 はなし、1 GPG、2 SSH、3 X.509）。`row_count` 個。検証の結果ではない。
+    pub signatures: *const u8,
     /// 文字列置き場の先頭アドレス。`StrRef::buf` で引き、`off` バイト進めた所から読む。
     pub bases: *const *const u8,
     pub base_count: u32,
@@ -559,6 +561,7 @@ pub unsafe extern "C" fn amonhen_chunk_view(chunk: *const AmonhenChunk) -> Amonh
         subjects: non_null(&c.subjects),
         author_names: non_null(&c.author_names),
         author_times: non_null(&c.author_times),
+        signatures: non_null(&c.signatures),
         bases: c.bases().as_ptr(),
         base_count: c.bases().len() as u32,
     }
