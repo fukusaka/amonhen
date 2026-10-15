@@ -36,6 +36,8 @@ fn bench(c: &mut Criterion) {
         graph: old_g.clone(),
         layout: old.clone(),
     };
+    // 読み込みだけを選んで測るときのため、先に 1 回書いておく。
+    cache::write(&path, &history).unwrap();
     c.bench_function("cache write 1M", |b| {
         b.iter(|| cache::write(&path, &history).unwrap())
     });
