@@ -671,6 +671,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     /// 表示しているコミットの情報と、裏で読んだ詳細（見せ方を変えたときに描き直す）。
     private var info: CommitInfo?
     private var extras: CommitExtras?
+    /// 署名を検証する側を変えた回数。変える前に始めた詳細の読み込みの結果は使わない。
+    private var signatureGeneration = 0
     private let styleControl = NSSegmentedControl(
         labels: CommitHeaderStyle.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
 
@@ -795,6 +797,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             return (changes, first, t, CACurrentMediaTime())
         }
         // 署名の検証や含むタグなど時間のかかる分は、ヘッダーを出した後に足す（stash では読まない）。
+        let signatureGeneration = self.signatureGeneration
         let extrasTask = stash ? nil : Task.detached(priority: .utility) { try? repository.commitExtras(oid: hex) }
         Task {
             guard let info = try? await infoTask.value, headerRequest == self.headerRequest else { return }
@@ -804,6 +807,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             FrameProfile.measure("select: header layout") { renderHeader() }
             FrameProfile.add("select: → header shown", CACurrentMediaTime() - selectedAt)
             guard let extras = await extrasTask?.value, headerRequest == self.headerRequest else { return }
+            // 読んでいる間に検証する側が変わっていたら、その結果は使わずに読み直す。
+            guard signatureGeneration == self.signatureGeneration else {
+                loadExtras(oid: hex)
+                return
+            }
             self.extras = extras
             renderHeader()
         }
@@ -839,17 +847,25 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         header.textStorage?.setAttributedString(text)
     }
 
-    /// 検証する側が変わったので、表示中のコミットの署名を検証し直す（前の結果は使わない）。
+    /// 検証する側が変わったので、表示中のコミットの署名を検証し直す（前の結果は使わない）。コミットの情報を
+    /// まだ読んでいる途中なら、読み終えたときに番号の違いに気づいて読み直す。
     func reloadSignature() {
-        guard let info, info.signed != nil else { return }
-        headerRequest += 1
-        let request = headerRequest
-        extras = nil
-        renderHeader()
-        let repository = self.repository, hex = info.oid
+        signatureGeneration += 1
+        guard let info else { return }
+        if info.signed != nil {
+            extras = nil
+            renderHeader()
+        }
+        loadExtras(oid: info.oid)
+    }
+
+    /// 詳細の時間のかかる分を読み直す。読んでいる間にコミットか検証する側が変わったら、その結果は捨てる。
+    private func loadExtras(oid hex: String) {
+        let request = headerRequest, generation = signatureGeneration
+        let repository = self.repository
         Task {
-            guard let extras = await Task.detached(priority: .utility, operation: { try? repository.commitExtras(oid: hex) }).value,
-                  request == headerRequest else { return }
+            let extras = await Task.detached(priority: .utility) { try? repository.commitExtras(oid: hex) }.value
+            guard let extras, request == headerRequest, generation == signatureGeneration else { return }
             self.extras = extras
             renderHeader()
         }
