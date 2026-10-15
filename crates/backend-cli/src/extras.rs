@@ -7,10 +7,13 @@ use crate::Git;
 impl Git {
     pub fn commit_extras(&self, commit: &Oid) -> Result<CommitExtras> {
         let hex = commit.to_string();
+        let gpg = self.gpg_without_key_fetch();
         // log.showSignature が有効だと、検証の出力が書式の前に混ざるので切る。
         let log = self.read(&[
             "-c",
             "log.showSignature=false",
+            "-c",
+            &gpg,
             "log",
             "-1",
             "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00%N",
@@ -45,10 +48,13 @@ impl Git {
             return Ok(Vec::new());
         }
         let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
+        let gpg = self.gpg_without_key_fetch();
         let out = self.read_with_input(
             &[
                 "-c",
                 "log.showSignature=false",
+                "-c",
+                &gpg,
                 "log",
                 "--no-walk=unsorted",
                 "--format=%H%x00%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP",
@@ -133,14 +139,30 @@ impl Git {
             .collect()
     }
 
-    /// `primaries`（主鍵の指紋）の鍵のユーザー ID のメールアドレスと有効性。gpg を 1 回だけ起動する。
-    fn key_uids(&self, primaries: &[&str]) -> std::collections::HashMap<String, Vec<SignerEmail>> {
-        let program = self
-            .read(&["config", "--get", "gpg.program"])
+    /// 設定されている gpg（`gpg.program`、なければ `gpg`）。
+    fn gpg_program(&self) -> String {
+        self.read(&["config", "--get", "gpg.program"])
             .ok()
             .map(|p| String::from_utf8_lossy(&p).trim().to_owned())
             .filter(|p| !p.is_empty())
-            .unwrap_or_else(|| "gpg".to_owned());
+            .unwrap_or_else(|| "gpg".to_owned())
+    }
+
+    /// 検証のときに git に渡す `gpg.program=…`。gpg の `auto-key-retrieve` が有効だと、知らない鍵の署名を
+    /// 検証するたびに鍵サーバーや WKD から鍵を取って鍵束に加えてしまう（裏で何百も検証するので困る）。
+    /// git は gpg に引数を足す設定を持たないので、`--no-auto-key-retrieve` を付けて gpg を呼ぶ小さな
+    /// スクリプトを置き、それを指す。作れなければ設定どおりの gpg を使う。
+    fn gpg_without_key_fetch(&self) -> String {
+        let program = self.gpg_program();
+        match no_fetch_wrapper(&program) {
+            Some(path) => format!("gpg.program={}", path.display()),
+            None => format!("gpg.program={program}"),
+        }
+    }
+
+    /// `primaries`（主鍵の指紋）の鍵のユーザー ID のメールアドレスと有効性。gpg を 1 回だけ起動する。
+    fn key_uids(&self, primaries: &[&str]) -> std::collections::HashMap<String, Vec<SignerEmail>> {
+        let program = self.gpg_program();
         let out = std::process::Command::new(&program)
             .args([
                 "--batch",
@@ -161,9 +183,12 @@ impl Git {
 
     /// 1 つのコミットの署名の検証の詳細（署名者・鍵・信用度）。
     pub fn signature_details(&self, commit: &Oid) -> Result<Option<SignatureCheck>> {
+        let gpg = self.gpg_without_key_fetch();
         let out = self.read(&[
             "-c",
             "log.showSignature=false",
+            "-c",
+            &gpg,
             "log",
             "-1",
             "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00",
@@ -172,6 +197,34 @@ impl Git {
         let (signature, primary, _) = parse_signature_and_notes(&String::from_utf8_lossy(&out));
         Ok(signature.map(|s| self.with_emails(vec![(s, primary)]).remove(0)))
     }
+}
+
+/// `program` を `--no-auto-key-retrieve` 付きで呼ぶスクリプト（gpg ごとに 1 つ、一時フォルダに置く）。
+#[cfg(unix)]
+fn no_fetch_wrapper(program: &str) -> Option<std::path::PathBuf> {
+    use std::hash::{Hash, Hasher};
+    use std::os::unix::fs::PermissionsExt;
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    program.hash(&mut hasher);
+    let name = format!("amonhen-gpg-{:016x}", hasher.finish());
+    let path = std::env::temp_dir().join(name);
+    let script = format!(
+        "#!/bin/sh\n# Amon Hen: 署名を検証するときに、gpg に鍵を取りに行かせない。\nexec '{}' --no-auto-key-retrieve \"$@\"\n",
+        program.replace('\'', "'\\''")
+    );
+    if std::fs::read_to_string(&path).ok().as_deref() != Some(script.as_str()) {
+        // 別の名前で書いてから置き換える（同時に検証していても、書きかけを実行しない）。
+        let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+        std::fs::write(&tmp, &script).ok()?;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755)).ok()?;
+        std::fs::rename(&tmp, &path).ok()?;
+    }
+    Some(path)
+}
+
+#[cfg(not(unix))]
+fn no_fetch_wrapper(_program: &str) -> Option<std::path::PathBuf> {
+    None
 }
 
 /// `%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00%N` を読む（署名と主鍵の指紋と notes）。署名がなければ（N）`None`。
@@ -286,6 +339,33 @@ mod tests {
         assert_eq!(
             parse_signature_and_notes("N\0\0\0\0\0\0\n"),
             (None, String::new(), String::new())
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn calls_gpg_without_fetching_keys() {
+        let tmp = tempfile::tempdir().unwrap();
+        // 渡された引数を書き出すだけの偽の gpg。
+        let fake = tmp.path().join("fake gpg");
+        let log = tmp.path().join("args");
+        std::fs::write(
+            &fake,
+            format!("#!/bin/sh\necho \"$@\" > '{}'\n", log.display()),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let wrapper = no_fetch_wrapper(fake.to_str().unwrap()).unwrap();
+        let ok = std::process::Command::new(&wrapper)
+            .args(["--status-fd=1", "--verify", "sig", "-"])
+            .status()
+            .unwrap()
+            .success();
+        assert!(ok);
+        assert_eq!(
+            std::fs::read_to_string(&log).unwrap().trim(),
+            "--no-auto-key-retrieve --status-fd=1 --verify sig -"
         );
     }
 
