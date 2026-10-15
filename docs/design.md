@@ -359,6 +359,18 @@ daemon 越し（`cargo run --release -p amonhen-remote --example daemon_cost -- 
 - 起点と HEAD が前回と同じなら、走査もレイアウトもしない（コミットは不変なので History も同じ）。
 - 読み込み時間の大半は検査と索引の組み立て。mmap 自体はほぼ 0。必要なら索引もキャッシュに入れる。
 
+Working Copy の status（`crates/core/examples/status.rs`、2 回目以降）:
+
+| リポジトリ | ふだんの git status | untracked cache | ＋ fsmonitor |
+| --- | --- | --- | --- |
+| linux（96,080 ファイル、手元の macOS） | 約 500 ms | 125 ms | 45 ms |
+| minix（73,545 ファイル、SSH 先の Linux、daemon 越し） | 115 ms | 32 ms | 使えない |
+
+- 時間の大半は追跡していないファイルを探すこと（linux で 373 ms）。untracked cache は `status.showUntrackedFiles` が `--untracked-files=all` と揃っていないと使われないので、両方を渡す。
+- ふだんの status は index のロックを取らない（利用者の git と奪い合わない）ので、キャッシュは書き残されない。初回と、その後は 60 秒に 1 回だけ書き残す。
+- fsmonitor は macOS と Windows だけで、リポジトリごとに `git fsmonitor--daemon` が常駐する。アプリの設定で切れる（既定は使う）。
+- 読み直しは重ねて走らせない。途中で変化の知らせが来たら、終わってから 1 回だけ読み直す。
+
 linux（148 万コミット）では、1 行を横切る線が中央値で 365 本、最大のレーン番号は中央値で 452（`crates/core/examples/layout.rs`）。トポロジー順（`git log --topo-order` と同じ並べ方）でも 303 本・637 で、並べ方では解決しない。そこで、見えている範囲に点のあるレーンだけを広く取り、線だけのレーンは細く薄い帯に詰め、何もないレーンは幅 0 にする（魚眼）。範囲が変わったときのレーンの動きは約 0.15 秒のアニメーションでつなぐ。
 
 実際のリポジトリ（`crates/core/examples/layout.rs`）では、coreutils（30,176 コミット）で 1.2 ms、android/development（34,261 コミット、起点 318 個）で 17 ms。後者はリリースブランチが多くレーンが 673 本まで広がるので、未使用レーンを詰める・魚眼で広げるなどの表現の工夫（実装順序の 13）が要る。
