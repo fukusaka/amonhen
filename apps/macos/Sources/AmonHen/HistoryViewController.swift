@@ -91,7 +91,9 @@ final class FocusTableView: NSTableView {
     @objc private func keyChanged() { onFocusChange?() }
 }
 
-final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
+final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate,
+    NSSearchFieldDelegate
+{
     private let repository: Repository
     private var history: History?
     private let renderer: GraphRenderer
@@ -145,6 +147,17 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private(set) var scope: Scope = .all
     private let scopePopup = NSPopUpButton()
+
+    // 検索
+    private let searchField = NSSearchField()
+    private let searchCount = NSTextField(labelWithString: "")
+    private let searchSpinner = NSProgressIndicator()
+    /// 結果を出した問い合わせと、合ったコミットの行（昇順）。
+    private var searchQuery: String?
+    private var searchRows: [Int] = []
+    private var searchRowSet: Set<Int> = []
+    private var searchIndex: Int?
+    private var searchTask: Task<Void, Never>?
     /// HEAD のコミット（Current Branch で使う）。
     var head: Data?
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
@@ -210,6 +223,21 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         scopePopup.action = #selector(scopeChanged)
         scopePopup.controlSize = .small
         updateScopePopup()
+        searchField.placeholderString = "コミットを検索（件名・作者・ID）"
+        searchField.controlSize = .small
+        searchField.sendsWholeSearchString = true
+        searchField.delegate = self
+        searchField.target = self
+        searchField.action = #selector(searchSubmitted)
+        searchCount.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        searchCount.textColor = .secondaryLabelColor
+        searchCount.alignment = .right
+        searchSpinner.style = .spinning
+        searchSpinner.controlSize = .small
+        searchSpinner.isDisplayedWhenStopped = false
+        container.addSubview(searchField)
+        container.addSubview(searchCount)
+        container.addSubview(searchSpinner)
         container.addSubview(scrollView)
         container.addSubview(graphView)
         container.addSubview(textView)
@@ -221,7 +249,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         super.viewDidLayout()
         // 上に範囲の切り替え、その下に表。
         let barHeight: CGFloat = 26
-        scopePopup.frame = NSRect(x: 6, y: view.bounds.height - barHeight + 2, width: 240, height: barHeight - 4)
+        let barY = view.bounds.height - barHeight + 2
+        scopePopup.frame = NSRect(x: 6, y: barY, width: 180, height: barHeight - 4)
+        let countWidth: CGFloat = 96
+        searchField.frame = NSRect(
+            x: 192, y: barY, width: max(80, view.bounds.width - 192 - countWidth - 12), height: barHeight - 4)
+        searchSpinner.frame = NSRect(x: searchField.frame.maxX + 6, y: barY + 3, width: 16, height: 16)
+        searchCount.frame = NSRect(x: view.bounds.width - countWidth - 6, y: barY + 2, width: countWidth, height: 16)
         scrollView.frame = NSRect(x: 0, y: 0, width: view.bounds.width, height: view.bounds.height - barHeight)
         // 件名の列を表の幅いっぱいにする。
         tableView.sizeLastColumnToFit()
@@ -328,6 +362,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         chunks.removeAll()
         loadingChunks.removeAll()
         rowText.removeAll()
+        // 行が変わるので、検索の結果は捨てる（問い合わせは残し、Enter で探し直せる）。
+        clearSearchResults()
         tableView.reloadData()
         if first { tableView.scrollRowToVisible(0) }
         // 何も選んでいなければ先頭（いちばん新しいコミット）を選び、詳細が空のままにならないようにする。
@@ -403,6 +439,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             guard let line = shapedRow(row, scale: scale) else { continue }
             let rowTop = tableView.rect(ofRow: row).minY - scrollY
             let isSelected = selection.contains(row)
+            if !isSelected, searchRowSet.contains(row) {
+                text.addRoundedRect(
+                    CGRect(x: column.minX - originX - 3, y: rowTop + 1, width: column.width + 6, height: tableView.rowHeight - 2),
+                    radius: 4, color: NSColor.systemYellow.withAlphaComponent(0.14).rgba)
+            }
             var x = column.minX - originX
             let end = column.maxX - originX
             if let id = history.commitID(row: row), let labels = refLabels[id] {
@@ -525,6 +566,99 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 self?.onLatency?(presented - eventTime)
             }
         }
+    }
+
+    // MARK: - 検索
+
+    /// ⌘F（Edit の Find…）。表やこの画面にフォーカスがあるとき、responder chain でここに届く。
+    @objc func showFindBar(_ sender: Any?) {
+        view.window?.makeFirstResponder(searchField)
+        searchField.currentEditor()?.selectAll(nil)
+    }
+
+    /// 検索欄に入れて探す（`--search` の確認用）。
+    func search(_ query: String) {
+        searchField.stringValue = query
+        searchSubmitted()
+    }
+
+    @objc func findNext(_ sender: Any?) { moveSearch(by: 1) }
+    @objc func findPrevious(_ sender: Any?) { moveSearch(by: -1) }
+
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        guard control === searchField else { return false }
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)) where NSEvent.modifierFlags.contains(.shift):
+            moveSearch(by: -1)
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            searchField.stringValue = ""
+            searchSubmitted()
+            view.window?.makeFirstResponder(tableView)
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Enter で探す。同じ問い合わせなら次の一致へ進む。
+    @objc private func searchSubmitted() {
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty, let history else {
+            searchTask?.cancel()
+            searchQuery = nil
+            clearSearchResults()
+            return
+        }
+        if query == searchQuery {
+            moveSearch(by: 1)
+            return
+        }
+        searchTask?.cancel()
+        searchSpinner.startAnimation(nil)
+        searchCount.stringValue = ""
+        searchTask = Task {
+            let rows = await Task.detached(priority: .userInitiated) { (try? history.search(query)) ?? [] }.value
+            guard !Task.isCancelled, self.history === history else { return }
+            self.searchSpinner.stopAnimation(nil)
+            self.searchQuery = query
+            self.searchRows = rows
+            self.searchRowSet = Set(rows)
+            // 今選んでいる行から下で、いちばん近い一致へ。
+            let from = max(0, self.tableView.selectedRow)
+            self.searchIndex = rows.isEmpty ? nil : (rows.firstIndex { $0 >= from } ?? 0)
+            self.showSearchResult()
+        }
+    }
+
+    private func moveSearch(by step: Int) {
+        guard searchQuery != nil else {
+            showFindBar(nil)
+            return
+        }
+        guard !searchRows.isEmpty else { return NSSound.beep() }
+        searchIndex = ((searchIndex ?? -step) + step + searchRows.count) % searchRows.count
+        showSearchResult()
+    }
+
+    private func showSearchResult() {
+        if let i = searchIndex {
+            searchCount.stringValue = "\(i + 1) / \(searchRows.count)"
+            select(row: searchRows[i])
+        } else {
+            searchCount.stringValue = searchQuery == nil ? "" : "見つかりません"
+        }
+        redrawText()
+    }
+
+    private func clearSearchResults() {
+        searchSpinner.stopAnimation(nil)
+        searchRows = []
+        searchRowSet = []
+        searchIndex = nil
+        searchQuery = nil
+        searchCount.stringValue = ""
+        redrawText()
     }
 
     // MARK: - 計測

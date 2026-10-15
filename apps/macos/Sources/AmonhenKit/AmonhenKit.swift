@@ -127,6 +127,15 @@ public final class History: @unchecked Sendable {
         }
     }
 
+    /// `query` に合うコミットの行（昇順）。件名・作者名・コミット ID の先頭を探す。すべてのコミットを読むので
+    /// 裏のスレッドで呼ぶ。
+    public func search(_ query: String) throws -> [Int] {
+        guard let rows = amonhen_history_search(repository.raw, raw, query) else { throw AmonhenError.last() }
+        defer { amonhen_rows_free(rows) }
+        let view = amonhen_rows_view(rows)
+        return UnsafeBufferPointer(start: view.rows, count: Int(view.count)).map(Int.init)
+    }
+
     /// `rows` の件名・作者・日時。
     public func chunk(rows: Range<Int>) throws -> HistoryChunk {
         let start = UInt32(clamping: rows.lowerBound)
