@@ -272,7 +272,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::SkipSequence(s) => encode(&ops.skip_sequence(s)?),
         Op::TakeSide { path, ours } => encode(&ops.take_side(&path, ours)?),
         Op::Fetch => encode(&ops.fetch()?),
-        Op::Pull => encode(&ops.pull()?),
+        Op::Pull(mode) => encode(&ops.pull(mode)?),
         Op::BranchTracking => encode(&ops.branch_tracking()?),
         Op::Push {
             remote,

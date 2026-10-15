@@ -10,6 +10,19 @@ pub struct HeadState {
     pub oid: Option<Oid>,
 }
 
+/// pull での上流の取り込み方。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub enum PullMode {
+    /// merge する（fast-forward で済めばそうする）。
+    #[default]
+    Merge,
+    Rebase,
+    /// fast-forward で済むときだけ取り込む。
+    FastForwardOnly,
+}
+
 /// 途中で止まりうる操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -124,7 +137,7 @@ pub trait Operations: Send + Sync {
 
     fn fetch(&self) -> Result<()>;
     /// 今のブランチに上流を取り込む（`git pull`）。
-    fn pull(&self) -> Result<Outcome>;
+    fn pull(&self, mode: PullMode) -> Result<Outcome>;
     /// ローカルブランチごとの、上流との差（名前, ahead, behind, gone）。
     fn branch_tracking(&self) -> Result<Vec<(String, u32, u32, bool)>>;
     fn push(

@@ -1,4 +1,4 @@
-use amonhen_model::{HeadState, Oid, Operations, Outcome, ResetMode, Result, Sequence};
+use amonhen_model::{HeadState, Oid, Operations, Outcome, PullMode, ResetMode, Result, Sequence};
 
 use crate::Git;
 
@@ -373,8 +373,13 @@ impl Operations for Git {
         self.write(&["fetch", "--all", "--prune"]).map(drop)
     }
 
-    fn pull(&self) -> Result<Outcome> {
-        self.stoppable(&["pull", "--no-edit", "--no-rebase"], &[])
+    fn pull(&self, mode: PullMode) -> Result<Outcome> {
+        let how = match mode {
+            PullMode::Merge => "--no-rebase",
+            PullMode::Rebase => "--rebase",
+            PullMode::FastForwardOnly => "--ff-only",
+        };
+        self.stoppable(&["pull", "--no-edit", how], &[])
     }
 
     fn branch_tracking(&self) -> Result<Vec<(String, u32, u32, bool)>> {

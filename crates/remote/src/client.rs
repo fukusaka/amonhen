@@ -12,7 +12,8 @@ use std::time::Duration;
 
 use amonhen_model::{
     CommitGraph, CommitText, ConnectionState, FileChange, GitBackend, HeadState, Oid, Operations,
-    Outcome, RawCommit, Refs, RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, Status,
+    Outcome, PullMode, RawCommit, Refs, RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence,
+    Status,
 };
 use serde::de::DeserializeOwned;
 
@@ -676,8 +677,8 @@ impl Operations for RemoteOperations {
         self.op(Op::Fetch)
     }
 
-    fn pull(&self) -> Result<Outcome> {
-        self.op(Op::Pull)
+    fn pull(&self, mode: PullMode) -> Result<Outcome> {
+        self.op(Op::Pull(mode))
     }
 
     fn branch_tracking(&self) -> Result<Vec<(String, u32, u32, bool)>> {

@@ -7,7 +7,7 @@ publish.workspace = true
 
 [dependencies]
 amonhen-layout.workspace = true
-amonhen-model.workspace = true
+amonhen-model = { workspace = true, features = ["serde"] }
 amonhen-projection.workspace = true
 amonhen-syntax = { workspace = true, optional = true }
 arc-swap = "1.9.2"

@@ -1,6 +1,6 @@
 //! FE から受け取る操作。頻度の低い操作はまとめてここを通し、Undo の記録もここで行う。
 
-use amonhen_model::{Oid, Outcome, Result, Root};
+use amonhen_model::{Oid, Outcome, PullMode, Result, Root};
 use serde::{Deserialize, Serialize};
 
 use crate::Repository;
@@ -68,7 +68,10 @@ pub enum Command {
     Skip,
     Fetch,
     /// 今のブランチに上流を取り込む（Undo できる）。
-    Pull,
+    Pull {
+        #[serde(default)]
+        mode: PullMode,
+    },
     Push {
         remote: String,
         branch: String,
@@ -767,7 +770,9 @@ impl Repository {
                 ops.fetch()?;
                 ok()
             }
-            Command::Pull => done(undo.record(ops, "Pull", &[], false, || ops.pull(), not_done)?),
+            Command::Pull { mode } => {
+                done(undo.record(ops, "Pull", &[], false, || ops.pull(mode), not_done)?)
+            }
             Command::Push {
                 remote,
                 branch,
@@ -1578,6 +1583,38 @@ mod tests {
         assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "edit");
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["z", "x and y", "first"]);
+    }
+
+    #[test]
+    fn pulls_by_merge_rebase_or_fast_forward_only() {
+        let (upstream, _) = setup();
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("clone");
+        git(tmp.path(), &["clone", "-q", upstream.path().to_str().unwrap(), "clone"]);
+        for (key, value) in [("user.name", "a"), ("user.email", "a@example.com")] {
+            git(&dir, &["config", key, value]);
+        }
+        // 上流と手元の両方で進め、分かれさせる。
+        std::fs::write(upstream.path().join("b.txt"), "b\n").unwrap();
+        git(upstream.path(), &["add", "."]);
+        git(upstream.path(), &["commit", "-q", "-m", "upstream"]);
+        std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "local"]);
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+
+        // 分かれていると fast-forward だけでは取り込めない。
+        let r = run(&repo, r#"{"op":"pull","mode":"fastForwardOnly"}"#);
+        assert_eq!(r["ok"], false, "{r}");
+        let r = run(&repo, r#"{"op":"pull","mode":"rebase"}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        // rebase なので merge コミットはなく、手元のコミットが上流の上に載る。
+        assert_eq!(git(&dir, &["log", "--format=%s"]), "local\nupstream\nfirst");
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        // mode を省くと merge。
+        let r = run(&repo, r#"{"op":"pull"}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(git(&dir, &["rev-list", "--count", "--merges", "HEAD"]), "1");
     }
 
     #[test]

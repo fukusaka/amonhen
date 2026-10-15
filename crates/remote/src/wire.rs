@@ -5,11 +5,13 @@ use std::sync::Arc;
 
 use amonhen_layout::{Pod, Slab};
 use amonhen_model::search::TextTerm;
-use amonhen_model::{CommitGraph, CommitText, HeadState, Oid, ResetMode, Result, Root, Sequence};
+use amonhen_model::{
+    CommitGraph, CommitText, HeadState, Oid, PullMode, ResetMode, Result, Root, Sequence,
+};
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 5;
+pub const PROTOCOL_VERSION: u32 = 6;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -168,7 +170,7 @@ pub enum Op {
         ours: bool,
     },
     Fetch,
-    Pull,
+    Pull(PullMode),
     BranchTracking,
     Push {
         remote: String,

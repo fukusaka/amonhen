@@ -19,7 +19,7 @@ pub use extras::{CommitExtras, FileStat, SignatureCheck, SignatureVerifier, Sign
 pub use files::{LocalFiles, RepoFiles, Root};
 pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use oid::{Oid, OidMap, OidSet};
-pub use ops::{HeadState, Operations, Outcome, ResetMode, Sequence};
+pub use ops::{HeadState, Operations, Outcome, PullMode, ResetMode, Sequence};
 pub use refs::{RefEntry, RefKind, Refs, RepoPaths};
 pub use status::{Status, StatusEntry, StatusKind};
 pub use text::CommitText;
