@@ -199,7 +199,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             title: "commit-graph を自動で書き出す", action: #selector(toggleWriteCommitGraph(_:)), keyEquivalent: "")
         commitGraph.target = self
         commitGraph.state = Settings.writeCommitGraph ? .on : .off
-        commitGraph.toolTip = "commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable を実行する（.git に書き込む）"
+        commitGraph.toolTip = "commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable --changed-paths を実行する（.git に書き込む。履歴の読み込みと path: での検索が速くなる）"
         appMenu.addItem(commitGraph)
         appMenu.addItem(.separator())
         appMenu.addItem(NSMenuItem(title: "Amon Hen を終了", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))

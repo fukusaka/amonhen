@@ -65,6 +65,11 @@ public struct CommitInfo: Decodable, Sendable {
 }
 
 extension Repository {
+    /// 走っている History の検索をやめる。
+    public func cancelSearch() {
+        amonhen_search_cancel(raw)
+    }
+
     /// 命令を実行し、結果の `info` を `T` として読む。裏のスレッドで呼ぶ。
     public func info<T: Decodable>(_ command: [String: Any], as type: T.Type = T.self) throws -> T {
         let json = try Repository.json(command)

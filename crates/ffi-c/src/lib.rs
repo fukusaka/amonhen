@@ -359,9 +359,10 @@ pub struct AmonhenRowsView {
     pub count: u32,
 }
 
-/// `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。件名・作者名を大文字・小文字を
-/// 区別せずに探し、16 進数 4 文字以上ならコミット ID の先頭も見る。すべてのコミットを読むので裏のスレッドで呼ぶ
-/// （linux の 148 万コミットで約 1.2 秒）。
+/// `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。構文は `amonhen-core` の
+/// `query`（`author:` `subject:` `commit:` `path:` `contents:`、AND・OR・括弧）。すべてのコミットを読むので
+/// 裏のスレッドで呼ぶ（linux の 148 万コミットで約 1.2 秒）。新しい検索を始めるか `amonhen_search_cancel` を
+/// 呼ぶと、走っている検索は NULL を返す。
 ///
 /// # Safety
 /// `repo` と `history` は有効、`query` は NUL 終端の UTF-8 であること。
@@ -381,6 +382,15 @@ pub unsafe extern "C" fn amonhen_history_search(
             std::ptr::null_mut()
         }
     }
+}
+
+/// 走っている検索をやめる。
+///
+/// # Safety
+/// `repo` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_search_cancel(repo_ptr: *const AmonhenRepo) {
+    repo(repo_ptr).cancel_search();
 }
 
 /// # Safety

@@ -127,8 +127,8 @@ public final class History: @unchecked Sendable {
         }
     }
 
-    /// `query` に合うコミットの行（昇順）。件名・作者名・コミット ID の先頭を探す。すべてのコミットを読むので
-    /// 裏のスレッドで呼ぶ。
+    /// `query` に合うコミットの行（昇順）。構文は `author:` `subject:` `commit:` `path:` `contents:` と
+    /// AND（空白）・OR・括弧。すべてのコミットを読むので裏のスレッドで呼ぶ。取り消されたら投げる。
     public func search(_ query: String) throws -> [Int] {
         guard let rows = amonhen_history_search(repository.raw, raw, query) else { throw AmonhenError.last() }
         defer { amonhen_rows_free(rows) }

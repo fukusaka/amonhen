@@ -224,7 +224,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         scopePopup.action = #selector(scopeChanged)
         scopePopup.controlSize = .small
         updateScopePopup()
-        searchField.placeholderString = "コミットを検索（件名・作者・ID）"
+        searchField.placeholderString = "検索（author: path: contents: も使える）"
+        searchField.toolTip = """
+        語は件名・作者・ID から探す。空白で区切ると AND、or で OR、括弧でまとめる。
+        author:名前  subject:件名  commit:ID  path:パス  contents:"差分の文字列"
+        例: path:fs/ (author:linus or author:greg)
+        """
         searchField.controlSize = .small
         searchField.sendsWholeSearchString = true
         searchField.delegate = self
@@ -644,6 +649,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
         guard !query.isEmpty, let history else {
             searchTask?.cancel()
+            repository.cancelSearch()
             searchQuery = nil
             clearSearchResults()
             return
@@ -656,9 +662,19 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         searchSpinner.startAnimation(nil)
         searchCount.stringValue = ""
         searchTask = Task {
-            let rows = await Task.detached(priority: .userInitiated) { (try? history.search(query)) ?? [] }.value
+            let result = await Task.detached(priority: .userInitiated) { Result { try history.search(query) } }.value
             guard !Task.isCancelled, self.history === history else { return }
             self.searchSpinner.stopAnimation(nil)
+            let rows: [Int]
+            switch result {
+            case let .success(found):
+                rows = found
+            case let .failure(error):
+                // 構文の誤りなどは件数の欄に出す（取り消しは新しい検索が始まっているので何もしない）。
+                self.searchCount.stringValue = "\(error)"
+                self.searchCount.toolTip = "\(error)"
+                return
+            }
             self.searchQuery = query
             self.searchRows = rows
             self.searchRowSet = Set(rows)
