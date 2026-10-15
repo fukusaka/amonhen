@@ -109,7 +109,7 @@ public class FileDiff: @unchecked Sendable {
     }
 }
 
-/// 差分の構文の色付け（行の順、位置は UTF-16 の符号単位）。
+/// 構文の色付け（差分なら行の順、位置は UTF-16 の符号単位）。
 public final class SyntaxSpans: @unchecked Sendable {
     let raw: OpaquePointer
     let view: AmonhenSyntaxView
@@ -121,6 +121,15 @@ public final class SyntaxSpans: @unchecked Sendable {
 
     deinit {
         amonhen_syntax_free(raw)
+    }
+
+    /// テキスト全体の構文の色付け（位置はテキストの先頭からの UTF-16 の符号単位）。言語は `path` の拡張子で
+    /// 決める。ファイル全体を解析するので、裏のスレッドで呼ぶ。
+    public static func highlight(path: String, text: String) -> SyntaxSpans? {
+        var text = text
+        return text.withUTF8 { buffer in
+            amonhen_text_syntax(path, buffer.baseAddress, UInt(buffer.count)).map(SyntaxSpans.init)
+        }
     }
 
     public var count: Int { Int(view.span_count) }
