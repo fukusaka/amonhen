@@ -51,17 +51,63 @@ extension WorkingFileDiff {
     }
 }
 
-/// コミットの詳細。
+/// コミットの詳細（すぐ返せる分）。
 public struct CommitInfo: Decodable, Sendable {
     public let oid: String
     public let message: String
     public let author: String
     public let authorEmail: String
     public let authorTime: Int64
+    /// `+0900` の形。
+    public let authorTz: String
     public let committer: String
+    public let committerEmail: String
     public let committerTime: Int64
+    public let committerTz: String
     public let parents: [String]
     public let refs: [String]
+    /// 署名の種類（`gpg`・`ssh`・`x509`）。署名がなければ nil。検証の結果は `CommitExtras.signature`。
+    public let signed: String?
+    /// 署名付きのタグを merge したコミットか。
+    public let mergetag: Bool
+    public let trailers: [Trailer]
+
+    public struct Trailer: Decodable, Sendable {
+        public let key: String
+        public let value: String
+    }
+}
+
+/// コミットの詳細のうち時間のかかる分（署名の検証・notes・行数・子・含むブランチとタグ）。
+public struct CommitExtras: Decodable, Sendable {
+    public let signature: Signature?
+    public let notes: String
+    public let stats: [FileStat]
+    public let children: [String]
+    public let branches: [String]
+    /// 含むタグは古い順で、多ければ先頭だけ。数は `tagCount`。
+    public let tags: [String]
+    public let tagCount: Int
+    /// このコミットを最初に含んだタグと、このコミットより前でいちばん近いタグ。
+    public let firstTag: String?
+    public let previousTag: String?
+    public let originUrl: String?
+
+    public struct Signature: Decodable, Sendable {
+        /// `git log --format=%G?` の 1 文字（G・B・U・X・Y・R・E）。
+        public let status: String
+        public let signer: String
+        public let key: String
+        public let fingerprint: String
+        public let trust: String
+    }
+
+    public struct FileStat: Decodable, Sendable {
+        public let path: String
+        /// バイナリなら nil。
+        public let added: Int?
+        public let removed: Int?
+    }
 }
 
 extension Repository {
@@ -89,6 +135,19 @@ extension Repository {
     /// コミットの詳細。裏のスレッドで呼ぶ。
     public func commitInfo(oid: String) throws -> CommitInfo {
         try info(["op": "commitInfo", "oid": oid])
+    }
+
+    /// コミットの詳細のうち時間のかかる分（git で署名を検証するなど）。裏のスレッドで呼ぶ。
+    public func commitExtras(oid: String) throws -> CommitExtras {
+        try info(["op": "commitExtras", "oid": oid])
+    }
+
+    /// 名前や短い ID が指すコミット（40 桁）。裏のスレッドで呼ぶ。
+    public func resolveCommit(_ rev: String) throws -> String {
+        guard let text = try run(["op": "resolveCommit", "rev": rev]).text else {
+            throw AmonhenError(description: "コミットが見つからない: \(rev)")
+        }
+        return text
     }
 }
 
