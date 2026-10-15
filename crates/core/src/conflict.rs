@@ -43,6 +43,10 @@ pub enum Choice {
 }
 
 /// 改行まで含めた行のバイト範囲。
+pub fn line_ranges(data: &[u8]) -> Vec<Range<usize>> {
+    lines(data)
+}
+
 fn lines(data: &[u8]) -> Vec<Range<usize>> {
     let mut out = Vec::new();
     let mut start = 0;
@@ -137,6 +141,45 @@ pub fn resolve(data: &[u8], index: usize, choice: Choice) -> Option<Vec<u8>> {
     }
     out.extend_from_slice(&data[ls[c.lines.end - 1].end..]);
     Some(out)
+}
+
+/// マージエディタの 1 つの欄（Current・Incoming・共通の祖先）。すべてのコンフリクトをその側で解決した内容と、
+/// 各コンフリクトがその内容の何行目から何行目になったか（0 始まり、終わりは含まない）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Side {
+    pub text: Vec<u8>,
+    pub regions: Vec<Range<usize>>,
+}
+
+/// すべてのコンフリクトを `choice`（`Ours`・`Theirs`・`Base`）の側にした欄。`Base` で、共通の祖先のない
+/// コンフリクト（diff3 でない）があれば `None`。
+pub fn side(data: &[u8], choice: Choice) -> Option<Side> {
+    let ls = lines(data);
+    let mut text = Vec::with_capacity(data.len());
+    let mut regions = Vec::new();
+    let mut out_line = 0;
+    let mut next = 0;
+    let copy = |range: Range<usize>, text: &mut Vec<u8>, out_line: &mut usize| {
+        for i in range {
+            text.extend_from_slice(&data[ls[i].clone()]);
+            *out_line += 1;
+        }
+    };
+    for c in parse(data) {
+        copy(next..c.lines.start, &mut text, &mut out_line);
+        let picked = match choice {
+            Choice::Ours => c.ours.clone(),
+            Choice::Theirs => c.theirs.clone(),
+            Choice::Base => c.base.clone()?,
+            Choice::Both => return None,
+        };
+        let start = out_line;
+        copy(picked, &mut text, &mut out_line);
+        regions.push(start..out_line);
+        next = c.lines.end;
+    }
+    copy(next..ls.len(), &mut text, &mut out_line);
+    Some(Side { text, regions })
 }
 
 /// コンフリクトのあるファイルを、FE 向けの行にする。コンフリクトの行の `old_no` は、
@@ -265,6 +308,23 @@ mod tests {
             resolve(data, 0, Choice::Base).is_none(),
             "base のないコンフリクト"
         );
+    }
+
+    #[test]
+    fn sides_resolve_every_conflict_and_report_where_each_landed() {
+        let data = FILE.as_bytes();
+        let ours = side(data, Choice::Ours).unwrap();
+        assert_eq!(ours.text, b"a\nours 1\nours 2\nb\nx\nc\n");
+        assert_eq!(ours.regions, [1..3, 4..5]);
+        let theirs = side(data, Choice::Theirs).unwrap();
+        assert_eq!(theirs.text, b"a\ntheirs\nb\ny\nc\n");
+        assert_eq!(theirs.regions, [1..2, 3..4]);
+        // 1 つ目のコンフリクトには共通の祖先がない。
+        assert!(side(data, Choice::Base).is_none());
+        let only_diff3 = &FILE[FILE.find("b\n").unwrap()..];
+        let base = side(only_diff3.as_bytes(), Choice::Base).unwrap();
+        assert_eq!(base.text, b"b\no\nc\n");
+        assert_eq!(base.regions, vec![1..2]);
     }
 
     #[test]

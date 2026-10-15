@@ -130,6 +130,29 @@ pub enum Command {
         path: String,
         ours: bool,
     },
+    /// マージエディタの中身（`info`）。`current`・`incoming`・`base`（diff3 のときだけ）は、すべての
+    /// コンフリクトをその側にした `text` と、各コンフリクトの行範囲 `regions`（`[開始, 終わり)`、0 始まり）。
+    /// `result` は今の作業ツリーの内容（マーカーつき）。
+    MergeSides {
+        path: String,
+    },
+    /// `text` の `index` 番目のコンフリクトを解決した文章（`text`）。ファイルには書かない。
+    ResolveText {
+        text: String,
+        index: usize,
+        choice: crate::conflict::Choice,
+    },
+    /// `text` に残っているコンフリクト（`info.conflicts`）。それぞれ、マーカーを含む行範囲 `lines` と、
+    /// 両側の中身 `current`・`incoming`（マージエディタの上の欄のどのコンフリクトかを突き合わせる）。
+    ConflictRegions {
+        text: String,
+    },
+    /// マージエディタの結果を `path` に書く（Undo できる）。`stage` なら解決済みにする（index に入れる）。
+    SaveMerge {
+        path: String,
+        text: String,
+        stage: bool,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -167,6 +190,16 @@ fn heads(name: &str) -> String {
 }
 
 impl Repository {
+    /// 作業ツリーの中の `path`。
+    fn workdir_file(&self, path: &str) -> Result<std::path::PathBuf> {
+        let workdir = self
+            .backend()
+            .paths()
+            .workdir
+            .ok_or("作業ツリーのないリポジトリ")?;
+        Ok(workdir.join(path))
+    }
+
     /// コミットのメッセージ全文。
     pub fn commit_message(&self, commit: &Oid) -> Result<String> {
         let text = self
@@ -620,6 +653,75 @@ impl Repository {
                 ops.take_side(&path, ours)?;
                 ok()
             }
+            Command::MergeSides { path } => {
+                let data = std::fs::read(self.workdir_file(&path)?)?;
+                let side = |choice| {
+                    crate::conflict::side(&data, choice).map(|s| {
+                        serde_json::json!({
+                            "text": String::from_utf8_lossy(&s.text),
+                            "regions": s.regions.iter().map(|r| [r.start, r.end]).collect::<Vec<_>>(),
+                        })
+                    })
+                };
+                use crate::conflict::Choice;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({
+                        "current": side(Choice::Ours),
+                        "incoming": side(Choice::Theirs),
+                        "base": side(Choice::Base),
+                        "result": String::from_utf8_lossy(&data),
+                    })),
+                    ..Default::default()
+                })
+            }
+            Command::ResolveText {
+                text,
+                index,
+                choice,
+            } => {
+                let resolved = crate::conflict::resolve(text.as_bytes(), index, choice)
+                    .ok_or("そのコンフリクトはもうない")?;
+                Ok(Response {
+                    ok: true,
+                    text: Some(String::from_utf8_lossy(&resolved).into_owned()),
+                    ..Default::default()
+                })
+            }
+            Command::ConflictRegions { text } => {
+                let data = text.as_bytes();
+                let ls = crate::conflict::line_ranges(data);
+                let join = |r: &std::ops::Range<usize>| -> String {
+                    r.clone()
+                        .map(|i| String::from_utf8_lossy(&data[ls[i].clone()]))
+                        .collect()
+                };
+                let conflicts: Vec<_> = crate::conflict::parse(data)
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "lines": [c.lines.start, c.lines.end],
+                            "current": join(&c.ours),
+                            "incoming": join(&c.theirs),
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "conflicts": conflicts })),
+                    ..Default::default()
+                })
+            }
+            Command::SaveMerge { path, text, stage } => {
+                let file = self.workdir_file(&path)?;
+                undo.record_files(ops, &format!("Merge {path}"), &[&path], || {
+                    Ok(std::fs::write(&file, text.as_bytes())?)
+                })?;
+                if stage {
+                    self.stage(&[&path])?;
+                }
+                ok()
+            }
             Command::Sequence => {
                 // rebase なら何番目かも添える（"rebase (2/5)"）。
                 let text = match ops.sequence_in_progress()? {
@@ -854,6 +956,69 @@ mod tests {
             run(&repo, r#"{"op":"sequence"}"#)["text"],
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn merge_editor_reads_both_sides_resolves_text_and_saves() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "a.txt", "1\nTOPIC\n3\n");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "a.txt", "1\nMAIN\n3\n");
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+
+        let sides = run(&repo, r#"{"op":"mergeSides","path":"a.txt"}"#);
+        let info = &sides["info"];
+        assert_eq!(info["current"]["text"], "1\nMAIN\n3\n", "{sides}");
+        assert_eq!(info["incoming"]["text"], "1\nTOPIC\n3\n");
+        assert_eq!(info["current"]["regions"], serde_json::json!([[1, 2]]));
+        assert_eq!(
+            info["base"],
+            serde_json::Value::Null,
+            "diff3 でなければ共通の祖先はない"
+        );
+        let result = info["result"].as_str().unwrap().to_owned();
+
+        let command = |op: serde_json::Value| run(&repo, &op.to_string());
+        let regions = command(serde_json::json!({"op": "conflictRegions", "text": result}));
+        let conflict = &regions["info"]["conflicts"][0];
+        assert_eq!(conflict["lines"], serde_json::json!([1, 6]));
+        assert_eq!(
+            (conflict["current"].as_str(), conflict["incoming"].as_str()),
+            (Some("MAIN\n"), Some("TOPIC\n"))
+        );
+        let both = command(
+            serde_json::json!({"op": "resolveText", "text": result, "index": 0, "choice": "both"}),
+        );
+        assert_eq!(both["text"], "1\nMAIN\nTOPIC\n3\n");
+        // ファイルにはまだ書かない。
+        assert!(
+            std::fs::read_to_string(dir.join("a.txt"))
+                .unwrap()
+                .contains("<<<<<<<")
+        );
+
+        let saved = command(
+            serde_json::json!({"op": "saveMerge", "path": "a.txt", "text": "1\nMERGED\n3\n", "stage": true}),
+        );
+        assert_eq!(saved["ok"], true, "{saved}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\nMERGED\n3\n"
+        );
+        let status = repo.load_status().unwrap();
+        assert!(
+            status
+                .status
+                .entries
+                .iter()
+                .all(|e| e.kind != amonhen_model::StatusKind::Unmerged)
+        );
+        assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "Merge a.txt");
     }
 
     #[test]
