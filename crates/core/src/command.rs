@@ -131,6 +131,10 @@ pub enum Command {
     CommitExtras {
         oid: String,
     },
+    /// 名前や短い ID が指すコミット（`text`: 40 桁の ID）。メッセージの中の ID のリンクに使う。
+    ResolveCommit {
+        rev: String,
+    },
     /// `path` を片側にして解決済みにする。
     TakeSide {
         path: String,
@@ -768,6 +772,11 @@ impl Repository {
                 info: Some(self.commit_info(&oid(&o)?)?),
                 ..Default::default()
             }),
+            Command::ResolveCommit { rev } => Ok(Response {
+                ok: true,
+                text: Some(ops.resolve(&format!("{rev}^{{commit}}"))?.to_string()),
+                ..Default::default()
+            }),
             Command::CommitExtras { oid: o } => Ok(Response {
                 ok: true,
                 info: Some(self.commit_extras(&oid(&o)?)?),
@@ -1078,6 +1087,11 @@ mod tests {
         )["info"]
             .clone();
         assert_eq!(extras["previousTag"], "v1");
+        let resolved = run(
+            &repo,
+            &format!(r#"{{"op":"resolveCommit","rev":"{}"}}"#, &first[..8]),
+        );
+        assert_eq!(resolved["text"], first.as_str());
         assert_eq!(extras["stats"][0]["added"], 1);
     }
 
