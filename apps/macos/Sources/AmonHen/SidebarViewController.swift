@@ -25,6 +25,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var remote: String?
         var children: [Node]
         let isHead: Bool
+        /// 右に薄く出す数（Working Copy の変更の数）。
+        var badge: String?
 
         init(title: String, item: RefItem? = nil, page: Page? = nil, children: [Node] = [], isHead: Bool = false) {
             self.title = title
@@ -146,7 +148,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     /// Working Copy の変更の数を表示する。
     func setWorkingCopyCount(_ count: Int) {
-        workingCopyNode.title = count > 0 ? "Working Copy (\(count))" : "Working Copy"
+        workingCopyNode.badge = count > 0 ? "\(count)" : nil
         outline.reloadItem(workingCopyNode)
     }
 
@@ -163,35 +165,42 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         guard let node = item as? Node else { return nil }
         let isGroup = groups.contains { $0 === node }
-        let id = NSUserInterfaceItemIdentifier(isGroup ? "group" : "item")
-        let cell = outlineView.makeView(withIdentifier: id, owner: nil) as? NSTableCellView ?? {
-            let cell = NSTableCellView()
-            cell.identifier = id
-            let field = NSTextField(labelWithString: "")
-            field.lineBreakMode = .byTruncatingTail
-            field.translatesAutoresizingMaskIntoConstraints = false
-            cell.addSubview(field)
-            cell.textField = field
-            NSLayoutConstraint.activate([
-                field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
-                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -2),
-                field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
+        if isGroup {
+            let cell = outlineView.makeView(withIdentifier: .init("group"), owner: nil) as? NSTableCellView
+                ?? SidebarCell(identifier: .init("group"), hasIcon: false)
+            cell.textField?.stringValue = node.title
             return cell
-        }()
-        var title = node.isHead ? "✓ \(node.title)" : node.title
+        }
+        let cell = outlineView.makeView(withIdentifier: .init("item"), owner: nil) as? SidebarCell
+            ?? SidebarCell(identifier: .init("item"), hasIcon: true)
+        cell.textField?.stringValue = node.title
+        cell.textField?.font = node.isHead ? .boldSystemFont(ofSize: NSFont.systemFontSize) : .systemFont(ofSize: NSFont.systemFontSize)
+        cell.imageView?.image = NSImage(systemSymbolName: Self.symbol(for: node), accessibilityDescription: nil)
+        cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
+        var badge = node.badge ?? ""
         if let item = node.item, item.kind == .local {
             if item.gone {
-                title += "  gone"
+                badge = "gone"
             } else {
-                if item.ahead > 0 { title += "  ↑\(item.ahead)" }
-                if item.behind > 0 { title += " ↓\(item.behind)" }
+                badge = [item.ahead > 0 ? "↑\(item.ahead)" : nil, item.behind > 0 ? "↓\(item.behind)" : nil]
+                    .compactMap { $0 }.joined(separator: " ")
             }
         }
-        cell.textField?.stringValue = title
-        cell.textField?.font = node.isHead ? .boldSystemFont(ofSize: NSFont.systemFontSize) : .systemFont(ofSize: NSFont.systemFontSize)
+        cell.badge.stringValue = badge
         cell.toolTip = node.item?.detail
         return cell
+    }
+
+    private static func symbol(for node: Node) -> String {
+        if let page = node.page { return page == .workingCopy ? "square.and.pencil" : "clock" }
+        if node.remote != nil { return "network" }
+        switch node.item?.kind {
+        case .local?, .remote?: return "arrow.triangle.branch"
+        case .tag?: return "tag"
+        case .stash?: return "tray"
+        case .submodule?: return "shippingbox"
+        case nil: return "folder"
+        }
     }
 
     // MARK: - ドラッグ＆ドロップ: merge・rebase・push
@@ -319,6 +328,50 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 }
 
 /// 選んだら閉包を呼ぶメニュー項目を作る。
+/// サイドバーの行: アイコン、名前、右に薄い数（ahead・behind や変更の数）。
+final class SidebarCell: NSTableCellView {
+    let badge = NSTextField(labelWithString: "")
+
+    init(identifier: NSUserInterfaceItemIdentifier, hasIcon: Bool) {
+        super.init(frame: .zero)
+        self.identifier = identifier
+        let field = NSTextField(labelWithString: "")
+        field.lineBreakMode = .byTruncatingTail
+        field.translatesAutoresizingMaskIntoConstraints = false
+        badge.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+        badge.textColor = .secondaryLabelColor
+        badge.translatesAutoresizingMaskIntoConstraints = false
+        badge.setContentCompressionResistancePriority(.required, for: .horizontal)
+        field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        addSubview(field)
+        addSubview(badge)
+        textField = field
+        var leading = leadingAnchor
+        if hasIcon {
+            let icon = NSImageView()
+            icon.translatesAutoresizingMaskIntoConstraints = false
+            icon.symbolConfiguration = .init(pointSize: 12, weight: .regular)
+            addSubview(icon)
+            imageView = icon
+            NSLayoutConstraint.activate([
+                icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+                icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: 18),
+            ])
+            leading = icon.trailingAnchor
+        }
+        NSLayoutConstraint.activate([
+            field.leadingAnchor.constraint(equalTo: leading, constant: hasIcon ? 4 : 2),
+            field.centerYAnchor.constraint(equalTo: centerYAnchor),
+            badge.leadingAnchor.constraint(greaterThanOrEqualTo: field.trailingAnchor, constant: 6),
+            badge.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            badge.centerYAnchor.constraint(equalTo: centerYAnchor),
+        ])
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+}
+
 func ClosureMenuItem(title: String, action handler: @escaping () -> Void) -> NSMenuItem {
     let target = MenuAction(handler)
     let item = NSMenuItem(title: title, action: #selector(MenuAction.fire), keyEquivalent: "")
