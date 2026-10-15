@@ -73,13 +73,34 @@ public final class Repository: @unchecked Sendable {
         }
     }
 
+    /// daemon とのつながりの様子。どのスレッドから呼んでもよい（数を読むだけで、通信はしない）。
+    public var connectionState: ConnectionState {
+        var received: UInt64 = 0
+        switch amonhen_repo_connection(raw, &received) {
+        case -1: return .local
+        case 0: return .connected(received: received)
+        default:
+            guard let s = amonhen_repo_disconnect_reason(raw) else { return .closed(reason: "") }
+            defer { amonhen_string_free(s) }
+            return .closed(reason: String(cString: s))
+        }
+    }
+
     /// 最新のスナップショット。まだ読んでいなければ nil。
     public func latestHistory() -> History? {
         amonhen_history_acquire(raw).map { History(raw: $0, repository: self) }
     }
 }
 
-/// History の不変のスナップショット。どのスレッドから読んでもよい。
+public enum ConnectionState: Equatable, Sendable {
+    /// 手元のリポジトリ。
+    case local
+    /// daemon とつながっている。`received` はこれまでに受け取ったバイト数。
+    case connected(received: UInt64)
+    /// 切れた（`reason` はその理由）。
+    case closed(reason: String)
+}
+
 /// リポジトリの場所の書き方（手元のパス、`daemon:/path`、`ssh://host/path`）。
 public enum RepositoryLocation {
     /// daemon 越しに開く場所か。
@@ -108,6 +129,7 @@ public enum RepositoryLocation {
     }
 }
 
+/// History の不変のスナップショット。どのスレッドから読んでもよい。
 public final class History: @unchecked Sendable {
     let raw: OpaquePointer
     let repository: Repository
