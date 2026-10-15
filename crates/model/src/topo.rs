@@ -4,6 +4,7 @@ use crate::{CommitGraph, Oid, OidMap};
 
 /// 走査で読んだコミット 1 つ。
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RawCommit {
     pub id: Oid,
     pub commit_time: i64,

@@ -3,6 +3,7 @@ use crate::Oid;
 /// status の 1 項目の種類。
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum StatusKind {
     Changed = 0,
     Renamed = 1,
@@ -13,6 +14,7 @@ pub enum StatusKind {
 
 /// 作業ツリーと index の 1 ファイル。
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct StatusEntry {
     pub kind: StatusKind,
     pub path: String,
@@ -44,6 +46,7 @@ impl StatusEntry {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Status {
     /// チェックアウト中のブランチ。detached HEAD なら `None`。
     pub branch: Option<String>,

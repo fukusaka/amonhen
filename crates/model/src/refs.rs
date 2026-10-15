@@ -5,6 +5,7 @@ use crate::Oid;
 /// サイドバーの項目の種類。
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum RefKind {
     Local = 0,
     Remote = 1,
@@ -14,6 +15,7 @@ pub enum RefKind {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RefEntry {
     pub kind: RefKind,
     /// 表示名（`main`、`origin/main`、`v1.0`、`stash@{0}`、サブモジュールのパス）。
@@ -31,6 +33,7 @@ pub struct RefEntry {
 
 /// ブランチ・リモートブランチ・タグ・stash・サブモジュールの一覧。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Refs {
     /// チェックアウト中のブランチ。detached HEAD なら `None`。
     pub head_branch: Option<String>,
@@ -41,6 +44,7 @@ pub struct Refs {
 
 /// リポジトリの場所。
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct RepoPaths {
     /// worktree ごとの .git（HEAD と index がある）。
     pub git_dir: PathBuf,

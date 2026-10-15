@@ -2,6 +2,7 @@ use crate::Oid;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ChangeKind {
     Added = 0,
     Deleted = 1,
@@ -12,6 +13,7 @@ pub enum ChangeKind {
 
 /// コミットで変わったファイル 1 つ。
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct FileChange {
     pub kind: ChangeKind,
     pub path: String,

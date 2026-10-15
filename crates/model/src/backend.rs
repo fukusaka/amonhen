@@ -26,6 +26,29 @@ pub trait GitBackend: Send + Sync {
         known: &(dyn Fn(&Oid) -> bool + Sync),
     ) -> Result<Vec<RawCommit>>;
 
+    /// `read_commits` に前回の History の起点 `known_tips` を添えたもの（`known` は `known_tips` から辿れる
+    /// コミット）。関数を送れないリモートの実装は、`known_tips` で既知の範囲を決める。
+    fn read_new_commits(
+        &self,
+        tips: &[Oid],
+        known_tips: &[Oid],
+        known: &(dyn Fn(&Oid) -> bool + Sync),
+    ) -> Result<Vec<RawCommit>> {
+        let _ = known_tips;
+        self.read_commits(tips, known)
+    }
+
+    /// `tips` から辿れ、`known_tips` からは辿れないコミット（daemon が `read_new_commits` に答えるときに使う）。
+    fn commits_since(&self, tips: &[Oid], known_tips: &[Oid]) -> Result<Vec<RawCommit>> {
+        // 既定は前回の範囲をすべて読んで印を付ける（遅い。git が使える実装は rev-list に任せる）。
+        let known: crate::OidSet = self
+            .read_commits(known_tips, &|_| false)?
+            .into_iter()
+            .map(|c| c.id)
+            .collect();
+        self.read_commits(tips, &|id| known.contains(id))
+    }
+
     /// `tips` から辿れるコミットを、子が親より先に来るトポロジカル順で返す。
     fn commit_graph(&self, tips: &[Oid]) -> Result<CommitGraph> {
         Ok(topo::sort(self.read_commits(tips, &|_| false)?))

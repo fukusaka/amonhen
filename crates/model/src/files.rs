@@ -8,6 +8,7 @@ use crate::Result;
 
 /// パスの基点。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Root {
     Workdir,
     /// worktree ごとの `.git`。

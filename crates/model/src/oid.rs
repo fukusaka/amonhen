@@ -7,6 +7,7 @@ use amonhen_layout::Pod;
 /// オブジェクト ID（SHA-1）。SHA-256 のリポジトリに対応するときに見直す。
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Oid(pub [u8; 20]);
 
 /// オブジェクト ID はそれ自体が暗号学的ハッシュなので、先頭 8 バイトをそのままハッシュ値にする。

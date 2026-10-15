@@ -425,6 +425,14 @@ impl GitBackend for GixBackend {
         Ok(self.git()?)
     }
 
+    fn commits_since(
+        &self,
+        tips: &[Oid],
+        known_tips: &[Oid],
+    ) -> Result<Vec<amonhen_model::RawCommit>> {
+        self.git()?.commits_since(tips, known_tips)
+    }
+
     fn status(&self) -> Result<amonhen_model::Status> {
         self.git()?.status()
     }

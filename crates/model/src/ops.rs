@@ -2,6 +2,7 @@ use crate::{Oid, Result};
 
 /// HEAD の状態。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HeadState {
     /// チェックアウト中のブランチの完全な名前（`refs/heads/main`）。detached なら `None`。
     pub branch: Option<String>,
@@ -11,6 +12,7 @@ pub struct HeadState {
 
 /// 途中で止まりうる操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Sequence {
     Rebase,
     Merge,
@@ -31,6 +33,7 @@ impl Sequence {
 
 /// merge・rebase などの結果。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum Outcome {
     Done,
     /// コンフリクトで止まった。
@@ -41,6 +44,7 @@ pub enum Outcome {
 
 /// Undo で現在のブランチを戻すときの reset の種類。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResetMode {
     /// index と作業ツリーはそのまま（コミットの Undo）。
     Soft,

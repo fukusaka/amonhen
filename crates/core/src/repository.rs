@@ -157,7 +157,7 @@ impl Repository {
                 let rows = old.rows();
                 let new = self
                     .backend
-                    .read_commits(&tips, &|id| rows.contains_key(id))?;
+                    .read_new_commits(&tips, &old.tips, &|id| rows.contains_key(id))?;
                 topo::extend(new, &old.graph, rows, &tips)
             }
             None => self.backend.commit_graph(&tips)?,

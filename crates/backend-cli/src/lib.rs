@@ -85,6 +85,43 @@ fn run(mut cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
     Ok(out.stdout)
 }
 
+/// History の読み込み。
+impl Git {
+    /// `tips` から辿れ、`known_tips` からは辿れないコミット（`git rev-list`。commit-graph があれば速い）。
+    pub fn commits_since(
+        &self,
+        tips: &[amonhen_model::Oid],
+        known_tips: &[amonhen_model::Oid],
+    ) -> Result<Vec<amonhen_model::RawCommit>> {
+        // 起点は標準入力で渡す（ref が数千あっても引数の長さの制限にかからない）。
+        let mut input = String::new();
+        for t in tips {
+            input.push_str(&format!("{t}\n"));
+        }
+        for k in known_tips {
+            input.push_str(&format!("^{k}\n"));
+        }
+        let mut cmd = self.command(&["rev-list", "--stdin", "--parents", "--timestamp"]);
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
+        let out = run(cmd, Some(input.as_bytes()))?;
+        // 1 行が「時刻 ID 親...」。
+        Ok(String::from_utf8_lossy(&out)
+            .lines()
+            .filter_map(|line| {
+                let mut words = line.split(' ');
+                let time = words.next()?.parse().ok()?;
+                let id = amonhen_model::Oid::from_hex(words.next()?)?;
+                let parents = words.filter_map(amonhen_model::Oid::from_hex).collect();
+                Some(amonhen_model::RawCommit {
+                    id,
+                    commit_time: time,
+                    parents,
+                })
+            })
+            .collect())
+    }
+}
+
 /// 作業ツリーと index の操作。
 impl Git {
     pub fn status(&self) -> Result<amonhen_model::Status> {
