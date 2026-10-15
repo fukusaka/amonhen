@@ -458,7 +458,14 @@ impl GitBackend for GixBackend {
         let out = std::process::Command::new("git")
             .arg("--git-dir")
             .arg(repo.common_dir())
-            .args(["commit-graph", "write", "--reachable", "--no-progress"])
+            // 変更のあったパスの Bloom フィルタも書き、パスでの履歴の検索（`git log -- <path>`）を速くする。
+            .args([
+                "commit-graph",
+                "write",
+                "--reachable",
+                "--changed-paths",
+                "--no-progress",
+            ])
             .output()?;
         if !out.status.success() {
             return Err(String::from_utf8_lossy(&out.stderr)
