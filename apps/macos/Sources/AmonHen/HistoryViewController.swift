@@ -141,7 +141,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     override func loadView() {
         // 分割の最初の幅は、このビューの幅で決まる。
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 700))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 700))
         tableView.headerView = NSTableHeaderView()
         tableView.rowHeight = CGFloat(renderer.metrics.rowHeight)
         tableView.intercellSpacing = NSSize(width: 6, height: 0)

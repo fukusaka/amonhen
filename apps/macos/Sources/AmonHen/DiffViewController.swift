@@ -668,7 +668,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     /// 親コミットのリンクを押したとき（40 桁の ID）。
     var onSelectCommit: ((String) -> Void)?
     /// メッセージ・作者・ID・親コミット。
-    private let header = NSTextView(frame: NSRect(x: 0, y: 0, width: 240, height: 150))
+    private let header = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 170))
     private let repository: Repository
     private let files = NSTableView()
     private let diffView: DiffViewController
@@ -684,23 +684,26 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private var fileColumnPlaced = false
-
     override func viewDidLayout() {
         super.viewDidLayout()
-        placeFileColumnOnce(&fileColumnPlaced)
+        files.sizeLastColumnToFit()
     }
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        splitView.isVertical = true
+        // 上から、メッセージとメタ情報、変更ファイル、差分。
+        splitView.isVertical = false
         let column = NSTableColumn(identifier: .init("path"))
+        column.resizingMask = .autoresizingMask
         files.addTableColumn(column)
+        // パスの列を表の幅いっぱいにする（狭いと途中が省略される）。
+        files.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         files.headerView = nil
         files.style = .sourceList
         files.dataSource = self
         files.delegate = self
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 240, height: 300))
+        // 分割の最初の高さは、中のビューの高さで決まる（メッセージ 170、変更ファイル 120、残りを差分）。
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 600, height: 120))
         scroll.documentView = files
         scroll.hasVerticalScroller = true
         header.isEditable = false
@@ -713,27 +716,23 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         header.minSize = NSSize(width: 0, height: 0)
         header.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         header.textContainer?.widthTracksTextView = true
-        let headerScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 240, height: 150))
+        let headerScroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 600, height: 170))
+        // 文字の領域を欄の幅に合わせてから入れる（幅が違うと、自動の伸縮でその差を保ったままになる）。
+        header.frame = NSRect(origin: .zero, size: headerScroll.contentSize)
         headerScroll.documentView = header
         headerScroll.hasVerticalScroller = true
         headerScroll.drawsBackground = false
-        // Working Copy の左の列と同じ幅から始める。
-        let leftColumn = NSSplitView(frame: NSRect(x: 0, y: 0, width: 280, height: 300))
-        leftColumn.isVertical = false
-        leftColumn.dividerStyle = .thin
-        // Working Copy と同じく、上にファイル、下にメッセージ（Working Copy ではコミットの入力）。
-        leftColumn.addArrangedSubview(scroll)
-        leftColumn.addArrangedSubview(headerScroll)
-        leftColumn.setHoldingPriority(.init(260), forSubviewAt: 1)
-        let list = NSViewController()
-        list.view = leftColumn
-        let listItem = NSSplitViewItem(viewController: list)
-        listItem.minimumThickness = 220
-        // ウィンドウの大きさを変えたとき、ファイル一覧の幅は保ち、差分の側を伸び縮みさせる。
-        listItem.holdingPriority = .init(260)
-        addSplitViewItem(listItem)
+        // ウィンドウの高さを変えたとき、メッセージと変更ファイルの高さは保ち、差分の側を伸び縮みさせる。
+        for (content, minimum) in [(headerScroll as NSView, 60.0), (scroll, 60.0)] {
+            let controller = NSViewController()
+            controller.view = content
+            let item = NSSplitViewItem(viewController: controller)
+            item.minimumThickness = minimum
+            item.holdingPriority = .init(260)
+            addSplitViewItem(item)
+        }
         let diffItem = NSSplitViewItem(viewController: diffView)
-        diffItem.minimumThickness = 300
+        diffItem.minimumThickness = 200
         addSplitViewItem(diffItem)
     }
 
@@ -797,23 +796,25 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let mono: [NSAttributedString.Key: Any] = [.font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor]
         let message = info.message.trimmingCharacters(in: .whitespacesAndNewlines)
         let (subject, rest) = message.firstIndex(of: "\n").map { (String(message[..<$0]), String(message[$0...])) } ?? (message, "")
-        add(subject, [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
-        add(rest + "\n\n", body)
+        // 件名、メタ情報（ref・作者・日時・ID・親）、本文の順。欄が低くてもメタ情報までは見えるようにする。
+        add(subject + "\n", [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
         if !info.refs.isEmpty {
             add(info.refs.joined(separator: ", ") + "\n", [.font: NSFont.boldSystemFont(ofSize: 11), .foregroundColor: NSColor.systemBlue])
         }
         let date = Self.dateFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(info.authorTime)))
-        add("\(info.author) <\(info.authorEmail)>  \(date)\n", dim)
+        add("\(info.author) <\(info.authorEmail)>  \(date)", dim)
         if info.committer != info.author {
-            add("Committed by \(info.committer)\n", dim)
+            add("  (committed by \(info.committer))", dim)
         }
-        add("Commit  \(info.oid)\n", mono)
-        for parent in info.parents {
-            add("Parent  ", mono)
+        add("\n\(info.oid)", mono)
+        for (i, parent) in info.parents.enumerated() {
+            add(i == 0 ? "  Parent " : ", ", mono)
             var link = mono
             link[.link] = "amonhen-commit:\(parent)"
-            add(String(parent.prefix(12)) + "\n", link)
+            add(String(parent.prefix(12)), link)
         }
+        let bodyText = rest.trimmingCharacters(in: .newlines)
+        add(bodyText.isEmpty ? "" : "\n\n" + bodyText, body)
         header.textStorage?.setAttributedString(text)
     }
 
