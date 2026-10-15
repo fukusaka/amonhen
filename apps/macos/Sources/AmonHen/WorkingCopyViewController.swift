@@ -152,6 +152,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         discardButton.target = self
         discardButton.action = #selector(discard)
         let conflictActions: [(String, Selector)] = [
+            ("Merge Editor…", #selector(openMergeEditor)),
             ("Use Current", #selector(useOurs)), ("Use Incoming", #selector(useTheirs)), ("Use Both", #selector(useBoth)),
             ("Take Current File", #selector(takeOursFile)), ("Take Incoming File", #selector(takeTheirsFile)),
             ("Mark Resolved", #selector(markResolved)),
@@ -273,7 +274,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         for v in [discardButton, linesButton, fileButton] { v.isHidden = isConflict }
         if isConflict {
             let hasConflict = diffView.selectedConflict != nil
-            for case let b as NSButton in conflictButtons.views.prefix(3) { b.isEnabled = hasConflict }
+            // 先頭はマージエディタ（いつでも開ける）、続く 3 つが選んだコンフリクトの解決。
+            for case let b as NSButton in conflictButtons.views.dropFirst().prefix(3) { b.isEnabled = hasConflict }
         }
         let staged = selectedKey?.staged ?? false
         fileButton.title = staged ? "Unstage File" : "Stage File"
@@ -354,6 +356,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private func resolve(_ choice: String) {
         guard let key = selectedKey, let index = diffView.selectedConflict else { return }
         actions?.perform(["op": "resolveConflict", "path": key.path, "index": index, "choice": choice])
+    }
+
+    @objc private func openMergeEditor() {
+        guard let key = selectedKey, let actions else { return }
+        MergeEditorWindowController.show(path: key.path, repository: repository, actions: actions)
     }
 
     @objc private func useOurs() { resolve("ours") }
