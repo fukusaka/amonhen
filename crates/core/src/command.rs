@@ -121,8 +121,14 @@ pub enum Command {
         index: usize,
         choice: crate::conflict::Choice,
     },
-    /// コミットの詳細（`info`: message・author・authorEmail・authorTime・committer・committerTime・parents・refs）。
+    /// コミットの詳細（`info`: message・author・authorEmail・authorTime・authorTz・committer・committerEmail・
+    /// committerTime・committerTz・parents・refs・signed・mergetag・trailers）。すぐ返せる分だけ。
     CommitInfo {
+        oid: String,
+    },
+    /// コミットの詳細のうち時間のかかる分（`info`: signature・notes・stats・children・branches・tags・tagCount・
+    /// firstTag・previousTag）。裏で読む。
+    CommitExtras {
         oid: String,
     },
     /// `path` を片側にして解決済みにする。
@@ -231,19 +237,19 @@ impl Repository {
             .remove(0);
         let raw = String::from_utf8_lossy(&text.raw).into_owned();
         let (header, message) = raw.split_once("\n\n").unwrap_or((&raw, ""));
-        // "Name <email> 1700000000 +0900" を名前・メール・時刻に分ける。
-        let signature = |line: &str| -> (String, String, i64) {
+        // "Name <email> 1700000000 +0900" を名前・メール・時刻・タイムゾーンに分ける。
+        let signature = |line: &str| -> (String, String, i64, String) {
             let (name, rest) = line.split_once(" <").unwrap_or((line, ""));
             let (email, rest) = rest.split_once("> ").unwrap_or((rest, ""));
-            let time = rest
-                .split(' ')
-                .next()
-                .and_then(|t| t.parse().ok())
-                .unwrap_or(0);
-            (name.to_owned(), email.to_owned(), time)
+            let mut parts = rest.split(' ');
+            let time = parts.next().and_then(|t| t.parse().ok()).unwrap_or(0);
+            let tz = parts.next().unwrap_or_default().to_owned();
+            (name.to_owned(), email.to_owned(), time, tz)
         };
         let mut parents = Vec::new();
         let (mut author, mut committer) = (None, None);
+        // 署名の種類（gpgsig の最初の行で分かる）と、署名付きのタグを merge したか。
+        let (mut signed, mut mergetag) = (None, false);
         for line in header.lines() {
             if let Some(p) = line.strip_prefix("parent ") {
                 parents.push(p.to_owned());
@@ -251,10 +257,28 @@ impl Repository {
                 author = Some(signature(a));
             } else if let Some(c) = line.strip_prefix("committer ") {
                 committer = Some(signature(c));
+            } else if let Some(sig) = line
+                .strip_prefix("gpgsig ")
+                .or_else(|| line.strip_prefix("gpgsig-sha256 "))
+            {
+                signed = Some(if sig.contains("SSH SIGNATURE") {
+                    "ssh"
+                } else if sig.contains("SIGNED MESSAGE") {
+                    "x509"
+                } else {
+                    "gpg"
+                });
+            } else if line.starts_with("mergetag ") {
+                mergetag = true;
             }
         }
-        let (author, email, author_time) = author.unwrap_or_default();
-        let (committer, _, committer_time) = committer.unwrap_or_default();
+        let (author, email, author_time, author_tz) = author.unwrap_or_default();
+        let (committer, committer_email, committer_time, committer_tz) =
+            committer.unwrap_or_default();
+        let trailers: Vec<serde_json::Value> = trailers(message)
+            .into_iter()
+            .map(|(key, value)| serde_json::json!({ "key": key, "value": value }))
+            .collect();
         // ref はディスクから読み直さず、最後に読んだものを使う（linux では読み直すと 15〜30 ms かかる）。
         let refs: Vec<String> = self
             .refs()?
@@ -272,10 +296,93 @@ impl Repository {
             "author": author,
             "authorEmail": email,
             "authorTime": author_time,
+            "authorTz": author_tz,
             "committer": committer,
+            "committerEmail": committer_email,
             "committerTime": committer_time,
+            "committerTz": committer_tz,
             "parents": parents,
             "refs": refs,
+            "signed": signed,
+            "mergetag": mergetag,
+            "trailers": trailers,
+        }))
+    }
+
+    /// コミットの詳細のうち時間のかかる分。署名の検証・notes・行数は git に頼み、子コミット・含むブランチと
+    /// タグ・前後のタグは History のグラフから求める（History をまだ読んでいなければ空）。
+    pub fn commit_extras(&self, commit: &Oid) -> Result<serde_json::Value> {
+        let extras = self.backend().commit_extras(commit)?;
+        let mut children = Vec::new();
+        let (mut branches, mut tags) = (Vec::new(), Vec::new());
+        let (mut first_tag, mut previous_tag) = (None, None);
+        if let Some(history) = self.history()
+            && let Some(row) = history.row_of(commit)
+        {
+            let graph = &history.graph;
+            let (contains, child_rows) = crate::lineage::descendants(graph, row);
+            children = child_rows
+                .iter()
+                .map(|&r| graph.ids()[r as usize].to_string())
+                .collect();
+            let refs = self.refs()?;
+            let row_of = |e: &amonhen_model::RefEntry| e.target.and_then(|t| history.row_of(&t));
+            let in_set = |r: u32| contains[r as usize / 64] & (1 << (r % 64)) != 0;
+            // 含むタグは、古い（行が下の）ものから。いちばん古いものが「最初に含んだリリース」。
+            let mut tag_rows = Vec::new();
+            for e in &refs.refs.entries {
+                let Some(r) = row_of(e) else { continue };
+                match e.kind {
+                    amonhen_model::RefKind::Local | amonhen_model::RefKind::Remote if in_set(r) => {
+                        branches.push(e.name.clone())
+                    }
+                    amonhen_model::RefKind::Tag if in_set(r) => tag_rows.push((r, e.name.clone())),
+                    _ => {}
+                }
+            }
+            tag_rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+            first_tag = tag_rows.first().map(|(_, n)| n.clone());
+            tags = tag_rows.into_iter().map(|(_, n)| n).collect();
+            // このコミットより前（祖先）で、いちばん近いタグ。
+            let mut tagged: std::collections::HashMap<u32, &str> = std::collections::HashMap::new();
+            for e in &refs.refs.entries {
+                if e.kind == amonhen_model::RefKind::Tag
+                    && let Some(r) = row_of(e)
+                {
+                    tagged.entry(r).or_insert(&e.name);
+                }
+            }
+            previous_tag = crate::lineage::nearest_ancestor(graph, row, |r| {
+                r != row && tagged.contains_key(&r)
+            })
+            .map(|r| tagged[&r].to_owned());
+        }
+        let signature = extras.signature.map(|s| {
+            serde_json::json!({
+                "status": s.status.to_string(),
+                "signer": s.signer,
+                "key": s.key,
+                "fingerprint": s.fingerprint,
+                "trust": s.trust,
+            })
+        });
+        let stats: Vec<serde_json::Value> = extras
+            .stats
+            .iter()
+            .map(|s| serde_json::json!({ "path": s.path, "added": s.added, "removed": s.removed }))
+            .collect();
+        // タグは多いことがある（linux の古いコミットは 900 以上）ので、数と古い順の先頭だけを返す。
+        const MAX_TAGS: usize = 50;
+        Ok(serde_json::json!({
+            "signature": signature,
+            "notes": extras.notes,
+            "stats": stats,
+            "children": children,
+            "branches": branches,
+            "tagCount": tags.len(),
+            "tags": tags.into_iter().take(MAX_TAGS).collect::<Vec<_>>(),
+            "firstTag": first_tag,
+            "previousTag": previous_tag,
         }))
     }
 
@@ -654,6 +761,11 @@ impl Repository {
                 info: Some(self.commit_info(&oid(&o)?)?),
                 ..Default::default()
             }),
+            Command::CommitExtras { oid: o } => Ok(Response {
+                ok: true,
+                info: Some(self.commit_extras(&oid(&o)?)?),
+                ..Default::default()
+            }),
             Command::TakeSide { path, ours } => {
                 ops.take_side(&path, ours)?;
                 ok()
@@ -786,6 +898,39 @@ impl Repository {
     }
 }
 
+/// メッセージの最後の段落にあるトレーラー（`Signed-off-by: 名前 <メール>` など）。段落のすべての行が
+/// `キー: 値`（か、その続きの字下げした行）のときだけトレーラーとみなす。
+fn trailers(message: &str) -> Vec<(String, String)> {
+    // 件名だけの段落はトレーラーにしない（`Fix: ...` のような件名がある）。
+    let message = message.trim_end();
+    let Some((_, last)) = message.rsplit_once("\n\n") else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, String)> = Vec::new();
+    for line in last.lines() {
+        if line.starts_with([' ', '\t']) {
+            match out.last_mut() {
+                Some((_, value)) => {
+                    value.push(' ');
+                    value.push_str(line.trim());
+                }
+                None => return Vec::new(),
+            }
+        } else if let Some((key, value)) = trailer(line) {
+            out.push((key.to_owned(), value.to_owned()));
+        } else {
+            return Vec::new();
+        }
+    }
+    out
+}
+
+fn trailer(line: &str) -> Option<(&str, &str)> {
+    let (key, value) = line.split_once(": ")?;
+    let valid = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    valid.then_some((key, value.trim()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -835,6 +980,71 @@ mod tests {
 
     fn run(repo: &Repository, json: &str) -> serde_json::Value {
         serde_json::from_str(&repo.run_json(json)).unwrap()
+    }
+
+    #[test]
+    fn reads_trailers_only_from_the_last_paragraph() {
+        assert_eq!(
+            trailers("Fix it\n\nBody.\n\nSigned-off-by: A <a@x>\nCo-authored-by: B\n  <b@x>\n"),
+            [
+                ("Signed-off-by".to_owned(), "A <a@x>".to_owned()),
+                ("Co-authored-by".to_owned(), "B <b@x>".to_owned()),
+            ]
+        );
+        assert!(trailers("Fix: subject only").is_empty());
+        assert!(trailers("Fix\n\nNot a trailer line\nKey: value").is_empty());
+    }
+
+    #[test]
+    fn reports_details_from_git_and_the_graph() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["tag", "v1"]);
+        std::fs::write(dir.join("a.txt"), "1\n2\n3\n4\n").unwrap();
+        git(
+            dir,
+            &[
+                "commit",
+                "-q",
+                "-am",
+                "second\n\nSigned-off-by: a <a@example.com>",
+            ],
+        );
+        git(dir, &["tag", "v2"]);
+        git(dir, &["branch", "topic"]);
+        let first = git(dir, &["rev-parse", "HEAD~1"]);
+        let second = git(dir, &["rev-parse", "HEAD"]);
+        repo.load_history().unwrap();
+        repo.load_refs().unwrap();
+
+        let info =
+            run(&repo, &format!(r#"{{"op":"commitInfo","oid":"{second}"}}"#))["info"].clone();
+        assert_eq!(info["trailers"][0]["key"], "Signed-off-by");
+        assert_eq!(info["committerEmail"], "a@example.com");
+        assert!(info["signed"].is_null());
+
+        let extras = run(
+            &repo,
+            &format!(r#"{{"op":"commitExtras","oid":"{first}"}}"#),
+        )["info"]
+            .clone();
+        assert_eq!(extras["children"][0], second.as_str());
+        assert_eq!(extras["branches"], serde_json::json!(["main", "topic"]));
+        assert_eq!(
+            extras["tags"],
+            serde_json::json!(["v1", "v2"]),
+            "古いタグから"
+        );
+        assert_eq!(extras["firstTag"], "v1");
+        assert!(extras["previousTag"].is_null());
+        assert!(extras["signature"].is_null());
+        let extras = run(
+            &repo,
+            &format!(r#"{{"op":"commitExtras","oid":"{second}"}}"#),
+        )["info"]
+            .clone();
+        assert_eq!(extras["previousTag"], "v1");
+        assert_eq!(extras["stats"][0]["added"], 1);
     }
 
     #[test]
