@@ -253,7 +253,7 @@ impl Repository {
             }
         };
         let file = diff::file_diff(side(&change.old_id)?, side(&change.new_id)?, 3);
-        Ok(DiffView::new(&file, profile))
+        Ok(DiffView::new(&file, profile).with_path(&change.path))
     }
 
     /// 作業ツリーと index の状態を読み直す。前回と同じなら前回のものを返す。
@@ -299,7 +299,7 @@ impl Repository {
             (blob(&entry.index_id)?, worktree)
         };
         let file = diff::file_diff(old, new, 3);
-        let view = DiffView::new(&file, profile);
+        let view = DiffView::new(&file, profile).with_path(&entry.path);
         Ok(WorkingDiff {
             entry: entry.clone(),
             staged,
@@ -349,10 +349,7 @@ impl Repository {
 
     /// コンフリクトのある作業ツリーのファイルを、FE 向けの行にする。
     pub fn conflict_view(&self, path: &str, profile: &FrontendProfile) -> Result<DiffView> {
-        Ok(crate::conflict::view(
-            self.backend.worktree_file(path)?,
-            profile,
-        ))
+        Ok(crate::conflict::view(self.backend.worktree_file(path)?, profile).with_path(path))
     }
 
     /// `diff` の `rows` 行目の変更を作業ツリーから取り除く（Undo できる）。stage していない差分にだけ使える。

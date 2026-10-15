@@ -49,6 +49,7 @@ jobs:
       - run: |
           for target in aarch64-apple-darwin aarch64-apple-ios x86_64-pc-windows-msvc aarch64-pc-windows-msvc x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu aarch64-linux-android; do
             echo "::group::$target"
-            cargo check --workspace --lib --target "$target"
+            # 構文の色付けの文法は C で書かれていて、ターゲットごとの C コンパイラ（MSVC・iOS の SDK など）が要るので外す。
+            cargo check --workspace --lib --no-default-features --exclude amonhen-syntax --target "$target"
             echo "::endgroup::"
           done

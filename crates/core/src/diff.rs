@@ -3,7 +3,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use amonhen_layout::{DiffRow, Highlight};
+use amonhen_layout::{DiffRow, Highlight, SyntaxSpan};
 use amonhen_projection::{FrontendProfile, StringEncoding, StringTable, StringTableBuilder};
 use imara_diff::{Algorithm, Diff, InternedInput};
 
@@ -227,16 +227,18 @@ pub fn apply_selection(diff: &FileDiff, apply: impl Fn(usize) -> bool) -> Vec<u8
     out
 }
 
+/// 行の中のバイトの位置 `at` を、FE の符号単位の位置に直す。
+fn units(encoding: StringEncoding, text: &[u8], at: usize) -> u32 {
+    if encoding == StringEncoding::Utf8 || text[..at].is_ascii() {
+        at as u32
+    } else {
+        String::from_utf8_lossy(&text[..at]).encode_utf16().count() as u32
+    }
+}
+
 /// 続けて並ぶ削除行と追加行を 1 行ずつ組にして、変わった単語を FE の符号単位で返す。
 fn word_highlights(diff: &FileDiff, encoding: StringEncoding) -> Vec<Highlight> {
-    // バイトの位置を FE の符号単位の位置に直す。
-    let units = |text: &[u8], at: usize| -> u32 {
-        if encoding == StringEncoding::Utf8 || text[..at].is_ascii() {
-            at as u32
-        } else {
-            String::from_utf8_lossy(&text[..at]).encode_utf16().count() as u32
-        }
-    };
+    let units = |text: &[u8], at: usize| units(encoding, text, at);
     let mut out = Vec::new();
     let lines = &diff.lines;
     let mut i = 0;
@@ -283,6 +285,8 @@ impl FileDiff {
 
 /// FE 向けの差分。行の文字列は、変更前・変更後の blob（文字列置き場の 1・2 番）を直接指す。
 pub struct DiffView {
+    /// ファイルのパス（色付けの言語を決める）。
+    pub path: String,
     pub rows: Vec<DiffRow>,
     /// 削除行と追加行の組の中で、変わった単語の範囲。
     pub highlights: Vec<Highlight>,
@@ -290,6 +294,15 @@ pub struct DiffView {
     pub binary: bool,
     pub added: u32,
     pub removed: u32,
+    /// 後から色付けするための、変更前・変更後の内容と、各行が指す場所。
+    #[cfg_attr(not(feature = "syntax"), allow(dead_code))]
+    pub(crate) old: Arc<Vec<u8>>,
+    #[cfg_attr(not(feature = "syntax"), allow(dead_code))]
+    pub(crate) new: Arc<Vec<u8>>,
+    #[cfg_attr(not(feature = "syntax"), allow(dead_code))]
+    pub(crate) sources: Vec<(Source, Range<u32>)>,
+    #[cfg_attr(not(feature = "syntax"), allow(dead_code))]
+    pub(crate) encoding: StringEncoding,
 }
 
 impl DiffView {
@@ -317,13 +330,76 @@ impl DiffView {
             .collect();
         let highlights = word_highlights(diff, profile.string);
         Self {
+            path: String::new(),
             rows,
             highlights,
             strings: strings.finish(),
             binary: diff.binary,
             added: diff.added,
             removed: diff.removed,
+            old: diff.old.clone(),
+            new: diff.new.clone(),
+            sources: diff
+                .lines
+                .iter()
+                .map(|l| (l.source, l.range.clone()))
+                .collect(),
+            encoding: profile.string,
         }
+    }
+
+    pub fn with_path(mut self, path: &str) -> Self {
+        self.path = path.to_owned();
+        self
+    }
+
+    /// 構文の色付け。変更前・変更後のファイル全体を解析して、各行に割り当てる。時間がかかることがあるので、
+    /// FE は差分を色なしで先に表示し、これを裏で呼ぶ。言語がわからなければ空。
+    #[cfg(feature = "syntax")]
+    pub fn syntax(&self) -> Vec<SyntaxSpan> {
+        if self.binary || amonhen_syntax::Language::from_path(&self.path).is_none() {
+            return Vec::new();
+        }
+        let uses = |side: Source| self.sources.iter().any(|(s, _)| *s == side);
+        let tokens = |side: Source, data: &[u8]| {
+            if uses(side) {
+                amonhen_syntax::highlight(&self.path, data)
+            } else {
+                Vec::new()
+            }
+        };
+        let (old, new) = (
+            tokens(Source::Old, &self.old),
+            tokens(Source::New, &self.new),
+        );
+        let mut out = Vec::new();
+        for (row, (source, range)) in self.sources.iter().enumerate() {
+            let (data, tokens) = match source {
+                Source::Old => (&self.old, &old),
+                Source::New => (&self.new, &new),
+                Source::Header => continue,
+            };
+            let text = &data[range.start as usize..range.end as usize];
+            // 行の先頭より後ろで終わる最初のトークンから、行の終わりまで。
+            let first = tokens.partition_point(|t| t.end <= range.start);
+            for t in tokens[first..].iter().take_while(|t| t.start < range.end) {
+                let start = t.start.max(range.start) - range.start;
+                let end = t.end.min(range.end) - range.start;
+                out.push(SyntaxSpan {
+                    row: row as u32,
+                    start: units(self.encoding, text, start as usize),
+                    end: units(self.encoding, text, end as usize),
+                    kind: t.kind,
+                    _pad: [0; 3],
+                });
+            }
+        }
+        out
+    }
+
+    #[cfg(not(feature = "syntax"))]
+    pub fn syntax(&self) -> Vec<SyntaxSpan> {
+        Vec::new()
     }
 }
 
@@ -446,6 +522,41 @@ mod tests {
                 start: 5,
                 end: 8
             }
+        );
+    }
+
+    #[cfg(feature = "syntax")]
+    #[test]
+    fn syntax_spans_are_mapped_onto_rows_in_frontend_units() {
+        // 変更前の 2 行目は、1 行目から続くコメントの中。差分の断片だけ見ても色はわからない。
+        let old = "/* start\n still comment */\nint a;\n";
+        let new = "/* start\n still comment */\nint \u{3042} = \"\u{3044}\";\n";
+        let d = diff(old, new, 3);
+        let v = DiffView::new(&d, &FrontendProfile::MACOS).with_path("x.c");
+        let spans = v.syntax();
+        let on = |row: usize| -> Vec<(u32, u32, u8)> {
+            spans
+                .iter()
+                .filter(|s| s.row as usize == row)
+                .map(|s| (s.start, s.end, s.kind))
+                .collect()
+        };
+        // 変更後の行番号で探す（ASCII でない行は UTF-16 に変換されている）。
+        let row = |kind: u8, no: u32| {
+            v.rows
+                .iter()
+                .position(|r| r.kind == kind && r.new_no == no)
+                .unwrap()
+        };
+        assert_eq!(on(row(DiffRow::CONTEXT, 2)), [(0, 17, SyntaxSpan::COMMENT)]);
+        // 「あ」は UTF-16 で 1 単位なので、文字列は 8..11。
+        let added = on(row(DiffRow::ADDED, 3));
+        assert!(added.contains(&(0, 3, SyntaxSpan::TYPE)), "{added:?}");
+        assert!(added.contains(&(8, 11, SyntaxSpan::STRING)), "{added:?}");
+        let plain = DiffView::new(&d, &FrontendProfile::MACOS).with_path("notes.txt");
+        assert!(
+            plain.syntax().is_empty(),
+            "言語がわからなければ色を付けない"
         );
     }
 

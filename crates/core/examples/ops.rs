@@ -17,7 +17,9 @@ fn time<T>(label: &str, f: impl FnOnce() -> T) -> T {
 fn main() -> amonhen_model::Result<()> {
     let path = std::env::args().nth(1).expect("リポジトリを指定する");
     let repo = Repository::new(GixBackend::open(&path)?);
-    let history = time("load_history（キャッシュなし）", || repo.load_history())?;
+    let history = time("load_history（キャッシュなし）", || {
+        repo.load_history()
+    })?;
     time("load_history（変化なし）", || repo.load_history())?;
     time("load_refs", || repo.load_refs())?;
     time("load_refs（2 回目）", || repo.load_refs())?;
@@ -26,14 +28,20 @@ fn main() -> amonhen_model::Result<()> {
     for row in [0usize, 1, 2] {
         let id = ids[row];
         let parents = history.graph.parents(row).len();
-        let changes = time(&format!("commit_changes 行 {row}（親 {parents}）"), || repo.commit_changes(&id))?;
+        let changes = time(
+            &format!("commit_changes 行 {row}（親 {parents}）"),
+            || repo.commit_changes(&id),
+        )?;
         time(&format!("commit_info 行 {row}"), || repo.commit_info(&id))?;
         if let Some(first) = changes.first() {
-            time(&format!("file_diff 行 {row}（{} ファイル中の先頭）", changes.len()), || {
-                repo.file_diff(first, &FrontendProfile::MACOS)
-            })?;
+            time(
+                &format!("file_diff 行 {row}（{} ファイル中の先頭）", changes.len()),
+                || repo.file_diff(first, &FrontendProfile::MACOS),
+            )?;
         }
     }
-    time("history_chunk 256 行", || repo.history_chunk(&history, 0, 256, &FrontendProfile::MACOS))?;
+    time("history_chunk 256 行", || {
+        repo.history_chunk(&history, 0, 256, &FrontendProfile::MACOS)
+    })?;
     Ok(())
 }
