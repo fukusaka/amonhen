@@ -4,8 +4,11 @@ import AppKit
 /// Working Copy: Staged / Unstaged のファイル、選んだファイルの差分（行を選んで stage・unstage）、
 /// コミットメッセージ。
 final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataSource, NSOutlineViewDelegate,
-    NSTextViewDelegate
+    NSTextViewDelegate, NSMenuDelegate
 {
+    /// ファイルの右クリック: 作業ツリーの内容の blame（パス）とファイルの履歴（パス）。
+    var onBlame: ((String) -> Void)?
+    var onFileHistory: ((String) -> Void)?
     private let repository: Repository
     private let diffView: DiffViewController
     private let files = KeyOutlineView()
@@ -102,6 +105,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         files.delegate = self
         // Space か Enter で、選んだファイルを stage / unstage する。
         files.onToggle = { [weak self] in self?.toggleFile() }
+        let fileMenu = NSMenu()
+        fileMenu.delegate = self
+        files.menu = fileMenu
         let filesScroll = NSScrollView()
         filesScroll.documentView = files
         filesScroll.hasVerticalScroller = true
@@ -606,6 +612,18 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             break
         }
         return field
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let entry = files.item(atRow: files.clickedRow) as? Entry else { return }
+        let path = entry.item.path
+        // untracked のファイルにはまだ履歴がない。
+        guard entry.item.kind != .untracked else { return }
+        if entry.item.worktreeState != "D" {
+            menu.addItem(ClosureMenuItem(title: "Blame") { [weak self] in self?.onBlame?(path) })
+        }
+        menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {

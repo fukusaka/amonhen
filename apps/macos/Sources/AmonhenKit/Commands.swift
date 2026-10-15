@@ -72,7 +72,11 @@ extension Repository {
 
     /// 命令を実行し、結果の `info` を `T` として読む。裏のスレッドで呼ぶ。
     public func info<T: Decodable>(_ command: [String: Any], as type: T.Type = T.self) throws -> T {
-        let json = try Repository.json(command)
+        try info(json: try Repository.json(command), as: type)
+    }
+
+    /// `info(_:as:)` の、命令を JSON の文字列で渡す版（スレッドをまたいで渡すため）。
+    public func info<T: Decodable>(json: String, as type: T.Type = T.self) throws -> T {
         guard let out = amonhen_command(raw, json) else { throw AmonhenError(description: "結果がない") }
         defer { amonhen_string_free(out) }
         let response = try JSONDecoder().decode(InfoResponse<T>.self, from: Data(String(cString: out).utf8))
@@ -120,4 +124,40 @@ public struct ConflictRegions: Decodable, Sendable {
     }
 
     public let conflicts: [Conflict]
+}
+
+/// 各行を最後に変えたコミット（`blame`）。
+public struct Blame: Decodable, Sendable {
+    public struct Commit: Decodable, Sendable {
+        /// 40 桁の ID。まだコミットしていない行は 0 が並ぶ。
+        public let oid: String
+        public let author: String
+        public let time: Int64
+        public let summary: String
+
+        public var isCommitted: Bool { oid.contains { $0 != "0" } }
+    }
+
+    public struct Line: Decodable, Sendable {
+        /// `commits` の添字。
+        public let c: Int
+        public let t: String
+    }
+
+    public let commits: [Commit]
+    public let lines: [Line]
+}
+
+/// ファイルを変えたコミット（`fileHistory`、新しい順）。
+public struct FileHistory: Decodable, Sendable {
+    public struct Entry: Decodable, Sendable {
+        public let oid: String
+        public let subject: String
+        public let author: String
+        public let time: Int64
+        /// そのコミットの時点のパス。
+        public let path: String
+    }
+
+    public let entries: [Entry]
 }

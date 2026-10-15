@@ -663,8 +663,13 @@ final class DiffDocumentView: NSView, NSMenuItemValidation {
 
 /// 選んだコミットの詳細: 変わったファイルの一覧と、選んだファイルの差分。
 final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSource, NSTableViewDelegate,
-    NSTextViewDelegate
+    NSTextViewDelegate, NSMenuDelegate
 {
+    /// ファイルの右クリック: blame（パス、コミット）とファイルの履歴（パス）。
+    var onBlame: ((String, String) -> Void)?
+    var onFileHistory: ((String) -> Void)?
+    /// 表示しているコミット（40 桁）。stash のときは nil（blame の起点にしない）。
+    private var commitHex: String?
     /// 親コミットのリンクを押したとき（40 桁の ID）。
     var onSelectCommit: ((String) -> Void)?
     /// メッセージ・作者・ID・親コミット。
@@ -702,6 +707,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         files.style = .sourceList
         files.dataSource = self
         files.delegate = self
+        let fileMenu = NSMenu()
+        fileMenu.delegate = self
+        files.menu = fileMenu
         // 分割の最初の高さは、中のビューの高さで決まる（メッセージ 170、変更ファイル 120、残りを差分）。
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 600, height: 120))
         scroll.documentView = files
@@ -756,6 +764,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
         let repository = self.repository
         let hex = commit.map { String(format: "%02x", $0) }.joined()
+        commitHex = stash ? nil : hex
         // ファイルの差分の読み込みとは別の番号で、古い結果を捨てる。
         headerRequest += 1
         let headerRequest = self.headerRequest
@@ -826,6 +835,17 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func numberOfRows(in tableView: NSTableView) -> Int {
         changes?.items.count ?? 0
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let row = files.clickedRow
+        guard row >= 0, let item = changes?.items[row] else { return }
+        let path = item.path
+        if let commit = commitHex, item.kind != .deleted {
+            menu.addItem(ClosureMenuItem(title: "Blame at \(commit.prefix(8))") { [weak self] in self?.onBlame?(path, commit) })
+        }
+        menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
