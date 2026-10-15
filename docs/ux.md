@@ -384,7 +384,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 
 - [ ] U1. メニューの網羅とショートカットの整理、Settings ウィンドウ（今のトグルを移す）。メニュー（File・Edit・View・Navigate・Repository・Commit・Window・Help）、規則に沿ったショートカット、Settings（Git・Appearance・Performance・Advanced）は済み。残りはほかのステップで足す項目（タブ、Quick Open、Clone、Repository Settings など）
 - [ ] U2. ツールバーの再編（メニュー付きボタン、Merge・Rebase・Pop、Activity のスピナー、検索欄、カスタマイズ）。Pull ▾（merge / rebase / ff-only、コアの `pull` に `mode`）・Push ▾（force-with-lease）・Merge・Rebase・Stash・Pop・Refresh・Undo・カスタマイズは済み。残りはブランチの切り替えパネル、検索欄、Activity のスピナー
-- [ ] U3. Working Copy の左の列の再配置（コミットの入力を上、チェックボックスの 1 群、List / Tree / Flat、絞り込み）とコミットの入力の強化
+- [ ] U3. Working Copy の左の列の再配置（コミットの入力を上、チェックボックスの 1 群、List / Tree / Flat、絞り込み）とコミットの入力の強化。コミットの入力を上、チェックボックスの 1 群（3 状態、ディレクトリと見出しでまとめて切り替え、Space）、List / Tree、パスの絞り込み、一部だけ stage したファイルの差分の切り替え（U4 までのつなぎ）は済み。残りは Flat、行数（+/−）、行のホバーのボタン、コミットの入力の強化（下書き・過去のメッセージ・補完・Commit ▾）
 - [ ] U4. HEAD → 作業ツリーの 1 本の差分と行ごとのチェック（コアで 2 つの差分を重ねる）、ガターでの行選択・キー操作
 - [ ] U5. History の詳細の全文表示と、境目のドラッグ
 - [ ] U6. History の PR 風の差分（全ファイルを縦に、Viewed）
