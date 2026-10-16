@@ -453,6 +453,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         // ウィンドウを組み立てる前にキャッシュから表示することがある。表がまだなければ先に作る。
         loadViewIfNeeded()
         let first = self.history == nil || resetScroll
+        // 選んでいたコミット（行番号ではなく ID で覚え、新しい History でも同じコミットを選ぶ）。
+        let selected: [(id: Data, row: Int)] = self.history.map { old in
+            tableView.selectedRowIndexes.compactMap { row in old.commitID(row: row).map { ($0, row) } }
+        } ?? []
         self.history = history
         chunks.removeAll()
         loadingChunks.removeAll()
@@ -462,6 +466,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         clearSearchResults()
         tableView.reloadData()
         if first { tableView.scrollRowToVisible(0) }
+        // 表は行番号の選択を引き継ぐが、上にコミットが増えると同じ行に別のコミットが来る（知らせも出ないので、
+        // 詳細が前のコミットのままになる）。選んでいたコミットを新しい行で選び直す。
+        if !selected.isEmpty {
+            let rows = IndexSet(selected.compactMap { Self.locate($0.id, near: $0.row, in: history) })
+            if rows != tableView.selectedRowIndexes {
+                tableView.selectRowIndexes(rows, byExtendingSelection: false)
+            }
+        }
         // 何も選んでいなければ先頭（いちばん新しいコミット）を選び、詳細が空のままにならないようにする。
         if tableView.selectedRow < 0, history.rowCount > 0 {
             tableView.selectRowIndexes([0], byExtendingSelection: false)
@@ -502,6 +514,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private func toggleMerge(_ id: Data) {
         if expandedMerges.remove(id) == nil { expandedMerges.insert(id) }
         reloadScope(select: id)
+    }
+
+    /// `id` の新しい行。たいていは前の行か、上に増えた分だけ下にずれた所にあるので、近くから探す（History 全体の
+    /// 索引は、linux で作るのに 80 ms かかる）。見つからなければ索引で引く。消えていれば nil。
+    private static func locate(_ id: Data, near row: Int, in history: History) -> Int? {
+        let end = min(history.rowCount, row + 256)
+        if row < end, let found = (row..<end).first(where: { history.commitID(row: $0) == id }) { return found }
+        return history.row(of: id)
     }
 
     /// 頼んだ祖先の計算の回数（古い結果を捨てるため）。
