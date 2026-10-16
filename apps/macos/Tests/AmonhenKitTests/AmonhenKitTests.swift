@@ -96,6 +96,12 @@ private func makeRepo() throws -> URL {
     let cached = try #require(second.loadCachedHistory())
     #expect(cached.rowCount == 2)
     #expect(try cached.chunk(rows: 0..<1).subject(row: 0) == "日本語の件名")
+
+    // 作り直すと、前回のものを引き継がずに新しい History を出す。
+    let rebuilt = try second.rebuildHistory()
+    #expect(rebuilt.generation > cached.generation)
+    #expect(rebuilt.rowCount == 2)
+    #expect(try rebuilt.chunk(rows: 0..<1).subject(row: 0) == "日本語の件名")
 }
 
 @Test func listsRefsAndFindsTheirRows() throws {
