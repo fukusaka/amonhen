@@ -80,51 +80,6 @@ pub fn changed_words(old: &[u8], new: &[u8]) -> Option<(Ranges, Ranges)> {
     Some((removed, added))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn merges_words_unless_both_sides_touch_the_same_place() {
-        assert_eq!(
-            merge3(b"f(a, b)", b"f(x, b)", b"f(a, y)").as_deref(),
-            Some(&b"f(x, y)"[..])
-        );
-        // 同じ位置に別々のものを足した・同じ単語を別々に変えた
-        assert_eq!(merge3(b"a b", b"a x b", b"a y b"), None);
-        assert_eq!(merge3(b"v = 0", b"v = 1", b"v = 2"), None);
-        // 同じ変更は 1 つにする
-        assert_eq!(merge3(b"a b", b"a c", b"a c").as_deref(), Some(&b"a c"[..]));
-    }
-
-    #[test]
-    fn finds_the_changed_words() {
-        let (r, a) = changed_words(b"let x = foo(1);", b"let x = bar(1);").unwrap();
-        assert_eq!(r, vec![Range { start: 8, end: 11 }]);
-        assert_eq!(a, vec![Range { start: 8, end: 11 }]);
-        // 範囲は UTF-8 の文字の境界にそろう。
-        let (old, new) = (
-            "名前は太郎です。ok".as_bytes(),
-            "名前は花子です。ok".as_bytes(),
-        );
-        if let Some((r, a)) = changed_words(old, new) {
-            assert!(
-                r.iter()
-                    .all(|x| std::str::from_utf8(&old[x.clone()]).is_ok())
-            );
-            assert!(
-                a.iter()
-                    .all(|x| std::str::from_utf8(&new[x.clone()]).is_ok())
-            );
-        }
-    }
-
-    #[test]
-    fn skips_lines_that_changed_almost_entirely() {
-        assert!(changed_words(b"completely different", b"nothing alike here").is_none());
-    }
-}
-
 /// これより長いコンフリクトは単語単位でマージしない（時間がかかる）。
 const MAX_MERGE: usize = 64 * 1024;
 
@@ -199,4 +154,49 @@ pub fn merge3(base: &[u8], ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
     }
     out.extend_from_slice(&base[at..]);
     Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn merges_words_unless_both_sides_touch_the_same_place() {
+        assert_eq!(
+            merge3(b"f(a, b)", b"f(x, b)", b"f(a, y)").as_deref(),
+            Some(&b"f(x, y)"[..])
+        );
+        // 同じ位置に別々のものを足した・同じ単語を別々に変えた
+        assert_eq!(merge3(b"a b", b"a x b", b"a y b"), None);
+        assert_eq!(merge3(b"v = 0", b"v = 1", b"v = 2"), None);
+        // 同じ変更は 1 つにする
+        assert_eq!(merge3(b"a b", b"a c", b"a c").as_deref(), Some(&b"a c"[..]));
+    }
+
+    #[test]
+    fn finds_the_changed_words() {
+        let (r, a) = changed_words(b"let x = foo(1);", b"let x = bar(1);").unwrap();
+        assert_eq!(r, vec![Range { start: 8, end: 11 }]);
+        assert_eq!(a, vec![Range { start: 8, end: 11 }]);
+        // 範囲は UTF-8 の文字の境界にそろう。
+        let (old, new) = (
+            "名前は太郎です。ok".as_bytes(),
+            "名前は花子です。ok".as_bytes(),
+        );
+        if let Some((r, a)) = changed_words(old, new) {
+            assert!(
+                r.iter()
+                    .all(|x| std::str::from_utf8(&old[x.clone()]).is_ok())
+            );
+            assert!(
+                a.iter()
+                    .all(|x| std::str::from_utf8(&new[x.clone()]).is_ok())
+            );
+        }
+    }
+
+    #[test]
+    fn skips_lines_that_changed_almost_entirely() {
+        assert!(changed_words(b"completely different", b"nothing alike here").is_none());
+    }
 }

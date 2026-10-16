@@ -178,9 +178,7 @@ pub fn magic(data: &[u8]) -> (Vec<u8>, usize) {
             Some(ours.to_vec())
         } else if base == Some(ours) {
             Some(theirs.to_vec())
-        } else if base == Some(theirs) {
-            Some(ours.to_vec())
-        } else if squeeze(ours) == squeeze(theirs) {
+        } else if base == Some(theirs) || squeeze(ours) == squeeze(theirs) {
             Some(ours.to_vec())
         } else {
             base.and_then(|base| crate::words::merge3(base, ours, theirs))
