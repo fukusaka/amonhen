@@ -11,9 +11,12 @@ use crate::Result;
 pub fn run(args: &[String]) -> Result<ExitCode> {
     let mut bundle = std::env::var("AMONHEN_BUNDLE_ID").unwrap_or_else(|_| "io.github.fukusaka.amonhen".into());
     let mut target: Option<&str> = None;
+    let mut through_daemon = false;
     for arg in args {
         match arg.as_str() {
             "--snapshot" => bundle = "io.github.fukusaka.amonhen.snapshot".into(),
+            // 手元のリポジトリを、共有の daemon 越しに開く。
+            "--daemon" => through_daemon = true,
             s if s.starts_with('-') => return Err(format!("知らないオプション: {s}").into()),
             s => target = Some(s),
         }
@@ -24,6 +27,9 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     }
     let status = if target.starts_with("ssh://") || target.starts_with("daemon:") {
         Command::new("open").args(["-b", &bundle, &url_for(target)]).status()?
+    } else if through_daemon {
+        let root = crate::repository_root(&PathBuf::from(target))?;
+        Command::new("open").args(["-b", &bundle, &url_for(&format!("daemon:{}", root.display()))]).status()?
     } else {
         let root = crate::repository_root(&PathBuf::from(target))?;
         Command::new("open").arg("-b").arg(&bundle).arg(&root).status()?

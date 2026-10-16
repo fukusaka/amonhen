@@ -179,7 +179,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func open(path: String, debug: Bool = false, inNewWindow: Bool = false) {
-        let location = RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).standardizedFileURL.path
+        var location = RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).standardizedFileURL.path
+        // 手元のリポジトリを共有の daemon 越しに開く設定なら、`daemon:` の場所にする。
+        if Settings.openThroughDaemon, !RepositoryLocation.isRemote(location) { location = "daemon:" + location }
         if let existing = windows.first(where: { $0.location == location }) {
             existing.window.makeKeyAndOrderFront(nil)
             return

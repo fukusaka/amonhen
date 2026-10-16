@@ -687,6 +687,10 @@ impl Repository {
             .workdir
             .map(|w| w.to_string_lossy().into_owned())
             .unwrap_or_default();
+        // Activity が数秒ごとに daemon の記録を読む問い合わせは、記録しない（一覧がそれで埋まる）。
+        if name == "remoteActivity" {
+            return self.run(command);
+        }
         amonhen_model::activity::track("command", &repo, name, || self.run(command))
     }
 

@@ -998,7 +998,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Activity の画面で、このリポジトリの操作ログを読み・戻すため。
     var activityRepository: ActivityRepository {
-        ActivityRepository(name: window.title, repository: repository, actions: actions, isRemote: !isLocal)
+        ActivityRepository(name: window.title, repository: repository, actions: actions, isRemote: !isLocal, location: location)
     }
 
     /// Repository > Repository Settings…（⌘;）。

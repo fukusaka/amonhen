@@ -34,6 +34,13 @@ pub struct SearchCache {
     texts: amonhen_model::search::TextIndexCache,
 }
 
+impl SearchCache {
+    /// 検索の索引の行の数とバイト数（まだ作っていなければ None）。
+    pub fn text_index_stats(&self) -> Option<(usize, usize)> {
+        self.texts.stats()
+    }
+}
+
 pub struct Server {
     backend: Arc<dyn GitBackend>,
     search: Arc<SearchCache>,

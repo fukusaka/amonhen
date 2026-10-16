@@ -91,6 +91,7 @@ dependencies = [
  "amonhen-remote",
  "amonhen-watch",
  "libc",
+ "serde_json",
  "tempfile",
 ]
 

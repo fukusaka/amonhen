@@ -527,6 +527,11 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         let bookmark = Bookmarks.shared.bookmark(path)
         add("Open in Tab") { [weak self] in self?.open(path, newWindow: false) }
         add("Open in New Window") { [weak self] in self?.open(path, newWindow: true) }
+        if !RepositoryLocation.isRemote(path), !Settings.openThroughDaemon {
+            let item = ClosureMenuItem(title: "Open via Daemon") { [weak self] in self?.onOpen?("daemon:" + path, false) }
+            item.toolTip = "共有の daemon 越しに開く（History・検索の索引・操作の記録を CLI などと共有する）"
+            menu.addItem(item)
+        }
         menu.addItem(.separator())
         let targets = outline.selectedRowIndexes.contains(outline.clickedRow) ? selectedPaths : [path]
         add(targets.count > 1 ? "Fetch \(targets.count) Repositories" : "Fetch") { Bookmarks.shared.fetch(targets) }

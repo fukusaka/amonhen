@@ -41,13 +41,14 @@ struct Shared {
     _watcher: Option<amonhen_watch::Watcher>,
 }
 
-#[derive(Default)]
 struct State {
     /// 開いているリポジトリと、最後に使われた時刻。
     repos: Mutex<HashMap<PathBuf, (Arc<Shared>, Instant)>>,
     connections: AtomicUsize,
     next: AtomicU64,
     last_left: Mutex<Option<Instant>>,
+    socket: PathBuf,
+    started: Instant,
 }
 
 pub fn run(socket: Option<PathBuf>) -> Result<()> {
@@ -67,7 +68,14 @@ pub fn run(socket: Option<PathBuf>) -> Result<()> {
         Err(e) => return Err(e.into()),
     };
     restrict(&socket);
-    let state = Arc::new(State::default());
+    let state = Arc::new(State {
+        repos: Mutex::default(),
+        connections: AtomicUsize::new(0),
+        next: AtomicU64::new(0),
+        last_left: Mutex::default(),
+        socket: socket.clone(),
+        started: Instant::now(),
+    });
     *state.last_left.lock().unwrap() = Some(Instant::now());
     watch_idle(state.clone(), socket.clone());
     for stream in listener.incoming() {
@@ -117,7 +125,22 @@ fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
         Err(e) => return Err(e.into()),
     };
-    let writer = BufWriter::new(stream);
+    let mut writer = BufWriter::new(stream);
+    // リポジトリではなく、daemon への指示。
+    if let Some(command) = path.strip_prefix(local::CONTROL) {
+        use amonhen_remote::frame::{self, Kind};
+        let (kind, reply) = match command {
+            "status" => (Kind::Ok, status(state).to_string()),
+            "stop" => (Kind::Ok, "stopping".to_owned()),
+            other => (Kind::Err, format!("知らない指示: {other}")),
+        };
+        frame::write_with(&mut writer, kind, 0, reply.as_bytes(), false)?;
+        if command == "stop" {
+            let _ = std::fs::remove_file(&state.socket);
+            std::process::exit(0);
+        }
+        return Ok(());
+    }
     let shared = match open(state, &path) {
         Ok(s) => s,
         Err(e) => {
@@ -226,4 +249,37 @@ fn cache_path(key: &Path) -> Option<PathBuf> {
     };
     std::fs::create_dir_all(&dir).ok()?;
     Some(amonhen_core::cache::path_for(&dir, &format!("daemon-history:{}", key.display())))
+}
+
+/// daemon の様子（`amonhen daemon status`、Activity の Daemon のタブ）。
+fn status(state: &State) -> serde_json::Value {
+    let repos: Vec<_> = state
+        .repos
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(path, (shared, used))| {
+            let index = shared.search.text_index_stats();
+            serde_json::json!({
+                "path": path.display().to_string(),
+                "clients": shared.listeners.lock().unwrap().len(),
+                "idleMs": used.elapsed().as_millis() as u64,
+                "history": shared.core.get().is_some(),
+                "watching": shared._watcher.is_some(),
+                "indexRows": index.map(|(rows, _)| rows),
+                "indexBytes": index.map(|(_, bytes)| bytes),
+            })
+        })
+        .collect();
+    serde_json::json!({
+        "pid": std::process::id(),
+        "version": env!("CARGO_PKG_VERSION"),
+        "protocol": amonhen_remote::PROTOCOL_VERSION,
+        "socket": state.socket.display().to_string(),
+        "uptimeMs": state.started.elapsed().as_millis() as u64,
+        // この問い合わせのつながりは数えない。
+        "connections": state.connections.load(Ordering::SeqCst).saturating_sub(1),
+        "idleExitMs": IDLE.as_millis() as u64,
+        "repos": repos,
+    })
 }

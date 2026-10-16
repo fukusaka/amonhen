@@ -10,6 +10,7 @@ name = "amonhend"
 path = "src/main.rs"
 
 [dependencies]
+serde_json = "1.0.154"
 amonhen-backend-gix.workspace = true
 amonhen-core.workspace = true
 amonhen-model.workspace = true

@@ -135,6 +135,12 @@ enum Settings {
         }
     }
 
+    /// 手元のリポジトリを、共有の daemon 越しに開くか（既定は開かない。このアプリの中で開く）。
+    static var openThroughDaemon: Bool {
+        get { UserDefaults.standard.bool(forKey: "openThroughDaemon") }
+        set { UserDefaults.standard.set(newValue, forKey: "openThroughDaemon") }
+    }
+
     /// 開いたリポジトリを、まだ一覧のどこにもなければブックマークに入れるか（既定は入れる）。
     static var autoBookmark: Bool {
         get { UserDefaults.standard.object(forKey: "autoBookmark") as? Bool ?? true }
@@ -200,6 +206,7 @@ final class SettingsModel {
     var gitHubCICommits = Settings.gitHubCICommits { didSet { Settings.gitHubCICommits = gitHubCICommits } }
     var gitHubAvatarsOnce = Settings.gitHubAvatarsOnce { didSet { Settings.gitHubAvatarsOnce = gitHubAvatarsOnce } }
     var autoBookmark = Settings.autoBookmark { didSet { Settings.autoBookmark = autoBookmark } }
+    var openThroughDaemon = Settings.openThroughDaemon { didSet { Settings.openThroughDaemon = openThroughDaemon } }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var historyFileTree = Settings.historyFileTree { didSet { Settings.historyFileTree = historyFileTree } }
     var autoMagicMerge = Settings.autoMagicMerge { didSet { Settings.autoMagicMerge = autoMagicMerge } }
@@ -230,6 +237,7 @@ final class SettingsModel {
             monospacedCommitMessage = Settings.monospacedCommitMessage
         }
         if showAvatars != Settings.showAvatars { showAvatars = Settings.showAvatars }
+        if openThroughDaemon != Settings.openThroughDaemon { openThroughDaemon = Settings.openThroughDaemon }
         if gitHubCIStatus != Settings.gitHubCIStatus { gitHubCIStatus = Settings.gitHubCIStatus }
         if gitHubAvatars != Settings.gitHubAvatars { gitHubAvatars = Settings.gitHubAvatars }
         if gitHubCIDefaultBranch != Settings.gitHubCIDefaultBranch { gitHubCIDefaultBranch = Settings.gitHubCIDefaultBranch }
@@ -405,6 +413,10 @@ private struct AdvancedSettings: View {
     @Bindable var model: SettingsModel
     var body: some View {
         Form {
+            Section("共有の daemon") {
+                Toggle("手元のリポジトリを共有の daemon 越しに開く", isOn: $model.openThroughDaemon)
+                Note("History・検索の索引・操作の記録を、アプリ・CLI（amonhen -C daemon:…）・後の VSCode 拡張と共有する。これから開くリポジトリから効く。リポジトリの一覧の右クリックで、1 つだけ daemon 越しに開くこともできる。daemon の様子は Window > Activity の Daemon。")
+            }
             Section("SSH 先のリポジトリ") {
                 Toggle("署名をこの Mac の鍵で検証する", isOn: $model.checkRemoteSignaturesLocally)
                 Note("この Mac の gpg・allowed_signers・信用度で検証する。外すと SSH 先の git と鍵で検証する。この Mac にあるリポジトリは、いつもこの Mac で検証する。")

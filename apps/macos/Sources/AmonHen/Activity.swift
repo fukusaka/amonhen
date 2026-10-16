@@ -55,8 +55,10 @@ struct ActivityRepository: Identifiable, Hashable {
     let name: String
     let repository: Repository
     let actions: Actions
-    /// SSH 先のリポジトリか（daemon の記録も読む）。
+    /// daemon 越しのリポジトリか（SSH 先・手元の共有の daemon。daemon の記録も読む）。
     var isRemote = false
+    /// 開いた場所（手元のパス、`daemon:/path`、`ssh://host/path`）。
+    var location = ""
     var id: ObjectIdentifier { ObjectIdentifier(repository) }
     static func == (a: Self, b: Self) -> Bool { a.id == b.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -79,15 +81,23 @@ final class ActivityModel {
     var selectedRepository: ActivityRepository?
     /// AppDelegate が設定する（開いているリポジトリ）。
     @ObservationIgnored var listRepositories: () -> [ActivityRepository] = { [] }
-    /// SSH 先の daemon の記録（リポジトリの名前 → 記録）。2 秒ごとに読む。
+    /// daemon の記録（リポジトリの名前 → 記録）。2 秒ごとに読む。
     @ObservationIgnored private var remoteRecords: [String: [ActivityRecord]] = [:]
     @ObservationIgnored private var remoteLoadedAt = Date.distantPast
     @ObservationIgnored private var loadingRemote = false
+
+    /// 手元の共有の daemon の様子（動いていなければ nil）。2 秒ごとに読む。
+    var daemon: SharedDaemon.Status?
+    /// daemon を読んだか（まだなら「調べています」と出す）。
+    var daemonChecked = false
+    @ObservationIgnored private var daemonLoadedAt = Date.distantPast
+    @ObservationIgnored private var loadingDaemon = false
 
     func refresh() {
         let remote = remoteRecords.values.flatMap { $0 }
         records = (ActivityRecord.all() + remote).sorted { $0.started < $1.started }
         loadRemoteRecords()
+        loadDaemon()
         events = EventLog.events
         metrics = PerformanceLog.samples.map { ($0.key, $0.value) }.sorted { $0.name < $1.name }
         repositories = listRepositories()
@@ -120,7 +130,38 @@ final class ActivityModel {
         }
     }
 
-    /// 走っている操作を取り消す（SSH 先の記録なら daemon に頼む）。
+    func loadDaemon(force: Bool = false) {
+        guard !loadingDaemon, force || Date().timeIntervalSince(daemonLoadedAt) > 2 else { return }
+        loadingDaemon = true
+        Task {
+            let status = await Task.detached(priority: .utility) { SharedDaemon.status() }.value
+            daemon = status
+            daemonChecked = true
+            daemonLoadedAt = Date()
+            loadingDaemon = false
+        }
+    }
+
+    func startDaemon() {
+        let path = Daemon.path
+        Task {
+            do {
+                try await Task.detached { try SharedDaemon.start(daemon: path) }.value
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+            loadDaemon(force: true)
+        }
+    }
+
+    func stopDaemon() {
+        Task {
+            await Task.detached { SharedDaemon.stop() }.value
+            loadDaemon(force: true)
+        }
+    }
+
+    /// 走っている操作を取り消す（daemon の記録なら daemon に頼む）。
     func cancel(_ record: ActivityRecord) {
         guard let name = record.remote else {
             ActivityRecord.cancel(seq: record.seq)
@@ -196,7 +237,7 @@ private struct OperationsTab: View {
                 }
                 .width(16)
                 TableColumn("リポジトリ") { r in
-                    Text(r.remote.map { "\($0)（SSH 先）" } ?? repoName(r.repo))
+                    Text(r.remote.map { "\($0)（daemon）" } ?? repoName(r.repo))
                 }
                 .width(min: 60, ideal: 110)
                 TableColumn("内容") { r in
@@ -221,7 +262,7 @@ private struct OperationsTab: View {
                 }
                 .frame(height: 90)
             }
-            Text("git の起動とコアの命令を、新しい順に最大 1000 件（SSH 先のリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。")
+            Text("git の起動とコアの命令を、新しい順に最大 1000 件（daemon 越しのリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding()
@@ -324,6 +365,92 @@ private struct EventsTab: View {
     }
 }
 
+/// 手元の共有の daemon の様子と、このアプリの daemon とのつながり。
+private struct DaemonTab: View {
+    let model: ActivityModel
+
+    private func duration(_ ms: UInt64) -> String {
+        let s = ms / 1000
+        if s < 60 { return "\(s) 秒" }
+        if s < 3600 { return s % 60 == 0 ? "\(s / 60) 分" : "\(s / 60) 分 \(s % 60) 秒" }
+        return "\(s / 3600) 時間 \(s % 3600 / 60) 分"
+    }
+
+    private func bytes(_ n: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(n), countStyle: .file)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                if let d = model.daemon {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label("共有の daemon は動いています", systemImage: "circle.fill").foregroundStyle(.green).font(.headline)
+                        Text("pid \(String(d.pid)) · 版 \(d.version)（通信の形 \(d.protocol)） · 動いて \(duration(d.uptimeMs)) · つながり \(d.connections)")
+                            .font(.caption).monospacedDigit()
+                        Text(d.socket).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Label(model.daemonChecked ? "共有の daemon は動いていません" : "調べています…", systemImage: "circle")
+                            .foregroundStyle(.secondary).font(.headline)
+                        Text("daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > Advanced）、自動で起動します。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
+                Spacer()
+                if model.daemon == nil {
+                    Button("起動") { model.startDaemon() }
+                } else {
+                    Button("止める") { model.stopDaemon() }
+                        .help("daemon 越しに開いているリポジトリは、つながりが切れる（「つなぎ直す」でまた起動する）")
+                }
+            }
+            Text("開いているリポジトリ").font(.subheadline.bold())
+            Table(model.daemon?.repos ?? []) {
+                TableColumn("リポジトリ") { r in Text(r.path).lineLimit(1).truncationMode(.head).help(r.path) }
+                TableColumn("つながり") { r in
+                    Text(r.clients > 0 ? "\(r.clients)" : "なし（\(duration(r.idleMs))前から）").monospacedDigit()
+                }
+                .width(min: 60, ideal: 130)
+                TableColumn("History") { r in Text(r.history ? "あり" : "—") }.width(60)
+                TableColumn("監視") { r in Text(r.watching ? "あり" : "—") }.width(40)
+                TableColumn("検索の索引") { r in
+                    Text(r.indexRows.map { "\($0) 行・\(bytes(UInt64(r.indexBytes ?? 0)))" } ?? "—").monospacedDigit()
+                }
+                .width(min: 80, ideal: 150)
+            }
+            .frame(minHeight: 110)
+            Text("このアプリの daemon とのつながり").font(.subheadline.bold())
+            let remotes = model.repositories.filter(\.isRemote)
+            Table(remotes) {
+                TableColumn("リポジトリ") { r in Text(r.name) }
+                TableColumn("場所") { r in
+                    Text(r.location.hasPrefix("ssh://") ? "SSH 先" : "手元の共有の daemon").foregroundStyle(.secondary)
+                }
+                .width(min: 80, ideal: 130)
+                TableColumn("状態") { r in
+                    switch r.repository.connectionState {
+                    case .closed(let reason): Text("切れた").foregroundStyle(.red).help(reason)
+                    default: Text("つながっている").foregroundStyle(.green)
+                    }
+                }
+                .width(90)
+                TableColumn("送った・受け取った") { r in
+                    let t = r.repository.traffic
+                    Text(t.map { "\(bytes($0.sent)) · \(bytes($0.received))" } ?? "—").monospacedDigit()
+                }
+                .width(min: 100, ideal: 150)
+            }
+            .frame(minHeight: 80)
+            Text("daemon はだれもつながらなくなって \(duration(model.daemon?.idleExitMs ?? 600_000))たつと終わる。端末からは amonhen daemon status で見られる。")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        .padding()
+        .onAppear { model.loadDaemon(force: true) }
+    }
+}
+
 private struct ActivityView: View {
     let model: ActivityModel
     var body: some View {
@@ -332,6 +459,7 @@ private struct ActivityView: View {
             HistoryTab(model: model).tabItem { Text("History") }
             PerformanceTab(model: model).tabItem { Text("Performance") }
             EventsTab(model: model).tabItem { Text("Events") }
+            DaemonTab(model: model).tabItem { Text("Daemon") }
         }
         .padding(.top, 8)
         .frame(minWidth: 760, minHeight: 460)

@@ -248,6 +248,11 @@ impl TextIndexCache {
         };
         index.search(terms, cancelled)
     }
+
+    /// 覚えている索引の行の数と、件名・作者名のバイト数（なければ None）。
+    pub fn stats(&self) -> Option<(usize, usize)> {
+        self.0.lock().unwrap().as_ref().map(|i| (i.ids.len(), i.text.len()))
+    }
 }
 
 /// `ids` のコミットを、行を分けて並列に読みながら調べる。条件ごとに、合ったコミットの添字（`ids` の中の

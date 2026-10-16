@@ -1058,14 +1058,15 @@ void amonhen_repo_set_local_signature_check(const AmonhenRepo *repo_ptr,
 
 /**
  * daemon とのつながりの様子。手元のリポジトリなら -1、つながっていれば 0、切れていれば 1 を返す。
- * `received` が NULL でなければ、これまでに受け取ったバイト数を書く。切れた理由は
+ * `received`・`sent` が NULL でなければ、これまでに受け取った・送ったバイト数を書く。切れた理由は
  * `amonhen_repo_disconnect_reason` で読む。
  *
  * # Safety
- * `repo` は有効なリポジトリ、`received` は NULL か書き込める `u64` を指すこと。
+ * `repo` は有効なリポジトリ、`received`・`sent` は NULL か書き込める `u64` を指すこと。
  */
 int32_t amonhen_repo_connection(const AmonhenRepo *repo_ptr,
-                                uint64_t *received);
+                                uint64_t *received,
+                                uint64_t *sent);
 
 /**
  * daemon との接続が切れた理由（`amonhen_string_free` で解放する）。切れていなければ NULL。
@@ -1144,6 +1145,24 @@ const AmonhenHistory *amonhen_history_matching(const AmonhenRepo *repo_ptr,
                                                const AmonhenHistory *history_ptr,
                                                const uint32_t *rows,
                                                uint32_t count);
+
+/**
+ * 手元の共有の daemon の様子（JSON。`amonhen_string_free` で解放する）。動いていなければ NULL。
+ */
+char *amonhen_daemon_status(void);
+
+/**
+ * 手元の共有の daemon を止める。動いていなければ false。
+ */
+bool amonhen_daemon_stop(void);
+
+/**
+ * 手元の共有の daemon を起動する（`daemon` は `amonhend` のパス）。失敗したら false（理由は `amonhen_last_error`）。
+ *
+ * # Safety
+ * `daemon` は NUL 終端の UTF-8 であること。
+ */
+bool amonhen_daemon_start(const char *daemon);
 
 #ifdef __cplusplus
 }  // extern "C"

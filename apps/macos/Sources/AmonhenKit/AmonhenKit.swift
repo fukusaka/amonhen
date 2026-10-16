@@ -88,7 +88,7 @@ public final class Repository: @unchecked Sendable {
     /// daemon とのつながりの様子。どのスレッドから呼んでもよい（数を読むだけで、通信はしない）。
     public var connectionState: ConnectionState {
         var received: UInt64 = 0
-        switch amonhen_repo_connection(raw, &received) {
+        switch amonhen_repo_connection(raw, &received, nil) {
         case -1: return .local
         case 0: return .connected(received: received)
         default:
@@ -96,6 +96,12 @@ public final class Repository: @unchecked Sendable {
             defer { amonhen_string_free(s) }
             return .closed(reason: String(cString: s))
         }
+    }
+
+    /// daemon との通信の量（送った・受け取ったバイト数）。手元のリポジトリなら nil。
+    public var traffic: (sent: UInt64, received: UInt64)? {
+        var received: UInt64 = 0, sent: UInt64 = 0
+        return amonhen_repo_connection(raw, &received, &sent) == -1 ? nil : (sent, received)
     }
 
     /// 最新のスナップショット。まだ読んでいなければ nil。
@@ -325,4 +331,45 @@ public final class HistoryChunk: @unchecked Sendable {
     func withString<R>(_ s: AmonhenStrRef, _ body: (CFString) throws -> R) rethrows -> R {
         try withExtendedLifetime(self) { try withNoCopyString(s, bases: view.bases, body) }
     }
+}
+
+/// 手元の共有の daemon（`amonhend --serve`）。
+public enum SharedDaemon {
+    /// 様子（`amonhen daemon status --json` と同じ）。
+    public struct Status: Decodable, Sendable {
+        public struct Repo: Decodable, Sendable, Identifiable, Hashable {
+            public let path: String
+            public let clients: Int
+            public let idleMs: UInt64
+            public let history: Bool
+            public let watching: Bool
+            public let indexRows: Int?
+            public let indexBytes: Int?
+            public var id: String { path }
+        }
+        public let pid: Int
+        public let version: String
+        public let `protocol`: Int
+        public let socket: String
+        public let uptimeMs: UInt64
+        public let connections: Int
+        public let idleExitMs: UInt64
+        public let repos: [Repo]
+    }
+
+    /// 動いていれば様子を返す（通信するので裏のスレッドで呼ぶ）。動いていなければ nil。
+    public static func status() -> Status? {
+        guard let out = amonhen_daemon_status() else { return nil }
+        defer { amonhen_string_free(out) }
+        return try? JSONDecoder().decode(Status.self, from: Data(String(cString: out).utf8))
+    }
+
+    /// 起動する（`daemon` は `amonhend` のパス）。もう動いていれば何もしない。
+    public static func start(daemon: String) throws {
+        if !amonhen_daemon_start(daemon) { throw AmonhenError.last() }
+    }
+
+    /// 止める。
+    @discardableResult
+    public static func stop() -> Bool { amonhen_daemon_stop() }
 }

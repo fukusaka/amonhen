@@ -32,6 +32,48 @@ pub fn socket_path() -> PathBuf {
     dir.join(format!("amonhend-{}.sock", crate::PROTOCOL_VERSION))
 }
 
+/// つないで最初に送るものが、この文字で始まれば、リポジトリではなく daemon への指示（`status`・`stop`）。
+pub const CONTROL: char = '\0';
+
+/// 共有の daemon に指示を送り、答え（`status` なら JSON）を返す。daemon が動いていなければ `None`。
+#[cfg(unix)]
+pub fn control(command: &str) -> Result<Option<String>> {
+    use std::os::unix::net::UnixStream;
+    let Ok(stream) = UnixStream::connect(socket_path()) else {
+        return Ok(None);
+    };
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+    let mut writer = stream.try_clone()?;
+    write_preamble(&mut writer, &format!("{CONTROL}{command}"))?;
+    let mut reader = std::io::BufReader::new(stream);
+    match crate::frame::read(&mut reader)? {
+        Some(f) if f.kind == crate::frame::Kind::Ok => Ok(Some(String::from_utf8_lossy(&f.payload).into_owned())),
+        Some(f) => Err(String::from_utf8_lossy(&f.payload).into_owned().into()),
+        None => Err("daemon が答えずに閉じた".into()),
+    }
+}
+
+#[cfg(not(unix))]
+pub fn control(_command: &str) -> Result<Option<String>> {
+    Ok(None)
+}
+
+/// 共有の daemon を起動する（もう動いていれば何もしない）。
+#[cfg(unix)]
+pub fn start(daemon: &str) -> Result<()> {
+    let socket = socket_path();
+    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+        return Ok(());
+    }
+    launch(daemon, &socket)?;
+    wait_for(&socket, Duration::from_secs(5)).map(drop)
+}
+
+#[cfg(not(unix))]
+pub fn start(_daemon: &str) -> Result<()> {
+    Err("共有の daemon は Unix だけです".into())
+}
+
 /// つないで最初に送る、開くリポジトリのパス。
 pub fn write_preamble(out: &mut impl Write, repo: &str) -> std::io::Result<()> {
     out.write_all(&(repo.len() as u32).to_le_bytes())?;

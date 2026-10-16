@@ -5,6 +5,7 @@
 //!   amonhen log [options] [<query>…]    グラフ付きの履歴
 //!   amonhen undo [--list|--peek]        Amon Hen の操作ログで、直前の操作を戻す
 //!   amonhen merge-file [--all] <file>…  コンフリクトのあるファイルに Magic Merge をかける
+//!   amonhen daemon [status|start|stop]  手元の共有の daemon の様子・起動・停止
 
 mod graph;
 mod open;
@@ -19,11 +20,12 @@ use amonhen_model::Oid;
 
 const USAGE: &str = "\
 usage: amonhen [<path>]
-       amonhen open [<path> | ssh://host/path] [--snapshot]
+       amonhen open [<path> | ssh://host/path] [--daemon] [--snapshot]
        amonhen log [-C <path>] [-n <count> | --all] [--fold] [--branch <name>]… [--no-graph]
                    [--color=auto|always|never] [<query>…]
        amonhen undo [-C <path>] [--list | --peek]
        amonhen merge-file [--all] [--check] <file>…
+       amonhen daemon [status [--json] | start | stop]
 
 log の <query> は History の検索と同じ書き方（author:名前 path:パス contents:\"文字列\" など）。
 merge-file は既定で間違えようのない規則だけをかける（--all ですべての規則）。コンフリクトが残れば終了コード 1
@@ -43,6 +45,7 @@ fn main() -> ExitCode {
         Some("log") => log(&args[1..]),
         Some("undo") => undo(&args[1..]),
         Some("merge-file") => merge_file(&args[1..]),
+        Some("daemon") => daemon(&args[1..]),
         // サブコマンドでなければ、開く場所とみなす（`amonhen .`）。
         Some(_) => open::run(&args),
     };
@@ -101,6 +104,81 @@ fn open_repository(path: &Path) -> Result<Repository> {
         Some(dir) => Repository::with_cache(backend, amonhen_core::cache::path_for(&dir, &key)),
         None => Repository::new(backend),
     })
+}
+
+// MARK: - daemon
+
+fn daemon(args: &[String]) -> Result<ExitCode> {
+    match args.first().map(String::as_str).unwrap_or("status") {
+        "status" => {
+            let Some(json) = amonhen_remote::local::control("status")? else {
+                println!("共有の daemon は動いていません（{}）", amonhen_remote::local::socket_path().display());
+                return Ok(ExitCode::from(1));
+            };
+            if args.iter().any(|a| a == "--json") {
+                println!("{json}");
+                return Ok(ExitCode::SUCCESS);
+            }
+            let s: serde_json::Value = serde_json::from_str(&json)?;
+            let secs = |ms: &serde_json::Value| ms.as_u64().unwrap_or(0) / 1000;
+            println!("共有の daemon: 動いています");
+            println!("  pid          {}", s["pid"]);
+            println!("  版           {}（通信の形 {}）", s["version"].as_str().unwrap_or(""), s["protocol"]);
+            println!("  ソケット     {}", s["socket"].as_str().unwrap_or(""));
+            println!("  動いている   {}", duration(secs(&s["uptimeMs"])));
+            println!("  つながり     {}", s["connections"]);
+            let repos = s["repos"].as_array().cloned().unwrap_or_default();
+            if repos.is_empty() {
+                println!("  リポジトリ   なし");
+            }
+            for r in repos {
+                let index = match (r["indexRows"].as_u64(), r["indexBytes"].as_u64()) {
+                    (Some(rows), Some(bytes)) => format!("検索の索引 {rows} 行・{:.1} MB", bytes as f64 / 1e6),
+                    _ => "検索の索引なし".to_owned(),
+                };
+                let clients = r["clients"].as_u64().unwrap_or(0);
+                let state = if clients > 0 {
+                    format!("{clients} つながり")
+                } else {
+                    format!("だれもつないでいない（{}前から）", duration(secs(&r["idleMs"])))
+                };
+                println!("  {}", r["path"].as_str().unwrap_or(""));
+                println!(
+                    "      {state}・History {}・監視 {}・{index}",
+                    if r["history"] == true { "あり" } else { "なし" },
+                    if r["watching"] == true { "あり" } else { "なし" },
+                );
+            }
+            println!("  だれもつながらなくなって {}たつと終わります", duration(secs(&s["idleExitMs"])));
+            Ok(ExitCode::SUCCESS)
+        }
+        "start" => {
+            amonhen_remote::local::start(&daemon_program()?)?;
+            println!("共有の daemon を起動しました（{}）", amonhen_remote::local::socket_path().display());
+            Ok(ExitCode::SUCCESS)
+        }
+        "stop" => match amonhen_remote::local::control("stop")? {
+            Some(_) => {
+                println!("共有の daemon を止めました");
+                Ok(ExitCode::SUCCESS)
+            }
+            None => {
+                println!("共有の daemon は動いていません");
+                Ok(ExitCode::from(1))
+            }
+        },
+        other => Err(format!("知らない指示: {other}\n\n{USAGE}").into()),
+    }
+}
+
+/// 秒を「1 時間 2 分」のように。
+fn duration(secs: u64) -> String {
+    match secs {
+        s if s < 60 => format!("{s} 秒"),
+        s if s < 3600 && s % 60 == 0 => format!("{} 分", s / 60),
+        s if s < 3600 => format!("{} 分 {} 秒", s / 60, s % 60),
+        s => format!("{} 時間 {} 分", s / 3600, s % 3600 / 60),
+    }
 }
 
 /// `amonhend` の場所: `AMONHEN_DAEMON`、なければ自分の隣（開発中の target/）か、`.app` の中

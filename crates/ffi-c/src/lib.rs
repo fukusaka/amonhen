@@ -1602,21 +1602,25 @@ pub unsafe extern "C" fn amonhen_repo_set_local_signature_check(
 }
 
 /// daemon とのつながりの様子。手元のリポジトリなら -1、つながっていれば 0、切れていれば 1 を返す。
-/// `received` が NULL でなければ、これまでに受け取ったバイト数を書く。切れた理由は
+/// `received`・`sent` が NULL でなければ、これまでに受け取った・送ったバイト数を書く。切れた理由は
 /// `amonhen_repo_disconnect_reason` で読む。
 ///
 /// # Safety
-/// `repo` は有効なリポジトリ、`received` は NULL か書き込める `u64` を指すこと。
+/// `repo` は有効なリポジトリ、`received`・`sent` は NULL か書き込める `u64` を指すこと。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_repo_connection(
     repo_ptr: *const AmonhenRepo,
     received: *mut u64,
+    sent: *mut u64,
 ) -> i32 {
     let Some(state) = repo(repo_ptr).connection_state() else {
         return -1;
     };
     if !received.is_null() {
         unsafe { *received = state.received };
+    }
+    if !sent.is_null() {
+        unsafe { *sent = state.sent };
     }
     i32::from(state.closed.is_some())
 }
@@ -1756,4 +1760,39 @@ pub unsafe extern "C" fn amonhen_history_matching(
 ) -> *const AmonhenHistory {
     let rows = if count == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(rows, count as usize) } };
     into_history(repo(repo_ptr).history_matching(history(history_ptr), rows))
+}
+
+/// 手元の共有の daemon の様子（JSON。`amonhen_string_free` で解放する）。動いていなければ NULL。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_daemon_status() -> *mut c_char {
+    match amonhen_remote::local::control("status") {
+        Ok(Some(json)) => CString::new(json).map_or(std::ptr::null_mut(), CString::into_raw),
+        Ok(None) => std::ptr::null_mut(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// 手元の共有の daemon を止める。動いていなければ false。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_daemon_stop() -> bool {
+    matches!(amonhen_remote::local::control("stop"), Ok(Some(_)))
+}
+
+/// 手元の共有の daemon を起動する（`daemon` は `amonhend` のパス）。失敗したら false（理由は `amonhen_last_error`）。
+///
+/// # Safety
+/// `daemon` は NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_daemon_start(daemon: *const c_char) -> bool {
+    let result = str_arg(daemon).map_err(Into::into).and_then(amonhen_remote::local::start);
+    match result {
+        Ok(()) => true,
+        Err(e) => {
+            set_error(e);
+            false
+        }
+    }
 }
