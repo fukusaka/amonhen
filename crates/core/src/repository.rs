@@ -23,6 +23,8 @@ pub struct HistorySnapshot {
     pub head: Option<Oid>,
     pub graph: CommitGraph,
     pub layout: GraphLayout,
+    /// マージ済みブランチを折りたたんだ History なら、行ごとの隠したコミットの数（そうでなければ空）。
+    pub folded: Vec<u32>,
     /// コミット ID から行への索引。次に読み直すとき、既知のコミットで走査を止めるのに使う。
     rows: OnceLock<OidMap<u32>>,
 }
@@ -132,6 +134,42 @@ pub struct RefsSnapshot {
 }
 
 impl HistorySnapshot {
+    /// スクロールバーに描く密度。行を `buckets` 個の区間に分け、区間ごとに [コミットの頻度, ブランチの活動量]
+    /// をそれぞれ 0〜1 で返す。頻度は時間あたりのコミット数（対数で縮める）、活動量は区間の中で点のあるレーンの数。
+    /// どちらも、いちばん少ない区間を 0、多い区間を 1 にする。
+    pub fn density(&self, buckets: usize) -> Vec<[f32; 2]> {
+        let n = self.graph.len();
+        if n == 0 || buckets == 0 {
+            return Vec::new();
+        }
+        let buckets = buckets.min(n);
+        let times = self.graph.commit_times();
+        let nodes = self.layout.nodes();
+        let mut lanes = Vec::new();
+        let mut raw: Vec<(f64, f64)> = (0..buckets)
+            .map(|b| {
+                let (start, end) = (b * n / buckets, (b + 1) * n / buckets);
+                let (lo, hi) = times[start..end].iter().fold((i64::MAX, i64::MIN), |(lo, hi), &t| (lo.min(t), hi.max(t)));
+                // 1 時間より短い区間は 1 時間とみなす（同じ時刻のコミットで無限大にしない）。
+                let hours = ((hi - lo).max(3600) as f64) / 3600.0;
+                let frequency = ((end - start) as f64 / hours).ln_1p();
+                lanes.clear();
+                lanes.extend(nodes.get(start..end).unwrap_or(&[]).iter().map(|node| node.lane));
+                lanes.sort_unstable();
+                lanes.dedup();
+                (frequency, lanes.len() as f64)
+            })
+            .collect();
+        // いちばん少ない区間を 0、多い区間を 1 に広げる（差を見やすくする）。
+        let range = |values: &mut dyn Iterator<Item = f64>| {
+            values.fold((f64::MAX, f64::MIN), |(lo, hi), v| (lo.min(v), hi.max(v)))
+        };
+        let (lo_f, hi_f) = range(&mut raw.iter().map(|r| r.0));
+        let (lo_a, hi_a) = range(&mut raw.iter().map(|r| r.1));
+        let scale = |v: f64, lo: f64, hi: f64| if hi > lo { ((v - lo) / (hi - lo)) as f32 } else { 0.5 };
+        raw.drain(..).map(|(f, a)| [scale(f, lo_f, hi_f), scale(a, lo_a, hi_a)]).collect()
+    }
+
     /// コミットの行。初回は索引を作る（150 万コミットで 80 ms ほど）。
     pub fn row_of(&self, id: &Oid) -> Option<u32> {
         self.rows().get(id).copied()
@@ -322,6 +360,7 @@ impl Repository {
             head,
             graph,
             layout,
+            folded: Vec::new(),
             rows: OnceLock::new(),
         });
         self.history.store(Some(snapshot.clone()));
@@ -386,23 +425,70 @@ impl Repository {
 
     /// `tips` から辿れるコミットだけの History（ブランチで絞り込む）。最新の History から作り、公開はしない。
     pub fn history_filtered(&self, tips: &[Oid]) -> Result<Arc<HistorySnapshot>> {
+        self.history_shaped(Some(tips), None)
+    }
+
+    /// マージ済みブランチを折りたたんだ History。`tips` があればそこから辿れるものだけ。`expanded` の merge は
+    /// 取り込んだ側も見せる。最新の History から作り、公開はしない。
+    pub fn history_folded(&self, tips: Option<&[Oid]>, expanded: &[Oid]) -> Result<Arc<HistorySnapshot>> {
+        self.history_shaped(tips, Some(expanded))
+    }
+
+    fn history_shaped(&self, tips: Option<&[Oid]>, fold: Option<&[Oid]>) -> Result<Arc<HistorySnapshot>> {
         let full = match self.history.load_full() {
             Some(h) => h,
             None => self.load_history()?,
         };
-        let roots: Vec<u32> = tips.iter().filter_map(|t| full.row_of(t)).collect();
-        let graph = full.graph.reachable_from(&roots);
+        let filtered = tips.map(|tips| {
+            let roots: Vec<u32> = tips.iter().filter_map(|t| full.row_of(t)).collect();
+            full.graph.reachable_from(&roots)
+        });
+        let mut merges = Vec::new();
+        let (graph, folded) = match (fold, filtered) {
+            (Some(expanded), filtered) => {
+                let base = filtered.as_ref().unwrap_or(&full.graph);
+                // 起点（絞り込んだ ref と HEAD）は、ほかのブランチの途中にあっても幹として残す。
+                // ID から行は 1 回なめて引く（ref が数千あっても、行ごとに探さない）。
+                // 同じ ID が何度出ても（HEAD が起点にも含まれるなど）、番号は 1 つにする。
+                let mut wanted: std::collections::HashMap<Oid, usize> = std::collections::HashMap::new();
+                for id in tips.unwrap_or(&[]).iter().chain(full.head.iter()).chain(expanded.iter()) {
+                    let next = wanted.len();
+                    wanted.entry(*id).or_insert(next);
+                }
+                let mut found = vec![u32::MAX; wanted.len()];
+                for (r, id) in base.ids().iter().enumerate() {
+                    if let Some(&i) = wanted.get(id) {
+                        found[i] = r as u32;
+                    }
+                }
+                let rows_of = |ids: &[Oid]| -> Vec<u32> {
+                    ids.iter().filter_map(|id| wanted.get(id).map(|&i| found[i])).filter(|&r| r != u32::MAX).collect()
+                };
+                // 全ブランチのときは、ほかのコミットの親になっていない先端（と HEAD）だけを幹にする。取り込み済みの
+                // ブランチの先端は merge の親なので、折りたたまれる。
+                let mut roots = tips.map(rows_of).unwrap_or_default();
+                roots.extend(full.head.iter().filter_map(|h| wanted.get(h).map(|&i| found[i])).filter(|&r| r != u32::MAX));
+                let expanded = rows_of(expanded);
+                let f = crate::fold::fold_merged(base, &roots, &expanded);
+                merges = f.merges;
+                (f.graph, f.hidden)
+            }
+            (None, Some(filtered)) => (filtered, Vec::new()),
+            (None, None) => return Ok(full),
+        };
         let head_row = full
             .head
             .and_then(|h| graph.ids().iter().position(|id| *id == h))
             .map(|r| r as u32);
-        let layout = graph::layout(&graph, head_row);
+        let mut layout = graph::layout(&graph, head_row);
+        layout.mark_merges(&merges);
         Ok(Arc::new(HistorySnapshot {
             generation: self.generation.fetch_add(1, Ordering::Relaxed) + 1,
-            tips: tips.to_vec(),
+            tips: tips.map_or_else(|| full.tips.clone(), <[Oid]>::to_vec),
             head: full.head,
             graph,
             layout,
+            folded,
             rows: OnceLock::new(),
         }))
     }

@@ -1679,3 +1679,63 @@ pub unsafe extern "C" fn amonhen_history_filtered(
         }
     }
 }
+
+/// マージ済みブランチを折りたたんだ History。`all` なら全ブランチ、そうでなければ `tips`（20 バイトの ID が
+/// `count` 個）から辿れるものだけ。`expanded`（20 バイトの ID が `expanded_count` 個）の merge は取り込んだ側も
+/// 見せる。`amonhen_history_release` で手放す。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`tips` は `count * 20` バイト、`expanded` は `expanded_count * 20` バイト読める
+/// 領域であること（個数が 0 なら NULL でよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_folded(
+    repo_ptr: *const AmonhenRepo,
+    all: bool,
+    tips: *const u8,
+    count: u32,
+    expanded: *const u8,
+    expanded_count: u32,
+) -> *const AmonhenHistory {
+    let read = |ptr: *const u8, n: u32| -> Vec<Oid> {
+        (0..n as usize).map(|i| Oid(unsafe { *ptr.add(i * 20).cast::<[u8; 20]>() })).collect()
+    };
+    let tips = (!all).then(|| read(tips, count));
+    let expanded = read(expanded, expanded_count);
+    match repo(repo_ptr).history_folded(tips.as_deref(), &expanded) {
+        Ok(s) => into_history(s),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null()
+        }
+    }
+}
+
+/// 折りたたんだ History で、`row` の merge が隠しているコミットの数（隠していなければ 0）。
+///
+/// # Safety
+/// `history` は有効な History であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_hidden(history_ptr: *const AmonhenHistory, row: u32) -> u32 {
+    history(history_ptr).folded.get(row as usize).copied().unwrap_or(0)
+}
+
+/// スクロールバーに描く密度。`out` に区間ごとの [頻度, 活動量]（0〜1）を `buckets * 2` 個書き、書いた区間の数を
+/// 返す（行が区間より少なければ行の数）。
+///
+/// # Safety
+/// `history` は有効な History、`out` は `buckets * 2` 個の float を書ける領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_density(
+    history_ptr: *const AmonhenHistory,
+    buckets: u32,
+    out: *mut f32,
+) -> u32 {
+    let density = history(history_ptr).density(buckets as usize);
+    for (i, [f, a]) in density.iter().enumerate() {
+        unsafe {
+            *out.add(i * 2) = *f;
+            *out.add(i * 2 + 1) = *a;
+        }
+    }
+    density.len() as u32
+}

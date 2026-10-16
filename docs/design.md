@@ -480,7 +480,7 @@ linux（148 万コミット）では、1 行を横切る線が中央値で 365 �
 - [x] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ
 - [x] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
 - [x] 12. 3-way マージ（コンフリクトごと・ファイルごとの解決、3 ペインのマージエディタ）
-- [ ] 13. グラフ表現の工夫（祖先の強調、折りたたみ、魚眼、アニメーション、密度表示）。魚眼（`crates/core/src/lanes.rs`）、レーンの動きのアニメーション、選んだコミットの祖先の強調（`crates/core/src/lineage.rs`）は済み
+- [x] 13. グラフ表現の工夫（祖先の強調、折りたたみ、魚眼、アニメーション、密度表示）。魚眼（`crates/core/src/lanes.rs`）、レーンの動きのアニメーション、選んだコミットの祖先の強調（`crates/core/src/lineage.rs`）、マージ済みブランチの折りたたみ（`crates/core/src/fold.rs`。各先端から最初の親だけを辿った幹を残し、取り込んだ側の数を merge の行に出す。右クリックで merge ごとに開く。View > Fold Merged Branches）、History の右端の密度の帯（区間ごとのコミットの頻度とブランチの活動量、見えている範囲の枠、押すとそこへ飛ぶ）も済み。linux（148 万コミット）で折りたたみとレイアウトが 47 ms（7.7 万行に）、密度が 10 ms（`crates/core/examples/fold.rs`）
 - [x] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）
 
 拡張:

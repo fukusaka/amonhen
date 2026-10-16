@@ -171,6 +171,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private(set) var scope: Scope = .all
     private let scopePopup = NSPopUpButton()
+    /// 折りたたんだ History で開いた merge（コミット ID）。
+    private var expandedMerges: Set<Data> = []
+    /// 右端の密度の帯（コミットの頻度とブランチの活動量。押すとそこへ飛ぶ）。
+    private let densityView = DensityStripView()
+    private var densityRequest = 0
+    /// 全ブランチをそのまま出すか（折りたたみも絞り込みもしない）。
+    private var showsFullHistory: Bool { scope == .all && !Settings.foldMergedBranches }
 
     // 検索
     private let searchField = NSSearchField()
@@ -286,6 +293,18 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         container.addSubview(graphView)
         container.addSubview(textView)
         container.addSubview(scopePopup)
+        densityView.onJump = { [weak self] fraction in
+            guard let self, let history else { return }
+            let row = min(history.rowCount - 1, max(0, Int(fraction * CGFloat(history.rowCount))))
+            let clip = scrollView.contentView
+            let y = max(0, CGFloat(row) * tableView.rowHeight - clip.bounds.height / 2)
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: min(y, max(0, tableView.frame.height - clip.bounds.height))))
+            scrollView.reflectScrolledClipView(clip)
+        }
+        densityView.toolTip = "コミットの頻度（左）とブランチの活動量（右）。押すとそこへ飛ぶ"
+        container.addSubview(densityView)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(foldChanged), name: .foldMergedBranchesChanged, object: nil)
         loadingLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         loadingLabel.textColor = .secondaryLabelColor
         loadingLabel.alignment = .center
@@ -309,7 +328,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             x: 192, y: barY, width: max(80, view.bounds.width - 192 - countWidth - 12), height: barHeight - 4)
         searchSpinner.frame = NSRect(x: searchField.frame.maxX + 6, y: barY + 3, width: 16, height: 16)
         searchCount.frame = NSRect(x: view.bounds.width - countWidth - 6, y: barY + 2, width: countWidth, height: 16)
-        scrollView.frame = NSRect(x: 0, y: 0, width: view.bounds.width, height: view.bounds.height - barHeight)
+        // 右端に密度の帯（スクロールバーの左）。
+        let stripWidth: CGFloat = 8
+        scrollView.frame = NSRect(x: 0, y: 0, width: view.bounds.width - stripWidth, height: view.bounds.height - barHeight)
+        let oldHeight = densityView.frame.height
+        densityView.frame = NSRect(x: view.bounds.width - stripWidth, y: 0, width: stripWidth, height: scrollView.frame.height)
+        if Int(oldHeight) != Int(densityView.frame.height) { updateDensity() }
         // 件名の列を表の幅いっぱいにする。
         tableView.sizeLastColumnToFit()
         layoutGraphView()
@@ -362,9 +386,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         case .current: head.map { [$0] }
         case let .ref(_, target): [target]
         }
+        let fold = Settings.foldMergedBranches, expanded = Array(expandedMerges)
         Task {
             let next: History? = await Task.detached(priority: .userInitiated) {
-                if let tips { try? repository.filteredHistory(tips: tips) } else { repository.latestHistory() }
+                if fold { return try? repository.foldedHistory(tips: tips, expanded: expanded) }
+                return if let tips { try? repository.filteredHistory(tips: tips) } else { repository.latestHistory() }
             }.value
             guard let next else { return }
             show(next, resetScroll: true)
@@ -381,7 +407,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         Task {
             do {
                 let latest = try await Task.detached(priority: .userInitiated) { try repository.loadHistory() }.value
-                if scope != .all {
+                if !showsFullHistory {
                     reloadScope()
                 } else if latest.generation != history?.generation {
                     show(latest)
@@ -402,7 +428,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         Task {
             guard let latest = try? await Task.detached(priority: .userInitiated, operation: { try repository.loadHistory() }).value
             else { return }
-            if scope != .all {
+            if !showsFullHistory {
                 reloadScope()
             } else if latest.generation != history?.generation {
                 show(latest)
@@ -442,6 +468,40 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         updateLineage()
         redrawGraph()
+        updateDensity()
+    }
+
+    /// 密度の帯を、今の History で描き直す（裏で求める。linux で数 ms）。
+    private func updateDensity() {
+        densityRequest += 1
+        let request = densityRequest
+        guard let history else { return }
+        // 1 区間に 25 行以上入るようにする（少ないと値がばらついて縞になる）。高さ 2 pt につき 1 区間まで。
+        let buckets = max(1, min(Int(densityView.bounds.height / 2), history.rowCount / 25))
+        Task {
+            let density = await Task.detached(priority: .utility) { history.density(buckets: buckets) }.value
+            guard request == densityRequest else { return }
+            densityView.density = density
+            updateDensityViewport()
+        }
+    }
+
+    /// 帯の上に、今見えている範囲を出す。
+    private func updateDensityViewport() {
+        let rows = max(1, history?.rowCount ?? 1)
+        let visible = tableView.rows(in: tableView.visibleRect)
+        densityView.visible = (CGFloat(visible.location) / CGFloat(rows), CGFloat(visible.location + visible.length) / CGFloat(rows))
+    }
+
+    @objc private func foldChanged() {
+        expandedMerges.removeAll()
+        reloadScope()
+    }
+
+    /// 折りたたんだ merge を開く・たたむ。
+    private func toggleMerge(_ id: Data) {
+        if expandedMerges.remove(id) == nil { expandedMerges.insert(id) }
+        reloadScope(select: id)
     }
 
     /// 頼んだ祖先の計算の回数（古い結果を捨てるため）。
@@ -710,6 +770,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     @objc private func contentDidScroll() {
         motion?.add(y: scrollView.contentView.bounds.minY)
         layoutGraphView()
+        updateDensityViewport()
     }
 
     /// レーンの位置が動いている間だけ、表示のリフレッシュごとに描き直す。
@@ -1073,6 +1134,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         func add(_ title: String, _ action: @escaping () -> Void) {
             menu.addItem(ClosureMenuItem(title: title, action: action))
         }
+        // 折りたたんだ merge: 取り込んだ側を開く・たたむ。
+        let hidden = history.hiddenCount(row: row)
+        if hidden > 0 || expandedMerges.contains(id) {
+            add(hidden > 0 ? "Show \(hidden) Merged Commits" : "Fold Merged Commits") { [weak self] in self?.toggleMerge(id) }
+            menu.addItem(.separator())
+        }
         add("New Branch at \(short)…") { actions.newBranch(at: hex) }
         add("New Tag at \(short)…") { actions.newTag(at: hex) }
         add("Checkout \(short) (Detached)") { actions.perform(["op": "detach", "oid": hex]) }
@@ -1228,7 +1295,7 @@ enum RowPreparation {
     nonisolated static func prepare(row: Int, chunk: HistoryChunk, history: History?, fonts: Fonts, compact: Bool) -> Row {
         let subject = chunk.withSubject(row: row) { TextRenderer.prepare($0, font: fonts.subject) }
         let time = chunk.authorTime(row: row)
-        let meta: String
+        var meta: String
         if compact {
             // 1 行では件名に幅を譲り、作者と短い日時だけにする（ID は詳細に出る）。
             meta = "\(chunk.authorName(row: row))  \(shortDate.string(from: time))"
@@ -1236,7 +1303,10 @@ enum RowPreparation {
             let short = history?.commitID(row: row).map { $0.prefix(4).map { String(format: "%02x", $0) }.joined() } ?? ""
             meta = "\(chunk.authorName(row: row))  ·  \(date.string(from: time))  ·  \(short)"
         }
-        return Row(subject: subject, meta: TextRenderer.prepare(meta as CFString, font: fonts.meta))
+        // 折りたたんだ merge は、隠しているコミットの数を添える。
+        let hidden = history?.hiddenCount(row: row) ?? 0
+        let shown = hidden > 0 ? meta + "  ·  ⊕ \(hidden) 件を折りたたみ" : meta
+        return Row(subject: subject, meta: TextRenderer.prepare(shown as CFString, font: fonts.meta))
     }
 }
 
@@ -1280,4 +1350,44 @@ final class ScrollMeasurement {
 
 extension NSPasteboard.PasteboardType {
     static let commitID = NSPasteboard.PasteboardType("io.github.fukusaka.amonhen.commit")
+}
+
+/// History の右端の細い帯: 行の区間ごとのコミットの頻度（左半分、青）とブランチの活動量（右半分、緑）を濃さで
+/// 描き、今見えている範囲を枠で示す。押す・ドラッグするとそこへ飛ぶ。
+final class DensityStripView: NSView {
+    var density: [(frequency: Float, activity: Float)] = [] { didSet { needsDisplay = true } }
+    /// 見えている範囲（上端・下端、0〜1）。
+    var visible: (CGFloat, CGFloat) = (0, 0) { didSet { if visible != oldValue { needsDisplay = true } } }
+    var onJump: ((CGFloat) -> Void)?
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        bounds.fill()
+        let n = density.count
+        guard n > 0 else { return }
+        let h = bounds.height / CGFloat(n)
+        let half = bounds.width / 2
+        for (i, d) in density.enumerated() {
+            let y = CGFloat(i) * h
+            NSColor.systemBlue.withAlphaComponent(CGFloat(d.frequency) * 0.75).setFill()
+            NSRect(x: 0, y: y, width: half, height: h + 0.5).fill()
+            NSColor.systemGreen.withAlphaComponent(CGFloat(d.activity) * 0.75).setFill()
+            NSRect(x: half, y: y, width: half, height: h + 0.5).fill()
+        }
+        let top = visible.0 * bounds.height, bottom = max(top + 3, visible.1 * bounds.height)
+        NSColor.labelColor.withAlphaComponent(0.6).setStroke()
+        let frame = NSBezierPath(rect: NSRect(x: 0.5, y: top + 0.5, width: bounds.width - 1, height: bottom - top - 1))
+        frame.lineWidth = 1
+        frame.stroke()
+    }
+
+    override func mouseDown(with event: NSEvent) { jump(event) }
+    override func mouseDragged(with event: NSEvent) { jump(event) }
+
+    private func jump(_ event: NSEvent) {
+        let y = convert(event.locationInWindow, from: nil).y
+        onJump?(min(1, max(0, y / max(1, bounds.height))))
+    }
 }

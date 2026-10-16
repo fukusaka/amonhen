@@ -5,6 +5,7 @@ pub mod cache;
 pub mod command;
 pub mod conflict;
 pub mod diff;
+pub mod fold;
 pub mod graph;
 pub mod lanes;
 pub mod lineage;

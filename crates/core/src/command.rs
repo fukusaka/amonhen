@@ -1794,6 +1794,34 @@ mod tests {
     }
 
     #[test]
+    fn folds_merged_branches_in_a_real_repository() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "t1.txt", "1");
+        commit_file(dir, "t2.txt", "2");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "m.txt", "m");
+        git(dir, &["merge", "-q", "--no-ff", "-m", "merge topic", "topic"]);
+        let merge = git(dir, &["rev-parse", "HEAD"]);
+        repo.load_history().unwrap();
+        // HEAD は起点（main）にも含まれる。重複しても動くこと。
+        let folded = repo.history_folded(None, &[]).unwrap();
+        // topic は merge に取り込み済みなので、ブランチが残っていても折りたたむ。
+        assert_eq!(folded.graph.len(), 3);
+        let all = repo.history_folded(Some(&[Oid::from_hex(&merge).unwrap()]), &[]).unwrap();
+        assert_eq!(all.graph.len(), 3, "merge・m・first だけ");
+        let row = all.row_of(&Oid::from_hex(&merge).unwrap()).unwrap() as usize;
+        assert_eq!(all.folded[row], 2);
+        assert!(all.layout.nodes()[row].flags & amonhen_layout::Node::MERGE != 0, "折りたたんでも merge");
+        let opened = repo
+            .history_folded(Some(&[Oid::from_hex(&merge).unwrap()]), &[Oid::from_hex(&merge).unwrap()])
+            .unwrap();
+        assert_eq!(opened.graph.len(), 5);
+        assert!(!all.density(4).is_empty());
+    }
+
+    #[test]
     fn rewrites_history_and_undoes_it() {
         let (tmp, repo) = setup();
         let dir = tmp.path();

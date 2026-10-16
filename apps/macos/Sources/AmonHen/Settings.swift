@@ -85,6 +85,15 @@ enum Settings {
         }
     }
 
+    /// History でマージ済みブランチを折りたたむか（既定は折りたたまない）。変えたら `foldMergedBranchesChanged` を知らせる。
+    static var foldMergedBranches: Bool {
+        get { UserDefaults.standard.bool(forKey: "foldMergedBranches") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "foldMergedBranches")
+            NotificationCenter.default.post(name: .foldMergedBranchesChanged, object: nil)
+        }
+    }
+
     /// 開いたリポジトリを、まだ一覧のどこにもなければブックマークに入れるか（既定は入れる）。
     static var autoBookmark: Bool {
         get { UserDefaults.standard.object(forKey: "autoBookmark") as? Bool ?? true }
@@ -114,6 +123,7 @@ extension Notification.Name {
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
     static let stackedCommitDiffChanged = Notification.Name("stackedCommitDiffChanged")
     static let historyFileTreeChanged = Notification.Name("historyFileTreeChanged")
+    static let foldMergedBranchesChanged = Notification.Name("foldMergedBranchesChanged")
     /// AI の CLI の選択が変わった（AI のボタンを出す・隠す）。
     static let assistantChanged = Notification.Name("assistantChanged")
 }

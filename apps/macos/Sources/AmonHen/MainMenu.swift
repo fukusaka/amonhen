@@ -104,6 +104,9 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         let stacked = item("All Files in One Diff", #selector(toggleStackedDiff(_:)), "", target: self)
         stacked.toolTip = "コミットの差分で、全ファイルを縦に並べる（オフなら選んだファイルだけ）"
         menu.addItem(stacked)
+        let fold = item("Fold Merged Branches", #selector(toggleFoldMerged(_:)), "", target: self)
+        fold.toolTip = "History で、merge で取り込んだ側のコミットを隠し、merge の行に数を出す（右クリックで開く）"
+        menu.addItem(fold)
         let tree = item("Changed Files as Tree", #selector(toggleFileTree(_:)), "", target: self)
         tree.toolTip = "コミットの変更ファイルを、差分の左に木で出す（オフならメッセージと差分の間に一覧）"
         menu.addItem(tree)
@@ -227,6 +230,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         case #selector(toggleAvatars(_:)): Settings.showAvatars
         case #selector(toggleStackedDiff(_:)): Settings.stackedCommitDiff
         case #selector(toggleFileTree(_:)): Settings.historyFileTree
+        case #selector(toggleFoldMerged(_:)): Settings.foldMergedBranches
         default: nil
         }
         if let on { item.state = on ? .on : .off }
@@ -242,4 +246,5 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     @objc private func toggleCompactRows(_ item: NSMenuItem) { Settings.compactHistoryRows.toggle() }
     @objc private func toggleStackedDiff(_ item: NSMenuItem) { Settings.stackedCommitDiff.toggle() }
     @objc private func toggleFileTree(_ item: NSMenuItem) { Settings.historyFileTree.toggle() }
+    @objc private func toggleFoldMerged(_ item: NSMenuItem) { Settings.foldMergedBranches.toggle() }
 }

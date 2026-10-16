@@ -67,7 +67,35 @@ extension Repository {
     }
 }
 
+extension Repository {
+    /// マージ済みブランチを折りたたんだ History。`tips` が nil なら全ブランチ。`expanded`（20 バイトの ID）の
+    /// merge は取り込んだ側も見せる。裏のスレッドで呼ぶ。
+    public func foldedHistory(tips: [Data]?, expanded: [Data]) throws -> History {
+        let tipBytes = (tips ?? []).reduce(Data(), +)
+        let expandedBytes = expanded.reduce(Data(), +)
+        let raw = tipBytes.withUnsafeBytes { t in
+            expandedBytes.withUnsafeBytes { e in
+                amonhen_history_folded(
+                    self.raw, tips == nil, t.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(tips?.count ?? 0),
+                    e.baseAddress?.assumingMemoryBound(to: UInt8.self), UInt32(expanded.count))
+            }
+        }
+        guard let raw else { throw AmonhenError.last() }
+        return History(raw: raw, repository: self)
+    }
+}
+
 extension History {
+    /// 折りたたんだ History で、`row` の merge が隠しているコミットの数（隠していなければ 0）。
+    public func hiddenCount(row: Int) -> Int { Int(amonhen_history_hidden(raw, UInt32(row))) }
+
+    /// スクロールバーに描く密度。区間ごとの（頻度, 活動量）を 0〜1 で。
+    public func density(buckets: Int) -> [(frequency: Float, activity: Float)] {
+        var out = [Float](repeating: 0, count: buckets * 2)
+        let n = out.withUnsafeMutableBufferPointer { amonhen_history_density(raw, UInt32(buckets), $0.baseAddress) }
+        return (0..<Int(n)).map { (out[$0 * 2], out[$0 * 2 + 1]) }
+    }
+
     /// `commit`（20 バイト）の行。
     public func row(of commit: Data) -> Int? {
         let row = commit.withUnsafeBytes { amonhen_history_row_of(raw, $0.baseAddress!.assumingMemoryBound(to: UInt8.self)) }

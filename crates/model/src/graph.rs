@@ -66,6 +66,11 @@ impl CommitGraph {
                 stack.extend_from_slice(self.parents(r as usize));
             }
         }
+        self.retain(&keep)
+    }
+
+    /// `keep` の立っている行だけのグラフ（並びは保つ）。残らない親への線は落とす。
+    pub fn retain(&self, keep: &[bool]) -> CommitGraph {
         let mut new_row = vec![u32::MAX; self.len()];
         let mut next = 0;
         for (r, &k) in keep.iter().enumerate() {
@@ -81,7 +86,12 @@ impl CommitGraph {
         for r in (0..self.len()).filter(|&r| keep[r]) {
             ids.push(self.ids[r]);
             times.push(self.commit_times[r]);
-            parents.extend(self.parents(r).iter().map(|&p| new_row[p as usize]));
+            parents.extend(
+                self.parents(r)
+                    .iter()
+                    .map(|&p| new_row[p as usize])
+                    .filter(|&p| p != u32::MAX),
+            );
             offsets.push(parents.len() as u32);
         }
         CommitGraph {

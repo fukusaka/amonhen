@@ -126,6 +126,17 @@ impl GraphLayout {
         Some(layout)
     }
 
+    /// `rows` の点に merge の印を付ける（折りたたみで親を落とした merge を、merge として扱うため）。
+    pub(crate) fn mark_merges(&mut self, rows: &[u32]) {
+        let mut nodes = self.nodes.to_vec();
+        for &r in rows {
+            if let Some(node) = nodes.get_mut(r as usize) {
+                node.flags |= Node::MERGE;
+            }
+        }
+        self.nodes = nodes.into();
+    }
+
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
     }

@@ -1097,6 +1097,42 @@ const AmonhenHistory *amonhen_history_filtered(const AmonhenRepo *repo_ptr,
                                                const uint8_t *tips,
                                                uint32_t count);
 
+/**
+ * マージ済みブランチを折りたたんだ History。`all` なら全ブランチ、そうでなければ `tips`（20 バイトの ID が
+ * `count` 個）から辿れるものだけ。`expanded`（20 バイトの ID が `expanded_count` 個）の merge は取り込んだ側も
+ * 見せる。`amonhen_history_release` で手放す。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`tips` は `count * 20` バイト、`expanded` は `expanded_count * 20` バイト読める
+ * 領域であること（個数が 0 なら NULL でよい）。
+ */
+const AmonhenHistory *amonhen_history_folded(const AmonhenRepo *repo_ptr,
+                                             bool all,
+                                             const uint8_t *tips,
+                                             uint32_t count,
+                                             const uint8_t *expanded,
+                                             uint32_t expanded_count);
+
+/**
+ * 折りたたんだ History で、`row` の merge が隠しているコミットの数（隠していなければ 0）。
+ *
+ * # Safety
+ * `history` は有効な History であること。
+ */
+uint32_t amonhen_history_hidden(const AmonhenHistory *history_ptr,
+                                uint32_t row);
+
+/**
+ * スクロールバーに描く密度。`out` に区間ごとの [頻度, 活動量]（0〜1）を `buckets * 2` 個書き、書いた区間の数を
+ * 返す（行が区間より少なければ行の数）。
+ *
+ * # Safety
+ * `history` は有効な History、`out` は `buckets * 2` 個の float を書ける領域であること。
+ */
+uint32_t amonhen_history_density(const AmonhenHistory *history_ptr,
+                                 uint32_t buckets,
+                                 float *out);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus
