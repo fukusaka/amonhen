@@ -136,7 +136,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // ウィンドウを前に出すたびに記録し直す（タブの並べ替え・切り出しを拾う）。
         NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
-        ) { [weak self] _ in MainActor.assumeIsolated { self?.saveOpenWindows() } }
+        ) { [weak self] note in
+            // 通知はスレッドをまたいで渡せないので、どのウィンドウかは ID で持ち込む。
+            let id = (note.object as AnyObject?).map(ObjectIdentifier.init)
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if let id, let window = self.windows.first(where: { ObjectIdentifier($0.window) == id })?.window {
+                    self.lastActiveWindow = window
+                }
+                self.saveOpenWindows()
+            }
+        }
         NSApp.activate()
     }
 
@@ -189,13 +199,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// つないでいる daemon 越しのリポジトリ（同じ場所を二重につながない）。
     private var connecting: [ConnectingWindow] = []
 
-    /// daemon 越しのリポジトリに裏でつなぎ、つながったらウィンドウを開く。その間は接続中のウィンドウを出す。
-    /// 新しいタブを入れるウィンドウ: 前にあるリポジトリのウィンドウ（なければ新しいウィンドウ）。
+    /// 最後に前に出ていたリポジトリのウィンドウ（アプリが後ろにいるときに、外から開いたものを入れる先）。
+    private weak var lastActiveWindow: NSWindow?
+
+    /// 新しいタブを入れるウィンドウ: 前にあるリポジトリのウィンドウ。アプリが後ろにいれば（`amonhen` コマンドや
+    /// Finder から開いたとき）、最後に使っていたウィンドウ。どれもなければ新しいウィンドウ。
     private var tabTarget: NSWindow? {
-        let candidates = [NSApp.keyWindow, NSApp.mainWindow].compactMap { $0 }
+        let candidates = [NSApp.keyWindow, NSApp.mainWindow, lastActiveWindow].compactMap { $0 }
         return candidates.first { w in windows.contains { $0.window === w } } ?? windows.last?.window
     }
 
+    /// daemon 越しのリポジトリに裏でつなぎ、つながったらウィンドウを開く。その間は接続中のウィンドウを出す。
     private func connect(location: String, debug: Bool, inNewWindow: Bool = false) {
         if let existing = connecting.first(where: { $0.location == location }) {
             existing.window.makeKeyAndOrderFront(nil)
