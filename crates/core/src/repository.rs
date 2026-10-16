@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
 
+use amonhen_layout::DiffRow;
 use amonhen_model::{
     CommitGraph, FileChange, GitBackend, Oid, OidMap, Refs, RepoPaths, Result, Status, StatusEntry,
     topo,
@@ -36,7 +37,10 @@ pub struct StatusSnapshot {
 pub struct WorkingDiff {
     pub entry: StatusEntry,
     /// stage 済みの変更（HEAD と index の差分）か、stage していない変更（index と作業ツリー）か。
+    /// `combined` なら false。
     pub staged: bool,
+    /// HEAD と作業ツリーの差分で、行ごとに index に入っているか（`working_diff_combined`）。
+    pub combined: Option<Vec<bool>>,
     pub file: FileDiff,
     pub view: DiffView,
 }
@@ -429,9 +433,78 @@ impl Repository {
         Ok(WorkingDiff {
             entry: entry.clone(),
             staged,
+            combined: None,
             file,
             view,
         })
+    }
+
+    /// Working Copy の 1 ファイルの、HEAD と作業ツリーの差分。変更の行ごとに、index に入っているか
+    /// （次のコミットに含めるか）を `DiffRow::STAGED` で示す。index がその形で表せないとき・サブモジュール・
+    /// バイナリ・コンフリクトでは None（FE は stage 済みと作業ツリーの差分を分けて見せる）。
+    pub fn working_diff_combined(
+        &self,
+        entry: &StatusEntry,
+        profile: &FrontendProfile,
+    ) -> Result<Option<WorkingDiff>> {
+        if entry.submodule || entry.kind == amonhen_model::StatusKind::Unmerged {
+            return Ok(None);
+        }
+        let blob = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
+            match id {
+                Some(id) => self.backend.blob(id),
+                None => Ok(Arc::default()),
+            }
+        };
+        let head = blob(&entry.head_id)?;
+        let index = blob(&entry.index_id)?;
+        let worktree = match entry.worktree {
+            b'D' => Arc::default(),
+            _ => self.backend.worktree_file(&entry.path)?,
+        };
+        let file = diff::file_diff(head, worktree, 3);
+        let Some(staged) = diff::staged_lines(&file, &index) else {
+            return Ok(None);
+        };
+        let mut view = DiffView::new(&file, profile).with_path(&entry.path);
+        for (row, &on) in view.rows.iter_mut().zip(&staged) {
+            if on {
+                row.flags |= DiffRow::STAGED;
+            }
+        }
+        Ok(Some(WorkingDiff {
+            entry: entry.clone(),
+            staged: false,
+            combined: Some(staged),
+            file,
+            view,
+        }))
+    }
+
+    /// `working_diff_combined` の差分の `rows` 行目の変更を、index に入れる（`stage`）・外す。ほかの行はそのまま。
+    /// すべて入れるなら `git add`、すべて外すなら `git reset` と同じにする（新しいファイル・消したファイルも
+    /// 正しく扱うため）。
+    pub fn set_rows_staged(&self, diff: &WorkingDiff, rows: &[usize], stage: bool) -> Result<()> {
+        let Some(current) = &diff.combined else {
+            return Err("HEAD と作業ツリーの差分ではない".into());
+        };
+        let state = |r: usize| if rows.contains(&r) { stage } else { current[r] };
+        let changes: Vec<usize> = (0..diff.file.lines.len())
+            .filter(|&r| matches!(diff.file.lines[r].kind, DiffRow::ADDED | DiffRow::REMOVED))
+            .collect();
+        let path = diff.entry.path.as_str();
+        if changes.iter().all(|&r| state(r)) {
+            return self.backend.stage(&[path]);
+        }
+        if !changes.iter().any(|&r| state(r)) {
+            return self.backend.unstage(&[path]);
+        }
+        let content = diff::apply_selection(&diff.file, state);
+        let mode = match diff.entry.index_mode {
+            0 => 0o100644,
+            mode => mode,
+        };
+        self.backend.set_index_content(path, mode, &content)
     }
 
     pub fn stage(&self, paths: &[&str]) -> Result<()> {
@@ -480,7 +553,11 @@ impl Repository {
 
     /// `diff` の `rows` 行目の変更を作業ツリーから取り除く（Undo できる）。stage していない差分にだけ使える。
     pub fn discard_rows(&self, diff: &WorkingDiff, rows: &[usize]) -> Result<()> {
-        if diff.staged {
+        let staged_row = diff
+            .combined
+            .as_ref()
+            .is_some_and(|c| rows.iter().any(|&r| c[r]));
+        if diff.staged || staged_row {
             return Err("stage 済みの変更は破棄できない（先に unstage する）".into());
         }
         let content = diff::apply_selection(&diff.file, |r| !rows.contains(&r));
@@ -945,6 +1022,133 @@ mod tests {
         repo.stage(&["a.txt"]).unwrap();
         repo.commit("change a", false).unwrap();
         assert!(repo.load_status().unwrap().status.entries.is_empty());
+    }
+
+    #[test]
+    fn marks_and_toggles_staged_lines_in_one_diff() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "first"]);
+        // 1 行目の変更だけを stage し、3 行目は作業ツリーにだけある。
+        std::fs::write(dir.join("a.txt"), "one\n2\n3\n").unwrap();
+        git(dir, &["add", "."]);
+        std::fs::write(dir.join("a.txt"), "one\n2\nthree\n").unwrap();
+        let show = |spec: &str| {
+            let out = Command::new("git")
+                .args(["show", spec])
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        };
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        let diff = |repo: &Repository| {
+            let status = repo.load_status().unwrap();
+            repo.working_diff_combined(&status.status.entries[0], &FrontendProfile::MACOS)
+                .unwrap()
+                .unwrap()
+        };
+        let staged = |d: &WorkingDiff| {
+            d.view
+                .rows
+                .iter()
+                .map(|r| r.flags & DiffRow::STAGED != 0)
+                .collect::<Vec<_>>()
+        };
+
+        // @@, -1, +one, 2, -3, +three
+        let d = diff(&repo);
+        assert_eq!(staged(&d), [false, true, true, false, false, false]);
+        // 3 行目の変更も入れる。
+        repo.set_rows_staged(&d, &[4, 5], true).unwrap();
+        assert_eq!(show(":a.txt"), "one\n2\nthree\n");
+        // 1 行目の変更を外す。
+        let d = diff(&repo);
+        assert_eq!(staged(&d), [false, true, true, false, true, true]);
+        repo.set_rows_staged(&d, &[1, 2], false).unwrap();
+        assert_eq!(show(":a.txt"), "1\n2\nthree\n");
+        // stage 済みの行は破棄できない。stage していない行は破棄できる。
+        let d = diff(&repo);
+        assert!(repo.discard_rows(&d, &[4, 5]).is_err());
+        repo.discard_rows(&d, &[1, 2]).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\n2\nthree\n"
+        );
+        // すべて外すと index は HEAD に戻る。差分は @@, 1, 2, -3, +three になっている。
+        let d = diff(&repo);
+        assert_eq!(staged(&d), [false, false, false, true, true]);
+        repo.set_rows_staged(&d, &[3, 4], false).unwrap();
+        assert_eq!(show(":a.txt"), "1\n2\n3\n");
+    }
+
+    #[test]
+    fn falls_back_when_the_index_is_not_part_of_the_worktree_change() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "first"]);
+        // index にだけある変更を、作業ツリーで書き戻す。
+        std::fs::write(dir.join("a.txt"), "one\n2\n3\n").unwrap();
+        git(dir, &["add", "."]);
+        std::fs::write(dir.join("a.txt"), "1\n2\n3\nfour\n").unwrap();
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        let status = repo.load_status().unwrap();
+        let entry = &status.status.entries[0];
+        assert!(
+            repo.working_diff_combined(entry, &FrontendProfile::MACOS)
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn stages_part_of_a_new_file_and_unstages_it_entirely() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "first"]);
+        std::fs::write(dir.join("new.txt"), "x\ny\n").unwrap();
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        let diff = |repo: &Repository| {
+            let status = repo.load_status().unwrap();
+            let entry = status
+                .status
+                .entries
+                .iter()
+                .find(|e| e.path == "new.txt")
+                .unwrap();
+            repo.working_diff_combined(entry, &FrontendProfile::MACOS)
+                .unwrap()
+                .unwrap()
+        };
+        // @@, +x, +y
+        let d = diff(&repo);
+        repo.set_rows_staged(&d, &[1], true).unwrap();
+        let out = Command::new("git")
+            .args(["show", ":new.txt"])
+            .current_dir(dir)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8(out.stdout).unwrap(), "x\n");
+        let d = diff(&repo);
+        repo.set_rows_staged(&d, &[1], false).unwrap();
+        // すべて外すと index から消え、untracked に戻る。
+        let status = repo.load_status().unwrap();
+        let entry = status
+            .status
+            .entries
+            .iter()
+            .find(|e| e.path == "new.txt")
+            .unwrap();
+        assert!(entry.index_id.is_none());
     }
 
     #[test]

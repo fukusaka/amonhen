@@ -308,7 +308,11 @@ typedef struct {
  */
 typedef struct {
   uint8_t kind;
-  uint8_t _pad[3];
+  /**
+   * `STAGED` など。
+   */
+  uint8_t flags;
+  uint8_t _pad[2];
   /**
    * 変更前・変更後の行番号（1 始まり）。その側にない行は 0。
    */
@@ -339,6 +343,10 @@ typedef struct {
  * `<<<<<<<` などのマーカーの行。
  */
 #define AmonhenDiffRow_MARKER 7
+/**
+ * `flags`: Working Copy の HEAD と作業ツリーの差分で、この行の変更が index に入っている（次のコミットに含める）。
+ */
+#define AmonhenDiffRow_STAGED (1 << 0)
 
 /**
  * 差分の行の中で強調する範囲（単語単位の変更）。位置は FE の文字列の符号単位。
@@ -826,6 +834,19 @@ AmonhenWorkingDiff *amonhen_working_diff(const AmonhenRepo *repo_ptr,
                                          AmonhenEncoding encoding);
 
 /**
+ * `status` の `index` 番目のファイルの、HEAD と作業ツリーの差分。変更の行ごとに、index に入っているかを
+ * `DiffRow` の `flags`（`STAGED`）で示す（`amonhen_working_diff_free` で解放する）。index がその形で表せない
+ * ファイルでは、`amonhen_last_error` を空にして NULL を返す（FE は `amonhen_working_diff` で 2 つに分けて見せる）。
+ *
+ * # Safety
+ * `repo` と `status` は有効であること。
+ */
+AmonhenWorkingDiff *amonhen_working_diff_combined(const AmonhenRepo *repo_ptr,
+                                                  const AmonhenStatus *status,
+                                                  uint32_t index,
+                                                  AmonhenEncoding encoding);
+
+/**
  * # Safety
  * `diff` は有効であること。返したポインタは解放するまで有効。
  */
@@ -867,6 +888,18 @@ bool amonhen_stage_rows(const AmonhenRepo *repo_ptr,
                         const AmonhenWorkingDiff *diff,
                         const uint32_t *rows,
                         uint32_t count);
+
+/**
+ * `amonhen_working_diff_combined` の差分の `rows` 行目の変更を、`staged` なら index に入れ、そうでなければ外す。
+ *
+ * # Safety
+ * `repo` と `diff` は有効、`rows` は `count` 個の `u32` を読める領域であること。
+ */
+bool amonhen_set_rows_staged(const AmonhenRepo *repo_ptr,
+                             const AmonhenWorkingDiff *diff,
+                             const uint32_t *rows,
+                             uint32_t count,
+                             bool staged);
 
 /**
  * stage した変更をコミットする。`amend` なら直前のコミットを作り直す。

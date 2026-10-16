@@ -198,7 +198,8 @@ pub fn view(data: Arc<Vec<u8>>, profile: &FrontendProfile) -> DiffView {
         }
         rows.push(DiffRow {
             kind,
-            _pad: [0; 3],
+            flags: 0,
+            _pad: [0; 2],
             old_no: conflict,
             new_no: line as u32 + 1,
             text: strings.add(buf, &data[r]),

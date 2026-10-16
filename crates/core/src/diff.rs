@@ -227,6 +227,46 @@ pub fn apply_selection(diff: &FileDiff, apply: impl Fn(usize) -> bool) -> Vec<u8
     out
 }
 
+/// `before` から `after` への行の差分で、`before` の消された行と `after` の足された行の印。
+fn changed_lines(before: &[u8], after: &[u8]) -> (Vec<bool>, Vec<bool>) {
+    let input = InternedInput::new(before, after);
+    let mut removed = vec![false; input.before.len()];
+    let mut added = vec![false; input.after.len()];
+    let mut d = Diff::compute(Algorithm::Histogram, &input);
+    d.postprocess_lines(&input);
+    for h in d.hunks() {
+        for r in h.before {
+            removed[r as usize] = true;
+        }
+        for a in h.after {
+            added[a as usize] = true;
+        }
+    }
+    (removed, added)
+}
+
+/// HEAD と作業ツリーの差分 `diff` の各行について、その変更が `index` に入っているか（変更の行以外は false）。
+/// 消した行は「HEAD と index の差分でも消えている」、足した行は「index と作業ツリーの差分で足されていない」
+/// なら入っているとみなす。index が「HEAD に `diff` の変更の一部を当てたもの」として表せなければ
+/// （作業ツリーで書き戻した変更が index にだけあるなど）None。
+pub fn staged_lines(diff: &FileDiff, index: &[u8]) -> Option<Vec<bool>> {
+    if diff.binary || is_binary(index) {
+        return None;
+    }
+    let (removed_in_index, _) = changed_lines(&diff.old, index);
+    let (_, added_after_index) = changed_lines(index, &diff.new);
+    let staged: Vec<bool> = diff
+        .lines
+        .iter()
+        .map(|l| match l.kind {
+            DiffRow::REMOVED => removed_in_index[l.old_no as usize - 1],
+            DiffRow::ADDED => !added_after_index[l.new_no as usize - 1],
+            _ => false,
+        })
+        .collect();
+    (apply_selection(diff, |r| staged[r]) == index).then_some(staged)
+}
+
 /// 行の中のバイトの位置 `at` を、FE の符号単位の位置に直す。
 fn units(encoding: StringEncoding, text: &[u8], at: usize) -> u32 {
     if encoding == StringEncoding::Utf8 || text[..at].is_ascii() {
@@ -321,7 +361,8 @@ impl DiffView {
                 let (buf, data) = sources[l.source as usize];
                 DiffRow {
                     kind: l.kind,
-                    _pad: [0; 3],
+                    flags: 0,
+                    _pad: [0; 2],
                     old_no: l.old_no,
                     new_no: l.new_no,
                     text: strings.add(buf, &data[l.range.start as usize..l.range.end as usize]),

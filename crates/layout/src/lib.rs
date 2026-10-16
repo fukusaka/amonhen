@@ -106,7 +106,9 @@ impl Edge {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct DiffRow {
     pub kind: u8,
-    pub _pad: [u8; 3],
+    /// `STAGED` など。
+    pub flags: u8,
+    pub _pad: [u8; 2],
     /// 変更前・変更後の行番号（1 始まり）。その側にない行は 0。
     pub old_no: u32,
     pub new_no: u32,
@@ -127,6 +129,9 @@ impl DiffRow {
     pub const BASE: u8 = 6;
     /// `<<<<<<<` などのマーカーの行。
     pub const MARKER: u8 = 7;
+
+    /// `flags`: Working Copy の HEAD と作業ツリーの差分で、この行の変更が index に入っている（次のコミットに含める）。
+    pub const STAGED: u8 = 1 << 0;
 }
 
 /// 差分の行の中で強調する範囲（単語単位の変更）。位置は FE の文字列の符号単位。

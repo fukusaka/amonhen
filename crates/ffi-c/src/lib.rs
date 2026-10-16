@@ -1198,6 +1198,37 @@ pub unsafe extern "C" fn amonhen_working_diff(
     }
 }
 
+/// `status` の `index` 番目のファイルの、HEAD と作業ツリーの差分。変更の行ごとに、index に入っているかを
+/// `DiffRow` の `flags`（`STAGED`）で示す（`amonhen_working_diff_free` で解放する）。index がその形で表せない
+/// ファイルでは、`amonhen_last_error` を空にして NULL を返す（FE は `amonhen_working_diff` で 2 つに分けて見せる）。
+///
+/// # Safety
+/// `repo` と `status` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_working_diff_combined(
+    repo_ptr: *const AmonhenRepo,
+    status: *const AmonhenStatus,
+    index: u32,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenWorkingDiff {
+    let s = unsafe { &*status.cast::<StatusHandle>() };
+    let Some(entry) = s.snapshot.status.entries.get(index as usize) else {
+        set_error("ファイルの番号が範囲外");
+        return std::ptr::null_mut();
+    };
+    match repo(repo_ptr).working_diff_combined(entry, &profile(encoding)) {
+        Ok(Some(d)) => Box::into_raw(Box::new(d)).cast(),
+        Ok(None) => {
+            set_error("");
+            std::ptr::null_mut()
+        }
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// # Safety
 /// `diff` は有効であること。返したポインタは解放するまで有効。
 #[unsafe(no_mangle)]
@@ -1281,6 +1312,25 @@ pub unsafe extern "C" fn amonhen_stage_rows(
         .map(|i| unsafe { *rows.add(i) } as usize)
         .collect();
     done(repo(repo_ptr).stage_rows(d, &rows))
+}
+
+/// `amonhen_working_diff_combined` の差分の `rows` 行目の変更を、`staged` なら index に入れ、そうでなければ外す。
+///
+/// # Safety
+/// `repo` と `diff` は有効、`rows` は `count` 個の `u32` を読める領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_set_rows_staged(
+    repo_ptr: *const AmonhenRepo,
+    diff: *const AmonhenWorkingDiff,
+    rows: *const u32,
+    count: u32,
+    staged: bool,
+) -> bool {
+    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    let rows: Vec<usize> = (0..count as usize)
+        .map(|i| unsafe { *rows.add(i) } as usize)
+        .collect();
+    done(repo(repo_ptr).set_rows_staged(d, &rows, staged))
 }
 
 /// stage した変更をコミットする。`amend` なら直前のコミットを作り直す。

@@ -1590,7 +1590,10 @@ mod tests {
         let (upstream, _) = setup();
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("clone");
-        git(tmp.path(), &["clone", "-q", upstream.path().to_str().unwrap(), "clone"]);
+        git(
+            tmp.path(),
+            &["clone", "-q", upstream.path().to_str().unwrap(), "clone"],
+        );
         for (key, value) in [("user.name", "a"), ("user.email", "a@example.com")] {
             git(&dir, &["config", key, value]);
         }
