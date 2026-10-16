@@ -14,4 +14,6 @@ pub mod rewrite;
 pub mod undo;
 pub mod words;
 
-pub use repository::{HistorySnapshot, RefsSnapshot, Repository, StatusSnapshot, WorkingDiff};
+pub use repository::{
+    HistorySnapshot, RefsSnapshot, Repository, Selection, StatusSnapshot, WorkingDiff,
+};

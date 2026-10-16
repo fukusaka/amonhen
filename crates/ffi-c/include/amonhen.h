@@ -779,6 +779,29 @@ AmonhenDiff *amonhen_stacked_view(const AmonhenStacked *stacked,
                                   AmonhenEncoding encoding);
 
 /**
+ * History で選んだコミット（`rows` は行、順不同）の全ファイルの差分（`amonhen_stacked_free` で解放する）。
+ * `kind` に見せ方を書く: 0 は first-parent でつながる範囲（一番古いものの親から一番新しいものまで）、1 はつながって
+ * いない 2 つ（古いほうから新しいほうまで）、2 はとびとびの 3 つ以上（コミットごとの差分を、見出し
+ * 「パス — 短い ID」でパス順に）。裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `repo` と `history` は有効、`rows` は `count` 個の `u32`、`kind` は書き込める `u8` であること。
+ */
+AmonhenStacked *amonhen_selection_diff(const AmonhenRepo *repo_ptr,
+                                       const AmonhenHistory *history_ptr,
+                                       const uint32_t *rows,
+                                       uint32_t count,
+                                       uint8_t *kind);
+
+/**
+ * ファイルの数。
+ *
+ * # Safety
+ * `stacked` は有効であること。
+ */
+uint32_t amonhen_stacked_count(const AmonhenStacked *stacked);
+
+/**
  * # Safety
  * `stacked` は `amonhen_stacked_diff` が返したもので、まだ解放していないこと。
  */

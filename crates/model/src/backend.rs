@@ -66,6 +66,9 @@ pub trait GitBackend: Send + Sync {
     /// 名前の変更も見つける。
     fn commit_changes(&self, commit: &Oid) -> Result<Vec<FileChange>>;
 
+    /// コミット `old` から `new` への変更（`old` が None なら全ファイルの追加）。名前の変更も見つける。
+    fn changes_between(&self, old: Option<&Oid>, new: &Oid) -> Result<Vec<FileChange>>;
+
     /// stash の中身（作業中の変更と、含めていれば untracked のファイル）。
     fn stash_changes(&self, stash: &Oid) -> Result<Vec<FileChange>> {
         self.commit_changes(stash)

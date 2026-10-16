@@ -344,6 +344,10 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::StashChanges(*stash))
     }
 
+    fn changes_between(&self, old: Option<&Oid>, new: &Oid) -> Result<Vec<FileChange>> {
+        self.conn.call(&Request::ChangesBetween(old.copied(), *new))
+    }
+
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
         let bytes: Bytes = self.conn.call(&Request::Blob(*id))?;
         Ok(Arc::new(bytes.0))

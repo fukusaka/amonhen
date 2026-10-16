@@ -45,6 +45,52 @@ pub struct WorkingDiff {
     pub view: DiffView,
 }
 
+/// History で選んだ複数のコミットの差分の見せ方（`Repository::selection_diff`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Selection {
+    /// first-parent でつながる `count` 個のコミット。`base`（一番古いものの最初の親。なければ None）から `tip` まで。
+    Range {
+        base: Option<Oid>,
+        tip: Oid,
+        count: usize,
+    },
+    /// つながっていない 2 つ。`from`（古いほう）から `to` まで。
+    Pair { from: Oid, to: Oid },
+    /// とびとびの 3 つ以上（古い順）。
+    Each(Vec<Oid>),
+}
+
+impl Selection {
+    /// `rows`（History の行。0 が一番新しい）の選び方。
+    pub fn of(graph: &CommitGraph, rows: &[u32]) -> Result<Self> {
+        let mut rows = rows.to_vec();
+        rows.sort_unstable();
+        rows.dedup();
+        let (Some(&newest), Some(&oldest)) = (rows.first(), rows.last()) else {
+            return Err("コミットを選んでいない".into());
+        };
+        if rows.iter().any(|&r| r as usize >= graph.len()) {
+            return Err("行が範囲外".into());
+        }
+        let id = |r: u32| graph.ids()[r as usize];
+        let first_parent = |r: u32| graph.parents(r as usize).first().copied();
+        if rows.windows(2).all(|w| first_parent(w[0]) == Some(w[1])) {
+            return Ok(Selection::Range {
+                base: first_parent(oldest).map(id),
+                tip: id(newest),
+                count: rows.len(),
+            });
+        }
+        if rows.len() == 2 {
+            return Ok(Selection::Pair {
+                from: id(oldest),
+                to: id(newest),
+            });
+        }
+        Ok(Selection::Each(rows.iter().rev().map(|&r| id(r)).collect()))
+    }
+}
+
 /// サイドバーの ref の一覧の不変のスナップショット。
 pub struct RefsSnapshot {
     pub generation: u64,
@@ -403,6 +449,44 @@ impl Repository {
             files.extend(part?);
         }
         Ok(diff::StackedDiff { files })
+    }
+
+    /// History で選んだコミット（行、順不同）の差分の見せ方と、その全ファイルの差分。
+    /// - first-parent でつながる範囲: 一番古いものの親から一番新しいものまで（まとめて 1 つにしたのと同じ）
+    /// - 2 つ（つながっていない）: 古いほうから新しいほうまで
+    /// - 3 つ以上でとびとび: コミットごとの差分を、ファイルのパス順・コミットの古い順に並べる（見出しは
+    ///   「パス — 短い ID」）
+    ///
+    /// 裏のスレッドで呼ぶ。
+    pub fn selection_diff(
+        &self,
+        snapshot: &HistorySnapshot,
+        rows: &[u32],
+    ) -> Result<(Selection, diff::StackedDiff)> {
+        let selection = Selection::of(&snapshot.graph, rows)?;
+        let stacked = match &selection {
+            Selection::Range { base, tip, .. } => {
+                self.stacked_diff(&self.backend.changes_between(base.as_ref(), tip)?)?
+            }
+            Selection::Pair { from, to } => {
+                self.stacked_diff(&self.backend.changes_between(Some(from), to)?)?
+            }
+            Selection::Each(commits) => {
+                let mut files = Vec::new();
+                for (order, id) in commits.iter().enumerate() {
+                    let short = id.to_string()[..8].to_owned();
+                    for (path, diff) in self.stacked_diff(&self.backend.commit_changes(id)?)?.files
+                    {
+                        files.push((path.clone(), order, format!("{path} — {short}"), diff));
+                    }
+                }
+                files.sort_by(|a, b| (&a.0, a.1).cmp(&(&b.0, b.1)));
+                diff::StackedDiff {
+                    files: files.into_iter().map(|(_, _, name, d)| (name, d)).collect(),
+                }
+            }
+        };
+        Ok((selection, stacked))
     }
 
     fn change_diff(&self, change: &FileChange) -> Result<FileDiff> {
@@ -1186,6 +1270,47 @@ mod tests {
             .find(|e| e.path == "new.txt")
             .unwrap();
         assert!(entry.index_id.is_none());
+    }
+
+    #[test]
+    fn diffs_a_range_a_pair_or_each_selected_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        // 0: c4（a を 4 に）、1: c3（b を足す）、2: c2（a を 2 に）、3: c1（a を作る）
+        for (file, text, message) in [
+            ("a.txt", "1\n", "c1"),
+            ("a.txt", "2\n", "c2"),
+            ("b.txt", "b\n", "c3"),
+            ("a.txt", "4\n", "c4"),
+        ] {
+            std::fs::write(dir.join(file), text).unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", message]);
+        }
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        let history = repo.load_history().unwrap();
+        let paths =
+            |d: &diff::StackedDiff| d.files.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>();
+
+        // 続く c2..c4 は、c1 から c4 までの差分。
+        let (selection, stacked) = repo.selection_diff(&history, &[2, 0, 1]).unwrap();
+        assert!(matches!(selection, Selection::Range { count: 3, .. }));
+        assert_eq!(paths(&stacked), ["a.txt", "b.txt"]);
+        let (_, a) = &stacked.files[0];
+        assert_eq!((a.added, a.removed), (1, 1));
+
+        // とびとびの 2 つ（c4 と c2）は、c2 から c4 まで。
+        let (selection, stacked) = repo.selection_diff(&history, &[0, 2]).unwrap();
+        assert!(matches!(selection, Selection::Pair { .. }));
+        assert_eq!(paths(&stacked), ["a.txt", "b.txt"]);
+
+        // とびとびの 3 つ（c4・c2・c1）は、コミットごとの差分をパス順・古い順に。
+        let (selection, stacked) = repo.selection_diff(&history, &[0, 2, 3]).unwrap();
+        assert!(matches!(selection, Selection::Each(ref ids) if ids.len() == 3));
+        let names = paths(&stacked);
+        assert_eq!(names.len(), 3);
+        assert!(names.iter().all(|n| n.starts_with("a.txt — ")));
     }
 
     #[test]

@@ -290,14 +290,26 @@ impl GitBackend for GixBackend {
     }
 
     fn commit_changes(&self, commit: &Oid) -> Result<Vec<FileChange>> {
-        use gix::object::tree::diff::ChangeDetached as C;
         let repo = self.repo.to_thread_local();
         let commit = repo.find_commit(gix::ObjectId::from_bytes_or_panic(&commit.0))?;
-        let new_tree = commit.tree()?;
-        let old_tree = match commit.parent_ids().next() {
-            Some(parent) => Some(parent.object()?.into_commit().tree()?),
-            None => None,
+        let parent = commit
+            .parent_ids()
+            .next()
+            .map(|p| to_oid(p.as_ref()))
+            .transpose()?;
+        self.changes_between(parent.as_ref(), &to_oid(commit.id.as_ref())?)
+    }
+
+    fn changes_between(&self, old: Option<&Oid>, new: &Oid) -> Result<Vec<FileChange>> {
+        use gix::object::tree::diff::ChangeDetached as C;
+        let repo = self.repo.to_thread_local();
+        let tree = |id: &Oid| -> Result<gix::Tree<'_>> {
+            Ok(repo
+                .find_commit(gix::ObjectId::from_bytes_or_panic(&id.0))?
+                .tree()?)
         };
+        let new_tree = tree(new)?;
+        let old_tree = old.map(tree).transpose()?;
         let opt = |id: gix::ObjectId| -> Result<Option<Oid>> { to_oid(id.as_ref()).map(Some) };
         let is_commit = |mode: gix::object::tree::EntryMode| mode.is_commit();
         let mut changes = Vec::new();

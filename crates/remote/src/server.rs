@@ -159,6 +159,7 @@ fn handle(
         Request::Refs => encode(&backend.refs()?),
         Request::CommitChanges(id) => encode(&backend.commit_changes(&id)?),
         Request::StashChanges(id) => encode(&backend.stash_changes(&id)?),
+        Request::ChangesBetween(old, new) => encode(&backend.changes_between(old.as_ref(), &new)?),
         Request::Blob(id) => encode(&Bytes(backend.blob(&id)?.to_vec())),
         Request::Status => encode(&backend.status()?),
         Request::WorktreeFile(path) => encode(&Bytes(backend.worktree_file(&path)?.to_vec())),

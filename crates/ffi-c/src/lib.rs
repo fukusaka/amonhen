@@ -976,6 +976,52 @@ pub unsafe extern "C" fn amonhen_stacked_view(
     Box::into_raw(Box::new(s.view(&collapsed, &profile(encoding)))).cast()
 }
 
+/// History で選んだコミット（`rows` は行、順不同）の全ファイルの差分（`amonhen_stacked_free` で解放する）。
+/// `kind` に見せ方を書く: 0 は first-parent でつながる範囲（一番古いものの親から一番新しいものまで）、1 はつながって
+/// いない 2 つ（古いほうから新しいほうまで）、2 はとびとびの 3 つ以上（コミットごとの差分を、見出し
+/// 「パス — 短い ID」でパス順に）。裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `repo` と `history` は有効、`rows` は `count` 個の `u32`、`kind` は書き込める `u8` であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_selection_diff(
+    repo_ptr: *const AmonhenRepo,
+    history_ptr: *const AmonhenHistory,
+    rows: *const u32,
+    count: u32,
+    kind: *mut u8,
+) -> *mut AmonhenStacked {
+    let rows: Vec<u32> = (0..count as usize)
+        .map(|i| unsafe { *rows.add(i) })
+        .collect();
+    match repo(repo_ptr).selection_diff(history(history_ptr), &rows) {
+        Ok((selection, stacked)) => {
+            let k = match selection {
+                amonhen_core::Selection::Range { .. } => 0,
+                amonhen_core::Selection::Pair { .. } => 1,
+                amonhen_core::Selection::Each(_) => 2,
+            };
+            unsafe { *kind = k };
+            Box::into_raw(Box::new(stacked)).cast()
+        }
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// ファイルの数。
+///
+/// # Safety
+/// `stacked` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_count(stacked: *const AmonhenStacked) -> u32 {
+    unsafe { &*stacked.cast::<amonhen_core::diff::StackedDiff>() }
+        .files
+        .len() as u32
+}
+
 /// # Safety
 /// `stacked` は `amonhen_stacked_diff` が返したもので、まだ解放していないこと。
 #[unsafe(no_mangle)]

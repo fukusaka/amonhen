@@ -11,12 +11,14 @@ use amonhen_model::{
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 6;
+pub const PROTOCOL_VERSION: u32 = 7;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
     /// → `Hello`
-    Hello { version: u32 },
+    Hello {
+        version: u32,
+    },
     // GitBackend
     /// → `Option<Oid>`
     Head,
@@ -28,7 +30,9 @@ pub enum Request {
         known_tips: Vec<Oid>,
     },
     /// → `GraphWire`（`tips` から辿れるすべて、トポロジカル順）
-    CommitGraph { tips: Vec<Oid> },
+    CommitGraph {
+        tips: Vec<Oid>,
+    },
     /// → `RepoPaths`
     Paths,
     /// → `Refs`
@@ -37,6 +41,7 @@ pub enum Request {
     CommitChanges(Oid),
     /// → `Vec<FileChange>`
     StashChanges(Oid),
+    ChangesBetween(Option<Oid>, Oid),
     /// → `Bytes`
     Blob(Oid),
     /// → `Status`
@@ -54,7 +59,10 @@ pub enum Request {
         content: Bytes,
     },
     /// → `()`
-    Commit { message: String, amend: bool },
+    Commit {
+        message: String,
+        amend: bool,
+    },
     /// → `bool`
     HasCommitGraph,
     /// → `()`
@@ -74,7 +82,10 @@ pub enum Request {
     },
     // RepoFiles
     /// → `Option<Bytes>`
-    FileRead { root: Root, path: String },
+    FileRead {
+        root: Root,
+        path: String,
+    },
     /// → `()`
     FileWrite {
         root: Root,
@@ -82,11 +93,21 @@ pub enum Request {
         data: Bytes,
     },
     /// → `()`
-    FileRemove { root: Root, path: String },
+    FileRemove {
+        root: Root,
+        path: String,
+    },
     /// → `Option<u32>`
-    FileMode { root: Root, path: String },
+    FileMode {
+        root: Root,
+        path: String,
+    },
     /// → `()`
-    FileSetMode { root: Root, path: String, mode: u32 },
+    FileSetMode {
+        root: Root,
+        path: String,
+        mode: u32,
+    },
     /// Operations（応答は `Op` のコメント）
     Op(Op),
 }
