@@ -126,7 +126,7 @@ crates/
   ffi-uniffi/        Swift / Kotlin 向けのバインディング
 bins/
   amonhend/          daemon（後で）
-  amonhen/           CLI
+  cli/               CLI（amonhen）
 apps/
   macos/             Xcode プロジェクト（AppKit）。ffi を xcframework にして取り込む
 bench/               criterion のベンチと大規模リポジトリでの計測
@@ -485,7 +485,7 @@ linux（148 万コミット）では、1 行を横切る線が中央値で 365 �
 
 拡張:
 
-- [ ] 15. CLI（`amonhen`）
+- [x] 15. CLI（`amonhen`、`crates/cli`）。UI なしでコアを使う。`amonhen [<path>]`・`amonhen open <path|ssh://…>` でアプリのタブに開く（アプリはフォルダと `amonhen://open?location=…` を受け取る）、`amonhen log`（コアのレイアウトで罫線のグラフ、点か曲線のあるレーンだけ列を取り、線が通るだけのレーンは ┆ にまとめる。`--fold`・`--branch`・検索の書き方）、`amonhen undo`（`--list`・`--peek`。アプリと同じ操作ログ）、`amonhen merge-file`（Magic Merge。残れば終了コード 1 で git の mergetool に使える）。History はアプリの永続キャッシュから始めるので、linux（148 万コミット）でも log が 85 ms。`scripts/install.sh` が `~/.local/bin/amonhen` にリンクを作る
 - [ ] 16. ローカル daemon（XPC＋共有メモリ）。SSH には要らない macOS 向けの最適化なので、17 の後に回す
 - [x] 17. SSH 越しの daemon と手元の複製。段階 A0（コアのファイル操作を `RepoFiles` に）・A（`amonhen-remote` と `amonhend`、手元の子プロセスでの確認）・B（アプリから `daemon:/path` で開く。amonhend はアプリに同梱）・C（`ssh://host/path` で、SSH 先の OS と CPU に合う amonhend を `~/.cache/amonhen/` に送り込んで起動する。チャンクは件名などだけ、件名の検索は daemon の側、大きなフレームは LZ4 で圧縮）・D（リポジトリの一覧の「Add Remote…」、つなぐ間の接続中のウィンドウ、初回の読み込みの受信量、切れたときの帯と「つなぎ直す」）は済み。実際の SSH 先（Linux x86_64）でも開けることを確かめた
 - [ ] 18. VSCode 拡張からの daemon 利用

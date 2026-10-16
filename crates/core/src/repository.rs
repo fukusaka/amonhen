@@ -848,6 +848,11 @@ impl Repository {
         Ok(HistoryChunk::new(start as u32, &texts, profile))
     }
 
+    /// コミットの件名・作者・日時（CLI の log など、FE 向けの形にしないで使うとき）。
+    pub fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<amonhen_model::CommitText>> {
+        self.backend.commit_summaries(ids)
+    }
+
     /// 走っている検索をやめる。
     pub fn cancel_search(&self) {
         self.search_generation.fetch_add(1, Ordering::Relaxed);

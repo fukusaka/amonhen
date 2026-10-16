@@ -34,6 +34,10 @@ mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp apps/macos/.build/release/AmonHen "$app/Contents/MacOS/AmonHen"
 # daemon 越しに開くときに起動する（`daemon:` の場所）。
 cp target/release/amonhend "$app/Contents/MacOS/amonhend"
+# 端末から使う CLI（PATH に通すには scripts/install.sh がリンクを作る）。ファイル名は大文字と小文字を区別しない
+# ので、MacOS には置けない（AmonHen を上書きする）。
+mkdir -p "$app/Contents/Helpers"
+cp target/release/amonhen "$app/Contents/Helpers/amonhen"
 # SSH 先に送り込む amonhend（Linux 用。SSH 先が macOS なら、上の amonhend を送る）。
 mkdir -p "$app/Contents/Resources/daemons"
 cp dist/linux/amonhend-linux-* "$app/Contents/Resources/daemons/"
@@ -50,6 +54,22 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>AmonHen</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key><string>$bundle_id</string>
+            <key>CFBundleURLSchemes</key><array><string>amonhen</string></array>
+        </dict>
+    </array>
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key><string>Folder</string>
+            <key>CFBundleTypeRole</key><string>Viewer</string>
+            <key>LSHandlerRank</key><string>None</string>
+            <key>LSItemContentTypes</key><array><string>public.folder</string></array>
+        </dict>
+    </array>
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleVersion</key><string>$build_number</string>
     <key>LSMinimumSystemVersion</key><string>14.4</string>
@@ -61,6 +81,7 @@ PLIST
 
 # 中の実行ファイル（amonhend）を先に署名してから、アプリ全体に署名する。
 codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/MacOS/amonhend"
+codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/Helpers/amonhen"
 codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app"
 codesign --verify --strict "$app"
 

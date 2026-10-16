@@ -47,6 +47,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "amonhen-cli"
+version = "0.1.0"
+dependencies = [
+ "amonhen-backend-gix",
+ "amonhen-core",
+ "amonhen-layout",
+ "amonhen-model",
+ "libc",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "amonhen-core"
 version = "0.1.0"
 dependencies = [

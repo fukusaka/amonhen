@@ -129,6 +129,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             if windows.isEmpty, connecting.isEmpty { RepositoryManagerWindowController.shared.show() }
         }
+        // 起動の途中で受け取った「開く」（`amonhen` コマンド・Finder から）を、ここで開く。
+        isLaunched = true
+        for location in pendingOpen { open(path: location) }
+        pendingOpen.removeAll()
         // ウィンドウを前に出すたびに記録し直す（タブの並べ替え・切り出しを拾う）。
         NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
@@ -138,6 +142,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// リポジトリを開く。ふつうは前にあるリポジトリのウィンドウのタブに入れ、`inNewWindow` なら新しいウィンドウに
     /// する。すでに開いていれば前に出す。`path` は手元のパスか、daemon 越しの場所（`daemon:/path`・`ssh://host/path`）。
+    private var isLaunched = false
+    private var pendingOpen: [String] = []
+
+    /// `amonhen [path]`・`amonhen open ssh://…` や Finder から渡されたリポジトリ。フォルダはそのまま、SSH 先などは
+    /// `amonhen://open?location=…` の URL で受け取る。
+    func application(_ application: NSApplication, open urls: [URL]) {
+        for url in urls {
+            let location: String?
+            if url.isFileURL {
+                location = url.path
+            } else if url.scheme == "amonhen", url.host == "open",
+                      let item = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "location" }) {
+                location = item.value
+            } else {
+                location = nil
+            }
+            guard let location else { continue }
+            if isLaunched {
+                open(path: location)
+                NSApp.activate()
+            } else {
+                pendingOpen.append(location)
+            }
+        }
+    }
+
     func open(path: String, debug: Bool = false, inNewWindow: Bool = false) {
         let location = RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).standardizedFileURL.path
         if let existing = windows.first(where: { $0.location == location }) {
