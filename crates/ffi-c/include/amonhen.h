@@ -1133,6 +1133,18 @@ uint32_t amonhen_history_density(const AmonhenHistory *history_ptr,
                                  uint32_t buckets,
                                  float *out);
 
+/**
+ * `history` の `rows`（行が `count` 個）のコミットだけの History（検索で一致したものだけを出す）。線は最初の親を
+ * たどって次に一致したコミットへつなぐ。`amonhen_history_release` で手放す。
+ *
+ * # Safety
+ * `repo`・`history` は有効なもの、`rows` は `count` 個の u32 を読める領域であること（0 個なら NULL でよい）。
+ */
+const AmonhenHistory *amonhen_history_matching(const AmonhenRepo *repo_ptr,
+                                               const AmonhenHistory *history_ptr,
+                                               const uint32_t *rows,
+                                               uint32_t count);
+
 #ifdef __cplusplus
 }  // extern "C"
 #endif  // __cplusplus

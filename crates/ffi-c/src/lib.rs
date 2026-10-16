@@ -1741,3 +1741,19 @@ pub unsafe extern "C" fn amonhen_history_density(
     }
     density.len() as u32
 }
+
+/// `history` の `rows`（行が `count` 個）のコミットだけの History（検索で一致したものだけを出す）。線は最初の親を
+/// たどって次に一致したコミットへつなぐ。`amonhen_history_release` で手放す。
+///
+/// # Safety
+/// `repo`・`history` は有効なもの、`rows` は `count` 個の u32 を読める領域であること（0 個なら NULL でよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_matching(
+    repo_ptr: *const AmonhenRepo,
+    history_ptr: *const AmonhenHistory,
+    rows: *const u32,
+    count: u32,
+) -> *const AmonhenHistory {
+    let rows = if count == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(rows, count as usize) } };
+    into_history(repo(repo_ptr).history_matching(history(history_ptr), rows))
+}

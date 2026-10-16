@@ -85,6 +85,16 @@ extension Repository {
     }
 }
 
+extension Repository {
+    /// `history` の `rows` の行（検索で一致したコミット）だけの History。裏のスレッドで呼ぶ。
+    public func matchingHistory(of history: History, rows: [Int]) -> History {
+        let raw = rows.map(UInt32.init).withUnsafeBufferPointer {
+            amonhen_history_matching(self.raw, history.raw, $0.baseAddress, UInt32($0.count))
+        }
+        return History(raw: raw!, repository: self)
+    }
+}
+
 extension History {
     /// 折りたたんだ History で、`row` の merge が隠しているコミットの数（隠していなければ 0）。
     public func hiddenCount(row: Int) -> Int { Int(amonhen_history_hidden(raw, UInt32(row))) }

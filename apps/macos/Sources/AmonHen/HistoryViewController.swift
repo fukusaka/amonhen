@@ -196,6 +196,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private var searchRowSet: Set<Int> = []
     private var searchIndex: Int?
     private var searchTask: Task<Void, Never>?
+    /// 検索の前・次の一致へ移るボタンと、一致したコミットだけを出す切り替え。
+    private let previousMatchButton = NSButton()
+    private let nextMatchButton = NSButton()
+    private let matchOnlyButton = NSButton()
+    /// 一致したコミットだけを出しているときの、元の History（出していなければ nil）。
+    private var baseHistory: History?
     /// HEAD のコミット（Current Branch で使う）。
     var head: Data?
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
@@ -286,6 +292,22 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         searchSpinner.style = .spinning
         searchSpinner.controlSize = .small
         searchSpinner.isDisplayedWhenStopped = false
+        for (button, symbol, tip, action) in [
+            (previousMatchButton, "chevron.up", "前の一致（⇧↩・⌘⇧G）", #selector(previousMatchClicked)),
+            (nextMatchButton, "chevron.down", "次の一致（↩・⌘G）", #selector(nextMatchClicked)),
+            (matchOnlyButton, "line.3.horizontal.decrease.circle", "一致したコミットだけを出す", #selector(matchOnlyClicked)),
+        ] {
+            button.bezelStyle = .accessoryBarAction
+            button.isBordered = false
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+            button.toolTip = tip
+            button.target = self
+            button.action = action
+            button.controlSize = .small
+            button.isEnabled = false
+            container.addSubview(button)
+        }
+        matchOnlyButton.setButtonType(.pushOnPushOff)
         container.addSubview(searchField)
         container.addSubview(searchCount)
         container.addSubview(searchSpinner)
@@ -324,10 +346,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let barY = view.bounds.height - barHeight + 2
         scopePopup.frame = NSRect(x: 6, y: barY, width: 180, height: barHeight - 4)
         let countWidth: CGFloat = 96
+        // 右から、絞り込み・次・前・件数。
+        let buttons: CGFloat = 3 * 22
         searchField.frame = NSRect(
-            x: 192, y: barY, width: max(80, view.bounds.width - 192 - countWidth - 12), height: barHeight - 4)
+            x: 192, y: barY, width: max(80, view.bounds.width - 192 - countWidth - buttons - 12), height: barHeight - 4)
         searchSpinner.frame = NSRect(x: searchField.frame.maxX + 6, y: barY + 3, width: 16, height: 16)
-        searchCount.frame = NSRect(x: view.bounds.width - countWidth - 6, y: barY + 2, width: countWidth, height: 16)
+        let countX = view.bounds.width - countWidth - buttons - 6
+        searchCount.frame = NSRect(x: countX, y: barY + 2, width: countWidth, height: 16)
+        for (i, button) in [previousMatchButton, nextMatchButton, matchOnlyButton].enumerated() {
+            button.frame = NSRect(x: countX + countWidth + CGFloat(i) * 22, y: barY, width: 22, height: barHeight - 4)
+        }
         // 右端に密度の帯（スクロールバーの左）。
         let stripWidth: CGFloat = 8
         scrollView.frame = NSRect(x: 0, y: 0, width: view.bounds.width - stripWidth, height: view.bounds.height - barHeight)
@@ -393,7 +421,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 return if let tips { try? repository.filteredHistory(tips: tips) } else { repository.latestHistory() }
             }.value
             guard let next else { return }
-            show(next, resetScroll: true)
+            showBase(next, resetScroll: true)
             if let commit, let row = next.row(of: commit) { select(row: row) }
         }
     }
@@ -409,8 +437,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 let latest = try await Task.detached(priority: .userInitiated) { try repository.loadHistory() }.value
                 if !showsFullHistory {
                     reloadScope()
-                } else if latest.generation != history?.generation {
-                    show(latest)
+                } else if latest.generation != (baseHistory ?? history)?.generation {
+                    showBase(latest)
                 }
                 completion(nil)
             } catch {
@@ -430,10 +458,22 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             else { return }
             if !showsFullHistory {
                 reloadScope()
-            } else if latest.generation != history?.generation {
-                show(latest)
+            } else if latest.generation != (baseHistory ?? history)?.generation {
+                showBase(latest)
             }
         }
+    }
+
+    /// 元になる History を出す。一致したコミットだけを出しているなら、新しい History で探し直して絞り込み直す
+    /// （それまでは今の絞り込みを出しておく）。
+    private func showBase(_ next: History, resetScroll: Bool = false) {
+        guard baseHistory != nil, matchOnlyButton.state == .on, let query = searchQuery else {
+            baseHistory = nil
+            show(next, resetScroll: resetScroll)
+            return
+        }
+        baseHistory = next
+        runSearch(query, in: next)
     }
 
     /// `row` を選び、表の中ほどに見えるようにする。
@@ -880,10 +920,15 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// Enter で探す。同じ問い合わせなら次の一致へ進む。
     @objc private func searchSubmitted() {
         let query = searchField.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !query.isEmpty, let history else {
+        guard !query.isEmpty, let base = baseHistory ?? history else {
             searchTask?.cancel()
             repository.cancelSearch()
             searchQuery = nil
+            // 一致だけを出していたら、元に戻す。
+            if let base = baseHistory {
+                baseHistory = nil
+                show(base)
+            }
             clearSearchResults()
             return
         }
@@ -891,31 +936,93 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             moveSearch(by: 1)
             return
         }
+        runSearch(query, in: base)
+    }
+
+    /// `base` で探す。一致だけを出す切り替えが入っていれば、一致したコミットだけの History にして出す。
+    private func runSearch(_ query: String, in base: History) {
         searchTask?.cancel()
         searchSpinner.startAnimation(nil)
         searchCount.stringValue = ""
+        let repository = self.repository
+        let matchOnly = matchOnlyButton.state == .on
         searchTask = Task {
-            let result = await Task.detached(priority: .userInitiated) { Result { try history.search(query) } }.value
-            guard !Task.isCancelled, self.history === history else { return }
-            self.searchSpinner.stopAnimation(nil)
+            let result = await Task.detached(priority: .userInitiated) { Result { try base.search(query) } }.value
+            guard !Task.isCancelled, (self.baseHistory ?? self.history) === base else { return }
             let rows: [Int]
             switch result {
             case let .success(found):
                 rows = found
             case let .failure(error):
                 // 構文の誤りなどは件数の欄に出す（取り消しは新しい検索が始まっているので何もしない）。
+                self.searchSpinner.stopAnimation(nil)
                 self.searchCount.stringValue = "\(error)"
                 self.searchCount.toolTip = "\(error)"
                 return
             }
-            self.searchQuery = query
-            self.searchRows = rows
-            self.searchRowSet = Set(rows)
-            // 今選んでいる行から下で、いちばん近い一致へ。
-            let from = max(0, self.tableView.selectedRow)
-            self.searchIndex = rows.isEmpty ? nil : (rows.firstIndex { $0 >= from } ?? 0)
+            if matchOnly, !rows.isEmpty {
+                let filtered = await Task.detached(priority: .userInitiated) {
+                    repository.matchingHistory(of: base, rows: rows)
+                }.value
+                guard !Task.isCancelled, (self.baseHistory ?? self.history) === base else { return }
+                // 選んでいたコミットは、絞り込んだ History でも選んだままにする（`show` が ID で選び直す）。
+                self.baseHistory = base
+                self.show(filtered)
+                self.searchQuery = query
+                self.searchRows = Array(0..<filtered.rowCount)
+                // 全部の行が一致なので、行に一致の色は付けない。
+                self.searchRowSet = []
+                self.searchIndex = max(0, self.tableView.selectedRow)
+            } else {
+                if let original = self.baseHistory {
+                    self.baseHistory = nil
+                    self.show(original)
+                }
+                self.searchQuery = query
+                self.searchRows = rows
+                self.searchRowSet = Set(rows)
+                // 今選んでいる行から下で、いちばん近い一致へ。
+                let from = max(0, self.tableView.selectedRow)
+                self.searchIndex = rows.isEmpty ? nil : (rows.firstIndex { $0 >= from } ?? 0)
+            }
+            self.searchSpinner.stopAnimation(nil)
             self.showSearchResult()
         }
+    }
+
+    @objc private func previousMatchClicked() { moveSearch(by: -1) }
+    @objc private func nextMatchClicked() { moveSearch(by: 1) }
+
+    @objc private func matchOnlyClicked() {
+        guard let query = searchQuery, let base = baseHistory ?? history else {
+            updateMatchButtons()
+            return
+        }
+        runSearch(query, in: base)
+    }
+
+    /// 前・次のボタンは一致があるときだけ、絞り込みは探したときだけ押せる。
+    private func updateMatchButtons() {
+        previousMatchButton.isEnabled = !searchRows.isEmpty
+        nextMatchButton.isEnabled = !searchRows.isEmpty
+        matchOnlyButton.isEnabled = searchQuery != nil || baseHistory != nil
+        // 入っているときは塗りつぶしの印と強調の色で見せる。
+        let on = matchOnlyButton.state == .on
+        matchOnlyButton.image = NSImage(
+            systemSymbolName: on ? "line.3.horizontal.decrease.circle.fill" : "line.3.horizontal.decrease.circle",
+            accessibilityDescription: matchOnlyButton.toolTip)
+        matchOnlyButton.contentTintColor = on ? .controlAccentColor : nil
+    }
+
+    /// History で探しているか（一致がなくても、問い合わせがあれば true）。
+    var hasSearch: Bool { searchQuery != nil }
+
+    /// 検索で一致したコミットの次・前へ（⌘G・⌘⇧G、ツールバーの検索欄の ⇧↩）。探していなければ false。
+    @discardableResult
+    func moveToMatch(by step: Int) -> Bool {
+        guard searchQuery != nil else { return false }
+        moveSearch(by: step)
+        return true
     }
 
     private func moveSearch(by step: Int) {
@@ -935,6 +1042,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         } else {
             searchCount.stringValue = searchQuery == nil ? "" : "見つかりません"
         }
+        updateMatchButtons()
         redrawText()
     }
 
@@ -945,6 +1053,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         searchIndex = nil
         searchQuery = nil
         searchCount.stringValue = ""
+        updateMatchButtons()
         redrawText()
     }
 

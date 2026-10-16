@@ -50,7 +50,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private let findBar = NSView()
     private let findField = NSSearchField()
     private let findCount = NSTextField(labelWithString: "")
-    private var isFindBarVisible = false
+    private(set) var isFindBarVisible = false
     private var matches: [(row: Int, range: Range<Int>)] = []
     private var currentMatch: Int?
 
@@ -1013,8 +1013,13 @@ final class DiffDocumentView: NSView, NSMenuItemValidation {
     @objc func copy(_ sender: Any?) { owner?.copySelection() }
     override func selectAll(_ sender: Any?) { owner?.selectAllText() }
     @objc func showFindBar(_ sender: Any?) { owner?.showFindBar() }
-    @objc func findNext(_ sender: Any?) { owner?.findNext() }
-    @objc func findPrevious(_ sender: Any?) { owner?.findPrevious() }
+    // ⌘G・⌘⇧G: この差分の中を探しているときはここで。そうでなければ History の検索の一致へ。
+    @objc func findNext(_ sender: Any?) {
+        if owner?.isFindBarVisible == true || !moveHistoryMatch(from: window, by: 1) { owner?.findNext() }
+    }
+    @objc func findPrevious(_ sender: Any?) {
+        if owner?.isFindBarVisible == true || !moveHistoryMatch(from: window, by: -1) { owner?.findPrevious() }
+    }
     override func cancelOperation(_ sender: Any?) { owner?.clearTextSelection() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -2207,12 +2212,33 @@ final class FileCell: NSTableCellView {
 /// ⌘F で文字の欄の中を探す NSTextView（Edit > Find… は、フォーカスのある欄の `showFindBar:` を呼ぶ）。
 final class FindableTextView: NSTextView {
     @objc func showFindBar(_ sender: Any?) { performTextFinderAction(findAction(.showFindInterface)) }
-    @objc func findNext(_ sender: Any?) { performTextFinderAction(findAction(.nextMatch)) }
-    @objc func findPrevious(_ sender: Any?) { performTextFinderAction(findAction(.previousMatch)) }
+    // ⌘G・⌘⇧G: この欄の中を探しているときはここで。そうでなければ History の検索の一致へ。
+    @objc func findNext(_ sender: Any?) {
+        if enclosingScrollView?.isFindBarVisible == true || !moveHistoryMatch(from: window, by: 1) {
+            performTextFinderAction(findAction(.nextMatch))
+        }
+    }
+    @objc func findPrevious(_ sender: Any?) {
+        if enclosingScrollView?.isFindBarVisible == true || !moveHistoryMatch(from: window, by: -1) {
+            performTextFinderAction(findAction(.previousMatch))
+        }
+    }
 
     private func findAction(_ action: NSTextFinder.Action) -> NSMenuItem {
         let item = NSMenuItem()
         item.tag = action.rawValue
         return item
     }
+}
+
+/// History の検索の一致を次・前へ移せるもの（リポジトリのウィンドウ）。
+protocol HistoryMatchNavigating: AnyObject {
+    /// 移したら true（History で探していなければ false）。
+    func moveHistoryMatch(by step: Int) -> Bool
+}
+
+/// `window` が History で探していれば、その一致を次・前へ移す。移したら true。
+@MainActor
+func moveHistoryMatch(from window: NSWindow?, by step: Int) -> Bool {
+    (window?.delegate as? HistoryMatchNavigating)?.moveHistoryMatch(by: step) ?? false
 }

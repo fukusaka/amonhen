@@ -71,6 +71,26 @@ impl CommitGraph {
 
     /// `keep` の立っている行だけのグラフ（並びは保つ）。残らない親への線は落とす。
     pub fn retain(&self, keep: &[bool]) -> CommitGraph {
+        self.retain_mapped(keep, Some)
+    }
+
+    /// `keep` の立っている行だけのグラフで、残らない親の代わりに、その親から最初の親をたどって最初に残る
+    /// コミットにつなぐ（検索で一致したコミットだけを出すとき、線が途切れないように）。行はトポロジー順
+    /// （親は子より下）なので、下から 1 回なめて求める。
+    pub fn retain_linked(&self, keep: &[bool]) -> CommitGraph {
+        let mut nearest = vec![u32::MAX; self.len()];
+        for r in (0..self.len()).rev() {
+            nearest[r] = if keep[r] {
+                r as u32
+            } else {
+                self.parents(r).first().map_or(u32::MAX, |&p| nearest[p as usize])
+            };
+        }
+        self.retain_mapped(keep, |p| Some(nearest[p as usize]).filter(|&n| n != u32::MAX))
+    }
+
+    /// `retain` の本体。親の行を `map` で残る行（元の番号）に置き換え、同じ親は 1 つにまとめる。
+    fn retain_mapped(&self, keep: &[bool], map: impl Fn(u32) -> Option<u32>) -> CommitGraph {
         let mut new_row = vec![u32::MAX; self.len()];
         let mut next = 0;
         for (r, &k) in keep.iter().enumerate() {
@@ -86,12 +106,15 @@ impl CommitGraph {
         for r in (0..self.len()).filter(|&r| keep[r]) {
             ids.push(self.ids[r]);
             times.push(self.commit_times[r]);
-            parents.extend(
-                self.parents(r)
-                    .iter()
-                    .map(|&p| new_row[p as usize])
-                    .filter(|&p| p != u32::MAX),
-            );
+            let start = parents.len();
+            for &p in self.parents(r) {
+                if let Some(m) = map(p)
+                    && new_row[m as usize] != u32::MAX
+                    && !parents[start..].contains(&new_row[m as usize])
+                {
+                    parents.push(new_row[m as usize]);
+                }
+            }
             offsets.push(parents.len() as u32);
         }
         CommitGraph {
@@ -206,6 +229,26 @@ mod tests {
         assert_eq!(sub.ids(), &[oid(3), oid(2), oid(1), oid(0)]);
         assert_eq!(sub.parents(0), &[1, 2]);
         assert_eq!(sub.parents(1), &[3]);
+    }
+
+    #[test]
+    fn links_kept_commits_through_the_skipped_ones() {
+        // 上から 4 → 3（merge: 2 と 1）→ 2 → 0、1 → 0。一致したのは 4・1・0 だけ。
+        let mut b = CommitGraphBuilder::default();
+        b.push(oid(4), 40, [oid(3)]);
+        b.push(oid(3), 30, [oid(2), oid(1)]);
+        b.push(oid(2), 20, [oid(0)]);
+        b.push(oid(1), 10, [oid(0)]);
+        b.push(oid(0), 0, []);
+        let g = b.build();
+        let keep = [true, false, false, true, true];
+        let linked = g.retain_linked(&keep);
+        assert_eq!(linked.ids(), &[oid(4), oid(1), oid(0)]);
+        // 4 は飛ばした 3 → 2 の先の 0 につながる（最初の親をたどる）。1 は 0 に。
+        assert_eq!(linked.parents(0), &[2]);
+        assert_eq!(linked.parents(1), &[2]);
+        // ただ残すだけなら、4 の線は途切れる。
+        assert_eq!(g.retain(&keep).parents(0), &[] as &[u32]);
     }
 
     #[test]

@@ -2,7 +2,9 @@ import AmonhenKit
 import AppKit
 
 /// 1 つのリポジトリのウィンドウ。サイドバー・History・Working Copy・ツールバー・監視を持つ。
-final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, NSToolbarItemValidation {
+final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, NSToolbarItemValidation,
+    HistoryMatchNavigating
+{
     /// 手元のパスか、daemon 越しの場所（`daemon:/path`・`ssh://host/path`）。
     let location: String
     /// 差分の文字を描く（ファイルの履歴のウィンドウでも使う）。
@@ -139,6 +141,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard let self else { return }
             sidebar.select(page: .history)
             history.search(query)
+        }
+        toolbar.onSearchStep = { [weak self] step in
+            guard let self else { return }
+            sidebar.select(page: .history)
+            history.moveToMatch(by: step)
         }
         detail.onSearch = { [weak history] query in history?.search(query) }
         detail.onSelectRef = { [weak self] name in self?.selectRef(named: name) }
@@ -1081,9 +1088,27 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// メニューの項目とツールバーのボタンを使えるか。
+    // MARK: - History の検索の一致
+
+    /// ⌘G・⌘⇧G がどの欄にも拾われなかったとき（ツールバーの検索欄や、探していない欄にいるとき）。
+    @objc func findNext(_ sender: Any?) {
+        if !moveHistoryMatch(by: 1) { NSSound.beep() }
+    }
+
+    @objc func findPrevious(_ sender: Any?) {
+        if !moveHistoryMatch(by: -1) { NSSound.beep() }
+    }
+
+    func moveHistoryMatch(by step: Int) -> Bool {
+        guard history.hasSearch else { return false }
+        sidebar.select(page: .history)
+        return history.moveToMatch(by: step)
+    }
+
     private func validate(_ action: Selector?) -> Bool {
         let sequence = workingCopy.sequence
         switch action {
+        case #selector(findNext(_:)), #selector(findPrevious(_:)): return history.hasSearch
         case #selector(continueSequence(_:)), #selector(abortSequence(_:)): return sequence != nil
         case #selector(skipSequence(_:)): return sequence.map { $0.hasPrefix("rebase") || $0 == "cherry-pick" } ?? false
         case #selector(push(_:)), #selector(forcePush(_:)): return latestRefs?.headBranch != nil

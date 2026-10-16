@@ -29,7 +29,11 @@ fn main() -> amonhen_model::Result<()> {
             again.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         again.sort_by(f64::total_cmp);
+        let t = Instant::now();
+        let matching = repo.history_matching(&history, &found);
+        let filter = t.elapsed().as_secs_f64() * 1000.0;
         let note = if i == 0 { "（索引を作る）" } else { "" };
+        println!("{:<28} 一致だけの History（{} 行）を作る {filter:.1} ms", "", matching.graph.len());
         println!("{query:<28} {:>8} 件  1 回目 {first:>8.1} ms{note}  2 回目から {:>6.1} ms", found.len(), again[1]);
     }
     Ok(())

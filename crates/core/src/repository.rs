@@ -512,6 +512,32 @@ impl Repository {
         self.cache_path.as_deref()
     }
 
+    /// `snapshot` の `rows` の行（検索で一致したコミット）だけの History。一致しないコミットは飛ばし、線は最初の親を
+    /// たどって次に一致したコミットへつなぐ。公開はしない。
+    pub fn history_matching(&self, snapshot: &HistorySnapshot, rows: &[u32]) -> Arc<HistorySnapshot> {
+        let mut keep = vec![false; snapshot.graph.len()];
+        for &r in rows {
+            if let Some(k) = keep.get_mut(r as usize) {
+                *k = true;
+            }
+        }
+        let graph = snapshot.graph.retain_linked(&keep);
+        let head_row = snapshot
+            .head
+            .and_then(|h| graph.ids().iter().position(|id| *id == h))
+            .map(|r| r as u32);
+        let layout = graph::layout(&graph, head_row);
+        Arc::new(HistorySnapshot {
+            generation: self.generation.fetch_add(1, Ordering::Relaxed) + 1,
+            tips: snapshot.tips.clone(),
+            head: snapshot.head,
+            graph,
+            layout,
+            folded: Vec::new(),
+            rows: OnceLock::new(),
+        })
+    }
+
     pub fn history(&self) -> Option<Arc<HistorySnapshot>> {
         self.history.load_full()
     }
