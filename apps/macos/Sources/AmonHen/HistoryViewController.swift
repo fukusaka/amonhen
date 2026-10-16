@@ -988,7 +988,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         preparedRows = preparedRows.filter { keep.contains($0.key / Self.chunkRows) }
     }
 
-    /// 複数のコミットを選んで右クリック: 古い順に cherry-pick、新しい順に revert、ID のコピー。
+    /// 複数のコミットを選んで右クリック: 古い順に cherry-pick、新しい順に revert、連続していれば squash、ID のコピー。
     private func buildMultipleMenu(_ menu: NSMenu, rows: [Int], history: History, actions: Actions) {
         // 行は新しい順（0 が一番新しい）。
         let commits: [(hex: String, isMerge: Bool)] = rows.compactMap { row in
@@ -1002,6 +1002,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         add("Revert \(commits.count) Commits（新しい順）") {
             actions.perform(sequence: commits.map { ["op": "revert", "oid": $0.hex, "isMerge": $0.isMerge] })
+        }
+        // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる。
+        let sorted = rows.sorted()
+        if sorted.count >= 2, zip(sorted, sorted.dropFirst()).allSatisfy({ $1 == $0 + 1 }),
+           !commits.contains(where: \.isMerge) {
+            add("Squash \(commits.count) Commits…") { actions.squash(range: commits.map(\.hex)) }
         }
         menu.addItem(.separator())
         add("Copy Commit IDs") {

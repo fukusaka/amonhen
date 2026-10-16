@@ -170,6 +170,28 @@ final class Actions {
         }
     }
 
+    /// 選んだ連続したコミットを 1 つにまとめる。メッセージは古い順に並べたものを初期値に編集してもらう。
+    func squash(range oids: [String]) {
+        let repository = self.repository
+        Task {
+            let result: Result<SquashRangeInfo, Error>
+            do {
+                let json = try Repository.json(["op": "squashRangeMessage", "oids": oids])
+                result = await Task.detached { Result { try repository.info(json: json, as: SquashRangeInfo.self) } }.value
+            } catch {
+                result = .failure(error)
+            }
+            switch result {
+            case let .failure(error):
+                await alert("まとめられません", "\(error)")
+            case let .success(info):
+                let title = "Squash \(oids.count) Commits"
+                guard let edited = editMessage(title, initial: info.message, ok: "まとめる") else { return }
+                rewrite(title, ["kind": "squashRange", "oid": info.oldest, "last": info.newest, "message": edited])
+            }
+        }
+    }
+
     /// 編集できるコミット（新しい順）。
     func editableCommits() async -> [String] {
         await text(["op": "editableCommits"])?.split(separator: "\n").map(String.init) ?? []
@@ -235,3 +257,9 @@ final class Actions {
     }
 }
 
+/// `squashRangeMessage` の結果: まとめる範囲の両端と、メッセージの初期値。
+nonisolated struct SquashRangeInfo: Decodable, Sendable {
+    let oldest: String
+    let newest: String
+    let message: String
+}

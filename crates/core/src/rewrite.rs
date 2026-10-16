@@ -24,6 +24,13 @@ pub enum HistoryEdit {
     Fixup {
         oid: String,
     },
+    /// `oid`（いちばん古い）から `last`（いちばん新しい）までの連続したコミットを 1 つにまとめ、
+    /// メッセージを `message` にする。
+    SquashRange {
+        oid: String,
+        last: String,
+        message: String,
+    },
     Drop {
         oid: String,
     },
@@ -48,6 +55,7 @@ impl HistoryEdit {
             Self::Reword { oid, .. }
             | Self::Squash { oid, .. }
             | Self::Fixup { oid }
+            | Self::SquashRange { oid, .. }
             | Self::Drop { oid }
             | Self::Edit { oid }
             | Self::Split { oid }
@@ -105,7 +113,19 @@ pub fn plan_rebase(
         .ok_or("このコミットは編集できません（HEAD から辿れないか、merge より前にあります）")?;
 
     let mut start = index;
+    // まとめる範囲の終わり（SquashRange のときだけ）。
+    let mut range_end = index;
     match edit {
+        HistoryEdit::SquashRange { last, .. } => {
+            let last = Oid::from_hex(last).ok_or("コミット ID を読めない")?;
+            range_end = seq
+                .iter()
+                .position(|c| c.oid == last)
+                .ok_or("このコミットは編集できません（HEAD から辿れないか、merge より前にあります）")?;
+            if range_end <= index {
+                return Err("まとめるには、2 つ以上の連続したコミットを選んでください".into());
+            }
+        }
         HistoryEdit::Squash { .. } | HistoryEdit::Fixup { .. } => {
             if index == 0 {
                 return Err("親が編集できる範囲にないので、まとめられません".into());
@@ -145,7 +165,20 @@ pub fn plan_rebase(
             shell_quote(&shell_path(&path))
         ));
     };
-    for c in &seq[start..] {
+    for (i, c) in seq.iter().enumerate().skip(start) {
+        if let HistoryEdit::SquashRange { message, .. } = edit {
+            if i == index {
+                lines.push(format!("pick {}", c.oid));
+            } else if i <= range_end {
+                lines.push(format!("fixup {}", c.oid));
+                if i == range_end {
+                    amend(&mut lines, &c.oid, message);
+                }
+            } else {
+                lines.push(format!("pick {}", c.oid));
+            }
+            continue;
+        }
         if c.oid != target {
             lines.push(format!("pick {}", c.oid));
             continue;
@@ -160,6 +193,7 @@ pub fn plan_rebase(
                 amend(&mut lines, &c.oid, message);
             }
             HistoryEdit::Fixup { .. } => lines.push(format!("fixup {}", c.oid)),
+            HistoryEdit::SquashRange { .. } => unreachable!(),
             HistoryEdit::Drop { .. } => lines.push(format!("drop {}", c.oid)),
             HistoryEdit::Edit { .. } => lines.extend([format!("pick {}", c.oid), "break".into()]),
             HistoryEdit::Split { .. } => lines.extend([
@@ -255,6 +289,28 @@ mod tests {
             "{todo}"
         );
         assert!(todo.ends_with("message-c.txt'\npick d\n"), "{todo}");
+    }
+
+    #[test]
+    fn squash_range_picks_the_oldest_and_fixes_up_the_rest() {
+        let p = plan(HistoryEdit::SquashRange {
+            oid: hex('b'),
+            last: hex('c'),
+            message: "b..c".into(),
+        })
+        .unwrap();
+        assert_eq!(p.base, Some(oid('a')));
+        let todo = short(&p.todo);
+        assert!(todo.starts_with("pick b\nfixup c\nexec git commit --amend "), "{todo}");
+        assert!(todo.ends_with("message-c.txt'\npick d\n"), "{todo}");
+        assert_eq!(p.messages[0].1, "b..c");
+        // 新しい側を先に渡したら断る。
+        assert!(plan(HistoryEdit::SquashRange {
+            oid: hex('c'),
+            last: hex('b'),
+            message: String::new(),
+        })
+        .is_err());
     }
 
     #[test]

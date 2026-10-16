@@ -120,6 +120,12 @@ pub enum Command {
     SquashMessage {
         oid: String,
     },
+    /// 連続したコミットをまとめるときの、メッセージの初期値（`oids` のメッセージを古い順に並べる）。
+    /// `info.oldest`・`info.newest` に、編集できる範囲の中で連続していることを確かめた両端を返す
+    /// （`info.message` にも同じメッセージ）。
+    SquashRangeMessage {
+        oids: Vec<String>,
+    },
     /// `path` の `index` 番目のコンフリクトを解決する（Undo できる）。
     ResolveConflict {
         path: String,
@@ -919,6 +925,42 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::SquashRangeMessage { oids } => {
+                let ids = oids.iter().map(|o| oid(o)).collect::<Result<Vec<_>>>()?;
+                let chain = self.editable_chain()?;
+                // chain は新しい順。選んだコミットの位置が隙間なく続いていること。
+                let mut positions = ids
+                    .iter()
+                    .map(|id| {
+                        chain.iter().position(|c| c.oid == *id).ok_or(
+                            "編集できる範囲の外のコミットがあります（HEAD から辿れないか、merge より前）",
+                        )
+                    })
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                positions.sort_unstable();
+                positions.dedup();
+                if positions.len() < 2 || positions.windows(2).any(|w| w[1] != w[0] + 1) {
+                    return Err("まとめるには、2 つ以上の連続したコミットを選んでください".into());
+                }
+                let newest = chain[positions[0]].oid;
+                let oldest = chain[*positions.last().unwrap()].oid;
+                let text = positions
+                    .iter()
+                    .rev()
+                    .map(|&p| self.commit_message(&chain[p].oid).map(|m| m.trim_end().to_owned()))
+                    .collect::<Result<Vec<_>>>()?
+                    .join("\n\n");
+                Ok(Response {
+                    ok: true,
+                    text: Some(text.clone()),
+                    info: Some(serde_json::json!({
+                        "oldest": oldest.to_string(),
+                        "newest": newest.to_string(),
+                        "message": text,
+                    })),
+                    ..Default::default()
+                })
+            }
             Command::SquashMessage { oid: o } => {
                 let id = oid(&o)?;
                 let chain = self.editable_chain()?;
@@ -1675,6 +1717,39 @@ mod tests {
         assert_eq!(log(dir), ["b", "d", "c", "first"]);
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["d", "c", "b", "first"]);
+    }
+
+    #[test]
+    fn squashes_a_range_of_commits() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let b = commit_file(dir, "b.txt", "b");
+        let c = commit_file(dir, "c.txt", "c");
+        let d = commit_file(dir, "d.txt", "d");
+        commit_file(dir, "e.txt", "e");
+        // 選んだ順に関わらず、古い順のメッセージと両端を返す。
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "squashRangeMessage", "oids": [d, b, c]}).to_string(),
+        );
+        assert_eq!(r["text"], "b\n\nc\n\nd", "{r}");
+        assert_eq!(r["info"]["oldest"], b.as_str());
+        assert_eq!(r["info"]["newest"], d.as_str());
+        // 飛び飛びは断る。
+        let gap = run(
+            &repo,
+            &serde_json::json!({"op": "squashRangeMessage", "oids": [b, d]}).to_string(),
+        );
+        assert_eq!(gap["ok"], false, "{gap}");
+
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squashRange", "oid": b, "last": d, "message": "b to d"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["e", "b to d", "first"]);
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(log(dir), ["e", "d", "c", "b", "first"]);
     }
 
     #[test]
