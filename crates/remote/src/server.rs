@@ -297,5 +297,8 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ChangeRemote(change) => encode(&ops.change_remote(&change)?),
         Op::WorkingStats => encode(&ops.working_stats()?),
         Op::IgnoreMatches(patterns, limit) => encode(&ops.ignore_matches(&patterns, limit)?),
+        // daemon の中の記録（daemon では、git を動かしているのは手元の backend）。
+        Op::Activity => encode(&amonhen_model::activity::entries()),
+        Op::CancelActivity(seq) => encode(&amonhen_model::activity::cancel(seq)),
     }
 }

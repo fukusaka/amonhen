@@ -225,6 +225,14 @@ pub enum Command {
     },
     /// hooks と Git LFS の様子（`info`: hooksPath・hooks（name・enabled）・lfs（入っているか）・lfsPatterns）。
     HooksAndLfs,
+    /// SSH 先の daemon の Activity の記録（`info.records`。手元のリポジトリなら空）。
+    RemoteActivity,
+    /// 走っている操作を取り消す（`remote` なら SSH 先の daemon の記録の番号）。
+    CancelActivity {
+        seq: u64,
+        #[serde(default)]
+        remote: bool,
+    },
     ChangeRemote {
         change: amonhen_model::RemoteChange,
     },
@@ -1200,6 +1208,25 @@ impl Repository {
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "lines": lines })),
+                    ..Default::default()
+                })
+            }
+            Command::RemoteActivity => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "records": ops.activity()? })),
+                ..Default::default()
+            }),
+            Command::CancelActivity { seq, remote } => {
+                let cancelled = if remote {
+                    ops.cancel_activity(seq)?
+                } else {
+                    amonhen_model::activity::cancel(seq)
+                };
+                if !cancelled {
+                    return Err("取り消せません（もう終わったか、取り消せない操作です）".into());
+                }
+                Ok(Response {
+                    ok: true,
                     ..Default::default()
                 })
             }

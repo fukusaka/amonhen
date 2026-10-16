@@ -190,6 +190,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
 
         actions.window = window
+        actions.onFailure = { [weak self] message in self?.showFailure(message) }
         actions.onChange = { [weak self] in
             self?.history.refresh()
             self?.reloadRefs()
@@ -366,6 +367,68 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         bar.layoutAttribute = .bottom
         window.addTitlebarAccessoryViewController(bar)
         sequenceBanner = bar
+    }
+
+    // MARK: - 失敗の帯
+
+    private var failureBanner: NSTitlebarAccessoryViewController?
+    private var failureMessage = ""
+
+    /// 操作の失敗を、ツールバーの下の帯で知らせる（作業を止めない）。閉じるか、次の失敗で置き換えるまで出す。
+    func showFailure(_ message: String, title: String = "操作に失敗しました") {
+        hideFailure()
+        failureMessage = message
+        let cancelled = message == "取り消した"
+        let icon = NSImageView(image: NSImage(
+            systemSymbolName: cancelled ? "stop.circle" : "xmark.octagon.fill", accessibilityDescription: nil) ?? NSImage())
+        icon.contentTintColor = cancelled ? .secondaryLabelColor : .systemRed
+        let label = NSTextField(labelWithString: cancelled ? "操作を取り消しました" : title)
+        label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+        // git のエラーは複数行になるので、帯には fatal:・error: の行（なければ最初の行）を出す（全文は「詳細」と
+        // ツールチップ）。
+        let lines = message.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty && !$0.hasPrefix("hint:") }
+        let line = lines.first { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") } ?? lines.first ?? ""
+        let detail = NSTextField(labelWithString: cancelled ? "" : line)
+        detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        detail.textColor = .secondaryLabelColor
+        detail.lineBreakMode = .byTruncatingTail
+        detail.toolTip = message
+        detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let more = NSButton(title: "詳細", target: self, action: #selector(showFailureDetail))
+        // AppDelegate の Window > Activity（target が nil なので、レスポンダチェーンで届く）。
+        let activity = NSButton(title: "Activity", target: nil, action: #selector(AppDelegate.showActivity(_:)))
+        let close = NSButton(title: "閉じる", target: self, action: #selector(hideFailure))
+        more.isHidden = cancelled
+        for b in [more, activity, close] { b.controlSize = .small }
+        let stack = NSStackView(views: [icon, label, detail, NSView(), more, activity, close])
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
+        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
+        let bar = NSTitlebarAccessoryViewController()
+        bar.view = stack
+        bar.layoutAttribute = .bottom
+        window.addTitlebarAccessoryViewController(bar)
+        failureBanner = bar
+        // 取り消したことは、しばらくしたら消す。
+        if cancelled {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak bar] in
+                if let bar, self?.failureBanner === bar { self?.hideFailure() }
+            }
+        }
+    }
+
+    @objc private func hideFailure() {
+        guard let banner = failureBanner, let index = window.titlebarAccessoryViewControllers.firstIndex(of: banner) else { return }
+        window.removeTitlebarAccessoryViewController(at: index)
+        failureBanner = nil
+    }
+
+    @objc private func showFailureDetail() {
+        let alert = NSAlert()
+        alert.messageText = "操作に失敗しました"
+        alert.informativeText = failureMessage
+        alert.beginSheetModal(for: window)
     }
 
     /// ツールバーの下に、切れたことと「つなぎ直す」を出す。
@@ -874,7 +937,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Activity の画面で、このリポジトリの操作ログを読み・戻すため。
     var activityRepository: ActivityRepository {
-        ActivityRepository(name: window.title, repository: repository, actions: actions)
+        ActivityRepository(name: window.title, repository: repository, actions: actions, isRemote: !isLocal)
     }
 
     /// Repository > Repository Settings…（⌘;）。
@@ -912,6 +975,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 EventLog.add(repo: name, "自動の fetch")
             } catch {
                 EventLog.add(repo: name, "自動の fetch に失敗: \(error)")
+                showFailure("\(error)", title: "自動の fetch に失敗しました")
             }
         }
     }

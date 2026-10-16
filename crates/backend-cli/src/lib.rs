@@ -163,7 +163,103 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
         label.push(' ');
         label.push_str(&arg.to_string_lossy());
     }
+    // ネットワークを使う操作は、進み具合を流しながら読み、取り消せるようにする。
+    let network = cmd
+        .get_args()
+        .find(|a| !a.to_string_lossy().starts_with('-') && !a.to_string_lossy().contains('='))
+        .is_some_and(|a| ["fetch", "pull", "push", "clone"].contains(&&*a.to_string_lossy()));
+    if network && input.is_none() && !cmd.get_args().any(|a| a == "--") {
+        return amonhen_model::activity::track_with("git", &repo, label, |seq| spawn_streaming(cmd, seq));
+    }
     amonhen_model::activity::track("git", &repo, label, || spawn(cmd, input))
+}
+
+/// `--progress` を付けて実行し、標準エラーの進み具合（\r で上書きされる行）を Activity に書く。取り消しを
+/// 頼まれたら git を止める。
+fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
+    use std::io::Read;
+    use amonhen_model::activity;
+    cmd.arg("--progress");
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    // 取り消すときに git が起動した ssh なども止められるよう、別のプロセスグループにする。
+    #[cfg(unix)]
+    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+    let mut child = cmd.spawn()?;
+    activity::set_cancellable(seq);
+    let mut stdout = child.stdout.take().unwrap();
+    let mut stderr = child.stderr.take().unwrap();
+    let out_thread = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = stdout.read_to_end(&mut buf);
+        buf
+    });
+    // 標準エラーは、進み具合の行（\r 区切り）を拾いながら、ほかの行はエラーの文に残す。
+    let err_thread = std::thread::spawn(move || {
+        let mut all = Vec::new();
+        let mut line = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while let Ok(n) = stderr.read(&mut chunk) {
+            if n == 0 {
+                break;
+            }
+            for &b in &chunk[..n] {
+                if b == b'\r' || b == b'\n' {
+                    let text = String::from_utf8_lossy(&line).trim().to_owned();
+                    if !text.is_empty() {
+                        if text.contains('%') || text.contains("objects") {
+                            activity::set_progress(seq, &text);
+                        }
+                        if b == b'\n' {
+                            all.extend_from_slice(text.as_bytes());
+                            all.push(b'\n');
+                        }
+                    }
+                    line.clear();
+                } else {
+                    line.push(b);
+                }
+            }
+        }
+        all
+    });
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if activity::take_cancel(seq) {
+            #[cfg(unix)]
+            // SAFETY: 自分で起動したプロセスグループ（pid = グループの番号）にシグナルを送るだけ。
+            unsafe {
+                libc::kill(-(child.id() as i32), libc::SIGKILL);
+            }
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = out_thread.join();
+            let _ = err_thread.join();
+            return Err("取り消した".into());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let out = out_thread.join().unwrap_or_default();
+    let err = err_thread.join().unwrap_or_default();
+    if !status.success() {
+        // 進み具合の行（remote: Counting など）を除いた、最後の数行をエラーの文にする。
+        let text = String::from_utf8_lossy(&err);
+        let message = text
+            .lines()
+            .filter(|l| !l.contains('%'))
+            .collect::<Vec<_>>()
+            .join("\n")
+            .trim()
+            .to_owned();
+        return Err(if message.is_empty() {
+            format!("git が失敗した: {status:?}")
+        } else {
+            message
+        }
+        .into());
+    }
+    Ok(out)
 }
 
 fn spawn(mut cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
@@ -507,5 +603,39 @@ mod ops_tests {
 
     fn text(out: Vec<u8>) -> Result<String> {
         Ok(String::from_utf8(out)?.trim().to_owned())
+    }
+}
+
+#[cfg(test)]
+mod streaming_tests {
+    use super::*;
+
+    #[test]
+    fn cancels_a_running_fetch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        assert!(Command::new("git").args(["init", "-q"]).current_dir(dir).status().unwrap().success());
+        // いつまでも返らないリモート（ext:: で sleep を起動する）。
+        let mut cmd = Command::new("git");
+        cmd.current_dir(dir)
+            .args(["-c", "protocol.ext.allow=always", "fetch", "ext::sleep 30", "main"]);
+        let started = std::time::Instant::now();
+        let handle = std::thread::spawn(move || run(cmd, None));
+        let seq = loop {
+            if let Some(r) = amonhen_model::activity::records()
+                .into_iter()
+                .find(|r| r.label.contains("ext::sleep") && r.cancellable && r.ok.is_none())
+            {
+                break r.seq;
+            }
+            assert!(started.elapsed().as_secs() < 10, "記録が出ない");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        };
+        assert!(amonhen_model::activity::cancel(seq));
+        let result = handle.join().unwrap();
+        assert_eq!(result.unwrap_err().to_string(), "取り消した");
+        assert!(started.elapsed().as_secs() < 10);
+        let record = amonhen_model::activity::records().into_iter().find(|r| r.seq == seq).unwrap();
+        assert_eq!(record.ok, Some(false));
     }
 }

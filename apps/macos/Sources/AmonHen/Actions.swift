@@ -9,6 +9,8 @@ final class Actions {
     var onChange: (() -> Void)?
     /// 次に Undo される操作の名前が変わった。
     var onUndoChange: ((String?) -> Void)?
+    /// 操作が失敗した（ウィンドウの帯で知らせる）。なければ警告のシートを出す。
+    var onFailure: ((String) -> Void)?
 
     init(repository: Repository) {
         self.repository = repository
@@ -33,7 +35,7 @@ final class Actions {
                 }
                 completion?(result)
             } catch {
-                await alert("操作に失敗しました", "\(error)")
+                await fail(error)
             }
             onChange?()
             refreshUndo()
@@ -58,7 +60,7 @@ final class Actions {
             do {
                 try await Task.detached(priority: .userInitiated) { try work() }.value
             } catch {
-                await alert("操作に失敗しました", "\(error)")
+                await fail(error)
             }
             onChange?()
             refreshUndo()
@@ -75,6 +77,15 @@ final class Actions {
 
     func undo() {
         perform(["op": "undo"])
+    }
+
+    @MainActor
+    private func fail(_ error: Error) async {
+        if let onFailure {
+            onFailure("\(error)")
+        } else {
+            await alert("操作に失敗しました", "\(error)")
+        }
     }
 
     @MainActor

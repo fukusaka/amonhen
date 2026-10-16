@@ -290,7 +290,31 @@ public struct ActivityRecord: Decodable, Sendable, Identifiable, Hashable {
     public let duration: Double?
     public let ok: Bool?
     public let error: String?
-    public var id: UInt64 { seq }
+    /// 走っている間の進み具合（fetch の受信量など）。
+    public let progress: String?
+    /// 取り消せるか（走っている間）。
+    public let cancellable: Bool
+    /// SSH 先の daemon の記録なら、そのリポジトリの名前（手元の記録なら nil）。
+    public var remote: String?
+    public var id: String { "\(remote ?? ""):\(seq)" }
+
+    enum CodingKeys: String, CodingKey {
+        case seq, kind, repo, label, started, duration, ok, error, progress, cancellable
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        seq = try c.decode(UInt64.self, forKey: .seq)
+        kind = try c.decode(String.self, forKey: .kind)
+        repo = try c.decode(String.self, forKey: .repo)
+        label = try c.decode(String.self, forKey: .label)
+        started = try c.decode(UInt64.self, forKey: .started)
+        duration = try c.decodeIfPresent(Double.self, forKey: .duration)
+        ok = try c.decodeIfPresent(Bool.self, forKey: .ok)
+        error = try c.decodeIfPresent(String.self, forKey: .error)
+        progress = try c.decodeIfPresent(String.self, forKey: .progress)
+        cancellable = try c.decodeIfPresent(Bool.self, forKey: .cancellable) ?? false
+    }
 
     /// 今残っている記録（古い順、最大 1000 件）。
     public static func all() -> [ActivityRecord] {
@@ -298,4 +322,8 @@ public struct ActivityRecord: Decodable, Sendable, Identifiable, Hashable {
         defer { amonhen_string_free(out) }
         return (try? JSONDecoder().decode([ActivityRecord].self, from: Data(String(cString: out).utf8))) ?? []
     }
+
+    /// 手元で走っている操作を取り消す。
+    @discardableResult
+    public static func cancel(seq: UInt64) -> Bool { amonhen_activity_cancel(seq) }
 }

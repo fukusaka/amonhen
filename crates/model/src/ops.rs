@@ -226,4 +226,13 @@ pub trait Operations: Send + Sync {
     /// .gitignore の書き方の確かめ: パターンごとに、合うファイル（追跡しているものと、していないもの。
     /// 中身ごと合うフォルダは 1 つにまとめる）の初めの `limit` 個と、合う数。
     fn ignore_matches(&self, patterns: &[String], limit: usize) -> Result<Vec<(Vec<String>, usize)>>;
+    /// git を動かしている側（SSH 先なら daemon）の Activity の記録。手元で動かしているなら空（手元の記録は
+    /// `activity::records` で読める）。
+    fn activity(&self) -> Result<Vec<crate::activity::Entry>> {
+        Ok(Vec::new())
+    }
+    /// git を動かしている側で、走っている操作を取り消す。
+    fn cancel_activity(&self, seq: u64) -> Result<bool> {
+        Ok(crate::activity::cancel(seq))
+    }
 }

@@ -31,9 +31,16 @@ pub struct Record {
     /// 成功したか。走っている間は None。
     pub ok: Option<bool>,
     pub error: Option<String>,
+    /// 走っている間の進み具合（git の `--progress` の最後の行など）。
+    pub progress: Option<String>,
+    /// 取り消せるか（走っている間だけ意味がある）。
+    pub cancellable: bool,
     #[cfg_attr(feature = "serde", serde(skip))]
     begun: Option<Instant>,
 }
+
+/// 取り消しを頼まれた記録の番号。
+static CANCELLED: Mutex<Vec<u64>> = Mutex::new(Vec::new());
 
 static LOG: Mutex<VecDeque<Record>> = Mutex::new(VecDeque::new());
 static SEQ: AtomicU64 = AtomicU64::new(0);
@@ -57,9 +64,63 @@ pub fn begin(kind: &'static str, repo: &str, label: String) -> u64 {
         duration: None,
         ok: None,
         error: None,
+        progress: None,
+        cancellable: false,
         begun: Some(Instant::now()),
     });
     seq
+}
+
+fn with_record(seq: u64, f: impl FnOnce(&mut Record)) {
+    let mut log = LOG.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(r) = log.iter_mut().rev().find(|r| r.seq == seq) {
+        f(r);
+    }
+}
+
+/// 走っている記録の進み具合を書く。
+pub fn set_progress(seq: u64, progress: &str) {
+    with_record(seq, |r| r.progress = Some(progress.to_owned()));
+}
+
+/// 取り消せる記録にする（`cancelled` で確かめながら走るもの）。
+pub fn set_cancellable(seq: u64) {
+    with_record(seq, |r| r.cancellable = true);
+}
+
+/// 取り消しを頼む。取り消せる記録で、まだ走っていれば true。
+pub fn cancel(seq: u64) -> bool {
+    let running = {
+        let log = LOG.lock().unwrap_or_else(|e| e.into_inner());
+        log.iter().any(|r| r.seq == seq && r.cancellable && r.ok.is_none())
+    };
+    if running {
+        CANCELLED.lock().unwrap_or_else(|e| e.into_inner()).push(seq);
+    }
+    running
+}
+
+/// 取り消しを頼まれたか（頼まれていれば印を消して true）。
+pub fn take_cancel(seq: u64) -> bool {
+    let mut cancelled = CANCELLED.lock().unwrap_or_else(|e| e.into_inner());
+    let found = cancelled.iter().position(|&s| s == seq);
+    if let Some(i) = found {
+        cancelled.swap_remove(i);
+    }
+    found.is_some()
+}
+
+/// 今走っている記録の番号（`f` の中から、自分の記録に進み具合を書くため）。
+pub fn track_with<T, E: std::fmt::Display>(
+    kind: &'static str,
+    repo: &str,
+    label: String,
+    f: impl FnOnce(u64) -> std::result::Result<T, E>,
+) -> std::result::Result<T, E> {
+    let seq = begin(kind, repo, label);
+    let result = f(seq);
+    end(seq, result.as_ref().err().map(|e| e.to_string()).as_deref());
+    result
 }
 
 /// 終えたことを記録する。もう捨てられていれば何もしない。
@@ -68,6 +129,7 @@ pub fn end(seq: u64, error: Option<&str>) {
     // 番号の順に並んでいるので、後ろから探す（終わるのはたいてい最近始めたもの）。
     if let Some(r) = log.iter_mut().rev().find(|r| r.seq == seq) {
         r.duration = r.begun.map(|b| b.elapsed().as_secs_f64() * 1000.0);
+        r.progress = None;
         r.ok = Some(error.is_none());
         r.error = error.map(|e| {
             let mut e = e.to_owned();
@@ -97,6 +159,42 @@ pub fn track<T, E: std::fmt::Display>(
     result
 }
 
+/// 記録を、ほかのプロセス（SSH 先の daemon）から手元へ渡す形。
+#[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct Entry {
+    pub seq: u64,
+    pub kind: String,
+    pub repo: String,
+    pub label: String,
+    pub started: u64,
+    pub duration: Option<f64>,
+    pub ok: Option<bool>,
+    pub error: Option<String>,
+    pub progress: Option<String>,
+    pub cancellable: bool,
+}
+
+/// 今残っている記録を、渡せる形で（古い順）。
+pub fn entries() -> Vec<Entry> {
+    records()
+        .into_iter()
+        .map(|r| Entry {
+            seq: r.seq,
+            kind: r.kind.to_owned(),
+            repo: r.repo,
+            label: r.label,
+            started: r.started,
+            duration: r.duration,
+            ok: r.ok,
+            error: r.error,
+            progress: r.progress,
+            cancellable: r.cancellable,
+        })
+        .collect()
+}
+
 /// 今残っている記録（古い順）。
 pub fn records() -> Vec<Record> {
     LOG.lock()
@@ -123,5 +221,19 @@ mod tests {
         assert_eq!(last[1].error.as_deref(), Some("rejected"));
         assert!(last[0].seq < last[1].seq);
         assert!(last.iter().all(|r| r.duration.is_some()));
+    }
+
+    #[test]
+    fn cancels_only_running_cancellable_records() {
+        let seq = begin("git", "/c", "git fetch".into());
+        assert!(!cancel(seq), "取り消せる印がなければ断る");
+        set_cancellable(seq);
+        set_progress(seq, "Receiving objects: 10%");
+        assert!(records().iter().any(|r| r.seq == seq && r.progress.as_deref() == Some("Receiving objects: 10%")));
+        assert!(cancel(seq));
+        assert!(take_cancel(seq));
+        assert!(!take_cancel(seq));
+        end(seq, Some("取り消した"));
+        assert!(!cancel(seq), "終わったものは取り消せない");
     }
 }

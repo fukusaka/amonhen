@@ -762,6 +762,14 @@ impl Operations for RemoteOperations {
     fn ignore_matches(&self, patterns: &[String], limit: usize) -> Result<Vec<(Vec<String>, usize)>> {
         self.op(Op::IgnoreMatches(patterns.to_vec(), limit))
     }
+
+    fn activity(&self) -> Result<Vec<amonhen_model::activity::Entry>> {
+        self.op(Op::Activity)
+    }
+
+    fn cancel_activity(&self, seq: u64) -> Result<bool> {
+        self.op(Op::CancelActivity(seq))
+    }
 }
 
 /// 読んだバイト数を数える。

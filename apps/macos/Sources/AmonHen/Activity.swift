@@ -55,6 +55,8 @@ struct ActivityRepository: Identifiable, Hashable {
     let name: String
     let repository: Repository
     let actions: Actions
+    /// SSH 先のリポジトリか（daemon の記録も読む）。
+    var isRemote = false
     var id: ObjectIdentifier { ObjectIdentifier(repository) }
     static func == (a: Self, b: Self) -> Bool { a.id == b.id }
     func hash(into hasher: inout Hasher) { hasher.combine(id) }
@@ -77,14 +79,56 @@ final class ActivityModel {
     var selectedRepository: ActivityRepository?
     /// AppDelegate が設定する（開いているリポジトリ）。
     @ObservationIgnored var listRepositories: () -> [ActivityRepository] = { [] }
+    /// SSH 先の daemon の記録（リポジトリの名前 → 記録）。2 秒ごとに読む。
+    @ObservationIgnored private var remoteRecords: [String: [ActivityRecord]] = [:]
+    @ObservationIgnored private var remoteLoadedAt = Date.distantPast
+    @ObservationIgnored private var loadingRemote = false
 
     func refresh() {
-        records = ActivityRecord.all()
+        let remote = remoteRecords.values.flatMap { $0 }
+        records = (ActivityRecord.all() + remote).sorted { $0.started < $1.started }
+        loadRemoteRecords()
         events = EventLog.events
         metrics = PerformanceLog.samples.map { ($0.key, $0.value) }.sorted { $0.name < $1.name }
         repositories = listRepositories()
         if let selected = selectedRepository, !repositories.contains(selected) { selectedRepository = nil }
         if selectedRepository == nil { selectedRepository = repositories.first }
+    }
+
+    private func loadRemoteRecords() {
+        guard !loadingRemote, Date().timeIntervalSince(remoteLoadedAt) > 2 else { return }
+        let remotes = repositories.filter(\.isRemote)
+        guard !remotes.isEmpty else {
+            remoteRecords = [:]
+            return
+        }
+        loadingRemote = true
+        Task {
+            var loaded: [String: [ActivityRecord]] = [:]
+            for entry in remotes {
+                let repository = entry.repository
+                struct Records: Decodable { let records: [ActivityRecord] }
+                if let records = try? await Task.detached(priority: .utility, operation: {
+                    try repository.info(["op": "remoteActivity"], as: Records.self).records
+                }).value {
+                    loaded[entry.name] = records.map { var r = $0; r.remote = entry.name; return r }
+                }
+            }
+            remoteRecords = loaded
+            remoteLoadedAt = Date()
+            loadingRemote = false
+        }
+    }
+
+    /// 走っている操作を取り消す（SSH 先の記録なら daemon に頼む）。
+    func cancel(_ record: ActivityRecord) {
+        guard let name = record.remote else {
+            ActivityRecord.cancel(seq: record.seq)
+            return
+        }
+        guard let repository = repositories.first(where: { $0.name == name })?.repository else { return }
+        let seq = record.seq
+        Task.detached { _ = try? repository.run(["op": "cancelActivity", "seq": seq, "remote": true]) }
     }
 
     func loadUndoLog() {
@@ -121,7 +165,7 @@ private struct OperationsTab: View {
     @State private var kind = "all"
     @State private var failuresOnly = false
     @State private var filter = ""
-    @State private var selection: UInt64?
+    @State private var selection: String?
 
     var body: some View {
         let shown = model.records.reversed().filter {
@@ -151,11 +195,25 @@ private struct OperationsTab: View {
                         .foregroundStyle(r.ok == nil ? .orange : r.ok! ? .green : .red)
                 }
                 .width(16)
-                TableColumn("リポジトリ") { r in Text(repoName(r.repo)) }.width(min: 60, ideal: 110)
-                TableColumn("内容") { r in Text(r.label).lineLimit(1).truncationMode(.middle).help(r.label) }
+                TableColumn("リポジトリ") { r in
+                    Text(r.remote.map { "\($0)（SSH 先）" } ?? repoName(r.repo))
+                }
+                .width(min: 60, ideal: 110)
+                TableColumn("内容") { r in
+                    HStack {
+                        Text(r.label).lineLimit(1).truncationMode(.middle).help(r.label)
+                        if r.ok == nil, let progress = r.progress {
+                            Text(progress).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        if r.ok == nil, r.cancellable {
+                            Spacer()
+                            Button("取り消す") { model.cancel(r) }.controlSize(.small)
+                        }
+                    }
+                }
                 TableColumn("ms") { r in Text(r.duration.map(ms) ?? "…").monospacedDigit() }.width(60)
             }
-            if let selection, let record = model.records.first(where: { $0.seq == selection }) {
+            if let selection, let record = model.records.first(where: { $0.id == selection }) {
                 ScrollView {
                     Text("\(record.repo)\n\(record.label)" + (record.error.map { "\n\n\($0)" } ?? ""))
                         .font(.system(.caption, design: .monospaced)).textSelection(.enabled)
@@ -163,7 +221,8 @@ private struct OperationsTab: View {
                 }
                 .frame(height: 90)
             }
-            Text("git の起動とコアの命令を、新しい順に最大 1000 件。● は実行中。").font(.caption).foregroundStyle(.secondary)
+            Text("git の起動とコアの命令を、新しい順に最大 1000 件（SSH 先のリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。")
+                .font(.caption).foregroundStyle(.secondary)
         }
         .padding()
     }

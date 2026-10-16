@@ -997,6 +997,11 @@ char *amonhen_command(const AmonhenRepo *repo_ptr,
 char *amonhen_activity(void);
 
 /**
+ * 手元で走っている操作（Activity の記録の番号 `seq`）を取り消す。取り消せれば true。
+ */
+bool amonhen_activity_cancel(uint64_t seq);
+
+/**
  * `url` を `dest`（まだないフォルダ）に clone する。失敗したら false（理由は `amonhen_last_error`）。時間が
  * かかるので裏のスレッドで呼ぶ。
  *

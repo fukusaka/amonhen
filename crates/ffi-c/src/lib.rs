@@ -1482,6 +1482,12 @@ pub extern "C" fn amonhen_activity() -> *mut c_char {
         .into_raw()
 }
 
+/// 手元で走っている操作（Activity の記録の番号 `seq`）を取り消す。取り消せれば true。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_activity_cancel(seq: u64) -> bool {
+    amonhen_core::cancel_activity(seq)
+}
+
 /// `url` を `dest`（まだないフォルダ）に clone する。失敗したら false（理由は `amonhen_last_error`）。時間が
 /// かかるので裏のスレッドで呼ぶ。
 ///

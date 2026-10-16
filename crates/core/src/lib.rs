@@ -19,6 +19,11 @@ pub use repository::{
 };
 
 /// Activity の記録（git の起動とコマンドの実行、古い順）の JSON の配列。
+/// 手元で走っている操作を取り消す（取り消せる記録で、まだ走っていれば true）。
+pub fn cancel_activity(seq: u64) -> bool {
+    amonhen_model::activity::cancel(seq)
+}
+
 pub fn activity_json() -> String {
     serde_json::to_string(&amonhen_model::activity::records()).unwrap_or_else(|_| "[]".into())
 }
