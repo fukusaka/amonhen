@@ -21,4 +21,6 @@ amonhen-watch.workspace = true
 libc = "0.2"
 
 [dev-dependencies]
+amonhen-layout.workspace = true
+amonhen-projection.workspace = true
 tempfile = "3.27.0"

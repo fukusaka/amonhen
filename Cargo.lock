@@ -76,6 +76,7 @@ dependencies = [
  "memmap2",
  "postcard",
  "serde",
+ "serde_bytes",
  "serde_json",
  "sha1_smol",
  "tempfile",
@@ -87,7 +88,9 @@ version = "0.1.0"
 dependencies = [
  "amonhen-backend-gix",
  "amonhen-core",
+ "amonhen-layout",
  "amonhen-model",
+ "amonhen-projection",
  "amonhen-remote",
  "amonhen-watch",
  "libc",

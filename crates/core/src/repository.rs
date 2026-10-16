@@ -684,6 +684,15 @@ impl Repository {
         Ok(Some((crate::delegate::decode(&answer.reply)?, answer.parts)))
     }
 
+    /// 手元の共有の daemon のコアに任せ、できたら true（つないでいなければ false）。
+    fn delegate_done(&self, request: &crate::delegate::Request) -> Result<bool> {
+        match self.delegate(request)? {
+            Some((crate::delegate::Reply::Done, _)) => Ok(true),
+            Some(_) => Err("daemon の答えの形が違う".into()),
+            None => Ok(false),
+        }
+    }
+
     /// 変更ごとの差分。手元の共有の daemon につないでいれば、daemon で計算して 1 回でもらう（中身は共有メモリ）。
     fn change_diffs(&self, changes: &[FileChange]) -> Result<Option<Vec<FileDiff>>> {
         match self.delegate(&crate::delegate::Request::ChangeDiffs(changes.to_vec()))? {
@@ -712,6 +721,14 @@ impl Repository {
         use crate::delegate::{DiffMeta, Reply, Request};
         let (reply, parts) = match crate::delegate::decode::<Request>(request)? {
             Request::Command(json) => (Reply::Command(self.run_json(&json)), Vec::new()),
+            Request::Commit { message, amend } => {
+                self.commit(&message, amend)?;
+                (Reply::Done, Vec::new())
+            }
+            Request::RestoreFile { path, content } => {
+                self.restore_file(&path, &content)?;
+                (Reply::Done, Vec::new())
+            }
             Request::ChangeDiffs(changes) => {
                 let diffs = self.stacked_diff(&changes)?;
                 let metas = diffs.files.iter().map(|(_, d)| DiffMeta::from(d)).collect();
@@ -891,6 +908,13 @@ impl Repository {
 
     /// コミットする（Undo できる。index と作業ツリーはそのままでブランチだけ戻る）。
     pub fn commit(&self, message: &str, amend: bool) -> Result<()> {
+        // 手元の共有の daemon につないでいれば、daemon のコアでコミットし、Undo の記録もそこで書く。
+        if self.delegate_done(&crate::delegate::Request::Commit {
+            message: message.to_owned(),
+            amend,
+        })? {
+            return Ok(());
+        }
         let label = if amend { "Amend commit" } else { "Commit" };
         let ops = self.backend.operations()?;
         self.undo_log()?.record(
@@ -920,11 +944,23 @@ impl Repository {
         let content = diff::apply_selection(&diff.file, |r| !rows.contains(&r));
         // 作業ツリーの内容を、選ばなかった変更だけを index に当てたものにする = 選んだ行を戻す。
         let path = diff.entry.path.clone();
+        if self.delegate_done(&crate::delegate::Request::RestoreFile {
+            path: path.clone(),
+            content: content.clone(),
+        })? {
+            return Ok(());
+        }
+        self.restore_file(&path, &content)
+    }
+
+    /// 作業ツリーの `path` を `content` にし、Undo できるように記録する（変更を捨てる）。
+    fn restore_file(&self, path: &str, content: &[u8]) -> Result<()> {
+        let path = path.to_owned();
         let ops = self.backend.operations()?;
         let files = self.backend.files();
         self.undo_log()?
             .record_files(ops, &format!("Discard lines in {path}"), &[&path], || {
-                files.write(amonhen_model::Root::Workdir, &path, &content)
+                files.write(amonhen_model::Root::Workdir, &path, content)
             })
     }
 

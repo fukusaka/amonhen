@@ -64,7 +64,7 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 └──────────────▲───────────────────────────────────────────────┬───────────────┘
                │ 変更通知（変わった行の範囲） / 行データ（ゼロコピー）│ Intent
 ┌──────────────┴────────── CoreClient（通信手段を抽象化）──────────▼───────────────┐
-│ ① 同一プロセス: C ABI   ② ローカル daemon: XPC＋共有メモリ   ③ SSH: stdio     │
+│ ① 同一プロセス: C ABI ② 手元の daemon: ソケット＋共有メモリ ③ SSH: stdio     │
 └──────────────▲───────────────────────────────────────────────┬───────────────┘
 ┌──────────────┴──────────────────── Rust コア ─────────────────▼───────────────┐
 │ model      内部モデル（FE を知らない。UTF-8、展開済みバッファへの参照）       │
@@ -110,28 +110,24 @@ UI と操作の見直し（タブ、ブックマーク、設定、ツールバ�
 
 ```
 crates/
-  model/             内部モデル（FE のことを知らない）
-  core/              状態・スナップショット・Intent の処理（通信手段に依存しない）
-  layout/            全 FE で共通の #[repr(C)] レコード（数値の列、グラフの Node / Edge）
+  layout/            全 FE で共通の #[repr(C)] レコード（数値の列、グラフの Node / Edge）、Slab・Blob
+  model/             内部モデル（FE のことを知らない）、GitBackend・Operations、検索の索引、Activity
+  core/              状態・スナップショット・命令（JSON）の処理、レイアウト、差分、折りたたみ
   projection/        FE ごとの形への変換（文字列の符号化、列の選択、配置の揃え方）
   platform/          Platform トレイト
-  backend-gix/       GixBackend
-  backend-cli/       CliBackend
-  backend-git2/      Git2Backend（モバイル向け、後で）
-  client/            CoreClient の共通 API
-  transport-inproc/  ① C ABI
-  transport-local/   ② XPC / Unix ドメインソケット＋共有メモリ（後で）
-  transport-remote/  ③ stdio（後で）
+  backend-gix/       GixBackend（読み取り）
+  backend-cli/       git CLI（書き込み・ネットワーク・署名の検証）
+  watch/             リポジトリの変化の検知（notify）
+  syntax/            tree-sitter による色付け
+  remote/            daemon との通信（フレーム・要求の形）、RemoteBackend、Server、共有の daemon につなぐ・
+                     共有メモリ（local・shm）、SSH で送り込む（ssh）
+  daemon/            amonhend（--stdio: SSH 先、--serve: 手元の共有の daemon）
   ffi-c/             C ABI ＋ cbindgen のヘッダー
-  ffi-uniffi/        Swift / Kotlin 向けのバインディング
-bins/
-  amonhend/          daemon（後で）
   cli/               CLI（amonhen）
 apps/
-  macos/             Xcode プロジェクト（AppKit）。ffi を xcframework にして取り込む
-bench/               criterion のベンチと大規模リポジトリでの計測
+  macos/             SwiftPM のパッケージ（AmonhenKit と、AppKit のアプリ）
 ```
-
+後で足すもの: `backend-git2/`（モバイル向け）、Swift / Kotlin 向けのバインディング。
 ## データ設計
 
 ### 不変のスナップショット
@@ -170,9 +166,11 @@ bench/               criterion のベンチと大規模リポジトリでの計�
 
 - コアの作業スレッドから SPSC のリングバッファ（`rtrb`）にイベントを積み、`Platform` から受け取った waker で FE のメインスレッドを起こす。macOS / iOS は `DispatchSource`（`.data_add`）で、合図が自動でまとまるので UI の更新は 1 フレームに 1 回で済む。ほかの OS は `PostMessage`（Windows）、GLib のメインループ（Linux）、Looper / Handler（Android）。
 
-### 別プロセス・リモートにするとき（後で）
+### 別プロセス・リモートにするとき
 
-- ② ローカル daemon: スナップショットを共有メモリに作り、領域は XPC で 1 回だけ渡す。Intent と通知も共有メモリのリングで送り、相手が寝ているときだけ `os_sync_wake_by_address_any` で起こす。要求処理のスレッドは `QOS_CLASS_USER_INTERACTIVE`。共有メモリの領域は使い回す。
+- ② 手元の共有の daemon（`amonhend --serve`）: 利用者ごとに 1 つ、Unix ドメインソケットで待つ。History は daemon が永続キャッシュのファイルに書き、つないだ側は mmap する。差分のファイルの中身は POSIX の共有メモリで渡す。命令と、Undo の記録を書く Working Copy の操作は daemon のコアで実行する。
+  - XPC ではなく Unix ドメインソケットにした: Linux でも同じものが動き（VSCode 拡張・CLI からも使う）、往復の遅れは小さな要求で p50 0.08 ms（同一プロセス 0.04 ms）と十分小さい。大きなデータはソケットに乗せず、ファイルの mmap と共有メモリで渡すので、XPC の領域の受け渡しの利点もない。
+  - 当初の案（要求と通知も共有メモリのリングで送り、寝ているときだけ `os_sync_wake_by_address_any` で起こす）は、ソケットの遅れが測って問題にならなかったので作っていない。
 - ③ SSH: daemon（`amonhend --stdio <repo>`、`crates/daemon`）は SSH 先で `GitBackend`・`Operations`・`RepoFiles` を要求に応じて実行するだけにし、レイアウト・永続キャッシュ・差分・色付けは手元のコアで行う（`crates/remote` の `RemoteBackend`）。C ABI と FE はそのまま使える。UI が読むのは手元のメモリだけで、通信に乗るのは git に触れる所だけ。History は永続キャッシュを手元に持ち、つなぎ直したら前回の起点からの新しいコミットだけを受け取る（daemon は `git rev-list` で求める）。要求には番号を振って並行に送り、パス・内容の検索は取り消せる。
 - どの動かし方でも、UI が読むのは手元のメモリだけ。通信は裏の同期にしか使わない。
 
@@ -486,7 +484,7 @@ linux（148 万コミット）では、1 行を横切る線が中央値で 365 �
 拡張:
 
 - [x] 15. CLI（`amonhen`、`crates/cli`）。UI なしでコアを使う。`amonhen [<path>]`・`amonhen open <path|ssh://…>` でアプリのタブに開く（アプリはフォルダと `amonhen://open?location=…` を受け取る）、`amonhen log`（コアのレイアウトで罫線のグラフ、点か曲線のあるレーンだけ列を取り、線が通るだけのレーンは ┆ にまとめる。`--fold`・`--branch`・検索の書き方）、`amonhen undo`（`--list`・`--peek`。アプリと同じ操作ログ）、`amonhen merge-file`（Magic Merge。残れば終了コード 1 で git の mergetool に使える）。History はアプリの永続キャッシュから始めるので、linux（148 万コミット）でも log が 85 ms。`scripts/install.sh` が `~/.local/bin/amonhen` にリンクを作る
-- [ ] 16. ローカル daemon（XPC＋共有メモリ）。SSH には要らない macOS 向けの最適化なので、17 の後に回す。段階的に進める: ① 手元に常駐する共有の daemon（`amonhend --serve`、`crates/daemon/src/serve.rs`）。利用者ごとに 1 つ、Unix ドメインソケット（`$TMPDIR/amonhend-<プロトコルの版>.sock`、0600）で待ち、つないだ相手が最初に送るパスのリポジトリを開く。同じリポジトリの `GitBackend` と監視はつないでいる相手のあいだで共有し、変化は全員に知らせる。だれもつないでいない状態が 10 分続いたら終わり、使うときにまた起動される。通信は SSH と同じフレームで、圧縮はしない。アプリの `daemon:/path` と CLI の `-C daemon:/path` がこれを使う。手元のリポジトリを daemon 越しに開く: Settings > Advanced の切り替え（いつも）、リポジトリの一覧の右クリックの Open via Daemon（1 つだけ）、`amonhen open --daemon`。様子を見る: `amonhen daemon status [--json]`・`start`・`stop`（つなぐときに最初に送るものを `\0status`・`\0stop` にすると、リポジトリではなく daemon への指示になる）と、Window > Activity の Daemon のタブ（daemon のプロセス・開いているリポジトリごとのつながり・History・監視・検索の索引と、このアプリの daemon とのつながりの送受信量）。linux で、2 回目からの `amonhen log` は同一プロセスと同じ 0.09 秒（初回は daemon の起動と全コミットの受け渡しで 1.7 秒）、は済み。往復の遅れは小さな要求で p50 0.08 ms（同一プロセス 0.04 ms）、256 行のチャンクは同じ 2 ms（`crates/daemon/examples/latency.rs`）で、ロジックを daemon に移しても遅くならないので、設計どおり順に移す。② History（読み込み・レイアウト）を daemon で作る: daemon がリポジトリごとに 1 つだけ作って永続キャッシュのファイルに書き、つないだ側にはその場所を返す（`Request::PreparedHistory`、`GitBackend::prepared_history`）。つないだ側はレイアウトを計算せず、ファイルを mmap して使うので、中身はコピーせずにページキャッシュで共有される（実質の共有メモリ）。書き換えは名前の付け替えなので、読んでいる途中のものは壊れない。FE は変えずに済む。linux で `amonhen log` は 2 回目から 0.12 秒（同一プロセス 0.09 秒）、daemon の再起動後 0.17 秒、初回（daemon が作って書く）2.3 秒、は済み。③ 操作を daemon に移す: `run_json` の命令（操作・Undo・設定・Magic Merge など）は、手元の共有の daemon につないでいれば daemon のコアで実行する（`GitBackend::delegate`、`Request::Delegate`、`crates/core/src/delegate.rs`）。操作と Undo の記録が 1 か所になる。daemon の記録を読む・取り消す命令だけは手元で実行する、は済み。差分も daemon で計算して 1 回の往復で返し、ファイルの中身は共有メモリで渡す（`crates/remote/src/shm.rs`。daemon が POSIX の共有メモリの 1 つの領域に並べて書き、ソケットでは領域の名前と各部分の位置だけを送る。受け取った側は読むだけで写し、`amonhen_layout::Blob` としてコピーせずに表示まで使う）。linux で p50 1.6 ms・p95 6.3 ms・最大 17 ms（同一プロセス 1.4・5.3・15 ms、ファイルごとに中身を取りに行く前の形 1.7・8.3・27 ms、ソケットで中身を送る形 1.6・9.2・34 ms）、は済み。Working Copy の status は git がもともと daemon で動いていて差がない（124 ms）。History の検索（件名・作者名・ID）は、件名と作者名を初めて探すときに全部読んで索引（`amonhen_model::search::TextIndex`）に置き、次からはそれを探すだけにする（毎回 git から読み直していたのが遅さのほとんどだった）。コミットが増えたら前の索引から引き継いで増えた分だけ読む。手元のコア・SSH 先の daemon・共有の daemon で同じものを使い、共有の daemon では同じリポジトリの相手のあいだで索引と数えたコミットを共有し、最後の相手が離れても 10 分は残す。linux で 1 回の検索が 1.1 秒 → 6〜31 ms（初回は索引を作るので 1.4 秒、索引は約 100 MB）、`amonhen log -C daemon:… <query>` は 2 回目から 0.1 秒（`crates/core/examples/search.rs`）。SQLite の全文検索（FTS5 の trigram）も比べたが、まれな語でだけ速く（0.5 ms）、索引が 950 MB・作るのに 22 秒かかるので採らなかった。一致したコミットの間は、↩・⇧↩（History とツールバーの検索欄）、⌘G・⌘⇧G（どの欄にいても。差分・詳細の欄の中を探しているときはそちら）、件数の横の ∧ ∨ で移る。件数の横の切り替えで、一致したコミットだけを出せる（`CommitGraph::retain_linked`。一致しないコミットは飛ばし、線は最初の親をたどって次に一致したコミットへつなぐ。linux で fix の 24.9 万件のレイアウトまで 49 ms）
+- [x] 16. 手元の共有の daemon（当初は XPC＋共有メモリの案。Unix ドメインソケット＋共有メモリにした。理由は「別プロセス・リモートにするとき」）。段階的に進める: ① 手元に常駐する共有の daemon（`amonhend --serve`、`crates/daemon/src/serve.rs`）。利用者ごとに 1 つ、Unix ドメインソケット（`$TMPDIR/amonhend-<プロトコルの版>.sock`、0600）で待ち、つないだ相手が最初に送るパスのリポジトリを開く。同じリポジトリの `GitBackend` と監視はつないでいる相手のあいだで共有し、変化は全員に知らせる。だれもつないでいない状態が 10 分続いたら終わり、使うときにまた起動される。通信は SSH と同じフレームで、圧縮はしない。アプリの `daemon:/path` と CLI の `-C daemon:/path` がこれを使う。手元のリポジトリを daemon 越しに開く: Settings > Advanced の切り替え（いつも）、リポジトリの一覧の右クリックの Open via Daemon（1 つだけ）、`amonhen open --daemon`。様子を見る: `amonhen daemon status [--json]`・`start`・`stop`（つなぐときに最初に送るものを `\0status`・`\0stop` にすると、リポジトリではなく daemon への指示になる）と、Window > Activity の Daemon のタブ（daemon のプロセス・開いているリポジトリごとのつながり・History・監視・検索の索引と、このアプリの daemon とのつながりの送受信量）。linux で、2 回目からの `amonhen log` は同一プロセスと同じ 0.09 秒（初回は daemon の起動と全コミットの受け渡しで 1.7 秒）、は済み。往復の遅れは小さな要求で p50 0.08 ms（同一プロセス 0.04 ms）、256 行のチャンクは同じ 2 ms（`crates/daemon/examples/latency.rs`）で、ロジックを daemon に移しても遅くならないので、設計どおり順に移す。② History（読み込み・レイアウト）を daemon で作る: daemon がリポジトリごとに 1 つだけ作って永続キャッシュのファイルに書き、つないだ側にはその場所を返す（`Request::PreparedHistory`、`GitBackend::prepared_history`）。つないだ側はレイアウトを計算せず、ファイルを mmap して使うので、中身はコピーせずにページキャッシュで共有される（実質の共有メモリ）。書き換えは名前の付け替えなので、読んでいる途中のものは壊れない。FE は変えずに済む。linux で `amonhen log` は 2 回目から 0.12 秒（同一プロセス 0.09 秒）、daemon の再起動後 0.17 秒、初回（daemon が作って書く）2.3 秒、は済み。③ 操作を daemon に移す: `run_json` の命令（操作・Undo・設定・Magic Merge など）と、Undo の記録を書く Working Copy の操作（コミット、変更を捨てる）は、手元の共有の daemon につないでいれば daemon のコアで実行する（`GitBackend::delegate`、`Request::Delegate`、`crates/core/src/delegate.rs`）。操作と Undo の記録が 1 か所になる（2 つのコアが同じ記録のファイルを別々に書き換えない）。行ごとの stage は記録を書かず、git の処理はもともと daemon で動くので任せない。daemon の記録を読む・取り消す命令だけは手元で実行する、は済み。手元のリポジトリを daemon 越しに開くのは、今は Settings で選ぶ（既定は開かない）。差分も daemon で計算して 1 回の往復で返し、ファイルの中身は共有メモリで渡す（`crates/remote/src/shm.rs`。daemon が POSIX の共有メモリの 1 つの領域に並べて書き、ソケットでは領域の名前と各部分の位置だけを送る。受け取った側は読むだけで写し、`amonhen_layout::Blob` としてコピーせずに表示まで使う）。linux で p50 1.6 ms・p95 6.3 ms・最大 17 ms（同一プロセス 1.4・5.3・15 ms、ファイルごとに中身を取りに行く前の形 1.7・8.3・27 ms、ソケットで中身を送る形 1.6・9.2・34 ms）、は済み。Working Copy の status は git がもともと daemon で動いていて差がない（124 ms）。History の検索（件名・作者名・ID）は、件名と作者名を初めて探すときに全部読んで索引（`amonhen_model::search::TextIndex`）に置き、次からはそれを探すだけにする（毎回 git から読み直していたのが遅さのほとんどだった）。コミットが増えたら前の索引から引き継いで増えた分だけ読む。手元のコア・SSH 先の daemon・共有の daemon で同じものを使い、共有の daemon では同じリポジトリの相手のあいだで索引と数えたコミットを共有し、最後の相手が離れても 10 分は残す。linux で 1 回の検索が 1.1 秒 → 6〜31 ms（初回は索引を作るので 1.4 秒、索引は約 100 MB）、`amonhen log -C daemon:… <query>` は 2 回目から 0.1 秒（`crates/core/examples/search.rs`）。SQLite の全文検索（FTS5 の trigram）も比べたが、まれな語でだけ速く（0.5 ms）、索引が 950 MB・作るのに 22 秒かかるので採らなかった。一致したコミットの間は、↩・⇧↩（History とツールバーの検索欄）、⌘G・⌘⇧G（どの欄にいても。差分・詳細の欄の中を探しているときはそちら）、件数の横の ∧ ∨ で移る。件数の横の切り替えで、一致したコミットだけを出せる（`CommitGraph::retain_linked`。一致しないコミットは飛ばし、線は最初の親をたどって次に一致したコミットへつなぐ。linux で fix の 24.9 万件のレイアウトまで 49 ms）
 - [x] 17. SSH 越しの daemon と手元の複製。段階 A0（コアのファイル操作を `RepoFiles` に）・A（`amonhen-remote` と `amonhend`、手元の子プロセスでの確認）・B（アプリから `daemon:/path` で開く。amonhend はアプリに同梱）・C（`ssh://host/path` で、SSH 先の OS と CPU に合う amonhend を `~/.cache/amonhen/` に送り込んで起動する。チャンクは件名などだけ、件名の検索は daemon の側、大きなフレームは LZ4 で圧縮）・D（リポジトリの一覧の「Add Remote…」、つなぐ間の接続中のウィンドウ、初回の読み込みの受信量、切れたときの帯と「つなぎ直す」）は済み。実際の SSH 先（Linux x86_64）でも開けることを確かめた
 - [ ] 18. VSCode 拡張からの daemon 利用
 - [ ] 19. ほかの OS の FE（iOS / Linux / Android / Windows）。プロジェクションの形式と Platform の実装、モバイルは Git2Backend を足す

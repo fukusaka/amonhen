@@ -259,6 +259,30 @@ fn shares_one_daemon_between_clients() {
     let out = Command::new("git").args(["branch", "--list", "topic"]).current_dir(&dir).output().unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("topic"));
 
+    // コミットは daemon のコアで行い、Undo の記録も daemon の側に書く（daemon のコアの Undo で戻せる）。
+    std::fs::write(dir.join("c.txt"), "c\n").unwrap();
+    rb.stage(&["c.txt"]).unwrap();
+    rb.commit("from b", false).unwrap();
+    let log = Command::new("git").args(["log", "-1", "--format=%s"]).current_dir(&dir).output().unwrap();
+    assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "from b");
+    let peek = ra.run_json(r#"{"op":"undoPeek"}"#);
+    assert!(peek.contains("Commit"), "a からも daemon の記録が見える: {peek}");
+
+    // 変更を捨てる操作も daemon のコアで行い、daemon の Undo で戻せる。
+    std::fs::write(dir.join("c.txt"), "changed\n").unwrap();
+    let status = rb.load_status().unwrap();
+    let entry = status.status.entries.iter().find(|e| e.path == "c.txt").unwrap();
+    let diff = rb.working_diff(entry, false, &amonhen_projection::FrontendProfile::MACOS).unwrap();
+    let removed_and_added: Vec<usize> = (0..diff.file.lines.len())
+        .filter(|&r| diff.file.lines[r].kind == amonhen_layout::DiffRow::ADDED || diff.file.lines[r].kind == amonhen_layout::DiffRow::REMOVED)
+        .collect();
+    rb.discard_rows(&diff, &removed_and_added).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
+    let undo = ra.run_json(r#"{"op":"undo"}"#);
+    assert!(undo.contains("Discard lines in c.txt"), "{undo}");
+    assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "changed\n");
+    git(&dir, &["checkout", "--", "c.txt"]);
+
     // daemon 越しの差分は、手元で計算したものと同じになる。
     std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
     std::fs::write(dir.join("b.txt"), "x\n").unwrap();
