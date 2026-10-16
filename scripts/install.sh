@@ -4,7 +4,7 @@
 # gh で取ってくるファイルには quarantine 属性が付かないので、公証なしで起動できる。
 set -eu
 mode=${1:-stable}
-repo=fukusaka/amonhen-standalone
+repo=fukusaka/amonhen
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

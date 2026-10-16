@@ -1,6 +1,6 @@
 # vscode-amonhen（apps/vscode）
 
-amonhen-standalone のリポジトリの `apps/vscode`。エンジン（ルートの Rust）と同じリポジトリで作り、エンジンを同梱する。
+fukusaka/amonhen のリポジトリの `apps/vscode`。エンジン（ルートの Rust）と同じリポジトリで作り、エンジンを同梱する。
 
 VSCode 上で快適に Git を操作するための、自分用の Git 拡張。Marketplace には公開せず、このリポジトリの GitHub Releases で `.vsix` を配布する。
 

@@ -1,6 +1,6 @@
-# amonhen-standalone
+# amonhen
 
-Amon Hen のスタンドアロン版。徹底的な低遅延を最優先にしたネイティブの Git クライアント。コアは Rust で書いて各 OS で使い回し、最初の FE（フロントエンド）は macOS（AppKit ＋ Metal）で作る。自分用で、GitHub Releases で配布する。
+Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-standalone）。ネイティブのアプリ（スタンドアロン版）と VSCode 拡張（`apps/vscode`）、両方が使うエンジン（Rust）をここで作る。アプリは徹底的な低遅延を最優先にしたネイティブの Git クライアント。コアは Rust で書いて各 OS で使い回し、最初の FE（フロントエンド）は macOS（AppKit ＋ Metal）で作る。自分用で、GitHub Releases で配布する。
 
 設計の詳細は `docs/design.md` を参照すること。VSCode 拡張は `apps/vscode`（設計は `apps/vscode/docs/design.md`）。
 

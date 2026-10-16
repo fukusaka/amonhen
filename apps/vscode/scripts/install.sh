@@ -5,7 +5,7 @@
 # Remote-SSH の接続先では、VSCode の統合ターミナルで実行すると接続先に入る。
 set -eu
 
-repo=fukusaka/amonhen-standalone
+repo=fukusaka/amonhen
 channel=${1:-stable}
 
 code=${CODE:-}

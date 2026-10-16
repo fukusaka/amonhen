@@ -103,7 +103,7 @@ scripts/install.sh snapshot   # main の最新
 リポジトリを clone していない端末では:
 
 ```sh
-gh api repos/fukusaka/amonhen-standalone/contents/apps/vscode/scripts/install.sh --jq .content | base64 -d | sh -s -- snapshot
+gh api repos/fukusaka/amonhen/contents/apps/vscode/scripts/install.sh --jq .content | base64 -d | sh -s -- snapshot
 ```
 
 Remote-SSH の接続先に入れるときは、接続した VSCode の統合ターミナルで実行する。入れたあとはウィンドウを再読み込みする。

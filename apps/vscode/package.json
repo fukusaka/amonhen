@@ -8,7 +8,7 @@
   "license": "UNLICENSED",
   "repository": {
     "type": "git",
-    "url": "https://github.com/fukusaka/amonhen-standalone.git",
+    "url": "https://github.com/fukusaka/amonhen.git",
     "directory": "apps/vscode"
   },
   "engines": {
