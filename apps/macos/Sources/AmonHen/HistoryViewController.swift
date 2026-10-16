@@ -28,10 +28,16 @@ final class GraphView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
+    /// 画面の倍率が変わった（1 倍と 2 倍の画面のあいだでウィンドウを動かした）。並べ直して描き直してもらう。
+    var onScaleChange: (() -> Void)?
+
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
-        metalLayer.contentsScale = window?.backingScaleFactor ?? 2
+        let scale = window?.backingScaleFactor ?? 2
+        let changed = metalLayer.contentsScale != scale
+        metalLayer.contentsScale = scale
         updateDrawableSize()
+        if changed { onScaleChange?() }
     }
 
     // フレームは親が直接決めるので、layout() ではなくここで描き先の大きさを合わせる。
@@ -271,6 +277,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
         graphView.metalLayer.device = renderer.device
         textView.metalLayer.device = text.device
+        // 画面の倍率が変わったら、倍率込みで並べた行を捨てて描き直す。
+        graphView.onScaleChange = { [weak self] in self?.redrawGraph() }
+        textView.onScaleChange = { [weak self] in
+            guard let self else { return }
+            rowText.removeAll()
+            labelText.removeAll()
+            redrawText()
+        }
         scopePopup.target = self
         scopePopup.action = #selector(scopeChanged)
         scopePopup.controlSize = .small

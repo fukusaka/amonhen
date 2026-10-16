@@ -98,6 +98,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         NotificationCenter.default.addObserver(
             self, selector: #selector(redraw), name: NSView.boundsDidChangeNotification, object: scrollView.contentView)
         textView.metalLayer.device = renderer.device
+        // 画面の倍率が変わったら、倍率込みで並べた行を捨てて描き直す。
+        textView.onScaleChange = { [weak self] in
+            self?.shaped.removeAll()
+            self?.redraw()
+        }
         document.owner = self
         buildFindBar()
         container.addSubview(scrollView)

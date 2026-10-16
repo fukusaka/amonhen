@@ -39,7 +39,8 @@ final class GlyphAtlas {
     /// 空白などで描くものがなければ nil。アトラスが一杯になったら空にして詰め直す（呼び出し側は描き直す）。
     /// `fontName` はフォントの PostScript 名（グリフごとに作らないよう、呼び出し側が run ごとに 1 回求める）。
     func entry(font: CTFont, fontName: String, glyph: CGGlyph, subpixel: Int, scale: CGFloat) -> Entry? {
-        let key = Key(font: fontName, size: CTFontGetSize(font), glyph: glyph, subpixel: UInt8(subpixel))
+        // 画面の倍率ごとに分ける（1 倍と 2 倍の画面のあいだでウィンドウを動かすと、同じ文字でも絵が違う）。
+        let key = Key(font: fontName, size: CTFontGetSize(font) * scale, glyph: glyph, subpixel: UInt8(subpixel))
         if let cached = entries[key] { return cached }
         let entry = rasterize(font: font, glyph: glyph, subpixel: subpixel, scale: scale)
         entries[key] = entry
