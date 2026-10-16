@@ -27,12 +27,20 @@ pub trait Host: Send + Sync {
 /// 検索のために数えたコミット（同じ起点で何度も探すときに読み直さない）。
 type CommitList = Mutex<Option<(Vec<Oid>, Arc<Vec<Oid>>)>>;
 
+/// 件名・作者名の検索のための、数えたコミットと索引。共有の daemon では、同じリポジトリの相手のあいだで共有する。
+#[derive(Default)]
+pub struct SearchCache {
+    commits: CommitList,
+    texts: amonhen_model::search::TextIndexCache,
+}
+
 pub struct Server {
     backend: Arc<dyn GitBackend>,
-    commits: Arc<CommitList>,
+    search: Arc<SearchCache>,
     writer: Writer,
     /// 走っている要求の、取り消しの印。
     cancels: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
+
     /// 大きな応答を圧縮するか（SSH では圧縮し、手元のソケットではしない）。
     compress: bool,
     host: Option<Arc<dyn Host>>,
@@ -44,10 +52,16 @@ impl Server {
             backend,
             writer: Arc::new(Mutex::new(Box::new(output))),
             cancels: Arc::default(),
-            commits: Arc::default(),
+            search: Arc::default(),
             compress: true,
             host: None,
         }
+    }
+
+    /// 検索のための数えたコミットと索引を、ほかの相手と共有する。
+    pub fn with_search_cache(mut self, search: Arc<SearchCache>) -> Self {
+        self.search = search;
+        self
     }
 
     /// daemon のコアで手伝えるようにする（`Request::PreparedHistory`・`Request::Delegate` に答える）。
@@ -90,7 +104,7 @@ impl Server {
                     let backend = self.backend.clone();
                     let writer = self.writer.clone();
                     let cancels = self.cancels.clone();
-                    let commits = self.commits.clone();
+                    let search = self.search.clone();
                     let compress = self.compress;
                     let host = self.host.clone();
                     std::thread::spawn(move || {
@@ -98,7 +112,7 @@ impl Server {
                             (Request::PreparedHistory, Some(h)) => h.prepared_history().and_then(|p| encode(&Some(p))),
                             (Request::Delegate(bytes), Some(h)) => h.delegate(&bytes.0).and_then(|d| encode(&share(d))),
                             (Request::Delegate(_), None) => Err("この daemon は処理を任されない".into()),
-                            (request, _) => handle(&*backend, &commits, request, &cancel),
+                            (request, _) => handle(&*backend, &search, request, &cancel),
                         };
                         cancels.lock().unwrap().remove(&f.id);
                         write_reply(&writer, f.id, result, compress);
@@ -179,7 +193,7 @@ fn commits_from(
 
 fn handle(
     backend: &dyn GitBackend,
-    commits: &CommitList,
+    search: &SearchCache,
     request: Request,
     cancel: &AtomicBool,
 ) -> Result<Vec<u8>> {
@@ -243,8 +257,8 @@ fn handle(
         Request::CommitExtras(id) => encode(&backend.commit_extras(&id)?),
         Request::VerifySignatures(ids) => encode(&backend.verify_signatures(&ids)?),
         Request::SearchTexts { tips, terms } => {
-            let ids = commits_from(backend, commits, &tips)?;
-            let words = amonhen_model::search::scan(
+            let ids = commits_from(backend, &search.commits, &tips)?;
+            let words = search.texts.search(
                 &ids,
                 &terms,
                 &|batch| backend.commit_texts(batch),
@@ -259,7 +273,7 @@ fn handle(
                         .collect()
                 })
                 .collect();
-            encode(&found)
+encode(&found)
         }
         Request::FileRead { root, path } => encode(&files().read(root, &path)?.map(Bytes)),
         Request::FileWrite { root, path, data } => encode(&files().write(root, &path, &data.0)?),

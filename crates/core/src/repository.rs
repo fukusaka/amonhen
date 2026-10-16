@@ -206,6 +206,8 @@ pub struct Repository {
     )>,
     /// 手元で検証するもの。あれば、daemon 越しのリポジトリでもコミットのオブジェクトを受け取って手元で検証する。
     verifier: std::sync::Mutex<Option<Arc<dyn amonhen_model::SignatureVerifier>>>,
+    /// History の検索で探す、件名と作者名の索引（初めて探すときに作る）。
+    texts: amonhen_model::search::TextIndexCache,
 }
 
 impl Repository {
@@ -221,6 +223,7 @@ impl Repository {
             undo: OnceLock::new(),
             signatures: Default::default(),
             verifier: Default::default(),
+            texts: Default::default(),
         }
     }
 
@@ -1045,9 +1048,8 @@ impl Repository {
                 })
                 .collect());
         }
-        let ids = snapshot.graph.ids();
-        let words = amonhen_model::search::scan(
-            ids,
+        let words = self.texts.search(
+            snapshot.graph.ids(),
             &terms,
             &|batch| self.backend.commit_texts(batch),
             cancelled,

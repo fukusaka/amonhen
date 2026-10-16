@@ -13,7 +13,7 @@ use std::io::{BufReader, BufWriter};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, Weak};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use amonhen_backend_gix::GixBackend;
@@ -25,7 +25,8 @@ const IDLE: Duration = Duration::from_secs(10 * 60);
 
 type Notify = Box<dyn Fn(Notification) + Send + Sync>;
 
-/// 共有しているリポジトリ 1 つ。最後の相手が離れたら落ちる（監視も止まる）。
+/// 共有しているリポジトリ 1 つ。最後の相手が離れても `IDLE` のあいだは残す（CLI のように 1 回ごとにつないで
+/// 切る相手でも、History・検索の索引を作り直さない）。その後、監視も止めて落とす。
 struct Shared {
     key: PathBuf,
     backend: Arc<dyn GitBackend>,
@@ -33,6 +34,8 @@ struct Shared {
     core: std::sync::OnceLock<amonhen_core::Repository>,
     /// History を作るのは 1 つずつ。
     history: Mutex<()>,
+    /// 検索のための数えたコミットと、件名と作者名の索引（つないでいる全員で 1 つ）。
+    search: Arc<amonhen_remote::SearchCache>,
     /// つないでいる相手ごとの知らせ先（番号つき。離れたら外す）。
     listeners: Arc<Mutex<Vec<(u64, Notify)>>>,
     _watcher: Option<amonhen_watch::Watcher>,
@@ -40,7 +43,8 @@ struct Shared {
 
 #[derive(Default)]
 struct State {
-    repos: Mutex<HashMap<PathBuf, Weak<Shared>>>,
+    /// 開いているリポジトリと、最後に使われた時刻。
+    repos: Mutex<HashMap<PathBuf, (Arc<Shared>, Instant)>>,
     connections: AtomicUsize,
     next: AtomicU64,
     last_left: Mutex<Option<Instant>>,
@@ -92,6 +96,10 @@ fn restrict(socket: &Path) {
 fn watch_idle(state: Arc<State>, socket: PathBuf) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(5));
+        // だれもつないでいない状態が続いたリポジトリを落とす（ここが最後の参照なら、監視も止まる）。
+        state.repos.lock().unwrap().retain(|_, (shared, used)| {
+            Arc::strong_count(shared) > 1 || used.elapsed() <= IDLE
+        });
         let idle = state.connections.load(Ordering::SeqCst) == 0
             && state.last_left.lock().unwrap().is_some_and(|t| t.elapsed() > IDLE);
         if idle {
@@ -119,7 +127,10 @@ fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
         }
     };
     let host: Arc<dyn amonhen_remote::Host> = Arc::new(CoreHost(shared.clone()));
-    let server = Server::new(shared.backend.clone(), writer).without_compression().with_host(host);
+    let server = Server::new(shared.backend.clone(), writer)
+        .without_compression()
+        .with_host(host)
+        .with_search_cache(shared.search.clone());
     let id = state.next.fetch_add(1, Ordering::Relaxed);
     shared.listeners.lock().unwrap().push((id, Box::new(server.notifier())));
     let result = server.run(reader);
@@ -138,8 +149,9 @@ fn reply_error(reader: &mut BufReader<UnixStream>, mut writer: BufWriter<UnixStr
 fn open(state: &State, path: &str) -> Result<Arc<Shared>> {
     let key = std::fs::canonicalize(path)?;
     let mut repos = state.repos.lock().unwrap();
-    if let Some(shared) = repos.get(&key).and_then(Weak::upgrade) {
-        return Ok(shared);
+    if let Some((shared, used)) = repos.get_mut(&key) {
+        *used = Instant::now();
+        return Ok(shared.clone());
     }
     let backend: Arc<dyn GitBackend> = Arc::new(GixBackend::open(&key)?);
     let listeners: Arc<Mutex<Vec<(u64, Notify)>>> = Arc::default();
@@ -156,11 +168,11 @@ fn open(state: &State, path: &str) -> Result<Arc<Shared>> {
         backend,
         core: std::sync::OnceLock::new(),
         history: Mutex::default(),
+        search: Arc::default(),
         listeners,
         _watcher: watcher,
     });
-    repos.retain(|_, w| w.strong_count() > 0);
-    repos.insert(key, Arc::downgrade(&shared));
+    repos.insert(key, (shared.clone(), Instant::now()));
     Ok(shared)
 }
 
