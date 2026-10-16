@@ -989,8 +989,18 @@ char *amonhen_command(const AmonhenRepo *repo_ptr,
                       const char *command);
 
 /**
+ * `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら
+ * 空）、上流があれば 1、ahead、behind、変更のあるファイルの数（untracked は数えない）。読めなければ NULL。
+ * `amonhen_string_free` で解放する。git を 1 回起動するので、裏のスレッドで呼ぶ。
+ *
  * # Safety
- * `s` は `amonhen_command` が返したもので、まだ解放していないこと。
+ * `path` は NUL 終端の UTF-8 文字列であること。
+ */
+char *amonhen_peek(const char *path);
+
+/**
+ * # Safety
+ * `s` は `amonhen_command`・`amonhen_peek` が返したもので、まだ解放していないこと。
  */
 void amonhen_string_free(char *s);
 

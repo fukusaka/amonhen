@@ -35,6 +35,18 @@ fn fsmonitor_enabled() -> bool {
 /// 利用者の git とロックを奪い合わないよう index に書かないので、ときどきだけ書いてキャッシュを新しくする。
 const SAVE_STATUS_EVERY: Duration = Duration::from_secs(60);
 
+/// リポジトリの一覧に出す軽い状態（`Git::peek`）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Peek {
+    /// 今のブランチ。detached なら None。
+    pub branch: Option<String>,
+    pub upstream: bool,
+    pub ahead: u32,
+    pub behind: u32,
+    /// 変更のあるファイルの数（untracked は数えない）。
+    pub changed: u32,
+}
+
 /// 1 つのリポジトリで git を実行する。
 #[derive(Clone, Debug)]
 pub struct Git {
@@ -71,6 +83,31 @@ impl Git {
         let mut cmd = self.command(args);
         cmd.env("GIT_OPTIONAL_LOCKS", "0");
         run(cmd, None)
+    }
+
+    /// リポジトリの一覧に出す、軽い状態（ブランチ・上流との差・変更のあるファイルの数）。untracked のファイルは
+    /// 数えず、ロックも取らない（一覧の行ごとに裏で呼ぶ）。
+    pub fn peek(&self) -> Result<Peek> {
+        let out = self.read(&["status", "--porcelain=v2", "--branch", "--untracked-files=no"])?;
+        let mut peek = Peek::default();
+        for line in String::from_utf8_lossy(&out).lines() {
+            if let Some(head) = line.strip_prefix("# branch.head ") {
+                peek.branch = (head != "(detached)").then(|| head.to_owned());
+            } else if line.starts_with("# branch.upstream ") {
+                peek.upstream = true;
+            } else if let Some(ab) = line.strip_prefix("# branch.ab ") {
+                for part in ab.split(' ') {
+                    if let Some(n) = part.strip_prefix('+') {
+                        peek.ahead = n.parse().unwrap_or(0);
+                    } else if let Some(n) = part.strip_prefix('-') {
+                        peek.behind = n.parse().unwrap_or(0);
+                    }
+                }
+            } else if !line.starts_with('#') && !line.is_empty() {
+                peek.changed += 1;
+            }
+        }
+        Ok(peek)
     }
 
     /// 書き込み系。
@@ -250,6 +287,26 @@ mod tests {
             git.write(args).unwrap();
         }
         (tmp, git)
+    }
+
+    #[test]
+    fn peeks_branch_changes_and_tracking() {
+        let (tmp, git) = repo();
+        std::fs::write(tmp.path().join("a.txt"), "1\n").unwrap();
+        git.stage(&["a.txt"]).unwrap();
+        git.commit("first", false).unwrap();
+        // 上流を作って 1 つ先に進める。
+        git.write(&["branch", "up"]).unwrap();
+        git.write(&["branch", "--set-upstream-to", "up"]).unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "2\n").unwrap();
+        git.stage(&["a.txt"]).unwrap();
+        git.commit("second", false).unwrap();
+        std::fs::write(tmp.path().join("a.txt"), "3\n").unwrap();
+        std::fs::write(tmp.path().join("new.txt"), "untracked\n").unwrap();
+        let peek = git.peek().unwrap();
+        assert_eq!(peek.branch.as_deref(), Some("main"));
+        assert!(peek.upstream);
+        assert_eq!((peek.ahead, peek.behind, peek.changed), (1, 0, 1));
     }
 
     #[test]

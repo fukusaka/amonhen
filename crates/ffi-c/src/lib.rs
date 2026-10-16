@@ -1466,8 +1466,38 @@ pub unsafe extern "C" fn amonhen_command(
     CString::new(response).unwrap_or_default().into_raw()
 }
 
+/// `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら
+/// 空）、上流があれば 1、ahead、behind、変更のあるファイルの数（untracked は数えない）。読めなければ NULL。
+/// `amonhen_string_free` で解放する。git を 1 回起動するので、裏のスレッドで呼ぶ。
+///
 /// # Safety
-/// `s` は `amonhen_command` が返したもので、まだ解放していないこと。
+/// `path` は NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_peek(path: *const c_char) -> *mut c_char {
+    let Ok(path) = str_arg(path) else {
+        return std::ptr::null_mut();
+    };
+    match amonhen_backend_cli::Git::new(path).peek() {
+        Ok(p) => {
+            let text = format!(
+                "{}\n{}\n{}\n{}\n{}",
+                p.branch.unwrap_or_default(),
+                u8::from(p.upstream),
+                p.ahead,
+                p.behind,
+                p.changed
+            );
+            CString::new(text).unwrap_or_default().into_raw()
+        }
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// # Safety
+/// `s` は `amonhen_command`・`amonhen_peek` が返したもので、まだ解放していないこと。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_string_free(s: *mut c_char) {
     if !s.is_null() {
