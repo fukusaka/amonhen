@@ -75,6 +75,16 @@ enum Settings {
         }
     }
 
+    /// History の変更ファイルを、差分の左に木で出すか（既定はメッセージと差分の間に一覧）。
+    /// 変えたら `historyFileTreeChanged` を知らせる。
+    static var historyFileTree: Bool {
+        get { UserDefaults.standard.bool(forKey: "historyFileTree") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "historyFileTree")
+            NotificationCenter.default.post(name: .historyFileTreeChanged, object: nil)
+        }
+    }
+
     /// マージエディタを開いたときに、間違えようのないコンフリクトを Magic Merge で解くか（既定は解く）。
     static var autoMagicMerge: Bool {
         get { UserDefaults.standard.object(forKey: "autoMagicMerge") as? Bool ?? true }
@@ -97,6 +107,7 @@ extension Notification.Name {
     static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
     static let stackedCommitDiffChanged = Notification.Name("stackedCommitDiffChanged")
+    static let historyFileTreeChanged = Notification.Name("historyFileTreeChanged")
     /// AI の CLI の選択が変わった（AI のボタンを出す・隠す）。
     static let assistantChanged = Notification.Name("assistantChanged")
 }
@@ -126,6 +137,7 @@ final class SettingsModel {
     }
     var showAvatars = Settings.showAvatars { didSet { Settings.showAvatars = showAvatars } }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
+    var historyFileTree = Settings.historyFileTree { didSet { Settings.historyFileTree = historyFileTree } }
     var autoMagicMerge = Settings.autoMagicMerge { didSet { Settings.autoMagicMerge = autoMagicMerge } }
     var writeCommitGraph = Settings.writeCommitGraph { didSet { Settings.writeCommitGraph = writeCommitGraph } }
     var useFSMonitor = Settings.useFSMonitor { didSet { Settings.useFSMonitor = useFSMonitor } }
@@ -155,6 +167,7 @@ final class SettingsModel {
         }
         if showAvatars != Settings.showAvatars { showAvatars = Settings.showAvatars }
         if stackedCommitDiff != Settings.stackedCommitDiff { stackedCommitDiff = Settings.stackedCommitDiff }
+        if historyFileTree != Settings.historyFileTree { historyFileTree = Settings.historyFileTree }
         if autoMagicMerge != Settings.autoMagicMerge { autoMagicMerge = Settings.autoMagicMerge }
         if writeCommitGraph != Settings.writeCommitGraph { writeCommitGraph = Settings.writeCommitGraph }
         if useFSMonitor != Settings.useFSMonitor { useFSMonitor = Settings.useFSMonitor }
@@ -206,6 +219,7 @@ private struct AppearanceSettings: View {
                 Toggle("アバターを表示する", isOn: $model.showAvatars)
                 Note("Gravatar から取る（メールアドレスのハッシュを gravatar.com に送る）。")
                 Toggle("全ファイルの差分を縦に並べる", isOn: $model.stackedCommitDiff)
+                Toggle("変更ファイルを差分の左に木で表示する", isOn: $model.historyFileTree)
                 Note("GitHub のプルリクエストのように、変更ファイルの差分を続けて見せる。ファイルの見出しで畳め、Viewed で見たものを畳む。変更ファイルが 200 を超えるコミットでは 1 ファイルずつ。")
             }
         }

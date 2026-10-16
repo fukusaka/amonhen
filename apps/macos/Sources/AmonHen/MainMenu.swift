@@ -104,6 +104,9 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         let stacked = item("All Files in One Diff", #selector(toggleStackedDiff(_:)), "", target: self)
         stacked.toolTip = "コミットの差分で、全ファイルを縦に並べる（オフなら選んだファイルだけ）"
         menu.addItem(stacked)
+        let tree = item("Changed Files as Tree", #selector(toggleFileTree(_:)), "", target: self)
+        tree.toolTip = "コミットの変更ファイルを、差分の左に木で出す（オフならメッセージと差分の間に一覧）"
+        menu.addItem(tree)
         return menu
     }
 
@@ -223,6 +226,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         case #selector(toggleMonospacedMessage(_:)): Settings.monospacedCommitMessage
         case #selector(toggleAvatars(_:)): Settings.showAvatars
         case #selector(toggleStackedDiff(_:)): Settings.stackedCommitDiff
+        case #selector(toggleFileTree(_:)): Settings.historyFileTree
         default: nil
         }
         if let on { item.state = on ? .on : .off }
@@ -237,4 +241,5 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     @objc private func toggleHighlightAncestors(_ item: NSMenuItem) { Settings.highlightAncestors.toggle() }
     @objc private func toggleCompactRows(_ item: NSMenuItem) { Settings.compactHistoryRows.toggle() }
     @objc private func toggleStackedDiff(_ item: NSMenuItem) { Settings.stackedCommitDiff.toggle() }
+    @objc private func toggleFileTree(_ item: NSMenuItem) { Settings.historyFileTree.toggle() }
 }

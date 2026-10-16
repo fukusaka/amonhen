@@ -1062,6 +1062,17 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
     }
     private var fileStats: [String: CommitExtras.FileStat] = [:]
+    /// 変更ファイルの一覧の行。上に並べるときはファイルだけ、左に木で出すときはフォルダの行も入る。
+    private enum FileRow {
+        case directory(String, depth: Int)
+        case file(Int, depth: Int)
+    }
+    private var fileRows: [FileRow] = []
+    /// ファイルの番号 → 一覧の行。
+    private var rowOfFile: [Int] = []
+    private var filesController: NSViewController?
+    private var diffItem: NSSplitViewItem?
+    private var sideSplit: NSSplitViewController?
     /// 署名を検証する側を変えた回数。変える前に始めた詳細の読み込みの結果は使わない。
     private var signatureGeneration = 0
     /// 詳細の欄だけを右の列いっぱいに広げる（変更ファイルと差分を隠す）。
@@ -1193,29 +1204,30 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             headerContainer.frame.size.height = 48
         }
         // ウィンドウの高さを変えたとき、メッセージと変更ファイルの高さは保ち、差分の側を伸び縮みさせる。
-        for (content, minimum) in [(headerContainer, 40.0), (scroll, 60.0)] {
-            let controller = NSViewController()
-            controller.view = content
-            let item = NSSplitViewItem(viewController: controller)
-            item.minimumThickness = minimum
-            item.holdingPriority = .init(260)
-            item.canCollapse = content === scroll
-            addSplitViewItem(item)
-        }
+        let headerController = NSViewController()
+        headerController.view = headerContainer
+        let headerItem = NSSplitViewItem(viewController: headerController)
+        headerItem.minimumThickness = 40
+        headerItem.holdingPriority = .init(260)
+        addSplitViewItem(headerItem)
+        let filesController = NSViewController()
+        filesController.view = scroll
+        self.filesController = filesController
         diffView.onToggleFile = { [weak self] file in self?.toggleCollapsed(file) }
         diffView.fileMenu = { [weak self] file in self?.menuForFile(file) }
         diffView.onToggleViewed = { [weak self] file in self?.toggleViewed(file) }
         diffView.onTopFileChange = { [weak self] file in
-            guard let self, stacked != nil, file < files.numberOfRows, files.selectedRow != file else { return }
+            guard let self, stacked != nil, file < rowOfFile.count else { return }
+            let row = rowOfFile[file]
+            guard files.selectedRow != row else { return }
             syncingSelection = true
-            files.selectRowIndexes([file], byExtendingSelection: false)
-            files.scrollRowToVisible(file)
+            files.selectRowIndexes([row], byExtendingSelection: false)
+            files.scrollRowToVisible(row)
             syncingSelection = false
         }
-        let diffItem = NSSplitViewItem(viewController: diffView)
-        diffItem.minimumThickness = 200
-        diffItem.canCollapse = true
-        addSplitViewItem(diffItem)
+        arrangeFiles()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(fileTreeChanged), name: .historyFileTreeChanged, object: nil)
         NotificationCenter.default.addObserver(
             self, selector: #selector(messageStyleChanged), name: .commitMessageStyleChanged, object: nil)
         NotificationCenter.default.addObserver(
@@ -1391,7 +1403,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             changes = nil
             stacked = nil
             shownCommit = nil
-            files.reloadData()
+            reloadFiles()
             diffView.show(nil, message: "コミットを選ぶと、変更が表示されます")
             info = nil
             extras = nil
@@ -1451,7 +1463,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             FrameProfile.add("select: changed files: main resume delay", resumed - callEnd)
             self.changes = changes
             self.stacked = stacked
-            files.reloadData()
+            reloadFiles()
             if changes?.items.isEmpty ?? true {
                 diffView.show(nil, message: "変更なし")
                 onDiffShown?()
@@ -1463,7 +1475,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             } else {
                 // 最初のファイルの差分は読んであるので、選んだときに読み直さない。
                 preloadedDiff = firstDiff
-                files.selectRowIndexes([0], byExtendingSelection: false)
+                if let row = rowOfFile.first { files.selectRowIndexes([row], byExtendingSelection: false) }
             }
         }
     }
@@ -1488,7 +1500,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         extras = nil
         changes = nil
         stacked = nil
-        files.reloadData()
+        reloadFiles()
         renderSelectionHeader(rows: rows, history: history, kind: nil)
         diffView.show(nil, message: "差分を読んでいます…")
         let started = CACurrentMediaTime()
@@ -1501,7 +1513,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             }
             NSLog("選んだ %d コミットの差分を %.0f ms で読んだ", rows.count, (CACurrentMediaTime() - started) * 1000)
             self.stacked = stacked
-            files.reloadData()
+            reloadFiles()
             renderSelectionHeader(rows: rows, history: history, kind: kind, pair: pair)
             if stacked.count == 0 {
                 diffView.show(nil, message: "変更なし")
@@ -1600,7 +1612,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         diffView.viewedFiles = Set(stacked.names.indices.filter { viewed.contains(stacked.names[$0]) })
         FrameProfile.measure("select: diff draw") { diffView.show(view) }
         syncingSelection = true
-        files.selectRowIndexes([0], byExtendingSelection: false)
+        if let row = rowOfFile.first { files.selectRowIndexes([row], byExtendingSelection: false) }
         syncingSelection = false
     }
 
@@ -1792,10 +1804,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     /// 詳細の欄を広げているか（変更ファイルと差分を畳んでいる）。
-    private var isExpanded: Bool { splitViewItems.count > 2 && splitViewItems[2].isCollapsed }
+    private var isExpanded: Bool { splitViewItems.count > 1 && splitViewItems[1].isCollapsed }
 
     @objc private func toggleExpanded() {
-        guard splitViewItems.count > 2 else { return }
+        guard splitViewItems.count > 1 else { return }
         let expand = !isExpanded
         for item in splitViewItems.dropFirst() { item.isCollapsed = expand }
         expandButton.image = NSImage(
@@ -1864,10 +1876,117 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         return false
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        // 複数のコミットを選んでいるときは、全ファイルの差分の見出しを並べる。
-        changes?.items.count ?? stacked?.names.count ?? 0
+    func numberOfRows(in tableView: NSTableView) -> Int { fileRows.count }
+
+    /// 一覧の行のファイルの番号（フォルダの行なら nil）。
+    private func fileIndex(row: Int) -> Int? {
+        guard row >= 0, row < fileRows.count, case let .file(index, _) = fileRows[row] else { return nil }
+        return index
     }
+
+    /// ファイルの一覧を作り直す。木で出すときは、フォルダごとにまとめ（子が 1 つだけのフォルダはつなげる）、
+    /// 各階層でフォルダを先に、名前の順に並べる。
+    private func reloadFiles() {
+        // 複数のコミットを選んでいるときは、全ファイルの差分の見出しを並べる。
+        let names = changes?.items.map(\.path) ?? stacked?.names ?? []
+        if Settings.historyFileTree {
+            final class Folder {
+                var folders: [String: Folder] = [:]
+                var files: [(String, Int)] = []
+            }
+            let root = Folder()
+            for (index, name) in names.enumerated() {
+                var parts = name.split(separator: "/").map(String.init)
+                let leaf = parts.popLast() ?? name
+                var folder = root
+                for part in parts {
+                    let next = folder.folders[part] ?? Folder()
+                    folder.folders[part] = next
+                    folder = next
+                }
+                folder.files.append((leaf, index))
+            }
+            var rows: [FileRow] = []
+            func add(_ folder: Folder, depth: Int) {
+                for name in folder.folders.keys.sorted(by: { $0.localizedStandardCompare($1) == .orderedAscending }) {
+                    var label = name
+                    var child = folder.folders[name]!
+                    while child.files.isEmpty, child.folders.count == 1, let (next, grand) = child.folders.first {
+                        label += "/" + next
+                        child = grand
+                    }
+                    rows.append(.directory(label, depth: depth))
+                    add(child, depth: depth + 1)
+                }
+                for (_, index) in folder.files.sorted(by: { $0.0.localizedStandardCompare($1.0) == .orderedAscending }) {
+                    rows.append(.file(index, depth: depth))
+                }
+            }
+            add(root, depth: 0)
+            fileRows = rows
+        } else {
+            fileRows = names.indices.map { .file($0, depth: 0) }
+        }
+        rowOfFile = Array(repeating: 0, count: names.count)
+        for (row, item) in fileRows.enumerated() {
+            if case let .file(index, _) = item { rowOfFile[index] = row }
+        }
+        files.reloadData()
+    }
+
+    /// 変更ファイルの一覧を、メッセージと差分の間（上に一覧）か、差分の左（木）に置く。
+    private func arrangeFiles() {
+        guard let filesController else { return }
+        // 今の置き方を外す（ビューコントローラは 1 か所にしか入れられない）。
+        if let diffItem { removeSplitViewItem(diffItem) }
+        if let sideSplit, let item = splitViewItems.first(where: { $0.viewController === sideSplit }) {
+            for item in sideSplit.splitViewItems { sideSplit.removeSplitViewItem(item) }
+            removeSplitViewItem(item)
+        }
+        if let item = splitViewItems.first(where: { $0.viewController === filesController }) { removeSplitViewItem(item) }
+        sideSplit = nil
+        let filesItem = NSSplitViewItem(viewController: filesController)
+        filesItem.canCollapse = true
+        let diffItem = NSSplitViewItem(viewController: diffView)
+        diffItem.minimumThickness = 200
+        diffItem.canCollapse = true
+        self.diffItem = nil
+        if Settings.historyFileTree {
+            let side = NSSplitViewController()
+            side.splitView.isVertical = true
+            side.splitView.dividerStyle = .thin
+            side.splitView.autosaveName = "CommitDetailFileTree"
+            filesItem.minimumThickness = 140
+            filesItem.holdingPriority = .init(260)
+            // 最初の幅（境目を動かしたら、その位置を覚える）。
+            filesController.view.frame.size.width = 260
+            side.addSplitViewItem(filesItem)
+            side.addSplitViewItem(diffItem)
+            let item = NSSplitViewItem(viewController: side)
+            item.minimumThickness = 200
+            item.canCollapse = true
+            addSplitViewItem(item)
+            sideSplit = side
+        } else {
+            filesController.view.frame.size.height = 120
+            filesItem.minimumThickness = 60
+            filesItem.holdingPriority = .init(260)
+            addSplitViewItem(filesItem)
+            addSplitViewItem(diffItem)
+            self.diffItem = diffItem
+        }
+    }
+
+    @objc private func fileTreeChanged() {
+        arrangeFiles()
+        let selected = fileIndex(row: files.selectedRow)
+        syncingSelection = true
+        reloadFiles()
+        if let selected { files.selectRowIndexes([rowOfFile[selected]], byExtendingSelection: false) }
+        syncingSelection = false
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { fileIndex(row: row) != nil }
 
     private func showFileDiff(_ diff: FileDiff?) {
         if let diff, diff.isBinary {
@@ -1879,8 +1998,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let row = files.clickedRow
-        guard row >= 0, let item = changes?.items[row] else { return }
+        guard let index = fileIndex(row: files.clickedRow), let item = changes?.items[index] else { return }
         let path = item.path
         if let commit = commitHex, item.kind != .deleted {
             menu.addItem(ClosureMenuItem(title: "Blame at \(commit.prefix(8))") { [weak self] in self?.onBlame?(path, commit) })
@@ -1890,9 +2008,25 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         let cell = tableView.makeView(withIdentifier: .init("file"), owner: nil) as? FileCell ?? FileCell()
-        guard let item = changes?.items[row] else {
-            guard let name = stacked?.names[row] else { return nil }
-            cell.path.stringValue = name
+        guard row < fileRows.count else { return nil }
+        let tree = Settings.historyFileTree
+        let index: Int
+        switch fileRows[row] {
+        case let .directory(name, depth):
+            cell.indent = CGFloat(depth) * 14
+            cell.path.attributedStringValue = FileCell.folderTitle(name)
+            cell.path.toolTip = name
+            cell.show(stat: nil)
+            return cell
+        case let .file(i, depth):
+            cell.indent = CGFloat(depth) * 14
+            index = i
+        }
+        // 木では、フォルダの下にファイルの名前だけを出す。
+        let display = { (path: String) in tree ? String(path.split(separator: "/").last ?? Substring(path)) : path }
+        guard let item = changes?.items[index] else {
+            guard let name = stacked?.names[index] else { return nil }
+            cell.path.stringValue = display(name)
             cell.path.toolTip = name
             cell.show(stat: nil)
             return cell
@@ -1905,15 +2039,14 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         case .renamed: "R"
         case .copied: "C"
         }
-        field.stringValue = "\(mark)  \(item.path)"
+        field.stringValue = "\(mark)  \(display(item.path))"
         field.toolTip = item.oldPath.map { "\($0) → \(item.path)" } ?? item.path
         cell.show(stat: fileStats[item.path])
         return cell
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard files.selectedRow >= 0 else { return }
-        let index = files.selectedRow
+        guard let index = fileIndex(row: files.selectedRow) else { return }
         // 全ファイルを並べているなら、そのファイルの見出しまでスクロールする。
         if stacked != nil {
             if !syncingSelection { diffView.scrollToFile(index) }
@@ -1949,11 +2082,37 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 final class FileCell: NSTableCellView {
     let path = NSTextField(labelWithString: "")
     private let stat = NSTextField(labelWithString: "")
+    private var leading: NSLayoutConstraint!
+    /// 木で出すときの字下げ。
+    var indent: CGFloat = 0 {
+        didSet { leading.constant = 2 + indent }
+    }
+
+    /// フォルダの行の文字（フォルダの印と名前、薄い色）。
+    static func folderTitle(_ name: String) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        if let image = NSImage(systemSymbolName: "folder", accessibilityDescription: nil) {
+            let attachment = NSTextAttachment()
+            attachment.image = image
+            attachment.bounds = NSRect(x: 0, y: -2, width: 14, height: 12)
+            text.append(NSAttributedString(attachment: attachment))
+            text.append(NSAttributedString(string: " "))
+        }
+        text.append(NSAttributedString(string: name))
+        // 長いときは頭を省く（近い側のフォルダの名前を残す）。
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingHead
+        let all = NSRange(location: 0, length: text.length)
+        text.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: all)
+        text.addAttribute(.paragraphStyle, value: paragraph, range: all)
+        return text
+    }
 
     init() {
         super.init(frame: .zero)
         identifier = .init("file")
         path.lineBreakMode = .byTruncatingMiddle
+        path.maximumNumberOfLines = 1
         stat.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         stat.alignment = .right
         for v in [path, stat] {
@@ -1963,8 +2122,9 @@ final class FileCell: NSTableCellView {
         path.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         stat.setContentCompressionResistancePriority(.required, for: .horizontal)
         stat.setContentHuggingPriority(.required, for: .horizontal)
+        leading = path.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2)
         NSLayoutConstraint.activate([
-            path.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 2),
+            leading,
             path.centerYAnchor.constraint(equalTo: centerYAnchor),
             stat.leadingAnchor.constraint(greaterThanOrEqualTo: path.trailingAnchor, constant: 8),
             stat.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
