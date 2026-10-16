@@ -143,15 +143,25 @@ pub fn resolve(data: &[u8], index: usize, choice: Choice) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Magic Merge の規則の範囲。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MagicRules {
+    /// 間違えようのないものだけ（両側が同じ、片側だけが変えた）。ファイルを開いたときに自動でかける。
+    Safe,
+    /// すべての規則。
+    All,
+}
+
 /// Magic Merge: 決まった規則で解けるコンフリクトを解く。解けたものは選んだ中身に置き換え、解けないものは
 /// マーカーごと残す。規則は順に:
 /// 1. 両側が同じ
 /// 2. 片側が共通の祖先と同じ（もう片側だけが変えた。diff3 のときだけ）
 /// 3. 空白・改行だけが違う（Current の側にする）
-/// 4. 単語単位で 3-way マージでき、両側の変更が重ならない（diff3 のときだけ）
+/// 4. 両側が同じ所に import・use などの行だけを足した（両方を並べる。diff3 のときだけ）
+/// 5. 単語単位で 3-way マージでき、両側の変更が重ならない（diff3 のときだけ）
 ///
-/// 解いた内容と、解いたコンフリクトの数。
-pub fn magic(data: &[u8]) -> (Vec<u8>, usize) {
+/// `only` があれば、その番号のコンフリクトだけを解く。解いた内容と、解いたコンフリクトの数。
+pub fn magic(data: &[u8], rules: MagicRules, only: Option<usize>) -> (Vec<u8>, usize) {
     let ls = lines(data);
     let take = |r: &Range<usize>| -> &[u8] {
         if r.is_empty() {
@@ -160,28 +170,21 @@ pub fn magic(data: &[u8]) -> (Vec<u8>, usize) {
             &data[ls[r.start].start..ls[r.end - 1].end]
         }
     };
-    let squeeze = |b: &[u8]| -> Vec<u8> {
-        b.iter()
-            .copied()
-            .filter(|c| !c.is_ascii_whitespace())
-            .collect()
-    };
     let mut out = Vec::with_capacity(data.len());
     let mut next = 0usize;
     let mut resolved = 0;
-    for c in parse(data) {
+    for (i, c) in parse(data).into_iter().enumerate() {
         out.extend_from_slice(&data[next..ls[c.lines.start].start]);
         next = ls[c.lines.end - 1].end;
-        let (ours, theirs) = (take(&c.ours), take(&c.theirs));
-        let base = c.base.as_ref().map(take);
-        let solution: Option<Vec<u8>> = if ours == theirs {
-            Some(ours.to_vec())
-        } else if base == Some(ours) {
-            Some(theirs.to_vec())
-        } else if base == Some(theirs) || squeeze(ours) == squeeze(theirs) {
-            Some(ours.to_vec())
+        let solution = if only.is_none_or(|o| o == i) {
+            solve(
+                take(&c.ours),
+                take(&c.theirs),
+                c.base.as_ref().map(take),
+                rules,
+            )
         } else {
-            base.and_then(|base| crate::words::merge3(base, ours, theirs))
+            None
         };
         match solution {
             Some(text) => {
@@ -193,6 +196,84 @@ pub fn magic(data: &[u8]) -> (Vec<u8>, usize) {
     }
     out.extend_from_slice(&data[next..]);
     (out, resolved)
+}
+
+/// コンフリクト 1 つを規則で解く。解けなければ None。
+fn solve(ours: &[u8], theirs: &[u8], base: Option<&[u8]>, rules: MagicRules) -> Option<Vec<u8>> {
+    if ours == theirs {
+        return Some(ours.to_vec());
+    }
+    if base == Some(ours) {
+        return Some(theirs.to_vec());
+    }
+    if base == Some(theirs) {
+        return Some(ours.to_vec());
+    }
+    if rules == MagicRules::Safe {
+        return None;
+    }
+    let squeeze = |b: &[u8]| -> Vec<u8> {
+        b.iter()
+            .copied()
+            .filter(|c| !c.is_ascii_whitespace())
+            .collect()
+    };
+    if squeeze(ours) == squeeze(theirs) {
+        return Some(ours.to_vec());
+    }
+    let base = base?;
+    merge_imports(base, ours, theirs).or_else(|| crate::words::merge3(base, ours, theirs))
+}
+
+/// import・use・#include などの行か。
+fn is_import(line: &[u8]) -> bool {
+    let t = String::from_utf8_lossy(line);
+    let t = t.trim_start();
+    [
+        "import ", "use ", "#include", "from ", "require(", "@import", "using ", "#import",
+    ]
+    .iter()
+    .any(|p| t.starts_with(p))
+        || (t.starts_with("const ") && t.contains("require("))
+}
+
+/// 両側が共通の祖先の同じ位置に、import などの行だけを足したなら、両方を並べる（Current が先、重複は 1 つ）。
+fn merge_imports(base: &[u8], ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
+    let split = |data: &[u8]| -> Vec<Vec<u8>> {
+        lines(data).into_iter().map(|r| data[r].to_vec()).collect()
+    };
+    let (b, o, t) = (split(base), split(ours), split(theirs));
+    // `side` が「祖先の前 k 行 + 足した行 + 祖先の残り」なら、(k, 足した行)。
+    let added = |side: &[Vec<u8>]| -> Option<(usize, Vec<Vec<u8>>)> {
+        let max = side.len().min(b.len());
+        let p = (0..max).take_while(|&i| side[i] == b[i]).count();
+        let q = (0..max - p)
+            .take_while(|&i| side[side.len() - 1 - i] == b[b.len() - 1 - i])
+            .count();
+        (p + q == b.len() && side.len() > b.len()).then(|| (p, side[p..side.len() - q].to_vec()))
+    };
+    let ((ko, a), (kt, c)) = (added(&o)?, added(&t)?);
+    let normalize = |l: &Vec<u8>| String::from_utf8_lossy(l).trim().to_owned();
+    if ko != kt || !a.iter().chain(&c).all(|l| is_import(l)) {
+        return None;
+    }
+    let mut merged: Vec<Vec<u8>> = b[..ko].to_vec();
+    merged.extend(a.iter().cloned());
+    for line in &c {
+        if !a.iter().any(|x| normalize(x) == normalize(line)) {
+            merged.push(line.clone());
+        }
+    }
+    merged.extend(b[ko..].iter().cloned());
+    let mut out: Vec<u8> = Vec::new();
+    for line in merged {
+        // 改行のない最後の行の後ろに続けるときは、改行を補う。
+        if out.last().is_some_and(|&x| x != b'\n') {
+            out.push(b'\n');
+        }
+        out.extend_from_slice(&line);
+    }
+    Some(out)
 }
 
 /// マージエディタの 1 つの欄（Current・Incoming・共通の祖先）。すべてのコンフリクトをその側で解決した内容と、
@@ -312,6 +393,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn magic_merge_joins_imports_one_conflict_or_only_safe_rules() {
+        let text = concat!(
+            "<<<<<<< HEAD\nuse a;\nuse x;\nfn f() {}\n||||||| base\nuse a;\nfn f() {}\n=======\nuse a;\nuse y;\nfn f() {}\n>>>>>>> t\n",
+            "mid\n",
+            "<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> t\n",
+        );
+        // import を両側が足したものは、すべての規則のときだけ並べる。
+        let (out, n) = magic(text.as_bytes(), MagicRules::All, None);
+        assert_eq!(n, 2);
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "use a;\nuse x;\nuse y;\nfn f() {}\nmid\nsame\n"
+        );
+        let (out, n) = magic(text.as_bytes(), MagicRules::Safe, None);
+        assert_eq!(n, 1);
+        assert_eq!(parse(&out).len(), 1);
+        // 番号を指定すると、そのコンフリクトだけ。
+        let (out, n) = magic(text.as_bytes(), MagicRules::All, Some(1));
+        assert_eq!(n, 1);
+        assert!(
+            String::from_utf8(out)
+                .unwrap()
+                .starts_with("<<<<<<< HEAD\nuse a;")
+        );
+    }
+
+    #[test]
     fn magic_merge_solves_what_the_rules_allow() {
         let text = concat!(
             "keep\n",
@@ -327,7 +435,7 @@ mod tests {
             "<<<<<<< HEAD\nv = 1\n||||||| base\nv = 0\n=======\nv = 2\n>>>>>>> t\n",
             "end\n",
         );
-        let (out, resolved) = magic(text.as_bytes());
+        let (out, resolved) = magic(text.as_bytes(), MagicRules::All, None);
         assert_eq!(resolved, 4);
         let out = String::from_utf8(out).unwrap();
         assert_eq!(

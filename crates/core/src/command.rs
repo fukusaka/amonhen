@@ -165,6 +165,11 @@ pub enum Command {
     /// （`info.resolved`）・残った数（`info.remaining`）。ファイルには書かない。
     MagicMerge {
         text: String,
+        /// 間違えようのない規則だけにする（ファイルを開いたときの自動の適用）。
+        #[serde(default)]
+        safe: bool,
+        /// この番号のコンフリクトだけを解く（1 つずつ Undo できるように）。
+        index: Option<usize>,
     },
     /// `text` に残っているコンフリクト（`info.conflicts`）。それぞれ、マーカーを含む行範囲 `lines` と、
     /// 両側の中身 `current`・`incoming`（マージエディタの上の欄のどのコンフリクトかを突き合わせる）。
@@ -1040,8 +1045,13 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::MagicMerge { text } => {
-                let (merged, resolved) = crate::conflict::magic(text.as_bytes());
+            Command::MagicMerge { text, safe, index } => {
+                let rules = if safe {
+                    crate::conflict::MagicRules::Safe
+                } else {
+                    crate::conflict::MagicRules::All
+                };
+                let (merged, resolved) = crate::conflict::magic(text.as_bytes(), rules, index);
                 let remaining = crate::conflict::parse(&merged).len();
                 let text = String::from_utf8_lossy(&merged).into_owned();
                 Ok(Response {
