@@ -166,17 +166,14 @@ fn launch(daemon: &str, endpoint: &str) -> Result<()> {
         command.creation_flags(0x0000_0008 | 0x0000_0200);
         // Windows では、引き継げる形のハンドルはすべて子に渡る。自分の標準入出力（呼んだ側のパイプのことがある）を
         // daemon に渡すと、daemon が終わるまで呼んだ側はこちらが終わったと分からない。起動する間だけ渡さない。
-        return no_inherit_std(|| command.spawn())
-            .map(drop)
-            .map_err(|e| format!("{daemon} を起動できない: {e}").into());
     }
+    #[cfg(windows)]
+    let spawned = no_inherit_std(|| command.spawn());
     #[cfg(not(windows))]
-    {
-        command
-            .spawn()
-            .map_err(|e| format!("{daemon} を起動できない: {e}"))?;
-        Ok(())
-    }
+    let spawned = command.spawn();
+    spawned
+        .map(drop)
+        .map_err(|e| format!("{daemon} を起動できない: {e}").into())
 }
 
 /// `f` の間だけ、自分の標準入出力のハンドルを子に引き継がない形にする（終わったら戻す）。
