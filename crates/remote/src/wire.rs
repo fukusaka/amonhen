@@ -12,7 +12,7 @@ use amonhen_model::{
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 9;
+pub const PROTOCOL_VERSION: u32 = 10;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -221,6 +221,7 @@ pub enum Op {
     Remotes,
     ChangeRemote(RemoteChange),
     WorkingStats,
+    IgnoreMatches(Vec<String>, usize),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

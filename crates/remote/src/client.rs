@@ -758,6 +758,10 @@ impl Operations for RemoteOperations {
     fn working_stats(&self) -> Result<Vec<amonhen_model::FileStat>> {
         self.op(Op::WorkingStats)
     }
+
+    fn ignore_matches(&self, patterns: &[String], limit: usize) -> Result<Vec<(Vec<String>, usize)>> {
+        self.op(Op::IgnoreMatches(patterns.to_vec(), limit))
+    }
 }
 
 /// 読んだバイト数を数える。

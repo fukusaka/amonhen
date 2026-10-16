@@ -218,6 +218,13 @@ pub enum Command {
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（`info.stats`: `path`・`added`・`removed`。
     /// バイナリは null。untracked は含まない）。
     WorkingStats,
+    /// `.gitignore` の書きかけの中身（`text`）の各行に合うファイルの例（`info.lines`: 行の番号・パターン・
+    /// 例・合う数）。空行・# の行・! の行は飛ばす。多すぎないよう 40 行まで。
+    IgnoreMatches {
+        text: String,
+    },
+    /// hooks と Git LFS の様子（`info`: hooksPath・hooks（name・enabled）・lfs（入っているか）・lfsPatterns）。
+    HooksAndLfs,
     ChangeRemote {
         change: amonhen_model::RemoteChange,
     },
@@ -1173,6 +1180,73 @@ impl Repository {
                 ops.config_set(&key, value.as_deref())?;
                 ok()
             }
+            Command::IgnoreMatches { text } => {
+                let lines: Vec<(usize, String)> = text
+                    .lines()
+                    .enumerate()
+                    .map(|(i, l)| (i + 1, l.trim().to_owned()))
+                    .filter(|(_, l)| !l.is_empty() && !l.starts_with('#') && !l.starts_with('!'))
+                    .take(40)
+                    .collect();
+                let patterns: Vec<String> = lines.iter().map(|(_, l)| l.clone()).collect();
+                let matches = ops.ignore_matches(&patterns, 5)?;
+                let lines: Vec<_> = lines
+                    .iter()
+                    .zip(matches)
+                    .map(|((line, pattern), (examples, count))| {
+                        serde_json::json!({"line": line, "pattern": pattern, "examples": examples, "count": count})
+                    })
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "lines": lines })),
+                    ..Default::default()
+                })
+            }
+            Command::HooksAndLfs => {
+                let config = ops.config_list()?;
+                let value = |key: &str| {
+                    config
+                        .iter()
+                        .rev()
+                        .find(|e| e.key.eq_ignore_ascii_case(key))
+                        .map(|e| e.value.clone())
+                };
+                let hooks_path = value("core.hooksPath");
+                // hooksPath が作業ツリーの中（相対）なら作業ツリーから、なければ .git/hooks から読む。
+                let (root, dir) = match &hooks_path {
+                    Some(p) if !p.starts_with('/') && !p.starts_with('~') => {
+                        (Root::Workdir, p.trim_end_matches('/').to_owned())
+                    }
+                    Some(_) => (Root::GitDir, String::new()),
+                    None => (Root::GitDir, "hooks".to_owned()),
+                };
+                let files = self.backend().files();
+                let mut hooks = Vec::new();
+                if !dir.is_empty() {
+                    for name in HOOK_NAMES {
+                        if let Some(mode) = files.mode(root, &format!("{dir}/{name}"))? {
+                            hooks.push(serde_json::json!({"name": name, "enabled": mode & 0o111 != 0}));
+                        }
+                    }
+                }
+                let attributes = files.read(Root::Workdir, ".gitattributes")?.unwrap_or_default();
+                let lfs_patterns: Vec<String> = String::from_utf8_lossy(&attributes)
+                    .lines()
+                    .filter(|l| l.split_whitespace().any(|a| a == "filter=lfs"))
+                    .filter_map(|l| l.split_whitespace().next().map(str::to_owned))
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({
+                        "hooksPath": hooks_path,
+                        "hooks": hooks,
+                        "lfs": value("filter.lfs.process").or(value("filter.lfs.smudge")).is_some(),
+                        "lfsPatterns": lfs_patterns,
+                    })),
+                    ..Default::default()
+                })
+            }
             Command::WorkingStats => Ok(Response {
                 ok: true,
                 info: Some(serde_json::json!({ "stats": ops.working_stats()? })),
@@ -1366,6 +1440,16 @@ fn trailer(line: &str) -> Option<(&str, &str)> {
     let valid = !key.is_empty() && key.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
     valid.then_some((key, value.trim()))
 }
+
+/// git が呼ぶ hook の名前（`git help hooks` の順）。
+const HOOK_NAMES: &[&str] = &[
+    "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit",
+    "prepare-commit-msg", "commit-msg", "post-commit", "pre-rebase", "post-checkout", "post-merge",
+    "pre-push", "pre-receive", "update", "proc-receive", "post-receive", "post-update",
+    "reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite", "sendemail-validate",
+    "fsmonitor-watchman", "p4-changelist", "p4-prepare-changelist", "p4-post-changelist", "p4-pre-submit",
+    "post-index-change",
+];
 
 #[cfg(test)]
 mod tests {
@@ -1717,6 +1801,41 @@ mod tests {
         assert_eq!(log(dir), ["b", "d", "c", "first"]);
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["d", "c", "b", "first"]);
+    }
+
+    #[test]
+    fn shows_files_matching_ignore_patterns_and_hooks() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::create_dir_all(dir.join("build/out")).unwrap();
+        std::fs::write(dir.join("build/out/a.o"), "").unwrap();
+        std::fs::write(dir.join("x.log"), "").unwrap();
+        std::fs::write(dir.join("y.log"), "").unwrap();
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "ignoreMatches", "text": "# c\n*.log\n\nbuild/\n!keep.log\nnone.txt"}).to_string(),
+        );
+        let lines = r["info"]["lines"].as_array().unwrap();
+        assert_eq!(lines.len(), 3, "{r}");
+        assert_eq!(lines[0]["line"], 2);
+        assert_eq!(lines[0]["count"], 2);
+        assert_eq!(lines[1]["examples"][0], "build/");
+        assert_eq!(lines[2]["count"], 0);
+
+        let hook = dir.join(".git/hooks/pre-commit");
+        std::fs::write(&hook, "#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        std::fs::write(dir.join(".gitattributes"), "*.psd filter=lfs diff=lfs merge=lfs -text\n*.txt text\n").unwrap();
+        let r = run(&repo, r#"{"op":"hooksAndLfs"}"#);
+        let hooks = r["info"]["hooks"].as_array().unwrap();
+        assert!(hooks.iter().any(|h| h["name"] == "pre-commit" && h["enabled"] == true), "{r}");
+        // サンプル（.sample）は数えない。
+        assert!(!hooks.iter().any(|h| h["name"].as_str().unwrap().ends_with(".sample")));
+        assert_eq!(r["info"]["lfsPatterns"], serde_json::json!(["*.psd"]));
     }
 
     #[test]

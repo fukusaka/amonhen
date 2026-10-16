@@ -22,6 +22,19 @@ struct RemoteEntry: Decodable, Hashable, Identifiable {
 @Observable
 final class RepositorySettingsModel {
     let repository: Repository
+    /// リポジトリの場所（表示名・色ラベル・自動 fetch はブックマークに置く）。
+    let location: String
+    var displayName: String
+    var color: String?
+    var autoFetch: Int
+    private(set) var hooksPath: String?
+    private(set) var hooks: [HookEntry] = []
+    private(set) var lfs = false
+    private(set) var lfsPatterns: [String] = []
+    /// Ignore の各行に合うファイル（「合うファイルを見る」を押したとき）。
+    private(set) var ignoreMatches: [IgnoreMatch]?
+    private(set) var excludeMatches: [IgnoreMatch]?
+    private(set) var matching = false
     private(set) var entries: [ConfigEntry] = []
     private(set) var remotes: [RemoteEntry] = []
     var gitignore = ""
@@ -29,8 +42,46 @@ final class RepositorySettingsModel {
     private(set) var savedIgnore = ("", "")
     var error: String?
 
-    init(repository: Repository) {
+    init(repository: Repository, location: String) {
         self.repository = repository
+        self.location = location
+        let bookmark = Bookmarks.shared.bookmark(location)
+        displayName = bookmark?.name ?? ""
+        color = bookmark?.color
+        autoFetch = bookmark?.autoFetch ?? 0
+    }
+
+    /// 表示名・色ラベル・自動 fetch をブックマークに書く（ブックマークになければ加える）。
+    func saveGeneral() {
+        let bookmarks = Bookmarks.shared
+        let name = displayName.trimmingCharacters(in: .whitespaces)
+        if bookmarks.bookmark(location)?.name ?? "" != name { bookmarks.rename(location, to: name.isEmpty ? nil : name) }
+        if bookmarks.bookmark(location)?.color != color { bookmarks.setColor(location, color) }
+        let minutes = autoFetch > 0 ? autoFetch : nil
+        if bookmarks.bookmark(location)?.autoFetch != minutes { bookmarks.setAutoFetch(location, minutes: minutes) }
+    }
+
+    /// .gitignore と exclude の各行に合うファイルを探す（git に聞くので裏で）。
+    func findIgnoreMatches() {
+        let repository = self.repository
+        let texts = (gitignore, exclude)
+        matching = true
+        Task {
+            struct Lines: Decodable { let lines: [IgnoreMatch] }
+            do {
+                let (a, b) = try await Task.detached(priority: .userInitiated) {
+                    (
+                        try repository.info(["op": "ignoreMatches", "text": texts.0], as: Lines.self).lines,
+                        try repository.info(["op": "ignoreMatches", "text": texts.1], as: Lines.self).lines
+                    )
+                }.value
+                ignoreMatches = a
+                excludeMatches = b
+            } catch {
+                self.error = "\(error)"
+            }
+            matching = false
+        }
     }
 
     func load() {
@@ -39,14 +90,20 @@ final class RepositorySettingsModel {
             struct Entries: Decodable { let entries: [ConfigEntry] }
             struct Remotes: Decodable { let remotes: [RemoteEntry] }
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
+            struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String] }
             do {
-                let (e, r, i) = try await Task.detached(priority: .userInitiated) {
+                let (e, r, i, h) = try await Task.detached(priority: .userInitiated) {
                     (
                         try repository.info(["op": "configList"], as: Entries.self),
                         try repository.info(["op": "remotes"], as: Remotes.self),
-                        try repository.info(["op": "ignoreFiles"], as: Ignore.self)
+                        try repository.info(["op": "ignoreFiles"], as: Ignore.self),
+                        try repository.info(["op": "hooksAndLfs"], as: Hooks.self)
                     )
                 }.value
+                hooksPath = h.hooksPath
+                hooks = h.hooks
+                lfs = h.lfs
+                lfsPatterns = h.lfsPatterns
                 entries = e.entries
                 remotes = r.remotes
                 if (gitignore, exclude) == savedIgnore {
@@ -102,6 +159,111 @@ final class RepositorySettingsModel {
                 self.error = "\(error)"
             }
             load()
+        }
+    }
+}
+
+struct HookEntry: Decodable, Hashable, Identifiable {
+    let name: String
+    let enabled: Bool
+    var id: String { name }
+}
+
+struct IgnoreMatch: Decodable, Hashable, Identifiable {
+    let line: Int
+    let pattern: String
+    let examples: [String]
+    let count: Int
+    var id: Int { line }
+}
+
+/// 表示名・色ラベル・自動 fetch（このアプリの中だけの設定。ブックマークに置く）。
+private struct GeneralTab: View {
+    @Bindable var model: RepositorySettingsModel
+    var body: some View {
+        Form {
+            Section {
+                TextField("表示名", text: $model.displayName, prompt: Text((RepositoryLocation.path(model.location) as NSString).lastPathComponent))
+                Picker("色ラベル", selection: $model.color) {
+                    Text("なし").tag(String?.none)
+                    ForEach(Bookmarks.colors, id: \.name) { entry in
+                        Label { Text(entry.title) } icon: { Image(nsImage: RepositoryCell.dot(entry.color) ?? NSImage()) }
+                            .tag(Optional(entry.name))
+                    }
+                }
+                Picker("自動で fetch", selection: $model.autoFetch) {
+                    Text("しない").tag(0)
+                    ForEach([5, 15, 30, 60], id: \.self) { Text("\($0) 分ごと").tag($0) }
+                }
+            } footer: {
+                Text("このアプリの中だけの設定（git の設定には書かない）。表示名はウィンドウ・タブ・リポジトリの一覧に出る。自動の fetch は、このリポジトリを開いている間だけ。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onChange(of: model.displayName) { model.saveGeneral() }
+        .onChange(of: model.color) { model.saveGeneral() }
+        .onChange(of: model.autoFetch) { model.saveGeneral() }
+    }
+}
+
+/// hooks（git が呼ぶスクリプト）と Git LFS の様子。
+private struct HooksTab: View {
+    let model: RepositorySettingsModel
+    var body: some View {
+        Form {
+            Section {
+                if model.hooks.isEmpty {
+                    Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? "core.hooksPath（\($0)）は作業ツリーの外なので、中を見られない" : "なし" } ?? "なし")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.hooks) { hook in
+                    HStack {
+                        Text(hook.name).font(.system(.body, design: .monospaced))
+                        Spacer()
+                        Text(hook.enabled ? "有効" : "実行できない（chmod +x がない）")
+                            .foregroundStyle(hook.enabled ? Color.green : Color.secondary)
+                    }
+                }
+            } header: {
+                Text("Hooks")
+            } footer: {
+                Text("場所: " + (model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks") + "。.sample は数えない。commit や push のときに git が実行する。")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                LabeledContent("Git LFS", value: model.lfs ? "入っている（filter.lfs が設定されている）" : "入っていない")
+                if model.lfsPatterns.isEmpty {
+                    Text(".gitattributes に LFS で扱うパターンはない").foregroundStyle(.secondary)
+                }
+                ForEach(model.lfsPatterns, id: \.self) { Text($0).font(.system(.body, design: .monospaced)) }
+            } header: {
+                Text("LFS")
+            } footer: {
+                if !model.lfs && !model.lfsPatterns.isEmpty {
+                    Text("LFS のパターンがあるのに git lfs が入っていない。brew install git-lfs と git lfs install で入れる。")
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Ignore の各行に合うファイルの一覧。
+private struct IgnoreMatchList: View {
+    let matches: [IgnoreMatch]
+    var body: some View {
+        ForEach(matches) { m in
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(m.line): \(m.pattern)　— \(m.count == 0 ? "合うファイルなし" : "\(m.count) 個")")
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(m.count == 0 ? Color.orange : Color.primary)
+                if !m.examples.isEmpty {
+                    Text(m.examples.joined(separator: "　") + (m.count > m.examples.count ? "　…" : ""))
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
+            }
         }
     }
 }
@@ -295,9 +457,25 @@ private struct IgnoreTab: View {
             TextEditor(text: $model.gitignore).font(.system(.body, design: .monospaced)).frame(minHeight: 140)
             Text(".git/info/exclude（このリポジトリだけ。共有しない）").font(.headline)
             TextEditor(text: $model.exclude).font(.system(.body, design: .monospaced)).frame(minHeight: 80)
+            if model.ignoreMatches != nil || model.excludeMatches != nil {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 4) {
+                        IgnoreMatchList(matches: model.ignoreMatches ?? [])
+                        if let exclude = model.excludeMatches, !exclude.isEmpty {
+                            Text("exclude").font(.caption.bold())
+                            IgnoreMatchList(matches: exclude)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxHeight: 120)
+            }
             HStack {
                 Text("1 行に 1 つのパターン（`*.log`、`build/` など）。# から後は説明。").font(.caption).foregroundStyle(.secondary)
                 Spacer()
+                Button(model.matching ? "探しています…" : "合うファイルを見る") { model.findIgnoreMatches() }
+                    .disabled(model.matching)
+                    .help("保存する前の中身で、各行に合うファイル（追跡しているものも含む）の例と数を出す")
                 Button("Revert") { model.load() }.disabled(!model.ignoreChanged)
                 Button("Save") { model.saveIgnore() }.disabled(!model.ignoreChanged).keyboardShortcut("s")
             }
@@ -342,10 +520,12 @@ private struct RepositorySettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             TabView {
+                GeneralTab(model: model).tabItem { Text("General") }
                 IdentityTab(model: model).tabItem { Text("Identity") }
                 BranchesTab(model: model).tabItem { Text("Branches") }
                 RemotesTab(model: model).tabItem { Text("Remotes") }
                 IgnoreTab(model: model).tabItem { Text("Ignore") }
+                HooksTab(model: model).tabItem { Text("Hooks・LFS") }
                 AllSettingsTab(model: model).tabItem { Text("All Settings") }
             }
             .padding([.top, .horizontal])
@@ -365,8 +545,10 @@ private struct RepositorySettingsView: View {
 /// リポジトリの設定をシートで出す。
 enum RepositorySettingsSheet {
     /// `onClose`: 閉じた（リモートなどが変わったかもしれないので、画面を読み直す）。
-    static func show(for repository: Repository, title: String, in window: NSWindow, onClose: @escaping () -> Void) {
-        let model = RepositorySettingsModel(repository: repository)
+    static func show(
+        for repository: Repository, location: String, title: String, in window: NSWindow, onClose: @escaping () -> Void
+    ) {
+        let model = RepositorySettingsModel(repository: repository, location: location)
         model.load()
         let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 560), styleMask: [.titled], backing: .buffered, defer: false)
         sheet.title = "\(title) の設定"

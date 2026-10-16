@@ -74,16 +74,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init()
         let path = RepositoryLocation.path(location)
-        window.title = (path as NSString).lastPathComponent
-        if let host = RepositoryLocation.host(location) {
-            // daemon 越しなら、タイトルに接続先を添える（手元のリポジトリと見分ける）。
-            window.title += " — \(host)"
-        } else {
+        // 表示名（リポジトリの設定で変えられる）。daemon 越しなら接続先を添える（手元のリポジトリと見分ける）。
+        window.title = Bookmarks.shared.displayName(location)
+        if RepositoryLocation.host(location) == nil {
             window.representedURL = URL(fileURLWithPath: path)
         }
         window.isReleasedWhenClosed = false
         window.delegate = self
         assemble()
+        scheduleAutoFetch()
         // リポジトリごとに、前回の位置と大きさで開く（初めてなら真ん中に）。
         let frameName = "Repository \(location)"
         window.setContentSize(NSSize(width: 1440, height: 820))
@@ -880,8 +879,40 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Repository > Repository Settings…（⌘;）。
     @objc func showRepositorySettings(_ sender: Any?) {
-        RepositorySettingsSheet.show(for: repository, title: window.title, in: window) { [weak self] in
-            self?.refreshRepository(nil)
+        RepositorySettingsSheet.show(for: repository, location: location, title: window.title, in: window) { [weak self] in
+            guard let self else { return }
+            // 表示名・自動 fetch が変わったかもしれない。
+            window.title = Bookmarks.shared.displayName(location)
+            updateTabTitle()
+            scheduleAutoFetch()
+            refreshRepository(nil)
+        }
+    }
+
+    // MARK: - 自動の fetch
+
+    private var autoFetchTimer: Timer?
+
+    /// リポジトリの設定で決めた間隔で、開いている間 fetch する（SSH 先も、daemon が fetch する）。
+    func scheduleAutoFetch() {
+        autoFetchTimer?.invalidate()
+        autoFetchTimer = nil
+        guard let minutes = Bookmarks.shared.bookmark(location)?.autoFetch, minutes > 0 else { return }
+        autoFetchTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(minutes * 60), repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.autoFetch() }
+        }
+    }
+
+    private func autoFetch() {
+        let repository = self.repository
+        let name = window.title
+        Task {
+            do {
+                try await Task.detached(priority: .utility) { try repository.run(json: #"{"op":"fetch"}"#) }.value
+                EventLog.add(repo: name, "自動の fetch")
+            } catch {
+                EventLog.add(repo: name, "自動の fetch に失敗: \(error)")
+            }
         }
     }
 
@@ -956,6 +987,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     func windowWillClose(_ notification: Notification) {
+        autoFetchTimer?.invalidate()
         connectionTimer?.invalidate()
         watch = nil
         onClose?()

@@ -11,6 +11,8 @@ struct Bookmark: Codable, Hashable {
     var favorite = false
     /// 色ラベル（`Bookmarks.colors` の名前）。
     var color: String?
+    /// 開いている間、何分ごとに自動で fetch するか（なければしない）。
+    var autoFetch: Int?
 }
 
 /// リポジトリを探すフォルダ。
@@ -99,6 +101,7 @@ final class Bookmarks {
 
     func toggleFavorite(_ path: String) { update(path) { $0.favorite.toggle() } }
     func setColor(_ path: String, _ color: String?) { update(path) { $0.color = color } }
+    func setAutoFetch(_ path: String, minutes: Int?) { update(path) { $0.autoFetch = minutes } }
 
     /// 色ラベルの名前と色（Finder のタグの並び）。
     static let colors: [(name: String, title: String, color: NSColor)] = [

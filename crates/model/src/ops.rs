@@ -223,4 +223,7 @@ pub trait Operations: Send + Sync {
     fn change_remote(&self, change: &RemoteChange) -> Result<()>;
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（index の分も含む。untracked は含まない）。
     fn working_stats(&self) -> Result<Vec<crate::FileStat>>;
+    /// .gitignore の書き方の確かめ: パターンごとに、合うファイル（追跡しているものと、していないもの。
+    /// 中身ごと合うフォルダは 1 つにまとめる）の初めの `limit` 個と、合う数。
+    fn ignore_matches(&self, patterns: &[String], limit: usize) -> Result<Vec<(Vec<String>, usize)>>;
 }
