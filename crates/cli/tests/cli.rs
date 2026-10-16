@@ -198,8 +198,9 @@ impl Env {
         for d in [&home, &remote_home, &socket_dir, &daemons] {
             std::fs::create_dir(d).unwrap();
         }
-        let daemon = amonhend();
-        std::fs::copy(&daemon, daemons.join(format!("amonhend-{}", amonhen_remote::ssh::local_platform()))).unwrap();
+        // エンジンは 1 つの実行ファイル: daemon にも、SSH 先に送るものにも、この CLI を使う。
+        let daemon = std::path::PathBuf::from(env!("CARGO_BIN_EXE_amonhen"));
+        std::fs::copy(&daemon, daemons.join(format!("amonhen-{}", amonhen_remote::ssh::local_platform()))).unwrap();
         let ssh = dir.join("fake-ssh");
         // ssh の代わり: 指定を読み飛ばし、ホスト名を捨て、SSH 先のホームで命令を実行する。
         std::fs::write(
@@ -222,7 +223,7 @@ impl Env {
             .env("AMONHEN_DAEMON_DIR", &self.socket_dir)
             .env("AMONHEN_DAEMON", &self.daemon)
             .env("AMONHEN_SSH", &self.ssh)
-            .env("AMONHEN_DAEMONS", &self.daemons);
+            .env("AMONHEN_ENGINES", &self.daemons);
         c
     }
 
@@ -292,16 +293,4 @@ impl Watch {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
-}
-
-/// `amonhend`（この CLI の隣。なければ作る）。
-fn amonhend() -> std::path::PathBuf {
-    let exe = Path::new(env!("CARGO_BIN_EXE_amonhen"));
-    let daemon = exe.with_file_name("amonhend");
-    if !daemon.exists() {
-        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
-        let ok = Command::new(cargo).args(["build", "-p", "amonhen-daemon"]).status().unwrap().success();
-        assert!(ok, "amonhend を作れない");
-    }
-    daemon
 }

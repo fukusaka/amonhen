@@ -52,6 +52,7 @@ version = "0.1.0"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-core",
+ "amonhen-daemon",
  "amonhen-front",
  "amonhen-layout",
  "amonhen-model",

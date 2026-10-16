@@ -81,7 +81,7 @@ impl Daemons {
             other => other,
         };
         let name = format!("{os}-{arch}");
-        let file = self.dir.join(format!("amonhend-{name}"));
+        let file = self.dir.join(format!("amonhen-{name}"));
         if file.exists() {
             return Ok(file);
         }
@@ -91,7 +91,7 @@ impl Daemons {
             return Ok(path.clone());
         }
         Err(format!(
-            "SSH 先（{}）に合う amonhend を同梱していません",
+            "SSH 先（{}）に合うエンジン（amonhen）を同梱していません",
             uname.trim()
         )
         .into())
@@ -251,14 +251,14 @@ mod tests {
     fn picks_the_daemon_for_the_host() {
         let dir = std::env::temp_dir().join(format!("amonhen-daemons-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("amonhend-linux-x86_64"), b"x").unwrap();
+        std::fs::write(dir.join("amonhen-linux-x86_64"), b"x").unwrap();
         let daemons = Daemons {
             dir: dir.clone(),
             local: Some(("darwin-aarch64".into(), PathBuf::from("/local"))),
         };
         assert_eq!(
             daemons.for_platform("Linux x86_64\n").unwrap(),
-            dir.join("amonhend-linux-x86_64")
+            dir.join("amonhen-linux-x86_64")
         );
         assert_eq!(
             daemons.for_platform("Darwin arm64").unwrap(),

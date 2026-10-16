@@ -42,6 +42,8 @@ usage: amonhen [<path>]
        amonhen merge-file [--all] [--check] <file>…
        amonhen clone <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
+       amonhen --version
+       amonhen --serve [<socket>] | --stdio <repo> | --socket   （daemon として動く。FE と SSH 先が使う）
 
 リポジトリを扱う命令は -C <path>・-C ssh://host/path（共有の daemon 越し）・-C daemon:<path> で場所を選ぶ。
 人が読む形のほかに --json で FE が読む形を出す（--color=auto|always|never も）。
@@ -59,11 +61,21 @@ merge-file は既定で間違えようのない規則だけをかける（--all 
   git config mergetool.amonhen.trustExitCode true";
 
 fn main() -> ExitCode {
+    let argv0 = std::env::args().next().unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
+    // エンジンは 1 つの実行ファイルで、daemon としての起動（`--serve`・`--stdio`・`--socket`、または `amonhend` と
+    // いう名前）なら daemon になる。
+    if amonhen_daemon::is_daemon(&argv0, &args) {
+        return ExitCode::from(amonhen_daemon::run(&args) as u8);
+    }
     let result = match args.first().map(String::as_str) {
         None => open::run(&[]),
         Some("-h" | "--help" | "help") => {
             println!("{USAGE}");
+            Ok(ExitCode::SUCCESS)
+        }
+        Some("-V" | "--version" | "version") => {
+            println!("{}", amonhen_daemon::version());
             Ok(ExitCode::SUCCESS)
         }
         Some("open") => open::run(&args[1..]),
@@ -247,19 +259,12 @@ fn duration(secs: u64) -> String {
     }
 }
 
-/// `amonhend` の場所: `AMONHEN_DAEMON`、なければ自分の隣（開発中の target/）か、`.app` の中
-/// （`Contents/Helpers/amonhen` から見た `Contents/MacOS/amonhend`）。
+/// 共有の daemon として起動するエンジン: `AMONHEN_DAEMON`、なければ自分（CLI と daemon は 1 つの実行ファイル）。
 fn daemon_program() -> Result<String> {
     if let Ok(p) = std::env::var("AMONHEN_DAEMON") {
         return Ok(p);
     }
-    let exe = std::env::current_exe()?.canonicalize()?;
-    let dir = exe.parent().ok_or("自分の場所が分からない")?;
-    [dir.join("amonhend"), dir.join("../MacOS/amonhend")]
-        .into_iter()
-        .find(|p| p.is_file())
-        .map(|p| p.display().to_string())
-        .ok_or_else(|| "amonhend が見つかりません（AMONHEN_DAEMON で場所を指定できます）".into())
+    Ok(std::env::current_exe()?.canonicalize()?.display().to_string())
 }
 
 /// アプリと同じキャッシュの置き場所（macOS）。ほかの OS では XDG の場所。

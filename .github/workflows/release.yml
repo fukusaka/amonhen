@@ -23,7 +23,7 @@ jobs:
         run: test "${GITHUB_REF_NAME#v}" = "$(scripts/version.sh stable)"
       - uses: dtolnay/rust-toolchain@stable
         with:
-          # SSH 先に送り込む Linux 用の amonhend（musl で静的リンク、リンクは zig）。
+          # Linux 用のエンジン（musl で静的リンク、リンクは zig）。
           targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
       - run: brew install zig
       - uses: Swatinem/rust-cache@v2
@@ -33,4 +33,5 @@ jobs:
         run: echo "zip=$(scripts/build-app.sh stable | tail -1)" >> "$GITHUB_OUTPUT"
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" "${{ steps.build.outputs.zip }}" --title "$GITHUB_REF_NAME" --verify-tag
+        # アプリの zip と、エンジンだけの tar.gz（darwin-aarch64・linux-x86_64・linux-aarch64）。
+        run: gh release create "$GITHUB_REF_NAME" "${{ steps.build.outputs.zip }}" dist/amonhen-*.tar.gz --title "$GITHUB_REF_NAME" --verify-tag

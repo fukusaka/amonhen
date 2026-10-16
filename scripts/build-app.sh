@@ -25,22 +25,22 @@ esac
 build_number=$(echo "$version" | sed -E 's/-snapshot\.([0-9]+).*/.\1/')
 
 scripts/build-core.sh
-scripts/build-linux-daemon.sh
+# エンジン（3 つの OS と CPU）と、リリースに載せる tar.gz。
+scripts/build-engine.sh "$version"
 (cd apps/macos && swift build -c release --product AmonHen)
 
 app="dist/$name.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp apps/macos/.build/release/AmonHen "$app/Contents/MacOS/AmonHen"
-# daemon 越しに開くときに起動する（`daemon:` の場所）。
-cp target/release/amonhend "$app/Contents/MacOS/amonhend"
-# 端末から使う CLI（PATH に通すには scripts/install.sh がリンクを作る）。ファイル名は大文字と小文字を区別しない
-# ので、MacOS には置けない（AmonHen を上書きする）。
+# エンジン（CLI と daemon を兼ねる）。daemon 越しに開くときの共有の daemon にも、端末の CLI にもなる（PATH に
+# 通すには scripts/install.sh がリンクを作る）。ファイル名は大文字と小文字を区別しないので、MacOS には置けない
+# （AmonHen を上書きする）。
 mkdir -p "$app/Contents/Helpers"
-cp target/release/amonhen "$app/Contents/Helpers/amonhen"
-# SSH 先に送り込む amonhend（Linux 用。SSH 先が macOS なら、上の amonhend を送る）。
-mkdir -p "$app/Contents/Resources/daemons"
-cp dist/linux/amonhend-linux-* "$app/Contents/Resources/daemons/"
+cp dist/engine/amonhen-darwin-aarch64 "$app/Contents/Helpers/amonhen"
+# SSH 先に送り込むエンジン（SSH 先の OS と CPU に合うもの）。
+mkdir -p "$app/Contents/Resources/engines"
+cp dist/engine/amonhen-* "$app/Contents/Resources/engines/"
 # アイコン（scripts/make-icon.swift で作ったもの）。
 cp "apps/macos/Icons/$icon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -79,9 +79,9 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 中の実行ファイル（amonhend）を先に署名してから、アプリ全体に署名する。
-codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/MacOS/amonhend"
+# 中の実行ファイル（エンジン）を先に署名してから、アプリ全体に署名する。
 codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/Helpers/amonhen"
+codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/Resources/engines/amonhen-darwin-aarch64"
 codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app"
 codesign --verify --strict "$app"
 

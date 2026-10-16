@@ -104,7 +104,7 @@ pub fn run(socket: Option<PathBuf>) -> Result<()> {
         state.connections.fetch_add(1, Ordering::SeqCst);
         std::thread::spawn(move || {
             if let Err(e) = serve_connection(&state, stream) {
-                eprintln!("amonhend: {e}");
+                eprintln!("amonhen: {e}");
             }
             if state.connections.fetch_sub(1, Ordering::SeqCst) == 1 {
                 *state.last_left.lock().unwrap() = Some(Instant::now());
@@ -286,7 +286,7 @@ fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
     } else {
         let backend: Arc<dyn GitBackend> = Arc::new(GixBackend::open(&key)?);
         let watcher = amonhen_watch::Watcher::new(backend.paths(), move |changes| notify_all(changes.0))
-            .map_err(|e| eprintln!("amonhend: {key} を監視できない: {e}"))
+            .map_err(|e| eprintln!("amonhen: {key} を監視できない: {e}"))
             .ok();
         (backend, None, watcher)
     };
@@ -320,21 +320,21 @@ fn connect_ssh(location: &str) -> Result<Arc<amonhen_remote::Connection>> {
     ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)
 }
 
-/// SSH 先に送る `amonhend-<os>-<arch>` の置き場所: `.app` なら `Contents/Resources/daemons`、開発中ならリポジトリの
-/// `dist/linux`。
+/// SSH 先に送るエンジン（`amonhen-<os>-<arch>`）の置き場所: `AMONHEN_ENGINES`、`.app` なら
+/// `Contents/Resources/engines`、開発中ならリポジトリの `dist/engine`（`scripts/build-engine.sh` が作る）。
 fn daemons_dir(exe: &Path) -> PathBuf {
-    if let Some(dir) = std::env::var_os("AMONHEN_DAEMONS") {
+    if let Some(dir) = std::env::var_os("AMONHEN_ENGINES") {
         return PathBuf::from(dir);
     }
     let resolved = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
-    if let Some(bundled) = resolved.parent().map(|d| d.join("../Resources/daemons")).filter(|d| d.is_dir()) {
+    if let Some(bundled) = resolved.parent().map(|d| d.join("../Resources/engines")).filter(|d| d.is_dir()) {
         return bundled;
     }
     resolved
         .ancestors()
-        .map(|d| d.join("dist/linux"))
+        .map(|d| d.join("dist/engine"))
         .find(|d| d.is_dir())
-        .unwrap_or_else(|| PathBuf::from("dist/linux"))
+        .unwrap_or_else(|| PathBuf::from("dist/engine"))
 }
 
 /// daemon のコアで、つないだ側を手伝う。

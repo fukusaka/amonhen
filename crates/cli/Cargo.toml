@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 amonhen-backend-cli.workspace = true
 amonhen-core.workspace = true
+amonhen-daemon.workspace = true
 amonhen-front.workspace = true
 amonhen-layout.workspace = true
 amonhen-model.workspace = true

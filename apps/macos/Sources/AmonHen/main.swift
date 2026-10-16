@@ -1,25 +1,25 @@
 import AmonhenKit
 import AppKit
 
-/// daemon 越しに開くときに起動する `amonhend`。アプリの中（Contents/MacOS）にあればそれを、開発中は
-/// リポジトリの target/release のものを使う。`AMONHEN_DAEMON` で差し替えられる。
+/// daemon 越しに開くときに起動するエンジン（`amonhen`。CLI と daemon を兼ねる）。アプリの中（Contents/Helpers）に
+/// あればそれを、開発中はリポジトリの target/release のものを使う。`AMONHEN_DAEMON` で差し替えられる。
 enum Daemon {
     static var path: String {
         if let override = ProcessInfo.processInfo.environment["AMONHEN_DAEMON"] { return override }
-        if let bundled = Bundle.main.url(forAuxiliaryExecutable: "amonhend") { return bundled.path }
-        return developmentFile("target/release/amonhend") ?? "amonhend"
+        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/amonhen").path
+        if FileManager.default.isExecutableFile(atPath: helper) { return helper }
+        return developmentFile("target/release/amonhen") ?? "amonhen"
     }
 
-    /// SSH 先に送り込む `amonhend-<os>-<arch>` の置き場所（アプリの Resources/daemons、開発中は dist/linux）。
+    /// SSH 先に送り込むエンジン（`amonhen-<os>-<arch>`）の置き場所（アプリの Resources/engines、開発中は dist/engine）。
     static var bundledDirectory: String {
-        if let resources = Bundle.main.resourceURL?.appendingPathComponent("daemons"),
+        if let resources = Bundle.main.resourceURL?.appendingPathComponent("engines"),
            FileManager.default.fileExists(atPath: resources.path) {
             return resources.path
         }
-        return developmentFile("dist/linux") ?? ""
+        return developmentFile("dist/engine") ?? ""
     }
 
-    /// 開発中: 実行ファイルの場所から上へ辿り、リポジトリの中の `relative` を探す。
     private static func developmentFile(_ relative: String) -> String? {
         var dir = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
         while dir.path != "/" {

@@ -145,7 +145,7 @@ fn sends_the_daemon_once_and_reuses_it() {
     std::fs::create_dir(&bundled).unwrap();
     std::fs::copy(
         env!("CARGO_BIN_EXE_amonhend"),
-        bundled.join(format!("amonhend-{}", ssh::local_platform())),
+        bundled.join(format!("amonhen-{}", ssh::local_platform())),
     )
     .unwrap();
     let daemons = ssh::Daemons {
@@ -351,14 +351,14 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     let ssh_program = fake_ssh(tmp.path(), &remote_home);
     let bundled = tmp.path().join("daemons");
     std::fs::create_dir(&bundled).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bundled.join(format!("amonhend-{}", ssh::local_platform()))).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bundled.join(format!("amonhen-{}", ssh::local_platform()))).unwrap();
     let socket = tmp.path().join("d.sock");
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
         .arg("--serve")
         .arg(&socket)
         .env("HOME", &local_home)
         .env("AMONHEN_SSH", &ssh_program)
-        .env("AMONHEN_DAEMONS", &bundled)
+        .env("AMONHEN_ENGINES", &bundled)
         .spawn()
         .unwrap();
     let connect = |location: &str| {

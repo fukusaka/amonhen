@@ -25,7 +25,7 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
         with:
-          # SSH 先に送り込む Linux 用の amonhend（musl で静的リンク、リンクは zig）。
+          # Linux 用のエンジン（musl で静的リンク、リンクは zig）。
           targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
       - run: brew install zig
       - uses: Swatinem/rust-cache@v2
@@ -39,6 +39,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete snapshot --yes --cleanup-tag || true
-          gh release create snapshot "${{ steps.build.outputs.zip }}" --prerelease \
+          gh release create snapshot "${{ steps.build.outputs.zip }}" dist/amonhen-*.tar.gz --prerelease \
             --target "$GITHUB_SHA" --title "Snapshot ${{ steps.build.outputs.version }}" \
             --notes "main の最新（${{ steps.build.outputs.version }}）。scripts/install.sh snapshot で入れられる。"
