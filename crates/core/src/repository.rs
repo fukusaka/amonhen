@@ -45,6 +45,40 @@ pub struct WorkingDiff {
     pub view: DiffView,
 }
 
+/// 2 つ選んだときの差分の取り方。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PairMode {
+    /// 古いほうから新しいほうまで（A..B）。
+    #[default]
+    Forward,
+    /// 新しいほうから古いほうまで（向きを入れ替える）。
+    Reverse,
+    /// 共通の祖先から新しいほうまで（A...B。新しいほうの側で変わったことだけ）。
+    MergeBase,
+}
+
+/// `a` と `b`（History の行）の共通の祖先のうち、一番新しいもの（行の小さいもの）。行はトポロジカル順で、親は
+/// 子より後ろにあるので、それぞれの祖先を前から順に印を付ければよい。
+pub fn merge_base(graph: &CommitGraph, a: u32, b: u32) -> Option<u32> {
+    let n = graph.len();
+    let ancestors = |start: u32| {
+        let mut mark = vec![false; n];
+        mark[start as usize] = true;
+        for r in start as usize..n {
+            if mark[r] {
+                for &p in graph.parents(r) {
+                    mark[p as usize] = true;
+                }
+            }
+        }
+        mark
+    };
+    let (ma, mb) = (ancestors(a), ancestors(b));
+    (a.min(b) as usize..n)
+        .find(|&r| ma[r] && mb[r])
+        .map(|r| r as u32)
+}
+
 /// History で選んだ複数のコミットの差分の見せ方（`Repository::selection_diff`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Selection {
@@ -462,9 +496,20 @@ impl Repository {
         &self,
         snapshot: &HistorySnapshot,
         rows: &[u32],
+        pair: PairMode,
     ) -> Result<(Selection, diff::StackedDiff)> {
         let selection = Selection::of(&snapshot.graph, rows)?;
         let stacked = match &selection {
+            Selection::Pair { from, to } if pair == PairMode::Reverse => {
+                self.stacked_diff(&self.backend.changes_between(Some(to), from)?)?
+            }
+            Selection::Pair { to, .. } if pair == PairMode::MergeBase => {
+                let mut sorted = rows.to_vec();
+                sorted.sort_unstable();
+                let base = merge_base(&snapshot.graph, sorted[0], sorted[1])
+                    .map(|r| snapshot.graph.ids()[r as usize]);
+                self.stacked_diff(&self.backend.changes_between(base.as_ref(), to)?)?
+            }
             Selection::Range { base, tip, .. } => {
                 self.stacked_diff(&self.backend.changes_between(base.as_ref(), tip)?)?
             }
@@ -1294,23 +1339,78 @@ mod tests {
             |d: &diff::StackedDiff| d.files.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>();
 
         // 続く c2..c4 は、c1 から c4 までの差分。
-        let (selection, stacked) = repo.selection_diff(&history, &[2, 0, 1]).unwrap();
+        let (selection, stacked) = repo
+            .selection_diff(&history, &[2, 0, 1], PairMode::Forward)
+            .unwrap();
         assert!(matches!(selection, Selection::Range { count: 3, .. }));
         assert_eq!(paths(&stacked), ["a.txt", "b.txt"]);
         let (_, a) = &stacked.files[0];
         assert_eq!((a.added, a.removed), (1, 1));
 
         // とびとびの 2 つ（c4 と c2）は、c2 から c4 まで。
-        let (selection, stacked) = repo.selection_diff(&history, &[0, 2]).unwrap();
+        let (selection, stacked) = repo
+            .selection_diff(&history, &[0, 2], PairMode::Forward)
+            .unwrap();
         assert!(matches!(selection, Selection::Pair { .. }));
         assert_eq!(paths(&stacked), ["a.txt", "b.txt"]);
 
         // とびとびの 3 つ（c4・c2・c1）は、コミットごとの差分をパス順・古い順に。
-        let (selection, stacked) = repo.selection_diff(&history, &[0, 2, 3]).unwrap();
+        let (selection, stacked) = repo
+            .selection_diff(&history, &[0, 2, 3], PairMode::Forward)
+            .unwrap();
         assert!(matches!(selection, Selection::Each(ref ids) if ids.len() == 3));
         let names = paths(&stacked);
         assert_eq!(names.len(), 3);
         assert!(names.iter().all(|n| n.starts_with("a.txt — ")));
+    }
+
+    #[test]
+    fn diffs_a_pair_reversed_or_from_the_merge_base() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "base"]);
+        git(dir, &["checkout", "-q", "-b", "topic"]);
+        std::fs::write(dir.join("t.txt"), "t\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "topic"]);
+        git(dir, &["checkout", "-q", "main"]);
+        std::fs::write(dir.join("m.txt"), "m\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "main"]);
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        let history = repo.load_history().unwrap();
+        let row = |subject: &str| {
+            let out = Command::new("git")
+                .args(["rev-parse", subject])
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            let oid = Oid::from_hex(String::from_utf8(out.stdout).unwrap().trim()).unwrap();
+            history.row_of(&oid).unwrap()
+        };
+        let (main, topic) = (row("main"), row("topic"));
+        let paths = |mode| {
+            let (_, s) = repo.selection_diff(&history, &[main, topic], mode).unwrap();
+            s.files
+                .iter()
+                .map(|(p, d)| (p.clone(), d.added, d.removed))
+                .collect::<Vec<_>>()
+        };
+        // 古いほうから新しいほう: 片方は足し、片方は消す。
+        assert_eq!(paths(PairMode::Forward).len(), 2);
+        // 向きを入れ替えると、足すと消すが入れ替わる。
+        let (f, r) = (paths(PairMode::Forward), paths(PairMode::Reverse));
+        assert_eq!(
+            f.iter().map(|x| (x.1, x.2)).collect::<Vec<_>>(),
+            r.iter().map(|x| (x.2, x.1)).collect::<Vec<_>>()
+        );
+        // 共通の祖先からは、新しいほうの側の変更だけ。
+        let newer = if main < topic { "m.txt" } else { "t.txt" };
+        assert_eq!(paths(PairMode::MergeBase), [(newer.to_owned(), 1, 0)]);
+        assert_eq!(merge_base(&history.graph, main, topic), Some(row("main~1")));
     }
 
     #[test]

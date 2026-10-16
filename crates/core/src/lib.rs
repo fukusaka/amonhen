@@ -15,7 +15,7 @@ pub mod undo;
 pub mod words;
 
 pub use repository::{
-    HistorySnapshot, RefsSnapshot, Repository, Selection, StatusSnapshot, WorkingDiff,
+    HistorySnapshot, PairMode, RefsSnapshot, Repository, Selection, StatusSnapshot, WorkingDiff,
 };
 
 /// Activity の記録（git の起動とコマンドの実行、古い順）の JSON の配列。
