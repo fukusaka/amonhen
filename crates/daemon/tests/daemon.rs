@@ -132,14 +132,22 @@ exec env -i HOME='{0}' PATH='{0}/bin:/usr/bin:/bin' sh -c "$*"
 /// SSH 先のエンジンの置き場所（`~/.local/share/amonhen/engine`）にあるもの。
 fn engines(home: &Path) -> Vec<String> {
     let mut names: Vec<String> = std::fs::read_dir(home.join(".local/share/amonhen/engine"))
-        .map(|d| d.map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect())
+        .map(|d| {
+            d.map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+                .collect()
+        })
         .unwrap_or_default();
     names.sort();
     names
 }
 
 fn touch_old(path: &Path) {
-    let ok = Command::new("touch").args(["-t", "202001010000"]).arg(path).status().unwrap().success();
+    let ok = Command::new("touch")
+        .args(["-t", "202001010000"])
+        .arg(path)
+        .status()
+        .unwrap()
+        .success();
     assert!(ok);
 }
 
@@ -159,8 +167,17 @@ fn provisions_the_engine_on_ssh_hosts() {
     // 送り込むエンジンの置き場所。手元の OS 向けに、テストで作ったものを置く。
     let bundled = tmp.path().join("engines");
     std::fs::create_dir(&bundled).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bundled.join(format!("amonhen-{}", ssh::local_platform()))).unwrap();
-    let daemons = ssh::Daemons { dir: bundled.clone(), local: None, remote_engine: None, push: true };
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_amonhend"),
+        bundled.join(format!("amonhen-{}", ssh::local_platform())),
+    )
+    .unwrap();
+    let daemons = ssh::Daemons {
+        dir: bundled.clone(),
+        local: None,
+        remote_engine: None,
+        push: true,
+    };
     let target = ssh::Target::parse(&format!("ssh://dev{}", repo_dir.display())).unwrap();
     let open = |daemons: &ssh::Daemons| -> amonhen_model::Result<String> {
         let conn = ssh::connect(ssh_program, &target, daemons)?;
@@ -175,7 +192,10 @@ fn provisions_the_engine_on_ssh_hosts() {
     assert!(engine.contains("今回送った"), "{engine}");
     let sent = engines(&home);
     assert_eq!(sent.len(), 1, "{sent:?}");
-    let binary = home.join(".local/share/amonhen/engine").join(&sent[0]).join("amonhen");
+    let binary = home
+        .join(".local/share/amonhen/engine")
+        .join(&sent[0])
+        .join("amonhen");
     let first = std::fs::metadata(&binary).unwrap().modified().unwrap();
 
     // ほかのマシンが最近送った版・30 日使われていない版・前の置き場所の古い daemon・書きかけを置いておく。
@@ -197,8 +217,14 @@ fn provisions_the_engine_on_ssh_hosts() {
     // 2 回目: 送らずに、置いてあるものを使う。最近使われたほかの版は残し、使われていないものだけを片付ける。
     let engine = open(&daemons).unwrap();
     assert!(engine.contains("前に送ったもの"), "{engine}");
-    assert_eq!(std::fs::metadata(&binary).unwrap().modified().unwrap(), first);
-    assert_eq!(engines(&home), ["0000000000000000".to_owned(), sent[0].clone()]);
+    assert_eq!(
+        std::fs::metadata(&binary).unwrap().modified().unwrap(),
+        first
+    );
+    assert_eq!(
+        engines(&home),
+        ["0000000000000000".to_owned(), sent[0].clone()]
+    );
     assert!(!stale_tmp.exists() && !legacy.exists());
 
     // SSH 先の PATH に通信の形が合う amonhen があれば、それを使う。
@@ -206,12 +232,20 @@ fn provisions_the_engine_on_ssh_hosts() {
     std::fs::create_dir(&bin).unwrap();
     std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bin.join("amonhen")).unwrap();
     let engine = open(&daemons).unwrap();
-    assert!(engine.contains("SSH 先に入っているもの") && engine.contains("/bin/amonhen"), "{engine}");
+    assert!(
+        engine.contains("SSH 先に入っているもの") && engine.contains("/bin/amonhen"),
+        "{engine}"
+    );
     std::fs::remove_dir_all(&bin).unwrap();
 
     // 送り込みを止めていて、使えるものがなければ、理由を返す。
     std::fs::remove_dir_all(&root).unwrap();
-    let no_push = ssh::Daemons { dir: bundled, local: None, remote_engine: None, push: false };
+    let no_push = ssh::Daemons {
+        dir: bundled,
+        local: None,
+        remote_engine: None,
+        push: false,
+    };
     let err = open(&no_push).unwrap_err().to_string();
     assert!(err.contains("使えるエンジンがありません"), "{err}");
     assert!(engines(&home).is_empty());
@@ -242,7 +276,9 @@ fn shares_one_daemon_between_clients() {
         let stream = loop {
             match std::os::unix::net::UnixStream::connect(&socket) {
                 Ok(s) => break s,
-                Err(_) if started.elapsed() < Duration::from_secs(5) => std::thread::sleep(Duration::from_millis(20)),
+                Err(_) if started.elapsed() < Duration::from_secs(5) => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
                 Err(e) => panic!("つなげない: {e}"),
             }
         };
@@ -266,13 +302,19 @@ fn shares_one_daemon_between_clients() {
     assert_eq!(ra.load_history().unwrap().graph.len(), 1);
     assert_eq!(rb.load_history().unwrap().graph.len(), 1);
     // History は daemon が 1 つだけ作ってファイルに書き、どちらもそれを読む。
-    let caches: Vec<_> = walk(&home).into_iter().filter(|p| p.to_string_lossy().contains("history-")).collect();
+    let caches: Vec<_> = walk(&home)
+        .into_iter()
+        .filter(|p| p.to_string_lossy().contains("history-"))
+        .collect();
     assert_eq!(caches.len(), 1, "{caches:?}");
 
     git(&dir, &["commit", "-q", "--allow-empty", "-m", "second"]);
     let mut heard = std::collections::HashSet::new();
     while heard.len() < 2 {
-        heard.insert(rx.recv_timeout(Duration::from_secs(10)).expect("両方に知らせが来ない"));
+        heard.insert(
+            rx.recv_timeout(Duration::from_secs(10))
+                .expect("両方に知らせが来ない"),
+        );
     }
     assert_eq!(rb.load_history().unwrap().graph.len(), 2);
 
@@ -281,38 +323,66 @@ fn shares_one_daemon_between_clients() {
     let rebuilt = ra.rebuild_history().unwrap();
     assert_eq!(rebuilt.graph, before.graph);
     assert!(rebuilt.generation > before.generation);
-    let caches: Vec<_> = walk(&home).into_iter().filter(|p| p.to_string_lossy().contains("history-")).collect();
+    let caches: Vec<_> = walk(&home)
+        .into_iter()
+        .filter(|p| p.to_string_lossy().contains("history-"))
+        .collect();
     assert_eq!(caches.len(), 1, "{caches:?}");
     assert_eq!(rb.load_history().unwrap().graph.len(), 2);
 
     // 命令は daemon のコアで実行される（ブランチができる）。
-    let reply = ra.run_json(r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#);
+    let reply =
+        ra.run_json(r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#);
     assert!(reply.contains(r#""ok":true"#), "{reply}");
-    let out = Command::new("git").args(["branch", "--list", "topic"]).current_dir(&dir).output().unwrap();
+    let out = Command::new("git")
+        .args(["branch", "--list", "topic"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     assert!(String::from_utf8_lossy(&out.stdout).contains("topic"));
 
     // コミットは daemon のコアで行い、Undo の記録も daemon の側に書く（daemon のコアの Undo で戻せる）。
     std::fs::write(dir.join("c.txt"), "c\n").unwrap();
     rb.stage(&["c.txt"]).unwrap();
     rb.commit("from b", false).unwrap();
-    let log = Command::new("git").args(["log", "-1", "--format=%s"]).current_dir(&dir).output().unwrap();
+    let log = Command::new("git")
+        .args(["log", "-1", "--format=%s"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
     assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "from b");
     let peek = ra.run_json(r#"{"op":"undoPeek"}"#);
-    assert!(peek.contains("Commit"), "a からも daemon の記録が見える: {peek}");
+    assert!(
+        peek.contains("Commit"),
+        "a からも daemon の記録が見える: {peek}"
+    );
 
     // 変更を捨てる操作も daemon のコアで行い、daemon の Undo で戻せる。
     std::fs::write(dir.join("c.txt"), "changed\n").unwrap();
     let status = rb.load_status().unwrap();
-    let entry = status.status.entries.iter().find(|e| e.path == "c.txt").unwrap();
-    let diff = rb.working_diff(entry, false, &amonhen_projection::FrontendProfile::MACOS).unwrap();
+    let entry = status
+        .status
+        .entries
+        .iter()
+        .find(|e| e.path == "c.txt")
+        .unwrap();
+    let diff = rb
+        .working_diff(entry, false, &amonhen_projection::FrontendProfile::MACOS)
+        .unwrap();
     let removed_and_added: Vec<usize> = (0..diff.file.lines.len())
-        .filter(|&r| diff.file.lines[r].kind == amonhen_layout::DiffRow::ADDED || diff.file.lines[r].kind == amonhen_layout::DiffRow::REMOVED)
+        .filter(|&r| {
+            diff.file.lines[r].kind == amonhen_layout::DiffRow::ADDED
+                || diff.file.lines[r].kind == amonhen_layout::DiffRow::REMOVED
+        })
         .collect();
     rb.discard_rows(&diff, &removed_and_added).unwrap();
     assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "c\n");
     let undo = ra.run_json(r#"{"op":"undo"}"#);
     assert!(undo.contains("Discard lines in c.txt"), "{undo}");
-    assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "changed\n");
+    assert_eq!(
+        std::fs::read_to_string(dir.join("c.txt")).unwrap(),
+        "changed\n"
+    );
     git(&dir, &["checkout", "--", "c.txt"]);
 
     // daemon 越しの差分は、手元で計算したものと同じになる。
@@ -323,7 +393,9 @@ fn shares_one_daemon_between_clients() {
     let head = ra.load_history().unwrap().graph.ids()[0];
     let changes = ra.commit_changes(&head).unwrap();
     let remote = ra.stacked_diff(&changes).unwrap();
-    let local = Repository::new(amonhen_backend_gix::GixBackend::open(&dir).unwrap()).stacked_diff(&changes).unwrap();
+    let local = Repository::new(amonhen_backend_gix::GixBackend::open(&dir).unwrap())
+        .stacked_diff(&changes)
+        .unwrap();
     assert_eq!(remote.files.len(), 2);
     for ((rp, rd), (lp, ld)) in remote.files.iter().zip(&local.files) {
         assert_eq!(rp, lp);
@@ -333,11 +405,18 @@ fn shares_one_daemon_between_clients() {
 
     // 開けないパスは、最初の要求に理由が返る。
     let bad = connect("/nonexistent-amonhen");
-    let error = RemoteBackend::connect(bad).err().expect("開けないはず").to_string();
+    let error = RemoteBackend::connect(bad)
+        .err()
+        .expect("開けないはず")
+        .to_string();
     assert!(error.contains("開けない"), "{error}");
 
     // 2 つ目の daemon は、動いているものに任せてすぐ終わる。
-    let second = Command::new(env!("CARGO_BIN_EXE_amonhend")).arg("--serve").arg(&socket).status().unwrap();
+    let second = Command::new(env!("CARGO_BIN_EXE_amonhend"))
+        .arg("--serve")
+        .arg(&socket)
+        .status()
+        .unwrap();
     assert!(second.success());
     let _ = daemon.kill();
     let _ = daemon.wait();
@@ -374,7 +453,11 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     let ssh_program = fake_ssh(tmp.path(), &remote_home);
     let bundled = tmp.path().join("daemons");
     std::fs::create_dir(&bundled).unwrap();
-    std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bundled.join(format!("amonhen-{}", ssh::local_platform()))).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_amonhend"),
+        bundled.join(format!("amonhen-{}", ssh::local_platform())),
+    )
+    .unwrap();
     let socket = tmp.path().join("d.sock");
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
         .arg("--serve")
@@ -389,7 +472,9 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
         let stream = loop {
             match std::os::unix::net::UnixStream::connect(&socket) {
                 Ok(s) => break s,
-                Err(_) if started.elapsed() < Duration::from_secs(5) => std::thread::sleep(Duration::from_millis(20)),
+                Err(_) if started.elapsed() < Duration::from_secs(5) => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
                 Err(e) => panic!("つなげない: {e}"),
             }
         };
@@ -408,9 +493,13 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     assert_eq!(engines(&remote_home).len(), 1);
 
     // 命令は手元の daemon のコアから SSH 先の git に届き、History にも出る。
-    let reply = a.run_json(r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#);
+    let reply =
+        a.run_json(r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#);
     assert!(reply.contains(r#""ok":true"#), "{reply}");
-    git(&repo_dir, &["commit", "-q", "--allow-empty", "-m", "second"]);
+    git(
+        &repo_dir,
+        &["commit", "-q", "--allow-empty", "-m", "second"],
+    );
     assert_eq!(b.load_history().unwrap().graph.len(), 2);
 
     // daemon の様子に、SSH 先のつながりが出る。
@@ -418,8 +507,14 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     amonhen_remote::local::write_preamble(&mut status, "\0status").unwrap();
     let frame = amonhen_remote::frame::read(&mut status).unwrap().unwrap();
     let text = String::from_utf8_lossy(&frame.payload).into_owned();
-    assert!(text.contains(r#""ssh":true"#) && text.contains("ssh://dev"), "{text}");
-    assert!(text.contains("今回送った") || text.contains("前に送ったもの"), "SSH 先のエンジンが出る: {text}");
+    assert!(
+        text.contains(r#""ssh":true"#) && text.contains("ssh://dev"),
+        "{text}"
+    );
+    assert!(
+        text.contains("今回送った") || text.contains("前に送ったもの"),
+        "SSH 先のエンジンが出る: {text}"
+    );
     let _ = daemon.kill();
     let _ = daemon.wait();
 }

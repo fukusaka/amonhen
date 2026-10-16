@@ -63,7 +63,11 @@ struct Line {
 
 impl Line {
     fn new(width: usize) -> Self {
-        Self { dirs: vec![0; width], glyph: vec![None; width], color: vec![None; width] }
+        Self {
+            dirs: vec![0; width],
+            glyph: vec![None; width],
+            color: vec![None; width],
+        }
     }
 
     fn add(&mut self, x: usize, dirs: u8, color: u8) {
@@ -110,7 +114,10 @@ impl Rows {
         Self {
             subjects: (0..numbers.len()).map(|r| string(r * 4)).collect(),
             authors: (0..numbers.len()).map(|r| string(r * 4 + 2)).collect(),
-            parents: starts.windows(2).map(|w| all_parents[w[0] as usize..w[1] as usize].to_vec()).collect(),
+            parents: starts
+                .windows(2)
+                .map(|w| all_parents[w[0] as usize..w[1] as usize].to_vec())
+                .collect(),
             nodes: reply.items("nodes"),
             ids: reply.items("ids"),
             times: reply.items("times"),
@@ -119,7 +126,6 @@ impl Rows {
             numbers,
         }
     }
-
 }
 
 /// ブランチ・タグの名前をコミットごとに（窓口の `refs` の答えから）。
@@ -133,7 +139,10 @@ fn labels(refs: &Value) -> HashMap<String, Vec<(String, &'static str)>> {
             _ => continue,
         };
         if let (Some(target), Some(name)) = (e["target"].as_str(), e["name"].as_str()) {
-            labels.entry(target.to_owned()).or_default().push((name.to_owned(), kind));
+            labels
+                .entry(target.to_owned())
+                .or_default()
+                .push((name.to_owned(), kind));
         }
     }
     labels
@@ -146,7 +155,11 @@ pub fn render(rows: &Rows, refs: &Value, show_graph: bool, style: &Style) -> Str
     }
     let labels = labels(refs);
     let head = refs["headBranch"].as_str();
-    let graph = if show_graph { Some(Graph::new(rows)) } else { None };
+    let graph = if show_graph {
+        Some(Graph::new(rows))
+    } else {
+        None
+    };
 
     for (i, &row) in rows.numbers.iter().enumerate() {
         let mut line = String::new();
@@ -188,12 +201,20 @@ pub fn render(rows: &Rows, refs: &Value, show_graph: bool, style: &Style) -> Str
         if hidden > 0 {
             tail.push_str(&format!("  ⊕ {hidden} 件を折りたたみ"));
         }
-        let meta = format!("  — {}, {}", rows.authors[i], crate::term::local_time(rows.times[i], false));
+        let meta = format!(
+            "  — {}, {}",
+            rows.authors[i],
+            crate::term::local_time(rows.times[i], false)
+        );
         // 幅を超えるなら、件名を切り詰める（作者・日付は残す）。
         if let Some(width) = style.width {
             let room = width.saturating_sub(visible + meta.chars().count());
             if tail.chars().count() > room {
-                tail = tail.chars().take(room.saturating_sub(1)).collect::<String>() + "…";
+                tail = tail
+                    .chars()
+                    .take(room.saturating_sub(1))
+                    .collect::<String>()
+                    + "…";
             }
         }
         line.push_str(&tail);
@@ -265,7 +286,12 @@ impl<'a> Graph<'a> {
                 through.insert(e.lane_start);
             }
         }
-        let max_lane = wide.iter().chain(through.iter()).copied().max().unwrap_or(0);
+        let max_lane = wide
+            .iter()
+            .chain(through.iter())
+            .copied()
+            .max()
+            .unwrap_or(0);
         let mut column = HashMap::new();
         let mut thin = std::collections::HashSet::new();
         let mut col = 0;
@@ -284,7 +310,12 @@ impl<'a> Graph<'a> {
                 thin.insert(lane);
             }
         }
-        Self { edges, column, thin, width: col * 2 }
+        Self {
+            edges,
+            column,
+            thin,
+            width: col * 2,
+        }
     }
 
     fn x(&self, lane: u16) -> usize {
@@ -300,7 +331,11 @@ impl<'a> Graph<'a> {
         for e in self.edges {
             if e.row_start <= row && row <= e.row_end {
                 // 曲線は、端の行ではそのレーンの縦線として出す（向きを変えるのはつなぎの行）。
-                let lane = if e.lane_start == e.lane_end || e.row_start == row { e.lane_start } else { e.lane_end };
+                let lane = if e.lane_start == e.lane_end || e.row_start == row {
+                    e.lane_start
+                } else {
+                    e.lane_end
+                };
                 line.add(self.x(lane), UP | DOWN, Self::color(e));
                 if self.thin.contains(&lane) {
                     line.glyph[self.x(lane)] = Some('┆');

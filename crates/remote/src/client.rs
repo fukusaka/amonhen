@@ -452,13 +452,19 @@ impl GitBackend for RemoteBackend {
         if !self.conn.is_local() {
             return Ok(None);
         }
-        let reply: crate::wire::DelegateReply = self.conn.call(&Request::Delegate(Bytes(request.to_vec())))?;
+        let reply: crate::wire::DelegateReply = self
+            .conn
+            .call(&Request::Delegate(Bytes(request.to_vec())))?;
         let parts = match &reply.region {
             #[cfg(unix)]
             Some(name) => crate::shm::parts(crate::shm::open(name)?, &reply.parts)?,
             #[cfg(not(unix))]
             Some(_) => return Err("共有メモリは Unix だけです".into()),
-            None => reply.inline.into_iter().map(|b| amonhen_layout::Blob::from(b.0)).collect(),
+            None => reply
+                .inline
+                .into_iter()
+                .map(|b| amonhen_layout::Blob::from(b.0))
+                .collect(),
         };
         Ok(Some(amonhen_model::Delegated {
             reply: reply.reply.0,
@@ -811,7 +817,11 @@ impl Operations for RemoteOperations {
         self.op(Op::WorkingStats)
     }
 
-    fn ignore_matches(&self, patterns: &[String], limit: usize) -> Result<Vec<(Vec<String>, usize)>> {
+    fn ignore_matches(
+        &self,
+        patterns: &[String],
+        limit: usize,
+    ) -> Result<Vec<(Vec<String>, usize)>> {
         self.op(Op::IgnoreMatches(patterns.to_vec(), limit))
     }
 

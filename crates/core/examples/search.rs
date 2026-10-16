@@ -11,9 +11,16 @@ fn main() -> amonhen_model::Result<()> {
     let path = args.next().unwrap_or_else(|| ".".into());
     let mut queries: Vec<String> = args.collect();
     if queries.is_empty() {
-        queries = ["fix", "xfs", "fix xfs", r#"subject:"use after free""#, "author:torvalds", "3857c2fe"]
-            .map(String::from)
-            .to_vec();
+        queries = [
+            "fix",
+            "xfs",
+            "fix xfs",
+            r#"subject:"use after free""#,
+            "author:torvalds",
+            "3857c2fe",
+        ]
+        .map(String::from)
+        .to_vec();
     }
     let repo = Repository::new(GixBackend::open(&path)?);
     let history = repo.load_history()?;
@@ -33,8 +40,16 @@ fn main() -> amonhen_model::Result<()> {
         let matching = repo.history_matching(&history, &found);
         let filter = t.elapsed().as_secs_f64() * 1000.0;
         let note = if i == 0 { "（索引を作る）" } else { "" };
-        println!("{:<28} 一致だけの History（{} 行）を作る {filter:.1} ms", "", matching.graph.len());
-        println!("{query:<28} {:>8} 件  1 回目 {first:>8.1} ms{note}  2 回目から {:>6.1} ms", found.len(), again[1]);
+        println!(
+            "{:<28} 一致だけの History（{} 行）を作る {filter:.1} ms",
+            "",
+            matching.graph.len()
+        );
+        println!(
+            "{query:<28} {:>8} 件  1 回目 {first:>8.1} ms{note}  2 回目から {:>6.1} ms",
+            found.len(),
+            again[1]
+        );
     }
     Ok(())
 }

@@ -33,7 +33,10 @@ pub struct Reply {
 
 impl Reply {
     pub fn json(json: Value) -> Self {
-        Self { json, data: Vec::new() }
+        Self {
+            json,
+            data: Vec::new(),
+        }
     }
 
     /// フレームの中身: JSON の長さ（u32、LE）、JSON、8 バイト境界まで詰め物、レコード。
@@ -54,7 +57,9 @@ impl Reply {
             .get(..4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
             .ok_or("答えが短すぎる")?;
-        let json = payload.get(4..4 + len).ok_or("答えの JSON が途中で切れている")?;
+        let json = payload
+            .get(4..4 + len)
+            .ok_or("答えの JSON が途中で切れている")?;
         let start = (4 + len).next_multiple_of(8).min(payload.len());
         Ok(Self {
             json: serde_json::from_slice(json)?,
@@ -66,7 +71,10 @@ impl Reply {
     pub fn section(&self, name: &str) -> &[u8] {
         let at = &self.json["data"][name];
         match (at[0].as_u64(), at[1].as_u64()) {
-            (Some(off), Some(len)) => self.data.get(off as usize..(off + len) as usize).unwrap_or(&[]),
+            (Some(off), Some(len)) => self
+                .data
+                .get(off as usize..(off + len) as usize)
+                .unwrap_or(&[]),
             _ => &[],
         }
     }
@@ -83,6 +91,11 @@ impl Reply {
 
     /// `name` の区画を `u32` の列として。
     pub fn u32s(&self, name: &str) -> Vec<u32> {
-        self.section(name).as_chunks::<4>().0.iter().map(|b| u32::from_le_bytes(*b)).collect()
+        self.section(name)
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|b| u32::from_le_bytes(*b))
+            .collect()
     }
 }

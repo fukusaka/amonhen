@@ -653,7 +653,9 @@ impl Repository {
         if !matches!(op_name(json).as_str(), "remoteActivity" | "cancelActivity") {
             match self.delegate(&crate::delegate::Request::Command(json.to_owned())) {
                 Ok(Some((crate::delegate::Reply::Command(reply), _))) => return reply,
-                Ok(Some(_)) => return r#"{"ok":false,"error":"daemon の答えの形が違う"}"#.to_owned(),
+                Ok(Some(_)) => {
+                    return r#"{"ok":false,"error":"daemon の答えの形が違う"}"#.to_owned();
+                }
                 Ok(None) => {}
                 Err(e) => {
                     let response = Response {
@@ -982,7 +984,10 @@ impl Repository {
                 let text = positions
                     .iter()
                     .rev()
-                    .map(|&p| self.commit_message(&chain[p].oid).map(|m| m.trim_end().to_owned()))
+                    .map(|&p| {
+                        self.commit_message(&chain[p].oid)
+                            .map(|m| m.trim_end().to_owned())
+                    })
                     .collect::<Result<Vec<_>>>()?
                     .join("\n\n");
                 Ok(Response {
@@ -1273,11 +1278,15 @@ impl Repository {
                 if !dir.is_empty() {
                     for name in HOOK_NAMES {
                         if let Some(mode) = files.mode(root, &format!("{dir}/{name}"))? {
-                            hooks.push(serde_json::json!({"name": name, "enabled": mode & 0o111 != 0}));
+                            hooks.push(
+                                serde_json::json!({"name": name, "enabled": mode & 0o111 != 0}),
+                            );
                         }
                     }
                 }
-                let attributes = files.read(Root::Workdir, ".gitattributes")?.unwrap_or_default();
+                let attributes = files
+                    .read(Root::Workdir, ".gitattributes")?
+                    .unwrap_or_default();
                 let lfs_patterns: Vec<String> = String::from_utf8_lossy(&attributes)
                     .lines()
                     .filter(|l| l.split_whitespace().any(|a| a == "filter=lfs"))
@@ -1490,11 +1499,33 @@ fn trailer(line: &str) -> Option<(&str, &str)> {
 
 /// git が呼ぶ hook の名前（`git help hooks` の順）。
 const HOOK_NAMES: &[&str] = &[
-    "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit",
-    "prepare-commit-msg", "commit-msg", "post-commit", "pre-rebase", "post-checkout", "post-merge",
-    "pre-push", "pre-receive", "update", "proc-receive", "post-receive", "post-update",
-    "reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite", "sendemail-validate",
-    "fsmonitor-watchman", "p4-changelist", "p4-prepare-changelist", "p4-post-changelist", "p4-pre-submit",
+    "applypatch-msg",
+    "pre-applypatch",
+    "post-applypatch",
+    "pre-commit",
+    "pre-merge-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    "pre-rebase",
+    "post-checkout",
+    "post-merge",
+    "pre-push",
+    "pre-receive",
+    "update",
+    "proc-receive",
+    "post-receive",
+    "post-update",
+    "reference-transaction",
+    "push-to-checkout",
+    "pre-auto-gc",
+    "post-rewrite",
+    "sendemail-validate",
+    "fsmonitor-watchman",
+    "p4-changelist",
+    "p4-prepare-changelist",
+    "p4-post-changelist",
+    "p4-pre-submit",
     "post-index-change",
 ];
 
@@ -1822,20 +1853,31 @@ mod tests {
         commit_file(dir, "t2.txt", "2");
         git(dir, &["switch", "-q", "main"]);
         commit_file(dir, "m.txt", "m");
-        git(dir, &["merge", "-q", "--no-ff", "-m", "merge topic", "topic"]);
+        git(
+            dir,
+            &["merge", "-q", "--no-ff", "-m", "merge topic", "topic"],
+        );
         let merge = git(dir, &["rev-parse", "HEAD"]);
         repo.load_history().unwrap();
         // HEAD は起点（main）にも含まれる。重複しても動くこと。
         let folded = repo.history_folded(None, &[]).unwrap();
         // topic は merge に取り込み済みなので、ブランチが残っていても折りたたむ。
         assert_eq!(folded.graph.len(), 3);
-        let all = repo.history_folded(Some(&[Oid::from_hex(&merge).unwrap()]), &[]).unwrap();
+        let all = repo
+            .history_folded(Some(&[Oid::from_hex(&merge).unwrap()]), &[])
+            .unwrap();
         assert_eq!(all.graph.len(), 3, "merge・m・first だけ");
         let row = all.row_of(&Oid::from_hex(&merge).unwrap()).unwrap() as usize;
         assert_eq!(all.folded[row], 2);
-        assert!(all.layout.nodes()[row].flags & amonhen_layout::Node::MERGE != 0, "折りたたんでも merge");
+        assert!(
+            all.layout.nodes()[row].flags & amonhen_layout::Node::MERGE != 0,
+            "折りたたんでも merge"
+        );
         let opened = repo
-            .history_folded(Some(&[Oid::from_hex(&merge).unwrap()]), &[Oid::from_hex(&merge).unwrap()])
+            .history_folded(
+                Some(&[Oid::from_hex(&merge).unwrap()]),
+                &[Oid::from_hex(&merge).unwrap()],
+            )
             .unwrap();
         assert_eq!(opened.graph.len(), 5);
         assert!(!all.density(4).is_empty());
@@ -1904,12 +1946,25 @@ mod tests {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
         }
-        std::fs::write(dir.join(".gitattributes"), "*.psd filter=lfs diff=lfs merge=lfs -text\n*.txt text\n").unwrap();
+        std::fs::write(
+            dir.join(".gitattributes"),
+            "*.psd filter=lfs diff=lfs merge=lfs -text\n*.txt text\n",
+        )
+        .unwrap();
         let r = run(&repo, r#"{"op":"hooksAndLfs"}"#);
         let hooks = r["info"]["hooks"].as_array().unwrap();
-        assert!(hooks.iter().any(|h| h["name"] == "pre-commit" && h["enabled"] == true), "{r}");
+        assert!(
+            hooks
+                .iter()
+                .any(|h| h["name"] == "pre-commit" && h["enabled"] == true),
+            "{r}"
+        );
         // サンプル（.sample）は数えない。
-        assert!(!hooks.iter().any(|h| h["name"].as_str().unwrap().ends_with(".sample")));
+        assert!(
+            !hooks
+                .iter()
+                .any(|h| h["name"].as_str().unwrap().ends_with(".sample"))
+        );
         assert_eq!(r["info"]["lfsPatterns"], serde_json::json!(["*.psd"]));
     }
 

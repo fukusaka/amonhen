@@ -122,17 +122,23 @@ fn restrict(socket: &Path) {
 
 /// だれもつないでいない状態が続いたら、ソケットを消して終わる。
 fn watch_idle(state: Arc<State>, socket: PathBuf) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(Duration::from_secs(5));
-        // だれもつないでいない状態が続いたリポジトリを落とす（ここが最後の参照なら、監視も止まる）。
-        state.repos.lock().unwrap().retain(|_, (shared, used)| {
-            Arc::strong_count(shared) > 1 || used.elapsed() <= IDLE
-        });
-        let idle = state.connections.load(Ordering::SeqCst) == 0
-            && state.last_left.lock().unwrap().is_some_and(|t| t.elapsed() > IDLE);
-        if idle {
-            let _ = std::fs::remove_file(&socket);
-            std::process::exit(0);
+    std::thread::spawn(move || {
+        loop {
+            std::thread::sleep(Duration::from_secs(5));
+            // だれもつないでいない状態が続いたリポジトリを落とす（ここが最後の参照なら、監視も止まる）。
+            state.repos.lock().unwrap().retain(|_, (shared, used)| {
+                Arc::strong_count(shared) > 1 || used.elapsed() <= IDLE
+            });
+            let idle = state.connections.load(Ordering::SeqCst) == 0
+                && state
+                    .last_left
+                    .lock()
+                    .unwrap()
+                    .is_some_and(|t| t.elapsed() > IDLE);
+            if idle {
+                let _ = std::fs::remove_file(&socket);
+                std::process::exit(0);
+            }
         }
     });
 }
@@ -179,14 +185,23 @@ fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
         .with_host(host)
         .with_search_cache(shared.search.clone());
     let id = state.next.fetch_add(1, Ordering::Relaxed);
-    shared.listeners.lock().unwrap().push((id, Box::new(server.notifier())));
+    shared
+        .listeners
+        .lock()
+        .unwrap()
+        .push((id, Box::new(server.notifier())));
     let result = server.run(reader);
     shared.listeners.lock().unwrap().retain(|(i, _)| *i != id);
     result.map_err(Into::into)
 }
 
 /// FE 向けの窓口のやりとり。要求ごとにスレッドで実行し、答えは番号つきで返す（順不同）。
-fn serve_front(state: &State, location: &str, mut reader: BufReader<UnixStream>, writer: BufWriter<UnixStream>) -> Result<()> {
+fn serve_front(
+    state: &State,
+    location: &str,
+    mut reader: BufReader<UnixStream>,
+    writer: BufWriter<UnixStream>,
+) -> Result<()> {
     use amonhen_remote::frame::{self, Kind};
     use std::sync::atomic::AtomicBool;
     let opened = open(state, location).and_then(|shared| Ok((core(&shared)?.clone(), shared)));
@@ -206,7 +221,13 @@ fn serve_front(state: &State, location: &str, mut reader: BufReader<UnixStream>,
         Box::new(move |n| {
             let Notification::Changed(bits) = n;
             let payload = serde_json::json!({ "changes": bits }).to_string();
-            let _ = frame::write_with(&mut *notify_writer.lock().unwrap(), Kind::Notify, 0, payload.as_bytes(), false);
+            let _ = frame::write_with(
+                &mut *notify_writer.lock().unwrap(),
+                Kind::Notify,
+                0,
+                payload.as_bytes(),
+                false,
+            );
         }),
     ));
     let cancels: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> = Arc::default();
@@ -216,16 +237,27 @@ fn serve_front(state: &State, location: &str, mut reader: BufReader<UnixStream>,
                 Kind::Request => {
                     let cancel = Arc::new(AtomicBool::new(false));
                     cancels.lock().unwrap().insert(f.id, cancel.clone());
-                    let (session, writer, cancels) = (session.clone(), writer.clone(), cancels.clone());
+                    let (session, writer, cancels) =
+                        (session.clone(), writer.clone(), cancels.clone());
                     std::thread::spawn(move || {
                         let result = serde_json::from_slice::<serde_json::Value>(&f.payload)
                             .map_err(|e| format!("命令を読めない: {e}").into())
-                            .and_then(|request| session.handle(&request, &|| cancel.load(Ordering::Relaxed)));
+                            .and_then(|request| {
+                                session.handle(&request, &|| cancel.load(Ordering::Relaxed))
+                            });
                         cancels.lock().unwrap().remove(&f.id);
                         let mut out = writer.lock().unwrap();
                         let _ = match result {
-                            Ok(reply) => frame::write_with(&mut *out, Kind::Ok, f.id, &reply.encode(), false),
-                            Err(e) => frame::write_with(&mut *out, Kind::Err, f.id, e.to_string().as_bytes(), false),
+                            Ok(reply) => {
+                                frame::write_with(&mut *out, Kind::Ok, f.id, &reply.encode(), false)
+                            }
+                            Err(e) => frame::write_with(
+                                &mut *out,
+                                Kind::Err,
+                                f.id,
+                                e.to_string().as_bytes(),
+                                false,
+                            ),
                         };
                     });
                 }
@@ -243,7 +275,11 @@ fn serve_front(state: &State, location: &str, mut reader: BufReader<UnixStream>,
     result
 }
 
-fn reply_error(reader: &mut BufReader<UnixStream>, mut writer: BufWriter<UnixStream>, message: &str) {
+fn reply_error(
+    reader: &mut BufReader<UnixStream>,
+    mut writer: BufWriter<UnixStream>,
+    message: &str,
+) {
     use amonhen_remote::frame::{self, Kind};
     if let Ok(Some(f)) = frame::read(reader) {
         let _ = frame::write_with(&mut writer, Kind::Err, f.id, message.as_bytes(), false);
@@ -282,12 +318,17 @@ fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
             let Notification::Changed(changes) = n;
             notify_all(changes);
         });
-        (Arc::new(amonhen_remote::RemoteBackend::connect(conn.clone())?), Some(conn), None)
+        (
+            Arc::new(amonhen_remote::RemoteBackend::connect(conn.clone())?),
+            Some(conn),
+            None,
+        )
     } else {
         let backend: Arc<dyn GitBackend> = Arc::new(GixBackend::open(&key)?);
-        let watcher = amonhen_watch::Watcher::new(backend.paths(), move |changes| notify_all(changes.0))
-            .map_err(|e| eprintln!("amonhen: {key} を監視できない: {e}"))
-            .ok();
+        let watcher =
+            amonhen_watch::Watcher::new(backend.paths(), move |changes| notify_all(changes.0))
+                .map_err(|e| eprintln!("amonhen: {key} を監視できない: {e}"))
+                .ok();
         (backend, None, watcher)
     };
     let shared = Arc::new(Shared {
@@ -327,7 +368,10 @@ fn daemons_dir(exe: &Path) -> PathBuf {
     let resolved = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
     // `.app` の中か、エンジンの置き場所（`amonhen install` が隣に `engines` を置く）。
     let beside = ["../Resources/engines", "engines"].into_iter();
-    if let Some(bundled) = beside.filter_map(|p| resolved.parent().map(|d| d.join(p))).find(|d| d.is_dir()) {
+    if let Some(bundled) = beside
+        .filter_map(|p| resolved.parent().map(|d| d.join(p)))
+        .find(|d| d.is_dir())
+    {
         return bundled;
     }
     resolved
@@ -358,7 +402,10 @@ fn core(shared: &Shared) -> Result<&Arc<amonhen_core::Repository>> {
     let cache = cache_path(&shared.key).ok_or("History のキャッシュの置き場所がない")?;
     let repo = match &shared.ssh {
         // SSH 先は、同じつながりの上でコアを動かす（SSH を 2 本にしない）。
-        Some(conn) => amonhen_core::Repository::with_cache(amonhen_remote::RemoteBackend::connect(conn.clone())?, cache),
+        Some(conn) => amonhen_core::Repository::with_cache(
+            amonhen_remote::RemoteBackend::connect(conn.clone())?,
+            cache,
+        ),
         None => amonhen_core::Repository::with_cache(GixBackend::open(&shared.key)?, cache),
     };
     repo.load_cached_history();
@@ -373,7 +420,9 @@ fn prepared_history(shared: &Shared) -> Result<String> {
     let _one_at_a_time = shared.history.lock().unwrap();
     let repo = core(shared)?;
     let snapshot = repo.load_history()?;
-    let path = repo.cache_path().ok_or("History のキャッシュの置き場所がない")?;
+    let path = repo
+        .cache_path()
+        .ok_or("History のキャッシュの置き場所がない")?;
     let written = amonhen_core::cache::read(path).ok_or("History のキャッシュを書けない")?;
     if written.tips != snapshot.tips || written.head != snapshot.head {
         return Err("History のキャッシュを書けない（古いまま）".into());
@@ -387,10 +436,15 @@ fn cache_path(key: &str) -> Option<PathBuf> {
     let dir = if cfg!(target_os = "macos") {
         home.join("Library/Caches/io.github.fukusaka.amonhen")
     } else {
-        std::env::var_os("XDG_CACHE_HOME").map_or_else(|| home.join(".cache"), PathBuf::from).join("amonhen")
+        std::env::var_os("XDG_CACHE_HOME")
+            .map_or_else(|| home.join(".cache"), PathBuf::from)
+            .join("amonhen")
     };
     std::fs::create_dir_all(&dir).ok()?;
-    Some(amonhen_core::cache::path_for(&dir, &format!("daemon-history:{key}")))
+    Some(amonhen_core::cache::path_for(
+        &dir,
+        &format!("daemon-history:{key}"),
+    ))
 }
 
 /// daemon の様子（`amonhen daemon status`、Activity の Daemon のタブ）。

@@ -50,15 +50,24 @@ pub struct InProcess {
 
 impl InProcess {
     pub fn new(repo: amonhen_core::Repository) -> Self {
-        Self { session: Session::new(Arc::new(repo)), watcher: Mutex::default() }
+        Self {
+            session: Session::new(Arc::new(repo)),
+            watcher: Mutex::default(),
+        }
     }
 
     /// 作業ツリーの一番上 `root` のリポジトリを開く。
     pub fn open(root: &Path, cache_dir: Option<&Path>) -> Result<Self> {
         let backend = amonhen_backend_gix::GixBackend::open(root)?;
-        let key = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_owned()).display().to_string();
+        let key = std::fs::canonicalize(root)
+            .unwrap_or_else(|_| root.to_owned())
+            .display()
+            .to_string();
         Ok(Self::new(match cache_dir {
-            Some(dir) => amonhen_core::Repository::with_cache(backend, amonhen_core::cache::path_for(dir, &key)),
+            Some(dir) => amonhen_core::Repository::with_cache(
+                backend,
+                amonhen_core::cache::path_for(dir, &key),
+            ),
             None => amonhen_core::Repository::new(backend),
         }))
     }
@@ -108,45 +117,54 @@ impl Remote {
         };
         let stream = amonhen_remote::local::stream(daemon)?;
         let mut writer = std::io::BufWriter::new(stream.try_clone()?);
-        amonhen_remote::local::write_preamble(&mut writer, &format!("{}{location}", crate::PREAMBLE))?;
+        amonhen_remote::local::write_preamble(
+            &mut writer,
+            &format!("{}{location}", crate::PREAMBLE),
+        )?;
         let shared = Arc::new(Shared::default());
         let reading = shared.clone();
-        std::thread::Builder::new().name("amonhen-front".into()).spawn(move || {
-            let mut reader = std::io::BufReader::new(stream);
-            let reason = loop {
-                match frame::read(&mut reader) {
-                    Ok(Some(f)) => match f.kind {
-                        Kind::Ok | Kind::Err => {
-                            let reply = if f.kind == Kind::Ok {
-                                Ok(f.payload)
-                            } else {
-                                Err(String::from_utf8_lossy(&f.payload).into_owned())
-                            };
-                            if let Some(tx) = reading.pending.lock().unwrap().remove(&f.id) {
-                                let _ = tx.send(reply);
+        std::thread::Builder::new()
+            .name("amonhen-front".into())
+            .spawn(move || {
+                let mut reader = std::io::BufReader::new(stream);
+                let reason = loop {
+                    match frame::read(&mut reader) {
+                        Ok(Some(f)) => match f.kind {
+                            Kind::Ok | Kind::Err => {
+                                let reply = if f.kind == Kind::Ok {
+                                    Ok(f.payload)
+                                } else {
+                                    Err(String::from_utf8_lossy(&f.payload).into_owned())
+                                };
+                                if let Some(tx) = reading.pending.lock().unwrap().remove(&f.id) {
+                                    let _ = tx.send(reply);
+                                }
                             }
-                        }
-                        Kind::Notify => {
-                            let bits = serde_json::from_slice::<Value>(&f.payload)
-                                .ok()
-                                .and_then(|v| v["changes"].as_u64())
-                                .unwrap_or(0) as u32;
-                            for l in reading.listeners.lock().unwrap().iter() {
-                                l(bits);
+                            Kind::Notify => {
+                                let bits = serde_json::from_slice::<Value>(&f.payload)
+                                    .ok()
+                                    .and_then(|v| v["changes"].as_u64())
+                                    .unwrap_or(0) as u32;
+                                for l in reading.listeners.lock().unwrap().iter() {
+                                    l(bits);
+                                }
                             }
-                        }
-                        _ => {}
-                    },
-                    Ok(None) => break "daemon との接続が切れました".to_owned(),
-                    Err(e) => break format!("daemon との接続が切れました: {e}"),
+                            _ => {}
+                        },
+                        Ok(None) => break "daemon との接続が切れました".to_owned(),
+                        Err(e) => break format!("daemon との接続が切れました: {e}"),
+                    }
+                };
+                *reading.closed.lock().unwrap() = Some(reason.clone());
+                for (_, tx) in reading.pending.lock().unwrap().drain() {
+                    let _ = tx.send(Err(reason.clone()));
                 }
-            };
-            *reading.closed.lock().unwrap() = Some(reason.clone());
-            for (_, tx) in reading.pending.lock().unwrap().drain() {
-                let _ = tx.send(Err(reason.clone()));
-            }
-        })?;
-        let remote = Self { writer: Mutex::new(Box::new(writer)), shared, next: AtomicU64::new(1) };
+            })?;
+        let remote = Self {
+            writer: Mutex::new(Box::new(writer)),
+            shared,
+            next: AtomicU64::new(1),
+        };
         // 開けたかを確かめる（開けなければ、daemon が理由を返して閉じる）。
         let hello = remote.call(serde_json::json!({"op": "hello"}))?;
         if hello.json["version"] != crate::VERSION {
@@ -191,7 +209,9 @@ impl Front for Remote {
                         return Err("取り消しました".into());
                     }
                 }
-                Err(mpsc::RecvTimeoutError::Disconnected) => return Err("daemon との接続が切れました".into()),
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("daemon との接続が切れました".into());
+                }
             }
         }
     }

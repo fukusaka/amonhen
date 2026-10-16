@@ -33,7 +33,10 @@ pub fn width() -> Option<usize> {
     if !stdout_is_tty() {
         return None;
     }
-    std::env::var("COLUMNS").ok().and_then(|c| c.parse().ok()).or(size().map(|s| s.0))
+    std::env::var("COLUMNS")
+        .ok()
+        .and_then(|c| c.parse().ok())
+        .or(size().map(|s| s.0))
 }
 
 pub fn height() -> usize {
@@ -48,8 +51,17 @@ pub fn local_time(time: i64, with_time: bool) -> String {
         let mut tm: libc::tm = unsafe { std::mem::zeroed() };
         let t = time as libc::time_t;
         if unsafe { !libc::localtime_r(&t, &mut tm).is_null() } {
-            let date = format!("{:04}-{:02}-{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
-            return if with_time { format!("{date} {:02}:{:02}", tm.tm_hour, tm.tm_min) } else { date };
+            let date = format!(
+                "{:04}-{:02}-{:02}",
+                tm.tm_year + 1900,
+                tm.tm_mon + 1,
+                tm.tm_mday
+            );
+            return if with_time {
+                format!("{date} {:02}:{:02}", tm.tm_hour, tm.tm_min)
+            } else {
+                date
+            };
         }
     }
     let _ = with_time;

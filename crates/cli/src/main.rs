@@ -17,9 +17,9 @@
 mod graph;
 mod install;
 mod open;
+mod session;
 mod term;
 mod work;
-mod session;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -125,7 +125,10 @@ impl<'a> Args<'a> {
     }
 
     pub(crate) fn value(&mut self, name: &str) -> Result<&'a str> {
-        self.rest.next().map(String::as_str).ok_or_else(|| format!("{name} に値がありません").into())
+        self.rest
+            .next()
+            .map(String::as_str)
+            .ok_or_else(|| format!("{name} に値がありません").into())
     }
 }
 
@@ -166,7 +169,10 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
     match args.first().map(String::as_str).unwrap_or("status") {
         "status" => {
             let Some(json) = amonhen_remote::local::control("status")? else {
-                println!("共有の daemon は動いていません（{}）", amonhen_remote::local::socket_path().display());
+                println!(
+                    "共有の daemon は動いていません（{}）",
+                    amonhen_remote::local::socket_path().display()
+                );
                 return Ok(ExitCode::from(1));
             };
             if args.iter().any(|a| a == "--json") {
@@ -177,7 +183,11 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
             let secs = |ms: &serde_json::Value| ms.as_u64().unwrap_or(0) / 1000;
             println!("共有の daemon: 動いています");
             println!("  pid          {}", s["pid"]);
-            println!("  版           {}（通信の形 {}）", s["version"].as_str().unwrap_or(""), s["protocol"]);
+            println!(
+                "  版           {}（通信の形 {}）",
+                s["version"].as_str().unwrap_or(""),
+                s["protocol"]
+            );
             println!("  ソケット     {}", s["socket"].as_str().unwrap_or(""));
             println!("  動いている   {}", duration(secs(&s["uptimeMs"])));
             println!("  つながり     {}", s["connections"]);
@@ -187,14 +197,19 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
             }
             for r in repos {
                 let index = match (r["indexRows"].as_u64(), r["indexBytes"].as_u64()) {
-                    (Some(rows), Some(bytes)) => format!("検索の索引 {rows} 行・{:.1} MB", bytes as f64 / 1e6),
+                    (Some(rows), Some(bytes)) => {
+                        format!("検索の索引 {rows} 行・{:.1} MB", bytes as f64 / 1e6)
+                    }
                     _ => "検索の索引なし".to_owned(),
                 };
                 let clients = r["clients"].as_u64().unwrap_or(0);
                 let state = if clients > 0 {
                     format!("{clients} つながり")
                 } else {
-                    format!("だれもつないでいない（{}前から）", duration(secs(&r["idleMs"])))
+                    format!(
+                        "だれもつないでいない（{}前から）",
+                        duration(secs(&r["idleMs"]))
+                    )
                 };
                 println!("  {}", r["path"].as_str().unwrap_or(""));
                 if r["ssh"] == true {
@@ -213,16 +228,30 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
                 }
                 println!(
                     "      {state}・History {}・監視 {}・{index}",
-                    if r["history"] == true { "あり" } else { "なし" },
-                    if r["watching"] == true { "あり" } else { "なし" },
+                    if r["history"] == true {
+                        "あり"
+                    } else {
+                        "なし"
+                    },
+                    if r["watching"] == true {
+                        "あり"
+                    } else {
+                        "なし"
+                    },
                 );
             }
-            println!("  だれもつながらなくなって {}たつと終わります", duration(secs(&s["idleExitMs"])));
+            println!(
+                "  だれもつながらなくなって {}たつと終わります",
+                duration(secs(&s["idleExitMs"]))
+            );
             Ok(ExitCode::SUCCESS)
         }
         "start" => {
             amonhen_remote::local::start(&daemon_program()?)?;
-            println!("共有の daemon を起動しました（{}）", amonhen_remote::local::socket_path().display());
+            println!(
+                "共有の daemon を起動しました（{}）",
+                amonhen_remote::local::socket_path().display()
+            );
             Ok(ExitCode::SUCCESS)
         }
         "stop" => match amonhen_remote::local::control("stop")? {
@@ -242,11 +271,18 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
                 given.to_owned()
             } else {
                 let root = repository_root(Path::new(given))?;
-                format!("daemon:{}", std::fs::canonicalize(&root).unwrap_or(root).display())
+                format!(
+                    "daemon:{}",
+                    std::fs::canonicalize(&root).unwrap_or(root).display()
+                )
             };
             let front = open_repository(Path::new(&location))?;
             let started = std::time::Instant::now();
-            let history = call(&*front, serde_json::json!({"op": "history", "rebuild": true}))?.json;
+            let history = call(
+                &*front,
+                serde_json::json!({"op": "history", "rebuild": true}),
+            )?
+            .json;
             println!(
                 "History を作り直しました（{} コミット・{:.2} 秒）",
                 history["rows"],
@@ -283,7 +319,9 @@ fn cache_dir() -> Option<PathBuf> {
     let dir = if cfg!(target_os = "macos") {
         home.join("Library/Caches/io.github.fukusaka.amonhen")
     } else {
-        std::env::var_os("XDG_CACHE_HOME").map_or_else(|| home.join(".cache"), PathBuf::from).join("amonhen")
+        std::env::var_os("XDG_CACHE_HOME")
+            .map_or_else(|| home.join(".cache"), PathBuf::from)
+            .join("amonhen")
     };
     std::fs::create_dir_all(&dir).ok()?;
     Some(dir)
@@ -291,9 +329,15 @@ fn cache_dir() -> Option<PathBuf> {
 
 /// コアの命令（`run_json`）を実行し、結果を返す。失敗なら Err。
 pub(crate) fn command(front: &dyn Front, json: serde_json::Value) -> Result<serde_json::Value> {
-    let response = front.call(serde_json::json!({"op": "run", "command": json}))?.json;
+    let response = front
+        .call(serde_json::json!({"op": "run", "command": json}))?
+        .json;
     if response["ok"] != true {
-        return Err(response["error"].as_str().unwrap_or("失敗しました").to_owned().into());
+        return Err(response["error"]
+            .as_str()
+            .unwrap_or("失敗しました")
+            .to_owned()
+            .into());
     }
     Ok(response)
 }
@@ -324,8 +368,12 @@ fn log(args: &[String]) -> Result<ExitCode> {
             "--color" | "--color=always" => color = true,
             "--color=never" | "--no-color" => color = false,
             "--color=auto" => color = term::stdout_is_tty(),
-            s if s.starts_with("-n") && s[2..].parse::<usize>().is_ok() => count = s[2..].parse().ok(),
-            s if s.starts_with('-') => return Err(format!("知らないオプション: {s}\n\n{USAGE}").into()),
+            s if s.starts_with("-n") && s[2..].parse::<usize>().is_ok() => {
+                count = s[2..].parse().ok()
+            }
+            s if s.starts_with('-') => {
+                return Err(format!("知らないオプション: {s}\n\n{USAGE}").into());
+            }
             _ => query.push(arg.clone()),
         }
     }
@@ -349,24 +397,45 @@ fn log(args: &[String]) -> Result<ExitCode> {
         request["tips"] = serde_json::json!(tips);
     }
     let history = call(&*front, request)?.json;
-    let (id, total) = (history["history"].clone(), history["rows"].as_u64().unwrap_or(0));
+    let (id, total) = (
+        history["history"].clone(),
+        history["rows"].as_u64().unwrap_or(0),
+    );
     // 端末に出すときは、既定で 1 画面分。
-    let count = count.unwrap_or_else(|| if term::stdout_is_tty() { term::height().saturating_sub(4).max(10) / 2 } else { 100 });
+    let count = count.unwrap_or_else(|| {
+        if term::stdout_is_tty() {
+            term::height().saturating_sub(4).max(10) / 2
+        } else {
+            100
+        }
+    });
     let rows = if query.is_empty() {
-        call(&*front, serde_json::json!({"op": "historyRows", "history": id, "start": 0, "count": count.min(total as usize)}))?
+        call(
+            &*front,
+            serde_json::json!({"op": "historyRows", "history": id, "start": 0, "count": count.min(total as usize)}),
+        )?
     } else {
         // 検索の結果は、グラフなしで並べる（行がとびとびなので線をつなげない）。
         show_graph = false;
-        let found = call(&*front, serde_json::json!({"op": "historySearch", "history": id, "query": query.join(" ")}))?;
+        let found = call(
+            &*front,
+            serde_json::json!({"op": "historySearch", "history": id, "query": query.join(" ")}),
+        )?;
         let found: Vec<u32> = found.u32s("rows").into_iter().take(count).collect();
-        call(&*front, serde_json::json!({"op": "historyRows", "history": id, "rows": found}))?
+        call(
+            &*front,
+            serde_json::json!({"op": "historyRows", "history": id, "rows": found}),
+        )?
     };
     let rows = graph::Rows::from(&rows);
     if as_json {
         println!("{}", graph::json_rows(&rows, &refs));
         return Ok(ExitCode::SUCCESS);
     }
-    let style = graph::Style { color, width: term::width() };
+    let style = graph::Style {
+        color,
+        width: term::width(),
+    };
     term::write(&graph::render(&rows, &refs, show_graph, &style));
     Ok(ExitCode::SUCCESS)
 }
@@ -394,8 +463,14 @@ fn undo(args: &[String]) -> Result<ExitCode> {
                 println!("戻せる操作はありません");
             }
             for (i, e) in entries.iter().enumerate() {
-                let time = e["time"].as_f64().map_or_else(String::new, |t| term::local_time((t / 1000.0) as i64, true));
-                println!("{:>3}  {time}  {}", i + 1, e["label"].as_str().unwrap_or(""));
+                let time = e["time"]
+                    .as_f64()
+                    .map_or_else(String::new, |t| term::local_time((t / 1000.0) as i64, true));
+                println!(
+                    "{:>3}  {time}  {}",
+                    i + 1,
+                    e["label"].as_str().unwrap_or("")
+                );
             }
         }
         "peek" => {
@@ -429,7 +504,9 @@ fn merge_file(args: &[String]) -> Result<ExitCode> {
         match arg.as_str() {
             "--all" => rules = amonhen_core::conflict::MagicRules::All,
             "--check" | "--dry-run" => check = true,
-            s if s.starts_with('-') => return Err(format!("知らないオプション: {s}\n\n{USAGE}").into()),
+            s if s.starts_with('-') => {
+                return Err(format!("知らないオプション: {s}\n\n{USAGE}").into());
+            }
             _ => files.push(PathBuf::from(arg)),
         }
     }
@@ -447,7 +524,14 @@ fn merge_file(args: &[String]) -> Result<ExitCode> {
             std::fs::write(file, &merged)?;
         }
         let verb = if check { "解ける" } else { "解いた" };
-        println!("{}: コンフリクト {before} 個のうち {resolved} 個を{verb}、残り {remaining} 個", file.display());
+        println!(
+            "{}: コンフリクト {before} 個のうち {resolved} 個を{verb}、残り {remaining} 個",
+            file.display()
+        );
     }
-    Ok(if remaining_total == 0 { ExitCode::SUCCESS } else { ExitCode::from(1) })
+    Ok(if remaining_total == 0 {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::from(1)
+    })
 }

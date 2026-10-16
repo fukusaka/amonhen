@@ -1,7 +1,7 @@
 //! コミットの本文（件名・作者・ID）での検索。手元のコアと daemon で同じものを使う。
 
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
 use crate::{CommitText, Oid, Result};
 
@@ -75,7 +75,9 @@ fn matches_parts(term: &TextTerm, subject: &[u8], author: &[u8], id: &Oid) -> bo
 const BATCH: usize = 4096;
 
 fn threads() -> usize {
-    std::thread::available_parallelism().map_or(4, |n| n.get()).min(16)
+    std::thread::available_parallelism()
+        .map_or(4, |n| n.get())
+        .min(16)
 }
 
 /// コミットの件名と作者名を、`ids` の順に並べて置いたもの。初めて探すときに全部読み、次からはこれを探すだけに
@@ -97,8 +99,13 @@ impl TextIndex {
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Self> {
         // 前の索引の、コミットごとの位置。
-        let old: Option<std::collections::HashMap<Oid, u32>> =
-            previous.map(|p| p.ids.iter().enumerate().map(|(i, id)| (*id, i as u32)).collect());
+        let old: Option<std::collections::HashMap<Oid, u32>> = previous.map(|p| {
+            p.ids
+                .iter()
+                .enumerate()
+                .map(|(i, id)| (*id, i as u32))
+                .collect()
+        });
         let missing: Vec<usize> = (0..ids.len())
             .filter(|&i| old.as_ref().is_none_or(|m| !m.contains_key(&ids[i])))
             .collect();
@@ -120,7 +127,9 @@ impl TextIndex {
                                 let part: Vec<(usize, Vec<u8>, Vec<u8>)> = rows
                                     .iter()
                                     .zip(texts)
-                                    .map(|(&r, t)| (r, t.subject().to_vec(), t.author_name().to_vec()))
+                                    .map(|(&r, t)| {
+                                        (r, t.subject().to_vec(), t.author_name().to_vec())
+                                    })
                                     .collect();
                                 read_parts.lock().unwrap().push(part);
                             }
@@ -251,7 +260,11 @@ impl TextIndexCache {
 
     /// 覚えている索引の行の数と、件名・作者名のバイト数（なければ None）。
     pub fn stats(&self) -> Option<(usize, usize)> {
-        self.0.lock().unwrap().as_ref().map(|i| (i.ids.len(), i.text.len()))
+        self.0
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|i| (i.ids.len(), i.text.len()))
     }
 }
 
@@ -340,7 +353,9 @@ mod tests {
     }
 
     fn rows(words: &[u64], n: usize) -> Vec<usize> {
-        (0..n).filter(|&i| words[i / 64] & (1 << (i % 64)) != 0).collect()
+        (0..n)
+            .filter(|&i| words[i / 64] & (1 << (i % 64)) != 0)
+            .collect()
     }
 
     #[test]
@@ -360,7 +375,10 @@ mod tests {
         ];
         let found = cache.search(&ids, &terms, &read, &never).unwrap();
         assert_eq!(rows(&found[0], 100).len(), 50);
-        assert_eq!(rows(&found[1], 100), vec![7, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79]);
+        assert_eq!(
+            rows(&found[1], 100),
+            vec![7, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79]
+        );
         assert_eq!(rows(&found[2], 100), vec![5], "ID の先頭（ab05…）");
         assert_eq!(reads.load(Ordering::Relaxed), 100);
 
@@ -369,10 +387,20 @@ mod tests {
         assert_eq!(reads.load(Ordering::Relaxed), 100);
 
         // 新しいコミットが上に 2 つ増えたら、その 2 つだけ読む。
-        let grown: Vec<Oid> = [oid(200), oid(201)].into_iter().chain(ids.iter().copied()).collect();
+        let grown: Vec<Oid> = [oid(200), oid(201)]
+            .into_iter()
+            .chain(ids.iter().copied())
+            .collect();
         let found = cache.search(&grown, &terms, &read, &never).unwrap();
         assert_eq!(reads.load(Ordering::Relaxed), 102);
-        assert_eq!(rows(&found[1], 102)[0], 9, "行がずれても同じコミットに合う（Subject 7 は 9 行目）");
-        assert!(rows(&found[0], 102).contains(&0), "新しいコミット（200、Alice）も探せる");
+        assert_eq!(
+            rows(&found[1], 102)[0],
+            9,
+            "行がずれても同じコミットに合う（Subject 7 は 9 行目）"
+        );
+        assert!(
+            rows(&found[0], 102).contains(&0),
+            "新しいコミット（200、Alice）も探せる"
+        );
     }
 }

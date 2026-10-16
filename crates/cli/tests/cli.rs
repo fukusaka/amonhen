@@ -4,7 +4,12 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 
 fn git(dir: &Path, args: &[&str]) {
-    let ok = Command::new("git").current_dir(dir).args(args).status().unwrap().success();
+    let ok = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .status()
+        .unwrap()
+        .success();
     assert!(ok, "git {args:?}");
 }
 
@@ -16,8 +21,13 @@ fn commit(dir: &Path, file: &str, message: &str) {
 
 fn amonhen(home: &Path, args: &[&str]) -> (String, i32) {
     // キャッシュは試験の中に置く（手元のアプリのキャッシュに混ぜない）。
-    let out = Command::new(env!("CARGO_BIN_EXE_amonhen")).env("HOME", home).args(args).output().unwrap();
-    let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+    let out = Command::new(env!("CARGO_BIN_EXE_amonhen"))
+        .env("HOME", home)
+        .args(args)
+        .output()
+        .unwrap();
+    let text =
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     (text, out.status.code().unwrap_or(-1))
 }
 
@@ -33,7 +43,10 @@ fn repository() -> tempfile::TempDir {
     commit(dir, "t.txt", "topic work");
     git(dir, &["switch", "-q", "main"]);
     commit(dir, "m.txt", "main work");
-    git(dir, &["merge", "-q", "--no-ff", "-m", "merge topic", "topic"]);
+    git(
+        dir,
+        &["merge", "-q", "--no-ff", "-m", "merge topic", "topic"],
+    );
     tmp
 }
 
@@ -45,8 +58,14 @@ fn log_draws_the_branch_and_the_merge() {
     let (out, code) = amonhen(home.path(), &["log", "-C", path, "--color=never"]);
     assert_eq!(code, 0, "{out}");
     let lines: Vec<&str> = out.lines().collect();
-    assert!(lines[0].starts_with('◉') || lines[0].starts_with('◆'), "{out}");
-    assert!(lines[0].contains("(HEAD → main)") && lines[0].contains("merge topic"), "{out}");
+    assert!(
+        lines[0].starts_with('◉') || lines[0].starts_with('◆'),
+        "{out}"
+    );
+    assert!(
+        lines[0].contains("(HEAD → main)") && lines[0].contains("merge topic"),
+        "{out}"
+    );
     assert!(out.contains("├─╮"), "枝分かれのつなぎ:\n{out}");
     assert!(out.contains("╯"), "合流のつなぎ:\n{out}");
     assert!(out.contains("topic work") && out.contains("first"), "{out}");
@@ -57,7 +76,10 @@ fn log_draws_the_branch_and_the_merge() {
     assert!(out.contains("1 件を折りたたみ"), "{out}");
 
     // 検索はグラフなしで、合うものだけ。
-    let (out, _) = amonhen(home.path(), &["log", "-C", path, "--color=never", "subject:topic"]);
+    let (out, _) = amonhen(
+        home.path(),
+        &["log", "-C", path, "--color=never", "subject:topic"],
+    );
     assert_eq!(out.lines().count(), 2, "{out}");
 }
 
@@ -105,7 +127,11 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
     let env = Env::new(tmp.path());
     let repo = repo.canonicalize().unwrap();
     let path = repo.to_str().unwrap().to_owned();
-    let locations = [path.clone(), format!("daemon:{path}"), format!("ssh://dev{path}")];
+    let locations = [
+        path.clone(),
+        format!("daemon:{path}"),
+        format!("ssh://dev{path}"),
+    ];
     let mut shown = Vec::new();
     for (i, at) in locations.iter().enumerate() {
         let at = at.as_str();
@@ -131,7 +157,13 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
         assert_eq!(picked.len(), 2, "{at}: {diff}");
         env.ok(&["stage", "-C", at, "--rows", &picked.join(","), "f.txt"]);
         let staged = env.json(&["diff", "-C", at, "--staged", "--json"]);
-        let texts: Vec<&str> = staged[0]["rows"].as_array().unwrap().iter().filter(|r| r["kind"] != "context" && r["kind"] != "hunk").map(|r| r["text"].as_str().unwrap()).collect();
+        let texts: Vec<&str> = staged[0]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|r| r["kind"] != "context" && r["kind"] != "hunk")
+            .map(|r| r["text"].as_str().unwrap())
+            .collect();
         assert_eq!(texts, ["b", "B"], "{at}: {staged}");
 
         // コミットし、残りの変更は捨てて、Undo で戻す。
@@ -139,9 +171,17 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
         let committed = env.json(&["commit", "-C", at, "-m", &message, "--json"]);
         assert_eq!(committed["ok"], true, "{at}: {committed}");
         env.ok(&["discard", "-C", at, "f.txt"]);
-        assert_eq!(std::fs::read_to_string(repo.join("f.txt")).unwrap(), "a\nB\nc\nd\ne\n", "{at}");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "a\nB\nc\nd\ne\n",
+            "{at}"
+        );
         env.ok(&["undo", "-C", at]);
-        assert_eq!(std::fs::read_to_string(repo.join("f.txt")).unwrap(), "a\nB\nc\nd\nE\n", "{at}");
+        assert_eq!(
+            std::fs::read_to_string(repo.join("f.txt")).unwrap(),
+            "a\nB\nc\nd\nE\n",
+            "{at}"
+        );
         git(&repo, &["checkout", "--", "f.txt"]);
 
         let log = env.json(&["log", "-C", at, "--json", "-n", "1"]);
@@ -157,7 +197,10 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
             &["run", "-C", at],
             &format!("{{\"op\":\"undoPeek\"}}\n{{\"op\":\"createBranch\",\"name\":\"{branch}\",\"start\":\"main\",\"checkout\":false}}\n{{\"op\":\"nope\"}}\n"),
         );
-        let replies: Vec<serde_json::Value> = replies.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        let replies: Vec<serde_json::Value> = replies
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
         assert_eq!(replies.len(), 3, "{at}: {replies:?}");
         assert_eq!(replies[1]["ok"], true, "{at}: {replies:?}");
         assert_eq!(replies[2]["ok"], false, "{at}: {replies:?}");
@@ -165,7 +208,12 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
         // 知らせ: つないだまま、作業ツリーとブランチの変化を受ける。
         let mut watch = env.spawn(&["watch", "-C", at, "--json"]);
         let lines = watch.lines();
-        assert!(lines.recv_timeout(std::time::Duration::from_secs(20)).is_ok(), "{at}: 最初の様子が出ない");
+        assert!(
+            lines
+                .recv_timeout(std::time::Duration::from_secs(20))
+                .is_ok(),
+            "{at}: 最初の様子が出ない"
+        );
         std::fs::write(repo.join("f.txt"), "changed\n").unwrap();
         watch.expect(&lines, "worktree", at);
         git(&repo, &["checkout", "--", "f.txt"]);
@@ -175,7 +223,11 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
     }
     // daemon 越しと SSH 越しで、同じ中身のコミット（「reset」）は同じに見える。
     for key in ["rows", "files", "changes"] {
-        assert!(shown[1][key].as_array().is_some_and(|a| !a.is_empty()), "{key}: {}", shown[1]);
+        assert!(
+            shown[1][key].as_array().is_some_and(|a| !a.is_empty()),
+            "{key}: {}",
+            shown[1]
+        );
         assert_eq!(shown[1][key], shown[2][key], "{key}");
     }
 }
@@ -200,7 +252,11 @@ impl Env {
         }
         // エンジンは 1 つの実行ファイル: daemon にも、SSH 先に送るものにも、この CLI を使う。
         let daemon = std::path::PathBuf::from(env!("CARGO_BIN_EXE_amonhen"));
-        std::fs::copy(&daemon, daemons.join(format!("amonhen-{}", amonhen_remote::ssh::local_platform()))).unwrap();
+        std::fs::copy(
+            &daemon,
+            daemons.join(format!("amonhen-{}", amonhen_remote::ssh::local_platform())),
+        )
+        .unwrap();
         let ssh = dir.join("fake-ssh");
         // ssh の代わり: 指定を読み飛ばし、ホスト名を捨て、SSH 先のホームで命令を実行する。
         std::fs::write(
@@ -213,7 +269,13 @@ impl Env {
         .unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
-        Self { home, socket_dir, ssh, daemons, daemon }
+        Self {
+            home,
+            socket_dir,
+            ssh,
+            daemons,
+            daemon,
+        }
     }
 
     fn command(&self, args: &[&str]) -> Command {
@@ -229,7 +291,8 @@ impl Env {
 
     fn ok(&self, args: &[&str]) -> String {
         let out = self.command(args).output().unwrap();
-        let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+        let text = String::from_utf8_lossy(&out.stdout).into_owned()
+            + &String::from_utf8_lossy(&out.stderr);
         assert!(out.status.success(), "{args:?}: {text}");
         text
     }
@@ -241,8 +304,18 @@ impl Env {
 
     fn stdin(&self, args: &[&str], input: &str) -> String {
         use std::io::Write;
-        let mut child = self.command(args).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
-        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        let mut child = self
+            .command(args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
         let out = child.wait_with_output().unwrap();
         assert!(out.status.success(), "{args:?}");
         String::from_utf8_lossy(&out.stdout).into_owned()
@@ -269,7 +342,10 @@ impl Watch {
         let (tx, rx) = std::sync::mpsc::channel();
         let stdout = self.0.stdout.take().unwrap();
         std::thread::spawn(move || {
-            for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+            for line in std::io::BufReader::new(stdout)
+                .lines()
+                .map_while(Result::ok)
+            {
                 let _ = tx.send(line);
             }
         });
@@ -308,19 +384,35 @@ fn installs_the_engine_and_picks_it_for_the_daemon() {
             .env_remove("XDG_DATA_HOME")
             .output()
             .unwrap();
-        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         String::from_utf8_lossy(&out.stdout).into_owned()
     };
     let first = run(&["install"]);
-    assert!(first.contains("置きました") && first.contains("current をこの版"), "{first}");
+    assert!(
+        first.contains("置きました") && first.contains("current をこの版"),
+        "{first}"
+    );
     let data = home.path().join(".local/share/amonhen");
     let current = data.join("current/amonhen");
     assert!(current.is_file());
-    assert_eq!(std::fs::read_link(home.path().join(".local/bin/amonhen")).unwrap(), current);
+    assert_eq!(
+        std::fs::read_link(home.path().join(".local/bin/amonhen")).unwrap(),
+        current
+    );
     let second = run(&["install"]);
-    assert!(!second.contains("置きました") && second.contains("current はこの版です"), "{second}");
+    assert!(
+        !second.contains("置きました") && second.contains("current はこの版です"),
+        "{second}"
+    );
     assert_eq!(run(&["engine"]).trim(), current.display().to_string());
     // 置いたエンジンは、CLI としても daemon としても動く。
-    let version = Command::new(home.path().join(".local/bin/amonhen")).arg("--version").output().unwrap();
+    let version = Command::new(home.path().join(".local/bin/amonhen"))
+        .arg("--version")
+        .output()
+        .unwrap();
     assert!(String::from_utf8_lossy(&version.stdout).contains("(protocol "));
 }

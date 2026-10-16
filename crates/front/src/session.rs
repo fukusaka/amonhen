@@ -33,7 +33,10 @@ struct Kept<T> {
 
 impl<T: Clone> Kept<T> {
     fn new() -> Self {
-        Self { items: HashMap::new(), order: Vec::new() }
+        Self {
+            items: HashMap::new(),
+            order: Vec::new(),
+        }
     }
 
     fn insert(&mut self, id: u64, item: T) {
@@ -57,15 +60,23 @@ impl<T: Clone> Kept<T> {
 
 fn arg<'a>(request: &'a Value, name: &str) -> Result<&'a Value> {
     let v = &request[name];
-    if v.is_null() { Err(format!("{name} がありません").into()) } else { Ok(v) }
+    if v.is_null() {
+        Err(format!("{name} がありません").into())
+    } else {
+        Ok(v)
+    }
 }
 
 fn str_arg<'a>(request: &'a Value, name: &str) -> Result<&'a str> {
-    arg(request, name)?.as_str().ok_or_else(|| format!("{name} は文字列です").into())
+    arg(request, name)?
+        .as_str()
+        .ok_or_else(|| format!("{name} は文字列です").into())
 }
 
 fn u64_arg(request: &Value, name: &str) -> Result<u64> {
-    arg(request, name)?.as_u64().ok_or_else(|| format!("{name} は数です").into())
+    arg(request, name)?
+        .as_u64()
+        .ok_or_else(|| format!("{name} は数です").into())
 }
 
 fn rows_arg(request: &Value, name: &str) -> Result<Vec<u32>> {
@@ -73,7 +84,11 @@ fn rows_arg(request: &Value, name: &str) -> Result<Vec<u32>> {
         .as_array()
         .ok_or_else(|| format!("{name} は数の配列です"))?
         .iter()
-        .map(|v| v.as_u64().map(|n| n as u32).ok_or_else(|| format!("{name} は数の配列です").into()))
+        .map(|v| {
+            v.as_u64()
+                .map(|n| n as u32)
+                .ok_or_else(|| format!("{name} は数の配列です").into())
+        })
         .collect()
 }
 
@@ -113,7 +128,11 @@ impl Session {
 
     fn history(&self, request: &Value) -> Result<Arc<HistorySnapshot>> {
         let id = u64_arg(request, "history")?;
-        self.histories.lock().unwrap().get(id).ok_or_else(|| format!("History {id} はもうありません（読み直してください）").into())
+        self.histories
+            .lock()
+            .unwrap()
+            .get(id)
+            .ok_or_else(|| format!("History {id} はもうありません（読み直してください）").into())
     }
 
     fn keep_history(&self, h: Arc<HistorySnapshot>) -> Value {
@@ -168,7 +187,10 @@ impl Session {
                 Reply::json(self.keep_history(m))
             }
             "historyRelease" => {
-                self.histories.lock().unwrap().remove(u64_arg(request, "history")?);
+                self.histories
+                    .lock()
+                    .unwrap()
+                    .remove(u64_arg(request, "history")?);
                 Reply::json(json!({}))
             }
             "historyRows" => self.history_rows(request)?,
@@ -197,9 +219,14 @@ impl Session {
             }
             "historyLineage" => {
                 let h = self.history(request)?;
-                let l = amonhen_core::lineage::lineage(&h.graph, &h.layout, u64_arg(request, "row")? as u32);
+                let l = amonhen_core::lineage::lineage(
+                    &h.graph,
+                    &h.layout,
+                    u64_arg(request, "row")? as u32,
+                );
                 let mut r = Records::new();
-                r.put_slice("rows", &l.rows).put_slice("edgeFrom", &l.edge_from);
+                r.put_slice("rows", &l.rows)
+                    .put_slice("edgeFrom", &l.edge_from);
                 r.finish(json!({}))
             }
             "historyLanes" => {
@@ -213,8 +240,12 @@ impl Session {
                     min_thin: f("minThin"),
                     available: f("available"),
                 };
-                let (start, end) = (u64_arg(request, "start")? as u32, u64_arg(request, "end")? as u32);
-                let positions = amonhen_core::lanes::lane_positions(&h.layout, start..end, &metrics);
+                let (start, end) = (
+                    u64_arg(request, "start")? as u32,
+                    u64_arg(request, "end")? as u32,
+                );
+                let positions =
+                    amonhen_core::lanes::lane_positions(&h.layout, start..end, &metrics);
                 let mut r = Records::new();
                 r.put_slice("positions", &positions);
                 r.finish(json!({}))
@@ -238,7 +269,9 @@ impl Session {
                 }))
             }
             "connection" => Reply::json(match repo.connection_state() {
-                Some(c) => json!({"sent": c.sent, "received": c.received, "closed": c.closed, "engine": c.engine}),
+                Some(c) => {
+                    json!({"sent": c.sent, "received": c.received, "closed": c.closed, "engine": c.engine})
+                }
                 None => json!(null),
             }),
 
@@ -255,12 +288,19 @@ impl Session {
             "stage" | "unstage" => {
                 let paths = paths_arg(request)?;
                 let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
-                if op == "stage" { repo.stage(&refs)? } else { repo.unstage(&refs)? }
+                if op == "stage" {
+                    repo.stage(&refs)?
+                } else {
+                    repo.unstage(&refs)?
+                }
                 Reply::json(json!({}))
             }
             "stageRows" => {
                 let diff = self.diff(request)?;
-                let rows: Vec<usize> = rows_arg(request, "rows")?.into_iter().map(|r| r as usize).collect();
+                let rows: Vec<usize> = rows_arg(request, "rows")?
+                    .into_iter()
+                    .map(|r| r as usize)
+                    .collect();
                 match &diff.combined {
                     Some(_) => repo.set_rows_staged(&diff, &rows, request["stage"] != false)?,
                     None => repo.stage_rows(&diff, &rows)?,
@@ -269,7 +309,10 @@ impl Session {
             }
             "discardRows" => {
                 let diff = self.diff(request)?;
-                let rows: Vec<usize> = rows_arg(request, "rows")?.into_iter().map(|r| r as usize).collect();
+                let rows: Vec<usize> = rows_arg(request, "rows")?
+                    .into_iter()
+                    .map(|r| r as usize)
+                    .collect();
                 repo.discard_rows(&diff, &rows)?;
                 Reply::json(json!({}))
             }
@@ -280,7 +323,8 @@ impl Session {
 
             // コアの命令（`run_json`）をそのまま。
             "run" => {
-                let reply: Value = serde_json::from_str(&repo.run_json(&arg(request, "command")?.to_string()))?;
+                let reply: Value =
+                    serde_json::from_str(&repo.run_json(&arg(request, "command")?.to_string()))?;
                 Reply::json(reply)
             }
             other => return Err(format!("知らない命令: {other}").into()),
@@ -295,8 +339,13 @@ impl Session {
         let (rows, edge_ids): (Vec<u32>, Vec<u32>) = match &request["rows"] {
             Value::Null => {
                 let start = (u64_arg(request, "start")? as u32).min(total);
-                let end = start.saturating_add(u64_arg(request, "count")? as u32).min(total);
-                ((start..end).collect(), h.layout.edges_in(start..end).collect())
+                let end = start
+                    .saturating_add(u64_arg(request, "count")? as u32)
+                    .min(total);
+                (
+                    (start..end).collect(),
+                    h.layout.edges_in(start..end).collect(),
+                )
             }
             _ => {
                 let rows = rows_arg(request, "rows")?;
@@ -316,7 +365,9 @@ impl Session {
             text.extend_from_slice(part);
         };
         let (times, signatures) = if contiguous && !rows.is_empty() {
-            let chunk = self.repo.history_chunk(&h, rows[0], rows.len() as u32, &PROFILE)?;
+            let chunk = self
+                .repo
+                .history_chunk(&h, rows[0], rows.len() as u32, &PROFILE)?;
             for (s, a) in chunk.subjects.iter().zip(&chunk.author_names) {
                 push(chunk.strings.bytes(*s));
                 push(chunk.strings.bytes(*a));
@@ -329,11 +380,19 @@ impl Session {
                 push(String::from_utf8_lossy(t.subject()).as_bytes());
                 push(String::from_utf8_lossy(t.author_name()).as_bytes());
             }
-            (texts.iter().map(|t| t.author_time).collect(), texts.iter().map(|t| t.signature).collect())
+            (
+                texts.iter().map(|t| t.author_time).collect(),
+                texts.iter().map(|t| t.signature).collect(),
+            )
         };
-        let nodes: Vec<amonhen_layout::Node> = rows.iter().map(|&r| h.layout.nodes()[r as usize]).collect();
+        let nodes: Vec<amonhen_layout::Node> =
+            rows.iter().map(|&r| h.layout.nodes()[r as usize]).collect();
         let ids: Vec<Oid> = rows.iter().map(|&r| h.graph.ids()[r as usize]).collect();
-        let folded: Vec<u32> = if h.folded.is_empty() { Vec::new() } else { rows.iter().map(|&r| h.folded[r as usize]).collect() };
+        let folded: Vec<u32> = if h.folded.is_empty() {
+            Vec::new()
+        } else {
+            rows.iter().map(|&r| h.folded[r as usize]).collect()
+        };
         // 親の行: 行ごとの始まり（行の数 + 1 個）と、続けた親の行。
         let mut parent_starts = Vec::with_capacity(rows.len() + 1);
         let mut parents = Vec::new();
@@ -379,7 +438,8 @@ impl Session {
                 Some("mergeBase") => PairMode::MergeBase,
                 _ => PairMode::Forward,
             };
-            let (selection, stacked) = repo.selection_diff(&h, &rows_arg(request, "rows")?, pair)?;
+            let (selection, stacked) =
+                repo.selection_diff(&h, &rows_arg(request, "rows")?, pair)?;
             (None, stacked, selection_json(&selection))
         };
         let collapsed = vec![false; stacked.files.len()];
@@ -444,7 +504,11 @@ impl Session {
 
     fn diff(&self, request: &Value) -> Result<Arc<WorkingDiff>> {
         let id = u64_arg(request, "diff")?;
-        self.diffs.lock().unwrap().get(id).ok_or_else(|| format!("差分 {id} はもうありません（読み直してください）").into())
+        self.diffs
+            .lock()
+            .unwrap()
+            .get(id)
+            .ok_or_else(|| format!("差分 {id} はもうありません（読み直してください）").into())
     }
 }
 
@@ -453,7 +517,11 @@ fn paths_arg(request: &Value) -> Result<Vec<String>> {
         .as_array()
         .ok_or("paths は文字列の配列です")?
         .iter()
-        .map(|v| v.as_str().map(str::to_owned).ok_or_else(|| "paths は文字列の配列です".into()))
+        .map(|v| {
+            v.as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| "paths は文字列の配列です".into())
+        })
         .collect()
 }
 
@@ -472,9 +540,16 @@ fn diff_records(view: &DiffView) -> Records {
         lengths.push(bytes.len() as u32);
         text.extend_from_slice(bytes);
     }
-    let highlights: Vec<u32> = view.highlights.iter().flat_map(|h| [h.row, h.start, h.end]).collect();
+    let highlights: Vec<u32> = view
+        .highlights
+        .iter()
+        .flat_map(|h| [h.row, h.start, h.end])
+        .collect();
     let mut r = Records::new();
-    r.put_slice("rows", &rows).put_slice("textLengths", &lengths).put("text", &text).put_slice("highlights", &highlights);
+    r.put_slice("rows", &rows)
+        .put_slice("textLengths", &lengths)
+        .put("text", &text)
+        .put_slice("highlights", &highlights);
     r
 }
 
@@ -483,8 +558,12 @@ fn selection_json(s: &Selection) -> Value {
         Selection::Range { base, tip, count } => {
             json!({"kind": "range", "base": base.map(|o| o.to_string()), "tip": tip.to_string(), "count": count})
         }
-        Selection::Pair { from, to } => json!({"kind": "pair", "from": from.to_string(), "to": to.to_string()}),
-        Selection::Each(ids) => json!({"kind": "each", "ids": ids.iter().map(Oid::to_string).collect::<Vec<_>>()}),
+        Selection::Pair { from, to } => {
+            json!({"kind": "pair", "from": from.to_string(), "to": to.to_string()})
+        }
+        Selection::Each(ids) => {
+            json!({"kind": "each", "ids": ids.iter().map(Oid::to_string).collect::<Vec<_>>()})
+        }
     }
 }
 

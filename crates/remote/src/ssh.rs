@@ -84,7 +84,9 @@ impl Daemons {
         Self {
             dir,
             local,
-            remote_engine: std::env::var("AMONHEN_REMOTE_ENGINE").ok().filter(|s| !s.is_empty()),
+            remote_engine: std::env::var("AMONHEN_REMOTE_ENGINE")
+                .ok()
+                .filter(|s| !s.is_empty()),
             push: std::env::var("AMONHEN_PUSH").map_or(true, |v| v != "0"),
         }
     }
@@ -235,17 +237,30 @@ pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Conn
     let wanted = format!("(protocol {})", crate::PROTOCOL_VERSION);
 
     let engine = if let Some(path) = configured {
-        RemoteEngine { path, source: "configured", pushed_bytes: None }
+        RemoteEngine {
+            path,
+            source: "configured",
+            pushed_bytes: None,
+        }
     } else if !installed.is_empty() && installed_version.ends_with(&wanted) {
-        RemoteEngine { path: installed, source: "installed", pushed_bytes: None }
+        RemoteEngine {
+            path: installed,
+            source: "installed",
+            pushed_bytes: None,
+        }
     } else {
         let binary = daemons.for_platform(&uname)?;
-        let data = std::fs::read(&binary).map_err(|e| format!("{} を読めない: {e}", binary.display()))?;
+        let data =
+            std::fs::read(&binary).map_err(|e| format!("{} を読めない: {e}", binary.display()))?;
         let digest = sha1_smol::Sha1::from(&data).digest().to_string();
         let hash = &digest[..16];
         let path = format!("{dir}/{hash}/amonhen");
         if present.contains(&hash) {
-            RemoteEngine { path, source: "present", pushed_bytes: None }
+            RemoteEngine {
+                path,
+                source: "present",
+                pushed_bytes: None,
+            }
         } else if !push {
             return Err(format!(
                 "SSH 先（{}）に使えるエンジンがありません。amonhen を入れるか（PATH に通す）、AMONHEN_REMOTE_ENGINE で場所を指定してください（送り込みは AMONHEN_PUSH=0 で止めています）",
@@ -268,7 +283,11 @@ pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Conn
                 )
                 .into());
             }
-            RemoteEngine { path, source: "pushed", pushed_bytes: Some(data.len() as u64) }
+            RemoteEngine {
+                path,
+                source: "pushed",
+                pushed_bytes: Some(data.len() as u64),
+            }
         }
     };
     let mut args = base_args(target);

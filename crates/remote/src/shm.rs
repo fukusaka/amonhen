@@ -46,7 +46,11 @@ impl Drop for Region {
 /// 領域の名前（macOS は 31 文字まで）。
 fn next_name() -> String {
     static NEXT: AtomicU64 = AtomicU64::new(0);
-    format!("/amh{}_{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed))
+    format!(
+        "/amh{}_{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 /// `parts` を 1 つの領域に並べて書き、領域の名前と各部分の（始め、終わり）を返す。
@@ -55,7 +59,13 @@ pub fn publish(parts: &[Blob]) -> io::Result<(String, Vec<(u64, u64)>)> {
     let name = next_name();
     let cname = CString::new(name.clone()).map_err(io::Error::other)?;
     // SAFETY: NUL 終端の名前と、フラグ・権限を渡すだけ。
-    let fd = unsafe { libc::shm_open(cname.as_ptr(), libc::O_CREAT | libc::O_EXCL | libc::O_RDWR, 0o600 as libc::c_uint) };
+    let fd = unsafe {
+        libc::shm_open(
+            cname.as_ptr(),
+            libc::O_CREAT | libc::O_EXCL | libc::O_RDWR,
+            0o600 as libc::c_uint,
+        )
+    };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -69,14 +79,25 @@ pub fn publish(parts: &[Blob]) -> io::Result<(String, Vec<(u64, u64)>)> {
         if libc::ftruncate(fd, size as libc::off_t) != 0 {
             Err(io::Error::last_os_error())
         } else {
-            let ptr = libc::mmap(std::ptr::null_mut(), size, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, fd, 0);
+            let ptr = libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_READ | libc::PROT_WRITE,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            );
             if ptr == libc::MAP_FAILED {
                 Err(io::Error::last_os_error())
             } else {
                 let mut offsets = Vec::with_capacity(parts.len());
                 let mut at = 0usize;
                 for part in parts {
-                    std::ptr::copy_nonoverlapping(part.as_ptr(), (ptr as *mut u8).add(at), part.len());
+                    std::ptr::copy_nonoverlapping(
+                        part.as_ptr(),
+                        (ptr as *mut u8).add(at),
+                        part.len(),
+                    );
                     offsets.push((at as u64, (at + part.len()) as u64));
                     at += part.len();
                 }
@@ -125,12 +146,22 @@ pub fn open(name: &str) -> io::Result<Arc<Region>> {
             let ptr = if len == 0 {
                 std::ptr::null_mut()
             } else {
-                libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, fd, 0)
+                libc::mmap(
+                    std::ptr::null_mut(),
+                    len,
+                    libc::PROT_READ,
+                    libc::MAP_SHARED,
+                    fd,
+                    0,
+                )
             };
             if ptr == libc::MAP_FAILED {
                 Err(io::Error::last_os_error())
             } else {
-                Ok(Arc::new(Region { ptr: ptr as *const u8, len }))
+                Ok(Arc::new(Region {
+                    ptr: ptr as *const u8,
+                    len,
+                }))
             }
         };
         libc::close(fd);
@@ -160,7 +191,11 @@ mod tests {
 
     #[test]
     fn hands_parts_over_through_shared_memory() {
-        let parts = vec![Blob::from(b"hello".to_vec()), Blob::default(), Blob::from(b"world!".to_vec())];
+        let parts = vec![
+            Blob::from(b"hello".to_vec()),
+            Blob::default(),
+            Blob::from(b"world!".to_vec()),
+        ];
         let (name, offsets) = publish(&parts).unwrap();
         let region = open(&name).unwrap();
         let got = super::parts(region, &offsets).unwrap();

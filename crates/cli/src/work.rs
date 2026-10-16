@@ -20,7 +20,12 @@ struct Common {
 
 /// `flags` は受け付ける指定、`valued` はそのうち値をとるもの（`-m <message>`・`--rows <rows>`）。
 fn common(args: &[String], flags: &[&str], valued: &[&str]) -> Result<(Common, Vec<String>)> {
-    let mut c = Common { dir: PathBuf::from("."), json: false, color: term::stdout_is_tty(), rest: Vec::new() };
+    let mut c = Common {
+        dir: PathBuf::from("."),
+        json: false,
+        color: term::stdout_is_tty(),
+        rest: Vec::new(),
+    };
     let mut seen = Vec::new();
     let mut a = Args::new(args);
     while let Some(arg) = a.rest.next() {
@@ -37,7 +42,9 @@ fn common(args: &[String], flags: &[&str], valued: &[&str]) -> Result<(Common, V
                 }
             }
             "--" => c.rest.push(arg.clone()),
-            s if s.starts_with('-') && s.len() > 1 => return Err(format!("知らないオプション: {s}\n\n{USAGE}").into()),
+            s if s.starts_with('-') && s.len() > 1 => {
+                return Err(format!("知らないオプション: {s}\n\n{USAGE}").into());
+            }
             _ => c.rest.push(arg.clone()),
         }
     }
@@ -49,7 +56,10 @@ fn flag(seen: &[String], name: &str) -> bool {
 }
 
 fn value<'a>(seen: &'a [String], name: &str) -> Option<&'a str> {
-    seen.iter().position(|s| s == name).and_then(|i| seen.get(i + 1)).map(String::as_str)
+    seen.iter()
+        .position(|s| s == name)
+        .and_then(|i| seen.get(i + 1))
+        .map(String::as_str)
 }
 
 fn print_json(value: &Value) {
@@ -57,7 +67,11 @@ fn print_json(value: &Value) {
 }
 
 fn paint(s: &str, code: &str, color: bool) -> String {
-    if color { format!("\x1b[{code}m{s}\x1b[0m") } else { s.to_owned() }
+    if color {
+        format!("\x1b[{code}m{s}\x1b[0m")
+    } else {
+        s.to_owned()
+    }
 }
 
 // MARK: - status
@@ -77,7 +91,10 @@ pub fn status(args: &[String]) -> Result<ExitCode> {
     }
     if let Some(u) = status["upstream"].as_str() {
         out.push_str(&format!("（{u}"));
-        let (ahead, behind) = (status["ahead"].as_u64().unwrap_or(0), status["behind"].as_u64().unwrap_or(0));
+        let (ahead, behind) = (
+            status["ahead"].as_u64().unwrap_or(0),
+            status["behind"].as_u64().unwrap_or(0),
+        );
         if ahead > 0 {
             out.push_str(&format!("・{ahead} 先"));
         }
@@ -92,7 +109,10 @@ pub fn status(args: &[String]) -> Result<ExitCode> {
         out.push_str("変更はありません\n");
     }
     for e in &entries {
-        let (x, y) = (e["index"].as_str().unwrap_or(" "), e["worktree"].as_str().unwrap_or(" "));
+        let (x, y) = (
+            e["index"].as_str().unwrap_or(" "),
+            e["worktree"].as_str().unwrap_or(" "),
+        );
         let xy = match e["kind"].as_str() {
             Some("unmerged") => paint(&format!("{x}{y}"), "31", c.color),
             Some("untracked") => paint(&format!("{x}{y}"), "90", c.color),
@@ -128,7 +148,13 @@ impl DiffRows {
             .map(|(r, len)| {
                 let off = r[3] as usize;
                 let s = String::from_utf8_lossy(&text[off..off + len as usize]).into_owned();
-                ((r[0] & 0xff) as u8, ((r[0] >> 8) & 0xff) as u8, r[1], r[2], s)
+                (
+                    (r[0] & 0xff) as u8,
+                    ((r[0] >> 8) & 0xff) as u8,
+                    r[1],
+                    r[2],
+                    s,
+                )
             })
             .collect();
         Self { rows }
@@ -152,7 +178,8 @@ impl DiffRows {
         self.rows
             .iter()
             .map(|(kind, flags, old, new, text)| {
-                let mut row = json!({"kind": Self::kind(*kind), "old": old, "new": new, "text": text});
+                let mut row =
+                    json!({"kind": Self::kind(*kind), "old": old, "new": new, "text": text});
                 if staged {
                     row["staged"] = json!(flags & DiffRow::STAGED != 0);
                 }
@@ -163,7 +190,14 @@ impl DiffRows {
 
     /// git の diff と同じ形で出す。`numbers` なら行の番号（`stage --rows` などで指す）を左に、`staged` なら
     /// stage 済みの行に `●` を付ける。ファイルの見出しの行（`FILE`）は `diff <path>` にする。
-    fn render(&self, out: &mut String, header: Option<&str>, numbers: bool, staged: bool, color: bool) {
+    fn render(
+        &self,
+        out: &mut String,
+        header: Option<&str>,
+        numbers: bool,
+        staged: bool,
+        color: bool,
+    ) {
         if let Some(h) = header {
             out.push_str(&paint(&format!("diff {h}"), "1", color));
             out.push('\n');
@@ -178,7 +212,11 @@ impl DiffRows {
                 out.push_str(&paint(&format!("{i:>5} "), "90", color));
             }
             if staged {
-                out.push_str(if flags & DiffRow::STAGED != 0 { "● " } else { "  " });
+                out.push_str(if flags & DiffRow::STAGED != 0 {
+                    "● "
+                } else {
+                    "  "
+                });
             }
             match *kind {
                 DiffRow::HUNK => out.push_str(&paint(text, "36", color)),
@@ -197,22 +235,41 @@ impl DiffRows {
 /// `amonhen diff`: 作業ツリーの差分。`--staged` なら stage 済みの差分、`--combined` なら HEAD と作業ツリーの差分に
 /// 行ごとの stage の印をつける。`<rev>` を 1 つ渡せばそのコミットの、2 つ渡せば History で 2 つ選んだときの差分。
 pub fn diff(args: &[String]) -> Result<ExitCode> {
-    let (c, seen) = common(args, &["--staged", "--cached", "--combined", "--rows", "--stat"], &[])?;
+    let (c, seen) = common(
+        args,
+        &["--staged", "--cached", "--combined", "--rows", "--stat"],
+        &[],
+    )?;
     let front = open_repository(&c.dir)?;
     let numbers = flag(&seen, "--rows");
     let stat = flag(&seen, "--stat");
     let (revs, paths) = split_revs(&*front, &c.rest);
     if !revs.is_empty() {
-        let ids = revs.iter().map(|r| resolve(&*front, r)).collect::<Result<Vec<_>>>()?;
+        let ids = revs
+            .iter()
+            .map(|r| resolve(&*front, r))
+            .collect::<Result<Vec<_>>>()?;
         let reply = match ids.as_slice() {
             [one] => call(&*front, json!({"op": "commitDiff", "id": one}))?,
             [from, to] => {
                 let history = call(&*front, json!({"op": "history"}))?.json["history"].clone();
                 let row = |id: &str| -> Result<Value> {
-                    let r = call(&*front, json!({"op": "historyRowOf", "history": history, "id": id}))?.json["row"].clone();
-                    if r.is_null() { Err(format!("History にないコミット: {id}").into()) } else { Ok(r) }
+                    let r = call(
+                        &*front,
+                        json!({"op": "historyRowOf", "history": history, "id": id}),
+                    )?
+                    .json["row"]
+                        .clone();
+                    if r.is_null() {
+                        Err(format!("History にないコミット: {id}").into())
+                    } else {
+                        Ok(r)
+                    }
                 };
-                call(&*front, json!({"op": "commitDiff", "history": history, "rows": [row(from)?, row(to)?]}))?
+                call(
+                    &*front,
+                    json!({"op": "commitDiff", "history": history, "rows": [row(from)?, row(to)?]}),
+                )?
             }
             _ => return Err("コミットは 1 つか 2 つです".into()),
         };
@@ -228,15 +285,33 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
             continue;
         }
         let (is_staged, is_unstaged) = (e["staged"] == true, e["unstaged"] == true);
-        let shown = if combined { is_staged || is_unstaged } else if staged { is_staged } else { is_unstaged };
+        let shown = if combined {
+            is_staged || is_unstaged
+        } else if staged {
+            is_staged
+        } else {
+            is_unstaged
+        };
         if !shown {
             continue;
         }
-        let mode = if combined { "combined" } else if staged { "staged" } else { "unstaged" };
-        let reply = match call(&*front, json!({"op": "workingDiff", "path": path, "mode": mode})) {
+        let mode = if combined {
+            "combined"
+        } else if staged {
+            "staged"
+        } else {
+            "unstaged"
+        };
+        let reply = match call(
+            &*front,
+            json!({"op": "workingDiff", "path": path, "mode": mode}),
+        ) {
             Ok(r) => r,
             // 行ごとの印をつけられない差分（バイナリなど）は、stage していない差分を出す。
-            Err(_) if combined => call(&*front, json!({"op": "workingDiff", "path": path, "mode": "unstaged"}))?,
+            Err(_) if combined => call(
+                &*front,
+                json!({"op": "workingDiff", "path": path, "mode": "unstaged"}),
+            )?,
             Err(e) => return Err(e),
         };
         files.push(reply);
@@ -265,9 +340,18 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
         if stat {
             stat_line(&mut out, path, &r.json);
         } else if r.json["binary"] == true {
-            out.push_str(&format!("{}\nバイナリのファイル\n", paint(&format!("diff {path}"), "1", c.color)));
+            out.push_str(&format!(
+                "{}\nバイナリのファイル\n",
+                paint(&format!("diff {path}"), "1", c.color)
+            ));
         } else {
-            DiffRows::from(r).render(&mut out, Some(path), numbers, r.json["mode"] == "combined", c.color);
+            DiffRows::from(r).render(
+                &mut out,
+                Some(path),
+                numbers,
+                r.json["mode"] == "combined",
+                c.color,
+            );
         }
     }
     term::write(&out);
@@ -284,7 +368,8 @@ pub fn show(args: &[String]) -> Result<ExitCode> {
     let no_patch = flag(&seen, "--no-patch");
     let diff = call(&*front, json!({"op": "commitDiff", "id": id}))?;
     if c.json {
-        let mut out = json!({"info": info, "changes": diff.json["changes"], "files": diff.json["files"]});
+        let mut out =
+            json!({"info": info, "changes": diff.json["changes"], "files": diff.json["files"]});
         if !no_patch {
             out["rows"] = json!(DiffRows::from(&diff).json(false));
         }
@@ -295,7 +380,11 @@ pub fn show(args: &[String]) -> Result<ExitCode> {
     out.push_str(&paint(&format!("commit {id}"), "33", c.color));
     out.push('\n');
     if let Some(parents) = info["parents"].as_array().filter(|p| p.len() > 1) {
-        let short: Vec<&str> = parents.iter().filter_map(|p| p.as_str()).map(|p| &p[..p.len().min(8)]).collect();
+        let short: Vec<&str> = parents
+            .iter()
+            .filter_map(|p| p.as_str())
+            .map(|p| &p[..p.len().min(8)])
+            .collect();
         out.push_str(&format!("Merge: {}\n", short.join(" ")));
     }
     out.push_str(&format!(
@@ -318,8 +407,18 @@ pub fn show(args: &[String]) -> Result<ExitCode> {
     print_commit_diff(&diff, &[], &c, flag(&seen, "--rows"), flag(&seen, "--stat"))
 }
 
-fn print_commit_diff(reply: &Reply, paths: &[String], c: &Common, numbers: bool, stat: bool) -> Result<ExitCode> {
-    let files: Vec<&Value> = reply.json["files"].as_array().into_iter().flatten().collect();
+fn print_commit_diff(
+    reply: &Reply,
+    paths: &[String],
+    c: &Common,
+    numbers: bool,
+    stat: bool,
+) -> Result<ExitCode> {
+    let files: Vec<&Value> = reply.json["files"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .collect();
     // 見出しの行（`FILE`）ごとにファイルを分ける。
     let mut parts: Vec<DiffRows> = Vec::new();
     for row in DiffRows::from(reply).rows {
@@ -381,20 +480,29 @@ fn split_revs(front: &dyn Front, rest: &[String]) -> (Vec<String>, Vec<String>) 
 }
 
 fn wanted(path: &str, paths: &[String]) -> bool {
-    paths.is_empty() || paths.iter().any(|p| path == p || path.starts_with(&format!("{p}/")))
+    paths.is_empty()
+        || paths
+            .iter()
+            .any(|p| path == p || path.starts_with(&format!("{p}/")))
 }
 
 /// `rev`（ブランチ・タグ・短い ID・`HEAD~2` など）をコミットの ID に。
 pub fn resolve(front: &dyn Front, rev: &str) -> Result<String> {
     let r = command(front, json!({"op": "resolveCommit", "rev": rev}))?;
-    r["text"].as_str().map(str::to_owned).ok_or_else(|| format!("コミットが見つかりません: {rev}").into())
+    r["text"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or_else(|| format!("コミットが見つかりません: {rev}").into())
 }
 
 fn stat_line(out: &mut String, path: &str, file: &Value) {
     if file["binary"] == true {
         out.push_str(&format!("{path}  バイナリ\n"));
     } else {
-        out.push_str(&format!("{path}  +{} -{}\n", file["added"], file["removed"]));
+        out.push_str(&format!(
+            "{path}  +{} -{}\n",
+            file["added"], file["removed"]
+        ));
     }
 }
 
@@ -421,11 +529,24 @@ pub fn stage(args: &[String], on: bool) -> Result<ExitCode> {
         let [path] = c.rest.as_slice() else {
             return Err("--rows には、ファイルを 1 つ渡してください".into());
         };
-        let d = call(&*front, json!({"op": "workingDiff", "path": path, "mode": "combined"}))
-            .map_err(|e| format!("{path} は行ごとに stage できません: {e}"))?;
-        call(&*front, json!({"op": "stageRows", "diff": d.json["diff"], "rows": parse_rows(spec)?, "stage": on}))?;
+        let d = call(
+            &*front,
+            json!({"op": "workingDiff", "path": path, "mode": "combined"}),
+        )
+        .map_err(|e| format!("{path} は行ごとに stage できません: {e}"))?;
+        call(
+            &*front,
+            json!({"op": "stageRows", "diff": d.json["diff"], "rows": parse_rows(spec)?, "stage": on}),
+        )?;
         if !c.json {
-            println!("{path} の {spec} 行目を {}", if on { "stage しました" } else { "unstage しました" });
+            println!(
+                "{path} の {spec} 行目を {}",
+                if on {
+                    "stage しました"
+                } else {
+                    "unstage しました"
+                }
+            );
         }
         return done(&c);
     }
@@ -435,7 +556,13 @@ pub fn stage(args: &[String], on: bool) -> Result<ExitCode> {
             .as_array()
             .into_iter()
             .flatten()
-            .filter(|e| if on { e["unstaged"] == true } else { e["staged"] == true })
+            .filter(|e| {
+                if on {
+                    e["unstaged"] == true
+                } else {
+                    e["staged"] == true
+                }
+            })
             .filter_map(|e| e["path"].as_str().map(str::to_owned))
             .collect()
     } else {
@@ -444,9 +571,20 @@ pub fn stage(args: &[String], on: bool) -> Result<ExitCode> {
     if paths.is_empty() {
         return Err("ファイルを渡してください（すべてなら --all）".into());
     }
-    call(&*front, json!({"op": if on { "stage" } else { "unstage" }, "paths": paths}))?;
+    call(
+        &*front,
+        json!({"op": if on { "stage" } else { "unstage" }, "paths": paths}),
+    )?;
     if !c.json {
-        println!("{} ファイルを {}", paths.len(), if on { "stage しました" } else { "unstage しました" });
+        println!(
+            "{} ファイルを {}",
+            paths.len(),
+            if on {
+                "stage しました"
+            } else {
+                "unstage しました"
+            }
+        );
     }
     done(&c)
 }
@@ -463,8 +601,14 @@ pub fn discard(args: &[String]) -> Result<ExitCode> {
         let [path] = c.rest.as_slice() else {
             return Err("--rows には、ファイルを 1 つ渡してください".into());
         };
-        let d = call(&*front, json!({"op": "workingDiff", "path": path, "mode": "unstaged"}))?;
-        call(&*front, json!({"op": "discardRows", "diff": d.json["diff"], "rows": parse_rows(spec)?}))?;
+        let d = call(
+            &*front,
+            json!({"op": "workingDiff", "path": path, "mode": "unstaged"}),
+        )?;
+        call(
+            &*front,
+            json!({"op": "discardRows", "diff": d.json["diff"], "rows": parse_rows(spec)?}),
+        )?;
         if !c.json {
             println!("{path} の {spec} 行目の変更を捨てました（amonhen undo で戻せます）");
         }
@@ -472,7 +616,10 @@ pub fn discard(args: &[String]) -> Result<ExitCode> {
     }
     command(&*front, json!({"op": "discard", "paths": c.rest}))?;
     if !c.json {
-        println!("{} ファイルの変更を捨てました（amonhen undo で戻せます）", c.rest.len());
+        println!(
+            "{} ファイルの変更を捨てました（amonhen undo で戻せます）",
+            c.rest.len()
+        );
     }
     done(&c)
 }
@@ -481,13 +628,22 @@ pub fn discard(args: &[String]) -> Result<ExitCode> {
 pub fn commit(args: &[String]) -> Result<ExitCode> {
     let (c, seen) = common(args, &["-m", "--message", "--amend"], &["-m", "--message"])?;
     let front = open_repository(&c.dir)?;
-    let message = value(&seen, "-m").or_else(|| value(&seen, "--message")).ok_or("-m でメッセージを渡してください")?;
-    call(&*front, json!({"op": "commit", "message": message, "amend": flag(&seen, "--amend")}))?;
+    let message = value(&seen, "-m")
+        .or_else(|| value(&seen, "--message"))
+        .ok_or("-m でメッセージを渡してください")?;
+    call(
+        &*front,
+        json!({"op": "commit", "message": message, "amend": flag(&seen, "--amend")}),
+    )?;
     let head = resolve(&*front, "HEAD")?;
     if c.json {
         print_json(&json!({"ok": true, "commit": head}));
     } else {
-        println!("コミットしました: {} {}", &head[..8], message.lines().next().unwrap_or(""));
+        println!(
+            "コミットしました: {} {}",
+            &head[..8],
+            message.lines().next().unwrap_or("")
+        );
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -526,12 +682,17 @@ pub fn refs(args: &[String]) -> Result<ExitCode> {
         }
         let name = e["name"].as_str().unwrap_or("");
         let is_head = kind == "branch" && head == Some(name);
-        let target = e["target"].as_str().map_or_else(|| "        ".to_owned(), |t| t[..8].to_owned());
+        let target = e["target"]
+            .as_str()
+            .map_or_else(|| "        ".to_owned(), |t| t[..8].to_owned());
         let mut line = format!("  {} {target} {name}", if is_head { "*" } else { " " });
         if let Some(d) = e["detail"].as_str() {
             line.push_str(&format!("  {d}"));
         }
-        let (ahead, behind) = (e["ahead"].as_u64().unwrap_or(0), e["behind"].as_u64().unwrap_or(0));
+        let (ahead, behind) = (
+            e["ahead"].as_u64().unwrap_or(0),
+            e["behind"].as_u64().unwrap_or(0),
+        );
         if e["gone"] == true {
             line.push_str("（上流がない）");
         } else if ahead > 0 || behind > 0 {

@@ -89,7 +89,13 @@ impl Server {
         let compress = self.compress;
         move |n| {
             if let Ok(payload) = postcard::to_allocvec(&n) {
-                let _ = frame::write_with(&mut *writer.lock().unwrap(), Kind::Notify, 0, &payload, compress);
+                let _ = frame::write_with(
+                    &mut *writer.lock().unwrap(),
+                    Kind::Notify,
+                    0,
+                    &payload,
+                    compress,
+                );
             }
         }
     }
@@ -116,9 +122,15 @@ impl Server {
                     let host = self.host.clone();
                     std::thread::spawn(move || {
                         let result = match (request, &host) {
-                            (Request::PreparedHistory, Some(h)) => h.prepared_history().and_then(|p| encode(&Some(p))),
-                            (Request::Delegate(bytes), Some(h)) => h.delegate(&bytes.0).and_then(|d| encode(&share(d))),
-                            (Request::Delegate(_), None) => Err("この daemon は処理を任されない".into()),
+                            (Request::PreparedHistory, Some(h)) => {
+                                h.prepared_history().and_then(|p| encode(&Some(p)))
+                            }
+                            (Request::Delegate(bytes), Some(h)) => {
+                                h.delegate(&bytes.0).and_then(|d| encode(&share(d)))
+                            }
+                            (Request::Delegate(_), None) => {
+                                Err("この daemon は処理を任されない".into())
+                            }
                             (request, _) => handle(&*backend, &search, request, &cancel),
                         };
                         cancels.lock().unwrap().remove(&f.id);
@@ -265,12 +277,12 @@ fn handle(
         Request::VerifySignatures(ids) => encode(&backend.verify_signatures(&ids)?),
         Request::SearchTexts { tips, terms } => {
             let ids = commits_from(backend, &search.commits, &tips)?;
-            let words = search.texts.search(
-                &ids,
-                &terms,
-                &|batch| backend.commit_texts(batch),
-                &|| cancel.load(Ordering::Relaxed),
-            )?;
+            let words =
+                search
+                    .texts
+                    .search(&ids, &terms, &|batch| backend.commit_texts(batch), &|| {
+                        cancel.load(Ordering::Relaxed)
+                    })?;
             let found: Vec<Vec<Oid>> = words
                 .iter()
                 .map(|w| {
@@ -280,7 +292,7 @@ fn handle(
                         .collect()
                 })
                 .collect();
-encode(&found)
+            encode(&found)
         }
         Request::FileRead { root, path } => encode(&files().read(root, &path)?.map(Bytes)),
         Request::FileWrite { root, path, data } => encode(&files().write(root, &path, &data.0)?),

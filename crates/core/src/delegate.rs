@@ -58,7 +58,16 @@ impl From<&FileDiff> for DiffMeta {
             lines: d
                 .lines
                 .iter()
-                .map(|l| (l.kind, l.old_no, l.new_no, l.source as u8, l.range.start, l.range.end))
+                .map(|l| {
+                    (
+                        l.kind,
+                        l.old_no,
+                        l.new_no,
+                        l.source as u8,
+                        l.range.start,
+                        l.range.end,
+                    )
+                })
                 .collect(),
             binary: d.binary,
             added: d.added,
@@ -68,7 +77,11 @@ impl From<&FileDiff> for DiffMeta {
 }
 
 impl DiffMeta {
-    pub(crate) fn into_diff(self, old: amonhen_layout::Blob, new: amonhen_layout::Blob) -> FileDiff {
+    pub(crate) fn into_diff(
+        self,
+        old: amonhen_layout::Blob,
+        new: amonhen_layout::Blob,
+    ) -> FileDiff {
         FileDiff {
             old,
             new,

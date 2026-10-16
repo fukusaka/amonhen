@@ -118,10 +118,9 @@ pub fn plan_rebase(
     match edit {
         HistoryEdit::SquashRange { last, .. } => {
             let last = Oid::from_hex(last).ok_or("コミット ID を読めない")?;
-            range_end = seq
-                .iter()
-                .position(|c| c.oid == last)
-                .ok_or("このコミットは編集できません（HEAD から辿れないか、merge より前にあります）")?;
+            range_end = seq.iter().position(|c| c.oid == last).ok_or(
+                "このコミットは編集できません（HEAD から辿れないか、merge より前にあります）",
+            )?;
             if range_end <= index {
                 return Err("まとめるには、2 つ以上の連続したコミットを選んでください".into());
             }
@@ -301,16 +300,21 @@ mod tests {
         .unwrap();
         assert_eq!(p.base, Some(oid('a')));
         let todo = short(&p.todo);
-        assert!(todo.starts_with("pick b\nfixup c\nexec git commit --amend "), "{todo}");
+        assert!(
+            todo.starts_with("pick b\nfixup c\nexec git commit --amend "),
+            "{todo}"
+        );
         assert!(todo.ends_with("message-c.txt'\npick d\n"), "{todo}");
         assert_eq!(p.messages[0].1, "b..c");
         // 新しい側を先に渡したら断る。
-        assert!(plan(HistoryEdit::SquashRange {
-            oid: hex('c'),
-            last: hex('b'),
-            message: String::new(),
-        })
-        .is_err());
+        assert!(
+            plan(HistoryEdit::SquashRange {
+                oid: hex('c'),
+                last: hex('b'),
+                message: String::new(),
+            })
+            .is_err()
+        );
     }
 
     #[test]

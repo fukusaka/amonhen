@@ -109,10 +109,14 @@ pub fn set_cancellable(seq: u64) {
 pub fn cancel(seq: u64) -> bool {
     let running = {
         let log = LOG.lock().unwrap_or_else(|e| e.into_inner());
-        log.iter().any(|r| r.seq == seq && r.cancellable && r.ok.is_none())
+        log.iter()
+            .any(|r| r.seq == seq && r.cancellable && r.ok.is_none())
     };
     if running {
-        CANCELLED.lock().unwrap_or_else(|e| e.into_inner()).push(seq);
+        CANCELLED
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push(seq);
     }
     running
 }
@@ -248,7 +252,11 @@ mod tests {
         assert!(!cancel(seq), "取り消せる印がなければ断る");
         set_cancellable(seq);
         set_progress(seq, "Receiving objects: 10%");
-        assert!(records().iter().any(|r| r.seq == seq && r.progress.as_deref() == Some("Receiving objects: 10%")));
+        assert!(
+            records()
+                .iter()
+                .any(|r| r.seq == seq && r.progress.as_deref() == Some("Receiving objects: 10%"))
+        );
         assert!(cancel(seq));
         assert!(take_cancel(seq));
         assert!(!take_cancel(seq));

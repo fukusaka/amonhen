@@ -10,7 +10,6 @@ use std::time::Duration;
 use amonhen_watch::Changes;
 use serde_json::{Value, json};
 
-
 use crate::{Args, Result, USAGE, open_repository, term};
 
 /// `amonhen run [-C <path>] [<json>…]`: コアの命令（`{"op":"checkout","branch":"main"}` など）を実行し、答えの
@@ -22,7 +21,9 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     while let Some(arg) = a.rest.next() {
         match arg.as_str() {
             "-C" => dir = PathBuf::from(a.value("-C")?),
-            s if s.starts_with('-') && s.len() > 1 => return Err(format!("知らないオプション: {s}\n\n{USAGE}").into()),
+            s if s.starts_with('-') && s.len() > 1 => {
+                return Err(format!("知らないオプション: {s}\n\n{USAGE}").into());
+            }
             _ => commands.push(arg.clone()),
         }
     }
@@ -31,7 +32,9 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
     let run = |line: &str| -> String {
         let command = match serde_json::from_str::<Value>(line) {
             Ok(c) => c,
-            Err(e) => return json!({"ok": false, "error": format!("命令を読めない: {e}")}).to_string(),
+            Err(e) => {
+                return json!({"ok": false, "error": format!("命令を読めない: {e}")}).to_string();
+            }
         };
         match front.call(json!({"op": "run", "command": command})) {
             Ok(reply) => reply.json.to_string(),
@@ -45,7 +48,11 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             all_ok &= ok(&reply);
             println!("{reply}");
         }
-        return Ok(if all_ok { ExitCode::SUCCESS } else { ExitCode::from(1) });
+        return Ok(if all_ok {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::from(1)
+        });
     }
     let stdin = std::io::stdin();
     let mut out = std::io::stdout().lock();
@@ -102,13 +109,20 @@ pub fn watch(args: &[String]) -> Result<ExitCode> {
         let commits = history["rows"].as_u64().unwrap_or(0);
         let changed = status["entries"].as_array().map_or(0, Vec::len);
         if as_json {
-            println!("{}", json!({"changes": names, "head": head, "commits": commits, "changedFiles": changed}));
+            println!(
+                "{}",
+                json!({"changes": names, "head": head, "commits": commits, "changedFiles": changed})
+            );
         } else {
             let head = head.as_deref().map_or("なし", |h| &h[..8]);
             println!(
                 "{}  {}  HEAD {head}・コミット {commits}・変更のあるファイル {changed}",
                 term::local_time(now(), true),
-                if names.is_empty() { "-".to_owned() } else { names.join(",") },
+                if names.is_empty() {
+                    "-".to_owned()
+                } else {
+                    names.join(",")
+                },
             );
         }
         std::io::stdout().flush()?;
@@ -145,13 +159,28 @@ fn now() -> i64 {
 pub fn clone(args: &[String]) -> Result<ExitCode> {
     let (url, dest) = match args {
         [url] => {
-            let name = url.trim_end_matches('/').rsplit(['/', ':']).next().unwrap_or("repo");
-            (url, PathBuf::from(name.strip_suffix(".git").unwrap_or(name)))
+            let name = url
+                .trim_end_matches('/')
+                .rsplit(['/', ':'])
+                .next()
+                .unwrap_or("repo");
+            (
+                url,
+                PathBuf::from(name.strip_suffix(".git").unwrap_or(name)),
+            )
         }
         [url, dir] => (url, PathBuf::from(dir)),
-        _ => return Err(format!("clone には URL と（あれば）置き場所を渡してください\n\n{USAGE}").into()),
+        _ => {
+            return Err(
+                format!("clone には URL と（あれば）置き場所を渡してください\n\n{USAGE}").into(),
+            );
+        }
     };
-    let dest = if dest.is_absolute() { dest } else { std::env::current_dir()?.join(dest) };
+    let dest = if dest.is_absolute() {
+        dest
+    } else {
+        std::env::current_dir()?.join(dest)
+    };
     amonhen_backend_cli::clone(url, Path::new(&dest))?;
     println!("clone しました: {}", dest.display());
     Ok(ExitCode::SUCCESS)

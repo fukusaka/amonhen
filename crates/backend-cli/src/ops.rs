@@ -573,12 +573,17 @@ impl Operations for Git {
         Ok(crate::extras::parse_numstat(&out))
     }
 
-    fn ignore_matches(&self, patterns: &[String], limit: usize) -> Result<Vec<(Vec<String>, usize)>> {
+    fn ignore_matches(
+        &self,
+        patterns: &[String],
+        limit: usize,
+    ) -> Result<Vec<(Vec<String>, usize)>> {
         patterns
             .iter()
             .map(|pattern| {
                 let exclude = format!("--exclude={pattern}");
-                let out = self.read(&["ls-files", "-z", "-c", "-o", "-i", "--directory", &exclude])?;
+                let out =
+                    self.read(&["ls-files", "-z", "-c", "-o", "-i", "--directory", &exclude])?;
                 let all: Vec<&[u8]> = out.split(|&b| b == 0).filter(|p| !p.is_empty()).collect();
                 let examples = all
                     .iter()

@@ -9,7 +9,8 @@ use std::process::{Command, ExitCode};
 use crate::Result;
 
 pub fn run(args: &[String]) -> Result<ExitCode> {
-    let mut bundle = std::env::var("AMONHEN_BUNDLE_ID").unwrap_or_else(|_| "io.github.fukusaka.amonhen".into());
+    let mut bundle =
+        std::env::var("AMONHEN_BUNDLE_ID").unwrap_or_else(|_| "io.github.fukusaka.amonhen".into());
     let mut target: Option<&str> = None;
     let mut through_daemon = false;
     for arg in args {
@@ -26,16 +27,31 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         return Err("アプリで開くのは macOS だけです".into());
     }
     let status = if target.starts_with("ssh://") || target.starts_with("daemon:") {
-        Command::new("open").args(["-b", &bundle, &url_for(target)]).status()?
+        Command::new("open")
+            .args(["-b", &bundle, &url_for(target)])
+            .status()?
     } else if through_daemon {
         let root = crate::repository_root(&PathBuf::from(target))?;
-        Command::new("open").args(["-b", &bundle, &url_for(&format!("daemon:{}", root.display()))]).status()?
+        Command::new("open")
+            .args([
+                "-b",
+                &bundle,
+                &url_for(&format!("daemon:{}", root.display())),
+            ])
+            .status()?
     } else {
         let root = crate::repository_root(&PathBuf::from(target))?;
-        Command::new("open").arg("-b").arg(&bundle).arg(&root).status()?
+        Command::new("open")
+            .arg("-b")
+            .arg(&bundle)
+            .arg(&root)
+            .status()?
     };
     if !status.success() {
-        return Err(format!("Amon Hen（{bundle}）を起動できません。/Applications に入っているか確かめてください").into());
+        return Err(format!(
+            "Amon Hen（{bundle}）を起動できません。/Applications に入っているか確かめてください"
+        )
+        .into());
     }
     Ok(ExitCode::SUCCESS)
 }

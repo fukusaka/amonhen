@@ -32,7 +32,10 @@ fn bin_link() -> Result<PathBuf> {
 fn parse_version(line: &str) -> Option<(String, u32)> {
     let rest = line.trim().strip_prefix("amonhen ")?;
     let (version, protocol) = rest.split_once(" (protocol ")?;
-    Some((version.to_owned(), protocol.strip_suffix(')')?.parse().ok()?))
+    Some((
+        version.to_owned(),
+        protocol.strip_suffix(')')?.parse().ok()?,
+    ))
 }
 
 /// 版の大小。`0.1.0` < `0.1.1-snapshot.3` < `0.1.1-snapshot.12` < `0.1.1`（`+` の後ろは見ない）。
@@ -45,13 +48,23 @@ fn version_key(version: &str) -> (Vec<u64>, u8, u64) {
     let numbers = core.split('.').map(|n| n.parse().unwrap_or(0)).collect();
     match pre {
         None => (numbers, 1, 0),
-        Some(p) => (numbers, 0, p.rsplit('.').next().and_then(|n| n.parse().ok()).unwrap_or(0)),
+        Some(p) => (
+            numbers,
+            0,
+            p.rsplit('.')
+                .next()
+                .and_then(|n| n.parse().ok())
+                .unwrap_or(0),
+        ),
     }
 }
 
 /// `path` のエンジンの版（動かして聞く）。
 fn version_of(path: &Path) -> Option<(String, u32)> {
-    let out = std::process::Command::new(path).arg("--version").output().ok()?;
+    let out = std::process::Command::new(path)
+        .arg("--version")
+        .output()
+        .ok()?;
     parse_version(&String::from_utf8_lossy(&out.stdout))
 }
 
@@ -120,7 +133,11 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
                 continue;
             }
             std::fs::create_dir_all(&to)?;
-            let tmp = to.join(format!("{}.tmp.{}", name.to_string_lossy(), std::process::id()));
+            let tmp = to.join(format!(
+                "{}.tmp.{}",
+                name.to_string_lossy(),
+                std::process::id()
+            ));
             std::fs::copy(entry.path(), &tmp)?;
             set_executable(&tmp)?;
             std::fs::rename(&tmp, to.join(&name))?;
@@ -130,7 +147,9 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
     // current を向けるか: なければ向ける。あれば、そちらが新しいときだけ残す（同じ版の別ビルドなら新しく置いたほう）。
     let current = root.join("current");
     let (mine, _) = own_version();
-    let installed = std::fs::read_link(&current).ok().and_then(|_| version_of(&current.join("amonhen")));
+    let installed = std::fs::read_link(&current)
+        .ok()
+        .and_then(|_| version_of(&current.join("amonhen")));
     let points_here = std::fs::read_link(&current).is_ok_and(|p| root.join(&p) == dir || p == dir);
     let newer_installed = installed
         .as_ref()
@@ -139,7 +158,9 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
         say(format!("current はこの版です（{mine}）"));
     } else if newer_installed && !force {
         let (v, _) = installed.unwrap();
-        say(format!("current は新しい版（{v}）のままにします（この版は {mine}。--force で入れ替える）"));
+        say(format!(
+            "current は新しい版（{v}）のままにします（この版は {mine}。--force で入れ替える）"
+        ));
     } else {
         let tmp = root.join(format!("current.tmp.{}", std::process::id()));
         let _ = std::fs::remove_file(&tmp);
@@ -153,7 +174,10 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
         let wanted = current.join("amonhen");
         match std::fs::symlink_metadata(&bin) {
             Ok(m) if !m.file_type().is_symlink() => {
-                say(format!("{} はリンクではないので、そのままにします", bin.display()));
+                say(format!(
+                    "{} はリンクではないので、そのままにします",
+                    bin.display()
+                ));
             }
             Ok(_) if std::fs::read_link(&bin).is_ok_and(|p| p == wanted) => {}
             _ => {
@@ -171,13 +195,18 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
 /// `bin`（自分も `amonhen-<os>-<arch>` の名前で並んでいる）、開発中はリポジトリの `dist/engine`）。
 fn bundled_engines(me: &Path) -> Option<PathBuf> {
     let dir = me.parent()?;
-    if me.file_name().is_some_and(|n| n.to_string_lossy().starts_with("amonhen-")) {
+    if me
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with("amonhen-"))
+    {
         return Some(dir.to_path_buf());
     }
     if let Some(bundled) = Some(dir.join("../Resources/engines")).filter(|d| d.is_dir()) {
         return Some(bundled);
     }
-    dir.ancestors().map(|d| d.join("dist/engine")).find(|d| d.is_dir())
+    dir.ancestors()
+        .map(|d| d.join("dist/engine"))
+        .find(|d| d.is_dir())
 }
 
 #[cfg(unix)]
@@ -209,7 +238,10 @@ mod tests {
 
     #[test]
     fn orders_versions() {
-        assert_eq!(parse_version("amonhen 0.1.1-snapshot.72+5de3fb4 (protocol 16)\n"), Some(("0.1.1-snapshot.72+5de3fb4".into(), 16)));
+        assert_eq!(
+            parse_version("amonhen 0.1.1-snapshot.72+5de3fb4 (protocol 16)\n"),
+            Some(("0.1.1-snapshot.72+5de3fb4".into(), 16))
+        );
         let k = version_key;
         assert!(k("0.1.0") < k("0.1.1-snapshot.3"));
         assert!(k("0.1.1-snapshot.3") < k("0.1.1-snapshot.12"));

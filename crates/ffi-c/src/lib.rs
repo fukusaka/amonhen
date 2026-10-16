@@ -192,7 +192,10 @@ pub unsafe extern "C" fn amonhen_repo_open_location(
         let daemon = str_arg(daemon)?;
         let conn = if location.starts_with("ssh://") {
             use amonhen_remote::ssh;
-            let daemons = ssh::Daemons::new(str_arg(daemons_dir)?.into(), Some((ssh::local_platform(), daemon.into())));
+            let daemons = ssh::Daemons::new(
+                str_arg(daemons_dir)?.into(),
+                Some((ssh::local_platform(), daemon.into())),
+            );
             let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
             ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)?
         } else {
@@ -1731,7 +1734,9 @@ pub unsafe extern "C" fn amonhen_history_folded(
     expanded_count: u32,
 ) -> *const AmonhenHistory {
     let read = |ptr: *const u8, n: u32| -> Vec<Oid> {
-        (0..n as usize).map(|i| Oid(unsafe { *ptr.add(i * 20).cast::<[u8; 20]>() })).collect()
+        (0..n as usize)
+            .map(|i| Oid(unsafe { *ptr.add(i * 20).cast::<[u8; 20]>() }))
+            .collect()
     };
     let tips = (!all).then(|| read(tips, count));
     let expanded = read(expanded, expanded_count);
@@ -1749,8 +1754,15 @@ pub unsafe extern "C" fn amonhen_history_folded(
 /// # Safety
 /// `history` は有効な History であること。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_history_hidden(history_ptr: *const AmonhenHistory, row: u32) -> u32 {
-    history(history_ptr).folded.get(row as usize).copied().unwrap_or(0)
+pub unsafe extern "C" fn amonhen_history_hidden(
+    history_ptr: *const AmonhenHistory,
+    row: u32,
+) -> u32 {
+    history(history_ptr)
+        .folded
+        .get(row as usize)
+        .copied()
+        .unwrap_or(0)
 }
 
 /// スクロールバーに描く密度。`out` に区間ごとの [頻度, 活動量]（0〜1）を `buckets * 2` 個書き、書いた区間の数を
@@ -1786,7 +1798,11 @@ pub unsafe extern "C" fn amonhen_history_matching(
     rows: *const u32,
     count: u32,
 ) -> *const AmonhenHistory {
-    let rows = if count == 0 { &[][..] } else { unsafe { std::slice::from_raw_parts(rows, count as usize) } };
+    let rows = if count == 0 {
+        &[][..]
+    } else {
+        unsafe { std::slice::from_raw_parts(rows, count as usize) }
+    };
     into_history(repo(repo_ptr).history_matching(history(history_ptr), rows))
 }
 
@@ -1815,7 +1831,9 @@ pub extern "C" fn amonhen_daemon_stop() -> bool {
 /// `daemon` は NUL 終端の UTF-8 であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_daemon_start(daemon: *const c_char) -> bool {
-    let result = str_arg(daemon).map_err(Into::into).and_then(amonhen_remote::local::start);
+    let result = str_arg(daemon)
+        .map_err(Into::into)
+        .and_then(amonhen_remote::local::start);
     match result {
         Ok(()) => true,
         Err(e) => {

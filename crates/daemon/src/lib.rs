@@ -17,8 +17,15 @@ use amonhen_remote::{Notification, Server};
 
 /// daemon としての起動か（`--stdio`・`--serve`・`--socket` で始まる引数、または `amonhend` という名前）。
 pub fn is_daemon(argv0: &str, args: &[String]) -> bool {
-    let name = std::path::Path::new(argv0).file_name().and_then(|n| n.to_str()).unwrap_or_default();
-    name.starts_with("amonhend") || matches!(args.first().map(String::as_str), Some("--stdio" | "--serve" | "--socket"))
+    let name = std::path::Path::new(argv0)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or_default();
+    name.starts_with("amonhend")
+        || matches!(
+            args.first().map(String::as_str),
+            Some("--stdio" | "--serve" | "--socket")
+        )
 }
 
 /// daemon として動き、終わったら終了コードを返す（`args` は実行ファイルの名前を除いた引数）。
@@ -56,7 +63,9 @@ pub fn run(args: &[String]) -> i32 {
             return 0;
         }
         _ => {
-            eprintln!("使い方: amonhen --stdio <リポジトリのパス> | amonhen --serve [<ソケット>] | amonhen --socket");
+            eprintln!(
+                "使い方: amonhen --stdio <リポジトリのパス> | amonhen --serve [<ソケット>] | amonhen --socket"
+            );
             return 2;
         }
     };
@@ -71,7 +80,11 @@ pub fn run(args: &[String]) -> i32 {
 
 /// `amonhen 0.1.0 (protocol 16)`。FE と SSH 先は、ここの protocol で使えるかを決める。
 pub fn version() -> String {
-    format!("amonhen {} (protocol {})", env!("CARGO_PKG_VERSION"), amonhen_remote::PROTOCOL_VERSION)
+    format!(
+        "amonhen {} (protocol {})",
+        env!("CARGO_PKG_VERSION"),
+        amonhen_remote::PROTOCOL_VERSION
+    )
 }
 
 fn stdio(repo: &str) -> amonhen_model::Result<()> {

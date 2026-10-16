@@ -19,7 +19,11 @@ fn main() -> amonhen_model::Result<()> {
     let repo = Repository::new(GixBackend::open(&path)?);
     let t = Instant::now();
     let history = repo.load_history()?;
-    println!("commits: {}（History {:.0} ms）", history.graph.len(), t.elapsed().as_secs_f64() * 1000.0);
+    println!(
+        "commits: {}（History {:.0} ms）",
+        history.graph.len(),
+        t.elapsed().as_secs_f64() * 1000.0
+    );
 
     // 画面 1 枚分: 真ん中あたり。
     let start = history.graph.len() as u32 / 2;
@@ -35,7 +39,12 @@ fn main() -> amonhen_model::Result<()> {
     Ok(())
 }
 
-fn report(name: &str, out: &std::path::Path, json: impl Fn() -> Vec<u8>, records: impl Fn() -> Vec<u8>) -> amonhen_model::Result<()> {
+fn report(
+    name: &str,
+    out: &std::path::Path,
+    json: impl Fn() -> Vec<u8>,
+    records: impl Fn() -> Vec<u8>,
+) -> amonhen_model::Result<()> {
     for (kind, make) in [("json", &json as &dyn Fn() -> Vec<u8>), ("bin", &records)] {
         let mut times = Vec::new();
         let mut bytes = Vec::new();
@@ -64,13 +73,27 @@ struct Window<'a> {
 }
 
 impl<'a> Window<'a> {
-    fn new(history: &'a HistorySnapshot, start: u32, end: u32, texts: &'a [amonhen_model::CommitText]) -> Self {
-        Self { history, start, end, texts }
+    fn new(
+        history: &'a HistorySnapshot,
+        start: u32,
+        end: u32,
+        texts: &'a [amonhen_model::CommitText],
+    ) -> Self {
+        Self {
+            history,
+            start,
+            end,
+            texts,
+        }
     }
 
     fn edges(&self) -> Vec<Edge> {
         let all = self.history.layout.edges();
-        self.history.layout.edges_in(self.start..self.end).map(|i| all[i as usize]).collect()
+        self.history
+            .layout
+            .edges_in(self.start..self.end)
+            .map(|i| all[i as usize])
+            .collect()
     }
 
     fn json(&self) -> Vec<u8> {
@@ -95,7 +118,16 @@ impl<'a> Window<'a> {
         let edges: Vec<serde_json::Value> = self
             .edges()
             .iter()
-            .map(|e| serde_json::json!([e.row_start, e.row_end, e.lane_start, e.lane_end, e.color, e.kind]))
+            .map(|e| {
+                serde_json::json!([
+                    e.row_start,
+                    e.row_end,
+                    e.lane_start,
+                    e.lane_end,
+                    e.color,
+                    e.kind
+                ])
+            })
             .collect();
         serde_json::to_vec(&serde_json::json!({"rows": rows, "edges": edges})).unwrap()
     }
@@ -145,7 +177,16 @@ impl All<'_> {
             .layout
             .edges()
             .iter()
-            .map(|e| serde_json::json!([e.row_start, e.row_end, e.lane_start, e.lane_end, e.color, e.kind]))
+            .map(|e| {
+                serde_json::json!([
+                    e.row_start,
+                    e.row_end,
+                    e.lane_start,
+                    e.lane_end,
+                    e.color,
+                    e.kind
+                ])
+            })
             .collect();
         serde_json::to_vec(&serde_json::json!({"nodes": nodes, "edges": edges})).unwrap()
     }

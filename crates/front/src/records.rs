@@ -18,7 +18,8 @@ impl Records {
         while !self.data.len().is_multiple_of(8) {
             self.data.push(0);
         }
-        self.sections.insert(name.to_owned(), json!([self.data.len(), bytes.len()]));
+        self.sections
+            .insert(name.to_owned(), json!([self.data.len(), bytes.len()]));
         self.data.extend_from_slice(bytes);
         self
     }
@@ -26,13 +27,18 @@ impl Records {
     /// `repr(C)` の値の並びをそのまま。
     pub fn put_slice<T: Copy>(&mut self, name: &str, items: &[T]) -> &mut Self {
         // SAFETY: 呼ぶのは `repr(C)` で詰め物のない型（数値・`Node`・`Edge`・`Oid`）だけ。
-        let bytes = unsafe { std::slice::from_raw_parts(items.as_ptr().cast::<u8>(), std::mem::size_of_val(items)) };
+        let bytes = unsafe {
+            std::slice::from_raw_parts(items.as_ptr().cast::<u8>(), std::mem::size_of_val(items))
+        };
         self.put(name, bytes)
     }
 
     /// JSON（`data` に区画の位置を足す）とレコード。
     pub fn finish(self, mut json: Value) -> crate::Reply {
         json["data"] = Value::Object(self.sections);
-        crate::Reply { json, data: self.data }
+        crate::Reply {
+            json,
+            data: self.data,
+        }
     }
 }

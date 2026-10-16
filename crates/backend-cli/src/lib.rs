@@ -169,7 +169,9 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
         .find(|a| !a.to_string_lossy().starts_with('-') && !a.to_string_lossy().contains('='))
         .is_some_and(|a| ["fetch", "pull", "push", "clone"].contains(&&*a.to_string_lossy()));
     if network && input.is_none() && !cmd.get_args().any(|a| a == "--") {
-        return amonhen_model::activity::track_with("git", &repo, label, |seq| spawn_streaming(cmd, seq));
+        return amonhen_model::activity::track_with("git", &repo, label, |seq| {
+            spawn_streaming(cmd, seq)
+        });
     }
     amonhen_model::activity::track_with("git", &repo, label, |seq| {
         let (out, err) = spawn_with_stderr(cmd, input)?;
@@ -185,10 +187,12 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
 /// `--progress` を付けて実行し、標準エラーの進み具合（\r で上書きされる行）を Activity に書く。取り消しを
 /// 頼まれたら git を止める。
 fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
-    use std::io::Read;
     use amonhen_model::activity;
+    use std::io::Read;
     cmd.arg("--progress");
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).stdin(Stdio::null());
+    cmd.stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null());
     // 取り消すときに git が起動した ssh なども止められるよう、別のプロセスグループにする。
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
@@ -623,11 +627,23 @@ mod streaming_tests {
     fn cancels_a_running_fetch() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        assert!(Command::new("git").args(["init", "-q"]).current_dir(dir).status().unwrap().success());
+        assert!(
+            Command::new("git")
+                .args(["init", "-q"])
+                .current_dir(dir)
+                .status()
+                .unwrap()
+                .success()
+        );
         // いつまでも返らないリモート（ext:: で sleep を起動する）。
         let mut cmd = Command::new("git");
-        cmd.current_dir(dir)
-            .args(["-c", "protocol.ext.allow=always", "fetch", "ext::sleep 30", "main"]);
+        cmd.current_dir(dir).args([
+            "-c",
+            "protocol.ext.allow=always",
+            "fetch",
+            "ext::sleep 30",
+            "main",
+        ]);
         let started = std::time::Instant::now();
         let handle = std::thread::spawn(move || run(cmd, None));
         let seq = loop {
@@ -644,7 +660,10 @@ mod streaming_tests {
         let result = handle.join().unwrap();
         assert_eq!(result.unwrap_err().to_string(), "取り消した");
         assert!(started.elapsed().as_secs() < 10);
-        let record = amonhen_model::activity::records().into_iter().find(|r| r.seq == seq).unwrap();
+        let record = amonhen_model::activity::records()
+            .into_iter()
+            .find(|r| r.seq == seq)
+            .unwrap();
         assert_eq!(record.ok, Some(false));
     }
 }

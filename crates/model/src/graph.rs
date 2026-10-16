@@ -83,10 +83,14 @@ impl CommitGraph {
             nearest[r] = if keep[r] {
                 r as u32
             } else {
-                self.parents(r).first().map_or(u32::MAX, |&p| nearest[p as usize])
+                self.parents(r)
+                    .first()
+                    .map_or(u32::MAX, |&p| nearest[p as usize])
             };
         }
-        self.retain_mapped(keep, |p| Some(nearest[p as usize]).filter(|&n| n != u32::MAX))
+        self.retain_mapped(keep, |p| {
+            Some(nearest[p as usize]).filter(|&n| n != u32::MAX)
+        })
     }
 
     /// `retain` の本体。親の行を `map` で残る行（元の番号）に置き換え、同じ親は 1 つにまとめる。

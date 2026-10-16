@@ -24,7 +24,11 @@ fn main() -> amonhen_model::Result<()> {
     for buckets in [400, 1000] {
         let t = Instant::now();
         let d = full.density(buckets);
-        println!("density ({buckets}): {:?}  buckets: {}", t.elapsed(), d.len());
+        println!(
+            "density ({buckets}): {:?}  buckets: {}",
+            t.elapsed(),
+            d.len()
+        );
     }
     Ok(())
 }

@@ -38,7 +38,10 @@ impl AsRef<[u8]> for Blob {
 impl From<Arc<Vec<u8>>> for Blob {
     fn from(v: Arc<Vec<u8>>) -> Self {
         let len = v.len();
-        Self { source: v, range: 0..len }
+        Self {
+            source: v,
+            range: 0..len,
+        }
     }
 }
 
@@ -75,7 +78,10 @@ mod tests {
         let source: ByteSource = Arc::new(b"helloworld".to_vec());
         let world = Blob::part(source.clone(), 5..10);
         assert_eq!(&*world, b"world");
-        assert_eq!(Blob::from(b"abc".to_vec()), Blob::from(Arc::new(b"abc".to_vec())));
+        assert_eq!(
+            Blob::from(b"abc".to_vec()),
+            Blob::from(Arc::new(b"abc".to_vec()))
+        );
         assert!(Blob::default().is_empty());
     }
 }

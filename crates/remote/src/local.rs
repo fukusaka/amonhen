@@ -21,7 +21,13 @@ use crate::Connection;
 /// `/tmp/amonhen-<uid>`）に置く。
 pub fn socket_path() -> PathBuf {
     let dir = std::env::var_os("AMONHEN_DAEMON_DIR")
-        .or_else(|| if cfg!(target_os = "macos") { std::env::var_os("TMPDIR") } else { None })
+        .or_else(|| {
+            if cfg!(target_os = "macos") {
+                std::env::var_os("TMPDIR")
+            } else {
+                None
+            }
+        })
         .or_else(|| std::env::var_os("XDG_RUNTIME_DIR"))
         .map(PathBuf::from)
         .unwrap_or_else(|| {
@@ -50,7 +56,9 @@ pub fn control(command: &str) -> Result<Option<String>> {
     write_preamble(&mut writer, &format!("{CONTROL}{command}"))?;
     let mut reader = std::io::BufReader::new(stream);
     match crate::frame::read(&mut reader)? {
-        Some(f) if f.kind == crate::frame::Kind::Ok => Ok(Some(String::from_utf8_lossy(&f.payload).into_owned())),
+        Some(f) if f.kind == crate::frame::Kind::Ok => {
+            Ok(Some(String::from_utf8_lossy(&f.payload).into_owned()))
+        }
         Some(f) => Err(String::from_utf8_lossy(&f.payload).into_owned().into()),
         None => Err("daemon が答えずに閉じた".into()),
     }
@@ -162,6 +170,9 @@ mod tests {
     fn round_trips_the_preamble() {
         let mut buf = Vec::new();
         super::write_preamble(&mut buf, "/work/リポジトリ").unwrap();
-        assert_eq!(super::read_preamble(&mut buf.as_slice()).unwrap(), "/work/リポジトリ");
+        assert_eq!(
+            super::read_preamble(&mut buf.as_slice()).unwrap(),
+            "/work/リポジトリ"
+        );
     }
 }

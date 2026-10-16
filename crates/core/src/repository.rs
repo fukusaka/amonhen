@@ -149,12 +149,20 @@ impl HistorySnapshot {
         let mut raw: Vec<(f64, f64)> = (0..buckets)
             .map(|b| {
                 let (start, end) = (b * n / buckets, (b + 1) * n / buckets);
-                let (lo, hi) = times[start..end].iter().fold((i64::MAX, i64::MIN), |(lo, hi), &t| (lo.min(t), hi.max(t)));
+                let (lo, hi) = times[start..end]
+                    .iter()
+                    .fold((i64::MAX, i64::MIN), |(lo, hi), &t| (lo.min(t), hi.max(t)));
                 // 1 時間より短い区間は 1 時間とみなす（同じ時刻のコミットで無限大にしない）。
                 let hours = ((hi - lo).max(3600) as f64) / 3600.0;
                 let frequency = ((end - start) as f64 / hours).ln_1p();
                 lanes.clear();
-                lanes.extend(nodes.get(start..end).unwrap_or(&[]).iter().map(|node| node.lane));
+                lanes.extend(
+                    nodes
+                        .get(start..end)
+                        .unwrap_or(&[])
+                        .iter()
+                        .map(|node| node.lane),
+                );
                 lanes.sort_unstable();
                 lanes.dedup();
                 (frequency, lanes.len() as f64)
@@ -166,8 +174,16 @@ impl HistorySnapshot {
         };
         let (lo_f, hi_f) = range(&mut raw.iter().map(|r| r.0));
         let (lo_a, hi_a) = range(&mut raw.iter().map(|r| r.1));
-        let scale = |v: f64, lo: f64, hi: f64| if hi > lo { ((v - lo) / (hi - lo)) as f32 } else { 0.5 };
-        raw.drain(..).map(|(f, a)| [scale(f, lo_f, hi_f), scale(a, lo_a, hi_a)]).collect()
+        let scale = |v: f64, lo: f64, hi: f64| {
+            if hi > lo {
+                ((v - lo) / (hi - lo)) as f32
+            } else {
+                0.5
+            }
+        };
+        raw.drain(..)
+            .map(|(f, a)| [scale(f, lo_f, hi_f), scale(a, lo_a, hi_a)])
+            .collect()
     }
 
     /// コミットの行。初回は索引を作る（150 万コミットで 80 ms ほど）。
@@ -458,11 +474,19 @@ impl Repository {
 
     /// マージ済みブランチを折りたたんだ History。`tips` があればそこから辿れるものだけ。`expanded` の merge は
     /// 取り込んだ側も見せる。最新の History から作り、公開はしない。
-    pub fn history_folded(&self, tips: Option<&[Oid]>, expanded: &[Oid]) -> Result<Arc<HistorySnapshot>> {
+    pub fn history_folded(
+        &self,
+        tips: Option<&[Oid]>,
+        expanded: &[Oid],
+    ) -> Result<Arc<HistorySnapshot>> {
         self.history_shaped(tips, Some(expanded))
     }
 
-    fn history_shaped(&self, tips: Option<&[Oid]>, fold: Option<&[Oid]>) -> Result<Arc<HistorySnapshot>> {
+    fn history_shaped(
+        &self,
+        tips: Option<&[Oid]>,
+        fold: Option<&[Oid]>,
+    ) -> Result<Arc<HistorySnapshot>> {
         let full = match self.history.load_full() {
             Some(h) => h,
             None => self.load_history()?,
@@ -478,8 +502,14 @@ impl Repository {
                 // 起点（絞り込んだ ref と HEAD）は、ほかのブランチの途中にあっても幹として残す。
                 // ID から行は 1 回なめて引く（ref が数千あっても、行ごとに探さない）。
                 // 同じ ID が何度出ても（HEAD が起点にも含まれるなど）、番号は 1 つにする。
-                let mut wanted: std::collections::HashMap<Oid, usize> = std::collections::HashMap::new();
-                for id in tips.unwrap_or(&[]).iter().chain(full.head.iter()).chain(expanded.iter()) {
+                let mut wanted: std::collections::HashMap<Oid, usize> =
+                    std::collections::HashMap::new();
+                for id in tips
+                    .unwrap_or(&[])
+                    .iter()
+                    .chain(full.head.iter())
+                    .chain(expanded.iter())
+                {
                     let next = wanted.len();
                     wanted.entry(*id).or_insert(next);
                 }
@@ -490,12 +520,20 @@ impl Repository {
                     }
                 }
                 let rows_of = |ids: &[Oid]| -> Vec<u32> {
-                    ids.iter().filter_map(|id| wanted.get(id).map(|&i| found[i])).filter(|&r| r != u32::MAX).collect()
+                    ids.iter()
+                        .filter_map(|id| wanted.get(id).map(|&i| found[i]))
+                        .filter(|&r| r != u32::MAX)
+                        .collect()
                 };
                 // 全ブランチのときは、ほかのコミットの親になっていない先端（と HEAD）だけを幹にする。取り込み済みの
                 // ブランチの先端は merge の親なので、折りたたまれる。
                 let mut roots = tips.map(rows_of).unwrap_or_default();
-                roots.extend(full.head.iter().filter_map(|h| wanted.get(h).map(|&i| found[i])).filter(|&r| r != u32::MAX));
+                roots.extend(
+                    full.head
+                        .iter()
+                        .filter_map(|h| wanted.get(h).map(|&i| found[i]))
+                        .filter(|&r| r != u32::MAX),
+                );
                 let expanded = rows_of(expanded);
                 let f = crate::fold::fold_merged(base, &roots, &expanded);
                 merges = f.merges;
@@ -528,7 +566,11 @@ impl Repository {
 
     /// `snapshot` の `rows` の行（検索で一致したコミット）だけの History。一致しないコミットは飛ばし、線は最初の親を
     /// たどって次に一致したコミットへつなぐ。公開はしない。
-    pub fn history_matching(&self, snapshot: &HistorySnapshot, rows: &[u32]) -> Arc<HistorySnapshot> {
+    pub fn history_matching(
+        &self,
+        snapshot: &HistorySnapshot,
+        rows: &[u32],
+    ) -> Arc<HistorySnapshot> {
         let mut keep = vec![false; snapshot.graph.len()];
         for &r in rows {
             if let Some(k) = keep.get_mut(r as usize) {
@@ -695,7 +737,10 @@ impl Repository {
         let Some(answer) = self.backend.delegate(&crate::delegate::encode(request)?)? else {
             return Ok(None);
         };
-        Ok(Some((crate::delegate::decode(&answer.reply)?, answer.parts)))
+        Ok(Some((
+            crate::delegate::decode(&answer.reply)?,
+            answer.parts,
+        )))
     }
 
     /// 手元の共有の daemon のコアに任せ、できたら true（つないでいなければ false）。
@@ -750,7 +795,11 @@ impl Repository {
             Request::ChangeDiffs(changes) => {
                 let diffs = self.stacked_diff(&changes)?;
                 let metas = diffs.files.iter().map(|(_, d)| DiffMeta::from(d)).collect();
-                let parts = diffs.files.into_iter().flat_map(|(_, d)| [d.old, d.new]).collect();
+                let parts = diffs
+                    .files
+                    .into_iter()
+                    .flat_map(|(_, d)| [d.old, d.new])
+                    .collect();
                 (Reply::ChangeDiffs(metas), parts)
             }
         };
