@@ -159,7 +159,7 @@ pub enum Command {
         index: usize,
         choice: crate::conflict::Choice,
     },
-    /// Magic Merge: `text` のコンフリクトのうち、決まった規則で解けるものを解いた文章（`text`）と、解いた数
+    /// Magic Merge: `text` のコンフリクトのうち、決まった規則で解けるものを解いた文章（`info.text`）と、解いた数
     /// （`info.resolved`）・残った数（`info.remaining`）。ファイルには書かない。
     MagicMerge {
         text: String,
@@ -996,10 +996,12 @@ impl Repository {
             Command::MagicMerge { text } => {
                 let (merged, resolved) = crate::conflict::magic(text.as_bytes());
                 let remaining = crate::conflict::parse(&merged).len();
+                let text = String::from_utf8_lossy(&merged).into_owned();
                 Ok(Response {
                     ok: true,
-                    text: Some(String::from_utf8_lossy(&merged).into_owned()),
-                    info: Some(serde_json::json!({ "resolved": resolved, "remaining": remaining })),
+                    info: Some(serde_json::json!({
+                        "text": text, "resolved": resolved, "remaining": remaining
+                    })),
                     ..Default::default()
                 })
             }
