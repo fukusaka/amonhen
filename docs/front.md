@@ -6,7 +6,7 @@ macOS のアプリは、同じプロセスのコアを C ABI（`crates/ffi-c`）
 
 ## つなぐ
 
-1. Unix ドメインソケット `amonhen_remote::local::socket_path()` につなぐ（macOS は `$TMPDIR/amonhend-<通信の形の版>.sock`、ほかは `$XDG_RUNTIME_DIR` か `/tmp/amonhen-<uid>`。`AMONHEN_DAEMON_DIR` で変えられる）。つながらなければ `amonhend --serve <socket>` を、親から切り離して起動し、つながるまで待つ。
+1. Unix ドメインソケットにつなぐ。場所は `amonhend --socket` が出す（macOS は `$TMPDIR/amonhend-<通信の形の版>.sock`、ほかは `$XDG_RUNTIME_DIR` か `/tmp/amonhen-<uid>`。`AMONHEN_DAEMON_DIR` で変えられる）。つながらなければ `amonhend --serve <socket>` を、親から切り離して起動し、つながるまで待つ。
 2. 最初に、開く場所を送る: 長さ（u32、LE）と UTF-8 の文字列 `"\u0001" + 場所`。場所は手元のリポジトリの絶対パスか `ssh://host/path`。
 3. その後はフレームでやりとりする。最初の要求は `{"op":"hello"}` にする（開けなければ、その答えが理由つきの失敗になる）。
 
@@ -48,7 +48,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `history` | rebuild?・fold?・expanded?（ID の配列）・tips?（ID の配列。そこから辿れるものだけ） | history・generation・rows・head・headRow・folded | |
 | `historyMatching` | history・rows | `history` と同じ（一致した行だけの History） | |
 | `historyRelease` | history | | |
-| `historyRows` | history と、start・count か rows（行の配列） | count・edges | rowNumbers u32・nodes・ids・times i64・spans（件名と作者の `text` の中の始めと長さ、u32 × 4）・text（UTF-8）・signatures u8・folded u32（折りたたんだ History のとき）・parentStarts u32（行の数 + 1）・parents u32（親の行）・edges・edgeIds u32（start・count のときだけ。その範囲に重なる線） |
+| `historyRows` | history と、start・count か rows（行の配列） | count・edges | rowNumbers u32・nodes・ids・times i64・spans（件名と作者の `text` の中の始めと長さ、u32 × 4）・text（UTF-8）・signatures u8・folded u32（折りたたんだ History のとき）・parentStarts u32（行の数 + 1）・parents u32（親の行）・parentIds（親の ID）・edges・edgeIds u32（start・count のときだけ。その範囲に重なる線） |
 | `historyGraph` | history | rows・edges | nodes・edges・ids・folded（全行） |
 | `historySearch` | history・query（`crates/core/src/query.rs` の書き方） | count | rows u32（昇順） |
 | `historyDensity` | history・buckets | buckets | density（f32 × 2: 頻度・活動量、0〜1） |

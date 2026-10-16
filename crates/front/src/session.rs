@@ -342,6 +342,7 @@ impl Session {
             parents.extend_from_slice(h.graph.parents(r as usize));
         }
         parent_starts.push(parents.len() as u32);
+        let parent_ids: Vec<Oid> = parents.iter().map(|&p| h.graph.ids()[p as usize]).collect();
         let all = h.layout.edges();
         let edges: Vec<amonhen_layout::Edge> = edge_ids.iter().map(|&i| all[i as usize]).collect();
         let mut r = Records::new();
@@ -355,6 +356,7 @@ impl Session {
             .put_slice("folded", &folded)
             .put_slice("parentStarts", &parent_starts)
             .put_slice("parents", &parents)
+            .put_slice("parentIds", &parent_ids)
             .put_slice("edges", &edges)
             .put_slice("edgeIds", &edge_ids);
         Ok(r.finish(json!({"count": rows.len(), "edges": edges.len()})))

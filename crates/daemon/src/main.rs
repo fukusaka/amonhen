@@ -1,6 +1,7 @@
 //! `amonhend --stdio <repo>`: リポジトリの git の操作を、標準入出力の要求に応じて行う daemon。
 //! SSH 先では `ssh host amonhend --stdio <repo>` で起動し、手元の Amon Hen がつなぐ。
-//! `amonhend --serve [<socket>]`: 手元に常駐し、アプリ・CLI がソケットでつなぐ共有の daemon（`serve`）。
+//! `amonhend --serve [<socket>]`: 手元に常駐し、アプリ・CLI・VSCode 拡張がソケットでつなぐ共有の daemon（`serve`）。
+//! `amonhend --socket`: そのソケットの場所を出す。
 
 #[cfg(unix)]
 mod serve;
@@ -36,6 +37,11 @@ fn main() {
             }
             return;
         }
+        // 共有の daemon のソケットの場所（VSCode 拡張などが、通信の形の版を知らずにつなげるように）。
+        [flag] if flag == "--socket" => {
+            println!("{}", amonhen_remote::local::socket_path().display());
+            return;
+        }
         [flag] if flag == "--version" => {
             println!(
                 "amonhend {} (protocol {})",
@@ -45,7 +51,7 @@ fn main() {
             return;
         }
         _ => {
-            eprintln!("使い方: amonhend --stdio <リポジトリのパス> | amonhend --serve [<ソケット>]");
+            eprintln!("使い方: amonhend --stdio <リポジトリのパス> | amonhend --serve [<ソケット>] | amonhend --socket");
             std::process::exit(2);
         }
     };
