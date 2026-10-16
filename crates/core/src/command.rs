@@ -2080,7 +2080,11 @@ mod tests {
         );
         let list = run(&repo, r#"{"op":"configList"}"#);
         let entries = list["info"]["entries"].as_array().unwrap();
-        let pull = entries.iter().find(|e| e["key"] == "pull.rebase").unwrap();
+        // 全体の設定（Windows の CI には system の pull.rebase がある）ではなく、このリポジトリの設定を見る。
+        let pull = entries
+            .iter()
+            .find(|e| e["key"] == "pull.rebase" && e["scope"] == "local")
+            .unwrap();
         assert_eq!(
             (pull["scope"].as_str(), pull["value"].as_str()),
             (Some("local"), Some("true"))

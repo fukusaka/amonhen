@@ -164,11 +164,53 @@ fn launch(daemon: &str, endpoint: &str) -> Result<()> {
         use std::os::windows::process::CommandExt;
         // 窓を出さず、親のコンソールから切り離す（DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP）。
         command.creation_flags(0x0000_0008 | 0x0000_0200);
+        // Windows では、引き継げる形のハンドルはすべて子に渡る。自分の標準入出力（呼んだ側のパイプのことがある）を
+        // daemon に渡すと、daemon が終わるまで呼んだ側はこちらが終わったと分からない。起動する間だけ渡さない。
+        return no_inherit_std(|| command.spawn())
+            .map(drop)
+            .map_err(|e| format!("{daemon} を起動できない: {e}").into());
     }
-    command
-        .spawn()
-        .map_err(|e| format!("{daemon} を起動できない: {e}"))?;
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        command
+            .spawn()
+            .map_err(|e| format!("{daemon} を起動できない: {e}"))?;
+        Ok(())
+    }
+}
+
+/// `f` の間だけ、自分の標準入出力のハンドルを子に引き継がない形にする（終わったら戻す）。
+#[cfg(windows)]
+fn no_inherit_std<T>(f: impl FnOnce() -> T) -> T {
+    use windows_sys::Win32::Foundation::{
+        GetHandleInformation, HANDLE_FLAG_INHERIT, SetHandleInformation,
+    };
+    use windows_sys::Win32::System::Console::{
+        GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
+    };
+    let mut saved = Vec::new();
+    // SAFETY: 自分の標準入出力のハンドルの、引き継ぎの印を読み書きするだけ。
+    unsafe {
+        for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
+            let h = GetStdHandle(which);
+            let mut flags = 0u32;
+            if !h.is_null()
+                && GetHandleInformation(h, &mut flags) != 0
+                && flags & HANDLE_FLAG_INHERIT != 0
+            {
+                SetHandleInformation(h, HANDLE_FLAG_INHERIT, 0);
+                saved.push(h);
+            }
+        }
+    }
+    let result = f();
+    // SAFETY: 上で外した印を戻すだけ。
+    unsafe {
+        for h in saved {
+            SetHandleInformation(h, HANDLE_FLAG_INHERIT, HANDLE_FLAG_INHERIT);
+        }
+    }
+    result
 }
 
 fn wait_for(endpoint: &str, limit: Duration) -> Result<crate::endpoint::Duplex> {

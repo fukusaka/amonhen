@@ -20,7 +20,7 @@ libc = "0.2"
 [target."cfg(windows)".dependencies]
 interprocess = { version = "2.4.6", default-features = false }
 widestring = "1"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
 amonhen-backend-gix.workspace = true

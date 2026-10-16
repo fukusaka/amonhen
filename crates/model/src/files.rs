@@ -89,9 +89,12 @@ impl RepoFiles for LocalFiles {
             .map(|m| m.permissions().mode()))
     }
 
+    /// Windows には実行の権限がなく、git はフックなどを権限によらず実行するので、あるファイルは実行できるものとする。
     #[cfg(not(unix))]
-    fn mode(&self, _root: Root, _path: &str) -> Result<Option<u32>> {
-        Ok(None)
+    fn mode(&self, root: Root, path: &str) -> Result<Option<u32>> {
+        Ok(std::fs::metadata(self.resolve(root, path)?)
+            .ok()
+            .map(|m| if m.is_dir() { 0o040_755 } else { 0o100_755 }))
     }
 
     #[cfg(unix)]
