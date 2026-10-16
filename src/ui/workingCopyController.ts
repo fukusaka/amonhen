@@ -4,6 +4,8 @@ import * as vscode from 'vscode';
 import { parseCommitObject } from '../git/commitObject.ts';
 import { groupChanges, type Change, type ChangeGroup } from '../state/changes.ts';
 import type { Repository } from '../state/repository.ts';
+import { daemonFor } from '../daemon/connection.ts';
+import { changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
 import { applyDiffSelection, computeDiff, type ComputedDiff } from '../diff/fileDiff.ts';
 import { discardFiles, discardLines } from '../state/discard.ts';
 import type { WorkingCopyHostMessage, WorkingCopyWebviewMessage } from '../workingCopy/protocol.ts';
@@ -84,8 +86,25 @@ export class WorkingCopyController implements vscode.Disposable {
       return;
     }
     this.selected = { group: change.group, path: change.path };
-    const computed = await this.loadDiff(change);
-    this.post({ type: 'wcDiff', group: change.group, diff: computed.diff });
+    const daemon = await this.daemonDiff(change);
+    const diff = daemon ? daemon.diff : (await this.loadDiff(change)).diff;
+    this.post({ type: 'wcDiff', group: change.group, diff });
+  }
+
+  /**
+   * 共有の daemon で読んだ差分（設定 `amonhen.daemon.path` があるとき）。コンフリクトは出さないので undefined。
+   * 行単位の stage・破棄も、この差分の行の番号で daemon に頼む
+   */
+  private async daemonDiff(change: Change): Promise<DaemonDiff | undefined> {
+    if (change.group === 'conflicts' || !this.repo) {
+      return undefined;
+    }
+    const client = await daemonFor(this.repo.root);
+    if (!client) {
+      return undefined;
+    }
+    const mode = change.group === 'staged' ? 'staged' : 'unstaged';
+    return readWorkingDiff(await client.call({ op: 'workingDiff', path: change.path, mode }));
   }
 
   private async loadDiff(change: Change): Promise<ComputedDiff> {
@@ -142,13 +161,26 @@ export class WorkingCopyController implements vscode.Disposable {
       case 'wcDiscardLines': {
         const change = find('unstaged', message.path);
         if (!change) break;
+        const n = message.lines.length;
+        const daemon = await this.daemonDiff(change);
+        if (daemon) {
+          if (daemon.diff.version !== message.version) {
+            this.post({ type: 'wcDiff', group: change.group, diff: daemon.diff });
+            vscode.window.setStatusBarMessage('ファイルが変わったので差分を更新しました。もう一度選んでください', 4000);
+            break;
+          }
+          const client = (await daemonFor(repo.root))!;
+          await this.discard(repo, `${change.path} の ${n} 行`, async () => {
+            await client.call({ op: 'discardRows', diff: daemon.handle, rows: selectedRows(daemon.rows, message.lines) });
+          });
+          break;
+        }
         const fresh = await this.loadDiff(change);
         if (fresh.diff.version !== message.version) {
           this.post({ type: 'wcDiff', group: change.group, diff: fresh.diff });
           vscode.window.setStatusBarMessage('ファイルが変わったので差分を更新しました。もう一度選んでください', 4000);
           break;
         }
-        const n = message.lines.length;
         await this.discard(repo, `${change.path} の ${n} 行`, () =>
           discardLines(repo.backend, repo.undo, change.path, fresh, message.lines),
         );
@@ -202,6 +234,10 @@ export class WorkingCopyController implements vscode.Disposable {
     version: string,
     lines: Extract<WorkingCopyWebviewMessage, { type: 'wcStageLines' }>['lines'],
   ): Promise<void> {
+    const daemon = await this.daemonDiff(change);
+    if (daemon) {
+      return this.stageLinesThroughDaemon(repo, change, version, lines, daemon);
+    }
     // 表示している差分と今の内容が違えば、選んだ行がずれるので当てない
     const fresh = await this.loadDiff(change);
     if (fresh.diff.version !== version) {
@@ -223,6 +259,38 @@ export class WorkingCopyController implements vscode.Disposable {
       } else {
         const mode = await indexMode(repo, change.path, join(repo.root, change.path));
         await repo.backend.writeIndex(change.path, mode, Buffer.from(next, 'latin1'));
+      }
+    } finally {
+      await repo.refresh();
+    }
+  }
+
+  /** 共有の daemon で、選んだ行を stage（staged の差分なら unstage）する */
+  private async stageLinesThroughDaemon(
+    repo: Repository,
+    change: Change,
+    version: string,
+    lines: Extract<WorkingCopyWebviewMessage, { type: 'wcStageLines' }>['lines'],
+    fresh: DaemonDiff,
+  ): Promise<void> {
+    if (fresh.diff.version !== version) {
+      this.post({ type: 'wcDiff', group: change.group, diff: fresh.diff });
+      vscode.window.setStatusBarMessage('ファイルが変わったので差分を更新しました。もう一度選んでください', 4000);
+      return;
+    }
+    const rows = selectedRows(fresh.rows, lines);
+    if (rows.length === 0) {
+      return;
+    }
+    const client = (await daemonFor(repo.root))!;
+    const op = change.group === 'staged' ? 'unstage' : 'stage';
+    try {
+      // すべての行を選んで中身が空になるなら、index のエントリごと戻す（削除の stage、新規ファイルの unstage）
+      const otherSideMissing = op === 'stage' ? change.letter === 'D' : change.letter === 'A';
+      if (otherSideMissing && rows.length === changedRows(fresh.rows).length) {
+        await client.call({ op, paths: [change.path] });
+      } else {
+        await client.call({ op: 'stageRows', diff: fresh.handle, rows });
       }
     } finally {
       await repo.refresh();

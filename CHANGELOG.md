@@ -11,7 +11,7 @@
 - Stash の保存・適用・pop・削除と、中身の表示（untracked のファイルも含む）。削除は Undo で戻せる。
 - History のコミットの右クリックで Cherry-pick / Revert。
 - サブモジュールの Update と、別のウィンドウで開く。
-- 設定 `amonhen.daemon.path` に Amon Hen のスタンドアロン版の `amonhend` を指定すると、History を共有の daemon で読む（グラフはスタンドアロン版と同じレイアウト。アプリ・CLI と History・検索の索引を共有する）。
+- 設定 `amonhen.daemon.path` に Amon Hen のスタンドアロン版の `amonhend` を指定すると、History（グラフ・コミットの詳細と差分）と Working Copy の差分・行単位の stage と破棄を、共有の daemon で行う（グラフはスタンドアロン版と同じレイアウト。アプリ・CLI と History・検索の索引を共有し、Undo の記録も共通）。
 
 ### Changed
 

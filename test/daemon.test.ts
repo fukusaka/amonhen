@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { Changes, controlDaemon, DaemonClient } from '../src/daemon/client.ts';
+import { readWorkingDiff, selectedRows } from '../src/daemon/diff.ts';
 import { readRows } from '../src/daemon/history.ts';
+import { CliBackend } from '../src/git/backend.ts';
+import { GitExecutor } from '../src/git/exec.ts';
+import { UndoLog } from '../src/state/undo.ts';
 
 // amonhen-standalone の amonhend（`cargo build -p amonhen-daemon`）。なければ飛ばす
 const daemon = process.env['AMONHEN_DAEMON'] ?? join(import.meta.dirname, '../../amonhen-standalone/target/debug/amonhend');
@@ -113,5 +117,36 @@ test('stages lines, commits and hears changes through the daemon', { skip }, asy
     assert.equal(git('log', '-1', '--format=%s').trim(), 'merge topic');
   } finally {
     client.dispose();
+  }
+});
+
+test('shows working diffs as hunks and discards lines that the extension can undo', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  try {
+    writeFileSync(join(repo, 'm.txt'), 'MAIN\nmore\n');
+    const d = readWorkingDiff(await client.call({ op: 'workingDiff', path: 'm.txt', mode: 'unstaged' }));
+    assert.equal(d.diff.hunks.length, 1);
+    assert.equal(d.diff.hunks[0]!.header, '@@ -1 +1,2 @@');
+    assert.deepEqual(
+      d.diff.hunks[0]!.lines.map((l) => `${l.kind}${l.text}`),
+      ['-main', '+MAIN', '+more'],
+    );
+    // 「more」の行だけを捨てる。記録は拡張と同じ undo.json に入り、拡張の Undo で戻せる
+    const rows = selectedRows(d.rows, [{ kind: '+', new: 2 }]);
+    assert.equal(rows.length, 1);
+    await client.call({ op: 'discardRows', diff: d.handle, rows });
+    assert.equal(git('show', ':m.txt'), 'main\n');
+    assert.equal(execFileSync('cat', [join(repo, 'm.txt')], { encoding: 'utf8' }), 'MAIN\n');
+    const backend = await CliBackend.open(new GitExecutor('git'), repo);
+    try {
+      const entry = await new UndoLog(backend).undo();
+      assert.ok(entry, '拡張の Undo で、daemon の操作が戻せる');
+    } finally {
+      backend.dispose();
+    }
+    assert.equal(execFileSync('cat', [join(repo, 'm.txt')], { encoding: 'utf8' }), 'MAIN\nmore\n');
+  } finally {
+    client.dispose();
+    git('checkout', '--', 'm.txt');
   }
 });

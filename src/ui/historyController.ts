@@ -2,6 +2,7 @@ import { basename } from 'node:path';
 import * as vscode from 'vscode';
 import type { DaemonClient } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
+import { commitFiles, splitCommitDiff } from '../daemon/diff.ts';
 import { readRows, toRowData } from '../daemon/history.ts';
 import { computeDiff, type FileDiff } from '../diff/fileDiff.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
@@ -155,6 +156,10 @@ export class HistoryController implements vscode.Disposable {
       return;
     }
     let details = this.details.get(oid);
+    if (!details && this.daemon) {
+      details = await this.daemonDetails(this.daemon.client, oid);
+      this.details.set(oid, details);
+    }
     if (!details) {
       const obj = await repo.backend.object(oid);
       if (!obj) {
@@ -176,6 +181,32 @@ export class HistoryController implements vscode.Disposable {
       }
     }
     this.post({ type: 'details', details: { ...details, refs: this.labels.get(oid) ?? [] } });
+  }
+
+  /** 共有の daemon で、コミットの詳細と全ファイルの差分を読む（差分は覚えておき、ファイルを選んだときに送る） */
+  private async daemonDetails(client: DaemonClient, oid: string): Promise<Omit<CommitDetails, 'refs'>> {
+    const [info, diff] = await Promise.all([
+      client.call({ op: 'run', command: { op: 'commitInfo', oid } }),
+      client.call({ op: 'commitDiff', id: oid }),
+    ]);
+    const i = info.json['info'] as Record<string, unknown>;
+    if (info.json['ok'] !== true || !i) {
+      throw new Error(String(info.json['error'] ?? 'コミットを読めません'));
+    }
+    for (const [path, d] of splitCommitDiff(diff)) {
+      this.diffs.set(`${oid}:${path}`, d);
+    }
+    while (this.diffs.size > DIFF_CACHE) {
+      this.diffs.delete(this.diffs.keys().next().value!);
+    }
+    return {
+      oid,
+      parents: i['parents'] as string[],
+      author: { name: String(i['author']), email: String(i['authorEmail']), date: Number(i['authorTime']) },
+      committer: { name: String(i['committer']), email: String(i['committerEmail']), date: Number(i['committerTime']) },
+      message: String(i['message']),
+      files: commitFiles(diff),
+    };
   }
 
   private async sendCommitDiff(oid: string, path: string): Promise<void> {
