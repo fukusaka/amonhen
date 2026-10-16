@@ -995,6 +995,16 @@ char *amonhen_command(const AmonhenRepo *repo_ptr,
 char *amonhen_activity(void);
 
 /**
+ * `url` を `dest`（まだないフォルダ）に clone する。失敗したら false（理由は `amonhen_last_error`）。時間が
+ * かかるので裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `url` と `dest` は NUL 終端の UTF-8 文字列であること。
+ */
+bool amonhen_clone(const char *url,
+                   const char *dest);
+
+/**
  * `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら
  * 空）、上流があれば 1、ahead、behind、変更のあるファイルの数（untracked は数えない）。読めなければ NULL。
  * `amonhen_string_free` で解放する。git を 1 回起動するので、裏のスレッドで呼ぶ。

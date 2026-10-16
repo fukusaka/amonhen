@@ -169,3 +169,10 @@ public struct RepositoryPeek: Sendable, Equatable {
             ahead: Int(fields[2]) ?? 0, behind: Int(fields[3]) ?? 0, changed: Int(fields[4]) ?? 0)
     }
 }
+
+extension Repository {
+    /// `url` を `dest`（まだないフォルダ）に clone する。時間がかかるので裏のスレッドで呼ぶ。
+    public static func clone(url: String, to dest: String) throws {
+        if !amonhen_clone(url, dest) { throw AmonhenError.last() }
+    }
+}

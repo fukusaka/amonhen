@@ -53,6 +53,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(item("New Window", #selector(newWindow(_:)), "n", target: self))
         menu.addItem(item("Open…", #selector(openDocument(_:)), "o", target: self))
         menu.addItem(item("Quick Open…", #selector(quickOpen(_:)), "o", [.command, .shift], target: self))
+        menu.addItem(item("Clone…", #selector(cloneRepository(_:)), "c", [.command, .control], target: self))
         let recent = NSMenu(title: "Open Recent")
         recent.delegate = self
         menu.addItem(submenu(recent))

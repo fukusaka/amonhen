@@ -220,6 +220,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         QuickOpenPanel.shared.show()
     }
 
+    /// File > Clone…（⌃⌘C）: clone して、前のウィンドウのタブで開く（ブックマークにも入れる）。
+    @objc func cloneRepository(_ sender: Any?) {
+        CloneSheet.show { [weak self] path in
+            Bookmarks.shared.add(path)
+            self?.open(path: path)
+        }
+    }
+
     /// File > Quick Open（⌘⇧O）。
     @objc func quickOpen(_ sender: Any?) {
         QuickOpenPanel.shared.show()

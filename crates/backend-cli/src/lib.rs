@@ -35,6 +35,19 @@ fn fsmonitor_enabled() -> bool {
 /// 利用者の git とロックを奪い合わないよう index に書かないので、ときどきだけ書いてキャッシュを新しくする。
 const SAVE_STATUS_EVERY: Duration = Duration::from_secs(60);
 
+/// `url` を `dest`（まだないフォルダ）に clone する。`dest` の親で git を起動する（Activity に残る）。
+pub fn clone(url: &str, dest: &std::path::Path) -> Result<()> {
+    let parent = dest.parent().ok_or("clone する先のフォルダがおかしい")?;
+    std::fs::create_dir_all(parent)?;
+    let name = dest
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or("clone する先のフォルダの名前がおかしい")?;
+    Git::new(parent)
+        .write(&["clone", "--", url, name])
+        .map(drop)
+}
+
 /// リポジトリの一覧に出す軽い状態（`Git::peek`）。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Peek {
@@ -312,6 +325,20 @@ mod tests {
             git.write(args).unwrap();
         }
         (tmp, git)
+    }
+
+    #[test]
+    fn clones_into_a_new_folder() {
+        let (tmp, git) = repo();
+        std::fs::write(tmp.path().join("a.txt"), "1\n").unwrap();
+        git.stage(&["a.txt"]).unwrap();
+        git.commit("first", false).unwrap();
+        let out = tempfile::tempdir().unwrap();
+        let dest = out.path().join("deep/copy");
+        clone(tmp.path().to_str().unwrap(), &dest).unwrap();
+        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "1\n");
+        // もうあるフォルダには clone できない。
+        assert!(clone(tmp.path().to_str().unwrap(), &dest).is_err());
     }
 
     #[test]

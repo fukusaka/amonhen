@@ -1475,6 +1475,19 @@ pub extern "C" fn amonhen_activity() -> *mut c_char {
         .into_raw()
 }
 
+/// `url` を `dest`（まだないフォルダ）に clone する。失敗したら false（理由は `amonhen_last_error`）。時間が
+/// かかるので裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `url` と `dest` は NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_clone(url: *const c_char, dest: *const c_char) -> bool {
+    match (str_arg(url), str_arg(dest)) {
+        (Ok(url), Ok(dest)) => done(amonhen_backend_cli::clone(url, std::path::Path::new(dest))),
+        (Err(e), _) | (_, Err(e)) => done(Err(e.into())),
+    }
+}
+
 /// `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら
 /// 空）、上流があれば 1、ahead、behind、変更のあるファイルの数（untracked は数えない）。読めなければ NULL。
 /// `amonhen_string_free` で解放する。git を 1 回起動するので、裏のスレッドで呼ぶ。
