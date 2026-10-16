@@ -10,6 +10,7 @@ import { readRows } from '../src/daemon/history.ts';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { UndoLog } from '../src/state/undo.ts';
+import { withDaemonWrites } from '../src/daemon/writes.ts';
 
 // amonhen-standalone の amonhend（`cargo build -p amonhen-daemon`）。なければ飛ばす
 const daemon = process.env['AMONHEN_DAEMON'] ?? join(import.meta.dirname, '../../amonhen-standalone/target/debug/amonhend');
@@ -148,5 +149,45 @@ test('shows working diffs as hunks and discards lines that the extension can und
   } finally {
     client.dispose();
     git('checkout', '--', 'm.txt');
+  }
+});
+
+test('writes through the daemon record one undo entry each', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  const inner = await CliBackend.open(new GitExecutor('git'), repo);
+  const backend = withDaemonWrites(inner, async () => client);
+  const undo = new UndoLog(backend);
+  const count = () => {
+    try {
+      return (JSON.parse(execFileSync('cat', [join(repo, '.git/amonhen/undo.json')], { encoding: 'utf8' })) as unknown[]).length;
+    } catch {
+      return 0;
+    }
+  };
+  try {
+    const before = count();
+    // ブランチを作る（コアが記録する）→ 拡張の記録は増やさない
+    await undo.record('Create branch side', ['refs/heads/side'], 'keep', () => backend.createBranch('side', 'main', false));
+    assert.equal(git('rev-parse', 'side').trim(), git('rev-parse', 'main').trim());
+    // checkout（コアは記録しない）→ 拡張の側で記録しないまま
+    await backend.switchBranch('side');
+    assert.equal(git('branch', '--show-current').trim(), 'side');
+    await backend.switchBranch('main');
+    // コミット（コアが記録する）
+    writeFileSync(join(repo, 'w.txt'), 'w\n');
+    await backend.stage(['w.txt']);
+    await undo.record('Commit "w"', ['refs/heads/main'], 'soft', () => backend.commit('w'));
+    assert.equal(git('log', '-1', '--format=%s').trim(), 'w');
+    assert.equal(count(), before + 2, 'ブランチとコミットの 2 つだけ（二重に記録しない）');
+    // 拡張の Undo で、コアが記録したコミットとブランチを順に戻せる
+    await undo.undo();
+    assert.equal(git('log', '-1', '--format=%s').trim(), 'merge topic');
+    await undo.undo();
+    assert.equal(git('branch', '--list', 'side').trim(), '');
+  } finally {
+    inner.dispose();
+    client.dispose();
+    git('reset', '-q');
+    rmSync(join(repo, 'w.txt'), { force: true });
   }
 });

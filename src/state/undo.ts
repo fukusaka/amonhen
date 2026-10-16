@@ -6,6 +6,7 @@
 import { createHash } from 'node:crypto';
 import { chmod, mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
+import { recordedElsewhere } from '../daemon/delegation.ts';
 import type { HeadState, RepositoryBackend } from '../git/backend.ts';
 
 export interface RefSnapshot {
@@ -85,7 +86,11 @@ export class UndoLog {
     opts: { skip?: (result: T) => boolean; pending?: (result: T) => boolean } = {},
   ): Promise<T> {
     const before = await this.snapshot(refs);
-    const result = await fn();
+    const { result, recorded } = await recordedElsewhere(fn);
+    // 共有の daemon のコアが同じ記録に書いた
+    if (recorded) {
+      return result;
+    }
     if (opts.pending?.(result)) {
       this.pending = { label, time: Date.now(), mode, before };
       await this.savePending();
@@ -131,7 +136,10 @@ export class UndoLog {
 
   /** stash を消し、Undo で戻せるように記録する */
   async recordStashDrop(name: string, oid: string, message: string): Promise<void> {
-    await this.backend.stashDrop(name);
+    const { recorded } = await recordedElsewhere(() => this.backend.stashDrop(name));
+    if (recorded) {
+      return;
+    }
     const snapshot = await this.snapshot([]);
     const entries = await this.load();
     entries.push({
@@ -261,24 +269,24 @@ export class UndoLog {
     return { head, refs: Object.fromEntries(values) };
   }
 
+  /**
+   * 記録を読む。毎回ファイルから読み直す（アプリ・CLI・共有の daemon も同じファイルに書くので、覚えておくと
+   * ほかが書いた記録を見落とし、次に保存したときに消してしまう）
+   */
   private async load(): Promise<UndoEntry[]> {
-    if (!this.entries) {
-      try {
-        this.entries = JSON.parse(await readFile(this.file, 'utf8')) as UndoEntry[];
-      } catch {
-        this.entries = [];
-      }
+    try {
+      this.entries = JSON.parse(await readFile(this.file, 'utf8')) as UndoEntry[];
+    } catch {
+      this.entries = [];
     }
     return this.entries;
   }
 
   private async loadPending(): Promise<Omit<UndoEntry, 'after'> | null> {
-    if (this.pending === undefined) {
-      try {
-        this.pending = JSON.parse(await readFile(this.pendingFile, 'utf8')) as Omit<UndoEntry, 'after'>;
-      } catch {
-        this.pending = null;
-      }
+    try {
+      this.pending = JSON.parse(await readFile(this.pendingFile, 'utf8')) as Omit<UndoEntry, 'after'>;
+    } catch {
+      this.pending = null;
     }
     return this.pending;
   }

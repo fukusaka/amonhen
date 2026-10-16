@@ -11,7 +11,7 @@
 - Stash の保存・適用・pop・削除と、中身の表示（untracked のファイルも含む）。削除は Undo で戻せる。
 - History のコミットの右クリックで Cherry-pick / Revert。
 - サブモジュールの Update と、別のウィンドウで開く。
-- 設定 `amonhen.daemon.path` に Amon Hen のスタンドアロン版の `amonhend` を指定すると、History（グラフ・コミットの詳細と差分）と Working Copy の差分・行単位の stage と破棄を、共有の daemon で行う（グラフはスタンドアロン版と同じレイアウト。アプリ・CLI と History・検索の索引を共有し、Undo の記録も共通）。
+- 設定 `amonhen.daemon.path` に Amon Hen のスタンドアロン版の `amonhend` を指定すると、History（グラフ・コミットの詳細と差分）、Working Copy の差分・行単位の stage と破棄、コミット・ブランチとタグ・merge・rebase・cherry-pick・revert・stash・fetch・push などの操作を、共有の daemon で行う（グラフはスタンドアロン版と同じレイアウト。アプリ・CLI と History・検索の索引を共有し、Undo の記録も共通）。
 
 ### Changed
 
@@ -22,6 +22,10 @@
 
 - サイドバーの変更ファイル一覧と、そこから開く標準の diff エディタでの行単位の stage（`ctrl+alt+s` / `ctrl+alt+u`）。stage はメインビューの Working Copy で行う。
 - サイドバーの 1 行のコミット欄。コミットはメインビューの Working Copy で行う。
+
+### Fixed
+
+- Undo の記録を毎回読み直す。アプリ・CLI で行った操作を見落としたり、その記録を消したりしていた。
 
 ## [0.0.2] - 2026-10-14
 

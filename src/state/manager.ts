@@ -1,5 +1,7 @@
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
+import { daemonFor } from '../daemon/connection.ts';
+import { withDaemonWrites } from '../daemon/writes.ts';
 import { CliBackend } from '../git/backend.ts';
 import { GitExecutor } from '../git/exec.ts';
 import type { GitApi, GitApiRepository, GitExtension } from './gitApi.ts';
@@ -78,7 +80,11 @@ export class RepositoryManager implements vscode.Disposable {
       backend.dispose();
       return;
     }
-    const repository = new Repository(backend, this.log);
+    // 設定 `amonhen.daemon.path` があれば、書き込みは共有の daemon のコアで行う
+    const repository = new Repository(
+      withDaemonWrites(backend, () => daemonFor(backend.root)),
+      this.log,
+    );
     const entry: Entry = {
       repository,
       apiRepo,
