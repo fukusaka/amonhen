@@ -5,13 +5,14 @@ import CryptoKit
 
 /// AI に頼むこと。用途ごとにプロンプトを持ち、利用者が書き換えられる。
 enum AssistPurpose: String, CaseIterable, Identifiable {
-    case translate, explainCommit, suggestMessage, resolveConflict, explainConflict
+    case translate, explainCommit, explainHunk, suggestMessage, resolveConflict, explainConflict
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .translate: "コミットメッセージの翻訳"
         case .explainCommit: "コミットの解説"
+        case .explainHunk: "hunk の解説"
         case .suggestMessage: "コミットメッセージの提案"
         case .resolveConflict: "コンフリクトの解消"
         case .explainConflict: "コンフリクトの解説"
@@ -23,8 +24,32 @@ enum AssistPurpose: String, CaseIterable, Identifiable {
         switch self {
         case .translate: ["message", "language"]
         case .explainCommit: ["message", "diff", "files", "language"]
+        case .explainHunk: ["path", "hunk", "message", "language"]
         case .suggestMessage: ["diff", "files", "recent_messages", "language"]
         case .resolveConflict, .explainConflict: ["path", "ours", "theirs", "base", "language"]
+        }
+    }
+
+    /// Settings の「試す」で差し込む見本の値（プロンプトの書き換えを、実際のリポジトリなしで確かめる）。
+    var sampleVariables: [String: String] {
+        let diff = """
+            --- src/cache.rs
+            @@ -10,7 +10,9 @@ impl Cache {
+                 pub fn get(&self, key: &str) -> Option<&Value> {
+            -        self.map.get(key)
+            +        let value = self.map.get(key)?;
+            +        self.hits.fetch_add(1, Ordering::Relaxed);
+            +        Some(value)
+                 }
+            """
+        let message = "Count cache hits\n\nThe hit rate shows whether the cache size is right."
+        return switch self {
+        case .translate: ["message": message]
+        case .explainCommit: ["message": message, "diff": diff, "files": "src/cache.rs"]
+        case .explainHunk: ["path": "src/cache.rs", "hunk": diff, "message": message]
+        case .suggestMessage: ["diff": diff, "files": "src/cache.rs", "recent_messages": "Add a size limit to the cache\n---\nFix eviction order"]
+        case .resolveConflict, .explainConflict:
+            ["path": "src/cache.rs", "ours": "let limit = 100;", "theirs": "let limit = config.limit;", "base": "let limit = 64;"]
         }
     }
 
@@ -55,6 +80,20 @@ enum AssistPurpose: String, CaseIterable, Identifiable {
 
             # 差分
             {{diff}}
+            """
+        case .explainHunk:
+            """
+            次の差分の一部（hunk）が何をしているかを{{language}}で短く解説してください。変更の意図として考えられること、\
+            気をつけるべき点があれば添えてください。推測は推測と書いてください。
+
+            # ファイル
+            {{path}}
+
+            # コミットのメッセージ（あれば）
+            {{message}}
+
+            # hunk
+            {{hunk}}
             """
         case .suggestMessage:
             """

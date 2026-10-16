@@ -269,9 +269,47 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     /// ファイルの見出しの右クリック（blame・ファイルの履歴など）。ファイルの番号を渡し、メニューを返してもらう。
     var fileMenu: ((Int) -> NSMenu?)?
 
+    /// AI で hunk を解説する（ファイルのパスと、hunk の差分の文字を渡す）。持ち主が設定したときだけ右クリックに出す。
+    var onExplainHunk: ((String, String) -> Void)?
+    /// 1 ファイルの差分のときのパス（全ファイルを並べた差分なら見出しの行から取る）。
+    var path: String?
+
     fileprivate func menu(at point: NSPoint) -> NSMenu? {
-        guard let file = fileHeader(at: point) else { return nil }
-        return fileMenu?(file)
+        if let file = fileHeader(at: point) { return fileMenu?(file) }
+        guard let onExplainHunk, Assistant.isConfigured, let (path, text) = hunkText(containing: Int(point.y / lineHeight))
+        else { return nil }
+        let menu = NSMenu()
+        menu.addItem(ClosureMenuItem(title: "AI でこの hunk を解説") { onExplainHunk(path, text) })
+        return menu
+    }
+
+    /// `row` 行目を含む hunk の差分の文字（見出しから次の hunk・ファイルの手前まで）と、そのファイルのパス。
+    private func hunkText(containing row: Int) -> (String, String)? {
+        guard let diff else { return nil }
+        return diff.withRows { rows -> (String, String)? in
+            guard row >= 0, row < rows.count,
+                  let start = rows.indices.prefix(row + 1).last(where: { rows[$0].kind == UInt8(AmonhenDiffRow_HUNK) })
+            else { return nil }
+            // 見出しより後ろで、次の hunk の前（ファイルの見出しが間にあれば、その hunk は別のファイル）。
+            if rows.indices[start...row].contains(where: { rows[$0].kind == UInt8(AmonhenDiffRow_FILE) }) { return nil }
+            var end = start + 1
+            while end < rows.count, rows[end].kind != UInt8(AmonhenDiffRow_HUNK), rows[end].kind != UInt8(AmonhenDiffRow_FILE) {
+                end += 1
+            }
+            let file = rows.indices.prefix(start).last { rows[$0].kind == UInt8(AmonhenDiffRow_FILE) }
+            var out = ""
+            for i in start..<end {
+                let text = diff.text(row: i)
+                switch rows[i].kind {
+                case UInt8(AmonhenDiffRow_HUNK): out += text + "\n"
+                case UInt8(AmonhenDiffRow_ADDED): out += "+" + text + "\n"
+                case UInt8(AmonhenDiffRow_REMOVED): out += "-" + text + "\n"
+                default: out += " " + text + "\n"
+                }
+                if out.utf8.count > DiffText.limit { break }
+            }
+            return (file.map { diff.text(row: $0) } ?? path ?? "", out)
+        }
     }
 
     /// 見出しの Viewed のチェックボックスの左端（見えている範囲の座標）。
@@ -1216,6 +1254,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         diffView.onToggleFile = { [weak self] file in self?.toggleCollapsed(file) }
         diffView.fileMenu = { [weak self] file in self?.menuForFile(file) }
         diffView.onToggleViewed = { [weak self] file in self?.toggleViewed(file) }
+        diffView.onExplainHunk = { [weak self] path, hunk in self?.explainHunk(path: path, hunk: hunk) }
         diffView.onTopFileChange = { [weak self] file in
             guard let self, stacked != nil, file < rowOfFile.count else { return }
             let row = rowOfFile[file]
@@ -1778,6 +1817,17 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
     }
 
+    /// 差分の右クリック > AI でこの hunk を解説。
+    private func explainHunk(path: String, hunk: String) {
+        guard Assistant.confirm(repository: repository.workdir ?? "remote", summary: "\(path) の hunk 1 つ") else { return }
+        let message = shownMessage, workdir = repository.workdir
+        AssistantPanel.show(title: "hunk の解説", over: view.window) { useCache, onText in
+            try await Assistant.run(
+                .explainHunk, variables: ["path": path, "hunk": hunk, "message": message], workdir: workdir,
+                useCache: useCache, onText: onText)
+        }
+    }
+
     @objc private func explainCommit() {
         let message = shownMessage
         let stacked = self.stacked, changes = self.changes
@@ -2047,6 +2097,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let index = fileIndex(row: files.selectedRow) else { return }
+        diffView.path = changes?.items[index].path
         // 全ファイルを並べているなら、そのファイルの見出しまでスクロールする。
         if stacked != nil {
             if !syncingSelection { diffView.scrollToFile(index) }

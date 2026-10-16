@@ -288,6 +288,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         diffBar = bar
         diffView.isSelectable = true
         diffView.onSelectionChange = { [weak self] in self?.updateButtons() }
+        diffView.onExplainHunk = { [weak self] path, hunk in
+            guard let self, Assistant.confirm(repository: repository.workdir ?? "remote", summary: "\(path) の hunk 1 つ") else { return }
+            let workdir = repository.workdir
+            AssistantPanel.show(title: "hunk の解説", over: view.window) { useCache, onText in
+                try await Assistant.run(
+                    .explainHunk, variables: ["path": path, "hunk": hunk, "message": ""], workdir: workdir,
+                    useCache: useCache, onText: onText)
+            }
+        }
         diffView.onSetStaged = { [weak self] rows, staged in self?.setStaged(rows: rows, staged: staged) }
         // ⌥J・⌥K: 一覧の次・前のファイルへ。
         diffView.onMoveFile = { [weak self] step in
@@ -493,6 +502,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard let status else { return }
         selectedKey = (entry.item.path, staged)
         titleLabel.stringValue = entry.item.path
+        diffView.path = entry.item.path
         request += 1
         let request = self.request
         isConflict = entry.isConflict

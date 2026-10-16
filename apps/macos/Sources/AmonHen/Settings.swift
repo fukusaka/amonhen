@@ -294,6 +294,15 @@ private struct AISettings: View {
                             refresh()
                         }
                         .disabled(!customized.contains(purpose.rawValue))
+                        Button("試す") {
+                            // 見本の値で、今のプロンプト（書き換えていればそれ）を送る。キャッシュは使わない。
+                            AssistantPanel.show(title: "\(purpose.title)（見本で試す）", over: NSApp.keyWindow) { _, onText in
+                                try await Assistant.run(
+                                    purpose, variables: purpose.sampleVariables, workdir: nil, useCache: false, onText: onText)
+                            }
+                        }
+                        .disabled(model.assistant == .none)
+                        .help("見本の差分・メッセージで、今のプロンプトを実際に送って返事を見る")
                     }
                 }
                 Note("~/Library/Application Support/Amon Hen/prompts/<用途>.md に置く。リポジトリの .amonhen/prompts/<用途>.md があればそちらを優先する（初めて使うときに中身を確かめる）。返事の形（コンフリクトの解消の JSON）はアプリが末尾に足す。")
