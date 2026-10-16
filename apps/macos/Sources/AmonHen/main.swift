@@ -95,6 +95,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        // swift build のまま起動したとき（.app でないのでアイコンがない）は、ソースの横のアイコンを Dock に出す。
+        if Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") == nil {
+            let icon = URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent().appendingPathComponent("../../Icons/AppIcon.icns").standardizedFileURL
+            if let image = NSImage(contentsOf: icon) { NSApp.applicationIconImage = image }
+        }
         Repository.setFSMonitor(Settings.useFSMonitor)
         RepositoryManagerWindowController.shared.onOpen = { [weak self] path, newWindow in
             self?.open(path: path, inNewWindow: newWindow)

@@ -11,11 +11,14 @@ case "$mode" in
 stable)
     name="Amon Hen"
     bundle_id="io.github.fukusaka.amonhen"
+    icon="AppIcon"
     ;;
 snapshot)
     # 正式版と並べて入れられるように、名前とバンドル ID を変える。
     name="Amon Hen Snapshot"
     bundle_id="io.github.fukusaka.amonhen.snapshot"
+    # 右下にオレンジの帯のあるアイコン（正式版と見分ける）。
+    icon="AppIcon-Snapshot"
     ;;
 esac
 # CFBundleVersion は数字とピリオドだけ。snapshot は「次の patch」＋コミット数にする。
@@ -34,6 +37,8 @@ cp target/release/amonhend "$app/Contents/MacOS/amonhend"
 # SSH 先に送り込む amonhend（Linux 用。SSH 先が macOS なら、上の amonhend を送る）。
 mkdir -p "$app/Contents/Resources/daemons"
 cp dist/linux/amonhend-linux-* "$app/Contents/Resources/daemons/"
+# アイコン（scripts/make-icon.swift で作ったもの）。
+cp "apps/macos/Icons/$icon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -44,6 +49,7 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundleIdentifier</key><string>$bundle_id</string>
     <key>CFBundleExecutable</key><string>AmonHen</string>
     <key>CFBundlePackageType</key><string>APPL</string>
+    <key>CFBundleIconFile</key><string>AppIcon</string>
     <key>CFBundleShortVersionString</key><string>$version</string>
     <key>CFBundleVersion</key><string>$build_number</string>
     <key>LSMinimumSystemVersion</key><string>14.4</string>
