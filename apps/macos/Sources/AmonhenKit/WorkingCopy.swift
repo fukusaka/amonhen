@@ -147,3 +147,25 @@ extension Repository {
         if !amonhen_commit(raw, message, amend) { throw AmonhenError.last() }
     }
 }
+
+/// リポジトリの一覧に出す軽い状態（`Repository` を開かずに読む）。
+public struct RepositoryPeek: Sendable, Equatable {
+    /// 今のブランチ。detached なら nil。
+    public let branch: String?
+    public let hasUpstream: Bool
+    public let ahead: Int
+    public let behind: Int
+    /// 変更のあるファイルの数（untracked は数えない）。
+    public let changed: Int
+
+    /// `path` の状態。git を 1 回起動するので、裏のスレッドで呼ぶ。読めなければ nil。
+    public static func read(path: String) -> RepositoryPeek? {
+        guard let out = amonhen_peek(path) else { return nil }
+        defer { amonhen_string_free(out) }
+        let fields = String(cString: out).components(separatedBy: "\n")
+        guard fields.count == 5 else { return nil }
+        return RepositoryPeek(
+            branch: fields[0].isEmpty ? nil : fields[0], hasUpstream: fields[1] == "1",
+            ahead: Int(fields[2]) ?? 0, behind: Int(fields[3]) ?? 0, changed: Int(fields[4]) ?? 0)
+    }
+}

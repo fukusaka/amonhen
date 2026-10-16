@@ -82,8 +82,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RepositoryList.openWindows = groups
     }
 
-    /// 次に一覧から開くリポジトリを、新しいウィンドウにするか（⌘N）。ふつうは前のウィンドウのタブにする。
-    private var nextInNewWindow = false
     private var isTerminating = false
     /// 確認用の起動（画面を撮る・計測する）。開いていたリポジトリの記録を書き換えない。
     static let isCheckRun = ["--snapshot", "--measure-scroll", "--log-scroll", "--measure-select"].contains { CommandLine.arguments.contains($0) }
@@ -98,10 +96,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
         Repository.setFSMonitor(Settings.useFSMonitor)
-        RepositoryManagerWindowController.shared.onOpen = { [weak self] path in
-            guard let self else { return }
-            open(path: path, inNewWindow: nextInNewWindow)
-            nextInNewWindow = false
+        RepositoryManagerWindowController.shared.onOpen = { [weak self] path, newWindow in
+            self?.open(path: path, inNewWindow: newWindow)
+        }
+        QuickOpenPanel.shared.onOpen = { [weak self] path, newWindow in
+            self?.open(path: path, inNewWindow: newWindow)
+        }
+        // ブックマーク・スキャンの結果・行の状態が変わったら、一覧と Quick Open を描き直す。
+        Bookmarks.shared.onChange = {
+            RepositoryManagerWindowController.shared.bookmarksChanged()
+            QuickOpenPanel.shared.refreshIfVisible()
         }
         // 引数でリポジトリを渡されたらそれを、なければ前回開いていたものを同じウィンドウ・タブの並びで開く。
         // どれもなければ一覧を出す。
@@ -208,19 +212,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         RepositoryManagerWindowController.shared.close()
     }
 
-    /// File > New Tab（⌘T）・タブバーの「+」: 一覧から選んだリポジトリを、前のウィンドウのタブで開く。
+    /// File > New Tab（⌘T）・タブバーの「+」: Quick Open で選んだリポジトリを、前のウィンドウのタブで開く。
     @objc func newTab(_ sender: Any?) {
-        nextInNewWindow = false
-        RepositoryManagerWindowController.shared.show()
+        QuickOpenPanel.shared.show()
+    }
+
+    /// File > Quick Open（⌘⇧O）。
+    @objc func quickOpen(_ sender: Any?) {
+        QuickOpenPanel.shared.show()
     }
 
     /// タブバーの「+」（AppKit がこの名前で探す）。
     @objc func newWindowForTab(_ sender: Any?) { newTab(sender) }
 
-    /// File > New Window（⌘N）: 一覧から選んだリポジトリを、新しいウィンドウで開く。
+    /// File > New Window（⌘N）: Quick Open で選んだリポジトリを、新しいウィンドウで開く。
     @objc func newWindow(_ sender: Any?) {
-        nextInNewWindow = true
-        RepositoryManagerWindowController.shared.show()
+        QuickOpenPanel.shared.show(newWindow: true)
     }
 
     @objc func openDocument(_ sender: Any?) {
