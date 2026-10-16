@@ -101,6 +101,8 @@ pub enum Command {
     Undo,
     /// 次に Undo される操作の名前。
     UndoPeek,
+    /// 操作ログ（`info.entries`: 新しい順の `label`・`time`（UNIX 時刻のミリ秒））。
+    UndoLog,
     /// コミットの編集（reword・squash・fixup・drop・edit・split・move）。
     Rewrite {
         label: String,
@@ -238,6 +240,14 @@ fn outcome_name(o: Outcome) -> &'static str {
         Outcome::Conflict => "conflict",
         Outcome::Stopped => "stopped",
     }
+}
+
+/// 命令の JSON の `op`（Activity に出す名前）。
+fn op_name(json: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(json)
+        .ok()
+        .and_then(|v| v.get("op").and_then(|o| o.as_str()).map(str::to_owned))
+        .unwrap_or_default()
 }
 
 fn oid(hex: &str) -> Result<Oid> {
@@ -610,7 +620,7 @@ impl Repository {
     /// JSON の命令を実行し、JSON の結果を返す。
     pub fn run_json(&self, json: &str) -> String {
         let response = match serde_json::from_str::<Command>(json) {
-            Ok(command) => match self.run(command) {
+            Ok(command) => match self.run_tracked(command, op_name(json)) {
                 Ok(r) => r,
                 Err(e) => Response {
                     error: Some(e.to_string()),
@@ -623,6 +633,16 @@ impl Repository {
             },
         };
         serde_json::to_string(&response).unwrap_or_default()
+    }
+
+    /// 命令を実行し、Activity に記録する（命令の名前と、かかった時間）。
+    fn run_tracked(&self, command: Command, name: String) -> Result<Response> {
+        let repo = self
+            .paths()
+            .workdir
+            .map(|w| w.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        amonhen_model::activity::track("command", &repo, name, || self.run(command))
     }
 
     pub fn run(&self, command: Command) -> Result<Response> {
@@ -850,6 +870,11 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::UndoLog => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "entries": undo.entries() })),
+                ..Default::default()
+            }),
             Command::UndoPeek => {
                 // 外で rebase を終わらせた場合も、ここで確定させる。
                 undo.settle_pending(ops)?;

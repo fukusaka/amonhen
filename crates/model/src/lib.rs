@@ -1,5 +1,6 @@
 //! 内部モデル。FE のことを知らず、git の処理と計算に都合の良い形だけを持つ。
 
+pub mod activity;
 mod backend;
 mod change;
 mod extras;

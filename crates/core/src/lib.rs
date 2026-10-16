@@ -17,3 +17,8 @@ pub mod words;
 pub use repository::{
     HistorySnapshot, RefsSnapshot, Repository, Selection, StatusSnapshot, WorkingDiff,
 };
+
+/// Activity の記録（git の起動とコマンドの実行、古い順）の JSON の配列。
+pub fn activity_json() -> String {
+    serde_json::to_string(&amonhen_model::activity::records()).unwrap_or_else(|_| "[]".into())
+}

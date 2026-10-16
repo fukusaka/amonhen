@@ -149,6 +149,15 @@ impl UndoLog {
         self.save(&entries)
     }
 
+    /// 記録した操作の名前と時刻（UNIX 時刻のミリ秒）。新しい順。
+    pub fn entries(&self) -> Vec<serde_json::Value> {
+        self.load()
+            .iter()
+            .rev()
+            .map(|e| serde_json::json!({ "label": e.label, "time": e.time }))
+            .collect()
+    }
+
     /// 次に Undo される操作の名前。
     pub fn peek(&self) -> Option<String> {
         self.load().last().map(|e| e.label.clone())

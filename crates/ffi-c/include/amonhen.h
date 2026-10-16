@@ -989,6 +989,12 @@ char *amonhen_command(const AmonhenRepo *repo_ptr,
                       const char *command);
 
 /**
+ * Activity の記録（git の起動とコマンドの実行、古い順、最大 1000 件）の JSON の配列。`amonhen_string_free` で
+ * 解放する。
+ */
+char *amonhen_activity(void);
+
+/**
  * `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら
  * 空）、上流があれば 1、ahead、behind、変更のあるファイルの数（untracked は数えない）。読めなければ NULL。
  * `amonhen_string_free` で解放する。git を 1 回起動するので、裏のスレッドで呼ぶ。

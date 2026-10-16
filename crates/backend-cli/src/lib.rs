@@ -133,7 +133,27 @@ impl Git {
     }
 }
 
-fn run(mut cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
+/// git を実行し、Activity に記録する（どのリポジトリで、何を、どれだけかかったか）。
+fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
+    let repo = cmd
+        .get_current_dir()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    // `-c` の設定は毎回同じなので省く。
+    let mut label = String::from("git");
+    let mut args = cmd.get_args();
+    while let Some(arg) = args.next() {
+        if arg == "-c" {
+            args.next();
+            continue;
+        }
+        label.push(' ');
+        label.push_str(&arg.to_string_lossy());
+    }
+    amonhen_model::activity::track("git", &repo, label, || spawn(cmd, input))
+}
+
+fn spawn(mut cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.stdin(if input.is_some() {
         Stdio::piped()
