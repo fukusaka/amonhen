@@ -478,6 +478,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    /// History を最初から作り直して表示し直す（永続キャッシュを捨てる。共有の daemon 越しなら daemon の分も）。
+    func rebuild(completion: @escaping (Error?) -> Void) {
+        let repository = self.repository
+        Task {
+            do {
+                let latest = try await Task.detached(priority: .userInitiated) { try repository.rebuildHistory() }.value
+                if showsFullHistory { showBase(latest) } else { reloadScope() }
+                completion(nil)
+            } catch {
+                completion(error)
+            }
+        }
+    }
+
     /// 元になる History を出す。一致したコミットだけを出しているなら、新しい History で探し直して絞り込み直す
     /// （それまでは今の絞り込みを出しておく）。
     private func showBase(_ next: History, resetScroll: Bool = false) {

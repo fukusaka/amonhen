@@ -5,7 +5,7 @@
 //!   amonhen log [options] [<query>…]    グラフ付きの履歴
 //!   amonhen undo [--list|--peek]        Amon Hen の操作ログで、直前の操作を戻す
 //!   amonhen merge-file [--all] <file>…  コンフリクトのあるファイルに Magic Merge をかける
-//!   amonhen daemon [status|start|stop]  手元の共有の daemon の様子・起動・停止
+//!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon の様子・起動・停止・History の作り直し
 
 mod graph;
 mod open;
@@ -21,13 +21,14 @@ use amonhen_model::Oid;
 const USAGE: &str = "\
 usage: amonhen [<path>]
        amonhen open [<path> | ssh://host/path] [--daemon] [--snapshot]
-       amonhen log [-C <path> | -C ssh://host/path] [-n <count> | --all] [--fold] [--branch <name>]… [--no-graph]
+       amonhen log [-C <path> | -C ssh://host/path] [-n <count> | --all] [--fold] [--branch <name>]… [--no-graph] [--rebuild]
                    [--color=auto|always|never] [<query>…]
        amonhen undo [-C <path>] [--list | --peek]
        amonhen merge-file [--all] [--check] <file>…
-       amonhen daemon [status [--json] | start | stop]
+       amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
 
 log の <query> は History の検索と同じ書き方（author:名前 path:パス contents:\"文字列\" など）。
+log --rebuild と daemon rebuild は、History のキャッシュを捨てて最初から作り直す（共有の daemon の分も）。
 merge-file は既定で間違えようのない規則だけをかける（--all ですべての規則）。コンフリクトが残れば終了コード 1
 なので、git の mergetool にも使える:
   git config mergetool.amonhen.cmd 'amonhen merge-file \"$MERGED\"'
@@ -181,6 +182,25 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
                 Ok(ExitCode::from(1))
             }
         },
+        "rebuild" => {
+            // daemon が持つ History を作り直す（daemon で開いていなければ開いてから）。
+            let given = args.get(1).map_or(".", String::as_str);
+            let location = if given.starts_with("ssh://") || given.starts_with("daemon:") {
+                given.to_owned()
+            } else {
+                let root = repository_root(Path::new(given))?;
+                format!("daemon:{}", std::fs::canonicalize(&root).unwrap_or(root).display())
+            };
+            let repo = open_repository(Path::new(&location))?;
+            let started = std::time::Instant::now();
+            let history = repo.rebuild_history()?;
+            println!(
+                "History を作り直しました（{} コミット・{:.2} 秒）",
+                history.graph.len(),
+                started.elapsed().as_secs_f64()
+            );
+            Ok(ExitCode::SUCCESS)
+        }
         other => Err(format!("知らない指示: {other}\n\n{USAGE}").into()),
     }
 }
@@ -241,6 +261,7 @@ fn log(args: &[String]) -> Result<ExitCode> {
     let mut show_graph = true;
     let mut color = term::stdout_is_tty();
     let mut query: Vec<String> = Vec::new();
+    let mut rebuild = false;
     let mut a = Args::new(args);
     while let Some(arg) = a.rest.next() {
         match arg.as_str() {
@@ -248,6 +269,7 @@ fn log(args: &[String]) -> Result<ExitCode> {
             "-n" => count = Some(a.value("-n")?.parse()?),
             "--all" => count = Some(usize::MAX),
             "--fold" => fold = true,
+            "--rebuild" => rebuild = true,
             "--branch" | "-b" => branches.push(a.value("--branch")?.to_owned()),
             "--no-graph" => show_graph = false,
             "--color" | "--color=always" => color = true,
@@ -260,8 +282,12 @@ fn log(args: &[String]) -> Result<ExitCode> {
     }
     let repo = open_repository(&dir)?;
     // アプリと同じく、前回の History（永続キャッシュ）から始めて、増えたコミットだけを読む。
-    repo.load_cached_history();
-    let full = repo.load_history()?;
+    let full = if rebuild {
+        repo.rebuild_history()?
+    } else {
+        repo.load_cached_history();
+        repo.load_history()?
+    };
     let refs = repo.load_refs()?;
     // 絞り込むブランチ（名前から ID へ）。
     let tips: Vec<Oid> = branches

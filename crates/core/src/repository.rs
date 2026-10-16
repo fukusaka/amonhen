@@ -437,6 +437,20 @@ impl Repository {
         Ok(self.publish(tips, head, graph, layout))
     }
 
+    /// History を最初から作り直して公開する（永続キャッシュを捨て、前回の History から引き継がない）。手元の共有の
+    /// daemon につないでいれば、daemon のコアに作り直させてから、そのファイルを読み直す。
+    pub fn rebuild_history(&self) -> Result<Arc<HistorySnapshot>> {
+        self.delegate_done(&crate::delegate::Request::RebuildHistory)?;
+        self.history.store(None);
+        if let Some(path) = &self.cache_path {
+            match std::fs::remove_file(path) {
+                Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.into()),
+                _ => {}
+            }
+        }
+        self.load_history()
+    }
+
     /// `tips` から辿れるコミットだけの History（ブランチで絞り込む）。最新の History から作り、公開はしない。
     pub fn history_filtered(&self, tips: &[Oid]) -> Result<Arc<HistorySnapshot>> {
         self.history_shaped(Some(tips), None)
@@ -727,6 +741,10 @@ impl Repository {
             }
             Request::RestoreFile { path, content } => {
                 self.restore_file(&path, &content)?;
+                (Reply::Done, Vec::new())
+            }
+            Request::RebuildHistory => {
+                self.rebuild_history()?;
                 (Reply::Done, Vec::new())
             }
             Request::ChangeDiffs(changes) => {
@@ -1243,6 +1261,19 @@ mod tests {
         git(&dir, &["commit", "--allow-empty", "-q", "-m", "second"]);
         let updated = repo.load_history().unwrap();
         assert_eq!((updated.generation, updated.graph.len()), (2, 2));
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache.clone());
+        assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
+
+        // 作り直すと、前回のものを引き継がずに作り、キャッシュも書き直す。
+        let cached = repo.load_history().unwrap();
+        // 壊れたキャッシュに差し替える（その場で書き換えると、mmap している `cached` まで壊れる）。
+        let broken = tmp.path().join("broken.bin");
+        std::fs::write(&broken, b"broken").unwrap();
+        std::fs::rename(&broken, &cache).unwrap();
+        let rebuilt = repo.rebuild_history().unwrap();
+        assert!(!Arc::ptr_eq(&rebuilt, &cached));
+        assert_eq!(rebuilt.graph, cached.graph);
+        assert!(rebuilt.generation > cached.generation);
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache);
         assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
     }

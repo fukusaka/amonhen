@@ -28,6 +28,8 @@ pub(crate) enum Request {
         #[serde(with = "serde_bytes")]
         content: Vec<u8>,
     },
+    /// History を最初から作り直す（`Repository::rebuild_history`）。daemon の永続キャッシュも作り直す。
+    RebuildHistory,
 }
 
 #[derive(Serialize, Deserialize)]

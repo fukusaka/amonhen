@@ -64,6 +64,12 @@ public final class Repository: @unchecked Sendable {
         return History(raw: raw, repository: self)
     }
 
+    /// History を最初から作り直す（永続キャッシュを捨てる。共有の daemon 越しなら daemon の分も）。裏のスレッドから呼ぶこと。
+    public func rebuildHistory() throws -> History {
+        guard let raw = amonhen_history_rebuild(raw) else { throw AmonhenError.last() }
+        return History(raw: raw, repository: self)
+    }
+
     /// 永続キャッシュにある前回の History。mmap するだけなので、メインスレッドで呼んでよい。
     public func loadCachedHistory() -> History? {
         amonhen_history_load_cached(raw).map { History(raw: $0, repository: self) }

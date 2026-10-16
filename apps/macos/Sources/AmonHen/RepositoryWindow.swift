@@ -694,6 +694,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var isLocal: Bool { !RepositoryLocation.isRemote(location) }
     private var showsWorkingCopy: Bool { pages?.page == .workingCopy }
 
+    @objc func rebuildHistory(_ sender: Any?) {
+        history.rebuild { [weak self] error in
+            if let error { self?.showFailure(error.localizedDescription, title: "History を作り直せませんでした") }
+        }
+    }
+
     @objc func fetch(_ sender: Any?) { actions.fetch() }
     @objc func pull(_ sender: Any?) { pull(mode: Settings.pullMode) }
     @objc func pullMerge(_ sender: Any?) { pull(mode: .merge) }

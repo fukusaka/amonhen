@@ -152,6 +152,9 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(item("Undo", #selector(RepositoryWindow.undoOperation(_:)), "z", [.command, .option]))
         menu.addItem(.separator())
         menu.addItem(item("Repository Settings…", #selector(RepositoryWindow.showRepositorySettings(_:)), ";"))
+        let rebuild = item("Rebuild History", #selector(RepositoryWindow.rebuildHistory(_:)), "")
+        rebuild.toolTip = "History のキャッシュを捨てて最初から作り直す（共有の daemon 越しなら daemon の分も）"
+        menu.addItem(rebuild)
         menu.addItem(.separator())
         menu.addItem(item("Create Pull Request…", #selector(RepositoryWindow.createPullRequest(_:)), ""))
         menu.addItem(item("Open on GitHub", #selector(RepositoryWindow.openOnGitHub(_:)), ""))

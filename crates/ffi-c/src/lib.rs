@@ -288,6 +288,24 @@ pub unsafe extern "C" fn amonhen_history_load(
     }
 }
 
+/// History を最初から作り直して公開し、そのスナップショットを返す（`amonhen_history_release` で手放す）。
+/// 永続キャッシュを捨てる（手元の共有の daemon につないでいれば、daemon の分も）。裏のスレッドから呼ぶこと。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_rebuild(
+    repo_ptr: *const AmonhenRepo,
+) -> *const AmonhenHistory {
+    match repo(repo_ptr).rebuild_history() {
+        Ok(snapshot) => into_history(snapshot),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null()
+        }
+    }
+}
+
 /// 永続キャッシュにある前回の History を公開して返す。キャッシュがなければ NULL。
 /// mmap するだけなので、起動直後にメインスレッドから呼んでよい。
 ///

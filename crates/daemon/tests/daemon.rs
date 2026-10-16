@@ -253,6 +253,15 @@ fn shares_one_daemon_between_clients() {
     }
     assert_eq!(rb.load_history().unwrap().graph.len(), 2);
 
+    // History の作り直しは daemon のコアで行い、同じ 1 つのキャッシュを書き直す。
+    let before = ra.load_history().unwrap();
+    let rebuilt = ra.rebuild_history().unwrap();
+    assert_eq!(rebuilt.graph, before.graph);
+    assert!(rebuilt.generation > before.generation);
+    let caches: Vec<_> = walk(&home).into_iter().filter(|p| p.to_string_lossy().contains("history-")).collect();
+    assert_eq!(caches.len(), 1, "{caches:?}");
+    assert_eq!(rb.load_history().unwrap().graph.len(), 2);
+
     // 命令は daemon のコアで実行される（ブランチができる）。
     let reply = ra.run_json(r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#);
     assert!(reply.contains(r#""ok":true"#), "{reply}");
