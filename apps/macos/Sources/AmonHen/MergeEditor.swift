@@ -1,96 +1,80 @@
 import AmonhenKit
 import AppKit
 
-/// コンフリクトのあるファイル 1 つを解決するウィンドウ。上の左に Incoming、右に Current（どちらも、すべての
-/// コンフリクトをその側にした内容）、下に編集できる Result（今の作業ツリーの内容から始める）。
+/// コンフリクトのあるファイル 1 つを解決するエディタ。左に Current、真ん中に編集できる Result（今の作業ツリーの
+/// 内容から始める）、右に Incoming（左右は、すべてのコンフリクトをその側にした内容）。共通の祖先（diff3）が
+/// あれば、Base を左端に出せる。
 ///
-/// コンフリクトごとに採用する側を選ぶと Result のそのコンフリクトが置き換わり、Result は直接編集もできる。
-/// 解決の計算はコア（`resolveText`・`conflictRegions`）に任せる。
-final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, NSTextViewDelegate {
-    /// 開いているエディタ（パスごとに 1 つ）。
-    private static var open: [String: MergeEditorWindowController] = [:]
-
-    static func show(path: String, repository: Repository, actions: Actions) {
-        if let existing = open[path] {
-            existing.window?.makeKeyAndOrderFront(nil)
-            return
-        }
-        Task {
-            do {
-                let sides = try await Task.detached(priority: .userInitiated) {
-                    try repository.info(["op": "mergeSides", "path": path], as: MergeSides.self)
-                }.value
-                let controller = MergeEditorWindowController(path: path, sides: sides, repository: repository, actions: actions)
-                open[path] = controller
-                controller.showWindow(nil)
-            } catch {
-                NSAlert(error: error).runModal()
-            }
-        }
-    }
-
-    /// 開いているエディタの画像（`--snapshot` と `--merge-editor` の確認用）。
-    static func snapshot() -> NSBitmapImageRep? {
-        guard let view = open.values.first?.window?.contentView,
-              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
-        view.cacheDisplay(in: view.bounds, to: rep)
-        return rep
-    }
-
-    private let path: String
+/// 列の間の帯は、左右の欄のコンフリクトと Result のコンフリクトをつなぎ、≫・≪ を押すとその側で解決する。
+/// ✨ Magic Merge は、決まった規則で解けるコンフリクトをまとめて解く。3 列のスクロールは、コンフリクトの位置で
+/// 揃える。解決の計算はコア（`resolveText`・`conflictRegions`・`magicMerge`）に任せる。
+///
+/// Working Copy の右に埋め込むほか、別ウィンドウ（`MergeEditorWindowController`）でも開ける。
+final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
+    let path: String
     private let sides: MergeSides
     private let repository: Repository
     private let actions: Actions
+    /// 保存して解決済みにした（埋め込んだ側はエディタを外し、ウィンドウは閉じる）。
+    var onResolved: (() -> Void)?
+    /// 別ウィンドウで開く（埋め込んだときだけ出す）。
+    var onPopOut: (() -> Void)?
 
-    private let incoming = MergeEditorWindowController.textView(editable: false)
-    private let current = MergeEditorWindowController.textView(editable: false)
-    private let base = MergeEditorWindowController.textView(editable: false)
-    private let result = MergeEditorWindowController.textView(editable: true)
+    private let current = MergeEditorViewController.textView(editable: false)
+    private let incoming = MergeEditorViewController.textView(editable: false)
+    private let base = MergeEditorViewController.textView(editable: false)
+    private let result = MergeEditorViewController.textView(editable: true)
+    private lazy var leftBand = ConflictBand(side: .ours)
+    private lazy var rightBand = ConflictBand(side: .theirs)
+    private var panes: [NSView] = []
+    private var basePane: NSView?
     private let position = NSTextField(labelWithString: "")
     private let previousButton = NSButton()
     private let nextButton = NSButton()
     private var acceptButtons: [NSButton] = []
-    private var baseButton: NSButton?
+    private let magicButton = NSButton(title: "✨ Magic Merge", target: nil, action: nil)
+    private let baseToggle = NSButton(checkboxWithTitle: "Base", target: nil, action: nil)
+    /// Magic Merge の結果など、直前の操作の知らせ。
+    private let note = NSTextField(labelWithString: "")
 
-    /// 最初の Result に入っていたコンフリクト（両側の中身）。添字が上の欄の `regions` の添字に当たる。
+    /// 最初の Result に入っていたコンフリクト（両側の中身）。添字が左右の欄の `regions` の添字に当たる。
     private var originals: [(current: String, incoming: String)] = []
     /// 今の Result に残っているコンフリクトと、それぞれが `originals` の何番目か（わからなければ nil）。
     private var conflicts: [ConflictRegions.Conflict] = []
     private var originalOf: [Int?] = []
     /// 選んでいるコンフリクト（`conflicts` の添字）。
     private var selected = 0
-    private var savedText: String
+    private(set) var savedText: String
     private var reparse: DispatchWorkItem?
+    /// ほかの欄をスクロールで揃えている間（揃えた結果の通知で揃え返さない）。
+    private var syncing = false
 
-    private init(path: String, sides: MergeSides, repository: Repository, actions: Actions) {
+    init(path: String, sides: MergeSides, repository: Repository, actions: Actions) {
         self.path = path
         self.sides = sides
         self.repository = repository
         self.actions = actions
         savedText = sides.result
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 820),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Merge — \(path)"
-        window.center()
-        super.init(window: window)
-        window.delegate = self
-        build()
-        result.string = sides.result
-        result.undoManager?.removeAllActions()
-        incoming.string = sides.incoming?.text ?? ""
-        current.string = sides.current?.text ?? ""
-        base.string = sides.base?.text ?? ""
-        updateConflicts(initial: true)
-        for text in [incoming, current, base, result] { colorSyntax(text) }
+        super.init(nibName: nil, bundle: nil)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// Result を保存していない変更があるか。
+    var hasUnsavedChanges: Bool { result.string != savedText }
+
+    /// `path` の中身を読んでエディタを作る（裏で読む）。
+    static func load(path: String, repository: Repository, actions: Actions) async throws -> MergeEditorViewController {
+        let sides = try await Task.detached(priority: .userInitiated) {
+            try repository.info(["op": "mergeSides", "path": path], as: MergeSides.self)
+        }.value
+        return MergeEditorViewController(path: path, sides: sides, repository: repository, actions: actions)
+    }
+
     // MARK: - 組み立て
 
     private static func textView(editable: Bool) -> NSTextView {
-        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 300))
+        let text = NSTextView(frame: NSRect(x: 0, y: 0, width: 400, height: 300))
         text.isEditable = editable
         text.isRichText = false
         text.allowsUndo = editable
@@ -100,7 +84,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
                      \.isAutomaticTextReplacementEnabled, \.isAutomaticSpellingCorrectionEnabled, \.isContinuousSpellCheckingEnabled] {
             text[keyPath: flag] = false
         }
-        // コードなので折り返さず、横にスクロールする。
+        // コードなので折り返さず、横にスクロールする（行の高さが揃い、3 列を行で揃えられる）。
         text.isHorizontallyResizable = true
         text.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         text.textContainer?.widthTracksTextView = false
@@ -108,16 +92,18 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
         return text
     }
 
-    /// 見出しと、スクロールする文字の欄。フレームと自動の伸縮で並べる（分割の中で大きさが決まるように）。
+    private static let labelHeight: CGFloat = 20
+
+    /// 見出しと、スクロールする文字の欄。
     private func pane(_ title: String, _ text: NSTextView) -> NSView {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 400))
-        let labelHeight: CGFloat = 20
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 400, height: 400))
         let label = NSTextField(labelWithString: title)
         label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
         label.textColor = .secondaryLabelColor
-        label.frame = NSRect(x: 6, y: 400 - labelHeight + 2, width: 588, height: labelHeight - 4)
+        label.lineBreakMode = .byTruncatingTail
+        label.frame = NSRect(x: 6, y: 400 - Self.labelHeight + 2, width: 388, height: Self.labelHeight - 4)
         label.autoresizingMask = [.width, .minYMargin]
-        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 600, height: 400 - labelHeight))
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 400, height: 400 - Self.labelHeight))
         scroll.autoresizingMask = [.width, .height]
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
@@ -126,79 +112,219 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
         text.isVerticallyResizable = true
         text.autoresizingMask = [.width]
         scroll.documentView = text
+        scroll.contentView.postsBoundsChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(scrolled(_:)), name: NSView.boundsDidChangeNotification, object: scroll.contentView)
         container.addSubview(label)
         container.addSubview(scroll)
         return container
     }
 
-    private func build() {
+    override func loadView() {
         let hasBase = sides.base != nil
-        var top = [pane("Incoming（取り込む側）", incoming)]
-        if hasBase { top.append(pane("Base（共通の祖先）", base)) }
-        top.append(pane("Current（今のブランチ）", current))
-        let topSplit = NSSplitView()
-        topSplit.isVertical = true
-        topSplit.dividerStyle = .thin
-        for v in top { topSplit.addArrangedSubview(v) }
-        let outer = NSSplitView()
-        outer.isVertical = false
-        outer.dividerStyle = .thin
-        outer.addArrangedSubview(topSplit)
-        outer.addArrangedSubview(pane("Result（結果、編集できる）", result))
+        let currentPane = pane("Current（今のブランチ）", current)
+        let resultPane = pane("Result（結果、編集できる）", result)
+        let incomingPane = pane("Incoming（取り込む側）", incoming)
+        if hasBase { basePane = pane("Base（共通の祖先）", base) }
+        panes = [currentPane, resultPane, incomingPane]
+        for band in [leftBand, rightBand] {
+            band.owner = self
+        }
 
         previousButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "前のコンフリクト")
         previousButton.target = self
         previousButton.action = #selector(selectPrevious)
+        previousButton.toolTip = "前のコンフリクト（⌥⌘↑）"
         nextButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "次のコンフリクト")
         nextButton.target = self
         nextButton.action = #selector(selectNext)
-        var accepts: [(String, String)] = [("Accept Incoming", "theirs"), ("Accept Current", "ours"), ("Accept Both", "both")]
+        nextButton.toolTip = "次のコンフリクト（⌥⌘↓）"
+        magicButton.target = self
+        magicButton.action = #selector(magicMerge)
+        magicButton.toolTip = """
+            決まった規則で解けるコンフリクトをまとめて解く: 両側が同じ、片側だけが変えた（diff3）、空白だけが違う、\
+            同じ行の別々の単語を変えた（diff3）。Undo で戻せる
+            """
+        var accepts: [(String, String)] = [("Accept Current", "ours"), ("Accept Incoming", "theirs"), ("Accept Both", "both")]
         if hasBase { accepts.append(("Accept Base", "base")) }
         acceptButtons = accepts.map { title, choice in
             let b = NSButton(title: title, target: self, action: #selector(accept(_:)))
             b.identifier = .init(choice)
             return b
         }
+        baseToggle.target = self
+        baseToggle.action = #selector(toggleBase)
+        baseToggle.isHidden = !hasBase
+        baseToggle.toolTip = "共通の祖先を左端に出す"
+        let popOut = NSButton(
+            image: NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: "別ウィンドウで開く")!,
+            target: self, action: #selector(popOutClicked))
+        popOut.toolTip = "別ウィンドウで開く"
+        popOut.isHidden = onPopOut == nil
         let save = NSButton(title: "Save", target: self, action: #selector(saveOnly))
         let resolve = NSButton(title: "Save & Mark Resolved", target: self, action: #selector(saveAndResolve))
         resolve.keyEquivalent = "\r"
-        for b in [previousButton, nextButton] + acceptButtons + [save, resolve] {
+        resolve.keyEquivalentModifierMask = .command
+        resolve.toolTip = "保存して解決済みにする（⌘↩）"
+        for b in [previousButton, nextButton, magicButton] + acceptButtons + [popOut, save, resolve] {
             b.bezelStyle = .push
             b.controlSize = .small
         }
         position.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
-        let bar = NSStackView(views: [position, previousButton, nextButton] + acceptButtons + [NSView(), save, resolve])
+        let bar = NSStackView(
+            views: [position, previousButton, nextButton, magicButton, note] + acceptButtons + [baseToggle, NSView(), popOut, save, resolve])
+        note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        note.textColor = .secondaryLabelColor
         bar.spacing = 6
         bar.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
 
-        // 上に操作の帯、残りに欄。
-        let size = window?.contentView?.bounds.size ?? NSSize(width: 1200, height: 820)
-        let barHeight: CGFloat = 36
-        let root = NSView(frame: NSRect(origin: .zero, size: size))
-        bar.frame = NSRect(x: 0, y: size.height - barHeight, width: size.width, height: barHeight)
-        bar.autoresizingMask = [.width, .minYMargin]
-        outer.frame = NSRect(x: 0, y: 0, width: size.width, height: size.height - barHeight)
-        outer.autoresizingMask = [.width, .height]
-        topSplit.frame = NSRect(x: 0, y: 0, width: size.width, height: (size.height - barHeight) * 0.45)
-        root.addSubview(bar)
-        root.addSubview(outer)
-        window?.contentView = root
+        let root = MergeLayoutView(bar: bar)
+        root.onLayout = { [weak self] in self?.layoutColumns() }
+        root.frame = NSRect(x: 0, y: 0, width: 1200, height: 700)
+        for v in [basePane].compactMap({ $0 }) + panes + [leftBand, rightBand] { root.addSubview(v) }
+        basePane?.isHidden = true
+        view = root
+        layoutColumns()
 
         result.delegate = self
-        incoming.delegate = self
-        current.delegate = self
-        base.delegate = self
-        // 上下を半分ずつ、上の欄は等分から始める。
-        DispatchQueue.main.async {
-            outer.setPosition(outer.bounds.height * 0.45, ofDividerAt: 0)
-            let width = topSplit.bounds.width / CGFloat(top.count)
-            for i in 0..<(top.count - 1) { topSplit.setPosition(width * CGFloat(i + 1), ofDividerAt: i) }
+        for text in [current, incoming, base] { text.delegate = self }
+        result.string = sides.result
+        result.undoManager?.removeAllActions()
+        current.string = sides.current?.text ?? ""
+        incoming.string = sides.incoming?.text ?? ""
+        base.string = sides.base?.text ?? ""
+        updateConflicts(initial: true)
+        for text in [current, incoming, base, result] { colorSyntax(text) }
+    }
+
+    /// 欄を左から Base（出すとき）・Current・帯・Result・帯・Incoming に並べる。帯は幅を固定し、残りを等分する。
+    private func layoutColumns() {
+        // 組み立てている途中（`view` を入れる前）に呼ばれたら何もしない（`view` を読むと組み立て直しになる）。
+        guard let root = viewIfLoaded as? MergeLayoutView else { return }
+        let area = root.contentArea
+        let bandWidth: CGFloat = 40
+        let showBase = basePane.map { !$0.isHidden } ?? false
+        let columns: [NSView] = (showBase ? [basePane!] : []) + panes
+        let gaps = CGFloat(columns.count - 1)
+        let width = max(0, (area.width - bandWidth * 2 - (showBase ? 1 : 0)) / CGFloat(columns.count))
+        var x = area.minX
+        for (i, column) in columns.enumerated() {
+            column.frame = NSRect(x: x, y: area.minY, width: width, height: area.height)
+            x += width
+            if column === panes[0] {
+                leftBand.frame = NSRect(x: x, y: area.minY, width: bandWidth, height: area.height - Self.labelHeight)
+                x += bandWidth
+            } else if column === panes[1] {
+                rightBand.frame = NSRect(x: x, y: area.minY, width: bandWidth, height: area.height - Self.labelHeight)
+                x += bandWidth
+            } else if i < Int(gaps) {
+                x += 1
+            }
         }
+        leftBand.needsDisplay = true
+        rightBand.needsDisplay = true
+    }
+
+    @objc private func toggleBase() {
+        basePane?.isHidden = baseToggle.state != .on
+        layoutColumns()
+    }
+
+    @objc private func popOutClicked() { onPopOut?() }
+
+    // MARK: - 行の位置
+
+    /// 1 行の高さ（等幅で折り返さないので、どの欄も同じ）。
+    private lazy var lineHeight: CGFloat = {
+        result.layoutManager?.defaultLineHeight(for: result.font ?? .monospacedSystemFont(ofSize: 12, weight: .regular)) ?? 15
+    }()
+
+    /// `text` の `line` 行目の上端の、帯の座標（欄の文字の領域の上端からの距離。見えている範囲の外なら外の値）。
+    fileprivate func y(ofLine line: Int, in text: NSTextView) -> CGFloat {
+        let top = text.enclosingScrollView?.contentView.bounds.origin.y ?? 0
+        return CGFloat(line) * lineHeight + text.textContainerInset.height - top
+    }
+
+    /// 帯に描くもの: 左右の欄のコンフリクトの行範囲と、Result のコンフリクトの行範囲（選んでいるか）。
+    fileprivate func bandRegions(_ side: ConflictBand.Side) -> [(side: Range<Int>, result: Range<Int>, selected: Bool, index: Int)] {
+        let regions = (side == .ours ? sides.current : sides.incoming)?.regions ?? []
+        return conflicts.indices.compactMap { i in
+            guard let j = originalOf[i], j < regions.count, regions[j].count == 2 else { return nil }
+            let lines = conflicts[i].lines
+            return (regions[j][0]..<regions[j][1], lines[0]..<lines[1], i == selected, i)
+        }
+    }
+
+    fileprivate func sideText(_ side: ConflictBand.Side) -> NSTextView { side == .ours ? current : incoming }
+    fileprivate var resultText: NSTextView { result }
+
+    /// Result の行 `line` に当たる、`side` の欄の行（コンフリクトの位置で区切って、間は比例で割り当てる）。
+    private func map(_ line: CGFloat, from: [Int], to: [Int]) -> CGFloat {
+        // 区切り: (0, 0) と、各コンフリクトの始まり・終わり。
+        guard from.count == to.count, !from.isEmpty else { return line }
+        if line <= CGFloat(from[0]) { return line - CGFloat(from[0]) + CGFloat(to[0]) }
+        for k in 1..<from.count where line <= CGFloat(from[k]) {
+            let (f0, f1, t0, t1) = (CGFloat(from[k - 1]), CGFloat(from[k]), CGFloat(to[k - 1]), CGFloat(to[k]))
+            return f1 == f0 ? t1 : t0 + (line - f0) * (t1 - t0) / (f1 - f0)
+        }
+        return line - CGFloat(from.last!) + CGFloat(to.last!)
+    }
+
+    /// Result と `side` の欄の、対応する行の区切り（Result の行, 欄の行）。
+    private func anchors(_ side: MergeSides.Side?) -> (result: [Int], side: [Int]) {
+        var r = [0], s = [0]
+        guard let regions = side?.regions else { return (r, s) }
+        for i in conflicts.indices {
+            guard let j = originalOf[i], j < regions.count, regions[j].count == 2 else { continue }
+            let lines = conflicts[i].lines
+            // 前の区切りより後ろのものだけ（順が入れ替わった対応は使わない）。
+            guard lines[0] >= r.last!, regions[j][0] >= s.last! else { continue }
+            r += [lines[0], lines[1]]
+            s += [regions[j][0], regions[j][1]]
+        }
+        return (r, s)
+    }
+
+    /// どれかの欄をスクロールしたら、ほかの欄の一番上の行を揃える。
+    @objc private func scrolled(_ notification: Notification) {
+        leftBand.needsDisplay = true
+        rightBand.needsDisplay = true
+        guard !syncing, let clip = notification.object as? NSClipView,
+              let source = [result, current, incoming, base].first(where: { $0.enclosingScrollView?.contentView === clip })
+        else { return }
+        syncing = true
+        defer { syncing = false }
+        let inset = result.textContainerInset.height
+        let topLine = (clip.bounds.origin.y - inset) / lineHeight
+        // 一度 Result の行に直してから、ほかの欄の行にする。
+        let pairs: [(NSTextView, MergeSides.Side?)] = [(current, sides.current), (incoming, sides.incoming), (base, sides.base)]
+        let resultLine: CGFloat
+        if source === result {
+            resultLine = topLine
+        } else if let side = pairs.first(where: { $0.0 === source })?.1 {
+            let a = anchors(side)
+            resultLine = map(topLine, from: a.side, to: a.result)
+        } else {
+            return
+        }
+        for (text, side) in pairs where text !== source {
+            let a = anchors(side)
+            scroll(text, toY: map(resultLine, from: a.result, to: a.side) * lineHeight + inset)
+        }
+        if source !== result { scroll(result, toY: resultLine * lineHeight + inset) }
+    }
+
+    private func scroll(_ text: NSTextView, toY y: CGFloat) {
+        guard let scrollView = text.enclosingScrollView else { return }
+        let clip = scrollView.contentView
+        let maxY = max(0, text.frame.height - clip.bounds.height)
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: min(max(0, y), maxY)))
+        scrollView.reflectScrolledClipView(clip)
     }
 
     // MARK: - コンフリクト
 
-    /// Result を読み直して、残っているコンフリクトと上の欄との対応を決め、強調し直す。
+    /// Result を読み直して、残っているコンフリクトと左右の欄との対応を決め、強調し直す。
     private func updateConflicts(initial: Bool = false) {
         let text = result.string
         let found = (try? repository.info(["op": "conflictRegions", "text": text], as: ConflictRegions.self))?.conflicts ?? []
@@ -217,27 +343,32 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
 
     private func refresh() {
         position.stringValue = conflicts.isEmpty ? "コンフリクトなし" : "Conflict \(selected + 1) / \(conflicts.count)"
-        for b in [previousButton, nextButton] + acceptButtons { b.isEnabled = !conflicts.isEmpty }
+        for b in [previousButton, nextButton, magicButton] + acceptButtons { b.isEnabled = !conflicts.isEmpty }
         // 共通の祖先は、対応のわかるコンフリクトでだけ選べる。
         if let baseIndex = acceptButtons.firstIndex(where: { $0.identifier?.rawValue == "base" }) {
             acceptButtons[baseIndex].isEnabled = !conflicts.isEmpty && originalOf[selected] != nil
         }
+        // 解決済み（Result に残っていない）のコンフリクトは、左右の欄で薄くする。
+        let live = Set(originalOf.compactMap { $0 })
         let chosen = conflicts.isEmpty ? nil : originalOf[selected]
-        highlight(incoming, regions: sides.incoming?.regions ?? [], selected: chosen, color: .systemGreen)
-        highlight(current, regions: sides.current?.regions ?? [], selected: chosen, color: .systemBlue)
-        highlight(base, regions: sides.base?.regions ?? [], selected: chosen, color: .systemGray)
-        highlight(result, regions: conflicts.map(\.lines), selected: conflicts.isEmpty ? nil : selected, color: .systemOrange)
+        highlight(current, regions: sides.current?.regions ?? [], live: live, selected: chosen, color: .systemBlue)
+        highlight(incoming, regions: sides.incoming?.regions ?? [], live: live, selected: chosen, color: .systemGreen)
+        highlight(base, regions: sides.base?.regions ?? [], live: live, selected: chosen, color: .systemGray)
+        highlight(result, regions: conflicts.map(\.lines), live: nil, selected: conflicts.isEmpty ? nil : selected, color: .systemRed)
+        leftBand.needsDisplay = true
+        rightBand.needsDisplay = true
     }
 
-    private func highlight(_ text: NSTextView, regions: [[Int]], selected: Int?, color: NSColor) {
+    private func highlight(_ text: NSTextView, regions: [[Int]], live: Set<Int>?, selected: Int?, color: NSColor) {
         guard let layout = text.layoutManager else { return }
         let whole = NSRange(location: 0, length: (text.string as NSString).length)
         layout.removeTemporaryAttribute(.backgroundColor, forCharacterRange: whole)
         let starts = Self.lineStarts(text.string)
         for (i, r) in regions.enumerated() where r.count == 2 {
-            let range = Self.characterRange(lines: r[0]..<r[1], starts: starts)
+            let alpha: CGFloat = i == selected ? 0.35 : live.map { $0.contains(i) ? 0.16 : 0.05 } ?? 0.16
             layout.addTemporaryAttribute(
-                .backgroundColor, value: color.withAlphaComponent(i == selected ? 0.35 : 0.14), forCharacterRange: range)
+                .backgroundColor, value: color.withAlphaComponent(alpha),
+                forCharacterRange: Self.characterRange(lines: r[0]..<r[1], starts: starts))
         }
     }
 
@@ -286,30 +417,15 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
         return NSRange(location: start, length: max(0, end - start))
     }
 
-    /// 選んだコンフリクトが見えるように、各欄をスクロールする。
+    /// 選んだコンフリクトが Result の上から 3 分の 1 あたりに来るようにスクロールする（ほかの欄は揃う）。
     private func reveal() {
-        guard !conflicts.isEmpty else { return }
-        scroll(result, toLine: conflicts[selected].lines[0])
-        guard let j = originalOf[selected] else { return }
-        for (text, side) in [(incoming, sides.incoming), (current, sides.current), (base, sides.base)] {
-            if let r = side?.regions[j] { scroll(text, toLine: r[0]) }
-        }
+        guard !conflicts.isEmpty, let clip = result.enclosingScrollView?.contentView else { return }
+        let line = conflicts[selected].lines[0]
+        scroll(result, toY: CGFloat(line) * lineHeight + result.textContainerInset.height - clip.bounds.height / 3)
     }
 
-    private func scroll(_ text: NSTextView, toLine line: Int) {
-        guard let layout = text.layoutManager, let container = text.textContainer,
-              let clip = text.enclosingScrollView?.contentView else { return }
-        let range = Self.characterRange(lines: line..<(line + 1), starts: Self.lineStarts(text.string))
-        let glyphs = layout.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
-        let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
-        // 上から 3 分の 1 あたりに出す。
-        let y = max(0, rect.minY - clip.bounds.height / 3)
-        clip.scroll(to: NSPoint(x: 0, y: y))
-        text.enclosingScrollView?.reflectScrolledClipView(clip)
-    }
-
-    @objc private func selectPrevious() { move(by: -1) }
-    @objc private func selectNext() { move(by: 1) }
+    @objc func selectPrevious() { move(by: -1) }
+    @objc func selectNext() { move(by: 1) }
 
     private func move(by step: Int) {
         guard !conflicts.isEmpty else { return }
@@ -318,22 +434,51 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
         reveal()
     }
 
-    /// 選んだコンフリクトを、ボタンの側で解決する。Result の変わった部分だけを置き換えて、Undo できるようにする。
     @objc private func accept(_ sender: NSButton) {
-        guard !conflicts.isEmpty, let choice = sender.identifier?.rawValue else { return }
+        guard let choice = sender.identifier?.rawValue else { return }
+        resolve(selected, choice)
+    }
+
+    /// 帯の ≫・≪ を押した。
+    fileprivate func acceptFromBand(_ index: Int, side: ConflictBand.Side) {
+        resolve(index, side == .ours ? "ours" : "theirs")
+    }
+
+    /// `index` 番目のコンフリクトを `choice` で解決する。Result の変わった部分だけを置き換えて、Undo できるようにする。
+    private func resolve(_ index: Int, _ choice: String) {
+        guard index < conflicts.count else { return }
         let old = result.string
-        let resolved: String
         do {
-            guard let text = try repository.run(["op": "resolveText", "text": old, "index": selected, "choice": choice]).text
+            guard let text = try repository.run(["op": "resolveText", "text": old, "index": index, "choice": choice]).text
             else { return }
-            resolved = text
+            selected = index
+            replace(old: old, with: text)
         } catch {
             NSAlert(error: error).runModal()
             return
         }
-        replace(old: old, with: resolved)
         updateConflicts()
         reveal()
+    }
+
+    /// ✨ Magic Merge: 決まった規則で解けるコンフリクトをまとめて解く（Undo でまとめて戻せる）。
+    @objc private func magicMerge() {
+        let old = result.string
+        struct Info: Decodable { let text: String; let resolved: Int; let remaining: Int }
+        do {
+            let info = try repository.info(["op": "magicMerge", "text": old], as: Info.self)
+            let text = info.text
+            guard info.resolved > 0 else {
+                note.stringValue = "解けるものはありません"
+                return
+            }
+            replace(old: old, with: text)
+            updateConflicts()
+            note.stringValue = "\(info.resolved) 個を解きました"
+            reveal()
+        } catch {
+            NSAlert(error: error).runModal()
+        }
     }
 
     private func replace(old: String, with new: String) {
@@ -366,7 +511,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
-    /// 上の欄やResult でクリックした位置のコンフリクトを選ぶ。
+    /// 欄でクリックした位置のコンフリクトを選ぶ。
     func textViewDidChangeSelection(_ notification: Notification) {
         guard let text = notification.object as? NSTextView, !conflicts.isEmpty else { return }
         let location = text.selectedRange().location
@@ -403,17 +548,164 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate, N
         let text = result.string
         actions.perform(["op": "saveMerge", "path": path, "text": text, "stage": stage]) { [weak self] _ in
             guard let self else { return }
-            self.savedText = text
-            if stage { self.close() }
+            savedText = text
+            if stage { onResolved?() }
+        }
+    }
+}
+
+/// 上に操作の帯、残りに欄を並べる。
+private final class MergeLayoutView: NSView {
+    private let bar: NSView
+    private let barHeight: CGFloat = 36
+    var onLayout: (() -> Void)?
+
+    init(bar: NSView) {
+        self.bar = bar
+        super.init(frame: .zero)
+        addSubview(bar)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 欄を並べる領域。
+    var contentArea: NSRect { NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - barHeight)) }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        bar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
+        onLayout?()
+    }
+}
+
+/// 左右の欄と Result の間の帯。コンフリクトごとに、欄の行範囲と Result の行範囲を曲線でつなぎ、欄の側に
+/// その側で解決する矢印（≫・≪）を出す。
+private final class ConflictBand: NSView {
+    enum Side { case ours, theirs }
+    let side: Side
+    weak var owner: MergeEditorViewController?
+    /// 矢印の押せる範囲と、そのコンフリクト。
+    private var arrows: [(NSRect, Int)] = []
+
+    init(side: Side) {
+        self.side = side
+        super.init(frame: .zero)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var isFlipped: Bool { true }
+
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.windowBackgroundColor.setFill()
+        bounds.fill()
+        arrows.removeAll()
+        guard let owner else { return }
+        let sideText = owner.sideText(side), result = owner.resultText
+        let color: NSColor = side == .ours ? .systemBlue : .systemGreen
+        for region in owner.bandRegions(side) {
+            let s0 = owner.y(ofLine: region.side.lowerBound, in: sideText)
+            let s1 = max(s0 + 2, owner.y(ofLine: region.side.upperBound, in: sideText))
+            let r0 = owner.y(ofLine: region.result.lowerBound, in: result)
+            let r1 = owner.y(ofLine: region.result.upperBound, in: result)
+            // 左の帯は左が欄・右が Result、右の帯はその逆。
+            let (l0, l1, rr0, rr1) = side == .ours ? (s0, s1, r0, r1) : (r0, r1, s0, s1)
+            guard max(l1, rr1) >= 0, min(l0, rr0) <= bounds.height else { continue }
+            let w = bounds.width
+            let path = NSBezierPath()
+            path.move(to: NSPoint(x: 0, y: l0))
+            path.curve(to: NSPoint(x: w, y: rr0), controlPoint1: NSPoint(x: w / 2, y: l0), controlPoint2: NSPoint(x: w / 2, y: rr0))
+            path.line(to: NSPoint(x: w, y: rr1))
+            path.curve(to: NSPoint(x: 0, y: l1), controlPoint1: NSPoint(x: w / 2, y: rr1), controlPoint2: NSPoint(x: w / 2, y: l1))
+            path.close()
+            color.withAlphaComponent(region.selected ? 0.35 : 0.16).setFill()
+            path.fill()
+            color.withAlphaComponent(0.5).setStroke()
+            path.lineWidth = 1
+            path.stroke()
+            // 欄の側の上端に、その側で解決する矢印。
+            let arrow = side == .ours ? "≫" : "≪"
+            let attrs: [NSAttributedString.Key: Any] = [
+                .font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: color,
+            ]
+            let size = (arrow as NSString).size(withAttributes: attrs)
+            let x = side == .ours ? 2 : w - size.width - 2
+            let rect = NSRect(x: x, y: s0, width: size.width, height: size.height)
+            (arrow as NSString).draw(at: rect.origin, withAttributes: attrs)
+            arrows.append((rect.insetBy(dx: -4, dy: -2), region.index))
         }
     }
 
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let hit = arrows.first(where: { $0.0.contains(point) }) else { return }
+        owner?.acceptFromBand(hit.1, side: side)
+    }
+
+    override func resetCursorRects() {
+        for (rect, _) in arrows { addCursorRect(rect, cursor: .pointingHand) }
+    }
+}
+
+/// マージエディタを別ウィンドウで開く。パスごとに 1 つ。
+final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
+    private static var open: [String: MergeEditorWindowController] = [:]
+    private let editor: MergeEditorViewController
+    private let actions: Actions
+
+    static func show(path: String, repository: Repository, actions: Actions) {
+        if let existing = open[path] {
+            existing.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        Task {
+            do {
+                show(try await MergeEditorViewController.load(path: path, repository: repository, actions: actions), actions: actions)
+            } catch {
+                NSAlert(error: error).runModal()
+            }
+        }
+    }
+
+    /// 埋め込んでいたエディタを、編集中の内容のまま別ウィンドウに移す。
+    static func show(_ editor: MergeEditorViewController, actions: Actions) {
+        let controller = MergeEditorWindowController(editor: editor, actions: actions)
+        open[editor.path] = controller
+        controller.showWindow(nil)
+    }
+
+    /// 開いているエディタの画像（`--snapshot` と `--merge-editor` の確認用）。
+    static func snapshot() -> NSBitmapImageRep? {
+        guard let view = open.values.first?.window?.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
+    }
+
+    private init(editor: MergeEditorViewController, actions: Actions) {
+        self.editor = editor
+        self.actions = actions
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1300, height: 820),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = "Merge — \(editor.path)"
+        super.init(window: window)
+        editor.onPopOut = nil
+        editor.onResolved = { [weak self] in self?.close() }
+        window.contentViewController = editor
+        window.setContentSize(NSSize(width: 1300, height: 820))
+        window.center()
+        window.delegate = self
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        result.string == savedText || actions.confirm(
+        !editor.hasUnsavedChanges || actions.confirm(
             "保存していない変更があります", message: "閉じると Result の変更は失われます。", ok: "保存せずに閉じる")
     }
 
     func windowWillClose(_ notification: Notification) {
-        Self.open[path] = nil
+        Self.open[editor.path] = nil
     }
 }

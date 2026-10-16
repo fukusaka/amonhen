@@ -137,6 +137,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.onSelectPage = { [weak pages] page in pages?.show(page) }
         detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
         detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
+        workingCopy.onSequenceChange = { [weak self] sequence, conflicts in
+            self?.showSequenceBanner(sequence, conflicts: conflicts)
+        }
         workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
         workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。stash は詳細にだけ中身を出す。
@@ -266,6 +269,52 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.signaturePlace = Settings.checkRemoteSignaturesLocally
             ? SignaturePlace(local: true, detail: "設定で選択")
             : SignaturePlace(local: false, host: host, detail: "設定で選択")
+    }
+
+    // MARK: - merge・rebase の途中の帯
+
+    private var sequenceBanner: NSTitlebarAccessoryViewController?
+    private let sequenceLabel = NSTextField(labelWithString: "")
+    private let skipButton = NSButton(title: "Skip", target: nil, action: nil)
+    private let continueButton = NSButton(title: "Continue", target: nil, action: nil)
+
+    /// merge・rebase・cherry-pick・revert の途中なら、ツールバーの下に帯を出す。コンフリクトが残っていれば数と
+    /// Working Copy へのリンク、なければ Continue を強調する。
+    private func showSequenceBanner(_ sequence: String?, conflicts: Int) {
+        guard let sequence else {
+            if let banner = sequenceBanner,
+               let index = window.titlebarAccessoryViewControllers.firstIndex(of: banner) {
+                window.removeTitlebarAccessoryViewController(at: index)
+            }
+            sequenceBanner = nil
+            return
+        }
+        let name = sequence.prefix(1).uppercased() + sequence.dropFirst()
+        sequenceLabel.stringValue = conflicts > 0
+            ? "\(name) の途中です · コンフリクトのファイルが \(conflicts) 個"
+            : "\(name) の途中です · コンフリクトは解決済み"
+        skipButton.isHidden = !(sequence.hasPrefix("rebase") || sequence == "cherry-pick")
+        continueButton.keyEquivalent = conflicts == 0 ? "\r" : ""
+        guard sequenceBanner == nil else { return }
+        let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.triangle.merge", accessibilityDescription: nil) ?? NSImage())
+        icon.contentTintColor = .systemOrange
+        sequenceLabel.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+        let show = NSButton(title: "Working Copy を開く", target: self, action: #selector(showWorkingCopy(_:)))
+        continueButton.target = self
+        continueButton.action = #selector(continueSequence(_:))
+        skipButton.target = self
+        skipButton.action = #selector(skipSequence(_:))
+        let abort = NSButton(title: "Abort", target: self, action: #selector(abortSequence(_:)))
+        for b in [show, continueButton, skipButton, abort] { b.controlSize = .small }
+        let stack = NSStackView(views: [icon, sequenceLabel, NSView(), show, continueButton, skipButton, abort])
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
+        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
+        let bar = NSTitlebarAccessoryViewController()
+        bar.view = stack
+        bar.layoutAttribute = .bottom
+        window.addTitlebarAccessoryViewController(bar)
+        sequenceBanner = bar
     }
 
     /// ツールバーの下に、切れたことと「つなぎ直す」を出す。

@@ -78,6 +78,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private var selectedKey: (path: String, staged: Bool)?
     private var request = 0
     private var isConflict = false
+    /// 右の欄（帯と、差分かマージエディタ）。
+    private var rightView: BarAndContentView?
+    private var rightController: NSViewController?
+    /// コンフリクトのファイルごとのマージエディタ（ほかのファイルに移っても、編集中の内容を保つ）。
+    private var mergeEditors: [String: MergeEditorViewController] = [:]
+    private var embeddedEditor: MergeEditorViewController?
 
     init(repository: Repository, renderer: TextRenderer) {
         self.repository = repository
@@ -216,9 +222,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         titleLabel.lineBreakMode = .byTruncatingMiddle
         discardButton.target = self
         discardButton.action = #selector(discard)
+        // コンフリクトのファイルは、下にマージエディタを出す。帯にはファイル全体の操作を置く。
         let conflictActions: [(String, Selector)] = [
-            ("Merge Editor…", #selector(openMergeEditor)),
-            ("Use Current", #selector(useOurs)), ("Use Incoming", #selector(useTheirs)), ("Use Both", #selector(useBoth)),
             ("Take Current File", #selector(takeOursFile)), ("Take Incoming File", #selector(takeTheirsFile)),
             ("Mark Resolved", #selector(markResolved)),
         ]
@@ -236,6 +241,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let rightController = NSViewController()
         rightController.view = right
         rightController.addChild(diffView)
+        self.rightView = right
+        self.rightController = rightController
         let rightItem = NSSplitViewItem(viewController: rightController)
         rightItem.minimumThickness = 300
         addSplitViewItem(rightItem)
@@ -278,9 +285,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private func show(_ status: WorkingStatus) {
         self.status = status
         // コンフリクトを先に、あとはパスの順。
+        // 解決済みになったファイルのエディタは捨てる。
+        let conflicted = Set(status.items.filter { $0.kind == .unmerged }.map(\.path))
+        mergeEditors = mergeEditors.filter { conflicted.contains($0.key) }
+        if let editor = embeddedEditor, !conflicted.contains(editor.path) { unembed() }
         allEntries = status.items.map(Entry.init).sorted {
             $0.isConflict != $1.isConflict ? $0.isConflict : $0.item.path < $1.item.path
         }
+        notifySequence()
         rebuildList()
     }
 
@@ -384,17 +396,28 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         sideControl.isHidden = true
         sideControl.selectedSegment = staged ? 1 : 0
         if entry.isConflict {
-            let repository = self.repository
             let path = entry.item.path
+            current = nil
+            updateButtons()
+            if let editor = mergeEditors[path] {
+                embed(editor)
+                return
+            }
             Task {
-                let view = try? await Task.detached(priority: .userInitiated) { try repository.conflictView(path: path) }.value
-                guard request == self.request else { return }
-                current = nil
-                diffView.show(view, keepScroll: keepScroll)
-                updateButtons()
+                do {
+                    let editor = try await MergeEditorViewController.load(path: path, repository: repository, actions: actions!)
+                    guard request == self.request else { return }
+                    mergeEditors[path] = editor
+                    embed(editor)
+                } catch {
+                    guard request == self.request else { return }
+                    unembed()
+                    diffView.show(nil, message: "読めません: \(error)")
+                }
             }
             return
         }
+        unembed()
         Task {
             // HEAD と作業ツリーの 1 本の差分（行ごとのチェック）。表せないときは、選んだ側の差分。
             let (diff, combined) = await Task.detached(priority: .userInitiated) { () -> (WorkingFileDiff?, Bool) in
@@ -419,13 +442,37 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         showDiff(of: entry, staged: sideControl.selectedSegment == 1)
     }
 
+    /// 右の欄の差分の代わりに、マージエディタを出す。
+    private func embed(_ editor: MergeEditorViewController) {
+        guard embeddedEditor !== editor, let rightView, let rightController else { return }
+        unembed()
+        editor.onPopOut = { [weak self, weak editor] in
+            guard let self, let editor, let actions else { return }
+            // 編集中の内容のまま、別ウィンドウに移す。
+            unembed()
+            mergeEditors[editor.path] = nil
+            MergeEditorWindowController.show(editor, actions: actions)
+            diffView.show(nil, message: "マージエディタを別ウィンドウで開いています")
+        }
+        editor.onResolved = { [weak self, weak editor] in
+            guard let self, let editor else { return }
+            if embeddedEditor === editor { unembed() }
+            mergeEditors[editor.path] = nil
+        }
+        rightController.addChild(editor)
+        rightView.content = editor.view
+        embeddedEditor = editor
+    }
+
+    private func unembed() {
+        guard let editor = embeddedEditor, let rightView else { return }
+        rightView.content = diffView.view
+        editor.removeFromParent()
+        embeddedEditor = nil
+    }
+
     private func updateButtons() {
         conflictButtons.isHidden = !isConflict
-        if isConflict {
-            let hasConflict = diffView.selectedConflict != nil
-            // 先頭はマージエディタ（いつでも開ける）、続く 3 つが選んだコンフリクトの解決。
-            for case let b as NSButton in conflictButtons.views.dropFirst().prefix(3) { b.isEnabled = hasConflict }
-        }
         let staged = selectedKey?.staged ?? false
         let selected = diffView.selectedChangeRows
         // 1 本の差分では、選んだ行がすべて含まれていれば外す、そうでなければ含める。
@@ -553,32 +600,24 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     func commitFromMenu() { if canCommit { commit() } }
     func stageAllFromMenu() { stageAll() }
 
+    /// merge・rebase などの途中かどうかと、コンフリクトのファイルの数が変わった（ウィンドウの帯に出す）。
+    var onSequenceChange: ((_ sequence: String?, _ conflicts: Int) -> Void)?
+
     private func showSequence(_ sequence: String?) {
         self.sequence = sequence
-        sequenceBar.isHidden = sequence == nil
-        if let sequence {
-            sequenceLabel.stringValue = "\(sequence) の途中です"
-        }
+        // 途中であることと Continue・Skip・Abort は、ウィンドウの帯に出す（どの画面でも見えるように）。
+        sequenceBar.isHidden = true
+        notifySequence()
+    }
+
+    private func notifySequence() {
+        onSequenceChange?(sequence, allEntries.filter(\.isConflict).count)
     }
 
     @objc private func sequenceAction(_ sender: NSButton) {
         guard let op = sender.identifier?.rawValue else { return }
         actions?.perform(["op": op])
     }
-
-    private func resolve(_ choice: String) {
-        guard let key = selectedKey, let index = diffView.selectedConflict else { return }
-        actions?.perform(["op": "resolveConflict", "path": key.path, "index": index, "choice": choice])
-    }
-
-    @objc private func openMergeEditor() {
-        guard let key = selectedKey, let actions else { return }
-        MergeEditorWindowController.show(path: key.path, repository: repository, actions: actions)
-    }
-
-    @objc private func useOurs() { resolve("ours") }
-    @objc private func useTheirs() { resolve("theirs") }
-    @objc private func useBoth() { resolve("both") }
 
     @objc private func takeOursFile() {
         guard let key = selectedKey else { return }
@@ -856,7 +895,15 @@ final class PlaceholderTextView: NSTextView {
 /// 上に高さ固定の帯、残りに中身を置く。
 final class BarAndContentView: NSView {
     private let bar: NSView
-    private let content: NSView
+    /// 中身（差し替えられる）。
+    var content: NSView {
+        didSet {
+            guard content !== oldValue else { return }
+            oldValue.removeFromSuperview()
+            addSubview(content)
+            arrange()
+        }
+    }
     private let barHeight: CGFloat = 34
 
     init(bar: NSView, content: NSView) {
