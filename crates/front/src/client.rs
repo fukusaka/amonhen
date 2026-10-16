@@ -105,18 +105,15 @@ struct Shared {
 
 impl Remote {
     /// 共有の daemon で `location`（手元のパスか `ssh://host/path`）を開いてつなぐ。
-    #[cfg(unix)]
     pub fn connect(location: &str, daemon: &str) -> Result<Self> {
         let location = if location.starts_with("ssh://") {
             location.to_owned()
         } else {
-            std::fs::canonicalize(location)
+            amonhen_remote::local::canonical_path(location)
                 .map_err(|e| format!("{location} を開けない: {e}"))?
-                .display()
-                .to_string()
         };
         let stream = amonhen_remote::local::stream(daemon)?;
-        let mut writer = std::io::BufWriter::new(stream.try_clone()?);
+        let mut writer = std::io::BufWriter::new(stream.writer);
         amonhen_remote::local::write_preamble(
             &mut writer,
             &format!("{}{location}", crate::PREAMBLE),
@@ -126,7 +123,7 @@ impl Remote {
         std::thread::Builder::new()
             .name("amonhen-front".into())
             .spawn(move || {
-                let mut reader = std::io::BufReader::new(stream);
+                let mut reader = std::io::BufReader::new(stream.reader);
                 let reason = loop {
                     match frame::read(&mut reader) {
                         Ok(Some(f)) => match f.kind {
@@ -171,11 +168,6 @@ impl Remote {
             return Err(format!("daemon の窓口の版が違う: {}", hello.json["version"]).into());
         }
         Ok(remote)
-    }
-
-    #[cfg(not(unix))]
-    pub fn connect(_location: &str, _daemon: &str) -> Result<Self> {
-        Err("共有の daemon は Unix だけです".into())
     }
 
     fn send(&self, kind: Kind, id: u64, payload: &[u8]) -> Result<()> {

@@ -171,7 +171,7 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
             let Some(json) = amonhen_remote::local::control("status")? else {
                 println!(
                     "共有の daemon は動いていません（{}）",
-                    amonhen_remote::local::socket_path().display()
+                    amonhen_remote::endpoint::endpoint()
                 );
                 return Ok(ExitCode::from(1));
             };
@@ -250,7 +250,7 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
             amonhen_remote::local::start(&daemon_program()?)?;
             println!(
                 "共有の daemon を起動しました（{}）",
-                amonhen_remote::local::socket_path().display()
+                amonhen_remote::endpoint::endpoint()
             );
             Ok(ExitCode::SUCCESS)
         }
@@ -315,16 +315,7 @@ fn daemon_program() -> Result<String> {
 
 /// アプリと同じキャッシュの置き場所（macOS）。ほかの OS では XDG の場所。
 fn cache_dir() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let dir = if cfg!(target_os = "macos") {
-        home.join("Library/Caches/io.github.fukusaka.amonhen")
-    } else {
-        std::env::var_os("XDG_CACHE_HOME")
-            .map_or_else(|| home.join(".cache"), PathBuf::from)
-            .join("amonhen")
-    };
-    std::fs::create_dir_all(&dir).ok()?;
-    Some(dir)
+    amonhen_remote::local::cache_dir()
 }
 
 /// コアの命令（`run_json`）を実行し、結果を返す。失敗なら Err。

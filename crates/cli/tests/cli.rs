@@ -423,3 +423,51 @@ fn installs_the_engine_and_picks_it_for_the_daemon() {
         .unwrap();
     assert!(String::from_utf8_lossy(&version.stdout).contains("(protocol "));
 }
+
+/// 共有の daemon 越し（`-C daemon:<path>`）で、status・stage・commit・log・undo が動く。偽の ssh を使わないので、
+/// Windows（名前付きパイプ）でも流れる。
+#[test]
+fn works_through_the_shared_daemon_on_every_platform() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "user.name", "a"]);
+    git(&repo, &["config", "user.email", "a@example.com"]);
+    git(&repo, &["config", "core.autocrlf", "false"]);
+    commit(&repo, "a.txt", "first");
+    let home = tmp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    // 試験の daemon は、手元の daemon と分ける（ソケット・パイプの名前と、キャッシュの置き場所）。
+    let run = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_amonhen"))
+            .args(args)
+            .env("HOME", &home)
+            .env("LOCALAPPDATA", &home)
+            .env("AMONHEN_DAEMON_DIR", tmp.path().join("s"))
+            .env("AMONHEN_DAEMON", env!("CARGO_BIN_EXE_amonhen"))
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned();
+        assert!(
+            out.status.success(),
+            "{args:?}: {text}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        text
+    };
+    let at = format!("daemon:{}", repo.display());
+    std::fs::write(repo.join("a.txt"), "changed\n").unwrap();
+    let status = run(&["status", "-C", &at, "--json"]);
+    assert!(status.contains(r#""path":"a.txt""#), "{status}");
+    run(&["stage", "-C", &at, "a.txt"]);
+    run(&["commit", "-C", &at, "-m", "through the daemon"]);
+    let log = run(&["log", "-C", &at, "--json", "-n", "1"]);
+    assert!(log.contains("through the daemon"), "{log}");
+    run(&["undo", "-C", &at]);
+    let log = run(&["log", "-C", &at, "--json", "-n", "1"]);
+    assert!(log.contains(r#""subject":"first""#), "{log}");
+    let status = run(&["daemon", "status", "--json"]);
+    assert!(status.contains("\"repos\""), "{status}");
+    run(&["daemon", "stop"]);
+}

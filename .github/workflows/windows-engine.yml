@@ -1,0 +1,28 @@
+name: Windows Engine
+
+# Windows 用のエンジン（amonhen.exe。CLI と daemon を兼ね、共有の daemon は名前付きパイプで待つ）を、Windows の
+# マシンで作る。snapshot・リリースの仕事から呼び、成果物 windows-engine（amonhen-windows-<arch>.exe）を渡す。
+on:
+  workflow_call:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      - shell: bash
+        run: |
+          mkdir -p out
+          for arch in x86_64 aarch64; do
+            cargo build --release -p amonhen-cli --target "$arch-pc-windows-msvc"
+            cp "target/$arch-pc-windows-msvc/release/amonhen.exe" "out/amonhen-windows-$arch.exe"
+          done
+          ls -l out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-engine
+          path: out/

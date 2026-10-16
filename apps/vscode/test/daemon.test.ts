@@ -197,7 +197,8 @@ test('writes through the daemon record one undo entry each', { skip }, async () 
 test('names the host platform like the engine files', () => {
   assert.equal(platformName('darwin', 'arm64'), 'darwin-aarch64');
   assert.equal(platformName('linux', 'x64'), 'linux-x86_64');
-  assert.equal(platformName('win32', 'x64'), undefined);
+  assert.equal(platformName('win32', 'x64'), 'windows-x86_64');
+  assert.equal(platformName('freebsd', 'x64'), undefined);
   assert.equal(platformName('linux', 'ia32'), undefined);
 });
 

@@ -9,7 +9,11 @@ permissions:
   contents: write
 
 jobs:
+  windows-engine:
+    uses: ./.github/workflows/windows-engine.yml
+
   release:
+    needs: windows-engine
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
@@ -22,6 +26,11 @@ jobs:
       - run: brew install zig
       - uses: Swatinem/rust-cache@v2
       - run: scripts/build-engine.sh
+      # Windows 用のエンジンも同梱する。
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-engine
+          path: dist/engine
       - uses: actions/setup-node@v5
         with:
           node-version: 24

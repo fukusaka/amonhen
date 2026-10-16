@@ -6,7 +6,6 @@
 //! `amonhend --serve [<socket>]`: 手元に常駐し、アプリ・CLI・VSCode 拡張がソケットでつなぐ共有の daemon（`serve`）。
 //! `amonhend --socket`: そのソケットの場所を出す。
 
-#[cfg(unix)]
 mod serve;
 
 use std::sync::Arc;
@@ -45,9 +44,8 @@ pub fn run(args: &[String]) -> i32 {
     }
     let repo = match args {
         [flag, repo] if flag == "--stdio" => repo.clone(),
-        #[cfg(unix)]
         [flag, rest @ ..] if flag == "--serve" && rest.len() <= 1 => {
-            if let Err(e) = serve::run(rest.first().map(std::path::PathBuf::from)) {
+            if let Err(e) = serve::run(rest.first().cloned()) {
                 eprintln!("amonhen: {e}");
                 return 1;
             }
@@ -55,7 +53,7 @@ pub fn run(args: &[String]) -> i32 {
         }
         // 共有の daemon のソケットの場所（VSCode 拡張などが、通信の形の版を知らずにつなげるように）。
         [flag] if flag == "--socket" => {
-            println!("{}", amonhen_remote::local::socket_path().display());
+            println!("{}", amonhen_remote::endpoint::endpoint());
             return 0;
         }
         [flag] if flag == "--version" => {

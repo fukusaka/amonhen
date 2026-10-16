@@ -3,6 +3,7 @@
 //! 通信に乗るのは git に触れる所（新しいコミット・本文・blob・操作）だけになる。
 
 mod client;
+pub mod endpoint;
 pub mod frame;
 pub mod local;
 pub mod location;

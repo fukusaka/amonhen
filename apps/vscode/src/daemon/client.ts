@@ -254,7 +254,8 @@ async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
   if (first) {
     return first;
   }
-  spawn(daemon, ['--serve', path], { detached: true, stdio: 'ignore' }).unref();
+  // Windows では窓を出さない
+  spawn(daemon, ['--serve', path], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
   const started = Date.now();
   while (Date.now() - started < CONNECT_TIMEOUT) {
     await new Promise((r) => setTimeout(r, 20));

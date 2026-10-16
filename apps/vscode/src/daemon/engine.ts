@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 /** この拡張のホストの OS と CPU（エンジンの名前と同じ形。合うエンジンを作っていなければ undefined） */
 export function platformName(platform = process.platform, arch = process.arch): string | undefined {
-  const os = platform === 'darwin' || platform === 'linux' ? platform : undefined;
+  const os = platform === 'darwin' || platform === 'linux' ? platform : platform === 'win32' ? 'windows' : undefined;
   const cpu = arch === 'arm64' ? 'aarch64' : arch === 'x64' ? 'x86_64' : undefined;
   return os && cpu ? `${os}-${cpu}` : undefined;
 }
@@ -29,7 +29,7 @@ export async function prepareEngine(binDir: string): Promise<string | undefined>
   if (!name) {
     return undefined;
   }
-  const bundled = join(binDir, `amonhen-${name}`);
+  const bundled = join(binDir, `amonhen-${name}${process.platform === 'win32' ? '.exe' : ''}`);
   try {
     await access(bundled);
   } catch {

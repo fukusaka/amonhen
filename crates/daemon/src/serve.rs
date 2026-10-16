@@ -14,7 +14,6 @@
 
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter};
-use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -67,27 +66,17 @@ struct State {
     connections: AtomicUsize,
     next: AtomicU64,
     last_left: Mutex<Option<Instant>>,
-    socket: PathBuf,
+    /// 待っている通り道（Unix はソケットのパス、Windows は名前付きパイプ）。
+    socket: String,
     started: Instant,
 }
 
-pub fn run(socket: Option<PathBuf>) -> Result<()> {
-    let socket = socket.unwrap_or_else(local::socket_path);
-    if let Some(dir) = socket.parent() {
-        std::fs::create_dir_all(dir)?;
-    }
+pub fn run(endpoint: Option<String>) -> Result<()> {
+    let socket = endpoint.unwrap_or_else(amonhen_remote::endpoint::endpoint);
     // もう動いている daemon があれば、それに任せて終わる。
-    if UnixStream::connect(&socket).is_ok() {
+    let Some(listener) = amonhen_remote::endpoint::Listener::bind(&socket)? else {
         return Ok(());
-    }
-    let _ = std::fs::remove_file(&socket);
-    let listener = match UnixListener::bind(&socket) {
-        Ok(l) => l,
-        // 同時に起動された別の daemon が先に作った。
-        Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => return Ok(()),
-        Err(e) => return Err(e.into()),
     };
-    restrict(&socket);
     let state = Arc::new(State {
         repos: Mutex::default(),
         connections: AtomicUsize::new(0),
@@ -98,8 +87,10 @@ pub fn run(socket: Option<PathBuf>) -> Result<()> {
     });
     *state.last_left.lock().unwrap() = Some(Instant::now());
     watch_idle(state.clone(), socket.clone());
-    for stream in listener.incoming() {
-        let Ok(stream) = stream else { continue };
+    loop {
+        let Ok(stream) = listener.accept() else {
+            continue;
+        };
         let state = state.clone();
         state.connections.fetch_add(1, Ordering::SeqCst);
         std::thread::spawn(move || {
@@ -111,17 +102,10 @@ pub fn run(socket: Option<PathBuf>) -> Result<()> {
             }
         });
     }
-    Ok(())
-}
-
-/// ソケットは自分だけが読み書きできるようにする。
-fn restrict(socket: &Path) {
-    use std::os::unix::fs::PermissionsExt;
-    let _ = std::fs::set_permissions(socket, std::fs::Permissions::from_mode(0o600));
 }
 
 /// だれもつないでいない状態が続いたら、ソケットを消して終わる。
-fn watch_idle(state: Arc<State>, socket: PathBuf) {
+fn watch_idle(state: Arc<State>, socket: String) {
     std::thread::spawn(move || {
         loop {
             std::thread::sleep(Duration::from_secs(5));
@@ -136,22 +120,25 @@ fn watch_idle(state: Arc<State>, socket: PathBuf) {
                     .unwrap()
                     .is_some_and(|t| t.elapsed() > IDLE);
             if idle {
-                let _ = std::fs::remove_file(&socket);
+                amonhen_remote::endpoint::remove(&socket);
                 std::process::exit(0);
             }
         }
     });
 }
 
-fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
-    let mut reader = BufReader::new(stream.try_clone()?);
+type Reader = BufReader<Box<dyn std::io::Read + Send>>;
+type Writer = BufWriter<Box<dyn std::io::Write + Send>>;
+
+fn serve_connection(state: &State, stream: amonhen_remote::endpoint::Duplex) -> Result<()> {
+    let mut reader = BufReader::new(stream.reader);
     let path = match local::read_preamble(&mut reader) {
         Ok(p) => p,
         // 動いているかを確かめるだけでつないで閉じた（別の daemon の起動など）。
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
         Err(e) => return Err(e.into()),
     };
-    let mut writer = BufWriter::new(stream);
+    let mut writer = BufWriter::new(stream.writer);
     // リポジトリではなく、daemon への指示。
     if let Some(command) = path.strip_prefix(local::CONTROL) {
         use amonhen_remote::frame::{self, Kind};
@@ -162,7 +149,7 @@ fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
         };
         frame::write_with(&mut writer, kind, 0, reply.as_bytes(), false)?;
         if command == "stop" {
-            let _ = std::fs::remove_file(&state.socket);
+            amonhen_remote::endpoint::remove(&state.socket);
             std::process::exit(0);
         }
         return Ok(());
@@ -196,12 +183,7 @@ fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
 }
 
 /// FE 向けの窓口のやりとり。要求ごとにスレッドで実行し、答えは番号つきで返す（順不同）。
-fn serve_front(
-    state: &State,
-    location: &str,
-    mut reader: BufReader<UnixStream>,
-    writer: BufWriter<UnixStream>,
-) -> Result<()> {
+fn serve_front(state: &State, location: &str, mut reader: Reader, writer: Writer) -> Result<()> {
     use amonhen_remote::frame::{self, Kind};
     use std::sync::atomic::AtomicBool;
     let opened = open(state, location).and_then(|shared| Ok((core(&shared)?.clone(), shared)));
@@ -275,11 +257,7 @@ fn serve_front(
     result
 }
 
-fn reply_error(
-    reader: &mut BufReader<UnixStream>,
-    mut writer: BufWriter<UnixStream>,
-    message: &str,
-) {
+fn reply_error(reader: &mut Reader, mut writer: Writer, message: &str) {
     use amonhen_remote::frame::{self, Kind};
     if let Ok(Some(f)) = frame::read(reader) {
         let _ = frame::write_with(&mut writer, Kind::Err, f.id, message.as_bytes(), false);
@@ -292,7 +270,7 @@ fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
     let key = if location.starts_with("ssh://") {
         location.to_owned()
     } else {
-        std::fs::canonicalize(location)?.display().to_string()
+        local::canonical_path(location)?
     };
     {
         let mut repos = state.repos.lock().unwrap();
@@ -432,15 +410,7 @@ fn prepared_history(shared: &Shared) -> Result<String> {
 
 /// daemon の History のキャッシュの置き場所（アプリと同じフォルダ。名前はアプリのものと分ける）。
 fn cache_path(key: &str) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    let dir = if cfg!(target_os = "macos") {
-        home.join("Library/Caches/io.github.fukusaka.amonhen")
-    } else {
-        std::env::var_os("XDG_CACHE_HOME")
-            .map_or_else(|| home.join(".cache"), PathBuf::from)
-            .join("amonhen")
-    };
-    std::fs::create_dir_all(&dir).ok()?;
+    let dir = local::cache_dir()?;
     Some(amonhen_core::cache::path_for(
         &dir,
         &format!("daemon-history:{key}"),
@@ -477,7 +447,7 @@ fn status(state: &State) -> serde_json::Value {
         "pid": std::process::id(),
         "version": env!("CARGO_PKG_VERSION"),
         "protocol": amonhen_remote::PROTOCOL_VERSION,
-        "socket": state.socket.display().to_string(),
+        "socket": state.socket,
         "uptimeMs": state.started.elapsed().as_millis() as u64,
         // この問い合わせのつながりは数えない。
         "connections": state.connections.load(Ordering::SeqCst).saturating_sub(1),

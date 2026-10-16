@@ -1,16 +1,13 @@
 //! 手元に常駐する共有の daemon（`amonhend --serve`）につなぐ側と、つないだときの取り決め。
 //!
-//! daemon は利用者ごとに 1 つ、Unix ドメインソケットで待つ。アプリ・CLI・VSCode 拡張は、同じリポジトリを
+//! daemon は利用者ごとに 1 つ、Unix ドメインソケット（Windows は名前付きパイプ。`crate::endpoint`）で待つ。アプリ・CLI・VSCode 拡張は、同じリポジトリを
 //! 開くと同じ daemon の同じ `GitBackend`（git の読み込みと監視）を共有する。つないだら、最初に開くリポジトリの
 //! パスを送り（長さ u32 と UTF-8）、その後はふつうのフレーム（`crate::frame`）でやりとりする。
 //! ソケットの名前にプロトコルの版を入れるので、版の違う daemon にはつながない。
 
 use std::io::{Read, Write};
-#[cfg(unix)]
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use amonhen_model::Result;
@@ -41,21 +38,55 @@ pub fn socket_path() -> PathBuf {
     dir.join(format!("amonhend-{}.sock", crate::PROTOCOL_VERSION))
 }
 
+/// History の永続キャッシュの置き場所（アプリと同じ）: macOS は `~/Library/Caches/io.github.fukusaka.amonhen`、Windows は
+/// `%LOCALAPPDATA%\amonhen\cache`、ほかは `$XDG_CACHE_HOME/amonhen`（なければ `~/.cache/amonhen`）。
+pub fn cache_dir() -> Option<PathBuf> {
+    let dir = if cfg!(windows) {
+        PathBuf::from(std::env::var_os("LOCALAPPDATA")?)
+            .join("amonhen")
+            .join("cache")
+    } else {
+        let home = PathBuf::from(std::env::var_os("HOME")?);
+        if cfg!(target_os = "macos") {
+            home.join("Library/Caches/io.github.fukusaka.amonhen")
+        } else {
+            std::env::var_os("XDG_CACHE_HOME")
+                .map_or_else(|| home.join(".cache"), PathBuf::from)
+                .join("amonhen")
+        }
+    };
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+/// 手元のリポジトリの場所を、daemon で共有するときの名前に（絶対パス。Windows の `\\?\C:\...` は `C:\...` に）。
+pub fn canonical_path(path: &str) -> std::io::Result<String> {
+    let full = std::fs::canonicalize(path)?.display().to_string();
+    Ok(match full.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => rest.to_owned(),
+        _ => full,
+    })
+}
+
 /// つないで最初に送るものが、この文字で始まれば、リポジトリではなく daemon への指示（`status`・`stop`）。
 pub const CONTROL: char = '\0';
 
 /// 共有の daemon に指示を送り、答え（`status` なら JSON）を返す。daemon が動いていなければ `None`。
-#[cfg(unix)]
 pub fn control(command: &str) -> Result<Option<String>> {
-    use std::os::unix::net::UnixStream;
-    let Ok(stream) = UnixStream::connect(socket_path()) else {
+    let Ok(mut duplex) = crate::endpoint::connect(&crate::endpoint::endpoint()) else {
         return Ok(None);
     };
-    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
-    let mut writer = stream.try_clone()?;
-    write_preamble(&mut writer, &format!("{CONTROL}{command}"))?;
-    let mut reader = std::io::BufReader::new(stream);
-    match crate::frame::read(&mut reader)? {
+    write_preamble(&mut duplex.writer, &format!("{CONTROL}{command}"))?;
+    // 答えは 5 秒まで待つ。
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut reader = std::io::BufReader::new(duplex.reader);
+    std::thread::spawn(move || {
+        let _ = tx.send(crate::frame::read(&mut reader));
+    });
+    let frame = rx
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|_| "daemon が答えない")??;
+    match frame {
         Some(f) if f.kind == crate::frame::Kind::Ok => {
             Ok(Some(String::from_utf8_lossy(&f.payload).into_owned()))
         }
@@ -64,25 +95,14 @@ pub fn control(command: &str) -> Result<Option<String>> {
     }
 }
 
-#[cfg(not(unix))]
-pub fn control(_command: &str) -> Result<Option<String>> {
-    Ok(None)
-}
-
 /// 共有の daemon を起動する（もう動いていれば何もしない）。
-#[cfg(unix)]
 pub fn start(daemon: &str) -> Result<()> {
-    let socket = socket_path();
-    if std::os::unix::net::UnixStream::connect(&socket).is_ok() {
+    let endpoint = crate::endpoint::endpoint();
+    if crate::endpoint::connect(&endpoint).is_ok() {
         return Ok(());
     }
-    launch(daemon, &socket)?;
-    wait_for(&socket, Duration::from_secs(5)).map(drop)
-}
-
-#[cfg(not(unix))]
-pub fn start(_daemon: &str) -> Result<()> {
-    Err("共有の daemon は Unix だけです".into())
+    launch(daemon, &endpoint)?;
+    wait_for(&endpoint, Duration::from_secs(5)).map(drop)
 }
 
 /// つないで最初に送る、開くリポジトリのパス。
@@ -104,60 +124,60 @@ pub fn read_preamble(input: &mut impl Read) -> std::io::Result<String> {
     String::from_utf8(path).map_err(std::io::Error::other)
 }
 
-/// 共有の daemon で `repo` を開いてつなぐ。daemon がいなければ `daemon`（`amonhend` のパス）を起動してから。
-#[cfg(unix)]
+/// 共有の daemon で `repo` を開いてつなぐ。daemon がいなければ `daemon`（エンジンのパス）を起動してから。
 pub fn connect(repo: &str, daemon: &str) -> Result<Arc<Connection>> {
-    let stream = stream(daemon)?;
-    let mut writer = stream.try_clone()?;
-    write_preamble(&mut writer, repo)?;
-    let conn = Connection::new(stream, std::io::BufWriter::new(writer));
+    let mut duplex = stream(daemon)?;
+    write_preamble(&mut duplex.writer, repo)?;
+    let conn = Connection::new(duplex.reader, std::io::BufWriter::new(duplex.writer));
     conn.mark_local();
     Ok(conn)
 }
 
-/// 共有の daemon につないだソケット（最初に送るものはまだ送っていない）。daemon がいなければ `daemon` を起動してから。
-#[cfg(unix)]
-pub fn stream(daemon: &str) -> Result<std::os::unix::net::UnixStream> {
-    use std::os::unix::net::UnixStream;
-    let socket = socket_path();
-    match UnixStream::connect(&socket) {
+/// 共有の daemon につないだ通り道（最初に送るものはまだ送っていない）。daemon がいなければ `daemon` を起動してから。
+pub fn stream(daemon: &str) -> Result<crate::endpoint::Duplex> {
+    let endpoint = crate::endpoint::endpoint();
+    match crate::endpoint::connect(&endpoint) {
         Ok(s) => Ok(s),
         Err(_) => {
-            launch(daemon, &socket)?;
-            wait_for(&socket, Duration::from_secs(5))
+            launch(daemon, &endpoint)?;
+            wait_for(&endpoint, Duration::from_secs(5))
         }
     }
 }
 
-#[cfg(not(unix))]
-pub fn connect(_repo: &str, _daemon: &str) -> Result<Arc<Connection>> {
-    Err("共有の daemon は Unix だけです".into())
-}
-
 /// daemon を、つないだ側と切り離して起動する（つないだ側が終わっても残る）。
-#[cfg(unix)]
-fn launch(daemon: &str, socket: &Path) -> Result<()> {
-    use std::os::unix::process::CommandExt;
-    std::process::Command::new(daemon)
+fn launch(daemon: &str, endpoint: &str) -> Result<()> {
+    let mut command = std::process::Command::new(daemon);
+    command
         .arg("--serve")
-        .arg(socket)
+        .arg(endpoint)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .process_group(0)
+        .stderr(std::process::Stdio::null());
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // 窓を出さず、親のコンソールから切り離す（DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP）。
+        command.creation_flags(0x0000_0008 | 0x0000_0200);
+    }
+    command
         .spawn()
         .map_err(|e| format!("{daemon} を起動できない: {e}"))?;
     Ok(())
 }
 
-#[cfg(unix)]
-fn wait_for(socket: &Path, limit: Duration) -> Result<std::os::unix::net::UnixStream> {
+fn wait_for(endpoint: &str, limit: Duration) -> Result<crate::endpoint::Duplex> {
     let started = Instant::now();
     loop {
-        match std::os::unix::net::UnixStream::connect(socket) {
+        match crate::endpoint::connect(endpoint) {
             Ok(s) => return Ok(s),
             Err(e) if started.elapsed() > limit => {
-                return Err(format!("daemon（{}）につなげない: {e}", socket.display()).into());
+                return Err(format!("daemon（{endpoint}）につなげない: {e}").into());
             }
             Err(_) => std::thread::sleep(Duration::from_millis(20)),
         }

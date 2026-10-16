@@ -13,7 +13,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-engine:
+    uses: ./.github/workflows/windows-engine.yml
+
   snapshot:
+    needs: windows-engine
     runs-on: macos-latest
     env:
       AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
@@ -34,6 +38,19 @@ jobs:
         run: |
           echo "zip=$(scripts/build-app.sh snapshot | tail -1)" >> "$GITHUB_OUTPUT"
           echo "version=$(scripts/version.sh snapshot)" >> "$GITHUB_OUTPUT"
+      # Windows 用のエンジンを足す（dist/engine と、リリースに載せる zip）。
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-engine
+          path: dist/engine
+      - run: |
+          for f in dist/engine/amonhen-windows-*.exe; do
+            platform=$(basename "$f" .exe | sed 's/^amonhen-//')
+            work=$(mktemp -d); cp "$f" "$work/amonhen.exe"
+            (cd "$work" && zip -q "$OLDPWD/dist/amonhen-$VERSION-$platform.zip" amonhen.exe)
+          done
+        env:
+          VERSION: ${{ steps.build.outputs.version }}
       # VSCode 拡張（apps/vscode）に、いま作ったエンジンを同梱して .vsix にする。
       - uses: actions/setup-node@v5
         with:
@@ -53,6 +70,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete snapshot --yes --cleanup-tag || true
-          gh release create snapshot "${{ steps.build.outputs.zip }}" dist/amonhen-*.tar.gz dist/amonhen-vscode-*.vsix --prerelease \
+          gh release create snapshot "${{ steps.build.outputs.zip }}" dist/amonhen-*.tar.gz dist/amonhen-*-windows-*.zip dist/amonhen-vscode-*.vsix --prerelease \
             --target "$GITHUB_SHA" --title "Snapshot ${{ steps.build.outputs.version }}" \
             --notes "main の最新（${{ steps.build.outputs.version }}）。アプリは scripts/install.sh snapshot、VSCode 拡張は apps/vscode/scripts/install.sh snapshot で入れられる。"
