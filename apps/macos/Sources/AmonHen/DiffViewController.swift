@@ -167,8 +167,13 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         if keepScroll {
             updateDocumentSize()
             redraw()
+            if let hunk = hunkToSelectAfterShow {
+                hunkToSelectAfterShow = nil
+                selectHunk(min(hunk, max(0, hunkRows.count - 1)))
+            }
             return
         }
+        hunkToSelectAfterShow = nil
         updateDocumentSize()
         scrollView.contentView.scroll(to: .zero)
         scrollView.reflectScrolledClipView(scrollView.contentView)
@@ -264,6 +269,73 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     /// 見出しの Viewed のチェックボックスの左端（見えている範囲の座標）。
     private var viewedBoxX: CGFloat { textView.bounds.width - 76 }
 
+    /// ⌥J・⌥K: 次・前のファイル（全ファイルを並べた差分なら見出しへ、そうでなければ持ち主に頼む）。
+    var onMoveFile: ((Int) -> Void)?
+    /// 表示し直した後に選ぶ hunk の番号（含める・外すの後に次の hunk へ進むため）。
+    var hunkToSelectAfterShow: Int?
+
+    /// hunk の見出しの行。
+    private var hunkRows: [Int] {
+        diff?.withRows { all in all.indices.filter { all[$0].kind == UInt8(AmonhenDiffRow_HUNK) } } ?? []
+    }
+
+    /// 今の hunk の番号（選んだ行か、見えている一番上の行を含む hunk）。
+    private var currentHunk: Int? {
+        let hunks = hunkRows
+        guard !hunks.isEmpty else { return nil }
+        let row = selectedRows.min() ?? Int(scrollView.contentView.bounds.origin.y / lineHeight)
+        return hunks.lastIndex { $0 <= row }
+    }
+
+    /// J・K: 次・前の hunk を選んで、上から 3 分の 1 あたりに出す。
+    fileprivate func moveHunk(by step: Int) {
+        let hunks = hunkRows
+        guard !hunks.isEmpty else { return NSSound.beep() }
+        let target: Int
+        if selectedRows.isEmpty {
+            // 選んでいなければ、見えている一番上から: J はそこ以降の最初、K はそれより前の最後。
+            let top = Int(scrollView.contentView.bounds.origin.y / lineHeight)
+            target = step > 0 ? (hunks.firstIndex { $0 >= top } ?? hunks.count) : (hunks.lastIndex { $0 < top } ?? -1)
+        } else {
+            target = (currentHunk ?? 0) + step
+        }
+        guard hunks.indices.contains(target) else { return NSSound.beep() }
+        selectHunk(target)
+    }
+
+    /// `index` 番目の hunk を選び（選べる表示なら）、見えるところへスクロールする。
+    func selectHunk(_ index: Int) {
+        let hunks = hunkRows
+        guard hunks.indices.contains(index) else { return }
+        let start = hunks[index]
+        let end = index + 1 < hunks.count ? hunks[index + 1] : (diff?.rowCount ?? start + 1)
+        if isSelectable {
+            selectedRows = Set(start..<end)
+            anchorRow = start
+            onSelectionChange?()
+        }
+        let clip = scrollView.contentView
+        let top = CGFloat(start) * lineHeight
+        let y = max(0, min(top - clip.bounds.height / 3, document.frame.height - clip.bounds.height))
+        if top < clip.bounds.origin.y || CGFloat(end) * lineHeight > clip.bounds.origin.y + clip.bounds.height {
+            clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+            scrollView.reflectScrolledClipView(clip)
+        }
+        redraw()
+    }
+
+    fileprivate func moveFile(by step: Int) {
+        if !fileRows.isEmpty {
+            let target = (topFile ?? 0) + step
+            guard fileRows.indices.contains(target) else { return NSSound.beep() }
+            scrollToFile(target)
+        } else if let onMoveFile {
+            onMoveFile(step)
+        } else {
+            NSSound.beep()
+        }
+    }
+
     /// `row` を含む hunk の、追加・削除の行（`row` が hunk の見出しでも中の行でもよい）。
     private func changeRows(inHunkOf row: Int) -> [Int] {
         guard let diff else { return [] }
@@ -280,9 +352,13 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         row.kind == UInt8(AmonhenDiffRow_ADDED) || row.kind == UInt8(AmonhenDiffRow_REMOVED)
     }
 
-    /// `rows` の変更を、すべて含めていれば外し、そうでなければすべて含める。
+    /// `rows` の変更を、すべて含めていれば外し、そうでなければすべて含める。切り替えた後は、次の hunk へ進む。
     private func toggleStaged(_ rows: [Int]) {
         guard let diff = diff as? WorkingFileDiff, !rows.isEmpty else { return }
+        let hunks = hunkRows
+        if let last = rows.max(), let index = hunks.lastIndex(where: { $0 <= last }) {
+            hunkToSelectAfterShow = index + 1 < hunks.count ? index + 1 : index
+        }
         onSetStaged?(rows, !rows.allSatisfy { diff.isStaged(row: $0) })
     }
 
@@ -868,7 +944,15 @@ final class DiffDocumentView: NSView, NSMenuItemValidation {
     override func keyDown(with event: NSEvent) {
         // Space: 選んだ変更の行を次のコミットに含める・外す（Working Copy の差分）。
         if event.charactersIgnoringModifiers == " ", owner?.toggleSelectedStaged() == true { return }
-        super.keyDown(with: event)
+        // J・K: 次・前の hunk。⌥J・⌥K: 次・前のファイル。
+        let flags = event.modifierFlags.intersection([.command, .control, .option, .shift])
+        switch (event.charactersIgnoringModifiers?.lowercased(), flags) {
+        case ("j", []): owner?.moveHunk(by: 1)
+        case ("k", []): owner?.moveHunk(by: -1)
+        case ("j", [.option]), ("∆", [.option]): owner?.moveFile(by: 1)
+        case ("k", [.option]), ("˚", [.option]): owner?.moveFile(by: -1)
+        default: super.keyDown(with: event)
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {

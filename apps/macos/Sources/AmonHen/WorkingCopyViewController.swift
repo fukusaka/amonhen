@@ -289,6 +289,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         diffView.isSelectable = true
         diffView.onSelectionChange = { [weak self] in self?.updateButtons() }
         diffView.onSetStaged = { [weak self] rows, staged in self?.setStaged(rows: rows, staged: staged) }
+        // ⌥J・⌥K: 一覧の次・前のファイルへ。
+        diffView.onMoveFile = { [weak self] step in
+            guard let self else { return }
+            let rows = (0..<files.numberOfRows).filter { files.item(atRow: $0) is Entry }
+            let current = rows.firstIndex(of: files.selectedRow) ?? -1
+            let next = current + step
+            guard rows.indices.contains(next) else { return NSSound.beep() }
+            files.selectRowIndexes([rows[next]], byExtendingSelection: false)
+            files.scrollRowToVisible(rows[next])
+        }
         let right = BarAndContentView(bar: bar, content: diffView.view)
         right.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
         // NSSplitViewController に addChild すると分割の項目が増えるので、右側の親に付ける。
