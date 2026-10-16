@@ -13,7 +13,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use amonhen_layout::DiffRow;
+use amonhen_layout::{Blob, DiffRow};
 use amonhen_projection::{FrontendProfile, StringTableBuilder};
 use serde::Deserialize;
 
@@ -379,8 +379,8 @@ pub fn view(data: Arc<Vec<u8>>, profile: &FrontendProfile) -> DiffView {
         removed: conflicts.len() as u32,
         parts: vec![Part {
             path: String::new(),
-            old: Arc::default(),
-            new: data.clone(),
+            old: Blob::default(),
+            new: data.clone().into(),
             first_row: 0,
             sources,
         }],

@@ -554,12 +554,20 @@ impl Repository {
 
     /// 変わったファイル 1 つの、前後 3 行の文脈つきの差分。
     pub fn file_diff(&self, change: &FileChange, profile: &FrontendProfile) -> Result<DiffView> {
-        Ok(DiffView::new(&self.change_diff(change)?, profile).with_path(&change.path))
+        let diff = match self.change_diffs(std::slice::from_ref(change))? {
+            Some(mut diffs) if diffs.len() == 1 => diffs.remove(0),
+            _ => self.change_diff(change)?,
+        };
+        Ok(DiffView::new(&diff, profile).with_path(&change.path))
     }
 
     /// `changes` のすべてのファイルの差分（History で全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読んで
     /// 差分を取るので、裏のスレッドで呼ぶ。
     pub fn stacked_diff(&self, changes: &[FileChange]) -> Result<diff::StackedDiff> {
+        if let Some(diffs) = self.change_diffs(changes)? {
+            let files = changes.iter().map(|c| c.path.clone()).zip(diffs).collect();
+            return Ok(diff::StackedDiff { files });
+        }
         let one = |c: &FileChange| Ok((c.path.clone(), self.change_diff(c)?));
         // ファイルごとの差分は独立しているので、多ければ分けて並列に取る（コミットを選んでから表示までの時間）。
         let threads = std::thread::available_parallelism()
@@ -636,21 +644,56 @@ impl Repository {
         Ok((selection, stacked))
     }
 
-    /// 手元の共有の daemon のコアに任せる（つないでいなければ `None`）。
-    pub(crate) fn delegate(&self, request: &crate::delegate::Request) -> Result<Option<crate::delegate::Reply>> {
-        let Some(reply) = self.backend.delegate(&crate::delegate::encode(request)?)? else {
+    /// 手元の共有の daemon のコアに任せる（つないでいなければ `None`）。答えと、大きなバイト列（`parts`）を返す。
+    pub(crate) fn delegate(
+        &self,
+        request: &crate::delegate::Request,
+    ) -> Result<Option<(crate::delegate::Reply, Vec<amonhen_layout::Blob>)>> {
+        let Some(answer) = self.backend.delegate(&crate::delegate::encode(request)?)? else {
             return Ok(None);
         };
-        crate::delegate::decode(&reply).map(Some)
+        Ok(Some((crate::delegate::decode(&answer.reply)?, answer.parts)))
+    }
+
+    /// 変更ごとの差分。手元の共有の daemon につないでいれば、daemon で計算して 1 回でもらう（中身は共有メモリ）。
+    fn change_diffs(&self, changes: &[FileChange]) -> Result<Option<Vec<FileDiff>>> {
+        match self.delegate(&crate::delegate::Request::ChangeDiffs(changes.to_vec()))? {
+            Some((crate::delegate::Reply::ChangeDiffs(metas), parts)) => {
+                if parts.len() != metas.len() * 2 {
+                    return Err("daemon の差分の中身の数が合わない".into());
+                }
+                let mut parts = parts.into_iter();
+                Ok(Some(
+                    metas
+                        .into_iter()
+                        .map(|m| {
+                            let (old, new) = (parts.next().unwrap(), parts.next().unwrap());
+                            m.into_diff(old, new)
+                        })
+                        .collect(),
+                ))
+            }
+            Some(_) => Err("daemon の答えの形が違う".into()),
+            None => Ok(None),
+        }
     }
 
     /// daemon の側: つないだ側のコアから任された処理を実行する。
-    pub fn serve_delegated(&self, request: &[u8]) -> Result<Vec<u8>> {
-        use crate::delegate::{Reply, Request};
-        let reply = match crate::delegate::decode::<Request>(request)? {
-            Request::Command(json) => Reply::Command(self.run_json(&json)),
+    pub fn serve_delegated(&self, request: &[u8]) -> Result<amonhen_model::Delegated> {
+        use crate::delegate::{DiffMeta, Reply, Request};
+        let (reply, parts) = match crate::delegate::decode::<Request>(request)? {
+            Request::Command(json) => (Reply::Command(self.run_json(&json)), Vec::new()),
+            Request::ChangeDiffs(changes) => {
+                let diffs = self.stacked_diff(&changes)?;
+                let metas = diffs.files.iter().map(|(_, d)| DiffMeta::from(d)).collect();
+                let parts = diffs.files.into_iter().flat_map(|(_, d)| [d.old, d.new]).collect();
+                (Reply::ChangeDiffs(metas), parts)
+            }
         };
-        crate::delegate::encode(&reply)
+        Ok(amonhen_model::Delegated {
+            reply: crate::delegate::encode(&reply)?,
+            parts,
+        })
     }
 
     fn change_diff(&self, change: &FileChange) -> Result<FileDiff> {

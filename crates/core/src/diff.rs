@@ -3,7 +3,7 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use amonhen_layout::{DiffRow, Highlight, SyntaxSpan};
+use amonhen_layout::{Blob, DiffRow, Highlight, SyntaxSpan};
 use amonhen_projection::{FrontendProfile, StringEncoding, StringTable, StringTableBuilder};
 use imara_diff::{Algorithm, Diff, InternedInput};
 
@@ -28,8 +28,8 @@ pub struct Line {
 
 #[derive(Clone, Debug)]
 pub struct FileDiff {
-    pub old: Arc<Vec<u8>>,
-    pub new: Arc<Vec<u8>>,
+    pub old: Blob,
+    pub new: Blob,
     /// hunk の見出しを並べた文字列。
     pub headers: String,
     pub lines: Vec<Line>,
@@ -67,7 +67,8 @@ fn line_ranges(data: &[u8]) -> Vec<Range<u32>> {
 }
 
 /// 前後に `context` 行の文脈をつけた差分。
-pub fn file_diff(old: Arc<Vec<u8>>, new: Arc<Vec<u8>>, context: u32) -> FileDiff {
+pub fn file_diff(old: impl Into<Blob>, new: impl Into<Blob>, context: u32) -> FileDiff {
+    let (old, new) = (old.into(), new.into());
     let mut diff = FileDiff {
         old: old.clone(),
         new: new.clone(),
@@ -345,8 +346,8 @@ pub struct DiffView {
 pub(crate) struct Part {
     /// ファイルのパス（色付けの言語を決める）。
     pub(crate) path: String,
-    pub(crate) old: Arc<Vec<u8>>,
-    pub(crate) new: Arc<Vec<u8>>,
+    pub(crate) old: Blob,
+    pub(crate) new: Blob,
     /// この部分の最初の行（表示の中の番号）。
     pub(crate) first_row: u32,
     /// 各行が指す場所（`first_row` からの順）。
@@ -375,7 +376,7 @@ impl ViewBuilder {
 
     /// `diff` の行を足す。
     fn push_file(&mut self, path: &str, diff: &FileDiff) {
-        let headers = Arc::new(diff.headers.clone().into_bytes());
+        let headers = Blob::from(diff.headers.clone().into_bytes());
         let sources = [
             (self.strings.share(diff.old.clone()), &diff.old),
             (self.strings.share(diff.new.clone()), &diff.new),

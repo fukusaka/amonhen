@@ -14,7 +14,7 @@ mod status;
 mod text;
 pub mod topo;
 
-pub use backend::{ConnectionState, Error, GitBackend, Result};
+pub use backend::{ConnectionState, Delegated, Error, GitBackend, Result};
 pub use change::{ChangeKind, FileChange};
 pub use extras::{CommitExtras, FileStat, SignatureCheck, SignatureVerifier, SignerEmail};
 pub use files::{LocalFiles, RepoFiles, Root};

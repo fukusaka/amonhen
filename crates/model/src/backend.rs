@@ -8,6 +8,14 @@ use crate::{
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
+/// 任せた処理（`GitBackend::delegate`）の答え。大きなバイト列（差分のファイルの中身）は `parts` に分け、手元の
+/// 共有の daemon からは共有メモリで受け取る（コピーしない）。
+#[derive(Default)]
+pub struct Delegated {
+    pub reply: Vec<u8>,
+    pub parts: Vec<amonhen_layout::Blob>,
+}
+
 /// git の操作。デスクトップは gix ＋ `git` の spawn、モバイルは gix ＋ libgit2 で実装する。
 ///
 /// 書き込み系の操作は、実装を足すときにここへ加える。
@@ -147,9 +155,9 @@ pub trait GitBackend: Send + Sync {
         Ok(None)
     }
 
-    /// コアの処理（命令）を手元の共有の daemon のコアに任せる。`request` と答えの形はコアが決める
+    /// コアの処理（命令・差分）を手元の共有の daemon のコアに任せる。`request` と答えの形はコアが決める
     /// （`amonhen_core` の `delegate`）。任せられなければ `None`。
-    fn delegate(&self, _request: &[u8]) -> Result<Option<Vec<u8>>> {
+    fn delegate(&self, _request: &[u8]) -> Result<Option<Delegated>> {
         Ok(None)
     }
 

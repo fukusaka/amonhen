@@ -7,6 +7,8 @@ pub mod frame;
 pub mod local;
 pub mod location;
 mod server;
+#[cfg(unix)]
+pub mod shm;
 pub mod ssh;
 pub mod wire;
 

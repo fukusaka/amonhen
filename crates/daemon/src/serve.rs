@@ -172,7 +172,7 @@ impl amonhen_remote::Host for CoreHost {
         prepared_history(&self.0)
     }
 
-    fn delegate(&self, request: &[u8]) -> Result<Vec<u8>> {
+    fn delegate(&self, request: &[u8]) -> Result<amonhen_model::Delegated> {
         core(&self.0)?.serve_delegated(request)
     }
 }

@@ -1,13 +1,12 @@
-use std::sync::Arc;
 
-use amonhen_layout::StrRef;
+use amonhen_layout::{Blob, StrRef};
 
 use crate::StringEncoding;
 
 enum Buffer {
     Utf8(Vec<u8>),
     Utf16(Vec<u16>),
-    Shared(Arc<Vec<u8>>),
+    Shared(Blob),
 }
 
 impl Buffer {
@@ -27,7 +26,7 @@ impl Buffer {
 /// の FE なら正しい UTF-8 の文字列すべて）はここを直接指す。
 pub struct StringTableBuilder {
     converted: Converted,
-    shared: Vec<Arc<Vec<u8>>>,
+    shared: Vec<Blob>,
 }
 
 impl StringTableBuilder {
@@ -39,8 +38,8 @@ impl StringTableBuilder {
     }
 
     /// バッファを登録し、その番号を返す。
-    pub fn share(&mut self, buffer: Arc<Vec<u8>>) -> u32 {
-        self.shared.push(buffer);
+    pub fn share(&mut self, buffer: impl Into<Blob>) -> u32 {
+        self.shared.push(buffer.into());
         self.shared.len() as u32
     }
 

@@ -652,7 +652,8 @@ impl Repository {
         // 手元のつながりそのものについての命令（daemon の記録を読む・取り消す）だけは、ここで実行する。
         if !matches!(op_name(json).as_str(), "remoteActivity" | "cancelActivity") {
             match self.delegate(&crate::delegate::Request::Command(json.to_owned())) {
-                Ok(Some(crate::delegate::Reply::Command(reply))) => return reply,
+                Ok(Some((crate::delegate::Reply::Command(reply), _))) => return reply,
+                Ok(Some(_)) => return r#"{"ok":false,"error":"daemon の答えの形が違う"}"#.to_owned(),
                 Ok(None) => {}
                 Err(e) => {
                     let response = Response {

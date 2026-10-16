@@ -12,7 +12,7 @@ use amonhen_model::{
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 14;
+pub const PROTOCOL_VERSION: u32 = 15;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -39,7 +39,8 @@ pub enum Request {
     /// → `Option<String>`: 共有の daemon が History を用意した永続キャッシュのファイル（用意できない daemon なら
     /// `None`）。手元の共有の daemon でだけ使う。
     PreparedHistory,
-    /// → `Bytes`: コアの処理を daemon のコアに任せる（中身の形はコアが決める）。手元の共有の daemon でだけ使う。
+    /// → `DelegateReply`: コアの処理を daemon のコアに任せる（中身の形はコアが決める）。手元の共有の daemon でだけ
+    /// 使う。
     Delegate(Bytes),
     /// → `Refs`
     Refs,
@@ -248,6 +249,16 @@ pub enum Notification {
 pub struct Bytes(#[serde(with = "serde_bytes")] pub Vec<u8>);
 
 /// コミットの本文。範囲は `raw` の中のバイト位置。
+/// 任せた処理の答え。大きなバイト列は共有メモリの領域（`region` の名前と各部分の位置）で渡す。共有メモリを
+/// 作れなかったときだけ、`inline` に入れて送る。
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct DelegateReply {
+    pub reply: Bytes,
+    pub region: Option<String>,
+    pub parts: Vec<(u64, u64)>,
+    pub inline: Vec<Bytes>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommitTextWire {
     pub raw: Bytes,

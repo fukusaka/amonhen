@@ -21,7 +21,7 @@ pub trait Host: Send + Sync {
     /// History を用意して、その永続キャッシュのファイルを返す。
     fn prepared_history(&self) -> Result<String>;
     /// つないだ側のコアから任された処理を実行する。
-    fn delegate(&self, request: &[u8]) -> Result<Vec<u8>>;
+    fn delegate(&self, request: &[u8]) -> Result<amonhen_model::Delegated>;
 }
 
 /// 検索のために数えたコミット（同じ起点で何度も探すときに読み直さない）。
@@ -96,7 +96,7 @@ impl Server {
                     std::thread::spawn(move || {
                         let result = match (request, &host) {
                             (Request::PreparedHistory, Some(h)) => h.prepared_history().and_then(|p| encode(&Some(p))),
-                            (Request::Delegate(bytes), Some(h)) => h.delegate(&bytes.0).and_then(|r| encode(&Bytes(r))),
+                            (Request::Delegate(bytes), Some(h)) => h.delegate(&bytes.0).and_then(|d| encode(&share(d))),
                             (Request::Delegate(_), None) => Err("この daemon は処理を任されない".into()),
                             (request, _) => handle(&*backend, &commits, request, &cancel),
                         };
@@ -126,6 +126,25 @@ fn write_reply(writer: &Writer, id: u64, result: Result<Vec<u8>>, compress: bool
         Ok(payload) => frame::write_with(&mut *out, Kind::Ok, id, &payload, compress),
         Err(e) => frame::write_with(&mut *out, Kind::Err, id, e.to_string().as_bytes(), compress),
     };
+}
+
+/// 任せた処理の答えを送る形にする。大きなバイト列は共有メモリに置く（作れなければ、そのまま送る）。
+fn share(d: amonhen_model::Delegated) -> crate::wire::DelegateReply {
+    let mut out = crate::wire::DelegateReply {
+        reply: Bytes(d.reply),
+        ..Default::default()
+    };
+    if d.parts.is_empty() {
+        return out;
+    }
+    #[cfg(unix)]
+    if let Ok((name, offsets)) = crate::shm::publish(&d.parts) {
+        out.region = Some(name);
+        out.parts = offsets;
+        return out;
+    }
+    out.inline = d.parts.iter().map(|p| Bytes(p.to_vec())).collect();
+    out
 }
 
 fn strs(v: &[String]) -> Vec<&str> {
