@@ -221,4 +221,6 @@ pub trait Operations: Send + Sync {
     fn config_set(&self, key: &str, value: Option<&str>) -> Result<()>;
     fn remotes(&self) -> Result<Vec<RemoteEntry>>;
     fn change_remote(&self, change: &RemoteChange) -> Result<()>;
+    /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（index の分も含む。untracked は含まない）。
+    fn working_stats(&self) -> Result<Vec<crate::FileStat>>;
 }

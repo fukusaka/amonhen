@@ -287,7 +287,7 @@ fn parse_key_uids(out: &str) -> std::collections::HashMap<String, Vec<SignerEmai
 }
 
 /// `git diff-tree -z --numstat` を読む。名前の変わったファイルは `追加\t削除\t\0元\0先\0`。
-fn parse_numstat(out: &[u8]) -> Vec<FileStat> {
+pub(crate) fn parse_numstat(out: &[u8]) -> Vec<FileStat> {
     let mut stats = Vec::new();
     let mut records = out.split(|&b| b == 0);
     while let Some(record) = records.next() {

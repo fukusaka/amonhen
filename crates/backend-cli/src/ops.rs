@@ -559,6 +559,20 @@ impl Operations for Git {
         Ok(remotes)
     }
 
+    fn working_stats(&self) -> Result<Vec<amonhen_model::FileStat>> {
+        // まだコミットがなければ、空の木と比べる。
+        let base = if self
+            .read(&["rev-parse", "--verify", "--quiet", "HEAD"])
+            .is_ok()
+        {
+            "HEAD"
+        } else {
+            "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+        };
+        let out = self.read(&["diff", "-z", "--numstat", "-M", base])?;
+        Ok(crate::extras::parse_numstat(&out))
+    }
+
     fn change_remote(&self, change: &RemoteChange) -> Result<()> {
         let args: Vec<&str> = match change {
             RemoteChange::Add { name, url } => vec!["remote", "add", name, url],

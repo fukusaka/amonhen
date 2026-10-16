@@ -204,6 +204,9 @@ pub enum Command {
     },
     /// リモート（`info.remotes`）。
     Remotes,
+    /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（`info.stats`: `path`・`added`・`removed`。
+    /// バイナリは null。untracked は含まない）。
+    WorkingStats,
     ChangeRemote {
         change: amonhen_model::RemoteChange,
     },
@@ -1118,6 +1121,11 @@ impl Repository {
                 ops.config_set(&key, value.as_deref())?;
                 ok()
             }
+            Command::WorkingStats => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "stats": ops.working_stats()? })),
+                ..Default::default()
+            }),
             Command::Remotes => Ok(Response {
                 ok: true,
                 info: Some(serde_json::json!({ "remotes": ops.remotes()? })),
@@ -1685,6 +1693,25 @@ mod tests {
         assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "edit");
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["z", "x and y", "first"]);
+    }
+
+    #[test]
+    fn counts_added_and_removed_lines_against_head() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        // a.txt は 1 2 3 → 1 x 3 y（index に一部、作業ツリーに残り）。
+        std::fs::write(dir.join("a.txt"), "1\nx\n3\n").unwrap();
+        git(dir, &["add", "a.txt"]);
+        std::fs::write(dir.join("a.txt"), "1\nx\n3\ny\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "untracked\n").unwrap();
+        let r = run(&repo, r#"{"op":"workingStats"}"#);
+        let stats = r["info"]["stats"].as_array().unwrap();
+        assert_eq!(stats.len(), 1, "{r}");
+        assert_eq!(stats[0]["path"], "a.txt");
+        assert_eq!(
+            (stats[0]["added"].as_u64(), stats[0]["removed"].as_u64()),
+            (Some(2), Some(1))
+        );
     }
 
     #[test]

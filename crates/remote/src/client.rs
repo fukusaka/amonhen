@@ -754,6 +754,10 @@ impl Operations for RemoteOperations {
     fn change_remote(&self, change: &RemoteChange) -> Result<()> {
         self.op(Op::ChangeRemote(change.clone()))
     }
+
+    fn working_stats(&self) -> Result<Vec<amonhen_model::FileStat>> {
+        self.op(Op::WorkingStats)
+    }
 }
 
 /// 読んだバイト数を数える。
