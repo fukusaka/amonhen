@@ -1,0 +1,117 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, test } from 'node:test';
+import { Changes, controlDaemon, DaemonClient } from '../src/daemon/client.ts';
+import { readRows } from '../src/daemon/history.ts';
+
+// amonhen-standalone の amonhend（`cargo build -p amonhen-daemon`）。なければ飛ばす
+const daemon = process.env['AMONHEN_DAEMON'] ?? join(import.meta.dirname, '../../amonhen-standalone/target/debug/amonhend');
+const skip = existsSync(daemon) ? false : `amonhend がありません: ${daemon}`;
+
+let dir = '';
+let repo = '';
+
+function git(...args: string[]): string {
+  return execFileSync('git', args, { cwd: repo, encoding: 'utf8' });
+}
+
+before(() => {
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-daemon-')));
+  // daemon のソケットと History のキャッシュは試験の中に置く（手元の daemon とアプリに混ぜない）
+  process.env['AMONHEN_DAEMON_DIR'] = join(dir, 's');
+  process.env['HOME'] = dir;
+  repo = join(dir, 'repo');
+  execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+  git('config', 'user.name', 'a');
+  git('config', 'user.email', 'a@example.com');
+  writeFileSync(join(repo, 'a.txt'), 'first\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'first');
+  git('switch', '-q', '-c', 'topic');
+  writeFileSync(join(repo, 't.txt'), 'topic\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'topic work');
+  git('switch', '-q', 'main');
+  writeFileSync(join(repo, 'm.txt'), 'main\n');
+  git('add', '.');
+  git('commit', '-q', '-m', 'main work');
+  git('merge', '-q', '--no-ff', '-m', 'merge topic', 'topic');
+});
+
+after(async () => {
+  if (!skip) {
+    await controlDaemon(daemon, 'stop').catch(() => undefined);
+  }
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('reads History rows and the graph through the daemon', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  try {
+    const history = await client.call({ op: 'history' });
+    assert.equal(history.json['rows'], 4);
+    const reply = await client.call({ op: 'historyRows', history: history.json['history'], start: 0, count: 10 });
+    const rows = readRows(reply);
+    assert.deepEqual(
+      rows.map((r) => r.subject),
+      ['merge topic', 'main work', 'topic work', 'first'],
+    );
+    assert.equal(rows[0]!.author, 'a');
+    assert.equal(rows[0]!.oid, git('rev-parse', 'HEAD').trim());
+    // merge は 2 つの親を持ち、topic の側は別のレーンに出る
+    assert.equal(rows[0]!.parents.length, 2);
+    assert.notEqual(rows[2]!.graph.col, rows[1]!.graph.col);
+    assert.ok(rows.every((r) => r.graph.segs.length % 5 === 0));
+    assert.ok(rows[0]!.graph.segs.length > 0);
+
+    const found = await client.call({ op: 'historySearch', history: history.json['history'], query: 'topic' });
+    assert.deepEqual(Array.from(found.u32('rows')), [0, 2]);
+  } finally {
+    client.dispose();
+  }
+});
+
+test('stages lines, commits and hears changes through the daemon', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  try {
+    const heard = new Promise<number>((resolve) => {
+      const d = client.onDidChange((c) => {
+        if (c & Changes.worktree) {
+          d.dispose();
+          resolve(c);
+        }
+      });
+    });
+    writeFileSync(join(repo, 'a.txt'), 'FIRST\nsecond\n');
+    await heard;
+    const status = await client.call({ op: 'status' });
+    assert.deepEqual(
+      (status.json['entries'] as { path: string }[]).map((e) => e.path),
+      ['a.txt'],
+    );
+    const diff = await client.call({ op: 'workingDiff', path: 'a.txt', mode: 'combined' });
+    const rows = diff.u32('rows');
+    const lengths = diff.u32('textLengths');
+    const text = diff.bytes('text');
+    const line = (i: number) => new TextDecoder().decode(text.subarray(rows[i * 4 + 3]!, rows[i * 4 + 3]! + lengths[i]!));
+    const picked = [];
+    for (let i = 0; i < lengths.length; i++) {
+      if (line(i) === 'second') picked.push(i);
+    }
+    assert.equal(picked.length, 1);
+    await client.call({ op: 'stageRows', diff: diff.json['diff'], rows: picked, stage: true });
+    assert.match(git('diff', '--cached'), /\+second/);
+    assert.doesNotMatch(git('diff', '--cached'), /FIRST/);
+    await client.call({ op: 'commit', message: 'add second' });
+    assert.equal(git('log', '-1', '--format=%s').trim(), 'add second');
+    // Undo はコアの操作ログで（アプリ・CLI と同じ）
+    const undo = await client.call({ op: 'run', command: { op: 'undo' } });
+    assert.equal(undo.json['ok'], true);
+    assert.equal(git('log', '-1', '--format=%s').trim(), 'merge topic');
+  } finally {
+    client.dispose();
+  }
+});

@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import { disposeDaemonClients } from './daemon/connection.ts';
 import { RepositoryManager } from './state/manager.ts';
 import { registerBranchCommands } from './ui/branchCommands.ts';
 import { registerContentProvider } from './ui/content.ts';
@@ -67,4 +68,6 @@ export async function activate(
   return { manager, sidebar, dragAndDrop };
 }
 
-export function deactivate(): void {}
+export function deactivate(): void {
+  disposeDaemonClients();
+}

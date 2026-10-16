@@ -38,6 +38,17 @@
         }
       ]
     },
+    "configuration": {
+      "title": "Amon Hen",
+      "properties": {
+        "amonhen.daemon.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "共有の daemon（Amon Hen のスタンドアロン版の `amonhend`）の場所。設定すると History を daemon で読む（コアは daemon で動き、アプリ・CLI と History・検索の索引を共有する）。空なら git で読む",
+          "scope": "machine"
+        }
+      }
+    },
     "viewsWelcome": [
       {
         "view": "amonhen.sidebar",

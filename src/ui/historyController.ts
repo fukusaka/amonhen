@@ -1,5 +1,8 @@
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
+import type { DaemonClient } from '../daemon/client.ts';
+import { daemonFor } from '../daemon/connection.ts';
+import { readRows, toRowData } from '../daemon/history.ts';
 import { computeDiff, type FileDiff } from '../diff/fileDiff.ts';
 import { parseCommitObject } from '../git/commitObject.ts';
 import type { Commit } from '../git/log.ts';
@@ -58,6 +61,8 @@ export class HistoryController implements vscode.Disposable {
   private readonly details = new Map<string, Omit<CommitDetails, 'refs'>>();
   /** 一度求めたファイルの差分。キーは `oid:path` */
   private readonly diffs = new Map<string, FileDiff>();
+  /** 共有の daemon で History を読むとき（設定 `amonhen.daemon.path`）、そのつながりと History の番号と行の数 */
+  private daemon: { client: DaemonClient; history: unknown; rows: number } | undefined;
 
   constructor(post: (message: HistoryHostMessage) => void) {
     this.post = post;
@@ -221,9 +226,62 @@ export class HistoryController implements vscode.Disposable {
     } catch (err) {
       showError(err);
     }
+    const previous = this.daemon;
+    this.daemon = undefined;
+    void previous?.client.call({ op: 'historyRelease', history: previous.history }).catch(() => undefined);
+    try {
+      const opened = this.headOid ? await this.openDaemonHistory(repo.root) : undefined;
+      if (generation !== this.generation) {
+        return;
+      }
+      this.daemon = opened;
+    } catch (err) {
+      // daemon を使えなければ、git で読む
+      showError(err);
+    }
     if (generation === this.generation) {
       await this.loadMore();
     }
+  }
+
+  /** 共有の daemon で、今の範囲の History を開く（daemon を使わない設定なら undefined） */
+  private async openDaemonHistory(root: string): Promise<{ client: DaemonClient; history: unknown; rows: number } | undefined> {
+    const client = await daemonFor(root);
+    if (!client) {
+      return undefined;
+    }
+    let tips: string[] | undefined;
+    if (this.scope === 'head') {
+      tips = [this.headOid!];
+    } else if (this.scope.startsWith('ref:')) {
+      const resolved = await client.call({ op: 'run', command: { op: 'resolveCommit', rev: this.scope.slice('ref:'.length) } });
+      tips = [String(resolved.json['text'])];
+    }
+    const history = await client.call(tips ? { op: 'history', tips } : { op: 'history' });
+    return { client, history: history.json['history'], rows: Number(history.json['rows']) };
+  }
+
+  /** 共有の daemon から次のページを読む */
+  private async loadMoreFromDaemon(daemon: { client: DaemonClient; history: unknown; rows: number }): Promise<void> {
+    const generation = this.generation;
+    const start = this.commits.length;
+    let rows: RowData[] = [];
+    try {
+      const reply = await daemon.client.call({ op: 'historyRows', history: daemon.history, start, count: PAGE });
+      if (generation !== this.generation) {
+        return;
+      }
+      const page = readRows(reply);
+      this.commits.push(
+        ...page.map((r) => ({ oid: r.oid, parents: r.parentOids, author: r.author, email: '', date: r.date, subject: r.subject })),
+      );
+      rows = toRowData(page, this.labels, this.chain);
+    } catch (err) {
+      showError(err);
+    }
+    this.done = this.commits.length >= daemon.rows || rows.length === 0;
+    this.loading = false;
+    this.post({ type: 'rows', start, rows, done: this.done });
   }
 
   private async loadMore(): Promise<void> {
@@ -232,6 +290,9 @@ export class HistoryController implements vscode.Disposable {
       return;
     }
     this.loading = true;
+    if (this.daemon) {
+      return this.loadMoreFromDaemon(this.daemon);
+    }
     const generation = this.generation;
     const revs =
       this.scope === 'all'
