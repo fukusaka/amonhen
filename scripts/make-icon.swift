@@ -122,8 +122,8 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
     let star = CGMutablePath()
     let c = CGPoint(x: 512, y: 300), long: CGFloat = 78, short: CGFloat = 16
     for i in 0..<8 {
-        // ほんのわずか（8°）傾ける。
-        let angle = CGFloat(i) * .pi / 4 - .pi / 2 + 8 * .pi / 180
+        // ほんのわずか（3°）傾ける。
+        let angle = CGFloat(i) * .pi / 4 - .pi / 2 + 3 * .pi / 180
         let r = i % 2 == 0 ? long : short
         let p = CGPoint(x: c.x + cos(angle) * r, y: c.y + sin(angle) * r)
         if i == 0 { star.move(to: p) } else { star.addLine(to: p) }
