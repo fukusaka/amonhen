@@ -232,6 +232,7 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
     }
 }
 
+#[cfg(unix)]
 /// 試験の中だけで動く環境（ホーム・共有の daemon のソケット・偽の ssh）。
 struct Env {
     home: std::path::PathBuf,
@@ -241,6 +242,7 @@ struct Env {
     daemon: std::path::PathBuf,
 }
 
+#[cfg(unix)]
 impl Env {
     fn new(dir: &Path) -> Self {
         let home = dir.join("home");
@@ -326,6 +328,7 @@ impl Env {
     }
 }
 
+#[cfg(unix)]
 impl Drop for Env {
     /// 試験が失敗しても、試験の共有の daemon を残さない。
     fn drop(&mut self) {
@@ -333,8 +336,10 @@ impl Drop for Env {
     }
 }
 
+#[cfg(unix)]
 struct Watch(std::process::Child);
 
+#[cfg(unix)]
 impl Watch {
     /// 出力を 1 行ずつ受け取る。
     fn lines(&mut self) -> std::sync::mpsc::Receiver<String> {

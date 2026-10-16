@@ -7,7 +7,8 @@ pub mod frame;
 pub mod local;
 pub mod location;
 mod server;
-#[cfg(unix)]
+// Android の libc には shm_open がない（大きな答えはソケットで送る）。
+#[cfg(all(unix, not(target_os = "android")))]
 pub mod shm;
 pub mod ssh;
 pub mod wire;

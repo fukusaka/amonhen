@@ -259,6 +259,9 @@ fn shares_one_daemon_between_clients() {
     let dir = tmp.path().join("repo");
     std::fs::create_dir(&dir).unwrap();
     git(&dir, &["init", "-q", "-b", "main"]);
+    // daemon が起動する git でもコミットできるように（CI には全体の設定がない）。
+    git(&dir, &["config", "user.name", "a"]);
+    git(&dir, &["config", "user.email", "a@example.com"]);
     git(&dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
     // ソケットのパスは短くする（macOS は 104 バイトまで）。
     let socket = tmp.path().join("d.sock");

@@ -456,10 +456,10 @@ impl GitBackend for RemoteBackend {
             .conn
             .call(&Request::Delegate(Bytes(request.to_vec())))?;
         let parts = match &reply.region {
-            #[cfg(unix)]
+            #[cfg(all(unix, not(target_os = "android")))]
             Some(name) => crate::shm::parts(crate::shm::open(name)?, &reply.parts)?,
-            #[cfg(not(unix))]
-            Some(_) => return Err("共有メモリは Unix だけです".into()),
+            #[cfg(not(all(unix, not(target_os = "android"))))]
+            Some(_) => return Err("共有メモリを使えない環境です".into()),
             None => reply
                 .inline
                 .into_iter()

@@ -170,7 +170,7 @@ fn share(d: amonhen_model::Delegated) -> crate::wire::DelegateReply {
     if d.parts.is_empty() {
         return out;
     }
-    #[cfg(unix)]
+    #[cfg(all(unix, not(target_os = "android")))]
     if let Ok((name, offsets)) = crate::shm::publish(&d.parts) {
         out.region = Some(name);
         out.parts = offsets;
