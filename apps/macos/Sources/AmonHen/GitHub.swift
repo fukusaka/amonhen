@@ -143,6 +143,13 @@ enum GitHub {
         return try JSONDecoder().decode([PullRequest].self, from: data)
     }
 
+    /// 開いている Issue（新しい順、最大 30 件）。コミットのメッセージの #123 の候補。
+    static func issues(_ repo: GitHubRepository) async throws -> [(number: Int, title: String)] {
+        struct Issue: Decodable { let number: Int; let title: String }
+        let data = try await run(["issue", "list", "-R", repo.slug, "--state", "open", "--limit", "30", "--json", "number,title"])
+        return try JSONDecoder().decode([Issue].self, from: data).map { ($0.number, $0.title) }
+    }
+
     /// 既定のブランチ（プルリクエストの base の初期値）。
     static func defaultBranch(_ repo: GitHubRepository) async -> String? {
         struct View: Decodable {

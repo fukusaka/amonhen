@@ -169,6 +169,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         sidebar.onCheckoutPullRequest = { [weak self] pr in self?.checkout(pr) }
         workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
+        workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
         workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。stash は詳細にだけ中身を出す。
         sidebar.onSelect = { [weak history, weak detail] item in
@@ -878,6 +879,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     private var defaultBranch: String?
+    private var cachedIssues: (at: Date, items: [(number: Int, title: String)])?
+
+    /// コミットのメッセージの #123 の候補: 開いている PR と Issue（番号の大きい順）。5 分は覚えておく。
+    private func issueCandidates() async -> [(number: Int, title: String)] {
+        guard let gitHub else { return [] }
+        if let cached = cachedIssues, Date().timeIntervalSince(cached.at) < 300 { return cached.items }
+        let issues = (try? await GitHub.issues(gitHub)) ?? []
+        let pulls = (try? await GitHub.pullRequests(gitHub))?.map { (number: $0.number, title: "PR: " + $0.title) } ?? []
+        let items = (issues + pulls).sorted { $0.number > $1.number }
+        cachedIssues = (Date(), items)
+        return items
+    }
 
     /// プルリクエストのブランチをチェックアウトする（gh pr checkout）。手元のリポジトリだけ。
     private func checkout(_ pr: PullRequest) {

@@ -494,8 +494,83 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func controlTextDidChange(_ obj: Notification) {
+        if (obj.object as? NSTextField) === summary, let editor = summary.currentEditor() as? NSTextView {
+            offerIssues(in: editor)
+            return
+        }
         guard (obj.object as? NSSearchField) === filterField else { return }
         rebuildList()
+    }
+
+    // MARK: - #123 の補完
+
+    /// GitHub の開いている Issue・PR（番号・タイトル）。RepositoryWindow が gh で読んで渡す。
+    var issueCandidates: (() async -> [(number: Int, title: String)])?
+
+    /// `#` を打った直後なら、開いている Issue・PR の一覧を出し、選んだ番号を入れる。
+    private func offerIssues(in textView: NSTextView) {
+        let range = textView.selectedRange()
+        // 変換中（IME で打っている途中）は、確定するまで待つ。全角の ＃ でもよい。
+        guard let issueCandidates, !textView.hasMarkedText(), range.length == 0, range.location > 0,
+              ["#", "＃"].contains((textView.string as NSString).substring(with: NSRange(location: range.location - 1, length: 1)))
+        else { return }
+        Task {
+            let items = await issueCandidates()
+            // 待っている間に打ち進めていたら出さない。
+            guard !items.isEmpty, textView.selectedRange() == range, let window = textView.window else { return }
+            let menu = NSMenu()
+            for item in items.prefix(30) {
+                menu.addItem(ClosureMenuItem(title: "#\(item.number)  \(item.title)") {
+                    // 全角の ＃ なら半角に直して、番号を入れる。
+                    let at = textView.selectedRange()
+                    textView.insertText("#\(item.number)", replacementRange: NSRange(location: at.location - 1, length: 1))
+                })
+            }
+            // 文字の位置の下に出す。
+            let rect = textView.firstRect(forCharacterRange: range, actualRange: nil)
+            let point = window.convertPoint(fromScreen: NSPoint(x: rect.minX, y: rect.minY))
+            menu.popUp(positioning: nil, at: textView.convert(point, from: nil), in: textView)
+        }
+    }
+
+    // MARK: - fixup! と squash!
+
+    /// Commit ▾ の Fixup・Squash の一覧を、最近のコミットで作り直す。
+    private func buildFixupMenus() {
+        guard let menu = commitMenuButton.menu else { return }
+        for title in ["Fixup Commit For", "Squash Commit For"] {
+            if let old = menu.item(withTitle: title) { menu.removeItem(old) }
+        }
+        var subjects: [String] = []
+        for commit in recentCommits {
+            let subject = commit.message.split(separator: "\n", maxSplits: 1).first.map(String.init) ?? ""
+            // fixup! を重ねない（rebase --autosquash は元のコミットの件名で探す）。
+            if subject.isEmpty || subject.hasPrefix("fixup! ") || subject.hasPrefix("squash! ") || subjects.contains(subject) { continue }
+            subjects.append(subject)
+            if subjects.count == 15 { break }
+        }
+        guard !subjects.isEmpty else { return }
+        menu.addItem(.separator())
+        for (title, prefix, keepBody) in [("Fixup Commit For", "fixup! ", false), ("Squash Commit For", "squash! ", true)] {
+            let sub = NSMenu(title: title)
+            for subject in subjects {
+                sub.addItem(ClosureMenuItem(title: subject) { [weak self] in
+                    guard let self else { return }
+                    // fixup! は件名だけ（元のメッセージを残す）、squash! は本文に書き足せる。
+                    summary.stringValue = prefix + subject
+                    if !keepBody { message.string = "" }
+                    amend.state = .off
+                    updateButtons()
+                    view.window?.makeFirstResponder(keepBody ? message : summary)
+                })
+            }
+            let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            item.submenu = sub
+            item.toolTip = prefix == "fixup! "
+                ? "選んだコミットへの fixup! としてコミットする（後で rebase -i --autosquash でまとめる）"
+                : "選んだコミットへの squash! としてコミットする（まとめるときにメッセージも足す）"
+            menu.addItem(item)
+        }
     }
 
     private func showDiff(of entry: Entry, staged: Bool, keepScroll: Bool = false) {
@@ -861,9 +936,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let text = composedMessage
         let isAmend = amend.state == .on
         let repository = self.repository
+        let started = UInt64(Date().timeIntervalSince1970 * 1000)
         Task {
             do {
                 try await Task.detached(priority: .userInitiated) { try repository.commit(message: text, amend: isAmend) }.value
+                // hooks（pre-commit・commit-msg など）が何か書いていれば見せる。
+                if let output = ActivityRecord.all().last(where: {
+                    $0.kind == "git" && $0.label.hasPrefix("git commit") && $0.started >= started && $0.ok == true
+                })?.output, !output.isEmpty, let window = view.window {
+                    HookOutputSheet.show(title: "コミットしました（hooks の出力）", text: output, in: window)
+                }
                 message.string = ""
                 summary.stringValue = ""
                 amend.state = .off
@@ -871,7 +953,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 loadRecentCommits()
                 if thenPush { actions?.push() }
             } catch {
-                _ = await NSAlert(error: error).beginSheetModal(for: view.window!)
+                // hooks で止まったときは出力が長いので、読めるシートで出す。
+                if let window = view.window {
+                    HookOutputSheet.show(title: "コミットできませんでした", text: "\(error)", in: window)
+                }
             }
             refresh()
             updateButtons()
@@ -880,6 +965,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     func textDidChange(_ notification: Notification) {
         updateButtons()
+        if notification.object as? NSTextView === message { offerIssues(in: message) }
         if notification.object as? NSTextView === message { saveDraft() }
     }
 
@@ -951,6 +1037,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             recentCommits = commits.map { (message: $0.0, author: $0.1, email: $0.2) }
             buildHistoryMenu()
             buildInsertMenu()
+            buildFixupMenus()
         }
     }
 
@@ -1383,5 +1470,25 @@ final class KeyOutlineView: NSOutlineView {
         default:
             super.keyDown(with: event)
         }
+    }
+}
+
+/// hooks の出力（git が標準エラーに書いたもの）を等幅の字体で読めるシート。
+enum HookOutputSheet {
+    static func show(title: String, text: String, in window: NSWindow) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.addButton(withTitle: "OK")
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 560, height: 260))
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        let view = NSTextView(frame: scroll.bounds)
+        view.isEditable = false
+        view.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        view.string = text
+        view.autoresizingMask = [.width]
+        scroll.documentView = view
+        alert.accessoryView = scroll
+        alert.beginSheetModal(for: window)
     }
 }

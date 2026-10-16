@@ -294,12 +294,14 @@ public struct ActivityRecord: Decodable, Sendable, Identifiable, Hashable {
     public let progress: String?
     /// 取り消せるか（走っている間）。
     public let cancellable: Bool
+    /// 成功したときに git が標準エラーに書いたもの（hooks の出力など）。
+    public let output: String?
     /// SSH 先の daemon の記録なら、そのリポジトリの名前（手元の記録なら nil）。
     public var remote: String?
     public var id: String { "\(remote ?? ""):\(seq)" }
 
     enum CodingKeys: String, CodingKey {
-        case seq, kind, repo, label, started, duration, ok, error, progress, cancellable
+        case seq, kind, repo, label, started, duration, ok, error, progress, cancellable, output
     }
 
     public init(from decoder: Decoder) throws {
@@ -314,6 +316,7 @@ public struct ActivityRecord: Decodable, Sendable, Identifiable, Hashable {
         error = try c.decodeIfPresent(String.self, forKey: .error)
         progress = try c.decodeIfPresent(String.self, forKey: .progress)
         cancellable = try c.decodeIfPresent(Bool.self, forKey: .cancellable) ?? false
+        output = try c.decodeIfPresent(String.self, forKey: .output)
     }
 
     /// 今残っている記録（古い順、最大 1000 件）。

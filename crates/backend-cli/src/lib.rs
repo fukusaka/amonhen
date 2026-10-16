@@ -171,7 +171,15 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
     if network && input.is_none() && !cmd.get_args().any(|a| a == "--") {
         return amonhen_model::activity::track_with("git", &repo, label, |seq| spawn_streaming(cmd, seq));
     }
-    amonhen_model::activity::track("git", &repo, label, || spawn(cmd, input))
+    amonhen_model::activity::track_with("git", &repo, label, |seq| {
+        let (out, err) = spawn_with_stderr(cmd, input)?;
+        // 成功しても hooks などが標準エラーに書いていれば、記録に残す（コミットの後に見せる）。
+        let err = String::from_utf8_lossy(&err);
+        if !err.trim().is_empty() {
+            amonhen_model::activity::set_output(seq, err.trim());
+        }
+        Ok(out)
+    })
 }
 
 /// `--progress` を付けて実行し、標準エラーの進み具合（\r で上書きされる行）を Activity に書く。取り消しを
@@ -262,7 +270,8 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn spawn(mut cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
+/// 実行して、標準出力と標準エラーを返す。失敗したら標準エラーの文を返す。
+fn spawn_with_stderr(mut cmd: Command, input: Option<&[u8]>) -> Result<(Vec<u8>, Vec<u8>)> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     cmd.stdin(if input.is_some() {
         Stdio::piped()
@@ -286,7 +295,7 @@ fn spawn(mut cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
         }
         .into());
     }
-    Ok(out.stdout)
+    Ok((out.stdout, out.stderr))
 }
 
 /// History の読み込み。

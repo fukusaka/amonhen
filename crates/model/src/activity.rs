@@ -35,6 +35,8 @@ pub struct Record {
     pub progress: Option<String>,
     /// 取り消せるか（走っている間だけ意味がある）。
     pub cancellable: bool,
+    /// 成功したときの標準エラー（hooks の出力など。なければ None）。
+    pub output: Option<String>,
     #[cfg_attr(feature = "serde", serde(skip))]
     begun: Option<Instant>,
 }
@@ -66,6 +68,7 @@ pub fn begin(kind: &'static str, repo: &str, label: String) -> u64 {
         error: None,
         progress: None,
         cancellable: false,
+        output: None,
         begun: Some(Instant::now()),
     });
     seq
@@ -81,6 +84,20 @@ fn with_record(seq: u64, f: impl FnOnce(&mut Record)) {
 /// 走っている記録の進み具合を書く。
 pub fn set_progress(seq: u64, progress: &str) {
     with_record(seq, |r| r.progress = Some(progress.to_owned()));
+}
+
+/// 成功したときの出力を残す（長ければ切る）。
+pub fn set_output(seq: u64, output: &str) {
+    let mut text = output.to_owned();
+    if text.len() > MAX_ERROR {
+        let mut cut = MAX_ERROR;
+        while !text.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        text.truncate(cut);
+        text.push('…');
+    }
+    with_record(seq, |r| r.output = Some(text));
 }
 
 /// 取り消せる記録にする（`cancelled` で確かめながら走るもの）。
@@ -174,6 +191,7 @@ pub struct Entry {
     pub error: Option<String>,
     pub progress: Option<String>,
     pub cancellable: bool,
+    pub output: Option<String>,
 }
 
 /// 今残っている記録を、渡せる形で（古い順）。
@@ -191,6 +209,7 @@ pub fn entries() -> Vec<Entry> {
             error: r.error,
             progress: r.progress,
             cancellable: r.cancellable,
+            output: r.output,
         })
         .collect()
 }
