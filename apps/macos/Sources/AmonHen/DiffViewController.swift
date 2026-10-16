@@ -955,6 +955,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private var signatureGeneration = 0
     /// 詳細の欄だけを右の列いっぱいに広げる（変更ファイルと差分を隠す）。
     private let expandButton = NSButton()
+    /// AI: メッセージの翻訳と、コミットの解説（AI の CLI を選んでいるときだけ出す）。
+    private let translateButton = NSButton()
+    private let explainButton = NSButton()
     /// History の検索の問い合わせ。件名と本文の中の一致を強調する。
     var searchQuery: String? {
         didSet { if searchQuery != oldValue { renderHeader() } }
@@ -1050,6 +1053,27 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             y: styleControl.frame.midY - expandButton.frame.height / 2)
         expandButton.autoresizingMask = [.minXMargin, .minYMargin]
         headerContainer.addSubview(expandButton)
+        var right = expandButton.frame.minX
+        for (button, symbol, tip, action) in [
+            (explainButton, "sparkles", "AI: このコミット（複数選んでいればまとめた差分）を解説する", #selector(explainCommit)),
+            (translateButton, "character.bubble", "AI: メッセージを翻訳する", #selector(translateMessage)),
+        ] {
+            button.bezelStyle = .accessoryBarAction
+            button.isBordered = false
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+            button.toolTip = tip
+            button.target = self
+            button.action = action
+            button.controlSize = .small
+            button.sizeToFit()
+            button.frame.origin = NSPoint(x: right - button.frame.width - 2, y: expandButton.frame.minY)
+            button.autoresizingMask = [.minXMargin, .minYMargin]
+            right = button.frame.minX
+            headerContainer.addSubview(button)
+        }
+        updateAssistantButtons()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(updateAssistantButtons), name: .assistantChanged, object: nil)
         if CommitHeaderStyle.saved == .compact {
             // 簡潔で始めるなら、最初から低くしておく。
             headerContainer.frame.size.height = 48
@@ -1552,6 +1576,51 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             x: 0, y: bounds.height - height, width: max(0, styleControl.frame.minX - 8), height: height)
         peopleStrip.autoresizingMask = [.width, .minYMargin]
         scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - height)
+    }
+
+    // MARK: - AI
+
+    @objc private func updateAssistantButtons() {
+        translateButton.isHidden = !Assistant.isConfigured
+        explainButton.isHidden = !Assistant.isConfigured
+    }
+
+    /// メッセージ（複数のコミットを選んでいれば、上の欄の一覧）。
+    private var shownMessage: String { info?.message ?? header.string }
+
+    @objc private func translateMessage() {
+        let message = shownMessage.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty, Assistant.confirm(repository: repository.workdir ?? "remote", summary: "メッセージ \(message.count) 文字")
+        else { return }
+        let workdir = repository.workdir
+        AssistantPanel.show(title: "翻訳", over: view.window) { useCache, onText in
+            try await Assistant.run(.translate, variables: ["message": message], workdir: workdir, useCache: useCache, onText: onText)
+        }
+    }
+
+    @objc private func explainCommit() {
+        let message = shownMessage
+        let stacked = self.stacked, changes = self.changes
+        let files = stacked?.names ?? changes?.items.map(\.path) ?? []
+        guard !files.isEmpty || !message.isEmpty,
+              Assistant.confirm(repository: repository.workdir ?? "remote", summary: "メッセージと、\(files.count) ファイルの差分")
+        else { return }
+        let workdir = repository.workdir
+        AssistantPanel.show(title: "解説", over: view.window) { useCache, onText in
+            // 差分の文字は裏で作る（大きければ切る）。
+            let diff = await Task.detached(priority: .userInitiated) { () -> String in
+                if let stacked { return DiffText.make(stacked.view(collapsed: [])) }
+                guard let changes else { return "" }
+                var out = ""
+                for i in changes.items.indices where out.utf8.count < DiffText.limit {
+                    if let d = try? changes.diff(at: i) { out += DiffText.make(d, path: changes.items[i].path) }
+                }
+                return out
+            }.value
+            return try await Assistant.run(
+                .explainCommit, variables: ["message": message, "diff": diff, "files": files.joined(separator: "\n")],
+                workdir: workdir, useCache: useCache, onText: onText)
+        }
     }
 
     /// 詳細の欄を広げているか（変更ファイルと差分を畳んでいる）。

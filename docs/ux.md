@@ -299,7 +299,7 @@ JetBrains の「Apply non-conflicting changes」と「Resolve simple conflicts�
 - 提案した内容にコンフリクトの印（`<<<<<<<` など）が残っていたら採用できなくする。言語が分かるときは tree-sitter で構文の壊れを確かめ、壊れていたら警告を出す。
 - ファイル全体を送るのは、衝突がファイルの大部分を占めるときだけ。それ以外は衝突の前後に絞る。
 
-- 接続先は手元の CLI で、Claude Code（`claude -p --output-format stream-json`）か Codex（`codex exec --json`）のどちらかを Settings > AI で明示的に選ぶ。見つかったものを勝手に使うことはせず、選ぶまで AI のボタンは出さない。用途ごとには分けず、全体で 1 つ。
+- 接続先は手元の CLI で、Claude Code（`claude -p --output-format stream-json --verbose --include-partial-messages --tools "" --no-session-persistence`、空の一時ディレクトリで起動してリポジトリの CLAUDE.md を読ませない）か Codex（`codex exec --json --sandbox read-only --skip-git-repo-check -`）のどちらかを Settings > AI で明示的に選ぶ。見つかったものを勝手に使うことはせず、選ぶまで AI のボタンは出さない。用途ごとには分けず、全体で 1 つ。
 - どちらも子プロセスとして起動し、プロンプトと差分は標準入力で渡して、流れてくる JSON を読む。鍵の管理はアプリで持たず、CLI のログインに任せる。
 - モデルは CLI ごとに覚え、`--model`（Codex は `-m`）で渡す。Claude Code の既定は速い `claude-haiku-5-5`、解説だけ `claude-sonnet-5-5` を選べる。
 - ツールを使わせない設定で起動する（Claude Code は使えるツールを空に、Codex は sandbox を読み取り専用に）。解説・翻訳でファイルを書いたりコマンドを実行したりする必要はないため。フラグの正確な名前は実装時に手元の版の `--help` で確かめる。
@@ -397,7 +397,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 - [x] U11. リポジトリの設定（git の設定と出どころ、Remotes、Ignore）。Repository > Repository Settings…（⌘;）のシートに Identity・Branches・Remotes・Ignore・All Settings。各項目に今効いている値とどこで決まっているか、このリポジトリ（local）での上書き・取り消し、リモートの追加・名前の変更・URL・削除・prune、`.gitignore` と `.git/info/exclude` の編集は済み。表示名・色ラベル・自動 fetch、hooks と LFS の一覧、パターンに合うファイルの例は後で
 - [x] U12. Activity（コアのリングバッファ、Operations・History・Performance・Events）。Window > Activity（⌥⌘A）とツールバーの Activity（操作の間は回る）。Operations は git の起動とコアの命令（リポジトリ・内容・時間・成否・エラー、絞り込み、JSON に書き出し）、History は操作ログと「ここまで戻す」、Performance は History の入力 → 表示・選択 → 差分・Working Copy の読み直しの p50 / p95 / 最大、Events はファイルの変化の知らせ。SSH 先の daemon で起動した git、fetch・clone の受信量の進み具合、操作の取り消し、失敗を帯で知らせることは後で
 - [x] U13. GitHub 連携（アカウント、PR の一覧と作成、CI の状態）。gh に任せる。origin の URL から GitHub のリポジトリを判定し、サイドバーの Pull Requests に開いている PR（CI の ✓・✗・●、draft、レビューの状態）、右クリックでチェックアウト・ブラウザで開く・URL のコピー、選ぶとそのブランチの履歴。Repository > Create Pull Request…（今のコミットのメッセージから、base は既定のブランチ）と Open on GitHub は済み。History のコミットごとの CI の状態、GitHub のアバター、自分のリポジトリから Clone は後で
-- [ ] U14. AI（Claude Code / Codex の CLI 経由の翻訳・解説・メッセージの提案、コンフリクトの解消、用途ごとのプロンプトの設定）
+- [x] U14. AI（Claude Code / Codex の CLI 経由の翻訳・解説・メッセージの提案、コンフリクトの解消、用途ごとのプロンプトの設定）。Settings > AI で CLI（既定は使わない）・モデル・言語を選び、用途ごとのプロンプトをファイルで編集・既定に戻す。History の詳細の翻訳・解説（複数選択ではまとめた差分）、Working Copy の ✨ 提案（「メッセージに入れる」）、マージエディタの「AI で解消」（JSON で受け、マーカーが残れば捨てる。「Result に入れる」で置き換え、⌘Z で戻せる）と「AI で解説」、結果は流しながら出し、キャッシュする。リポジトリごとの初回の確認、リポジトリのプロンプトの確認は済み。Codex の出力の読み取りは確かめていない。hunk の解説、プロンプトの「試す」ボタンは後で
 
 ## 決めたこと
 

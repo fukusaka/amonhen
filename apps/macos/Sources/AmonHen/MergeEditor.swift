@@ -36,6 +36,9 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private let baseToggle = NSButton(checkboxWithTitle: "Base", target: nil, action: nil)
     /// Magic Merge の結果など、直前の操作の知らせ。
     private let note = NSTextField(labelWithString: "")
+    /// AI: 選んだコンフリクトの解消の提案と解説。
+    private let aiResolveButton = NSButton(title: "AI で解消", target: nil, action: nil)
+    private let aiExplainButton = NSButton(title: "AI で解説", target: nil, action: nil)
 
     /// 最初の Result に入っていたコンフリクト（両側の中身）。添字が左右の欄の `regions` の添字に当たる。
     private var originals: [(current: String, incoming: String)] = []
@@ -172,7 +175,19 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         }
         position.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         let bar = NSStackView(
-            views: [position, previousButton, nextButton, magicButton, note] + acceptButtons + [baseToggle, NSView(), popOut, save, resolve])
+            views: [position, previousButton, nextButton, magicButton, aiResolveButton, aiExplainButton, note] + acceptButtons
+                + [baseToggle, NSView(), popOut, save, resolve])
+        aiResolveButton.target = self
+        aiResolveButton.action = #selector(aiResolve)
+        aiResolveButton.toolTip = "AI: 選んだコンフリクトの解消を提案する（採用するまで Result は変わらない）"
+        aiExplainButton.target = self
+        aiExplainButton.action = #selector(aiExplain)
+        aiExplainButton.toolTip = "AI: 選んだコンフリクトで、両側が何をしようとしているかを説明する"
+        for b in [aiResolveButton, aiExplainButton] {
+            b.bezelStyle = .push
+            b.controlSize = .small
+            b.isHidden = !Assistant.isConfigured
+        }
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         note.textColor = .secondaryLabelColor
         bar.spacing = 6
@@ -494,6 +509,88 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         guard result.shouldChangeText(in: range, replacementString: replacement) else { return }
         result.textStorage?.replaceCharacters(in: range, with: replacement)
         result.didChangeText()
+    }
+
+    // MARK: - AI
+
+    /// 選んだコンフリクトの両側と共通の祖先の中身。
+    private func selectedConflictTexts() -> (ours: String, theirs: String, base: String)? {
+        guard !conflicts.isEmpty else { return nil }
+        let c = conflicts[selected]
+        var base = ""
+        if let j = originalOf[selected], let side = sides.base, j < side.regions.count, side.regions[j].count == 2 {
+            let lines = side.text.components(separatedBy: "\n")
+            let r = side.regions[j]
+            base = lines[min(r[0], lines.count)..<min(r[1], lines.count)].joined(separator: "\n")
+        }
+        return (c.current, c.incoming, base)
+    }
+
+    private var assistantKey: String { repository.workdir ?? "remote" }
+
+    @objc private func aiExplain() {
+        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: "\(path) のコンフリクト 1 つ")
+        else { return NSSound.beep() }
+        let path = self.path, workdir = repository.workdir
+        AssistantPanel.show(title: "コンフリクトの解説", over: view.window) { useCache, onText in
+            try await Assistant.run(
+                .explainConflict, variables: ["path": path, "ours": texts.ours, "theirs": texts.theirs, "base": texts.base],
+                workdir: workdir, useCache: useCache, onText: onText)
+        }
+    }
+
+    /// AI の解消の提案（`resolveConflict` の JSON）。
+    private struct Proposal: Decodable { let text: String; let reason: String? }
+
+    /// 返事から JSON を取り出して読む（コードの囲みや前後の文は除く）。
+    private static func parseProposal(_ raw: String) -> Proposal? {
+        guard let start = raw.firstIndex(of: "{"), let end = raw.lastIndex(of: "}") else { return nil }
+        return try? JSONDecoder().decode(Proposal.self, from: Data(raw[start...end].utf8))
+    }
+
+    @objc private func aiResolve() {
+        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: "\(path) のコンフリクト 1 つ")
+        else { return NSSound.beep() }
+        let index = selected
+        let original = conflicts[index]
+        let path = self.path, workdir = repository.workdir
+        /// 返事を読めたら、ここに入れる（「Result に入れる」で使う）。
+        final class Box { var proposal: Proposal? }
+        let box = Box()
+        AssistantPanel.show(title: "コンフリクトの解消", over: view.window, useTitle: "Result に入れる", onUse: { [weak self] _ in
+            guard let self, let proposal = box.proposal else { return }
+            applyProposal(proposal.text, to: original)
+        }) { useCache, onText in
+            let raw = try await Assistant.run(
+                .resolveConflict, variables: ["path": path, "ours": texts.ours, "theirs": texts.theirs, "base": texts.base],
+                workdir: workdir, useCache: useCache, onText: onText)
+            guard let proposal = Self.parseProposal(raw) else {
+                throw Assistant.Failure(description: "返事を読めませんでした（決めた形の JSON ではない）:\n\n\(raw)")
+            }
+            let markers = ["<<<<<<<", "=======", ">>>>>>>", "|||||||"]
+            if proposal.text.components(separatedBy: "\n").contains(where: { line in markers.contains { line.hasPrefix($0) } }) {
+                throw Assistant.Failure(description: "提案にコンフリクトのマーカーが残っています。作り直してください。\n\n\(proposal.text)")
+            }
+            box.proposal = proposal
+            return "理由: \(proposal.reason ?? "（なし）")\n\n── 提案 ──\n\(proposal.text)"
+        }
+    }
+
+    /// 提案で、そのコンフリクト（マーカーを含む行）を置き換える。Undo で戻せる。コンフリクトが動いていれば
+    /// 中身で探し直す。
+    private func applyProposal(_ text: String, to original: ConflictRegions.Conflict) {
+        guard let c = conflicts.first(where: { $0.current == original.current && $0.incoming == original.incoming })
+            ?? conflicts.first(where: { $0.lines == original.lines })
+        else { return NSSound.beep() }
+        let old = result.string
+        var lines = old.components(separatedBy: "\n")
+        let start = min(c.lines[0], lines.count), end = min(c.lines[1], lines.count)
+        var replacement = text.components(separatedBy: "\n")
+        if replacement.last == "" { replacement.removeLast() }
+        lines.replaceSubrange(start..<end, with: replacement)
+        replace(old: old, with: lines.joined(separator: "\n"))
+        updateConflicts()
+        note.stringValue = "AI の提案を入れました（⌘Z で戻せる）"
     }
 
     // MARK: - 編集と選択

@@ -91,6 +91,8 @@ extension Notification.Name {
     static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
     static let stackedCommitDiffChanged = Notification.Name("stackedCommitDiffChanged")
+    /// AI の CLI の選択が変わった（AI のボタンを出す・隠す）。
+    static let assistantChanged = Notification.Name("assistantChanged")
 }
 
 
@@ -120,6 +122,18 @@ final class SettingsModel {
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var writeCommitGraph = Settings.writeCommitGraph { didSet { Settings.writeCommitGraph = writeCommitGraph } }
     var useFSMonitor = Settings.useFSMonitor { didSet { Settings.useFSMonitor = useFSMonitor } }
+    var assistant = Settings.assistant {
+        didSet {
+            Settings.assistant = assistant
+            assistantModel = Settings.assistantModel(assistant)
+            NotificationCenter.default.post(name: .assistantChanged, object: nil)
+        }
+    }
+    var assistantModel = Settings.assistantModel(Settings.assistant) {
+        didSet { Settings.setAssistantModel(assistantModel, for: assistant) }
+    }
+    var assistantLanguage = Settings.assistantLanguage { didSet { Settings.assistantLanguage = assistantLanguage } }
+    var assistantVersion: String?
     var checkRemoteSignaturesLocally = Settings.checkRemoteSignaturesLocally {
         didSet { Settings.checkRemoteSignaturesLocally = checkRemoteSignaturesLocally }
     }
@@ -202,6 +216,66 @@ private struct PerformanceSettings: View {
     }
 }
 
+private struct AISettings: View {
+    @Bindable var model: SettingsModel
+    @State private var customized: Set<String> = []
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("使う CLI", selection: $model.assistant) {
+                    ForEach(AssistantCLI.allCases) { Text($0.title).tag($0) }
+                }
+                if model.assistant != .none {
+                    if let path = model.assistant.path {
+                        Note("\(path)" + (model.assistantVersion.map { "（\($0)）" } ?? ""))
+                    } else {
+                        Note("見つかりません。\(model.assistant == .claude ? "Claude Code（claude）" : "Codex（codex）")を入れ、CLI でログインしてください。")
+                            .foregroundStyle(.red)
+                    }
+                    TextField("モデル", text: $model.assistantModel, prompt: Text("CLI の既定"))
+                    TextField("翻訳・解説の言語", text: $model.assistantLanguage)
+                }
+            } footer: {
+                Note("手元の CLI を、ツールを使わせない設定で起動して頼む（鍵はアプリで持たず、CLI のログインを使う）。リポジトリごとに、初めて使うときに送ってよいか確かめる。")
+            }
+            Section("プロンプト（用途ごと）") {
+                ForEach(AssistPurpose.allCases) { purpose in
+                    HStack {
+                        VStack(alignment: .leading) {
+                            Text(purpose.title)
+                            Note("変数: " + purpose.variables.map { "{{\($0)}}" }.joined(separator: " "))
+                        }
+                        Spacer()
+                        if customized.contains(purpose.rawValue) { Text("書き換え済み").font(.caption).foregroundStyle(.orange) }
+                        Button("編集…") {
+                            if let file = try? Assistant.editablePromptFile(purpose) { NSWorkspace.shared.open(file) }
+                            refresh()
+                        }
+                        Button("既定に戻す") {
+                            Assistant.resetPrompt(purpose)
+                            refresh()
+                        }
+                        .disabled(!customized.contains(purpose.rawValue))
+                    }
+                }
+                Note("~/Library/Application Support/Amon Hen/prompts/<用途>.md に置く。リポジトリの .amonhen/prompts/<用途>.md があればそちらを優先する（初めて使うときに中身を確かめる）。返事の形（コンフリクトの解消の JSON）はアプリが末尾に足す。")
+            }
+            Section {
+                Button("リポジトリごとの許可を消す") { Assistant.forgetRepositoryDecisions() }
+                Note("「このリポジトリで AI を使うか」の答えを忘れ、次に使うときにもう一度確かめる。")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { refresh() }
+        .task(id: model.assistant) { model.assistantVersion = await Assistant.version(model.assistant) }
+    }
+
+    private func refresh() {
+        customized = Set(AssistPurpose.allCases.filter(Assistant.isCustomized).map(\.rawValue))
+    }
+}
+
 private struct AdvancedSettings: View {
     @Bindable var model: SettingsModel
     var body: some View {
@@ -236,6 +310,7 @@ final class SettingsWindowController: NSWindowController {
         add("Git", "arrow.triangle.branch", GitSettings(model: model))
         add("Appearance", "paintbrush", AppearanceSettings(model: model))
         add("Performance", "speedometer", PerformanceSettings(model: model))
+        add("AI", "sparkles", AISettings(model: model))
         add("Advanced", "gearshape.2", AdvancedSettings(model: model))
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable]

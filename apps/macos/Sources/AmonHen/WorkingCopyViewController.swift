@@ -32,6 +32,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private var diffBar: TitleAndButtonsBar?
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
     private let commitButton = NSButton(title: "Commit", target: nil, action: nil)
+    private let suggestButton = NSButton(title: "", target: nil, action: nil)
     /// 一部だけ stage したファイルで、作業ツリーの側と stage 済みの側のどちらの差分を見せるか。
     private let sideControl = NSSegmentedControl(labels: ["Unstaged", "Staged"], trackingMode: .selectOne, target: nil, action: nil)
     private let linesButton = NSButton(title: "Stage Lines", target: nil, action: nil)
@@ -129,7 +130,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         commitButton.toolTip = "チェックしたファイルをコミット（⌘↩）"
         amend.target = self
         amend.action = #selector(toggleAmend)
-        let commitRow = NSStackView(views: [amend, NSView(), commitButton])
+        suggestButton.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI でメッセージを提案")
+        suggestButton.toolTip = "AI: stage 済みの変更からコミットメッセージを提案する"
+        suggestButton.target = self
+        suggestButton.action = #selector(suggestMessage)
+        suggestButton.isHidden = !Assistant.isConfigured
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(assistantChanged), name: .assistantChanged, object: nil)
+        let commitRow = NSStackView(views: [amend, NSView(), suggestButton, commitButton])
         let summaryRow = NSStackView(views: [summary, summaryCount])
         summaryCount.setContentHuggingPriority(.required, for: .horizontal)
         summaryCount.widthAnchor.constraint(equalToConstant: 28).isActive = true
@@ -665,6 +673,45 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             }
         }
         updateButtons()
+    }
+
+    @objc private func assistantChanged() {
+        suggestButton.isHidden = !Assistant.isConfigured
+    }
+
+    /// AI: stage 済みの変更からメッセージを提案し、「メッセージに入れる」で Summary と Description に入れる。
+    @objc private func suggestMessage() {
+        guard let status else { return }
+        let staged = status.items.filter { $0.isStaged && $0.kind != .unmerged }
+        guard !staged.isEmpty else {
+            NSSound.beep()
+            return
+        }
+        guard Assistant.confirm(repository: repository.workdir ?? "remote", summary: "stage 済みの \(staged.count) ファイルの差分")
+        else { return }
+        let repository = self.repository, workdir = repository.workdir
+        AssistantPanel.show(title: "コミットメッセージの提案", over: view.window, useTitle: "メッセージに入れる", onUse: { [weak self] text in
+            guard let self else { return }
+            let parts = text.trimmingCharacters(in: .whitespacesAndNewlines)
+                .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            summary.stringValue = String(parts.first ?? "")
+            message.string = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            updateButtons()
+        }) { useCache, onText in
+            let (diff, recent) = await Task.detached(priority: .userInitiated) { () -> (String, String) in
+                var out = ""
+                for item in staged where out.utf8.count < DiffText.limit {
+                    if let d = try? status.diff(of: item, staged: true) { out += DiffText.make(d, path: item.path) }
+                }
+                // 書き方の手本として、直前のコミットのメッセージ。
+                let head = (try? repository.run(["op": "commitMessage", "oid": "HEAD"]).text) ?? nil
+                return (out, head ?? "")
+            }.value
+            return try await Assistant.run(
+                .suggestMessage,
+                variables: ["diff": diff, "files": staged.map(\.path).joined(separator: "\n"), "recent_messages": recent],
+                workdir: workdir, useCache: useCache, onText: onText)
+        }
     }
 
     /// Summary と Description をつないだメッセージ。
