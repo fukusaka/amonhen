@@ -1164,6 +1164,21 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             text.addAttribute(.paragraphStyle, value: first, range: firstLine)
         }
         header.textStorage?.setAttributedString(text)
+        scheduleHeaderFit()
+    }
+
+    private var headerFitPending = false
+
+    /// 欄の高さ合わせは右の列全体を並べ直すので（linux で 5 ms ほど）、選んでから表示するまでの間ではなく、
+    /// 表示を終えた後にまとめて 1 回だけ行う（キーを押し続けて次々に選ぶ間は、最後のものだけ）。
+    private func scheduleHeaderFit() {
+        guard !headerFitPending else { return }
+        headerFitPending = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self else { return }
+            headerFitPending = false
+            fitHeaderToContent()
+        }
     }
 
     /// ref が変わったので、表示中のコミットの情報（ref の一覧など）を読み直す。
@@ -1227,31 +1242,25 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     @objc private func styleChanged() {
-        let previous = CommitHeaderStyle.saved
         let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
         CommitHeaderStyle.saved = style
         // 広げたままだと高さを合わせられないので、先に戻す。
         if isExpanded { toggleExpanded() }
         renderHeader()
-        fitHeader(from: previous, to: style)
     }
 
-    /// 簡潔にしたら欄を文字の高さまで縮め、ほかに戻したら前の高さに戻す。
-    private var expandedHeaderHeight: CGFloat = 170
-
-    private func fitHeader(from previous: CommitHeaderStyle, to style: CommitHeaderStyle) {
-        guard splitViewItems.count > 1 else { return }
-        let current = splitViewItems[0].viewController.view.frame.height
-        if previous != .compact { expandedHeaderHeight = current }
-        let target: CGFloat
-        if style == .compact {
-            guard let layout = header.layoutManager, let container = header.textContainer else { return }
-            layout.ensureLayout(for: container)
-            target = ceil(layout.usedRect(for: container).height + header.textContainerInset.height * 2 + 4)
-        } else {
-            target = expandedHeaderHeight
-        }
-        splitView.setPosition(max(splitViewItems[0].minimumThickness, target), ofDividerAt: 0)
+    /// 詳細の欄の高さをメッセージに合わせる（短ければ縮め、長ければ右の列の半分まで伸ばす。続きは欄の中で
+    /// スクロールするか、⤢ で広げる）。コミットを選ぶたび・見せ方を変えるたびに合わせる。
+    private func fitHeaderToContent() {
+        guard splitViewItems.count > 1, !isExpanded, rewordEditor == nil,
+              let layout = header.layoutManager, let container = header.textContainer else { return }
+        layout.ensureLayout(for: container)
+        let strip = peopleStrip.isHidden ? 0 : PeopleStrip.height
+        let content = ceil(strip + layout.usedRect(for: container).height + header.textContainerInset.height * 2 + 4)
+        let cap = max(splitViewItems[0].minimumThickness, floor(splitView.bounds.height * 0.5))
+        let target = max(splitViewItems[0].minimumThickness, min(cap, content))
+        guard abs(splitViewItems[0].viewController.view.frame.height - target) > 1 else { return }
+        splitView.setPosition(target, ofDividerAt: 0)
     }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
