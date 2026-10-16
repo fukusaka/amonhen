@@ -154,6 +154,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     private func commitMenu() -> NSMenu {
         let menu = NSMenu(title: "Commit")
         menu.addItem(item("Commit", #selector(RepositoryWindow.commitChanges(_:)), "\r"))
+        menu.addItem(item("Commit and Push", #selector(RepositoryWindow.commitAndPush(_:)), "\r", [.command, .shift]))
         menu.addItem(item("Stage All", #selector(RepositoryWindow.stageAllChanges(_:)), ""))
         return menu
     }

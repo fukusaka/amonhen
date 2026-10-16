@@ -681,6 +681,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func commitChanges(_ sender: Any?) { workingCopy.commitFromMenu() }
+    @objc func commitAndPush(_ sender: Any?) { workingCopy.commitAndPushFromMenu() }
     @objc func stageAllChanges(_ sender: Any?) { workingCopy.stageAllFromMenu() }
 
     // MARK: - GitHub
@@ -859,7 +860,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(popStash(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil
         case #selector(goToHead(_:)): return latestRefs?.head != nil
-        case #selector(commitChanges(_:)): return showsWorkingCopy && workingCopy.canCommit
+        case #selector(commitChanges(_:)), #selector(commitAndPush(_:)): return showsWorkingCopy && workingCopy.canCommit
         case #selector(stageAllChanges(_:)): return showsWorkingCopy && workingCopy.canStageAll
         case #selector(openInTerminal(_:)), #selector(revealInFinder(_:)): return isLocal
         case #selector(openOnGitHub(_:)): return gitHub != nil
