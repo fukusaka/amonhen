@@ -493,6 +493,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         return group.selectedWindow !== window
     }
 
+    func windowDidResignKey(_ notification: Notification) {
+        // タブを切り替えたら、裏になった History のメモリを絞る（タブの選択が変わってから確かめる）。
+        DispatchQueue.main.async { [weak self] in
+            guard let self, isBackgroundTab else { return }
+            let dropped = history.shrinkForBackground()
+            if dropped > 0 { EventLog.add(repo: window.title, "裏のタブ: History のチャンクを \(dropped) 個捨てた") }
+        }
+    }
+
     func windowDidBecomeKey(_ notification: Notification) {
         guard pendingChanges.rawValue != 0 else { return }
         let changes = pendingChanges

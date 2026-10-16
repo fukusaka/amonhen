@@ -976,6 +976,22 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    /// 裏のタブになった: 見えている行のチャンクだけを残して、ほかと並べた行・ラベルの文字を捨てる（前に出て
+    /// スクロールしたら読み直す）。捨てたチャンクの数を返す。
+    @discardableResult
+    func shrinkForBackground() -> Int {
+        let visible = tableView.rows(in: tableView.visibleRect)
+        let first = visible.location / Self.chunkRows
+        let last = max(first, (visible.location + max(visible.length, 1) - 1) / Self.chunkRows)
+        let before = chunks.count
+        for index in Array(chunks.keys) where index < first || index > last {
+            chunks.removeValue(forKey: index)
+        }
+        preparedRows = preparedRows.filter { (first...last).contains($0.key / Self.chunkRows) }
+        labelText.removeAll()
+        return before - chunks.count
+    }
+
     /// 見えている所から遠いチャンクと、その範囲の並べた行を捨てる（戻ってきたら読み直す）。
     private func trimChunks() {
         guard chunks.count > Self.maxChunks else { return }
