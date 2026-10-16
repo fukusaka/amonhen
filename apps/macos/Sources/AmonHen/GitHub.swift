@@ -170,17 +170,20 @@ enum GitHub {
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    /// ブランチの直近のコミット（それぞれ 100 個まで）の CI の状態と、作者の GitHub のアバターの URL
-    /// （メールアドレス → URL）。GraphQL で 1 回に読む。GitHub にないブランチは飛ばす。
+    /// ブランチの直近のコミット（それぞれ `count` 個まで）の CI の状態（`ci` のとき）と、作者の GitHub のアバターの
+    /// URL（`authors` のとき。メールアドレス → URL）。GraphQL で 1 回に読む。GitHub にないブランチは飛ばす。
     static func commitStatuses(
-        _ repo: GitHubRepository, branches: [String]
+        _ repo: GitHubRepository, branches: [String], count: Int = 100, ci: Bool = true, authors: Bool = true
     ) async throws -> (ci: [String: PullRequest.CI], avatars: [String: URL]) {
-        guard !branches.isEmpty else { return ([:], [:]) }
+        guard !branches.isEmpty, ci || authors else { return ([:], [:]) }
+        // 要るものだけを頼む（量を減らす）。
+        let wanted = ["oid", authors ? "author { email avatarUrl(size: 96) }" : nil, ci ? "statusCheckRollup { state }" : nil]
+            .compactMap { $0 }.joined(separator: " ")
         // ブランチごとに別名を付けて並べる（b0・b1 …）。
         let fields = branches.indices.map { i in
             """
-            b\(i): ref(qualifiedName: $r\(i)) { target { ... on Commit { history(first: 100) { nodes {
-              oid author { email avatarUrl(size: 96) } statusCheckRollup { state } } } } } }
+            b\(i): ref(qualifiedName: $r\(i)) { target { ... on Commit { history(first: \(count)) { nodes {
+              \(wanted) } } } } }
             """
         }.joined(separator: "\n")
         let variables = branches.indices.map { "$r\($0): String!" }.joined(separator: ", ")

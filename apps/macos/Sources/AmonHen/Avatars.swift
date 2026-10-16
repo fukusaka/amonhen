@@ -14,6 +14,17 @@ final class Avatars {
     /// GitHub のコミットの作者のアバター（メールアドレス → URL）。Gravatar より優先する。
     private var gitHub: [String: URL] = [:]
 
+    /// GitHub のアバターを使うのをやめる（Gravatar に戻す）。
+    func forgetGitHub() {
+        let keys = Array(gitHub.keys)
+        gitHub.removeAll()
+        for key in keys {
+            images[key] = nil
+            failed.remove(key)
+        }
+        for key in keys { for f in onLoad { f(key) } }
+    }
+
     /// GitHub で分かったアバターを使う。Gravatar で読んでいたものは読み直す。
     func useGitHub(_ urls: [String: URL]) {
         var changed: [String] = []

@@ -192,6 +192,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
         actions.window = window
         actions.onFailure = { [weak self] message in self?.showFailure(message) }
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(gitHubSettingsChanged), name: .gitHubSettingsChanged, object: nil)
         actions.onChange = { [weak self] in
             self?.history.refresh()
             self?.reloadRefs()
@@ -866,16 +868,39 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// 今のブランチと既定のブランチの、直近のコミットの CI の状態（History の行の印）と作者のアバター。
+    /// 読むものと量は Settings > Git > GitHub で決める。
     private func loadCommitStatuses(_ gitHub: GitHubRepository) async {
-        if defaultBranch == nil { defaultBranch = await GitHub.defaultBranch(gitHub) }
-        let branches = Array(Set([latestRefs?.headBranch, defaultBranch].compactMap { $0 })).sorted()
+        let ci = Settings.gitHubCIStatus
+        // アバターの URL は、1 回だけにするなら、読めた後は頼まない。
+        let authors = Settings.gitHubAvatars && !(Settings.gitHubAvatarsOnce && avatarsLoaded)
+        if !ci { history.ciStatus = [:] }
+        guard ci || authors else { return }
+        if Settings.gitHubCIDefaultBranch, defaultBranch == nil { defaultBranch = await GitHub.defaultBranch(gitHub) }
+        let branches = Array(Set([latestRefs?.headBranch, Settings.gitHubCIDefaultBranch ? defaultBranch : nil].compactMap { $0 })).sorted()
         do {
-            let (ci, avatars) = try await GitHub.commitStatuses(gitHub, branches: branches)
-            history.ciStatus = Dictionary(uniqueKeysWithValues: ci.compactMap { key, value in Data(hex: key).map { ($0, value) } })
-            Avatars.shared.useGitHub(avatars)
+            let (statuses, avatars) = try await GitHub.commitStatuses(
+                gitHub, branches: branches, count: Settings.gitHubCICommits, ci: ci, authors: authors)
+            if ci {
+                history.ciStatus = Dictionary(uniqueKeysWithValues: statuses.compactMap { key, value in Data(hex: key).map { ($0, value) } })
+            }
+            if authors {
+                Avatars.shared.useGitHub(avatars)
+                avatarsLoaded = true
+            }
         } catch {
             EventLog.add(repo: window.title, "CI の状態を読めない: \(error)")
         }
+    }
+
+    /// このウィンドウで GitHub のアバターの URL を読んだか。
+    private var avatarsLoaded = false
+
+    @objc private func gitHubSettingsChanged() {
+        if !Settings.gitHubAvatars {
+            Avatars.shared.forgetGitHub()
+            avatarsLoaded = false
+        }
+        loadGitHub(force: true)
     }
 
     private var defaultBranch: String?

@@ -41,6 +41,47 @@ enum Settings {
         }
     }
 
+    // MARK: GitHub（gh で読む。変えたら `gitHubSettingsChanged` を知らせる）
+
+    private static func gitHubBool(_ key: String, default value: Bool) -> Bool {
+        UserDefaults.standard.object(forKey: key) as? Bool ?? value
+    }
+
+    private static func setGitHub(_ value: Any, _ key: String) {
+        UserDefaults.standard.set(value, forKey: key)
+        NotificationCenter.default.post(name: .gitHubSettingsChanged, object: nil)
+    }
+
+    /// History のコミットごとに CI の状態を読んで出すか（既定は出す）。
+    static var gitHubCIStatus: Bool {
+        get { gitHubBool("gitHubCIStatus", default: true) }
+        set { setGitHub(newValue, "gitHubCIStatus") }
+    }
+
+    /// コミットの作者の GitHub のアバターを使うか（既定は使う。使わなければ Gravatar だけ）。
+    static var gitHubAvatars: Bool {
+        get { gitHubBool("gitHubAvatars", default: true) }
+        set { setGitHub(newValue, "gitHubAvatars") }
+    }
+
+    /// CI を読むブランチに、既定のブランチも含めるか（既定は含める。外すと今のブランチだけ）。
+    static var gitHubCIDefaultBranch: Bool {
+        get { gitHubBool("gitHubCIDefaultBranch", default: true) }
+        set { setGitHub(newValue, "gitHubCIDefaultBranch") }
+    }
+
+    /// ブランチごとに読む直近のコミットの数（既定は 100）。
+    static var gitHubCICommits: Int {
+        get { [30, 50, 100].contains(UserDefaults.standard.integer(forKey: "gitHubCICommits")) ? UserDefaults.standard.integer(forKey: "gitHubCICommits") : 100 }
+        set { setGitHub(newValue, "gitHubCICommits") }
+    }
+
+    /// アバターの URL は、ウィンドウを開いて最初の 1 回だけ読むか（既定はそうする。2 回目からは CI の状態だけを読む）。
+    static var gitHubAvatarsOnce: Bool {
+        get { gitHubBool("gitHubAvatarsOnce", default: true) }
+        set { setGitHub(newValue, "gitHubAvatarsOnce") }
+    }
+
     /// コミットの本文を等幅で出すか（既定は等幅）。変えたら `commitMessageStyleChanged` を知らせる。
     static var monospacedCommitMessage: Bool {
         get { UserDefaults.standard.object(forKey: "monospacedCommitMessage") as? Bool ?? true }
@@ -124,6 +165,7 @@ extension Notification.Name {
     static let stackedCommitDiffChanged = Notification.Name("stackedCommitDiffChanged")
     static let historyFileTreeChanged = Notification.Name("historyFileTreeChanged")
     static let foldMergedBranchesChanged = Notification.Name("foldMergedBranchesChanged")
+    static let gitHubSettingsChanged = Notification.Name("gitHubSettingsChanged")
     /// AI の CLI の選択が変わった（AI のボタンを出す・隠す）。
     static let assistantChanged = Notification.Name("assistantChanged")
 }
@@ -152,6 +194,11 @@ final class SettingsModel {
         didSet { Settings.monospacedCommitMessage = monospacedCommitMessage }
     }
     var showAvatars = Settings.showAvatars { didSet { Settings.showAvatars = showAvatars } }
+    var gitHubCIStatus = Settings.gitHubCIStatus { didSet { Settings.gitHubCIStatus = gitHubCIStatus } }
+    var gitHubAvatars = Settings.gitHubAvatars { didSet { Settings.gitHubAvatars = gitHubAvatars } }
+    var gitHubCIDefaultBranch = Settings.gitHubCIDefaultBranch { didSet { Settings.gitHubCIDefaultBranch = gitHubCIDefaultBranch } }
+    var gitHubCICommits = Settings.gitHubCICommits { didSet { Settings.gitHubCICommits = gitHubCICommits } }
+    var gitHubAvatarsOnce = Settings.gitHubAvatarsOnce { didSet { Settings.gitHubAvatarsOnce = gitHubAvatarsOnce } }
     var autoBookmark = Settings.autoBookmark { didSet { Settings.autoBookmark = autoBookmark } }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var historyFileTree = Settings.historyFileTree { didSet { Settings.historyFileTree = historyFileTree } }
@@ -183,6 +230,11 @@ final class SettingsModel {
             monospacedCommitMessage = Settings.monospacedCommitMessage
         }
         if showAvatars != Settings.showAvatars { showAvatars = Settings.showAvatars }
+        if gitHubCIStatus != Settings.gitHubCIStatus { gitHubCIStatus = Settings.gitHubCIStatus }
+        if gitHubAvatars != Settings.gitHubAvatars { gitHubAvatars = Settings.gitHubAvatars }
+        if gitHubCIDefaultBranch != Settings.gitHubCIDefaultBranch { gitHubCIDefaultBranch = Settings.gitHubCIDefaultBranch }
+        if gitHubCICommits != Settings.gitHubCICommits { gitHubCICommits = Settings.gitHubCICommits }
+        if gitHubAvatarsOnce != Settings.gitHubAvatarsOnce { gitHubAvatarsOnce = Settings.gitHubAvatarsOnce }
         if stackedCommitDiff != Settings.stackedCommitDiff { stackedCommitDiff = Settings.stackedCommitDiff }
         if historyFileTree != Settings.historyFileTree { historyFileTree = Settings.historyFileTree }
         if autoMagicMerge != Settings.autoMagicMerge { autoMagicMerge = Settings.autoMagicMerge }
@@ -216,6 +268,23 @@ private struct GitSettings: View {
             Section("リポジトリの一覧") {
                 Toggle("開いたリポジトリをブックマークに入れる", isOn: $model.autoBookmark)
                 Note("スキャンするフォルダで見つかっているものは入れない。")
+            }
+            Section("GitHub") {
+                Toggle("History にコミットごとの CI の状態を出す", isOn: $model.gitHubCIStatus)
+                Toggle("コミットの作者の GitHub のアバターを使う", isOn: $model.gitHubAvatars)
+                Note("gh で読む。開いたとき・Refresh・fetch や push の後（30 秒は空ける）に読む。1 回あたり、2 ブランチ × 100 コミットで両方なら 40 KB、CI だけなら 17 KB、今のブランチだけ・30 個なら 3 KB ほど（keel で測った値）。どちらも切ると読まない。")
+                Picker("CI を読むブランチ", selection: $model.gitHubCIDefaultBranch) {
+                    Text("今のブランチと既定のブランチ").tag(true)
+                    Text("今のブランチだけ").tag(false)
+                }
+                .disabled(!model.gitHubCIStatus && !model.gitHubAvatars)
+                Picker("ブランチごとに読むコミット", selection: $model.gitHubCICommits) {
+                    ForEach([100, 50, 30], id: \.self) { Text("直近 \($0) 個").tag($0) }
+                }
+                .disabled(!model.gitHubCIStatus && !model.gitHubAvatars)
+                Toggle("アバターの URL はウィンドウを開いて最初の 1 回だけ読む", isOn: $model.gitHubAvatarsOnce)
+                    .disabled(!model.gitHubAvatars)
+                Note("2 回目からは CI の状態だけを読む（40 KB → 17 KB）。")
             }
             Section("マージ") {
                 Toggle("マージエディタを開いたときに、間違えようのないコンフリクトを解く", isOn: $model.autoMagicMerge)
