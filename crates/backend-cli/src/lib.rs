@@ -239,12 +239,7 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
             break status;
         }
         if activity::take_cancel(seq) {
-            #[cfg(unix)]
-            // SAFETY: 自分で起動したプロセスグループ（pid = グループの番号）にシグナルを送るだけ。
-            unsafe {
-                libc::kill(-(child.id() as i32), libc::SIGKILL);
-            }
-            let _ = child.kill();
+            kill_tree(&mut child);
             let _ = child.wait();
             let _ = out_thread.join();
             let _ = err_thread.join();
@@ -417,6 +412,28 @@ impl Git {
     }
 }
 
+/// 起動した git を、その子のプロセス（`git-remote-https`・ssh など）ごと止める。子が残ると、出力のパイプが閉じずに
+/// 読み取りが終わらない。Unix はプロセスグループ（起動するときに分けてある）に、Windows は `taskkill /T` で。
+pub(crate) fn kill_tree(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    // SAFETY: 自分で起動したプロセスグループ（pid = グループの番号）にシグナルを送るだけ。
+    unsafe {
+        libc::kill(-(child.id() as i32), libc::SIGKILL);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        // 窓を出さない（CREATE_NO_WINDOW）。
+        let _ = std::process::Command::new("taskkill")
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .creation_flags(0x0800_0000)
+            .status();
+    }
+    let _ = child.kill();
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -445,7 +462,13 @@ mod tests {
         let out = tempfile::tempdir().unwrap();
         let dest = out.path().join("deep/copy");
         clone(tmp.path().to_str().unwrap(), &dest).unwrap();
-        assert_eq!(std::fs::read_to_string(dest.join("a.txt")).unwrap(), "1\n");
+        // Windows の CI では、clone の取り出しで改行が \r\n になる（全体の autocrlf）。
+        assert_eq!(
+            std::fs::read_to_string(dest.join("a.txt"))
+                .unwrap()
+                .replace("\r\n", "\n"),
+            "1\n"
+        );
         // もうあるフォルダには clone できない。
         assert!(clone(tmp.path().to_str().unwrap(), &dest).is_err());
     }

@@ -120,7 +120,7 @@ impl Operations for Git {
         let mut found = Vec::new();
         loop {
             if cancelled() {
-                let _ = child.kill();
+                crate::kill_tree(&mut child);
                 let _ = child.wait();
                 return Err("検索を取り消しました".into());
             }
