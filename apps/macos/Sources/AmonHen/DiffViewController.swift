@@ -1472,8 +1472,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     /// History で複数のコミットを選んだ: まとめた差分（`History.selectionDiff`）を全ファイル並べて見せる。
     /// 上の欄には、選んだコミットの一覧と、差分の取り方を出す。
-    func show(selection rows: [Int], in history: History) {
+    /// 表示中の複数選択（2 つのときの取り方を変えて読み直すため）。
+    private var shownSelection: (rows: [Int], history: History, pair: PairMode)?
+    private static let pairScheme = "amonhen-pair:"
+
+    func show(selection rows: [Int], in history: History, pair: PairMode = .forward) {
         endReword()
+        shownSelection = (rows, history, pair)
         request += 1
         headerRequest += 1
         let request = self.request
@@ -1488,7 +1493,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         diffView.show(nil, message: "差分を読んでいます…")
         let started = CACurrentMediaTime()
         Task {
-            let result = await Task.detached(priority: .userInitiated) { try? history.selectionDiff(rows: rows) }.value
+            let result = await Task.detached(priority: .userInitiated) { try? history.selectionDiff(rows: rows, pair: pair) }.value
             guard request == self.request else { return }
             guard let (kind, stacked) = result else {
                 diffView.show(nil, message: "差分を読めませんでした")
@@ -1497,18 +1502,18 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             NSLog("選んだ %d コミットの差分を %.0f ms で読んだ", rows.count, (CACurrentMediaTime() - started) * 1000)
             self.stacked = stacked
             files.reloadData()
-            renderSelectionHeader(rows: rows, history: history, kind: kind)
+            renderSelectionHeader(rows: rows, history: history, kind: kind, pair: pair)
             if stacked.count == 0 {
                 diffView.show(nil, message: "変更なし")
                 return
             }
             let ids = rows.sorted().compactMap { history.commitID(row: $0) }
-            showStacked(stacked, key: ids.map { $0.map { String(format: "%02x", $0) }.joined() }.joined(separator: ","))
+            showStacked(stacked, key: ids.map { $0.map { String(format: "%02x", $0) }.joined() }.joined(separator: ",") + "|\(pair.rawValue)")
         }
     }
 
     /// 選んだコミットの数・差分の取り方・各コミットの 1 行。
-    private func renderSelectionHeader(rows: [Int], history: History, kind: SelectionKind?) {
+    private func renderSelectionHeader(rows: [Int], history: History, kind: SelectionKind?, pair: PairMode = .forward) {
         let sorted = rows.sorted()
         let text = NSMutableAttributedString()
         let title: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
@@ -1520,11 +1525,28 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         text.append(NSAttributedString(string: "\(rows.count) コミットを選んでいます\n", attributes: title))
         let explanation = switch kind {
         case .range?: "続いているので、一番古いものの親から一番新しいものまでの差分（まとめて 1 つにしたのと同じ）"
-        case .pair?: "続いていない 2 つなので、古いほうから新しいほうまでの差分"
+        case .pair?: switch pair {
+            case .forward: "続いていない 2 つなので、古いほうから新しいほうまでの差分（A..B）"
+            case .reverse: "続いていない 2 つの、新しいほうから古いほうまでの差分（向きを入れ替えた）"
+            case .mergeBase: "続いていない 2 つの、共通の祖先から新しいほうまでの差分（A...B。新しいほうの側の変更だけ）"
+            }
         case .each?: "とびとびなので、コミットごとの差分をファイルごとに並べています（見出しはパスと短い ID）"
         case nil: "差分を読んでいます…"
         }
-        text.append(NSAttributedString(string: explanation + "\n\n", attributes: note))
+        text.append(NSAttributedString(string: explanation + "\n", attributes: note))
+        if kind == .pair {
+            // 取り方の切り替え（押すと読み直す）。
+            let options: [(PairMode, String)] = [(.forward, "A..B"), (.reverse, "向きを入れ替える"), (.mergeBase, "merge-base から（A...B）")]
+            for (mode, title) in options where mode != pair {
+                var link = note
+                link[.link] = Self.pairScheme + "\(mode.rawValue)"
+                link[.foregroundColor] = NSColor.linkColor
+                text.append(NSAttributedString(string: title, attributes: link))
+                text.append(NSAttributedString(string: "　", attributes: note))
+            }
+            text.append(NSAttributedString(string: "\n", attributes: note))
+        }
+        text.append(NSAttributedString(string: "\n", attributes: note))
         for row in sorted {
             guard let id = history.commitID(row: row) else { continue }
             let short = id.prefix(5).map { String(format: "%02x", $0) }.joined().prefix(8)
@@ -1805,6 +1827,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         guard let s = (link as? String) ?? (link as? URL)?.absoluteString else { return false }
+        if s.hasPrefix(Self.pairScheme), let selection = shownSelection,
+           let raw = UInt8(s.dropFirst(Self.pairScheme.count)), let mode = PairMode(rawValue: raw) {
+            show(selection: selection.rows, in: selection.history, pair: mode)
+            return true
+        }
         if s.hasPrefix(CommitHeaderRenderer.authorScheme) {
             let name = String(s.dropFirst(CommitHeaderRenderer.authorScheme.count)).replacingOccurrences(of: "\"", with: "")
             onSearch?("author:\"\(name)\"")

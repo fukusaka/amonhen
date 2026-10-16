@@ -988,10 +988,42 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         preparedRows = preparedRows.filter { keep.contains($0.key / Self.chunkRows) }
     }
 
+    /// 複数のコミットを選んで右クリック: 古い順に cherry-pick、新しい順に revert、ID のコピー。
+    private func buildMultipleMenu(_ menu: NSMenu, rows: [Int], history: History, actions: Actions) {
+        // 行は新しい順（0 が一番新しい）。
+        let commits: [(hex: String, isMerge: Bool)] = rows.compactMap { row in
+            guard let id = history.commitID(row: row) else { return nil }
+            let isMerge = history.withNodes { $0[row].flags & UInt16(AmonhenNode_MERGE) != 0 }
+            return (id.map { String(format: "%02x", $0) }.joined(), isMerge)
+        }
+        func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
+        add("Cherry-pick \(commits.count) Commits（古い順）") {
+            actions.perform(sequence: commits.reversed().map { ["op": "cherryPick", "oid": $0.hex, "isMerge": $0.isMerge] })
+        }
+        add("Revert \(commits.count) Commits（新しい順）") {
+            actions.perform(sequence: commits.map { ["op": "revert", "oid": $0.hex, "isMerge": $0.isMerge] })
+        }
+        menu.addItem(.separator())
+        add("Copy Commit IDs") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(commits.map(\.hex).joined(separator: "\n"), forType: .string)
+        }
+        add("Copy Short IDs") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(commits.map { String($0.hex.prefix(10)) }.joined(separator: " "), forType: .string)
+        }
+    }
+
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = tableView.clickedRow
         guard let actions, let history, row >= 0, let id = history.commitID(row: row) else { return }
+        // 複数選んだ行の上なら、選んだコミットまとめての操作。
+        let selected = tableView.selectedRowIndexes
+        if selected.count > 1, selected.contains(row) {
+            buildMultipleMenu(menu, rows: selected.sorted(), history: history, actions: actions)
+            return
+        }
         let hex = id.map { String(format: "%02x", $0) }.joined()
         let short = String(hex.prefix(8))
         let isMerge = history.withNodes { $0[row].flags & UInt16(AmonhenNode_MERGE) != 0 }

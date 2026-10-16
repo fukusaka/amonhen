@@ -97,12 +97,22 @@ public enum SelectionKind: UInt8, Sendable {
     case each
 }
 
+/// 2 つ選んだときの差分の取り方。
+public enum PairMode: UInt8, Sendable {
+    /// 古いほうから新しいほうまで（A..B）。
+    case forward
+    /// 新しいほうから古いほうまで。
+    case reverse
+    /// 共通の祖先から新しいほうまで（A...B）。
+    case mergeBase
+}
+
 extension History {
     /// 選んだ行（順不同）のコミットの、全ファイルの差分。裏のスレッドで呼ぶ。
-    public func selectionDiff(rows: [Int]) throws -> (SelectionKind, StackedDiff) {
+    public func selectionDiff(rows: [Int], pair: PairMode = .forward) throws -> (SelectionKind, StackedDiff) {
         var kind: UInt8 = 0
         let raw = rows.map(UInt32.init).withUnsafeBufferPointer {
-            amonhen_selection_diff(repository.raw, self.raw, $0.baseAddress, UInt32($0.count), &kind)
+            amonhen_selection_diff(repository.raw, self.raw, $0.baseAddress, UInt32($0.count), pair.rawValue, &kind)
         }
         guard let raw else { throw AmonhenError.last() }
         return (SelectionKind(rawValue: kind) ?? .range, StackedDiff(raw: raw, owner: self))
