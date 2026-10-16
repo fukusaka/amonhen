@@ -20,6 +20,7 @@
     "workspace"
   ],
   "main": "./dist/extension.js",
+  "amonhenEngine": "snapshot",
   "contributes": {
     "viewsContainers": {
       "activitybar": [
@@ -41,10 +42,16 @@
     "configuration": {
       "title": "Amon Hen",
       "properties": {
+        "amonhen.daemon.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Amon Hen のエンジン（スタンドアロン版と共通。拡張に同梱）の共有の daemon で、History・差分・操作を行う（アプリ・CLI と History・検索の索引を共有し、Undo の記録も共通）。切ると git 実行層だけで動く。このホストの OS と CPU 向けのエンジンがなければ、設定に関わらず git 実行層で動く",
+          "scope": "machine"
+        },
         "amonhen.daemon.path": {
           "type": "string",
           "default": "",
-          "markdownDescription": "共有の daemon（Amon Hen のスタンドアロン版の `amonhend`）の場所。設定すると History を daemon で読む（コアは daemon で動き、アプリ・CLI と History・検索の索引を共有する）。空なら git で読む",
+          "markdownDescription": "同梱のものの代わりに使うエンジン（`amonhen`）の場所。空なら同梱のものを `~/.local/share/amonhen` に置いて使う",
           "scope": "machine"
         }
       }

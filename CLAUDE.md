@@ -11,6 +11,7 @@ VSCode 上で快適に Git を操作するための、自分用の Git 拡張。
 - コマンド ID・設定キー・View ID の接頭辞は `amonhen.`
 - 独自 URI スキームは `amonhen:`
 - `extensionKind: ["workspace"]`。Remote-SSH 接続時は拡張ホストが SSH 先で動き、git もそこで実行される
+- 既定では、Amon Hen のエンジン（スタンドアロン版の `amonhen`。`bin/` に同梱し、`scripts/fetch-engine.sh` で取ってくる）の共有の daemon で History・差分・操作を行う（`src/daemon/`。取り決めはスタンドアロン版の `docs/front.md`）。エンジンを使わないとき（`amonhen.daemon.enabled` を切る、合うエンジンがない）は、以下の git 実行層で動く
 - git の操作とデータ取得は `git` を直接 spawn する。状態変化の検知だけ組み込みの `vscode.git` 拡張 API（`getAPI(1)` の `onDidChange` 系）を使う
 - ナビはサイドバーの TreeView、中身（Working Copy・History と差分）はエディタ領域の 1 つの Webview（メインビュー）に出す。コンフリクト解決は VSCode 標準の 3-way マージエディタを流用する
 - 履歴を書き換える操作（rebase、amend、reset など）は、実行前に `HEAD` と関係する ref を記録し、Undo できるようにする

@@ -26,6 +26,12 @@ jobs:
           fi
       - run: npm ci
       - run: npm test
+      - name: Fetch the engine
+        # package.json の amonhenEngine のリリースのエンジンを同梱する（正式版は必ず同梱する）。読める鍵は
+        # AMONHEN_STANDALONE_TOKEN（snapshot.yml と同じ）。
+        env:
+          GH_TOKEN: ${{ secrets.AMONHEN_STANDALONE_TOKEN }}
+        run: scripts/fetch-engine.sh
       - run: npx @vscode/vsce package --skip-license
       - run: gh release create "$GITHUB_REF_NAME" *.vsix --generate-notes --latest
         env:

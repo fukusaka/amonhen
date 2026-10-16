@@ -1,21 +1,42 @@
 /**
- * リポジトリごとの、共有の daemon とのつながり。設定 `amonhen.daemon.path`（amonhend の場所）があるときだけ使う。
- * 切れていれば、次に使うときにつなぎ直す
+ * リポジトリごとの、共有の daemon とのつながり。エンジンは拡張に同梱したものを置き場所に置いて使う（`engine.ts`）。
+ * 設定 `amonhen.daemon.path` で別のエンジンを指せ、`amonhen.daemon.enabled` を切ると daemon を使わない（git 実行層
+ * だけで動く。合うエンジンがない OS と CPU でも同じ）。切れていれば、次に使うときにつなぎ直す
  */
 import * as vscode from 'vscode';
 import { DaemonClient } from './client.ts';
+import { prepareEngine } from './engine.ts';
 
 const clients = new Map<string, Promise<DaemonClient>>();
+let binDir: string | undefined;
+let prepared: Promise<string | undefined> | undefined;
 
-/** amonhend の場所。設定がなければ undefined（daemon を使わない） */
-export function daemonPath(): string | undefined {
-  const path = vscode.workspace.getConfiguration('amonhen').get<string>('daemon.path')?.trim();
-  return path ? path : undefined;
+/** 拡張の bin の場所を覚え、同梱のエンジンを置き場所に置く（起動時に 1 回） */
+export function initDaemon(extensionPath: string, log?: vscode.LogOutputChannel): void {
+  binDir = `${extensionPath}/bin`;
+  prepared = prepareEngine(binDir).catch((err: unknown) => {
+    log?.warn('エンジンを置けません:', err);
+    return undefined;
+  });
+  void prepared.then((path) => log?.info(path ? `daemon のエンジン: ${path}` : 'このホスト向けのエンジンがありません（git 実行層で動きます）'));
 }
 
-/** `root` のリポジトリを daemon で開いたつながり。daemon を使わない設定なら undefined */
+/** daemon に使うエンジンの場所。使わない設定か、エンジンがなければ undefined */
+export async function daemonPath(): Promise<string | undefined> {
+  const config = vscode.workspace.getConfiguration('amonhen');
+  if (!config.get<boolean>('daemon.enabled', true)) {
+    return undefined;
+  }
+  const path = config.get<string>('daemon.path')?.trim();
+  if (path) {
+    return path;
+  }
+  return prepared;
+}
+
+/** `root` のリポジトリを daemon で開いたつながり。daemon を使わないなら undefined */
 export async function daemonFor(root: string): Promise<DaemonClient | undefined> {
-  const daemon = daemonPath();
+  const daemon = await daemonPath();
   if (!daemon) {
     return undefined;
   }

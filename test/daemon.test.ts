@@ -6,15 +6,16 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { Changes, controlDaemon, DaemonClient } from '../src/daemon/client.ts';
 import { readWorkingDiff, selectedRows } from '../src/daemon/diff.ts';
+import { platformName, prepareEngine } from '../src/daemon/engine.ts';
 import { readRows } from '../src/daemon/history.ts';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { UndoLog } from '../src/state/undo.ts';
 import { withDaemonWrites } from '../src/daemon/writes.ts';
 
-// amonhen-standalone の amonhend（`cargo build -p amonhen-daemon`）。なければ飛ばす
-const daemon = process.env['AMONHEN_DAEMON'] ?? join(import.meta.dirname, '../../amonhen-standalone/target/debug/amonhend');
-const skip = existsSync(daemon) ? false : `amonhend がありません: ${daemon}`;
+// amonhen-standalone のエンジン（`cargo build -p amonhen-cli`。CLI と daemon を兼ねる）。なければ飛ばす
+const daemon = process.env['AMONHEN_DAEMON'] ?? join(import.meta.dirname, '../../amonhen-standalone/target/debug/amonhen');
+const skip = existsSync(daemon) ? false : `エンジンがありません: ${daemon}`;
 
 let dir = '';
 let repo = '';
@@ -28,6 +29,7 @@ before(() => {
   // daemon のソケットと History のキャッシュは試験の中に置く（手元の daemon とアプリに混ぜない）
   process.env['AMONHEN_DAEMON_DIR'] = join(dir, 's');
   process.env['HOME'] = dir;
+  delete process.env['XDG_DATA_HOME'];
   repo = join(dir, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'main', repo]);
   git('config', 'user.name', 'a');
@@ -190,4 +192,21 @@ test('writes through the daemon record one undo entry each', { skip }, async () 
     git('reset', '-q');
     rmSync(join(repo, 'w.txt'), { force: true });
   }
+});
+
+test('names the host platform like the engine files', () => {
+  assert.equal(platformName('darwin', 'arm64'), 'darwin-aarch64');
+  assert.equal(platformName('linux', 'x64'), 'linux-x86_64');
+  assert.equal(platformName('win32', 'x64'), undefined);
+  assert.equal(platformName('linux', 'ia32'), undefined);
+});
+
+test('installs the bundled engine and picks it for the daemon', { skip }, async () => {
+  // 拡張の bin と同じ形（amonhen-<os>-<arch>）に、試験の amonhen を置く
+  const bin = join(dir, 'ext-bin');
+  execFileSync('mkdir', ['-p', bin]);
+  execFileSync('cp', [daemon, join(bin, `amonhen-${platformName()}`)]);
+  const path = await prepareEngine(bin);
+  assert.equal(path, join(dir, '.local/share/amonhen/current/amonhen'));
+  assert.match(execFileSync(path!, ['--version'], { encoding: 'utf8' }), /\(protocol \d+\)/);
 });

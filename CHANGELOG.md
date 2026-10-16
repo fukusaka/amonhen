@@ -11,7 +11,7 @@
 - Stash の保存・適用・pop・削除と、中身の表示（untracked のファイルも含む）。削除は Undo で戻せる。
 - History のコミットの右クリックで Cherry-pick / Revert。
 - サブモジュールの Update と、別のウィンドウで開く。
-- 設定 `amonhen.daemon.path` に Amon Hen のスタンドアロン版の `amonhend` を指定すると、History（グラフ・コミットの詳細と差分）、Working Copy の差分・行単位の stage と破棄、コミット・ブランチとタグ・merge・rebase・cherry-pick・revert・stash・fetch・push などの操作を、共有の daemon で行う（グラフはスタンドアロン版と同じレイアウト。アプリ・CLI と History・検索の索引を共有し、Undo の記録も共通）。
+- Amon Hen のエンジン（スタンドアロン版と共通。macOS arm64・Linux x86_64・Linux aarch64 向けを同梱）の共有の daemon で、History（グラフ・コミットの詳細と差分）、Working Copy の差分・行単位の stage と破棄、コミット・ブランチとタグ・merge・rebase・cherry-pick・revert・stash・fetch・push などの操作を行う。設定なしで使い、エンジンは `~/.local/share/amonhen` に置いて `~/.local/bin/amonhen`（CLI）も張る（アプリ・CLI と同じ daemon・History・検索の索引を共有し、Undo の記録も共通）。`amonhen.daemon.enabled` で切れ、合うエンジンがない OS と CPU では git 実行層で動く。
 
 ### Changed
 

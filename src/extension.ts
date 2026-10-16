@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import { disposeDaemonClients } from './daemon/connection.ts';
+import { disposeDaemonClients, initDaemon } from './daemon/connection.ts';
 import { RepositoryManager } from './state/manager.ts';
 import { registerBranchCommands } from './ui/branchCommands.ts';
 import { registerContentProvider } from './ui/content.ts';
@@ -21,6 +21,8 @@ export async function activate(
 ): Promise<{ manager: RepositoryManager; sidebar: SidebarProvider; dragAndDrop: SidebarDragAndDrop }> {
   const start = performance.now();
   const log = vscode.window.createOutputChannel('Amon Hen', { log: true });
+  // 同梱のエンジンを置き場所に置く（裏で。使うときに待つ）
+  initDaemon(context.extensionPath, log);
   const manager = new RepositoryManager(log);
   const sidebar = new SidebarProvider(manager);
   const dragAndDrop = new SidebarDragAndDrop(manager);

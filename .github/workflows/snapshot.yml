@@ -27,6 +27,17 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      - name: Fetch the engine
+        # スタンドアロン版のエンジンを同梱する。リリースは非公開のリポジトリなので、読める鍵（fine-grained の PAT。
+        # amonhen-standalone の Contents を読める）を AMONHEN_STANDALONE_TOKEN に置く。なければ同梱せずに作る。
+        env:
+          GH_TOKEN: ${{ secrets.AMONHEN_STANDALONE_TOKEN }}
+        run: |
+          if [ -n "$GH_TOKEN" ]; then
+            scripts/fetch-engine.sh snapshot
+          else
+            echo "::warning::AMONHEN_STANDALONE_TOKEN がないので、エンジンを同梱しません（拡張は git 実行層だけで動く）"
+          fi
       - name: Package
         id: package
         run: |
