@@ -97,6 +97,9 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         let avatars = item("Show Avatars", #selector(toggleAvatars(_:)), "", target: self)
         avatars.toolTip = "コミットの詳細に Gravatar のアバターを出す（メールアドレスのハッシュを gravatar.com に送る）"
         menu.addItem(avatars)
+        let stacked = item("All Files in One Diff", #selector(toggleStackedDiff(_:)), "", target: self)
+        stacked.toolTip = "コミットの差分で、全ファイルを縦に並べる（オフなら選んだファイルだけ）"
+        menu.addItem(stacked)
         return menu
     }
 
@@ -199,6 +202,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         case #selector(toggleHighlightAncestors(_:)): Settings.highlightAncestors
         case #selector(toggleMonospacedMessage(_:)): Settings.monospacedCommitMessage
         case #selector(toggleAvatars(_:)): Settings.showAvatars
+        case #selector(toggleStackedDiff(_:)): Settings.stackedCommitDiff
         default: nil
         }
         if let on { item.state = on ? .on : .off }
@@ -211,4 +215,5 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     @objc private func toggleMonospacedMessage(_ item: NSMenuItem) { Settings.monospacedCommitMessage.toggle() }
     @objc private func toggleHighlightAncestors(_ item: NSMenuItem) { Settings.highlightAncestors.toggle() }
     @objc private func toggleCompactRows(_ item: NSMenuItem) { Settings.compactHistoryRows.toggle() }
+    @objc private func toggleStackedDiff(_ item: NSMenuItem) { Settings.stackedCommitDiff.toggle() }
 }

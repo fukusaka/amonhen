@@ -66,6 +66,17 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private var showsStageChecks: Bool { (diff as? WorkingFileDiff)?.isCombined == true }
     /// チェックボックスを押した・Space を押した: `rows` 行目の変更を含める（true）・外す。
     var onSetStaged: ((_ rows: [Int], _ staged: Bool) -> Void)?
+    /// 全ファイルを並べた差分の、ファイルの見出しの行（`AmonhenDiffRow_FILE`）。i 番目がファイル i。
+    private var fileRows: [Int] = []
+    /// 見出しを押した: ファイルを畳む・開く。Viewed を押した: 見たことにする・戻す。
+    var onToggleFile: ((Int) -> Void)?
+    var onToggleViewed: ((Int) -> Void)?
+    /// 見たことにしたファイル（見出しに ✓ を出す）。
+    var viewedFiles: Set<Int> = [] { didSet { if viewedFiles != oldValue { redraw() } } }
+    /// 一番上に見えているファイルが変わった（変更ファイルの一覧の選択を合わせる）。
+    var onTopFileChange: ((Int) -> Void)?
+    private var topFile: Int?
+    private var headerGlyphs: [String: TextRenderer.ShapedLine] = [:]
     private var checkGlyphs: [String: TextRenderer.ShapedLine] = [:]
 
     init(renderer: TextRenderer) {
@@ -145,6 +156,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         syntax = [:]
         if let diff { loadSyntax(of: diff) }
         shaped.removeAll()
+        headerGlyphs.removeAll()
+        fileRows = diff?.withRows { all in all.indices.filter { all[$0].kind == UInt8(AmonhenDiffRow_FILE) } } ?? []
+        topFile = nil
         selectedRows.removeAll()
         anchorRow = nil
         textSelection = nil
@@ -206,6 +220,50 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         return id > 0 ? id - 1 : nil
     }
 
+    /// `point`（文書の座標）が、ファイルの見出し（上に張り付いたものを含む）なら、そのファイルの番号。
+    private func fileHeader(at point: NSPoint) -> Int? {
+        guard !fileRows.isEmpty else { return nil }
+        let origin = scrollView.contentView.bounds.origin
+        if let (file, top) = stickyHeader(origin: origin), point.y - origin.y >= top, point.y - origin.y < top + lineHeight {
+            return file
+        }
+        let row = Int(point.y / lineHeight)
+        return fileRows.firstIndex(of: row)
+    }
+
+    /// 上に張り付かせる見出し（ファイルの番号と、見えている範囲の上端からの位置）。見出しの行が見えている範囲より
+    /// 上にあるファイルのものを出し、次のファイルの見出しが近づいたら押し上げる。
+    private func stickyHeader(origin: CGPoint) -> (Int, CGFloat)? {
+        let first = Int(origin.y / lineHeight)
+        // 最初に見えている行が属するファイル（その見出しが first 以前で最後のもの）。
+        guard let file = fileRows.lastIndex(where: { $0 <= first }) else { return nil }
+        // 見出しの行がちょうど一番上に見えているなら、張り付かせなくてよい。
+        if CGFloat(fileRows[file]) * lineHeight >= origin.y { return nil }
+        var top: CGFloat = 0
+        if file + 1 < fileRows.count {
+            top = min(0, CGFloat(fileRows[file + 1]) * lineHeight - origin.y - lineHeight)
+        }
+        return (file, top)
+    }
+
+    /// ファイル `index` の見出しが一番上に来るようにスクロールする。
+    func scrollToFile(_ index: Int) {
+        guard index < fileRows.count else { return }
+        let clip = scrollView.contentView
+        let y = min(CGFloat(fileRows[index]) * lineHeight, max(0, document.frame.height - clip.bounds.height))
+        clip.scroll(to: NSPoint(x: clip.bounds.origin.x, y: y))
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    /// ファイル `index` の見出しが見えている範囲より上にあれば、見出しが一番上に来るまで戻す。
+    func revealFileHeader(_ index: Int) {
+        guard index < fileRows.count else { return }
+        if CGFloat(fileRows[index]) * lineHeight < scrollView.contentView.bounds.origin.y { scrollToFile(index) }
+    }
+
+    /// 見出しの Viewed のチェックボックスの左端（見えている範囲の座標）。
+    private var viewedBoxX: CGFloat { textView.bounds.width - 76 }
+
     /// `row` を含む hunk の、追加・削除の行（`row` が hunk の見出しでも中の行でもよい）。
     private func changeRows(inHunkOf row: Int) -> [Int] {
         guard let diff else { return [] }
@@ -239,6 +297,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     /// 左端のチェックボックスなら、その行（hunk の見出しなら hunk の変更すべて）を含める・外す。
     fileprivate func mouseDown(_ event: NSEvent, at point: NSPoint) {
         guard let diff else { return }
+        if let file = fileHeader(at: point) {
+            let visibleX = point.x - scrollView.contentView.bounds.origin.x
+            if visibleX > viewedBoxX - 4 { onToggleViewed?(file) } else { onToggleFile?(file) }
+            return
+        }
         if showsStageChecks, point.x - scrollView.contentView.bounds.origin.x < checkWidth {
             let row = Int(point.y / lineHeight)
             guard row >= 0, row < diff.rowCount else { return }
@@ -598,6 +661,10 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 }
                 let baseline = top + 2 + ascent
                 // コンフリクトの表示では old_no はコンフリクトの番号なので、行番号は new_no だけ出す。
+                if r.kind == UInt8(AmonhenDiffRow_FILE) {
+                    drawFileHeader(row: row, all: all, top: top, scale: scale)
+                    continue
+                }
                 if showsStageChecks {
                     drawStageCheck(row: row, kind: r.kind, all: all, top: top, scale: scale)
                 }
@@ -638,11 +705,85 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                     line, origin: CGPoint(x: gutterWidth + 8 - origin.x, y: baseline), color: isHunk ? secondary : text,
                     scale: scale, spans: spans)
             }
+            // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる。
+            if let (file, top) = stickyHeader(origin: origin) {
+                drawFileHeader(row: fileRows[file], all: all, top: top, scale: scale)
+            }
+        }
+        if !fileRows.isEmpty {
+            let file = fileRows.lastIndex { CGFloat($0) * lineHeight <= origin.y + lineHeight / 2 } ?? 0
+            if file != topFile {
+                topFile = file
+                onTopFileChange?(file)
+            }
         }
     }
 }
 
 extension DiffViewController {
+    /// ファイルの見出しの行: 畳む・開くの印、パス、追加・削除の行数、Viewed のチェックボックス。横にはスクロールしない。
+    fileprivate func drawFileHeader(
+        row: Int, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat
+    ) {
+        let r = all[row]
+        let width = textView.bounds.width
+        renderer.addRect(CGRect(x: 0, y: top, width: width, height: lineHeight), color: NSColor.windowBackgroundColor.rgba)
+        renderer.addRect(CGRect(x: 0, y: top + lineHeight - 1, width: width, height: 1), color: NSColor.separatorColor.rgba)
+        let small = NSFont.systemFont(ofSize: 11) as CTFont
+        let bold = NSFont.boldSystemFont(ofSize: 11) as CTFont
+        func glyph(_ text: String, _ font: CTFont) -> TextRenderer.ShapedLine {
+            let key = "\(text)|\(CTFontGetSize(font))|\(font === bold ? "b" : "r")"
+            if let cached = headerGlyphs[key] { return cached }
+            let line = renderer.shape(text as CFString, font: font, scale: scale)
+            headerGlyphs[key] = line
+            return line
+        }
+        let baseline = top + (lineHeight + CTFontGetAscent(small) - CTFontGetDescent(small)) / 2
+        let collapsed = r.flags & UInt8(AmonhenDiffRow_COLLAPSED) != 0
+        let large = NSFont.systemFont(ofSize: 14) as CTFont
+        let chevron = glyph(collapsed ? "▸" : "▾", large)
+        let chevronBaseline = top + (lineHeight + CTFontGetAscent(large) - CTFontGetDescent(large)) / 2
+        renderer.addLine(
+            chevron, origin: CGPoint(x: 12 - chevron.width / 2, y: chevronBaseline), color: NSColor.secondaryLabelColor.rgba,
+            scale: scale)
+        // 右から: Viewed、行数。
+        let file = fileRows.firstIndex(of: row) ?? 0
+        let viewed = viewedFiles.contains(file)
+        let box = CGRect(x: viewedBoxX, y: top + (lineHeight - 12) / 2, width: 12, height: 12)
+        let label = glyph("Viewed", small)
+        // 行数（バイナリならその旨）は Viewed の左に右揃えで置く。
+        let counts: [(TextRenderer.ShapedLine, NSColor)] = r.flags & UInt8(AmonhenDiffRow_BINARY) != 0
+            ? [(glyph("バイナリ", small), .secondaryLabelColor)]
+            : [(glyph("+\(r.new_no)", bold), .systemGreen), (glyph("−\(r.old_no)", bold), .systemRed)]
+        let countsWidth = counts.map(\.0.width).reduce(0, +) + CGFloat(counts.count - 1) * 6
+        let countsX = box.minX - 14 - countsWidth
+        // パスは行数の手前までに収める（長ければ、はみ出た分を帯の色で隠す）。
+        if let line = shapedLine(row, scale: scale) {
+            let textBaseline = top + 2 + CTFontGetAscent(font)
+            renderer.addLine(line, origin: CGPoint(x: 24, y: textBaseline), color: NSColor.labelColor.rgba, scale: scale)
+            if 24 + line.width > countsX - 8 {
+                renderer.addRect(
+                    CGRect(x: countsX - 8, y: top, width: width - countsX + 8, height: lineHeight - 1),
+                    color: NSColor.windowBackgroundColor.rgba)
+            }
+        }
+        var x = countsX
+        for (line, color) in counts {
+            renderer.addLine(line, origin: CGPoint(x: x, y: baseline), color: color.rgba, scale: scale)
+            x += line.width + 6
+        }
+        // Viewed は隠す帯より後に描く。
+        if viewed {
+            renderer.addRect(box, color: NSColor.controlAccentColor.rgba)
+            let check = glyph("✓", bold)
+            renderer.addLine(check, origin: CGPoint(x: box.midX - check.width / 2, y: baseline), color: NSColor.white.rgba, scale: scale)
+        } else {
+            renderer.addRect(box, color: NSColor.secondaryLabelColor.rgba)
+            renderer.addRect(box.insetBy(dx: 1, dy: 1), color: NSColor.windowBackgroundColor.rgba)
+        }
+        renderer.addLine(label, origin: CGPoint(x: box.maxX + 5, y: baseline), color: NSColor.secondaryLabelColor.rgba, scale: scale)
+    }
+
     /// 変更の行・hunk の見出しの左のチェックボックス。hunk は中の変更がすべて含まれていれば ✓、一部なら −。
     fileprivate func drawStageCheck(
         row: Int, kind: UInt8, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat
@@ -760,6 +901,15 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private var selectedAt: CFTimeInterval = 0
     /// コミットの変更と一緒に読んだ、最初のファイルの差分。
     private var preloadedDiff: FileDiff?
+    /// 全ファイルを縦に並べて見せているときの、すべての差分と、ファイルごとに畳んでいるか。
+    private var stacked: StackedDiff?
+    private var collapsed: [Bool] = []
+    /// 差分のスクロールに合わせて一覧の選択を変えている間（選択の変化でスクロールし返さない）。
+    private var syncingSelection = false
+    /// 見たことにしたファイル（コミット ID → パス）。アプリが動いている間だけ覚える。
+    private static var viewed: [String: Set<String>] = [:]
+    /// 全ファイルを並べるのは、変更ファイルがこの数までのコミット（多ければ 1 ファイルずつ）。
+    nonisolated private static let stackLimit = 200
     var onDiffShown: (() -> Void)?
     /// 親コミットのリンクを押したとき（40 桁の ID）。
     var onSelectCommit: ((String) -> Void)?
@@ -914,12 +1064,23 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             item.canCollapse = content === scroll
             addSplitViewItem(item)
         }
+        diffView.onToggleFile = { [weak self] file in self?.toggleCollapsed(file) }
+        diffView.onToggleViewed = { [weak self] file in self?.toggleViewed(file) }
+        diffView.onTopFileChange = { [weak self] file in
+            guard let self, stacked != nil, file < files.numberOfRows, files.selectedRow != file else { return }
+            syncingSelection = true
+            files.selectRowIndexes([file], byExtendingSelection: false)
+            files.scrollRowToVisible(file)
+            syncingSelection = false
+        }
         let diffItem = NSSplitViewItem(viewController: diffView)
         diffItem.minimumThickness = 200
         diffItem.canCollapse = true
         addSplitViewItem(diffItem)
         NotificationCenter.default.addObserver(
             self, selector: #selector(messageStyleChanged), name: .commitMessageStyleChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(stackedChanged), name: .stackedCommitDiffChanged, object: nil)
         // アバターを読み終えたら、表示中のコミットの人なら描き直す。
         Avatars.shared.onLoad.append { [weak self] email in
             guard let self, let info,
@@ -927,6 +1088,14 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             peopleStrip.updateAvatars()
             renderHeader()
         }
+    }
+
+    /// 表示中のコミット（全ファイルを並べるかを変えたときに読み直す）。
+    private var shownCommit: (id: Data, stash: Bool)?
+
+    @objc private func stackedChanged() {
+        guard let shownCommit else { return }
+        show(commit: shownCommit.id, stash: shownCommit.stash)
     }
 
     @objc private func messageStyleChanged() {
@@ -1081,6 +1250,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let request = self.request
         guard let commit else {
             changes = nil
+            stacked = nil
+            shownCommit = nil
             files.reloadData()
             diffView.show(nil, message: "コミットを選ぶと、変更が表示されます")
             info = nil
@@ -1088,6 +1259,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             header.string = ""
             return
         }
+        shownCommit = (commit, stash)
         let repository = self.repository
         let hex = commit.map { String(format: "%02x", $0) }.joined()
         commitHex = stash ? nil : hex
@@ -1099,12 +1271,18 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         // 裏の読み込みはここですぐ始める（メインスレッドが表のスクロールや描画をしている間に進める）。
         let infoTask = Task.detached(priority: .userInitiated) { try repository.commitInfo(oid: hex) }
         // 変わったファイルと、最初のファイルの差分を続けて読む（メインスレッドとの往復を 1 回で済ませる）。
+        let stack = Settings.stackedCommitDiff
         let changesTask = Task.detached(priority: .userInitiated) {
-            () -> (CommitChanges?, FileDiff?, CFTimeInterval, CFTimeInterval) in
+            () -> (CommitChanges?, FileDiff?, StackedDiff?, CFTimeInterval, CFTimeInterval) in
             let t = CACurrentMediaTime()
             let changes = try? stash ? repository.stashChanges(of: commit) : repository.changes(of: commit)
+            // 全ファイルを並べるなら全ファイルの差分を、そうでなければ最初のファイルの差分を読む。
+            if stack, let changes, (1...Self.stackLimit).contains(changes.items.count),
+               let stacked = try? changes.stacked() {
+                return (changes, nil, stacked, t, CACurrentMediaTime())
+            }
             let first = changes.flatMap { $0.items.isEmpty ? nil : try? $0.diff(at: 0) }
-            return (changes, first, t, CACurrentMediaTime())
+            return (changes, first, nil, t, CACurrentMediaTime())
         }
         // 署名の検証や含むタグなど時間のかかる分は、ヘッダーを出した後に足す（stash では読まない）。
         let signatureGeneration = self.signatureGeneration
@@ -1126,16 +1304,21 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             renderHeader()
         }
         Task {
-            let (changes, firstDiff, callStart, callEnd) = await changesTask.value
+            let (changes, firstDiff, stacked, callStart, callEnd) = await changesTask.value
             guard request == self.request else { return }
             let resumed = CACurrentMediaTime()
             FrameProfile.add("select: changed files: start delay", callStart - selectedAt)
             FrameProfile.add("select: changed files: in call", callEnd - callStart)
             FrameProfile.add("select: changed files: main resume delay", resumed - callEnd)
             self.changes = changes
+            self.stacked = stacked
             files.reloadData()
             if changes?.items.isEmpty ?? true {
                 diffView.show(nil, message: "変更なし")
+                onDiffShown?()
+            } else if let stacked {
+                showStacked(stacked, commit: hex)
+                FrameProfile.add("select: → diff shown", CACurrentMediaTime() - selectedAt)
                 onDiffShown?()
             } else {
                 // 最初のファイルの差分は読んであるので、選んだときに読み直さない。
@@ -1143,6 +1326,73 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
                 files.selectRowIndexes([0], byExtendingSelection: false)
             }
         }
+    }
+
+    // MARK: - 全ファイルを縦に並べた差分
+
+    /// 最初から畳むファイル: lockfile などの生成物（見ても仕方がない大きな差分）。
+    private static func isGenerated(_ path: String) -> Bool {
+        let name = (path as NSString).lastPathComponent
+        let lockfiles: Set<String> = [
+            "Cargo.lock", "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Gemfile.lock", "poetry.lock",
+            "composer.lock", "go.sum", "Package.resolved", "Podfile.lock", "bun.lockb", "uv.lock",
+        ]
+        return lockfiles.contains(name) || name.hasSuffix(".min.js") || name.hasSuffix(".min.css")
+    }
+
+    /// 1 ファイルの変更がこの行数を超えたら、最初は畳む。
+    private static let collapseAbove = 1000
+
+    private func showStacked(_ stacked: StackedDiff, commit: String) {
+        let viewed = Self.viewed[commit] ?? []
+        collapsed = stacked.items.map { Self.isGenerated($0.path) || viewed.contains($0.path) }
+        var view = stacked.view(collapsed: collapsed)
+        // 行数は差分を取って初めてわかるので、大きなファイルがあれば畳んで作り直す。
+        let large: [Int] = view.withRows { all in
+            var file = -1
+            var out: [Int] = []
+            for r in all where r.kind == UInt8(AmonhenDiffRow_FILE) {
+                file += 1
+                if Int(r.old_no + r.new_no) > Self.collapseAbove { out.append(file) }
+            }
+            return out
+        }
+        if large.contains(where: { !collapsed[$0] }) {
+            for i in large { collapsed[i] = true }
+            view = stacked.view(collapsed: collapsed)
+        }
+        diffView.viewedFiles = Set(stacked.items.indices.filter { viewed.contains(stacked.items[$0].path) })
+        FrameProfile.measure("select: diff draw") { diffView.show(view) }
+        syncingSelection = true
+        files.selectRowIndexes([0], byExtendingSelection: false)
+        syncingSelection = false
+    }
+
+    /// 畳むファイルを変えたので、表示を作り直す（スクロールの位置は保つ）。畳んだファイルの見出しが上に隠れて
+    /// いたら、見出しが見えるところまで戻す。
+    private func reshowStacked(keeping file: Int) {
+        guard let stacked else { return }
+        diffView.show(stacked.view(collapsed: collapsed), keepScroll: true)
+        diffView.revealFileHeader(file)
+    }
+
+    private func toggleCollapsed(_ file: Int) {
+        guard file < collapsed.count else { return }
+        collapsed[file].toggle()
+        reshowStacked(keeping: file)
+    }
+
+    /// 見たことにしたら畳み、戻したら開く（GitHub と同じ）。
+    private func toggleViewed(_ file: Int) {
+        guard let stacked, let commit = commitHex ?? info?.oid, file < stacked.items.count else { return }
+        let path = stacked.items[file].path
+        var set = Self.viewed[commit] ?? []
+        let nowViewed = set.insert(path).inserted
+        if !nowViewed { set.remove(path) }
+        Self.viewed[commit] = set
+        collapsed[file] = nowViewed
+        diffView.viewedFiles = Set(stacked.items.indices.filter { set.contains(stacked.items[$0].path) })
+        reshowStacked(keeping: file)
     }
 
     private func renderHeader() {
@@ -1340,6 +1590,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let changes, files.selectedRow >= 0 else { return }
         let index = files.selectedRow
+        // 全ファイルを並べているなら、そのファイルの見出しまでスクロールする。
+        if stacked != nil {
+            if !syncingSelection { diffView.scrollToFile(index) }
+            return
+        }
         request += 1
         let request = self.request
         if index == 0, let diff = preloadedDiff {

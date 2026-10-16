@@ -65,6 +65,16 @@ enum Settings {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "pullMode") }
     }
 
+    /// History のコミットの差分で、全ファイルを縦に並べるか（既定は並べる。オフなら選んだファイルだけ）。
+    /// 変えたら `stackedCommitDiffChanged` を知らせる。
+    static var stackedCommitDiff: Bool {
+        get { UserDefaults.standard.object(forKey: "stackedCommitDiff") as? Bool ?? true }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "stackedCommitDiff")
+            NotificationCenter.default.post(name: .stackedCommitDiffChanged, object: nil)
+        }
+    }
+
     /// History の行を 1 行にするか（既定は件名と作者・日時の 2 行）。変えたら `historyRowsChanged` を知らせる。
     static var compactHistoryRows: Bool {
         get { UserDefaults.standard.bool(forKey: "compactHistoryRows") }
@@ -80,6 +90,7 @@ extension Notification.Name {
     static let highlightAncestorsChanged = Notification.Name("highlightAncestorsChanged")
     static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
+    static let stackedCommitDiffChanged = Notification.Name("stackedCommitDiffChanged")
 }
 
 
@@ -106,6 +117,7 @@ final class SettingsModel {
         didSet { Settings.monospacedCommitMessage = monospacedCommitMessage }
     }
     var showAvatars = Settings.showAvatars { didSet { Settings.showAvatars = showAvatars } }
+    var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var writeCommitGraph = Settings.writeCommitGraph { didSet { Settings.writeCommitGraph = writeCommitGraph } }
     var useFSMonitor = Settings.useFSMonitor { didSet { Settings.useFSMonitor = useFSMonitor } }
     var checkRemoteSignaturesLocally = Settings.checkRemoteSignaturesLocally {
@@ -121,6 +133,7 @@ final class SettingsModel {
             monospacedCommitMessage = Settings.monospacedCommitMessage
         }
         if showAvatars != Settings.showAvatars { showAvatars = Settings.showAvatars }
+        if stackedCommitDiff != Settings.stackedCommitDiff { stackedCommitDiff = Settings.stackedCommitDiff }
         if writeCommitGraph != Settings.writeCommitGraph { writeCommitGraph = Settings.writeCommitGraph }
         if useFSMonitor != Settings.useFSMonitor { useFSMonitor = Settings.useFSMonitor }
         if checkRemoteSignaturesLocally != Settings.checkRemoteSignaturesLocally {
@@ -166,6 +179,8 @@ private struct AppearanceSettings: View {
                 Toggle("本文を等幅の字体で表示する", isOn: $model.monospacedCommitMessage)
                 Toggle("アバターを表示する", isOn: $model.showAvatars)
                 Note("Gravatar から取る（メールアドレスのハッシュを gravatar.com に送る）。")
+                Toggle("全ファイルの差分を縦に並べる", isOn: $model.stackedCommitDiff)
+                Note("GitHub のプルリクエストのように、変更ファイルの差分を続けて見せる。ファイルの見出しで畳め、Viewed で見たものを畳む。変更ファイルが 200 を超えるコミットでは 1 ファイルずつ。")
             }
         }
         .formStyle(.grouped)

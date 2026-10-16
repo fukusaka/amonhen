@@ -45,6 +45,38 @@ public final class CommitChanges: @unchecked Sendable {
         }
         return FileDiff(raw: raw, changes: self)
     }
+
+    /// すべてのファイルの差分（全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読むので、裏のスレッドで呼ぶ。
+    public func stacked() throws -> StackedDiff {
+        guard let raw = amonhen_stacked_diff(repository.raw, raw) else { throw AmonhenError.last() }
+        return StackedDiff(raw: raw, changes: self)
+    }
+}
+
+/// コミットのすべてのファイルの差分。畳むファイルを変えるたびに `view(collapsed:)` で表示を作り直す。
+public final class StackedDiff: @unchecked Sendable {
+    let raw: OpaquePointer
+    let changes: CommitChanges
+
+    init(raw: OpaquePointer, changes: CommitChanges) {
+        self.raw = raw
+        self.changes = changes
+    }
+
+    deinit {
+        amonhen_stacked_free(raw)
+    }
+
+    public var items: [FileChangeItem] { changes.items }
+
+    /// 各ファイルの見出しの行（`AmonhenDiffRow_FILE`）に、畳まないファイルの差分の行を続けたもの。
+    /// `collapsed[i]` が true のファイルは見出しだけ。
+    public func view(collapsed: [Bool]) -> FileDiff {
+        let raw = collapsed.withUnsafeBufferPointer {
+            amonhen_stacked_view(self.raw, $0.baseAddress, UInt32($0.count), UInt8(AmonhenEncoding_Utf16.rawValue))!
+        }
+        return FileDiff(raw: raw, owner: self, view: amonhen_diff_view(raw), free: { amonhen_diff_free($0) })
+    }
 }
 
 /// ファイル 1 つの差分。行の文字列はコアのメモリ（blob）を直接指す。
