@@ -1,7 +1,9 @@
 //! `amonhen` を実際に起動して確かめる。
 
 use std::path::Path;
-use std::process::{Command, Stdio};
+use std::process::Command;
+#[cfg(unix)]
+use std::process::Stdio;
 
 fn git(dir: &Path, args: &[&str]) {
     let ok = Command::new("git")
