@@ -1,4 +1,7 @@
-use amonhen_model::{HeadState, Oid, Operations, Outcome, PullMode, ResetMode, Result, Sequence};
+use amonhen_model::{
+    ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RemoteChange, RemoteEntry,
+    ResetMode, Result, Sequence,
+};
 
 use crate::Git;
 
@@ -486,6 +489,84 @@ impl Operations for Git {
     fn update_submodules(&self, paths: &[&str]) -> Result<()> {
         let mut args = vec!["submodule", "update", "--init", "--"];
         args.extend(paths);
+        self.write(&args).map(drop)
+    }
+
+    fn config_list(&self) -> Result<Vec<ConfigEntry>> {
+        let out = self.read(&["config", "--list", "--show-origin", "--show-scope", "-z"])?;
+        // 1 項目は `scope\0origin\0key\nvalue\0`（値のない項目は `key\0`）。
+        let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
+        Ok(fields
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|f| {
+                let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+                let (key, value) = match f[2].iter().position(|&b| b == b'\n') {
+                    Some(i) => (text(&f[2][..i]), text(&f[2][i + 1..])),
+                    None => (text(f[2]), String::new()),
+                };
+                ConfigEntry {
+                    scope: text(f[0]),
+                    origin: text(f[1]),
+                    key,
+                    value,
+                }
+            })
+            .collect())
+    }
+
+    fn config_set(&self, key: &str, value: Option<&str>) -> Result<()> {
+        match value {
+            Some(v) => self.write(&["config", "--local", key, v]).map(drop),
+            None => match self.write(&["config", "--local", "--unset-all", key]) {
+                Ok(_) => Ok(()),
+                // もともとない（終了コード 5）なら、消したのと同じ。
+                Err(_) if self.read(&["config", "--local", "--get-all", key]).is_err() => Ok(()),
+                Err(e) => Err(e),
+            },
+        }
+    }
+
+    fn remotes(&self) -> Result<Vec<RemoteEntry>> {
+        let out = text(self.read(&["remote", "-v"])?)?;
+        let mut remotes: Vec<RemoteEntry> = Vec::new();
+        for line in out.lines() {
+            // "origin\thttps://… (fetch)"
+            let Some((name, rest)) = line.split_once('\t') else {
+                continue;
+            };
+            let Some((url, kind)) = rest.rsplit_once(' ') else {
+                continue;
+            };
+            let entry = match remotes.iter_mut().find(|r| r.name == name) {
+                Some(e) => e,
+                None => {
+                    remotes.push(RemoteEntry {
+                        name: name.to_owned(),
+                        fetch_url: String::new(),
+                        push_url: String::new(),
+                    });
+                    remotes.last_mut().unwrap()
+                }
+            };
+            if kind == "(push)" {
+                entry.push_url = url.to_owned();
+            } else {
+                entry.fetch_url = url.to_owned();
+            }
+        }
+        Ok(remotes)
+    }
+
+    fn change_remote(&self, change: &RemoteChange) -> Result<()> {
+        let args: Vec<&str> = match change {
+            RemoteChange::Add { name, url } => vec!["remote", "add", name, url],
+            RemoteChange::Rename { from, to } => vec!["remote", "rename", from, to],
+            RemoteChange::SetUrl { name, url } => vec!["remote", "set-url", name, url],
+            RemoteChange::Remove { name } => vec!["remote", "remove", name],
+            RemoteChange::Prune { name } => vec!["remote", "prune", name],
+        };
         self.write(&args).map(drop)
     }
 }

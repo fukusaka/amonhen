@@ -88,7 +88,12 @@ impl Git {
     /// リポジトリの一覧に出す、軽い状態（ブランチ・上流との差・変更のあるファイルの数）。untracked のファイルは
     /// 数えず、ロックも取らない（一覧の行ごとに裏で呼ぶ）。
     pub fn peek(&self) -> Result<Peek> {
-        let out = self.read(&["status", "--porcelain=v2", "--branch", "--untracked-files=no"])?;
+        let out = self.read(&[
+            "status",
+            "--porcelain=v2",
+            "--branch",
+            "--untracked-files=no",
+        ])?;
         let mut peek = Peek::default();
         for line in String::from_utf8_lossy(&out).lines() {
             if let Some(head) = line.strip_prefix("# branch.head ") {

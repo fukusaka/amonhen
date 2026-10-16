@@ -23,6 +23,62 @@ pub enum PullMode {
     FastForwardOnly,
 }
 
+/// git の設定の 1 項目（`git config --list --show-origin --show-scope`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ConfigEntry {
+    /// "system"・"global"・"local"・"worktree"・"command"。
+    pub scope: String,
+    /// どこで決まっているか（`file:/Users/a/.gitconfig` など）。
+    pub origin: String,
+    pub key: String,
+    /// 値のない項目（`[core] bare` のような真偽）は空。
+    pub value: String,
+}
+
+/// リモート。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct RemoteEntry {
+    pub name: String,
+    pub fetch_url: String,
+    pub push_url: String,
+}
+
+/// リモートの変更。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(
+    feature = "serde",
+    serde(
+        tag = "kind",
+        rename_all = "camelCase",
+        rename_all_fields = "camelCase"
+    )
+)]
+pub enum RemoteChange {
+    Add {
+        name: String,
+        url: String,
+    },
+    Rename {
+        from: String,
+        to: String,
+    },
+    SetUrl {
+        name: String,
+        url: String,
+    },
+    Remove {
+        name: String,
+    },
+    /// リモートで消えたブランチの追跡を消す。
+    Prune {
+        name: String,
+    },
+}
+
 /// 途中で止まりうる操作。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -158,4 +214,11 @@ pub trait Operations: Send + Sync {
     /// 消した stash を戻す。
     fn stash_store(&self, oid: &Oid, message: &str) -> Result<()>;
     fn update_submodules(&self, paths: &[&str]) -> Result<()>;
+
+    /// すべての設定と、それぞれがどこで決まっているか（後に出るものほど優先）。
+    fn config_list(&self) -> Result<Vec<ConfigEntry>>;
+    /// このリポジトリ（local）の設定を変える。`value` が None なら消す（上の段の値に戻る）。
+    fn config_set(&self, key: &str, value: Option<&str>) -> Result<()>;
+    fn remotes(&self) -> Result<Vec<RemoteEntry>>;
+    fn change_remote(&self, change: &RemoteChange) -> Result<()>;
 }

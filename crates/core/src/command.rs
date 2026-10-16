@@ -193,6 +193,25 @@ pub enum Command {
         text: String,
         stage: bool,
     },
+    /// すべての設定と、それぞれがどこで決まっているか（`info.entries`。後のものほど優先）。
+    ConfigList,
+    /// このリポジトリ（local）の設定を変える。`value` がなければ消す。
+    ConfigSet {
+        key: String,
+        value: Option<String>,
+    },
+    /// リモート（`info.remotes`）。
+    Remotes,
+    ChangeRemote {
+        change: amonhen_model::RemoteChange,
+    },
+    /// `.gitignore`（作業ツリーの直下）と `.git/info/exclude` の中身（`info.gitignore`・`info.exclude`）。
+    IgnoreFiles,
+    /// `.gitignore` と `.git/info/exclude` を書く。
+    SaveIgnoreFiles {
+        gitignore: String,
+        exclude: String,
+    },
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -1065,6 +1084,47 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::ConfigList => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "entries": ops.config_list()? })),
+                ..Default::default()
+            }),
+            Command::ConfigSet { key, value } => {
+                ops.config_set(&key, value.as_deref())?;
+                ok()
+            }
+            Command::Remotes => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "remotes": ops.remotes()? })),
+                ..Default::default()
+            }),
+            Command::ChangeRemote { change } => {
+                ops.change_remote(&change)?;
+                ok()
+            }
+            Command::IgnoreFiles => {
+                let files = self.backend().files();
+                let read = |root, path| -> Result<String> {
+                    Ok(files
+                        .read(root, path)?
+                        .map(|b| String::from_utf8_lossy(&b).into_owned())
+                        .unwrap_or_default())
+                };
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({
+                        "gitignore": read(Root::Workdir, ".gitignore")?,
+                        "exclude": read(Root::GitDir, "info/exclude")?,
+                    })),
+                    ..Default::default()
+                })
+            }
+            Command::SaveIgnoreFiles { gitignore, exclude } => {
+                let files = self.backend().files();
+                files.write(Root::Workdir, ".gitignore", gitignore.as_bytes())?;
+                files.write(Root::GitDir, "info/exclude", exclude.as_bytes())?;
+                ok()
+            }
             Command::SaveMerge { path, text, stage } => {
                 let files = self.backend().files();
                 undo.record_files(ops, &format!("Merge {path}"), &[&path], || {
@@ -1600,6 +1660,85 @@ mod tests {
         assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "edit");
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["z", "x and y", "first"]);
+    }
+
+    #[test]
+    fn edits_local_config_remotes_and_ignore_files() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        assert_eq!(
+            run(
+                &repo,
+                r#"{"op":"configSet","key":"pull.rebase","value":"true"}"#
+            )["ok"],
+            true
+        );
+        let list = run(&repo, r#"{"op":"configList"}"#);
+        let entries = list["info"]["entries"].as_array().unwrap();
+        let pull = entries.iter().find(|e| e["key"] == "pull.rebase").unwrap();
+        assert_eq!(
+            (pull["scope"].as_str(), pull["value"].as_str()),
+            (Some("local"), Some("true"))
+        );
+        assert!(pull["origin"].as_str().unwrap().ends_with("config"));
+        // 消す（もともとないものを消しても失敗しない）。
+        for _ in 0..2 {
+            assert_eq!(
+                run(
+                    &repo,
+                    r#"{"op":"configSet","key":"pull.rebase","value":null}"#
+                )["ok"],
+                true
+            );
+        }
+        let list = run(&repo, r#"{"op":"configList"}"#);
+        let keys = list["info"]["entries"].as_array().unwrap();
+        assert!(!keys.iter().any(|e| e["key"] == "pull.rebase"));
+
+        let change = |json: &str| {
+            run(
+                &repo,
+                &format!(r#"{{"op":"changeRemote","change":{json}}}"#),
+            )
+        };
+        assert_eq!(
+            change(r#"{"kind":"add","name":"up","url":"https://example.com/a.git"}"#)["ok"],
+            true
+        );
+        assert_eq!(
+            change(r#"{"kind":"rename","from":"up","to":"origin"}"#)["ok"],
+            true
+        );
+        assert_eq!(
+            change(r#"{"kind":"setUrl","name":"origin","url":"git@example.com:a.git"}"#)["ok"],
+            true
+        );
+        let remotes = run(&repo, r#"{"op":"remotes"}"#);
+        assert_eq!(remotes["info"]["remotes"][0]["name"], "origin");
+        assert_eq!(
+            remotes["info"]["remotes"][0]["fetchUrl"],
+            "git@example.com:a.git"
+        );
+        assert_eq!(change(r#"{"kind":"remove","name":"origin"}"#)["ok"], true);
+        assert_eq!(
+            run(&repo, r#"{"op":"remotes"}"#)["info"]["remotes"]
+                .as_array()
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let r = run(
+            &repo,
+            r#"{"op":"saveIgnoreFiles","gitignore":"target/\n","exclude":"*.local\n"}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
+            "target/\n"
+        );
+        let files = run(&repo, r#"{"op":"ignoreFiles"}"#);
+        assert_eq!(files["info"]["exclude"], "*.local\n");
     }
 
     #[test]

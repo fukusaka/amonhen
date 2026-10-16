@@ -11,9 +11,9 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use amonhen_model::{
-    CommitGraph, CommitText, ConnectionState, FileChange, GitBackend, HeadState, Oid, Operations,
-    Outcome, PullMode, RawCommit, Refs, RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence,
-    Status,
+    CommitGraph, CommitText, ConfigEntry, ConnectionState, FileChange, GitBackend, HeadState, Oid,
+    Operations, Outcome, PullMode, RawCommit, Refs, RemoteChange, RemoteEntry, RepoFiles,
+    RepoPaths, ResetMode, Result, Root, Sequence, Status,
 };
 use serde::de::DeserializeOwned;
 
@@ -737,6 +737,22 @@ impl Operations for RemoteOperations {
 
     fn update_submodules(&self, paths: &[&str]) -> Result<()> {
         self.op(Op::UpdateSubmodules(owned(paths)))
+    }
+
+    fn config_list(&self) -> Result<Vec<ConfigEntry>> {
+        self.op(Op::ConfigList)
+    }
+
+    fn config_set(&self, key: &str, value: Option<&str>) -> Result<()> {
+        self.op(Op::ConfigSet(key.to_owned(), value.map(str::to_owned)))
+    }
+
+    fn remotes(&self) -> Result<Vec<RemoteEntry>> {
+        self.op(Op::Remotes)
+    }
+
+    fn change_remote(&self, change: &RemoteChange) -> Result<()> {
+        self.op(Op::ChangeRemote(change.clone()))
     }
 }
 
