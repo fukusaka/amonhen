@@ -1,0 +1,618 @@
+{
+  "name": "amonhen",
+  "displayName": "Amon Hen",
+  "description": "VSCode 上で快適に Git を操作するための自分用の拡張",
+  "version": "0.0.2",
+  "publisher": "fukusaka",
+  "private": true,
+  "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/fukusaka/vscode-amonhen.git"
+  },
+  "engines": {
+    "vscode": "^1.120.0"
+  },
+  "categories": [
+    "SCM Providers"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "main": "./dist/extension.js",
+  "amonhenEngine": "snapshot",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "amonhen",
+          "title": "Amon Hen",
+          "icon": "media/amonhen.svg"
+        }
+      ]
+    },
+    "views": {
+      "amonhen": [
+        {
+          "id": "amonhen.sidebar",
+          "name": "Amon Hen"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Amon Hen",
+      "properties": {
+        "amonhen.daemon.enabled": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Amon Hen のエンジン（スタンドアロン版と共通。拡張に同梱）の共有の daemon で、History・差分・操作を行う（アプリ・CLI と History・検索の索引を共有し、Undo の記録も共通）。切ると git 実行層だけで動く。このホストの OS と CPU 向けのエンジンがなければ、設定に関わらず git 実行層で動く",
+          "scope": "machine"
+        },
+        "amonhen.daemon.path": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "同梱のものの代わりに使うエンジン（`amonhen`）の場所。空なら同梱のものを `~/.local/share/amonhen` に置いて使う",
+          "scope": "machine"
+        }
+      }
+    },
+    "viewsWelcome": [
+      {
+        "view": "amonhen.sidebar",
+        "contents": "Git リポジトリが見つかりません。\n[フォルダーを開く](command:vscode.openFolder)",
+        "when": "!amonhen.hasRepository"
+      }
+    ],
+    "commands": [
+      {
+        "command": "amonhen.refresh",
+        "title": "Refresh",
+        "category": "Amon Hen",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "amonhen.selectRepository",
+        "title": "Select Repository",
+        "category": "Amon Hen",
+        "icon": "$(repo)"
+      },
+      {
+        "command": "amonhen.undo",
+        "title": "Undo",
+        "category": "Amon Hen",
+        "icon": "$(discard)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.fetch",
+        "title": "Fetch",
+        "category": "Amon Hen",
+        "icon": "$(cloud-download)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.showHistory",
+        "title": "Show History",
+        "category": "Amon Hen",
+        "icon": "$(history)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.continueSequence",
+        "title": "Continue",
+        "category": "Amon Hen",
+        "icon": "$(debug-continue)"
+      },
+      {
+        "command": "amonhen.abortSequence",
+        "title": "Abort",
+        "category": "Amon Hen",
+        "icon": "$(close)"
+      },
+      {
+        "command": "amonhen.history.reword",
+        "title": "Reword…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.squash",
+        "title": "Squash into Parent…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.fixup",
+        "title": "Fixup into Parent",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.edit",
+        "title": "Edit (Stop Here)",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.split",
+        "title": "Split…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.drop",
+        "title": "Drop…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.moveUp",
+        "title": "Move Up",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.moveDown",
+        "title": "Move Down",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.copyId",
+        "title": "Copy Commit ID",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.skipSequence",
+        "title": "Skip",
+        "category": "Amon Hen",
+        "icon": "$(debug-step-over)"
+      },
+      {
+        "command": "amonhen.open",
+        "title": "Open Amon Hen",
+        "category": "Amon Hen",
+        "icon": "$(window)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.pull",
+        "title": "Pull",
+        "category": "Amon Hen",
+        "icon": "$(repo-pull)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.push",
+        "title": "Push",
+        "category": "Amon Hen",
+        "icon": "$(repo-push)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.forcePush",
+        "title": "Force Push",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.nav.checkout",
+        "title": "Checkout",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.nav.merge",
+        "title": "Merge into Current Branch",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.nav.rebase",
+        "title": "Rebase Current Branch onto This",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.nav.delete",
+        "title": "Delete Branch…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.showWorkingCopy",
+        "title": "Show Working Copy",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.showRef",
+        "title": "Show History of Ref",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.newBranch",
+        "title": "New Branch…",
+        "category": "Amon Hen",
+        "icon": "$(git-branch-create)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.newTag",
+        "title": "New Tag…",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.renameBranch",
+        "title": "Rename Branch…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stash",
+        "title": "Stash Changes…",
+        "category": "Amon Hen",
+        "icon": "$(add)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.stash.apply",
+        "title": "Apply Stash",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stash.pop",
+        "title": "Pop Stash",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stash.drop",
+        "title": "Drop Stash…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.stash.show",
+        "title": "Show Stash",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.cherryPick",
+        "title": "Cherry-pick onto Current Branch",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.revert",
+        "title": "Revert",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.submodule.update",
+        "title": "Update Submodule",
+        "category": "Amon Hen",
+        "icon": "$(sync)"
+      },
+      {
+        "command": "amonhen.submodule.open",
+        "title": "Open Submodule in New Window",
+        "category": "Amon Hen"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "amonhen.fetch",
+          "when": "view == amonhen.sidebar",
+          "group": "navigation@1"
+        },
+        {
+          "command": "amonhen.pull",
+          "when": "view == amonhen.sidebar",
+          "group": "navigation@2"
+        },
+        {
+          "command": "amonhen.push",
+          "when": "view == amonhen.sidebar",
+          "group": "navigation@3"
+        },
+        {
+          "command": "amonhen.undo",
+          "when": "view == amonhen.sidebar",
+          "group": "navigation@4"
+        },
+        {
+          "command": "amonhen.selectRepository",
+          "when": "view == amonhen.sidebar && amonhen.multipleRepositories",
+          "group": "navigation@5"
+        },
+        {
+          "command": "amonhen.open",
+          "when": "view == amonhen.sidebar",
+          "group": "1_view@1"
+        },
+        {
+          "command": "amonhen.refresh",
+          "when": "view == amonhen.sidebar",
+          "group": "1_view@2"
+        },
+        {
+          "command": "amonhen.forcePush",
+          "when": "view == amonhen.sidebar",
+          "group": "2_sync@1"
+        },
+        {
+          "command": "amonhen.newBranch",
+          "when": "view == amonhen.sidebar",
+          "group": "1_view@0"
+        },
+        {
+          "command": "amonhen.stash",
+          "when": "view == amonhen.sidebar",
+          "group": "1_view@1"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "amonhen.continueSequence",
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\./",
+          "group": "inline@1"
+        },
+        {
+          "command": "amonhen.abortSequence",
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\./",
+          "group": "inline@3"
+        },
+        {
+          "command": "amonhen.skipSequence",
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\.(rebase|cherry-pick|revert)$/",
+          "group": "inline@2"
+        },
+        {
+          "command": "amonhen.nav.checkout",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|remoteBranch)$/",
+          "group": "1_ref@1"
+        },
+        {
+          "command": "amonhen.nav.merge",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|remoteBranch|tag)$/",
+          "group": "2_ref@1"
+        },
+        {
+          "command": "amonhen.nav.rebase",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|remoteBranch|tag)$/",
+          "group": "2_ref@2"
+        },
+        {
+          "command": "amonhen.nav.delete",
+          "when": "view == amonhen.sidebar && viewItem == branch",
+          "group": "3_ref@1"
+        },
+        {
+          "command": "amonhen.newBranch",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current|remoteBranch|tag)$/",
+          "group": "4_create@1"
+        },
+        {
+          "command": "amonhen.newTag",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current|remoteBranch|tag)$/",
+          "group": "4_create@2"
+        },
+        {
+          "command": "amonhen.renameBranch",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current)$/",
+          "group": "3_ref@0"
+        },
+        {
+          "command": "amonhen.stash",
+          "when": "view == amonhen.sidebar && viewItem == section.stashes",
+          "group": "inline"
+        },
+        {
+          "command": "amonhen.stash.apply",
+          "when": "view == amonhen.sidebar && viewItem == stash",
+          "group": "1_stash@1"
+        },
+        {
+          "command": "amonhen.stash.pop",
+          "when": "view == amonhen.sidebar && viewItem == stash",
+          "group": "1_stash@2"
+        },
+        {
+          "command": "amonhen.stash.drop",
+          "when": "view == amonhen.sidebar && viewItem == stash",
+          "group": "2_stash@1"
+        },
+        {
+          "command": "amonhen.submodule.update",
+          "when": "view == amonhen.sidebar && viewItem == submodule",
+          "group": "inline"
+        },
+        {
+          "command": "amonhen.submodule.update",
+          "when": "view == amonhen.sidebar && viewItem == submodule",
+          "group": "1_submodule@1"
+        },
+        {
+          "command": "amonhen.submodule.open",
+          "when": "view == amonhen.sidebar && viewItem == submodule",
+          "group": "1_submodule@2"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "amonhen.continueSequence",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.abortSequence",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.history.reword",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.squash",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.fixup",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.edit",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.split",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.drop",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.moveUp",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.moveDown",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.copyId",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.skipSequence",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.nav.checkout",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.nav.merge",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.nav.rebase",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.nav.delete",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.showRef",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.renameBranch",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.apply",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.pop",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.drop",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.stash.show",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.cherryPick",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.revert",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodule.update",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.submodule.open",
+          "when": "false"
+        }
+      ],
+      "webview/context": [
+        {
+          "command": "amonhen.history.reword",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitEditable",
+          "group": "1_message@1"
+        },
+        {
+          "command": "amonhen.history.squash",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitCanSquash",
+          "group": "1_message@2"
+        },
+        {
+          "command": "amonhen.history.fixup",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitCanSquash",
+          "group": "1_message@3"
+        },
+        {
+          "command": "amonhen.history.edit",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitEditable",
+          "group": "2_rewrite@1"
+        },
+        {
+          "command": "amonhen.history.split",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitEditable",
+          "group": "2_rewrite@2"
+        },
+        {
+          "command": "amonhen.history.drop",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitEditable",
+          "group": "2_rewrite@3"
+        },
+        {
+          "command": "amonhen.history.moveUp",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitEditable",
+          "group": "3_move@1"
+        },
+        {
+          "command": "amonhen.history.moveDown",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && commitEditable",
+          "group": "3_move@2"
+        },
+        {
+          "command": "amonhen.history.copyId",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "group": "9_copy@1"
+        },
+        {
+          "command": "amonhen.newBranch",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "group": "8_create@1"
+        },
+        {
+          "command": "amonhen.newTag",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "group": "8_create@2"
+        },
+        {
+          "command": "amonhen.history.cherryPick",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit' && !commitEditable",
+          "group": "5_apply@1"
+        },
+        {
+          "command": "amonhen.history.revert",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "group": "5_apply@2"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "build": "node esbuild.mjs",
+    "watch": "node esbuild.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "package": "vsce package --skip-license",
+    "vscode:prepublish": "npm run typecheck && node esbuild.mjs --production"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/vscode": "~1.120.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^7.0.2"
+  }
+}

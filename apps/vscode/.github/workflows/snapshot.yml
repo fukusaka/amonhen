@@ -1,0 +1,58 @@
+name: snapshot
+
+# main への push のたびに .vsix を作り、`snapshot` という pre-release を置き換える
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: snapshot
+  cancel-in-progress: true
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # バージョンの計算に、前回のリリースタグからのコミット数を使う
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Fetch the engine
+        # スタンドアロン版のエンジンを同梱する。リリースは非公開のリポジトリなので、読める鍵（fine-grained の PAT。
+        # amonhen-standalone の Contents を読める）を AMONHEN_STANDALONE_TOKEN に置く。なければ同梱せずに作る。
+        env:
+          GH_TOKEN: ${{ secrets.AMONHEN_STANDALONE_TOKEN }}
+        run: |
+          if [ -n "$GH_TOKEN" ]; then
+            scripts/fetch-engine.sh snapshot
+          else
+            echo "::warning::AMONHEN_STANDALONE_TOKEN がないので、エンジンを同梱しません（拡張は git 実行層だけで動く）"
+          fi
+      - name: Package
+        id: package
+        run: |
+          version=$(node scripts/snapshot-version.mjs)
+          npm pkg set version="$version"
+          npx @vscode/vsce package --skip-license --out "amonhen-$version.vsix"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Replace the snapshot release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.package.outputs.version }}
+        run: |
+          gh release delete snapshot --yes --cleanup-tag || true
+          gh release create snapshot amonhen-*.vsix \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Snapshot $VERSION" \
+            --notes "main の最新（$GITHUB_SHA）から自動で作った版。"
