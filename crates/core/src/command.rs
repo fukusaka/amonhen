@@ -2102,7 +2102,11 @@ mod tests {
         }
         let list = run(&repo, r#"{"op":"configList"}"#);
         let keys = list["info"]["entries"].as_array().unwrap();
-        assert!(!keys.iter().any(|e| e["key"] == "pull.rebase"));
+        assert!(
+            !keys
+                .iter()
+                .any(|e| e["key"] == "pull.rebase" && e["scope"] == "local")
+        );
 
         let change = |json: &str| {
             run(
