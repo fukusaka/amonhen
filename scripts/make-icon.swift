@@ -52,7 +52,7 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
         return CGPoint(x: -r * sin(a), y: r * cos(a))
     }
     let polaris = CGPoint(x: 512, y: 300)
-    let dubheAt = CGPoint(x: 330, y: 330)
+    let dubheAt = CGPoint(x: 287, y: 427)
     let pole = project(2.530, 89.26), dubhe = project(dipper[0].ra, dipper[0].dec)
     let from = CGPoint(x: dubhe.x - pole.x, y: dubhe.y - pole.y)
     let to = CGPoint(x: dubheAt.x - polaris.x, y: dubheAt.y - polaris.y)
