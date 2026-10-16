@@ -189,6 +189,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     var head: Data?
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
     var onSelectCommit: ((Data?) -> Void)?
+    /// 複数の行を選んだ（⇧・⌘ クリック）。まとめた差分を見せる。
+    var onSelectRows: (([Int], History) -> Void)?
 
     init(repository: Repository, renderer: GraphRenderer, text: TextRenderer) {
         self.repository = repository
@@ -211,6 +213,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.intercellSpacing = NSSize(width: 6, height: 0)
         tableView.usesAlternatingRowBackgroundColors = false
         tableView.allowsTypeSelect = false
+        // ⇧・⌘ クリックで複数のコミットを選び、まとめた差分を見る。
+        tableView.allowsMultipleSelection = true
         tableView.style = .plain
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         graphColumn.title = ""
@@ -1022,6 +1026,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     func tableViewSelectionDidChange(_ notification: Notification) {
         redrawText()
         updateLineage()
+        let rows = tableView.selectedRowIndexes
+        if rows.count > 1, let history {
+            onSelectRows?(Array(rows), history)
+            return
+        }
         let row = tableView.selectedRow
         onSelectCommit?(row >= 0 ? history?.commitID(row: row) : nil)
     }

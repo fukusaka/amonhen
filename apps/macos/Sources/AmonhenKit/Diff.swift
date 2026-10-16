@@ -49,25 +49,33 @@ public final class CommitChanges: @unchecked Sendable {
     /// すべてのファイルの差分（全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読むので、裏のスレッドで呼ぶ。
     public func stacked() throws -> StackedDiff {
         guard let raw = amonhen_stacked_diff(repository.raw, raw) else { throw AmonhenError.last() }
-        return StackedDiff(raw: raw, changes: self)
+        return StackedDiff(raw: raw, owner: self)
     }
 }
 
-/// コミットのすべてのファイルの差分。畳むファイルを変えるたびに `view(collapsed:)` で表示を作り直す。
+/// コミット（や選んだ複数のコミット）のすべてのファイルの差分。畳むファイルを変えるたびに `view(collapsed:)` で
+/// 表示を作り直す。
 public final class StackedDiff: @unchecked Sendable {
     let raw: OpaquePointer
-    let changes: CommitChanges
+    let owner: AnyObject?
 
-    init(raw: OpaquePointer, changes: CommitChanges) {
+    init(raw: OpaquePointer, owner: AnyObject?) {
         self.raw = raw
-        self.changes = changes
+        self.owner = owner
     }
 
     deinit {
         amonhen_stacked_free(raw)
     }
 
-    public var items: [FileChangeItem] { changes.items }
+    public var count: Int { Int(amonhen_stacked_count(raw)) }
+
+    /// 各ファイルの見出し（ふつうはパス。とびとびに選んだコミットでは「パス — 短い ID」）。
+    public private(set) lazy var names: [String] = {
+        // すべて畳むと見出しの行だけになる。
+        let headers = view(collapsed: [Bool](repeating: true, count: count))
+        return (0..<headers.rowCount).map { headers.text(row: $0) }
+    }()
 
     /// 各ファイルの見出しの行（`AmonhenDiffRow_FILE`）に、畳まないファイルの差分の行を続けたもの。
     /// `collapsed[i]` が true のファイルは見出しだけ。
@@ -76,6 +84,28 @@ public final class StackedDiff: @unchecked Sendable {
             amonhen_stacked_view(self.raw, $0.baseAddress, UInt32($0.count), UInt8(AmonhenEncoding_Utf16.rawValue))!
         }
         return FileDiff(raw: raw, owner: self, view: amonhen_diff_view(raw), free: { amonhen_diff_free($0) })
+    }
+}
+
+/// History で選んだ複数のコミットの差分の見せ方（`History.selectionDiff`）。
+public enum SelectionKind: UInt8, Sendable {
+    /// first-parent でつながる範囲（一番古いものの親から一番新しいものまで）。
+    case range
+    /// つながっていない 2 つ（古いほうから新しいほうまで）。
+    case pair
+    /// とびとびの 3 つ以上（コミットごとの差分を、パス順に）。
+    case each
+}
+
+extension History {
+    /// 選んだ行（順不同）のコミットの、全ファイルの差分。裏のスレッドで呼ぶ。
+    public func selectionDiff(rows: [Int]) throws -> (SelectionKind, StackedDiff) {
+        var kind: UInt8 = 0
+        let raw = rows.map(UInt32.init).withUnsafeBufferPointer {
+            amonhen_selection_diff(repository.raw, self.raw, $0.baseAddress, UInt32($0.count), &kind)
+        }
+        guard let raw else { throw AmonhenError.last() }
+        return (SelectionKind(rawValue: kind) ?? .range, StackedDiff(raw: raw, owner: self))
     }
 }
 

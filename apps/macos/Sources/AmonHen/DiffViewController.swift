@@ -1317,7 +1317,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
                 diffView.show(nil, message: "変更なし")
                 onDiffShown?()
             } else if let stacked {
-                showStacked(stacked, commit: hex)
+                showStacked(stacked, key: hex)
                 FrameProfile.add("select: → diff shown", CACurrentMediaTime() - selectedAt)
                 onDiffShown?()
             } else {
@@ -1326,6 +1326,76 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
                 files.selectRowIndexes([0], byExtendingSelection: false)
             }
         }
+    }
+
+    // MARK: - 複数のコミット
+
+    /// History で複数のコミットを選んだ: まとめた差分（`History.selectionDiff`）を全ファイル並べて見せる。
+    /// 上の欄には、選んだコミットの一覧と、差分の取り方を出す。
+    func show(selection rows: [Int], in history: History) {
+        endReword()
+        request += 1
+        headerRequest += 1
+        let request = self.request
+        shownCommit = nil
+        commitHex = nil
+        info = nil
+        extras = nil
+        changes = nil
+        stacked = nil
+        files.reloadData()
+        renderSelectionHeader(rows: rows, history: history, kind: nil)
+        diffView.show(nil, message: "差分を読んでいます…")
+        let started = CACurrentMediaTime()
+        Task {
+            let result = await Task.detached(priority: .userInitiated) { try? history.selectionDiff(rows: rows) }.value
+            guard request == self.request else { return }
+            guard let (kind, stacked) = result else {
+                diffView.show(nil, message: "差分を読めませんでした")
+                return
+            }
+            NSLog("選んだ %d コミットの差分を %.0f ms で読んだ", rows.count, (CACurrentMediaTime() - started) * 1000)
+            self.stacked = stacked
+            files.reloadData()
+            renderSelectionHeader(rows: rows, history: history, kind: kind)
+            if stacked.count == 0 {
+                diffView.show(nil, message: "変更なし")
+                return
+            }
+            let ids = rows.sorted().compactMap { history.commitID(row: $0) }
+            showStacked(stacked, key: ids.map { $0.map { String(format: "%02x", $0) }.joined() }.joined(separator: ","))
+        }
+    }
+
+    /// 選んだコミットの数・差分の取り方・各コミットの 1 行。
+    private func renderSelectionHeader(rows: [Int], history: History, kind: SelectionKind?) {
+        let sorted = rows.sorted()
+        let text = NSMutableAttributedString()
+        let title: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
+        let note: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+        let mono: [NSAttributedString.Key: Any] = [
+            .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor,
+        ]
+        let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
+        text.append(NSAttributedString(string: "\(rows.count) コミットを選んでいます\n", attributes: title))
+        let explanation = switch kind {
+        case .range?: "続いているので、一番古いものの親から一番新しいものまでの差分（まとめて 1 つにしたのと同じ）"
+        case .pair?: "続いていない 2 つなので、古いほうから新しいほうまでの差分"
+        case .each?: "とびとびなので、コミットごとの差分をファイルごとに並べています（見出しはパスと短い ID）"
+        case nil: "差分を読んでいます…"
+        }
+        text.append(NSAttributedString(string: explanation + "\n\n", attributes: note))
+        for row in sorted {
+            guard let id = history.commitID(row: row) else { continue }
+            let short = id.prefix(5).map { String(format: "%02x", $0) }.joined().prefix(8)
+            let chunk = try? history.chunk(rows: row..<row + 1)
+            text.append(NSAttributedString(string: "\(short)  ", attributes: mono))
+            text.append(NSAttributedString(string: chunk?.subject(row: row) ?? "", attributes: body))
+            text.append(NSAttributedString(string: "  — \(chunk?.authorName(row: row) ?? "")\n", attributes: note))
+        }
+        layoutPeopleStrip(visible: false)
+        header.textStorage?.setAttributedString(text)
+        scheduleHeaderFit()
     }
 
     // MARK: - 全ファイルを縦に並べた差分
@@ -1343,9 +1413,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     /// 1 ファイルの変更がこの行数を超えたら、最初は畳む。
     private static let collapseAbove = 1000
 
-    private func showStacked(_ stacked: StackedDiff, commit: String) {
-        let viewed = Self.viewed[commit] ?? []
-        collapsed = stacked.items.map { Self.isGenerated($0.path) || viewed.contains($0.path) }
+    /// Viewed を覚える鍵（コミット ID。複数のコミットを選んでいるときは、その ID を並べたもの）。
+    private var viewedKey: String?
+
+    private func showStacked(_ stacked: StackedDiff, key: String) {
+        viewedKey = key
+        let viewed = Self.viewed[key] ?? []
+        collapsed = stacked.names.map { Self.isGenerated($0) || viewed.contains($0) }
         var view = stacked.view(collapsed: collapsed)
         // 行数は差分を取って初めてわかるので、大きなファイルがあれば畳んで作り直す。
         let large: [Int] = view.withRows { all in
@@ -1361,7 +1435,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             for i in large { collapsed[i] = true }
             view = stacked.view(collapsed: collapsed)
         }
-        diffView.viewedFiles = Set(stacked.items.indices.filter { viewed.contains(stacked.items[$0].path) })
+        diffView.viewedFiles = Set(stacked.names.indices.filter { viewed.contains(stacked.names[$0]) })
         FrameProfile.measure("select: diff draw") { diffView.show(view) }
         syncingSelection = true
         files.selectRowIndexes([0], byExtendingSelection: false)
@@ -1384,14 +1458,14 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     /// 見たことにしたら畳み、戻したら開く（GitHub と同じ）。
     private func toggleViewed(_ file: Int) {
-        guard let stacked, let commit = commitHex ?? info?.oid, file < stacked.items.count else { return }
-        let path = stacked.items[file].path
+        guard let stacked, let commit = viewedKey, file < stacked.names.count else { return }
+        let path = stacked.names[file]
         var set = Self.viewed[commit] ?? []
         let nowViewed = set.insert(path).inserted
         if !nowViewed { set.remove(path) }
         Self.viewed[commit] = set
         collapsed[file] = nowViewed
-        diffView.viewedFiles = Set(stacked.items.indices.filter { set.contains(stacked.items[$0].path) })
+        diffView.viewedFiles = Set(stacked.names.indices.filter { set.contains(stacked.names[$0]) })
         reshowStacked(keeping: file)
     }
 
@@ -1548,7 +1622,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        changes?.items.count ?? 0
+        // 複数のコミットを選んでいるときは、全ファイルの差分の見出しを並べる。
+        changes?.items.count ?? stacked?.names.count ?? 0
     }
 
     private func showFileDiff(_ diff: FileDiff?) {
@@ -1571,8 +1646,14 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let item = changes?.items[row] else { return nil }
         let cell = tableView.makeView(withIdentifier: .init("file"), owner: nil) as? FileCell ?? FileCell()
+        guard let item = changes?.items[row] else {
+            guard let name = stacked?.names[row] else { return nil }
+            cell.path.stringValue = name
+            cell.path.toolTip = name
+            cell.show(stat: nil)
+            return cell
+        }
         let field = cell.path
         let mark = switch item.kind {
         case .added: "A"
@@ -1588,13 +1669,14 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
-        guard let changes, files.selectedRow >= 0 else { return }
+        guard files.selectedRow >= 0 else { return }
         let index = files.selectedRow
         // 全ファイルを並べているなら、そのファイルの見出しまでスクロールする。
         if stacked != nil {
             if !syncingSelection { diffView.scrollToFile(index) }
             return
         }
+        guard let changes else { return }
         request += 1
         let request = self.request
         if index == 0, let diff = preloadedDiff {

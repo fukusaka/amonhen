@@ -114,6 +114,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             self?.selectedCommit = commit
             self?.detail.show(commit: commit)
         }
+        history.onSelectRows = { [weak self] rows, history in
+            self?.selectedCommit = nil
+            self?.detail.show(selection: rows, in: history)
+        }
         history.onSearchChanged = { [weak detail] query in detail?.searchQuery = query }
         detail.onSearch = { [weak history] query in history?.search(query) }
         detail.onSelectRef = { [weak self] name in self?.selectRef(named: name) }
