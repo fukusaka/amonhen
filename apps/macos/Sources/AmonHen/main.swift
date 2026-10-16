@@ -1,14 +1,50 @@
 import AmonhenKit
 import AppKit
+import os
 
-/// daemon 越しに開くときに起動するエンジン（`amonhen`。CLI と daemon を兼ねる）。アプリの中（Contents/Helpers）に
-/// あればそれを、開発中はリポジトリの target/release のものを使う。`AMONHEN_DAEMON` で差し替えられる。
+/// daemon 越しに開くときに起動するエンジン（`amonhen`。CLI と daemon を兼ねる）。アプリの中（Contents/Helpers）の
+/// エンジンを起動時に置き場所（`~/.local/share/amonhen`）へ置き（`amonhen install`）、daemon はそのエンジンが選ぶもの
+/// （`amonhen engine`。置き場所の current が同じ通信の形ならそれ）で起動する。どの FE が先に起動しても同じ daemon に
+/// なる。開発中はリポジトリの target/release のものを使い、置き場所には置かない。`AMONHEN_DAEMON` で差し替えられる。
 enum Daemon {
     static var path: String {
         if let override = ProcessInfo.processInfo.environment["AMONHEN_DAEMON"] { return override }
-        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/amonhen").path
-        if FileManager.default.isExecutableFile(atPath: helper) { return helper }
+        if let resolved = resolved.withLock({ $0 }) { return resolved }
+        if let helper { return helper }
         return developmentFile("target/release/amonhen") ?? "amonhen"
+    }
+
+    /// アプリの中のエンジン（.app でなければ nil）。
+    private static var helper: String? {
+        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/amonhen").path
+        return FileManager.default.isExecutableFile(atPath: helper) ? helper : nil
+    }
+
+    /// `amonhen engine` が選んだもの。
+    private static let resolved = OSAllocatedUnfairLock<String?>(initialState: nil)
+
+    /// アプリの中のエンジンを置き場所に置き、daemon に使うエンジンを決める（起動時に裏で）。
+    static func prepare() {
+        guard ProcessInfo.processInfo.environment["AMONHEN_DAEMON"] == nil, let helper else { return }
+        DispatchQueue.global(qos: .utility).async {
+            _ = run(helper, ["install", "--quiet"])
+            if let engine = run(helper, ["engine"])?.trimmingCharacters(in: .whitespacesAndNewlines), !engine.isEmpty {
+                resolved.withLock { $0 = engine }
+            }
+        }
+    }
+
+    private static func run(_ program: String, _ arguments: [String]) -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: program)
+        process.arguments = arguments
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return nil }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
     }
 
     /// SSH 先に送り込むエンジン（`amonhen-<os>-<arch>`）の置き場所（アプリの Resources/engines、開発中は dist/engine）。
@@ -102,6 +138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if let image = NSImage(contentsOf: icon) { NSApp.applicationIconImage = image }
         }
         Repository.setFSMonitor(Settings.useFSMonitor)
+        Daemon.prepare()
         RepositoryManagerWindowController.shared.onOpen = { [weak self] path, newWindow in
             self?.open(path: path, inNewWindow: newWindow)
         }

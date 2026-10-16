@@ -11,9 +11,11 @@
 //!   amonhen undo [--list|--peek]        Amon Hen の操作ログで、直前の操作を戻す
 //!   amonhen merge-file [--all] <file>…  コンフリクトのあるファイルに Magic Merge をかける
 //!   amonhen clone <url> [<dir>]
+//!   amonhen install / engine           エンジンの置き場所（`install.rs`）
 //!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon
 
 mod graph;
+mod install;
 mod open;
 mod term;
 mod work;
@@ -42,6 +44,8 @@ usage: amonhen [<path>]
        amonhen merge-file [--all] [--check] <file>…
        amonhen clone <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
+       amonhen install [--quiet] [--no-link] [--force]   （エンジンを ~/.local/share/amonhen に置き、~/.local/bin/amonhen を張る）
+       amonhen engine   （共有の daemon として起動するエンジンの場所）
        amonhen --version
        amonhen --serve [<socket>] | --stdio <repo> | --socket   （daemon として動く。FE と SSH 先が使う）
 
@@ -83,6 +87,8 @@ fn main() -> ExitCode {
         Some("undo") => undo(&args[1..]),
         Some("merge-file") => merge_file(&args[1..]),
         Some("daemon") => daemon(&args[1..]),
+        Some("install") => install::install(&args[1..]),
+        Some("engine") => install::engine(&args[1..]),
         Some("run") => session::run(&args[1..]),
         Some("watch") => session::watch(&args[1..]),
         Some("clone") => session::clone(&args[1..]),
@@ -262,12 +268,13 @@ fn duration(secs: u64) -> String {
     }
 }
 
-/// 共有の daemon として起動するエンジン: `AMONHEN_DAEMON`、なければ自分（CLI と daemon は 1 つの実行ファイル）。
+/// 共有の daemon として起動するエンジン: `AMONHEN_DAEMON`、なければエンジンの置き場所の `current`（通信の形の版が
+/// 同じなら）か自分（`install::engine_for_daemon`）。
 fn daemon_program() -> Result<String> {
     if let Ok(p) = std::env::var("AMONHEN_DAEMON") {
         return Ok(p);
     }
-    Ok(std::env::current_exe()?.canonicalize()?.display().to_string())
+    Ok(install::engine_for_daemon()?.display().to_string())
 }
 
 /// アプリと同じキャッシュの置き場所（macOS）。ほかの OS では XDG の場所。

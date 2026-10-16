@@ -318,13 +318,16 @@ fn connect_ssh(location: &str) -> Result<Arc<amonhen_remote::Connection>> {
 }
 
 /// SSH 先に送るエンジン（`amonhen-<os>-<arch>`）の置き場所: `AMONHEN_ENGINES`、`.app` なら
-/// `Contents/Resources/engines`、開発中ならリポジトリの `dist/engine`（`scripts/build-engine.sh` が作る）。
+/// `Contents/Resources/engines`、エンジンの置き場所なら隣の `engines`、開発中ならリポジトリの `dist/engine`
+/// （`scripts/build-engine.sh` が作る）。
 fn daemons_dir(exe: &Path) -> PathBuf {
     if let Some(dir) = std::env::var_os("AMONHEN_ENGINES") {
         return PathBuf::from(dir);
     }
     let resolved = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
-    if let Some(bundled) = resolved.parent().map(|d| d.join("../Resources/engines")).filter(|d| d.is_dir()) {
+    // `.app` の中か、エンジンの置き場所（`amonhen install` が隣に `engines` を置く）。
+    let beside = ["../Resources/engines", "engines"].into_iter();
+    if let Some(bundled) = beside.filter_map(|p| resolved.parent().map(|d| d.join(p))).find(|d| d.is_dir()) {
         return bundled;
     }
     resolved

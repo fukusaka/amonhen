@@ -294,3 +294,33 @@ impl Watch {
         let _ = self.0.wait();
     }
 }
+
+/// `amonhen install` はエンジンを置き場所に置いて current と ~/.local/bin を張り、`amonhen engine` はそれを daemon に
+/// 使うエンジンとして出す。2 回目は置き直さない。
+#[cfg(unix)]
+#[test]
+fn installs_the_engine_and_picks_it_for_the_daemon() {
+    let home = tempfile::tempdir().unwrap();
+    let run = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_amonhen"))
+            .args(args)
+            .env("HOME", home.path())
+            .env_remove("XDG_DATA_HOME")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let first = run(&["install"]);
+    assert!(first.contains("置きました") && first.contains("current をこの版"), "{first}");
+    let data = home.path().join(".local/share/amonhen");
+    let current = data.join("current/amonhen");
+    assert!(current.is_file());
+    assert_eq!(std::fs::read_link(home.path().join(".local/bin/amonhen")).unwrap(), current);
+    let second = run(&["install"]);
+    assert!(!second.contains("置きました") && second.contains("current はこの版です"), "{second}");
+    assert_eq!(run(&["engine"]).trim(), current.display().to_string());
+    // 置いたエンジンは、CLI としても daemon としても動く。
+    let version = Command::new(home.path().join(".local/bin/amonhen")).arg("--version").output().unwrap();
+    assert!(String::from_utf8_lossy(&version.stdout).contains("(protocol "));
+}

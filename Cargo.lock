@@ -60,6 +60,7 @@ dependencies = [
  "amonhen-watch",
  "libc",
  "serde_json",
+ "sha1_smol",
  "tempfile",
 ]
 

@@ -25,10 +25,9 @@ for app in "$work"/app/*.app; do
     # 万一付いていても外す。
     xattr -dr com.apple.quarantine "$target" 2>/dev/null || true
     echo "installed $target ($(defaults read "$target/Contents/Info" CFBundleShortVersionString))"
-    # CLI（amonhen）を PATH に通す。正式版だけ。
-    if [ "$mode" = stable ] && [ -x "$target/Contents/Helpers/amonhen" ]; then
-        mkdir -p "$HOME/.local/bin"
-        ln -sf "$target/Contents/Helpers/amonhen" "$HOME/.local/bin/amonhen"
-        echo "linked ~/.local/bin/amonhen"
+    # エンジン（CLI と daemon）を置き場所（~/.local/share/amonhen）に置き、~/.local/bin/amonhen を張る。今の
+    # ものより新しいときだけ入れ替える（アプリも起動するたびに同じことをする）。
+    if [ -x "$target/Contents/Helpers/amonhen" ]; then
+        "$target/Contents/Helpers/amonhen" install
     fi
 done

@@ -378,6 +378,7 @@ daemon 越し（`cargo run --release -p amonhen-remote --example daemon_cost -- 
 
 - 転送量を減らした後（通信路の上の大きさ）: チャンク 502 KB → 13 KB、変わったファイルと最初の差分 127 KB → 56 KB、件名の検索 1.37 GB → 5 MB。History の初回は 47 MB（コミット ID はほとんど縮まない）で、以後は手元のキャッシュから差分だけ。
 - 圧縮は zstd ではなく LZ4（`lz4_flex`、Rust だけで書かれている）にした。zstd は C のコードを含み、全ターゲットの型検査と Linux 用の静的リンクで C コンパイラが要るため。
+- エンジンの置き場所はどのマシンでも同じ形にする: `${XDG_DATA_HOME:-~/.local/share}/amonhen/engine/<中身のハッシュ>/amonhen`（版ごとに並べて置け、隣の `engines` に SSH 先に送るほかの OS と CPU のものも置く）、`current` がいちばん新しい版を指し、`~/.local/bin/amonhen` が `current/amonhen` を指す。アプリ（起動するたびに裏で）・`scripts/install.sh`・tar.gz を展開した人は `amonhen install` で自分を置き、今の `current` より古くなければ `current` を向け直す（`0.1.0` < `0.1.1-snapshot.N` < `0.1.1`）。共有の daemon は `amonhen engine` が出すもの（`current` の通信の形の版が同じならそれ、違えば自分）で起動するので、どの FE が先に起動しても同じ daemon になる（`crates/cli/src/install.rs`）。開発中のアプリからは置かない。
 - SSH 先で動くのはエンジン（`amonhen`。CLI と daemon を兼ねる 1 つの実行ファイル）で、x86_64 と aarch64 の Linux 向けは musl で静的リンクしたもの（`scripts/build-engine.sh`、リンクは zig、5〜6 MB）。使う順は `AMONHEN_REMOTE_ENGINE` で指定したもの → SSH 先の `PATH` の `amonhen`（通信の形の版が合えば）→ 前に送ったもの → 送り込む（`AMONHEN_PUSH=0` で止める）。送る先は `~/.local/share/amonhen/engine/<中身のハッシュ>/amonhen`（手元の置き場所と同じ形）で、書いたら SSH 先で `sha1sum`・`shasum` で中身を確かめる。ほかの版は消さず（違う版の Amon Hen が同じ SSH 先を使っても取り合いにならない）、使うたびに `used` の印を更新し、30 日使われていないものだけを片付ける。使っているエンジンと用意のしかたは `amonhen daemon status` と Activity に出す（VSCode の Remote-SSH・Zed のリモート開発と同じ形）。
 
 構文の色付け（`cargo run --release -p amonhen-syntax --example highlight -- <file>`、linux のファイル）:
