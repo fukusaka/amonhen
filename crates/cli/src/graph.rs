@@ -176,6 +176,41 @@ pub fn render(
     Ok(out)
 }
 
+/// `rows` の行を JSON の配列に（`amonhen log --json`）。`lane`・`color` は FE が描くときのレーンと色の番号。
+pub fn json_rows(repo: &Repository, history: &HistorySnapshot, refs: &Refs, rows: &[u32]) -> amonhen_model::Result<serde_json::Value> {
+    let ids: Vec<Oid> = rows.iter().map(|&r| history.graph.ids()[r as usize]).collect();
+    let texts = repo.commit_texts(&ids)?;
+    let mut labels: HashMap<Oid, Vec<String>> = HashMap::new();
+    for e in &refs.entries {
+        if let (Some(target), RefKind::Local | RefKind::Remote | RefKind::Tag) = (e.target, e.kind) {
+            labels.entry(target).or_default().push(e.name.clone());
+        }
+    }
+    let nodes = history.layout.nodes();
+    let all = history.graph.ids();
+    Ok(serde_json::Value::Array(
+        rows.iter()
+            .zip(&ids)
+            .zip(&texts)
+            .map(|((&row, id), text)| {
+                let node = &nodes[row as usize];
+                serde_json::json!({
+                    "row": row,
+                    "id": id.to_string(),
+                    "parents": history.graph.parents(row as usize).iter().map(|&p| all[p as usize].to_string()).collect::<Vec<_>>(),
+                    "subject": String::from_utf8_lossy(text.subject()),
+                    "author": String::from_utf8_lossy(text.author_name()),
+                    "authorTime": text.author_time,
+                    "refs": labels.get(id).cloned().unwrap_or_default(),
+                    "lane": node.lane,
+                    "color": node.color,
+                    "folded": history.folded.get(row as usize).copied().unwrap_or(0),
+                })
+            })
+            .collect(),
+    ))
+}
+
 /// 表示する行の範囲の点と線と、レーンから列への対応。
 struct Graph<'a> {
     edges: Vec<&'a Edge>,

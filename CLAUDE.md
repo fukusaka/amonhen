@@ -25,7 +25,7 @@ Amon Hen のスタンドアロン版。徹底的な低遅延を最優先にし�
 - `crates/syntax`: tree-sitter による構文の色付け。文法が C なので、コアの `syntax` フィーチャーで切り離せる
 - `crates/remote`: daemon との通信（フレーム・要求の形）、手元の `RemoteBackend` と daemon の `Server`
 - `crates/daemon`: `amonhend --stdio <repo>`。SSH 先でリポジトリの git の操作を行う。`amonhend --serve` は手元に常駐する共有の daemon（Unix ドメインソケット。アプリ・CLI の `daemon:/path`・`daemon:ssh://host/path` がつなぐ。SSH 先は daemon が `--stdio` でつないで共有する）
-- `crates/cli`: `amonhen`（CLI）。アプリで開く・グラフ付きの log・undo・merge-file。UI なしでコアを使い、History はアプリと同じ永続キャッシュを使う。`.app` では `Contents/Helpers/amonhen`（`MacOS` には置けない。大文字小文字を区別しないので `AmonHen` を上書きする）
+- `crates/cli`: `amonhen`（CLI）。コアでできることはすべて CLI から使える（VSCode 拡張・ほかの FE の試金石）。アプリで開く・グラフ付きの log・status・diff・show・stage・discard・commit・refs・watch・run（コアの命令の JSON）・undo・merge-file。どれも `--json` あり。UI なしでコアを使い、History はアプリと同じ永続キャッシュを使う。`.app` では `Contents/Helpers/amonhen`（`MacOS` には置けない。大文字小文字を区別しないので `AmonHen` を上書きする）
 - `crates/ffi-c`: C ABI。`build.rs` が `include/amonhen.h` を生成する（コミットする）
 - `apps/macos`: SwiftPM のパッケージ。`AmonhenKit`（コアの Swift ラッパー）と `AmonHen`（AppKit のアプリ）
 

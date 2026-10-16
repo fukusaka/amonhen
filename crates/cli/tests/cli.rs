@@ -1,7 +1,7 @@
 //! `amonhen` を実際に起動して確かめる。
 
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 fn git(dir: &Path, args: &[&str]) {
     let ok = Command::new("git").current_dir(dir).args(args).status().unwrap().success();
@@ -86,4 +86,220 @@ fn undo_and_merge_file() {
 
     let (out, code) = amonhen(home.path(), &["log", "-C", "/"]);
     assert_eq!(code, 2, "{out}");
+}
+
+/// 3 つの開き方（手元で直接・`daemon:`・`ssh://`）で、同じ命令が同じように動く。CLI は VSCode 拡張やほかの FE の
+/// 試金石なので、daemon・SSH の難所（コアに任せる操作・共有メモリの差分・知らせ）を全部通す。
+#[cfg(unix)]
+#[test]
+fn works_the_same_directly_through_the_daemon_and_over_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["config", "user.name", "a"]);
+    git(&repo, &["config", "user.email", "a@example.com"]);
+    std::fs::write(repo.join("f.txt"), "a\nb\nc\nd\ne\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "first"]);
+    let env = Env::new(tmp.path());
+    let repo = repo.canonicalize().unwrap();
+    let path = repo.to_str().unwrap().to_owned();
+    let locations = [path.clone(), format!("daemon:{path}"), format!("ssh://dev{path}")];
+    let mut shown = Vec::new();
+    for (i, at) in locations.iter().enumerate() {
+        let at = at.as_str();
+        if i > 0 {
+            std::fs::write(repo.join("f.txt"), "a\nb\nc\nd\ne\n").unwrap();
+            git(&repo, &["commit", "-q", "-am", &format!("reset {i}")]);
+        }
+        // 2 行目と 5 行目を変える。
+        std::fs::write(repo.join("f.txt"), "a\nB\nc\nd\nE\n").unwrap();
+        let status = env.json(&["status", "-C", at, "--json"]);
+        assert_eq!(status["entries"][0]["path"], "f.txt", "{at}: {status}");
+        assert_eq!(status["entries"][0]["worktree"], "M", "{at}: {status}");
+
+        // 行ごとに stage する（b → B だけ）。
+        let diff = env.json(&["diff", "-C", at, "--combined", "--json"]);
+        let rows = diff[0]["rows"].as_array().unwrap();
+        let picked: Vec<String> = rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r["text"] == "b" || r["text"] == "B")
+            .map(|(n, _)| n.to_string())
+            .collect();
+        assert_eq!(picked.len(), 2, "{at}: {diff}");
+        env.ok(&["stage", "-C", at, "--rows", &picked.join(","), "f.txt"]);
+        let staged = env.json(&["diff", "-C", at, "--staged", "--json"]);
+        let texts: Vec<&str> = staged[0]["rows"].as_array().unwrap().iter().filter(|r| r["kind"] != "context" && r["kind"] != "hunk").map(|r| r["text"].as_str().unwrap()).collect();
+        assert_eq!(texts, ["b", "B"], "{at}: {staged}");
+
+        // コミットし、残りの変更は捨てて、Undo で戻す。
+        let message = format!("change {i}");
+        let committed = env.json(&["commit", "-C", at, "-m", &message, "--json"]);
+        assert_eq!(committed["ok"], true, "{at}: {committed}");
+        env.ok(&["discard", "-C", at, "f.txt"]);
+        assert_eq!(std::fs::read_to_string(repo.join("f.txt")).unwrap(), "a\nB\nc\nd\ne\n", "{at}");
+        env.ok(&["undo", "-C", at]);
+        assert_eq!(std::fs::read_to_string(repo.join("f.txt")).unwrap(), "a\nB\nc\nd\nE\n", "{at}");
+        git(&repo, &["checkout", "--", "f.txt"]);
+
+        let log = env.json(&["log", "-C", at, "--json", "-n", "1"]);
+        assert_eq!(log[0]["subject"], message.as_str(), "{at}: {log}");
+        assert_eq!(log[0]["refs"][0], "main", "{at}: {log}");
+        shown.push(env.json(&["show", "-C", at, "--json", "HEAD~1"]));
+        let refs = env.json(&["refs", "-C", at, "--json"]);
+        assert_eq!(refs["headBranch"], "main", "{at}: {refs}");
+
+        // 命令の窓口: 1 行 1 命令で、1 行ずつ答える。
+        let branch = format!("b{i}");
+        let replies = env.stdin(
+            &["run", "-C", at],
+            &format!("{{\"op\":\"undoPeek\"}}\n{{\"op\":\"createBranch\",\"name\":\"{branch}\",\"start\":\"main\",\"checkout\":false}}\n{{\"op\":\"nope\"}}\n"),
+        );
+        let replies: Vec<serde_json::Value> = replies.lines().map(|l| serde_json::from_str(l).unwrap()).collect();
+        assert_eq!(replies.len(), 3, "{at}: {replies:?}");
+        assert_eq!(replies[1]["ok"], true, "{at}: {replies:?}");
+        assert_eq!(replies[2]["ok"], false, "{at}: {replies:?}");
+
+        // 知らせ: つないだまま、作業ツリーとブランチの変化を受ける。
+        let mut watch = env.spawn(&["watch", "-C", at, "--json"]);
+        let lines = watch.lines();
+        assert!(lines.recv_timeout(std::time::Duration::from_secs(20)).is_ok(), "{at}: 最初の様子が出ない");
+        std::fs::write(repo.join("f.txt"), "changed\n").unwrap();
+        watch.expect(&lines, "worktree", at);
+        git(&repo, &["checkout", "--", "f.txt"]);
+        git(&repo, &["branch", &format!("w{i}")]);
+        watch.expect(&lines, "refs", at);
+        watch.stop();
+    }
+    // どの開き方でも、同じコミットは同じに見える。
+    assert_eq!(shown[1]["diffs"], shown[2]["diffs"].clone());
+    assert_eq!(shown[1]["changes"], shown[2]["changes"]);
+}
+
+/// 試験の中だけで動く環境（ホーム・共有の daemon のソケット・偽の ssh）。
+struct Env {
+    home: std::path::PathBuf,
+    socket_dir: std::path::PathBuf,
+    ssh: std::path::PathBuf,
+    daemons: std::path::PathBuf,
+    daemon: std::path::PathBuf,
+}
+
+impl Env {
+    fn new(dir: &Path) -> Self {
+        let home = dir.join("home");
+        let remote_home = dir.join("remote-home");
+        let socket_dir = dir.join("s");
+        let daemons = dir.join("daemons");
+        for d in [&home, &remote_home, &socket_dir, &daemons] {
+            std::fs::create_dir(d).unwrap();
+        }
+        let daemon = amonhend();
+        std::fs::copy(&daemon, daemons.join(format!("amonhend-{}", amonhen_remote::ssh::local_platform()))).unwrap();
+        let ssh = dir.join("fake-ssh");
+        // ssh の代わり: 指定を読み飛ばし、ホスト名を捨て、SSH 先のホームで命令を実行する。
+        std::fs::write(
+            &ssh,
+            format!(
+                "#!/bin/sh\nwhile [ $# -gt 0 ]; do\n    case \"$1\" in\n        -T) shift ;;\n        -o|-p) shift 2 ;;\n        *) break ;;\n    esac\ndone\nshift\nHOME='{}' exec sh -c \"$*\"\n",
+                remote_home.display()
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Self { home, socket_dir, ssh, daemons, daemon }
+    }
+
+    fn command(&self, args: &[&str]) -> Command {
+        let mut c = Command::new(env!("CARGO_BIN_EXE_amonhen"));
+        c.args(args)
+            .env("HOME", &self.home)
+            .env("AMONHEN_DAEMON_DIR", &self.socket_dir)
+            .env("AMONHEN_DAEMON", &self.daemon)
+            .env("AMONHEN_SSH", &self.ssh)
+            .env("AMONHEN_DAEMONS", &self.daemons);
+        c
+    }
+
+    fn ok(&self, args: &[&str]) -> String {
+        let out = self.command(args).output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{args:?}: {text}");
+        text
+    }
+
+    fn json(&self, args: &[&str]) -> serde_json::Value {
+        let text = self.ok(args);
+        serde_json::from_str(&text).unwrap_or_else(|e| panic!("{args:?}: {e}: {text}"))
+    }
+
+    fn stdin(&self, args: &[&str], input: &str) -> String {
+        use std::io::Write;
+        let mut child = self.command(args).stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+        child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "{args:?}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    fn spawn(&self, args: &[&str]) -> Watch {
+        Watch(self.command(args).stdout(Stdio::piped()).spawn().unwrap())
+    }
+}
+
+impl Drop for Env {
+    /// 試験が失敗しても、試験の共有の daemon を残さない。
+    fn drop(&mut self) {
+        let _ = self.command(&["daemon", "stop"]).output();
+    }
+}
+
+struct Watch(std::process::Child);
+
+impl Watch {
+    /// 出力を 1 行ずつ受け取る。
+    fn lines(&mut self) -> std::sync::mpsc::Receiver<String> {
+        use std::io::BufRead;
+        let (tx, rx) = std::sync::mpsc::channel();
+        let stdout = self.0.stdout.take().unwrap();
+        std::thread::spawn(move || {
+            for line in std::io::BufReader::new(stdout).lines().map_while(Result::ok) {
+                let _ = tx.send(line);
+            }
+        });
+        rx
+    }
+
+    /// `change` の知らせを受けるまで待つ。
+    fn expect(&self, lines: &std::sync::mpsc::Receiver<String>, change: &str, at: &str) {
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_secs(20) {
+            if let Ok(line) = lines.recv_timeout(std::time::Duration::from_secs(1))
+                && line.contains(&format!("\"{change}\""))
+            {
+                return;
+            }
+        }
+        panic!("{at}: {change} の知らせが来ない");
+    }
+
+    fn stop(mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+/// `amonhend`（この CLI の隣。なければ作る）。
+fn amonhend() -> std::path::PathBuf {
+    let exe = Path::new(env!("CARGO_BIN_EXE_amonhen"));
+    let daemon = exe.with_file_name("amonhend");
+    if !daemon.exists() {
+        let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".to_owned());
+        let ok = Command::new(cargo).args(["build", "-p", "amonhen-daemon"]).status().unwrap().success();
+        assert!(ok, "amonhend を作れない");
+    }
+    daemon
 }

@@ -1,15 +1,23 @@
-//! `amonhen`: Amon Hen のコアを端末から使う。UI は起動しない（`open` だけはアプリに渡す）。
+//! `amonhen`: Amon Hen のコアを端末から使う。UI は起動しない（`open` だけはアプリに渡す）。コアでできることは、
+//! ここからもすべて使える（VSCode 拡張やほかの FE が通る道を、先に通して確かめる）。
 //!
 //!   amonhen [<path>]                    リポジトリを Amon Hen で開く（`amonhen open` と同じ）
-//!   amonhen open [<path>|ssh://…]       同上。SSH 先の場所も渡せる
 //!   amonhen log [options] [<query>…]    グラフ付きの履歴
+//!   amonhen status / diff / show        Working Copy とコミットの中身
+//!   amonhen stage / unstage / discard / commit   Working Copy の操作（行ごとにも）
+//!   amonhen refs                        ブランチ・タグ・リモート・stash
+//!   amonhen run [<json>…]               コアの命令をそのまま（なければ標準入力の 1 行 1 命令）
+//!   amonhen watch                       変化の知らせを受け続ける
 //!   amonhen undo [--list|--peek]        Amon Hen の操作ログで、直前の操作を戻す
 //!   amonhen merge-file [--all] <file>…  コンフリクトのあるファイルに Magic Merge をかける
-//!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon の様子・起動・停止・History の作り直し
+//!   amonhen clone <url> [<dir>]
+//!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon
 
 mod graph;
 mod open;
 mod term;
+mod work;
+mod session;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -18,16 +26,34 @@ use amonhen_backend_gix::GixBackend;
 use amonhen_core::Repository;
 use amonhen_model::Oid;
 
-const USAGE: &str = "\
+pub(crate) const USAGE: &str = "\
 usage: amonhen [<path>]
        amonhen open [<path> | ssh://host/path] [--daemon] [--snapshot]
-       amonhen log [-C <path> | -C ssh://host/path] [-n <count> | --all] [--fold] [--branch <name>]… [--no-graph] [--rebuild]
-                   [--color=auto|always|never] [<query>…]
-       amonhen undo [-C <path>] [--list | --peek]
+       amonhen log [-n <count> | --all] [--fold] [--branch <name>]… [--no-graph] [--rebuild] [--json] [<query>…]
+       amonhen status [--json]
+       amonhen diff [--staged | --combined] [--rows] [--stat] [--json] [<rev> [<rev>]] [[--] <path>…]
+       amonhen show [<rev>] [--stat] [--no-patch] [--rows] [--json]
+       amonhen stage [--rows <rows>] <path>… | --all
+       amonhen unstage [--rows <rows>] <path>… | --all
+       amonhen discard [--rows <rows>] <path>…
+       amonhen commit -m <message> [--amend]
+       amonhen refs [--json]
+       amonhen run [<json>…]
+       amonhen watch [--json]
+       amonhen undo [--list | --peek]
        amonhen merge-file [--all] [--check] <file>…
+       amonhen clone <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
 
+リポジトリを扱う命令は -C <path>・-C ssh://host/path（共有の daemon 越し）・-C daemon:<path> で場所を選ぶ。
+人が読む形のほかに --json で FE が読む形を出す（--color=auto|always|never も）。
 log の <query> は History の検索と同じ書き方（author:名前 path:パス contents:\"文字列\" など）。
+diff は既定で stage していない変更、--staged で stage 済み、--combined で HEAD からの変更に stage 済みの行の印
+（●）。<rev> を 1 つ渡すとそのコミットの差分、2 つ渡すと History で 2 つ選んだときと同じ差分（first-parent で
+つながっていれば、古いほうの親から新しいほうまで）。
+--rows は差分の行番号を出す。stage・unstage の --rows <rows>（3,5-9 の形）は diff --combined の行番号、discard
+の --rows は diff（stage していない差分）の行番号で、その行の変更だけを扱う。discard と commit は undo で戻せる。
+run の命令は {\"op\":\"checkout\",\"branch\":\"main\"} の形（コアの command.rs）。答えも 1 行の JSON。
 log --rebuild と daemon rebuild は、History のキャッシュを捨てて最初から作り直す（共有の daemon の分も）。
 merge-file は既定で間違えようのない規則だけをかける（--all ですべての規則）。コンフリクトが残れば終了コード 1
 なので、git の mergetool にも使える:
@@ -47,6 +73,17 @@ fn main() -> ExitCode {
         Some("undo") => undo(&args[1..]),
         Some("merge-file") => merge_file(&args[1..]),
         Some("daemon") => daemon(&args[1..]),
+        Some("run") => session::run(&args[1..]),
+        Some("watch") => session::watch(&args[1..]),
+        Some("clone") => session::clone(&args[1..]),
+        Some("status") => work::status(&args[1..]),
+        Some("diff") => work::diff(&args[1..]),
+        Some("show") => work::show(&args[1..]),
+        Some("stage" | "add") => work::stage(&args[1..], true),
+        Some("unstage") => work::stage(&args[1..], false),
+        Some("discard") => work::discard(&args[1..]),
+        Some("commit") => work::commit(&args[1..]),
+        Some("refs" | "branch") => work::refs(&args[1..]),
         // サブコマンドでなければ、開く場所とみなす（`amonhen .`）。
         Some(_) => open::run(&args),
     };
@@ -59,25 +96,25 @@ fn main() -> ExitCode {
     }
 }
 
-type Result<T> = amonhen_model::Result<T>;
+pub(crate) type Result<T> = amonhen_model::Result<T>;
 
 /// 引数を 1 つずつ読む（`-n 5`・`-n5`・`--color=never` の形）。
-struct Args<'a> {
-    rest: std::slice::Iter<'a, String>,
+pub(crate) struct Args<'a> {
+    pub(crate) rest: std::slice::Iter<'a, String>,
 }
 
 impl<'a> Args<'a> {
-    fn new(args: &'a [String]) -> Self {
+    pub(crate) fn new(args: &'a [String]) -> Self {
         Self { rest: args.iter() }
     }
 
-    fn value(&mut self, name: &str) -> Result<&'a str> {
+    pub(crate) fn value(&mut self, name: &str) -> Result<&'a str> {
         self.rest.next().map(String::as_str).ok_or_else(|| format!("{name} に値がありません").into())
     }
 }
 
 /// `path` を含むリポジトリの作業ツリーの一番上（`git rev-parse --show-toplevel`）。
-fn repository_root(path: &Path) -> Result<PathBuf> {
+pub(crate) fn repository_root(path: &Path) -> Result<PathBuf> {
     let out = std::process::Command::new("git")
         .arg("-C")
         .arg(path)
@@ -92,7 +129,7 @@ fn repository_root(path: &Path) -> Result<PathBuf> {
 /// リポジトリを開く。History はアプリと同じ永続キャッシュを使う（2 回目からはすぐ出る）。`daemon:/path` なら、
 /// 手元の共有の daemon（アプリと同じもの。いなければ起動する）越しに開く。`ssh://host/path` はいつも共有の daemon
 /// 越しに開く（daemon が SSH のつながりと History・検索の索引を持ち続けるので、2 回目からは速い）。
-fn open_repository(path: &Path) -> Result<Repository> {
+pub(crate) fn open_repository(path: &Path) -> Result<Repository> {
     let given = path.to_str().unwrap_or_default();
     let through_daemon = if given.starts_with("ssh://") { Some(format!("daemon:{given}")) } else { None };
     if let Some(location) = through_daemon.as_deref().or(Some(given).filter(|p| p.starts_with("daemon:"))) {
@@ -243,7 +280,7 @@ fn cache_dir() -> Option<PathBuf> {
 }
 
 /// コアの命令を JSON で実行し、結果を返す。失敗なら Err。
-fn command(repo: &Repository, json: serde_json::Value) -> Result<serde_json::Value> {
+pub(crate) fn command(repo: &Repository, json: serde_json::Value) -> Result<serde_json::Value> {
     let response: serde_json::Value = serde_json::from_str(&repo.run_json(&json.to_string()))?;
     if response["ok"] != true {
         return Err(response["error"].as_str().unwrap_or("失敗しました").to_owned().into());
@@ -262,6 +299,7 @@ fn log(args: &[String]) -> Result<ExitCode> {
     let mut color = term::stdout_is_tty();
     let mut query: Vec<String> = Vec::new();
     let mut rebuild = false;
+    let mut as_json = false;
     let mut a = Args::new(args);
     while let Some(arg) = a.rest.next() {
         match arg.as_str() {
@@ -270,6 +308,7 @@ fn log(args: &[String]) -> Result<ExitCode> {
             "--all" => count = Some(usize::MAX),
             "--fold" => fold = true,
             "--rebuild" => rebuild = true,
+            "--json" => as_json = true,
             "--branch" | "-b" => branches.push(a.value("--branch")?.to_owned()),
             "--no-graph" => show_graph = false,
             "--color" | "--color=always" => color = true,
@@ -317,6 +356,10 @@ fn log(args: &[String]) -> Result<ExitCode> {
         let found = repo.search_history(&history, &query.join(" "))?;
         found.into_iter().take(count).collect()
     };
+    if as_json {
+        println!("{}", graph::json_rows(&repo, &history, &refs.refs, &rows)?);
+        return Ok(ExitCode::SUCCESS);
+    }
     let style = graph::Style { color, width: term::width() };
     let out = graph::render(&repo, &history, &refs.refs, &rows, show_graph, &style)?;
     term::write(&out);
