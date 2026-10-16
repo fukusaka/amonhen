@@ -110,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             RepositoryManagerWindowController.shared.bookmarksChanged()
             QuickOpenPanel.shared.refreshIfVisible()
         }
+        Bookmarks.shared.watchScanRoots()
         // 引数でリポジトリを渡されたらそれを、なければ前回開いていたものを同じウィンドウ・タブの並びで開く。
         // どれもなければ一覧を出す。
         if let path = repositoryPath() {
@@ -212,6 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         windows.append(window)
         RepositoryList.touch(window.location)
+        if Settings.autoBookmark { Bookmarks.shared.register(window.location) }
         RepositoryManagerWindowController.shared.close()
     }
 

@@ -85,6 +85,12 @@ enum Settings {
         }
     }
 
+    /// 開いたリポジトリを、まだ一覧のどこにもなければブックマークに入れるか（既定は入れる）。
+    static var autoBookmark: Bool {
+        get { UserDefaults.standard.object(forKey: "autoBookmark") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "autoBookmark") }
+    }
+
     /// マージエディタを開いたときに、間違えようのないコンフリクトを Magic Merge で解くか（既定は解く）。
     static var autoMagicMerge: Bool {
         get { UserDefaults.standard.object(forKey: "autoMagicMerge") as? Bool ?? true }
@@ -136,6 +142,7 @@ final class SettingsModel {
         didSet { Settings.monospacedCommitMessage = monospacedCommitMessage }
     }
     var showAvatars = Settings.showAvatars { didSet { Settings.showAvatars = showAvatars } }
+    var autoBookmark = Settings.autoBookmark { didSet { Settings.autoBookmark = autoBookmark } }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var historyFileTree = Settings.historyFileTree { didSet { Settings.historyFileTree = historyFileTree } }
     var autoMagicMerge = Settings.autoMagicMerge { didSet { Settings.autoMagicMerge = autoMagicMerge } }
@@ -195,6 +202,10 @@ private struct GitSettings: View {
                     ForEach(PullMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 Note("ツールバーの Pull と ⌃⌘L で使う。Pull ボタンの ▾ や Repository > Pull With でその都度も選べる。")
+            }
+            Section("リポジトリの一覧") {
+                Toggle("開いたリポジトリをブックマークに入れる", isOn: $model.autoBookmark)
+                Note("スキャンするフォルダで見つかっているものは入れない。")
             }
             Section("マージ") {
                 Toggle("マージエディタを開いたときに、間違えようのないコンフリクトを解く", isOn: $model.autoMagicMerge)

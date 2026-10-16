@@ -57,7 +57,8 @@ enum RepositoryList {
 }
 
 /// リポジトリの一覧: お気に入り・最近開いたもの・ブックマーク（手で作ったグループ）・スキャンするフォルダ。
-/// 開く・加える・外す・グループに分ける。行には今のブランチ・変更の有無・上流との差を出す（見えている行だけ裏で読む）。
+/// 開く・加える・外す・グループに分ける・色ラベル・ドラッグで並べ替える・まとめて Fetch。行には今のブランチ・
+/// 変更の有無・上流との差を出す（見えている行だけ裏で読む）。
 final class RepositoryManagerWindowController: NSWindowController, NSOutlineViewDataSource, NSOutlineViewDelegate,
     NSSearchFieldDelegate, NSMenuDelegate
 {
@@ -147,6 +148,9 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         outline.doubleAction = #selector(openSelected)
         outline.autosaveName = "RepositorySections"
         outline.autosaveExpandedItems = true
+        outline.allowsMultipleSelection = true
+        outline.registerForDraggedTypes([Self.dragType])
+        outline.setDraggingSourceOperationMask(.move, forLocal: true)
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
@@ -173,12 +177,14 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         }
         let rescan = NSButton(title: "Rescan", target: self, action: #selector(rescanFolders))
         rescan.toolTip = "スキャンするフォルダを探し直す"
+        let fetch = NSButton(title: "Fetch", target: self, action: #selector(fetchSelected))
+        fetch.toolTip = "選んだリポジトリ（見出しを選べばその中のすべて）をまとめて fetch する"
         let remove = NSButton(title: "Remove", target: self, action: #selector(removeSelected))
         remove.toolTip = "一覧から外す（フォルダには触れない）"
         let open = NSButton(title: "Open", target: self, action: #selector(openSelected))
         open.keyEquivalent = "\r"
         open.toolTip = "⏎ タブで開く　⌘⏎ 新しいウィンドウで開く"
-        let buttons = NSStackView(views: [add, rescan, remove, scanning, NSView(), open])
+        let buttons = NSStackView(views: [add, rescan, fetch, remove, scanning, NSView(), open])
 
         for v in [filter, scroll, buttons] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
@@ -372,6 +378,82 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         }
     }
 
+    // MARK: - まとめて Fetch
+
+    /// 選んだ行のリポジトリ（見出しなら、その中のすべて）。
+    private var selectedPaths: [String] {
+        var seen = Set<String>()
+        return outline.selectedRowIndexes.flatMap { index -> [String] in
+            switch outline.item(atRow: index) {
+            case let row as Row: [row.path]
+            case let section as Section: section.paths
+            default: []
+            }
+        }.filter { seen.insert($0).inserted }
+    }
+
+    @objc private func fetchSelected() {
+        let paths = selectedPaths
+        guard !paths.isEmpty else { return NSSound.beep() }
+        Bookmarks.shared.fetch(paths)
+    }
+
+    // MARK: - ドラッグでの並べ替え
+
+    private static let dragType = NSPasteboard.PasteboardType("io.github.fukusaka.amonhen.repository")
+
+    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
+        // ブックマーク・グループ・お気に入りの行だけを動かせる（最近開いたもの・スキャンの結果は並びが決まっている）。
+        guard let row = item as? Row else { return nil }
+        switch row.section.kind {
+        case .bookmarks, .group, .favorites: break
+        default: return nil
+        }
+        let pb = NSPasteboardItem()
+        pb.setString(row.path, forType: Self.dragType)
+        return pb
+    }
+
+    func outlineView(
+        _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int
+    ) -> NSDragOperation {
+        guard info.draggingPasteboard.string(forType: Self.dragType) != nil else { return [] }
+        // 行の上に落としたら、その行の前に入れる。
+        if let row = item as? Row {
+            guard let section = row.section as Section?, let i = rows[ObjectIdentifier(section)]?.firstIndex(where: { $0 === row })
+            else { return [] }
+            outlineView.setDropItem(section, dropChildIndex: i)
+            return dropTarget(section) ? .move : []
+        }
+        guard let section = item as? Section, dropTarget(section) else { return [] }
+        return .move
+    }
+
+    /// 落とせる見出し（ブックマーク・手で作ったグループ・お気に入り）。
+    private func dropTarget(_ section: Section) -> Bool {
+        switch section.kind {
+        case .bookmarks, .group, .favorites: true
+        default: false
+        }
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        guard let path = info.draggingPasteboard.string(forType: Self.dragType), let section = item as? Section else { return false }
+        let list = rows[ObjectIdentifier(section)] ?? []
+        // 動かす行そのものは数えずに、落とした位置の次の行を探す。
+        let target = list.dropFirst(max(0, index == -1 ? list.count : index)).first { $0.path != path }?.path
+        switch section.kind {
+        case .bookmarks: Bookmarks.shared.reorder(path, before: target, group: nil)
+        case let .group(name): Bookmarks.shared.reorder(path, before: target, group: name)
+        case .favorites:
+            // お気に入りの中の並びも、ブックマークの並びで決まる。グループは変えない。
+            if Bookmarks.shared.bookmark(path)?.favorite != true { Bookmarks.shared.toggleFavorite(path) }
+            Bookmarks.shared.reorder(path, before: target, group: Bookmarks.shared.bookmark(path)?.group)
+        default: return false
+        }
+        return true
+    }
+
     // MARK: - 開く
 
     @objc private func openSelected() {
@@ -404,6 +486,11 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         let item = outline.item(atRow: outline.clickedRow)
         func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
         if let section = item as? Section {
+            if !section.paths.isEmpty {
+                let paths = section.paths
+                add("Fetch All（\(paths.count)）") { Bookmarks.shared.fetch(paths) }
+                menu.addItem(.separator())
+            }
             switch section.kind {
             case let .group(name):
                 add("Rename Group…") { [weak self] in
@@ -441,7 +528,23 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         add("Open in Tab") { [weak self] in self?.open(path, newWindow: false) }
         add("Open in New Window") { [weak self] in self?.open(path, newWindow: true) }
         menu.addItem(.separator())
+        let targets = outline.selectedRowIndexes.contains(outline.clickedRow) ? selectedPaths : [path]
+        add(targets.count > 1 ? "Fetch \(targets.count) Repositories" : "Fetch") { Bookmarks.shared.fetch(targets) }
+        menu.addItem(.separator())
         add(bookmark?.favorite == true ? "Remove from Favorites" : "Add to Favorites") { Bookmarks.shared.toggleFavorite(path) }
+        let colors = NSMenu(title: "Color Label")
+        let noColor = ClosureMenuItem(title: "なし") { for p in targets { Bookmarks.shared.setColor(p, nil) } }
+        noColor.state = bookmark?.color == nil ? .on : .off
+        colors.addItem(noColor)
+        for entry in Bookmarks.colors {
+            let item = ClosureMenuItem(title: entry.title) { for p in targets { Bookmarks.shared.setColor(p, entry.name) } }
+            item.image = RepositoryCell.dot(entry.color)
+            item.state = bookmark?.color == entry.name ? .on : .off
+            colors.addItem(item)
+        }
+        let colorItem = NSMenuItem(title: "Color Label", action: nil, keyEquivalent: "")
+        colorItem.submenu = colors
+        menu.addItem(colorItem)
         if bookmark == nil {
             add("Add to Bookmarks") { Bookmarks.shared.add(path) }
         }
@@ -576,8 +679,20 @@ final class RepositoryCell: NSTableCellView {
     func show(_ location: String) {
         let exists = RepositoryList.isRepository(location)
         let bookmark = Bookmarks.shared.bookmark(location)
-        name.stringValue = (bookmark?.favorite == true ? "★ " : "") + Bookmarks.shared.displayName(location)
-        name.textColor = exists ? .labelColor : .tertiaryLabelColor
+        let title = NSMutableAttributedString()
+        if let color = Bookmarks.color(named: bookmark?.color), let dot = Self.dot(color) {
+            let attachment = NSTextAttachment()
+            attachment.image = dot
+            attachment.bounds = NSRect(x: 0, y: 0, width: 10, height: 10)
+            title.append(NSAttributedString(attachment: attachment))
+            title.append(NSAttributedString(string: " "))
+        }
+        title.append(NSAttributedString(string: (bookmark?.favorite == true ? "★ " : "") + Bookmarks.shared.displayName(location)))
+        title.addAttributes(
+            [.font: NSFont.boldSystemFont(ofSize: NSFont.systemFontSize),
+             .foregroundColor: exists ? NSColor.labelColor : NSColor.tertiaryLabelColor],
+            range: NSRange(location: 0, length: title.length))
+        name.attributedStringValue = title
         path.stringValue = RepositoryLocation.isRemote(location) ? location
             : exists ? (location as NSString).abbreviatingWithTildeInPath : "見つかりません — \(location)"
         let peek = exists ? Bookmarks.shared.peek(location) : nil
@@ -588,13 +703,27 @@ final class RepositoryCell: NSTableCellView {
             if peek.ahead > 0 { parts.append("↑\(peek.ahead)") }
             if peek.behind > 0 { parts.append("↓\(peek.behind)") }
         }
+        let fetching = Bookmarks.shared.fetching.contains(location)
+        let fetchError = Bookmarks.shared.fetchErrors[location]
+        if fetching { parts.insert("Fetch 中…", at: 0) }
+        if fetchError != nil { parts.insert("Fetch に失敗", at: 0) }
         state.stringValue = parts.joined(separator: "  ")
-        state.textColor = peek?.changed ?? 0 > 0 ? .systemOrange : .secondaryLabelColor
+        state.textColor = fetchError != nil ? .systemRed : peek?.changed ?? 0 > 0 ? .systemOrange : .secondaryLabelColor
         toolTip = peek.map {
             [
                 $0.changed > 0 ? "変更のあるファイル \($0.changed) 個（untracked は数えない）" : "変更なし",
                 $0.hasUpstream ? "上流より \($0.ahead) 先、\($0.behind) 後ろ" : "上流なし",
             ].joined(separator: "\n")
+        }
+        if let fetchError { toolTip = "Fetch に失敗: \(fetchError)" + (toolTip.map { "\n" + $0 } ?? "") }
+    }
+
+    /// 色ラベルの丸。
+    static func dot(_ color: NSColor) -> NSImage? {
+        NSImage(size: NSSize(width: 10, height: 10), flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
+            return true
         }
     }
 }
