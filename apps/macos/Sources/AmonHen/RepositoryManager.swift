@@ -10,10 +10,14 @@ enum RepositoryList {
         set { UserDefaults.standard.set(newValue, forKey: key) }
     }
 
-    /// 開いているリポジトリ（次の起動で開き直す）。
-    static var open: [String] {
-        get { UserDefaults.standard.stringArray(forKey: "openRepositories") ?? [] }
-        set { UserDefaults.standard.set(newValue, forKey: "openRepositories") }
+    /// 開いているリポジトリ（次の起動で開き直す）。ウィンドウごとに、タブの順。前の版の記録（ウィンドウごとに
+    /// 1 つ）しかなければ、それぞれを 1 つのウィンドウにする。
+    static var openWindows: [[String]] {
+        get {
+            if let groups = UserDefaults.standard.array(forKey: "openWindows") as? [[String]] { return groups }
+            return (UserDefaults.standard.stringArray(forKey: "openRepositories") ?? []).map { [$0] }
+        }
+        set { UserDefaults.standard.set(newValue, forKey: "openWindows") }
     }
 
     /// 開いたリポジトリを先頭に置く。

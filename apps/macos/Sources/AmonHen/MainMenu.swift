@@ -49,12 +49,14 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
 
     private func fileMenu() -> NSMenu {
         let menu = NSMenu(title: "File")
+        menu.addItem(item("New Tab", #selector(newTab(_:)), "t", target: self))
+        menu.addItem(item("New Window", #selector(newWindow(_:)), "n", target: self))
         menu.addItem(item("Open…", #selector(openDocument(_:)), "o", target: self))
         let recent = NSMenu(title: "Open Recent")
         recent.delegate = self
         menu.addItem(submenu(recent))
         menu.addItem(.separator())
-        menu.addItem(item("Close Window", #selector(NSWindow.performClose(_:)), "w"))
+        menu.addItem(item("Close", #selector(NSWindow.performClose(_:)), "w"))
         return menu
     }
 
@@ -154,6 +156,12 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         let menu = NSMenu(title: "Window")
         menu.addItem(item("最小化", #selector(NSWindow.performMiniaturize(_:)), "m"))
         menu.addItem(item("拡大／縮小", #selector(NSWindow.performZoom(_:)), ""))
+        menu.addItem(.separator())
+        // タブ（複数のリポジトリを 1 つのウィンドウで扱う）。
+        menu.addItem(item("Show Next Tab", #selector(NSWindow.selectNextTab(_:)), "]", [.command, .shift]))
+        menu.addItem(item("Show Previous Tab", #selector(NSWindow.selectPreviousTab(_:)), "[", [.command, .shift]))
+        menu.addItem(item("Move Tab to New Window", #selector(NSWindow.moveTabToNewWindow(_:)), ""))
+        menu.addItem(item("Merge All Windows", #selector(NSWindow.mergeAllWindows(_:)), ""))
         menu.addItem(.separator())
         menu.addItem(item("Repositories", #selector(showRepositories(_:)), "r", [.command, .shift], target: self))
         menu.addItem(item("Settings", #selector(showSettings(_:)), "", target: self))

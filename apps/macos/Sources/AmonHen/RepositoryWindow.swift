@@ -45,13 +45,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// `debug` なら、起動時の引数（`--snapshot` など）の確認用の動きをする。
-    convenience init(location: String, debug: Bool) throws {
+    convenience init(location: String, debug: Bool, tabWith: NSWindow?) throws {
         let repository = try Self.openRepository(location: location, daemon: Daemon.path, daemons: Daemon.bundledDirectory)
-        try self.init(location: location, repository: repository, debug: debug)
+        try self.init(location: location, repository: repository, debug: debug, tabWith: tabWith)
     }
 
+    /// タブのまとまりの名前（同じ名前のウィンドウだけがタブでまとまる）。
+    static let tabbingIdentifier = "io.github.fukusaka.amonhen.repository"
+
+
     /// 開いた `repository` のウィンドウを作る。
-    init(location: String, repository: Repository, debug: Bool) throws {
+    /// `tabWith` があればそのウィンドウのタブに入れ、なければ新しいウィンドウにする。
+    init(location: String, repository: Repository, debug: Bool, tabWith: NSWindow?) throws {
         self.location = location
         self.repository = repository
         guard let renderer = GraphRenderer(), let text = TextRenderer(device: renderer.device) else {
@@ -84,7 +89,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         window.setContentSize(NSSize(width: 1440, height: 820))
         if !window.setFrameUsingName(frameName) { window.center() }
         window.setFrameAutosaveName(frameName)
-        window.makeKeyAndOrderFront(nil)
+        window.tabbingIdentifier = Self.tabbingIdentifier
+        if let tabWith {
+            tabWith.addTabbedWindow(window, ordered: .above)
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            // 新しいウィンドウにする（タブにしない）。出した後は、ほかのウィンドウをタブとして受け入れる。
+            window.tabbingMode = .disallowed
+            window.makeKeyAndOrderFront(nil)
+            window.tabbingMode = .preferred
+        }
         start(debug: debug)
     }
 
@@ -139,6 +153,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         workingCopy.onSequenceChange = { [weak self] sequence, conflicts in
             self?.showSequenceBanner(sequence, conflicts: conflicts)
+        }
+        workingCopy.onChangeCount = { [weak self] count in
+            self?.changeCount = count
+            self?.updateTabTitle()
         }
         workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
         workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
@@ -269,6 +287,25 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.signaturePlace = Settings.checkRemoteSignaturesLocally
             ? SignaturePlace(local: true, detail: "設定で選択")
             : SignaturePlace(local: false, host: host, detail: "設定で選択")
+    }
+
+    // MARK: - タブの名前
+
+    private var changeCount = 0
+    private var tracking = (ahead: 0, behind: 0)
+
+    /// タブの名前に、未コミットの変更（●）と上流との差（↑↓）を添える。ウィンドウのタイトルは変えない。
+    private func updateTabTitle() {
+        var title = window.title
+        if changeCount > 0 { title += " ●" }
+        if tracking.ahead > 0 { title += " ↑\(tracking.ahead)" }
+        if tracking.behind > 0 { title += " ↓\(tracking.behind)" }
+        window.tab.title = title
+        window.tab.toolTip = [
+            changeCount > 0 ? "変更のあるファイル \(changeCount) 個" : nil,
+            tracking.ahead > 0 ? "上流より \(tracking.ahead) コミット先" : nil,
+            tracking.behind > 0 ? "上流より \(tracking.behind) コミット後ろ" : nil,
+        ].compactMap { $0 }.joined(separator: "、")
     }
 
     // MARK: - merge・rebase の途中の帯
@@ -431,7 +468,31 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         actions.refreshUndo()
     }
 
+    /// 裏のタブで溜めた変化（前に出たときに読み直す）。
+    private var pendingChanges = Changes(rawValue: 0)
+
+    /// タブのまとまりの中で、前に出ていないタブか。
+    private var isBackgroundTab: Bool {
+        guard let group = window.tabGroup, group.windows.count > 1 else { return false }
+        return group.selectedWindow !== window
+    }
+
+    func windowDidBecomeKey(_ notification: Notification) {
+        guard pendingChanges.rawValue != 0 else { return }
+        let changes = pendingChanges
+        pendingChanges = Changes(rawValue: 0)
+        repositoryDidChange(changes)
+    }
+
     private func repositoryDidChange(_ changes: Changes) {
+        // 裏のタブでは、作業ツリーの変化（ビルドなどで頻繁に来る）の読み直しを前に出るまで待つ。ref の変化は
+        // タブの名前（ahead・behind）に出すので、すぐ読む。
+        if isBackgroundTab, !changes.intersection([.index, .worktree]).isEmpty {
+            pendingChanges.formUnion(changes.intersection([.index, .worktree]))
+            let rest = changes.subtracting([.index, .worktree])
+            guard rest.rawValue != 0 else { return }
+            return repositoryDidChange(rest)
+        }
         if !changes.intersection([.refs, .config]).isEmpty {
             history.refresh()
             reloadRefs()
@@ -456,6 +517,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 history.show(refs: refs)
                 let current = refs.items.first { $0.kind == .local && $0.name == refs.headBranch }
                 toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0)
+                tracking = (current?.ahead ?? 0, current?.behind ?? 0)
+                updateTabTitle()
             } catch {
                 NSLog("ref を読めない: \(error)")
             }

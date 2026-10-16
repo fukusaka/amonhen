@@ -610,8 +610,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         notifySequence()
     }
 
+    /// 変更のあるファイルの数が変わった（タブの名前に出す）。
+    var onChangeCount: ((Int) -> Void)?
+
     private func notifySequence() {
         onSequenceChange?(sequence, allEntries.filter(\.isConflict).count)
+        onChangeCount?(allEntries.count)
     }
 
     @objc private func sequenceAction(_ sender: NSButton) {
