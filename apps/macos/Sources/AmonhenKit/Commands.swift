@@ -275,3 +275,27 @@ public struct FileHistory: Decodable, Sendable {
 
     public let entries: [Entry]
 }
+
+/// Activity の記録（git の起動とコマンドの実行）。
+public struct ActivityRecord: Decodable, Sendable, Identifiable, Hashable {
+    public let seq: UInt64
+    /// "git"・"command"。
+    public let kind: String
+    /// 作業ツリーのパス（わからなければ空）。
+    public let repo: String
+    public let label: String
+    /// 始めた時刻（UNIX 時刻のミリ秒）。
+    public let started: UInt64
+    /// かかった時間（ミリ秒）。走っている間は nil。
+    public let duration: Double?
+    public let ok: Bool?
+    public let error: String?
+    public var id: UInt64 { seq }
+
+    /// 今残っている記録（古い順、最大 1000 件）。
+    public static func all() -> [ActivityRecord] {
+        guard let out = amonhen_activity() else { return [] }
+        defer { amonhen_string_free(out) }
+        return (try? JSONDecoder().decode([ActivityRecord].self, from: Data(String(cString: out).utf8))) ?? []
+    }
+}

@@ -201,7 +201,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if CommandLine.arguments.contains("--show-latency") {
             history.onLatency = { latency in
                 window.subtitle = String(format: "入力→表示 %.1f ms", latency * 1000)
+                PerformanceLog.record("History: 入力 → 表示", ms: latency * 1000)
             }
+        } else {
+            history.onLatency = { latency in PerformanceLog.record("History: 入力 → 表示", ms: latency * 1000) }
         }
         let repository = self.repository
         let started = Date()
@@ -485,6 +488,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     private func repositoryDidChange(_ changes: Changes) {
+        let names = [(Changes.refs, "ref"), (.index, "index"), (.worktree, "作業ツリー"), (.config, "設定")]
+            .filter { changes.contains($0.0) }.map(\.1)
+        EventLog.add(
+            repo: window.title,
+            "変化: " + names.joined(separator: "・") + (isBackgroundTab && !changes.isDisjoint(with: [.index, .worktree]) ? "（裏のタブ: 作業ツリーは前に出るまで待つ）" : ""))
         // 裏のタブでは、作業ツリーの変化（ビルドなどで頻繁に来る）の読み直しを前に出るまで待つ。ref の変化は
         // タブの名前（ahead・behind）に出すので、すぐ読む。
         if isBackgroundTab, !changes.intersection([.index, .worktree]).isEmpty {
@@ -669,6 +677,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc func commitChanges(_ sender: Any?) { workingCopy.commitFromMenu() }
     @objc func stageAllChanges(_ sender: Any?) { workingCopy.stageAllFromMenu() }
+
+    /// Activity の画面で、このリポジトリの操作ログを読み・戻すため。
+    var activityRepository: ActivityRepository {
+        ActivityRepository(name: window.title, repository: repository, actions: actions)
+    }
 
     /// Repository > Repository Settings…（⌘;）。
     @objc func showRepositorySettings(_ sender: Any?) {

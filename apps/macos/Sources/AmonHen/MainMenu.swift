@@ -168,6 +168,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item("Repositories", #selector(showRepositories(_:)), "r", [.command, .shift], target: self))
         menu.addItem(item("Settings", #selector(showSettings(_:)), "", target: self))
+        menu.addItem(item("Activity", #selector(showActivity(_:)), "a", [.command, .option], target: self))
         menu.addItem(.separator())
         menu.addItem(item("すべてを手前に移動", #selector(NSApplication.arrangeInFront(_:)), ""))
         return menu
@@ -221,6 +222,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     }
 
     @objc func showSettings(_ sender: Any?) { SettingsWindowController.shared.show() }
+    @objc func showActivity(_ sender: Any?) { ActivityWindowController.shared.show() }
     @objc func showRepositories(_ sender: Any?) { RepositoryManagerWindowController.shared.show() }
     @objc private func toggleAvatars(_ item: NSMenuItem) { Settings.showAvatars.toggle() }
     @objc private func toggleMonospacedMessage(_ item: NSMenuItem) { Settings.monospacedCommitMessage.toggle() }

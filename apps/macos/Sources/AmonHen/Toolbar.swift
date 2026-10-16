@@ -8,6 +8,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     private let undoItem = NSToolbarItem(itemIdentifier: .undo)
     private let pushItem = NSMenuToolbarItem(itemIdentifier: .push)
     private let pullItem = NSMenuToolbarItem(itemIdentifier: .pull)
+    private let activityItem = NSToolbarItem(itemIdentifier: .activity)
+    private let spinner = NSProgressIndicator()
 
     override init() {
         super.init()
@@ -16,6 +18,33 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         toolbar.allowsUserCustomization = true
         toolbar.autosavesConfiguration = true
         setUndo(nil)
+        // Activity: 操作を実行している間は回る。押すと Activity の画面。
+        spinner.style = .spinning
+        spinner.controlSize = .small
+        spinner.isDisplayedWhenStopped = false
+        let button = NSButton(
+            image: NSImage(systemSymbolName: "waveform.path.ecg", accessibilityDescription: "Activity")!,
+            target: nil, action: #selector(AppDelegate.showActivity(_:)))
+        button.bezelStyle = .texturedRounded
+        button.isBordered = false
+        let stack = NSStackView(views: [spinner, button])
+        stack.spacing = 2
+        activityItem.view = stack
+        activityItem.label = "Activity"
+        activityItem.paletteLabel = "Activity"
+        activityItem.toolTip = "実行した git とコマンド、操作ログ、画面の速さ（⌥⌘A）"
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(runningChanged), name: .runningOperationsChanged, object: nil)
+    }
+
+    @objc private func runningChanged() {
+        if RunningOperations.count > 0 {
+            spinner.startAnimation(nil)
+            activityItem.toolTip = "実行中の操作 \(RunningOperations.count) 個（押すと Activity）"
+        } else {
+            spinner.stopAnimation(nil)
+            activityItem.toolTip = "実行した git とコマンド、操作ログ、画面の速さ（⌥⌘A）"
+        }
     }
 
     func setUndo(_ label: String?) {
@@ -38,17 +67,18 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop, .flexibleSpace, .refresh, .undo]
+        [.fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop, .flexibleSpace, .activity, .refresh, .undo]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .refresh, .undo, .terminal, .finder,
+        [.fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
          .space, .flexibleSpace]
     }
 
     func toolbar(
         _ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
+        if id == .activity { return activityItem }
         let item: NSToolbarItem, label: String, symbol: String, action: Selector, tip: String
         switch id {
         case .fetch:
@@ -130,4 +160,5 @@ extension NSToolbarItem.Identifier {
     static let undo = Self("undo")
     static let terminal = Self("terminal")
     static let finder = Self("finder")
+    static let activity = Self("activity")
 }

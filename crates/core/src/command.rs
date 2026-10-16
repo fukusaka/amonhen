@@ -1688,6 +1688,25 @@ mod tests {
     }
 
     #[test]
+    fn lists_the_undo_log_newest_first() {
+        let (_tmp, repo) = setup();
+        for name in ["a", "b"] {
+            let r = run(
+                &repo,
+                &format!(
+                    r#"{{"op":"createBranch","name":"{name}","start":"HEAD","checkout":true}}"#
+                ),
+            );
+            assert_eq!(r["ok"], true, "{r}");
+        }
+        let log = run(&repo, r#"{"op":"undoLog"}"#);
+        let entries = log["info"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 2);
+        assert!(entries[0]["label"].as_str().unwrap().contains('b'));
+        assert!(entries[0]["time"].as_u64().unwrap() >= entries[1]["time"].as_u64().unwrap());
+    }
+
+    #[test]
     fn edits_local_config_remotes_and_ignore_files() {
         let (tmp, repo) = setup();
         let dir = tmp.path();

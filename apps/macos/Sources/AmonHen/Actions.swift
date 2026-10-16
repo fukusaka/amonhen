@@ -17,7 +17,9 @@ final class Actions {
     /// `command` を実行する（`crates/core/src/command.rs` の `Command`）。
     func perform(_ command: [String: Any], completion: ((CommandResult) -> Void)? = nil) {
         let repository = self.repository
+        RunningOperations.begin()
         Task {
+            defer { RunningOperations.end() }
             do {
                 let json = try Repository.json(command)
                 let result = try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
@@ -50,7 +52,9 @@ final class Actions {
 
     /// 裏で実行し、終わったら読み直す（JSON の命令以外の操作）。
     func perform(_ work: @escaping @Sendable () throws -> Void) {
+        RunningOperations.begin()
         Task {
+            defer { RunningOperations.end() }
             do {
                 try await Task.detached(priority: .userInitiated) { try work() }.value
             } catch {

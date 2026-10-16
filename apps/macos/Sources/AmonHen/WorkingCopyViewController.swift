@@ -268,7 +268,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
         isRefreshing = true
         let repository = self.repository
+        let started = CACurrentMediaTime()
         Task {
+            defer { PerformanceLog.record("Working Copy: status の読み直し", ms: (CACurrentMediaTime() - started) * 1000) }
             async let sequence = Task.detached { try? repository.run(["op": "sequence"]).text }.value
             async let status = Task.detached(priority: .userInitiated) { try? repository.loadStatus() }.value
             let (s, w) = await (sequence, status)

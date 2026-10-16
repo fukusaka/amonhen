@@ -1319,6 +1319,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             } else if let stacked {
                 showStacked(stacked, key: hex)
                 FrameProfile.add("select: → diff shown", CACurrentMediaTime() - selectedAt)
+                PerformanceLog.record("History: 選択 → 差分", ms: (CACurrentMediaTime() - selectedAt) * 1000)
                 onDiffShown?()
             } else {
                 // 最初のファイルの差分は読んであるので、選んだときに読み直さない。
@@ -1683,6 +1684,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             preloadedDiff = nil
             FrameProfile.measure("select: diff draw") { showFileDiff(diff) }
             FrameProfile.add("select: → diff shown", CACurrentMediaTime() - selectedAt)
+                PerformanceLog.record("History: 選択 → 差分", ms: (CACurrentMediaTime() - selectedAt) * 1000)
             onDiffShown?()
             return
         }
@@ -1695,6 +1697,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             FrameProfile.add("select: file diff (FFI)", CACurrentMediaTime() - started)
             FrameProfile.measure("select: diff draw") { showFileDiff(diff) }
             FrameProfile.add("select: → diff shown", CACurrentMediaTime() - selectedAt)
+                PerformanceLog.record("History: 選択 → 差分", ms: (CACurrentMediaTime() - selectedAt) * 1000)
             onDiffShown?()
         }
     }

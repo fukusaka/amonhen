@@ -102,6 +102,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         QuickOpenPanel.shared.onOpen = { [weak self] path, newWindow in
             self?.open(path: path, inNewWindow: newWindow)
         }
+        ActivityWindowController.shared.model.listRepositories = { [weak self] in
+            self?.windows.map(\.activityRepository) ?? []
+        }
         // ブックマーク・スキャンの結果・行の状態が変わったら、一覧と Quick Open を描き直す。
         Bookmarks.shared.onChange = {
             RepositoryManagerWindowController.shared.bookmarksChanged()
