@@ -34,11 +34,25 @@ jobs:
         run: |
           echo "zip=$(scripts/build-app.sh snapshot | tail -1)" >> "$GITHUB_OUTPUT"
           echo "version=$(scripts/version.sh snapshot)" >> "$GITHUB_OUTPUT"
+      # VSCode 拡張（apps/vscode）に、いま作ったエンジンを同梱して .vsix にする。
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/vscode/package-lock.json
+      - id: vsix
+        working-directory: apps/vscode
+        run: |
+          npm ci
+          scripts/bundle-engine.sh
+          version=$(node scripts/snapshot-version.mjs)
+          npm pkg set version="$version"
+          npx @vscode/vsce package --skip-license --out "../../dist/amonhen-vscode-$version.vsix"
       # snapshot という pre-release を、このコミットで作り直す。
       - env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete snapshot --yes --cleanup-tag || true
-          gh release create snapshot "${{ steps.build.outputs.zip }}" dist/amonhen-*.tar.gz --prerelease \
+          gh release create snapshot "${{ steps.build.outputs.zip }}" dist/amonhen-*.tar.gz dist/amonhen-vscode-*.vsix --prerelease \
             --target "$GITHUB_SHA" --title "Snapshot ${{ steps.build.outputs.version }}" \
-            --notes "main の最新（${{ steps.build.outputs.version }}）。scripts/install.sh snapshot で入れられる。"
+            --notes "main の最新（${{ steps.build.outputs.version }}）。アプリは scripts/install.sh snapshot、VSCode 拡張は apps/vscode/scripts/install.sh snapshot で入れられる。"

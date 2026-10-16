@@ -13,8 +13,8 @@ import { GitExecutor } from '../src/git/exec.ts';
 import { UndoLog } from '../src/state/undo.ts';
 import { withDaemonWrites } from '../src/daemon/writes.ts';
 
-// amonhen-standalone のエンジン（`cargo build -p amonhen-cli`。CLI と daemon を兼ねる）。なければ飛ばす
-const daemon = process.env['AMONHEN_DAEMON'] ?? join(import.meta.dirname, '../../amonhen-standalone/target/debug/amonhen');
+// このリポジトリのエンジン（ルートで `cargo build -p amonhen-cli`。CLI と daemon を兼ねる）。なければ飛ばす
+const daemon = process.env['AMONHEN_DAEMON'] ?? join(import.meta.dirname, '../../../target/debug/amonhen');
 const skip = existsSync(daemon) ? false : `エンジンがありません: ${daemon}`;
 
 let dir = '';

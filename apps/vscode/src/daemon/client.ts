@@ -1,7 +1,7 @@
 /**
- * 手元の共有の daemon（amonhen-standalone の `amonhend --serve`）の FE 向けの窓口につなぐ。
+ * 手元の共有の daemon（エンジン `amonhen --serve`）の FE 向けの窓口につなぐ。
  * コアは daemon で動き、ここは命令（JSON）を送って、答え（JSON とレコード）を受け取るだけ。
- * 取り決めは amonhen-standalone の `docs/front.md`。
+ * 取り決めはリポジトリのルートの `docs/front.md`。
  */
 import { execFile, spawn } from 'node:child_process';
 import { connect, type Socket } from 'node:net';

@@ -5,7 +5,7 @@
 # Remote-SSH の接続先では、VSCode の統合ターミナルで実行すると接続先に入る。
 set -eu
 
-repo=fukusaka/vscode-amonhen
+repo=fukusaka/amonhen-standalone
 channel=${1:-stable}
 
 code=${CODE:-}
@@ -24,7 +24,10 @@ dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 
 case $channel in
-  stable) gh release download --repo "$repo" --pattern '*.vsix' --dir "$dir" ;;
+  stable)
+    # 拡張の正式版はタグ vscode-v*（アプリ・エンジンの v* とは別）
+    tag=$(gh release list --repo "$repo" --exclude-pre-releases --json tagName --jq '[.[] | select(.tagName | startswith("vscode-v"))][0].tagName')
+    gh release download "$tag" --repo "$repo" --pattern '*.vsix' --dir "$dir" ;;
   snapshot) gh release download snapshot --repo "$repo" --pattern '*.vsix' --dir "$dir" ;;
   *)
     echo "usage: $0 [stable|snapshot]" >&2

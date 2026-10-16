@@ -6,8 +6,11 @@
 //! ソケットの名前にプロトコルの版を入れるので、版の違う daemon にはつながない。
 
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 use amonhen_model::Result;

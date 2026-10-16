@@ -2,7 +2,7 @@
 
 Amon Hen のスタンドアロン版。徹底的な低遅延を最優先にしたネイティブの Git クライアント。コアは Rust で書いて各 OS で使い回し、最初の FE（フロントエンド）は macOS（AppKit ＋ Metal）で作る。自分用で、GitHub Releases で配布する。
 
-設計の詳細は `docs/design.md` を参照すること。VSCode 拡張版は別リポジトリ（vscode-amonhen）。
+設計の詳細は `docs/design.md` を参照すること。VSCode 拡張は `apps/vscode`（設計は `apps/vscode/docs/design.md`）。
 
 ## 前提
 
@@ -28,6 +28,7 @@ Amon Hen のスタンドアロン版。徹底的な低遅延を最優先にし�
 - `crates/daemon`: daemon（ライブラリ）。エンジンは CLI と 1 つの実行ファイル `amonhen` で、`--stdio <repo>` は SSH 先でリポジトリの git の操作を行い、`--serve` は手元に常駐する共有の daemon（Unix ドメインソケット。アプリ・CLI の `daemon:/path`・`daemon:ssh://host/path` がつなぐ。SSH 先は daemon が `--stdio` でつないで共有する）。配るエンジンは `scripts/build-engine.sh` で作る（darwin-aarch64、musl の linux-x86_64・linux-aarch64）。置き場所は `~/.local/share/amonhen`（`amonhen install`・`amonhen engine`、`crates/cli/src/install.rs`）
 - `crates/cli`: `amonhen`（CLI）。コアでできることはすべて CLI から使える（VSCode 拡張・ほかの FE の試金石）。アプリで開く・グラフ付きの log・status・diff・show・stage・discard・commit・refs・watch・run（コアの命令の JSON）・undo・merge-file。どれも `--json` あり。コアへは `amonhen-front` の窓口だけを通る（手元は同じプロセス、`daemon:`・`ssh://` は共有の daemon のコア）、History はアプリと同じ永続キャッシュを使う。`.app` では `Contents/Helpers/amonhen`（`MacOS` には置けない。大文字小文字を区別しないので `AmonHen` を上書きする）
 - `crates/ffi-c`: C ABI。`build.rs` が `include/amonhen.h` を生成する（コミットする）
+- `apps/vscode`: VSCode 拡張（TypeScript。もとは vscode-amonhen のリポジトリ。履歴ごと取り込んだ）。エンジンを同梱し、共有の daemon の FE 向けの窓口を使う。作業の決まりは `apps/vscode/CLAUDE.md`。正式版のタグは `vscode-v*`（アプリ・エンジンは `v*`）
 - `apps/macos`: SwiftPM のパッケージ。`AmonhenKit`（コアの Swift ラッパー）と `AmonHen`（AppKit のアプリ）
 
 ## 確認
@@ -36,6 +37,7 @@ Amon Hen のスタンドアロン版。徹底的な低遅延を最優先にし�
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `scripts/build-core.sh && (cd apps/macos && swift test)`
 - 見た目: `apps/macos/.build/debug/AmonHen <repo> --snapshot out.png`、速さ: `--measure-scroll`
+- VSCode 拡張: `cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm run typecheck && npm test)`
 
 ## 進捗
 

@@ -2,7 +2,8 @@ name: Release
 
 on:
   push:
-    tags: ['v*']
+    # アプリとエンジン（v0.1.0 など）。拡張の vscode-v* は vscode-release.yml
+    tags: ['v[0-9]*']
 
 permissions:
   contents: write

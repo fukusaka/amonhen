@@ -9,7 +9,10 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
 case "$mode" in
-stable) gh release download --repo "$repo" --pattern '*.zip' --dir "$work" ;;
+stable)
+    # アプリとエンジンの正式版はタグ v<数字>（VSCode 拡張の vscode-v* とは別）
+    tag=$(gh release list --repo "$repo" --exclude-pre-releases --json tagName --jq '[.[] | select(.tagName | test("^v[0-9]"))][0].tagName')
+    gh release download "$tag" --repo "$repo" --pattern '*.zip' --dir "$work" ;;
 snapshot) gh release download snapshot --repo "$repo" --pattern '*.zip' --dir "$work" ;;
 *)
     echo "usage: $0 [stable|snapshot]" >&2

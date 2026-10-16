@@ -1,7 +1,7 @@
 //! FE の側: 同じプロセスのコア（`InProcess`）か、共有の daemon のコア（`Remote`）に命令を送る。
 
 use std::collections::HashMap;
-use std::io::{BufReader, BufWriter, Write};
+use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -82,7 +82,7 @@ type Pending = Mutex<HashMap<u64, mpsc::Sender<std::result::Result<Vec<u8>, Stri
 
 /// 共有の daemon のコア。
 pub struct Remote {
-    writer: Mutex<BufWriter<std::os::unix::net::UnixStream>>,
+    writer: Mutex<Box<dyn Write + Send>>,
     shared: Arc<Shared>,
     next: AtomicU64,
 }
@@ -107,12 +107,12 @@ impl Remote {
                 .to_string()
         };
         let stream = amonhen_remote::local::stream(daemon)?;
-        let mut writer = BufWriter::new(stream.try_clone()?);
+        let mut writer = std::io::BufWriter::new(stream.try_clone()?);
         amonhen_remote::local::write_preamble(&mut writer, &format!("{}{location}", crate::PREAMBLE))?;
         let shared = Arc::new(Shared::default());
         let reading = shared.clone();
         std::thread::Builder::new().name("amonhen-front".into()).spawn(move || {
-            let mut reader = BufReader::new(stream);
+            let mut reader = std::io::BufReader::new(stream);
             let reason = loop {
                 match frame::read(&mut reader) {
                     Ok(Some(f)) => match f.kind {
@@ -146,7 +146,7 @@ impl Remote {
                 let _ = tx.send(Err(reason.clone()));
             }
         })?;
-        let remote = Self { writer: Mutex::new(writer), shared, next: AtomicU64::new(1) };
+        let remote = Self { writer: Mutex::new(Box::new(writer)), shared, next: AtomicU64::new(1) };
         // 開けたかを確かめる（開けなければ、daemon が理由を返して閉じる）。
         let hello = remote.call(serde_json::json!({"op": "hello"}))?;
         if hello.json["version"] != crate::VERSION {

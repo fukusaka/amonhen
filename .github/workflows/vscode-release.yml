@@ -1,0 +1,38 @@
+name: VSCode Release
+
+# 拡張（apps/vscode）の正式版。`vscode-v*` タグから、エンジンを作って同梱した .vsix を作る
+on:
+  push:
+    tags: ['vscode-v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: タグと package.json の version が一致するか
+        run: test "${GITHUB_REF_NAME#vscode-v}" = "$(node -p "require('./apps/vscode/package.json').version")"
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Linux 用のエンジン（musl で静的リンク、リンクは zig）。
+          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
+      - run: brew install zig
+      - uses: Swatinem/rust-cache@v2
+      - run: scripts/build-engine.sh
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/vscode/package-lock.json
+      - working-directory: apps/vscode
+        run: |
+          npm ci
+          npm test
+          scripts/bundle-engine.sh
+          npx @vscode/vsce package --skip-license
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" apps/vscode/*.vsix --title "VSCode $GITHUB_REF_NAME" --generate-notes --verify-tag
