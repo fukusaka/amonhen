@@ -58,14 +58,35 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
     let to = CGPoint(x: dubheAt.x - polaris.x, y: dubheAt.y - polaris.y)
     let scale = hypot(to.x, to.y) / hypot(from.x, from.y)
     let turn = atan2(to.y, to.x) - atan2(from.y, from.x)
+    // 星座とすぐ分かるほどまとまらないよう、位置を少しずらし、まわりにも淡い星を散らす（種を決めた乱数）。
+    var seed: UInt64 = 0x5EED_A40F
+    func random() -> CGFloat {
+        seed = seed &* 6364136223846793005 &+ 1442695040888963407
+        return CGFloat(seed >> 33) / CGFloat(1 << 31)
+    }
+    func dot(_ at: CGPoint, _ mag: CGFloat) {
+        // 明るい星ほど少し大きく濃く。
+        let r: CGFloat = 6.2 - mag
+        ctx.setFillColor(color(0xFFFFFF, 0.5 - mag * 0.08))
+        ctx.fillEllipse(in: CGRect(x: at.x - r, y: at.y - r, width: r * 2, height: r * 2))
+    }
     for star in dipper + cassiopeia {
         let p = project(star.ra, star.dec)
         let dx = (p.x - pole.x) * scale, dy = (p.y - pole.y) * scale
-        let at = CGPoint(x: polaris.x + dx * cos(turn) - dy * sin(turn), y: polaris.y + dx * sin(turn) + dy * cos(turn))
-        // 明るい星ほど少し大きく濃く。
-        let r: CGFloat = 6.2 - star.mag
-        ctx.setFillColor(color(0xFFFFFF, 0.5 - star.mag * 0.08))
-        ctx.fillEllipse(in: CGRect(x: at.x - r, y: at.y - r, width: r * 2, height: r * 2))
+        let at = CGPoint(
+            x: polaris.x + dx * cos(turn) - dy * sin(turn) + (random() - 0.5) * 36,
+            y: polaris.y + dx * sin(turn) + dy * cos(turn) + (random() - 0.5) * 36)
+        dot(at, star.mag + random() * 0.6)
+    }
+    // まわりの星: 空の上半分に散らす。頂上の星の近くと、枠の角の外は避ける。
+    var placed = 0
+    while placed < 14 {
+        let at = CGPoint(x: 140 + random() * 744, y: 130 + random() * 380)
+        if hypot(at.x - polaris.x, at.y - polaris.y) < 130 { continue }
+        let corner = CGPoint(x: at.x < 512 ? 285 : 739, y: 285)
+        if at.y < 285, (at.x < 285 || at.x > 739), hypot(at.x - corner.x, at.y - corner.y) > 165 { continue }
+        dot(at, 2.6 + random() * 1.4)
+        placed += 1
     }
 
     // 頂上の後ろの光。
