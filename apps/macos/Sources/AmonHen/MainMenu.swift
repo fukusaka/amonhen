@@ -143,6 +143,9 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item("Repository Settings…", #selector(RepositoryWindow.showRepositorySettings(_:)), ";"))
         menu.addItem(.separator())
+        menu.addItem(item("Create Pull Request…", #selector(RepositoryWindow.createPullRequest(_:)), ""))
+        menu.addItem(item("Open on GitHub", #selector(RepositoryWindow.openOnGitHub(_:)), ""))
+        menu.addItem(.separator())
         menu.addItem(item("Open in Terminal", #selector(RepositoryWindow.openInTerminal(_:)), ""))
         menu.addItem(item("Reveal in Finder", #selector(RepositoryWindow.revealInFinder(_:)), ""))
         return menu

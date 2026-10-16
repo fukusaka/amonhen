@@ -1,7 +1,7 @@
 import AmonhenKit
 import AppKit
 
-/// サイドバー: Branches / Remotes / Tags / Stashes / Submodules。
+/// サイドバー: Branches / Pull Requests / Remotes / Tags / Stashes / Submodules。
 final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
     /// 項目を選んだとき（指すコミットがあれば History でその行を選ぶ）。
     var onSelect: ((RefItem) -> Void)?
@@ -12,6 +12,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onOpenSubmodule: ((String) -> Void)?
     /// Working Copy か History を選んだとき。
     var onSelectPage: ((Page) -> Void)?
+    /// プルリクエストの右クリック: チェックアウト（gh pr checkout）。
+    var onCheckoutPullRequest: ((PullRequest) -> Void)?
 
     enum Page {
         case workingCopy, history
@@ -27,6 +29,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let isHead: Bool
         /// 右に薄く出す数（Working Copy の変更の数）。
         var badge: String?
+        /// Pull Requests の下のプルリクエスト。
+        var pullRequest: PullRequest?
 
         init(title: String, item: RefItem? = nil, page: Page? = nil, children: [Node] = [], isHead: Bool = false) {
             self.title = title
@@ -69,12 +73,29 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         view = scroll
     }
 
+    private var refs: Refs?
+    private var pullRequests: [PullRequest] = []
+
     func show(_ refs: Refs) {
         guard refs.generation != generation else { return }
         let first = generation == nil
         generation = refs.generation
+        self.refs = refs
+        rebuild(first: first)
+    }
+
+    /// 開いているプルリクエスト（GitHub のリポジトリで gh があるときだけ）。
+    func show(pullRequests: [PullRequest]) {
+        guard pullRequests != self.pullRequests else { return }
+        self.pullRequests = pullRequests
+        rebuild(first: false)
+    }
+
+    private func rebuild(first: Bool) {
+        guard let refs else { return }
         headBranch = refs.headBranch
         let expanded = Set(groups.filter { outline.isItemExpanded($0) }.map(\.title))
+        let selectedTitle = (outline.item(atRow: outline.selectedRow) as? Node).map { ($0.title, $0.page) }
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
         var groups: [Node] = []
@@ -95,6 +116,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             parent.children.append(Node(title: parts.last ?? item.name, item: item, isHead: item.name == refs.headBranch))
         }
         if !branchRoot.children.isEmpty { groups.append(branchRoot) }
+
+        if !pullRequests.isEmpty {
+            groups.append(Node(title: "Pull Requests", children: pullRequests.map { pr in
+                let node = Node(title: "#\(pr.number) \(pr.title)")
+                node.pullRequest = pr
+                node.badge = [pr.isDraft ? "draft" : nil, pr.ciMark.isEmpty ? nil : pr.ciMark].compactMap { $0 }.joined(separator: " ")
+                return node
+            }))
+        }
 
         // リモートごとにまとめる（origin/main → origin の下の main）。
         var remotes: [String: [Node]] = [:]
@@ -117,10 +147,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         self.groups = [workspace] + groups
         outline.reloadData()
         outline.expandItem(workspace)
-        for group in groups where first ? group.title == "Branches" : expanded.contains(group.title) {
-            outline.expandItem(group)
+        for group in groups {
+            let open = expanded.contains(group.title) || (first && group.title == "Branches")
+                || (group.title == "Pull Requests" && pullRequestsFirstShown)
+            if open { outline.expandItem(group) }
         }
+        if !pullRequests.isEmpty { pullRequestsFirstShown = false }
+        // 作り直す前に選んでいた Working Copy・History を選び直す。
+        if let (_, page) = selectedTitle, let page { select(page: page) }
     }
+
+    /// プルリクエストの見出しを初めて出すときは開いておく。
+    private var pullRequestsFirstShown = true
 
     // MARK: - NSOutlineViewDataSource
 
@@ -143,7 +181,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        (item as? Node).map { $0.item != nil || $0.page != nil } ?? false
+        (item as? Node).map { $0.item != nil || $0.page != nil || $0.pullRequest != nil } ?? false
     }
 
     /// Working Copy の変更の数を表示する。
@@ -187,12 +225,31 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
         }
         cell.badge.stringValue = badge
+        cell.badge.textColor = .secondaryLabelColor
         cell.toolTip = node.item?.detail
+        if let pr = node.pullRequest {
+            let ci = switch pr.ci {
+            case .passing: "CI: 成功"
+            case .failing: "CI: 失敗"
+            case .pending: "CI: 実行中"
+            case .none: "CI なし"
+            }
+            let review = switch pr.reviewDecision {
+            case "APPROVED": "承認済み"
+            case "CHANGES_REQUESTED": "変更の依頼あり"
+            case "REVIEW_REQUIRED": "レビュー待ち"
+            default: ""
+            }
+            cell.toolTip = ["#\(pr.number) \(pr.title)", "\(pr.author.login) · \(pr.headRefName) → \(pr.baseRefName)",
+                            [ci, review].filter { !$0.isEmpty }.joined(separator: " · ")].joined(separator: "\n")
+            cell.badge.textColor = pr.ci == .failing ? .systemRed : pr.ci == .passing ? .systemGreen : .secondaryLabelColor
+        }
         return cell
     }
 
     private static func symbol(for node: Node) -> String {
         if let page = node.page { return page == .workingCopy ? "square.and.pencil" : "clock" }
+        if node.pullRequest != nil { return "arrow.triangle.pull" }
         if node.remote != nil { return "network" }
         switch node.item?.kind {
         case .local?, .remote?: return "arrow.triangle.branch"
@@ -274,6 +331,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if let pr = (outline.item(atRow: outline.clickedRow) as? Node)?.pullRequest {
+            menu.addItem(ClosureMenuItem(title: "Checkout #\(pr.number)") { [weak self] in self?.onCheckoutPullRequest?(pr) })
+            menu.addItem(ClosureMenuItem(title: "Open in Browser") {
+                if let url = URL(string: pr.url) { NSWorkspace.shared.open(url) }
+            })
+            menu.addItem(ClosureMenuItem(title: "Copy URL") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(pr.url, forType: .string)
+            })
+            return
+        }
         guard let actions, let node = outline.item(atRow: outline.clickedRow) as? Node, let item = node.item else { return }
         let name = item.name
         func add(_ title: String, _ action: @escaping () -> Void) {
@@ -323,6 +391,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         } else if let item = node.item {
             onSelectPage?(.history)
             onSelect?(item)
+        } else if let pr = node.pullRequest,
+                  let branch = refs?.items.first(where: { $0.kind == .remote && $0.name.hasSuffix("/" + pr.headRefName) })
+                    ?? refs?.items.first(where: { $0.kind == .local && $0.name == pr.headRefName }) {
+            // プルリクエストのブランチが手元にあれば、その履歴に絞り込む。
+            onSelectPage?(.history)
+            onSelect?(branch)
         }
     }
 }

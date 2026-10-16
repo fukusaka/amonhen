@@ -158,6 +158,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             self?.changeCount = count
             self?.updateTabTitle()
         }
+        sidebar.onCheckoutPullRequest = { [weak self] pr in self?.checkout(pr) }
         workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
         workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。stash は詳細にだけ中身を出す。
@@ -227,6 +228,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.select(page: debug && CommandLine.arguments.contains("--working-copy") ? .workingCopy : .history)
         workingCopy.refresh()
         reloadRefs()
+        loadGitHub(force: true)
         do {
             watch = try RepositoryWatch(repository: repository) { [weak self] changes in
                 Task { @MainActor in self?.repositoryDidChange(changes) }
@@ -469,6 +471,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func refreshRepository(_ sender: Any?) {
         repositoryDidChange(Changes(rawValue: ~0))
         actions.refreshUndo()
+        loadGitHub(force: true)
     }
 
     /// 裏のタブで溜めた変化（前に出たときに読み直す）。
@@ -504,6 +507,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if !changes.intersection([.refs, .config]).isEmpty {
             history.refresh()
             reloadRefs()
+            // push・fetch の後はプルリクエストも変わりうる（読みすぎないよう、間を空ける）。
+            loadGitHub(force: false)
         }
         if !changes.intersection([.refs, .index, .worktree]).isEmpty {
             workingCopy.refresh()
@@ -678,6 +683,111 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func commitChanges(_ sender: Any?) { workingCopy.commitFromMenu() }
     @objc func stageAllChanges(_ sender: Any?) { workingCopy.stageAllFromMenu() }
 
+    // MARK: - GitHub
+
+    /// origin（なければ最初のリモート）が GitHub なら、そのリポジトリ。
+    private var gitHub: GitHubRepository?
+    private var gitHubLoadedAt: Date?
+
+    /// GitHub のリポジトリを判定し、開いているプルリクエストを読んでサイドバーに出す。gh がなければ何もしない。
+    /// `force` でなければ、前に読んでから 30 秒は読まない。
+    private func loadGitHub(force: Bool) {
+        guard GitHub.isAvailable else { return }
+        if !force, let at = gitHubLoadedAt, Date().timeIntervalSince(at) < 30 { return }
+        gitHubLoadedAt = Date()
+        let repository = self.repository
+        Task {
+            struct Remotes: Decodable {
+                struct Remote: Decodable { let name: String; let fetchUrl: String }
+                let remotes: [Remote]
+            }
+            let remotes = try? await Task.detached { try repository.info(["op": "remotes"], as: Remotes.self) }.value
+            let remote = remotes?.remotes.first { $0.name == "origin" } ?? remotes?.remotes.first
+            gitHub = remote.flatMap { GitHubRepository(remoteURL: $0.fetchUrl) }
+            guard let gitHub else {
+                sidebar.show(pullRequests: [])
+                return
+            }
+            do {
+                sidebar.show(pullRequests: try await GitHub.pullRequests(gitHub))
+            } catch {
+                EventLog.add(repo: window.title, "プルリクエストを読めない: \(error)")
+            }
+        }
+    }
+
+    /// プルリクエストのブランチをチェックアウトする（gh pr checkout）。手元のリポジトリだけ。
+    private func checkout(_ pr: PullRequest) {
+        guard let gitHub, isLocal, let dir = repository.workdir else { return NSSound.beep() }
+        RunningOperations.begin()
+        Task {
+            defer { RunningOperations.end() }
+            do {
+                try await GitHub.checkout(pr.number, in: dir, repo: gitHub)
+            } catch {
+                _ = await NSAlert(error: error).beginSheetModal(for: window)
+            }
+            refreshRepository(nil)
+        }
+    }
+
+    /// Repository > Open on GitHub: 今のブランチのページを開く。
+    @objc func openOnGitHub(_ sender: Any?) {
+        guard let gitHub else { return NSSound.beep() }
+        var url = gitHub.webURL
+        if let branch = latestRefs?.headBranch { url = url.appendingPathComponent("tree").appendingPathComponent(branch) }
+        NSWorkspace.shared.open(url)
+    }
+
+    /// Repository > Create Pull Request…: 今のブランチからプルリクエストを作る。上流がなければ先に push してもらう。
+    @objc func createPullRequest(_ sender: Any?) {
+        guard let gitHub, let branch = latestRefs?.headBranch, let dir = repository.workdir else { return NSSound.beep() }
+        let repository = self.repository
+        Task {
+            let status = try? await Task.detached { try repository.loadStatus() }.value
+            if status?.upstream == nil || (status?.ahead ?? 0) > 0 {
+                let alert = NSAlert()
+                alert.messageText = "先に \(branch) を push してください"
+                alert.informativeText = status?.upstream == nil
+                    ? "このブランチはまだリモートにありません。"
+                    : "上流より \(status?.ahead ?? 0) コミット先にあります。"
+                alert.addButton(withTitle: "Push")
+                alert.addButton(withTitle: "キャンセル")
+                if await alert.beginSheetModal(for: window) == .alertFirstButtonReturn { actions.push() }
+                return
+            }
+            // タイトルと本文は、今のコミットのメッセージから。
+            let message = (try? await Task.detached { try repository.run(["op": "commitMessage", "oid": "HEAD"]).text }.value) ?? nil
+            let parts = (message ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
+            let title = parts.first.map(String.init) ?? branch
+            let body = parts.count > 1 ? parts[1].trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            let base = await GitHub.defaultBranch(gitHub) ?? "main"
+            CreatePullRequestSheet.ask(in: window, branch: branch, title: title, body: body, base: base) { [weak self] answer in
+                guard let self, let answer else { return }
+                RunningOperations.begin()
+                Task {
+                    defer { RunningOperations.end() }
+                    do {
+                        let url = try await GitHub.createPullRequest(
+                            in: dir, repo: gitHub, title: answer.title, body: answer.body, base: answer.base, draft: answer.draft)
+                        let done = NSAlert()
+                        done.messageText = "プルリクエストを作りました"
+                        done.informativeText = url
+                        done.addButton(withTitle: "ブラウザで開く")
+                        done.addButton(withTitle: "閉じる")
+                        if await done.beginSheetModal(for: self.window) == .alertFirstButtonReturn, let link = URL(string: url) {
+                            NSWorkspace.shared.open(link)
+                        }
+                    } catch {
+                        _ = await NSAlert(error: error).beginSheetModal(for: self.window)
+                    }
+                    self.loadGitHub(force: true)
+                }
+            }
+        }
+    }
+
     /// Activity の画面で、このリポジトリの操作ログを読み・戻すため。
     var activityRepository: ActivityRepository {
         ActivityRepository(name: window.title, repository: repository, actions: actions)
@@ -752,6 +862,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(commitChanges(_:)): return showsWorkingCopy && workingCopy.canCommit
         case #selector(stageAllChanges(_:)): return showsWorkingCopy && workingCopy.canStageAll
         case #selector(openInTerminal(_:)), #selector(revealInFinder(_:)): return isLocal
+        case #selector(openOnGitHub(_:)): return gitHub != nil
+        case #selector(createPullRequest(_:)): return gitHub != nil && GitHub.isAvailable && latestRefs?.headBranch != nil
         default: return true
         }
     }

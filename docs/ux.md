@@ -370,7 +370,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 
 | 機能 | 内容 |
 | --- | --- |
-| アカウント | Settings > Accounts で GitHub（OAuth のデバイスフロー、または `gh auth token` を使う）。GitLab・Gitea は後で。トークンはキーチェーン |
+| アカウント | 手元の `gh`（GitHub CLI）に任せる。アプリはトークンに触れず、`gh` を起動して読み書きする（ログインは `gh auth login`）。gh がなければ連携の機能を出さない。GitLab・Gitea は後で |
 | リモートの判定 | origin などの URL から GitHub のリポジトリを判定（今の `#123` のリンクと同じ） |
 | Pull Requests | サイドバーに一覧（自分のもの・レビュー依頼・すべて）。状態（draft・レビュー・CI）。チェックアウト、ブラウザで開く |
 | PR を作る | Push の後に「Create Pull Request…」。タイトル・本文をコミットから（AI の要約も選べる）、base の選択、draft |
@@ -378,7 +378,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | アバター | GitHub のアカウントがあれば GitHub のアバター、なければ今の Gravatar |
 | Clone | 自分のリポジトリの一覧から選んで clone |
 
-- 通信はコアの外の crate（`amonhen-hosting`、`HostingProvider` トレイトで GitHub / GitLab を差し替え）に閉じ込め、UI スレッドを待たせない。オフラインでは灰色の表示にして、ほかの操作には影響させない。
+- 通信は gh を裏で起動して行い、UI スレッドを待たせない（今は macOS の FE の中。GitLab などを足すときに、`HostingProvider` で差し替えられる形にしてコアの外の crate に移す）。読めないときは Activity の Events に出し、ほかの操作には影響させない。
 
 ## 実装の順序
 
@@ -396,7 +396,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 - [x] U10. ブックマーク（グループ、フォルダのスキャン、状態の表示、Quick Open）。Favorites・Recent・Bookmarks・手で作ったグループ・スキャンするフォルダの見出し、右クリック（お気に入り・名前・グループ・Finder・ターミナル）、スキャン（深さ・除外、一覧を開くたびに探し直す）、行の状態、Quick Open（⌘⇧O・⌘T・⌘N、あいまい検索）は済み。FSEvents での見張り、ドラッグでの並べ替え、色ラベル、選んだものの一括 Fetch、開いたリポジトリの自動の登録は後で
 - [x] U11. リポジトリの設定（git の設定と出どころ、Remotes、Ignore）。Repository > Repository Settings…（⌘;）のシートに Identity・Branches・Remotes・Ignore・All Settings。各項目に今効いている値とどこで決まっているか、このリポジトリ（local）での上書き・取り消し、リモートの追加・名前の変更・URL・削除・prune、`.gitignore` と `.git/info/exclude` の編集は済み。表示名・色ラベル・自動 fetch、hooks と LFS の一覧、パターンに合うファイルの例は後で
 - [x] U12. Activity（コアのリングバッファ、Operations・History・Performance・Events）。Window > Activity（⌥⌘A）とツールバーの Activity（操作の間は回る）。Operations は git の起動とコアの命令（リポジトリ・内容・時間・成否・エラー、絞り込み、JSON に書き出し）、History は操作ログと「ここまで戻す」、Performance は History の入力 → 表示・選択 → 差分・Working Copy の読み直しの p50 / p95 / 最大、Events はファイルの変化の知らせ。SSH 先の daemon で起動した git、fetch・clone の受信量の進み具合、操作の取り消し、失敗を帯で知らせることは後で
-- [ ] U13. GitHub 連携（アカウント、PR の一覧と作成、CI の状態）
+- [x] U13. GitHub 連携（アカウント、PR の一覧と作成、CI の状態）。gh に任せる。origin の URL から GitHub のリポジトリを判定し、サイドバーの Pull Requests に開いている PR（CI の ✓・✗・●、draft、レビューの状態）、右クリックでチェックアウト・ブラウザで開く・URL のコピー、選ぶとそのブランチの履歴。Repository > Create Pull Request…（今のコミットのメッセージから、base は既定のブランチ）と Open on GitHub は済み。History のコミットごとの CI の状態、GitHub のアバター、自分のリポジトリから Clone は後で
 - [ ] U14. AI（Claude Code / Codex の CLI 経由の翻訳・解説・メッセージの提案、コンフリクトの解消、用途ごとのプロンプトの設定）
 
 ## 決めたこと
