@@ -666,42 +666,41 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     unverified.append(id)
                 }
             }
-            // GitHub の CI の状態（知っていれば）。署名の印の右に置く。
+            // GitHub の CI の状態（知っていれば）。行の右端に置き、署名の印とは離す。
             let ci = id.flatMap { ciStatus[$0] }
-            let dot: CGFloat = (signed ? 12 : 0) + (ci != nil ? 12 : 0)
+            let ciSpace: CGFloat = ci != nil ? 18 : 0
+            let right = end - ciSpace
+            let dot: CGFloat = signed ? 12 : 0
             // 1 行なら、作者・日時・ID を右に寄せ、件名はその手前まで。
             let metaWidth = compact ? min(line.meta.width, column.width * 0.45) : 0
-            let subjectEnd = compact ? end - metaWidth - 12 - dot : end
+            let subjectEnd = compact ? right - metaWidth - 12 - dot : right
             text.addLine(
                 line.subject, origin: CGPoint(x: x, y: rowTop + subjectBaseline), color: isSelected ? selected : primary,
                 scale: scale, maxWidth: max(0, subjectEnd - x), ellipsis: ellipsis)
             text.addLine(
-                line.meta, origin: CGPoint(x: compact ? end - metaWidth : column.minX - originX, y: rowTop + metaBaseline),
+                line.meta, origin: CGPoint(x: compact ? right - metaWidth : column.minX - originX, y: rowTop + metaBaseline),
                 color: isSelected ? selectedSecondary : secondary, scale: scale,
-                maxWidth: compact ? metaWidth : column.width - dot, ellipsis: metaEllipsis)
+                maxWidth: compact ? metaWidth : column.width - dot - ciSpace, ellipsis: metaEllipsis)
             if signed {
                 // 署名の状態のアイコン（信用度は形で分かる。塗りつぶしの seal は強い信用）。
                 let centerX = compact
-                    ? end - metaWidth - 7
-                    : column.minX - originX + min(line.meta.width, column.width - dot) + 9
+                    ? right - metaWidth - 7
+                    : column.minX - originX + min(line.meta.width, column.width - dot - ciSpace) + 9
                 let centerY = rowTop + metaBaseline - CTFontGetXHeight(metaFont) / 2
                 text.addSymbol(
                     status.symbol, pointSize: 9.5, center: CGPoint(x: centerX, y: centerY),
                     color: (isSelected && focused ? selected : status.color.rgba), scale: scale)
             }
             if let ci {
-                let centerX = (compact
-                    ? end - metaWidth - 7 - (signed ? 12 : 0)
-                    : column.minX - originX + min(line.meta.width, column.width - dot) + 9 + (signed ? 12 : 0))
-                let centerY = rowTop + metaBaseline - CTFontGetXHeight(metaFont) / 2
-                let (symbol, color): (String, NSColor) = switch ci {
-                case .passing: ("checkmark.circle", .systemGreen)
-                case .failing: ("xmark.circle", .systemRed)
-                case .pending: ("clock", .systemOrange)
-                case .none: ("circle", .secondaryLabelColor)
+                // 枠のないチェック・バツ・点（署名のバッジと形で見分ける）。
+                let (symbol, color, size): (String, NSColor, CGFloat) = switch ci {
+                case .passing: ("checkmark", .systemGreen, 10)
+                case .failing: ("xmark", .systemRed, 10)
+                case .pending: ("circle.fill", .systemOrange, 6)
+                case .none: ("circle", .secondaryLabelColor, 6)
                 }
                 text.addSymbol(
-                    symbol, pointSize: 9.5, center: CGPoint(x: centerX, y: centerY),
+                    symbol, pointSize: size, center: CGPoint(x: end - 9, y: rowTop + tableView.rowHeight / 2),
                     color: (isSelected && focused ? selected : color.rgba), scale: scale)
             }
         }
