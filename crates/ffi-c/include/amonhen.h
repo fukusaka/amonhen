@@ -489,7 +489,7 @@ const char *amonhen_last_error(void);
 void amonhen_set_fsmonitor(bool enabled);
 
 /**
- * daemon 越しのリポジトリを開く。`location` は `daemon:/path`（手元の `daemon` を起動）か
+ * daemon 越しのリポジトリを開く。`location` は `daemon:/path`（手元の共有の daemon。いなければ `daemon` を起動）か
  * `ssh://[user@]host[:port]/path`（SSH 先に daemon を送り込んで起動）。SSH 先に送る daemon は
  * `daemons_dir` の `amonhend-<os>-<arch>`（SSH 先が手元と同じ OS と CPU なら `daemon`）。ssh のコマンドは
  * 環境変数 `AMONHEN_SSH` で差し替えられる。`cache_dir` を渡すと History を永続化する。

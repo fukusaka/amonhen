@@ -193,3 +193,61 @@ fn sends_the_daemon_once_and_reuses_it() {
     assert!(fresh_tmp.exists(), "書いている途中かもしれないので残す");
     assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 2);
 }
+
+/// 共有の daemon（`--serve`）: 2 つの相手が同じリポジトリを開くと、どちらにも変化の知らせが来る。開けない
+/// パスは理由を返す。
+#[test]
+fn shares_one_daemon_between_clients() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("repo");
+    std::fs::create_dir(&dir).unwrap();
+    git(&dir, &["init", "-q", "-b", "main"]);
+    git(&dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    // ソケットのパスは短くする（macOS は 104 バイトまで）。
+    let socket = tmp.path().join("d.sock");
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend")).arg("--serve").arg(&socket).spawn().unwrap();
+    let connect = |path: &str| {
+        let started = std::time::Instant::now();
+        let stream = loop {
+            match std::os::unix::net::UnixStream::connect(&socket) {
+                Ok(s) => break s,
+                Err(_) if started.elapsed() < Duration::from_secs(5) => std::thread::sleep(Duration::from_millis(20)),
+                Err(e) => panic!("つなげない: {e}"),
+            }
+        };
+        let mut writer = stream.try_clone().unwrap();
+        amonhen_remote::local::write_preamble(&mut writer, path).unwrap();
+        Connection::new(stream, std::io::BufWriter::new(writer))
+    };
+    let path = dir.display().to_string();
+    let (a, b) = (connect(&path), connect(&path));
+    let (tx, rx) = mpsc::channel();
+    for (name, conn) in [("a", &a), ("b", &b)] {
+        let tx = tx.clone();
+        conn.on_notification(move |_| {
+            let _ = tx.send(name);
+        });
+    }
+    let ra = Repository::new(RemoteBackend::connect(a).unwrap());
+    let rb = Repository::new(RemoteBackend::connect(b).unwrap());
+    assert_eq!(ra.load_history().unwrap().graph.len(), 1);
+    assert_eq!(rb.load_history().unwrap().graph.len(), 1);
+
+    git(&dir, &["commit", "-q", "--allow-empty", "-m", "second"]);
+    let mut heard = std::collections::HashSet::new();
+    while heard.len() < 2 {
+        heard.insert(rx.recv_timeout(Duration::from_secs(10)).expect("両方に知らせが来ない"));
+    }
+    assert_eq!(rb.load_history().unwrap().graph.len(), 2);
+
+    // 開けないパスは、最初の要求に理由が返る。
+    let bad = connect("/nonexistent-amonhen");
+    let error = RemoteBackend::connect(bad).err().expect("開けないはず").to_string();
+    assert!(error.contains("開けない"), "{error}");
+
+    // 2 つ目の daemon は、動いているものに任せてすぐ終わる。
+    let second = Command::new(env!("CARGO_BIN_EXE_amonhend")).arg("--serve").arg(&socket).status().unwrap();
+    assert!(second.success());
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+}

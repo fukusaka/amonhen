@@ -25,6 +25,8 @@ pub struct Server {
     writer: Writer,
     /// 走っている要求の、取り消しの印。
     cancels: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
+    /// 大きな応答を圧縮するか（SSH では圧縮し、手元のソケットではしない）。
+    compress: bool,
 }
 
 impl Server {
@@ -34,15 +36,23 @@ impl Server {
             writer: Arc::new(Mutex::new(Box::new(output))),
             cancels: Arc::default(),
             commits: Arc::default(),
+            compress: true,
         }
+    }
+
+    /// 大きな応答も圧縮しない（手元のソケットで使う）。
+    pub fn without_compression(mut self) -> Self {
+        self.compress = false;
+        self
     }
 
     /// 知らせを送る関数（ファイルの監視から呼ぶ）。
     pub fn notifier(&self) -> impl Fn(Notification) + Send + Sync + 'static {
         let writer = self.writer.clone();
+        let compress = self.compress;
         move |n| {
             if let Ok(payload) = postcard::to_allocvec(&n) {
-                let _ = frame::write(&mut *writer.lock().unwrap(), Kind::Notify, 0, &payload);
+                let _ = frame::write_with(&mut *writer.lock().unwrap(), Kind::Notify, 0, &payload, compress);
             }
         }
     }
@@ -65,10 +75,11 @@ impl Server {
                     let writer = self.writer.clone();
                     let cancels = self.cancels.clone();
                     let commits = self.commits.clone();
+                    let compress = self.compress;
                     std::thread::spawn(move || {
                         let result = handle(&*backend, &commits, request, &cancel);
                         cancels.lock().unwrap().remove(&f.id);
-                        write_reply(&writer, f.id, result);
+                        write_reply(&writer, f.id, result, compress);
                     });
                 }
                 Kind::Cancel => {
@@ -83,15 +94,15 @@ impl Server {
     }
 
     fn reply(&self, id: u64, result: Result<Vec<u8>>) {
-        write_reply(&self.writer, id, result);
+        write_reply(&self.writer, id, result, self.compress);
     }
 }
 
-fn write_reply(writer: &Writer, id: u64, result: Result<Vec<u8>>) {
+fn write_reply(writer: &Writer, id: u64, result: Result<Vec<u8>>, compress: bool) {
     let mut out = writer.lock().unwrap();
     let _ = match result {
-        Ok(payload) => frame::write(&mut *out, Kind::Ok, id, &payload),
-        Err(e) => frame::write(&mut *out, Kind::Err, id, e.to_string().as_bytes()),
+        Ok(payload) => frame::write_with(&mut *out, Kind::Ok, id, &payload, compress),
+        Err(e) => frame::write_with(&mut *out, Kind::Err, id, e.to_string().as_bytes(), compress),
     };
 }
 

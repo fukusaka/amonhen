@@ -14,6 +14,9 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_bytes = "0.11.19"
 sha1_smol = "1.0.1"
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 amonhen-backend-gix.workspace = true
 amonhen-core.workspace = true

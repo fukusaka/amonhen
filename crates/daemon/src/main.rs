@@ -1,5 +1,9 @@
 //! `amonhend --stdio <repo>`: リポジトリの git の操作を、標準入出力の要求に応じて行う daemon。
 //! SSH 先では `ssh host amonhend --stdio <repo>` で起動し、手元の Amon Hen がつなぐ。
+//! `amonhend --serve [<socket>]`: 手元に常駐し、アプリ・CLI がソケットでつなぐ共有の daemon（`serve`）。
+
+#[cfg(unix)]
+mod serve;
 
 use std::sync::Arc;
 
@@ -24,6 +28,14 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let repo = match args.as_slice() {
         [flag, repo] if flag == "--stdio" => repo.clone(),
+        #[cfg(unix)]
+        [flag, rest @ ..] if flag == "--serve" && rest.len() <= 1 => {
+            if let Err(e) = serve::run(rest.first().map(std::path::PathBuf::from)) {
+                eprintln!("amonhend: {e}");
+                std::process::exit(1);
+            }
+            return;
+        }
         [flag] if flag == "--version" => {
             println!(
                 "amonhend {} (protocol {})",
@@ -33,7 +45,7 @@ fn main() {
             return;
         }
         _ => {
-            eprintln!("使い方: amonhend --stdio <リポジトリのパス>");
+            eprintln!("使い方: amonhend --stdio <リポジトリのパス> | amonhend --serve [<ソケット>]");
             std::process::exit(2);
         }
     };

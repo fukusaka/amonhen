@@ -85,8 +85,18 @@ fn repository_root(path: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(String::from_utf8(out.stdout)?.trim()))
 }
 
-/// リポジトリを開く。History はアプリと同じ永続キャッシュを使う（2 回目からはすぐ出る）。
+/// リポジトリを開く。History はアプリと同じ永続キャッシュを使う（2 回目からはすぐ出る）。`daemon:/path` なら、
+/// 手元の共有の daemon（アプリと同じもの。いなければ起動する）越しに開く。
 fn open_repository(path: &Path) -> Result<Repository> {
+    if let Some(location) = path.to_str().filter(|p| p.starts_with("daemon:")) {
+        let repo = amonhen_remote::location::local_path(location)?;
+        let conn = amonhen_remote::local::connect(repo, &daemon_program()?)?;
+        let backend = amonhen_remote::RemoteBackend::connect(conn)?;
+        return Ok(match cache_dir() {
+            Some(dir) => Repository::with_cache(backend, amonhen_core::cache::path_for(&dir, location)),
+            None => Repository::new(backend),
+        });
+    }
     let root = repository_root(path)?;
     let backend = GixBackend::open(&root)?;
     let key = std::fs::canonicalize(&root).unwrap_or(root).display().to_string();
@@ -94,6 +104,21 @@ fn open_repository(path: &Path) -> Result<Repository> {
         Some(dir) => Repository::with_cache(backend, amonhen_core::cache::path_for(&dir, &key)),
         None => Repository::new(backend),
     })
+}
+
+/// `amonhend` の場所: `AMONHEN_DAEMON`、なければ自分の隣（開発中の target/）か、`.app` の中
+/// （`Contents/Helpers/amonhen` から見た `Contents/MacOS/amonhend`）。
+fn daemon_program() -> Result<String> {
+    if let Ok(p) = std::env::var("AMONHEN_DAEMON") {
+        return Ok(p);
+    }
+    let exe = std::env::current_exe()?.canonicalize()?;
+    let dir = exe.parent().ok_or("自分の場所が分からない")?;
+    [dir.join("amonhend"), dir.join("../MacOS/amonhend")]
+        .into_iter()
+        .find(|p| p.is_file())
+        .map(|p| p.display().to_string())
+        .ok_or_else(|| "amonhend が見つかりません（AMONHEN_DAEMON で場所を指定できます）".into())
 }
 
 /// アプリと同じキャッシュの置き場所（macOS）。ほかの OS では XDG の場所。

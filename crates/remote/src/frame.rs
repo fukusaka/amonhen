@@ -47,7 +47,18 @@ const COMPRESSED: u8 = 0x80;
 
 /// 書いたバイト数（圧縮した後）を返す。
 pub fn write(out: &mut impl Write, kind: Kind, id: u64, payload: &[u8]) -> io::Result<usize> {
-    let compressed = (payload.len() >= COMPRESS_FROM)
+    write_with(out, kind, id, payload, true)
+}
+
+/// `compress` でなければ、大きくても圧縮しない（手元のソケットでは、圧縮は時間がかかるだけ）。
+pub fn write_with(
+    out: &mut impl Write,
+    kind: Kind,
+    id: u64,
+    payload: &[u8],
+    compress: bool,
+) -> io::Result<usize> {
+    let compressed = (compress && payload.len() >= COMPRESS_FROM)
         .then(|| lz4_flex::compress_prepend_size(payload))
         .filter(|c| c.len() < payload.len());
     let (flag, payload) = match &compressed {
