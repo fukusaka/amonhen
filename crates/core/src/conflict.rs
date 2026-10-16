@@ -143,6 +143,60 @@ pub fn resolve(data: &[u8], index: usize, choice: Choice) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// Magic Merge: 決まった規則で解けるコンフリクトを解く。解けたものは選んだ中身に置き換え、解けないものは
+/// マーカーごと残す。規則は順に:
+/// 1. 両側が同じ
+/// 2. 片側が共通の祖先と同じ（もう片側だけが変えた。diff3 のときだけ）
+/// 3. 空白・改行だけが違う（Current の側にする）
+/// 4. 単語単位で 3-way マージでき、両側の変更が重ならない（diff3 のときだけ）
+///
+/// 解いた内容と、解いたコンフリクトの数。
+pub fn magic(data: &[u8]) -> (Vec<u8>, usize) {
+    let ls = lines(data);
+    let take = |r: &Range<usize>| -> &[u8] {
+        if r.is_empty() {
+            &[]
+        } else {
+            &data[ls[r.start].start..ls[r.end - 1].end]
+        }
+    };
+    let squeeze = |b: &[u8]| -> Vec<u8> {
+        b.iter()
+            .copied()
+            .filter(|c| !c.is_ascii_whitespace())
+            .collect()
+    };
+    let mut out = Vec::with_capacity(data.len());
+    let mut next = 0usize;
+    let mut resolved = 0;
+    for c in parse(data) {
+        out.extend_from_slice(&data[next..ls[c.lines.start].start]);
+        next = ls[c.lines.end - 1].end;
+        let (ours, theirs) = (take(&c.ours), take(&c.theirs));
+        let base = c.base.as_ref().map(take);
+        let solution: Option<Vec<u8>> = if ours == theirs {
+            Some(ours.to_vec())
+        } else if base == Some(ours) {
+            Some(theirs.to_vec())
+        } else if base == Some(theirs) {
+            Some(ours.to_vec())
+        } else if squeeze(ours) == squeeze(theirs) {
+            Some(ours.to_vec())
+        } else {
+            base.and_then(|base| crate::words::merge3(base, ours, theirs))
+        };
+        match solution {
+            Some(text) => {
+                out.extend_from_slice(&text);
+                resolved += 1;
+            }
+            None => out.extend_from_slice(&data[ls[c.lines.start].start..next]),
+        }
+    }
+    out.extend_from_slice(&data[next..]);
+    (out, resolved)
+}
+
 /// マージエディタの 1 つの欄（Current・Incoming・共通の祖先）。すべてのコンフリクトをその側で解決した内容と、
 /// 各コンフリクトがその内容の何行目から何行目になったか（0 始まり、終わりは含まない）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -258,6 +312,32 @@ pub fn view(data: Arc<Vec<u8>>, profile: &FrontendProfile) -> DiffView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn magic_merge_solves_what_the_rules_allow() {
+        let text = concat!(
+            "keep\n",
+            // 1. 同じ
+            "<<<<<<< HEAD\nsame\n=======\nsame\n>>>>>>> t\n",
+            // 2. Current が祖先のまま → Incoming
+            "<<<<<<< HEAD\nold\n||||||| base\nold\n=======\nnew\n>>>>>>> t\n",
+            // 3. 空白だけ違う → Current
+            "<<<<<<< HEAD\nf(a, b)\n=======\nf(a,b)\n>>>>>>> t\n",
+            // 4. 同じ行の別の単語 → 両方
+            "<<<<<<< HEAD\ncall(x, b)\n||||||| base\ncall(a, b)\n=======\ncall(a, y)\n>>>>>>> t\n",
+            // 解けない: 同じ単語を別々に変えた
+            "<<<<<<< HEAD\nv = 1\n||||||| base\nv = 0\n=======\nv = 2\n>>>>>>> t\n",
+            "end\n",
+        );
+        let (out, resolved) = magic(text.as_bytes());
+        assert_eq!(resolved, 4);
+        let out = String::from_utf8(out).unwrap();
+        assert_eq!(
+            out,
+            "keep\nsame\nnew\nf(a, b)\ncall(x, y)\n<<<<<<< HEAD\nv = 1\n||||||| base\nv = 0\n=======\nv = 2\n>>>>>>> t\nend\n"
+        );
+        assert_eq!(parse(out.as_bytes()).len(), 1);
+    }
 
     const FILE: &str = "a\n<<<<<<< HEAD\nours 1\nours 2\n=======\ntheirs\n>>>>>>> topic\nb\n<<<<<<< HEAD\nx\n||||||| base\no\n=======\ny\n>>>>>>> topic\nc\n";
 

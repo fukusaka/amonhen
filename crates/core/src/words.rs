@@ -85,6 +85,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn merges_words_unless_both_sides_touch_the_same_place() {
+        assert_eq!(
+            merge3(b"f(a, b)", b"f(x, b)", b"f(a, y)").as_deref(),
+            Some(&b"f(x, y)"[..])
+        );
+        // 同じ位置に別々のものを足した・同じ単語を別々に変えた
+        assert_eq!(merge3(b"a b", b"a x b", b"a y b"), None);
+        assert_eq!(merge3(b"v = 0", b"v = 1", b"v = 2"), None);
+        // 同じ変更は 1 つにする
+        assert_eq!(merge3(b"a b", b"a c", b"a c").as_deref(), Some(&b"a c"[..]));
+    }
+
+    #[test]
     fn finds_the_changed_words() {
         let (r, a) = changed_words(b"let x = foo(1);", b"let x = bar(1);").unwrap();
         assert_eq!(r, vec![Range { start: 8, end: 11 }]);
@@ -110,4 +123,80 @@ mod tests {
     fn skips_lines_that_changed_almost_entirely() {
         assert!(changed_words(b"completely different", b"nothing alike here").is_none());
     }
+}
+
+/// これより長いコンフリクトは単語単位でマージしない（時間がかかる）。
+const MAX_MERGE: usize = 64 * 1024;
+
+/// 共通の祖先 `base` から `ours`・`theirs` への変更を、単語単位で 3-way マージする。両方の変更が重なる
+/// （同じ所か隣り合う所を変えた）なら、同じ変更でない限り None。
+pub fn merge3(base: &[u8], ours: &[u8], theirs: &[u8]) -> Option<Vec<u8>> {
+    if base.len() + ours.len() + theirs.len() > MAX_MERGE {
+        return None;
+    }
+    let tokens = |text: &[u8]| -> Vec<Range<usize>> {
+        boundaries(text).windows(2).map(|w| w[0]..w[1]).collect()
+    };
+    let (bt, ot, tt) = (tokens(base), tokens(ours), tokens(theirs));
+    // 祖先からの変更: 祖先の単語の範囲と、置き換える中身（バイト）。
+    let changes = |side: &[u8], st: &[Range<usize>]| -> Vec<(Range<u32>, Vec<u8>)> {
+        let input = InternedInput::new(Words(base), Words(side));
+        let mut diff = Diff::compute(Algorithm::Histogram, &input);
+        diff.postprocess_no_heuristic(&input);
+        diff.hunks()
+            .map(|h| {
+                let bytes = if h.after.is_empty() {
+                    Vec::new()
+                } else {
+                    side[st[h.after.start as usize].start..st[h.after.end as usize - 1].end]
+                        .to_vec()
+                };
+                (h.before, bytes)
+            })
+            .collect()
+    };
+    let (mut a, mut b) = (changes(ours, &ot), changes(theirs, &tt));
+    // 祖先の位置の順に、両側の変更を 1 つの列にする。重なるものは、同じ変更なら 1 つにし、違えば諦める。
+    let mut merged: Vec<(Range<u32>, Vec<u8>)> = Vec::new();
+    a.reverse();
+    b.reverse();
+    loop {
+        let next = match (a.last(), b.last()) {
+            (None, None) => break,
+            (Some(_), None) => a.pop().unwrap(),
+            (None, Some(_)) => b.pop().unwrap(),
+            (Some(x), Some(y)) => {
+                // 重なる・隣り合う（片方が挿入で同じ位置を含む）なら、同じ変更でなければマージできない。
+                if x.0.start <= y.0.end && y.0.start <= x.0.end {
+                    if x == y {
+                        b.pop();
+                        a.pop().unwrap()
+                    } else {
+                        return None;
+                    }
+                } else if x.0.start < y.0.start {
+                    a.pop().unwrap()
+                } else {
+                    b.pop().unwrap()
+                }
+            }
+        };
+        merged.push(next);
+    }
+    let byte = |i: u32| -> usize {
+        if (i as usize) < bt.len() {
+            bt[i as usize].start
+        } else {
+            base.len()
+        }
+    };
+    let mut out = Vec::with_capacity(base.len().max(ours.len()).max(theirs.len()));
+    let mut at = 0usize;
+    for (range, bytes) in merged {
+        out.extend_from_slice(&base[at..byte(range.start)]);
+        out.extend_from_slice(&bytes);
+        at = byte(range.end);
+    }
+    out.extend_from_slice(&base[at..]);
+    Some(out)
 }

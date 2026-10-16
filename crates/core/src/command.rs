@@ -159,6 +159,11 @@ pub enum Command {
         index: usize,
         choice: crate::conflict::Choice,
     },
+    /// Magic Merge: `text` のコンフリクトのうち、決まった規則で解けるものを解いた文章（`text`）と、解いた数
+    /// （`info.resolved`）・残った数（`info.remaining`）。ファイルには書かない。
+    MagicMerge {
+        text: String,
+    },
     /// `text` に残っているコンフリクト（`info.conflicts`）。それぞれ、マーカーを含む行範囲 `lines` と、
     /// 両側の中身 `current`・`incoming`（マージエディタの上の欄のどのコンフリクトかを突き合わせる）。
     ConflictRegions {
@@ -985,6 +990,16 @@ impl Repository {
                 Ok(Response {
                     ok: true,
                     text: Some(String::from_utf8_lossy(&resolved).into_owned()),
+                    ..Default::default()
+                })
+            }
+            Command::MagicMerge { text } => {
+                let (merged, resolved) = crate::conflict::magic(text.as_bytes());
+                let remaining = crate::conflict::parse(&merged).len();
+                Ok(Response {
+                    ok: true,
+                    text: Some(String::from_utf8_lossy(&merged).into_owned()),
+                    info: Some(serde_json::json!({ "resolved": resolved, "remaining": remaining })),
                     ..Default::default()
                 })
             }
