@@ -65,16 +65,10 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
         dipperPoint(1, 0), dipperPoint(0, 0), dipperPoint(-0.1, 1.3), dipperPoint(0.95, 1.45),
         dipperPoint(1.6, 2.25), dipperPoint(2.15, 2.85), dipperPoint(3.1, 3.2),
     ]
-    let lines = CGMutablePath()
-    lines.addLines(between: [dipper[0], dipper[1], dipper[2], dipper[3], dipper[0]])
-    lines.addLines(between: [dipper[3], dipper[4], dipper[5], dipper[6]])
-    ctx.addPath(lines)
-    ctx.setStrokeColor(color(0xFFFFFF, 0.16))
-    ctx.setLineWidth(3)
-    ctx.strokePath()
+    // 線は引かず、淡い点だけ（気づく人だけ気づく程度）。
     for (i, p) in dipper.enumerated() {
-        let r: CGFloat = i == 3 ? 5 : 7
-        ctx.setFillColor(color(0xFFFFFF, 0.8))
+        let r: CGFloat = i == 3 ? 3.5 : 4.5
+        ctx.setFillColor(color(0xFFFFFF, i == 3 ? 0.2 : 0.3))
         ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
     }
 
@@ -105,7 +99,7 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
     eye.addCurve(to: left, control1: lower.1, control2: lower.0)
     eye.closeSubpath()
     ctx.addPath(eye)
-    ctx.setFillColor(color(0x5A6CB4, 0.6))
+    ctx.setFillColor(color(0x4A5A9C, 0.35))
     ctx.fillPath()
 
     // レーン: 本流（青）が稜線と上まぶた、分かれて下を回って合流する枝（緑）が下まぶた。
@@ -150,20 +144,20 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
     node(bezier(0.78, lower), color(0x5FD38D), radius: 22)
 
     // 瞳: 金色の虹彩と、濃い瞳孔、小さな光。
-    let iris = CGPoint(x: 512, y: 632), irisRadius: CGFloat = 88
+    let iris = CGPoint(x: 512, y: 632), irisRadius: CGFloat = 62
     ctx.setFillColor(color(0x141B36))
     ctx.fillEllipse(in: CGRect(x: iris.x - irisRadius - 10, y: iris.y - irisRadius - 10,
                                width: (irisRadius + 10) * 2, height: (irisRadius + 10) * 2))
     ctx.saveGState()
     ctx.addEllipse(in: CGRect(x: iris.x - irisRadius, y: iris.y - irisRadius, width: irisRadius * 2, height: irisRadius * 2))
     ctx.clip()
-    let gold = CGGradient(colorsSpace: space, colors: [color(0xFFE9A8), color(0xF2B44A)] as CFArray, locations: [0, 1])!
+    let gold = CGGradient(colorsSpace: space, colors: [color(0xE9CF8E), color(0xB98A3E)] as CFArray, locations: [0, 1])!
     ctx.drawRadialGradient(gold, startCenter: iris, startRadius: 0, endCenter: iris, endRadius: irisRadius, options: [])
     ctx.restoreGState()
     ctx.setFillColor(color(0x141B36))
-    ctx.fillEllipse(in: CGRect(x: iris.x - 36, y: iris.y - 36, width: 72, height: 72))
-    ctx.setFillColor(color(0xFFFFFF, 0.9))
-    ctx.fillEllipse(in: CGRect(x: iris.x - 34, y: iris.y - 40, width: 22, height: 22))
+    ctx.fillEllipse(in: CGRect(x: iris.x - 24, y: iris.y - 24, width: 48, height: 48))
+    ctx.setFillColor(color(0xFFFFFF, 0.45))
+    ctx.fillEllipse(in: CGRect(x: iris.x - 24, y: iris.y - 28, width: 13, height: 13))
 
     // 北極星（四方に光る星）。ほんのわずか（3°）傾ける。
     let star = CGMutablePath()
