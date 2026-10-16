@@ -10,6 +10,7 @@ use std::time::Duration;
 use amonhen_watch::Changes;
 use serde_json::{Value, json};
 
+
 use crate::{Args, Result, USAGE, open_repository, term};
 
 /// `amonhen run [-C <path>] [<json>…]`: コアの命令（`{"op":"checkout","branch":"main"}` など）を実行し、答えの
@@ -25,11 +26,22 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             _ => commands.push(arg.clone()),
         }
     }
-    let repo = open_repository(&dir)?;
+    let front = open_repository(&dir)?;
+    // コアの命令をそのまま渡し、答えの JSON を 1 行で返す。
+    let run = |line: &str| -> String {
+        let command = match serde_json::from_str::<Value>(line) {
+            Ok(c) => c,
+            Err(e) => return json!({"ok": false, "error": format!("命令を読めない: {e}")}).to_string(),
+        };
+        match front.call(json!({"op": "run", "command": command})) {
+            Ok(reply) => reply.json.to_string(),
+            Err(e) => json!({"ok": false, "error": e.to_string()}).to_string(),
+        }
+    };
     if !commands.is_empty() {
         let mut all_ok = true;
         for c in &commands {
-            let reply = repo.run_json(c);
+            let reply = run(c);
             all_ok &= ok(&reply);
             println!("{reply}");
         }
@@ -42,7 +54,7 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         if line.trim().is_empty() {
             continue;
         }
-        writeln!(out, "{}", repo.run_json(&line))?;
+        writeln!(out, "{}", run(&line))?;
         out.flush()?;
     }
     Ok(ExitCode::SUCCESS)
@@ -65,19 +77,12 @@ pub fn watch(args: &[String]) -> Result<ExitCode> {
             s => return Err(format!("知らない引数: {s}\n\n{USAGE}").into()),
         }
     }
-    let repo = open_repository(&dir)?;
+    let front = open_repository(&dir)?;
     let (tx, rx) = mpsc::channel::<u32>();
-    // daemon 越しなら daemon の知らせ、手元なら自分で監視する（アプリと同じ）。
-    let remote_tx = tx.clone();
-    let _watcher = if repo.subscribe_changes(Box::new(move |bits| {
-        let _ = remote_tx.send(bits);
-    })) {
-        None
-    } else {
-        Some(amonhen_watch::Watcher::new(repo.paths(), move |changes| {
-            let _ = tx.send(changes.0);
-        })?)
-    };
+    // 手元ならこのプロセスで監視し、daemon 越しなら daemon の知らせを受ける（アプリと同じ）。
+    front.subscribe(Box::new(move |bits| {
+        let _ = tx.send(bits);
+    }))?;
     let report = |bits: u32| -> Result<()> {
         let changes = Changes(bits);
         let names: Vec<&str> = [
@@ -90,22 +95,20 @@ pub fn watch(args: &[String]) -> Result<ExitCode> {
         .filter(|(c, _)| changes.contains(*c))
         .map(|(_, n)| n)
         .collect();
-        let history = repo.load_history()?;
-        let status = repo.load_status()?;
-        let head = history.head.map(|h| h.to_string());
-        let changed = status.status.entries.len();
+        let history = front.call(json!({"op": "history"}))?.json;
+        let status = front.call(json!({"op": "status"}))?.json;
+        let _ = front.call(json!({"op": "historyRelease", "history": history["history"]}));
+        let head = history["head"].as_str().map(str::to_owned);
+        let commits = history["rows"].as_u64().unwrap_or(0);
+        let changed = status["entries"].as_array().map_or(0, Vec::len);
         if as_json {
-            println!(
-                "{}",
-                json!({"changes": names, "head": head, "commits": history.graph.len(), "changedFiles": changed})
-            );
+            println!("{}", json!({"changes": names, "head": head, "commits": commits, "changedFiles": changed}));
         } else {
             let head = head.as_deref().map_or("なし", |h| &h[..8]);
             println!(
-                "{}  {}  HEAD {head}・コミット {}・変更のあるファイル {changed}",
+                "{}  {}  HEAD {head}・コミット {commits}・変更のあるファイル {changed}",
                 term::local_time(now(), true),
                 if names.is_empty() { "-".to_owned() } else { names.join(",") },
-                history.graph.len(),
             );
         }
         std::io::stdout().flush()?;
@@ -125,7 +128,7 @@ pub fn watch(args: &[String]) -> Result<ExitCode> {
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
-        if let Some(reason) = repo.connection_state().and_then(|s| s.closed) {
+        if let Some(reason) = front.closed() {
             return Err(format!("daemon とのつながりが切れました: {reason}").into());
         }
     }

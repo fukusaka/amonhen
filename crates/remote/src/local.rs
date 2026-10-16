@@ -96,20 +96,26 @@ pub fn read_preamble(input: &mut impl Read) -> std::io::Result<String> {
 /// 共有の daemon で `repo` を開いてつなぐ。daemon がいなければ `daemon`（`amonhend` のパス）を起動してから。
 #[cfg(unix)]
 pub fn connect(repo: &str, daemon: &str) -> Result<Arc<Connection>> {
-    use std::os::unix::net::UnixStream;
-    let socket = socket_path();
-    let stream = match UnixStream::connect(&socket) {
-        Ok(s) => s,
-        Err(_) => {
-            launch(daemon, &socket)?;
-            wait_for(&socket, Duration::from_secs(5))?
-        }
-    };
+    let stream = stream(daemon)?;
     let mut writer = stream.try_clone()?;
     write_preamble(&mut writer, repo)?;
     let conn = Connection::new(stream, std::io::BufWriter::new(writer));
     conn.mark_local();
     Ok(conn)
+}
+
+/// 共有の daemon につないだソケット（最初に送るものはまだ送っていない）。daemon がいなければ `daemon` を起動してから。
+#[cfg(unix)]
+pub fn stream(daemon: &str) -> Result<std::os::unix::net::UnixStream> {
+    use std::os::unix::net::UnixStream;
+    let socket = socket_path();
+    match UnixStream::connect(&socket) {
+        Ok(s) => Ok(s),
+        Err(_) => {
+            launch(daemon, &socket)?;
+            wait_for(&socket, Duration::from_secs(5))
+        }
+    }
 }
 
 #[cfg(not(unix))]

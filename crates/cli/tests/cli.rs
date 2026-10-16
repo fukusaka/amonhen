@@ -173,9 +173,11 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
         watch.expect(&lines, "refs", at);
         watch.stop();
     }
-    // どの開き方でも、同じコミットは同じに見える。
-    assert_eq!(shown[1]["diffs"], shown[2]["diffs"].clone());
-    assert_eq!(shown[1]["changes"], shown[2]["changes"]);
+    // daemon 越しと SSH 越しで、同じ中身のコミット（「reset」）は同じに見える。
+    for key in ["rows", "files", "changes"] {
+        assert!(shown[1][key].as_array().is_some_and(|a| !a.is_empty()), "{key}: {}", shown[1]);
+        assert_eq!(shown[1][key], shown[2][key], "{key}");
+    }
 }
 
 /// 試験の中だけで動く環境（ホーム・共有の daemon のソケット・偽の ssh）。

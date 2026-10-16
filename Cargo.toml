@@ -21,6 +21,7 @@ amonhen-watch = { path = "crates/watch" }
 amonhen-syntax = { path = "crates/syntax" }
 amonhen-remote = { path = "crates/remote" }
 amonhen-daemon = { path = "crates/daemon" }
+amonhen-front = { path = "crates/front" }
 gix = { version = "0.89", default-features = false, features = ["sha1", "max-performance-safe", "revision", "attributes", "blob-diff"] }
 
 [profile.release]

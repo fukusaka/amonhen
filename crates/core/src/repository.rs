@@ -1023,6 +1023,17 @@ impl Repository {
     pub fn search_history(&self, snapshot: &HistorySnapshot, query: &str) -> Result<Vec<u32>> {
         let generation = self.search_generation.fetch_add(1, Ordering::Relaxed) + 1;
         let cancelled = || self.search_generation.load(Ordering::Relaxed) != generation;
+        self.search_history_until(snapshot, query, &cancelled)
+    }
+
+    /// `search_history` と同じだが、ほかの検索とは関係なく、`cancelled` が true になったときだけやめる（共有の
+    /// daemon のコアを、つないでいる相手ごとの検索で使うとき）。
+    pub fn search_history_until(
+        &self,
+        snapshot: &HistorySnapshot,
+        query: &str,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Vec<u32>> {
         let Some(expr) = crate::query::parse(query)? else {
             return Ok(Vec::new());
         };

@@ -8,9 +8,10 @@
 use std::collections::HashMap;
 use std::fmt::Write;
 
-use amonhen_core::{HistorySnapshot, Repository};
+use amonhen_front::Reply;
 use amonhen_layout::{Edge, Node};
-use amonhen_model::{Oid, RefKind, Refs};
+use amonhen_model::Oid;
+use serde_json::Value;
 
 pub struct Style {
     pub color: bool,
@@ -82,51 +83,91 @@ impl Line {
     }
 }
 
-pub fn render(
-    repo: &Repository,
-    history: &HistorySnapshot,
-    refs: &Refs,
-    rows: &[u32],
-    show_graph: bool,
-    style: &Style,
-) -> amonhen_model::Result<String> {
-    let mut out = String::new();
-    if rows.is_empty() {
-        return Ok(out);
-    }
-    let ids: Vec<Oid> = rows.iter().map(|&r| history.graph.ids()[r as usize]).collect();
-    let texts = repo.commit_texts(&ids)?;
-    let mut labels: HashMap<Oid, Vec<(String, RefKind)>> = HashMap::new();
-    for e in &refs.entries {
-        if let (Some(target), RefKind::Local | RefKind::Remote | RefKind::Tag) = (e.target, e.kind) {
-            labels.entry(target).or_default().push((e.name.clone(), e.kind));
+/// 窓口（`historyRows`）から受け取った行。
+pub struct Rows {
+    pub numbers: Vec<u32>,
+    pub nodes: Vec<Node>,
+    pub ids: Vec<Oid>,
+    pub times: Vec<i64>,
+    pub subjects: Vec<String>,
+    pub authors: Vec<String>,
+    pub folded: Vec<u32>,
+    pub parents: Vec<Vec<u32>>,
+    pub edges: Vec<Edge>,
+}
+
+impl Rows {
+    pub fn from(reply: &Reply) -> Self {
+        let spans = reply.u32s("spans");
+        let text = reply.section("text");
+        let string = |i: usize| {
+            let (off, len) = (spans[i] as usize, spans[i + 1] as usize);
+            String::from_utf8_lossy(&text[off..off + len]).into_owned()
+        };
+        let numbers = reply.u32s("rowNumbers");
+        let starts = reply.u32s("parentStarts");
+        let all_parents = reply.u32s("parents");
+        Self {
+            subjects: (0..numbers.len()).map(|r| string(r * 4)).collect(),
+            authors: (0..numbers.len()).map(|r| string(r * 4 + 2)).collect(),
+            parents: starts.windows(2).map(|w| all_parents[w[0] as usize..w[1] as usize].to_vec()).collect(),
+            nodes: reply.items("nodes"),
+            ids: reply.items("ids"),
+            times: reply.items("times"),
+            folded: reply.u32s("folded"),
+            edges: reply.items("edges"),
+            numbers,
         }
     }
-    let nodes = history.layout.nodes();
-    let graph = if show_graph { Some(Graph::new(history, rows)) } else { None };
 
-    for (i, &row) in rows.iter().enumerate() {
+}
+
+/// ブランチ・タグの名前をコミットごとに（窓口の `refs` の答えから）。
+fn labels(refs: &Value) -> HashMap<String, Vec<(String, &'static str)>> {
+    let mut labels: HashMap<String, Vec<(String, &'static str)>> = HashMap::new();
+    for e in refs["entries"].as_array().into_iter().flatten() {
+        let kind = match e["kind"].as_str() {
+            Some("branch") => "branch",
+            Some("remote") => "remote",
+            Some("tag") => "tag",
+            _ => continue,
+        };
+        if let (Some(target), Some(name)) = (e["target"].as_str(), e["name"].as_str()) {
+            labels.entry(target.to_owned()).or_default().push((name.to_owned(), kind));
+        }
+    }
+    labels
+}
+
+pub fn render(rows: &Rows, refs: &Value, show_graph: bool, style: &Style) -> String {
+    let mut out = String::new();
+    if rows.numbers.is_empty() {
+        return out;
+    }
+    let labels = labels(refs);
+    let head = refs["headBranch"].as_str();
+    let graph = if show_graph { Some(Graph::new(rows)) } else { None };
+
+    for (i, &row) in rows.numbers.iter().enumerate() {
         let mut line = String::new();
         let mut visible = 0;
         if let Some(g) = &graph {
-            let l = g.commit_line(row, &nodes[row as usize]);
+            let l = g.commit_line(row, &rows.nodes[i]);
             line.push_str(&l.text(style.color));
             line.push(' ');
             visible += l.dirs.len() + 1;
         }
-        let text = &texts[i];
-        let id = ids[i].to_string();
+        let id = rows.ids[i].to_string();
         paint(&mut line, &id[..8], Some(179), style.color);
         line.push(' ');
         visible += 9;
-        if let Some(names) = labels.get(&ids[i]) {
-            let head = refs.head_branch.as_deref();
+        if let Some(names) = labels.get(&id) {
             let mut parts = Vec::new();
             for (name, kind) in names {
-                let (color, shown) = match kind {
-                    RefKind::Local if Some(name.as_str()) == head => (114, format!("HEAD → {name}")),
-                    RefKind::Local => (114, name.clone()),
-                    RefKind::Remote => (174, name.clone()),
+                let (color, shown) = match *kind {
+                    "branch" if Some(name.as_str()) == head => (114, format!("HEAD → {name}")),
+                    "branch" => (114, name.clone()),
+                    "remote" => (174, name.clone()),
                     _ => (179, format!("tag: {name}")),
                 };
                 parts.push((color, shown));
@@ -142,17 +183,12 @@ pub fn render(
             line.push_str(") ");
             visible += 1;
         }
-        let hidden = history.folded.get(row as usize).copied().unwrap_or(0);
-        let subject = String::from_utf8_lossy(text.subject());
-        let mut tail = subject.into_owned();
+        let hidden = rows.folded.get(i).copied().unwrap_or(0);
+        let mut tail = rows.subjects[i].clone();
         if hidden > 0 {
             tail.push_str(&format!("  ⊕ {hidden} 件を折りたたみ"));
         }
-        let meta = format!(
-            "  — {}, {}",
-            String::from_utf8_lossy(text.author_name()),
-            crate::term::local_time(text.author_time, false)
-        );
+        let meta = format!("  — {}, {}", rows.authors[i], crate::term::local_time(rows.times[i], false));
         // 幅を超えるなら、件名を切り詰める（作者・日付は残す）。
         if let Some(width) = style.width {
             let room = width.saturating_sub(visible + meta.chars().count());
@@ -165,7 +201,7 @@ pub fn render(
         line.push('\n');
         out.push_str(&line);
         if let Some(g) = &graph
-            && let Some(next) = rows.get(i + 1)
+            && let Some(next) = rows.numbers.get(i + 1)
             && *next == row + 1
             && let Some(l) = g.connector_line(row)
         {
@@ -173,47 +209,38 @@ pub fn render(
             out.push('\n');
         }
     }
-    Ok(out)
+    out
 }
 
 /// `rows` の行を JSON の配列に（`amonhen log --json`）。`lane`・`color` は FE が描くときのレーンと色の番号。
-pub fn json_rows(repo: &Repository, history: &HistorySnapshot, refs: &Refs, rows: &[u32]) -> amonhen_model::Result<serde_json::Value> {
-    let ids: Vec<Oid> = rows.iter().map(|&r| history.graph.ids()[r as usize]).collect();
-    let texts = repo.commit_texts(&ids)?;
-    let mut labels: HashMap<Oid, Vec<String>> = HashMap::new();
-    for e in &refs.entries {
-        if let (Some(target), RefKind::Local | RefKind::Remote | RefKind::Tag) = (e.target, e.kind) {
-            labels.entry(target).or_default().push(e.name.clone());
-        }
-    }
-    let nodes = history.layout.nodes();
-    let all = history.graph.ids();
-    Ok(serde_json::Value::Array(
-        rows.iter()
-            .zip(&ids)
-            .zip(&texts)
-            .map(|((&row, id), text)| {
-                let node = &nodes[row as usize];
+pub fn json_rows(rows: &Rows, refs: &Value) -> Value {
+    let labels = labels(refs);
+    Value::Array(
+        rows.numbers
+            .iter()
+            .enumerate()
+            .map(|(i, &row)| {
+                let id = rows.ids[i].to_string();
                 serde_json::json!({
                     "row": row,
-                    "id": id.to_string(),
-                    "parents": history.graph.parents(row as usize).iter().map(|&p| all[p as usize].to_string()).collect::<Vec<_>>(),
-                    "subject": String::from_utf8_lossy(text.subject()),
-                    "author": String::from_utf8_lossy(text.author_name()),
-                    "authorTime": text.author_time,
-                    "refs": labels.get(id).cloned().unwrap_or_default(),
-                    "lane": node.lane,
-                    "color": node.color,
-                    "folded": history.folded.get(row as usize).copied().unwrap_or(0),
+                    "id": id,
+                    "parentRows": rows.parents[i],
+                    "subject": rows.subjects[i],
+                    "author": rows.authors[i],
+                    "authorTime": rows.times[i],
+                    "refs": labels.get(&id).map(|l| l.iter().map(|(n, _)| n.clone()).collect::<Vec<_>>()).unwrap_or_default(),
+                    "lane": rows.nodes[i].lane,
+                    "color": rows.nodes[i].color,
+                    "folded": rows.folded.get(i).copied().unwrap_or(0),
                 })
             })
             .collect(),
-    ))
+    )
 }
 
 /// 表示する行の範囲の点と線と、レーンから列への対応。
 struct Graph<'a> {
-    edges: Vec<&'a Edge>,
+    edges: &'a [Edge],
     /// レーン → 半列の位置。
     column: HashMap<u16, usize>,
     /// 細い列にまとめたレーン。
@@ -222,18 +249,15 @@ struct Graph<'a> {
 }
 
 impl<'a> Graph<'a> {
-    fn new(history: &'a HistorySnapshot, rows: &[u32]) -> Self {
-        let first = *rows.first().unwrap();
-        let last = *rows.last().unwrap();
-        let layout = &history.layout;
-        let edges: Vec<&Edge> = layout.edges_in(first..last + 1).map(|i| &layout.edges()[i as usize]).collect();
+    fn new(rows: &'a Rows) -> Self {
+        let edges = &rows.edges[..];
         // 点か曲線の端があるレーンは広く、線が通るだけのレーンは細く。
         let mut wide = std::collections::BTreeSet::new();
-        for &r in rows {
-            wide.insert(layout.nodes()[r as usize].lane);
+        for n in &rows.nodes {
+            wide.insert(n.lane);
         }
         let mut through = std::collections::BTreeSet::new();
-        for e in &edges {
+        for e in edges {
             if e.lane_start != e.lane_end {
                 wide.insert(e.lane_start);
                 wide.insert(e.lane_end);
@@ -273,7 +297,7 @@ impl<'a> Graph<'a> {
 
     fn commit_line(&self, row: u32, node: &Node) -> Line {
         let mut line = Line::new(self.width);
-        for e in &self.edges {
+        for e in self.edges {
             if e.row_start <= row && row <= e.row_end {
                 // 曲線は、端の行ではそのレーンの縦線として出す（向きを変えるのはつなぎの行）。
                 let lane = if e.lane_start == e.lane_end || e.row_start == row { e.lane_start } else { e.lane_end };
@@ -299,7 +323,7 @@ impl<'a> Graph<'a> {
     fn connector_line(&self, row: u32) -> Option<Line> {
         let mut line = Line::new(self.width);
         let mut curved = false;
-        for e in &self.edges {
+        for e in self.edges {
             let c = Self::color(e);
             if e.lane_start != e.lane_end && e.row_start == row {
                 curved = true;

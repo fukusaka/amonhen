@@ -38,7 +38,7 @@ struct Shared {
     ssh: Option<Arc<amonhen_remote::Connection>>,
     backend: Arc<dyn GitBackend>,
     /// History を作り、任された命令と差分を実行するコア（初めて頼まれたときに作る）。
-    core: std::sync::OnceLock<amonhen_core::Repository>,
+    core: std::sync::OnceLock<Arc<amonhen_core::Repository>>,
     /// History を作るのは 1 つずつ。
     history: Mutex<()>,
     /// 検索のための数えたコミットと、件名と作者名の索引（つないでいる全員で 1 つ）。
@@ -161,6 +161,10 @@ fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
         }
         return Ok(());
     }
+    // FE 向けの窓口（`amonhen-front`）: コアはこの daemon で動き、相手は JSON とレコードを受け取る。
+    if let Some(location) = path.strip_prefix(amonhen_front::PREAMBLE) {
+        return serve_front(state, location, reader, writer);
+    }
     let shared = match open(state, &path) {
         Ok(s) => s,
         Err(e) => {
@@ -179,6 +183,64 @@ fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
     let result = server.run(reader);
     shared.listeners.lock().unwrap().retain(|(i, _)| *i != id);
     result.map_err(Into::into)
+}
+
+/// FE 向けの窓口のやりとり。要求ごとにスレッドで実行し、答えは番号つきで返す（順不同）。
+fn serve_front(state: &State, location: &str, mut reader: BufReader<UnixStream>, writer: BufWriter<UnixStream>) -> Result<()> {
+    use amonhen_remote::frame::{self, Kind};
+    use std::sync::atomic::AtomicBool;
+    let opened = open(state, location).and_then(|shared| Ok((core(&shared)?.clone(), shared)));
+    let (repo, shared) = match opened {
+        Ok(r) => r,
+        Err(e) => {
+            reply_error(&mut reader, writer, &format!("{location} を開けない: {e}"));
+            return Ok(());
+        }
+    };
+    let session = Arc::new(amonhen_front::Session::new(repo));
+    let writer = Arc::new(Mutex::new(writer));
+    let id = state.next.fetch_add(1, Ordering::Relaxed);
+    let notify_writer = writer.clone();
+    shared.listeners.lock().unwrap().push((
+        id,
+        Box::new(move |n| {
+            let Notification::Changed(bits) = n;
+            let payload = serde_json::json!({ "changes": bits }).to_string();
+            let _ = frame::write_with(&mut *notify_writer.lock().unwrap(), Kind::Notify, 0, payload.as_bytes(), false);
+        }),
+    ));
+    let cancels: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> = Arc::default();
+    let result = (|| -> Result<()> {
+        while let Some(f) = frame::read(&mut reader)? {
+            match f.kind {
+                Kind::Request => {
+                    let cancel = Arc::new(AtomicBool::new(false));
+                    cancels.lock().unwrap().insert(f.id, cancel.clone());
+                    let (session, writer, cancels) = (session.clone(), writer.clone(), cancels.clone());
+                    std::thread::spawn(move || {
+                        let result = serde_json::from_slice::<serde_json::Value>(&f.payload)
+                            .map_err(|e| format!("命令を読めない: {e}").into())
+                            .and_then(|request| session.handle(&request, &|| cancel.load(Ordering::Relaxed)));
+                        cancels.lock().unwrap().remove(&f.id);
+                        let mut out = writer.lock().unwrap();
+                        let _ = match result {
+                            Ok(reply) => frame::write_with(&mut *out, Kind::Ok, f.id, &reply.encode(), false),
+                            Err(e) => frame::write_with(&mut *out, Kind::Err, f.id, e.to_string().as_bytes(), false),
+                        };
+                    });
+                }
+                Kind::Cancel => {
+                    if let Some(c) = cancels.lock().unwrap().get(&f.id) {
+                        c.store(true, Ordering::Relaxed);
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    })();
+    shared.listeners.lock().unwrap().retain(|(i, _)| *i != id);
+    result
 }
 
 fn reply_error(reader: &mut BufReader<UnixStream>, mut writer: BufWriter<UnixStream>, message: &str) {
@@ -289,7 +351,7 @@ impl amonhen_remote::Host for CoreHost {
 }
 
 /// リポジトリのコア（初めて使うときに、前回の History のキャッシュから作る）。
-fn core(shared: &Shared) -> Result<&amonhen_core::Repository> {
+fn core(shared: &Shared) -> Result<&Arc<amonhen_core::Repository>> {
     if let Some(repo) = shared.core.get() {
         return Ok(repo);
     }
@@ -301,7 +363,7 @@ fn core(shared: &Shared) -> Result<&amonhen_core::Repository> {
     };
     repo.load_cached_history();
     // 同時に作られたら、先にできた方を使う。
-    let _ = shared.core.set(repo);
+    let _ = shared.core.set(Arc::new(repo));
     Ok(shared.core.get().unwrap())
 }
 

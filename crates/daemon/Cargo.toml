@@ -13,6 +13,7 @@ path = "src/main.rs"
 serde_json = "1.0.154"
 amonhen-backend-gix.workspace = true
 amonhen-core.workspace = true
+amonhen-front.workspace = true
 amonhen-model.workspace = true
 amonhen-remote.workspace = true
 amonhen-watch.workspace = true

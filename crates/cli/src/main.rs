@@ -22,9 +22,7 @@ mod session;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use amonhen_backend_gix::GixBackend;
-use amonhen_core::Repository;
-use amonhen_model::Oid;
+use amonhen_front::Front;
 
 pub(crate) const USAGE: &str = "\
 usage: amonhen [<path>]
@@ -126,25 +124,22 @@ pub(crate) fn repository_root(path: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(String::from_utf8(out.stdout)?.trim()))
 }
 
-/// リポジトリを開く。History はアプリと同じ永続キャッシュを使う（2 回目からはすぐ出る）。`daemon:/path` なら、
-/// 手元の共有の daemon（アプリと同じもの。いなければ起動する）越しに開く。`ssh://host/path` はいつも共有の daemon
-/// 越しに開く（daemon が SSH のつながりと History・検索の索引を持ち続けるので、2 回目からは速い）。
-pub(crate) fn open_repository(path: &Path) -> Result<Repository> {
+/// リポジトリを開く（コアへの窓口）。手元のパスなら、このプロセスのコアで（History はアプリと同じ永続キャッシュを
+/// 使うので、2 回目からはすぐ出る）。`daemon:<path>` と `ssh://host/path` は、手元の共有の daemon（アプリと同じもの。
+/// いなければ起動する）のコアで動かし、ここでは答えを出すだけにする（daemon が SSH のつながりと History・検索の
+/// 索引を持ち続けるので、2 回目からは速い）。どちらも同じ命令を通る（VSCode 拡張と同じ道）。
+pub(crate) fn open_repository(path: &Path) -> Result<Box<dyn Front>> {
     let given = path.to_str().unwrap_or_default();
-    let through_daemon = if given.starts_with("ssh://") { Some(format!("daemon:{given}")) } else { None };
-    if let Some(location) = through_daemon.as_deref().or(Some(given).filter(|p| p.starts_with("daemon:"))) {
-        let repo = amonhen_remote::location::local_path(location)?;
-        let conn = amonhen_remote::local::connect(repo, &daemon_program()?)?;
-        // History は daemon が用意したファイルを直接読むので、手元のキャッシュは持たない。
-        return Ok(Repository::new(amonhen_remote::RemoteBackend::connect(conn)?));
+    if given.starts_with("ssh://") || given.starts_with("daemon:") {
+        return amonhen_front::open(given, &daemon_program()?, None);
     }
     let root = repository_root(path)?;
-    let backend = GixBackend::open(&root)?;
-    let key = std::fs::canonicalize(&root).unwrap_or(root).display().to_string();
-    Ok(match cache_dir() {
-        Some(dir) => Repository::with_cache(backend, amonhen_core::cache::path_for(&dir, &key)),
-        None => Repository::new(backend),
-    })
+    amonhen_front::open(&root.display().to_string(), "", cache_dir().as_deref())
+}
+
+/// 窓口に命令を送る。
+pub(crate) fn call(front: &dyn Front, request: serde_json::Value) -> Result<amonhen_front::Reply> {
+    front.call(request)
 }
 
 // MARK: - daemon
@@ -228,12 +223,12 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
                 let root = repository_root(Path::new(given))?;
                 format!("daemon:{}", std::fs::canonicalize(&root).unwrap_or(root).display())
             };
-            let repo = open_repository(Path::new(&location))?;
+            let front = open_repository(Path::new(&location))?;
             let started = std::time::Instant::now();
-            let history = repo.rebuild_history()?;
+            let history = call(&*front, serde_json::json!({"op": "history", "rebuild": true}))?.json;
             println!(
                 "History を作り直しました（{} コミット・{:.2} 秒）",
-                history.graph.len(),
+                history["rows"],
                 started.elapsed().as_secs_f64()
             );
             Ok(ExitCode::SUCCESS)
@@ -279,9 +274,9 @@ fn cache_dir() -> Option<PathBuf> {
     Some(dir)
 }
 
-/// コアの命令を JSON で実行し、結果を返す。失敗なら Err。
-pub(crate) fn command(repo: &Repository, json: serde_json::Value) -> Result<serde_json::Value> {
-    let response: serde_json::Value = serde_json::from_str(&repo.run_json(&json.to_string()))?;
+/// コアの命令（`run_json`）を実行し、結果を返す。失敗なら Err。
+pub(crate) fn command(front: &dyn Front, json: serde_json::Value) -> Result<serde_json::Value> {
+    let response = front.call(serde_json::json!({"op": "run", "command": json}))?.json;
     if response["ok"] != true {
         return Err(response["error"].as_str().unwrap_or("失敗しました").to_owned().into());
     }
@@ -319,50 +314,45 @@ fn log(args: &[String]) -> Result<ExitCode> {
             _ => query.push(arg.clone()),
         }
     }
-    let repo = open_repository(&dir)?;
-    // アプリと同じく、前回の History（永続キャッシュ）から始めて、増えたコミットだけを読む。
-    let full = if rebuild {
-        repo.rebuild_history()?
-    } else {
-        repo.load_cached_history();
-        repo.load_history()?
-    };
-    let refs = repo.load_refs()?;
+    let front = open_repository(&dir)?;
+    let refs = call(&*front, serde_json::json!({"op": "refs"}))?.json;
     // 絞り込むブランチ（名前から ID へ）。
-    let tips: Vec<Oid> = branches
+    let tips: Vec<String> = branches
         .iter()
         .map(|name| {
-            refs.refs
-                .entries
-                .iter()
-                .find(|e| &e.name == name)
-                .and_then(|e| e.target)
+            refs["entries"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .find(|e| e["name"] == name.as_str() && e["kind"] != "tag")
+                .and_then(|e| e["target"].as_str().map(str::to_owned))
                 .ok_or_else(|| format!("ブランチが見つかりません: {name}"))
         })
         .collect::<std::result::Result<_, _>>()?;
-    let tips = (!tips.is_empty()).then_some(tips.as_slice());
-    let history = match (fold, tips) {
-        (true, tips) => repo.history_folded(tips, &[])?,
-        (false, Some(tips)) => repo.history_filtered(tips)?,
-        (false, None) => full,
-    };
+    let mut request = serde_json::json!({"op": "history", "rebuild": rebuild, "fold": fold});
+    if !tips.is_empty() {
+        request["tips"] = serde_json::json!(tips);
+    }
+    let history = call(&*front, request)?.json;
+    let (id, total) = (history["history"].clone(), history["rows"].as_u64().unwrap_or(0));
     // 端末に出すときは、既定で 1 画面分。
     let count = count.unwrap_or_else(|| if term::stdout_is_tty() { term::height().saturating_sub(4).max(10) / 2 } else { 100 });
-    let rows: Vec<u32> = if query.is_empty() {
-        (0..history.graph.len().min(count) as u32).collect()
+    let rows = if query.is_empty() {
+        call(&*front, serde_json::json!({"op": "historyRows", "history": id, "start": 0, "count": count.min(total as usize)}))?
     } else {
         // 検索の結果は、グラフなしで並べる（行がとびとびなので線をつなげない）。
         show_graph = false;
-        let found = repo.search_history(&history, &query.join(" "))?;
-        found.into_iter().take(count).collect()
+        let found = call(&*front, serde_json::json!({"op": "historySearch", "history": id, "query": query.join(" ")}))?;
+        let found: Vec<u32> = found.u32s("rows").into_iter().take(count).collect();
+        call(&*front, serde_json::json!({"op": "historyRows", "history": id, "rows": found}))?
     };
+    let rows = graph::Rows::from(&rows);
     if as_json {
-        println!("{}", graph::json_rows(&repo, &history, &refs.refs, &rows)?);
+        println!("{}", graph::json_rows(&rows, &refs));
         return Ok(ExitCode::SUCCESS);
     }
     let style = graph::Style { color, width: term::width() };
-    let out = graph::render(&repo, &history, &refs.refs, &rows, show_graph, &style)?;
-    term::write(&out);
+    term::write(&graph::render(&rows, &refs, show_graph, &style));
     Ok(ExitCode::SUCCESS)
 }
 
@@ -380,10 +370,10 @@ fn undo(args: &[String]) -> Result<ExitCode> {
             s => return Err(format!("知らない引数: {s}\n\n{USAGE}").into()),
         }
     }
-    let repo = open_repository(&dir)?;
+    let front = open_repository(&dir)?;
     match mode {
         "list" => {
-            let r = command(&repo, serde_json::json!({"op": "undoLog"}))?;
+            let r = command(&*front, serde_json::json!({"op": "undoLog"}))?;
             let entries = r["info"]["entries"].as_array().cloned().unwrap_or_default();
             if entries.is_empty() {
                 println!("戻せる操作はありません");
@@ -394,14 +384,14 @@ fn undo(args: &[String]) -> Result<ExitCode> {
             }
         }
         "peek" => {
-            let r = command(&repo, serde_json::json!({"op": "undoPeek"}))?;
+            let r = command(&*front, serde_json::json!({"op": "undoPeek"}))?;
             match r["label"].as_str() {
                 Some(label) => println!("次に戻す操作: {label}"),
                 None => println!("戻せる操作はありません"),
             }
         }
         _ => {
-            let r = command(&repo, serde_json::json!({"op": "undo"}))?;
+            let r = command(&*front, serde_json::json!({"op": "undo"}))?;
             match r["label"].as_str() {
                 Some(label) => println!("戻しました: {label}"),
                 None => {
