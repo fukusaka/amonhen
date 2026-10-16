@@ -2,9 +2,8 @@
 //   swift scripts/make-icon.swift [出力先のフォルダ]
 // 出力: AppIcon.icns（正式版）・AppIcon-Snapshot.icns（snapshot 版。右下にオレンジの帯）・AppIcon.png（1024 px の見本）
 //
-// 図柄: Amon Hen（シンダール語で「目の丘」）にちなみ、夜の丘の稜線を git のレーンで描く。稜線（本流）と、
-// 分かれて下を回り合流する枝が、目の上下のまぶたになり、その間に金色の瞳を置く。空には北斗七星（物語では
-// 「ヴァラールの鎌」）と、その指極星の先に北極星。macOS のアイコンの枠（1024 の中の 824 の角の丸い四角）に合わせる。
+// 図柄: Amon Hen（見張りの座）にちなみ、夜の丘の稜線を git のレーン（分かれて合流する 2 本）で描き、
+// 頂上の座に光る点（見る目）を置く。空には淡い北斗七星と、その指極星の先に光る星（北極星の役）。macOS のアイコンの枠（1024 の中の 824 の角の丸い四角）に合わせる。
 import AppKit
 
 let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "apps/macos/Icons")
@@ -36,99 +35,88 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
     let space = CGColorSpace(name: CGColorSpace.sRGB)!
 
     // 夜空: 上が藍、下が濃紺。
-    let sky = CGGradient(colorsSpace: space, colors: [color(0x26325E), color(0x0A0E1E)] as CFArray, locations: [0, 1])!
+    let sky = CGGradient(colorsSpace: space, colors: [color(0x2A3766), color(0x0B1022)] as CFArray, locations: [0, 1])!
     ctx.drawLinearGradient(sky, start: CGPoint(x: 512, y: 100), end: CGPoint(x: 512, y: 924), options: [])
 
-    // 頂上の星（北極星の役）と、その後ろの光。
-    let polaris = CGPoint(x: 512, y: 270)
-    let glow = CGGradient(
-        colorsSpace: space, colors: [color(0xFFC94D, 0.45), color(0xE8A23A, 0.15), color(0xE8A23A, 0)] as CFArray,
-        locations: [0, 0.45, 1])!
-    ctx.drawRadialGradient(glow, startCenter: polaris, startRadius: 0, endCenter: polaris, endRadius: 250, options: [])
-
-    // 北斗七星（物語では「ヴァラールの鎌」）。柄杓の先の 2 つ（Merak→Dubhe）を延ばした先に北極星が来るように置く。
-    // 形は Merak を原点、Dubhe への向きを x、柄の側を y にとった座標（指極星の間を 1 とする）。
-    let unit: CGFloat = 52
-    let tilt: CGFloat = -28 * CGFloat.pi / 180
-    let pointer = CGPoint(x: cos(tilt), y: sin(tilt))
-    let side = CGPoint(x: pointer.y, y: -pointer.x)
-    let reach: CGFloat = unit * 5
-    let dubhe = CGPoint(x: polaris.x - pointer.x * reach, y: polaris.y - pointer.y * reach)
-    let merak = CGPoint(x: dubhe.x - pointer.x * unit, y: dubhe.y - pointer.y * unit)
-    func dipperPoint(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-        let dx: CGFloat = (pointer.x * x + side.x * y) * unit
-        let dy: CGFloat = (pointer.y * x + side.y * y) * unit
-        return CGPoint(x: merak.x + dx, y: merak.y + dy)
-    }
-    // Dubhe・Merak・Phecda・Megrez（升）と、Alioth・Mizar・Alkaid（柄）。
-    let dipper = [
-        dipperPoint(1, 0), dipperPoint(0, 0), dipperPoint(-0.1, 1.3), dipperPoint(0.95, 1.45),
-        dipperPoint(1.6, 2.25), dipperPoint(2.15, 2.85), dipperPoint(3.1, 3.2),
+    // 北斗七星（物語では「ヴァラールの鎌」）。実際の位置（赤経を時、赤緯を度）から並びを作り、柄杓の先の 2 つ
+    // （Merak → Dubhe）を延ばした先に頂上の星（北極星の役）が来るように回して置く。淡い点だけで、線は引かない。
+    let catalog: [(ra: CGFloat, dec: CGFloat, mag: CGFloat)] = [
+        (11.062, 61.75, 1.8), (11.031, 56.38, 2.4), (11.897, 53.69, 2.4), (12.257, 57.03, 3.3),
+        (12.900, 55.96, 1.8), (13.399, 54.93, 2.2), (13.792, 49.31, 1.9),
     ]
-    // 線は引かず、淡い点だけ（気づく人だけ気づく程度）。
-    for (i, p) in dipper.enumerated() {
-        let r: CGFloat = i == 3 ? 3.5 : 4.5
-        ctx.setFillColor(color(0xFFFFFF, i == 3 ? 0.2 : 0.3))
+    // 空を見上げた向き（東が左）の平面に写す（度、y は下向き）。
+    let flat = catalog.map { CGPoint(x: -($0.ra - 12) * 15 * cos(55 * CGFloat.pi / 180), y: -$0.dec) }
+    let polaris = CGPoint(x: 512, y: 300)
+    let dubheAt = CGPoint(x: 330, y: 330)
+    let pointer = CGPoint(x: flat[0].x - flat[1].x, y: flat[0].y - flat[1].y)
+    let toPolaris = CGPoint(x: polaris.x - dubheAt.x, y: polaris.y - dubheAt.y)
+    let turn = atan2(toPolaris.y, toPolaris.x) - atan2(pointer.y, pointer.x)
+    let scale: CGFloat = 7.5
+    for (i, star) in flat.enumerated() {
+        let dx = (star.x - flat[0].x) * scale, dy = (star.y - flat[0].y) * scale
+        let p = CGPoint(x: dubheAt.x + dx * cos(turn) - dy * sin(turn), y: dubheAt.y + dx * sin(turn) + dy * cos(turn))
+        // 明るい星ほど少し大きく濃く（Megrez は暗い）。
+        let r: CGFloat = 6.2 - catalog[i].mag
+        ctx.setFillColor(color(0xFFFFFF, 0.5 - catalog[i].mag * 0.08))
         ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
     }
 
-    // 丘: 稜線の真ん中が目の上まぶたになる。左右の角から外へは、なだらかに下りる。
-    let left = CGPoint(x: 280, y: 640), right = CGPoint(x: 744, y: 640)
-    let upper = (CGPoint(x: 380, y: 455), CGPoint(x: 644, y: 455))
-    let lower = (CGPoint(x: 380, y: 805), CGPoint(x: 644, y: 805))
-    let outerLeft = CGPoint(x: 100, y: 790), outerRight = CGPoint(x: 924, y: 790)
+    // 頂上の後ろの光。
+    let glow = CGGradient(
+        colorsSpace: space, colors: [color(0xFFC94D, 0.5), color(0xE8A23A, 0.18), color(0xE8A23A, 0)] as CFArray, locations: [0, 0.45, 1])!
+    ctx.drawRadialGradient(glow, startCenter: polaris, startRadius: 0,
+                           endCenter: polaris, endRadius: 280, options: [])
+
+    // 奥の丘（薄く）。
+    let back = CGMutablePath()
+    back.move(to: CGPoint(x: 100, y: 640))
+    back.addQuadCurve(to: CGPoint(x: 330, y: 560), control: CGPoint(x: 220, y: 570))
+    back.addQuadCurve(to: CGPoint(x: 560, y: 650), control: CGPoint(x: 450, y: 560))
+    back.addLine(to: CGPoint(x: 560, y: 924))
+    back.addLine(to: CGPoint(x: 100, y: 924))
+    back.closeSubpath()
+    ctx.addPath(back)
+    ctx.setFillColor(color(0x26315A, 0.8))
+    ctx.fillPath()
+
+    // 手前の丘: 稜線は頂上の座（平らなところ）を挟んで左右に下りる。
+    let ridge: [CGPoint] = [
+        CGPoint(x: 100, y: 790), CGPoint(x: 290, y: 640), CGPoint(x: 420, y: 520), CGPoint(x: 512, y: 470),
+        CGPoint(x: 610, y: 525), CGPoint(x: 760, y: 615), CGPoint(x: 924, y: 700),
+    ]
     let hill = CGMutablePath()
-    hill.move(to: outerLeft)
-    hill.addLine(to: left)
-    hill.addCurve(to: right, control1: upper.0, control2: upper.1)
-    hill.addLine(to: outerRight)
+    hill.move(to: ridge[0])
+    for p in ridge.dropFirst() { hill.addLine(to: p) }
     hill.addLine(to: CGPoint(x: 924, y: 924))
     hill.addLine(to: CGPoint(x: 100, y: 924))
     hill.closeSubpath()
     ctx.saveGState()
     ctx.addPath(hill)
     ctx.clip()
-    let ground = CGGradient(colorsSpace: space, colors: [color(0x3E4F8E), color(0x1A2450)] as CFArray, locations: [0, 1])!
-    ctx.drawLinearGradient(ground, start: CGPoint(x: 512, y: 480), end: CGPoint(x: 512, y: 924), options: [])
+    let ground = CGGradient(colorsSpace: space, colors: [color(0x34437A), color(0x111833)] as CFArray, locations: [0, 1])!
+    ctx.drawLinearGradient(ground, start: CGPoint(x: 512, y: 470), end: CGPoint(x: 512, y: 924), options: [])
     ctx.restoreGState()
 
-    // 目の中（上まぶたと下まぶたの間）を少し明るく。
-    let eye = CGMutablePath()
-    eye.move(to: left)
-    eye.addCurve(to: right, control1: upper.0, control2: upper.1)
-    eye.addCurve(to: left, control1: lower.1, control2: lower.0)
-    eye.closeSubpath()
-    ctx.addPath(eye)
-    ctx.setFillColor(color(0x4A5A9C, 0.35))
-    ctx.fillPath()
-
-    // レーン: 本流（青）が稜線と上まぶた、分かれて下を回って合流する枝（緑）が下まぶた。
+    // レーン: 稜線に沿う本流（青）と、途中で分かれて下を回り、また合流する枝（緑）。
+    let main = ridge.map { CGPoint(x: $0.x, y: $0.y + 4) }
+    let branchA = CGPoint(x: 290, y: 644), branchB = CGPoint(x: 760, y: 619)
+    let branch = CGMutablePath()
+    branch.move(to: branchA)
+    branch.addCurve(to: CGPoint(x: 520, y: 690), control1: CGPoint(x: 340, y: 720), control2: CGPoint(x: 430, y: 700))
+    branch.addCurve(to: branchB, control1: CGPoint(x: 620, y: 680), control2: CGPoint(x: 720, y: 690))
     ctx.setLineCap(.round)
     ctx.setLineJoin(.round)
-    let branch = CGMutablePath()
-    branch.move(to: left)
-    branch.addCurve(to: right, control1: lower.0, control2: lower.1)
     ctx.addPath(branch)
     ctx.setStrokeColor(color(0x5FD38D))
     ctx.setLineWidth(24)
     ctx.strokePath()
-    let main = CGMutablePath()
-    main.move(to: outerLeft)
-    main.addLine(to: left)
-    main.addCurve(to: right, control1: upper.0, control2: upper.1)
-    main.addLine(to: outerRight)
-    ctx.addPath(main)
+    let mainPath = CGMutablePath()
+    mainPath.addLines(between: main)
+    ctx.addPath(mainPath)
     ctx.setStrokeColor(color(0x6FB6FF))
     ctx.setLineWidth(26)
     ctx.strokePath()
 
-    func bezier(_ t: CGFloat, _ c: (CGPoint, CGPoint)) -> CGPoint {
-        let u = 1 - t
-        let a = u * u * u, b = 3 * u * u * t, d = 3 * u * t * t, e = t * t * t
-        let x: CGFloat = a * left.x + b * c.0.x + d * c.1.x + e * right.x
-        let y: CGFloat = a * left.y + b * c.0.y + d * c.1.y + e * right.y
-        return CGPoint(x: x, y: y)
-    }
     // コミットの点（地の色の縁取りで線から浮かせる）。
     func node(_ p: CGPoint, _ fill: CGColor, radius: CGFloat = 30) {
         ctx.setFillColor(color(0x141B36))
@@ -136,36 +124,24 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
         ctx.setFillColor(fill)
         ctx.fillEllipse(in: CGRect(x: p.x - radius, y: p.y - radius, width: radius * 2, height: radius * 2))
     }
-    node(left, color(0x6FB6FF))
-    node(right, color(0x6FB6FF))
-    node(bezier(0.22, upper), color(0x6FB6FF), radius: 24)
-    node(bezier(0.78, upper), color(0x6FB6FF), radius: 24)
-    node(bezier(0.22, lower), color(0x5FD38D), radius: 22)
-    node(bezier(0.78, lower), color(0x5FD38D), radius: 22)
+    node(branchA, color(0x6FB6FF))
+    node(CGPoint(x: 420, y: 524), color(0x6FB6FF))
+    node(CGPoint(x: 610, y: 529), color(0x6FB6FF))
+    node(branchB, color(0x6FB6FF))
+    node(CGPoint(x: 430, y: 697), color(0x5FD38D), radius: 26)
+    node(CGPoint(x: 620, y: 681), color(0x5FD38D), radius: 26)
 
-    // 瞳: 金色の虹彩と、濃い瞳孔、小さな光。
-    let iris = CGPoint(x: 512, y: 632), irisRadius: CGFloat = 62
-    ctx.setFillColor(color(0x141B36))
-    ctx.fillEllipse(in: CGRect(x: iris.x - irisRadius - 10, y: iris.y - irisRadius - 10,
-                               width: (irisRadius + 10) * 2, height: (irisRadius + 10) * 2))
-    ctx.saveGState()
-    ctx.addEllipse(in: CGRect(x: iris.x - irisRadius, y: iris.y - irisRadius, width: irisRadius * 2, height: irisRadius * 2))
-    ctx.clip()
-    let gold = CGGradient(colorsSpace: space, colors: [color(0xE9CF8E), color(0xB98A3E)] as CFArray, locations: [0, 1])!
-    ctx.drawRadialGradient(gold, startCenter: iris, startRadius: 0, endCenter: iris, endRadius: irisRadius, options: [])
-    ctx.restoreGState()
-    ctx.setFillColor(color(0x141B36))
-    ctx.fillEllipse(in: CGRect(x: iris.x - 24, y: iris.y - 24, width: 48, height: 48))
-    ctx.setFillColor(color(0xFFFFFF, 0.45))
-    ctx.fillEllipse(in: CGRect(x: iris.x - 24, y: iris.y - 28, width: 13, height: 13))
-
-    // 北極星（四方に光る星）。ほんのわずか（3°）傾ける。
+    // 頂上の座: 光る大きな点（見る目）と、その上の四方に光る星。
+    node(CGPoint(x: 512, y: 474), color(0xFFE08A), radius: 40)
+    ctx.setFillColor(color(0xFFF6D8))
+    ctx.fillEllipse(in: CGRect(x: 512 - 16, y: 474 - 16, width: 32, height: 32))
     let star = CGMutablePath()
-    let long: CGFloat = 70, short: CGFloat = 14
+    let c = polaris, long: CGFloat = 78, short: CGFloat = 16
     for i in 0..<8 {
+        // ほんのわずか（3°）傾ける。
         let angle = CGFloat(i) * .pi / 4 - .pi / 2 + 3 * .pi / 180
         let r = i % 2 == 0 ? long : short
-        let p = CGPoint(x: polaris.x + cos(angle) * r, y: polaris.y + sin(angle) * r)
+        let p = CGPoint(x: c.x + cos(angle) * r, y: c.y + sin(angle) * r)
         if i == 0 { star.move(to: p) } else { star.addLine(to: p) }
     }
     star.closeSubpath()
