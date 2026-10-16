@@ -190,6 +190,9 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         }
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         note.textColor = .secondaryLabelColor
+        // 文が長くてもボタンを押し出さないよう、メモの方を切り詰める。
+        note.lineBreakMode = .byTruncatingTail
+        note.setContentCompressionResistancePriority(.defaultLow - 1, for: .horizontal)
         bar.spacing = 6
         bar.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
 
@@ -210,6 +213,22 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         base.string = sides.base?.text ?? ""
         updateConflicts(initial: true)
         for text in [current, incoming, base, result] { colorSyntax(text) }
+    }
+
+    private var autoApplied = false
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        // 開いたときに、間違えようのないコンフリクト（両側が同じ、片側だけが変えた）を解いておく（設定で切れる）。
+        // Undo はウィンドウに入ってからでないと効かないので、最初に出たときにする。
+        guard !autoApplied else { return }
+        autoApplied = true
+        guard Settings.autoMagicMerge else { return }
+        let solved = applyMagic(safe: true)
+        if solved > 0 {
+            colorSyntax(result)
+            note.stringValue = "開いたときに \(solved) 個を解きました（⌘Z で戻せる）"
+        }
     }
 
     /// 欄を左から Base（出すとき）・Current・帯・Result・帯・Incoming に並べる。帯は幅を固定し、残りを等分する。
@@ -478,22 +497,34 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     /// ✨ Magic Merge: 決まった規則で解けるコンフリクトをまとめて解く（Undo でまとめて戻せる）。
     @objc private func magicMerge() {
-        let old = result.string
-        struct Info: Decodable { let text: String; let resolved: Int; let remaining: Int }
-        do {
-            let info = try repository.info(["op": "magicMerge", "text": old], as: Info.self)
-            let text = info.text
-            guard info.resolved > 0 else {
-                note.stringValue = "解けるものはありません"
-                return
-            }
-            replace(old: old, with: text)
-            updateConflicts()
-            note.stringValue = "\(info.resolved) 個を解きました"
-            reveal()
-        } catch {
-            NSAlert(error: error).runModal()
+        let solved = applyMagic(safe: false)
+        note.stringValue = solved == 0 ? "解けるものはありません" : "\(solved) 個を解きました（⌘Z で 1 つずつ戻せる）"
+        if solved > 0 { reveal() }
+    }
+
+    /// Magic Merge をコンフリクト 1 つずつかける（それぞれ別の Undo にする）。後ろから解くので、前の番号は変わらない。
+    /// `safe` なら、間違えようのない規則（両側が同じ、片側だけが変えた）だけ。解いた数を返す。
+    @discardableResult
+    private func applyMagic(safe: Bool) -> Int {
+        struct Info: Decodable { let text: String; let resolved: Int }
+        guard let undo = result.undoManager else { return 0 }
+        let wasGrouping = undo.groupsByEvent
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = wasGrouping }
+        var solved = 0
+        for index in conflicts.indices.reversed() {
+            let old = result.string
+            guard let info = try? repository.info(
+                ["op": "magicMerge", "text": old, "safe": safe, "index": index], as: Info.self),
+                info.resolved > 0 else { continue }
+            undo.beginUndoGrouping()
+            replace(old: old, with: info.text)
+            undo.setActionName(safe ? "Magic Merge（開いたとき）" : "Magic Merge")
+            undo.endUndoGrouping()
+            solved += 1
         }
+        if solved > 0 { updateConflicts() }
+        return solved
     }
 
     private func replace(old: String, with new: String) {
@@ -661,6 +692,14 @@ private final class MergeLayoutView: NSView {
         self.bar = bar
         super.init(frame: .zero)
         addSubview(bar)
+        // 幅を制約で決める（frame だと、中身が入りきらないときにスタックがはみ出す）。
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: topAnchor),
+            bar.leadingAnchor.constraint(equalTo: leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: trailingAnchor),
+            bar.heightAnchor.constraint(equalToConstant: barHeight),
+        ])
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -670,7 +709,6 @@ private final class MergeLayoutView: NSView {
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        bar.frame = NSRect(x: 0, y: bounds.height - barHeight, width: bounds.width, height: barHeight)
         onLayout?()
     }
 }

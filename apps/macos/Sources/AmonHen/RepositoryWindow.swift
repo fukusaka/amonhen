@@ -161,7 +161,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         workingCopy.onSequenceChange = { [weak self] sequence, conflicts in
             self?.showSequenceBanner(sequence, conflicts: conflicts)
+            self?.sidebar.setConflictCount(conflicts)
         }
+        sidebar.onSelectConflicts = { [weak self] in self?.workingCopy.selectFirstConflict() }
         workingCopy.onChangeCount = { [weak self] count in
             self?.changeCount = count
             self?.updateTabTitle()

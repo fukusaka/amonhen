@@ -715,6 +715,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         notifySequence()
     }
 
+    /// 最初のコンフリクトのファイルを選ぶ（右にマージエディタが出る）。
+    func selectFirstConflict() {
+        guard let entry = entries.first(where: \.isConflict) else { return }
+        let row = files.row(forItem: entry)
+        guard row >= 0 else { return }
+        files.selectRowIndexes([row], byExtendingSelection: false)
+        files.scrollRowToVisible(row)
+    }
+
     /// 変更のあるファイルの数が変わった（タブの名前に出す）。
     var onChangeCount: ((Int) -> Void)?
 

@@ -43,7 +43,23 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     private let workingCopyNode = Node(title: "Working Copy", page: .workingCopy)
     private let historyNode = Node(title: "History", page: .history)
+    /// コンフリクトがあるときだけ出す。選ぶと Working Copy で最初のコンフリクトのファイルを開く。
+    private let conflictsNode = Node(title: "Conflicts", page: .workingCopy)
     private lazy var workspace = Node(title: "Workspace", children: [workingCopyNode, historyNode])
+    /// Conflicts を選んだ（最初のコンフリクトのファイルを開く）。
+    var onSelectConflicts: (() -> Void)?
+
+    /// コンフリクトのファイルの数（0 なら Conflicts を出さない）。
+    func setConflictCount(_ count: Int) {
+        let shown = workspace.children.contains { $0 === conflictsNode }
+        conflictsNode.badge = count > 0 ? "\(count)" : nil
+        if (count > 0) != shown {
+            workspace.children = count > 0 ? [workingCopyNode, historyNode, conflictsNode] : [workingCopyNode, historyNode]
+            outline.reloadItem(workspace, reloadChildren: true)
+        } else if shown {
+            outline.reloadItem(conflictsNode)
+        }
+    }
 
     private let outline = NSOutlineView()
     private var groups: [Node] = []
@@ -248,6 +264,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     private static func symbol(for node: Node) -> String {
+        if node.title == "Conflicts", node.page != nil { return "exclamationmark.triangle" }
         if let page = node.page { return page == .workingCopy ? "square.and.pencil" : "clock" }
         if node.pullRequest != nil { return "arrow.triangle.pull" }
         if node.remote != nil { return "network" }
@@ -386,7 +403,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
         guard let node = outline.item(atRow: outline.selectedRow) as? Node else { return }
-        if let page = node.page {
+        if node === conflictsNode {
+            onSelectPage?(.workingCopy)
+            onSelectConflicts?()
+        } else if let page = node.page {
             onSelectPage?(page)
         } else if let item = node.item {
             onSelectPage?(.history)

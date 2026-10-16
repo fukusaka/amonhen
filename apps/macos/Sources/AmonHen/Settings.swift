@@ -75,6 +75,12 @@ enum Settings {
         }
     }
 
+    /// マージエディタを開いたときに、間違えようのないコンフリクトを Magic Merge で解くか（既定は解く）。
+    static var autoMagicMerge: Bool {
+        get { UserDefaults.standard.object(forKey: "autoMagicMerge") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "autoMagicMerge") }
+    }
+
     /// History の行を 1 行にするか（既定は件名と作者・日時の 2 行）。変えたら `historyRowsChanged` を知らせる。
     static var compactHistoryRows: Bool {
         get { UserDefaults.standard.bool(forKey: "compactHistoryRows") }
@@ -120,6 +126,7 @@ final class SettingsModel {
     }
     var showAvatars = Settings.showAvatars { didSet { Settings.showAvatars = showAvatars } }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
+    var autoMagicMerge = Settings.autoMagicMerge { didSet { Settings.autoMagicMerge = autoMagicMerge } }
     var writeCommitGraph = Settings.writeCommitGraph { didSet { Settings.writeCommitGraph = writeCommitGraph } }
     var useFSMonitor = Settings.useFSMonitor { didSet { Settings.useFSMonitor = useFSMonitor } }
     var assistant = Settings.assistant {
@@ -148,6 +155,7 @@ final class SettingsModel {
         }
         if showAvatars != Settings.showAvatars { showAvatars = Settings.showAvatars }
         if stackedCommitDiff != Settings.stackedCommitDiff { stackedCommitDiff = Settings.stackedCommitDiff }
+        if autoMagicMerge != Settings.autoMagicMerge { autoMagicMerge = Settings.autoMagicMerge }
         if writeCommitGraph != Settings.writeCommitGraph { writeCommitGraph = Settings.writeCommitGraph }
         if useFSMonitor != Settings.useFSMonitor { useFSMonitor = Settings.useFSMonitor }
         if checkRemoteSignaturesLocally != Settings.checkRemoteSignaturesLocally {
@@ -174,6 +182,10 @@ private struct GitSettings: View {
                     ForEach(PullMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 Note("ツールバーの Pull と ⌃⌘L で使う。Pull ボタンの ▾ や Repository > Pull With でその都度も選べる。")
+            }
+            Section("マージ") {
+                Toggle("マージエディタを開いたときに、間違えようのないコンフリクトを解く", isOn: $model.autoMagicMerge)
+                Note("両側が同じ・片側だけが変えた、のどちらかに当たるコンフリクト。⌘Z で戻せる。残りは ✨ Magic Merge で。")
             }
         }
         .formStyle(.grouped)
