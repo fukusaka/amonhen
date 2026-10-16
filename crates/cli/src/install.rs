@@ -167,10 +167,13 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// 自分と一緒に配られた、SSH 先に送るエンジンの置き場所（`.app` の `Contents/Resources/engines`、開発中は
-/// リポジトリの `dist/engine`）。
+/// 自分と一緒に配られた、SSH 先に送るエンジンの置き場所（`.app` の `Contents/Resources/engines`、VSCode 拡張の
+/// `bin`（自分も `amonhen-<os>-<arch>` の名前で並んでいる）、開発中はリポジトリの `dist/engine`）。
 fn bundled_engines(me: &Path) -> Option<PathBuf> {
     let dir = me.parent()?;
+    if me.file_name().is_some_and(|n| n.to_string_lossy().starts_with("amonhen-")) {
+        return Some(dir.to_path_buf());
+    }
     if let Some(bundled) = Some(dir.join("../Resources/engines")).filter(|d| d.is_dir()) {
         return Some(bundled);
     }
