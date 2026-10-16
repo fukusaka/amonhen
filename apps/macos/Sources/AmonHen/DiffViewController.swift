@@ -803,8 +803,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private var fileStats: [String: CommitExtras.FileStat] = [:]
     /// 署名を検証する側を変えた回数。変える前に始めた詳細の読み込みの結果は使わない。
     private var signatureGeneration = 0
-    /// 長い本文を開いているか（コミットを替えたら閉じる）。
-    private var bodyExpanded = false
+    /// 詳細の欄だけを右の列いっぱいに広げる（変更ファイルと差分を隠す）。
+    private let expandButton = NSButton()
     /// History の検索の問い合わせ。件名と本文の中の一致を強調する。
     var searchQuery: String? {
         didSet { if searchQuery != oldValue { renderHeader() } }
@@ -827,8 +827,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        // 上から、メッセージとメタ情報、変更ファイル、差分。
+        // 上から、メッセージとメタ情報、変更ファイル、差分。境目の位置は覚えておく。
         splitView.isVertical = false
+        splitView.autosaveName = "CommitDetail"
         let column = NSTableColumn(identifier: .init("path"))
         column.resizingMask = .autoresizingMask
         files.addTableColumn(column)
@@ -885,6 +886,20 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             y: headerContainer.bounds.height - styleControl.frame.height - 4)
         styleControl.autoresizingMask = [.minXMargin, .minYMargin]
         headerContainer.addSubview(styleControl)
+        // 見せ方の切り替えの左に、詳細だけを広げるボタン。
+        expandButton.bezelStyle = .accessoryBarAction
+        expandButton.isBordered = false
+        expandButton.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "詳細を広げる")
+        expandButton.toolTip = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）"
+        expandButton.target = self
+        expandButton.action = #selector(toggleExpanded)
+        expandButton.controlSize = .small
+        expandButton.sizeToFit()
+        expandButton.frame.origin = NSPoint(
+            x: styleControl.frame.minX - expandButton.frame.width - 4,
+            y: styleControl.frame.midY - expandButton.frame.height / 2)
+        expandButton.autoresizingMask = [.minXMargin, .minYMargin]
+        headerContainer.addSubview(expandButton)
         if CommitHeaderStyle.saved == .compact {
             // 簡潔で始めるなら、最初から低くしておく。
             headerContainer.frame.size.height = 48
@@ -896,10 +911,12 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             let item = NSSplitViewItem(viewController: controller)
             item.minimumThickness = minimum
             item.holdingPriority = .init(260)
+            item.canCollapse = content === scroll
             addSplitViewItem(item)
         }
         let diffItem = NSSplitViewItem(viewController: diffView)
         diffItem.minimumThickness = 200
+        diffItem.canCollapse = true
         addSplitViewItem(diffItem)
         NotificationCenter.default.addObserver(
             self, selector: #selector(messageStyleChanged), name: .commitMessageStyleChanged, object: nil)
@@ -1097,7 +1114,6 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             FrameProfile.add("select: commit info (JSON)", CACurrentMediaTime() - selectedAt)
             self.info = info
             extras = nil
-            bodyExpanded = false
             FrameProfile.measure("select: header layout") { renderHeader() }
             FrameProfile.add("select: → header shown", CACurrentMediaTime() - selectedAt)
             guard let extras = await extrasTask?.value, headerRequest == self.headerRequest else { return }
@@ -1134,7 +1150,6 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
         var renderer = CommitHeaderRenderer(info: info, extras: extras, style: style)
         renderer.monospacedBody = Settings.monospacedCommitMessage
-        renderer.expanded = bodyExpanded
         renderer.highlight = CommitHeaderRenderer.highlightTerms(of: searchQuery)
         let text = NSMutableAttributedString(attributedString: renderer.render())
         let showPeople = style != .compact
@@ -1199,10 +1214,24 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         scroll.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - height)
     }
 
+    /// 詳細の欄を広げているか（変更ファイルと差分を畳んでいる）。
+    private var isExpanded: Bool { splitViewItems.count > 2 && splitViewItems[2].isCollapsed }
+
+    @objc private func toggleExpanded() {
+        guard splitViewItems.count > 2 else { return }
+        let expand = !isExpanded
+        for item in splitViewItems.dropFirst() { item.isCollapsed = expand }
+        expandButton.image = NSImage(
+            systemSymbolName: expand ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
+            accessibilityDescription: expand ? "詳細を戻す" : "詳細を広げる")
+    }
+
     @objc private func styleChanged() {
         let previous = CommitHeaderStyle.saved
         let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
         CommitHeaderStyle.saved = style
+        // 広げたままだと高さを合わせられないので、先に戻す。
+        if isExpanded { toggleExpanded() }
         renderHeader()
         fitHeader(from: previous, to: style)
     }
@@ -1238,11 +1267,6 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
         if s == CommitHeaderRenderer.signatureLink {
             showSignaturePopover(at: charIndex)
-            return true
-        }
-        if s == CommitHeaderRenderer.expandLink {
-            bodyExpanded.toggle()
-            renderHeader()
             return true
         }
         if s.hasPrefix(CommitHeaderRenderer.commitScheme) {

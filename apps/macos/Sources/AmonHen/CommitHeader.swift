@@ -64,16 +64,9 @@ struct CommitHeaderRenderer {
 
     /// 本文を等幅で出すか（git の慣習の 72 桁の改行が崩れない）。
     var monospacedBody = true
-    /// 長い本文を折りたたまずに出すか。
-    var expanded = false
     /// 件名と本文の中で強調する語（History の検索の語）。
     var highlight: [String] = []
 
-    /// 本文がこの行数を超えたら、`collapsedLines` 行で折りたたむ。
-    static let collapseAbove = 16
-    static let collapsedLines = 12
-    /// 「続きを表示」「折りたたむ」のリンク。
-    static let expandLink = "amonhen-expand:"
 
     init(info: CommitInfo, extras: CommitExtras?, style: CommitHeaderStyle) {
         self.info = info
@@ -94,17 +87,10 @@ struct CommitHeaderRenderer {
     private func renderMessage(notes: Bool) {
         let messageStart = text.length
         add(subject, subjectAttrs)
-        let lines = bodyWithoutTrailers.components(separatedBy: "\n")
+        // 本文は長くても畳まずに全文を出す（欄の中でスクロールする。⤢ で欄を広げられる）。
         if !bodyWithoutTrailers.isEmpty {
             add("\n\n", body)
-            let collapse = lines.count > Self.collapseAbove && !expanded
-            linkedBody(collapse ? lines.prefix(Self.collapsedLines).joined(separator: "\n") : bodyWithoutTrailers)
-            if lines.count > Self.collapseAbove {
-                var link = dim
-                link[.link] = Self.expandLink
-                add("\n", body)
-                add(collapse ? "続きを表示（あと \(lines.count - Self.collapsedLines) 行）" : "折りたたむ", link)
-            }
+            linkedBody(bodyWithoutTrailers)
         }
         if !info.trailers.isEmpty {
             add("\n", body)
