@@ -3,7 +3,7 @@
 // 出力: AppIcon.icns（正式版）・AppIcon-Snapshot.icns（snapshot 版。右下にオレンジの帯）・AppIcon.png（1024 px の見本）
 //
 // 図柄: Amon Hen（見張りの座）にちなみ、夜の丘の稜線を git のレーン（分かれて合流する 2 本）で描き、
-// 頂上の座に光る点（見る目）を置く。空には淡い北斗七星と、その指極星の先に光る星（北極星の役）。macOS のアイコンの枠（1024 の中の 824 の角の丸い四角）に合わせる。
+// 頂上の座に光る点（見る目）を置く。空には淡い北斗七星とカシオペヤ座、その間に光る星（北極星の役）。macOS のアイコンの枠（1024 の中の 824 の角の丸い四角）に合わせる。
 import AppKit
 
 let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "apps/macos/Icons")
@@ -38,27 +38,34 @@ func draw(_ ctx: CGContext, snapshot: Bool) {
     let sky = CGGradient(colorsSpace: space, colors: [color(0x2A3766), color(0x0B1022)] as CFArray, locations: [0, 1])!
     ctx.drawLinearGradient(sky, start: CGPoint(x: 512, y: 100), end: CGPoint(x: 512, y: 924), options: [])
 
-    // 北斗七星（物語では「ヴァラールの鎌」）。実際の位置（赤経を時、赤緯を度）から並びを作り、柄杓の先の 2 つ
-    // （Merak → Dubhe）を延ばした先に頂上の星（北極星の役）が来るように回して置く。淡い点だけで、線は引かない。
-    let catalog: [(ra: CGFloat, dec: CGFloat, mag: CGFloat)] = [
+    // 北斗七星（物語では「ヴァラールの鎌」）とカシオペヤ座。実際の位置（赤経を時、赤緯を度）を、天の北極を中心に
+    // 見上げた向き（東が左）で写す。北極星を頂上の星に、Dubhe を左上の決めた位置に合わせて回し、縮める。
+    // 北斗七星の指極星の先に北極星、北極星を挟んだ反対側にカシオペヤ座が来る（実際の夜空と同じ）。淡い点だけ。
+    typealias Star = (ra: CGFloat, dec: CGFloat, mag: CGFloat)
+    let dipper: [Star] = [
         (11.062, 61.75, 1.8), (11.031, 56.38, 2.4), (11.897, 53.69, 2.4), (12.257, 57.03, 3.3),
         (12.900, 55.96, 1.8), (13.399, 54.93, 2.2), (13.792, 49.31, 1.9),
     ]
-    // 空を見上げた向き（東が左）の平面に写す（度、y は下向き）。
-    let flat = catalog.map { CGPoint(x: -($0.ra - 12) * 15 * cos(55 * CGFloat.pi / 180), y: -$0.dec) }
+    let cassiopeia: [Star] = [(0.153, 59.15, 2.3), (0.675, 56.54, 2.2), (0.945, 60.72, 2.4), (1.430, 60.24, 2.7), (1.907, 63.67, 3.4)]
+    func project(_ ra: CGFloat, _ dec: CGFloat) -> CGPoint {
+        let r = 90 - dec, a = ra * 15 * CGFloat.pi / 180
+        return CGPoint(x: -r * sin(a), y: r * cos(a))
+    }
     let polaris = CGPoint(x: 512, y: 300)
     let dubheAt = CGPoint(x: 330, y: 330)
-    let pointer = CGPoint(x: flat[0].x - flat[1].x, y: flat[0].y - flat[1].y)
-    let toPolaris = CGPoint(x: polaris.x - dubheAt.x, y: polaris.y - dubheAt.y)
-    let turn = atan2(toPolaris.y, toPolaris.x) - atan2(pointer.y, pointer.x)
-    let scale: CGFloat = 7.5
-    for (i, star) in flat.enumerated() {
-        let dx = (star.x - flat[0].x) * scale, dy = (star.y - flat[0].y) * scale
-        let p = CGPoint(x: dubheAt.x + dx * cos(turn) - dy * sin(turn), y: dubheAt.y + dx * sin(turn) + dy * cos(turn))
-        // 明るい星ほど少し大きく濃く（Megrez は暗い）。
-        let r: CGFloat = 6.2 - catalog[i].mag
-        ctx.setFillColor(color(0xFFFFFF, 0.5 - catalog[i].mag * 0.08))
-        ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: r * 2, height: r * 2))
+    let pole = project(2.530, 89.26), dubhe = project(dipper[0].ra, dipper[0].dec)
+    let from = CGPoint(x: dubhe.x - pole.x, y: dubhe.y - pole.y)
+    let to = CGPoint(x: dubheAt.x - polaris.x, y: dubheAt.y - polaris.y)
+    let scale = hypot(to.x, to.y) / hypot(from.x, from.y)
+    let turn = atan2(to.y, to.x) - atan2(from.y, from.x)
+    for star in dipper + cassiopeia {
+        let p = project(star.ra, star.dec)
+        let dx = (p.x - pole.x) * scale, dy = (p.y - pole.y) * scale
+        let at = CGPoint(x: polaris.x + dx * cos(turn) - dy * sin(turn), y: polaris.y + dx * sin(turn) + dy * cos(turn))
+        // 明るい星ほど少し大きく濃く。
+        let r: CGFloat = 6.2 - star.mag
+        ctx.setFillColor(color(0xFFFFFF, 0.5 - star.mag * 0.08))
+        ctx.fillEllipse(in: CGRect(x: at.x - r, y: at.y - r, width: r * 2, height: r * 2))
     }
 
     // 頂上の後ろの光。
