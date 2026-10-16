@@ -126,10 +126,11 @@ public enum RepositoryLocation {
         location.hasPrefix("daemon:") || location.hasPrefix("ssh://")
     }
 
-    /// リポジトリのパス（daemon 越しなら、その向こうのパス）。
+    /// リポジトリのパス（daemon 越しなら、その向こうのパス）。`daemon:ssh://host/path` は、手元の共有の daemon 越しに
+    /// SSH 先を開く場所。
     public static func path(_ location: String) -> String {
-        if let rest = location.split(separator: ":", maxSplits: 1).last, location.hasPrefix("daemon:") {
-            return String(rest)
+        if location.hasPrefix("daemon:") {
+            return path(String(location.dropFirst("daemon:".count)))
         }
         if location.hasPrefix("ssh://") {
             let rest = location.dropFirst("ssh://".count)
@@ -153,9 +154,11 @@ public enum RepositoryLocation {
         return "ssh://\(host)\(path)"
     }
 
-    /// 接続先（`ssh://` のホスト、`daemon:` は "daemon"）。手元なら nil。
+    /// 接続先（`ssh://` のホスト、`daemon:` は "daemon"、`daemon:ssh://` は「ホスト · daemon」）。手元なら nil。
     public static func host(_ location: String) -> String? {
-        if location.hasPrefix("daemon:") { return "daemon" }
+        if location.hasPrefix("daemon:") {
+            return host(String(location.dropFirst("daemon:".count))).map { "\($0) · daemon" } ?? "daemon"
+        }
         guard location.hasPrefix("ssh://") else { return nil }
         let rest = location.dropFirst("ssh://".count)
         return String(rest.prefix { $0 != "/" })
@@ -345,6 +348,11 @@ public enum SharedDaemon {
             public let watching: Bool
             public let indexRows: Int?
             public let indexBytes: Int?
+            /// SSH 先のリポジトリなら true（そのつながりの送受信量と、切れていれば理由）。
+            public let ssh: Bool?
+            public let sent: UInt64?
+            public let received: UInt64?
+            public let closed: String?
             public var id: String { path }
         }
         public let pid: Int

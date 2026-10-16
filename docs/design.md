@@ -169,6 +169,7 @@ apps/
 ### 別プロセス・リモートにするとき
 
 - ② 手元の共有の daemon（`amonhend --serve`）: 利用者ごとに 1 つ、Unix ドメインソケットで待つ。History は daemon が永続キャッシュのファイルに書き、つないだ側は mmap する。差分のファイルの中身は POSIX の共有メモリで渡す。命令と、Undo の記録を書く Working Copy の操作は daemon のコアで実行する。
+  - SSH 先も開ける（`daemon:ssh://host/path`。CLI の `-C ssh://…` はいつもこれ）。手元の daemon が SSH 先に `amonhend --stdio` を送り込んでつなぎ、そのつながりとコア（History・検索の索引・差分）を、同じ SSH 先を開いた相手のあいだで共有する。SSH 先には git に触れる処理だけを頼む（アプリが直接 SSH 先を開く `ssh://…` と同じ分け方）。つながりが切れていれば、次に開くときにつなぎ直す。CLI で 1 回目はつなぐのに 1.6 秒、2 回目からは 0.01 秒（偽の ssh で手元を SSH 先に見立てて測った）。
   - XPC ではなく Unix ドメインソケットにした: Linux でも同じものが動き（VSCode 拡張・CLI からも使う）、往復の遅れは小さな要求で p50 0.08 ms（同一プロセス 0.04 ms）と十分小さい。大きなデータはソケットに乗せず、ファイルの mmap と共有メモリで渡すので、XPC の領域の受け渡しの利点もない。
   - 当初の案（要求と通知も共有メモリのリングで送り、寝ているときだけ `os_sync_wake_by_address_any` で起こす）は、ソケットの遅れが測って問題にならなかったので作っていない。
 - ③ SSH: daemon（`amonhend --stdio <repo>`、`crates/daemon`）は SSH 先で `GitBackend`・`Operations`・`RepoFiles` を要求に応じて実行するだけにし、レイアウト・永続キャッシュ・差分・色付けは手元のコアで行う（`crates/remote` の `RemoteBackend`）。C ABI と FE はそのまま使える。UI が読むのは手元のメモリだけで、通信に乗るのは git に触れる所だけ。History は永続キャッシュを手元に持ち、つなぎ直したら前回の起点からの新しいコミットだけを受け取る（daemon は `git rev-list` で求める）。要求には番号を振って並行に送り、パス・内容の検索は取り消せる。

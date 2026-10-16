@@ -409,6 +409,19 @@ private struct DaemonTab: View {
             Text("開いているリポジトリ").font(.subheadline.bold())
             Table(model.daemon?.repos ?? []) {
                 TableColumn("リポジトリ") { r in Text(r.path).lineLimit(1).truncationMode(.head).help(r.path) }
+                TableColumn("SSH") { r in
+                    if r.ssh == true {
+                        if let reason = r.closed {
+                            Text("切れた").foregroundStyle(.red).help(reason)
+                        } else {
+                            Text("\(bytes(r.sent ?? 0)) · \(bytes(r.received ?? 0))").monospacedDigit()
+                                .help("SSH 先との送った・受け取った量")
+                        }
+                    } else {
+                        Text("—").foregroundStyle(.secondary)
+                    }
+                }
+                .width(min: 40, ideal: 120)
                 TableColumn("つながり") { r in
                     Text(r.clients > 0 ? "\(r.clients)" : "なし（\(duration(r.idleMs))前から）").monospacedDigit()
                 }
@@ -426,7 +439,9 @@ private struct DaemonTab: View {
             Table(remotes) {
                 TableColumn("リポジトリ") { r in Text(r.name) }
                 TableColumn("場所") { r in
-                    Text(r.location.hasPrefix("ssh://") ? "SSH 先" : "手元の共有の daemon").foregroundStyle(.secondary)
+                    Text(r.location.hasPrefix("ssh://") ? "SSH 先（直接）"
+                        : r.location.hasPrefix("daemon:ssh://") ? "共有の daemon → SSH 先" : "手元の共有の daemon")
+                        .foregroundStyle(.secondary)
                 }
                 .width(min: 80, ideal: 130)
                 TableColumn("状態") { r in

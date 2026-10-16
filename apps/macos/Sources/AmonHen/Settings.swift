@@ -135,7 +135,7 @@ enum Settings {
         }
     }
 
-    /// 手元のリポジトリを、共有の daemon 越しに開くか（既定は開かない。このアプリの中で開く）。
+    /// リポジトリ（手元も SSH 先も）を、共有の daemon 越しに開くか（既定は開かない。このアプリの中で開く）。
     static var openThroughDaemon: Bool {
         get { UserDefaults.standard.bool(forKey: "openThroughDaemon") }
         set { UserDefaults.standard.set(newValue, forKey: "openThroughDaemon") }
@@ -414,8 +414,8 @@ private struct AdvancedSettings: View {
     var body: some View {
         Form {
             Section("共有の daemon") {
-                Toggle("手元のリポジトリを共有の daemon 越しに開く", isOn: $model.openThroughDaemon)
-                Note("History・検索の索引・操作の記録を、アプリ・CLI（amonhen -C daemon:…）・後の VSCode 拡張と共有する。これから開くリポジトリから効く。リポジトリの一覧の右クリックで、1 つだけ daemon 越しに開くこともできる。daemon の様子は Window > Activity の Daemon。")
+                Toggle("リポジトリを共有の daemon 越しに開く（SSH 先も）", isOn: $model.openThroughDaemon)
+                Note("History・検索の索引・操作の記録と SSH のつながりを、アプリ・CLI（amonhen -C daemon:… や -C ssh://…）・後の VSCode 拡張と共有する。これから開くリポジトリから効く。リポジトリの一覧の右クリックで、1 つだけ daemon 越しに開くこともできる。daemon の様子は Window > Activity の Daemon。")
             }
             Section("SSH 先のリポジトリ") {
                 Toggle("署名をこの Mac の鍵で検証する", isOn: $model.checkRemoteSignaturesLocally)

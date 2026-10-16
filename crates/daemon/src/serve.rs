@@ -7,6 +7,10 @@
 //!
 //! History（読み込みとレイアウト）も、リポジトリごとに 1 つだけ作って永続キャッシュのファイルに書き、つないだ
 //! 相手にはそのファイルの場所を返す（相手は mmap して使うので、中身はコピーせずに共有される）。
+//!
+//! 送られてきた場所が `ssh://host/path` なら、SSH 先に `amonhend --stdio` を送り込んでつなぎ、そのつながりを
+//! つないでいる相手のあいだで共有する。コア（History・検索の索引・差分）はこの daemon で動き、SSH 先には git に
+//! 触れる処理だけを頼む（アプリ・CLI・VSCode 拡張が、同じ SSH のつながりと索引を使う）。
 
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter};
@@ -28,7 +32,10 @@ type Notify = Box<dyn Fn(Notification) + Send + Sync>;
 /// 共有しているリポジトリ 1 つ。最後の相手が離れても `IDLE` のあいだは残す（CLI のように 1 回ごとにつないで
 /// 切る相手でも、History・検索の索引を作り直さない）。その後、監視も止めて落とす。
 struct Shared {
-    key: PathBuf,
+    /// 開いた場所（手元のリポジトリの絶対パス、または `ssh://host/path`）。
+    key: String,
+    /// SSH 先なら、そのつながり（コアもこれを使う）。
+    ssh: Option<Arc<amonhen_remote::Connection>>,
     backend: Arc<dyn GitBackend>,
     /// History を作り、任された命令と差分を実行するコア（初めて頼まれたときに作る）。
     core: std::sync::OnceLock<amonhen_core::Repository>,
@@ -38,12 +45,25 @@ struct Shared {
     search: Arc<amonhen_remote::SearchCache>,
     /// つないでいる相手ごとの知らせ先（番号つき。離れたら外す）。
     listeners: Arc<Mutex<Vec<(u64, Notify)>>>,
+    /// 手元のリポジトリの監視（SSH 先なら、SSH 先の daemon の知らせを受けるので None）。
     _watcher: Option<amonhen_watch::Watcher>,
+}
+
+impl Shared {
+    /// 変化を見張っているか（手元なら監視、SSH 先なら知らせを受けている）。
+    fn watching(&self) -> bool {
+        self._watcher.is_some() || self.ssh.is_some()
+    }
+
+    /// SSH のつながりが切れていれば、その理由。
+    fn closed(&self) -> Option<String> {
+        self.ssh.as_ref().and_then(|c| c.closed())
+    }
 }
 
 struct State {
     /// 開いているリポジトリと、最後に使われた時刻。
-    repos: Mutex<HashMap<PathBuf, (Arc<Shared>, Instant)>>,
+    repos: Mutex<HashMap<String, (Arc<Shared>, Instant)>>,
     connections: AtomicUsize,
     next: AtomicU64,
     last_left: Mutex<Option<Instant>>,
@@ -168,26 +188,49 @@ fn reply_error(reader: &mut BufReader<UnixStream>, mut writer: BufWriter<UnixStr
     }
 }
 
-/// `path` のリポジトリを、だれかがもう開いていればそれを、なければ新しく開く。
-fn open(state: &State, path: &str) -> Result<Arc<Shared>> {
-    let key = std::fs::canonicalize(path)?;
-    let mut repos = state.repos.lock().unwrap();
-    if let Some((shared, used)) = repos.get_mut(&key) {
-        *used = Instant::now();
-        return Ok(shared.clone());
+/// `location`（手元のパスか `ssh://host/path`）のリポジトリを、だれかがもう開いていればそれを、なければ新しく
+/// 開く。SSH のつながりが切れていれば、つなぎ直す。
+fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
+    let key = if location.starts_with("ssh://") {
+        location.to_owned()
+    } else {
+        std::fs::canonicalize(location)?.display().to_string()
+    };
+    {
+        let mut repos = state.repos.lock().unwrap();
+        if let Some((shared, used)) = repos.get_mut(&key) {
+            if shared.closed().is_none() {
+                *used = Instant::now();
+                return Ok(shared.clone());
+            }
+            repos.remove(&key);
+        }
     }
-    let backend: Arc<dyn GitBackend> = Arc::new(GixBackend::open(&key)?);
+    // SSH はつなぐのに数秒かかるので、一覧のロックの外で開く。
     let listeners: Arc<Mutex<Vec<(u64, Notify)>>> = Arc::default();
     let fan_out = listeners.clone();
-    let watcher = amonhen_watch::Watcher::new(backend.paths(), move |changes| {
+    let notify_all = move |changes: u32| {
         for (_, notify) in fan_out.lock().unwrap().iter() {
-            notify(Notification::Changed(changes.0));
+            notify(Notification::Changed(changes));
         }
-    })
-    .map_err(|e| eprintln!("amonhend: {} を監視できない: {e}", key.display()))
-    .ok();
+    };
+    let (backend, ssh, watcher): (Arc<dyn GitBackend>, _, _) = if key.starts_with("ssh://") {
+        let conn = connect_ssh(&key)?;
+        conn.on_notification(move |n| {
+            let Notification::Changed(changes) = n;
+            notify_all(changes);
+        });
+        (Arc::new(amonhen_remote::RemoteBackend::connect(conn.clone())?), Some(conn), None)
+    } else {
+        let backend: Arc<dyn GitBackend> = Arc::new(GixBackend::open(&key)?);
+        let watcher = amonhen_watch::Watcher::new(backend.paths(), move |changes| notify_all(changes.0))
+            .map_err(|e| eprintln!("amonhend: {key} を監視できない: {e}"))
+            .ok();
+        (backend, None, watcher)
+    };
     let shared = Arc::new(Shared {
         key: key.clone(),
+        ssh,
         backend,
         core: std::sync::OnceLock::new(),
         history: Mutex::default(),
@@ -195,8 +238,41 @@ fn open(state: &State, path: &str) -> Result<Arc<Shared>> {
         listeners,
         _watcher: watcher,
     });
-    repos.insert(key, (shared.clone(), Instant::now()));
-    Ok(shared)
+    let mut repos = state.repos.lock().unwrap();
+    // 同時に開いた相手がいれば、先に入った方を使う。
+    let entry = repos.entry(key).or_insert((shared, Instant::now()));
+    entry.1 = Instant::now();
+    Ok(entry.0.clone())
+}
+
+/// SSH 先に amonhend を送り込んでつなぐ（アプリが SSH 先を開くときと同じ）。ssh のコマンドは `AMONHEN_SSH` で、
+/// 送る amonhend の置き場所は `AMONHEN_DAEMONS` で差し替えられる。
+fn connect_ssh(location: &str) -> Result<Arc<amonhen_remote::Connection>> {
+    use amonhen_remote::ssh;
+    let exe = std::env::current_exe()?;
+    let daemons = ssh::Daemons {
+        dir: daemons_dir(&exe),
+        local: Some((ssh::local_platform(), exe)),
+    };
+    let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+    ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)
+}
+
+/// SSH 先に送る `amonhend-<os>-<arch>` の置き場所: `.app` なら `Contents/Resources/daemons`、開発中ならリポジトリの
+/// `dist/linux`。
+fn daemons_dir(exe: &Path) -> PathBuf {
+    if let Some(dir) = std::env::var_os("AMONHEN_DAEMONS") {
+        return PathBuf::from(dir);
+    }
+    let resolved = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
+    if let Some(bundled) = resolved.parent().map(|d| d.join("../Resources/daemons")).filter(|d| d.is_dir()) {
+        return bundled;
+    }
+    resolved
+        .ancestors()
+        .map(|d| d.join("dist/linux"))
+        .find(|d| d.is_dir())
+        .unwrap_or_else(|| PathBuf::from("dist/linux"))
 }
 
 /// daemon のコアで、つないだ側を手伝う。
@@ -218,7 +294,11 @@ fn core(shared: &Shared) -> Result<&amonhen_core::Repository> {
         return Ok(repo);
     }
     let cache = cache_path(&shared.key).ok_or("History のキャッシュの置き場所がない")?;
-    let repo = amonhen_core::Repository::with_cache(GixBackend::open(&shared.key)?, cache);
+    let repo = match &shared.ssh {
+        // SSH 先は、同じつながりの上でコアを動かす（SSH を 2 本にしない）。
+        Some(conn) => amonhen_core::Repository::with_cache(amonhen_remote::RemoteBackend::connect(conn.clone())?, cache),
+        None => amonhen_core::Repository::with_cache(GixBackend::open(&shared.key)?, cache),
+    };
     repo.load_cached_history();
     // 同時に作られたら、先にできた方を使う。
     let _ = shared.core.set(repo);
@@ -240,7 +320,7 @@ fn prepared_history(shared: &Shared) -> Result<String> {
 }
 
 /// daemon の History のキャッシュの置き場所（アプリと同じフォルダ。名前はアプリのものと分ける）。
-fn cache_path(key: &Path) -> Option<PathBuf> {
+fn cache_path(key: &str) -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
     let dir = if cfg!(target_os = "macos") {
         home.join("Library/Caches/io.github.fukusaka.amonhen")
@@ -248,7 +328,7 @@ fn cache_path(key: &Path) -> Option<PathBuf> {
         std::env::var_os("XDG_CACHE_HOME").map_or_else(|| home.join(".cache"), PathBuf::from).join("amonhen")
     };
     std::fs::create_dir_all(&dir).ok()?;
-    Some(amonhen_core::cache::path_for(&dir, &format!("daemon-history:{}", key.display())))
+    Some(amonhen_core::cache::path_for(&dir, &format!("daemon-history:{key}")))
 }
 
 /// daemon の様子（`amonhen daemon status`、Activity の Daemon のタブ）。
@@ -260,12 +340,17 @@ fn status(state: &State) -> serde_json::Value {
         .iter()
         .map(|(path, (shared, used))| {
             let index = shared.search.text_index_stats();
+            let traffic = shared.ssh.as_ref().map(|c| c.traffic());
             serde_json::json!({
-                "path": path.display().to_string(),
+                "path": path,
+                "ssh": shared.ssh.is_some(),
+                "sent": traffic.map(|t| t.0),
+                "received": traffic.map(|t| t.1),
+                "closed": shared.closed(),
                 "clients": shared.listeners.lock().unwrap().len(),
                 "idleMs": used.elapsed().as_millis() as u64,
                 "history": shared.core.get().is_some(),
-                "watching": shared._watcher.is_some(),
+                "watching": shared.watching(),
                 "indexRows": index.map(|(rows, _)| rows),
                 "indexBytes": index.map(|(_, bytes)| bytes),
             })

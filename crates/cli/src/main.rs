@@ -21,7 +21,7 @@ use amonhen_model::Oid;
 const USAGE: &str = "\
 usage: amonhen [<path>]
        amonhen open [<path> | ssh://host/path] [--daemon] [--snapshot]
-       amonhen log [-C <path>] [-n <count> | --all] [--fold] [--branch <name>]… [--no-graph]
+       amonhen log [-C <path> | -C ssh://host/path] [-n <count> | --all] [--fold] [--branch <name>]… [--no-graph]
                    [--color=auto|always|never] [<query>…]
        amonhen undo [-C <path>] [--list | --peek]
        amonhen merge-file [--all] [--check] <file>…
@@ -89,9 +89,12 @@ fn repository_root(path: &Path) -> Result<PathBuf> {
 }
 
 /// リポジトリを開く。History はアプリと同じ永続キャッシュを使う（2 回目からはすぐ出る）。`daemon:/path` なら、
-/// 手元の共有の daemon（アプリと同じもの。いなければ起動する）越しに開く。
+/// 手元の共有の daemon（アプリと同じもの。いなければ起動する）越しに開く。`ssh://host/path` はいつも共有の daemon
+/// 越しに開く（daemon が SSH のつながりと History・検索の索引を持ち続けるので、2 回目からは速い）。
 fn open_repository(path: &Path) -> Result<Repository> {
-    if let Some(location) = path.to_str().filter(|p| p.starts_with("daemon:")) {
+    let given = path.to_str().unwrap_or_default();
+    let through_daemon = if given.starts_with("ssh://") { Some(format!("daemon:{given}")) } else { None };
+    if let Some(location) = through_daemon.as_deref().or(Some(given).filter(|p| p.starts_with("daemon:"))) {
         let repo = amonhen_remote::location::local_path(location)?;
         let conn = amonhen_remote::local::connect(repo, &daemon_program()?)?;
         // History は daemon が用意したファイルを直接読むので、手元のキャッシュは持たない。
@@ -143,6 +146,17 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
                     format!("だれもつないでいない（{}前から）", duration(secs(&r["idleMs"])))
                 };
                 println!("  {}", r["path"].as_str().unwrap_or(""));
+                if r["ssh"] == true {
+                    let mb = |v: &serde_json::Value| v.as_u64().unwrap_or(0) as f64 / 1e6;
+                    match r["closed"].as_str() {
+                        Some(reason) => println!("      SSH のつながり: 切れた（{reason}）"),
+                        None => println!(
+                            "      SSH のつながり: 送った {:.1} MB・受け取った {:.1} MB",
+                            mb(&r["sent"]),
+                            mb(&r["received"])
+                        ),
+                    }
+                }
                 println!(
                     "      {state}・History {}・監視 {}・{index}",
                     if r["history"] == true { "あり" } else { "なし" },

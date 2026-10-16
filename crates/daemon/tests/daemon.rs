@@ -323,3 +323,71 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
     }
     out
 }
+
+/// 共有の daemon が SSH 先を開く: 2 つの相手が同じ SSH 先を開いても、SSH 先の daemon は 1 つだけ送り込み、
+/// History は手元の daemon が作ってファイルで渡す。命令も手元の daemon のコアから SSH 先に届く。
+#[test]
+fn shared_daemon_opens_an_ssh_repository_for_everyone() {
+    use amonhen_remote::ssh;
+    let tmp = tempfile::tempdir().unwrap();
+    let repo_dir = tmp.path().join("repo");
+    std::fs::create_dir(&repo_dir).unwrap();
+    git(&repo_dir, &["init", "-q", "-b", "main"]);
+    git(&repo_dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    // SSH 先のホーム（送り込んだ daemon が置かれる）と、手元の daemon のホーム（History のキャッシュ）。
+    let remote_home = tmp.path().join("remote-home");
+    let local_home = tmp.path().join("local-home");
+    std::fs::create_dir(&remote_home).unwrap();
+    std::fs::create_dir(&local_home).unwrap();
+    let ssh_program = fake_ssh(tmp.path(), &remote_home);
+    let bundled = tmp.path().join("daemons");
+    std::fs::create_dir(&bundled).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bundled.join(format!("amonhend-{}", ssh::local_platform()))).unwrap();
+    let socket = tmp.path().join("d.sock");
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
+        .arg("--serve")
+        .arg(&socket)
+        .env("HOME", &local_home)
+        .env("AMONHEN_SSH", &ssh_program)
+        .env("AMONHEN_DAEMONS", &bundled)
+        .spawn()
+        .unwrap();
+    let connect = |location: &str| {
+        let started = std::time::Instant::now();
+        let stream = loop {
+            match std::os::unix::net::UnixStream::connect(&socket) {
+                Ok(s) => break s,
+                Err(_) if started.elapsed() < Duration::from_secs(5) => std::thread::sleep(Duration::from_millis(20)),
+                Err(e) => panic!("つなげない: {e}"),
+            }
+        };
+        let mut writer = stream.try_clone().unwrap();
+        amonhen_remote::local::write_preamble(&mut writer, location).unwrap();
+        let conn = Connection::new(stream, std::io::BufWriter::new(writer));
+        conn.mark_local();
+        conn
+    };
+    let location = format!("ssh://dev{}", repo_dir.display());
+    let a = Repository::new(RemoteBackend::connect(connect(&location)).unwrap());
+    let b = Repository::new(RemoteBackend::connect(connect(&location)).unwrap());
+    assert_eq!(a.load_history().unwrap().graph.len(), 1);
+    assert_eq!(b.load_history().unwrap().graph.len(), 1);
+    // SSH 先には daemon を 1 つだけ送った（2 つ目の相手は同じつながりを使う）。
+    let sent = std::fs::read_dir(remote_home.join(".cache/amonhen")).unwrap().count();
+    assert_eq!(sent, 1);
+
+    // 命令は手元の daemon のコアから SSH 先の git に届き、History にも出る。
+    let reply = a.run_json(r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#);
+    assert!(reply.contains(r#""ok":true"#), "{reply}");
+    git(&repo_dir, &["commit", "-q", "--allow-empty", "-m", "second"]);
+    assert_eq!(b.load_history().unwrap().graph.len(), 2);
+
+    // daemon の様子に、SSH 先のつながりが出る。
+    let mut status = std::os::unix::net::UnixStream::connect(&socket).unwrap();
+    amonhen_remote::local::write_preamble(&mut status, "\0status").unwrap();
+    let frame = amonhen_remote::frame::read(&mut status).unwrap().unwrap();
+    let text = String::from_utf8_lossy(&frame.payload).into_owned();
+    assert!(text.contains(r#""ssh":true"#) && text.contains("ssh://dev"), "{text}");
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+}
