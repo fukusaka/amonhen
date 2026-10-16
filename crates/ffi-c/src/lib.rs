@@ -204,8 +204,9 @@ pub unsafe extern "C" fn amonhen_repo_open_location(
             amonhen_remote::local::connect(path, daemon)?
         };
         let backend = amonhen_remote::RemoteBackend::connect(conn)?;
-        // 永続キャッシュは場所の文字列ごとに手元に持つ（つなぎ直したら新しいコミットだけを受け取る）。
-        Ok(if cache_dir.is_null() {
+        // 永続キャッシュは場所の文字列ごとに手元に持つ（つなぎ直したら新しいコミットだけを受け取る）。手元の共有の
+        // daemon なら、daemon が用意した History のファイルを直接読むので、手元には持たない。
+        Ok(if cache_dir.is_null() || !location.starts_with("ssh://") {
             Repository::new(backend)
         } else {
             Repository::with_cache(

@@ -39,6 +39,8 @@ pub struct Connection {
     received: Arc<AtomicU64>,
     /// 切れた理由。
     reason: Mutex<Option<String>>,
+    /// 手元の共有の daemon とのつながりか（History を用意してもらえる）。
+    local: AtomicBool,
     /// daemon（や ssh）が標準エラーに書いた最後の部分。つながらなかったときの理由に添える。
     stderr: Arc<Mutex<String>>,
 }
@@ -60,6 +62,7 @@ impl Connection {
             received: Arc::default(),
             reason: Mutex::default(),
             stderr: Arc::default(),
+            local: AtomicBool::new(false),
         });
         let weak = Arc::downgrade(&conn);
         let reader = Counting {
@@ -130,6 +133,15 @@ impl Connection {
     }
 
     /// daemon からの知らせを受け取る。
+    /// 手元の共有の daemon とのつながりにする（`crate::local::connect`）。
+    pub fn mark_local(&self) {
+        self.local.store(true, Ordering::Relaxed);
+    }
+
+    pub fn is_local(&self) -> bool {
+        self.local.load(Ordering::Relaxed)
+    }
+
     pub fn on_notification(&self, f: impl Fn(Notification) + Send + Sync + 'static) {
         self.listeners.lock().unwrap().push(Box::new(f));
     }
@@ -412,6 +424,15 @@ impl GitBackend for RemoteBackend {
             received,
             closed: self.conn.closed(),
         })
+    }
+
+    fn prepared_history(&self) -> Result<Option<std::path::PathBuf>> {
+        // SSH 先のファイルは手元で読めないので、手元の共有の daemon だけ。
+        if !self.conn.is_local() {
+            return Ok(None);
+        }
+        let path: Option<String> = self.conn.call(&Request::PreparedHistory)?;
+        Ok(path.map(std::path::PathBuf::from))
     }
 
     fn subscribe_changes(&self, f: Box<dyn Fn(u32) + Send + Sync>) -> bool {

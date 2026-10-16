@@ -4,6 +4,9 @@
 //! リポジトリを開き、同じリポジトリをつないでいる相手のあいだで `GitBackend` と監視を 1 つに共有する（git の
 //! オブジェクトのキャッシュも共有される）。リポジトリの変化は、そのリポジトリをつないでいる全員に知らせる。
 //! だれもつないでいない状態が `IDLE` 続いたら、ソケットを消して終わる（使うときにまた起動される）。
+//!
+//! History（読み込みとレイアウト）も、リポジトリごとに 1 つだけ作って永続キャッシュのファイルに書き、つないだ
+//! 相手にはそのファイルの場所を返す（相手は mmap して使うので、中身はコピーせずに共有される）。
 
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter};
@@ -24,7 +27,10 @@ type Notify = Box<dyn Fn(Notification) + Send + Sync>;
 
 /// 共有しているリポジトリ 1 つ。最後の相手が離れたら落ちる（監視も止まる）。
 struct Shared {
+    key: PathBuf,
     backend: Arc<dyn GitBackend>,
+    /// History を作るコア（初めて頼まれたときに作る）。同時に頼まれても 1 つずつ作る。
+    history: Mutex<Option<amonhen_core::Repository>>,
     /// つないでいる相手ごとの知らせ先（番号つき。離れたら外す）。
     listeners: Arc<Mutex<Vec<(u64, Notify)>>>,
     _watcher: Option<amonhen_watch::Watcher>,
@@ -110,7 +116,11 @@ fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
             return Ok(());
         }
     };
-    let server = Server::new(shared.backend.clone(), writer).without_compression();
+    let provider = {
+        let shared = shared.clone();
+        Arc::new(move || prepared_history(&shared)) as amonhen_remote::HistoryProvider
+    };
+    let server = Server::new(shared.backend.clone(), writer).without_compression().with_history(provider);
     let id = state.next.fetch_add(1, Ordering::Relaxed);
     shared.listeners.lock().unwrap().push((id, Box::new(server.notifier())));
     let result = server.run(reader);
@@ -142,8 +152,46 @@ fn open(state: &State, path: &str) -> Result<Arc<Shared>> {
     })
     .map_err(|e| eprintln!("amonhend: {} を監視できない: {e}", key.display()))
     .ok();
-    let shared = Arc::new(Shared { backend, listeners, _watcher: watcher });
+    let shared = Arc::new(Shared {
+        key: key.clone(),
+        backend,
+        history: Mutex::default(),
+        listeners,
+        _watcher: watcher,
+    });
     repos.retain(|_, w| w.strong_count() > 0);
     repos.insert(key, Arc::downgrade(&shared));
     Ok(shared)
+}
+
+/// History を最新にして、その永続キャッシュのファイルを返す。ファイルが今の History と合わなければ（書けなかった）
+/// 断る（相手が古い History を読まないように）。
+fn prepared_history(shared: &Shared) -> Result<String> {
+    let mut guard = shared.history.lock().unwrap();
+    if guard.is_none() {
+        let cache = cache_path(&shared.key).ok_or("History のキャッシュの置き場所がない")?;
+        let repo = amonhen_core::Repository::with_cache(GixBackend::open(&shared.key)?, cache);
+        repo.load_cached_history();
+        *guard = Some(repo);
+    }
+    let repo = guard.as_ref().unwrap();
+    let snapshot = repo.load_history()?;
+    let path = repo.cache_path().ok_or("History のキャッシュの置き場所がない")?;
+    let written = amonhen_core::cache::read(path).ok_or("History のキャッシュを書けない")?;
+    if written.tips != snapshot.tips || written.head != snapshot.head {
+        return Err("History のキャッシュを書けない（古いまま）".into());
+    }
+    Ok(path.display().to_string())
+}
+
+/// daemon の History のキャッシュの置き場所（アプリと同じフォルダ。名前はアプリのものと分ける）。
+fn cache_path(key: &Path) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    let dir = if cfg!(target_os = "macos") {
+        home.join("Library/Caches/io.github.fukusaka.amonhen")
+    } else {
+        std::env::var_os("XDG_CACHE_HOME").map_or_else(|| home.join(".cache"), PathBuf::from).join("amonhen")
+    };
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(amonhen_core::cache::path_for(&dir, &format!("daemon-history:{}", key.display())))
 }

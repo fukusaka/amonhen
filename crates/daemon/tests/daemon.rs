@@ -205,7 +205,15 @@ fn shares_one_daemon_between_clients() {
     git(&dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
     // ソケットのパスは短くする（macOS は 104 バイトまで）。
     let socket = tmp.path().join("d.sock");
-    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend")).arg("--serve").arg(&socket).spawn().unwrap();
+    // History のキャッシュは試験の中に書かせる（手元のアプリのキャッシュに混ぜない）。
+    let home = tmp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
+        .arg("--serve")
+        .arg(&socket)
+        .env("HOME", &home)
+        .spawn()
+        .unwrap();
     let connect = |path: &str| {
         let started = std::time::Instant::now();
         let stream = loop {
@@ -217,7 +225,9 @@ fn shares_one_daemon_between_clients() {
         };
         let mut writer = stream.try_clone().unwrap();
         amonhen_remote::local::write_preamble(&mut writer, path).unwrap();
-        Connection::new(stream, std::io::BufWriter::new(writer))
+        let conn = Connection::new(stream, std::io::BufWriter::new(writer));
+        conn.mark_local();
+        conn
     };
     let path = dir.display().to_string();
     let (a, b) = (connect(&path), connect(&path));
@@ -232,6 +242,9 @@ fn shares_one_daemon_between_clients() {
     let rb = Repository::new(RemoteBackend::connect(b).unwrap());
     assert_eq!(ra.load_history().unwrap().graph.len(), 1);
     assert_eq!(rb.load_history().unwrap().graph.len(), 1);
+    // History は daemon が 1 つだけ作ってファイルに書き、どちらもそれを読む。
+    let caches: Vec<_> = walk(&home).into_iter().filter(|p| p.to_string_lossy().contains("history-")).collect();
+    assert_eq!(caches.len(), 1, "{caches:?}");
 
     git(&dir, &["commit", "-q", "--allow-empty", "-m", "second"]);
     let mut heard = std::collections::HashSet::new();
@@ -250,4 +263,17 @@ fn shares_one_daemon_between_clients() {
     assert!(second.success());
     let _ = daemon.kill();
     let _ = daemon.wait();
+}
+
+fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(walk(&path));
+        } else {
+            out.push(path);
+        }
+    }
+    out
 }

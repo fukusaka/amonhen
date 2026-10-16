@@ -140,6 +140,13 @@ pub trait GitBackend: Send + Sync {
     }
 
     /// 件名・作者・日時だけを読む（History の行に出す分）。daemon 越しでは本文を送らずに済む。
+    /// History を別の所（手元の共有の daemon）で用意してもらえるなら、その永続キャッシュのファイル。つないだ側は
+    /// レイアウトを計算せず、このファイルを mmap して使う（同じ Mac の上なので、中身はコピーせずに共有される）。
+    /// 用意してもらえなければ `None`。
+    fn prepared_history(&self) -> Result<Option<std::path::PathBuf>> {
+        Ok(None)
+    }
+
     fn commit_summaries(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
         self.commit_texts(ids)
     }

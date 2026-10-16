@@ -381,6 +381,17 @@ impl Repository {
     /// 変わっていれば、新しい起点から前回の History に当たるまでだけ辿り、レイアウトも
     /// 変わった所だけ計算し直す。
     pub fn load_history(&self) -> Result<Arc<HistorySnapshot>> {
+        // 手元の共有の daemon が用意してくれるなら、レイアウトは計算せず、そのファイルを mmap する。
+        if let Some(path) = self.backend.prepared_history()? {
+            let cached = cache::read(&path).ok_or("daemon が用意した History を読めない")?;
+            if let Some(current) = self.history.load_full()
+                && current.tips == cached.tips
+                && current.head == cached.head
+            {
+                return Ok(current);
+            }
+            return Ok(self.publish(cached.tips, cached.head, cached.graph, cached.layout));
+        }
         let tips = self.backend.tips()?;
         let head = self.backend.head()?;
         let current = self.history.load_full();
@@ -491,6 +502,11 @@ impl Repository {
             folded,
             rows: OnceLock::new(),
         }))
+    }
+
+    /// History の永続キャッシュのファイル（あれば）。
+    pub fn cache_path(&self) -> Option<&std::path::Path> {
+        self.cache_path.as_deref()
     }
 
     pub fn history(&self) -> Option<Arc<HistorySnapshot>> {

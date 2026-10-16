@@ -91,11 +91,8 @@ fn open_repository(path: &Path) -> Result<Repository> {
     if let Some(location) = path.to_str().filter(|p| p.starts_with("daemon:")) {
         let repo = amonhen_remote::location::local_path(location)?;
         let conn = amonhen_remote::local::connect(repo, &daemon_program()?)?;
-        let backend = amonhen_remote::RemoteBackend::connect(conn)?;
-        return Ok(match cache_dir() {
-            Some(dir) => Repository::with_cache(backend, amonhen_core::cache::path_for(&dir, location)),
-            None => Repository::new(backend),
-        });
+        // History は daemon が用意したファイルを直接読むので、手元のキャッシュは持たない。
+        return Ok(Repository::new(amonhen_remote::RemoteBackend::connect(conn)?));
     }
     let root = repository_root(path)?;
     let backend = GixBackend::open(&root)?;

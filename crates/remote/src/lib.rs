@@ -11,5 +11,5 @@ pub mod ssh;
 pub mod wire;
 
 pub use client::{Connection, RemoteBackend};
-pub use server::Server;
+pub use server::{HistoryProvider, Server};
 pub use wire::{Notification, PROTOCOL_VERSION};

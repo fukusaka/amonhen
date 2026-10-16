@@ -16,6 +16,9 @@ use crate::wire::{
 
 type Writer = Arc<Mutex<Box<dyn Write + Send>>>;
 
+/// History を用意して、その永続キャッシュのファイルを返す（手元の共有の daemon が与える）。
+pub type HistoryProvider = Arc<dyn Fn() -> Result<String> + Send + Sync>;
+
 /// 検索のために数えたコミット（同じ起点で何度も探すときに読み直さない）。
 type CommitList = Mutex<Option<(Vec<Oid>, Arc<Vec<Oid>>)>>;
 
@@ -27,6 +30,7 @@ pub struct Server {
     cancels: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
     /// 大きな応答を圧縮するか（SSH では圧縮し、手元のソケットではしない）。
     compress: bool,
+    history: Option<HistoryProvider>,
 }
 
 impl Server {
@@ -37,7 +41,14 @@ impl Server {
             cancels: Arc::default(),
             commits: Arc::default(),
             compress: true,
+            history: None,
         }
+    }
+
+    /// History を用意できるようにする（`Request::PreparedHistory` に答える）。
+    pub fn with_history(mut self, provider: HistoryProvider) -> Self {
+        self.history = Some(provider);
+        self
     }
 
     /// 大きな応答も圧縮しない（手元のソケットで使う）。
@@ -76,8 +87,14 @@ impl Server {
                     let cancels = self.cancels.clone();
                     let commits = self.commits.clone();
                     let compress = self.compress;
+                    let history = self.history.clone();
                     std::thread::spawn(move || {
-                        let result = handle(&*backend, &commits, request, &cancel);
+                        let result = match request {
+                            Request::PreparedHistory => {
+                                history.as_ref().map(|h| h()).transpose().and_then(|path| encode(&path))
+                            }
+                            request => handle(&*backend, &commits, request, &cancel),
+                        };
                         cancels.lock().unwrap().remove(&f.id);
                         write_reply(&writer, f.id, result, compress);
                     });
@@ -155,6 +172,7 @@ fn handle(
                 version: PROTOCOL_VERSION,
             })
         }
+        Request::PreparedHistory => encode(&Option::<String>::None),
         Request::Head => encode(&backend.head()?),
         Request::Tips => encode(&backend.tips()?),
         Request::NewCommits { tips, known_tips } => {

@@ -65,7 +65,9 @@ pub fn connect(repo: &str, daemon: &str) -> Result<Arc<Connection>> {
     };
     let mut writer = stream.try_clone()?;
     write_preamble(&mut writer, repo)?;
-    Ok(Connection::new(stream, std::io::BufWriter::new(writer)))
+    let conn = Connection::new(stream, std::io::BufWriter::new(writer));
+    conn.mark_local();
+    Ok(conn)
 }
 
 #[cfg(not(unix))]
