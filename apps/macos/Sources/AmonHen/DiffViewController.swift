@@ -266,6 +266,14 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         if CGFloat(fileRows[index]) * lineHeight < scrollView.contentView.bounds.origin.y { scrollToFile(index) }
     }
 
+    /// ファイルの見出しの右クリック（blame・ファイルの履歴など）。ファイルの番号を渡し、メニューを返してもらう。
+    var fileMenu: ((Int) -> NSMenu?)?
+
+    fileprivate func menu(at point: NSPoint) -> NSMenu? {
+        guard let file = fileHeader(at: point) else { return nil }
+        return fileMenu?(file)
+    }
+
     /// 見出しの Viewed のチェックボックスの左端（見えている範囲の座標）。
     private var viewedBoxX: CGFloat { textView.bounds.width - 76 }
 
@@ -941,6 +949,10 @@ final class DiffDocumentView: NSView, NSMenuItemValidation {
         owner?.mouseDown(event, at: convert(event.locationInWindow, from: nil))
     }
 
+    override func menu(for event: NSEvent) -> NSMenu? {
+        owner?.menu(at: convert(event.locationInWindow, from: nil)) ?? super.menu(for: event)
+    }
+
     override func keyDown(with event: NSEvent) {
         // Space: 選んだ変更の行を次のコミットに含める・外す（Working Copy の差分）。
         if event.charactersIgnoringModifiers == " ", owner?.toggleSelectedStaged() == true { return }
@@ -990,8 +1002,23 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private var collapsed: [Bool] = []
     /// 差分のスクロールに合わせて一覧の選択を変えている間（選択の変化でスクロールし返さない）。
     private var syncingSelection = false
-    /// 見たことにしたファイル（コミット ID → パス）。アプリが動いている間だけ覚える。
-    private static var viewed: [String: Set<String>] = [:]
+    /// 見たことにしたファイル（コミット ID → パス）。次の起動でも覚えておく（古いものから捨てて 500 コミットまで）。
+    private static var viewed: [String: Set<String>] = {
+        let stored = UserDefaults.standard.dictionary(forKey: "viewedFiles") as? [String: [String]] ?? [:]
+        return stored.mapValues(Set.init)
+    }() {
+        didSet {
+            var order = UserDefaults.standard.stringArray(forKey: "viewedOrder") ?? []
+            for key in viewed.keys where !order.contains(key) { order.append(key) }
+            order.removeAll { viewed[$0] == nil || viewed[$0]!.isEmpty }
+            if order.count > 500 {
+                for key in order.prefix(order.count - 500) { viewed[key] = nil }
+                order.removeFirst(order.count - 500)
+            }
+            UserDefaults.standard.set(order, forKey: "viewedOrder")
+            UserDefaults.standard.set(viewed.filter { !$0.value.isEmpty }.mapValues(Array.init), forKey: "viewedFiles")
+        }
+    }
     /// 全ファイルを並べるのは、変更ファイルがこの数までのコミット（多ければ 1 ファイルずつ）。
     nonisolated private static let stackLimit = 200
     var onDiffShown: (() -> Void)?
@@ -1017,7 +1044,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     var currentParents: [String] { info?.parents ?? [] }
     var currentChildren: [String] { extras?.children ?? [] }
     /// メッセージ・作者・ID・親コミット。
-    private let header = NSTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 170))
+    private let header = FindableTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 170))
     private let repository: Repository
     private let files = NSTableView()
     private let diffView: DiffViewController
@@ -1084,6 +1111,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         scroll.documentView = files
         scroll.hasVerticalScroller = true
         header.isEditable = false
+        // ⌘F で、詳細の欄の中（メッセージ）を探す（欄にフォーカスがあるとき）。
+        header.usesFindBar = true
+        header.isIncrementalSearchingEnabled = true
         header.drawsBackground = true
         header.backgroundColor = .textBackgroundColor
         header.textContainerInset = NSSize(width: 6, height: 6)
@@ -1173,6 +1203,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             addSplitViewItem(item)
         }
         diffView.onToggleFile = { [weak self] file in self?.toggleCollapsed(file) }
+        diffView.fileMenu = { [weak self] file in self?.menuForFile(file) }
         diffView.onToggleViewed = { [weak self] file in self?.toggleViewed(file) }
         diffView.onTopFileChange = { [weak self] file in
             guard let self, stacked != nil, file < files.numberOfRows, files.selectedRow != file else { return }
@@ -1559,6 +1590,37 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         diffView.revealFileHeader(file)
     }
 
+    /// ファイルの見出しの右クリック。とびとびに選んだコミットの見出し（「パス — 短い ID」）からはパスを取り出す。
+    private func menuForFile(_ file: Int) -> NSMenu? {
+        guard let stacked, file < stacked.names.count else { return nil }
+        let name = stacked.names[file]
+        let path = name.components(separatedBy: " — ").first ?? name
+        let menu = NSMenu()
+        let collapsedNow = file < collapsed.count && collapsed[file]
+        menu.addItem(ClosureMenuItem(title: collapsedNow ? "開く" : "畳む") { [weak self] in self?.toggleCollapsed(file) })
+        menu.addItem(ClosureMenuItem(title: "Viewed にする・戻す") { [weak self] in self?.toggleViewed(file) })
+        menu.addItem(.separator())
+        if let commit = commitHex {
+            menu.addItem(ClosureMenuItem(title: "Blame at \(commit.prefix(8))") { [weak self] in self?.onBlame?(path, commit) })
+        }
+        menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
+        menu.addItem(.separator())
+        menu.addItem(ClosureMenuItem(title: "パスをコピー") {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(path, forType: .string)
+        })
+        if let workdir = repository.workdir {
+            let full = (workdir as NSString).appendingPathComponent(path)
+            if FileManager.default.fileExists(atPath: full) {
+                menu.addItem(ClosureMenuItem(title: "Finder で表示") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: full)])
+                })
+                menu.addItem(ClosureMenuItem(title: "既定のアプリで開く") { NSWorkspace.shared.open(URL(fileURLWithPath: full)) })
+            }
+        }
+        return menu
+    }
+
     private func toggleCollapsed(_ file: Int) {
         guard file < collapsed.count else { return }
         collapsed[file].toggle()
@@ -1901,5 +1963,18 @@ final class FileCell: NSTableCellView {
             text.append(NSAttributedString(string: "−\(removed)", attributes: [.foregroundColor: NSColor.systemRed]))
         }
         stat.attributedStringValue = text
+    }
+}
+
+/// ⌘F で文字の欄の中を探す NSTextView（Edit > Find… は、フォーカスのある欄の `showFindBar:` を呼ぶ）。
+final class FindableTextView: NSTextView {
+    @objc func showFindBar(_ sender: Any?) { performTextFinderAction(findAction(.showFindInterface)) }
+    @objc func findNext(_ sender: Any?) { performTextFinderAction(findAction(.nextMatch)) }
+    @objc func findPrevious(_ sender: Any?) { performTextFinderAction(findAction(.previousMatch)) }
+
+    private func findAction(_ action: NSTextFinder.Action) -> NSMenuItem {
+        let item = NSMenuItem()
+        item.tag = action.rawValue
+        return item
     }
 }
