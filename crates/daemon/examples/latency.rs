@@ -31,6 +31,27 @@ fn bench(name: &str, backend: &dyn GitBackend, ids: &[amonhen_model::Oid]) {
     stats(&format!("{name}: 256 行の件名・作者（チャンク）"), chunk);
 }
 
+/// コミットの全ファイルの差分（History でコミットを選んだとき）と、Working Copy の status。
+fn bench_core(name: &str, repo: &amonhen_core::Repository) {
+    let history = repo.load_history().unwrap();
+    let ids: Vec<_> = history.graph.ids().iter().take(300).copied().collect();
+    let mut diffs = Vec::new();
+    for id in ids.iter().step_by(3) {
+        let t = Instant::now();
+        let changes = repo.commit_changes(id).unwrap();
+        repo.stacked_diff(&changes).unwrap();
+        diffs.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    stats(&format!("{name}: コミットの全ファイルの差分"), diffs);
+    let mut status = Vec::new();
+    for _ in 0..20 {
+        let t = Instant::now();
+        repo.load_status().unwrap();
+        status.push(t.elapsed().as_secs_f64() * 1e6);
+    }
+    stats(&format!("{name}: Working Copy の status"), status);
+}
+
 fn main() -> amonhen_model::Result<()> {
     let path = std::env::args().nth(1).unwrap_or_else(|| ".".into());
     let local = GixBackend::open(&path)?;
@@ -40,5 +61,8 @@ fn main() -> amonhen_model::Result<()> {
     let conn = amonhen_remote::local::connect(&std::fs::canonicalize(&path)?.display().to_string(), &daemon)?;
     let remote = RemoteBackend::connect(conn)?;
     bench("daemon 越し", &remote, &ids);
+    bench_core("同じプロセス", &amonhen_core::Repository::new(GixBackend::open(&path)?));
+    let conn = amonhen_remote::local::connect(&std::fs::canonicalize(&path)?.display().to_string(), &daemon)?;
+    bench_core("daemon 越し", &amonhen_core::Repository::new(RemoteBackend::connect(conn)?));
     Ok(())
 }

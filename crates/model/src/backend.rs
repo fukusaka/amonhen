@@ -147,6 +147,12 @@ pub trait GitBackend: Send + Sync {
         Ok(None)
     }
 
+    /// コアの処理（命令）を手元の共有の daemon のコアに任せる。`request` と答えの形はコアが決める
+    /// （`amonhen_core` の `delegate`）。任せられなければ `None`。
+    fn delegate(&self, _request: &[u8]) -> Result<Option<Vec<u8>>> {
+        Ok(None)
+    }
+
     fn commit_summaries(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
         self.commit_texts(ids)
     }

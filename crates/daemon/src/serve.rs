@@ -29,8 +29,10 @@ type Notify = Box<dyn Fn(Notification) + Send + Sync>;
 struct Shared {
     key: PathBuf,
     backend: Arc<dyn GitBackend>,
-    /// History を作るコア（初めて頼まれたときに作る）。同時に頼まれても 1 つずつ作る。
-    history: Mutex<Option<amonhen_core::Repository>>,
+    /// History を作り、任された命令と差分を実行するコア（初めて頼まれたときに作る）。
+    core: std::sync::OnceLock<amonhen_core::Repository>,
+    /// History を作るのは 1 つずつ。
+    history: Mutex<()>,
     /// つないでいる相手ごとの知らせ先（番号つき。離れたら外す）。
     listeners: Arc<Mutex<Vec<(u64, Notify)>>>,
     _watcher: Option<amonhen_watch::Watcher>,
@@ -116,11 +118,8 @@ fn serve_connection(state: &State, stream: UnixStream) -> Result<()> {
             return Ok(());
         }
     };
-    let provider = {
-        let shared = shared.clone();
-        Arc::new(move || prepared_history(&shared)) as amonhen_remote::HistoryProvider
-    };
-    let server = Server::new(shared.backend.clone(), writer).without_compression().with_history(provider);
+    let host: Arc<dyn amonhen_remote::Host> = Arc::new(CoreHost(shared.clone()));
+    let server = Server::new(shared.backend.clone(), writer).without_compression().with_host(host);
     let id = state.next.fetch_add(1, Ordering::Relaxed);
     shared.listeners.lock().unwrap().push((id, Box::new(server.notifier())));
     let result = server.run(reader);
@@ -155,6 +154,7 @@ fn open(state: &State, path: &str) -> Result<Arc<Shared>> {
     let shared = Arc::new(Shared {
         key: key.clone(),
         backend,
+        core: std::sync::OnceLock::new(),
         history: Mutex::default(),
         listeners,
         _watcher: watcher,
@@ -164,17 +164,37 @@ fn open(state: &State, path: &str) -> Result<Arc<Shared>> {
     Ok(shared)
 }
 
+/// daemon のコアで、つないだ側を手伝う。
+struct CoreHost(Arc<Shared>);
+
+impl amonhen_remote::Host for CoreHost {
+    fn prepared_history(&self) -> Result<String> {
+        prepared_history(&self.0)
+    }
+
+    fn delegate(&self, request: &[u8]) -> Result<Vec<u8>> {
+        core(&self.0)?.serve_delegated(request)
+    }
+}
+
+/// リポジトリのコア（初めて使うときに、前回の History のキャッシュから作る）。
+fn core(shared: &Shared) -> Result<&amonhen_core::Repository> {
+    if let Some(repo) = shared.core.get() {
+        return Ok(repo);
+    }
+    let cache = cache_path(&shared.key).ok_or("History のキャッシュの置き場所がない")?;
+    let repo = amonhen_core::Repository::with_cache(GixBackend::open(&shared.key)?, cache);
+    repo.load_cached_history();
+    // 同時に作られたら、先にできた方を使う。
+    let _ = shared.core.set(repo);
+    Ok(shared.core.get().unwrap())
+}
+
 /// History を最新にして、その永続キャッシュのファイルを返す。ファイルが今の History と合わなければ（書けなかった）
 /// 断る（相手が古い History を読まないように）。
 fn prepared_history(shared: &Shared) -> Result<String> {
-    let mut guard = shared.history.lock().unwrap();
-    if guard.is_none() {
-        let cache = cache_path(&shared.key).ok_or("History のキャッシュの置き場所がない")?;
-        let repo = amonhen_core::Repository::with_cache(GixBackend::open(&shared.key)?, cache);
-        repo.load_cached_history();
-        *guard = Some(repo);
-    }
-    let repo = guard.as_ref().unwrap();
+    let _one_at_a_time = shared.history.lock().unwrap();
+    let repo = core(shared)?;
     let snapshot = repo.load_history()?;
     let path = repo.cache_path().ok_or("History のキャッシュの置き場所がない")?;
     let written = amonhen_core::cache::read(path).ok_or("History のキャッシュを書けない")?;

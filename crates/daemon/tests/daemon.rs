@@ -253,6 +253,28 @@ fn shares_one_daemon_between_clients() {
     }
     assert_eq!(rb.load_history().unwrap().graph.len(), 2);
 
+    // 命令は daemon のコアで実行される（ブランチができる）。
+    let reply = ra.run_json(r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#);
+    assert!(reply.contains(r#""ok":true"#), "{reply}");
+    let out = Command::new("git").args(["branch", "--list", "topic"]).current_dir(&dir).output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("topic"));
+
+    // daemon 越しの差分は、手元で計算したものと同じになる。
+    std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
+    std::fs::write(dir.join("b.txt"), "x\n").unwrap();
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-q", "-m", "files"]);
+    let head = ra.load_history().unwrap().graph.ids()[0];
+    let changes = ra.commit_changes(&head).unwrap();
+    let remote = ra.stacked_diff(&changes).unwrap();
+    let local = Repository::new(amonhen_backend_gix::GixBackend::open(&dir).unwrap()).stacked_diff(&changes).unwrap();
+    assert_eq!(remote.files.len(), 2);
+    for ((rp, rd), (lp, ld)) in remote.files.iter().zip(&local.files) {
+        assert_eq!(rp, lp);
+        assert_eq!(rd.lines, ld.lines);
+        assert_eq!(rd.new, ld.new);
+    }
+
     // 開けないパスは、最初の要求に理由が返る。
     let bad = connect("/nonexistent-amonhen");
     let error = RemoteBackend::connect(bad).err().expect("開けないはず").to_string();

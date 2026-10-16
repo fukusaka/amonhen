@@ -16,8 +16,13 @@ use crate::wire::{
 
 type Writer = Arc<Mutex<Box<dyn Write + Send>>>;
 
-/// History を用意して、その永続キャッシュのファイルを返す（手元の共有の daemon が与える）。
-pub type HistoryProvider = Arc<dyn Fn() -> Result<String> + Send + Sync>;
+/// 手元の共有の daemon が、自分のコアでつないだ側を手伝う所。
+pub trait Host: Send + Sync {
+    /// History を用意して、その永続キャッシュのファイルを返す。
+    fn prepared_history(&self) -> Result<String>;
+    /// つないだ側のコアから任された処理を実行する。
+    fn delegate(&self, request: &[u8]) -> Result<Vec<u8>>;
+}
 
 /// 検索のために数えたコミット（同じ起点で何度も探すときに読み直さない）。
 type CommitList = Mutex<Option<(Vec<Oid>, Arc<Vec<Oid>>)>>;
@@ -30,7 +35,7 @@ pub struct Server {
     cancels: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>>,
     /// 大きな応答を圧縮するか（SSH では圧縮し、手元のソケットではしない）。
     compress: bool,
-    history: Option<HistoryProvider>,
+    host: Option<Arc<dyn Host>>,
 }
 
 impl Server {
@@ -41,13 +46,13 @@ impl Server {
             cancels: Arc::default(),
             commits: Arc::default(),
             compress: true,
-            history: None,
+            host: None,
         }
     }
 
-    /// History を用意できるようにする（`Request::PreparedHistory` に答える）。
-    pub fn with_history(mut self, provider: HistoryProvider) -> Self {
-        self.history = Some(provider);
+    /// daemon のコアで手伝えるようにする（`Request::PreparedHistory`・`Request::Delegate` に答える）。
+    pub fn with_host(mut self, host: Arc<dyn Host>) -> Self {
+        self.host = Some(host);
         self
     }
 
@@ -87,13 +92,13 @@ impl Server {
                     let cancels = self.cancels.clone();
                     let commits = self.commits.clone();
                     let compress = self.compress;
-                    let history = self.history.clone();
+                    let host = self.host.clone();
                     std::thread::spawn(move || {
-                        let result = match request {
-                            Request::PreparedHistory => {
-                                history.as_ref().map(|h| h()).transpose().and_then(|path| encode(&path))
-                            }
-                            request => handle(&*backend, &commits, request, &cancel),
+                        let result = match (request, &host) {
+                            (Request::PreparedHistory, Some(h)) => h.prepared_history().and_then(|p| encode(&Some(p))),
+                            (Request::Delegate(bytes), Some(h)) => h.delegate(&bytes.0).and_then(|r| encode(&Bytes(r))),
+                            (Request::Delegate(_), None) => Err("この daemon は処理を任されない".into()),
+                            (request, _) => handle(&*backend, &commits, request, &cancel),
                         };
                         cancels.lock().unwrap().remove(&f.id);
                         write_reply(&writer, f.id, result, compress);
@@ -173,6 +178,7 @@ fn handle(
             })
         }
         Request::PreparedHistory => encode(&Option::<String>::None),
+        Request::Delegate(_) => Err("この daemon は処理を任されない".into()),
         Request::Head => encode(&backend.head()?),
         Request::Tips => encode(&backend.tips()?),
         Request::NewCommits { tips, known_tips } => {

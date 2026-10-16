@@ -648,6 +648,21 @@ impl Repository {
 
     /// JSON の命令を実行し、JSON の結果を返す。
     pub fn run_json(&self, json: &str) -> String {
+        // 手元の共有の daemon につないでいれば、daemon のコアで実行する（操作と Undo の記録を 1 か所にする）。
+        // 手元のつながりそのものについての命令（daemon の記録を読む・取り消す）だけは、ここで実行する。
+        if !matches!(op_name(json).as_str(), "remoteActivity" | "cancelActivity") {
+            match self.delegate(&crate::delegate::Request::Command(json.to_owned())) {
+                Ok(Some(crate::delegate::Reply::Command(reply))) => return reply,
+                Ok(None) => {}
+                Err(e) => {
+                    let response = Response {
+                        error: Some(e.to_string()),
+                        ..Default::default()
+                    };
+                    return serde_json::to_string(&response).unwrap_or_default();
+                }
+            }
+        }
         let response = match serde_json::from_str::<Command>(json) {
             Ok(command) => match self.run_tracked(command, op_name(json)) {
                 Ok(r) => r,

@@ -435,6 +435,14 @@ impl GitBackend for RemoteBackend {
         Ok(path.map(std::path::PathBuf::from))
     }
 
+    fn delegate(&self, request: &[u8]) -> Result<Option<Vec<u8>>> {
+        if !self.conn.is_local() {
+            return Ok(None);
+        }
+        let reply: Bytes = self.conn.call(&Request::Delegate(Bytes(request.to_vec())))?;
+        Ok(Some(reply.0))
+    }
+
     fn subscribe_changes(&self, f: Box<dyn Fn(u32) + Send + Sync>) -> bool {
         self.conn.on_notification(move |n| match n {
             Notification::Changed(bits) => f(bits),

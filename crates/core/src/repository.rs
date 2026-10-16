@@ -636,6 +636,23 @@ impl Repository {
         Ok((selection, stacked))
     }
 
+    /// 手元の共有の daemon のコアに任せる（つないでいなければ `None`）。
+    pub(crate) fn delegate(&self, request: &crate::delegate::Request) -> Result<Option<crate::delegate::Reply>> {
+        let Some(reply) = self.backend.delegate(&crate::delegate::encode(request)?)? else {
+            return Ok(None);
+        };
+        crate::delegate::decode(&reply).map(Some)
+    }
+
+    /// daemon の側: つないだ側のコアから任された処理を実行する。
+    pub fn serve_delegated(&self, request: &[u8]) -> Result<Vec<u8>> {
+        use crate::delegate::{Reply, Request};
+        let reply = match crate::delegate::decode::<Request>(request)? {
+            Request::Command(json) => Reply::Command(self.run_json(&json)),
+        };
+        crate::delegate::encode(&reply)
+    }
+
     fn change_diff(&self, change: &FileChange) -> Result<FileDiff> {
         let side = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
             match id {

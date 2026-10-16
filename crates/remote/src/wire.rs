@@ -12,7 +12,7 @@ use amonhen_model::{
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 13;
+pub const PROTOCOL_VERSION: u32 = 14;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -39,6 +39,8 @@ pub enum Request {
     /// → `Option<String>`: 共有の daemon が History を用意した永続キャッシュのファイル（用意できない daemon なら
     /// `None`）。手元の共有の daemon でだけ使う。
     PreparedHistory,
+    /// → `Bytes`: コアの処理を daemon のコアに任せる（中身の形はコアが決める）。手元の共有の daemon でだけ使う。
+    Delegate(Bytes),
     /// → `Refs`
     Refs,
     /// → `Vec<FileChange>`

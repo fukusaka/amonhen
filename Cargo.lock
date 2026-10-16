@@ -74,6 +74,7 @@ dependencies = [
  "criterion",
  "imara-diff",
  "memmap2",
+ "postcard",
  "serde",
  "serde_json",
  "sha1_smol",

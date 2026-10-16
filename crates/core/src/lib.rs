@@ -4,6 +4,7 @@ pub mod blame;
 pub mod cache;
 pub mod command;
 pub mod conflict;
+mod delegate;
 pub mod diff;
 pub mod fold;
 pub mod graph;
