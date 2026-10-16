@@ -132,7 +132,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             self?.selectedCommit = nil
             self?.detail.show(selection: rows, in: history)
         }
-        history.onSearchChanged = { [weak detail] query in detail?.searchQuery = query }
+        history.onSearchChanged = { [weak self] query in
+            self?.detail.searchQuery = query
+            self?.toolbar.setSearch(query)
+        }
+        toolbar.onSearch = { [weak self] query in
+            guard let self else { return }
+            sidebar.select(page: .history)
+            history.search(query)
+        }
         detail.onSearch = { [weak history] query in history?.search(query) }
         detail.onSelectRef = { [weak self] name in self?.selectRef(named: name) }
         updateSignaturePlace()
@@ -530,6 +538,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 history.show(refs: refs)
                 let current = refs.items.first { $0.kind == .local && $0.name == refs.headBranch }
                 toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0)
+                toolbar.setBranch(refs.headBranch)
+                if let branch = refs.headBranch { rememberBranch(branch) }
                 tracking = (current?.ahead ?? 0, current?.behind ?? 0)
                 updateTabTitle()
             } catch {
@@ -671,7 +681,70 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc func findInHistory(_ sender: Any?) {
         sidebar.select(page: .history)
-        history.showFindBar(sender)
+        // ツールバーに検索欄があればそこへ、なければ History の検索欄へ。
+        if window.toolbar?.items.contains(where: { $0.itemIdentifier == .search }) == true, window.toolbar?.isVisible == true {
+            toolbar.focusSearch()
+        } else {
+            history.showFindBar(sender)
+        }
+    }
+
+    // MARK: - ブランチ
+
+    /// 最近切り替えたブランチ（新しい順、10 個まで）。ブランチの切り替えで上に出す。
+    private var recentBranchesKey: String { "recentBranches." + location }
+
+    private func rememberBranch(_ branch: String) {
+        var list = UserDefaults.standard.stringArray(forKey: recentBranchesKey) ?? []
+        guard list.first != branch else { return }
+        list.removeAll { $0 == branch }
+        list.insert(branch, at: 0)
+        UserDefaults.standard.set(Array(list.prefix(10)), forKey: recentBranchesKey)
+    }
+
+    /// Navigate > Switch Branch…（⌘⇧B）・ツールバーのブランチ。
+    @objc func switchBranch(_ sender: Any?) {
+        guard let refs = latestRefs else { return NSSound.beep() }
+        let recent = UserDefaults.standard.stringArray(forKey: recentBranchesKey) ?? []
+        BranchSwitcherPanel.shared.show(refs: refs, recent: recent, over: window) { [weak self] choice in
+            guard let self else { return }
+            switch choice {
+            case let .local(name): actions.perform(["op": "checkout", "branch": name])
+            case let .remote(name): actions.perform(["op": "track", "remoteBranch": name])
+            case let .create(name): actions.perform(["op": "createBranch", "name": name, "start": "HEAD", "checkout": true])
+            }
+        }
+    }
+
+    /// Repository > Rename Branch…: 今のブランチの名前を変える。
+    @objc func renameBranch(_ sender: Any?) {
+        guard let branch = latestRefs?.headBranch,
+              let to = actions.ask("Rename Branch", message: "\(branch) の新しい名前", initial: branch, ok: "変更"),
+              to != branch else { return }
+        actions.perform(["op": "renameBranch", "from": branch, "to": to])
+    }
+
+    /// Repository > Set Upstream…: 今のブランチの上流（pull・push の相手）を、リモートのブランチから選ぶ。
+    @objc func setUpstream(_ sender: Any?) {
+        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        let remotes = (latestRefs?.items ?? []).filter { $0.kind == .remote && !$0.name.hasSuffix("/HEAD") }.map(\.name)
+        guard !remotes.isEmpty else { return NSSound.beep() }
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
+        popup.addItems(withTitles: remotes)
+        if let same = remotes.first(where: { $0.hasSuffix("/" + branch) }) { popup.selectItem(withTitle: same) }
+        let alert = NSAlert()
+        alert.messageText = "\(branch) の上流"
+        alert.informativeText = "pull で取り込み、push で送るリモートのブランチ"
+        alert.addButton(withTitle: "設定")
+        alert.addButton(withTitle: "キャンセル")
+        alert.accessoryView = popup
+        guard alert.runModal() == .alertFirstButtonReturn, let upstream = popup.titleOfSelectedItem,
+              let slash = upstream.firstIndex(of: "/") else { return }
+        let remote = String(upstream[..<slash]), remoteBranch = String(upstream[upstream.index(after: slash)...])
+        actions.perform(sequence: [
+            ["op": "configSet", "key": "branch.\(branch).remote", "value": remote],
+            ["op": "configSet", "key": "branch.\(branch).merge", "value": "refs/heads/\(remoteBranch)"],
+        ])
     }
 
     @objc func goToHead(_ sender: Any?) {
@@ -860,6 +933,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(popStash(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil
         case #selector(goToHead(_:)): return latestRefs?.head != nil
+        case #selector(switchBranch(_:)): return latestRefs != nil
+        case #selector(renameBranch(_:)), #selector(setUpstream(_:)): return latestRefs?.headBranch != nil
         case #selector(commitChanges(_:)), #selector(commitAndPush(_:)): return showsWorkingCopy && workingCopy.canCommit
         case #selector(stageAllChanges(_:)): return showsWorkingCopy && workingCopy.canStageAll
         case #selector(openInTerminal(_:)), #selector(revealInFinder(_:)): return isLocal

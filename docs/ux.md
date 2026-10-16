@@ -385,7 +385,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 体感の効果が大きく、依存の少ないものから。各ステップで `docs/design.md` の「実装順序」と同じくチェックボックスを更新する。
 
 - [ ] U1. メニューの網羅とショートカットの整理、Settings ウィンドウ（今のトグルを移す）。メニュー（File・Edit・View・Navigate・Repository・Commit・Window・Help）、規則に沿ったショートカット、Settings（Git・Appearance・Performance・Advanced）は済み。残りはほかのステップで足す項目（タブ、Quick Open、Clone、Repository Settings など）
-- [ ] U2. ツールバーの再編（メニュー付きボタン、Merge・Rebase・Pop、Activity のスピナー、検索欄、カスタマイズ）。Pull ▾（merge / rebase / ff-only、コアの `pull` に `mode`）・Push ▾（force-with-lease）・Merge・Rebase・Stash・Pop・Refresh・Undo・カスタマイズは済み。残りはブランチの切り替えパネル、検索欄、Activity のスピナー
+- [x] U2. ツールバーの再編（メニュー付きボタン、Merge・Rebase・Pop、Activity のスピナー、検索欄、カスタマイズ）。Pull ▾・Push ▾・Merge・Rebase・Stash・Pop・Activity・Refresh・Undo、ブランチ（押すと切り替えのパネル ⌘⇧B: あいまい検索、最近切り替えたものが上、リモートは追跡ブランチを作る、一致しなければ新しいブランチ。▾ で New・Rename・Set Upstream）、History の検索欄（⌘⇧F、▾ で author:・path:・contents:）、カスタマイズは済み
 - [x] U3. Working Copy の左の列の再配置（コミットの入力を上、チェックボックスの 1 群、List / Tree / Flat、絞り込み）とコミットの入力の強化。List / Tree / Flat、行ごとの +/−（コアの `workingStats`）、ホバーの「変更を捨てる」、リポジトリごとの下書き、`commit.template` から始める、⌥↑・⌥↓ と 🕘 の一覧で最近のメッセージ、⊕ で Conventional Commits の型・Co-authored-by（最近の作者）・Signed-off-by、Commit ▾（Commit and Push ⌘⇧↩、Amend）、本文の 72 桁の目安線は済み。`#123` の補完、Fixup! 選んだコミット、hooks の出力のシートは後で
 - [x] U4. HEAD → 作業ツリーの 1 本の差分と行ごとのチェック（コアで 2 つの差分を重ねる）、ガターでの行選択・キー操作。行・hunk のチェック、Space、重ねられないファイルでの Unstaged / Staged の切り替えは済み。J / K などのキー、切り替えた後に次の hunk へ移るのは後で
 - [x] U5. History の詳細の全文表示と、境目のドラッグ。本文は畳まずに全文、境目の位置を覚える、⤢ で詳細だけを広げる。詳細の中だけを探す ⌘F は後で

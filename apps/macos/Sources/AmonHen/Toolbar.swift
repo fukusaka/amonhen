@@ -4,7 +4,12 @@ import AppKit
 /// ボタンの action は target を持たず、レスポンダチェーンで `RepositoryWindow` に届く（メニューと同じ操作）。
 /// 使えるかどうかも `RepositoryWindow.validateToolbarItem` で決める。
 final class MainToolbar: NSObject, NSToolbarDelegate {
-    let toolbar = NSToolbar(identifier: "main")
+    /// 並びを変えたら名前を変える（保存した並びに新しい項目が出てこないため）。
+    let toolbar = NSToolbar(identifier: "main.v2")
+    private let branchItem = NSMenuToolbarItem(itemIdentifier: .branch)
+    private let searchItem = NSSearchToolbarItem(itemIdentifier: .search)
+    /// 検索欄で ⏎ を押した（History を探す）。
+    var onSearch: ((String) -> Void)?
     private let undoItem = NSToolbarItem(itemIdentifier: .undo)
     private let pushItem = NSMenuToolbarItem(itemIdentifier: .push)
     private let pullItem = NSMenuToolbarItem(itemIdentifier: .pull)
@@ -35,6 +40,63 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         activityItem.toolTip = "実行した git とコマンド、操作ログ、画面の速さ（⌥⌘A）"
         NotificationCenter.default.addObserver(
             self, selector: #selector(runningChanged), name: .runningOperationsChanged, object: nil)
+        // 今のブランチ。押すとブランチの切り替え（⌘⇧B）、▾ でブランチの操作。
+        branchItem.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "ブランチ")
+        branchItem.label = "Branch"
+        branchItem.paletteLabel = "Branch"
+        branchItem.action = #selector(RepositoryWindow.switchBranch(_:))
+        branchItem.toolTip = "ブランチを切り替える（⌘⇧B）"
+        branchItem.menu = Self.menu([
+            ("Switch Branch…", #selector(RepositoryWindow.switchBranch(_:))),
+            ("New Branch…", #selector(RepositoryWindow.newBranch(_:))),
+            ("Rename Branch…", #selector(RepositoryWindow.renameBranch(_:))),
+            ("Set Upstream…", #selector(RepositoryWindow.setUpstream(_:))),
+        ])
+        // History の検索。▾ で、作者・パス・内容で探す書き方を入れる。
+        let field = searchItem.searchField
+        field.placeholderString = "History を検索"
+        field.sendsWholeSearchString = true
+        field.target = self
+        field.action = #selector(searchSubmitted)
+        let scopes = NSMenu(title: "検索")
+        for (title, prefix) in [("作者で探す（author:）", "author:"), ("パスで探す（path:）", "path:"), ("内容で探す（contents:）", "contents:")] {
+            let item = NSMenuItem(title: title, action: #selector(insertSearchPrefix(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = prefix
+            scopes.addItem(item)
+        }
+        field.searchMenuTemplate = scopes
+        searchItem.paletteLabel = "Search"
+    }
+
+    /// 今のブランチを出す（detached なら短い ID）。
+    func setBranch(_ name: String?) {
+        branchItem.label = name ?? "detached"
+        branchItem.toolTip = "\(name ?? "detached HEAD") — 押すとブランチを切り替える（⌘⇧B）"
+    }
+
+    /// History の検索欄の中身と揃える。
+    func setSearch(_ query: String?) {
+        let field = searchItem.searchField
+        if field.currentEditor() == nil { field.stringValue = query ?? "" }
+    }
+
+    /// ⌘⇧F: 検索欄に移る。
+    func focusSearch() {
+        searchItem.beginSearchInteraction()
+    }
+
+    @objc private func searchSubmitted() {
+        onSearch?(searchItem.searchField.stringValue.trimmingCharacters(in: .whitespaces))
+    }
+
+    @objc private func insertSearchPrefix(_ sender: NSMenuItem) {
+        guard let prefix = sender.representedObject as? String else { return }
+        let field = searchItem.searchField
+        let current = field.stringValue.trimmingCharacters(in: .whitespaces)
+        field.stringValue = current.isEmpty ? prefix : "\(current) \(prefix)"
+        field.window?.makeFirstResponder(field)
+        field.currentEditor()?.moveToEndOfDocument(nil)
     }
 
     @objc private func runningChanged() {
@@ -67,11 +129,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop, .flexibleSpace, .activity, .refresh, .undo]
+        [.branch, .fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop, .flexibleSpace, .activity, .refresh, .undo,
+         .search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
+        [.branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
          .space, .flexibleSpace]
     }
 
@@ -79,6 +142,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         _ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool
     ) -> NSToolbarItem? {
         if id == .activity { return activityItem }
+        if id == .branch { return branchItem }
+        if id == .search { return searchItem }
         let item: NSToolbarItem, label: String, symbol: String, action: Selector, tip: String
         switch id {
         case .fetch:
@@ -161,4 +226,6 @@ extension NSToolbarItem.Identifier {
     static let terminal = Self("terminal")
     static let finder = Self("finder")
     static let activity = Self("activity")
+    static let branch = Self("branch")
+    static let search = Self("search")
 }

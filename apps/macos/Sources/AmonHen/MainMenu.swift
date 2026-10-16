@@ -108,6 +108,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
 
     private func navigateMenu() -> NSMenu {
         let menu = NSMenu(title: "Navigate")
+        menu.addItem(item("Switch Branch…", #selector(RepositoryWindow.switchBranch(_:)), "b", [.command, .shift]))
         menu.addItem(item("Go to HEAD", #selector(RepositoryWindow.goToHead(_:)), "h", [.command, .shift]))
         let down = String(UnicodeScalar(NSDownArrowFunctionKey)!), up = String(UnicodeScalar(NSUpArrowFunctionKey)!)
         menu.addItem(item("Go to Parent", #selector(RepositoryWindow.goToParent(_:)), down, [.command, .option]))
@@ -128,6 +129,8 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(item("Force Push (with Lease)…", #selector(RepositoryWindow.forcePush(_:)), ""))
         menu.addItem(.separator())
         menu.addItem(item("New Branch…", #selector(RepositoryWindow.newBranch(_:)), "b", [.command, .option]))
+        menu.addItem(item("Rename Branch…", #selector(RepositoryWindow.renameBranch(_:)), ""))
+        menu.addItem(item("Set Upstream…", #selector(RepositoryWindow.setUpstream(_:)), ""))
         menu.addItem(item("New Tag…", #selector(RepositoryWindow.newTag(_:)), "t", [.command, .option]))
         menu.addItem(item("Merge…", #selector(RepositoryWindow.mergeIntoCurrent(_:)), "m", [.command, .option]))
         menu.addItem(item("Rebase…", #selector(RepositoryWindow.rebaseCurrent(_:)), "r", [.command, .option]))
