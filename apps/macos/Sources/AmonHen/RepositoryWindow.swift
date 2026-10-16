@@ -860,8 +860,24 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             } catch {
                 EventLog.add(repo: window.title, "プルリクエストを読めない: \(error)")
             }
+            await loadCommitStatuses(gitHub)
         }
     }
+
+    /// 今のブランチと既定のブランチの、直近のコミットの CI の状態（History の行の印）と作者のアバター。
+    private func loadCommitStatuses(_ gitHub: GitHubRepository) async {
+        if defaultBranch == nil { defaultBranch = await GitHub.defaultBranch(gitHub) }
+        let branches = Array(Set([latestRefs?.headBranch, defaultBranch].compactMap { $0 })).sorted()
+        do {
+            let (ci, avatars) = try await GitHub.commitStatuses(gitHub, branches: branches)
+            history.ciStatus = Dictionary(uniqueKeysWithValues: ci.compactMap { key, value in Data(hex: key).map { ($0, value) } })
+            Avatars.shared.useGitHub(avatars)
+        } catch {
+            EventLog.add(repo: window.title, "CI の状態を読めない: \(error)")
+        }
+    }
+
+    private var defaultBranch: String?
 
     /// プルリクエストのブランチをチェックアウトする（gh pr checkout）。手元のリポジトリだけ。
     private func checkout(_ pr: PullRequest) {

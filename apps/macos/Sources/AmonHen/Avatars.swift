@@ -11,6 +11,21 @@ final class Avatars {
     var onLoad: [(String) -> Void] = []
 
     private var images: [String: NSImage] = [:]
+    /// GitHub のコミットの作者のアバター（メールアドレス → URL）。Gravatar より優先する。
+    private var gitHub: [String: URL] = [:]
+
+    /// GitHub で分かったアバターを使う。Gravatar で読んでいたものは読み直す。
+    func useGitHub(_ urls: [String: URL]) {
+        var changed: [String] = []
+        for (key, url) in urls where gitHub[key] != url {
+            gitHub[key] = url
+            images[key] = nil
+            failed.remove(key)
+            changed.append(key)
+        }
+        // 描き直すと image(for:) が呼ばれ、GitHub から読み始める。
+        for key in changed { for f in onLoad { f(key) } }
+    }
     private var loading: Set<String> = []
     /// 取れなかったもの（ネットワークがないなど）。何度も取りに行かない。
     private var failed: Set<String> = []
@@ -22,8 +37,9 @@ final class Avatars {
         guard Settings.showAvatars, !key.isEmpty, !loading.contains(key), !failed.contains(key) else { return nil }
         loading.insert(key)
         let hash = Insecure.MD5.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined()
-        // 登録していない人は、ハッシュから作る模様（identicon）にする。高解像度の画面のため 2 倍の大きさで取る。
-        guard let url = URL(string: "https://www.gravatar.com/avatar/\(hash)?s=96&d=identicon") else { return nil }
+        // GitHub のアバターを知っていればそれを、なければ Gravatar（登録していない人は、ハッシュから作る模様）。
+        // 高解像度の画面のため 2 倍の大きさで取る。
+        guard let url = gitHub[key] ?? URL(string: "https://www.gravatar.com/avatar/\(hash)?s=96&d=identicon") else { return nil }
         Task {
             let data = try? await URLSession.shared.data(from: url).0
             loading.remove(key)

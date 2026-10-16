@@ -134,6 +134,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private var verifyWork: DispatchWorkItem?
     /// 検証する側を変えた回数。変える前に始めた検証の結果は捨てる。
     private var signatureGeneration = 0
+    /// GitHub の CI の状態（コミットの ID → 状態）。RepositoryWindow が gh で読んで渡す。
+    var ciStatus: [Data: PullRequest.CI] = [:] {
+        didSet { if ciStatus != oldValue { redrawText() } }
+    }
 
     /// 検証する側が変わったので、覚えていた結果を捨てて検証し直す（結果を引き継がない）。
     func forgetSignatures() {
@@ -582,7 +586,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     unverified.append(id)
                 }
             }
-            let dot: CGFloat = signed ? 12 : 0
+            // GitHub の CI の状態（知っていれば）。署名の印の右に置く。
+            let ci = id.flatMap { ciStatus[$0] }
+            let dot: CGFloat = (signed ? 12 : 0) + (ci != nil ? 12 : 0)
             // 1 行なら、作者・日時・ID を右に寄せ、件名はその手前まで。
             let metaWidth = compact ? min(line.meta.width, column.width * 0.45) : 0
             let subjectEnd = compact ? end - metaWidth - 12 - dot : end
@@ -602,6 +608,21 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 text.addSymbol(
                     status.symbol, pointSize: 9.5, center: CGPoint(x: centerX, y: centerY),
                     color: (isSelected && focused ? selected : status.color.rgba), scale: scale)
+            }
+            if let ci {
+                let centerX = (compact
+                    ? end - metaWidth - 7 - (signed ? 12 : 0)
+                    : column.minX - originX + min(line.meta.width, column.width - dot) + 9 + (signed ? 12 : 0))
+                let centerY = rowTop + metaBaseline - CTFontGetXHeight(metaFont) / 2
+                let (symbol, color): (String, NSColor) = switch ci {
+                case .passing: ("checkmark.circle", .systemGreen)
+                case .failing: ("xmark.circle", .systemRed)
+                case .pending: ("clock", .systemOrange)
+                case .none: ("circle", .secondaryLabelColor)
+                }
+                text.addSymbol(
+                    symbol, pointSize: 9.5, center: CGPoint(x: centerX, y: centerY),
+                    color: (isSelected && focused ? selected : color.rgba), scale: scale)
             }
         }
         if !unverified.isEmpty { verifySoon(unverified) }

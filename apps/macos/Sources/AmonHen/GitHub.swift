@@ -163,6 +163,64 @@ enum GitHub {
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// ブランチの直近のコミット（それぞれ 100 個まで）の CI の状態と、作者の GitHub のアバターの URL
+    /// （メールアドレス → URL）。GraphQL で 1 回に読む。GitHub にないブランチは飛ばす。
+    static func commitStatuses(
+        _ repo: GitHubRepository, branches: [String]
+    ) async throws -> (ci: [String: PullRequest.CI], avatars: [String: URL]) {
+        guard !branches.isEmpty else { return ([:], [:]) }
+        // ブランチごとに別名を付けて並べる（b0・b1 …）。
+        let fields = branches.indices.map { i in
+            """
+            b\(i): ref(qualifiedName: $r\(i)) { target { ... on Commit { history(first: 100) { nodes {
+              oid author { email avatarUrl(size: 96) } statusCheckRollup { state } } } } } }
+            """
+        }.joined(separator: "\n")
+        let variables = branches.indices.map { "$r\($0): String!" }.joined(separator: ", ")
+        let query = "query($owner: String!, $name: String!, \(variables)) { repository(owner: $owner, name: $name) { \(fields) } }"
+        var args = ["api", "graphql", "-f", "query=\(query)", "-f", "owner=\(repo.owner)", "-f", "name=\(repo.name)"]
+        if repo.host != "github.com" { args += ["--hostname", repo.host] }
+        for (i, branch) in branches.enumerated() { args += ["-f", "r\(i)=refs/heads/\(branch)"] }
+        let data = try await run(args)
+        struct Node: Decodable {
+            struct Author: Decodable { let email: String?; let avatarUrl: String? }
+            struct Rollup: Decodable { let state: String }
+            let oid: String
+            let author: Author?
+            let statusCheckRollup: Rollup?
+        }
+        struct Ref: Decodable {
+            struct Target: Decodable {
+                struct History: Decodable { let nodes: [Node] }
+                let history: History?
+            }
+            let target: Target?
+        }
+        struct Response: Decodable {
+            struct Body: Decodable { let repository: [String: Ref?]? }
+            let data: Body?
+        }
+        let response = try JSONDecoder().decode(Response.self, from: data)
+        var ci: [String: PullRequest.CI] = [:]
+        var avatars: [String: URL] = [:]
+        for ref in (response.data?.repository ?? [:]).values {
+            for node in ref?.target?.history?.nodes ?? [] {
+                if let state = node.statusCheckRollup?.state {
+                    ci[node.oid] = switch state {
+                    case "SUCCESS": .passing
+                    case "FAILURE", "ERROR": .failing
+                    default: .pending
+                    }
+                }
+                if let email = node.author?.email?.lowercased(), !email.isEmpty,
+                   let url = node.author?.avatarUrl.flatMap(URL.init(string:)) {
+                    avatars[email] = url
+                }
+            }
+        }
+        return (ci, avatars)
+    }
+
     /// プルリクエストのブランチをチェックアウトする（なければ作る）。
     static func checkout(_ number: Int, in dir: String, repo: GitHubRepository) async throws {
         _ = try await run(["pr", "checkout", "\(number)", "-R", repo.slug], in: dir)
