@@ -184,7 +184,8 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
  ☐ + 14   dbg!(b);          ← 作業ツリーにだけある行
 ```
 
-- コアで HEAD → index と index → 作業ツリーの 2 つの差分を重ね、HEAD → 作業ツリーの各変更行に「stage 済みか」を付けて返す（`WorkingDiff` に行の状態の列を足す）。重ねられない入り組んだ場合（index にだけある変更が作業ツリーで書き戻されたなど）は、その hunk だけ「Staged / 作業ツリー」の 2 段に分けて出す。
+- コアで HEAD → index と index → 作業ツリーの 2 つの差分を重ね、HEAD → 作業ツリーの各変更行に「stage 済みか」を付けて返す（`working_diff_combined`、行の `flags` の `STAGED`）。index が「HEAD に変更の一部を当てたもの」として表せないファイル（index にだけある変更が作業ツリーで書き戻されたなど）は、ファイルごと従来の Unstaged / Staged の切り替えで見せる。
+- 切り替えは「HEAD にどの変更を当てたものを index にするか」を作り直して書く（`set_rows_staged`）。すべて含めるなら `git add`、すべて外すなら `git reset` と同じにする（新しいファイル・消したファイルのため）。
 - hunk の見出しのチェックは 3 状態で、押すと hunk ごと含める・外す。
 - 行のチェックを押すとその行を切り替える。ガターをドラッグで範囲、⌘ クリックで追加して選び、Space でまとめて切り替える。
 - 変更のまとまり（連続する − と ＋）の境目をクリックすると、そのまとまりだけを選ぶ。
@@ -385,7 +386,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 - [ ] U1. メニューの網羅とショートカットの整理、Settings ウィンドウ（今のトグルを移す）。メニュー（File・Edit・View・Navigate・Repository・Commit・Window・Help）、規則に沿ったショートカット、Settings（Git・Appearance・Performance・Advanced）は済み。残りはほかのステップで足す項目（タブ、Quick Open、Clone、Repository Settings など）
 - [ ] U2. ツールバーの再編（メニュー付きボタン、Merge・Rebase・Pop、Activity のスピナー、検索欄、カスタマイズ）。Pull ▾（merge / rebase / ff-only、コアの `pull` に `mode`）・Push ▾（force-with-lease）・Merge・Rebase・Stash・Pop・Refresh・Undo・カスタマイズは済み。残りはブランチの切り替えパネル、検索欄、Activity のスピナー
 - [ ] U3. Working Copy の左の列の再配置（コミットの入力を上、チェックボックスの 1 群、List / Tree / Flat、絞り込み）とコミットの入力の強化。コミットの入力を上、チェックボックスの 1 群（3 状態、ディレクトリと見出しでまとめて切り替え、Space）、List / Tree、パスの絞り込み、一部だけ stage したファイルの差分の切り替え（U4 までのつなぎ）は済み。残りは Flat、行数（+/−）、行のホバーのボタン、コミットの入力の強化（下書き・過去のメッセージ・補完・Commit ▾）
-- [ ] U4. HEAD → 作業ツリーの 1 本の差分と行ごとのチェック（コアで 2 つの差分を重ねる）、ガターでの行選択・キー操作
+- [x] U4. HEAD → 作業ツリーの 1 本の差分と行ごとのチェック（コアで 2 つの差分を重ねる）、ガターでの行選択・キー操作。行・hunk のチェック、Space、重ねられないファイルでの Unstaged / Staged の切り替えは済み。J / K などのキー、切り替えた後に次の hunk へ移るのは後で
 - [ ] U5. History の詳細の全文表示と、境目のドラッグ
 - [ ] U6. History の PR 風の差分（全ファイルを縦に、Viewed）
 - [ ] U7. History の複数選択（範囲・2 つ・飛び飛び）

@@ -65,21 +65,52 @@ public final class WorkingStatus: @unchecked Sendable {
         else { throw AmonhenError.last() }
         return WorkingFileDiff(raw: raw, status: self, item: item, staged: staged)
     }
+
+    /// `item` の HEAD と作業ツリーの差分。変更の行ごとに index に入っているか（`WorkingFileDiff.isStaged(row:)`）が
+    /// わかる。index がその形で表せないファイル（作業ツリーで書き戻した変更が index にだけあるなど）・
+    /// サブモジュール・バイナリ・コンフリクトでは nil。裏のスレッドで呼ぶ。
+    public func combinedDiff(of item: StatusItem) throws -> WorkingFileDiff? {
+        guard let raw = amonhen_working_diff_combined(
+            repository.raw, raw, UInt32(item.index), UInt8(AmonhenEncoding_Utf16.rawValue))
+        else {
+            // 理由が空の NULL は「表せない」。
+            let error = AmonhenError.last()
+            if error.description.isEmpty { return nil }
+            throw error
+        }
+        return WorkingFileDiff(raw: raw, status: self, item: item, staged: false, combined: true)
+    }
 }
 
 /// Working Copy の 1 ファイルの差分。行を選んで stage・unstage できる。
 public final class WorkingFileDiff: FileDiff, @unchecked Sendable {
     public let item: StatusItem
     public let staged: Bool
+    /// HEAD と作業ツリーの差分（`WorkingStatus.combinedDiff`）か。
+    public let isCombined: Bool
     let repository: Repository
 
-    init(raw: OpaquePointer, status: WorkingStatus, item: StatusItem, staged: Bool) {
+    init(raw: OpaquePointer, status: WorkingStatus, item: StatusItem, staged: Bool, combined: Bool = false) {
         self.item = item
         self.staged = staged
+        self.isCombined = combined
         self.repository = status.repository
         super.init(
             raw: raw, owner: status, view: amonhen_working_diff_view(raw), free: { amonhen_working_diff_free($0) },
             syntax: { amonhen_working_diff_syntax($0) })
+    }
+
+    /// `row` 行目の変更が index に入っているか（`isCombined` の差分だけ）。
+    public func isStaged(row: Int) -> Bool {
+        withRows { $0[row].flags & UInt8(AmonhenDiffRow_STAGED) != 0 }
+    }
+
+    /// `rows` 行目の変更を、`staged` なら index に入れ、そうでなければ外す（`isCombined` の差分だけ）。
+    public func setStaged(rows: [Int], staged: Bool) throws {
+        let ok = rows.map(UInt32.init).withUnsafeBufferPointer {
+            amonhen_set_rows_staged(repository.raw, raw, $0.baseAddress, UInt32($0.count), staged)
+        }
+        if !ok { throw AmonhenError.last() }
     }
 
     /// `rows` 行目の変更だけを stage する（stage 済みの差分なら unstage する）。

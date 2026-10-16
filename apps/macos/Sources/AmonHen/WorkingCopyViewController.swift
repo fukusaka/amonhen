@@ -229,6 +229,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         diffBar = bar
         diffView.isSelectable = true
         diffView.onSelectionChange = { [weak self] in self?.updateButtons() }
+        diffView.onSetStaged = { [weak self] rows, staged in self?.setStaged(rows: rows, staged: staged) }
         let right = BarAndContentView(bar: bar, content: diffView.view)
         right.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
         // NSSplitViewController に addChild すると分割の項目が増えるので、右側の親に付ける。
@@ -379,8 +380,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let request = self.request
         isConflict = entry.isConflict
         diffView.isConflictView = entry.isConflict
-        let both = entry.item.isStaged && entry.item.isUnstaged && !entry.isConflict
-        sideControl.isHidden = !both
+        // 一部だけ含めたファイルで、1 本の差分にできないときだけ、見る側を切り替える。
+        sideControl.isHidden = true
         sideControl.selectedSegment = staged ? 1 : 0
         if entry.isConflict {
             let repository = self.repository
@@ -395,10 +396,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             return
         }
         Task {
-            let diff = try? await Task.detached(priority: .userInitiated) {
-                try status.diff(of: entry.item, staged: staged)
+            // HEAD と作業ツリーの 1 本の差分（行ごとのチェック）。表せないときは、選んだ側の差分。
+            let (diff, combined) = await Task.detached(priority: .userInitiated) { () -> (WorkingFileDiff?, Bool) in
+                if let combined = try? status.combinedDiff(of: entry.item) { return (combined, true) }
+                return (try? status.diff(of: entry.item, staged: staged), false)
             }.value
             guard request == self.request else { return }
+            sideControl.isHidden = combined || !(entry.item.isStaged && entry.item.isUnstaged)
+            selectedKey = (entry.item.path, combined ? false : staged)
             current = diff
             if let diff, diff.isBinary {
                 diffView.show(nil, message: "バイナリファイル")
@@ -422,14 +427,23 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             for case let b as NSButton in conflictButtons.views.dropFirst().prefix(3) { b.isEnabled = hasConflict }
         }
         let staged = selectedKey?.staged ?? false
+        let selected = diffView.selectedChangeRows
+        // 1 本の差分では、選んだ行がすべて含まれていれば外す、そうでなければ含める。
+        let selectedStaged = current?.isCombined == true && !selected.isEmpty
+            && selected.allSatisfy { current?.isStaged(row: $0) == true }
         // 選んだファイルがなければ、ファイルの操作は出さない。
         linesButton.isHidden = isConflict || selectedKey == nil
-        linesButton.title = staged ? "Unstage Lines" : "Stage Lines"
-        linesButton.isEnabled = current != nil && !diffView.selectedChangeRows.isEmpty
+        linesButton.title = staged || selectedStaged ? "Unstage Lines" : "Stage Lines"
+        linesButton.isEnabled = current != nil && !selected.isEmpty
+        linesButton.toolTip = current?.isCombined == true ? "選んだ行を次のコミットに含める・外す（Space）" : nil
         // 選んだ行があれば行を、なければファイルを破棄する。stage 済みの変更は破棄しない。
         discardButton.isHidden = staged || isConflict || selectedKey == nil
-        discardButton.title = diffView.selectedChangeRows.isEmpty ? "Discard File" : "Discard Lines"
+        discardButton.title = selected.isEmpty ? "Discard File" : "Discard Lines"
         discardButton.isEnabled = selectedKey != nil
+            && !(current?.isCombined == true && selected.contains { current?.isStaged(row: $0) == true })
+        discardButton.toolTip = selected.isEmpty
+            ? "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻す"
+            : "選んだ行の変更を作業ツリーから捨てる（含めている行は先に外す）"
         let count = stagedCount
         commitButton.isEnabled = !(count == 0 && amend.state == .off) && !composedMessage.isEmpty
         // ボタンの数や名前が変わると幅が変わるので、並べ直す。
@@ -500,7 +514,17 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard let current else { return }
         let rows = diffView.selectedChangeRows
         guard !rows.isEmpty else { return }
-        run { try current.stage(rows: rows) }
+        if current.isCombined {
+            setStaged(rows: rows, staged: !rows.allSatisfy { current.isStaged(row: $0) })
+        } else {
+            run { try current.stage(rows: rows) }
+        }
+    }
+
+    /// 1 本の差分の `rows` 行目の変更を、次のコミットに含める・外す。
+    private func setStaged(rows: [Int], staged: Bool) {
+        guard let current, current.isCombined else { return }
+        run { try current.setStaged(rows: rows, staged: staged) }
     }
 
     @objc private func discard() {

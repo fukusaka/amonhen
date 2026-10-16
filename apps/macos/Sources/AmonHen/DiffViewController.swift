@@ -56,7 +56,17 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     private let font = CTFontCreateWithName("Menlo" as CFString, 12, nil)
     private var lineHeight: CGFloat { ceil(CTFontGetAscent(font) + CTFontGetDescent(font) + CTFontGetLeading(font)) + 4 }
-    private let gutterWidth: CGFloat = 96
+    /// 行番号の欄の幅。
+    private let numbersWidth: CGFloat = 96
+    /// 変更の行の左のチェックボックスの欄（`showsStageChecks` のときだけ）。
+    private let checkWidth: CGFloat = 22
+    private var gutterWidth: CGFloat { numbersWidth + (showsStageChecks ? checkWidth : 0) }
+    /// Working Copy の HEAD と作業ツリーの差分か。変更の行と hunk の見出しの左に、次のコミットに含めるかの
+    /// チェックボックスを出す。
+    private var showsStageChecks: Bool { (diff as? WorkingFileDiff)?.isCombined == true }
+    /// チェックボックスを押した・Space を押した: `rows` 行目の変更を含める（true）・外す。
+    var onSetStaged: ((_ rows: [Int], _ staged: Bool) -> Void)?
+    private var checkGlyphs: [String: TextRenderer.ShapedLine] = [:]
 
     init(renderer: TextRenderer) {
         self.renderer = renderer
@@ -196,9 +206,50 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         return id > 0 ? id - 1 : nil
     }
 
+    /// `row` を含む hunk の、追加・削除の行（`row` が hunk の見出しでも中の行でもよい）。
+    private func changeRows(inHunkOf row: Int) -> [Int] {
+        guard let diff else { return [] }
+        return diff.withRows { all in
+            var start = row
+            while start > 0, all[start].kind != UInt8(AmonhenDiffRow_HUNK) { start -= 1 }
+            var end = start + 1
+            while end < all.count, all[end].kind != UInt8(AmonhenDiffRow_HUNK) { end += 1 }
+            return (start..<end).filter { Self.isChange(all[$0]) }
+        }
+    }
+
+    private static func isChange(_ row: AmonhenDiffRow) -> Bool {
+        row.kind == UInt8(AmonhenDiffRow_ADDED) || row.kind == UInt8(AmonhenDiffRow_REMOVED)
+    }
+
+    /// `rows` の変更を、すべて含めていれば外し、そうでなければすべて含める。
+    private func toggleStaged(_ rows: [Int]) {
+        guard let diff = diff as? WorkingFileDiff, !rows.isEmpty else { return }
+        onSetStaged?(rows, !rows.allSatisfy { diff.isStaged(row: $0) })
+    }
+
+    /// Space: 選んだ変更の行（なければ何もしない）を含める・外す。扱ったら true。
+    fileprivate func toggleSelectedStaged() -> Bool {
+        guard showsStageChecks, !selectedChangeRows.isEmpty else { return false }
+        toggleStaged(selectedChangeRows)
+        return true
+    }
+
     /// クリックで行を選ぶ。hunk の見出しなら hunk 全体、Shift で範囲、Command で追加・解除。
+    /// 左端のチェックボックスなら、その行（hunk の見出しなら hunk の変更すべて）を含める・外す。
     fileprivate func mouseDown(_ event: NSEvent, at point: NSPoint) {
         guard let diff else { return }
+        if showsStageChecks, point.x - scrollView.contentView.bounds.origin.x < checkWidth {
+            let row = Int(point.y / lineHeight)
+            guard row >= 0, row < diff.rowCount else { return }
+            let kind = diff.withRows { $0[row].kind }
+            if kind == UInt8(AmonhenDiffRow_HUNK) {
+                toggleStaged(changeRows(inHunkOf: row))
+            } else if kind == UInt8(AmonhenDiffRow_ADDED) || kind == UInt8(AmonhenDiffRow_REMOVED) {
+                toggleStaged([row])
+            }
+            return
+        }
         guard isSelectable else {
             beginTextSelection(event, at: point)
             return
@@ -547,7 +598,12 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                 }
                 let baseline = top + 2 + ascent
                 // コンフリクトの表示では old_no はコンフリクトの番号なので、行番号は new_no だけ出す。
-                let numbers = isConflictView ? [(r.new_no, gutterWidth - 6)] : [(r.old_no, gutterWidth / 2 - 6), (r.new_no, gutterWidth - 6)]
+                if showsStageChecks {
+                    drawStageCheck(row: row, kind: r.kind, all: all, top: top, scale: scale)
+                }
+                let numbers = isConflictView
+                    ? [(r.new_no, gutterWidth - 6)]
+                    : [(r.old_no, gutterWidth - numbersWidth / 2 - 6), (r.new_no, gutterWidth - 6)]
                 for (number, right) in numbers where number > 0 {
                     let line = numberCache[number] ?? renderer.shape("\(number)" as CFString, font: font, scale: scale)
                     numberCache[number] = line
@@ -583,6 +639,47 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
                     scale: scale, spans: spans)
             }
         }
+    }
+}
+
+extension DiffViewController {
+    /// 変更の行・hunk の見出しの左のチェックボックス。hunk は中の変更がすべて含まれていれば ✓、一部なら −。
+    fileprivate func drawStageCheck(
+        row: Int, kind: UInt8, all: UnsafeBufferPointer<AmonhenDiffRow>, top: CGFloat, scale: CGFloat
+    ) {
+        let state: NSControl.StateValue
+        switch kind {
+        case UInt8(AmonhenDiffRow_ADDED), UInt8(AmonhenDiffRow_REMOVED):
+            state = all[row].flags & UInt8(AmonhenDiffRow_STAGED) != 0 ? .on : .off
+        case UInt8(AmonhenDiffRow_HUNK):
+            var end = row + 1
+            var staged = 0, total = 0
+            while end < all.count, all[end].kind != UInt8(AmonhenDiffRow_HUNK) {
+                if all[end].kind == UInt8(AmonhenDiffRow_ADDED) || all[end].kind == UInt8(AmonhenDiffRow_REMOVED) {
+                    total += 1
+                    if all[end].flags & UInt8(AmonhenDiffRow_STAGED) != 0 { staged += 1 }
+                }
+                end += 1
+            }
+            state = staged == 0 ? .off : staged == total ? .on : .mixed
+        default:
+            return
+        }
+        let size: CGFloat = 12
+        let box = CGRect(x: 5, y: top + (lineHeight - size) / 2, width: size, height: size)
+        if state == .off {
+            renderer.addRect(box, color: NSColor.secondaryLabelColor.rgba)
+            renderer.addRect(box.insetBy(dx: 1, dy: 1), color: NSColor.textBackgroundColor.rgba)
+            return
+        }
+        renderer.addRect(box, color: NSColor.controlAccentColor.rgba)
+        let mark = state == .on ? "✓" : "−"
+        let font = NSFont.boldSystemFont(ofSize: 10) as CTFont
+        let glyph = checkGlyphs[mark] ?? renderer.shape(mark as CFString, font: font, scale: scale)
+        checkGlyphs[mark] = glyph
+        let baseline = box.midY + (CTFontGetAscent(font) - CTFontGetDescent(font)) / 2
+        renderer.addLine(
+            glyph, origin: CGPoint(x: box.midX - glyph.width / 2, y: baseline), color: NSColor.white.rgba, scale: scale)
     }
 }
 
@@ -625,6 +722,12 @@ final class DiffDocumentView: NSView, NSMenuItemValidation {
     override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         owner?.mouseDown(event, at: convert(event.locationInWindow, from: nil))
+    }
+
+    override func keyDown(with event: NSEvent) {
+        // Space: 選んだ変更の行を次のコミットに含める・外す（Working Copy の差分）。
+        if event.charactersIgnoringModifiers == " ", owner?.toggleSelectedStaged() == true { return }
+        super.keyDown(with: event)
     }
 
     override func mouseDragged(with event: NSEvent) {
