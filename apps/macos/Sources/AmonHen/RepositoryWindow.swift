@@ -670,6 +670,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func commitChanges(_ sender: Any?) { workingCopy.commitFromMenu() }
     @objc func stageAllChanges(_ sender: Any?) { workingCopy.stageAllFromMenu() }
 
+    /// Repository > Repository Settings…（⌘;）。
+    @objc func showRepositorySettings(_ sender: Any?) {
+        RepositorySettingsSheet.show(for: repository, title: window.title, in: window) { [weak self] in
+            self?.refreshRepository(nil)
+        }
+    }
+
     @objc func openInTerminal(_ sender: Any?) {
         guard isLocal, let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal")
         else { return NSSound.beep() }

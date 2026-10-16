@@ -141,6 +141,8 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item("Undo", #selector(RepositoryWindow.undoOperation(_:)), "z", [.command, .option]))
         menu.addItem(.separator())
+        menu.addItem(item("Repository Settings…", #selector(RepositoryWindow.showRepositorySettings(_:)), ";"))
+        menu.addItem(.separator())
         menu.addItem(item("Open in Terminal", #selector(RepositoryWindow.openInTerminal(_:)), ""))
         menu.addItem(item("Reveal in Finder", #selector(RepositoryWindow.revealInFinder(_:)), ""))
         return menu

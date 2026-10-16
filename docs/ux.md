@@ -394,7 +394,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 - [x] U8. マージエディタの埋め込み・3 列の並び・帯、Magic Merge（コアの単語単位のマージ）。Working Copy の右に埋め込み（⧉ で別ウィンドウへ）、Current・Result・Incoming の 3 列（Base は切り替え）、コンフリクトをつなぐ帯と ≫・≪、コンフリクトの位置で揃えるスクロール、Magic Merge の規則 1〜4、ウィンドウの帯（途中の操作・コンフリクトの数・Continue / Skip / Abort）は済み。サイドバーの Conflicts、ファイルを開いたときの自動の適用、import の並びの判定、Magic Merge の 1 つずつの取り消しは後で
 - [x] U9. ウィンドウのタブと、開いていたタブの復元。開くリポジトリは前のウィンドウのタブに入れ、⌘N だけ新しいウィンドウ。タブバーの「+」と ⌘T、Window メニューのタブの操作、ウィンドウごとのタブの並びの記録と復元、裏のタブでは作業ツリーの読み直しを前に出るまで待つ、タブの名前の ●・↑↓ は済み。裏のタブの History のチャンクを絞るのは後で
 - [x] U10. ブックマーク（グループ、フォルダのスキャン、状態の表示、Quick Open）。Favorites・Recent・Bookmarks・手で作ったグループ・スキャンするフォルダの見出し、右クリック（お気に入り・名前・グループ・Finder・ターミナル）、スキャン（深さ・除外、一覧を開くたびに探し直す）、行の状態、Quick Open（⌘⇧O・⌘T・⌘N、あいまい検索）は済み。FSEvents での見張り、ドラッグでの並べ替え、色ラベル、選んだものの一括 Fetch、開いたリポジトリの自動の登録は後で
-- [ ] U11. リポジトリの設定（git の設定と出どころ、Remotes、Ignore）
+- [x] U11. リポジトリの設定（git の設定と出どころ、Remotes、Ignore）。Repository > Repository Settings…（⌘;）のシートに Identity・Branches・Remotes・Ignore・All Settings。各項目に今効いている値とどこで決まっているか、このリポジトリ（local）での上書き・取り消し、リモートの追加・名前の変更・URL・削除・prune、`.gitignore` と `.git/info/exclude` の編集は済み。表示名・色ラベル・自動 fetch、hooks と LFS の一覧、パターンに合うファイルの例は後で
 - [ ] U12. Activity（コアのリングバッファ、Operations・History・Performance・Events）
 - [ ] U13. GitHub 連携（アカウント、PR の一覧と作成、CI の状態）
 - [ ] U14. AI（Claude Code / Codex の CLI 経由の翻訳・解説・メッセージの提案、コンフリクトの解消、用途ごとのプロンプトの設定）
