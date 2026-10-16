@@ -192,10 +192,7 @@ pub unsafe extern "C" fn amonhen_repo_open_location(
         let daemon = str_arg(daemon)?;
         let conn = if location.starts_with("ssh://") {
             use amonhen_remote::ssh;
-            let daemons = ssh::Daemons {
-                dir: str_arg(daemons_dir)?.into(),
-                local: Some((ssh::local_platform(), daemon.into())),
-            };
+            let daemons = ssh::Daemons::new(str_arg(daemons_dir)?.into(), Some((ssh::local_platform(), daemon.into())));
             let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
             ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)?
         } else {
@@ -1641,6 +1638,19 @@ pub unsafe extern "C" fn amonhen_repo_connection(
         unsafe { *sent = state.sent };
     }
     i32::from(state.closed.is_some())
+}
+
+/// SSH 先で使っているエンジンと、その用意のしかた（`amonhen_string_free` で解放する）。SSH のつながりでなければ NULL。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_repo_remote_engine(repo_ptr: *const AmonhenRepo) -> *mut c_char {
+    repo(repo_ptr)
+        .connection_state()
+        .and_then(|s| s.engine)
+        .and_then(|e| CString::new(e).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
 /// daemon との接続が切れた理由（`amonhen_string_free` で解放する）。切れていなければ NULL。

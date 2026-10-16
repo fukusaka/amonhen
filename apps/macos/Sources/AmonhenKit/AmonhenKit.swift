@@ -110,6 +110,13 @@ public final class Repository: @unchecked Sendable {
         return amonhen_repo_connection(raw, &received, &sent) == -1 ? nil : (sent, received)
     }
 
+    /// SSH 先で使っているエンジンと、その用意のしかた（SSH のつながりでなければ nil）。
+    public var remoteEngine: String? {
+        guard let s = amonhen_repo_remote_engine(raw) else { return nil }
+        defer { amonhen_string_free(s) }
+        return String(cString: s)
+    }
+
     /// 最新のスナップショット。まだ読んでいなければ nil。
     public func latestHistory() -> History? {
         amonhen_history_acquire(raw).map { History(raw: $0, repository: self) }
@@ -359,6 +366,8 @@ public enum SharedDaemon {
             public let sent: UInt64?
             public let received: UInt64?
             public let closed: String?
+            /// SSH 先で使っているエンジンと、その用意のしかた。
+            public let engine: String?
             public var id: String { path }
         }
         public let pid: Int

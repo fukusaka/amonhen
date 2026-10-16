@@ -206,7 +206,7 @@ impl Env {
         std::fs::write(
             &ssh,
             format!(
-                "#!/bin/sh\nwhile [ $# -gt 0 ]; do\n    case \"$1\" in\n        -T) shift ;;\n        -o|-p) shift 2 ;;\n        *) break ;;\n    esac\ndone\nshift\nHOME='{}' exec sh -c \"$*\"\n",
+                "#!/bin/sh\nwhile [ $# -gt 0 ]; do\n    case \"$1\" in\n        -T) shift ;;\n        -o|-p) shift 2 ;;\n        *) break ;;\n    esac\ndone\nshift\nexec env -i HOME='{0}' PATH='{0}/bin:/usr/bin:/bin' sh -c \"$*\"\n",
                 remote_home.display()
             ),
         )

@@ -189,4 +189,6 @@ pub struct ConnectionState {
     pub received: u64,
     /// 切れていれば、その理由。
     pub closed: Option<String>,
+    /// SSH 先で使っているエンジンと、その用意のしかた（SSH のつながりのときだけ）。
+    pub engine: Option<String>,
 }

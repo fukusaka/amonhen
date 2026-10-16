@@ -415,7 +415,7 @@ private struct DaemonTab: View {
                             Text("切れた").foregroundStyle(.red).help(reason)
                         } else {
                             Text("\(bytes(r.sent ?? 0)) · \(bytes(r.received ?? 0))").monospacedDigit()
-                                .help("SSH 先との送った・受け取った量")
+                                .help("SSH 先との送った・受け取った量" + (r.engine.map { "\nSSH 先のエンジン: \($0)" } ?? ""))
                         }
                     } else {
                         Text("—").foregroundStyle(.secondary)
@@ -456,6 +456,11 @@ private struct DaemonTab: View {
                     Text(t.map { "\(bytes($0.sent)) · \(bytes($0.received))" } ?? "—").monospacedDigit()
                 }
                 .width(min: 100, ideal: 150)
+                TableColumn("SSH 先のエンジン") { r in
+                    let engine = r.repository.remoteEngine
+                    Text(engine ?? "—").lineLimit(1).truncationMode(.head).foregroundStyle(.secondary).help(engine ?? "")
+                }
+                .width(min: 80, ideal: 220)
             }
             .frame(minHeight: 80)
             Text("daemon はだれもつながらなくなって \(duration(model.daemon?.idleExitMs ?? 600_000))たつと終わる。端末からは amonhen daemon status で見られる。")

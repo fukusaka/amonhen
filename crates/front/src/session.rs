@@ -238,7 +238,7 @@ impl Session {
                 }))
             }
             "connection" => Reply::json(match repo.connection_state() {
-                Some(c) => json!({"sent": c.sent, "received": c.received, "closed": c.closed}),
+                Some(c) => json!({"sent": c.sent, "received": c.received, "closed": c.closed, "engine": c.engine}),
                 None => json!(null),
             }),
 

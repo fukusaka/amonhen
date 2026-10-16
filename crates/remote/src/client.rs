@@ -43,6 +43,8 @@ pub struct Connection {
     local: AtomicBool,
     /// daemon（や ssh）が標準エラーに書いた最後の部分。つながらなかったときの理由に添える。
     stderr: Arc<Mutex<String>>,
+    /// SSH 先で使っているエンジンと、その用意のしかた（`crate::ssh::RemoteEngine::describe`）。
+    remote_engine: Mutex<Option<String>>,
 }
 
 impl Connection {
@@ -63,6 +65,7 @@ impl Connection {
             reason: Mutex::default(),
             stderr: Arc::default(),
             local: AtomicBool::new(false),
+            remote_engine: Mutex::default(),
         });
         let weak = Arc::downgrade(&conn);
         let reader = Counting {
@@ -140,6 +143,15 @@ impl Connection {
 
     pub fn is_local(&self) -> bool {
         self.local.load(Ordering::Relaxed)
+    }
+
+    pub fn set_remote_engine(&self, description: String) {
+        *self.remote_engine.lock().unwrap() = Some(description);
+    }
+
+    /// SSH 先で使っているエンジン（SSH のつながりでなければ None）。
+    pub fn remote_engine(&self) -> Option<String> {
+        self.remote_engine.lock().unwrap().clone()
     }
 
     pub fn on_notification(&self, f: impl Fn(Notification) + Send + Sync + 'static) {
@@ -423,6 +435,7 @@ impl GitBackend for RemoteBackend {
             sent,
             received,
             closed: self.conn.closed(),
+            engine: self.conn.remote_engine(),
         })
     }
 

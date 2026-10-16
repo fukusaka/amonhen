@@ -1078,6 +1078,14 @@ int32_t amonhen_repo_connection(const AmonhenRepo *repo_ptr,
                                 uint64_t *sent);
 
 /**
+ * SSH 先で使っているエンジンと、その用意のしかた（`amonhen_string_free` で解放する）。SSH のつながりでなければ NULL。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+char *amonhen_repo_remote_engine(const AmonhenRepo *repo_ptr);
+
+/**
  * daemon との接続が切れた理由（`amonhen_string_free` で解放する）。切れていなければ NULL。
  *
  * # Safety

@@ -117,7 +117,8 @@ while [ $# -gt 0 ]; do
     esac
 done
 shift
-HOME='{}' exec sh -c "$*"
+# SSH 先の環境は手元から引き継がない（手元に入れた amonhen を SSH 先のものと見なさない）。
+exec env -i HOME='{0}' PATH='{0}/bin:/usr/bin:/bin' sh -c "$*"
 "#,
             home.display()
         ),
@@ -128,9 +129,23 @@ HOME='{}' exec sh -c "$*"
     script
 }
 
+/// SSH 先のエンジンの置き場所（`~/.local/share/amonhen/engine`）にあるもの。
+fn engines(home: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(home.join(".local/share/amonhen/engine"))
+        .map(|d| d.map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect())
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+fn touch_old(path: &Path) {
+    let ok = Command::new("touch").args(["-t", "202001010000"]).arg(path).status().unwrap().success();
+    assert!(ok);
+}
+
 #[cfg(unix)]
 #[test]
-fn sends_the_daemon_once_and_reuses_it() {
+fn provisions_the_engine_on_ssh_hosts() {
     use amonhen_remote::ssh;
     let tmp = tempfile::tempdir().unwrap();
     let repo_dir = tmp.path().join("repo");
@@ -140,58 +155,66 @@ fn sends_the_daemon_once_and_reuses_it() {
     let home = tmp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     let ssh_program = fake_ssh(tmp.path(), &home);
-    // 送り込む daemon の置き場所。手元の OS 向けに、テストで作った amonhend を置く。
-    let bundled = tmp.path().join("daemons");
+    let ssh_program = ssh_program.to_str().unwrap();
+    // 送り込むエンジンの置き場所。手元の OS 向けに、テストで作ったものを置く。
+    let bundled = tmp.path().join("engines");
     std::fs::create_dir(&bundled).unwrap();
-    std::fs::copy(
-        env!("CARGO_BIN_EXE_amonhend"),
-        bundled.join(format!("amonhen-{}", ssh::local_platform())),
-    )
-    .unwrap();
-    let daemons = ssh::Daemons {
-        dir: bundled,
-        local: None,
-    };
+    std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bundled.join(format!("amonhen-{}", ssh::local_platform()))).unwrap();
+    let daemons = ssh::Daemons { dir: bundled.clone(), local: None, remote_engine: None, push: true };
     let target = ssh::Target::parse(&format!("ssh://dev{}", repo_dir.display())).unwrap();
+    let open = |daemons: &ssh::Daemons| -> amonhen_model::Result<String> {
+        let conn = ssh::connect(ssh_program, &target, daemons)?;
+        let engine = conn.remote_engine().unwrap_or_default();
+        let repo = Repository::new(RemoteBackend::connect(conn)?);
+        assert_eq!(repo.load_history()?.graph.len(), 1);
+        Ok(engine)
+    };
 
-    let conn = ssh::connect(ssh_program.to_str().unwrap(), &target, &daemons).unwrap();
-    let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
-    assert_eq!(repo.load_history().unwrap().graph.len(), 1);
-    let cache = home.join(".cache/amonhen");
-    let sent: Vec<_> = std::fs::read_dir(&cache)
-        .unwrap()
-        .map(|e| e.unwrap().path())
-        .collect();
-    assert_eq!(sent.len(), 1, "daemon を 1 つ送った: {sent:?}");
-    let first = std::fs::metadata(&sent[0]).unwrap().modified().unwrap();
-    drop(repo);
+    // 1 回目: 送る。置いたら中身を確かめる。
+    let engine = open(&daemons).unwrap();
+    assert!(engine.contains("今回送った"), "{engine}");
+    let sent = engines(&home);
+    assert_eq!(sent.len(), 1, "{sent:?}");
+    let binary = home.join(".local/share/amonhen/engine").join(&sent[0]).join("amonhen");
+    let first = std::fs::metadata(&binary).unwrap().modified().unwrap();
 
-    // 前の版の daemon と、書きかけの一時ファイル（新しいもの・1 日より前のもの）を置いておく。
-    let old = cache.join("amonhend-0000000000000000");
-    let fresh_tmp = cache.join("amonhend-1111111111111111.tmp.42");
-    let stale_tmp = cache.join("amonhend-2222222222222222.tmp.43");
-    for f in [&old, &fresh_tmp, &stale_tmp] {
-        std::fs::write(f, b"").unwrap();
+    // ほかのマシンが最近送った版・30 日使われていない版・前の置き場所の古い daemon・書きかけを置いておく。
+    let root = home.join(".local/share/amonhen/engine");
+    for name in ["0000000000000000", "1111111111111111"] {
+        std::fs::create_dir_all(root.join(name)).unwrap();
+        std::fs::write(root.join(name).join("amonhen"), b"").unwrap();
+        std::fs::write(root.join(name).join("used"), b"").unwrap();
     }
-    let ok = Command::new("touch")
-        .args(["-t", "202001010000"])
-        .arg(&stale_tmp)
-        .status()
-        .unwrap()
-        .success();
-    assert!(ok);
+    touch_old(&root.join("1111111111111111/used"));
+    let stale_tmp = root.join(&sent[0]).join("amonhen.tmp.43");
+    std::fs::write(&stale_tmp, b"").unwrap();
+    touch_old(&stale_tmp);
+    let legacy = home.join(".cache/amonhen/amonhend-2222222222222222");
+    std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+    std::fs::write(&legacy, b"").unwrap();
+    touch_old(&legacy);
 
-    // 2 回目は送らずに、置いてある daemon を使う。前の版と古い一時ファイルは消える。
-    let conn = ssh::connect(ssh_program.to_str().unwrap(), &target, &daemons).unwrap();
-    let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
-    assert_eq!(repo.load_history().unwrap().graph.len(), 1);
-    assert_eq!(
-        std::fs::metadata(&sent[0]).unwrap().modified().unwrap(),
-        first
-    );
-    assert!(!old.exists() && !stale_tmp.exists());
-    assert!(fresh_tmp.exists(), "書いている途中かもしれないので残す");
-    assert_eq!(std::fs::read_dir(&cache).unwrap().count(), 2);
+    // 2 回目: 送らずに、置いてあるものを使う。最近使われたほかの版は残し、使われていないものだけを片付ける。
+    let engine = open(&daemons).unwrap();
+    assert!(engine.contains("前に送ったもの"), "{engine}");
+    assert_eq!(std::fs::metadata(&binary).unwrap().modified().unwrap(), first);
+    assert_eq!(engines(&home), ["0000000000000000".to_owned(), sent[0].clone()]);
+    assert!(!stale_tmp.exists() && !legacy.exists());
+
+    // SSH 先の PATH に通信の形が合う amonhen があれば、それを使う。
+    let bin = home.join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bin.join("amonhen")).unwrap();
+    let engine = open(&daemons).unwrap();
+    assert!(engine.contains("SSH 先に入っているもの") && engine.contains("/bin/amonhen"), "{engine}");
+    std::fs::remove_dir_all(&bin).unwrap();
+
+    // 送り込みを止めていて、使えるものがなければ、理由を返す。
+    std::fs::remove_dir_all(&root).unwrap();
+    let no_push = ssh::Daemons { dir: bundled, local: None, remote_engine: None, push: false };
+    let err = open(&no_push).unwrap_err().to_string();
+    assert!(err.contains("使えるエンジンがありません"), "{err}");
+    assert!(engines(&home).is_empty());
 }
 
 /// 共有の daemon（`--serve`）: 2 つの相手が同じリポジトリを開くと、どちらにも変化の知らせが来る。開けない
@@ -381,9 +404,8 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     let b = Repository::new(RemoteBackend::connect(connect(&location)).unwrap());
     assert_eq!(a.load_history().unwrap().graph.len(), 1);
     assert_eq!(b.load_history().unwrap().graph.len(), 1);
-    // SSH 先には daemon を 1 つだけ送った（2 つ目の相手は同じつながりを使う）。
-    let sent = std::fs::read_dir(remote_home.join(".cache/amonhen")).unwrap().count();
-    assert_eq!(sent, 1);
+    // SSH 先にはエンジンを 1 つだけ送った（2 つ目の相手は同じつながりを使う）。
+    assert_eq!(engines(&remote_home).len(), 1);
 
     // 命令は手元の daemon のコアから SSH 先の git に届き、History にも出る。
     let reply = a.run_json(r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#);
@@ -397,6 +419,7 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     let frame = amonhen_remote::frame::read(&mut status).unwrap().unwrap();
     let text = String::from_utf8_lossy(&frame.payload).into_owned();
     assert!(text.contains(r#""ssh":true"#) && text.contains("ssh://dev"), "{text}");
+    assert!(text.contains("今回送った") || text.contains("前に送ったもの"), "SSH 先のエンジンが出る: {text}");
     let _ = daemon.kill();
     let _ = daemon.wait();
 }

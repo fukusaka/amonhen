@@ -307,15 +307,12 @@ fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
     Ok(entry.0.clone())
 }
 
-/// SSH 先に amonhend を送り込んでつなぐ（アプリが SSH 先を開くときと同じ）。ssh のコマンドは `AMONHEN_SSH` で、
-/// 送る amonhend の置き場所は `AMONHEN_DAEMONS` で差し替えられる。
+/// SSH 先のエンジンを用意してつなぐ（アプリが SSH 先を開くときと同じ）。ssh のコマンドは `AMONHEN_SSH` で、
+/// 送るエンジンの置き場所は `AMONHEN_ENGINES` で差し替えられる。
 fn connect_ssh(location: &str) -> Result<Arc<amonhen_remote::Connection>> {
     use amonhen_remote::ssh;
     let exe = std::env::current_exe()?;
-    let daemons = ssh::Daemons {
-        dir: daemons_dir(&exe),
-        local: Some((ssh::local_platform(), exe)),
-    };
+    let daemons = ssh::Daemons::new(daemons_dir(&exe), Some((ssh::local_platform(), exe)));
     let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
     ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)
 }
@@ -409,6 +406,7 @@ fn status(state: &State) -> serde_json::Value {
                 "sent": traffic.map(|t| t.0),
                 "received": traffic.map(|t| t.1),
                 "closed": shared.closed(),
+                "engine": shared.ssh.as_ref().and_then(|c| c.remote_engine()),
                 "clients": shared.listeners.lock().unwrap().len(),
                 "idleMs": used.elapsed().as_millis() as u64,
                 "history": shared.core.get().is_some(),

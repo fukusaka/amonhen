@@ -1,12 +1,12 @@
 # FE 向けの窓口（`amonhen-front`）
 
-コアのすべての働きを、言語を問わず使える形で出す取り決め。VSCode 拡張（TypeScript）と CLI が使う。コアは手元の共有の daemon（`amonhend --serve`）で動き、FE はコアを持たない。SSH 先のリポジトリも daemon が開く（FE からは手元と同じに見える）。CLI は手元のリポジトリを同じプロセスのコア（`amonhen_front::InProcess`）でも開き、同じ命令を通す。
+コアのすべての働きを、言語を問わず使える形で出す取り決め。VSCode 拡張（TypeScript）と CLI が使う。コアは手元の共有の daemon（`amonhen --serve`）で動き、FE はコアを持たない。SSH 先のリポジトリも daemon が開く（FE からは手元と同じに見える）。CLI は手元のリポジトリを同じプロセスのコア（`amonhen_front::InProcess`）でも開き、同じ命令を通す。
 
 macOS のアプリは、同じプロセスのコアを C ABI（`crates/ffi-c`）で使う（共有メモリと mmap でコピーしない、いちばん速い道）。
 
 ## つなぐ
 
-1. Unix ドメインソケットにつなぐ。場所は `amonhend --socket` が出す（macOS は `$TMPDIR/amonhend-<通信の形の版>.sock`、ほかは `$XDG_RUNTIME_DIR` か `/tmp/amonhen-<uid>`。`AMONHEN_DAEMON_DIR` で変えられる）。つながらなければ `amonhend --serve <socket>` を、親から切り離して起動し、つながるまで待つ。
+1. Unix ドメインソケットにつなぐ。場所は `amonhen --socket` が出す（macOS は `$TMPDIR/amonhend-<通信の形の版>.sock`、ほかは `$XDG_RUNTIME_DIR` か `/tmp/amonhen-<uid>`。`AMONHEN_DAEMON_DIR` で変えられる）。つながらなければ `amonhen --serve <socket>` を、親から切り離して起動し、つながるまで待つ。
 2. 最初に、開く場所を送る: 長さ（u32、LE）と UTF-8 の文字列 `"\u0001" + 場所`。場所は手元のリポジトリの絶対パスか `ssh://host/path`。
 3. その後はフレームでやりとりする。最初の要求は `{"op":"hello"}` にする（開けなければ、その答えが理由つきの失敗になる）。
 

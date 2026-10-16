@@ -1,10 +1,14 @@
-//! SSH 先の daemon。初めてつなぐ SSH 先には、手元に同梱した daemon を送り込んでから起動する
-//! （VSCode の Remote-SSH と同じ形）。
+//! SSH 先のエンジン（`amonhen --stdio`）。SSH 先に入っていなければ、手元に同梱したものを送り込んでから起動する
+//! （VSCode の Remote-SSH・Zed のリモート開発と同じ形）。
 //!
-//! 1. SSH の接続は使い回す（ControlMaster）。調べる・送る・起動するを 1 回のログインで済ませる。
-//! 2. SSH 先の OS と CPU（`uname -sm`）を調べ、同じ daemon がもう置いてあるかを見る。
-//! 3. なければ `~/.cache/amonhen/amonhend-<中身のハッシュ>` に送る（版が変われば別の名前になる）。
-//! 4. 前の版の daemon を消してから、それを `--stdio <パス>` で起動し、標準入出力でつなぐ。
+//! 1. SSH の接続は使い回す（ControlMaster）。調べる・送る・起動するを少ないログインで済ませる。
+//! 2. SSH 先の OS と CPU（`uname -sm`）、`PATH` の `amonhen` の版、置いてあるエンジンを 1 回で調べる。
+//! 3. 使うエンジンを決める: `AMONHEN_REMOTE_ENGINE` で指定したもの → `PATH` の `amonhen`（通信の形の版が合えば）
+//!    → 置いてある同じ中身のもの → 送り込む（`AMONHEN_PUSH=0` なら送らずにやめる）。
+//! 4. 送るのは `~/.local/share/amonhen/engine/<中身のハッシュ>/amonhen`（手元の置き場所と同じ形）。書いてから
+//!    SSH 先で中身のハッシュを確かめ、合わなければ消してやめる。
+//! 5. ほかの版は消さない（違う版の Amon Hen が同じ SSH 先を使っても、取り合いにならない）。30 日使われていない
+//!    ものだけを片付ける（使うたびに `used` の印を更新する）。
 
 use std::io::Write;
 use std::path::PathBuf;
@@ -63,11 +67,27 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
-/// 送り込む daemon の置き場所。手元の `dir` に `amonhend-<os>-<arch>` を置いておく。
+/// 送り込むエンジンの置き場所。手元の `dir` に `amonhen-<os>-<arch>` を置いておく。
 pub struct Daemons {
     pub dir: PathBuf,
-    /// 手元（macOS）の daemon。SSH 先も同じ OS と CPU なら、これを送る。
+    /// 手元（macOS）のエンジン。SSH 先も同じ OS と CPU なら、これを送る。
     pub local: Option<(String, PathBuf)>,
+    /// SSH 先で使うエンジンの場所（`AMONHEN_REMOTE_ENGINE`）。あれば、調べずにこれを使う。
+    pub remote_engine: Option<String>,
+    /// 使えるエンジンがなければ送り込む（`AMONHEN_PUSH=0` で止める）。
+    pub push: bool,
+}
+
+impl Daemons {
+    /// `dir`・`local` と、環境変数（`AMONHEN_REMOTE_ENGINE`・`AMONHEN_PUSH`）から。
+    pub fn new(dir: PathBuf, local: Option<(String, PathBuf)>) -> Self {
+        Self {
+            dir,
+            local,
+            remote_engine: std::env::var("AMONHEN_REMOTE_ENGINE").ok().filter(|s| !s.is_empty()),
+            push: std::env::var("AMONHEN_PUSH").map_or(true, |v| v != "0"),
+        }
+    }
 }
 
 impl Daemons {
@@ -160,48 +180,121 @@ fn run(ssh: &str, target: &Target, script: &str, input: Option<&[u8]>) -> Result
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
-/// SSH 先に daemon を用意して起動し、つなぐ。`ssh` は ssh のコマンド（テストでは偽物を渡す）。
+/// SSH 先のエンジンの置き場所（手元の置き場所と同じ形）。
+const ENGINE_DIR: &str = "${XDG_DATA_HOME:-$HOME/.local/share}/amonhen/engine";
+
+/// 使わなくなったエンジンを片付けるまでの日数。
+const KEEP_DAYS: u32 = 30;
+
+/// SSH 先で使うエンジンと、その用意のしかた（Activity・`amonhen daemon status` に出す）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RemoteEngine {
+    /// SSH 先でのパス。
+    pub path: String,
+    /// `configured`（`AMONHEN_REMOTE_ENGINE`）・`installed`（`PATH` の `amonhen`）・`present`（前に送ったもの）・
+    /// `pushed`（今回送った）。
+    pub source: &'static str,
+    /// 送ったときの大きさ（バイト）。
+    pub pushed_bytes: Option<u64>,
+}
+
+impl RemoteEngine {
+    pub fn describe(&self) -> String {
+        let how = match self.source {
+            "configured" => "指定したもの",
+            "installed" => "SSH 先に入っているもの",
+            "present" => "前に送ったもの",
+            _ => "今回送った",
+        };
+        match self.pushed_bytes {
+            Some(n) => format!("{}（{how}、{:.1} MB）", self.path, n as f64 / 1e6),
+            None => format!("{}（{how}）", self.path),
+        }
+    }
+}
+
+/// SSH 先にエンジンを用意して起動し、つなぐ。`ssh` は ssh のコマンド（テストでは偽物を渡す）。
 pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Connection>> {
-    const DIR: &str = "\"$HOME\"/.cache/amonhen";
-    // OS と CPU を調べ、置いてある daemon の名前を並べてもらう。
+    let configured = daemons.remote_engine.clone();
+    let push = daemons.push;
+    // OS と CPU、置き場所、PATH の amonhen の版、置いてあるエンジン（ハッシュの名前）を 1 回で調べる。
     let probe = run(
         ssh,
         target,
-        &format!("uname -sm; ls {DIR} 2>/dev/null || true"),
+        &format!(
+            r#"uname -sm; D="{ENGINE_DIR}"; echo "$D"; a=$(command -v amonhen 2>/dev/null); if [ -n "$a" ]; then echo "$a"; "$a" --version 2>/dev/null | head -1; else echo; echo; fi; ls "$D" 2>/dev/null || true"#
+        ),
         None,
     )?;
     let mut lines = probe.lines();
     let uname = lines.next().unwrap_or_default().to_owned();
+    let dir = lines.next().unwrap_or_default().to_owned();
+    let installed = lines.next().unwrap_or_default().to_owned();
+    let installed_version = lines.next().unwrap_or_default().to_owned();
     let present: Vec<&str> = lines.collect();
-    let binary = daemons.for_platform(&uname)?;
-    let data =
-        std::fs::read(&binary).map_err(|e| format!("{} を読めない: {e}", binary.display()))?;
-    let name = format!(
-        "amonhend-{}",
-        &sha1_smol::Sha1::from(&data).digest().to_string()[..16]
-    );
-    if !present.contains(&name.as_str()) {
-        // 書きかけを使わないよう、一時的な名前で書いてから置き換える。
-        let script = format!(
-            "mkdir -p {DIR} && cat > {DIR}/{name}.tmp.$$ && chmod 755 {DIR}/{name}.tmp.$$ && mv {DIR}/{name}.tmp.$$ {DIR}/{name}"
-        );
-        run(ssh, target, &script, Some(&data))?;
-    }
+    let wanted = format!("(protocol {})", crate::PROTOCOL_VERSION);
+
+    let engine = if let Some(path) = configured {
+        RemoteEngine { path, source: "configured", pushed_bytes: None }
+    } else if !installed.is_empty() && installed_version.ends_with(&wanted) {
+        RemoteEngine { path: installed, source: "installed", pushed_bytes: None }
+    } else {
+        let binary = daemons.for_platform(&uname)?;
+        let data = std::fs::read(&binary).map_err(|e| format!("{} を読めない: {e}", binary.display()))?;
+        let digest = sha1_smol::Sha1::from(&data).digest().to_string();
+        let hash = &digest[..16];
+        let path = format!("{dir}/{hash}/amonhen");
+        if present.contains(&hash) {
+            RemoteEngine { path, source: "present", pushed_bytes: None }
+        } else if !push {
+            return Err(format!(
+                "SSH 先（{}）に使えるエンジンがありません。amonhen を入れるか（PATH に通す）、AMONHEN_REMOTE_ENGINE で場所を指定してください（送り込みは AMONHEN_PUSH=0 で止めています）",
+                target.destination
+            )
+            .into());
+        } else {
+            // 書きかけを使わないよう、一時的な名前で書いてから置き換える。置いたら中身のハッシュを確かめる。
+            let d = format!("{}/{hash}", shell_quote(&dir));
+            let script = format!(
+                r#"mkdir -p {d} && cat > {d}/amonhen.tmp.$$ && chmod 755 {d}/amonhen.tmp.$$ && mv {d}/amonhen.tmp.$$ {d}/amonhen && (sha1sum {d}/amonhen 2>/dev/null || shasum {d}/amonhen) | cut -d' ' -f1"#
+            );
+            let got = run(ssh, target, &script, Some(&data))?;
+            if got.trim() != digest {
+                let _ = run(ssh, target, &format!("rm -rf {d}"), None);
+                return Err(format!(
+                    "SSH 先（{}）に送ったエンジンの中身が合いません（送った {digest}、SSH 先 {}）",
+                    target.destination,
+                    got.trim()
+                )
+                .into());
+            }
+            RemoteEngine { path, source: "pushed", pushed_bytes: Some(data.len() as u64) }
+        }
+    };
     let mut args = base_args(target);
     args.push(format!(
-        "{}; exec {DIR}/{name} --stdio {}",
-        cleanup_script(DIR, &name),
+        "{}; exec {} --stdio {}",
+        cleanup_script(&engine),
+        shell_quote(&engine.path),
         target.shell_path()
     ));
-    Connection::spawn(ssh, &args)
+    let conn = Connection::spawn(ssh, &args)?;
+    conn.set_remote_engine(engine.describe());
+    Ok(conn)
 }
 
-/// `dir` にある、`keep` 以外の daemon を消すシェルの文。動いている daemon のファイルを消しても、
-/// そのプロセスはそのまま動く（Linux・macOS）。ほかの接続が書いている途中かもしれない一時ファイルは、
-/// 1 日たったものだけ消す。
-fn cleanup_script(dir: &str, keep: &str) -> String {
+/// 使う印を更新し、`KEEP_DAYS` 日使われていないエンジン（と前の置き場所 `~/.cache/amonhen` の古い daemon）を
+/// 片付けるシェルの文。動いているエンジンのファイルを消しても、そのプロセスはそのまま動く（Linux・macOS）。
+/// 書きかけの一時ファイルも、1 日たったものだけ消す。
+fn cleanup_script(engine: &RemoteEngine) -> String {
+    let mark = if matches!(engine.source, "present" | "pushed") {
+        let dir = engine.path.trim_end_matches("/amonhen");
+        format!("touch {}/used 2>/dev/null; ", shell_quote(dir))
+    } else {
+        String::new()
+    };
     format!(
-        r#"for f in {dir}/amonhend-*; do case "$f" in */{keep}) ;; *.tmp.*) [ -n "$(find "$f" -mtime +0 2>/dev/null)" ] && rm -f "$f" ;; *) rm -f "$f" ;; esac; done 2>/dev/null"#
+        r#"{mark}D="{ENGINE_DIR}"; for e in "$D"/*; do [ -d "$e" ] || continue; [ -e "$e/used" ] || touch "$e/used"; [ -n "$(find "$e/used" -mtime +{KEEP_DAYS} 2>/dev/null)" ] && rm -rf "$e"; find "$e" -name 'amonhen.tmp.*' -mtime +0 -exec rm -f {{}} + 2>/dev/null; done 2>/dev/null; find "$HOME/.cache/amonhen" -name 'amonhend-*' -mtime +{KEEP_DAYS} -exec rm -f {{}} + 2>/dev/null; true"#
     )
 }
 
@@ -255,6 +348,8 @@ mod tests {
         let daemons = Daemons {
             dir: dir.clone(),
             local: Some(("darwin-aarch64".into(), PathBuf::from("/local"))),
+            remote_engine: None,
+            push: true,
         };
         assert_eq!(
             daemons.for_platform("Linux x86_64\n").unwrap(),

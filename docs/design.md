@@ -121,7 +121,7 @@ crates/
   syntax/            tree-sitter による色付け
   remote/            daemon との通信（フレーム・要求の形）、RemoteBackend、Server、共有の daemon につなぐ・
                      共有メモリ（local・shm）、SSH で送り込む（ssh）
-  daemon/            amonhend（--stdio: SSH 先、--serve: 手元の共有の daemon）
+  daemon/            daemon（エンジン amonhen の --stdio: SSH 先、--serve: 手元の共有の daemon）
   ffi-c/             C ABI ＋ cbindgen のヘッダー
   cli/               CLI（amonhen）
 apps/
@@ -168,11 +168,11 @@ apps/
 
 ### 別プロセス・リモートにするとき
 
-- ② 手元の共有の daemon（`amonhend --serve`）: 利用者ごとに 1 つ、Unix ドメインソケットで待つ。History は daemon が永続キャッシュのファイルに書き、つないだ側は mmap する。差分のファイルの中身は POSIX の共有メモリで渡す。命令と、Undo の記録を書く Working Copy の操作は daemon のコアで実行する。
-  - SSH 先も開ける（`daemon:ssh://host/path`。CLI の `-C ssh://…` はいつもこれ）。手元の daemon が SSH 先に `amonhend --stdio` を送り込んでつなぎ、そのつながりとコア（History・検索の索引・差分）を、同じ SSH 先を開いた相手のあいだで共有する。SSH 先には git に触れる処理だけを頼む（アプリが直接 SSH 先を開く `ssh://…` と同じ分け方）。つながりが切れていれば、次に開くときにつなぎ直す。CLI で 1 回目はつなぐのに 1.6 秒、2 回目からは 0.01 秒（偽の ssh で手元を SSH 先に見立てて測った）。
+- ② 手元の共有の daemon（`amonhen --serve`）: 利用者ごとに 1 つ、Unix ドメインソケットで待つ。History は daemon が永続キャッシュのファイルに書き、つないだ側は mmap する。差分のファイルの中身は POSIX の共有メモリで渡す。命令と、Undo の記録を書く Working Copy の操作は daemon のコアで実行する。
+  - SSH 先も開ける（`daemon:ssh://host/path`。CLI の `-C ssh://…` はいつもこれ）。手元の daemon が SSH 先でエンジン（`amonhen --stdio`）を用意してつなぎ、そのつながりとコア（History・検索の索引・差分）を、同じ SSH 先を開いた相手のあいだで共有する。SSH 先には git に触れる処理だけを頼む（アプリが直接 SSH 先を開く `ssh://…` と同じ分け方）。つながりが切れていれば、次に開くときにつなぎ直す。CLI で 1 回目はつなぐのに 1.6 秒、2 回目からは 0.01 秒（偽の ssh で手元を SSH 先に見立てて測った）。
   - XPC ではなく Unix ドメインソケットにした: Linux でも同じものが動き（VSCode 拡張・CLI からも使う）、往復の遅れは小さな要求で p50 0.08 ms（同一プロセス 0.04 ms）と十分小さい。大きなデータはソケットに乗せず、ファイルの mmap と共有メモリで渡すので、XPC の領域の受け渡しの利点もない。
   - 当初の案（要求と通知も共有メモリのリングで送り、寝ているときだけ `os_sync_wake_by_address_any` で起こす）は、ソケットの遅れが測って問題にならなかったので作っていない。
-- ③ SSH: daemon（`amonhend --stdio <repo>`、`crates/daemon`）は SSH 先で `GitBackend`・`Operations`・`RepoFiles` を要求に応じて実行するだけにし、レイアウト・永続キャッシュ・差分・色付けは手元のコアで行う（`crates/remote` の `RemoteBackend`）。C ABI と FE はそのまま使える。UI が読むのは手元のメモリだけで、通信に乗るのは git に触れる所だけ。History は永続キャッシュを手元に持ち、つなぎ直したら前回の起点からの新しいコミットだけを受け取る（daemon は `git rev-list` で求める）。要求には番号を振って並行に送り、パス・内容の検索は取り消せる。
+- ③ SSH: daemon（`amonhen --stdio <repo>`、`crates/daemon`）は SSH 先で `GitBackend`・`Operations`・`RepoFiles` を要求に応じて実行するだけにし、レイアウト・永続キャッシュ・差分・色付けは手元のコアで行う（`crates/remote` の `RemoteBackend`）。C ABI と FE はそのまま使える。UI が読むのは手元のメモリだけで、通信に乗るのは git に触れる所だけ。History は永続キャッシュを手元に持ち、つなぎ直したら前回の起点からの新しいコミットだけを受け取る（daemon は `git rev-list` で求める）。要求には番号を振って並行に送り、パス・内容の検索は取り消せる。
 - どの動かし方でも、UI が読むのは手元のメモリだけ。通信は裏の同期にしか使わない。
 
 ### コミットの署名の検証
@@ -378,7 +378,7 @@ daemon 越し（`cargo run --release -p amonhen-remote --example daemon_cost -- 
 
 - 転送量を減らした後（通信路の上の大きさ）: チャンク 502 KB → 13 KB、変わったファイルと最初の差分 127 KB → 56 KB、件名の検索 1.37 GB → 5 MB。History の初回は 47 MB（コミット ID はほとんど縮まない）で、以後は手元のキャッシュから差分だけ。
 - 圧縮は zstd ではなく LZ4（`lz4_flex`、Rust だけで書かれている）にした。zstd は C のコードを含み、全ターゲットの型検査と Linux 用の静的リンクで C コンパイラが要るため。
-- SSH 先に送る amonhend は、x86_64 と aarch64 の Linux 向けに musl で静的リンクしたもの（`scripts/build-linux-daemon.sh`、リンクは zig、約 3.5 MB）。名前に中身のハッシュを付け、アプリの版が変われば送り直す。
+- SSH 先で動くのはエンジン（`amonhen`。CLI と daemon を兼ねる 1 つの実行ファイル）で、x86_64 と aarch64 の Linux 向けは musl で静的リンクしたもの（`scripts/build-engine.sh`、リンクは zig、5〜6 MB）。使う順は `AMONHEN_REMOTE_ENGINE` で指定したもの → SSH 先の `PATH` の `amonhen`（通信の形の版が合えば）→ 前に送ったもの → 送り込む（`AMONHEN_PUSH=0` で止める）。送る先は `~/.local/share/amonhen/engine/<中身のハッシュ>/amonhen`（手元の置き場所と同じ形）で、書いたら SSH 先で `sha1sum`・`shasum` で中身を確かめる。ほかの版は消さず（違う版の Amon Hen が同じ SSH 先を使っても取り合いにならない）、使うたびに `used` の印を更新し、30 日使われていないものだけを片付ける。使っているエンジンと用意のしかたは `amonhen daemon status` と Activity に出す（VSCode の Remote-SSH・Zed のリモート開発と同じ形）。
 
 構文の色付け（`cargo run --release -p amonhen-syntax --example highlight -- <file>`、linux のファイル）:
 

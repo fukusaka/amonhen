@@ -201,6 +201,9 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
                             mb(&r["received"])
                         ),
                     }
+                    if let Some(engine) = r["engine"].as_str() {
+                        println!("      SSH 先のエンジン: {engine}");
+                    }
                 }
                 println!(
                     "      {state}・History {}・監視 {}・{index}",
