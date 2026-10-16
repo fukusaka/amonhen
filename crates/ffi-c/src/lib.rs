@@ -63,6 +63,11 @@ pub struct AmonhenDiff {
     _private: [u8; 0],
 }
 
+/// コミットの全ファイルの差分（畳むファイルを変えて表示を作り直す）。
+pub struct AmonhenStacked {
+    _private: [u8; 0],
+}
+
 /// 差分の構文の色付け。
 pub struct AmonhenSyntax {
     _private: [u8; 0],
@@ -929,6 +934,54 @@ pub unsafe extern "C" fn amonhen_file_diff(
             set_error(e);
             std::ptr::null_mut()
         }
+    }
+}
+
+/// `changes` のすべてのファイルの差分（`amonhen_stacked_free` で解放する）。ファイルの数だけ blob を読むので、
+/// 裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `repo` と `changes` は有効であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_diff(
+    repo_ptr: *const AmonhenRepo,
+    changes: *const AmonhenChanges,
+) -> *mut AmonhenStacked {
+    let c = unsafe { &*changes.cast::<ChangesHandle>() };
+    match repo(repo_ptr).stacked_diff(&c.changes) {
+        Ok(s) => Box::into_raw(Box::new(s)).cast(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// 全ファイルを見出しの行（`DiffRow::FILE`）でつないだ差分の表示（`amonhen_diff_free` で解放する。
+/// `amonhen_diff_view`・`amonhen_diff_syntax` が使える）。`collapsed` の i 番目が true のファイルは見出しだけ。
+///
+/// # Safety
+/// `stacked` は有効、`collapsed` は `count` 個の `bool` を読める領域（`count` が 0 なら NULL でもよい）であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_view(
+    stacked: *const AmonhenStacked,
+    collapsed: *const bool,
+    count: u32,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenDiff {
+    let s = unsafe { &*stacked.cast::<amonhen_core::diff::StackedDiff>() };
+    let collapsed: Vec<bool> = (0..count as usize)
+        .map(|i| unsafe { *collapsed.add(i) })
+        .collect();
+    Box::into_raw(Box::new(s.view(&collapsed, &profile(encoding)))).cast()
+}
+
+/// # Safety
+/// `stacked` は `amonhen_stacked_diff` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_stacked_free(stacked: *mut AmonhenStacked) {
+    if !stacked.is_null() {
+        drop(unsafe { Box::from_raw(stacked.cast::<amonhen_core::diff::StackedDiff>()) });
     }
 }
 

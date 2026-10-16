@@ -323,10 +323,9 @@ impl FileDiff {
     }
 }
 
-/// FE 向けの差分。行の文字列は、変更前・変更後の blob（文字列置き場の 1・2 番）を直接指す。
+/// FE 向けの差分。行の文字列は、変更前・変更後の blob（文字列置き場の 1 番以降）を直接指す。
+/// 1 ファイルの差分のほか、コミットの全ファイルを見出しの行（`DiffRow::FILE`）でつないだもの（`StackedDiff`）もある。
 pub struct DiffView {
-    /// ファイルのパス（色付けの言語を決める）。
-    pub path: String,
     pub rows: Vec<DiffRow>,
     /// 削除行と追加行の組の中で、変わった単語の範囲。
     pub highlights: Vec<Highlight>,
@@ -334,63 +333,116 @@ pub struct DiffView {
     pub binary: bool,
     pub added: u32,
     pub removed: u32,
-    /// 後から色付けするための、変更前・変更後の内容と、各行が指す場所。
+    /// 後から色付けするための、ファイルごとの中身と各行が指す場所。
     #[cfg_attr(not(feature = "syntax"), allow(dead_code))]
-    pub(crate) old: Arc<Vec<u8>>,
-    #[cfg_attr(not(feature = "syntax"), allow(dead_code))]
-    pub(crate) new: Arc<Vec<u8>>,
-    #[cfg_attr(not(feature = "syntax"), allow(dead_code))]
-    pub(crate) sources: Vec<(Source, Range<u32>)>,
+    pub(crate) parts: Vec<Part>,
     #[cfg_attr(not(feature = "syntax"), allow(dead_code))]
     pub(crate) encoding: StringEncoding,
 }
 
-impl DiffView {
-    pub fn new(diff: &FileDiff, profile: &FrontendProfile) -> Self {
-        let headers = Arc::new(diff.headers.clone().into_bytes());
-        let mut strings = StringTableBuilder::new(profile.string);
-        let sources = [
-            (strings.share(diff.old.clone()), &diff.old),
-            (strings.share(diff.new.clone()), &diff.new),
-            (strings.share(headers.clone()), &headers),
-        ];
-        let rows = diff
-            .lines
-            .iter()
-            .map(|l| {
-                let (buf, data) = sources[l.source as usize];
-                DiffRow {
-                    kind: l.kind,
-                    flags: 0,
-                    _pad: [0; 2],
-                    old_no: l.old_no,
-                    new_no: l.new_no,
-                    text: strings.add(buf, &data[l.range.start as usize..l.range.end as usize]),
-                }
-            })
-            .collect();
-        let highlights = word_highlights(diff, profile.string);
+/// 差分の表示の中の、1 ファイル分の行。
+#[cfg_attr(not(feature = "syntax"), allow(dead_code))]
+pub(crate) struct Part {
+    /// ファイルのパス（色付けの言語を決める）。
+    pub(crate) path: String,
+    pub(crate) old: Arc<Vec<u8>>,
+    pub(crate) new: Arc<Vec<u8>>,
+    /// この部分の最初の行（表示の中の番号）。
+    pub(crate) first_row: u32,
+    /// 各行が指す場所（`first_row` からの順）。
+    pub(crate) sources: Vec<(Source, Range<u32>)>,
+}
+
+/// `DiffView` を組み立てる。ファイルの中身は共有したまま、行が指す場所だけを作る。
+struct ViewBuilder {
+    strings: StringTableBuilder,
+    rows: Vec<DiffRow>,
+    highlights: Vec<Highlight>,
+    parts: Vec<Part>,
+    encoding: StringEncoding,
+}
+
+impl ViewBuilder {
+    fn new(profile: &FrontendProfile) -> Self {
         Self {
-            path: String::new(),
-            rows,
-            highlights,
-            strings: strings.finish(),
-            binary: diff.binary,
-            added: diff.added,
-            removed: diff.removed,
+            strings: StringTableBuilder::new(profile.string),
+            rows: Vec::new(),
+            highlights: Vec::new(),
+            parts: Vec::new(),
+            encoding: profile.string,
+        }
+    }
+
+    /// `diff` の行を足す。
+    fn push_file(&mut self, path: &str, diff: &FileDiff) {
+        let headers = Arc::new(diff.headers.clone().into_bytes());
+        let sources = [
+            (self.strings.share(diff.old.clone()), &diff.old),
+            (self.strings.share(diff.new.clone()), &diff.new),
+            (self.strings.share(headers.clone()), &headers),
+        ];
+        let first_row = self.rows.len() as u32;
+        for l in &diff.lines {
+            let (buf, data) = sources[l.source as usize];
+            let text = self
+                .strings
+                .add(buf, &data[l.range.start as usize..l.range.end as usize]);
+            self.rows.push(DiffRow {
+                kind: l.kind,
+                flags: 0,
+                _pad: [0; 2],
+                old_no: l.old_no,
+                new_no: l.new_no,
+                text,
+            });
+        }
+        self.highlights
+            .extend(
+                word_highlights(diff, self.encoding)
+                    .into_iter()
+                    .map(|h| Highlight {
+                        row: h.row + first_row,
+                        ..h
+                    }),
+            );
+        self.parts.push(Part {
+            path: path.to_owned(),
             old: diff.old.clone(),
             new: diff.new.clone(),
+            first_row,
             sources: diff
                 .lines
                 .iter()
                 .map(|l| (l.source, l.range.clone()))
                 .collect(),
-            encoding: profile.string,
+        });
+    }
+
+    fn finish(self, binary: bool, added: u32, removed: u32) -> DiffView {
+        DiffView {
+            rows: self.rows,
+            highlights: self.highlights,
+            strings: self.strings.finish(),
+            binary,
+            added,
+            removed,
+            parts: self.parts,
+            encoding: self.encoding,
         }
+    }
+}
+
+impl DiffView {
+    pub fn new(diff: &FileDiff, profile: &FrontendProfile) -> Self {
+        let mut builder = ViewBuilder::new(profile);
+        builder.push_file("", diff);
+        builder.finish(diff.binary, diff.added, diff.removed)
     }
 
     pub fn with_path(mut self, path: &str) -> Self {
-        self.path = path.to_owned();
+        if let Some(part) = self.parts.first_mut() {
+            part.path = path.to_owned();
+        }
         self
     }
 
@@ -398,26 +450,37 @@ impl DiffView {
     /// FE は差分を色なしで先に表示し、これを裏で呼ぶ。言語がわからなければ空。
     #[cfg(feature = "syntax")]
     pub fn syntax(&self) -> Vec<SyntaxSpan> {
-        if self.binary || amonhen_syntax::Language::from_path(&self.path).is_none() {
-            return Vec::new();
+        let mut out = Vec::new();
+        for part in &self.parts {
+            self.part_syntax(part, &mut out);
         }
-        let uses = |side: Source| self.sources.iter().any(|(s, _)| *s == side);
+        out
+    }
+
+    #[cfg(feature = "syntax")]
+    fn part_syntax(&self, part: &Part, out: &mut Vec<SyntaxSpan>) {
+        if amonhen_syntax::Language::from_path(&part.path).is_none()
+            || is_binary(&part.old)
+            || is_binary(&part.new)
+        {
+            return;
+        }
+        let uses = |side: Source| part.sources.iter().any(|(s, _)| *s == side);
         let tokens = |side: Source, data: &[u8]| {
             if uses(side) {
-                amonhen_syntax::highlight(&self.path, data)
+                amonhen_syntax::highlight(&part.path, data)
             } else {
                 Vec::new()
             }
         };
         let (old, new) = (
-            tokens(Source::Old, &self.old),
-            tokens(Source::New, &self.new),
+            tokens(Source::Old, &part.old),
+            tokens(Source::New, &part.new),
         );
-        let mut out = Vec::new();
-        for (row, (source, range)) in self.sources.iter().enumerate() {
+        for (i, (source, range)) in part.sources.iter().enumerate() {
             let (data, tokens) = match source {
-                Source::Old => (&self.old, &old),
-                Source::New => (&self.new, &new),
+                Source::Old => (&part.old, &old),
+                Source::New => (&part.new, &new),
                 Source::Header => continue,
             };
             let text = &data[range.start as usize..range.end as usize];
@@ -427,7 +490,7 @@ impl DiffView {
                 let start = t.start.max(range.start) - range.start;
                 let end = t.end.min(range.end) - range.start;
                 out.push(SyntaxSpan {
-                    row: row as u32,
+                    row: part.first_row + i as u32,
                     start: units(self.encoding, text, start as usize),
                     end: units(self.encoding, text, end as usize),
                     kind: t.kind,
@@ -435,12 +498,56 @@ impl DiffView {
                 });
             }
         }
-        out
     }
 
     #[cfg(not(feature = "syntax"))]
     pub fn syntax(&self) -> Vec<SyntaxSpan> {
         Vec::new()
+    }
+}
+
+/// コミットの全ファイルの差分。一度計算しておき、畳むファイルを変えるたびに `view` で表示を作り直す。
+pub struct StackedDiff {
+    /// パスと差分（コミットの変更ファイルの順）。
+    pub files: Vec<(String, FileDiff)>,
+}
+
+impl StackedDiff {
+    /// 各ファイルの見出しの行（`DiffRow::FILE`。文字列はパス、`old_no` は削除の行数、`new_no` は追加の行数）に、
+    /// 畳まないファイルの差分の行を続けた表示。`collapsed[i]` が true のファイルは見出しだけ。
+    pub fn view(&self, collapsed: &[bool], profile: &FrontendProfile) -> DiffView {
+        let mut builder = ViewBuilder::new(profile);
+        // 見出しのパスは 1 つのバッファに並べて共有する。
+        let names: Vec<u8> = self.files.iter().flat_map(|(p, _)| p.bytes()).collect();
+        let names = Arc::new(names);
+        let names_buf = builder.strings.share(names.clone());
+        let (mut at, mut added, mut removed) = (0usize, 0, 0);
+        for (i, (path, diff)) in self.files.iter().enumerate() {
+            let hidden = collapsed.get(i).copied().unwrap_or(false);
+            let mut flags = 0;
+            if hidden {
+                flags |= DiffRow::COLLAPSED;
+            }
+            if diff.binary {
+                flags |= DiffRow::BINARY;
+            }
+            let text = builder.strings.add(names_buf, &names[at..at + path.len()]);
+            at += path.len();
+            builder.rows.push(DiffRow {
+                kind: DiffRow::FILE,
+                flags,
+                _pad: [0; 2],
+                old_no: diff.removed,
+                new_no: diff.added,
+                text,
+            });
+            added += diff.added;
+            removed += diff.removed;
+            if !hidden && !diff.binary {
+                builder.push_file(path, diff);
+            }
+        }
+        builder.finish(false, added, removed)
     }
 }
 
@@ -484,6 +591,46 @@ pub fn text_syntax(_path: &str, _text: &[u8]) -> Vec<SyntaxSpan> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stacks_files_under_headers_and_collapses_them() {
+        let a = file_diff(
+            Arc::new(b"1\n2\n".to_vec()),
+            Arc::new(b"1\nx\n".to_vec()),
+            3,
+        );
+        let b = file_diff(Arc::new(b"".to_vec()), Arc::new(b"new\n".to_vec()), 3);
+        let stacked = StackedDiff {
+            files: vec![("a.txt".into(), a), ("dir/b.rs".into(), b)],
+        };
+        let profile = FrontendProfile::MACOS;
+        let view = stacked.view(&[false, false], &profile);
+        let kinds: Vec<u8> = view.rows.iter().map(|r| r.kind).collect();
+        // a.txt: 見出し、@@、1、-2、+x。dir/b.rs: 見出し、@@、+new。
+        assert_eq!(
+            kinds,
+            [
+                DiffRow::FILE,
+                DiffRow::HUNK,
+                DiffRow::CONTEXT,
+                DiffRow::REMOVED,
+                DiffRow::ADDED,
+                DiffRow::FILE,
+                DiffRow::HUNK,
+                DiffRow::ADDED
+            ]
+        );
+        assert_eq!(view.strings.bytes(view.rows[5].text), b"dir/b.rs");
+        assert_eq!((view.rows[0].old_no, view.rows[0].new_no), (1, 1));
+        assert_eq!((view.added, view.removed), (2, 1));
+        // 単語の強調は、つないだ後の行の番号になる。
+        assert!(view.highlights.iter().all(|h| h.row == 3 || h.row == 4));
+        // 畳んだファイルは見出しだけ。
+        let view = stacked.view(&[true, false], &profile);
+        assert_eq!(view.rows.len(), 4);
+        assert_eq!(view.rows[0].flags & DiffRow::COLLAPSED, DiffRow::COLLAPSED);
+        assert_eq!(view.rows[1].kind, DiffRow::FILE);
+    }
 
     #[cfg(feature = "syntax")]
     #[test]

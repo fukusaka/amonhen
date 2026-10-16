@@ -17,7 +17,7 @@ use amonhen_layout::DiffRow;
 use amonhen_projection::{FrontendProfile, StringTableBuilder};
 use serde::Deserialize;
 
-use crate::diff::{DiffView, Source};
+use crate::diff::{DiffView, Part, Source};
 
 /// ファイルの中の 1 つのコンフリクト。範囲はすべて行（0 始まり、改行込みのバイト範囲の添字）。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -238,16 +238,19 @@ pub fn view(data: Arc<Vec<u8>>, profile: &FrontendProfile) -> DiffView {
         })
         .collect();
     DiffView {
-        path: String::new(),
         rows,
         highlights: Vec::new(),
         strings: strings.finish(),
         binary: false,
         added: 0,
         removed: conflicts.len() as u32,
-        old: Arc::default(),
-        new: data.clone(),
-        sources,
+        parts: vec![Part {
+            path: String::new(),
+            old: Arc::default(),
+            new: data.clone(),
+            first_row: 0,
+            sources,
+        }],
         encoding: profile.string,
     }
 }

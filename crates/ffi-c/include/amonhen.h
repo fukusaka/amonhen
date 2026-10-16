@@ -76,6 +76,11 @@ typedef struct AmonhenRepo AmonhenRepo;
 typedef struct AmonhenRows AmonhenRows;
 
 /**
+ * コミットの全ファイルの差分（畳むファイルを変えて表示を作り直す）。
+ */
+typedef struct AmonhenStacked AmonhenStacked;
+
+/**
  * 作業ツリーと index の状態。
  */
 typedef struct AmonhenStatus AmonhenStatus;
@@ -344,9 +349,21 @@ typedef struct {
  */
 #define AmonhenDiffRow_MARKER 7
 /**
+ * コミットの全ファイルを並べた差分の、ファイルの見出し（文字列はパス、`old_no`・`new_no` は削除・追加の行数）。
+ */
+#define AmonhenDiffRow_FILE 8
+/**
  * `flags`: Working Copy の HEAD と作業ツリーの差分で、この行の変更が index に入っている（次のコミットに含める）。
  */
 #define AmonhenDiffRow_STAGED (1 << 0)
+/**
+ * `flags`: ファイルの見出しで、そのファイルの行を畳んでいる。
+ */
+#define AmonhenDiffRow_COLLAPSED (1 << 1)
+/**
+ * `flags`: ファイルの見出しで、バイナリのファイル（行の差分はない）。
+ */
+#define AmonhenDiffRow_BINARY (1 << 2)
 
 /**
  * 差分の行の中で強調する範囲（単語単位の変更）。位置は FE の文字列の符号単位。
@@ -738,6 +755,34 @@ AmonhenDiff *amonhen_file_diff(const AmonhenRepo *repo_ptr,
                                const AmonhenChanges *changes,
                                uint32_t index,
                                AmonhenEncoding encoding);
+
+/**
+ * `changes` のすべてのファイルの差分（`amonhen_stacked_free` で解放する）。ファイルの数だけ blob を読むので、
+ * 裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `repo` と `changes` は有効であること。
+ */
+AmonhenStacked *amonhen_stacked_diff(const AmonhenRepo *repo_ptr,
+                                     const AmonhenChanges *changes);
+
+/**
+ * 全ファイルを見出しの行（`DiffRow::FILE`）でつないだ差分の表示（`amonhen_diff_free` で解放する。
+ * `amonhen_diff_view`・`amonhen_diff_syntax` が使える）。`collapsed` の i 番目が true のファイルは見出しだけ。
+ *
+ * # Safety
+ * `stacked` は有効、`collapsed` は `count` 個の `bool` を読める領域（`count` が 0 なら NULL でもよい）であること。
+ */
+AmonhenDiff *amonhen_stacked_view(const AmonhenStacked *stacked,
+                                  const bool *collapsed,
+                                  uint32_t count,
+                                  AmonhenEncoding encoding);
+
+/**
+ * # Safety
+ * `stacked` は `amonhen_stacked_diff` が返したもので、まだ解放していないこと。
+ */
+void amonhen_stacked_free(AmonhenStacked *stacked);
 
 /**
  * # Safety

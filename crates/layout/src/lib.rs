@@ -129,9 +129,15 @@ impl DiffRow {
     pub const BASE: u8 = 6;
     /// `<<<<<<<` などのマーカーの行。
     pub const MARKER: u8 = 7;
+    /// コミットの全ファイルを並べた差分の、ファイルの見出し（文字列はパス、`old_no`・`new_no` は削除・追加の行数）。
+    pub const FILE: u8 = 8;
 
     /// `flags`: Working Copy の HEAD と作業ツリーの差分で、この行の変更が index に入っている（次のコミットに含める）。
     pub const STAGED: u8 = 1 << 0;
+    /// `flags`: ファイルの見出しで、そのファイルの行を畳んでいる。
+    pub const COLLAPSED: u8 = 1 << 1;
+    /// `flags`: ファイルの見出しで、バイナリのファイル（行の差分はない）。
+    pub const BINARY: u8 = 1 << 2;
 }
 
 /// 差分の行の中で強調する範囲（単語単位の変更）。位置は FE の文字列の符号単位。

@@ -372,6 +372,40 @@ impl Repository {
 
     /// 変わったファイル 1 つの、前後 3 行の文脈つきの差分。
     pub fn file_diff(&self, change: &FileChange, profile: &FrontendProfile) -> Result<DiffView> {
+        Ok(DiffView::new(&self.change_diff(change)?, profile).with_path(&change.path))
+    }
+
+    /// `changes` のすべてのファイルの差分（History で全ファイルを縦に並べて見せる）。ファイルの数だけ blob を読んで
+    /// 差分を取るので、裏のスレッドで呼ぶ。
+    pub fn stacked_diff(&self, changes: &[FileChange]) -> Result<diff::StackedDiff> {
+        let one = |c: &FileChange| Ok((c.path.clone(), self.change_diff(c)?));
+        // ファイルごとの差分は独立しているので、多ければ分けて並列に取る（コミットを選んでから表示までの時間）。
+        let threads = std::thread::available_parallelism()
+            .map_or(1, |n| n.get())
+            .min(8);
+        if changes.len() < 4 || threads < 2 {
+            let files = changes.iter().map(one).collect::<Result<_>>()?;
+            return Ok(diff::StackedDiff { files });
+        }
+        let chunk = changes.len().div_ceil(threads);
+        let parts: Vec<Result<Vec<_>>> = std::thread::scope(|scope| {
+            let handles: Vec<_> = changes
+                .chunks(chunk)
+                .map(|part| scope.spawn(move || part.iter().map(one).collect::<Result<Vec<_>>>()))
+                .collect();
+            handles
+                .into_iter()
+                .map(|h| h.join().unwrap_or_else(|_| Err("差分を取れない".into())))
+                .collect()
+        });
+        let mut files = Vec::with_capacity(changes.len());
+        for part in parts {
+            files.extend(part?);
+        }
+        Ok(diff::StackedDiff { files })
+    }
+
+    fn change_diff(&self, change: &FileChange) -> Result<FileDiff> {
         let side = |id: &Option<Oid>| -> Result<Arc<Vec<u8>>> {
             match id {
                 None => Ok(Arc::default()),
@@ -382,8 +416,11 @@ impl Repository {
                 Some(id) => self.backend.blob(id),
             }
         };
-        let file = diff::file_diff(side(&change.old_id)?, side(&change.new_id)?, 3);
-        Ok(DiffView::new(&file, profile).with_path(&change.path))
+        Ok(diff::file_diff(
+            side(&change.old_id)?,
+            side(&change.new_id)?,
+            3,
+        ))
     }
 
     /// 作業ツリーと index の状態を読み直す。前回と同じなら前回のものを返す。
