@@ -2,7 +2,7 @@
 
 [English](https://github.com/fukusaka/amonhen/blob/main/apps/vscode/README.md)
 
-VSCode 上で快適に Git を操作するための自分用の拡張。Marketplace には公開せず、このリポジトリの GitHub Releases で `.vsix` を配布する。変更履歴はリポジトリの [CHANGELOG.md](https://github.com/fukusaka/amonhen/blob/main/CHANGELOG.md) の「VSCode extension」の節、手を入れるときは [開発](https://github.com/fukusaka/amonhen/blob/main/apps/vscode/docs/ja/development.md) と [設計](https://github.com/fukusaka/amonhen/blob/main/apps/vscode/docs/ja/design.md) を参照。
+VSCode 上で快適に Git を操作するための自分用の拡張。Marketplace には公開せず、このリポジトリの GitHub Releases で `.vsix` を配布する。変更履歴はリポジトリの [CHANGELOG.md](https://github.com/fukusaka/amonhen/blob/main/CHANGELOG.md) の「VSCode extension」の節、手を入れるときは [開発](https://github.com/fukusaka/amonhen/blob/main/docs/ja/development.md#vscode-拡張) と [設計](https://github.com/fukusaka/amonhen/blob/main/docs/ja/vscode.md) を参照。
 
 > [!WARNING]
 > 開発の途中。機能・ファイルの形・コマンドは、予告なく変わることがある。無保証で、そのままの形で提供する

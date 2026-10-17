@@ -1,10 +1,12 @@
-# Amon Hen design notes
+# VSCode extension design notes
 
-[日本語](ja/design.md)
+[日本語](ja/vscode.md)
 
 ## Overview
 
-A personal extension for working with Git comfortably in VSCode. It is not published on the Marketplace; the `.vsix` is distributed through GitHub Releases.
+A personal extension for working with Git comfortably in VSCode. It lives in `apps/vscode` (paths below are relative to it) and
+bundles the Amon Hen engine (the same as the app and the CLI). It is not published on the Marketplace; the `.vsix` is
+distributed through GitHub Releases.
 
 | Requirement | Category |
 | --- | --- |
@@ -21,25 +23,45 @@ VSCode's UI components offer little freedom, so instead of building a dedicated 
 
 ## Overall structure
 
-With `extensionKind: ["workspace"]`, the extension host runs on the SSH host during a Remote-SSH connection, and git runs there too. That takes care of most of the over-SSH support.
+With `extensionKind: ["workspace"]`, the extension host runs on the SSH host during a Remote-SSH connection, and git and
+the engine run there too. That takes care of most of the over-SSH support.
 
 ```
 Local (VSCode UI)                    Remote (extension host, the Remote-SSH host)
-┌──────────────────────┐            ┌─────────────────────────────────────┐
-│ TreeView             │            │ UI layer                            │
-│ Standard diff editor │──postMessage──▶ Providers, Webview communication   │
-│ Webview              │   (via SSH)  │        ▼                            │
-└──────────────────────┘            │ State management ◀── vscode.git API │
-                                    │ status cache, Undo log (change events)│
-                                    │        ▼                            │
-                                    │ git execution layer                 │
-                                    │ resident cat-file, non-interactive rebase │
-                                    │        ▼                            │
-                                    │ git CLI / repository                │
-                                    └─────────────────────────────────────┘
+┌──────────────────────┐            ┌──────────────────────────────────────────────┐
+│ TreeView (nav)       │            │ UI layer: providers, Webview communication   │
+│ Webview (main view)  │──postMessage──▶      ▼                                   │
+│ 3-way merge editor   │   (via SSH)  │ State management ◀── vscode.git API          │
+└──────────────────────┘            │ (change events)                              │
+                                    │        ▼                         ▼           │
+                                    │ src/daemon/ (default)    git execution layer │
+                                    │ front API client         (fallback)          │
+                                    │        ▼                         ▼           │
+                                    │ shared daemon            git CLI             │
+                                    │ (amonhen --serve)                            │
+                                    │        ▼                         ▼           │
+                                    │ repository                                   │
+                                    └──────────────────────────────────────────────┘
 ```
 
-The Webview is rendered locally, and only its communication with the extension host goes over SSH. Large diffs and logs are sent in chunks.
+The Webview is rendered locally, and only its communication with the extension host goes over SSH. Large diffs and logs
+are sent in chunks.
+
+## Engine (shared daemon)
+
+The default path. `src/daemon/` finds the bundled engine for the host (`bin/amonhen-<os>-<cpu>`), installs it with
+`amonhen install`, and talks to the shared daemon (`amonhen --serve`; a Unix domain socket, or a named pipe on Windows)
+through the front API: commands and answers in JSON, large data (History rows, graph, diffs) as records. The protocol
+is in [front.md](front.md), and the design in item 18 of
+[design.md](design.md).
+
+- History, diffs, the Working Copy and writes go through the daemon. The daemon keeps the History, the search index and
+  SSH connections, and shares them with the app and the CLI.
+- The Undo log is the same file in the same format as the core's (`<git dir>/amonhen/undo.json`). `delegation.ts` keeps
+  operations the core already records from being recorded again by the extension.
+- Without a matching engine, or with `amonhen.daemon.enabled` off, everything runs on the extension's own git execution
+  layer. The sections below on spawning git, `cat-file`, rebase plans and line-level staging describe that path; the
+  engine does the same work in Rust.
 
 ## Implementation approach for the required features
 
@@ -70,9 +92,13 @@ The Webview is rendered locally, and only its communication with the extension h
 
 ### Building commits finely from the diff view
 
-- Diffs are shown in the standard diff editor. A `TextDocumentContentProvider` provides an `amonhen:` scheme serving the HEAD and index versions, opened with `vscode.diff`. Syntax highlighting, word-level diffs, and switching between inline / side-by-side come for free.
-- For hunk- and line-level staging, compute the line diff between the index and the working tree ourselves (Myers' algorithm), build new index content with only the selected changes applied, and write it with `hash-object -w` → `update-index --cacheinfo`. Unstaging does the same with the diff against HEAD. Compared with passing a partial patch to `git apply`, this does not stumble over context lines or line endings.
-- The standard diff editor cannot hold checkboxes, so make up for it with buttons at the top of the editor, keybindings, and gutter decorations. If you want to scroll through all hunks on one screen, provide a separate Webview diff view.
+- Staging happens in the Working Copy of the main view: select diff lines (Shift+click for a range) or use the hunk and
+  file buttons. The standard diff editor is only for reading.
+- With the engine, the daemon stages, unstages and discards the selected rows (`stageRows` / `discardRows`).
+- On the git execution layer, the extension computes the line diff between the index and the working tree itself
+  (Myers' algorithm, `src/diff/lineDiff.ts`), builds new index content with only the selected changes applied, and
+  writes it with `hash-object -w` → `update-index --cacheinfo`. Unstaging does the same with the diff against HEAD.
+  Compared with passing a partial patch to `git apply`, this does not stumble over context lines or line endings.
 
 ### Conflict resolution
 
@@ -96,7 +122,7 @@ In steps 1–5, the Working Copy was built with a sidebar TreeView and the stand
 
 ## Performance
 
-The time taken by a small git command is almost entirely the process spawn cost (about 6 ms each on macOS). A query to the resident `cat-file` takes about 0.08 ms. "The number of spawns" and "the scope of updates" matter more than the language, so the following are applied thoroughly.
+On the git execution layer, the time taken by a small git command is almost entirely the process spawn cost (about 6 ms each on macOS). A query to the resident `cat-file` takes about 0.08 ms. "The number of spawns" and "the scope of updates" matter more than the language, so the following are applied thoroughly.
 
 - Keep `git cat-file --batch-command` resident, rather than spawning for each object fetch. cat-file reads the index only once, at the start, so before querying `:path`, check the index's modification time and restart it if it has changed.
 - Detect changes to refs, config and stashes by the modification times of files in `.git` (`HEAD`, the directories under `refs/`, `packed-refs`, `reftable/tables.list`, `config`, `logs/refs/stash`), without spawning. git updates refs by renaming lock files, so directory modification times are enough.
@@ -105,28 +131,13 @@ The time taken by a small git command is almost entirely the process spawn cost 
 - Operations such as stage / unstage are reflected in the UI first and confirmed by git's result (optimistic updates).
 - Bundle into a single file with esbuild, with no runtime dependency packages. The Webview does not use React, and stays light with virtual scrolling and canvas rendering of the graph.
 - Record the time taken by git commands and redraws in Output, and build while measuring against the target of "sidebar updates within 30 ms on a typical repository".
-- Separate the git execution layer behind an interface. If measurement shows places where TS is not enough, make it possible to replace just those parts with a WASM / native implementation such as Rust (gitoxide).
+- The git execution layer is behind an interface, so the Rust engine (gix) replaces it where it is available (see "Engine
+  (shared daemon)"). History and diffs then come from the daemon as records, without spawning git.
 - Get status with `git status --porcelain=v2 -z`. For large repositories, suggest enabling `core.untrackedCache` and fsmonitor.
 - Pass `--no-optional-locks` to read commands, so as not to contend for locks with the user's own git operations.
 - Fetch the log about 200 entries at a time. The graph's lane computation advances bit by bit on the extension host side, and only minimal arrays are sent to the Webview. The Webview side renders with virtual scrolling.
 - Suggesting `git commit-graph write --reachable` speeds up the graph display and ancestry checks.
 - With Remote-SSH, postMessage goes over SSH, so large diffs and logs are sent in chunks.
-
-## Engine (shared daemon)
-
-Since the repositories were merged, the extension's main path is the Amon Hen engine (Rust, the same as the app and the
-CLI). `src/daemon/` finds the bundled engine for the host (`bin/amonhen-<os>-<cpu>`), installs it with
-`amonhen install`, and talks to the shared daemon (`amonhen --serve`; a Unix domain socket, or a named pipe on Windows)
-through the front API: commands and answers in JSON, large data (History rows, graph, diffs) as records. The protocol
-is in the root [docs/front.md](../../../docs/front.md), and the design in item 18 of the root
-[docs/design.md](../../../docs/design.md).
-
-- History, diffs, the Working Copy and writes go through the daemon. The daemon keeps the History, the search index and
-  SSH connections, and shares them with the app and the CLI.
-- The Undo log is the same file in the same format as the core's (`<git dir>/amonhen/undo.json`). `delegation.ts` keeps
-  operations the core already records from being recorded again by the extension.
-- Without a matching engine, or with `amonhen.daemon.enabled` off, everything runs on the git execution layer below
-  (the layers described above), as before.
 
 ## Distribution
 
@@ -159,3 +170,8 @@ Bringing the UI into one Webview (see "Bringing the UI into one Webview"):
 - [x] 9. Branches and the like in the nav, drag and drop, the toolbar (Undo, Fetch, etc.)
 - [x] 10. Tidying up the sidebar TreeView, and documentation
 - [x] 11. Move the nav to a sidebar TreeView, and make the main view contents only
+
+Using the engine:
+
+- [ ] 12. History, diffs, the Working Copy and writes through the shared daemon. Tracked as item 18 of
+  [design.md](design.md)

@@ -109,7 +109,7 @@ Use `stable` or `snapshot` as the argument. From a clone, run `scripts/install-a
 ## Documents
 
 - [Usage](docs/usage.md): app, SSH hosts, shared daemon, CLI
-- [VSCode extension](apps/vscode)
+- [VSCode extension](apps/vscode) and its [design](docs/vscode.md)
 - [Design](docs/design.md) and [front API contract](docs/front.md)
 - [Development](docs/development.md) and [Release](docs/release.md)
 - [Changelog](CHANGELOG.md)

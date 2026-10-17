@@ -10,12 +10,27 @@ How releases are made, and signing, notarization and build provenance attestatio
   tar.gz files (macOS arm64, Linux x86_64, Linux aarch64) and zip files (Windows x86_64, aarch64). The tag must match
   `workspace.package.version` in `Cargo.toml`.
 - The VSCode extension uses `vscode-v*` tags and publishes a .vsix with the engine bundled (see
-  [apps/vscode/docs/development.md](../apps/vscode/docs/development.md#release)).
+  [VSCode extension](#vscode-extension) below).
 - Whenever CI (`ci.yml`) passes on main, a pre-release named `snapshot` is recreated from that commit (app, engine,
   extension; the version is `<next patch>-snapshot.<commit count>+<sha>`). The Windows engines are built alongside the
   macOS build, and a last job bundles and publishes everything.
 - Changes go in [CHANGELOG.md](../CHANGELOG.md) (one file, with sections for the app and engine and for the VSCode
   extension). Before tagging, rename that section's `Unreleased` to the version and date, and commit it.
+
+## VSCode extension
+
+| Channel | When it is built | Version |
+| --- | --- | --- |
+| stable | On pushing a `vscode-v*` tag (separate from the app and engine's `v*`) | `0.0.2` |
+| snapshot | Whenever CI passes on main (put on the same `snapshot` pre-release as the app and engine) | `0.0.3-snapshot.<number of apps/vscode commits since the last release>+<sha>` |
+
+A snapshot is treated as a pre-release of the next patch, so installing a stable release is judged newer than the snapshot.
+
+Steps to cut a stable release:
+
+1. In the "VSCode extension" section of [CHANGELOG.md](../CHANGELOG.md), change `Unreleased` to a heading with the version and date being released, and commit it
+2. Include `npm version patch --no-git-tag-version` in the same commit as 1.
+3. `git tag vscode-v<version> && git push origin main vscode-v<version>`
 
 ## Build provenance attestation
 

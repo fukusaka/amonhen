@@ -1,10 +1,11 @@
-# Amon Hen 設計メモ
+# VSCode 拡張の設計メモ
 
-[English](../design.md)
+[English](../vscode.md)
 
 ## 概要
 
-VSCode 上で快適に Git を操作するための自分用の拡張。Marketplace には公開せず、GitHub Releases で `.vsix` を配布する。
+VSCode 上で快適に Git を操作するための自分用の拡張。Amon Hen のリポジトリの `apps/vscode` で作り（以下のパスはそこからの相対）、Amon Hen のエンジン
+（アプリ・CLI と同じもの）を同梱する。Marketplace には公開せず、GitHub Releases で `.vsix` を配布する。
 
 | 要件 | 区分 |
 | --- | --- |
@@ -21,25 +22,42 @@ VSCode の UI 部品は自由度が低いため、専用 Git クライアント�
 
 ## 全体構成
 
-`extensionKind: ["workspace"]` にすると、Remote-SSH 接続時に拡張ホストが SSH 先で動き、git もそこで実行される。over SSH 対応はこれでほぼ済む。
+`extensionKind: ["workspace"]` にすると、Remote-SSH 接続時に拡張ホストが SSH 先で動き、git とエンジンもそこで動く。
+over SSH 対応はこれでほぼ済む。
 
 ```
 ローカル（VSCode の UI）              リモート（拡張ホスト、Remote-SSH の接続先）
-┌──────────────────────┐            ┌─────────────────────────────────────┐
-│ TreeView             │            │ UI 層                               │
-│ 標準 diff エディタ    │──postMessage──▶ Provider 群・Webview との通信      │
-│ Webview              │   (SSH 経由) │        ▼                            │
-└──────────────────────┘            │ 状態管理層 ◀──── vscode.git API      │
-                                    │ status キャッシュ・Undo 記録 (変更通知)│
-                                    │        ▼                            │
-                                    │ git 実行層                          │
-                                    │ 常駐 cat-file・非対話 rebase         │
-                                    │        ▼                            │
-                                    │ git CLI / リポジトリ                 │
-                                    └─────────────────────────────────────┘
+┌──────────────────────┐            ┌──────────────────────────────────────────────┐
+│ TreeView（ナビ）      │            │ UI 層: Provider 群・Webview との通信          │
+│ Webview（メインビュー）│──postMessage──▶      ▼                                   │
+│ 3-way マージエディタ   │  (SSH 経由)  │ 状態管理層 ◀── vscode.git API（変更通知）     │
+└──────────────────────┘            │        ▼                         ▼           │
+                                    │ src/daemon/（既定）       git 実行層（代わり） │
+                                    │ FE 向けの窓口のクライアント                    │
+                                    │        ▼                         ▼           │
+                                    │ 共有の daemon             git CLI             │
+                                    │ (amonhen --serve)                            │
+                                    │        ▼                         ▼           │
+                                    │ リポジトリ                                   │
+                                    └──────────────────────────────────────────────┘
 ```
 
 Webview はローカルで描画され、拡張ホストとの通信だけが SSH を経由する。大きな差分やログは分割して送る。
+
+## エンジン（共有の daemon）
+
+既定の経路。`src/daemon/` が、
+ホスト向けに同梱したエンジン（`bin/amonhen-<OS>-<CPU>`）を探して `amonhen install` で置き、共有の daemon
+（`amonhen --serve`。Unix ドメインソケット、Windows は名前付きパイプ）と FE 向けの窓口で話す。命令と答えは JSON、
+大きなデータ（History の行・グラフ・差分）はレコード。取り決めは[front.md](front.md)、
+設計は[design.md](design.md) の 18。
+
+- History・差分・Working Copy・書き込みは daemon を通す。daemon は History・検索の索引・SSH のつながりを持ち続け、
+  アプリ・CLI と分け合う。
+- Undo の記録は、コアと同じファイル・同じ形（`<git dir>/amonhen/undo.json`）。コアが記録する操作を拡張がもう一度
+  記録しないよう、`delegation.ts` で分ける。
+- 合うエンジンがないとき、`amonhen.daemon.enabled` を切ったときは、拡張の git 実行層で動く。下の git の起動・`cat-file`・
+  rebase の組み立て・行単位の stage の節は、この経路の話。エンジンは同じことを Rust で行う。
 
 ## 必須要素の実装方針
 
@@ -70,9 +88,12 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 ### 差分ビューから細かくコミットを作る
 
-- 差分表示は標準の diff エディタを使う。`TextDocumentContentProvider` で `amonhen:` スキームを作って HEAD 版と index 版を提供し、`vscode.diff` で開く。シンタックスハイライト、単語単位の差分、インライン／左右分割の切り替えがそのまま使える。
-- hunk・行単位の stage は、index と working tree の行差分を自前で計算し（Myers 法）、選択範囲の変更だけを当てた新しい index の内容を作って `hash-object -w` → `update-index --cacheinfo` で書き込む。unstage は HEAD との差分で同じことをする。部分パッチを `git apply` に渡す方式より、文脈行や改行の扱いでつまずかない。
-- 標準 diff エディタにはチェックボックスを置けないので、エディタ上部のボタン、キーバインド、ガターのデコレーションで補う。全 hunk を 1 画面でスクロールしたい場合は、Webview の差分ビューを別途用意する。
+- stage はメインビューの Working Copy で行う。差分の行を選び（Shift+クリックで範囲）、または hunk・ファイルのボタンを使う。
+  標準の diff エディタは読むためだけに使う。
+- エンジンがあれば、選んだ行の stage・unstage・破棄は daemon が行う（`stageRows`・`discardRows`）。
+- git 実行層では、index と working tree の行差分を自前で計算し（Myers 法、`src/diff/lineDiff.ts`）、選択範囲の変更だけを
+  当てた新しい index の内容を作って `hash-object -w` → `update-index --cacheinfo` で書き込む。unstage は HEAD との差分で
+  同じことをする。部分パッチを `git apply` に渡す方式より、文脈行や改行の扱いでつまずかない。
 
 ### コンフリクト解決
 
@@ -96,7 +117,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 ## 速度対策
 
-小さな git コマンドの所要時間は、ほぼプロセス起動のコスト（macOS で 1 回 約 6 ms）。常駐 `cat-file` への問い合わせは 約 0.08 ms。言語より「spawn の回数」と「更新範囲」が効くので、以下を徹底する。
+git 実行層では、小さな git コマンドの所要時間は、ほぼプロセス起動のコスト（macOS で 1 回 約 6 ms）。常駐 `cat-file` への問い合わせは 約 0.08 ms。言語より「spawn の回数」と「更新範囲」が効くので、以下を徹底する。
 
 - `git cat-file --batch-command` を常駐させ、オブジェクト取得のたびに spawn しない。cat-file は index を最初の 1 回しか読まないので、`:path` を問い合わせる前に index の更新時刻を確かめ、変わっていれば起動し直す。
 - ref・config・stash の変化は `.git` 内のファイル（`HEAD`、`refs/` 以下のディレクトリ、`packed-refs`、`reftable/tables.list`、`config`、`logs/refs/stash`）の更新時刻で検知し、spawn しない。git は ref を lock ファイルの rename で更新するので、ディレクトリの更新時刻で足りる。
@@ -105,26 +126,13 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - stage / unstage などは先に UI へ反映し、git の結果で確定させる（楽観的更新）。
 - esbuild で 1 ファイルに bundle し、実行時の依存パッケージは持たない。Webview は React を使わず、仮想スクロールとグラフの canvas 描画で軽くする。
 - git コマンドと再描画の所要時間を Output に記録し、「通常のリポジトリでサイドバーの更新は 30 ms 以内」を目安に計測しながら作る。
-- git 実行層はインターフェースで切り離す。計測して TS で足りない箇所が出たら、その部分だけ Rust（gitoxide）などの WASM／ネイティブ実装に差し替えられるようにする。
+- git 実行層はインターフェースで切り離してあり、エンジンがあれば Rust（gix）のエンジンが代わる（「エンジン（共有の
+  daemon）」を参照）。History と差分は、git を起動せずに daemon からレコードで受け取る。
 - status は `git status --porcelain=v2 -z` で取得する。大きなリポジトリでは `core.untrackedCache` と fsmonitor の有効化を案内する。
 - 読み取り系コマンドには `--no-optional-locks` を付け、ユーザー自身の git 操作とロックを奪い合わない。
 - log は 200 件程度ずつ取得する。グラフのレーン計算は拡張ホスト側で少しずつ進め、Webview には最小限の配列だけ送る。Webview 側は仮想スクロールで描画する。
 - `git commit-graph write --reachable` の実行を案内すると、グラフ表示と ancestry 判定が速くなる。
 - Remote-SSH では postMessage が SSH を経由するため、大きな差分やログは分割して送る。
-
-## エンジン（共有の daemon）
-
-リポジトリをまとめてからは、拡張の本筋は Amon Hen のエンジン（Rust。アプリ・CLI と同じもの）。`src/daemon/` が、
-ホスト向けに同梱したエンジン（`bin/amonhen-<OS>-<CPU>`）を探して `amonhen install` で置き、共有の daemon
-（`amonhen --serve`。Unix ドメインソケット、Windows は名前付きパイプ）と FE 向けの窓口で話す。命令と答えは JSON、
-大きなデータ（History の行・グラフ・差分）はレコード。取り決めはルートの [docs/front.md](../../../../docs/ja/front.md)、
-設計はルートの [docs/design.md](../../../../docs/ja/design.md) の 18。
-
-- History・差分・Working Copy・書き込みは daemon を通す。daemon は History・検索の索引・SSH のつながりを持ち続け、
-  アプリ・CLI と分け合う。
-- Undo の記録は、コアと同じファイル・同じ形（`<git dir>/amonhen/undo.json`）。コアが記録する操作を拡張がもう一度
-  記録しないよう、`delegation.ts` で分ける。
-- 合うエンジンがないとき、`amonhen.daemon.enabled` を切ったときは、これまでどおり下の git 実行層（上に書いた層）で動く。
 
 ## 配布
 
@@ -156,3 +164,8 @@ UI を 1 つの Webview にまとめる（「UI を 1 つの Webview にまと�
 - [x] 9. ナビのブランチ類とドラッグ＆ドロップ、ツールバー（Undo・Fetch など）
 - [x] 10. サイドバーの TreeView の整理とドキュメント
 - [x] 11. ナビをサイドバーの TreeView に移し、メインビューは中身だけにする
+
+エンジンを使う:
+
+- [ ] 12. History・差分・Working Copy・書き込みを共有の daemon で行う。
+  [design.md](design.md) の 18 で進める

@@ -2,7 +2,7 @@
 
 [日本語](https://github.com/fukusaka/amonhen/blob/main/apps/vscode/README.ja.md)
 
-A personal extension for working with Git comfortably in VSCode. It is not published on the Marketplace; the `.vsix` is distributed through this repository's GitHub Releases. See the "VSCode extension" section of the repository's [CHANGELOG.md](https://github.com/fukusaka/amonhen/blob/main/CHANGELOG.md) for the change history, and [Development](https://github.com/fukusaka/amonhen/blob/main/apps/vscode/docs/development.md) and the [design notes](https://github.com/fukusaka/amonhen/blob/main/apps/vscode/docs/design.md) for working on it.
+A personal extension for working with Git comfortably in VSCode. It is not published on the Marketplace; the `.vsix` is distributed through this repository's GitHub Releases. See the "VSCode extension" section of the repository's [CHANGELOG.md](https://github.com/fukusaka/amonhen/blob/main/CHANGELOG.md) for the change history, and [Development](https://github.com/fukusaka/amonhen/blob/main/docs/development.md#vscode-extension) and the [design notes](https://github.com/fukusaka/amonhen/blob/main/docs/vscode.md) for working on it.
 
 > [!WARNING]
 > Work in progress. Features, file formats and commands may change without notice. It is provided as is, without
