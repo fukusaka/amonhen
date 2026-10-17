@@ -129,7 +129,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 ## 配布
 
 - 正式版: ルートの `.github/workflows/vscode-release.yml`。`vscode-v*` タグ（アプリ・エンジンは `v*`）の push で、
-  エンジン（Windows も）を作り、`scripts/bundle-engine.sh` で同梱して `vsce package`、ビルドの由来の証明を付けて
+  エンジン（Windows も）を作り、macOS のものは Developer ID で署名して公証に出し、`scripts/bundle-engine.sh` で同梱して `vsce package`、ビルドの由来の証明を付けて
   Release を作る。
 - snapshot: ルートの `.github/workflows/snapshot.yml`。main の CI が通るたびに、`scripts/snapshot-version.mjs` が
   `<次の patch>-snapshot.<前回リリースからの apps/vscode のコミット数>+<sha>` を作り、エンジンを同梱した `.vsix` を

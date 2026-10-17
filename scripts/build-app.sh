@@ -82,15 +82,10 @@ PLIST
 
 # 中の実行ファイル（エンジン）を先に署名してから、アプリ全体に署名する。Developer ID なら公証の条件
 # （hardened runtime・時刻の印）を付ける。
-identity=${AMONHEN_SIGN_IDENTITY:--}
-case $identity in
-"Developer ID Application"*) sign() { codesign --force --sign "$identity" --options runtime --timestamp "$@"; } ;;
-*) sign() { codesign --force --sign "$identity" --timestamp=none "$@"; } ;;
-esac
-sign dist/engine/amonhen-darwin-aarch64
+scripts/codesign.sh dist/engine/amonhen-darwin-aarch64
 cp dist/engine/amonhen-darwin-aarch64 "$app/Contents/Helpers/amonhen"
 cp dist/engine/amonhen-darwin-aarch64 "$app/Contents/Resources/engines/amonhen-darwin-aarch64"
-sign "$app"
+scripts/codesign.sh "$app"
 codesign --verify --strict "$app"
 # 署名したエンジンで、リリースに載せる macOS の tar.gz を作り直す。
 work=$(mktemp -d)

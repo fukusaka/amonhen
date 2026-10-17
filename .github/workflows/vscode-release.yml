@@ -17,7 +17,16 @@ jobs:
 
   release:
     needs: windows-engine
+    # 同梱する macOS のエンジンを Developer ID で署名し、公証に出す。鍵は環境 release の secret（この仕事だけが読める）。
+    environment: release
     runs-on: macos-latest
+    env:
+      AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
+      AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
+      AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
+      AMONHEN_NOTARY_KEY: ${{ secrets.AMONHEN_NOTARY_KEY }}
+      AMONHEN_NOTARY_KEY_ID: ${{ secrets.AMONHEN_NOTARY_KEY_ID }}
+      AMONHEN_NOTARY_ISSUER: ${{ secrets.AMONHEN_NOTARY_ISSUER }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -31,7 +40,12 @@ jobs:
           targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
       - run: brew install zig
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: scripts/import-signing-certificate.sh
       - run: scripts/build-engine.sh
+      # 単体の実行ファイルには公証の結果を綴じ込めないので、出すだけ（初めて動かすときに Mac が Apple に確かめる）。
+      - run: |
+          scripts/codesign.sh dist/engine/amonhen-darwin-aarch64
+          scripts/notarize.sh --engines dist/engine/amonhen-darwin-aarch64
       # Windows 用のエンジンも同梱する。
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:

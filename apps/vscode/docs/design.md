@@ -131,7 +131,8 @@ is in the root [docs/front.md](../../../docs/front.md), and the design in item 1
 ## Distribution
 
 - Stable release: the root `.github/workflows/vscode-release.yml`. On pushing a `vscode-v*` tag (the app and engine use
-  `v*`), build the engines (including Windows), bundle them with `scripts/bundle-engine.sh`, `vsce package`, attach a
+  `v*`), build the engines (including Windows), sign the macOS one with Developer ID and
+  submit it for notarization, bundle them with `scripts/bundle-engine.sh`, `vsce package`, attach a
   build provenance attestation, and create the Release.
 - snapshot: the root `.github/workflows/snapshot.yml`. Whenever CI passes on main, `scripts/snapshot-version.mjs` produces
   `<next patch>-snapshot.<number of apps/vscode commits since the last release>+<sha>`, and the `.vsix` with the
