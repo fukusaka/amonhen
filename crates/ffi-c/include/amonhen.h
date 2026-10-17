@@ -489,6 +489,21 @@ const char *amonhen_last_error(void);
 void amonhen_set_fsmonitor(bool enabled);
 
 /**
+ * SSH 先のフォルダの下のリポジトリを探す（リポジトリの一覧の、SSH 先のスキャンするフォルダ）。`location` は
+ * `ssh://[user@]host[:port]/path`。エンジンの用意は SSH 先のリポジトリを開くときと同じ（`daemon`・`daemons_dir`）。
+ * `excludes` は入らないフォルダの名前を改行でつないだもの。見つけたリポジトリの場所（`ssh://host/path`）を改行で
+ * つないで返す（`amonhen_string_free` で解放）。失敗したら NULL（`amonhen_last_error`）。
+ *
+ * # Safety
+ * `location`・`daemon`・`daemons_dir`・`excludes` は NUL 終端の UTF-8 であること。
+ */
+char *amonhen_find_remote_repositories(const char *location,
+                                       uint32_t depth,
+                                       const char *excludes,
+                                       const char *daemon,
+                                       const char *daemons_dir);
+
+/**
  * daemon 越しのリポジトリを開く。`location` は `daemon:/path`（手元の共有の daemon。いなければ `daemon` を起動）か
  * `ssh://[user@]host[:port]/path`（SSH 先に daemon を送り込んで起動）。SSH 先に送る daemon は
  * `daemons_dir` の `amonhend-<os>-<arch>`（SSH 先が手元と同じ OS と CPU なら `daemon`）。ssh のコマンドは

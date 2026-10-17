@@ -15,7 +15,7 @@ struct Bookmark: Codable, Hashable {
     var autoFetch: Int?
 }
 
-/// リポジトリを探すフォルダ。
+/// リポジトリを探すフォルダ。この Mac のパスか、SSH 先のフォルダ（`ssh://host/path`。SSH 先のエンジンが探す）。
 struct ScanRoot: Codable, Hashable {
     var path: String
     /// フォルダから何段下まで探すか。
@@ -40,6 +40,8 @@ final class Bookmarks {
     /// スキャンで見つけたリポジトリ（フォルダ → リポジトリの並び）。
     private(set) var scanned: [String: [String]] = [:]
     private(set) var isScanning = false
+    /// SSH 先のフォルダを探せなかった理由（フォルダ → エラー。一覧に出す）。
+    private(set) var scanErrors: [String: String] = [:]
     /// 一覧の行に出す状態（読んだもの）。
     private var peeks: [String: RepositoryPeek] = [:]
     private var peeking = Set<String>()
@@ -187,11 +189,41 @@ final class Bookmarks {
         isScanning = true
         onChange?()
         let roots = data.scanRoots
+        // SSH 先のエンジンを用意するための場所（アプリの中の、SSH 先に送るエンジン）。
+        let daemon = Daemon.path, daemons = Daemon.bundledDirectory
         Task {
-            let found = await Task.detached(priority: .utility) {
-                Dictionary(uniqueKeysWithValues: roots.map { ($0.path, Self.scan($0)) })
+            let results = await Task.detached(priority: .utility) {
+                // SSH 先は 1 つずつ時間がかかるので、フォルダごとに並べて探す。
+                await withTaskGroup(of: (String, Result<[String], Error>).self) { group in
+                    for root in roots {
+                        group.addTask {
+                            if RepositoryLocation.isRemote(root.path) {
+                                return (root.path, Result {
+                                    try RemoteScan.findRepositories(
+                                        location: root.path, depth: root.depth, excludes: root.excludes, daemon: daemon, daemons: daemons)
+                                })
+                            }
+                            return (root.path, .success(Self.scan(root)))
+                        }
+                    }
+                    var all: [(String, Result<[String], Error>)] = []
+                    for await result in group { all.append(result) }
+                    return all
+                }
             }.value
+            var found: [String: [String]] = [:]
+            var errors: [String: String] = [:]
+            for (path, result) in results {
+                switch result {
+                case let .success(list): found[path] = list
+                case let .failure(error):
+                    // 探せなかったら、前に見つけたものを残す（つながらないだけで消えたわけではない）。
+                    found[path] = scanned[path] ?? []
+                    errors[path] = "\(error)"
+                }
+            }
             scanned = found
+            scanErrors = errors
             isScanning = false
             onChange?()
         }

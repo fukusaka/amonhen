@@ -46,6 +46,7 @@ usage: amonhen [<path>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   （エンジンを ~/.local/share/amonhen に置き、~/.local/bin/amonhen を張る）
        amonhen engine   （共有の daemon として起動するエンジンの場所）
+       amonhen find-repositories <dir> [--depth <n>] [--exclude <name>]…   （フォルダの下のリポジトリ。SSH 先のスキャンに使う）
        amonhen --version
        amonhen --serve [<socket>] | --stdio <repo> | --socket   （daemon として動く。FE と SSH 先が使う）
 
@@ -86,6 +87,7 @@ fn main() -> ExitCode {
         Some("log") => log(&args[1..]),
         Some("undo") => undo(&args[1..]),
         Some("merge-file") => merge_file(&args[1..]),
+        Some("find-repositories") => find_repositories(&args[1..]),
         Some("daemon") => daemon(&args[1..]),
         Some("install") => install::install(&args[1..]),
         Some("engine") => install::engine(&args[1..]),
@@ -486,6 +488,49 @@ fn undo(args: &[String]) -> Result<ExitCode> {
 }
 
 // MARK: - merge-file
+
+/// `amonhen find-repositories <dir> [--depth <n>] [--exclude <name>]…`: `dir` の下のリポジトリを、`dir` からの相対
+/// パスで 1 行ずつ出す（アプリのリポジトリの一覧の「スキャンするフォルダ」と同じ規則。SSH 先のスキャンで使う）。
+/// `--exclude` を 1 つでも渡すと、既定の除外（node_modules など）の代わりにそれを使う。
+fn find_repositories(args: &[String]) -> Result<ExitCode> {
+    let mut dir: Option<&str> = None;
+    let mut depth = 3;
+    let mut excludes: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
+            "--depth" => {
+                depth = args
+                    .get(i + 1)
+                    .and_then(|v| v.parse().ok())
+                    .ok_or("--depth には数を渡してください")?;
+                i += 1;
+            }
+            "--exclude" => {
+                excludes.push(
+                    args.get(i + 1)
+                        .ok_or("--exclude には名前を渡してください")?
+                        .clone(),
+                );
+                i += 1;
+            }
+            other if dir.is_none() && !other.starts_with("--") => dir = Some(other),
+            other => return Err(format!("知らない引数: {other}\n\n{USAGE}").into()),
+        }
+        i += 1;
+    }
+    let dir = dir.ok_or("探すフォルダを渡してください")?;
+    if excludes.is_empty() {
+        excludes = amonhen_model::scan::DEFAULT_EXCLUDES
+            .iter()
+            .map(|s| (*s).to_owned())
+            .collect();
+    }
+    for path in amonhen_model::scan::find_repositories(Path::new(dir), depth, &excludes) {
+        println!("{}", path.display());
+    }
+    Ok(ExitCode::SUCCESS)
+}
 
 fn merge_file(args: &[String]) -> Result<ExitCode> {
     let mut rules = amonhen_core::conflict::MagicRules::Safe;

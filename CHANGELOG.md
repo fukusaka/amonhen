@@ -12,9 +12,14 @@ becomes the GitHub Release notes.
 #### Changed
 
 - Repositories are chosen on a repository page that opens as a tab (⌘T, ⌘N, ⌘O, ⌘⇧R), instead of a separate window.
-  Categories on the left (All, Favorites, This Mac and each SSH host with their folders, groups, folders to scan) and
+  Categories on the left (All, Favorites, This Mac and each SSH host with their folders to scan and other folders,
+  groups) and
   each repository once on the right, with its branch, status, last commit and when it was last opened. The toolbar has
   a Repositories button for the page, and the repository name next to it opens the same list to switch the current tab.
+
+#### Added
+
+- Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).
 
 #### Fixed
 

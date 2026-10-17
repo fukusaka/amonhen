@@ -9,6 +9,7 @@ mod graph;
 mod oid;
 mod ops;
 mod refs;
+pub mod scan;
 pub mod search;
 mod status;
 mod text;

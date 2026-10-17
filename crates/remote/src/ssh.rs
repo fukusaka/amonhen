@@ -217,6 +217,61 @@ impl RemoteEngine {
 
 /// SSH 先にエンジンを用意して起動し、つなぐ。`ssh` は ssh のコマンド（テストでは偽物を渡す）。
 pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Connection>> {
+    let engine = prepare(ssh, target, daemons)?;
+    let mut args = base_args(target);
+    args.push(format!(
+        "{}; exec {} --stdio {}",
+        cleanup_script(&engine),
+        shell_quote(&engine.path),
+        target.shell_path()
+    ));
+    let conn = Connection::spawn(ssh, &args)?;
+    conn.set_remote_engine(engine.describe());
+    Ok(conn)
+}
+
+/// SSH 先の `target.path` の下のリポジトリを探す（リポジトリの一覧の、SSH 先のスキャンするフォルダ）。エンジンを
+/// 用意して `amonhen find-repositories` を実行し、見つけたものを `target.path` からのパスで返す（`/~/prj` の下なら
+/// `/~/prj/x` の形）。
+pub fn find_repositories(
+    ssh: &str,
+    target: &Target,
+    daemons: &Daemons,
+    depth: u32,
+    excludes: &[String],
+) -> Result<Vec<String>> {
+    let engine = prepare(ssh, target, daemons)?;
+    let excludes: String = excludes
+        .iter()
+        .map(|e| format!(" --exclude {}", shell_quote(e)))
+        .collect();
+    let out = run(
+        ssh,
+        target,
+        &format!(
+            "{}; exec {} find-repositories --depth {depth}{excludes} {}",
+            cleanup_script(&engine),
+            shell_quote(&engine.path),
+            target.shell_path()
+        ),
+        None,
+    )?;
+    let base = target.path.trim_end_matches('/');
+    Ok(out
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(|line| {
+            if line == "." {
+                base.to_owned()
+            } else {
+                format!("{base}/{line}")
+            }
+        })
+        .collect())
+}
+
+/// SSH 先で使うエンジンを決め、なければ送り込む。
+fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine> {
     let configured = daemons.remote_engine.clone();
     let push = daemons.push;
     // OS と CPU、置き場所、PATH の amonhen の版、置いてあるエンジン（ハッシュの名前）を 1 回で調べる。
@@ -290,16 +345,7 @@ pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Conn
             }
         }
     };
-    let mut args = base_args(target);
-    args.push(format!(
-        "{}; exec {} --stdio {}",
-        cleanup_script(&engine),
-        shell_quote(&engine.path),
-        target.shell_path()
-    ));
-    let conn = Connection::spawn(ssh, &args)?;
-    conn.set_remote_engine(engine.describe());
-    Ok(conn)
+    Ok(engine)
 }
 
 /// 使う印を更新し、`KEEP_DAYS` 日使われていないエンジン（と前の置き場所 `~/.cache/amonhen` の古い daemon）を

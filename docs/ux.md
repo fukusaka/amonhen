@@ -66,16 +66,19 @@ The list appears in two places, with the same contents and operations (`Reposito
 
 - **The repository page**, a tab with no repository open (`RepositoryHome.swift`). ⌘T, ⌘N, ⌘O and ⌘⇧R show it, and so
   does launching or closing the last repository with nothing open. On the left are categories: All, Favorites, Places
-  (This Mac and one entry per SSH host), the manual groups and the folders to scan, each with a count. Under This Mac,
-  each SSH host and each folder to scan, the folders that hold repositories form a tree (folders with a single child
-  and no repository of their own are folded into one, like `~/prj/oss`); choosing a folder lists the repositories
-  under it. On the right,
+  (This Mac and one entry per SSH host) and the manual groups, each with a count. Under each place are its folders to
+  scan (🔍; only these are searched, on that machine: SSH hosts are searched by the engine there with
+  `amonhen find-repositories`) and the folders of the other repositories (opened or added by hand), as a tree of the
+  folders that hold repositories (folders with a single child and no repository of their own are folded into one,
+  like `~/prj/oss`); choosing a folder lists the repositories under it. Things are added from the "+" under the left
+  side or by right-clicking: Places adds a local repository or an SSH connection, This Mac a local repository or a
+  folder to scan, a host a repository or a folder to scan on that host, Groups a group; a 🔍 folder sets its depth,
+  rescans or stops scanning. On the right,
   the repositories in the chosen category appear once each, in five sortable columns: name and path, branch, status
   (changes, ahead/behind; "SSH" for remote ones, which are read only when opened), the last commit (when and its
   subject) and when it was last opened (the default order). Dragging rows onto Favorites or a group puts them there.
-  Choosing a repository turns this tab into that repository (⌘⏎ for a new window). The only buttons are "+ Add" (a
-  local repository, Clone, an SSH connection, a group, a folder to scan) and "Open"; everything else is in the context
-  menus. A person takes in about five or six things at once, so each part of the page stays within that. The page has
+  Choosing a repository (double-click or ⏎) turns this tab into that repository (⌘⏎ for a new window). The right side
+  is just the filter and the list; there are no buttons under it. A person takes in about five or six things at once, so each part of the page stays within that. The page has
   the same toolbar as a repository tab (the repository actions are disabled), so the tab bar does not move when
   switching between them. There is no separate window.
 - **Repositories** at the left of the toolbar switches to the repository page (⌘⇧R).

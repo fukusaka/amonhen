@@ -13,3 +13,6 @@ serde = { version = "1.0.229", features = ["derive"], optional = true }
 [features]
 # SSH 越しのリポジトリで、型をそのまま送るため（amonhen-remote が有効にする）。
 serde = ["dep:serde"]
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -173,6 +173,53 @@ pub extern "C" fn amonhen_set_fsmonitor(enabled: bool) {
     amonhen_backend_cli::set_fsmonitor(enabled);
 }
 
+/// SSH 先のフォルダの下のリポジトリを探す（リポジトリの一覧の、SSH 先のスキャンするフォルダ）。`location` は
+/// `ssh://[user@]host[:port]/path`。エンジンの用意は SSH 先のリポジトリを開くときと同じ（`daemon`・`daemons_dir`）。
+/// `excludes` は入らないフォルダの名前を改行でつないだもの。見つけたリポジトリの場所（`ssh://host/path`）を改行で
+/// つないで返す（`amonhen_string_free` で解放）。失敗したら NULL（`amonhen_last_error`）。
+///
+/// # Safety
+/// `location`・`daemon`・`daemons_dir`・`excludes` は NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_find_remote_repositories(
+    location: *const c_char,
+    depth: u32,
+    excludes: *const c_char,
+    daemon: *const c_char,
+    daemons_dir: *const c_char,
+) -> *mut c_char {
+    let result = (|| -> amonhen_model::Result<String> {
+        use amonhen_remote::ssh;
+        let location = str_arg(location)?;
+        let target = ssh::Target::parse(location)?;
+        let daemons = ssh::Daemons::new(
+            str_arg(daemons_dir)?.into(),
+            Some((ssh::local_platform(), str_arg(daemon)?.into())),
+        );
+        let excludes: Vec<String> = str_arg(excludes)?
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(str::to_owned)
+            .collect();
+        let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+        let found = ssh::find_repositories(&program, &target, &daemons, depth, &excludes)?;
+        // 場所の形に戻す（`ssh://` と接続先はそのまま、パスだけ見つけたものに）。
+        let prefix = &location[..location.len() - target.path.len()];
+        Ok(found
+            .iter()
+            .map(|path| format!("{prefix}{path}"))
+            .collect::<Vec<_>>()
+            .join("\n"))
+    })();
+    match result {
+        Ok(text) => CString::new(text).unwrap_or_default().into_raw(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// daemon 越しのリポジトリを開く。`location` は `daemon:/path`（手元の共有の daemon。いなければ `daemon` を起動）か
 /// `ssh://[user@]host[:port]/path`（SSH 先に daemon を送り込んで起動）。SSH 先に送る daemon は
 /// `daemons_dir` の `amonhend-<os>-<arch>`（SSH 先が手元と同じ OS と CPU なら `daemon`）。ssh のコマンドは
