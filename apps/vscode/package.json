@@ -1,7 +1,7 @@
 {
   "name": "amonhen",
   "displayName": "Amon Hen",
-  "description": "VSCode 上で快適に Git を操作するための自分用の拡張",
+  "description": "A personal extension for working with Git comfortably in VSCode, on the Amon Hen engine",
   "version": "0.0.2",
   "publisher": "fukusaka",
   "private": true,

@@ -4,6 +4,10 @@
 
 VSCode 上で快適に Git を操作するための自分用の拡張。Marketplace には公開せず、このリポジトリの GitHub Releases で `.vsix` を配布する。設計は [docs/ja/design.md](docs/ja/design.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照。
 
+> [!WARNING]
+> 開発の途中。機能・ファイルの形・コマンドは、予告なく変わることがある。無保証で、そのままの形で提供する
+> （リポジトリのルートのライセンスを参照）。大事なリポジトリは、バックアップを取っておくこと。
+
 ## 機能
 
 アクティビティバーの Amon Hen アイコンを押すと、サイドバーにナビが、エディタ領域にメインビューが開く（コマンドパレットの「Amon Hen: Open Amon Hen」でもメインビューを開ける）。ナビで選んだものをメインビューに出す。
@@ -93,22 +97,38 @@ HEAD から first-parent で辿れるコミット（最初の merge コミット
 - 差分にシンタックスハイライトは付かない。
 - 外部での変更が反映されるまで約 1 秒かかる（組み込みの Git 拡張の通知を待っているため）。
 
+## エンジンと設定
+
+既定では、History・差分・操作を Amon Hen のエンジン（アプリ・CLI と同じもの）の共有の daemon で行う。`.vsix` に
+macOS arm64・Linux x86_64 / aarch64・Windows x86_64 / aarch64 向けのエンジンを同梱していて、設定はいらない（初めて
+使うときに `~/.local/share/amonhen`、Windows は `%LOCALAPPDATA%\amonhen` に置く）。アプリ・CLI・拡張で、同じ daemon・
+History・検索の索引・Undo の記録を分け合う。Remote-SSH では、接続先でその OS 向けのエンジンを使う。
+
+ホストの OS と CPU に合うエンジンがないとき、または `amonhen.daemon.enabled` を切ったときは、拡張の git 実行層で動く
+（上の機能は同じように使えるが、アプリ・CLI とは分け合わない）。
+
+| 設定 | 既定 | 内容 |
+| --- | --- | --- |
+| `amonhen.daemon.enabled` | `true` | エンジンの共有の daemon を使う。切ると git 実行層だけで動く |
+| `amonhen.daemon.path` | `""` | 同梱のものの代わりに使うエンジン（`amonhen`）の場所 |
+
 ## インストール・更新
 
-`gh` でこのリポジトリにアクセスできる必要がある（private リポジトリのため）。
+[Releases](https://github.com/fukusaka/amonhen/releases) から `amonhen-vscode-<版>.vsix` を取ってきて（正式版は
+`vscode-v<版>`、main の最新は `snapshot`）入れ、ウィンドウを再読み込みする:
 
 ```sh
-scripts/install.sh            # 正式版（最新の Release）
-scripts/install.sh snapshot   # main の最新
+code --install-extension amonhen-vscode-<版>.vsix
 ```
 
-リポジトリを clone していない端末では:
+Remote-SSH の接続先に入れるときは、つないだウィンドウの統合ターミナルで実行する。
+
+ルートの `scripts/install-vscode.sh [stable|snapshot]` で、最新のものを探して取ってきて入れるまでを 1 回でできる（`curl` だけあれば
+よい）。clone していない端末では:
 
 ```sh
-gh api repos/fukusaka/amonhen/contents/apps/vscode/scripts/install.sh --jq .content | base64 -d | sh -s -- snapshot
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- snapshot
 ```
-
-Remote-SSH の接続先に入れるときは、接続した VSCode の統合ターミナルで実行する。入れたあとはウィンドウを再読み込みする。
 
 ## リリース
 
@@ -127,6 +147,9 @@ snapshot は次の patch の pre-release 扱いなので、正式版を入れる
 
 ## 開発
 
+エンジンはリポジトリのルートで作る（`cargo build -p amonhen-cli`。テストはそれを使う）。`bin/` に同梱するエンジンは、
+ルートで `scripts/build-engine.sh`、ここで `scripts/bundle-engine.sh` を実行して写す。
+
 ```sh
 npm install
 npm run build      # dist/extension.js を生成
@@ -138,6 +161,7 @@ VSCode で F5 を押すと、拡張を読み込んだウィンドウが開く。
 
 | ディレクトリ | 内容 |
 | --- | --- |
+| `src/daemon/` | エンジン。探して置く、共有の daemon とのつながり、FE 向けの窓口のクライアント、それを通した History・差分・書き込み |
 | `src/git/` | git 実行層。プロセス起動、常駐 `cat-file`、出力のパース、`.git` の更新時刻による変化検知 |
 | `src/diff/` | 行単位の差分と、選んだ変更だけを当てる処理 |
 | `src/state/` | 状態管理層。リポジトリごとのキャッシュと更新 |

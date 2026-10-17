@@ -112,11 +112,31 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - `git commit-graph write --reachable` の実行を案内すると、グラフ表示と ancestry 判定が速くなる。
 - Remote-SSH では postMessage が SSH を経由するため、大きな差分やログは分割して送る。
 
+## エンジン（共有の daemon）
+
+リポジトリをまとめてからは、拡張の本筋は Amon Hen のエンジン（Rust。アプリ・CLI と同じもの）。`src/daemon/` が、
+ホスト向けに同梱したエンジン（`bin/amonhen-<OS>-<CPU>`）を探して `amonhen install` で置き、共有の daemon
+（`amonhen --serve`。Unix ドメインソケット、Windows は名前付きパイプ）と FE 向けの窓口で話す。命令と答えは JSON、
+大きなデータ（History の行・グラフ・差分）はレコード。取り決めはルートの [docs/front.md](../../../../docs/ja/front.md)、
+設計はルートの [docs/design.md](../../../../docs/ja/design.md) の 18。
+
+- History・差分・Working Copy・書き込みは daemon を通す。daemon は History・検索の索引・SSH のつながりを持ち続け、
+  アプリ・CLI と分け合う。
+- Undo の記録は、コアと同じファイル・同じ形（`<git dir>/amonhen/undo.json`）。コアが記録する操作を拡張がもう一度
+  記録しないよう、`delegation.ts` で分ける。
+- 合うエンジンがないとき、`amonhen.daemon.enabled` を切ったときは、これまでどおり下の git 実行層（上に書いた層）で動く。
+
 ## 配布
 
-- 正式版: `.github/workflows/release.yml`。`v*` タグの push で、タグと `package.json` の version が一致するか確かめ、テスト → `vsce package` → Release に添付する。
-- snapshot: `.github/workflows/snapshot.yml`。main への push のたびに `scripts/snapshot-version.mjs` で `<次の patch>-snapshot.<前回リリースからのコミット数>+<sha>` を作り、`snapshot` という pre-release を置き換える。SemVer の比較で正式版より古くなるので、正式版を入れると上書きされる。
-- 各端末でのインストール・更新: `scripts/install.sh [stable|snapshot]`。`gh release download` → `code --install-extension --force`。
+- 正式版: ルートの `.github/workflows/vscode-release.yml`。`vscode-v*` タグ（アプリ・エンジンは `v*`）の push で、
+  エンジン（Windows も）を作り、`scripts/bundle-engine.sh` で同梱して `vsce package`、ビルドの由来の証明を付けて
+  Release を作る。
+- snapshot: ルートの `.github/workflows/snapshot.yml`。main への push のたびに、`scripts/snapshot-version.mjs` が
+  `<次の patch>-snapshot.<前回リリースからの apps/vscode のコミット数>+<sha>` を作り、エンジンを同梱した `.vsix` を
+  アプリ・エンジンと同じ `snapshot` という pre-release に載せる。SemVer の比較では正式版より古いので、正式版を入れると
+  上書きされる。
+- 各マシンへの導入・更新: `.vsix` を取ってきて `code --install-extension`、またはルートの `scripts/install-vscode.sh [stable|snapshot]`
+  （Releases の API から `curl` で `.vsix` を探して取る → `code --install-extension --force`。`curl … | sh` でも動く）。
 
 ## 実装順序
 

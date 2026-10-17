@@ -112,11 +112,33 @@ The time taken by a small git command is almost entirely the process spawn cost 
 - Suggesting `git commit-graph write --reachable` speeds up the graph display and ancestry checks.
 - With Remote-SSH, postMessage goes over SSH, so large diffs and logs are sent in chunks.
 
+## Engine (shared daemon)
+
+Since the repositories were merged, the extension's main path is the Amon Hen engine (Rust, the same as the app and the
+CLI). `src/daemon/` finds the bundled engine for the host (`bin/amonhen-<os>-<cpu>`), installs it with
+`amonhen install`, and talks to the shared daemon (`amonhen --serve`; a Unix domain socket, or a named pipe on Windows)
+through the front API: commands and answers in JSON, large data (History rows, graph, diffs) as records. The protocol
+is in the root [docs/front.md](../../../docs/front.md), and the design in item 18 of the root
+[docs/design.md](../../../docs/design.md).
+
+- History, diffs, the Working Copy and writes go through the daemon. The daemon keeps the History, the search index and
+  SSH connections, and shares them with the app and the CLI.
+- The Undo log is the same file in the same format as the core's (`<git dir>/amonhen/undo.json`). `delegation.ts` keeps
+  operations the core already records from being recorded again by the extension.
+- Without a matching engine, or with `amonhen.daemon.enabled` off, everything runs on the git execution layer below
+  (the layers described above), as before.
+
 ## Distribution
 
-- Stable release: `.github/workflows/release.yml`. On pushing a `v*` tag, check that the tag matches the version in `package.json`, then test → `vsce package` → attach to the Release.
-- snapshot: `.github/workflows/snapshot.yml`. On every push to main, `scripts/snapshot-version.mjs` produces `<next patch>-snapshot.<number of commits since the last release>+<sha>`, replacing the `snapshot` pre-release. Under SemVer comparison it is older than the stable release, so installing the stable release overwrites it.
-- Installing and updating on each machine: `scripts/install.sh [stable|snapshot]`. `gh release download` → `code --install-extension --force`.
+- Stable release: the root `.github/workflows/vscode-release.yml`. On pushing a `vscode-v*` tag (the app and engine use
+  `v*`), build the engines (including Windows), bundle them with `scripts/bundle-engine.sh`, `vsce package`, attach a
+  build provenance attestation, and create the Release.
+- snapshot: the root `.github/workflows/snapshot.yml`. On every push to main, `scripts/snapshot-version.mjs` produces
+  `<next patch>-snapshot.<number of apps/vscode commits since the last release>+<sha>`, and the `.vsix` with the
+  engines bundled goes on the same `snapshot` pre-release as the app and the engine. Under SemVer comparison it is older
+  than the stable release, so installing the stable release overwrites it.
+- Installing and updating on each machine: download the `.vsix` and `code --install-extension`, or
+  the root `scripts/install-vscode.sh [stable|snapshot]` (finds the `.vsix` through the Releases API with `curl` → `code --install-extension --force`; also runnable as `curl … | sh`).
 
 ## Implementation order
 

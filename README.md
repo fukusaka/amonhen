@@ -1,4 +1,8 @@
-# Amon Hen
+<h1><img src="docs/images/banner.png" alt="Amon Hen"></h1>
+
+[![CI](https://github.com/fukusaka/amonhen/actions/workflows/ci.yml/badge.svg)](https://github.com/fukusaka/amonhen/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/fukusaka/amonhen?filter=!vscode-*)](https://github.com/fukusaka/amonhen/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)](#license)
 
 [日本語](README.ja.md)
 
@@ -11,6 +15,10 @@ The Git GUI I wanted to use, so I'm building it myself. What matters most: no wa
   just like local ones. A shared daemon keeps History, the search index and SSH connections alive, shared by the app,
   the CLI and the extension.
 
+> [!WARNING]
+> Work in progress. Features, file formats and commands may change without notice. It is provided as is, without
+> warranty of any kind (see [License](#license)); keep backups of repositories that matter to you.
+
 ## Requirements
 
 - App: macOS 14.4 or later, Apple silicon (arm64).
@@ -20,23 +28,82 @@ The Git GUI I wanted to use, so I'm building it myself. What matters most: no wa
 
 ## Installation
 
-Get it from [Releases](https://github.com/fukusaka/amonhen/releases). Stable releases are `v<version>` (the VSCode
-extension is `vscode-v<version>`), and the latest main is published as `snapshot` (pre-release).
+Everything is on the [Releases](https://github.com/fukusaka/amonhen/releases) page. Pick one of:
 
-- App: extract `Amon-Hen-<version>.zip` (the snapshot is `Amon-Hen-Snapshot-<version>.zip` and can be installed side by
-  side with the stable release) and put it in `/Applications`. It is signed with Developer ID and notarized, so it
-  opens as is. On first launch, the engine (CLI and daemon) is placed in `~/.local/share/amonhen` and is available as
-  `~/.local/bin/amonhen`.
-- Engine only: extract `amonhen-<version>-<OS>-<CPU>` (tar.gz for Linux and macOS, zip for Windows) and run
-  `amonhen install` (on Windows it is placed in `%LOCALAPPDATA%\amonhen`, so add `%LOCALAPPDATA%\amonhen\bin` to PATH).
-- VSCode extension: install `amonhen-vscode-<version>.vsix` with `code --install-extension <file>`. The extension
-  bundles the engine, and once installed it uses the shared daemon.
+- **Stable**: the release tagged `v<version>` (the VSCode extension has its own `vscode-v<version>`).
+- **Snapshot**: the `snapshot` pre-release, rebuilt from every push to main.
 
-You can check that a downloaded file was built by this repository's CI with
-`gh attestation verify <file> --repo fukusaka/amonhen`.
+> [!NOTE]
+> Signed and notarized builds start from the snapshot and `v0.1.1`. There is no stable VSCode extension yet, so use the
+> snapshot for it.
 
-With the [GitHub CLI](https://cli.github.com/), from a local clone, `scripts/install.sh [stable|snapshot]` (app) and
-`apps/vscode/scripts/install.sh [stable|snapshot]` (extension) do everything from downloading to replacing in one go.
+### App (macOS)
+
+1. Download `Amon-Hen-<version>.zip` (snapshot: `Amon-Hen-Snapshot-<version>.zip`).
+2. Unzip it and move `Amon Hen.app` to `/Applications`. The snapshot is `Amon Hen Snapshot.app` and can sit next to the
+   stable release.
+3. Open it. It is signed and notarized, so it opens without warnings.
+
+On first launch the app also installs the engine (CLI and daemon), so `amonhen` is available from
+`~/.local/bin/amonhen`.
+
+### Engine only (CLI and daemon)
+
+For Linux, Windows, or a Mac without the app.
+
+macOS and Linux: download `amonhen-<version>-<os>-<cpu>.tar.gz` (or use `scripts/install-engine.sh`, see below), then
+
+```sh
+tar xzf amonhen-<version>-linux-x86_64.tar.gz
+./amonhen install    # puts it in ~/.local/share/amonhen and links ~/.local/bin/amonhen
+```
+
+Windows: download `amonhen-<version>-windows-<cpu>.zip`, extract it, then
+
+```powershell
+.\amonhen.exe install    # puts it in %LOCALAPPDATA%\amonhen
+```
+
+and add `%LOCALAPPDATA%\amonhen\bin` to `PATH`.
+
+### VSCode extension
+
+1. Download `amonhen-vscode-<version>.vsix`.
+2. Install it:
+
+   ```sh
+   code --install-extension amonhen-vscode-<version>.vsix
+   ```
+
+3. Reload the window. With Remote-SSH, run the command in the integrated terminal of the connected window so it is
+   installed on the SSH host.
+
+The extension bundles the engine, so nothing else is needed.
+
+### Verifying a download
+
+Each file carries a build provenance attestation:
+
+```sh
+gh attestation verify <file> --repo fukusaka/amonhen
+```
+
+### Shortcut: install scripts
+
+These find the latest release, download it and install (or replace) it in one step. Only `curl` is needed. Without a
+clone:
+
+```sh
+# App (macOS)
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-app.sh | sh -s -- stable
+# Engine only (macOS, Linux)
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.sh | sh -s -- snapshot
+# VSCode extension
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- snapshot
+```
+
+Use `stable` or `snapshot` as the argument. From a clone, run `scripts/install-app.sh`,
+`scripts/install-engine.sh` and `scripts/install-vscode.sh` directly.
 
 ## Documents
 

@@ -4,6 +4,10 @@
 
 A personal extension for working with Git comfortably in VSCode. It is not published on the Marketplace; the `.vsix` is distributed through this repository's GitHub Releases. See [docs/design.md](docs/design.md) for the design and [CHANGELOG.md](CHANGELOG.md) for the change history.
 
+> [!WARNING]
+> Work in progress. Features, file formats and commands may change without notice. It is provided as is, without
+> warranty of any kind (see the license in the repository root); keep backups of repositories that matter to you.
+
 ## Features
 
 Clicking the Amon Hen icon in the activity bar opens the nav in the sidebar and the main view in the editor area (the main view can also be opened with "Amon Hen: Open Amon Hen" in the command palette). Whatever you select in the nav is shown in the main view.
@@ -93,22 +97,39 @@ Undo in the nav reverts the last operation. It covers commits (including amend),
 - Diffs have no syntax highlighting.
 - External changes take about 1 second to show up (because it waits for notifications from the built-in Git extension).
 
+## Engine and settings
+
+By default the extension runs History, diffs and operations through the Amon Hen engine (the same engine as the app and
+the CLI), via the shared daemon. The `.vsix` bundles the engine for macOS arm64, Linux x86_64 / aarch64 and Windows
+x86_64 / aarch64, and nothing needs to be set up: on first use it is placed in `~/.local/share/amonhen` (Windows:
+`%LOCALAPPDATA%\amonhen`). The app, the CLI and the extension share the same daemon, History, search index and Undo
+log. On a Remote-SSH host, the engine for that host is used there.
+
+Without an engine for the host's OS and CPU, or with `amonhen.daemon.enabled` off, the extension runs on its own git
+execution layer (the features above work the same, but without sharing with the app and CLI).
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `amonhen.daemon.enabled` | `true` | Use the engine's shared daemon. Off: the git execution layer only |
+| `amonhen.daemon.path` | `""` | An engine (`amonhen`) to use instead of the bundled one |
+
 ## Install / update
 
-You need access to this repository through `gh` (because it is a private repository).
+Download `amonhen-vscode-<version>.vsix` from [Releases](https://github.com/fukusaka/amonhen/releases) (stable:
+`vscode-v<version>`; latest main: `snapshot`) and install it, then reload the window:
 
 ```sh
-scripts/install.sh            # stable release (the latest Release)
-scripts/install.sh snapshot   # latest main
+code --install-extension amonhen-vscode-<version>.vsix
 ```
 
-On a machine where the repository is not cloned:
+For a Remote-SSH host, run it in the integrated terminal of the connected window.
+
+The root `scripts/install-vscode.sh [stable|snapshot]` finds the latest one, downloads it and installs it in one step (only `curl` is
+needed). Without a clone:
 
 ```sh
-gh api repos/fukusaka/amonhen/contents/apps/vscode/scripts/install.sh --jq .content | base64 -d | sh -s -- snapshot
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- snapshot
 ```
-
-To install on a Remote-SSH host, run it in the integrated terminal of the connected VSCode. After installing, reload the window.
 
 ## Release
 
@@ -127,6 +148,9 @@ Steps to cut a stable release:
 
 ## Development
 
+The engine is built from the repository root (`cargo build -p amonhen-cli`; tests find it there). To bundle the
+engines into `bin/`, run `scripts/build-engine.sh` at the root, then `scripts/bundle-engine.sh` here.
+
 ```sh
 npm install
 npm run build      # generate dist/extension.js
@@ -138,6 +162,7 @@ Pressing F5 in VSCode opens a window with the extension loaded. Setting the log 
 
 | Directory | Description |
 | --- | --- |
+| `src/daemon/` | The engine: finding and installing it, the connection to the shared daemon, the front API client, and History, diffs and writes through it |
 | `src/git/` | The git execution layer. Process spawning, the resident `cat-file`, output parsing, change detection by the modification times in `.git` |
 | `src/diff/` | Line-level diffs, and applying only the selected changes |
 | `src/state/` | The state management layer. Per-repository caches and updates |
