@@ -6,65 +6,71 @@
 
 [日本語](README.ja.md)
 
-The Git GUI I wanted to use, so I'm building it myself. What matters most: no waiting, even on large repositories.
+The Git GUI I wanted to use, so I'm building it myself. What matters most to me is never having to wait, even on
+large repositories.
 
-- History: a list with a graph, commit search, commit editing (message, squash, reorder and more), cherry-pick and revert.
-- Working Copy: line-by-line staging and discarding of diffs, and a 3-pane merge editor.
-- Rewriting history, discarding changes, dropping stashes and the like can all be reverted with Undo.
-- The same engine is also usable from the CLI (`amonhen`) and the VSCode extension, and repositories on SSH hosts work
-  just like local ones. A shared daemon keeps History, the search index and SSH connections alive, shared by the app,
-  the CLI and the extension.
+## What it does
+
+- **History**: browse commits with a branch graph, search them, and edit them (reword, squash, reorder and more).
+  Cherry-pick and revert too.
+- **Working Copy**: pick exactly which lines go into a commit, throw away changes you don't want, and resolve conflicts
+  in a three-pane merge editor.
+- **Undo**: most operations can be undone, even rewriting history or deleting a stash.
+- **Beyond the app**: the same features are available from the command line (`amonhen`) and from VSCode, and
+  repositories on other machines over SSH work just like local ones.
+
+The Git work is done by one program, the **engine**. The macOS app, the command line and the VSCode extension all use
+the same engine, so they share what it has already loaded and stay fast together.
 
 > [!WARNING]
-> Work in progress. Features, file formats and commands may change without notice. It is provided as is, without
-> warranty of any kind (see [License](#license)); keep backups of repositories that matter to you.
+> This is a work in progress. Features, file formats and commands may change without notice. It comes with no
+> warranty (see [License](#license)), so keep backups of repositories that matter to you.
 
 ## Requirements
 
-- App: macOS 14.4 or later, Apple silicon (arm64).
-- Engine (CLI and daemon): macOS arm64, Linux x86_64 and aarch64 (statically linked against musl, so it runs on any
-  Linux), Windows x86_64 and aarch64.
-- All of them use `git` (writes and some reads launch `git`).
+- **App**: macOS 14.4 or later on Apple silicon.
+- **Engine** (command line, and what the VSCode extension uses): macOS on Apple silicon, Linux (x86_64 or arm64, any
+  distribution), or Windows (x86_64 or arm64).
+- `git` must be installed.
 
 ## Installation
 
-Everything is on the [Releases](https://github.com/fukusaka/amonhen/releases) page. Pick one of:
+Download from the [Releases](https://github.com/fukusaka/amonhen/releases) page. There are two kinds:
 
-- **Stable**: the release tagged `v<version>` (the VSCode extension has its own `vscode-v<version>`).
-- **Snapshot**: the `snapshot` pre-release, rebuilt whenever CI passes on main.
+- **Stable** releases, tagged `v<version>` (the VSCode extension has its own tags, `vscode-v<version>`).
+- **Snapshot**: the latest development build, updated whenever the code passes its tests.
 
 > [!NOTE]
-> Stable releases are signed and notarized from `v0.2.0`. Snapshots are signed but not notarized: install them with the
-> script below, or after a browser download allow them once in System Settings > Privacy & Security.
+> Stable releases open without a security warning on macOS. Snapshots do not: install them with the scripts below, or
+> allow them once in System Settings > Privacy & Security after downloading.
 
 ### App (macOS)
 
-1. Download `Amon-Hen-<version>.zip` (snapshot: `Amon-Hen-Snapshot-<version>.zip`).
-2. Unzip it and move `Amon Hen.app` to `/Applications`. The snapshot is `Amon Hen Snapshot.app` and can sit next to the
-   stable release.
-3. Open it. A stable release is signed and notarized, so it opens without warnings.
+1. Download `Amon-Hen-<version>.zip` (the snapshot is `Amon-Hen-Snapshot-<version>.zip`).
+2. Unzip it and move `Amon Hen.app` into `/Applications`. The snapshot is called `Amon Hen Snapshot.app`, so you can
+   keep both.
+3. Open it.
 
-On first launch the app also installs the engine (CLI and daemon), so `amonhen` is available from
-`~/.local/bin/amonhen`.
+The first time it opens, the app also sets up the command line tool, `amonhen` (in `~/.local/bin`).
 
-### Engine only (CLI and daemon)
+### Command line only
 
 For Linux, Windows, or a Mac without the app.
 
-macOS and Linux: download `amonhen-<version>-<os>-<cpu>.tar.gz` (or use `scripts/install-engine.sh`, see below), then
+On macOS or Linux, download `amonhen-<version>-<os>-<cpu>.tar.gz`, then:
 
 ```sh
 tar xzf amonhen-<version>-linux-x86_64.tar.gz
-./amonhen install    # puts it in ~/.local/share/amonhen and links ~/.local/bin/amonhen
+./amonhen install    # copies it to ~/.local/share/amonhen and adds ~/.local/bin/amonhen
 ```
 
-Windows: download `amonhen-<version>-windows-<cpu>.zip`, extract it, then
+On Windows, download `amonhen-<version>-windows-<cpu>.zip`, unzip it, then:
 
 ```powershell
-.\amonhen.exe install    # puts it in %LOCALAPPDATA%\amonhen
+.\amonhen.exe install    # copies it to %LOCALAPPDATA%\amonhen
 ```
 
-and add `%LOCALAPPDATA%\amonhen\bin` to `PATH`.
+and add `%LOCALAPPDATA%\amonhen\bin` to your `PATH`.
 
 ### VSCode extension
 
@@ -75,45 +81,40 @@ and add `%LOCALAPPDATA%\amonhen\bin` to `PATH`.
    code --install-extension amonhen-vscode-<version>.vsix
    ```
 
-3. Reload the window. With Remote-SSH, run the command in the integrated terminal of the connected window so it is
-   installed on the SSH host.
+3. Reload the VSCode window.
 
-The extension bundles the engine, so nothing else is needed.
+The extension includes the engine, so there is nothing else to install. When you work on another machine through
+Remote-SSH, run the command in that window's terminal so the extension is installed on that machine.
 
-### Verifying a download
+### Install or update in one line
 
-Each file carries a build provenance attestation:
-
-```sh
-gh attestation verify <file> --repo fukusaka/amonhen
-```
-
-### Shortcut: install scripts
-
-These find the latest release, download it and install (or replace) it in one step. Only `curl` is needed. Without a
-clone:
+These scripts find the latest release, download it and install it (or replace the one you have). They only need
+`curl`:
 
 ```sh
 # App (macOS)
 curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-app.sh | sh -s -- stable
-# Engine only (macOS, Linux)
+# Command line only (macOS, Linux)
 curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.sh | sh -s -- stable
 # VSCode extension
 curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- stable
 ```
 
-Use `stable` or `snapshot` as the argument. From a clone, run `scripts/install-app.sh`,
-`scripts/install-engine.sh` and `scripts/install-vscode.sh` directly. Running them again updates what is installed; if
-the app is running, `install-app.sh` says so, and the new version takes effect when you reopen it.
+Replace `stable` with `snapshot` for the latest development build. Run the same line again to update. If the app is
+open while you update it, the script tells you, and the new version is used the next time you open the app.
+
+To check that a downloaded file really was built from this repository, see
+[Release](docs/release.md#build-provenance-attestation).
 
 ## Documents
 
-- [Usage](docs/usage.md): app, SSH hosts, shared daemon, CLI
-- [VSCode extension](apps/vscode) and its [design](docs/vscode.md)
-- [Design](docs/design.md) and [front API contract](docs/front.md)
-- [Development](docs/development.md) and [Release](docs/release.md)
+- [Usage](docs/usage.md): the app, repositories over SSH, the command line
+- [VSCode extension](apps/vscode) and how it is built ([design](docs/vscode.md))
+- [Design](docs/design.md), and the [protocol between the engine and the apps](docs/front.md)
+- [Development](docs/development.md) and [making a release](docs/release.md)
 - [Changelog](CHANGELOG.md)
 
 ## License
 
-Use it under your choice of [MIT](LICENSE-MIT) or [Apache License 2.0](LICENSE-APACHE) (`MIT OR Apache-2.0`).
+You may use it under either the [MIT License](LICENSE-MIT) or the [Apache License 2.0](LICENSE-APACHE), whichever you
+prefer (`MIT OR Apache-2.0`).
