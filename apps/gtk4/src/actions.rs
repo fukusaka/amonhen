@@ -201,6 +201,69 @@ impl Actions {
         });
     }
 
+    /// 答えの `text` を返す命令（`commitMessage` など）を裏で実行する。失敗したら知らせて None。
+    pub async fn text(&self, command: Value) -> Option<String> {
+        let repo = self.repo.borrow().clone()?;
+        let reply: Value = gio::spawn_blocking(move || {
+            serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
+        if let Some(error) = reply["error"].as_str() {
+            self.alert("操作に失敗しました", error).await;
+            return None;
+        }
+        reply["text"].as_str().map(str::to_owned)
+    }
+
+    /// コミットの編集（`HistoryEdit`）。
+    pub fn rewrite(self: &Rc<Self>, label: &str, edit: Value) {
+        self.perform(json!({ "op": "rewrite", "label": label, "edit": edit }));
+    }
+
+    /// コミットのメッセージを書き直す。
+    pub fn reword(self: &Rc<Self>, oid: &str) {
+        let (this, oid) = (self.clone(), oid.to_owned());
+        glib::spawn_future_local(async move {
+            let Some(message) = this
+                .text(json!({ "op": "commitMessage", "oid": oid }))
+                .await
+            else {
+                return;
+            };
+            if let Some(edited) = this.edit_message("Edit Message", &message, "変更").await {
+                let label = format!("Reword {}", &oid[..8]);
+                this.rewrite(
+                    &label,
+                    json!({ "kind": "reword", "oid": oid, "message": edited }),
+                );
+            }
+        });
+    }
+
+    /// コミットを親にまとめる（メッセージは親と自分のものを並べた初期値を編集してもらう）。
+    pub fn squash(self: &Rc<Self>, oid: &str) {
+        let (this, oid) = (self.clone(), oid.to_owned());
+        glib::spawn_future_local(async move {
+            let Some(message) = this
+                .text(json!({ "op": "squashMessage", "oid": oid }))
+                .await
+            else {
+                return;
+            };
+            if let Some(edited) = this
+                .edit_message("Squash into Parent", &message, "まとめる")
+                .await
+            {
+                let label = format!("Squash {}", &oid[..8]);
+                this.rewrite(
+                    &label,
+                    json!({ "kind": "squash", "oid": oid, "message": edited }),
+                );
+            }
+        });
+    }
+
     /// JSON の命令にない操作を裏で行い、終わったら読み直す。
     pub fn perform_work(
         self: &Rc<Self>,
@@ -314,6 +377,37 @@ impl Actions {
         }
         let checked = checkbox.as_ref().is_some_and(|c| c.is_active());
         Some((entry.text().trim().to_owned(), checked))
+    }
+
+    /// 複数行のメッセージを編集してもらう。キャンセルなら None。
+    pub async fn edit_message(&self, title: &str, initial: &str, ok: &str) -> Option<String> {
+        let text = gtk::TextView::builder()
+            .monospace(true)
+            .wrap_mode(gtk::WrapMode::WordChar)
+            .top_margin(6)
+            .bottom_margin(6)
+            .left_margin(6)
+            .right_margin(6)
+            .build();
+        text.buffer().set_text(initial);
+        let scrolled = gtk::ScrolledWindow::builder()
+            .child(&text)
+            .min_content_width(460)
+            .min_content_height(180)
+            .has_frame(true)
+            .build();
+        if !self
+            .run_dialog(title, "", scrolled.upcast_ref(), text.upcast_ref(), ok)
+            .await
+        {
+            return None;
+        }
+        let buffer = text.buffer();
+        let message = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .trim()
+            .to_owned();
+        (!message.is_empty()).then_some(message)
     }
 
     /// 一覧から選んでもらう（`choices` は表示と値の組）。キャンセルなら None。

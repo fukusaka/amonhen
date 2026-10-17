@@ -20,6 +20,9 @@ use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
 use crate::graph::{self, Lanes, Metrics};
 
+/// 行を右クリックしたときに呼ぶ（行、x、y）。
+type MenuCallback = Rc<dyn Fn(u32, f64, f64)>;
+
 const CHUNK_ROWS: u32 = 256;
 /// 持っておくチャンクの数（見えている所に近いものから）。
 const KEPT_CHUNKS: usize = 24;
@@ -78,6 +81,8 @@ pub struct State {
     selected: Option<u32>,
     /// 行を選んだときに呼ぶ。
     on_select: Option<Rc<dyn Fn(u32)>>,
+    /// 行を右クリックしたときに呼ぶ（行、x、y）。
+    on_menu: Option<MenuCallback>,
     lanes: Lanes,
     metrics: Metrics,
     tick: Option<gtk::TickCallbackId>,
@@ -147,6 +152,23 @@ mod imp {
                 }
             });
             view.add_controller(click);
+
+            // 右クリック: その行を選んで、コミットのメニュー。
+            let menu = gtk::GestureClick::new();
+            menu.set_button(gdk::BUTTON_SECONDARY);
+            let weak = view.downgrade();
+            menu.connect_pressed(move |_, _, x, y| {
+                let Some(view) = weak.upgrade() else { return };
+                view.grab_focus();
+                if let Some(row) = view.row_at(y as f32) {
+                    view.select(row);
+                    let f = view.state().on_menu.clone();
+                    if let Some(f) = f {
+                        f(row, x, y);
+                    }
+                }
+            });
+            view.add_controller(menu);
 
             let keys = gtk::EventControllerKey::new();
             let weak = view.downgrade();
@@ -317,6 +339,11 @@ impl HistoryView {
         if let Some(f) = callback {
             f(row);
         }
+    }
+
+    /// 行を右クリックしたら `f(行, x, y)` を呼ぶ。
+    pub fn connect_menu(&self, f: impl Fn(u32, f64, f64) + 'static) {
+        self.state().on_menu = Some(Rc::new(f));
     }
 
     /// 行を選んだら `f(行)` を呼ぶ。

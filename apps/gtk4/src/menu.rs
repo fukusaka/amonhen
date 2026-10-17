@@ -15,6 +15,17 @@ pub fn action(title: impl Into<String>, f: impl Fn() + 'static) -> Item {
     Item::Action(title.into(), Box::new(f))
 }
 
+/// 項目の名前（区切りは `---`）。確認用に、出したメニューを文字で書き出すのに使う。
+pub fn titles(items: &[Item]) -> Vec<String> {
+    items
+        .iter()
+        .map(|i| match i {
+            Item::Action(title, _) => title.clone(),
+            Item::Separator => "---".into(),
+        })
+        .collect()
+}
+
 /// `parent` の `(x, y)` に `items` のメニューを出す。
 pub fn popup(parent: &impl IsA<gtk::Widget>, x: f64, y: f64, items: Vec<Item>) {
     if items.is_empty() {

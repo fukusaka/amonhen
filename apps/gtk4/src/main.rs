@@ -1,9 +1,10 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--menu-ref <name>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
 
 mod actions;
 mod appmenu;
+mod commitops;
 mod details;
 mod diff;
 mod graph;
@@ -51,6 +52,8 @@ struct Args {
     select_ref: Option<String>,
     /// 最初に ref を読んだら、この名前の ref の右クリックのメニューを出す（確認用）。
     menu_ref: Option<String>,
+    /// History のこの行の右クリックのメニューを開いておく（確認用）。
+    menu_row: Option<u32>,
     /// 見出しのメニュー（`repository` か `primary`）を開いておく（確認用）。
     open_menu: Option<String>,
     /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
@@ -74,6 +77,10 @@ fn parse_args() -> Result<Args, String> {
             "--working-copy" => args.working_copy = true,
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
             "--menu-ref" => args.menu_ref = Some(it.next().ok_or("--menu-ref <name>")?),
+            "--menu-row" => {
+                let row = it.next().ok_or("--menu-row <row>")?;
+                args.menu_row = Some(row.parse().map_err(|_| "--menu-row <row>")?);
+            }
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
             "--toggle-row" => {
@@ -248,6 +255,15 @@ fn build_window(app: &gtk::Application, args: Args) {
     });
     let r = reload.clone();
     actions.connect_change(move || r());
+    // History のコミットの右クリック。
+    let (a, v) = (actions.clone(), view.downgrade());
+    view.connect_menu(move |row, x, y| {
+        let Some(view) = v.upgrade() else { return };
+        if let Some((_, history)) = view.current() {
+            let items = commitops::menu(&a, &history, row, view.upcast_ref());
+            menu::popup(&view, x, y, items);
+        }
+    });
     // 最後に読んだ ref（メニューにはチェックアウト中のブランチや最新の stash が要る）。
     let refs: Rc<std::cell::RefCell<Option<Arc<amonhen_core::RefsSnapshot>>>> = Rc::default();
     let head = {
@@ -360,6 +376,24 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 Some("primary") => Some(buttons.primary.clone()),
                                 _ => None,
                             };
+                            if let Some(row) = args.menu_row {
+                                view.select(row);
+                                pending.set(pending.get() + 1);
+                                let (p, v, a) = (pending.clone(), view.clone(), actions.clone());
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(300),
+                                    move || {
+                                        if let Some((_, history)) = v.current() {
+                                            let y = (row as f32 + 0.5) * v.row_height();
+                                            let items =
+                                                commitops::menu(&a, &history, row, v.upcast_ref());
+                                            eprintln!("{}", menu::titles(&items).join("\n"));
+                                            menu::popup(&v, 380.0, y as f64, items);
+                                        }
+                                        p.set(p.get() - 1);
+                                    },
+                                );
+                            }
                             if let Some(button) = button {
                                 pending.set(pending.get() + 1);
                                 let p = pending.clone();
@@ -401,6 +435,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 refs.refs.head_branch.as_deref(),
                                 &open_submodule,
                             );
+                            eprintln!("{}", menu::titles(&items).join("\n"));
                             menu::popup(&sidebar.root, 24.0, 120.0, items);
                         }
                         actions.refresh_undo();
