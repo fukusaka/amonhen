@@ -226,6 +226,22 @@
 			<string>%ld files</string>
 		</dict>
 	</dict>
+	<key>%ld more worktrees with changes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld more worktree with changes</string>
+			<key>other</key>
+			<string>%ld more worktrees with changes</string>
+		</dict>
+	</dict>
 	<key>%ld operations running (click for Activity)</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -256,6 +272,22 @@
 			<string>%ld row</string>
 			<key>other</key>
 			<string>%ld rows</string>
+		</dict>
+	</dict>
+	<key>%ld worktrees without changes</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld worktree without changes</string>
+			<key>other</key>
+			<string>%ld worktrees without changes</string>
 		</dict>
 	</dict>
 	<key>%ld: %@ — %ld files</key>

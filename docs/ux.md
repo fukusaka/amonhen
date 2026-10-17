@@ -466,7 +466,9 @@ Viewing mixes them, editing names one:
   changes. History labels each worktree's HEAD commit (green, before the branch labels: ✎ for the edited one, ⌂ for the
   others, with the number of changed files), so where every worktree is and how much it has changed shows on one
   screen. Working Copy lists the changes of every worktree under one heading
-  each (worktrees without changes collapsed), and any of their diffs can be read.
+  each, newest activity first with how long ago (file edits, HEAD and index moves): the five most recent with changes,
+  then "N more worktrees with changes" and "N worktrees without changes"; the filter also matches worktree names,
+  branches and their files. Any of their diffs can be read.
 - **Edit (one worktree, always shown).** The toolbar shows the edited worktree (✎ name) next to its branch. Picking a
   worktree in the sidebar or from ✎ makes it the edited one. Staging or discarding a file of another worktree asks
   "Edit in <worktree>?" first; only reading never switches. Confirmation sheets name the worktree ("Pull into

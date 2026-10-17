@@ -853,3 +853,6 @@
 "Staging, committing and the other changes then go to %@ (branch %@)." = "このあとの stage・コミットなどは、%1$@（ブランチ %2$@）に対して行います。";
 "Checked out in the worktree “%@” (%@)" = "worktree「%1$@」（%2$@）で checkout されています";
 "  · in the worktree %@" = "　· worktree %@ で使用中";
+"%ld more worktrees with changes" = "ほか %ld 個の worktree（変更あり）";
+"%ld worktrees without changes" = "変更のない worktree %ld 個";
+"Last activity: %@" = "最後の作業: %@";

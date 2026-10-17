@@ -345,10 +345,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             slot.watch = try? RepositoryWatch(repository: repository) { [weak self, weak slot] changes in
                 Task { @MainActor in
                     guard let self, let slot, !changes.intersection([.refs, .index, .worktree]).isEmpty else { return }
-                    if changes.contains(.refs) {
-                        self.reloadRefs()
-                        self.reloadWorktrees()
-                    }
+                    // ref は全部の worktree で共通なので、どの worktree の知らせも 1 回の読み直しにまとめる。
+                    if changes.contains(.refs) { self.refsChanged() }
                     // 変わった worktree だけを読み直す（全部は読み直さない）。
                     if slot === self.editing { slot.workingCopy.refresh() } else { self.refreshStatus(of: slot.path) }
                 }
@@ -373,6 +371,25 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard response == .alertFirstButtonReturn else { return }
             self?.edit(worktree: path, file: file)
         }
+    }
+
+    private var refsWork: DispatchWorkItem?
+
+    /// ref（と worktree の HEAD）が変わった。worktree ごとの見張りが一斉に知らせるので、少し待って 1 回だけ
+    /// History・ref・worktree の一覧を読み直す。
+    private func refsChanged() {
+        refsWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.refsWork = nil
+                self.history.refresh()
+                self.reloadRefs()
+                self.reloadWorktrees()
+            }
+        }
+        refsWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
     /// worktree ごとの status（パスで引く）。変化の知らせが来た worktree だけを読み直す。
@@ -424,12 +441,37 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     private func readStatus(of path: String) async {
+        let local = !RepositoryLocation.isRemote(location)
         guard let slot = await slot(for: path),
-              let status = try? await Task.detached(priority: .utility, operation: { try slot.repository.loadStatus() }).value
+              let (status, activity) = try? await Task.detached(priority: .utility, operation: {
+                  let status = try slot.repository.loadStatus()
+                  return (status, local ? Self.lastActivity(of: path, changed: status.items.map(\.path)) : nil)
+              }).value
         else { return }
         worktreeStatus[WorktreeInfo.canonical(path)] = status
+        worktreeActivity[WorktreeInfo.canonical(path)] = activity
         worktreeChanges[path] = status.items.count
         schedulePush()
+    }
+
+    /// worktree ごとの、最後に作業した時刻。
+    private var worktreeActivity: [String: Date] = [:]
+
+    /// 最後に作業した時刻: 変更のあるファイル（多ければ 200 個まで）と、その worktree の HEAD・index を書いた時刻の
+    /// 新しいほう（git の操作もファイルの編集も拾う）。手元の worktree だけ。
+    nonisolated static func lastActivity(of path: String, changed: [String]) -> Date? {
+        let fm = FileManager.default
+        func modified(_ file: String) -> Date? { (try? fm.attributesOfItem(atPath: file))?[.modificationDate] as? Date }
+        var gitDir = (path as NSString).appendingPathComponent(".git")
+        var isDirectory: ObjCBool = false
+        if fm.fileExists(atPath: gitDir, isDirectory: &isDirectory), !isDirectory.boolValue,
+           let text = try? String(contentsOfFile: gitDir, encoding: .utf8), text.hasPrefix("gitdir:") {
+            let target = text.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+            gitDir = target.hasPrefix("/") ? target : (path as NSString).appendingPathComponent(target)
+        }
+        let files = ["HEAD", "index"].map { (gitDir as NSString).appendingPathComponent($0) }
+            + changed.prefix(200).map { (path as NSString).appendingPathComponent($0) }
+        return files.compactMap(modified).max()
     }
 
     /// 読んだ status を画面に出す（同じ回の読み直しで何度も描き直さないよう、まとめて 1 回）。
@@ -447,7 +489,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private func pushOthers() {
         let list: [WorkingCopyViewController.OtherWorktree] = worktrees.compactMap { info in
             guard !info.isSame(editing.path), let status = worktreeStatus[WorktreeInfo.canonical(info.path)] else { return nil }
-            return .init(path: info.path, name: info.name, branch: info.branch, status: status)
+            return .init(path: info.path, name: info.name, branch: info.branch, status: status,
+                         activity: worktreeActivity[WorktreeInfo.canonical(info.path)])
         }
         sidebar.setWorktreeChanges(worktreeChanges)
         showWorktreeHeads()
@@ -990,9 +1033,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             return repositoryDidChange(rest)
         }
         if !changes.intersection([.refs, .config]).isEmpty {
-            history.refresh()
-            reloadRefs()
-            reloadWorktrees()
+            refsChanged()
             // push・fetch の後はプルリクエストも変わりうる（読みすぎないよう、間を空ける）。
             loadGitHub(force: false)
         }

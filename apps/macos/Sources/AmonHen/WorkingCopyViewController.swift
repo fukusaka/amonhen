@@ -103,11 +103,29 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let name: String
         let branch: String?
         let status: WorkingStatus
+        /// 最後に作業した時刻（変更のあるファイルと、HEAD・index が動いた時刻の新しいほう）。
+        let activity: Date?
     }
+    /// ほかの worktree の見出しをまとめる行（「ほか N 個の worktree」「変更のない worktree N」）。
+    private final class OtherBucket {
+        let key: String
+        let title: String
+        let groups: [OtherGroup]
+        init(key: String, title: String, groups: [OtherGroup]) {
+            self.key = key
+            self.title = title
+            self.groups = groups
+        }
+    }
+    /// 一番上に並べる、変更のある worktree の数（残りは「ほか N 個」にまとめる）。
+    private static let shownWorktrees = 5
+    private var otherTop: [Any] = []
     /// この worktree の見出し（ほかの worktree があるときだけ出す）。
     private final class OwnHeader {}
     private final class OtherGroup {
         let worktree: OtherWorktree
+        /// すべての変更と、絞り込んだもの（一覧に出すもの）。
+        var all: [OtherEntry] = []
         var entries: [OtherEntry] = []
         init(_ worktree: OtherWorktree) { self.worktree = worktree }
     }
@@ -138,12 +156,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard summary != othersSummary else { return }
         othersSummary = summary
         let wasExpanded = Dictionary(others.map { ($0.worktree.path, files.isItemExpanded($0)) }, uniquingKeysWith: { a, _ in a })
+            .merging(otherTop.compactMap { ($0 as? OtherBucket).map { ($0.key, files.isItemExpanded($0)) } }) { a, _ in a }
         let viewing = viewingOther.map { ($0.group.worktree.path, $0.item.path, $0.group.worktree.status) }
-        others = list.map { worktree in
+        others = list.sorted { ($0.activity ?? .distantPast) > ($1.activity ?? .distantPast) }.map { worktree in
             let group = OtherGroup(worktree)
-            group.entries = worktree.status.items.sorted { $0.path < $1.path }.map { OtherEntry(group: group, item: $0) }
+            group.all = worktree.status.items.sorted { $0.path < $1.path }.map { OtherEntry(group: group, item: $0) }
+            group.entries = group.all
             return group
         }
+        arrangeOthers()
         guard isViewLoaded else { return }
         // 一覧だけを作り直す。書き込む先のファイルの差分は読み直さない（選び直しても同じファイルなら何もしない）。
         let selected = files.item(atRow: files.selectedRow)
@@ -151,6 +172,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         files.expandItem(ownHeader, expandChildren: true)
         if let tree { for dir in tree.dirs { files.expandItem(dir, expandChildren: true) } }
         // ほかの worktree は畳んでおく（数が多いと一覧が長くなる）。開いたものは開いたまま。
+        for case let bucket as OtherBucket in otherTop where wasExpanded[bucket.key] ?? false { files.expandItem(bucket) }
         for group in others where wasExpanded[group.worktree.path] ?? false { files.expandItem(group) }
         emptyLabel.isHidden = !entries.isEmpty || !others.isEmpty
         if let (path, file, oldStatus) = viewing,
@@ -166,6 +188,41 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             suppressSelection = false
         }
     }
+
+    /// ほかの worktree を並べる: 変更のあるものを新しい順に `shownWorktrees` 個、残りは「ほか N 個」、変更のない
+    /// ものは「変更のない worktree N」にまとめる。絞り込みの文字があれば、ファイルのパスか worktree の名前・
+    /// ブランチが合うものだけ。
+    private func arrangeOthers() {
+        let query = isViewLoaded ? filterField.stringValue.trimmingCharacters(in: .whitespaces).lowercased() : ""
+        var changed: [OtherGroup] = [], quiet: [OtherGroup] = []
+        for group in others {
+            group.entries = group.all
+            if !query.isEmpty {
+                let w = group.worktree
+                let nameMatches = w.name.lowercased().contains(query) || (w.branch?.lowercased().contains(query) ?? false)
+                if !nameMatches {
+                    group.entries = group.all.filter { $0.item.path.lowercased().contains(query) }
+                    if group.entries.isEmpty { continue }
+                }
+            }
+            if group.entries.isEmpty { quiet.append(group) } else { changed.append(group) }
+        }
+        var top: [Any] = Array(changed.prefix(Self.shownWorktrees))
+        if changed.count > Self.shownWorktrees {
+            let rest = Array(changed.dropFirst(Self.shownWorktrees))
+            top.append(OtherBucket(key: "more", title: L("%ld more worktrees with changes", rest.count), groups: rest))
+        }
+        if !quiet.isEmpty {
+            top.append(OtherBucket(key: "quiet", title: L("%ld worktrees without changes", quiet.count), groups: quiet))
+        }
+        otherTop = top
+    }
+
+    private static let relative: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return f
+    }()
 
     /// 前に並べたほかの worktree の中身（変わったときだけ描き直す）。
     private var othersSummary: [[String]] = []
@@ -509,10 +566,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let query = filterField.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
         entries = query.isEmpty ? allEntries : allEntries.filter { $0.item.path.lowercased().contains(query) }
         tree = showsTree ? Self.makeTree(entries) : nil
+        arrangeOthers()
         files.reloadData()
         files.expandItem(nil, expandChildren: true)
-        // ほかの worktree は畳んでおく（見出しの数で分かる。数が多いと一覧が長くなる）。
-        for group in others { files.collapseItem(group) }
+        // ほかの worktree は畳んでおく（見出しの数で分かる。数が多いと一覧が長くなる）。絞り込んでいれば、合ったものを
+        // 開いて見せる。
+        if query.isEmpty {
+            for group in others { files.collapseItem(group) }
+            for case let bucket as OtherBucket in otherTop { files.collapseItem(bucket) }
+        }
         emptyLabel.stringValue = allEntries.isEmpty ? L("No changes") : L("No matching files")
         emptyLabel.isHidden = !entries.isEmpty || !others.isEmpty
         updateHeader()
@@ -1312,8 +1374,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     private func children(of item: Any?) -> [Any] {
         switch item {
-        case nil: others.isEmpty ? (tree?.children ?? entries) : [ownHeader] + others
+        case nil: others.isEmpty ? (tree?.children ?? entries) : [ownHeader] + otherTop
         case is OwnHeader: tree?.children ?? entries
+        case let bucket as OtherBucket: bucket.groups
         case let group as OtherGroup: group.entries
         case let dir as Dir: dir.children
         default: []
@@ -1329,7 +1392,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        item is Dir || item is OwnHeader || item is OtherGroup
+        item is Dir || item is OwnHeader || item is OtherGroup || item is OtherBucket
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -1339,12 +1402,17 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             cell.show(check: nil, mark: ("✎", .controlAccentColor), name: worktreeName ?? "", dimmed: false,
                       tip: L("The worktree you edit: commits and staging go here"), detail: "\(allEntries.count)")
             cell.onDiscard = nil
+        case let bucket as OtherBucket:
+            cell.show(check: nil, mark: ("", .secondaryLabelColor), name: bucket.title, dimmed: true, tip: nil)
+            cell.onDiscard = nil
         case let group as OtherGroup:
             let w = group.worktree
+            let when = w.activity.map { Self.relative.localizedString(for: $0, relativeTo: Date()) }
             cell.show(check: nil, mark: ("", .secondaryLabelColor), name: w.name, dimmed: true,
-                      tip: [w.path, w.branch.map { L("Branch: %@", $0) }].compactMap { $0 }.joined(separator: "\n"),
-                      detail: [group.entries.isEmpty ? "–" : "\(group.entries.count)", w.branch]
-                        .compactMap { $0 }.joined(separator: "  "))
+                      tip: [w.path, w.branch.map { L("Branch: %@", $0) } ?? L("detached HEAD"),
+                            w.activity.map { L("Last activity: %@", $0.formatted(date: .abbreviated, time: .shortened)) }]
+                        .compactMap { $0 }.joined(separator: "\n"),
+                      detail: [group.entries.isEmpty ? nil : "\(group.entries.count)", when].compactMap { $0 }.joined(separator: " · "))
             cell.onDiscard = nil
         case let other as OtherEntry:
             let item = other.item
