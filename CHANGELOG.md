@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Line numbers, file headers and stage checkboxes in diffs no longer come out garbled after the window moves
+  between screens of different scale (1x and 2x).
 - Building History no longer spins up threads for every few commits. On the Linux engines (musl) it was 5 times
   slower than it should be; on git/git it now takes about 0.1 s instead of 0.6 s there, and about 20% less elsewhere.
 
