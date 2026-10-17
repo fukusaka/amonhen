@@ -508,7 +508,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard let hex = w.head, let head = Data(hex: hex) else { return nil }
             let editingThis = w.isSame(editing.path)
             let changes = worktreeChanges[w.path] ?? 0
-            let name = (editingThis ? "✎ " : "⌂ ") + w.name + (changes > 0 ? " · \(changes)" : "")
+            // ✎ 書き込む先、⌂ メインの作業ツリー、⑂ 追加した worktree（サイドバーと同じ印）。
+            let mark = editingThis ? "✎ " : w.main ? "⌂ " : "⑂ "
+            let name = mark + w.name + (changes > 0 ? " · \(changes)" : "")
             return (head, name, editingThis)
         })
     }
@@ -532,7 +534,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let multiple = worktrees.count > 1
         history.setWorktreeBranches(
             editing: multiple ? .some(info?.branch) : nil,
-            elsewhere: multiple ? Set(worktrees.filter { !$0.isSame(editing.path) }.compactMap(\.branch)) : [])
+            elsewhere: multiple ? Set(worktrees.filter { !$0.isSame(editing.path) && !$0.main }.compactMap(\.branch)) : [])
         if multiple, let hex = info?.head, let head = Data(hex: hex) { history.head = head }
         let other = editing !== opened || (info.map { !$0.main } ?? false)
         toolbar.setRepository(window.title, worktree: other ? info?.name ?? (editing.path as NSString).lastPathComponent : nil)

@@ -451,8 +451,12 @@ What git says, and what the app keeps:
 - A branch can be checked out in only one worktree. The app never forces it (`--ignore-other-worktrees`): choosing a
   branch that another worktree has checked out moves the edited worktree there instead.
 - "The current branch" is the edited worktree's branch: bold with an accent icon in Branches, the filled label in
-  History, the toolbar's Branch. Branches checked out in other worktrees show "⌂ worktree" in Branches, a green
-  label in History, and "in the worktree …" in the branch switcher.
+  History, the toolbar's Branch. Three marks tell worktrees apart everywhere: ✎ the edited worktree, ⌂ the main
+  worktree (the one holding `.git`), ⑂ a linked worktree. In Branches, the current branch gets ✎, the main worktree's
+  branch ⌂, and a branch checked out in a linked worktree ⑂ with a green icon (its worktree in the tooltip); History
+  labels each worktree's HEAD with the same mark, and a linked worktree's branch label is green; the branch switcher
+  says "in the worktree …". Worktrees on a detached HEAD have no branch, so they show only under Worktrees and in
+  History.
 - Worktrees are created and removed with git (`git worktree add`, `remove`, `prune`; listed with
   `git worktree list --porcelain`), never by editing `.git/worktrees`. Removing one with changes asks, then uses
   `--force`; locked worktrees are shown as locked and never pruned; a worktree whose folder is gone is shown as
@@ -464,7 +468,7 @@ Viewing mixes them, editing names one:
 
 - **View (all worktrees together).** The sidebar's Worktrees lists every worktree with its branch and number of
   changes. History labels each worktree's HEAD commit (green, before the branch labels: ✎ for the edited one, ⌂ for the
-  others, with the number of changed files), so where every worktree is and how much it has changed shows on one
+  main worktree, ⑂ for linked ones, with the number of changed files), so where every worktree is and how much it has changed shows on one
   screen. Working Copy lists the changes of every worktree under one heading
   each, newest activity first with how long ago (file edits, HEAD and index moves): the five most recent with changes,
   then "N more worktrees with changes" and "N worktrees without changes"; the filter also matches worktree names,

@@ -234,7 +234,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // しない。docs/ux.md の「Worktrees」）。
         if !RepositoryLocation.isRemote(path), let main = RepositoryList.mainRepository(ofWorktree: path) {
             open(path: main, debug: debug, inNewWindow: inNewWindow, replacing: replacing)
-            if let window = windows.first(where: { RepositoryLocation.path($0.location) == main }) {
+            // `/private/tmp` と `/tmp` のような違いがあるので、リンクを解いて比べる。
+            let key = WorktreeInfo.canonical(main)
+            if let window = windows.first(where: { WorktreeInfo.canonical(RepositoryLocation.path($0.location)) == key }) {
                 window.edit(worktree: path)
             }
             return

@@ -441,8 +441,11 @@ git の考え方と、アプリが守ること:
 - 1 つのブランチは 1 つの worktree でしか checkout できない。アプリは押し通さない（`--ignore-other-worktrees` は
   使わない）: ほかの worktree が checkout しているブランチを選んだら、書き込む先をその worktree に移す。
 - 「今のブランチ」は書き込む先の worktree のブランチ: Branches で太字・色付きのアイコン、History で塗った札、
-  ツールバーの Branch。ほかの worktree が checkout しているブランチは、Branches に「⌂ worktree」、History で緑の札、
-  ブランチの切り替えのパネルに「worktree … で使用中」と出す。
+  ツールバーの Branch。worktree はどこでも 3 つの印で見分ける: ✎ 書き込む先、⌂ メインの作業ツリー（`.git` を持つ
+  もの）、⑂ 追加した worktree。Branches では、今のブランチに ✎、メインの作業ツリーのブランチに ⌂、追加した worktree が
+  checkout しているブランチに ⑂ と緑のアイコン（worktree はツールチップに）。History は各 worktree の HEAD に同じ印の札を
+  付け、追加した worktree のブランチの札は緑。ブランチの切り替えのパネルには「worktree … で使用中」。detached HEAD の
+  worktree はブランチがないので、Worktrees と History にだけ出る。
 - worktree の作成・削除は git で行う（`git worktree add`・`remove`・`prune`、一覧は
   `git worktree list --porcelain`）。`.git/worktrees` を直接いじらない。変更が残っている worktree の削除は確かめて
   から `--force`。ロック中のものはロック中と見せ、片付けない。フォルダがなくなったものは片付け待ちと見せる。
@@ -452,8 +455,8 @@ git の考え方と、アプリが守ること:
 見るときは混ぜ、書くときは 1 つを名指す:
 
 - **見る（全部の worktree をまとめて）**。サイドバーの Worktrees に、全部の worktree をブランチと変更の数つきで
-  並べる。History では、各 worktree の HEAD のコミットに札を付ける（緑。ブランチの札の前。書き込む先は ✎、ほかは ⌂、
-  変更のあるファイルの数つき）。どの worktree がどこにいて、どれだけ書き換えているかが 1 画面で分かる。Working Copy には全部の worktree の変更を worktree ごとの見出しで
+  並べる。History では、各 worktree の HEAD のコミットに札を付ける（緑。ブランチの札の前。書き込む先は ✎、メインの作業ツリーは ⌂、
+  追加した worktree は ⑂。変更のあるファイルの数つき）。どの worktree がどこにいて、どれだけ書き換えているかが 1 画面で分かる。Working Copy には全部の worktree の変更を worktree ごとの見出しで
   並べる。最後の作業（ファイルの編集、HEAD・index の動き）の新しい順に「何分前」を添え、変更のあるもの 5 つの後は
   「ほか N 個の worktree」「変更のない worktree N 個」にまとめる。絞り込みは worktree の名前・ブランチ・ファイルにも
   効く。どの差分も読める。

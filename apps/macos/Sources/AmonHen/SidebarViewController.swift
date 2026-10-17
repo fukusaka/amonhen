@@ -311,12 +311,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
         var badge = node.badge ?? ""
         if let item = node.item, item.kind == .local, let other = otherWorktree(using: item.name) {
-            // ほかの worktree が checkout している（git はここでは checkout させない）。
-            // 名前は長いことが多いので、行には ⌂ だけを出し、worktree の名前はツールチップに（ブランチ名を隠さない）。
-            cell.imageView?.contentTintColor = .systemGreen
+            // ほかの worktree が checkout している（git はここでは checkout させない）。名前は長いことが多いので、
+            // 行には印だけを出し、worktree の名前はツールチップに（ブランチ名を隠さない）。メインの作業ツリーは ⌂、
+            // 追加した worktree は ⑂（緑）。
             cell.toolTip = L("Checked out in the worktree “%@” (%@)", other.name, other.path)
-            cell.badge.stringValue = "⌂"
-            cell.badge.textColor = .systemGreen
+            cell.badge.stringValue = other.main ? "⌂" : "⑂"
+            cell.badge.textColor = other.main ? .secondaryLabelColor : .systemGreen
+            if !other.main { cell.imageView?.contentTintColor = .systemGreen }
             return cell
         } else if let item = node.item, item.kind == .local {
             if item.gone {
@@ -324,6 +325,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             } else {
                 badge = [item.ahead > 0 ? "↑\(item.ahead)" : nil, item.behind > 0 ? "↓\(item.behind)" : nil]
                     .compactMap { $0 }.joined(separator: " ")
+            }
+            // worktree が 2 つ以上なら、今のブランチ（書き込む先のもの）に ✎ を添える。
+            if node.isHead, editingInfo != nil {
+                badge = badge.isEmpty ? "✎" : "✎ " + badge
             }
         }
         if let w = node.worktree {
@@ -364,7 +369,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if node.title == L("Conflicts"), node.page != nil { return "exclamationmark.triangle" }
         if let page = node.page { return page == .workingCopy ? "square.and.pencil" : "clock" }
         if node.pullRequest != nil { return "arrow.triangle.pull" }
-        if node.worktree != nil { return node.isHead ? "pencil.circle" : "folder" }
+        if let w = node.worktree { return node.isHead ? "pencil.circle" : w.main ? "house" : "arrow.triangle.branch" }
         if node.remote != nil { return "network" }
         switch node.item?.kind {
         case .local?, .remote?: return "arrow.triangle.branch"
