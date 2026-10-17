@@ -9,7 +9,7 @@ mod verify;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -193,6 +193,9 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
     })
 }
 
+/// ネットワークを使う git が、これだけ何も出さなければ止める（`--progress` なので、動いていれば数秒ごとに出す）。
+const NETWORK_SILENCE: Duration = Duration::from_secs(120);
+
 /// `--progress` を付けて実行し、標準エラーの進み具合（\r で上書きされる行）を Activity に書く。取り消しを
 /// 頼まれたら git を止める。
 fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
@@ -207,6 +210,10 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd.spawn()?;
     activity::set_cancellable(seq);
+    // 最後に標準エラーに何か出た時刻（始めてからのミリ秒）。認証の入力待ちなどで黙ったままのときに止める。
+    let started = Instant::now();
+    let heard = Arc::new(AtomicU64::new(0));
+    let heard_in_thread = heard.clone();
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let out_thread = std::thread::spawn(move || {
@@ -223,6 +230,7 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
             if n == 0 {
                 break;
             }
+            heard_in_thread.store(started.elapsed().as_millis() as u64, Ordering::Relaxed);
             for &b in &chunk[..n] {
                 if b == b'\r' || b == b'\n' {
                     let text = String::from_utf8_lossy(&line).trim().to_owned();
@@ -253,6 +261,19 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
             let _ = out_thread.join();
             let _ = err_thread.join();
             return Err("取り消した".into());
+        }
+        let silent = started.elapsed().as_millis() as u64 - heard.load(Ordering::Relaxed);
+        if silent > NETWORK_SILENCE.as_millis() as u64 {
+            kill_tree(&mut child);
+            let _ = child.wait();
+            let _ = out_thread.join();
+            let _ = err_thread.join();
+            return Err(format!(
+                "{} 秒のあいだ応答がないので止めました。認証の入力を待っていたのかもしれません\
+                 （ターミナルで同じ git を実行して、認証を済ませてください）",
+                NETWORK_SILENCE.as_secs()
+            )
+            .into());
         }
         std::thread::sleep(std::time::Duration::from_millis(50));
     };
@@ -677,7 +698,7 @@ mod streaming_tests {
             "ext::sleep 30",
             "main",
         ]);
-        let started = std::time::Instant::now();
+        let started = Instant::now();
         let handle = std::thread::spawn(move || run(cmd, None));
         let seq = loop {
             if let Some(r) = amonhen_model::activity::records()

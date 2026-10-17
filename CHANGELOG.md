@@ -17,12 +17,23 @@ becomes the GitHub Release notes.
   each repository once on the right, with its branch, status, last commit and when it was last opened. The toolbar has
   a Repositories button for the page, and the repository name next to it opens the same list to switch the current tab.
 
+- Pull, Push, Pop and Undo no longer run on a single click. Each opens a sheet with what will happen: the commits to
+  send or bring in, how Pull integrates them (merge, rebase or fast-forward only, chosen there) and what that does,
+  uncommitted changes in the way, the stash or operation being undone. Push suggests Pull when upstream has commits
+  you lack, and Force Push lists the commits upstream would lose. The ▾ menus on Pull, Push and Branch are gone.
+- Discarding a whole file in Working Copy asks first.
+- The repository page: folders under a place no longer count repositories already under a folder to scan, the status
+  column says "changes n" and explains itself, and empty Groups are hidden.
+
 #### Added
 
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).
 
 #### Fixed
 
+- Fetch, Pull and Push no longer hang forever when git waits for credentials nobody can see: after 120 seconds with no
+  output they stop and say so.
+- The repository name in the toolbar has a fixed width, so the buttons after it stay put when switching tabs.
 - The repository list no longer jumps back to the top while scrolling (each row's branch and change count used to
   rebuild the whole list as it arrived).
 - Line numbers, file headers and stage checkboxes in diffs no longer come out garbled after the window moves

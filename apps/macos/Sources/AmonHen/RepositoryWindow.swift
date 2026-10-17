@@ -739,27 +739,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func pullRebase(_ sender: Any?) { pull(mode: .rebase) }
     @objc func pullFastForward(_ sender: Any?) { pull(mode: .fastForwardOnly) }
 
-    private func pull(mode: PullMode) {
-        actions.perform(["op": "pull", "mode": mode.rawValue])
-    }
+    /// Pull・Push・Pop は、すぐには実行しないで何が起きるかをシートで見せる（`SyncSheets.swift`）。
+    private func pull(mode: PullMode) { actions.pullWithConfirmation(mode: mode) }
 
-    @objc func push(_ sender: Any?) { actions.push() }
-
-    @objc func forcePush(_ sender: Any?) {
-        let branch = latestRefs?.headBranch ?? "HEAD"
-        guard actions.confirm(
-            "\(branch) を force push しますか？",
-            message: "上流のブランチを手元の内容で置き換えます（--force-with-lease。ほかの人が先に push していたら失敗します）。",
-            ok: "Force Push") else { return }
-        actions.push(force: true)
-    }
+    @objc func push(_ sender: Any?) { actions.pushWithConfirmation() }
+    @objc func forcePush(_ sender: Any?) { actions.pushWithConfirmation(force: true) }
 
     @objc func stashChanges(_ sender: Any?) { actions.stash() }
 
     /// 最新の stash（`stash@{0}`）を戻して消す。
     @objc func popStash(_ sender: Any?) {
-        guard let name = latestStash else { return NSSound.beep() }
-        actions.perform(["op": "stashApply", "name": name, "pop": true])
+        guard let stash = latestRefs?.items.first(where: { $0.kind == .stash }) else { return NSSound.beep() }
+        actions.popWithConfirmation(name: stash.name, message: stash.detail)
     }
 
     private var latestStash: String? {
@@ -796,7 +787,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func abortSequence(_ sender: Any?) { actions.perform(["op": "abort"]) }
 
     /// Repository > Undo（⌥⌘Z）・ツールバーの Undo。git の操作を操作ログで戻す（テキストの ⌘Z とは別）。
-    @objc func undoOperation(_ sender: Any?) { actions.undo() }
+    @objc func undoOperation(_ sender: Any?) { actions.undoWithConfirmation() }
 
     @objc func showWorkingCopy(_ sender: Any?) { sidebar.select(page: .workingCopy) }
     @objc func showHistory(_ sender: Any?) { sidebar.select(page: .history) }

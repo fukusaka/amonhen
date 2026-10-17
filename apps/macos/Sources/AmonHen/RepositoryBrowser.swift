@@ -281,6 +281,12 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 column.minWidth = 60
                 column.resizingMask = .userResizingMask
                 column.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: ascending)
+                column.headerToolTip = [
+                    "branch": "今のブランチ",
+                    "status": "変更 n: 変更のあるファイルの数（untracked は数えない）\n↑ 上流より先・↓ 後ろのコミットの数\n✓ 変更なしで上流と同じ",
+                    "commit": "最後のコミットの日時と件名",
+                    "opened": "このアプリで最後に開いた日時（— はまだ開いていない）",
+                ][id]
                 table.addTableColumn(column)
             }
             table.autosaveName = "RepositoryPage.v2"
@@ -340,7 +346,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             add.bezelStyle = .accessoryBarAction
             add.isBordered = false
             (add.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
-            add.item(at: 0)?.title = ""
+            add.item(at: 0)?.title = "追加"
+            add.imagePosition = .imageLeading
             add.item(at: 0)?.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "加える")
             add.toolTip = "リポジトリ・SSH 接続・グループ・スキャンするフォルダを加える"
             // 右は絞り込みと一覧だけ（開くのはダブルクリックと ⏎、加えるのは左の ＋ と右クリック）。
@@ -477,8 +484,21 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                                                     title: Self.remoteTitle)))
         }
         roots.append(SideNode("場所", nil, children: places))
-        roots.append(SideNode("グループ", nil, children: bookmarks.data.groups.map { SideNode($0, symbol: "folder", .group($0)) }))
+        // グループは作ってから出す（空の見出しを並べない。作るのは左下の ＋ と、リポジトリの右クリック）。
+        if !bookmarks.data.groups.isEmpty {
+            roots.append(SideNode("グループ", nil, children: bookmarks.data.groups.map { SideNode($0, symbol: "folder", .group($0)) }))
+        }
         return roots
+    }
+
+    /// `location` が、同じ場所（`host`。手元なら nil）のスキャンするフォルダの下にあるか。
+    private static func isScanned(_ location: String, host: String?) -> Bool {
+        let path = pathPart(location)
+        return Bookmarks.shared.data.scanRoots.contains { root in
+            guard sshHost(root.path) == host else { return false }
+            let base = pathPart(root.path)
+            return path == base || path.hasPrefix(base + "/")
+        }
     }
 
     /// 場所の中のパス（SSH 先ならそのホストの上のパス、手元の共有の daemon 越しなら手元のパス）。
@@ -562,10 +582,15 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         case let .host(name): return bookmarks.allLocations.filter { Self.sshHost($0) == name }
         case let .group(name): return bookmarks.data.items.filter { $0.group == name }.map(\.path)
         case let .scan(path): return bookmarks.scanned[path] ?? []
+        // 場所の下のフォルダは、スキャンするフォルダの外のものだけ（左の木と同じ。スキャンした分は 🔍 の下に出す）。
         case let .folder(prefix):
-            return bookmarks.allLocations.filter { Self.sshHost($0) == nil && Self.localPath($0).hasPrefix(prefix + "/") }
+            return bookmarks.allLocations.filter {
+                Self.sshHost($0) == nil && Self.localPath($0).hasPrefix(prefix + "/") && !Self.isScanned($0, host: nil)
+            }
         case let .hostFolder(host, prefix):
-            return bookmarks.allLocations.filter { Self.sshHost($0) == host && RepositoryLocation.path($0).hasPrefix(prefix + "/") }
+            return bookmarks.allLocations.filter {
+                Self.sshHost($0) == host && RepositoryLocation.path($0).hasPrefix(prefix + "/") && !Self.isScanned($0, host: host)
+            }
         case let .scanFolder(root, prefix):
             return (bookmarks.scanned[root] ?? []).filter { Self.pathPart($0).hasPrefix(prefix + "/") }
         }
@@ -1132,6 +1157,15 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             if Bookmarks.shared.isScanning { count = "…" } else if Bookmarks.shared.scanErrors[root] != nil { count = "⚠︎" }
         }
         cell.show(title: node.title, symbol: node.symbol, count: count)
+        // 狭いと名前の途中が省かれるので、フォルダはフルパスをツールチップに出す。
+        let tilde = { (path: String) in (path as NSString).abbreviatingWithTildeInPath }
+        switch category {
+        case let .folder(path): cell.toolTip = tilde(path)
+        case let .scan(root): cell.toolTip = "\(Self.sshHost(root).map { $0 + ":" } ?? "")\(tilde(Self.pathPart(root))) を探す"
+        case let .scanFolder(root, path): cell.toolTip = "\(Self.sshHost(root).map { $0 + ":" } ?? "")\(tilde(path))"
+        case let .hostFolder(host, path): cell.toolTip = "\(host):\(Self.remoteTitle(path))"
+        default: cell.toolTip = nil
+        }
         return cell
     }
 
@@ -1238,7 +1272,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 }
                 var parts: [String] = []
                 if let peek {
-                    if peek.changed > 0 { parts.append("● \(peek.changed)") }
+                    if peek.changed > 0 { parts.append("変更 \(peek.changed)") }
                     if peek.ahead > 0 { parts.append("↑\(peek.ahead)") }
                     if peek.behind > 0 { parts.append("↓\(peek.behind)") }
                     if parts.isEmpty { parts.append("✓") }
@@ -1263,7 +1297,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                     label.stringValue = remote ? "—" : ""
                 }
             case "opened":
-                label.stringValue = RepositoryList.openedAt(location).map { Self.relative.localizedString(for: $0, relativeTo: Date()) } ?? ""
+                label.stringValue = RepositoryList.openedAt(location).map { Self.relative.localizedString(for: $0, relativeTo: Date()) } ?? "—"
             default:
                 label.stringValue = ""
             }

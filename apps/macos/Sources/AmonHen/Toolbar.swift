@@ -8,15 +8,16 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     let toolbar = NSToolbar(identifier: "main.v4")
     private let repositoryItem = NSToolbarItem(itemIdentifier: .repository)
     private let repositoryButton = NSButton()
-    private let branchItem = NSMenuToolbarItem(itemIdentifier: .branch)
+    private let branchItem = NSToolbarItem(itemIdentifier: .branch)
     private let searchItem = NSSearchToolbarItem(itemIdentifier: .search)
     /// 検索欄で ⏎ を押した（History を探す）。
     var onSearch: ((String) -> Void)?
     /// 検索欄で ⇧↩: 前の一致へ（-1）。
     var onSearchStep: ((Int) -> Void)?
     private let undoItem = NSToolbarItem(itemIdentifier: .undo)
-    private let pushItem = NSMenuToolbarItem(itemIdentifier: .push)
-    private let pullItem = NSMenuToolbarItem(itemIdentifier: .pull)
+    /// Pull・Push は ▾ で選ばせず、押すと確認のシート（取り込み方もそこで選ぶ）。
+    private let pushItem = NSToolbarItem(itemIdentifier: .push)
+    private let pullItem = NSToolbarItem(itemIdentifier: .pull)
     private let activityItem = NSToolbarItem(itemIdentifier: .activity)
     private let spinner = NSProgressIndicator()
 
@@ -51,23 +52,21 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         repositoryButton.imagePosition = .imageTrailing
         repositoryButton.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
         repositoryButton.action = #selector(RepositoryWindow.showRepositoryList(_:))
-        repositoryButton.setContentHuggingPriority(.required, for: .horizontal)
+        // 幅は決めておく（タブを切り替えても、名前の長さで後ろのボタンや検索欄の位置が変わらないように）。長い名前は
+        // 途中を省き、全体はツールチップに出す。
+        repositoryButton.lineBreakMode = .byTruncatingMiddle
+        repositoryButton.translatesAutoresizingMaskIntoConstraints = false
+        repositoryButton.widthAnchor.constraint(equalToConstant: 200).isActive = true
         repositoryItem.view = repositoryButton
         repositoryItem.label = "Repository"
         repositoryItem.paletteLabel = "Repository"
         repositoryItem.toolTip = "リポジトリを切り替える"
-        // 今のブランチ。押すとブランチの切り替え（⌘⇧B）、▾ でブランチの操作。
+        // 今のブランチ。押すとブランチの切り替え（⌘⇧B）。名前の変更・上流は Repository メニュー。
         branchItem.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "ブランチ")
         branchItem.label = "Branch"
         branchItem.paletteLabel = "Branch"
         branchItem.action = #selector(RepositoryWindow.switchBranch(_:))
         branchItem.toolTip = "ブランチを切り替える（⌘⇧B）"
-        branchItem.menu = Self.menu([
-            ("Switch Branch…", #selector(RepositoryWindow.switchBranch(_:))),
-            ("New Branch…", #selector(RepositoryWindow.newBranch(_:))),
-            ("Rename Branch…", #selector(RepositoryWindow.renameBranch(_:))),
-            ("Set Upstream…", #selector(RepositoryWindow.setUpstream(_:))),
-        ])
         // History の検索。▾ で、作者・パス・内容で探す書き方を入れる。
         let field = searchItem.searchField
         field.placeholderString = "History を検索"
@@ -93,9 +92,10 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
 
     /// リポジトリを開いていないタブ（リポジトリのページ）: 名前の代わりに案内を出し、押せなくする。
     func showNoRepository() {
-        repositoryButton.title = "リポジトリを選んでください"
+        repositoryButton.title = "リポジトリを選ぶ"
         repositoryButton.isEnabled = false
         repositoryItem.toolTip = nil
+        branchItem.label = "Branch"
     }
 
     /// リポジトリの一覧を出す位置（ツールバーにあれば、リポジトリ名のボタン）。
@@ -192,20 +192,11 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Fetch", "arrow.down.circle",
                                                   #selector(RepositoryWindow.fetch(_:)), "すべてのリモートを fetch（⌃⌘F）")
         case .pull:
-            pullItem.menu = Self.menu([
-                ("Pull with Merge", #selector(RepositoryWindow.pullMerge(_:))),
-                ("Pull with Rebase", #selector(RepositoryWindow.pullRebase(_:))),
-                ("Pull Fast-Forward Only", #selector(RepositoryWindow.pullFastForward(_:))),
-            ])
             (item, label, symbol, action, tip) = (pullItem, "Pull", "arrow.down.to.line.circle",
-                                                  #selector(RepositoryWindow.pull(_:)), "Pull（⌃⌘L）")
+                                                  #selector(RepositoryWindow.pull(_:)), "Pull — 取り込むコミットと取り込み方を確かめてから（⌃⌘L）")
         case .push:
-            pushItem.menu = Self.menu([
-                ("Push", #selector(RepositoryWindow.push(_:))),
-                ("Force Push (with Lease)…", #selector(RepositoryWindow.forcePush(_:))),
-            ])
             (item, label, symbol, action, tip) = (pushItem, "Push", "arrow.up.circle",
-                                                  #selector(RepositoryWindow.push(_:)), "Push（⌃⌘P）")
+                                                  #selector(RepositoryWindow.push(_:)), "Push — 送るコミットを確かめてから（⌃⌘P）")
         case .merge:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Merge", "arrow.triangle.merge",
                                                   #selector(RepositoryWindow.mergeIntoCurrent(_:)),
@@ -245,12 +236,6 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         item.action = action
         if item.toolTip == nil { item.toolTip = tip }
         return item
-    }
-
-    private static func menu(_ items: [(String, Selector)]) -> NSMenu {
-        let menu = NSMenu()
-        for (title, action) in items { menu.addItem(withTitle: title, action: action, keyEquivalent: "") }
-        return menu
     }
 }
 

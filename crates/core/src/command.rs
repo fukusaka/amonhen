@@ -192,6 +192,14 @@ pub enum Command {
     FileHistory {
         path: String,
     },
+    /// `tip` から辿れて `base` から辿れないコミット（`git log base..tip`）。`info`: 全部の数 `count` と、新しい順に
+    /// `limit` 個（既定 50）までの `commits`（oid・subject・author・time）。Push・Pull の前に、送る・取り込む
+    /// コミットを見せる。
+    Between {
+        base: String,
+        tip: String,
+        limit: Option<usize>,
+    },
     /// untracked のファイルを消す（git の記録にないので Undo では戻せない）。
     DeleteUntracked {
         paths: Vec<String>,
@@ -1185,6 +1193,59 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::Between { base, tip, limit } => {
+                let history = self.load_history()?;
+                let graph = &history.graph;
+                let row = |rev: &str| -> Result<usize> {
+                    let id = ops.resolve(&format!("{rev}^{{commit}}"))?;
+                    history.row_of(&id).map(|r| r as usize).ok_or_else(|| {
+                        format!("{rev} が History にない（読み直してください）").into()
+                    })
+                };
+                let (base, tip) = (row(&base)?, row(&tip)?);
+                // base から辿れるものに印を付けてから、tip から印のないものだけを辿る。
+                let walk = |start: usize, stop: &[bool], seen: &mut Vec<bool>| {
+                    let mut stack = vec![start];
+                    while let Some(r) = stack.pop() {
+                        if seen[r] || stop[r] {
+                            continue;
+                        }
+                        seen[r] = true;
+                        stack.extend(graph.parents(r).iter().map(|&p| p as usize));
+                    }
+                };
+                let none = vec![false; graph.len()];
+                let mut reachable = vec![false; graph.len()];
+                walk(base, &none, &mut reachable);
+                let mut only = vec![false; graph.len()];
+                walk(tip, &reachable, &mut only);
+                // History の行は新しい順。
+                let rows: Vec<usize> = (0..graph.len()).filter(|&r| only[r]).collect();
+                let count = rows.len();
+                let ids: Vec<Oid> = rows
+                    .iter()
+                    .take(limit.unwrap_or(50))
+                    .map(|&r| graph.ids()[r])
+                    .collect();
+                let texts = self.commit_texts(&ids)?;
+                let commits: Vec<_> = ids
+                    .iter()
+                    .zip(&texts)
+                    .map(|(id, t)| {
+                        serde_json::json!({
+                            "oid": id.to_string(),
+                            "subject": String::from_utf8_lossy(t.subject()),
+                            "author": String::from_utf8_lossy(t.author_name()),
+                            "time": t.author_time,
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "count": count, "commits": commits })),
+                    ..Default::default()
+                })
+            }
             Command::DeleteUntracked { paths } => {
                 let files = self.backend().files();
                 for path in &paths {
@@ -1662,6 +1723,31 @@ mod tests {
             .iter()
             .map(|c| c.status)
             .collect()
+    }
+
+    #[test]
+    fn lists_commits_on_one_side_only() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        for name in ["b", "c"] {
+            std::fs::write(dir.join(name), "x\n").unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", &format!("add {name}")]);
+        }
+        let between = run(&repo, r#"{"op":"between","base":"main","tip":"topic"}"#);
+        assert_eq!(between["info"]["count"], 2);
+        // 新しい順。
+        assert_eq!(between["info"]["commits"][0]["subject"], "add c");
+        assert_eq!(between["info"]["commits"][1]["subject"], "add b");
+        let limited = run(
+            &repo,
+            r#"{"op":"between","base":"main","tip":"topic","limit":1}"#,
+        );
+        assert_eq!(limited["info"]["count"], 2);
+        assert_eq!(limited["info"]["commits"].as_array().unwrap().len(), 1);
+        let back = run(&repo, r#"{"op":"between","base":"topic","tip":"main"}"#);
+        assert_eq!(back["info"]["count"], 0);
     }
 
     #[test]

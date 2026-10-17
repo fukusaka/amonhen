@@ -19,7 +19,7 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 
 ```
 ┌ Tabs: amonhen-standalone │ linux │ vscode-amonhen │ + ─────────────────────────────────────────┐
-│ [◧] main ▾ ↑2↓0 │ Fetch▾ Pull▾ Push▾ │ Branch▾ Merge▾ Rebase▾ │ Stash▾ Pop │  ⟳ 2 ops  ↶  🔍____ │
+│ [◧] main ↑2↓0 │ Fetch Pull Push │ Branch Merge Rebase │ Stash Pop │  ⟳ 2 ops  ↶  🔍____ │
 ├────────────┬──────────────────────────────────────────────────────────────────────────────┤
 │ WORKSPACE  │ (one of Working Copy / History / Conflicts)                                  │
 │  Changes 5 │                                                                              │
@@ -66,17 +66,19 @@ The list appears in two places, with the same contents and operations (`Reposito
 
 - **The repository page**, a tab with no repository open (`RepositoryHome.swift`). ⌘T, ⌘N, ⌘O and ⌘⇧R show it, and so
   does launching or closing the last repository with nothing open. On the left are categories: All, Favorites, Places
-  (This Mac and one entry per SSH host) and the manual groups, each with a count. Under each place are its folders to
+  (This Mac and one entry per SSH host) and the manual groups (shown once one exists), each with a count. Under each place are its folders to
   scan (🔍; only these are searched, on that machine: SSH hosts are searched by the engine there with
   `amonhen find-repositories`) and the folders of the other repositories (opened or added by hand), as a tree of the
   folders that hold repositories (folders with a single child and no repository of their own are folded into one,
-  like `~/prj/oss`); choosing a folder lists the repositories under it. Things are added from the "+" under the left
+  like `~/prj/oss`); choosing a folder lists the repositories under it (folders under a place hold only repositories
+  outside its 🔍 folders, so nothing is counted twice; a shortened name shows the full path as a tooltip). Things are added from the "+" under the left
   side or by right-clicking: Places adds a local repository or an SSH connection, This Mac a local repository or a
   folder to scan, a host a repository or a folder to scan on that host, Groups a group; a 🔍 folder sets its depth,
   rescans or stops scanning. On the right,
   the repositories in the chosen category appear once each, in five sortable columns: name and path, branch, status
-  (changes, ahead/behind; "SSH" for remote ones, which are read only when opened), the last commit (when and its
-  subject) and when it was last opened (the default order). Dragging rows onto Favorites or a group puts them there.
+  ("changes n", ahead/behind ↑↓, ✓ when clean, explained in the column header's tooltip; "SSH" for remote
+  ones, which are read only when opened), the last commit (when and its
+  subject) and when it was last opened (the default order; — if never). Dragging rows onto Favorites or a group puts them there.
   Choosing a repository (double-click or ⏎) turns this tab into that repository (⌘⏎ for a new window). The right side
   is just the filter and the list; there are no buttons under it. A person takes in about five or six things at once, so each part of the page stays within that. The page has
   the same toolbar as a repository tab (the repository actions are disabled), so the tab bar does not move when
@@ -122,23 +124,25 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 
 | Group | Item | Click | ▾ menu |
 | --- | --- | --- | --- |
-| Location | Branch (in the title position) | Branch switcher panel (fuzzy search, recent branches on top) | New branch, rename, set upstream |
+| Location | Branch (in the title position) | Branch switcher panel (fuzzy search, recent branches on top) | — (rename and upstream are in the Repository menu) |
 | Sync | Fetch | Fetch the default remote | All remotes, with prune, tags too |
-| | Pull | Pull with the default from settings | Choose merge / rebase / ff-only, autostash |
-| | Push | Push to upstream (if none is set, confirm creating one) | force-with-lease, push tags too, to another remote or branch |
+| | Pull | Confirmation sheet: the commits to bring in and the local-only ones, how to integrate (merge / rebase / ff-only, the default from settings) with what that does (a merge commit, rewritten IDs, ff-only fails), a warning about uncommitted changes | — |
+| | Push | Confirmation sheet: the commits to send. If upstream has commits we lack, suggest Pull (Force Push… only from there, listing the commits upstream would lose); if there is no upstream, confirm creating one | — |
 | Integrate | Merge | Merge the selected commit or branch into the current branch (choose no-ff or squash in the confirmation sheet) | List of recent branches |
 | | Rebase | Rebase the current branch onto the selection | interactive (enters History's edit mode), onto |
 | Stash | Stash | Stash (with a message field; ⌥-click stashes immediately) | Include untracked, staged only, selected files only |
-| | Pop | Pop the latest | apply (keep it), choose from the list |
+| | Pop | Confirm, naming the stash and its message, then pop the latest | — (apply or pop a chosen one from the sidebar) |
 | Status | Activity | Number of running operations and a spinner. Click to open Activity | — |
 | | Refresh | Reload status, refs and History (⌘R) | Reload the whole working tree (without the fsmonitor and status caches), discard the persistent cache and rebuild History |
-| | Undo | Revert the last operation (the tooltip names it) | The last 10 entries of the operation log (revert up to there) |
+| | Undo | Confirm, naming the operation, then revert it | — (the operation log in Activity) |
 | Search | Search field (`NSSearchToolbarItem`) | ⌘F searches History, ⌘⇧F with a scope | Switch between subject and body / author / ID / path / contents (pickaxe) |
 
 - Keep Refresh. Changes are detected automatically, but this makes sure things line up when detection misses, such as on network file systems, SSH hosts, or when other tools rewrite `.git` directly. While reloading after a click, the button spins.
 - Set `allowsUserCustomization = true` so that Branch, Merge, Rebase, Cherry-pick, Terminal, Finder, Open on GitHub and so on can be added and removed.
 - Show ahead/behind both as badges on Push and Pull (macOS 26 and later) and next to the branch name.
 - When unavailable, disable the item and give the reason in the tooltip ("No upstream", "Resolving conflicts").
+- No ▾ menus on Pull, Push and Branch: one click on an icon must never send or rewrite anything. Operations that leave the machine or move branches (Pull, Push, Pop, Undo) open a sheet that says what will happen; ↩ runs it, so the keyboard costs one extra key. Fetch and Refresh run at once (they change nothing of ours). The menu shortcuts (⌃⌘L, ⌃⌘P) open the same sheets; Commit and Push does not ask again.
+- Network git that prints nothing for 120 seconds (usually a credential prompt nobody sees) is stopped with an error saying so. It can also be cancelled from Activity.
 
 ## 6. Working Copy
 

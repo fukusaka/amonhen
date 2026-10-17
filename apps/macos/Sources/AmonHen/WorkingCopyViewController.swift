@@ -276,6 +276,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         titleLabel.lineBreakMode = .byTruncatingMiddle
         discardButton.target = self
         discardButton.action = #selector(discard)
+        // 捨てる操作は目立たせず、消える操作だと分かる色にする。
+        discardButton.hasDestructiveAction = true
         // コンフリクトのファイルは、下にマージエディタを出す。帯にはファイル全体の操作を置く。
         let conflictActions: [(String, Selector)] = [
             ("Take Current File", #selector(takeOursFile)), ("Take Incoming File", #selector(takeTheirsFile)),
@@ -775,6 +777,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             // ファイルの操作はコアに任せる（SSH 越しのリポジトリでも同じに動く）。
             actions.perform(["op": "deleteUntracked", "paths": [key.path]])
         } else {
+            // ファイル全体を一度に捨てるときは確かめる（行の単位は選んで押すので、そのまま）。
+            guard actions.confirm(
+                "\(key.path) の変更を捨てますか？", message: "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻します。Undo で戻せます。",
+                ok: "捨てる") else { return }
             actions.perform(["op": "discard", "paths": [key.path]])
         }
     }
