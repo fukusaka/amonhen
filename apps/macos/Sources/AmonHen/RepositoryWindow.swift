@@ -83,8 +83,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let path = RepositoryLocation.path(location)
         // 表示名（リポジトリの設定で変えられる）。daemon 越しなら接続先を添える（手元のリポジトリと見分ける）。
         window.title = Bookmarks.shared.displayName(location)
-        // リポジトリ名とブランチはツールバーの左に出すので、タイトルは出さない（タブの見出しには使われる）。
-        window.titleVisibility = .hidden
         if RepositoryLocation.host(location) == nil {
             window.representedURL = URL(fileURLWithPath: path)
         }

@@ -5,7 +5,7 @@ import AppKit
 /// 使えるかどうかも `RepositoryWindow.validateToolbarItem` で決める。
 final class MainToolbar: NSObject, NSToolbarDelegate {
     /// 並びを変えたら名前を変える（保存した並びに新しい項目が出てこないため）。
-    let toolbar = NSToolbar(identifier: "main.v3")
+    let toolbar = NSToolbar(identifier: "main.v4")
     private let repositoryItem = NSToolbarItem(itemIdentifier: .repository)
     private let repositoryButton = NSButton()
     private let branchItem = NSMenuToolbarItem(itemIdentifier: .branch)
@@ -91,6 +91,13 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         repositoryItem.toolTip = "\(name) — 押すとリポジトリを切り替える"
     }
 
+    /// リポジトリを開いていないタブ（リポジトリのページ）: 名前の代わりに案内を出し、押せなくする。
+    func showNoRepository() {
+        repositoryButton.title = "リポジトリを選んでください"
+        repositoryButton.isEnabled = false
+        repositoryItem.toolTip = nil
+    }
+
     /// リポジトリの一覧を出す位置（ツールバーにあれば、リポジトリ名のボタン）。
     var repositoryAnchor: NSView? { repositoryButton.window == nil ? nil : repositoryButton }
 
@@ -160,12 +167,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.repository, .branch, .fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop, .flexibleSpace, .activity, .refresh,
-         .undo, .search]
+        [.repositories, .repository, .branch, .fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop, .flexibleSpace,
+         .activity, .refresh, .undo, .search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.repository, .branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
+        [.repositories, .repository, .branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
          .space, .flexibleSpace]
     }
 
@@ -178,6 +185,9 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         if id == .search { return searchItem }
         let item: NSToolbarItem, label: String, symbol: String, action: Selector, tip: String
         switch id {
+        case .repositories:
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Repositories", "square.grid.2x2",
+                                                  #selector(AppDelegate.showRepositories(_:)), "リポジトリのページに切り替える（⌘⇧R）")
         case .fetch:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Fetch", "arrow.down.circle",
                                                   #selector(RepositoryWindow.fetch(_:)), "すべてのリモートを fetch（⌃⌘F）")
@@ -260,5 +270,6 @@ extension NSToolbarItem.Identifier {
     static let activity = Self("activity")
     static let branch = Self("branch")
     static let repository = Self("repository")
+    static let repositories = Self("repositories")
     static let search = Self("search")
 }

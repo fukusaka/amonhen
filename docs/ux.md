@@ -66,17 +66,21 @@ The list appears in two places, with the same contents and operations (`Reposito
 
 - **The repository page**, a tab with no repository open (`RepositoryHome.swift`). ⌘T, ⌘N, ⌘O and ⌘⇧R show it, and so
   does launching or closing the last repository with nothing open. On the left are categories: All, Favorites, Places
-  (This Mac and one entry per SSH host), the manual groups and the folders to scan, each with a count. On the right,
+  (This Mac and one entry per SSH host), the manual groups and the folders to scan, each with a count. Under This Mac,
+  each SSH host and each folder to scan, the folders that hold repositories form a tree (folders with a single child
+  and no repository of their own are folded into one, like `~/prj/oss`); choosing a folder lists the repositories
+  under it. On the right,
   the repositories in the chosen category appear once each, in five sortable columns: name and path, branch, status
   (changes, ahead/behind; "SSH" for remote ones, which are read only when opened), the last commit (when and its
   subject) and when it was last opened (the default order). Dragging rows onto Favorites or a group puts them there.
   Choosing a repository turns this tab into that repository (⌘⏎ for a new window). The only buttons are "+ Add" (a
   local repository, Clone, an SSH connection, a group, a folder to scan) and "Open"; everything else is in the context
-  menus. A person takes in about five or six things at once, so each part of the page stays within that. There is no
-  separate window.
-- **The repository name at the left of the toolbar** (like GitHub Desktop). It opens the list in a popover with names
-  and status only, favorites first and then by when they were last opened; choosing one switches the current tab to it. The window title is hidden, since the toolbar shows the
-  repository and the branch.
+  menus. A person takes in about five or six things at once, so each part of the page stays within that. The page has
+  the same toolbar as a repository tab (the repository actions are disabled), so the tab bar does not move when
+  switching between them. There is no separate window.
+- **Repositories** at the left of the toolbar switches to the repository page (⌘⇧R).
+- **The repository name next to it** (like GitHub Desktop). It opens the list in a popover with names
+  and status only, favorites first and then by when they were last opened; choosing one switches the current tab to it.
 
 Saved not in UserDefaults but in `~/Library/Application Support/Amon Hen/bookmarks.json` (structured, and editable by hand). Scan results are not saved; they are collected again in the background at launch.
 

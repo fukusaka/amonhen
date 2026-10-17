@@ -6,6 +6,9 @@ import AppKit
 final class RepositoryHomeWindow: NSObject, NSWindowDelegate {
     let window: NSWindow
     let browser = RepositoryBrowser(style: .page)
+    /// リポジトリのタブと同じツールバー（タブを切り替えてもタブの並びの位置が動かないように）。リポジトリへの操作は
+    /// 届け先がないので押せない。
+    private let toolbar = MainToolbar()
     /// 閉じた（AppDelegate が手放す）。
     var onClose: (() -> Void)?
 
@@ -19,6 +22,8 @@ final class RepositoryHomeWindow: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentViewController = browser
+        window.toolbar = toolbar.toolbar
+        toolbar.showNoRepository()
         window.setContentSize(NSSize(width: 1100, height: 700))
         if !window.setFrameUsingName("RepositoryHome") { window.center() }
         window.setFrameAutosaveName("RepositoryHome")

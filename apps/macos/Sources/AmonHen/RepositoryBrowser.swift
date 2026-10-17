@@ -80,8 +80,8 @@ enum RepositoryList {
 ///   選ぶとそのタブのリポジトリを切り替える。
 ///
 /// 1 画面に並べるものは 5〜6 個に抑える（固定の分類は 2 つ、列は 5 つ、下のボタンは 2 つ）。それ以外の操作は右クリック。
-final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableViewDelegate,
-    NSSearchFieldDelegate, NSMenuDelegate
+final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSOutlineViewDataSource,
+    NSOutlineViewDelegate, NSSearchFieldDelegate, NSMenuDelegate
 {
     enum Style { case page, compact }
 
@@ -111,8 +111,9 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
     /// 左の分類。
     private enum Category: Equatable {
-        /// `local` はこの Mac のリポジトリ（手元の共有の daemon 越しも含む）、`host` は SSH のホストごと。
-        case all, favorites, local, host(String), group(String), scan(String)
+        /// `local` はこの Mac のリポジトリ（手元の共有の daemon 越しも含む）、`host` は SSH のホストごと。`folder` は
+        /// この Mac のフォルダの下、`hostFolder` は SSH のホストのフォルダの下（場所・スキャンの階層）。
+        case all, favorites, local, host(String), group(String), scan(String), folder(String), hostFolder(String, String)
 
         /// 覚えておくための文字列。
         var key: String {
@@ -123,6 +124,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             case let .host(name): "host:" + name
             case let .group(name): "group:" + name
             case let .scan(path): "scan:" + path
+            case let .folder(path): "folder:" + path
+            case let .hostFolder(host, path): "hostfolder:" + host + "\n" + path
             }
         }
 
@@ -132,6 +135,11 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             else if key.hasPrefix("host:") { self = .host(String(key.dropFirst(5))) }
             else if key.hasPrefix("group:") { self = .group(String(key.dropFirst(6))) }
             else if key.hasPrefix("scan:") { self = .scan(String(key.dropFirst(5))) }
+            else if key.hasPrefix("folder:") { self = .folder(String(key.dropFirst(7))) }
+            else if key.hasPrefix("hostfolder:"), let split = key.dropFirst(11).firstIndex(of: "\n") {
+                let rest = key.dropFirst(11)
+                self = .hostFolder(String(rest[..<split]), String(rest[rest.index(after: split)...]))
+            }
             else { return nil }
         }
     }
@@ -143,10 +151,28 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         return String(rest.dropFirst("ssh://".count).prefix { $0 != "/" })
     }
 
-    /// 左の行: 分類か、見出し（グループ・スキャン）。
-    private enum SideEntry: Equatable {
-        case header(String)
-        case category(Category)
+    /// 手元のリポジトリのパス（`daemon:/path` なら `/path`）。
+    static func localPath(_ location: String) -> String {
+        location.hasPrefix("daemon:") ? String(location.dropFirst("daemon:".count)) : location
+    }
+
+    /// 左の木の節: 見出し（場所・グループ・スキャン）か分類。場所とスキャンの下は、リポジトリのあるフォルダの階層。
+    private final class SideNode {
+        let title: String
+        let symbol: String
+        /// nil なら見出し。
+        let category: Category?
+        var children: [SideNode] = []
+
+        init(_ title: String, symbol: String = "", _ category: Category?, children: [SideNode] = []) {
+            self.title = title
+            self.symbol = symbol
+            self.category = category
+            self.children = children
+        }
+
+        /// 開いた・閉じたを覚えるための名前。
+        var key: String { category?.key ?? "header:" + title }
     }
 
     private static let categoryKey = "repositoryPageCategory"
@@ -154,7 +180,13 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         didSet { UserDefaults.standard.set(category.key, forKey: Self.categoryKey) }
     }
 
-    private var sideEntries: [SideEntry] = []
+    private var sideRoots: [SideNode] = []
+    /// 開いている節（`SideNode.key`）。最初は見出しと「このMac」を開く。
+    private static let expandedKey = "repositoryPageExpanded"
+    private var expanded: Set<String> = Set(
+        UserDefaults.standard.stringArray(forKey: RepositoryBrowser.expandedKey) ?? ["header:場所", "header:グループ", "header:スキャン", "local"])
+    /// 木を作り直している間（開閉の知らせで、覚えている状態を書き換えない）。
+    private var rebuildingSidebar = false
     /// 右に出しているリポジトリ（絞り込み・並べ替えの後）。
     private var shown: [String] = []
 
@@ -166,7 +198,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         }
     }
 
-    private let sidebar = NSTableView()
+    private let sidebar = NSOutlineView()
     private let table = Table()
     private let tableScroll = NSScrollView()
     private let filter = NSSearchField()
@@ -338,9 +370,11 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let column = NSTableColumn(identifier: .init("category"))
         column.resizingMask = .autoresizingMask
         sidebar.addTableColumn(column)
+        sidebar.outlineTableColumn = column
         sidebar.headerView = nil
         sidebar.style = .sourceList
         sidebar.rowHeight = 26
+        sidebar.floatsGroupRows = false
         sidebar.dataSource = self
         sidebar.delegate = self
         sidebar.registerForDraggedTypes([Self.dragType])
@@ -366,7 +400,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let split = NSSplitView()
         split.isVertical = true
         split.dividerStyle = .thin
-        split.autosaveName = "RepositoryPageSplit"
+        split.autosaveName = "RepositoryPageSplit.v2"
         split.addArrangedSubview(left)
         split.addArrangedSubview(right)
         split.translatesAutoresizingMaskIntoConstraints = false
@@ -374,11 +408,107 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         NSLayoutConstraint.activate([
             split.topAnchor.constraint(equalTo: view.topAnchor), split.bottomAnchor.constraint(equalTo: view.bottomAnchor),
             split.leadingAnchor.constraint(equalTo: view.leadingAnchor), split.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            left.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
+            left.widthAnchor.constraint(greaterThanOrEqualToConstant: 200),
         ])
-        left.widthAnchor.constraint(equalToConstant: 210).priority = .defaultLow
+        left.widthAnchor.constraint(equalToConstant: 250).priority = .defaultLow
         split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
-        split.setPosition(210, ofDividerAt: 0)
+        split.setPosition(250, ofDividerAt: 0)
+    }
+
+    // MARK: - 左の木
+
+    /// 左の木: すべて・お気に入り、場所（このMac・SSH のホストごと。その下はフォルダの階層）、グループ、スキャン（その下は
+    /// フォルダの階層）。
+    private func makeSidebar() -> [SideNode] {
+        let bookmarks = Bookmarks.shared
+        let all = bookmarks.allLocations
+        var roots = [SideNode("すべて", symbol: "tray.full", .all), SideNode("お気に入り", symbol: "star", .favorites)]
+
+        let local = all.filter { Self.sshHost($0) == nil }.map(Self.localPath)
+        var places = [SideNode("このMac", symbol: "laptopcomputer", .local,
+                               children: folderTree(local, base: "", category: { .folder($0) }, title: { ($0 as NSString).abbreviatingWithTildeInPath }))]
+        for host in Array(Set(all.compactMap(Self.sshHost))).sorted() {
+            let remote = all.filter { Self.sshHost($0) == host }.map { RepositoryLocation.path($0) }
+            places.append(SideNode(host, symbol: "network", .host(host),
+                                   children: folderTree(remote, base: "", category: { .hostFolder(host, $0) }, title: Self.remoteTitle)))
+        }
+        roots.append(SideNode("場所", nil, children: places))
+
+        if !bookmarks.data.groups.isEmpty {
+            roots.append(SideNode("グループ", nil, children: bookmarks.data.groups.map { SideNode($0, symbol: "folder", .group($0)) }))
+        }
+        if !bookmarks.data.scanRoots.isEmpty {
+            let scans = bookmarks.data.scanRoots.map { root in
+                SideNode((root.path as NSString).abbreviatingWithTildeInPath, symbol: "magnifyingglass", .scan(root.path),
+                         children: folderTree(bookmarks.scanned[root.path] ?? [], base: root.path, category: { .folder($0) }, title: { $0 }))
+            }
+            roots.append(SideNode("スキャン", nil, children: scans))
+        }
+        return roots
+    }
+
+    /// SSH 先のパスの見せ方（`/~/prj` は `~/prj`）。
+    private static func remoteTitle(_ path: String) -> String {
+        path.hasPrefix("/~") ? String(path.dropFirst()) : path
+    }
+
+    /// リポジトリのあるフォルダの階層。`repositories` はリポジトリのパス（`base` の下）。リポジトリの入っている
+    /// フォルダとその上のフォルダを節にし、枝分かれもリポジトリもない途中のフォルダは 1 つにまとめる（`a/b`）。
+    /// 一番上の節の名前は `title`（フルパスから）、その下はひとつ上からの相対。
+    private func folderTree(
+        _ repositories: [String], base: String, category: (String) -> Category, title: (String) -> String
+    ) -> [SideNode] {
+        final class Trie {
+            var children: [String: Trie] = [:]
+            var repositories = 0
+        }
+        let root = Trie()
+        for path in repositories {
+            let parent = (path as NSString).deletingLastPathComponent
+            guard parent == base || parent.hasPrefix(base + "/") || base.isEmpty else { continue }
+            var node = root
+            for part in parent.dropFirst(base.count).split(separator: "/") {
+                let next = node.children[String(part)] ?? Trie()
+                node.children[String(part)] = next
+                node = next
+            }
+            node.repositories += 1
+        }
+        func make(_ node: Trie, prefix: String, top: Bool) -> [SideNode] {
+            node.children.keys.sorted { $0.localizedStandardCompare($1) == .orderedAscending }.map { name in
+                var child = node.children[name]!
+                var path = prefix + "/" + name
+                var label = name
+                while child.repositories == 0, child.children.count == 1, let (next, grand) = child.children.first {
+                    path += "/" + next
+                    label += "/" + next
+                    child = grand
+                }
+                return SideNode(top ? title(path) : label, symbol: "folder", category(path),
+                                children: make(child, prefix: path, top: false))
+            }
+        }
+        // 一番上（`base` の直下）は、枝分かれがなければそのまま下の節に降りる。
+        var start = root
+        var prefix = base
+        while start.repositories == 0, start.children.count == 1, let (next, child) = start.children.first {
+            prefix += "/" + next
+            start = child
+        }
+        if base.isEmpty, prefix.isEmpty { return make(start, prefix: "", top: true) }
+        if prefix == base { return make(start, prefix: base, top: base.isEmpty) }
+        // まとめた途中のフォルダを 1 つの節にする（リポジトリが散っていれば、その下を枝に）。
+        let label = base.isEmpty ? title(prefix) : String(prefix.dropFirst(base.count + 1))
+        return [SideNode(label, symbol: "folder", category(prefix), children: make(start, prefix: prefix, top: false))]
+    }
+
+    /// `category` の節までの道（見つからなければ nil）。
+    private func pathTo(_ category: Category, in nodes: [SideNode]) -> [SideNode]? {
+        for node in nodes {
+            if node.category == category { return [node] }
+            if let rest = pathTo(category, in: node.children) { return [node] + rest }
+        }
+        return nil
     }
 
     // MARK: - 中身
@@ -393,6 +523,10 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         case let .host(name): return bookmarks.allLocations.filter { Self.sshHost($0) == name }
         case let .group(name): return bookmarks.data.items.filter { $0.group == name }.map(\.path)
         case let .scan(path): return bookmarks.scanned[path] ?? []
+        case let .folder(prefix):
+            return bookmarks.allLocations.filter { Self.sshHost($0) == nil && Self.localPath($0).hasPrefix(prefix + "/") }
+        case let .hostFolder(host, prefix):
+            return bookmarks.allLocations.filter { Self.sshHost($0) == host && RepositoryLocation.path($0).hasPrefix(prefix + "/") }
         }
     }
 
@@ -400,27 +534,28 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     private func reload() {
         let bookmarks = Bookmarks.shared
         if style == .page {
-            var entries: [SideEntry] = [.category(.all), .category(.favorites)]
-            // 場所: この Mac と、SSH のホストごと。
-            let hosts = Array(Set(bookmarks.allLocations.compactMap(Self.sshHost))).sorted()
-            entries.append(.header("場所"))
-            entries.append(.category(.local))
-            entries += hosts.map { .category(.host($0)) }
-            if !bookmarks.data.groups.isEmpty {
-                entries.append(.header("グループ"))
-                entries += bookmarks.data.groups.map { .category(.group($0)) }
-            }
-            if !bookmarks.data.scanRoots.isEmpty {
-                entries.append(.header("スキャン"))
-                entries += bookmarks.data.scanRoots.map { .category(.scan($0.path)) }
-            }
+            sideRoots = makeSidebar()
+            var all: [Category] = []
+            func collect(_ nodes: [SideNode]) { for n in nodes { if let c = n.category { all.append(c) }; collect(n.children) } }
+            collect(sideRoots)
             // 消えたグループ・フォルダを選んでいたら、すべてに戻す。
-            if !entries.contains(.category(category)) { category = .all }
-            sideEntries = entries
+            if !all.contains(category) { category = .all }
+            rebuildingSidebar = true
             sidebar.reloadData()
-            if let row = sideEntries.firstIndex(of: .category(category)) {
-                sidebar.selectRowIndexes([row], byExtendingSelection: false)
+            func expand(_ nodes: [SideNode]) {
+                for n in nodes where !n.children.isEmpty && expanded.contains(n.key) {
+                    sidebar.expandItem(n)
+                    expand(n.children)
+                }
             }
+            expand(sideRoots)
+            // 選んでいる分類が閉じた節の中なら、そこまで開く。
+            if let path = pathTo(category, in: sideRoots) {
+                for ancestor in path.dropLast() { sidebar.expandItem(ancestor) }
+                let row = sidebar.row(forItem: path.last)
+                if row >= 0 { sidebar.selectRowIndexes([row], byExtendingSelection: false) }
+            }
+            rebuildingSidebar = false
         }
 
         let selected = Set(table.selectedRowIndexes.compactMap { $0 < shown.count ? shown[$0] : nil })
@@ -649,7 +784,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 if Bookmarks.shared.bookmark(path)?.favorite == true { Bookmarks.shared.toggleFavorite(path) }
             case .group:
                 Bookmarks.shared.move(path, to: nil)
-            case .local, .host:
+            case .local, .host, .folder, .hostFolder:
                 RepositoryList.remove(path)
                 Bookmarks.shared.remove(path)
             case .scan:
@@ -661,7 +796,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
     private var removeTitle: String? {
         switch category {
-        case .all, .local, .host: "一覧から外す"
+        case .all, .local, .host, .folder, .hostFolder: "一覧から外す"
         case .favorites: "お気に入りから外す"
         case .group: "グループから外す"
         case .scan: nil
@@ -679,21 +814,20 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         return item
     }
 
-    func tableView(
-        _ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation
+    func outlineView(
+        _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int
     ) -> NSDragOperation {
-        guard tableView === sidebar, info.draggingPasteboard.string(forType: Self.dragType) != nil,
-              row < sideEntries.count, case let .category(target) = sideEntries[row] else { return [] }
+        guard info.draggingPasteboard.string(forType: Self.dragType) != nil, let target = (item as? SideNode)?.category else { return [] }
         switch target {
         case .favorites, .group:
-            tableView.setDropRow(row, dropOperation: .on)
+            outlineView.setDropItem(item, dropChildIndex: NSOutlineViewDropOnItemIndex)
             return .move
         default: return []
         }
     }
 
-    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
-        guard tableView === sidebar, row < sideEntries.count, case let .category(target) = sideEntries[row] else { return false }
+    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
+        guard let target = (item as? SideNode)?.category else { return false }
         let paths = (info.draggingPasteboard.pasteboardItems ?? []).compactMap { $0.string(forType: Self.dragType) }
         for path in paths {
             switch target {
@@ -745,8 +879,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     }
 
     private func sidebarMenu(_ menu: NSMenu) {
-        let row = sidebar.clickedRow
-        guard row >= 0, row < sideEntries.count, case let .category(target) = sideEntries[row] else { return }
+        guard let target = (sidebar.item(atRow: sidebar.clickedRow) as? SideNode)?.category else { return }
         func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
         let paths = paths(in: target)
         if !paths.isEmpty {
@@ -862,35 +995,71 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
     // MARK: - NSTableView
 
-    func numberOfRows(in tableView: NSTableView) -> Int {
-        tableView === sidebar ? sideEntries.count : shown.count
+    func numberOfRows(in tableView: NSTableView) -> Int { shown.count }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat { 40 }
+
+    // MARK: - 左の木（NSOutlineView）
+
+    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
+        (item as? SideNode)?.children.count ?? sideRoots.count
     }
 
-    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
-        guard tableView === sidebar, row < sideEntries.count, case .header = sideEntries[row] else { return false }
-        return true
+    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
+        (item as? SideNode)?.children[index] ?? sideRoots[index]
     }
 
-    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
-        guard tableView === sidebar else { return true }
-        if case .category = sideEntries[row] { return true }
-        return false
+    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
+        !((item as? SideNode)?.children.isEmpty ?? true)
     }
 
-    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
-        tableView === sidebar ? 26 : 40
+    func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool {
+        (item as? SideNode)?.category == nil
     }
 
-    func tableViewSelectionDidChange(_ notification: Notification) {
-        guard notification.object as? NSTableView === sidebar else { return }
-        let row = sidebar.selectedRow
-        guard row >= 0, row < sideEntries.count, case let .category(chosen) = sideEntries[row], chosen != category else { return }
+    func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
+        (item as? SideNode)?.category != nil
+    }
+
+    func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat { 26 }
+
+    func outlineViewItemDidExpand(_ notification: Notification) { rememberExpansion(notification, true) }
+    func outlineViewItemDidCollapse(_ notification: Notification) { rememberExpansion(notification, false) }
+
+    private func rememberExpansion(_ notification: Notification, _ open: Bool) {
+        guard !rebuildingSidebar, let node = notification.userInfo?["NSObject"] as? SideNode else { return }
+        if open { expanded.insert(node.key) } else { expanded.remove(node.key) }
+        UserDefaults.standard.set(Array(expanded), forKey: Self.expandedKey)
+    }
+
+    func outlineViewSelectionDidChange(_ notification: Notification) {
+        guard !rebuildingSidebar, let chosen = (sidebar.item(atRow: sidebar.selectedRow) as? SideNode)?.category, chosen != category
+        else { return }
         category = chosen
         reload()
     }
 
+    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
+        guard let node = item as? SideNode else { return nil }
+        guard let category = node.category else {
+            let field = outlineView.makeView(withIdentifier: .init("header"), owner: nil) as? NSTextField ?? {
+                let f = NSTextField(labelWithString: "")
+                f.identifier = .init("header")
+                f.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+                f.textColor = .secondaryLabelColor
+                return f
+            }()
+            field.stringValue = node.title
+            return field
+        }
+        let cell = outlineView.makeView(withIdentifier: .init("category"), owner: nil) as? CategoryCell ?? CategoryCell()
+        var count = "\(paths(in: category).count)"
+        if case .scan = category, Bookmarks.shared.isScanning { count = "…" }
+        cell.show(title: node.title, symbol: node.symbol, count: count)
+        return cell
+    }
+
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        if tableView === sidebar { return sidebarCell(row) }
         guard row < shown.count else { return nil }
         let path = shown[row]
         let column = tableColumn?.identifier.rawValue ?? "name"
@@ -904,36 +1073,6 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let cell = tableView.makeView(withIdentifier: .init(column), owner: nil) as? DetailCell ?? DetailCell(column)
         cell.show(column: column, location: path)
         return cell
-    }
-
-    private func sidebarCell(_ row: Int) -> NSView? {
-        guard row < sideEntries.count else { return nil }
-        switch sideEntries[row] {
-        case let .header(title):
-            let field = sidebar.makeView(withIdentifier: .init("header"), owner: nil) as? NSTextField ?? {
-                let f = NSTextField(labelWithString: "")
-                f.identifier = .init("header")
-                f.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
-                f.textColor = .secondaryLabelColor
-                return f
-            }()
-            field.stringValue = title
-            return field
-        case let .category(category):
-            let cell = sidebar.makeView(withIdentifier: .init("category"), owner: nil) as? CategoryCell ?? CategoryCell()
-            let (title, symbol): (String, String) = switch category {
-            case .all: ("すべて", "tray.full")
-            case .favorites: ("お気に入り", "star")
-            case .local: ("このMac", "laptopcomputer")
-            case let .host(name): (name, "network")
-            case let .group(name): (name, "folder")
-            case let .scan(path): ((path as NSString).abbreviatingWithTildeInPath, "magnifyingglass")
-            }
-            var count = "\(paths(in: category).count)"
-            if case .scan = category, Bookmarks.shared.isScanning { count = "…" }
-            cell.show(title: title, symbol: symbol, count: count)
-            return cell
-        }
     }
 
     /// 左の分類の行: 印、名前、右に件数。
