@@ -235,6 +235,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard let self, let slot else { return }
             worktreeChanges[slot.path] = count
             sidebar.setWorktreeChanges(worktreeChanges)
+            showWorktreeHeads()
             guard slot === editing else { return }
             changeCount = count
             updateTabTitle()
@@ -281,12 +282,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 showWorktrees()
             }
             guard !RepositoryLocation.isRemote(location) else { return }
-            for w in list where slots[WorktreeInfo.canonical(w.path)] == nil && !w.isSame(opened.path) && w.prunable == nil {
+            for w in list where slots[WorktreeInfo.canonical(w.path)] == nil && w.prunable == nil && !w.bare {
                 let path = w.path
                 Task {
                     let peek = await Task.detached(priority: .utility) { RepositoryPeek.read(path: path) }.value
                     worktreeChanges[path] = peek?.changed
                     sidebar.setWorktreeChanges(worktreeChanges)
+                    showWorktreeHeads()
                 }
             }
         }
@@ -338,7 +340,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 Task { @MainActor in
                     guard let self, let slot, !changes.intersection([.refs, .index, .worktree]).isEmpty else { return }
                     if slot === self.editing { slot.workingCopy.refresh() }
-                    if changes.contains(.refs) { self.reloadRefs() }
+                    if changes.contains(.refs) {
+                        self.reloadRefs()
+                        self.reloadWorktrees()
+                    }
                     self.reloadOtherWorktrees()
                 }
             }
@@ -381,9 +386,22 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 list.append(.init(path: info.path, name: info.name, branch: info.branch, status: status))
             }
             sidebar.setWorktreeChanges(worktreeChanges)
+            showWorktreeHeads()
             guard target === editing else { return }
             target.workingCopy.setOtherWorktrees(list)
         }
+    }
+
+    /// History に、各 worktree の HEAD の札（✎ は書き込む先、数は変更のあるファイル）。
+    private func showWorktreeHeads() {
+        guard worktrees.count > 1 else { return history.show(worktreeHeads: []) }
+        history.show(worktreeHeads: worktrees.compactMap { w in
+            guard let hex = w.head, let head = Data(hex: hex) else { return nil }
+            let editingThis = w.isSame(editing.path)
+            let changes = worktreeChanges[w.path] ?? 0
+            let name = (editingThis ? "✎ " : "⌂ ") + w.name + (changes > 0 ? " · \(changes)" : "")
+            return (head, name, editingThis)
+        })
     }
 
     private func activate(_ slot: WorktreeSlot) {

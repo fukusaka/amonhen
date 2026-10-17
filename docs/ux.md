@@ -460,8 +460,9 @@ What git says, and what the app keeps:
 Viewing mixes them, editing names one:
 
 - **View (all worktrees together).** The sidebar's Worktrees lists every worktree with its branch and number of
-  changes. History shows a "working" row at each worktree's HEAD with its changed files, so where every worktree is
-  and what it has changed shows on one screen. Working Copy lists the changes of every worktree under one heading
+  changes. History labels each worktree's HEAD commit (green, before the branch labels: ✎ for the edited one, ⌂ for the
+  others, with the number of changed files), so where every worktree is and how much it has changed shows on one
+  screen. Working Copy lists the changes of every worktree under one heading
   each (worktrees without changes collapsed), and any of their diffs can be read.
 - **Edit (one worktree, always shown).** The toolbar shows the edited worktree (✎ name) next to its branch. Picking a
   worktree in the sidebar or from ✎ makes it the edited one. Staging or discarding a file of another worktree asks
@@ -500,7 +501,8 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
   working tree sent there, the worktree named in confirmation sheets, branches checked out elsewhere moving the edited
   worktree, New Worktree… / Remove Worktree / Prune.
 - [x] U18. Working Copy with every worktree's changes under one heading each, asking before editing another worktree.
-- [ ] U19. History's "working" rows at each worktree's HEAD.
+- [x] U19. History's labels at each worktree's HEAD (name and number of changed files; ✎ for the edited one), kept up
+  to date when a worktree commits or changes files.
 
 ## Decisions
 

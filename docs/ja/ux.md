@@ -449,8 +449,8 @@ git の考え方と、アプリが守ること:
 見るときは混ぜ、書くときは 1 つを名指す:
 
 - **見る（全部の worktree をまとめて）**。サイドバーの Worktrees に、全部の worktree をブランチと変更の数つきで
-  並べる。History には各 worktree の HEAD の位置に「作業中」の行を出し、変更したファイルを添える（どの worktree が
-  どこにいて何を書き換えているかが 1 画面で分かる）。Working Copy には全部の worktree の変更を worktree ごとの見出しで
+  並べる。History では、各 worktree の HEAD のコミットに札を付ける（緑。ブランチの札の前。書き込む先は ✎、ほかは ⌂、
+  変更のあるファイルの数つき）。どの worktree がどこにいて、どれだけ書き換えているかが 1 画面で分かる。Working Copy には全部の worktree の変更を worktree ごとの見出しで
   並べ（変更のないものは畳む）、どの差分も読める。
 - **書く（1 つの worktree。いつも見せる）**。ツールバーに書き込む先（✎ 名前）をブランチと並べて出す。サイドバーか
   ✎ で worktree を選ぶと、それが書き込む先になる。ほかの worktree のファイルを stage・discard しようとしたら、先に
@@ -488,7 +488,8 @@ git の考え方と、アプリが守ること:
   確認のシートに worktree を書く、ほかの worktree が checkout しているブランチで書き込む先を移す、New Worktree…・
   Remove Worktree・Prune。
 - [x] U18. Working Copy に全部の worktree の変更を worktree ごとの見出しで並べる、ほかの worktree に書く前に聞く。
-- [ ] U19. History に各 worktree の HEAD の「作業中」の行。
+- [x] U19. History で、各 worktree の HEAD に札（名前と変更のあるファイルの数、書き込む先は ✎）。worktree が
+  コミットしたり、ファイルを書き換えたりしたら付け直す。
 
 ## 決めたこと
 

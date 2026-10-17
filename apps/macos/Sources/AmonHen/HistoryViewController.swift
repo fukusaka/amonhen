@@ -135,8 +135,23 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let kind: RefKind
         /// 今のブランチ。
         let isHead: Bool
+        /// worktree の HEAD の札（名前と変更の数）。
+        var worktree = false
     }
     private var refLabels: [Data: [RefLabel]] = [:]
+    /// 各 worktree の HEAD の札（ref の札の前に出す。docs/ux.md の「Worktrees」）。
+    private var worktreeLabels: [Data: [RefLabel]] = [:]
+
+    /// worktree ごとの HEAD（コミットの ID）と札の文字。書き込む先は `isHead`。
+    func show(worktreeHeads: [(head: Data, name: String, editing: Bool)]) {
+        var labels: [Data: [RefLabel]] = [:]
+        for w in worktreeHeads {
+            labels[w.head, default: []].append(RefLabel(name: w.name, kind: .local, isHead: w.editing, worktree: true))
+        }
+        guard labels.mapValues({ $0.map(\.name) }) != worktreeLabels.mapValues({ $0.map(\.name) }) else { return }
+        worktreeLabels = labels
+        redrawText()
+    }
     /// 署名の検証の結果（コミット ID → `%G?` の 1 文字）。コミットは変わらないので、History を読み直しても残す。
     private var verifiedSignatures: [Data: SignatureStatus] = [:]
     private var verifyingSignatures: Set<Data> = []
@@ -730,7 +745,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             var x = column.minX - originX
             let end = column.maxX - originX
             let id = FrameProfile.measure("text: commit id (FFI)") { history.commitID(row: row) }
-            let labels = id.flatMap { refLabels[$0] }
+            let labels = id.flatMap { id -> [RefLabel]? in
+                let all = (worktreeLabels[id] ?? []) + (refLabels[id] ?? [])
+                return all.isEmpty ? nil : all
+            }
             if let labels {
                 x = drawLabels(labels, x: x, maxX: end - 40, baseline: rowTop + subjectBaseline, scale: scale,
                                selected: isSelected && focused)
@@ -845,6 +863,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private func labelColors(_ label: RefLabel?, selected: Bool) -> (SIMD4<Float>, SIMD4<Float>) {
         guard let label else { return (NSColor.systemGray.withAlphaComponent(0.25).rgba, NSColor.labelColor.rgba) }
+        if label.worktree {
+            let base = NSColor.systemGreen
+            if label.isHead { return (base.withAlphaComponent(0.85).rgba, NSColor.white.rgba) }
+            return (base.withAlphaComponent(selected ? 0.45 : 0.25).rgba, (selected ? NSColor.white : NSColor.labelColor).rgba)
+        }
         let base: NSColor = switch label.kind {
         case .local: .systemBlue
         case .remote: .systemPurple
