@@ -17,22 +17,22 @@
 
 ## インストール
 
-アプリ（[GitHub CLI](https://cli.github.com/) で Release から取ってきて `/Applications` に入れる。入っていれば置き換える）:
+[Releases](https://github.com/fukusaka/amonhen/releases) から取ってくる。正式版は `v<版>`（VSCode 拡張は `vscode-v<版>`）、
+main の最新は `snapshot`（pre-release）に載る。
 
-```sh
-scripts/install.sh            # 最新のリリース（Amon Hen）
-scripts/install.sh snapshot   # main の最新（Amon Hen Snapshot、正式版と並べて入れられる）
-```
-
-アプリを入れると、エンジン（CLI と daemon）も `~/.local/share/amonhen` に置かれ、`~/.local/bin/amonhen` から使える。
-エンジンだけを入れるときは、Release の `amonhen-<版>-<OS>-<CPU>`（Linux・macOS は tar.gz、Windows は zip）を展開して
-`amonhen install` を実行する（Windows は `%LOCALAPPDATA%\amonhen` に置き、`%LOCALAPPDATA%\amonhen\bin` を PATH に足す）。
-
-VSCode 拡張は [apps/vscode](apps/vscode) の `scripts/install.sh [stable|snapshot]` で入れる。拡張はエンジンを同梱していて、
-入れれば共有の daemon を使う。
+- アプリ: `Amon-Hen-<版>.zip`（snapshot は `Amon-Hen-Snapshot-<版>.zip`、正式版と並べて入れられる）を展開して
+  `/Applications` に置く。Developer ID で署名・公証してあるので、そのまま開ける。初めて起動すると、エンジン（CLI と daemon）が
+  `~/.local/share/amonhen` に置かれ、`~/.local/bin/amonhen` から使える。
+- エンジンだけ: `amonhen-<版>-<OS>-<CPU>`（Linux・macOS は tar.gz、Windows は zip）を展開して `amonhen install` を実行する
+  （Windows は `%LOCALAPPDATA%\amonhen` に置かれるので、`%LOCALAPPDATA%\amonhen\bin` を PATH に足す）。
+- VSCode 拡張: `amonhen-vscode-<版>.vsix` を `code --install-extension <ファイル>` で入れる。拡張はエンジンを同梱していて、
+  入れれば共有の daemon を使う。
 
 取ってきたファイルが、このリポジトリの CI で作ったものかは `gh attestation verify <ファイル> --repo fukusaka/amonhen` で
 確かめられる。
+
+[GitHub CLI](https://cli.github.com/) があれば、clone した手元から `scripts/install.sh [stable|snapshot]`（アプリ）・
+`apps/vscode/scripts/install.sh [stable|snapshot]`（拡張）で、取ってくるところから入れ替えまでをまとめてできる。
 
 ## 文書
 
