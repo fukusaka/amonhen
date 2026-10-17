@@ -1,5 +1,8 @@
 import AmonhenKit
 import AppKit
+#if canImport(FoundationModels)
+import FoundationModels
+#endif
 import CAmonhen
 import CryptoKit
 
@@ -157,24 +160,59 @@ enum AssistPurpose: String, CaseIterable, Identifiable {
     }
 }
 
-/// AI の CLI。設定で明示的に選ぶ（既定は使わない）。
+/// AI の使い方: 手元の CLI（Claude Code・Codex）か、macOS 26 の端末内のモデル（Apple Intelligence、Foundation
+/// Models）。設定で選ぶ。選んでいなければ、端末内のモデルが使える Mac ではそれ、使えなければ使わない。
 enum AssistantCLI: String, CaseIterable, Identifiable {
-    case none, claude, codex
+    case none, apple, claude, codex
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .none: L("Don’t Use")
+        case .apple: L("Apple Intelligence (On-Device)")
         case .claude: "Claude Code"
         case .codex: "Codex"
         }
     }
 
+    /// 使える（CLI なら見つかる、端末内のモデルなら用意できている）。
+    var isAvailable: Bool {
+        switch self {
+        case .none: false
+        case .apple: AppleModel.unavailableReason == nil
+        case .claude, .codex: path != nil
+        }
+    }
+
+    /// 選べるモデル（ID と名前）。Claude Code は決まった一覧、Codex は CLI が持っている一覧
+    /// （`~/.codex/models_cache.json` のうち、一覧に出すもの）。
+    var models: [(id: String, title: String)] {
+        switch self {
+        case .claude:
+            return [("claude-haiku-5-5", "Haiku 5.5"), ("claude-sonnet-5-5", "Sonnet 5.5"), ("claude-opus-5-5", "Opus 5.5"),
+                    ("claude-fable-5-1", "Fable 5.1")]
+        case .codex:
+            let file = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".codex/models_cache.json")
+            guard let data = try? Data(contentsOf: file),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let models = json["models"] as? [[String: Any]] else { return [] }
+            return models.compactMap { m in
+                guard m["visibility"] as? String == "list", let slug = m["slug"] as? String else { return nil }
+                return (slug, m["display_name"] as? String ?? slug)
+            }
+        case .none, .apple:
+            return []
+        }
+    }
+
+    /// 端末の外に送るか（送るものは、リポジトリごとに初めて使うときに確かめる）。
+    var sendsOut: Bool { self == .claude || self == .codex }
+
     /// 実行ファイルの場所（Finder から起動したアプリには端末の PATH がないので、よくある場所を探す）。
     var path: String? {
         let home = NSHomeDirectory()
         let names: [String] = switch self {
-        case .none: []
+        case .none, .apple: []
         case .claude: ["\(home)/.local/bin/claude", "\(home)/.claude/local/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude"]
         case .codex: ["/opt/homebrew/bin/codex", "/usr/local/bin/codex", "\(home)/.local/bin/codex", "\(home)/.npm-global/bin/codex"]
         }
@@ -183,7 +221,7 @@ enum AssistantCLI: String, CaseIterable, Identifiable {
 
     var defaultModel: String {
         switch self {
-        case .none: ""
+        case .none, .apple: ""
         case .claude: "claude-haiku-5-5"
         case .codex: ""
         }
@@ -193,7 +231,10 @@ enum AssistantCLI: String, CaseIterable, Identifiable {
 extension Settings {
     /// AI に使う CLI（既定は使わない）。
     static var assistant: AssistantCLI {
-        get { UserDefaults.standard.string(forKey: "assistant").flatMap(AssistantCLI.init) ?? .none }
+        get {
+            UserDefaults.standard.string(forKey: "assistant").flatMap(AssistantCLI.init)
+                ?? (AssistantCLI.apple.isAvailable ? .apple : .none)
+        }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "assistant") }
     }
 
@@ -218,7 +259,7 @@ extension Settings {
 enum Assistant {
     struct Failure: Error, CustomStringConvertible { let description: String }
 
-    static var isConfigured: Bool { Settings.assistant != .none && Settings.assistant.path != nil }
+    static var isConfigured: Bool { Settings.assistant.isAvailable }
 
     // MARK: - プロンプト
 
@@ -305,6 +346,8 @@ enum Assistant {
     /// このリポジトリで AI を使ってよいか。初めて使うときに、送る内容の大きさを見せて確かめる。
     @discardableResult
     static func confirm(repository key: String, summary: String) -> Bool {
+        // 端末内のモデルなら、どこにも送らないので聞かない。
+        guard Settings.assistant.sendsOut else { return true }
         var allowed = UserDefaults.standard.dictionary(forKey: "assistantRepositories") as? [String: Bool] ?? [:]
         if let decided = allowed[key] { return decided }
         let alert = NSAlert()
@@ -345,13 +388,28 @@ enum Assistant {
         onText: @escaping @MainActor (String) -> Void
     ) async throws -> String {
         let cli = Settings.assistant
-        guard cli != .none, let executable = cli.path else {
-            throw Failure(description: L("No AI CLI is selected, or it can’t be found (Settings > AI)."))
+        guard cli.isAvailable else {
+            throw Failure(description: cli == .apple
+                ? (AppleModel.unavailableReason ?? "")
+                : L("No AI CLI is selected, or it can’t be found (Settings > AI)."))
         }
         var vars = variables
         vars["language"] = vars["language"] ?? Settings.assistantLanguage
-        var prompt = try fill(prompt(purpose, workdir: workdir), vars, purpose: purpose)
-        if let contract = purpose.outputContract { prompt += try fill(contract, vars, purpose: purpose) }
+        let template = prompt(purpose, workdir: workdir)
+        func build(_ vars: [String: String]) throws -> String {
+            var prompt = try fill(template, vars, purpose: purpose)
+            if let contract = purpose.outputContract { prompt += try fill(contract, vars, purpose: purpose) }
+            return prompt
+        }
+        var prompt = try build(vars)
+        // 端末内のモデルは一度に読める量が小さい（入力と出力で約 4,000 トークン）。長ければ、いちばん長い変数
+        // （差分など）を詰める。
+        if cli == .apple, prompt.count > AppleModel.promptCharacters,
+           let (name, value) = vars.max(by: { $0.value.count < $1.value.count }) {
+            let keep = max(0, value.count - (prompt.count - AppleModel.promptCharacters))
+            vars[name] = String(value.prefix(keep)) + "\n" + L("…(the rest is left out: too long for the on-device model)") + "\n"
+            prompt = try build(vars)
+        }
         let model = Settings.assistantModel(cli)
         let key = sha256([cli.rawValue, model, purpose.rawValue, prompt].joined(separator: "\u{0}"))
         let cacheFile = cacheDirectory.appendingPathComponent(key + ".txt")
@@ -360,7 +418,9 @@ enum Assistant {
             return cached
         }
         let started = CACurrentMediaTime()
-        let result = try await stream(cli: cli, executable: executable, model: model, prompt: prompt, onText: onText)
+        let result = cli == .apple
+            ? try await AppleModel.stream(prompt: prompt, onText: onText)
+            : try await stream(cli: cli, executable: cli.path ?? "", model: model, prompt: prompt, onText: onText)
         PerformanceLog.record("AI: \(purpose.title)", ms: (CACurrentMediaTime() - started) * 1000)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
         try? result.write(to: cacheFile, atomically: true, encoding: .utf8)
@@ -384,7 +444,7 @@ enum Assistant {
             args = ["exec", "--json", "--sandbox", "read-only", "--skip-git-repo-check"]
             if !model.isEmpty { args += ["-m", model] }
             args.append("-")
-        case .none:
+        case .none, .apple:
             throw Failure(description: L("No AI CLI is selected."))
         }
         let process = Process()
@@ -464,7 +524,7 @@ enum Assistant {
                 return msg["message"] as? String
             }
             return nil
-        case .none:
+        case .none, .apple:
             return nil
         }
     }
@@ -484,6 +544,53 @@ enum Assistant {
             p.waitUntilExit()
             return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
         }.value
+    }
+}
+
+/// macOS 26 の端末内のモデル（Foundation Models）。Apple Intelligence を入れた Apple シリコンの Mac で使える。
+enum AppleModel {
+    /// プロンプトの文字数の上限（約 4,000 トークンのうち、返事の分を残す）。
+    static let promptCharacters = 6_000
+
+    /// 使えない理由（使えれば nil）。
+    static var unavailableReason: String? {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            switch SystemLanguageModel.default.availability {
+            case .available: return nil
+            case .unavailable(.deviceNotEligible): return L("This Mac can’t run Apple Intelligence.")
+            case .unavailable(.appleIntelligenceNotEnabled): return L("Turn on Apple Intelligence in System Settings.")
+            case .unavailable(.modelNotReady): return L("The on-device model is still downloading. Try again later.")
+            case .unavailable: return L("The on-device model isn’t available.")
+            }
+        }
+        #endif
+        return L("Needs macOS 26 or later.")
+    }
+
+    /// 送って、返事を流しながら `onText` に渡す（それまでの全文）。
+    static func stream(prompt: String, onText: @escaping @MainActor (String) -> Void) async throws -> String {
+        #if canImport(FoundationModels)
+        if #available(macOS 26.0, *) {
+            let session = LanguageModelSession()
+            var text = ""
+            do {
+                for try await snapshot in session.streamResponse(to: prompt) {
+                    text = snapshot.content
+                    onText(text)
+                }
+            } catch let error as LanguageModelSession.GenerationError {
+                if case .exceededContextWindowSize = error {
+                    throw Assistant.Failure(description: L("Too long for the on-device model. Try a smaller selection, or use Claude Code or Codex."))
+                }
+                throw Assistant.Failure(description: error.localizedDescription)
+            }
+            let result = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            onText(result)
+            return result
+        }
+        #endif
+        throw Assistant.Failure(description: unavailableReason ?? "")
     }
 }
 

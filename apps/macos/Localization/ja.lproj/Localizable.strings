@@ -807,3 +807,17 @@
 "Format" = "方式";
 "Rewrite" = "書き直す";
 "Content" = "内容";
+
+/* Assistant.swift（Apple Intelligence） */
+"Apple Intelligence (On-Device)" = "Apple Intelligence（端末内）";
+"AI to use" = "使う AI";
+"This Mac can’t run Apple Intelligence." = "この Mac では Apple Intelligence を使えません。";
+"Turn on Apple Intelligence in System Settings." = "システム設定で Apple Intelligence を入にしてください。";
+"The on-device model is still downloading. Try again later." = "端末内のモデルをまだダウンロードしています。しばらくしてから試してください。";
+"The on-device model isn’t available." = "端末内のモデルを使えません。";
+"Needs macOS 26 or later." = "macOS 26 以降が必要です。";
+"Too long for the on-device model. Try a smaller selection, or use Claude Code or Codex." = "端末内のモデルには長すぎます。選ぶ範囲を小さくするか、Claude Code か Codex を使ってください。";
+"…(the rest is left out: too long for the on-device model)" = "…（端末内のモデルには長すぎるので、以下は省略）";
+"Runs on this Mac and sends nothing out. It reads about 4,000 tokens at a time, so long diffs are cut short; for large commits or resolving conflicts, Claude Code or Codex does better." = "この Mac の中で動き、外には何も送りません。一度に読めるのは約 4,000 トークンなので、長い差分は途中で切ります。大きなコミットやコンフリクトの解消には、Claude Code か Codex のほうが向いています。";
+"Other…" = "その他…";
+"Model name" = "モデルの名前";

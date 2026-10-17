@@ -343,14 +343,23 @@ private struct PerformanceSettings: View {
 private struct AISettings: View {
     @Bindable var model: SettingsModel
     @State private var customized: Set<String> = []
+    /// モデルの「その他…」を選んだ（名前を書く欄を出す）。
+    @State private var otherModel = false
 
     var body: some View {
         Form {
             Section {
-                Picker(L("CLI to use"), selection: $model.assistant) {
+                Picker(L("AI to use"), selection: $model.assistant) {
                     ForEach(AssistantCLI.allCases) { Text($0.title).tag($0) }
                 }
-                if model.assistant != .none {
+                if model.assistant == .apple {
+                    if let reason = AppleModel.unavailableReason {
+                        Note(reason).foregroundStyle(.red)
+                    } else {
+                        Note(L("Runs on this Mac and sends nothing out. It reads about 4,000 tokens at a time, so long diffs are cut short; for large commits or resolving conflicts, Claude Code or Codex does better."))
+                    }
+                    TextField(L("Language for translations and explanations"), text: $model.assistantLanguage)
+                } else if model.assistant != .none {
                     if let path = model.assistant.path {
                         Note(model.assistantVersion.map { L("%@ (%@)", path, $0) } ?? path)
                     } else {
@@ -359,7 +368,23 @@ private struct AISettings: View {
                              : L("Not found. Install %@ (%@) and sign in with the CLI.", "Codex", "codex"))
                             .foregroundStyle(.red)
                     }
-                    TextField(L("Model"), text: $model.assistantModel, prompt: Text(L("CLI default")))
+                    // 一覧から選ぶ。一覧にない名前は「その他…」で書く。
+                    let models = model.assistant.models
+                    let custom = !model.assistantModel.isEmpty && !models.contains { $0.id == model.assistantModel }
+                    Picker(L("Model"), selection: Binding(
+                        get: { custom || otherModel ? "\u{0}other" : model.assistantModel },
+                        set: { value in
+                            otherModel = value == "\u{0}other"
+                            if !otherModel { model.assistantModel = value }
+                        })) {
+                        Text(L("CLI default")).tag("")
+                        ForEach(models, id: \.id) { Text("\($0.title)  (\($0.id))").tag($0.id) }
+                        Divider()
+                        Text(L("Other…")).tag("\u{0}other")
+                    }
+                    if custom || otherModel {
+                        TextField(L("Model name"), text: $model.assistantModel, prompt: Text(L("CLI default")))
+                    }
                     TextField(L("Language for translations and explanations"), text: $model.assistantLanguage)
                 }
             } footer: {
@@ -390,7 +415,7 @@ private struct AISettings: View {
                                     purpose, variables: purpose.sampleVariables, workdir: nil, useCache: false, onText: onText)
                             }
                         }
-                        .disabled(model.assistant == .none)
+                        .disabled(!model.assistant.isAvailable)
                         .help(L("Send the current prompt with a sample diff and message, and see the reply."))
                     }
                 }
@@ -403,7 +428,10 @@ private struct AISettings: View {
         }
         .formStyle(.grouped)
         .onAppear { refresh() }
-        .task(id: model.assistant) { model.assistantVersion = await Assistant.version(model.assistant) }
+        .task(id: model.assistant) {
+            otherModel = false
+            model.assistantVersion = await Assistant.version(model.assistant)
+        }
     }
 
     private func refresh() {

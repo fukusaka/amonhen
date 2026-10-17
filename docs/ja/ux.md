@@ -96,7 +96,7 @@ macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewCont
 | Appearance | テーマ（システム / ライト / ダーク）、差分とメッセージのフォントと大きさ、History の 1 行表示・アバター・祖先の強調、グラフの色 |
 | Diff & Merge | unified / split の既定、空白の無視、前後の行数、折り返し、タブ幅、マージエディタの既定の並び（後述）、diff3 |
 | Commit | 件名の文字数の目安（50 / 72）、Sign-off を付ける、Conventional Commits の補完、コミット後に push |
-| AI | 使う CLI（なし / Claude Code / Codex。既定は「なし」）、選んだ CLI の場所・版・ログインの状態（見つからなければ入れ方を案内）、モデル、翻訳先の言語、リポジトリごとに送らない設定。詳細で用途ごとのプロンプト（9 章） |
+| AI | 使う AI（なし / Apple Intelligence（端末内）/ Claude Code / Codex。既定は、端末内のモデルが使えればそれ、なければ「なし」）、選んだ CLI の場所・版・ログインの状態（見つからなければ入れ方を案内）、モデル、翻訳先の言語、リポジトリごとに送らない設定。詳細で用途ごとのプロンプト（9 章） |
 | Performance | commit-graph の自動書き出し、fsmonitor、永続キャッシュの場所と大きさ・消去、裏のタブの扱い |
 | Advanced | SSH 先の署名の検証、daemon の送り込み先、ログの詳しさ、計測の記録 |
 
@@ -326,7 +326,8 @@ JetBrains の「Apply non-conflicting changes」と「Resolve simple conflicts�
 
 - 接続先は手元の CLI で、Claude Code（`claude -p --output-format stream-json --verbose --include-partial-messages --tools "" --no-session-persistence`、空の一時ディレクトリで起動してリポジトリの CLAUDE.md を読ませない）か Codex（`codex exec --json --sandbox read-only --skip-git-repo-check -`）のどちらかを Settings > AI で明示的に選ぶ。見つかったものを勝手に使うことはせず、選ぶまで AI のボタンは出さない。用途ごとには分けず、全体で 1 つ。
 - どちらも子プロセスとして起動し、プロンプトと差分は標準入力で渡して、流れてくる JSON を読む。鍵の管理はアプリで持たず、CLI のログインに任せる。
-- モデルは CLI ごとに覚え、`--model`（Codex は `-m`）で渡す。Claude Code の既定は速い `claude-haiku-5-5`、解説だけ `claude-sonnet-5-5` を選べる。
+- Apple Intelligence（端末内。macOS 26 で Apple Intelligence を入にした Mac）は Foundation Models を直接使う。Mac の外に何も出ないので、リポジトリごとの確認はしない。一度に読めるのは約 4,000 トークンなので、いちばん長い変数（ふつうは差分）を詰める。翻訳や短い解説に向き、大きなコミットやコンフリクトの解消は Claude Code・Codex のほうがよい。
+- モデルは CLI ごとに覚え、プルダウンで選ぶ（Claude Code は Haiku・Sonnet・Opus・Fable、Codex は `~/.codex/models_cache.json` に一覧で出ているもの。「その他…」で名前を書ける）。`--model`（Codex は `-m`）で渡す。Claude Code の既定は速い `claude-haiku-5-5`、解説だけ `claude-sonnet-5-5` を選べる。
 - ツールを使わせない設定で起動する（Claude Code は使えるツールを空に、Codex は sandbox を読み取り専用に）。解説・翻訳でファイルを書いたりコマンドを実行したりする必要はないため。フラグの正確な名前は実装時に手元の版の `--help` で確かめる。
 - 呼び出しはコアの外の小さな crate（`amonhen-assist`）の `Assistant` トレイトに閉じ込め、実装を CLI ごとに 1 つ置く。出力の読み取りは CLI ごとに小さく分け、版を確かめる（Codex の `exec` のイベントの形は変わりやすい）。プロセスの起動は `Platform` から注入する（SSH 先のリポジトリでも、CLI は手元で動かす）。
 - 選んだ CLI が見つからない・ログインしていないときはボタンを無効にし、理由を出す。
