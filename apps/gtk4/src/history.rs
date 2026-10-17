@@ -76,6 +76,8 @@ pub struct State {
     label_layouts: HashMap<String, pango::Layout>,
     fonts: Option<Fonts>,
     selected: Option<u32>,
+    /// 行を選んだときに呼ぶ。
+    on_select: Option<Rc<dyn Fn(u32)>>,
     lanes: Lanes,
     metrics: Metrics,
     tick: Option<gtk::TickCallbackId>,
@@ -300,9 +302,28 @@ impl HistoryView {
     }
 
     pub fn select(&self, row: u32) {
-        self.state().selected = Some(row);
+        let callback = {
+            let mut st = self.state();
+            let changed = st.selected != Some(row);
+            st.selected = Some(row);
+            st.on_select.clone().filter(|_| changed)
+        };
         self.scroll_to_row(row);
         self.queue_draw();
+        if let Some(f) = callback {
+            f(row);
+        }
+    }
+
+    /// 行を選んだら `f(行)` を呼ぶ。
+    pub fn connect_selected(&self, f: impl Fn(u32) + 'static) {
+        self.state().on_select = Some(Rc::new(f));
+    }
+
+    /// 表示している History と、そのリポジトリ。
+    pub fn current(&self) -> Option<(Arc<Repository>, Arc<HistorySnapshot>)> {
+        let st = self.state();
+        Some((st.repo.clone()?, st.history.clone()?))
     }
 
     /// `row` が見えるようにスクロールする。

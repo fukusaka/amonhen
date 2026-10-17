@@ -2,18 +2,24 @@
 //!
 //! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll] [--scroll-to <row>]`
 
+mod details;
+mod diff;
 mod graph;
 mod history;
 mod measure;
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use amonhen_backend_gix::GixBackend;
-use amonhen_core::{Repository, cache};
+use amonhen_core::{PairMode, Repository, cache};
 use gtk::prelude::*;
 use gtk::{gio, glib, graphene};
 
+use crate::details::Details;
+use crate::diff::DiffWidget;
 use crate::history::HistoryView;
 
 const APP_ID: &str = "io.github.fukusaka.amonhen";
@@ -108,12 +114,32 @@ fn build_window(app: &gtk::Application, args: Args) {
     overlay.set_child(Some(&scrolled));
     overlay.add_overlay(&status);
 
+    // 右の列: 選んだコミットの詳細と差分。
+    let details = Rc::new(Details::new());
+    let diff = DiffWidget::default();
+    let diff_scrolled = gtk::ScrolledWindow::builder()
+        .child(&diff)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .build();
+    let right = gtk::Paned::new(gtk::Orientation::Vertical);
+    right.set_start_child(Some(&details.root));
+    right.set_end_child(Some(&diff_scrolled));
+    right.set_resize_start_child(false);
+    right.set_position(170);
+    let columns = gtk::Paned::new(gtk::Orientation::Horizontal);
+    columns.set_start_child(Some(&overlay));
+    columns.set_end_child(Some(&right));
+    columns.set_position(560);
+    // 裏で読んでいる詳細と差分の数（`--snapshot` はなくなるまで待つ）。
+    let pending = Rc::new(Cell::new(0u32));
+    connect_selection(&view, &details, &diff, &right, &pending);
+
     let window = gtk::ApplicationWindow::builder()
         .application(app)
         .title(format!("{name} — Amon Hen"))
         .default_width(1100)
         .default_height(760)
-        .child(&overlay)
+        .child(&columns)
         .build();
     window.set_titlebar(Some(&header));
     window.present();
@@ -142,7 +168,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                             if let Some(row) = args.scroll_to {
                                 view.select(row);
                             }
-                            after_first_show(&window, &view, &args);
+                            after_first_show(&window, &view, &pending, &args);
                         }
                     }
                     Event::Refs(refs) => {
@@ -165,6 +191,99 @@ fn build_window(app: &gtk::Application, args: Args) {
             }
         }
     ));
+}
+
+/// History で選んだコミットの詳細と差分を、裏で読んで出す。選び直したら古い結果は捨てる。
+fn connect_selection(
+    view: &HistoryView,
+    details: &Rc<Details>,
+    diff: &DiffWidget,
+    right: &gtk::Paned,
+    pending: &Rc<Cell<u32>>,
+) {
+    let weak_right = right.downgrade();
+    let generation = Rc::new(Cell::new(0u64));
+    let weak_view = view.downgrade();
+    let weak_diff = diff.downgrade();
+    let details = details.clone();
+    let pending = pending.clone();
+    view.connect_selected(move |row| {
+        let (Some(view), Some(diff)) = (weak_view.upgrade(), weak_diff.upgrade()) else {
+            return;
+        };
+        let Some((repo, history)) = view.current() else {
+            return;
+        };
+        let Some(&id) = history.graph.ids().get(row as usize) else {
+            return;
+        };
+        let g = generation.get() + 1;
+        generation.set(g);
+        details.clear();
+        diff.clear();
+
+        // 詳細はすぐ読めるので先に出し、差分はその後に。
+        pending.set(pending.get() + 2);
+        let (details, generation_d, pending_d, repo_d) = (
+            details.clone(),
+            generation.clone(),
+            pending.clone(),
+            repo.clone(),
+        );
+        let weak_right = weak_right.clone();
+        glib::spawn_future_local(async move {
+            let info =
+                gio::spawn_blocking(move || repo_d.commit_info(&id).map_err(|e| e.to_string()))
+                    .await;
+            pending_d.set(pending_d.get() - 1);
+            if generation_d.get() != g {
+                return;
+            }
+            match info {
+                Ok(Ok(info)) => {
+                    details.show(&info);
+                    // 詳細の欄をメッセージの高さに合わせる（右の列の半分まで。残りは欄の中でスクロール）。
+                    // 窓が開いた直後は大きさがまだ決まっていないので、決まったフレームで合わせる。
+                    if let Some(right) = weak_right.upgrade() {
+                        right.add_tick_callback(move |right, _| {
+                            if right.width() <= 0 {
+                                return glib::ControlFlow::Continue;
+                            }
+                            let height = details.natural_height(right.width());
+                            right.set_position(height.min(right.height() / 2).max(60));
+                            glib::ControlFlow::Break
+                        });
+                    }
+                }
+                Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
+                Err(_) => {}
+            }
+        });
+        let (generation, pending) = (generation.clone(), pending.clone());
+        let weak_diff = diff.downgrade();
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || {
+                let (_, stacked) = repo
+                    .selection_diff(&history, &[row], PairMode::Forward)
+                    .map_err(|e| e.to_string())?;
+                let view = diff::View::build(&stacked, &[]);
+                Ok::<_, String>((Arc::new(diff::Source(stacked)), view))
+            })
+            .await;
+            pending.set(pending.get() - 1);
+            let Some(diff) = weak_diff.upgrade() else {
+                return;
+            };
+            if generation.get() != g {
+                return;
+            }
+            match result {
+                Ok(Ok((source, view))) => diff.show(source, view),
+                Ok(Err(e)) => eprintln!("差分を読めない: {e}"),
+                Err(_) => {}
+            }
+        });
+    });
 }
 
 enum Event {
@@ -225,7 +344,13 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
     }
 }
 
-fn after_first_show(window: &gtk::ApplicationWindow, view: &HistoryView, args: &Args) {
+fn after_first_show(
+    window: &gtk::ApplicationWindow,
+    view: &HistoryView,
+    pending: &Rc<Cell<u32>>,
+    args: &Args,
+) {
+    let pending = pending.clone();
     if let Some(png) = args.snapshot.clone() {
         // 見えている行が読めて、レーンが落ち着くまで待ってから撮る。
         glib::timeout_add_local(
@@ -238,7 +363,7 @@ fn after_first_show(window: &gtk::ApplicationWindow, view: &HistoryView, args: &
                 #[upgrade_or]
                 glib::ControlFlow::Break,
                 move || {
-                    if !view.is_settled() {
+                    if !view.is_settled() || pending.get() > 0 {
                         return glib::ControlFlow::Continue;
                     }
                     match snapshot(&window, &png) {
