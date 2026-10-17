@@ -44,7 +44,8 @@ becomes the GitHub Release notes.
 - History no longer crashes when showing only the commits that match a search scrolled down past the matches.
 - Fetch, Pull and Push no longer hang forever when git waits for credentials nobody can see: after 120 seconds with no
   output they stop and say so.
-- The repository name in the toolbar has a fixed width, so the buttons after it stay put when switching tabs.
+- The repository and branch names in the toolbar have a fixed width, so the buttons after them stay put when switching
+  tabs.
 - The repository list no longer jumps back to the top while scrolling (each row's branch and change count used to
   rebuild the whole list as it arrived).
 - Line numbers, file headers and stage checkboxes in diffs no longer come out garbled after the window moves

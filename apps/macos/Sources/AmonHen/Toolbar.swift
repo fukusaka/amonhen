@@ -9,6 +9,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     private let repositoryItem = NSToolbarItem(itemIdentifier: .repository)
     private let repositoryButton = NSButton()
     private let branchItem = NSToolbarItem(itemIdentifier: .branch)
+    /// 今のブランチの名前を出すボタン（ラベルにすると、名前の長さでツールバーの並びがずれるため、幅を決める）。
+    private let branchButton = NSButton()
     private let searchItem = NSSearchToolbarItem(itemIdentifier: .search)
     /// 検索欄で ⏎ を押した（History を探す）。
     var onSearch: ((String) -> Void)?
@@ -62,10 +64,16 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         repositoryItem.paletteLabel = "Repository"
         repositoryItem.toolTip = L("Switch Repository")
         // 今のブランチ。押すとブランチの切り替え（⌘⇧B）。名前の変更・上流は Repository メニュー。
-        branchItem.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Branch")
+        branchButton.bezelStyle = .texturedRounded
+        branchButton.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Branch")
+        branchButton.imagePosition = .imageLeading
+        branchButton.lineBreakMode = .byTruncatingMiddle
+        branchButton.action = #selector(RepositoryWindow.switchBranch(_:))
+        branchButton.translatesAutoresizingMaskIntoConstraints = false
+        branchButton.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        branchItem.view = branchButton
         branchItem.label = "Branch"
         branchItem.paletteLabel = "Branch"
-        branchItem.action = #selector(RepositoryWindow.switchBranch(_:))
         branchItem.toolTip = L("Switch Branch (⌘⇧B)")
         // History の検索。▾ で、作者・パス・内容で探す書き方を入れる。
         let field = searchItem.searchField
@@ -81,6 +89,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
             scopes.addItem(item)
         }
         field.searchMenuTemplate = scopes
+        searchItem.label = L("Search")
         searchItem.paletteLabel = L("Search")
     }
 
@@ -95,7 +104,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         repositoryButton.title = L("Choose a Repository")
         repositoryButton.isEnabled = false
         repositoryItem.toolTip = nil
-        branchItem.label = "Branch"
+        branchButton.title = "—"
+        branchButton.isEnabled = false
     }
 
     /// リポジトリの一覧を出す位置（ツールバーにあれば、リポジトリ名のボタン）。
@@ -103,7 +113,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
 
     /// 今のブランチを出す（detached なら短い ID）。
     func setBranch(_ name: String?) {
-        branchItem.label = name ?? "detached"
+        branchButton.title = name ?? "detached"
         branchItem.toolTip = L("%@ — click to switch branch (⌘⇧B)", name ?? "detached HEAD")
     }
 

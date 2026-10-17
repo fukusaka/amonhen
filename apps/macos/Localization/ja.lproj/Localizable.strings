@@ -243,7 +243,7 @@
 
 /* Settings.swift */
 "Default Pull" = "Pull の既定";
-"Used by Pull in the toolbar and ⌃⌘L. You can also choose each time from the Pull button’s ▾ or Repository > Pull With." = "ツールバーの Pull と ⌃⌘L で使う。Pull ボタンの ▾ や Repository > Pull With でその都度も選べる。";
+"The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With." = "Pull の確認のシートで最初に選ばれている取り込み方（ツールバーと ⌃⌘L）。シートでその都度変えられ、Repository > Pull With でも選べる。";
 "Repository List" = "リポジトリの一覧";
 "Bookmark repositories you open" = "開いたリポジトリをブックマークに入れる";
 "Repositories already found in folders to scan aren’t added." = "スキャンするフォルダで見つかっているものは入れない。";

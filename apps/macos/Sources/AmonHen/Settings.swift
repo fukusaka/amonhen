@@ -271,7 +271,7 @@ private struct GitSettings: View {
                 Picker(L("Default Pull"), selection: $model.pullMode) {
                     ForEach(PullMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                Note(L("Used by Pull in the toolbar and ⌃⌘L. You can also choose each time from the Pull button’s ▾ or Repository > Pull With."))
+                Note(L("The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With."))
             }
             Section(L("Repository List")) {
                 Toggle(L("Bookmark repositories you open"), isOn: $model.autoBookmark)
@@ -388,7 +388,9 @@ private struct AISettings: View {
                     TextField(L("Language for translations and explanations"), text: $model.assistantLanguage)
                 }
             } footer: {
-                Note(L("Runs the local CLI with tools disabled (the app holds no keys; it uses the CLI’s sign-in). For each repository, asks before sending anything the first time."))
+                if model.assistant.sendsOut {
+                    Note(L("Runs the local CLI with tools disabled (the app holds no keys; it uses the CLI’s sign-in). For each repository, asks before sending anything the first time."))
+                }
             }
             Section(L("Prompts by Purpose")) {
                 ForEach(AssistPurpose.allCases) { purpose in
