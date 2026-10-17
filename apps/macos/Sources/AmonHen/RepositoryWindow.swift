@@ -431,7 +431,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     func showFailure(_ message: String, title: String = L("Operation Failed")) {
         hideFailure()
         failureMessage = message
-        let cancelled = message == "取り消した"
+        let cancelled = CoreLanguage.isCancelled(message)
         let icon = NSImageView(image: NSImage(
             systemSymbolName: cancelled ? "stop.circle" : "xmark.octagon.fill", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = cancelled ? .secondaryLabelColor : .systemRed

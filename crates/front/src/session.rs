@@ -2,11 +2,12 @@
 //! （FE がスクロールする間に History が新しくなっても、見ている行は変わらない）。
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use amonhen_core::diff::DiffView;
 use amonhen_core::{HistorySnapshot, PairMode, Repository, Selection, WorkingDiff};
+use amonhen_model::i18n::{self, Lang};
 use amonhen_model::{ChangeKind, FileChange, Oid, RefKind, StatusEntry, StatusKind};
 use amonhen_projection::FrontendProfile;
 use serde_json::{Value, json};
@@ -23,6 +24,8 @@ pub struct Session {
     next: AtomicU64,
     histories: Mutex<Kept<Arc<HistorySnapshot>>>,
     diffs: Mutex<Kept<Arc<WorkingDiff>>>,
+    /// 相手が `hello` で伝えた言語（`Lang` の値）。答えのエラーの文に使う。伝えなければプロセスの既定。
+    language: AtomicU8,
 }
 
 /// 番号つきで、新しいものを `KEEP` 個まで。
@@ -115,6 +118,7 @@ impl Session {
             next: AtomicU64::new(1),
             histories: Mutex::new(Kept::new()),
             diffs: Mutex::new(Kept::new()),
+            language: AtomicU8::new(i18n::current() as u8),
         }
     }
 
@@ -152,6 +156,25 @@ impl Session {
 
     /// 命令（`{"op": "...", ...}`）を実行する。`cancelled` が true になれば、時間のかかる処理をやめる。
     pub fn handle(&self, request: &Value, cancelled: &(dyn Fn() -> bool + Sync)) -> Result<Reply> {
+        if request["op"] == "hello"
+            && let Some(language) = request["language"].as_str()
+        {
+            self.language
+                .store(Lang::parse(language) as u8, Ordering::Relaxed);
+        }
+        let lang = if self.language.load(Ordering::Relaxed) == Lang::Ja as u8 {
+            Lang::Ja
+        } else {
+            Lang::En
+        };
+        i18n::with(lang, || self.handle_in_language(request, cancelled))
+    }
+
+    fn handle_in_language(
+        &self,
+        request: &Value,
+        cancelled: &(dyn Fn() -> bool + Sync),
+    ) -> Result<Reply> {
         let op = request["op"].as_str().ok_or("op がありません")?;
         let repo = &*self.repo;
         Ok(match op {

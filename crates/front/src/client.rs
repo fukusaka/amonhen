@@ -163,7 +163,10 @@ impl Remote {
             next: AtomicU64::new(1),
         };
         // 開けたかを確かめる（開けなければ、daemon が理由を返して閉じる）。
-        let hello = remote.call(serde_json::json!({"op": "hello"}))?;
+        let hello = remote.call(serde_json::json!({
+            "op": "hello",
+            "language": amonhen_model::i18n::current().code(),
+        }))?;
         if hello.json["version"] != crate::VERSION {
             return Err(format!("daemon の窓口の版が違う: {}", hello.json["version"]).into());
         }
@@ -198,7 +201,7 @@ impl Front for Remote {
                     if cancelled() {
                         self.shared.pending.lock().unwrap().remove(&id);
                         let _ = self.send(Kind::Cancel, id, &[]);
-                        return Err("取り消しました".into());
+                        return Err(amonhen_model::i18n::cancelled().into());
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {

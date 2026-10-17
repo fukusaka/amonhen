@@ -17,6 +17,19 @@ public struct AmonhenError: Error, CustomStringConvertible {
     }
 }
 
+/// コアが作る文（エラーなど）の言語。
+public enum CoreLanguage {
+    /// 利用者に見せる文の言語を決める（`ja`・`en`。アプリの画面と同じ言語を、リポジトリを開く前に渡す）。
+    public static func set(_ language: String) {
+        amonhen_set_language(language)
+    }
+
+    /// `message` が、取り消したことを表すコアの文か（どの言語でも）。
+    public static func isCancelled(_ message: String) -> Bool {
+        amonhen_is_cancelled(message)
+    }
+}
+
 public final class Repository: @unchecked Sendable {
     let raw: OpaquePointer
 

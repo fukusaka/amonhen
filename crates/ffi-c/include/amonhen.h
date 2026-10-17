@@ -1189,6 +1189,23 @@ char *amonhen_daemon_status(void);
 bool amonhen_daemon_stop(void);
 
 /**
+ * 利用者に見せる文（エラーなど）の言語を決める（`ja`・`en` など。訳のない言語は英語）。アプリの画面と同じ言語を
+ * 起動したときに渡す。daemon・SSH 先にも、つなぐときにこの言語を伝える。
+ *
+ * # Safety
+ * `language` は NUL 終端の UTF-8 であること。
+ */
+void amonhen_set_language(const char *language);
+
+/**
+ * `message`（`amonhen_last_error` や操作の記録の文）が、取り消したことを表すか（どの言語の文でも）。
+ *
+ * # Safety
+ * `message` は NUL 終端の UTF-8 であること。
+ */
+bool amonhen_is_cancelled(const char *message);
+
+/**
  * 手元の共有の daemon を起動する（`daemon` は `amonhend` のパス）。失敗したら false（理由は `amonhen_last_error`）。
  *
  * # Safety

@@ -260,7 +260,7 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
             let _ = child.wait();
             let _ = out_thread.join();
             let _ = err_thread.join();
-            return Err("取り消した".into());
+            return Err(amonhen_model::i18n::cancelled().into());
         }
         let silent = started.elapsed().as_millis() as u64 - heard.load(Ordering::Relaxed);
         if silent > NETWORK_SILENCE.as_millis() as u64 {
@@ -712,7 +712,9 @@ mod streaming_tests {
         };
         assert!(amonhen_model::activity::cancel(seq));
         let result = handle.join().unwrap();
-        assert_eq!(result.unwrap_err().to_string(), "取り消した");
+        assert!(amonhen_model::i18n::is_cancelled(
+            &result.unwrap_err().to_string()
+        ));
         assert!(started.elapsed().as_secs() < 10);
         let record = amonhen_model::activity::records()
             .into_iter()

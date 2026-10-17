@@ -395,6 +395,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// コアが作る文（エラーなど）も、画面と同じ言語にする（リポジトリを開く前に）。
+CoreLanguage.set(L10n.language ?? "en")
 let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate

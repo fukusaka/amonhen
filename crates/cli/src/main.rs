@@ -66,6 +66,7 @@ merge-file は既定で間違えようのない規則だけをかける（--all 
   git config mergetool.amonhen.trustExitCode true";
 
 fn main() -> ExitCode {
+    amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
     let argv0 = std::env::args().next().unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // エンジンは 1 つの実行ファイルで、daemon としての起動（`--serve`・`--stdio`・`--socket`、または `amonhend` と

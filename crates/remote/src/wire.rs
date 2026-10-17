@@ -12,13 +12,15 @@ use amonhen_model::{
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 16;
+pub const PROTOCOL_VERSION: u32 = 17;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
     /// → `Hello`
     Hello {
         version: u32,
+        /// 手元の利用者の言語（`amonhen_model::i18n::Lang::code`）。この接続のエラーの文をその言語で作る。
+        language: String,
     },
     // GitBackend
     /// → `Option<Oid>`

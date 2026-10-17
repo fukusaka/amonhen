@@ -260,7 +260,7 @@ mod tests {
         assert!(cancel(seq));
         assert!(take_cancel(seq));
         assert!(!take_cancel(seq));
-        end(seq, Some("取り消した"));
+        end(seq, Some("Cancelled"));
         assert!(!cancel(seq), "終わったものは取り消せない");
     }
 }

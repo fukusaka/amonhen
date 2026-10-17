@@ -1,0 +1,5 @@
+/* 日本語。鍵はコードの中の英語の文（`tr!("…")`）。値の差し込みは `{name}`（鍵と同じ名前）。
+   形はアプリの apps/macos/Localization/ja.lproj/Localizable.strings と同じ。 */
+
+/* model */
+"Cancelled" = "取り消しました";

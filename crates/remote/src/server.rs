@@ -3,9 +3,10 @@
 
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
+use amonhen_model::i18n::{self, Lang};
 use amonhen_model::{GitBackend, Oid, Result};
 use serde::Serialize;
 
@@ -51,6 +52,8 @@ pub struct Server {
     /// 大きな応答を圧縮するか（SSH では圧縮し、手元のソケットではしない）。
     compress: bool,
     host: Option<Arc<dyn Host>>,
+    /// 相手が挨拶で伝えた言語（`Lang` の値）。答えのエラーの文に使う。
+    language: Arc<AtomicU8>,
 }
 
 impl Server {
@@ -62,6 +65,7 @@ impl Server {
             search: Arc::default(),
             compress: true,
             host: None,
+            language: Arc::new(AtomicU8::new(i18n::current() as u8)),
         }
     }
 
@@ -112,6 +116,15 @@ impl Server {
                             continue;
                         }
                     };
+                    if let Request::Hello { language, .. } = &request {
+                        self.language
+                            .store(Lang::parse(language) as u8, Ordering::Relaxed);
+                    }
+                    let lang = if self.language.load(Ordering::Relaxed) == Lang::Ja as u8 {
+                        Lang::Ja
+                    } else {
+                        Lang::En
+                    };
                     let cancel = Arc::new(AtomicBool::new(false));
                     self.cancels.lock().unwrap().insert(f.id, cancel.clone());
                     let backend = self.backend.clone();
@@ -121,7 +134,7 @@ impl Server {
                     let compress = self.compress;
                     let host = self.host.clone();
                     std::thread::spawn(move || {
-                        let result = match (request, &host) {
+                        let result = i18n::with(lang, || match (request, &host) {
                             (Request::PreparedHistory, Some(h)) => {
                                 h.prepared_history().and_then(|p| encode(&Some(p)))
                             }
@@ -132,7 +145,7 @@ impl Server {
                                 Err("この daemon は処理を任されない".into())
                             }
                             (request, _) => handle(&*backend, &search, request, &cancel),
-                        };
+                        });
                         cancels.lock().unwrap().remove(&f.id);
                         write_reply(&writer, f.id, result, compress);
                     });
@@ -218,7 +231,7 @@ fn handle(
 ) -> Result<Vec<u8>> {
     let files = || backend.files();
     match request {
-        Request::Hello { version } => {
+        Request::Hello { version, .. } => {
             if version != PROTOCOL_VERSION {
                 return Err(format!(
                     "daemon と通信の形が違います（手元 {version}、daemon {PROTOCOL_VERSION}）。同じ版の amonhend を入れてください"

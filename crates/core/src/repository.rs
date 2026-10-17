@@ -1141,7 +1141,7 @@ impl Repository {
             sets[i] = Some(set);
         }
         if cancelled() {
-            return Err("検索を取り消しました".into());
+            return Err(amonhen_model::i18n::cancelled().into());
         }
         let mut next = 0;
         let result = combine(&expr, &mut sets, &mut next, rows);

@@ -29,6 +29,8 @@ pub fn is_daemon(argv0: &str, args: &[String]) -> bool {
 
 /// daemon として動き、終わったら終了コードを返す（`args` は実行ファイルの名前を除いた引数）。
 pub fn run(args: &[String]) -> i32 {
+    // 既定の言語は起動した側が `AMONHEN_LANG` で渡す（つないだ相手ごとの言語は挨拶で受け取る）。
+    amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
     // macOS のアプリ（AppKit）は SIGTERM などを無視・保留する設定にしていて、子のプロセスはそれを引き継ぐ。
     // 手元で起動されたときにも、ふつうに止められるよう既定に戻す（スレッドを作る前に）。
     #[cfg(unix)]

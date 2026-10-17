@@ -4,21 +4,26 @@ import Foundation
 /// git の操作と画面の名前（Commit・Push・Pull・Fetch・Working Copy・History など）は、日本語でも英語のまま
 /// （docs/ux.md の「Language」）。
 enum L10n {
-    /// 使う言語の `.lproj`。`.app` なら Contents/Resources（`scripts/package-app.sh` が入れる）、開発中の実行ファイル
-    /// ならソースの中。言語は利用者の設定の順で選ぶ（素の実行ファイルでは Bundle が英語しか選ばないので、自分で選ぶ）。
-    nonisolated static let bundle: Bundle = {
-        let root: Bundle
+    /// 訳の置き場所。`.app` なら Contents/Resources（`scripts/package-app.sh` が入れる）、開発中の実行ファイルなら
+    /// ソースの中。
+    nonisolated private static let root: Bundle = {
         if Bundle.main.url(forResource: "Localizable", withExtension: "strings", subdirectory: nil, localization: "ja") != nil {
-            root = .main
-        } else {
-            let source = URL(fileURLWithPath: #filePath)
-                .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-                .appendingPathComponent("Localization")
-            root = Bundle(url: source) ?? .main
+            return .main
         }
-        let language = Bundle.preferredLocalizations(from: root.localizations, forPreferences: Locale.preferredLanguages).first
-        return language.flatMap { root.url(forResource: $0, withExtension: "lproj") }.flatMap(Bundle.init(url:)) ?? root
+        let source = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("Localization")
+        return Bundle(url: source) ?? .main
     }()
+
+    /// 画面の言語（`ja`・`en`）。利用者の設定の順で選ぶ（素の実行ファイルでは Bundle が英語しか選ばないので、
+    /// 自分で選ぶ）。コアにも同じ言語を渡す（`CoreLanguage.set`）。
+    nonisolated static let language: String? =
+        Bundle.preferredLocalizations(from: root.localizations, forPreferences: Locale.preferredLanguages).first
+
+    /// 使う言語の `.lproj`。
+    nonisolated static let bundle: Bundle =
+        language.flatMap { root.url(forResource: $0, withExtension: "lproj") }.flatMap(Bundle.init(url:)) ?? root
 }
 
 /// `key`（英語）の訳。

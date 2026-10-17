@@ -6,6 +6,7 @@ mod change;
 mod extras;
 mod files;
 mod graph;
+pub mod i18n;
 mod oid;
 mod ops;
 mod refs;

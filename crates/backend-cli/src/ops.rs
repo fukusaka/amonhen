@@ -122,7 +122,7 @@ impl Operations for Git {
             if cancelled() {
                 crate::kill_tree(&mut child);
                 let _ = child.wait();
-                return Err("検索を取り消しました".into());
+                return Err(amonhen_model::i18n::cancelled().into());
             }
             match rx.recv_timeout(std::time::Duration::from_millis(50)) {
                 Ok(line) => found.extend(Oid::from_hex(line.trim())),

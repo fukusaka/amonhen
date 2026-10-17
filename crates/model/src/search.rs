@@ -146,7 +146,7 @@ impl TextIndex {
             return Err(e.into());
         }
         if cancelled() {
-            return Err("検索を取り消しました".into());
+            return Err(crate::i18n::cancelled().into());
         }
         let mut fresh: Vec<Option<(Vec<u8>, Vec<u8>)>> = vec![None; ids.len()];
         for part in read_parts.into_inner().unwrap() {
@@ -221,7 +221,7 @@ impl TextIndex {
             handles.into_iter().map(|h| h.join().unwrap()).collect()
         });
         if cancelled() {
-            return Err("検索を取り消しました".into());
+            return Err(crate::i18n::cancelled().into());
         }
         let mut sets = vec![vec![0u64; words]; terms.len()];
         for (start, part) in parts {
@@ -313,7 +313,7 @@ pub fn scan(
         return Err(e.into());
     }
     if cancelled() {
-        return Err("検索を取り消しました".into());
+        return Err(crate::i18n::cancelled().into());
     }
     let mut sets = vec![vec![0u64; ids.len().div_ceil(64)]; terms.len()];
     for (start, words) in parts.into_inner().unwrap() {

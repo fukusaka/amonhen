@@ -115,7 +115,7 @@ export class DaemonClient {
     head.writeUInt32LE(name.length, 0);
     socket.write(Buffer.concat([head, name]));
     const client = new DaemonClient(socket);
-    const hello = await client.call({ op: 'hello' });
+    const hello = await client.call({ op: 'hello', language });
     if (hello.json['version'] !== FRONT_VERSION) {
       client.dispose();
       throw new DaemonError(`daemon の窓口の版が違います: ${String(hello.json['version'])}`);
@@ -248,6 +248,16 @@ function tryConnect(path: string): Promise<Socket | undefined> {
   });
 }
 
+/**
+ * daemon が作る文（エラーなど）の言語（VSCode の表示言語）。拡張を起動したときに決め、つなぐときの `hello` と、
+ * daemon を起動するときの `AMONHEN_LANG` で伝える
+ */
+let language = 'en';
+
+export function setDaemonLanguage(value: string): void {
+  language = value;
+}
+
 /** つなぐ。daemon がいなければ、拡張と切り離して起動し、つながるまで待つ */
 async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
   const first = await tryConnect(path);
@@ -255,7 +265,12 @@ async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
     return first;
   }
   // Windows では窓を出さない
-  spawn(daemon, ['--serve', path], { detached: true, stdio: 'ignore', windowsHide: true }).unref();
+  spawn(daemon, ['--serve', path], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+    env: { ...process.env, AMONHEN_LANG: language },
+  }).unref();
   const started = Date.now();
   while (Date.now() - started < CONNECT_TIMEOUT) {
     await new Promise((r) => setTimeout(r, 20));

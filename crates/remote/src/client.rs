@@ -254,7 +254,7 @@ impl Connection {
                         self.pending.lock().unwrap().remove(&id);
                         let _ =
                             frame::write(&mut *self.writer.lock().unwrap(), Kind::Cancel, id, &[]);
-                        return Err("検索を取り消しました".into());
+                        return Err(amonhen_model::i18n::cancelled().into());
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
@@ -288,6 +288,7 @@ impl RemoteBackend {
     pub fn connect(conn: Arc<Connection>) -> Result<Self> {
         let _: Hello = conn.call(&Request::Hello {
             version: PROTOCOL_VERSION,
+            language: amonhen_model::i18n::current().code().to_owned(),
         })?;
         let paths: RepoPaths = conn.call(&Request::Paths)?;
         Ok(Self {

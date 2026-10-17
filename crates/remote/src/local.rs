@@ -151,6 +151,8 @@ fn launch(daemon: &str, endpoint: &str) -> Result<()> {
     command
         .arg("--serve")
         .arg(endpoint)
+        // 共有の daemon が SSH 先につなぐときなどに使う、既定の言語（起動した側の言語）。
+        .env("AMONHEN_LANG", amonhen_model::i18n::current().code())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());

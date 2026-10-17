@@ -1879,6 +1879,27 @@ pub extern "C" fn amonhen_daemon_stop() -> bool {
     matches!(amonhen_remote::local::control("stop"), Ok(Some(_)))
 }
 
+/// 利用者に見せる文（エラーなど）の言語を決める（`ja`・`en` など。訳のない言語は英語）。アプリの画面と同じ言語を
+/// 起動したときに渡す。daemon・SSH 先にも、つなぐときにこの言語を伝える。
+///
+/// # Safety
+/// `language` は NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_set_language(language: *const c_char) {
+    if let Ok(language) = str_arg(language) {
+        amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::parse(language));
+    }
+}
+
+/// `message`（`amonhen_last_error` や操作の記録の文）が、取り消したことを表すか（どの言語の文でも）。
+///
+/// # Safety
+/// `message` は NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_is_cancelled(message: *const c_char) -> bool {
+    str_arg(message).is_ok_and(amonhen_model::i18n::is_cancelled)
+}
+
 /// 手元の共有の daemon を起動する（`daemon` は `amonhend` のパス）。失敗したら false（理由は `amonhen_last_error`）。
 ///
 /// # Safety
