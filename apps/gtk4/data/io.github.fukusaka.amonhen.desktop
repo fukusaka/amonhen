@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Amon Hen
+Comment=A low-latency Git client
+Exec=amonhen-gtk %f
+Icon=io.github.fukusaka.amonhen
+Terminal=false
+Categories=Development;RevisionControl;
+StartupWMClass=io.github.fukusaka.amonhen
+MimeType=inode/directory;

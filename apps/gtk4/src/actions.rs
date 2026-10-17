@@ -1,0 +1,548 @@
+//! 操作の実行。コアの命令（`crates/core/src/command.rs` の `Command`、JSON）を裏で実行し、失敗や
+//! コンフリクトを知らせ、終わったら画面を読み直す。Undo の記録はコアが書く。
+
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+
+use amonhen_core::Repository;
+use gtk::prelude::*;
+use gtk::{gio, glib};
+use serde_json::{Value, json};
+
+type Callback = Rc<dyn Fn()>;
+
+pub struct Actions {
+    repo: RefCell<Option<Arc<Repository>>>,
+    window: glib::WeakRef<gtk::ApplicationWindow>,
+    /// 見出しの「取り消す」。次に取り消す操作の名前を説明に出す。
+    pub undo: gtk::Button,
+    /// 操作の後に、History・サイドバー・Working Copy を読み直す。
+    on_change: RefCell<Option<Callback>>,
+}
+
+impl Actions {
+    pub fn new(window: &gtk::ApplicationWindow) -> Rc<Self> {
+        // 見出しの Undo（メニューの Undo と同じアクション。使えるかはアクションで決まる）。
+        let undo = gtk::Button::new();
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::Undo, false);
+        undo.set_child(Some(&icon));
+        undo.set_action_name(Some("win.undo"));
+        let actions = Rc::new(Self {
+            repo: RefCell::default(),
+            window: window.downgrade(),
+            undo,
+            on_change: RefCell::default(),
+        });
+        let weak = Rc::downgrade(&actions);
+        actions.undo.connect_clicked(move |_| {
+            if let Some(actions) = weak.upgrade() {
+                actions.perform(json!({ "op": "undo" }));
+            }
+        });
+        // Ctrl+Z: 入力欄が自分の Undo に使わなかったときだけ（窓で最後に受ける）。
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Bubble);
+        let weak = Rc::downgrade(&actions);
+        keys.connect_key_pressed(move |_, key, _, state| {
+            let Some(actions) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if key == gtk::gdk::Key::z
+                && state == gtk::gdk::ModifierType::CONTROL_MASK
+                && actions.undo.is_sensitive()
+            {
+                actions.perform(json!({ "op": "undo" }));
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        window.add_controller(keys);
+        actions
+    }
+
+    pub fn set_repo(&self, repo: Arc<Repository>) {
+        let first = self.repo.borrow().is_none();
+        self.repo.replace(Some(repo));
+        if first {
+            self.refresh_undo();
+        }
+    }
+
+    pub fn connect_change(&self, f: impl Fn() + 'static) {
+        self.on_change.replace(Some(Rc::new(f)));
+    }
+
+    /// `command` を実行する。
+    pub fn perform(self: &Rc<Self>, command: Value) {
+        self.perform_sequence(vec![command]);
+    }
+
+    /// 命令を順に実行する。失敗したり、途中で止まったりしたら、そこでやめる。
+    pub fn perform_sequence(self: &Rc<Self>, commands: Vec<Value>) {
+        self.perform_then(commands, || {});
+    }
+
+    /// 命令を順に実行し、知らせと読み直しを頼んだ後で `done` を呼ぶ。
+    pub fn perform_then(self: &Rc<Self>, commands: Vec<Value>, done: impl FnOnce() + 'static) {
+        let Some(repo) = self.repo.borrow().clone() else {
+            done();
+            return;
+        };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || {
+                let mut last = Value::Null;
+                for command in commands {
+                    let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
+                        .unwrap_or_default();
+                    let done = reply["ok"].as_bool() == Some(true)
+                        && reply["outcome"].as_str().is_none_or(|o| o == "done");
+                    last = reply;
+                    if !done {
+                        break;
+                    }
+                }
+                last
+            })
+            .await
+            .unwrap_or_default();
+            if let Some(error) = result["error"].as_str() {
+                this.alert("操作に失敗しました", error).await;
+            } else {
+                match result["outcome"].as_str() {
+                    Some("conflict") => {
+                        this.alert(
+                            "コンフリクトがあります",
+                            "Working Copy で解決してから Continue するか、Abort してください。",
+                        )
+                        .await;
+                    }
+                    Some("stopped") => {
+                        this.alert(
+                            "途中で止まりました",
+                            "Working Copy で確かめてから Continue してください。",
+                        )
+                        .await;
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(f) = this.on_change.borrow().clone() {
+                f();
+            }
+            this.refresh_undo();
+            done();
+        });
+    }
+
+    /// 今のブランチを上流へ push する。上流がなければ origin の同じ名前へ push して上流にする。
+    /// `force` なら `--force-with-lease`（確かめてから）。
+    pub fn push(self: &Rc<Self>, force: bool) {
+        let Some(repo) = self.repo.borrow().clone() else {
+            return;
+        };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let status = gio::spawn_blocking(move || repo.load_status().ok())
+                .await
+                .ok()
+                .flatten();
+            let Some(branch) = status.as_ref().and_then(|s| s.status.branch.clone()) else {
+                this.alert("push できません", "ブランチをチェックアウトしていません。")
+                    .await;
+                return;
+            };
+            let upstream = status.and_then(|s| s.status.upstream.clone());
+            let (remote, remote_branch, set_upstream) =
+                match upstream.as_deref().and_then(|u| u.split_once('/')) {
+                    Some((r, b)) => (r.to_owned(), b.to_owned(), false),
+                    None => ("origin".to_owned(), branch.clone(), true),
+                };
+            if force
+                && !this
+                    .confirm(
+                        &format!("{branch} を force push しますか？"),
+                        "上流のブランチを手元の内容で置き換えます（--force-with-lease。ほかの人が先に push していたら失敗します）。",
+                        "Force Push",
+                    )
+                    .await
+            {
+                return;
+            }
+            this.perform(json!({
+                "op": "push", "remote": remote, "branch": branch, "remoteBranch": remote_branch,
+                "force": force, "setUpstream": set_upstream && !force,
+            }));
+        });
+    }
+
+    /// 作業中の変更を stash する（メッセージと、untracked のファイルを含めるかを聞く）。
+    pub fn stash(self: &Rc<Self>) {
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let Some((message, untracked)) = this
+                .ask_with(
+                    "Stash Changes",
+                    "メッセージ（空でもよい）",
+                    "",
+                    "Stash",
+                    Some("untracked のファイルも含める"),
+                )
+                .await
+            else {
+                return;
+            };
+            let message = (!message.is_empty()).then_some(message);
+            this.perform(
+                json!({ "op": "stashPush", "message": message, "includeUntracked": untracked }),
+            );
+        });
+    }
+
+    /// 答えの `text` を返す命令（`commitMessage` など）を裏で実行する。失敗したら知らせて None。
+    pub async fn text(&self, command: Value) -> Option<String> {
+        let repo = self.repo.borrow().clone()?;
+        let reply: Value = gio::spawn_blocking(move || {
+            serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
+        })
+        .await
+        .unwrap_or_default();
+        if let Some(error) = reply["error"].as_str() {
+            self.alert("操作に失敗しました", error).await;
+            return None;
+        }
+        reply["text"].as_str().map(str::to_owned)
+    }
+
+    /// コミットの編集（`HistoryEdit`）。
+    pub fn rewrite(self: &Rc<Self>, label: &str, edit: Value) {
+        self.perform(json!({ "op": "rewrite", "label": label, "edit": edit }));
+    }
+
+    /// コミットのメッセージを書き直す。
+    pub fn reword(self: &Rc<Self>, oid: &str) {
+        let (this, oid) = (self.clone(), oid.to_owned());
+        glib::spawn_future_local(async move {
+            let Some(message) = this
+                .text(json!({ "op": "commitMessage", "oid": oid }))
+                .await
+            else {
+                return;
+            };
+            if let Some(edited) = this.edit_message("Edit Message", &message, "変更").await {
+                let label = format!("Reword {}", &oid[..8]);
+                this.rewrite(
+                    &label,
+                    json!({ "kind": "reword", "oid": oid, "message": edited }),
+                );
+            }
+        });
+    }
+
+    /// コミットを親にまとめる（メッセージは親と自分のものを並べた初期値を編集してもらう）。
+    pub fn squash(self: &Rc<Self>, oid: &str) {
+        let (this, oid) = (self.clone(), oid.to_owned());
+        glib::spawn_future_local(async move {
+            let Some(message) = this
+                .text(json!({ "op": "squashMessage", "oid": oid }))
+                .await
+            else {
+                return;
+            };
+            if let Some(edited) = this
+                .edit_message("Squash into Parent", &message, "まとめる")
+                .await
+            {
+                let label = format!("Squash {}", &oid[..8]);
+                this.rewrite(
+                    &label,
+                    json!({ "kind": "squash", "oid": oid, "message": edited }),
+                );
+            }
+        });
+    }
+
+    /// 選んだ連続したコミットを 1 つにまとめる。メッセージは古い順に並べたものを初期値に編集してもらう。
+    pub fn squash_range(self: &Rc<Self>, oids: Vec<String>) {
+        let Some(repo) = self.repo.borrow().clone() else {
+            return;
+        };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let count = oids.len();
+            let command = json!({ "op": "squashRangeMessage", "oids": oids });
+            let reply: Value = gio::spawn_blocking(move || {
+                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+            if let Some(error) = reply["error"].as_str() {
+                this.alert("まとめられません", error).await;
+                return;
+            }
+            let info = &reply["info"];
+            let title = format!("Squash {count} Commits");
+            let initial = info["message"].as_str().unwrap_or_default();
+            if let Some(edited) = this.edit_message(&title, initial, "まとめる").await {
+                this.rewrite(
+                    &title,
+                    json!({
+                        "kind": "squashRange", "oid": info["oldest"], "last": info["newest"],
+                        "message": edited,
+                    }),
+                );
+            }
+        });
+    }
+
+    /// JSON の命令にない操作を裏で行い、終わったら読み直す。
+    pub fn perform_work(
+        self: &Rc<Self>,
+        work: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
+    ) {
+        let Some(repo) = self.repo.borrow().clone() else {
+            return;
+        };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || work(&repo).map_err(|e| e.to_string())).await;
+            if let Ok(Err(e)) = result {
+                this.alert("操作に失敗しました", &e).await;
+            }
+            if let Some(f) = this.on_change.borrow().clone() {
+                f();
+            }
+            this.refresh_undo();
+        });
+    }
+
+    /// 次に取り消せる操作の名前を読み、「取り消す」に出す。
+    pub fn refresh_undo(&self) {
+        let Some(repo) = self.repo.borrow().clone() else {
+            return;
+        };
+        let button = self.undo.downgrade();
+        glib::spawn_future_local(async move {
+            let reply = gio::spawn_blocking(move || {
+                serde_json::from_str::<Value>(&repo.run_json(r#"{"op":"undoPeek"}"#))
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+            let Some(button) = button.upgrade() else {
+                return;
+            };
+            let label = reply["label"].as_str();
+            if let Some(action) = button
+                .root()
+                .and_downcast::<gtk::ApplicationWindow>()
+                .and_then(|w| w.lookup_action("undo"))
+                .and_downcast::<gio::SimpleAction>()
+            {
+                action.set_enabled(label.is_some());
+            }
+            let tip = match label {
+                Some(l) => format!("Undo: {l}（Ctrl+Z）"),
+                None => "Undo できる操作はありません".to_owned(),
+            };
+            button.set_tooltip_text(Some(&tip));
+        });
+    }
+
+    async fn alert(&self, title: &str, message: &str) {
+        let dialog = gtk::AlertDialog::builder()
+            .message(title)
+            .detail(message)
+            .modal(true)
+            .build();
+        let window = self.window.upgrade();
+        let _ = dialog.choose_future(window.as_ref()).await;
+    }
+
+    /// 取り消せない操作の前に確かめる。
+    pub async fn confirm(&self, title: &str, message: &str, ok: &str) -> bool {
+        let dialog = gtk::AlertDialog::builder()
+            .message(title)
+            .detail(message)
+            .buttons(["キャンセル", ok])
+            .cancel_button(0)
+            .default_button(1)
+            .modal(true)
+            .build();
+        let window = self.window.upgrade();
+        dialog.choose_future(window.as_ref()).await == Ok(1)
+    }
+
+    /// 文字を入れてもらう（macOS 版の `ask`）。キャンセルか空なら None。
+    pub async fn ask(&self, title: &str, message: &str, initial: &str, ok: &str) -> Option<String> {
+        self.ask_with(title, message, initial, ok, None)
+            .await
+            .map(|(text, _)| text)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// 文字を入れてもらい、`check` があればそのチェックの状態も返す。キャンセルなら None。
+    pub async fn ask_with(
+        &self,
+        title: &str,
+        message: &str,
+        initial: &str,
+        ok: &str,
+        check: Option<&str>,
+    ) -> Option<(String, bool)> {
+        let entry = gtk::Entry::builder()
+            .text(initial)
+            .activates_default(true)
+            .build();
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        content.append(&entry);
+        let checkbox = check.map(gtk::CheckButton::with_label);
+        if let Some(c) = &checkbox {
+            content.append(c);
+        }
+        if !self
+            .run_dialog(title, message, content.upcast_ref(), entry.upcast_ref(), ok)
+            .await
+        {
+            return None;
+        }
+        let checked = checkbox.as_ref().is_some_and(|c| c.is_active());
+        Some((entry.text().trim().to_owned(), checked))
+    }
+
+    /// 複数行のメッセージを編集してもらう。キャンセルなら None。
+    pub async fn edit_message(&self, title: &str, initial: &str, ok: &str) -> Option<String> {
+        let text = gtk::TextView::builder()
+            .monospace(true)
+            .wrap_mode(gtk::WrapMode::WordChar)
+            .top_margin(6)
+            .bottom_margin(6)
+            .left_margin(6)
+            .right_margin(6)
+            .build();
+        text.buffer().set_text(initial);
+        let scrolled = gtk::ScrolledWindow::builder()
+            .child(&text)
+            .min_content_width(460)
+            .min_content_height(180)
+            .has_frame(true)
+            .build();
+        if !self
+            .run_dialog(title, "", scrolled.upcast_ref(), text.upcast_ref(), ok)
+            .await
+        {
+            return None;
+        }
+        let buffer = text.buffer();
+        let message = buffer
+            .text(&buffer.start_iter(), &buffer.end_iter(), false)
+            .trim()
+            .to_owned();
+        (!message.is_empty()).then_some(message)
+    }
+
+    /// 一覧から選んでもらう（`choices` は表示と値の組）。キャンセルなら None。
+    pub async fn choose(
+        &self,
+        title: &str,
+        message: &str,
+        choices: &[(String, String)],
+        selected: usize,
+        ok: &str,
+    ) -> Option<String> {
+        let titles: Vec<&str> = choices.iter().map(|(t, _)| t.as_str()).collect();
+        let list = gtk::StringList::new(&titles);
+        let dropdown = gtk::DropDown::new(Some(list), gtk::Expression::NONE);
+        // ブランチやタグが多くても探せるように。
+        dropdown.set_expression(Some(gtk::PropertyExpression::new(
+            gtk::StringObject::static_type(),
+            gtk::Expression::NONE,
+            "string",
+        )));
+        dropdown.set_enable_search(true);
+        dropdown.set_selected(selected as u32);
+        if !self
+            .run_dialog(
+                title,
+                message,
+                dropdown.upcast_ref(),
+                dropdown.upcast_ref(),
+                ok,
+            )
+            .await
+        {
+            return None;
+        }
+        choices
+            .get(dropdown.selected() as usize)
+            .map(|(_, value)| value.clone())
+    }
+
+    /// macOS 版の確認の窓（見出し・説明・部品・ボタン）に当たる窓を出す。`ok` を押したら true。
+    async fn run_dialog(
+        &self,
+        title: &str,
+        message: &str,
+        content: &gtk::Widget,
+        focus: &gtk::Widget,
+        ok: &str,
+    ) -> bool {
+        let parent = self.window.upgrade();
+        let dialog = gtk::Window::builder()
+            .title(title)
+            .modal(true)
+            .resizable(false)
+            .default_width(380)
+            .build();
+        dialog.set_transient_for(parent.as_ref());
+        let heading = gtk::Label::new(Some(title));
+        heading.add_css_class("title-4");
+        heading.set_xalign(0.0);
+        heading.set_wrap(true);
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        column.set_margin_top(16);
+        column.set_margin_bottom(16);
+        column.set_margin_start(16);
+        column.set_margin_end(16);
+        column.append(&heading);
+        if !message.is_empty() {
+            let detail = gtk::Label::new(Some(message));
+            detail.set_xalign(0.0);
+            detail.set_wrap(true);
+            column.append(&detail);
+        }
+        column.append(content);
+        let cancel = gtk::Button::with_label("キャンセル");
+        let accept = gtk::Button::with_label(ok);
+        accept.add_css_class("suggested-action");
+        let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        buttons.set_halign(gtk::Align::End);
+        buttons.set_margin_top(4);
+        buttons.append(&cancel);
+        buttons.append(&accept);
+        column.append(&buttons);
+        dialog.set_child(Some(&column));
+        dialog.set_default_widget(Some(&accept));
+
+        let (tx, rx) = async_channel::bounded::<bool>(1);
+        let t = tx.clone();
+        accept.connect_clicked(move |_| {
+            let _ = t.try_send(true);
+        });
+        let t = tx.clone();
+        cancel.connect_clicked(move |_| {
+            let _ = t.try_send(false);
+        });
+        dialog.connect_close_request(move |_| {
+            let _ = tx.try_send(false);
+            glib::Propagation::Proceed
+        });
+        dialog.present();
+        focus.grab_focus();
+        let answer = rx.recv().await.unwrap_or(false);
+        dialog.destroy();
+        answer
+    }
+}
