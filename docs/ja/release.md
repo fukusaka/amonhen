@@ -36,6 +36,12 @@ snapshot は次の patch の pre-release 扱いなので、正式版を入れる
 3. main に push し、CI が通ったら `git tag vscode-v<版> && git push origin vscode-v<版>`（リリースは、タグのコミットで
    CI が通っていることを確かめ、CHANGELOG のその節を説明にする）
 
+## ライセンス
+
+アプリ（`Contents/Resources`）、エンジンのどの tar.gz・zip、`.vsix` にも、`LICENSE-MIT`・`LICENSE-APACHE`・`NOTICE` と、
+中に組み込んだ依存のライセンスの一覧 `THIRD-PARTY-NOTICES.md` を入れる（`about.toml` で cargo about が作る。musl libc
+は `about.hbs` に手で足す）。`deny.toml` で許していないライセンスの依存が入ると、CI が落ちる。
+
 ## ビルドの由来の証明
 
 Release のファイルには、このリポジトリのどのコミットから、どの CI で作ったかの証明（artifact attestations）が付く

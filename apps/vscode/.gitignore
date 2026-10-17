@@ -2,3 +2,8 @@ node_modules/
 dist/
 *.vsix
 bin/
+# scripts/bundle-engine.sh がルートから写すライセンスの文書
+LICENSE-MIT
+LICENSE-APACHE
+NOTICE
+THIRD-PARTY-NOTICES.md

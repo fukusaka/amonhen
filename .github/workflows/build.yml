@@ -8,7 +8,8 @@ name: Build
 #
 # app が false（拡張の正式版）なら、アプリは作らず、エンジンだけを作って macOS のものに署名する。
 #
-# 成果物 release: dist/ のアプリの zip、エンジンの tar.gz・zip、dist/engine/（拡張に同梱するエンジン）。
+# 成果物 release: dist/ のアプリの zip、エンジンの tar.gz・zip、dist/engine/（拡張に同梱するエンジン）、
+# dist/THIRD-PARTY-NOTICES.md（依存のライセンスの一覧）。
 on:
   workflow_call:
     inputs:
@@ -83,6 +84,11 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      # 依存のライセンスの一覧（アプリ・エンジンの tar.gz・zip・.vsix に同梱する）。
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-about
+      - run: scripts/third-party-notices.sh
       - id: compile
         run: |
           version=$(scripts/version.sh "${{ inputs.mode }}")
@@ -99,6 +105,7 @@ jobs:
           path: |
             dist/bin/
             dist/engine/
+            dist/THIRD-PARTY-NOTICES.md
 
   package:
     needs: [engines, compile]
@@ -146,3 +153,4 @@ jobs:
             dist/*.zip
             dist/*.tar.gz
             dist/engine/
+            dist/THIRD-PARTY-NOTICES.md

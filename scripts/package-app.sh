@@ -2,6 +2,7 @@
 # Amon Hen.app を組み立てて署名し、リリースに載せるファイルを作る。scripts/compile-app.sh のあとに、dist/engine に
 # 配るエンジン（SSH 先に送る Linux 用なども）をそろえてから実行する。
 #   scripts/package-app.sh [stable|snapshot]
+# dist/THIRD-PARTY-NOTICES.md（scripts/third-party-notices.sh）も先に作っておく。
 # 出力: dist/<アプリ名>-<版>.zip（最後の行にその場所）、dist/amonhen-<版>-<os>-<arch>.tar.gz（Windows は .zip）
 # 署名: AMONHEN_SIGN_IDENTITY にキーチェーンの証明書の名前があればそれで、なければ ad-hoc（scripts/codesign.sh）。
 # 公証の鍵（scripts/notarize.sh）があれば公証して結果を綴じ込む。
@@ -49,6 +50,9 @@ mkdir -p "$app/Contents/Resources/engines"
 for f in dist/engine/amonhen-darwin-* dist/engine/amonhen-linux-*; do
     [ -e "$f" ] && cp "$f" "$app/Contents/Resources/engines/"
 done
+# ライセンスと、中に入っている依存のライセンスの一覧（scripts/third-party-notices.sh）。
+legal="LICENSE-MIT LICENSE-APACHE NOTICE dist/THIRD-PARTY-NOTICES.md"
+cp $legal "$app/Contents/Resources/"
 # アイコン（scripts/make-icon.swift で作ったもの）。
 cp "apps/macos/Icons/$icon.icns" "$app/Contents/Resources/AppIcon.icns"
 cat > "$app/Contents/Info.plist" <<PLIST
@@ -89,20 +93,21 @@ PLIST
 scripts/codesign.sh "$app"
 codesign --verify --strict "$app"
 
-# エンジンだけを使う人向けに、OS と CPU ごとに 1 つずつ（中は amonhen か amonhen.exe の 1 つ）。
+# エンジンだけを使う人向けに、OS と CPU ごとに 1 つずつ（中は amonhen か amonhen.exe と、ライセンスの文書）。
 for f in dist/engine/amonhen-*; do
     platform=$(basename "$f" .exe)
     platform=${platform#amonhen-}
     work=$(mktemp -d)
+    cp $legal "$work/"
     case "$f" in
     *.exe)
         cp "$f" "$work/amonhen.exe"
         rm -f "dist/amonhen-$version-$platform.zip"
-        (cd "$work" && zip -q "$OLDPWD/dist/amonhen-$version-$platform.zip" amonhen.exe)
+        (cd "$work" && zip -q "$OLDPWD/dist/amonhen-$version-$platform.zip" ./*)
         ;;
     *)
         cp "$f" "$work/amonhen"
-        tar -C "$work" -czf "dist/amonhen-$version-$platform.tar.gz" amonhen
+        tar -C "$work" -czf "dist/amonhen-$version-$platform.tar.gz" .
         ;;
     esac
     rm -rf "$work"

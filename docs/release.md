@@ -38,6 +38,13 @@ Steps to cut a stable release:
 3. Push to main, and once CI has passed: `git tag vscode-v<version> && git push origin vscode-v<version>` (the release
    checks that CI passed on the tagged commit and takes the notes from that CHANGELOG section)
 
+## Licenses
+
+The app (`Contents/Resources`), every engine archive and the `.vsix` include `LICENSE-MIT`, `LICENSE-APACHE`, `NOTICE`
+and `THIRD-PARTY-NOTICES.md`, the licenses of the dependencies built into them (generated with cargo about from
+`about.toml`; musl libc is added by hand in `about.hbs`). CI fails if a dependency uses a license not allowed in
+`deny.toml`.
+
 ## Build provenance attestation
 
 Files in a Release carry an attestation (artifact attestations) of which commit of this repository and which CI run

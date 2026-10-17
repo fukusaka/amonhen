@@ -13,6 +13,8 @@ scripts/build-core.sh && (cd apps/macos && swift test)
 scripts/build-engine.sh          # engines into dist/engine (macOS, Linux; Linux needs brew install zig)
 scripts/build-app.sh snapshot   # build the .app and zip into dist/ (compile-app.sh, Linux engines, package-app.sh)
 scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # run a built engine once (version, reads this repository)
+scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md (cargo install --locked cargo-about --features cli)
+cargo deny check licenses        # dependencies use only the licenses allowed in deny.toml (cargo install --locked cargo-deny)
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode extension
 ```
 

@@ -55,6 +55,16 @@ jobs:
             echo "::endgroup::"
           done
 
+  # 配るものに入る依存が、許したライセンスだけか（deny.toml）。
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-deny
+      - run: cargo deny check licenses
+
   # VSCode 拡張（apps/vscode）。daemon の試験に、このリポジトリのエンジンを使う（Windows は名前付きパイプ）。
   vscode:
     strategy:

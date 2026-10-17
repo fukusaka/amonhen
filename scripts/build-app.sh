@@ -11,6 +11,7 @@ cd "$(dirname "$0")/.."
 mode=${1:-stable}
 version=$(scripts/version.sh "$mode")
 scripts/compile-app.sh "$mode" >&2
+scripts/third-party-notices.sh >&2
 # SSH 先に送る Linux 用のエンジン（zig で作る）。
 AMONHEN_ENGINE_PLATFORMS="linux-x86_64 linux-aarch64" scripts/build-engine.sh "$version" >&2
 scripts/package-app.sh "$mode"

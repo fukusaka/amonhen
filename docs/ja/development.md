@@ -13,6 +13,8 @@ scripts/build-core.sh && (cd apps/macos && swift test)
 scripts/build-engine.sh          # dist/engine にエンジン（macOS・Linux。Linux 用は brew install zig が要る）
 scripts/build-app.sh snapshot   # dist/ に .app と zip を作る（compile-app.sh・Linux のエンジン・package-app.sh）
 scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # 作ったエンジンを一度動かす（版、このリポジトリを読めるか）
+scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md（cargo install --locked cargo-about --features cli）
+cargo deny check licenses        # 依存が deny.toml で許したライセンスだけか（cargo install --locked cargo-deny）
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 拡張
 ```
 
