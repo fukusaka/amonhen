@@ -398,6 +398,8 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ConfigSet(key, value) => encode(&ops.config_set(&key, value.as_deref())?),
         Op::Remotes => encode(&ops.remotes()?),
         Op::ChangeRemote(change) => encode(&ops.change_remote(&change)?),
+        Op::WorktreeList => encode(&Bytes(ops.worktree_list()?)),
+        Op::ChangeWorktree(change) => encode(&ops.change_worktree(&change)?),
         Op::WorkingStats => encode(&ops.working_stats()?),
         Op::IgnoreMatches(patterns, limit) => encode(&ops.ignore_matches(&patterns, limit)?),
         // daemon の中の記録（daemon では、git を動かしているのは手元の backend）。

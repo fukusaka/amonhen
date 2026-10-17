@@ -245,6 +245,22 @@ pub enum Command {
     ChangeRemote {
         change: amonhen_model::RemoteChange,
     },
+    /// worktree の一覧（`info.worktrees`: path・head・branch・detached・bare・locked・prunable・main・current）。
+    Worktrees,
+    /// `path` に worktree を作る（`git worktree add`）。`new_branch` があれば `start`（なければ HEAD）から作る。
+    WorktreeAdd {
+        path: String,
+        start: Option<String>,
+        new_branch: Option<String>,
+    },
+    /// `path` の worktree を消す（`git worktree remove`。`force` なら変更が残っていても）。Undo では戻せない。
+    WorktreeRemove {
+        path: String,
+        #[serde(default)]
+        force: bool,
+    },
+    /// フォルダがなくなった worktree の記録を片付ける（`git worktree prune`）。
+    WorktreePrune,
     /// `.gitignore`（作業ツリーの直下）と `.git/info/exclude` の中身（`info.gitignore`・`info.exclude`）。
     IgnoreFiles,
     /// `.gitignore` と `.git/info/exclude` を書く。
@@ -1400,6 +1416,35 @@ impl Repository {
                 ops.change_remote(&change)?;
                 ok()
             }
+            Command::Worktrees => {
+                let paths = self.backend().paths();
+                let list = crate::worktree::parse(&ops.worktree_list()?, paths.workdir.as_deref());
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "worktrees": list })),
+                    ..Default::default()
+                })
+            }
+            Command::WorktreeAdd {
+                path,
+                start,
+                new_branch,
+            } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Add {
+                    path,
+                    start,
+                    new_branch,
+                })?;
+                ok()
+            }
+            Command::WorktreeRemove { path, force } => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Remove { path, force })?;
+                ok()
+            }
+            Command::WorktreePrune => {
+                ops.change_worktree(&amonhen_model::WorktreeChange::Prune)?;
+                ok()
+            }
             Command::IgnoreFiles => {
                 let files = self.backend().files();
                 let read = |root, path| -> Result<String> {
@@ -1745,6 +1790,40 @@ mod tests {
             .iter()
             .map(|c| c.status)
             .collect()
+    }
+
+    #[test]
+    fn adds_lists_and_removes_worktrees() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let wt = dir.join(".worktrees/topic");
+        let add = format!(
+            r#"{{"op":"worktreeAdd","path":"{}","newBranch":"topic"}}"#,
+            wt.display()
+        );
+        run(&repo, &add);
+        let list = run(&repo, r#"{"op":"worktrees"}"#);
+        let list = list["info"]["worktrees"].as_array().unwrap().clone();
+        assert_eq!(list.len(), 2);
+        assert!(list[0]["main"] == true && list[0]["current"] == true);
+        assert_eq!(list[1]["branch"], "topic");
+        assert_eq!(list[1]["current"], false);
+        // 変更が残っていれば、force なしでは消せない（git が断る）。
+        std::fs::write(wt.join("new.txt"), "x").unwrap();
+        let refused = repo.run_json(&format!(
+            r#"{{"op":"worktreeRemove","path":"{}"}}"#,
+            wt.display()
+        ));
+        assert!(refused.contains(r#""ok":false"#), "{refused}");
+        run(
+            &repo,
+            &format!(
+                r#"{{"op":"worktreeRemove","path":"{}","force":true}}"#,
+                wt.display()
+            ),
+        );
+        let list = run(&repo, r#"{"op":"worktrees"}"#);
+        assert_eq!(list["info"]["worktrees"].as_array().unwrap().len(), 1);
     }
 
     #[test]

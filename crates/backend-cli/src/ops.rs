@@ -1,7 +1,7 @@
 use amonhen_model::tr;
 use amonhen_model::{
     ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RemoteChange, RemoteEntry,
-    ResetMode, Result, Sequence,
+    ResetMode, Result, Sequence, WorktreeChange,
 };
 
 use crate::Git;
@@ -608,6 +608,40 @@ impl Operations for Git {
             RemoteChange::SetUrl { name, url } => vec!["remote", "set-url", name, url],
             RemoteChange::Remove { name } => vec!["remote", "remove", name],
             RemoteChange::Prune { name } => vec!["remote", "prune", name],
+        };
+        self.write(&args).map(drop)
+    }
+
+    fn worktree_list(&self) -> Result<Vec<u8>> {
+        self.read(&["worktree", "list", "--porcelain", "-z"])
+    }
+
+    fn change_worktree(&self, change: &WorktreeChange) -> Result<()> {
+        let args: Vec<&str> = match change {
+            WorktreeChange::Add {
+                path,
+                start,
+                new_branch,
+            } => {
+                let mut args = vec!["worktree", "add"];
+                if let Some(branch) = new_branch {
+                    args.extend(["-b", branch]);
+                }
+                args.extend(["--", path]);
+                if let Some(start) = start {
+                    args.push(start);
+                }
+                args
+            }
+            WorktreeChange::Remove { path, force } => {
+                let mut args = vec!["worktree", "remove"];
+                if *force {
+                    args.extend(["--force", "--force"]);
+                }
+                args.extend(["--", path]);
+                args
+            }
+            WorktreeChange::Prune => vec!["worktree", "prune"],
         };
         self.write(&args).map(drop)
     }

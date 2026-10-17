@@ -113,6 +113,34 @@ fn undo_and_merge_file() {
     assert_eq!(code, 2, "{out}");
 }
 
+#[test]
+fn worktree_lists_adds_and_removes() {
+    let repo = repository();
+    let home = tempfile::tempdir().unwrap();
+    let path = repo.path().to_str().unwrap();
+    let wt = repo.path().join(".worktrees").join("topic");
+    let wt = wt.to_str().unwrap();
+    let (out, code) = amonhen(
+        home.path(),
+        &["worktree", "-C", path, "add", wt, "-b", "wt-topic"],
+    );
+    assert_eq!(code, 0, "{out}");
+    let (out, code) = amonhen(home.path(), &["worktree", "-C", path, "list"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(
+        out.contains("[wt-topic]") && out.contains("(current)"),
+        "{out}"
+    );
+    // 開いた worktree が「現在」になる（git と同じく、実行した場所の worktree）。
+    let (out, _) = amonhen(home.path(), &["worktree", "-C", wt, "list", "--json"]);
+    let list: serde_json::Value = serde_json::from_str(&out).unwrap();
+    assert_eq!(list[1]["current"], true, "{out}");
+    let (out, code) = amonhen(home.path(), &["worktree", "-C", path, "remove", wt]);
+    assert_eq!(code, 0, "{out}");
+    let (out, _) = amonhen(home.path(), &["worktree", "-C", path, "list"]);
+    assert!(!out.contains("[wt-topic]"), "{out}");
+}
+
 /// 3 つの開き方（手元で直接・`daemon:`・`ssh://`）で、同じ命令が同じように動く。CLI は VSCode 拡張やほかの FE の
 /// 試金石なので、daemon・SSH の難所（コアに任せる操作・共有メモリの差分・知らせ）を全部通す。
 #[cfg(unix)]

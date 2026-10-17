@@ -15,6 +15,7 @@ mod repository;
 pub mod rewrite;
 pub mod undo;
 pub mod words;
+pub mod worktree;
 
 pub use repository::{
     HistorySnapshot, PairMode, RefsSnapshot, Repository, Selection, StatusSnapshot, WorkingDiff,

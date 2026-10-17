@@ -46,6 +46,23 @@ pub struct RemoteEntry {
     pub push_url: String,
 }
 
+/// worktree の作成・削除・片付け（`git worktree add`・`remove`・`prune`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum WorktreeChange {
+    /// `path` に worktree を作る。`new_branch` があればそのブランチを `start`（なければ HEAD）から作って
+    /// checkout、なければ `start`（ブランチかコミット）を checkout する（ブランチでなければ detached）。
+    Add {
+        path: String,
+        start: Option<String>,
+        new_branch: Option<String>,
+    },
+    /// `path` の worktree を消す。`force` なら変更が残っていても・ロックしていても消す（`--force` を 2 回）。
+    Remove { path: String, force: bool },
+    /// フォルダがなくなった worktree の記録を片付ける。
+    Prune,
+}
+
 /// リモートの変更。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -221,6 +238,14 @@ pub trait Operations: Send + Sync {
     fn config_set(&self, key: &str, value: Option<&str>) -> Result<()>;
     fn remotes(&self) -> Result<Vec<RemoteEntry>>;
     fn change_remote(&self, change: &RemoteChange) -> Result<()>;
+    /// worktree の一覧。`git worktree list --porcelain -z` の出力。
+    fn worktree_list(&self) -> Result<Vec<u8>> {
+        Err(crate::tr!("Can’t list worktrees here").into())
+    }
+    fn change_worktree(&self, change: &WorktreeChange) -> Result<()> {
+        let _ = change;
+        Err(crate::tr!("Can’t change worktrees here").into())
+    }
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（index の分も含む。untracked は含まない）。
     fn working_stats(&self) -> Result<Vec<crate::FileStat>>;
     /// .gitignore の書き方の確かめ: パターンごとに、合うファイル（追跡しているものと、していないもの。

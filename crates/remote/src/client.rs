@@ -14,7 +14,7 @@ use std::time::Duration;
 use amonhen_model::{
     CommitGraph, CommitText, ConfigEntry, ConnectionState, FileChange, GitBackend, HeadState, Oid,
     Operations, Outcome, PullMode, RawCommit, Refs, RemoteChange, RemoteEntry, RepoFiles,
-    RepoPaths, ResetMode, Result, Root, Sequence, Status,
+    RepoPaths, ResetMode, Result, Root, Sequence, Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -816,6 +816,15 @@ impl Operations for RemoteOperations {
 
     fn change_remote(&self, change: &RemoteChange) -> Result<()> {
         self.op(Op::ChangeRemote(change.clone()))
+    }
+
+    fn worktree_list(&self) -> Result<Vec<u8>> {
+        let bytes: Bytes = self.op(Op::WorktreeList)?;
+        Ok(bytes.0)
+    }
+
+    fn change_worktree(&self, change: &WorktreeChange) -> Result<()> {
+        self.op(Op::ChangeWorktree(change.clone()))
     }
 
     fn working_stats(&self) -> Result<Vec<amonhen_model::FileStat>> {

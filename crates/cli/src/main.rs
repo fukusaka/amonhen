@@ -9,6 +9,7 @@
 //!   amonhen run [<json>…]               コアの命令をそのまま（なければ標準入力の 1 行 1 命令）
 //!   amonhen watch                       変化の知らせを受け続ける
 //!   amonhen undo [--list|--peek]        Amon Hen の操作ログで、直前の操作を戻す
+//!   amonhen worktree [list|add|remove|prune]  worktree（`git worktree` と同じ並び）
 //!   amonhen merge-file [--all] <file>…  コンフリクトのあるファイルに Magic Merge をかける
 //!   amonhen clone <url> [<dir>]
 //!   amonhen install / engine           エンジンの置き場所（`install.rs`）
@@ -44,6 +45,7 @@ usage: amonhen [<path>]
        amonhen run [<json>…]
        amonhen watch [--json]
        amonhen undo [--list | --peek]
+       amonhen worktree [list [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune]
        amonhen merge-file [--all] [--check] <file>…
        amonhen clone <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
@@ -92,6 +94,7 @@ fn main() -> ExitCode {
         Some("open") => open::run(&args[1..]),
         Some("log") => log(&args[1..]),
         Some("undo") => undo(&args[1..]),
+        Some("worktree") => worktree(&args[1..]),
         Some("merge-file") => merge_file(&args[1..]),
         Some("find-repositories") => find_repositories(&args[1..]),
         Some("daemon") => daemon(&args[1..]),
@@ -546,6 +549,122 @@ fn undo(args: &[String]) -> Result<ExitCode> {
                     return Ok(ExitCode::from(1));
                 }
             }
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+// MARK: - worktree
+
+/// `amonhen worktree`: `git worktree` と同じ並び（list・add・remove・prune）。コアの命令を通す（SSH 先も同じ）。
+fn worktree(args: &[String]) -> Result<ExitCode> {
+    let mut dir = PathBuf::from(".");
+    let mut json = false;
+    let mut force = false;
+    let mut branch: Option<String> = None;
+    let mut words: Vec<String> = Vec::new();
+    let mut a = Args::new(args);
+    while let Some(arg) = a.rest.next() {
+        match arg.as_str() {
+            "-C" => dir = PathBuf::from(a.value("-C")?),
+            "--json" => json = true,
+            "--force" | "-f" => force = true,
+            "-b" => branch = Some(a.value("-b")?.to_owned()),
+            s if s.starts_with('-') => {
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown option: {option}", option = s),
+                    usage()
+                )
+                .into());
+            }
+            s => words.push(s.to_owned()),
+        }
+    }
+    let front = open_repository(&dir)?;
+    let absolute = |path: &str| -> String {
+        std::path::absolute(path).map_or_else(|_| path.to_owned(), |p| p.display().to_string())
+    };
+    match words.first().map(String::as_str).unwrap_or("list") {
+        "list" => {
+            let r = command(&*front, serde_json::json!({"op": "worktrees"}))?;
+            let list = r["info"]["worktrees"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            if json {
+                println!("{}", serde_json::Value::Array(list));
+                return Ok(ExitCode::SUCCESS);
+            }
+            for w in &list {
+                let head = w["head"].as_str().map_or("", |h| &h[..h.len().min(8)]);
+                let what = w["branch"]
+                    .as_str()
+                    .map_or_else(|| tr!("(detached)"), |b| format!("[{b}]"));
+                let mut marks = Vec::new();
+                if w["current"] == true {
+                    marks.push(tr!("current"));
+                }
+                if w["locked"].is_string() {
+                    marks.push(tr!("locked"));
+                }
+                if w["prunable"].is_string() {
+                    marks.push(tr!("prunable"));
+                }
+                let marks = if marks.is_empty() {
+                    String::new()
+                } else {
+                    format!("  ({})", marks.join(", "))
+                };
+                println!(
+                    "{}  {head}  {what}{marks}",
+                    w["path"].as_str().unwrap_or("")
+                );
+            }
+        }
+        "add" => {
+            let Some(path) = words.get(1) else {
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Give the folder for the new worktree"),
+                    usage()
+                )
+                .into());
+            };
+            command(
+                &*front,
+                serde_json::json!({"op": "worktreeAdd", "path": absolute(path), "start": words.get(2), "newBranch": branch}),
+            )?;
+            println!(
+                "{}",
+                tr!("Created the worktree {path}", path = absolute(path))
+            );
+        }
+        "remove" => {
+            let Some(path) = words.get(1) else {
+                return Err(
+                    format!("{}\n\n{}", tr!("Give the worktree to remove"), usage()).into(),
+                );
+            };
+            command(
+                &*front,
+                serde_json::json!({"op": "worktreeRemove", "path": absolute(path), "force": force}),
+            )?;
+            println!(
+                "{}",
+                tr!("Removed the worktree {path}", path = absolute(path))
+            );
+        }
+        "prune" => {
+            command(&*front, serde_json::json!({"op": "worktreePrune"}))?;
+        }
+        other => {
+            return Err(format!(
+                "{}\n\n{}",
+                tr!("Unknown argument: {argument}", argument = other),
+                usage()
+            )
+            .into());
         }
     }
     Ok(ExitCode::SUCCESS)

@@ -45,6 +45,7 @@ becomes the GitHub Release notes.
   instead of sending an old one that the connection would then refuse.
 - AI can use Apple Intelligence's on-device model (macOS 26): nothing leaves the Mac, and it is the default where
   available. Claude Code and Codex models are chosen from a pop-up (Codex lists the models its CLI knows).
+- `amonhen worktree` (list, add, remove, prune), the same as `git worktree`, through the core (so over SSH too).
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).
 
 #### Fixed
