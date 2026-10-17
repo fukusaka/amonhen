@@ -40,8 +40,8 @@ before(async () => {
   backend = await CliBackend.open(new GitExecutor('git'), dir);
 });
 
-after(() => {
-  backend.dispose();
+after(async () => {
+  await backend.dispose();
   rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
@@ -178,7 +178,7 @@ test('unstage works before the first commit', async () => {
     assert.equal((await b.status()).entries[0]?.index, 'A');
     await b.unstage(['x']);
     assert.equal((await b.status()).entries[0]?.kind, 'untracked');
-    b.dispose();
+    await b.dispose();
   } finally {
     rmSync(fresh, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }

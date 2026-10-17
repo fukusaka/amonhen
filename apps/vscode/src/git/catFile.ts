@@ -44,9 +44,14 @@ export class CatFileBatch {
     return (await this.send('contents', rev)) as GitObject | undefined;
   }
 
-  dispose(): void {
-    this.process?.kill();
+  /**
+   * 終了させる。返す Promise は git が終わったら解決する。
+   * Windows では、終わるまで git が作業ディレクトリを掴んでいて消せない（kill の直後に消すと EPERM）。
+   */
+  dispose(): Promise<void> {
+    const proc = this.process;
     this.process = undefined;
+    return proc ? proc.stop() : Promise.resolve();
   }
 
   private async send(kind: Request['kind'], rev: string): Promise<GitObject | ObjectInfo | undefined> {
@@ -92,6 +97,7 @@ class CatFileProcess {
   readonly indexStamp: string;
   alive = true;
   private readonly child: ChildProcessWithoutNullStreams;
+  private readonly closed: Promise<void>;
   private readonly queue: Request[] = [];
   private chunks: Buffer[] = [];
   private length = 0;
@@ -106,8 +112,17 @@ class CatFileProcess {
     });
     this.child.stdout.on('data', (c: Buffer) => this.onData(c));
     this.child.stdin.on('error', () => {});
-    this.child.on('error', (err) => this.fail(err));
-    this.child.on('close', (code) => this.fail(new Error(`git cat-file exited with ${code}`)));
+    this.closed = new Promise((resolve) => {
+      // 起動できなかったときは close が来ないことがある
+      this.child.on('error', (err) => {
+        this.fail(err);
+        resolve();
+      });
+      this.child.on('close', (code) => {
+        this.fail(new Error(`git cat-file exited with ${code}`));
+        resolve();
+      });
+    });
   }
 
   send(kind: Request['kind'], rev: string): Promise<GitObject | ObjectInfo | undefined> {
@@ -126,9 +141,11 @@ class CatFileProcess {
     this.child.stdin.end();
   }
 
-  kill(): void {
+  /** 終了させ、終わったら解決する */
+  stop(): Promise<void> {
     this.alive = false;
     this.child.kill();
+    return this.closed;
   }
 
   private fail(err: Error): void {

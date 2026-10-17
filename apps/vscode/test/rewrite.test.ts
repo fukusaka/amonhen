@@ -51,8 +51,8 @@ beforeEach(async () => {
   undo = new UndoLog(backend);
 });
 
-afterEach(() => {
-  backend.dispose();
+afterEach(async () => {
+  await backend.dispose();
   rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 

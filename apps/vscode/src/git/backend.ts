@@ -498,7 +498,8 @@ export class CliBackend implements RepositoryBackend {
     return this.git.exec(['--literal-pathspecs', ...args], { cwd: this.root });
   }
 
-  dispose(): void {
-    this.catFile.dispose();
+  /** 常駐の cat-file を終わらせる。返す Promise は終わったら解決する（作業ディレクトリを消す前に待つ） */
+  dispose(): Promise<void> {
+    return this.catFile.dispose();
   }
 }
