@@ -1,6 +1,7 @@
 name: Snapshot
 
 # main の CI が通ったコミットで、snapshot という pre-release を作り直す（テストが落ちたコミットは配らない）。
+# 作るのは build.yml。ここでは拡張の .vsix を作り、証明を付けて載せる。
 on:
   workflow_run:
     workflows: [CI]
@@ -19,55 +20,17 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Windows 用のエンジンは、macOS の build と並んで作る。
-  windows-engine:
-    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
-    uses: ./.github/workflows/windows-engine.yml
-    with:
-      ref: ${{ github.event.workflow_run.head_sha }}
-
-  # アプリと、macOS・Linux のエンジン。
   build:
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
-    # 署名の鍵は、環境 release の secret に置く（この仕事だけが読める）。snapshot は公証しない（自分用で、curl で
-    # 入れれば quarantine の印が付かないので要らない）。公証は正式版（release.yml）だけ。
-    environment: release
-    runs-on: macos-latest
-    env:
-      AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
-      AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
-      AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
-    outputs:
-      zip: ${{ steps.build.outputs.zip }}
-      version: ${{ steps.build.outputs.version }}
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
-          fetch-depth: 0
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          # Linux 用のエンジン（musl で静的リンク、リンクは zig）。
-          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
-      - run: brew install zig
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: scripts/import-signing-certificate.sh
-      - id: build
-        run: |
-          echo "zip=$(scripts/build-app.sh snapshot | tail -1)" >> "$GITHUB_OUTPUT"
-          echo "version=$(scripts/version.sh snapshot)" >> "$GITHUB_OUTPUT"
-      # アプリの zip、エンジンの tar.gz、拡張に同梱するエンジン（dist/engine）を publish に渡す。
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: build
-          path: |
-            dist/*.zip
-            dist/amonhen-*.tar.gz
-            dist/engine/
+    uses: ./.github/workflows/build.yml
+    with:
+      mode: snapshot
+      ref: ${{ github.event.workflow_run.head_sha }}
+    secrets: inherit
 
-  # 両方がそろったら、Windows の zip と .vsix を作り、証明を付けて snapshot を作り直す。
+  # 鍵は持たない（npm の依存を動かすので）。
   publish:
-    needs: [build, windows-engine]
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -77,22 +40,9 @@ jobs:
           fetch-depth: 0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: build
+          name: release
           path: dist
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
-        with:
-          name: windows-engine
-          path: dist/engine
-      - run: |
-          for f in dist/engine/amonhen-windows-*.exe; do
-            platform=$(basename "$f" .exe | sed 's/^amonhen-//')
-            work=$(mktemp -d); cp "$f" "$work/amonhen.exe"
-            (cd "$work" && zip -q "$OLDPWD/dist/amonhen-$VERSION-$platform.zip" amonhen.exe)
-          done
-        env:
-          VERSION: ${{ needs.build.outputs.version }}
-      # VSCode 拡張（apps/vscode）に、いま作ったエンジンを同梱して .vsix にする（成果物で失った実行の印は
-      # bundle-engine.sh が付け直す）。
+      # VSCode 拡張（apps/vscode）に、いま作ったエンジンを同梱して .vsix にする。
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24

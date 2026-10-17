@@ -1,0 +1,148 @@
+name: Build
+
+# 配るものを作る（snapshot.yml・release.yml・vscode-release.yml から呼ぶ）。時間のかかるコンパイルは OS と CPU ごとに
+# そのマシンで並べて走らせ、作ったエンジンはその場で動かして確かめる。最後に macOS でアプリを組み立てて署名する。
+#
+#   engines（Linux x86_64・aarch64、Windows x86_64・aarch64）──┐
+#   compile（macOS: Rust のコアと macOS のエンジン、Swift）────┴─▶ package（macOS: 組み立て・署名・公証）
+#
+# app が false（拡張の正式版）なら、アプリは作らず、エンジンだけを作って macOS のものに署名する。
+#
+# 成果物 release: dist/ のアプリの zip、エンジンの tar.gz・zip、dist/engine/（拡張に同梱するエンジン）。
+on:
+  workflow_call:
+    inputs:
+      # 版（scripts/version.sh の stable か snapshot）。アプリの名前とエンジンに埋め込む版が決まる。
+      mode:
+        type: string
+        required: true
+      # 作るコミット（空ならワークフローを起こしたコミット）。
+      ref:
+        type: string
+        default: ''
+      # 公証に出すか（正式版だけ）。
+      notarize:
+        type: boolean
+        default: false
+      # アプリも作るか。拡張の正式版はエンジンだけ（macOS のものは署名し、notarize なら公証に出す）。
+      app:
+        type: boolean
+        default: true
+    outputs:
+      version:
+        value: ${{ jobs.compile.outputs.version }}
+      zip:
+        value: ${{ jobs.package.outputs.zip }}
+
+jobs:
+  engines:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux-x86_64, runner: ubuntu-latest, target: x86_64-unknown-linux-musl }
+          - { platform: linux-aarch64, runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+          - { platform: windows-x86_64, runner: windows-latest, target: x86_64-pc-windows-msvc }
+          - { platform: windows-aarch64, runner: windows-11-arm, target: aarch64-pc-windows-msvc }
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.ref }}
+          # snapshot の版は、前のリリースからのコミット数を数える。
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          targets: ${{ matrix.target }}
+      # Linux 用は musl で静的リンクする（C の部分は musl-gcc で）。
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q musl-tools
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.platform }}
+      - run: |
+          version=$(scripts/version.sh "${{ inputs.mode }}")
+          AMONHEN_ENGINE_PLATFORMS=${{ matrix.platform }} scripts/build-engine.sh "$version"
+          scripts/check-engine.sh dist/engine/amonhen-${{ matrix.platform }}* "$version"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: engine-${{ matrix.platform }}
+          path: dist/engine/
+
+  compile:
+    runs-on: macos-latest
+    outputs:
+      version: ${{ steps.compile.outputs.version }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - id: compile
+        run: |
+          version=$(scripts/version.sh "${{ inputs.mode }}")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "${{ inputs.app }}" = true ]; then
+            scripts/compile-app.sh "${{ inputs.mode }}"
+          else
+            AMONHEN_ENGINE_PLATFORMS=darwin-aarch64 scripts/build-engine.sh "$version"
+          fi
+          scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64 "$version"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: compiled
+          path: |
+            dist/bin/
+            dist/engine/
+
+  package:
+    needs: [engines, compile]
+    # 署名と公証の鍵は、環境 release の secret に置く（この仕事だけが読める）。
+    environment: release
+    runs-on: macos-latest
+    env:
+      AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
+      AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
+      AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
+      # 公証は正式版だけ（snapshot は自分用で、curl で入れれば quarantine の印が付かないので要らない）。
+      AMONHEN_NOTARY_KEY: ${{ inputs.notarize && secrets.AMONHEN_NOTARY_KEY || '' }}
+      AMONHEN_NOTARY_KEY_ID: ${{ inputs.notarize && secrets.AMONHEN_NOTARY_KEY_ID || '' }}
+      AMONHEN_NOTARY_ISSUER: ${{ inputs.notarize && secrets.AMONHEN_NOTARY_ISSUER || '' }}
+    outputs:
+      zip: ${{ steps.package.outputs.zip }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: compiled
+          path: dist
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: engine-*
+          merge-multiple: true
+          path: dist/engine
+      - run: scripts/import-signing-certificate.sh
+      - id: package
+        if: inputs.app
+        run: echo "zip=$(scripts/package-app.sh "${{ inputs.mode }}" | tail -1)" >> "$GITHUB_OUTPUT"
+      # エンジンだけのとき: macOS のものを署名して公証に出す（単体の実行ファイルには結果を綴じ込めないので、出すだけ）。
+      - if: ${{ !inputs.app }}
+        run: |
+          chmod 755 dist/engine/amonhen-*
+          scripts/codesign.sh dist/engine/amonhen-darwin-aarch64
+          scripts/notarize.sh --engines dist/engine/amonhen-darwin-aarch64
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release
+          path: |
+            dist/*.zip
+            dist/*.tar.gz
+            dist/engine/

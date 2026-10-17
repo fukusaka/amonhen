@@ -1,6 +1,7 @@
 name: VSCode Release
 
-# 拡張（apps/vscode）の正式版。`vscode-v*` タグから、エンジンを作って同梱した .vsix を作る
+# 拡張（apps/vscode）の正式版。`vscode-v*` タグのコミットで CI が通っていることを確かめ、build.yml でエンジンを作り
+# （macOS のものは署名して公証に出す）、同梱した .vsix を作って Release に載せる。アプリの Latest の印は取らない。
 on:
   push:
     tags: ['vscode-v*']
@@ -10,47 +11,42 @@ permissions:
   # ビルドの由来の証明（artifact attestations）。gh attestation verify で確かめられる。
   id-token: write
   attestations: write
+  # CI の結果を読む。
+  actions: read
 
 jobs:
-  windows-engine:
-    uses: ./.github/workflows/windows-engine.yml
-
-  release:
-    needs: windows-engine
-    # 同梱する macOS のエンジンを Developer ID で署名し、公証に出す。鍵は環境 release の secret（この仕事だけが読める）。
-    environment: release
-    runs-on: macos-latest
-    env:
-      AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
-      AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
-      AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
-      AMONHEN_NOTARY_KEY: ${{ secrets.AMONHEN_NOTARY_KEY }}
-      AMONHEN_NOTARY_KEY_ID: ${{ secrets.AMONHEN_NOTARY_KEY_ID }}
-      AMONHEN_NOTARY_ISSUER: ${{ secrets.AMONHEN_NOTARY_ISSUER }}
+  check:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
-        with:
-          # 同梱するエンジンの版（snapshot の版）は、前のリリースからのコミット数を数える。
-          fetch-depth: 0
       - name: タグと package.json の version が一致するか
         run: test "${GITHUB_REF_NAME#vscode-v}" = "$(node -p "require('./apps/vscode/package.json').version")"
-      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
-        with:
-          # Linux 用のエンジン（musl で静的リンク、リンクは zig）。
-          targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
-      - run: brew install zig
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - run: scripts/import-signing-certificate.sh
-      - run: scripts/build-engine.sh
-      # 単体の実行ファイルには公証の結果を綴じ込めないので、出すだけ（初めて動かすときに Mac が Apple に確かめる）。
-      - run: |
-          scripts/codesign.sh dist/engine/amonhen-darwin-aarch64
-          scripts/notarize.sh --engines dist/engine/amonhen-darwin-aarch64
-      # Windows 用のエンジンも同梱する。
+      - name: CHANGELOG にこの版の節があるか
+        run: scripts/changelog-notes.sh "VSCode extension" "${GITHUB_REF_NAME#vscode-v}" >/dev/null
+      - name: このコミットで CI が通っているか
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/require-ci.sh "$GITHUB_SHA"
+
+  build:
+    uses: ./.github/workflows/build.yml
+    with:
+      # 同梱するエンジンの版は snapshot の版（エンジンの正式版とは別に出すので）。
+      mode: snapshot
+      notarize: true
+      app: false
+    secrets: inherit
+
+  # 鍵は持たない（npm の依存を動かすので）。
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: windows-engine
-          path: dist/engine
+          name: release
+          path: dist
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 24
@@ -59,7 +55,6 @@ jobs:
       - working-directory: apps/vscode
         run: |
           npm ci
-          npm test
           scripts/bundle-engine.sh
           npx @vscode/vsce package --skip-license
       # .vsix に、このタグのこの CI で作ったことの証明を付ける。
@@ -68,4 +63,7 @@ jobs:
           subject-path: apps/vscode/*.vsix
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" apps/vscode/*.vsix --title "VSCode $GITHUB_REF_NAME" --generate-notes --verify-tag --latest=false
+        run: |
+          scripts/changelog-notes.sh "VSCode extension" "${GITHUB_REF_NAME#vscode-v}" > notes.md
+          gh release create "$GITHUB_REF_NAME" apps/vscode/*.vsix --title "VSCode $GITHUB_REF_NAME" \
+            --notes-file notes.md --verify-tag --latest=false

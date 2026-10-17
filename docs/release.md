@@ -8,7 +8,12 @@ How releases are made, and signing, notarization and build provenance attestatio
 
 - Pushing a `v<number>` tag (such as `v0.1.1`) makes GitHub Actions publish to the Release the app zip, plus engine-only
   tar.gz files (macOS arm64, Linux x86_64, Linux aarch64) and zip files (Windows x86_64, aarch64). The tag must match
-  `workspace.package.version` in `Cargo.toml`.
+  `workspace.package.version` in `Cargo.toml`, CI must have passed on the tagged commit, and `CHANGELOG.md` must have a
+  section for the version (it becomes the Release notes).
+- Everything is built by `.github/workflows/build.yml`: each engine on a machine of its own OS and CPU, run there once
+  (`scripts/check-engine.sh`) before it is shipped; the app compiled on macOS in parallel
+  (`scripts/compile-app.sh`); then assembled and signed (`scripts/package-app.sh`). Locally, `scripts/build-app.sh`
+  does the same in one go.
 - The VSCode extension uses `vscode-v*` tags and publishes a .vsix with the engine bundled (see
   [VSCode extension](#vscode-extension) below).
 - Whenever CI (`ci.yml`) passes on main, a pre-release named `snapshot` is recreated from that commit (app, engine,
@@ -30,7 +35,8 @@ Steps to cut a stable release:
 
 1. In the "VSCode extension" section of [CHANGELOG.md](../CHANGELOG.md), change `Unreleased` to a heading with the version and date being released, and commit it
 2. Include `npm version patch --no-git-tag-version` in the same commit as 1.
-3. `git tag vscode-v<version> && git push origin main vscode-v<version>`
+3. Push to main, and once CI has passed: `git tag vscode-v<version> && git push origin vscode-v<version>` (the release
+   checks that CI passed on the tagged commit and takes the notes from that CHANGELOG section)
 
 ## Build provenance attestation
 
