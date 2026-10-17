@@ -22,6 +22,7 @@ The Git GUI I wanted to use, so I'm building it myself. What matters most: no wa
 ## Requirements
 
 - App: macOS 14.4 or later, Apple silicon (arm64).
+- GTK4 app (Linux, early): x86_64 and aarch64 with GTK 4.14 or later (Ubuntu 24.04, Debian 13 and later).
 - Engine (CLI and daemon): macOS arm64, Linux x86_64 and aarch64 (statically linked against musl, so it runs on any
   Linux), Windows x86_64 and aarch64.
 - All of them use `git` (writes and some reads launch `git`).
@@ -46,6 +47,18 @@ Everything is on the [Releases](https://github.com/fukusaka/amonhen/releases) pa
 
 On first launch the app also installs the engine (CLI and daemon), so `amonhen` is available from
 `~/.local/bin/amonhen`.
+
+### GTK4 app (Linux)
+
+An early native app for Linux (History, Working Copy, the merge editor, Blame and File History, through the daemon
+and SSH too). Download `amonhen-gtk-<version>-linux-<cpu>.tar.gz`, then
+
+```sh
+tar xzf amonhen-gtk-<version>-linux-x86_64.tar.gz
+amonhen-gtk-linux-x86_64/install.sh    # puts it in ~/.local, adds it to the desktop's app list and installs the engine
+```
+
+GTK is not bundled (`sudo apt install libgtk-4-1` if it is missing).
 
 ### Engine only (CLI and daemon)
 

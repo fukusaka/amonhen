@@ -50,7 +50,7 @@ jobs:
           subject-path: |
             dist/*.zip
             dist/amonhen-*.tar.gz
-      # アプリの zip と、エンジンだけの tar.gz（macOS・Linux）と zip（Windows）。
+      # アプリの zip、GTK4 のアプリの tar.gz（Linux）、エンジンだけの tar.gz（macOS・Linux）と zip（Windows）。
       - env:
           GH_TOKEN: ${{ github.token }}
           ZIP: ${{ needs.build.outputs.zip }}

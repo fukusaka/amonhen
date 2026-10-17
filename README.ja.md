@@ -21,6 +21,7 @@
 ## 動作環境
 
 - アプリ: macOS 14.4 以降、Apple シリコン（arm64）。
+- GTK4 のアプリ（Linux、作り始め）: x86_64・aarch64 で GTK 4.14 以降（Ubuntu 24.04・Debian 13 以降）。
 - エンジン（CLI と daemon）: macOS arm64、Linux x86_64・aarch64（musl の静的リンクなので、どの Linux でも動く）、
   Windows x86_64・aarch64。
 - どれも `git` を使う（書き込みと一部の読み取りは `git` を起動する）。
@@ -43,6 +44,18 @@
 3. 開く。正式版は署名・公証してあるので、警告なしで開ける。
 
 初めて起動すると、エンジン（CLI と daemon）も入り、`~/.local/bin/amonhen` から使える。
+
+### GTK4 のアプリ（Linux）
+
+Linux のネイティブのアプリ（作り始め。History・Working Copy・マージエディタ・Blame・File History、daemon・SSH 越しも）。
+`amonhen-gtk-<版>-linux-<CPU>.tar.gz` を取ってきて、
+
+```sh
+tar xzf amonhen-gtk-<版>-linux-x86_64.tar.gz
+amonhen-gtk-linux-x86_64/install.sh    # ~/.local に置き、デスクトップのアプリの一覧に出し、エンジンも入れる
+```
+
+GTK は同梱しない（なければ `sudo apt install libgtk-4-1`）。
 
 ### エンジンだけ（CLI と daemon）
 

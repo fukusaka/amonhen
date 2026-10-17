@@ -954,7 +954,8 @@ fn show_about(p: &Rc<Parts>) {
         .transient_for(&p.window)
         .modal(true)
         .program_name("Amon Hen")
-        .version(env!("CARGO_PKG_VERSION"))
+        // 配るときは scripts/package-gtk4.sh が版を埋め込む。
+        .version(option_env!("AMONHEN_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
         .website("https://github.com/fukusaka/amonhen")
         .license("MIT OR Apache-2.0")
         .authors(["Shoichi Fukusaka"])

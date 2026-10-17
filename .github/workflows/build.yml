@@ -3,13 +3,14 @@ name: Build
 # 配るものを作る（snapshot.yml・release.yml・vscode-release.yml から呼ぶ）。時間のかかるコンパイルは OS と CPU ごとに
 # そのマシンで並べて走らせ、作ったエンジンはその場で動かして確かめる。最後に macOS でアプリを組み立てて署名する。
 #
-#   engines（Linux x86_64・aarch64、Windows x86_64・aarch64）──┐
-#   compile（macOS: Rust のコアと macOS のエンジン、Swift）────┴─▶ package（macOS: 組み立て・署名・公証）
+#   engines（Linux x86_64・aarch64、Windows x86_64・aarch64）──┬─▶ gtk（Linux x86_64・aarch64: GTK4 のアプリ）──┐
+#                                                              └───────────────────────────────────────────────┤
+#   compile（macOS: Rust のコアと macOS のエンジン、Swift）──────────────────────────────────────────────────────┴─▶ package（macOS: 組み立て・署名・公証）
 #
 # app が false（拡張の正式版）なら、アプリは作らず、エンジンだけを作って macOS のものに署名する。
 #
-# 成果物 release: dist/ のアプリの zip、エンジンの tar.gz・zip、dist/engine/（拡張に同梱するエンジン）、
-# dist/THIRD-PARTY-NOTICES.md（依存のライセンスの一覧）。
+# 成果物 release: dist/ のアプリの zip、GTK4 のアプリの tar.gz（amonhen-gtk-*）、エンジンの tar.gz・zip、
+# dist/engine/（拡張に同梱するエンジン）、dist/THIRD-PARTY-NOTICES.md（依存のライセンスの一覧）。
 on:
   workflow_call:
     inputs:
@@ -73,6 +74,41 @@ jobs:
           name: engine-${{ matrix.platform }}
           path: dist/engine/
 
+  # GTK4 のアプリ（apps/gtk4）を Linux の CPU ごとにそのマシンで作り、同じ CPU 向けに作ったエンジンを SSH 先に送る
+  # ために入れる（GTK は同梱しないので、GTK 4.14 の Ubuntu 24.04 で作る）。拡張の正式版（app が false）では作らない。
+  gtk:
+    needs: engines
+    if: inputs.app
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { arch: x86_64, runner: ubuntu-24.04 }
+          - { arch: aarch64, runner: ubuntu-24.04-arm }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          ref: ${{ inputs.ref }}
+          fetch-depth: 0
+      - run: sudo apt-get update -q && sudo apt-get install -y -q libgtk-4-dev
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: apps/gtk4
+          key: gtk-${{ matrix.arch }}
+      # SSH 先に送るエンジン（Linux の 2 つ。SSH 先の CPU は手元と違うことがある）。
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: engine-linux-*
+          merge-multiple: true
+          path: dist/engine
+      - run: scripts/package-gtk4.sh "$(scripts/version.sh "${{ inputs.mode }}")"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: gtk-${{ matrix.arch }}
+          path: dist/amonhen-gtk-*.tar.gz
+
   compile:
     runs-on: macos-latest
     outputs:
@@ -108,7 +144,9 @@ jobs:
             dist/THIRD-PARTY-NOTICES.md
 
   package:
-    needs: [engines, compile]
+    needs: [engines, compile, gtk]
+    # gtk は拡張の正式版では飛ばすので、飛ばしたときも進める。
+    if: ${{ !cancelled() && needs.engines.result == 'success' && needs.compile.result == 'success' && contains(fromJSON('["success", "skipped"]'), needs.gtk.result) }}
     # 署名と公証の鍵は、環境 release の secret に置く（この仕事だけが読める）。
     environment: release
     runs-on: macos-latest
@@ -136,6 +174,12 @@ jobs:
           pattern: engine-*
           merge-multiple: true
           path: dist/engine
+      - if: inputs.app
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: gtk-*
+          merge-multiple: true
+          path: dist
       - run: scripts/import-signing-certificate.sh
       - id: package
         if: inputs.app

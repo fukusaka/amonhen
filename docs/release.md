@@ -6,14 +6,15 @@ How releases are made, and signing, notarization and build provenance attestatio
 
 ## Tags and snapshot
 
-- Pushing a `v<number>` tag (such as `v0.2.0`) makes GitHub Actions publish to the Release the app zip, plus engine-only
+- Pushing a `v<number>` tag (such as `v0.2.0`) makes GitHub Actions publish to the Release the app zip, the GTK4 app's tar.gz files (Linux x86_64,
+  aarch64), plus engine-only
   tar.gz files (macOS arm64, Linux x86_64, Linux aarch64) and zip files (Windows x86_64, aarch64). The tag must match
   `workspace.package.version` in `Cargo.toml`, CI must have passed on the tagged commit, and `CHANGELOG.md` must have a
   section for the version with a short summary paragraph under its heading (the summary becomes the Release
   notes, with a link to the whole CHANGELOG).
 - Everything is built by `.github/workflows/build.yml`: each engine on a machine of its own OS and CPU, run there once
-  (`scripts/check-engine.sh`) before it is shipped; the app compiled on macOS in parallel
-  (`scripts/compile-app.sh`); then assembled and signed (`scripts/package-app.sh`). Locally, `scripts/build-app.sh`
+  (`scripts/check-engine.sh`) before it is shipped; the GTK4 app on Ubuntu 24.04 for each Linux CPU with the Linux engines put in
+  for SSH (`scripts/package-gtk4.sh`); the app compiled on macOS in parallel (`scripts/compile-app.sh`); then assembled and signed (`scripts/package-app.sh`). Locally, `scripts/build-app.sh`
   does the same in one go.
 - The VSCode extension uses `vscode-v*` tags and publishes a .vsix with the engine bundled (see
   [VSCode extension](#vscode-extension) below).
