@@ -20,7 +20,14 @@ cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 
 
 ## Launch options for checking
 
-`AmonHen <repo> --snapshot out.png [--select-first | --select-row N] [--working-copy] [--find TEXT] [--search TEXT] [--merge-editor PATH]`, `--blame PATH`, `--file-history PATH` (open that window) (write the screen to a PNG and exit), `--measure-scroll [--scroll-rows N]` (auto-scroll History for 600 frames and show the speed and a per-stage breakdown), `--measure-select N` (select N commits and show the time per stage until the details appear), `--log-scroll` (record trackpad scroll deceleration), `--show-latency` (show the time from input to display below the title).
+`AmonHen <repo> --snapshot out.png [--select-first | --select-row N] [--working-copy] [--find TEXT] [--search TEXT] [--merge-editor PATH]`, `--blame PATH`, `--file-history PATH` (open that window) (write the screen to a PNG and exit), `--measure-scroll [--scroll-rows N]` (auto-scroll History for 600 frames and show the speed and a per-stage breakdown), `--measure-select N` (select N commits and show the time per stage until the details appear), `--log-scroll` (record trackpad scroll deceleration), `--show-latency` (show the time from input to display below the title). `--select-first` and `--select-row N` also work
+without `--snapshot`.
+
+The README's screenshot is the real window, not a `--snapshot` (which leaves the toolbar blank): launch the debug build
+on a repository with `--select-row N`, then capture the window with `screencapture -o -l<window id>`. To hide avatars for
+the picture, set `defaults write AmonHen showAvatars -bool NO` beforehand (the debug build's own defaults domain) and
+delete it afterwards. The window size comes from `NSWindow Frame Repository <path>` in the same domain (the README uses
+1200×720: `"1300 500 1200 720 0 0 <screen width> <screen height> "`).
 
 ## VSCode extension
 

@@ -20,7 +20,12 @@ cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 
 
 ## 確認用の起動オプション
 
-`AmonHen <repo> --snapshot out.png [--select-first | --select-row N] [--working-copy] [--find TEXT] [--search TEXT] [--merge-editor PATH]`、`--blame PATH`・`--file-history PATH`（そのウィンドウを開く）（画面を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 600 フレーム自動でスクロールして速さと処理ごとの内訳を表示）、`--measure-select N`（コミットを N 個選び、詳細が出るまでの段階ごとの時間を表示）、`--log-scroll`（トラックパッドでのスクロールの減速を記録）、`--show-latency`（入力から表示までの時間をタイトルの下に出す）。
+`AmonHen <repo> --snapshot out.png [--select-first | --select-row N] [--working-copy] [--find TEXT] [--search TEXT] [--merge-editor PATH]`、`--blame PATH`・`--file-history PATH`（そのウィンドウを開く）（画面を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 600 フレーム自動でスクロールして速さと処理ごとの内訳を表示）、`--measure-select N`（コミットを N 個選び、詳細が出るまでの段階ごとの時間を表示）、`--log-scroll`（トラックパッドでのスクロールの減速を記録）、`--show-latency`（入力から表示までの時間をタイトルの下に出す）。`--select-first`・`--select-row N` は `--snapshot` なしでも効く。
+
+README の画面は、`--snapshot`（ツールバーが空のまま写る）ではなく本物のウィンドウを撮る: デバッグ版をリポジトリと
+`--select-row N` で起動し、`screencapture -o -l<ウィンドウの ID>` でウィンドウを撮る。アバターを出さないときは、先に
+`defaults write AmonHen showAvatars -bool NO`（デバッグ版の設定のドメイン）を書き、撮ったら消す。ウィンドウの大きさは同じ
+ドメインの `NSWindow Frame Repository <パス>` で決まる（README は 1200×720: `"1300 500 1200 720 0 0 <画面の幅> <画面の高さ> "`）。
 
 ## VSCode 拡張
 
