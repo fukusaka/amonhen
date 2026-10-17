@@ -30,7 +30,7 @@
 どれも [Releases](https://github.com/fukusaka/amonhen/releases) にある。次のどちらかを選ぶ。
 
 - **正式版**: タグ `v<版>` のリリース（VSCode 拡張は別のタグ `vscode-v<版>`）。
-- **snapshot**: pre-release の `snapshot`。main に push するたびに作り直す。
+- **snapshot**: pre-release の `snapshot`。main の CI が通るたびに作り直す。
 
 > [!NOTE]
 > 正式版は `v0.1.1` から署名・公証してある。snapshot は署名だけで公証していないので、下のスクリプトで入れるか、

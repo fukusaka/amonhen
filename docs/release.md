@@ -11,8 +11,9 @@ How releases are made, and signing, notarization and build provenance attestatio
   `workspace.package.version` in `Cargo.toml`.
 - The VSCode extension uses `vscode-v*` tags and publishes a .vsix with the engine bundled (see
   [apps/vscode](../apps/vscode)).
-- Every push to main recreates a pre-release named `snapshot` (app, engine, extension; the version is
-  `<next patch>-snapshot.<commit count>+<sha>`).
+- Whenever CI (`ci.yml`) passes on main, a pre-release named `snapshot` is recreated from that commit (app, engine,
+  extension; the version is `<next patch>-snapshot.<commit count>+<sha>`). The Windows engines are built alongside the
+  macOS build, and a last job bundles and publishes everything.
 - Changes go in [CHANGELOG.md](../CHANGELOG.md) (one file, with sections for the app and engine and for the VSCode
   extension). Before tagging, rename that section's `Unreleased` to the version and date, and commit it.
 

@@ -10,8 +10,9 @@
   Linux x86_64・Linux aarch64）と zip（Windows x86_64・aarch64）を Release に載せる。タグは `Cargo.toml` の
   `workspace.package.version` と一致させる。
 - VSCode 拡張は `vscode-v*` のタグで、エンジンを同梱した .vsix を載せる（[apps/vscode](../../apps/vscode/README.ja.md) を参照）。
-- main に push するたびに、`snapshot` という pre-release を作り直す（アプリ・エンジン・拡張。バージョンは
-  `<次の patch>-snapshot.<コミット数>+<sha>`）。
+- main の CI（`ci.yml`）が通るたびに、そのコミットで `snapshot` という pre-release を作り直す（アプリ・エンジン・拡張。
+  バージョンは `<次の patch>-snapshot.<コミット数>+<sha>`）。Windows のエンジンは macOS のビルドと並んで作り、最後の
+  仕事で同梱して載せる。
 - 変更は [CHANGELOG.md](../../CHANGELOG.md)（英語。アプリとエンジン、VSCode 拡張の節に分けた 1 つのファイル）に書く。
   タグを打つ前に、その節の `Unreleased` を版と日付の見出しに改めてコミットする。
 

@@ -9,6 +9,10 @@ on:
       mode:
         type: string
         default: snapshot
+      # 作るコミット（空ならワークフローを起こしたコミット）。snapshot は CI が通ったコミットを渡す。
+      ref:
+        type: string
+        default: ''
 
 jobs:
   build:
@@ -16,6 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          ref: ${{ inputs.ref }}
           # snapshot の版は、前のリリースからのコミット数を数える。
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable

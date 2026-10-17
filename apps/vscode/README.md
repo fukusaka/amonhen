@@ -136,7 +136,7 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 | Channel | When it is built | Version |
 | --- | --- | --- |
 | stable | On pushing a `vscode-v*` tag (separate from the app and engine's `v*`) | `0.0.2` |
-| snapshot | On every push to main (put on the same `snapshot` pre-release as the app and engine) | `0.0.3-snapshot.<number of apps/vscode commits since the last release>+<sha>` |
+| snapshot | Whenever CI passes on main (put on the same `snapshot` pre-release as the app and engine) | `0.0.3-snapshot.<number of apps/vscode commits since the last release>+<sha>` |
 
 A snapshot is treated as a pre-release of the next patch, so installing a stable release is judged newer than the snapshot.
 

@@ -31,7 +31,7 @@ The Git GUI I wanted to use, so I'm building it myself. What matters most: no wa
 Everything is on the [Releases](https://github.com/fukusaka/amonhen/releases) page. Pick one of:
 
 - **Stable**: the release tagged `v<version>` (the VSCode extension has its own `vscode-v<version>`).
-- **Snapshot**: the `snapshot` pre-release, rebuilt from every push to main.
+- **Snapshot**: the `snapshot` pre-release, rebuilt whenever CI passes on main.
 
 > [!NOTE]
 > Stable releases are signed and notarized from `v0.1.1`. Snapshots are signed but not notarized: install them with the

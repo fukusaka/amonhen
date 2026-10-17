@@ -133,7 +133,7 @@ is in the root [docs/front.md](../../../docs/front.md), and the design in item 1
 - Stable release: the root `.github/workflows/vscode-release.yml`. On pushing a `vscode-v*` tag (the app and engine use
   `v*`), build the engines (including Windows), bundle them with `scripts/bundle-engine.sh`, `vsce package`, attach a
   build provenance attestation, and create the Release.
-- snapshot: the root `.github/workflows/snapshot.yml`. On every push to main, `scripts/snapshot-version.mjs` produces
+- snapshot: the root `.github/workflows/snapshot.yml`. Whenever CI passes on main, `scripts/snapshot-version.mjs` produces
   `<next patch>-snapshot.<number of apps/vscode commits since the last release>+<sha>`, and the `.vsix` with the
   engines bundled goes on the same `snapshot` pre-release as the app and the engine. Under SemVer comparison it is older
   than the stable release, so installing the stable release overwrites it.

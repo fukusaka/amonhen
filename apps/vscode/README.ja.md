@@ -135,7 +135,7 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 | チャンネル | 作られるタイミング | バージョン |
 | --- | --- | --- |
 | stable | `vscode-v*` タグの push（アプリ・エンジンの `v*` とは別） | `0.0.2` |
-| snapshot | main への push のたび（アプリ・エンジンと同じ `snapshot` という pre-release に載せる） | `0.0.3-snapshot.<前回リリースからの apps/vscode のコミット数>+<sha>` |
+| snapshot | main の CI が通るたび（アプリ・エンジンと同じ `snapshot` という pre-release に載せる） | `0.0.3-snapshot.<前回リリースからの apps/vscode のコミット数>+<sha>` |
 
 snapshot は次の patch の pre-release 扱いなので、正式版を入れると snapshot より新しいと判定される。
 
