@@ -27,7 +27,7 @@ function git(...args: string[]): string {
 }
 
 before(async () => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-test-')));
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-test-')));
   git('init', '-q', '-b', 'main');
   writeFileSync(join(dir, 'a.txt'), 'one\n');
   git('add', '.');
@@ -42,7 +42,7 @@ before(async () => {
 
 after(() => {
   backend.dispose();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 test('open resolves the root and git dirs', () => {
@@ -169,7 +169,7 @@ test('stage, unstage and writeIndex', async () => {
 });
 
 test('unstage works before the first commit', async () => {
-  const fresh = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-test-')));
+  const fresh = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-test-')));
   try {
     execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: fresh });
     writeFileSync(join(fresh, 'x'), 'x\n');
@@ -180,7 +180,7 @@ test('unstage works before the first commit', async () => {
     assert.equal((await b.status()).entries[0]?.kind, 'untracked');
     b.dispose();
   } finally {
-    rmSync(fresh, { recursive: true, force: true });
+    rmSync(fresh, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });
 

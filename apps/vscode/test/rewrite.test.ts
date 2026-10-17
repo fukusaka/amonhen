@@ -41,7 +41,7 @@ function subjects(): string[] {
 }
 
 beforeEach(async () => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-rewrite-')));
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-rewrite-')));
   git('init', '-q', '-b', 'main');
   commitFile('a.txt', 'a\n', 'A');
   commitFile('b.txt', 'b\n', 'B');
@@ -53,7 +53,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   backend.dispose();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 test('reword keeps the tree, and undo restores the original commit', async () => {

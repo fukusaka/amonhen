@@ -34,7 +34,7 @@ function commitFile(name: string, content: string, message: string): void {
 }
 
 beforeEach(async () => {
-  tmp = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-seq-')));
+  tmp = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-seq-')));
   dir = join(tmp, 'work');
   execFileSync('git', ['init', '-q', '--bare', '-b', 'main', join(tmp, 'remote.git')]);
   execFileSync('git', ['init', '-q', '-b', 'main', dir]);
@@ -45,7 +45,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   backend.dispose();
-  rmSync(tmp, { recursive: true, force: true });
+  rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 /** main と feature が同じファイルの同じ行を変えた状態を作る */

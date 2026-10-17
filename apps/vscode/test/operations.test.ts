@@ -33,7 +33,7 @@ function commitFile(name: string, content: string, message: string): void {
 }
 
 beforeEach(async () => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-ops-')));
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-ops-')));
   git('init', '-q', '-b', 'main');
   commitFile('a.txt', 'base\n', 'base');
   backend = await CliBackend.open(new GitExecutor('git'), dir);
@@ -42,7 +42,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   backend.dispose();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 const H = (b: string) => `refs/heads/${b}`;

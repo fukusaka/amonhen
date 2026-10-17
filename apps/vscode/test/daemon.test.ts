@@ -26,7 +26,7 @@ function git(...args: string[]): string {
 }
 
 before(() => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-daemon-')));
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-daemon-')));
   // daemon のソケットと History のキャッシュは試験の中に置く（手元の daemon とアプリに混ぜない）
   process.env['AMONHEN_DAEMON_DIR'] = join(dir, 's');
   process.env['HOME'] = dir;
@@ -54,7 +54,7 @@ after(async () => {
   if (!skip) {
     await controlDaemon(daemon, 'stop').catch(() => undefined);
   }
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 test('reads History rows and the graph through the daemon', { skip }, async () => {

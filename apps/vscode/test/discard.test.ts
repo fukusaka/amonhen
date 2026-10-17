@@ -38,7 +38,7 @@ function git(...args: string[]): string {
 const read = (p: string) => readFileSync(join(dir, p), 'utf8');
 
 beforeEach(async () => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-discard-')));
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-discard-')));
   git('init', '-q', '-b', 'main');
   writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree\n');
   writeFileSync(join(dir, 'run.sh'), '#!/bin/sh\n');
@@ -51,7 +51,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   backend.dispose();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 test('discard modified and untracked files, then undo brings them back', async () => {
@@ -71,7 +71,8 @@ test('discard modified and untracked files, then undo brings them back', async (
   await undo.undo();
   assert.equal(read('a.txt'), 'changed\n');
   assert.equal(read('run.sh'), '#!/bin/sh\necho hi\n');
-  assert.equal(statSync(join(dir, 'run.sh')).mode & 0o111, 0o111);
+  // Windows には実行ビットがない。
+  if (process.platform !== 'win32') assert.equal(statSync(join(dir, 'run.sh')).mode & 0o111, 0o111);
   assert.equal(read('new.txt'), 'new\n');
 });
 

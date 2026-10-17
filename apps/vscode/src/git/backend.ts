@@ -3,7 +3,7 @@
  * 計測して足りない箇所が出たら、その部分だけ別実装（WASM やネイティブ）に差し替える。
  */
 import { access, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
 import { GitError, shellQuote, type GitExecutor } from './exec.ts';
 import { diffTreeArgs, logArgs, parseLog, parseNameStatus, type Commit, type FileChange } from './log.ts';
@@ -161,7 +161,8 @@ export class CliBackend implements RepositoryBackend {
       ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir'],
       { cwd, readOnly: true },
     );
-    const [root = '', gitDir = '', commonDir = ''] = out.split('\n');
+    // Windows の git は `C:/…` と / で区切って返すので、その OS の形にそろえる（VSCode のパスと比べられるように）。
+    const [root = '', gitDir = '', commonDir = ''] = out.split('\n').map((p) => (p ? resolve(p) : p));
     return new CliBackend(git, root, { gitDir, commonDir });
   }
 

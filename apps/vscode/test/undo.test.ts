@@ -32,7 +32,7 @@ function commitFile(name: string, content: string, message: string): void {
 }
 
 beforeEach(async () => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-undo-')));
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-undo-')));
   git('init', '-q', '-b', 'main');
   commitFile('a.txt', 'base\n', 'base');
   backend = await CliBackend.open(new GitExecutor('git'), dir);
@@ -41,7 +41,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   backend.dispose();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 test('undo a commit keeps its changes staged', async () => {

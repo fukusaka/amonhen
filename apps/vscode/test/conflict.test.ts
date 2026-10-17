@@ -30,7 +30,7 @@ function commitAll(message: string): void {
 }
 
 beforeEach(async () => {
-  dir = realpathSync(mkdtempSync(join(tmpdir(), 'amonhen-conflict-')));
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-conflict-')));
   git('init', '-q', '-b', 'main');
   for (const f of ['both.txt', 'gone-there.txt', 'gone-here.txt']) writeFileSync(join(dir, f), 'base\n');
   commitAll('base');
@@ -51,7 +51,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   backend.dispose();
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 async function conflicts(): Promise<{ path: string; conflict: string }[]> {
