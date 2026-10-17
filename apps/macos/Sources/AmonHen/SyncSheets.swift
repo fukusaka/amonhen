@@ -26,40 +26,39 @@ extension Actions {
         Task { @MainActor in
             guard let state = await syncState() else { return }
             guard let branch = state.status.branch else {
-                return await inform("Push できません", "ブランチをチェックアウトしていません（detached HEAD）。")
+                return await inform(L("Can’t Push"), L("No branch is checked out (detached HEAD)."))
             }
             guard let upstream = state.status.upstream else {
-                let alert = makeAlert("\(branch) を origin に push しますか？",
-                                      "origin にはまだ \(branch) がありません。origin/\(branch) を作り、上流にします。")
+                let alert = makeAlert(L("Push %@ to origin?", branch),
+                                      L("origin has no %@ yet. This creates origin/%@ and makes it the upstream.", branch, branch))
                 alert.addButton(withTitle: "Push")
-                alert.addButton(withTitle: "キャンセル")
+                alert.addButton(withTitle: L("Cancel"))
                 if await present(alert) == .alertFirstButtonReturn { push(force: false) }
                 return
             }
             let (outgoing, incoming) = (state.outgoing, state.incoming)
             if force {
                 let alert = makeAlert(
-                    "\(branch) を force push しますか？",
-                    "\(upstream) を手元の \(branch) で置き換えます（--force-with-lease。ほかの人が後から push していたら失敗します）。")
+                    L("Force push %@?", branch),
+                    L("This replaces %@ with your %@ (--force-with-lease: it fails if someone pushed in the meantime).", upstream, branch))
                 alert.accessoryView = Self.commitLists([
-                    ("送るコミット", outgoing, false), ("\(upstream) から消えるコミット", incoming, true),
+                    (L("Commits to send"), outgoing, false), (L("Commits %@ will lose", upstream), incoming, true),
                 ])
                 let button = alert.addButton(withTitle: "Force Push")
                 button.hasDestructiveAction = true
-                alert.addButton(withTitle: "キャンセル")
+                alert.addButton(withTitle: L("Cancel"))
                 if await present(alert) == .alertFirstButtonReturn { push(force: true) }
                 return
             }
             if incoming.count > 0 {
                 let alert = makeAlert(
-                    outgoing.count > 0 ? "\(branch) は \(upstream) と分かれています" : "送るコミットはありません",
-                    "\(upstream) に、手元にないコミットが \(incoming.count) 個あります（最後の Fetch の時点）。"
-                        + "先に Pull で取り込んでから push してください。")
+                    outgoing.count > 0 ? L("%@ and %@ have diverged", branch, upstream) : L("Nothing to push"),
+                    L("%@ has %ld commits you don’t have (as of the last Fetch). Pull them first, then push.", upstream, incoming.count))
                 alert.accessoryView = Self.commitLists([
-                    ("送るコミット", outgoing, false), ("\(upstream) にだけあるコミット", incoming, false),
+                    (L("Commits to send"), outgoing, false), (L("Commits only on %@", upstream), incoming, false),
                 ])
                 alert.addButton(withTitle: "Pull…")
-                alert.addButton(withTitle: "キャンセル")
+                alert.addButton(withTitle: L("Cancel"))
                 if outgoing.count > 0 { alert.addButton(withTitle: "Force Push…") }
                 switch await present(alert) {
                 case .alertFirstButtonReturn: pullWithConfirmation(mode: Settings.pullMode)
@@ -69,12 +68,12 @@ extension Actions {
                 return
             }
             if outgoing.count == 0 {
-                return await inform("送るコミットはありません", "\(branch) は \(upstream) と同じです（最後の Fetch の時点）。")
+                return await inform(L("Nothing to push"), L("%@ is the same as %@ (as of the last Fetch).", branch, upstream))
             }
-            let alert = makeAlert("\(outgoing.count) コミットを \(upstream) に push しますか？", "")
-            alert.accessoryView = Self.commitLists([("送るコミット", outgoing, false)])
+            let alert = makeAlert(L("Push %ld commits to %@?", outgoing.count, upstream), "")
+            alert.accessoryView = Self.commitLists([(L("Commits to send"), outgoing, false)])
             alert.addButton(withTitle: "Push")
-            alert.addButton(withTitle: "キャンセル")
+            alert.addButton(withTitle: L("Cancel"))
             if await present(alert) == .alertFirstButtonReturn { push(force: false) }
         }
     }
@@ -86,12 +85,12 @@ extension Actions {
         Task { @MainActor in
             guard let state = await syncState() else { return }
             guard let branch = state.status.branch else {
-                return await inform("Pull できません", "ブランチをチェックアウトしていません（detached HEAD）。")
+                return await inform(L("Can’t Pull"), L("No branch is checked out (detached HEAD)."))
             }
             guard let upstream = state.status.upstream else {
-                let alert = makeAlert("\(branch) に上流がありません", "Pull で取り込むリモートのブランチを先に決めてください。")
-                alert.addButton(withTitle: "Set Upstream…")
-                alert.addButton(withTitle: "キャンセル")
+                let alert = makeAlert(L("%@ has no upstream", branch), L("Choose the remote branch to pull from first."))
+                alert.addButton(withTitle: L("Set Upstream…"))
+                alert.addButton(withTitle: L("Cancel"))
                 if await present(alert) == .alertFirstButtonReturn {
                     NSApp.sendAction(#selector(RepositoryWindow.setUpstream(_:)), to: nil, from: nil)
                 }
@@ -100,7 +99,7 @@ extension Actions {
             let (outgoing, incoming) = (state.outgoing, state.incoming)
             let changed = state.status.items.filter { $0.kind != .untracked }.count
             let alert = makeAlert(
-                incoming.count > 0 ? "\(upstream) から \(incoming.count) コミット取り込みますか？" : "\(upstream) から Pull しますか？",
+                incoming.count > 0 ? L("Pull %ld commits from %@?", incoming.count, upstream) : L("Pull from %@?", upstream),
                 "")
             let popup = NSPopUpButton(frame: .zero, pullsDown: false)
             for m in PullMode.allCases {
@@ -116,25 +115,25 @@ extension Actions {
                 let m = PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? .merge
                 var lines: [String] = []
                 if incoming.count == 0 {
-                    lines.append("最後の Fetch の時点では、取り込むコミットはありません（Pull は先に Fetch します）。")
+                    lines.append(L("Nothing new as of the last Fetch (Pull fetches first)."))
                 } else if outgoing.count == 0 {
-                    lines.append("\(branch) を進めるだけです（fast-forward）。")
+                    lines.append(L("This just moves %@ forward (fast-forward).", branch))
                 } else {
                     switch m {
-                    case .merge: lines.append("手元に \(outgoing.count) コミットあるので、マージコミットを 1 つ作ります。")
-                    case .rebase: lines.append("手元の \(outgoing.count) コミットを、取り込んだコミットの上に載せ直します（ID が変わります）。")
-                    case .fastForwardOnly: lines.append("⚠︎ 手元にも \(outgoing.count) コミットあるので、Fast-Forward Only では取り込めません。")
+                    case .merge: lines.append(L("You have %ld local commits, so this makes a merge commit.", outgoing.count))
+                    case .rebase: lines.append(L("Your %ld local commits are replayed on top (their IDs change).", outgoing.count))
+                    case .fastForwardOnly: lines.append(L("⚠︎ You have %ld local commits too, so Fast-Forward Only can’t pull these.", outgoing.count))
                     }
                 }
-                if changed > 0 { lines.append("作業中の変更が \(changed) ファイルあります。取り込む変更と重なると止まります。") }
-                lines.append("あとから Undo（⌥⌘Z）で戻せます。")
+                if changed > 0 { lines.append(L("%ld files have uncommitted changes. Pull stops if the incoming changes touch them.", changed)) }
+                lines.append(L("You can Undo it afterwards (⌥⌘Z)."))
                 note.stringValue = lines.joined(separator: "\n")
             }
             update()
             let target = ClosureTarget(update)
             popup.target = target
             popup.action = #selector(ClosureTarget.fire)
-            let modeRow = NSStackView(views: [NSTextField(labelWithString: "取り込み方:"), popup])
+            let modeRow = NSStackView(views: [NSTextField(labelWithString: L("Integrate with:")), popup])
             modeRow.spacing = 6
             let stack = NSStackView(views: [modeRow, note])
             stack.orientation = .vertical
@@ -142,14 +141,14 @@ extension Actions {
             stack.spacing = 8
             if incoming.count > 0 || outgoing.count > 0 {
                 stack.addArrangedSubview(Self.commitLists([
-                    ("取り込むコミット", incoming, false), ("手元にだけあるコミット", outgoing, false),
+                    (L("Commits to pull"), incoming, false), (L("Commits only here"), outgoing, false),
                 ]))
             }
             stack.layoutSubtreeIfNeeded()
             stack.frame.size = stack.fittingSize
             alert.accessoryView = stack
             alert.addButton(withTitle: "Pull")
-            alert.addButton(withTitle: "キャンセル")
+            alert.addButton(withTitle: L("Cancel"))
             let response = await present(alert)
             withExtendedLifetime(target) {}
             guard response == .alertFirstButtonReturn else { return }
@@ -164,10 +163,10 @@ extension Actions {
     func popWithConfirmation(name: String, message: String?) {
         Task { @MainActor in
             let alert = makeAlert(
-                "\(name) を戻して消しますか？",
-                (message.map { "「\($0)」\n\n" } ?? "") + "作業ツリーに戻し、stash の一覧から消します（重なってコンフリクトしたときは消しません）。")
+                L("Pop %@?", name),
+                (message.map { "“\($0)”\n\n" } ?? "") + L("This applies it to the working tree and removes it from the stash list (it is kept if it conflicts)."))
             alert.addButton(withTitle: "Pop")
-            alert.addButton(withTitle: "キャンセル")
+            alert.addButton(withTitle: L("Cancel"))
             if await present(alert) == .alertFirstButtonReturn {
                 perform(["op": "stashApply", "name": name, "pop": true])
             }
@@ -180,11 +179,11 @@ extension Actions {
         Task { @MainActor in
             let label = (try? await Task.detached { try repository.run(["op": "undoPeek"]).label }.value) ?? nil
             guard let label else {
-                return await inform("Undo できる操作はありません", "")
+                return await inform(L("Nothing to Undo"), "")
             }
-            let alert = makeAlert("「\(label)」を戻しますか？", "操作の前の HEAD とブランチに戻します。Activity の操作ログからも戻せます。")
+            let alert = makeAlert(L("Undo “%@”?", label), L("This returns HEAD and the branches to where they were before. The operation log in Activity can undo it too."))
             alert.addButton(withTitle: "Undo")
-            alert.addButton(withTitle: "キャンセル")
+            alert.addButton(withTitle: L("Cancel"))
             if await present(alert) == .alertFirstButtonReturn { undo() }
         }
     }
@@ -217,7 +216,7 @@ extension Actions {
         switch result {
         case let .success(state): return state
         case let .failure(error):
-            await inform("状態を読めません", "\(error)")
+            await inform(L("Can’t read the status"), "\(error)")
             return nil
         }
     }
@@ -257,7 +256,7 @@ extension Actions {
         stack.alignment = .leading
         stack.spacing = 4
         for (title, range, warn) in lists where range.count > 0 {
-            let header = NSTextField(labelWithString: "\(title)（\(range.count)）")
+            let header = NSTextField(labelWithString: "\(title) (\(range.count))")
             header.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
             header.textColor = warn ? .systemRed : .labelColor
             stack.addArrangedSubview(header)
@@ -276,7 +275,7 @@ extension Actions {
                                                attributes: [.font: body, .foregroundColor: NSColor.tertiaryLabelColor]))
             }
             if range.count > range.commits.count {
-                text.append(NSAttributedString(string: "\nほか \(range.count - range.commits.count) コミット",
+                text.append(NSAttributedString(string: "\n" + L("and %ld more", range.count - range.commits.count),
                                                attributes: [.font: body, .foregroundColor: NSColor.secondaryLabelColor]))
             }
             let lines = min(range.commits.count + (range.count > range.commits.count ? 1 : 0), 8)

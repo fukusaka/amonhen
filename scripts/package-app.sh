@@ -55,6 +55,8 @@ legal="LICENSE-MIT LICENSE-APACHE NOTICE dist/THIRD-PARTY-NOTICES.md"
 cp $legal "$app/Contents/Resources/"
 # アイコン（scripts/make-icon.swift で作ったもの）。
 cp "apps/macos/Icons/$icon.icns" "$app/Contents/Resources/AppIcon.icns"
+# 画面の文字の訳（apps/macos/Sources/AmonHen/Localization.swift）。
+cp -R apps/macos/Localization/*.lproj "$app/Contents/Resources/"
 cat > "$app/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -66,6 +68,8 @@ cat > "$app/Contents/Info.plist" <<PLIST
     <key>CFBundleExecutable</key><string>AmonHen</string>
     <key>CFBundlePackageType</key><string>APPL</string>
     <key>CFBundleIconFile</key><string>AppIcon</string>
+    <key>CFBundleDevelopmentRegion</key><string>en</string>
+    <key>CFBundleLocalizations</key><array><string>en</string><string>ja</string></array>
     <key>CFBundleURLTypes</key>
     <array>
         <dict>

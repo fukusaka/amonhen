@@ -1,0 +1,43 @@
+/* 日本語。鍵はコードの中の英語の文（`L("…")`）。用語の決まりは docs/ux.md の「Language」。 */
+
+/* 共通 */
+"Cancel" = "キャンセル";
+
+/* SyncSheets.swift */
+"Can’t Push" = "Push できません";
+"Can’t Pull" = "Pull できません";
+"No branch is checked out (detached HEAD)." = "ブランチをチェックアウトしていません（detached HEAD）。";
+"Push %@ to origin?" = "%@ を origin に push しますか？";
+"origin has no %@ yet. This creates origin/%@ and makes it the upstream." = "origin にはまだ %1$@ がありません。origin/%2$@ を作り、上流にします。";
+"Force push %@?" = "%@ を force push しますか？";
+"This replaces %@ with your %@ (--force-with-lease: it fails if someone pushed in the meantime)." = "%1$@ を手元の %2$@ で置き換えます（--force-with-lease。ほかの人が後から push していたら失敗します）。";
+"Commits to send" = "送るコミット";
+"Commits %@ will lose" = "%@ から消えるコミット";
+"%@ and %@ have diverged" = "%1$@ は %2$@ と分かれています";
+"Nothing to push" = "送るコミットはありません";
+"%@ has %ld commits you don’t have (as of the last Fetch). Pull them first, then push." = "%1$@ に、手元にないコミットが %2$ld 個あります（最後の Fetch の時点）。先に Pull で取り込んでから push してください。";
+"Commits only on %@" = "%@ にだけあるコミット";
+"%@ is the same as %@ (as of the last Fetch)." = "%1$@ は %2$@ と同じです（最後の Fetch の時点）。";
+"Push %ld commits to %@?" = "%1$ld コミットを %2$@ に push しますか？";
+"%@ has no upstream" = "%@ に上流がありません";
+"Choose the remote branch to pull from first." = "Pull で取り込むリモートのブランチを先に決めてください。";
+"Set Upstream…" = "上流を設定…";
+"Pull %ld commits from %@?" = "%2$@ から %1$ld コミット取り込みますか？";
+"Pull from %@?" = "%@ から Pull しますか？";
+"Nothing new as of the last Fetch (Pull fetches first)." = "最後の Fetch の時点では、取り込むコミットはありません（Pull は先に Fetch します）。";
+"This just moves %@ forward (fast-forward)." = "%@ を進めるだけです（fast-forward）。";
+"You have %ld local commits, so this makes a merge commit." = "手元に %ld コミットあるので、マージコミットを 1 つ作ります。";
+"Your %ld local commits are replayed on top (their IDs change)." = "手元の %ld コミットを、取り込んだコミットの上に載せ直します（ID が変わります）。";
+"⚠︎ You have %ld local commits too, so Fast-Forward Only can’t pull these." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。";
+"%ld files have uncommitted changes. Pull stops if the incoming changes touch them." = "作業中の変更が %ld ファイルあります。取り込む変更と重なると止まります。";
+"You can Undo it afterwards (⌥⌘Z)." = "あとから Undo（⌥⌘Z）で戻せます。";
+"Integrate with:" = "取り込み方:";
+"Commits to pull" = "取り込むコミット";
+"Commits only here" = "手元にだけあるコミット";
+"Pop %@?" = "%@ を戻して消しますか？";
+"This applies it to the working tree and removes it from the stash list (it is kept if it conflicts)." = "作業ツリーに戻し、stash の一覧から消します（重なってコンフリクトしたときは消しません）。";
+"Nothing to Undo" = "Undo できる操作はありません";
+"Undo “%@”?" = "「%@」を戻しますか？";
+"This returns HEAD and the branches to where they were before. The operation log in Activity can undo it too." = "操作の前の HEAD とブランチに戻します。Activity の操作ログからも戻せます。";
+"Can’t read the status" = "状態を読めません";
+"and %ld more" = "ほか %ld コミット";
