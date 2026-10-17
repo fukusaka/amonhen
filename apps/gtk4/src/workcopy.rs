@@ -99,7 +99,11 @@ struct Inner {
     toggle_once: Cell<Option<u32>>,
     /// 変更のあるファイルの数が変わったときに呼ぶ。
     on_count: RefCell<Option<CountCallback>>,
+    /// ファイルの行を右クリックしたときに呼ぶ（パス、Blame できるか、File History を出せるか、行、x、y）。
+    on_file_menu: RefCell<Option<FileMenuCallback>>,
 }
+
+type FileMenuCallback = Box<dyn Fn(&str, bool, bool, &gtk::Widget, f64, f64)>;
 
 impl WorkingCopy {
     pub fn new(pending: Rc<Cell<u32>>) -> Self {
@@ -297,6 +301,7 @@ impl WorkingCopy {
             pending,
             toggle_once: Cell::new(None),
             on_count: RefCell::default(),
+            on_file_menu: RefCell::default(),
         });
         Inner::connect(&inner);
         let layouts = layout_buttons.clone();
@@ -384,6 +389,14 @@ impl WorkingCopy {
             let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
             repo.stage(&paths)
         });
+    }
+
+    /// ファイルの行を右クリックしたら `f(パス, Blame できるか, File History を出せるか, 行, x, y)` を呼ぶ。
+    pub fn connect_file_menu(
+        &self,
+        f: impl Fn(&str, bool, bool, &gtk::Widget, f64, f64) + 'static,
+    ) {
+        self.inner.on_file_menu.replace(Some(Box::new(f)));
     }
 
     pub fn connect_count(&self, f: impl Fn(usize) + 'static) {
@@ -816,6 +829,28 @@ impl Inner {
         }
         let row = gtk::ListBoxRow::new();
         row.set_child(Some(&line));
+        // 右クリック: Blame（消したファイルにはない）と File History（untracked にはまだ履歴がない）。
+        let menu = gtk::GestureClick::new();
+        menu.set_button(gtk::gdk::BUTTON_SECONDARY);
+        let (weak, path, r) = (Rc::downgrade(this), entry.path.clone(), row.downgrade());
+        let untracked = entry.kind == StatusKind::Untracked;
+        let deleted = entry.worktree == b'D';
+        menu.connect_pressed(move |_, _, x, y| {
+            let (Some(this), Some(row)) = (weak.upgrade(), r.upgrade()) else {
+                return;
+            };
+            if let Some(f) = this.on_file_menu.borrow().as_ref() {
+                f(
+                    &path,
+                    !untracked && !deleted,
+                    !untracked,
+                    row.upcast_ref(),
+                    x,
+                    y,
+                );
+            }
+        });
+        row.add_controller(menu);
         row
     }
 

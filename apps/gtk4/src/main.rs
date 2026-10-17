@@ -1,12 +1,13 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
 
 mod actions;
 mod appmenu;
 mod commitops;
 mod details;
 mod diff;
+mod filetools;
 mod graph;
 mod history;
 mod icon;
@@ -59,6 +60,9 @@ struct Args {
     search: Option<String>,
     /// `--search` で、一致したコミットだけを出す（確認用）。
     only_matching: bool,
+    /// このファイルの Blame・File History の窓を開いておく（確認用。`--snapshot` はその窓を撮る）。
+    blame: Option<String>,
+    file_history: Option<String>,
     /// History のこの行の右クリックのメニューを開いておく（確認用）。
     menu_row: Option<u32>,
     /// 見出しのメニュー（`repository` か `primary`）を開いておく（確認用）。
@@ -94,6 +98,8 @@ fn parse_args() -> Result<Args, String> {
                     .collect::<Result<_, _>>()?;
             }
             "--only-matching" => args.only_matching = true,
+            "--blame" => args.blame = Some(it.next().ok_or("--blame <path>")?),
+            "--file-history" => args.file_history = Some(it.next().ok_or("--file-history <path>")?),
             "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {
                 let row = it.next().ok_or("--menu-row <row>")?;
@@ -353,6 +359,64 @@ fn build_window(app: &gtk::Application, args: Args) {
     });
     let r = reload.clone();
     actions.connect_change(move || r());
+    // Blame・File History（History の差分のファイルの見出しと、Working Copy のファイルの右クリック）。
+    let on_commit: filetools::OnCommit = {
+        let (pages, view, sidebar) = (pages.clone(), view.clone(), sidebar.clone());
+        Rc::new(move |id| {
+            sidebar.select_page(Page::History);
+            jump_to(&pages, &view, id, &Rc::new(Cell::new(0)));
+        })
+    };
+    let (v, w, oc) = (view.downgrade(), window.downgrade(), on_commit.clone());
+    diff.connect_file_menu(move |path, x, y| {
+        let (Some(view), Some(window)) = (v.upgrade(), w.upgrade()) else {
+            return;
+        };
+        let Some((repo, history)) = view.current() else {
+            return;
+        };
+        let mut items = Vec::new();
+        // 1 つのコミットを選んでいるときだけ、そのコミットでの blame。
+        if let [row] = view.selection()[..]
+            && let Some(id) = history.graph.ids().get(row as usize)
+        {
+            let hex = id.to_string();
+            let (repo, window, path, oc) =
+                (repo.clone(), window.clone(), path.to_owned(), oc.clone());
+            items.push(menu::action(format!("Blame at {}", &hex[..8]), move || {
+                filetools::blame(&window, repo.clone(), &path, Some(&hex), oc.clone());
+            }));
+        }
+        let (window, path, oc) = (window.clone(), path.to_owned(), oc.clone());
+        items.push(menu::action("File History", move || {
+            filetools::file_history(&window, repo.clone(), &path, oc.clone());
+        }));
+        menu::popup(&view, x, y, items);
+    });
+    let (v, w, oc) = (view.downgrade(), window.downgrade(), on_commit.clone());
+    working.connect_file_menu(move |path, can_blame, can_history, widget, x, y| {
+        let (Some(view), Some(window)) = (v.upgrade(), w.upgrade()) else {
+            return;
+        };
+        let Some((repo, _)) = view.current() else {
+            return;
+        };
+        let mut items = Vec::new();
+        if can_blame {
+            let (repo, window, path, oc) =
+                (repo.clone(), window.clone(), path.to_owned(), oc.clone());
+            items.push(menu::action("Blame", move || {
+                filetools::blame(&window, repo.clone(), &path, None, oc.clone());
+            }));
+        }
+        if can_history {
+            let (window, path, oc) = (window.clone(), path.to_owned(), oc.clone());
+            items.push(menu::action("File History", move || {
+                filetools::file_history(&window, repo.clone(), &path, oc.clone());
+            }));
+        }
+        menu::popup(widget, x, y, items);
+    });
     // History のコミットの右クリック。
     let (a, v) = (actions.clone(), view.downgrade());
     view.connect_menu(move |row, x, y| {
@@ -486,6 +550,26 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 for &row in rest {
                                     view.select_with(row, false, true);
                                 }
+                            }
+                            if args.blame.is_some() || args.file_history.is_some() {
+                                let (repo, _) = view.current().expect("history");
+                                let oc: filetools::OnCommit = Rc::new(|_| {});
+                                match (&args.blame, &args.file_history) {
+                                    (Some(path), _) => {
+                                        filetools::blame(&window, repo, path, None, oc)
+                                    }
+                                    (_, Some(path)) => {
+                                        filetools::file_history(&window, repo, path, oc)
+                                    }
+                                    _ => {}
+                                }
+                                // 窓が開いて中身が読めるまで待つ（裏で読むので少しかかる）。
+                                pending.set(pending.get() + 1);
+                                let p = pending.clone();
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(1500),
+                                    move || p.set(p.get() - 1),
+                                );
                             }
                             if let Some(query) = &args.search {
                                 search.search(query, args.only_matching, pending.clone());
@@ -976,7 +1060,13 @@ fn after_first_show(
                     if (view.is_mapped() && !view.is_settled()) || pending.get() > 0 {
                         return glib::ControlFlow::Continue;
                     }
-                    match snapshot(&window, &png) {
+                    // 別の窓（Blame など）を開いていれば、そちらを撮る。
+                    let target = gtk::Window::list_toplevels()
+                        .into_iter()
+                        .filter_map(|w| w.downcast::<gtk::Window>().ok())
+                        .find(|w| w.transient_for().as_ref() == Some(window.upcast_ref()))
+                        .unwrap_or_else(|| window.clone().upcast());
+                    match snapshot(&target, &png) {
                         Ok(()) => eprintln!("{}", png.display()),
                         Err(e) => eprintln!("撮れない: {e}"),
                     }
@@ -993,7 +1083,7 @@ fn after_first_show(
 
 /// 窓の背景の色（テーマの色の名前はテーマによって違う。どれもなければ白）。
 #[allow(deprecated)]
-fn window_background(window: &gtk::ApplicationWindow) -> gtk::gdk::RGBA {
+fn window_background(window: &gtk::Window) -> gtk::gdk::RGBA {
     let style = window.style_context();
     ["window_bg_color", "theme_bg_color", "bg_color"]
         .iter()
@@ -1029,7 +1119,7 @@ fn collect_popovers(widget: &gtk::Widget, out: &mut Vec<gtk::Popover>) {
 }
 
 /// 窓の中身を PNG にする。
-fn snapshot(window: &gtk::ApplicationWindow, png: &Path) -> Result<(), String> {
+fn snapshot(window: &gtk::Window, png: &Path) -> Result<(), String> {
     let (w, h) = (window.width() as f32, window.height() as f32);
     let scale = window.scale_factor() as f32;
     // 窓そのものの paintable は空になるので、窓の部品（見出しと中身）を順に描く。
