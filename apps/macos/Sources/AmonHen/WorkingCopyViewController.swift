@@ -151,10 +151,16 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// ほかの worktree の変更を一覧の下に並べる（変更のないものは見出しだけ）。
     func setOtherWorktrees(_ list: [OtherWorktree]) {
-        // 変わっていなければ描き直さない（status は読み直すたびに新しいものになるので、中身で比べる）。
-        let summary = list.map { w in [w.path, w.branch ?? ""] + w.status.items.map { "\($0.path)\u{0}\($0.indexState)\($0.worktreeState)" } }
+        // 変わっていなければ描き直さない（worktree ごとの status の版で比べる）。
+        let summary = list.map { "\($0.path)\u{0}\($0.branch ?? "")\u{0}\($0.status.generation)" }
         guard summary != othersSummary else { return }
         othersSummary = summary
+        // 表示していなければ、表示したときに並べる（裏で何度も一覧を作り直さない）。
+        guard isViewLoaded, view.window != nil else {
+            pendingOthers = list
+            return
+        }
+        pendingOthers = nil
         let wasExpanded = Dictionary(others.map { ($0.worktree.path, files.isItemExpanded($0)) }, uniquingKeysWith: { a, _ in a })
             .merging(otherTop.compactMap { ($0 as? OtherBucket).map { ($0.key, files.isItemExpanded($0)) } }) { a, _ in a }
         let viewing = viewingOther.map { ($0.group.worktree.path, $0.item.path, $0.group.worktree.status) }
@@ -224,8 +230,19 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         return f
     }()
 
-    /// 前に並べたほかの worktree の中身（変わったときだけ描き直す）。
-    private var othersSummary: [[String]] = []
+    /// 前に並べたほかの worktree（変わったときだけ描き直す）。
+    private var othersSummary: [String] = []
+    /// 表示していない間に届いた、ほかの worktree の変更。
+    private var pendingOthers: [OtherWorktree]?
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        if let pending = pendingOthers {
+            pendingOthers = nil
+            othersSummary = []
+            setOtherWorktrees(pending)
+        }
+    }
     /// 選び直しているところ（選んだときの処理をしない）。
     private var suppressSelection = false
 

@@ -448,8 +448,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                   return (status, local ? Self.lastActivity(of: path, changed: status.items.map(\.path)) : nil)
               }).value
         else { return }
-        worktreeStatus[WorktreeInfo.canonical(path)] = status
-        worktreeActivity[WorktreeInfo.canonical(path)] = activity
+        let key = WorktreeInfo.canonical(path)
+        // 前と同じ版なら、画面は変えない（作業中の worktree からは知らせが絶えず来る）。
+        if let old = worktreeStatus[key], old.generation == status.generation { return }
+        worktreeStatus[key] = status
+        worktreeActivity[key] = activity
         worktreeChanges[path] = status.items.count
         schedulePush()
     }
@@ -474,11 +477,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         return files.compactMap(modified).max()
     }
 
-    /// 読んだ status を画面に出す（同じ回の読み直しで何度も描き直さないよう、まとめて 1 回）。
+    /// 読んだ status を画面に出す。続けて読んだ分は 0.5 秒ごとにまとめて 1 回（作業中の worktree が多いと、
+    /// 読むたびに描き直して画面が固まる）。
     private func schedulePush() {
         guard !pushScheduled else { return }
         pushScheduled = true
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             MainActor.assumeIsolated {
                 self?.pushScheduled = false
                 self?.pushOthers()
