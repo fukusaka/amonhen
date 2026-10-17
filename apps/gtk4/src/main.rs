@@ -1,13 +1,16 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--menu-ref <name>] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
 
+mod actions;
 mod details;
 mod diff;
 mod graph;
 mod history;
 mod icon;
 mod measure;
+mod menu;
+mod refops;
 mod sidebar;
 mod workcopy;
 
@@ -21,6 +24,7 @@ use amonhen_core::{PairMode, Repository, cache};
 use gtk::prelude::*;
 use gtk::{gio, glib, graphene};
 
+use crate::actions::Actions;
 use crate::details::Details;
 use crate::diff::DiffWidget;
 use crate::history::HistoryView;
@@ -44,6 +48,10 @@ struct Args {
     select_path: Option<String>,
     /// 最初に ref を読んだら、この名前の ref をサイドバーで選んだことにする（確認用）。
     select_ref: Option<String>,
+    /// 最初に ref を読んだら、この名前の ref の右クリックのメニューを出す（確認用）。
+    menu_ref: Option<String>,
+    /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
+    perform: Option<String>,
     /// Working Copy の差分で、この行の印を一度クリックしたことにする（確認用）。
     toggle_row: Option<u32>,
     scroll_to: Option<u32>,
@@ -62,6 +70,8 @@ fn parse_args() -> Result<Args, String> {
             }
             "--working-copy" => args.working_copy = true,
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
+            "--menu-ref" => args.menu_ref = Some(it.next().ok_or("--menu-ref <name>")?),
+            "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
             "--toggle-row" => {
                 let row = it.next().ok_or("--toggle-row <row>")?;
                 args.toggle_row = Some(row.parse().map_err(|_| "--toggle-row <row>")?);
@@ -196,6 +206,11 @@ fn build_window(app: &gtk::Application, args: Args) {
     pending.set(pending.get() + 1);
     let mut waiting_status = true;
     let mut select_ref = args.select_ref.clone();
+    let mut menu_ref = args.menu_ref.clone();
+    let mut perform = args.perform.clone();
+    if perform.is_some() {
+        pending.set(pending.get() + 1);
+    }
     if select_ref.is_some() {
         pending.set(pending.get() + 1);
     }
@@ -212,6 +227,37 @@ fn build_window(app: &gtk::Application, args: Args) {
     view.grab_focus();
 
     let (tx, rx) = async_channel::unbounded::<Event>();
+    // 操作は裏で実行し、終わったら History・ref・status を読み直す（ファイルの変化の知らせも来るが、
+    // 待たずに出す）。
+    let actions = Actions::new(&window);
+    header.pack_end(&actions.undo);
+    let reload_tx = tx.clone();
+    let weak_view = view.downgrade();
+    actions.connect_change(move || {
+        let Some((repo, _)) = weak_view.upgrade().and_then(|v| v.current()) else {
+            return;
+        };
+        let tx = reload_tx.clone();
+        std::thread::spawn(move || {
+            reload_history(&repo, &tx);
+            reload_status(&repo, &tx);
+        });
+    });
+    // サイドバーの右クリックとドラッグ＆ドロップ。メニューにはチェックアウト中のブランチが要る。
+    let head: Rc<std::cell::RefCell<Option<String>>> = Rc::default();
+    let (a, h) = (actions.clone(), head.clone());
+    sidebar.connect_menu(move |data, widget, x, y| {
+        menu::popup(widget, x, y, refops::menu(&a, data, h.borrow().as_deref()));
+    });
+    let (a, h) = (actions.clone(), head.clone());
+    sidebar.connect_drop(move |dragged, data, widget, x, y| {
+        menu::popup(
+            widget,
+            x,
+            y,
+            refops::drop_menu(&a, dragged, data, h.borrow().as_deref()),
+        );
+    });
     std::thread::spawn(move || load(path, tx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
@@ -229,7 +275,26 @@ fn build_window(app: &gtk::Application, args: Args) {
                     Event::History(repo, history) => {
                         status.set_visible(false);
                         working.set_repo(repo.clone());
+                        actions.set_repo(repo.clone());
                         view.show(repo, history);
+                        if let Some(command) = perform.take() {
+                            match serde_json::from_str(&command) {
+                                Ok(command) => {
+                                    let p = pending.clone();
+                                    actions.perform_then(vec![command], move || {
+                                        // 読み直しの知らせが届くまで、少し待ってから撮る。
+                                        glib::timeout_add_local_once(
+                                            std::time::Duration::from_millis(500),
+                                            move || p.set(p.get() - 1),
+                                        );
+                                    });
+                                }
+                                Err(e) => {
+                                    eprintln!("--perform の JSON を読めない: {e}");
+                                    pending.set(pending.get() - 1);
+                                }
+                            }
+                        }
                         if first {
                             first = false;
                             if let Some(row) = args.scroll_to {
@@ -246,6 +311,20 @@ fn build_window(app: &gtk::Application, args: Args) {
                         subtitle.set_visible(true);
                         view.show_refs(&refs);
                         sidebar.show(&refs);
+                        head.replace(refs.refs.head_branch.clone());
+                        if let Some(name) = menu_ref.take()
+                            && let Some(entry) = refs.refs.entries.iter().find(|e| e.name == name)
+                        {
+                            let data = sidebar::Data {
+                                title: entry.name.clone(),
+                                item: sidebar::Item::Ref(entry.clone()),
+                                ..sidebar::Data::default()
+                            };
+                            let items =
+                                refops::menu(&actions, &data, refs.refs.head_branch.as_deref());
+                            menu::popup(&sidebar.root, 24.0, 120.0, items);
+                        }
+                        actions.refresh_undo();
                         if let Some(name) = select_ref.take() {
                             pending.set(pending.get() - 1);
                             let target = refs
@@ -262,6 +341,8 @@ fn build_window(app: &gtk::Application, args: Args) {
                     }
                     Event::Status(snapshot) => {
                         working.show(snapshot);
+                        // Working Copy の操作（破棄・コミット）も Undo の記録を書く。
+                        actions.refresh_undo();
                         if waiting_status {
                             waiting_status = false;
                             pending.set(pending.get() - 1);
@@ -428,6 +509,31 @@ enum Event {
     Failed(String),
 }
 
+/// History と ref を読み直して知らせる（裏のスレッドで呼ぶ）。
+fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
+    match repo.load_history() {
+        Ok(history) => {
+            let _ = tx.send_blocking(Event::History(repo.clone(), history));
+        }
+        Err(e) => {
+            let _ = tx.send_blocking(Event::Failed(format!("History を読めない: {e}")));
+        }
+    }
+    if let Ok(refs) = repo.load_refs() {
+        let _ = tx.send_blocking(Event::Refs(refs));
+    }
+}
+
+/// status を読み直して知らせる（裏のスレッドで呼ぶ）。
+fn reload_status(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
+    match repo.load_status() {
+        Ok(snapshot) => {
+            let _ = tx.send_blocking(Event::Status(snapshot));
+        }
+        Err(e) => eprintln!("status を読めない: {e}"),
+    }
+}
+
 /// 裏のスレッドで開いて読み、変化を見張って読み直す。
 fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
     let repo = match open(&path) {
@@ -441,25 +547,8 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
     if let Some(cached) = repo.load_cached_history() {
         let _ = tx.send_blocking(Event::History(repo.clone(), cached));
     }
-    let status = |repo: &Arc<Repository>| match repo.load_status() {
-        Ok(snapshot) => {
-            let _ = tx.send_blocking(Event::Status(snapshot));
-        }
-        Err(e) => eprintln!("status を読めない: {e}"),
-    };
-    let reload = |repo: &Arc<Repository>| {
-        match repo.load_history() {
-            Ok(history) => {
-                let _ = tx.send_blocking(Event::History(repo.clone(), history));
-            }
-            Err(e) => {
-                let _ = tx.send_blocking(Event::Failed(format!("History を読めない: {e}")));
-            }
-        }
-        if let Ok(refs) = repo.load_refs() {
-            let _ = tx.send_blocking(Event::Refs(refs));
-        }
-    };
+    let status = |repo: &Arc<Repository>| reload_status(repo, &tx);
+    let reload = |repo: &Arc<Repository>| reload_history(repo, &tx);
     reload(&repo);
     status(&repo);
 
@@ -559,6 +648,18 @@ pub fn scale_font(
     }
 }
 
+/// `widget` の下の、見えている popover。
+fn collect_popovers(widget: &gtk::Widget, out: &mut Vec<gtk::Popover>) {
+    let mut child = widget.first_child();
+    while let Some(c) = child {
+        match c.downcast_ref::<gtk::Popover>() {
+            Some(p) if p.is_visible() => out.push(p.clone()),
+            _ => collect_popovers(&c, out),
+        }
+        child = c.next_sibling();
+    }
+}
+
 /// 窓の中身を PNG にする。
 fn snapshot(window: &gtk::ApplicationWindow, png: &Path) -> Result<(), String> {
     let (w, h) = (window.width() as f32, window.height() as f32);
@@ -580,6 +681,18 @@ fn snapshot(window: &gtk::ApplicationWindow, png: &Path) -> Result<(), String> {
             snap.restore();
         }
         child = widget.next_sibling();
+    }
+    // 開いているメニュー（popover）は別の面に描かれるので、上に重ねる。
+    let mut popovers = Vec::new();
+    collect_popovers(window.upcast_ref(), &mut popovers);
+    for popover in popovers {
+        if let Some(bounds) = popover.compute_bounds(window) {
+            let paintable = gtk::WidgetPaintable::new(Some(&popover));
+            snap.save();
+            snap.translate(&bounds.top_left());
+            paintable.snapshot(&snap, bounds.width() as f64, bounds.height() as f64);
+            snap.restore();
+        }
     }
     let node = snap.to_node().ok_or("描くものがない")?;
     let renderer = window.renderer().ok_or("renderer がない")?;

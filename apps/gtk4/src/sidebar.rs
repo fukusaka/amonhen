@@ -2,6 +2,8 @@
 //!
 //! `GtkListView` と `GtkTreeListModel` の木（項目が多くても、見えている行の部品しか作らない）。
 //! `feature/x` のような名前はフォルダにまとめる。ref を選ぶと、指すコミットを History で選ぶ。
+//! 右クリックとドラッグ＆ドロップ（ブランチ・タグを別のブランチやリモートに落とす）は、窓の側が
+//! 操作のメニューにする。
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -139,6 +141,30 @@ impl Tree {
 }
 
 type SelectCallback = Box<dyn Fn(&Data)>;
+/// 右クリックした項目と、メニューを出す場所。
+type MenuCallback = Box<dyn Fn(&Data, &gtk::Widget, f64, f64)>;
+/// 落としたもの（`local:<名前>` か `other:<名前>`）、落とした先の項目、メニューを出す場所。
+type DropCallback = Box<dyn Fn(&str, &Data, &gtk::Widget, f64, f64)>;
+
+/// ドラッグで運ぶ文字列（ローカルブランチの名前にも `/` は入りうるので、種類も付ける）。
+pub fn drag_value(data: &Data) -> Option<String> {
+    match &data.item {
+        Item::Ref(e) if matches!(e.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) => {
+            let kind = if e.kind == RefKind::Local {
+                "local"
+            } else {
+                "other"
+            };
+            Some(format!("{kind}:{}", e.name))
+        }
+        _ => None,
+    }
+}
+
+/// 行の部品から、その行の項目。
+fn node_of(expander: &gtk::TreeExpander) -> Option<Node> {
+    expander.list_row()?.item().and_downcast::<Node>()
+}
 
 /// 最初に開いておく見出しの、項目の数の上限。
 const MANY: u32 = 30;
@@ -155,6 +181,8 @@ struct Inner {
     working: Node,
     generation: RefCell<Option<u64>>,
     on_select: RefCell<Option<SelectCallback>>,
+    on_menu: Rc<RefCell<Option<MenuCallback>>>,
+    on_drop: Rc<RefCell<Option<DropCallback>>>,
     /// 作り直している間は、選択の変化を知らせない。
     rebuilding: std::cell::Cell<bool>,
 }
@@ -171,8 +199,11 @@ impl Sidebar {
         selection.set_autoselect(false);
         selection.set_can_unselect(true);
 
+        let on_menu: Rc<RefCell<Option<MenuCallback>>> = Rc::default();
+        let on_drop: Rc<RefCell<Option<DropCallback>>> = Rc::default();
         let factory = gtk::SignalListItemFactory::new();
-        factory.connect_setup(|_, item| {
+        let (menu_cb, drop_cb) = (on_menu.clone(), on_drop.clone());
+        factory.connect_setup(move |_, item| {
             let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
             let icon = Icon::default();
             icon.set_valign(gtk::Align::Center);
@@ -190,6 +221,49 @@ impl Sidebar {
             let expander = gtk::TreeExpander::new();
             expander.set_child(Some(&line));
             item.set_child(Some(&expander));
+
+            // 右クリック: 操作のメニュー。
+            let click = gtk::GestureClick::new();
+            click.set_button(gtk::gdk::BUTTON_SECONDARY);
+            let (weak, cb) = (expander.downgrade(), menu_cb.clone());
+            click.connect_pressed(move |_, _, x, y| {
+                let Some(expander) = weak.upgrade() else {
+                    return;
+                };
+                if let (Some(node), Some(f)) = (node_of(&expander), cb.borrow().as_ref()) {
+                    f(&node.data(), expander.upcast_ref(), x, y);
+                }
+            });
+            expander.add_controller(click);
+
+            // ブランチ・タグは運べる。
+            let drag = gtk::DragSource::new();
+            drag.set_actions(gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE);
+            let weak = expander.downgrade();
+            drag.connect_prepare(move |_, _, _| {
+                let value = drag_value(&node_of(&weak.upgrade()?)?.data())?;
+                Some(gtk::gdk::ContentProvider::for_value(&value.to_value()))
+            });
+            expander.add_controller(drag);
+
+            let target = gtk::DropTarget::new(
+                String::static_type(),
+                gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
+            );
+            let (weak, cb) = (expander.downgrade(), drop_cb.clone());
+            target.connect_drop(move |_, value, x, y| {
+                let (Some(expander), Ok(dragged)) = (weak.upgrade(), value.get::<String>()) else {
+                    return false;
+                };
+                match (node_of(&expander), cb.borrow().as_ref()) {
+                    (Some(node), Some(f)) => {
+                        f(&dragged, &node.data(), expander.upcast_ref(), x, y);
+                        true
+                    }
+                    _ => false,
+                }
+            });
+            expander.add_controller(target);
         });
         factory.connect_bind(|_, item| {
             let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
@@ -260,6 +334,8 @@ impl Sidebar {
             working,
             generation: RefCell::default(),
             on_select: RefCell::default(),
+            on_menu,
+            on_drop,
             rebuilding: std::cell::Cell::new(false),
         });
         let weak = Rc::downgrade(&inner);
@@ -288,6 +364,16 @@ impl Sidebar {
     /// 項目を選んだら `f(項目)` を呼ぶ。
     pub fn connect_select(&self, f: impl Fn(&Data) + 'static) {
         self.inner.on_select.replace(Some(Box::new(f)));
+    }
+
+    /// 右クリックしたら `f(項目, 部品, x, y)` を呼ぶ。
+    pub fn connect_menu(&self, f: impl Fn(&Data, &gtk::Widget, f64, f64) + 'static) {
+        self.inner.on_menu.replace(Some(Box::new(f)));
+    }
+
+    /// ブランチ・タグを落としたら `f(運んだもの, 落とした先, 部品, x, y)` を呼ぶ。
+    pub fn connect_drop(&self, f: impl Fn(&str, &Data, &gtk::Widget, f64, f64) + 'static) {
+        self.inner.on_drop.replace(Some(Box::new(f)));
     }
 
     /// ref の一覧を出す。前と同じ世代なら何もしない。
