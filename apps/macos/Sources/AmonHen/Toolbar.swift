@@ -5,7 +5,9 @@ import AppKit
 /// 使えるかどうかも `RepositoryWindow.validateToolbarItem` で決める。
 final class MainToolbar: NSObject, NSToolbarDelegate {
     /// 並びを変えたら名前を変える（保存した並びに新しい項目が出てこないため）。
-    let toolbar = NSToolbar(identifier: "main.v2")
+    let toolbar = NSToolbar(identifier: "main.v3")
+    private let repositoryItem = NSToolbarItem(itemIdentifier: .repository)
+    private let repositoryButton = NSButton()
     private let branchItem = NSMenuToolbarItem(itemIdentifier: .branch)
     private let searchItem = NSSearchToolbarItem(itemIdentifier: .search)
     /// 検索欄で ⏎ を押した（History を探す）。
@@ -42,6 +44,18 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         activityItem.toolTip = "実行した git とコマンド、操作ログ、画面の速さ（⌥⌘A）"
         NotificationCenter.default.addObserver(
             self, selector: #selector(runningChanged), name: .runningOperationsChanged, object: nil)
+        // 今のリポジトリ。押すとリポジトリの一覧を出し、選んだものにこのタブを切り替える。
+        repositoryButton.bezelStyle = .texturedRounded
+        repositoryButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "リポジトリを切り替える")?
+            .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
+        repositoryButton.imagePosition = .imageTrailing
+        repositoryButton.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        repositoryButton.action = #selector(RepositoryWindow.showRepositoryList(_:))
+        repositoryButton.setContentHuggingPriority(.required, for: .horizontal)
+        repositoryItem.view = repositoryButton
+        repositoryItem.label = "Repository"
+        repositoryItem.paletteLabel = "Repository"
+        repositoryItem.toolTip = "リポジトリを切り替える"
         // 今のブランチ。押すとブランチの切り替え（⌘⇧B）、▾ でブランチの操作。
         branchItem.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "ブランチ")
         branchItem.label = "Branch"
@@ -70,6 +84,15 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         field.searchMenuTemplate = scopes
         searchItem.paletteLabel = "Search"
     }
+
+    /// 今のリポジトリの名前を出す。
+    func setRepository(_ name: String) {
+        repositoryButton.title = name
+        repositoryItem.toolTip = "\(name) — 押すとリポジトリを切り替える"
+    }
+
+    /// リポジトリの一覧を出す位置（ツールバーにあれば、リポジトリ名のボタン）。
+    var repositoryAnchor: NSView? { repositoryButton.window == nil ? nil : repositoryButton }
 
     /// 今のブランチを出す（detached なら短い ID）。
     func setBranch(_ name: String?) {
@@ -137,12 +160,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.branch, .fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop, .flexibleSpace, .activity, .refresh, .undo,
-         .search]
+        [.repository, .branch, .fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop, .flexibleSpace, .activity, .refresh,
+         .undo, .search]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
+        [.repository, .branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
          .space, .flexibleSpace]
     }
 
@@ -151,6 +174,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     ) -> NSToolbarItem? {
         if id == .activity { return activityItem }
         if id == .branch { return branchItem }
+        if id == .repository { return repositoryItem }
         if id == .search { return searchItem }
         let item: NSToolbarItem, label: String, symbol: String, action: Selector, tip: String
         switch id {
@@ -235,5 +259,6 @@ extension NSToolbarItem.Identifier {
     static let finder = Self("finder")
     static let activity = Self("activity")
     static let branch = Self("branch")
+    static let repository = Self("repository")
     static let search = Self("search")
 }

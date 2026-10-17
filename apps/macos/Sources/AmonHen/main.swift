@@ -139,27 +139,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         Repository.setFSMonitor(Settings.useFSMonitor)
         Daemon.prepare()
-        RepositoryManagerWindowController.shared.onOpen = { [weak self] path, newWindow in
-            self?.open(path: path, inNewWindow: newWindow)
-        }
         QuickOpenPanel.shared.onOpen = { [weak self] path, newWindow in
             self?.open(path: path, inNewWindow: newWindow)
         }
         ActivityWindowController.shared.model.listRepositories = { [weak self] in
             self?.windows.map(\.activityRepository) ?? []
         }
-        // ブックマーク・スキャンの結果・行の状態が変わったら、一覧と Quick Open を描き直す。
+        // ブックマーク・スキャンの結果・行の状態が変わったら、一覧（ページ・ツールバー）と Quick Open を描き直す。
         Bookmarks.shared.onChange = {
-            RepositoryManagerWindowController.shared.bookmarksChanged()
+            RepositoryBrowser.bookmarksChanged()
             QuickOpenPanel.shared.refreshIfVisible()
         }
         Bookmarks.shared.onRowChange = { path in
-            RepositoryManagerWindowController.shared.rowChanged(path)
+            RepositoryBrowser.rowChanged(path)
             QuickOpenPanel.shared.refreshIfVisible()
         }
         Bookmarks.shared.watchScanRoots()
         // 引数でリポジトリを渡されたらそれを、なければ前回開いていたものを同じウィンドウ・タブの並びで開く。
-        // どれもなければ一覧を出す。
+        // どれもなければリポジトリのページを出す。
         if let path = repositoryPath() {
             open(path: path, debug: true)
         } else {
@@ -168,7 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     open(path: path, inNewWindow: i == 0)
                 }
             }
-            if windows.isEmpty, connecting.isEmpty { RepositoryManagerWindowController.shared.show() }
+            showHomeIfNothingOpen()
         }
         // 起動の途中で受け取った「開く」（`amonhen` コマンド・Finder から）を、ここで開く。
         isLaunched = true
@@ -182,7 +179,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let id = (note.object as AnyObject?).map(ObjectIdentifier.init)
             MainActor.assumeIsolated {
                 guard let self else { return }
-                if let id, let window = self.windows.first(where: { ObjectIdentifier($0.window) == id })?.window {
+                if let id, let window = self.windows.first(where: { ObjectIdentifier($0.window) == id })?.window
+                    ?? self.homes.first(where: { ObjectIdentifier($0.window) == id })?.window {
                     self.lastActiveWindow = window
                 }
                 self.saveOpenWindows()
@@ -219,7 +217,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    func open(path: String, debug: Bool = false, inNewWindow: Bool = false) {
+    /// `replacing` を渡すと、そのタブ（リポジトリのページ、ツールバーの一覧から切り替える前のリポジトリ）の隣に
+    /// 開いてから、それを閉じる（そのタブがそのリポジトリに替わる）。
+    func open(path: String, debug: Bool = false, inNewWindow: Bool = false, replacing: NSWindow? = nil) {
         var location = RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).standardizedFileURL.path
         // 共有の daemon 越しに開く設定なら、`daemon:` の場所にする（SSH 先も `daemon:ssh://…`）。
         if Settings.openThroughDaemon, !location.hasPrefix("daemon:") { location = "daemon:" + location }
@@ -228,15 +228,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         if RepositoryLocation.isRemote(location) {
-            connect(location: location, debug: debug, inNewWindow: inNewWindow)
+            connect(location: location, debug: debug, inNewWindow: inNewWindow, replacing: replacing)
             return
         }
         do {
-            add(try RepositoryWindow(location: location, debug: debug, tabWith: inNewWindow ? nil : tabTarget))
+            add(try RepositoryWindow(location: location, debug: debug, tabWith: inNewWindow ? nil : replacing ?? tabTarget),
+                replacing: replacing)
         } catch {
             NSAlert(error: error).runModal()
-            if windows.isEmpty, connecting.isEmpty { RepositoryManagerWindowController.shared.show() }
+            showHomeIfNothingOpen()
         }
+    }
+
+    // MARK: - リポジトリのページ
+
+    /// リポジトリのページ（リポジトリを開いていないタブ）。
+    private var homes: [RepositoryHomeWindow] = []
+
+    /// リポジトリのページを出す。前のウィンドウのタブの並びにもうあれば、それを前に出す。`newWindow` なら
+    /// 新しいウィンドウに出す。
+    func showHome(newWindow: Bool = false) {
+        if !newWindow, let target = tabTarget {
+            let group = target.tabbedWindows ?? [target]
+            if let home = homes.first(where: { h in group.contains { $0 === h.window } }) {
+                home.show()
+                return
+            }
+        }
+        let home = RepositoryHomeWindow(tabWith: newWindow ? nil : tabTarget)
+        home.browser.onOpen = { [weak self, weak home] path, mode in
+            self?.open(path: path, inNewWindow: mode == .newWindow, replacing: mode == .here ? home?.window : nil)
+        }
+        home.onClose = { [weak self, weak home] in
+            self?.homes.removeAll { $0 === home }
+        }
+        homes.append(home)
+    }
+
+    /// 何も開いていなければ（リポジトリもページも、つないでいる途中のものもない）、ページを出す。
+    private func showHomeIfNothingOpen() {
+        if windows.isEmpty, homes.isEmpty, connecting.isEmpty { showHome(newWindow: true) }
     }
 
     /// つないでいる daemon 越しのリポジトリ（同じ場所を二重につながない）。
@@ -249,11 +280,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Finder から開いたとき）、最後に使っていたウィンドウ。どれもなければ新しいウィンドウ。
     private var tabTarget: NSWindow? {
         let candidates = [NSApp.keyWindow, NSApp.mainWindow, lastActiveWindow].compactMap { $0 }
-        return candidates.first { w in windows.contains { $0.window === w } } ?? windows.last?.window
+        return candidates.first { w in windows.contains { $0.window === w } || homes.contains { $0.window === w } }
+            ?? windows.last?.window ?? homes.last?.window
     }
 
     /// daemon 越しのリポジトリに裏でつなぎ、つながったらウィンドウを開く。その間は接続中のウィンドウを出す。
-    private func connect(location: String, debug: Bool, inNewWindow: Bool = false) {
+    private func connect(location: String, debug: Bool, inNewWindow: Bool = false, replacing: NSWindow? = nil) {
         if let existing = connecting.first(where: { $0.location == location }) {
             existing.window.makeKeyAndOrderFront(nil)
             return
@@ -261,12 +293,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let progress = ConnectingWindow(location: location)
         progress.onCancel = { [weak self, weak progress] in
             self?.connecting.removeAll { $0 === progress }
-            if self?.windows.isEmpty == true, self?.connecting.isEmpty == true {
-                RepositoryManagerWindowController.shared.show()
-            }
+            self?.showHomeIfNothingOpen()
         }
         connecting.append(progress)
-        RepositoryManagerWindowController.shared.close()
         let daemon = Daemon.path, daemons = Daemon.bundledDirectory
         Task {
             let result = await Task.detached(priority: .userInitiated) {
@@ -278,19 +307,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             connecting.removeAll { $0 === progress }
             do {
                 add(try RepositoryWindow(
-                    location: location, repository: try result.get(), debug: debug, tabWith: inNewWindow ? nil : tabTarget))
+                    location: location, repository: try result.get(), debug: debug,
+                    tabWith: inNewWindow ? nil : replacing ?? tabTarget), replacing: replacing)
             } catch {
                 let alert = NSAlert(error: error)
                 alert.messageText = "\(RepositoryLocation.host(location) ?? location) に接続できませんでした"
                 alert.informativeText = String(describing: error)
                 alert.runModal()
-                if windows.isEmpty, connecting.isEmpty { RepositoryManagerWindowController.shared.show() }
+                showHomeIfNothingOpen()
             }
         }
     }
 
-    private func add(_ window: RepositoryWindow) {
+    private func add(_ window: RepositoryWindow, replacing: NSWindow? = nil) {
         window.onOpenRepository = { [weak self] path in self?.open(path: path) }
+        // ツールバーのリポジトリ名から開く一覧: 選んだものにこのタブを切り替える（⌘ なら新しいウィンドウ）。
+        window.onSwitchRepository = { [weak self, weak window] path, mode in
+            self?.open(path: path, inNewWindow: mode == .newWindow, replacing: mode == .here ? window?.window : nil)
+        }
+        window.onShowRepositories = { [weak self] in self?.showHome() }
         window.onReconnect = { [weak self, weak window] in
             guard let self, let window else { return }
             // 先につなぎ始めてから閉じる（閉じたときにリポジトリの一覧を出さないため）。
@@ -299,20 +334,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window.onClose = { [weak self, weak window] in
             self?.windows.removeAll { $0 === window }
-            // 最後のリポジトリを閉じたら、終わらずにリポジトリの一覧を出す。
-            if self?.windows.isEmpty == true, self?.connecting.isEmpty == true {
-                RepositoryManagerWindowController.shared.show()
-            }
+            // 最後のリポジトリを閉じたら、終わらずにリポジトリのページを出す。
+            self?.showHomeIfNothingOpen()
         }
         windows.append(window)
         RepositoryList.touch(window.location)
         if Settings.autoBookmark { Bookmarks.shared.register(window.location) }
-        RepositoryManagerWindowController.shared.close()
+        // 開いたタブで、元のタブ（ページ・切り替える前のリポジトリ）を置き換える。
+        replacing?.close()
     }
 
-    /// File > New Tab（⌘T）・タブバーの「+」: Quick Open で選んだリポジトリを、前のウィンドウのタブで開く。
+    /// File > New Tab（⌘T）・タブバーの「+」: 前のウィンドウに、リポジトリのページのタブを出す。
     @objc func newTab(_ sender: Any?) {
-        QuickOpenPanel.shared.show()
+        showHome()
     }
 
     /// File > Clone…（⌃⌘C）: clone して、前のウィンドウのタブで開く（ブックマークにも入れる）。
@@ -331,22 +365,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// タブバーの「+」（AppKit がこの名前で探す）。
     @objc func newWindowForTab(_ sender: Any?) { newTab(sender) }
 
-    /// File > New Window（⌘N）: Quick Open で選んだリポジトリを、新しいウィンドウで開く。
+    /// File > New Window（⌘N）: 新しいウィンドウに、リポジトリのページを出す。
     @objc func newWindow(_ sender: Any?) {
-        QuickOpenPanel.shared.show(newWindow: true)
+        showHome(newWindow: true)
     }
 
+    /// File > Open…（⌘O）: リポジトリのページを出す（一覧から選ぶ。一覧にないフォルダは、ページの Add から加える）。
     @objc func openDocument(_ sender: Any?) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.message = "リポジトリを選んでください"
-        if panel.runModal() == .OK, let url = panel.url {
-            open(path: url.path)
-        }
+        showHome()
     }
 
-    /// リポジトリをすべて閉じても終わらない（リポジトリの一覧から開き直せる）。終えるのは ⌘Q。
+    /// リポジトリをすべて閉じても終わらない（リポジトリのページから開き直せる）。終えるのは ⌘Q。
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
     static func option(_ name: String) -> String? {

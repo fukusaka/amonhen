@@ -58,6 +58,8 @@ pub struct Peek {
     pub behind: u32,
     /// 変更のあるファイルの数（untracked は数えない）。
     pub changed: u32,
+    /// HEAD のコミットの日時（UNIX 時間、コミッターの日時）と件名。まだコミットがなければ None。
+    pub last_commit: Option<(i64, String)>,
 }
 
 /// 1 つのリポジトリで git を実行する。
@@ -123,6 +125,13 @@ impl Git {
                 }
             } else if !line.starts_with('#') && !line.is_empty() {
                 peek.changed += 1;
+            }
+        }
+        // 最後のコミット（一覧で、いつ何をしたリポジトリかを見渡すため）。まだコミットがなければ失敗するので無視する。
+        if let Ok(out) = self.read(&["log", "-1", "--format=%ct%x09%s"]) {
+            let text = String::from_utf8_lossy(&out);
+            if let Some((time, subject)) = text.trim_end().split_once('\t') {
+                peek.last_commit = time.parse().ok().map(|t| (t, subject.to_owned()));
             }
         }
         Ok(peek)
@@ -491,6 +500,7 @@ mod tests {
         assert_eq!(peek.branch.as_deref(), Some("main"));
         assert!(peek.upstream);
         assert_eq!((peek.ahead, peek.behind, peek.changed), (1, 0, 1));
+        assert_eq!(peek.last_commit.map(|(_, s)| s).as_deref(), Some("second"));
     }
 
     #[test]

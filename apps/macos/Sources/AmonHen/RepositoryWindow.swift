@@ -13,6 +13,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     let window: NSWindow
     /// ほかのリポジトリ（サブモジュールなど）を新しいウィンドウで開く。
     var onOpenRepository: ((String) -> Void)?
+    /// ツールバーのリポジトリ名から開く一覧で選んだ: このタブを切り替える（`here`）・新しいタブ・新しいウィンドウ。
+    var onSwitchRepository: ((String, RepositoryBrowser.OpenMode) -> Void)?
+    /// 一覧の「すべてのリポジトリ…」: リポジトリのページを出す。
+    var onShowRepositories: (() -> Void)?
+    private var repositoryPopover: NSPopover?
     var onClose: (() -> Void)?
     /// 切れた daemon 越しのリポジトリをつなぎ直す（AppDelegate がこのウィンドウを閉じて開き直す）。
     var onReconnect: (() -> Void)?
@@ -78,6 +83,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let path = RepositoryLocation.path(location)
         // 表示名（リポジトリの設定で変えられる）。daemon 越しなら接続先を添える（手元のリポジトリと見分ける）。
         window.title = Bookmarks.shared.displayName(location)
+        // リポジトリ名とブランチはツールバーの左に出すので、タイトルは出さない（タブの見出しには使われる）。
+        window.titleVisibility = .hidden
         if RepositoryLocation.host(location) == nil {
             window.representedURL = URL(fileURLWithPath: path)
         }
@@ -214,6 +221,33 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         history.actions = actions
         workingCopy.actions = actions
         window.toolbar = toolbar.toolbar
+        toolbar.setRepository(window.title)
+    }
+
+    /// ツールバーのリポジトリ名: リポジトリの一覧を出し、選んだものにこのタブを切り替える（⌘ を押していれば新しい
+    /// ウィンドウ）。リポジトリのページと同じ一覧で、名前と状態だけを出す。
+    @objc func showRepositoryList(_ sender: Any?) {
+        if let popover = repositoryPopover, popover.isShown {
+            popover.close()
+            return
+        }
+        let browser = RepositoryBrowser(style: .compact)
+        browser.onOpen = { [weak self] path, mode in
+            self?.repositoryPopover?.close()
+            self?.onSwitchRepository?(path, mode)
+        }
+        browser.onShowAll = { [weak self] in
+            self?.repositoryPopover?.close()
+            self?.onShowRepositories?()
+        }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.contentViewController = browser
+        popover.contentSize = NSSize(width: 440, height: 520)
+        let anchor = toolbar.repositoryAnchor ?? window.contentView!
+        popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: .minY)
+        browser.prepare()
+        repositoryPopover = popover
     }
 
     private func start(debug: Bool) {
@@ -1014,6 +1048,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard let self else { return }
             // 表示名・自動 fetch が変わったかもしれない。
             window.title = Bookmarks.shared.displayName(location)
+            toolbar.setRepository(window.title)
             updateTabTitle()
             scheduleAutoFetch()
             refreshRepository(nil)

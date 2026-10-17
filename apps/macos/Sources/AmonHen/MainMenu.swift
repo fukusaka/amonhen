@@ -242,7 +242,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
 
     @objc func showSettings(_ sender: Any?) { SettingsWindowController.shared.show() }
     @objc func showActivity(_ sender: Any?) { ActivityWindowController.shared.show() }
-    @objc func showRepositories(_ sender: Any?) { RepositoryManagerWindowController.shared.show() }
+    @objc func showRepositories(_ sender: Any?) { showHome() }
     @objc private func toggleAvatars(_ item: NSMenuItem) { Settings.showAvatars.toggle() }
     @objc private func toggleMonospacedMessage(_ item: NSMenuItem) { Settings.monospacedCommitMessage.toggle() }
     @objc private func toggleHighlightAncestors(_ item: NSMenuItem) { Settings.highlightAncestors.toggle() }

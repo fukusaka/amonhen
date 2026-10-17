@@ -9,6 +9,12 @@ becomes the GitHub Release notes.
 
 ### [Unreleased]
 
+#### Changed
+
+- Repositories are chosen on a repository page that opens as a tab (⌘T, ⌘N, ⌘O, ⌘⇧R), instead of a separate window.
+  It shows each repository's branch, status, last commit and when it was last opened. The repository name at the left
+  of the toolbar opens the same list and switches the current tab.
+
 #### Fixed
 
 - The repository list no longer jumps back to the top while scrolling (each row's branch and change count used to

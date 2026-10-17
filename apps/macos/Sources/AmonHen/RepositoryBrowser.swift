@@ -20,13 +20,26 @@ enum RepositoryList {
         set { UserDefaults.standard.set(newValue, forKey: "openWindows") }
     }
 
-    /// 開いたリポジトリを先頭に置く。
+    /// 最後に開いた日時（リポジトリの一覧で見渡すため）。この記録を始める前に開いたものは nil。
+    static func openedAt(_ path: String) -> Date? {
+        (UserDefaults.standard.dictionary(forKey: openedKey)?[path] as? Double).map { Date(timeIntervalSince1970: $0) }
+    }
+
+    private static let openedKey = "repositoryOpenedAt"
+
+    /// 開いたリポジトリを先頭に置き、開いた日時を覚える。
     static func touch(_ path: String) {
         paths = [path] + paths.filter { $0 != path }
+        var opened = UserDefaults.standard.dictionary(forKey: openedKey) ?? [:]
+        opened[path] = Date().timeIntervalSince1970
+        UserDefaults.standard.set(opened, forKey: openedKey)
     }
 
     static func remove(_ path: String) {
         paths = paths.filter { $0 != path }
+        var opened = UserDefaults.standard.dictionary(forKey: openedKey) ?? [:]
+        opened[path] = nil
+        UserDefaults.standard.set(opened, forKey: openedKey)
     }
 
     /// `path` が Git のリポジトリ（作業ツリーの直下に `.git` がある）か。daemon 越しの場所は、つなぐまで
@@ -58,14 +71,36 @@ enum RepositoryList {
 
 /// リポジトリの一覧: お気に入り・最近開いたもの・ブックマーク（手で作ったグループ）・スキャンするフォルダ。
 /// 開く・加える・外す・グループに分ける・色ラベル・ドラッグで並べ替える・まとめて Fetch。行には今のブランチ・
-/// 変更の有無・上流との差を出す（見えている行だけ裏で読む）。
-final class RepositoryManagerWindowController: NSWindowController, NSOutlineViewDataSource, NSOutlineViewDelegate,
+/// 変更の有無・上流との差・最後のコミット・最後に開いた日時を出す（見えている行だけ裏で読む）。
+///
+/// 2 つの見た目で使う。`page` は新しいタブのページ（列に分けて見渡す）、`compact` はツールバーのリポジトリ名から
+/// 出す一覧（名前と状態だけ。選ぶとそのタブのリポジトリを切り替える）。中身と操作は同じ。
+final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate,
     NSSearchFieldDelegate, NSMenuDelegate
 {
-    static let shared = RepositoryManagerWindowController()
+    enum Style { case page, compact }
 
-    /// リポジトリを開く（パス、新しいウィンドウにするか）。AppDelegate が設定する。
-    var onOpen: ((String, Bool) -> Void)?
+    /// 開き方: `here` はこのタブ（ページならページの代わりに、ツールバーの一覧なら今のリポジトリと入れ替える）。
+    enum OpenMode { case here, newTab, newWindow }
+
+    let style: Style
+    /// リポジトリを開く。AppDelegate・RepositoryWindow が設定する。
+    var onOpen: ((String, OpenMode) -> Void)?
+    /// ツールバーの一覧の「すべてのリポジトリ」: ページを出す。
+    var onShowAll: (() -> Void)?
+
+    /// 表示している一覧（ブックマークや行の状態が変わったら、全部に知らせる）。
+    private static let live = NSHashTable<RepositoryBrowser>.weakObjects()
+
+    /// ブックマーク・スキャンの結果が変わった。
+    static func bookmarksChanged() {
+        for browser in live.allObjects { browser.bookmarksChanged() }
+    }
+
+    /// 行の状態（ブランチ・変更の数など）が変わった。
+    static func rowChanged(_ path: String) {
+        for browser in live.allObjects { browser.rowChanged(path) }
+    }
 
     /// 一覧の見出し。
     private final class Section {
@@ -95,60 +130,103 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         }
     }
 
-    private let outline = NSOutlineView()
+    /// ⏎ で開く（表の中で）。
+    private final class Outline: NSOutlineView {
+        var onReturn: (() -> Void)?
+        override func keyDown(with event: NSEvent) {
+            if event.keyCode == 36 || event.keyCode == 76 { onReturn?() } else { super.keyDown(with: event) }
+        }
+    }
+
+    private let outline = Outline()
     private let scroll = NSScrollView()
     private let filter = NSSearchField()
     private let scanning = NSProgressIndicator()
     private var sections: [Section] = []
     private var rows: [ObjectIdentifier: [Row]] = [:]
 
-    private init() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 640, height: 560),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Repositories"
-        window.setFrameAutosaveName("Repositories")
-        super.init(window: window)
-        build()
-        reload()
+    init(style: Style) {
+        self.style = style
+        super.init(nibName: nil, bundle: nil)
+        Self.live.add(self)
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show() {
-        Bookmarks.shared.forgetPeeks()
-        Bookmarks.shared.rescan()
+    override func loadView() {
+        view = NSView(frame: NSRect(x: 0, y: 0, width: style == .page ? 1100 : 420, height: style == .page ? 700 : 480))
+        build()
         reload()
-        if window?.isVisible != true { window?.center() }
-        showWindow(nil)
-        window?.makeFirstResponder(outline)
     }
 
-    /// ブックマーク・スキャンの結果・行の状態が変わった。
-    func bookmarksChanged() {
-        guard window?.isVisible == true else { return }
+    /// 出す前に: 行の状態を読み直し、スキャンするフォルダを探し直して、絞り込みの欄に入る。
+    func prepare() {
+        _ = view
+        Bookmarks.shared.forgetPeeks()
+        Bookmarks.shared.rescan()
+        filter.stringValue = ""
+        reload()
+        view.window?.makeFirstResponder(filter)
+    }
+
+    /// 絞り込みの欄に入る（ページを前に出したとき）。
+    func focusFilter() {
+        view.window?.makeFirstResponder(filter)
+    }
+
+    private func bookmarksChanged() {
+        guard isViewLoaded, view.window != nil else { return }
         scanning.isHidden = !Bookmarks.shared.isScanning
         if Bookmarks.shared.isScanning { scanning.startAnimation(nil) } else { scanning.stopAnimation(nil) }
         reload()
     }
 
+    /// 行の状態が変わった。その行だけ描き直す（全部作り直すとスクロールが戻る）。
+    private func rowChanged(_ path: String) {
+        guard isViewLoaded, view.window != nil else { return }
+        for section in sections {
+            for row in rows[ObjectIdentifier(section)] ?? [] where row.path == path {
+                outline.reloadItem(row)
+            }
+        }
+    }
+
     private func build() {
-        guard let content = window?.contentView else { return }
-        let column = NSTableColumn(identifier: .init("repository"))
-        column.resizingMask = .autoresizingMask
-        outline.addTableColumn(column)
-        outline.outlineTableColumn = column
-        outline.headerView = nil
-        outline.rowHeight = 40
-        outline.style = .sourceList
+        let page = style == .page
+        let name = NSTableColumn(identifier: .init("repository"))
+        name.title = "Repository"
+        name.resizingMask = .autoresizingMask
+        name.minWidth = 220
+        outline.addTableColumn(name)
+        outline.outlineTableColumn = name
+        if page {
+            // 見渡すための列。幅は覚える。
+            for (id, title, width) in [
+                ("branch", "Branch", 150.0), ("status", "Status", 110.0), ("commit", "Last Commit", 300.0), ("opened", "Opened", 110.0),
+            ] {
+                let column = NSTableColumn(identifier: .init(id))
+                column.title = title
+                column.width = width
+                column.minWidth = 60
+                column.resizingMask = .userResizingMask
+                outline.addTableColumn(column)
+            }
+            outline.autosaveName = "RepositoryPage"
+            outline.autosaveTableColumns = true
+            outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+            outline.usesAlternatingRowBackgroundColors = true
+            outline.style = .inset
+        } else {
+            outline.headerView = nil
+            outline.style = .sourceList
+            outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        }
         outline.floatsGroupRows = false
-        outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         outline.dataSource = self
         outline.delegate = self
         outline.target = self
         outline.doubleAction = #selector(openSelected)
-        outline.autosaveName = "RepositorySections"
-        outline.autosaveExpandedItems = true
+        outline.onReturn = { [weak self] in self?.openSelected() }
         outline.allowsMultipleSelection = true
         outline.registerForDraggedTypes([Self.dragType])
         outline.setDraggingSourceOperationMask(.move, forLocal: true)
@@ -157,61 +235,65 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         outline.menu = menu
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
+        scroll.drawsBackground = false
 
-        filter.placeholderString = "名前・パスで絞り込む"
+        filter.placeholderString = page ? "名前・パスで絞り込む" : "リポジトリを切り替える"
         filter.delegate = self
         filter.target = self
         filter.action = #selector(filterChanged)
         scanning.style = .spinning
         scanning.controlSize = .small
         scanning.isHidden = true
-        let add = NSPopUpButton(frame: .zero, pullsDown: true)
-        add.addItem(withTitle: "Add")
-        for (title, action) in [
-            ("Add Repository…", #selector(addRepository)), ("Add Remote Repository…", #selector(addRemote)),
-            ("Add Folder to Scan…", #selector(addScanFolder)), ("New Group…", #selector(newGroup)),
-        ] {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-            item.target = self
-            add.menu?.addItem(item)
-        }
-        let rescan = NSButton(title: "Rescan", target: self, action: #selector(rescanFolders))
-        rescan.toolTip = "スキャンするフォルダを探し直す"
-        let fetch = NSButton(title: "Fetch", target: self, action: #selector(fetchSelected))
-        fetch.toolTip = "選んだリポジトリ（見出しを選べばその中のすべて）をまとめて fetch する"
-        let remove = NSButton(title: "Remove", target: self, action: #selector(removeSelected))
-        remove.toolTip = "一覧から外す（フォルダには触れない）"
-        let open = NSButton(title: "Open", target: self, action: #selector(openSelected))
-        open.keyEquivalent = "\r"
-        open.toolTip = "⏎ タブで開く　⌘⏎ 新しいウィンドウで開く"
-        let buttons = NSStackView(views: [add, rescan, fetch, remove, scanning, NSView(), open])
 
+        let content = view
+        var arranged: [NSView]
+        if page {
+            let add = NSPopUpButton(frame: .zero, pullsDown: true)
+            add.addItem(withTitle: "Add")
+            for (title, action) in [
+                ("Add Local Repository…", #selector(addRepository)), ("Clone…", #selector(clone)),
+                ("Add Remote Repository…", #selector(addRemote)), ("Add Folder to Scan…", #selector(addScanFolder)),
+                ("New Group…", #selector(newGroup)),
+            ] {
+                let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
+                item.target = self
+                add.menu?.addItem(item)
+            }
+            let rescan = NSButton(title: "Rescan", target: self, action: #selector(rescanFolders))
+            rescan.toolTip = "スキャンするフォルダを探し直し、行の状態を読み直す"
+            let fetch = NSButton(title: "Fetch", target: self, action: #selector(fetchSelected))
+            fetch.toolTip = "選んだリポジトリ（見出しを選べばその中のすべて）をまとめて fetch する"
+            let remove = NSButton(title: "Remove", target: self, action: #selector(removeSelected))
+            remove.toolTip = "一覧から外す（フォルダには触れない）"
+            let open = NSButton(title: "Open", target: self, action: #selector(openSelected))
+            open.toolTip = "⏎ このタブで開く　⌘⏎ 新しいウィンドウで開く"
+            arranged = [add, rescan, fetch, remove, scanning, NSView(), open]
+        } else {
+            let all = NSButton(title: "すべてのリポジトリ…", target: self, action: #selector(showAll))
+            all.bezelStyle = .inline
+            all.toolTip = "リポジトリのページを新しいタブで開く（⌘⇧R）"
+            let add = NSButton(title: "Add…", target: self, action: #selector(addRepository))
+            add.bezelStyle = .inline
+            arranged = [add, scanning, NSView(), all]
+        }
+        let buttons = NSStackView(views: arranged)
+        let margin: CGFloat = page ? 16 : 10
         for v in [filter, scroll, buttons] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            filter.topAnchor.constraint(equalTo: content.topAnchor, constant: 12),
-            filter.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
-            filter.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
+            filter.topAnchor.constraint(equalTo: content.topAnchor, constant: margin),
+            filter.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
+            filter.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
             scroll.topAnchor.constraint(equalTo: filter.bottomAnchor, constant: 8),
             scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
             buttons.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 8),
-            buttons.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 12),
-            buttons.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -12),
-            buttons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -12),
+            buttons.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
+            buttons.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
+            buttons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -margin),
         ])
-    }
-
-    /// 行の状態（ブランチ・変更の数など）が変わった。その行だけ描き直す。
-    func rowChanged(_ path: String) {
-        guard window?.isVisible == true else { return }
-        for section in sections {
-            for row in rows[ObjectIdentifier(section)] ?? [] where row.path == path {
-                outline.reloadItem(row)
-            }
-        }
     }
 
     /// 見出しと行を作り直す。選んでいた行、開いていた見出し、スクロールの位置は保つ（作り直すと見出しが
@@ -248,17 +330,53 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         }
         if let selectedPath, let row = sections.lazy.compactMap({ s in self.rows[ObjectIdentifier(s)]?.first { $0.path == selectedPath } }).first {
             outline.selectRowIndexes([outline.row(forItem: row)], byExtendingSelection: false)
-        } else if outline.selectedRow < 0, let first = sections.lazy.compactMap({ self.rows[ObjectIdentifier($0)]?.first }).first {
+        } else if outline.selectedRow < 0 || !query.isEmpty,
+                  let first = sections.lazy.compactMap({ self.rows[ObjectIdentifier($0)]?.first }).first {
             outline.selectRowIndexes([outline.row(forItem: first)], byExtendingSelection: false)
         }
         outline.layoutSubtreeIfNeeded()
-        scroll.contentView.scroll(to: scrolled)
-        scroll.reflectScrolledClipView(scroll.contentView)
+        if query.isEmpty {
+            scroll.contentView.scroll(to: scrolled)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        } else {
+            outline.scrollRowToVisible(outline.selectedRow)
+        }
     }
 
     @objc private func filterChanged() { reload() }
 
     func controlTextDidChange(_ notification: Notification) { reload() }
+
+    /// 絞り込みの欄から、↑↓ で行を選び、⏎ で開き、Esc で閉じる（ツールバーの一覧）。
+    func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+        switch selector {
+        case #selector(NSResponder.moveDown(_:)): moveSelection(1)
+        case #selector(NSResponder.moveUp(_:)): moveSelection(-1)
+        case #selector(NSResponder.insertNewline(_:)): openSelected()
+        case #selector(NSResponder.cancelOperation(_:)):
+            if !filter.stringValue.isEmpty {
+                filter.stringValue = ""
+                reload()
+            } else {
+                view.window?.performClose(nil)
+            }
+        default: return false
+        }
+        return true
+    }
+
+    /// 見出しを飛ばして、次・前のリポジトリの行を選ぶ。
+    private func moveSelection(_ step: Int) {
+        var row = outline.selectedRow
+        repeat {
+            row += step
+        } while row >= 0 && row < outline.numberOfRows && !(outline.item(atRow: row) is Row)
+        guard row >= 0, row < outline.numberOfRows else { return }
+        outline.selectRowIndexes([row], byExtendingSelection: false)
+        outline.scrollRowToVisible(row)
+    }
+
+    @objc private func showAll() { onShowAll?() }
 
     // MARK: - 加える・外す
 
@@ -267,7 +385,7 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
-        panel.message = "ブックマークに加えるリポジトリのフォルダを選んでください"
+        panel.message = "一覧に加えるリポジトリのフォルダを選んでください"
         guard panel.runModal() == .OK else { return }
         var rejected: [String] = []
         for url in panel.urls {
@@ -283,6 +401,10 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
             alert.informativeText = rejected.joined(separator: "、")
             alert.runModal()
         }
+    }
+
+    @objc private func clone() {
+        NSApp.sendAction(#selector(AppDelegate.cloneRepository(_:)), to: nil, from: self)
     }
 
     /// 選んでいる見出しが手で作ったグループなら、その名前（加えるものをそこに入れる）。
@@ -331,6 +453,7 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
     private static let lastHostKey = "lastRemoteHost"
 
     @objc private func addRemote() {
+        guard let window = view.window else { return }
         let host = NSTextField(string: UserDefaults.standard.string(forKey: Self.lastHostKey) ?? "")
         host.placeholderString = "user@host:port（~/.ssh/config の名前でもよい）"
         let path = NSTextField(string: "")
@@ -351,19 +474,19 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         alert.addButton(withTitle: "加えて開く")
         alert.addButton(withTitle: "キャンセル")
         alert.window.initialFirstResponder = host.stringValue.isEmpty ? host : path
-        alert.beginSheetModal(for: window!) { [weak self] response in
+        alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
             guard let location = RepositoryLocation.ssh(host: host.stringValue, path: path.stringValue) else {
                 let error = NSAlert()
                 error.messageText = "接続先とパスを入れてください"
                 error.informativeText = "接続先には空白や / を含められません。"
-                error.beginSheetModal(for: self.window!)
+                error.beginSheetModal(for: window)
                 return
             }
             UserDefaults.standard.set(host.stringValue.trimmingCharacters(in: .whitespaces), forKey: Self.lastHostKey)
             Bookmarks.shared.add(location, group: selectedGroup)
             RepositoryList.touch(location)
-            onOpen?(location, false)
+            onOpen?(location, .here)
         }
     }
 
@@ -472,12 +595,12 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
     // MARK: - 開く
 
     @objc private func openSelected() {
-        let row = outline.clickedRow >= 0 ? outline.clickedRow : outline.selectedRow
+        let row = outline.clickedRow >= 0 && NSApp.currentEvent?.type != .keyDown ? outline.clickedRow : outline.selectedRow
         guard let item = outline.item(atRow: row) as? Row else { return }
-        open(item.path, newWindow: NSApp.currentEvent?.modifierFlags.contains(.command) == true)
+        open(item.path, NSApp.currentEvent?.modifierFlags.contains(.command) == true ? .newWindow : .here)
     }
 
-    private func open(_ path: String, newWindow: Bool) {
+    private func open(_ path: String, _ mode: OpenMode) {
         guard RepositoryList.isRepository(path) else {
             let alert = NSAlert()
             alert.messageText = "\((path as NSString).lastPathComponent) が見つかりません"
@@ -491,7 +614,7 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
             }
             return
         }
-        onOpen?(path, newWindow)
+        onOpen?(path, mode)
     }
 
     // MARK: - 右クリック
@@ -540,10 +663,11 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         guard let row = item as? Row else { return }
         let path = row.path
         let bookmark = Bookmarks.shared.bookmark(path)
-        add("Open in Tab") { [weak self] in self?.open(path, newWindow: false) }
-        add("Open in New Window") { [weak self] in self?.open(path, newWindow: true) }
+        add(style == .page ? "Open" : "Switch to This Repository") { [weak self] in self?.open(path, .here) }
+        add("Open in New Tab") { [weak self] in self?.open(path, .newTab) }
+        add("Open in New Window") { [weak self] in self?.open(path, .newWindow) }
         if !path.hasPrefix("daemon:"), !Settings.openThroughDaemon {
-            let item = ClosureMenuItem(title: "Open via Daemon") { [weak self] in self?.onOpen?("daemon:" + path, false) }
+            let item = ClosureMenuItem(title: "Open via Daemon") { [weak self] in self?.onOpen?("daemon:" + path, .here) }
             item.toolTip = "共有の daemon 越しに開く（History・検索の索引・操作の記録を CLI などと共有する）"
             menu.addItem(item)
         }
@@ -582,6 +706,12 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
             item.state = bookmark?.group == group ? .on : .off
             groups.addItem(item)
         }
+        groups.addItem(.separator())
+        groups.addItem(ClosureMenuItem(title: "New Group…") { [weak self] in
+            guard let name = self?.ask("New Group", message: "グループの名前", initial: "") else { return }
+            Bookmarks.shared.addGroup(name)
+            Bookmarks.shared.move(path, to: name)
+        })
         let groupItem = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
         groupItem.submenu = groups
         menu.addItem(groupItem)
@@ -624,20 +754,13 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         item is Section ? 24 : 40
     }
 
-    /// 見出しを開いたままにするための、保存できる名前。
-    func outlineView(_ outlineView: NSOutlineView, persistentObjectForItem item: Any?) -> Any? {
-        (item as? Section)?.title
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, itemForPersistentObject object: Any) -> Any? {
-        sections.first { $0.title == object as? String }
-    }
-
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         if let section = item as? Section {
             let field = outlineView.makeView(withIdentifier: .init("section"), owner: nil) as? NSTextField ?? {
                 let f = NSTextField(labelWithString: "")
                 f.identifier = .init("section")
+                f.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+                f.textColor = .secondaryLabelColor
                 return f
             }()
             var title = section.title
@@ -646,9 +769,90 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
             return field
         }
         guard let row = item as? Row else { return nil }
-        let cell = outlineView.makeView(withIdentifier: .init("repo"), owner: nil) as? RepositoryCell ?? RepositoryCell()
-        cell.show(row.path)
+        let column = tableColumn?.identifier.rawValue ?? "repository"
+        if column == "repository" {
+            let id = NSUserInterfaceItemIdentifier(style == .page ? "repo-page" : "repo")
+            let cell = outlineView.makeView(withIdentifier: id, owner: nil) as? RepositoryCell
+                ?? RepositoryCell(details: style == .compact)
+            cell.identifier = id
+            cell.show(row.path)
+            return cell
+        }
+        let cell = outlineView.makeView(withIdentifier: .init(column), owner: nil) as? DetailCell ?? DetailCell(column)
+        cell.show(column: column, location: row.path)
         return cell
+    }
+
+    /// ページの列（ブランチ・状態・最後のコミット・最後に開いた日時）。
+    private final class DetailCell: NSTableCellView {
+        let label = NSTextField(labelWithString: "")
+
+        init(_ column: String) {
+            super.init(frame: .zero)
+            identifier = .init(column)
+            label.font = column == "status"
+                ? .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+                : .systemFont(ofSize: NSFont.smallSystemFontSize)
+            label.lineBreakMode = .byTruncatingTail
+            label.translatesAutoresizingMaskIntoConstraints = false
+            addSubview(label)
+            textField = label
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+                label.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor, constant: -4),
+                label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        private static let relative: RelativeDateTimeFormatter = {
+            let f = RelativeDateTimeFormatter()
+            f.unitsStyle = .short
+            return f
+        }()
+
+        func show(column: String, location: String) {
+            let exists = RepositoryList.isRepository(location)
+            let peek = exists ? Bookmarks.shared.peek(location) : nil
+            label.textColor = .secondaryLabelColor
+            toolTip = nil
+            switch column {
+            case "branch":
+                label.stringValue = exists ? peek.map { $0.branch ?? "detached" } ?? RepositoryList.branch(of: location) ?? "" : ""
+                label.textColor = .labelColor
+            case "status":
+                var parts: [String] = []
+                if let peek {
+                    if peek.changed > 0 { parts.append("● \(peek.changed)") }
+                    if peek.ahead > 0 { parts.append("↑\(peek.ahead)") }
+                    if peek.behind > 0 { parts.append("↓\(peek.behind)") }
+                    if parts.isEmpty { parts.append("✓") }
+                }
+                let fetchError = Bookmarks.shared.fetchErrors[location]
+                if Bookmarks.shared.fetching.contains(location) { parts.insert("Fetch 中…", at: 0) }
+                if fetchError != nil { parts.insert("Fetch に失敗", at: 0) }
+                label.stringValue = parts.joined(separator: "  ")
+                label.textColor = fetchError != nil ? .systemRed : peek?.changed ?? 0 > 0 ? .systemOrange : .secondaryLabelColor
+                toolTip = fetchError.map { "Fetch に失敗: \($0)" } ?? peek.map {
+                    [
+                        $0.changed > 0 ? "変更のあるファイル \($0.changed) 個（untracked は数えない）" : "変更なし",
+                        $0.hasUpstream ? "上流より \($0.ahead) 先、\($0.behind) 後ろ" : "上流なし",
+                    ].joined(separator: "\n")
+                }
+            case "commit":
+                if let peek, let date = peek.lastCommitDate {
+                    label.stringValue = Self.relative.localizedString(for: date, relativeTo: Date()) + " — " + (peek.lastCommitSubject ?? "")
+                    toolTip = (peek.lastCommitSubject ?? "") + "\n" + date.formatted(date: .abbreviated, time: .shortened)
+                } else {
+                    label.stringValue = ""
+                }
+            case "opened":
+                label.stringValue = RepositoryList.openedAt(location).map { Self.relative.localizedString(for: $0, relativeTo: Date()) } ?? ""
+            default:
+                label.stringValue = ""
+            }
+        }
     }
 }
 
@@ -659,9 +863,12 @@ final class RepositoryCell: NSTableCellView {
     let branch = NSTextField(labelWithString: "")
     let state = NSTextField(labelWithString: "")
 
-    init() {
+    /// `details` が false なら、ブランチと状態を出さない（ページでは列に分けて出す）。
+    init(details: Bool = true) {
         super.init(frame: .zero)
         identifier = .init("repo")
+        branch.isHidden = !details
+        state.isHidden = !details
         name.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
         path.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         path.textColor = .secondaryLabelColor

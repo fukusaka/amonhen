@@ -157,16 +157,22 @@ public struct RepositoryPeek: Sendable, Equatable {
     public let behind: Int
     /// 変更のあるファイルの数（untracked は数えない）。
     public let changed: Int
+    /// HEAD のコミットの日時と件名。まだコミットがなければ nil。
+    public let lastCommitDate: Date?
+    public let lastCommitSubject: String?
 
-    /// `path` の状態。git を 1 回起動するので、裏のスレッドで呼ぶ。読めなければ nil。
+    /// `path` の状態。git を 2 回起動するので、裏のスレッドで呼ぶ。読めなければ nil。
     public static func read(path: String) -> RepositoryPeek? {
         guard let out = amonhen_peek(path) else { return nil }
         defer { amonhen_string_free(out) }
         let fields = String(cString: out).components(separatedBy: "\n")
-        guard fields.count == 5 else { return nil }
+        guard fields.count == 7 else { return nil }
+        let time = TimeInterval(fields[5])
         return RepositoryPeek(
             branch: fields[0].isEmpty ? nil : fields[0], hasUpstream: fields[1] == "1",
-            ahead: Int(fields[2]) ?? 0, behind: Int(fields[3]) ?? 0, changed: Int(fields[4]) ?? 0)
+            ahead: Int(fields[2]) ?? 0, behind: Int(fields[3]) ?? 0, changed: Int(fields[4]) ?? 0,
+            lastCommitDate: time.map { Date(timeIntervalSince1970: $0) },
+            lastCommitSubject: time == nil ? nil : fields[6])
     }
 }
 

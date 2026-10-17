@@ -1534,13 +1534,20 @@ pub unsafe extern "C" fn amonhen_peek(path: *const c_char) -> *mut c_char {
     };
     match amonhen_backend_cli::Git::new(path).peek() {
         Ok(p) => {
+            // 7 行: ブランチ、上流があるか、先、後ろ、変更の数、最後のコミットの日時（UNIX 時間）、その件名。
+            let (time, subject) = p
+                .last_commit
+                .map(|(t, s)| (t.to_string(), s))
+                .unwrap_or_default();
             let text = format!(
-                "{}\n{}\n{}\n{}\n{}",
+                "{}\n{}\n{}\n{}\n{}\n{}\n{}",
                 p.branch.unwrap_or_default(),
                 u8::from(p.upstream),
                 p.ahead,
                 p.behind,
-                p.changed
+                p.changed,
+                time,
+                subject.replace('\n', " ")
             );
             CString::new(text).unwrap_or_default().into_raw()
         }

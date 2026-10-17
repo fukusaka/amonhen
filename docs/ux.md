@@ -60,7 +60,18 @@ Extend today's "Repositories…" (a list in the order opened) into the equivalen
 | Status | Each row shows the current branch, ahead/behind and the number of changed files. Only `.git/HEAD` is read right away; for the rest, only visible rows run `git status --porcelain=v2 --branch --untracked-files=no` (takes no lock) in the background, 4 at a time. Untracked files are not counted |
 | Extra information | Color labels, favorites (★), display name override, last opened time |
 | Operations | Open (⏎ in a tab of the current window, ⌘⏎ in a new window), Show in Finder, Open in Terminal, Open in Editor, Fetch (all selected ones at once) |
-| Quick Open | ⌘⇧O opens a panel (Spotlight-style) that fuzzy-searches all bookmarks. This becomes the main way to "open" |
+| Quick Open | ⌘⇧O opens a panel (Spotlight-style) that fuzzy-searches all bookmarks |
+
+The list appears in two places, with the same contents and operations (`RepositoryBrowser`):
+
+- **The repository page**, a tab with no repository open (`RepositoryHome.swift`). ⌘T, ⌘N, ⌘O and ⌘⇧R show it, and so
+  does launching or closing the last repository with nothing open. It lays the list out in columns to give an overview:
+  name and path, branch, status (changes, ahead/behind), the last commit (when and its subject) and when it was last
+  opened. Choosing a repository turns this tab into that repository (⌘⏎ for a new window). Adding (a local folder,
+  Clone, an SSH host, a folder to scan, a group) is in the page's Add menu. There is no separate window.
+- **The repository name at the left of the toolbar** (like GitHub Desktop). It opens the list in a popover with names
+  and status only; choosing one switches the current tab to it. The window title is hidden, since the toolbar shows the
+  repository and the branch.
 
 Saved not in UserDefaults but in `~/Library/Application Support/Amon Hen/bookmarks.json` (structured, and editable by hand). Scan results are not saved; they are collected again in the background at launch.
 
