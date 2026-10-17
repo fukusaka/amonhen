@@ -172,15 +172,19 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let category: Category?
         var children: [SideNode] = []
 
-        init(_ title: String, symbol: String = "", _ category: Category?, children: [SideNode] = []) {
+        /// 見出しの、開いた・閉じたを覚えるための名前（訳した `title` は言語で変わるので使わない）。
+        let header: String?
+
+        init(_ title: String, symbol: String = "", _ category: Category?, header: String? = nil, children: [SideNode] = []) {
             self.title = title
+            self.header = header
             self.symbol = symbol
             self.category = category
             self.children = children
         }
 
         /// 開いた・閉じたを覚えるための名前。
-        var key: String { category?.key ?? "header:" + title }
+        var key: String { category?.key ?? "header:" + (header ?? title) }
     }
 
     private static let categoryKey = "repositoryPageCategory"
@@ -265,15 +269,15 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let page = style == .page
         // 右: リポジトリの表。
         let name = NSTableColumn(identifier: .init("name"))
-        name.title = "Name"
+        name.title = L("Name")
         name.minWidth = 200
         name.resizingMask = .autoresizingMask
         name.sortDescriptorPrototype = NSSortDescriptor(key: "name", ascending: true)
         table.addTableColumn(name)
         if page {
             for (id, title, width, ascending) in [
-                ("branch", "Branch", 150.0, true), ("status", "Status", 100.0, false),
-                ("commit", "Last Commit", 300.0, false), ("opened", "Opened", 100.0, false),
+                ("branch", L("Branch"), 150.0, true), ("status", L("Status"), 100.0, false),
+                ("commit", L("Last Commit"), 300.0, false), ("opened", L("Opened"), 100.0, false),
             ] {
                 let column = NSTableColumn(identifier: .init(id))
                 column.title = title
@@ -282,10 +286,10 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 column.resizingMask = .userResizingMask
                 column.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: ascending)
                 column.headerToolTip = [
-                    "branch": "今のブランチ",
-                    "status": "変更 n: 変更のあるファイルの数（untracked は数えない）\n↑ 上流より先・↓ 後ろのコミットの数\n✓ 変更なしで上流と同じ",
-                    "commit": "最後のコミットの日時と件名",
-                    "opened": "このアプリで最後に開いた日時（— はまだ開いていない）",
+                    "branch": L("Current branch"),
+                    "status": L("Changes n: files with changes (untracked files aren’t counted)\n↑ commits ahead of the upstream · ↓ commits behind it\n✓ no changes and same as the upstream"),
+                    "commit": L("Date and subject of the last commit"),
+                    "opened": L("When you last opened it in this app (— if never)"),
                 ][id]
                 table.addTableColumn(column)
             }
@@ -316,7 +320,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         tableScroll.hasVerticalScroller = true
         tableScroll.drawsBackground = false
 
-        filter.placeholderString = page ? "名前・パスで絞り込む" : "リポジトリを切り替える"
+        filter.placeholderString = page ? L("Filter by name or path") : L("Switch repository")
         filter.delegate = self
         filter.target = self
         filter.action = #selector(filterChanged)
@@ -328,11 +332,11 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let bottom: NSStackView
         if page {
             let add = NSPopUpButton(frame: .zero, pullsDown: true)
-            add.addItem(withTitle: "＋ 追加")
+            add.addItem(withTitle: L("＋ Add"))
             for (title, action) in [
-                ("手元のリポジトリ…", #selector(addRepository)), ("Clone…", #selector(clone)),
-                ("SSH 接続…", #selector(addRemote as () -> Void)), ("-", nil),
-                ("グループ…", #selector(newGroup)), ("スキャンするフォルダ…", #selector(addScanFolder)),
+                (L("Local Repository…"), #selector(addRepository)), ("Clone…", #selector(clone)),
+                (L("SSH Connection…"), #selector(addRemote as () -> Void)), ("-", nil),
+                (L("Group…"), #selector(newGroup)), (L("Folder to Scan…"), #selector(addScanFolder)),
             ] as [(String, Selector?)] {
                 if title == "-" {
                     add.menu?.addItem(.separator())
@@ -346,16 +350,16 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             add.bezelStyle = .accessoryBarAction
             add.isBordered = false
             (add.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
-            add.item(at: 0)?.title = "追加"
+            add.item(at: 0)?.title = L("Add")
             add.imagePosition = .imageLeading
-            add.item(at: 0)?.image = NSImage(systemSymbolName: "plus", accessibilityDescription: "加える")
-            add.toolTip = "リポジトリ・SSH 接続・グループ・スキャンするフォルダを加える"
+            add.item(at: 0)?.image = NSImage(systemSymbolName: "plus", accessibilityDescription: L("Add"))
+            add.toolTip = L("Add repositories, SSH connections, groups and folders to scan")
             // 右は絞り込みと一覧だけ（開くのはダブルクリックと ⏎、加えるのは左の ＋ と右クリック）。
             bottom = NSStackView(views: [])
         } else {
-            let all = NSButton(title: "すべてのリポジトリ…", target: self, action: #selector(showAll))
+            let all = NSButton(title: L("All Repositories…"), target: self, action: #selector(showAll))
             all.bezelStyle = .inline
-            all.toolTip = "リポジトリのページを開く（⌘⇧R）"
+            all.toolTip = L("Open the repository page (⌘⇧R)")
             bottom = NSStackView(views: [scanning, NSView(), all])
         }
 
@@ -451,7 +455,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     private func makeSidebar() -> [SideNode] {
         let bookmarks = Bookmarks.shared
         let all = bookmarks.allLocations
-        var roots = [SideNode("すべて", symbol: "tray.full", .all), SideNode("お気に入り", symbol: "star", .favorites)]
+        var roots = [SideNode(L("All"), symbol: "tray.full", .all), SideNode(L("Favorites"), symbol: "star", .favorites)]
 
         // 場所: この Mac と SSH のホストごと。その下に、スキャンするフォルダ（🔍。そこだけを探す）と、それ以外の
         // リポジトリ（開いた・手で入れたもの）のあるフォルダの木。
@@ -471,7 +475,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let localRoots = bookmarks.data.scanRoots.filter { Self.sshHost($0.path) == nil }
         let local = all.filter { Self.sshHost($0) == nil }.map(Self.localPath)
         let tilde = { (path: String) in (path as NSString).abbreviatingWithTildeInPath }
-        var places = [SideNode("このMac", symbol: "laptopcomputer", .local,
+        var places = [SideNode(L("This Mac"), symbol: "laptopcomputer", .local,
                                children: scanNodes(localRoots, title: tilde)
                                    + folderTree(outside(local, of: localRoots), base: "", category: { .folder($0) }, title: tilde))]
         let hosts = Set(all.compactMap(Self.sshHost) + bookmarks.data.scanRoots.compactMap { Self.sshHost($0.path) })
@@ -484,10 +488,10 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                                        + folderTree(outside(remote, of: hostRoots), base: "", category: { .hostFolder(host, $0) },
                                                     title: Self.remoteTitle)))
         }
-        roots.append(SideNode("場所", nil, children: places))
+        roots.append(SideNode(L("Places"), nil, header: "場所", children: places))
         // グループは作ってから出す（空の見出しを並べない。作るのは左下の ＋ と、リポジトリの右クリック）。
         if !bookmarks.data.groups.isEmpty {
-            roots.append(SideNode("グループ", nil, children: bookmarks.data.groups.map { SideNode($0, symbol: "folder", .group($0)) }))
+            roots.append(SideNode(L("Groups"), nil, header: "グループ", children: bookmarks.data.groups.map { SideNode($0, symbol: "folder", .group($0)) }))
         }
         return roots
     }
@@ -738,7 +742,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
-        panel.message = "一覧に加えるリポジトリのフォルダを選んでください"
+        panel.message = L("Choose the repository folders to add to the list.")
         guard panel.runModal() == .OK else { return }
         var rejected: [String] = []
         for url in panel.urls {
@@ -750,8 +754,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         }
         if !rejected.isEmpty {
             let alert = NSAlert()
-            alert.messageText = "Git のリポジトリではありません"
-            alert.informativeText = rejected.joined(separator: "、")
+            alert.messageText = L("Not a Git repository")
+            alert.informativeText = rejected.joined(separator: L(", "))
             alert.runModal()
         }
     }
@@ -770,7 +774,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
-        panel.message = "リポジトリを探すフォルダを選んでください（3 段下まで探します）"
+        panel.message = L("Choose a folder to search for repositories (up to 3 levels deep).")
         guard panel.runModal() == .OK, let url = panel.url else { return }
         Bookmarks.shared.addScanRoot(url.standardizedFileURL.path)
     }
@@ -778,13 +782,13 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     /// SSH のホストでスキャンするフォルダを加える（そのホストの上で、エンジンが探す）。
     private func addRemoteScanFolder(host: String) {
         let alert = NSAlert()
-        alert.messageText = "\(host) でスキャンするフォルダを加える"
-        alert.informativeText = "このフォルダの下を、\(host) の上で 3 段下まで探します。"
+        alert.messageText = L("Add a Folder to Scan on %@", host)
+        alert.informativeText = L("Searches up to 3 levels below this folder on %@.", host)
         let path = NSTextField(string: "~/prj")
         path.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
         alert.accessoryView = path
-        alert.addButton(withTitle: "加える")
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Add"))
+        alert.addButton(withTitle: L("Cancel"))
         alert.window.initialFirstResponder = path
         guard alert.runModal() == .alertFirstButtonReturn,
               let location = RepositoryLocation.ssh(host: host, path: path.stringValue) else { return }
@@ -792,7 +796,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     }
 
     @objc private func newGroup() {
-        guard let name = ask("New Group", message: "グループの名前", initial: "") else { return }
+        guard let name = ask(L("New Group"), message: L("Group name"), initial: "") else { return }
         Bookmarks.shared.addGroup(name)
         category = .group(name)
         reload()
@@ -803,7 +807,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: initial)
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
@@ -824,12 +828,12 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     private func addRemote(host initialHost: String?) {
         guard let window = view.window else { return }
         let host = NSTextField(string: initialHost ?? UserDefaults.standard.string(forKey: Self.lastHostKey) ?? "")
-        host.placeholderString = "user@host:port（~/.ssh/config の名前でもよい）"
+        host.placeholderString = L("user@host:port (or a name in ~/.ssh/config)")
         let path = NSTextField(string: "")
-        path.placeholderString = "~/src/repo や /srv/git/repo"
+        path.placeholderString = L("~/src/repo or /srv/git/repo")
         let grid = NSGridView(views: [
-            [NSTextField(labelWithString: "接続先:"), host],
-            [NSTextField(labelWithString: "パス:"), path],
+            [NSTextField(labelWithString: L("Host:")), host],
+            [NSTextField(labelWithString: L("Path:")), path],
         ])
         grid.column(at: 0).xPlacement = .trailing
         grid.rowSpacing = 8
@@ -837,18 +841,18 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         grid.frame = NSRect(x: 0, y: 0, width: 370, height: 56)
 
         let alert = NSAlert()
-        alert.messageText = initialHost.map { "\($0) のリポジトリを加える" } ?? "SSH 接続を加える"
-        alert.informativeText = "SSH で接続します。鍵か ssh-agent でパスワードなしに入れるホストにしてください。"
+        alert.messageText = initialHost.map { L("Add a Repository on %@", $0) } ?? L("Add SSH Connection")
+        alert.informativeText = L("Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent).")
         alert.accessoryView = grid
-        alert.addButton(withTitle: "加えて開く")
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Add and Open"))
+        alert.addButton(withTitle: L("Cancel"))
         alert.window.initialFirstResponder = host.stringValue.isEmpty ? host : path
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
             guard let location = RepositoryLocation.ssh(host: host.stringValue, path: path.stringValue) else {
                 let error = NSAlert()
-                error.messageText = "接続先とパスを入れてください"
-                error.informativeText = "接続先には空白や / を含められません。"
+                error.messageText = L("Enter a host and a path")
+                error.informativeText = L("The host can’t contain spaces or “/”.")
                 error.beginSheetModal(for: window)
                 return
             }
@@ -885,9 +889,9 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
     private var removeTitle: String? {
         switch category {
-        case .all, .local, .host, .folder, .hostFolder: "一覧から外す"
-        case .favorites: "お気に入りから外す"
-        case .group: "グループから外す"
+        case .all, .local, .host, .folder, .hostFolder: L("Remove from List")
+        case .favorites: L("Remove from Favorites")
+        case .group: L("Remove from Group")
         case .scan, .scanFolder: nil
         }
     }
@@ -942,10 +946,10 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     private func open(_ path: String, _ mode: OpenMode) {
         guard RepositoryList.isRepository(path) else {
             let alert = NSAlert()
-            alert.messageText = "\((path as NSString).lastPathComponent) が見つかりません"
-            alert.informativeText = "\(path)\n一覧から外しますか？"
-            alert.addButton(withTitle: "外す")
-            alert.addButton(withTitle: "キャンセル")
+            alert.messageText = L("%@ not found", (path as NSString).lastPathComponent)
+            alert.informativeText = L("%@\nRemove it from the list?", path)
+            alert.addButton(withTitle: L("Remove"))
+            alert.addButton(withTitle: L("Cancel"))
             if alert.runModal() == .alertFirstButtonReturn {
                 RepositoryList.remove(path)
                 Bookmarks.shared.remove(path)
@@ -972,57 +976,57 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
         guard let target = node.category else {
             // 見出し: そこに加えるもの。
-            if node.title == "場所" {
-                add("手元のリポジトリを加える…") { [weak self] in self?.addRepository() }
-                add("SSH 接続を加える…") { [weak self] in self?.addRemote(host: nil) }
-            } else if node.title == "グループ" {
-                add("グループを作る…") { [weak self] in self?.newGroup() }
+            if node.header == "場所" {
+                add(L("Add Local Repository…")) { [weak self] in self?.addRepository() }
+                add(L("Add SSH Connection…")) { [weak self] in self?.addRemote(host: nil) }
+            } else if node.header == "グループ" {
+                add(L("Create Group…")) { [weak self] in self?.newGroup() }
             }
             return
         }
         let paths = paths(in: target)
         if !paths.isEmpty {
-            add("すべて Fetch（\(paths.count)）") { Bookmarks.shared.fetch(paths) }
+            add(L("Fetch All (%ld)", paths.count)) { Bookmarks.shared.fetch(paths) }
             menu.addItem(.separator())
         }
         switch target {
         case let .host(name):
-            add("このホストのリポジトリを加える…") { [weak self] in self?.addRemote(host: name) }
-            add("このホストでスキャンするフォルダを加える…") { [weak self] in self?.addRemoteScanFolder(host: name) }
+            add(L("Add Repository on This Host…")) { [weak self] in self?.addRemote(host: name) }
+            add(L("Add Folder to Scan on This Host…")) { [weak self] in self?.addRemoteScanFolder(host: name) }
         case .local:
-            add("手元のリポジトリを加える…") { [weak self] in self?.addRepository() }
-            add("スキャンするフォルダを加える…") { [weak self] in self?.addScanFolder() }
+            add(L("Add Local Repository…")) { [weak self] in self?.addRepository() }
+            add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }
         case let .group(name):
-            add("名前を変える…") { [weak self] in
-                guard let new = self?.ask("グループの名前を変える", message: "グループの名前", initial: name) else { return }
+            add(L("Rename…")) { [weak self] in
+                guard let new = self?.ask(L("Rename Group"), message: L("Group name"), initial: name) else { return }
                 let members = Bookmarks.shared.data.items.filter { $0.group == name }.map(\.path)
                 Bookmarks.shared.addGroup(new)
                 for path in members { Bookmarks.shared.move(path, to: new) }
                 Bookmarks.shared.removeGroup(name)
             }
-            add("グループを消す") { Bookmarks.shared.removeGroup(name) }
+            add(L("Delete Group")) { Bookmarks.shared.removeGroup(name) }
         case let .scan(path):
             if let error = Bookmarks.shared.scanErrors[path] {
-                let item = NSMenuItem(title: "探せませんでした: " + error, action: nil, keyEquivalent: "")
+                let item = NSMenuItem(title: L("Couldn’t search: %@", error), action: nil, keyEquivalent: "")
                 item.isEnabled = false
                 menu.addItem(item)
                 menu.addItem(.separator())
             }
             let depth = Bookmarks.shared.data.scanRoots.first { $0.path == path }?.depth ?? 3
-            let depths = NSMenu(title: "探す深さ")
+            let depths = NSMenu(title: L("Search Depth"))
             for d in 1...6 {
                 let item = ClosureMenuItem(title: "\(d)") { Bookmarks.shared.setDepth(d, of: path) }
                 item.state = d == depth ? .on : .off
                 depths.addItem(item)
             }
-            let depthItem = NSMenuItem(title: "探す深さ", action: nil, keyEquivalent: "")
+            let depthItem = NSMenuItem(title: L("Search Depth"), action: nil, keyEquivalent: "")
             depthItem.submenu = depths
             menu.addItem(depthItem)
-            add("探し直す") { Bookmarks.shared.rescan() }
+            add(L("Search Again")) { Bookmarks.shared.rescan() }
             if Self.sshHost(path) == nil {
-                add("Finder に表示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+                add(L("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
             }
-            add("スキャンをやめる") { Bookmarks.shared.removeScanRoot(path) }
+            add(L("Stop Scanning")) { Bookmarks.shared.removeScanRoot(path) }
         default:
             break
         }
@@ -1036,20 +1040,20 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             ? table.selectedRowIndexes.compactMap { $0 < shown.count ? shown[$0] : nil } : [path]
         let bookmark = Bookmarks.shared.bookmark(path)
         func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
-        add(style == .page ? "開く" : "このリポジトリに切り替える") { [weak self] in self?.open(path, .here) }
-        add("新しいタブで開く") { [weak self] in self?.open(path, .newTab) }
-        add("新しいウィンドウで開く") { [weak self] in self?.open(path, .newWindow) }
+        add(style == .page ? L("Open") : L("Switch to This Repository")) { [weak self] in self?.open(path, .here) }
+        add(L("Open in New Tab")) { [weak self] in self?.open(path, .newTab) }
+        add(L("Open in New Window")) { [weak self] in self?.open(path, .newWindow) }
         if !path.hasPrefix("daemon:"), !Settings.openThroughDaemon {
-            let item = ClosureMenuItem(title: "共有の daemon 越しに開く") { [weak self] in self?.onOpen?("daemon:" + path, .here) }
-            item.toolTip = "History・検索の索引・操作の記録を CLI などと共有する"
+            let item = ClosureMenuItem(title: L("Open Through the Shared daemon")) { [weak self] in self?.onOpen?("daemon:" + path, .here) }
+            item.toolTip = L("Share History, the search index and the operation log with the CLI and others")
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        add(targets.count > 1 ? "Fetch（\(targets.count)）" : "Fetch") { Bookmarks.shared.fetch(targets) }
+        add(targets.count > 1 ? L("Fetch (%ld)", targets.count) : "Fetch") { Bookmarks.shared.fetch(targets) }
         menu.addItem(.separator())
-        add(bookmark?.favorite == true ? "お気に入りから外す" : "お気に入りに入れる") { Bookmarks.shared.toggleFavorite(path) }
-        let groups = NSMenu(title: "グループ")
-        let none = ClosureMenuItem(title: "なし") { for p in targets { Bookmarks.shared.move(p, to: nil) } }
+        add(bookmark?.favorite == true ? L("Remove from Favorites") : L("Add to Favorites")) { Bookmarks.shared.toggleFavorite(path) }
+        let groups = NSMenu(title: L("Group"))
+        let none = ClosureMenuItem(title: L("None")) { for p in targets { Bookmarks.shared.move(p, to: nil) } }
         none.state = bookmark?.group == nil ? .on : .off
         groups.addItem(none)
         for group in Bookmarks.shared.data.groups {
@@ -1058,16 +1062,16 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             groups.addItem(item)
         }
         groups.addItem(.separator())
-        groups.addItem(ClosureMenuItem(title: "新しいグループ…") { [weak self] in
-            guard let name = self?.ask("New Group", message: "グループの名前", initial: "") else { return }
+        groups.addItem(ClosureMenuItem(title: L("New Group…")) { [weak self] in
+            guard let name = self?.ask(L("New Group"), message: L("Group name"), initial: "") else { return }
             Bookmarks.shared.addGroup(name)
             for p in targets { Bookmarks.shared.move(p, to: name) }
         })
-        let groupItem = NSMenuItem(title: "グループ", action: nil, keyEquivalent: "")
+        let groupItem = NSMenuItem(title: L("Group"), action: nil, keyEquivalent: "")
         groupItem.submenu = groups
         menu.addItem(groupItem)
-        let colors = NSMenu(title: "色ラベル")
-        let noColor = ClosureMenuItem(title: "なし") { for p in targets { Bookmarks.shared.setColor(p, nil) } }
+        let colors = NSMenu(title: L("Color Label"))
+        let noColor = ClosureMenuItem(title: L("None")) { for p in targets { Bookmarks.shared.setColor(p, nil) } }
         noColor.state = bookmark?.color == nil ? .on : .off
         colors.addItem(noColor)
         for entry in Bookmarks.colors {
@@ -1076,18 +1080,18 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             item.state = bookmark?.color == entry.name ? .on : .off
             colors.addItem(item)
         }
-        let colorItem = NSMenuItem(title: "色ラベル", action: nil, keyEquivalent: "")
+        let colorItem = NSMenuItem(title: L("Color Label"), action: nil, keyEquivalent: "")
         colorItem.submenu = colors
         menu.addItem(colorItem)
-        add("名前を変える…") { [weak self] in
+        add(L("Rename…")) { [weak self] in
             let current = Bookmarks.shared.displayName(path)
-            let name = self?.ask("名前を変える", message: "一覧に出す名前（空にするとフォルダの名前）", initial: current)
+            let name = self?.ask(L("Rename"), message: L("Name shown in the list (leave empty for the folder name)"), initial: current)
             Bookmarks.shared.rename(path, to: name)
         }
         if !RepositoryLocation.isRemote(path) {
             menu.addItem(.separator())
-            add("Finder に表示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
-            add("ターミナルで開く") {
+            add(L("Show in Finder")) { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+            add(L("Open in Terminal")) {
                 guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
                 NSWorkspace.shared.open(
                     [URL(fileURLWithPath: path)], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
@@ -1168,7 +1172,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let tilde = { (path: String) in (path as NSString).abbreviatingWithTildeInPath }
         switch category {
         case let .folder(path): cell.toolTip = tilde(path)
-        case let .scan(root): cell.toolTip = "\(Self.sshHost(root).map { $0 + ":" } ?? "")\(tilde(Self.pathPart(root))) を探す"
+        case let .scan(root): cell.toolTip = L("Searches %@", (Self.sshHost(root).map { $0 + ":" } ?? "") + tilde(Self.pathPart(root)))
         case let .scanFolder(root, path): cell.toolTip = "\(Self.sshHost(root).map { $0 + ":" } ?? "")\(tilde(path))"
         case let .hostFolder(host, path): cell.toolTip = "\(host):\(Self.remoteTitle(path))"
         default: cell.toolTip = nil
@@ -1274,26 +1278,26 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 if remote {
                     // SSH 先・daemon 越しは、開くまで状態を読まない。
                     label.stringValue = RepositoryBrowser.sshHost(location) != nil ? "SSH" : "daemon"
-                    toolTip = "開くまで状態は読みません"
+                    toolTip = L("The status isn’t read until you open it")
                     break
                 }
                 var parts: [String] = []
                 if let peek {
-                    if peek.changed > 0 { parts.append("変更 \(peek.changed)") }
+                    if peek.changed > 0 { parts.append(L("Changes %ld", peek.changed)) }
                     if peek.ahead > 0 { parts.append("↑\(peek.ahead)") }
                     if peek.behind > 0 { parts.append("↓\(peek.behind)") }
                     if parts.isEmpty { parts.append("✓") }
                 }
                 let fetchError = Bookmarks.shared.fetchErrors[location]
-                if Bookmarks.shared.fetching.contains(location) { parts.insert("Fetch 中…", at: 0) }
-                if fetchError != nil { parts.insert("Fetch に失敗", at: 0) }
-                if !exists { parts = ["見つかりません"] }
+                if Bookmarks.shared.fetching.contains(location) { parts.insert(L("Fetching…"), at: 0) }
+                if fetchError != nil { parts.insert(L("Fetch failed"), at: 0) }
+                if !exists { parts = [L("Not found")] }
                 label.stringValue = parts.joined(separator: "  ")
                 label.textColor = fetchError != nil || !exists ? .systemRed : peek?.changed ?? 0 > 0 ? .systemOrange : .secondaryLabelColor
-                toolTip = fetchError.map { "Fetch に失敗: \($0)" } ?? peek.map {
+                toolTip = fetchError.map { L("Fetch failed: %@", $0) } ?? peek.map {
                     [
-                        $0.changed > 0 ? "変更のあるファイル \($0.changed) 個（untracked は数えない）" : "変更なし",
-                        $0.hasUpstream ? "上流より \($0.ahead) 先、\($0.behind) 後ろ" : "上流なし",
+                        $0.changed > 0 ? L("%ld files with changes (untracked files aren’t counted)", $0.changed) : L("No changes"),
+                        $0.hasUpstream ? L("%ld ahead of the upstream, %ld behind", $0.ahead, $0.behind) : L("No upstream"),
                     ].joined(separator: "\n")
                 }
             case "commit":
@@ -1377,7 +1381,7 @@ final class RepositoryCell: NSTableCellView {
             range: NSRange(location: 0, length: title.length))
         name.attributedStringValue = title
         path.stringValue = RepositoryLocation.isRemote(location) ? location
-            : exists ? (location as NSString).abbreviatingWithTildeInPath : "見つかりません — \(location)"
+            : exists ? (location as NSString).abbreviatingWithTildeInPath : L("Not found — %@", location)
         let peek = exists ? Bookmarks.shared.peek(location) : nil
         branch.stringValue = exists ? peek.map { $0.branch ?? "detached" } ?? RepositoryList.branch(of: location) ?? "" : ""
         var parts: [String] = []
@@ -1388,17 +1392,17 @@ final class RepositoryCell: NSTableCellView {
         }
         let fetching = Bookmarks.shared.fetching.contains(location)
         let fetchError = Bookmarks.shared.fetchErrors[location]
-        if fetching { parts.insert("Fetch 中…", at: 0) }
-        if fetchError != nil { parts.insert("Fetch に失敗", at: 0) }
+        if fetching { parts.insert(L("Fetching…"), at: 0) }
+        if fetchError != nil { parts.insert(L("Fetch failed"), at: 0) }
         state.stringValue = parts.joined(separator: "  ")
         state.textColor = fetchError != nil ? .systemRed : peek?.changed ?? 0 > 0 ? .systemOrange : .secondaryLabelColor
         toolTip = peek.map {
             [
-                $0.changed > 0 ? "変更のあるファイル \($0.changed) 個（untracked は数えない）" : "変更なし",
-                $0.hasUpstream ? "上流より \($0.ahead) 先、\($0.behind) 後ろ" : "上流なし",
+                $0.changed > 0 ? L("%ld files with changes (untracked files aren’t counted)", $0.changed) : L("No changes"),
+                $0.hasUpstream ? L("%ld ahead of the upstream, %ld behind", $0.ahead, $0.behind) : L("No upstream"),
             ].joined(separator: "\n")
         }
-        if let fetchError { toolTip = "Fetch に失敗: \(fetchError)" + (toolTip.map { "\n" + $0 } ?? "") }
+        if let fetchError { toolTip = L("Fetch failed: %@", fetchError) + (toolTip.map { "\n" + $0 } ?? "") }
     }
 
     /// 色ラベルの丸。

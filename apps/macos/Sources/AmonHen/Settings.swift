@@ -268,35 +268,35 @@ private struct GitSettings: View {
     var body: some View {
         Form {
             Section {
-                Picker("Pull の既定", selection: $model.pullMode) {
+                Picker(L("Default Pull"), selection: $model.pullMode) {
                     ForEach(PullMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                Note("ツールバーの Pull と ⌃⌘L で使う。Pull ボタンの ▾ や Repository > Pull With でその都度も選べる。")
+                Note(L("Used by Pull in the toolbar and ⌃⌘L. You can also choose each time from the Pull button’s ▾ or Repository > Pull With."))
             }
-            Section("リポジトリの一覧") {
-                Toggle("開いたリポジトリをブックマークに入れる", isOn: $model.autoBookmark)
-                Note("スキャンするフォルダで見つかっているものは入れない。")
+            Section(L("Repository List")) {
+                Toggle(L("Bookmark repositories you open"), isOn: $model.autoBookmark)
+                Note(L("Repositories already found in folders to scan aren’t added."))
             }
             Section("GitHub") {
-                Toggle("History にコミットごとの CI の状態を出す", isOn: $model.gitHubCIStatus)
-                Toggle("コミットの作者の GitHub のアバターを使う", isOn: $model.gitHubAvatars)
-                Note("gh で読む。開いたとき・Refresh・fetch や push の後（30 秒は空ける）に読む。1 回あたり、2 ブランチ × 100 コミットで両方なら 40 KB、CI だけなら 17 KB、今のブランチだけ・30 個なら 3 KB ほど（CI のある中くらいのリポジトリで測った値）。どちらも切ると読まない。")
-                Picker("CI を読むブランチ", selection: $model.gitHubCIDefaultBranch) {
-                    Text("今のブランチと既定のブランチ").tag(true)
-                    Text("今のブランチだけ").tag(false)
+                Toggle(L("Show each commit’s CI status in History"), isOn: $model.gitHubCIStatus)
+                Toggle(L("Use commit authors’ GitHub avatars"), isOn: $model.gitHubAvatars)
+                Note(L("Read with gh on open, on Refresh, and after a fetch or push (at least 30 seconds apart). Each read is about 40 KB for both with 2 branches × 100 commits, 17 KB for CI only, and 3 KB for the current branch only with 30 commits (measured on a medium-sized repository with CI). Nothing is read when both are off."))
+                Picker(L("Branches to read CI for"), selection: $model.gitHubCIDefaultBranch) {
+                    Text(L("Current and default branch")).tag(true)
+                    Text(L("Current branch only")).tag(false)
                 }
                 .disabled(!model.gitHubCIStatus && !model.gitHubAvatars)
-                Picker("ブランチごとに読むコミット", selection: $model.gitHubCICommits) {
-                    ForEach([100, 50, 30], id: \.self) { Text("直近 \($0) 個").tag($0) }
+                Picker(L("Commits to read per branch"), selection: $model.gitHubCICommits) {
+                    ForEach([100, 50, 30], id: \.self) { Text(L("Last %ld", $0)).tag($0) }
                 }
                 .disabled(!model.gitHubCIStatus && !model.gitHubAvatars)
-                Toggle("アバターの URL はウィンドウを開いて最初の 1 回だけ読む", isOn: $model.gitHubAvatarsOnce)
+                Toggle(L("Read avatar URLs only once per window"), isOn: $model.gitHubAvatarsOnce)
                     .disabled(!model.gitHubAvatars)
-                Note("2 回目からは CI の状態だけを読む（40 KB → 17 KB）。")
+                Note(L("After the first read, only the CI status is read (40 KB → 17 KB)."))
             }
-            Section("マージ") {
-                Toggle("マージエディタを開いたときに、間違えようのないコンフリクトを解く", isOn: $model.autoMagicMerge)
-                Note("両側が同じ・片側だけが変えた、のどちらかに当たるコンフリクト。⌘Z で戻せる。残りは ✨ Magic Merge で。")
+            Section(L("Merging")) {
+                Toggle(L("Resolve unambiguous conflicts when the merge editor opens"), isOn: $model.autoMagicMerge)
+                Note(L("Conflicts where both sides are the same, or only one side changed. ⌘Z undoes it. Use ✨ Magic Merge for the rest."))
             }
         }
         .formStyle(.grouped)
@@ -308,17 +308,17 @@ private struct AppearanceSettings: View {
     var body: some View {
         Form {
             Section("History") {
-                Toggle("1 コミットを 1 行で表示する", isOn: $model.compactHistoryRows)
-                Toggle("選んだコミットの祖先を強調する", isOn: $model.highlightAncestors)
-                Note("選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする。")
+                Toggle(L("Show each commit on one line"), isOn: $model.compactHistoryRows)
+                Toggle(L("Highlight the selected commit’s ancestors"), isOn: $model.highlightAncestors)
+                Note(L("Draws only the selected commit’s ancestors and the lines between them at full strength, and dims the rest."))
             }
-            Section("コミットの詳細") {
-                Toggle("本文を等幅の字体で表示する", isOn: $model.monospacedCommitMessage)
-                Toggle("アバターを表示する", isOn: $model.showAvatars)
-                Note("Gravatar から取る（メールアドレスのハッシュを gravatar.com に送る）。")
-                Toggle("全ファイルの差分を縦に並べる", isOn: $model.stackedCommitDiff)
-                Toggle("変更ファイルを差分の左に木で表示する", isOn: $model.historyFileTree)
-                Note("GitHub のプルリクエストのように、変更ファイルの差分を続けて見せる。ファイルの見出しで畳め、Viewed で見たものを畳む。変更ファイルが 200 を超えるコミットでは 1 ファイルずつ。")
+            Section(L("Commit Details")) {
+                Toggle(L("Show the message in a monospaced font"), isOn: $model.monospacedCommitMessage)
+                Toggle(L("Show avatars"), isOn: $model.showAvatars)
+                Note(L("Fetched from Gravatar (sends a hash of the email address to gravatar.com)."))
+                Toggle(L("Stack the diffs of all files"), isOn: $model.stackedCommitDiff)
+                Toggle(L("Show changed files as a tree left of the diff"), isOn: $model.historyFileTree)
+                Note(L("Shows the diffs of the changed files one after another, like a GitHub pull request. Click a file header to collapse it; Viewed collapses files you’ve seen. Commits with more than 200 changed files show one file at a time."))
             }
         }
         .formStyle(.grouped)
@@ -330,10 +330,10 @@ private struct PerformanceSettings: View {
     var body: some View {
         Form {
             Section {
-                Toggle("commit-graph を自動で書き出す", isOn: $model.writeCommitGraph)
-                Note("commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable --changed-paths を実行する（.git に書き込む）。履歴の読み込みと path: での検索が速くなる。")
-                Toggle("fsmonitor で status を速くする", isOn: $model.useFSMonitor)
-                Note("この Mac のリポジトリの status で git の fsmonitor を使う（リポジトリごとに git fsmonitor--daemon が常駐し、.git にソケットを作る）。")
+                Toggle(L("Write commit-graph automatically"), isOn: $model.writeCommitGraph)
+                Note(L("When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster."))
+                Toggle(L("Speed up status with fsmonitor"), isOn: $model.useFSMonitor)
+                Note(L("Uses git’s fsmonitor for the status of repositories on this Mac (a git fsmonitor--daemon runs for each repository and creates a socket in .git)."))
             }
         }
         .formStyle(.grouped)
@@ -347,56 +347,58 @@ private struct AISettings: View {
     var body: some View {
         Form {
             Section {
-                Picker("使う CLI", selection: $model.assistant) {
+                Picker(L("CLI to use"), selection: $model.assistant) {
                     ForEach(AssistantCLI.allCases) { Text($0.title).tag($0) }
                 }
                 if model.assistant != .none {
                     if let path = model.assistant.path {
-                        Note("\(path)" + (model.assistantVersion.map { "（\($0)）" } ?? ""))
+                        Note(model.assistantVersion.map { L("%@ (%@)", path, $0) } ?? path)
                     } else {
-                        Note("見つかりません。\(model.assistant == .claude ? "Claude Code（claude）" : "Codex（codex）")を入れ、CLI でログインしてください。")
+                        Note(model.assistant == .claude
+                             ? L("Not found. Install %@ (%@) and sign in with the CLI.", "Claude Code", "claude")
+                             : L("Not found. Install %@ (%@) and sign in with the CLI.", "Codex", "codex"))
                             .foregroundStyle(.red)
                     }
-                    TextField("モデル", text: $model.assistantModel, prompt: Text("CLI の既定"))
-                    TextField("翻訳・解説の言語", text: $model.assistantLanguage)
+                    TextField(L("Model"), text: $model.assistantModel, prompt: Text(L("CLI default")))
+                    TextField(L("Language for translations and explanations"), text: $model.assistantLanguage)
                 }
             } footer: {
-                Note("手元の CLI を、ツールを使わせない設定で起動して頼む（鍵はアプリで持たず、CLI のログインを使う）。リポジトリごとに、初めて使うときに送ってよいか確かめる。")
+                Note(L("Runs the local CLI with tools disabled (the app holds no keys; it uses the CLI’s sign-in). For each repository, asks before sending anything the first time."))
             }
-            Section("プロンプト（用途ごと）") {
+            Section(L("Prompts by Purpose")) {
                 ForEach(AssistPurpose.allCases) { purpose in
                     HStack {
                         VStack(alignment: .leading) {
                             Text(purpose.title)
-                            Note("変数: " + purpose.variables.map { "{{\($0)}}" }.joined(separator: " "))
+                            Note(L("Variables: %@", purpose.variables.map { "{{\($0)}}" }.joined(separator: " ")))
                         }
                         Spacer()
-                        if customized.contains(purpose.rawValue) { Text("書き換え済み").font(.caption).foregroundStyle(.orange) }
-                        Button("編集…") {
+                        if customized.contains(purpose.rawValue) { Text(L("Customized")).font(.caption).foregroundStyle(.orange) }
+                        Button(L("Edit…")) {
                             if let file = try? Assistant.editablePromptFile(purpose) { NSWorkspace.shared.open(file) }
                             refresh()
                         }
-                        Button("既定に戻す") {
+                        Button(L("Restore Default")) {
                             Assistant.resetPrompt(purpose)
                             refresh()
                         }
                         .disabled(!customized.contains(purpose.rawValue))
-                        Button("試す") {
+                        Button(L("Try")) {
                             // 見本の値で、今のプロンプト（書き換えていればそれ）を送る。キャッシュは使わない。
-                            AssistantPanel.show(title: "\(purpose.title)（見本で試す）", over: NSApp.keyWindow) { _, onText in
+                            AssistantPanel.show(title: L("%@ (Try with Sample)", purpose.title), over: NSApp.keyWindow) { _, onText in
                                 try await Assistant.run(
                                     purpose, variables: purpose.sampleVariables, workdir: nil, useCache: false, onText: onText)
                             }
                         }
                         .disabled(model.assistant == .none)
-                        .help("見本の差分・メッセージで、今のプロンプトを実際に送って返事を見る")
+                        .help(L("Send the current prompt with a sample diff and message, and see the reply."))
                     }
                 }
-                Note("~/Library/Application Support/Amon Hen/prompts/<用途>.md に置く。リポジトリの .amonhen/prompts/<用途>.md があればそちらを優先する（初めて使うときに中身を確かめる）。返事の形（コンフリクトの解消の JSON）はアプリが末尾に足す。")
+                Note(L("Stored in ~/Library/Application Support/Amon Hen/prompts/<purpose>.md. A repository’s .amonhen/prompts/<purpose>.md takes precedence (you’re asked to check it the first time). The app appends the reply format (the JSON for resolving conflicts)."))
             }
             Section {
-                Button("リポジトリごとの許可を消す") { Assistant.forgetRepositoryDecisions() }
-                Note("「このリポジトリで AI を使うか」の答えを忘れ、次に使うときにもう一度確かめる。")
+                Button(L("Forget Per-Repository Permissions")) { Assistant.forgetRepositoryDecisions() }
+                Note(L("Forgets the answers to “Use AI in this repository?” and asks again next time."))
             }
         }
         .formStyle(.grouped)
@@ -413,13 +415,13 @@ private struct AdvancedSettings: View {
     @Bindable var model: SettingsModel
     var body: some View {
         Form {
-            Section("共有の daemon") {
-                Toggle("リポジトリを共有の daemon 越しに開く（SSH 先も）", isOn: $model.openThroughDaemon)
-                Note("History・検索の索引・操作の記録と SSH のつながりを、アプリ・CLI（amonhen -C daemon:… や -C ssh://…）・後の VSCode 拡張と共有する。これから開くリポジトリから効く。リポジトリの一覧の右クリックで、1 つだけ daemon 越しに開くこともできる。daemon の様子は Window > Activity の Daemon。")
+            Section(L("Shared daemon")) {
+                Toggle(L("Open repositories through the shared daemon (SSH hosts too)"), isOn: $model.openThroughDaemon)
+                Note(L("Shares History, the search index, the operation log and SSH connections among the app, the CLI (amonhen -C daemon:… or -C ssh://…) and the upcoming VSCode extension. Applies to repositories opened from now on. You can also open a single repository through the daemon by right-clicking it in the repository list. See Daemon in Window > Activity for its status."))
             }
-            Section("SSH 先のリポジトリ") {
-                Toggle("署名をこの Mac の鍵で検証する", isOn: $model.checkRemoteSignaturesLocally)
-                Note("この Mac の gpg・allowed_signers・信用度で検証する。外すと SSH 先の git と鍵で検証する。この Mac にあるリポジトリは、いつもこの Mac で検証する。")
+            Section(L("Repositories on SSH Hosts")) {
+                Toggle(L("Verify signatures with this Mac’s keys"), isOn: $model.checkRemoteSignaturesLocally)
+                Note(L("Verifies with this Mac’s gpg, allowed_signers and trust levels. When off, verifies with the git and keys on the SSH host. Repositories on this Mac are always verified on this Mac."))
             }
         }
         .formStyle(.grouped)
@@ -445,13 +447,13 @@ final class SettingsWindowController: NSWindowController {
             tabs.addTabViewItem(item)
         }
         add("Git", "arrow.triangle.branch", GitSettings(model: model))
-        add("Appearance", "paintbrush", AppearanceSettings(model: model))
-        add("Performance", "speedometer", PerformanceSettings(model: model))
+        add(L("Appearance"), "paintbrush", AppearanceSettings(model: model))
+        add(L("Performance"), "speedometer", PerformanceSettings(model: model))
         add("AI", "sparkles", AISettings(model: model))
-        add("Advanced", "gearshape.2", AdvancedSettings(model: model))
+        add(L("Advanced"), "gearshape.2", AdvancedSettings(model: model))
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable]
-        window.title = "Settings"
+        window.title = L("Settings")
         window.setFrameAutosaveName("Settings")
         super.init(window: window)
     }

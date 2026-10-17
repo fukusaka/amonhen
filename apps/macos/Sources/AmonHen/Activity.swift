@@ -217,17 +217,17 @@ private struct OperationsTab: View {
         VStack(alignment: .leading) {
             HStack {
                 Picker("", selection: $kind) {
-                    Text("すべて").tag("all")
+                    Text(L("All")).tag("all")
                     Text("git").tag("git")
-                    Text("コマンド").tag("command")
+                    Text(L("Commands")).tag("command")
                 }
                 .pickerStyle(.segmented).frame(width: 220)
-                Toggle("失敗だけ", isOn: $failuresOnly)
-                TextField("絞り込む", text: $filter)
-                Button("JSON に書き出す…") { export() }
+                Toggle(L("Failures Only"), isOn: $failuresOnly)
+                TextField(L("Filter"), text: $filter)
+                Button(L("Export JSON…")) { export() }
             }
             Table(shown, selection: $selection) {
-                TableColumn("時刻") { r in
+                TableColumn(L("Time")) { r in
                     Text(timeFormatter.string(from: Date(timeIntervalSince1970: Double(r.started) / 1000))).monospacedDigit()
                 }
                 .width(90)
@@ -236,11 +236,11 @@ private struct OperationsTab: View {
                         .foregroundStyle(r.ok == nil ? .orange : r.ok! ? .green : .red)
                 }
                 .width(16)
-                TableColumn("リポジトリ") { r in
-                    Text(r.remote.map { "\($0)（daemon）" } ?? repoName(r.repo))
+                TableColumn(L("Repository")) { r in
+                    Text(r.remote.map { L("%@ (daemon)", $0) } ?? repoName(r.repo))
                 }
                 .width(min: 60, ideal: 110)
-                TableColumn("内容") { r in
+                TableColumn(L("Content")) { r in
                     HStack {
                         Text(r.label).lineLimit(1).truncationMode(.middle).help(r.label)
                         if r.ok == nil, let progress = r.progress {
@@ -248,7 +248,7 @@ private struct OperationsTab: View {
                         }
                         if r.ok == nil, r.cancellable {
                             Spacer()
-                            Button("取り消す") { model.cancel(r) }.controlSize(.small)
+                            Button(L("Cancel Operation")) { model.cancel(r) }.controlSize(.small)
                         }
                     }
                 }
@@ -262,7 +262,7 @@ private struct OperationsTab: View {
                 }
                 .frame(height: 90)
             }
-            Text("git の起動とコアの命令を、新しい順に最大 1000 件（daemon 越しのリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。")
+            Text(L("git runs and core commands, newest first, up to 1,000 (for repositories through the daemon, also the git it starts). ● means running; fetch, pull, push and clone show their progress and can be canceled."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding()
@@ -298,7 +298,7 @@ private struct HistoryTab: View {
 
     var body: some View {
         VStack(alignment: .leading) {
-            Picker("リポジトリ", selection: $model.selectedRepository) {
+            Picker(L("Repository"), selection: $model.selectedRepository) {
                 ForEach(model.repositories) { Text($0.name).tag(Optional($0)) }
             }
             .frame(width: 320)
@@ -309,12 +309,12 @@ private struct HistoryTab: View {
                         Text(timeFormatter.string(from: entry.time)).monospacedDigit().foregroundStyle(.secondary)
                         Text(entry.label)
                         Spacer()
-                        Button(i == 0 ? "Undo" : "ここまで戻す") { model.undo(through: i) }
-                            .help(i == 0 ? "この操作を戻す" : "この操作を含め、これより新しい \(i + 1) 個の操作を順に戻す")
+                        Button(i == 0 ? "Undo" : L("Undo to Here")) { model.undo(through: i) }
+                            .help(i == 0 ? L("Undo this operation.") : L("Undo the %ld latest operations, down to and including this one.", i + 1))
                     }
                 }
             }
-            Text("Undo できる操作（新しい順）。ほかのツールで ref が動いていると、そこで止まります。").font(.caption).foregroundStyle(.secondary)
+            Text(L("Operations you can Undo (newest first). It stops where another tool has moved a ref.")).font(.caption).foregroundStyle(.secondary)
         }
         .padding()
         .onAppear { model.loadUndoLog() }
@@ -337,14 +337,14 @@ private struct PerformanceTab: View {
         }
         VStack(alignment: .leading) {
             Table(rows) {
-                TableColumn("項目", value: \.id)
-                TableColumn("回数") { Text("\($0.count)").monospacedDigit() }.width(50)
+                TableColumn(L("Item"), value: \.id)
+                TableColumn(L("Count")) { Text("\($0.count)").monospacedDigit() }.width(50)
                 TableColumn("p50 ms") { Text(ms($0.p50)).monospacedDigit() }.width(60)
                 TableColumn("p95 ms") { r in Text(ms(r.p95)).monospacedDigit().foregroundStyle(r.p95 > 16.7 ? .orange : .primary) }.width(60)
-                TableColumn("最大 ms") { Text(ms($0.max)).monospacedDigit() }.width(60)
-                TableColumn("直近 ms") { Text(ms($0.last)).monospacedDigit() }.width(60)
+                TableColumn(L("Max ms")) { Text(ms($0.max)).monospacedDigit() }.width(60)
+                TableColumn(L("Last ms")) { Text(ms($0.last)).monospacedDigit() }.width(60)
             }
-            Text("アプリを起動してからの直近 500 回ずつ。p95 が 1 フレームの倍（16.7 ms）を超えたら橙色。").font(.caption).foregroundStyle(.secondary)
+            Text(L("The last 500 of each since the app started. Orange when p95 exceeds twice a frame (16.7 ms).")).font(.caption).foregroundStyle(.secondary)
         }
         .padding()
     }
@@ -355,11 +355,11 @@ private struct EventsTab: View {
     var body: some View {
         VStack(alignment: .leading) {
             Table(model.events.reversed()) {
-                TableColumn("時刻") { Text(timeFormatter.string(from: $0.time)).monospacedDigit() }.width(90)
-                TableColumn("リポジトリ") { Text($0.repo) }.width(min: 60, ideal: 120)
-                TableColumn("内容") { Text($0.text) }
+                TableColumn(L("Time")) { Text(timeFormatter.string(from: $0.time)).monospacedDigit() }.width(90)
+                TableColumn(L("Repository")) { Text($0.repo) }.width(min: 60, ideal: 120)
+                TableColumn(L("Content")) { Text($0.text) }
             }
-            Text("ファイルの変化の知らせと、それによる読み直し（新しい順に最大 500 件）。").font(.caption).foregroundStyle(.secondary)
+            Text(L("File change notices and the reloads they cause (newest first, up to 500).")).font(.caption).foregroundStyle(.secondary)
         }
         .padding()
     }
@@ -371,9 +371,9 @@ private struct DaemonTab: View {
 
     private func duration(_ ms: UInt64) -> String {
         let s = ms / 1000
-        if s < 60 { return "\(s) 秒" }
-        if s < 3600 { return s % 60 == 0 ? "\(s / 60) 分" : "\(s / 60) 分 \(s % 60) 秒" }
-        return "\(s / 3600) 時間 \(s % 3600 / 60) 分"
+        if s < 60 { return L("%ld s", Int(s)) }
+        if s < 3600 { return s % 60 == 0 ? L("%ld min", Int(s / 60)) : L("%ld min %ld s", Int(s / 60), Int(s % 60)) }
+        return L("%ld h %ld min", Int(s / 3600), Int(s % 3600 / 60))
     }
 
     private func bytes(_ n: UInt64) -> String {
@@ -385,85 +385,85 @@ private struct DaemonTab: View {
             HStack(alignment: .top) {
                 if let d = model.daemon {
                     VStack(alignment: .leading, spacing: 2) {
-                        Label("共有の daemon は動いています", systemImage: "circle.fill").foregroundStyle(.green).font(.headline)
-                        Text("pid \(String(d.pid)) · 版 \(d.version)（通信の形 \(d.protocol)） · 動いて \(duration(d.uptimeMs)) · つながり \(d.connections)")
+                        Label(L("The shared daemon is running"), systemImage: "circle.fill").foregroundStyle(.green).font(.headline)
+                        Text(L("pid %@ · version %@ (protocol %@) · up %@ · connections %ld", String(d.pid), "\(d.version)", "\(d.protocol)", duration(d.uptimeMs), d.connections))
                             .font(.caption).monospacedDigit()
                         Text(d.socket).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 2) {
-                        Label(model.daemonChecked ? "共有の daemon は動いていません" : "調べています…", systemImage: "circle")
+                        Label(model.daemonChecked ? L("The shared daemon isn’t running") : L("Checking…"), systemImage: "circle")
                             .foregroundStyle(.secondary).font(.headline)
-                        Text("daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > Advanced）、自動で起動します。")
+                        Text(L("It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Advanced)."))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 Spacer()
                 if model.daemon == nil {
-                    Button("起動") { model.startDaemon() }
+                    Button(L("Start")) { model.startDaemon() }
                 } else {
-                    Button("止める") { model.stopDaemon() }
-                        .help("daemon 越しに開いているリポジトリは、つながりが切れる（「つなぎ直す」でまた起動する）")
+                    Button(L("Stop")) { model.stopDaemon() }
+                        .help(L("Repositories opened through the daemon get disconnected (Reconnect starts it again)."))
                 }
             }
-            Text("開いているリポジトリ").font(.subheadline.bold())
+            Text(L("Open Repositories")).font(.subheadline.bold())
             Table(model.daemon?.repos ?? []) {
-                TableColumn("リポジトリ") { r in Text(r.path).lineLimit(1).truncationMode(.head).help(r.path) }
+                TableColumn(L("Repository")) { r in Text(r.path).lineLimit(1).truncationMode(.head).help(r.path) }
                 TableColumn("SSH") { r in
                     if r.ssh == true {
                         if let reason = r.closed {
-                            Text("切れた").foregroundStyle(.red).help(reason)
+                            Text(L("Disconnected")).foregroundStyle(.red).help(reason)
                         } else {
                             Text("\(bytes(r.sent ?? 0)) · \(bytes(r.received ?? 0))").monospacedDigit()
-                                .help("SSH 先との送った・受け取った量" + (r.engine.map { "\nSSH 先のエンジン: \($0)" } ?? ""))
+                                .help(L("Sent to and received from the SSH host") + (r.engine.map { "\n" + L("Engine on the SSH host: %@", $0) } ?? ""))
                         }
                     } else {
                         Text("—").foregroundStyle(.secondary)
                     }
                 }
                 .width(min: 40, ideal: 120)
-                TableColumn("つながり") { r in
-                    Text(r.clients > 0 ? "\(r.clients)" : "なし（\(duration(r.idleMs))前から）").monospacedDigit()
+                TableColumn(L("Connections")) { r in
+                    Text(r.clients > 0 ? "\(r.clients)" : L("None (for %@)", duration(r.idleMs))).monospacedDigit()
                 }
                 .width(min: 60, ideal: 130)
-                TableColumn("History") { r in Text(r.history ? "あり" : "—") }.width(60)
-                TableColumn("監視") { r in Text(r.watching ? "あり" : "—") }.width(40)
-                TableColumn("検索の索引") { r in
-                    Text(r.indexRows.map { "\($0) 行・\(bytes(UInt64(r.indexBytes ?? 0)))" } ?? "—").monospacedDigit()
+                TableColumn("History") { r in Text(r.history ? L("Yes") : "—") }.width(60)
+                TableColumn(L("Watching")) { r in Text(r.watching ? L("Yes") : "—") }.width(40)
+                TableColumn(L("Search Index")) { r in
+                    Text(r.indexRows.map { L("%ld rows · %@", $0, bytes(UInt64(r.indexBytes ?? 0))) } ?? "—").monospacedDigit()
                 }
                 .width(min: 80, ideal: 150)
             }
             .frame(minHeight: 110)
-            Text("このアプリの daemon とのつながり").font(.subheadline.bold())
+            Text(L("This App’s Connections to the Daemon")).font(.subheadline.bold())
             let remotes = model.repositories.filter(\.isRemote)
             Table(remotes) {
-                TableColumn("リポジトリ") { r in Text(r.name) }
-                TableColumn("場所") { r in
-                    Text(r.location.hasPrefix("ssh://") ? "SSH 先（直接）"
-                        : r.location.hasPrefix("daemon:ssh://") ? "共有の daemon → SSH 先" : "手元の共有の daemon")
+                TableColumn(L("Repository")) { r in Text(r.name) }
+                TableColumn(L("Location")) { r in
+                    Text(r.location.hasPrefix("ssh://") ? L("SSH host (direct)")
+                        : r.location.hasPrefix("daemon:ssh://") ? L("Shared daemon → SSH host") : L("Local shared daemon"))
                         .foregroundStyle(.secondary)
                 }
                 .width(min: 80, ideal: 130)
-                TableColumn("状態") { r in
+                TableColumn(L("Status")) { r in
                     switch r.repository.connectionState {
-                    case .closed(let reason): Text("切れた").foregroundStyle(.red).help(reason)
-                    default: Text("つながっている").foregroundStyle(.green)
+                    case .closed(let reason): Text(L("Disconnected")).foregroundStyle(.red).help(reason)
+                    default: Text(L("Connected")).foregroundStyle(.green)
                     }
                 }
                 .width(90)
-                TableColumn("送った・受け取った") { r in
+                TableColumn(L("Sent · Received")) { r in
                     let t = r.repository.traffic
                     Text(t.map { "\(bytes($0.sent)) · \(bytes($0.received))" } ?? "—").monospacedDigit()
                 }
                 .width(min: 100, ideal: 150)
-                TableColumn("SSH 先のエンジン") { r in
+                TableColumn(L("Engine on the SSH Host")) { r in
                     let engine = r.repository.remoteEngine
                     Text(engine ?? "—").lineLimit(1).truncationMode(.head).foregroundStyle(.secondary).help(engine ?? "")
                 }
                 .width(min: 80, ideal: 220)
             }
             .frame(minHeight: 80)
-            Text("daemon はだれもつながらなくなって \(duration(model.daemon?.idleExitMs ?? 600_000))たつと終わる。端末からは amonhen daemon status で見られる。")
+            Text(L("The daemon exits after %@ with no connections. From a terminal, run amonhen daemon status to see it.", duration(model.daemon?.idleExitMs ?? 600_000)))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding()
@@ -475,10 +475,10 @@ private struct ActivityView: View {
     let model: ActivityModel
     var body: some View {
         TabView {
-            OperationsTab(model: model).tabItem { Text("Operations") }
+            OperationsTab(model: model).tabItem { Text(L("Operations")) }
             HistoryTab(model: model).tabItem { Text("History") }
-            PerformanceTab(model: model).tabItem { Text("Performance") }
-            EventsTab(model: model).tabItem { Text("Events") }
+            PerformanceTab(model: model).tabItem { Text(L("Performance")) }
+            EventsTab(model: model).tabItem { Text(L("Events")) }
             DaemonTab(model: model).tabItem { Text("Daemon") }
         }
         .padding(.top, 8)

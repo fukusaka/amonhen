@@ -109,9 +109,9 @@ final class Bookmarks {
 
     /// 色ラベルの名前と色（Finder のタグの並び）。
     static let colors: [(name: String, title: String, color: NSColor)] = [
-        ("red", "赤", .systemRed), ("orange", "オレンジ", .systemOrange), ("yellow", "黄", .systemYellow),
-        ("green", "緑", .systemGreen), ("blue", "青", .systemBlue), ("purple", "紫", .systemPurple),
-        ("gray", "グレー", .systemGray),
+        ("red", L("Red"), .systemRed), ("orange", L("Orange"), .systemOrange), ("yellow", L("Yellow"), .systemYellow),
+        ("green", L("Green"), .systemGreen), ("blue", L("Blue"), .systemBlue), ("purple", L("Purple"), .systemPurple),
+        ("gray", L("Gray"), .systemGray),
     ]
 
     static func color(named name: String?) -> NSColor? { colors.first { $0.name == name }?.color }

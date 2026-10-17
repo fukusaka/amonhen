@@ -311,7 +311,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     tabWith: inNewWindow ? nil : replacing ?? tabTarget), replacing: replacing)
             } catch {
                 let alert = NSAlert(error: error)
-                alert.messageText = "\(RepositoryLocation.host(location) ?? location) に接続できませんでした"
+                alert.messageText = L("Couldn’t connect to %@", RepositoryLocation.host(location) ?? location)
                 alert.informativeText = String(describing: error)
                 alert.runModal()
                 showHomeIfNothingOpen()

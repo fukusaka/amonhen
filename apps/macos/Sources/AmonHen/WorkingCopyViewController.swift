@@ -32,11 +32,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// ファイルごとの追加・削除の行数（HEAD と作業ツリー。untracked はない）。
     private var stats: [String: (added: Int?, removed: Int?)] = [:]
     /// 一覧の見出し: すべてを含める・外すチェックボックスと、含める数。
-    private let allCheckbox = NSButton(checkboxWithTitle: "Changes", target: nil, action: nil)
+    private let allCheckbox = NSButton(checkboxWithTitle: L("Changes"), target: nil, action: nil)
     private let countLabel = NSTextField(labelWithString: "")
     /// パスで一覧を絞り込む。
     private let filterField = NSSearchField()
-    private let emptyLabel = NSTextField(labelWithString: "変更はありません")
+    private let emptyLabel = NSTextField(labelWithString: L("No changes"))
     private var diffBar: TitleAndButtonsBar?
     private let amend = NSButton(checkboxWithTitle: "Amend", target: nil, action: nil)
     private let commitButton = NSButton(title: "Commit", target: nil, action: nil)
@@ -123,7 +123,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         message.isAutomaticDashSubstitutionEnabled = false
         message.delegate = self
         message.textContainerInset = NSSize(width: 4, height: 4)
-        message.placeholder = "Description（任意）"
+        message.placeholder = L("Description (optional)")
         summary.placeholderString = "Summary"
         summaryCount.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         summaryCount.textColor = .tertiaryLabelColor
@@ -145,19 +145,19 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         commitButton.action = #selector(commitClicked)
         commitButton.keyEquivalent = "\r"
         commitButton.keyEquivalentModifierMask = .command
-        commitButton.toolTip = "チェックしたファイルをコミット（⌘↩）"
+        commitButton.toolTip = L("Commit the checked files (⌘↩)")
         amend.target = self
         amend.action = #selector(toggleAmend)
-        suggestButton.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: "AI でメッセージを提案")
-        suggestButton.toolTip = "AI: stage 済みの変更からコミットメッセージを提案する"
+        suggestButton.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: L("Suggest a message with AI"))
+        suggestButton.toolTip = L("AI: suggest a commit message from the staged changes")
         suggestButton.target = self
         suggestButton.action = #selector(suggestMessage)
         suggestButton.isHidden = !Assistant.isConfigured
         NotificationCenter.default.addObserver(
             self, selector: #selector(assistantChanged), name: .assistantChanged, object: nil)
         for (button, symbol, tip) in [
-            (historyButton, "clock.arrow.circlepath", "最近のコミットのメッセージを入れる（件名の欄で ⌥↑・⌥↓ でも呼び出せる）"),
-            (insertButton, "plus.circle", "Conventional Commits の型、Co-authored-by、Signed-off-by を入れる"),
+            (historyButton, "clock.arrow.circlepath", L("Insert the message of a recent commit (⌥↑ and ⌥↓ in the Summary field also work)")),
+            (insertButton, "plus.circle", L("Insert a Conventional Commits type, Co-authored-by or Signed-off-by")),
         ] {
             button.addItem(withTitle: "")
             button.item(at: 0)?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
@@ -169,7 +169,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         commitMenuButton.addItem(withTitle: "")
         commitMenuButton.controlSize = .small
         commitMenuButton.isBordered = false
-        commitMenuButton.toolTip = "Commit and Push（⌘⇧↩）、Amend"
+        commitMenuButton.toolTip = L("Commit and Push (⌘⇧↩), Amend")
         for (title, action) in [("Commit and Push", #selector(commitAndPush)), ("Amend Last Commit", #selector(startAmend))] {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
@@ -186,7 +186,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         ])
         commitRow.spacing = 4
         summaryCount.setContentHuggingPriority(.required, for: .horizontal)
-        summaryCount.toolTip = "件名の文字数（50 を超えると黄、72 を超えると橙）"
+        summaryCount.toolTip = L("Length of the summary (yellow over 50, orange over 72)")
         let summaryRow = summary
         let separator = NSBox()
         separator.boxType = .separator
@@ -206,22 +206,22 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         allCheckbox.target = self
         allCheckbox.action = #selector(toggleAll)
         allCheckbox.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
-        allCheckbox.toolTip = "一覧のファイルをすべて次のコミットに含める・外す"
+        allCheckbox.toolTip = L("Include or exclude all listed files in the next commit")
         countLabel.textColor = .secondaryLabelColor
         countLabel.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         layoutControl.segmentCount = 3
-        layoutControl.setImage(NSImage(systemSymbolName: "list.bullet", accessibilityDescription: "リスト"), forSegment: 0)
-        layoutControl.setImage(NSImage(systemSymbolName: "list.bullet.indent", accessibilityDescription: "ツリー"), forSegment: 1)
-        layoutControl.setImage(NSImage(systemSymbolName: "doc.text", accessibilityDescription: "ファイル名"), forSegment: 2)
-        layoutControl.setToolTip("ファイルをパスの一覧で表示", forSegment: 0)
-        layoutControl.setToolTip("ファイルをディレクトリの木で表示", forSegment: 1)
-        layoutControl.setToolTip("ファイル名を先に、親のディレクトリを薄く表示", forSegment: 2)
+        layoutControl.setImage(NSImage(systemSymbolName: "list.bullet", accessibilityDescription: L("List")), forSegment: 0)
+        layoutControl.setImage(NSImage(systemSymbolName: "list.bullet.indent", accessibilityDescription: L("Tree")), forSegment: 1)
+        layoutControl.setImage(NSImage(systemSymbolName: "doc.text", accessibilityDescription: L("File Name")), forSegment: 2)
+        layoutControl.setToolTip(L("Show files as a list of paths"), forSegment: 0)
+        layoutControl.setToolTip(L("Show files as a directory tree"), forSegment: 1)
+        layoutControl.setToolTip(L("Show the file name first and the parent directory dimmed"), forSegment: 2)
         layoutControl.controlSize = .small
         layoutControl.selectedSegment = layout.rawValue
         layoutControl.target = self
         layoutControl.action = #selector(layoutChanged)
         let filesHeader = NSStackView(views: [allCheckbox, countLabel, NSView(), layoutControl])
-        filterField.placeholderString = "パスで絞り込む"
+        filterField.placeholderString = L("Filter by path")
         filterField.controlSize = .small
         filterField.delegate = self
 
@@ -272,8 +272,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         sideControl.target = self
         sideControl.action = #selector(sideChanged)
         sideControl.controlSize = .small
-        sideControl.setToolTip("作業ツリーにあって、まだ stage していない変更", forSegment: 0)
-        sideControl.setToolTip("stage 済み（次のコミットに含める）の変更", forSegment: 1)
+        sideControl.setToolTip(L("Changes in the working tree that are not staged yet"), forSegment: 0)
+        sideControl.setToolTip(L("Staged changes (included in the next commit)"), forSegment: 1)
         linesButton.target = self
         linesButton.action = #selector(stageLines)
         titleLabel.lineBreakMode = .byTruncatingMiddle
@@ -283,8 +283,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         discardButton.hasDestructiveAction = true
         // コンフリクトのファイルは、下にマージエディタを出す。帯にはファイル全体の操作を置く。
         let conflictActions: [(String, Selector)] = [
-            ("Take Current File", #selector(takeOursFile)), ("Take Incoming File", #selector(takeTheirsFile)),
-            ("Mark Resolved", #selector(markResolved)),
+            (L("Take Current File"), #selector(takeOursFile)), (L("Take Incoming File"), #selector(takeTheirsFile)),
+            (L("Mark Resolved"), #selector(markResolved)),
         ]
         conflictButtons.setViews(conflictActions.map { NSButton(title: $0.0, target: self, action: $0.1) }, in: .leading)
         conflictButtons.isHidden = true
@@ -294,9 +294,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         diffView.isSelectable = true
         diffView.onSelectionChange = { [weak self] in self?.updateButtons() }
         diffView.onExplainHunk = { [weak self] path, hunk in
-            guard let self, Assistant.confirm(repository: repository.workdir ?? "remote", summary: "\(path) の hunk 1 つ") else { return }
+            guard let self, Assistant.confirm(repository: repository.workdir ?? "remote", summary: L("One hunk of %@", path)) else { return }
             let workdir = repository.workdir
-            AssistantPanel.show(title: "hunk の解説", over: view.window) { useCache, onText in
+            AssistantPanel.show(title: L("Hunk Explanation"), over: view.window) { useCache, onText in
                 try await Assistant.run(
                     .explainHunk, variables: ["path": path, "hunk": hunk, "message": ""], workdir: workdir,
                     useCache: useCache, onText: onText)
@@ -388,13 +388,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard let actions, !entry.isConflict else { return }
         let path = entry.item.path
         if entry.item.kind == .untracked {
-            guard actions.confirm("\(path) を削除しますか？", message: "untracked のファイルなので、Undo では戻せません。", ok: "削除")
+            guard actions.confirm(L("Delete %@?", path), message: L("It’s an untracked file, so Undo can’t bring it back."), ok: L("Delete"))
             else { return }
             actions.perform(["op": "deleteUntracked", "paths": [path]])
         } else if entry.item.isUnstaged {
             guard actions.confirm(
-                "\(path) の変更を捨てますか？", message: "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻します。Undo で戻せます。",
-                ok: "捨てる") else { return }
+                L("Discard the changes to %@?", path), message: L("This discards the working tree changes and returns to the content of the next commit (the index). You can Undo it."),
+                ok: "Discard") else { return }
             actions.perform(["op": "discard", "paths": [path]])
         } else {
             NSSound.beep()
@@ -422,7 +422,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         tree = showsTree ? Self.makeTree(entries) : nil
         files.reloadData()
         files.expandItem(nil, expandChildren: true)
-        emptyLabel.stringValue = allEntries.isEmpty ? "変更はありません" : "一致するファイルはありません"
+        emptyLabel.stringValue = allEntries.isEmpty ? L("No changes") : L("No matching files")
         emptyLabel.isHidden = !entries.isEmpty
         updateHeader()
 
@@ -436,7 +436,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         } else {
             current = nil
             selectedKey = nil
-            diffView.show(nil, message: allEntries.isEmpty ? "変更はありません" : "")
+            diffView.show(nil, message: allEntries.isEmpty ? L("No changes") : "")
             titleLabel.stringValue = ""
             updateButtons()
         }
@@ -458,7 +458,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         allCheckbox.isEnabled = !candidates.isEmpty
         let included = allEntries.filter { $0.item.isStaged && !$0.isConflict }.count
         countLabel.stringValue = allEntries.isEmpty ? "" : "\(included) / \(allEntries.count)"
-        countLabel.toolTip = "次のコミットに含めるファイル / 変更のあるファイル"
+        countLabel.toolTip = L("Files in the next commit / changed files")
     }
 
     /// ファイルをディレクトリの木にする。
@@ -572,8 +572,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             item.submenu = sub
             item.toolTip = prefix == "fixup! "
-                ? "選んだコミットへの fixup! としてコミットする（後で rebase -i --autosquash でまとめる）"
-                : "選んだコミットへの squash! としてコミットする（まとめるときにメッセージも足す）"
+                ? L("Commit as a fixup! of the chosen commit (combine later with rebase -i --autosquash)")
+                : L("Commit as a squash! of the chosen commit (its message is added when combined)")
             menu.addItem(item)
         }
     }
@@ -607,7 +607,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 } catch {
                     guard request == self.request else { return }
                     unembed()
-                    diffView.show(nil, message: "読めません: \(error)")
+                    diffView.show(nil, message: L("Can’t read: %@", "\(error)"))
                 }
             }
             return
@@ -624,7 +624,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             selectedKey = (entry.item.path, combined ? false : staged)
             current = diff
             if let diff, diff.isBinary {
-                diffView.show(nil, message: "バイナリファイル")
+                diffView.show(nil, message: L("Binary file"))
             } else {
                 diffView.show(diff, keepScroll: keepScroll)
             }
@@ -647,7 +647,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             unembed()
             mergeEditors[editor.path] = nil
             MergeEditorWindowController.show(editor, actions: actions)
-            diffView.show(nil, message: "マージエディタを別ウィンドウで開いています")
+            diffView.show(nil, message: L("The merge editor is open in a separate window"))
         }
         editor.onResolved = { [weak self, weak editor] in
             guard let self, let editor else { return }
@@ -677,15 +677,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         linesButton.isHidden = isConflict || selectedKey == nil
         linesButton.title = staged || selectedStaged ? "Unstage Lines" : "Stage Lines"
         linesButton.isEnabled = current != nil && !selected.isEmpty
-        linesButton.toolTip = current?.isCombined == true ? "選んだ行を次のコミットに含める・外す（Space）" : nil
+        linesButton.toolTip = current?.isCombined == true ? L("Include or exclude the selected lines in the next commit (Space)") : nil
         // 選んだ行があれば行を、なければファイルを破棄する。stage 済みの変更は破棄しない。
         discardButton.isHidden = staged || isConflict || selectedKey == nil
         discardButton.title = selected.isEmpty ? "Discard File" : "Discard Lines"
         discardButton.isEnabled = selectedKey != nil
             && !(current?.isCombined == true && selected.contains { current?.isStaged(row: $0) == true })
         discardButton.toolTip = selected.isEmpty
-            ? "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻す"
-            : "選んだ行の変更を作業ツリーから捨てる（含めている行は先に外す）"
+            ? L("Discard the working tree changes and return to the content of the next commit (the index)")
+            : L("Discard the selected lines’ changes from the working tree (included lines are excluded first)")
         let count = stagedCount
         commitButton.isEnabled = !(count == 0 && amend.state == .off) && !composedMessage.isEmpty
         // ボタンの数や名前が変わると幅が変わるので、並べ直す。
@@ -776,14 +776,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             actions.perform { try current.discard(rows: rows) }
         } else if current?.item.kind == .untracked {
             guard actions.confirm(
-                "\(key.path) を削除しますか？", message: "untracked のファイルなので、Undo では戻せません。", ok: "削除") else { return }
+                L("Delete %@?", key.path), message: L("It’s an untracked file, so Undo can’t bring it back."), ok: L("Delete")) else { return }
             // ファイルの操作はコアに任せる（SSH 越しのリポジトリでも同じに動く）。
             actions.perform(["op": "deleteUntracked", "paths": [key.path]])
         } else {
             // ファイル全体を一度に捨てるときは確かめる（行の単位は選んで押すので、そのまま）。
             guard actions.confirm(
-                "\(key.path) の変更を捨てますか？", message: "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻します。Undo で戻せます。",
-                ok: "捨てる") else { return }
+                L("Discard the changes to %@?", key.path), message: L("This discards the working tree changes and returns to the content of the next commit (the index). You can Undo it."),
+                ok: "Discard") else { return }
             actions.perform(["op": "discard", "paths": [key.path]])
         }
     }
@@ -846,7 +846,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         struct Count: Decodable { let count: Int }
         let remaining = (try? repository.info(["op": "conflictCount", "path": key.path], as: Count.self))?.count ?? 0
         if remaining > 0,
-           actions?.confirm("\(key.path) にコンフリクトが \(remaining) 個残っています", message: "このまま解決済みにしますか？", ok: "解決済みにする") != true {
+           actions?.confirm(L("%@ still has %ld conflicts", key.path, remaining), message: L("Mark it as resolved anyway?"), ok: L("Mark Resolved")) != true {
             return
         }
         let repository = self.repository
@@ -885,12 +885,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             NSSound.beep()
             return
         }
-        guard Assistant.confirm(repository: repository.workdir ?? "remote", summary: "stage 済みの \(staged.count) ファイルの差分")
+        guard Assistant.confirm(repository: repository.workdir ?? "remote", summary: L("The diff of %ld staged files", staged.count))
         else { return }
         let repository = self.repository, workdir = repository.workdir
         // 書き方の手本: 最近のコミットのメッセージ（まだ読めていなければ直前のもの）。
         let examples = recentCommits.prefix(10).map(\.message).joined(separator: "\n---\n")
-        AssistantPanel.show(title: "コミットメッセージの提案", over: view.window, useTitle: "メッセージに入れる", onUse: { [weak self] text in
+        AssistantPanel.show(title: L("Suggested Commit Message"), over: view.window, useTitle: L("Use Message"), onUse: { [weak self] text in
             guard let self else { return }
             let parts = text.trimmingCharacters(in: .whitespacesAndNewlines)
                 .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
@@ -953,7 +953,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 if let output = ActivityRecord.all().last(where: {
                     $0.kind == "git" && $0.label.hasPrefix("git commit") && $0.started >= started && $0.ok == true
                 })?.output, !output.isEmpty, let window = view.window {
-                    HookOutputSheet.show(title: "コミットしました（hooks の出力）", text: output, in: window)
+                    HookOutputSheet.show(title: L("Committed (hooks output)"), text: output, in: window)
                 }
                 message.string = ""
                 summary.stringValue = ""
@@ -964,7 +964,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             } catch {
                 // hooks で止まったときは出力が長いので、読めるシートで出す。
                 if let window = view.window {
-                    HookOutputSheet.show(title: "コミットできませんでした", text: "\(error)", in: window)
+                    HookOutputSheet.show(title: L("Couldn’t Commit"), text: "\(error)", in: window)
                 }
             }
             refresh()
@@ -1060,7 +1060,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             item.toolTip = commit.message
             menu.addItem(item)
         }
-        if menu.items.count == 1 { menu.addItem(NSMenuItem(title: "まだ読めていません", action: nil, keyEquivalent: "")) }
+        if menu.items.count == 1 { menu.addItem(NSMenuItem(title: L("Not loaded yet"), action: nil, keyEquivalent: "")) }
     }
 
     private func useMessage(_ text: String) {
@@ -1075,11 +1075,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private func buildInsertMenu() {
         let menu = insertButton.menu!
         while menu.items.count > 1 { menu.removeItem(at: 1) }
-        let types = NSMenu(title: "型")
+        let types = NSMenu(title: L("Type"))
         for type in ["feat", "fix", "docs", "style", "refactor", "perf", "test", "build", "ci", "chore", "revert"] {
             types.addItem(ClosureMenuItem(title: "\(type):") { [weak self] in self?.setType(type) })
         }
-        let typesItem = NSMenuItem(title: "Conventional Commits の型", action: nil, keyEquivalent: "")
+        let typesItem = NSMenuItem(title: L("Conventional Commits Type"), action: nil, keyEquivalent: "")
         typesItem.submenu = types
         menu.addItem(typesItem)
         let authors = NSMenu(title: "Co-authored-by")
@@ -1089,11 +1089,11 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 self?.addTrailer("Co-authored-by: \(c.author) <\(c.email)>")
             })
         }
-        if authors.items.isEmpty { authors.addItem(NSMenuItem(title: "最近の作者はまだ読めていません", action: nil, keyEquivalent: "")) }
+        if authors.items.isEmpty { authors.addItem(NSMenuItem(title: L("Recent authors aren’t loaded yet"), action: nil, keyEquivalent: "")) }
         let authorsItem = NSMenuItem(title: "Co-authored-by", action: nil, keyEquivalent: "")
         authorsItem.submenu = authors
         menu.addItem(authorsItem)
-        menu.addItem(ClosureMenuItem(title: "Signed-off-by（自分）") { [weak self] in self?.addSignOff() })
+        menu.addItem(ClosureMenuItem(title: L("Signed-off-by (Me)")) { [weak self] in self?.addSignOff() })
     }
 
     /// 件名の先頭を `type: ` にする（もう型があれば置き換える）。
@@ -1276,10 +1276,10 @@ final class WorkingFileCell: NSTableCellView {
         detail.lineBreakMode = .byTruncatingHead
         stat.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
         stat.alignment = .right
-        discardButton.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: "変更を捨てる")
+        discardButton.image = NSImage(systemSymbolName: "arrow.uturn.backward", accessibilityDescription: L("Discard Changes"))
         discardButton.isBordered = false
         discardButton.bezelStyle = .accessoryBarAction
-        discardButton.toolTip = "作業ツリーの変更を捨てる（index の内容に戻す）"
+        discardButton.toolTip = L("Discard the working tree changes (return to the content of the index)")
         discardButton.target = self
         discardButton.action = #selector(discardClicked)
         discardButton.isHidden = true
@@ -1343,9 +1343,9 @@ final class WorkingFileCell: NSTableCellView {
         checkbox.isHidden = check == nil
         checkbox.state = check ?? .off
         checkbox.toolTip = switch check {
-        case .on?: "次のコミットに含める（クリックで外す）"
-        case .mixed?: "一部の行だけ含める（クリックですべて含める）"
-        default: "次のコミットに含めない（クリックで含める）"
+        case .on?: L("Included in the next commit (click to exclude)")
+        case .mixed?: L("Only some lines are included (click to include all)")
+        default: L("Not included in the next commit (click to include)")
         }
         self.mark.isHidden = mark == nil
         self.mark.stringValue = mark?.0 ?? ""

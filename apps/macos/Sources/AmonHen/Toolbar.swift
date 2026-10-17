@@ -42,12 +42,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         activityItem.view = stack
         activityItem.label = "Activity"
         activityItem.paletteLabel = "Activity"
-        activityItem.toolTip = "実行した git とコマンド、操作ログ、画面の速さ（⌥⌘A）"
+        activityItem.toolTip = L("Git and commands run, the operation log, and UI speed (⌥⌘A)")
         NotificationCenter.default.addObserver(
             self, selector: #selector(runningChanged), name: .runningOperationsChanged, object: nil)
         // 今のリポジトリ。押すとリポジトリの一覧を出し、選んだものにこのタブを切り替える。
         repositoryButton.bezelStyle = .texturedRounded
-        repositoryButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "リポジトリを切り替える")?
+        repositoryButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: L("Switch Repository"))?
             .withSymbolConfiguration(.init(pointSize: 9, weight: .semibold))
         repositoryButton.imagePosition = .imageTrailing
         repositoryButton.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
@@ -60,39 +60,39 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         repositoryItem.view = repositoryButton
         repositoryItem.label = "Repository"
         repositoryItem.paletteLabel = "Repository"
-        repositoryItem.toolTip = "リポジトリを切り替える"
+        repositoryItem.toolTip = L("Switch Repository")
         // 今のブランチ。押すとブランチの切り替え（⌘⇧B）。名前の変更・上流は Repository メニュー。
-        branchItem.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "ブランチ")
+        branchItem.image = NSImage(systemSymbolName: "arrow.triangle.branch", accessibilityDescription: "Branch")
         branchItem.label = "Branch"
         branchItem.paletteLabel = "Branch"
         branchItem.action = #selector(RepositoryWindow.switchBranch(_:))
-        branchItem.toolTip = "ブランチを切り替える（⌘⇧B）"
+        branchItem.toolTip = L("Switch Branch (⌘⇧B)")
         // History の検索。▾ で、作者・パス・内容で探す書き方を入れる。
         let field = searchItem.searchField
-        field.placeholderString = "History を検索"
+        field.placeholderString = L("Search History")
         field.sendsWholeSearchString = true
         field.target = self
         field.action = #selector(searchSubmitted)
-        let scopes = NSMenu(title: "検索")
-        for (title, prefix) in [("作者で探す（author:）", "author:"), ("パスで探す（path:）", "path:"), ("内容で探す（contents:）", "contents:")] {
+        let scopes = NSMenu(title: L("Search"))
+        for (title, prefix) in [(L("Search by Author (author:)"), "author:"), (L("Search by Path (path:)"), "path:"), (L("Search by Contents (contents:)"), "contents:")] {
             let item = NSMenuItem(title: title, action: #selector(insertSearchPrefix(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = prefix
             scopes.addItem(item)
         }
         field.searchMenuTemplate = scopes
-        searchItem.paletteLabel = "Search"
+        searchItem.paletteLabel = L("Search")
     }
 
     /// 今のリポジトリの名前を出す。
     func setRepository(_ name: String) {
         repositoryButton.title = name
-        repositoryItem.toolTip = "\(name) — 押すとリポジトリを切り替える"
+        repositoryItem.toolTip = L("%@ — click to switch repository", name)
     }
 
     /// リポジトリを開いていないタブ（リポジトリのページ）: 名前の代わりに案内を出し、押せなくする。
     func showNoRepository() {
-        repositoryButton.title = "リポジトリを選ぶ"
+        repositoryButton.title = L("Choose a Repository")
         repositoryButton.isEnabled = false
         repositoryItem.toolTip = nil
         branchItem.label = "Branch"
@@ -104,7 +104,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     /// 今のブランチを出す（detached なら短い ID）。
     func setBranch(_ name: String?) {
         branchItem.label = name ?? "detached"
-        branchItem.toolTip = "\(name ?? "detached HEAD") — 押すとブランチを切り替える（⌘⇧B）"
+        branchItem.toolTip = L("%@ — click to switch branch (⌘⇧B)", name ?? "detached HEAD")
     }
 
     /// History の検索欄の中身と揃える。
@@ -140,16 +140,16 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     @objc private func runningChanged() {
         if RunningOperations.count > 0 {
             spinner.startAnimation(nil)
-            activityItem.toolTip = "実行中の操作 \(RunningOperations.count) 個（押すと Activity）"
+            activityItem.toolTip = L("%ld operations running (click for Activity)", RunningOperations.count)
         } else {
             spinner.stopAnimation(nil)
-            activityItem.toolTip = "実行した git とコマンド、操作ログ、画面の速さ（⌥⌘A）"
+            activityItem.toolTip = L("Git and commands run, the operation log, and UI speed (⌥⌘A)")
         }
     }
 
     func setUndo(_ label: String?) {
         // ラベルの長さでツールバーの幅が変わらないよう、操作の名前はツールチップに出す。
-        undoItem.toolTip = label.map { "Undo: \($0)（⌥⌘Z）" } ?? "Undo できる操作はありません"
+        undoItem.toolTip = label.map { L("Undo: %@ (⌥⌘Z)", $0) } ?? L("Nothing to Undo")
     }
 
     /// 今のブランチが上流より先（push できる）・後ろ（pull できる）にあるコミットの数を、ボタンのバッジに出す。
@@ -162,8 +162,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
             pushItem.label = ahead > 0 ? "Push ↑\(ahead)" : "Push"
             pullItem.label = behind > 0 ? "Pull ↓\(behind)" : "Pull"
         }
-        pushItem.toolTip = ahead > 0 ? "上流より \(ahead) コミット先にあります（⌃⌘P）" : "Push（⌃⌘P）"
-        pullItem.toolTip = behind > 0 ? "上流より \(behind) コミット後ろにあります（⌃⌘L）" : "Pull（⌃⌘L）"
+        pushItem.toolTip = ahead > 0 ? L("%ld commits ahead of upstream (⌃⌘P)", ahead) : L("Push (⌃⌘P)")
+        pullItem.toolTip = behind > 0 ? L("%ld commits behind upstream (⌃⌘L)", behind) : L("Pull (⌃⌘L)")
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -187,46 +187,46 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         switch id {
         case .repositories:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Repositories", "square.grid.2x2",
-                                                  #selector(AppDelegate.showRepositories(_:)), "リポジトリのページに切り替える（⌘⇧R）")
+                                                  #selector(AppDelegate.showRepositories(_:)), L("Show the Repositories page (⌘⇧R)"))
         case .fetch:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Fetch", "arrow.down.circle",
-                                                  #selector(RepositoryWindow.fetch(_:)), "すべてのリモートを fetch（⌃⌘F）")
+                                                  #selector(RepositoryWindow.fetch(_:)), L("Fetch all remotes (⌃⌘F)"))
         case .pull:
             (item, label, symbol, action, tip) = (pullItem, "Pull", "arrow.down.to.line.circle",
-                                                  #selector(RepositoryWindow.pull(_:)), "Pull — 取り込むコミットと取り込み方を確かめてから（⌃⌘L）")
+                                                  #selector(RepositoryWindow.pull(_:)), L("Pull — review the incoming commits and how to integrate them first (⌃⌘L)"))
         case .push:
             (item, label, symbol, action, tip) = (pushItem, "Push", "arrow.up.circle",
-                                                  #selector(RepositoryWindow.push(_:)), "Push — 送るコミットを確かめてから（⌃⌘P）")
+                                                  #selector(RepositoryWindow.push(_:)), L("Push — review the commits to send first (⌃⌘P)"))
         case .merge:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Merge", "arrow.triangle.merge",
                                                   #selector(RepositoryWindow.mergeIntoCurrent(_:)),
-                                                  "ブランチ・タグ・選んだコミットを今のブランチへ merge（⌥⌘M）")
+                                                  L("Merge a branch, tag or the selected commit into the current branch (⌥⌘M)"))
         case .rebase:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Rebase", "arrow.triangle.pull",
                                                   #selector(RepositoryWindow.rebaseCurrent(_:)),
-                                                  "今のブランチを、ブランチ・タグ・選んだコミットの上へ rebase（⌥⌘R）")
+                                                  L("Rebase the current branch onto a branch, tag or the selected commit (⌥⌘R)"))
         case .stash:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Stash", "tray.and.arrow.down",
-                                                  #selector(RepositoryWindow.stashChanges(_:)), "作業中の変更を退避（⌥⌘S）")
+                                                  #selector(RepositoryWindow.stashChanges(_:)), L("Stash your uncommitted changes (⌥⌘S)"))
         case .pop:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Pop", "tray.and.arrow.up",
-                                                  #selector(RepositoryWindow.popStash(_:)), "最新の stash を戻して消す（⌥⌘⇧S）")
+                                                  #selector(RepositoryWindow.popStash(_:)), L("Apply the latest stash and remove it (⌥⌘⇧S)"))
         case .newBranch:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Branch", "plus.square.on.square",
-                                                  #selector(RepositoryWindow.newBranch(_:)), "HEAD から新しいブランチ（⌥⌘B）")
+                                                  #selector(RepositoryWindow.newBranch(_:)), L("New branch from HEAD (⌥⌘B)"))
         case .refresh:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Refresh", "arrow.clockwise",
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), L("Refresh"), "arrow.clockwise",
                                                   #selector(RepositoryWindow.refreshRepository(_:)),
-                                                  "History・ブランチ・Working Copy を読み直す（⌘R）")
+                                                  L("Reload History, branches and Working Copy (⌘R)"))
         case .undo:
             (item, label, symbol, action, tip) = (undoItem, "Undo", "arrow.uturn.backward.circle",
                                                   #selector(RepositoryWindow.undoOperation(_:)), undoItem.toolTip ?? "")
         case .terminal:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Terminal", "terminal",
-                                                  #selector(RepositoryWindow.openInTerminal(_:)), "ターミナルで開く")
+            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), L("Terminal"), "terminal",
+                                                  #selector(RepositoryWindow.openInTerminal(_:)), L("Open in Terminal"))
         case .finder:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Finder", "folder",
-                                                  #selector(RepositoryWindow.revealInFinder(_:)), "Finder で表示")
+                                                  #selector(RepositoryWindow.revealInFinder(_:)), L("Reveal in Finder"))
         default:
             return nil
         }

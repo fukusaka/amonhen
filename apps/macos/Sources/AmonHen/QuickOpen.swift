@@ -34,7 +34,7 @@ final class QuickOpenPanel: NSObject, NSSearchFieldDelegate, NSTableViewDataSour
 
     private func build() {
         guard let content = panel.contentView else { return }
-        field.placeholderString = "リポジトリを開く（名前・パスであいまいに探す）"
+        field.placeholderString = L("Open a repository (fuzzy search by name or path)")
         field.font = .systemFont(ofSize: 17)
         field.focusRingType = .none
         field.delegate = self
@@ -79,8 +79,8 @@ final class QuickOpenPanel: NSObject, NSSearchFieldDelegate, NSTableViewDataSour
         if Bookmarks.shared.scanned.isEmpty, !Bookmarks.shared.data.scanRoots.isEmpty { Bookmarks.shared.rescan() }
         field.stringValue = ""
         hint.stringValue = newWindow
-            ? "⏎ 新しいウィンドウで開く　⌘⏎ タブで開く　esc 閉じる"
-            : "⏎ タブで開く　⌘⏎ 新しいウィンドウで開く　esc 閉じる"
+            ? L("⏎ Open in New Window   ⌘⏎ Open in Tab   esc Close")
+            : L("⏎ Open in Tab   ⌘⏎ Open in New Window   esc Close")
         update()
         if let screen = (NSApp.keyWindow ?? NSApp.mainWindow)?.screen ?? NSScreen.main {
             let frame = screen.visibleFrame

@@ -125,7 +125,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     private func buildFindBar() {
         findBar.isHidden = true
-        findField.placeholderString = "差分を検索"
+        findField.placeholderString = L("Search Diff")
         findField.sendsSearchStringImmediately = true
         findField.delegate = self
         findField.target = self
@@ -133,11 +133,11 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         findField.controlSize = .small
         findCount.textColor = .secondaryLabelColor
         findCount.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        let previous = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "前へ")!,
+        let previous = NSButton(image: NSImage(systemSymbolName: "chevron.up", accessibilityDescription: L("Previous"))!,
                                 target: self, action: #selector(findPrevious))
-        let next = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "次へ")!,
+        let next = NSButton(image: NSImage(systemSymbolName: "chevron.down", accessibilityDescription: L("Next"))!,
                             target: self, action: #selector(findNext))
-        let done = NSButton(title: "完了", target: self, action: #selector(hideFindBar))
+        let done = NSButton(title: L("Done"), target: self, action: #selector(hideFindBar))
         for b in [previous, next, done] {
             b.bezelStyle = .accessoryBarAction
             b.controlSize = .small
@@ -296,7 +296,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         guard let onExplainHunk, Assistant.isConfigured, let (path, text) = hunkText(containing: Int(point.y / lineHeight))
         else { return nil }
         let menu = NSMenu()
-        menu.addItem(ClosureMenuItem(title: "AI でこの hunk を解説") { onExplainHunk(path, text) })
+        menu.addItem(ClosureMenuItem(title: L("Explain This Hunk with AI")) { onExplainHunk(path, text) })
         return menu
     }
 
@@ -684,7 +684,7 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         } else if let current = currentMatch {
             findCount.stringValue = "\(current + 1) / \(matches.count)"
         } else {
-            findCount.stringValue = "見つかりません"
+            findCount.stringValue = L("Not found")
         }
     }
 
@@ -895,7 +895,7 @@ extension DiffViewController {
         let label = glyph("Viewed", small)
         // 行数（バイナリならその旨）は Viewed の左に右揃えで置く。
         let counts: [(TextRenderer.ShapedLine, NSColor)] = r.flags & UInt8(AmonhenDiffRow_BINARY) != 0
-            ? [(glyph("バイナリ", small), .secondaryLabelColor)]
+            ? [(glyph(L("Binary"), small), .secondaryLabelColor)]
             : [(glyph("+\(r.new_no)", bold), .systemGreen), (glyph("−\(r.old_no)", bold), .systemRed)]
         let countsWidth = counts.map(\.0.width).reduce(0, +) + CGFloat(counts.count - 1) * 6
         let countsX = box.minX - 14 - countsWidth
@@ -1091,7 +1091,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     var onSearch: ((String) -> Void)?
     var onSelectRef: ((String) -> Void)?
     /// 署名をどこで検証しているか（吹き出しに出す。RepositoryWindow が決める）。
-    var signaturePlace = SignaturePlace(local: true, detail: "リポジトリがこの Mac にある")
+    var signaturePlace = SignaturePlace(local: true, detail: L("The repository is on this Mac"))
     private var signaturePopover: NSPopover?
     /// メッセージを書き直して保存したとき（コミットの ID と新しいメッセージ）。
     var onReword: ((String, String) -> Void)?
@@ -1230,8 +1230,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         // 見せ方の切り替えの左に、詳細だけを広げるボタン。
         expandButton.bezelStyle = .accessoryBarAction
         expandButton.isBordered = false
-        expandButton.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: "詳細を広げる")
-        expandButton.toolTip = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）"
+        expandButton.image = NSImage(systemSymbolName: "arrow.up.left.and.arrow.down.right", accessibilityDescription: L("Expand Details"))
+        expandButton.toolTip = L("Expand the commit details to fill the right column (click again to restore).")
         expandButton.target = self
         expandButton.action = #selector(toggleExpanded)
         expandButton.controlSize = .small
@@ -1243,8 +1243,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         headerContainer.addSubview(expandButton)
         var right = expandButton.frame.minX
         for (button, symbol, tip, action) in [
-            (explainButton, "sparkles", "AI: このコミット（複数選んでいればまとめた差分）を解説する", #selector(explainCommit)),
-            (translateButton, "character.bubble", "AI: メッセージを翻訳する", #selector(translateMessage)),
+            (explainButton, "sparkles", L("AI: Explain this commit (or the combined diff of the selected commits)."), #selector(explainCommit)),
+            (translateButton, "character.bubble", L("AI: Translate the message."), #selector(translateMessage)),
         ] {
             button.bezelStyle = .accessoryBarAction
             button.isBordered = false
@@ -1324,11 +1324,11 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let message = info.message.trimmingCharacters(in: .whitespacesAndNewlines)
         let subject = message.components(separatedBy: "\n").first ?? message
         let items: [(String, String)] = [
-            ("ID をコピー", info.oid),
-            ("短い ID をコピー", String(info.oid.prefix(10))),
-            ("件名をコピー", subject),
-            ("メッセージをコピー", message),
-            ("git show コマンドをコピー", "git show \(info.oid)"),
+            (L("Copy ID"), info.oid),
+            (L("Copy Short ID"), String(info.oid.prefix(10))),
+            (L("Copy Subject"), subject),
+            (L("Copy Message"), message),
+            (L("Copy git show Command"), "git show \(info.oid)"),
         ]
         for (i, (title, value)) in items.enumerated() {
             menu.insertItem(ClosureMenuItem(title: title) {
@@ -1338,7 +1338,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
         menu.insertItem(.separator(), at: items.count)
         if extras?.headDistance != nil, info.parents.count <= 1 {
-            menu.insertItem(ClosureMenuItem(title: "メッセージを書き直す…") { [weak self] in self?.beginReword() }, at: items.count + 1)
+            menu.insertItem(ClosureMenuItem(title: L("Edit Message…")) { [weak self] in self?.beginReword() }, at: items.count + 1)
             menu.insertItem(.separator(), at: items.count + 2)
         }
         return menu
@@ -1392,13 +1392,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         text.autoresizingMask = [.width]
         text.string = info.message.trimmingCharacters(in: .whitespacesAndNewlines)
         scroll.documentView = text
-        let save = NSButton(title: "保存", target: self, action: #selector(saveReword))
+        let save = NSButton(title: L("Save"), target: self, action: #selector(saveReword))
         save.keyEquivalent = "\r"
         save.keyEquivalentModifierMask = .command
         save.bezelColor = .controlAccentColor
-        let cancel = NSButton(title: "キャンセル", target: self, action: #selector(cancelReword))
+        let cancel = NSButton(title: L("Cancel"), target: self, action: #selector(cancelReword))
         cancel.keyEquivalent = "\u{1b}"
-        let hint = NSTextField(labelWithString: "⌘↩ で保存、esc でやめる。Undo で戻せる")
+        let hint = NSTextField(labelWithString: L("⌘↩ to save, esc to cancel. You can Undo it."))
         hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         hint.textColor = .secondaryLabelColor
         // 下の帯: 左に説明、右端に「キャンセル」「保存」。
@@ -1431,10 +1431,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         guard message != info.message.trimmingCharacters(in: .whitespacesAndNewlines) else { return endReword() }
         if extras.map({ !$0.remoteBranches.isEmpty }) ?? false {
             let alert = NSAlert()
-            alert.messageText = "push 済みのコミットを書き直しますか？"
-            alert.informativeText = "このコミットは \(extras?.remoteBranches.joined(separator: ", ") ?? "") に含まれています。書き直すとリモートと食い違い、push には force が要ります。"
-            alert.addButton(withTitle: "書き直す")
-            alert.addButton(withTitle: "キャンセル")
+            alert.messageText = L("Edit a commit that has been pushed?")
+            alert.informativeText = L("This commit is in %@. Editing it makes your branch differ from the remote, and pushing then needs force.", extras?.remoteBranches.joined(separator: ", ") ?? "")
+            alert.addButton(withTitle: L("Rewrite"))
+            alert.addButton(withTitle: L("Cancel"))
             guard alert.runModal() == .alertFirstButtonReturn else { return }
         }
         let oid = info.oid
@@ -1468,7 +1468,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             stacked = nil
             shownCommit = nil
             reloadFiles()
-            diffView.show(nil, message: "コミットを選ぶと、変更が表示されます")
+            diffView.show(nil, message: L("Select a commit to see its changes."))
             info = nil
             extras = nil
             header.string = ""
@@ -1529,7 +1529,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             self.stacked = stacked
             reloadFiles()
             if changes?.items.isEmpty ?? true {
-                diffView.show(nil, message: "変更なし")
+                diffView.show(nil, message: L("No changes"))
                 onDiffShown?()
             } else if let stacked {
                 showStacked(stacked, key: hex)
@@ -1566,13 +1566,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         stacked = nil
         reloadFiles()
         renderSelectionHeader(rows: rows, history: history, kind: nil)
-        diffView.show(nil, message: "差分を読んでいます…")
+        diffView.show(nil, message: L("Loading the diff…"))
         let started = CACurrentMediaTime()
         Task {
             let result = await Task.detached(priority: .userInitiated) { try? history.selectionDiff(rows: rows, pair: pair) }.value
             guard request == self.request else { return }
             guard let (kind, stacked) = result else {
-                diffView.show(nil, message: "差分を読めませんでした")
+                diffView.show(nil, message: L("Couldn’t load the diff"))
                 return
             }
             NSLog("選んだ %d コミットの差分を %.0f ms で読んだ", rows.count, (CACurrentMediaTime() - started) * 1000)
@@ -1580,7 +1580,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             reloadFiles()
             renderSelectionHeader(rows: rows, history: history, kind: kind, pair: pair)
             if stacked.count == 0 {
-                diffView.show(nil, message: "変更なし")
+                diffView.show(nil, message: L("No changes"))
                 return
             }
             let ids = rows.sorted().compactMap { history.commitID(row: $0) }
@@ -1598,21 +1598,21 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             .font: NSFont.monospacedSystemFont(ofSize: 11, weight: .regular), .foregroundColor: NSColor.secondaryLabelColor,
         ]
         let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
-        text.append(NSAttributedString(string: "\(rows.count) コミットを選んでいます\n", attributes: title))
+        text.append(NSAttributedString(string: L("%ld commits selected", rows.count) + "\n", attributes: title))
         let explanation = switch kind {
-        case .range?: "続いているので、一番古いものの親から一番新しいものまでの差分（まとめて 1 つにしたのと同じ）"
+        case .range?: L("They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one).")
         case .pair?: switch pair {
-            case .forward: "続いていない 2 つなので、古いほうから新しいほうまでの差分（A..B）"
-            case .reverse: "続いていない 2 つの、新しいほうから古いほうまでの差分（向きを入れ替えた）"
-            case .mergeBase: "続いていない 2 つの、共通の祖先から新しいほうまでの差分（A...B。新しいほうの側の変更だけ）"
+            case .forward: L("Two non-consecutive commits, so this is the diff from the older to the newer (A..B).")
+            case .reverse: L("The diff of the two non-consecutive commits from the newer to the older (reversed).")
+            case .mergeBase: L("The diff of the two non-consecutive commits from their common ancestor to the newer (A...B: only the changes on the newer side).")
             }
-        case .each?: "とびとびなので、コミットごとの差分をファイルごとに並べています（見出しはパスと短い ID）"
-        case nil: "差分を読んでいます…"
+        case .each?: L("They are not contiguous, so each commit’s diff is listed file by file (headed by the path and short ID).")
+        case nil: L("Loading the diff…")
         }
         text.append(NSAttributedString(string: explanation + "\n", attributes: note))
         if kind == .pair {
             // 取り方の切り替え（押すと読み直す）。
-            let options: [(PairMode, String)] = [(.forward, "A..B"), (.reverse, "向きを入れ替える"), (.mergeBase, "merge-base から（A...B）")]
+            let options: [(PairMode, String)] = [(.forward, "A..B"), (.reverse, L("Reverse")), (.mergeBase, L("From the merge-base (A...B)"))]
             for (mode, title) in options where mode != pair {
                 var link = note
                 link[.link] = Self.pairScheme + "\(mode.rawValue)"
@@ -1695,25 +1695,25 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let path = name.components(separatedBy: " — ").first ?? name
         let menu = NSMenu()
         let collapsedNow = file < collapsed.count && collapsed[file]
-        menu.addItem(ClosureMenuItem(title: collapsedNow ? "開く" : "畳む") { [weak self] in self?.toggleCollapsed(file) })
-        menu.addItem(ClosureMenuItem(title: "Viewed にする・戻す") { [weak self] in self?.toggleViewed(file) })
+        menu.addItem(ClosureMenuItem(title: collapsedNow ? L("Expand") : L("Collapse")) { [weak self] in self?.toggleCollapsed(file) })
+        menu.addItem(ClosureMenuItem(title: L("Toggle Viewed")) { [weak self] in self?.toggleViewed(file) })
         menu.addItem(.separator())
         if let commit = commitHex {
             menu.addItem(ClosureMenuItem(title: "Blame at \(commit.prefix(8))") { [weak self] in self?.onBlame?(path, commit) })
         }
         menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
         menu.addItem(.separator())
-        menu.addItem(ClosureMenuItem(title: "パスをコピー") {
+        menu.addItem(ClosureMenuItem(title: L("Copy Path")) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(path, forType: .string)
         })
         if let workdir = repository.workdir {
             let full = (workdir as NSString).appendingPathComponent(path)
             if FileManager.default.fileExists(atPath: full) {
-                menu.addItem(ClosureMenuItem(title: "Finder で表示") {
+                menu.addItem(ClosureMenuItem(title: L("Show in Finder")) {
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: full)])
                 })
-                menu.addItem(ClosureMenuItem(title: "既定のアプリで開く") { NSWorkspace.shared.open(URL(fileURLWithPath: full)) })
+                menu.addItem(ClosureMenuItem(title: L("Open with Default App")) { NSWorkspace.shared.open(URL(fileURLWithPath: full)) })
             }
         }
         return menu
@@ -1834,19 +1834,19 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     @objc private func translateMessage() {
         let message = shownMessage.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !message.isEmpty, Assistant.confirm(repository: repository.workdir ?? "remote", summary: "メッセージ \(message.count) 文字")
+        guard !message.isEmpty, Assistant.confirm(repository: repository.workdir ?? "remote", summary: L("The message (%ld characters)", message.count))
         else { return }
         let workdir = repository.workdir
-        AssistantPanel.show(title: "翻訳", over: view.window) { useCache, onText in
+        AssistantPanel.show(title: L("Translation"), over: view.window) { useCache, onText in
             try await Assistant.run(.translate, variables: ["message": message], workdir: workdir, useCache: useCache, onText: onText)
         }
     }
 
     /// 差分の右クリック > AI でこの hunk を解説。
     private func explainHunk(path: String, hunk: String) {
-        guard Assistant.confirm(repository: repository.workdir ?? "remote", summary: "\(path) の hunk 1 つ") else { return }
+        guard Assistant.confirm(repository: repository.workdir ?? "remote", summary: L("One hunk of %@", path)) else { return }
         let message = shownMessage, workdir = repository.workdir
-        AssistantPanel.show(title: "hunk の解説", over: view.window) { useCache, onText in
+        AssistantPanel.show(title: L("Hunk Explanation"), over: view.window) { useCache, onText in
             try await Assistant.run(
                 .explainHunk, variables: ["path": path, "hunk": hunk, "message": message], workdir: workdir,
                 useCache: useCache, onText: onText)
@@ -1858,10 +1858,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let stacked = self.stacked, changes = self.changes
         let files = stacked?.names ?? changes?.items.map(\.path) ?? []
         guard !files.isEmpty || !message.isEmpty,
-              Assistant.confirm(repository: repository.workdir ?? "remote", summary: "メッセージと、\(files.count) ファイルの差分")
+              Assistant.confirm(repository: repository.workdir ?? "remote", summary: L("The message and the diff of %ld files", files.count))
         else { return }
         let workdir = repository.workdir
-        AssistantPanel.show(title: "解説", over: view.window) { useCache, onText in
+        AssistantPanel.show(title: L("Explanation"), over: view.window) { useCache, onText in
             // 差分の文字は裏で作る（大きければ切る）。
             let diff = await Task.detached(priority: .userInitiated) { () -> String in
                 if let stacked { return DiffText.make(stacked.view(collapsed: [])) }
@@ -1887,7 +1887,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         for item in splitViewItems.dropFirst() { item.isCollapsed = expand }
         expandButton.image = NSImage(
             systemSymbolName: expand ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right",
-            accessibilityDescription: expand ? "詳細を戻す" : "詳細を広げる")
+            accessibilityDescription: expand ? L("Restore Details") : L("Expand Details"))
     }
 
     @objc private func styleChanged() {
@@ -2065,7 +2065,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     private func showFileDiff(_ diff: FileDiff?) {
         if let diff, diff.isBinary {
-            diffView.show(nil, message: "バイナリファイル")
+            diffView.show(nil, message: L("Binary file"))
         } else {
             diffView.show(diff)
         }
@@ -2216,7 +2216,7 @@ final class FileCell: NSTableCellView {
             return
         }
         guard let added = value.added, let removed = value.removed else {
-            stat.attributedStringValue = NSAttributedString(string: "バイナリ", attributes: [.foregroundColor: NSColor.secondaryLabelColor])
+            stat.attributedStringValue = NSAttributedString(string: L("Binary"), attributes: [.foregroundColor: NSColor.secondaryLabelColor])
             return
         }
         let text = NSMutableAttributedString()

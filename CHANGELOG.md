@@ -32,6 +32,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- The app is in English and Japanese, following the system language. git's operations and the app's screens keep
+  their English names (Commit, Push, Working Copy, History, …) in Japanese too.
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).
 
 #### Fixed

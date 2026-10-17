@@ -12,9 +12,9 @@ enum CommitHeaderStyle: Int, CaseIterable {
 
     var title: String {
         switch self {
-        case .compact: "簡潔"
-        case .standard: "標準"
-        case .detailed: "詳細"
+        case .compact: L("Brief")
+        case .standard: L("Standard")
+        case .detailed: L("Full")
         }
     }
 
@@ -236,13 +236,13 @@ struct CommitHeaderRenderer {
                 guard let range = message.range(of: token) else { return nil }
                 let line = message[message.lineRange(for: range)].lowercased()
                 let kind = if line.contains("cherry picked from") {
-                    "cherry-pick 元"
+                    L("Cherry-picked from")
                 } else if line.contains("reverts commit") {
-                    "revert 元"
+                    L("Reverts")
                 } else if line.hasPrefix("fixes:") {
-                    "修正対象"
+                    L("Fixes")
                 } else {
-                    "参照"
+                    L("Mentions")
                 }
                 return (message.distance(from: message.startIndex, to: range.lowerBound), kind, commit)
             }
@@ -254,7 +254,7 @@ struct CommitHeaderRenderer {
     private func authorLink(_ name: String, _ attrs: [NSAttributedString.Key: Any]) {
         var link = attrs
         link[.link] = Self.authorScheme + name
-        link[.toolTip] = "\(name) のコミットで絞り込む"
+        link[.toolTip] = L("Show only commits by %@", name)
         add(name, link)
     }
 
@@ -264,7 +264,7 @@ struct CommitHeaderRenderer {
             if i > 0 { add(", ", attrs) }
             var link = attrs
             link[.link] = Self.refScheme + name
-            link[.toolTip] = "\(name) の履歴に絞り込む"
+            link[.toolTip] = L("Show only the history of %@", name)
             add(name, link)
         }
     }
@@ -372,7 +372,7 @@ struct CommitHeaderRenderer {
         if !info.refs.isEmpty { table.row("Refs") { refLinks(info.refs, refAttrs) } }
         mergedTagRows(table)
         if let extras, extras.mergedCount > 0 {
-            table.row("Merged") { add("\(extras.mergedCount) コミット", value) }
+            table.row("Merged") { add(L("%ld commits", extras.mergedCount), value) }
         }
         add("\n", dim)
         renderMessage(notes: true)
@@ -393,14 +393,14 @@ struct CommitHeaderRenderer {
             if !extras.branches.isEmpty { table.row("Branches") { refLinks(extras.branches, value) } }
             if extras.tagCount > 0 {
                 let shown = extras.tags.prefix(12).joined(separator: ", ")
-                let more = extras.tagCount > 12 ? " ほか \(extras.tagCount - 12) 個" : ""
+                let more = extras.tagCount > 12 ? " " + L("and %ld more tags", extras.tagCount - 12) : ""
                 table.row("Tags") { add(shown + more, value) }
             }
             if let previous = extras.previousTag { table.row("Previous Tag") { add(previous, value) } }
             if extras.originUrl != nil {
                 table.row("Pushed") {
                     if isUnpushed {
-                        add("未 push（どのリモートブランチにも含まれない）", unpushedAttrs)
+                        add(L("Not pushed (not on any remote branch)"), unpushedAttrs)
                     } else {
                         refLinks(extras.remoteBranches, value)
                     }
@@ -410,12 +410,12 @@ struct CommitHeaderRenderer {
         mergedTagRows(table)
         if let extras, extras.mergedCount > 0 {
             table.row("Merged") {
-                add("\(extras.mergedCount) コミット", value)
+                add(L("%ld commits", extras.mergedCount), value)
                 for commit in extras.merged.prefix(20) {
                     add("\u{2028}", value)
                     summaryLine(commit)
                 }
-                if extras.mergedCount > 20 { add("\u{2028}ほか \(extras.mergedCount - 20) 件", dim) }
+                if extras.mergedCount > 20 { add("\u{2028}" + L("and %ld more", extras.mergedCount - 20), dim) }
             }
         }
         for (kind, commit) in relatedCommits {
@@ -542,7 +542,7 @@ struct CommitHeaderRenderer {
         for tag in info.mergedTags {
             table.row("Merged Tag") {
                 add("\(tag.name)", value)
-                add("（\(tag.tagger)、\(tag.signed ? "署名付き" : "署名なし")）", dim)
+                add(tag.signed ? L(" (%@, signed)", tag.tagger) : L(" (%@, unsigned)", tag.tagger), dim)
                 if !tag.subject.isEmpty { add(" — \(tag.subject)", dim) }
             }
         }

@@ -27,9 +27,9 @@ final class Actions {
                 let result = try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
                 switch result.outcome {
                 case .conflict:
-                    await alert("コンフリクトがあります", "Working Copy で解決してから Continue するか、Abort してください。")
+                    await alert(L("There are conflicts"), L("Resolve them in Working Copy, then Continue or Abort."))
                 case .stopped:
-                    await alert("途中で止まりました", "Working Copy で確かめてから Continue してください。")
+                    await alert(L("Stopped partway"), L("Check Working Copy, then Continue."))
                 default:
                     break
                 }
@@ -84,7 +84,7 @@ final class Actions {
         if let onFailure {
             onFailure("\(error)")
         } else {
-            await alert("操作に失敗しました", "\(error)")
+            await alert(L("The operation failed"), "\(error)")
         }
     }
 
@@ -106,7 +106,7 @@ final class Actions {
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: ok)
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(string: initial)
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
@@ -122,7 +122,7 @@ final class Actions {
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: ok)
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Cancel"))
         return alert.runModal() == .alertFirstButtonReturn
     }
 
@@ -131,7 +131,7 @@ final class Actions {
         let alert = NSAlert()
         alert.messageText = title
         alert.addButton(withTitle: ok)
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Cancel"))
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 180))
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
@@ -156,7 +156,7 @@ final class Actions {
             let json = try Repository.json(command)
             return try await Task.detached { try repository.run(json: json).text }.value
         } catch {
-            await alert("読み込めません", "\(error)")
+            await alert(L("Can’t Read"), "\(error)")
             return nil
         }
     }
@@ -168,7 +168,7 @@ final class Actions {
     func reword(_ oid: String) {
         Task {
             guard let message = await text(["op": "commitMessage", "oid": oid]),
-                  let edited = editMessage("Edit Message", initial: message, ok: "変更") else { return }
+                  let edited = editMessage(L("Edit Message"), initial: message, ok: L("Change")) else { return }
             rewrite("Reword \(oid.prefix(8))", ["kind": "reword", "oid": oid, "message": edited])
         }
     }
@@ -176,7 +176,7 @@ final class Actions {
     func squash(_ oid: String) {
         Task {
             guard let message = await text(["op": "squashMessage", "oid": oid]),
-                  let edited = editMessage("Squash into Parent", initial: message, ok: "まとめる") else { return }
+                  let edited = editMessage("Squash into Parent", initial: message, ok: "Squash") else { return }
             rewrite("Squash \(oid.prefix(8))", ["kind": "squash", "oid": oid, "message": edited])
         }
     }
@@ -194,10 +194,10 @@ final class Actions {
             }
             switch result {
             case let .failure(error):
-                await alert("まとめられません", "\(error)")
+                await alert(L("Can’t Squash"), "\(error)")
             case let .success(info):
                 let title = "Squash \(oids.count) Commits"
-                guard let edited = editMessage(title, initial: info.message, ok: "まとめる") else { return }
+                guard let edited = editMessage(title, initial: info.message, ok: "Squash") else { return }
                 rewrite(title, ["kind": "squashRange", "oid": info.oldest, "last": info.newest, "message": edited])
             }
         }
@@ -211,12 +211,12 @@ final class Actions {
     // MARK: - よく使う操作
 
     func newBranch(at start: String) {
-        guard let name = ask("New Branch", message: "\(start) から作るブランチの名前", ok: "作成して切り替え") else { return }
+        guard let name = ask("New Branch", message: L("Name of the branch to create from %@", start), ok: L("Create and Switch")) else { return }
         perform(["op": "createBranch", "name": name, "start": start, "checkout": true])
     }
 
     func newTag(at target: String) {
-        guard let name = ask("New Tag", message: "\(target) に付けるタグの名前", ok: "作成") else { return }
+        guard let name = ask("New Tag", message: L("Name of the tag for %@", target), ok: L("Create")) else { return }
         perform(["op": "createTag", "name": name, "target": target])
     }
 
@@ -228,11 +228,11 @@ final class Actions {
     func stash() {
         let alert = NSAlert()
         alert.messageText = "Stash Changes"
-        alert.informativeText = "メッセージ（空でもよい）"
+        alert.informativeText = L("Message (optional)")
         alert.addButton(withTitle: "Stash")
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Cancel"))
         let field = NSTextField(frame: NSRect(x: 0, y: 30, width: 300, height: 24))
-        let untracked = NSButton(checkboxWithTitle: "untracked のファイルも含める", target: nil, action: nil)
+        let untracked = NSButton(checkboxWithTitle: L("Include untracked files"), target: nil, action: nil)
         untracked.frame = NSRect(x: 0, y: 0, width: 300, height: 22)
         let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 56))
         box.addSubview(field)
@@ -252,7 +252,7 @@ final class Actions {
         Task {
             guard let status = try? await Task.detached(operation: { try repository.loadStatus() }).value,
                   let branch = status.branch else {
-                await alert("push できません", "ブランチをチェックアウトしていません。")
+                await alert(L("Can’t Push"), L("No branch is checked out."))
                 return
             }
             if let upstream = status.upstream, let slash = upstream.firstIndex(of: "/") {

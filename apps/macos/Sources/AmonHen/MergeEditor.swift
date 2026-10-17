@@ -37,8 +37,8 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// Magic Merge の結果など、直前の操作の知らせ。
     private let note = NSTextField(labelWithString: "")
     /// AI: 選んだコンフリクトの解消の提案と解説。
-    private let aiResolveButton = NSButton(title: "AI で解消", target: nil, action: nil)
-    private let aiExplainButton = NSButton(title: "AI で解説", target: nil, action: nil)
+    private let aiResolveButton = NSButton(title: L("Resolve with AI"), target: nil, action: nil)
+    private let aiExplainButton = NSButton(title: L("Explain with AI"), target: nil, action: nil)
 
     /// 最初の Result に入っていたコンフリクト（両側の中身）。添字が左右の欄の `regions` の添字に当たる。
     private var originals: [(current: String, incoming: String)] = []
@@ -125,31 +125,29 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     override func loadView() {
         let hasBase = sides.base != nil
-        let currentPane = pane("Current（今のブランチ）", current)
-        let resultPane = pane("Result（結果、編集できる）", result)
-        let incomingPane = pane("Incoming（取り込む側）", incoming)
-        if hasBase { basePane = pane("Base（共通の祖先）", base) }
+        let currentPane = pane(L("Current (your branch)"), current)
+        let resultPane = pane(L("Result (editable)"), result)
+        let incomingPane = pane(L("Incoming (being merged in)"), incoming)
+        if hasBase { basePane = pane(L("Base (common ancestor)"), base) }
         panes = [currentPane, resultPane, incomingPane]
         for band in [leftBand, rightBand] {
             band.owner = self
         }
 
-        previousButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: "前のコンフリクト")
+        previousButton.image = NSImage(systemSymbolName: "chevron.up", accessibilityDescription: L("Previous Conflict"))
         previousButton.target = self
         previousButton.action = #selector(selectPrevious)
-        previousButton.toolTip = "前のコンフリクト（⌥⌘↑）"
-        nextButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: "次のコンフリクト")
+        previousButton.toolTip = L("Previous Conflict (⌥⌘↑)")
+        nextButton.image = NSImage(systemSymbolName: "chevron.down", accessibilityDescription: L("Next Conflict"))
         nextButton.target = self
         nextButton.action = #selector(selectNext)
-        nextButton.toolTip = "次のコンフリクト（⌥⌘↓）"
+        nextButton.toolTip = L("Next Conflict (⌥⌘↓)")
         magicButton.target = self
         magicButton.action = #selector(magicMerge)
-        magicButton.toolTip = """
-            決まった規則で解けるコンフリクトをまとめて解く: 両側が同じ、片側だけが変えた（diff3）、空白だけが違う、\
-            同じ行の別々の単語を変えた（diff3）。Undo で戻せる
-            """
-        var accepts: [(String, String)] = [("Accept Current", "ours"), ("Accept Incoming", "theirs"), ("Accept Both", "both")]
-        if hasBase { accepts.append(("Accept Base", "base")) }
+        magicButton.toolTip = L(
+            "Resolve all conflicts that fixed rules can solve: both sides are the same, only one side changed (diff3), only whitespace differs, or different words on the same line changed (diff3). You can Undo it.")
+        var accepts: [(String, String)] = [(L("Accept Current"), "ours"), (L("Accept Incoming"), "theirs"), (L("Accept Both"), "both")]
+        if hasBase { accepts.append((L("Accept Base"), "base")) }
         acceptButtons = accepts.map { title, choice in
             let b = NSButton(title: title, target: self, action: #selector(accept(_:)))
             b.identifier = .init(choice)
@@ -158,17 +156,17 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         baseToggle.target = self
         baseToggle.action = #selector(toggleBase)
         baseToggle.isHidden = !hasBase
-        baseToggle.toolTip = "共通の祖先を左端に出す"
+        baseToggle.toolTip = L("Show the common ancestor on the left.")
         let popOut = NSButton(
-            image: NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: "別ウィンドウで開く")!,
+            image: NSImage(systemSymbolName: "macwindow.on.rectangle", accessibilityDescription: L("Open in a Separate Window"))!,
             target: self, action: #selector(popOutClicked))
-        popOut.toolTip = "別ウィンドウで開く"
+        popOut.toolTip = L("Open in a Separate Window")
         popOut.isHidden = onPopOut == nil
-        let save = NSButton(title: "Save", target: self, action: #selector(saveOnly))
-        let resolve = NSButton(title: "Save & Mark Resolved", target: self, action: #selector(saveAndResolve))
+        let save = NSButton(title: L("Save"), target: self, action: #selector(saveOnly))
+        let resolve = NSButton(title: L("Save & Mark Resolved"), target: self, action: #selector(saveAndResolve))
         resolve.keyEquivalent = "\r"
         resolve.keyEquivalentModifierMask = .command
-        resolve.toolTip = "保存して解決済みにする（⌘↩）"
+        resolve.toolTip = L("Save and mark as resolved (⌘↩).")
         for b in [previousButton, nextButton, magicButton] + acceptButtons + [popOut, save, resolve] {
             b.bezelStyle = .push
             b.controlSize = .small
@@ -179,10 +177,10 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
                 + [baseToggle, NSView(), popOut, save, resolve])
         aiResolveButton.target = self
         aiResolveButton.action = #selector(aiResolve)
-        aiResolveButton.toolTip = "AI: 選んだコンフリクトの解消を提案する（採用するまで Result は変わらない）"
+        aiResolveButton.toolTip = L("AI: Suggest a resolution for the selected conflict (Result doesn’t change until you accept it).")
         aiExplainButton.target = self
         aiExplainButton.action = #selector(aiExplain)
-        aiExplainButton.toolTip = "AI: 選んだコンフリクトで、両側が何をしようとしているかを説明する"
+        aiExplainButton.toolTip = L("AI: Explain what each side of the selected conflict is trying to do.")
         for b in [aiResolveButton, aiExplainButton] {
             b.bezelStyle = .push
             b.controlSize = .small
@@ -227,7 +225,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         let solved = applyMagic(safe: true)
         if solved > 0 {
             colorSyntax(result)
-            note.stringValue = "開いたときに \(solved) 個を解きました（⌘Z で戻せる）"
+            note.stringValue = L("Resolved %ld when opened (⌘Z to undo).", solved)
         }
     }
 
@@ -376,7 +374,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     }
 
     private func refresh() {
-        position.stringValue = conflicts.isEmpty ? "コンフリクトなし" : "Conflict \(selected + 1) / \(conflicts.count)"
+        position.stringValue = conflicts.isEmpty ? L("No conflicts") : L("Conflict %ld of %ld", selected + 1, conflicts.count)
         for b in [previousButton, nextButton, magicButton] + acceptButtons { b.isEnabled = !conflicts.isEmpty }
         // 共通の祖先は、対応のわかるコンフリクトでだけ選べる。
         if let baseIndex = acceptButtons.firstIndex(where: { $0.identifier?.rawValue == "base" }) {
@@ -498,7 +496,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     /// ✨ Magic Merge: 決まった規則で解けるコンフリクトをまとめて解く（Undo でまとめて戻せる）。
     @objc private func magicMerge() {
         let solved = applyMagic(safe: false)
-        note.stringValue = solved == 0 ? "解けるものはありません" : "\(solved) 個を解きました（⌘Z で 1 つずつ戻せる）"
+        note.stringValue = solved == 0 ? L("Nothing to resolve") : L("Resolved %ld (⌘Z undoes them one at a time).", solved)
         if solved > 0 { reveal() }
     }
 
@@ -519,7 +517,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
                 info.resolved > 0 else { continue }
             undo.beginUndoGrouping()
             replace(old: old, with: info.text)
-            undo.setActionName(safe ? "Magic Merge（開いたとき）" : "Magic Merge")
+            undo.setActionName(safe ? L("Magic Merge (on open)") : "Magic Merge")
             undo.endUndoGrouping()
             solved += 1
         }
@@ -560,10 +558,10 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     private var assistantKey: String { repository.workdir ?? "remote" }
 
     @objc private func aiExplain() {
-        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: "\(path) のコンフリクト 1 つ")
+        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path))
         else { return NSSound.beep() }
         let path = self.path, workdir = repository.workdir
-        AssistantPanel.show(title: "コンフリクトの解説", over: view.window) { useCache, onText in
+        AssistantPanel.show(title: L("Conflict Explanation"), over: view.window) { useCache, onText in
             try await Assistant.run(
                 .explainConflict, variables: ["path": path, "ours": texts.ours, "theirs": texts.theirs, "base": texts.base],
                 workdir: workdir, useCache: useCache, onText: onText)
@@ -580,7 +578,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     }
 
     @objc private func aiResolve() {
-        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: "\(path) のコンフリクト 1 つ")
+        guard let texts = selectedConflictTexts(), Assistant.confirm(repository: assistantKey, summary: L("One conflict in %@", path))
         else { return NSSound.beep() }
         let index = selected
         let original = conflicts[index]
@@ -588,7 +586,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         /// 返事を読めたら、ここに入れる（「Result に入れる」で使う）。
         final class Box { var proposal: Proposal? }
         let box = Box()
-        AssistantPanel.show(title: "コンフリクトの解消", over: view.window, useTitle: "Result に入れる", onUse: { [weak self] _ in
+        AssistantPanel.show(title: L("Conflict Resolution"), over: view.window, useTitle: L("Put in Result"), onUse: { [weak self] _ in
             guard let self, let proposal = box.proposal else { return }
             applyProposal(proposal.text, to: original)
         }) { useCache, onText in
@@ -596,14 +594,14 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
                 .resolveConflict, variables: ["path": path, "ours": texts.ours, "theirs": texts.theirs, "base": texts.base],
                 workdir: workdir, useCache: useCache, onText: onText)
             guard let proposal = Self.parseProposal(raw) else {
-                throw Assistant.Failure(description: "返事を読めませんでした（決めた形の JSON ではない）:\n\n\(raw)")
+                throw Assistant.Failure(description: L("Couldn’t read the reply (not JSON in the expected shape):") + "\n\n\(raw)")
             }
             let markers = ["<<<<<<<", "=======", ">>>>>>>", "|||||||"]
             if proposal.text.components(separatedBy: "\n").contains(where: { line in markers.contains { line.hasPrefix($0) } }) {
-                throw Assistant.Failure(description: "提案にコンフリクトのマーカーが残っています。作り直してください。\n\n\(proposal.text)")
+                throw Assistant.Failure(description: L("The suggestion still has conflict markers. Try again.") + "\n\n\(proposal.text)")
             }
             box.proposal = proposal
-            return "理由: \(proposal.reason ?? "（なし）")\n\n── 提案 ──\n\(proposal.text)"
+            return L("Reason: %@", proposal.reason ?? L("(none)")) + "\n\n" + L("── Suggestion ──") + "\n\(proposal.text)"
         }
     }
 
@@ -621,7 +619,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         lines.replaceSubrange(start..<end, with: replacement)
         replace(old: old, with: lines.joined(separator: "\n"))
         updateConflicts()
-        note.stringValue = "AI の提案を入れました（⌘Z で戻せる）"
+        note.stringValue = L("Put in the AI’s suggestion (⌘Z to undo).")
     }
 
     // MARK: - 編集と選択
@@ -666,7 +664,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     @objc private func saveAndResolve() {
         if !conflicts.isEmpty, !actions.confirm(
-            "コンフリクトが \(conflicts.count) 個残っています", message: "マーカーを残したまま解決済みにしますか？", ok: "解決済みにする") {
+            L("%ld conflicts remain", conflicts.count), message: L("Mark as resolved with the markers left in?"), ok: L("Mark Resolved")) {
             return
         }
         save(stage: true)
@@ -837,7 +835,7 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         !editor.hasUnsavedChanges || actions.confirm(
-            "保存していない変更があります", message: "閉じると Result の変更は失われます。", ok: "保存せずに閉じる")
+            L("You have unsaved changes"), message: L("Closing discards the changes to Result."), ok: L("Close Without Saving"))
     }
 
     func windowWillClose(_ notification: Notification) {

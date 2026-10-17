@@ -405,6 +405,19 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 
 - 通信は gh を裏で起動して行い、UI スレッドを待たせない（今は macOS の FE の中。GitLab などを足すときに、`HostingProvider` で差し替えられる形にしてコアの外の crate に移す）。読めないときは Activity の Events に出し、ほかの操作には影響させない。
 
+## 13. 言語
+
+- アプリは英語で書いてローカライズする。最初の訳は日本語（`apps/macos/Localization/ja.lproj/Localizable.strings`。
+  `Localization.swift` の `L()` で使う）。言語はシステムの優先する言語に従う。
+- git の操作とアプリの画面の名前は、どの言語でも英語のまま（調べるときの言葉で、git 自身の出力にも出るため）:
+  Working Copy・History・Activity・Repositories・Branches・Remotes・Tags・Stashes・Pull Requests・Summary・
+  Description・Diff・Blame・Commit・Amend・Push・Pull・Fetch・Merge・Rebase・Stash・Pop・Cherry-pick・Revert・Reset・
+  Squash・Fixup・Reword・Stage・Unstage・Discard・Clone・Undo・Continue・Skip・Abort・Force Push・Fast-Forward・HEAD。
+  そういう語だけのボタンやメニューの項目（「New Branch…」「Stage Lines」）は訳さない。
+- それ以外は訳す: macOS の標準のメニューと項目（Apple の訳語）、説明・確認・プレースホルダ・ツールチップ。日本語の文では
+  ブランチ・タグ・リモート・上流・コミット・作業ツリー・コンフリクトを名詞として使う。
+- コア（Rust）のエラーの文はまだ日本語だけ。訳すのは後回し。
+
 ## 実装の順序
 
 体感の効果が大きく、依存の少ないものから。各ステップで `docs/design.md` の「実装順序」と同じくチェックボックスを更新する。

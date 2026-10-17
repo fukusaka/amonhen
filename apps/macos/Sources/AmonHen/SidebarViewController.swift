@@ -44,7 +44,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let workingCopyNode = Node(title: "Working Copy", page: .workingCopy)
     private let historyNode = Node(title: "History", page: .history)
     /// コンフリクトがあるときだけ出す。選ぶと Working Copy で最初のコンフリクトのファイルを開く。
-    private let conflictsNode = Node(title: "Conflicts", page: .workingCopy)
+    private let conflictsNode = Node(title: L("Conflicts"), page: .workingCopy)
     private lazy var workspace = Node(title: "Workspace", children: [workingCopyNode, historyNode])
     /// Conflicts を選んだ（最初のコンフリクトのファイルを開く）。
     var onSelectConflicts: (() -> Void)?
@@ -271,15 +271,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         cell.toolTip = node.item?.detail
         if let pr = node.pullRequest {
             let ci = switch pr.ci {
-            case .passing: "CI: 成功"
-            case .failing: "CI: 失敗"
-            case .pending: "CI: 実行中"
-            case .none: "CI なし"
+            case .passing: L("CI: passed")
+            case .failing: L("CI: failed")
+            case .pending: L("CI: running")
+            case .none: L("No CI")
             }
             let review = switch pr.reviewDecision {
-            case "APPROVED": "承認済み"
-            case "CHANGES_REQUESTED": "変更の依頼あり"
-            case "REVIEW_REQUIRED": "レビュー待ち"
+            case "APPROVED": L("Approved")
+            case "CHANGES_REQUESTED": L("Changes requested")
+            case "REVIEW_REQUIRED": L("Review required")
             default: ""
             }
             cell.toolTip = ["#\(pr.number) \(pr.title)", "\(pr.author.login) · \(pr.headRefName) → \(pr.baseRefName)",
@@ -290,7 +290,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     private static func symbol(for node: Node) -> String {
-        if node.title == "Conflicts", node.page != nil { return "exclamationmark.triangle" }
+        if node.title == L("Conflicts"), node.page != nil { return "exclamationmark.triangle" }
         if let page = node.page { return page == .workingCopy ? "square.and.pencil" : "clock" }
         if node.pullRequest != nil { return "arrow.triangle.pull" }
         if node.remote != nil { return "network" }
@@ -358,7 +358,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         guard !menu.items.isEmpty else { return false }
         menu.addItem(.separator())
-        menu.addItem(withTitle: "キャンセル", action: nil, keyEquivalent: "")
+        menu.addItem(withTitle: L("Cancel"), action: nil, keyEquivalent: "")
         menu.popUp(positioning: nil, at: outlineView.convert(info.draggingLocation, from: nil), in: outlineView)
         return true
     }
@@ -376,10 +376,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         menu.removeAllItems()
         if let pr = (outline.item(atRow: outline.clickedRow) as? Node)?.pullRequest {
             menu.addItem(ClosureMenuItem(title: "Checkout #\(pr.number)") { [weak self] in self?.onCheckoutPullRequest?(pr) })
-            menu.addItem(ClosureMenuItem(title: "Open in Browser") {
+            menu.addItem(ClosureMenuItem(title: L("Open in Browser")) {
                 if let url = URL(string: pr.url) { NSWorkspace.shared.open(url) }
             })
-            menu.addItem(ClosureMenuItem(title: "Copy URL") {
+            menu.addItem(ClosureMenuItem(title: L("Copy URL")) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(pr.url, forType: .string)
             })
@@ -401,12 +401,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
             add("New Branch from \(name)…") { actions.newBranch(at: name) }
             add("New Tag at \(name)…") { actions.newTag(at: name) }
-            add("Rename \(name)…") {
-                guard let to = actions.ask("Rename Branch", initial: name, ok: "変更") else { return }
+            add(L("Rename %@…", name)) {
+                guard let to = actions.ask(L("Rename Branch"), initial: name, ok: L("Change")) else { return }
                 actions.perform(["op": "renameBranch", "from": name, "to": to])
             }
             if name != headBranch {
-                add("Delete \(name)") { actions.perform(["op": "deleteBranch", "name": name, "force": false]) }
+                add(L("Delete %@", name)) { actions.perform(["op": "deleteBranch", "name": name, "force": false]) }
             }
         case .remote:
             add("Checkout \(name) as Local Branch") { actions.perform(["op": "track", "remoteBranch": name]) }
@@ -423,7 +423,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add("Drop \(name)") { actions.perform(["op": "stashDrop", "name": name]) }
         case .submodule:
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
-            add("Open \(name) in New Window") { [weak self] in self?.onOpenSubmodule?(name) }
+            add(L("Open %@ in New Window", name)) { [weak self] in self?.onOpenSubmodule?(name) }
         }
     }
 

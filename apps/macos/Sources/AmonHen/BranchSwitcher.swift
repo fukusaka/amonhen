@@ -37,7 +37,7 @@ final class BranchSwitcherPanel: NSObject, NSSearchFieldDelegate, NSTableViewDat
 
     private func build() {
         guard let content = panel.contentView else { return }
-        field.placeholderString = "ブランチを探す・新しい名前を打つ"
+        field.placeholderString = L("Find a branch or type a new name")
         field.font = .systemFont(ofSize: 16)
         field.focusRingType = .none
         field.delegate = self
@@ -56,7 +56,7 @@ final class BranchSwitcherPanel: NSObject, NSSearchFieldDelegate, NSTableViewDat
         scroll.drawsBackground = false
         hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         hint.textColor = .secondaryLabelColor
-        hint.stringValue = "⏎ 切り替える　esc 閉じる　（リモートのブランチは追跡ブランチを作る）"
+        hint.stringValue = L("⏎ Switch   esc Close   (a remote branch gets a tracking branch)")
         for v in [field, scroll, hint] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
             content.addSubview(v)
@@ -175,9 +175,9 @@ final class BranchSwitcherPanel: NSObject, NSSearchFieldDelegate, NSTableViewDat
             return c
         }()
         let (symbol, title, color): (String, String, NSColor) = switch shown[row] {
-        case let .local(name): ("arrow.triangle.branch", name + (recent.contains(name) ? "　· 最近" : ""), .labelColor)
-        case let .remote(name): ("network", name + "　· 追跡ブランチを作る", .secondaryLabelColor)
-        case let .create(name): ("plus.circle", "新しいブランチ \(name) を作って切り替える", .controlAccentColor)
+        case let .local(name): ("arrow.triangle.branch", name + (recent.contains(name) ? L("  · recent") : ""), .labelColor)
+        case let .remote(name): ("network", name + L("  · creates a tracking branch"), .secondaryLabelColor)
+        case let .create(name): ("plus.circle", L("Create branch %@ and switch to it", name), .controlAccentColor)
         }
         cell.imageView?.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         cell.imageView?.contentTintColor = color

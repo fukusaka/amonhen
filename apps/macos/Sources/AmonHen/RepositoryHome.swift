@@ -18,7 +18,7 @@ final class RepositoryHomeWindow: NSObject, NSWindowDelegate {
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         super.init()
         window.title = "Repositories"
-        window.subtitle = "リポジトリを選んで開く"
+        window.subtitle = L("Choose a repository to open")
         window.isReleasedWhenClosed = false
         window.delegate = self
         window.contentViewController = browser

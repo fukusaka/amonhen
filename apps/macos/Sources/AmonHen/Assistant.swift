@@ -10,12 +10,12 @@ enum AssistPurpose: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .translate: "コミットメッセージの翻訳"
-        case .explainCommit: "コミットの解説"
-        case .explainHunk: "hunk の解説"
-        case .suggestMessage: "コミットメッセージの提案"
-        case .resolveConflict: "コンフリクトの解消"
-        case .explainConflict: "コンフリクトの解説"
+        case .translate: L("Translate Commit Message")
+        case .explainCommit: L("Explain Commit")
+        case .explainHunk: L("Explain Hunk")
+        case .suggestMessage: L("Suggest Commit Message")
+        case .resolveConflict: L("Resolve Conflict")
+        case .explainConflict: L("Explain Conflict")
         }
     }
 
@@ -164,7 +164,7 @@ enum AssistantCLI: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .none: "使わない"
+        case .none: L("Don’t Use")
         case .claude: "Claude Code"
         case .codex: "Codex"
         }
@@ -273,10 +273,10 @@ enum Assistant {
         let hash = sha256(text)
         if trusted[path] == hash { return text }
         let alert = NSAlert()
-        alert.messageText = "リポジトリのプロンプトを使いますか？"
+        alert.messageText = L("Use the repository’s prompt?")
         alert.informativeText = "\(path)\n\n" + String(text.prefix(1500))
-        alert.addButton(withTitle: "使う")
-        alert.addButton(withTitle: "使わない（自分のプロンプトを使う）")
+        alert.addButton(withTitle: L("Use"))
+        alert.addButton(withTitle: L("Don’t Use (Use My Prompt)"))
         guard alert.runModal() == .alertFirstButtonReturn else { return userPrompt(purpose) }
         trusted[path] = hash
         UserDefaults.standard.set(trusted, forKey: "trustedPrompts")
@@ -291,7 +291,7 @@ enum Assistant {
             Range($0.range(at: 1), in: template).map { String(template[$0]) }
         }
         if let unknown = names.first(where: { !purpose.variables.contains($0) }) {
-            throw Failure(description: "プロンプトの変数 {{\(unknown)}} は「\(purpose.title)」では使えません（使えるもの: \(purpose.variables.joined(separator: ", "))）")
+            throw Failure(description: L("The prompt variable {{%@}} can’t be used for “%@” (available: %@)", unknown, purpose.title, purpose.variables.joined(separator: ", ")))
         }
         for name in Set(names) {
             out = out.replacingOccurrences(
@@ -308,15 +308,13 @@ enum Assistant {
         var allowed = UserDefaults.standard.dictionary(forKey: "assistantRepositories") as? [String: Bool] ?? [:]
         if let decided = allowed[key] { return decided }
         let alert = NSAlert()
-        alert.messageText = "このリポジトリで AI を使いますか？"
-        alert.informativeText = """
-            \(Settings.assistant.title) に送ります: \(summary)
-            このリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。
-            あとで Settings > AI の「このリポジトリの許可を消す」で選び直せます。
-            """
-        alert.addButton(withTitle: "使う")
-        alert.addButton(withTitle: "このリポジトリでは使わない")
-        alert.addButton(withTitle: "キャンセル")
+        alert.messageText = L("Use AI in this repository?")
+        alert.informativeText = L(
+            "Sends to %@: %@\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI.",
+            Settings.assistant.title, summary)
+        alert.addButton(withTitle: L("Use"))
+        alert.addButton(withTitle: L("Don’t Use in This Repository"))
+        alert.addButton(withTitle: L("Cancel"))
         switch alert.runModal() {
         case .alertFirstButtonReturn: allowed[key] = true
         case .alertSecondButtonReturn: allowed[key] = false
@@ -348,7 +346,7 @@ enum Assistant {
     ) async throws -> String {
         let cli = Settings.assistant
         guard cli != .none, let executable = cli.path else {
-            throw Failure(description: "AI の CLI が選ばれていないか、見つかりません（Settings > AI）")
+            throw Failure(description: L("No AI CLI is selected, or it can’t be found (Settings > AI)."))
         }
         var vars = variables
         vars["language"] = vars["language"] ?? Settings.assistantLanguage
@@ -387,7 +385,7 @@ enum Assistant {
             if !model.isEmpty { args += ["-m", model] }
             args.append("-")
         case .none:
-            throw Failure(description: "AI の CLI が選ばれていません")
+            throw Failure(description: L("No AI CLI is selected."))
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -433,7 +431,7 @@ enum Assistant {
         let errorText = String(decoding: errors.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         let result = (collected.1 ?? collected.0).trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0, !result.isEmpty else {
-            throw Failure(description: errorText.isEmpty ? "\(cli.title) が失敗しました（終了コード \(process.terminationStatus)）" : errorText)
+            throw Failure(description: errorText.isEmpty ? L("%@ failed (exit code %ld).", cli.title, Int(process.terminationStatus)) : errorText)
         }
         onText(result)
         return result
@@ -524,8 +522,8 @@ final class AssistantPanel: NSObject, NSWindowDelegate {
     private let text = NSTextView()
     private let status = NSTextField(labelWithString: "")
     private let spinner = NSProgressIndicator()
-    private let regenerate = NSButton(title: "作り直す", target: nil, action: nil)
-    private let useButton = NSButton(title: "使う", target: nil, action: nil)
+    private let regenerate = NSButton(title: L("Regenerate"), target: nil, action: nil)
+    private let useButton = NSButton(title: L("Use"), target: nil, action: nil)
     private let work: (_ useCache: Bool, _ onText: @escaping @MainActor (String) -> Void) async throws -> String
     private let onUse: ((String) -> Void)?
     private var result = ""
@@ -578,10 +576,10 @@ final class AssistantPanel: NSObject, NSWindowDelegate {
         status.textColor = .secondaryLabelColor
         status.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         status.lineBreakMode = .byTruncatingTail
-        let copy = NSButton(title: "コピー", target: self, action: #selector(copyResult))
+        let copy = NSButton(title: L("Copy"), target: self, action: #selector(copyResult))
         regenerate.target = self
         regenerate.action = #selector(regenerateResult)
-        regenerate.toolTip = "前の結果を使わずに、もう一度頼む"
+        regenerate.toolTip = L("Ask again without using the previous result")
         useButton.title = useTitle ?? ""
         useButton.isHidden = onUse == nil
         useButton.target = self
@@ -609,7 +607,7 @@ final class AssistantPanel: NSObject, NSWindowDelegate {
         task?.cancel()
         result = ""
         text.string = ""
-        status.stringValue = "待っています…"
+        status.stringValue = L("Waiting…")
         spinner.startAnimation(nil)
         regenerate.isEnabled = false
         useButton.isEnabled = false
@@ -621,14 +619,14 @@ final class AssistantPanel: NSObject, NSWindowDelegate {
                 let final = try await work(useCache) { [weak self] partial in
                     self?.text.string = partial
                     self?.text.scrollToEndOfDocument(nil)
-                    self?.status.stringValue = "受け取っています…"
+                    self?.status.stringValue = L("Receiving…")
                 }
                 result = final
                 text.string = final
-                status.stringValue = "できました（\(Settings.assistantModel(Settings.assistant).isEmpty ? Settings.assistant.title : Settings.assistantModel(Settings.assistant))）"
+                status.stringValue = L("Done (%@)", Settings.assistantModel(Settings.assistant).isEmpty ? Settings.assistant.title : Settings.assistantModel(Settings.assistant))
                 useButton.isEnabled = true
             } catch {
-                status.stringValue = "失敗しました"
+                status.stringValue = L("Failed")
                 text.string = "\(error)"
             }
             spinner.stopAnimation(nil)

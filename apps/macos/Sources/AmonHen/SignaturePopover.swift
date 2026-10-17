@@ -26,7 +26,7 @@ final class SignaturePopover: NSViewController {
         icon.image = CommitHeaderRenderer.symbolImage(status.symbol, color: status.color, size: 18)
         let title = NSTextField(labelWithString: status.label)
         title.font = .systemFont(ofSize: 14, weight: .semibold)
-        let badge = NSTextField(labelWithString: " \(place.name)で検証 ")
+        let badge = NSTextField(labelWithString: " " + L("Checked on %@", place.name) + " ")
         badge.font = .systemFont(ofSize: 10, weight: .medium)
         badge.textColor = status.color
         badge.wantsLayer = true
@@ -52,38 +52,38 @@ final class SignaturePopover: NSViewController {
             return f
         }
         if let s = signature {
-            if !s.signer.isEmpty { rows.append(("署名者", value(s.signer))) }
+            if !s.signer.isEmpty { rows.append((L("Signer"), value(s.signer))) }
             // 署名した鍵のすべてのメールアドレスとコミッターを、状態に関係なく比べて出す。
             switch CommitterMatch(emails: s.emails, committerEmail: committerEmail) {
             case let .matched(email):
-                rows.append(("コミッターのメール", value("鍵に登録されている（\(email)）", color: .systemGreen)))
+                rows.append((L("Committer email"), value(L("Listed on the key (%@)", email), color: .systemGreen)))
             case let .unconfirmed(email):
-                rows.append(("コミッターのメール", value("鍵に登録されている（\(email)）。ただし、そのユーザー ID は確認されていない", color: .systemYellow)))
+                rows.append((L("Committer email"), value(L("Listed on the key (%@), but that user ID isn’t confirmed", email), color: .systemYellow)))
             case .mismatched:
-                rows.append(("コミッターのメール", value("鍵に登録されていない（\(committerEmail)）", color: .systemOrange)))
+                rows.append((L("Committer email"), value(L("Not listed on the key (%@)", committerEmail), color: .systemOrange)))
             case .unknown:
                 if !committerEmail.isEmpty {
-                    rows.append(("コミッターのメール", value("鍵のメールアドレスを読めず、確かめられない", color: .secondaryLabelColor)))
+                    rows.append((L("Committer email"), value(L("Can’t check: the key’s email addresses can’t be read"), color: .secondaryLabelColor)))
                 }
             }
             let others = s.emails.filter { $0.email.lowercased() != committerEmail.lowercased() }
             if kind != "ssh", !others.isEmpty {
                 let lines = others.map { e in
-                    e.validity == "r" ? "\(e.email)（失効）" : e.validity == "e" ? "\(e.email)（期限切れ）" : e.email
+                    e.validity == "r" ? L("%@ (revoked)", e.email) : e.validity == "e" ? L("%@ (expired)", e.email) : e.email
                 }
-                rows.append(("鍵のほかの ID", value(lines.joined(separator: "\n"))))
+                rows.append((L("Other IDs on the key"), value(lines.joined(separator: "\n"))))
             }
         }
-        rows.append(("方式", value(kind == "ssh" ? "SSH" : kind == "x509" ? "X.509（S/MIME）" : "GPG（OpenPGP）")))
+        rows.append((L("Format"), value(kind == "ssh" ? "SSH" : kind == "x509" ? L("X.509 (S/MIME)") : L("GPG (OpenPGP)"))))
         if let s = signature {
-            if !s.key.isEmpty { rows.append((kind == "ssh" ? "鍵" : "鍵 ID", value(s.key, mono: true))) }
+            if !s.key.isEmpty { rows.append((kind == "ssh" ? L("Public Key") : L("Key ID"), value(s.key, mono: true))) }
             if !s.fingerprint.isEmpty, s.fingerprint != s.key {
-                rows.append(("指紋", value(Self.grouped(s.fingerprint), mono: true)))
+                rows.append((L("Fingerprint"), value(Self.grouped(s.fingerprint), mono: true)))
             }
-            if kind != "ssh", !s.trust.isEmpty { rows.append(("信用", value(Self.trustText(s.trust)))) }
+            if kind != "ssh", !s.trust.isEmpty { rows.append((L("Trust"), value(Self.trustText(s.trust)))) }
         }
         let keys = kind == "ssh" ? "allowed signers" : "~/.gnupg"
-        rows.append(("検証した場所", value("\(place.name)の \(keys)（\(place.detail)）")))
+        rows.append((L("Checked on"), value(L("%@ on %@ (%@)", keys, place.name, place.detail))))
 
         let grid = NSGridView(views: rows.map { label, view in
             let l = NSTextField(labelWithString: label)
@@ -117,11 +117,11 @@ final class SignaturePopover: NSViewController {
 
     static func trustText(_ trust: String) -> String {
         switch trust.lowercased() {
-        case "ultimate": "ultimate（自分の鍵）"
-        case "full", "fully": "full（完全に信用）"
-        case "marginal": "marginal（部分的に信用）"
-        case "never": "never（信用しない）"
-        default: "\(trust)（信用度が決まっていない）"
+        case "ultimate": L("ultimate (your own key)")
+        case "full", "fully": L("full (fully trusted)")
+        case "marginal": L("marginal (partly trusted)")
+        case "never": L("never (not trusted)")
+        default: L("%@ (trust not set)", trust)
         }
     }
 }
@@ -132,5 +132,5 @@ struct SignaturePlace {
     var host: String = ""
     var detail: String
 
-    var name: String { local ? "この Mac" : "\(host)（SSH 先）" }
+    var name: String { local ? L("this Mac") : L("%@ (SSH host)", host) }
 }

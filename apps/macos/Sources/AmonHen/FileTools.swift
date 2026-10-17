@@ -123,7 +123,7 @@ final class BlameWindowController: NSWindowController, NSTableViewDataSource, NS
             // まとまりの 1 行目に ID・作者・日時、2 行目に件名を出す。
             let offset = blocks[row].offset
             if !commit.isCommitted {
-                field.stringValue = offset == 0 ? "まだコミットしていない" : ""
+                field.stringValue = offset == 0 ? L("Not committed yet") : ""
             } else if offset == 0 {
                 let date = fileToolDate.string(from: Date(timeIntervalSince1970: TimeInterval(commit.time)))
                 field.stringValue = "\(commit.oid.prefix(8))  \(commit.author)  \(date)"
@@ -133,7 +133,7 @@ final class BlameWindowController: NSWindowController, NSTableViewDataSource, NS
                 field.stringValue = ""
             }
             field.textColor = offset == 0 ? .secondaryLabelColor : .tertiaryLabelColor
-            field.toolTip = commit.isCommitted ? "\(commit.summary)\n\(commit.oid)\nダブルクリックで History に表示" : nil
+            field.toolTip = commit.isCommitted ? "\(commit.summary)\n\(commit.oid)\n" + L("Double-click to show in History.") : nil
         case "number":
             field.stringValue = "\(row + 1)"
         default:
@@ -191,14 +191,14 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "History — \(path)（\(history.entries.count) コミット）"
+        window.title = L("History — %@ (%ld commits)", path, history.entries.count)
         window.center()
         super.init(window: window)
         build()
         if !history.entries.isEmpty {
             table.selectRowIndexes([0], byExtendingSelection: false)
         } else {
-            diffView.show(nil, message: "このファイルを変えたコミットはありません")
+            diffView.show(nil, message: L("No commits changed this file."))
         }
     }
 
@@ -266,7 +266,7 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
             if let diff, !diff.isBinary {
                 diffView.show(diff)
             } else {
-                diffView.show(nil, message: diff == nil ? "差分を読めません" : "バイナリファイル")
+                diffView.show(nil, message: diff == nil ? L("Can’t read the diff") : L("Binary file"))
             }
         }
     }

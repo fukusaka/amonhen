@@ -183,20 +183,20 @@ private struct GeneralTab: View {
     var body: some View {
         Form {
             Section {
-                TextField("表示名", text: $model.displayName, prompt: Text((RepositoryLocation.path(model.location) as NSString).lastPathComponent))
-                Picker("色ラベル", selection: $model.color) {
-                    Text("なし").tag(String?.none)
+                TextField(L("Display name"), text: $model.displayName, prompt: Text((RepositoryLocation.path(model.location) as NSString).lastPathComponent))
+                Picker(L("Color label"), selection: $model.color) {
+                    Text(L("None")).tag(String?.none)
                     ForEach(Bookmarks.colors, id: \.name) { entry in
                         Label { Text(entry.title) } icon: { Image(nsImage: RepositoryCell.dot(entry.color) ?? NSImage()) }
                             .tag(Optional(entry.name))
                     }
                 }
-                Picker("自動で fetch", selection: $model.autoFetch) {
-                    Text("しない").tag(0)
-                    ForEach([5, 15, 30, 60], id: \.self) { Text("\($0) 分ごと").tag($0) }
+                Picker(L("Fetch automatically"), selection: $model.autoFetch) {
+                    Text(L("Never")).tag(0)
+                    ForEach([5, 15, 30, 60], id: \.self) { Text(L("Every %ld minutes", $0)).tag($0) }
                 }
             } footer: {
-                Text("このアプリの中だけの設定（git の設定には書かない）。表示名はウィンドウ・タブ・リポジトリの一覧に出る。自動の fetch は、このリポジトリを開いている間だけ。")
+                Text(L("These settings are kept in this app only (not written to the git config). The display name appears in windows, tabs and the repository list. Automatic fetch runs only while this repository is open."))
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -214,34 +214,34 @@ private struct HooksTab: View {
         Form {
             Section {
                 if model.hooks.isEmpty {
-                    Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? "core.hooksPath（\($0)）は作業ツリーの外なので、中を見られない" : "なし" } ?? "なし")
+                    Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? L("core.hooksPath (%@) is outside the working tree, so its contents can’t be shown.", $0) : L("None") } ?? L("None"))
                         .foregroundStyle(.secondary)
                 }
                 ForEach(model.hooks) { hook in
                     HStack {
                         Text(hook.name).font(.system(.body, design: .monospaced))
                         Spacer()
-                        Text(hook.enabled ? "有効" : "実行できない（chmod +x がない）")
+                        Text(hook.enabled ? L("Enabled") : L("Not executable (no chmod +x)"))
                             .foregroundStyle(hook.enabled ? Color.green : Color.secondary)
                     }
                 }
             } header: {
                 Text("Hooks")
             } footer: {
-                Text("場所: " + (model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks") + "。.sample は数えない。commit や push のときに git が実行する。")
+                Text(L("Location: %@. .sample files aren’t counted. git runs these on commit, push and so on.", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
-                LabeledContent("Git LFS", value: model.lfs ? "入っている（filter.lfs が設定されている）" : "入っていない")
+                LabeledContent("Git LFS", value: model.lfs ? L("Installed (filter.lfs is set)") : L("Not installed"))
                 if model.lfsPatterns.isEmpty {
-                    Text(".gitattributes に LFS で扱うパターンはない").foregroundStyle(.secondary)
+                    Text(L("No LFS patterns in .gitattributes.")).foregroundStyle(.secondary)
                 }
                 ForEach(model.lfsPatterns, id: \.self) { Text($0).font(.system(.body, design: .monospaced)) }
             } header: {
                 Text("LFS")
             } footer: {
                 if !model.lfs && !model.lfsPatterns.isEmpty {
-                    Text("LFS のパターンがあるのに git lfs が入っていない。brew install git-lfs と git lfs install で入れる。")
+                    Text(L("There are LFS patterns, but git lfs isn’t installed. Install it with brew install git-lfs and git lfs install."))
                         .font(.caption).foregroundStyle(.orange)
                 }
             }
@@ -256,7 +256,7 @@ private struct IgnoreMatchList: View {
     var body: some View {
         ForEach(matches) { m in
             VStack(alignment: .leading, spacing: 1) {
-                Text("\(m.line): \(m.pattern)　— \(m.count == 0 ? "合うファイルなし" : "\(m.count) 個")")
+                Text(m.count == 0 ? L("%ld: %@ — no matching files", m.line, m.pattern) : L("%ld: %@ — %ld files", m.line, m.pattern, m.count))
                     .font(.system(.caption, design: .monospaced))
                     .foregroundStyle(m.count == 0 ? Color.orange : Color.primary)
                 if !m.examples.isEmpty {
@@ -272,7 +272,7 @@ private struct IgnoreMatchList: View {
 private func describe(_ entry: ConfigEntry) -> String {
     var origin = entry.origin
     if origin.hasPrefix("file:") { origin = String(origin.dropFirst(5)) }
-    return "\(entry.scope)（\((origin as NSString).abbreviatingWithTildeInPath)）"
+    return L("%@ (%@)", entry.scope, (origin as NSString).abbreviatingWithTildeInPath)
 }
 
 /// 文字の設定: このリポジトリでの値を入れる（空なら、上の段の値をそのまま使う）。
@@ -284,7 +284,7 @@ private struct TextSetting: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            TextField(title, text: $text, prompt: Text(model.inherited(key)?.value ?? "未設定"))
+            TextField(title, text: $text, prompt: Text(model.inherited(key)?.value ?? L("Not set")))
                 .onSubmit { model.set(key, text) }
                 .onAppear { text = model.local(key) ?? "" }
                 .onChange(of: model.local(key)) { _, new in text = new ?? "" }
@@ -306,7 +306,7 @@ private struct ChoiceSetting: View {
                 get: { model.local(key) ?? "" },
                 set: { model.set(key, $0) }
             )) {
-                Text("上の段のまま（\(model.inherited(key)?.value ?? "未設定")）").tag("")
+                Text(L("Inherited (%@)", model.inherited(key)?.value ?? L("Not set"))).tag("")
                 ForEach(choices, id: \.self) { Text($0).tag($0) }
             }
             Origin(model: model, key: key)
@@ -320,7 +320,7 @@ private struct Origin: View {
     let key: String
 
     var body: some View {
-        let text = model.effective(key).map { "\(key) = \($0.value)　← \(describe($0))" } ?? "\(key) は未設定"
+        let text = model.effective(key).map { "\(key) = \($0.value)　← \(describe($0))" } ?? L("%@ is not set", key)
         Text(text).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
     }
 }
@@ -330,16 +330,16 @@ private struct IdentityTab: View {
     var body: some View {
         Form {
             Section {
-                TextSetting(model: model, title: "名前", key: "user.name")
-                TextSetting(model: model, title: "メール", key: "user.email")
+                TextSetting(model: model, title: L("Name"), key: "user.name")
+                TextSetting(model: model, title: L("Email"), key: "user.email")
             } footer: {
-                Text("このリポジトリのコミットにだけ使う（仕事用と個人用を分けるなど）。空にすると上の段（global など）の値を使う。")
+                Text(L("Used only for commits in this repository (for example, to separate work and personal). Leave empty to use the inherited value (global and so on)."))
                     .font(.caption).foregroundStyle(.secondary)
             }
-            Section("署名") {
-                TextSetting(model: model, title: "署名の鍵", key: "user.signingkey")
-                ChoiceSetting(model: model, title: "コミットに署名する", key: "commit.gpgsign", choices: ["true", "false"])
-                ChoiceSetting(model: model, title: "署名の形式", key: "gpg.format", choices: ["openpgp", "ssh", "x509"])
+            Section(L("Signing")) {
+                TextSetting(model: model, title: L("Signing key"), key: "user.signingkey")
+                ChoiceSetting(model: model, title: L("Sign commits"), key: "commit.gpgsign", choices: ["true", "false"])
+                ChoiceSetting(model: model, title: L("Signature format"), key: "gpg.format", choices: ["openpgp", "ssh", "x509"])
             }
         }
         .formStyle(.grouped)
@@ -351,17 +351,17 @@ private struct BranchesTab: View {
     var body: some View {
         Form {
             Section("Pull") {
-                ChoiceSetting(model: model, title: "pull で rebase する", key: "pull.rebase", choices: ["false", "true", "merges"])
-                ChoiceSetting(model: model, title: "fast-forward だけ", key: "pull.ff", choices: ["true", "false", "only"])
-                ChoiceSetting(model: model, title: "rebase の前に退避する", key: "rebase.autoStash", choices: ["true", "false"])
+                ChoiceSetting(model: model, title: L("Rebase on pull"), key: "pull.rebase", choices: ["false", "true", "merges"])
+                ChoiceSetting(model: model, title: L("Fast-forward only"), key: "pull.ff", choices: ["true", "false", "only"])
+                ChoiceSetting(model: model, title: L("Stash before rebase"), key: "rebase.autoStash", choices: ["true", "false"])
             }
             Section("Push・Fetch") {
-                ChoiceSetting(model: model, title: "上流がなければ作る", key: "push.autoSetupRemote", choices: ["true", "false"])
-                ChoiceSetting(model: model, title: "push の既定", key: "push.default", choices: ["simple", "current", "upstream", "matching", "nothing"])
-                ChoiceSetting(model: model, title: "fetch で消えたブランチを片づける", key: "fetch.prune", choices: ["true", "false"])
+                ChoiceSetting(model: model, title: L("Set up the upstream if missing"), key: "push.autoSetupRemote", choices: ["true", "false"])
+                ChoiceSetting(model: model, title: L("Default push behavior"), key: "push.default", choices: ["simple", "current", "upstream", "matching", "nothing"])
+                ChoiceSetting(model: model, title: L("Prune deleted branches on fetch"), key: "fetch.prune", choices: ["true", "false"])
             }
             Section("Merge") {
-                ChoiceSetting(model: model, title: "コンフリクトの書き方", key: "merge.conflictStyle", choices: ["merge", "diff3", "zdiff3"])
+                ChoiceSetting(model: model, title: L("Conflict style"), key: "merge.conflictStyle", choices: ["merge", "diff3", "zdiff3"])
             }
         }
         .formStyle(.grouped)
@@ -375,49 +375,49 @@ private struct RemotesTab: View {
     var body: some View {
         VStack(alignment: .leading) {
             Table(model.remotes, selection: $selection) {
-                TableColumn("名前", value: \.name).width(min: 80, ideal: 100)
+                TableColumn(L("Name"), value: \.name).width(min: 80, ideal: 100)
                 TableColumn("URL", value: \.fetchUrl)
-                TableColumn("push の URL") { r in
-                    Text(r.pushUrl == r.fetchUrl ? "（同じ）" : r.pushUrl).foregroundStyle(r.pushUrl == r.fetchUrl ? .secondary : .primary)
+                TableColumn(L("Push URL")) { r in
+                    Text(r.pushUrl == r.fetchUrl ? L("(same)") : r.pushUrl).foregroundStyle(r.pushUrl == r.fetchUrl ? .secondary : .primary)
                 }
             }
             HStack {
-                Button("Add…") { add() }
-                Button("Rename…") { rename() }.disabled(selection == nil)
-                Button("Edit URL…") { editURL() }.disabled(selection == nil)
+                Button(L("Add…")) { add() }
+                Button(L("Rename…")) { rename() }.disabled(selection == nil)
+                Button(L("Edit URL…")) { editURL() }.disabled(selection == nil)
                 Button("Prune") { selection.map { model.changeRemote(["kind": "prune", "name": $0]) } }
                     .disabled(selection == nil)
-                    .help("リモートで消えたブランチの追跡を消す")
+                    .help(L("Remove remote-tracking branches that no longer exist on the remote."))
                 Spacer()
-                Button("Remove", role: .destructive) { remove() }.disabled(selection == nil)
+                Button(L("Delete"), role: .destructive) { remove() }.disabled(selection == nil)
             }
         }
         .padding()
     }
 
     private func add() {
-        guard let (name, url) = askPair("Add Remote", first: ("名前", "origin"), second: ("URL", "")) else { return }
+        guard let (name, url) = askPair(L("Add Remote"), first: (L("Name"), "origin"), second: ("URL", "")) else { return }
         model.changeRemote(["kind": "add", "name": name, "url": url])
     }
 
     private func rename() {
-        guard let from = selection, let to = ask("Rename Remote", label: "新しい名前", initial: from) else { return }
+        guard let from = selection, let to = ask(L("Rename Remote"), label: L("New name"), initial: from) else { return }
         model.changeRemote(["kind": "rename", "from": from, "to": to])
     }
 
     private func editURL() {
         guard let name = selection, let remote = model.remotes.first(where: { $0.name == name }),
-              let url = ask("Edit URL", label: "\(name) の URL", initial: remote.fetchUrl) else { return }
+              let url = ask(L("Edit URL"), label: L("URL for %@", name), initial: remote.fetchUrl) else { return }
         model.changeRemote(["kind": "setUrl", "name": name, "url": url])
     }
 
     private func remove() {
         guard let name = selection else { return }
         let alert = NSAlert()
-        alert.messageText = "\(name) を消しますか？"
-        alert.informativeText = "リモートの設定と、追跡しているリモートブランチ（\(name)/…）が消えます。リモートのリポジトリには触れません。"
-        alert.addButton(withTitle: "消す")
-        alert.addButton(withTitle: "キャンセル")
+        alert.messageText = L("Remove %@?", name)
+        alert.informativeText = L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name)
+        alert.addButton(withTitle: L("Delete"))
+        alert.addButton(withTitle: L("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         model.changeRemote(["kind": "remove", "name": name])
         selection = nil
@@ -432,7 +432,7 @@ private struct RemotesTab: View {
         let alert = NSAlert()
         alert.messageText = title
         alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Cancel"))
         let a = NSTextField(string: first.1), b = NSTextField(string: second?.1 ?? "")
         var rows: [[NSView]] = [[NSTextField(labelWithString: first.0 + ":"), a]]
         if let second { rows.append([NSTextField(labelWithString: second.0 + ":"), b]) }
@@ -453,9 +453,9 @@ private struct IgnoreTab: View {
     @Bindable var model: RepositorySettingsModel
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(".gitignore（作業ツリーの直下。コミットして共有する）").font(.headline)
+            Text(L(".gitignore (at the top of the working tree; committed and shared)")).font(.headline)
             TextEditor(text: $model.gitignore).font(.system(.body, design: .monospaced)).frame(minHeight: 140)
-            Text(".git/info/exclude（このリポジトリだけ。共有しない）").font(.headline)
+            Text(L(".git/info/exclude (this repository only; not shared)")).font(.headline)
             TextEditor(text: $model.exclude).font(.system(.body, design: .monospaced)).frame(minHeight: 80)
             if model.ignoreMatches != nil || model.excludeMatches != nil {
                 ScrollView {
@@ -471,13 +471,13 @@ private struct IgnoreTab: View {
                 .frame(maxHeight: 120)
             }
             HStack {
-                Text("1 行に 1 つのパターン（`*.log`、`build/` など）。# から後は説明。").font(.caption).foregroundStyle(.secondary)
+                Text(LocalizedStringKey(L("One pattern per line (`*.log`, `build/` and so on). Text after # is a comment."))).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button(model.matching ? "探しています…" : "合うファイルを見る") { model.findIgnoreMatches() }
+                Button(model.matching ? L("Searching…") : L("Show Matching Files")) { model.findIgnoreMatches() }
                     .disabled(model.matching)
-                    .help("保存する前の中身で、各行に合うファイル（追跡しているものも含む）の例と数を出す")
+                    .help(L("Show how many files (tracked ones included) match each line of the unsaved text, with examples."))
                 Button("Revert") { model.load() }.disabled(!model.ignoreChanged)
-                Button("Save") { model.saveIgnore() }.disabled(!model.ignoreChanged).keyboardShortcut("s")
+                Button(L("Save")) { model.saveIgnore() }.disabled(!model.ignoreChanged).keyboardShortcut("s")
             }
         }
         .padding()
@@ -492,21 +492,21 @@ private struct AllSettingsTab: View {
 
     var body: some View {
         VStack(alignment: .leading) {
-            TextField("キーで絞り込む", text: $filter)
+            TextField(L("Filter by key"), text: $filter)
             Table(model.entries.filter { filter.isEmpty || $0.key.localizedCaseInsensitiveContains(filter) }) {
-                TableColumn("キー", value: \.key).width(min: 140, ideal: 200)
-                TableColumn("値", value: \.value)
-                TableColumn("段", value: \.scope).width(min: 50, ideal: 60)
-                TableColumn("場所") { e in Text(describe(e)).foregroundStyle(.secondary) }
+                TableColumn(L("Key"), value: \.key).width(min: 140, ideal: 200)
+                TableColumn(L("Value"), value: \.value)
+                TableColumn(L("Scope"), value: \.scope).width(min: 50, ideal: 60)
+                TableColumn(L("Location")) { e in Text(describe(e)).foregroundStyle(.secondary) }
             }
             HStack {
-                TextField("キー（core.autocrlf など）", text: $key).frame(width: 200)
-                TextField("値", text: $value)
-                Button("Set Local") { model.set(key, value) }.disabled(key.isEmpty || value.isEmpty)
-                Button("Unset Local") { model.set(key, nil) }.disabled(key.isEmpty)
-                    .help("このリポジトリ（local）の値を消し、上の段の値に戻す")
+                TextField(L("Key (e.g. core.autocrlf)"), text: $key).frame(width: 200)
+                TextField(L("Value"), text: $value)
+                Button(L("Set Local")) { model.set(key, value) }.disabled(key.isEmpty || value.isEmpty)
+                Button(L("Unset Local")) { model.set(key, nil) }.disabled(key.isEmpty)
+                    .help(L("Remove this repository’s (local) value and go back to the inherited one."))
             }
-            Text("後の行ほど優先される（system → global → local → worktree）。変えられるのはこのリポジトリ（local）の値だけ。")
+            Text(L("Later rows take precedence (system → global → local → worktree). Only this repository’s (local) values can be changed."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding()
@@ -520,13 +520,13 @@ private struct RepositorySettingsView: View {
     var body: some View {
         VStack(spacing: 0) {
             TabView {
-                GeneralTab(model: model).tabItem { Text("General") }
-                IdentityTab(model: model).tabItem { Text("Identity") }
+                GeneralTab(model: model).tabItem { Text(L("General")) }
+                IdentityTab(model: model).tabItem { Text(L("Identity")) }
                 BranchesTab(model: model).tabItem { Text("Branches") }
                 RemotesTab(model: model).tabItem { Text("Remotes") }
-                IgnoreTab(model: model).tabItem { Text("Ignore") }
+                IgnoreTab(model: model).tabItem { Text(L("Ignore")) }
                 HooksTab(model: model).tabItem { Text("Hooks・LFS") }
-                AllSettingsTab(model: model).tabItem { Text("All Settings") }
+                AllSettingsTab(model: model).tabItem { Text(L("All Settings")) }
             }
             .padding([.top, .horizontal])
             HStack {
@@ -534,7 +534,7 @@ private struct RepositorySettingsView: View {
                     Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
                 }
                 Spacer()
-                Button("Done") { onClose() }.keyboardShortcut(.defaultAction)
+                Button(L("Done")) { onClose() }.keyboardShortcut(.defaultAction)
             }
             .padding()
         }
@@ -551,7 +551,7 @@ enum RepositorySettingsSheet {
         let model = RepositorySettingsModel(repository: repository, location: location)
         model.load()
         let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 560), styleMask: [.titled], backing: .buffered, defer: false)
-        sheet.title = "\(title) の設定"
+        sheet.title = L("%@ Settings", title)
         sheet.contentViewController = NSHostingController(
             rootView: RepositorySettingsView(model: model) { [weak window, weak sheet] in
                 if let sheet { window?.endSheet(sheet) }

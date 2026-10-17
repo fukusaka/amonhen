@@ -411,6 +411,22 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 
 - Communication runs gh in the background and never makes the UI thread wait (currently inside the macOS FE; when GitLab and others are added, move it to a crate outside the core in a form swappable via `HostingProvider`). When something cannot be read, it goes to Activity's Events and does not affect other operations.
 
+## 13. Language
+
+- The app is written in English and localized; Japanese is the first translation
+  (`apps/macos/Localization/ja.lproj/Localizable.strings`, used through `L()` in `Localization.swift`). The language
+  follows the system's preferred languages.
+- git's operations and the app's screens keep their English names in every language, because those are the words
+  people search for and see in git's own output: Working Copy, History, Activity, Repositories, Branches, Remotes,
+  Tags, Stashes, Pull Requests, Summary, Description, Diff, Blame, Commit, Amend, Push, Pull, Fetch, Merge, Rebase,
+  Stash, Pop, Cherry-pick, Revert, Reset, Squash, Fixup, Reword, Stage, Unstage, Discard, Clone, Undo, Continue,
+  Skip, Abort, Force Push, Fast-Forward, HEAD. A button or menu item that is only such a phrase ("New Branch…",
+  "Stage Lines") is not translated.
+- Everything else is translated: standard macOS menus and items (with Apple's wording), explanations, confirmations,
+  placeholders and tool tips. In Japanese prose ブランチ, タグ, リモート, 上流, コミット, 作業ツリー and コンフリクト are
+  used as nouns.
+- Error text from the core (Rust) is still Japanese only; translating it is left for later.
+
 ## Implementation order
 
 Starting with what has the biggest felt effect and fewest dependencies. At each step, update the checkboxes, as with "Implementation order" in `docs/design.md`.

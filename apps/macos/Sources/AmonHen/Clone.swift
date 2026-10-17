@@ -23,11 +23,11 @@ enum CloneSheet {
 
     static func show(onCloned: @escaping (String) -> Void) {
         let url = NSTextField(string: "")
-        url.placeholderString = "https://github.com/owner/repo.git や git@host:owner/repo.git"
+        url.placeholderString = L("https://github.com/owner/repo.git or git@host:owner/repo.git")
         let folder = NSTextField(string: (defaultFolder as NSString).abbreviatingWithTildeInPath)
         let name = NSTextField(string: "")
-        name.placeholderString = "URL から決める"
-        let choose = NSButton(title: "選ぶ…", target: nil, action: nil)
+        name.placeholderString = L("Taken from the URL")
+        let choose = NSButton(title: L("Choose…"), target: nil, action: nil)
         let chooser = ClosureTarget {
             let panel = NSOpenPanel()
             panel.canChooseDirectories = true
@@ -39,22 +39,22 @@ enum CloneSheet {
         choose.action = #selector(ClosureTarget.fire)
         var rows: [[NSView]] = [
             [NSTextField(labelWithString: "URL:"), url],
-            [NSTextField(labelWithString: "置き場所:"), NSStackView(views: [folder, choose])],
-            [NSTextField(labelWithString: "フォルダの名前:"), name],
+            [NSTextField(labelWithString: L("Location:")), NSStackView(views: [folder, choose])],
+            [NSTextField(labelWithString: L("Folder Name:")), name],
         ]
         // gh があれば、自分のリポジトリから選べる（読み終えたら一覧に入れる）。
         let mine = NSPopUpButton(frame: .zero, pullsDown: true)
         var picker: ClosureTarget?
         if GitHub.isAvailable {
-            mine.addItem(withTitle: "自分の GitHub のリポジトリから選ぶ")
-            mine.menu?.addItem(withTitle: "読んでいます…", action: nil, keyEquivalent: "")
+            mine.addItem(withTitle: L("Choose from My GitHub Repositories"))
+            mine.menu?.addItem(withTitle: L("Loading…"), action: nil, keyEquivalent: "")
             rows.insert([NSGridCell.emptyContentView, mine], at: 1)
             Task {
                 struct Repo: Decodable { let nameWithOwner: String; let url: String }
                 let data = try? await GitHub.run(["repo", "list", "--json", "nameWithOwner,url", "--limit", "200"])
                 let repos = data.flatMap { try? JSONDecoder().decode([Repo].self, from: $0) } ?? []
                 while (mine.menu?.items.count ?? 0) > 1 { mine.menu?.removeItem(at: 1) }
-                if repos.isEmpty { mine.menu?.addItem(withTitle: "見つかりません", action: nil, keyEquivalent: "") }
+                if repos.isEmpty { mine.menu?.addItem(withTitle: L("None found"), action: nil, keyEquivalent: "") }
                 let target = ClosureTarget {}
                 picker = target
                 for repo in repos.sorted(by: { $0.nameWithOwner.lowercased() < $1.nameWithOwner.lowercased() }) {
@@ -75,7 +75,7 @@ enum CloneSheet {
         let alert = NSAlert()
         alert.messageText = "Clone Repository"
         alert.addButton(withTitle: "Clone")
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Cancel"))
         alert.accessoryView = grid
         alert.window.initialFirstResponder = url
         guard alert.runModal() == .alertFirstButtonReturn else { return }
@@ -88,8 +88,8 @@ enum CloneSheet {
         let dest = (parent as NSString).appendingPathComponent(folderName)
         if FileManager.default.fileExists(atPath: dest) {
             let exists = NSAlert()
-            exists.messageText = "\((dest as NSString).abbreviatingWithTildeInPath) はもうあります"
-            exists.informativeText = "別の名前か置き場所にしてください。"
+            exists.messageText = L("%@ already exists", (dest as NSString).abbreviatingWithTildeInPath)
+            exists.informativeText = L("Choose a different name or location.")
             exists.runModal()
             return
         }
@@ -104,7 +104,7 @@ enum CloneSheet {
         let spinner = NSProgressIndicator()
         spinner.style = .spinning
         spinner.startAnimation(nil)
-        let label = NSTextField(wrappingLabelWithString: "\(url) を clone しています…")
+        let label = NSTextField(wrappingLabelWithString: L("Cloning %@…", url))
         let stack = NSStackView(views: [spinner, label])
         stack.edgeInsets = NSEdgeInsets(top: 16, left: 16, bottom: 16, right: 16)
         panel.contentView = stack
@@ -120,7 +120,7 @@ enum CloneSheet {
             } catch {
                 panel.close()
                 let alert = NSAlert(error: error)
-                alert.messageText = "clone できませんでした"
+                alert.messageText = L("Couldn’t clone")
                 alert.informativeText = "\(error)"
                 alert.runModal()
             }

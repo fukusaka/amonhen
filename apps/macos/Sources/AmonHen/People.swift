@@ -8,8 +8,8 @@ final class PeopleStrip: NSView {
     /// 名前を押したとき（History をその人のコミットで絞り込む）。
     var onSelectPerson: ((String) -> Void)?
 
-    private let author = PersonView(role: "Author")
-    private let committer = PersonView(role: "Committer")
+    private let author = PersonView(role: L("Author"))
+    private let committer = PersonView(role: L("Committer"))
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -57,7 +57,7 @@ private final class PersonView: NSView {
         name.contentTintColor = .labelColor
         name.target = self
         name.action = #selector(selectPerson)
-        name.toolTip = "この人のコミットで絞り込む"
+        name.toolTip = L("Filter to this person’s commits")
         self.role.font = .systemFont(ofSize: 10)
         self.role.textColor = .tertiaryLabelColor
         detail.font = .systemFont(ofSize: 11)

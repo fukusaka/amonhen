@@ -105,7 +105,7 @@ enum GitHub {
 
     /// gh を `dir` で実行し、標準出力を返す。失敗したら標準エラーの文を投げる。裏で動く。
     static func run(_ args: [String], in dir: String? = nil) async throws -> Data {
-        guard let gh = ghPath else { throw Failure(description: "gh（GitHub CLI）が見つかりません。brew install gh で入れ、gh auth login でログインしてください") }
+        guard let gh = ghPath else { throw Failure(description: L("gh (GitHub CLI) wasn’t found. Install it with brew install gh, then sign in with gh auth login.")) }
         let started = CACurrentMediaTime()
         defer { PerformanceLog.record("GitHub: gh \(args.first ?? "")", ms: (CACurrentMediaTime() - started) * 1000) }
         return try await Task.detached(priority: .utility) {
@@ -128,7 +128,7 @@ enum GitHub {
             process.waitUntilExit()
             guard process.terminationStatus == 0 else {
                 let message = String(decoding: errData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                throw Failure(description: message.isEmpty ? "gh \(args.joined(separator: " ")) が失敗しました" : message)
+                throw Failure(description: message.isEmpty ? L("gh %@ failed.", args.joined(separator: " ")) : message)
             }
             return data
         }.value
@@ -246,11 +246,11 @@ enum CreatePullRequestSheet {
     ) {
         let alert = NSAlert()
         alert.messageText = "Create Pull Request"
-        alert.informativeText = "\(branch) から"
-        alert.addButton(withTitle: "Create")
-        alert.addButton(withTitle: "キャンセル")
+        alert.informativeText = L("From %@", branch)
+        alert.addButton(withTitle: L("Create"))
+        alert.addButton(withTitle: L("Cancel"))
         let titleField = NSTextField(string: title)
-        titleField.placeholderString = "タイトル"
+        titleField.placeholderString = L("Title")
         let baseField = NSTextField(string: base)
         baseField.placeholderString = "main"
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 460, height: 160))
@@ -263,11 +263,11 @@ enum CreatePullRequestSheet {
         bodyView.autoresizingMask = [.width]
         bodyView.string = body
         scroll.documentView = bodyView
-        let draft = NSButton(checkboxWithTitle: "Draft として作る", target: nil, action: nil)
+        let draft = NSButton(checkboxWithTitle: L("Create as Draft"), target: nil, action: nil)
         let grid = NSGridView(views: [
-            [NSTextField(labelWithString: "タイトル:"), titleField],
+            [NSTextField(labelWithString: L("Title:")), titleField],
             [NSTextField(labelWithString: "base:"), baseField],
-            [NSTextField(labelWithString: "本文:"), scroll],
+            [NSTextField(labelWithString: L("Body:")), scroll],
             [NSGridCell.emptyContentView, draft],
         ])
         grid.column(at: 0).xPlacement = .trailing

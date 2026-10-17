@@ -101,20 +101,20 @@ enum SignatureStatus: Equatable {
     var explanation: String {
         switch self {
         case let .verified(trust):
-            trust >= 3 ? "このコミットは、信用している鍵による正しい署名を持っています。"
-                : "このコミットは正しい署名を持っています。鍵の信用度は marginal（部分的に信用）です。"
-        case .untrusted: "署名は正しいですが、鍵の信用度が決まっていません。鍵の持ち主を確かめて信用度を設定すると Verified になります。"
-        case .signerMismatch: "署名は正しいですが、コミッターのメールアドレスが署名した鍵に登録されていません。コミッターとは別の人の鍵で署名された可能性があります。"
-        case .expired: "署名か鍵の期限が切れています。署名した時点では正しかった可能性があります。"
-        case .revoked: "署名した鍵は失効しています。この署名は信用できません。"
-        case .bad: "署名が正しくありません。コミットが署名の後に書き換えられたか、署名が壊れています。"
-        case .noKey: "署名を検証する公開鍵がありません（GPG の鍵束、SSH の allowed signers に入っていない）。"
-        case .pending: "署名を検証しています。"
+            trust >= 3 ? L("This commit has a valid signature from a trusted key.")
+                : L("This commit has a valid signature. The key’s trust is marginal (partly trusted).")
+        case .untrusted: L("The signature is valid, but the key’s trust isn’t set. Check who owns the key and set its trust to make it Verified.")
+        case .signerMismatch: L("The signature is valid, but the committer’s email address isn’t listed on the signing key. Someone other than the committer may have signed it.")
+        case .expired: L("The signature or the key has expired. It may have been valid when it was signed.")
+        case .revoked: L("The signing key has been revoked. This signature can’t be trusted.")
+        case .bad: L("The signature is invalid. The commit was changed after it was signed, or the signature is corrupt.")
+        case .noKey: L("There’s no public key to verify the signature (it isn’t in the GPG keyring or the SSH allowed signers).")
+        case .pending: L("Verifying the signature.")
         }
     }
 
     /// かざしたときの短い説明。
-    var toolTip: String { "\(label) — \(explanation)（押すと詳細）" }
+    var toolTip: String { L("%@ — %@ (Click for details.)", label, explanation) }
 
     /// 信用度の目盛りの段数（0〜3）。信用度に意味がない状態は nil。
     var trustBars: Int? {

@@ -16,7 +16,7 @@ final class ConnectingWindow: NSObject, NSWindowDelegate {
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 110),
             styleMask: [.titled, .closable], backing: .buffered, defer: false)
         super.init()
-        window.title = "接続中"
+        window.title = L("Connecting")
         window.isReleasedWhenClosed = false
         window.delegate = self
 
@@ -25,12 +25,12 @@ final class ConnectingWindow: NSObject, NSWindowDelegate {
         spinner.controlSize = .small
         spinner.startAnimation(nil)
         let host = RepositoryLocation.host(location) ?? location
-        let title = NSTextField(labelWithString: "\(host) に接続しています…")
+        let title = NSTextField(labelWithString: L("Connecting to %@…", host))
         title.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
         let detail = NSTextField(labelWithString: RepositoryLocation.path(location))
         detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingMiddle
-        let cancel = NSButton(title: "キャンセル", target: self, action: #selector(cancel))
+        let cancel = NSButton(title: L("Cancel"), target: self, action: #selector(cancel))
         cancel.keyEquivalent = "\u{1b}"
 
         let text = NSStackView(views: [title, detail])

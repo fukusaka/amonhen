@@ -67,7 +67,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         self.location = location
         self.repository = repository
         guard let renderer = GraphRenderer(), let text = TextRenderer(device: renderer.device) else {
-            throw AmonhenError(description: "Metal を使えない")
+            throw AmonhenError(description: L("Metal isn’t available."))
         }
         textRenderer = text
         history = HistoryViewController(repository: repository, renderer: renderer, text: text)
@@ -327,7 +327,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             // キャッシュがなく、まだ何も出せないときだけ（キャッシュがあれば差分だけで済み、すぐ終わる）。
             if history.currentHistory == nil {
                 let size = ByteCountFormatter.string(fromByteCount: Int64(received), countStyle: .file)
-                history.loadingMessage = "History を読み込んでいます… \(size) 受信"
+                history.loadingMessage = L("Loading History… %@ received", size)
             }
         case let .closed(reason):
             connectionTimer?.invalidate()
@@ -349,12 +349,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// 理由も添える。
     private func updateSignaturePlace() {
         guard let host = RepositoryLocation.host(location) else {
-            detail.signaturePlace = SignaturePlace(local: true, detail: "リポジトリがこの Mac にある")
+            detail.signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
             return
         }
         detail.signaturePlace = Settings.checkRemoteSignaturesLocally
-            ? SignaturePlace(local: true, detail: "設定で選択")
-            : SignaturePlace(local: false, host: host, detail: "設定で選択")
+            ? SignaturePlace(local: true, detail: L("chosen in Settings"))
+            : SignaturePlace(local: false, host: host, detail: L("chosen in Settings"))
     }
 
     // MARK: - タブの名前
@@ -370,10 +370,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if tracking.behind > 0 { title += " ↓\(tracking.behind)" }
         window.tab.title = title
         window.tab.toolTip = [
-            changeCount > 0 ? "変更のあるファイル \(changeCount) 個" : nil,
-            tracking.ahead > 0 ? "上流より \(tracking.ahead) コミット先" : nil,
-            tracking.behind > 0 ? "上流より \(tracking.behind) コミット後ろ" : nil,
-        ].compactMap { $0 }.joined(separator: "、")
+            changeCount > 0 ? L("%ld changed files", changeCount) : nil,
+            tracking.ahead > 0 ? L("%ld commits ahead of upstream", tracking.ahead) : nil,
+            tracking.behind > 0 ? L("%ld commits behind upstream", tracking.behind) : nil,
+        ].compactMap { $0 }.joined(separator: L(", "))
     }
 
     // MARK: - merge・rebase の途中の帯
@@ -396,15 +396,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         let name = sequence.prefix(1).uppercased() + sequence.dropFirst()
         sequenceLabel.stringValue = conflicts > 0
-            ? "\(name) の途中です · コンフリクトのファイルが \(conflicts) 個"
-            : "\(name) の途中です · コンフリクトは解決済み"
+            ? L("%@ in progress · %ld files with conflicts", name, conflicts)
+            : L("%@ in progress · conflicts resolved", name)
         skipButton.isHidden = !(sequence.hasPrefix("rebase") || sequence == "cherry-pick")
         continueButton.keyEquivalent = conflicts == 0 ? "\r" : ""
         guard sequenceBanner == nil else { return }
         let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.triangle.merge", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemOrange
         sequenceLabel.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
-        let show = NSButton(title: "Working Copy を開く", target: self, action: #selector(showWorkingCopy(_:)))
+        let show = NSButton(title: L("Open Working Copy"), target: self, action: #selector(showWorkingCopy(_:)))
         continueButton.target = self
         continueButton.action = #selector(continueSequence(_:))
         skipButton.target = self
@@ -428,14 +428,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var failureMessage = ""
 
     /// 操作の失敗を、ツールバーの下の帯で知らせる（作業を止めない）。閉じるか、次の失敗で置き換えるまで出す。
-    func showFailure(_ message: String, title: String = "操作に失敗しました") {
+    func showFailure(_ message: String, title: String = L("Operation Failed")) {
         hideFailure()
         failureMessage = message
         let cancelled = message == "取り消した"
         let icon = NSImageView(image: NSImage(
             systemSymbolName: cancelled ? "stop.circle" : "xmark.octagon.fill", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = cancelled ? .secondaryLabelColor : .systemRed
-        let label = NSTextField(labelWithString: cancelled ? "操作を取り消しました" : title)
+        let label = NSTextField(labelWithString: cancelled ? L("Operation Cancelled") : title)
         label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
         // git のエラーは複数行になるので、帯には fatal:・error: の行（なければ最初の行）を出す（全文は「詳細」と
         // ツールチップ）。
@@ -448,10 +448,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.lineBreakMode = .byTruncatingTail
         detail.toolTip = message
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let more = NSButton(title: "詳細", target: self, action: #selector(showFailureDetail))
+        let more = NSButton(title: L("Details"), target: self, action: #selector(showFailureDetail))
         // AppDelegate の Window > Activity（target が nil なので、レスポンダチェーンで届く）。
         let activity = NSButton(title: "Activity", target: nil, action: #selector(AppDelegate.showActivity(_:)))
-        let close = NSButton(title: "閉じる", target: self, action: #selector(hideFailure))
+        let close = NSButton(title: L("Close"), target: self, action: #selector(hideFailure))
         more.isHidden = cancelled
         for b in [more, activity, close] { b.controlSize = .small }
         let stack = NSStackView(views: [icon, label, detail, NSView(), more, activity, close])
@@ -479,7 +479,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc private func showFailureDetail() {
         let alert = NSAlert()
-        alert.messageText = "操作に失敗しました"
+        alert.messageText = L("Operation Failed")
         alert.informativeText = failureMessage
         alert.beginSheetModal(for: window)
     }
@@ -489,7 +489,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let icon = NSImageView(image: NSImage(systemSymbolName: "bolt.horizontal.circle", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemOrange
         let host = RepositoryLocation.host(location) ?? location
-        let label = NSTextField(labelWithString: "\(host) との接続が切れました")
+        let label = NSTextField(labelWithString: L("Lost connection to %@", host))
         label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
         let detail = NSTextField(labelWithString: reason)
         detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -497,7 +497,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.lineBreakMode = .byTruncatingTail
         detail.toolTip = reason
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let button = NSButton(title: "つなぎ直す", target: self, action: #selector(reconnect))
+        let button = NSButton(title: L("Reconnect"), target: self, action: #selector(reconnect))
         button.controlSize = .small
         let stack = NSStackView(views: [icon, label, detail, NSView(), button])
         stack.spacing = 8
@@ -614,7 +614,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         DispatchQueue.main.async { [weak self] in
             guard let self, isBackgroundTab else { return }
             let dropped = history.shrinkForBackground()
-            if dropped > 0 { EventLog.add(repo: window.title, "裏のタブ: History のチャンクを \(dropped) 個捨てた") }
+            if dropped > 0 { EventLog.add(repo: window.title, L("Background tab: dropped %ld History chunks", dropped)) }
         }
     }
 
@@ -626,11 +626,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     private func repositoryDidChange(_ changes: Changes) {
-        let names = [(Changes.refs, "ref"), (.index, "index"), (.worktree, "作業ツリー"), (.config, "設定")]
+        let names = [(Changes.refs, "ref"), (.index, "index"), (.worktree, L("working tree")), (.config, L("config"))]
             .filter { changes.contains($0.0) }.map(\.1)
         EventLog.add(
             repo: window.title,
-            "変化: " + names.joined(separator: "・") + (isBackgroundTab && !changes.isDisjoint(with: [.index, .worktree]) ? "（裏のタブ: 作業ツリーは前に出るまで待つ）" : ""))
+            L("Changed: %@", names.joined(separator: L(", "))) + (isBackgroundTab && !changes.isDisjoint(with: [.index, .worktree]) ? L(" (background tab: the working tree waits until the tab comes to the front)") : ""))
         // 裏のタブでは、作業ツリーの変化（ビルドなどで頻繁に来る）の読み直しを前に出るまで待つ。ref の変化は
         // タブの名前（ahead・behind）に出すので、すぐ読む。
         if isBackgroundTab, !changes.intersection([.index, .worktree]).isEmpty {
@@ -738,7 +738,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc func rebuildHistory(_ sender: Any?) {
         history.rebuild { [weak self] error in
-            if let error { self?.showFailure(error.localizedDescription, title: "History を作り直せませんでした") }
+            if let error { self?.showFailure(error.localizedDescription, title: L("Couldn’t Rebuild History")) }
         }
     }
 
@@ -769,14 +769,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func mergeIntoCurrent(_ sender: Any?) {
         let current = latestRefs?.headBranch ?? "HEAD"
         guard let rev = chooseRevision(
-            title: "\(current) に merge する", message: "取り込むブランチ・タグ・コミット", ok: "Merge") else { return }
+            title: L("Merge into %@", current), message: L("The branch, tag or commit to merge in"), ok: "Merge") else { return }
         actions.perform(["op": "merge", "rev": rev])
     }
 
     @objc func rebaseCurrent(_ sender: Any?) {
         let current = latestRefs?.headBranch ?? "HEAD"
         guard let rev = chooseRevision(
-            title: "\(current) を rebase する", message: "上に載せる先のブランチ・タグ・コミット", ok: "Rebase") else { return }
+            title: L("Rebase %@", current), message: L("The branch, tag or commit to rebase onto"), ok: "Rebase") else { return }
         actions.perform(["op": "rebase", "onto": rev])
     }
 
@@ -853,7 +853,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// Repository > Rename Branch…: 今のブランチの名前を変える。
     @objc func renameBranch(_ sender: Any?) {
         guard let branch = latestRefs?.headBranch,
-              let to = actions.ask("Rename Branch", message: "\(branch) の新しい名前", initial: branch, ok: "変更"),
+              let to = actions.ask("Rename Branch", message: L("New name for %@", branch), initial: branch, ok: L("Rename")),
               to != branch else { return }
         actions.perform(["op": "renameBranch", "from": branch, "to": to])
     }
@@ -867,10 +867,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         popup.addItems(withTitles: remotes)
         if let same = remotes.first(where: { $0.hasSuffix("/" + branch) }) { popup.selectItem(withTitle: same) }
         let alert = NSAlert()
-        alert.messageText = "\(branch) の上流"
-        alert.informativeText = "pull で取り込み、push で送るリモートのブランチ"
-        alert.addButton(withTitle: "設定")
-        alert.addButton(withTitle: "キャンセル")
+        alert.messageText = L("Upstream of %@", branch)
+        alert.informativeText = L("The remote branch that Pull brings in from and Push sends to.")
+        alert.addButton(withTitle: L("Set"))
+        alert.addButton(withTitle: L("Cancel"))
         alert.accessoryView = popup
         guard alert.runModal() == .alertFirstButtonReturn, let upstream = popup.titleOfSelectedItem,
               let slash = upstream.firstIndex(of: "/") else { return }
@@ -919,7 +919,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             do {
                 sidebar.show(pullRequests: try await GitHub.pullRequests(gitHub))
             } catch {
-                EventLog.add(repo: window.title, "プルリクエストを読めない: \(error)")
+                EventLog.add(repo: window.title, L("Can’t read pull requests: %@", "\(error)"))
             }
             await loadCommitStatuses(gitHub)
         }
@@ -946,7 +946,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 avatarsLoaded = true
             }
         } catch {
-            EventLog.add(repo: window.title, "CI の状態を読めない: \(error)")
+            EventLog.add(repo: window.title, L("Can’t read the CI status: %@", "\(error)"))
         }
     }
 
@@ -1006,12 +1006,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             let status = try? await Task.detached { try repository.loadStatus() }.value
             if status?.upstream == nil || (status?.ahead ?? 0) > 0 {
                 let alert = NSAlert()
-                alert.messageText = "先に \(branch) を push してください"
+                alert.messageText = L("Push %@ First", branch)
                 alert.informativeText = status?.upstream == nil
-                    ? "このブランチはまだリモートにありません。"
-                    : "上流より \(status?.ahead ?? 0) コミット先にあります。"
+                    ? L("This branch isn’t on the remote yet.")
+                    : L("It is %ld commits ahead of its upstream.", status?.ahead ?? 0)
                 alert.addButton(withTitle: "Push")
-                alert.addButton(withTitle: "キャンセル")
+                alert.addButton(withTitle: L("Cancel"))
                 if await alert.beginSheetModal(for: window) == .alertFirstButtonReturn { actions.push() }
                 return
             }
@@ -1031,10 +1031,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                         let url = try await GitHub.createPullRequest(
                             in: dir, repo: gitHub, title: answer.title, body: answer.body, base: answer.base, draft: answer.draft)
                         let done = NSAlert()
-                        done.messageText = "プルリクエストを作りました"
+                        done.messageText = L("Pull Request Created")
                         done.informativeText = url
-                        done.addButton(withTitle: "ブラウザで開く")
-                        done.addButton(withTitle: "閉じる")
+                        done.addButton(withTitle: L("Open in Browser"))
+                        done.addButton(withTitle: L("Close"))
                         if await done.beginSheetModal(for: self.window) == .alertFirstButtonReturn, let link = URL(string: url) {
                             NSWorkspace.shared.open(link)
                         }
@@ -1085,10 +1085,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         Task {
             do {
                 try await Task.detached(priority: .utility) { try repository.run(json: #"{"op":"fetch"}"#) }.value
-                EventLog.add(repo: name, "自動の fetch")
+                EventLog.add(repo: name, L("Automatic fetch"))
             } catch {
-                EventLog.add(repo: name, "自動の fetch に失敗: \(error)")
-                showFailure("\(error)", title: "自動の fetch に失敗しました")
+                EventLog.add(repo: name, L("Automatic fetch failed: %@", "\(error)"))
+                showFailure("\(error)", title: L("Automatic Fetch Failed"))
             }
         }
     }
@@ -1111,7 +1111,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         var choices: [(title: String, rev: String)] = []
         if let selectedCommit, selectedCommit != latestRefs?.head {
             let hex = selectedCommit.map { String(format: "%02x", $0) }.joined()
-            choices.append(("選んでいるコミット \(hex.prefix(8))", hex))
+            choices.append((L("Selected Commit %@", String(hex.prefix(8))), hex))
         }
         let items = latestRefs?.items ?? []
         for kind in [RefKind.local, .remote, .tag] {
@@ -1132,7 +1132,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         alert.messageText = title
         alert.informativeText = message
         alert.addButton(withTitle: ok)
-        alert.addButton(withTitle: "キャンセル")
+        alert.addButton(withTitle: L("Cancel"))
         alert.accessoryView = popup
         alert.window.initialFirstResponder = popup
         guard alert.runModal() == .alertFirstButtonReturn, let item = popup.selectedItem else { return nil }
