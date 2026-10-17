@@ -1,7 +1,12 @@
 //! `--measure-scroll`: History を毎フレーム決まった行数だけスクロールし、メインスレッドの時間と
 //! 落としたフレームを数える（macOS 版の `--measure-scroll` と同じ考え）。
+//!
+//! 画面に出るまでの遅れは、GTK のフレームの記録（`GdkFrameTimings`）の、フレームの始まり（スクロールを
+//! 進めた時点）から、コンポジタが画面に出したと知らせた時刻（presentation time）まで。GPU の仕事や
+//! コンポジタの合成も含む。知らせはフレームを描いた後で届くので、数フレーム後に読む。
 
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -23,6 +28,35 @@ struct Record {
     started: Option<Instant>,
     last_frame: Option<i64>,
     refresh: Option<f64>,
+    /// 画面に出た時刻をまだ読んでいないフレームの番号。
+    unpresented: VecDeque<i64>,
+    /// フレームの始まりから画面に出るまで。
+    presented: Vec<f64>,
+    /// 画面に出た時刻が分からなかったフレームの数。
+    unknown: usize,
+}
+
+impl Record {
+    /// 記録の揃ったフレームの、画面に出るまでの時間を読む（GTK は最近の十数フレームしか持たない）。
+    fn read_presented(&mut self, clock: &gtk::gdk::FrameClock, current: i64) {
+        while let Some(&counter) = self.unpresented.front() {
+            let timings = clock.timings(counter);
+            match timings {
+                Some(t) if t.is_complete() => {
+                    let (start, shown) = (t.frame_time(), t.presentation_time());
+                    if shown > 0 {
+                        self.presented.push((shown - start) as f64 / 1000.0);
+                    } else {
+                        self.unknown += 1;
+                    }
+                }
+                // まだ揃っていない。古くなりすぎたら諦める。
+                Some(_) if current - counter < 12 => return,
+                _ => self.unknown += 1,
+            }
+            self.unpresented.pop_front();
+        }
+    }
 }
 
 pub fn scroll(window: &gtk::ApplicationWindow, view: &HistoryView, rows_per_frame: f64) {
@@ -43,6 +77,9 @@ pub fn scroll(window: &gtk::ApplicationWindow, view: &HistoryView, rows_per_fram
             r.work.push(t.elapsed().as_secs_f64() * 1000.0);
         }
         let time = clock.frame_time();
+        let current = clock.frame_counter();
+        r.unpresented.push_back(current);
+        r.read_presented(clock, current);
         if let Some(last) = r.last_frame {
             r.intervals.push((time - last) as f64 / 1000.0);
         }
@@ -101,7 +138,8 @@ fn summary(r: &Record, snapshots: &[f64], frames: usize) -> String {
         "frames {frames} (refresh {refresh:.2} ms, dropped {dropped})\n\
          main thread per frame: p50 {} / p95 {} / max {} ms\n\
          history snapshot: p50 {} / p95 {} / max {} ms\n\
-         frame interval: p50 {} / p95 {} ms",
+         frame interval: p50 {} / p95 {} ms\n\
+         frame start to presented: p50 {} / p95 {} / max {} ms ({} frames, {} unknown)",
         percentile(&r.work, 0.5),
         percentile(&r.work, 0.95),
         percentile(&r.work, 1.0),
@@ -110,5 +148,10 @@ fn summary(r: &Record, snapshots: &[f64], frames: usize) -> String {
         percentile(snapshots, 1.0),
         percentile(&r.intervals, 0.5),
         percentile(&r.intervals, 0.95),
+        percentile(&r.presented, 0.5),
+        percentile(&r.presented, 0.95),
+        percentile(&r.presented, 1.0),
+        r.presented.len(),
+        r.unknown + r.unpresented.len(),
     )
 }
