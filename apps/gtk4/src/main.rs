@@ -259,6 +259,7 @@ fn build_window(app: &gtk::Application, args: Args) {
     // 操作は裏で実行し、終わったら History・ref・status を読み直す（ファイルの変化の知らせも来るが、
     // 待たずに出す）。
     let actions = Actions::new(&window);
+    working.set_actions(actions.clone());
     let reload_tx = tx.clone();
     let weak_view = view.downgrade();
     let reload: Rc<dyn Fn()> = Rc::new(move || {

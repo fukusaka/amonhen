@@ -1,11 +1,14 @@
 //! Working Copy: 左の上にコミットの入力、その下に変更のあるファイルの一覧（チェックで次のコミットに含めるか）。
-//! 右に選んだファイルの差分（行を選んで含める・外す・破棄する）。
+//! 右に選んだファイルの差分（行を選んで含める・外す・捨てる）。項目と文言は macOS 版の
+//! `WorkingCopyViewController` と同じ。
 //!
 //! チェックは index の状態そのもので、FE だけの選択状態は持たない（ターミナルで `git add` しても揃う）。
 //! 差分は、できれば HEAD と作業ツリーの 1 本の差分に行ごとの印を付けて見せ（`working_diff_combined`）、
-//! それで表せないファイルは、作業ツリーの側か stage 済みの側の差分を見せる。
+//! それで表せないファイルは、作業ツリーの側（Unstaged）か stage 済みの側（Staged）の差分を見せる。
+//! コンフリクトのファイルは、マーカー付きの中身（`conflict_view`）と、ファイルごとの解決のボタンを出す。
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -16,13 +19,17 @@ use amonhen_model::{StatusEntry, StatusKind};
 use amonhen_projection::FrontendProfile;
 use gtk::prelude::*;
 use gtk::{gio, glib};
+use serde_json::{Value, json};
 
+use crate::actions::Actions;
 use crate::diff::{DiffWidget, View};
 
 type CountCallback = Box<dyn Fn(usize)>;
+/// 追加と削除の行数（バイナリなどで数えられなければ None）。
+type LineCounts = (Option<u64>, Option<u64>);
 
-/// 裏のスレッドで作った 1 ファイルの差分。行の操作に使う。
-struct Working(WorkingDiff);
+/// 裏のスレッドで作った 1 ファイルの差分。行の操作に使う。コンフリクトなら None（行の操作はしない）。
+struct Working(Option<WorkingDiff>);
 
 // SAFETY: `WorkingDiff` の表示（`DiffView`）のポインタは、自分が持つバッファの先頭を指すだけ。
 unsafe impl Send for Working {}
@@ -35,12 +42,18 @@ pub struct WorkingCopy {
 
 struct Inner {
     repo: RefCell<Option<Arc<Repository>>>,
+    actions: RefCell<Option<Rc<Actions>>>,
     status: RefCell<Option<Arc<StatusSnapshot>>>,
-    /// 一覧に出しているファイル（一覧の行と同じ順）。
+    /// 一覧に出しているファイル（絞り込み済み。一覧の行と同じ順）。
     entries: RefCell<Vec<StatusEntry>>,
+    /// 絞り込む前のすべてのファイル。
+    all_entries: RefCell<Vec<StatusEntry>>,
+    /// ファイルごとの行数（追加, 削除）。HEAD と作業ツリーの比べ。
+    stats: RefCell<HashMap<String, LineCounts>>,
     list: gtk::ListBox,
     all: gtk::CheckButton,
     count: gtk::Label,
+    filter: gtk::SearchEntry,
     subject: gtk::Entry,
     body: gtk::TextView,
     amend: gtk::CheckButton,
@@ -48,12 +61,13 @@ struct Inner {
     message: gtk::Label,
     diff: DiffWidget,
     path: gtk::Label,
-    stage: gtk::Button,
-    unstage: gtk::Button,
+    lines: gtk::Button,
     discard: gtk::Button,
     /// 1 本の差分で表せないファイルで、作業ツリーの側と stage 済みの側を切り替える。
     sides: gtk::Box,
     staged_side: gtk::ToggleButton,
+    /// コンフリクトのファイルの解決のボタン。
+    conflict_buttons: gtk::Box,
     /// 選んでいるファイル。
     selected: RefCell<Option<String>>,
     /// 出している差分。
@@ -72,9 +86,7 @@ struct Inner {
 impl WorkingCopy {
     pub fn new(pending: Rc<Cell<u32>>) -> Self {
         // 左の上: コミットの入力。
-        let subject = gtk::Entry::builder()
-            .placeholder_text("コミットの件名")
-            .build();
+        let subject = gtk::Entry::builder().placeholder_text("Summary").build();
         let body = gtk::TextView::builder()
             .wrap_mode(gtk::WrapMode::WordChar)
             .top_margin(6)
@@ -88,14 +100,27 @@ impl WorkingCopy {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .has_frame(true)
             .build();
-        let amend = gtk::CheckButton::with_label("直前のコミットを修正");
-        let commit = gtk::Button::with_label("コミット");
+        let amend = gtk::CheckButton::with_label("Amend");
+        let commit = gtk::Button::with_label("Commit");
         commit.add_css_class("suggested-action");
-        commit.set_hexpand(true);
-        commit.set_halign(gtk::Align::End);
+        commit.set_tooltip_text(Some("チェックしたファイルをコミット（Ctrl+Return）"));
+        let commit_menu = gtk::MenuButton::builder()
+            .tooltip_text("Commit and Push（Ctrl+Shift+Return）、Amend")
+            .build();
+        commit_menu.add_css_class("suggested-action");
+        let menu = gio::Menu::new();
+        menu.append(Some("Commit and Push"), Some("win.commit-and-push"));
+        menu.append(Some("Amend Last Commit"), Some("win.amend-last-commit"));
+        commit_menu.set_menu_model(Some(&menu));
+        let commit_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        commit_group.add_css_class("linked");
+        commit_group.append(&commit);
+        commit_group.append(&commit_menu);
+        commit_group.set_hexpand(true);
+        commit_group.set_halign(gtk::Align::End);
         let commit_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         commit_row.append(&amend);
-        commit_row.append(&commit);
+        commit_row.append(&commit_group);
         let message = gtk::Label::new(None);
         message.set_xalign(0.0);
         message.set_wrap(true);
@@ -103,14 +128,20 @@ impl WorkingCopy {
         message.set_visible(false);
 
         // 左の下: 変更のあるファイルの一覧。
-        let all = gtk::CheckButton::new();
-        all.set_tooltip_text(Some("すべてを含める・外す"));
+        let all = gtk::CheckButton::with_label("Changes");
+        all.set_tooltip_text(Some("一覧のファイルをすべて次のコミットに含める・外す"));
         let count = gtk::Label::new(None);
-        count.set_xalign(0.0);
+        count.set_hexpand(true);
+        count.set_xalign(1.0);
         count.add_css_class("dim-label");
+        count.add_css_class("numeric");
+        count.set_tooltip_text(Some("次のコミットに含めるファイル / 変更のあるファイル"));
         let list_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         list_header.append(&all);
         list_header.append(&count);
+        let filter = gtk::SearchEntry::builder()
+            .placeholder_text("パスで絞り込む")
+            .build();
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Single);
         list.add_css_class("navigation-sidebar");
@@ -129,6 +160,7 @@ impl WorkingCopy {
         left.append(&commit_row);
         left.append(&message);
         left.append(&list_header);
+        left.append(&filter);
         left.append(&list_scrolled);
 
         // 右: 操作のボタンと差分。
@@ -137,11 +169,13 @@ impl WorkingCopy {
         path.set_hexpand(true);
         path.set_ellipsize(gtk::pango::EllipsizeMode::Start);
         path.add_css_class("heading");
-        let stage = gtk::Button::with_label("含める");
-        let unstage = gtk::Button::with_label("外す");
-        let discard = gtk::Button::with_label("破棄");
-        let worktree_side = gtk::ToggleButton::with_label("作業ツリー");
-        let staged_side = gtk::ToggleButton::with_label("stage 済み");
+        let lines = gtk::Button::with_label("Stage Lines");
+        let discard = gtk::Button::with_label("Discard File");
+        discard.set_tooltip_text(Some("作業ツリーの変更を捨てる（index の内容に戻す）"));
+        let worktree_side = gtk::ToggleButton::with_label("Unstaged");
+        worktree_side.set_tooltip_text(Some("stage していない（作業ツリーの）変更"));
+        let staged_side = gtk::ToggleButton::with_label("Staged");
+        staged_side.set_tooltip_text(Some("stage 済み（次のコミットに含める）の変更"));
         staged_side.set_group(Some(&worktree_side));
         worktree_side.set_active(true);
         let sides = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -149,7 +183,8 @@ impl WorkingCopy {
         sides.append(&worktree_side);
         sides.append(&staged_side);
         sides.set_visible(false);
-        discard.add_css_class("destructive-action");
+        let conflict_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        conflict_buttons.set_visible(false);
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         bar.set_margin_top(6);
         bar.set_margin_bottom(6);
@@ -157,8 +192,8 @@ impl WorkingCopy {
         bar.set_margin_end(10);
         bar.append(&path);
         bar.append(&sides);
-        bar.append(&stage);
-        bar.append(&unstage);
+        bar.append(&conflict_buttons);
+        bar.append(&lines);
         bar.append(&discard);
         let diff = DiffWidget::default();
         let diff_scrolled = gtk::ScrolledWindow::builder()
@@ -179,11 +214,15 @@ impl WorkingCopy {
 
         let inner = Rc::new(Inner {
             repo: RefCell::default(),
+            actions: RefCell::default(),
             status: RefCell::default(),
             entries: RefCell::default(),
+            all_entries: RefCell::default(),
+            stats: RefCell::default(),
             list,
             all,
             count,
+            filter,
             subject,
             body,
             amend,
@@ -191,11 +230,11 @@ impl WorkingCopy {
             message,
             diff,
             path,
-            stage,
-            unstage,
+            lines,
             discard,
             sides,
             staged_side,
+            conflict_buttons,
             selected: RefCell::default(),
             current: RefCell::default(),
             generation: Cell::new(0),
@@ -213,17 +252,22 @@ impl WorkingCopy {
         self.inner.repo.replace(Some(repo));
     }
 
+    /// 確かめる窓や、知らせに使う。
+    pub fn set_actions(&self, actions: Rc<Actions>) {
+        self.inner.actions.replace(Some(actions));
+    }
+
     /// 新しい status を出す。同じスナップショットなら何もしない。
     pub fn show(&self, status: Arc<StatusSnapshot>) {
         Inner::show(&self.inner, status);
     }
 
-    /// 次に status が届いたとき、`path` を選ぶ。
     /// 次に差分を出したとき、`row` 行の印をクリックしたことにする（確認用）。
     pub fn toggle_row_once(&self, row: u32) {
         self.inner.toggle_once.set(Some(row));
     }
 
+    /// 次に status が届いたとき、`path` を選ぶ。
     pub fn select_path(&self, path: &str) {
         self.inner.selected.replace(Some(path.to_owned()));
     }
@@ -235,13 +279,19 @@ impl WorkingCopy {
         }
     }
 
-    /// Commit メニューの Stage All（変更のあるファイルをすべて次のコミットに含める）。
+    /// Amend Last Commit: 直前のコミットを直す（メッセージを入れておく）。
+    pub fn amend_last_commit(&self) {
+        self.inner.amend.set_active(true);
+    }
+
+    /// Commit メニューの Stage All（コンフリクト以外の、stage していない変更をすべて含める）。
     pub fn stage_all(&self) {
         let paths: Vec<String> = self
             .inner
-            .entries
+            .all_entries
             .borrow()
             .iter()
+            .filter(|e| e.kind != StatusKind::Unmerged && e.is_unstaged())
             .map(|e| e.path.clone())
             .collect();
         if paths.is_empty() {
@@ -265,6 +315,9 @@ impl Inner {
             let (Some(this), Some(row)) = (weak.upgrade(), row) else {
                 return;
             };
+            if this.rebuilding.get() {
+                return;
+            }
             let entry = this.entries.borrow().get(row.index() as usize).cloned();
             if let Some(entry) = entry {
                 let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
@@ -282,6 +335,7 @@ impl Inner {
                 .entries
                 .borrow()
                 .iter()
+                .filter(|e| e.kind != StatusKind::Unmerged)
                 .map(|e| e.path.clone())
                 .collect();
             let stage = all.is_active();
@@ -295,6 +349,12 @@ impl Inner {
             });
         });
         let weak = Rc::downgrade(this);
+        this.filter.connect_search_changed(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::rebuild_list(&this);
+            }
+        });
+        let weak = Rc::downgrade(this);
         this.diff.connect_mark(move |row| {
             let Some(this) = weak.upgrade() else { return };
             Inner::set_rows(&this, vec![row as usize], None);
@@ -305,22 +365,19 @@ impl Inner {
                 this.update_buttons();
             }
         });
-        for (button, stage) in [(&this.stage, true), (&this.unstage, false)] {
-            let weak = Rc::downgrade(this);
-            button.connect_clicked(move |_| {
-                let Some(this) = weak.upgrade() else { return };
-                let rows = this.diff.selected_rows();
-                Inner::set_rows(&this, rows, Some(stage));
-            });
-        }
+        let weak = Rc::downgrade(this);
+        this.lines.connect_clicked(move |_| {
+            let Some(this) = weak.upgrade() else { return };
+            // 1 本の差分では、選んだ行がすべて含まれていれば外す、そうでなければ含める。
+            let rows = this.diff.selected_rows();
+            let (staged, total) = this.diff.selected_staged();
+            Inner::set_rows(&this, rows, Some(staged < total));
+        });
         let weak = Rc::downgrade(this);
         this.discard.connect_clicked(move |_| {
-            let Some(this) = weak.upgrade() else { return };
-            let Some(current) = this.current.borrow().clone() else {
-                return;
-            };
-            let rows = this.diff.selected_rows();
-            Inner::run(&this, move |repo| repo.discard_rows(&current.0, &rows));
+            if let Some(this) = weak.upgrade() {
+                Inner::discard(&this);
+            }
         });
         let weak = Rc::downgrade(this);
         this.staged_side.connect_toggled(move |_| {
@@ -330,6 +387,29 @@ impl Inner {
                 Inner::load_diff(&this, entry, false);
             }
         });
+        for (title, ours) in [("Take Current File", true), ("Take Incoming File", false)] {
+            let button = gtk::Button::with_label(title);
+            let weak = Rc::downgrade(this);
+            button.connect_clicked(move |_| {
+                let Some(this) = weak.upgrade() else { return };
+                let (Some(path), Some(actions)) = (
+                    this.selected.borrow().clone(),
+                    this.actions.borrow().clone(),
+                ) else {
+                    return;
+                };
+                actions.perform(json!({ "op": "takeSide", "path": path, "ours": ours }));
+            });
+            this.conflict_buttons.append(&button);
+        }
+        let resolved = gtk::Button::with_label("Mark Resolved");
+        let weak = Rc::downgrade(this);
+        resolved.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::mark_resolved(&this);
+            }
+        });
+        this.conflict_buttons.append(&resolved);
         let weak = Rc::downgrade(this);
         this.subject.connect_changed(move |_| {
             if let Some(this) = weak.upgrade() {
@@ -380,56 +460,97 @@ impl Inner {
                 .cmp(&(b.kind != StatusKind::Unmerged, &b.path))
         });
         this.status.replace(Some(status));
+        let count = entries.len();
+        this.all_entries.replace(entries);
+        Inner::rebuild_list(this);
+        Inner::load_stats(this);
+        if let Some(f) = this.on_count.borrow().as_ref() {
+            f(count);
+        }
+    }
 
+    /// 絞り込みに合うファイルで一覧を作り直し、選んでいたファイルを選び直す（なければ最初のもの）。
+    fn rebuild_list(this: &Rc<Self>) {
+        let filter = this.filter.text().to_lowercase();
+        let entries: Vec<StatusEntry> = this
+            .all_entries
+            .borrow()
+            .iter()
+            .filter(|e| filter.is_empty() || e.path.to_lowercase().contains(&filter))
+            .cloned()
+            .collect();
         this.rebuilding.set(true);
         this.list.remove_all();
         for entry in &entries {
             this.list.append(&Inner::row(this, entry));
         }
-        let staged = entries.iter().filter(|e| e.is_staged()).count();
-        let partial = entries.iter().any(|e| e.is_staged() && e.is_unstaged());
+        let all = this.all_entries.borrow();
+        let staged = all.iter().filter(|e| e.is_staged()).count();
+        let partial = all.iter().any(|e| e.is_staged() && e.is_unstaged());
         this.all
-            .set_inconsistent(partial || (staged > 0 && staged < entries.len()));
+            .set_inconsistent(partial || (staged > 0 && staged < all.len()));
         this.all
-            .set_active(!entries.is_empty() && staged == entries.len() && !partial);
-        this.all.set_sensitive(!entries.is_empty());
-        this.count.set_text(&if entries.is_empty() {
-            "変更はありません".to_owned()
-        } else {
-            format!("{staged} / {} を含める", entries.len())
-        });
-        let count = entries.len();
-        // 同じファイルを選び直す。なければ最初のもの。
+            .set_active(!all.is_empty() && staged == all.len() && !partial);
+        this.all.set_sensitive(!all.is_empty());
+        this.count.set_text(&format!("{staged} / {}", all.len()));
+        drop(all);
         let wanted = this.selected.borrow().clone();
         let index = wanted
             .and_then(|p| entries.iter().position(|e| e.path == p))
             .unwrap_or(0);
         this.entries.replace(entries);
-        this.rebuilding.set(false);
         if let Some(row) = this.list.row_at_index(index as i32) {
-            // 選び直すと `row-selected` が来ないことがあるので、差分は自分で読み直す。
             this.list.select_row(Some(&row));
+            this.rebuilding.set(false);
+            // 選び直しでは `row-selected` を扱わないので、差分は自分で読み直す。
             let entry = this.entries.borrow()[index].clone();
             let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
             this.selected.replace(Some(entry.path.clone()));
             Inner::load_diff(this, entry, same);
         } else {
+            this.rebuilding.set(false);
             this.selected.replace(None);
             this.current.replace(None);
             this.path.set_text("");
             this.diff.clear();
         }
         this.update_buttons();
-        if let Some(f) = this.on_count.borrow().as_ref() {
-            f(count);
-        }
     }
 
-    /// 一覧の 1 行: チェック（次のコミットに含めるか）、状態の文字、パス。
+    /// ファイルごとの行数を裏で読み、一覧に出す（数がなくても一覧は先に出す）。
+    fn load_stats(this: &Rc<Self>) {
+        let Some(repo) = this.repo() else { return };
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let reply: Value = gio::spawn_blocking(move || {
+                serde_json::from_str(&repo.run_json(r#"{"op":"workingStats"}"#)).unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+            let Some(this) = weak.upgrade() else { return };
+            let stats = reply["info"]["stats"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|s| {
+                    Some((
+                        s["path"].as_str()?.to_owned(),
+                        (s["added"].as_u64(), s["removed"].as_u64()),
+                    ))
+                })
+                .collect();
+            this.stats.replace(stats);
+            Inner::rebuild_list(&this);
+        });
+    }
+
+    /// 一覧の 1 行: チェック（次のコミットに含めるか）、状態の文字、パス、行数、変更を捨てるボタン。
     fn row(this: &Rc<Self>, entry: &StatusEntry) -> gtk::ListBoxRow {
+        let conflict = entry.kind == StatusKind::Unmerged;
         let check = gtk::CheckButton::new();
         check.set_active(entry.is_staged() && !entry.is_unstaged());
         check.set_inconsistent(entry.is_staged() && entry.is_unstaged());
+        check.set_sensitive(!conflict);
         let path = entry.path.clone();
         let fully = entry.is_staged() && !entry.is_unstaged();
         let weak = Rc::downgrade(this);
@@ -463,6 +584,43 @@ impl Inner {
         line.append(&check);
         line.append(&state);
         line.append(&name);
+        // 行数（+ 追加 − 削除）。
+        if let Some(&(added, removed)) = this.stats.borrow().get(&entry.path) {
+            let counts = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+            for (n, mark, css) in [(added, "+", "success"), (removed, "−", "error")] {
+                if let Some(n) = n.filter(|&n| n > 0) {
+                    let l = gtk::Label::new(Some(&format!("{mark}{n}")));
+                    l.add_css_class("caption");
+                    l.add_css_class("numeric");
+                    l.add_css_class(css);
+                    counts.append(&l);
+                }
+            }
+            line.append(&counts);
+        }
+        // 変更を捨てるボタン（マウスを載せたときだけ出す。コンフリクトと、stage 済みだけのファイルにはない）。
+        if !conflict && entry.is_unstaged() {
+            let discard = gtk::Button::new();
+            let icon = crate::icon::Icon::default();
+            icon.set(crate::icon::Kind::Undo, false);
+            discard.set_child(Some(&icon));
+            discard.add_css_class("flat");
+            discard.set_tooltip_text(Some("作業ツリーの変更を捨てる（index の内容に戻す）"));
+            discard.set_opacity(0.0);
+            let (weak, e) = (Rc::downgrade(this), entry.clone());
+            discard.connect_clicked(move |_| {
+                if let Some(this) = weak.upgrade() {
+                    Inner::discard_file(&this, &e);
+                }
+            });
+            let motion = gtk::EventControllerMotion::new();
+            let d = discard.clone();
+            motion.connect_enter(move |_, _, _| d.set_opacity(1.0));
+            let d = discard.clone();
+            motion.connect_leave(move |_| d.set_opacity(0.0));
+            line.add_controller(motion);
+            line.append(&discard);
+        }
         let row = gtk::ListBoxRow::new();
         row.set_child(Some(&line));
         row
@@ -471,7 +629,7 @@ impl Inner {
     fn selected_entry(&self) -> Option<StatusEntry> {
         let selected = self.selected.borrow();
         let path = selected.as_deref()?;
-        self.entries
+        self.all_entries
             .borrow()
             .iter()
             .find(|e| e.path == path)
@@ -486,10 +644,19 @@ impl Inner {
         this.generation.set(generation);
         this.path.set_text(&entry.path);
         this.pending.set(this.pending.get() + 1);
+        let conflict = entry.kind == StatusKind::Unmerged;
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || {
                 let profile = FrontendProfile::GTK;
+                if conflict {
+                    // コンフリクト: マーカー付きの中身（Current・Incoming・Base の行に分ける）。
+                    let view = repo.conflict_view(&entry.path, &profile)?;
+                    return Ok::<_, amonhen_model::Error>((
+                        Arc::new(Working(None)),
+                        View::new(view),
+                    ));
+                }
                 // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側）。
                 let mut working = match repo.working_diff_combined(&entry, &profile)? {
                     Some(d) => d,
@@ -514,7 +681,7 @@ impl Inner {
                         }
                     }
                 }
-                Ok::<_, amonhen_model::Error>((Arc::new(Working(working)), View::new(view)))
+                Ok((Arc::new(Working(Some(working))), View::new(view)))
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
@@ -524,12 +691,18 @@ impl Inner {
             }
             match result {
                 Ok(Ok((working, view))) => {
-                    let w = &working.0;
-                    this.sides.set_visible(
-                        w.combined.is_none() && w.entry.is_staged() && w.entry.is_unstaged(),
-                    );
+                    let w = working.0.as_ref();
+                    this.sides.set_visible(w.is_some_and(|w| {
+                        w.combined.is_none() && w.entry.is_staged() && w.entry.is_unstaged()
+                    }));
+                    this.conflict_buttons.set_visible(w.is_none());
+                    let marks = w.is_some();
                     this.current.replace(Some(working));
-                    this.diff.show_working(view, same);
+                    if marks {
+                        this.diff.show_working(view, same);
+                    } else {
+                        this.diff.show_plain(view);
+                    }
                     if let Some(row) = this.toggle_once.take() {
                         Inner::set_rows(&this, vec![row as usize], None);
                     }
@@ -546,11 +719,11 @@ impl Inner {
         let Some(current) = this.current.borrow().clone() else {
             return;
         };
-        if rows.is_empty() {
+        if rows.is_empty() || current.0.is_none() {
             return;
         }
         Inner::run(this, move |repo| {
-            let w = &current.0;
+            let w = current.0.as_ref().expect("working diff");
             match &w.combined {
                 Some(staged) => {
                     let stage = stage.unwrap_or(!staged[rows[0]]);
@@ -558,6 +731,110 @@ impl Inner {
                 }
                 // 片側だけの差分: 作業ツリーの側なら含める、stage 済みの側なら外す。
                 None => repo.stage_rows(w, &rows),
+            }
+        });
+    }
+
+    /// Discard Lines・Discard File（macOS 版と同じ）: 選んだ行があれば行を、なければファイルを捨てる。
+    /// untracked のファイルは消す（Undo では戻せないので確かめる）。
+    fn discard(this: &Rc<Self>) {
+        let Some(current) = this.current.borrow().clone() else {
+            return;
+        };
+        let Some(w) = current.0.as_ref() else { return };
+        if w.staged {
+            return;
+        }
+        let rows = this.diff.selected_rows();
+        if !rows.is_empty() {
+            Inner::run(this, move |repo| {
+                repo.discard_rows(current.0.as_ref().expect("working diff"), &rows)
+            });
+            return;
+        }
+        let entry = w.entry.clone();
+        let (Some(actions), path) = (this.actions.borrow().clone(), entry.path.clone()) else {
+            return;
+        };
+        if entry.kind == StatusKind::Untracked {
+            glib::spawn_future_local(async move {
+                if actions
+                    .confirm(
+                        &format!("{path} を削除しますか？"),
+                        "untracked のファイルなので、Undo では戻せません。",
+                        "削除",
+                    )
+                    .await
+                {
+                    actions.perform(json!({ "op": "deleteUntracked", "paths": [path] }));
+                }
+            });
+        } else {
+            actions.perform(json!({ "op": "discard", "paths": [path] }));
+        }
+    }
+
+    /// 一覧の行のボタン: 1 ファイルの変更を捨てる（確かめてから）。作業ツリーを index の内容に戻すので、
+    /// 含めている分は残る。untracked のファイルは消す。
+    fn discard_file(this: &Rc<Self>, entry: &StatusEntry) {
+        let (Some(actions), path) = (this.actions.borrow().clone(), entry.path.clone()) else {
+            return;
+        };
+        let untracked = entry.kind == StatusKind::Untracked;
+        glib::spawn_future_local(async move {
+            let (title, message, ok, command) = if untracked {
+                (
+                    format!("{path} を削除しますか？"),
+                    "untracked のファイルなので、Undo では戻せません。",
+                    "削除",
+                    json!({ "op": "deleteUntracked", "paths": [path] }),
+                )
+            } else {
+                (
+                    format!("{path} の変更を捨てますか？"),
+                    "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻します。Undo で戻せます。",
+                    "捨てる",
+                    json!({ "op": "discard", "paths": [path] }),
+                )
+            };
+            if actions.confirm(&title, message, ok).await {
+                actions.perform(command);
+            }
+        });
+    }
+
+    /// Mark Resolved: 残っているコンフリクトがあれば確かめてから、解決済みにする（index に入れる）。
+    fn mark_resolved(this: &Rc<Self>) {
+        let (Some(path), Some(actions), Some(repo)) = (
+            this.selected.borrow().clone(),
+            this.actions.borrow().clone(),
+            this.repo(),
+        ) else {
+            return;
+        };
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let p = path.clone();
+            let reply: Value = gio::spawn_blocking(move || {
+                let command = json!({ "op": "conflictCount", "path": p });
+                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+            let remaining = reply["info"]["count"].as_u64().unwrap_or(0);
+            if remaining > 0
+                && !actions
+                    .confirm(
+                        &format!("{path} にコンフリクトが {remaining} 個残っています"),
+                        "このまま解決済みにしますか？",
+                        "解決済みにする",
+                    )
+                    .await
+            {
+                return;
+            }
+            if let Some(this) = weak.upgrade() {
+                Inner::run(&this, move |repo| repo.stage(&[&path]));
             }
         });
     }
@@ -631,26 +908,26 @@ impl Inner {
         });
     }
 
-    /// 直前のコミットを修正するとき、そのメッセージを入れておく。
+    /// 直前のコミットを直すとき、そのメッセージを入れておく（1 行目を Summary、空行の後を本文に）。
     fn fill_head_message(this: &Rc<Self>) {
         let Some(repo) = this.repo() else { return };
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
-            let info = gio::spawn_blocking(move || {
-                let head = repo.load_refs().ok()?.refs.head?;
-                repo.commit_info(&head).ok()
+            let reply: Value = gio::spawn_blocking(move || {
+                serde_json::from_str(&repo.run_json(r#"{"op":"commitMessage","oid":"HEAD"}"#))
+                    .unwrap_or_default()
             })
-            .await;
-            let (Some(this), Ok(Some(info))) = (weak.upgrade(), info) else {
-                return;
-            };
-            if !this.subject.text().is_empty() {
+            .await
+            .unwrap_or_default();
+            let Some(this) = weak.upgrade() else { return };
+            if !this.subject.text().is_empty() || !this.amend.is_active() {
                 return;
             }
-            let message = info["message"].as_str().unwrap_or_default();
+            let message = reply["text"].as_str().unwrap_or_default().trim();
             let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
             this.subject.set_text(subject.trim());
             this.body.buffer().set_text(body.trim());
+            this.update_buttons();
         });
     }
 
@@ -660,36 +937,41 @@ impl Inner {
     }
 
     fn update_buttons(&self) {
-        let staged = self.entries.borrow().iter().any(StatusEntry::is_staged);
+        let staged = self.all_entries.borrow().iter().any(StatusEntry::is_staged);
         let has_subject = !self.subject.text().trim().is_empty();
+        let amend = self.amend.is_active();
+        self.commit.set_sensitive(has_subject && (staged || amend));
         self.commit
-            .set_sensitive(has_subject && (staged || self.amend.is_active()));
+            .set_label(if amend { "Amend Commit" } else { "Commit" });
 
         let current = self.current.borrow();
+        let working = current.as_ref().and_then(|c| c.0.as_ref());
+        let conflict = current.is_some() && working.is_none();
         let (selected_staged, selected) = self.diff.selected_staged();
-        let (combined, staged_side) = current
-            .as_ref()
-            .map_or((false, false), |c| (c.0.combined.is_some(), c.0.staged));
-        let any = selected > 0;
-        // 1 本の差分: 選んだ行に含めていないものがあれば「含める」、含めているものがあれば「外す」。
-        // 片側だけの差分: 作業ツリーの側なら「含める」、stage 済みの側なら「外す」だけ。
-        self.stage.set_sensitive(
-            any && if combined {
-                selected_staged < selected
-            } else {
-                !staged_side
-            },
+        let staged_side = working.is_some_and(|w| w.staged);
+        // 1 本の差分: 選んだ行がすべて含まれていれば Unstage、そうでなければ Stage。片側だけの差分では側で決まる。
+        let unstage = if working.is_some_and(|w| w.combined.is_some()) {
+            selected > 0 && selected_staged == selected
+        } else {
+            staged_side
+        };
+        self.lines.set_visible(!conflict);
+        self.lines.set_label(if unstage {
+            "Unstage Lines"
+        } else {
+            "Stage Lines"
+        });
+        self.lines.set_sensitive(selected > 0);
+        // stage 済みの側では捨てない。選んだ行がなければファイルを捨てる。
+        self.discard.set_visible(!conflict);
+        self.discard.set_label(if selected > 0 {
+            "Discard Lines"
+        } else {
+            "Discard File"
+        });
+        self.discard.set_sensitive(
+            working.is_some_and(|w| !w.staged && w.entry.is_unstaged()) && selected_staged == 0,
         );
-        self.unstage.set_sensitive(
-            any && if combined {
-                selected_staged > 0
-            } else {
-                staged_side
-            },
-        );
-        // stage 済みの変更は破棄しない（先に外す）。
-        self.discard
-            .set_sensitive(any && selected_staged == 0 && !staged_side);
     }
 }
 

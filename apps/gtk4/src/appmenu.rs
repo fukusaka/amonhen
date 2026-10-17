@@ -268,6 +268,13 @@ pub fn install(parts: Parts) -> Buttons {
         }),
     );
     add("stage-all", Box::new(|p| p.working.stage_all()));
+    add(
+        "amend-last-commit",
+        Box::new(|p| {
+            show_page(p, Page::WorkingCopy);
+            p.working.amend_last_commit();
+        }),
+    );
     // アプリ
     add("shortcuts", Box::new(show_shortcuts));
     add("about", Box::new(show_about));

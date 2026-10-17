@@ -289,6 +289,26 @@ impl DiffWidget {
         self.selection_changed();
     }
 
+    /// 印も選択もない表示（コンフリクトのマーカー付きの中身など）。
+    pub fn show_plain(&self, view: View) {
+        {
+            let mut st = self.state();
+            st.generation += 1;
+            st.source = None;
+            st.view = Some(Arc::new(view));
+            st.rows.clear();
+            st.marks = false;
+            st.selection.clear();
+            st.anchor = None;
+        }
+        if let Some(adj) = self.vadjustment() {
+            adj.set_value(0.0);
+        }
+        self.configure_adjustments();
+        self.queue_draw();
+        self.selection_changed();
+    }
+
     /// 選んだ変更の行（表示の行の番号。Working Copy の差分では、コアの差分の行の番号と同じ）。
     pub fn selected_rows(&self) -> Vec<usize> {
         self.state().selection.iter().map(|&r| r as usize).collect()
@@ -540,7 +560,13 @@ impl DiffWidget {
                 if v == 0 { String::new() } else { v.to_string() }
             };
             let w = view.digits;
-            layout(&format!("{:>w$} {:>w$}", n(row.old_no), n(row.new_no)))
+            // コンフリクトの行は、作業ツリーのファイルの行番号だけ。
+            let old = if row.kind >= DiffRow::OURS {
+                0
+            } else {
+                row.old_no
+            };
+            layout(&format!("{:>w$} {:>w$}", n(old), n(row.new_no)))
         });
         let text = view.text(row);
         let l = layout(text);
@@ -615,6 +641,11 @@ impl DiffWidget {
                 DiffRow::ADDED => Some(gdk::RGBA::new(0.2, 0.7, 0.3, 0.16)),
                 DiffRow::REMOVED => Some(gdk::RGBA::new(0.9, 0.25, 0.25, 0.16)),
                 DiffRow::HUNK => Some(gdk::RGBA::new(0.3, 0.5, 0.9, 0.10)),
+                // コンフリクト: Current（自分の側）・Incoming（取り込む側）・共通の祖先・マーカー。
+                DiffRow::OURS => Some(gdk::RGBA::new(0.2, 0.55, 0.9, 0.16)),
+                DiffRow::THEIRS => Some(gdk::RGBA::new(0.6, 0.4, 0.85, 0.16)),
+                DiffRow::BASE => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.10)),
+                DiffRow::MARKER => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.22)),
                 DiffRow::FILE => Some(gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.08)),
                 _ => None,
             };
