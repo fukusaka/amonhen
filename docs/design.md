@@ -1,492 +1,494 @@
-# Amon Hen Standalone 計画
+# Amon Hen Standalone plan
 
-## 概要
+[日本語](ja/design.md)
 
-VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約なしに作り込んだネイティブの Git クライアント。徹底的な低遅延を最優先にする。コアは Rust で書いて各 OS で使い回し、最初の FE（フロントエンド）は macOS で作る。拡張と同じく自分用で、GitHub Releases で配布する。
+## Overview
 
-| 方針 | 内容 |
+A native Git client with the same feel as the Amon Hen VSCode extension, built without the constraints of VSCode's UI components. Thoroughly low latency comes first. The core is written in Rust and reused on each OS; the first FE (frontend) is built for macOS. Like the extension, it is for my own use and is distributed through GitHub Releases.
+
+| Principle | Details |
 | --- | --- |
-| 速度 | 入力から表示まで 1 フレーム（120Hz で 8.3 ms）以内。UI スレッドで git を待たない |
-| 構成 | コアロジックは Rust、UI は各 OS のネイティブ。まず macOS（AppKit）だけ |
-| 使い回し | コアは macOS / iOS / Windows / Linux / Android で動かす。FE に渡すデータの形式は FE ごとに最適なものを選べる |
-| 妥協しない | SwiftUI・Qt・WebView は重い画面に使わない。History と差分は自前で描画する |
-| 段階的に広げる | コアは同一プロセス・ローカル daemon・SSH 越しのどれでも動く形にしておき、最初は同一プロセスだけ作る |
+| Speed | Within 1 frame from input to display (8.3 ms at 120Hz). The UI thread never waits on git |
+| Structure | Core logic in Rust, UI native to each OS. macOS (AppKit) only at first |
+| Reuse | The core runs on macOS / iOS / Windows / Linux / Android. Each FE can choose the data format best for it |
+| No compromises | No SwiftUI, Qt or WebView for heavy screens. History and diffs are drawn by our own code |
+| Expand step by step | The core is shaped to run in the same process, as a local daemon, or over SSH; at first only the same-process form is built |
 
-### 要件
+### Requirements
 
-拡張の要件（vscode-amonhen の `docs/design.md` の「概要」）をすべて引き継ぎ、以下を足す。
+Inherit all of the extension's requirements ("Overview" in vscode-amonhen's `docs/design.md`) and add the following.
 
-| 要件 | 区分 |
+| Requirement | Category |
 | --- | --- |
-| 10 万〜100 万コミットのリポジトリで History を 120fps でスクロールできる | 必須 |
-| 起動直後に前回の History を即座に表示する（永続キャッシュ） | 必須 |
-| 日本語入力・アクセシビリティは OS 標準の挙動 | 必須 |
-| コアを macOS / iOS / Windows / Linux / Android で流用できる | 必須 |
-| FE ごとに最適なデータ形式（文字列の符号化・列・GPU の頂点形式）を選べ、変換で無駄なコピーをしない | 必須 |
-| History のグラフ表現の工夫（幹線の強調、祖先のハイライト、折りたたみ、アニメーション） | 必須 |
-| CLI（`amonhen`）から同じコアを使える | 希望 |
-| SSH 先のリポジトリを手元と同じ速さで操作できる | 希望 |
-| VSCode 拡張の git 実行層・状態管理層をコアの daemon に置き換えられる | 希望 |
+| Scroll History at 120fps in repositories with 100k–1M commits | Required |
+| Show the previous History immediately after launch (persistent cache) | Required |
+| Japanese input and accessibility behave as the OS standard | Required |
+| The core can be reused on macOS / iOS / Windows / Linux / Android | Required |
+| Each FE can choose the best data format (string encoding, columns, GPU vertex format), with no wasted copies in conversion | Required |
+| Refinements to the History graph (emphasized trunk, ancestor highlighting, folding, animation) | Required |
+| The same core can be used from a CLI (`amonhen`) | Desired |
+| Repositories on an SSH host can be operated as fast as local ones | Desired |
+| The VSCode extension's git execution layer and state management layer can be replaced by the core's daemon | Desired |
 
-### 非目標
+### Non-goals
 
-- macOS 以外の FE（コアと抽象化は最初から対応させ、全ターゲットのビルドを CI で通すが、FE は当面作らない）
-- Qt・Electron・Tauri・Flutter による実装（検討の上で外した）
-- 全画面を Metal で描くこと（入力欄・設定・ダイアログは標準部品）
+- FEs other than macOS (the core and abstractions support them from the start, and CI builds all targets, but no FE for now)
+- Implementing with Qt, Electron, Tauri or Flutter (considered and ruled out)
+- Drawing the whole screen with Metal (input fields, settings and dialogs use standard components)
 
-## 技術選定
+## Technology choices
 
-| 層 | 選択 | 理由 |
+| Layer | Choice | Reason |
 | --- | --- | --- |
-| コア | Rust | GC 停止がなく、メモリ配置を制御できる |
-| git の読み取り | gix（gitoxide）を同一プロセスで | spawn のコスト（1 回 約 6 ms）とパイプのコピーをなくす。commit-graph を直接読める |
-| git の書き込み | デスクトップは `git` を spawn、iOS / Android は gix と libgit2 | rebase・merge・push などは本家に任せて正しさと互換性を保つ。モバイルでは git を起動できない。`GitBackend` で差し替える |
-| 非同期 | tokio（I/O・プロセス）＋ rayon（CPU） | 古い要求は即キャンセルする |
-| 差分 | imara-diff、色付けは tree-sitter | 色付けは後追いで、まず色なしで即表示 |
-| 橋渡し | C ABI（cbindgen）を土台に、UniFFI（Swift / Kotlin）、Linux・Windows は Rust から直接 | 操作系は型安全に、行データはゼロコピーで |
-| OS の機能 | `Platform` トレイトで FE から注入。ファイル監視は notify | メインスレッドの起こし方・認証情報・SSH・保存先を OS ごとに差し替える |
-| UI の骨格・重い画面 | AppKit | 表示行の使い回し、描画範囲、レイヤーを直接制御できる |
-| UI の周辺 | SwiftUI（`NSHostingView` で埋め込む） | 設定・ダイアログ・Welcome を手早く作る |
-| GPU | History と差分表示を Metal で描く（文字のグリフアトラスを共有）。ほかは Core Animation と標準部品 | History のラベル用に Metal の文字描画は必ず作るので、差分表示でも使い回す |
-| 最初の FE | macOS 14.4 以降、Apple Silicon | `os_sync_wait_on_address`、`NSView.displayLink` を使う |
-| コアのビルド対象 | `aarch64-apple-darwin`、`aarch64-apple-ios`、`x86_64` / `aarch64-pc-windows-msvc`、`x86_64` / `aarch64-unknown-linux-gnu`、`aarch64-linux-android` | コアに OS 固有のコードが紛れ込むのを CI で防ぐ |
+| Core | Rust | No GC pauses, and memory layout can be controlled |
+| Reading git | gix (gitoxide) in the same process | Removes the spawn cost (about 6 ms each) and pipe copies. Can read commit-graph directly |
+| Writing git | Spawn `git` on desktop, gix and libgit2 on iOS / Android | Leave rebase, merge, push etc. to upstream git to keep correctness and compatibility. git cannot be launched on mobile. Swapped via `GitBackend` |
+| Async | tokio (I/O, processes) + rayon (CPU) | Stale requests are cancelled immediately |
+| Diff | imara-diff, highlighting with tree-sitter | Highlighting comes later; show without colors first, immediately |
+| Bridge | Built on a C ABI (cbindgen), UniFFI (Swift / Kotlin), Linux and Windows use it directly from Rust | Type-safe for operations, zero-copy for row data |
+| OS features | Injected from the FE via the `Platform` trait. File watching with notify | Swap how the main thread is woken, credentials, SSH and storage locations per OS |
+| UI skeleton, heavy screens | AppKit | Direct control over row reuse, draw regions and layers |
+| UI periphery | SwiftUI (embedded with `NSHostingView`) | Build settings, dialogs and Welcome quickly |
+| GPU | Draw History and diffs with Metal (sharing the glyph atlas). Everything else with Core Animation and standard components | Metal text drawing has to be built anyway for History labels, so reuse it for diffs |
+| First FE | macOS 14.4 or later, Apple Silicon | Uses `os_sync_wait_on_address`, `NSView.displayLink` |
+| Core build targets | `aarch64-apple-darwin`, `aarch64-apple-ios`, `x86_64` / `aarch64-pc-windows-msvc`, `x86_64` / `aarch64-unknown-linux-gnu`, `aarch64-linux-android` | CI keeps OS-specific code from slipping into the core |
 
-## 全体構成
+## Overall structure
 
 ```
-┌──────────────────────── macOS アプリ（Swift / AppKit）────────────────────────┐
-│ サイドバー        History               差分表示            コミット入力     │
-│ NSOutlineView   NSTableView           自前の NSView        NSTextView        │
-│                 + Metal のグラフ       Metal（文字は共有）  （IME は OS）     │
-│ 3-way マージ（自前の NSView） · 設定・ダイアログ（SwiftUI）                  │
+┌──────────────────────── macOS app (Swift / AppKit) ───────────────────────────┐
+│ Sidebar          History               Diff view            Commit input     │
+│ NSOutlineView   NSTableView           Custom NSView        NSTextView        │
+│                 + Metal graph          Metal (shared text)  (IME by the OS)  │
+│ 3-way merge (custom NSView) · Settings, dialogs (SwiftUI)                    │
 │ ──────────────────────────────────────────────────────────────────────────── │
-│ Swift の薄い層: 見えている行だけ読む → 描く / 操作を Intent として送る       │
+│ Thin Swift layer: read only visible rows → draw / send operations as Intents │
 └──────────────▲───────────────────────────────────────────────┬───────────────┘
-               │ 変更通知（変わった行の範囲） / 行データ（ゼロコピー）│ Intent
-┌──────────────┴────────── CoreClient（通信手段を抽象化）──────────▼───────────────┐
-│ ① 同一プロセス: C ABI ② 手元の daemon: ソケット＋共有メモリ ③ SSH: stdio     │
+               │ Change notices (changed row ranges) / row data (zero-copy) │ Intent
+┌──────────────┴────────── CoreClient (abstracts the transport) ───▼───────────────┐
+│ ① Same process: C ABI ② Local daemon: socket + shared memory ③ SSH: stdio    │
 └──────────────▲───────────────────────────────────────────────┬───────────────┘
-┌──────────────┴──────────────────── Rust コア ─────────────────▼───────────────┐
-│ model      内部モデル（FE を知らない。UTF-8、展開済みバッファへの参照）       │
-│ core       状態・スナップショット・Intent の処理（一方向のデータの流れ）       │
-│ projection FE ごとの形への変換（変わったチャンクだけ・1 回だけ）              │
+┌──────────────┴──────────────────── Rust core ─────────────────▼───────────────┐
+│ model      Internal model (knows no FE. UTF-8, references into decoded buffers) │
+│ core       State, snapshots, Intent handling (one-way data flow)              │
+│ projection Conversion to each FE's shape (only changed chunks, only once)     │
 │ backend    GitBackend: gix / git CLI / libgit2                               │
-│ platform   Platform: 起こし方・認証情報・SSH・保存先（FE から注入）          │
-│ index   コミット情報の永続キャッシュ（mmap、メモリ上と同じ配置）              │
-│ graph   レーンの順次計算・差分だけの再計算                                   │
-│ diff    imara-diff・単語差分・tree-sitter の色付け                           │
-│ watch   notify（FSEvents / inotify / ReadDirectoryChangesW）で監視            │
-│ oplog   Undo 用の操作ログ（操作前の HEAD と関係する ref を記録）              │
-│ search  log・pickaxe 検索（rayon で並列）                                    │
+│ platform   Platform: waking, credentials, SSH, storage (injected from the FE) │
+│ index   Persistent cache of commit info (mmap, same layout as in memory)      │
+│ graph   Incremental lane computation, recomputing only the difference        │
+│ diff    imara-diff, word diff, tree-sitter highlighting                       │
+│ watch   Watching with notify (FSEvents / inotify / ReadDirectoryChangesW)    │
+│ oplog   Operation log for Undo (records HEAD before the operation and related refs) │
+│ search  log and pickaxe search (parallel with rayon)                         │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 画面構成
+### Screen layout
 
-| 画面 | 左 | 右 |
+| Screen | Left | Right |
 | --- | --- | --- |
-| Working Copy | コミットの入力（上）と、変更のあるファイルの一覧（下。チェックボックスで次のコミットに含めるか） | 差分 |
-| History | コミットの一覧（グラフと件名） | 上から、メッセージとメタ情報（ref・作者・日時・ID・親）、変更ファイル、差分 |
+| Working Copy | Commit input (top) and the list of changed files (bottom; checkboxes decide whether each goes into the next commit) | Diff |
+| History | List of commits (graph and subject) | From the top: message and metadata (refs, author, date, ID, parents), changed files, diff |
 
-コンフリクトのあるファイルは、Working Copy で選ぶと右にマージエディタが出る（別ウィンドウにも移せる）。左に Current、真ん中に Result（作業ツリーの内容から始める）、右に Incoming を並べ（左右は、すべてのコンフリクトをその側にした内容。diff3 なら Base も出せる）、列の間の帯がコンフリクトをつなぐ。帯の ≫・≪ やボタンでコンフリクトごとに採用するか、手で編集して、保存・解決済みにする。✨ Magic Merge は、両側が同じ・片側だけが変えた・空白だけが違う・同じ行の別々の単語を変えた、のどれかに当たるコンフリクトをまとめて解く。解決の計算はコア（`mergeSides`・`resolveText`・`conflictRegions`・`magicMerge`・`saveMerge`）が行う。merge・rebase などの途中は、ウィンドウのツールバーの下に帯を出す（コンフリクトの数と Continue・Skip・Abort）。
+Selecting a conflicted file in Working Copy shows a merge editor on the right (it can also be moved to a separate window). Current is on the left, Result (starting from the working tree contents) in the middle, and Incoming on the right (left and right are the contents with every conflict taken from that side; with diff3, Base can be shown too), and bands between the columns connect the conflicts. Each conflict is accepted with the ≫ / ≪ on the bands or with buttons, or edited by hand, then saved and marked resolved. ✨ Magic Merge resolves in one go the conflicts that fall into one of these: both sides are the same, only one side changed, only whitespace differs, or different words on the same line were changed. The resolution is computed by the core (`mergeSides`, `resolveText`, `conflictRegions`, `magicMerge`, `saveMerge`). During a merge, rebase etc., a band is shown under the window's toolbar (the number of conflicts and Continue, Skip, Abort).
 
-History の右の列の上の欄（コミットの詳細）は、メタ情報、件名、本文の残りの順に並べる。見せ方は 3 つから選ぶ（欄の右上、選んだものを覚える）。
+The top pane of History's right column (commit details) lists the metadata, the subject, then the rest of the body. There are three presentations to choose from (top right of the pane; the choice is remembered).
 
-- 簡潔: 小さなアバター・作者・作者の日時・ref・親の 1 行と件名。欄は文字の高さまで縮める。
-- 標準: 上の帯に作者とコミッターを左右に並べ（Gravatar のアバター・名前・メール・日時）、その下に見出しを右揃えにした 2 列の表（ID、親、署名、ref、merge したタグ、取り込んだコミットの数）、件名と本文。
-- 詳細: 標準と同じ形で、表に子、`HEAD~2^2~1` の形の位置（そのまま git に渡せる）、含むブランチ・タグ、直前のタグ、push 済みか、取り込んだコミット 20 件、メッセージが参照するコミット（cherry-pick・revert の元、Fixes:）、notes を足す。
+- Compact: one line with a small avatar, author, author date, refs and parents, plus the subject. The pane shrinks to the height of the text.
+- Standard: a top band with author and committer side by side (Gravatar avatar, name, email, date), below it a two-column table with right-aligned headings (ID, parents, signature, refs, merged tags, number of commits brought in), then the subject and body.
+- Detailed: the same shape as Standard, with the table adding children, the position in `HEAD~2^2~1` form (can be passed to git as is), containing branches and tags, the preceding tag, whether it is pushed, 20 of the commits brought in, commits the message refers to (cherry-pick and revert sources, Fixes:), and notes.
 
-署名は 1 行（結果・署名者・鍵・信用度）、親・子は 40 桁で選んでコピーできる。日時は相対ではなく日時とタイムゾーン。行数（+/−）は変更ファイルの一覧の各行に出す。メッセージのトレーラーはメッセージの中で見せ、表には転記しない。アバターは gravatar.com からメールアドレスの MD5 で取り、アプリが動いている間だけ覚える（View > Show Avatars で切れる）。
+The signature is one line (result, signer, key, trust level); parents and children can be selected and copied as 40 hex digits. Dates are absolute date and time with time zone, not relative. Line counts (+/−) are shown on each row of the changed file list. Message trailers are shown within the message and not copied into the table. Avatars are fetched from gravatar.com by the MD5 of the email address and remembered only while the app is running (can be turned off with View > Show Avatars).
 
-すぐ出せるもの（ヘッダーとメッセージから読める分。`commitInfo`）を先に描き、時間のかかるもの（署名の検証・notes・行数は git、子・含むブランチとタグ・前後のタグ・HEAD との位置・取り込んだコミットは History のグラフ。`commitExtras`、linux で 30〜55 ms）は裏で読んでから足す。本文は等幅とプロポーショナルを選べ（View メニュー）、長くても畳まずに全文を出す。詳細の欄はコミットを選ぶたびにメッセージの高さに合わせ（右の列の半分まで。続きは欄の中でスクロール）、右上の ⤢ で右の列いっぱいに広げられる。高さ合わせは右の列全体を並べ直す（linux で 5 ms ほど）ので、表示を終えた後にまとめて 1 回だけ行う。History で検索しているときは、件名と本文の一致を強調する。
+What can be shown right away (what can be read from the header and message; `commitInfo`) is drawn first, and the slow parts (signature verification, notes and line counts from git; children, containing branches and tags, preceding and following tags, position relative to HEAD and commits brought in from the History graph; `commitExtras`, 30–55 ms on linux) are read in the background and then added. The body can be monospaced or proportional (View menu) and is shown in full without folding, however long. Each time a commit is selected, the details pane fits the height of the message (up to half of the right column; the rest scrolls within the pane), and ⤢ at the top right expands it to the full right column. Fitting the height relays out the whole right column (about 5 ms on linux), so it is done only once, together, after display is finished. While searching in History, matches in the subject and body are highlighted.
 
-操作: URL・コミット ID・`#123`（origin が GitHub・GitLab なら issue へ）はリンク。作者を押すとその人のコミットで絞り込み、ref やブランチを押すとその履歴に絞り込む。右クリックで ID・件名・メッセージ・`git show` をコピーする。⌥⌘↓・⌥⌘↑ で最初の親・最初の子へ移る。HEAD に含まれる merge でないコミットは、右クリックの「メッセージを書き直す…」でその場で書き直せる（⌘↩ で保存、push 済みなら確かめる。Undo で戻せる）。
+Operations: URLs, commit IDs and `#123` (to the issue if origin is GitHub or GitLab) are links. Clicking the author filters to that person's commits; clicking a ref or branch filters to its history. Right-click copies the ID, subject, message or `git show`. ⌥⌘↓ and ⌥⌘↑ move to the first parent and the first child. Non-merge commits contained in HEAD can be reworded in place with "Reword Message…" on the right-click menu (save with ⌘↩; confirms if already pushed; can be reverted with Undo).
 
-UI と操作の見直し（タブ、ブックマーク、設定、ツールバー、Working Copy・History・マージエディタの作り込み、Activity、GitHub・AI との連携）は `docs/ux.md` にまとめた。
+The review of UI and operations (tabs, bookmarks, settings, toolbar, refining Working Copy, History and the merge editor, Activity, integration with GitHub and AI) is collected in `docs/ux.md`.
 
-### リポジトリ構成
+### Repository layout
 
-拡張（vscode-amonhen）とは別のこのリポジトリで作る。
+Built in this repository, separate from the extension (vscode-amonhen).
 
 ```
 crates/
-  layout/            全 FE で共通の #[repr(C)] レコード（数値の列、グラフの Node / Edge）、Slab・Blob
-  model/             内部モデル（FE のことを知らない）、GitBackend・Operations、検索の索引、Activity
-  core/              状態・スナップショット・命令（JSON）の処理、レイアウト、差分、折りたたみ
-  projection/        FE ごとの形への変換（文字列の符号化、列の選択、配置の揃え方）
-  platform/          Platform トレイト
-  backend-gix/       GixBackend（読み取り）
-  backend-cli/       git CLI（書き込み・ネットワーク・署名の検証）
-  watch/             リポジトリの変化の検知（notify）
-  syntax/            tree-sitter による色付け
-  remote/            daemon との通信（フレーム・要求の形）、RemoteBackend、Server、共有の daemon につなぐ・
-                     共有メモリ（local・shm）、SSH で送り込む（ssh）
-  daemon/            daemon（エンジン amonhen の --stdio: SSH 先、--serve: 手元の共有の daemon）
-  ffi-c/             C ABI ＋ cbindgen のヘッダー
-  cli/               CLI（amonhen）
+  layout/            #[repr(C)] records shared by all FEs (numeric columns, graph Node / Edge), Slab, Blob
+  model/             Internal model (knows nothing of FEs), GitBackend, Operations, search index, Activity
+  core/              State, snapshots, command (JSON) handling, layout, diff, folding
+  projection/        Conversion to each FE's shape (string encoding, column selection, alignment)
+  platform/          Platform trait
+  backend-gix/       GixBackend (reading)
+  backend-cli/       git CLI (writing, network, signature verification)
+  watch/             Detecting repository changes (notify)
+  syntax/            Highlighting with tree-sitter
+  remote/            Communication with the daemon (frames, request shapes), RemoteBackend, Server, connecting to the shared daemon,
+                     shared memory (local, shm), pushing over SSH (ssh)
+  daemon/            daemon (engine amonhen's --stdio: SSH host, --serve: local shared daemon)
+  ffi-c/             C ABI + cbindgen header
+  cli/               CLI (amonhen)
 apps/
-  macos/             SwiftPM のパッケージ（AmonhenKit と、AppKit のアプリ）
+  macos/             SwiftPM package (AmonhenKit and the AppKit app)
 ```
-後で足すもの: `backend-git2/`（モバイル向け）、Swift / Kotlin 向けのバインディング。
-## データ設計
+To add later: `backend-git2/` (for mobile), bindings for Swift / Kotlin.
+## Data design
 
-### 不変のスナップショット
+### Immutable snapshots
 
-- コアは状態が変わるたびに新しいスナップショットを作り、`arc-swap` で公開する。公開したものは書き換えない。UI の読み取りにロックは要らない。
-- 行データは 4096 行ごとのチャンクに分け、変わったチャンクだけ作り直す（残りは前の世代と共有）。
-- 各スナップショットは `generation` を持つ。UI は世代番号で古いデータでの描画を検出する。
+- Each time the state changes, the core builds a new snapshot and publishes it with `arc-swap`. Published snapshots are never modified. The UI needs no locks to read.
+- Row data is split into chunks of 4096 rows, and only changed chunks are rebuilt (the rest are shared with the previous generation).
+- Each snapshot has a `generation`. The UI uses the generation number to detect drawing with stale data.
 
-### 内部モデルとプロジェクション
+### Internal model and projection
 
-- 内部モデルは git の処理と計算に都合の良い形だけを持ち、FE を知らない。文字列は gix が展開した `Arc<[u8]>` を位置と長さで参照し、コピーしない。
-- FE は接続時に `FrontendProfile`（文字列の符号化・必要な列・GPU の頂点形式・配置の揃え方）を宣言する。プロジェクション層がその形にチャンク単位で変換する。
-- 変換するのは見えている範囲と先読みの範囲だけ。結果は「世代＋チャンク＋形式」でキャッシュし、変わっていないチャンクは前の世代と共有する。同じ形式の FE が複数あれば共有する。
-- 変換結果は形式ごとに永続キャッシュにも書き、次の起動では mmap するだけにする。内部の永続キャッシュ（チェックポイント、ref の索引など Rust の中で閉じるもの）は rkyv を使ってもよいが、FE に渡す形は自前で定義する（rkyv は配置が言語をまたいで文書化されておらず、文字列も UTF-8 固定のため）。
+- The internal model holds only shapes convenient for git processing and computation, and knows no FE. Strings reference the `Arc<[u8]>` decoded by gix by offset and length, without copying.
+- At connection time, the FE declares a `FrontendProfile` (string encoding, required columns, GPU vertex format, alignment). The projection layer converts to that shape chunk by chunk.
+- Only the visible range and the prefetch range are converted. Results are cached by "generation + chunk + format", and unchanged chunks are shared with the previous generation. Multiple FEs with the same format share them.
+- Conversion results are also written to the persistent cache per format, so the next launch only needs to mmap them. The internal persistent cache (things closed inside Rust, such as checkpoints and the ref index) may use rkyv, but the shape handed to FEs is defined by us (rkyv's layout is not documented across languages, and its strings are fixed to UTF-8).
 
-### ゼロコピーの規則
+### Zero-copy rules
 
-- 形が同じなら変換しない。数値の列（日時・添字・レーン・フラグ）とグラフの `Node` / `Edge` は全 FE で同じ `#[repr(C)]` レコードを共有し、GPU 側は頂点ディスクリプタで読み方を合わせる。
-- データは列ごとの配列（SoA）で持つ。FE が列を選ぶのはポインタを選ぶだけで、詰め直さない。
-- 文字列は「ASCII なら共通のバイト列、それ以外だけ FE の好む符号化」に統一する。ASCII はそのまま UTF-8 でも Latin-1 でもあるので、大半の文字列（ハッシュ、パス、英語のメッセージ、ブランチ名）は全 FE でコピーなし。変換が要るのは ASCII 以外の文字列を UTF-16 系の FE に渡すときだけで、展開済みバッファから FE 向けの領域へ直接 1 回だけ書く。
-- 参照はポインタではなく領域の先頭からのオフセットで持つ（共有メモリ・ファイル・ネットワークでそのまま通用させるため）。別プロセス・リモートでは、連続した領域に集める処理と符号化の変換を同時に行い、書き込みを 1 回にする。
-- チャンクの領域は全 FE でページ境界に揃えて確保する（`MTLBuffer(bytesNoCopy:)`、`VK_EXT_external_memory_host` でそのまま GPU に見せるため）。独立 GPU では PCIe 越しの転送 1 回だけは避けられない。
-- 原理的に残る処理は「git オブジェクトの展開」と「描画」だけ。どちらも 1 回きりにしてキャッシュする。
+- If the shape is the same, do not convert. Numeric columns (dates, indices, lanes, flags) and graph `Node` / `Edge` share the same `#[repr(C)]` records across all FEs, and on the GPU side the vertex descriptor adapts how they are read.
+- Data is held as per-column arrays (SoA). An FE choosing columns just chooses pointers, with no repacking.
+- Strings are unified as "a common byte sequence if ASCII, the FE's preferred encoding only otherwise". ASCII is both UTF-8 and Latin-1 as is, so most strings (hashes, paths, English messages, branch names) are copy-free for every FE. Conversion is needed only when passing non-ASCII strings to UTF-16-based FEs, and it is written once, directly from the decoded buffer into the FE's region.
+- References are held as offsets from the start of a region rather than pointers (so they work as is across shared memory, files and the network). In other processes and remotely, gathering into a contiguous region and converting the encoding are done at the same time, so there is a single write.
+- Chunk regions are allocated aligned to page boundaries for all FEs (so they can be shown to the GPU as is with `MTLBuffer(bytesNoCopy:)`, `VK_EXT_external_memory_host`). With a discrete GPU, a single transfer over PCIe cannot be avoided.
+- The only work that remains in principle is "decoding git objects" and "drawing". Both are done only once and cached.
 
-| FE | 文字列 | コピーなしの受け渡し | 描画 |
+| FE | Strings | Copy-free handoff | Drawing |
 | --- | --- | --- | --- |
-| macOS / iOS | ASCII＋UTF-16 | `UnsafeBufferPointer` で直接読む（生ポインタは `withSnapshot { }` の外に出さない）。`CFStringCreateWithBytesNoCopy`（ASCII）/ `CFStringCreateWithCharactersNoCopy`（UTF-16） | Metal ＋ Core Text |
-| Windows | ASCII＋UTF-16 | UTF-16 はそのまま `PCWSTR`。ASCII は描画時に見えている行だけスタック上で広げる | Direct2D / D3D ＋ DirectWrite |
-| Linux | UTF-8 | UI も Rust（gtk-rs）で書き、FFI なしで参照する | GTK4（GSK）/ Vulkan |
-| Android | ASCII（Latin-1）＋UTF-16 | JNI の `NewDirectByteBuffer`。Java の `String` は作らず、バッファを参照する `CharSequence` を描画 API に渡す | Compose / Canvas、必要なら Vulkan |
-| VSCode / Web | UTF-16 または UTF-8 | daemon 経由の `ArrayBuffer`、または WASM のメモリを直接参照 | Canvas / WebGL |
+| macOS / iOS | ASCII + UTF-16 | Read directly with `UnsafeBufferPointer` (raw pointers never leave `withSnapshot { }`). `CFStringCreateWithBytesNoCopy` (ASCII) / `CFStringCreateWithCharactersNoCopy` (UTF-16) | Metal + Core Text |
+| Windows | ASCII + UTF-16 | UTF-16 as `PCWSTR` as is. ASCII is widened on the stack at draw time, only for visible rows | Direct2D / D3D + DirectWrite |
+| Linux | UTF-8 | The UI is also written in Rust (gtk-rs) and references the data without FFI | GTK4 (GSK) / Vulkan |
+| Android | ASCII (Latin-1) + UTF-16 | JNI's `NewDirectByteBuffer`. No Java `String` is created; a `CharSequence` referencing the buffer is passed to the drawing API | Compose / Canvas, Vulkan if needed |
+| VSCode / Web | UTF-16 or UTF-8 | `ArrayBuffer` via the daemon, or referencing WASM memory directly | Canvas / WebGL |
 
-同一プロセスでの書き込み回数は、数値の列・グラフ・ASCII の文字列が全 FE で 0 回、ASCII 以外の文字列が UTF-8 の FE で 0 回・UTF-16 系の FE で 1 回（変わったときだけ）になる。
+In the same process, the number of writes is 0 for numeric columns, the graph and ASCII strings on every FE, and for non-ASCII strings 0 on UTF-8 FEs and 1 on UTF-16-based FEs (only when they change).
 
-### 変更通知
+### Change notifications
 
-- コアの作業スレッドから SPSC のリングバッファ（`rtrb`）にイベントを積み、`Platform` から受け取った waker で FE のメインスレッドを起こす。macOS / iOS は `DispatchSource`（`.data_add`）で、合図が自動でまとまるので UI の更新は 1 フレームに 1 回で済む。ほかの OS は `PostMessage`（Windows）、GLib のメインループ（Linux）、Looper / Handler（Android）。
+- The core's worker threads push events onto an SPSC ring buffer (`rtrb`) and wake the FE's main thread with the waker received from `Platform`. On macOS / iOS this is `DispatchSource` (`.data_add`), which coalesces signals automatically, so the UI updates only once per frame. Other OSes use `PostMessage` (Windows), the GLib main loop (Linux), and Looper / Handler (Android).
 
-### 別プロセス・リモートにするとき
+### When moving to another process or remote
 
-- ② 手元の共有の daemon（`amonhen --serve`）: 利用者ごとに 1 つ、Unix ドメインソケットで待つ。History は daemon が永続キャッシュのファイルに書き、つないだ側は mmap する。差分のファイルの中身は POSIX の共有メモリで渡す。命令と、Undo の記録を書く Working Copy の操作は daemon のコアで実行する。
-  - SSH 先も開ける（`daemon:ssh://host/path`。CLI の `-C ssh://…` はいつもこれ）。手元の daemon が SSH 先でエンジン（`amonhen --stdio`）を用意してつなぎ、そのつながりとコア（History・検索の索引・差分）を、同じ SSH 先を開いた相手のあいだで共有する。SSH 先には git に触れる処理だけを頼む（アプリが直接 SSH 先を開く `ssh://…` と同じ分け方）。つながりが切れていれば、次に開くときにつなぎ直す。CLI で 1 回目はつなぐのに 1.6 秒、2 回目からは 0.01 秒（偽の ssh で手元を SSH 先に見立てて測った）。
-  - XPC ではなく Unix ドメインソケットにした: Linux でも同じものが動き（VSCode 拡張・CLI からも使う）、往復の遅れは小さな要求で p50 0.08 ms（同一プロセス 0.04 ms）と十分小さい。大きなデータはソケットに乗せず、ファイルの mmap と共有メモリで渡すので、XPC の領域の受け渡しの利点もない。
-  - 当初の案（要求と通知も共有メモリのリングで送り、寝ているときだけ `os_sync_wake_by_address_any` で起こす）は、ソケットの遅れが測って問題にならなかったので作っていない。
-- ③ SSH: daemon（`amonhen --stdio <repo>`、`crates/daemon`）は SSH 先で `GitBackend`・`Operations`・`RepoFiles` を要求に応じて実行するだけにし、レイアウト・永続キャッシュ・差分・色付けは手元のコアで行う（`crates/remote` の `RemoteBackend`）。C ABI と FE はそのまま使える。UI が読むのは手元のメモリだけで、通信に乗るのは git に触れる所だけ。History は永続キャッシュを手元に持ち、つなぎ直したら前回の起点からの新しいコミットだけを受け取る（daemon は `git rev-list` で求める）。要求には番号を振って並行に送り、パス・内容の検索は取り消せる。
-- どの動かし方でも、UI が読むのは手元のメモリだけ。通信は裏の同期にしか使わない。
+- ② Local shared daemon (`amonhen --serve`): one per user, listening on a Unix domain socket. The daemon writes History to the persistent cache file, and the connecting side mmaps it. Diff file contents are passed in POSIX shared memory. Commands, and Working Copy operations that write Undo records, run in the daemon's core.
+  - SSH hosts can be opened too (`daemon:ssh://host/path`; the CLI's `-C ssh://…` always uses this). The local daemon prepares and connects to the engine (`amonhen --stdio`) on the SSH host, and shares that connection and the core (History, search index, diffs) among the clients that opened the same SSH host. Only work that touches git is requested from the SSH host (the same split as `ssh://…`, where the app opens the SSH host directly). If the connection has dropped, it reconnects the next time it is opened. In the CLI, the first connection takes 1.6 seconds, and 0.01 seconds from the second time (measured with a fake ssh treating the local machine as the SSH host).
+  - Unix domain sockets rather than XPC: the same thing runs on Linux (also used by the VSCode extension and the CLI), and the round-trip delay is small enough, p50 0.08 ms for small requests (0.04 ms in the same process). Large data is not put on the socket but passed via file mmap and shared memory, so XPC's region handoff offers no advantage either.
+  - The original plan (send requests and notifications over shared-memory rings too, waking with `os_sync_wake_by_address_any` only when asleep) was not built, because the measured socket delay turned out not to be a problem.
+- ③ SSH: the daemon (`amonhen --stdio <repo>`, `crates/daemon`) only executes `GitBackend`, `Operations` and `RepoFiles` on request on the SSH host, while layout, persistent cache, diffs and highlighting are done in the local core (`RemoteBackend` in `crates/remote`). The C ABI and FE can be used as is. The UI reads only local memory, and only the parts that touch git go over the wire. History keeps its persistent cache locally, and after reconnecting it receives only the new commits since the previous starting points (the daemon finds them with `git rev-list`). Requests are numbered and sent concurrently, and path and content searches can be cancelled.
+- In every mode, the UI reads only local memory. Communication is used only for background synchronization.
 
-### コミットの署名の検証
+### Commit signature verification
 
-- 署名があるか・どの種類か（GPG・SSH・X.509）は、コミットのヘッダーの `gpgsig` で分かるので、History の行を読むときに一緒に取る（`CommitText::signature`、チャンクの `signatures` の列）。gpg は使わない。
-- 検証の結果（`git log --format=%G?` の 1 文字）は git に頼む。gpg を 1 件ずつ起動するので 1 件 15 ms ほどかかる。
-- 検証で gpg に鍵を取りに行かせない。gpg の `auto-key-retrieve` が有効だと、知らない鍵の署名を検証するたびに鍵サーバーや WKD に問い合わせて鍵束に鍵を加えてしまう（裏で何百も検証するので、ネットワークに出て、利用者の鍵束を勝手に増やす）。git は gpg に引数を足す設定を持たないので、`--no-auto-key-retrieve` を付けて設定どおりの gpg を呼ぶスクリプトを一時フォルダに置き、検証のときだけ `-c gpg.program=` でそれを指す。知らない鍵の署名は「No key」になる。
-  - History: 見えている署名つきの行だけを、スクロールが止まって 0.15 秒たってから、8 件ずつ 1 回の git でまとめて検証する（`git log --no-walk=unsorted --format=%H%x00%G?%x00%GS%x00%GK%x00%GF%x00%GT --stdin`。正しい署名にはコミッターのメールを添えて返す）。終わった分からアイコンを替える。描画は覚えた結果を読むだけで、gpg を待たない。アイコンは SF Symbols を Metal の文字のアトラスに入れて描く。
-  - 詳細の欄: 署名者・鍵・信用度を、ヘッダーを出した後に裏で読む（`commitExtras`）。
-- どこで検証するか:
-  - 手元のリポジトリ: 手元の git と鍵（`~/.gnupg`、`gpg.ssh.allowedSignersFile`、`gpg.minTrustLevel` など）。
-  - SSH 先のリポジトリ: 設定で選ぶ（既定は手元）。
-    - 手元（既定）: コミットのオブジェクト（数 KB）を受け取り、手元の作業用の bare リポジトリ（`$TMPDIR/amonhen-verify.git`）に書いて、手元の git に `%G?` で検証させる。木やほかのオブジェクトは要らない。手元のリポジトリと同じ規則・鍵・信用度になる。書いたオブジェクトの ID が元の ID と違えば断る。
-    - SSH 先: daemon に要求を送り、SSH 先の git と鍵で検証する。SSH 先に公開鍵がなければ「検証できない」になる。
-  - 信用度は「自分がその鍵をどれだけ信用するか」なので、手元の鍵束で判断するのを既定にした。
-- 見せ方（`SignatureStatus`）は、`%G?` に信用度（`%GT`）と「署名者のメールアドレスがコミッターと一致するか」を加えて決める。言葉は GitHub に合わせて英語。
+- Whether there is a signature and which kind (GPG, SSH, X.509) can be told from `gpgsig` in the commit header, so it is taken together when reading History rows (`CommitText::signature`, the chunk's `signatures` column). gpg is not used.
+- The verification result (the single character of `git log --format=%G?`) is left to git. It launches gpg once per commit, so each takes about 15 ms.
+- Verification does not let gpg go fetch keys. With gpg's `auto-key-retrieve` enabled, every time a signature from an unknown key is verified it queries key servers and WKD and adds the key to the keyring (verifying hundreds in the background, going out to the network and growing the user's keyring without asking). git has no setting to add arguments to gpg, so a script that calls the configured gpg with `--no-auto-key-retrieve` is placed in a temporary folder, and only for verification `-c gpg.program=` points to it. Signatures from unknown keys become "No key".
+  - History: only visible signed rows are verified, 0.15 seconds after scrolling stops, 8 at a time in a single git call (`git log --no-walk=unsorted --format=%H%x00%G?%x00%GS%x00%GK%x00%GF%x00%GT --stdin`; valid signatures are returned with the committer's email attached). Icons are replaced as results come in. Drawing only reads remembered results and never waits for gpg. Icons are drawn by putting SF Symbols into Metal's text atlas.
+  - Details pane: the signer, key and trust level are read in the background after the header is shown (`commitExtras`).
+- Where to verify:
+  - Local repositories: the local git and keys (`~/.gnupg`, `gpg.ssh.allowedSignersFile`, `gpg.minTrustLevel`, etc.).
+  - Repositories on an SSH host: chosen in settings (local by default).
+    - Local (default): receive the commit object (a few KB), write it to a local scratch bare repository (`$TMPDIR/amonhen-verify.git`), and have the local git verify it with `%G?`. Trees and other objects are not needed. The rules, keys and trust levels are the same as for local repositories. If the written object's ID differs from the original ID, it is rejected.
+    - SSH host: send a request to the daemon and verify with the SSH host's git and keys. If the SSH host has no public key, the result is "cannot verify".
+  - The trust level is "how much I trust that key", so judging by the local keyring is the default.
+- The presentation (`SignatureStatus`) is decided from `%G?` plus the trust level (`%GT`) and "whether the signer's email address matches the committer". Wording is English, matching GitHub.
 
-  | 状態 | アイコン（SF Symbols） | 色 | 言葉 | 信用度の目盛り |
+  | State | Icon (SF Symbols) | Color | Wording | Trust scale |
   | --- | --- | --- | --- | --- |
-  | G・信用 ultimate・full（SSH は allowed signers にあれば） | checkmark.seal.fill | 緑 | Verified | 3 |
-  | G・信用 marginal | checkmark.seal | 緑 | Verified | 2 |
-  | U、または信用 undefined・never | checkmark.shield | 黄 | Untrusted key | 1 |
-  | G で、鍵のどのメールアドレスもコミッターと違う | person.crop.circle.badge.questionmark | 黄 | Unverified signer | — |
-  | X・Y | clock.badge.exclamationmark | 橙 | Expired | — |
-  | R | exclamationmark.shield.fill | 赤 | Revoked key | — |
-  | B | xmark.seal.fill | 赤 | Bad signature | — |
-  | E | questionmark.circle | 灰 | No key | — |
-  | 検証中 | seal | 薄い灰 | Checking… | — |
+  | G, trust ultimate / full (for SSH, if in allowed signers) | checkmark.seal.fill | Green | Verified | 3 |
+  | G, trust marginal | checkmark.seal | Green | Verified | 2 |
+  | U, or trust undefined / never | checkmark.shield | Yellow | Untrusted key | 1 |
+  | G, but none of the key's email addresses match the committer | person.crop.circle.badge.questionmark | Yellow | Unverified signer | — |
+  | X, Y | clock.badge.exclamationmark | Orange | Expired | — |
+  | R | exclamationmark.shield.fill | Red | Revoked key | — |
+  | B | xmark.seal.fill | Red | Bad signature | — |
+  | E | questionmark.circle | Gray | No key | — |
+  | Verifying | seal | Light gray | Checking… | — |
 
-  署名者がコミッターと一致するかは、git の `%GS`（鍵の主なユーザー ID だけ）ではなく、署名した鍵に登録されたすべてのメールアドレスで決める。GPG は主鍵の指紋（`%GP`）で `gpg --list-keys --with-colons` を引き（鍵がいくつあっても gpg は 1 回）、ユーザー ID ごとの有効性も読む。SSH は git が allowed signers から見つけたプリンシパル（`%GS`）を使う。吹き出しの「コミッターのメール」の行に、コミッターのメールアドレスが鍵に登録されているかを出す。有効なユーザー ID（u・f・m）にあれば「鍵に登録されている」、有効性が不明なものにだけあれば「鍵に登録されている。ただし、そのユーザー ID は確認されていない」（誰でも他人のアドレスをユーザー ID に書けるため）、失効・期限切れのものにだけある、またはどこにもなければ「鍵に登録されていない」、鍵のメールアドレスを読めなければ「確かめられない」。
+  Whether the signer matches the committer is decided by all the email addresses registered on the signing key, not by git's `%GS` (only the key's primary user ID). For GPG, `gpg --list-keys --with-colons` is looked up by the primary key's fingerprint (`%GP`) (gpg runs once no matter how many keys), and the validity of each user ID is read too. For SSH, the principal git found in allowed signers (`%GS`) is used. The popover's "Committer email" line shows whether the committer's email address is registered on the key: if it is on a valid user ID (u, f, m), "registered on the key"; if only on user IDs of unknown validity, "registered on the key, but that user ID is not verified" (since anyone can write someone else's address into a user ID); if only on revoked or expired ones, or nowhere, "not registered on the key"; if the key's email addresses cannot be read, "cannot be checked".
 
-  詳細の欄の Signature の行は、アイコン・言葉・目盛り・方式と署名者。かざすと短い説明、押すと吹き出し（説明、署名者、コミッターとの一致、方式、鍵 ID、4 文字ずつ区切った指紋、信用度、検証した場所）を出す。History の行はアイコンだけ（信用度はアイコンの形で分かる）。
-- 結果はコア（手元の `Repository`）がコミットごとに覚える（コミットは変わらないため）。アプリを終えると消える。
-- 検証する側を変えたら、覚えていた結果はすべて捨てる。鍵や信用度が違うので、結果を引き継がない。コアは番号を進め、変える前に始めた検証の結果が後から届いても覚えない。History の丸と詳細の欄も、結果を捨てて検証し直す。
+  The Signature line in the details pane shows the icon, wording, scale, method and signer. Hovering shows a short explanation; clicking shows a popover (explanation, signer, match with the committer, method, key ID, fingerprint split into groups of 4 characters, trust level, where it was verified). History rows show only the icon (the trust level can be told from the icon's shape).
+- Results are remembered per commit by the core (the local `Repository`) (since commits do not change). They are discarded when the app quits.
+- When the verifying side is changed, all remembered results are discarded. Keys and trust levels differ, so results are not carried over. The core advances a counter and does not remember results of verifications started before the change, even if they arrive later. The History dots and the details pane also discard results and verify again.
 
-## マルチプラットフォーム
+## Multi-platform
 
 ### GitBackend
 
-iOS / Android では `git` を起動できないので、git の操作をトレイトで抽象化して差し替える。
+`git` cannot be launched on iOS / Android, so git operations are abstracted behind a trait and swapped.
 
-| 実装 | 用途 |
+| Implementation | Use |
 | --- | --- |
-| `GixBackend` | 読み取りは全 OS。書き込みも gix が対応した操作から順に移す |
-| `CliBackend` | デスクトップでの書き込み（rebase・merge・push）。正しさを優先 |
-| `Git2Backend`（libgit2） | モバイルで gix が未対応の書き込み（merge・push など）を補う |
+| `GixBackend` | Reading on all OSes. Writing is also moved over, starting with the operations gix supports |
+| `CliBackend` | Writing on desktop (rebase, merge, push). Correctness first |
+| `Git2Backend` (libgit2) | Fills in the writes gix does not yet support on mobile (merge, push, etc.) |
 
-非対話 rebase も、デスクトップは `GIT_SEQUENCE_EDITOR` で todo を差し込む方式、モバイルは gix / libgit2 でコミットを積み直す方式と、バックエンドごとに実装する。
+Non-interactive rebase is also implemented per backend: on desktop by injecting the todo through `GIT_SEQUENCE_EDITOR`, on mobile by re-stacking commits with gix / libgit2.
 
 ### Platform
 
-FE が実装してコアに渡す。
+Implemented by the FE and passed to the core.
 
-| 機能 | macOS / iOS | Windows | Linux | Android |
+| Feature | macOS / iOS | Windows | Linux | Android |
 | --- | --- | --- | --- | --- |
-| メインスレッドの起こし方 | DispatchSource | `PostMessage` | GLib のメインループ | Looper / Handler |
-| ファイル監視（notify） | FSEvents | `ReadDirectoryChangesW` | inotify | inotify |
-| 認証情報 | キーチェーン | 資格情報マネージャー | libsecret | Android Keystore |
-| SSH | OS の ssh / russh（iOS） | OS の ssh | OS の ssh | russh |
-| 保存先 | `~/Library/Caches/<バンドル ID>` など | `%LOCALAPPDATA%` | `$XDG_CACHE_HOME` | アプリの cache ディレクトリ |
+| Waking the main thread | DispatchSource | `PostMessage` | GLib main loop | Looper / Handler |
+| File watching (notify) | FSEvents | `ReadDirectoryChangesW` | inotify | inotify |
+| Credentials | Keychain | Credential Manager | libsecret | Android Keystore |
+| SSH | The OS's ssh / russh (iOS) | The OS's ssh | The OS's ssh | russh |
+| Storage location | `~/Library/Caches/<bundle ID>` etc. | `%LOCALAPPDATA%` | `$XDG_CACHE_HOME` | The app's cache directory |
 
-### バインディング
+### Bindings
 
-- C ABI（`cbindgen` でヘッダーを生成）がすべての土台。速さが要る経路（行データ・グラフ・通知）はここを通す。
-- UniFFI で Swift（macOS / iOS）と Kotlin（Android）向けの型付き API を生成する。
-- Linux（gtk-rs）と Windows（windows-rs で UI も Rust にする場合）は Rust から直接使う。
+- The C ABI (header generated with `cbindgen`) is the foundation for everything. Paths that need speed (row data, graph, notifications) go through it.
+- UniFFI generates typed APIs for Swift (macOS / iOS) and Kotlin (Android).
+- Linux (gtk-rs) and Windows (if the UI is also Rust with windows-rs) use it directly from Rust.
 
-## History のグラフ
+## History graph
 
-### レイアウト（Rust）
+### Layout (Rust)
 
-- commit-graph から親と世代番号を読む。メッセージ・作者は見えている行の分だけ後で取る。
-- 新しい順に順次レイアウトし、最初の 1 画面分ができた時点で表示する。4096 行ごとにレーンの状態をチェックポイントとして保存する。
-- 新しいコミットが増えたら先頭から計算し直し、チェックポイントと状態が一致した時点で打ち切る。
-- first-parent の幹線はレーン 0 に固定する。色はレーン番号ではなくブランチの出自で決め、スクロールや再計算で変わらないようにする。
-- 長い線は行ごとに分けず、区間（`row_start..row_end`）1 つとして持つ。見えている範囲の線は区間の索引で O(log n) で引く。
+- Read parents and generation numbers from commit-graph. Messages and authors are fetched later, only for visible rows.
+- Lay out incrementally from newest, and display as soon as the first screenful is ready. Every 4096 rows, the lane state is saved as a checkpoint.
+- When new commits are added, recompute from the top and stop once the state matches a checkpoint.
+- The first-parent trunk is fixed to lane 0. Colors are decided by the branch's origin rather than the lane number, so they do not change with scrolling or recomputation.
+- Long lines are not split per row but held as a single span (`row_start..row_end`). Lines in the visible range are looked up in O(log n) with a span index.
 
-### 描画（Metal）
+### Drawing (Metal)
 
-- 点・線・曲線・ラベルの背景を四角形のインスタンスとして、1 回の描画命令で描く。形は fragment シェーダーの SDF で描き、解析的にアンチエイリアスする。
-- インスタンスは表示範囲 ± 数画面分を GPU に置き、スクロールでは定数バッファのオフセットだけを変える。
-- `CAMetalLayer.maximumDrawableCount = 2`。入力を受けたら次の vsync を待たずに描いて表示する。
+- Dots, lines, curves and label backgrounds are drawn as quad instances in a single draw call. Shapes are drawn with SDFs in the fragment shader and antialiased analytically.
+- Instances for the visible range ± a few screens are kept on the GPU, and scrolling only changes the offset in the constant buffer.
+- `CAMetalLayer.maximumDrawableCount = 2`. On input, draw and present without waiting for the next vsync.
 
-### 入力
+### Input
 
-- `scrollWheel` を直接受け、イベントのタイムスタンプと速度から表示時刻の位置を予測して描く。慣性は `momentumPhase` に従う。
-- 当たり判定は行 = `y / 行の高さ`、レーン = `x / レーンの幅` で O(1)。
+- Receive `scrollWheel` directly, and draw at the position predicted for display time from the event timestamp and velocity. Momentum follows `momentumPhase`.
+- Hit testing is O(1): row = `y / row height`, lane = `x / lane width`.
 
-### 表現の工夫
+### Presentation refinements
 
-- 幹線を太く、枝を細く描く。
-- ホバーしたコミットの祖先の道筋を強調し、ほかを薄くする（祖先判定は Rust でビット集合を作り、GPU にはテクスチャ 1 枚で渡す）。
-- ブランチに焦点を当てるモード、マージ済みブランチの折りたたみ。
-- レーンが多いときは未使用レーンを詰め、ホバー位置の周辺を魚眼で広げる。
-- 未コミットの変更を先頭の点線の仮ノードで、stash を専用の形で、ahead / behind の区間を色分けで示す。
-- レイアウトが変わったら新旧をコミット ID で対応付け、頂点シェーダーで位置を補間してアニメーションする。
-- スクロールバーにグラフの密度（コミットの頻度、ブランチの活動量）を描く。
+- Draw the trunk thick and branches thin.
+- Emphasize the ancestor path of the hovered commit and fade the rest (ancestry is computed in Rust as a bit set and passed to the GPU as a single texture).
+- A mode that focuses on a branch, folding of merged branches.
+- When there are many lanes, compact unused lanes and widen the area around the hover position with a fisheye.
+- Show uncommitted changes as a dotted virtual node at the top, stashes with a dedicated shape, and ahead / behind spans with distinct colors.
+- When the layout changes, match old and new by commit ID and animate by interpolating positions in the vertex shader.
+- Draw the graph's density (commit frequency, branch activity) on the scroll bar.
 
-## 差分表示
+## Diff view
 
-- `NSTextView` は使わず、最初から Metal で描く。文字の描画の仕組みは History のラベルと共有する。
-  1. 文字の並べ方は Core Text の CTLine に任せる（日本語・合字・フォントの代替を OS と同じ品質で）。
-  2. CTRun からグリフ番号・位置・フォントを取り出す。
-  3. 未登録のグリフだけ `CTFontDrawGlyphs` でラスタライズしてアトラスに足す（OS と同じ描画処理なので見た目が揃う）。絵文字はカラーのアトラスに分ける。
-  4. グリフ 1 つを四角形のインスタンス 1 つとして、1 回の描画命令で描く。横位置は 1/4 ピクセル単位に丸める。
-- CTLine は「世代＋行番号」でキャッシュし、スクロールでは History と同じく定数のオフセットだけを変える。
-- ファイル内容は gix が展開した `Arc<[u8]>` を差分計算・色付け・表示で共有する。
-- テキスト選択・コピー・検索・右クリックメニュー・hunk / 行単位の stage を自前で実装する。
+- Do not use `NSTextView`; draw with Metal from the start. The text drawing machinery is shared with History labels.
+  1. Leave text layout to Core Text's CTLine (Japanese, ligatures and font fallback at the same quality as the OS).
+  2. Extract glyph IDs, positions and fonts from CTRun.
+  3. Rasterize only unregistered glyphs with `CTFontDrawGlyphs` and add them to the atlas (the same rendering as the OS, so the look matches). Emoji go into a separate color atlas.
+  4. Draw each glyph as one quad instance, in a single draw call. Horizontal positions are rounded to 1/4 pixel.
+- CTLines are cached by "generation + line number", and scrolling, as in History, only changes a constant offset.
+- File contents share the `Arc<[u8]>` decoded by gix across diff computation, highlighting and display.
+- Text selection, copy, search, the right-click menu and hunk / line-level staging are implemented by our own code.
 
-## 速度目標と計測
+## Speed targets and measurement
 
-| 項目 | 目標 |
+| Item | Target |
 | --- | --- |
-| 起動して History を表示 | 数 ms（永続キャッシュあり） |
-| 130 万コミット（linux）の全レイアウト | 裏で 100 ms 前後 |
-| スクロール中の GPU へのデータ転送 | 定数 1 つ |
-| 1 フレームの描画命令 | History は 1 回 |
-| 入力から GPU が描き終えるまで | 8.3 ms 以内（表示はさらに WindowServer の合成で 2 フレーム後） |
-| Rust と Swift の境界のコスト | 1 フレームあたり µs 未満 |
+| Launch and show History | A few ms (with persistent cache) |
+| Full layout of 1.3M commits (linux) | Around 100 ms in the background |
+| Data transfer to the GPU while scrolling | One constant |
+| Draw calls per frame | 1 for History |
+| From input until the GPU finishes drawing | Within 8.3 ms (display is a further 2 frames later due to WindowServer compositing) |
+| Cost of the Rust–Swift boundary | Under a µs per frame |
 
-- Rust は criterion、Swift は `os_signpost` ＋ Instruments で計測する。
-- 入力イベントのタイムスタンプから `MTLDrawable.addPresentedHandler` の表示時刻までを常に計測し、デバッグ表示に出す。
-- CI で linux・chromium 規模のリポジトリを使い、起動時間・フレーム落ち・入力遅延の悪化を検出する。
-- `CFString` の NoCopy が実際にコピーしていないことを確かめる。`apps/macos/Tests` で、UTF-16 は `CFStringGetCharactersPtr` が元の配列を返すこと、ASCII は元のバッファを書き換えると内容も変わることをテストしている。短い ASCII 文字列は CoreFoundation が tagged pointer（ポインタの値に文字を埋め込む）にするので参照はしないが、ヒープ確保もないので問題ない。
+- Measurement uses criterion for Rust and `os_signpost` + Instruments for Swift.
+- Always measure from the input event timestamp to the display time from `MTLDrawable.addPresentedHandler`, and show it in the debug display.
+- CI uses linux- and chromium-scale repositories to detect regressions in launch time, dropped frames and input latency.
+- Confirm that `CFString`'s NoCopy really does not copy. `apps/macos/Tests` tests that for UTF-16 `CFStringGetCharactersPtr` returns the original array, and for ASCII that rewriting the original buffer changes the contents too. Short ASCII strings are turned into tagged pointers (characters embedded in the pointer value) by CoreFoundation, so they do not reference the buffer, but there is no heap allocation either, so this is fine.
 
-### 計測の記録
+### Measurement log
 
-linux（1,485,021 コミット、ref 952 個、Apple Silicon、release ビルド）:
+linux (1,485,021 commits, 952 refs, Apple Silicon, release build):
 
-| 項目 | 時間 |
+| Item | Time |
 | --- | --- |
-| History の読み込み（commit-graph なし） | 2.5 s（`git rev-list --all --topo-order` は 11 s） |
-| 同上（commit-graph あり、`git clone --shared` した複製で計測） | 0.97 s（git は 2.1 s） |
-| グラフのレイアウト（レーン 671 本） | 0.23 s |
-| 起点が変わらないときの読み直し | 9 ms |
-| 1 コミット足した後の読み直し | 139 ms |
-| アプリで開いて History を表示（キャッシュあり、102 MB） | 18 ms |
-| 同上（キャッシュなし） | 2.4 s |
-| スクロール中のメインスレッドの処理 p50 / p95 | 2.0 / 2.6 ms（フレーム落ち 0） |
+| Loading History (without commit-graph) | 2.5 s (`git rev-list --all --topo-order` takes 11 s) |
+| Same (with commit-graph, measured on a copy made with `git clone --shared`) | 0.97 s (git takes 2.1 s) |
+| Graph layout (671 lanes) | 0.23 s |
+| Reload when starting points are unchanged | 9 ms |
+| Reload after adding 1 commit | 139 ms |
+| Open in the app and show History (with cache, 102 MB) | 18 ms |
+| Same (without cache) | 2.4 s |
+| Main-thread work while scrolling p50 / p95 | 2.0 / 2.6 ms (0 dropped frames) |
 
-ここに至るまでに直したこと:
+What was fixed to get here:
 
-- gix のトポロジカル順の走査は全コミットを 2 回読み、2 回目もオブジェクトを展開し直していた（28 s）。各コミットを 1 回だけ読み（commit-graph があればそれを使う）、同じ深さのコミットを並列に読んで、並べ替えはメモリ上で行うようにした（`model::topo`）。
-- 並べ替えはハッシュ表を 3 回引いていて、150 万件の表ではキャッシュミスが重かった（0.91 s）。オブジェクト ID の先頭 8 バイトをそのままハッシュ値にし（`OidMap`）、親を 1 回だけ添字に直すようにした（0.22 s）。
-- レイアウトは各行で全レーンを走査していた（821 本で 1.0 s）。待っている行からレーンを引く索引と空きレーンの集合を持つようにした（0.18〜0.23 s）。
-- 起点が変わったら全履歴を読み直していた。前回の History に当たったら止めて、新しいコミットだけを足すようにした（`model::topo::extend`）。
+- gix's topological-order walk read every commit twice, decoding objects again on the second pass (28 s). Now each commit is read only once (using commit-graph if present), commits at the same depth are read in parallel, and sorting is done in memory (`model::topo`).
+- Sorting looked up a hash table three times, and with a 1.5M-entry table cache misses were heavy (0.91 s). Now the first 8 bytes of the object ID are used directly as the hash value (`OidMap`), and parents are converted to indices only once (0.22 s).
+- Layout scanned all lanes on every row (1.0 s with 821 lanes). Now it keeps an index from awaited rows to lanes and a set of free lanes (0.18–0.23 s).
+- When the starting points changed, the whole history was reloaded. Now it stops when it hits the previous History and adds only the new commits (`model::topo::extend`).
 
-キャッシュがない初回の 2.4 s は、commit-graph があれば約 1.2 s になる。commit-graph がないリポジトリで `git commit-graph write --reachable` を裏で実行するかは設定で選ぶ（`writeCommitGraph`、既定は行わない。リポジトリの `.git` に書き込むため）。
+The 2.4 s for the first load without cache becomes about 1.2 s with commit-graph. Whether to run `git commit-graph write --reachable` in the background in repositories without commit-graph is chosen in settings (`writeCommitGraph`, off by default, since it writes into the repository's `.git`).
 
-History の読み込み（起点の収集＋トポロジカル順の走査、`crates/backend-gix/examples/walk.rs`、Apple Silicon、release ビルド）:
+Loading History (collecting starting points + topological-order walk, `crates/backend-gix/examples/walk.rs`, Apple Silicon, release build):
 
-| リポジトリ | コミット数 | gix | `git rev-list --all --topo-order` |
+| Repository | Commits | gix | `git rev-list --all --topo-order` |
 | --- | --- | --- | --- |
-| android/development（commit-graph なし） | 34,261 | 267 ms | 286 ms |
-| 同上（commit-graph あり） | 34,261 | 31 ms | 111 ms |
-| coreutils（commit-graph なし） | 30,176 | 157 ms | 225 ms |
+| android/development (without commit-graph) | 34,261 | 267 ms | 286 ms |
+| Same (with commit-graph) | 34,261 | 31 ms | 111 ms |
+| coreutils (without commit-graph) | 30,176 | 157 ms | 225 ms |
 
-- gix のオブジェクトキャッシュを有効にしないと、commit-graph なしで 1.3 秒かかる（`object_cache_size_if_unset` で 64 MB を指定）。
-- commit-graph の有無で 1 桁違う。commit-graph がないリポジトリでは、書き出しを案内するか、コア自身の永続キャッシュで補う。
+- Without gix's object cache enabled, it takes 1.3 seconds without commit-graph (64 MB set with `object_cache_size_if_unset`).
+- With or without commit-graph differs by an order of magnitude. For repositories without commit-graph, suggest writing it, or make up for it with the core's own persistent cache.
 
-グラフのレイアウト（`crates/core/benches/graph.rs`、合成した履歴、criterion）:
+Graph layout (`crates/core/benches/graph.rs`, synthetic history, criterion):
 
-| 項目 | 時間 |
+| Item | Time |
 | --- | --- |
-| 10 万コミットの全レイアウト | 9.4 ms |
-| 100 万コミットの全レイアウト | 90 ms |
-| 100 万コミットのうち最初の 60 行 | 1.3 ms |
-| 100 万コミットに 10 コミット足した後の再計算 | 6.9 ms |
-| 見えている 60 行に重なる線の検索 | 0.9 µs |
+| Full layout of 100k commits | 9.4 ms |
+| Full layout of 1M commits | 90 ms |
+| First 60 rows of 1M commits | 1.3 ms |
+| Recompute after adding 10 commits to 1M commits | 6.9 ms |
+| Searching lines overlapping the visible 60 rows | 0.9 µs |
 
-History 画面のスクロール（`AmonHen <repo> --measure-scroll`、600 フレーム、1.5 行ずつ、60Hz のディスプレイ、release ビルド）:
+Scrolling the History screen (`AmonHen <repo> --measure-scroll`, 600 frames, 1.5 rows each, 60Hz display, release build):
 
-| リポジトリ | メインスレッドの処理 p50 / p95 | GPU が描き終えるまで p50 / p95 | 表示まで | フレーム落ち |
+| Repository | Main-thread work p50 / p95 | Until the GPU finishes drawing p50 / p95 | Until display | Dropped frames |
 | --- | --- | --- | --- | --- |
 | coreutils | 1.9 / 2.5 ms | 2.2 / 2.8 ms | 33.3 ms | 0 |
 | android/development | 2.2 / 4.2 ms | 2.3 / 4.2 ms | 33.3 ms | 0 |
 
-- 表示までは 2 フレーム。ウィンドウ表示では、WindowServer が次の vsync で合成し、その次の vsync で画面に出るので、アプリ側では縮められない。`presentsWithTransaction` の有無でも変わらなかったので、表とグラフを同じフレームで動かせる有効の方を使う。
-- 最大値（8〜12 ms）は、新しいチャンクの件名を同期で読む瞬間だった。裏で読んで前後のチャンクも先読みするようにして、p95 2.0 ms・最大 2.6 ms になった。
-- linux（140 万コミット）、120Hz のディスプレイ、1 フレームに 40 行ずつの速いスクロールでは、表のセル（NSTextField）を CPU で描く処理が CA のコミットの約 6 割を占め、600 フレームのうち表示できたのは 532（49 フレーム落ち）だった。描画先を 3 枚にし、件名・作者・日時をグラフと同じく Metal で描く（差分表示と共有するグリフアトラス、行ごとに並べたグリフをキャッシュ）ようにして、599 フレーム表示（1 フレーム落ち）、メインスレッドの処理は p50 2.1 / p95 2.5 ms になった。
-- グラフの点と線は、見えている範囲だけ毎フレーム GPU のバッファに書いている（数 KB）。レイアウトの配列をページ境界に揃えて `MTLBuffer(bytesNoCopy:)` で渡し、スクロールでは定数だけ変える形にするのは後で。
+- Display takes 2 frames. In windowed display, WindowServer composites at the next vsync and it reaches the screen at the vsync after that, so the app side cannot shorten it. It did not change with or without `presentsWithTransaction` either, so the enabled setting is used, which lets the table and graph move in the same frame.
+- The maximum (8–12 ms) was the moment of synchronously reading subjects for a new chunk. Reading in the background and prefetching the neighboring chunks brought it to p95 2.0 ms and max 2.6 ms.
+- On linux (1.4M commits), with a 120Hz display and fast scrolling of 40 rows per frame, CPU drawing of the table cells (NSTextField) took about 60% of the CA commit, and only 532 of 600 frames were displayed (49 dropped frames). Using 3 drawables and drawing subject, author and date with Metal like the graph (the glyph atlas shared with the diff view, with per-row laid-out glyphs cached) gave 599 frames displayed (1 dropped frame), with main-thread work at p50 2.1 / p95 2.5 ms.
+- Graph dots and lines are written into a GPU buffer every frame, only for the visible range (a few KB). Aligning the layout arrays to page boundaries, passing them with `MTLBuffer(bytesNoCopy:)` and changing only a constant while scrolling is for later.
 
-FE とコアの境目（`--measure-scroll` の内訳、`--measure-select N`、linux、release ビルド）:
+The FE–core boundary (breakdown of `--measure-scroll`, `--measure-select N`, linux, release build):
 
-| 項目 | 前 | 後 |
+| Item | Before | After |
 | --- | --- | --- |
-| 速いスクロール（40 行/フレーム）のメインスレッド p50 / p95 | 3.35 / 3.93 ms | 1.09 / 1.72 ms |
-| コミットを選んでから差分が出るまで p50 / p95（履歴の離れた行へ） | 24.4 / 46.9 ms | 8.1 / 15.4 ms |
-| コミットを選んでからメッセージが出るまで p50 / p95 | 12.4 / 39.2 ms | 6.9 / 11.1 ms |
+| Main thread during fast scrolling (40 rows/frame) p50 / p95 | 3.35 / 3.93 ms | 1.09 / 1.72 ms |
+| From selecting a commit until the diff appears p50 / p95 (to distant rows of history) | 24.4 / 46.9 ms | 8.1 / 15.4 ms |
+| From selecting a commit until the message appears p50 / p95 | 12.4 / 39.2 ms | 6.9 / 11.1 ms |
 
-- コアの呼び出し（線の検索・レーンの位置・コミット ID）は 1 フレームで合わせて 0.03 ms 以下。重かったのは FE 側の Core Text での行の並べで、行の文字はチャンクを裏で読むときに同じスレッドで並べておき、メインスレッドではアトラスを引くだけにした。
-- コミットの詳細の読み込み自体（変わったファイル 1.1 ms、差分 0.7 ms）は軽く、遅れは待ち時間だった。詳細のたびに ref をディスクから読み直していた（15〜30 ms）のをやめ、先読みのチャンクと色付けを詳細より低い優先度にし、読み込みはメインスレッドの描画を待たずに始め、最初のファイルの差分は変わったファイルと一緒に読む。
+- Core calls (line search, lane positions, commit IDs) total 0.03 ms or less per frame. What was heavy was laying out rows with Core Text on the FE side; row text is now laid out on the same thread when the chunk is read in the background, and the main thread only looks up the atlas.
+- Loading commit details itself (changed files 1.1 ms, diff 0.7 ms) is light; the delay was waiting. It no longer rereads refs from disk for each detail view (15–30 ms), prefetch chunks and highlighting have lower priority than details, loading starts without waiting for the main thread to draw, and the first file's diff is read together with the changed files.
 
-daemon 越し（`cargo run --release -p amonhen-remote --example daemon_cost -- <amonhend> <repo>`、手元の linux に子プロセスでつないだもの。SSH の遅延と帯域は含まない）:
+Over the daemon (`cargo run --release -p amonhen-remote --example daemon_cost -- <amonhend> <repo>`, connected to a local linux as a child process; excludes SSH latency and bandwidth):
 
-| 項目 | 時間 | 受け取った量 |
+| Item | Time | Amount received |
 | --- | --- | --- |
-| History の初回の読み込み | 2.4 s | 54 MB（以後は手元のキャッシュ） |
-| History の読み直し（変化なし） | 29 ms | 19 KB |
-| 件名などのチャンク（256 行） | 3 ms | 502 KB |
-| 変わったファイルと最初の差分 | 3 ms | 127 KB |
-| 件名の検索 | 1.4 s | 1.37 GB |
+| First load of History | 2.4 s | 54 MB (local cache afterwards) |
+| Reloading History (no change) | 29 ms | 19 KB |
+| Chunk of subjects etc. (256 rows) | 3 ms | 502 KB |
+| Changed files and the first diff | 3 ms | 127 KB |
+| Subject search | 1.4 s | 1.37 GB |
 
-- 転送量を減らした後（通信路の上の大きさ）: チャンク 502 KB → 13 KB、変わったファイルと最初の差分 127 KB → 56 KB、件名の検索 1.37 GB → 5 MB。History の初回は 47 MB（コミット ID はほとんど縮まない）で、以後は手元のキャッシュから差分だけ。
-- 圧縮は zstd ではなく LZ4（`lz4_flex`、Rust だけで書かれている）にした。zstd は C のコードを含み、全ターゲットの型検査と Linux 用の静的リンクで C コンパイラが要るため。
-- エンジンの置き場所はどのマシンでも同じ形にする: `${XDG_DATA_HOME:-~/.local/share}/amonhen/engine/<中身のハッシュ>/amonhen`（版ごとに並べて置け、隣の `engines` に SSH 先に送るほかの OS と CPU のものも置く）、`current` がいちばん新しい版を指し、`~/.local/bin/amonhen` が `current/amonhen` を指す。アプリ（起動するたびに裏で）・`scripts/install.sh`・tar.gz を展開した人は `amonhen install` で自分を置き、今の `current` より古くなければ `current` を向け直す（`0.1.0` < `0.1.1-snapshot.N` < `0.1.1`）。共有の daemon は `amonhen engine` が出すもの（`current` の通信の形の版が同じならそれ、違えば自分）で起動するので、どの FE が先に起動しても同じ daemon になる（`crates/cli/src/install.rs`）。開発中のアプリからは置かない。
-- SSH 先で動くのはエンジン（`amonhen`。CLI と daemon を兼ねる 1 つの実行ファイル）で、x86_64 と aarch64 の Linux 向けは musl で静的リンクしたもの（`scripts/build-engine.sh`、リンクは zig、5〜6 MB）。使う順は `AMONHEN_REMOTE_ENGINE` で指定したもの → SSH 先の `PATH` の `amonhen`（通信の形の版が合えば）→ 前に送ったもの → 送り込む（`AMONHEN_PUSH=0` で止める）。送る先は `~/.local/share/amonhen/engine/<中身のハッシュ>/amonhen`（手元の置き場所と同じ形）で、書いたら SSH 先で `sha1sum`・`shasum` で中身を確かめる。ほかの版は消さず（違う版の Amon Hen が同じ SSH 先を使っても取り合いにならない）、使うたびに `used` の印を更新し、30 日使われていないものだけを片付ける。使っているエンジンと用意のしかたは `amonhen daemon status` と Activity に出す（VSCode の Remote-SSH・Zed のリモート開発と同じ形）。
+- After reducing transfer (size on the wire): chunk 502 KB → 13 KB, changed files and the first diff 127 KB → 56 KB, subject search 1.37 GB → 5 MB. The first History load is 47 MB (commit IDs barely shrink), and afterwards only the difference from the local cache.
+- Compression is LZ4 (`lz4_flex`, written purely in Rust) rather than zstd. zstd contains C code, which would require a C compiler for type-checking all targets and for static linking on Linux.
+- The engine's location has the same shape on every machine: `${XDG_DATA_HOME:-~/.local/share}/amonhen/engine/<content hash>/amonhen` (versions can sit side by side, and the neighboring `engines` also holds the ones for other OSes and CPUs to send to SSH hosts), `current` points to the newest version, and `~/.local/bin/amonhen` points to `current/amonhen`. The app (in the background at every launch), `scripts/install.sh`, and people who extracted the tar.gz place themselves with `amonhen install`, repointing `current` if they are not older than the current `current` (`0.1.0` < `0.1.1-snapshot.N` < `0.1.1`). The shared daemon is started with the one `amonhen engine` prints (`current` if its protocol version is the same, otherwise itself), so whichever FE starts first, it ends up as the same daemon (`crates/cli/src/install.rs`). Development builds of the app do not place it.
+- What runs on the SSH host is the engine (`amonhen`, a single executable serving as both CLI and daemon); for x86_64 and aarch64 Linux it is statically linked with musl (`scripts/build-engine.sh`, linked with zig, 5–6 MB). The order of use is the one specified by `AMONHEN_REMOTE_ENGINE` → `amonhen` on the SSH host's `PATH` (if the protocol version matches) → one sent earlier → push one (stopped with `AMONHEN_PUSH=0`). It is sent to `~/.local/share/amonhen/engine/<content hash>/amonhen` (the same shape as the local location), and after writing, its contents are checked on the SSH host with `sha1sum` or `shasum`. Other versions are not deleted (so different versions of Amon Hen using the same SSH host do not fight), the `used` mark is updated on each use, and only those unused for 30 days are cleaned up. The engine in use and how it was prepared are shown in `amonhen daemon status` and Activity (the same approach as VSCode's Remote-SSH and Zed's remote development).
 
-構文の色付け（`cargo run --release -p amonhen-syntax --example highlight -- <file>`、linux のファイル）:
+Syntax highlighting (`cargo run --release -p amonhen-syntax --example highlight -- <file>`, files from linux):
 
-| ファイル | 大きさ | 時間 |
+| File | Size | Time |
 | --- | --- | --- |
-| kernel/fork.c | 3,431 行・84 KB | 16 ms |
-| kernel/workqueue.c | 8,644 行・245 KB | 29 ms |
-| drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c | 10,253 行・451 KB | 58 ms |
+| kernel/fork.c | 3,431 lines, 84 KB | 16 ms |
+| kernel/workqueue.c | 8,644 lines, 245 KB | 29 ms |
+| drivers/gpu/drm/amd/amdgpu/gfx_v10_0.c | 10,253 lines, 451 KB | 58 ms |
 
-- 言語ごとの最初の 1 回は、クエリの読み込みで 8〜14 ms 足される。
-- 差分は色なしで先に表示し、変更前・変更後のファイル全体を裏で解析してから描き直す。断片ではなく全体を解析するので、hunk の外から続くコメントや文字列にも正しく色が付く。
+- The first time for each language adds 8–14 ms for loading queries.
+- Diffs are shown without colors first, and redrawn after the whole before and after files are parsed in the background. Since the whole file is parsed rather than fragments, comments and strings continuing from outside the hunk are colored correctly too.
 
-History の行の文字（件名・作者・日時）のメモリ:
+Memory for History row text (subject, author, date):
 
-- 256 行ずつのチャンクで読み、見えている所に近い 24 個（約 6,000 行）だけを覚える。遠いものは捨て、戻ってきたら読み直す（1 チャンク数 ms、裏で）。チャンクはコミットのオブジェクトの中身を指しているので、全部持つと linux では数 GB になる。
-- linux を上から下まで速くスクロールしたときの物理メモリ（`footprint`）は、捨てないと 8 秒で 4 GB まで増え続けたが、捨てるようにして 300〜380 MB で止まる。スクロールの速さは変わらない（メインスレッド p50 1.14 ms）。
+- Read in chunks of 256 rows, and keep only the 24 (about 6,000 rows) closest to the visible area. Distant ones are discarded and reread when scrolled back to (a few ms per chunk, in the background). Chunks point into the contents of commit objects, so holding all of them would be several GB on linux.
+- Physical memory (`footprint`) while scrolling linux quickly from top to bottom kept growing to 4 GB in 8 seconds without discarding, but with discarding it settles at 300–380 MB. Scrolling speed does not change (main thread p50 1.14 ms).
 
-永続キャッシュ（`crates/core/src/cache.rs`）:
+Persistent cache (`crates/core/src/cache.rs`):
 
-| 項目 | 時間 |
+| Item | Time |
 | --- | --- |
-| 100 万コミットの書き込み | 19 ms |
-| 100 万コミットの読み込み（mmap ＋ 壊れていないかの検査 ＋ 線の索引の組み立て） | 8.1 ms |
-| android/development を開いて History を表示（キャッシュあり） | 3〜4 ms |
-| 同上（キャッシュなし、裏で読んで表示） | 約 400 ms |
+| Writing 1M commits | 19 ms |
+| Reading 1M commits (mmap + integrity check + building the line index) | 8.1 ms |
+| Open android/development and show History (with cache) | 3–4 ms |
+| Same (without cache, read and shown in the background) | About 400 ms |
 
-- 起点と HEAD が前回と同じなら、走査もレイアウトもしない（コミットは不変なので History も同じ）。
-- 読み込み時間の大半は検査と索引の組み立て。mmap 自体はほぼ 0。必要なら索引もキャッシュに入れる。
+- If the starting points and HEAD are the same as last time, neither the walk nor the layout runs (commits are immutable, so History is the same too).
+- Most of the load time is the check and building the index. mmap itself is nearly 0. If needed, the index can go into the cache too.
 
-Working Copy の status（`crates/core/examples/status.rs`、2 回目以降）:
+Working Copy status (`crates/core/examples/status.rs`, second run onward):
 
-| リポジトリ | ふだんの git status | untracked cache | ＋ fsmonitor |
+| Repository | Plain git status | untracked cache | + fsmonitor |
 | --- | --- | --- | --- |
-| linux（96,080 ファイル、手元の macOS） | 約 500 ms | 125 ms | 45 ms |
-| minix（73,545 ファイル、SSH 先の Linux、daemon 越し） | 115 ms | 32 ms | 使えない |
+| linux (96,080 files, local macOS) | About 500 ms | 125 ms | 45 ms |
+| minix (73,545 files, Linux on an SSH host, over the daemon) | 115 ms | 32 ms | Not available |
 
-- 時間の大半は追跡していないファイルを探すこと（linux で 373 ms）。untracked cache は `status.showUntrackedFiles` が `--untracked-files=all` と揃っていないと使われないので、両方を渡す。
-- ふだんの status は index のロックを取らない（利用者の git と奪い合わない）ので、キャッシュは書き残されない。初回と、その後は 60 秒に 1 回だけ書き残す。
-- fsmonitor は macOS と Windows だけで、リポジトリごとに `git fsmonitor--daemon` が常駐する。アプリの設定で切れる（既定は使う）。
-- 読み直しは重ねて走らせない。途中で変化の知らせが来たら、終わってから 1 回だけ読み直す。
+- Most of the time goes to finding untracked files (373 ms on linux). The untracked cache is not used unless `status.showUntrackedFiles` agrees with `--untracked-files=all`, so both are passed.
+- A normal status does not take the index lock (so it does not fight with the user's git), so the cache is not written back. It is written back the first time, and after that only once every 60 seconds.
+- fsmonitor is macOS and Windows only, and `git fsmonitor--daemon` stays resident per repository. It can be turned off in the app's settings (on by default).
+- Reloads do not run overlapping. If a change notice arrives midway, it reloads only once after finishing.
 
-祖先の強調（`crates/core/src/lineage.rs`、`crates/core/examples/lineage.rs`）:
+Ancestor emphasis (`crates/core/src/lineage.rs`, `crates/core/examples/lineage.rs`):
 
-- linux（148 万コミット、線 174 万本）で、選んだコミットの祖先と光らせる線を求めるのに 9〜25 ms。コミットを選んだときに裏で求め、求まったら描き直す。カーソルを合わせるたびに求めるには重いので、選んだときだけにしている。
-- 線は子と親の行を持つ（`Edge::child`・`Edge::parent`、合流する線は `Edge::RIDER`）。線が 16 バイトから 24 バイトになり、linux のキャッシュは 103 MB から 117 MB になった（形式 2）。読み込み・書き込みの時間はほぼ変わらない。
-- 同じ親を待つ線は、レーンの持ち主の縦線を共有する。合流した子だけが祖先なら、縦線は合流したところから下だけを光らせる（描くときに 2 つに分ける）。
-- 描くのは見えている範囲の線だけなので、速いスクロールのメインスレッドの時間は変わらない（p50 1.07 ms）。
+- On linux (1.48M commits, 1.74M lines), finding the ancestors of the selected commit and the lines to light up takes 9–25 ms. It is computed in the background when a commit is selected, and redrawn once found. It is too heavy to compute on every hover, so it is done only on selection.
+- Lines hold the child's and parent's rows (`Edge::child`, `Edge::parent`; merging lines are `Edge::RIDER`). A line grew from 16 bytes to 24 bytes, and the linux cache from 103 MB to 117 MB (format 2). Read and write times barely changed.
+- Lines waiting for the same parent share the vertical line of the lane's owner. If only the merging child is an ancestor, only the part of the vertical line below the merge point lights up (split in two when drawing).
+- Only lines in the visible range are drawn, so the main-thread time for fast scrolling does not change (p50 1.07 ms).
 
-linux（148 万コミット）では、1 行を横切る線が中央値で 365 本、最大のレーン番号は中央値で 452（`crates/core/examples/layout.rs`）。トポロジー順（`git log --topo-order` と同じ並べ方）でも 303 本・637 で、並べ方では解決しない。そこで、見えている範囲に点のあるレーンだけを広く取り、線だけのレーンは細く薄い帯に詰め、何もないレーンは幅 0 にする（魚眼）。範囲が変わったときのレーンの動きは約 0.15 秒のアニメーションでつなぐ。
+On linux (1.48M commits), the median number of lines crossing a row is 365, and the median maximum lane number is 452 (`crates/core/examples/layout.rs`). Even in topological order (the same ordering as `git log --topo-order`) it is 303 and 637, so ordering does not solve it. Instead, only lanes with dots in the visible range get full width, lanes with only lines are packed into thin, faint bands, and empty lanes get width 0 (fisheye). Lane movement when the range changes is bridged with an animation of about 0.15 seconds.
 
-実際のリポジトリ（`crates/core/examples/layout.rs`）では、coreutils（30,176 コミット）で 1.2 ms、android/development（34,261 コミット、起点 318 個）で 17 ms。後者はリリースブランチが多くレーンが 673 本まで広がるので、未使用レーンを詰める・魚眼で広げるなどの表現の工夫（実装順序の 13）が要る。
+In real repositories (`crates/core/examples/layout.rs`), coreutils (30,176 commits) takes 1.2 ms and android/development (34,261 commits, 318 starting points) 17 ms. The latter has many release branches and spreads to 673 lanes, so presentation refinements such as compacting unused lanes and widening with a fisheye (step 13 of the implementation order) are needed.
 
-## 配布
+## Distribution
 
-- arm64 の `.app` を GitHub Releases に置く。拡張と同じく `v*` タグの push で GitHub Actions がビルドして添付し、main への push で `snapshot` の pre-release を作り直す。
-- 署名は自己署名のコード署名用証明書で行う。ad-hoc 署名だとビルドのたびに身元が変わり、macOS のアクセス許可（フォルダへのアクセス、キーチェーンなど）が更新のたびにリセットされるため。証明書と秘密鍵は GitHub Actions の secret に置く。
-- アプリ名は `Amon Hen`、バンドル ID は `io.github.fukusaka.amonhen`。バンドル ID は設定・キャッシュ・アクセス許可のひも付け先なので変えない。snapshot 版は `Amon Hen Snapshot`（`io.github.fukusaka.amonhen.snapshot`）にして、正式版と並べて入れられるようにする。
-- `.app` の組み立ては `scripts/build-app.sh [stable|snapshot]`（`dist/` に zip）。証明書は secret の `AMONHEN_CERT_P12`・`AMONHEN_CERT_PASSWORD`・`AMONHEN_CERT_NAME` から CI の一時キーチェーンに入れる（`scripts/import-signing-certificate.sh`）。
-- インストール・更新は `scripts/install.sh [stable|snapshot]`。`gh release download` で取得して `/Applications` に置く。quarantine 属性が付かないので、公証なしで起動できる（最初の配布で確かめる。付いていたら `xattr -d com.apple.quarantine` で外す）。
-- Developer ID の署名と公証: 環境 `release` の secret に Developer ID Application の証明書（`AMONHEN_CERT_P12`・`AMONHEN_CERT_PASSWORD`・`AMONHEN_CERT_NAME`）と App Store Connect の API キー（`AMONHEN_NOTARY_KEY`・`AMONHEN_NOTARY_KEY_ID`・`AMONHEN_NOTARY_ISSUER`）があれば、snapshot と正式版の CI で、アプリとエンジンを hardened runtime と時刻の印つきで署名し、公証に出す（`scripts/build-app.sh`・`scripts/notarize.sh`）。アプリには結果を綴じ込み、単体のエンジンは公証に出すだけ（初めて動かすときに Mac が確かめる）。なければ ad-hoc のまま作る（`gh` や `curl` で取れば quarantine の印が付かないので、`scripts/install.sh` ではそのまま動く）。公開のリポジトリなので、署名する仕事だけが環境 `release` の secret を読み、リリースを作る CI の外部の Action はコミットのハッシュで固定する。フォークからの pull request には secret が渡らない。自動更新（Sparkle）は、人に配りたくなったときに検討する。
+- Put the arm64 `.app` on GitHub Releases. As with the extension, pushing a `v*` tag makes GitHub Actions build and attach it, and pushing to main recreates the `snapshot` pre-release.
+- Signing uses a self-signed code signing certificate. With ad-hoc signing the identity changes with every build, and macOS permissions (folder access, keychain, etc.) are reset on every update. The certificate and private key are kept in GitHub Actions secrets.
+- The app name is `Amon Hen` and the bundle ID is `io.github.fukusaka.amonhen`. The bundle ID is what settings, caches and permissions are tied to, so it does not change. The snapshot build is `Amon Hen Snapshot` (`io.github.fukusaka.amonhen.snapshot`), so it can be installed alongside the stable release.
+- The `.app` is assembled with `scripts/build-app.sh [stable|snapshot]` (zip in `dist/`). The certificate is imported from the secrets `AMONHEN_CERT_P12`, `AMONHEN_CERT_PASSWORD` and `AMONHEN_CERT_NAME` into a temporary keychain in CI (`scripts/import-signing-certificate.sh`).
+- Install and update with `scripts/install.sh [stable|snapshot]`. It fetches with `gh release download` and places it in `/Applications`. No quarantine attribute is attached, so it launches without notarization (to be confirmed with the first release; if it is attached, remove it with `xattr -d com.apple.quarantine`).
+- Developer ID signing and notarization: if the `release` environment's secrets hold a Developer ID Application certificate (`AMONHEN_CERT_P12`, `AMONHEN_CERT_PASSWORD`, `AMONHEN_CERT_NAME`) and an App Store Connect API key (`AMONHEN_NOTARY_KEY`, `AMONHEN_NOTARY_KEY_ID`, `AMONHEN_NOTARY_ISSUER`), the snapshot and stable release CI sign the app and the engine with the hardened runtime and a timestamp, and submit them for notarization (`scripts/build-app.sh`, `scripts/notarize.sh`). The result is stapled to the app; the standalone engine is only submitted for notarization (the Mac checks it the first time it runs). Without them, builds stay ad-hoc (fetching with `gh` or `curl` attaches no quarantine mark, so they run as is with `scripts/install.sh`). Since the repository is public, only the signing job reads the `release` environment's secrets, and third-party Actions in the release CI are pinned by commit hash. Secrets are not passed to pull requests from forks. Auto-update (Sparkle) will be considered if I ever want to distribute to others.
 
-## 既存の拡張との関係
+## Relationship to the existing extension
 
-- 拡張は今のまま保守する。Standalone は別製品として作る。
-- 設計の考え方（spawn を減らす、分割取得、楽観的更新、Undo の操作ログ、非対話 rebase の todo 生成）はそのまま移す。非対話 rebase の手順（vscode-amonhen の `src/history/rebasePlan.ts`）は Rust に移植する。
-- daemon ができたら、拡張の git 実行層・状態管理層を daemon への接続に置き換えることを検討する（Remote-SSH では SSH 先で `amonhend --stdio` を起動する）。
+- The extension is maintained as is. Standalone is built as a separate product.
+- The design ideas (fewer spawns, partial fetching, optimistic updates, the Undo operation log, generating the todo for non-interactive rebase) carry over as is. The non-interactive rebase procedure (vscode-amonhen's `src/history/rebasePlan.ts`) is ported to Rust.
+- Once the daemon exists, consider replacing the extension's git execution layer and state management layer with a connection to the daemon (with Remote-SSH, launch `amonhend --stdio` on the SSH host).
 
-## リスクと検証
+## Risks and validation
 
-| リスク | 検証の方法 |
+| Risk | How to validate |
 | --- | --- |
-| gix が書き込み系・特殊な設定（reftable、sparse checkout、partial clone など）に追いつかない | 読み取りだけ gix、書き込みは git。読めない場合は git の spawn に落とす経路を残す |
-| 自前の差分表示で日本語入力・選択・アクセシビリティの作り込みが重い | 入力欄は標準の `NSTextView`。差分表示は読み取り専用にして、`NSAccessibility` は行単位で提供する |
-| UniFFI と C ABI の二本立てで境界が複雑になる | 行データ以外は UniFFI に寄せ、C ABI は History・差分・status の行取得だけにする |
-| プロジェクションの形式が増えるとテストの組み合わせが増える | 形式ごとに「内部モデルから変換 → 元に戻して比較」するテストを用意する。試作では macOS の形式だけ実装する |
-| モバイルで gix・libgit2 の書き込みが git と食い違う | 同じ操作を CliBackend と比べるテストを用意する。未対応の操作はモバイルでは出さない |
-| 共有メモリ・リングバッファでのメモリ安全性 | Swift 側は範囲を限定した API で包み、Rust 側は Miri と AddressSanitizer で境界をテストする |
-| macOS 14.4 未満の端末 | 対象外とする |
+| gix cannot keep up with writes and special configurations (reftable, sparse checkout, partial clone, etc.) | Only reading uses gix, writing uses git. Keep a path that falls back to spawning git when something cannot be read |
+| Building Japanese input, selection and accessibility into a custom diff view is heavy | Input fields use the standard `NSTextView`. The diff view is read-only, and `NSAccessibility` is provided per line |
+| Having both UniFFI and the C ABI makes the boundary complex | Move everything but row data to UniFFI; the C ABI is only for fetching History, diff and status rows |
+| More projection formats mean more test combinations | Prepare a test per format that "converts from the internal model → converts back and compares". The prototype implements only the macOS format |
+| On mobile, writes with gix and libgit2 diverge from git | Prepare tests comparing the same operations against CliBackend. Unsupported operations are not offered on mobile |
+| Memory safety with shared memory and ring buffers | Wrap the Swift side in APIs with limited ranges, and test the boundaries on the Rust side with Miri and AddressSanitizer |
+| Machines older than macOS 14.4 | Out of scope |
 
-## 実装順序
+## Implementation order
 
-いちばん重い History を最初に試作し、境界の設計と速度目標を満たせるかを確かめてから広げる。
+Prototype the heaviest part, History, first, and confirm the boundary design and the speed targets can be met before expanding.
 
-試作:
+Prototype:
 
-- [x] 1. Rust の workspace と `model` / `core` / `layout` の骨組み、`GitBackend` / `Platform` / `FrontendProfile` の形、gix による commit-graph の読み取り。全ターゲットのビルドを CI で通す
-- [x] 2. グラフのレイアウト（順次計算、チェックポイント、区間表現）と criterion のベンチ
-- [x] 3. プロジェクション（macOS の形式だけ）と C ABI でのスナップショット公開、Swift からのゼロコピー読み取り
-- [x] 4. AppKit の History（`NSTableView`）と Metal のグラフ描画、入力から表示までの計測
-- [x] 5. linux リポジトリで速度目標を検証。満たせなければ設計を見直す
+- [x] 1. The Rust workspace and the skeleton of `model` / `core` / `layout`, the shapes of `GitBackend` / `Platform` / `FrontendProfile`, reading commit-graph with gix. CI builds all targets
+- [x] 2. Graph layout (incremental computation, checkpoints, span representation) and criterion benchmarks
+- [x] 3. Projection (macOS format only), publishing snapshots over the C ABI, zero-copy reading from Swift
+- [x] 4. AppKit History (`NSTableView`) and Metal graph drawing, measurement from input to display
+- [x] 5. Validate the speed targets on the linux repository. If they cannot be met, revisit the design
 
-本体:
+Main body:
 
-- [x] 6. 永続キャッシュ（mmap）と起動直後の即時表示
-- [x] 7. サイドバー（Branches / Remotes / Tags / Stashes / Submodules）と FSEvents による変更検知
-- [x] 8. 差分表示（Metal、History と共有するグリフアトラス、CTLine キャッシュ）と後追いの色付け（tree-sitter、`crates/syntax`）。History の件名・作者・日時も Metal で描く。差分の文字の選択・コピー・検索
-- [x] 9. Working Copy: status、ファイル・hunk・行単位の stage、コミット入力
-- [x] 10. 書き込み系の操作（checkout、merge、rebase、push、fetch）と Undo の操作ログ
-- [x] 11. コミット編集（reword / squash / fixup / drop / reorder / split）とドラッグ＆ドロップ
-- [x] 12. 3-way マージ（コンフリクトごと・ファイルごとの解決、3 ペインのマージエディタ）
-- [x] 13. グラフ表現の工夫（祖先の強調、折りたたみ、魚眼、アニメーション、密度表示）。魚眼（`crates/core/src/lanes.rs`）、レーンの動きのアニメーション、選んだコミットの祖先の強調（`crates/core/src/lineage.rs`）、マージ済みブランチの折りたたみ（`crates/core/src/fold.rs`。各先端から最初の親だけを辿った幹を残し、取り込んだ側の数を merge の行に出す。右クリックで merge ごとに開く。View > Fold Merged Branches）、History の右端の密度の帯（区間ごとのコミットの頻度とブランチの活動量、見えている範囲の枠、押すとそこへ飛ぶ）も済み。linux（148 万コミット）で折りたたみとレイアウトが 47 ms（7.7 万行に）、密度が 10 ms（`crates/core/examples/fold.rs`）
-- [x] 14. 配布（GitHub Actions、snapshot、自己署名、install.sh）
+- [x] 6. Persistent cache (mmap) and immediate display right after launch
+- [x] 7. Sidebar (Branches / Remotes / Tags / Stashes / Submodules) and change detection with FSEvents
+- [x] 8. Diff view (Metal, glyph atlas shared with History, CTLine cache) and deferred highlighting (tree-sitter, `crates/syntax`). History's subject, author and date are also drawn with Metal. Selecting, copying and searching text in diffs
+- [x] 9. Working Copy: status, file / hunk / line-level staging, commit input
+- [x] 10. Write operations (checkout, merge, rebase, push, fetch) and the Undo operation log
+- [x] 11. Commit editing (reword / squash / fixup / drop / reorder / split) and drag and drop
+- [x] 12. 3-way merge (resolving per conflict and per file, 3-pane merge editor)
+- [x] 13. Graph presentation refinements (ancestor emphasis, folding, fisheye, animation, density display). Fisheye (`crates/core/src/lanes.rs`), animation of lane movement, ancestor emphasis for the selected commit (`crates/core/src/lineage.rs`), folding of merged branches (`crates/core/src/fold.rs`; keeps the trunk followed from each tip through first parents only, and shows the number of commits on the merged side on the merge row; opened per merge with right-click; View > Fold Merged Branches), and the density band at History's right edge (commit frequency and branch activity per span, a frame for the visible range, clicking jumps there) are also done. On linux (1.48M commits), folding and layout take 47 ms (down to 77k rows) and density 10 ms (`crates/core/examples/fold.rs`)
+- [x] 14. Distribution (GitHub Actions, snapshot, self-signing, install.sh)
 
-拡張:
+Extensions:
 
-- [x] 15. CLI（`amonhen`、`crates/cli`）。UI なしでコアを使う。`amonhen [<path>]`・`amonhen open <path|ssh://…>` でアプリのタブに開く（アプリはフォルダと `amonhen://open?location=…` を受け取る）、`amonhen log`（コアのレイアウトで罫線のグラフ、点か曲線のあるレーンだけ列を取り、線が通るだけのレーンは ┆ にまとめる。`--fold`・`--branch`・検索の書き方）、`amonhen undo`（`--list`・`--peek`。アプリと同じ操作ログ）、`amonhen merge-file`（Magic Merge。残れば終了コード 1 で git の mergetool に使える）。History はアプリの永続キャッシュから始めるので、linux（148 万コミット）でも log が 85 ms。`scripts/install.sh` が `~/.local/bin/amonhen` にリンクを作る。コアでできることは CLI からすべて使える（VSCode 拡張やほかの FE が通る道を、先に CLI で通して確かめる）: `status`・`diff`（stage していない・`--staged`・`--combined` で行ごとの stage の印、コミット 1 つ・2 つ）・`show`・`stage`/`unstage`（`--rows` で差分の行ごと）・`discard`（行ごとにも。Undo できる）・`commit`・`refs`・`watch`（つないだまま変化の知らせを受ける）・`clone`・`run`（`run_json` の命令をそのまま。引数がなければ標準入力の 1 行 1 命令に 1 行ずつ答える、拡張が CLI を窓口にする形の試作）。どれも `--json` で FE が読む形を出す。`crates/cli/tests/cli.rs` で、手元で直接・`daemon:`・`ssh://`（偽の ssh）の 3 つの開き方に同じ命令を流し、同じに動くことを確かめる
-- [x] 16. 手元の共有の daemon（当初は XPC＋共有メモリの案。Unix ドメインソケット＋共有メモリにした。理由は「別プロセス・リモートにするとき」）。段階的に進める: ① 手元に常駐する共有の daemon（`amonhend --serve`、`crates/daemon/src/serve.rs`）。利用者ごとに 1 つ、Unix ドメインソケット（`$TMPDIR/amonhend-<プロトコルの版>.sock`、0600）で待ち、つないだ相手が最初に送るパスのリポジトリを開く。同じリポジトリの `GitBackend` と監視はつないでいる相手のあいだで共有し、変化は全員に知らせる。だれもつないでいない状態が 10 分続いたら終わり、使うときにまた起動される。通信は SSH と同じフレームで、圧縮はしない。アプリの `daemon:/path` と CLI の `-C daemon:/path` がこれを使う。手元のリポジトリを daemon 越しに開く: Settings > Advanced の切り替え（いつも）、リポジトリの一覧の右クリックの Open via Daemon（1 つだけ）、`amonhen open --daemon`。様子を見る: `amonhen daemon status [--json]`・`start`・`stop`（つなぐときに最初に送るものを `\0status`・`\0stop` にすると、リポジトリではなく daemon への指示になる）と、Window > Activity の Daemon のタブ（daemon のプロセス・開いているリポジトリごとのつながり・History・監視・検索の索引と、このアプリの daemon とのつながりの送受信量）。linux で、2 回目からの `amonhen log` は同一プロセスと同じ 0.09 秒（初回は daemon の起動と全コミットの受け渡しで 1.7 秒）、は済み。往復の遅れは小さな要求で p50 0.08 ms（同一プロセス 0.04 ms）、256 行のチャンクは同じ 2 ms（`crates/daemon/examples/latency.rs`）で、ロジックを daemon に移しても遅くならないので、設計どおり順に移す。② History（読み込み・レイアウト）を daemon で作る: daemon がリポジトリごとに 1 つだけ作って永続キャッシュのファイルに書き、つないだ側にはその場所を返す（`Request::PreparedHistory`、`GitBackend::prepared_history`）。つないだ側はレイアウトを計算せず、ファイルを mmap して使うので、中身はコピーせずにページキャッシュで共有される（実質の共有メモリ）。書き換えは名前の付け替えなので、読んでいる途中のものは壊れない。FE は変えずに済む。linux で `amonhen log` は 2 回目から 0.12 秒（同一プロセス 0.09 秒）、daemon の再起動後 0.17 秒、初回（daemon が作って書く）2.3 秒、は済み。③ 操作を daemon に移す: `run_json` の命令（操作・Undo・設定・Magic Merge など）と、Undo の記録を書く Working Copy の操作（コミット、変更を捨てる）は、手元の共有の daemon につないでいれば daemon のコアで実行する（`GitBackend::delegate`、`Request::Delegate`、`crates/core/src/delegate.rs`）。操作と Undo の記録が 1 か所になる（2 つのコアが同じ記録のファイルを別々に書き換えない）。行ごとの stage は記録を書かず、git の処理はもともと daemon で動くので任せない。daemon の記録を読む・取り消す命令だけは手元で実行する、は済み。手元のリポジトリを daemon 越しに開くのは、今は Settings で選ぶ（既定は開かない）。差分も daemon で計算して 1 回の往復で返し、ファイルの中身は共有メモリで渡す（`crates/remote/src/shm.rs`。daemon が POSIX の共有メモリの 1 つの領域に並べて書き、ソケットでは領域の名前と各部分の位置だけを送る。受け取った側は読むだけで写し、`amonhen_layout::Blob` としてコピーせずに表示まで使う）。linux で p50 1.6 ms・p95 6.3 ms・最大 17 ms（同一プロセス 1.4・5.3・15 ms、ファイルごとに中身を取りに行く前の形 1.7・8.3・27 ms、ソケットで中身を送る形 1.6・9.2・34 ms）、は済み。Working Copy の status は git がもともと daemon で動いていて差がない（124 ms）。History の検索（件名・作者名・ID）は、件名と作者名を初めて探すときに全部読んで索引（`amonhen_model::search::TextIndex`）に置き、次からはそれを探すだけにする（毎回 git から読み直していたのが遅さのほとんどだった）。コミットが増えたら前の索引から引き継いで増えた分だけ読む。手元のコア・SSH 先の daemon・共有の daemon で同じものを使い、共有の daemon では同じリポジトリの相手のあいだで索引と数えたコミットを共有し、最後の相手が離れても 10 分は残す。linux で 1 回の検索が 1.1 秒 → 6〜31 ms（初回は索引を作るので 1.4 秒、索引は約 100 MB）、`amonhen log -C daemon:… <query>` は 2 回目から 0.1 秒（`crates/core/examples/search.rs`）。SQLite の全文検索（FTS5 の trigram）も比べたが、まれな語でだけ速く（0.5 ms）、索引が 950 MB・作るのに 22 秒かかるので採らなかった。一致したコミットの間は、↩・⇧↩（History とツールバーの検索欄）、⌘G・⌘⇧G（どの欄にいても。差分・詳細の欄の中を探しているときはそちら）、件数の横の ∧ ∨ で移る。件数の横の切り替えで、一致したコミットだけを出せる（`CommitGraph::retain_linked`。一致しないコミットは飛ばし、線は最初の親をたどって次に一致したコミットへつなぐ。linux で fix の 24.9 万件のレイアウトまで 49 ms）。History の作り直し: Repository > Rebuild History、`amonhen log --rebuild`、`amonhen daemon rebuild [<path>|ssh://…]`（`Repository::rebuild_history`。永続キャッシュを捨て、前回の History から引き継がずに作る。共有の daemon 越しなら daemon のコアに作り直させ、そのファイルを読み直す）
-- [x] 17. SSH 越しの daemon と手元の複製。段階 A0（コアのファイル操作を `RepoFiles` に）・A（`amonhen-remote` と `amonhend`、手元の子プロセスでの確認）・B（アプリから `daemon:/path` で開く。amonhend はアプリに同梱）・C（`ssh://host/path` で、SSH 先の OS と CPU に合う amonhend を `~/.cache/amonhen/` に送り込んで起動する。チャンクは件名などだけ、件名の検索は daemon の側、大きなフレームは LZ4 で圧縮）・D（リポジトリの一覧の「Add Remote…」、つなぐ間の接続中のウィンドウ、初回の読み込みの受信量、切れたときの帯と「つなぎ直す」）は済み。実際の SSH 先（Linux x86_64）でも開けることを確かめた
-- [ ] 18. VSCode 拡張からの daemon 利用。先にやること: CLI の `log --json`・`diff --json` は大きなデータを JSON にしていて、拡張が本来通る道（`repr(C)` のレコードと文字列表を `ArrayBuffer`・WASM のメモリでコピーせずに読む）を通していない。CLI にレコードをそのまま出す口（例: `amonhen log --records <file>`、VSCode 向けのプロファイル）を足し、linux で JSON と比べて（書き出し・大きさ・Node での読み込みの時間とメモリ）から、つなぎ方（CLI をはさむ・napi・WASM）を決める。計測（linux の 148 万コミット、`crates/core/examples/transport.rs` と Node 26）: 画面 1 枚分（256 行の点・線・ID・件名・作者・日時）は JSON が作る 0.51 ms・82 KB・Node で読む 0.18 ms、レコードが作る 0.013 ms・54 KB・読む 0.16 ms（文字列にする分が大半）で、どちらでも足りる。全行（点・線・ID）は JSON が作る 1.1 秒・137 MB・読む 0.53 秒・ヒープ +386 MB、レコードが作る 7.8 ms・89 MB・読む（型付き配列で見るだけ）0.001 ms。別スレッドへの受け渡し（webview の postMessage と同じ構造化複製）は、全行で JSON のオブジェクト 1.1 秒、ArrayBuffer の複製 12 ms、移す 0.75 ms。よって、大きなデータはレコード（ArrayBuffer）、命令は JSON にする。つなぎ方は、コアを残らず共有の daemon に移し、拡張は TypeScript で daemon の FE 向けの窓口に直接つなぐ（napi は使わない。コアが daemon にあれば napi に残る利点は mmap・共有メモリだけで、webview へはどのみちプロセス間のコピーになる）。① FE 向けの窓口（`crates/front`、`docs/front.md`）は済み: 命令と答えは JSON、大きなデータは `repr(C)` のレコード、フレームは daemon と同じ（圧縮なし）、つないで最初に `\u0001` ＋場所を送る。History と Working Copy の差分は番号で持ち、検索は相手ごとに取り消せる（`Repository::search_history_until`）。CLI はすべての命令をこの窓口で通す（手元は同じプロセスの `InProcess`、`daemon:`・`ssh://` は daemon）。linux で、daemon 越しの `amonhen log -n 30` は 2 回目から 0.03 秒（同じプロセスで毎回開くと 0.09 秒）、`log fix` の検索は 2 回目から 0.05 秒（同 1.5 秒）。② 拡張の TS のつなぐ側（vscode-amonhen の `src/daemon/`。`amonhend --socket` でソケットの場所を聞き、いなければ起動する）は済み。③ 設定 `amonhen.daemon.path` があれば、History（グラフはコアのレイアウトを行ごとの線分に直す）・コミットの詳細と差分・Working Copy の差分・行単位の stage と破棄を daemon で行う、は済み（Extension Development Host で ktor を開いて確かめた）。④ Undo の記録はもともと共通（コアと拡張が同じ `<git_dir>/amonhen/undo.json` を同じ形で読み書きする）で、daemon で捨てた行を拡張の Undo で戻せることを試験で確かめた。⑤ 書き込み（コミット・ファイル単位の stage・ブランチとタグ・merge・rebase・cherry-pick・revert・stash・fetch・push・続ける／中止／飛ばす・サブモジュール）は daemon のコアの命令で行う（vscode-amonhen の `src/daemon/writes.ts`。拡張の git 実行層の書き込みを置き換え、読み取りと拡張に固有の手順（untracked を消す破棄・index の書き込み・rebase の todo）は git 実行層のまま）、は済み。コアが Undo を記録する操作は、拡張では記録しない（`AsyncLocalStorage` で伝える）。拡張の Undo の記録が中身を覚えたままにしていて、アプリ・CLI・daemon が書いた記録を見落とし、次の保存で消していたので、毎回読み直すようにした（コアはもとから毎回読む）。⑥ 配り方を整理した: エンジンは CLI と daemon を兼ねる 1 つの実行ファイル `amonhen`（darwin-aarch64・musl の linux-x86_64・linux-aarch64。リリースに tar.gz を載せる）、置き場所はどのマシンでも `~/.local/share/amonhen`（`amonhen install`・`amonhen engine`）、SSH 先にも同じ形で置く。拡張は 3 つのエンジンを同梱した共通の .vsix 1 つ（約 8 MB）で、起動時に合うものを置き場所に置き、設定なしで共有の daemon を使う（`amonhen.daemon.enabled` で切れる。合うエンジンがなければ git 実行層で動く）。拡張の CI がスタンドアロン版のリリースを読むには、非公開のリポジトリなので読める鍵（`AMONHEN_STANDALONE_TOKEN`）が要る。⑦ Remote-SSH: 拡張の daemon まわりの試験を、Remote-SSH の先と同じ手元の Linux のマシン（x86_64、Node 24）で、配る Linux 用のエンジンで流して通した（ソケットは `$XDG_RUNTIME_DIR`、共有メモリは `/dev/shm`）。Windows: 共有の daemon は名前付きパイプで待つ（git の fsmonitor・VSCode・Docker と同じ使い分け。`crates/remote/src/endpoint.rs`、`interprocess` crate。重ねた I/O で読み書きを同時にでき、名前に利用者の SID のハッシュと通信の形の版を入れ、権限は自分の SID だけ、最初の作成は `FILE_FLAG_FIRST_PIPE_INSTANCE`）。共有メモリは後で（Node は使えず、Rust の FE で効く。取り決めはもう両方に対応）。エンジンの置き場所は `%LOCALAPPDATA%\amonhen`（`current` はハッシュを書いたファイル、CLI は `bin\amonhen.exe` に写す）、History のキャッシュは `%LOCALAPPDATA%\amonhen\cache`。Windows 用のエンジン（x86_64・aarch64）は CI の Windows のマシンで作り（`.github/workflows/windows-engine.yml`）、リリースに zip で載せ、.vsix に同梱する。CI の Windows のテストで、共有の daemon 越しの CLI（`works_through_the_shared_daemon_on_every_platform`）を流す。Remote-SSH の画面でも確かめた（Extension Development Host を手元の Linux のマシンに Remote-SSH でつなぎ、拡張が SSH 先で同梱の Linux 用エンジンを置き場所に置いて `~/.local/bin/amonhen` を張り、`$XDG_RUNTIME_DIR` の共有の daemon で toybox の History・コミットの詳細・差分を出した）。Windows は CI の Windows のマシンで、共有の daemon 越しの CLI の試験が名前付きパイプの上で通った。残り: Windows の実機での確認と、拡張の試験を Windows で流すこと。次: WASM（エンジンがない環境で、コアを WASM で動かす。wasm32-wasip1 にビルドでき、Node の `node:wasi` で動いたが、gix がパックを mmap で読むので WASI では読めない。git の読み書きを拡張の git 実行層に任せる形が本命）
-- [ ] 19. ほかの OS の FE（iOS / Linux / Android / Windows）。プロジェクションの形式と Platform の実装、モバイルは Git2Backend を足す
+- [x] 15. CLI (`amonhen`, `crates/cli`). Uses the core without a UI. `amonhen [<path>]` and `amonhen open <path|ssh://…>` open in an app tab (the app accepts folders and `amonhen://open?location=…`), `amonhen log` (a box-drawing graph from the core's layout; only lanes with dots or curves get a column, and lanes that lines merely pass through are collapsed into ┆; `--fold`, `--branch`, search syntax), `amonhen undo` (`--list`, `--peek`; the same operation log as the app), `amonhen merge-file` (Magic Merge; exits with code 1 if anything remains, so it can be used as git's mergetool). History starts from the app's persistent cache, so log takes 85 ms even on linux (1.48M commits). `scripts/install.sh` creates a link at `~/.local/bin/amonhen`. Everything the core can do is available from the CLI (the path the VSCode extension and other FEs will take is first tried out with the CLI): `status`, `diff` (unstaged, `--staged`, `--combined` with per-line stage marks, one or two commits), `show`, `stage`/`unstage` (`--rows` for individual diff lines), `discard` (also per line; can be undone), `commit`, `refs`, `watch` (stays connected and receives change notices), `clone`, `run` (`run_json` commands as is; without arguments it answers line by line to one command per line on standard input, a prototype of the extension using the CLI as its front API). All of them output the shape FEs read with `--json`. `crates/cli/tests/cli.rs` runs the same commands through the three ways of opening — directly in-process, `daemon:` and `ssh://` (fake ssh) — and confirms they behave the same
+- [x] 16. Local shared daemon (originally planned as XPC + shared memory; went with a Unix domain socket + shared memory, for the reasons in "When moving to another process or remote"). Proceeds in stages: ① A shared daemon resident on the local machine (`amonhend --serve`, `crates/daemon/src/serve.rs`). One per user, listening on a Unix domain socket (`$TMPDIR/amonhend-<protocol version>.sock`, 0600), and opening the repository at the path the client sends first. The `GitBackend` and watching for the same repository are shared among connected clients, and changes are notified to everyone. It exits after 10 minutes with nobody connected, and is started again when needed. Communication uses the same frames as SSH, without compression. The app's `daemon:/path` and the CLI's `-C daemon:/path` use this. Opening local repositories through the daemon: a toggle in Settings > Advanced (always), Open via Daemon on the repository list's right-click menu (just one), `amonhen open --daemon`. Checking its state: `amonhen daemon status [--json]`, `start`, `stop` (if the first thing sent on connecting is `\0status` or `\0stop`, it becomes an instruction to the daemon rather than a repository), and the Daemon tab in Window > Activity (the daemon's process, the connections per open repository, History, watching, search index, and the bytes sent and received on this app's connection to the daemon). On linux, `amonhen log` from the second time is 0.09 seconds, the same as in-process (the first time is 1.7 seconds for starting the daemon and handing over all commits) — done. The round-trip delay is p50 0.08 ms for small requests (0.04 ms in-process), and a 256-row chunk is the same 2 ms (`crates/daemon/examples/latency.rs`), so moving logic into the daemon does not make it slower, and it is moved over step by step as designed. ② Building History (loading, layout) in the daemon: the daemon builds only one per repository and writes it to the persistent cache file, returning its location to the connecting side (`Request::PreparedHistory`, `GitBackend::prepared_history`). The connecting side does not compute the layout but mmaps the file, so the contents are shared through the page cache without copying (effectively shared memory). Rewrites are renames, so anything being read is not broken. The FE needs no changes. On linux, `amonhen log` is 0.12 seconds from the second time (0.09 seconds in-process), 0.17 seconds after the daemon restarts, and 2.3 seconds the first time (the daemon builds and writes it) — done. ③ Moving operations into the daemon: `run_json` commands (operations, Undo, settings, Magic Merge, etc.) and Working Copy operations that write Undo records (commit, discarding changes) run in the daemon's core when connected to the local shared daemon (`GitBackend::delegate`, `Request::Delegate`, `crates/core/src/delegate.rs`). Operations and Undo records end up in one place (two cores do not separately rewrite the same record file). Per-line staging writes no record and its git work already runs in the daemon, so it is not delegated. Only the commands that read or undo the daemon's records run locally — done. Opening local repositories through the daemon is currently chosen in Settings (off by default). Diffs are also computed in the daemon and returned in a single round trip, with file contents passed in shared memory (`crates/remote/src/shm.rs`; the daemon lays them out in one POSIX shared memory region, and only the region's name and each part's position are sent over the socket; the receiving side only reads and maps it, using it as `amonhen_layout::Blob` without copying all the way to display). On linux p50 1.6 ms, p95 6.3 ms, max 17 ms (in-process 1.4, 5.3, 15 ms; the earlier form that fetched contents per file 1.7, 8.3, 27 ms; the form that sent contents over the socket 1.6, 9.2, 34 ms) — done. Working Copy status already runs git in the daemon, so there is no difference (124 ms). History search (subject, author name, ID) reads everything into an index (`amonhen_model::search::TextIndex`) the first time subjects and author names are searched, and from then on only searches it (rereading from git every time was most of the slowness). When commits are added, it carries over from the previous index and reads only the added ones. The local core, the SSH host's daemon and the shared daemon use the same thing; in the shared daemon the index and counted commits are shared among clients of the same repository and kept for 10 minutes even after the last client leaves. On linux, a single search went from 1.1 seconds → 6–31 ms (1.4 seconds the first time to build the index; the index is about 100 MB), and `amonhen log -C daemon:… <query>` is 0.1 seconds from the second time (`crates/core/examples/search.rs`). SQLite full-text search (FTS5 trigram) was also compared, but it was faster only for rare terms (0.5 ms), and the index was 950 MB and took 22 seconds to build, so it was not adopted. Moving between matching commits uses ↩ / ⇧↩ (History and the toolbar search field), ⌘G / ⌘⇧G (from any field; when searching within the diff or details pane, there instead), and ∧ ∨ next to the count. A toggle next to the count shows only matching commits (`CommitGraph::retain_linked`; non-matching commits are skipped, and lines follow first parents to connect to the next matching commit; on linux, laying out the 249k matches for fix takes 49 ms). Rebuilding History: Repository > Rebuild History, `amonhen log --rebuild`, `amonhen daemon rebuild [<path>|ssh://…]` (`Repository::rebuild_history`; discards the persistent cache and builds without carrying over from the previous History; through the shared daemon, it has the daemon's core rebuild and rereads that file)
+- [x] 17. Daemon over SSH and a local replica. Stages A0 (core file operations into `RepoFiles`), A (`amonhen-remote` and `amonhend`, checked with a local child process), B (opening from the app with `daemon:/path`; amonhend bundled with the app), C (with `ssh://host/path`, push an amonhend matching the SSH host's OS and CPU to `~/.cache/amonhen/` and launch it; chunks carry only subjects etc., subject search on the daemon side, large frames compressed with LZ4) and D ("Add Remote…" in the repository list, a connecting window while connecting, the amount received for the first load, a band and "Reconnect" when disconnected) are done. Confirmed it can open a real SSH host (Linux x86_64) too
+- [ ] 18. Using the daemon from the VSCode extension. To do first: the CLI's `log --json` and `diff --json` turn large data into JSON and do not go the way the extension is meant to (reading `repr(C)` records and string tables without copying through an `ArrayBuffer` or WASM memory). Add an outlet to the CLI that outputs records as is (e.g. `amonhen log --records <file>`, a profile for VSCode), compare with JSON on linux (writing, size, and time and memory to read in Node), and then decide how to connect (via the CLI, napi, WASM). Measurement (linux's 1.48M commits, `crates/core/examples/transport.rs` and Node 26): for one screenful (256 rows of dots, lines, IDs, subjects, authors, dates), JSON takes 0.51 ms to build, 82 KB, 0.18 ms to read in Node; records take 0.013 ms to build, 54 KB, 0.16 ms to read (mostly turning into strings), so either is enough. For all rows (dots, lines, IDs), JSON takes 1.1 seconds to build, 137 MB, 0.53 seconds to read, heap +386 MB; records take 7.8 ms to build, 89 MB, 0.001 ms to read (just viewing through typed arrays). Handing to another thread (the same structured clone as the webview's postMessage) takes, for all rows, 1.1 seconds for JSON objects, 12 ms to clone an ArrayBuffer, and 0.75 ms to transfer it. So large data goes as records (ArrayBuffer), and commands as JSON. As for connecting, move the core entirely into the shared daemon, and have the extension connect directly from TypeScript to the daemon's front API (no napi: with the core in the daemon, the only advantages left for napi would be mmap and shared memory, and getting to the webview is an inter-process copy anyway). ① The front API (`crates/front`, `docs/front.md`) is done: commands and answers are JSON, large data is `repr(C)` records, frames are the same as the daemon's (no compression), and on connecting it first sends `\u0001` + the location. History and Working Copy diffs are held by number, and searches can be cancelled per client (`Repository::search_history_until`). The CLI passes every command through this front API (`InProcess` in the same process locally, the daemon for `daemon:` and `ssh://`). On linux, `amonhen log -n 30` over the daemon is 0.03 seconds from the second time (0.09 seconds when opening in the same process each time), and the `log fix` search is 0.05 seconds from the second time (1.5 seconds likewise). ② The extension's TS connecting side (vscode-amonhen's `src/daemon/`; asks `amonhend --socket` for the socket location and launches it if not running) is done. ③ When the setting `amonhen.daemon.path` is set, History (the graph converts the core's layout into per-row line segments), commit details and diffs, Working Copy diffs, and line-level staging and discarding are done through the daemon — done (confirmed by opening ktor in the Extension Development Host). ④ Undo records were already common (the core and the extension read and write the same `<git_dir>/amonhen/undo.json` in the same shape), and a test confirmed that lines discarded through the daemon can be restored with the extension's Undo. ⑤ Writes (commit, file-level staging, branches and tags, merge, rebase, cherry-pick, revert, stash, fetch, push, continue / abort / skip, submodules) are done with commands to the daemon's core (vscode-amonhen's `src/daemon/writes.ts`; replaces the writes in the extension's git execution layer, while reads and the extension's own procedures (discard that deletes untracked files, index writes, rebase todo) stay in the git execution layer) — done. Operations for which the core records Undo are not recorded by the extension (conveyed with `AsyncLocalStorage`). The extension's Undo records kept their contents in memory, missed records written by the app, CLI and daemon, and erased them on the next save, so they are now reread every time (the core already rereads every time). ⑥ Distribution was sorted out: the engine is a single executable `amonhen` serving as both CLI and daemon (darwin-aarch64, musl linux-x86_64 and linux-aarch64; tar.gz attached to releases), its location on every machine is `~/.local/share/amonhen` (`amonhen install`, `amonhen engine`), and it is placed the same way on SSH hosts. The extension is a single common .vsix bundling the three engines (about 8 MB), places the matching one at the location on startup, and uses the shared daemon with no settings (can be turned off with `amonhen.daemon.enabled`; if there is no matching engine it runs on the git execution layer). For the extension's CI to read the standalone releases, a key that can read them (`AMONHEN_STANDALONE_TOKEN`) is needed, since the repository is private. ⑦ Remote-SSH: the extension's daemon-related tests passed when run with the distributed Linux engine on a local Linux machine of the same kind as a Remote-SSH host (x86_64, Node 24) (socket in `$XDG_RUNTIME_DIR`, shared memory in `/dev/shm`). Windows: the shared daemon listens on a named pipe (the same choice as git's fsmonitor, VSCode and Docker; `crates/remote/src/endpoint.rs`, the `interprocess` crate; overlapped I/O allows reading and writing at the same time, the name includes a hash of the user's SID and the protocol version, permissions are only the user's own SID, and the first creation uses `FILE_FLAG_FIRST_PIPE_INSTANCE`). Shared memory comes later (Node cannot use it; it pays off with a Rust FE; the protocol already supports both). The engine's location is `%LOCALAPPDATA%\amonhen` (`current` is a file containing the hash, and the CLI is copied to `bin\amonhen.exe`), and the History cache is `%LOCALAPPDATA%\amonhen\cache`. The Windows engines (x86_64, aarch64) are built on CI's Windows machines (`.github/workflows/windows-engine.yml`), attached to releases as zip, and bundled in the .vsix. CI's Windows tests run the CLI over the shared daemon (`works_through_the_shared_daemon_on_every_platform`). Also confirmed on the Remote-SSH screen (connected the Extension Development Host to a local Linux machine with Remote-SSH; the extension placed the bundled Linux engine at the location on the SSH host, linked `~/.local/bin/amonhen`, and showed toybox's History, commit details and diffs through the shared daemon in `$XDG_RUNTIME_DIR`). On Windows, the CLI test over the shared daemon passed over named pipes on CI's Windows machine. Remaining: checking on a real Windows machine, and running the extension's tests on Windows. Next: WASM (run the core as WASM in environments without the engine; it builds for wasm32-wasip1 and ran with Node's `node:wasi`, but gix reads packs with mmap, so they cannot be read under WASI; the main candidate is leaving git reads and writes to the extension's git execution layer)
+- [ ] 19. FEs for other OSes (iOS / Linux / Android / Windows). Projection formats and Platform implementations; add Git2Backend for mobile

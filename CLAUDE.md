@@ -41,4 +41,8 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 
 ## 進捗
 
-`docs/design.md` の「実装順序」を参照。完了したステップはそこのチェックボックスを更新すること。
+`docs/design.md` の「Implementation order」を参照。完了したステップはそこのチェックボックスを更新すること。
+
+## 文書
+
+文書は英語が正（`README.md`・`docs/*.md`）で、日本語版を `README.ja.md`・`docs/ja/` に置く（`apps/vscode` も同じ）。文書を変えるときは、日本語版も同じように直す（チェックボックスも両方）。

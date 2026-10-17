@@ -1,46 +1,50 @@
 # Amon Hen
 
-自分のために作っている Git の GUI。大きなリポジトリでも待たないことを、いちばん大事にしている。
+[日本語](README.ja.md)
 
-- History: グラフ付きの一覧、コミットの検索、コミットの編集（メッセージ・squash・並べ替えなど）、cherry-pick・revert。
-- Working Copy: 差分の行ごとの stage・破棄、3 ペインのマージエディタ。
-- 履歴の書き換え・変更の破棄・stash の削除なども、Undo で戻せる。
-- 同じエンジンで、CLI（`amonhen`）・VSCode 拡張からも使え、SSH 先のリポジトリも手元と同じように扱える。共有の daemon が
-  History・検索の索引・SSH のつながりを持ち続け、アプリ・CLI・拡張で分け合う。
+The Git GUI I wanted to use, so I'm building it myself. What matters most: no waiting, even on large repositories.
 
-## 動作環境
+- History: a list with a graph, commit search, commit editing (message, squash, reorder and more), cherry-pick and revert.
+- Working Copy: line-by-line staging and discarding of diffs, and a 3-pane merge editor.
+- Rewriting history, discarding changes, dropping stashes and the like can all be reverted with Undo.
+- The same engine is also usable from the CLI (`amonhen`) and the VSCode extension, and repositories on SSH hosts work
+  just like local ones. A shared daemon keeps History, the search index and SSH connections alive, shared by the app,
+  the CLI and the extension.
 
-- アプリ: macOS 14.4 以降、Apple シリコン（arm64）。
-- エンジン（CLI と daemon）: macOS arm64、Linux x86_64・aarch64（musl の静的リンクなので、どの Linux でも動く）、
-  Windows x86_64・aarch64。
-- どれも `git` を使う（書き込みと一部の読み取りは `git` を起動する）。
+## Requirements
 
-## インストール
+- App: macOS 14.4 or later, Apple silicon (arm64).
+- Engine (CLI and daemon): macOS arm64, Linux x86_64 and aarch64 (statically linked against musl, so it runs on any
+  Linux), Windows x86_64 and aarch64.
+- All of them use `git` (writes and some reads launch `git`).
 
-[Releases](https://github.com/fukusaka/amonhen/releases) から取ってくる。正式版は `v<版>`（VSCode 拡張は `vscode-v<版>`）、
-main の最新は `snapshot`（pre-release）に載る。
+## Installation
 
-- アプリ: `Amon-Hen-<版>.zip`（snapshot は `Amon-Hen-Snapshot-<版>.zip`、正式版と並べて入れられる）を展開して
-  `/Applications` に置く。Developer ID で署名・公証してあるので、そのまま開ける。初めて起動すると、エンジン（CLI と daemon）が
-  `~/.local/share/amonhen` に置かれ、`~/.local/bin/amonhen` から使える。
-- エンジンだけ: `amonhen-<版>-<OS>-<CPU>`（Linux・macOS は tar.gz、Windows は zip）を展開して `amonhen install` を実行する
-  （Windows は `%LOCALAPPDATA%\amonhen` に置かれるので、`%LOCALAPPDATA%\amonhen\bin` を PATH に足す）。
-- VSCode 拡張: `amonhen-vscode-<版>.vsix` を `code --install-extension <ファイル>` で入れる。拡張はエンジンを同梱していて、
-  入れれば共有の daemon を使う。
+Get it from [Releases](https://github.com/fukusaka/amonhen/releases). Stable releases are `v<version>` (the VSCode
+extension is `vscode-v<version>`), and the latest main is published as `snapshot` (pre-release).
 
-取ってきたファイルが、このリポジトリの CI で作ったものかは `gh attestation verify <ファイル> --repo fukusaka/amonhen` で
-確かめられる。
+- App: extract `Amon-Hen-<version>.zip` (the snapshot is `Amon-Hen-Snapshot-<version>.zip` and can be installed side by
+  side with the stable release) and put it in `/Applications`. It is signed with Developer ID and notarized, so it
+  opens as is. On first launch, the engine (CLI and daemon) is placed in `~/.local/share/amonhen` and is available as
+  `~/.local/bin/amonhen`.
+- Engine only: extract `amonhen-<version>-<OS>-<CPU>` (tar.gz for Linux and macOS, zip for Windows) and run
+  `amonhen install` (on Windows it is placed in `%LOCALAPPDATA%\amonhen`, so add `%LOCALAPPDATA%\amonhen\bin` to PATH).
+- VSCode extension: install `amonhen-vscode-<version>.vsix` with `code --install-extension <file>`. The extension
+  bundles the engine, and once installed it uses the shared daemon.
 
-[GitHub CLI](https://cli.github.com/) があれば、clone した手元から `scripts/install.sh [stable|snapshot]`（アプリ）・
-`apps/vscode/scripts/install.sh [stable|snapshot]`（拡張）で、取ってくるところから入れ替えまでをまとめてできる。
+You can check that a downloaded file was built by this repository's CI with
+`gh attestation verify <file> --repo fukusaka/amonhen`.
 
-## 文書
+With the [GitHub CLI](https://cli.github.com/), from a local clone, `scripts/install.sh [stable|snapshot]` (app) and
+`apps/vscode/scripts/install.sh [stable|snapshot]` (extension) do everything from downloading to replacing in one go.
 
-- [使い方](docs/usage.md): アプリ・SSH 先・共有の daemon・CLI
-- [VSCode 拡張](apps/vscode)
-- [設計](docs/design.md)・[FE 向けの窓口の取り決め](docs/front.md)
-- [開発](docs/development.md)・[リリース](docs/release.md)
+## Documents
 
-## ライセンス
+- [Usage](docs/usage.md): app, SSH hosts, shared daemon, CLI
+- [VSCode extension](apps/vscode)
+- [Design](docs/design.md) and [front API contract](docs/front.md)
+- [Development](docs/development.md) and [Release](docs/release.md)
 
-[MIT](LICENSE-MIT) か [Apache License 2.0](LICENSE-APACHE) の、好きなほうを選んで使える（`MIT OR Apache-2.0`）。
+## License
+
+Use it under your choice of [MIT](LICENSE-MIT) or [Apache License 2.0](LICENSE-APACHE) (`MIT OR Apache-2.0`).

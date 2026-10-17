@@ -1,38 +1,40 @@
-# 使い方
+# Usage
 
-アプリ（macOS）・SSH 先・共有の daemon・CLI の使い方。インストールは [README](../README.md)、VSCode 拡張は
-[apps/vscode](../apps/vscode) を参照。
+[日本語](ja/usage.md)
 
-## アプリ
+How to use the app (macOS), SSH hosts, the shared daemon and the CLI. For installation see the [README](../README.md),
+and for the VSCode extension see [apps/vscode](../apps/vscode).
 
-- 起動するとリポジトリの一覧（File > Repositories…、⇧⌘O）が出る。開いたことのあるリポジトリが新しい順に並び、Add Repository… で加え、Remove で外す（フォルダには触れない）。File > Open…（⌘O）でほかのリポジトリを別のウィンドウで開く。最後のウィンドウを閉じると一覧に戻る。
-- サイドバー: Working Copy / History、ブランチ（フォルダ・上流との差 ↑↓・gone）、リモート、タグ、stash、サブモジュール。右クリックで checkout・merge・rebase・作成・名前の変更・削除・stash の操作・サブモジュールの更新と別ウィンドウ。ブランチを別のブランチにドロップすると merge / rebase（fast-forward で済めば checkout しない）、リモートにドロップすると push。
-- ツールバー: Fetch・Pull・Push・Stash・Undo。履歴の書き換え・変更の破棄・stash の削除などは Undo で戻せる（CLI・VSCode 拡張と記録を共有する）。
-- Working Copy: ファイルはパスの一覧かディレクトリの木で表示（一覧の上で切り替え）。差分の行をクリックで選び（hunk の見出しで hunk 全体、Shift で範囲、⌘ で追加）、Stage Lines / Discard Lines。Space・Enter で stage / unstage。Summary と Description を書いて ⌘↩ でコミット。コンフリクトはコンフリクトごとに Use Current / Use Incoming / Use Both、または Merge Editor…（3 ペインのマージエディタ）。
-- History: グラフ付きの一覧（件名とブランチ・タグのラベル、その下に作者・日時・ID）。右クリックでコミットの編集（Edit Message・Squash・Fixup・Edit・Split・Drop）、cherry-pick・revert、ブランチ・タグの作成。ドラッグで並べ替え。上部で All Branches / Current Branch / 選んだ ref を切り替える。⌘F でコミットを検索（Enter・⌘G で次へ、⇧Enter・⇧⌘G で前へ。一致したコミットだけを出すこともできる）。
-- 差分: ドラッグで文字を選んで ⌘C、⌘F で検索。構文の色付けは表示の後に裏で付く。
-- History の検索の構文: 語は件名・作者・ID から探す。空白で区切ると AND、`or` で OR、括弧でまとめる。`author:` `subject:` `commit:` `path:` `contents:"..."`（例: `path:fs/ (author:linus or author:greg)`）。
-- ファイルの右クリック（Working Copy・History の変更ファイル）で Blame と File History（名前の変更も追う）。行やコミットをダブルクリックすると History で選ぶ。
-- View > One Line per Commit で History の行を 1 行にする。終了したときに開いていたリポジトリは、次の起動で開き直す。
+## App
 
-## SSH 先のリポジトリ
+- On launch, the repository list (File > Repositories…, ⇧⌘O) appears. Repositories you have opened are listed newest first; add one with Add Repository… and take one off with Remove (the folder is left untouched). File > Open… (⌘O) opens another repository in a separate window. Closing the last window returns to the list.
+- Sidebar: Working Copy / History, branches (folders, ahead/behind upstream ↑↓, gone), remotes, tags, stashes, submodules. Right-click for checkout, merge, rebase, create, rename, delete, stash operations, and updating a submodule or opening it in a separate window. Dropping a branch onto another branch merges / rebases (no checkout if a fast-forward suffices); dropping it onto a remote pushes.
+- Toolbar: Fetch, Pull, Push, Stash, Undo. Rewriting history, discarding changes, dropping stashes and the like can be reverted with Undo (the record is shared with the CLI and the VSCode extension).
+- Working Copy: files are shown as a list of paths or a directory tree (switch above the list). Click diff lines to select them (a hunk header selects the whole hunk, Shift selects a range, ⌘ adds to the selection), then Stage Lines / Discard Lines. Space / Enter stages / unstages. Write a Summary and Description and commit with ⌘↩. For conflicts, choose Use Current / Use Incoming / Use Both per conflict, or Merge Editor… (the 3-pane merge editor).
+- History: a list with a graph (subject and branch / tag labels, with author, date and ID below). Right-click to edit a commit (Edit Message, Squash, Fixup, Edit, Split, Drop), cherry-pick, revert, or create a branch or tag. Drag to reorder. At the top, switch between All Branches / Current Branch / a chosen ref. ⌘F searches commits (Enter / ⌘G for next, ⇧Enter / ⇧⌘G for previous; you can also show only the matching commits).
+- Diffs: drag to select text and ⌘C, ⌘F to search. Syntax highlighting is applied in the background after display.
+- History search syntax: words are searched in the subject, author and ID. Separate with spaces for AND, `or` for OR, and group with parentheses. `author:` `subject:` `commit:` `path:` `contents:"..."` (e.g. `path:fs/ (author:linus or author:greg)`).
+- Right-click a file (in Working Copy, or a changed file in History) for Blame and File History (renames are followed too). Double-click a line or commit to select it in History.
+- View > One Line per Commit makes History rows a single line. Repositories that were open when you quit are reopened on the next launch.
 
-リポジトリの一覧の Add Remote Repository… で接続先とパスを入れるか、`AmonHen ssh://[user@]host[:port]/path/to/repo`（ホームからなら `/~/src/repo`）。鍵か ssh-agent でパスワードなしにつながること。SSH 先では git の処理だけを `amonhen --stdio` が行う。SSH 先の `PATH` に通信の形の版が合う `amonhen` があればそれを使い、なければ同梱のエンジン（Linux x86_64・aarch64、macOS arm64）を `~/.local/share/amonhen/engine/<中身のハッシュ>/` に送り込む（送ったら中身を確かめる。`AMONHEN_PUSH=0` で送らない、`AMONHEN_REMOTE_ENGINE` で場所を指定）。
+## Repositories on SSH hosts
 
-## 共有の daemon
+Use Add Remote Repository… in the repository list and enter the host and path, or `AmonHen ssh://[user@]host[:port]/path/to/repo` (`/~/src/repo` for a path from home). You must be able to connect without a password, using a key or ssh-agent. On the SSH host, only git processing is done, by `amonhen --stdio`. If an `amonhen` with a matching protocol version is on the SSH host's `PATH`, it is used; otherwise the bundled engine (Linux x86_64 and aarch64, macOS arm64) is pushed to `~/.local/share/amonhen/engine/<content hash>/` (its contents are verified after pushing; `AMONHEN_PUSH=0` disables pushing, `AMONHEN_REMOTE_ENGINE` specifies the location).
 
-Settings > Advanced の「リポジトリを共有の daemon 越しに開く」か、一覧の右クリックの Open via Daemon で、手元の共有の daemon 越しに開く（`daemon:/path`・`daemon:ssh://host/path`）。CLI・VSCode 拡張と History・検索の索引・SSH のつながりを共有する。様子は Window > Activity の Daemon のタブか `amonhen daemon status`。
+## Shared daemon
+
+With "Open repositories through the shared daemon" in Settings > Advanced, or Open via Daemon in the list's context menu, a repository is opened through the local shared daemon (`daemon:/path`, `daemon:ssh://host/path`). History, the search index and SSH connections are shared with the CLI and the VSCode extension. Check its state in the Daemon tab of Window > Activity or with `amonhen daemon status`.
 
 ## CLI
 
-`amonhen --help` に全部の命令がある。主なもの:
+`amonhen --help` lists all commands. The main ones:
 
 ```sh
-amonhen .                      # アプリで開く
-amonhen log -n 20 fix          # グラフ付きの履歴（検索の構文も使える）
-amonhen status / diff / show   # Working Copy とコミットの中身（--json で FE が読む形）
-amonhen stage --rows 3,5-9 f   # 差分の行ごとに stage（amonhen diff --combined --rows で番号を見る）
-amonhen undo [--list]          # 操作を戻す（アプリ・VSCode 拡張と記録を共有）
-amonhen log -C ssh://host/path # SSH 先（共有の daemon が SSH のつながりを持ち続ける）
-amonhen daemon status          # 共有の daemon の様子
+amonhen .                      # open in the app
+amonhen log -n 20 fix          # history with a graph (search syntax works too)
+amonhen status / diff / show   # Working Copy and commit contents (--json for the form FEs read)
+amonhen stage --rows 3,5-9 f   # stage diff lines (see the numbers with amonhen diff --combined --rows)
+amonhen undo [--list]          # undo operations (record shared with the app and the VSCode extension)
+amonhen log -C ssh://host/path # SSH host (the shared daemon keeps the SSH connection alive)
+amonhen daemon status          # state of the shared daemon
 ```

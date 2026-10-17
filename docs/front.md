@@ -1,74 +1,76 @@
-# FE 向けの窓口（`amonhen-front`）
+# Front API (`amonhen-front`)
 
-コアのすべての働きを、言語を問わず使える形で出す取り決め。VSCode 拡張（TypeScript）と CLI が使う。コアは手元の共有の daemon（`amonhen --serve`）で動き、FE はコアを持たない。SSH 先のリポジトリも daemon が開く（FE からは手元と同じに見える）。CLI は手元のリポジトリを同じプロセスのコア（`amonhen_front::InProcess`）でも開き、同じ命令を通す。
+[日本語](ja/front.md)
 
-macOS のアプリは、同じプロセスのコアを C ABI（`crates/ffi-c`）で使う（共有メモリと mmap でコピーしない、いちばん速い道）。
+The contract that exposes every function of the core in a language-independent form. Used by the VSCode extension (TypeScript) and the CLI. The core runs in the local shared daemon (`amonhen --serve`); FEs do not hold a core. Repositories on SSH hosts are opened by the daemon too (to FEs they look the same as local ones). The CLI can also open local repositories with an in-process core (`amonhen_front::InProcess`), passing the same commands.
 
-## つなぐ
+The macOS app uses an in-process core through the C ABI (`crates/ffi-c`) (no copies, via shared memory and mmap: the fastest path).
 
-1. Unix ドメインソケット（Windows は名前付きパイプ `\\.\pipe\amonhen-<利用者の SID のハッシュ>-<通信の形の版>`。Node は `net.connect` でそのままつなげる）につなぐ。場所は `amonhen --socket` が出す（macOS は `$TMPDIR/amonhend-<通信の形の版>.sock`、ほかは `$XDG_RUNTIME_DIR` か `/tmp/amonhen-<uid>`。`AMONHEN_DAEMON_DIR` で変えられる）。つながらなければ `amonhen --serve <socket>` を、親から切り離して起動し、つながるまで待つ。
-2. 最初に、開く場所を送る: 長さ（u32、LE）と UTF-8 の文字列 `"\u0001" + 場所`。場所は手元のリポジトリの絶対パスか `ssh://host/path`。
-3. その後はフレームでやりとりする。最初の要求は `{"op":"hello"}` にする（開けなければ、その答えが理由つきの失敗になる）。
+## Connecting
 
-## フレーム
+1. Connect to the Unix domain socket (on Windows, the named pipe `\\.\pipe\amonhen-<hash of the user's SID>-<protocol version>`; Node can connect to it directly with `net.connect`). `amonhen --socket` prints its location (on macOS `$TMPDIR/amonhend-<protocol version>.sock`, elsewhere `$XDG_RUNTIME_DIR` or `/tmp/amonhen-<uid>`; it can be changed with `AMONHEN_DAEMON_DIR`). If it cannot connect, launch `amonhen --serve <socket>` detached from the parent and wait until it can connect.
+2. First, send the location to open: a length (u32, LE) and the UTF-8 string `"\u0001" + location`. The location is the absolute path of a local repository or `ssh://host/path`.
+3. After that, communicate in frames. Make the first request `{"op":"hello"}` (if the repository cannot be opened, its reply is a failure with the reason).
 
-| バイト | 中身 |
+## Frames
+
+| Bytes | Contents |
 |---|---|
-| 0..4 | 長さ（u32、LE）: 種類から中身の終わりまで（9 + 中身の長さ） |
-| 4 | 種類: 1 要求、2 成功、3 失敗、4 知らせ、5 取り消し（最上位ビットは圧縮の印。この窓口では使わない） |
-| 5..13 | 番号（u64、LE）。答えは要求と同じ番号。知らせは 0 |
-| 13.. | 中身 |
+| 0..4 | Length (u32, LE): from the kind to the end of the payload (9 + payload length) |
+| 4 | Kind: 1 request, 2 success, 3 failure, 4 notification, 5 cancel (the top bit marks compression; not used by this API) |
+| 5..13 | Number (u64, LE). A reply has the same number as its request. 0 for notifications |
+| 13.. | Payload |
 
-- 要求の中身: 命令の JSON（UTF-8）。
-- 成功の中身: JSON の長さ（u32、LE）、JSON、8 バイト境界までの詰め物、レコード（下）。
-- 失敗の中身: 理由の文（UTF-8）。
-- 知らせの中身: `{"changes": <ビット>}`。1 refs、2 index、4 作業ツリー、8 config。
-- 取り消し: 走っている要求（検索など）の番号を送る。その要求は失敗で終わる。
+- Request payload: the command JSON (UTF-8).
+- Success payload: JSON length (u32, LE), JSON, padding to an 8-byte boundary, records (below).
+- Failure payload: the reason text (UTF-8).
+- Notification payload: `{"changes": <bits>}`. 1 refs, 2 index, 4 working tree, 8 config.
+- Cancel: send the number of a running request (such as a search). That request ends in failure.
 
-要求は並べて送ってよい。答えは終わった順に返る。
+Requests may be pipelined. Replies come back in the order they finish.
 
-## レコード
+## Records
 
-成功の JSON の `data` に、区画ごとの `[始め, 長さ]`（バイト。レコードの先頭から）がある。区画は 8 バイト境界から始まる。数値はすべて LE。TS では、中身から区画を `ArrayBuffer` に切り出し（`slice` で 0 始まりにする）、型付き配列で読む。
+The success JSON's `data` holds `[start, length]` (in bytes, from the start of the records) for each section. Sections start on an 8-byte boundary. All numbers are LE. In TS, slice a section out of the payload into an `ArrayBuffer` (use `slice` to make it start at 0) and read it with typed arrays.
 
-| 型 | 大きさ | 並び |
+| Type | Size | Layout |
 |---|---|---|
-| 点 `Node` | 12 | row u32・lane u16・color u16・flags u16（1 merge、2 HEAD、4 stash、8 未コミット）・空き u16 |
-| 線 `Edge` | 24 | rowStart u32・rowEnd u32・laneStart u16・laneEnd u16・color u16・kind u16（1 first-parent、2 合流の始まり）・child u32・parent u32 |
-| ID | 20 | SHA-1 のバイト列 |
-| 差分の行 | 16 | kind u8（0 文脈・1 追加・2 削除・3 hunk・4 ours・5 theirs・6 base・7 マーカー・8 ファイルの見出し）・flags u8（1 stage 済み）・空き u16・old u32・new u32・`text` の中の始め u32 |
+| Node `Node` | 12 | row u32, lane u16, color u16, flags u16 (1 merge, 2 HEAD, 4 stash, 8 uncommitted), unused u16 |
+| Edge `Edge` | 24 | rowStart u32, rowEnd u32, laneStart u16, laneEnd u16, color u16, kind u16 (1 first-parent, 2 start of a merge), child u32, parent u32 |
+| ID | 20 | SHA-1 bytes |
+| Diff line | 16 | kind u8 (0 context, 1 added, 2 removed, 3 hunk, 4 ours, 5 theirs, 6 base, 7 marker, 8 file header), flags u8 (1 staged), unused u16, old u32, new u32, start in `text` u32 |
 
-## 命令
+## Commands
 
-History と差分は番号（`history`・`diff`）で持つ。FE がスクロールしている間に History が新しくなっても、同じ番号なら同じ行が返る。各 FE で新しいものから 16 個まで覚え、古いものは「もうありません」になる（読み直す）。
+History and diffs are held by number (`history`, `diff`). Even if History is refreshed while an FE is scrolling, the same number returns the same rows. Up to 16 of the newest are kept per FE; older ones become "no longer available" (read again).
 
-| 命令 | 引数 | 答え（JSON） | レコード |
+| Command | Arguments | Reply (JSON) | Records |
 |---|---|---|---|
-| `hello` | | version・workdir・gitDir | |
-| `history` | rebuild?・fold?・expanded?（ID の配列）・tips?（ID の配列。そこから辿れるものだけ） | history・generation・rows・head・headRow・folded | |
-| `historyMatching` | history・rows | `history` と同じ（一致した行だけの History） | |
+| `hello` | | version, workdir, gitDir | |
+| `history` | rebuild?, fold?, expanded? (array of IDs), tips? (array of IDs; only what is reachable from them) | history, generation, rows, head, headRow, folded | |
+| `historyMatching` | history, rows | same as `history` (a History of only the matching rows) | |
 | `historyRelease` | history | | |
-| `historyRows` | history と、start・count か rows（行の配列） | count・edges | rowNumbers u32・nodes・ids・times i64・spans（件名と作者の `text` の中の始めと長さ、u32 × 4）・text（UTF-8）・signatures u8・folded u32（折りたたんだ History のとき）・parentStarts u32（行の数 + 1）・parents u32（親の行）・parentIds（親の ID）・edges・edgeIds u32（start・count のときだけ。その範囲に重なる線） |
-| `historyGraph` | history | rows・edges | nodes・edges・ids・folded（全行） |
-| `historySearch` | history・query（`crates/core/src/query.rs` の書き方） | count | rows u32（昇順） |
-| `historyDensity` | history・buckets | buckets | density（f32 × 2: 頻度・活動量、0〜1） |
-| `historyLineage` | history・row | | rows（u64 のビット列）・edgeFrom u32 |
-| `historyLanes` | history・start・end・metrics（full・thin・minFull・minThin・available） | | positions f32 |
-| `historyRowOf` | history・id | row（なければ null） | |
-| `refs` | | headBranch・head・entries（kind・name・target・detail・ahead・behind・gone） | |
-| `status` | | generation・branch・upstream・ahead・behind・entries（kind・path・origPath・index・worktree・staged・unstaged・submodule） | |
-| `commitDiff` | id か stash（ID）、または history・rows・pair?（forward・reverse・mergeBase） | files（path・oldPath・kind・added・removed・binary）・changes・selection・rows | 差分の行（下） |
-| `workingDiff` | path・mode（unstaged・staged・combined） | diff・path・mode・binary・added・removed・rows | 差分の行 |
-| `conflict` | path | path・rows | 差分の行 |
-| `stage`・`unstage` | paths | | |
-| `stageRows` | diff・rows・stage?（combined の差分のとき。false で外す） | | |
-| `discardRows` | diff・rows（unstaged の差分の行） | | |
-| `commit` | message・amend? | | |
-| `run` | command（`crates/core/src/command.rs` の命令。checkout・merge・rebase・fetch・push・stash・undo・blame・設定など） | その命令の答え（ok・error ほか） | |
-| `connection` | | sent・received・closed（SSH 先のつながり。手元なら null） | |
+| `historyRows` | history, and start and count or rows (array of rows) | count, edges | rowNumbers u32, nodes, ids, times i64, spans (start and length of the subject and author in `text`, u32 × 4), text (UTF-8), signatures u8, folded u32 (for a folded History), parentStarts u32 (number of rows + 1), parents u32 (parent rows), parentIds (parent IDs), edges, edgeIds u32 (only with start and count; edges overlapping that range) |
+| `historyGraph` | history | rows, edges | nodes, edges, ids, folded (all rows) |
+| `historySearch` | history, query (syntax of `crates/core/src/query.rs`) | count | rows u32 (ascending) |
+| `historyDensity` | history, buckets | buckets | density (f32 × 2: frequency, activity, 0 to 1) |
+| `historyLineage` | history, row | | rows (u64 bit set), edgeFrom u32 |
+| `historyLanes` | history, start, end, metrics (full, thin, minFull, minThin, available) | | positions f32 |
+| `historyRowOf` | history, id | row (null if absent) | |
+| `refs` | | headBranch, head, entries (kind, name, target, detail, ahead, behind, gone) | |
+| `status` | | generation, branch, upstream, ahead, behind, entries (kind, path, origPath, index, worktree, staged, unstaged, submodule) | |
+| `commitDiff` | id or stash (ID), or history, rows, pair? (forward, reverse, mergeBase) | files (path, oldPath, kind, added, removed, binary), changes, selection, rows | diff lines (below) |
+| `workingDiff` | path, mode (unstaged, staged, combined) | diff, path, mode, binary, added, removed, rows | diff lines |
+| `conflict` | path | path, rows | diff lines |
+| `stage`, `unstage` | paths | | |
+| `stageRows` | diff, rows, stage? (for a combined diff; false to unstage) | | |
+| `discardRows` | diff, rows (lines of an unstaged diff) | | |
+| `commit` | message, amend? | | |
+| `run` | command (a command of `crates/core/src/command.rs`: checkout, merge, rebase, fetch, push, stash, undo, blame, settings and more) | that command's reply (ok, error and others) | |
+| `connection` | | sent, received, closed (the SSH host connection; null if local) | |
 
-差分の行のレコード: rows（差分の行 × 行の数）・textLengths u32・text（UTF-8）・highlights（行・始め・終わりの u32 × 3。変わった単語のバイト位置）。`commitDiff` は、ファイルごとに見出しの行（kind 8、text はパス、old・new は削除・追加の行数）から始まる。`workingDiff` の行の番号（0 始まり）が、`stageRows`・`discardRows` の rows で指す番号。
+Diff line records: rows (diff line × number of rows), textLengths u32, text (UTF-8), highlights (row, start, end as u32 × 3; byte positions of changed words). `commitDiff` starts each file with a header line (kind 8, text is the path, old and new are the numbers of removed and added lines). The line numbers (0-based) of `workingDiff` are the numbers that the rows of `stageRows` and `discardRows` refer to.
 
-## 版
+## Version
 
-窓口の形を変えたら `amonhen_front::VERSION` を上げる（`hello` の答えの version で確かめる）。ソケットの名前には daemon との通信の形の版（`amonhen_remote::PROTOCOL_VERSION`）が入るので、版の違う daemon にはつながらない。
+When the shape of the API changes, bump `amonhen_front::VERSION` (check it with the version in the `hello` reply). The socket name includes the daemon protocol version (`amonhen_remote::PROTOCOL_VERSION`), so it never connects to a daemon of a different version.

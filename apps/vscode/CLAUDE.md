@@ -40,4 +40,4 @@ VSCode 上で快適に Git を操作するための、自分用の Git 拡張。
 
 ## 進捗
 
-`docs/design.md` の「実装順序」を参照。完了したステップはそこのチェックボックスを更新すること。
+`docs/design.md` の「Implementation order」を参照。完了したステップはそこのチェックボックスを更新すること。文書は英語が正で、日本語版（`README.ja.md`・`docs/ja/`）も同じように直す。
