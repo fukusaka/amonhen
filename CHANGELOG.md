@@ -2,13 +2,18 @@
 
 User-visible changes, by release. The app and the engine (CLI and daemon) are released together with `v*` tags, and the
 VSCode extension separately with `vscode-v*` tags, so each has its own section. Changes not released yet go under
-`Unreleased`; on release, that heading becomes `### [x.y.z] - YYYY-MM-DD`.
+`Unreleased`; on release, that heading becomes `### [x.y.z] - YYYY-MM-DD`, followed by a short summary paragraph that
+becomes the GitHub Release notes.
 
 ## App and engine
 
 ### [Unreleased]
 
 ### [0.2.0] - 2026-10-17
+
+The first release signed with Developer ID and notarized. The app is reworked around a menu bar, tabs and bookmarks,
+with History search and folding, a three-pane merge editor with Magic Merge and AI assistance. New: the `amonhen` CLI,
+a shared daemon for the app, the CLI and the VSCode extension, and engines for Linux and Windows.
 
 #### Added
 
@@ -86,6 +91,10 @@ First release.
 ### [Unreleased]
 
 ### [0.2.0] - 2026-10-17
+
+The first stable release, versioned with the app. History, diffs and operations run on the bundled Amon Hen engine
+through the daemon shared with the app and the CLI. Adds discarding changes, stashes, creating branches and tags,
+cherry-pick and revert.
 
 #### Added
 

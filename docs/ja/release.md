@@ -9,16 +9,17 @@
 - `v<数字>` のタグ（`v0.2.0` など）を push すると、GitHub Actions がアプリの zip と、エンジンだけの tar.gz（macOS arm64・
   Linux x86_64・Linux aarch64）と zip（Windows x86_64・aarch64）を Release に載せる。タグは `Cargo.toml` の
   `workspace.package.version` と一致させ、タグのコミットで CI が通っていて、`CHANGELOG.md` にその版の節があること
-  （Release の説明になる）。
+  （見出しのすぐ下に短い要約の段落を書く。要約が、CHANGELOG 全体へのリンクと一緒に Release の説明になる）。
 - 作るのは `.github/workflows/build.yml`: エンジンは OS と CPU ごとにそのマシンで作り、配る前にその場で一度動かして
   確かめる（`scripts/check-engine.sh`）。アプリは macOS で並べてコンパイルし（`scripts/compile-app.sh`）、最後に
   組み立てて署名する（`scripts/package-app.sh`）。手元では `scripts/build-app.sh` が同じことをまとめて行う。
 - VSCode 拡張は `vscode-v*` のタグで、エンジンを同梱した .vsix を載せる（下の「[VSCode 拡張](#vscode-拡張)」を参照）。
 - main の CI（`ci.yml`）が通るたびに、そのコミットで `snapshot` という pre-release を作り直す（アプリ・エンジン・拡張。
-  バージョンは `<次の patch>-snapshot.<コミット数>+<sha>`）。Windows のエンジンは macOS のビルドと並んで作り、最後の
+  バージョンは `<次の patch>-snapshot.<コミット数>+<sha>`。版を上げてからタグを打つまでは `<版>-snapshot.…` で、snapshot は
+  そのあとの正式版より必ず古くなる）。Windows のエンジンは macOS のビルドと並んで作り、最後の
   仕事で同梱して載せる。
 - 変更は [CHANGELOG.md](../../CHANGELOG.md)（英語。アプリとエンジン、VSCode 拡張の節に分けた 1 つのファイル）に書く。
-  タグを打つ前に、その節の `Unreleased` を版と日付の見出しに改めてコミットする。
+  タグを打つ前に、その節の `Unreleased` を版と日付の見出しに改め、その下に要約を書いてコミットする。
 
 ## VSCode 拡張
 
@@ -31,7 +32,7 @@ snapshot は次の patch の pre-release 扱いなので、正式版を入れる
 
 正式版を出す手順:
 
-1. [CHANGELOG.md](../../CHANGELOG.md) の「VSCode extension」の節の `Unreleased` を、出すバージョンと日付の見出しに改めてコミットする
+1. [CHANGELOG.md](../../CHANGELOG.md) の「VSCode extension」の節の `Unreleased` を、出すバージョンと日付の見出しに改め、その下に要約を書いてコミットする
 2. `npm version patch --no-git-tag-version` を、1. と同じコミットに入れる
 3. main に push し、CI が通ったら `git tag vscode-v<版> && git push origin vscode-v<版>`（リリースは、タグのコミットで
    CI が通っていることを確かめ、CHANGELOG のその節を説明にする）
