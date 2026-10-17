@@ -153,6 +153,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             RepositoryManagerWindowController.shared.bookmarksChanged()
             QuickOpenPanel.shared.refreshIfVisible()
         }
+        Bookmarks.shared.onRowChange = { path in
+            RepositoryManagerWindowController.shared.rowChanged(path)
+            QuickOpenPanel.shared.refreshIfVisible()
+        }
         Bookmarks.shared.watchScanRoots()
         // 引数でリポジトリを渡されたらそれを、なければ前回開いていたものを同じウィンドウ・タブの並びで開く。
         // どれもなければ一覧を出す。

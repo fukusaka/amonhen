@@ -59,4 +59,4 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 
 文書は英語が正（`README.md`・`docs/*.md`）で、日本語版を `README.ja.md`・`docs/ja/` に置く（`apps/vscode` は README だけで、`README.ja.md` を並べる）。文書を変えるときは、日本語版も同じように直す（チェックボックスも両方）。
 
-利用者から見える変更を加えたら、ルートの `CHANGELOG.md`（英語だけ）の該当する節（App and engine か VSCode extension）の `Unreleased` に追記する（コミット単位ではなく、リリース単位でまとめる）。
+利用者から見える変更を加えたら、ルートの `CHANGELOG.md`（英語だけ）の該当する節（App and engine か VSCode extension）の `Unreleased` に追記する（コミット単位ではなく、リリース単位でまとめる）。版を出すときは `Unreleased` を `### [x.y.z] - YYYY-MM-DD` に改め、そのすぐ下に版をひとことで表す短い要約の段落を書く。要約は GitHub の Release の説明になり（`scripts/changelog-notes.sh`）、なければリリースが止まる。

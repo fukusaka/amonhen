@@ -156,7 +156,7 @@ func draw(_ ctx: CGContext) {
         ctx.restoreGState()
     }
     text("Amon Hen", 84, .bold, .white, at: CGPoint(x: 296, y: 204))
-    text("The Git GUI I wanted to use, so I built it.", 30, .medium, NSColor(white: 1, alpha: 0.72), at: CGPoint(x: 300, y: 254))
+    text("A quick, responsive Git GUI.", 30, .medium, NSColor(white: 1, alpha: 0.72), at: CGPoint(x: 300, y: 254))
 }
 
 let pixels = NSBitmapImageRep(

@@ -491,14 +491,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if let count = AppDelegate.option("--measure-select").flatMap(Int.init) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in measureSelection(count: count) }
         }
+        // --select-first・--select-row N で、その行を選んで表の中ほどに出す（履歴の途中の見た目を確かめる）。--snapshot
+        // がなくても効く（本物のウィンドウを画面キャプチャで撮るとき）。
+        let selectFirst = CommandLine.arguments.contains("--select-first")
+        let selectRow = AppDelegate.option("--select-row").flatMap(Int.init) ?? (selectFirst ? 0 : nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if let selectRow { history.select(row: selectRow) }
+        }
         if let output = AppDelegate.option("--snapshot") {
-            let selectFirst = CommandLine.arguments.contains("--select-first")
-            // --select-row N で、N 行目を選んで表の中ほどに出す（履歴の途中の見た目を確かめる）。
-            let selectRow = AppDelegate.option("--select-row").flatMap(Int.init) ?? (selectFirst ? 0 : nil)
             let wait = selectRow != nil || CommandLine.arguments.contains("--working-copy")
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if let selectRow { history.select(row: selectRow) }
-            }
             if let query = AppDelegate.option("--find") {
                 // 選んだコミットの差分を検索した状態（検索欄と強調）を確かめる。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in detail.find(query) }

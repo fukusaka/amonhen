@@ -16,6 +16,15 @@ becomes the GitHub Release notes.
   app's menus in the header bar, the merge editor, Blame, File History, Activity and Settings, opening repositories
   locally, through the shared daemon or over SSH.
 
+#### Fixed
+
+- The repository list no longer jumps back to the top while scrolling (each row's branch and change count used to
+  rebuild the whole list as it arrived).
+- Line numbers, file headers and stage checkboxes in diffs no longer come out garbled after the window moves
+  between screens of different scale (1x and 2x).
+- Building History no longer spins up threads for every few commits. On the Linux engines (musl) it was 5 times
+  slower than it should be; on git/git it now takes about 0.1 s instead of 0.6 s there, and about 20% less elsewhere.
+
 ### [0.2.0] - 2026-10-17
 
 The first release signed with Developer ID and notarized. The app is reworked around a menu bar, tabs and bookmarks,

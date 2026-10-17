@@ -2,7 +2,7 @@
 
 [日本語](ja/usage.md)
 
-How to use the app (macOS), SSH hosts, the shared daemon and the CLI. For installation see the [README](../README.md),
+How to use the app (macOS), SSH hosts, the shared daemon and the CLI. For installation see [install.md](install.md),
 and for the VSCode extension see [apps/vscode](../apps/vscode).
 
 ## App

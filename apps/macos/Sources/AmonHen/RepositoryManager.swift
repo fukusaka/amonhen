@@ -96,6 +96,7 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
     }
 
     private let outline = NSOutlineView()
+    private let scroll = NSScrollView()
     private let filter = NSSearchField()
     private let scanning = NSProgressIndicator()
     private var sections: [Section] = []
@@ -154,7 +155,6 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
-        let scroll = NSScrollView()
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
 
@@ -204,9 +204,21 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         ])
     }
 
-    /// 見出しと行を作り直す。選んでいた行と、開いていた見出しは保つ。
+    /// 行の状態（ブランチ・変更の数など）が変わった。その行だけ描き直す。
+    func rowChanged(_ path: String) {
+        guard window?.isVisible == true else { return }
+        for section in sections {
+            for row in rows[ObjectIdentifier(section)] ?? [] where row.path == path {
+                outline.reloadItem(row)
+            }
+        }
+    }
+
+    /// 見出しと行を作り直す。選んでいた行、開いていた見出し、スクロールの位置は保つ（作り直すと見出しが
+    /// 畳まれて開き直されるので、何もしないと一番上に戻ってしまう）。
     private func reload() {
         let selectedPath = (outline.item(atRow: outline.selectedRow) as? Row)?.path
+        let scrolled = scroll.contentView.bounds.origin
         let query = filter.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
         let bookmarks = Bookmarks.shared
         let matches = { (path: String) in
@@ -239,6 +251,9 @@ final class RepositoryManagerWindowController: NSWindowController, NSOutlineView
         } else if outline.selectedRow < 0, let first = sections.lazy.compactMap({ self.rows[ObjectIdentifier($0)]?.first }).first {
             outline.selectRowIndexes([outline.row(forItem: first)], byExtendingSelection: false)
         }
+        outline.layoutSubtreeIfNeeded()
+        scroll.contentView.scroll(to: scrolled)
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     @objc private func filterChanged() { reload() }
