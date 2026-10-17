@@ -112,8 +112,11 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     /// 左の分類。
     private enum Category: Equatable {
         /// `local` はこの Mac のリポジトリ（手元の共有の daemon 越しも含む）、`host` は SSH のホストごと。`folder` は
-        /// この Mac のフォルダの下、`hostFolder` は SSH のホストのフォルダの下（場所・スキャンの階層）。
+        /// この Mac のフォルダの下、`hostFolder` は SSH のホストのフォルダの下（場所の階層）、`scanFolder` はスキャンする
+        /// フォルダの中のフォルダの下（スキャンの階層）。場所とスキャンで同じフォルダが出ても、別の分類にする（同じに
+        /// すると、スキャンの中で選んだものが場所の中の節に選び直されてしまう）。
         case all, favorites, local, host(String), group(String), scan(String), folder(String), hostFolder(String, String)
+        case scanFolder(String, String)
 
         /// 覚えておくための文字列。
         var key: String {
@@ -126,6 +129,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             case let .scan(path): "scan:" + path
             case let .folder(path): "folder:" + path
             case let .hostFolder(host, path): "hostfolder:" + host + "\n" + path
+            case let .scanFolder(root, path): "scanfolder:" + root + "\n" + path
             }
         }
 
@@ -139,6 +143,10 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             else if key.hasPrefix("hostfolder:"), let split = key.dropFirst(11).firstIndex(of: "\n") {
                 let rest = key.dropFirst(11)
                 self = .hostFolder(String(rest[..<split]), String(rest[rest.index(after: split)...]))
+            }
+            else if key.hasPrefix("scanfolder:"), let split = key.dropFirst(11).firstIndex(of: "\n") {
+                let rest = key.dropFirst(11)
+                self = .scanFolder(String(rest[..<split]), String(rest[rest.index(after: split)...]))
             }
             else { return nil }
         }
@@ -440,7 +448,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         if !bookmarks.data.scanRoots.isEmpty {
             let scans = bookmarks.data.scanRoots.map { root in
                 SideNode((root.path as NSString).abbreviatingWithTildeInPath, symbol: "magnifyingglass", .scan(root.path),
-                         children: folderTree(bookmarks.scanned[root.path] ?? [], base: root.path, category: { .folder($0) }, title: { $0 }))
+                         children: folderTree(bookmarks.scanned[root.path] ?? [], base: root.path,
+                                              category: { .scanFolder(root.path, $0) }, title: { $0 }))
             }
             roots.append(SideNode("スキャン", nil, children: scans))
         }
@@ -527,6 +536,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             return bookmarks.allLocations.filter { Self.sshHost($0) == nil && Self.localPath($0).hasPrefix(prefix + "/") }
         case let .hostFolder(host, prefix):
             return bookmarks.allLocations.filter { Self.sshHost($0) == host && RepositoryLocation.path($0).hasPrefix(prefix + "/") }
+        case let .scanFolder(root, prefix):
+            return (bookmarks.scanned[root] ?? []).filter { $0.hasPrefix(prefix + "/") }
         }
     }
 
@@ -787,7 +798,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             case .local, .host, .folder, .hostFolder:
                 RepositoryList.remove(path)
                 Bookmarks.shared.remove(path)
-            case .scan:
+            case .scan, .scanFolder:
                 NSSound.beep()
             }
         }
@@ -799,7 +810,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         case .all, .local, .host, .folder, .hostFolder: "一覧から外す"
         case .favorites: "お気に入りから外す"
         case .group: "グループから外す"
-        case .scan: nil
+        case .scan, .scanFolder: nil
         }
     }
 
