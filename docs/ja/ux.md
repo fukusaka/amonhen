@@ -440,6 +440,9 @@ git の考え方と、アプリが守ること:
   ブランチ・タグの作成・名前の変更・削除、リモート）は、どの worktree からでも同じに働く。
 - 1 つのブランチは 1 つの worktree でしか checkout できない。アプリは押し通さない（`--ignore-other-worktrees` は
   使わない）: ほかの worktree が checkout しているブランチを選んだら、書き込む先をその worktree に移す。
+- 「今のブランチ」は書き込む先の worktree のブランチ: Branches で太字・色付きのアイコン、History で塗った札、
+  ツールバーの Branch。ほかの worktree が checkout しているブランチは、Branches に「⌂ worktree」、History で緑の札、
+  ブランチの切り替えのパネルに「worktree … で使用中」と出す。
 - worktree の作成・削除は git で行う（`git worktree add`・`remove`・`prune`、一覧は
   `git worktree list --porcelain`）。`.git/worktrees` を直接いじらない。変更が残っている worktree の削除は確かめて
   から `--force`。ロック中のものはロック中と見せ、片付けない。フォルダがなくなったものは片付け待ちと見せる。

@@ -113,6 +113,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if changed { rebuild(first: false) }
     }
 
+    /// `branch` を checkout している、書き込む先以外の worktree。
+    private func otherWorktree(using branch: String) -> WorktreeInfo? {
+        guard worktrees.count > 1 else { return nil }
+        return worktrees.first { $0.branch == branch && !(editingWorktree.map($0.isSame) ?? false) }
+    }
+
     /// worktree ごとの変更の数。
     func setWorktreeChanges(_ changes: [String: Int]) {
         guard changes != worktreeChanges else { return }
@@ -139,7 +145,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     private func rebuild(first: Bool) {
         guard let refs else { return }
-        headBranch = refs.headBranch
+        // 今のブランチは、書き込む先の worktree のもの（worktree が 1 つなら開いたリポジトリの HEAD）。
+        let editingInfo = worktrees.count > 1 ? worktrees.first { w in editingWorktree.map(w.isSame) ?? false } : nil
+        headBranch = editingInfo.map(\.branch) ?? refs.headBranch
+        let head = headBranch
         let expanded = Set(groups.filter { outline.isItemExpanded($0) }.map(\.title))
         let selectedTitle = (outline.item(atRow: outline.selectedRow) as? Node).map { ($0.title, $0.page) }
 
@@ -159,7 +168,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                     parent = node
                 }
             }
-            parent.children.append(Node(title: parts.last ?? item.name, item: item, isHead: item.name == refs.headBranch))
+            parent.children.append(Node(title: parts.last ?? item.name, item: item, isHead: item.name == head))
         }
         if !branchRoot.children.isEmpty { groups.append(branchRoot) }
 
@@ -294,7 +303,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         cell.imageView?.image = NSImage(systemSymbolName: Self.symbol(for: node), accessibilityDescription: nil)
         cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
         var badge = node.badge ?? ""
-        if let item = node.item, item.kind == .local {
+        if let item = node.item, item.kind == .local, let other = otherWorktree(using: item.name) {
+            // ほかの worktree が checkout している（git はここでは checkout させない）。
+            badge = "⌂ " + other.name
+            cell.toolTip = L("Checked out in the worktree “%@” (%@)", other.name, other.path)
+            cell.badge.stringValue = badge
+            cell.badge.textColor = .systemGreen
+            return cell
+        } else if let item = node.item, item.kind == .local {
             if item.gone {
                 badge = "gone"
             } else {

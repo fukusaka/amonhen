@@ -416,15 +416,23 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         updateTabTitle()
     }
 
-    /// ツールバーに、書き込む先の worktree とそのブランチを出す。
+    /// ツールバーに、書き込む先の worktree とそのブランチを出す。History とサイドバーの「今のブランチ」も
+    /// 書き込む先のものにし、ほかの worktree が checkout しているブランチに印を付ける。
     private func updateEditingBranch() {
         let info = worktrees.first { $0.isSame(editing.path) }
+        let multiple = worktrees.count > 1
+        history.setWorktreeBranches(
+            editing: multiple ? .some(info?.branch) : nil,
+            elsewhere: multiple ? Set(worktrees.filter { !$0.isSame(editing.path) }.compactMap(\.branch)) : [])
+        if multiple, let hex = info?.head, let head = Data(hex: hex) { history.head = head }
         let other = editing !== opened || (info.map { !$0.main } ?? false)
         toolbar.setRepository(window.title, worktree: other ? info?.name ?? (editing.path as NSString).lastPathComponent : nil)
-        guard editing !== opened, let info else { return }
-        toolbar.setBranch(info.branch)
-        let current = latestRefs?.items.first { $0.kind == .local && $0.name == info.branch }
+        // 書き込む先のブランチ（開いたリポジトリに戻ったときも、そのブランチに戻す）。
+        let branch = editing === opened ? latestRefs?.headBranch : info?.branch
+        toolbar.setBranch(branch)
+        let current = latestRefs?.items.first { $0.kind == .local && $0.name == branch }
         toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0)
+        if editing === opened, let head = latestRefs?.head { history.head = head }
     }
 
     /// サイドバーの worktree の右クリック。
@@ -1122,7 +1130,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func switchBranch(_ sender: Any?) {
         guard let refs = latestRefs else { return NSSound.beep() }
         let recent = UserDefaults.standard.stringArray(forKey: recentBranchesKey) ?? []
-        BranchSwitcherPanel.shared.show(refs: refs, recent: recent, over: window) { [weak self] choice in
+        let inUse = Dictionary(
+            worktrees.filter { $0.branch != nil && !$0.isSame(editing.path) }.map { ($0.branch!, $0.name) },
+            uniquingKeysWith: { a, _ in a })
+        BranchSwitcherPanel.shared.show(refs: refs, recent: recent, inUse: inUse, over: window) { [weak self] choice in
             guard let self else { return }
             switch choice {
             case let .local(name):

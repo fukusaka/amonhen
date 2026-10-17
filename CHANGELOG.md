@@ -51,7 +51,8 @@ becomes the GitHub Release notes.
   in another worktree takes you to that worktree. New Worktree…, Remove Worktree and Prune Worktrees; confirmation
   sheets name the worktree. Working Copy lists every worktree's changes under its own heading: another worktree's
   diffs can be read in place, and staging one of its files asks to edit that worktree first. History labels each
-  worktree's HEAD with its name and number of changed files. Opening a worktree's folder opens its repository's tab, and the repository page no longer
+  worktree's HEAD with its name and number of changed files. The current branch is the edited worktree's; branches checked out in
+  other worktrees are marked in Branches, History and the branch switcher. Opening a worktree's folder opens its repository's tab, and the repository page no longer
   lists worktrees as repositories of their own.
 - `amonhen worktree` (list, add, remove, prune), the same as `git worktree`, through the core (so over SSH too).
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).

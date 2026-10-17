@@ -450,6 +450,9 @@ What git says, and what the app keeps:
   (fetch, creating, renaming or deleting branches and tags, remotes) work the same from any worktree.
 - A branch can be checked out in only one worktree. The app never forces it (`--ignore-other-worktrees`): choosing a
   branch that another worktree has checked out moves the edited worktree there instead.
+- "The current branch" is the edited worktree's branch: bold with an accent icon in Branches, the filled label in
+  History, the toolbar's Branch. Branches checked out in other worktrees show "⌂ worktree" in Branches, a green
+  label in History, and "in the worktree …" in the branch switcher.
 - Worktrees are created and removed with git (`git worktree add`, `remove`, `prune`; listed with
   `git worktree list --porcelain`), never by editing `.git/worktrees`. Removing one with changes asks, then uses
   `--force`; locked worktrees are shown as locked and never pruned; a worktree whose folder is gone is shown as

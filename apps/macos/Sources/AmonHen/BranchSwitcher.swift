@@ -19,6 +19,8 @@ final class BranchSwitcherPanel: NSObject, NSSearchFieldDelegate, NSTableViewDat
     private let hint = NSTextField(labelWithString: "")
     private var refs: Refs?
     private var recent: [String] = []
+    /// ほかの worktree が checkout しているブランチ（ブランチ → worktree の名前）。選ぶとその worktree に移る。
+    private var inUse: [String: String] = [:]
     private var shown: [Choice] = []
     private var onChoose: ((Choice) -> Void)?
 
@@ -75,9 +77,13 @@ final class BranchSwitcherPanel: NSObject, NSSearchFieldDelegate, NSTableViewDat
     }
 
     /// `refs` のブランチから選んでもらう。`recent` は最近切り替えたブランチ（新しい順）。
-    func show(refs: Refs, recent: [String], over window: NSWindow?, onChoose: @escaping (Choice) -> Void) {
+    func show(
+        refs: Refs, recent: [String], inUse: [String: String] = [:], over window: NSWindow?,
+        onChoose: @escaping (Choice) -> Void
+    ) {
         self.refs = refs
         self.recent = recent
+        self.inUse = inUse
         self.onChoose = onChoose
         field.stringValue = ""
         update()
@@ -175,7 +181,12 @@ final class BranchSwitcherPanel: NSObject, NSSearchFieldDelegate, NSTableViewDat
             return c
         }()
         let (symbol, title, color): (String, String, NSColor) = switch shown[row] {
-        case let .local(name): ("arrow.triangle.branch", name + (recent.contains(name) ? L("  · recent") : ""), .labelColor)
+        case let .local(name):
+            if let worktree = inUse[name] {
+                ("folder", name + L("  · in the worktree %@", worktree), .systemGreen)
+            } else {
+                ("arrow.triangle.branch", name + (recent.contains(name) ? L("  · recent") : ""), .labelColor)
+            }
         case let .remote(name): ("network", name + L("  · creates a tracking branch"), .secondaryLabelColor)
         case let .create(name): ("plus.circle", L("Create branch %@ and switch to it", name), .controlAccentColor)
         }

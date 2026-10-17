@@ -851,3 +851,5 @@
 "Edit in %@" = "%@ で編集";
 "Edit in the worktree “%@”?" = "worktree「%@」で編集しますか？";
 "Staging, committing and the other changes then go to %@ (branch %@)." = "このあとの stage・コミットなどは、%1$@（ブランチ %2$@）に対して行います。";
+"Checked out in the worktree “%@” (%@)" = "worktree「%1$@」（%2$@）で checkout されています";
+"  · in the worktree %@" = "　· worktree %@ で使用中";

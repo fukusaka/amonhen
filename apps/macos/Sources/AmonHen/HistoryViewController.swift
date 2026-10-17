@@ -137,6 +137,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let isHead: Bool
         /// worktree の HEAD の札（名前と変更の数）。
         var worktree = false
+        /// ほかの worktree が checkout しているブランチ。
+        var elsewhere = false
+    }
+    private var lastRefs: Refs?
+    /// 今のブランチ（書き込む先の worktree のもの。nil なら開いたリポジトリの HEAD）と、ほかの worktree が
+    /// checkout しているブランチ。
+    private var editingBranch: String??
+    private var branchesElsewhere: Set<String> = []
+
+    func setWorktreeBranches(editing: String??, elsewhere: Set<String>) {
+        guard editing != editingBranch || elsewhere != branchesElsewhere else { return }
+        editingBranch = editing
+        branchesElsewhere = elsewhere
+        if let lastRefs { show(refs: lastRefs) }
     }
     private var refLabels: [Data: [RefLabel]] = [:]
     /// 各 worktree の HEAD の札（ref の札の前に出す。docs/ux.md の「Worktrees」）。
@@ -685,11 +699,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     /// ref の一覧が変わった。各コミットのラベルを作り直して描き直す。
     func show(refs: Refs) {
+        lastRefs = refs
+        let head = editingBranch ?? refs.headBranch
         var labels: [Data: [RefLabel]] = [:]
         for item in refs.items {
             guard let target = item.target, [.local, .remote, .tag].contains(item.kind) else { continue }
             labels[target, default: []].append(
-                RefLabel(name: item.name, kind: item.kind, isHead: item.kind == .local && item.name == refs.headBranch))
+                RefLabel(name: item.name, kind: item.kind, isHead: item.kind == .local && item.name == head,
+                         elsewhere: item.kind == .local && branchesElsewhere.contains(item.name)))
         }
         // 今のブランチ、ローカル、リモート、タグの順。
         let order: (RefLabel) -> Int = { $0.isHead ? 0 : [.local: 1, .remote: 2, .tag: 3][$0.kind] ?? 4 }
@@ -863,6 +880,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private func labelColors(_ label: RefLabel?, selected: Bool) -> (SIMD4<Float>, SIMD4<Float>) {
         guard let label else { return (NSColor.systemGray.withAlphaComponent(0.25).rgba, NSColor.labelColor.rgba) }
+        if label.elsewhere {
+            // ほかの worktree が checkout しているブランチ: worktree の札と同じ緑。
+            return (NSColor.systemGreen.withAlphaComponent(selected ? 0.45 : 0.22).rgba,
+                    (selected ? NSColor.white : NSColor.labelColor).rgba)
+        }
         if label.worktree {
             let base = NSColor.systemGreen
             if label.isHead { return (base.withAlphaComponent(0.85).rgba, NSColor.white.rgba) }
