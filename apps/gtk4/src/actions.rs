@@ -19,6 +19,8 @@ pub struct Actions {
     pub undo: gtk::Button,
     /// 操作の後に、History・サイドバー・Working Copy を読み直す。
     on_change: RefCell<Option<Callback>>,
+    /// 操作の後に呼ぶ（Activity の History など）。
+    on_after: RefCell<Vec<Callback>>,
 }
 
 impl Actions {
@@ -34,6 +36,7 @@ impl Actions {
             window: window.downgrade(),
             undo,
             on_change: RefCell::default(),
+            on_after: RefCell::default(),
         });
         let weak = Rc::downgrade(&actions);
         actions.undo.connect_clicked(move |_| {
@@ -74,6 +77,11 @@ impl Actions {
         self.on_change.replace(Some(Rc::new(f)));
     }
 
+    /// 操作の後に `f` を呼ぶ。
+    pub fn connect_after(&self, f: impl Fn() + 'static) {
+        self.on_after.borrow_mut().push(Rc::new(f));
+    }
+
     /// `command` を実行する。
     pub fn perform(self: &Rc<Self>, command: Value) {
         self.perform_sequence(vec![command]);
@@ -86,8 +94,17 @@ impl Actions {
 
     /// 命令を順に実行し、知らせと読み直しを頼んだ後で `done` を呼ぶ。
     pub fn perform_then(self: &Rc<Self>, commands: Vec<Value>, done: impl FnOnce() + 'static) {
+        self.perform_with(commands, |_| done());
+    }
+
+    /// 命令を順に実行し、知らせと読み直しを頼んだ後で、最後の答えを `done` に渡す。
+    pub fn perform_with(
+        self: &Rc<Self>,
+        commands: Vec<Value>,
+        done: impl FnOnce(&Value) + 'static,
+    ) {
         let Some(repo) = self.repo.borrow().clone() else {
-            done();
+            done(&Value::Null);
             return;
         };
         let this = self.clone();
@@ -133,7 +150,11 @@ impl Actions {
                 f();
             }
             this.refresh_undo();
-            done();
+            let after: Vec<Callback> = this.on_after.borrow().clone();
+            for f in after {
+                f();
+            }
+            done(&result);
         });
     }
 

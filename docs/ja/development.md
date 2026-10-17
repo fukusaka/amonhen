@@ -17,7 +17,7 @@ scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md（cargo install -
 cargo deny check licenses        # 依存が deny.toml で許したライセンスだけか（cargo install --locked cargo-deny）
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 拡張
 (cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 のアプリ（GTK 4.14 以降が要る。libgtk-4-dev か brew install gtk4 pkgconf）
-scripts/package-gtk4.sh          # GTK4 のアプリを dist/amonhen-gtk-linux-<arch>.tar.gz に（Linux で。dist/engine の Linux のエンジンがあれば入れる）
+scripts/package-gtk4.sh          # GTK4 のアプリを dist/amonhen-gtk-<版>-linux-<arch>.tar.gz に（Linux で。dist/engine の Linux のエンジンがあれば入れる）
 ```
 
 ## 確認用の起動オプション
@@ -29,7 +29,7 @@ README の画面は、`--snapshot`（ツールバーが空のまま写る）で�
 `defaults write AmonHen showAvatars -bool NO`（デバッグ版の設定のドメイン）を書き、撮ったら消す。ウィンドウの大きさは同じ
 ドメインの `NSWindow Frame Repository <パス>` で決まる（README は 1200×720: `"1300 500 1200 720 0 0 <画面の幅> <画面の高さ> "`）。
 
-GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png [--scroll-to N | --select-rows N,N,... | --select-ref NAME] [--menu-ref NAME | --menu-row N] [--search QUERY] [--open-menu repository|primary] [--perform JSON] [--working-copy [--select-path PATH] [--toggle-row N]]`（`--menu-ref` はその ref の右クリックのメニューを開く、`--perform` はコアの命令を 1 つメニューと同じ経路で実行する、`--toggle-row` はその差分の行の印を一度クリックしたことにする）（見えている行を読んだら窓を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 1 フレームに 40 行（か N 行）ずつ 600 フレームスクロールし、1 フレームのメインスレッドの時間・History の snapshot の時間・落としたフレーム・フレームの始まりから画面に出るまでの時間を表示。描画器は `GSK_RENDERER=cairo|gl|vulkan` で選ぶ）。
+GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png [--scroll-to N | --select-rows N,N,... | --select-ref NAME] [--menu-ref NAME | --menu-row N] [--search QUERY [--only-matching]] [--blame PATH | --file-history PATH | --activity operations|history|performance|events|daemon | --settings git|appearance|performance|advanced | --merge-editor PATH [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--perform JSON] [--working-copy [--select-path PATH] [--toggle-row N] [--layout list|tree|flat]]`（`--menu-ref` はその ref の右クリックのメニューを開く、`--perform` はコアの命令を 1 つメニューと同じ経路で実行する、`--toggle-row` はその差分の行の印を一度クリックしたことにする）（見えている行を読んだら窓を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 1 フレームに 40 行（か N 行）ずつ 600 フレームスクロールし、1 フレームのメインスレッドの時間・History の snapshot の時間・落としたフレーム・フレームの始まりから画面に出るまでの時間を表示。描画器は `GSK_RENDERER=cairo|gl|vulkan` で選ぶ）。
 
 ## VSCode 拡張
 

@@ -111,7 +111,12 @@ pub struct State {
     on_mark: Option<Rc<dyn Fn(u32)>>,
     /// 選んだ行が変わったときに呼ぶ。
     on_selection: Option<Rc<dyn Fn()>>,
+    /// ファイルの見出しを右クリックしたときに呼ぶ（パス、x、y）。
+    on_file_menu: Option<FileMenuCallback>,
 }
+
+/// ファイルの見出しを右クリックしたときに呼ぶ（パス、x、y）。
+type FileMenuCallback = Rc<dyn Fn(&str, f64, f64)>;
 
 mod imp {
     use super::*;
@@ -173,6 +178,16 @@ mod imp {
                 }
             });
             view.add_controller(click);
+            // ファイルの見出しの右クリック（Blame・File History）。
+            let menu = gtk::GestureClick::new();
+            menu.set_button(gdk::BUTTON_SECONDARY);
+            let weak = view.downgrade();
+            menu.connect_pressed(move |_, _, x, y| {
+                if let Some(view) = weak.upgrade() {
+                    view.file_menu(x, y);
+                }
+            });
+            view.add_controller(menu);
         }
     }
 
@@ -324,6 +339,40 @@ impl DiffWidget {
             .filter(|&&r| view.view.rows[r as usize].flags & DiffRow::STAGED != 0)
             .count();
         (staged, st.selection.len())
+    }
+
+    /// ファイルの見出しを右クリックしたら `f(パス, x, y)` を呼ぶ。
+    pub fn connect_file_menu(&self, f: impl Fn(&str, f64, f64) + 'static) {
+        self.state().on_file_menu = Some(Rc::new(f));
+    }
+
+    fn file_menu(&self, x: f64, y: f64) {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let rh = self.row_height();
+        let (view, f) = {
+            let st = self.state();
+            (st.view.clone(), st.on_file_menu.clone())
+        };
+        let (Some(view), Some(f)) = (view, f) else {
+            return;
+        };
+        let index = ((y as f32 + scroll) / rh).floor();
+        if index < 0.0 {
+            return;
+        }
+        // 見出しより下の行なら、その行のファイルの見出しを探す。
+        let rows = &view.view.rows;
+        let Some(header) = rows[..rows.len().min(index as usize + 1)]
+            .iter()
+            .rev()
+            .find(|r| r.kind == DiffRow::FILE)
+        else {
+            return;
+        };
+        // とびとびに選んだときの見出しは「パス — 短い ID」。
+        let text = view.text(header);
+        let path = text.split(" — ").next().unwrap_or(text);
+        f(path, x, y);
     }
 
     pub fn connect_mark(&self, f: impl Fn(u32) + 'static) {

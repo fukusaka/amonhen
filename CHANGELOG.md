@@ -9,6 +9,13 @@ becomes the GitHub Release notes.
 
 ### [Unreleased]
 
+#### Added
+
+- A GTK4 app for Linux (`amonhen-gtk-<version>-linux-<cpu>.tar.gz`, early): History with the graph, search and
+  multi-select, commit details and diffs, Working Copy with line staging, the sidebar and its operations, the macOS
+  app's menus in the header bar, the merge editor, Blame, File History, Activity and Settings, opening repositories
+  locally, through the shared daemon or over SSH.
+
 #### Fixed
 
 - The repository list no longer jumps back to the top while scrolling (each row's branch and change count used to

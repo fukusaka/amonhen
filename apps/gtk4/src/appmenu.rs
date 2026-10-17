@@ -169,6 +169,8 @@ const ACCELS: &[(&str, &str)] = &[
     ("win.undo", "<Control><Alt>z"),
     ("win.commit", "<Control>Return"),
     ("win.commit-and-push", "<Control><Shift>Return"),
+    ("win.activity", "<Control><Alt>a"),
+    ("win.settings", "<Control>comma"),
     ("win.shortcuts", "<Control>question"),
 ];
 
@@ -219,7 +221,13 @@ pub fn install(parts: Parts) -> Buttons {
     add("go-to-child", Box::new(|p| go_to_relative(p, false)));
     // Repository
     add("fetch", run(json!({ "op": "fetch" })));
-    add("pull", run(json!({ "op": "pull", "mode": "merge" })));
+    add(
+        "pull",
+        Box::new(|p| {
+            p.actions
+                .perform(json!({ "op": "pull", "mode": crate::settings::pull_mode() }))
+        }),
+    );
     add("pull-merge", run(json!({ "op": "pull", "mode": "merge" })));
     add(
         "pull-rebase",
@@ -277,6 +285,14 @@ pub fn install(parts: Parts) -> Buttons {
         }),
     );
     // アプリ
+    add("settings", Box::new(|p| crate::settings::show(&p.window)));
+    add(
+        "activity",
+        Box::new(|p| {
+            let repo = p.view.current().map(|(r, _)| r);
+            crate::activity::Activity::show(&p.window, repo, p.actions.clone(), crate::engine());
+        }),
+    );
     add("shortcuts", Box::new(show_shortcuts));
     add("about", Box::new(show_about));
 
@@ -469,6 +485,8 @@ fn primary_menu() -> gio::Menu {
     menu.append_section(
         None,
         &menu_of(&[
+            Some(("Settings", "win.settings")),
+            Some(("Activity", "win.activity")),
             Some(("Keyboard Shortcuts", "win.shortcuts")),
             Some(("About Amon Hen", "win.about")),
         ]),
@@ -919,6 +937,10 @@ fn show_shortcuts(p: &Rc<Parts>) {
             ("win.commit-and-push", "Commit and Push"),
         ],
     ));
+    section.add_group(&group(
+        "Window",
+        &[("win.settings", "Settings"), ("win.activity", "Activity")],
+    ));
     let window = gtk::ShortcutsWindow::builder()
         .transient_for(&p.window)
         .modal(true)
@@ -932,7 +954,8 @@ fn show_about(p: &Rc<Parts>) {
         .transient_for(&p.window)
         .modal(true)
         .program_name("Amon Hen")
-        .version(env!("CARGO_PKG_VERSION"))
+        // 配るときは scripts/package-gtk4.sh が版を埋め込む。
+        .version(option_env!("AMONHEN_VERSION").unwrap_or(env!("CARGO_PKG_VERSION")))
         .website("https://github.com/fukusaka/amonhen")
         .license("MIT OR Apache-2.0")
         .authors(["Shoichi Fukusaka"])

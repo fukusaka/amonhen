@@ -6,12 +6,13 @@
 
 ## タグと snapshot
 
-- `v<数字>` のタグ（`v0.2.0` など）を push すると、GitHub Actions がアプリの zip と、エンジンだけの tar.gz（macOS arm64・
+- `v<数字>` のタグ（`v0.2.0` など）を push すると、GitHub Actions がアプリの zip、GTK4 のアプリの tar.gz（Linux x86_64・aarch64）、エンジンだけの tar.gz（macOS arm64・
   Linux x86_64・Linux aarch64）と zip（Windows x86_64・aarch64）を Release に載せる。タグは `Cargo.toml` の
   `workspace.package.version` と一致させ、タグのコミットで CI が通っていて、`CHANGELOG.md` にその版の節があること
   （見出しのすぐ下に短い要約の段落を書く。要約が、CHANGELOG 全体へのリンクと一緒に Release の説明になる）。
 - 作るのは `.github/workflows/build.yml`: エンジンは OS と CPU ごとにそのマシンで作り、配る前にその場で一度動かして
-  確かめる（`scripts/check-engine.sh`）。アプリは macOS で並べてコンパイルし（`scripts/compile-app.sh`）、最後に
+  確かめる（`scripts/check-engine.sh`）。GTK4 のアプリは Linux の CPU ごとに Ubuntu 24.04 で作り、SSH 先に送る Linux のエンジンを入れる
+  （`scripts/package-gtk4.sh`）。アプリは macOS で並べてコンパイルし（`scripts/compile-app.sh`）、最後に
   組み立てて署名する（`scripts/package-app.sh`）。手元では `scripts/build-app.sh` が同じことをまとめて行う。
 - VSCode 拡張は `vscode-v*` のタグで、エンジンを同梱した .vsix を載せる（下の「[VSCode 拡張](#vscode-拡張)」を参照）。
 - main の CI（`ci.yml`）が通るたびに、そのコミットで `snapshot` という pre-release を作り直す（アプリ・エンジン・拡張。
