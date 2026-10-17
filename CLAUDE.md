@@ -29,6 +29,7 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - `crates/cli`: `amonhen`（CLI）。コアでできることはすべて CLI から使える（VSCode 拡張・ほかの FE の試金石）。アプリで開く・グラフ付きの log・status・diff・show・stage・discard・commit・refs・watch・run（コアの命令の JSON）・undo・merge-file。どれも `--json` あり。コアへは `amonhen-front` の窓口だけを通る（手元は同じプロセス、`daemon:`・`ssh://` は共有の daemon のコア）、History はアプリと同じ永続キャッシュを使う。`.app` では `Contents/Helpers/amonhen`（`MacOS` には置けない。大文字小文字を区別しないので `AmonHen` を上書きする）
 - `crates/ffi-c`: C ABI。`build.rs` が `include/amonhen.h` を生成する（コミットする）
 - `apps/vscode`: VSCode 拡張（TypeScript。もとは vscode-amonhen のリポジトリ。履歴ごと取り込んだ）。エンジンを同梱し、共有の daemon の FE 向けの窓口を使う。決まりは下の「VSCode 拡張」。正式版のタグは `vscode-v*`（アプリ・エンジンは `v*`）
+- `apps/gtk4`: GTK4 のアプリ（gtk4-rs、`amonhen-gtk`）。Linux・BSD が本命（Windows・macOS でも動くが、配るのはそれぞれのネイティブの FE）。コアを FFI なしで直接使う。GTK が要るので、ルートとは別の Cargo の workspace（`Cargo.lock` も別）
 - `apps/macos`: SwiftPM のパッケージ。`AmonhenKit`（コアの Swift ラッパー）と `AmonHen`（AppKit のアプリ）
 
 ## 確認
@@ -38,6 +39,7 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - `scripts/build-core.sh && (cd apps/macos && swift test)`
 - 見た目: `apps/macos/.build/debug/AmonHen <repo> --snapshot out.png`、速さ: `--measure-scroll`
 - VSCode 拡張: `cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm run typecheck && npm test)`
+- GTK4 のアプリ: `(cd apps/gtk4 && cargo fmt --check && cargo clippy --all-targets -- -D warnings)`、見た目: `cargo run --release -- <repo> --snapshot out.png`、速さ: `--measure-scroll`
 
 ## VSCode 拡張（`apps/vscode`）
 

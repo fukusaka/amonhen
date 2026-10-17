@@ -1,0 +1,27 @@
+# GTK4 の FE。GTK が要るので、ルートの workspace（全 OS の CI で `cargo test --workspace` する）には入れず、
+# ここだけの workspace にする。コアの crate はパスで参照する。
+[workspace]
+
+[package]
+name = "amonhen-gtk"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+amonhen-backend-gix = { path = "../../crates/backend-gix" }
+amonhen-core = { path = "../../crates/core" }
+amonhen-layout = { path = "../../crates/layout" }
+amonhen-model = { path = "../../crates/model" }
+amonhen-projection = { path = "../../crates/projection" }
+amonhen-remote = { path = "../../crates/remote" }
+amonhen-watch = { path = "../../crates/watch" }
+async-channel = "2"
+gtk = { package = "gtk4", version = "0.11", features = ["v4_14"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+debug = "line-tables-only"

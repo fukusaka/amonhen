@@ -16,11 +16,14 @@ scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # run a built engin
 scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md (cargo install --locked cargo-about --features cli)
 cargo deny check licenses        # dependencies use only the licenses allowed in deny.toml (cargo install --locked cargo-deny)
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode extension
+(cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 app (needs GTK 4.14 or later: libgtk-4-dev, or brew install gtk4 pkgconf)
 ```
 
 ## Launch options for checking
 
 `AmonHen <repo> --snapshot out.png [--select-first | --select-row N] [--working-copy] [--find TEXT] [--search TEXT] [--merge-editor PATH]`, `--blame PATH`, `--file-history PATH` (open that window) (write the screen to a PNG and exit), `--measure-scroll [--scroll-rows N]` (auto-scroll History for 600 frames and show the speed and a per-stage breakdown), `--measure-select N` (select N commits and show the time per stage until the details appear), `--log-scroll` (record trackpad scroll deceleration), `--show-latency` (show the time from input to display below the title).
+
+The GTK4 app (`apps/gtk4`): `amonhen-gtk <repo> --snapshot out.png [--scroll-to N]` (write the window to a PNG once the visible rows are read, and exit), `--measure-scroll` (scroll History 40 rows per frame for 600 frames and show the main thread's time per frame, the History snapshot's time and dropped frames; `GSK_RENDERER=cairo|gl|vulkan` picks the renderer).
 
 ## VSCode extension
 
