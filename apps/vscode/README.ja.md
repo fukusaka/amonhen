@@ -127,5 +127,5 @@ Remote-SSH の接続先に入れるときは、つないだウィンドウの統
 よい）。clone していない端末では:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- snapshot
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- stable
 ```

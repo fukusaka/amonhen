@@ -33,9 +33,8 @@
 - **snapshot**: pre-release の `snapshot`。main の CI が通るたびに作り直す。
 
 > [!NOTE]
-> 正式版は `v0.1.1` から署名・公証してある。snapshot は署名だけで公証していないので、下のスクリプトで入れるか、
-> ブラウザで取ったときは「システム設定 > プライバシーとセキュリティ」で一度だけ許可する。VSCode 拡張は正式版が
-> まだないので、snapshot を使う。
+> 正式版は `v0.2.0` から署名・公証してある。snapshot は署名だけで公証していないので、下のスクリプトで入れるか、
+> ブラウザで取ったときは「システム設定 > プライバシーとセキュリティ」で一度だけ許可する。
 
 ### アプリ（macOS）
 
@@ -93,9 +92,9 @@ gh attestation verify <ファイル> --repo fukusaka/amonhen
 # アプリ（macOS）
 curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-app.sh | sh -s -- stable
 # エンジンだけ（macOS・Linux）
-curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.sh | sh -s -- snapshot
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.sh | sh -s -- stable
 # VSCode 拡張
-curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- snapshot
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- stable
 ```
 
 引数は `stable` か `snapshot`。clone した手元では、`scripts/install-app.sh`・

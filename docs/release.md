@@ -6,7 +6,7 @@ How releases are made, and signing, notarization and build provenance attestatio
 
 ## Tags and snapshot
 
-- Pushing a `v<number>` tag (such as `v0.1.1`) makes GitHub Actions publish to the Release the app zip, plus engine-only
+- Pushing a `v<number>` tag (such as `v0.2.0`) makes GitHub Actions publish to the Release the app zip, plus engine-only
   tar.gz files (macOS arm64, Linux x86_64, Linux aarch64) and zip files (Windows x86_64, aarch64). The tag must match
   `workspace.package.version` in `Cargo.toml`, CI must have passed on the tagged commit, and `CHANGELOG.md` must have a
   section for the version (it becomes the Release notes).
@@ -51,7 +51,7 @@ Files in a Release carry an attestation (artifact attestations) of which commit 
 built them (for releases after v0.1.0).
 
 ```sh
-gh attestation verify Amon-Hen-0.1.1.zip --repo fukusaka/amonhen
+gh attestation verify Amon-Hen-0.2.0.zip --repo fukusaka/amonhen
 ```
 
 ## Signing and notarization (macOS)

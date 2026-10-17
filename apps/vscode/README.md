@@ -128,5 +128,5 @@ The root `scripts/install-vscode.sh [stable|snapshot]` finds the latest one, dow
 needed). Without a clone:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- snapshot
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- stable
 ```

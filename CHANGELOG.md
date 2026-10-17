@@ -8,6 +8,8 @@ VSCode extension separately with `vscode-v*` tags, so each has its own section. 
 
 ### [Unreleased]
 
+### [0.2.0] - 2026-10-17
+
 #### Added
 
 - Menu bar with every operation, a Settings window and a reworked toolbar with a branch switcher and History search.
@@ -82,6 +84,8 @@ First release.
 ## VSCode extension
 
 ### [Unreleased]
+
+### [0.2.0] - 2026-10-17
 
 #### Added
 

@@ -34,9 +34,8 @@ Everything is on the [Releases](https://github.com/fukusaka/amonhen/releases) pa
 - **Snapshot**: the `snapshot` pre-release, rebuilt whenever CI passes on main.
 
 > [!NOTE]
-> Stable releases are signed and notarized from `v0.1.1`. Snapshots are signed but not notarized: install them with the
-> script below, or after a browser download allow them once in System Settings > Privacy & Security. There is no stable
-> VSCode extension yet, so use the snapshot for it.
+> Stable releases are signed and notarized from `v0.2.0`. Snapshots are signed but not notarized: install them with the
+> script below, or after a browser download allow them once in System Settings > Privacy & Security.
 
 ### App (macOS)
 
@@ -98,9 +97,9 @@ clone:
 # App (macOS)
 curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-app.sh | sh -s -- stable
 # Engine only (macOS, Linux)
-curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.sh | sh -s -- snapshot
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.sh | sh -s -- stable
 # VSCode extension
-curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- snapshot
+curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- stable
 ```
 
 Use `stable` or `snapshot` as the argument. From a clone, run `scripts/install-app.sh`,

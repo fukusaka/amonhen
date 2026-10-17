@@ -6,7 +6,7 @@
 
 ## タグと snapshot
 
-- `v<数字>` のタグ（`v0.1.1` など）を push すると、GitHub Actions がアプリの zip と、エンジンだけの tar.gz（macOS arm64・
+- `v<数字>` のタグ（`v0.2.0` など）を push すると、GitHub Actions がアプリの zip と、エンジンだけの tar.gz（macOS arm64・
   Linux x86_64・Linux aarch64）と zip（Windows x86_64・aarch64）を Release に載せる。タグは `Cargo.toml` の
   `workspace.package.version` と一致させ、タグのコミットで CI が通っていて、`CHANGELOG.md` にその版の節があること
   （Release の説明になる）。
@@ -48,7 +48,7 @@ Release のファイルには、このリポジトリのどのコミットから
 （v0.1.0 より後のもの）。
 
 ```sh
-gh attestation verify Amon-Hen-0.1.1.zip --repo fukusaka/amonhen
+gh attestation verify Amon-Hen-0.2.0.zip --repo fukusaka/amonhen
 ```
 
 ## 署名と公証（macOS）
