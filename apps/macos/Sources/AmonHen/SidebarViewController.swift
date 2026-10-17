@@ -305,9 +305,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var badge = node.badge ?? ""
         if let item = node.item, item.kind == .local, let other = otherWorktree(using: item.name) {
             // ほかの worktree が checkout している（git はここでは checkout させない）。
-            badge = "⌂ " + other.name
+            // 名前は長いことが多いので、行には ⌂ だけを出し、worktree の名前はツールチップに（ブランチ名を隠さない）。
+            cell.imageView?.contentTintColor = .systemGreen
             cell.toolTip = L("Checked out in the worktree “%@” (%@)", other.name, other.path)
-            cell.badge.stringValue = badge
+            cell.badge.stringValue = "⌂"
             cell.badge.textColor = .systemGreen
             return cell
         } else if let item = node.item, item.kind == .local {

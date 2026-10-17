@@ -133,13 +133,44 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// ほかの worktree の変更を一覧の下に並べる（変更のないものは見出しだけ）。
     func setOtherWorktrees(_ list: [OtherWorktree]) {
+        // 変わっていなければ描き直さない（status は読み直すたびに新しいものになるので、中身で比べる）。
+        let summary = list.map { w in [w.path, w.branch ?? ""] + w.status.items.map { "\($0.path)\u{0}\($0.indexState)\($0.worktreeState)" } }
+        guard summary != othersSummary else { return }
+        othersSummary = summary
+        let wasExpanded = Dictionary(others.map { ($0.worktree.path, files.isItemExpanded($0)) }, uniquingKeysWith: { a, _ in a })
+        let viewing = viewingOther.map { ($0.group.worktree.path, $0.item.path, $0.group.worktree.status) }
         others = list.map { worktree in
             let group = OtherGroup(worktree)
             group.entries = worktree.status.items.sorted { $0.path < $1.path }.map { OtherEntry(group: group, item: $0) }
             return group
         }
-        if isViewLoaded { rebuildList() }
+        guard isViewLoaded else { return }
+        // 一覧だけを作り直す。書き込む先のファイルの差分は読み直さない（選び直しても同じファイルなら何もしない）。
+        let selected = files.item(atRow: files.selectedRow)
+        files.reloadData()
+        files.expandItem(ownHeader, expandChildren: true)
+        if let tree { for dir in tree.dirs { files.expandItem(dir, expandChildren: true) } }
+        // ほかの worktree は畳んでおく（数が多いと一覧が長くなる）。開いたものは開いたまま。
+        for group in others where wasExpanded[group.worktree.path] ?? false { files.expandItem(group) }
+        emptyLabel.isHidden = !entries.isEmpty || !others.isEmpty
+        if let (path, file, oldStatus) = viewing,
+           let again = others.first(where: { $0.worktree.path == path })?.entries.first(where: { $0.item.path == file }) {
+            suppressSelection = true
+            files.selectRowIndexes([files.row(forItem: again)], byExtendingSelection: false)
+            suppressSelection = false
+            viewingOther = again
+            if again.group.worktree.status !== oldStatus { showOtherDiff(again) }
+        } else if let entry = selected as? Entry {
+            suppressSelection = true
+            files.selectRowIndexes([files.row(forItem: entry)], byExtendingSelection: false)
+            suppressSelection = false
+        }
     }
+
+    /// 前に並べたほかの worktree の中身（変わったときだけ描き直す）。
+    private var othersSummary: [[String]] = []
+    /// 選び直しているところ（選んだときの処理をしない）。
+    private var suppressSelection = false
 
     /// 書き込む先にした直後に、`file` を選ぶ（読み直した後に選ぶ）。
     func select(file: String) {
@@ -480,8 +511,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         tree = showsTree ? Self.makeTree(entries) : nil
         files.reloadData()
         files.expandItem(nil, expandChildren: true)
-        // ほかの worktree は、変更のあるものだけ開いておく。
-        for group in others where group.entries.isEmpty { files.collapseItem(group) }
+        // ほかの worktree は畳んでおく（見出しの数で分かる。数が多いと一覧が長くなる）。
+        for group in others { files.collapseItem(group) }
         emptyLabel.stringValue = allEntries.isEmpty ? L("No changes") : L("No matching files")
         emptyLabel.isHidden = !entries.isEmpty || !others.isEmpty
         updateHeader()
@@ -1312,7 +1343,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             let w = group.worktree
             cell.show(check: nil, mark: ("", .secondaryLabelColor), name: w.name, dimmed: true,
                       tip: [w.path, w.branch.map { L("Branch: %@", $0) }].compactMap { $0 }.joined(separator: "\n"),
-                      detail: [w.branch, group.entries.isEmpty ? L("No changes") : "\(group.entries.count)"]
+                      detail: [group.entries.isEmpty ? "–" : "\(group.entries.count)", w.branch]
                         .compactMap { $0 }.joined(separator: "  "))
             cell.onDiscard = nil
         case let other as OtherEntry:
@@ -1384,6 +1415,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        if suppressSelection { return }
         if let other = files.item(atRow: files.selectedRow) as? OtherEntry {
             showOtherDiff(other)
             return
