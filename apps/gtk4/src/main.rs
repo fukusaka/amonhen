@@ -126,6 +126,8 @@ fn main() -> glib::ExitCode {
         .application_id(APP_ID)
         .flags(gio::ApplicationFlags::NON_UNIQUE)
         .build();
+    // 窓のアイコン（配るときに hicolor のテーマに置く。.desktop の Icon と同じ名前）。GTK を初期化した後に。
+    app.connect_startup(|_| gtk::Window::set_default_icon_name(APP_ID));
     app.connect_activate(move |app| build_window(app, args.clone()));
     // 引数は自分で読んだので、GTK には渡さない。
     app.run_with_args::<&str>(&[])

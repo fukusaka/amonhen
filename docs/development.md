@@ -17,6 +17,7 @@ scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md (cargo install --
 cargo deny check licenses        # dependencies use only the licenses allowed in deny.toml (cargo install --locked cargo-deny)
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode extension
 (cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 app (needs GTK 4.14 or later: libgtk-4-dev, or brew install gtk4 pkgconf)
+scripts/package-gtk4.sh          # GTK4 app into dist/amonhen-gtk-linux-<arch>.tar.gz (on Linux; includes dist/engine's Linux engines if built)
 ```
 
 ## Launch options for checking

@@ -71,6 +71,8 @@ jobs:
         working-directory: apps/gtk4
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: apps/gtk4
+      # 配る形（tar.gz）にまとめられるか。エンジンは入れない（リリースでは scripts/build-engine.sh の分を入れる）。
+      - run: scripts/package-gtk4.sh
 
   # 配るものに入る依存が、許したライセンスだけか（deny.toml）。
   licenses:
