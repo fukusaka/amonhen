@@ -13,6 +13,8 @@ How releases are made, and signing, notarization and build provenance attestatio
   [apps/vscode](../apps/vscode)).
 - Every push to main recreates a pre-release named `snapshot` (app, engine, extension; the version is
   `<next patch>-snapshot.<commit count>+<sha>`).
+- Changes go in [CHANGELOG.md](../CHANGELOG.md) (one file, with sections for the app and engine and for the VSCode
+  extension). Before tagging, rename that section's `Unreleased` to the version and date, and commit it.
 
 ## Build provenance attestation
 

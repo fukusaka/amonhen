@@ -105,6 +105,7 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 - [VSCode 拡張](apps/vscode/README.ja.md)
 - [設計](docs/ja/design.md)・[FE 向けの窓口の取り決め](docs/ja/front.md)
 - [開発](docs/ja/development.md)・[リリース](docs/ja/release.md)
+- [変更履歴](CHANGELOG.md)（英語）
 
 ## ライセンス
 

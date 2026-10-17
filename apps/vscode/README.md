@@ -2,7 +2,7 @@
 
 [日本語](README.ja.md)
 
-A personal extension for working with Git comfortably in VSCode. It is not published on the Marketplace; the `.vsix` is distributed through this repository's GitHub Releases. See [docs/design.md](docs/design.md) for the design and [CHANGELOG.md](CHANGELOG.md) for the change history.
+A personal extension for working with Git comfortably in VSCode. It is not published on the Marketplace; the `.vsix` is distributed through this repository's GitHub Releases. See [docs/design.md](docs/design.md) for the design and the "VSCode extension" section of the repository's [CHANGELOG.md](https://github.com/fukusaka/amonhen/blob/main/CHANGELOG.md) for the change history.
 
 > [!WARNING]
 > Work in progress. Features, file formats and commands may change without notice. It is provided as is, without
@@ -142,7 +142,7 @@ A snapshot is treated as a pre-release of the next patch, so installing a stable
 
 Steps to cut a stable release:
 
-1. Change `Unreleased` in [CHANGELOG.md](CHANGELOG.md) to a heading with the version and date being released, and commit it
+1. In the "VSCode extension" section of the root [CHANGELOG.md](https://github.com/fukusaka/amonhen/blob/main/CHANGELOG.md), change `Unreleased` to a heading with the version and date being released, and commit it
 2. Include `npm version patch --no-git-tag-version` in the same commit as 1.
 3. `git tag vscode-v<version> && git push origin main vscode-v<version>`
 

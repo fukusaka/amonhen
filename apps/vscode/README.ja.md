@@ -2,7 +2,7 @@
 
 [English](README.md)
 
-VSCode 上で快適に Git を操作するための自分用の拡張。Marketplace には公開せず、このリポジトリの GitHub Releases で `.vsix` を配布する。設計は [docs/ja/design.md](docs/ja/design.md)、変更履歴は [CHANGELOG.md](CHANGELOG.md) を参照。
+VSCode 上で快適に Git を操作するための自分用の拡張。Marketplace には公開せず、このリポジトリの GitHub Releases で `.vsix` を配布する。設計は [docs/ja/design.md](docs/ja/design.md)、変更履歴はリポジトリの [CHANGELOG.md](https://github.com/fukusaka/amonhen/blob/main/CHANGELOG.md) の「VSCode extension」の節を参照。
 
 > [!WARNING]
 > 開発の途中。機能・ファイルの形・コマンドは、予告なく変わることがある。無保証で、そのままの形で提供する
@@ -141,7 +141,7 @@ snapshot は次の patch の pre-release 扱いなので、正式版を入れる
 
 正式版を出す手順:
 
-1. [CHANGELOG.md](CHANGELOG.md) の `Unreleased` を、出すバージョンと日付の見出しに改めてコミットする
+1. ルートの [CHANGELOG.md](https://github.com/fukusaka/amonhen/blob/main/CHANGELOG.md) の「VSCode extension」の節の `Unreleased` を、出すバージョンと日付の見出しに改めてコミットする
 2. `npm version patch --no-git-tag-version` を、1. と同じコミットに入れる
 3. `git tag vscode-v<版> && git push origin main vscode-v<版>`
 

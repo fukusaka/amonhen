@@ -33,8 +33,8 @@ VSCode 上で快適に Git を操作するための、自分用の Git 拡張。
 ## リリース
 
 - `vscode-v*` タグの push で GitHub Actions（ルートの `.github/workflows/vscode-release.yml`）がエンジンを作って同梱し、Release に `.vsix` を添付する（アプリ・エンジンの `v*` とは別）
-- 利用者から見える変更を加えたら、`CHANGELOG.md` の `Unreleased` に追記する（コミット単位ではなく、リリース単位でまとめる）
-- リリース手順: `CHANGELOG.md` の `Unreleased` をバージョンと日付の見出しに改め、`npm version patch --no-git-tag-version` と一緒にコミット → `git tag vscode-v<版> && git push origin main vscode-v<版>`
+- 利用者から見える変更を加えたら、ルートの `CHANGELOG.md` の「VSCode extension」の節の `Unreleased` に、英語で追記する（コミット単位ではなく、リリース単位でまとめる）
+- リリース手順: ルートの `CHANGELOG.md` の「VSCode extension」の節の `Unreleased` をバージョンと日付の見出しに改め、`npm version patch --no-git-tag-version` と一緒にコミット → `git tag vscode-v<版> && git push origin main vscode-v<版>`
 - main への push のたびに、ルートの snapshot（`snapshot` という pre-release。アプリ・エンジンと一緒）に `.vsix` も載せる（バージョンは `<次の patch>-snapshot.<apps/vscode のコミット数>+<sha>`）
 - インストール: ルートの `scripts/install-vscode.sh [stable|snapshot]`
 

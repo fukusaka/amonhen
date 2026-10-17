@@ -12,6 +12,8 @@
 - VSCode 拡張は `vscode-v*` のタグで、エンジンを同梱した .vsix を載せる（[apps/vscode](../../apps/vscode/README.ja.md) を参照）。
 - main に push するたびに、`snapshot` という pre-release を作り直す（アプリ・エンジン・拡張。バージョンは
   `<次の patch>-snapshot.<コミット数>+<sha>`）。
+- 変更は [CHANGELOG.md](../../CHANGELOG.md)（英語。アプリとエンジン、VSCode 拡張の節に分けた 1 つのファイル）に書く。
+  タグを打つ前に、その節の `Unreleased` を版と日付の見出しに改めてコミットする。
 
 ## ビルドの由来の証明
 

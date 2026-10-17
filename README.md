@@ -111,6 +111,7 @@ Use `stable` or `snapshot` as the argument. From a clone, run `scripts/install-a
 - [VSCode extension](apps/vscode)
 - [Design](docs/design.md) and [front API contract](docs/front.md)
 - [Development](docs/development.md) and [Release](docs/release.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 
