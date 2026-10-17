@@ -539,6 +539,18 @@ impl Inner {
             });
             this.conflict_buttons.append(&button);
         }
+        // マージエディタ（別の窓）で、コンフリクトを 1 つずつ解く。
+        let editor = gtk::Button::with_label("Open Merge Editor");
+        editor.set_tooltip_text(Some(
+            "Current・Result・Incoming を並べて、コンフリクトを 1 つずつ解く",
+        ));
+        let weak = Rc::downgrade(this);
+        editor.connect_clicked(move |b| {
+            if let Some(this) = weak.upgrade() {
+                Inner::open_merge_editor(&this, b.upcast_ref());
+            }
+        });
+        this.conflict_buttons.append(&editor);
         let resolved = gtk::Button::with_label("Mark Resolved");
         let weak = Rc::downgrade(this);
         resolved.connect_clicked(move |_| {
@@ -1064,6 +1076,19 @@ impl Inner {
                 actions.perform(command);
             }
         });
+    }
+
+    /// 選んでいるコンフリクトのファイルを、マージエディタで開く。
+    fn open_merge_editor(this: &Rc<Self>, widget: &gtk::Widget) {
+        let (Some(path), Some(actions), Some(repo), Some(window)) = (
+            this.selected.borrow().clone(),
+            this.actions.borrow().clone(),
+            this.repo(),
+            widget.root().and_downcast::<gtk::Window>(),
+        ) else {
+            return;
+        };
+        crate::merge::open(&window, repo, actions, &path, || {});
     }
 
     /// Mark Resolved: 残っているコンフリクトがあれば確かめてから、解決済みにする（index に入れる）。

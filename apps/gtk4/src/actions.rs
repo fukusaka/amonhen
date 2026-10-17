@@ -94,8 +94,17 @@ impl Actions {
 
     /// 命令を順に実行し、知らせと読み直しを頼んだ後で `done` を呼ぶ。
     pub fn perform_then(self: &Rc<Self>, commands: Vec<Value>, done: impl FnOnce() + 'static) {
+        self.perform_with(commands, |_| done());
+    }
+
+    /// 命令を順に実行し、知らせと読み直しを頼んだ後で、最後の答えを `done` に渡す。
+    pub fn perform_with(
+        self: &Rc<Self>,
+        commands: Vec<Value>,
+        done: impl FnOnce(&Value) + 'static,
+    ) {
         let Some(repo) = self.repo.borrow().clone() else {
-            done();
+            done(&Value::Null);
             return;
         };
         let this = self.clone();
@@ -145,7 +154,7 @@ impl Actions {
             for f in after {
                 f();
             }
-            done();
+            done(&result);
         });
     }
 

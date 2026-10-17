@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
 
 mod actions;
 mod activity;
@@ -14,6 +14,7 @@ mod history;
 mod icon;
 mod measure;
 mod menu;
+mod merge;
 mod refops;
 mod search;
 mod settings;
@@ -68,6 +69,8 @@ struct Args {
     activity: Option<String>,
     /// 設定の窓をこのタブで開いておく（確認用）。
     settings: Option<String>,
+    /// このファイルのマージエディタを開いておく（確認用）。
+    merge_editor: Option<String>,
     file_history: Option<String>,
     /// History のこの行の右クリックのメニューを開いておく（確認用）。
     menu_row: Option<u32>,
@@ -107,6 +110,8 @@ fn parse_args() -> Result<Args, String> {
             "--blame" => args.blame = Some(it.next().ok_or("--blame <path>")?),
             "--activity" => args.activity = Some(it.next().ok_or("--activity <tab>")?),
             "--settings" => args.settings = Some(it.next().ok_or("--settings <tab>")?),
+            "--merge-editor" => args.merge_editor = Some(it.next().ok_or("--merge-editor <path>")?),
+            "--accept" => merge::accept_once(&it.next().ok_or("--accept ours|theirs|both|base")?),
             "--file-history" => args.file_history = Some(it.next().ok_or("--file-history <path>")?),
             "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {
@@ -563,6 +568,22 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 for &row in rest {
                                     view.select_with(row, false, true);
                                 }
+                            }
+                            if let Some(path) = &args.merge_editor {
+                                let (repo, _) = view.current().expect("history");
+                                merge::open(
+                                    window.upcast_ref(),
+                                    repo,
+                                    actions.clone(),
+                                    path,
+                                    || {},
+                                );
+                                pending.set(pending.get() + 1);
+                                let p = pending.clone();
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(1500),
+                                    move || p.set(p.get() - 1),
+                                );
                             }
                             if let Some(tab) = &args.settings {
                                 settings::show(&window);

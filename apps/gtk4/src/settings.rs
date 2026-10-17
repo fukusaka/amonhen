@@ -26,6 +26,7 @@ pub const MONOSPACED_COMMIT_MESSAGE: &str = "monospacedCommitMessage";
 pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
 pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
+pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
 
 fn path() -> PathBuf {
     glib::user_config_dir().join("amonhen").join("gtk.ini")
@@ -56,7 +57,7 @@ fn changed(key: &str) {
 
 pub fn bool(key: &str) -> bool {
     FILE.with(|f| f.boolean(GROUP, key))
-        .unwrap_or(key == MONOSPACED_COMMIT_MESSAGE)
+        .unwrap_or(matches!(key, MONOSPACED_COMMIT_MESSAGE | AUTO_MAGIC_MERGE))
 }
 
 pub fn set_bool(key: &str, value: bool) {
@@ -168,14 +169,24 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     pull_row.append(&l);
     pull_row.append(&pull);
     stack.add_titled(
-        &page(&[section(
-            None,
-            &[
-                pull_row.upcast(),
-                note("ツールバーの Pull と Ctrl+Alt+L で使う。Pull ボタンの ▾ や Repository > Pull With でその都度も選べる。")
-                    .upcast(),
-            ],
-        )]),
+        &page(&[
+            section(
+                None,
+                &[
+                    pull_row.upcast(),
+                    note("ツールバーの Pull と Ctrl+Alt+L で使う。Pull ボタンの ▾ や Repository > Pull With でその都度も選べる。")
+                        .upcast(),
+                ],
+            ),
+            section(
+                Some("マージ"),
+                &[
+                    check(AUTO_MAGIC_MERGE, "マージエディタを開いたときに、間違えようのないコンフリクトを解く").upcast(),
+                    note("両側が同じ・片側だけが変えた、のどちらかに当たるコンフリクト。Ctrl+Z で戻せる。残りは ✨ Magic Merge で。")
+                        .upcast(),
+                ],
+            ),
+        ]),
         Some("git"),
         "Git",
     );
