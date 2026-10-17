@@ -423,6 +423,45 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
   渡す `AMONHEN_LANG`）。git 自身の文は英語のまま（`LC_ALL=C` で動かす）。
 - VSCode 拡張の画面は、まだローカライズしていない。
 
+## 14. Worktree
+
+Claude Code などは worktree をしきりに作る（`.claude/worktrees/` の下など）。そのたびに別のリポジトリとして開くのは
+煩わしいので、リポジトリの worktree はそのリポジトリのタブの中に置く。考え方は git の worktree に合わせる。
+
+git の考え方と、アプリが守ること:
+
+- worktree は対等。それぞれが作業ツリーと HEAD・index の組で、元のものは `.git` を持っているだけ。アプリは
+  `git worktree list` と同じく、元のものを先頭にするほかは同じに並べる。
+- ブランチ・タグ・リモート・オブジェクト・stash の一覧・設定は全部の worktree で共有。HEAD・index・作業ツリーの
+  ファイル・途中の操作（rebase・merge など）は worktree ごと。
+- git の命令は、実行した worktree に対して働く。アプリは**書き込む先の worktree** を 1 つ持ち（git の「今いる
+  worktree」）、HEAD・index・作業ツリーに触れる命令だけをそこに向ける: checkout・commit・amend・stage・discard・
+  merge・rebase・pull・reset・cherry-pick・revert・stash（退避と pop）・Undo。リポジトリ全体の命令（fetch、
+  ブランチ・タグの作成・名前の変更・削除、リモート）は、どの worktree からでも同じに働く。
+- 1 つのブランチは 1 つの worktree でしか checkout できない。アプリは押し通さない（`--ignore-other-worktrees` は
+  使わない）: ほかの worktree が checkout しているブランチを選んだら、書き込む先をその worktree に移す。
+- worktree の作成・削除は git で行う（`git worktree add`・`remove`・`prune`、一覧は
+  `git worktree list --porcelain`）。`.git/worktrees` を直接いじらない。変更が残っている worktree の削除は確かめて
+  から `--force`。ロック中のものはロック中と見せ、片付けない。フォルダがなくなったものは片付け待ちと見せる。
+- Undo の記録は worktree ごと（`<git dir>/amonhen/undo.json`。追加した worktree は自分の git dir を持つ）で、HEAD
+  と同じ。共有のブランチを動かした操作を戻すと、どの worktree からもそう見える。
+
+見るときは混ぜ、書くときは 1 つを名指す:
+
+- **見る（全部の worktree をまとめて）**。サイドバーの Worktrees に、全部の worktree をブランチと変更の数つきで
+  並べる。History には各 worktree の HEAD の位置に「作業中」の行を出し、変更したファイルを添える（どの worktree が
+  どこにいて何を書き換えているかが 1 画面で分かる）。Working Copy には全部の worktree の変更を worktree ごとの見出しで
+  並べ（変更のないものは畳む）、どの差分も読める。
+- **書く（1 つの worktree。いつも見せる）**。ツールバーに書き込む先（✎ 名前）をブランチと並べて出す。サイドバーか
+  ✎ で worktree を選ぶと、それが書き込む先になる。ほかの worktree のファイルを stage・discard しようとしたら、先に
+  「<worktree> で編集しますか？」と聞く。読むだけなら変えない。確認のシートには worktree を書く（「gui-gtk4 に
+  Pull」）。
+- **ほかの場所**。リポジトリのページと一覧では、worktree を別のリポジトリとして出さず、そのリポジトリの下に出す
+  （スキャンで見つかったものも）。worktree のフォルダを開いたら（CLI・Finder）、そのリポジトリのタブを、その
+  worktree を書き込む先にして開く。CLI は git と同じく実行した worktree に対して働き、`amonhen worktree` は
+  `git worktree` と同じ並び（list・add・remove・prune）。
+- New Worktree…（ブランチかコミットから、フォルダを選んで）、Remove Worktree、Prune、Finder で表示、ターミナルで開く。
+
 ## 実装の順序
 
 体感の効果が大きく、依存の少ないものから。各ステップで `docs/design.md` の「実装順序」と同じくチェックボックスを更新する。
@@ -441,6 +480,15 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 - [x] U12. Activity（コアのリングバッファ、Operations・History・Performance・Events）。Window > Activity（⌥⌘A）とツールバーの Activity（操作の間は回る）。Operations は git の起動とコアの命令（リポジトリ・内容・時間・成否・エラー、絞り込み、JSON に書き出し）、History は操作ログと「ここまで戻す」、Performance は History の入力 → 表示・選択 → 差分・Working Copy の読み直しの p50 / p95 / 最大、Events はファイルの変化の知らせ。SSH 先の daemon で起動した git の記録（2 秒ごとに daemon から読む）、fetch・pull・push・clone の進み具合（`--progress` の行を流しながら拾う）と取り消し（プロセスグループごと止める。SSH 先も daemon に頼む）、操作の失敗をウィンドウの帯で知らせる（fatal:・error: の行、詳細・Activity・閉じる。取り消したときも）も済み
 - [x] U13. GitHub 連携（アカウント、PR の一覧と作成、CI の状態）。gh に任せる。origin の URL から GitHub のリポジトリを判定し、サイドバーの Pull Requests に開いている PR（CI の ✓・✗・●、draft、レビューの状態）、右クリックでチェックアウト・ブラウザで開く・URL のコピー、選ぶとそのブランチの履歴。Repository > Create Pull Request…（今のコミットのメッセージから、base は既定のブランチ）と Open on GitHub、History のコミットごとの CI の状態（今のブランチと既定のブランチの直近 100 コミットを GraphQL で 1 回に読み、署名の印の右に ✓・✗・時計）、GitHub のアバター（同じ問い合わせで作者の avatarUrl を取り、Gravatar より優先）、自分のリポジトリから Clone（U1）も済み
 - [x] U14. AI（Claude Code / Codex の CLI 経由の翻訳・解説・メッセージの提案、コンフリクトの解消、用途ごとのプロンプトの設定）。Settings > AI で CLI（既定は使わない）・モデル・言語を選び、用途ごとのプロンプトをファイルで編集・既定に戻す。History の詳細の翻訳・解説（複数選択ではまとめた差分）、Working Copy の ✨ 提案（「メッセージに入れる」）、マージエディタの「AI で解消」（JSON で受け、マーカーが残れば捨てる。「Result に入れる」で置き換え、⌘Z で戻せる）と「AI で解説」、結果は流しながら出し、キャッシュする。リポジトリごとの初回の確認、リポジトリのプロンプトの確認、差分の hunk の右クリックからの解説（用途「hunk の解説」、History・Working Copy）、Settings のプロンプトの「試す」（見本の差分・メッセージで今のプロンプトを送る）も済み。Codex はこの Mac に入っていないので、出力の読み取りは確かめていない
+- [ ] U15. コアと CLI の worktree: 一覧（`git worktree list --porcelain`）・作成・削除・片付け（SSH 先も）、
+  `amonhen worktree`。
+- [ ] U16. worktree を見る: サイドバーの Worktrees（ブランチと変更の数、増減をすぐ反映）、リポジトリのページで
+  リポジトリの下にまとめる、worktree のフォルダを開いたらそのリポジトリのタブを開く。
+- [ ] U17. 1 つの worktree に書く: 書き込む先（ツールバーの ✎）、HEAD・index・作業ツリーに触れる命令をそこへ、
+  確認のシートに worktree を書く、ほかの worktree が checkout しているブランチで書き込む先を移す、New Worktree…・
+  Remove Worktree・Prune。
+- [ ] U18. Working Copy に全部の worktree の変更を worktree ごとの見出しで並べる、ほかの worktree に書く前に聞く。
+- [ ] U19. History に各 worktree の HEAD の「作業中」の行。
 
 ## 決めたこと
 

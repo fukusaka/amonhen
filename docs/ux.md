@@ -433,6 +433,46 @@ Make every operation available from the menus. Shortcuts do not follow other cli
   git's own messages stay English (it runs with `LC_ALL=C`).
 - The VSCode extension's UI is not localized yet.
 
+## 14. Worktrees
+
+Tools such as Claude Code create worktrees all the time (for example under `.claude/worktrees/`). Opening each one as
+another repository is tedious, so a repository's worktrees live in its tab. The design follows git's own model.
+
+What git says, and what the app keeps:
+
+- Worktrees are peers. Each is a working tree with its own HEAD and index; the main one only holds `.git`. The app
+  lists them like `git worktree list`: the main one first, all the same otherwise.
+- Branches, tags, remotes, objects, the stash list and config are shared by all worktrees. HEAD, the index, the
+  working tree files and an operation in progress (rebase, merge…) belong to one worktree.
+- git commands act on the worktree they run in. The app keeps one **worktree it edits** (git's "the worktree you are
+  in"), and only commands that touch HEAD, the index or the working tree go there: checkout, commit, amend, stage,
+  discard, merge, rebase, pull, reset, cherry-pick, revert, stash (push and pop) and Undo. Repository-wide commands
+  (fetch, creating, renaming or deleting branches and tags, remotes) work the same from any worktree.
+- A branch can be checked out in only one worktree. The app never forces it (`--ignore-other-worktrees`): choosing a
+  branch that another worktree has checked out moves the edited worktree there instead.
+- Worktrees are created and removed with git (`git worktree add`, `remove`, `prune`; listed with
+  `git worktree list --porcelain`), never by editing `.git/worktrees`. Removing one with changes asks, then uses
+  `--force`; locked worktrees are shown as locked and never pruned; a worktree whose folder is gone is shown as
+  prunable.
+- The Undo log is per worktree (`<git dir>/amonhen/undo.json`, and a linked worktree has its own git dir), like
+  HEAD; undoing something that moved a shared branch is seen from every worktree.
+
+Viewing mixes them, editing names one:
+
+- **View (all worktrees together).** The sidebar's Worktrees lists every worktree with its branch and number of
+  changes. History shows a "working" row at each worktree's HEAD with its changed files, so where every worktree is
+  and what it has changed shows on one screen. Working Copy lists the changes of every worktree under one heading
+  each (worktrees without changes collapsed), and any of their diffs can be read.
+- **Edit (one worktree, always shown).** The toolbar shows the edited worktree (✎ name) next to its branch. Picking a
+  worktree in the sidebar or from ✎ makes it the edited one. Staging or discarding a file of another worktree asks
+  "Edit in <worktree>?" first; only reading never switches. Confirmation sheets name the worktree ("Pull into
+  gui-gtk4").
+- **Elsewhere.** The repository page and lists show worktrees under their repository, not as repositories of their
+  own (also when a scan finds them). Opening a worktree's folder (the CLI, Finder) opens its repository's tab with that
+  worktree edited. The CLI works on the worktree it runs in, as git does; `amonhen worktree` mirrors `git worktree`
+  (list, add, remove, prune).
+- New Worktree… (from a branch or commit, folder chosen), Remove Worktree, Prune, Reveal in Finder, Open in Terminal.
+
 ## Implementation order
 
 Starting with what has the biggest felt effect and fewest dependencies. At each step, update the checkboxes, as with "Implementation order" in `docs/design.md`.
@@ -451,6 +491,16 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
 - [x] U12. Activity (the core's ring buffer, Operations, History, Performance, Events). Window > Activity (⌥⌘A) and Activity in the toolbar (spins during operations). Operations has git invocations and core commands (repository, contents, time, success or failure, error, filtering, JSON export), History has the operation log and "ここまで戻す" (Undo to Here), Performance has p50 / p95 / max of History input → display, selection → diff and Working Copy reloads, Events has file change notifications. Records of git invoked by the daemon on an SSH host (read from the daemon every 2 seconds), progress of fetch, pull, push and clone (picking up `--progress` lines as they stream) and cancellation (stopping the whole process group; on SSH hosts, asking the daemon), and reporting failed operations on the window bar (fatal: and error: lines, details, Activity, close; also when cancelled) are also done
 - [x] U13. GitHub integration (accounts, listing and creating PRs, CI status). Left to gh. Detect the GitHub repository from the origin URL; Pull Requests in the sidebar shows open PRs (CI ✓, ✗, ●, draft, review state); right-click to check out, open in the browser, copy the URL; selecting one shows that branch's history. Repository > Create Pull Request… (from the current commit's message, base is the default branch) and Open on GitHub, per-commit CI status in History (the last 100 commits of the current branch and the default branch read in one GraphQL query, ✓, ✗ or a clock to the right of the signature mark), GitHub avatars (the author's avatarUrl from the same query, preferred over Gravatar), and Clone from your own repositories (U1) are also done
 - [x] U14. AI (translation, explanation and message suggestions through the Claude Code / Codex CLI, conflict resolution, per-purpose prompt settings). Choose the CLI (default: not used), model and language in Settings > AI, and edit per-purpose prompts as files or restore the default. Translation and explanation in History details (the combined diff for a multiple selection), ✨ suggestions in Working Copy ("メッセージに入れる" (Insert into Message)), "AI で解消" (Resolve with AI) in the merge editor (received as JSON, discarded if markers remain; "Result に入れる" (Insert into Result) replaces, ⌘Z reverts) and "AI で解説" (Explain with AI), results shown as they stream and cached. The first-time confirmation per repository, confirmation of repository prompts, explanation from right-clicking a diff hunk (purpose "hunk explanation", in History and Working Copy), and "試す" (Try) for prompts in Settings (sends the current prompt with a sample diff and message) are also done. Codex is not installed on this Mac, so its output parsing has not been verified
+- [ ] U15. Worktrees in the core and the CLI: listing (`git worktree list --porcelain`), add, remove, prune, over SSH
+  too; `amonhen worktree`.
+- [ ] U16. Viewing worktrees: the sidebar's Worktrees with branches and change counts, kept up to date as worktrees
+  come and go; worktrees grouped under their repository on the repository page; opening a worktree's folder opens its
+  repository's tab.
+- [ ] U17. Editing one worktree: the edited worktree (✎ in the toolbar), commands that touch HEAD, the index or the
+  working tree sent there, the worktree named in confirmation sheets, branches checked out elsewhere moving the edited
+  worktree, New Worktree… / Remove Worktree / Prune.
+- [ ] U18. Working Copy with every worktree's changes under one heading each, asking before editing another worktree.
+- [ ] U19. History's "working" rows at each worktree's HEAD.
 
 ## Decisions
 
