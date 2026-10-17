@@ -45,6 +45,12 @@ becomes the GitHub Release notes.
   instead of sending an old one that the connection would then refuse.
 - AI can use Apple Intelligence's on-device model (macOS 26): nothing leaves the Mac, and it is the default where
   available. Claude Code and Codex models are chosen from a pop-up (Codex lists the models its CLI knows).
+- Worktrees live in their repository's tab, the way git sees them. The sidebar's Worktrees lists them with their
+  branches and changes; picking one makes it the worktree you edit (✎ next to the repository name), and Working Copy,
+  commits, checkout, Pull, Push, stash and Undo act there, while History and branches stay shared. A branch checked out
+  in another worktree takes you to that worktree. New Worktree…, Remove Worktree and Prune Worktrees; confirmation
+  sheets name the worktree. Opening a worktree's folder opens its repository's tab, and the repository page no longer
+  lists worktrees as repositories of their own.
 - `amonhen worktree` (list, add, remove, prune), the same as `git worktree`, through the core (so over SSH too).
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).
 

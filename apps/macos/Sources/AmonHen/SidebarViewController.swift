@@ -31,6 +31,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var badge: String?
         /// Pull Requests の下のプルリクエスト。
         var pullRequest: PullRequest?
+        /// Worktrees の下の worktree。
+        var worktree: WorktreeInfo?
 
         init(title: String, item: RefItem? = nil, page: Page? = nil, children: [Node] = [], isHead: Bool = false) {
             self.title = title
@@ -94,6 +96,31 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     private var refs: Refs?
     private var pullRequests: [PullRequest] = []
+    private var worktrees: [WorktreeInfo] = []
+    /// 書き込む先の worktree のパス。
+    private var editingWorktree: String?
+    private var worktreeChanges: [String: Int] = [:]
+    /// worktree を選んだ（書き込む先にする）。
+    var onSelectWorktree: ((String) -> Void)?
+    enum WorktreeAction { case reveal, terminal, remove, prune }
+    var onWorktreeAction: ((String, WorktreeAction) -> Void)?
+
+    /// リポジトリの worktree（2 つ以上あるときだけ Worktrees に出す）。
+    func show(worktrees: [WorktreeInfo], editing: String) {
+        let changed = worktrees != self.worktrees || editing != editingWorktree
+        self.worktrees = worktrees
+        editingWorktree = editing
+        if changed { rebuild(first: false) }
+    }
+
+    /// worktree ごとの変更の数。
+    func setWorktreeChanges(_ changes: [String: Int]) {
+        guard changes != worktreeChanges else { return }
+        worktreeChanges = changes
+        for row in 0..<outline.numberOfRows {
+            if let node = outline.item(atRow: row) as? Node, node.worktree != nil { outline.reloadItem(node) }
+        }
+    }
 
     func show(_ refs: Refs) {
         guard refs.generation != generation else { return }
@@ -135,6 +162,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             parent.children.append(Node(title: parts.last ?? item.name, item: item, isHead: item.name == refs.headBranch))
         }
         if !branchRoot.children.isEmpty { groups.append(branchRoot) }
+
+        // worktree（git worktree list の順。書き込む先に印を付ける）。1 つだけなら出さない。
+        if worktrees.count > 1 {
+            groups.append(Node(title: "Worktrees", children: worktrees.map { w in
+                let node = Node(title: w.name, isHead: editingWorktree.map(w.isSame) ?? false)
+                node.worktree = w
+                return node
+            }))
+        }
 
         if !pullRequests.isEmpty {
             groups.append(Node(title: "Pull Requests", children: pullRequests.map { pr in
@@ -200,7 +236,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func outlineView(_ outlineView: NSOutlineView, shouldSelectItem item: Any) -> Bool {
-        (item as? Node).map { $0.item != nil || $0.page != nil || $0.pullRequest != nil } ?? false
+        (item as? Node).map { $0.item != nil || $0.page != nil || $0.pullRequest != nil || $0.worktree != nil } ?? false
     }
 
     /// 見出しの下の項目の数（リモートはブランチの数）。
@@ -266,9 +302,20 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                     .compactMap { $0 }.joined(separator: " ")
             }
         }
+        if let w = node.worktree {
+            badge = w.prunable != nil ? L("missing") : w.locked != nil ? L("locked")
+                : (worktreeChanges[w.path]).flatMap { $0 > 0 ? "\($0)" : nil } ?? ""
+        }
         cell.badge.stringValue = badge
         cell.badge.textColor = .secondaryLabelColor
         cell.toolTip = node.item?.detail
+        if let w = node.worktree {
+            cell.toolTip = [w.path, w.branch.map { L("Branch: %@", $0) } ?? L("detached HEAD"),
+                            node.isHead ? L("Editing this worktree") : L("Click to edit this worktree"),
+                            w.locked.map { $0.isEmpty ? L("Locked") : L("Locked: %@", $0) },
+                            w.prunable.map { L("Its folder is gone (Prune removes it): %@", $0) }]
+                .compactMap { $0 }.joined(separator: "\n")
+        }
         if let pr = node.pullRequest {
             let ci = switch pr.ci {
             case .passing: L("CI: passed")
@@ -293,6 +340,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if node.title == L("Conflicts"), node.page != nil { return "exclamationmark.triangle" }
         if let page = node.page { return page == .workingCopy ? "square.and.pencil" : "clock" }
         if node.pullRequest != nil { return "arrow.triangle.pull" }
+        if node.worktree != nil { return node.isHead ? "pencil.circle" : "folder" }
         if node.remote != nil { return "network" }
         switch node.item?.kind {
         case .local?, .remote?: return "arrow.triangle.branch"
@@ -374,6 +422,23 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if let w = (outline.item(atRow: outline.clickedRow) as? Node)?.worktree {
+            let path = w.path
+            if w.prunable == nil {
+                menu.addItem(ClosureMenuItem(title: L("Edit This Worktree")) { [weak self] in self?.onSelectWorktree?(path) })
+                menu.addItem(ClosureMenuItem(title: L("Show in Finder")) { [weak self] in self?.onWorktreeAction?(path, .reveal) })
+                menu.addItem(ClosureMenuItem(title: L("Open in Terminal")) { [weak self] in self?.onWorktreeAction?(path, .terminal) })
+            }
+            if !w.main {
+                menu.addItem(.separator())
+                if w.prunable != nil {
+                    menu.addItem(ClosureMenuItem(title: L("Prune Worktrees")) { [weak self] in self?.onWorktreeAction?(path, .prune) })
+                } else {
+                    menu.addItem(ClosureMenuItem(title: L("Remove Worktree…")) { [weak self] in self?.onWorktreeAction?(path, .remove) })
+                }
+            }
+            return
+        }
         if let pr = (outline.item(atRow: outline.clickedRow) as? Node)?.pullRequest {
             menu.addItem(ClosureMenuItem(title: "Checkout #\(pr.number)") { [weak self] in self?.onCheckoutPullRequest?(pr) })
             menu.addItem(ClosureMenuItem(title: L("Open in Browser")) {
@@ -437,6 +502,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         } else if let item = node.item {
             onSelectPage?(.history)
             onSelect?(item)
+        } else if let w = node.worktree {
+            // 選んだ worktree を書き込む先にして、その変更を見せる。
+            guard w.prunable == nil else { return }
+            onSelectWorktree?(w.path)
+            onSelectPage?(.workingCopy)
         } else if let pr = node.pullRequest,
                   let branch = refs?.items.first(where: { $0.kind == .remote && $0.name.hasSuffix("/" + pr.headRefName) })
                     ?? refs?.items.first(where: { $0.kind == .local && $0.name == pr.headRefName }) {

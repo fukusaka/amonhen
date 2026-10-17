@@ -94,9 +94,11 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     /// 今のリポジトリの名前を出す。
-    func setRepository(_ name: String) {
-        repositoryButton.title = name
-        repositoryItem.toolTip = L("%@ — click to switch repository", name)
+    /// `worktree` は書き込む先の worktree（開いたものでなければ）。名前に ✎ で添える。
+    func setRepository(_ name: String, worktree: String? = nil) {
+        repositoryButton.title = worktree.map { "\(name) ✎ \($0)" } ?? name
+        repositoryItem.toolTip = worktree.map { L("%@ — editing the worktree %@. Click to switch repository", name, $0) }
+            ?? L("%@ — click to switch repository", name)
     }
 
     /// リポジトリを開いていないタブ（リポジトリのページ）: 名前の代わりに案内を出し、押せなくする。

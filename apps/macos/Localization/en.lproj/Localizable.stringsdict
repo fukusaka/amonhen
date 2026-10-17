@@ -18,6 +18,22 @@
 			<string>%ld commits you don’t have (as of the last Fetch). Pull them first</string>
 		</dict>
 	</dict>
+	<key>%@ has uncommitted changes in %ld files. They are lost with the folder. The branch stays.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%@ has uncommitted changes in %#@n0@. They are lost with the folder. The branch stays.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file</string>
+			<key>other</key>
+			<string>%ld files</string>
+		</dict>
+	</dict>
 	<key>%@ in progress · %ld files with conflicts</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>

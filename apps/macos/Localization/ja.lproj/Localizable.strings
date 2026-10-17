@@ -821,3 +821,28 @@
 "Runs on this Mac and sends nothing out. It reads about 4,000 tokens at a time, so long diffs are cut short; for large commits or resolving conflicts, Claude Code or Codex does better." = "この Mac の中で動き、外には何も送りません。一度に読めるのは約 4,000 トークンなので、長い差分は途中で切ります。大きなコミットやコンフリクトの解消には、Claude Code か Codex のほうが向いています。";
 "Other…" = "その他…";
 "Model name" = "モデルの名前";
+
+/* Worktrees（RepositoryWindow.swift・SidebarViewController.swift・Toolbar.swift・SyncSheets.swift） */
+"%@ has uncommitted changes in %ld files. They are lost with the folder. The branch stays." = "%1$@ には、コミットしていない変更が %2$ld ファイルあります。フォルダと一緒に失われます。ブランチは残ります。";
+"%@ — editing the worktree %@. Click to switch repository" = "%1$@ — worktree %2$@ を編集中。押すとリポジトリを切り替える";
+"Branch name" = "ブランチの名前";
+"Branch: %@" = "ブランチ: %@";
+"Can’t open the worktree" = "worktree を開けません";
+"Click to edit this worktree" = "押すと、この worktree を編集する";
+"Creates a branch from %@ and checks it out in a new folder." = "%@ からブランチを作り、新しいフォルダに checkout します。";
+"Edit This Worktree" = "この worktree を編集";
+"Editing this worktree" = "この worktree を編集中";
+"Folder" = "フォルダ";
+"In the worktree “%@”." = "worktree「%@」で行います。";
+"Its folder is gone (Prune removes it): %@" = "フォルダがありません（Prune で片付けられます）: %@";
+"Locked" = "ロック中";
+"Locked: %@" = "ロック中: %@";
+"New Worktree" = "New Worktree";
+"Prune Worktrees" = "Prune Worktrees";
+"Remove Worktree" = "Remove Worktree";
+"Remove Worktree…" = "Remove Worktree…";
+"Remove the worktree “%@”?" = "worktree「%@」を消しますか？";
+"Removes the folder %@. The branch stays." = "フォルダ %@ を消します。ブランチは残ります。";
+"detached HEAD" = "detached HEAD";
+"locked" = "ロック中";
+"missing" = "なし";

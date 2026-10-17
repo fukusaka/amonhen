@@ -482,9 +482,9 @@ git の考え方と、アプリが守ること:
 - [x] U14. AI（Claude Code / Codex の CLI 経由の翻訳・解説・メッセージの提案、コンフリクトの解消、用途ごとのプロンプトの設定）。Settings > AI で CLI（既定は使わない）・モデル・言語を選び、用途ごとのプロンプトをファイルで編集・既定に戻す。History の詳細の翻訳・解説（複数選択ではまとめた差分）、Working Copy の ✨ 提案（「メッセージに入れる」）、マージエディタの「AI で解消」（JSON で受け、マーカーが残れば捨てる。「Result に入れる」で置き換え、⌘Z で戻せる）と「AI で解説」、結果は流しながら出し、キャッシュする。リポジトリごとの初回の確認、リポジトリのプロンプトの確認、差分の hunk の右クリックからの解説（用途「hunk の解説」、History・Working Copy）、Settings のプロンプトの「試す」（見本の差分・メッセージで今のプロンプトを送る）も済み。Codex はこの Mac に入っていないので、出力の読み取りは確かめていない
 - [x] U15. コアと CLI の worktree: 一覧（`git worktree list --porcelain`）・作成・削除・片付け（SSH 先も）、
   `amonhen worktree`。
-- [ ] U16. worktree を見る: サイドバーの Worktrees（ブランチと変更の数、増減をすぐ反映）、リポジトリのページで
+- [x] U16. worktree を見る: サイドバーの Worktrees（ブランチと変更の数、増減をすぐ反映）、リポジトリのページで
   リポジトリの下にまとめる、worktree のフォルダを開いたらそのリポジトリのタブを開く。
-- [ ] U17. 1 つの worktree に書く: 書き込む先（ツールバーの ✎）、HEAD・index・作業ツリーに触れる命令をそこへ、
+- [x] U17. 1 つの worktree に書く: 書き込む先（ツールバーの ✎）、HEAD・index・作業ツリーに触れる命令をそこへ、
   確認のシートに worktree を書く、ほかの worktree が checkout しているブランチで書き込む先を移す、New Worktree…・
   Remove Worktree・Prune。
 - [ ] U18. Working Copy に全部の worktree の変更を worktree ごとの見出しで並べる、ほかの worktree に書く前に聞く。

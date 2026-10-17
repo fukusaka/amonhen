@@ -27,9 +27,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private let repository: Repository
     private let history: HistoryViewController
     private let sidebar: SidebarViewController
-    private let workingCopy: WorkingCopyViewController
+    /// 書き込む先の worktree（git の「今いる worktree」）。HEAD・index・作業ツリーに触れる操作はここに向ける。
+    /// History・ref・詳細は、開いたリポジトリ（`repository`）のものを全部の worktree で共通に使う。
+    private var editing: WorktreeSlot
+    /// 開いたリポジトリの組（最初の書き込む先）。
+    private let opened: WorktreeSlot
+    /// 一度書き込む先にした worktree の組（パスで引く）。
+    private var slots: [String: WorktreeSlot] = [:]
+    /// リポジトリの worktree（`git worktree list`）。
+    private var worktrees: [WorktreeInfo] = []
+    private var workingCopy: WorkingCopyViewController { editing.workingCopy }
     private let detail: CommitDetailViewController
-    private let actions: Actions
+    private var actions: Actions { editing.actions }
     private let toolbar: MainToolbar
     private var watch: RepositoryWatch?
     /// 最後に読んだ ref（詳細の欄で ref の名前を押したときに引く）。
@@ -73,8 +82,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         history = HistoryViewController(repository: repository, renderer: renderer, text: text)
         sidebar = SidebarViewController()
         detail = CommitDetailViewController(repository: repository, renderer: text)
-        workingCopy = WorkingCopyViewController(repository: repository, renderer: text)
-        actions = Actions(repository: repository)
+        let slot = WorktreeSlot(path: repository.workdir ?? RepositoryLocation.path(location), repository: repository, renderer: text)
+        opened = slot
+        editing = slot
         toolbar = MainToolbar()
         window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1440, height: 820),
@@ -166,8 +176,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         detail.onSelectRef = { [weak self] name in self?.selectRef(named: name) }
         updateSignaturePlace()
-        detail.onReword = { [weak actions] oid, message in
-            actions?.rewrite("Reword \(oid.prefix(8))", ["kind": "reword", "oid": oid, "message": message])
+        detail.onReword = { [weak self] oid, message in
+            self?.actions.rewrite("Reword \(oid.prefix(8))", ["kind": "reword", "oid": oid, "message": message])
         }
         // 詳細の親コミットのリンク。
         detail.onSelectCommit = { [weak history] hex in
@@ -181,19 +191,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.onSelectPage = { [weak pages] page in pages?.show(page) }
         detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
         detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
-        workingCopy.onSequenceChange = { [weak self] sequence, conflicts in
-            self?.showSequenceBanner(sequence, conflicts: conflicts)
-            self?.sidebar.setConflictCount(conflicts)
-        }
         sidebar.onSelectConflicts = { [weak self] in self?.workingCopy.selectFirstConflict() }
-        workingCopy.onChangeCount = { [weak self] count in
-            self?.changeCount = count
-            self?.updateTabTitle()
-        }
         sidebar.onCheckoutPullRequest = { [weak self] pr in self?.checkout(pr) }
-        workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
-        workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
-        workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
+        sidebar.onSelectWorktree = { [weak self] path in self?.edit(worktree: path) }
+        sidebar.onWorktreeAction = { [weak self] path, action in self?.worktreeAction(path, action) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。stash は詳細にだけ中身を出す。
         sidebar.onSelect = { [weak history, weak detail] item in
             guard let history, let target = item.target else { return }
@@ -213,24 +214,229 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             self?.onOpenRepository?(remote ? Self.replacingPath(of: self?.location ?? "", with: full) : full)
         }
 
-        actions.window = window
-        actions.onFailure = { [weak self] message in self?.showFailure(message) }
         NotificationCenter.default.addObserver(
             self, selector: #selector(gitHubSettingsChanged), name: .gitHubSettingsChanged, object: nil)
-        actions.onChange = { [weak self] in
-            self?.history.refresh()
-            self?.reloadRefs()
-            self?.workingCopy.refresh()
-        }
-        actions.onUndoChange = { [weak self] label in
-            self?.undoLabel = label
-            self?.toolbar.setUndo(label)
-        }
+        wire(editing)
         sidebar.actions = actions
         history.actions = actions
-        workingCopy.actions = actions
         window.toolbar = toolbar.toolbar
         toolbar.setRepository(window.title)
+    }
+
+    /// worktree の組の、Working Copy と操作の知らせをこのウィンドウにつなぐ。書き込む先でないものの知らせは、
+    /// 帯やタブの名前には出さない。
+    private func wire(_ slot: WorktreeSlot) {
+        slot.workingCopy.onSequenceChange = { [weak self, weak slot] sequence, conflicts in
+            guard let self, slot === editing else { return }
+            showSequenceBanner(sequence, conflicts: conflicts)
+            sidebar.setConflictCount(conflicts)
+        }
+        slot.workingCopy.onChangeCount = { [weak self, weak slot] count in
+            guard let self, let slot else { return }
+            worktreeChanges[slot.path] = count
+            sidebar.setWorktreeChanges(worktreeChanges)
+            guard slot === editing else { return }
+            changeCount = count
+            updateTabTitle()
+        }
+        slot.workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
+        slot.workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
+        slot.workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
+        slot.actions.window = window
+        slot.actions.onFailure = { [weak self] message in self?.showFailure(message) }
+        slot.actions.onChange = { [weak self, weak slot] in
+            self?.history.refresh()
+            self?.reloadRefs()
+            slot?.workingCopy.refresh()
+            self?.reloadWorktrees()
+        }
+        slot.actions.onUndoChange = { [weak self, weak slot] label in
+            guard let self, slot === editing else { return }
+            undoLabel = label
+            toolbar.setUndo(label)
+        }
+    }
+
+    // MARK: - worktree
+
+    /// worktree ごとの変更の数（サイドバーに出す）。
+    private var worktreeChanges: [String: Int] = [:]
+
+    /// worktree の一覧を読み直す（増えた・消えた・ブランチが変わった）。変更の数は手元のものだけ裏で数える。
+    private func reloadWorktrees() {
+        let repository = self.repository
+        Task {
+            guard let list = try? await Task.detached(priority: .utility, operation: {
+                try repository.info(["op": "worktrees"], as: WorktreeList.self)
+            }).value.worktrees else { return }
+            if list != worktrees {
+                worktrees = list
+                // 書き込む先が消えたら、開いたリポジトリに戻す。
+                if editing !== opened, !list.contains(where: { $0.isSame(editing.path) }) {
+                    activate(opened)
+                }
+                showWorktrees()
+            }
+            guard !RepositoryLocation.isRemote(location) else { return }
+            for w in list where slots[WorktreeInfo.canonical(w.path)] == nil && !w.isSame(opened.path) && w.prunable == nil {
+                let path = w.path
+                Task {
+                    let peek = await Task.detached(priority: .utility) { RepositoryPeek.read(path: path) }.value
+                    worktreeChanges[path] = peek?.changed
+                    sidebar.setWorktreeChanges(worktreeChanges)
+                }
+            }
+        }
+    }
+
+    private func showWorktrees() {
+        sidebar.show(worktrees: worktrees, editing: editing.path)
+        actionsWorktreeName()
+        updateEditingBranch()
+    }
+
+    /// 確認のシートに worktree の名前を出す（worktree が 2 つ以上あるときだけ）。
+    private func actionsWorktreeName() {
+        let name = worktrees.count > 1 ? worktrees.first { $0.isSame(editing.path) }?.name : nil
+        editing.actions.worktreeName = name
+    }
+
+    /// `path` の worktree を書き込む先にする。まだ開いていなければ開く（SSH 先なら同じ接続先の上のパス）。
+    func edit(worktree path: String) {
+        if WorktreeInfo.canonical(path) == WorktreeInfo.canonical(editing.path) { return }
+        if WorktreeInfo.canonical(path) == WorktreeInfo.canonical(opened.path) { return activate(opened) }
+        if let slot = slots[WorktreeInfo.canonical(path)] { return activate(slot) }
+        let location = RepositoryLocation.isRemote(self.location) ? Self.replacingPath(of: self.location, with: path) : path
+        let daemon = Daemon.path, daemons = Daemon.bundledDirectory
+        let renderer = textRenderer
+        Task {
+            do {
+                let repository = try await Task.detached(priority: .userInitiated) {
+                    try Self.openRepository(location: location, daemon: daemon, daemons: daemons)
+                }.value
+                let slot = WorktreeSlot(path: path, repository: repository, renderer: renderer)
+                wire(slot)
+                slots[WorktreeInfo.canonical(path)] = slot
+                slot.watch = try? RepositoryWatch(repository: repository) { [weak self, weak slot] changes in
+                    Task { @MainActor in
+                        guard let slot, !changes.intersection([.refs, .index, .worktree]).isEmpty else { return }
+                        slot.workingCopy.refresh()
+                        if changes.contains(.refs) { self?.reloadRefs() }
+                    }
+                }
+                activate(slot)
+            } catch {
+                showFailure("\(error)", title: L("Can’t open the worktree"))
+            }
+        }
+    }
+
+    private func activate(_ slot: WorktreeSlot) {
+        editing = slot
+        pages?.replace(.workingCopy, with: slot.workingCopy)
+        sidebar.actions = slot.actions
+        history.actions = slot.actions
+        slot.actions.refreshUndo()
+        slot.workingCopy.refresh()
+        changeCount = worktreeChanges[slot.path] ?? 0
+        showWorktrees()
+        updateTabTitle()
+    }
+
+    /// ツールバーに、書き込む先の worktree とそのブランチを出す。
+    private func updateEditingBranch() {
+        let info = worktrees.first { $0.isSame(editing.path) }
+        let other = editing !== opened || (info.map { !$0.main } ?? false)
+        toolbar.setRepository(window.title, worktree: other ? info?.name ?? (editing.path as NSString).lastPathComponent : nil)
+        guard editing !== opened, let info else { return }
+        toolbar.setBranch(info.branch)
+        let current = latestRefs?.items.first { $0.kind == .local && $0.name == info.branch }
+        toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0)
+    }
+
+    /// サイドバーの worktree の右クリック。
+    private func worktreeAction(_ path: String, _ action: SidebarViewController.WorktreeAction) {
+        guard let info = worktrees.first(where: { $0.isSame(path) }) else { return }
+        switch action {
+        case .reveal:
+            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+        case .terminal:
+            openTerminal(at: path)
+        case .remove:
+            removeWorktree(info)
+        case .prune:
+            opened.actions.perform(["op": "worktreePrune"])
+        }
+    }
+
+    /// Repository > New Worktree…: ブランチを作り、それを checkout した worktree を作って、書き込む先にする。
+    @objc func newWorktree(_ sender: Any?) {
+        let start = startPoint
+        let base = opened.path
+        let alert = NSAlert()
+        alert.messageText = L("New Worktree")
+        alert.informativeText = L("Creates a branch from %@ and checks it out in a new folder.", start)
+        let branch = NSTextField(string: "")
+        branch.placeholderString = L("Branch name")
+        let folder = NSTextField(string: "")
+        folder.placeholderString = L("Folder")
+        for field in [branch, folder] { field.frame.size = NSSize(width: 360, height: 24) }
+        let stack = NSStackView(views: [branch, folder])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: 360, height: 56)
+        alert.accessoryView = stack
+        alert.window.initialFirstResponder = branch
+        // フォルダの既定は、リポジトリの隣の「<名前>-<ブランチ>」（git の worktree でよくある置き方）。
+        let parent = (base as NSString).deletingLastPathComponent, repoName = (base as NSString).lastPathComponent
+        let target = ClosureTarget {
+            let name = branch.stringValue.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "/", with: "-")
+            folder.placeholderString = name.isEmpty ? L("Folder")
+                : (parent as NSString).appendingPathComponent("\(repoName)-\(name)")
+        }
+        NotificationCenter.default.addObserver(forName: NSControl.textDidChangeNotification, object: branch, queue: .main) { _ in
+            MainActor.assumeIsolated { target.fire() }
+        }
+        alert.addButton(withTitle: L("Create"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            withExtendedLifetime(target) {}
+            guard let self, response == .alertFirstButtonReturn else { return }
+            let name = branch.stringValue.trimmingCharacters(in: .whitespaces)
+            guard !name.isEmpty else { return NSSound.beep() }
+            var path = folder.stringValue.trimmingCharacters(in: .whitespaces)
+            if path.isEmpty { path = folder.placeholderString ?? "" }
+            path = (path as NSString).expandingTildeInPath
+            opened.actions.perform(["op": "worktreeAdd", "path": path, "newBranch": name, "start": start]) { [weak self] _ in
+                self?.reloadWorktrees()
+                self?.edit(worktree: path)
+            }
+        }
+    }
+
+    /// Repository > Prune Worktrees: フォルダがなくなった worktree の記録を片付ける。
+    @objc func pruneWorktrees(_ sender: Any?) {
+        opened.actions.perform(["op": "worktreePrune"])
+    }
+
+    /// worktree を消す（変更が残っていれば、それも捨てると確かめてから --force）。開いたリポジトリは消せない。
+    private func removeWorktree(_ info: WorktreeInfo) {
+        guard !info.main, !info.isSame(opened.path) else { return NSSound.beep() }
+        let changes = worktreeChanges[info.path] ?? 0
+        let alert = NSAlert()
+        alert.messageText = L("Remove the worktree “%@”?", info.name)
+        alert.informativeText = changes > 0
+            ? L("%@ has uncommitted changes in %ld files. They are lost with the folder. The branch stays.", info.path, changes)
+            : L("Removes the folder %@. The branch stays.", info.path)
+        let button = alert.addButton(withTitle: L("Remove Worktree"))
+        button.hasDestructiveAction = true
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            if info.isSame(editing.path) { activate(opened) }
+            if let slot = slots.removeValue(forKey: WorktreeInfo.canonical(info.path)) { slot.watch = nil }
+            opened.actions.perform(["op": "worktreeRemove", "path": info.path, "force": changes > 0 || info.locked != nil])
+        }
     }
 
     /// ツールバーのリポジトリ名: リポジトリの一覧を出し、選んだものにこのタブを切り替える（⌘ を押していれば新しい
@@ -291,6 +497,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.select(page: debug && CommandLine.arguments.contains("--working-copy") ? .workingCopy : .history)
         workingCopy.refresh()
         reloadRefs()
+        reloadWorktrees()
         loadGitHub(force: true)
         do {
             watch = try RepositoryWatch(repository: repository) { [weak self] changes in
@@ -642,6 +849,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if !changes.intersection([.refs, .config]).isEmpty {
             history.refresh()
             reloadRefs()
+            reloadWorktrees()
             // push・fetch の後はプルリクエストも変わりうる（読みすぎないよう、間を空ける）。
             loadGitHub(force: false)
         }
@@ -666,6 +874,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 toolbar.setBranch(refs.headBranch)
                 if let branch = refs.headBranch { rememberBranch(branch) }
                 tracking = (current?.ahead ?? 0, current?.behind ?? 0)
+                updateEditingBranch()
                 updateTabTitle()
             } catch {
                 NSLog("ref を読めない: \(error)")
@@ -843,7 +1052,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         BranchSwitcherPanel.shared.show(refs: refs, recent: recent, over: window) { [weak self] choice in
             guard let self else { return }
             switch choice {
-            case let .local(name): actions.perform(["op": "checkout", "branch": name])
+            case let .local(name):
+                // ほかの worktree が checkout しているブランチは、git と同じく押し通さず、その worktree に移る。
+                if let other = worktrees.first(where: { $0.branch == name && !$0.isSame(editing.path) }) {
+                    edit(worktree: other.path)
+                } else {
+                    actions.perform(["op": "checkout", "branch": name])
+                }
             case let .remote(name): actions.perform(["op": "track", "remoteBranch": name])
             case let .create(name): actions.perform(["op": "createBranch", "name": name, "start": "HEAD", "checkout": true])
             }
@@ -1093,16 +1308,21 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
+    /// 書き込む先の worktree の場所で開く。
     @objc func openInTerminal(_ sender: Any?) {
+        openTerminal(at: editing.path)
+    }
+
+    private func openTerminal(at path: String) {
         guard isLocal, let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal")
         else { return NSSound.beep() }
-        let url = URL(fileURLWithPath: RepositoryLocation.path(location))
-        NSWorkspace.shared.open([url], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
+        NSWorkspace.shared.open(
+            [URL(fileURLWithPath: path)], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
     }
 
     @objc func revealInFinder(_ sender: Any?) {
         guard isLocal else { return NSSound.beep() }
-        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: RepositoryLocation.path(location))])
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: editing.path)])
     }
 
     /// Merge・Rebase の相手を選んでもらう。候補は History で選んでいるコミット（あれば先頭）、

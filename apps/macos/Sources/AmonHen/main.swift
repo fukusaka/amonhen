@@ -69,7 +69,7 @@ enum Daemon {
 
 /// 子の画面を 1 つだけ表示し、切り替える。
 final class PageViewController: NSViewController {
-    private let pages: [SidebarViewController.Page: NSViewController]
+    private var pages: [SidebarViewController.Page: NSViewController]
     private var current: NSViewController?
     /// 表示している画面。
     private(set) var page: SidebarViewController.Page?
@@ -83,6 +83,16 @@ final class PageViewController: NSViewController {
 
     override func loadView() {
         view = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 700))
+    }
+
+    /// `page` の画面を差し替える（書き込む先の worktree を変えたときの Working Copy）。表示中なら出し直す。
+    func replace(_ page: SidebarViewController.Page, with controller: NSViewController) {
+        let showing = self.page == page
+        pages[page] = controller
+        if showing {
+            self.page = nil
+            show(page)
+        }
     }
 
     func show(_ page: SidebarViewController.Page) {
@@ -220,6 +230,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `replacing` を渡すと、そのタブ（リポジトリのページ、ツールバーの一覧から切り替える前のリポジトリ）の隣に
     /// 開いてから、それを閉じる（そのタブがそのリポジトリに替わる）。
     func open(path: String, debug: Bool = false, inNewWindow: Bool = false, replacing: NSWindow? = nil) {
+        // 追加した worktree は、元のリポジトリのタブを開き、その worktree を書き込む先にする（別のリポジトリに
+        // しない。docs/ux.md の「Worktrees」）。
+        if !RepositoryLocation.isRemote(path), let main = RepositoryList.mainRepository(ofWorktree: path) {
+            open(path: main, debug: debug, inNewWindow: inNewWindow, replacing: replacing)
+            if let window = windows.first(where: { RepositoryLocation.path($0.location) == main }) {
+                window.edit(worktree: path)
+            }
+            return
+        }
         var location = RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).standardizedFileURL.path
         // 共有の daemon 越しに開く設定なら、`daemon:` の場所にする（SSH 先も `daemon:ssh://…`）。
         if Settings.openThroughDaemon, !location.hasPrefix("daemon:") { location = "daemon:" + location }

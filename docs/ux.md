@@ -493,10 +493,10 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
 - [x] U14. AI (translation, explanation and message suggestions through the Claude Code / Codex CLI, conflict resolution, per-purpose prompt settings). Choose the CLI (default: not used), model and language in Settings > AI, and edit per-purpose prompts as files or restore the default. Translation and explanation in History details (the combined diff for a multiple selection), ✨ suggestions in Working Copy ("メッセージに入れる" (Insert into Message)), "AI で解消" (Resolve with AI) in the merge editor (received as JSON, discarded if markers remain; "Result に入れる" (Insert into Result) replaces, ⌘Z reverts) and "AI で解説" (Explain with AI), results shown as they stream and cached. The first-time confirmation per repository, confirmation of repository prompts, explanation from right-clicking a diff hunk (purpose "hunk explanation", in History and Working Copy), and "試す" (Try) for prompts in Settings (sends the current prompt with a sample diff and message) are also done. Codex is not installed on this Mac, so its output parsing has not been verified
 - [x] U15. Worktrees in the core and the CLI: listing (`git worktree list --porcelain`), add, remove, prune, over SSH
   too; `amonhen worktree`.
-- [ ] U16. Viewing worktrees: the sidebar's Worktrees with branches and change counts, kept up to date as worktrees
+- [x] U16. Viewing worktrees: the sidebar's Worktrees with branches and change counts, kept up to date as worktrees
   come and go; worktrees grouped under their repository on the repository page; opening a worktree's folder opens its
   repository's tab.
-- [ ] U17. Editing one worktree: the edited worktree (✎ in the toolbar), commands that touch HEAD, the index or the
+- [x] U17. Editing one worktree: the edited worktree (✎ in the toolbar), commands that touch HEAD, the index or the
   working tree sent there, the worktree named in confirmation sheets, branches checked out elsewhere moving the edited
   worktree, New Worktree… / Remove Worktree / Prune.
 - [ ] U18. Working Copy with every worktree's changes under one heading each, asking before editing another worktree.

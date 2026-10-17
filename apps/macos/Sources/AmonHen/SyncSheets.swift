@@ -225,7 +225,8 @@ extension Actions {
     private func makeAlert(_ title: String, _ message: String) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = title
-        alert.informativeText = message
+        // worktree が 2 つ以上あれば、どの worktree に対する操作かを書く（docs/ux.md の「Worktrees」）。
+        alert.informativeText = worktreeName.map { L("In the worktree “%@”.", $0) + (message.isEmpty ? "" : "\n" + message) } ?? message
         return alert
     }
 

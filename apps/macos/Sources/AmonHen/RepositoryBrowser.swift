@@ -49,6 +49,28 @@ enum RepositoryList {
         return FileManager.default.fileExists(atPath: (path as NSString).appendingPathComponent(".git"))
     }
 
+    /// `path` が追加した worktree なら、その元のリポジトリの作業ツリー（`.git` が
+    /// `gitdir: <元>/.git/worktrees/<名前>` のファイル）。手元のものだけ。
+    static func mainRepository(ofWorktree path: String) -> String? {
+        if RepositoryLocation.isRemote(path) { return nil }
+        if let cached = worktreeMains[path] { return cached }
+        var main: String?
+        let dotGit = (path as NSString).appendingPathComponent(".git")
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: dotGit, isDirectory: &isDirectory), !isDirectory.boolValue,
+           let text = try? String(contentsOfFile: dotGit, encoding: .utf8), text.hasPrefix("gitdir:") {
+            let target = text.dropFirst("gitdir:".count).trimmingCharacters(in: .whitespacesAndNewlines)
+            let gitDir = target.hasPrefix("/") ? target : (path as NSString).appendingPathComponent(target)
+            if let range = gitDir.range(of: "/.git/worktrees/") {
+                main = String(gitDir[..<range.lowerBound])
+            }
+        }
+        worktreeMains[path] = .some(main)
+        return main
+    }
+
+    nonisolated(unsafe) private static var worktreeMains: [String: String?] = [:]
+
     /// 今のブランチ。`.git/HEAD` を読むだけで、git は起動しない（一覧を開くたびに数十件を読むため）。
     static func branch(of path: String) -> String? {
         if RepositoryLocation.isRemote(path) { return nil }
@@ -584,7 +606,17 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     // MARK: - 中身
 
     /// 分類の中のリポジトリ（絞り込み・並べ替えの前）。
+    /// `category` のリポジトリ。追加した worktree は、元のリポジトリも一覧にあれば出さない（元のリポジトリのタブの
+    /// Worktrees から使う。docs/ux.md の「Worktrees」）。
     private func paths(in category: Category) -> [String] {
+        let all = Set(Bookmarks.shared.allLocations.map(Self.localPath))
+        return allPaths(in: category).filter { path in
+            guard let main = RepositoryList.mainRepository(ofWorktree: Self.localPath(path)) else { return true }
+            return !all.contains(main)
+        }
+    }
+
+    private func allPaths(in category: Category) -> [String] {
         let bookmarks = Bookmarks.shared
         switch category {
         case .all: return bookmarks.allLocations

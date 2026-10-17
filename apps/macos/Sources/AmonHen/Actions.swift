@@ -11,6 +11,8 @@ final class Actions {
     var onUndoChange: ((String?) -> Void)?
     /// 操作が失敗した（ウィンドウの帯で知らせる）。なければ警告のシートを出す。
     var onFailure: ((String) -> Void)?
+    /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。確認のシートに出す。
+    var worktreeName: String?
 
     init(repository: Repository) {
         self.repository = repository
