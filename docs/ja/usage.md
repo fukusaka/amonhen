@@ -2,7 +2,7 @@
 
 [English](../usage.md)
 
-アプリ（macOS）・SSH 先・共有の daemon・CLI の使い方。インストールは [README](../../README.ja.md)、VSCode 拡張は
+アプリ（macOS）・SSH 先・共有の daemon・CLI の使い方。インストールは [install.md](install.md)、VSCode 拡張は
 [apps/vscode](../../apps/vscode/README.ja.md) を参照。
 
 ## アプリ
