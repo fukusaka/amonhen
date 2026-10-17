@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- The repository list no longer jumps back to the top while scrolling (each row's branch and change count used to
+  rebuild the whole list as it arrived).
 - Line numbers, file headers and stage checkboxes in diffs no longer come out garbled after the window moves
   between screens of different scale (1x and 2x).
 - Building History no longer spins up threads for every few commits. On the Linux engines (musl) it was 5 times

@@ -45,6 +45,8 @@ final class Bookmarks {
     private var peeking = Set<String>()
     /// 中身・スキャンの結果・行の状態が変わった（一覧を描き直す）。
     var onChange: (() -> Void)?
+    /// 行の状態（peek・fetch の結果）が変わった。一覧はその行だけ描き直す（全部作り直すとスクロールが戻る）。
+    var onRowChange: ((String) -> Void)?
 
     private static var file: URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -231,7 +233,7 @@ final class Bookmarks {
             let peek = await Self.peekQueue.run { RepositoryPeek.read(path: path) }
             peeking.remove(path)
             if let peek { peeks[path] = peek }
-            onChange?()
+            onRowChange?(path)
         }
         return nil
     }
@@ -259,7 +261,7 @@ final class Bookmarks {
                 fetching.remove(path)
                 fetchErrors[path] = error
                 peeks[path] = nil
-                onChange?()
+                onRowChange?(path)
             }
         }
         onChange?()
