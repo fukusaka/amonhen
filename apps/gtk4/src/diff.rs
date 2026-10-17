@@ -3,9 +3,13 @@
 //! History と同じく、見えている行だけを 1 つのウィジェットの `snapshot` で描く。変わった単語の強調と構文の
 //! 色は、コアが FE の符号単位（UTF-8 のバイト位置）で渡すので、そのまま Pango の属性にする。
 //! ファイルの見出しをクリックすると、そのファイルを畳む・開く。
+//!
+//! Working Copy では、変更の行をクリック（Shift で範囲、Ctrl で追加）して選び、行の左の印で
+//! 次のコミットに含めるか（index に入っているか）を見せる。印のクリックでその行を含める・外す。
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use amonhen_core::diff::{DiffView, StackedDiff};
@@ -14,11 +18,13 @@ use amonhen_projection::FrontendProfile;
 use gtk::glib::Properties;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
-use gtk::{gdk, gio, glib, graphene, pango};
+use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
 /// 左の行番号の列と本文の間の余白。
 const GUTTER_GAP: f32 = 12.0;
 const TEXT_INSET: f32 = 8.0;
+/// 行ごとの stage の印の列の幅。
+const MARK_WIDTH: f32 = 20.0;
 
 /// 裏のスレッドで作った表示。文字列置き場は自分のバッファを持っているので、どのスレッドに渡してもよい。
 pub struct View {
@@ -37,7 +43,11 @@ unsafe impl Send for View {}
 impl View {
     /// `stacked` の、`collapsed` のファイルを畳んだ表示を作る（裏のスレッドで呼ぶ）。
     pub fn build(stacked: &StackedDiff, collapsed: &[bool]) -> Self {
-        let view = stacked.view(collapsed, &FrontendProfile::GTK);
+        Self::new(stacked.view(collapsed, &FrontendProfile::GTK))
+    }
+
+    /// 強調と構文の色を行ごとに分けておく（構文の色はファイル全体を解析するので、裏のスレッドで呼ぶ）。
+    pub fn new(view: DiffView) -> Self {
         let mut highlights: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
         for h in &view.highlights {
             highlights.entry(h.row).or_default().push((h.start, h.end));
@@ -91,6 +101,16 @@ pub struct State {
     row_height: f32,
     /// 作り直している途中の表示の世代（古い結果を捨てる）。
     generation: u64,
+    /// 行ごとの stage の印を出す（Working Copy）。
+    marks: bool,
+    /// 選んだ変更の行。
+    selection: BTreeSet<u32>,
+    /// Shift で範囲を選ぶときの起点。
+    anchor: Option<u32>,
+    /// 印をクリックしたときに呼ぶ（行）。
+    on_mark: Option<Rc<dyn Fn(u32)>>,
+    /// 選んだ行が変わったときに呼ぶ。
+    on_selection: Option<Rc<dyn Fn()>>,
 }
 
 mod imp {
@@ -139,10 +159,16 @@ mod imp {
             view.set_overflow(gtk::Overflow::Hidden);
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
-            click.connect_pressed(move |_, _, _, y| {
+            click.connect_pressed(move |gesture, _, x, y| {
                 if let Some(view) = weak.upgrade() {
                     view.grab_focus();
-                    view.clicked(y as f32);
+                    let state = gesture.current_event_state();
+                    view.clicked(
+                        x as f32,
+                        y as f32,
+                        state.contains(gdk::ModifierType::SHIFT_MASK),
+                        state.contains(gdk::ModifierType::CONTROL_MASK),
+                    );
                 }
             });
             view.add_controller(click);
@@ -208,6 +234,8 @@ impl DiffWidget {
             st.source = None;
             st.view = None;
             st.rows.clear();
+            st.selection.clear();
+            st.anchor = None;
         }
         self.configure_adjustments();
         self.queue_draw();
@@ -222,12 +250,79 @@ impl DiffWidget {
             st.source = Some(source);
             st.view = Some(Arc::new(view));
             st.rows.clear();
+            st.marks = false;
+            st.selection.clear();
+            st.anchor = None;
         }
         if let Some(adj) = self.vadjustment() {
             adj.set_value(0.0);
         }
         self.configure_adjustments();
         self.queue_draw();
+        self.selection_changed();
+    }
+
+    /// Working Copy の 1 ファイルの差分を、行ごとの stage の印つきで出す。`keep` なら同じファイルを
+    /// 読み直したとして、スクロールの位置と選んだ行を保つ。
+    pub fn show_working(&self, view: View, keep: bool) {
+        {
+            let mut st = self.state();
+            st.generation += 1;
+            st.source = None;
+            let rows = view.view.rows.len() as u32;
+            st.view = Some(Arc::new(view));
+            st.rows.clear();
+            st.marks = true;
+            if keep {
+                st.selection.retain(|&r| r < rows);
+            } else {
+                st.selection.clear();
+                st.anchor = None;
+            }
+        }
+        if !keep && let Some(adj) = self.vadjustment() {
+            adj.set_value(0.0);
+        }
+        self.configure_adjustments();
+        self.queue_draw();
+        self.selection_changed();
+    }
+
+    /// 選んだ変更の行（表示の行の番号。Working Copy の差分では、コアの差分の行の番号と同じ）。
+    pub fn selected_rows(&self) -> Vec<usize> {
+        self.state().selection.iter().map(|&r| r as usize).collect()
+    }
+
+    /// 選んだ行のうち、次のコミットに含めているものの数と、全体の数。
+    pub fn selected_staged(&self) -> (usize, usize) {
+        let st = self.state();
+        let Some(view) = &st.view else { return (0, 0) };
+        let staged = st
+            .selection
+            .iter()
+            .filter(|&&r| view.view.rows[r as usize].flags & DiffRow::STAGED != 0)
+            .count();
+        (staged, st.selection.len())
+    }
+
+    pub fn connect_mark(&self, f: impl Fn(u32) + 'static) {
+        self.state().on_mark = Some(Rc::new(f));
+    }
+
+    pub fn connect_selection(&self, f: impl Fn() + 'static) {
+        self.state().on_selection = Some(Rc::new(f));
+    }
+
+    fn selection_changed(&self) {
+        let f = self.state().on_selection.clone();
+        if let Some(f) = f {
+            f();
+        }
+    }
+
+    /// 変更の行（選べる行）か。
+    fn is_change(row: &DiffRow) -> bool {
+        matches!(row.kind, DiffRow::ADDED | DiffRow::REMOVED)
     }
 
     fn row_height(&self) -> f32 {
@@ -269,8 +364,79 @@ impl DiffWidget {
         }
     }
 
+    /// ファイルの見出しなら畳む・開く。Working Copy では印なら含める・外す、ほかは行を選ぶ。
+    fn clicked(&self, x: f32, y: f32, shift: bool, ctrl: bool) {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let rh = self.row_height();
+        let index = ((y + scroll) / rh).floor();
+        let (marks, view) = {
+            let st = self.state();
+            (st.marks, st.view.clone())
+        };
+        let Some(view) = view else { return };
+        if index < 0.0 || index as usize >= view.view.rows.len() {
+            return;
+        }
+        let index = index as u32;
+        let row = view.view.rows[index as usize];
+        if marks {
+            if Self::is_change(&row) && x < TEXT_INSET + MARK_WIDTH {
+                let f = self.state().on_mark.clone();
+                if let Some(f) = f {
+                    f(index);
+                }
+                return;
+            }
+            self.select_rows(&view, index, shift, ctrl);
+            return;
+        }
+        self.toggle_file(y);
+    }
+
+    /// 行を選ぶ。hunk の見出しなら、その hunk の変更の行をすべて。
+    fn select_rows(&self, view: &View, index: u32, shift: bool, ctrl: bool) {
+        let rows = &view.view.rows;
+        let picked: Vec<u32> = if rows[index as usize].kind == DiffRow::HUNK {
+            (index + 1..rows.len() as u32)
+                .take_while(|&r| rows[r as usize].kind != DiffRow::HUNK)
+                .filter(|&r| Self::is_change(&rows[r as usize]))
+                .collect()
+        } else if Self::is_change(&rows[index as usize]) {
+            vec![index]
+        } else {
+            Vec::new()
+        };
+        {
+            let mut st = self.state();
+            match (shift, st.anchor) {
+                (true, Some(anchor)) => {
+                    let (a, b) = (anchor.min(index), anchor.max(index));
+                    if !ctrl {
+                        st.selection.clear();
+                    }
+                    st.selection
+                        .extend((a..=b).filter(|&r| Self::is_change(&rows[r as usize])));
+                }
+                _ if ctrl => {
+                    for r in &picked {
+                        if !st.selection.remove(r) {
+                            st.selection.insert(*r);
+                        }
+                    }
+                    st.anchor = Some(index);
+                }
+                _ => {
+                    st.selection = picked.into_iter().collect();
+                    st.anchor = Some(index);
+                }
+            }
+        }
+        self.queue_draw();
+        self.selection_changed();
+    }
+
     /// ファイルの見出しをクリックしたら、そのファイルを畳む・開く。
-    fn clicked(&self, y: f32) {
+    fn toggle_file(&self, y: f32) {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let rh = self.row_height();
         let (source, collapsed, generation) = {
@@ -457,14 +623,35 @@ impl DiffWidget {
             let line = &st.rows[&index];
             let (_, h) = line.text.pixel_size();
             let y = top + ((rh - h as f32) / 2.0).round();
-            let text_x = if row.kind == DiffRow::FILE {
-                TEXT_INSET
+            if st.selection.contains(&index) {
+                snapshot.append_color(
+                    &gdk::RGBA::new(0.21, 0.52, 0.89, 0.28),
+                    &graphene::Rect::new(0.0, top, width, rh),
+                );
+            }
+            let left = if st.marks {
+                TEXT_INSET + MARK_WIDTH
             } else {
-                TEXT_INSET + gutter_width + GUTTER_GAP
+                TEXT_INSET
+            };
+            if st.marks && Self::is_change(row) {
+                draw_mark(
+                    snapshot,
+                    TEXT_INSET,
+                    top,
+                    rh,
+                    row.flags & DiffRow::STAGED != 0,
+                    &fg,
+                );
+            }
+            let text_x = if row.kind == DiffRow::FILE {
+                left
+            } else {
+                left + gutter_width + GUTTER_GAP
             };
             if let Some(gutter) = &line.gutter {
                 snapshot.save();
-                snapshot.translate(&graphene::Point::new(TEXT_INSET, y));
+                snapshot.translate(&graphene::Point::new(left, y));
                 snapshot.append_layout(gutter, &secondary);
                 snapshot.restore();
             }
@@ -485,6 +672,32 @@ impl DiffWidget {
             snapshot.pop();
             snapshot.restore();
         }
+    }
+}
+
+/// 次のコミットに含めるかの印（含めていれば塗りつぶしにチェック、外していれば枠だけ）。
+fn draw_mark(snapshot: &gtk::Snapshot, x: f32, top: f32, rh: f32, staged: bool, fg: &gdk::RGBA) {
+    let size = (rh - 6.0).clamp(8.0, 12.0);
+    let rect = graphene::Rect::new(x + 2.0, top + (rh - size) / 2.0, size, size);
+    let path = gsk::PathBuilder::new();
+    path.add_rounded_rect(&gsk::RoundedRect::from_rect(rect, 3.0));
+    let path = path.to_path();
+    if staged {
+        snapshot.append_fill(
+            &path,
+            gsk::FillRule::Winding,
+            &gdk::RGBA::new(0.21, 0.52, 0.89, 1.0),
+        );
+        let check = gsk::PathBuilder::new();
+        check.move_to(rect.x() + size * 0.22, rect.y() + size * 0.52);
+        check.line_to(rect.x() + size * 0.42, rect.y() + size * 0.72);
+        check.line_to(rect.x() + size * 0.78, rect.y() + size * 0.3);
+        let stroke = gsk::Stroke::new(1.6);
+        stroke.set_line_cap(gsk::LineCap::Round);
+        snapshot.append_stroke(&check.to_path(), &stroke, &gdk::RGBA::WHITE);
+    } else {
+        let color = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.45);
+        snapshot.append_stroke(&path, &gsk::Stroke::new(1.0), &color);
     }
 }
 

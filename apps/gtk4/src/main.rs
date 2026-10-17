@@ -1,12 +1,13 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll] [--scroll-to <row>]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll] [--scroll-to <row>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
 
 mod details;
 mod diff;
 mod graph;
 mod history;
 mod measure;
+mod workcopy;
 
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,7 @@ use gtk::{gio, glib, graphene};
 use crate::details::Details;
 use crate::diff::DiffWidget;
 use crate::history::HistoryView;
+use crate::workcopy::WorkingCopy;
 
 const APP_ID: &str = "io.github.fukusaka.amonhen";
 
@@ -31,6 +33,12 @@ struct Args {
     snapshot: Option<PathBuf>,
     /// 自動でスクロールして、1 フレームの時間を測って終わる。
     measure_scroll: bool,
+    /// Working Copy を開いた状態で始める。
+    working_copy: bool,
+    /// Working Copy で選んでおくファイル。
+    select_path: Option<String>,
+    /// Working Copy の差分で、この行の印を一度クリックしたことにする（確認用）。
+    toggle_row: Option<u32>,
     scroll_to: Option<u32>,
 }
 
@@ -41,6 +49,14 @@ fn parse_args() -> Result<Args, String> {
         match a.as_str() {
             "--snapshot" => args.snapshot = Some(it.next().ok_or("--snapshot <png>")?.into()),
             "--measure-scroll" => args.measure_scroll = true,
+            "--working-copy" => args.working_copy = true,
+            "--toggle-row" => {
+                let row = it.next().ok_or("--toggle-row <row>")?;
+                args.toggle_row = Some(row.parse().map_err(|_| "--toggle-row <row>")?);
+            }
+            "--select-path" => {
+                args.select_path = Some(it.next().ok_or("--select-path <path>")?);
+            }
             "--scroll-to" => {
                 let row = it.next().ok_or("--scroll-to <row>")?;
                 args.scroll_to = Some(row.parse().map_err(|_| "--scroll-to <row>")?);
@@ -134,12 +150,41 @@ fn build_window(app: &gtk::Application, args: Args) {
     let pending = Rc::new(Cell::new(0u32));
     connect_selection(&view, &details, &diff, &right, &pending);
 
+    // History と Working Copy を見出しの切り替えで行き来する。
+    let working = WorkingCopy::new(pending.clone());
+    if let Some(path) = &args.select_path {
+        working.select_path(path);
+    }
+    if let Some(row) = args.toggle_row {
+        working.toggle_row_once(row);
+    }
+    let pages = gtk::Stack::new();
+    pages.set_transition_type(gtk::StackTransitionType::None);
+    pages.add_titled(&columns, Some("history"), "History");
+    let working_page = pages.add_titled(&working.root, Some("working"), "Working Copy");
+    let switcher = gtk::StackSwitcher::new();
+    switcher.set_stack(Some(&pages));
+    header.pack_start(&switcher);
+    working.connect_count(move |count| {
+        working_page.set_title(&if count > 0 {
+            format!("Working Copy ({count})")
+        } else {
+            "Working Copy".to_owned()
+        });
+    });
+    if args.working_copy {
+        pages.set_visible_child_name("working");
+    }
+    // 最初の status が届くまでは、撮るのを待つ。
+    pending.set(pending.get() + 1);
+    let mut waiting_status = true;
+
     let window = gtk::ApplicationWindow::builder()
         .application(app)
         .title(format!("{name} — Amon Hen"))
         .default_width(1100)
         .default_height(760)
-        .child(&columns)
+        .child(&pages)
         .build();
     window.set_titlebar(Some(&header));
     window.present();
@@ -162,6 +207,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                 match event {
                     Event::History(repo, history) => {
                         status.set_visible(false);
+                        working.set_repo(repo.clone());
                         view.show(repo, history);
                         if first {
                             first = false;
@@ -178,6 +224,13 @@ fn build_window(app: &gtk::Application, args: Args) {
                         }
                         subtitle.set_visible(true);
                         view.show_refs(&refs);
+                    }
+                    Event::Status(snapshot) => {
+                        working.show(snapshot);
+                        if waiting_status {
+                            waiting_status = false;
+                            pending.set(pending.get() - 1);
+                        }
                     }
                     Event::Failed(e) => {
                         status.set_text(&e);
@@ -289,6 +342,7 @@ fn connect_selection(
 enum Event {
     History(Arc<Repository>, Arc<amonhen_core::HistorySnapshot>),
     Refs(Arc<amonhen_core::RefsSnapshot>),
+    Status(Arc<amonhen_core::StatusSnapshot>),
     Failed(String),
 }
 
@@ -305,6 +359,12 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
     if let Some(cached) = repo.load_cached_history() {
         let _ = tx.send_blocking(Event::History(repo.clone(), cached));
     }
+    let status = |repo: &Arc<Repository>| match repo.load_status() {
+        Ok(snapshot) => {
+            let _ = tx.send_blocking(Event::Status(snapshot));
+        }
+        Err(e) => eprintln!("status を読めない: {e}"),
+    };
     let reload = |repo: &Arc<Repository>| {
         match repo.load_history() {
             Ok(history) => {
@@ -319,14 +379,13 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
         }
     };
     reload(&repo);
-    let _ = repo.write_commit_graph_if_missing();
+    status(&repo);
 
-    // ref が変わったら読み直す。知らせは監視のスレッドから来るので、このスレッドで受けて読む。
+    // ref が変わったら History を、index か作業ツリーが変わったら status を読み直す。知らせは監視の
+    // スレッドから来るので、このスレッドで受けて読む。
     let (changed_tx, changed_rx) = std::sync::mpsc::channel();
     let _watcher = match amonhen_watch::Watcher::new(repo.paths(), move |changes| {
-        if changes.contains(amonhen_watch::Changes::REFS) {
-            let _ = changed_tx.send(());
-        }
+        let _ = changed_tx.send(changes.0);
     }) {
         Ok(w) => w,
         Err(e) => {
@@ -334,13 +393,25 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
             return;
         }
     };
-    while changed_rx.recv().is_ok() {
+    use amonhen_watch::Changes;
+    while let Ok(mut bits) = changed_rx.recv() {
         // まとめて来た知らせは 1 回の読み直しにする。
-        while changed_rx.try_recv().is_ok() {}
+        while let Ok(more) = changed_rx.try_recv() {
+            bits |= more;
+        }
         if tx.is_closed() {
             return;
         }
-        reload(&repo);
+        let changes = Changes(bits);
+        if changes.contains(Changes::REFS) {
+            reload(&repo);
+        }
+        if changes.contains(Changes::REFS)
+            || changes.contains(Changes::INDEX)
+            || changes.contains(Changes::WORKTREE)
+        {
+            status(&repo);
+        }
     }
 }
 
@@ -363,7 +434,7 @@ fn after_first_show(
                 #[upgrade_or]
                 glib::ControlFlow::Break,
                 move || {
-                    if !view.is_settled() || pending.get() > 0 {
+                    if (view.is_mapped() && !view.is_settled()) || pending.get() > 0 {
                         return glib::ControlFlow::Continue;
                     }
                     match snapshot(&window, &png) {
