@@ -7,6 +7,9 @@ on:
 
 permissions:
   contents: write
+  # ビルドの由来の証明（artifact attestations）。gh attestation verify で確かめられる。
+  id-token: write
+  attestations: write
 
 jobs:
   windows-engine:
@@ -55,6 +58,12 @@ jobs:
           done
         env:
           VERSION: ${{ github.ref_name }}
+      # リリースに載せるファイルに、このタグのこの CI で作ったことの証明を付ける。
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/amonhen-*.tar.gz
       - env:
           GH_TOKEN: ${{ github.token }}
         # アプリの zip と、エンジンだけの tar.gz（darwin-aarch64・linux-x86_64・linux-aarch64）と zip（Windows）。

@@ -6,6 +6,9 @@ on:
 
 permissions:
   contents: write
+  # ビルドの由来の証明（artifact attestations）。gh attestation verify で確かめられる。
+  id-token: write
+  attestations: write
 
 # 新しい push が来たら、前の snapshot の作成はやめる。
 concurrency:
@@ -71,6 +74,13 @@ jobs:
           version=$(node scripts/snapshot-version.mjs)
           npm pkg set version="$version"
           npx @vscode/vsce package --skip-license --out "../../dist/amonhen-vscode-$version.vsix"
+      # リリースに載せるファイルに、このコミットのこの CI で作ったことの証明を付ける。
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.zip
+            dist/amonhen-*.tar.gz
+            dist/amonhen-vscode-*.vsix
       # snapshot という pre-release を、このコミットで作り直す。
       - env:
           GH_TOKEN: ${{ github.token }}

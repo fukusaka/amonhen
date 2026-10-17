@@ -1,6 +1,7 @@
-# Amon Hen Standalone
+# Amon Hen
 
-徹底的な低遅延を最優先にした、macOS 向けの Git クライアント。コアは Rust、UI は AppKit と Metal。
+徹底的な低遅延を最優先にした Git クライアント。コア（エンジン）は Rust で、macOS のアプリ（AppKit と Metal）、
+CLI（`amonhen`）、VSCode 拡張（[apps/vscode](apps/vscode)）が同じエンジンと共有の daemon を使う。
 設計は [docs/design.md](docs/design.md) を参照。
 
 ## インストール
@@ -12,8 +13,8 @@ scripts/install.sh            # 最新のリリース（Amon Hen）
 scripts/install.sh snapshot   # main の最新（Amon Hen Snapshot、正式版と並べて入れられる）
 ```
 
-`gh` で取ってきたファイルには quarantine 属性が付かないので、公証なしで起動できる。ブラウザで落とした場合は
-`xattr -dr com.apple.quarantine "/Applications/Amon Hen.app"` で外す。
+エンジン（CLI と daemon）は `~/.local/share/amonhen` に置かれ、`~/.local/bin/amonhen` から使える。Linux では、Release の
+`amonhen-<版>-linux-<CPU>.tar.gz` を展開して `./amonhen install` を実行する。
 
 ## 使い方
 
@@ -41,21 +42,37 @@ scripts/build-app.sh snapshot   # dist/ に .app と zip を作る
 
 ## リリース
 
-- `v*` タグを push すると、GitHub Actions がビルドして Release に zip を添付する。タグは `Cargo.toml` の `workspace.package.version` と一致させる。
-- main に push するたびに、`snapshot` という pre-release を作り直す（バージョンは `<次の patch>-snapshot.<コミット数>+<sha>`）。
+- `v<数字>` のタグ（`v0.1.1` など）を push すると、GitHub Actions がアプリの zip と、エンジンだけの tar.gz（macOS arm64・
+  Linux x86_64・Linux aarch64）と zip（Windows x86_64・aarch64）を Release に載せる。タグは `Cargo.toml` の
+  `workspace.package.version` と一致させる。
+- VSCode 拡張は `vscode-v*` のタグで、エンジンを同梱した .vsix を載せる（[apps/vscode](apps/vscode) を参照）。
+- main に push するたびに、`snapshot` という pre-release を作り直す（アプリ・エンジン・拡張。バージョンは
+  `<次の patch>-snapshot.<コミット数>+<sha>`）。
 
-### 署名（自己署名の証明書）
+### 確かめ方（ビルドの由来の証明）
 
-ad-hoc 署名だとビルドのたびにアプリの身元が変わり、macOS のアクセス許可（フォルダへのアクセスなど）が更新のたびにリセットされる。自己署名のコード署名用証明書を 1 つ作って CI に渡すと、身元が固定される。
+Release のファイルには、このリポジトリのどのコミットから、どの CI で作ったかの証明（artifact attestations）が付く。
 
-1. キーチェーンアクセス > 証明書アシスタント > 証明書を作成…で、名前を `Amon Hen`、固有名の種類を「自己署名ルート」、証明書のタイプを「コード署名」にして作る。
-2. キーチェーンアクセスでその証明書と秘密鍵を選び、.p12 として書き出す（パスワードを付ける）。
-3. リポジトリの secret に登録する。
+```sh
+gh attestation verify Amon-Hen-0.1.1.zip --repo fukusaka/amonhen
+```
 
-   ```sh
-   base64 -i amonhen.p12 | gh secret set AMONHEN_CERT_P12
-   gh secret set AMONHEN_CERT_PASSWORD
-   gh secret set AMONHEN_CERT_NAME --body "Amon Hen"
-   ```
+### 署名と公証（macOS）
 
-secret がなければ ad-hoc 署名で作る。手元では `AMONHEN_SIGN_IDENTITY="Amon Hen" scripts/build-app.sh` で同じ証明書を使える。
+環境 `release` の secret に Developer ID Application の証明書と App Store Connect の API キーがあれば、アプリと
+macOS のエンジンを Developer ID で署名し、Apple の公証に出す（アプリには結果を綴じ込む）。ブラウザで取っても
+そのまま開ける。
+
+```sh
+base64 -i DeveloperID.p12 | gh secret set AMONHEN_CERT_P12 --env release
+gh secret set AMONHEN_CERT_PASSWORD --env release
+gh secret set AMONHEN_CERT_NAME --env release --body "Developer ID Application: 名前 (チーム ID)"
+base64 -i AuthKey_XXXXXXXXXX.p8 | gh secret set AMONHEN_NOTARY_KEY --env release
+gh secret set AMONHEN_NOTARY_KEY_ID --env release --body "<Key ID>"
+gh secret set AMONHEN_NOTARY_ISSUER --env release --body "<Issuer ID>"
+```
+
+Developer ID の証明書は期限（いまは約 1 年）が来る前に作り直し、`AMONHEN_CERT_P12` と `AMONHEN_CERT_PASSWORD` を
+入れ替える。secret がなければ ad-hoc 署名で作る。手元では `AMONHEN_SIGN_IDENTITY` に証明書の名前を渡すと、同じ
+証明書で署名する。Windows・Linux のエンジンは署名していない（Windows でブラウザから取ると SmartScreen が警告する。
+VSCode 拡張に同梱したものは警告なしで動く）。
