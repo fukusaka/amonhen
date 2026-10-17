@@ -476,6 +476,19 @@ fn build_window(app: &gtk::Application, args: Args) {
     ));
 }
 
+/// 詳細の欄をメッセージの高さに合わせる（右の列の半分まで。残りは欄の中でスクロール）。
+/// 窓が開いた直後は大きさがまだ決まっていないので、決まったフレームで合わせる。
+fn fit_details(right: &gtk::Paned, details: Rc<Details>) {
+    right.add_tick_callback(move |right, _| {
+        if right.width() <= 0 {
+            return glib::ControlFlow::Continue;
+        }
+        let height = details.natural_height(right.width());
+        right.set_position(height.min(right.height() / 2).max(60));
+        glib::ControlFlow::Break
+    });
+}
+
 /// サイドバーで選んだ項目: ページなら切り替え、ref なら History でそのコミットを選ぶ。
 fn connect_sidebar(sidebar: &Sidebar, pages: &gtk::Stack, view: &HistoryView) {
     let (pages, view) = (pages.downgrade(), view.downgrade());
@@ -561,6 +574,7 @@ fn connect_selection(
             repo.clone(),
         );
         let weak_right = weak_right.clone();
+        let repo_e = repo.clone();
         glib::spawn_future_local(async move {
             let info =
                 gio::spawn_blocking(move || repo_d.commit_info(&id).map_err(|e| e.to_string()))
@@ -572,17 +586,36 @@ fn connect_selection(
             match info {
                 Ok(Ok(info)) => {
                     details.show(&info);
-                    // 詳細の欄をメッセージの高さに合わせる（右の列の半分まで。残りは欄の中でスクロール）。
-                    // 窓が開いた直後は大きさがまだ決まっていないので、決まったフレームで合わせる。
-                    if let Some(right) = weak_right.upgrade() {
-                        right.add_tick_callback(move |right, _| {
-                            if right.width() <= 0 {
-                                return glib::ControlFlow::Continue;
+                    // 時間のかかる分（署名の検証・子・含むブランチとタグなど）は、その後に足す。
+                    pending_d.set(pending_d.get() + 1);
+                    let (details_e, generation, pending, right_e) = (
+                        details.clone(),
+                        generation_d.clone(),
+                        pending_d.clone(),
+                        weak_right.clone(),
+                    );
+                    glib::spawn_future_local(async move {
+                        let extras = gio::spawn_blocking(move || {
+                            repo_e.commit_extras(&id).map_err(|e| e.to_string())
+                        })
+                        .await;
+                        pending.set(pending.get() - 1);
+                        if generation.get() != g {
+                            return;
+                        }
+                        match extras {
+                            Ok(Ok(extras)) => {
+                                details_e.show_extras(&extras);
+                                if let Some(right) = right_e.upgrade() {
+                                    fit_details(&right, details_e);
+                                }
                             }
-                            let height = details.natural_height(right.width());
-                            right.set_position(height.min(right.height() / 2).max(60));
-                            glib::ControlFlow::Break
-                        });
+                            Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
+                            Err(_) => {}
+                        }
+                    });
+                    if let Some(right) = weak_right.upgrade() {
+                        fit_details(&right, details);
                     }
                 }
                 Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
