@@ -487,7 +487,7 @@ git の考え方と、アプリが守ること:
 - [x] U17. 1 つの worktree に書く: 書き込む先（ツールバーの ✎）、HEAD・index・作業ツリーに触れる命令をそこへ、
   確認のシートに worktree を書く、ほかの worktree が checkout しているブランチで書き込む先を移す、New Worktree…・
   Remove Worktree・Prune。
-- [ ] U18. Working Copy に全部の worktree の変更を worktree ごとの見出しで並べる、ほかの worktree に書く前に聞く。
+- [x] U18. Working Copy に全部の worktree の変更を worktree ごとの見出しで並べる、ほかの worktree に書く前に聞く。
 - [ ] U19. History に各 worktree の HEAD の「作業中」の行。
 
 ## 決めたこと

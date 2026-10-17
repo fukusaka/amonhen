@@ -242,6 +242,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
         slot.workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
         slot.workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
+        slot.workingCopy.onEditInWorktree = { [weak self] path, file, ask in
+            if ask { self?.askToEdit(worktree: path, file: file) } else { self?.edit(worktree: path, file: file) }
+        }
         slot.actions.window = window
         slot.actions.onFailure = { [weak self] message in self?.showFailure(message) }
         slot.actions.onChange = { [weak self, weak slot] in
@@ -293,6 +296,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.show(worktrees: worktrees, editing: editing.path)
         actionsWorktreeName()
         updateEditingBranch()
+        reloadOtherWorktrees()
     }
 
     /// 確認のシートに worktree の名前を出す（worktree が 2 つ以上あるときだけ）。
@@ -302,32 +306,83 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// `path` の worktree を書き込む先にする。まだ開いていなければ開く（SSH 先なら同じ接続先の上のパス）。
-    func edit(worktree path: String) {
-        if WorktreeInfo.canonical(path) == WorktreeInfo.canonical(editing.path) { return }
-        if WorktreeInfo.canonical(path) == WorktreeInfo.canonical(opened.path) { return activate(opened) }
-        if let slot = slots[WorktreeInfo.canonical(path)] { return activate(slot) }
+    /// `file` があれば、Working Copy でそのファイルを選ぶ。
+    func edit(worktree path: String, file: String? = nil) {
+        if WorktreeInfo.canonical(path) == WorktreeInfo.canonical(editing.path) {
+            if let file { editing.workingCopy.select(file: file); editing.workingCopy.refresh() }
+            return
+        }
+        Task {
+            guard let slot = await slot(for: path) else { return }
+            if let file { slot.workingCopy.select(file: file) }
+            activate(slot)
+        }
+    }
+
+    /// `path` の worktree の組（なければ開く。開いただけでは書き込む先にしない）。
+    private func slot(for path: String) async -> WorktreeSlot? {
+        if WorktreeInfo.canonical(path) == WorktreeInfo.canonical(opened.path) { return opened }
+        if let slot = slots[WorktreeInfo.canonical(path)] { return slot }
         let location = RepositoryLocation.isRemote(self.location) ? Self.replacingPath(of: self.location, with: path) : path
         let daemon = Daemon.path, daemons = Daemon.bundledDirectory
-        let renderer = textRenderer
-        Task {
-            do {
-                let repository = try await Task.detached(priority: .userInitiated) {
-                    try Self.openRepository(location: location, daemon: daemon, daemons: daemons)
-                }.value
-                let slot = WorktreeSlot(path: path, repository: repository, renderer: renderer)
-                wire(slot)
-                slots[WorktreeInfo.canonical(path)] = slot
-                slot.watch = try? RepositoryWatch(repository: repository) { [weak self, weak slot] changes in
-                    Task { @MainActor in
-                        guard let slot, !changes.intersection([.refs, .index, .worktree]).isEmpty else { return }
-                        slot.workingCopy.refresh()
-                        if changes.contains(.refs) { self?.reloadRefs() }
-                    }
+        do {
+            let repository = try await Task.detached(priority: .userInitiated) {
+                try Self.openRepository(location: location, daemon: daemon, daemons: daemons)
+            }.value
+            // 開いている間にほかから開いていたら、そちらを使う。
+            if let slot = slots[WorktreeInfo.canonical(path)] { return slot }
+            let slot = WorktreeSlot(path: path, repository: repository, renderer: textRenderer)
+            wire(slot)
+            slots[WorktreeInfo.canonical(path)] = slot
+            slot.watch = try? RepositoryWatch(repository: repository) { [weak self, weak slot] changes in
+                Task { @MainActor in
+                    guard let self, let slot, !changes.intersection([.refs, .index, .worktree]).isEmpty else { return }
+                    if slot === self.editing { slot.workingCopy.refresh() }
+                    if changes.contains(.refs) { self.reloadRefs() }
+                    self.reloadOtherWorktrees()
                 }
-                activate(slot)
-            } catch {
-                showFailure("\(error)", title: L("Can’t open the worktree"))
             }
+            return slot
+        } catch {
+            showFailure("\(error)", title: L("Can’t open the worktree"))
+            return nil
+        }
+    }
+
+    /// ほかの worktree のファイルを stage・discard しようとした: 書き込む先を変えてよいか聞く。
+    private func askToEdit(worktree path: String, file: String?) {
+        guard let info = worktrees.first(where: { $0.isSame(path) }) else { return }
+        let alert = NSAlert()
+        alert.messageText = L("Edit in the worktree “%@”?", info.name)
+        alert.informativeText = L("Staging, committing and the other changes then go to %@ (branch %@).", info.path,
+                                  info.branch ?? L("detached HEAD"))
+        alert.addButton(withTitle: L("Edit in %@", info.name))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.edit(worktree: path, file: file)
+        }
+    }
+
+    /// ほかの worktree の変更を読み、書き込む先の Working Copy の一覧の下に並べる（見るときは全部を混ぜる）。
+    private func reloadOtherWorktrees() {
+        let others = worktrees.filter { !$0.isSame(editing.path) && $0.prunable == nil && !$0.bare }
+        let target = editing
+        target.workingCopy.worktreeName = worktrees.count > 1
+            ? worktrees.first { $0.isSame(target.path) }?.name ?? (target.path as NSString).lastPathComponent : nil
+        guard !others.isEmpty else { return target.workingCopy.setOtherWorktrees([]) }
+        Task {
+            var list: [WorkingCopyViewController.OtherWorktree] = []
+            for info in others {
+                guard let slot = await slot(for: info.path),
+                      let status = try? await Task.detached(priority: .utility, operation: { try slot.repository.loadStatus() }).value
+                else { continue }
+                worktreeChanges[info.path] = status.items.count
+                list.append(.init(path: info.path, name: info.name, branch: info.branch, status: status))
+            }
+            sidebar.setWorktreeChanges(worktreeChanges)
+            guard target === editing else { return }
+            target.workingCopy.setOtherWorktrees(list)
         }
     }
 

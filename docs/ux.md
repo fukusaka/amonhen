@@ -499,7 +499,7 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
 - [x] U17. Editing one worktree: the edited worktree (✎ in the toolbar), commands that touch HEAD, the index or the
   working tree sent there, the worktree named in confirmation sheets, branches checked out elsewhere moving the edited
   worktree, New Worktree… / Remove Worktree / Prune.
-- [ ] U18. Working Copy with every worktree's changes under one heading each, asking before editing another worktree.
+- [x] U18. Working Copy with every worktree's changes under one heading each, asking before editing another worktree.
 - [ ] U19. History's "working" rows at each worktree's HEAD.
 
 ## Decisions

@@ -55,6 +55,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let sideControl = NSSegmentedControl(labels: ["Unstaged", "Staged"], trackingMode: .selectOne, target: nil, action: nil)
     private let linesButton = NSButton(title: "Stage Lines", target: nil, action: nil)
     private let discardButton = NSButton(title: "Discard Lines", target: nil, action: nil)
+    /// ほかの worktree の差分を見ているときの「<worktree> で編集」。
+    private let editInButton = NSButton(title: "", target: nil, action: nil)
     var actions: Actions?
     private let titleLabel = NSTextField(labelWithString: "")
     /// merge・rebase などの途中のときに出す帯。
@@ -92,6 +94,59 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         var allFiles: [Entry] { files + dirs.flatMap(\.allFiles) }
     }
     private var tree: Dir?
+
+    // MARK: worktree（docs/ux.md の「Worktrees」: 見るときは全部の worktree を混ぜる）
+
+    /// ほかの worktree の変更（見るだけ）。窓が読んで渡す。
+    struct OtherWorktree {
+        let path: String
+        let name: String
+        let branch: String?
+        let status: WorkingStatus
+    }
+    /// この worktree の見出し（ほかの worktree があるときだけ出す）。
+    private final class OwnHeader {}
+    private final class OtherGroup {
+        let worktree: OtherWorktree
+        var entries: [OtherEntry] = []
+        init(_ worktree: OtherWorktree) { self.worktree = worktree }
+    }
+    private final class OtherEntry {
+        unowned let group: OtherGroup
+        let item: StatusItem
+        init(group: OtherGroup, item: StatusItem) {
+            self.group = group
+            self.item = item
+        }
+    }
+    private let ownHeader = OwnHeader()
+    private var others: [OtherGroup] = []
+    /// この worktree の名前（見出しに出す）。
+    var worktreeName: String?
+    /// ほかの worktree のファイルに書き込もうとした（`path` の worktree を書き込む先にして、`file` を選ぶ）。
+    /// `ask` なら先に聞く（stage しようとしたとき。「<worktree> で編集」のボタンなら聞かない）。
+    var onEditInWorktree: ((String, String?, Bool) -> Void)?
+    /// ほかの worktree の差分を見ている（stage などはできない）。
+    private var viewingOther: OtherEntry?
+    /// 書き込む先にした後に選ぶファイル。
+    private var pendingSelection: String?
+
+    /// ほかの worktree の変更を一覧の下に並べる（変更のないものは見出しだけ）。
+    func setOtherWorktrees(_ list: [OtherWorktree]) {
+        others = list.map { worktree in
+            let group = OtherGroup(worktree)
+            group.entries = worktree.status.items.sorted { $0.path < $1.path }.map { OtherEntry(group: group, item: $0) }
+            return group
+        }
+        if isViewLoaded { rebuildList() }
+    }
+
+    /// 書き込む先にした直後に、`file` を選ぶ（読み直した後に選ぶ）。
+    func select(file: String) {
+        pendingSelection = file
+        selectedKey = (file, false)
+    }
+
     private var current: WorkingFileDiff?
     /// 選んでいたファイルと、見せていた側（読み直した後に選び直す）。
     private var selectedKey: (path: String, staged: Bool)?
@@ -288,7 +343,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         ]
         conflictButtons.setViews(conflictActions.map { NSButton(title: $0.0, target: self, action: $0.1) }, in: .leading)
         conflictButtons.isHidden = true
-        let actionButtons = NSStackView(views: [sideControl, conflictButtons, discardButton, linesButton])
+        editInButton.target = self
+        editInButton.action = #selector(editInOtherWorktree)
+        editInButton.isHidden = true
+        let actionButtons = NSStackView(views: [sideControl, conflictButtons, discardButton, linesButton, editInButton])
         let bar = TitleAndButtonsBar(title: titleLabel, buttons: actionButtons)
         diffBar = bar
         diffView.isSelectable = true
@@ -422,9 +480,24 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         tree = showsTree ? Self.makeTree(entries) : nil
         files.reloadData()
         files.expandItem(nil, expandChildren: true)
+        // ほかの worktree は、変更のあるものだけ開いておく。
+        for group in others where group.entries.isEmpty { files.collapseItem(group) }
         emptyLabel.stringValue = allEntries.isEmpty ? L("No changes") : L("No matching files")
-        emptyLabel.isHidden = !entries.isEmpty
+        emptyLabel.isHidden = !entries.isEmpty || !others.isEmpty
         updateHeader()
+        if let pending = pendingSelection {
+            pendingSelection = nil
+            selectedKey = (pending, false)
+        }
+        // ほかの worktree の差分を見ていたら、それを選び直す。
+        if let viewing = viewingOther,
+           let again = others.first(where: { $0.worktree.path == viewing.group.worktree.path })?
+            .entries.first(where: { $0.item.path == viewing.item.path }) {
+            files.selectRowIndexes([files.row(forItem: again)], byExtendingSelection: false)
+            showOtherDiff(again)
+            return
+        }
+        viewingOther = nil
 
         // 同じファイルを選び直す。なければ最初のもの。
         let target = selectedKey.flatMap { key in entries.first { $0.item.path == key.path } } ?? entries.first
@@ -580,6 +653,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     private func showDiff(of entry: Entry, staged: Bool, keepScroll: Bool = false) {
         guard let status else { return }
+        viewingOther = nil
+        editInButton.isHidden = true
         selectedKey = (entry.item.path, staged)
         titleLabel.stringValue = entry.item.path
         diffView.path = entry.item.path
@@ -630,6 +705,45 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             }
             updateButtons()
         }
+    }
+
+    /// ほかの worktree のファイルの差分を、見るだけの形で出す（帯に「<worktree> で編集」）。
+    private func showOtherDiff(_ other: OtherEntry) {
+        viewingOther = other
+        selectedKey = nil
+        unembed()
+        current = nil
+        isConflict = false
+        diffView.isConflictView = false
+        titleLabel.stringValue = "\(other.group.worktree.name): \(other.item.path)"
+        diffView.path = other.item.path
+        sideControl.isHidden = true
+        updateButtons()
+        linesButton.isHidden = true
+        discardButton.isHidden = true
+        conflictButtons.isHidden = true
+        editInButton.title = L("Edit in %@", other.group.worktree.name)
+        editInButton.isHidden = false
+        diffBar?.needsLayout = true
+        request += 1
+        let request = self.request
+        let status = other.group.worktree.status, item = other.item
+        Task {
+            let diff = await Task.detached(priority: .userInitiated) { () -> WorkingFileDiff? in
+                (try? status.combinedDiff(of: item)) ?? (try? status.diff(of: item, staged: !item.isUnstaged))
+            }.value
+            guard request == self.request else { return }
+            if let diff, diff.isBinary {
+                diffView.show(nil, message: L("Binary file"))
+            } else {
+                diffView.show(diff)
+            }
+        }
+    }
+
+    @objc private func editInOtherWorktree() {
+        guard let other = viewingOther else { return }
+        onEditInWorktree?(other.group.worktree.path, other.item.path, false)
     }
 
     @objc private func sideChanged() {
@@ -1167,7 +1281,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     private func children(of item: Any?) -> [Any] {
         switch item {
-        case nil: tree?.children ?? entries
+        case nil: others.isEmpty ? (tree?.children ?? entries) : [ownHeader] + others
+        case is OwnHeader: tree?.children ?? entries
+        case let group as OtherGroup: group.entries
         case let dir as Dir: dir.children
         default: []
         }
@@ -1182,12 +1298,33 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {
-        item is Dir
+        item is Dir || item is OwnHeader || item is OtherGroup
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
         let cell = outlineView.makeView(withIdentifier: WorkingFileCell.identifier, owner: nil) as? WorkingFileCell ?? WorkingFileCell()
         switch item {
+        case is OwnHeader:
+            cell.show(check: nil, mark: ("✎", .controlAccentColor), name: worktreeName ?? "", dimmed: false,
+                      tip: L("The worktree you edit: commits and staging go here"), detail: "\(allEntries.count)")
+            cell.onDiscard = nil
+        case let group as OtherGroup:
+            let w = group.worktree
+            cell.show(check: nil, mark: ("", .secondaryLabelColor), name: w.name, dimmed: true,
+                      tip: [w.path, w.branch.map { L("Branch: %@", $0) }].compactMap { $0 }.joined(separator: "\n"),
+                      detail: [w.branch, group.entries.isEmpty ? L("No changes") : "\(group.entries.count)"]
+                        .compactMap { $0 }.joined(separator: "  "))
+            cell.onDiscard = nil
+        case let other as OtherEntry:
+            let item = other.item
+            let state = item.worktreeState != "." ? item.worktreeState : item.indexState
+            let mark: (String, NSColor) = item.kind == .unmerged ? ("⚠", .systemRed)
+                : state == "?" || state == "A" ? (state == "?" ? "U" : "A", .systemGreen)
+                : state == "D" ? ("D", .systemRed) : (String(state), .systemOrange)
+            let check: NSControl.StateValue = item.isStaged ? (item.isUnstaged ? .mixed : .on) : .off
+            cell.show(check: item.kind == .unmerged ? nil : check, mark: mark, name: item.path, dimmed: false,
+                      tip: L("In the worktree “%@” (read only here)", other.group.worktree.name))
+            cell.onDiscard = nil
         case let dir as Dir:
             let states = Set(dir.allFiles.filter { !$0.isConflict }.map(\.check))
             let state: NSControl.StateValue = states == [.on] ? .on : states.isEmpty || states == [.off] ? .off : .mixed
@@ -1209,6 +1346,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
         cell.onToggle = { [weak self] in
             guard let self else { return }
+            // ほかの worktree のファイルは、書き込む先を変えてからでないと含められない。
+            if let other = item as? OtherEntry {
+                onEditInWorktree?(other.group.worktree.path, other.item.path, true)
+                rebuildList()
+                return
+            }
             toggle(files(under: item))
         }
         return cell
@@ -1241,7 +1384,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        if let other = files.item(atRow: files.selectedRow) as? OtherEntry {
+            showOtherDiff(other)
+            return
+        }
         guard let entry = files.item(atRow: files.selectedRow) as? Entry else { return }
+        viewingOther = nil
+        editInButton.isHidden = true
         if selectedKey?.path == entry.item.path, current != nil || isConflict { return }
         showDiff(of: entry, staged: side(for: entry.item))
     }

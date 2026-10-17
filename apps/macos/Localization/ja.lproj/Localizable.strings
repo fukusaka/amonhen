@@ -846,3 +846,8 @@
 "detached HEAD" = "detached HEAD";
 "locked" = "ロック中";
 "missing" = "なし";
+"The worktree you edit: commits and staging go here" = "書き込む先の worktree（コミットや stage はここに入る）";
+"In the worktree “%@” (read only here)" = "worktree「%@」のファイル（ここでは見るだけ）";
+"Edit in %@" = "%@ で編集";
+"Edit in the worktree “%@”?" = "worktree「%@」で編集しますか？";
+"Staging, committing and the other changes then go to %@ (branch %@)." = "このあとの stage・コミットなどは、%1$@（ブランチ %2$@）に対して行います。";
