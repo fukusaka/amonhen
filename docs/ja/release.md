@@ -9,7 +9,7 @@
 - `v<数字>` のタグ（`v0.1.1` など）を push すると、GitHub Actions がアプリの zip と、エンジンだけの tar.gz（macOS arm64・
   Linux x86_64・Linux aarch64）と zip（Windows x86_64・aarch64）を Release に載せる。タグは `Cargo.toml` の
   `workspace.package.version` と一致させる。
-- VSCode 拡張は `vscode-v*` のタグで、エンジンを同梱した .vsix を載せる（[apps/vscode](../../apps/vscode/README.ja.md) を参照）。
+- VSCode 拡張は `vscode-v*` のタグで、エンジンを同梱した .vsix を載せる（[apps/vscode/docs/ja/development.md](../../apps/vscode/docs/ja/development.md#リリース) を参照）。
 - main の CI（`ci.yml`）が通るたびに、そのコミットで `snapshot` という pre-release を作り直す（アプリ・エンジン・拡張。
   バージョンは `<次の patch>-snapshot.<コミット数>+<sha>`）。Windows のエンジンは macOS のビルドと並んで作り、最後の
   仕事で同梱して載せる。

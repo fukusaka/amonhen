@@ -10,7 +10,7 @@ How releases are made, and signing, notarization and build provenance attestatio
   tar.gz files (macOS arm64, Linux x86_64, Linux aarch64) and zip files (Windows x86_64, aarch64). The tag must match
   `workspace.package.version` in `Cargo.toml`.
 - The VSCode extension uses `vscode-v*` tags and publishes a .vsix with the engine bundled (see
-  [apps/vscode](../apps/vscode)).
+  [apps/vscode/docs/development.md](../apps/vscode/docs/development.md#release)).
 - Whenever CI (`ci.yml`) passes on main, a pre-release named `snapshot` is recreated from that commit (app, engine,
   extension; the version is `<next patch>-snapshot.<commit count>+<sha>`). The Windows engines are built alongside the
   macOS build, and a last job bundles and publishes everything.
