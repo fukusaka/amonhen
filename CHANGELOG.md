@@ -9,6 +9,11 @@ becomes the GitHub Release notes.
 
 ### [Unreleased]
 
+#### Fixed
+
+- Building History no longer spins up threads for every few commits. On the Linux engines (musl) it was 5 times
+  slower than it should be; on git/git it now takes about 0.1 s instead of 0.6 s there, and about 20% less elsewhere.
+
 ### [0.2.0] - 2026-10-17
 
 The first release signed with Developer ID and notarized. The app is reworked around a menu bar, tabs and bookmarks,

@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use std::ops::Range;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use amonhen_model::Operations as _;
 use amonhen_model::{
@@ -37,6 +37,13 @@ fn range_in(whole: &[u8], part: &[u8]) -> Range<u32> {
 fn trim(bytes: &[u8]) -> &[u8] {
     bytes.trim_ascii()
 }
+
+/// History を作るとき、同じ深さのコミットがこれだけあれば並列に読む（少なければ 1 本のスレッドで順に読む）。
+/// git/git（8.2 万コミット、32 コア）で 16〜64 がいちばん速く、ほぼ同じだった。スレッドを起こす回数の少ない 64 にする。
+const PARALLEL_READ_MIN: usize = 64;
+
+/// 並列に読むときの、スレッドごとの読み手（リポジトリと、展開に使うバッファ）。
+type Reader = Mutex<Option<(gix::Repository, Vec<u8>)>>;
 
 /// コミット 1 つの親と日時。commit-graph にあればオブジェクトを展開せずに済ませる。
 fn read_commit(
@@ -146,16 +153,35 @@ impl GitBackend for GixBackend {
             .filter(|t| !known(t) && seen.insert(*t))
             .collect();
         let mut out = Vec::new();
+        let mut buf = Vec::new();
+        // 並列に読むときの、スレッドごとの読み手（大きなバッファ付き）。rayon のスレッドの番号ごとに 1 つ、最初に
+        // 使うときに作り、History を作り終えるまで使い回す。rayon は仕事を分けるたびに map_init の初期化をするので、
+        // そのたびに作り直すと読むより高くつく（musl ではバッファのたびに mmap・munmap して、5 倍遅くなっていた）。
+        let threads = rayon::current_num_threads();
+        let readers: Vec<Reader> = (0..=threads).map(|_| Mutex::new(None)).collect();
 
-        // 幅優先で辿り、同じ深さのコミットはまとめて並列に読む（展開が時間の大半を占める）。
+        // 幅優先で辿り、同じ深さのコミットが多ければまとめて並列に読む（展開が時間の大半を占める）。ふつうの履歴は
+        // ほとんどの深さで 1〜数個しかないので、そこはスレッドを起こさずに順に読む。
         while !frontier.is_empty() {
-            let read: Vec<RawCommit> = frontier
-                .par_iter()
-                .map_init(
-                    || (self.repo.to_thread_local(), Vec::new()),
-                    |(repo, buf), id| read_commit(repo, graph.as_ref(), hash, buf, id),
-                )
-                .collect::<Result<_>>()?;
+            let read: Vec<RawCommit> = if frontier.len() < PARALLEL_READ_MIN {
+                frontier
+                    .iter()
+                    .map(|id| read_commit(&repo, graph.as_ref(), hash, &mut buf, id))
+                    .collect::<Result<_>>()?
+            } else {
+                frontier
+                    .par_iter()
+                    .map(|id| {
+                        let slot = rayon::current_thread_index()
+                            .unwrap_or(threads)
+                            .min(threads);
+                        let mut reader = readers[slot].lock().unwrap_or_else(|e| e.into_inner());
+                        let (repo, buf) =
+                            reader.get_or_insert_with(|| (self.repo.to_thread_local(), Vec::new()));
+                        read_commit(repo, graph.as_ref(), hash, buf, id)
+                    })
+                    .collect::<Result<_>>()?
+            };
             frontier.clear();
             for commit in &read {
                 for p in &commit.parents {
