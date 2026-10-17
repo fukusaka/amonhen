@@ -133,6 +133,8 @@ mod imp {
             let view = self.obj();
             view.set_focusable(true);
             view.set_overflow(gtk::Overflow::Hidden);
+            // テーマの一覧の背景（暗いテーマでも文字と合う）。
+            view.add_css_class("view");
 
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
@@ -236,7 +238,9 @@ impl HistoryView {
     }
 
     pub fn row_height(&self) -> f32 {
-        self.state().metrics.row_height
+        let mut st = self.state();
+        self.fonts(&mut st);
+        st.metrics.row_height
     }
 
     /// 表示する History を替える。同じ History の新しい世代なら、選んでいたコミットを選び直す。
@@ -396,12 +400,19 @@ impl HistoryView {
             return;
         }
         let subject = self.pango_context().font_description().unwrap_or_default();
-        let size = subject.size();
         let mut meta = subject.clone();
-        meta.set_size(size * 85 / 100);
+        crate::scale_font(&mut meta, &subject, 0.85);
         let mut label = subject.clone();
-        label.set_size(size * 80 / 100);
+        crate::scale_font(&mut label, &subject, 0.80);
         label.set_weight(pango::Weight::Medium);
+        // 行の高さは、件名と作者・日時の 2 段が収まるように（フォントの大きさは OS や設定で違う）。
+        let height = |font: &pango::FontDescription| {
+            let layout = self.create_pango_layout(Some("Ag"));
+            layout.set_font_description(Some(font));
+            layout.pixel_size().1 as f32
+        };
+        let needed = (height(&subject) + 2.0 + height(&meta) + 8.0).ceil();
+        st.metrics.row_height = needed.max(Metrics::default().row_height);
         st.fonts = Some(Fonts {
             subject,
             meta,

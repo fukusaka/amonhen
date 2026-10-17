@@ -157,6 +157,7 @@ mod imp {
             let view = self.obj();
             view.set_focusable(true);
             view.set_overflow(gtk::Overflow::Hidden);
+            view.add_css_class("view");
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
             click.connect_pressed(move |gesture, _, x, y| {
@@ -344,7 +345,7 @@ impl DiffWidget {
         }
         let base = self.pango_context().font_description().unwrap_or_default();
         let mut font = pango::FontDescription::from_string("Monospace");
-        font.set_size(base.size() * 90 / 100);
+        crate::scale_font(&mut font, &base, 0.90);
         let layout = self.create_pango_layout(Some("Mg"));
         layout.set_font_description(Some(&font));
         st.row_height = (layout.pixel_size().1 as f32 + 3.0).round();

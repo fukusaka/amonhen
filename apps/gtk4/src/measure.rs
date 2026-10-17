@@ -11,7 +11,8 @@ use gtk::prelude::*;
 use crate::history::HistoryView;
 
 const FRAMES: usize = 600;
-const ROWS_PER_FRAME: f64 = 40.0;
+/// 1 フレームにスクロールする行数の既定（`--scroll-rows`）。
+pub const ROWS_PER_FRAME: f64 = 40.0;
 
 #[derive(Default)]
 struct Record {
@@ -24,7 +25,7 @@ struct Record {
     refresh: Option<f64>,
 }
 
-pub fn scroll(window: &gtk::ApplicationWindow, view: &HistoryView) {
+pub fn scroll(window: &gtk::ApplicationWindow, view: &HistoryView, rows_per_frame: f64) {
     let Some(clock) = view.frame_clock() else {
         eprintln!("frame clock がない");
         return;
@@ -61,7 +62,7 @@ pub fn scroll(window: &gtk::ApplicationWindow, view: &HistoryView) {
         let frame = frame.get();
         let adj = view.vadjustment().expect("vadjustment");
         let max = adj.upper() - adj.page_size();
-        adj.set_value((adj.value() + ROWS_PER_FRAME * view.row_height() as f64).min(max));
+        adj.set_value((adj.value() + rows_per_frame * view.row_height() as f64).min(max));
         if frame < FRAMES && adj.value() < max {
             return glib::ControlFlow::Continue;
         }

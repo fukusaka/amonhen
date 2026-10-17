@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll] [--scroll-to <row> | --select-ref <name>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
 
 mod details;
 mod diff;
@@ -36,6 +36,8 @@ struct Args {
     snapshot: Option<PathBuf>,
     /// 自動でスクロールして、1 フレームの時間を測って終わる。
     measure_scroll: bool,
+    /// `--measure-scroll` で 1 フレームにスクロールする行数。
+    scroll_rows: Option<f64>,
     /// Working Copy を開いた状態で始める。
     working_copy: bool,
     /// Working Copy で選んでおくファイル。
@@ -54,6 +56,10 @@ fn parse_args() -> Result<Args, String> {
         match a.as_str() {
             "--snapshot" => args.snapshot = Some(it.next().ok_or("--snapshot <png>")?.into()),
             "--measure-scroll" => args.measure_scroll = true,
+            "--scroll-rows" => {
+                let rows = it.next().ok_or("--scroll-rows <n>")?;
+                args.scroll_rows = Some(rows.parse().map_err(|_| "--scroll-rows <n>")?);
+            }
             "--working-copy" => args.working_copy = true,
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
             "--toggle-row" => {
@@ -523,7 +529,33 @@ fn after_first_show(
             ),
         );
     } else if args.measure_scroll {
-        measure::scroll(window, view);
+        let rows = args.scroll_rows.unwrap_or(measure::ROWS_PER_FRAME);
+        measure::scroll(window, view, rows);
+    }
+}
+
+/// 窓の背景の色（テーマの色の名前はテーマによって違う。どれもなければ白）。
+#[allow(deprecated)]
+fn window_background(window: &gtk::ApplicationWindow) -> gtk::gdk::RGBA {
+    let style = window.style_context();
+    ["window_bg_color", "theme_bg_color", "bg_color"]
+        .iter()
+        .find_map(|name| style.lookup_color(name))
+        .unwrap_or(gtk::gdk::RGBA::WHITE)
+}
+
+/// `font` を `base` の大きさの `factor` 倍にする。大きさがピクセルで決まっている（Ubuntu など）なら、
+/// ポイントに読み替えずにピクセルのまま縮める。
+pub fn scale_font(
+    font: &mut gtk::pango::FontDescription,
+    base: &gtk::pango::FontDescription,
+    factor: f64,
+) {
+    let size = base.size() as f64 * factor;
+    if base.is_size_absolute() {
+        font.set_absolute_size(size);
+    } else {
+        font.set_size(size as i32);
     }
 }
 
@@ -534,7 +566,10 @@ fn snapshot(window: &gtk::ApplicationWindow, png: &Path) -> Result<(), String> {
     // 窓そのものの paintable は空になるので、窓の部品（見出しと中身）を順に描く。
     let snap = gtk::Snapshot::new();
     snap.scale(scale, scale);
-    snap.append_color(&gtk::gdk::RGBA::WHITE, &graphene::Rect::new(0.0, 0.0, w, h));
+    snap.append_color(
+        &window_background(window),
+        &graphene::Rect::new(0.0, 0.0, w, h),
+    );
     let mut child = window.first_child();
     while let Some(widget) = child {
         if let Some(bounds) = widget.compute_bounds(window) {

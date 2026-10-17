@@ -23,7 +23,7 @@ cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 
 
 `AmonHen <repo> --snapshot out.png [--select-first | --select-row N] [--working-copy] [--find TEXT] [--search TEXT] [--merge-editor PATH]`、`--blame PATH`・`--file-history PATH`（そのウィンドウを開く）（画面を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 600 フレーム自動でスクロールして速さと処理ごとの内訳を表示）、`--measure-select N`（コミットを N 個選び、詳細が出るまでの段階ごとの時間を表示）、`--log-scroll`（トラックパッドでのスクロールの減速を記録）、`--show-latency`（入力から表示までの時間をタイトルの下に出す）。
 
-GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png [--scroll-to N | --select-ref NAME] [--working-copy [--select-path PATH] [--toggle-row N]]`（`--toggle-row` はその差分の行の印を一度クリックしたことにする）（見えている行を読んだら窓を PNG に書き出して終了）、`--measure-scroll`（History を 1 フレームに 40 行ずつ 600 フレームスクロールし、1 フレームのメインスレッドの時間・History の snapshot の時間・落としたフレームを表示。描画器は `GSK_RENDERER=cairo|gl|vulkan` で選ぶ）。
+GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png [--scroll-to N | --select-ref NAME] [--working-copy [--select-path PATH] [--toggle-row N]]`（`--toggle-row` はその差分の行の印を一度クリックしたことにする）（見えている行を読んだら窓を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 1 フレームに 40 行（か N 行）ずつ 600 フレームスクロールし、1 フレームのメインスレッドの時間・History の snapshot の時間・落としたフレームを表示。描画器は `GSK_RENDERER=cairo|gl|vulkan` で選ぶ）。
 
 ## VSCode 拡張
 
