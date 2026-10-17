@@ -419,7 +419,7 @@ enum Assistant {
         }
         let started = CACurrentMediaTime()
         let result = cli == .apple
-            ? try await AppleModel.stream(prompt: prompt, onText: onText)
+            ? try await AppleModel.stream(prompt: prompt, purpose: purpose, onText: onText)
             : try await stream(cli: cli, executable: cli.path ?? "", model: model, prompt: prompt, onText: onText)
         PerformanceLog.record("AI: \(purpose.title)", ms: (CACurrentMediaTime() - started) * 1000)
         try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
@@ -568,13 +568,23 @@ enum AppleModel {
         return L("Needs macOS 26 or later.")
     }
 
-    /// 送って、返事を流しながら `onText` に渡す（それまでの全文）。
-    static func stream(prompt: String, onText: @escaping @MainActor (String) -> Void) async throws -> String {
+    /// 送って、返事を流しながら `onText` に渡す（それまでの全文）。コンフリクトの解消は、返事の形（JSON の
+    /// text・reason）をモデルに守らせる（ガイド付き生成）。小さなモデルは決まった形の JSON を崩しやすいため。
+    static func stream(
+        prompt: String, purpose: AssistPurpose, onText: @escaping @MainActor (String) -> Void
+    ) async throws -> String {
         #if canImport(FoundationModels)
         if #available(macOS 26.0, *) {
             let session = LanguageModelSession()
             var text = ""
             do {
+                if purpose == .resolveConflict {
+                    let answer = try await session.respond(to: prompt, generating: AppleResolution.self).content
+                    let data = try JSONSerialization.data(withJSONObject: ["text": answer.text, "reason": answer.reason])
+                    text = String(decoding: data, as: UTF8.self)
+                    onText(text)
+                    return text
+                }
                 for try await snapshot in session.streamResponse(to: prompt) {
                     text = snapshot.content
                     onText(text)
@@ -593,6 +603,18 @@ enum AppleModel {
         throw Assistant.Failure(description: unavailableReason ?? "")
     }
 }
+
+#if canImport(FoundationModels)
+/// 端末内のモデルに返させるコンフリクトの解消（`resolveConflict` の JSON と同じ中身）。
+@available(macOS 26.0, *)
+@Generable
+nonisolated struct AppleResolution {
+    @Guide(description: "The lines that replace the conflict region, without conflict markers")
+    var text: String
+    @Guide(description: "Why it was resolved this way, briefly, in the requested language")
+    var reason: String
+}
+#endif
 
 /// 差分を、AI に渡す unified diff 風の文字にする（大きければ切る）。
 nonisolated enum DiffText {

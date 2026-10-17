@@ -33,7 +33,8 @@ becomes the GitHub Release notes.
 #### Added
 
 - The app is in English and Japanese, following the system language. git's operations and the app's screens keep
-  their English names (Commit, Push, Working Copy, History, …) in Japanese too.
+  their English names (Commit, Push, Working Copy, History, …) in Japanese too. English counts read "1 commit",
+  not "1 commits".
 - AI can use Apple Intelligence's on-device model (macOS 26): nothing leaves the Mac, and it is the default where
   available. Claude Code and Codex models are chosen from a pop-up (Codex lists the models its CLI knows).
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).

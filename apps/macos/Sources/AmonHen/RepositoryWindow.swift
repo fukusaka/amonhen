@@ -265,10 +265,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if CommandLine.arguments.contains("--show-latency") {
             history.onLatency = { latency in
                 window.subtitle = String(format: "入力→表示 %.1f ms", latency * 1000)
-                PerformanceLog.record("History: 入力 → 表示", ms: latency * 1000)
+                PerformanceLog.record("History: input → display", ms: latency * 1000)
             }
         } else {
-            history.onLatency = { latency in PerformanceLog.record("History: 入力 → 表示", ms: latency * 1000) }
+            history.onLatency = { latency in PerformanceLog.record("History: input → display", ms: latency * 1000) }
         }
         let repository = self.repository
         let started = Date()

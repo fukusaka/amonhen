@@ -1386,7 +1386,7 @@ final class RepositoryCell: NSTableCellView {
         branch.stringValue = exists ? peek.map { $0.branch ?? "detached" } ?? RepositoryList.branch(of: location) ?? "" : ""
         var parts: [String] = []
         if let peek {
-            if peek.changed > 0 { parts.append("● \(peek.changed)") }
+            if peek.changed > 0 { parts.append(L("Changes %ld", peek.changed)) }
             if peek.ahead > 0 { parts.append("↑\(peek.ahead)") }
             if peek.behind > 0 { parts.append("↓\(peek.behind)") }
         }

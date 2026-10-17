@@ -26,7 +26,8 @@ nonisolated func L(_ key: String) -> String {
     L10n.bundle.localizedString(forKey: key, value: key, table: nil)
 }
 
-/// `format`（英語。`%@`・`%d`、順番を変えるなら `%1$@`）の訳に、`args` を入れる。
+/// `format`（英語。`%@`・`%ld`、順番を変えるなら `%1$@`）の訳に、`args` を入れる。英語で数によって形が変わる文
+/// （1 commit・2 commits）は、`en.lproj/Localizable.stringsdict` に単数と複数を書く。
 nonisolated func L(_ format: String, _ args: CVarArg...) -> String {
     String(format: L(format), locale: Locale.current, arguments: args)
 }
