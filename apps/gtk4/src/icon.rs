@@ -1,4 +1,4 @@
-//! サイドバーの小さなアイコン。GSK のパスで描き、文字の色に合わせる（アイコンのテーマに頼らない。
+//! サイドバーと見出しのボタンの小さなアイコン（形は macOS 版の SF Symbols に寄せる）。GSK のパスで描き、文字の色に合わせる（アイコンのテーマに頼らない。
 //! テーマによってブランチやタグのアイコンがないため）。
 
 use std::cell::Cell;
@@ -21,6 +21,24 @@ pub enum Kind {
     Stash,
     Submodule,
     Folder,
+    /// arrow.down.circle
+    Fetch,
+    /// arrow.down.to.line.circle
+    Pull,
+    /// arrow.up.circle
+    Push,
+    /// arrow.triangle.merge
+    Merge,
+    /// arrow.triangle.pull
+    Rebase,
+    /// tray.and.arrow.down
+    StashPush,
+    /// tray.and.arrow.up
+    StashPop,
+    /// arrow.clockwise
+    Refresh,
+    /// arrow.uturn.backward.circle
+    Undo,
 }
 
 mod imp {
@@ -40,7 +58,14 @@ mod imp {
         type ParentType = gtk::Widget;
     }
 
-    impl ObjectImpl for Icon {}
+    impl ObjectImpl for Icon {
+        fn constructed(&self) {
+            self.parent_constructed();
+            // ボタンや行の中で、上下左右の真ん中に置く。
+            self.obj().set_valign(gtk::Align::Center);
+            self.obj().set_halign(gtk::Align::Center);
+        }
+    }
 
     impl WidgetImpl for Icon {
         fn measure(&self, _: gtk::Orientation, _: i32) -> (i32, i32, i32, i32) {
@@ -167,6 +192,97 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(13.5, 12.5);
             p.line_to(2.5, 12.5);
             p.close();
+        }
+        Kind::Fetch | Kind::Pull | Kind::Push => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            let (top, bottom) = match kind {
+                Kind::Pull => (4.3, 9.6),
+                _ => (4.5, 11.5),
+            };
+            if kind == Kind::Push {
+                p.move_to(8.0, 11.5);
+                p.line_to(8.0, 4.5);
+                p.move_to(5.5, 7.0);
+                p.line_to(8.0, 4.5);
+                p.line_to(10.5, 7.0);
+            } else {
+                p.move_to(8.0, top);
+                p.line_to(8.0, bottom);
+                p.move_to(5.5, bottom - 2.5);
+                p.line_to(8.0, bottom);
+                p.line_to(10.5, bottom - 2.5);
+            }
+            if kind == Kind::Pull {
+                p.move_to(5.0, 11.8);
+                p.line_to(11.0, 11.8);
+            }
+        }
+        Kind::Merge => {
+            // 2 本が合流して 1 本になる。
+            p.move_to(4.0, 2.5);
+            p.line_to(4.0, 5.0);
+            p.cubic_to(4.0, 8.0, 8.0, 8.0, 8.0, 11.0);
+            p.line_to(8.0, 14.0);
+            p.move_to(12.0, 2.5);
+            p.line_to(12.0, 5.0);
+            p.cubic_to(12.0, 8.0, 8.0, 8.0, 8.0, 11.0);
+            p.move_to(9.8, 4.3);
+            p.line_to(12.0, 2.3);
+            p.line_to(14.2, 4.3);
+        }
+        Kind::Rebase => {
+            // 枝を幹の先へ載せ替える。
+            p.move_to(4.5, 14.0);
+            p.line_to(4.5, 2.5);
+            p.move_to(11.5, 14.0);
+            p.line_to(11.5, 9.0);
+            p.cubic_to(11.5, 6.0, 8.0, 5.0, 6.0, 4.0);
+            p.move_to(6.5, 6.6);
+            p.line_to(5.6, 3.8);
+            p.line_to(8.5, 3.0);
+        }
+        Kind::StashPush | Kind::StashPop => {
+            p.move_to(2.5, 9.0);
+            p.line_to(2.5, 13.5);
+            p.line_to(13.5, 13.5);
+            p.line_to(13.5, 9.0);
+            p.move_to(2.5, 9.0);
+            p.line_to(5.5, 9.0);
+            p.line_to(6.5, 10.5);
+            p.line_to(9.5, 10.5);
+            p.line_to(10.5, 9.0);
+            p.line_to(13.5, 9.0);
+            if kind == Kind::StashPush {
+                p.move_to(8.0, 1.8);
+                p.line_to(8.0, 7.5);
+                p.move_to(5.8, 5.3);
+                p.line_to(8.0, 7.5);
+                p.line_to(10.2, 5.3);
+            } else {
+                p.move_to(8.0, 7.5);
+                p.line_to(8.0, 1.8);
+                p.move_to(5.8, 4.0);
+                p.line_to(8.0, 1.8);
+                p.line_to(10.2, 4.0);
+            }
+        }
+        Kind::Refresh => {
+            // 右上を開けた円と、その端の矢じり。
+            p.move_to(13.0, 8.0);
+            p.svg_arc_to(5.0, 5.0, 0.0, true, true, 9.5, 3.2);
+            p.move_to(9.0, 1.2);
+            p.line_to(11.2, 3.4);
+            p.line_to(8.8, 5.4);
+        }
+        Kind::Undo => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(10.8, 11.0);
+            p.line_to(10.8, 8.0);
+            p.svg_arc_to(2.4, 2.4, 0.0, false, false, 6.0, 8.0);
+            p.line_to(6.0, 10.0);
+            p.move_to(4.3, 8.4);
+            p.line_to(6.0, 10.2);
+            p.line_to(7.7, 8.4);
         }
     }
     let stroke = gsk::Stroke::new(1.3);

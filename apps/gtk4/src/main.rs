@@ -314,7 +314,6 @@ fn build_window(app: &gtk::Application, args: Args) {
         open,
         go_to,
     });
-    header.pack_end(&actions.undo);
     let latest_refs = refs;
     std::thread::spawn(move || load(path, tx));
     glib::spawn_future_local(glib::clone!(
@@ -387,6 +386,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                         view.show_refs(&refs);
                         sidebar.show(&refs);
                         latest_refs.replace(Some(refs.clone()));
+                        buttons.show_refs(&refs);
                         if let Some(name) = menu_ref.take()
                             && let Some(entry) = refs.refs.entries.iter().find(|e| e.name == name)
                         {

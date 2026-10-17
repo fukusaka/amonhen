@@ -19,6 +19,7 @@ use serde_json::json;
 
 use crate::actions::Actions;
 use crate::history::HistoryView;
+use crate::icon;
 use crate::refops;
 use crate::sidebar::{Page, Sidebar};
 use crate::workcopy::WorkingCopy;
@@ -42,10 +43,102 @@ pub struct Parts {
     pub go_to: Rc<dyn Fn(Oid)>,
 }
 
-/// 見出しのメニューのボタン（`--open-menu` で開く）。
+/// 見出しのメニューとツールバーのボタン（`--open-menu` で開く、ref を読んだら数を出す）。
 pub struct Buttons {
     pub repository: gtk::MenuButton,
     pub primary: gtk::MenuButton,
+    branch: gtk::Label,
+    branch_button: gtk::MenuButton,
+    pull: gtk::Button,
+    pull_count: gtk::Label,
+    push: gtk::Button,
+    push_count: gtk::Label,
+    window: gtk::ApplicationWindow,
+}
+
+impl Buttons {
+    /// 今のブランチ、上流との差（↓ 取り込める・↑ 送れる）、stash があるか。
+    pub fn show_refs(&self, refs: &RefsSnapshot) {
+        let head = refs.refs.head_branch.as_deref();
+        self.branch.set_text(head.unwrap_or("detached"));
+        self.branch_button.set_tooltip_text(Some(&format!(
+            "{} — 押すとブランチを切り替える（Ctrl+Shift+B）",
+            head.unwrap_or("detached HEAD")
+        )));
+        let entry = refs
+            .refs
+            .entries
+            .iter()
+            .find(|e| e.kind == RefKind::Local && Some(e.name.as_str()) == head);
+        let (ahead, behind) = entry.map_or((0, 0), |e| (e.ahead, e.behind));
+        let count = |label: &gtk::Label, n: u32, mark: &str| {
+            label.set_text(&format!("{mark}{n}"));
+            label.set_visible(n > 0);
+        };
+        count(&self.pull_count, behind, "↓");
+        count(&self.push_count, ahead, "↑");
+        self.pull.set_tooltip_text(Some(&if behind > 0 {
+            format!("上流より {behind} コミット後ろにあります（Ctrl+Alt+L）")
+        } else {
+            "Pull（Ctrl+Alt+L）".to_owned()
+        }));
+        self.push.set_tooltip_text(Some(&if ahead > 0 {
+            format!("上流より {ahead} コミット先にあります（Ctrl+Alt+P）")
+        } else {
+            "Push（Ctrl+Alt+P）".to_owned()
+        }));
+        let has_stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
+        if let Some(action) = self
+            .window
+            .lookup_action("pop-stash")
+            .and_downcast::<gio::SimpleAction>()
+        {
+            action.set_enabled(has_stash);
+        }
+    }
+}
+
+/// アイコンのボタン（`action` を実行する）。
+fn icon_button(kind: icon::Kind, action: &str, tip: &str) -> gtk::Button {
+    let icon = icon::Icon::default();
+    icon.set(kind, false);
+    let button = gtk::Button::new();
+    button.set_child(Some(&icon));
+    button.set_action_name(Some(action));
+    button.set_tooltip_text(Some(tip));
+    button
+}
+
+/// ▾ 付きのボタン（押すと `action`、▾ で `menu`）。アイコンの横に数を出せる。
+fn split_button(
+    kind: icon::Kind,
+    action: &str,
+    menu: &gio::Menu,
+) -> (gtk::Box, gtk::Button, gtk::Label) {
+    let icon = icon::Icon::default();
+    icon.set(kind, false);
+    let count = gtk::Label::new(None);
+    count.add_css_class("caption");
+    count.set_visible(false);
+    let inner = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    inner.append(&icon);
+    inner.append(&count);
+    let button = gtk::Button::new();
+    button.set_child(Some(&inner));
+    button.set_action_name(Some(action));
+    let more = gtk::MenuButton::builder().menu_model(menu).build();
+    let group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    group.add_css_class("linked");
+    group.append(&button);
+    group.append(&more);
+    (group, button, count)
+}
+
+/// ボタンの群れの間の空き（macOS のツールバーの space）。
+fn space() -> gtk::Box {
+    let b = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    b.set_width_request(8);
+    b
 }
 
 /// メニューの項目を選んだときの処理。
@@ -202,16 +295,97 @@ pub fn install(parts: Parts) -> Buttons {
         popover.set_halign(gtk::Align::Start);
     }
     parts.header.pack_start(&repository);
+
+    // ツールバー（macOS 版の既定の並び: Branch・Fetch・Pull・Push、Merge・Rebase、Stash・Pop、
+    // 右に Refresh・Undo）。Activity と検索は、まだ機能がないので出さない。
+    let branch = gtk::Label::new(Some("…"));
+    let branch_icon = icon::Icon::default();
+    branch_icon.set(icon::Kind::Branch, false);
+    let branch_inner = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    branch_inner.append(&branch_icon);
+    branch_inner.append(&branch);
+    let branch_button = gtk::MenuButton::builder()
+        .child(&branch_inner)
+        .always_show_arrow(true)
+        .menu_model(&menu_of(&[
+            Some(("Switch Branch…", "win.switch-branch")),
+            Some(("New Branch…", "win.new-branch")),
+            Some(("Rename Branch…", "win.rename-branch")),
+            Some(("Set Upstream…", "win.set-upstream")),
+        ]))
+        .build();
+    parts.header.pack_start(&branch_button);
+    parts.header.pack_start(&icon_button(
+        icon::Kind::Fetch,
+        "win.fetch",
+        "すべてのリモートを fetch（Ctrl+Alt+F）",
+    ));
+    let (pull_group, pull, pull_count) = split_button(
+        icon::Kind::Pull,
+        "win.pull",
+        &menu_of(&[
+            Some(("Pull with Merge", "win.pull-merge")),
+            Some(("Pull with Rebase", "win.pull-rebase")),
+            Some(("Pull Fast-Forward Only", "win.pull-ff-only")),
+        ]),
+    );
+    parts.header.pack_start(&pull_group);
+    let (push_group, push, push_count) = split_button(
+        icon::Kind::Push,
+        "win.push",
+        &menu_of(&[
+            Some(("Push", "win.push")),
+            Some(("Force Push (with Lease)…", "win.force-push")),
+        ]),
+    );
+    parts.header.pack_start(&push_group);
+    parts.header.pack_start(&space());
+    parts.header.pack_start(&icon_button(
+        icon::Kind::Merge,
+        "win.merge",
+        "ブランチ・タグ・選んだコミットを今のブランチへ merge（Ctrl+Alt+M）",
+    ));
+    parts.header.pack_start(&icon_button(
+        icon::Kind::Rebase,
+        "win.rebase",
+        "今のブランチを、ブランチ・タグ・選んだコミットの上へ rebase（Ctrl+Alt+R）",
+    ));
+    parts.header.pack_start(&space());
+    parts.header.pack_start(&icon_button(
+        icon::Kind::StashPush,
+        "win.stash",
+        "作業中の変更を退避（Ctrl+Alt+S）",
+    ));
+    parts.header.pack_start(&icon_button(
+        icon::Kind::StashPop,
+        "win.pop-stash",
+        "最新の stash を戻して消す（Ctrl+Alt+Shift+S）",
+    ));
+
     let primary = gtk::MenuButton::builder()
         .menu_model(&primary_menu())
         .tooltip_text("Main Menu")
         .primary(true)
         .build();
     set_icon(&primary, "open-menu-symbolic", "≡");
+    // 右端から: 主メニュー、Undo、Refresh。
     parts.header.pack_end(&primary);
+    parts.header.pack_end(&parts.actions.undo);
+    parts.header.pack_end(&icon_button(
+        icon::Kind::Refresh,
+        "win.refresh",
+        "History・ブランチ・Working Copy を読み直す（Ctrl+R）",
+    ));
     Buttons {
         repository,
         primary,
+        branch,
+        branch_button,
+        pull,
+        pull_count,
+        push,
+        push_count,
+        window: parts.window.clone(),
     }
 }
 

@@ -23,8 +23,12 @@ pub struct Actions {
 
 impl Actions {
     pub fn new(window: &gtk::ApplicationWindow) -> Rc<Self> {
-        let undo = gtk::Button::with_label("Undo");
-        undo.set_sensitive(false);
+        // 見出しの Undo（メニューの Undo と同じアクション。使えるかはアクションで決まる）。
+        let undo = gtk::Button::new();
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::Undo, false);
+        undo.set_child(Some(&icon));
+        undo.set_action_name(Some("win.undo"));
         let actions = Rc::new(Self {
             repo: RefCell::default(),
             window: window.downgrade(),
@@ -46,7 +50,7 @@ impl Actions {
                 return glib::Propagation::Proceed;
             };
             if key == gtk::gdk::Key::z
-                && state.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                && state == gtk::gdk::ModifierType::CONTROL_MASK
                 && actions.undo.is_sensitive()
             {
                 actions.perform(json!({ "op": "undo" }));
@@ -235,7 +239,14 @@ impl Actions {
                 return;
             };
             let label = reply["label"].as_str();
-            button.set_sensitive(label.is_some());
+            if let Some(action) = button
+                .root()
+                .and_downcast::<gtk::ApplicationWindow>()
+                .and_then(|w| w.lookup_action("undo"))
+                .and_downcast::<gio::SimpleAction>()
+            {
+                action.set_enabled(label.is_some());
+            }
             let tip = match label {
                 Some(l) => format!("Undo: {l}（Ctrl+Z）"),
                 None => "Undo できる操作はありません".to_owned(),
