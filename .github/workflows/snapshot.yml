@@ -72,4 +72,4 @@ jobs:
           gh release delete snapshot --yes --cleanup-tag || true
           gh release create snapshot "$ZIP" dist/amonhen-*.tar.gz dist/amonhen-*-windows-*.zip dist/amonhen-vscode-*.vsix --prerelease \
             --target "$SHA" --title "Snapshot $VERSION" \
-            --notes "main の最新（$VERSION）。アプリは scripts/install-app.sh snapshot、VSCode 拡張は scripts/install-vscode.sh snapshot で入れられる。"
+            --notes "The latest main ($VERSION), rebuilt whenever CI passes. Signed but not notarized: install it with \`scripts/install-app.sh snapshot\` (also \`install-engine.sh\` and \`install-vscode.sh\`), see the README."
