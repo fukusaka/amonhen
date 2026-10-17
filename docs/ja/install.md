@@ -20,6 +20,20 @@
 
 初めて開いたときに、コマンドの `amonhen` も使えるようになります（`~/.local/bin` に入ります）。
 
+## GTK4 のアプリ（Linux、作り始め）
+
+Linux のネイティブのアプリです。まだ作り始めで、History・Working Copy・マージエディタ・Blame・File History が
+使えます（共有の daemon 越しや SSH 先のリポジトリも）。`amonhen-gtk-<版>-linux-<CPU>.tar.gz` を取ってきて、
+次を実行します。
+
+```sh
+tar xzf amonhen-gtk-<版>-linux-x86_64.tar.gz
+amonhen-gtk-linux-x86_64/install.sh
+```
+
+`~/.local` に置き、デスクトップのアプリの一覧に出し、コマンドも使えるようにします。GTK は入っていないので、
+なければ入れてください（Ubuntu なら `sudo apt install libgtk-4-1`）。
+
 ## コマンドだけ
 
 Linux・Windows、またはアプリを入れない Mac で使うときです。コマンドは、アプリと VSCode 拡張が使っているのと同じ
@@ -86,6 +100,7 @@ gh attestation verify <ファイル> --repo fukusaka/amonhen
 ## 動作環境
 
 - **アプリ**: macOS 14.4 以降、Apple シリコンの Mac。
+- **GTK4 のアプリ**: Linux（x86_64・arm64）で GTK 4.14 以降（Ubuntu 24.04・Debian 13 以降）。
 - **コマンドと VSCode 拡張**: Apple シリコンの macOS、Linux（x86_64・arm64、ディストリビューションは問いません）、
   Windows（x86_64・arm64）。
 - `git` が入っている必要があります。

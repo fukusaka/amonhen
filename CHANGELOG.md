@@ -16,7 +16,6 @@ becomes the GitHub Release notes.
   groups) and
   each repository once on the right, with its branch, status, last commit and when it was last opened. The toolbar has
   a Repositories button for the page, and the repository name next to it opens the same list to switch the current tab.
-
 - Pull, Push, Pop and Undo no longer run on a single click. Each opens a sheet with what will happen: the commits to
   send or bring in, how Pull integrates them (merge, rebase or fast-forward only, chosen there) and what that does,
   uncommitted changes in the way, the stash or operation being undone. Push suggests Pull when upstream has commits
@@ -32,6 +31,10 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- A GTK4 app for Linux (`amonhen-gtk-<version>-linux-<cpu>.tar.gz`, early): History with the graph, search and
+  multi-select, commit details and diffs, Working Copy with line staging, the sidebar and its operations, the macOS
+  app's menus in the header bar, the merge editor, Blame, File History, Activity and Settings, opening repositories
+  locally, through the shared daemon or over SSH.
 - The app is in English and Japanese, following the system language. git's operations and the app's screens keep
   their English names (Commit, Push, Working Copy, History, …) in Japanese too. English counts read "1 commit",
   not "1 commits".

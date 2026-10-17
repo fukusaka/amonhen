@@ -32,7 +32,7 @@ Mac（macOS 14.4 以降、Apple シリコン）の場合:
 2. 展開して、`Amon Hen.app` を `/Applications` に移します。
 3. 開きます。
 
-Linux・Windows（コマンド）、VSCode 拡張、開発中の版、インストールのスクリプトについては、
+Linux（作り始めの GTK4 のアプリとコマンド）・Windows（コマンド）、VSCode 拡張、開発中の版、インストールのスクリプトについては、
 [インストール](docs/ja/install.md)を見てください。
 
 ## 文書

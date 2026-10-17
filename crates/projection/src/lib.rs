@@ -55,6 +55,13 @@ impl FrontendProfile {
         page_aligned: true,
     };
 
+    /// GTK4（`apps/gtk4`。Linux・BSD が本命）。文字列は UTF-8 のまま Pango に渡す。
+    pub const GTK: Self = Self {
+        string: StringEncoding::Utf8,
+        columns: ColumnSet::ALL,
+        page_aligned: false,
+    };
+
     /// daemon の FE 向けの窓口（`amonhen-front`）。VSCode 拡張・CLI。文字列は UTF-8 で、TS の `TextDecoder` で読む。
     pub const WEB: Self = Self {
         string: StringEncoding::Utf8,

@@ -55,6 +55,25 @@ jobs:
             echo "::endgroup::"
           done
 
+  # GTK4 のアプリ（apps/gtk4。別の workspace）。Ubuntu 24.04 の GTK は 4.14。
+  gtk:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update && sudo apt-get install -y libgtk-4-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/gtk4
+      - run: cargo fmt --check
+        working-directory: apps/gtk4
+      - run: cargo clippy --all-targets -- -D warnings
+        working-directory: apps/gtk4
+      # 配る形（tar.gz）にまとめられるか。エンジンは入れない（リリースでは scripts/build-engine.sh の分を入れる）。
+      - run: scripts/package-gtk4.sh
+
   # 配るものに入る依存が、許したライセンスだけか（deny.toml）。
   licenses:
     runs-on: ubuntu-latest

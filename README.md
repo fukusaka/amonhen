@@ -31,7 +31,7 @@ On a Mac (macOS 14.4 or later, Apple silicon):
 2. Unzip it and move `Amon Hen.app` into `/Applications`.
 3. Open it.
 
-For Linux and Windows (command line), the VSCode extension, development builds and install scripts, see
+For Linux (an early GTK4 app, and the command line), Windows (command line), the VSCode extension, development builds and install scripts, see
 [Installation](docs/install.md).
 
 ## Documents

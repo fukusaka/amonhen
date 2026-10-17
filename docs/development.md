@@ -16,6 +16,8 @@ scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # run a built engin
 scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md (cargo install --locked cargo-about --features cli)
 cargo deny check licenses        # dependencies use only the licenses allowed in deny.toml (cargo install --locked cargo-deny)
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode extension
+(cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 app (needs GTK 4.14 or later: libgtk-4-dev, or brew install gtk4 pkgconf)
+scripts/package-gtk4.sh          # GTK4 app into dist/amonhen-gtk-<version>-linux-<arch>.tar.gz (on Linux; includes dist/engine's Linux engines if built)
 ```
 
 ## Launch options for checking
@@ -28,6 +30,8 @@ on a repository with `--select-row N`, then capture the window with `screencaptu
 the picture, set `defaults write AmonHen showAvatars -bool NO` beforehand (the debug build's own defaults domain) and
 delete it afterwards. The window size comes from `NSWindow Frame Repository <path>` in the same domain (the README uses
 1200×720: `"1300 500 1200 720 0 0 <screen width> <screen height> "`).
+
+The GTK4 app (`apps/gtk4`): `amonhen-gtk <repo> --snapshot out.png [--scroll-to N | --select-rows N,N,... | --select-ref NAME] [--menu-ref NAME | --menu-row N] [--search QUERY [--only-matching]] [--blame PATH | --file-history PATH | --activity operations|history|performance|events|daemon | --settings git|appearance|performance|advanced | --merge-editor PATH [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--perform JSON] [--working-copy [--select-path PATH] [--toggle-row N] [--layout list|tree|flat]]` (`--menu-ref` opens that ref's right-click menu, `--perform` runs one core command the way the menus do, `--toggle-row` acts as one click on that diff line's mark) (write the window to a PNG once the visible rows are read, and exit), `--measure-scroll [--scroll-rows N]` (scroll History 40 (or N) rows per frame for 600 frames and show the main thread's time per frame, the History snapshot's time, dropped frames and the time from a frame's start to its presentation; `GSK_RENDERER=cairo|gl|vulkan` picks the renderer).
 
 ## VSCode extension
 

@@ -20,6 +20,19 @@ Everything is on the [Releases](https://github.com/fukusaka/amonhen/releases) pa
 
 The first time it opens, the app also sets up the command line tool, `amonhen` (in `~/.local/bin`).
 
+## GTK4 app (Linux, early)
+
+A native app for Linux, still early: History, Working Copy, the merge editor, Blame and File History, also for
+repositories through the shared daemon or over SSH. Download `amonhen-gtk-<version>-linux-<cpu>.tar.gz`, then:
+
+```sh
+tar xzf amonhen-gtk-<version>-linux-x86_64.tar.gz
+amonhen-gtk-linux-x86_64/install.sh
+```
+
+This puts it in `~/.local`, adds it to the desktop's app list and sets up the command line tool too. GTK is not
+included; if it is missing, install it (`sudo apt install libgtk-4-1` on Ubuntu).
+
 ## Command line only
 
 For Linux, Windows, or a Mac without the app. The command line tool is the same program the app and the VSCode
@@ -86,6 +99,7 @@ gh attestation verify <file> --repo fukusaka/amonhen
 ## Requirements
 
 - **App**: macOS 14.4 or later on Apple silicon.
+- **GTK4 app**: Linux (x86_64 or arm64) with GTK 4.14 or later (Ubuntu 24.04, Debian 13 or later).
 - **Command line and VSCode extension**: macOS on Apple silicon, Linux (x86_64 or arm64, any distribution), or Windows
   (x86_64 or arm64).
 - `git` must be installed.
