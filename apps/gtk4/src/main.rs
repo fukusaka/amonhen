@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
 
 mod actions;
 mod appmenu;
@@ -57,6 +57,8 @@ struct Args {
     select_rows: Vec<u32>,
     /// History をこの問い合わせで探しておく（確認用）。
     search: Option<String>,
+    /// `--search` で、一致したコミットだけを出す（確認用）。
+    only_matching: bool,
     /// History のこの行の右クリックのメニューを開いておく（確認用）。
     menu_row: Option<u32>,
     /// 見出しのメニュー（`repository` か `primary`）を開いておく（確認用）。
@@ -89,6 +91,7 @@ fn parse_args() -> Result<Args, String> {
                     .map(|r| r.trim().parse().map_err(|_| "--select-rows <row,row,...>"))
                     .collect::<Result<_, _>>()?;
             }
+            "--only-matching" => args.only_matching = true,
             "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {
                 let row = it.next().ok_or("--menu-row <row>")?;
@@ -445,8 +448,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                         status.set_visible(false);
                         working.set_repo(repo.clone());
                         actions.set_repo(repo.clone());
-                        view.show(repo, history);
-                        search.history_changed();
+                        search.show_history(repo, history);
                         if let Some(command) = perform.take() {
                             match serde_json::from_str(&command) {
                                 Ok(command) => {
@@ -480,7 +482,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 }
                             }
                             if let Some(query) = &args.search {
-                                search.search(query, pending.clone());
+                                search.search(query, args.only_matching, pending.clone());
                             }
                             if let Some(row) = args.menu_row {
                                 view.select(row);

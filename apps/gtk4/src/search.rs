@@ -2,12 +2,16 @@
 //! 欄を出す（GNOME の検索バー）。Enter で探し、一致した行を塗って件数を出し、選んでいる行より後の最初の一致を
 //! 選ぶ。同じ問い合わせなら Enter で次へ、Shift+Enter で前へ（Ctrl+G・Ctrl+Shift+G でも）。書き方はコアの
 //! `query`（`author:`・`subject:`・`commit:`・`path:`・`contents:`、AND・OR・括弧）。
+//! 一致したコミットだけを出す切り替え（macOS 版と同じ）を入れると、一致したものだけの History
+//! （`history_matching`。間を飛ばして親につなぐ）に替える。探すのはいつも元の History。
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use amonhen_core::{HistorySnapshot, Repository};
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
+use std::sync::Arc;
 
 use crate::history::HistoryView;
 
@@ -27,6 +31,10 @@ struct Inner {
     generation: Cell<u64>,
     /// `--search` のとき、終わったら 1 つ減らす。
     pending: RefCell<Option<Rc<Cell<u32>>>>,
+    /// 元の History（探すのはいつもこれ）。
+    base: RefCell<Option<(Arc<Repository>, Arc<HistorySnapshot>)>>,
+    /// 一致したコミットだけを出す。
+    only: gtk::ToggleButton,
 }
 
 impl Search {
@@ -50,6 +58,13 @@ impl Search {
         steps.add_css_class("linked");
         steps.append(&previous);
         steps.append(&next);
+        let only = gtk::ToggleButton::new();
+        let filter_icon = crate::icon::Icon::default();
+        filter_icon.set(crate::icon::Kind::Filter, false);
+        only.set_child(Some(&filter_icon));
+        only.set_tooltip_text(Some("一致したコミットだけを出す"));
+        only.set_sensitive(false);
+        steps.append(&only);
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         line.append(&entry);
         line.append(&count);
@@ -77,7 +92,11 @@ impl Search {
             searched: RefCell::default(),
             generation: Cell::new(0),
             pending: RefCell::default(),
+            base: RefCell::default(),
+            only: only.clone(),
         });
+        let i = inner.clone();
+        only.connect_toggled(move |_| i.apply_filter());
         let i = inner.clone();
         entry.connect_activate(move |_| Inner::submit(&i, 1));
         // Shift+Enter: 前の一致へ。
@@ -134,9 +153,30 @@ impl Search {
         app.set_accels_for_action("win.find-previous", &["<Control><Shift>g"]);
     }
 
+    /// 新しく読んだ History を出す。一致したコミットだけを出しているなら、探し直してから絞る。
+    pub fn show_history(&self, repo: Arc<Repository>, history: Arc<HistorySnapshot>) {
+        let same = self
+            .inner
+            .base
+            .borrow()
+            .as_ref()
+            .is_some_and(|(_, h)| Arc::ptr_eq(h, &history));
+        self.inner
+            .base
+            .replace(Some((repo.clone(), history.clone())));
+        if self.inner.only.is_active() {
+            if !same {
+                self.history_changed();
+            }
+        } else {
+            self.inner.view.show(repo, history);
+            self.history_changed();
+        }
+    }
+
     /// History が新しくなったら、同じ問い合わせで探し直す（行の番号が変わるため）。
-    pub fn history_changed(&self) {
-        let current = self.inner.view.current().map(|(_, h)| h.generation);
+    fn history_changed(&self) {
+        let current = self.inner.base.borrow().as_ref().map(|(_, h)| h.generation);
         let query = self
             .inner
             .searched
@@ -149,8 +189,14 @@ impl Search {
         }
     }
 
-    /// 欄を開いて `query` を探す（`--search`）。終わるまで `pending` を 1 つ増やしておく。
-    pub fn search(&self, query: &str, pending: Rc<Cell<u32>>) {
+    /// 欄を開いて `query` を探す（`--search`）。終わるまで `pending` を 1 つ増やしておく。`only` なら、
+    /// 一致したコミットだけを出す。
+    pub fn search(&self, query: &str, only: bool, pending: Rc<Cell<u32>>) {
+        if only {
+            // 探し終わったら絞る（今はまだ一致がないので、切り替えの知らせでは何もしない）。
+            self.inner.only.set_sensitive(true);
+            self.inner.only.set_active(true);
+        }
         self.bar.set_search_mode(true);
         self.inner.entry.set_text(query);
         pending.set(pending.get() + 1);
@@ -166,6 +212,32 @@ impl Inner {
         self.searched.replace(None);
         self.count.set_text("");
         self.view.set_matches(Rc::default());
+        // 絞り込みもやめる（元の History に戻す）。
+        self.only.set_sensitive(false);
+        if self.only.is_active() {
+            self.only.set_active(false);
+        }
+    }
+
+    /// 切り替えに合わせて、一致したコミットだけの History か、元の History を出す。
+    fn apply_filter(&self) {
+        let Some((repo, base)) = self.base.borrow().clone() else {
+            return;
+        };
+        if !self.only.is_active() {
+            self.view.show(repo, base);
+            self.view.set_matches(self.matches.borrow().clone());
+            self.update_count();
+            return;
+        }
+        // 一致したコミットだけ（すべて一致なので塗らない）。作るのは linux の 25 万件でも 50 ms ほど。
+        let rows = self.matches.borrow().clone();
+        let filtered = repo.history_matching(&base, &rows);
+        self.view.show(repo, filtered);
+        if !rows.is_empty() {
+            self.view.select(0);
+        }
+        self.update_count();
     }
 
     /// 問い合わせが前と同じなら `step` だけ一致を移り、違えば探す。
@@ -174,7 +246,7 @@ impl Inner {
         if query.is_empty() {
             return;
         }
-        let generation = this.view.current().map(|(_, h)| h.generation);
+        let generation = this.base.borrow().as_ref().map(|(_, h)| h.generation);
         let same = this
             .searched
             .borrow()
@@ -189,7 +261,7 @@ impl Inner {
 
     /// 裏で探す（すべてのコミットを読むので、linux では初回に 1 秒ほど）。`step` が 0 なら選び直さない。
     fn run(this: &Rc<Self>, query: String, step: i32) {
-        let Some((repo, history)) = this.view.current() else {
+        let Some((repo, history)) = this.base.borrow().clone() else {
             return;
         };
         let generation = this.generation.get() + 1;
@@ -213,11 +285,16 @@ impl Inner {
                     let rows = Rc::new(rows);
                     this.searched.replace(Some((query, snapshot_generation)));
                     this.matches.replace(rows.clone());
-                    this.view.set_matches(rows);
-                    if step != 0 {
-                        this.step(1);
+                    this.only.set_sensitive(true);
+                    if this.only.is_active() {
+                        this.apply_filter();
                     } else {
-                        this.update_count();
+                        this.view.set_matches(rows);
+                        if step != 0 {
+                            this.step(1);
+                        } else {
+                            this.update_count();
+                        }
                     }
                 }
                 Ok(Err(e)) => this.count.set_text(&e),
@@ -231,6 +308,20 @@ impl Inner {
 
     /// 選んでいる行から `step` 方向の、次の一致を選ぶ（端では反対の端へ回る）。
     fn step(&self, step: i32) {
+        // 一致したものだけを出しているなら、どの行も一致なので隣の行へ。
+        if self.only.is_active() {
+            let count = self.matches.borrow().len() as u32;
+            if count > 0 {
+                let row = match self.view.selected() {
+                    Some(r) if step >= 0 => (r + 1) % count,
+                    Some(r) => (r + count - 1) % count,
+                    None => 0,
+                };
+                self.view.select(row);
+            }
+            self.update_count();
+            return;
+        }
         let matches = self.matches.borrow().clone();
         if matches.is_empty() {
             self.update_count();
@@ -258,6 +349,14 @@ impl Inner {
     fn update_count(&self) {
         let matches = self.matches.borrow();
         let total = matches.len();
+        if self.only.is_active() {
+            let text = match self.view.selected() {
+                Some(r) => format!("{} / {total}", r + 1),
+                None => format!("{total} 件"),
+            };
+            self.count.set_text(&text);
+            return;
+        }
         let text = match self
             .view
             .selected()

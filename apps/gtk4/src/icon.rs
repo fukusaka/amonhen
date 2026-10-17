@@ -41,6 +41,8 @@ pub enum Kind {
     Undo,
     /// magnifyingglass
     Search,
+    /// line.3.horizontal.decrease
+    Filter,
 }
 
 mod imp {
@@ -275,6 +277,14 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(9.0, 1.2);
             p.line_to(11.2, 3.4);
             p.line_to(8.8, 5.4);
+        }
+        Kind::Filter => {
+            p.move_to(2.5, 4.5);
+            p.line_to(13.5, 4.5);
+            p.move_to(4.5, 8.0);
+            p.line_to(11.5, 8.0);
+            p.move_to(6.5, 11.5);
+            p.line_to(9.5, 11.5);
         }
         Kind::Search => {
             p.add_circle(&point(6.8, 6.8), 4.3);
