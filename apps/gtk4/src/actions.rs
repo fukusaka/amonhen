@@ -19,6 +19,8 @@ pub struct Actions {
     pub undo: gtk::Button,
     /// 操作の後に、History・サイドバー・Working Copy を読み直す。
     on_change: RefCell<Option<Callback>>,
+    /// 操作の後に呼ぶ（Activity の History など）。
+    on_after: RefCell<Vec<Callback>>,
 }
 
 impl Actions {
@@ -34,6 +36,7 @@ impl Actions {
             window: window.downgrade(),
             undo,
             on_change: RefCell::default(),
+            on_after: RefCell::default(),
         });
         let weak = Rc::downgrade(&actions);
         actions.undo.connect_clicked(move |_| {
@@ -72,6 +75,11 @@ impl Actions {
 
     pub fn connect_change(&self, f: impl Fn() + 'static) {
         self.on_change.replace(Some(Rc::new(f)));
+    }
+
+    /// 操作の後に `f` を呼ぶ。
+    pub fn connect_after(&self, f: impl Fn() + 'static) {
+        self.on_after.borrow_mut().push(Rc::new(f));
     }
 
     /// `command` を実行する。
@@ -133,6 +141,10 @@ impl Actions {
                 f();
             }
             this.refresh_undo();
+            let after: Vec<Callback> = this.on_after.borrow().clone();
+            for f in after {
+                f();
+            }
             done();
         });
     }

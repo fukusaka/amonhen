@@ -1,8 +1,9 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
 
 mod actions;
+mod activity;
 mod appmenu;
 mod commitops;
 mod details;
@@ -62,6 +63,8 @@ struct Args {
     only_matching: bool,
     /// このファイルの Blame・File History の窓を開いておく（確認用。`--snapshot` はその窓を撮る）。
     blame: Option<String>,
+    /// Activity の窓をこのタブで開いておく（確認用）。
+    activity: Option<String>,
     file_history: Option<String>,
     /// History のこの行の右クリックのメニューを開いておく（確認用）。
     menu_row: Option<u32>,
@@ -99,6 +102,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--only-matching" => args.only_matching = true,
             "--blame" => args.blame = Some(it.next().ok_or("--blame <path>")?),
+            "--activity" => args.activity = Some(it.next().ok_or("--activity <tab>")?),
             "--file-history" => args.file_history = Some(it.next().ok_or("--file-history <path>")?),
             "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {
@@ -551,6 +555,17 @@ fn build_window(app: &gtk::Application, args: Args) {
                                     view.select_with(row, false, true);
                                 }
                             }
+                            if let Some(tab) = &args.activity {
+                                let repo = view.current().map(|(r, _)| r);
+                                activity::Activity::show(&window, repo, actions.clone(), engine());
+                                activity::Activity::select(&window, tab);
+                                pending.set(pending.get() + 1);
+                                let p = pending.clone();
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(1500),
+                                    move || p.set(p.get() - 1),
+                                );
+                            }
                             if args.blame.is_some() || args.file_history.is_some() {
                                 let (repo, _) = view.current().expect("history");
                                 let oc: filetools::OnCommit = Rc::new(|_| {});
@@ -660,6 +675,8 @@ fn build_window(app: &gtk::Application, args: Args) {
                             pending.set(pending.get() - 1);
                         }
                     }
+                    Event::Note(repo, text) => activity::event(&repo, text),
+                    Event::Timing(metric, ms) => activity::record(metric, ms),
                     Event::Failed(e) => {
                         status.set_text(&e);
                         status.set_visible(true);
@@ -909,6 +926,7 @@ impl Loader {
         self.pending.set(self.pending.get() + 1);
         let this = self.clone();
         glib::spawn_future_local(async move {
+            let started = std::time::Instant::now();
             let result = gio::spawn_blocking(move || {
                 let (selection, stacked) = repo
                     .selection_diff(&history, &rows, pair)
@@ -928,6 +946,7 @@ impl Loader {
             }
             match result {
                 Ok(Ok((kind, source, view))) => {
+                    activity::record("差分の読み込み", started.elapsed().as_secs_f64() * 1000.0);
                     if let Some(diff) = this.diff.upgrade() {
                         diff.show(source, view);
                     }
@@ -950,12 +969,31 @@ enum Event {
     History(Arc<Repository>, Arc<amonhen_core::HistorySnapshot>),
     Refs(Arc<amonhen_core::RefsSnapshot>),
     Status(Arc<amonhen_core::StatusSnapshot>),
+    /// Activity の Events に出す出来事（リポジトリの名前、内容）。
+    Note(String, String),
+    /// Activity の Performance に出す時間（項目、ms）。
+    Timing(&'static str, f64),
     Failed(String),
+}
+
+fn repo_name(repo: &Repository) -> String {
+    repo.paths()
+        .workdir
+        .as_deref()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// History と ref を読み直して知らせる（裏のスレッドで呼ぶ）。
 fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
-    match repo.load_history() {
+    let started = std::time::Instant::now();
+    let loaded = repo.load_history();
+    let _ = tx.send_blocking(Event::Timing(
+        "History の読み直し",
+        started.elapsed().as_secs_f64() * 1000.0,
+    ));
+    match loaded {
         Ok(history) => {
             let _ = tx.send_blocking(Event::History(repo.clone(), history));
         }
@@ -970,7 +1008,13 @@ fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
 
 /// status を読み直して知らせる（裏のスレッドで呼ぶ）。
 fn reload_status(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
-    match repo.load_status() {
+    let started = std::time::Instant::now();
+    let loaded = repo.load_status();
+    let _ = tx.send_blocking(Event::Timing(
+        "status の読み直し",
+        started.elapsed().as_secs_f64() * 1000.0,
+    ));
+    match loaded {
         Ok(snapshot) => {
             let _ = tx.send_blocking(Event::Status(snapshot));
         }
@@ -1026,6 +1070,20 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
             return;
         }
         let changes = Changes(bits);
+        let mut what = Vec::new();
+        for (bit, name) in [
+            (Changes::REFS, "ref"),
+            (Changes::INDEX, "index"),
+            (Changes::WORKTREE, "作業ツリー"),
+        ] {
+            if changes.contains(bit) {
+                what.push(name);
+            }
+        }
+        if !what.is_empty() {
+            let text = format!("{} が変わった（読み直す）", what.join("・"));
+            let _ = tx.send_blocking(Event::Note(repo_name(&repo), text));
+        }
         if changes.contains(Changes::REFS) {
             reload(&repo);
         }
@@ -1111,7 +1169,7 @@ fn collect_popovers(widget: &gtk::Widget, out: &mut Vec<gtk::Popover>) {
     let mut child = widget.first_child();
     while let Some(c) = child {
         match c.downcast_ref::<gtk::Popover>() {
-            Some(p) if p.is_visible() => out.push(p.clone()),
+            Some(p) if p.is_visible() && p.is_mapped() => out.push(p.clone()),
             _ => collect_popovers(&c, out),
         }
         child = c.next_sibling();

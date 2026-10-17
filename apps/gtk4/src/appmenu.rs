@@ -169,6 +169,7 @@ const ACCELS: &[(&str, &str)] = &[
     ("win.undo", "<Control><Alt>z"),
     ("win.commit", "<Control>Return"),
     ("win.commit-and-push", "<Control><Shift>Return"),
+    ("win.activity", "<Control><Alt>a"),
     ("win.shortcuts", "<Control>question"),
 ];
 
@@ -277,6 +278,13 @@ pub fn install(parts: Parts) -> Buttons {
         }),
     );
     // アプリ
+    add(
+        "activity",
+        Box::new(|p| {
+            let repo = p.view.current().map(|(r, _)| r);
+            crate::activity::Activity::show(&p.window, repo, p.actions.clone(), crate::engine());
+        }),
+    );
     add("shortcuts", Box::new(show_shortcuts));
     add("about", Box::new(show_about));
 
@@ -469,6 +477,7 @@ fn primary_menu() -> gio::Menu {
     menu.append_section(
         None,
         &menu_of(&[
+            Some(("Activity", "win.activity")),
             Some(("Keyboard Shortcuts", "win.shortcuts")),
             Some(("About Amon Hen", "win.about")),
         ]),
@@ -919,6 +928,7 @@ fn show_shortcuts(p: &Rc<Parts>) {
             ("win.commit-and-push", "Commit and Push"),
         ],
     ));
+    section.add_group(&group("Window", &[("win.activity", "Activity")]));
     let window = gtk::ShortcutsWindow::builder()
         .transient_for(&p.window)
         .modal(true)
