@@ -14,30 +14,36 @@ jobs:
 
   release:
     needs: windows-engine
+    # 署名と公証の鍵は、環境 release の secret に置く（この仕事だけが読める）。
+    environment: release
     runs-on: macos-latest
     env:
       # 自己署名のコード署名用証明書（.p12 を base64 にしたもの）とそのパスワード。なければ ad-hoc 署名。
       AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
       AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
       AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
+      # 公証（Developer ID で署名したときだけ通る）。App Store Connect の API キー。なければ公証しない。
+      AMONHEN_NOTARY_KEY: ${{ secrets.AMONHEN_NOTARY_KEY }}
+      AMONHEN_NOTARY_KEY_ID: ${{ secrets.AMONHEN_NOTARY_KEY_ID }}
+      AMONHEN_NOTARY_ISSUER: ${{ secrets.AMONHEN_NOTARY_ISSUER }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
       - name: タグと Cargo.toml の version が一致するか
         run: test "${GITHUB_REF_NAME#v}" = "$(scripts/version.sh stable)"
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           # Linux 用のエンジン（musl で静的リンク、リンクは zig）。
           targets: x86_64-unknown-linux-musl, aarch64-unknown-linux-musl
       - run: brew install zig
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --workspace
       - run: scripts/import-signing-certificate.sh
       - id: build
         run: echo "zip=$(scripts/build-app.sh stable | tail -1)" >> "$GITHUB_OUTPUT"
       # Windows 用のエンジンを足す（dist/engine と、リリースに載せる zip）。
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: windows-engine
           path: dist/engine

@@ -439,7 +439,7 @@ linux（148 万コミット）では、1 行を横切る線が中央値で 365 �
 - アプリ名は `Amon Hen`、バンドル ID は `io.github.fukusaka.amonhen`。バンドル ID は設定・キャッシュ・アクセス許可のひも付け先なので変えない。snapshot 版は `Amon Hen Snapshot`（`io.github.fukusaka.amonhen.snapshot`）にして、正式版と並べて入れられるようにする。
 - `.app` の組み立ては `scripts/build-app.sh [stable|snapshot]`（`dist/` に zip）。証明書は secret の `AMONHEN_CERT_P12`・`AMONHEN_CERT_PASSWORD`・`AMONHEN_CERT_NAME` から CI の一時キーチェーンに入れる（`scripts/import-signing-certificate.sh`）。
 - インストール・更新は `scripts/install.sh [stable|snapshot]`。`gh release download` で取得して `/Applications` に置く。quarantine 属性が付かないので、公証なしで起動できる（最初の配布で確かめる。付いていたら `xattr -d com.apple.quarantine` で外す）。
-- Developer ID の取得と公証、自動更新（Sparkle）は、人に配りたくなったときに検討する。
+- Developer ID の署名と公証: 環境 `release` の secret に Developer ID Application の証明書（`AMONHEN_CERT_P12`・`AMONHEN_CERT_PASSWORD`・`AMONHEN_CERT_NAME`）と App Store Connect の API キー（`AMONHEN_NOTARY_KEY`・`AMONHEN_NOTARY_KEY_ID`・`AMONHEN_NOTARY_ISSUER`）があれば、snapshot と正式版の CI で、アプリとエンジンを hardened runtime と時刻の印つきで署名し、公証に出す（`scripts/build-app.sh`・`scripts/notarize.sh`）。アプリには結果を綴じ込み、単体のエンジンは公証に出すだけ（初めて動かすときに Mac が確かめる）。なければ ad-hoc のまま作る（`gh` や `curl` で取れば quarantine の印が付かないので、`scripts/install.sh` ではそのまま動く）。公開のリポジトリなので、署名する仕事だけが環境 `release` の secret を読み、リリースを作る CI の外部の Action はコミットのハッシュで固定する。フォークからの pull request には secret が渡らない。自動更新（Sparkle）は、人に配りたくなったときに検討する。
 
 ## 既存の拡張との関係
 

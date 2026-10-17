@@ -1,7 +1,8 @@
 #!/bin/sh
 # Amon Hen.app を組み立てて zip にする。出力: dist/<アプリ名>-<バージョン>.zip
 #   scripts/build-app.sh [stable|snapshot]
-# 署名: AMONHEN_SIGN_IDENTITY にキーチェーンの証明書の名前があればそれで、なければ ad-hoc。
+# 署名: AMONHEN_SIGN_IDENTITY にキーチェーンの証明書の名前があればそれで、なければ ad-hoc。Developer ID の証明書なら
+# hardened runtime と時刻の印を付けて署名し、公証の鍵（scripts/notarize.sh）があれば公証して結果を綴じ込む。
 # ad-hoc 署名はビルドのたびに身元が変わり、macOS のアクセス許可が更新のたびにリセットされる。
 set -eu
 cd "$(dirname "$0")/.."
@@ -79,13 +80,27 @@ cat > "$app/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# 中の実行ファイル（エンジン）を先に署名してから、アプリ全体に署名する。
-codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/Helpers/amonhen"
-codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app/Contents/Resources/engines/amonhen-darwin-aarch64"
-codesign --force --sign "${AMONHEN_SIGN_IDENTITY:--}" --timestamp=none "$app"
+# 中の実行ファイル（エンジン）を先に署名してから、アプリ全体に署名する。Developer ID なら公証の条件
+# （hardened runtime・時刻の印）を付ける。
+identity=${AMONHEN_SIGN_IDENTITY:--}
+case $identity in
+"Developer ID Application"*) sign() { codesign --force --sign "$identity" --options runtime --timestamp "$@"; } ;;
+*) sign() { codesign --force --sign "$identity" --timestamp=none "$@"; } ;;
+esac
+sign dist/engine/amonhen-darwin-aarch64
+cp dist/engine/amonhen-darwin-aarch64 "$app/Contents/Helpers/amonhen"
+cp dist/engine/amonhen-darwin-aarch64 "$app/Contents/Resources/engines/amonhen-darwin-aarch64"
+sign "$app"
 codesign --verify --strict "$app"
+# 署名したエンジンで、リリースに載せる macOS の tar.gz を作り直す。
+work=$(mktemp -d)
+cp dist/engine/amonhen-darwin-aarch64 "$work/amonhen"
+tar -C "$work" -czf "dist/amonhen-$version-darwin-aarch64.tar.gz" amonhen
+rm -rf "$work"
 
 zip="dist/$(echo "$name" | tr ' ' '-')-$version.zip"
 rm -f "$zip"
 ditto -c -k --keepParent "$app" "$zip"
+# 公証の鍵があれば、アプリとエンジンを公証する（なければ何もしない）。出力は標準エラーへ（最後の行は zip の場所）。
+scripts/notarize.sh "$app" "$zip" dist/engine/amonhen-darwin-aarch64 >&2
 echo "$zip"
