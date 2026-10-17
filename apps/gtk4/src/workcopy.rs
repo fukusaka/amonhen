@@ -36,6 +36,17 @@ enum Layout {
     /// ファイル名を先に、親のディレクトリを薄く。
     Flat,
 }
+
+impl Layout {
+    /// 設定に覚える名前（`--layout` と同じ）。
+    fn name(self) -> &'static str {
+        match self {
+            Layout::List => "list",
+            Layout::Tree => "tree",
+            Layout::Flat => "flat",
+        }
+    }
+}
 /// 追加と削除の行数（バイナリなどで数えられなければ None）。
 type LineCounts = (Option<u64>, Option<u64>);
 
@@ -51,6 +62,8 @@ pub struct WorkingCopy {
     inner: Rc<Inner>,
     /// 一覧の見せ方の切り替え（`--layout`）。
     layouts: Vec<(gtk::ToggleButton, Layout)>,
+    /// 見せ方を変えたら設定に覚えるか。
+    remember: Rc<Cell<bool>>,
 }
 
 struct Inner {
@@ -305,22 +318,42 @@ impl WorkingCopy {
         });
         Inner::connect(&inner);
         let layouts = layout_buttons.clone();
+        let remember = Rc::new(Cell::new(true));
         for (button, layout) in layout_buttons {
             let weak = Rc::downgrade(&inner);
+            let remember = remember.clone();
             button.connect_toggled(move |b| {
                 if let Some(this) = weak.upgrade()
                     && b.is_active()
                 {
                     this.layout.set(layout);
                     Inner::rebuild_list(&this);
+                    // 次に開く窓も同じ見せ方にする（`--layout` では覚えない）。
+                    if remember.get() {
+                        crate::settings::set_string(
+                            crate::settings::WORKING_COPY_LAYOUT,
+                            layout.name(),
+                        );
+                    }
                 }
             });
+        }
+        // 前に選んだ見せ方。
+        let saved = crate::settings::string(crate::settings::WORKING_COPY_LAYOUT);
+        if let Some((button, _)) = layouts
+            .iter()
+            .find(|(_, l)| Some(l.name()) == saved.as_deref())
+        {
+            remember.set(false);
+            button.set_active(true);
+            remember.set(true);
         }
         inner.update_buttons();
         Self {
             root,
             inner,
             layouts,
+            remember,
         }
     }
 
@@ -351,7 +384,9 @@ impl WorkingCopy {
             _ => Layout::List,
         };
         if let Some((button, _)) = self.layouts.iter().find(|(_, l)| *l == wanted) {
+            self.remember.set(false);
             button.set_active(true);
+            self.remember.set(true);
         }
     }
 

@@ -58,6 +58,23 @@ impl Details {
             .build();
         let subject = label(&["title-4"]);
         let body = label(&[]);
+        // 本文を等幅にするか（Settings > Appearance）。
+        let monospace = |body: &gtk::Label| {
+            if crate::settings::bool(crate::settings::MONOSPACED_COMMIT_MESSAGE) {
+                body.add_css_class("monospace");
+            } else {
+                body.remove_css_class("monospace");
+            }
+        };
+        monospace(&body);
+        let weak = body.downgrade();
+        crate::settings::connect_changed(move |key| {
+            if key == crate::settings::MONOSPACED_COMMIT_MESSAGE
+                && let Some(body) = weak.upgrade()
+            {
+                monospace(&body);
+            }
+        });
         let notes = label(&["dim-label"]);
         let selection_title = label(&["title-4"]);
         let selection_note = label(&["dim-label", "caption"]);

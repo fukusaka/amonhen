@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
 
 mod actions;
 mod activity;
@@ -16,6 +16,7 @@ mod measure;
 mod menu;
 mod refops;
 mod search;
+mod settings;
 mod sidebar;
 mod workcopy;
 
@@ -65,6 +66,8 @@ struct Args {
     blame: Option<String>,
     /// Activity の窓をこのタブで開いておく（確認用）。
     activity: Option<String>,
+    /// 設定の窓をこのタブで開いておく（確認用）。
+    settings: Option<String>,
     file_history: Option<String>,
     /// History のこの行の右クリックのメニューを開いておく（確認用）。
     menu_row: Option<u32>,
@@ -103,6 +106,7 @@ fn parse_args() -> Result<Args, String> {
             "--only-matching" => args.only_matching = true,
             "--blame" => args.blame = Some(it.next().ok_or("--blame <path>")?),
             "--activity" => args.activity = Some(it.next().ok_or("--activity <tab>")?),
+            "--settings" => args.settings = Some(it.next().ok_or("--settings <tab>")?),
             "--file-history" => args.file_history = Some(it.next().ok_or("--file-history <path>")?),
             "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {
@@ -158,6 +162,11 @@ fn open(location: &Path) -> Result<Repository, String> {
         return open_remote(&text).map_err(|e| e.to_string());
     }
     let path = location;
+    // Settings > Advanced: 手元のリポジトリも共有の daemon 越しに開く。
+    if settings::bool(settings::OPEN_THROUGH_DAEMON) {
+        let path = amonhen_remote::local::canonical_path(&text).map_err(|e| e.to_string())?;
+        return open_remote(&format!("daemon:{path}")).map_err(|e| e.to_string());
+    }
     let backend = GixBackend::open(path).map_err(|e| e.to_string())?;
     let key = std::fs::canonicalize(path)
         .map_or_else(|_| path.display().to_string(), |p| p.display().to_string());
@@ -554,6 +563,16 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 for &row in rest {
                                     view.select_with(row, false, true);
                                 }
+                            }
+                            if let Some(tab) = &args.settings {
+                                settings::show(&window);
+                                settings::select(tab);
+                                pending.set(pending.get() + 1);
+                                let p = pending.clone();
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(500),
+                                    move || p.set(p.get() - 1),
+                                );
                             }
                             if let Some(tab) = &args.activity {
                                 let repo = view.current().map(|(r, _)| r);
@@ -1031,6 +1050,15 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
             return;
         }
     };
+    // Settings > Performance: commit-graph がなければ書き出す（手元のリポジトリだけ）。
+    if settings::bool(settings::WRITE_COMMIT_GRAPH) && repo.connection_state().is_none() {
+        let repo = repo.clone();
+        std::thread::spawn(move || match repo.write_commit_graph_if_missing() {
+            Ok(true) => eprintln!("commit-graph を書き出した"),
+            Ok(false) => {}
+            Err(e) => eprintln!("commit-graph を書き出せない: {e}"),
+        });
+    }
     // 前回の History をすぐ出してから、最新にする。
     if let Some(cached) = repo.load_cached_history() {
         let _ = tx.send_blocking(Event::History(repo.clone(), cached));
