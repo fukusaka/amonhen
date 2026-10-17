@@ -104,7 +104,8 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 ```
 
 Use `stable` or `snapshot` as the argument. From a clone, run `scripts/install-app.sh`,
-`scripts/install-engine.sh` and `scripts/install-vscode.sh` directly.
+`scripts/install-engine.sh` and `scripts/install-vscode.sh` directly. Running them again updates what is installed; if
+the app is running, `install-app.sh` says so, and the new version takes effect when you reopen it.
 
 ## Documents
 

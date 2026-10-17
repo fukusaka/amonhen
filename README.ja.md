@@ -99,7 +99,8 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 ```
 
 引数は `stable` か `snapshot`。clone した手元では、`scripts/install-app.sh`・
-`scripts/install-engine.sh`・`scripts/install-vscode.sh` をそのまま実行する。
+`scripts/install-engine.sh`・`scripts/install-vscode.sh` をそのまま実行する。もう一度実行すると入っているものを新しくする。
+アプリが起動中なら `install-app.sh` がそう知らせ、新しい版は開き直すと使われる。
 
 ## 文書
 

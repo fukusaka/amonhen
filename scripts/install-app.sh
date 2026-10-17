@@ -31,6 +31,9 @@ curl -fsSL -o "$work/app.zip" "$url"
 ditto -x -k "$work/app.zip" "$work/app"
 for app in "$work"/app/*.app; do
     target="/Applications/$(basename "$app")"
+    # 起動中でも置き換えられるが、動いているほうは古い版のまま。終わりに知らせる。
+    running=
+    pgrep -f "^$target/Contents/MacOS/" >/dev/null 2>&1 && running=1
     rm -rf "$target"
     ditto "$app" "$target"
     # 万一付いていても外す。
@@ -40,5 +43,8 @@ for app in "$work"/app/*.app; do
     # ものより新しいときだけ入れ替える（アプリも起動するたびに同じことをする）。
     if [ -x "$target/Contents/Helpers/amonhen" ]; then
         "$target/Contents/Helpers/amonhen" install
+    fi
+    if [ -n "$running" ]; then
+        echo "$(basename "$target" .app) is running the old version; quit and reopen it to use the new one"
     fi
 done

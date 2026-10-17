@@ -44,7 +44,8 @@ VSCode extension separately with `vscode-v*` tags, so each has its own section. 
   `%LOCALAPPDATA%\amonhen`) and links `~/.local/bin/amonhen`. On SSH hosts the engine is provisioned the way VS Code
   Server is.
 - Install scripts that need only `curl`: `scripts/install-app.sh`, `scripts/install-engine.sh` and
-  `scripts/install-vscode.sh`.
+  `scripts/install-vscode.sh`. Running them again updates in place, and `install-app.sh` tells you when the app is
+  still running the old version.
 - Releases are signed with Developer ID and notarized (snapshots are signed only), and every file carries a build
   provenance attestation.
 
