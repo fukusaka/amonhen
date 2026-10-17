@@ -31,6 +31,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- History no longer crashes when showing only the commits that match a search scrolled down past the matches.
 - Fetch, Pull and Push no longer hang forever when git waits for credentials nobody can see: after 120 seconds with no
   output they stop and say so.
 - The repository name in the toolbar has a fixed width, so the buttons after it stay put when switching tabs.

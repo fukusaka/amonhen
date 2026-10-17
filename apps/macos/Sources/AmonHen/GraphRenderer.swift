@@ -107,7 +107,9 @@ final class GraphRenderer {
     private func updateLanes(history: History, rows: Range<Int>, width: Float, animate: Bool) {
         // 少し先の行まで含めて決め、スクロールで点が入ってくる直前に広げ始める。
         let margin = 4
-        let window = max(0, rows.lowerBound - margin)..<min(history.rowCount, rows.upperBound + margin)
+        // History を差し替えた直後は、見えている行が新しい History の外のことがある（下端を超えないようにする）。
+        let upper = min(history.rowCount, rows.upperBound + margin)
+        let window = min(max(0, rows.lowerBound - margin), upper)..<upper
         let key = (ObjectIdentifier(history), window, width)
         let historyChanged = targetKey?.history != key.0
         if targetKey == nil || historyChanged || targetKey!.rows != window || targetKey!.width != width {

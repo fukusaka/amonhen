@@ -533,9 +533,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         loadingChunks.removeAll()
         rowText.removeAll()
         preparedRows.removeAll()
-        // 行が変わるので、検索の結果は捨てる（問い合わせは残し、Enter で探し直せる）。
-        clearSearchResults()
         tableView.reloadData()
+        // 行が変わるので、検索の結果は捨てる（問い合わせは残し、Enter で探し直せる）。表を読み直してから描き直す。
+        clearSearchResults()
         if first { tableView.scrollRowToVisible(0) }
         // 表は行番号の選択を引き継ぐが、上にコミットが増えると同じ行に別のコミットが来る（知らせも出ないので、
         // 詳細が前のコミットのままになる）。選んでいたコミットを新しい行で選び直す。
@@ -709,7 +709,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let selection = tableView.selectedRowIndexes
         if rowText.count > 4096 { rowText.removeAll() }
         var unverified: [Data] = []
-        for row in rows.location..<min(history.rowCount, rows.location + rows.length) {
+        // History を差し替えた直後（表を読み直す前）は、表が前の History の行を返すことがある（絞り込みで行が
+        // 減ったときは、見えている行が全部新しい History の外）。
+        let last = min(history.rowCount, rows.location + rows.length)
+        guard rows.location < last else { return }
+        for row in rows.location..<last {
             guard let line = FrameProfile.measure("text: row text", { shapedRow(row, scale: scale) }) else { continue }
             let rowTop = tableView.rect(ofRow: row).minY - scrollY
             let isSelected = selection.contains(row)
