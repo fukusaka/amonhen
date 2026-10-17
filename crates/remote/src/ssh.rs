@@ -318,6 +318,16 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
         let binary = daemons.for_platform(&uname)?;
         let data = std::fs::read(&binary)
             .map_err(|e| tr!("Can’t read {path}: {e}", path = binary.display(), e = e))?;
+        if !data
+            .windows(crate::PROTOCOL_MARK.len())
+            .any(|w| w == crate::PROTOCOL_MARK.as_bytes())
+        {
+            return Err(tr!(
+                "The engine for the SSH host ({path}) was built for another version of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app",
+                path = binary.display()
+            )
+            .into());
+        }
         let digest = sha1_smol::Sha1::from(&data).digest().to_string();
         let hash = &digest[..16];
         let path = format!("{dir}/{hash}/amonhen");

@@ -16,4 +16,4 @@ pub mod wire;
 
 pub use client::{Connection, RemoteBackend};
 pub use server::{Host, SearchCache, Server};
-pub use wire::{Notification, PROTOCOL_VERSION};
+pub use wire::{Notification, PROTOCOL_MARK, PROTOCOL_VERSION};

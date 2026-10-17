@@ -15,6 +15,10 @@ use serde::{Deserialize, Serialize};
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
 pub const PROTOCOL_VERSION: u32 = 17;
 
+/// エンジンの実行ファイルに埋め込む印（`PROTOCOL_VERSION` と同じ数）。SSH 先へ送る前に、同梱のエンジンが
+/// この版で作られたものかを中身で確かめる（古いまま送って、つないでから版の違いで断られないように）。
+pub const PROTOCOL_MARK: &str = "amonhen-protocol=17;";
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
     /// → `Hello`
@@ -367,5 +371,16 @@ impl GraphWire {
             values_of(&self.parent_rows)?,
         )
         .ok_or_else(|| tr!("The received History is corrupt").into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn protocol_mark_matches_the_version() {
+        assert_eq!(
+            super::PROTOCOL_MARK,
+            format!("amonhen-protocol={};", super::PROTOCOL_VERSION)
+        );
     }
 }

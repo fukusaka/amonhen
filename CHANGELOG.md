@@ -38,6 +38,8 @@ becomes the GitHub Release notes.
 - Messages from the core, the CLI and the daemon are in English and Japanese too, in the language of whoever shows
   them: the app's UI language, the CLI's `LC_ALL` / `LANG`, and for the shared daemon and SSH hosts the language each
   client names when it connects (the remote protocol is now version 17, so SSH hosts need the matching engine).
+- Before sending an engine to an SSH host, the app checks that the bundled engine speaks its protocol, and says so
+  instead of sending an old one that the connection would then refuse.
 - AI can use Apple Intelligence's on-device model (macOS 26): nothing leaves the Mac, and it is the default where
   available. Claude Code and Codex models are chosen from a pop-up (Codex lists the models its CLI knows).
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).

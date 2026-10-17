@@ -238,3 +238,4 @@
 "Submodules" = "サブモジュール";
 " (upstream gone)" = "（上流がない）";
 " ({ahead} ahead, {behind} behind)" = "（{ahead} 先・{behind} 遅れ）";
+"The engine for the SSH host ({path}) was built for another version of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app" = "SSH 先に送るエンジン（{path}）は、Amon Hen のほかの版のものです。作り直す（scripts/build-engine.sh）か、同じ版のアプリを入れてください";
