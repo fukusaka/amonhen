@@ -75,6 +75,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outline.floatsGroupRows = false
         outline.dataSource = self
         outline.delegate = self
+        // 見出しは、押せば開く・閉じる（既定ではカーソルを載せたときの「表示」でしか開けず、閉じた見出しが空に見える）。
+        outline.target = self
+        outline.action = #selector(outlineClicked)
         outline.allowsTypeSelect = true
         let menu = NSMenu()
         menu.delegate = self
@@ -200,6 +203,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         (item as? Node).map { $0.item != nil || $0.page != nil || $0.pullRequest != nil } ?? false
     }
 
+    /// 見出しの下の項目の数（リモートはブランチの数）。
+    private static func leafCount(_ node: Node) -> Int {
+        node.children.isEmpty ? 1 : node.children.reduce(0) { $0 + leafCount($1) }
+    }
+
+    @objc private func outlineClicked() {
+        let row = outline.clickedRow
+        guard row >= 0, let node = outline.item(atRow: row) as? Node, groups.contains(where: { $0 === node }),
+              !node.children.isEmpty else { return }
+        if outline.isItemExpanded(node) { outline.animator().collapseItem(node) } else { outline.animator().expandItem(node) }
+    }
+
     /// Working Copy の変更の数を表示する。
     func setWorkingCopyCount(_ count: Int) {
         workingCopyNode.badge = count > 0 ? "\(count)" : nil
@@ -222,7 +237,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if isGroup {
             let cell = outlineView.makeView(withIdentifier: .init("group"), owner: nil) as? NSTableCellView
                 ?? SidebarCell(identifier: .init("group"), hasIcon: false)
-            cell.textField?.stringValue = node.title
+            // 閉じていても中身があると分かるよう、数を添える（Workspace は除く）。
+            let count = node === workspace ? 0 : Self.leafCount(node)
+            if count > 0, let field = cell.textField {
+                let text = NSMutableAttributedString(string: node.title)
+                text.append(NSAttributedString(string: "  \(count)", attributes: [
+                    .foregroundColor: NSColor.tertiaryLabelColor,
+                    .font: field.font ?? NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+                ]))
+                field.attributedStringValue = text
+            } else {
+                cell.textField?.stringValue = node.title
+            }
             return cell
         }
         let cell = outlineView.makeView(withIdentifier: .init("item"), owner: nil) as? SidebarCell

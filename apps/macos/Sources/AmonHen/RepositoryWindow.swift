@@ -153,6 +153,17 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             history.moveToMatch(by: step)
         }
         detail.onSearch = { [weak history] query in history?.search(query) }
+        history.toolbarSearchShown = { [weak self] in self?.toolbarHasSearch ?? false }
+        history.focusToolbarSearch = { [weak self] in self?.toolbar.focusSearch() }
+        // ツールバーの検索欄を足し引き・ツールバーを隠したら、History の検索欄を出し直す。
+        for name in [NSToolbar.willAddItemNotification, NSToolbar.didRemoveItemNotification] {
+            NotificationCenter.default.addObserver(forName: name, object: toolbar.toolbar, queue: .main) { [weak self] _ in
+                DispatchQueue.main.async {
+                    self?.history.view.needsLayout = true
+                    self?.updateSubtitle()
+                }
+            }
+        }
         detail.onSelectRef = { [weak self] name in self?.selectRef(named: name) }
         updateSignaturePlace()
         detail.onReword = { [weak actions] oid, message in
@@ -647,9 +658,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 latestRefs = refs
                 sidebar.show(refs)
                 detail.reloadInfo()
-                if !CommandLine.arguments.contains("--show-latency") {
-                    window.subtitle = refs.headBranch ?? "detached HEAD"
-                }
+                updateSubtitle()
                 history.head = refs.head
                 history.show(refs: refs)
                 let current = refs.items.first { $0.kind == .local && $0.name == refs.headBranch }
@@ -792,10 +801,22 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func showWorkingCopy(_ sender: Any?) { sidebar.select(page: .workingCopy) }
     @objc func showHistory(_ sender: Any?) { sidebar.select(page: .history) }
 
+    /// タイトルの下のブランチ名。ツールバーにブランチのボタンが出ていれば、同じ名前を 2 か所に出さない。
+    private func updateSubtitle() {
+        guard !CommandLine.arguments.contains("--show-latency") else { return }
+        let shown = window.toolbar?.isVisible == true && window.toolbar?.items.contains { $0.itemIdentifier == .branch } == true
+        window.subtitle = shown ? "" : latestRefs?.headBranch ?? "detached HEAD"
+    }
+
+    /// ツールバーに検索欄が出ている。
+    var toolbarHasSearch: Bool {
+        window.toolbar?.isVisible == true && window.toolbar?.items.contains(where: { $0.itemIdentifier == .search }) == true
+    }
+
     @objc func findInHistory(_ sender: Any?) {
         sidebar.select(page: .history)
         // ツールバーに検索欄があればそこへ、なければ History の検索欄へ。
-        if window.toolbar?.items.contains(where: { $0.itemIdentifier == .search }) == true, window.toolbar?.isVisible == true {
+        if toolbarHasSearch {
             toolbar.focusSearch()
         } else {
             history.showFindBar(sender)

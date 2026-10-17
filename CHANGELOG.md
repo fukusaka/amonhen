@@ -22,6 +22,11 @@ becomes the GitHub Release notes.
   uncommitted changes in the way, the stash or operation being undone. Push suggests Pull when upstream has commits
   you lack, and Force Push lists the commits upstream would lose. The ▾ menus on Pull, Push and Branch are gone.
 - Discarding a whole file in Working Copy asks first.
+- No more doubled names: History hides its own search field while the toolbar has one, and the window subtitle leaves
+  out the branch while the toolbar shows it. The Summary field spans the commit box, with its length next to Commit.
+- Sidebar headings show how many items they hold and open or close with a click, so a closed Remotes or Tags no longer
+  looks empty.
+- On SSH hosts, paths under the home folder are shown with `~`, so `~/prj` and `/home/me/prj` sit in one tree.
 - The repository page: folders under a place no longer count repositories already under a folder to scan, the status
   column says "changes n" and explains itself, and empty Groups are hidden.
 

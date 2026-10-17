@@ -142,6 +142,8 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 - Show ahead/behind both as badges on Push and Pull (macOS 26 and later) and next to the branch name.
 - When unavailable, disable the item and give the reason in the tooltip ("No upstream", "Resolving conflicts").
 - No ▾ menus on Pull, Push and Branch: one click on an icon must never send or rewrite anything. Operations that leave the machine or move branches (Pull, Push, Pop, Undo) open a sheet that says what will happen; ↩ runs it, so the keyboard costs one extra key. Fetch and Refresh run at once (they change nothing of ours). The menu shortcuts (⌃⌘L, ⌃⌘P) open the same sheets; Commit and Push does not ask again.
+- One name in one place: while the toolbar shows the search field, History hides its own (the match count, previous,
+  next and "matching only" stay in History); while it shows Branch, the window subtitle leaves the branch out.
 - Network git that prints nothing for 120 seconds (usually a credential prompt nobody sees) is stopped with an error saying so. It can also be cancelled from Activity.
 
 ## 6. Working Copy

@@ -180,11 +180,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         message.guideColumn = 72
         restoreDraftOrTemplate()
         loadRecentCommits()
-        let commitRow = NSStackView(views: [amend, historyButton, insertButton, NSView(), suggestButton, commitButton, commitMenuButton])
+        // 件名の文字数は Commit の横に置く（件名の欄は Description と同じ幅にする）。
+        let commitRow = NSStackView(views: [
+            amend, historyButton, insertButton, NSView(), summaryCount, suggestButton, commitButton, commitMenuButton,
+        ])
         commitRow.spacing = 4
-        let summaryRow = NSStackView(views: [summary, summaryCount])
         summaryCount.setContentHuggingPriority(.required, for: .horizontal)
-        summaryCount.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        summaryCount.toolTip = "件名の文字数（50 を超えると黄、72 を超えると橙）"
+        let summaryRow = summary
         let separator = NSBox()
         separator.boxType = .separator
 

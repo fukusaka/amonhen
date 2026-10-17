@@ -477,7 +477,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         let hosts = Set(all.compactMap(Self.sshHost) + bookmarks.data.scanRoots.compactMap { Self.sshHost($0.path) })
         for host in hosts.sorted() {
             let hostRoots = bookmarks.data.scanRoots.filter { Self.sshHost($0.path) == host }
-            let remote = all.filter { Self.sshHost($0) == host }.map { RepositoryLocation.path($0) }
+            RemoteHome.learn(host)
+            let remote = all.filter { Self.sshHost($0) == host }.map(Self.pathPart)
             places.append(SideNode(host, symbol: "network", .host(host),
                                    children: scanNodes(hostRoots, title: Self.remoteTitle)
                                        + folderTree(outside(remote, of: hostRoots), base: "", category: { .hostFolder(host, $0) },
@@ -502,8 +503,14 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     }
 
     /// 場所の中のパス（SSH 先ならそのホストの上のパス、手元の共有の daemon 越しなら手元のパス）。
+    /// SSH 先では、ホームの下の絶対パスを `~` に揃える（`~/prj` と `/home/me/prj` を同じ木に並べる）。
     static func pathPart(_ location: String) -> String {
-        sshHost(location) != nil ? RepositoryLocation.path(location) : localPath(location)
+        guard let host = sshHost(location) else { return localPath(location) }
+        let path = RepositoryLocation.path(location)
+        if let home = RemoteHome.known(host), path == home || path.hasPrefix(home + "/") {
+            return "/~" + path.dropFirst(home.count)
+        }
+        return path
     }
 
     /// SSH 先のパスの見せ方（`/~/prj` は `~/prj`）。
@@ -589,7 +596,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             }
         case let .hostFolder(host, prefix):
             return bookmarks.allLocations.filter {
-                Self.sshHost($0) == host && RepositoryLocation.path($0).hasPrefix(prefix + "/") && !Self.isScanned($0, host: host)
+                Self.sshHost($0) == host && Self.pathPart($0).hasPrefix(prefix + "/") && !Self.isScanned($0, host: host)
             }
         case let .scanFolder(root, prefix):
             return (bookmarks.scanned[root] ?? []).filter { Self.pathPart($0).hasPrefix(prefix + "/") }
@@ -1400,6 +1407,42 @@ final class RepositoryCell: NSTableCellView {
             color.setFill()
             NSBezierPath(ovalIn: rect.insetBy(dx: 0.5, dy: 0.5)).fill()
             return true
+        }
+    }
+}
+
+/// SSH のホストのホームディレクトリ。`ssh <host> 'printf %s "$HOME"'` で一度だけ問い合わせ、覚えておく
+/// （パスワードを聞かれるホストでは問い合わせない: BatchMode）。分かったらリポジトリの一覧を作り直す。
+enum RemoteHome {
+    private static let key = "sshHome"
+    nonisolated(unsafe) private static var asked: Set<String> = []
+
+    static func known(_ host: String) -> String? {
+        (UserDefaults.standard.dictionary(forKey: key) as? [String: String])?[host]
+    }
+
+    static func learn(_ host: String) {
+        guard known(host) == nil, !asked.contains(host) else { return }
+        asked.insert(host)
+        Task.detached(priority: .utility) {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+            process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, "printf %s \"$HOME\""]
+            let out = Pipe()
+            process.standardOutput = out
+            process.standardError = FileHandle.nullDevice
+            process.standardInput = FileHandle.nullDevice
+            guard (try? process.run()) != nil else { return }
+            let data = out.fileHandleForReading.readDataToEndOfFile()
+            process.waitUntilExit()
+            let home = String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard process.terminationStatus == 0, home.hasPrefix("/"), home.count > 1 else { return }
+            await MainActor.run {
+                var all = UserDefaults.standard.dictionary(forKey: key) as? [String: String] ?? [:]
+                all[host] = home
+                UserDefaults.standard.set(all, forKey: key)
+                RepositoryBrowser.bookmarksChanged()
+            }
         }
     }
 }

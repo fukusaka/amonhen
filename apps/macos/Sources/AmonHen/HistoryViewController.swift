@@ -356,6 +356,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         view = container
     }
 
+    /// ウィンドウのツールバーに検索欄が出ているか。出ていれば、ここの検索欄は隠す（同じ検索の欄を 2 つ並べない）。
+    /// 一致の件数・前・次・絞り込みはここに残す。
+    var toolbarSearchShown: (() -> Bool)?
+    /// ツールバーの検索欄に移る（ここの検索欄を隠しているとき）。
+    var focusToolbarSearch: (() -> Void)?
+
     override func viewDidLayout() {
         super.viewDidLayout()
         // 上に範囲の切り替え、その下に表。
@@ -365,9 +371,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let countWidth: CGFloat = 96
         // 右から、絞り込み・次・前・件数。
         let buttons: CGFloat = 3 * 22
+        let ownField = toolbarSearchShown?() != true
+        searchField.isHidden = !ownField
         searchField.frame = NSRect(
-            x: 192, y: barY, width: max(80, view.bounds.width - 192 - countWidth - buttons - 12), height: barHeight - 4)
-        searchSpinner.frame = NSRect(x: searchField.frame.maxX + 6, y: barY + 3, width: 16, height: 16)
+            x: 192, y: barY, width: ownField ? max(80, view.bounds.width - 192 - countWidth - buttons - 12) : 0,
+            height: barHeight - 4)
+        searchSpinner.frame = NSRect(x: (ownField ? searchField.frame.maxX : 186) + 6, y: barY + 3, width: 16, height: 16)
         let countX = view.bounds.width - countWidth - buttons - 6
         searchCount.frame = NSRect(x: countX, y: barY + 2, width: countWidth, height: 16)
         for (i, button) in [previousMatchButton, nextMatchButton, matchOnlyButton].enumerated() {
@@ -923,6 +932,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     /// ⌘F（Edit の Find…）。表やこの画面にフォーカスがあるとき、responder chain でここに届く。
     @objc func showFindBar(_ sender: Any?) {
+        if searchField.isHidden, let focusToolbarSearch { return focusToolbarSearch() }
         view.window?.makeFirstResponder(searchField)
         searchField.currentEditor()?.selectAll(nil)
     }
