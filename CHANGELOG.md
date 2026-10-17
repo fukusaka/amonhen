@@ -45,7 +45,8 @@ VSCode extension separately with `vscode-v*` tags, so each has its own section. 
   Server is.
 - Install scripts that need only `curl`: `scripts/install-app.sh`, `scripts/install-engine.sh` and
   `scripts/install-vscode.sh`.
-- Releases are signed with Developer ID and notarized, and every file carries a build provenance attestation.
+- Releases are signed with Developer ID and notarized (snapshots are signed only), and every file carries a build
+  provenance attestation.
 
 #### Changed
 

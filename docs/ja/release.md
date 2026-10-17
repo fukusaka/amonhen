@@ -28,7 +28,8 @@ gh attestation verify Amon-Hen-0.1.1.zip --repo fukusaka/amonhen
 
 環境 `release` の secret に Developer ID Application の証明書と App Store Connect の API キーがあれば、アプリと
 macOS のエンジンを Developer ID で署名し、Apple の公証に出す（アプリには結果を綴じ込む）。ブラウザで取っても
-そのまま開ける。
+そのまま開ける。正式版だけを公証に出し、snapshot は署名だけにする（`scripts/install-app.sh` で入れれば
+quarantine の印が付かない）。
 
 ```sh
 base64 -i DeveloperID.p12 | gh secret set AMONHEN_CERT_P12 --env release

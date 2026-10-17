@@ -21,17 +21,14 @@ jobs:
 
   snapshot:
     needs: windows-engine
-    # 署名と公証の鍵は、環境 release の secret に置く（この仕事だけが読める）。
+    # 署名の鍵は、環境 release の secret に置く（この仕事だけが読める）。snapshot は公証しない（自分用で、curl で
+    # 入れれば quarantine の印が付かないので要らない）。公証は正式版（release.yml）だけ。
     environment: release
     runs-on: macos-latest
     env:
       AMONHEN_CERT_P12: ${{ secrets.AMONHEN_CERT_P12 }}
       AMONHEN_CERT_PASSWORD: ${{ secrets.AMONHEN_CERT_PASSWORD }}
       AMONHEN_CERT_NAME: ${{ secrets.AMONHEN_CERT_NAME }}
-      # 公証（Developer ID で署名したときだけ通る）。App Store Connect の API キー。なければ公証しない。
-      AMONHEN_NOTARY_KEY: ${{ secrets.AMONHEN_NOTARY_KEY }}
-      AMONHEN_NOTARY_KEY_ID: ${{ secrets.AMONHEN_NOTARY_KEY_ID }}
-      AMONHEN_NOTARY_ISSUER: ${{ secrets.AMONHEN_NOTARY_ISSUER }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:

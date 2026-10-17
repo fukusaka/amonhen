@@ -33,13 +33,15 @@
 - **snapshot**: pre-release の `snapshot`。main に push するたびに作り直す。
 
 > [!NOTE]
-> 署名・公証したものは、snapshot と `v0.1.1` から。VSCode 拡張は正式版がまだないので、snapshot を使う。
+> 正式版は `v0.1.1` から署名・公証してある。snapshot は署名だけで公証していないので、下のスクリプトで入れるか、
+> ブラウザで取ったときは「システム設定 > プライバシーとセキュリティ」で一度だけ許可する。VSCode 拡張は正式版が
+> まだないので、snapshot を使う。
 
 ### アプリ（macOS）
 
 1. `Amon-Hen-<版>.zip`（snapshot は `Amon-Hen-Snapshot-<版>.zip`）を取ってくる。
 2. 展開して、`Amon Hen.app` を `/Applications` に移す。snapshot は `Amon Hen Snapshot.app` で、正式版と並べて置ける。
-3. 開く。署名・公証してあるので、警告なしで開ける。
+3. 開く。正式版は署名・公証してあるので、警告なしで開ける。
 
 初めて起動すると、エンジン（CLI と daemon）も入り、`~/.local/bin/amonhen` から使える。
 

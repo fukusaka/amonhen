@@ -34,15 +34,16 @@ Everything is on the [Releases](https://github.com/fukusaka/amonhen/releases) pa
 - **Snapshot**: the `snapshot` pre-release, rebuilt from every push to main.
 
 > [!NOTE]
-> Signed and notarized builds start from the snapshot and `v0.1.1`. There is no stable VSCode extension yet, so use the
-> snapshot for it.
+> Stable releases are signed and notarized from `v0.1.1`. Snapshots are signed but not notarized: install them with the
+> script below, or after a browser download allow them once in System Settings > Privacy & Security. There is no stable
+> VSCode extension yet, so use the snapshot for it.
 
 ### App (macOS)
 
 1. Download `Amon-Hen-<version>.zip` (snapshot: `Amon-Hen-Snapshot-<version>.zip`).
 2. Unzip it and move `Amon Hen.app` to `/Applications`. The snapshot is `Amon Hen Snapshot.app` and can sit next to the
    stable release.
-3. Open it. It is signed and notarized, so it opens without warnings.
+3. Open it. A stable release is signed and notarized, so it opens without warnings.
 
 On first launch the app also installs the engine (CLI and daemon), so `amonhen` is available from
 `~/.local/bin/amonhen`.

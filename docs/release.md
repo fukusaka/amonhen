@@ -29,7 +29,8 @@ gh attestation verify Amon-Hen-0.1.1.zip --repo fukusaka/amonhen
 
 If the `release` environment's secrets hold a Developer ID Application certificate and an App Store Connect API key,
 the app and the macOS engine are signed with Developer ID and submitted to Apple for notarization (the result is stapled
-to the app). Even when downloaded with a browser, it opens as is.
+to the app). Even when downloaded with a browser, it opens as is. Only stable releases are notarized; snapshots are
+signed but not notarized (they are installed with `scripts/install-app.sh`, which attaches no quarantine mark).
 
 ```sh
 base64 -i DeveloperID.p12 | gh secret set AMONHEN_CERT_P12 --env release
