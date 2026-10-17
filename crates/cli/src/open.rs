@@ -74,8 +74,8 @@ mod tests {
     #[test]
     fn encodes_the_location() {
         assert_eq!(
-            super::url_for("ssh://luna.local/~/prj/a b"),
-            "amonhen://open?location=ssh%3A//luna.local/~/prj/a%20b"
+            super::url_for("ssh://dev.example/~/src/a b"),
+            "amonhen://open?location=ssh%3A//dev.example/~/src/a%20b"
         );
     }
 }

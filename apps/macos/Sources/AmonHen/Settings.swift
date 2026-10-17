@@ -280,7 +280,7 @@ private struct GitSettings: View {
             Section("GitHub") {
                 Toggle("History にコミットごとの CI の状態を出す", isOn: $model.gitHubCIStatus)
                 Toggle("コミットの作者の GitHub のアバターを使う", isOn: $model.gitHubAvatars)
-                Note("gh で読む。開いたとき・Refresh・fetch や push の後（30 秒は空ける）に読む。1 回あたり、2 ブランチ × 100 コミットで両方なら 40 KB、CI だけなら 17 KB、今のブランチだけ・30 個なら 3 KB ほど（keel で測った値）。どちらも切ると読まない。")
+                Note("gh で読む。開いたとき・Refresh・fetch や push の後（30 秒は空ける）に読む。1 回あたり、2 ブランチ × 100 コミットで両方なら 40 KB、CI だけなら 17 KB、今のブランチだけ・30 個なら 3 KB ほど（CI のある中くらいのリポジトリで測った値）。どちらも切ると読まない。")
                 Picker("CI を読むブランチ", selection: $model.gitHubCIDefaultBranch) {
                     Text("今のブランチと既定のブランチ").tag(true)
                     Text("今のブランチだけ").tag(false)
