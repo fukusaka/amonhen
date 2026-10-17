@@ -69,13 +69,18 @@ enum RepositoryList {
     }
 }
 
-/// リポジトリの一覧: お気に入り・最近開いたもの・ブックマーク（手で作ったグループ）・スキャンするフォルダ。
-/// 開く・加える・外す・グループに分ける・色ラベル・ドラッグで並べ替える・まとめて Fetch。行には今のブランチ・
-/// 変更の有無・上流との差・最後のコミット・最後に開いた日時を出す（見えている行だけ裏で読む）。
+/// リポジトリの一覧。各リポジトリは 1 回だけ出す。
 ///
-/// 2 つの見た目で使う。`page` は新しいタブのページ（列に分けて見渡す）、`compact` はツールバーのリポジトリ名から
-/// 出す一覧（名前と状態だけ。選ぶとそのタブのリポジトリを切り替える）。中身と操作は同じ。
-final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate,
+/// 2 つの見た目で使う。
+/// - `page`: 新しいタブのページ。左に分類（すべて・お気に入り・場所（このMac・SSH のホストごと）・手で作ったグループ・
+///   スキャンするフォルダ）、右にその中の
+///   リポジトリを列（名前・ブランチ・状態・最後のコミット・開いた日時）で並べ、列で並べ替える（既定は最後に開いた順）。
+///   行を左のグループ・お気に入りにドラッグすると入れられる。
+/// - `compact`: ツールバーのリポジトリ名から出す一覧。お気に入り、そのあと最後に開いた順に、名前と状態だけを出す。
+///   選ぶとそのタブのリポジトリを切り替える。
+///
+/// 1 画面に並べるものは 5〜6 個に抑える（固定の分類は 2 つ、列は 5 つ、下のボタンは 2 つ）。それ以外の操作は右クリック。
+final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableViewDelegate,
     NSSearchFieldDelegate, NSMenuDelegate
 {
     enum Style { case page, compact }
@@ -86,7 +91,7 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
     let style: Style
     /// リポジトリを開く。AppDelegate・RepositoryWindow が設定する。
     var onOpen: ((String, OpenMode) -> Void)?
-    /// ツールバーの一覧の「すべてのリポジトリ」: ページを出す。
+    /// ツールバーの一覧の「すべてのリポジトリ…」: ページを出す。
     var onShowAll: (() -> Void)?
 
     /// 表示している一覧（ブックマークや行の状態が変わったら、全部に知らせる）。
@@ -102,52 +107,77 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
         for browser in live.allObjects { browser.rowChanged(path) }
     }
 
-    /// 一覧の見出し。
-    private final class Section {
-        enum Kind: Equatable { case favorites, recent, bookmarks, group(String), scan(String) }
-        let kind: Kind
-        var paths: [String] = []
-        init(_ kind: Kind) { self.kind = kind }
+    // MARK: - 分類
 
-        var title: String {
-            switch kind {
-            case .favorites: "Favorites"
-            case .recent: "Recent"
-            case .bookmarks: "Bookmarks"
-            case let .group(name): name
-            case let .scan(path): (path as NSString).abbreviatingWithTildeInPath
+    /// 左の分類。
+    private enum Category: Equatable {
+        /// `local` はこの Mac のリポジトリ（手元の共有の daemon 越しも含む）、`host` は SSH のホストごと。
+        case all, favorites, local, host(String), group(String), scan(String)
+
+        /// 覚えておくための文字列。
+        var key: String {
+            switch self {
+            case .all: "all"
+            case .favorites: "favorites"
+            case .local: "local"
+            case let .host(name): "host:" + name
+            case let .group(name): "group:" + name
+            case let .scan(path): "scan:" + path
             }
         }
-    }
 
-    /// 行（同じリポジトリが複数の見出しに出るので、見出しと組にする）。
-    private final class Row {
-        let path: String
-        unowned let section: Section
-        init(_ path: String, in section: Section) {
-            self.path = path
-            self.section = section
+        init?(key: String) {
+            if key == "all" { self = .all } else if key == "favorites" { self = .favorites }
+            else if key == "local" { self = .local }
+            else if key.hasPrefix("host:") { self = .host(String(key.dropFirst(5))) }
+            else if key.hasPrefix("group:") { self = .group(String(key.dropFirst(6))) }
+            else if key.hasPrefix("scan:") { self = .scan(String(key.dropFirst(5))) }
+            else { return nil }
         }
     }
 
+    /// SSH 先のリポジトリなら、そのホスト（`ssh://host/…`・`daemon:ssh://host/…`）。この Mac のものは nil。
+    static func sshHost(_ location: String) -> String? {
+        let rest = location.hasPrefix("daemon:") ? String(location.dropFirst("daemon:".count)) : location
+        guard rest.hasPrefix("ssh://") else { return nil }
+        return String(rest.dropFirst("ssh://".count).prefix { $0 != "/" })
+    }
+
+    /// 左の行: 分類か、見出し（グループ・スキャン）。
+    private enum SideEntry: Equatable {
+        case header(String)
+        case category(Category)
+    }
+
+    private static let categoryKey = "repositoryPageCategory"
+    private var category: Category = .all {
+        didSet { UserDefaults.standard.set(category.key, forKey: Self.categoryKey) }
+    }
+
+    private var sideEntries: [SideEntry] = []
+    /// 右に出しているリポジトリ（絞り込み・並べ替えの後）。
+    private var shown: [String] = []
+
     /// ⏎ で開く（表の中で）。
-    private final class Outline: NSOutlineView {
+    private final class Table: NSTableView {
         var onReturn: (() -> Void)?
         override func keyDown(with event: NSEvent) {
             if event.keyCode == 36 || event.keyCode == 76 { onReturn?() } else { super.keyDown(with: event) }
         }
     }
 
-    private let outline = Outline()
-    private let scroll = NSScrollView()
+    private let sidebar = NSTableView()
+    private let table = Table()
+    private let tableScroll = NSScrollView()
     private let filter = NSSearchField()
     private let scanning = NSProgressIndicator()
-    private var sections: [Section] = []
-    private var rows: [ObjectIdentifier: [Row]] = [:]
 
     init(style: Style) {
         self.style = style
         super.init(nibName: nil, bundle: nil)
+        if style == .page, let saved = UserDefaults.standard.string(forKey: Self.categoryKey).flatMap(Category.init(key:)) {
+            category = saved
+        }
         Self.live.add(self)
     }
 
@@ -181,61 +211,62 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
         reload()
     }
 
-    /// 行の状態が変わった。その行だけ描き直す（全部作り直すとスクロールが戻る）。
+    /// 行の状態が変わった。その行だけ描き直す（並びは変えない。読めるたびに行が動くと選びにくい）。
     private func rowChanged(_ path: String) {
-        guard isViewLoaded, view.window != nil else { return }
-        for section in sections {
-            for row in rows[ObjectIdentifier(section)] ?? [] where row.path == path {
-                outline.reloadItem(row)
-            }
-        }
+        guard isViewLoaded, view.window != nil, let row = shown.firstIndex(of: path) else { return }
+        table.reloadData(forRowIndexes: [row], columnIndexes: IndexSet(integersIn: 0..<table.numberOfColumns))
     }
+
+    // MARK: - 組み立て
 
     private func build() {
         let page = style == .page
-        let name = NSTableColumn(identifier: .init("repository"))
-        name.title = "Repository"
+        // 右: リポジトリの表。
+        let name = NSTableColumn(identifier: .init("name"))
+        name.title = "Name"
+        name.minWidth = 200
         name.resizingMask = .autoresizingMask
-        name.minWidth = 220
-        outline.addTableColumn(name)
-        outline.outlineTableColumn = name
+        name.sortDescriptorPrototype = NSSortDescriptor(key: "name", ascending: true)
+        table.addTableColumn(name)
         if page {
-            // 見渡すための列。幅は覚える。
-            for (id, title, width) in [
-                ("branch", "Branch", 150.0), ("status", "Status", 110.0), ("commit", "Last Commit", 300.0), ("opened", "Opened", 110.0),
+            for (id, title, width, ascending) in [
+                ("branch", "Branch", 150.0, true), ("status", "Status", 100.0, false),
+                ("commit", "Last Commit", 300.0, false), ("opened", "Opened", 100.0, false),
             ] {
                 let column = NSTableColumn(identifier: .init(id))
                 column.title = title
                 column.width = width
                 column.minWidth = 60
                 column.resizingMask = .userResizingMask
-                outline.addTableColumn(column)
+                column.sortDescriptorPrototype = NSSortDescriptor(key: id, ascending: ascending)
+                table.addTableColumn(column)
             }
-            outline.autosaveName = "RepositoryPage"
-            outline.autosaveTableColumns = true
-            outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
-            outline.usesAlternatingRowBackgroundColors = true
-            outline.style = .inset
+            table.autosaveName = "RepositoryPage.v2"
+            table.autosaveTableColumns = true
+            table.style = .inset
+            table.usesAlternatingRowBackgroundColors = true
+            let sortKey = UserDefaults.standard.string(forKey: "repositoryPageSort") ?? "opened"
+            let ascending = UserDefaults.standard.object(forKey: "repositoryPageSortAscending") as? Bool ?? false
+            table.sortDescriptors = [NSSortDescriptor(key: sortKey, ascending: ascending)]
         } else {
-            outline.headerView = nil
-            outline.style = .sourceList
-            outline.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+            table.headerView = nil
+            table.style = .sourceList
         }
-        outline.floatsGroupRows = false
-        outline.dataSource = self
-        outline.delegate = self
-        outline.target = self
-        outline.doubleAction = #selector(openSelected)
-        outline.onReturn = { [weak self] in self?.openSelected() }
-        outline.allowsMultipleSelection = true
-        outline.registerForDraggedTypes([Self.dragType])
-        outline.setDraggingSourceOperationMask(.move, forLocal: true)
+        table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
+        table.rowHeight = 40
+        table.dataSource = self
+        table.delegate = self
+        table.target = self
+        table.doubleAction = #selector(openSelected)
+        table.onReturn = { [weak self] in self?.openSelected() }
+        table.allowsMultipleSelection = true
+        table.setDraggingSourceOperationMask(.move, forLocal: true)
         let menu = NSMenu()
         menu.delegate = self
-        outline.menu = menu
-        scroll.documentView = outline
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
+        table.menu = menu
+        tableScroll.documentView = table
+        tableScroll.hasVerticalScroller = true
+        tableScroll.drawsBackground = false
 
         filter.placeholderString = page ? "名前・パスで絞り込む" : "リポジトリを切り替える"
         filter.delegate = self
@@ -245,109 +276,227 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
         scanning.controlSize = .small
         scanning.isHidden = true
 
-        let content = view
-        var arranged: [NSView]
+        // 下のボタン（2 つ）。
+        let bottom: NSStackView
         if page {
             let add = NSPopUpButton(frame: .zero, pullsDown: true)
-            add.addItem(withTitle: "Add")
+            add.addItem(withTitle: "＋ 追加")
             for (title, action) in [
-                ("Add Local Repository…", #selector(addRepository)), ("Clone…", #selector(clone)),
-                ("Add Remote Repository…", #selector(addRemote)), ("Add Folder to Scan…", #selector(addScanFolder)),
-                ("New Group…", #selector(newGroup)),
-            ] {
+                ("手元のリポジトリ…", #selector(addRepository)), ("Clone…", #selector(clone)),
+                ("SSH 接続…", #selector(addRemote as () -> Void)), ("-", nil),
+                ("グループ…", #selector(newGroup)), ("スキャンするフォルダ…", #selector(addScanFolder)),
+            ] as [(String, Selector?)] {
+                if title == "-" {
+                    add.menu?.addItem(.separator())
+                    continue
+                }
                 let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
                 item.target = self
                 add.menu?.addItem(item)
             }
-            let rescan = NSButton(title: "Rescan", target: self, action: #selector(rescanFolders))
-            rescan.toolTip = "スキャンするフォルダを探し直し、行の状態を読み直す"
-            let fetch = NSButton(title: "Fetch", target: self, action: #selector(fetchSelected))
-            fetch.toolTip = "選んだリポジトリ（見出しを選べばその中のすべて）をまとめて fetch する"
-            let remove = NSButton(title: "Remove", target: self, action: #selector(removeSelected))
-            remove.toolTip = "一覧から外す（フォルダには触れない）"
-            let open = NSButton(title: "Open", target: self, action: #selector(openSelected))
+            let open = NSButton(title: "開く", target: self, action: #selector(openSelected))
+            open.keyEquivalent = "\r"
             open.toolTip = "⏎ このタブで開く　⌘⏎ 新しいウィンドウで開く"
-            arranged = [add, rescan, fetch, remove, scanning, NSView(), open]
+            bottom = NSStackView(views: [add, scanning, NSView(), open])
         } else {
             let all = NSButton(title: "すべてのリポジトリ…", target: self, action: #selector(showAll))
             all.bezelStyle = .inline
-            all.toolTip = "リポジトリのページを新しいタブで開く（⌘⇧R）"
-            let add = NSButton(title: "Add…", target: self, action: #selector(addRepository))
-            add.bezelStyle = .inline
-            arranged = [add, scanning, NSView(), all]
+            all.toolTip = "リポジトリのページを開く（⌘⇧R）"
+            bottom = NSStackView(views: [scanning, NSView(), all])
         }
-        let buttons = NSStackView(views: arranged)
-        let margin: CGFloat = page ? 16 : 10
-        for v in [filter, scroll, buttons] as [NSView] {
+
+        let right = NSView()
+        let margin: CGFloat = page ? 14 : 10
+        for v in [filter, tableScroll, bottom] as [NSView] {
             v.translatesAutoresizingMaskIntoConstraints = false
-            content.addSubview(v)
+            right.addSubview(v)
         }
         NSLayoutConstraint.activate([
-            filter.topAnchor.constraint(equalTo: content.topAnchor, constant: margin),
-            filter.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-            filter.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
-            scroll.topAnchor.constraint(equalTo: filter.bottomAnchor, constant: 8),
-            scroll.leadingAnchor.constraint(equalTo: content.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: content.trailingAnchor),
-            buttons.topAnchor.constraint(equalTo: scroll.bottomAnchor, constant: 8),
-            buttons.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: margin),
-            buttons.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -margin),
-            buttons.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -margin),
+            filter.topAnchor.constraint(equalTo: right.topAnchor, constant: margin),
+            filter.leadingAnchor.constraint(equalTo: right.leadingAnchor, constant: margin),
+            filter.trailingAnchor.constraint(equalTo: right.trailingAnchor, constant: -margin),
+            tableScroll.topAnchor.constraint(equalTo: filter.bottomAnchor, constant: 8),
+            tableScroll.leadingAnchor.constraint(equalTo: right.leadingAnchor),
+            tableScroll.trailingAnchor.constraint(equalTo: right.trailingAnchor),
+            bottom.topAnchor.constraint(equalTo: tableScroll.bottomAnchor, constant: 8),
+            bottom.leadingAnchor.constraint(equalTo: right.leadingAnchor, constant: margin),
+            bottom.trailingAnchor.constraint(equalTo: right.trailingAnchor, constant: -margin),
+            bottom.bottomAnchor.constraint(equalTo: right.bottomAnchor, constant: -margin),
         ])
+
+        guard page else {
+            right.translatesAutoresizingMaskIntoConstraints = false
+            view.addSubview(right)
+            NSLayoutConstraint.activate([
+                right.topAnchor.constraint(equalTo: view.topAnchor), right.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+                right.leadingAnchor.constraint(equalTo: view.leadingAnchor), right.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            ])
+            return
+        }
+
+        // 左: 分類。
+        let column = NSTableColumn(identifier: .init("category"))
+        column.resizingMask = .autoresizingMask
+        sidebar.addTableColumn(column)
+        sidebar.headerView = nil
+        sidebar.style = .sourceList
+        sidebar.rowHeight = 26
+        sidebar.dataSource = self
+        sidebar.delegate = self
+        sidebar.registerForDraggedTypes([Self.dragType])
+        let sideMenu = NSMenu()
+        sideMenu.delegate = self
+        sidebar.menu = sideMenu
+        let sideScroll = NSScrollView()
+        sideScroll.documentView = sidebar
+        sideScroll.hasVerticalScroller = true
+        sideScroll.drawsBackground = false
+        let left = NSVisualEffectView()
+        left.material = .sidebar
+        left.blendingMode = .behindWindow
+        sideScroll.translatesAutoresizingMaskIntoConstraints = false
+        left.addSubview(sideScroll)
+        NSLayoutConstraint.activate([
+            sideScroll.topAnchor.constraint(equalTo: left.topAnchor, constant: 8),
+            sideScroll.bottomAnchor.constraint(equalTo: left.bottomAnchor),
+            sideScroll.leadingAnchor.constraint(equalTo: left.leadingAnchor),
+            sideScroll.trailingAnchor.constraint(equalTo: left.trailingAnchor),
+        ])
+
+        let split = NSSplitView()
+        split.isVertical = true
+        split.dividerStyle = .thin
+        split.autosaveName = "RepositoryPageSplit"
+        split.addArrangedSubview(left)
+        split.addArrangedSubview(right)
+        split.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(split)
+        NSLayoutConstraint.activate([
+            split.topAnchor.constraint(equalTo: view.topAnchor), split.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            split.leadingAnchor.constraint(equalTo: view.leadingAnchor), split.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            left.widthAnchor.constraint(greaterThanOrEqualToConstant: 160),
+        ])
+        left.widthAnchor.constraint(equalToConstant: 210).priority = .defaultLow
+        split.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
+        split.setPosition(210, ofDividerAt: 0)
     }
 
-    /// 見出しと行を作り直す。選んでいた行、開いていた見出し、スクロールの位置は保つ（作り直すと見出しが
-    /// 畳まれて開き直されるので、何もしないと一番上に戻ってしまう）。
-    private func reload() {
-        let selectedPath = (outline.item(atRow: outline.selectedRow) as? Row)?.path
-        let scrolled = scroll.contentView.bounds.origin
-        let query = filter.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
+    // MARK: - 中身
+
+    /// 分類の中のリポジトリ（絞り込み・並べ替えの前）。
+    private func paths(in category: Category) -> [String] {
         let bookmarks = Bookmarks.shared
-        let matches = { (path: String) in
-            query.isEmpty || bookmarks.displayName(path).lowercased().contains(query) || path.lowercased().contains(query)
+        switch category {
+        case .all: return bookmarks.allLocations
+        case .favorites: return bookmarks.data.items.filter(\.favorite).map(\.path)
+        case .local: return bookmarks.allLocations.filter { Self.sshHost($0) == nil }
+        case let .host(name): return bookmarks.allLocations.filter { Self.sshHost($0) == name }
+        case let .group(name): return bookmarks.data.items.filter { $0.group == name }.map(\.path)
+        case let .scan(path): return bookmarks.scanned[path] ?? []
         }
-        var made: [Section] = []
-        func add(_ kind: Section.Kind, _ paths: [String], always: Bool = false) {
-            let section = Section(kind)
-            section.paths = paths.filter(matches)
-            if !section.paths.isEmpty || (always && query.isEmpty) { made.append(section) }
+    }
+
+    /// 左と右を作り直す。選んでいた行とスクロールの位置は保つ。
+    private func reload() {
+        let bookmarks = Bookmarks.shared
+        if style == .page {
+            var entries: [SideEntry] = [.category(.all), .category(.favorites)]
+            // 場所: この Mac と、SSH のホストごと。
+            let hosts = Array(Set(bookmarks.allLocations.compactMap(Self.sshHost))).sorted()
+            entries.append(.header("場所"))
+            entries.append(.category(.local))
+            entries += hosts.map { .category(.host($0)) }
+            if !bookmarks.data.groups.isEmpty {
+                entries.append(.header("グループ"))
+                entries += bookmarks.data.groups.map { .category(.group($0)) }
+            }
+            if !bookmarks.data.scanRoots.isEmpty {
+                entries.append(.header("スキャン"))
+                entries += bookmarks.data.scanRoots.map { .category(.scan($0.path)) }
+            }
+            // 消えたグループ・フォルダを選んでいたら、すべてに戻す。
+            if !entries.contains(.category(category)) { category = .all }
+            sideEntries = entries
+            sidebar.reloadData()
+            if let row = sideEntries.firstIndex(of: .category(category)) {
+                sidebar.selectRowIndexes([row], byExtendingSelection: false)
+            }
         }
-        let items = bookmarks.data.items
-        add(.favorites, items.filter(\.favorite).map(\.path))
-        add(.recent, Array(RepositoryList.paths.prefix(15)), always: true)
-        add(.bookmarks, items.filter { $0.group == nil || !bookmarks.data.groups.contains($0.group!) }.map(\.path))
-        for group in bookmarks.data.groups {
-            add(.group(group), items.filter { $0.group == group }.map(\.path), always: true)
+
+        let selected = Set(table.selectedRowIndexes.compactMap { $0 < shown.count ? shown[$0] : nil })
+        let scrolled = tableScroll.contentView.bounds.origin
+        let query = filter.stringValue.trimmingCharacters(in: .whitespaces).lowercased()
+        var list = paths(in: style == .page ? category : .all).filter {
+            query.isEmpty || bookmarks.displayName($0).lowercased().contains(query) || $0.lowercased().contains(query)
         }
-        for root in bookmarks.data.scanRoots {
-            add(.scan(root.path), bookmarks.scanned[root.path] ?? [], always: true)
+        list = sorted(list)
+        shown = list
+        table.reloadData()
+        let rows = IndexSet(shown.indices.filter { selected.contains(shown[$0]) })
+        if !rows.isEmpty, query.isEmpty {
+            table.selectRowIndexes(rows, byExtendingSelection: false)
+        } else if !shown.isEmpty {
+            table.selectRowIndexes([0], byExtendingSelection: false)
         }
-        sections = made
-        rows = Dictionary(uniqueKeysWithValues: made.map { s in (ObjectIdentifier(s), s.paths.map { Row($0, in: s) }) })
-        outline.reloadData()
-        for section in sections where !outline.isItemExpanded(section) {
-            outline.expandItem(section)
-        }
-        if let selectedPath, let row = sections.lazy.compactMap({ s in self.rows[ObjectIdentifier(s)]?.first { $0.path == selectedPath } }).first {
-            outline.selectRowIndexes([outline.row(forItem: row)], byExtendingSelection: false)
-        } else if outline.selectedRow < 0 || !query.isEmpty,
-                  let first = sections.lazy.compactMap({ self.rows[ObjectIdentifier($0)]?.first }).first {
-            outline.selectRowIndexes([outline.row(forItem: first)], byExtendingSelection: false)
-        }
-        outline.layoutSubtreeIfNeeded()
         if query.isEmpty {
-            scroll.contentView.scroll(to: scrolled)
-            scroll.reflectScrolledClipView(scroll.contentView)
+            tableScroll.contentView.scroll(to: scrolled)
+            tableScroll.reflectScrolledClipView(tableScroll.contentView)
         } else {
-            outline.scrollRowToVisible(outline.selectedRow)
+            table.scrollRowToVisible(0)
         }
+    }
+
+    /// 並べ替え。ツールバーの一覧は、お気に入り、そのあと最後に開いた順。
+    private func sorted(_ list: [String]) -> [String] {
+        let bookmarks = Bookmarks.shared
+        let opened = { (path: String) in RepositoryList.openedAt(path) ?? .distantPast }
+        guard style == .page, let sort = table.sortDescriptors.first, let key = sort.key else {
+            return list.sorted { a, b in
+                let fa = bookmarks.bookmark(a)?.favorite == true, fb = bookmarks.bookmark(b)?.favorite == true
+                if fa != fb { return fa }
+                return opened(a) > opened(b)
+            }
+        }
+        let name = { (path: String) in bookmarks.displayName(path).lowercased() }
+        let ordered: (String, String) -> Bool
+        switch key {
+        case "branch":
+            let branch = { (path: String) in bookmarks.peek(path)?.branch ?? RepositoryList.branch(of: path) ?? "" }
+            ordered = { branch($0) < branch($1) }
+        case "status":
+            let weight = { (path: String) -> Int in
+                guard let peek = bookmarks.peek(path) else { return -1 }
+                return peek.changed * 10_000 + peek.ahead + peek.behind
+            }
+            ordered = { weight($0) < weight($1) }
+        case "commit":
+            let date = { (path: String) in bookmarks.peek(path)?.lastCommitDate ?? .distantPast }
+            ordered = { date($0) < date($1) }
+        case "opened":
+            ordered = { opened($0) < opened($1) }
+        default:
+            ordered = { name($0) < name($1) }
+        }
+        // 同じ値なら名前の順（並びが毎回変わらないように）。
+        return list.sorted { a, b in
+            if ordered(a, b) { return sort.ascending }
+            if ordered(b, a) { return !sort.ascending }
+            return name(a) < name(b)
+        }
+    }
+
+    func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
+        guard tableView === table, let sort = table.sortDescriptors.first else { return }
+        UserDefaults.standard.set(sort.key, forKey: "repositoryPageSort")
+        UserDefaults.standard.set(sort.ascending, forKey: "repositoryPageSortAscending")
+        reload()
     }
 
     @objc private func filterChanged() { reload() }
 
     func controlTextDidChange(_ notification: Notification) { reload() }
 
-    /// 絞り込みの欄から、↑↓ で行を選び、⏎ で開き、Esc で閉じる（ツールバーの一覧）。
+    /// 絞り込みの欄から、↑↓ で行を選び、⏎ で開き、Esc で消す・閉じる。
     func control(_ control: NSControl, textView: NSTextView, doCommandBy selector: Selector) -> Bool {
         switch selector {
         case #selector(NSResponder.moveDown(_:)): moveSelection(1)
@@ -357,7 +506,7 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
             if !filter.stringValue.isEmpty {
                 filter.stringValue = ""
                 reload()
-            } else {
+            } else if style == .compact {
                 view.window?.performClose(nil)
             }
         default: return false
@@ -365,20 +514,16 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
         return true
     }
 
-    /// 見出しを飛ばして、次・前のリポジトリの行を選ぶ。
     private func moveSelection(_ step: Int) {
-        var row = outline.selectedRow
-        repeat {
-            row += step
-        } while row >= 0 && row < outline.numberOfRows && !(outline.item(atRow: row) is Row)
-        guard row >= 0, row < outline.numberOfRows else { return }
-        outline.selectRowIndexes([row], byExtendingSelection: false)
-        outline.scrollRowToVisible(row)
+        guard !shown.isEmpty else { return }
+        let row = min(max(0, table.selectedRow + step), shown.count - 1)
+        table.selectRowIndexes([row], byExtendingSelection: false)
+        table.scrollRowToVisible(row)
     }
 
     @objc private func showAll() { onShowAll?() }
 
-    // MARK: - 加える・外す
+    // MARK: - 加える
 
     @objc private func addRepository() {
         let panel = NSOpenPanel()
@@ -407,11 +552,9 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
         NSApp.sendAction(#selector(AppDelegate.cloneRepository(_:)), to: nil, from: self)
     }
 
-    /// 選んでいる見出しが手で作ったグループなら、その名前（加えるものをそこに入れる）。
+    /// 左で手で作ったグループを選んでいれば、その名前（加えるものをそこに入れる）。
     private var selectedGroup: String? {
-        let item = outline.item(atRow: outline.selectedRow)
-        let section = (item as? Section) ?? (item as? Row)?.section
-        if case let .group(name)? = section?.kind { return name }
+        if case let .group(name) = category { return name }
         return nil
     }
 
@@ -427,11 +570,8 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
     @objc private func newGroup() {
         guard let name = ask("New Group", message: "グループの名前", initial: "") else { return }
         Bookmarks.shared.addGroup(name)
-    }
-
-    @objc private func rescanFolders() {
-        Bookmarks.shared.forgetPeeks()
-        Bookmarks.shared.rescan()
+        category = .group(name)
+        reload()
     }
 
     private func ask(_ title: String, message: String, initial: String) -> String? {
@@ -453,8 +593,13 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
     private static let lastHostKey = "lastRemoteHost"
 
     @objc private func addRemote() {
+        if case let .host(name) = category { addRemote(host: name) } else { addRemote(host: nil) }
+    }
+
+    /// SSH 先のリポジトリを加えて開く。`host` を渡すと、接続先を入れた状態で聞く（ホストの行の右クリック）。
+    private func addRemote(host initialHost: String?) {
         guard let window = view.window else { return }
-        let host = NSTextField(string: UserDefaults.standard.string(forKey: Self.lastHostKey) ?? "")
+        let host = NSTextField(string: initialHost ?? UserDefaults.standard.string(forKey: Self.lastHostKey) ?? "")
         host.placeholderString = "user@host:port（~/.ssh/config の名前でもよい）"
         let path = NSTextField(string: "")
         path.placeholderString = "~/src/repo や /srv/git/repo"
@@ -468,7 +613,7 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
         grid.frame = NSRect(x: 0, y: 0, width: 370, height: 56)
 
         let alert = NSAlert()
-        alert.messageText = "リモートのリポジトリを加える"
+        alert.messageText = initialHost.map { "\($0) のリポジトリを加える" } ?? "SSH 接続を加える"
         alert.informativeText = "SSH で接続します。鍵か ssh-agent でパスワードなしに入れるホストにしてください。"
         alert.accessoryView = grid
         alert.addButton(withTitle: "加えて開く")
@@ -490,121 +635,92 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
         }
     }
 
-    /// 選んだ行を、その見出しから外す（最近開いたものからは履歴を、ブックマークからは登録を消す）。
-    /// スキャンで見つけたものは外せない（フォルダを外す）。
-    @objc private func removeSelected() {
-        let item = outline.item(atRow: outline.selectedRow)
-        if let row = item as? Row {
-            remove(row)
-        } else if let section = item as? Section {
-            switch section.kind {
-            case let .group(name): Bookmarks.shared.removeGroup(name)
-            case let .scan(path): Bookmarks.shared.removeScanRoot(path)
-            default: NSSound.beep()
+    // MARK: - 外す
+
+    /// 今の分類から外す: すべてなら一覧から（ブックマークと開いた記録を消す）、お気に入りなら印を外す、グループなら
+    /// グループから出す。スキャンで見つけたものは外せない（フォルダを外す）。
+    private func remove(_ paths: [String]) {
+        for path in paths {
+            switch category {
+            case .all:
+                RepositoryList.remove(path)
+                Bookmarks.shared.remove(path)
+            case .favorites:
+                if Bookmarks.shared.bookmark(path)?.favorite == true { Bookmarks.shared.toggleFavorite(path) }
+            case .group:
+                Bookmarks.shared.move(path, to: nil)
+            case .local, .host:
+                RepositoryList.remove(path)
+                Bookmarks.shared.remove(path)
+            case .scan:
+                NSSound.beep()
             }
+        }
+        reload()
+    }
+
+    private var removeTitle: String? {
+        switch category {
+        case .all, .local, .host: "一覧から外す"
+        case .favorites: "お気に入りから外す"
+        case .group: "グループから外す"
+        case .scan: nil
         }
     }
 
-    private func remove(_ row: Row) {
-        switch row.section.kind {
-        case .recent:
-            RepositoryList.remove(row.path)
-            reload()
-        case .favorites: Bookmarks.shared.toggleFavorite(row.path)
-        case .bookmarks, .group: Bookmarks.shared.remove(row.path)
-        case .scan: NSSound.beep()
-        }
-    }
-
-    // MARK: - まとめて Fetch
-
-    /// 選んだ行のリポジトリ（見出しなら、その中のすべて）。
-    private var selectedPaths: [String] {
-        var seen = Set<String>()
-        return outline.selectedRowIndexes.flatMap { index -> [String] in
-            switch outline.item(atRow: index) {
-            case let row as Row: [row.path]
-            case let section as Section: section.paths
-            default: []
-            }
-        }.filter { seen.insert($0).inserted }
-    }
-
-    @objc private func fetchSelected() {
-        let paths = selectedPaths
-        guard !paths.isEmpty else { return NSSound.beep() }
-        Bookmarks.shared.fetch(paths)
-    }
-
-    // MARK: - ドラッグでの並べ替え
+    // MARK: - ドラッグ（行を左のお気に入り・グループへ）
 
     private static let dragType = NSPasteboard.PasteboardType("io.github.fukusaka.amonhen.repository")
 
-    func outlineView(_ outlineView: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
-        // ブックマーク・グループ・お気に入りの行だけを動かせる（最近開いたもの・スキャンの結果は並びが決まっている）。
-        guard let row = item as? Row else { return nil }
-        switch row.section.kind {
-        case .bookmarks, .group, .favorites: break
-        default: return nil
-        }
-        let pb = NSPasteboardItem()
-        pb.setString(row.path, forType: Self.dragType)
-        return pb
+    func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> NSPasteboardWriting? {
+        guard tableView === table, style == .page, row < shown.count else { return nil }
+        let item = NSPasteboardItem()
+        item.setString(shown[row], forType: Self.dragType)
+        return item
     }
 
-    func outlineView(
-        _ outlineView: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?, proposedChildIndex index: Int
+    func tableView(
+        _ tableView: NSTableView, validateDrop info: NSDraggingInfo, proposedRow row: Int, proposedDropOperation op: NSTableView.DropOperation
     ) -> NSDragOperation {
-        guard info.draggingPasteboard.string(forType: Self.dragType) != nil else { return [] }
-        // 行の上に落としたら、その行の前に入れる。
-        if let row = item as? Row {
-            guard let section = row.section as Section?, let i = rows[ObjectIdentifier(section)]?.firstIndex(where: { $0 === row })
-            else { return [] }
-            outlineView.setDropItem(section, dropChildIndex: i)
-            return dropTarget(section) ? .move : []
-        }
-        guard let section = item as? Section, dropTarget(section) else { return [] }
-        return .move
-    }
-
-    /// 落とせる見出し（ブックマーク・手で作ったグループ・お気に入り）。
-    private func dropTarget(_ section: Section) -> Bool {
-        switch section.kind {
-        case .bookmarks, .group, .favorites: true
-        default: false
+        guard tableView === sidebar, info.draggingPasteboard.string(forType: Self.dragType) != nil,
+              row < sideEntries.count, case let .category(target) = sideEntries[row] else { return [] }
+        switch target {
+        case .favorites, .group:
+            tableView.setDropRow(row, dropOperation: .on)
+            return .move
+        default: return []
         }
     }
 
-    func outlineView(_ outlineView: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
-        guard let path = info.draggingPasteboard.string(forType: Self.dragType), let section = item as? Section else { return false }
-        let list = rows[ObjectIdentifier(section)] ?? []
-        // 動かす行そのものは数えずに、落とした位置の次の行を探す。
-        let target = list.dropFirst(max(0, index == -1 ? list.count : index)).first { $0.path != path }?.path
-        switch section.kind {
-        case .bookmarks: Bookmarks.shared.reorder(path, before: target, group: nil)
-        case let .group(name): Bookmarks.shared.reorder(path, before: target, group: name)
-        case .favorites:
-            // お気に入りの中の並びも、ブックマークの並びで決まる。グループは変えない。
-            if Bookmarks.shared.bookmark(path)?.favorite != true { Bookmarks.shared.toggleFavorite(path) }
-            Bookmarks.shared.reorder(path, before: target, group: Bookmarks.shared.bookmark(path)?.group)
-        default: return false
+    func tableView(_ tableView: NSTableView, acceptDrop info: NSDraggingInfo, row: Int, dropOperation: NSTableView.DropOperation) -> Bool {
+        guard tableView === sidebar, row < sideEntries.count, case let .category(target) = sideEntries[row] else { return false }
+        let paths = (info.draggingPasteboard.pasteboardItems ?? []).compactMap { $0.string(forType: Self.dragType) }
+        for path in paths {
+            switch target {
+            case .favorites:
+                if Bookmarks.shared.bookmark(path)?.favorite != true { Bookmarks.shared.toggleFavorite(path) }
+            case let .group(name):
+                Bookmarks.shared.move(path, to: name)
+            default:
+                return false
+            }
         }
-        return true
+        return !paths.isEmpty
     }
 
     // MARK: - 開く
 
     @objc private func openSelected() {
-        let row = outline.clickedRow >= 0 && NSApp.currentEvent?.type != .keyDown ? outline.clickedRow : outline.selectedRow
-        guard let item = outline.item(atRow: row) as? Row else { return }
-        open(item.path, NSApp.currentEvent?.modifierFlags.contains(.command) == true ? .newWindow : .here)
+        let row = table.clickedRow >= 0 && NSApp.currentEvent?.type != .keyDown ? table.clickedRow : table.selectedRow
+        guard row >= 0, row < shown.count else { return }
+        open(shown[row], NSApp.currentEvent?.modifierFlags.contains(.command) == true ? .newWindow : .here)
     }
 
     private func open(_ path: String, _ mode: OpenMode) {
         guard RepositoryList.isRepository(path) else {
             let alert = NSAlert()
             alert.messageText = "\((path as NSString).lastPathComponent) が見つかりません"
-            alert.informativeText = "\(path)\n最近開いたものとブックマークから外しますか？"
+            alert.informativeText = "\(path)\n一覧から外しますか？"
             alert.addButton(withTitle: "外す")
             alert.addButton(withTitle: "キャンセル")
             if alert.runModal() == .alertFirstButtonReturn {
@@ -621,62 +737,97 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let item = outline.item(atRow: outline.clickedRow)
-        func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
-        if let section = item as? Section {
-            if !section.paths.isEmpty {
-                let paths = section.paths
-                add("Fetch All（\(paths.count)）") { Bookmarks.shared.fetch(paths) }
-                menu.addItem(.separator())
-            }
-            switch section.kind {
-            case let .group(name):
-                add("Rename Group…") { [weak self] in
-                    guard let new = self?.ask("Rename Group", message: "グループの名前", initial: name) else { return }
-                    let members = Bookmarks.shared.data.items.filter { $0.group == name }.map(\.path)
-                    Bookmarks.shared.addGroup(new)
-                    for path in members { Bookmarks.shared.move(path, to: new) }
-                    Bookmarks.shared.removeGroup(name)
-                }
-                add("Remove Group") { Bookmarks.shared.removeGroup(name) }
-            case let .scan(path):
-                let depth = Bookmarks.shared.data.scanRoots.first { $0.path == path }?.depth ?? 3
-                let depths = NSMenu(title: "Depth")
-                for d in 1...6 {
-                    let item = ClosureMenuItem(title: "\(d)") { Bookmarks.shared.setDepth(d, of: path) }
-                    item.state = d == depth ? .on : .off
-                    depths.addItem(item)
-                }
-                let depthItem = NSMenuItem(title: "Depth", action: nil, keyEquivalent: "")
-                depthItem.submenu = depths
-                menu.addItem(depthItem)
-                add("Rescan") { Bookmarks.shared.rescan() }
-                add("Reveal in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
-                }
-                add("Remove Folder") { Bookmarks.shared.removeScanRoot(path) }
-            default:
-                break
-            }
-            return
+        if menu === sidebar.menu {
+            sidebarMenu(menu)
+        } else {
+            rowMenu(menu)
         }
-        guard let row = item as? Row else { return }
-        let path = row.path
+    }
+
+    private func sidebarMenu(_ menu: NSMenu) {
+        let row = sidebar.clickedRow
+        guard row >= 0, row < sideEntries.count, case let .category(target) = sideEntries[row] else { return }
+        func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
+        let paths = paths(in: target)
+        if !paths.isEmpty {
+            add("すべて Fetch（\(paths.count)）") { Bookmarks.shared.fetch(paths) }
+        }
+        switch target {
+        case let .host(name):
+            menu.addItem(.separator())
+            add("このホストのリポジトリを加える…") { [weak self] in self?.addRemote(host: name) }
+        case .local:
+            menu.addItem(.separator())
+            add("手元のリポジトリを加える…") { [weak self] in self?.addRepository() }
+        case let .group(name):
+            menu.addItem(.separator())
+            add("名前を変える…") { [weak self] in
+                guard let new = self?.ask("グループの名前を変える", message: "グループの名前", initial: name) else { return }
+                let members = Bookmarks.shared.data.items.filter { $0.group == name }.map(\.path)
+                Bookmarks.shared.addGroup(new)
+                for path in members { Bookmarks.shared.move(path, to: new) }
+                Bookmarks.shared.removeGroup(name)
+            }
+            add("グループを消す") { Bookmarks.shared.removeGroup(name) }
+        case let .scan(path):
+            menu.addItem(.separator())
+            let depth = Bookmarks.shared.data.scanRoots.first { $0.path == path }?.depth ?? 3
+            let depths = NSMenu(title: "探す深さ")
+            for d in 1...6 {
+                let item = ClosureMenuItem(title: "\(d)") { Bookmarks.shared.setDepth(d, of: path) }
+                item.state = d == depth ? .on : .off
+                depths.addItem(item)
+            }
+            let depthItem = NSMenuItem(title: "探す深さ", action: nil, keyEquivalent: "")
+            depthItem.submenu = depths
+            menu.addItem(depthItem)
+            add("探し直す") { Bookmarks.shared.rescan() }
+            add("Finder に表示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+            add("フォルダを外す") { Bookmarks.shared.removeScanRoot(path) }
+        default:
+            break
+        }
+    }
+
+    private func rowMenu(_ menu: NSMenu) {
+        let clicked = table.clickedRow
+        guard clicked >= 0, clicked < shown.count else { return }
+        let path = shown[clicked]
+        let targets = table.selectedRowIndexes.contains(clicked)
+            ? table.selectedRowIndexes.compactMap { $0 < shown.count ? shown[$0] : nil } : [path]
         let bookmark = Bookmarks.shared.bookmark(path)
-        add(style == .page ? "Open" : "Switch to This Repository") { [weak self] in self?.open(path, .here) }
-        add("Open in New Tab") { [weak self] in self?.open(path, .newTab) }
-        add("Open in New Window") { [weak self] in self?.open(path, .newWindow) }
+        func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
+        add(style == .page ? "開く" : "このリポジトリに切り替える") { [weak self] in self?.open(path, .here) }
+        add("新しいタブで開く") { [weak self] in self?.open(path, .newTab) }
+        add("新しいウィンドウで開く") { [weak self] in self?.open(path, .newWindow) }
         if !path.hasPrefix("daemon:"), !Settings.openThroughDaemon {
-            let item = ClosureMenuItem(title: "Open via Daemon") { [weak self] in self?.onOpen?("daemon:" + path, .here) }
-            item.toolTip = "共有の daemon 越しに開く（History・検索の索引・操作の記録を CLI などと共有する）"
+            let item = ClosureMenuItem(title: "共有の daemon 越しに開く") { [weak self] in self?.onOpen?("daemon:" + path, .here) }
+            item.toolTip = "History・検索の索引・操作の記録を CLI などと共有する"
             menu.addItem(item)
         }
         menu.addItem(.separator())
-        let targets = outline.selectedRowIndexes.contains(outline.clickedRow) ? selectedPaths : [path]
-        add(targets.count > 1 ? "Fetch \(targets.count) Repositories" : "Fetch") { Bookmarks.shared.fetch(targets) }
+        add(targets.count > 1 ? "Fetch（\(targets.count)）" : "Fetch") { Bookmarks.shared.fetch(targets) }
         menu.addItem(.separator())
-        add(bookmark?.favorite == true ? "Remove from Favorites" : "Add to Favorites") { Bookmarks.shared.toggleFavorite(path) }
-        let colors = NSMenu(title: "Color Label")
+        add(bookmark?.favorite == true ? "お気に入りから外す" : "お気に入りに入れる") { Bookmarks.shared.toggleFavorite(path) }
+        let groups = NSMenu(title: "グループ")
+        let none = ClosureMenuItem(title: "なし") { for p in targets { Bookmarks.shared.move(p, to: nil) } }
+        none.state = bookmark?.group == nil ? .on : .off
+        groups.addItem(none)
+        for group in Bookmarks.shared.data.groups {
+            let item = ClosureMenuItem(title: group) { for p in targets { Bookmarks.shared.move(p, to: group) } }
+            item.state = bookmark?.group == group ? .on : .off
+            groups.addItem(item)
+        }
+        groups.addItem(.separator())
+        groups.addItem(ClosureMenuItem(title: "新しいグループ…") { [weak self] in
+            guard let name = self?.ask("New Group", message: "グループの名前", initial: "") else { return }
+            Bookmarks.shared.addGroup(name)
+            for p in targets { Bookmarks.shared.move(p, to: name) }
+        })
+        let groupItem = NSMenuItem(title: "グループ", action: nil, keyEquivalent: "")
+        groupItem.submenu = groups
+        menu.addItem(groupItem)
+        let colors = NSMenu(title: "色ラベル")
         let noColor = ClosureMenuItem(title: "なし") { for p in targets { Bookmarks.shared.setColor(p, nil) } }
         noColor.state = bookmark?.color == nil ? .on : .off
         colors.addItem(noColor)
@@ -686,104 +837,144 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
             item.state = bookmark?.color == entry.name ? .on : .off
             colors.addItem(item)
         }
-        let colorItem = NSMenuItem(title: "Color Label", action: nil, keyEquivalent: "")
+        let colorItem = NSMenuItem(title: "色ラベル", action: nil, keyEquivalent: "")
         colorItem.submenu = colors
         menu.addItem(colorItem)
-        if bookmark == nil {
-            add("Add to Bookmarks") { Bookmarks.shared.add(path) }
-        }
-        add("Rename…") { [weak self] in
+        add("名前を変える…") { [weak self] in
             let current = Bookmarks.shared.displayName(path)
-            let name = self?.ask("Rename", message: "一覧に出す名前（空にするとフォルダの名前）", initial: current)
+            let name = self?.ask("名前を変える", message: "一覧に出す名前（空にするとフォルダの名前）", initial: current)
             Bookmarks.shared.rename(path, to: name)
         }
-        let groups = NSMenu(title: "Move to Group")
-        let none = ClosureMenuItem(title: "なし") { Bookmarks.shared.move(path, to: nil) }
-        none.state = bookmark != nil && bookmark?.group == nil ? .on : .off
-        groups.addItem(none)
-        for group in Bookmarks.shared.data.groups {
-            let item = ClosureMenuItem(title: group) { Bookmarks.shared.move(path, to: group) }
-            item.state = bookmark?.group == group ? .on : .off
-            groups.addItem(item)
-        }
-        groups.addItem(.separator())
-        groups.addItem(ClosureMenuItem(title: "New Group…") { [weak self] in
-            guard let name = self?.ask("New Group", message: "グループの名前", initial: "") else { return }
-            Bookmarks.shared.addGroup(name)
-            Bookmarks.shared.move(path, to: name)
-        })
-        let groupItem = NSMenuItem(title: "Move to Group", action: nil, keyEquivalent: "")
-        groupItem.submenu = groups
-        menu.addItem(groupItem)
         if !RepositoryLocation.isRemote(path) {
             menu.addItem(.separator())
-            add("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
-            add("Open in Terminal") {
+            add("Finder に表示") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+            add("ターミナルで開く") {
                 guard let terminal = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Terminal") else { return }
                 NSWorkspace.shared.open(
                     [URL(fileURLWithPath: path)], withApplicationAt: terminal, configuration: NSWorkspace.OpenConfiguration())
             }
         }
-        if case .scan = row.section.kind {} else {
+        if style == .page, let title = removeTitle {
             menu.addItem(.separator())
-            add("Remove from \(row.section.title)") { [weak self] in self?.remove(row) }
+            add(title) { [weak self] in self?.remove(targets) }
         }
     }
 
-    // MARK: - NSOutlineView
+    // MARK: - NSTableView
 
-    func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        switch item {
-        case nil: sections.count
-        case let section as Section: rows[ObjectIdentifier(section)]?.count ?? 0
-        default: 0
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        tableView === sidebar ? sideEntries.count : shown.count
+    }
+
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        guard tableView === sidebar, row < sideEntries.count, case .header = sideEntries[row] else { return false }
+        return true
+    }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        guard tableView === sidebar else { return true }
+        if case .category = sideEntries[row] { return true }
+        return false
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        tableView === sidebar ? 26 : 40
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        guard notification.object as? NSTableView === sidebar else { return }
+        let row = sidebar.selectedRow
+        guard row >= 0, row < sideEntries.count, case let .category(chosen) = sideEntries[row], chosen != category else { return }
+        category = chosen
+        reload()
+    }
+
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        if tableView === sidebar { return sidebarCell(row) }
+        guard row < shown.count else { return nil }
+        let path = shown[row]
+        let column = tableColumn?.identifier.rawValue ?? "name"
+        if column == "name" {
+            let id = NSUserInterfaceItemIdentifier(style == .page ? "repo-page" : "repo")
+            let cell = tableView.makeView(withIdentifier: id, owner: nil) as? RepositoryCell ?? RepositoryCell(details: style == .compact)
+            cell.identifier = id
+            cell.show(path)
+            return cell
         }
+        let cell = tableView.makeView(withIdentifier: .init(column), owner: nil) as? DetailCell ?? DetailCell(column)
+        cell.show(column: column, location: path)
+        return cell
     }
 
-    func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        switch item {
-        case let section as Section: rows[ObjectIdentifier(section)]![index]
-        default: sections[index]
-        }
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool { item is Section }
-    func outlineView(_ outlineView: NSOutlineView, isGroupItem item: Any) -> Bool { item is Section }
-
-    func outlineView(_ outlineView: NSOutlineView, heightOfRowByItem item: Any) -> CGFloat {
-        item is Section ? 24 : 40
-    }
-
-    func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
-        if let section = item as? Section {
-            let field = outlineView.makeView(withIdentifier: .init("section"), owner: nil) as? NSTextField ?? {
+    private func sidebarCell(_ row: Int) -> NSView? {
+        guard row < sideEntries.count else { return nil }
+        switch sideEntries[row] {
+        case let .header(title):
+            let field = sidebar.makeView(withIdentifier: .init("header"), owner: nil) as? NSTextField ?? {
                 let f = NSTextField(labelWithString: "")
-                f.identifier = .init("section")
+                f.identifier = .init("header")
                 f.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
                 f.textColor = .secondaryLabelColor
                 return f
             }()
-            var title = section.title
-            if case .scan = section.kind { title = "📁 " + title + (Bookmarks.shared.isScanning ? "（探しています…）" : "") }
             field.stringValue = title
             return field
-        }
-        guard let row = item as? Row else { return nil }
-        let column = tableColumn?.identifier.rawValue ?? "repository"
-        if column == "repository" {
-            let id = NSUserInterfaceItemIdentifier(style == .page ? "repo-page" : "repo")
-            let cell = outlineView.makeView(withIdentifier: id, owner: nil) as? RepositoryCell
-                ?? RepositoryCell(details: style == .compact)
-            cell.identifier = id
-            cell.show(row.path)
+        case let .category(category):
+            let cell = sidebar.makeView(withIdentifier: .init("category"), owner: nil) as? CategoryCell ?? CategoryCell()
+            let (title, symbol): (String, String) = switch category {
+            case .all: ("すべて", "tray.full")
+            case .favorites: ("お気に入り", "star")
+            case .local: ("このMac", "laptopcomputer")
+            case let .host(name): (name, "network")
+            case let .group(name): (name, "folder")
+            case let .scan(path): ((path as NSString).abbreviatingWithTildeInPath, "magnifyingglass")
+            }
+            var count = "\(paths(in: category).count)"
+            if case .scan = category, Bookmarks.shared.isScanning { count = "…" }
+            cell.show(title: title, symbol: symbol, count: count)
             return cell
         }
-        let cell = outlineView.makeView(withIdentifier: .init(column), owner: nil) as? DetailCell ?? DetailCell(column)
-        cell.show(column: column, location: row.path)
-        return cell
     }
 
-    /// ページの列（ブランチ・状態・最後のコミット・最後に開いた日時）。
+    /// 左の分類の行: 印、名前、右に件数。
+    private final class CategoryCell: NSTableCellView {
+        let icon = NSImageView()
+        let title = NSTextField(labelWithString: "")
+        let count = NSTextField(labelWithString: "")
+
+        init() {
+            super.init(frame: .zero)
+            identifier = .init("category")
+            title.lineBreakMode = .byTruncatingMiddle
+            count.textColor = .secondaryLabelColor
+            count.font = .monospacedDigitSystemFont(ofSize: NSFont.smallSystemFontSize, weight: .regular)
+            for v in [icon, title, count] {
+                v.translatesAutoresizingMaskIntoConstraints = false
+                addSubview(v)
+            }
+            title.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+            NSLayoutConstraint.activate([
+                icon.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 4),
+                icon.centerYAnchor.constraint(equalTo: centerYAnchor),
+                icon.widthAnchor.constraint(equalToConstant: 16),
+                title.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 6),
+                title.centerYAnchor.constraint(equalTo: centerYAnchor),
+                title.trailingAnchor.constraint(lessThanOrEqualTo: count.leadingAnchor, constant: -6),
+                count.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+                count.centerYAnchor.constraint(equalTo: centerYAnchor),
+            ])
+        }
+
+        required init?(coder: NSCoder) { fatalError() }
+
+        func show(title text: String, symbol: String, count number: String) {
+            icon.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            title.stringValue = text
+            count.stringValue = number
+        }
+    }
+
+    /// ページの列（ブランチ・状態・最後のコミット・開いた日時）。
     private final class DetailCell: NSTableCellView {
         let label = NSTextField(labelWithString: "")
 
@@ -813,15 +1004,23 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
         }()
 
         func show(column: String, location: String) {
+            let remote = RepositoryLocation.isRemote(location)
             let exists = RepositoryList.isRepository(location)
-            let peek = exists ? Bookmarks.shared.peek(location) : nil
+            let peek = exists && !remote ? Bookmarks.shared.peek(location) : nil
             label.textColor = .secondaryLabelColor
             toolTip = nil
             switch column {
             case "branch":
-                label.stringValue = exists ? peek.map { $0.branch ?? "detached" } ?? RepositoryList.branch(of: location) ?? "" : ""
+                label.stringValue = remote ? "—"
+                    : exists ? peek.map { $0.branch ?? "detached" } ?? RepositoryList.branch(of: location) ?? "" : ""
                 label.textColor = .labelColor
             case "status":
+                if remote {
+                    // SSH 先・daemon 越しは、開くまで状態を読まない。
+                    label.stringValue = RepositoryBrowser.sshHost(location) != nil ? "SSH" : "daemon"
+                    toolTip = "開くまで状態は読みません"
+                    break
+                }
                 var parts: [String] = []
                 if let peek {
                     if peek.changed > 0 { parts.append("● \(peek.changed)") }
@@ -832,8 +1031,9 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
                 let fetchError = Bookmarks.shared.fetchErrors[location]
                 if Bookmarks.shared.fetching.contains(location) { parts.insert("Fetch 中…", at: 0) }
                 if fetchError != nil { parts.insert("Fetch に失敗", at: 0) }
+                if !exists { parts = ["見つかりません"] }
                 label.stringValue = parts.joined(separator: "  ")
-                label.textColor = fetchError != nil ? .systemRed : peek?.changed ?? 0 > 0 ? .systemOrange : .secondaryLabelColor
+                label.textColor = fetchError != nil || !exists ? .systemRed : peek?.changed ?? 0 > 0 ? .systemOrange : .secondaryLabelColor
                 toolTip = fetchError.map { "Fetch に失敗: \($0)" } ?? peek.map {
                     [
                         $0.changed > 0 ? "変更のあるファイル \($0.changed) 個（untracked は数えない）" : "変更なし",
@@ -845,7 +1045,7 @@ final class RepositoryBrowser: NSViewController, NSOutlineViewDataSource, NSOutl
                     label.stringValue = Self.relative.localizedString(for: date, relativeTo: Date()) + " — " + (peek.lastCommitSubject ?? "")
                     toolTip = (peek.lastCommitSubject ?? "") + "\n" + date.formatted(date: .abbreviated, time: .shortened)
                 } else {
-                    label.stringValue = ""
+                    label.stringValue = remote ? "—" : ""
                 }
             case "opened":
                 label.stringValue = RepositoryList.openedAt(location).map { Self.relative.localizedString(for: $0, relativeTo: Date()) } ?? ""

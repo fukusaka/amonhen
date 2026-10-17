@@ -65,12 +65,17 @@ Extend today's "Repositories…" (a list in the order opened) into the equivalen
 The list appears in two places, with the same contents and operations (`RepositoryBrowser`):
 
 - **The repository page**, a tab with no repository open (`RepositoryHome.swift`). ⌘T, ⌘N, ⌘O and ⌘⇧R show it, and so
-  does launching or closing the last repository with nothing open. It lays the list out in columns to give an overview:
-  name and path, branch, status (changes, ahead/behind), the last commit (when and its subject) and when it was last
-  opened. Choosing a repository turns this tab into that repository (⌘⏎ for a new window). Adding (a local folder,
-  Clone, an SSH host, a folder to scan, a group) is in the page's Add menu. There is no separate window.
+  does launching or closing the last repository with nothing open. On the left are categories: All, Favorites, Places
+  (This Mac and one entry per SSH host), the manual groups and the folders to scan, each with a count. On the right,
+  the repositories in the chosen category appear once each, in five sortable columns: name and path, branch, status
+  (changes, ahead/behind; "SSH" for remote ones, which are read only when opened), the last commit (when and its
+  subject) and when it was last opened (the default order). Dragging rows onto Favorites or a group puts them there.
+  Choosing a repository turns this tab into that repository (⌘⏎ for a new window). The only buttons are "+ Add" (a
+  local repository, Clone, an SSH connection, a group, a folder to scan) and "Open"; everything else is in the context
+  menus. A person takes in about five or six things at once, so each part of the page stays within that. There is no
+  separate window.
 - **The repository name at the left of the toolbar** (like GitHub Desktop). It opens the list in a popover with names
-  and status only; choosing one switches the current tab to it. The window title is hidden, since the toolbar shows the
+  and status only, favorites first and then by when they were last opened; choosing one switches the current tab to it. The window title is hidden, since the toolbar shows the
   repository and the branch.
 
 Saved not in UserDefaults but in `~/Library/Application Support/Amon Hen/bookmarks.json` (structured, and editable by hand). Scan results are not saved; they are collected again in the background at launch.
