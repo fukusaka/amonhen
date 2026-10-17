@@ -131,8 +131,15 @@ fn main() -> glib::ExitCode {
     app.run_with_args::<&str>(&[])
 }
 
-/// `path` を含むリポジトリを開く。History は CLI・アプリと同じ永続キャッシュに置く。
-fn open(path: &Path) -> Result<Repository, String> {
+/// リポジトリを開く。`location` は手元のパス、`daemon:/path`（手元の共有の daemon。いなければ起動する）、
+/// `ssh://[user@]host[:port]/path`（SSH 先の daemon。なければエンジンを送り込む）のどれか。History は CLI・アプリと
+/// 同じ永続キャッシュに置く（手元の共有の daemon なら、daemon が用意したものを読む）。
+fn open(location: &Path) -> Result<Repository, String> {
+    let text = location.to_string_lossy();
+    if amonhen_remote::location::is_remote(&text) {
+        return open_remote(&text).map_err(|e| e.to_string());
+    }
+    let path = location;
     let backend = GixBackend::open(path).map_err(|e| e.to_string())?;
     let key = std::fs::canonicalize(path)
         .map_or_else(|_| path.display().to_string(), |p| p.display().to_string());
@@ -142,15 +149,76 @@ fn open(path: &Path) -> Result<Repository, String> {
     })
 }
 
+/// daemon 越しに開く（macOS 版の `amonhen_repo_open_location` と同じ）。
+fn open_remote(location: &str) -> amonhen_model::Result<Repository> {
+    use amonhen_remote::ssh;
+    let daemon = engine();
+    let conn = if location.starts_with("ssh://") {
+        // SSH 先に送るエンジン（`amonhen-<os>-<arch>`）の置き場所: `AMONHEN_ENGINES`、なければ実行ファイルの隣の
+        // `engines`（配るときに同梱する。macOS 版の Resources/engines と同じ）。SSH 先が手元と同じ OS と CPU なら
+        // 手元のエンジンを送る。
+        let engines = std::env::var_os("AMONHEN_ENGINES")
+            .map(PathBuf::from)
+            .or_else(|| {
+                let exe = std::env::current_exe().ok()?;
+                Some(exe.parent()?.join("engines"))
+            })
+            .unwrap_or_default();
+        let daemons = ssh::Daemons::new(engines, Some((ssh::local_platform(), daemon.clone())));
+        let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+        ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)?
+    } else {
+        let path = amonhen_remote::location::local_path(location)?;
+        amonhen_remote::local::connect(path, &daemon.to_string_lossy())?
+    };
+    let backend = amonhen_remote::RemoteBackend::connect(conn)?;
+    // SSH 先の History は手元にキャッシュする（つなぎ直したら新しいコミットだけを受け取る）。手元の共有の daemon
+    // なら、daemon が用意したファイルを直接読むので持たない。
+    Ok(match amonhen_remote::local::cache_dir() {
+        Some(dir) if location.starts_with("ssh://") => {
+            Repository::with_cache(backend, cache::path_for(&dir, location))
+        }
+        _ => Repository::new(backend),
+    })
+}
+
+/// 共有の daemon として起動するエンジン: 置き場所の `current`（`amonhen install` が置く）か、PATH の `amonhen`。
+fn engine() -> PathBuf {
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .filter(|d| !d.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")));
+    if let Some(current) = data.map(|d| d.join("amonhen/current/amonhen"))
+        && current.is_file()
+    {
+        return current;
+    }
+    PathBuf::from("amonhen")
+}
+
 fn build_window(app: &gtk::Application, args: Args) {
     let path = args
         .path
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    let name = std::fs::canonicalize(&path)
-        .ok()
-        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-        .unwrap_or_else(|| path.display().to_string());
+    // 窓の名前: リポジトリのフォルダーの名前（daemon・SSH 越しなら、場所の最後の部分と接続先）。
+    let text = path.to_string_lossy().into_owned();
+    let name = if amonhen_remote::location::is_remote(&text) {
+        let last = text
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .unwrap_or(&text);
+        match text.strip_prefix("ssh://") {
+            Some(rest) => format!("{last} — {}", rest.split('/').next().unwrap_or_default()),
+            None => last.to_owned(),
+        }
+    } else {
+        std::fs::canonicalize(&path)
+            .ok()
+            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| text.clone())
+    };
 
     let title = gtk::Label::new(Some(&name));
     title.add_css_class("title");
@@ -835,15 +903,23 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
     status(&repo);
 
     // ref が変わったら History を、index か作業ツリーが変わったら status を読み直す。知らせは監視の
-    // スレッドから来るので、このスレッドで受けて読む。
+    // スレッド（daemon 越しなら daemon の知らせ）から来るので、このスレッドで受けて読む。
     let (changed_tx, changed_rx) = std::sync::mpsc::channel();
-    let _watcher = match amonhen_watch::Watcher::new(repo.paths(), move |changes| {
-        let _ = changed_tx.send(changes.0);
-    }) {
-        Ok(w) => w,
-        Err(e) => {
-            eprintln!("リポジトリを見張れない: {e}");
-            return;
+    let remote_tx = changed_tx.clone();
+    let remote = repo.subscribe_changes(Box::new(move |bits| {
+        let _ = remote_tx.send(bits);
+    }));
+    let _watcher = if remote {
+        None
+    } else {
+        match amonhen_watch::Watcher::new(repo.paths(), move |changes| {
+            let _ = changed_tx.send(changes.0);
+        }) {
+            Ok(w) => Some(w),
+            Err(e) => {
+                eprintln!("リポジトリを見張れない: {e}");
+                return;
+            }
         }
     };
     use amonhen_watch::Changes;

@@ -195,6 +195,7 @@ pub fn install(parts: Parts) -> Buttons {
         }),
     );
     add("open", Box::new(open_folder));
+    add("add-remote", Box::new(add_remote));
     add("close", Box::new(|p| p.window.close()));
     // View
     add(
@@ -431,6 +432,7 @@ fn primary_menu() -> gio::Menu {
         &menu_of(&[
             Some(("New Window", "win.new-window")),
             Some(("Open…", "win.open")),
+            Some(("Add Remote…", "win.add-remote")),
             None,
             Some(("Close", "win.close")),
         ]),
@@ -815,6 +817,25 @@ fn reveal_in_files(p: &Rc<Parts>) {
             .is_err()
         {
             window.error_bell();
+        }
+    });
+}
+
+/// daemon・SSH 越しのリポジトリを、新しい窓で開く。
+fn add_remote(p: &Rc<Parts>) {
+    let (actions, open) = (p.actions.clone(), p.open.clone());
+    glib::spawn_future_local(async move {
+        if let Some(location) = actions
+            .ask(
+                "Add Remote",
+                "ssh://[user@]host[:port]/path（SSH 先の daemon）か daemon:/path（手元の共有の daemon）",
+                "ssh://",
+                "開く",
+            )
+            .await
+            && amonhen_remote::location::is_remote(&location)
+        {
+            open(PathBuf::from(location));
         }
     });
 }
