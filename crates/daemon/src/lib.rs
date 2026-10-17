@@ -85,7 +85,10 @@ pub const VERSION: &str = match option_env!("AMONHEN_VERSION") {
 
 /// `amonhen 0.1.0 (protocol 16)`。FE と SSH 先は、ここの protocol で使えるかを決める。
 pub fn version() -> String {
-    format!("amonhen {VERSION} (protocol {})", amonhen_remote::PROTOCOL_VERSION)
+    format!(
+        "amonhen {VERSION} (protocol {})",
+        amonhen_remote::PROTOCOL_VERSION
+    )
 }
 
 fn stdio(repo: &str) -> amonhen_model::Result<()> {
