@@ -5,7 +5,7 @@
   "version": "0.0.2",
   "publisher": "fukusaka",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "(MIT OR Apache-2.0)",
   "repository": {
     "type": "git",
     "url": "https://github.com/fukusaka/amonhen.git",

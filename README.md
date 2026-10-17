@@ -76,3 +76,7 @@ Developer ID の証明書は期限（いまは約 1 年）が来る前に作り�
 入れ替える。secret がなければ ad-hoc 署名で作る。手元では `AMONHEN_SIGN_IDENTITY` に証明書の名前を渡すと、同じ
 証明書で署名する。Windows・Linux のエンジンは署名していない（Windows でブラウザから取ると SmartScreen が警告する。
 VSCode 拡張に同梱したものは警告なしで動く）。
+
+## ライセンス
+
+[MIT](LICENSE-MIT) か [Apache License 2.0](LICENSE-APACHE) の、好きなほうを選んで使える（`MIT OR Apache-2.0`）。
