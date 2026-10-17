@@ -88,4 +88,4 @@ jobs:
           gh release delete snapshot --yes --cleanup-tag || true
           gh release create snapshot "${{ steps.build.outputs.zip }}" dist/amonhen-*.tar.gz dist/amonhen-*-windows-*.zip dist/amonhen-vscode-*.vsix --prerelease \
             --target "$GITHUB_SHA" --title "Snapshot ${{ steps.build.outputs.version }}" \
-            --notes "main の最新（${{ steps.build.outputs.version }}）。アプリは scripts/install.sh snapshot、VSCode 拡張は apps/vscode/scripts/install.sh snapshot で入れられる。"
+            --notes "main の最新（${{ steps.build.outputs.version }}）。アプリは scripts/install-app.sh snapshot、VSCode 拡張は scripts/install-vscode.sh snapshot で入れられる。"

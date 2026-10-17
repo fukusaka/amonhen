@@ -54,4 +54,4 @@ jobs:
           subject-path: apps/vscode/*.vsix
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "$GITHUB_REF_NAME" apps/vscode/*.vsix --title "VSCode $GITHUB_REF_NAME" --generate-notes --verify-tag
+        run: gh release create "$GITHUB_REF_NAME" apps/vscode/*.vsix --title "VSCode $GITHUB_REF_NAME" --generate-notes --verify-tag --latest=false

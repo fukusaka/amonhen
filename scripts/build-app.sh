@@ -35,7 +35,7 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp apps/macos/.build/release/AmonHen "$app/Contents/MacOS/AmonHen"
 # エンジン（CLI と daemon を兼ねる）。daemon 越しに開くときの共有の daemon にも、端末の CLI にもなる（PATH に
-# 通すには scripts/install.sh がリンクを作る）。ファイル名は大文字と小文字を区別しないので、MacOS には置けない
+# 通すには scripts/install-app.sh がリンクを作る）。ファイル名は大文字と小文字を区別しないので、MacOS には置けない
 # （AmonHen を上書きする）。
 mkdir -p "$app/Contents/Helpers"
 cp dist/engine/amonhen-darwin-aarch64 "$app/Contents/Helpers/amonhen"
