@@ -1,5 +1,5 @@
-//! サイドバーの項目の操作（右クリックのメニューと、ドラッグ＆ドロップ）。macOS 版の `SidebarViewController`
-//! と同じ項目。
+//! サイドバーの項目の操作（右クリックのメニューと、ドラッグ＆ドロップ）。項目と文言は macOS 版の
+//! `SidebarViewController` と同じ。
 
 use std::rc::Rc;
 
@@ -11,8 +11,16 @@ use crate::actions::Actions;
 use crate::menu::{self, Item};
 use crate::sidebar::{self, Data};
 
+/// サブモジュールを新しい窓で開く（作業ツリーからのパス）。
+pub type OpenSubmodule = Rc<dyn Fn(&str)>;
+
 /// 右クリックのメニュー。`head` はチェックアウト中のブランチ。
-pub fn menu(actions: &Rc<Actions>, data: &Data, head: Option<&str>) -> Vec<Item> {
+pub fn menu(
+    actions: &Rc<Actions>,
+    data: &Data,
+    head: Option<&str>,
+    open_submodule: &OpenSubmodule,
+) -> Vec<Item> {
     let sidebar::Item::Ref(entry) = &data.item else {
         return Vec::new();
     };
@@ -23,13 +31,15 @@ pub fn menu(actions: &Rc<Actions>, data: &Data, head: Option<&str>) -> Vec<Item>
         let actions = actions.clone();
         move || actions.perform(command.clone())
     };
-    let merge_rebase = |items: &mut Vec<Item>| {
+    let merge = |items: &mut Vec<Item>| {
         items.push(menu::action(
-            format!("{name} を {current} に merge"),
+            format!("Merge {name} into {current}"),
             run(json!({ "op": "merge", "rev": name })),
         ));
+    };
+    let rebase = |items: &mut Vec<Item>| {
         items.push(menu::action(
-            format!("{current} を {name} の上に rebase"),
+            format!("Rebase {current} onto {name}"),
             run(json!({ "op": "rebase", "onto": name })),
         ));
     };
@@ -38,79 +48,68 @@ pub fn menu(actions: &Rc<Actions>, data: &Data, head: Option<&str>) -> Vec<Item>
             let is_head = Some(name.as_str()) == head;
             if !is_head {
                 items.push(menu::action(
-                    format!("{name} をチェックアウト"),
+                    format!("Checkout {name}"),
                     run(json!({ "op": "checkout", "branch": name })),
                 ));
-                merge_rebase(&mut items);
+                merge(&mut items);
+                rebase(&mut items);
+                items.push(Item::Separator);
             }
-            // 上流があれば、そこへ push する。
-            if let Some((remote, branch)) = entry.detail.as_deref().and_then(|u| u.split_once('/'))
-            {
-                items.push(menu::action(
-                    format!("{name} を {remote}/{branch} に push"),
-                    run(json!({
-                        "op": "push", "remote": remote, "branch": name, "remoteBranch": branch,
-                        "force": false, "setUpstream": false,
-                    })),
-                ));
-            }
-            items.push(Item::Separator);
             items.push(new_branch(actions, &name));
             items.push(new_tag(actions, &name));
             let (a, from) = (actions.clone(), name.clone());
-            items.push(menu::action(
-                format!("{name} の名前を変える…"),
-                move || {
-                    let (a, from) = (a.clone(), from.clone());
-                    glib::spawn_future_local(async move {
-                        if let Some(to) = a.ask("ブランチの名前を変える", &from, "変更").await
-                        {
-                            a.perform(json!({ "op": "renameBranch", "from": from, "to": to }));
-                        }
-                    });
-                },
-            ));
+            items.push(menu::action(format!("Rename {name}…"), move || {
+                let (a, from) = (a.clone(), from.clone());
+                glib::spawn_future_local(async move {
+                    if let Some(to) = a.ask("Rename Branch", "", &from, "変更").await {
+                        a.perform(json!({ "op": "renameBranch", "from": from, "to": to }));
+                    }
+                });
+            }));
             if !is_head {
                 items.push(menu::action(
-                    format!("{name} を削除"),
+                    format!("Delete {name}"),
                     run(json!({ "op": "deleteBranch", "name": name, "force": false })),
                 ));
             }
         }
         RefKind::Remote => {
             items.push(menu::action(
-                format!("{name} をローカルブランチとしてチェックアウト"),
+                format!("Checkout {name} as Local Branch"),
                 run(json!({ "op": "track", "remoteBranch": name })),
             ));
-            merge_rebase(&mut items);
+            merge(&mut items);
+            rebase(&mut items);
             items.push(Item::Separator);
             items.push(new_branch(actions, &name));
         }
         RefKind::Tag => {
-            items.push(menu::action(
-                format!("{name} を {current} に merge"),
-                run(json!({ "op": "merge", "rev": name })),
-            ));
+            merge(&mut items);
             items.push(new_branch(actions, &name));
         }
         RefKind::Stash => {
             items.push(menu::action(
-                format!("{name} を当てる"),
+                format!("Apply {name}"),
                 run(json!({ "op": "stashApply", "name": name, "pop": false })),
             ));
             items.push(menu::action(
-                format!("{name} を当てて消す（pop）"),
+                format!("Pop {name}"),
                 run(json!({ "op": "stashApply", "name": name, "pop": true })),
             ));
             items.push(menu::action(
-                format!("{name} を消す"),
+                format!("Drop {name}"),
                 run(json!({ "op": "stashDrop", "name": name })),
             ));
         }
         RefKind::Submodule => {
             items.push(menu::action(
-                format!("{name} を更新"),
+                format!("Update {name}"),
                 run(json!({ "op": "updateSubmodules", "paths": [name] })),
+            ));
+            let (open, path) = (open_submodule.clone(), name.clone());
+            items.push(menu::action(
+                format!("Open {name} in New Window"),
+                move || open(&path),
             ));
         }
     }
@@ -118,34 +117,43 @@ pub fn menu(actions: &Rc<Actions>, data: &Data, head: Option<&str>) -> Vec<Item>
 }
 
 /// `start` から新しいブランチを作って切り替える。
-fn new_branch(actions: &Rc<Actions>, start: &str) -> Item {
+pub fn new_branch(actions: &Rc<Actions>, start: &str) -> Item {
     let (a, start) = (actions.clone(), start.to_owned());
-    menu::action(
-        format!("{start} から新しいブランチ…"),
-        move || {
-            let (a, start) = (a.clone(), start.clone());
-            glib::spawn_future_local(async move {
-                if let Some(name) = a.ask("新しいブランチ", "", "作成").await {
-                    a.perform(json!({ "op": "createBranch", "name": name, "start": start, "checkout": true }));
-                }
-            });
-        },
-    )
+    menu::action(format!("New Branch from {start}…"), move || {
+        ask_new_branch(&a, &start);
+    })
+}
+
+pub fn ask_new_branch(actions: &Rc<Actions>, start: &str) {
+    let (a, start) = (actions.clone(), start.to_owned());
+    glib::spawn_future_local(async move {
+        let message = format!("{start} から作るブランチの名前");
+        if let Some(name) = a.ask("New Branch", &message, "", "作成して切り替え").await {
+            a.perform(
+                json!({ "op": "createBranch", "name": name, "start": start, "checkout": true }),
+            );
+        }
+    });
 }
 
 /// `target` に新しいタグを付ける。
-fn new_tag(actions: &Rc<Actions>, target: &str) -> Item {
+pub fn new_tag(actions: &Rc<Actions>, target: &str) -> Item {
     let (a, target) = (actions.clone(), target.to_owned());
-    menu::action(format!("{target} に新しいタグ…"), move || {
-        let (a, target) = (a.clone(), target.clone());
-        glib::spawn_future_local(async move {
-            if let Some(name) = a.ask("新しいタグ", "", "作成").await {
-                a.perform(
-                    json!({ "op": "createTag", "name": name, "target": target, "message": null }),
-                );
-            }
-        });
+    menu::action(format!("New Tag at {target}…"), move || {
+        ask_new_tag(&a, &target);
     })
+}
+
+pub fn ask_new_tag(actions: &Rc<Actions>, target: &str) {
+    let (a, target) = (actions.clone(), target.to_owned());
+    glib::spawn_future_local(async move {
+        let message = format!("{target} に付けるタグの名前");
+        if let Some(name) = a.ask("New Tag", &message, "", "作成").await {
+            a.perform(
+                json!({ "op": "createTag", "name": name, "target": target, "message": null }),
+            );
+        }
+    });
 }
 
 /// ドラッグ＆ドロップ: ブランチの上なら merge・rebase、リモート（かリモートブランチ）の上なら push。
@@ -168,7 +176,7 @@ pub fn drop_menu(
             let (d, t) = (dragged.clone(), to.clone());
             // checkout していなくても、fast-forward で済むならブランチだけ進める。
             items.push(menu::action(
-                format!("{dragged} を {to} に merge"),
+                format!("Merge {dragged} into {to}"),
                 move || {
                     a.perform(json!({ "op": "mergeInto", "target": t, "rev": d }));
                 },
@@ -181,7 +189,7 @@ pub fn drop_menu(
             sequence.push(json!({ "op": "rebase", "onto": dragged }));
             let a = actions.clone();
             items.push(menu::action(
-                format!("{to} を {dragged} の上に rebase"),
+                format!("Rebase {to} onto {dragged}"),
                 move || {
                     a.perform_sequence(sequence.clone());
                 },
@@ -200,32 +208,18 @@ pub fn drop_menu(
                 _ => None,
             };
             if let Some((remote, branch, set_upstream)) = remote_target {
-                let push = |force: bool| {
-                    json!({
+                for force in [false, true] {
+                    let command = json!({
                         "op": "push", "remote": remote, "branch": dragged, "remoteBranch": branch,
                         "force": force, "setUpstream": set_upstream && !force,
-                    })
-                };
-                let (a, command) = (actions.clone(), push(false));
-                items.push(menu::action(
-                    format!("{dragged} を {remote}/{branch} に push"),
-                    move || a.perform(command.clone()),
-                ));
-                let (a, command) = (actions.clone(), push(true));
-                let message = format!(
-                    "{remote}/{branch} を {dragged} で上書きします。リモートにしかないコミットは失われます。"
-                );
-                items.push(menu::action(
-                    format!("{dragged} を {remote}/{branch} に強制 push"),
-                    move || {
-                        let (a, command, message) = (a.clone(), command.clone(), message.clone());
-                        glib::spawn_future_local(async move {
-                            if a.confirm("強制 push", &message, "強制 push").await {
-                                a.perform(command);
-                            }
-                        });
-                    },
-                ));
+                    });
+                    let title = if force { "Force Push" } else { "Push" };
+                    let a = actions.clone();
+                    items.push(menu::action(
+                        format!("{title} {dragged} to {remote}/{branch}"),
+                        move || a.perform(command.clone()),
+                    ));
+                }
             }
         }
         _ => {}

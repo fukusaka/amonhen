@@ -177,7 +177,7 @@ fn build_window(app: &gtk::Application, args: Args) {
     connect_selection(&view, &details, &diff, &right, &pending);
 
     // History と Working Copy は、サイドバーで行き来する。
-    let working = WorkingCopy::new(pending.clone());
+    let working = Rc::new(WorkingCopy::new(pending.clone()));
     if let Some(path) = &args.select_path {
         working.select_path(path);
     }
@@ -258,9 +258,33 @@ fn build_window(app: &gtk::Application, args: Args) {
                 .and_then(|r| r.refs.head_branch.clone())
         }
     };
-    let (a, h) = (actions.clone(), head.clone());
+    // 別のリポジトリを新しい窓で開く。
+    let app_for_open = app.clone();
+    let open: Rc<dyn Fn(PathBuf)> = Rc::new(move |path| {
+        build_window(
+            &app_for_open,
+            Args {
+                path: Some(path),
+                ..Args::default()
+            },
+        );
+    });
+    // サブモジュールは、作業ツリーからのパスで開く。
+    let open_submodule: refops::OpenSubmodule = {
+        let (open, view) = (open.clone(), view.downgrade());
+        Rc::new(move |name: &str| {
+            let workdir = view
+                .upgrade()
+                .and_then(|v| v.current())
+                .and_then(|(repo, _)| repo.paths().workdir);
+            if let Some(dir) = workdir {
+                open(dir.join(name));
+            }
+        })
+    };
+    let (a, h, o) = (actions.clone(), head.clone(), open_submodule.clone());
     sidebar.connect_menu(move |data, widget, x, y| {
-        menu::popup(widget, x, y, refops::menu(&a, data, h().as_deref()));
+        menu::popup(widget, x, y, refops::menu(&a, data, h().as_deref(), &o));
     });
     let (a, h) = (actions.clone(), head.clone());
     sidebar.connect_drop(move |dragged, data, widget, x, y| {
@@ -271,8 +295,11 @@ fn build_window(app: &gtk::Application, args: Args) {
             refops::drop_menu(&a, dragged, data, h().as_deref()),
         );
     });
-    // 見出しのメニュー（主メニューが右端、その左に「取り消す」）。
-    let app_for_open = app.clone();
+    // 見出しのメニュー（主メニューが右端、その左に Undo）。
+    let go_to: Rc<dyn Fn(amonhen_model::Oid)> = {
+        let (pages, view) = (pages.clone(), view.clone());
+        Rc::new(move |id| jump_to(&pages, &view, id, &Rc::new(Cell::new(0))))
+    };
     let buttons = appmenu::install(appmenu::Parts {
         app: app.clone(),
         window: window.clone(),
@@ -280,26 +307,15 @@ fn build_window(app: &gtk::Application, args: Args) {
         actions: actions.clone(),
         pages: pages.clone(),
         sidebar: sidebar.clone(),
+        working: working.clone(),
         view: view.clone(),
         refs: refs.clone(),
         reload,
-        open: Rc::new(move |path| {
-            build_window(
-                &app_for_open,
-                Args {
-                    path: Some(path),
-                    ..Args::default()
-                },
-            );
-        }),
+        open,
+        go_to,
     });
     header.pack_end(&actions.undo);
     let latest_refs = refs;
-    match args.open_menu.as_deref() {
-        Some("repository") => buttons.repository.popup(),
-        Some("primary") => buttons.primary.popup(),
-        _ => {}
-    }
     std::thread::spawn(move || load(path, tx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
@@ -339,6 +355,23 @@ fn build_window(app: &gtk::Application, args: Args) {
                         }
                         if first {
                             first = false;
+                            // 窓が出てから開く（出る前に開くと、出ないことがある）。
+                            let button = match args.open_menu.as_deref() {
+                                Some("repository") => Some(buttons.repository.clone()),
+                                Some("primary") => Some(buttons.primary.clone()),
+                                _ => None,
+                            };
+                            if let Some(button) = button {
+                                pending.set(pending.get() + 1);
+                                let p = pending.clone();
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(300),
+                                    move || {
+                                        button.popup();
+                                        p.set(p.get() - 1);
+                                    },
+                                );
+                            }
                             if let Some(row) = args.scroll_to {
                                 view.select(row);
                             }
@@ -362,8 +395,12 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 item: sidebar::Item::Ref(entry.clone()),
                                 ..sidebar::Data::default()
                             };
-                            let items =
-                                refops::menu(&actions, &data, refs.refs.head_branch.as_deref());
+                            let items = refops::menu(
+                                &actions,
+                                &data,
+                                refs.refs.head_branch.as_deref(),
+                                &open_submodule,
+                            );
                             menu::popup(&sidebar.root, 24.0, 120.0, items);
                         }
                         actions.refresh_undo();

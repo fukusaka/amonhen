@@ -228,6 +228,31 @@ impl WorkingCopy {
         self.inner.selected.replace(Some(path.to_owned()));
     }
 
+    /// Commit メニューの Commit（コミットできるときだけ）。`then` はコミットできた後に呼ぶ。
+    pub fn commit_from_menu(&self, then: Option<Box<dyn FnOnce()>>) {
+        if self.inner.commit.is_sensitive() {
+            Inner::commit(&self.inner, then);
+        }
+    }
+
+    /// Commit メニューの Stage All（変更のあるファイルをすべて次のコミットに含める）。
+    pub fn stage_all(&self) {
+        let paths: Vec<String> = self
+            .inner
+            .entries
+            .borrow()
+            .iter()
+            .map(|e| e.path.clone())
+            .collect();
+        if paths.is_empty() {
+            return;
+        }
+        Inner::run(&self.inner, move |repo| {
+            let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+            repo.stage(&paths)
+        });
+    }
+
     pub fn connect_count(&self, f: impl Fn(usize) + 'static) {
         self.inner.on_count.replace(Some(Box::new(f)));
     }
@@ -322,7 +347,7 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.commit.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
-                Inner::commit(&this);
+                Inner::commit(&this, None);
             }
         });
         let weak = Rc::downgrade(this);
@@ -330,7 +355,7 @@ impl Inner {
             if let Some(this) = weak.upgrade()
                 && this.commit.is_sensitive()
             {
-                Inner::commit(&this);
+                Inner::commit(&this, None);
             }
         });
     }
@@ -563,7 +588,8 @@ impl Inner {
         });
     }
 
-    fn commit(this: &Rc<Self>) {
+    /// コミットする。できたら `then` を呼ぶ（Commit and Push の push）。
+    fn commit(this: &Rc<Self>, then: Option<Box<dyn FnOnce()>>) {
         let subject = this.subject.text().trim().to_owned();
         let buffer = this.body.buffer();
         let body = buffer
@@ -594,6 +620,9 @@ impl Inner {
                     this.body.buffer().set_text("");
                     this.amend.set_active(false);
                     Inner::show(&this, status);
+                    if let Some(then) = then {
+                        then();
+                    }
                 }
                 Ok(Err(e)) => this.show_error(&e),
                 Err(_) => {}

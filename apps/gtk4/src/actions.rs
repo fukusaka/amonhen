@@ -23,7 +23,7 @@ pub struct Actions {
 
 impl Actions {
     pub fn new(window: &gtk::ApplicationWindow) -> Rc<Self> {
-        let undo = gtk::Button::with_label("取り消す");
+        let undo = gtk::Button::with_label("Undo");
         undo.set_sensitive(false);
         let actions = Rc::new(Self {
             repo: RefCell::default(),
@@ -159,9 +159,9 @@ impl Actions {
             if force
                 && !this
                     .confirm(
-                        &format!("{branch} を強制 push しますか？"),
+                        &format!("{branch} を force push しますか？"),
                         "上流のブランチを手元の内容で置き換えます（--force-with-lease。ほかの人が先に push していたら失敗します）。",
-                        "強制 push",
+                        "Force Push",
                     )
                     .await
             {
@@ -180,10 +180,10 @@ impl Actions {
         glib::spawn_future_local(async move {
             let Some((message, untracked)) = this
                 .ask_with(
-                    "変更を stash する",
+                    "Stash Changes",
                     "メッセージ（空でもよい）",
                     "",
-                    "stash",
+                    "Stash",
                     Some("untracked のファイルも含める"),
                 )
                 .await
@@ -236,7 +236,11 @@ impl Actions {
             };
             let label = reply["label"].as_str();
             button.set_sensitive(label.is_some());
-            button.set_tooltip_text(label.map(|l| format!("取り消す: {l}")).as_deref());
+            let tip = match label {
+                Some(l) => format!("Undo: {l}（Ctrl+Z）"),
+                None => "Undo できる操作はありません".to_owned(),
+            };
+            button.set_tooltip_text(Some(&tip));
         });
     }
 
@@ -264,9 +268,9 @@ impl Actions {
         dialog.choose_future(window.as_ref()).await == Ok(1)
     }
 
-    /// 名前を入れてもらう。キャンセルか空なら None。
-    pub async fn ask(&self, title: &str, initial: &str, ok: &str) -> Option<String> {
-        self.ask_with(title, "", initial, ok, None)
+    /// 文字を入れてもらう（macOS 版の `ask`）。キャンセルか空なら None。
+    pub async fn ask(&self, title: &str, message: &str, initial: &str, ok: &str) -> Option<String> {
+        self.ask_with(title, message, initial, ok, None)
             .await
             .map(|(text, _)| text)
             .filter(|s| !s.is_empty())
@@ -276,62 +280,130 @@ impl Actions {
     pub async fn ask_with(
         &self,
         title: &str,
-        placeholder: &str,
+        message: &str,
         initial: &str,
         ok: &str,
         check: Option<&str>,
     ) -> Option<(String, bool)> {
+        let entry = gtk::Entry::builder()
+            .text(initial)
+            .activates_default(true)
+            .build();
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        content.append(&entry);
+        let checkbox = check.map(gtk::CheckButton::with_label);
+        if let Some(c) = &checkbox {
+            content.append(c);
+        }
+        if !self
+            .run_dialog(title, message, content.upcast_ref(), entry.upcast_ref(), ok)
+            .await
+        {
+            return None;
+        }
+        let checked = checkbox.as_ref().is_some_and(|c| c.is_active());
+        Some((entry.text().trim().to_owned(), checked))
+    }
+
+    /// 一覧から選んでもらう（`choices` は表示と値の組）。キャンセルなら None。
+    pub async fn choose(
+        &self,
+        title: &str,
+        message: &str,
+        choices: &[(String, String)],
+        selected: usize,
+        ok: &str,
+    ) -> Option<String> {
+        let titles: Vec<&str> = choices.iter().map(|(t, _)| t.as_str()).collect();
+        let list = gtk::StringList::new(&titles);
+        let dropdown = gtk::DropDown::new(Some(list), gtk::Expression::NONE);
+        // ブランチやタグが多くても探せるように。
+        dropdown.set_expression(Some(gtk::PropertyExpression::new(
+            gtk::StringObject::static_type(),
+            gtk::Expression::NONE,
+            "string",
+        )));
+        dropdown.set_enable_search(true);
+        dropdown.set_selected(selected as u32);
+        if !self
+            .run_dialog(
+                title,
+                message,
+                dropdown.upcast_ref(),
+                dropdown.upcast_ref(),
+                ok,
+            )
+            .await
+        {
+            return None;
+        }
+        choices
+            .get(dropdown.selected() as usize)
+            .map(|(_, value)| value.clone())
+    }
+
+    /// macOS 版の確認の窓（見出し・説明・部品・ボタン）に当たる窓を出す。`ok` を押したら true。
+    async fn run_dialog(
+        &self,
+        title: &str,
+        message: &str,
+        content: &gtk::Widget,
+        focus: &gtk::Widget,
+        ok: &str,
+    ) -> bool {
         let parent = self.window.upgrade();
         let dialog = gtk::Window::builder()
             .title(title)
             .modal(true)
             .resizable(false)
-            .default_width(360)
+            .default_width(380)
             .build();
         dialog.set_transient_for(parent.as_ref());
-        let entry = gtk::Entry::builder()
-            .text(initial)
-            .placeholder_text(placeholder)
-            .activates_default(true)
-            .build();
-        let checkbox = check.map(gtk::CheckButton::with_label);
+        let heading = gtk::Label::new(Some(title));
+        heading.add_css_class("title-4");
+        heading.set_xalign(0.0);
+        heading.set_wrap(true);
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 10);
+        column.set_margin_top(16);
+        column.set_margin_bottom(16);
+        column.set_margin_start(16);
+        column.set_margin_end(16);
+        column.append(&heading);
+        if !message.is_empty() {
+            let detail = gtk::Label::new(Some(message));
+            detail.set_xalign(0.0);
+            detail.set_wrap(true);
+            column.append(&detail);
+        }
+        column.append(content);
         let cancel = gtk::Button::with_label("キャンセル");
         let accept = gtk::Button::with_label(ok);
         accept.add_css_class("suggested-action");
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         buttons.set_halign(gtk::Align::End);
+        buttons.set_margin_top(4);
         buttons.append(&cancel);
         buttons.append(&accept);
-        let column = gtk::Box::new(gtk::Orientation::Vertical, 12);
-        column.set_margin_top(16);
-        column.set_margin_bottom(16);
-        column.set_margin_start(16);
-        column.set_margin_end(16);
-        column.append(&entry);
-        if let Some(c) = &checkbox {
-            column.append(c);
-        }
         column.append(&buttons);
         dialog.set_child(Some(&column));
         dialog.set_default_widget(Some(&accept));
 
-        let (tx, rx) = async_channel::bounded::<Option<(String, bool)>>(1);
-        let (t, e, c) = (tx.clone(), entry.clone(), checkbox.clone());
+        let (tx, rx) = async_channel::bounded::<bool>(1);
+        let t = tx.clone();
         accept.connect_clicked(move |_| {
-            let checked = c.as_ref().is_some_and(|c| c.is_active());
-            let _ = t.try_send(Some((e.text().trim().to_owned(), checked)));
+            let _ = t.try_send(true);
         });
         let t = tx.clone();
         cancel.connect_clicked(move |_| {
-            let _ = t.try_send(None);
+            let _ = t.try_send(false);
         });
         dialog.connect_close_request(move |_| {
-            let _ = tx.try_send(None);
+            let _ = tx.try_send(false);
             glib::Propagation::Proceed
         });
         dialog.present();
-        entry.grab_focus();
-        let answer = rx.recv().await.ok().flatten();
+        focus.grab_focus();
+        let answer = rx.recv().await.unwrap_or(false);
         dialog.destroy();
         answer
     }
