@@ -3,10 +3,14 @@
 #   scripts/build-engine.sh [<版>]
 # 出力: dist/engine/amonhen-<os>-<arch>（darwin-aarch64・linux-x86_64・linux-aarch64）。<版> を渡すと、リリースに
 # 載せる dist/amonhen-<版>-<os>-<arch>.tar.gz（中は amonhen の 1 つ）も作る。
+# エンジンには配る版を埋め込む（`amonhen --version`。`amonhen install` が新旧を決める）。<版> がなければ snapshot の版。
 # Linux 用は musl で静的リンクし（どの Linux でも動く）、リンクには zig を使う（brew install zig）。
 set -eu
 cd "$(dirname "$0")/.."
 version=${1:-}
+AMONHEN_VERSION=${version:-$(scripts/version.sh snapshot)}
+export AMONHEN_VERSION
+echo "engine version: $AMONHEN_VERSION"
 rm -rf dist/engine
 mkdir -p dist/engine
 cargo build --release -p amonhen-cli

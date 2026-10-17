@@ -14,6 +14,8 @@ permissions:
 jobs:
   windows-engine:
     uses: ./.github/workflows/windows-engine.yml
+    with:
+      mode: stable
 
   release:
     needs: windows-engine

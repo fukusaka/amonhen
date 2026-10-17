@@ -445,7 +445,7 @@ fn status(state: &State) -> serde_json::Value {
         .collect();
     serde_json::json!({
         "pid": std::process::id(),
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": crate::VERSION,
         "protocol": amonhen_remote::PROTOCOL_VERSION,
         "socket": state.socket,
         "uptimeMs": state.started.elapsed().as_millis() as u64,

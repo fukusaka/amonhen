@@ -20,6 +20,9 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # 同梱するエンジンの版（snapshot の版）は、前のリリースからのコミット数を数える。
+          fetch-depth: 0
       - name: タグと package.json の version が一致するか
         run: test "${GITHUB_REF_NAME#vscode-v}" = "$(node -p "require('./apps/vscode/package.json').version")"
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable

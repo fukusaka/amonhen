@@ -4,12 +4,20 @@ name: Windows Engine
 # マシンで作る。snapshot・リリースの仕事から呼び、成果物 windows-engine（amonhen-windows-<arch>.exe）を渡す。
 on:
   workflow_call:
+    inputs:
+      # エンジンに埋め込む版（scripts/version.sh の stable か snapshot）。
+      mode:
+        type: string
+        default: snapshot
 
 jobs:
   build:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          # snapshot の版は、前のリリースからのコミット数を数える。
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
         with:
           targets: x86_64-pc-windows-msvc, aarch64-pc-windows-msvc
@@ -17,6 +25,8 @@ jobs:
       - shell: bash
         run: |
           mkdir -p out
+          export AMONHEN_VERSION=$(scripts/version.sh "${{ inputs.mode }}")
+          echo "engine version: $AMONHEN_VERSION"
           for arch in x86_64 aarch64; do
             cargo build --release -p amonhen-cli --target "$arch-pc-windows-msvc"
             cp "target/$arch-pc-windows-msvc/release/amonhen.exe" "out/amonhen-windows-$arch.exe"

@@ -76,13 +76,16 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
+/// 配る版（`0.1.1-snapshot.5+abc1234` など）。配るエンジンを作るとき（`scripts/build-engine.sh`）に
+/// `AMONHEN_VERSION` で埋め込む。なければ（開発中のビルド）Cargo.toml の版。`amonhen install` はこれで新旧を決める。
+pub const VERSION: &str = match option_env!("AMONHEN_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
 /// `amonhen 0.1.0 (protocol 16)`。FE と SSH 先は、ここの protocol で使えるかを決める。
 pub fn version() -> String {
-    format!(
-        "amonhen {} (protocol {})",
-        env!("CARGO_PKG_VERSION"),
-        amonhen_remote::PROTOCOL_VERSION
-    )
+    format!("amonhen {VERSION} (protocol {})", amonhen_remote::PROTOCOL_VERSION)
 }
 
 fn stdio(repo: &str) -> amonhen_model::Result<()> {
