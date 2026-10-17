@@ -39,6 +39,8 @@ pub enum Kind {
     Refresh,
     /// arrow.uturn.backward.circle
     Undo,
+    /// magnifyingglass
+    Search,
 }
 
 mod imp {
@@ -273,6 +275,11 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(9.0, 1.2);
             p.line_to(11.2, 3.4);
             p.line_to(8.8, 5.4);
+        }
+        Kind::Search => {
+            p.add_circle(&point(6.8, 6.8), 4.3);
+            p.move_to(10.0, 10.0);
+            p.line_to(13.8, 13.8);
         }
         Kind::Undo => {
             p.add_circle(&point(8.0, 8.0), 6.3);

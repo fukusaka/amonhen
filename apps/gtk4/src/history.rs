@@ -83,6 +83,8 @@ pub struct State {
     on_select: Option<Rc<dyn Fn(u32)>>,
     /// 行を右クリックしたときに呼ぶ（行、x、y）。
     on_menu: Option<MenuCallback>,
+    /// 検索に一致した行（昇順）。薄く塗る。
+    matches: Rc<Vec<u32>>,
     lanes: Lanes,
     metrics: Metrics,
     tick: Option<gtk::TickCallbackId>,
@@ -289,6 +291,8 @@ impl HistoryView {
             st.loading.clear();
             st.rows.clear();
             st.complete = false;
+            // 行の番号が変わるので、検索の一致は捨てる（検索の欄が探し直す）。
+            st.matches = Rc::default();
         }
         self.configure_adjustments();
         self.queue_draw();
@@ -339,6 +343,12 @@ impl HistoryView {
         if let Some(f) = callback {
             f(row);
         }
+    }
+
+    /// 検索に一致した行（昇順）を塗る。
+    pub fn set_matches(&self, rows: Rc<Vec<u32>>) {
+        self.state().matches = rows;
+        self.queue_draw();
     }
 
     /// 行を右クリックしたら `f(行, x, y)` を呼ぶ。
@@ -474,6 +484,22 @@ impl HistoryView {
             let first = ((scroll_y / rh).floor().max(0.0) as u32).min(count);
             let last = (((scroll_y + height) / rh).ceil() as u32 + 1).min(count);
 
+            // 検索に一致した行の背景（選んでいる行は、選んだ色で上から塗る）。
+            let from = st.matches.partition_point(|&r| r < first);
+            for &row in st.matches[from..].iter().take_while(|&&r| r < last) {
+                let y = row as f32 * rh - scroll_y;
+                let rect = gsk::RoundedRect::from_rect(
+                    graphene::Rect::new(2.0, y + 1.0, width - 4.0, rh - 2.0),
+                    4.0,
+                );
+                let path = gsk::PathBuilder::new();
+                path.add_rounded_rect(&rect);
+                snapshot.append_fill(
+                    &path.to_path(),
+                    gsk::FillRule::Winding,
+                    &gdk::RGBA::new(1.0, 0.8, 0.0, 0.14),
+                );
+            }
             // 選んでいる行の背景。
             if let Some(row) = st.selected.filter(|r| (first..last).contains(r)) {
                 let y = row as f32 * rh - scroll_y;

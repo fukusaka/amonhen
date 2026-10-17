@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
 
 mod actions;
 mod appmenu;
@@ -13,6 +13,7 @@ mod icon;
 mod measure;
 mod menu;
 mod refops;
+mod search;
 mod sidebar;
 mod workcopy;
 
@@ -52,6 +53,8 @@ struct Args {
     select_ref: Option<String>,
     /// 最初に ref を読んだら、この名前の ref の右クリックのメニューを出す（確認用）。
     menu_ref: Option<String>,
+    /// History をこの問い合わせで探しておく（確認用）。
+    search: Option<String>,
     /// History のこの行の右クリックのメニューを開いておく（確認用）。
     menu_row: Option<u32>,
     /// 見出しのメニュー（`repository` か `primary`）を開いておく（確認用）。
@@ -77,6 +80,7 @@ fn parse_args() -> Result<Args, String> {
             "--working-copy" => args.working_copy = true,
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
             "--menu-ref" => args.menu_ref = Some(it.next().ok_or("--menu-ref <name>")?),
+            "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {
                 let row = it.next().ok_or("--menu-row <row>")?;
                 args.menu_row = Some(row.parse().map_err(|_| "--menu-row <row>")?);
@@ -162,6 +166,11 @@ fn build_window(app: &gtk::Application, args: Args) {
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&scrolled));
     overlay.add_overlay(&status);
+    // History の検索の欄（History の上に出す）。
+    let search = Rc::new(search::Search::new(&view));
+    let history_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    history_column.append(&search.bar);
+    history_column.append(&overlay);
 
     // 右の列: 選んだコミットの詳細と差分。
     let details = Rc::new(Details::new());
@@ -176,7 +185,7 @@ fn build_window(app: &gtk::Application, args: Args) {
     right.set_resize_start_child(false);
     right.set_position(170);
     let columns = gtk::Paned::new(gtk::Orientation::Horizontal);
-    columns.set_start_child(Some(&overlay));
+    columns.set_start_child(Some(&history_column));
     columns.set_end_child(Some(&right));
     columns.set_position(560);
     // 裏で読んでいる詳細と差分の数（`--snapshot` はなくなるまで待つ）。
@@ -331,6 +340,8 @@ fn build_window(app: &gtk::Application, args: Args) {
         go_to,
     });
     let latest_refs = refs;
+    search.install(&window, app);
+    header.pack_end(&search.toggle);
     std::thread::spawn(move || load(path, tx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
@@ -350,6 +361,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                         working.set_repo(repo.clone());
                         actions.set_repo(repo.clone());
                         view.show(repo, history);
+                        search.history_changed();
                         if let Some(command) = perform.take() {
                             match serde_json::from_str(&command) {
                                 Ok(command) => {
@@ -376,6 +388,9 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 Some("primary") => Some(buttons.primary.clone()),
                                 _ => None,
                             };
+                            if let Some(query) = &args.search {
+                                search.search(query, pending.clone());
+                            }
                             if let Some(row) = args.menu_row {
                                 view.select(row);
                                 pending.set(pending.get() + 1);
