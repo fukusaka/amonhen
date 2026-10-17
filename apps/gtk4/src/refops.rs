@@ -230,10 +230,6 @@ pub fn drop_menu(
         }
         _ => {}
     }
-    if !items.is_empty() {
-        items.push(Item::Separator);
-        items.push(menu::action("キャンセル", || {}));
-    }
     items
 }
 

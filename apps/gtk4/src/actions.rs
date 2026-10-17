@@ -133,6 +133,91 @@ impl Actions {
         });
     }
 
+    /// 今のブランチを上流へ push する。上流がなければ origin の同じ名前へ push して上流にする。
+    /// `force` なら `--force-with-lease`（確かめてから）。
+    pub fn push(self: &Rc<Self>, force: bool) {
+        let Some(repo) = self.repo.borrow().clone() else {
+            return;
+        };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let status = gio::spawn_blocking(move || repo.load_status().ok())
+                .await
+                .ok()
+                .flatten();
+            let Some(branch) = status.as_ref().and_then(|s| s.status.branch.clone()) else {
+                this.alert("push できません", "ブランチをチェックアウトしていません。")
+                    .await;
+                return;
+            };
+            let upstream = status.and_then(|s| s.status.upstream.clone());
+            let (remote, remote_branch, set_upstream) =
+                match upstream.as_deref().and_then(|u| u.split_once('/')) {
+                    Some((r, b)) => (r.to_owned(), b.to_owned(), false),
+                    None => ("origin".to_owned(), branch.clone(), true),
+                };
+            if force
+                && !this
+                    .confirm(
+                        &format!("{branch} を強制 push しますか？"),
+                        "上流のブランチを手元の内容で置き換えます（--force-with-lease。ほかの人が先に push していたら失敗します）。",
+                        "強制 push",
+                    )
+                    .await
+            {
+                return;
+            }
+            this.perform(json!({
+                "op": "push", "remote": remote, "branch": branch, "remoteBranch": remote_branch,
+                "force": force, "setUpstream": set_upstream && !force,
+            }));
+        });
+    }
+
+    /// 作業中の変更を stash する（メッセージと、untracked のファイルを含めるかを聞く）。
+    pub fn stash(self: &Rc<Self>) {
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let Some((message, untracked)) = this
+                .ask_with(
+                    "変更を stash する",
+                    "メッセージ（空でもよい）",
+                    "",
+                    "stash",
+                    Some("untracked のファイルも含める"),
+                )
+                .await
+            else {
+                return;
+            };
+            let message = (!message.is_empty()).then_some(message);
+            this.perform(
+                json!({ "op": "stashPush", "message": message, "includeUntracked": untracked }),
+            );
+        });
+    }
+
+    /// JSON の命令にない操作を裏で行い、終わったら読み直す。
+    pub fn perform_work(
+        self: &Rc<Self>,
+        work: impl FnOnce(&Repository) -> amonhen_model::Result<()> + Send + 'static,
+    ) {
+        let Some(repo) = self.repo.borrow().clone() else {
+            return;
+        };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let result = gio::spawn_blocking(move || work(&repo).map_err(|e| e.to_string())).await;
+            if let Ok(Err(e)) = result {
+                this.alert("操作に失敗しました", &e).await;
+            }
+            if let Some(f) = this.on_change.borrow().clone() {
+                f();
+            }
+            this.refresh_undo();
+        });
+    }
+
     /// 次に取り消せる操作の名前を読み、「取り消す」に出す。
     pub fn refresh_undo(&self) {
         let Some(repo) = self.repo.borrow().clone() else {
@@ -179,8 +264,23 @@ impl Actions {
         dialog.choose_future(window.as_ref()).await == Ok(1)
     }
 
-    /// 名前を入れてもらう。キャンセルなら None。
+    /// 名前を入れてもらう。キャンセルか空なら None。
     pub async fn ask(&self, title: &str, initial: &str, ok: &str) -> Option<String> {
+        self.ask_with(title, "", initial, ok, None)
+            .await
+            .map(|(text, _)| text)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// 文字を入れてもらい、`check` があればそのチェックの状態も返す。キャンセルなら None。
+    pub async fn ask_with(
+        &self,
+        title: &str,
+        placeholder: &str,
+        initial: &str,
+        ok: &str,
+        check: Option<&str>,
+    ) -> Option<(String, bool)> {
         let parent = self.window.upgrade();
         let dialog = gtk::Window::builder()
             .title(title)
@@ -191,8 +291,10 @@ impl Actions {
         dialog.set_transient_for(parent.as_ref());
         let entry = gtk::Entry::builder()
             .text(initial)
+            .placeholder_text(placeholder)
             .activates_default(true)
             .build();
+        let checkbox = check.map(gtk::CheckButton::with_label);
         let cancel = gtk::Button::with_label("キャンセル");
         let accept = gtk::Button::with_label(ok);
         accept.add_css_class("suggested-action");
@@ -206,14 +308,18 @@ impl Actions {
         column.set_margin_start(16);
         column.set_margin_end(16);
         column.append(&entry);
+        if let Some(c) = &checkbox {
+            column.append(c);
+        }
         column.append(&buttons);
         dialog.set_child(Some(&column));
         dialog.set_default_widget(Some(&accept));
 
-        let (tx, rx) = async_channel::bounded::<Option<String>>(1);
-        let (t, e) = (tx.clone(), entry.clone());
+        let (tx, rx) = async_channel::bounded::<Option<(String, bool)>>(1);
+        let (t, e, c) = (tx.clone(), entry.clone(), checkbox.clone());
         accept.connect_clicked(move |_| {
-            let _ = t.try_send(Some(e.text().trim().to_owned()));
+            let checked = c.as_ref().is_some_and(|c| c.is_active());
+            let _ = t.try_send(Some((e.text().trim().to_owned(), checked)));
         });
         let t = tx.clone();
         cancel.connect_clicked(move |_| {
@@ -227,6 +333,6 @@ impl Actions {
         entry.grab_focus();
         let answer = rx.recv().await.ok().flatten();
         dialog.destroy();
-        answer.filter(|s| !s.is_empty())
+        answer
     }
 }

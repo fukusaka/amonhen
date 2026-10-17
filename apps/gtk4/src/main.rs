@@ -1,8 +1,9 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--menu-ref <name>] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--menu-ref <name>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
 
 mod actions;
+mod appmenu;
 mod details;
 mod diff;
 mod graph;
@@ -50,6 +51,8 @@ struct Args {
     select_ref: Option<String>,
     /// 最初に ref を読んだら、この名前の ref の右クリックのメニューを出す（確認用）。
     menu_ref: Option<String>,
+    /// 見出しのメニュー（`repository` か `primary`）を開いておく（確認用）。
+    open_menu: Option<String>,
     /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
     perform: Option<String>,
     /// Working Copy の差分で、この行の印を一度クリックしたことにする（確認用）。
@@ -71,6 +74,7 @@ fn parse_args() -> Result<Args, String> {
             "--working-copy" => args.working_copy = true,
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
             "--menu-ref" => args.menu_ref = Some(it.next().ok_or("--menu-ref <name>")?),
+            "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
             "--toggle-row" => {
                 let row = it.next().ok_or("--toggle-row <row>")?;
@@ -230,10 +234,9 @@ fn build_window(app: &gtk::Application, args: Args) {
     // 操作は裏で実行し、終わったら History・ref・status を読み直す（ファイルの変化の知らせも来るが、
     // 待たずに出す）。
     let actions = Actions::new(&window);
-    header.pack_end(&actions.undo);
     let reload_tx = tx.clone();
     let weak_view = view.downgrade();
-    actions.connect_change(move || {
+    let reload: Rc<dyn Fn()> = Rc::new(move || {
         let Some((repo, _)) = weak_view.upgrade().and_then(|v| v.current()) else {
             return;
         };
@@ -243,11 +246,21 @@ fn build_window(app: &gtk::Application, args: Args) {
             reload_status(&repo, &tx);
         });
     });
-    // サイドバーの右クリックとドラッグ＆ドロップ。メニューにはチェックアウト中のブランチが要る。
-    let head: Rc<std::cell::RefCell<Option<String>>> = Rc::default();
+    let r = reload.clone();
+    actions.connect_change(move || r());
+    // 最後に読んだ ref（メニューにはチェックアウト中のブランチや最新の stash が要る）。
+    let refs: Rc<std::cell::RefCell<Option<Arc<amonhen_core::RefsSnapshot>>>> = Rc::default();
+    let head = {
+        let refs = refs.clone();
+        move || {
+            refs.borrow()
+                .as_ref()
+                .and_then(|r| r.refs.head_branch.clone())
+        }
+    };
     let (a, h) = (actions.clone(), head.clone());
     sidebar.connect_menu(move |data, widget, x, y| {
-        menu::popup(widget, x, y, refops::menu(&a, data, h.borrow().as_deref()));
+        menu::popup(widget, x, y, refops::menu(&a, data, h().as_deref()));
     });
     let (a, h) = (actions.clone(), head.clone());
     sidebar.connect_drop(move |dragged, data, widget, x, y| {
@@ -255,9 +268,38 @@ fn build_window(app: &gtk::Application, args: Args) {
             widget,
             x,
             y,
-            refops::drop_menu(&a, dragged, data, h.borrow().as_deref()),
+            refops::drop_menu(&a, dragged, data, h().as_deref()),
         );
     });
+    // 見出しのメニュー（主メニューが右端、その左に「取り消す」）。
+    let app_for_open = app.clone();
+    let buttons = appmenu::install(appmenu::Parts {
+        app: app.clone(),
+        window: window.clone(),
+        header: header.clone(),
+        actions: actions.clone(),
+        pages: pages.clone(),
+        sidebar: sidebar.clone(),
+        view: view.clone(),
+        refs: refs.clone(),
+        reload,
+        open: Rc::new(move |path| {
+            build_window(
+                &app_for_open,
+                Args {
+                    path: Some(path),
+                    ..Args::default()
+                },
+            );
+        }),
+    });
+    header.pack_end(&actions.undo);
+    let latest_refs = refs;
+    match args.open_menu.as_deref() {
+        Some("repository") => buttons.repository.popup(),
+        Some("primary") => buttons.primary.popup(),
+        _ => {}
+    }
     std::thread::spawn(move || load(path, tx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
@@ -311,7 +353,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                         subtitle.set_visible(true);
                         view.show_refs(&refs);
                         sidebar.show(&refs);
-                        head.replace(refs.refs.head_branch.clone());
+                        latest_refs.replace(Some(refs.clone()));
                         if let Some(name) = menu_ref.take()
                             && let Some(entry) = refs.refs.entries.iter().find(|e| e.name == name)
                         {
