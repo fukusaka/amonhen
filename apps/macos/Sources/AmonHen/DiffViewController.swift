@@ -78,6 +78,17 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
     private var topFile: Int?
     private var headerGlyphs: [String: TextRenderer.ShapedLine] = [:]
     private var checkGlyphs: [String: TextRenderer.ShapedLine] = [:]
+    /// 上の並べた文字を作ったときの倍率。
+    private var cachedScale: CGFloat?
+
+    /// 倍率込みで並べた文字（行、行番号、見出し、チェックの印）を全部捨てる。1 つでも残すと、前の倍率の
+    /// グリフで描かれて崩れる。
+    private func dropShapedText() {
+        shaped.removeAll()
+        numberCache.removeAll()
+        headerGlyphs.removeAll()
+        checkGlyphs.removeAll()
+    }
 
     init(renderer: TextRenderer) {
         self.renderer = renderer
@@ -101,12 +112,8 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
         // 画面の倍率が変わったら、倍率込みで並べた文字（行、行番号、見出し、チェックの印）を全部捨てて描き直す。
         // 1 つでも残すと、前の倍率のグリフで描かれて崩れる（行番号で起きていた）。
         textView.onScaleChange = { [weak self] in
-            guard let self else { return }
-            shaped.removeAll()
-            numberCache.removeAll()
-            headerGlyphs.removeAll()
-            checkGlyphs.removeAll()
-            redraw()
+            self?.dropShapedText()
+            self?.redraw()
         }
         document.owner = self
         buildFindBar()
@@ -722,6 +729,9 @@ final class DiffViewController: NSViewController, NSSearchFieldDelegate {
 
     private func buildInstances() {
         let scale = view.window?.backingScaleFactor ?? 2
+        // 並べた文字は倍率込み。描く倍率が並べたときと違えば、知らせを待たずにここで捨てる。
+        if cachedScale != scale { dropShapedText() }
+        cachedScale = scale
         let origin = scrollView.contentView.bounds.origin
         let height = textView.bounds.height
         renderer.instances.removeAll(keepingCapacity: true)

@@ -30,14 +30,17 @@ final class GraphView: NSView {
 
     /// 画面の倍率が変わった（1 倍と 2 倍の画面のあいだでウィンドウを動かした）。並べ直して描き直してもらう。
     var onScaleChange: (() -> Void)?
+    /// 最後に知らせた倍率。metalLayer はこのビューの層なので、AppKit が super の中で contentsScale を先に
+    /// 書き換えることがあり、それと比べると変わったことを見落とす（差分の文字が前の倍率のまま崩れていた）。
+    private var notifiedScale: CGFloat?
 
     override func viewDidChangeBackingProperties() {
         super.viewDidChangeBackingProperties()
         let scale = window?.backingScaleFactor ?? 2
-        let changed = metalLayer.contentsScale != scale
         metalLayer.contentsScale = scale
         updateDrawableSize()
-        if changed { onScaleChange?() }
+        if let notifiedScale, notifiedScale != scale { onScaleChange?() }
+        notifiedScale = scale
     }
 
     // フレームは親が直接決めるので、layout() ではなくここで描き先の大きさを合わせる。
