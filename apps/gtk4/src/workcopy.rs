@@ -25,6 +25,17 @@ use crate::actions::Actions;
 use crate::diff::{DiffWidget, View};
 
 type CountCallback = Box<dyn Fn(usize)>;
+
+/// 一覧の見せ方（macOS 版と同じ 3 つ）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Layout {
+    /// パスの一覧。
+    List,
+    /// ディレクトリの木。
+    Tree,
+    /// ファイル名を先に、親のディレクトリを薄く。
+    Flat,
+}
 /// 追加と削除の行数（バイナリなどで数えられなければ None）。
 type LineCounts = (Option<u64>, Option<u64>);
 
@@ -38,14 +49,21 @@ unsafe impl Sync for Working {}
 pub struct WorkingCopy {
     pub root: gtk::Paned,
     inner: Rc<Inner>,
+    /// 一覧の見せ方の切り替え（`--layout`）。
+    layouts: Vec<(gtk::ToggleButton, Layout)>,
 }
 
 struct Inner {
     repo: RefCell<Option<Arc<Repository>>>,
     actions: RefCell<Option<Rc<Actions>>>,
     status: RefCell<Option<Arc<StatusSnapshot>>>,
-    /// 一覧に出しているファイル（絞り込み済み。一覧の行と同じ順）。
+    /// 一覧に出しているファイル（絞り込み済み）。
     entries: RefCell<Vec<StatusEntry>>,
+    /// 一覧の行ごとの、`entries` の番号（ディレクトリの行は None）。
+    row_entries: RefCell<Vec<Option<usize>>>,
+    layout: Cell<Layout>,
+    /// 木で畳んでいるディレクトリ。
+    collapsed: RefCell<std::collections::HashSet<String>>,
     /// 絞り込む前のすべてのファイル。
     all_entries: RefCell<Vec<StatusEntry>>,
     /// ファイルごとの行数（追加, 削除）。HEAD と作業ツリーの比べ。
@@ -139,6 +157,40 @@ impl WorkingCopy {
         let list_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         list_header.append(&all);
         list_header.append(&count);
+        // 一覧の見せ方の切り替え。
+        let layouts = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        layouts.add_css_class("linked");
+        let mut layout_buttons: Vec<(gtk::ToggleButton, Layout)> = Vec::new();
+        for (kind, tip, layout) in [
+            (
+                crate::icon::Kind::List,
+                "ファイルをパスの一覧で表示",
+                Layout::List,
+            ),
+            (
+                crate::icon::Kind::Tree,
+                "ファイルをディレクトリの木で表示",
+                Layout::Tree,
+            ),
+            (
+                crate::icon::Kind::Doc,
+                "ファイル名を先に、親のディレクトリを薄く表示",
+                Layout::Flat,
+            ),
+        ] {
+            let icon = crate::icon::Icon::default();
+            icon.set(kind, false);
+            let button = gtk::ToggleButton::new();
+            button.set_child(Some(&icon));
+            button.set_tooltip_text(Some(tip));
+            if let Some(first) = layout_buttons.first() {
+                button.set_group(Some(&first.0));
+            }
+            layouts.append(&button);
+            layout_buttons.push((button, layout));
+        }
+        layout_buttons[0].0.set_active(true);
+        list_header.append(&layouts);
         let filter = gtk::SearchEntry::builder()
             .placeholder_text("パスで絞り込む")
             .build();
@@ -217,6 +269,9 @@ impl WorkingCopy {
             actions: RefCell::default(),
             status: RefCell::default(),
             entries: RefCell::default(),
+            row_entries: RefCell::default(),
+            layout: Cell::new(Layout::List),
+            collapsed: RefCell::default(),
             all_entries: RefCell::default(),
             stats: RefCell::default(),
             list,
@@ -244,8 +299,24 @@ impl WorkingCopy {
             on_count: RefCell::default(),
         });
         Inner::connect(&inner);
+        let layouts = layout_buttons.clone();
+        for (button, layout) in layout_buttons {
+            let weak = Rc::downgrade(&inner);
+            button.connect_toggled(move |b| {
+                if let Some(this) = weak.upgrade()
+                    && b.is_active()
+                {
+                    this.layout.set(layout);
+                    Inner::rebuild_list(&this);
+                }
+            });
+        }
         inner.update_buttons();
-        Self { root, inner }
+        Self {
+            root,
+            inner,
+            layouts,
+        }
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
@@ -265,6 +336,18 @@ impl WorkingCopy {
     /// 次に差分を出したとき、`row` 行の印をクリックしたことにする（確認用）。
     pub fn toggle_row_once(&self, row: u32) {
         self.inner.toggle_once.set(Some(row));
+    }
+
+    /// 一覧の見せ方を `list`・`tree`・`flat` にする。
+    pub fn set_layout(&self, name: &str) {
+        let wanted = match name {
+            "tree" => Layout::Tree,
+            "flat" => Layout::Flat,
+            _ => Layout::List,
+        };
+        if let Some((button, _)) = self.layouts.iter().find(|(_, l)| *l == wanted) {
+            button.set_active(true);
+        }
     }
 
     /// 次に status が届いたとき、`path` を選ぶ。
@@ -318,7 +401,13 @@ impl Inner {
             if this.rebuilding.get() {
                 return;
             }
-            let entry = this.entries.borrow().get(row.index() as usize).cloned();
+            let index = this
+                .row_entries
+                .borrow()
+                .get(row.index() as usize)
+                .copied()
+                .flatten();
+            let entry = index.and_then(|i| this.entries.borrow().get(i).cloned());
             if let Some(entry) = entry {
                 let same = this.selected.borrow().as_deref() == Some(entry.path.as_str());
                 this.selected.replace(Some(entry.path.clone()));
@@ -481,9 +570,40 @@ impl Inner {
             .collect();
         this.rebuilding.set(true);
         this.list.remove_all();
-        for entry in &entries {
-            this.list.append(&Inner::row(this, entry));
+        let mut row_entries = Vec::new();
+        match this.layout.get() {
+            Layout::Tree => {
+                for item in tree(&entries) {
+                    match item {
+                        TreeItem::Dir { name, path, depth } => {
+                            let collapsed = this.collapsed.borrow().contains(&path);
+                            this.list
+                                .append(&Inner::dir_row(this, &name, &path, depth, collapsed));
+                            row_entries.push(None);
+                        }
+                        TreeItem::File { index, depth } => {
+                            if this.is_hidden(&entries[index].path) {
+                                continue;
+                            }
+                            this.list.append(&Inner::row(
+                                this,
+                                &entries[index],
+                                Layout::Tree,
+                                depth,
+                            ));
+                            row_entries.push(Some(index));
+                        }
+                    }
+                }
+            }
+            layout => {
+                for (i, entry) in entries.iter().enumerate() {
+                    this.list.append(&Inner::row(this, entry, layout, 0));
+                    row_entries.push(Some(i));
+                }
+            }
         }
+        this.row_entries.replace(row_entries);
         let all = this.all_entries.borrow();
         let staged = all.iter().filter(|e| e.is_staged()).count();
         let partial = all.iter().any(|e| e.is_staged() && e.is_unstaged());
@@ -499,7 +619,14 @@ impl Inner {
             .and_then(|p| entries.iter().position(|e| e.path == p))
             .unwrap_or(0);
         this.entries.replace(entries);
-        if let Some(row) = this.list.row_at_index(index as i32) {
+        // そのファイルの行（畳んだディレクトリの中なら、最初のファイルの行）。
+        let row_of = |i: usize| this.row_entries.borrow().iter().position(|&r| r == Some(i));
+        let row_index =
+            row_of(index).or_else(|| this.row_entries.borrow().iter().position(Option::is_some));
+        let index = row_index
+            .and_then(|r| this.row_entries.borrow()[r])
+            .unwrap_or(index);
+        if let Some(row) = row_index.and_then(|r| this.list.row_at_index(r as i32)) {
             this.list.select_row(Some(&row));
             this.rebuilding.set(false);
             // 選び直しでは `row-selected` を扱わないので、差分は自分で読み直す。
@@ -544,8 +671,57 @@ impl Inner {
         });
     }
 
+    /// 木で、畳んだディレクトリの中のファイルか。
+    fn is_hidden(&self, path: &str) -> bool {
+        let collapsed = self.collapsed.borrow();
+        collapsed
+            .iter()
+            .any(|dir| path.starts_with(dir.as_str()) && path[dir.len()..].starts_with('/'))
+    }
+
+    /// 木のディレクトリの行（クリックで畳む・開く）。
+    fn dir_row(
+        this: &Rc<Self>,
+        name: &str,
+        path: &str,
+        depth: usize,
+        collapsed: bool,
+    ) -> gtk::ListBoxRow {
+        let arrow = gtk::Label::new(Some(if collapsed { "▸" } else { "▾" }));
+        arrow.add_css_class("dim-label");
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::Folder, false);
+        let label = gtk::Label::new(Some(name));
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        line.set_margin_start((depth * 16) as i32);
+        line.append(&arrow);
+        line.append(&icon);
+        line.append(&label);
+        let row = gtk::ListBoxRow::new();
+        row.set_child(Some(&line));
+        row.set_selectable(false);
+        let click = gtk::GestureClick::new();
+        let (weak, path) = (Rc::downgrade(this), path.to_owned());
+        click.connect_released(move |_, _, _, _| {
+            let Some(this) = weak.upgrade() else { return };
+            {
+                let mut collapsed = this.collapsed.borrow_mut();
+                if !collapsed.remove(&path) {
+                    collapsed.insert(path.clone());
+                }
+            }
+            Inner::rebuild_list(&this);
+        });
+        row.add_controller(click);
+        row
+    }
+
     /// 一覧の 1 行: チェック（次のコミットに含めるか）、状態の文字、パス、行数、変更を捨てるボタン。
-    fn row(this: &Rc<Self>, entry: &StatusEntry) -> gtk::ListBoxRow {
+    /// 木ならファイル名を `depth` 段下げ、ファイル名を先にするならパスの親を薄く添える。
+    fn row(this: &Rc<Self>, entry: &StatusEntry, layout: Layout, depth: usize) -> gtk::ListBoxRow {
         let conflict = entry.kind == StatusKind::Unmerged;
         let check = gtk::CheckButton::new();
         check.set_active(entry.is_staged() && !entry.is_unstaged());
@@ -573,17 +749,34 @@ impl Inner {
         state.set_width_chars(2);
         state.add_css_class(css);
         state.add_css_class("monospace");
-        let name = gtk::Label::new(Some(&match &entry.orig_path {
-            Some(orig) => format!("{orig} → {}", entry.path),
-            None => entry.path.clone(),
-        }));
+        let (parent, file) = match entry.path.rsplit_once('/') {
+            Some((p, f)) => (p, f),
+            None => ("", entry.path.as_str()),
+        };
+        let shown = match (layout, &entry.orig_path) {
+            (Layout::List, Some(orig)) => format!("{orig} → {}", entry.path),
+            (Layout::List, None) => entry.path.clone(),
+            _ => file.to_owned(),
+        };
+        let name = gtk::Label::new(Some(&shown));
         name.set_xalign(0.0);
-        name.set_hexpand(true);
         name.set_ellipsize(gtk::pango::EllipsizeMode::Start);
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        line.set_margin_start((depth * 16) as i32);
         line.append(&check);
         line.append(&state);
         line.append(&name);
+        if layout == Layout::Flat && !parent.is_empty() {
+            let dir = gtk::Label::new(Some(parent));
+            dir.set_xalign(0.0);
+            dir.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+            dir.add_css_class("dim-label");
+            dir.add_css_class("caption");
+            dir.set_hexpand(true);
+            line.append(&dir);
+        } else {
+            name.set_hexpand(true);
+        }
         // 行数（+ 追加 − 削除）。
         if let Some(&(added, removed)) = this.stats.borrow().get(&entry.path) {
             let counts = gtk::Box::new(gtk::Orientation::Horizontal, 4);
@@ -994,4 +1187,72 @@ fn state_letter(entry: &StatusEntry) -> (&'static str, &'static str) {
             }
         }
     }
+}
+
+/// 木の行（ディレクトリかファイル）。
+enum TreeItem {
+    Dir {
+        name: String,
+        path: String,
+        depth: usize,
+    },
+    File {
+        index: usize,
+        depth: usize,
+    },
+}
+
+/// ファイルをディレクトリの木の順に並べる（macOS 版と同じく、ファイルを持たず子が 1 つだけのディレクトリは
+/// 名前をつないで 1 段にする。ディレクトリはファイルより先、どちらも名前の順）。
+fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
+    #[derive(Default)]
+    struct Dir {
+        dirs: std::collections::BTreeMap<String, Dir>,
+        files: Vec<usize>,
+    }
+    let mut root = Dir::default();
+    for (i, e) in entries.iter().enumerate() {
+        let mut dir = &mut root;
+        let parts: Vec<&str> = e.path.split('/').collect();
+        for part in &parts[..parts.len() - 1] {
+            dir = dir.dirs.entry((*part).to_owned()).or_default();
+        }
+        dir.files.push(i);
+    }
+    fn walk(
+        dir: &Dir,
+        prefix: &str,
+        depth: usize,
+        entries: &[StatusEntry],
+        out: &mut Vec<TreeItem>,
+    ) {
+        for (name, child) in &dir.dirs {
+            // 子が 1 つのディレクトリだけなら、名前をつなぐ。
+            let (mut name, mut child) = (name.clone(), child);
+            while child.files.is_empty() && child.dirs.len() == 1 {
+                let (n, c) = child.dirs.iter().next().expect("one");
+                name = format!("{name}/{n}");
+                child = c;
+            }
+            let path = if prefix.is_empty() {
+                name.clone()
+            } else {
+                format!("{prefix}/{name}")
+            };
+            out.push(TreeItem::Dir {
+                name,
+                path: path.clone(),
+                depth,
+            });
+            walk(child, &path, depth + 1, entries, out);
+        }
+        let mut files = dir.files.clone();
+        files.sort_by(|&a, &b| entries[a].path.cmp(&entries[b].path));
+        for index in files {
+            out.push(TreeItem::File { index, depth });
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root, "", 0, entries, &mut out);
+    out
 }

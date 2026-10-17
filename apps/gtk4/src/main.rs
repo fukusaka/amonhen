@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
 
 mod actions;
 mod appmenu;
@@ -65,6 +65,8 @@ struct Args {
     open_menu: Option<String>,
     /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
     perform: Option<String>,
+    /// Working Copy の一覧の見せ方（`list`・`tree`・`flat`。確認用）。
+    layout: Option<String>,
     /// Working Copy の差分で、この行の印を一度クリックしたことにする（確認用）。
     toggle_row: Option<u32>,
     scroll_to: Option<u32>,
@@ -99,6 +101,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
+            "--layout" => args.layout = Some(it.next().ok_or("--layout list|tree|flat")?),
             "--toggle-row" => {
                 let row = it.next().ok_or("--toggle-row <row>")?;
                 args.toggle_row = Some(row.parse().map_err(|_| "--toggle-row <row>")?);
@@ -281,6 +284,9 @@ fn build_window(app: &gtk::Application, args: Args) {
     }
     if let Some(row) = args.toggle_row {
         working.toggle_row_once(row);
+    }
+    if let Some(layout) = &args.layout {
+        working.set_layout(layout);
     }
     let pages = gtk::Stack::new();
     pages.set_transition_type(gtk::StackTransitionType::None);

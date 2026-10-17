@@ -43,6 +43,12 @@ pub enum Kind {
     Search,
     /// line.3.horizontal.decrease
     Filter,
+    /// list.bullet
+    List,
+    /// list.bullet.indent
+    Tree,
+    /// doc.text
+    Doc,
 }
 
 mod imp {
@@ -277,6 +283,29 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(9.0, 1.2);
             p.line_to(11.2, 3.4);
             p.line_to(8.8, 5.4);
+        }
+        Kind::List | Kind::Tree => {
+            let indent = if kind == Kind::Tree { 3.0 } else { 0.0 };
+            for (i, y) in [4.0f32, 8.0, 12.0].iter().enumerate() {
+                let x = if i == 0 { 0.0 } else { indent };
+                let dot = gsk::PathBuilder::new();
+                dot.add_circle(&point(3.0 + x, *y), 0.9);
+                p.add_path(&dot.to_path());
+                p.move_to(6.0 + x, *y);
+                p.line_to(13.5, *y);
+            }
+        }
+        Kind::Doc => {
+            p.move_to(4.0, 2.5);
+            p.line_to(9.5, 2.5);
+            p.line_to(12.5, 5.5);
+            p.line_to(12.5, 13.5);
+            p.line_to(4.0, 13.5);
+            p.close();
+            p.move_to(6.0, 8.0);
+            p.line_to(10.5, 8.0);
+            p.move_to(6.0, 10.5);
+            p.line_to(10.5, 10.5);
         }
         Kind::Filter => {
             p.move_to(2.5, 4.5);
