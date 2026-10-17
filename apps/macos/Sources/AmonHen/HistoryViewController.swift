@@ -1571,10 +1571,43 @@ extension NSPasteboard.PasteboardType {
 final class DensityStripView: NSView {
     var density: [(frequency: Float, activity: Float)] = [] { didSet { needsDisplay = true } }
     /// 見えている範囲（上端・下端、0〜1）。
-    var visible: (CGFloat, CGFloat) = (0, 0) { didSet { if visible != oldValue { needsDisplay = true } } }
+    /// 見えている範囲。枠は別の層で動かす（スクロールのたびに帯の全体を描き直さない）。
+    var visible: (CGFloat, CGFloat) = (0, 0) { didSet { if visible != oldValue { moveViewport() } } }
     var onJump: ((CGFloat) -> Void)?
+    private let viewport = CALayer()
 
     override var isFlipped: Bool { true }
+
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        wantsLayer = true
+        viewport.borderWidth = 1
+        viewport.actions = ["position": NSNull(), "bounds": NSNull(), "frame": NSNull()]
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        moveViewport()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        moveViewport()
+    }
+
+    private func moveViewport() {
+        // 層はウィンドウに入ってから作られるので、そのときに枠を載せる。
+        if viewport.superlayer == nil, let layer { layer.addSublayer(viewport) }
+        let top = visible.0 * bounds.height, bottom = max(top + 3, visible.1 * bounds.height)
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            viewport.borderColor = NSColor.labelColor.withAlphaComponent(0.6).cgColor
+        }
+        // 上が原点のビューでは、層も上が原点になる（そうでなければ下から測る）。
+        let flipped = layer?.isGeometryFlipped ?? true
+        viewport.frame = NSRect(x: 0, y: flipped ? top : bounds.height - bottom, width: bounds.width, height: bottom - top)
+    }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.windowBackgroundColor.setFill()
@@ -1590,11 +1623,6 @@ final class DensityStripView: NSView {
             NSColor.systemGreen.withAlphaComponent(CGFloat(d.activity) * 0.75).setFill()
             NSRect(x: half, y: y, width: half, height: h + 0.5).fill()
         }
-        let top = visible.0 * bounds.height, bottom = max(top + 3, visible.1 * bounds.height)
-        NSColor.labelColor.withAlphaComponent(0.6).setStroke()
-        let frame = NSBezierPath(rect: NSRect(x: 0.5, y: top + 0.5, width: bounds.width - 1, height: bottom - top - 1))
-        frame.lineWidth = 1
-        frame.stroke()
     }
 
     override func mouseDown(with event: NSEvent) { jump(event) }
