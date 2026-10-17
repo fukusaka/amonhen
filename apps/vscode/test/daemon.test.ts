@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -14,7 +14,8 @@ import { UndoLog } from '../src/state/undo.ts';
 import { withDaemonWrites } from '../src/daemon/writes.ts';
 
 // このリポジトリのエンジン（ルートで `cargo build -p amonhen-cli`。CLI と daemon を兼ねる）。なければ飛ばす
-const daemon = process.env['AMONHEN_DAEMON'] ?? join(import.meta.dirname, '../../../target/debug/amonhen');
+const exe = process.platform === 'win32' ? '.exe' : '';
+const daemon = process.env['AMONHEN_DAEMON'] ?? join(import.meta.dirname, `../../../target/debug/amonhen${exe}`);
 const skip = existsSync(daemon) ? false : `エンジンがありません: ${daemon}`;
 
 let dir = '';
@@ -29,6 +30,7 @@ before(() => {
   // daemon のソケットと History のキャッシュは試験の中に置く（手元の daemon とアプリに混ぜない）
   process.env['AMONHEN_DAEMON_DIR'] = join(dir, 's');
   process.env['HOME'] = dir;
+  process.env['LOCALAPPDATA'] = dir;
   delete process.env['XDG_DATA_HOME'];
   repo = join(dir, 'repo');
   execFileSync('git', ['init', '-q', '-b', 'main', repo]);
@@ -139,7 +141,7 @@ test('shows working diffs as hunks and discards lines that the extension can und
     assert.equal(rows.length, 1);
     await client.call({ op: 'discardRows', diff: d.handle, rows });
     assert.equal(git('show', ':m.txt'), 'main\n');
-    assert.equal(execFileSync('cat', [join(repo, 'm.txt')], { encoding: 'utf8' }), 'MAIN\n');
+    assert.equal(readFileSync(join(repo, 'm.txt'), 'utf8'), 'MAIN\n');
     const backend = await CliBackend.open(new GitExecutor('git'), repo);
     try {
       const entry = await new UndoLog(backend).undo();
@@ -147,7 +149,7 @@ test('shows working diffs as hunks and discards lines that the extension can und
     } finally {
       backend.dispose();
     }
-    assert.equal(execFileSync('cat', [join(repo, 'm.txt')], { encoding: 'utf8' }), 'MAIN\nmore\n');
+    assert.equal(readFileSync(join(repo, 'm.txt'), 'utf8'), 'MAIN\nmore\n');
   } finally {
     client.dispose();
     git('checkout', '--', 'm.txt');
@@ -161,7 +163,7 @@ test('writes through the daemon record one undo entry each', { skip }, async () 
   const undo = new UndoLog(backend);
   const count = () => {
     try {
-      return (JSON.parse(execFileSync('cat', [join(repo, '.git/amonhen/undo.json')], { encoding: 'utf8' })) as unknown[]).length;
+      return (JSON.parse(readFileSync(join(repo, '.git/amonhen/undo.json'), 'utf8')) as unknown[]).length;
     } catch {
       return 0;
     }
@@ -205,9 +207,14 @@ test('names the host platform like the engine files', () => {
 test('installs the bundled engine and picks it for the daemon', { skip }, async () => {
   // 拡張の bin と同じ形（amonhen-<os>-<arch>）に、試験の amonhen を置く
   const bin = join(dir, 'ext-bin');
-  execFileSync('mkdir', ['-p', bin]);
-  execFileSync('cp', [daemon, join(bin, `amonhen-${platformName()}`)]);
+  mkdirSync(bin, { recursive: true });
+  copyFileSync(daemon, join(bin, `amonhen-${platformName()}${exe}`));
   const path = await prepareEngine(bin);
-  assert.equal(path, join(dir, '.local/share/amonhen/current/amonhen'));
+  // 置き場所は OS ごと（Windows は %LOCALAPPDATA%\\amonhen で、current はハッシュを書いたファイル）
+  if (process.platform === 'win32') {
+    assert.match(path!, /amonhen[\\/]engine[\\/][0-9a-f]{16}[\\/]amonhen\.exe$/);
+  } else {
+    assert.equal(path, join(dir, '.local/share/amonhen/current/amonhen'));
+  }
   assert.match(execFileSync(path!, ['--version'], { encoding: 'utf8' }), /\(protocol \d+\)/);
 });

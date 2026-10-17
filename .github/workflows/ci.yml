@@ -55,10 +55,20 @@ jobs:
             echo "::endgroup::"
           done
 
-  # VSCode 拡張（apps/vscode）。daemon の試験に、このリポジトリのエンジンを使う。
+  # VSCode 拡張（apps/vscode）。daemon の試験に、このリポジトリのエンジンを使う（Windows は名前付きパイプ）。
   vscode:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
+      # 試験は改行を変えない前提（Windows の CI は autocrlf が有効）。
+      - if: runner.os == 'Windows'
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
