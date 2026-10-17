@@ -264,6 +264,39 @@ impl Actions {
         });
     }
 
+    /// 選んだ連続したコミットを 1 つにまとめる。メッセージは古い順に並べたものを初期値に編集してもらう。
+    pub fn squash_range(self: &Rc<Self>, oids: Vec<String>) {
+        let Some(repo) = self.repo.borrow().clone() else {
+            return;
+        };
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let count = oids.len();
+            let command = json!({ "op": "squashRangeMessage", "oids": oids });
+            let reply: Value = gio::spawn_blocking(move || {
+                serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
+            })
+            .await
+            .unwrap_or_default();
+            if let Some(error) = reply["error"].as_str() {
+                this.alert("まとめられません", error).await;
+                return;
+            }
+            let info = &reply["info"];
+            let title = format!("Squash {count} Commits");
+            let initial = info["message"].as_str().unwrap_or_default();
+            if let Some(edited) = this.edit_message(&title, initial, "まとめる").await {
+                this.rewrite(
+                    &title,
+                    json!({
+                        "kind": "squashRange", "oid": info["oldest"], "last": info["newest"],
+                        "message": edited,
+                    }),
+                );
+            }
+        });
+    }
+
     /// JSON の命令にない操作を裏で行い、終わったら読み直す。
     pub fn perform_work(
         self: &Rc<Self>,

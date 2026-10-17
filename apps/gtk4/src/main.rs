@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query>] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
 
 mod actions;
 mod appmenu;
@@ -53,6 +53,8 @@ struct Args {
     select_ref: Option<String>,
     /// 最初に ref を読んだら、この名前の ref の右クリックのメニューを出す（確認用）。
     menu_ref: Option<String>,
+    /// History でこれらの行を選んでおく（確認用。`1,3` のように）。
+    select_rows: Vec<u32>,
     /// History をこの問い合わせで探しておく（確認用）。
     search: Option<String>,
     /// History のこの行の右クリックのメニューを開いておく（確認用）。
@@ -80,6 +82,13 @@ fn parse_args() -> Result<Args, String> {
             "--working-copy" => args.working_copy = true,
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
             "--menu-ref" => args.menu_ref = Some(it.next().ok_or("--menu-ref <name>")?),
+            "--select-rows" => {
+                let rows = it.next().ok_or("--select-rows <row,row,...>")?;
+                args.select_rows = rows
+                    .split(',')
+                    .map(|r| r.trim().parse().map_err(|_| "--select-rows <row,row,...>"))
+                    .collect::<Result<_, _>>()?;
+            }
             "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {
                 let row = it.next().ok_or("--menu-row <row>")?;
@@ -269,7 +278,12 @@ fn build_window(app: &gtk::Application, args: Args) {
     view.connect_menu(move |row, x, y| {
         let Some(view) = v.upgrade() else { return };
         if let Some((_, history)) = view.current() {
-            let items = commitops::menu(&a, &history, row, view.upcast_ref());
+            let rows = view.selection();
+            let items = if rows.len() > 1 && rows.contains(&row) {
+                commitops::menu_many(&a, &history, &rows, view.upcast_ref())
+            } else {
+                commitops::menu(&a, &history, row, view.upcast_ref())
+            };
             menu::popup(&view, x, y, items);
         }
     });
@@ -388,6 +402,12 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 Some("primary") => Some(buttons.primary.clone()),
                                 _ => None,
                             };
+                            if let Some((&first, rest)) = args.select_rows.split_first() {
+                                view.select(first);
+                                for &row in rest {
+                                    view.select_with(row, false, true);
+                                }
+                            }
                             if let Some(query) = &args.search {
                                 search.search(query, pending.clone());
                             }
@@ -559,109 +579,208 @@ fn connect_selection(
     right: &gtk::Paned,
     pending: &Rc<Cell<u32>>,
 ) {
-    let weak_right = right.downgrade();
-    let generation = Rc::new(Cell::new(0u64));
+    let loader = Rc::new(Loader {
+        details: details.clone(),
+        diff: diff.downgrade(),
+        right: right.downgrade(),
+        pending: pending.clone(),
+        generation: Cell::new(0),
+    });
     let weak_view = view.downgrade();
-    let weak_diff = diff.downgrade();
-    let details = details.clone();
-    let pending = pending.clone();
-    view.connect_selected(move |row| {
-        let (Some(view), Some(diff)) = (weak_view.upgrade(), weak_diff.upgrade()) else {
+    view.connect_selected(move |rows| {
+        let Some(view) = weak_view.upgrade() else {
             return;
         };
         let Some((repo, history)) = view.current() else {
             return;
         };
+        match rows {
+            [] => {}
+            [row] => loader.one(repo, history, *row),
+            _ => loader.many(repo, history, rows.to_vec(), PairMode::Forward),
+        }
+    });
+}
+
+/// 選んだコミットの詳細と差分を読む。
+struct Loader {
+    details: Rc<Details>,
+    diff: glib::WeakRef<DiffWidget>,
+    right: glib::WeakRef<gtk::Paned>,
+    /// 裏で読んでいる数（`--snapshot` はなくなるまで待つ）。
+    pending: Rc<Cell<u32>>,
+    /// 選び直したら増やし、古い結果を捨てる。
+    generation: Cell<u64>,
+}
+
+impl Loader {
+    fn start(&self) -> u64 {
+        let g = self.generation.get() + 1;
+        self.generation.set(g);
+        self.details.clear();
+        if let Some(diff) = self.diff.upgrade() {
+            diff.clear();
+        }
+        g
+    }
+
+    /// 1 つのコミット: 詳細はすぐ読めるので先に出し、時間のかかる分と差分はその後に。
+    fn one(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        history: Arc<amonhen_core::HistorySnapshot>,
+        row: u32,
+    ) {
         let Some(&id) = history.graph.ids().get(row as usize) else {
             return;
         };
-        let g = generation.get() + 1;
-        generation.set(g);
-        details.clear();
-        diff.clear();
-
-        // 詳細はすぐ読めるので先に出し、差分はその後に。
-        pending.set(pending.get() + 2);
-        let (details, generation_d, pending_d, repo_d) = (
-            details.clone(),
-            generation.clone(),
-            pending.clone(),
-            repo.clone(),
-        );
-        let weak_right = weak_right.clone();
-        let repo_e = repo.clone();
+        let g = self.start();
+        self.pending.set(self.pending.get() + 1);
+        let (this, repo_i) = (self.clone(), repo.clone());
         glib::spawn_future_local(async move {
             let info =
-                gio::spawn_blocking(move || repo_d.commit_info(&id).map_err(|e| e.to_string()))
+                gio::spawn_blocking(move || repo_i.commit_info(&id).map_err(|e| e.to_string()))
                     .await;
-            pending_d.set(pending_d.get() - 1);
-            if generation_d.get() != g {
+            this.pending.set(this.pending.get() - 1);
+            if this.generation.get() != g {
                 return;
             }
             match info {
                 Ok(Ok(info)) => {
-                    details.show(&info);
-                    // 時間のかかる分（署名の検証・子・含むブランチとタグなど）は、その後に足す。
-                    pending_d.set(pending_d.get() + 1);
-                    let (details_e, generation, pending, right_e) = (
-                        details.clone(),
-                        generation_d.clone(),
-                        pending_d.clone(),
-                        weak_right.clone(),
-                    );
-                    glib::spawn_future_local(async move {
-                        let extras = gio::spawn_blocking(move || {
-                            repo_e.commit_extras(&id).map_err(|e| e.to_string())
-                        })
-                        .await;
-                        pending.set(pending.get() - 1);
-                        if generation.get() != g {
-                            return;
-                        }
-                        match extras {
-                            Ok(Ok(extras)) => {
-                                details_e.show_extras(&extras);
-                                if let Some(right) = right_e.upgrade() {
-                                    fit_details(&right, details_e);
-                                }
-                            }
-                            Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
-                            Err(_) => {}
-                        }
-                    });
-                    if let Some(right) = weak_right.upgrade() {
-                        fit_details(&right, details);
-                    }
+                    this.details.show(&info);
+                    this.fit();
                 }
                 Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
                 Err(_) => {}
             }
         });
-        let (generation, pending) = (generation.clone(), pending.clone());
-        let weak_diff = diff.downgrade();
+        // 時間のかかる分（署名の検証・子・含むブランチとタグなど）。
+        self.pending.set(self.pending.get() + 1);
+        let (this, repo_e) = (self.clone(), repo.clone());
+        glib::spawn_future_local(async move {
+            let extras =
+                gio::spawn_blocking(move || repo_e.commit_extras(&id).map_err(|e| e.to_string()))
+                    .await;
+            this.pending.set(this.pending.get() - 1);
+            if this.generation.get() != g {
+                return;
+            }
+            match extras {
+                Ok(Ok(extras)) => {
+                    // 詳細より先に届いたら、詳細が出たときに足す。
+                    this.details.show_extras(&extras);
+                    this.fit();
+                }
+                Ok(Err(e)) => eprintln!("コミットの詳細を読めない: {e}"),
+                Err(_) => {}
+            }
+        });
+        self.diff(repo, history, vec![row], PairMode::Forward, g, |_| {});
+    }
+
+    /// 複数のコミット: 選び方の見出しを出し、`selection_diff` の差分を読む。
+    fn many(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        history: Arc<amonhen_core::HistorySnapshot>,
+        rows: Vec<u32>,
+        pair: PairMode,
+    ) {
+        let g = self.start();
+        let weak = Rc::downgrade(self);
+        let (r, h, rs) = (repo.clone(), history.clone(), rows.clone());
+        let on_pair: Rc<dyn Fn(PairMode)> = Rc::new(move |mode| {
+            if let Some(this) = weak.upgrade() {
+                this.many(r.clone(), h.clone(), rs.clone(), mode);
+            }
+        });
+        self.details
+            .show_selection(rows.len(), None, pair, &[], on_pair.clone());
+        // 各コミットの 1 行（短い ID・件名・作者）。
+        let ids: Vec<amonhen_model::Oid> = rows
+            .iter()
+            .filter_map(|&r| history.graph.ids().get(r as usize).copied())
+            .collect();
+        let count = rows.len();
+        let this = self.clone();
+        let repo_t = repo.clone();
+        self.diff(repo, history, rows, pair, g, move |kind| {
+            let (this, repo_t, ids, on_pair) =
+                (this.clone(), repo_t.clone(), ids.clone(), on_pair.clone());
+            let kind = kind.to_owned();
+            glib::spawn_future_local(async move {
+                let texts = gio::spawn_blocking(move || {
+                    let texts = repo_t.commit_texts(&ids).unwrap_or_default();
+                    ids.iter()
+                        .zip(&texts)
+                        .map(|(id, t)| {
+                            (
+                                id.to_string()[..8].to_owned(),
+                                String::from_utf8_lossy(t.subject()).into_owned(),
+                                String::from_utf8_lossy(t.author_name()).into_owned(),
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await
+                .unwrap_or_default();
+                if this.generation.get() == g {
+                    this.details
+                        .show_selection(count, Some(&kind), pair, &texts, on_pair);
+                    this.fit();
+                }
+            });
+        });
+    }
+
+    /// 選んだ行の差分を読んで出す。読めたら `then(選び方)` を呼ぶ（`range`・`pair`・`each`）。
+    fn diff(
+        self: &Rc<Self>,
+        repo: Arc<Repository>,
+        history: Arc<amonhen_core::HistorySnapshot>,
+        rows: Vec<u32>,
+        pair: PairMode,
+        g: u64,
+        then: impl FnOnce(&str) + 'static,
+    ) {
+        self.pending.set(self.pending.get() + 1);
+        let this = self.clone();
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || {
-                let (_, stacked) = repo
-                    .selection_diff(&history, &[row], PairMode::Forward)
+                let (selection, stacked) = repo
+                    .selection_diff(&history, &rows, pair)
                     .map_err(|e| e.to_string())?;
+                let kind = match selection {
+                    amonhen_core::Selection::Range { .. } => "range",
+                    amonhen_core::Selection::Pair { .. } => "pair",
+                    amonhen_core::Selection::Each(_) => "each",
+                };
                 let view = diff::View::build(&stacked, &[]);
-                Ok::<_, String>((Arc::new(diff::Source(stacked)), view))
+                Ok::<_, String>((kind, Arc::new(diff::Source(stacked)), view))
             })
             .await;
-            pending.set(pending.get() - 1);
-            let Some(diff) = weak_diff.upgrade() else {
-                return;
-            };
-            if generation.get() != g {
+            this.pending.set(this.pending.get() - 1);
+            if this.generation.get() != g {
                 return;
             }
             match result {
-                Ok(Ok((source, view))) => diff.show(source, view),
+                Ok(Ok((kind, source, view))) => {
+                    if let Some(diff) = this.diff.upgrade() {
+                        diff.show(source, view);
+                    }
+                    then(kind);
+                }
                 Ok(Err(e)) => eprintln!("差分を読めない: {e}"),
                 Err(_) => {}
             }
         });
-    });
+    }
+
+    fn fit(&self) {
+        if let Some(right) = self.right.upgrade() {
+            fit_details(&right, self.details.clone());
+        }
+    }
 }
 
 enum Event {

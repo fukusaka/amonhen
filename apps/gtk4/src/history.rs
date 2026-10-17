@@ -5,7 +5,7 @@
 //! 件名などは 256 行ずつ裏のスレッドで読み（`Repository::history_chunk`）、見えている所の近くだけを持つ。
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
@@ -22,6 +22,8 @@ use crate::graph::{self, Lanes, Metrics};
 
 /// 行を右クリックしたときに呼ぶ（行、x、y）。
 type MenuCallback = Rc<dyn Fn(u32, f64, f64)>;
+/// 選んだ行が変わったときに呼ぶ（選んでいる行、昇順）。
+type SelectCallback = Rc<dyn Fn(&[u32])>;
 
 const CHUNK_ROWS: u32 = 256;
 /// 持っておくチャンクの数（見えている所に近いものから）。
@@ -78,9 +80,14 @@ pub struct State {
     labels: HashMap<Oid, Vec<Label>>,
     label_layouts: HashMap<String, pango::Layout>,
     fonts: Option<Fonts>,
+    /// 選んでいる行（複数選んでいるときは、最後に選んだ行）。
     selected: Option<u32>,
+    /// 複数選んでいるときの、`selected` 以外の行。
+    extra: BTreeSet<u32>,
+    /// Shift で範囲を選ぶときの起点。
+    anchor: Option<u32>,
     /// 行を選んだときに呼ぶ。
-    on_select: Option<Rc<dyn Fn(u32)>>,
+    on_select: Option<SelectCallback>,
     /// 行を右クリックしたときに呼ぶ（行、x、y）。
     on_menu: Option<MenuCallback>,
     /// 検索に一致した行（昇順）。薄く塗る。
@@ -145,11 +152,17 @@ mod imp {
 
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
-            click.connect_pressed(move |_, _, _, y| {
+            click.connect_pressed(move |gesture, _, _, y| {
                 if let Some(view) = weak.upgrade() {
                     view.grab_focus();
                     if let Some(row) = view.row_at(y as f32) {
-                        view.select(row);
+                        // Ctrl で 1 行ずつ足す・外す、Shift で範囲（macOS の ⌘・⇧ と同じ）。
+                        let state = gesture.current_event_state();
+                        view.select_with(
+                            row,
+                            state.contains(gdk::ModifierType::SHIFT_MASK),
+                            state.contains(gdk::ModifierType::CONTROL_MASK),
+                        );
                     }
                 }
             });
@@ -163,7 +176,10 @@ mod imp {
                 let Some(view) = weak.upgrade() else { return };
                 view.grab_focus();
                 if let Some(row) = view.row_at(y as f32) {
-                    view.select(row);
+                    // 複数選んでいる行の上なら、選んだまま（まとめての操作のメニュー）。
+                    if !view.selection().contains(&row) {
+                        view.select(row);
+                    }
                     let f = view.state().on_menu.clone();
                     if let Some(f) = f {
                         f(row, x, y);
@@ -174,11 +190,11 @@ mod imp {
 
             let keys = gtk::EventControllerKey::new();
             let weak = view.downgrade();
-            keys.connect_key_pressed(move |_, key, _, _| {
+            keys.connect_key_pressed(move |_, key, _, state| {
                 let Some(view) = weak.upgrade() else {
                     return glib::Propagation::Proceed;
                 };
-                if view.move_selection(key) {
+                if view.move_selection(key, state.contains(gdk::ModifierType::SHIFT_MASK)) {
                     glib::Propagation::Stop
                 } else {
                     glib::Propagation::Proceed
@@ -280,12 +296,18 @@ impl HistoryView {
                 st.repo = Some(repo);
                 return;
             }
-            let selected = st.selected.and_then(|row| {
+            // 選んでいたコミットを、新しい History の行で選び直す。
+            let id_of = |row: u32| {
                 let old = st.history.as_ref()?;
                 old.graph.ids().get(row as usize).copied()
-            });
+            };
+            let selected = st.selected.and_then(id_of);
+            let extra: Vec<_> = st.extra.iter().filter_map(|&r| id_of(r)).collect();
+            let anchor = st.anchor.and_then(id_of);
             st.repo = Some(repo);
             st.selected = selected.and_then(|id| history.row_of(&id));
+            st.extra = extra.iter().filter_map(|id| history.row_of(id)).collect();
+            st.anchor = anchor.and_then(|id| history.row_of(&id));
             st.history = Some(history);
             st.chunks.clear();
             st.loading.clear();
@@ -331,17 +353,82 @@ impl HistoryView {
         self.state().selected
     }
 
+    /// 選んでいる行（昇順）。
+    pub fn selection(&self) -> Vec<u32> {
+        let st = self.state();
+        let mut rows: Vec<u32> = st.extra.iter().copied().chain(st.selected).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        rows
+    }
+
+    /// `row` だけを選ぶ。
     pub fn select(&self, row: u32) {
-        let callback = {
+        let changed = {
             let mut st = self.state();
-            let changed = st.selected != Some(row);
+            let changed = st.selected != Some(row) || !st.extra.is_empty();
             st.selected = Some(row);
-            st.on_select.clone().filter(|_| changed)
+            st.extra.clear();
+            st.anchor = Some(row);
+            changed
         };
         self.scroll_to_row(row);
         self.queue_draw();
-        if let Some(f) = callback {
-            f(row);
+        if changed {
+            self.notify_selection();
+        }
+    }
+
+    /// クリックで選ぶ。`shift` なら起点からの範囲、`ctrl` なら 1 行ずつ足す・外す。
+    pub fn select_with(&self, row: u32, shift: bool, ctrl: bool) {
+        {
+            let mut st = self.state();
+            let anchor = st.anchor.or(st.selected);
+            match (shift, ctrl, anchor) {
+                (true, _, Some(anchor)) => {
+                    let (a, b) = (anchor.min(row), anchor.max(row));
+                    if !ctrl {
+                        st.extra.clear();
+                    }
+                    if ctrl && let Some(old) = st.selected {
+                        st.extra.insert(old);
+                    }
+                    st.extra.extend((a..=b).filter(|&r| r != row));
+                    st.selected = Some(row);
+                }
+                (false, true, _) => {
+                    let mut all: BTreeSet<u32> =
+                        st.extra.iter().copied().chain(st.selected).collect();
+                    if !all.remove(&row) {
+                        all.insert(row);
+                    }
+                    // 外した行が最後に選んだ行なら、残りのうち最後のものにする。
+                    st.selected = if all.contains(&row) {
+                        Some(row)
+                    } else {
+                        all.iter().next_back().copied()
+                    };
+                    if let Some(s) = st.selected {
+                        all.remove(&s);
+                    }
+                    st.extra = all;
+                    st.anchor = Some(row);
+                }
+                _ => {
+                    drop(st);
+                    self.select(row);
+                    return;
+                }
+            }
+        }
+        self.queue_draw();
+        self.notify_selection();
+    }
+
+    fn notify_selection(&self) {
+        let f = self.state().on_select.clone();
+        if let Some(f) = f {
+            f(&self.selection());
         }
     }
 
@@ -356,8 +443,8 @@ impl HistoryView {
         self.state().on_menu = Some(Rc::new(f));
     }
 
-    /// 行を選んだら `f(行)` を呼ぶ。
-    pub fn connect_selected(&self, f: impl Fn(u32) + 'static) {
+    /// 選んだ行が変わったら `f(選んでいる行、昇順)` を呼ぶ。
+    pub fn connect_selected(&self, f: impl Fn(&[u32]) + 'static) {
         self.state().on_select = Some(Rc::new(f));
     }
 
@@ -391,7 +478,8 @@ impl HistoryView {
         (row >= 0.0 && (row as u32) < self.row_count()).then_some(row as u32)
     }
 
-    fn move_selection(&self, key: gdk::Key) -> bool {
+    /// 矢印などで選ぶ行を動かす。`extend`（Shift）なら起点からの範囲を選ぶ。
+    fn move_selection(&self, key: gdk::Key, extend: bool) -> bool {
         let count = self.row_count();
         if count == 0 {
             return false;
@@ -408,7 +496,12 @@ impl HistoryView {
             gdk::Key::End => count - 1,
             _ => return false,
         };
-        self.select(row);
+        if extend {
+            self.select_with(row, true, false);
+            self.scroll_to_row(row);
+        } else {
+            self.select(row);
+        }
         true
     }
 
@@ -501,13 +594,19 @@ impl HistoryView {
                 );
             }
             // 選んでいる行の背景。
-            if let Some(row) = st.selected.filter(|r| (first..last).contains(r)) {
+            let color = if focused {
+                gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
+            } else {
+                gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.12)
+            };
+            let chosen: Vec<u32> = st
+                .extra
+                .range(first..last)
+                .copied()
+                .chain(st.selected.filter(|r| (first..last).contains(r)))
+                .collect();
+            for &row in &chosen {
                 let y = row as f32 * rh - scroll_y;
-                let color = if focused {
-                    gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
-                } else {
-                    gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.12)
-                };
                 snapshot.append_color(&color, &graphene::Rect::new(0.0, y, width, rh));
             }
 
@@ -567,7 +666,7 @@ impl HistoryView {
                     let text = self.row_text(st, &history, &chunk, row);
                     st.rows.insert(row, text);
                 }
-                let selected = focused && st.selected == Some(row);
+                let selected = focused && (st.selected == Some(row) || st.extra.contains(&row));
                 let top = row as f32 * rh - scroll_y;
                 let mut x = text_x;
                 let line = &st.rows[&row];

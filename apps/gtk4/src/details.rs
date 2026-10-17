@@ -4,6 +4,9 @@
 //! タグ・notes など）が届いたら表を作り直す。
 
 use std::cell::RefCell;
+use std::rc::Rc;
+
+use amonhen_core::PairMode;
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -18,7 +21,22 @@ pub struct Details {
     body: gtk::Label,
     notes: gtk::Label,
     info: RefCell<Option<Value>>,
+    /// 詳細より先に届いた、時間のかかる分。
+    extras: RefCell<Option<Value>>,
+    /// 複数のコミットを選んだときの見出し（ほかの部品の代わりに出す）。
+    selection: gtk::Box,
+    selection_title: gtk::Label,
+    selection_note: gtk::Label,
+    pairs: gtk::Box,
+    selection_lines: gtk::Label,
 }
+
+/// 2 つ選んだときの差分の取り方の切り替え（macOS 版と同じ言葉）。
+const PAIRS: [(PairMode, &str); 3] = [
+    (PairMode::Forward, "A..B"),
+    (PairMode::Reverse, "向きを入れ替える"),
+    (PairMode::MergeBase, "merge-base から（A...B）"),
+];
 
 impl Details {
     pub fn new() -> Self {
@@ -41,7 +59,17 @@ impl Details {
         let subject = label(&["title-4"]);
         let body = label(&[]);
         let notes = label(&["dim-label"]);
+        let selection_title = label(&["title-4"]);
+        let selection_note = label(&["dim-label", "caption"]);
+        let pairs = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let selection_lines = label(&["caption"]);
+        let selection = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        selection.append(&selection_title);
+        selection.append(&selection_note);
+        selection.append(&pairs);
+        selection.append(&selection_lines);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        column.append(&selection);
         column.set_margin_top(10);
         column.set_margin_bottom(10);
         column.set_margin_start(12);
@@ -64,13 +92,21 @@ impl Details {
             body,
             notes,
             info: RefCell::default(),
+            extras: RefCell::default(),
+            selection,
+            selection_title,
+            selection_note,
+            pairs,
+            selection_lines,
         };
         details.clear();
         details
     }
 
     pub fn clear(&self) {
+        self.set_selection_mode(false);
         self.info.replace(None);
+        self.extras.replace(None);
         self.people.set_text("");
         self.clear_table();
         self.subject.set_text("");
@@ -84,6 +120,71 @@ impl Details {
         while let Some(child) = self.table.first_child() {
             self.table.remove(&child);
         }
+    }
+
+    /// 複数選んだときの見出しか、1 つのコミットの詳細か。
+    fn set_selection_mode(&self, on: bool) {
+        self.selection.set_visible(on);
+        self.people.set_visible(!on);
+        self.table.set_visible(!on);
+        self.subject.set_visible(!on);
+    }
+
+    /// 複数のコミットを選んだときの見出し（macOS 版と同じ）: 数、差分の取り方の説明、2 つなら取り方の
+    /// 切り替え、各コミットの 1 行（短い ID・件名・作者）。`kind` は `range`・`pair`・`each`（読む前は None）。
+    pub fn show_selection(
+        &self,
+        count: usize,
+        kind: Option<&str>,
+        pair: PairMode,
+        lines: &[(String, String, String)],
+        on_pair: Rc<dyn Fn(PairMode)>,
+    ) {
+        self.clear();
+        self.set_selection_mode(true);
+        self.selection_title
+            .set_text(&format!("{count} コミットを選んでいます"));
+        let note = match (kind, pair) {
+            (Some("range"), _) => {
+                "続いているので、一番古いものの親から一番新しいものまでの差分（まとめて 1 つにしたのと同じ）"
+            }
+            (Some("pair"), PairMode::Forward) => {
+                "続いていない 2 つなので、古いほうから新しいほうまでの差分（A..B）"
+            }
+            (Some("pair"), PairMode::Reverse) => {
+                "続いていない 2 つの、新しいほうから古いほうまでの差分（向きを入れ替えた）"
+            }
+            (Some("pair"), PairMode::MergeBase) => {
+                "続いていない 2 つの、共通の祖先から新しいほうまでの差分（A...B。新しいほうの側の変更だけ）"
+            }
+            (Some(_), _) => {
+                "とびとびなので、コミットごとの差分をファイルごとに並べています（見出しはパスと短い ID）"
+            }
+            (None, _) => "差分を読んでいます…",
+        };
+        self.selection_note.set_text(note);
+        while let Some(child) = self.pairs.first_child() {
+            self.pairs.remove(&child);
+        }
+        self.pairs.set_visible(kind == Some("pair"));
+        if kind == Some("pair") {
+            for (mode, title) in PAIRS {
+                if mode == pair {
+                    continue;
+                }
+                let button = gtk::Button::with_label(title);
+                button.add_css_class("flat");
+                button.add_css_class("caption");
+                let f = on_pair.clone();
+                button.connect_clicked(move |_| f(mode));
+                self.pairs.append(&button);
+            }
+        }
+        let text: Vec<String> = lines
+            .iter()
+            .map(|(id, subject, author)| format!("{id}  {subject}  — {author}"))
+            .collect();
+        self.selection_lines.set_text(&text.join("\n"));
     }
 
     /// すぐ読める分を出す（時間のかかる分は、届いたら `show_extras`）。
@@ -117,11 +218,16 @@ impl Details {
             ));
         }
         self.people.set_text(&people);
-        self.build_table(None);
+        let extras = self.extras.borrow().clone();
+        match extras {
+            Some(extras) => self.show_extras(&extras),
+            None => self.build_table(None),
+        }
     }
 
     /// 時間のかかる分（`commit_extras` の答え）を足す。`info` と同じコミットのものであること。
     pub fn show_extras(&self, extras: &Value) {
+        self.extras.replace(Some(extras.clone()));
         if self.info.borrow().is_none() {
             return;
         }

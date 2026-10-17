@@ -96,3 +96,79 @@ pub fn menu(
     }));
     items
 }
+
+/// 複数選んだ行の上のメニュー（macOS 版の `buildMultipleMenu` と同じ）。`rows` は昇順（新しい順）。
+pub fn menu_many(
+    actions: &Rc<Actions>,
+    history: &HistorySnapshot,
+    rows: &[u32],
+    widget: &gtk::Widget,
+) -> Vec<Item> {
+    let commits: Vec<(String, bool)> = rows
+        .iter()
+        .filter_map(|&r| {
+            let id = history.graph.ids().get(r as usize)?;
+            let merge = history
+                .layout
+                .nodes()
+                .get(r as usize)
+                .is_some_and(|n| n.flags & Node::MERGE != 0);
+            Some((id.to_string(), merge))
+        })
+        .collect();
+    let n = commits.len();
+    let mut items = Vec::new();
+    let (a, c) = (actions.clone(), commits.clone());
+    items.push(menu::action(
+        format!("Cherry-pick {n} Commits（古い順）"),
+        move || {
+            let sequence = c
+                .iter()
+                .rev()
+                .map(|(oid, merge)| json!({ "op": "cherryPick", "oid": oid, "isMerge": merge }))
+                .collect();
+            a.perform_sequence(sequence);
+        },
+    ));
+    let (a, c) = (actions.clone(), commits.clone());
+    items.push(menu::action(
+        format!("Revert {n} Commits（新しい順）"),
+        move || {
+            let sequence = c
+                .iter()
+                .map(|(oid, merge)| json!({ "op": "revert", "oid": oid, "isMerge": merge }))
+                .collect();
+            a.perform_sequence(sequence);
+        },
+    ));
+    // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる。
+    let consecutive = rows.windows(2).all(|w| w[1] == w[0] + 1);
+    if n >= 2 && consecutive && !commits.iter().any(|(_, merge)| *merge) {
+        let (a, oids) = (
+            actions.clone(),
+            commits.iter().map(|(o, _)| o.clone()).collect::<Vec<_>>(),
+        );
+        items.push(menu::action(format!("Squash {n} Commits…"), move || {
+            a.squash_range(oids.clone());
+        }));
+    }
+    items.push(Item::Separator);
+    let (w, ids) = (
+        widget.clone(),
+        commits.iter().map(|(o, _)| o.clone()).collect::<Vec<_>>(),
+    );
+    items.push(menu::action("Copy Commit IDs", move || {
+        w.clipboard().set_text(&ids.join("\n"));
+    }));
+    let (w, ids) = (
+        widget.clone(),
+        commits
+            .iter()
+            .map(|(o, _)| o[..10].to_owned())
+            .collect::<Vec<_>>(),
+    );
+    items.push(menu::action("Copy Short IDs", move || {
+        w.clipboard().set_text(&ids.join(" "));
+    }));
+    items
+}
