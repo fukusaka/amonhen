@@ -1,12 +1,14 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll] [--scroll-to <row>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll] [--scroll-to <row> | --select-ref <name>] [--working-copy [--select-path <path>] [--toggle-row <row>]]`
 
 mod details;
 mod diff;
 mod graph;
 mod history;
+mod icon;
 mod measure;
+mod sidebar;
 mod workcopy;
 
 use std::cell::Cell;
@@ -22,6 +24,7 @@ use gtk::{gio, glib, graphene};
 use crate::details::Details;
 use crate::diff::DiffWidget;
 use crate::history::HistoryView;
+use crate::sidebar::{Page, Sidebar};
 use crate::workcopy::WorkingCopy;
 
 const APP_ID: &str = "io.github.fukusaka.amonhen";
@@ -37,6 +40,8 @@ struct Args {
     working_copy: bool,
     /// Working Copy で選んでおくファイル。
     select_path: Option<String>,
+    /// 最初に ref を読んだら、この名前の ref をサイドバーで選んだことにする（確認用）。
+    select_ref: Option<String>,
     /// Working Copy の差分で、この行の印を一度クリックしたことにする（確認用）。
     toggle_row: Option<u32>,
     scroll_to: Option<u32>,
@@ -50,6 +55,7 @@ fn parse_args() -> Result<Args, String> {
             "--snapshot" => args.snapshot = Some(it.next().ok_or("--snapshot <png>")?.into()),
             "--measure-scroll" => args.measure_scroll = true,
             "--working-copy" => args.working_copy = true,
+            "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
             "--toggle-row" => {
                 let row = it.next().ok_or("--toggle-row <row>")?;
                 args.toggle_row = Some(row.parse().map_err(|_| "--toggle-row <row>")?);
@@ -150,7 +156,7 @@ fn build_window(app: &gtk::Application, args: Args) {
     let pending = Rc::new(Cell::new(0u32));
     connect_selection(&view, &details, &diff, &right, &pending);
 
-    // History と Working Copy を見出しの切り替えで行き来する。
+    // History と Working Copy は、サイドバーで行き来する。
     let working = WorkingCopy::new(pending.clone());
     if let Some(path) = &args.select_path {
         working.select_path(path);
@@ -160,31 +166,40 @@ fn build_window(app: &gtk::Application, args: Args) {
     }
     let pages = gtk::Stack::new();
     pages.set_transition_type(gtk::StackTransitionType::None);
-    pages.add_titled(&columns, Some("history"), "History");
-    let working_page = pages.add_titled(&working.root, Some("working"), "Working Copy");
-    let switcher = gtk::StackSwitcher::new();
-    switcher.set_stack(Some(&pages));
-    header.pack_start(&switcher);
+    pages.add_named(&columns, Some("history"));
+    pages.add_named(&working.root, Some("working"));
+    let sidebar = Rc::new(Sidebar::new());
+    let weak_sidebar = Rc::downgrade(&sidebar);
     working.connect_count(move |count| {
-        working_page.set_title(&if count > 0 {
-            format!("Working Copy ({count})")
-        } else {
-            "Working Copy".to_owned()
-        });
+        if let Some(sidebar) = weak_sidebar.upgrade() {
+            sidebar.set_working_count(count);
+        }
     });
+    connect_sidebar(&sidebar, &pages, &view);
     if args.working_copy {
         pages.set_visible_child_name("working");
+        sidebar.select_page(Page::WorkingCopy);
     }
+    let body = gtk::Paned::new(gtk::Orientation::Horizontal);
+    body.set_start_child(Some(&sidebar.root));
+    body.set_end_child(Some(&pages));
+    body.set_resize_start_child(false);
+    body.set_shrink_start_child(false);
+    body.set_position(200);
     // 最初の status が届くまでは、撮るのを待つ。
     pending.set(pending.get() + 1);
     let mut waiting_status = true;
+    let mut select_ref = args.select_ref.clone();
+    if select_ref.is_some() {
+        pending.set(pending.get() + 1);
+    }
 
     let window = gtk::ApplicationWindow::builder()
         .application(app)
         .title(format!("{name} — Amon Hen"))
-        .default_width(1100)
+        .default_width(1280)
         .default_height(760)
-        .child(&pages)
+        .child(&body)
         .build();
     window.set_titlebar(Some(&header));
     window.present();
@@ -224,6 +239,20 @@ fn build_window(app: &gtk::Application, args: Args) {
                         }
                         subtitle.set_visible(true);
                         view.show_refs(&refs);
+                        sidebar.show(&refs);
+                        if let Some(name) = select_ref.take() {
+                            pending.set(pending.get() - 1);
+                            let target = refs
+                                .refs
+                                .entries
+                                .iter()
+                                .find(|e| e.name == name)
+                                .and_then(|e| e.target);
+                            match target {
+                                Some(target) => jump_to(&pages, &view, target, &pending),
+                                None => eprintln!("ref がない: {name}"),
+                            }
+                        }
                     }
                     Event::Status(snapshot) => {
                         working.show(snapshot);
@@ -244,6 +273,53 @@ fn build_window(app: &gtk::Application, args: Args) {
             }
         }
     ));
+}
+
+/// サイドバーで選んだ項目: ページなら切り替え、ref なら History でそのコミットを選ぶ。
+fn connect_sidebar(sidebar: &Sidebar, pages: &gtk::Stack, view: &HistoryView) {
+    let (pages, view) = (pages.downgrade(), view.downgrade());
+    sidebar.connect_select(move |data| {
+        let (Some(pages), Some(view)) = (pages.upgrade(), view.upgrade()) else {
+            return;
+        };
+        match data.item {
+            sidebar::Item::Page(Page::WorkingCopy) => pages.set_visible_child_name("working"),
+            sidebar::Item::Page(Page::History) => pages.set_visible_child_name("history"),
+            _ => {}
+        }
+        if let Some(target) = sidebar::target(data) {
+            jump_to(&pages, &view, target, &Rc::new(Cell::new(0)));
+        }
+    });
+}
+
+/// History に切り替えて、`target` のコミットを選ぶ。`pending` は終わるまで 1 つ増やしておく。
+fn jump_to(
+    pages: &gtk::Stack,
+    view: &HistoryView,
+    target: amonhen_model::Oid,
+    pending: &Rc<Cell<u32>>,
+) {
+    pages.set_visible_child_name("history");
+    let Some((_, history)) = view.current() else {
+        return;
+    };
+    // 行の索引は初回に作る（150 万コミットで 80 ms ほど）ので、裏で引く。
+    let weak = view.downgrade();
+    let pending = pending.clone();
+    pending.set(pending.get() + 1);
+    glib::spawn_future_local(async move {
+        let generation = history.generation;
+        let row = gio::spawn_blocking(move || history.row_of(&target)).await;
+        pending.set(pending.get() - 1);
+        let (Some(view), Ok(Some(row))) = (weak.upgrade(), row) else {
+            return;
+        };
+        if view.current().map(|(_, h)| h.generation) == Some(generation) {
+            view.select(row);
+            view.grab_focus();
+        }
+    });
 }
 
 /// History で選んだコミットの詳細と差分を、裏で読んで出す。選び直したら古い結果は捨てる。
