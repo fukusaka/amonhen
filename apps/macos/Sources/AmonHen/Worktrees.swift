@@ -19,9 +19,24 @@ nonisolated struct WorktreeInfo: Decodable, Sendable, Equatable {
     /// 同じ worktree か（シンボリックリンクを解いて比べる）。
     func isSame(_ other: String) -> Bool { Self.canonical(path) == Self.canonical(other) }
 
+    /// シンボリックリンクを解いたパス。ファイルシステムを引くので、一度解いたものは覚えておく（一覧を描くたびに
+    /// 何千回も呼ばれる）。
     static func canonical(_ path: String) -> String {
-        URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        canonicalLock.lock()
+        if let known = canonicalCache[path] {
+            canonicalLock.unlock()
+            return known
+        }
+        canonicalLock.unlock()
+        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        canonicalLock.lock()
+        canonicalCache[path] = resolved
+        canonicalLock.unlock()
+        return resolved
     }
+
+    nonisolated(unsafe) private static var canonicalCache: [String: String] = [:]
+    private static let canonicalLock = NSLock()
 }
 
 nonisolated struct WorktreeList: Decodable, Sendable {

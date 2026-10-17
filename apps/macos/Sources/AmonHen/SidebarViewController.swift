@@ -99,6 +99,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var worktrees: [WorktreeInfo] = []
     /// 書き込む先の worktree のパス。
     private var editingWorktree: String?
+    private var editingInfo: WorktreeInfo?
+    /// ほかの worktree が checkout しているブランチ。
+    private var branchesElsewhere: [String: WorktreeInfo] = [:]
     private var worktreeChanges: [String: Int] = [:]
     /// worktree を選んだ（書き込む先にする）。
     var onSelectWorktree: ((String) -> Void)?
@@ -110,13 +113,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let changed = worktrees != self.worktrees || editing != editingWorktree
         self.worktrees = worktrees
         editingWorktree = editing
+        // 行を描くたびに探さないよう、ブランチ → それを checkout しているほかの worktree を先に作っておく。
+        let editingKey = WorktreeInfo.canonical(editing)
+        editingInfo = worktrees.count > 1 ? worktrees.first { WorktreeInfo.canonical($0.path) == editingKey } : nil
+        branchesElsewhere = worktrees.count > 1 ? Dictionary(
+            worktrees.filter { WorktreeInfo.canonical($0.path) != editingKey }.compactMap { w in w.branch.map { ($0, w) } },
+            uniquingKeysWith: { a, _ in a }) : [:]
         if changed { rebuild(first: false) }
     }
 
     /// `branch` を checkout している、書き込む先以外の worktree。
     private func otherWorktree(using branch: String) -> WorktreeInfo? {
-        guard worktrees.count > 1 else { return nil }
-        return worktrees.first { $0.branch == branch && !(editingWorktree.map($0.isSame) ?? false) }
+        branchesElsewhere[branch]
     }
 
     /// worktree ごとの変更の数。
@@ -146,7 +154,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func rebuild(first: Bool) {
         guard let refs else { return }
         // 今のブランチは、書き込む先の worktree のもの（worktree が 1 つなら開いたリポジトリの HEAD）。
-        let editingInfo = worktrees.count > 1 ? worktrees.first { w in editingWorktree.map(w.isSame) ?? false } : nil
         headBranch = editingInfo.map(\.branch) ?? refs.headBranch
         let head = headBranch
         let expanded = Set(groups.filter { outline.isItemExpanded($0) }.map(\.title))
@@ -175,7 +182,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         // worktree（git worktree list の順。書き込む先に印を付ける）。1 つだけなら出さない。
         if worktrees.count > 1 {
             groups.append(Node(title: "Worktrees", children: worktrees.map { w in
-                let node = Node(title: w.name, isHead: editingWorktree.map(w.isSame) ?? false)
+                let node = Node(title: w.name, isHead: w == editingInfo)
                 node.worktree = w
                 return node
             }))
