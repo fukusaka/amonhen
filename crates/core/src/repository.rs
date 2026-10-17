@@ -1,3 +1,4 @@
+use amonhen_model::tr;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, OnceLock};
@@ -103,10 +104,10 @@ impl Selection {
         rows.sort_unstable();
         rows.dedup();
         let (Some(&newest), Some(&oldest)) = (rows.first(), rows.last()) else {
-            return Err("コミットを選んでいない".into());
+            return Err(tr!("No commit selected").into());
         };
         if rows.iter().any(|&r| r as usize >= graph.len()) {
-            return Err("行が範囲外".into());
+            return Err(tr!("Row out of range").into());
         }
         let id = |r: u32| graph.ids()[r as usize];
         let first_parent = |r: u32| graph.parents(r as usize).first().copied();
@@ -402,7 +403,8 @@ impl Repository {
     pub fn load_history(&self) -> Result<Arc<HistorySnapshot>> {
         // 手元の共有の daemon が用意してくれるなら、レイアウトは計算せず、そのファイルを mmap する。
         if let Some(path) = self.backend.prepared_history()? {
-            let cached = cache::read(&path).ok_or("daemon が用意した History を読めない")?;
+            let cached = cache::read(&path)
+                .ok_or_else(|| tr!("Can’t read the History the daemon prepared"))?;
             if let Some(current) = self.history.load_full()
                 && current.tips == cached.tips
                 && current.head == cached.head
@@ -670,7 +672,10 @@ impl Repository {
                 .collect();
             handles
                 .into_iter()
-                .map(|h| h.join().unwrap_or_else(|_| Err("差分を取れない".into())))
+                .map(|h| {
+                    h.join()
+                        .unwrap_or_else(|_| Err(tr!("Can’t get the diff").into()))
+                })
                 .collect()
         });
         let mut files = Vec::with_capacity(changes.len());
@@ -747,7 +752,7 @@ impl Repository {
     fn delegate_done(&self, request: &crate::delegate::Request) -> Result<bool> {
         match self.delegate(request)? {
             Some((crate::delegate::Reply::Done, _)) => Ok(true),
-            Some(_) => Err("daemon の答えの形が違う".into()),
+            Some(_) => Err(tr!("Unexpected reply from the daemon").into()),
             None => Ok(false),
         }
     }
@@ -757,7 +762,7 @@ impl Repository {
         match self.delegate(&crate::delegate::Request::ChangeDiffs(changes.to_vec()))? {
             Some((crate::delegate::Reply::ChangeDiffs(metas), parts)) => {
                 if parts.len() != metas.len() * 2 {
-                    return Err("daemon の差分の中身の数が合わない".into());
+                    return Err(tr!("The daemon’s diff has the wrong number of files").into());
                 }
                 let mut parts = parts.into_iter();
                 Ok(Some(
@@ -770,7 +775,7 @@ impl Repository {
                         .collect(),
                 ))
             }
-            Some(_) => Err("daemon の答えの形が違う".into()),
+            Some(_) => Err(tr!("Unexpected reply from the daemon").into()),
             None => Ok(None),
         }
     }
@@ -927,7 +932,7 @@ impl Repository {
     /// 正しく扱うため）。
     pub fn set_rows_staged(&self, diff: &WorkingDiff, rows: &[usize], stage: bool) -> Result<()> {
         let Some(current) = &diff.combined else {
-            return Err("HEAD と作業ツリーの差分ではない".into());
+            return Err(tr!("Not a diff between HEAD and the working tree").into());
         };
         let state = |r: usize| if rows.contains(&r) { stage } else { current[r] };
         let changes: Vec<usize> = (0..diff.file.lines.len())
@@ -1006,7 +1011,7 @@ impl Repository {
             .as_ref()
             .is_some_and(|c| rows.iter().any(|&r| c[r]));
         if diff.staged || staged_row {
-            return Err("stage 済みの変更は破棄できない（先に unstage する）".into());
+            return Err(tr!("Can’t discard staged changes (unstage them first)").into());
         }
         let content = diff::apply_selection(&diff.file, |r| !rows.contains(&r));
         // 作業ツリーの内容を、選ばなかった変更だけを index に当てたものにする = 選んだ行を戻す。
@@ -1122,7 +1127,7 @@ impl Repository {
                 .map(|(i, handle)| {
                     let ids = handle
                         .join()
-                        .unwrap_or_else(|_| Err("検索が異常終了しました".into()));
+                        .unwrap_or_else(|_| Err(tr!("Search failed unexpectedly").into()));
                     (i, ids)
                 })
                 .collect();

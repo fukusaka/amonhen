@@ -10,7 +10,7 @@ The macOS app uses an in-process core through the C ABI (`crates/ffi-c`) (no cop
 
 1. Connect to the Unix domain socket (on Windows, the named pipe `\\.\pipe\amonhen-<hash of the user's SID>-<protocol version>`; Node can connect to it directly with `net.connect`). `amonhen --socket` prints its location (on macOS `$TMPDIR/amonhend-<protocol version>.sock`, elsewhere `$XDG_RUNTIME_DIR` or `/tmp/amonhen-<uid>`; it can be changed with `AMONHEN_DAEMON_DIR`). If it cannot connect, launch `amonhen --serve <socket>` detached from the parent and wait until it can connect.
 2. First, send the location to open: a length (u32, LE) and the UTF-8 string `"\u0001" + location`. The location is the absolute path of a local repository or `ssh://host/path`.
-3. After that, communicate in frames. Make the first request `{"op":"hello"}` (if the repository cannot be opened, its reply is a failure with the reason).
+3. After that, communicate in frames. Make the first request `{"op":"hello","language":"ja"}` (if the repository cannot be opened, its reply is a failure with the reason). `language` is the front-end's display language (`en`, `ja`, `ja-JP` …); the daemon writes this connection's error messages in it (English when it has no translation, or when it is left out).
 
 ## Frames
 
@@ -46,7 +46,7 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 
 | Command | Arguments | Reply (JSON) | Records |
 |---|---|---|---|
-| `hello` | | version, workdir, gitDir | |
+| `hello` | language | version, workdir, gitDir | |
 | `history` | rebuild?, fold?, expanded? (array of IDs), tips? (array of IDs; only what is reachable from them) | history, generation, rows, head, headRow, folded | |
 | `historyMatching` | history, rows | same as `history` (a History of only the matching rows) | |
 | `historyRelease` | history | | |
@@ -74,3 +74,5 @@ Diff line records: rows (diff line × number of rows), textLengths u32, text (UT
 ## Version
 
 When the shape of the API changes, bump `amonhen_front::VERSION` (check it with the version in the `hello` reply). The socket name includes the daemon protocol version (`amonhen_remote::PROTOCOL_VERSION`), so it never connects to a daemon of a different version.
+
+When a front-end starts the shared daemon itself, it passes its language as `AMONHEN_LANG` (the daemon uses it for what it does on its own, such as connecting to SSH hosts).

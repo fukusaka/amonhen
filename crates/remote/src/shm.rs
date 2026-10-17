@@ -3,6 +3,7 @@
 //! 側は領域を読むだけで自分のメモリに見せ（コピーしない）、開いたらすぐ名前を消す。受け取った側が開かずに
 //! 終わったときのため、daemon も少し後に名前を消す。
 
+use amonhen_model::tr;
 use std::ffi::CString;
 use std::io;
 use std::sync::Arc;
@@ -178,7 +179,9 @@ pub fn parts(region: Arc<Region>, offsets: &[(u64, u64)]) -> io::Result<Vec<Blob
         .iter()
         .map(|&(start, end)| {
             if start > end || end > len {
-                return Err(io::Error::other("共有メモリの範囲が領域の外"));
+                return Err(io::Error::other(tr!(
+                    "Shared memory range is outside the region"
+                )));
             }
             Ok(Blob::part(source.clone(), start as usize..end as usize))
         })

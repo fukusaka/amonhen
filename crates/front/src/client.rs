@@ -1,5 +1,6 @@
 //! FE の側: 同じプロセスのコア（`InProcess`）か、共有の daemon のコア（`Remote`）に命令を送る。
 
+use amonhen_model::tr;
 use std::collections::HashMap;
 use std::io::Write;
 use std::path::Path;
@@ -110,7 +111,7 @@ impl Remote {
             location.to_owned()
         } else {
             amonhen_remote::local::canonical_path(location)
-                .map_err(|e| format!("{location} を開けない: {e}"))?
+                .map_err(|e| tr!("Can’t open {location}: {e}", location = location, e = e))?
         };
         let stream = amonhen_remote::local::stream(daemon)?;
         let mut writer = std::io::BufWriter::new(stream.writer);
@@ -148,8 +149,8 @@ impl Remote {
                             }
                             _ => {}
                         },
-                        Ok(None) => break "daemon との接続が切れました".to_owned(),
-                        Err(e) => break format!("daemon との接続が切れました: {e}"),
+                        Ok(None) => break tr!("Lost connection to the daemon"),
+                        Err(e) => break tr!("Lost connection to the daemon: {detail}", detail = e),
                     }
                 };
                 *reading.closed.lock().unwrap() = Some(reason.clone());
@@ -168,7 +169,11 @@ impl Remote {
             "language": amonhen_model::i18n::current().code(),
         }))?;
         if hello.json["version"] != crate::VERSION {
-            return Err(format!("daemon の窓口の版が違う: {}", hello.json["version"]).into());
+            return Err(tr!(
+                "The daemon’s front-end interface version differs: {version}",
+                version = hello.json["version"]
+            )
+            .into());
         }
         Ok(remote)
     }
@@ -205,7 +210,7 @@ impl Front for Remote {
                     }
                 }
                 Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    return Err("daemon との接続が切れました".into());
+                    return Err(tr!("Lost connection to the daemon").into());
                 }
             }
         }

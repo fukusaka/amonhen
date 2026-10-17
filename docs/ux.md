@@ -426,7 +426,12 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 - Everything else is translated: standard macOS menus and items (with Apple's wording), explanations, confirmations,
   placeholders and tool tips. In Japanese prose ブランチ, タグ, リモート, 上流, コミット, 作業ツリー and コンフリクト are
   used as nouns.
-- Error text from the core (Rust) is still Japanese only; translating it is left for later.
+- The core (Rust) is localized the same way (`tr!` in `amonhen_model::i18n`, Japanese in
+  `crates/model/src/i18n/ja.strings`). The language comes from the side that shows the text: the app passes its UI
+  language over FFI, the CLI reads `LC_ALL` / `LC_MESSAGES` / `LANG`, and the shared daemon and SSH hosts answer
+  each connection in the language its hello named (the daemon's own work uses `AMONHEN_LANG` from whoever started it).
+  git's own messages stay English (it runs with `LC_ALL=C`).
+- The VSCode extension's UI is not localized yet.
 
 ## Implementation order
 

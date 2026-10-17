@@ -1,5 +1,6 @@
 //! FE から受け取る操作。頻度の低い操作はまとめてここを通し、Undo の記録もここで行う。
 
+use amonhen_model::tr;
 use amonhen_model::{Oid, Outcome, PullMode, Result, Root};
 use serde::{Deserialize, Serialize};
 
@@ -288,7 +289,7 @@ fn op_name(json: &str) -> String {
 }
 
 fn oid(hex: &str) -> Result<Oid> {
-    Oid::from_hex(hex).ok_or_else(|| format!("コミット ID を読めない: {hex}").into())
+    Oid::from_hex(hex).ok_or_else(|| tr!("Can’t read the commit ID: {hex}", hex = hex).into())
 }
 
 fn heads(name: &str) -> String {
@@ -603,10 +604,14 @@ impl Repository {
             Some(h) => h,
             None => self.load_history()?,
         };
-        let head = self.backend().head()?.ok_or("まだコミットがありません")?;
+        let head = self
+            .backend()
+            .head()?
+            .ok_or_else(|| tr!("No commits yet"))?;
         let mut row = history
             .row_of(&head)
-            .ok_or("HEAD が History にない（読み直してください）")? as usize;
+            .ok_or_else(|| tr!("HEAD isn’t in the History (reload it)"))?
+            as usize;
         let graph = &history.graph;
         let mut chain = Vec::new();
         while chain.len() < CHAIN_LIMIT {
@@ -631,7 +636,7 @@ impl Repository {
     pub fn rewrite(&self, label: &str, edit: &HistoryEdit) -> Result<Outcome> {
         let ops = self.backend().operations()?;
         if ops.sequence_in_progress()?.is_some() {
-            return Err("merge や rebase の途中です。先に終わらせるか中止してください".into());
+            return Err(tr!("A merge or rebase is in progress. Finish or abort it first").into());
         }
         // 書き換える前に、最新の History で範囲を決める。
         self.load_history()?;
@@ -662,7 +667,11 @@ impl Repository {
             match self.delegate(&crate::delegate::Request::Command(json.to_owned())) {
                 Ok(Some((crate::delegate::Reply::Command(reply), _))) => return reply,
                 Ok(Some(_)) => {
-                    return r#"{"ok":false,"error":"daemon の答えの形が違う"}"#.to_owned();
+                    let response = Response {
+                        error: Some(tr!("Unexpected reply from the daemon")),
+                        ..Default::default()
+                    };
+                    return serde_json::to_string(&response).unwrap_or_default();
                 }
                 Ok(None) => {}
                 Err(e) => {
@@ -683,7 +692,7 @@ impl Repository {
                 },
             },
             Err(e) => Response {
-                error: Some(format!("命令を読めない: {e}")),
+                error: Some(tr!("Can’t read the command: {e}", e = e)),
                 ..Default::default()
             },
         };
@@ -852,19 +861,25 @@ impl Repository {
                 )?)
             }
             Command::Abort => {
-                let sequence = ops.sequence_in_progress()?.ok_or("途中の操作がない")?;
+                let sequence = ops
+                    .sequence_in_progress()?
+                    .ok_or_else(|| tr!("No operation in progress"))?;
                 ops.abort(sequence)?;
                 undo.settle_pending(ops)?;
                 ok()
             }
             Command::Continue => {
-                let sequence = ops.sequence_in_progress()?.ok_or("途中の操作がない")?;
+                let sequence = ops
+                    .sequence_in_progress()?
+                    .ok_or_else(|| tr!("No operation in progress"))?;
                 let outcome = ops.continue_sequence(sequence)?;
                 undo.settle_pending(ops)?;
                 done(outcome)
             }
             Command::Skip => {
-                let sequence = ops.sequence_in_progress()?.ok_or("途中の操作がない")?;
+                let sequence = ops
+                    .sequence_in_progress()?
+                    .ok_or_else(|| tr!("No operation in progress"))?;
                 let outcome = ops.skip_sequence(sequence)?;
                 undo.settle_pending(ops)?;
                 done(outcome)
@@ -910,8 +925,8 @@ impl Repository {
                     .entries
                     .iter()
                     .find(|e| e.kind == amonhen_model::RefKind::Stash && e.name == name)
-                    .ok_or_else(|| format!("{name} がない"))?;
-                let target = entry.target.ok_or("stash のコミットがない")?;
+                    .ok_or_else(|| tr!("{name} not found", name = name))?;
+                let target = entry.target.ok_or_else(|| tr!("The stash has no commit"))?;
                 let message = entry.detail.clone().unwrap_or_else(|| name.clone());
                 undo.record_stash_drop(ops, &name, &target, &message)?;
                 ok()
@@ -947,7 +962,9 @@ impl Repository {
             Command::CommitMessage { oid: o } => {
                 // "HEAD" なら今のコミット（Amend の初期値）。
                 let id = if o == "HEAD" {
-                    self.backend().head()?.ok_or("まだコミットがありません")?
+                    self.backend()
+                        .head()?
+                        .ok_or_else(|| tr!("No commits yet"))?
                 } else {
                     oid(&o)?
                 };
@@ -977,15 +994,15 @@ impl Repository {
                 let mut positions = ids
                     .iter()
                     .map(|id| {
-                        chain.iter().position(|c| c.oid == *id).ok_or(
-                            "編集できる範囲の外のコミットがあります（HEAD から辿れないか、merge より前）",
-                        )
+                        chain.iter().position(|c| c.oid == *id).ok_or_else(|| {
+                            tr!("Some commits are outside the editable range (not reachable from HEAD, or before a merge)")
+                        })
                     })
                     .collect::<std::result::Result<Vec<_>, _>>()?;
                 positions.sort_unstable();
                 positions.dedup();
                 if positions.len() < 2 || positions.windows(2).any(|w| w[1] != w[0] + 1) {
-                    return Err("まとめるには、2 つ以上の連続したコミットを選んでください".into());
+                    return Err(tr!("To squash, select two or more consecutive commits").into());
                 }
                 let newest = chain[positions[0]].oid;
                 let oldest = chain[*positions.last().unwrap()].oid;
@@ -1016,7 +1033,7 @@ impl Repository {
                     .iter()
                     .find(|c| c.oid == id)
                     .and_then(|c| c.parent)
-                    .ok_or("親が編集できる範囲にないので、まとめられません")?;
+                    .ok_or_else(|| tr!("Can’t squash: the parent isn’t in the editable range"))?;
                 let text = format!(
                     "{}\n\n{}",
                     self.commit_message(&parent)?.trim_end(),
@@ -1034,9 +1051,11 @@ impl Repository {
                 choice,
             } => {
                 let files = self.backend().files();
-                let data = files.read(Root::Workdir, &path)?.ok_or("ファイルがない")?;
+                let data = files
+                    .read(Root::Workdir, &path)?
+                    .ok_or_else(|| tr!("File not found"))?;
                 let resolved = crate::conflict::resolve(&data, index, choice)
-                    .ok_or("そのコンフリクトはもうない")?;
+                    .ok_or_else(|| tr!("That conflict no longer exists"))?;
                 undo.record_files(
                     ops,
                     &format!("Resolve conflict in {path}"),
@@ -1101,7 +1120,7 @@ impl Repository {
                     .backend()
                     .files()
                     .read(Root::Workdir, &path)?
-                    .ok_or("ファイルがない")?;
+                    .ok_or_else(|| tr!("File not found"))?;
                 let side = |choice| {
                     crate::conflict::side(&data, choice).map(|s| {
                         serde_json::json!({
@@ -1128,7 +1147,7 @@ impl Repository {
                 choice,
             } => {
                 let resolved = crate::conflict::resolve(text.as_bytes(), index, choice)
-                    .ok_or("そのコンフリクトはもうない")?;
+                    .ok_or_else(|| tr!("That conflict no longer exists"))?;
                 Ok(Response {
                     ok: true,
                     text: Some(String::from_utf8_lossy(&resolved).into_owned()),
@@ -1199,7 +1218,7 @@ impl Repository {
                 let row = |rev: &str| -> Result<usize> {
                     let id = ops.resolve(&format!("{rev}^{{commit}}"))?;
                     history.row_of(&id).map(|r| r as usize).ok_or_else(|| {
-                        format!("{rev} が History にない（読み直してください）").into()
+                        tr!("{rev} isn’t in the History (reload it)", rev = rev).into()
                     })
                 };
                 let (base, tip) = (row(&base)?, row(&tip)?);
@@ -1309,7 +1328,10 @@ impl Repository {
                     amonhen_model::activity::cancel(seq)
                 };
                 if !cancelled {
-                    return Err("取り消せません（もう終わったか、取り消せない操作です）".into());
+                    return Err(tr!(
+                        "Can’t cancel (it already finished, or it can’t be cancelled)"
+                    )
+                    .into());
                 }
                 Ok(Response {
                     ok: true,

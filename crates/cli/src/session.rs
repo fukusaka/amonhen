@@ -10,7 +10,9 @@ use std::time::Duration;
 use amonhen_watch::Changes;
 use serde_json::{Value, json};
 
-use crate::{Args, Result, USAGE, open_repository, term};
+use amonhen_model::tr;
+
+use crate::{Args, Result, open_repository, term, usage};
 
 /// `amonhen run [-C <path>] [<json>…]`: コアの命令（`{"op":"checkout","branch":"main"}` など）を実行し、答えの
 /// JSON を出す。命令を渡さなければ、標準入力から 1 行ずつ読んで 1 行ずつ答える（つないだまま何度でも）。
@@ -22,7 +24,12 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         match arg.as_str() {
             "-C" => dir = PathBuf::from(a.value("-C")?),
             s if s.starts_with('-') && s.len() > 1 => {
-                return Err(format!("知らないオプション: {s}\n\n{USAGE}").into());
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown option: {option}", option = s),
+                    usage()
+                )
+                .into());
             }
             _ => commands.push(arg.clone()),
         }
@@ -33,7 +40,8 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
         let command = match serde_json::from_str::<Value>(line) {
             Ok(c) => c,
             Err(e) => {
-                return json!({"ok": false, "error": format!("命令を読めない: {e}")}).to_string();
+                return json!({"ok": false, "error": tr!("Can’t read the command: {e}", e = e)})
+                    .to_string();
             }
         };
         match front.call(json!({"op": "run", "command": command})) {
@@ -81,7 +89,14 @@ pub fn watch(args: &[String]) -> Result<ExitCode> {
         match arg.as_str() {
             "-C" => dir = PathBuf::from(a.value("-C")?),
             "--json" => as_json = true,
-            s => return Err(format!("知らない引数: {s}\n\n{USAGE}").into()),
+            s => {
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown argument: {argument}", argument = s),
+                    usage()
+                )
+                .into());
+            }
         }
     }
     let front = open_repository(&dir)?;
@@ -114,15 +129,23 @@ pub fn watch(args: &[String]) -> Result<ExitCode> {
                 json!({"changes": names, "head": head, "commits": commits, "changedFiles": changed})
             );
         } else {
-            let head = head.as_deref().map_or("なし", |h| &h[..8]);
+            let head = head
+                .as_deref()
+                .map_or_else(|| tr!("none"), |h| h[..8].to_owned());
             println!(
-                "{}  {}  HEAD {head}・コミット {commits}・変更のあるファイル {changed}",
+                "{}  {}  {}",
                 term::local_time(now(), true),
                 if names.is_empty() {
                     "-".to_owned()
                 } else {
                     names.join(",")
                 },
+                tr!(
+                    "HEAD {head} · commits {commits} · changed files {changed}",
+                    head = head,
+                    commits = commits,
+                    changed = changed
+                ),
             );
         }
         std::io::stdout().flush()?;
@@ -143,7 +166,11 @@ pub fn watch(args: &[String]) -> Result<ExitCode> {
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         }
         if let Some(reason) = front.closed() {
-            return Err(format!("daemon とのつながりが切れました: {reason}").into());
+            return Err(tr!(
+                "Lost the connection to the daemon: {reason}",
+                reason = reason
+            )
+            .into());
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -171,9 +198,12 @@ pub fn clone(args: &[String]) -> Result<ExitCode> {
         }
         [url, dir] => (url, PathBuf::from(dir)),
         _ => {
-            return Err(
-                format!("clone には URL と（あれば）置き場所を渡してください\n\n{USAGE}").into(),
-            );
+            return Err(format!(
+                "{}\n\n{}",
+                tr!("clone takes a URL and, optionally, a destination"),
+                usage()
+            )
+            .into());
         }
     };
     let dest = if dest.is_absolute() {
@@ -182,6 +212,6 @@ pub fn clone(args: &[String]) -> Result<ExitCode> {
         std::env::current_dir()?.join(dest)
     };
     amonhen_backend_cli::clone(url, Path::new(&dest))?;
-    println!("clone しました: {}", dest.display());
+    println!("{}", tr!("Cloned: {path}", path = dest.display()));
     Ok(ExitCode::SUCCESS)
 }

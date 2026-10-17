@@ -25,8 +25,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use amonhen_front::Front;
+use amonhen_model::tr;
 
-pub(crate) const USAGE: &str = "\
+/// 使い方（`--help` と、引数を間違えたとき）。
+pub(crate) fn usage() -> String {
+    tr!("\
 usage: amonhen [<path>]
        amonhen open [<path> | ssh://host/path] [--daemon] [--snapshot]
        amonhen log [-n <count> | --all] [--fold] [--branch <name>]… [--no-graph] [--rebuild] [--json] [<query>…]
@@ -44,26 +47,28 @@ usage: amonhen [<path>]
        amonhen merge-file [--all] [--check] <file>…
        amonhen clone <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
-       amonhen install [--quiet] [--no-link] [--force]   （エンジンを ~/.local/share/amonhen に置き、~/.local/bin/amonhen を張る）
-       amonhen engine   （共有の daemon として起動するエンジンの場所）
-       amonhen find-repositories <dir> [--depth <n>] [--exclude <name>]…   （フォルダの下のリポジトリ。SSH 先のスキャンに使う）
+       amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)
+       amonhen engine   (the engine to start as the shared daemon)
+       amonhen find-repositories <dir> [--depth <n>] [--exclude <name>]…   (repositories under a folder; used to scan SSH hosts)
        amonhen --version
-       amonhen --serve [<socket>] | --stdio <repo> | --socket   （daemon として動く。FE と SSH 先が使う）
+       amonhen --serve [<socket>] | --stdio <repo> | --socket   (runs as a daemon; used by FEs and SSH hosts)
 
-リポジトリを扱う命令は -C <path>・-C ssh://host/path（共有の daemon 越し）・-C daemon:<path> で場所を選ぶ。
-人が読む形のほかに --json で FE が読む形を出す（--color=auto|always|never も）。
-log の <query> は History の検索と同じ書き方（author:名前 path:パス contents:\"文字列\" など）。
-diff は既定で stage していない変更、--staged で stage 済み、--combined で HEAD からの変更に stage 済みの行の印
-（●）。<rev> を 1 つ渡すとそのコミットの差分、2 つ渡すと History で 2 つ選んだときと同じ差分（first-parent で
-つながっていれば、古いほうの親から新しいほうまで）。
---rows は差分の行番号を出す。stage・unstage の --rows <rows>（3,5-9 の形）は diff --combined の行番号、discard
-の --rows は diff（stage していない差分）の行番号で、その行の変更だけを扱う。discard と commit は undo で戻せる。
-run の命令は {\"op\":\"checkout\",\"branch\":\"main\"} の形（コアの command.rs）。答えも 1 行の JSON。
-log --rebuild と daemon rebuild は、History のキャッシュを捨てて最初から作り直す（共有の daemon の分も）。
-merge-file は既定で間違えようのない規則だけをかける（--all ですべての規則）。コンフリクトが残れば終了コード 1
-なので、git の mergetool にも使える:
+Commands that work on a repository choose it with -C <path>, -C ssh://host/path (through the shared daemon) or
+-C daemon:<path>. Besides the human-readable form, --json prints the form FEs read (also --color=auto|always|never).
+log's <query> uses the History search syntax (author:name path:path contents:\"text\" and so on).
+diff shows unstaged changes by default, staged changes with --staged, and with --combined the changes since HEAD with
+staged lines marked (●). With one <rev> it shows that commit's diff; with two, the same diff as selecting two commits in
+History (if they connect along first-parent, from the older one's parent to the newer one).
+--rows prints diff line numbers. The --rows <rows> of stage and unstage (like 3,5-9) are diff --combined line numbers,
+and discard's --rows are diff (unstaged) line numbers; only the changes on those lines are touched. discard and commit
+can be undone with undo.
+run takes commands like {\"op\":\"checkout\",\"branch\":\"main\"} (the core's command.rs). Each answer is one line of JSON.
+log --rebuild and daemon rebuild throw away the History cache and build it again (the shared daemon's too).
+merge-file applies only the rules that can't go wrong by default (--all for every rule). If conflicts remain the exit
+code is 1, so it also works as git's mergetool:
   git config mergetool.amonhen.cmd 'amonhen merge-file \"$MERGED\"'
-  git config mergetool.amonhen.trustExitCode true";
+  git config mergetool.amonhen.trustExitCode true")
+}
 
 fn main() -> ExitCode {
     amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
@@ -77,7 +82,7 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         None => open::run(&[]),
         Some("-h" | "--help" | "help") => {
-            println!("{USAGE}");
+            println!("{}", usage());
             Ok(ExitCode::SUCCESS)
         }
         Some("-V" | "--version" | "version") => {
@@ -131,7 +136,7 @@ impl<'a> Args<'a> {
         self.rest
             .next()
             .map(String::as_str)
-            .ok_or_else(|| format!("{name} に値がありません").into())
+            .ok_or_else(|| tr!("{name} needs a value", name = name).into())
     }
 }
 
@@ -143,7 +148,7 @@ pub(crate) fn repository_root(path: &Path) -> Result<PathBuf> {
         .args(["rev-parse", "--show-toplevel"])
         .output()?;
     if !out.status.success() {
-        return Err(format!("{} は Git のリポジトリではありません", path.display()).into());
+        return Err(tr!("{path} isn’t a Git repository", path = path.display()).into());
     }
     Ok(PathBuf::from(String::from_utf8(out.stdout)?.trim()))
 }
@@ -173,8 +178,11 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
         "status" => {
             let Some(json) = amonhen_remote::local::control("status")? else {
                 println!(
-                    "共有の daemon は動いていません（{}）",
-                    amonhen_remote::endpoint::endpoint()
+                    "{}",
+                    tr!(
+                        "The shared daemon isn’t running ({endpoint})",
+                        endpoint = amonhen_remote::endpoint::endpoint()
+                    )
                 );
                 return Ok(ExitCode::from(1));
             };
@@ -184,86 +192,122 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
             }
             let s: serde_json::Value = serde_json::from_str(&json)?;
             let secs = |ms: &serde_json::Value| ms.as_u64().unwrap_or(0) / 1000;
-            println!("共有の daemon: 動いています");
+            println!("{}", tr!("Shared daemon: running"));
             println!("  pid          {}", s["pid"]);
             println!(
-                "  版           {}（通信の形 {}）",
-                s["version"].as_str().unwrap_or(""),
-                s["protocol"]
+                "{}",
+                tr!(
+                    "  version      {version} (protocol {protocol})",
+                    version = s["version"].as_str().unwrap_or(""),
+                    protocol = s["protocol"]
+                )
             );
-            println!("  ソケット     {}", s["socket"].as_str().unwrap_or(""));
-            println!("  動いている   {}", duration(secs(&s["uptimeMs"])));
-            println!("  つながり     {}", s["connections"]);
+            println!(
+                "{}",
+                tr!(
+                    "  socket       {socket}",
+                    socket = s["socket"].as_str().unwrap_or("")
+                )
+            );
+            println!(
+                "{}",
+                tr!(
+                    "  uptime       {duration}",
+                    duration = duration(secs(&s["uptimeMs"]))
+                )
+            );
+            println!(
+                "{}",
+                tr!("  connections  {count}", count = s["connections"])
+            );
             let repos = s["repos"].as_array().cloned().unwrap_or_default();
             if repos.is_empty() {
-                println!("  リポジトリ   なし");
+                println!("{}", tr!("  repositories none"));
             }
             for r in repos {
                 let index = match (r["indexRows"].as_u64(), r["indexBytes"].as_u64()) {
                     (Some(rows), Some(bytes)) => {
-                        format!("検索の索引 {rows} 行・{:.1} MB", bytes as f64 / 1e6)
+                        tr!(
+                            "search index {rows} rows, {size} MB",
+                            rows = rows,
+                            size = format!("{:.1}", bytes as f64 / 1e6)
+                        )
                     }
-                    _ => "検索の索引なし".to_owned(),
+                    _ => tr!("no search index"),
                 };
                 let clients = r["clients"].as_u64().unwrap_or(0);
-                let state = if clients > 0 {
-                    format!("{clients} つながり")
-                } else {
-                    format!(
-                        "だれもつないでいない（{}前から）",
-                        duration(secs(&r["idleMs"]))
-                    )
+                let state = match clients {
+                    0 => tr!(
+                        "no connections (idle for {duration})",
+                        duration = duration(secs(&r["idleMs"]))
+                    ),
+                    1 => tr!("1 connection"),
+                    n => tr!("{count} connections", count = n),
                 };
                 println!("  {}", r["path"].as_str().unwrap_or(""));
                 if r["ssh"] == true {
                     let mb = |v: &serde_json::Value| v.as_u64().unwrap_or(0) as f64 / 1e6;
                     match r["closed"].as_str() {
-                        Some(reason) => println!("      SSH のつながり: 切れた（{reason}）"),
+                        Some(reason) => println!(
+                            "{}",
+                            tr!("      SSH connection: closed ({reason})", reason = reason)
+                        ),
                         None => println!(
-                            "      SSH のつながり: 送った {:.1} MB・受け取った {:.1} MB",
-                            mb(&r["sent"]),
-                            mb(&r["received"])
+                            "{}",
+                            tr!(
+                                "      SSH connection: sent {sent} MB, received {received} MB",
+                                sent = format!("{:.1}", mb(&r["sent"])),
+                                received = format!("{:.1}", mb(&r["received"]))
+                            )
                         ),
                     }
                     if let Some(engine) = r["engine"].as_str() {
-                        println!("      SSH 先のエンジン: {engine}");
+                        println!(
+                            "{}",
+                            tr!("      SSH host engine: {engine}", engine = engine)
+                        );
                     }
                 }
+                let yes_no =
+                    |v: &serde_json::Value| if *v == true { tr!("yes") } else { tr!("no") };
                 println!(
-                    "      {state}・History {}・監視 {}・{index}",
-                    if r["history"] == true {
-                        "あり"
-                    } else {
-                        "なし"
-                    },
-                    if r["watching"] == true {
-                        "あり"
-                    } else {
-                        "なし"
-                    },
+                    "{}",
+                    tr!(
+                        "      {state}, History {history}, watching {watching}, {index}",
+                        state = state,
+                        history = yes_no(&r["history"]),
+                        watching = yes_no(&r["watching"]),
+                        index = index
+                    )
                 );
             }
             println!(
-                "  だれもつながらなくなって {}たつと終わります",
-                duration(secs(&s["idleExitMs"]))
+                "{}",
+                tr!(
+                    "  Exits after {duration} with no connections",
+                    duration = duration(secs(&s["idleExitMs"]))
+                )
             );
             Ok(ExitCode::SUCCESS)
         }
         "start" => {
             amonhen_remote::local::start(&daemon_program()?)?;
             println!(
-                "共有の daemon を起動しました（{}）",
-                amonhen_remote::endpoint::endpoint()
+                "{}",
+                tr!(
+                    "Started the shared daemon ({endpoint})",
+                    endpoint = amonhen_remote::endpoint::endpoint()
+                )
             );
             Ok(ExitCode::SUCCESS)
         }
         "stop" => match amonhen_remote::local::control("stop")? {
             Some(_) => {
-                println!("共有の daemon を止めました");
+                println!("{}", tr!("Stopped the shared daemon"));
                 Ok(ExitCode::SUCCESS)
             }
             None => {
-                println!("共有の daemon は動いていません");
+                println!("{}", tr!("The shared daemon isn’t running"));
                 Ok(ExitCode::from(1))
             }
         },
@@ -287,23 +331,31 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
             )?
             .json;
             println!(
-                "History を作り直しました（{} コミット・{:.2} 秒）",
-                history["rows"],
-                started.elapsed().as_secs_f64()
+                "{}",
+                tr!(
+                    "Rebuilt History ({count} commits, {seconds} s)",
+                    count = history["rows"],
+                    seconds = format!("{:.2}", started.elapsed().as_secs_f64())
+                )
             );
             Ok(ExitCode::SUCCESS)
         }
-        other => Err(format!("知らない指示: {other}\n\n{USAGE}").into()),
+        other => Err(format!(
+            "{}\n\n{}",
+            tr!("Unknown subcommand: {name}", name = other),
+            usage()
+        )
+        .into()),
     }
 }
 
 /// 秒を「1 時間 2 分」のように。
 fn duration(secs: u64) -> String {
     match secs {
-        s if s < 60 => format!("{s} 秒"),
-        s if s < 3600 && s % 60 == 0 => format!("{} 分", s / 60),
-        s if s < 3600 => format!("{} 分 {} 秒", s / 60, s % 60),
-        s => format!("{} 時間 {} 分", s / 3600, s % 3600 / 60),
+        s if s < 60 => tr!("{s} s", s = s),
+        s if s < 3600 && s % 60 == 0 => tr!("{m} min", m = s / 60),
+        s if s < 3600 => tr!("{m} min {s} s", m = s / 60, s = s % 60),
+        s => tr!("{h} h {m} min", h = s / 3600, m = s % 3600 / 60),
     }
 }
 
@@ -329,8 +381,7 @@ pub(crate) fn command(front: &dyn Front, json: serde_json::Value) -> Result<serd
     if response["ok"] != true {
         return Err(response["error"]
             .as_str()
-            .unwrap_or("失敗しました")
-            .to_owned()
+            .map_or_else(|| tr!("Failed"), str::to_owned)
             .into());
     }
     Ok(response)
@@ -366,7 +417,12 @@ fn log(args: &[String]) -> Result<ExitCode> {
                 count = s[2..].parse().ok()
             }
             s if s.starts_with('-') => {
-                return Err(format!("知らないオプション: {s}\n\n{USAGE}").into());
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown option: {option}", option = s),
+                    usage()
+                )
+                .into());
             }
             _ => query.push(arg.clone()),
         }
@@ -383,7 +439,7 @@ fn log(args: &[String]) -> Result<ExitCode> {
                 .flatten()
                 .find(|e| e["name"] == name.as_str() && e["kind"] != "tag")
                 .and_then(|e| e["target"].as_str().map(str::to_owned))
-                .ok_or_else(|| format!("ブランチが見つかりません: {name}"))
+                .ok_or_else(|| tr!("Branch not found: {name}", name = name))
         })
         .collect::<std::result::Result<_, _>>()?;
     let mut request = serde_json::json!({"op": "history", "rebuild": rebuild, "fold": fold});
@@ -445,7 +501,14 @@ fn undo(args: &[String]) -> Result<ExitCode> {
             "-C" => dir = PathBuf::from(a.value("-C")?),
             "--list" | "-l" => mode = "list",
             "--peek" => mode = "peek",
-            s => return Err(format!("知らない引数: {s}\n\n{USAGE}").into()),
+            s => {
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown argument: {argument}", argument = s),
+                    usage()
+                )
+                .into());
+            }
         }
     }
     let front = open_repository(&dir)?;
@@ -454,7 +517,7 @@ fn undo(args: &[String]) -> Result<ExitCode> {
             let r = command(&*front, serde_json::json!({"op": "undoLog"}))?;
             let entries = r["info"]["entries"].as_array().cloned().unwrap_or_default();
             if entries.is_empty() {
-                println!("戻せる操作はありません");
+                println!("{}", tr!("Nothing to undo"));
             }
             for (i, e) in entries.iter().enumerate() {
                 let time = e["time"]
@@ -470,16 +533,16 @@ fn undo(args: &[String]) -> Result<ExitCode> {
         "peek" => {
             let r = command(&*front, serde_json::json!({"op": "undoPeek"}))?;
             match r["label"].as_str() {
-                Some(label) => println!("次に戻す操作: {label}"),
-                None => println!("戻せる操作はありません"),
+                Some(label) => println!("{}", tr!("Next to undo: {label}", label = label)),
+                None => println!("{}", tr!("Nothing to undo")),
             }
         }
         _ => {
             let r = command(&*front, serde_json::json!({"op": "undo"}))?;
             match r["label"].as_str() {
-                Some(label) => println!("戻しました: {label}"),
+                Some(label) => println!("{}", tr!("Undid: {label}", label = label)),
                 None => {
-                    println!("戻せる操作はありません");
+                    println!("{}", tr!("Nothing to undo"));
                     return Ok(ExitCode::from(1));
                 }
             }
@@ -504,23 +567,30 @@ fn find_repositories(args: &[String]) -> Result<ExitCode> {
                 depth = args
                     .get(i + 1)
                     .and_then(|v| v.parse().ok())
-                    .ok_or("--depth には数を渡してください")?;
+                    .ok_or_else(|| tr!("--depth takes a number"))?;
                 i += 1;
             }
             "--exclude" => {
                 excludes.push(
                     args.get(i + 1)
-                        .ok_or("--exclude には名前を渡してください")?
+                        .ok_or_else(|| tr!("--exclude takes a name"))?
                         .clone(),
                 );
                 i += 1;
             }
             other if dir.is_none() && !other.starts_with("--") => dir = Some(other),
-            other => return Err(format!("知らない引数: {other}\n\n{USAGE}").into()),
+            other => {
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown argument: {argument}", argument = other),
+                    usage()
+                )
+                .into());
+            }
         }
         i += 1;
     }
-    let dir = dir.ok_or("探すフォルダを渡してください")?;
+    let dir = dir.ok_or_else(|| tr!("Give the folder to search"))?;
     if excludes.is_empty() {
         excludes = amonhen_model::scan::DEFAULT_EXCLUDES
             .iter()
@@ -542,13 +612,18 @@ fn merge_file(args: &[String]) -> Result<ExitCode> {
             "--all" => rules = amonhen_core::conflict::MagicRules::All,
             "--check" | "--dry-run" => check = true,
             s if s.starts_with('-') => {
-                return Err(format!("知らないオプション: {s}\n\n{USAGE}").into());
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown option: {option}", option = s),
+                    usage()
+                )
+                .into());
             }
             _ => files.push(PathBuf::from(arg)),
         }
     }
     if files.is_empty() {
-        return Err(format!("ファイルを渡してください\n\n{USAGE}").into());
+        return Err(format!("{}\n\n{}", tr!("Give the files"), usage()).into());
     }
     let mut remaining_total = 0;
     for file in &files {
@@ -560,11 +635,24 @@ fn merge_file(args: &[String]) -> Result<ExitCode> {
         if resolved > 0 && !check {
             std::fs::write(file, &merged)?;
         }
-        let verb = if check { "解ける" } else { "解いた" };
-        println!(
-            "{}: コンフリクト {before} 個のうち {resolved} 個を{verb}、残り {remaining} 個",
-            file.display()
-        );
+        let line = if check {
+            tr!(
+                "{file}: {resolved} of {before} conflicts can be resolved, {remaining} left",
+                file = file.display(),
+                before = before,
+                resolved = resolved,
+                remaining = remaining
+            )
+        } else {
+            tr!(
+                "{file}: resolved {resolved} of {before} conflicts, {remaining} left",
+                file = file.display(),
+                before = before,
+                resolved = resolved,
+                remaining = remaining
+            )
+        };
+        println!("{line}");
     }
     Ok(if remaining_total == 0 {
         ExitCode::SUCCESS

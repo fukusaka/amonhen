@@ -1,6 +1,7 @@
 //! 手元の側: daemon につなぎ、`GitBackend`・`Operations`・`RepoFiles` を要求に置き換える。
 //! コア（レイアウト・キャッシュ・差分・色付け）はこれまでどおり手元で動き、git に触れる所だけが通信になる。
 
+use amonhen_model::tr;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -86,9 +87,9 @@ impl Connection {
                             std::thread::sleep(Duration::from_millis(100));
                             let detail = conn.stderr.lock().unwrap().trim().to_owned();
                             let reason = if detail.is_empty() {
-                                "daemon との接続が切れました".to_owned()
+                                tr!("Lost connection to the daemon")
                             } else {
-                                format!("daemon との接続が切れました: {detail}")
+                                tr!("Lost connection to the daemon: {detail}", detail = detail)
                             };
                             conn.close(&reason);
                             break;
@@ -108,7 +109,7 @@ impl Connection {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|e| format!("{program} を起動できない: {e}"))?;
+            .map_err(|e| tr!("Can’t start {program}: {e}", program = program, e = e))?;
         let stdin = child.stdin.take().unwrap();
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
@@ -204,7 +205,7 @@ impl Connection {
 
     fn send(&self, request: &Request) -> Result<(u64, mpsc::Receiver<Reply>)> {
         if self.closed.load(Ordering::Relaxed) {
-            return Err("daemon との接続が切れています".into());
+            return Err(tr!("The connection to the daemon is closed").into());
         }
         let id = self.next.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = mpsc::channel();
@@ -221,7 +222,7 @@ impl Connection {
             }
             Err(e) => {
                 self.pending.lock().unwrap().remove(&id);
-                return Err(format!("daemon に送れない: {e}").into());
+                return Err(tr!("Can’t send to the daemon: {e}", e = e).into());
             }
         }
         Ok((id, rx))
@@ -236,7 +237,10 @@ impl Connection {
 
     pub fn call<T: DeserializeOwned>(&self, request: &Request) -> Result<T> {
         let (_, rx) = self.send(request)?;
-        Self::decode(rx.recv().map_err(|_| "daemon との接続が切れました")?)
+        Self::decode(
+            rx.recv()
+                .map_err(|_| tr!("Lost connection to the daemon"))?,
+        )
     }
 
     /// `cancelled` が true になったら daemon に取り消しを送り、`Err` を返す。
@@ -258,7 +262,7 @@ impl Connection {
                     }
                 }
                 Err(RecvTimeoutError::Disconnected) => {
-                    return Err("daemon との接続が切れました".into());
+                    return Err(tr!("Lost connection to the daemon").into());
                 }
             }
         }
@@ -460,7 +464,7 @@ impl GitBackend for RemoteBackend {
             #[cfg(all(unix, not(target_os = "android")))]
             Some(name) => crate::shm::parts(crate::shm::open(name)?, &reply.parts)?,
             #[cfg(not(all(unix, not(target_os = "android"))))]
-            Some(_) => return Err("共有メモリを使えない環境です".into()),
+            Some(_) => return Err(tr!("Shared memory isn’t available in this environment").into()),
             None => reply
                 .inline
                 .into_iter()

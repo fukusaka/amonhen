@@ -189,7 +189,7 @@ fn provisions_the_engine_on_ssh_hosts() {
 
     // 1 回目: 送る。置いたら中身を確かめる。
     let engine = open(&daemons).unwrap();
-    assert!(engine.contains("今回送った"), "{engine}");
+    assert!(engine.contains("sent now"), "{engine}");
     let sent = engines(&home);
     assert_eq!(sent.len(), 1, "{sent:?}");
     let binary = home
@@ -216,7 +216,7 @@ fn provisions_the_engine_on_ssh_hosts() {
 
     // 2 回目: 送らずに、置いてあるものを使う。最近使われたほかの版は残し、使われていないものだけを片付ける。
     let engine = open(&daemons).unwrap();
-    assert!(engine.contains("前に送ったもの"), "{engine}");
+    assert!(engine.contains("sent earlier"), "{engine}");
     assert_eq!(
         std::fs::metadata(&binary).unwrap().modified().unwrap(),
         first
@@ -233,7 +233,7 @@ fn provisions_the_engine_on_ssh_hosts() {
     std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bin.join("amonhen")).unwrap();
     let engine = open(&daemons).unwrap();
     assert!(
-        engine.contains("SSH 先に入っているもの") && engine.contains("/bin/amonhen"),
+        engine.contains("installed on the SSH host") && engine.contains("/bin/amonhen"),
         "{engine}"
     );
     std::fs::remove_dir_all(&bin).unwrap();
@@ -247,7 +247,7 @@ fn provisions_the_engine_on_ssh_hosts() {
         push: false,
     };
     let err = open(&no_push).unwrap_err().to_string();
-    assert!(err.contains("使えるエンジンがありません"), "{err}");
+    assert!(err.contains("No usable engine"), "{err}");
     assert!(engines(&home).is_empty());
 }
 
@@ -269,6 +269,7 @@ fn shares_one_daemon_between_clients() {
     let home = tmp.path().join("home");
     std::fs::create_dir(&home).unwrap();
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
+        .env("AMONHEN_LANG", "en")
         .arg("--serve")
         .arg(&socket)
         .env("HOME", &home)
@@ -412,10 +413,11 @@ fn shares_one_daemon_between_clients() {
         .err()
         .expect("開けないはず")
         .to_string();
-    assert!(error.contains("開けない"), "{error}");
+    assert!(error.contains("Can’t open"), "{error}");
 
     // 2 つ目の daemon は、動いているものに任せてすぐ終わる。
     let second = Command::new(env!("CARGO_BIN_EXE_amonhend"))
+        .env("AMONHEN_LANG", "en")
         .arg("--serve")
         .arg(&socket)
         .status()
@@ -463,6 +465,7 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     .unwrap();
     let socket = tmp.path().join("d.sock");
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
+        .env("AMONHEN_LANG", "en")
         .arg("--serve")
         .arg(&socket)
         .env("HOME", &local_home)
@@ -515,7 +518,7 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
         "{text}"
     );
     assert!(
-        text.contains("今回送った") || text.contains("前に送ったもの"),
+        text.contains("sent now") || text.contains("sent earlier"),
         "SSH 先のエンジンが出る: {text}"
     );
     let _ = daemon.kill();

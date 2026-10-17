@@ -43,7 +43,10 @@ impl LocalFiles {
 
     fn resolve(&self, root: Root, path: &str) -> Result<PathBuf> {
         let base = match root {
-            Root::Workdir => self.workdir.as_ref().ok_or("作業ツリーのないリポジトリ")?,
+            Root::Workdir => self
+                .workdir
+                .as_ref()
+                .ok_or_else(|| crate::tr!("The repository has no working tree"))?,
             Root::GitDir => &self.git_dir,
         };
         let relative = Path::new(path);
@@ -51,7 +54,9 @@ impl LocalFiles {
             .components()
             .all(|c| matches!(c, Component::Normal(_) | Component::CurDir))
         {
-            return Err(format!("リポジトリの外は指せない: {path}").into());
+            return Err(
+                crate::tr!("Can’t point outside the repository: {path}", path = path).into(),
+            );
         }
         Ok(base.join(relative))
     }

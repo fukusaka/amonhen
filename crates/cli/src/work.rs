@@ -8,7 +8,9 @@ use amonhen_front::{Front, Reply};
 use amonhen_layout::DiffRow;
 use serde_json::{Value, json};
 
-use crate::{Args, Result, USAGE, call, command, open_repository, term};
+use amonhen_model::tr;
+
+use crate::{Args, Result, call, command, open_repository, term, usage};
 
 /// 命令ごとに共通の引数（`-C`・`--json`・`--color`）と、残り。
 struct Common {
@@ -43,7 +45,12 @@ fn common(args: &[String], flags: &[&str], valued: &[&str]) -> Result<(Common, V
             }
             "--" => c.rest.push(arg.clone()),
             s if s.starts_with('-') && s.len() > 1 => {
-                return Err(format!("知らないオプション: {s}\n\n{USAGE}").into());
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown option: {option}", option = s),
+                    usage()
+                )
+                .into());
             }
             _ => c.rest.push(arg.clone()),
         }
@@ -86,27 +93,28 @@ pub fn status(args: &[String]) -> Result<ExitCode> {
     }
     let mut out = String::new();
     match status["branch"].as_str() {
-        Some(b) => out.push_str(&format!("ブランチ {b}")),
+        Some(b) => out.push_str(&tr!("On branch {branch}", branch = b)),
         None => out.push_str("detached HEAD"),
     }
     if let Some(u) = status["upstream"].as_str() {
-        out.push_str(&format!("（{u}"));
+        let mut items = vec![u.to_owned()];
         let (ahead, behind) = (
             status["ahead"].as_u64().unwrap_or(0),
             status["behind"].as_u64().unwrap_or(0),
         );
         if ahead > 0 {
-            out.push_str(&format!("・{ahead} 先"));
+            items.push(tr!("{count} ahead", count = ahead));
         }
         if behind > 0 {
-            out.push_str(&format!("・{behind} 遅れ"));
+            items.push(tr!("{count} behind", count = behind));
         }
-        out.push('）');
+        out.push_str(&tr!(" ({items})", items = items.join(&tr!(", "))));
     }
     out.push('\n');
     let entries = status["entries"].as_array().cloned().unwrap_or_default();
     if entries.is_empty() {
-        out.push_str("変更はありません\n");
+        out.push_str(&tr!("No changes"));
+        out.push('\n');
     }
     for e in &entries {
         let (x, y) = (
@@ -261,7 +269,7 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
                     .json["row"]
                         .clone();
                     if r.is_null() {
-                        Err(format!("History にないコミット: {id}").into())
+                        Err(tr!("Commit not in History: {id}", id = id).into())
                     } else {
                         Ok(r)
                     }
@@ -271,7 +279,7 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
                     json!({"op": "commitDiff", "history": history, "rows": [row(from)?, row(to)?]}),
                 )?
             }
-            _ => return Err("コミットは 1 つか 2 つです".into()),
+            _ => return Err(tr!("Give one or two commits").into()),
         };
         return print_commit_diff(&reply, &paths, &c, numbers, stat);
     }
@@ -341,8 +349,9 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
             stat_line(&mut out, path, &r.json);
         } else if r.json["binary"] == true {
             out.push_str(&format!(
-                "{}\nバイナリのファイル\n",
-                paint(&format!("diff {path}"), "1", c.color)
+                "{}\n{}\n",
+                paint(&format!("diff {path}"), "1", c.color),
+                tr!("Binary file")
             ));
         } else {
             DiffRows::from(r).render(
@@ -492,12 +501,12 @@ pub fn resolve(front: &dyn Front, rev: &str) -> Result<String> {
     r["text"]
         .as_str()
         .map(str::to_owned)
-        .ok_or_else(|| format!("コミットが見つかりません: {rev}").into())
+        .ok_or_else(|| tr!("Commit not found: {rev}", rev = rev).into())
 }
 
 fn stat_line(out: &mut String, path: &str, file: &Value) {
     if file["binary"] == true {
-        out.push_str(&format!("{path}  バイナリ\n"));
+        out.push_str(&format!("{path}  {}\n", tr!("binary")));
     } else {
         out.push_str(&format!(
             "{path}  +{} -{}\n",
@@ -527,26 +536,24 @@ pub fn stage(args: &[String], on: bool) -> Result<ExitCode> {
     let front = open_repository(&c.dir)?;
     if let Some(spec) = value(&seen, "--rows") {
         let [path] = c.rest.as_slice() else {
-            return Err("--rows には、ファイルを 1 つ渡してください".into());
+            return Err(tr!("--rows takes exactly one file").into());
         };
         let d = call(
             &*front,
             json!({"op": "workingDiff", "path": path, "mode": "combined"}),
         )
-        .map_err(|e| format!("{path} は行ごとに stage できません: {e}"))?;
+        .map_err(|e| tr!("Can’t stage {path} by line: {e}", path = path, e = e))?;
         call(
             &*front,
             json!({"op": "stageRows", "diff": d.json["diff"], "rows": parse_rows(spec)?, "stage": on}),
         )?;
         if !c.json {
-            println!(
-                "{path} の {spec} 行目を {}",
-                if on {
-                    "stage しました"
-                } else {
-                    "unstage しました"
-                }
-            );
+            let done = if on {
+                tr!("Staged lines {rows} of {path}", rows = spec, path = path)
+            } else {
+                tr!("Unstaged lines {rows} of {path}", rows = spec, path = path)
+            };
+            println!("{done}");
         }
         return done(&c);
     }
@@ -569,22 +576,20 @@ pub fn stage(args: &[String], on: bool) -> Result<ExitCode> {
         c.rest.clone()
     };
     if paths.is_empty() {
-        return Err("ファイルを渡してください（すべてなら --all）".into());
+        return Err(tr!("Give the files (--all for all of them)").into());
     }
     call(
         &*front,
         json!({"op": if on { "stage" } else { "unstage" }, "paths": paths}),
     )?;
     if !c.json {
-        println!(
-            "{} ファイルを {}",
-            paths.len(),
-            if on {
-                "stage しました"
-            } else {
-                "unstage しました"
-            }
-        );
+        let done = match (on, paths.len()) {
+            (true, 1) => tr!("Staged 1 file"),
+            (true, n) => tr!("Staged {count} files", count = n),
+            (false, 1) => tr!("Unstaged 1 file"),
+            (false, n) => tr!("Unstaged {count} files", count = n),
+        };
+        println!("{done}");
     }
     done(&c)
 }
@@ -595,11 +600,11 @@ pub fn discard(args: &[String]) -> Result<ExitCode> {
     let (c, seen) = common(args, &["--rows"], &["--rows"])?;
     let front = open_repository(&c.dir)?;
     if c.rest.is_empty() {
-        return Err("ファイルを渡してください".into());
+        return Err(tr!("Give the files").into());
     }
     if let Some(spec) = value(&seen, "--rows") {
         let [path] = c.rest.as_slice() else {
-            return Err("--rows には、ファイルを 1 つ渡してください".into());
+            return Err(tr!("--rows takes exactly one file").into());
         };
         let d = call(
             &*front,
@@ -610,16 +615,27 @@ pub fn discard(args: &[String]) -> Result<ExitCode> {
             json!({"op": "discardRows", "diff": d.json["diff"], "rows": parse_rows(spec)?}),
         )?;
         if !c.json {
-            println!("{path} の {spec} 行目の変更を捨てました（amonhen undo で戻せます）");
+            println!(
+                "{}",
+                tr!(
+                    "Discarded the changes on lines {rows} of {path} (amonhen undo brings them back)",
+                    rows = spec,
+                    path = path
+                )
+            );
         }
         return done(&c);
     }
     command(&*front, json!({"op": "discard", "paths": c.rest}))?;
     if !c.json {
-        println!(
-            "{} ファイルの変更を捨てました（amonhen undo で戻せます）",
-            c.rest.len()
-        );
+        let done = match c.rest.len() {
+            1 => tr!("Discarded the changes in 1 file (amonhen undo brings them back)"),
+            n => tr!(
+                "Discarded the changes in {count} files (amonhen undo brings them back)",
+                count = n
+            ),
+        };
+        println!("{done}");
     }
     done(&c)
 }
@@ -630,7 +646,7 @@ pub fn commit(args: &[String]) -> Result<ExitCode> {
     let front = open_repository(&c.dir)?;
     let message = value(&seen, "-m")
         .or_else(|| value(&seen, "--message"))
-        .ok_or("-m でメッセージを渡してください")?;
+        .ok_or_else(|| tr!("Give the message with -m"))?;
     call(
         &*front,
         json!({"op": "commit", "message": message, "amend": flag(&seen, "--amend")}),
@@ -640,9 +656,12 @@ pub fn commit(args: &[String]) -> Result<ExitCode> {
         print_json(&json!({"ok": true, "commit": head}));
     } else {
         println!(
-            "コミットしました: {} {}",
-            &head[..8],
-            message.lines().next().unwrap_or("")
+            "{}",
+            tr!(
+                "Committed: {id} {subject}",
+                id = &head[..8],
+                subject = message.lines().next().unwrap_or("")
+            )
         );
     }
     Ok(ExitCode::SUCCESS)
@@ -671,13 +690,14 @@ pub fn refs(args: &[String]) -> Result<ExitCode> {
     for e in refs["entries"].as_array().into_iter().flatten() {
         let kind = e["kind"].as_str().unwrap_or("");
         if kind != last {
-            out.push_str(match kind {
-                "branch" => "ブランチ\n",
-                "remote" => "リモート\n",
-                "tag" => "タグ\n",
-                "stash" => "stash\n",
-                _ => "サブモジュール\n",
+            out.push_str(&match kind {
+                "branch" => tr!("Branches"),
+                "remote" => tr!("Remotes"),
+                "tag" => tr!("Tags"),
+                "stash" => "stash".to_owned(),
+                _ => tr!("Submodules"),
             });
+            out.push('\n');
             last = kind.to_owned();
         }
         let name = e["name"].as_str().unwrap_or("");
@@ -694,9 +714,13 @@ pub fn refs(args: &[String]) -> Result<ExitCode> {
             e["behind"].as_u64().unwrap_or(0),
         );
         if e["gone"] == true {
-            line.push_str("（上流がない）");
+            line.push_str(&tr!(" (upstream gone)"));
         } else if ahead > 0 || behind > 0 {
-            line.push_str(&format!("（{ahead} 先・{behind} 遅れ）"));
+            line.push_str(&tr!(
+                " ({ahead} ahead, {behind} behind)",
+                ahead = ahead,
+                behind = behind
+            ));
         }
         out.push_str(&line);
         out.push('\n');

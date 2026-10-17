@@ -6,6 +6,8 @@
 use std::path::PathBuf;
 use std::process::{Command, ExitCode};
 
+use amonhen_model::tr;
+
 use crate::Result;
 
 pub fn run(args: &[String]) -> Result<ExitCode> {
@@ -18,13 +20,15 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             "--snapshot" => bundle = "io.github.fukusaka.amonhen.snapshot".into(),
             // 手元のリポジトリを、共有の daemon 越しに開く。
             "--daemon" => through_daemon = true,
-            s if s.starts_with('-') => return Err(format!("知らないオプション: {s}").into()),
+            s if s.starts_with('-') => {
+                return Err(tr!("Unknown option: {option}", option = s).into());
+            }
             s => target = Some(s),
         }
     }
     let target = target.unwrap_or(".");
     if !cfg!(target_os = "macos") {
-        return Err("アプリで開くのは macOS だけです".into());
+        return Err(tr!("Opening in the app works only on macOS").into());
     }
     let status = if target.starts_with("ssh://") || target.starts_with("daemon:") {
         Command::new("open")
@@ -48,8 +52,9 @@ pub fn run(args: &[String]) -> Result<ExitCode> {
             .status()?
     };
     if !status.success() {
-        return Err(format!(
-            "Amon Hen（{bundle}）を起動できません。/Applications に入っているか確かめてください"
+        return Err(tr!(
+            "Can’t start Amon Hen ({bundle}). Check that it’s in /Applications",
+            bundle = bundle
         )
         .into());
     }

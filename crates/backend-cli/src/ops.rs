@@ -1,3 +1,4 @@
+use amonhen_model::tr;
 use amonhen_model::{
     ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RemoteChange, RemoteEntry,
     ResetMode, Result, Sequence,
@@ -133,7 +134,7 @@ impl Operations for Git {
         let status = child.wait()?;
         if !status.success() {
             let message = errors.join().unwrap_or_default();
-            return Err(format!("git log が失敗した: {}", message.trim()).into());
+            return Err(tr!("git log failed: {message}", message = message.trim()).into());
         }
         Ok(found)
     }
@@ -196,7 +197,7 @@ impl Operations for Git {
         match (&head.branch, &head.oid) {
             (Some(branch), _) => self.write(&["switch", branch.trim_start_matches("refs/heads/")]),
             (None, Some(oid)) => self.write(&["switch", "--detach", &hex(oid)]),
-            (None, None) => return Err("切り替え先がない".into()),
+            (None, None) => return Err(tr!("Nothing to switch to").into()),
         }
         .map(drop)
     }
@@ -205,7 +206,7 @@ impl Operations for Git {
         let out = text(
             self.write_with_input(&["hash-object", "-w", "--no-filters", "--stdin"], content)?,
         )?;
-        Oid::from_hex(&out).ok_or_else(|| format!("blob の ID を読めない: {out}").into())
+        Oid::from_hex(&out).ok_or_else(|| tr!("Can’t read the blob ID: {out}", out = out).into())
     }
 
     fn read_blob(&self, oid: &Oid) -> Result<Vec<u8>> {
@@ -267,14 +268,19 @@ impl Operations for Git {
         match status.code() {
             Some(0) => Ok(true),
             Some(1) => Ok(false),
-            _ => Err(format!("{ancestor} と {descendant} を比べられない").into()),
+            _ => Err(tr!(
+                "Can’t compare {ancestor} and {descendant}",
+                ancestor = ancestor,
+                descendant = descendant
+            )
+            .into()),
         }
     }
 
     fn resolve(&self, rev: &str) -> Result<Oid> {
         let spec = format!("{rev}^{{commit}}");
         let out = text(self.read(&["rev-parse", "--verify", "--quiet", &spec])?)?;
-        Oid::from_hex(&out).ok_or_else(|| format!("{rev} が見つからない").into())
+        Oid::from_hex(&out).ok_or_else(|| tr!("{rev} not found", rev = rev).into())
     }
 
     fn merge(&self, rev: &str) -> Result<Outcome> {

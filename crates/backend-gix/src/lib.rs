@@ -1,5 +1,6 @@
 //! gix による GitBackend の実装。
 
+use amonhen_model::tr;
 use std::path::Path;
 
 use std::ops::Range;
@@ -71,7 +72,7 @@ fn read_commit(
     let data = repo
         .objects
         .try_find(&oid, buf)?
-        .ok_or_else(|| format!("コミット {id} が見つからない"))?;
+        .ok_or_else(|| tr!("Commit {id} not found", id = id))?;
     let iter = || gix::objs::CommitRefIter::from_bytes(data.data, hash);
     let parents = iter()
         .parent_ids()
@@ -89,7 +90,7 @@ fn to_oid(id: &gix::oid) -> Result<Oid> {
     let bytes: [u8; 20] = id
         .as_bytes()
         .try_into()
-        .map_err(|_| "SHA-1 以外のリポジトリには未対応")?;
+        .map_err(|_| tr!("Only SHA-1 repositories are supported"))?;
     Ok(Oid(bytes))
 }
 
@@ -97,7 +98,7 @@ impl GixBackend {
     fn git(&self) -> Result<&amonhen_backend_cli::Git> {
         self.git
             .as_ref()
-            .ok_or_else(|| "作業ツリーのないリポジトリ".into())
+            .ok_or_else(|| tr!("The repository has no working tree").into())
     }
 }
 
@@ -452,7 +453,7 @@ impl GitBackend for GixBackend {
         let len = repo
             .objects
             .try_find(&gix::ObjectId::from_bytes_or_panic(&id.0), &mut buf)?
-            .ok_or_else(|| format!("blob {id} が見つからない"))?
+            .ok_or_else(|| tr!("Blob {id} not found", id = id))?
             .data
             .len();
         buf.truncate(len);
@@ -547,7 +548,7 @@ impl GitBackend for GixBackend {
                 let len = repo
                     .objects
                     .try_find(&oid, &mut buf)?
-                    .ok_or_else(|| format!("コミット {id} が見つからない"))?
+                    .ok_or_else(|| tr!("Commit {id} not found", id = id))?
                     .data
                     .len();
                 buf.truncate(len);

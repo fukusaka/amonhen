@@ -14,6 +14,7 @@ pub use client::{Front, InProcess, Remote, open};
 pub use records::Records;
 pub use session::Session;
 
+use amonhen_model::tr;
 use serde_json::Value;
 
 /// 取り決めの版。変えたら上げる（`hello` の答えで確かめる）。
@@ -56,10 +57,10 @@ impl Reply {
         let len = payload
             .get(..4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()) as usize)
-            .ok_or("答えが短すぎる")?;
+            .ok_or_else(|| tr!("The reply is too short"))?;
         let json = payload
             .get(4..4 + len)
-            .ok_or("答えの JSON が途中で切れている")?;
+            .ok_or_else(|| tr!("The reply’s JSON is cut off"))?;
         let start = (4 + len).next_multiple_of(8).min(payload.len());
         Ok(Self {
             json: serde_json::from_slice(json)?,

@@ -1,6 +1,7 @@
 //! FE 1 つとのやりとり。History のスナップショットと Working Copy の差分は番号で持ち、FE はその番号で続きを頼む
 //! （FE がスクロールする間に History が新しくなっても、見ている行は変わらない）。
 
+use amonhen_model::tr;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -64,7 +65,7 @@ impl<T: Clone> Kept<T> {
 fn arg<'a>(request: &'a Value, name: &str) -> Result<&'a Value> {
     let v = &request[name];
     if v.is_null() {
-        Err(format!("{name} がありません").into())
+        Err(tr!("{name} is missing", name = name).into())
     } else {
         Ok(v)
     }
@@ -73,30 +74,30 @@ fn arg<'a>(request: &'a Value, name: &str) -> Result<&'a Value> {
 fn str_arg<'a>(request: &'a Value, name: &str) -> Result<&'a str> {
     arg(request, name)?
         .as_str()
-        .ok_or_else(|| format!("{name} は文字列です").into())
+        .ok_or_else(|| tr!("{name} must be a string", name = name).into())
 }
 
 fn u64_arg(request: &Value, name: &str) -> Result<u64> {
     arg(request, name)?
         .as_u64()
-        .ok_or_else(|| format!("{name} は数です").into())
+        .ok_or_else(|| tr!("{name} must be a number", name = name).into())
 }
 
 fn rows_arg(request: &Value, name: &str) -> Result<Vec<u32>> {
     arg(request, name)?
         .as_array()
-        .ok_or_else(|| format!("{name} は数の配列です"))?
+        .ok_or_else(|| tr!("{name} must be an array of numbers", name = name))?
         .iter()
         .map(|v| {
             v.as_u64()
                 .map(|n| n as u32)
-                .ok_or_else(|| format!("{name} は数の配列です").into())
+                .ok_or_else(|| tr!("{name} must be an array of numbers", name = name).into())
         })
         .collect()
 }
 
 fn oid(text: &str) -> Result<Oid> {
-    Oid::from_hex(text).ok_or_else(|| format!("コミットの ID ではない: {text}").into())
+    Oid::from_hex(text).ok_or_else(|| tr!("Not a commit ID: {text}", text = text).into())
 }
 
 fn oids(request: &Value, name: &str) -> Result<Option<Vec<Oid>>> {
@@ -107,7 +108,7 @@ fn oids(request: &Value, name: &str) -> Result<Option<Vec<Oid>>> {
             .map(|v| oid(v.as_str().unwrap_or_default()))
             .collect::<Result<Vec<_>>>()
             .map(Some),
-        _ => Err(format!("{name} は ID の配列です").into()),
+        _ => Err(tr!("{name} must be an array of IDs", name = name).into()),
     }
 }
 
@@ -136,7 +137,7 @@ impl Session {
             .lock()
             .unwrap()
             .get(id)
-            .ok_or_else(|| format!("History {id} はもうありません（読み直してください）").into())
+            .ok_or_else(|| tr!("History {id} no longer exists (reload it)", id = id).into())
     }
 
     fn keep_history(&self, h: Arc<HistorySnapshot>) -> Value {
@@ -175,7 +176,7 @@ impl Session {
         request: &Value,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Reply> {
-        let op = request["op"].as_str().ok_or("op がありません")?;
+        let op = request["op"].as_str().ok_or_else(|| tr!("op is missing"))?;
         let repo = &*self.repo;
         Ok(match op {
             "hello" => {
@@ -350,7 +351,7 @@ impl Session {
                     serde_json::from_str(&repo.run_json(&arg(request, "command")?.to_string()))?;
                 Reply::json(reply)
             }
-            other => return Err(format!("知らない命令: {other}").into()),
+            other => return Err(tr!("Unknown command: {other}", other = other).into()),
         })
     }
 
@@ -373,7 +374,7 @@ impl Session {
             _ => {
                 let rows = rows_arg(request, "rows")?;
                 if let Some(bad) = rows.iter().find(|&&r| r >= total) {
-                    return Err(format!("History にない行: {bad}").into());
+                    return Err(tr!("Row not in History: {bad}", bad = bad).into());
                 }
                 (rows, Vec::new())
             }
@@ -501,15 +502,15 @@ impl Session {
             .entries
             .iter()
             .find(|e| e.path == path)
-            .ok_or_else(|| format!("変更のないファイル: {path}"))?;
+            .ok_or_else(|| tr!("File has no changes: {path}", path = path))?;
         let mode = request["mode"].as_str().unwrap_or("unstaged");
         let diff = match mode {
             "staged" => repo.working_diff(entry, true, &PROFILE)?,
             "unstaged" => repo.working_diff(entry, false, &PROFILE)?,
             "combined" => repo
                 .working_diff_combined(entry, &PROFILE)?
-                .ok_or("この差分は stage 済みの印をつけて出せません（stage 済みと stage していない差分を分けて読んでください）")?,
-            other => return Err(format!("知らない mode: {other}").into()),
+                .ok_or_else(|| tr!("This diff can’t be shown with staged marks (read the staged and unstaged diffs separately)"))?,
+            other => return Err(tr!("Unknown mode: {other}", other = other).into()),
         };
         let id = self.id();
         let reply = diff_records(&diff.view).finish(json!({
@@ -531,19 +532,19 @@ impl Session {
             .lock()
             .unwrap()
             .get(id)
-            .ok_or_else(|| format!("差分 {id} はもうありません（読み直してください）").into())
+            .ok_or_else(|| tr!("Diff {id} no longer exists (reload it)", id = id).into())
     }
 }
 
 fn paths_arg(request: &Value) -> Result<Vec<String>> {
     arg(request, "paths")?
         .as_array()
-        .ok_or("paths は文字列の配列です")?
+        .ok_or_else(|| tr!("paths must be an array of strings"))?
         .iter()
         .map(|v| {
             v.as_str()
                 .map(str::to_owned)
-                .ok_or_else(|| "paths は文字列の配列です".into())
+                .ok_or_else(|| tr!("paths must be an array of strings").into())
         })
         .collect()
 }

@@ -10,7 +10,7 @@ use std::fmt::Write;
 
 use amonhen_front::Reply;
 use amonhen_layout::{Edge, Node};
-use amonhen_model::Oid;
+use amonhen_model::{Oid, tr};
 use serde_json::Value;
 
 pub struct Style {
@@ -199,7 +199,7 @@ pub fn render(rows: &Rows, refs: &Value, show_graph: bool, style: &Style) -> Str
         let hidden = rows.folded.get(i).copied().unwrap_or(0);
         let mut tail = rows.subjects[i].clone();
         if hidden > 0 {
-            tail.push_str(&format!("  ⊕ {hidden} 件を折りたたみ"));
+            tail.push_str(&tr!("  ⊕ {count} folded", count = hidden));
         }
         let meta = format!(
             "  — {}, {}",

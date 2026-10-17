@@ -24,6 +24,7 @@ fn commit(dir: &Path, file: &str, message: &str) {
 fn amonhen(home: &Path, args: &[&str]) -> (String, i32) {
     // キャッシュは試験の中に置く（手元のアプリのキャッシュに混ぜない）。
     let out = Command::new(env!("CARGO_BIN_EXE_amonhen"))
+        .env("AMONHEN_LANG", "en")
         .env("HOME", home)
         .args(args)
         .output()
@@ -75,7 +76,7 @@ fn log_draws_the_branch_and_the_merge() {
     // 折りたたむと、topic の側は merge の数になる。
     let (out, _) = amonhen(home.path(), &["log", "-C", path, "--fold", "--color=never"]);
     assert!(!out.contains("topic work"), "{out}");
-    assert!(out.contains("1 件を折りたたみ"), "{out}");
+    assert!(out.contains("1 folded"), "{out}");
 
     // 検索はグラフなしで、合うものだけ。
     let (out, _) = amonhen(
@@ -92,7 +93,7 @@ fn undo_and_merge_file() {
     let path = repo.path().to_str().unwrap();
     let (out, code) = amonhen(home.path(), &["undo", "-C", path, "--peek"]);
     assert_eq!(code, 0, "{out}");
-    assert!(out.contains("戻せる操作はありません"), "{out}");
+    assert!(out.contains("Nothing to undo"), "{out}");
 
     // 片側だけが変えたコンフリクトは、間違えようのない規則で解ける。両側が変えたものは残る。
     let file = repo.path().join("conflict.txt");
@@ -105,7 +106,7 @@ fn undo_and_merge_file() {
     let file = file.to_str().unwrap();
     let (out, code) = amonhen(home.path(), &["merge-file", file]);
     assert_eq!(code, 1, "残りがあれば 1: {out}");
-    assert!(out.contains("2 個のうち 1 個を解いた、残り 1 個"), "{out}");
+    assert!(out.contains("resolved 1 of 2 conflicts, 1 left"), "{out}");
     assert!(std::fs::read_to_string(file).unwrap().starts_with("same\n"));
 
     let (out, code) = amonhen(home.path(), &["log", "-C", "/"]);
@@ -285,6 +286,7 @@ impl Env {
     fn command(&self, args: &[&str]) -> Command {
         let mut c = Command::new(env!("CARGO_BIN_EXE_amonhen"));
         c.args(args)
+            .env("AMONHEN_LANG", "en")
             .env("HOME", &self.home)
             .env("AMONHEN_DAEMON_DIR", &self.socket_dir)
             .env("AMONHEN_DAEMON", &self.daemon)
@@ -387,6 +389,7 @@ fn installs_the_engine_and_picks_it_for_the_daemon() {
     let run = |args: &[&str]| {
         let out = Command::new(env!("CARGO_BIN_EXE_amonhen"))
             .args(args)
+            .env("AMONHEN_LANG", "en")
             .env("HOME", home.path())
             .env_remove("XDG_DATA_HOME")
             .output()
@@ -400,7 +403,7 @@ fn installs_the_engine_and_picks_it_for_the_daemon() {
     };
     let first = run(&["install"]);
     assert!(
-        first.contains("置きました") && first.contains("current をこの版"),
+        first.contains("Installed") && first.contains("Set current to this version"),
         "{first}"
     );
     let data = home.path().join(".local/share/amonhen");
@@ -412,7 +415,7 @@ fn installs_the_engine_and_picks_it_for_the_daemon() {
     );
     let second = run(&["install"]);
     assert!(
-        !second.contains("置きました") && second.contains("current はこの版です"),
+        !second.contains("Installed") && second.contains("current is already this version"),
         "{second}"
     );
     assert_eq!(run(&["engine"]).trim(), current.display().to_string());
@@ -442,6 +445,7 @@ fn works_through_the_shared_daemon_on_every_platform() {
     let run = |args: &[&str]| {
         let out = Command::new(env!("CARGO_BIN_EXE_amonhen"))
             .args(args)
+            .env("AMONHEN_LANG", "en")
             .env("HOME", &home)
             .env("LOCALAPPDATA", &home)
             .env("AMONHEN_DAEMON_DIR", tmp.path().join("s"))

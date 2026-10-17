@@ -16,6 +16,8 @@
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use amonhen_model::tr;
+
 use crate::Result;
 
 /// エンジンの実行ファイルの名前（Windows は `amonhen.exe`）。
@@ -25,13 +27,14 @@ fn exe_name() -> String {
 
 fn data_dir() -> Result<PathBuf> {
     if cfg!(windows) {
-        let local = std::env::var_os("LOCALAPPDATA").ok_or("LOCALAPPDATA がありません")?;
+        let local =
+            std::env::var_os("LOCALAPPDATA").ok_or_else(|| tr!("LOCALAPPDATA isn’t set"))?;
         return Ok(PathBuf::from(local).join("amonhen"));
     }
     if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
         return Ok(PathBuf::from(d).join("amonhen"));
     }
-    let home = std::env::var_os("HOME").ok_or("HOME がありません")?;
+    let home = std::env::var_os("HOME").ok_or_else(|| tr!("HOME isn’t set"))?;
     Ok(PathBuf::from(home).join(".local/share/amonhen"))
 }
 
@@ -39,7 +42,7 @@ fn bin_link() -> Result<PathBuf> {
     if cfg!(windows) {
         return Ok(data_dir()?.join("bin").join(exe_name()));
     }
-    let home = std::env::var_os("HOME").ok_or("HOME がありません")?;
+    let home = std::env::var_os("HOME").ok_or_else(|| tr!("HOME isn’t set"))?;
     Ok(PathBuf::from(home).join(".local/bin/amonhen"))
 }
 
@@ -148,7 +151,14 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
             "--quiet" | "-q" => quiet = true,
             "--no-link" => link = false,
             "--force" => force = true,
-            other => return Err(format!("知らない引数: {other}\n\n{}", crate::USAGE).into()),
+            other => {
+                return Err(format!(
+                    "{}\n\n{}",
+                    tr!("Unknown argument: {argument}", argument = other),
+                    crate::usage()
+                )
+                .into());
+            }
         }
     }
     let say = |s: String| {
@@ -168,7 +178,7 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
         std::fs::write(&tmp, &data)?;
         set_executable(&tmp)?;
         std::fs::rename(&tmp, &target)?;
-        say(format!("置きました: {}", target.display()));
+        say(tr!("Installed: {path}", path = target.display()));
     }
     let _ = std::fs::write(dir.join("used"), b"");
     // SSH 先に送るほかの OS と CPU のエンジン（.app の Resources/engines、開発中は dist/engine）も一緒に置く。ここから
@@ -203,15 +213,23 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
         .as_ref()
         .is_some_and(|(v, _)| version_key(v) > version_key(&mine));
     if points_here {
-        say(format!("current はこの版です（{mine}）"));
+        say(tr!(
+            "current is already this version ({version})",
+            version = mine
+        ));
     } else if newer_installed && !force {
         let (v, _) = installed.unwrap();
-        say(format!(
-            "current は新しい版（{v}）のままにします（この版は {mine}。--force で入れ替える）"
+        say(tr!(
+            "Keeping current at the newer version {installed} (this is {version}; --force replaces it)",
+            installed = v,
+            version = mine
         ));
     } else {
         set_current(&root, &hash)?;
-        say(format!("current をこの版（{mine}）にしました"));
+        say(tr!(
+            "Set current to this version ({version})",
+            version = mine
+        ));
     }
 
     if link {
@@ -232,14 +250,15 @@ fn link_cli(root: &Path, say: &dyn Fn(String)) -> Result<()> {
         let same = std::fs::read(&bin).ok() == std::fs::read(&engine).ok();
         if !same {
             match std::fs::copy(&engine, &bin) {
-                Ok(_) => say(format!(
-                    "{} に写しました（端末から使うなら {} を PATH に足してください）",
-                    bin.display(),
-                    bin.parent().unwrap().display()
+                Ok(_) => say(tr!(
+                    "Copied to {path} (add {dir} to PATH to use it from a terminal)",
+                    path = bin.display(),
+                    dir = bin.parent().unwrap().display()
                 )),
-                Err(e) => say(format!(
-                    "{} を書けません（動いているかもしれません）: {e}",
-                    bin.display()
+                Err(e) => say(tr!(
+                    "Can’t write {path} (it may be running): {e}",
+                    path = bin.display(),
+                    e = e
                 )),
             }
         }
@@ -248,9 +267,9 @@ fn link_cli(root: &Path, say: &dyn Fn(String)) -> Result<()> {
     let wanted = root.join("current").join(exe_name());
     match std::fs::symlink_metadata(&bin) {
         Ok(m) if !m.file_type().is_symlink() => {
-            say(format!(
-                "{} はリンクではないので、そのままにします",
-                bin.display()
+            say(tr!(
+                "Leaving {path} alone because it isn’t a link",
+                path = bin.display()
             ));
         }
         Ok(_) if std::fs::read_link(&bin).is_ok_and(|p| p == wanted) => {}
@@ -302,7 +321,7 @@ fn symlink(original: &Path, link: &Path) -> Result<()> {
 
 #[cfg(not(unix))]
 fn symlink(_original: &Path, _link: &Path) -> Result<()> {
-    Err("リンクは Unix だけです".into())
+    Err(tr!("Links are Unix only").into())
 }
 
 #[cfg(test)]

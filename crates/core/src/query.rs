@@ -9,6 +9,8 @@
 //!
 //! AND は OR より強く結び付く。`and` は書いてもよい（空白と同じ）。値に空白を含めるときは `"..."` で囲む。
 
+use amonhen_model::tr;
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Field {
     /// 件名・作者名・コミット ID の先頭のどれか。
@@ -100,7 +102,7 @@ fn tokenize(query: &str) -> Result<Vec<Token>, String> {
                     }
                 }
                 if quoted {
-                    return Err("引用符が閉じていません".into());
+                    return Err(tr!("Unclosed quotation mark"));
                 }
                 match word.to_ascii_lowercase().as_str() {
                     "or" => tokens.push(Token::Or),
@@ -171,7 +173,7 @@ impl Parser {
                     self.at += 1;
                     all.push(self.or()?);
                     if self.tokens.get(self.at) != Some(&Token::Close) {
-                        return Err("括弧が閉じていません".into());
+                        return Err(tr!("Unclosed parenthesis"));
                     }
                     self.at += 1;
                 }
@@ -179,7 +181,7 @@ impl Parser {
             }
         }
         match all.len() {
-            0 => Err("条件がありません".into()),
+            0 => Err(tr!("No search condition")),
             1 => Ok(all.pop().unwrap()),
             _ => Ok(Expr::And(all)),
         }
@@ -195,7 +197,7 @@ pub fn parse(query: &str) -> Result<Option<Expr>, String> {
     let mut parser = Parser { tokens, at: 0 };
     let expr = parser.or()?;
     if parser.at != parser.tokens.len() {
-        return Err("余分な括弧があります".into());
+        return Err(tr!("Extra parenthesis"));
     }
     Ok(Some(expr))
 }

@@ -1,5 +1,6 @@
 //! 要求と知らせの形。応答の中身は要求ごとに決まった型を postcard で書いたもの（コメントに書く）。
 
+use amonhen_model::tr;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -332,7 +333,7 @@ fn bytes_of<T: Pod>(values: &[T]) -> Bytes {
 fn values_of<T: Pod + Default + Clone>(bytes: &Bytes) -> Result<Slab<T>> {
     let size = std::mem::size_of::<T>();
     if !bytes.0.len().is_multiple_of(size) {
-        return Err("配列の大きさがおかしい".into());
+        return Err(tr!("Invalid array size").into());
     }
     let mut out = vec![T::default(); bytes.0.len() / size];
     // `out` は `T` の境界に揃っていて、`T: Pod` なのでどのビット列も有効。
@@ -365,6 +366,6 @@ impl GraphWire {
             values_of(&self.parent_offsets)?,
             values_of(&self.parent_rows)?,
         )
-        .ok_or_else(|| "受け取った History が壊れている".into())
+        .ok_or_else(|| tr!("The received History is corrupt").into())
     }
 }

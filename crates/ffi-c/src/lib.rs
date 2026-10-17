@@ -4,6 +4,7 @@
 //! - スナップショットは不変なので、読むのにロックは要らない。どのスレッドから読んでもよい。
 //! - 失敗した関数は NULL か false を返し、理由は `amonhen_last_error` で取れる。
 
+use amonhen_model::tr;
 use std::cell::RefCell;
 use std::ffi::{CStr, CString, c_char};
 use std::sync::Arc;
@@ -992,7 +993,7 @@ pub unsafe extern "C" fn amonhen_file_diff(
 ) -> *mut AmonhenDiff {
     let c = unsafe { &*changes.cast::<ChangesHandle>() };
     let Some(change) = c.changes.get(index as usize) else {
-        set_error("ファイルの番号が範囲外");
+        set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
     match repo(repo_ptr).file_diff(change, &profile(encoding)) {
@@ -1359,7 +1360,7 @@ pub unsafe extern "C" fn amonhen_working_diff(
 ) -> *mut AmonhenWorkingDiff {
     let s = unsafe { &*status.cast::<StatusHandle>() };
     let Some(entry) = s.snapshot.status.entries.get(index as usize) else {
-        set_error("ファイルの番号が範囲外");
+        set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
     match repo(repo_ptr).working_diff(entry, staged, &profile(encoding)) {
@@ -1386,7 +1387,7 @@ pub unsafe extern "C" fn amonhen_working_diff_combined(
 ) -> *mut AmonhenWorkingDiff {
     let s = unsafe { &*status.cast::<StatusHandle>() };
     let Some(entry) = s.snapshot.status.entries.get(index as usize) else {
-        set_error("ファイルの番号が範囲外");
+        set_error(tr!("File index out of range"));
         return std::ptr::null_mut();
     };
     match repo(repo_ptr).working_diff_combined(entry, &profile(encoding)) {

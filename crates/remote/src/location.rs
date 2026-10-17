@@ -3,6 +3,8 @@
 //! - `daemon:/path/to/repo` … 手元の共有の daemon（`crate::local`）で開く
 //! - `ssh://[user@]host[:port]/path/to/repo` … SSH 先に daemon を送り込んで起動する（`crate::ssh`）
 
+use amonhen_model::tr;
+
 /// 手元のパスではなく、daemon 越しに開く場所か。
 pub fn is_remote(location: &str) -> bool {
     location.starts_with("daemon:") || location.starts_with("ssh://")
@@ -11,9 +13,12 @@ pub fn is_remote(location: &str) -> bool {
 /// `daemon:` の場所の、リポジトリのパス。
 pub fn local_path(location: &str) -> Result<&str, String> {
     match location.strip_prefix("daemon:") {
-        Some("") => Err("daemon: の後にリポジトリのパスを書いてください".into()),
+        Some("") => Err(tr!("Write the repository path after daemon:")),
         Some(path) => Ok(path),
-        None => Err(format!("daemon 越しの場所ではありません: {location}")),
+        None => Err(tr!(
+            "Not a daemon location: {location}",
+            location = location
+        )),
     }
 }
 
@@ -22,14 +27,19 @@ pub fn local_path(location: &str) -> Result<&str, String> {
 pub fn launch_command(location: &str, daemon: &str) -> Result<(String, Vec<String>), String> {
     if let Some(path) = location.strip_prefix("daemon:") {
         if path.is_empty() {
-            return Err("daemon: の後にリポジトリのパスを書いてください".into());
+            return Err(tr!("Write the repository path after daemon:"));
         }
         return Ok((daemon.to_owned(), vec!["--stdio".into(), path.into()]));
     }
     if location.starts_with("ssh://") {
-        return Err("ssh:// の場所は ssh::connect でつなぐ（daemon を送り込むため）".into());
+        return Err(tr!(
+            "Connect to ssh:// locations with ssh::connect (to send the daemon there)"
+        ));
     }
-    Err(format!("daemon 越しの場所ではありません: {location}"))
+    Err(tr!(
+        "Not a daemon location: {location}",
+        location = location
+    ))
 }
 
 #[cfg(test)]

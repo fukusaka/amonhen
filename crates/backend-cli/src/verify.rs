@@ -2,6 +2,7 @@
 //! 作業用のリポジトリに書き、手元の git に `%G?` で検証させる（手元のリポジトリと同じ規則・設定になる。
 //! gpg.program・gpg.ssh.allowedSignersFile・gpg.minTrustLevel など）。木やほかのオブジェクトは要らない。
 
+use amonhen_model::tr;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
@@ -67,7 +68,9 @@ impl LocalVerifier {
             let mut lines = written.lines();
             for (id, _) in commits {
                 if lines.next().map(str::trim) != Some(id.to_string().as_str()) {
-                    return Err(format!("コミット {id} の中身が ID と合わない").into());
+                    return Err(
+                        tr!("The contents of commit {id} don’t match its ID", id = id).into(),
+                    );
                 }
             }
             Ok(())

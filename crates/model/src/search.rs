@@ -163,7 +163,7 @@ impl TextIndex {
                     let i = m[id] as usize;
                     (p.subject(i), p.author(i))
                 }
-                _ => return Err("索引を作れない".into()),
+                _ => return Err(crate::tr!("Can’t build the search index").into()),
             };
             bounds.push(text.len() as u32);
             text.extend_from_slice(subject);

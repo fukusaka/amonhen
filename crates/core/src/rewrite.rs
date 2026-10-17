@@ -3,6 +3,7 @@
 //! todo はこちらで丸ごと書き、`GIT_SEQUENCE_EDITOR` で git の todo に上書きする。メッセージの
 //! 書き換えは、対象のコミットの直後に `exec git commit --amend --file=<file>` を挟んで行う。
 
+use amonhen_model::tr;
 use std::path::{Path, PathBuf};
 
 use amonhen_model::{Oid, Result};
@@ -106,39 +107,38 @@ pub fn plan_rebase(
     // 古い順にする。
     let original: Vec<ChainCommit> = chain.iter().rev().copied().collect();
     let mut seq = original.clone();
-    let target = Oid::from_hex(edit.oid()).ok_or("コミット ID を読めない")?;
-    let index = seq
-        .iter()
-        .position(|c| c.oid == target)
-        .ok_or("このコミットは編集できません（HEAD から辿れないか、merge より前にあります）")?;
+    let target = Oid::from_hex(edit.oid()).ok_or_else(|| tr!("Can’t read the commit ID"))?;
+    let index = seq.iter().position(|c| c.oid == target).ok_or_else(|| {
+        tr!("This commit can’t be edited (it isn’t reachable from HEAD, or it’s before a merge)")
+    })?;
 
     let mut start = index;
     // まとめる範囲の終わり（SquashRange のときだけ）。
     let mut range_end = index;
     match edit {
         HistoryEdit::SquashRange { last, .. } => {
-            let last = Oid::from_hex(last).ok_or("コミット ID を読めない")?;
-            range_end = seq.iter().position(|c| c.oid == last).ok_or(
-                "このコミットは編集できません（HEAD から辿れないか、merge より前にあります）",
-            )?;
+            let last = Oid::from_hex(last).ok_or_else(|| tr!("Can’t read the commit ID"))?;
+            range_end = seq.iter().position(|c| c.oid == last).ok_or_else(|| {
+                tr!("This commit can’t be edited (it isn’t reachable from HEAD, or it’s before a merge)")
+            })?;
             if range_end <= index {
-                return Err("まとめるには、2 つ以上の連続したコミットを選んでください".into());
+                return Err(tr!("To squash, select two or more consecutive commits").into());
             }
         }
         HistoryEdit::Squash { .. } | HistoryEdit::Fixup { .. } => {
             if index == 0 {
-                return Err("親が編集できる範囲にないので、まとめられません".into());
+                return Err(tr!("Can’t squash: the parent isn’t in the editable range").into());
             }
             start = index - 1;
         }
         HistoryEdit::Split { .. } if seq[index].parent.is_none() => {
-            return Err("最初のコミットは split できません".into());
+            return Err(tr!("Can’t split the first commit").into());
         }
         HistoryEdit::Move { to, .. } => {
             let to = seq
                 .len()
                 .checked_sub(1 + to)
-                .ok_or("移動先が編集できる範囲の外です")?;
+                .ok_or_else(|| tr!("The destination is outside the editable range"))?;
             let moved = seq.remove(index);
             seq.insert(to, moved);
             start = index.min(to);

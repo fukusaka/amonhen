@@ -8,6 +8,7 @@
 
 mod serve;
 
+use amonhen_model::tr;
 use std::sync::Arc;
 
 use amonhen_backend_gix::GixBackend;
@@ -64,7 +65,10 @@ pub fn run(args: &[String]) -> i32 {
         }
         _ => {
             eprintln!(
-                "使い方: amonhen --stdio <リポジトリのパス> | amonhen --serve [<ソケット>] | amonhen --socket"
+                "{}",
+                tr!(
+                    "Usage: amonhen --stdio <repository path> | amonhen --serve [<socket>] | amonhen --socket"
+                )
             );
             return 2;
         }
@@ -104,7 +108,7 @@ fn stdio(repo: &str) -> amonhen_model::Result<()> {
     }) {
         Ok(w) => Some(w),
         Err(e) => {
-            eprintln!("amonhen: リポジトリを監視できない: {e}");
+            eprintln!("{}", tr!("amonhen: Can’t watch the repository: {e}", e = e));
             None
         }
     };

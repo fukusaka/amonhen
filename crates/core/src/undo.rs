@@ -4,6 +4,7 @@
 //! 今の状態が記録した「操作後」と一致することを確かめてから戻す。形式は VSCode 拡張版と同じで、
 //! ファイルも共有する（どちらで行った操作も、どちらからでも Undo できる）。
 
+use amonhen_model::tr;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
@@ -81,11 +82,10 @@ pub struct UndoConflict(pub String);
 
 impl std::fmt::Display for UndoConflict {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "「{}」のあとにブランチや HEAD が変わっているため、Undo できません",
-            self.0
-        )
+        f.write_str(&tr!(
+            "Can’t undo: branches or HEAD changed after “{label}”",
+            label = self.0
+        ))
     }
 }
 
@@ -379,7 +379,9 @@ impl UndoLog {
         let Some(entry) = entries.last().cloned() else {
             return Ok(None);
         };
-        let oid = |s: &str| Oid::from_hex(s).ok_or_else(|| format!("記録の oid を読めない: {s}"));
+        let oid = |s: &str| {
+            Oid::from_hex(s).ok_or_else(|| tr!("Can’t read the recorded oid: {oid}", oid = s))
+        };
 
         if let Some(stash) = &entry.stash {
             ops.stash_store(&oid(&stash.oid)?, &stash.message)?;
@@ -458,7 +460,7 @@ impl UndoLog {
                 let _ = self.files.remove(Root::Workdir, &f.path);
                 continue;
             };
-            let blob = Oid::from_hex(before).ok_or("記録の blob を読めない")?;
+            let blob = Oid::from_hex(before).ok_or_else(|| tr!("Can’t read the recorded blob"))?;
             self.files
                 .write(Root::Workdir, &f.path, &ops.read_blob(&blob)?)?;
             if let Some(mode) = f.mode {

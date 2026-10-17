@@ -1,3 +1,4 @@
+use amonhen_model::tr;
 use amonhen_model::{Oid, Result, Status, StatusEntry, StatusKind};
 
 /// `git status --porcelain=v2 -z --branch --untracked-files=all` の出力を読む。
@@ -9,9 +10,12 @@ pub fn parse_status(output: &[u8]) -> Result<Status> {
         let fields = |n: usize| -> Result<(Vec<&str>, &str)> {
             let mut parts = text.splitn(n + 1, ' ');
             let tokens: Vec<&str> = parts.by_ref().take(n).collect();
-            let rest = parts
-                .next()
-                .ok_or_else(|| format!("status の行が短い: {text:?}"))?;
+            let rest = parts.next().ok_or_else(|| {
+                tr!(
+                    "status line is too short: {text}",
+                    text = format!("{text:?}")
+                )
+            })?;
             Ok((tokens, rest))
         };
         let oid = |hex: &str| Oid::from_hex(hex).filter(|o| !o.is_zero());
@@ -43,7 +47,9 @@ pub fn parse_status(output: &[u8]) -> Result<Status> {
                 let (tokens, path) = fields(if renamed { 9 } else { 8 })?;
                 let xy = tokens[1].as_bytes();
                 let orig_path = if renamed {
-                    let orig = records.next().ok_or("名前の変更の元のパスがない")?;
+                    let orig = records
+                        .next()
+                        .ok_or_else(|| tr!("Missing the original path of a rename"))?;
                     Some(String::from_utf8_lossy(orig).into_owned())
                 } else {
                     None

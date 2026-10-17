@@ -5,6 +5,7 @@
 //! パスを送り（長さ u32 と UTF-8）、その後はふつうのフレーム（`crate::frame`）でやりとりする。
 //! ソケットの名前にプロトコルの版を入れるので、版の違う daemon にはつながない。
 
+use amonhen_model::tr;
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -85,13 +86,13 @@ pub fn control(command: &str) -> Result<Option<String>> {
     });
     let frame = rx
         .recv_timeout(Duration::from_secs(5))
-        .map_err(|_| "daemon が答えない")??;
+        .map_err(|_| tr!("The daemon didn’t answer"))??;
     match frame {
         Some(f) if f.kind == crate::frame::Kind::Ok => {
             Ok(Some(String::from_utf8_lossy(&f.payload).into_owned()))
         }
         Some(f) => Err(String::from_utf8_lossy(&f.payload).into_owned().into()),
-        None => Err("daemon が答えずに閉じた".into()),
+        None => Err(tr!("The daemon closed without answering").into()),
     }
 }
 
@@ -117,7 +118,9 @@ pub fn read_preamble(input: &mut impl Read) -> std::io::Result<String> {
     input.read_exact(&mut len)?;
     let len = u32::from_le_bytes(len) as usize;
     if len > 64 * 1024 {
-        return Err(std::io::Error::other("リポジトリのパスが長すぎる"));
+        return Err(std::io::Error::other(tr!(
+            "The repository path is too long"
+        )));
     }
     let mut path = vec![0u8; len];
     input.read_exact(&mut path)?;
@@ -175,7 +178,7 @@ fn launch(daemon: &str, endpoint: &str) -> Result<()> {
     let spawned = command.spawn();
     spawned
         .map(drop)
-        .map_err(|e| format!("{daemon} を起動できない: {e}").into())
+        .map_err(|e| tr!("Can’t start {program}: {e}", program = daemon, e = e).into())
 }
 
 /// `f` の間だけ、自分の標準入出力のハンドルを子に引き継がない形にする（終わったら戻す）。
@@ -218,7 +221,12 @@ fn wait_for(endpoint: &str, limit: Duration) -> Result<crate::endpoint::Duplex> 
         match crate::endpoint::connect(endpoint) {
             Ok(s) => return Ok(s),
             Err(e) if started.elapsed() > limit => {
-                return Err(format!("daemon（{endpoint}）につなげない: {e}").into());
+                return Err(tr!(
+                    "Can’t connect to the daemon ({endpoint}): {e}",
+                    endpoint = endpoint,
+                    e = e
+                )
+                .into());
             }
             Err(_) => std::thread::sleep(Duration::from_millis(20)),
         }

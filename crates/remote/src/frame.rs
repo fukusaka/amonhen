@@ -1,6 +1,7 @@
 //! ストリームの上のフレーム。`長さ（u32）・種類（u8）・番号（u64）・中身` を並べる。長さは種類から後ろ。
 //! 大きな中身は LZ4 で圧縮し、種類の最上位のビットで示す（SSH の帯域を節約する）。
 
+use amonhen_model::tr;
 use std::io::{self, Read, Write};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -66,7 +67,7 @@ pub fn write_with(
         None => (0, payload),
     };
     let len = u32::try_from(1 + 8 + payload.len())
-        .map_err(|_| io::Error::other("フレームが大きすぎる"))?;
+        .map_err(|_| io::Error::other(tr!("Frame too large")))?;
     let mut head = [0u8; 13];
     head[..4].copy_from_slice(&len.to_le_bytes());
     head[4] = kind as u8 | flag;
@@ -87,12 +88,15 @@ pub fn read(input: &mut impl Read) -> io::Result<Option<Frame>> {
     }
     let len = u32::from_le_bytes(len);
     if !(9..=MAX_FRAME).contains(&len) {
-        return Err(io::Error::other(format!("フレームの長さがおかしい: {len}")));
+        return Err(io::Error::other(tr!(
+            "Invalid frame length: {len}",
+            len = len
+        )));
     }
     let mut head = [0u8; 9];
     input.read_exact(&mut head)?;
     let kind = Kind::from_u8(head[0] & !COMPRESSED)
-        .ok_or_else(|| io::Error::other("知らないフレームの種類"))?;
+        .ok_or_else(|| io::Error::other(tr!("Unknown frame kind")))?;
     let id = u64::from_le_bytes(head[1..].try_into().unwrap());
     let mut payload = vec![0u8; len as usize - 9];
     input.read_exact(&mut payload)?;
@@ -103,7 +107,7 @@ pub fn read(input: &mut impl Read) -> io::Result<Option<Frame>> {
             .get(..4)
             .map(|b| u32::from_le_bytes(b.try_into().unwrap()));
         if size.is_none_or(|s| s > MAX_FRAME) {
-            return Err(io::Error::other("圧縮したフレームの大きさがおかしい"));
+            return Err(io::Error::other(tr!("Invalid compressed frame size")));
         }
         payload = lz4_flex::decompress_size_prepended(&payload).map_err(io::Error::other)?;
     }

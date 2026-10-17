@@ -239,6 +239,9 @@ mod tests {
         });
         assert_eq!(current(), Lang::En);
         assert_eq!(tr!("Cancelled"), "Cancelled");
+        // 本物の表が最後まで読めている（書き間違いで途中から読めなくなっていない）。
+        assert!(japanese().len() > 200, "{}", japanese().len());
+        with(Lang::Ja, || assert_eq!(tr!("Cancelled"), "取り消しました"));
         assert!(is_cancelled("Cancelled"));
     }
 }

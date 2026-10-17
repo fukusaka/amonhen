@@ -12,6 +12,7 @@
 //! つないでいる相手のあいだで共有する。コア（History・検索の索引・差分）はこの daemon で動き、SSH 先には git に
 //! 触れる処理だけを頼む（アプリ・CLI・VSCode 拡張が、同じ SSH のつながりと索引を使う）。
 
+use amonhen_model::tr;
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter};
 use std::path::{Path, PathBuf};
@@ -145,7 +146,10 @@ fn serve_connection(state: &State, stream: amonhen_remote::endpoint::Duplex) -> 
         let (kind, reply) = match command {
             "status" => (Kind::Ok, status(state).to_string()),
             "stop" => (Kind::Ok, "stopping".to_owned()),
-            other => (Kind::Err, format!("知らない指示: {other}")),
+            other => (
+                Kind::Err,
+                tr!("Unknown command: {command}", command = other),
+            ),
         };
         frame::write_with(&mut writer, kind, 0, reply.as_bytes(), false)?;
         if command == "stop" {
@@ -162,7 +166,11 @@ fn serve_connection(state: &State, stream: amonhen_remote::endpoint::Duplex) -> 
         Ok(s) => s,
         Err(e) => {
             // 開けなければ、最初の要求（Hello）に理由を返して閉じる。
-            reply_error(&mut reader, writer, &format!("{path} を開けない: {e}"));
+            reply_error(
+                &mut reader,
+                writer,
+                &tr!("Can’t open {path}: {e}", path = path, e = e),
+            );
             return Ok(());
         }
     };
@@ -190,7 +198,11 @@ fn serve_front(state: &State, location: &str, mut reader: Reader, writer: Writer
     let (repo, shared) = match opened {
         Ok(r) => r,
         Err(e) => {
-            reply_error(&mut reader, writer, &format!("{location} を開けない: {e}"));
+            reply_error(
+                &mut reader,
+                writer,
+                &tr!("Can’t open {path}: {e}", path = location, e = e),
+            );
             return Ok(());
         }
     };
@@ -223,7 +235,7 @@ fn serve_front(state: &State, location: &str, mut reader: Reader, writer: Writer
                         (session.clone(), writer.clone(), cancels.clone());
                     std::thread::spawn(move || {
                         let result = serde_json::from_slice::<serde_json::Value>(&f.payload)
-                            .map_err(|e| format!("命令を読めない: {e}").into())
+                            .map_err(|e| tr!("Can’t read the command: {e}", e = e).into())
                             .and_then(|request| {
                                 session.handle(&request, &|| cancel.load(Ordering::Relaxed))
                             });
@@ -305,7 +317,12 @@ fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
         let backend: Arc<dyn GitBackend> = Arc::new(GixBackend::open(&key)?);
         let watcher =
             amonhen_watch::Watcher::new(backend.paths(), move |changes| notify_all(changes.0))
-                .map_err(|e| eprintln!("amonhen: {key} を監視できない: {e}"))
+                .map_err(|e| {
+                    eprintln!(
+                        "{}",
+                        tr!("amonhen: Can’t watch {path}: {e}", path = key, e = e)
+                    )
+                })
                 .ok();
         (backend, None, watcher)
     };
@@ -377,7 +394,7 @@ fn core(shared: &Shared) -> Result<&Arc<amonhen_core::Repository>> {
     if let Some(repo) = shared.core.get() {
         return Ok(repo);
     }
-    let cache = cache_path(&shared.key).ok_or("History のキャッシュの置き場所がない")?;
+    let cache = cache_path(&shared.key).ok_or_else(|| tr!("No place for the History cache"))?;
     let repo = match &shared.ssh {
         // SSH 先は、同じつながりの上でコアを動かす（SSH を 2 本にしない）。
         Some(conn) => amonhen_core::Repository::with_cache(
@@ -400,10 +417,11 @@ fn prepared_history(shared: &Shared) -> Result<String> {
     let snapshot = repo.load_history()?;
     let path = repo
         .cache_path()
-        .ok_or("History のキャッシュの置き場所がない")?;
-    let written = amonhen_core::cache::read(path).ok_or("History のキャッシュを書けない")?;
+        .ok_or_else(|| tr!("No place for the History cache"))?;
+    let written =
+        amonhen_core::cache::read(path).ok_or_else(|| tr!("Can’t write the History cache"))?;
     if written.tips != snapshot.tips || written.head != snapshot.head {
-        return Err("History のキャッシュを書けない（古いまま）".into());
+        return Err(tr!("Can’t write the History cache (it’s out of date)").into());
     }
     Ok(path.display().to_string())
 }

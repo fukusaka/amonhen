@@ -243,18 +243,24 @@ mod imp {
     }
 
     pub fn connect(_endpoint: &str) -> io::Result<Duplex> {
-        Err(io::Error::other("共有の daemon を使えない環境です"))
+        Err(io::Error::other(amonhen_model::tr!(
+            "The shared daemon isn’t available in this environment"
+        )))
     }
 
     pub struct Listener;
 
     impl Listener {
         pub fn bind(_endpoint: &str) -> io::Result<Option<Self>> {
-            Err(io::Error::other("共有の daemon を使えない環境です"))
+            Err(io::Error::other(amonhen_model::tr!(
+                "The shared daemon isn’t available in this environment"
+            )))
         }
 
         pub fn accept(&self) -> io::Result<Duplex> {
-            Err(io::Error::other("共有の daemon を使えない環境です"))
+            Err(io::Error::other(amonhen_model::tr!(
+                "The shared daemon isn’t available in this environment"
+            )))
         }
     }
 

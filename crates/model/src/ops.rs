@@ -133,20 +133,20 @@ pub trait Operations: Send + Sync {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Oid>> {
         let _ = (tips, path, contents, cancelled);
-        Err("この環境ではパス・内容で探せません".into())
+        Err(crate::tr!("Can’t search by path or content here").into())
     }
 
     /// `git blame --porcelain` の出力。`rev` がなければ作業ツリーの内容（まだコミットしていない行を含む）。
     fn blame(&self, path: &str, rev: Option<&Oid>) -> Result<Vec<u8>> {
         let _ = (path, rev);
-        Err("この環境では blame できません".into())
+        Err(crate::tr!("Can’t blame here").into())
     }
 
     /// HEAD から `path` を変えたコミット（名前の変更を追う）。`git log --follow -z --name-only` の、
     /// 各コミットが `\x01ID\0件名\0作者\0時刻\0\nその時点のパス\0` になる出力。
     fn file_log(&self, path: &str) -> Result<Vec<u8>> {
         let _ = path;
-        Err("この環境ではファイルの履歴を読めません".into())
+        Err(crate::tr!("Can’t read file history here").into())
     }
 
     fn head_state(&self) -> Result<HeadState>;

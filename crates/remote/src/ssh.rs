@@ -10,6 +10,7 @@
 //! 5. ほかの版は消さない（違う版の Amon Hen が同じ SSH 先を使っても、取り合いにならない）。30 日使われていない
 //!    ものだけを片付ける（使うたびに `used` の印を更新する）。
 
+use amonhen_model::tr;
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -33,10 +34,10 @@ impl Target {
     pub fn parse(location: &str) -> Result<Self> {
         let rest = location
             .strip_prefix("ssh://")
-            .ok_or("ssh:// で始まる場所ではありません")?;
+            .ok_or_else(|| tr!("Not an ssh:// location"))?;
         let slash = rest
             .find('/')
-            .ok_or("ssh://host/path の形で書いてください")?;
+            .ok_or_else(|| tr!("Write it as ssh://host/path"))?;
         let (authority, path) = (&rest[..slash], &rest[slash..]);
         let (destination, port) = match authority.rsplit_once(':') {
             Some((d, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
@@ -45,7 +46,7 @@ impl Target {
             _ => (authority, None),
         };
         if destination.is_empty() {
-            return Err("SSH の接続先がありません".into());
+            return Err(tr!("No SSH destination").into());
         }
         Ok(Self {
             destination: destination.to_owned(),
@@ -112,9 +113,9 @@ impl Daemons {
         {
             return Ok(path.clone());
         }
-        Err(format!(
-            "SSH 先（{}）に合うエンジン（amonhen）を同梱していません",
-            uname.trim()
+        Err(tr!(
+            "No engine (amonhen) bundled for the SSH host ({platform})",
+            platform = uname.trim()
         )
         .into())
     }
@@ -168,7 +169,7 @@ fn run(ssh: &str, target: &Target, script: &str, input: Option<&[u8]>) -> Result
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("{ssh} を起動できない: {e}"))?;
+        .map_err(|e| tr!("Can’t start {program}: {e}", program = ssh, e = e))?;
     if let Some(data) = input {
         let mut stdin = child.stdin.take().unwrap();
         let data = data.to_vec();
@@ -177,7 +178,12 @@ fn run(ssh: &str, target: &Target, script: &str, input: Option<&[u8]>) -> Result
     let out = child.wait_with_output()?;
     if !out.status.success() {
         let message = String::from_utf8_lossy(&out.stderr).trim().to_owned();
-        return Err(format!("SSH 先（{}）でエラー: {message}", target.destination).into());
+        return Err(tr!(
+            "Error on the SSH host ({host}): {message}",
+            host = target.destination,
+            message = message
+        )
+        .into());
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -203,14 +209,19 @@ pub struct RemoteEngine {
 impl RemoteEngine {
     pub fn describe(&self) -> String {
         let how = match self.source {
-            "configured" => "指定したもの",
-            "installed" => "SSH 先に入っているもの",
-            "present" => "前に送ったもの",
-            _ => "今回送った",
+            "configured" => tr!("specified"),
+            "installed" => tr!("installed on the SSH host"),
+            "present" => tr!("sent earlier"),
+            _ => tr!("sent now"),
         };
         match self.pushed_bytes {
-            Some(n) => format!("{}（{how}、{:.1} MB）", self.path, n as f64 / 1e6),
-            None => format!("{}（{how}）", self.path),
+            Some(n) => tr!(
+                "{path} ({how}, {size} MB)",
+                path = self.path,
+                how = how,
+                size = format!("{:.1}", n as f64 / 1e6)
+            ),
+            None => tr!("{path} ({how})", path = self.path, how = how),
         }
     }
 }
@@ -305,8 +316,8 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
         }
     } else {
         let binary = daemons.for_platform(&uname)?;
-        let data =
-            std::fs::read(&binary).map_err(|e| format!("{} を読めない: {e}", binary.display()))?;
+        let data = std::fs::read(&binary)
+            .map_err(|e| tr!("Can’t read {path}: {e}", path = binary.display(), e = e))?;
         let digest = sha1_smol::Sha1::from(&data).digest().to_string();
         let hash = &digest[..16];
         let path = format!("{dir}/{hash}/amonhen");
@@ -317,9 +328,9 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
                 pushed_bytes: None,
             }
         } else if !push {
-            return Err(format!(
-                "SSH 先（{}）に使えるエンジンがありません。amonhen を入れるか（PATH に通す）、AMONHEN_REMOTE_ENGINE で場所を指定してください（送り込みは AMONHEN_PUSH=0 で止めています）",
-                target.destination
+            return Err(tr!(
+                "No usable engine on the SSH host ({host}). Install amonhen (on PATH) or set its location with AMONHEN_REMOTE_ENGINE (sending it is turned off by AMONHEN_PUSH=0)",
+                host = target.destination
             )
             .into());
         } else {
@@ -331,10 +342,11 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
             let got = run(ssh, target, &script, Some(&data))?;
             if got.trim() != digest {
                 let _ = run(ssh, target, &format!("rm -rf {d}"), None);
-                return Err(format!(
-                    "SSH 先（{}）に送ったエンジンの中身が合いません（送った {digest}、SSH 先 {}）",
-                    target.destination,
-                    got.trim()
+                return Err(tr!(
+                    "The engine sent to the SSH host ({host}) doesn’t match (sent {sent}, SSH host {got})",
+                    host = target.destination,
+                    sent = digest,
+                    got = got.trim()
                 )
                 .into());
             }

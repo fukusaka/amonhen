@@ -6,6 +6,7 @@ mod ops;
 mod status;
 mod verify;
 
+use amonhen_model::tr;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -37,12 +38,14 @@ const SAVE_STATUS_EVERY: Duration = Duration::from_secs(60);
 
 /// `url` を `dest`（まだないフォルダ）に clone する。`dest` の親で git を起動する（Activity に残る）。
 pub fn clone(url: &str, dest: &std::path::Path) -> Result<()> {
-    let parent = dest.parent().ok_or("clone する先のフォルダがおかしい")?;
+    let parent = dest
+        .parent()
+        .ok_or_else(|| tr!("The clone destination folder is invalid"))?;
     std::fs::create_dir_all(parent)?;
     let name = dest
         .file_name()
         .and_then(|n| n.to_str())
-        .ok_or("clone する先のフォルダの名前がおかしい")?;
+        .ok_or_else(|| tr!("The clone destination folder’s name is invalid"))?;
     Git::new(parent)
         .write(&["clone", "--", url, name])
         .map(drop)
@@ -268,10 +271,9 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
             let _ = child.wait();
             let _ = out_thread.join();
             let _ = err_thread.join();
-            return Err(format!(
-                "{} 秒のあいだ応答がないので止めました。認証の入力を待っていたのかもしれません\
-                 （ターミナルで同じ git を実行して、認証を済ませてください）",
-                NETWORK_SILENCE.as_secs()
+            return Err(tr!(
+                "Stopped after {seconds} seconds without a response. It may have been waiting for authentication (run the same git command in a terminal and authenticate)",
+                seconds = NETWORK_SILENCE.as_secs()
             )
             .into());
         }
@@ -290,7 +292,7 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
             .trim()
             .to_owned();
         return Err(if message.is_empty() {
-            format!("git が失敗した: {status:?}")
+            tr!("git failed: {status}", status = format!("{status:?}"))
         } else {
             message
         }
@@ -318,7 +320,7 @@ fn spawn_with_stderr(mut cmd: Command, input: Option<&[u8]>) -> Result<(Vec<u8>,
     if !out.status.success() {
         let message = String::from_utf8_lossy(&out.stderr).trim().to_owned();
         return Err(if message.is_empty() {
-            format!("git が失敗した: {:?}", out.status)
+            tr!("git failed: {status}", status = format!("{:?}", out.status))
         } else {
             message
         }

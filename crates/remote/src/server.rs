@@ -1,6 +1,7 @@
 //! daemon の側: 要求を読み、手元の `GitBackend` で実行して応答を書く。要求はそれぞれ別のスレッドで処理し、
 //! 応答は番号で対応づける（重い要求が軽い要求を待たせない）。
 
+use amonhen_model::tr;
 use std::collections::HashMap;
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -112,7 +113,7 @@ impl Server {
                     let request: Request = match postcard::from_bytes(&f.payload) {
                         Ok(r) => r,
                         Err(e) => {
-                            self.reply(f.id, Err(format!("要求を読めない: {e}").into()));
+                            self.reply(f.id, Err(tr!("Can’t read the request: {e}", e = e).into()));
                             continue;
                         }
                     };
@@ -142,7 +143,7 @@ impl Server {
                                 h.delegate(&bytes.0).and_then(|d| encode(&share(d)))
                             }
                             (Request::Delegate(_), None) => {
-                                Err("この daemon は処理を任されない".into())
+                                Err(tr!("This daemon doesn’t take delegated work").into())
                             }
                             (request, _) => handle(&*backend, &search, request, &cancel),
                         });
@@ -233,8 +234,10 @@ fn handle(
     match request {
         Request::Hello { version, .. } => {
             if version != PROTOCOL_VERSION {
-                return Err(format!(
-                    "daemon と通信の形が違います（手元 {version}、daemon {PROTOCOL_VERSION}）。同じ版の amonhend を入れてください"
+                return Err(tr!(
+                    "The daemon speaks a different protocol (local {local}, daemon {daemon}). Install the same version of amonhend",
+                    local = version,
+                    daemon = PROTOCOL_VERSION
                 )
                 .into());
             }
@@ -243,7 +246,7 @@ fn handle(
             })
         }
         Request::PreparedHistory => encode(&Option::<String>::None),
-        Request::Delegate(_) => Err("この daemon は処理を任されない".into()),
+        Request::Delegate(_) => Err(tr!("This daemon doesn’t take delegated work").into()),
         Request::Head => encode(&backend.head()?),
         Request::Tips => encode(&backend.tips()?),
         Request::NewCommits { tips, known_tips } => {
