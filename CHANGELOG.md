@@ -151,8 +151,9 @@ First release.
 #### Fixed
 
 - On Windows, git and the engine no longer flash a console window when the extension runs them.
-- With the bundled engine, Working Copy diffs and line staging follow git's line ending conversion (`core.autocrlf`,
-  `core.eol` and the `text` and `eol` attributes). On Windows, changed files no longer show as entirely rewritten.
+- Working Copy diffs and line staging follow git's line ending conversion (`core.autocrlf`, `core.eol` and the `text`
+  and `eol` attributes), with or without the bundled engine. On Windows, changed files no longer show as entirely
+  rewritten, and staging lines no longer puts CRs into the index. Discarding lines changes only those lines.
 
 ### [0.2.0] - 2026-10-17
 

@@ -5,6 +5,7 @@
 import { access, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
+import { ATTRIBUTES, parseCheckAttr, toGitForm } from './eol.ts';
 import { GitError, shellQuote, type GitExecutor } from './exec.ts';
 import { diffTreeArgs, logArgs, parseLog, parseNameStatus, type Commit, type FileChange } from './log.ts';
 import {
@@ -88,6 +89,13 @@ export interface RepositoryBackend {
   unstage(paths: readonly string[]): Promise<void>;
   /** index のエントリを指定した内容で置き換える（行単位の stage に使う） */
   writeIndex(path: string, mode: string, content: Buffer): Promise<void>;
+  /**
+   * 作業中のファイルを、git に入れる形で（改行の変換をかけたもの。index の blob とそのまま比べられる）。なければ undefined。
+   * index はその path の index の blob（自動の改行の変換は、index に CR があればしない）
+   */
+  worktreeFile(path: string, index: Buffer | undefined): Promise<Buffer | undefined>;
+  /** index の path の blob を、作業中のファイルに書く形で（checkout と同じ変換） */
+  indexInWorktreeForm(path: string): Promise<Buffer>;
   /** 内容を blob として保存し、oid を返す（破棄した内容を Undo で戻すために残す） */
   writeBlob(content: Buffer): Promise<string>;
   /** 作業中のファイルを index の内容に戻す（stage していない変更を破棄する） */
@@ -299,6 +307,23 @@ export class CliBackend implements RepositoryBackend {
     // 内容は index から作ったものなので、clean フィルターは通さない
     const oid = await this.writeBlob(content);
     await this.write(['update-index', '--add', '--cacheinfo', `${mode},${oid},${path}`]);
+  }
+
+  async worktreeFile(path: string, index: Buffer | undefined): Promise<Buffer | undefined> {
+    const data = await readFile(join(this.root, path)).catch(() => undefined);
+    // 改行の変換は CR を取り除くだけなので、CR がなければ git に聞くまでもない
+    if (!data?.includes(0x0d)) {
+      return data;
+    }
+    const [attrs, autocrlf] = await Promise.all([
+      this.read(['check-attr', '-z', ...ATTRIBUTES, '--', path]).then(parseCheckAttr),
+      this.read(['config', '--get', 'core.autocrlf'], [0, 1]).then((s) => s.trim() || undefined),
+    ]);
+    return toGitForm(data, attrs, autocrlf, index);
+  }
+
+  indexInWorktreeForm(path: string): Promise<Buffer> {
+    return this.git.exec(['cat-file', '--filters', `:${path}`], { cwd: this.root, readOnly: true });
   }
 
   async writeBlob(content: Buffer): Promise<string> {

@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { parseCommitObject } from '../git/commitObject.ts';
@@ -116,8 +115,8 @@ export class WorkingCopyController implements vscode.Disposable {
         return computeDiff(change.path, undefined, undefined);
       case 'unstaged': {
         const old = change.letter === 'U' ? undefined : await object(`:${change.path}`);
-        const now =
-          change.letter === 'D' ? undefined : await readFile(join(repo.root, change.path)).catch(() => undefined);
+        // git に入れる形（改行の変換をかけたもの）で index と比べる
+        const now = change.letter === 'D' ? undefined : await repo.backend.worktreeFile(change.path, old);
         return computeDiff(change.path, old, now);
       }
       case 'staged': {
