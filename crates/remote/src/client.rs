@@ -835,6 +835,10 @@ impl Operations for RemoteOperations {
         self.op(Op::ChangeWorktree(change.clone()))
     }
 
+    fn worktree_changes(&self, paths: &[String]) -> Result<Vec<amonhen_model::WorktreeChanges>> {
+        self.op(Op::WorktreeChanges(paths.to_vec()))
+    }
+
     fn working_stats(&self) -> Result<Vec<amonhen_model::FileStat>> {
         self.op(Op::WorkingStats)
     }

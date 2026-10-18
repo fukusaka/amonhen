@@ -233,7 +233,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         slot.workingCopy.onChangeCount = { [weak self, weak slot] count in
             guard let self, let slot else { return }
-            worktreeChanges[slot.path] = count
+            worktreeChanges[WorktreeInfo.canonical(slot.path)] = count
             sidebar.setWorktreeChanges(worktreeChanges)
             showWorktreeHeads()
             guard slot === editing else { return }
@@ -340,7 +340,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                     // ref は全部の worktree で共通なので、どの worktree の知らせも 1 回の読み直しにまとめる。
                     if changes.contains(.refs) { self.refsChanged() }
                     // 変わった worktree だけを読み直す（全部は読み直さない）。
-                    if slot === self.editing { slot.workingCopy.refresh() } else { self.refreshStatus(of: slot.path) }
+                    if slot === self.editing { slot.workingCopy.refresh() } else { self.reloadOtherWorktrees(after: 1) }
                 }
             }
             return slot
@@ -369,72 +369,62 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
     }
 
-    /// worktree ごとの status（パスで引く）。変化の知らせが来た worktree だけを読み直す。
-    private var worktreeStatus: [String: WorkingStatus] = [:]
-    /// 読み直しを待っている worktree（続けて来た知らせは 1 回にまとめる）。
-    private var pendingStatus: [String: DispatchWorkItem] = [:]
-    private var pushScheduled = false
+    /// ほかの worktree の status の指紋（変わっていなければ画面を変えない）。
+    private var worktreeStamps: [String: UInt64] = [:]
+    private var countsWork: DispatchWorkItem?
+    private var countsRunning = false
+    private var countsAgain = false
+    /// 見ていない間の変化も拾うよう、ときどき数え直す（ほかの worktree は開かないので、変化の知らせが来ない）。
+    private var countsTimer: Timer?
 
-    /// ほかの worktree の変更の数を読む（サイドバーの Working Copy の下と、History の札に出す）。まだ読んでいない
-    /// worktree だけを、4 つずつ並べて読む。
-    private func reloadOtherWorktrees() {
-        let missing = worktrees.filter {
-            !$0.isSame(editing.path) && $0.prunable == nil && !$0.bare && worktreeStatus[WorktreeInfo.canonical($0.path)] == nil
-        }.map(\.path)
-        showWorktreeCounts()
-        guard !missing.isEmpty else { return }
+    /// ほかの worktree の変更の数を読み直す（サイドバーの Working Copy の下と、History の札に出す）。開いた
+    /// リポジトリに 1 回で頼み、worktree ごとには開かない（SSH 先でも 1 本のつながりで済む）。続けて呼ばれたら、
+    /// `delay` 待ってまとめる。
+    private func reloadOtherWorktrees(after delay: Double = 0.3) {
+        countsWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated { self?.readWorktreeCounts() }
+        }
+        countsWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        if countsTimer == nil {
+            countsTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, NSApp.isActive, self.window.isVisible, !self.isBackgroundTab else { return }
+                    self.reloadOtherWorktrees(after: 0)
+                }
+            }
+        }
+    }
+
+    private func readWorktreeCounts() {
+        guard !countsRunning else {
+            countsAgain = true
+            return
+        }
+        let paths = worktrees.filter { !$0.isSame(editing.path) && $0.prunable == nil && !$0.bare }.map(\.path)
+        guard worktrees.count > 1, !paths.isEmpty else { return showWorktreeCounts() }
+        countsRunning = true
+        let repository = opened.repository
         let started = CACurrentMediaTime()
         Task {
-            defer { PerformanceLog.record("Worktrees: read the others' status", ms: (CACurrentMediaTime() - started) * 1000) }
-            var queue = missing[...]
-            await withTaskGroup(of: Void.self) { group in
-                for _ in 0..<4 {
-                    guard let path = queue.popFirst() else { break }
-                    group.addTask { await self.readStatus(of: path) }
-                }
-                while await group.next() != nil {
-                    guard let path = queue.popFirst() else { continue }
-                    group.addTask { await self.readStatus(of: path) }
-                }
+            let result = try? await Task.detached(priority: .utility) {
+                try repository.info(["op": "worktreeChanges", "paths": paths], as: WorktreeChangesList.self)
+            }.value
+            PerformanceLog.record("Worktrees: count the others' changes", ms: (CACurrentMediaTime() - started) * 1000)
+            countsRunning = false
+            var changed = false
+            for w in result?.worktrees ?? [] {
+                let key = WorktreeInfo.canonical(w.path)
+                guard worktreeStamps[key] != w.stamp || worktreeChanges[key] == nil else { continue }
+                worktreeStamps[key] = w.stamp
+                worktreeChanges[key] = w.count ?? 0
+                changed = true
             }
-        }
-    }
-
-    /// `path` の worktree の status を、少し待ってから読み直す（その間に来た知らせはまとめる）。
-    private func refreshStatus(of path: String) {
-        let key = WorktreeInfo.canonical(path)
-        pendingStatus[key]?.cancel()
-        let work = DispatchWorkItem { [weak self] in
-            Task { @MainActor in
-                self?.pendingStatus[key] = nil
-                await self?.readStatus(of: path)
-            }
-        }
-        pendingStatus[key] = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
-    }
-
-    private func readStatus(of path: String) async {
-        guard let slot = await slot(for: path),
-              let status = try? await Task.detached(priority: .utility, operation: { try slot.repository.loadStatus() }).value
-        else { return }
-        let key = WorktreeInfo.canonical(path)
-        // 前と同じ版なら、画面は変えない（作業中の worktree からは知らせが絶えず来る）。
-        if let old = worktreeStatus[key], old.generation == status.generation { return }
-        worktreeStatus[key] = status
-        worktreeChanges[path] = status.items.count
-        schedulePush()
-    }
-
-    /// 読んだ数を画面に出す。続けて読んだ分は 0.5 秒ごとにまとめて 1 回（作業中の worktree が多いと、
-    /// 読むたびに描き直して画面が固まる）。
-    private func schedulePush() {
-        guard !pushScheduled else { return }
-        pushScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            MainActor.assumeIsolated {
-                self?.pushScheduled = false
-                self?.showWorktreeCounts()
+            if changed { showWorktreeCounts() }
+            if countsAgain {
+                countsAgain = false
+                reloadOtherWorktrees()
             }
         }
     }
@@ -450,7 +440,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         history.show(worktreeHeads: worktrees.compactMap { w in
             guard let hex = w.head, let head = Data(hex: hex) else { return nil }
             let editingThis = w.isSame(editing.path)
-            let changes = worktreeChanges.first { WorktreeInfo.canonical($0.key) == WorktreeInfo.canonical(w.path) }?.value ?? 0
+            let changes = worktreeChanges[WorktreeInfo.canonical(w.path)] ?? 0
             // ✎ 書き込む先、⌂ メインの作業ツリー、⑂ 追加した worktree（サイドバーと同じ印）。
             let mark = editingThis ? "✎ " : w.main ? "⌂ " : "⑂ "
             let name = mark + w.name + (changes > 0 ? " · \(changes)" : "")
@@ -458,14 +448,27 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         })
     }
 
+    /// 書き込む先にした worktree の順（新しいものが後ろ）。開いたままにするのは、開いたリポジトリと最近の
+    /// `keptSlots` 個まで（SSH 先では 1 つごとにつながりとエンジンを使う。戻ったら開き直す）。
+    private var slotOrder: [String] = []
+    private static let keptSlots = 3
+
     private func activate(_ slot: WorktreeSlot) {
         editing = slot
+        if slot !== opened {
+            let key = WorktreeInfo.canonical(slot.path)
+            slotOrder.removeAll { $0 == key }
+            slotOrder.append(key)
+            while slotOrder.count > Self.keptSlots {
+                slots[slotOrder.removeFirst()] = nil
+            }
+        }
         pages?.replace(.workingCopy, with: slot.workingCopy)
         sidebar.actions = slot.actions
         history.actions = slot.actions
         slot.actions.refreshUndo()
         slot.workingCopy.refresh()
-        changeCount = worktreeChanges[slot.path] ?? 0
+        changeCount = worktreeChanges[WorktreeInfo.canonical(slot.path)] ?? 0
         showWorktrees()
         updateTabTitle()
     }
@@ -557,7 +560,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// worktree を消す（変更が残っていれば、それも捨てると確かめてから --force）。開いたリポジトリは消せない。
     private func removeWorktree(_ info: WorktreeInfo) {
         guard !info.main, !info.isSame(opened.path) else { return NSSound.beep() }
-        let changes = worktreeChanges[info.path] ?? 0
+        let changes = worktreeChanges[WorktreeInfo.canonical(info.path)] ?? 0
         let alert = NSAlert()
         alert.messageText = L("Remove the worktree “%@”?", info.name)
         alert.informativeText = changes > 0
@@ -961,6 +964,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     func windowDidBecomeKey(_ notification: Notification) {
+        // ほかの worktree の変化は知らせが来ないので、戻ってきたら数え直す。
+        if worktrees.count > 1 { reloadOtherWorktrees(after: 0.5) }
         guard pendingChanges.rawValue != 0 else { return }
         let changes = pendingChanges
         pendingChanges = Changes(rawValue: 0)
@@ -988,7 +993,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         if !changes.intersection([.refs, .index, .worktree]).isEmpty {
             // 開いたリポジトリの変化。書き込む先がほかの worktree なら、一覧の見出しの分だけ読み直す。
-            if editing === opened { workingCopy.refresh() } else { refreshStatus(of: opened.path) }
+            if editing === opened { workingCopy.refresh() } else { reloadOtherWorktrees(after: 1) }
         }
     }
 
@@ -1540,6 +1545,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     func windowWillClose(_ notification: Notification) {
         autoFetchTimer?.invalidate()
+        countsTimer?.invalidate()
         connectionTimer?.invalidate()
         watch = nil
         onClose?()

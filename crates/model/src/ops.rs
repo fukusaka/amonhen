@@ -63,6 +63,18 @@ pub enum WorktreeChange {
     Prune,
 }
 
+/// ほかの worktree の変更の数（`Operations::worktree_changes`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct WorktreeChanges {
+    pub path: String,
+    /// 変更のあるファイルの数（untracked も 1 つずつ数える。Working Copy と同じ）。読めなければ None。
+    pub count: Option<u32>,
+    /// status の中身の指紋（変わったかどうかを見分ける）。
+    pub stamp: u64,
+}
+
 /// リモートの変更。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -245,6 +257,12 @@ pub trait Operations: Send + Sync {
     fn change_worktree(&self, change: &WorktreeChange) -> Result<()> {
         let _ = change;
         Err(crate::tr!("Can’t change worktrees here").into())
+    }
+    /// `paths` の worktree の変更の数。worktree は `.git` を共有するので、開いたリポジトリから読む（worktree ごとに
+    /// 開かない。SSH 先でも 1 本のつながりで済む）。
+    fn worktree_changes(&self, paths: &[String]) -> Result<Vec<WorktreeChanges>> {
+        let _ = paths;
+        Err(crate::tr!("Can’t list worktrees here").into())
     }
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（index の分も含む。untracked は含まない）。
     fn working_stats(&self) -> Result<Vec<crate::FileStat>>;

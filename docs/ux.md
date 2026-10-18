@@ -463,6 +463,11 @@ What git says, and what the app keeps:
   `git worktree list --porcelain`), never by editing `.git/worktrees`. Removing one with changes asks, then uses
   `--force`; locked worktrees are shown as locked and never pruned; a worktree whose folder is gone is shown as
   prunable.
+- The other worktrees are not opened just to count their changes: the opened repository's engine runs `git status`
+  in each of them (eight at a time) and answers for all of them in one request (`worktreeChanges`; over SSH one
+  connection serves every worktree). Their counts are read again when refs change, when the window comes to the front
+  and every minute while it is in front, since nothing watches their files. Only the worktree being edited and the two
+  edited before it stay open.
 - The Undo log is per worktree (`<git dir>/amonhen/undo.json`, and a linked worktree has its own git dir), like
   HEAD; undoing something that moved a shared branch is seen from every worktree.
 
@@ -502,7 +507,7 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
 - [x] U13. GitHub integration (accounts, listing and creating PRs, CI status). Left to gh. Detect the GitHub repository from the origin URL; Pull Requests in the sidebar shows open PRs (CI ✓, ✗, ●, draft, review state); right-click to check out, open in the browser, copy the URL; selecting one shows that branch's history. Repository > Create Pull Request… (from the current commit's message, base is the default branch) and Open on GitHub, per-commit CI status in History (the last 100 commits of the current branch and the default branch read in one GraphQL query, ✓, ✗ or a clock to the right of the signature mark), GitHub avatars (the author's avatarUrl from the same query, preferred over Gravatar), and Clone from your own repositories (U1) are also done
 - [x] U14. AI (translation, explanation and message suggestions through the Claude Code / Codex CLI, conflict resolution, per-purpose prompt settings). Choose the CLI (default: not used), model and language in Settings > AI, and edit per-purpose prompts as files or restore the default. Translation and explanation in History details (the combined diff for a multiple selection), ✨ suggestions in Working Copy ("メッセージに入れる" (Insert into Message)), "AI で解消" (Resolve with AI) in the merge editor (received as JSON, discarded if markers remain; "Result に入れる" (Insert into Result) replaces, ⌘Z reverts) and "AI で解説" (Explain with AI), results shown as they stream and cached. The first-time confirmation per repository, confirmation of repository prompts, explanation from right-clicking a diff hunk (purpose "hunk explanation", in History and Working Copy), and "試す" (Try) for prompts in Settings (sends the current prompt with a sample diff and message) are also done. Codex is not installed on this Mac, so its output parsing has not been verified
 - [x] U15. Worktrees in the core and the CLI: listing (`git worktree list --porcelain`), add, remove, prune, over SSH
-  too; `amonhen worktree`.
+  too; `amonhen worktree` (`list --changes` adds each worktree's number of changed files).
 - [x] U16. Viewing worktrees: the sidebar's Worktrees with branches and change counts, kept up to date as worktrees
   come and go; worktrees grouped under their repository on the repository page; opening a worktree's folder opens its
   repository's tab.

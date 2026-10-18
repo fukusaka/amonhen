@@ -45,7 +45,7 @@ usage: amonhen [<path>]
        amonhen run [<json>…]
        amonhen watch [--json]
        amonhen undo [--list | --peek]
-       amonhen worktree [list [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune]
+       amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune]
        amonhen merge-file [--all] [--check] <file>…
        amonhen clone <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
@@ -561,6 +561,7 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
     let mut dir = PathBuf::from(".");
     let mut json = false;
     let mut force = false;
+    let mut changes = false;
     let mut branch: Option<String> = None;
     let mut words: Vec<String> = Vec::new();
     let mut a = Args::new(args);
@@ -569,6 +570,7 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
             "-C" => dir = PathBuf::from(a.value("-C")?),
             "--json" => json = true,
             "--force" | "-f" => force = true,
+            "--changes" => changes = true,
             "-b" => branch = Some(a.value("-b")?.to_owned()),
             s if s.starts_with('-') => {
                 return Err(format!(
@@ -588,10 +590,23 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
     match words.first().map(String::as_str).unwrap_or("list") {
         "list" => {
             let r = command(&*front, serde_json::json!({"op": "worktrees"}))?;
-            let list = r["info"]["worktrees"]
+            let mut list = r["info"]["worktrees"]
                 .as_array()
                 .cloned()
                 .unwrap_or_default();
+            // --changes なら、それぞれの変更のあるファイルの数（開いたリポジトリから 1 回で読む）を `changes` に。
+            if changes {
+                let paths: Vec<&str> = list.iter().filter_map(|w| w["path"].as_str()).collect();
+                let r = command(
+                    &*front,
+                    serde_json::json!({"op": "worktreeChanges", "paths": paths}),
+                )?;
+                for c in r["info"]["worktrees"].as_array().into_iter().flatten() {
+                    if let Some(w) = list.iter_mut().find(|w| w["path"] == c["path"]) {
+                        w["changes"] = c["count"].clone();
+                    }
+                }
+            }
             if json {
                 println!("{}", serde_json::Value::Array(list));
                 return Ok(ExitCode::SUCCESS);
@@ -610,6 +625,9 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
                 }
                 if w["prunable"].is_string() {
                     marks.push(tr!("prunable"));
+                }
+                if let Some(n) = w["changes"].as_u64().filter(|&n| n > 0) {
+                    marks.push(tr!("{count} changed", count = n));
                 }
                 let marks = if marks.is_empty() {
                     String::new()

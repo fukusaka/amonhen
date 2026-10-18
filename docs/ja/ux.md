@@ -450,6 +450,10 @@ git の考え方と、アプリが守ること:
 - worktree の作成・削除は git で行う（`git worktree add`・`remove`・`prune`、一覧は
   `git worktree list --porcelain`）。`.git/worktrees` を直接いじらない。変更が残っている worktree の削除は確かめて
   から `--force`。ロック中のものはロック中と見せ、片付けない。フォルダがなくなったものは片付け待ちと見せる。
+- ほかの worktree は、変更を数えるためだけには開かない。開いたリポジトリのエンジンが、それぞれの中で `git status`
+  を動かし（8 つずつ）、1 回の要求でまとめて答える（`worktreeChanges`。SSH 先でも 1 本のつながりで全部の worktree
+  を扱う）。ファイルの変化は見張らないので、ref が変わったとき、ウィンドウが前に来たとき、前にある間は 1 分ごとに
+  数え直す。開いたままにするのは、書き込む先と、その前に書き込んだ 2 つまで。
 - Undo の記録は worktree ごと（`<git dir>/amonhen/undo.json`。追加した worktree は自分の git dir を持つ）で、HEAD
   と同じ。共有のブランチを動かした操作を戻すと、どの worktree からもそう見える。
 
@@ -487,7 +491,7 @@ git の考え方と、アプリが守ること:
 - [x] U13. GitHub 連携（アカウント、PR の一覧と作成、CI の状態）。gh に任せる。origin の URL から GitHub のリポジトリを判定し、サイドバーの Pull Requests に開いている PR（CI の ✓・✗・●、draft、レビューの状態）、右クリックでチェックアウト・ブラウザで開く・URL のコピー、選ぶとそのブランチの履歴。Repository > Create Pull Request…（今のコミットのメッセージから、base は既定のブランチ）と Open on GitHub、History のコミットごとの CI の状態（今のブランチと既定のブランチの直近 100 コミットを GraphQL で 1 回に読み、署名の印の右に ✓・✗・時計）、GitHub のアバター（同じ問い合わせで作者の avatarUrl を取り、Gravatar より優先）、自分のリポジトリから Clone（U1）も済み
 - [x] U14. AI（Claude Code / Codex の CLI 経由の翻訳・解説・メッセージの提案、コンフリクトの解消、用途ごとのプロンプトの設定）。Settings > AI で CLI（既定は使わない）・モデル・言語を選び、用途ごとのプロンプトをファイルで編集・既定に戻す。History の詳細の翻訳・解説（複数選択ではまとめた差分）、Working Copy の ✨ 提案（「メッセージに入れる」）、マージエディタの「AI で解消」（JSON で受け、マーカーが残れば捨てる。「Result に入れる」で置き換え、⌘Z で戻せる）と「AI で解説」、結果は流しながら出し、キャッシュする。リポジトリごとの初回の確認、リポジトリのプロンプトの確認、差分の hunk の右クリックからの解説（用途「hunk の解説」、History・Working Copy）、Settings のプロンプトの「試す」（見本の差分・メッセージで今のプロンプトを送る）も済み。Codex はこの Mac に入っていないので、出力の読み取りは確かめていない
 - [x] U15. コアと CLI の worktree: 一覧（`git worktree list --porcelain`）・作成・削除・片付け（SSH 先も）、
-  `amonhen worktree`。
+  `amonhen worktree`（`list --changes` で、それぞれの変更のあるファイルの数も出す）。
 - [x] U16. worktree を見る: サイドバーの Worktrees（ブランチと変更の数、増減をすぐ反映）、リポジトリのページで
   リポジトリの下にまとめる、worktree のフォルダを開いたらそのリポジトリのタブを開く。
 - [x] U17. 1 つの worktree に書く: 書き込む先（ツールバーの ✎）、HEAD・index・作業ツリーに触れる命令をそこへ、

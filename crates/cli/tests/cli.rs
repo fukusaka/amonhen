@@ -131,6 +131,12 @@ fn worktree_lists_adds_and_removes() {
         out.contains("[wt-topic]") && out.contains("(current)"),
         "{out}"
     );
+    // --changes で、それぞれの変更の数を出す。
+    std::fs::write(Path::new(wt).join("new.txt"), "x").unwrap();
+    let (out, code) = amonhen(home.path(), &["worktree", "-C", path, "list", "--changes"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("1 changed"), "{out}");
+    std::fs::remove_file(Path::new(wt).join("new.txt")).unwrap();
     // 開いた worktree が「現在」になる（git と同じく、実行した場所の worktree）。
     let (out, _) = amonhen(home.path(), &["worktree", "-C", wt, "list", "--json"]);
     let list: serde_json::Value = serde_json::from_str(&out).unwrap();

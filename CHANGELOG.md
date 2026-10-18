@@ -58,7 +58,8 @@ becomes the GitHub Release notes.
 - Tags are grouped into folders by `/` like branches (`backup/…`, `archive/…`), and clicking a folder or a remote in
   the sidebar opens or closes it.
 - Copy a branch or tag name from the sidebar's right-click menu, or from a commit's menu in History.
-- `amonhen worktree` (list, add, remove, prune), the same as `git worktree`, through the core (so over SSH too).
+- `amonhen worktree` (list, add, remove, prune), the same as `git worktree`, through the core (so over SSH too);
+  `list --changes` adds each worktree's number of changed files.
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`). Add one
   from "+" or the Places menu for any host, or from a listed host's menu.
 - Choosing an SSH folder: adding a folder to scan or an SSH connection suggests hosts from `~/.ssh/config` and
@@ -67,9 +68,12 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
-- Opening many worktrees of an SSH repository no longer fails with "Session open refused by peer": sshd allows only
-  a few sessions per connection, so past five open engines each one gets its own SSH connection, and short commands
-  the shared connection refuses are retried on their own.
+- Opening an SSH repository with many worktrees no longer fails with "Session open refused by peer", and no longer
+  keeps an engine and a connection per worktree: the opened repository counts every worktree's changes in one request
+  (`worktreeChanges`, remote protocol 19), only the edited worktree and the two before it stay open, and past five
+  engines per host each gets its own SSH connection (sshd allows only a few sessions per connection; short commands it
+  refuses are retried on their own). With 59 worktrees on a Linux host this went from 59 engines to 2, and counting
+  them all takes about 2 seconds.
 - History no longer crashes when showing only the commits that match a search scrolled down past the matches.
 - Fetch, Pull and Push no longer hang forever when git waits for credentials nobody can see: after 120 seconds with no
   output they stop and say so.

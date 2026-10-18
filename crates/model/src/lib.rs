@@ -24,7 +24,7 @@ pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use oid::{Oid, OidMap, OidSet};
 pub use ops::{
     ConfigEntry, HeadState, Operations, Outcome, PullMode, RemoteChange, RemoteEntry, ResetMode,
-    Sequence, WorktreeChange,
+    Sequence, WorktreeChange, WorktreeChanges,
 };
 pub use refs::{RefEntry, RefKind, Refs, RepoPaths};
 pub use status::{Status, StatusEntry, StatusKind};

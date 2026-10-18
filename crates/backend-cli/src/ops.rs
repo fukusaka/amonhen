@@ -1,7 +1,7 @@
 use amonhen_model::tr;
 use amonhen_model::{
     ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RemoteChange, RemoteEntry,
-    ResetMode, Result, Sequence, WorktreeChange,
+    ResetMode, Result, Sequence, WorktreeChange, WorktreeChanges,
 };
 
 use crate::Git;
@@ -644,5 +644,82 @@ impl Operations for Git {
             WorktreeChange::Prune => vec!["worktree", "prune"],
         };
         self.write(&args).map(drop)
+    }
+
+    fn worktree_changes(&self, paths: &[String]) -> Result<Vec<WorktreeChanges>> {
+        // このリポジトリの worktree のパスだけを読む（ほかの場所は読まない）。
+        let listed = self.worktree_list()?;
+        let known: Vec<&[u8]> = listed
+            .split(|&b| b == 0)
+            .filter_map(|field| field.strip_prefix(b"worktree "))
+            .collect();
+        let paths: Vec<&String> = paths
+            .iter()
+            .filter(|p| known.contains(&p.as_bytes()))
+            .collect();
+        // 1 つずつ git status を動かす。数が多いので 8 つまで並べる。
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let results: std::sync::Mutex<Vec<Option<(u32, u64)>>> =
+            std::sync::Mutex::new(vec![None; paths.len()]);
+        std::thread::scope(|scope| {
+            for _ in 0..paths.len().min(8) {
+                scope.spawn(|| {
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(path) = paths.get(i) else { break };
+                        let changes = Git::new(path.as_str()).count_changes();
+                        results.lock().unwrap()[i] = changes.ok();
+                    }
+                });
+            }
+        });
+        Ok(paths
+            .into_iter()
+            .zip(results.into_inner().unwrap())
+            .map(|(path, result)| {
+                let (count, stamp) = match result {
+                    Some((count, stamp)) => (Some(count), stamp),
+                    None => (None, 0),
+                };
+                WorktreeChanges {
+                    path: path.clone(),
+                    count,
+                    stamp,
+                }
+            })
+            .collect())
+    }
+}
+
+impl Git {
+    /// 変更のあるファイルの数（untracked も 1 つずつ。Working Copy の一覧と同じ数え方）と、status の指紋。
+    fn count_changes(&self) -> Result<(u32, u64)> {
+        use std::hash::{Hash, Hasher};
+        let out = self.read(&[
+            "-c",
+            "core.untrackedCache=true",
+            "-c",
+            "status.showUntrackedFiles=all",
+            "status",
+            "--porcelain=v2",
+            "-z",
+            "--untracked-files=all",
+        ])?;
+        let mut count = 0;
+        let mut fields = out.split(|&b| b == 0);
+        while let Some(field) = fields.next() {
+            match field.first() {
+                Some(b'1' | b'u' | b'?') => count += 1,
+                // 名前を変えたものは、続く元の名前を飛ばす。
+                Some(b'2') => {
+                    count += 1;
+                    fields.next();
+                }
+                _ => {}
+            }
+        }
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        out.hash(&mut hasher);
+        Ok((count, hasher.finish()))
     }
 }

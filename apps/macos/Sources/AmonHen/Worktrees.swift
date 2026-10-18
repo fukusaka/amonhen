@@ -95,6 +95,16 @@ nonisolated struct WorktreeList: Decodable, Sendable {
     }
 }
 
+/// コアの `worktreeChanges` の答え（ほかの worktree の変更の数）。
+nonisolated struct WorktreeChangesList: Decodable, Sendable {
+    struct Entry: Decodable, Sendable {
+        let path: String
+        let count: Int?
+        let stamp: UInt64
+    }
+    let worktrees: [Entry]
+}
+
 /// 書き込む先にできる worktree の組: そのリポジトリ、操作、Working Copy、変化の見張り。History・ref・詳細は
 /// リポジトリで共通なので、ウィンドウが開いたリポジトリのものを使う（docs/ux.md の「Worktrees」）。
 final class WorktreeSlot {

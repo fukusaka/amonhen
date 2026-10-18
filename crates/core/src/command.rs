@@ -247,6 +247,11 @@ pub enum Command {
     },
     /// worktree の一覧（`info.worktrees`: path・head・branch・detached・bare・locked・prunable・main・current）。
     Worktrees,
+    /// `paths` の worktree の変更の数（`info.worktrees`: path・count・stamp）。開いたリポジトリから読むので、
+    /// worktree ごとに開かなくてよい。
+    WorktreeChanges {
+        paths: Vec<String>,
+    },
     /// `path` に worktree を作る（`git worktree add`）。`new_branch` があれば `start`（なければ HEAD）から作る。
     WorktreeAdd {
         path: String,
@@ -1425,6 +1430,11 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::WorktreeChanges { paths } => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "worktrees": ops.worktree_changes(&paths)? })),
+                ..Default::default()
+            }),
             Command::WorktreeAdd {
                 path,
                 start,
@@ -1810,6 +1820,16 @@ mod tests {
         assert_eq!(list[1]["current"], false);
         // 変更が残っていれば、force なしでは消せない（git が断る）。
         std::fs::write(wt.join("new.txt"), "x").unwrap();
+        // ほかの worktree の変更の数は、開いたリポジトリから読める（一覧にないパスは読まない）。
+        let path = list[1]["path"].as_str().unwrap();
+        let changes = run(
+            &repo,
+            &format!(r#"{{"op":"worktreeChanges","paths":["{path}","/nowhere"]}}"#),
+        );
+        let changes = changes["info"]["worktrees"].as_array().unwrap().clone();
+        assert_eq!(changes.len(), 1, "{changes:?}");
+        assert_eq!(changes[0]["path"], path);
+        assert_eq!(changes[0]["count"], 1);
         let refused = repo.run_json(&format!(
             r#"{{"op":"worktreeRemove","path":"{}"}}"#,
             wt.display()
