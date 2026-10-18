@@ -16,7 +16,7 @@ export function platformName(platform = process.platform, arch = process.arch): 
 
 function run(program: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(program, args, (err, stdout, stderr) => (err ? reject(new Error(stderr.trim() || err.message)) : resolve(stdout)));
+    execFile(program, args, { windowsHide: true }, (err, stdout, stderr) => (err ? reject(new Error(stderr.trim() || err.message)) : resolve(stdout)));
   });
 }
 

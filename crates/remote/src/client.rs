@@ -5,7 +5,7 @@ use amonhen_model::tr;
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
@@ -103,7 +103,7 @@ impl Connection {
 
     /// `program args...` を起動し、その標準入出力でつなぐ（`amonhend --stdio <repo>`、`ssh host amonhend ...`）。
     pub fn spawn(program: &str, args: &[String]) -> Result<Arc<Self>> {
-        let mut child = Command::new(program)
+        let mut child = amonhen_model::process::command(program)
             .args(args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -393,6 +393,14 @@ impl GitBackend for RemoteBackend {
     fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>> {
         let bytes: Bytes = self.conn.call(&Request::WorktreeFile(path.to_owned()))?;
         Ok(Arc::new(bytes.0))
+    }
+
+    fn to_worktree_form(&self, path: &str, content: &[u8]) -> Result<Vec<u8>> {
+        let bytes: Bytes = self.conn.call(&Request::ToWorktreeForm {
+            path: path.to_owned(),
+            content: Bytes(content.to_vec()),
+        })?;
+        Ok(bytes.0)
     }
 
     fn stage(&self, paths: &[&str]) -> Result<()> {

@@ -43,8 +43,8 @@ beforeEach(async () => {
   backend = await CliBackend.open(new GitExecutor('git'), dir);
 });
 
-afterEach(() => {
-  backend.dispose();
+afterEach(async () => {
+  await backend.dispose();
   rmSync(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
@@ -251,6 +251,6 @@ test('updateSubmodules initializes a submodule', async () => {
     assert.equal(readFileSync(join(clone, 'vendor/lib/l.txt'), 'utf8'), 'l\n');
   } finally {
     delete process.env.GIT_CONFIG_PARAMETERS;
-    b.dispose();
+    await b.dispose();
   }
 });

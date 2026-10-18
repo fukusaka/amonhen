@@ -163,7 +163,7 @@ impl Git {
     /// `primaries`（主鍵の指紋）の鍵のユーザー ID のメールアドレスと有効性。gpg を 1 回だけ起動する。
     fn key_uids(&self, primaries: &[&str]) -> std::collections::HashMap<String, Vec<SignerEmail>> {
         let program = self.gpg_program();
-        let out = std::process::Command::new(&program)
+        let out = amonhen_model::process::command(&program)
             .args([
                 "--batch",
                 "--no-tty",

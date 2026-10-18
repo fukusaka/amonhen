@@ -2,7 +2,7 @@
 
 [日本語](ja/development.md)
 
-Building, testing, and launch options for checking. For the design see [design.md](design.md), and for working rules see [CLAUDE.md](../CLAUDE.md).
+Building, testing, and launch options for checking. For the design see [design.md](design.md), and for working rules see [CLAUDE.md](../CLAUDE.md). Setting up and driving a real Windows machine is in [windows.md](windows.md).
 
 ## Build and test
 

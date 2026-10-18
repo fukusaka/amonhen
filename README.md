@@ -41,7 +41,7 @@ For Linux (an early GTK4 app, and the command line), Windows (command line), the
 - [VSCode extension](apps/vscode)
 - [Design](docs/design.md), and how [the VSCode extension](docs/vscode.md) and
   [the engine's protocol](docs/front.md) are built
-- [Development](docs/development.md) and [making a release](docs/release.md)
+- [Development](docs/development.md), [a Windows machine](docs/windows.md) and [making a release](docs/release.md)
 - [Changelog](CHANGELOG.md)
 
 ## License

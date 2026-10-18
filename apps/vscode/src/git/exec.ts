@@ -52,6 +52,8 @@ export class GitExecutor {
       const child = spawn(this.path, fullArgs, {
         cwd: opts.cwd,
         env: { ...process.env, ...BASE_ENV, ...opts.env },
+        // Windows でコンソールの窓を出さない
+        windowsHide: true,
       });
       const out: Buffer[] = [];
       const err: Buffer[] = [];

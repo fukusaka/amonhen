@@ -230,7 +230,7 @@ export class DaemonClient {
 /** daemon のソケットの場所（amonhend 自身に聞く。通信の形の版が名前に入っている） */
 function socketPath(daemon: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(daemon, ['--socket'], (err, stdout) => {
+    execFile(daemon, ['--socket'], { windowsHide: true }, (err, stdout) => {
       if (err) {
         reject(new DaemonError(`${daemon} を起動できません: ${err.message}`));
       } else {

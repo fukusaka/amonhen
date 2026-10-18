@@ -142,7 +142,7 @@ impl<'a> Args<'a> {
 
 /// `path` を含むリポジトリの作業ツリーの一番上（`git rev-parse --show-toplevel`）。
 pub(crate) fn repository_root(path: &Path) -> Result<PathBuf> {
-    let out = std::process::Command::new("git")
+    let out = amonhen_model::process::command("git")
         .arg("-C")
         .arg(path)
         .args(["rev-parse", "--show-toplevel"])

@@ -9,6 +9,7 @@ mod graph;
 pub mod i18n;
 mod oid;
 mod ops;
+pub mod process;
 mod refs;
 pub mod scan;
 pub mod search;

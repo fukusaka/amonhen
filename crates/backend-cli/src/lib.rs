@@ -86,7 +86,7 @@ impl Git {
     }
 
     pub(crate) fn command(&self, args: &[&str]) -> Command {
-        let mut cmd = Command::new("git");
+        let mut cmd = amonhen_model::process::command("git");
         cmd.current_dir(&self.workdir)
             // 利用者の端末に依存しない出力にする。
             .env("LC_ALL", "C")
@@ -453,16 +453,11 @@ pub(crate) fn kill_tree(child: &mut std::process::Child) {
         libc::kill(-(child.id() as i32), libc::SIGKILL);
     }
     #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // 窓を出さない（CREATE_NO_WINDOW）。
-        let _ = std::process::Command::new("taskkill")
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .creation_flags(0x0800_0000)
-            .status();
-    }
+    let _ = amonhen_model::process::command("taskkill")
+        .args(["/PID", &child.id().to_string(), "/T", "/F"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
     let _ = child.kill();
 }
 

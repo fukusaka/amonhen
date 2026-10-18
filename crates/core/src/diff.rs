@@ -228,6 +228,93 @@ pub fn apply_selection(diff: &FileDiff, apply: impl Fn(usize) -> bool) -> Vec<u8
     out
 }
 
+/// `diff`（index から作業ツリーへ。どちらも git に入れる形）の `discard` が真を返す行の変更を、作業ツリーから
+/// 取り除いた中身（作業ツリーに書く形）。
+///
+/// 残す行は `worktree`（作業ツリーのファイルの生のバイト）の行を、改行も含めてそのまま使う。戻す行（index の行）は
+/// `index_worktree`（index の blob を作業ツリーの形にしたもの。checkout と同じ改行）の行を使う。こうして、選んだ行の
+/// ほかは 1 バイトも変えない（改行が混ざったファイルや、設定と違う改行のファイルでも）。
+///
+/// 作業ツリーの形と git に入れる形が行ごとに対応しない（改行のほかも変わる・行の数が変わる。
+/// `working-tree-encoding` など）ときは None。
+pub fn discard_selection(
+    diff: &FileDiff,
+    discard: impl Fn(usize) -> bool,
+    worktree: &[u8],
+    index_worktree: &[u8],
+) -> Option<Vec<u8>> {
+    let raw = same_lines(worktree, &diff.new)?;
+    let restored = same_lines(index_worktree, &diff.old)?;
+    // 改行のない最後の行の後ろに行を足すときに補う改行。
+    let eol: &[u8] = if worktree.windows(2).any(|w| w == b"\r\n") {
+        b"\r\n"
+    } else {
+        b"\n"
+    };
+    let mut out = Vec::with_capacity(worktree.len());
+    let push = |out: &mut Vec<u8>, bytes: &[u8]| {
+        if out.last().is_some_and(|&b| b != b'\n') {
+            out.extend_from_slice(eol);
+        }
+        out.extend_from_slice(bytes);
+    };
+    // 次に写す行（0 始まり）。差分に出ない行は両方で同じなので、作業ツリーの側から写す。
+    let (mut next_old, mut next_new) = (0usize, 0usize);
+    let copy_until = |out: &mut Vec<u8>, next_new: &mut usize, end: usize| {
+        for r in &raw[*next_new..end] {
+            push(out, &worktree[r.clone()]);
+        }
+        *next_new = end;
+    };
+    for (row, line) in diff.lines.iter().enumerate() {
+        match line.kind {
+            DiffRow::CONTEXT => {
+                let (at_old, at_new) = (line.old_no as usize - 1, line.new_no as usize - 1);
+                copy_until(&mut out, &mut next_new, at_new + 1);
+                next_old = at_old + 1;
+            }
+            DiffRow::REMOVED => {
+                let at = line.old_no as usize - 1;
+                let end = next_new + (at - next_old);
+                copy_until(&mut out, &mut next_new, end);
+                next_old = at + 1;
+                if discard(row) {
+                    push(&mut out, &index_worktree[restored[at].clone()]);
+                }
+            }
+            DiffRow::ADDED => {
+                let at = line.new_no as usize - 1;
+                next_old += at - next_new;
+                copy_until(&mut out, &mut next_new, at);
+                next_new = at + 1;
+                if !discard(row) {
+                    push(&mut out, &worktree[raw[at].clone()]);
+                }
+            }
+            _ => {}
+        }
+    }
+    copy_until(&mut out, &mut next_new, raw.len());
+    Some(out)
+}
+
+/// `form`（作業ツリーの形）と `git`（git に入れる形）が、改行のほかは同じ行の並びなら、`form` の行の範囲（改行を含む）。
+fn same_lines(form: &[u8], git: &[u8]) -> Option<Vec<Range<usize>>> {
+    let a = full_line_ranges(form);
+    let b = full_line_ranges(git);
+    let same = a.len() == b.len()
+        && a.iter()
+            .zip(&b)
+            .all(|(x, y)| line_body(&form[x.clone()]) == line_body(&git[y.clone()]));
+    same.then_some(a)
+}
+
+/// 行の末尾の改行（`\n`・`\r\n`）を除いたもの。
+fn line_body(line: &[u8]) -> &[u8] {
+    let line = line.strip_suffix(b"\n").unwrap_or(line);
+    line.strip_suffix(b"\r").unwrap_or(line)
+}
+
 /// `before` から `after` への行の差分で、`before` の消された行と `after` の足された行の印。
 fn changed_lines(before: &[u8], after: &[u8]) -> (Vec<bool>, Vec<bool>) {
     let input = InternedInput::new(before, after);
@@ -812,5 +899,18 @@ mod tests {
     fn additions_to_empty_files_and_binaries() {
         assert_eq!(render(&diff("", "x\n", 3)), "@@ -0,0 +1 @@\n+x\n");
         assert!(diff("a\0b", "a\0c", 3).binary);
+    }
+
+    #[test]
+    fn refuses_to_discard_when_the_forms_differ_beyond_line_endings() {
+        let diff = file_diff(b"a\nb\n".to_vec(), b"a\nc\n".to_vec(), 3);
+        // 行ごとに改行だけが違うなら、作業ツリーの行をそのまま使う。
+        assert_eq!(
+            discard_selection(&diff, |_| true, b"a\r\nc\r\n", b"a\r\nb\r\n").unwrap(),
+            b"a\r\nb\r\n"
+        );
+        // 行の数や中身が違う（working-tree-encoding など）なら組み立てない。
+        assert!(discard_selection(&diff, |_| true, b"a\nc\nd\n", b"a\nb\n").is_none());
+        assert!(discard_selection(&diff, |_| true, b"a\nC\n", b"a\nb\n").is_none());
     }
 }

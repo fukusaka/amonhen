@@ -13,7 +13,7 @@
 use amonhen_model::tr;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 
 use amonhen_model::Result;
@@ -158,7 +158,7 @@ fn base_args(target: &Target) -> Vec<String> {
 
 /// SSH 先で `script` を実行し、標準出力を返す。`input` は標準入力に流す。
 fn run(ssh: &str, target: &Target, script: &str, input: Option<&[u8]>) -> Result<String> {
-    let mut child = Command::new(ssh)
+    let mut child = amonhen_model::process::command(ssh)
         .args(base_args(target))
         .arg(script)
         .stdin(if input.is_some() {
