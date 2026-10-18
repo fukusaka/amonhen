@@ -132,7 +132,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     // MARK: - 分類
 
     /// 左の分類。
-    private enum Category: Equatable {
+    private enum Category: Hashable {
         /// `local` はこの Mac のリポジトリ（手元の共有の daemon 越しも含む）、`host` は SSH のホストごと。`folder` は
         /// この Mac のフォルダの下、`hostFolder` は SSH のホストのフォルダの下（場所の階層）、`scanFolder` はスキャンする
         /// フォルダの中のフォルダの下（スキャンの階層）。場所とスキャンで同じフォルダが出ても、別の分類にする（同じに
@@ -610,12 +610,21 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     /// `category` のリポジトリ。追加した worktree は、元のリポジトリも一覧にあれば出さない（元のリポジトリのタブの
     /// Worktrees から使う。docs/ux.md の「Worktrees」）。
     private func paths(in category: Category) -> [String] {
-        let all = Set(Bookmarks.shared.allLocations.map(Self.localPath))
-        return allPaths(in: category).filter { path in
+        if let known = pathsCache[category] { return known }
+        let all = listedCache ?? Set(Bookmarks.shared.allLocations.map(Self.localPath))
+        listedCache = all
+        let paths = allPaths(in: category).filter { path in
             guard let main = RepositoryList.mainRepository(ofWorktree: Self.localPath(path)) else { return true }
             return !all.contains(main)
         }
+        pathsCache[category] = paths
+        return paths
     }
+
+    /// 分類ごとのリポジトリと、一覧にあるもの全部（左の行を描くたびに数え直すと、分類が多いとき作り直しのたびに
+    /// 数百 ms 止まる）。一覧が変わったら `reload` で捨てる。
+    private var pathsCache: [Category: [String]] = [:]
+    private var listedCache: Set<String>?
 
     private func allPaths(in category: Category) -> [String] {
         let bookmarks = Bookmarks.shared
@@ -642,6 +651,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
     /// 左と右を作り直す。選んでいた行とスクロールの位置は保つ。
     private func reload() {
+        pathsCache = [:]
+        listedCache = nil
         let bookmarks = Bookmarks.shared
         if style == .page {
             sideRoots = makeSidebar()
