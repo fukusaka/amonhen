@@ -109,6 +109,7 @@ class CatFileProcess {
     this.child = spawn(gitPath, ['--no-optional-locks', 'cat-file', '--batch-command'], {
       cwd,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      windowsHide: true,
     });
     this.child.stdout.on('data', (c: Buffer) => this.onData(c));
     this.child.stdin.on('error', () => {});

@@ -104,7 +104,7 @@ fn version_key(version: &str) -> (Vec<u64>, u8, u64) {
 
 /// `path` のエンジンの版（動かして聞く）。
 fn version_of(path: &Path) -> Option<(String, u32)> {
-    let out = std::process::Command::new(path)
+    let out = amonhen_model::process::command(path)
         .arg("--version")
         .output()
         .ok()?;

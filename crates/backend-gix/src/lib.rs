@@ -515,7 +515,7 @@ impl GitBackend for GixBackend {
     // gix には commit-graph を書く機能がないので git に任せる。書き込み系の CliBackend を作ったら移す。
     fn write_commit_graph(&self) -> Result<()> {
         let repo = self.repo.to_thread_local();
-        let out = std::process::Command::new("git")
+        let out = amonhen_model::process::command("git")
             .arg("--git-dir")
             .arg(repo.common_dir())
             // 変更のあったパスの Bloom フィルタも書き、パスでの履歴の検索（`git log -- <path>`）を速くする。

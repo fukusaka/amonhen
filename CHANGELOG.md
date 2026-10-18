@@ -60,6 +60,8 @@ becomes the GitHub Release notes.
   between screens of different scale (1x and 2x).
 - Building History no longer spins up threads for every few commits. On the Linux engines (musl) it was 5 times
   slower than it should be; on git/git it now takes about 0.1 s instead of 0.6 s there, and about 20% less elsewhere.
+- On Windows, the shared daemon no longer flashes a console window each time it runs git or ssh (for example on
+  every branch selected in the VSCode extension).
 
 ### [0.2.0] - 2026-10-17
 
@@ -141,6 +143,10 @@ First release.
 ## VSCode extension
 
 ### [Unreleased]
+
+#### Fixed
+
+- On Windows, git and the engine no longer flash a console window when the extension runs them.
 
 ### [0.2.0] - 2026-10-17
 
