@@ -1834,8 +1834,9 @@ mod tests {
         assert_eq!(changes.len(), 1, "{changes:?}");
         assert_eq!(changes[0]["path"], path);
         assert_eq!(changes[0]["count"], 1);
-        // 変更のある worktree は見張るので、後から書き換えても（fresh なしで）数え直される。
+        // HEAD と index は見張るので、stage すれば（fresh なしで）数え直される。
         std::fs::write(wt.join("more.txt"), "y").unwrap();
+        git(&wt, &["add", "more.txt"]);
         let started = std::time::Instant::now();
         loop {
             let changes = run(

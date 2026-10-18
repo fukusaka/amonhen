@@ -467,10 +467,12 @@ What git says, and what the app keeps:
   in each of them (eight at a time) and answers for all of them in one request (`worktreeChanges`; over SSH one
   connection serves every worktree). The engine remembers the counts and counts again only the worktrees that changed:
   it watches every worktree's HEAD and index under `<git dir>/worktrees` (a few files, so staging, commits and
-  checkouts show anywhere), and the files of the worktrees with changes, at most eight (Linux's inotify uses one watch
-  per folder, and a large tree like minix has 17,000 of them, so watching 59 would reach the limit of about a million).
-  The window asks every 10 seconds while in front, which costs nothing when nothing changed, and counts everything
-  again every 5 minutes, to see a clean worktree whose files were edited without staging. Only the worktree being
+  checkouts show anywhere within 10 seconds), and counts the worktrees with changes again every 30 seconds. It does
+  not watch the worktrees' files: Linux's inotify uses one watch per folder (about 1 KB of kernel memory each), and a
+  large tree like minix has 17,000 folders, so watching 59 would reach the limit of about a million, and even a few
+  cost tens of megabytes for numbers that may lag a little. The window asks every 10 seconds while in front, which
+  runs no git when nothing changed, and counts everything again every 5 minutes, to see a clean worktree whose files
+  were edited without staging. Only the worktree being
   edited and the two edited before it stay open.
 - The Undo log is per worktree (`<git dir>/amonhen/undo.json`, and a linked worktree has its own git dir), like
   HEAD; undoing something that moved a shared branch is seen from every worktree.

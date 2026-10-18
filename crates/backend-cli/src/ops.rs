@@ -659,7 +659,8 @@ impl Operations for Git {
             .collect();
         let mut counts = self.worktrees.lock().unwrap();
         counts.start_watching(self);
-        // 数え直すもの: 初めて・変わった・見張っていない作業ツリーに変更があるもの（ファイルの変化が見えない）。
+        // 数え直すもの: 初めて・HEAD か index が変わった・変更があって前に数えてから 30 秒たった（作業ツリーの
+        // ファイルは見張らないので、変更のあるものはときどき数え直す）。
         let generations: Vec<Option<u64>> = paths.iter().map(|p| counts.generation(p)).collect();
         let due: Vec<usize> = (0..paths.len())
             .filter(|&i| fresh || counts.is_due(paths[i], generations[i]))
@@ -685,7 +686,6 @@ impl Operations for Git {
         for (i, result) in due.iter().zip(results.into_inner().unwrap()) {
             counts.record(paths[*i], generations[*i], result);
         }
-        counts.choose_hot();
         Ok(paths
             .iter()
             .map(|path| {
@@ -700,12 +700,14 @@ impl Operations for Git {
     }
 }
 
-/// ほかの worktree の変更の数を覚えておき、変わったものだけ数え直す（`amonhen_watch::WorktreeWatch` で見張る）。
+/// ほかの worktree の変更の数を覚えておき、変わったものだけ数え直す（`amonhen_watch::WorktreeWatch` で HEAD と
+/// index を見張る）。
 #[derive(Default)]
 pub struct WorktreeCounts {
     #[cfg(not(target_family = "wasm"))]
     watch: Option<amonhen_watch::WorktreeWatch>,
-    started: bool,
+    /// 見張りを作ったときに `<git dir>/worktrees` があったか（なければ、できたら作り直す）。
+    watching_worktrees: bool,
     /// パス → 数えたときの番号・数・指紋・最後に指紋が変わった時刻。
     known: std::collections::HashMap<String, Known>,
 }
@@ -722,19 +724,29 @@ struct Known {
     generation: Option<u64>,
     count: Option<u32>,
     stamp: u64,
-    changed: std::time::Instant,
+    counted: std::time::Instant,
 }
+
+/// 変更のある worktree を数え直すまでの間（作業ツリーのファイルは見張らないので）。
+const RECOUNT_DIRTY: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl WorktreeCounts {
     fn start_watching(&mut self, git: &Git) {
-        if self.started {
-            return;
-        }
-        self.started = true;
         #[cfg(not(target_family = "wasm"))]
-        if let Ok(dir) = git.read(&["rev-parse", "--path-format=absolute", "--git-common-dir"]) {
-            let dir = String::from_utf8_lossy(&dir).trim().to_owned();
-            self.watch = amonhen_watch::WorktreeWatch::new(std::path::Path::new(&dir)).ok();
+        {
+            let Ok(dir) = git.read(&["rev-parse", "--path-format=absolute", "--git-common-dir"])
+            else {
+                return;
+            };
+            let dir = std::path::PathBuf::from(String::from_utf8_lossy(&dir).trim());
+            let has_worktrees = dir.join("worktrees").is_dir();
+            if self.watch.is_some() && (self.watching_worktrees || !has_worktrees) {
+                return;
+            }
+            self.watching_worktrees = has_worktrees;
+            self.watch = amonhen_watch::WorktreeWatch::new(&dir).ok();
+            // 作り直した見張りの番号は 0 から。前に数えたものは数え直す。
+            self.known.clear();
         }
         #[cfg(target_family = "wasm")]
         let _ = git;
@@ -757,35 +769,20 @@ impl WorktreeCounts {
         let Some(generation) = generation else {
             return true;
         };
-        if known.generation != Some(generation) || known.count.is_none() {
-            return true;
-        }
-        // 変更があって作業ツリーを見張っていなければ、ファイルの変化が見えないので毎回数える。
-        known.count.unwrap_or(0) > 0 && !self.is_hot(path)
-    }
-
-    fn is_hot(&self, path: &str) -> bool {
-        #[cfg(not(target_family = "wasm"))]
-        if let Some(watch) = &self.watch {
-            return watch.is_hot(&canonical(path));
-        }
-        let _ = path;
-        false
+        known.generation != Some(generation)
+            || known.count.is_none()
+            || (known.count.unwrap_or(0) > 0 && known.counted.elapsed() >= RECOUNT_DIRTY)
     }
 
     fn record(&mut self, path: &str, generation: Option<u64>, result: Option<(u32, u64)>) {
         let (count, stamp) = result.map_or((None, 0), |(c, s)| (Some(c), s));
-        let changed = match self.known.get(path) {
-            Some(old) if old.stamp == stamp => old.changed,
-            _ => std::time::Instant::now(),
-        };
         self.known.insert(
             path.to_owned(),
             Known {
                 generation,
                 count,
                 stamp,
-                changed,
+                counted: std::time::Instant::now(),
             },
         );
     }
@@ -794,22 +791,6 @@ impl WorktreeCounts {
         self.known
             .get(path)
             .map_or((None, 0), |k| (k.count, k.stamp))
-    }
-
-    /// 作業ツリーを丸ごと見張る worktree: 変更のあるもののうち、最近変わったもの。
-    fn choose_hot(&self) {
-        #[cfg(not(target_family = "wasm"))]
-        if let Some(watch) = &self.watch {
-            let mut dirty: Vec<(&String, &Known)> = self
-                .known
-                .iter()
-                .filter(|(_, k)| k.count.unwrap_or(0) > 0)
-                .collect();
-            dirty.sort_by_key(|(_, k)| std::cmp::Reverse(k.changed));
-            let hot: Vec<std::path::PathBuf> =
-                dirty.into_iter().map(|(p, _)| canonical(p)).collect();
-            watch.set_hot(&hot);
-        }
     }
 }
 
