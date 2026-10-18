@@ -73,7 +73,9 @@ The list appears in two places, with the same contents and operations (`Reposito
   like `~/prj/oss`); choosing a folder lists the repositories under it (folders under a place hold only repositories
   outside its 🔍 folders, so nothing is counted twice; a shortened name shows the full path as a tooltip). Things are added from the "+" under the left
   side or by right-clicking: Places adds a local repository, an SSH connection, a folder to scan on this Mac or one on an SSH host (any host, not only ones already listed), This Mac a local repository or a
-  folder to scan, a host a repository or a folder to scan on that host, Groups a group; a 🔍 folder sets its depth,
+  folder to scan, a host a repository or a folder to scan on that host, Groups a group (for an SSH host the dialog suggests
+  hosts from `~/.ssh/config` and `~/.ssh/known_hosts`, and lists the folders on the host to pick from: double-click to go
+  in, repositories in green; hosts that ask for a password can't be listed, so the path is typed); a 🔍 folder sets its depth,
   rescans or stops scanning. On the right,
   the repositories in the chosen category appear once each, in five sortable columns: name and path, branch, status
   ("changes n", ahead/behind ↑↓, ✓ when clean, explained in the column header's tooltip; "SSH" for remote
@@ -467,7 +469,8 @@ What git says, and what the app keeps:
 Viewing mixes them, editing names one:
 
 - **View (all worktrees together).** Under Working Copy in the sidebar, every worktree is listed with its number of changes (✎ the edited one); picking
-  one edits it and shows its changes. History labels each worktree's HEAD commit (green, before the branch labels: ✎ for the edited one, ⌂ for the
+  one edits it and shows its changes. The main worktree comes first, then the rest by name (w2 before w10); worktrees with no changes are
+  folded into "No changes N" (closed at first) so the ones being worked on stand out; the edited one, a missing or a locked one always shows. History labels each worktree's HEAD commit (green, before the branch labels: ✎ for the edited one, ⌂ for the
   main worktree, ⑂ for linked ones, with the number of changed files), so where every worktree is and how much it has changed shows on one
   screen. Working Copy itself shows only the edited worktree's changes (an earlier version listed every worktree's changes there; with many worktrees that was hard to scan, so the list moved to the sidebar).
 - **Edit (one worktree, always shown).** The toolbar shows the edited worktree (✎ name) next to its branch. Picking a

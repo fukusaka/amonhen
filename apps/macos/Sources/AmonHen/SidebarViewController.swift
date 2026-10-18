@@ -31,8 +31,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var badge: String?
         /// Pull Requests の下のプルリクエスト。
         var pullRequest: PullRequest?
-        /// Worktrees の下の worktree。
+        /// Working Copy の下の worktree。
         var worktree: WorktreeInfo?
+        /// 変更のない worktree をまとめる行。
+        var isCleanWorktrees = false
 
         init(title: String, item: RefItem? = nil, page: Page? = nil, children: [Node] = [], isHead: Bool = false) {
             self.title = title
@@ -133,9 +135,65 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let changes = Dictionary(changes.map { (WorktreeInfo.canonical($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
         guard changes != worktreeChanges else { return }
         worktreeChanges = changes
-        for row in 0..<outline.numberOfRows {
-            if let node = outline.item(atRow: row) as? Node, node.worktree != nil { outline.reloadItem(node) }
+        // 変更のある・ないが入れ替わったら並べ直す。数だけなら行を描き直す。
+        if !arrangeWorktrees() {
+            for row in 0..<outline.numberOfRows {
+                if let node = outline.item(atRow: row) as? Node, node.worktree != nil { outline.reloadItem(node) }
+            }
         }
+    }
+
+    /// 変更のない worktree をまとめる行（「変更なし N」。初めは畳んでおく）。
+    private let cleanWorktreesNode: Node = {
+        let node = Node(title: L("No changes"))
+        node.isCleanWorktrees = true
+        return node
+    }()
+
+    /// Working Copy の下に並べる worktree: 書き込む先、変更のあるもの、フォルダが消えた・ロックしたもの（メインの
+    /// 作業ツリーを先に、残りは名前の順。w2 は w10 より前）と、「変更なし」にまとめるもの（2 つ以上あるときだけ
+    /// まとめる）。worktree が 1 つなら出さない。
+    private func worktreeLayout() -> (shown: [WorktreeInfo], clean: [WorktreeInfo]) {
+        guard worktrees.count > 1 else { return ([], []) }
+        let ordered = worktrees.sorted {
+            $0.main != $1.main ? $0.main : $0.name.localizedStandardCompare($1.name) == .orderedAscending
+        }
+        var shown: [WorktreeInfo] = [], clean: [WorktreeInfo] = []
+        for w in ordered {
+            let changes = worktreeChanges[WorktreeInfo.canonical(w.path)] ?? 0
+            if w == editingInfo || changes > 0 || w.prunable != nil || w.locked != nil { shown.append(w) } else { clean.append(w) }
+        }
+        return clean.count < 2 ? (ordered, []) : (shown, clean)
+    }
+
+    private func setWorktreeNodes(_ layout: (shown: [WorktreeInfo], clean: [WorktreeInfo])) {
+        func node(_ w: WorktreeInfo) -> Node {
+            let node = Node(title: w.name, isHead: w == editingInfo)
+            node.worktree = w
+            return node
+        }
+        cleanWorktreesNode.children = layout.clean.map(node)
+        workingCopyNode.children = layout.shown.map(node) + (layout.clean.isEmpty ? [] : [cleanWorktreesNode])
+    }
+
+    /// 変更の数が変わったときに並べ直す（変更のある・ないが入れ替わったときだけ）。並べ直したら `true`。
+    private func arrangeWorktrees() -> Bool {
+        let layout = worktreeLayout()
+        let current = workingCopyNode.children.compactMap { $0.worktree?.path }
+        guard layout.shown.map(\.path) != current || layout.clean.map(\.path) != cleanWorktreesNode.children.compactMap({ $0.worktree?.path })
+        else { return false }
+        let cleanOpen = outline.isItemExpanded(cleanWorktreesNode)
+        let selected = (outline.item(atRow: outline.selectedRow) as? Node)?.worktree?.path
+        setWorktreeNodes(layout)
+        outline.reloadItem(workingCopyNode, reloadChildren: true)
+        outline.expandItem(workingCopyNode)
+        if cleanOpen { outline.expandItem(cleanWorktreesNode) }
+        if let selected, let row = (0..<outline.numberOfRows).first(where: {
+            (outline.item(atRow: $0) as? Node)?.worktree?.path == selected
+        }) {
+            outline.selectRowIndexes([row], byExtendingSelection: false)
+        }
+        return true
     }
 
     func show(_ refs: Refs) {
@@ -181,12 +239,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if !branchRoot.children.isEmpty { groups.append(branchRoot) }
 
-        // worktree は Working Copy の下に並べる（git worktree list の順。書き込む先に印）。1 つだけなら出さない。
-        workingCopyNode.children = worktrees.count > 1 ? worktrees.map { w in
-            let node = Node(title: w.name, isHead: w == editingInfo)
-            node.worktree = w
-            return node
-        } : []
+        // worktree は Working Copy の下に並べる（1 つだけなら出さない）。
+        let cleanOpen = outline.isItemExpanded(cleanWorktreesNode)
+        setWorktreeNodes(worktreeLayout())
 
         if !pullRequests.isEmpty {
             groups.append(Node(title: "Pull Requests", children: pullRequests.map { pr in
@@ -219,6 +274,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outline.reloadData()
         outline.expandItem(workspace)
         outline.expandItem(workingCopyNode)
+        if cleanOpen { outline.expandItem(cleanWorktreesNode) }
         for group in groups {
             let open = expanded.contains(group.title) || (first && group.title == "Branches")
                 || (group.title == "Pull Requests" && pullRequestsFirstShown)
@@ -263,8 +319,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     @objc private func outlineClicked() {
         let row = outline.clickedRow
-        guard row >= 0, let node = outline.item(atRow: row) as? Node, groups.contains(where: { $0 === node }),
-              !node.children.isEmpty else { return }
+        guard row >= 0, let node = outline.item(atRow: row) as? Node,
+              groups.contains(where: { $0 === node }) || node === cleanWorktreesNode, !node.children.isEmpty else { return }
         if outline.isItemExpanded(node) { outline.animator().collapseItem(node) } else { outline.animator().expandItem(node) }
     }
 
@@ -308,6 +364,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             ?? SidebarCell(identifier: .init("item"), hasIcon: true)
         cell.textField?.stringValue = node.title
         cell.textField?.font = node.isHead ? .boldSystemFont(ofSize: NSFont.systemFontSize) : .systemFont(ofSize: NSFont.systemFontSize)
+        cell.textField?.textColor = node === cleanWorktreesNode ? .secondaryLabelColor : .labelColor
         cell.imageView?.image = NSImage(systemSymbolName: Self.symbol(for: node), accessibilityDescription: nil)
         cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
         var badge = node.badge ?? ""
@@ -332,13 +389,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 badge = badge.isEmpty ? "✎" : "✎ " + badge
             }
         }
+        if node === cleanWorktreesNode { badge = "\(node.children.count)" }
         if let w = node.worktree {
             badge = w.prunable != nil ? L("missing") : w.locked != nil ? L("locked")
                 : (worktreeChanges[WorktreeInfo.canonical(w.path)]).flatMap { $0 > 0 ? "\($0)" : nil } ?? ""
         }
         cell.badge.stringValue = badge
         cell.badge.textColor = .secondaryLabelColor
-        cell.toolTip = node.item?.detail
+        cell.toolTip = node === cleanWorktreesNode ? L("Worktrees with no changes (click to show)") : node.item?.detail
         if let w = node.worktree {
             cell.toolTip = [w.path, w.branch.map { L("Branch: %@", $0) } ?? L("detached HEAD"),
                             node.isHead ? L("Editing this worktree") : L("Click to edit this worktree"),
@@ -370,6 +428,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if node.title == L("Conflicts"), node.page != nil { return "exclamationmark.triangle" }
         if let page = node.page { return page == .workingCopy ? "square.and.pencil" : "clock" }
         if node.pullRequest != nil { return "arrow.triangle.pull" }
+        if node.isCleanWorktrees { return "checkmark.circle" }
         if let w = node.worktree { return node.isHead ? "pencil.circle" : w.main ? "house" : "arrow.triangle.branch" }
         if node.remote != nil { return "network" }
         switch node.item?.kind {

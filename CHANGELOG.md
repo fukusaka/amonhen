@@ -49,7 +49,8 @@ becomes the GitHub Release notes.
   branches and changes; picking one makes it the worktree you edit (✎ next to the repository name), and Working Copy,
   commits, checkout, Pull, Push, stash and Undo act there, while History and branches stay shared. A branch checked out
   in another worktree takes you to that worktree. New Worktree…, Remove Worktree and Prune Worktrees; confirmation
-  sheets name the worktree. The worktrees are listed under Working Copy in the sidebar with their change counts. History labels each
+  sheets name the worktree. The worktrees are listed under Working Copy in the sidebar with their change counts (the main
+  one first, then by name; worktrees with no changes are folded into "No changes"). History labels each
   worktree's HEAD with its name and number of changed files. The current branch is the edited worktree's; branches checked out in
   other worktrees are marked in Branches, History and the branch switcher. Opening a worktree's folder opens its repository's tab, and the repository page no longer
   lists worktrees as repositories of their own.
@@ -57,6 +58,9 @@ becomes the GitHub Release notes.
 - `amonhen worktree` (list, add, remove, prune), the same as `git worktree`, through the core (so over SSH too).
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`). Add one
   from "+" or the Places menu for any host, or from a listed host's menu.
+- Choosing an SSH folder: adding a folder to scan or an SSH connection suggests hosts from `~/.ssh/config` and
+  `~/.ssh/known_hosts` and lists the folders on the host (double-click to go in, repositories in green), instead of
+  only typing the path.
 
 #### Fixed
 

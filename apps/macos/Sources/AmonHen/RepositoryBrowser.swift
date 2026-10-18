@@ -818,52 +818,32 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         Bookmarks.shared.addScanRoot(url.standardizedFileURL.path)
     }
 
-    /// SSH のホストとフォルダを入れてもらい、スキャンするフォルダに加える（まだ一覧にないホストでもよい）。
-    @objc private func addSSHScanFolder() {
-        let alert = NSAlert()
-        alert.messageText = L("Add a Folder to Scan over SSH")
-        alert.informativeText = L("The engine on the host searches up to 3 levels below the folder. The host is a name from ~/.ssh/config or user@host.")
-        // 前に使ったホストを候補に出す。
-        let hosts = Set(Bookmarks.shared.allLocations.compactMap(Self.sshHost)
-            + Bookmarks.shared.data.scanRoots.compactMap { Self.sshHost($0.path) }).sorted()
-        let host = NSComboBox(frame: NSRect(x: 0, y: 32, width: 300, height: 24))
-        host.addItems(withObjectValues: hosts)
-        host.placeholderString = L("Host")
-        host.completes = true
-        let path = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        path.stringValue = "~/prj"
-        path.placeholderString = L("Folder")
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 56))
-        box.addSubview(host)
-        box.addSubview(path)
-        alert.accessoryView = box
-        alert.addButton(withTitle: L("Add"))
-        alert.addButton(withTitle: L("Cancel"))
-        alert.window.initialFirstResponder = host
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        let name = host.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !name.isEmpty, let location = RepositoryLocation.ssh(host: name, path: path.stringValue) else {
-            return NSSound.beep()
-        }
-        Bookmarks.shared.addScanRoot(location)
-        category = .host(name)
-        reload()
+    /// 使ったことのあるホスト（先に）と、~/.ssh/config・known_hosts のホスト。
+    private static func sshHostCandidates() -> [String] {
+        let used = Set(Bookmarks.shared.allLocations.compactMap(sshHost)
+            + Bookmarks.shared.data.scanRoots.compactMap { sshHost($0.path) }).sorted()
+        let usedSet = Set(used)
+        return used + SSHHosts.candidates().filter { !usedSet.contains($0) }
     }
 
-    /// SSH のホストでスキャンするフォルダを加える（そのホストの上で、エンジンが探す）。
-    private func addRemoteScanFolder(host: String) {
-        let alert = NSAlert()
-        alert.messageText = L("Add a Folder to Scan on %@", host)
-        alert.informativeText = L("Searches up to 3 levels below this folder on %@.", host)
-        let path = NSTextField(string: "~/prj")
-        path.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
-        alert.accessoryView = path
-        alert.addButton(withTitle: L("Add"))
-        alert.addButton(withTitle: L("Cancel"))
-        alert.window.initialFirstResponder = path
-        guard alert.runModal() == .alertFirstButtonReturn,
-              let location = RepositoryLocation.ssh(host: host, path: path.stringValue) else { return }
+    /// SSH のホストとフォルダを選んでもらい、スキャンするフォルダに加える（まだ一覧にないホストでもよい）。
+    @objc private func addSSHScanFolder() {
+        addRemoteScanFolder(host: nil)
+    }
+
+    /// SSH のホストでスキャンするフォルダを加える（そのホストの上で、エンジンが探す）。`host` を渡すとホストは決まり。
+    private func addRemoteScanFolder(host: String?) {
+        guard let chosen = SSHFolderChooser.run(
+            title: host.map { L("Add a Folder to Scan on %@", $0) } ?? L("Add a Folder to Scan over SSH"),
+            message: L("The engine on the host searches up to 3 levels below the folder. Double-click a folder to go into it."),
+            button: L("Add"), fixedHost: host, hosts: Self.sshHostCandidates(),
+            initialHost: UserDefaults.standard.string(forKey: Self.lastHostKey), initialPath: "~/prj"),
+            let location = RepositoryLocation.ssh(host: chosen.host, path: chosen.path)
+        else { return }
+        UserDefaults.standard.set(chosen.host, forKey: Self.lastHostKey)
         Bookmarks.shared.addScanRoot(location)
+        category = .host(chosen.host)
+        reload()
     }
 
     @objc private func newGroup() {
@@ -897,41 +877,23 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
     /// SSH 先のリポジトリを加えて開く。`host` を渡すと、接続先を入れた状態で聞く（ホストの行の右クリック）。
     private func addRemote(host initialHost: String?) {
-        guard let window = view.window else { return }
-        let host = NSTextField(string: initialHost ?? UserDefaults.standard.string(forKey: Self.lastHostKey) ?? "")
-        host.placeholderString = L("user@host:port (or a name in ~/.ssh/config)")
-        let path = NSTextField(string: "")
-        path.placeholderString = L("~/src/repo or /srv/git/repo")
-        let grid = NSGridView(views: [
-            [NSTextField(labelWithString: L("Host:")), host],
-            [NSTextField(labelWithString: L("Path:")), path],
-        ])
-        grid.column(at: 0).xPlacement = .trailing
-        grid.rowSpacing = 8
-        grid.column(at: 1).width = 300
-        grid.frame = NSRect(x: 0, y: 0, width: 370, height: 56)
-
-        let alert = NSAlert()
-        alert.messageText = initialHost.map { L("Add a Repository on %@", $0) } ?? L("Add SSH Connection")
-        alert.informativeText = L("Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent).")
-        alert.accessoryView = grid
-        alert.addButton(withTitle: L("Add and Open"))
-        alert.addButton(withTitle: L("Cancel"))
-        alert.window.initialFirstResponder = host.stringValue.isEmpty ? host : path
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .alertFirstButtonReturn else { return }
-            guard let location = RepositoryLocation.ssh(host: host.stringValue, path: path.stringValue) else {
-                let error = NSAlert()
-                error.messageText = L("Enter a host and a path")
-                error.informativeText = L("The host can’t contain spaces or “/”.")
-                error.beginSheetModal(for: window)
-                return
-            }
-            UserDefaults.standard.set(host.stringValue.trimmingCharacters(in: .whitespaces), forKey: Self.lastHostKey)
-            Bookmarks.shared.add(location, group: selectedGroup)
-            RepositoryList.touch(location)
-            onOpen?(location, .here)
+        guard let chosen = SSHFolderChooser.run(
+            title: initialHost.map { L("Add a Repository on %@", $0) } ?? L("Add SSH Connection"),
+            message: L("Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent). Double-click a folder to go into it, and choose a repository (green)."),
+            button: L("Add and Open"), fixedHost: nil, hosts: Self.sshHostCandidates(),
+            initialHost: initialHost ?? UserDefaults.standard.string(forKey: Self.lastHostKey), initialPath: "~")
+        else { return }
+        guard let location = RepositoryLocation.ssh(host: chosen.host, path: chosen.path) else {
+            let error = NSAlert()
+            error.messageText = L("Enter a host and a path")
+            error.informativeText = L("The host can’t contain spaces or “/”.")
+            if let window = view.window { error.beginSheetModal(for: window) } else { error.runModal() }
+            return
         }
+        UserDefaults.standard.set(chosen.host, forKey: Self.lastHostKey)
+        Bookmarks.shared.add(location, group: selectedGroup)
+        RepositoryList.touch(location)
+        onOpen?(location, .here)
     }
 
     // MARK: - 外す
