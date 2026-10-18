@@ -180,6 +180,16 @@ First release.
 
 ### [Unreleased]
 
+### [0.2.1] - 2026-10-19
+
+Fixes for Windows: no more console windows flashing, and Working Copy diffs of files checked out with CRLF show only
+the changed lines. The bundled engines speak remote protocol 20 like the 0.2.1 app and CLI, so they share one daemon
+again. The engine's messages follow VSCode's display language.
+
+#### Changed
+
+- Messages from the engine (errors and the like) are in VSCode's display language: Japanese or English.
+
 #### Fixed
 
 - On Windows, git and the engine no longer flash a console window when the extension runs them.
