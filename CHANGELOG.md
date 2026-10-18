@@ -55,7 +55,8 @@ becomes the GitHub Release notes.
   lists worktrees as repositories of their own.
 - Copy a branch or tag name from the sidebar's right-click menu, or from a commit's menu in History.
 - `amonhen worktree` (list, add, remove, prune), the same as `git worktree`, through the core (so over SSH too).
-- Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).
+- Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`). Add one
+  from "+" or the Places menu for any host, or from a listed host's menu.
 
 #### Fixed
 

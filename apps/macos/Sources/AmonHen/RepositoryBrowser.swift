@@ -359,6 +359,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 (L("Local Repository…"), #selector(addRepository)), ("Clone…", #selector(clone)),
                 (L("SSH Connection…"), #selector(addRemote as () -> Void)), ("-", nil),
                 (L("Group…"), #selector(newGroup)), (L("Folder to Scan…"), #selector(addScanFolder)),
+                (L("Folder to Scan over SSH…"), #selector(addSSHScanFolder)),
             ] as [(String, Selector?)] {
                 if title == "-" {
                     add.menu?.addItem(.separator())
@@ -817,6 +818,38 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         Bookmarks.shared.addScanRoot(url.standardizedFileURL.path)
     }
 
+    /// SSH のホストとフォルダを入れてもらい、スキャンするフォルダに加える（まだ一覧にないホストでもよい）。
+    @objc private func addSSHScanFolder() {
+        let alert = NSAlert()
+        alert.messageText = L("Add a Folder to Scan over SSH")
+        alert.informativeText = L("The engine on the host searches up to 3 levels below the folder. The host is a name from ~/.ssh/config or user@host.")
+        // 前に使ったホストを候補に出す。
+        let hosts = Set(Bookmarks.shared.allLocations.compactMap(Self.sshHost)
+            + Bookmarks.shared.data.scanRoots.compactMap { Self.sshHost($0.path) }).sorted()
+        let host = NSComboBox(frame: NSRect(x: 0, y: 32, width: 300, height: 24))
+        host.addItems(withObjectValues: hosts)
+        host.placeholderString = L("Host")
+        host.completes = true
+        let path = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
+        path.stringValue = "~/prj"
+        path.placeholderString = L("Folder")
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: 56))
+        box.addSubview(host)
+        box.addSubview(path)
+        alert.accessoryView = box
+        alert.addButton(withTitle: L("Add"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.window.initialFirstResponder = host
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let name = host.stringValue.trimmingCharacters(in: .whitespaces)
+        guard !name.isEmpty, let location = RepositoryLocation.ssh(host: name, path: path.stringValue) else {
+            return NSSound.beep()
+        }
+        Bookmarks.shared.addScanRoot(location)
+        category = .host(name)
+        reload()
+    }
+
     /// SSH のホストでスキャンするフォルダを加える（そのホストの上で、エンジンが探す）。
     private func addRemoteScanFolder(host: String) {
         let alert = NSAlert()
@@ -1017,6 +1050,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             if node.header == "場所" {
                 add(L("Add Local Repository…")) { [weak self] in self?.addRepository() }
                 add(L("Add SSH Connection…")) { [weak self] in self?.addRemote(host: nil) }
+                add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }
+                add(L("Folder to Scan over SSH…")) { [weak self] in self?.addSSHScanFolder() }
             } else if node.header == "グループ" {
                 add(L("Create Group…")) { [weak self] in self?.newGroup() }
             }

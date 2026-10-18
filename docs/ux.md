@@ -72,7 +72,7 @@ The list appears in two places, with the same contents and operations (`Reposito
   folders that hold repositories (folders with a single child and no repository of their own are folded into one,
   like `~/prj/oss`); choosing a folder lists the repositories under it (folders under a place hold only repositories
   outside its 🔍 folders, so nothing is counted twice; a shortened name shows the full path as a tooltip). Things are added from the "+" under the left
-  side or by right-clicking: Places adds a local repository or an SSH connection, This Mac a local repository or a
+  side or by right-clicking: Places adds a local repository, an SSH connection, a folder to scan on this Mac or one on an SSH host (any host, not only ones already listed), This Mac a local repository or a
   folder to scan, a host a repository or a folder to scan on that host, Groups a group; a 🔍 folder sets its depth,
   rescans or stops scanning. On the right,
   the repositories in the chosen category appear once each, in five sortable columns: name and path, branch, status

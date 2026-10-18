@@ -861,3 +861,7 @@
 "Copy Name" = "名前をコピー";
 "Copy Branch Name “%@”" = "ブランチ名「%@」をコピー";
 "Copy Tag Name “%@”" = "タグ名「%@」をコピー";
+"Folder to Scan over SSH…" = "SSH 先でスキャンするフォルダ…";
+"Add a Folder to Scan over SSH" = "SSH 先でスキャンするフォルダを加える";
+"The engine on the host searches up to 3 levels below the folder. The host is a name from ~/.ssh/config or user@host." = "ホストの上のエンジンが、フォルダの 3 段下まで探します。ホストは ~/.ssh/config の名前か user@host。";
+"Host" = "ホスト";
