@@ -49,8 +49,7 @@ becomes the GitHub Release notes.
   branches and changes; picking one makes it the worktree you edit (✎ next to the repository name), and Working Copy,
   commits, checkout, Pull, Push, stash and Undo act there, while History and branches stay shared. A branch checked out
   in another worktree takes you to that worktree. New Worktree…, Remove Worktree and Prune Worktrees; confirmation
-  sheets name the worktree. Working Copy lists every worktree's changes under its own heading: another worktree's
-  diffs can be read in place, and staging one of its files asks to edit that worktree first. History labels each
+  sheets name the worktree. The worktrees are listed under Working Copy in the sidebar with their change counts. History labels each
   worktree's HEAD with its name and number of changed files. The current branch is the edited worktree's; branches checked out in
   other worktrees are marked in Branches, History and the branch switcher. Opening a worktree's folder opens its repository's tab, and the repository page no longer
   lists worktrees as repositories of their own.

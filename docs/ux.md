@@ -466,16 +466,12 @@ What git says, and what the app keeps:
 
 Viewing mixes them, editing names one:
 
-- **View (all worktrees together).** The sidebar's Worktrees lists every worktree with its branch and number of
-  changes. History labels each worktree's HEAD commit (green, before the branch labels: ✎ for the edited one, ⌂ for the
+- **View (all worktrees together).** Under Working Copy in the sidebar, every worktree is listed with its number of changes (✎ the edited one); picking
+  one edits it and shows its changes. History labels each worktree's HEAD commit (green, before the branch labels: ✎ for the edited one, ⌂ for the
   main worktree, ⑂ for linked ones, with the number of changed files), so where every worktree is and how much it has changed shows on one
-  screen. Working Copy lists the changes of every worktree under one heading
-  each, newest activity first with how long ago (file edits, HEAD and index moves): the five most recent with changes,
-  then "N more worktrees with changes" and "N worktrees without changes"; the filter also matches worktree names,
-  branches and their files. Any of their diffs can be read.
+  screen. Working Copy itself shows only the edited worktree's changes (an earlier version listed every worktree's changes there; with many worktrees that was hard to scan, so the list moved to the sidebar).
 - **Edit (one worktree, always shown).** The toolbar shows the edited worktree (✎ name) next to its branch. Picking a
-  worktree in the sidebar or from ✎ makes it the edited one. Staging or discarding a file of another worktree asks
-  "Edit in <worktree>?" first; only reading never switches. Confirmation sheets name the worktree ("Pull into
+  worktree in the sidebar or from ✎ makes it the edited one. Confirmation sheets name the worktree ("Pull into
   gui-gtk4").
 - **Elsewhere.** The repository page and lists show worktrees under their repository, not as repositories of their
   own (also when a scan finds them). Opening a worktree's folder (the CLI, Finder) opens its repository's tab with that
@@ -509,7 +505,7 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
 - [x] U17. Editing one worktree: the edited worktree (✎ in the toolbar), commands that touch HEAD, the index or the
   working tree sent there, the worktree named in confirmation sheets, branches checked out elsewhere moving the edited
   worktree, New Worktree… / Remove Worktree / Prune.
-- [x] U18. Working Copy with every worktree's changes under one heading each, asking before editing another worktree.
+- [x] U18. Worktrees under Working Copy in the sidebar with their change counts (first built as every worktree's changes inside Working Copy, then moved to the sidebar).
 - [x] U19. History's labels at each worktree's HEAD (name and number of changed files; ✎ for the edited one), kept up
   to date when a worktree commits or changes files.
 

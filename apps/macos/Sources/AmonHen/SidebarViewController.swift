@@ -129,6 +129,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     /// worktree ごとの変更の数。
     func setWorktreeChanges(_ changes: [String: Int]) {
+        // パスの書き方の違い（/tmp と /private/tmp など）をなくして引けるよう、リンクを解いた形で持つ。
+        let changes = Dictionary(changes.map { (WorktreeInfo.canonical($0.key), $0.value) }, uniquingKeysWith: { a, _ in a })
         guard changes != worktreeChanges else { return }
         worktreeChanges = changes
         for row in 0..<outline.numberOfRows {
@@ -179,14 +181,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if !branchRoot.children.isEmpty { groups.append(branchRoot) }
 
-        // worktree（git worktree list の順。書き込む先に印を付ける）。1 つだけなら出さない。
-        if worktrees.count > 1 {
-            groups.append(Node(title: "Worktrees", children: worktrees.map { w in
-                let node = Node(title: w.name, isHead: w == editingInfo)
-                node.worktree = w
-                return node
-            }))
-        }
+        // worktree は Working Copy の下に並べる（git worktree list の順。書き込む先に印）。1 つだけなら出さない。
+        workingCopyNode.children = worktrees.count > 1 ? worktrees.map { w in
+            let node = Node(title: w.name, isHead: w == editingInfo)
+            node.worktree = w
+            return node
+        } : []
 
         if !pullRequests.isEmpty {
             groups.append(Node(title: "Pull Requests", children: pullRequests.map { pr in
@@ -218,6 +218,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         self.groups = [workspace] + groups
         outline.reloadData()
         outline.expandItem(workspace)
+        outline.expandItem(workingCopyNode)
         for group in groups {
             let open = expanded.contains(group.title) || (first && group.title == "Branches")
                 || (group.title == "Pull Requests" && pullRequestsFirstShown)
@@ -333,7 +334,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if let w = node.worktree {
             badge = w.prunable != nil ? L("missing") : w.locked != nil ? L("locked")
-                : (worktreeChanges[w.path]).flatMap { $0 > 0 ? "\($0)" : nil } ?? ""
+                : (worktreeChanges[WorktreeInfo.canonical(w.path)]).flatMap { $0 > 0 ? "\($0)" : nil } ?? ""
         }
         cell.badge.stringValue = badge
         cell.badge.textColor = .secondaryLabelColor

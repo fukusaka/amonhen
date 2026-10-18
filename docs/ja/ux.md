@@ -454,15 +454,11 @@ git の考え方と、アプリが守ること:
 
 見るときは混ぜ、書くときは 1 つを名指す:
 
-- **見る（全部の worktree をまとめて）**。サイドバーの Worktrees に、全部の worktree をブランチと変更の数つきで
-  並べる。History では、各 worktree の HEAD のコミットに札を付ける（緑。ブランチの札の前。書き込む先は ✎、メインの作業ツリーは ⌂、
-  追加した worktree は ⑂。変更のあるファイルの数つき）。どの worktree がどこにいて、どれだけ書き換えているかが 1 画面で分かる。Working Copy には全部の worktree の変更を worktree ごとの見出しで
-  並べる。最後の作業（ファイルの編集、HEAD・index の動き）の新しい順に「何分前」を添え、変更のあるもの 5 つの後は
-  「ほか N 個の worktree」「変更のない worktree N 個」にまとめる。絞り込みは worktree の名前・ブランチ・ファイルにも
-  効く。どの差分も読める。
+- **見る（全部の worktree をまとめて）**。サイドバーの Working Copy の下に、全部の worktree を変更の数つきで並べる（書き込む先は ✎）。押すとその worktree を
+  書き込む先にして、変更を見せる。History では、各 worktree の HEAD のコミットに札を付ける（緑。ブランチの札の前。書き込む先は ✎、メインの作業ツリーは ⌂、
+  追加した worktree は ⑂。変更のあるファイルの数つき）。どの worktree がどこにいて、どれだけ書き換えているかが 1 画面で分かる。Working Copy の右の一覧は、書き込む先の worktree の変更だけ（はじめは全部の worktree の変更をここに並べたが、worktree が多いと探しにくいので、サイドバーに移した）。
 - **書く（1 つの worktree。いつも見せる）**。ツールバーに書き込む先（✎ 名前）をブランチと並べて出す。サイドバーか
-  ✎ で worktree を選ぶと、それが書き込む先になる。ほかの worktree のファイルを stage・discard しようとしたら、先に
-  「<worktree> で編集しますか？」と聞く。読むだけなら変えない。確認のシートには worktree を書く（「gui-gtk4 に
+  ✎ で worktree を選ぶと、それが書き込む先になる。確認のシートには worktree を書く（「gui-gtk4 に
   Pull」）。
 - **ほかの場所**。リポジトリのページと一覧では、worktree を別のリポジトリとして出さず、そのリポジトリの下に出す
   （スキャンで見つかったものも）。worktree のフォルダを開いたら（CLI・Finder）、そのリポジトリのタブを、その
@@ -495,7 +491,7 @@ git の考え方と、アプリが守ること:
 - [x] U17. 1 つの worktree に書く: 書き込む先（ツールバーの ✎）、HEAD・index・作業ツリーに触れる命令をそこへ、
   確認のシートに worktree を書く、ほかの worktree が checkout しているブランチで書き込む先を移す、New Worktree…・
   Remove Worktree・Prune。
-- [x] U18. Working Copy に全部の worktree の変更を worktree ごとの見出しで並べる、ほかの worktree に書く前に聞く。
+- [x] U18. サイドバーの Working Copy の下に worktree を変更の数つきで並べる（はじめは Working Copy の中に全部の worktree の変更を並べ、のちにサイドバーに移した）。
 - [x] U19. History で、各 worktree の HEAD に札（名前と変更のあるファイルの数、書き込む先は ✎）。worktree が
   コミットしたり、ファイルを書き換えたりしたら付け直す。
 
