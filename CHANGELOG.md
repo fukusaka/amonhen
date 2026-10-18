@@ -7,7 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### [Unreleased]
+### [0.2.1] - 2026-10-19
+
+Worktrees live in their repository's tab, listed with their changes under Working Copy and edited one at a time, also
+over SSH with many worktrees. Pull, Push, Pop and Undo show what will happen before running, repositories are chosen on
+a page that opens as a tab, and the app and engine speak Japanese. New: a GTK4 app for Linux (early), Apple's
+on-device model for AI, folders to scan on SSH hosts, and correct line endings in Windows diffs. The remote protocol is
+now version 20; the app sends the matching engine to SSH hosts.
 
 #### Changed
 
@@ -45,13 +51,13 @@ becomes the GitHub Release notes.
   instead of sending an old one that the connection would then refuse.
 - AI can use Apple Intelligence's on-device model (macOS 26): nothing leaves the Mac, and it is the default where
   available. Claude Code and Codex models are chosen from a pop-up (Codex lists the models its CLI knows).
-- Worktrees live in their repository's tab, the way git sees them. The sidebar's Worktrees lists them with their
-  branches and changes; picking one makes it the worktree you edit (✎ next to the repository name), and Working Copy,
+- Worktrees live in their repository's tab, the way git sees them. The sidebar lists them under Working Copy with their
+  changes; picking one makes it the worktree you edit (✎ next to the repository name), and Working Copy,
   commits, checkout, Pull, Push, stash and Undo act there, while History and branches stay shared. A branch checked out
   in another worktree takes you to that worktree. New Worktree…, Remove Worktree and Prune Worktrees; confirmation
-  sheets name the worktree. The worktrees are listed under Working Copy in the sidebar with their change counts (the main
-  one first, then by name; worktrees with no changes are folded into "No changes"; worktrees whose folders share a
-  name, like `build/aslr/src` and `build/ssp/src`, show as `aslr/src` and `ssp/src`). History labels each
+  sheets name the worktree. In the sidebar the main worktree comes first, then
+  the rest by name; worktrees with no changes are folded into "No changes", and worktrees whose folders share a name,
+  like `build/aslr/src` and `build/ssp/src`, show as `aslr/src` and `ssp/src`. History labels each
   worktree's HEAD with its name and number of changed files. The current branch is the edited worktree's; branches checked out in
   other worktrees are marked in Branches, History and the branch switcher. Opening a worktree's folder opens its repository's tab, and the repository page no longer
   lists worktrees as repositories of their own.
@@ -74,7 +80,7 @@ becomes the GitHub Release notes.
   engines per host each gets its own SSH connection (sshd allows only a few sessions per connection; short commands it
   refuses are retried on their own). The engine watches the worktrees' HEAD and index (not their files) and counts
   again only the ones that changed, plus those with changes every 30 seconds. With 59 worktrees on a Linux host this went from 59 engines to
-  2; counting all of them takes about 2 seconds, and asking again when nothing changed runs no git.
+  2; counting all of them takes under a second, and asking again when nothing changed runs no git.
 - History no longer crashes when showing only the commits that match a search scrolled down past the matches.
 - Fetch, Pull and Push no longer hang forever when git waits for credentials nobody can see: after 120 seconds with no
   output they stop and say so.
