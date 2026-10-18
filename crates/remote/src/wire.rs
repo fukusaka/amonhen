@@ -242,7 +242,7 @@ pub enum Op {
     /// → `()`
     ChangeWorktree(WorktreeChange),
     /// → `Vec<WorktreeChanges>`
-    WorktreeChanges(Vec<String>),
+    WorktreeChanges(Vec<String>, bool),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

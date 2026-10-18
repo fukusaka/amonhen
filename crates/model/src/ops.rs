@@ -259,9 +259,10 @@ pub trait Operations: Send + Sync {
         Err(crate::tr!("Can’t change worktrees here").into())
     }
     /// `paths` の worktree の変更の数。worktree は `.git` を共有するので、開いたリポジトリから読む（worktree ごとに
-    /// 開かない。SSH 先でも 1 本のつながりで済む）。
-    fn worktree_changes(&self, paths: &[String]) -> Result<Vec<WorktreeChanges>> {
-        let _ = paths;
+    /// 開かない。SSH 先でも 1 本のつながりで済む）。前に数えてから変わっていない worktree は数え直さない（変化を
+    /// 見張れる側だけ）。`fresh` なら全部を数え直す。
+    fn worktree_changes(&self, paths: &[String], fresh: bool) -> Result<Vec<WorktreeChanges>> {
+        let _ = (paths, fresh);
         Err(crate::tr!("Can’t list worktrees here").into())
     }
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（index の分も含む。untracked は含まない）。

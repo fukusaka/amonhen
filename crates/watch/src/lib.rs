@@ -151,6 +151,147 @@ impl Watcher {
     }
 }
 
+/// ほかの worktree の変化を、worktree ごとの番号で数える（変わったかどうかだけを覚え、何が変わったかは見ない）。
+/// worktree の変更の数を、変わったものだけ数え直すために使う。
+///
+/// - `<common dir>/worktrees/<名前>/` の HEAD・index（と、メインの作業ツリーの `<common dir>` の HEAD・index）を
+///   見張る。ファイルは少ないので軽く、stage・コミット・checkout はどの worktree でも分かる。
+/// - 作業ツリーのファイルは、`set_hot` で渡した worktree だけを丸ごと見張る。Linux の inotify はフォルダごとに
+///   1 つ使い、大きな作業ツリーを何十も見張ると上限（`max_user_watches`）に届くので、変更のあるものに絞る。
+pub struct WorktreeWatch {
+    state: std::sync::Arc<std::sync::Mutex<WorktreeState>>,
+    watcher: std::sync::Mutex<notify::RecommendedWatcher>,
+}
+
+#[derive(Default)]
+struct WorktreeState {
+    common_dir: PathBuf,
+    /// worktree（作業ツリーのパス）ごとの番号。変わるたびに増やす。
+    generations: std::collections::HashMap<PathBuf, u64>,
+    /// 丸ごと見張っている worktree。
+    hot: Vec<PathBuf>,
+}
+
+impl WorktreeState {
+    /// `<common dir>/worktrees/<名前>/…` か `<common dir>/{HEAD,index}` なら、その worktree の作業ツリー。
+    fn worktree_of_git_file(&self, path: &Path) -> Option<PathBuf> {
+        let rel = path.strip_prefix(&self.common_dir).ok()?;
+        let mut parts = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy().into_owned());
+        match parts.next()?.as_str() {
+            "HEAD" | "index" => self.common_dir.parent().map(Path::to_owned),
+            "worktrees" => {
+                let name = parts.next()?;
+                if !matches!(parts.next().as_deref(), Some("HEAD" | "index")) {
+                    return None;
+                }
+                // `gitdir` に `<作業ツリー>/.git` が書いてある（相対パスなら、この名前のフォルダから）。
+                let dir = self.common_dir.join("worktrees").join(name);
+                let gitdir = std::fs::read_to_string(dir.join("gitdir")).ok()?;
+                let gitdir = dir.join(gitdir.trim());
+                let gitdir = gitdir.canonicalize().unwrap_or(gitdir);
+                gitdir.parent().map(Path::to_owned)
+            }
+            _ => None,
+        }
+    }
+
+    fn touch(&mut self, worktree: PathBuf) {
+        *self.generations.entry(worktree).or_default() += 1;
+    }
+}
+
+/// 丸ごと見張る worktree の数の上限。
+pub const HOT_WORKTREES: usize = 8;
+
+impl WorktreeWatch {
+    /// `common_dir`（リポジトリの共有の .git）の worktree を見張る。
+    pub fn new(common_dir: &Path) -> notify::Result<Self> {
+        let common_dir = common_dir
+            .canonicalize()
+            .unwrap_or_else(|_| common_dir.to_owned());
+        let state = std::sync::Arc::new(std::sync::Mutex::new(WorktreeState {
+            common_dir: common_dir.clone(),
+            ..Default::default()
+        }));
+        let events = state.clone();
+        let mut watcher =
+            notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+                let Ok(event) = event else { return };
+                if is_read_only(&event.kind) {
+                    return;
+                }
+                let mut state = events.lock().unwrap();
+                for path in &event.paths {
+                    if let Some(worktree) = state.worktree_of_git_file(path) {
+                        state.touch(worktree);
+                        continue;
+                    }
+                    if path.starts_with(&state.common_dir) {
+                        continue;
+                    }
+                    // 丸ごと見張っている worktree の中（入れ子なら深いほう）。
+                    if let Some(hot) = state
+                        .hot
+                        .iter()
+                        .filter(|h| path.starts_with(h))
+                        .max_by_key(|h| h.as_os_str().len())
+                        .cloned()
+                    {
+                        state.touch(hot);
+                    }
+                }
+            })?;
+        watcher.watch(&common_dir, RecursiveMode::NonRecursive)?;
+        let worktrees = common_dir.join("worktrees");
+        if worktrees.is_dir() {
+            watcher.watch(&worktrees, RecursiveMode::Recursive)?;
+        }
+        Ok(Self {
+            state,
+            watcher: std::sync::Mutex::new(watcher),
+        })
+    }
+
+    /// 作業ツリーを丸ごと見張る worktree を `paths` にする（初めの `HOT_WORKTREES` 個まで）。外したものは見張り
+    /// をやめ、新しく見張り始めたものは番号を増やす（見張っていなかった間の変化を数え直させる）。
+    pub fn set_hot(&self, paths: &[PathBuf]) {
+        let wanted: Vec<PathBuf> = paths.iter().take(HOT_WORKTREES).cloned().collect();
+        let mut watcher = self.watcher.lock().unwrap();
+        let old = std::mem::take(&mut self.state.lock().unwrap().hot);
+        for path in old.iter().filter(|p| !wanted.contains(p)) {
+            let _ = watcher.unwatch(path);
+        }
+        let mut hot = Vec::new();
+        for path in wanted {
+            if old.contains(&path) || watcher.watch(&path, RecursiveMode::Recursive).is_ok() {
+                if !old.contains(&path) {
+                    self.state.lock().unwrap().touch(path.clone());
+                }
+                hot.push(path);
+            }
+        }
+        self.state.lock().unwrap().hot = hot;
+    }
+
+    /// `path` の worktree の番号（変わるたびに増える）。
+    pub fn generation(&self, path: &Path) -> u64 {
+        self.state
+            .lock()
+            .unwrap()
+            .generations
+            .get(path)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// 作業ツリーのファイルを見張っているか（見張っていなければ、ファイルの変化は番号に出ない）。
+    pub fn is_hot(&self, path: &Path) -> bool {
+        self.state.lock().unwrap().hot.iter().any(|h| h == path)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +363,69 @@ mod tests {
             thread::sleep(Duration::from_millis(20));
         }
         panic!("変化が届かない: {:?}", seen.lock().unwrap());
+    }
+
+    #[test]
+    fn counts_changes_per_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().canonicalize().unwrap();
+        let git = |dir: &Path, args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .current_dir(dir)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        };
+        let main = root.join("main");
+        std::fs::create_dir(&main).unwrap();
+        git(&main, &["init", "-q"]);
+        std::fs::write(main.join("a"), "a").unwrap();
+        git(&main, &["add", "."]);
+        git(
+            &main,
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "a",
+            ],
+        );
+        let (one, two) = (root.join("one"), root.join("two"));
+        git(&main, &["worktree", "add", "-q", one.to_str().unwrap()]);
+        git(&main, &["worktree", "add", "-q", two.to_str().unwrap()]);
+        let watch = WorktreeWatch::new(&main.join(".git")).unwrap();
+        watch.set_hot(std::slice::from_ref(&one));
+        let wait_for = |path: &Path, above: u64| {
+            let started = Instant::now();
+            while watch.generation(path) <= above {
+                assert!(
+                    started.elapsed() < Duration::from_secs(5),
+                    "no change seen in {}",
+                    path.display()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        };
+        // 丸ごと見張っている worktree のファイル。
+        let before = watch.generation(&one);
+        std::fs::write(one.join("new"), "x").unwrap();
+        wait_for(&one, before);
+        // 見張っていない worktree でも、stage は index で分かる。
+        let before = watch.generation(&two);
+        std::fs::write(two.join("b"), "b").unwrap();
+        git(&two, &["add", "b"]);
+        wait_for(&two, before);
+        // メインの作業ツリーの index。
+        let before = watch.generation(&main);
+        git(&main, &["rm", "-q", "--cached", "a"]);
+        wait_for(&main, before);
     }
 }

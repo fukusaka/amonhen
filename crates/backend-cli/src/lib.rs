@@ -71,6 +71,8 @@ pub struct Git {
     workdir: PathBuf,
     /// status の結果を最後に index に書き残した時刻。
     status_saved: Arc<Mutex<Option<Instant>>>,
+    /// ほかの worktree の変更の数と、その変化の見張り（`Operations::worktree_changes`）。
+    pub(crate) worktrees: Arc<Mutex<ops::WorktreeCounts>>,
 }
 
 impl Git {
@@ -78,6 +80,7 @@ impl Git {
         Self {
             workdir: workdir.into(),
             status_saved: Arc::default(),
+            worktrees: Arc::default(),
         }
     }
 

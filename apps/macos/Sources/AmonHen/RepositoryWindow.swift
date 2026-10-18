@@ -374,13 +374,19 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var countsWork: DispatchWorkItem?
     private var countsRunning = false
     private var countsAgain = false
-    /// 見ていない間の変化も拾うよう、ときどき数え直す（ほかの worktree は開かないので、変化の知らせが来ない）。
+    /// ほかの worktree は開かないので変化の知らせが来ない。前にある間は 10 秒ごとに数を頼む（エンジンが変化を
+    /// 見張っていて、変わったものだけを数え直すので軽い）。
     private var countsTimer: Timer?
+    /// 最後に全部を数え直した時刻。エンジンが作業ツリーを見張るのは変更のある worktree だけなので、変更のない
+    /// worktree が書き換えられたのは、全部を数え直すまで分からない（5 分ごと）。
+    private var lastFreshCount = Date.distantPast
+    private var countsFresh = false
 
     /// ほかの worktree の変更の数を読み直す（サイドバーの Working Copy の下と、History の札に出す）。開いた
     /// リポジトリに 1 回で頼み、worktree ごとには開かない（SSH 先でも 1 本のつながりで済む）。続けて呼ばれたら、
     /// `delay` 待ってまとめる。
-    private func reloadOtherWorktrees(after delay: Double = 0.3) {
+    private func reloadOtherWorktrees(after delay: Double = 0.3, fresh: Bool = false) {
+        countsFresh = countsFresh || fresh
         countsWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             MainActor.assumeIsolated { self?.readWorktreeCounts() }
@@ -388,7 +394,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         countsWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
         if countsTimer == nil {
-            countsTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            countsTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, NSApp.isActive, self.window.isVisible, !self.isBackgroundTab else { return }
                     self.reloadOtherWorktrees(after: 0)
@@ -405,13 +411,17 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let paths = worktrees.filter { !$0.isSame(editing.path) && $0.prunable == nil && !$0.bare }.map(\.path)
         guard worktrees.count > 1, !paths.isEmpty else { return showWorktreeCounts() }
         countsRunning = true
+        let fresh = countsFresh || Date().timeIntervalSince(lastFreshCount) > 300
+        countsFresh = false
+        if fresh { lastFreshCount = Date() }
         let repository = opened.repository
         let started = CACurrentMediaTime()
         Task {
             let result = try? await Task.detached(priority: .utility) {
-                try repository.info(["op": "worktreeChanges", "paths": paths], as: WorktreeChangesList.self)
+                try repository.info(["op": "worktreeChanges", "paths": paths, "fresh": fresh], as: WorktreeChangesList.self)
             }.value
-            PerformanceLog.record("Worktrees: count the others' changes", ms: (CACurrentMediaTime() - started) * 1000)
+            PerformanceLog.record(fresh ? "Worktrees: count all the others' changes" : "Worktrees: count the others' changes",
+                                  ms: (CACurrentMediaTime() - started) * 1000)
             countsRunning = false
             var changed = false
             for w in result?.worktrees ?? [] {

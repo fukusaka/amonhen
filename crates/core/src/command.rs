@@ -248,9 +248,11 @@ pub enum Command {
     /// worktree の一覧（`info.worktrees`: path・head・branch・detached・bare・locked・prunable・main・current）。
     Worktrees,
     /// `paths` の worktree の変更の数（`info.worktrees`: path・count・stamp）。開いたリポジトリから読むので、
-    /// worktree ごとに開かなくてよい。
+    /// worktree ごとに開かなくてよい。変わっていない worktree は前の数を返す（`fresh` なら全部を数え直す）。
     WorktreeChanges {
         paths: Vec<String>,
+        #[serde(default)]
+        fresh: bool,
     },
     /// `path` に worktree を作る（`git worktree add`）。`new_branch` があれば `start`（なければ HEAD）から作る。
     WorktreeAdd {
@@ -1430,9 +1432,11 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::WorktreeChanges { paths } => Ok(Response {
+            Command::WorktreeChanges { paths, fresh } => Ok(Response {
                 ok: true,
-                info: Some(serde_json::json!({ "worktrees": ops.worktree_changes(&paths)? })),
+                info: Some(
+                    serde_json::json!({ "worktrees": ops.worktree_changes(&paths, fresh)? }),
+                ),
                 ..Default::default()
             }),
             Command::WorktreeAdd {
@@ -1830,6 +1834,20 @@ mod tests {
         assert_eq!(changes.len(), 1, "{changes:?}");
         assert_eq!(changes[0]["path"], path);
         assert_eq!(changes[0]["count"], 1);
+        // 変更のある worktree は見張るので、後から書き換えても（fresh なしで）数え直される。
+        std::fs::write(wt.join("more.txt"), "y").unwrap();
+        let started = std::time::Instant::now();
+        loop {
+            let changes = run(
+                &repo,
+                &format!(r#"{{"op":"worktreeChanges","paths":["{path}"]}}"#),
+            );
+            if changes["info"]["worktrees"][0]["count"] == 2 {
+                break;
+            }
+            assert!(started.elapsed().as_secs() < 5, "{changes}");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
         let refused = repo.run_json(&format!(
             r#"{{"op":"worktreeRemove","path":"{}"}}"#,
             wt.display()

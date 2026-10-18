@@ -646,7 +646,7 @@ impl Operations for Git {
         self.write(&args).map(drop)
     }
 
-    fn worktree_changes(&self, paths: &[String]) -> Result<Vec<WorktreeChanges>> {
+    fn worktree_changes(&self, paths: &[String], fresh: bool) -> Result<Vec<WorktreeChanges>> {
         // このリポジトリの worktree のパスだけを読む（ほかの場所は読まない）。
         let listed = self.worktree_list()?;
         let known: Vec<&[u8]> = listed
@@ -657,38 +657,166 @@ impl Operations for Git {
             .iter()
             .filter(|p| known.contains(&p.as_bytes()))
             .collect();
+        let mut counts = self.worktrees.lock().unwrap();
+        counts.start_watching(self);
+        // 数え直すもの: 初めて・変わった・見張っていない作業ツリーに変更があるもの（ファイルの変化が見えない）。
+        let generations: Vec<Option<u64>> = paths.iter().map(|p| counts.generation(p)).collect();
+        let due: Vec<usize> = (0..paths.len())
+            .filter(|&i| fresh || counts.is_due(paths[i], generations[i]))
+            .collect();
+        drop(counts);
         // 1 つずつ git status を動かす。数が多いので 8 つまで並べる。
         let next = std::sync::atomic::AtomicUsize::new(0);
         let results: std::sync::Mutex<Vec<Option<(u32, u64)>>> =
-            std::sync::Mutex::new(vec![None; paths.len()]);
+            std::sync::Mutex::new(vec![None; due.len()]);
         std::thread::scope(|scope| {
-            for _ in 0..paths.len().min(8) {
+            for _ in 0..due.len().min(8) {
                 scope.spawn(|| {
                     loop {
                         let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(path) = paths.get(i) else { break };
-                        let changes = Git::new(path.as_str()).count_changes();
+                        let Some(&index) = due.get(i) else { break };
+                        let changes = Git::new(paths[index].as_str()).count_changes();
                         results.lock().unwrap()[i] = changes.ok();
                     }
                 });
             }
         });
+        let mut counts = self.worktrees.lock().unwrap();
+        for (i, result) in due.iter().zip(results.into_inner().unwrap()) {
+            counts.record(paths[*i], generations[*i], result);
+        }
+        counts.choose_hot();
         Ok(paths
-            .into_iter()
-            .zip(results.into_inner().unwrap())
-            .map(|(path, result)| {
-                let (count, stamp) = match result {
-                    Some((count, stamp)) => (Some(count), stamp),
-                    None => (None, 0),
-                };
+            .iter()
+            .map(|path| {
+                let (count, stamp) = counts.get(path);
                 WorktreeChanges {
-                    path: path.clone(),
+                    path: (*path).clone(),
                     count,
                     stamp,
                 }
             })
             .collect())
     }
+}
+
+/// ほかの worktree の変更の数を覚えておき、変わったものだけ数え直す（`amonhen_watch::WorktreeWatch` で見張る）。
+#[derive(Default)]
+pub struct WorktreeCounts {
+    #[cfg(not(target_family = "wasm"))]
+    watch: Option<amonhen_watch::WorktreeWatch>,
+    started: bool,
+    /// パス → 数えたときの番号・数・指紋・最後に指紋が変わった時刻。
+    known: std::collections::HashMap<String, Known>,
+}
+
+impl std::fmt::Debug for WorktreeCounts {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WorktreeCounts")
+            .field("known", &self.known.len())
+            .finish()
+    }
+}
+
+struct Known {
+    generation: Option<u64>,
+    count: Option<u32>,
+    stamp: u64,
+    changed: std::time::Instant,
+}
+
+impl WorktreeCounts {
+    fn start_watching(&mut self, git: &Git) {
+        if self.started {
+            return;
+        }
+        self.started = true;
+        #[cfg(not(target_family = "wasm"))]
+        if let Ok(dir) = git.read(&["rev-parse", "--path-format=absolute", "--git-common-dir"]) {
+            let dir = String::from_utf8_lossy(&dir).trim().to_owned();
+            self.watch = amonhen_watch::WorktreeWatch::new(std::path::Path::new(&dir)).ok();
+        }
+        #[cfg(target_family = "wasm")]
+        let _ = git;
+    }
+
+    /// 見張りの番号（見張れなければ None）。
+    fn generation(&self, path: &str) -> Option<u64> {
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(watch) = &self.watch {
+            return Some(watch.generation(&canonical(path)));
+        }
+        let _ = path;
+        None
+    }
+
+    fn is_due(&self, path: &str, generation: Option<u64>) -> bool {
+        let Some(known) = self.known.get(path) else {
+            return true;
+        };
+        let Some(generation) = generation else {
+            return true;
+        };
+        if known.generation != Some(generation) || known.count.is_none() {
+            return true;
+        }
+        // 変更があって作業ツリーを見張っていなければ、ファイルの変化が見えないので毎回数える。
+        known.count.unwrap_or(0) > 0 && !self.is_hot(path)
+    }
+
+    fn is_hot(&self, path: &str) -> bool {
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(watch) = &self.watch {
+            return watch.is_hot(&canonical(path));
+        }
+        let _ = path;
+        false
+    }
+
+    fn record(&mut self, path: &str, generation: Option<u64>, result: Option<(u32, u64)>) {
+        let (count, stamp) = result.map_or((None, 0), |(c, s)| (Some(c), s));
+        let changed = match self.known.get(path) {
+            Some(old) if old.stamp == stamp => old.changed,
+            _ => std::time::Instant::now(),
+        };
+        self.known.insert(
+            path.to_owned(),
+            Known {
+                generation,
+                count,
+                stamp,
+                changed,
+            },
+        );
+    }
+
+    fn get(&self, path: &str) -> (Option<u32>, u64) {
+        self.known
+            .get(path)
+            .map_or((None, 0), |k| (k.count, k.stamp))
+    }
+
+    /// 作業ツリーを丸ごと見張る worktree: 変更のあるもののうち、最近変わったもの。
+    fn choose_hot(&self) {
+        #[cfg(not(target_family = "wasm"))]
+        if let Some(watch) = &self.watch {
+            let mut dirty: Vec<(&String, &Known)> = self
+                .known
+                .iter()
+                .filter(|(_, k)| k.count.unwrap_or(0) > 0)
+                .collect();
+            dirty.sort_by_key(|(_, k)| std::cmp::Reverse(k.changed));
+            let hot: Vec<std::path::PathBuf> =
+                dirty.into_iter().map(|(p, _)| canonical(p)).collect();
+            watch.set_hot(&hot);
+        }
+    }
+}
+
+#[cfg(not(target_family = "wasm"))]
+fn canonical(path: &str) -> std::path::PathBuf {
+    let path = std::path::Path::new(path);
+    path.canonicalize().unwrap_or_else(|_| path.to_owned())
 }
 
 impl Git {

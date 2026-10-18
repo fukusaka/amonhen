@@ -399,7 +399,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::Remotes => encode(&ops.remotes()?),
         Op::ChangeRemote(change) => encode(&ops.change_remote(&change)?),
         Op::WorktreeList => encode(&Bytes(ops.worktree_list()?)),
-        Op::WorktreeChanges(paths) => encode(&ops.worktree_changes(&paths)?),
+        Op::WorktreeChanges(paths, fresh) => encode(&ops.worktree_changes(&paths, fresh)?),
         Op::ChangeWorktree(change) => encode(&ops.change_worktree(&change)?),
         Op::WorkingStats => encode(&ops.working_stats()?),
         Op::IgnoreMatches(patterns, limit) => encode(&ops.ignore_matches(&patterns, limit)?),

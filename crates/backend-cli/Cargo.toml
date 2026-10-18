@@ -9,6 +9,10 @@ license.workspace = true
 [dependencies]
 amonhen-model.workspace = true
 
+# ほかの worktree の変化を見張る（変わったものだけ数え直す）。WASM では見張らない。
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+amonhen-watch.workspace = true
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 

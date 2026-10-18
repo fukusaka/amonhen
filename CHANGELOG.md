@@ -72,8 +72,9 @@ becomes the GitHub Release notes.
   keeps an engine and a connection per worktree: the opened repository counts every worktree's changes in one request
   (`worktreeChanges`, remote protocol 19), only the edited worktree and the two before it stay open, and past five
   engines per host each gets its own SSH connection (sshd allows only a few sessions per connection; short commands it
-  refuses are retried on their own). With 59 worktrees on a Linux host this went from 59 engines to 2, and counting
-  them all takes about 2 seconds.
+  refuses are retried on their own). The engine watches the worktrees' HEAD and index and the files of those with
+  changes, and counts again only the ones that changed. With 59 worktrees on a Linux host this went from 59 engines to
+  2; counting all of them takes about 2 seconds, and asking again when nothing changed runs no git.
 - History no longer crashes when showing only the commits that match a search scrolled down past the matches.
 - Fetch, Pull and Push no longer hang forever when git waits for credentials nobody can see: after 120 seconds with no
   output they stop and say so.

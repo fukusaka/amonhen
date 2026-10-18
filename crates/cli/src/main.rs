@@ -599,7 +599,7 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
                 let paths: Vec<&str> = list.iter().filter_map(|w| w["path"].as_str()).collect();
                 let r = command(
                     &*front,
-                    serde_json::json!({"op": "worktreeChanges", "paths": paths}),
+                    serde_json::json!({"op": "worktreeChanges", "paths": paths, "fresh": true}),
                 )?;
                 for c in r["info"]["worktrees"].as_array().into_iter().flatten() {
                     if let Some(w) = list.iter_mut().find(|w| w["path"] == c["path"]) {
