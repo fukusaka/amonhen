@@ -856,3 +856,8 @@
 "%ld more worktrees with changes" = "ほか %ld 個の worktree（変更あり）";
 "%ld worktrees without changes" = "変更のない worktree %ld 個";
 "Last activity: %@" = "最後の作業: %@";
+"Copy Branch Name" = "ブランチ名をコピー";
+"Copy Tag Name" = "タグ名をコピー";
+"Copy Name" = "名前をコピー";
+"Copy Branch Name “%@”" = "ブランチ名「%@」をコピー";
+"Copy Tag Name “%@”" = "タグ名「%@」をコピー";

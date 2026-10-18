@@ -54,6 +54,7 @@ becomes the GitHub Release notes.
   worktree's HEAD with its name and number of changed files. The current branch is the edited worktree's; branches checked out in
   other worktrees are marked in Branches, History and the branch switcher. Opening a worktree's folder opens its repository's tab, and the repository page no longer
   lists worktrees as repositories of their own.
+- Copy a branch or tag name from the sidebar's right-click menu, or from a commit's menu in History.
 - `amonhen worktree` (list, add, remove, prune), the same as `git worktree`, through the core (so over SSH too).
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`).
 

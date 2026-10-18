@@ -485,6 +485,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(ClosureMenuItem(title: title, action: action))
         }
         let current = headBranch ?? "HEAD"
+        // 名前をコピー（ターミナルや PR に貼るため。リモートブランチは origin/ を付けたまま）。
+        let copyTitle = switch item.kind {
+        case .local, .remote: L("Copy Branch Name")
+        case .tag: L("Copy Tag Name")
+        default: L("Copy Name")
+        }
+        add(copyTitle) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(name, forType: .string)
+        }
+        menu.addItem(.separator())
         switch item.kind {
         case .local:
             if name != headBranch {
