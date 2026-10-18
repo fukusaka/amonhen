@@ -1389,23 +1389,43 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     // MARK: - NSOutlineView
 
-    private func children(of item: Any?) -> [Any] {
-        switch item {
-        case nil: others.isEmpty ? (tree?.children ?? entries) : [ownHeader] + otherTop
-        case is OwnHeader: tree?.children ?? entries
-        case let bucket as OtherBucket: bucket.groups
-        case let group as OtherGroup: group.entries
-        case let dir as Dir: dir.children
-        default: []
-        }
+    // 一覧の子は、配列を作らずに元の配列から直接答える（行ごとに全体の配列を作ると n² になり、変更の多い
+    // リポジトリで数秒止まった）。
+
+    /// 一番上の並び（ほかの worktree があるときは、この worktree の見出しの後に並べる）。
+    private var topCount: Int { others.isEmpty ? ownCount : 1 + otherTop.count }
+    private func topChild(_ index: Int) -> Any {
+        if others.isEmpty { return ownChild(index) }
+        return index == 0 ? ownHeader : otherTop[index - 1]
+    }
+
+    /// この worktree のファイル（木なら一番上のディレクトリとファイル）。
+    private var ownCount: Int { tree.map { $0.dirs.count + $0.files.count } ?? entries.count }
+    private func ownChild(_ index: Int) -> Any {
+        guard let tree else { return entries[index] }
+        return index < tree.dirs.count ? tree.dirs[index] : tree.files[index - tree.dirs.count]
     }
 
     func outlineView(_ outlineView: NSOutlineView, numberOfChildrenOfItem item: Any?) -> Int {
-        children(of: item).count
+        switch item {
+        case nil: topCount
+        case is OwnHeader: ownCount
+        case let bucket as OtherBucket: bucket.groups.count
+        case let group as OtherGroup: group.entries.count
+        case let dir as Dir: dir.dirs.count + dir.files.count
+        default: 0
+        }
     }
 
     func outlineView(_ outlineView: NSOutlineView, child index: Int, ofItem item: Any?) -> Any {
-        children(of: item)[index]
+        switch item {
+        case nil: topChild(index)
+        case is OwnHeader: ownChild(index)
+        case let bucket as OtherBucket: bucket.groups[index]
+        case let group as OtherGroup: group.entries[index]
+        case let dir as Dir: index < dir.dirs.count ? dir.dirs[index] : dir.files[index - dir.dirs.count]
+        default: entries[index]
+        }
     }
 
     func outlineView(_ outlineView: NSOutlineView, isItemExpandable item: Any) -> Bool {

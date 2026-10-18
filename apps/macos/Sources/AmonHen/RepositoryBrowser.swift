@@ -690,42 +690,48 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         }
     }
 
-    /// 並べ替え。ツールバーの一覧は、お気に入り、そのあと最後に開いた順。
+    /// 並べ替え。ツールバーの一覧は、お気に入り、そのあと最後に開いた順。比べる値（設定・ブックマーク・
+    /// `.git/HEAD` などを読む）は、比べるたびに引かず、先に 1 度ずつ読んでおく（行が多いと数秒止まった）。
     private func sorted(_ list: [String]) -> [String] {
         let bookmarks = Bookmarks.shared
-        let opened = { (path: String) in RepositoryList.openedAt(path) ?? .distantPast }
+        let openedAll = UserDefaults.standard.dictionary(forKey: "repositoryOpenedAt") ?? [:]
+        let opened = Dictionary(list.map { ($0, (openedAll[$0] as? Double) ?? -Double.infinity) }, uniquingKeysWith: { a, _ in a })
         guard style == .page, let sort = table.sortDescriptors.first, let key = sort.key else {
+            let favorites = Set(bookmarks.data.items.filter(\.favorite).map(\.path))
             return list.sorted { a, b in
-                let fa = bookmarks.bookmark(a)?.favorite == true, fb = bookmarks.bookmark(b)?.favorite == true
+                let fa = favorites.contains(a), fb = favorites.contains(b)
                 if fa != fb { return fa }
-                return opened(a) > opened(b)
+                return opened[a, default: 0] > opened[b, default: 0]
             }
         }
-        let name = { (path: String) in bookmarks.displayName(path).lowercased() }
-        let ordered: (String, String) -> Bool
+        let names = Dictionary(list.map { ($0, bookmarks.displayName($0).lowercased()) }, uniquingKeysWith: { a, _ in a })
+        // 並べる値（文字か数）。
+        enum Value: Comparable {
+            case text(String)
+            case number(Double)
+        }
+        let value: (String) -> Value
         switch key {
         case "branch":
-            let branch = { (path: String) in bookmarks.peek(path)?.branch ?? RepositoryList.branch(of: path) ?? "" }
-            ordered = { branch($0) < branch($1) }
+            value = { .text(bookmarks.peek($0)?.branch ?? RepositoryList.branch(of: $0) ?? "") }
         case "status":
-            let weight = { (path: String) -> Int in
-                guard let peek = bookmarks.peek(path) else { return -1 }
-                return peek.changed * 10_000 + peek.ahead + peek.behind
+            value = { path in
+                guard let peek = bookmarks.peek(path) else { return .number(-1) }
+                return .number(Double(peek.changed * 10_000 + peek.ahead + peek.behind))
             }
-            ordered = { weight($0) < weight($1) }
         case "commit":
-            let date = { (path: String) in bookmarks.peek(path)?.lastCommitDate ?? .distantPast }
-            ordered = { date($0) < date($1) }
+            value = { .number(bookmarks.peek($0)?.lastCommitDate?.timeIntervalSince1970 ?? -Double.infinity) }
         case "opened":
-            ordered = { opened($0) < opened($1) }
+            value = { .number(opened[$0, default: 0]) }
         default:
-            ordered = { name($0) < name($1) }
+            value = { .text(names[$0, default: ""]) }
         }
+        let keys = Dictionary(list.map { ($0, value($0)) }, uniquingKeysWith: { a, _ in a })
         // 同じ値なら名前の順（並びが毎回変わらないように）。
         return list.sorted { a, b in
-            if ordered(a, b) { return sort.ascending }
-            if ordered(b, a) { return !sort.ascending }
-            return name(a) < name(b)
+            let ka = keys[a]!, kb = keys[b]!
+            if ka != kb { return sort.ascending ? ka < kb : kb < ka }
+            return names[a, default: ""] < names[b, default: ""]
         }
     }
 

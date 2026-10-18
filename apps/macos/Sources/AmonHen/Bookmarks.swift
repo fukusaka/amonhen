@@ -337,25 +337,35 @@ final class Bookmarks {
         RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).resolvingSymlinksInPath().path
     }
 
+    /// 見つけたリポジトリとスキャンするフォルダの、リンクを解いたパス（解くのはファイルシステムを引くので、
+    /// 探し直したときだけ作り直す）。
+    private var realScanned: (key: [String: [String]], known: Set<String>, roots: [ScanRoot])?
+
     private func scanRootsChanged(_ paths: [String]) {
         // FSEvents のパスはリンクを解いた形で来る。
-        let known = data.scanRoots.flatMap { scanned[$0.path] ?? [] }.map(Self.real)
-        let roots = data.scanRoots.map { root in
-            var root = root
-            root.path = Self.real(root.path)
-            return root
+        if realScanned?.key != scanned {
+            realScanned = (scanned, Set(data.scanRoots.flatMap { scanned[$0.path] ?? [] }.map(Self.real)),
+                           data.scanRoots.map { root in
+                               var root = root
+                               root.path = Self.real(root.path)
+                               return root
+                           })
         }
+        guard let (_, known, roots) = realScanned else { return }
         let relevant = paths.contains { raw in
             let path = raw.hasSuffix("/") ? String(raw.dropLast()) : raw
-            // 見つけたリポジトリの中（そのもの以外）の変化は、リポジトリの増減ではない。
-            if known.contains(where: { path.hasPrefix($0 + "/") }) { return false }
-            // 探す深さより下は見ない。
-            return roots.contains { root in
-                guard path == root.path || path.hasPrefix(root.path + "/") else { return false }
-                let depth = path.dropFirst(root.path.count).split(separator: "/").count
-                let parts = path.dropFirst(root.path.count).split(separator: "/").map(String.init)
-                return depth < root.depth && !parts.contains { $0.hasPrefix(".") || root.excludes.contains($0) }
+            // 探す深さより下（ビルドの出力など、ほとんどの知らせ）は、先に安く捨てる。
+            guard let root = roots.first(where: { path == $0.path || path.hasPrefix($0.path + "/") }) else { return false }
+            let parts = path.dropFirst(root.path.count).split(separator: "/").map(String.init)
+            guard parts.count < root.depth, !parts.contains(where: { $0.hasPrefix(".") || root.excludes.contains($0) })
+            else { return false }
+            // 見つけたリポジトリの中（そのもの以外）の変化は、リポジトリの増減ではない。上のフォルダを順に引く。
+            var parent = (path as NSString).deletingLastPathComponent
+            while parent.count > root.path.count {
+                if known.contains(parent) { return false }
+                parent = (parent as NSString).deletingLastPathComponent
             }
+            return true
         }
         guard relevant, !rescanPending else { return }
         rescanPending = true

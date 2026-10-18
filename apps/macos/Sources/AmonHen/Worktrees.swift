@@ -28,7 +28,10 @@ nonisolated struct WorktreeInfo: Decodable, Sendable, Equatable {
             return known
         }
         canonicalLock.unlock()
-        let resolved = URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
+        // /home・/net は macOS では自動マウントの場所で、引くとマウントを探しに行って数秒止まる（SSH 先の worktree の
+        // パスがここに来る）。手元のものではないので、そのまま比べる。
+        let automounted = ["/home/", "/net/", "/Network/"].contains { path.hasPrefix($0) }
+        let resolved = automounted ? path : URL(fileURLWithPath: path).resolvingSymlinksInPath().standardizedFileURL.path
         canonicalLock.lock()
         canonicalCache[path] = resolved
         canonicalLock.unlock()
