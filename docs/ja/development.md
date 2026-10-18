@@ -2,7 +2,7 @@
 
 [English](../development.md)
 
-ビルド・テストと、確認用の起動オプション。設計は [design.md](design.md)、作業の決まりは [CLAUDE.md](../../CLAUDE.md) を参照。
+ビルド・テストと、確認用の起動オプション。設計は [design.md](design.md)、作業の決まりは [CLAUDE.md](../../CLAUDE.md) を参照。Windows の実機の準備と操作は [windows.md](windows.md)。
 
 ## ビルドとテスト
 
