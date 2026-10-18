@@ -50,10 +50,13 @@ becomes the GitHub Release notes.
   commits, checkout, Pull, Push, stash and Undo act there, while History and branches stay shared. A branch checked out
   in another worktree takes you to that worktree. New Worktree…, Remove Worktree and Prune Worktrees; confirmation
   sheets name the worktree. The worktrees are listed under Working Copy in the sidebar with their change counts (the main
-  one first, then by name; worktrees with no changes are folded into "No changes"). History labels each
+  one first, then by name; worktrees with no changes are folded into "No changes"; worktrees whose folders share a
+  name, like `build/aslr/src` and `build/ssp/src`, show as `aslr/src` and `ssp/src`). History labels each
   worktree's HEAD with its name and number of changed files. The current branch is the edited worktree's; branches checked out in
   other worktrees are marked in Branches, History and the branch switcher. Opening a worktree's folder opens its repository's tab, and the repository page no longer
   lists worktrees as repositories of their own.
+- Tags are grouped into folders by `/` like branches (`backup/…`, `archive/…`), and clicking a folder or a remote in
+  the sidebar opens or closes it.
 - Copy a branch or tag name from the sidebar's right-click menu, or from a commit's menu in History.
 - `amonhen worktree` (list, add, remove, prune), the same as `git worktree`, through the core (so over SSH too).
 - Folders to scan on SSH hosts: the engine on the host finds the repositories (`amonhen find-repositories`). Add one
@@ -64,6 +67,9 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Opening many worktrees of an SSH repository no longer fails with "Session open refused by peer": sshd allows only
+  a few sessions per connection, so past five open engines each one gets its own SSH connection, and short commands
+  the shared connection refuses are retried on their own.
 - History no longer crashes when showing only the commits that match a search scrolled down past the matches.
 - Fetch, Pull and Push no longer hang forever when git waits for credentials nobody can see: after 120 seconds with no
   output they stop and say so.

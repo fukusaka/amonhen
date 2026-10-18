@@ -253,3 +253,4 @@
 /* model: worktree */
 "Can’t list worktrees here" = "この環境では worktree の一覧を読めません";
 "Can’t change worktrees here" = "この環境では worktree を変えられません";
+"The SSH host refused another session" = "SSH 先が、これ以上のセッションを断りました";

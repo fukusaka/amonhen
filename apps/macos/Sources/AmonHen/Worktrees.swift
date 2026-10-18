@@ -13,8 +13,50 @@ nonisolated struct WorktreeInfo: Decodable, Sendable, Equatable {
     let main: Bool
     let current: Bool
 
-    /// 見せる名前（フォルダの名前）。
-    var name: String { (path as NSString).lastPathComponent }
+    /// 見せる名前: フォルダの名前。同じ名前のものがほかにあれば、見分けがつくところまで親のフォルダを足す
+    /// （`build/aslr/src` と `build/ssp/src` なら `aslr/src`・`ssp/src`）。一覧を読んだときに `WorktreeList` が決める。
+    var name: String
+
+    private enum CodingKeys: String, CodingKey {
+        case path, head, branch, detached, bare, locked, prunable, main, current
+    }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        path = try c.decode(String.self, forKey: .path)
+        head = try c.decodeIfPresent(String.self, forKey: .head)
+        branch = try c.decodeIfPresent(String.self, forKey: .branch)
+        detached = try c.decode(Bool.self, forKey: .detached)
+        bare = try c.decode(Bool.self, forKey: .bare)
+        locked = try c.decodeIfPresent(String.self, forKey: .locked)
+        prunable = try c.decodeIfPresent(String.self, forKey: .prunable)
+        main = try c.decode(Bool.self, forKey: .main)
+        current = try c.decode(Bool.self, forKey: .current)
+        name = (path as NSString).lastPathComponent
+    }
+
+    /// `list` の名前を、重ならないところまで親のフォルダを足して決める。
+    static func disambiguate(_ list: [WorktreeInfo]) -> [WorktreeInfo] {
+        let parts = list.map { $0.path.split(separator: "/").map(String.init) }
+        var depth = Array(repeating: 1, count: list.count)
+        func label(_ i: Int) -> String { parts[i].suffix(depth[i]).joined(separator: "/") }
+        while true {
+            let groups = Dictionary(grouping: list.indices, by: label)
+            var grew = false
+            for (_, members) in groups where members.count > 1 {
+                for i in members where depth[i] < parts[i].count {
+                    depth[i] += 1
+                    grew = true
+                }
+            }
+            if !grew { break }
+        }
+        return list.indices.map { i in
+            var w = list[i]
+            if !parts[i].isEmpty { w.name = label(i) }
+            return w
+        }
+    }
 
     /// 同じ worktree か（シンボリックリンクを解いて比べる）。
     func isSame(_ other: String) -> Bool { Self.canonical(path) == Self.canonical(other) }
@@ -44,6 +86,13 @@ nonisolated struct WorktreeInfo: Decodable, Sendable, Equatable {
 
 nonisolated struct WorktreeList: Decodable, Sendable {
     let worktrees: [WorktreeInfo]
+
+    private enum CodingKeys: String, CodingKey { case worktrees }
+
+    init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        worktrees = WorktreeInfo.disambiguate(try c.decode([WorktreeInfo].self, forKey: .worktrees))
+    }
 }
 
 /// 書き込む先にできる worktree の組: そのリポジトリ、操作、Working Copy、変化の見張り。History・ref・詳細は

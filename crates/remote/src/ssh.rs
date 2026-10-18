@@ -134,21 +134,27 @@ fn control_path() -> String {
     }
 }
 
-/// SSH の共通の引数（接続先まで）。
-fn base_args(target: &Target) -> Vec<String> {
+/// SSH の共通の引数（接続先まで）。`share` なら、調べる・送る・起動するで同じ接続を使い回す（ControlMaster）。
+/// しないなら、この ssh だけの接続を張る。
+fn base_args(target: &Target, share: bool) -> Vec<String> {
     let mut args = vec![
         "-T".to_owned(),
         // パスワードは聞けない（画面がない）。鍵か ssh-agent でつなぐ。
         "-o".into(),
         "BatchMode=yes".into(),
-        // 調べる・送る・起動するで、同じ接続を使い回す。
-        "-o".into(),
-        "ControlMaster=auto".into(),
-        "-o".into(),
-        format!("ControlPath={}", control_path()),
-        "-o".into(),
-        "ControlPersist=60".into(),
     ];
+    if share {
+        args.extend([
+            "-o".into(),
+            "ControlMaster=auto".into(),
+            "-o".into(),
+            format!("ControlPath={}", control_path()),
+            "-o".into(),
+            "ControlPersist=60".into(),
+        ]);
+    } else {
+        args.extend(["-o".into(), "ControlPath=none".into()]);
+    }
     if let Some(p) = &target.port {
         args.extend(["-p".into(), p.clone()]);
     }
@@ -156,10 +162,93 @@ fn base_args(target: &Target) -> Vec<String> {
     args
 }
 
-/// SSH 先で `script` を実行し、標準出力を返す。`input` は標準入力に流す。
+/// 1 つの SSH の接続の上で、sshd が開けるセッションの数には限りがある（`MaxSessions`、既定は 10）。リポジトリ・
+/// worktree ごとのエンジン（`--stdio`）は開いている間ずっとセッションを使うので、接続先ごとにここまでを使い回しの
+/// 接続に載せ、超えた分はそれぞれの接続を張る（調べる・送るなどの短いセッションの分を残しておく）。
+const SHARED_ENGINES: usize = 5;
+
+/// 接続先ごとの、使い回しの接続に載せているエンジンの数。
+static SHARED: std::sync::Mutex<Vec<(String, usize)>> = std::sync::Mutex::new(Vec::new());
+
+/// 使い回しの接続に載せたエンジンの数え（つながりが切れたら減らす）。
+struct SharedSlot(String);
+
+impl SharedSlot {
+    /// 載せられれば数えて返す。いっぱいなら None。
+    fn take(key: &str) -> Option<Self> {
+        let mut shared = SHARED.lock().unwrap();
+        let count = match shared.iter_mut().find(|(k, _)| k == key) {
+            Some((_, count)) => count,
+            None => {
+                shared.push((key.to_owned(), 0));
+                &mut shared.last_mut().unwrap().1
+            }
+        };
+        (*count < SHARED_ENGINES).then(|| {
+            *count += 1;
+            Self(key.to_owned())
+        })
+    }
+}
+
+impl Drop for SharedSlot {
+    fn drop(&mut self) {
+        if let Some((_, count)) = SHARED
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .find(|(k, _)| *k == self.0)
+        {
+            *count = count.saturating_sub(1);
+        }
+    }
+}
+
+/// 使い回しの接続が、新しいセッションを断った（`MaxSessions` を超えた）。
+fn session_refused(stderr: &str) -> bool {
+    stderr.contains("Session open refused") || stderr.contains("mux_client_request_session")
+}
+
+/// SSH 先で `script` を実行し、標準出力を返す。`input` は標準入力に流す。使い回しの接続がセッションを断ったら、
+/// この ssh だけの接続でやり直す。
 fn run(ssh: &str, target: &Target, script: &str, input: Option<&[u8]>) -> Result<String> {
+    match run_on(ssh, target, script, input, true) {
+        Err(RunError::Refused) => {
+            run_on(ssh, target, script, input, false).map_err(RunError::into_error)
+        }
+        result => result.map_err(RunError::into_error),
+    }
+}
+
+enum RunError {
+    Refused,
+    Other(amonhen_model::Error),
+}
+
+impl RunError {
+    fn into_error(self) -> amonhen_model::Error {
+        match self {
+            RunError::Other(e) => e,
+            RunError::Refused => tr!("The SSH host refused another session").into(),
+        }
+    }
+}
+
+impl<E: Into<amonhen_model::Error>> From<E> for RunError {
+    fn from(e: E) -> Self {
+        RunError::Other(e.into())
+    }
+}
+
+fn run_on(
+    ssh: &str,
+    target: &Target,
+    script: &str,
+    input: Option<&[u8]>,
+    share: bool,
+) -> std::result::Result<String, RunError> {
     let mut child = Command::new(ssh)
-        .args(base_args(target))
+        .args(base_args(target, share))
         .arg(script)
         .stdin(if input.is_some() {
             Stdio::piped()
@@ -178,6 +267,9 @@ fn run(ssh: &str, target: &Target, script: &str, input: Option<&[u8]>) -> Result
     let out = child.wait_with_output()?;
     if !out.status.success() {
         let message = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+        if share && session_refused(&message) {
+            return Err(RunError::Refused);
+        }
         return Err(tr!(
             "Error on the SSH host ({host}): {message}",
             host = target.destination,
@@ -229,7 +321,14 @@ impl RemoteEngine {
 /// SSH 先にエンジンを用意して起動し、つなぐ。`ssh` は ssh のコマンド（テストでは偽物を渡す）。
 pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Connection>> {
     let engine = prepare(ssh, target, daemons)?;
-    let mut args = base_args(target);
+    // 使い回しの接続に載せられるのは、接続先ごとに `SHARED_ENGINES` 個まで。
+    let key = format!(
+        "{}:{}",
+        target.destination,
+        target.port.as_deref().unwrap_or("")
+    );
+    let slot = SharedSlot::take(&key);
+    let mut args = base_args(target, slot.is_some());
     args.push(format!(
         "{}; exec {} --stdio {}",
         cleanup_script(&engine),
@@ -237,6 +336,9 @@ pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Conn
         target.shell_path()
     ));
     let conn = Connection::spawn(ssh, &args)?;
+    if let Some(slot) = slot {
+        conn.hold(Box::new(slot));
+    }
     conn.set_remote_engine(engine.describe());
     Ok(conn)
 }

@@ -221,22 +221,27 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
         var groups: [Node] = []
-        // feature/x のような名前はフォルダにまとめる。
-        let branchRoot = Node(title: "Branches")
-        for item in items(.local) {
-            var parent = branchRoot
-            let parts = item.name.split(separator: "/").map(String.init)
-            for folder in parts.dropLast() {
-                if let existing = parent.children.first(where: { $0.item == nil && $0.title == folder }) {
-                    parent = existing
-                } else {
-                    let node = Node(title: folder)
-                    parent.children.append(node)
-                    parent = node
+        // feature/x・backup/x のような名前はフォルダにまとめる（ブランチとタグ）。
+        func folders(_ title: String, _ list: [RefItem]) -> Node {
+            let root = Node(title: title)
+            for item in list {
+                var parent = root
+                let parts = item.name.split(separator: "/").map(String.init)
+                for folder in parts.dropLast() {
+                    if let existing = parent.children.first(where: { $0.item == nil && $0.title == folder }) {
+                        parent = existing
+                    } else {
+                        let node = Node(title: folder)
+                        parent.children.append(node)
+                        parent = node
+                    }
                 }
+                parent.children.append(Node(title: parts.last ?? item.name, item: item,
+                                            isHead: item.kind == .local && item.name == head))
             }
-            parent.children.append(Node(title: parts.last ?? item.name, item: item, isHead: item.name == head))
+            return root
         }
+        let branchRoot = folders("Branches", items(.local))
         if !branchRoot.children.isEmpty { groups.append(branchRoot) }
 
         // worktree は Working Copy の下に並べる（1 つだけなら出さない）。
@@ -265,7 +270,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 return node
             }))
         }
-        for (kind, title) in [(RefKind.tag, "Tags"), (.stash, "Stashes"), (.submodule, "Submodules")] {
+        let tagRoot = folders("Tags", items(.tag))
+        if !tagRoot.children.isEmpty { groups.append(tagRoot) }
+        for (kind, title) in [(RefKind.stash, "Stashes"), (.submodule, "Submodules")] {
             let nodes = items(kind).map { Node(title: $0.name, item: $0) }
             if !nodes.isEmpty { groups.append(Node(title: title, children: nodes)) }
         }
@@ -319,8 +326,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     @objc private func outlineClicked() {
         let row = outline.clickedRow
-        guard row >= 0, let node = outline.item(atRow: row) as? Node,
-              groups.contains(where: { $0 === node }) || node === cleanWorktreesNode, !node.children.isEmpty else { return }
+        // 見出しと、選べない行（ブランチ・タグのフォルダ、リモート、「変更なし」）は、押せば開く・閉じる。
+        guard row >= 0, let node = outline.item(atRow: row) as? Node, !node.children.isEmpty,
+              groups.contains(where: { $0 === node }) || !outlineView(outline, shouldSelectItem: node) else { return }
         if outline.isItemExpanded(node) { outline.animator().collapseItem(node) } else { outline.animator().expandItem(node) }
     }
 

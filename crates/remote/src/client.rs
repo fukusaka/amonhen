@@ -46,6 +46,8 @@ pub struct Connection {
     stderr: Arc<Mutex<String>>,
     /// SSH 先で使っているエンジンと、その用意のしかた（`crate::ssh::RemoteEngine::describe`）。
     remote_engine: Mutex<Option<String>>,
+    /// つながっている間だけ持っておくもの（SSH の接続の上のセッションの数え。`crate::ssh`）。
+    held: Mutex<Option<Box<dyn Send>>>,
 }
 
 impl Connection {
@@ -67,6 +69,7 @@ impl Connection {
             stderr: Arc::default(),
             local: AtomicBool::new(false),
             remote_engine: Mutex::default(),
+            held: Mutex::default(),
         });
         let weak = Arc::downgrade(&conn);
         let reader = Counting {
@@ -134,6 +137,11 @@ impl Connection {
         });
         *conn.child.lock().unwrap() = Some(child);
         Ok(conn)
+    }
+
+    /// つながっている間だけ `value` を持っておく（切れたら捨てる）。
+    pub fn hold(&self, value: Box<dyn Send>) {
+        *self.held.lock().unwrap() = Some(value);
     }
 
     /// daemon からの知らせを受け取る。
