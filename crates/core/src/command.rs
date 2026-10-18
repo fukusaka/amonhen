@@ -1811,11 +1811,13 @@ mod tests {
         let (tmp, repo) = setup();
         let dir = tmp.path();
         let wt = dir.join(".worktrees/topic");
-        let add = format!(
-            r#"{{"op":"worktreeAdd","path":"{}","newBranch":"topic"}}"#,
-            wt.display()
+        // JSON は json! で作る（Windows のパスの \ を文字列の中に書けるように）。
+        let command = |value: serde_json::Value| value.to_string();
+        let added = run(
+            &repo,
+            &command(serde_json::json!({"op": "worktreeAdd", "path": wt, "newBranch": "topic"})),
         );
-        run(&repo, &add);
+        assert_eq!(added["ok"], true, "{added}");
         let list = run(&repo, r#"{"op":"worktrees"}"#);
         let list = list["info"]["worktrees"].as_array().unwrap().clone();
         assert_eq!(list.len(), 2);
@@ -1828,7 +1830,7 @@ mod tests {
         let path = list[1]["path"].as_str().unwrap();
         let changes = run(
             &repo,
-            &format!(r#"{{"op":"worktreeChanges","paths":["{path}","/nowhere"]}}"#),
+            &command(serde_json::json!({"op": "worktreeChanges", "paths": [path, "/nowhere"]})),
         );
         let changes = changes["info"]["worktrees"].as_array().unwrap().clone();
         assert_eq!(changes.len(), 1, "{changes:?}");
@@ -1841,7 +1843,7 @@ mod tests {
         loop {
             let changes = run(
                 &repo,
-                &format!(r#"{{"op":"worktreeChanges","paths":["{path}"]}}"#),
+                &command(serde_json::json!({"op": "worktreeChanges", "paths": [path]})),
             );
             if changes["info"]["worktrees"][0]["count"] == 2 {
                 break;
@@ -1849,18 +1851,15 @@ mod tests {
             assert!(started.elapsed().as_secs() < 5, "{changes}");
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
-        let refused = repo.run_json(&format!(
-            r#"{{"op":"worktreeRemove","path":"{}"}}"#,
-            wt.display()
+        let refused = repo.run_json(&command(
+            serde_json::json!({"op": "worktreeRemove", "path": wt}),
         ));
         assert!(refused.contains(r#""ok":false"#), "{refused}");
-        run(
+        let removed = run(
             &repo,
-            &format!(
-                r#"{{"op":"worktreeRemove","path":"{}","force":true}}"#,
-                wt.display()
-            ),
+            &command(serde_json::json!({"op": "worktreeRemove", "path": wt, "force": true})),
         );
+        assert_eq!(removed["ok"], true, "{removed}");
         let list = run(&repo, r#"{"op":"worktrees"}"#);
         assert_eq!(list["info"]["worktrees"].as_array().unwrap().len(), 1);
     }

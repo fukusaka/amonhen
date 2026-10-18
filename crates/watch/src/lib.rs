@@ -324,7 +324,9 @@ mod tests {
     #[test]
     fn counts_changes_per_worktree() {
         let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path().canonicalize().unwrap();
+        // git には普通のパスを渡し、番号は実パス（macOS の /private/var、Windows の \\?\C:\…）で引く。
+        let root = tmp.path().to_owned();
+        let key = |p: &Path| p.canonicalize().unwrap();
         let git = |dir: &Path, args: &[&str]| {
             let out = std::process::Command::new("git")
                 .current_dir(dir)
@@ -360,7 +362,7 @@ mod tests {
         let watch = WorktreeWatch::new(&main.join(".git")).unwrap();
         let wait_for = |path: &Path, above: u64| {
             let started = Instant::now();
-            while watch.generation(path) <= above {
+            while watch.generation(&key(path)) <= above {
                 assert!(
                     started.elapsed() < Duration::from_secs(5),
                     "no change seen in {}",
@@ -370,16 +372,16 @@ mod tests {
             }
         };
         // checkout は HEAD で分かる。
-        let before = watch.generation(&one);
+        let before = watch.generation(&key(&one));
         git(&one, &["switch", "-q", "-c", "topic"]);
         wait_for(&one, before);
         // stage は index で分かる。
-        let before = watch.generation(&two);
+        let before = watch.generation(&key(&two));
         std::fs::write(two.join("b"), "b").unwrap();
         git(&two, &["add", "b"]);
         wait_for(&two, before);
         // メインの作業ツリーの index。
-        let before = watch.generation(&main);
+        let before = watch.generation(&key(&main));
         git(&main, &["rm", "-q", "--cached", "a"]);
         wait_for(&main, before);
     }
