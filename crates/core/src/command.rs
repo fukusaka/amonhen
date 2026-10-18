@@ -2618,4 +2618,103 @@ mod tests {
         assert_eq!(git(dir, &["log", "--format=%s"]), "first");
         assert_eq!(git(dir, &["diff", "--cached", "--name-only"]), "a.txt");
     }
+
+    /// 改行を変換するリポジトリ。`committed` を変換なしで commit し、`config` を設定してから開く
+    /// （gix は開いたときの設定を使う）。
+    fn setup_converting(
+        config: &[(&str, &str)],
+        committed: &[u8],
+    ) -> (tempfile::TempDir, Repository) {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q", "-b", "main"]);
+        std::fs::write(dir.join("a.txt"), committed).unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "first"]);
+        for (key, value) in config {
+            git(dir, &["config", key, value]);
+        }
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        (tmp, repo)
+    }
+
+    fn index_blob(dir: &std::path::Path) -> Vec<u8> {
+        Process::new("git")
+            .args(["cat-file", "blob", ":a.txt"])
+            .current_dir(dir)
+            .output()
+            .unwrap()
+            .stdout
+    }
+
+    fn unstaged_diff(repo: &Repository) -> crate::WorkingDiff {
+        let status = repo.load_status().unwrap();
+        repo.working_diff(&status.status.entries[0], false, &FrontendProfile::MACOS)
+            .unwrap()
+    }
+
+    #[test]
+    fn diffs_and_stages_lines_through_autocrlf() {
+        // Windows の既定（core.autocrlf=true）: 作業ツリーは CRLF、index は LF。
+        let (tmp, repo) = setup_converting(&[("core.autocrlf", "true")], b"1\n2\n3\n");
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.txt"), "1\r\nTWO\r\n3\r\n4\r\n").unwrap();
+        let diff = unstaged_diff(&repo);
+        assert_eq!(
+            (diff.file.added, diff.file.removed),
+            (2, 1),
+            "改行の違いは差分にしない"
+        );
+        // @@, 1, -2, +TWO, 3, +4: 4 だけを stage する。index に CR を入れない。
+        repo.stage_rows(&diff, &[5]).unwrap();
+        assert_eq!(index_blob(dir), b"1\n2\n3\n4\n");
+    }
+
+    #[test]
+    fn discards_lines_keeping_the_other_line_endings() {
+        // 改行が混ざったファイル（2 行目だけ LF）。選んだ行のほかは 1 バイトも変えない。
+        let (tmp, repo) = setup_converting(&[("core.autocrlf", "true")], b"1\n2\n3\n4\n");
+        let dir = tmp.path();
+        let before = b"1\r\nTWO\n3\r\nFOUR\r\n";
+        std::fs::write(dir.join("a.txt"), before).unwrap();
+        let diff = unstaged_diff(&repo);
+        // @@, 1, -2, +TWO, 3, -4, +FOUR: 4 → FOUR だけ戻す。戻す行は checkout と同じ CRLF。
+        repo.discard_rows(&diff, &[5, 6]).unwrap();
+        assert_eq!(
+            std::fs::read(dir.join("a.txt")).unwrap(),
+            b"1\r\nTWO\n3\r\n4\r\n"
+        );
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), before);
+    }
+
+    #[test]
+    fn discards_lines_in_a_file_whose_endings_differ_from_its_eol_attribute() {
+        // `eol=lf` なのに作業ツリーは CRLF。戻す行は LF、ほかの行は CRLF のまま。
+        let (tmp, repo) = setup_converting(&[], b"1\n2\n3\n");
+        let dir = tmp.path();
+        std::fs::write(dir.join(".git/info/attributes"), "*.txt eol=lf\n").unwrap();
+        let repo = {
+            drop(repo);
+            Repository::new(GixBackend::open(dir).unwrap())
+        };
+        std::fs::write(dir.join("a.txt"), "1\r\n2x\r\n3\r\n").unwrap();
+        let diff = unstaged_diff(&repo);
+        assert_eq!((diff.file.added, diff.file.removed), (1, 1));
+        repo.discard_rows(&diff, &[2, 3]).unwrap();
+        assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"1\r\n2\n3\r\n");
+    }
+
+    #[test]
+    fn leaves_crlf_committed_files_unconverted() {
+        // CRLF のまま commit されたファイルは、core.autocrlf=true でも変換しない（git と同じ）。
+        let (tmp, repo) = setup_converting(&[("core.autocrlf", "true")], b"1\r\n2\r\n3\r\n");
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.txt"), "1\r\nTWO\r\n3\r\n").unwrap();
+        let diff = unstaged_diff(&repo);
+        assert_eq!((diff.file.added, diff.file.removed), (1, 1));
+        // @@, 1, -2, +TWO, 3: TWO を足すことだけを stage する。
+        repo.stage_rows(&diff, &[3]).unwrap();
+        assert_eq!(index_blob(dir), b"1\r\n2\r\nTWO\r\n3\r\n");
+    }
 }

@@ -49,8 +49,8 @@ beforeEach(async () => {
   backend = await CliBackend.open(new GitExecutor('git'), dir);
 });
 
-afterEach(() => {
-  backend.dispose();
+afterEach(async () => {
+  await backend.dispose();
   rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 

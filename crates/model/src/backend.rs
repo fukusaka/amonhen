@@ -91,8 +91,16 @@ pub trait GitBackend: Send + Sync {
     /// 作業ツリーと index の状態。
     fn status(&self) -> Result<Status>;
 
-    /// 作業ツリーのファイルの中身。
+    /// 作業ツリーのファイルの中身を、git に入れる形で（`core.autocrlf`・`core.eol`・`.gitattributes` の改行の変換などを
+    /// かけたもの。`git diff` と同じく、index や HEAD の blob とそのまま比べられる）。
     fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>>;
+
+    /// git に入れる形の `content`（`path` の blob の中身）を、作業ツリーに書く形にする（checkout と同じ変換）。
+    /// 変換しない実装はそのまま返す。
+    fn to_worktree_form(&self, path: &str, content: &[u8]) -> Result<Vec<u8>> {
+        let _ = path;
+        Ok(content.to_vec())
+    }
 
     /// `paths` の変更（追加・削除を含む）を index に入れる。
     fn stage(&self, paths: &[&str]) -> Result<()>;

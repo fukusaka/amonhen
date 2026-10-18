@@ -19,13 +19,27 @@ pub struct GixBackend {
     repo: gix::ThreadSafeRepository,
     /// bare リポジトリでは `None`。
     git: Option<amonhen_backend_cli::Git>,
+    filters: Mutex<Option<Filters>>,
+}
+
+/// 改行の変換などの pipeline と属性の引き方。作るのに大きなリポジトリでは数 ms かかる（`.gitattributes` の対応表を
+/// index から作る）ので、index が変わるまで使い回す。
+struct Filters {
+    index_stamp: Option<(std::time::SystemTime, u64)>,
+    pipeline: gix::filter::plumbing::Pipeline,
+    attributes: gix::worktree::Stack,
+    index: gix::worktree::IndexPersistedOrInMemory,
 }
 
 impl GixBackend {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let repo = gix::ThreadSafeRepository::discover(path.as_ref())?;
         let git = repo.work_dir().map(amonhen_backend_cli::Git::new);
-        Ok(Self { repo, git })
+        Ok(Self {
+            repo,
+            git,
+            filters: Mutex::new(None),
+        })
     }
 }
 
@@ -95,11 +109,51 @@ fn to_oid(id: &gix::oid) -> Result<Oid> {
 }
 
 impl GixBackend {
+    /// 改行の変換などの pipeline を使う（index が変わっていれば作り直す）。
+    fn with_filters<T>(
+        &self,
+        f: impl FnOnce(&mut Filters, &gix::Repository) -> Result<T>,
+    ) -> Result<T> {
+        let repo = self.repo.to_thread_local();
+        let stamp = std::fs::metadata(repo.index_path())
+            .ok()
+            .and_then(|m| Some((m.modified().ok()?, m.len())));
+        let mut cached = self.filters.lock().unwrap();
+        if cached.as_ref().is_none_or(|c| c.index_stamp != stamp) {
+            let (pipeline, attributes, index) = builtin_filters(&repo)?;
+            *cached = Some(Filters {
+                index_stamp: stamp,
+                pipeline,
+                attributes,
+                index,
+            });
+        }
+        f(cached.as_mut().expect("作ったところ"), &repo)
+    }
+
     fn git(&self) -> Result<&amonhen_backend_cli::Git> {
         self.git
             .as_ref()
             .ok_or_else(|| tr!("The repository has no working tree").into())
     }
+}
+
+/// git の組み込みのフィルター（改行の変換・`working-tree-encoding`・`ident`）だけの pipeline と、属性の引き方、index。
+/// `.gitattributes` の `filter=`（git-lfs など）の外部のプログラムは起動しない（差分を見るたびに起動して遅くなるため）。
+/// 改行が混ざっていても失敗させない（`core.safecrlf` は書き込むときの git の確かめで、見るときには関係しない）。
+fn builtin_filters(
+    repo: &gix::Repository,
+) -> Result<(
+    gix::filter::plumbing::Pipeline,
+    gix::worktree::Stack,
+    gix::worktree::IndexPersistedOrInMemory,
+)> {
+    let (pipeline, index) = repo.filter_pipeline(None)?;
+    let (mut filters, attributes) = pipeline.into_parts();
+    let options = filters.options_mut();
+    options.drivers.clear();
+    options.crlf_roundtrip_check = gix::filter::plumbing::pipeline::CrlfRoundTripCheck::Skip;
+    Ok((filters, attributes, index))
 }
 
 impl GitBackend for GixBackend {
@@ -485,7 +539,79 @@ impl GitBackend for GixBackend {
     }
 
     fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>> {
-        Ok(Arc::new(std::fs::read(self.git()?.workdir().join(path))?))
+        let data = std::fs::read(self.git()?.workdir().join(path))?;
+        self.with_filters(|filters, repo| {
+            let Filters {
+                pipeline,
+                attributes,
+                index,
+                ..
+            } = filters;
+            let rela = Path::new(path);
+            let mut others =
+                attributes.selected_attribute_matches(["working-tree-encoding", "ident"]);
+            let entry = attributes.at_path(rela, None, &repo.objects)?;
+            // 改行の変換は CR を取り除くだけなので、CR がなく、ほかの変換（文字コード・`$Id$`）もかからなければ
+            // そのまま返す（大きなファイルでは変換に 1 ms ほどかかる）。
+            entry.matching_attributes(&mut others);
+            let other_filters = others
+                .iter_selected()
+                .any(|m| !matches!(m.assignment.state, gix::attrs::StateRef::Unspecified));
+            if !other_filters && !data.contains(&b'\r') {
+                return Ok(Arc::new(data));
+            }
+            let out = pipeline.convert_to_git(
+                &data[..],
+                rela,
+                &mut |_, attrs| {
+                    entry.matching_attributes(attrs);
+                },
+                // 自動の改行の変換（`text=auto`）は、index の blob に CR があれば変換しない（git と同じ）。
+                &mut |buf| {
+                    let Some(entry) = index.entry_by_path(path.into()) else {
+                        return Ok(None);
+                    };
+                    Ok(repo
+                        .objects
+                        .try_find(&entry.id, buf)
+                        .ok()
+                        .flatten()
+                        .filter(|obj| obj.kind == gix::object::Kind::Blob)
+                        .map(|_| ()))
+                },
+            )?;
+            use gix::filter::plumbing::pipeline::convert::ToGitOutcome;
+            Ok(Arc::new(match out {
+                ToGitOutcome::Unchanged(_) => data,
+                ToGitOutcome::Buffer(buf) => buf.to_vec(),
+                ToGitOutcome::Process(_) => unreachable!("外部のフィルターは外してある"),
+            }))
+        })
+    }
+
+    fn to_worktree_form(&self, path: &str, content: &[u8]) -> Result<Vec<u8>> {
+        self.with_filters(|filters, repo| {
+            let Filters {
+                pipeline,
+                attributes,
+                ..
+            } = filters;
+            let entry = attributes.at_entry(path, None, &repo.objects)?;
+            let out = pipeline.convert_to_worktree(
+                content,
+                path.into(),
+                &mut |_, attrs| {
+                    entry.matching_attributes(attrs);
+                },
+                Default::default(),
+            )?;
+            use gix::filter::plumbing::pipeline::convert::ToWorktreeOutcome;
+            Ok(match out {
+                ToWorktreeOutcome::Unchanged(_) => content.to_vec(),
+                ToWorktreeOutcome::Buffer(buf) => buf.to_vec(),
+                ToWorktreeOutcome::Process(_) => unreachable!("外部のフィルターは外してある"),
+            })
+        })
     }
 
     fn stage(&self, paths: &[&str]) -> Result<()> {
@@ -515,7 +641,7 @@ impl GitBackend for GixBackend {
     // gix には commit-graph を書く機能がないので git に任せる。書き込み系の CliBackend を作ったら移す。
     fn write_commit_graph(&self) -> Result<()> {
         let repo = self.repo.to_thread_local();
-        let out = std::process::Command::new("git")
+        let out = amonhen_model::process::command("git")
             .arg("--git-dir")
             .arg(repo.common_dir())
             // 変更のあったパスの Bloom フィルタも書き、パスでの履歴の検索（`git log -- <path>`）を速くする。

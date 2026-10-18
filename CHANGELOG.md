@@ -40,7 +40,7 @@ becomes the GitHub Release notes.
   not "1 commits".
 - Messages from the core, the CLI and the daemon are in English and Japanese too, in the language of whoever shows
   them: the app's UI language, the CLI's `LC_ALL` / `LANG`, and for the shared daemon and SSH hosts the language each
-  client names when it connects (the remote protocol is now version 17, so SSH hosts need the matching engine).
+  client names when it connects (the remote protocol is now version 20, so SSH hosts need the matching engine; the app sends it).
 - Before sending an engine to an SSH host, the app checks that the bundled engine speaks its protocol, and says so
   instead of sending an old one that the connection would then refuse.
 - AI can use Apple Intelligence's on-device model (macOS 26): nothing leaves the Mac, and it is the default where
@@ -70,7 +70,7 @@ becomes the GitHub Release notes.
 
 - Opening an SSH repository with many worktrees no longer fails with "Session open refused by peer", and no longer
   keeps an engine and a connection per worktree: the opened repository counts every worktree's changes in one request
-  (`worktreeChanges`, remote protocol 19), only the edited worktree and the two before it stay open, and past five
+  (`worktreeChanges`), only the edited worktree and the two before it stay open, and past five
   engines per host each gets its own SSH connection (sshd allows only a few sessions per connection; short commands it
   refuses are retried on their own). The engine watches the worktrees' HEAD and index (not their files) and counts
   again only the ones that changed, plus those with changes every 30 seconds. With 59 worktrees on a Linux host this went from 59 engines to
@@ -86,6 +86,12 @@ becomes the GitHub Release notes.
   between screens of different scale (1x and 2x).
 - Building History no longer spins up threads for every few commits. On the Linux engines (musl) it was 5 times
   slower than it should be; on git/git it now takes about 0.1 s instead of 0.6 s there, and about 20% less elsewhere.
+- On Windows, the shared daemon no longer flashes a console window each time it runs git or ssh (for example on
+  every branch selected in the VSCode extension).
+- Working Copy diffs follow git's line ending conversion (`core.autocrlf`, `core.eol` and the `text` and `eol`
+  attributes). On Windows, where git checks files out with CRLF, every changed file used to show as entirely rewritten,
+  and staging lines put CRs into the index. Discarding lines changes only those lines, leaving the line endings of the
+  rest of the file as they were.
 
 ### [0.2.0] - 2026-10-17
 
@@ -167,6 +173,13 @@ First release.
 ## VSCode extension
 
 ### [Unreleased]
+
+#### Fixed
+
+- On Windows, git and the engine no longer flash a console window when the extension runs them.
+- Working Copy diffs and line staging follow git's line ending conversion (`core.autocrlf`, `core.eol` and the `text`
+  and `eol` attributes), with or without the bundled engine. On Windows, changed files no longer show as entirely
+  rewritten, and staging lines no longer puts CRs into the index. Discarding lines changes only those lines.
 
 ### [0.2.0] - 2026-10-17
 

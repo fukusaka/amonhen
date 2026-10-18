@@ -266,6 +266,9 @@ fn handle(
         Request::Blob(id) => encode(&Bytes(backend.blob(&id)?.to_vec())),
         Request::Status => encode(&backend.status()?),
         Request::WorktreeFile(path) => encode(&Bytes(backend.worktree_file(&path)?.to_vec())),
+        Request::ToWorktreeForm { path, content } => {
+            encode(&Bytes(backend.to_worktree_form(&path, &content.0)?))
+        }
         Request::Stage(paths) => encode(&backend.stage(&strs(&paths))?),
         Request::Unstage(paths) => encode(&backend.unstage(&strs(&paths))?),
         Request::SetIndexContent {

@@ -13,7 +13,7 @@
 use amonhen_model::tr;
 use std::io::Write;
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::Arc;
 
 use amonhen_model::Result;
@@ -247,7 +247,7 @@ fn run_on(
     input: Option<&[u8]>,
     share: bool,
 ) -> std::result::Result<String, RunError> {
-    let mut child = Command::new(ssh)
+    let mut child = amonhen_model::process::command(ssh)
         .args(base_args(target, share))
         .arg(script)
         .stdin(if input.is_some() {

@@ -20,6 +20,7 @@
 "The daemon’s diff has the wrong number of files" = "daemon の差分の中身の数が合わない";
 "Not a diff between HEAD and the working tree" = "HEAD と作業ツリーの差分ではない";
 "Can’t discard staged changes (unstage them first)" = "stage 済みの変更は破棄できない（先に unstage する）";
+"Can’t discard lines in {path}: its working tree form doesn’t match what git stores line by line" = "{path} は、作業ツリーの形と git に入れる形が行ごとに対応しないため、行単位では破棄できません";
 "Search failed unexpectedly" = "検索が異常終了しました";
 "Can’t read the commit ID" = "コミット ID を読めない";
 "This commit can’t be edited (it isn’t reachable from HEAD, or it’s before a merge)" = "このコミットは編集できません（HEAD から辿れないか、merge より前にあります）";

@@ -147,7 +147,7 @@ test('shows working diffs as hunks and discards lines that the extension can und
       const entry = await new UndoLog(backend).undo();
       assert.ok(entry, '拡張の Undo で、daemon の操作が戻せる');
     } finally {
-      backend.dispose();
+      await backend.dispose();
     }
     assert.equal(readFileSync(join(repo, 'm.txt'), 'utf8'), 'MAIN\nmore\n');
   } finally {
@@ -189,7 +189,7 @@ test('writes through the daemon record one undo entry each', { skip }, async () 
     await undo.undo();
     assert.equal(git('branch', '--list', 'side').trim(), '');
   } finally {
-    inner.dispose();
+    await inner.dispose();
     client.dispose();
     git('reset', '-q');
     rmSync(join(repo, 'w.txt'), { force: true });
