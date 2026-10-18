@@ -5,8 +5,9 @@
 set -eu
 sha=$1
 for _ in $(seq 120); do
+    # 走っている途中は conclusion が空なので、欄が詰まらないよう "-" にする。CI がなければ何も出さない。
     run=$(gh run list --workflow CI --commit "$sha" --event push --limit 1 --json status,conclusion,url \
-        --jq '.[0] | "\(.status) \(.conclusion) \(.url)"')
+        --jq '.[0] // empty | "\(.status) \(if .conclusion == "" or .conclusion == null then "-" else .conclusion end) \(.url)"')
     set -- $run
     case "${1:-}" in
     completed)
