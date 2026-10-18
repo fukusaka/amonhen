@@ -1013,9 +1013,27 @@ impl Repository {
         if diff.staged || staged_row {
             return Err(tr!("Can’t discard staged changes (unstage them first)").into());
         }
-        let content = diff::apply_selection(&diff.file, |r| !rows.contains(&r));
         // 作業ツリーの内容を、選ばなかった変更だけを index に当てたものにする = 選んだ行を戻す。
+        // 差分は git に入れる形（改行の変換をかけたもの）なので、作業ツリーの形で組み立てる。
         let path = diff.entry.path.clone();
+        let worktree = self
+            .backend
+            .files()
+            .read(amonhen_model::Root::Workdir, &path)?
+            .unwrap_or_default();
+        let index_worktree = self.backend.to_worktree_form(&path, &diff.file.old)?;
+        let content = diff::discard_selection(
+            &diff.file,
+            |r| rows.contains(&r),
+            &worktree,
+            &index_worktree,
+        )
+        .ok_or_else(|| {
+            tr!(
+                "Can’t discard lines in {path}: its working tree form doesn’t match what git stores line by line",
+                path = path
+            )
+        })?;
         if self.delegate_done(&crate::delegate::Request::RestoreFile {
             path: path.clone(),
             content: content.clone(),

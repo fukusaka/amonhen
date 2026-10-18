@@ -395,6 +395,14 @@ impl GitBackend for RemoteBackend {
         Ok(Arc::new(bytes.0))
     }
 
+    fn to_worktree_form(&self, path: &str, content: &[u8]) -> Result<Vec<u8>> {
+        let bytes: Bytes = self.conn.call(&Request::ToWorktreeForm {
+            path: path.to_owned(),
+            content: Bytes(content.to_vec()),
+        })?;
+        Ok(bytes.0)
+    }
+
     fn stage(&self, paths: &[&str]) -> Result<()> {
         self.conn.call(&Request::Stage(owned(paths)))
     }

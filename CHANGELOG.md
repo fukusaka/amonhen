@@ -62,6 +62,10 @@ becomes the GitHub Release notes.
   slower than it should be; on git/git it now takes about 0.1 s instead of 0.6 s there, and about 20% less elsewhere.
 - On Windows, the shared daemon no longer flashes a console window each time it runs git or ssh (for example on
   every branch selected in the VSCode extension).
+- Working Copy diffs follow git's line ending conversion (`core.autocrlf`, `core.eol` and the `text` and `eol`
+  attributes). On Windows, where git checks files out with CRLF, every changed file used to show as entirely rewritten,
+  and staging lines put CRs into the index. Discarding lines changes only those lines, leaving the line endings of the
+  rest of the file as they were.
 
 ### [0.2.0] - 2026-10-17
 
@@ -147,6 +151,8 @@ First release.
 #### Fixed
 
 - On Windows, git and the engine no longer flash a console window when the extension runs them.
+- With the bundled engine, Working Copy diffs and line staging follow git's line ending conversion (`core.autocrlf`,
+  `core.eol` and the `text` and `eol` attributes). On Windows, changed files no longer show as entirely rewritten.
 
 ### [0.2.0] - 2026-10-17
 
