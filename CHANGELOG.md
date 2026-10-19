@@ -35,7 +35,9 @@ becomes the GitHub Release notes.
 #### Fixed
 
 - History no longer goes empty when another program (a terminal, an editor) rebases, amends or commits while it shows
-  the current branch or a branch picked in the sidebar: it follows the branch to its new commit.
+  the current branch or a branch picked in the sidebar: it follows the branch to its new commit. Refreshing after such
+  a change keeps the scroll position, loads the visible rows before swapping so the list does not blank out, cross-fades
+  the two, and leaves the commit details alone when the selected commit is the same.
 - A rebase, cherry-pick or revert finished by another program no longer stays shown as in progress (most often when a
   hook or autostash ran at the end).
 

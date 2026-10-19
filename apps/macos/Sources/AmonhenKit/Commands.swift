@@ -52,7 +52,7 @@ extension WorkingFileDiff {
 }
 
 /// コミットの詳細（すぐ返せる分）。
-public struct CommitInfo: Decodable, Sendable {
+public struct CommitInfo: Decodable, Equatable, Sendable {
     public let oid: String
     public let message: String
     public let author: String
@@ -74,7 +74,7 @@ public struct CommitInfo: Decodable, Sendable {
     public let mergedTags: [MergedTag]
     public let trailers: [Trailer]
 
-    public struct MergedTag: Decodable, Sendable {
+    public struct MergedTag: Decodable, Equatable, Sendable {
         public let name: String
         public let tagger: String
         /// タグのメッセージの 1 行目。
@@ -82,7 +82,7 @@ public struct CommitInfo: Decodable, Sendable {
         public let signed: Bool
     }
 
-    public struct Trailer: Decodable, Sendable {
+    public struct Trailer: Decodable, Equatable, Sendable {
         public let key: String
         public let value: String
     }

@@ -1780,7 +1780,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let request = headerRequest, repository = self.repository
         Task {
             guard let info = try? await Task.detached(priority: .utility, operation: { try repository.commitInfo(oid: hex) }).value,
-                  request == headerRequest, info.oid == self.info?.oid else { return }
+                  request == headerRequest, info.oid == self.info?.oid,
+                  // ref が動いても、このコミットに付く ref が同じなら描き直さない（描き直すと右の列を並べ直し、ちらつく）。
+                  info != self.info else { return }
             self.info = info
             renderHeader()
         }
