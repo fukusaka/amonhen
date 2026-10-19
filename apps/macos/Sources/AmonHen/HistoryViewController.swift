@@ -203,8 +203,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     enum Scope: Equatable {
         case all
         case current
-        /// サイドバーで選んだ ref（名前, コミット）。
-        case ref(String, Data)
+        /// サイドバーで選んだ ref（種類, 名前, コミット）。ref が動いたら、コミットを付け替える。
+        case ref(RefKind, String, Data)
     }
 
     private(set) var scope: Scope = .all
@@ -241,7 +241,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 一致したコミットだけを出しているときの、元の History（出していなければ nil）。
     private var baseHistory: History?
     /// HEAD のコミット（Current Branch で使う）。
-    var head: Data?
+    var head: Data? {
+        // ほかのプログラムで commit・rebase すると HEAD が動く。今のブランチに絞っていれば絞り込み直す。
+        didSet { if head != oldValue, scope == .current, history != nil { scheduleReloadScope() } }
+    }
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
     var onSelectCommit: ((Data?) -> Void)?
     /// 複数の行を選んだ（⇧・⌘ クリック）。まとめた差分を見せる。
@@ -435,7 +438,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private func updateScopePopup() {
         scopePopup.removeAllItems()
         scopePopup.addItems(withTitles: [L("All Branches"), L("Current Branch")])
-        if case let .ref(name, _) = scope {
+        if case let .ref(_, name, _) = scope {
             scopePopup.addItem(withTitle: name)
             scopePopup.selectItem(at: 2)
         } else {
@@ -451,19 +454,41 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
-    /// 表示する範囲を変えて読み直す。
-    func set(scope: Scope, select commit: Data? = nil) {
+    /// `.ref` の範囲に一緒に出すコミット（選んだブランチの上流。先にある・遅れているコミットを両方見せる）。
+    private var companionTips: [Data] = []
+
+    /// 表示する範囲を変えて読み直す。`companions` は `.ref` のときに一緒に辿る起点（ブランチの上流）。
+    func set(scope: Scope, select commit: Data? = nil, companions: [Data] = []) {
         self.scope = scope
+        companionTips = companions
         updateScopePopup()
         reloadScope(select: commit)
     }
 
-    private func reloadScope(select commit: Data? = nil) {
+    private var scopeWork: DispatchWorkItem?
+
+    /// ほかのプログラムの変化で絞り込み直す。History の読み直しと ref の読み直し（起点の付け替え）が続けて
+    /// 来るので、少し待って 1 回にまとめる（2 回出し直すと、途中の古い起点の一覧が一瞬見える）。
+    private func scheduleReloadScope() {
+        scopeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.scopeWork = nil
+                self?.reloadScope(resetScroll: false)
+            }
+        }
+        scopeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+    }
+
+    private func reloadScope(select commit: Data? = nil, resetScroll: Bool = true) {
+        scopeWork?.cancel()
+        scopeWork = nil
         let repository = self.repository
         let tips: [Data]? = switch scope {
         case .all: nil
         case .current: head.map { [$0] }
-        case let .ref(_, target): [target]
+        case let .ref(_, _, target): [target] + companionTips
         }
         let fold = Settings.foldMergedBranches, expanded = Array(expandedMerges)
         Task {
@@ -471,8 +496,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 if fold { return try? repository.foldedHistory(tips: tips, expanded: expanded) }
                 return if let tips { try? repository.filteredHistory(tips: tips) } else { repository.latestHistory() }
             }.value
-            guard let next else { return }
-            showBase(next, resetScroll: true)
+            // 起点がもう History にない（ほかのプログラムの rebase で消えた HEAD を、ref を読み直す前に使った）と
+            // 空になる。空にはせず今の表示を残し、ref を読み直して起点を付け替えたときに出し直す。
+            guard let next, next.rowCount > 0 || repository.latestHistory()?.rowCount == 0 else { return }
+            showBase(next, resetScroll: resetScroll)
             if let commit, let row = next.row(of: commit) { select(row: row) }
         }
     }
@@ -508,7 +535,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             guard let latest = try? await Task.detached(priority: .userInitiated, operation: { try repository.loadHistory() }).value
             else { return }
             if !showsFullHistory {
-                reloadScope()
+                scheduleReloadScope()
             } else if latest.generation != (baseHistory ?? history)?.generation {
                 showBase(latest)
             }
@@ -529,12 +556,43 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    /// 出し直しの番号（見えている行を読んでいる間に次の出し直しが来たら、前のは捨てる）。
+    private var presentRequest = 0
+
+    /// 読み込み済みのチャンクとその行の文字。
+    private typealias Preloaded = [(index: Int, chunk: HistoryChunk, prepared: [Int: RowPreparation.Row])]
+
+    /// 新しい History を、見えている行の文字を読んでから出す。読むまでは前の表示を残すので、入れ替えの間に
+    /// 文字が空になる瞬間が出ない（ほかのプログラムの変化で読み直したときに、一覧がちらつかない）。
+    private func present(_ next: History, resetScroll: Bool) {
+        presentRequest += 1
+        let request = presentRequest
+        guard history != nil, next.rowCount > 0 else { return show(next, resetScroll: resetScroll) }
+        let visible = tableView.rows(in: tableView.visibleRect)
+        let top = resetScroll ? 0 : visible.location
+        let first = top / Self.chunkRows
+        let last = max(first, (top + max(visible.length, 1) - 1) / Self.chunkRows)
+        let indices = (first...last).filter { $0 * Self.chunkRows < next.rowCount }
+        let fonts = rowFonts, compact = Settings.compactHistoryRows, chunkRows = Self.chunkRows
+        Task {
+            let loaded: Preloaded = await Task.detached(priority: .userInitiated) {
+                indices.compactMap { index in
+                    let rows = index * chunkRows..<min(next.rowCount, (index + 1) * chunkRows)
+                    let (chunk, prepared) = Self.loadChunk(rows: rows, of: next, fonts: fonts, compact: compact)
+                    return chunk.map { (index, $0, prepared) }
+                }
+            }.value
+            guard request == presentRequest else { return }
+            show(next, resetScroll: resetScroll, preloaded: compact == Settings.compactHistoryRows ? loaded : [])
+        }
+    }
+
     /// 元になる History を出す。一致したコミットだけを出しているなら、新しい History で探し直して絞り込み直す
     /// （それまでは今の絞り込みを出しておく）。
     private func showBase(_ next: History, resetScroll: Bool = false) {
         guard baseHistory != nil, matchOnlyButton.state == .on, let query = searchQuery else {
             baseHistory = nil
-            show(next, resetScroll: resetScroll)
+            present(next, resetScroll: resetScroll)
             return
         }
         baseHistory = next
@@ -554,19 +612,40 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         scrollView.reflectScrolledClipView(clip)
     }
 
-    private func show(_ history: History, resetScroll: Bool = false) {
+    private func show(_ history: History, resetScroll: Bool = false, preloaded: Preloaded = []) {
         // ウィンドウを組み立てる前にキャッシュから表示することがある。表がまだなければ先に作る。
         loadViewIfNeeded()
+        presentRequest += 1
         let first = self.history == nil || resetScroll
+        // 前の表示を、新しい表示へ短く溶かして入れ替える（ほかのプログラムの変化で読み直したとき。自分で範囲を
+        // 変えたときは待たせない）。グラフと文字は Core Animation のトランザクションの中で出すので、一緒に溶ける。
+        if !first, history.generation != self.history?.generation, let layer = view.layer {
+            let fade = CATransition()
+            fade.type = .fade
+            fade.duration = 0.15
+            layer.add(fade, forKey: "refresh")
+        }
         // 選んでいたコミット（行番号ではなく ID で覚え、新しい History でも同じコミットを選ぶ）。
         let selected: [(id: Data, row: Int)] = self.history.map { old in
             tableView.selectedRowIndexes.compactMap { row in old.commitID(row: row).map { ($0, row) } }
         } ?? []
+        // 選び直しの途中（消えたコミットの選択を外し、先頭を選ぶ）は詳細に知らせない。知らせると差分が
+        // 「選んでいない」を挟んで読み直され、ちらつく。最後に、選んだコミットが変わったときだけ知らせる。
+        quietSelection = true
+        defer {
+            quietSelection = false
+            let now = tableView.selectedRowIndexes.compactMap { history.commitID(row: $0) }
+            if now != selected.map(\.id) { notifySelection() }
+        }
         self.history = history
         chunks.removeAll()
         loadingChunks.removeAll()
         rowText.removeAll()
         preparedRows.removeAll()
+        for item in preloaded {
+            chunks[item.index] = item.chunk
+            preparedRows.merge(item.prepared) { new, _ in new }
+        }
         tableView.reloadData()
         // 行が変わるので、検索の結果は捨てる（問い合わせは残し、Enter で探し直せる）。表を読み直してから描き直す。
         clearSearchResults()
@@ -700,6 +779,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// ref の一覧が変わった。各コミットのラベルを作り直して描き直す。
     func show(refs: Refs) {
         lastRefs = refs
+        // 絞り込んだ ref がほかのプログラムで動いた（rebase・commit・fetch）。前のコミットのままだと、消えた
+        // コミットから辿ることになり空になるので、新しいコミットに付け替えて絞り込み直す。
+        if case let .ref(kind, name, target) = scope,
+           let now = refs.items.first(where: { $0.kind == kind && $0.name == name })?.target, now != target {
+            scope = .ref(kind, name, now)
+            scheduleReloadScope()
+        }
         let head = editingBranch ?? refs.headBranch
         var labels: [Data: [RefLabel]] = [:]
         for item in refs.items {
@@ -1236,6 +1322,18 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         return chunks[index]
     }
 
+    /// `rows` の件名などを読み、同じ裏のスレッドで行の文字も並べておく（Core Text の処理をメインスレッドから外す）。
+    nonisolated private static func loadChunk(
+        rows: Range<Int>, of history: History, fonts: RowPreparation.Fonts, compact: Bool
+    ) -> (HistoryChunk?, [Int: RowPreparation.Row]) {
+        guard let chunk = try? history.chunk(rows: rows) else { return (nil, [:]) }
+        var prepared: [Int: RowPreparation.Row] = [:]
+        for row in rows {
+            prepared[row] = RowPreparation.prepare(row: row, chunk: chunk, history: history, fonts: fonts, compact: compact)
+        }
+        return (chunk, prepared)
+    }
+
     private func prefetch(chunk index: Int, priority: TaskPriority) {
         guard let history, index >= 0, index * Self.chunkRows < history.rowCount,
               chunks[index] == nil, !loadingChunks.contains(index) else { return }
@@ -1244,16 +1342,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let fonts = rowFonts
         let compact = Settings.compactHistoryRows
         Task {
-            // 件名などを読んだら、同じ裏のスレッドで行の文字も並べておく（Core Text の処理をメインスレッドから外す）。
             let (chunk, prepared) = await Task.detached(priority: priority) {
-                () -> (HistoryChunk?, [Int: RowPreparation.Row]) in
-                guard let chunk = try? history.chunk(rows: rows) else { return (nil, [:]) }
-                var prepared: [Int: RowPreparation.Row] = [:]
-                for row in rows {
-                    prepared[row] = RowPreparation.prepare(
-                        row: row, chunk: chunk, history: history, fonts: fonts, compact: compact)
-                }
-                return (chunk, prepared)
+                Self.loadChunk(rows: rows, of: history, fonts: fonts, compact: compact)
             }.value
             do {
                 // 読んでいる間に History や行の表示が変わっていたら捨てる。
@@ -1387,9 +1477,18 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    /// History を入れ替えて選び直している途中（詳細には、終わってから 1 回だけ知らせる）。
+    private var quietSelection = false
+
     func tableViewSelectionDidChange(_ notification: Notification) {
         redrawText()
         updateLineage()
+        guard !quietSelection else { return }
+        notifySelection()
+    }
+
+    /// 選んだコミットを詳細に知らせる。
+    private func notifySelection() {
         let rows = tableView.selectedRowIndexes
         if rows.count > 1, let history {
             onSelectRows?(Array(rows), history)

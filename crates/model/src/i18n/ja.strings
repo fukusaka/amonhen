@@ -90,7 +90,7 @@
 "{rev} not found" = "{rev} が見つからない";
 "The clone destination folder is invalid" = "clone する先のフォルダがおかしい";
 "The clone destination folder’s name is invalid" = "clone する先のフォルダの名前がおかしい";
-"Stopped after {seconds} seconds without a response. It may have been waiting for authentication (run the same git command in a terminal and authenticate)" = "{seconds} 秒のあいだ応答がないので止めました。認証の入力を待っていたのかもしれません（ターミナルで同じ git を実行して、認証を済ませてください）";
+"Stopped after {seconds} seconds without a response. It may have been waiting for a sign-in (a password or passphrase dialog, or the SSH agent) or for the network" = "{seconds} 秒のあいだ応答がないので止めました。サインインの入力（パスワードやパスフレーズのダイアログ、SSH の agent）か、ネットワークを待っていたのかもしれません";
 "git failed: {status}" = "git が失敗した: {status}";
 
 /* amonhen-remote */

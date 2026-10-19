@@ -19,6 +19,39 @@ becomes the GitHub Release notes.
 - `scripts/install-app.sh --user` installs the app into your own Applications folder (`~/Applications`); `--system`
   picks `/Applications`, and `--dir <folder>` any folder. Without any of them, an update replaces the app where it is
   already installed.
+- Branches in the sidebar are arranged for getting around: Favorites (★, in the order you choose by dragging) first,
+  then the current branch together with the branches it is built on and the default branch, then the active branches
+  newest first with `/` names in folders, and at the end Inactive (no commit for 90 days) and Archived, both folded.
+  A branch built on top of another one is nested under it with a ↳ mark, and a branch already merged into the default
+  branch shows a merge mark at the right, next to the mark for a gone upstream; clicking those marks opens a popover
+  that explains them, shows the branch's upstream, base and last commit, and offers Delete Branch (only when merged)
+  and Archive. Add to Favorites and Archive are in a branch's menu; both are kept in
+  git's config (`branch.<name>.amonhenPinned`, `branch.<name>.amonhenArchived`), so they follow a rename and go away
+  with the branch. `amonhen run '{"op":"branchGroups"}'` gives the same facts (`merged`, `parent`, `pinned`,
+  `archived`, `mine`, the tip's `time`).
+- Selecting a branch that has diverged from its upstream shows both in History, so the commits ahead and behind are
+  in the list.
+
+#### Changed
+
+- The Pull sheet starts with the way you pulled last time (merge, rebase or fast-forward only), and the note under it
+  always explains the chosen way, not only when your branch and upstream have diverged.
+
+#### Fixed
+
+- Fetch, Pull and Push now work from the app as they do in a terminal. Launched from the Finder or the Dock, the app
+  had launchd's bare environment, so Homebrew's git, credential helpers and SSH agents such as 1Password were not
+  found; it now takes `PATH`, `SSH_AUTH_SOCK`, `GIT_*` and the like from your login shell at launch (cached, refreshed
+  in the background; Settings > Advanced > Terminal Environment shows what was taken, reads it again, and turns it
+  off; `AmonHen --print-environment` prints it). When git or
+  ssh needs a password, a token or a key passphrase, a dialog asks for it instead of failing with "terminal prompts
+  disabled".
+- History no longer goes empty when another program (a terminal, an editor) rebases, amends or commits while it shows
+  the current branch or a branch picked in the sidebar: it follows the branch to its new commit. Refreshing after such
+  a change keeps the scroll position, loads the visible rows before swapping so the list does not blank out, cross-fades
+  the two, and leaves the commit details alone when the selected commit is the same.
+- A rebase, cherry-pick or revert finished by another program no longer stays shown as in progress (most often when a
+  hook or autostash ran at the end).
 
 ### [0.2.1] - 2026-10-19
 

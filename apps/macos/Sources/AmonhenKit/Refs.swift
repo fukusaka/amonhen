@@ -153,3 +153,28 @@ public final class RepositoryWatch: @unchecked Sendable {
         box.release()
     }
 }
+
+/// ローカルブランチの分け方（`{"op":"branchGroups"}`。`crates/core/src/branches.rs`）。
+public struct BranchGroups: Decodable, Equatable, Sendable {
+    public struct Branch: Decodable, Equatable, Sendable {
+        public let name: String
+        /// 先端のコミットの日時（UNIX 時間）。
+        public let time: Int64?
+        /// 既定のブランチに取り込み済み。
+        public let merged: Bool
+        /// 既定のブランチの先端と同じ（作ったばかり）。
+        public let atBase: Bool
+        /// 取り込んでいない自分のコミットがある。
+        public let mine: Bool
+        /// その上に積んであるブランチ（土台）。既定のブランチの上なら nil。
+        public let parent: String?
+        /// 手でアーカイブした（`branch.<name>.amonhenArchived`）。
+        public let archived: Bool
+        /// お気に入りの順位（`branch.<name>.amonhenPinned`。小さいほど上）。お気に入りでなければ nil。
+        public let pinned: Int64?
+    }
+
+    /// 既定のブランチ（`origin/main`・`main` など）。
+    public let base: String?
+    public let branches: [Branch]
+}

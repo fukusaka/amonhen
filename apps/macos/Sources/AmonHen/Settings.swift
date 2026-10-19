@@ -141,6 +141,13 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "openThroughDaemon") }
     }
 
+    /// 起動時にログインシェルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込むか（既定は取り込む。
+    /// `ShellEnvironment`）。
+    static var importShellEnvironment: Bool {
+        get { UserDefaults.standard.object(forKey: "importShellEnvironment") as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: "importShellEnvironment") }
+    }
+
     /// 開いたリポジトリを、まだ一覧のどこにもなければブックマークに入れるか（既定は入れる）。
     static var autoBookmark: Bool {
         get { UserDefaults.standard.object(forKey: "autoBookmark") as? Bool ?? true }
@@ -207,6 +214,7 @@ final class SettingsModel {
     var gitHubAvatarsOnce = Settings.gitHubAvatarsOnce { didSet { Settings.gitHubAvatarsOnce = gitHubAvatarsOnce } }
     var autoBookmark = Settings.autoBookmark { didSet { Settings.autoBookmark = autoBookmark } }
     var openThroughDaemon = Settings.openThroughDaemon { didSet { Settings.openThroughDaemon = openThroughDaemon } }
+    var importShellEnvironment = Settings.importShellEnvironment { didSet { Settings.importShellEnvironment = importShellEnvironment } }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var historyFileTree = Settings.historyFileTree { didSet { Settings.historyFileTree = historyFileTree } }
     var autoMagicMerge = Settings.autoMagicMerge { didSet { Settings.autoMagicMerge = autoMagicMerge } }
@@ -453,8 +461,62 @@ private struct AdvancedSettings: View {
                 Toggle(L("Verify signatures with this Mac’s keys"), isOn: $model.checkRemoteSignaturesLocally)
                 Note(L("Verifies with this Mac’s gpg, allowed_signers and trust levels. When off, verifies with the git and keys on the SSH host. Repositories on this Mac are always verified on this Mac."))
             }
+            Section(L("Terminal Environment")) {
+                Toggle(L("Take the login shell’s environment at launch"), isOn: $model.importShellEnvironment)
+                Note(L("Launched from the Finder, the app does not get the terminal’s PATH, SSH agent or GIT_* settings, so git could miss Homebrew’s git, credential helpers and agents such as 1Password. The app runs your login shell once at launch and gives git, the shared daemon and gh what it found. Changes apply at the next launch."))
+                ShellEnvironmentView()
+            }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// 取り込んだ変数とその値。読み直すボタン付き（シェルの設定を変えたあとに）。
+private struct ShellEnvironmentView: View {
+    @State private var values = ShellEnvironment.values
+    @State private var shell = ShellEnvironment.shell
+    @State private var lastRead = ShellEnvironment.lastRead
+    @State private var reloading = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(status).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(L("Read Again")) {
+                    reloading = true
+                    ShellEnvironment.reload()
+                }
+                .disabled(reloading || !ShellEnvironment.isEnabled)
+            }
+            if values.isEmpty {
+                Text(L("Nothing taken from the shell.")).font(.caption).foregroundStyle(.secondary)
+            } else {
+                ForEach(values.keys.sorted(), id: \.self) { key in
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(key).font(.caption.weight(.medium))
+                        // PATH は 1 行に 1 つ（どの git が選ばれるかは、この順で決まる）。
+                        Text(key == "PATH" ? values[key, default: ""].replacingOccurrences(of: ":", with: "\n") : values[key, default: ""])
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ShellEnvironment.didChange)) { _ in
+            values = ShellEnvironment.values
+            shell = ShellEnvironment.shell
+            lastRead = ShellEnvironment.lastRead
+            reloading = false
+        }
+    }
+
+    private var status: String {
+        if !ShellEnvironment.isEnabled { return L("Off") }
+        guard let lastRead else { return shell.isEmpty ? L("Not read yet") : L("Couldn’t read %@", shell) }
+        return L("Read from %@ at %@", shell, lastRead.formatted(date: .omitted, time: .shortened))
     }
 }
 

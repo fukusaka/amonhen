@@ -2,7 +2,9 @@ import AmonhenKit
 import AppKit
 
 /// サイドバー: Branches / Pull Requests / Remotes / Tags / Stashes / Submodules。
-final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
+final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate,
+    NSPopoverDelegate
+{
     /// 項目を選んだとき（指すコミットがあれば History でその行を選ぶ）。
     var onSelect: ((RefItem) -> Void)?
     var actions: Actions?
@@ -35,6 +37,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var worktree: WorktreeInfo?
         /// 変更のない worktree をまとめる行。
         var isCleanWorktrees = false
+        /// Branches の下の分け方のフォルダ（`inactive`・`archived`）。開いているかを覚えるのに使う。
+        var branchGroup: String?
+        /// ほかのブランチの上に積んだブランチなら、その土台のブランチ（行は土台の下に入れ子で、↳ の印）。
+        var stackedOn: String?
+        /// お気に入り（Branches の一番上に、決めた順で出す）。
+        var isPinned = false
 
         init(title: String, item: RefItem? = nil, page: Page? = nil, children: [Node] = [], isHead: Bool = false) {
             self.title = title
@@ -65,7 +73,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    private let outline = NSOutlineView()
+    private let outline = SidebarOutlineView()
     private var groups: [Node] = []
     private var generation: UInt64?
 
@@ -97,6 +105,32 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     private var refs: Refs?
+    /// ローカルブランチの分け方（まだ求めていなければ nil。そのときは名前のフォルダだけ）。
+    private var branchGroups: BranchGroups?
+    /// 開いている分け方のフォルダ（Merged・Inactive・Archived。初めはすべて畳む）。
+    private var openBranchGroups: Set<String> = []
+    /// お気に入りのブランチ（上から順）。ドラッグで並べ替える。
+    private var pinnedOrder: [String] = []
+
+    /// 分け方のフォルダの説明（ツールチップ）。
+    private static func branchGroupHelp(_ key: String) -> String? {
+        switch key {
+        case "inactive": L("Branches with no new commit for 90 days. Folded.")
+        case "archived": L("Branches you archived from their menu. Folded. Archiving is kept in git’s config, so it follows a rename.")
+        default: nil
+        }
+    }
+
+    /// ブランチの名前 → 分け方（行を描くときに引く）。
+    private var branchFacts: [String: BranchGroups.Branch] = [:]
+
+    /// ローカルブランチの分け方が変わった。
+    func show(branchGroups: BranchGroups) {
+        guard branchGroups != self.branchGroups else { return }
+        self.branchGroups = branchGroups
+        branchFacts = Dictionary(branchGroups.branches.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        rebuild(first: false)
+    }
     private var pullRequests: [PullRequest] = []
     private var worktrees: [WorktreeInfo] = []
     /// 書き込む先の worktree のパス。
@@ -241,7 +275,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
             return root
         }
-        let branchRoot = folders("Branches", items(.local))
+        let branchRoot = branchesNode(items(.local), head: head, folders: folders)
         if !branchRoot.children.isEmpty { groups.append(branchRoot) }
 
         // worktree は Working Copy の下に並べる（1 つだけなら出さない）。
@@ -288,8 +322,200 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if open { outline.expandItem(group) }
         }
         if !pullRequests.isEmpty { pullRequestsFirstShown = false }
+        expandBranchGroups()
         // 作り直す前に選んでいた Working Copy・History を選び直す。
         if let (_, page) = selectedTitle, let page { select(page: page) }
+    }
+
+    /// Inactive とみなす日数（最後のコミットからこれだけ経ったブランチ）。
+    private static let staleDays: Int64 = 90
+
+    /// Branches の中身。分け方が分かっていれば、上から順に:
+    /// - お気に入り（★。決めた順。ドラッグで並べ替える。積んだブランチでも入れ子にせず、ここに平らに出す）
+    /// - 今のブランチ（その積み重ねの根元ごと）と既定のブランチ
+    /// - 動いているブランチ（新しい順。`/` の名前はフォルダ。既定のブランチに取り込み済みなら、gone と同じく
+    ///   行の右端に merged の印）
+    /// - Inactive（最後のコミットから 90 日以上。畳んでおく）
+    /// - Archived（手でアーカイブしたもの。畳んでおく）
+    /// ほかのブランチの上に積んだブランチは、その土台のブランチの行の下に入れ子で出す（↳ の印）。見出しは
+    /// Branches・Remotes と同じく英語のまま。ほかの worktree が checkout しているブランチは、Merged・Inactive に入れない。
+    private func branchesNode(_ locals: [RefItem], head: String?, folders: (String, [RefItem]) -> Node) -> Node {
+        guard let groups = branchGroups else { return folders("Branches", locals) }
+        let facts = Dictionary(groups.branches.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        let baseName = groups.base.map { name in
+            locals.contains { $0.name == name } ? name : String(name.split(separator: "/", maxSplits: 1).last ?? "")
+        }
+        let now = Int64(Date().timeIntervalSince1970)
+        func newest(_ a: RefItem, _ b: RefItem) -> Bool { (facts[a.name]?.time ?? 0) > (facts[b.name]?.time ?? 0) }
+        func isArchived(_ item: RefItem) -> Bool { facts[item.name]?.archived == true }
+        func isPinned(_ item: RefItem) -> Bool { facts[item.name]?.pinned != nil }
+        // 今のブランチがほかのブランチの上に積んであれば、その積み重ねの根元ごと一番上に出す（積み重ねを切らない）。
+        var stackRoot = head
+        var seen: Set<String> = []
+        while let name = stackRoot, let parent = facts[name]?.parent, !seen.contains(parent),
+              locals.contains(where: { $0.name == parent && !isArchived($0) }) {
+            seen.insert(name)
+            stackRoot = parent
+        }
+        // 根元がお気に入りなら、そのお気に入りの下に入れ子で出す（お気に入りはもう一番上にある）。
+        func isTop(_ item: RefItem) -> Bool { (item.name == stackRoot && !isPinned(item)) || item.name == baseName }
+        // 土台のブランチ → その上に積んだブランチ（土台がアーカイブ済みなら、積んだほうは自分の場所に出す。
+        // お気に入りは入れ子にしない）。
+        let byName = Dictionary(locals.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+        var stacked: [String: [RefItem]] = [:]
+        var nested: Set<String> = []
+        for item in locals where !isTop(item) && !isArchived(item) && !isPinned(item) {
+            guard let parent = facts[item.name]?.parent, let under = byName[parent], !isArchived(under) else { continue }
+            stacked[parent, default: []].append(item)
+            nested.insert(item.name)
+        }
+        // 積んだブランチを、土台の行の下に（さらに積んだものはその下に）付ける。名前のフォルダの中の行は
+        // 名前の最後の部分だけだが、積んだブランチの行は土台とは別の名前なので、名前を全部出す。
+        func attach(_ node: Node) {
+            if let item = node.item {
+                node.children = (stacked[item.name] ?? []).sorted(by: newest).map { tree($0, on: item.name) }
+            } else {
+                node.children.forEach(attach)
+            }
+        }
+        func tree(_ item: RefItem, on parent: String? = nil) -> Node {
+            let node = Node(title: item.name, item: item, isHead: item.name == head)
+            node.stackedOn = parent
+            attach(node)
+            return node
+        }
+        var pinned: [RefItem] = [], top: [RefItem] = [], active: [RefItem] = []
+        var inactive: [RefItem] = [], archived: [RefItem] = []
+        for item in locals where !nested.contains(item.name) {
+            let f = facts[item.name]
+            if isPinned(item) {
+                pinned.append(item)
+            } else if isTop(item) {
+                top.append(item)
+            } else if isArchived(item) {
+                archived.append(item)
+            } else if let f, otherWorktree(using: item.name) == nil,
+                      f.time.map({ now - $0 > Self.staleDays * 86_400 }) ?? false {
+                inactive.append(item)
+            } else {
+                active.append(item)
+            }
+        }
+        func group(_ key: String, _ title: String, _ list: [RefItem]) -> Node? {
+            guard !list.isEmpty else { return nil }
+            let node = Node(title: title, children: list.map { tree($0) })
+            node.branchGroup = key
+            node.badge = "\(list.count)"
+            return node
+        }
+        // お気に入りは決めた順（順位が同じなら名前順）。積んだブランチでも平らに出し、土台は行の右に書く。
+        pinned.sort { (facts[$0.name]?.pinned ?? 0, $0.name) < (facts[$1.name]?.pinned ?? 0, $1.name) }
+        pinnedOrder = pinned.map(\.name)
+        let stars: [Node] = pinned.map { item in
+            let node = Node(title: item.name, item: item, isHead: item.name == head)
+            node.isPinned = true
+            node.stackedOn = facts[item.name]?.parent.flatMap { byName[$0] }.map(\.name)
+            // お気に入りの上に積んだブランチは、お気に入りの下に入れ子で出す。
+            attach(node)
+            return node
+        }
+        // 動いているブランチは新しい順。`/` のフォルダは、中でいちばん新しいブランチの位置に出る。
+        let named = folders("", active.sorted(by: newest)).children
+        named.forEach(attach)
+        let root = Node(title: "Branches")
+        var children: [Node] = stars + top.sorted { a, _ in a.name == stackRoot }.map { tree($0) } + named
+        if let node = group("inactive", "Inactive", inactive.sorted(by: newest)) { children.append(node) }
+        if let node = group("archived", "Archived", archived.sorted { $0.name < $1.name }) { children.append(node) }
+        root.children = children
+        return root
+    }
+
+    private var statusPopover: NSPopover?
+    /// 吹き出しを出していたブランチと、閉じた時刻。同じアイコンをもう一度押したら、閉じるだけにする（押した
+    /// 瞬間に transient の吹き出しが閉じ、すぐ出し直すと、閉じられないように見える）。
+    private var statusClosed: (name: String, at: CFTimeInterval)?
+
+    /// 行の右端の印（取り込み済み・gone・ほかの worktree・↑↓・✎）の詳細の吹き出し（印の下に出す）。
+    private func showBranchStatus(
+        _ item: RefItem, isHead: Bool, otherWorktree: WorktreeInfo? = nil, editing: Bool = false, from view: NSView
+    ) {
+        // 出ている間にもう一度押した（transient の吹き出しが閉じるのは、この後）: 閉じるだけ。
+        if let shown = statusPopover, shown.isShown, statusShown == item.name {
+            shown.close()
+            return
+        }
+        // 押した瞬間に閉じた直後なら、出し直さない。
+        if let closed = statusClosed, closed.name == item.name, CACurrentMediaTime() - closed.at < 0.3 {
+            statusClosed = nil
+            return
+        }
+        var facts = BranchStatusPopover.Facts(item: item, branch: branchFacts[item.name], base: branchGroups?.base, isHead: isHead)
+        facts.otherWorktree = otherWorktree
+        facts.editing = editing
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.delegate = self
+        popover.contentViewController = BranchStatusPopover(
+            facts: facts,
+            onDelete: { [weak self] in self?.actions?.perform(["op": "deleteBranch", "name": item.name, "force": false]) },
+            onArchive: { [weak self] in
+                self?.actions?.perform(["op": "configSet", "key": "branch.\(item.name).amonhenArchived", "value": "true"])
+            },
+            onOpenWorktree: { [weak self] path in self?.onSelectWorktree?(path) })
+        popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+        statusPopover = popover
+        statusShown = item.name
+    }
+
+    private var statusShown: String?
+
+    func popoverDidClose(_ notification: Notification) {
+        guard notification.object as? NSPopover === statusPopover else { return }
+        if let name = statusShown { statusClosed = (name, CACurrentMediaTime()) }
+        statusShown = nil
+        statusPopover = nil
+    }
+
+    /// お気に入りの順を書く（`branch.<name>.amonhenPinned` に 1 から順に）。
+    private func savePinnedOrder(_ names: [String]) {
+        guard let actions else { return }
+        actions.perform(sequence: names.enumerated().map { i, name in
+            ["op": "configSet", "key": "branch.\(name).amonhenPinned", "value": "\(i + 1)"]
+        })
+    }
+
+    /// 畳んだ、積んだブランチのあるブランチ（初めはすべて開いておく）。
+    private var foldedStacks: Set<String> = []
+
+    /// Branches の下の分け方のフォルダを、前と同じように開く。
+    private func expandBranchGroups() {
+        // 積んだブランチのある行は、畳んだもののほかは開く（分け方のフォルダの中も）。
+        func expandStacks(_ node: Node) {
+            for child in node.children {
+                if let item = child.item, !child.children.isEmpty, !foldedStacks.contains(item.name) {
+                    outline.expandItem(child)
+                }
+                expandStacks(child)
+            }
+        }
+        for group in groups where group.title == "Branches" {
+            for node in group.children where node.branchGroup.map(openBranchGroups.contains) == true {
+                outline.expandItem(node)
+            }
+            expandStacks(group)
+        }
+    }
+
+    func outlineViewItemDidExpand(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? Node else { return }
+        if let key = node.branchGroup { openBranchGroups.insert(key) }
+        if let item = node.item, item.kind == .local { foldedStacks.remove(item.name) }
+    }
+
+    func outlineViewItemDidCollapse(_ notification: Notification) {
+        guard let node = notification.userInfo?["NSObject"] as? Node else { return }
+        if let key = node.branchGroup { openBranchGroups.remove(key) }
+        if let item = node.item, item.kind == .local { foldedStacks.insert(item.name) }
     }
 
     /// プルリクエストの見出しを初めて出すときは開いておく。
@@ -376,6 +602,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         cell.imageView?.image = NSImage(systemSymbolName: Self.symbol(for: node), accessibilityDescription: nil)
         cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
         var badge = node.badge ?? ""
+        /// 右端のアイコン（SF Symbols の名前, ツールチップ）。
+        var marks: [(String, String)] = []
         if let item = node.item, item.kind == .local, let other = otherWorktree(using: item.name) {
             // ほかの worktree が checkout している（git はここでは checkout させない）。名前は長いことが多いので、
             // 行には印だけを出し、worktree の名前はツールチップに（ブランチ名を隠さない）。メインの作業ツリーは ⌂、
@@ -384,17 +612,31 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             cell.badge.stringValue = other.main ? "⌂" : "⑂"
             cell.badge.textColor = other.main ? .secondaryLabelColor : .systemGreen
             if !other.main { cell.imageView?.contentTintColor = .systemGreen }
+            cell.onBadgeClick = { [weak self, weak cell] in
+                guard let self, let cell else { return }
+                showBranchStatus(item, isHead: node.isHead, otherWorktree: other, from: cell.badge)
+            }
             return cell
         } else if let item = node.item, item.kind == .local {
-            if item.gone {
-                badge = "gone"
-            } else {
+            if !item.gone {
                 badge = [item.ahead > 0 ? "↑\(item.ahead)" : nil, item.behind > 0 ? "↓\(item.behind)" : nil]
                     .compactMap { $0 }.joined(separator: " ")
             }
+            // 取り込み済み（既定のブランチの先端と同じ、作ったばかりのものは除く）と gone は、文字でなくアイコンで
+            // （行の右端。意味はツールチップ）。
+            let merged = branchFacts[item.name].map { $0.merged && !$0.atBase } ?? false
+                && !node.isHead && item.name != branchGroups?.base
+            marks = [merged ? ("arrow.triangle.merge", L("Merged into %@", branchGroups?.base ?? "main")) : nil,
+                     item.gone ? ("icloud.slash", L("Its upstream %@ no longer exists on the remote", item.detail ?? "")) : nil]
+                .compactMap { $0 }
             // worktree が 2 つ以上なら、今のブランチ（書き込む先のもの）に ✎ を添える。
             if node.isHead, editingInfo != nil {
                 badge = badge.isEmpty ? "✎" : "✎ " + badge
+            }
+            // お気に入りに出した積んだブランチは入れ子にならないので、↳ を右に添える（土台はツールチップ）。
+            // サイドバーは狭いので、土台の名前は行に出さない（名前が隠れる）。
+            if node.isPinned, node.stackedOn != nil {
+                badge = badge.isEmpty ? "↳" : "↳ " + badge
             }
         }
         if node === cleanWorktreesNode { badge = "\(node.children.count)" }
@@ -402,9 +644,44 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             badge = w.prunable != nil ? L("missing") : w.locked != nil ? L("locked")
                 : (worktreeChanges[WorktreeInfo.canonical(w.path)]).flatMap { $0 > 0 ? "\($0)" : nil } ?? ""
         }
-        cell.badge.stringValue = badge
         cell.badge.textColor = .secondaryLabelColor
-        cell.toolTip = node === cleanWorktreesNode ? L("Worktrees with no changes (click to show)") : node.item?.detail
+        if marks.isEmpty {
+            cell.badge.stringValue = badge
+        } else {
+            // アイコンは文字に添付して並べる（アイコンの後に、数などの文字）。
+            let text = NSMutableAttributedString()
+            for (symbol, _) in marks {
+                let attachment = NSTextAttachment()
+                attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                    .withSymbolConfiguration(.init(pointSize: NSFont.smallSystemFontSize, weight: .regular))
+                let icon = NSMutableAttributedString(attachment: attachment)
+                icon.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: icon.length))
+                text.append(icon)
+                text.append(NSAttributedString(string: " "))
+            }
+            text.append(NSAttributedString(string: badge, attributes: [
+                .font: cell.badge.font ?? .systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+            cell.badge.attributedStringValue = text
+        }
+        cell.toolTip = node === cleanWorktreesNode ? L("Worktrees with no changes (click to show)")
+            : node.branchGroup.flatMap(Self.branchGroupHelp)
+            ?? node.stackedOn.map { L("Built on %@ (its commits are on top of that branch)", $0) }
+            ?? node.item?.detail
+        // 右端のアイコンの意味は、ツールチップの先頭に（上流の名前はその後ろに残す）。右端に何か出ているローカル
+        // ブランチは、押すと詳細の吹き出し。
+        cell.onBadgeClick = nil
+        if !marks.isEmpty {
+            cell.toolTip = (marks.map(\.1) + [cell.toolTip].compactMap { $0 }).joined(separator: "\n")
+        }
+        if let item = node.item, item.kind == .local, !marks.isEmpty || !badge.isEmpty {
+            let editing = node.isHead && editingInfo != nil
+            cell.onBadgeClick = { [weak self, weak cell] in
+                guard let self, let cell else { return }
+                showBranchStatus(item, isHead: node.isHead, editing: editing, from: cell.badge)
+            }
+        }
         if let w = node.worktree {
             cell.toolTip = [w.path, w.branch.map { L("Branch: %@", $0) } ?? L("detached HEAD"),
                             node.isHead ? L("Editing this worktree") : L("Click to edit this worktree"),
@@ -439,6 +716,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if node.isCleanWorktrees { return "checkmark.circle" }
         if let w = node.worktree { return node.isHead ? "pencil.circle" : w.main ? "house" : "arrow.triangle.branch" }
         if node.remote != nil { return "network" }
+        if node.isPinned { return "star.fill" }
+        if node.stackedOn != nil { return "arrow.turn.down.right" }
         switch node.item?.kind {
         case .local?, .remote?: return "arrow.triangle.branch"
         case .tag?: return "tag"
@@ -463,6 +742,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         proposedChildIndex index: Int
     ) -> NSDragOperation {
         guard let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return [] }
+        // お気に入りのブランチは、Branches の直下のお気に入りの間に落として並べ替える。
+        if isLocal, pinnedOrder.contains(dragged), node.title == "Branches", node.item == nil, node.page == nil,
+           index != NSOutlineViewDropOnItemIndex, index <= pinnedOrder.count {
+            return .move
+        }
         // ブランチの上に落とす（間に落とすのではない）。
         outlineView.setDropItem(node, dropChildIndex: NSOutlineViewDropOnItemIndex)
         if let ref = node.item, ref.kind == .local, ref.name != dragged { return .move }
@@ -475,6 +759,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         _ outlineView: NSOutlineView, acceptDrop info: any NSDraggingInfo, item: Any?, childIndex index: Int
     ) -> Bool {
         guard let actions, let (isLocal, dragged) = draggedBranch(info), let node = item as? Node else { return false }
+        if isLocal, index != NSOutlineViewDropOnItemIndex, let from = pinnedOrder.firstIndex(of: dragged) {
+            var order = pinnedOrder
+            order.remove(at: from)
+            order.insert(dragged, at: min(index > from ? index - 1 : index, order.count))
+            if order != pinnedOrder { savePinnedOrder(order) }
+            return true
+        }
         let menu = NSMenu()
         func add(_ title: String, _ action: @escaping () -> Void) {
             menu.addItem(ClosureMenuItem(title: title, action: action))
@@ -572,6 +863,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 add("Rebase \(current) onto \(name)") { actions.perform(["op": "rebase", "onto": name]) }
                 menu.addItem(.separator())
             }
+            // お気に入りとアーカイブは git の設定に書く（ブランチを消せば一緒に消え、名前を変えればついていく）。
+            let pinned = pinnedOrder.contains(name)
+            add(pinned ? L("Remove from Favorites") : L("Add to Favorites")) { [weak self] in
+                guard let self else { return }
+                savePinnedOrder(pinned ? pinnedOrder.filter { $0 != name } : pinnedOrder + [name])
+                if pinned { actions.perform(["op": "configSet", "key": "branch.\(name).amonhenPinned", "value": NSNull()]) }
+            }
+            let archived = branchGroups?.branches.first { $0.name == name }?.archived ?? false
+            add(archived ? L("Unarchive") : L("Archive")) {
+                actions.perform(["op": "configSet", "key": "branch.\(name).amonhenArchived",
+                                 "value": archived ? NSNull() : "true"])
+            }
             add("New Branch from \(name)…") { actions.newBranch(at: name) }
             add("New Tag at \(name)…") { actions.newTag(at: name) }
             add(L("Rename %@…", name)) {
@@ -625,10 +928,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 }
 
-/// 選んだら閉包を呼ぶメニュー項目を作る。
+/// 右端の文字（数・アイコン）。クリックはセルに渡す（セルが、押されたのが右端かを見る）。
+private final class BadgeLabel: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 /// サイドバーの行: アイコン、名前、右に薄い数（ahead・behind や変更の数）。
 final class SidebarCell: NSTableCellView {
-    let badge = NSTextField(labelWithString: "")
+    let badge: NSTextField = BadgeLabel(labelWithString: "")
+    /// 右端のアイコンを押した（取り込み済み・gone の詳細の吹き出し）。なければ押しても何も起きない。
+    var onBadgeClick: (() -> Void)?
 
     init(identifier: NSUserInterfaceItemIdentifier, hasIcon: Bool) {
         super.init(frame: .zero)
@@ -668,8 +977,29 @@ final class SidebarCell: NSTableCellView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// `point`（セルの座標）が右端のアイコンの上か。小さなアイコンなので、少し広めに当てる。
+    func hitsBadge(_ point: NSPoint) -> Bool {
+        onBadgeClick != nil && badge.frame.insetBy(dx: -6, dy: -6).contains(point)
+    }
 }
 
+/// サイドバーの表。行の右端のアイコン（取り込み済み・gone）の上で押したら、行を選ばずに吹き出しを出す。
+/// セルの mouseDown では拾えない（表が先に受けて、行の選択とドラッグにする）ので、表で見る。
+final class SidebarOutlineView: NSOutlineView {
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = self.row(at: point)
+        if row >= 0, let cell = view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarCell,
+           cell.hitsBadge(cell.convert(event.locationInWindow, from: nil)) {
+            cell.onBadgeClick?()
+            return
+        }
+        super.mouseDown(with: event)
+    }
+}
+
+/// 選んだら閉包を呼ぶメニュー項目を作る。
 func ClosureMenuItem(title: String, action handler: @escaping () -> Void) -> NSMenuItem {
     let target = MenuAction(handler)
     let item = NSMenuItem(title: title, action: #selector(MenuAction.fire), keyEquivalent: "")

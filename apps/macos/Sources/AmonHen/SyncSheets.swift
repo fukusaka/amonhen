@@ -81,6 +81,7 @@ extension Actions {
     // MARK: - Pull
 
     /// Pull の前に、取り込むコミットと取り込み方を見せる。取り込み方はシートの中で変えられる（既定は `mode`）。
+    /// 選んで Pull した取り込み方は、次の Pull の既定になる（`Settings.pullMode`）。
     func pullWithConfirmation(mode: PullMode) {
         Task { @MainActor in
             guard let state = await syncState() else { return }
@@ -111,9 +112,13 @@ extension Actions {
             note.preferredMaxLayoutWidth = 440
             note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             note.textColor = .secondaryLabelColor
-            let update = {
-                let m = PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? .merge
-                var lines: [String] = []
+            let describe = { (m: PullMode) -> String in
+                // 取り込み方そのものの説明（選び直すと必ず変わる）と、今の状態でそれが何をするか。
+                var lines: [String] = switch m {
+                case .merge: [L("Merge brings the upstream commits into %@. When both sides have new commits, a merge commit joins them.", branch)]
+                case .rebase: [L("Rebase puts your local commits on top of the upstream commits, keeping the History in one line.")]
+                case .fastForwardOnly: [L("Fast-Forward Only just moves %@ forward. If you have local commits too, it stops without changing anything.", branch)]
+                }
                 if incoming.count == 0 {
                     lines.append(L("Nothing new as of the last Fetch (Pull fetches first)."))
                 } else if outgoing.count == 0 {
@@ -127,7 +132,17 @@ extension Actions {
                 }
                 if changed > 0 { lines.append(L("%ld files have uncommitted changes. Pull stops if the incoming changes touch them.", changed)) }
                 lines.append(L("You can Undo it afterwards (⌥⌘Z)."))
-                note.stringValue = lines.joined(separator: "\n")
+                return lines.joined(separator: "\n")
+            }
+            // 説明の高さは、いちばん長い取り込み方に合わせて決めておく（選び直してもシートの大きさを変えず、
+            // 文が切れない）。
+            let height = PullMode.allCases.map { m -> CGFloat in
+                note.stringValue = describe(m)
+                return note.fittingSize.height
+            }.max() ?? 0
+            note.heightAnchor.constraint(equalToConstant: height).isActive = true
+            let update = {
+                note.stringValue = describe(PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? .merge)
             }
             update()
             let target = ClosureTarget(update)
@@ -153,6 +168,7 @@ extension Actions {
             withExtendedLifetime(target) {}
             guard response == .alertFirstButtonReturn else { return }
             let chosen = PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? mode
+            Settings.pullMode = chosen
             perform(["op": "pull", "mode": chosen.rawValue])
         }
     }

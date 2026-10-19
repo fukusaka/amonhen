@@ -196,10 +196,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.onSelectWorktree = { [weak self] path in self?.edit(worktree: path) }
         sidebar.onWorktreeAction = { [weak self] path, action in self?.worktreeAction(path, action) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。stash は詳細にだけ中身を出す。
-        sidebar.onSelect = { [weak history, weak detail] item in
+        sidebar.onSelect = { [weak self, weak history, weak detail] item in
             guard let history, let target = item.target else { return }
             if [.local, .remote, .tag].contains(item.kind) {
-                history.set(scope: .ref(item.name, target), select: target)
+                // 上流と分かれていれば上流も一緒に辿り、先にある・遅れているコミットを両方 History に出す。
+                let upstream = item.kind == .local && (item.ahead > 0 || item.behind > 0)
+                    ? self?.latestRefs?.items.first { $0.kind == .remote && $0.name == item.detail }?.target : nil
+                history.set(scope: .ref(item.kind, item.name, target), select: target, companions: upstream.map { [$0] } ?? [])
             } else if item.kind == .stash {
                 detail?.show(commit: target, stash: true)
             } else if let row = history.currentHistory?.row(of: target) {
@@ -927,7 +930,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private func selectRef(named name: String) {
         guard let item = latestRefs?.items.first(where: { $0.name == name && [.local, .remote, .tag].contains($0.kind) }),
               let target = item.target else { return NSSound.beep() }
-        history.set(scope: .ref(item.name, target), select: target)
+        history.set(scope: .ref(item.kind, item.name, target), select: target)
     }
 
     /// View > Go to Parent（⌥⌘↓）・Go to Child（⌥⌘↑）。最初の親・最初の子へ移る。
@@ -1014,6 +1017,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
                 latestRefs = refs
                 sidebar.show(refs)
+                reloadBranchGroups()
                 detail.reloadInfo()
                 updateSubtitle()
                 history.head = refs.head
@@ -1028,6 +1032,19 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             } catch {
                 NSLog("ref を読めない: \(error)")
             }
+        }
+    }
+
+    /// ローカルブランチの分け方を裏で求め、サイドバーに出す（History のグラフから求める）。
+    private func reloadBranchGroups() {
+        let repository = self.repository
+        Task {
+            let started = CACurrentMediaTime()
+            guard let groups = await Task.detached(priority: .utility, operation: {
+                try? repository.info(["op": "branchGroups"], as: BranchGroups.self)
+            }).value else { return }
+            PerformanceLog.record("Sidebar: branch groups", ms: (CACurrentMediaTime() - started) * 1000)
+            sidebar.show(branchGroups: groups)
         }
     }
 
