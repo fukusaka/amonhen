@@ -208,6 +208,16 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
 
 /// ネットワークを使う git が、これだけ何も出さなければ止める（`--progress` なので、動いていれば数秒ごとに出す）。
 const NETWORK_SILENCE: Duration = Duration::from_secs(120);
+/// askpass（ダイアログ）があるときの上限。黙っているのは、人がダイアログに向かっている間かもしれない。
+const NETWORK_SILENCE_WITH_ASKPASS: Duration = Duration::from_secs(600);
+
+fn network_silence() -> Duration {
+    if std::env::var_os("AMONHEN_ASKPASS").is_some() {
+        NETWORK_SILENCE_WITH_ASKPASS
+    } else {
+        NETWORK_SILENCE
+    }
+}
 
 /// `--progress` を付けて実行し、標準エラーの進み具合（\r で上書きされる行）を Activity に書く。取り消しを
 /// 頼まれたら git を止める。
@@ -276,14 +286,15 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
             return Err(amonhen_model::i18n::cancelled().into());
         }
         let silent = started.elapsed().as_millis() as u64 - heard.load(Ordering::Relaxed);
-        if silent > NETWORK_SILENCE.as_millis() as u64 {
+        let limit = network_silence();
+        if silent > limit.as_millis() as u64 {
             kill_tree(&mut child);
             let _ = child.wait();
             let _ = out_thread.join();
             let _ = err_thread.join();
             return Err(tr!(
-                "Stopped after {seconds} seconds without a response. It may have been waiting for authentication (run the same git command in a terminal and authenticate)",
-                seconds = NETWORK_SILENCE.as_secs()
+                "Stopped after {seconds} seconds without a response. It may have been waiting for a sign-in (a password or passphrase dialog, or the SSH agent) or for the network",
+                seconds = limit.as_secs()
             )
             .into());
         }
