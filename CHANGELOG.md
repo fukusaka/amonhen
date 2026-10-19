@@ -39,6 +39,10 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Fetch, Pull and Push now work from the app as they do in a terminal. Launched from the Finder or the Dock, the app
+  had launchd's bare environment, so Homebrew's git, credential helpers and SSH agents such as 1Password were not
+  found; it now takes `PATH`, `SSH_AUTH_SOCK`, `GIT_*` and the like from your login shell at launch (cached, refreshed
+  in the background; `AMONHEN_NO_SHELL_ENV` turns it off, `AmonHen --print-environment` shows the result).
 - History no longer goes empty when another program (a terminal, an editor) rebases, amends or commits while it shows
   the current branch or a branch picked in the sidebar: it follows the branch to its new commit. Refreshing after such
   a change keeps the scroll position, loads the visible rows before swapping so the list does not blank out, cross-fades

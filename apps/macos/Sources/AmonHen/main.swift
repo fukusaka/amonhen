@@ -56,7 +56,8 @@ enum Daemon {
         return developmentFile("dist/engine") ?? ""
     }
 
-    private static func developmentFile(_ relative: String) -> String? {
+    /// 開発中のリポジトリの中のファイル（`.app` でないとき）。
+    static func developmentFile(_ relative: String) -> String? {
         var dir = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath().deletingLastPathComponent()
         while dir.path != "/" {
             let candidate = dir.appendingPathComponent(relative)
@@ -416,6 +417,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// ターミナルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込む（git・daemon を動かす前に）。
+ShellEnvironment.import()
+// --print-environment: 取り込んだあとの環境（git に渡るもの）を出して終わる（Finder からの起動を確かめる用）。
+if CommandLine.arguments.contains("--print-environment") {
+    let env = ProcessInfo.processInfo.environment
+    print("imported: \(ShellEnvironment.imported.joined(separator: " "))")
+    for key in ["PATH", "SSH_AUTH_SOCK"] + env.keys.filter({ $0.hasPrefix("GIT_") }).sorted() {
+        print("\(key)=\(env[key] ?? "")")
+    }
+    exit(0)
+}
 // コアが作る文（エラーなど）も、画面と同じ言語にする（リポジトリを開く前に）。
 CoreLanguage.set(L10n.language ?? "en")
 HangWatch.startIfRequested()
