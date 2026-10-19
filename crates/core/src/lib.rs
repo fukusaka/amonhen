@@ -1,6 +1,7 @@
 //! 状態・スナップショット・Intent の処理。通信手段にも FE にも依存しない。
 
 pub mod blame;
+pub mod branches;
 pub mod cache;
 pub mod command;
 pub mod conflict;

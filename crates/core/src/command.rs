@@ -1,7 +1,7 @@
 //! FE から受け取る操作。頻度の低い操作はまとめてここを通し、Undo の記録もここで行う。
 
 use amonhen_model::tr;
-use amonhen_model::{Oid, Outcome, PullMode, Result, Root};
+use amonhen_model::{Oid, Outcome, PullMode, RefEntry, RefKind, Result, Root};
 use serde::{Deserialize, Serialize};
 
 use crate::Repository;
@@ -117,6 +117,12 @@ pub enum Command {
     Sequence,
     /// 編集できるコミット（HEAD から first-parent で最初の merge の手前まで、新しい順）。`text` に改行区切り。
     EditableCommits,
+    /// ローカルブランチの分け方（`info`）。`base` は既定のブランチ（`origin/HEAD` の先、なければ main・master）、
+    /// `branches` はブランチごとの `name`・`time`（先端のコミットの日時）・`merged`（既定のブランチに取り込み済み）・
+    /// `atBase`（既定のブランチの先端と同じ）・
+    /// `mine`（取り込んでいない自分のコミットがある）・`parent`（その上に積んであるブランチ）・
+    /// `archived`（`branch.<name>.amonhenArchived`）・`pinned`（お気に入りの順位。`branch.<name>.amonhenPinned`）。
+    BranchGroups,
     /// `oid` を親にまとめるときの、メッセージの初期値（親のメッセージ ＋ `oid` のメッセージ）。
     SquashMessage {
         oid: String,
@@ -320,6 +326,145 @@ fn heads(name: &str) -> String {
 }
 
 impl Repository {
+    /// `Command::BranchGroups` の答え。
+    fn branch_groups(&self) -> Result<serde_json::Value> {
+        use crate::branches;
+        let history = self.load_history()?;
+        let refs = self.refs()?;
+        let entries = &refs.refs.entries;
+        let config = self.backend().operations()?.config_list()?;
+        let config_value = |key: &str| {
+            config
+                .iter()
+                .rev()
+                .find(|e| e.key.eq_ignore_ascii_case(key))
+                .map(|e| e.value.clone())
+        };
+        // 既定のブランチ: リモートの HEAD（origin を先に）が指すもの、なければ手元の main・master。
+        let remote_head = entries
+            .iter()
+            .filter(|e| e.kind == RefKind::Remote && e.name.ends_with("/HEAD"))
+            .min_by_key(|e| !e.name.starts_with("origin/"));
+        let base = remote_head
+            .and_then(|h| {
+                let remote = h.name.trim_end_matches("/HEAD");
+                entries.iter().find(|e| {
+                    e.kind == RefKind::Remote
+                        && e.target == h.target
+                        && e.name.starts_with(remote)
+                        && !e.name.ends_with("/HEAD")
+                })
+            })
+            .or_else(|| {
+                ["main", "master"].iter().find_map(|n| {
+                    entries
+                        .iter()
+                        .find(|e| e.kind == RefKind::Local && e.name == *n)
+                })
+            });
+        let graph = &history.graph;
+        // 既定のブランチは、手元のもの（main）とリモートのもの（origin/main）のどちらかが先に進んでいることが多い。
+        // 両方とも起点にする（片方だけだと、もう片方にしかないコミットを固有と見誤る）。
+        let local_base = base.and_then(|b| match b.kind {
+            RefKind::Local => Some(b),
+            _ => entries
+                .iter()
+                .find(|l| l.kind == RefKind::Local && l.detail.as_ref() == Some(&b.name)),
+        });
+        let upstream_base = local_base.and_then(|l| l.detail.as_ref()).and_then(|u| {
+            entries
+                .iter()
+                .find(|e| e.kind == RefKind::Remote && &e.name == u)
+        });
+        let roots: Vec<u32> = [base, local_base, upstream_base]
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.target.as_ref().and_then(|t| history.row_of(t)))
+            .collect();
+        let in_base = branches::reachable(graph, &roots);
+        // 固有のコミットは 1 本につき 200 まで見る（自分のものか・共有しているかには十分）。
+        const LIMIT: usize = 200;
+        let locals: Vec<&RefEntry> = entries
+            .iter()
+            .filter(|e| e.kind == RefKind::Local)
+            .collect();
+        let facts: Vec<Option<branches::BranchFacts>> = locals
+            .iter()
+            .map(|e| {
+                e.target
+                    .as_ref()
+                    .and_then(|t| history.row_of(t))
+                    .map(|row| branches::facts(graph, &in_base, row, LIMIT))
+            })
+            .collect();
+        // 自分のコミットか: 固有のコミットの作者のメールアドレスを、まとめて 1 回で読む。
+        let me = config_value("user.email").map(|e| e.to_lowercase());
+        let mut mine_rows = std::collections::HashSet::new();
+        if let Some(me) = &me {
+            let mut rows: Vec<u32> = facts
+                .iter()
+                .flatten()
+                .flat_map(|f| f.unique.iter().copied())
+                .collect();
+            rows.sort_unstable();
+            rows.dedup();
+            let ids: Vec<Oid> = rows.iter().map(|&r| graph.ids()[r as usize]).collect();
+            for (row, text) in rows.iter().zip(self.backend().commit_texts(&ids)?) {
+                if branches::author_email(&text.raw).as_deref() == Some(me.as_str()) {
+                    mine_rows.insert(*row);
+                }
+            }
+        }
+        let tips: Vec<Option<u32>> = locals
+            .iter()
+            .map(|e| e.target.as_ref().and_then(|t| history.row_of(t)))
+            .collect();
+        // 土台を探す手がかり。上流が `origin/x` のブランチは、上流が同じ `x`（幹）の上に積んだものと見なす。
+        let local_of_upstream = |upstream: &str| {
+            locals.iter().position(|l| {
+                l.detail.as_deref() == Some(upstream)
+                    && upstream.rsplit_once('/').is_some_and(|(_, n)| n == l.name)
+            })
+        };
+        let candidates: Vec<branches::Candidate> = locals
+            .iter()
+            .zip(&tips)
+            .zip(&facts)
+            .map(|((e, &tip), f)| branches::Candidate {
+                tip,
+                trunk: e
+                    .detail
+                    .as_deref()
+                    .is_some_and(|u| u.rsplit_once('/').is_some_and(|(_, n)| n == e.name)),
+                has_upstream: e.detail.is_some(),
+                upstream_local: e.detail.as_deref().and_then(local_of_upstream),
+                merged: f.as_ref().is_some_and(|f| f.merged),
+            })
+            .collect();
+        let parents = branches::parents(graph, &candidates);
+        let branches: Vec<serde_json::Value> = locals
+            .iter()
+            .zip(&facts)
+            .zip(tips.iter().zip(&parents))
+            .map(|((e, f), (&row, parent))| {
+                let unique = f.as_ref().map_or(&[][..], |f| &f.unique[..]);
+                serde_json::json!({
+                    "name": e.name,
+                    "time": row.map(|r| graph.commit_times()[r as usize]),
+                    "merged": f.as_ref().is_some_and(|f| f.merged),
+                    // 既定のブランチの先端と同じ（作ったばかりで、まだコミットしていない）。
+                    "atBase": row.is_some_and(|r| roots.contains(&r)),
+                    "mine": unique.iter().any(|r| mine_rows.contains(r)),
+                    "parent": parent.map(|p| &locals[p].name),
+                    "archived": config_value(&format!("branch.{}.amonhenarchived", e.name)).is_some_and(|v| v == "true"),
+                    // お気に入り（サイドバーの一番上に出す）の順位。小さいほど上。
+                    "pinned": config_value(&format!("branch.{}.amonhenpinned", e.name)).and_then(|v| v.parse::<i64>().ok()),
+                })
+            })
+            .collect();
+        Ok(serde_json::json!({ "base": base.map(|b| &b.name), "branches": branches }))
+    }
+
     /// コミットのメッセージ全文。
     pub fn commit_message(&self, commit: &Oid) -> Result<String> {
         let text = self
@@ -997,6 +1142,11 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::BranchGroups => Ok(Response {
+                ok: true,
+                info: Some(self.branch_groups()?),
+                ..Default::default()
+            }),
             Command::EditableCommits => {
                 let chain = self.editable_chain()?;
                 let text = chain
