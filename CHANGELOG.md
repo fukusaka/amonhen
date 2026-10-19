@@ -32,6 +32,11 @@ becomes the GitHub Release notes.
 - Selecting a branch that has diverged from its upstream shows both in History, so the commits ahead and behind are
   in the list.
 
+#### Changed
+
+- The Pull sheet starts with the way you pulled last time (merge, rebase or fast-forward only), and the note under it
+  always explains the chosen way, not only when your branch and upstream have diverged.
+
 #### Fixed
 
 - History no longer goes empty when another program (a terminal, an editor) rebases, amends or commits while it shows

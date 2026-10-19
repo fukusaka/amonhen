@@ -25,6 +25,9 @@
 "Set Upstream…" = "上流を設定…";
 "Pull %ld commits from %@?" = "%2$@ から %1$ld コミット取り込みますか？";
 "Pull from %@?" = "%@ から Pull しますか？";
+"Merge brings the upstream commits into %@. When both sides have new commits, a merge commit joins them." = "Merge は、上流のコミットを %@ に取り込みます。両方に新しいコミットがあれば、マージコミットでつなぎます。";
+"Rebase puts your local commits on top of the upstream commits, keeping the History in one line." = "Rebase は、手元のコミットを上流のコミットの上に載せ直し、History を一本にします。";
+"Fast-Forward Only just moves %@ forward. If you have local commits too, it stops without changing anything." = "Fast-Forward Only は、%@ を進めるだけです。手元にもコミットがあれば、何も変えずに止まります。";
 "Nothing new as of the last Fetch (Pull fetches first)." = "最後の Fetch の時点では、取り込むコミットはありません（Pull は先に Fetch します）。";
 "This just moves %@ forward (fast-forward)." = "%@ を進めるだけです（fast-forward）。";
 "You have %ld local commits, so this makes a merge commit." = "手元に %ld コミットあるので、マージコミットを 1 つ作ります。";
