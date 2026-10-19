@@ -85,6 +85,11 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 開発中の最新版を入れるときは、`stable` を `snapshot` にします。同じ行をもう一度実行すると、新しい版に入れ替わります。
 アプリを開いたまま入れ替えたときはスクリプトがそう知らせるので、アプリを開き直すと新しい版になります。
 
+アプリは `/Applications` に入ります。`--user` を付けると（`sh -s -- --user stable`）ユーザーのアプリフォルダ
+（`~/Applications`）に、`--system` を付けると `/Applications` に、`--dir <フォルダ>` を付けるとそのフォルダ（なければ
+作ります）に入れます。どれも付けなければ、今入っているところで
+入れ替えます。
+
 リポジトリを clone した手元では、`scripts/install-app.sh`・`scripts/install-engine.sh`・`scripts/install-vscode.sh`
 をそのまま実行します。
 

@@ -16,6 +16,9 @@ becomes the GitHub Release notes.
   write LF, which the next commit or checkout may change for the whole file. The tooltip names the conversion.
   `amonhen diff` prints the same under the file's header, and `--json` has `lineEndings`. The remote protocol is now
   version 21.
+- `scripts/install-app.sh --user` installs the app into your own Applications folder (`~/Applications`); `--system`
+  picks `/Applications`, and `--dir <folder>` any folder. Without any of them, an update replaces the app where it is
+  already installed.
 
 ### [0.2.1] - 2026-10-19
 
