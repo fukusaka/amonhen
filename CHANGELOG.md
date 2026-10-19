@@ -42,7 +42,8 @@ becomes the GitHub Release notes.
 - Fetch, Pull and Push now work from the app as they do in a terminal. Launched from the Finder or the Dock, the app
   had launchd's bare environment, so Homebrew's git, credential helpers and SSH agents such as 1Password were not
   found; it now takes `PATH`, `SSH_AUTH_SOCK`, `GIT_*` and the like from your login shell at launch (cached, refreshed
-  in the background; `AMONHEN_NO_SHELL_ENV` turns it off, `AmonHen --print-environment` shows the result). When git or
+  in the background; Settings > Advanced > Terminal Environment shows what was taken, reads it again, and turns it
+  off; `AmonHen --print-environment` prints it). When git or
   ssh needs a password, a token or a key passphrase, a dialog asks for it instead of failing with "terminal prompts
   disabled".
 - History no longer goes empty when another program (a terminal, an editor) rebases, amends or commits while it shows
