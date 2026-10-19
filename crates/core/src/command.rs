@@ -2056,7 +2056,11 @@ mod tests {
             ],
         );
         let merge = git(dir, &["rev-parse", "HEAD"]);
-        let short = &first[..10];
+        // 短い ID は、数字だけだと ID と見なされない（日付や番号と区別がつかない）。英字が入る長さまで取る。
+        let short = (10..=40)
+            .map(|n| &first[..n])
+            .find(|s| s.bytes().any(|b| b.is_ascii_alphabetic()))
+            .unwrap();
         git(
             dir,
             &[
