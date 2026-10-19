@@ -247,7 +247,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
         slot.workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         slot.actions.window = window
-        slot.actions.onFailure = { [weak self] message in self?.showFailure(message) }
+        slot.actions.onFailure = { [weak self] failure in self?.showFailure(failure) }
         slot.actions.onChange = { [weak self, weak slot] in
             self?.history.refresh()
             self?.reloadRefs()
@@ -783,36 +783,43 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     // MARK: - 失敗の帯
 
     private var failureBanner: NSTitlebarAccessoryViewController?
-    private var failureMessage = ""
+    private var failure: OperationFailure?
 
     /// 操作の失敗を、ツールバーの下の帯で知らせる（作業を止めない）。閉じるか、次の失敗で置き換えるまで出す。
-    func showFailure(_ message: String, title: String = L("Operation Failed")) {
+    func showFailure(_ message: String, title: String) {
+        showFailure(OperationFailure(message: message), title: title)
+    }
+
+    /// 帯には、何が失敗したか（見出し）、なぜか（要点）、次にできること（ボタン）を出す。git の全文は「詳細」と
+    /// ツールチップ。
+    func showFailure(_ failure: OperationFailure, title: String? = nil) {
         hideFailure()
-        failureMessage = message
-        let cancelled = CoreLanguage.isCancelled(message)
+        self.failure = failure
+        let cancelled = CoreLanguage.isCancelled(failure.message)
         let icon = NSImageView(image: NSImage(
             systemSymbolName: cancelled ? "stop.circle" : "xmark.octagon.fill", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = cancelled ? .secondaryLabelColor : .systemRed
-        let label = NSTextField(labelWithString: cancelled ? L("Operation Cancelled") : title)
+        let label = NSTextField(labelWithString: cancelled ? L("Operation Cancelled") : title ?? failure.title)
         label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
-        // git のエラーは複数行になるので、帯には fatal:・error: の行（なければ最初の行）を出す（全文は「詳細」と
-        // ツールチップ）。
-        let lines = message.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("hint:") }
-        let line = lines.first { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") } ?? lines.first ?? ""
-        let detail = NSTextField(labelWithString: cancelled ? "" : line)
+        let detail = NSTextField(labelWithString: cancelled ? "" : failure.summary)
         detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingTail
-        detail.toolTip = message
+        detail.toolTip = failure.message
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // 次の一手（いちばん目立たせるのは最初のもの）。
+        let remedies: [NSButton] = cancelled ? [] : failure.remedies.enumerated().map { i, remedy in
+            let button = NSButton(title: remedy.title, target: self, action: #selector(runRemedy(_:)))
+            button.tag = i
+            if i == 0 { button.bezelColor = .controlAccentColor }
+            return button
+        }
         let more = NSButton(title: L("Details"), target: self, action: #selector(showFailureDetail))
         // AppDelegate の Window > Activity（target が nil なので、レスポンダチェーンで届く）。
         let activity = NSButton(title: "Activity", target: nil, action: #selector(AppDelegate.showActivity(_:)))
         let close = NSButton(title: L("Close"), target: self, action: #selector(hideFailure))
         more.isHidden = cancelled
-        for b in [more, activity, close] { b.controlSize = .small }
-        let stack = NSStackView(views: [icon, label, detail, NSView(), more, activity, close])
+        for b in remedies + [more, activity, close] { b.controlSize = .small }
+        let stack = NSStackView(views: [icon, label, detail, NSView()] + remedies + [more, activity, close])
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
         stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
@@ -835,10 +842,26 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         failureBanner = nil
     }
 
+    @objc private func runRemedy(_ sender: NSButton) {
+        guard let failure, failure.remedies.indices.contains(sender.tag) else { return }
+        hideFailure()
+        switch failure.remedies[sender.tag] {
+        case let .openWorktree(path): edit(worktree: path)
+        case .openTerminal: openTerminal(at: editing.path)
+        case .retry: if let command = failure.command { actions.perform(command) }
+        case .pull: pull(nil)
+        case .workingCopy: showWorkingCopy(nil)
+        case .setUpstream: setUpstream(nil)
+        }
+    }
+
     @objc private func showFailureDetail() {
+        guard let failure else { return }
         let alert = NSAlert()
-        alert.messageText = L("Operation Failed")
-        alert.informativeText = failureMessage
+        alert.messageText = failure.title
+        // 要点と、どうすればよいか、git の全文。
+        alert.informativeText = [failure.kind == nil ? nil : failure.summary, failure.advice, failure.message]
+            .compactMap { $0 }.joined(separator: "\n\n")
         alert.beginSheetModal(for: window)
     }
 
@@ -1472,7 +1495,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 EventLog.add(repo: name, L("Automatic fetch"))
             } catch {
                 EventLog.add(repo: name, L("Automatic fetch failed: %@", "\(error)"))
-                showFailure("\(error)", title: L("Automatic Fetch Failed"))
+                showFailure(OperationFailure(error, command: ["op": "fetch"]), title: L("Automatic Fetch Failed"))
             }
         }
     }

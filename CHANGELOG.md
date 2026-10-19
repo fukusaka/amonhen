@@ -38,6 +38,9 @@ becomes the GitHub Release notes.
 
 - The Pull sheet starts with the way you pulled last time (merge, rebase or fast-forward only), and the note under it
   always explains the chosen way, not only when your branch and upstream have diverged.
+- A failed operation names what failed (Pull Failed, Couldn’t Switch…), says why in plain words instead of git's first
+  line, and offers the next step: open the worktree that has the branch checked out, Open in Terminal for sign-in
+  problems, Try Again, Pull before Push, Open Working Copy or Set Upstream. Details adds how to fix it.
 
 #### Fixed
 

@@ -10,7 +10,7 @@ final class Actions {
     /// 次に Undo される操作の名前が変わった。
     var onUndoChange: ((String?) -> Void)?
     /// 操作が失敗した（ウィンドウの帯で知らせる）。なければ警告のシートを出す。
-    var onFailure: ((String) -> Void)?
+    var onFailure: ((OperationFailure) -> Void)?
     /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。確認のシートに出す。
     var worktreeName: String?
 
@@ -37,7 +37,7 @@ final class Actions {
                 }
                 completion?(result)
             } catch {
-                await fail(error)
+                await fail(OperationFailure(error, command: command))
             }
             onChange?()
             refreshUndo()
@@ -62,7 +62,7 @@ final class Actions {
             do {
                 try await Task.detached(priority: .userInitiated) { try work() }.value
             } catch {
-                await fail(error)
+                await fail(OperationFailure(error))
             }
             onChange?()
             refreshUndo()
@@ -82,11 +82,12 @@ final class Actions {
     }
 
     @MainActor
-    private func fail(_ error: Error) async {
+    private func fail(_ failure: OperationFailure) async {
         if let onFailure {
-            onFailure("\(error)")
+            onFailure(failure)
         } else {
-            await alert(L("The operation failed"), "\(error)")
+            await alert(failure.title, [failure.summary, failure.advice, failure.kind == nil ? nil : failure.message]
+                .compactMap { $0 }.joined(separator: "\n\n"))
         }
     }
 
