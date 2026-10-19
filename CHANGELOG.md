@@ -19,6 +19,18 @@ becomes the GitHub Release notes.
 - `scripts/install-app.sh --user` installs the app into your own Applications folder (`~/Applications`); `--system`
   picks `/Applications`, and `--dir <folder>` any folder. Without any of them, an update replaces the app where it is
   already installed.
+- Branches in the sidebar are arranged for getting around: Favorites (★, in the order you choose by dragging) first,
+  then the current branch together with the branches it is built on and the default branch, then the active branches
+  newest first with `/` names in folders, and at the end Inactive (no commit for 90 days) and Archived, both folded.
+  A branch built on top of another one is nested under it with a ↳ mark, and a branch already merged into the default
+  branch shows a merge mark at the right, next to the mark for a gone upstream; clicking those marks opens a popover
+  that explains them, shows the branch's upstream, base and last commit, and offers Delete Branch (only when merged)
+  and Archive. Add to Favorites and Archive are in a branch's menu; both are kept in
+  git's config (`branch.<name>.amonhenPinned`, `branch.<name>.amonhenArchived`), so they follow a rename and go away
+  with the branch. `amonhen run '{"op":"branchGroups"}'` gives the same facts (`merged`, `parent`, `pinned`,
+  `archived`, `mine`, the tip's `time`).
+- Selecting a branch that has diverged from its upstream shows both in History, so the commits ahead and behind are
+  in the list.
 
 ### [0.2.1] - 2026-10-19
 
