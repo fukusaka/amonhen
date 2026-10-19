@@ -2,7 +2,9 @@ import AmonhenKit
 import AppKit
 
 /// サイドバー: Branches / Pull Requests / Remotes / Tags / Stashes / Submodules。
-final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate {
+final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate,
+    NSPopoverDelegate
+{
     /// 項目を選んだとき（指すコミットがあれば History でその行を選ぶ）。
     var onSelect: ((RefItem) -> Void)?
     var actions: Actions?
@@ -71,7 +73,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    private let outline = NSOutlineView()
+    private let outline = SidebarOutlineView()
     private var groups: [Node] = []
     private var generation: UInt64?
 
@@ -428,6 +430,52 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return root
     }
 
+    private var statusPopover: NSPopover?
+    /// 吹き出しを出していたブランチと、閉じた時刻。同じアイコンをもう一度押したら、閉じるだけにする（押した
+    /// 瞬間に transient の吹き出しが閉じ、すぐ出し直すと、閉じられないように見える）。
+    private var statusClosed: (name: String, at: CFTimeInterval)?
+
+    /// 行の右端の印（取り込み済み・gone・ほかの worktree・↑↓・✎）の詳細の吹き出し（印の下に出す）。
+    private func showBranchStatus(
+        _ item: RefItem, isHead: Bool, otherWorktree: WorktreeInfo? = nil, editing: Bool = false, from view: NSView
+    ) {
+        // 出ている間にもう一度押した（transient の吹き出しが閉じるのは、この後）: 閉じるだけ。
+        if let shown = statusPopover, shown.isShown, statusShown == item.name {
+            shown.close()
+            return
+        }
+        // 押した瞬間に閉じた直後なら、出し直さない。
+        if let closed = statusClosed, closed.name == item.name, CACurrentMediaTime() - closed.at < 0.3 {
+            statusClosed = nil
+            return
+        }
+        var facts = BranchStatusPopover.Facts(item: item, branch: branchFacts[item.name], base: branchGroups?.base, isHead: isHead)
+        facts.otherWorktree = otherWorktree
+        facts.editing = editing
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.delegate = self
+        popover.contentViewController = BranchStatusPopover(
+            facts: facts,
+            onDelete: { [weak self] in self?.actions?.perform(["op": "deleteBranch", "name": item.name, "force": false]) },
+            onArchive: { [weak self] in
+                self?.actions?.perform(["op": "configSet", "key": "branch.\(item.name).amonhenArchived", "value": "true"])
+            },
+            onOpenWorktree: { [weak self] path in self?.onSelectWorktree?(path) })
+        popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+        statusPopover = popover
+        statusShown = item.name
+    }
+
+    private var statusShown: String?
+
+    func popoverDidClose(_ notification: Notification) {
+        guard notification.object as? NSPopover === statusPopover else { return }
+        if let name = statusShown { statusClosed = (name, CACurrentMediaTime()) }
+        statusShown = nil
+        statusPopover = nil
+    }
+
     /// お気に入りの順を書く（`branch.<name>.amonhenPinned` に 1 から順に）。
     private func savePinnedOrder(_ names: [String]) {
         guard let actions else { return }
@@ -564,6 +612,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             cell.badge.stringValue = other.main ? "⌂" : "⑂"
             cell.badge.textColor = other.main ? .secondaryLabelColor : .systemGreen
             if !other.main { cell.imageView?.contentTintColor = .systemGreen }
+            cell.onBadgeClick = { [weak self, weak cell] in
+                guard let self, let cell else { return }
+                showBranchStatus(item, isHead: node.isHead, otherWorktree: other, from: cell.badge)
+            }
             return cell
         } else if let item = node.item, item.kind == .local {
             if !item.gone {
@@ -617,9 +669,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             : node.branchGroup.flatMap(Self.branchGroupHelp)
             ?? node.stackedOn.map { L("Built on %@ (its commits are on top of that branch)", $0) }
             ?? node.item?.detail
-        // 右端のアイコンの意味は、ツールチップの先頭に（上流の名前はその後ろに残す）。
+        // 右端のアイコンの意味は、ツールチップの先頭に（上流の名前はその後ろに残す）。右端に何か出ているローカル
+        // ブランチは、押すと詳細の吹き出し。
+        cell.onBadgeClick = nil
         if !marks.isEmpty {
             cell.toolTip = (marks.map(\.1) + [cell.toolTip].compactMap { $0 }).joined(separator: "\n")
+        }
+        if let item = node.item, item.kind == .local, !marks.isEmpty || !badge.isEmpty {
+            let editing = node.isHead && editingInfo != nil
+            cell.onBadgeClick = { [weak self, weak cell] in
+                guard let self, let cell else { return }
+                showBranchStatus(item, isHead: node.isHead, editing: editing, from: cell.badge)
+            }
         }
         if let w = node.worktree {
             cell.toolTip = [w.path, w.branch.map { L("Branch: %@", $0) } ?? L("detached HEAD"),
@@ -867,9 +928,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 }
 
+/// 右端の文字（数・アイコン）。クリックはセルに渡す（セルが、押されたのが右端かを見る）。
+private final class BadgeLabel: NSTextField {
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+}
+
 /// サイドバーの行: アイコン、名前、右に薄い数（ahead・behind や変更の数）。
 final class SidebarCell: NSTableCellView {
-    let badge = NSTextField(labelWithString: "")
+    let badge: NSTextField = BadgeLabel(labelWithString: "")
+    /// 右端のアイコンを押した（取り込み済み・gone の詳細の吹き出し）。なければ押しても何も起きない。
+    var onBadgeClick: (() -> Void)?
 
     init(identifier: NSUserInterfaceItemIdentifier, hasIcon: Bool) {
         super.init(frame: .zero)
@@ -909,6 +977,26 @@ final class SidebarCell: NSTableCellView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// `point`（セルの座標）が右端のアイコンの上か。小さなアイコンなので、少し広めに当てる。
+    func hitsBadge(_ point: NSPoint) -> Bool {
+        onBadgeClick != nil && badge.frame.insetBy(dx: -6, dy: -6).contains(point)
+    }
+}
+
+/// サイドバーの表。行の右端のアイコン（取り込み済み・gone）の上で押したら、行を選ばずに吹き出しを出す。
+/// セルの mouseDown では拾えない（表が先に受けて、行の選択とドラッグにする）ので、表で見る。
+final class SidebarOutlineView: NSOutlineView {
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = self.row(at: point)
+        if row >= 0, let cell = view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarCell,
+           cell.hitsBadge(cell.convert(event.locationInWindow, from: nil)) {
+            cell.onBadgeClick?()
+            return
+        }
+        super.mouseDown(with: event)
+    }
 }
 
 /// 選んだら閉包を呼ぶメニュー項目を作る。
