@@ -7,6 +7,7 @@ pub mod command;
 pub mod conflict;
 mod delegate;
 pub mod diff;
+pub mod failure;
 pub mod fold;
 pub mod graph;
 pub mod lanes;

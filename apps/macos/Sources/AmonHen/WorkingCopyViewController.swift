@@ -352,7 +352,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let started = CACurrentMediaTime()
         Task {
             defer { PerformanceLog.record("Working Copy: reload status", ms: (CACurrentMediaTime() - started) * 1000) }
-            async let sequence = Task.detached { try? repository.run(["op": "sequence"]).text }.value
+            async let sequence = Task.detached { try? repository.sequence() }.value
             async let status = Task.detached(priority: .userInitiated) { try? repository.loadStatus() }.value
             let (s, w) = await (sequence, status)
             showSequence(s ?? nil)
@@ -823,7 +823,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     /// merge・rebase などの途中なら、その名前（Repository > Continue・Skip・Abort を使えるか）。
-    private(set) var sequence: String?
+    /// 途中の操作の種類（`rebase`・`merge`・`cherry-pick`・`revert`）。
+    var sequence: String? { sequenceInfo?.kind }
+    private(set) var sequenceInfo: SequenceInfo?
 
     /// Commit > Commit（⌘↩）・Stage All を使えるか。
     var canCommit: Bool { commitButton.isEnabled }
@@ -834,10 +836,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     func stageAllFromMenu() { stageAll() }
 
     /// merge・rebase などの途中かどうかと、コンフリクトのファイルの数が変わった（ウィンドウの帯に出す）。
-    var onSequenceChange: ((_ sequence: String?, _ conflicts: Int) -> Void)?
+    var onSequenceChange: ((_ sequence: SequenceInfo?, _ conflicts: Int) -> Void)?
 
-    private func showSequence(_ sequence: String?) {
-        self.sequence = sequence
+    private func showSequence(_ sequence: SequenceInfo?) {
+        sequenceInfo = sequence
         // 途中であることと Continue・Skip・Abort は、ウィンドウの帯に出す（どの画面でも見えるように）。
         sequenceBar.isHidden = true
         notifySequence()
@@ -856,7 +858,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     var onChangeCount: ((Int) -> Void)?
 
     private func notifySequence() {
-        onSequenceChange?(sequence, allEntries.filter(\.isConflict).count)
+        onSequenceChange?(sequenceInfo, allEntries.filter(\.isConflict).count)
         onChangeCount?(allEntries.count)
     }
 

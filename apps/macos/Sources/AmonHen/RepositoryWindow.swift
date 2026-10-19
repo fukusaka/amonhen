@@ -247,7 +247,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
         slot.workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         slot.actions.window = window
-        slot.actions.onFailure = { [weak self] message in self?.showFailure(message) }
+        slot.actions.onFailure = { [weak self] failure in self?.showFailure(failure) }
         slot.actions.onChange = { [weak self, weak slot] in
             self?.history.refresh()
             self?.reloadRefs()
@@ -738,12 +738,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     private var sequenceBanner: NSTitlebarAccessoryViewController?
     private let sequenceLabel = NSTextField(labelWithString: "")
+    private let sequenceDetail = NSTextField(labelWithString: "")
     private let skipButton = NSButton(title: "Skip", target: nil, action: nil)
     private let continueButton = NSButton(title: "Continue", target: nil, action: nil)
 
-    /// merge・rebase・cherry-pick・revert の途中なら、ツールバーの下に帯を出す。コンフリクトが残っていれば数と
+    /// merge・rebase・cherry-pick・revert の途中なら、ツールバーの下に色の付いた帯を出す。1 行目に何をどこへして
+    /// いる途中か（何番目か）、2 行目にどこで・なぜ止まっていて次に何をすればよいか。コンフリクトが残っていれば数と
     /// Working Copy へのリンク、なければ Continue を強調する。
-    private func showSequenceBanner(_ sequence: String?, conflicts: Int) {
+    private func showSequenceBanner(_ sequence: SequenceInfo?, conflicts: Int) {
         guard let sequence else {
             if let banner = sequenceBanner,
                let index = window.titlebarAccessoryViewControllers.firstIndex(of: banner) {
@@ -752,27 +754,39 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             sequenceBanner = nil
             return
         }
-        let name = sequence.prefix(1).uppercased() + sequence.dropFirst()
-        sequenceLabel.stringValue = conflicts > 0
-            ? L("%@ in progress · %ld files with conflicts", name, conflicts)
-            : L("%@ in progress · conflicts resolved", name)
-        skipButton.isHidden = !(sequence.hasPrefix("rebase") || sequence == "cherry-pick")
+        sequenceLabel.stringValue = Self.sequenceTitle(sequence)
+        sequenceDetail.stringValue = Self.sequenceDetail(sequence, conflicts: conflicts)
+        sequenceDetail.toolTip = sequenceDetail.stringValue
+        skipButton.isHidden = !["rebase", "cherry-pick"].contains(sequence.kind)
         continueButton.keyEquivalent = conflicts == 0 ? "\r" : ""
         guard sequenceBanner == nil else { return }
         let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.triangle.merge", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemOrange
-        sequenceLabel.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+        icon.symbolConfiguration = .init(pointSize: 18, weight: .regular)
+        sequenceLabel.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        sequenceLabel.lineBreakMode = .byTruncatingTail
+        sequenceDetail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        sequenceDetail.lineBreakMode = .byTruncatingTail
+        for label in [sequenceLabel, sequenceDetail] {
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        let texts = NSStackView(views: [sequenceLabel, sequenceDetail])
+        texts.orientation = .vertical
+        texts.alignment = .leading
+        texts.spacing = 1
         let show = NSButton(title: L("Open Working Copy"), target: self, action: #selector(showWorkingCopy(_:)))
         continueButton.target = self
         continueButton.action = #selector(continueSequence(_:))
         skipButton.target = self
         skipButton.action = #selector(skipSequence(_:))
         let abort = NSButton(title: "Abort", target: self, action: #selector(abortSequence(_:)))
-        for b in [show, continueButton, skipButton, abort] { b.controlSize = .small }
-        let stack = NSStackView(views: [icon, sequenceLabel, NSView(), show, continueButton, skipButton, abort])
+        let stack = NSStackView(views: [icon, texts, NSView(), show, continueButton, skipButton, abort])
         stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
-        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
+        stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 46)
+        // 細い帯だと気づきにくいので、色を敷く（作業の途中であることを、どの画面でも見落とさないように）。
+        stack.wantsLayer = true
+        stack.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.14).cgColor
         let bar = NSTitlebarAccessoryViewController()
         bar.view = stack
         bar.layoutAttribute = .bottom
@@ -780,39 +794,78 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sequenceBanner = bar
     }
 
+    /// 帯の 1 行目: 何をどこへしている途中か。
+    private static func sequenceTitle(_ s: SequenceInfo) -> String {
+        let title = switch (s.kind, s.branch, s.onto ?? s.from) {
+        case let ("rebase", branch?, onto?): L("Rebasing %@ onto %@", branch, onto)
+        case let ("merge", branch?, from?): L("Merging %@ into %@", from, branch)
+        case let ("cherry-pick", branch?, _): L("Cherry-picking into %@", branch)
+        case let ("revert", branch?, _): L("Reverting in %@", branch)
+        case ("rebase", _, _): L("Rebase in progress")
+        case ("merge", _, _): L("Merge in progress")
+        case ("cherry-pick", _, _): L("Cherry-pick in progress")
+        default: L("Revert in progress")
+        }
+        guard let current = s.current, let total = s.total else { return title }
+        return title + " · " + L("step %ld of %ld", current, total)
+    }
+
+    /// 帯の 2 行目: どこで・なぜ止まっていて、次に何をすればよいか。
+    private static func sequenceDetail(_ s: SequenceInfo, conflicts: Int) -> String {
+        let subject = s.step?.subject.map { "“\($0)”" }
+        if s.step?.action == "exec", conflicts == 0 {
+            return L("The command %@ failed. Fix the problem, then Continue.", subject ?? "")
+        }
+        if conflicts > 0 {
+            return subject.map { L("%ld files have conflicts at %@. Resolve them in Working Copy, then Continue.", conflicts, $0) }
+                ?? L("%ld files have conflicts. Resolve them in Working Copy, then Continue.", conflicts)
+        }
+        if s.editing == true {
+            return L("Stopped to edit %@. Change files or amend the commit, then Continue.", subject ?? "")
+        }
+        return L("Conflicts resolved. Continue to finish, or Abort to go back to where you started.")
+    }
+
     // MARK: - 失敗の帯
 
     private var failureBanner: NSTitlebarAccessoryViewController?
-    private var failureMessage = ""
+    private var failure: OperationFailure?
 
     /// 操作の失敗を、ツールバーの下の帯で知らせる（作業を止めない）。閉じるか、次の失敗で置き換えるまで出す。
-    func showFailure(_ message: String, title: String = L("Operation Failed")) {
+    func showFailure(_ message: String, title: String) {
+        showFailure(OperationFailure(message: message), title: title)
+    }
+
+    /// 帯には、何が失敗したか（見出し）、なぜか（要点）、次にできること（ボタン）を出す。git の全文は「詳細」と
+    /// ツールチップ。
+    func showFailure(_ failure: OperationFailure, title: String? = nil) {
         hideFailure()
-        failureMessage = message
-        let cancelled = CoreLanguage.isCancelled(message)
+        self.failure = failure
+        let cancelled = CoreLanguage.isCancelled(failure.message)
         let icon = NSImageView(image: NSImage(
             systemSymbolName: cancelled ? "stop.circle" : "xmark.octagon.fill", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = cancelled ? .secondaryLabelColor : .systemRed
-        let label = NSTextField(labelWithString: cancelled ? L("Operation Cancelled") : title)
+        let label = NSTextField(labelWithString: cancelled ? L("Operation Cancelled") : title ?? failure.title)
         label.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
-        // git のエラーは複数行になるので、帯には fatal:・error: の行（なければ最初の行）を出す（全文は「詳細」と
-        // ツールチップ）。
-        let lines = message.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty && !$0.hasPrefix("hint:") }
-        let line = lines.first { $0.hasPrefix("fatal:") || $0.hasPrefix("error:") } ?? lines.first ?? ""
-        let detail = NSTextField(labelWithString: cancelled ? "" : line)
+        let detail = NSTextField(labelWithString: cancelled ? "" : failure.summary)
         detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        detail.textColor = .secondaryLabelColor
         detail.lineBreakMode = .byTruncatingTail
-        detail.toolTip = message
+        detail.toolTip = failure.message
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        // 次の一手（いちばん目立たせるのは最初のもの）。
+        let remedies: [NSButton] = cancelled ? [] : failure.remedies.enumerated().map { i, remedy in
+            let button = NSButton(title: remedy.title, target: self, action: #selector(runRemedy(_:)))
+            button.tag = i
+            if i == 0 { button.bezelColor = .controlAccentColor }
+            return button
+        }
         let more = NSButton(title: L("Details"), target: self, action: #selector(showFailureDetail))
         // AppDelegate の Window > Activity（target が nil なので、レスポンダチェーンで届く）。
         let activity = NSButton(title: "Activity", target: nil, action: #selector(AppDelegate.showActivity(_:)))
         let close = NSButton(title: L("Close"), target: self, action: #selector(hideFailure))
         more.isHidden = cancelled
-        for b in [more, activity, close] { b.controlSize = .small }
-        let stack = NSStackView(views: [icon, label, detail, NSView(), more, activity, close])
+        for b in remedies + [more, activity, close] { b.controlSize = .small }
+        let stack = NSStackView(views: [icon, label, detail, NSView()] + remedies + [more, activity, close])
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
         stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
@@ -835,10 +888,26 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         failureBanner = nil
     }
 
+    @objc private func runRemedy(_ sender: NSButton) {
+        guard let failure, failure.remedies.indices.contains(sender.tag) else { return }
+        hideFailure()
+        switch failure.remedies[sender.tag] {
+        case let .openWorktree(path): edit(worktree: path)
+        case .openTerminal: openTerminal(at: editing.path)
+        case .retry: if let command = failure.command { actions.perform(command) }
+        case .pull: pull(nil)
+        case .workingCopy: showWorkingCopy(nil)
+        case .setUpstream: setUpstream(nil)
+        }
+    }
+
     @objc private func showFailureDetail() {
+        guard let failure else { return }
         let alert = NSAlert()
-        alert.messageText = L("Operation Failed")
-        alert.informativeText = failureMessage
+        alert.messageText = failure.title
+        // 要点と、どうすればよいか、git の全文。
+        alert.informativeText = [failure.kind == nil ? nil : failure.summary, failure.advice, failure.message]
+            .compactMap { $0 }.joined(separator: "\n\n")
         alert.beginSheetModal(for: window)
     }
 
@@ -1472,7 +1541,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 EventLog.add(repo: name, L("Automatic fetch"))
             } catch {
                 EventLog.add(repo: name, L("Automatic fetch failed: %@", "\(error)"))
-                showFailure("\(error)", title: L("Automatic Fetch Failed"))
+                showFailure(OperationFailure(error, command: ["op": "fetch"]), title: L("Automatic Fetch Failed"))
             }
         }
     }
