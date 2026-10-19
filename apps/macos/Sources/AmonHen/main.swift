@@ -69,13 +69,13 @@ enum Daemon {
 }
 
 /// git と ssh が資格情報（HTTPS のユーザー名とパスワード、SSH の鍵のパスフレーズ）を尋ねる先。アプリは端末なしで
-/// git を動かすので、尋ねられると失敗していた。ダイアログで尋ねる小さなスクリプト（`Contents/Helpers/amonhen-askpass`、
+/// git を動かすので、尋ねられると失敗していた。ダイアログで尋ねる小さなスクリプト（`Contents/Resources/amonhen-askpass`、
 /// 開発中は `apps/macos/Helpers`）を `AMONHEN_ASKPASS` で渡し、コアが git を動かすときに `GIT_ASKPASS`・`SSH_ASKPASS` に
 /// する（共有の daemon にも引き継がれる）。
 enum Askpass {
     static func install() {
         guard ProcessInfo.processInfo.environment["AMONHEN_ASKPASS"] == nil else { return }
-        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/amonhen-askpass").path
+        let helper = Bundle.main.resourceURL?.appendingPathComponent("amonhen-askpass").path ?? ""
         let path = FileManager.default.isExecutableFile(atPath: helper) ? helper : Daemon.developmentFile("apps/macos/Helpers/amonhen-askpass")
         if let path { setenv("AMONHEN_ASKPASS", path, 1) }
     }

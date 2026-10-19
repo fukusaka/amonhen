@@ -45,8 +45,6 @@ cp dist/bin/AmonHen "$app/Contents/MacOS/AmonHen"
 # （AmonHen を上書きする）。
 mkdir -p "$app/Contents/Helpers"
 cp dist/engine/amonhen-darwin-aarch64 "$app/Contents/Helpers/amonhen"
-# git と ssh が資格情報を尋ねるときのダイアログ（apps/macos/Sources/AmonHen/main.swift の Askpass）。
-cp apps/macos/Helpers/amonhen-askpass "$app/Contents/Helpers/amonhen-askpass"
 # SSH 先に送り込むエンジン（SSH 先の OS と CPU に合うもの。Windows のものは SSH 先には送らない）。
 mkdir -p "$app/Contents/Resources/engines"
 for f in dist/engine/amonhen-darwin-* dist/engine/amonhen-linux-*; do
@@ -55,6 +53,9 @@ done
 # ライセンスと、中に入っている依存のライセンスの一覧（scripts/third-party-notices.sh）。
 legal="LICENSE-MIT LICENSE-APACHE NOTICE dist/THIRD-PARTY-NOTICES.md"
 cp $legal "$app/Contents/Resources/"
+# git と ssh が資格情報を尋ねるときのダイアログ（apps/macos/Sources/AmonHen/main.swift の Askpass）。シェルスクリプト
+# なので Helpers（署名した実行ファイルの置き場所）ではなく Resources に置く（Resources は署名の封に含まれる）。
+cp apps/macos/Helpers/amonhen-askpass "$app/Contents/Resources/amonhen-askpass"
 # アイコン（scripts/make-icon.swift で作ったもの）。
 cp "apps/macos/Icons/$icon.icns" "$app/Contents/Resources/AppIcon.icns"
 # 画面の文字の訳（apps/macos/Sources/AmonHen/Localization.swift）。
