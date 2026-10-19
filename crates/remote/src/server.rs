@@ -266,6 +266,7 @@ fn handle(
         Request::Blob(id) => encode(&Bytes(backend.blob(&id)?.to_vec())),
         Request::Status => encode(&backend.status()?),
         Request::WorktreeFile(path) => encode(&Bytes(backend.worktree_file(&path)?.to_vec())),
+        Request::LineEndingRule(path) => encode(&backend.line_ending_rule(&path)?),
         Request::ToWorktreeForm { path, content } => {
             encode(&Bytes(backend.to_worktree_form(&path, &content.0)?))
         }

@@ -60,7 +60,7 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 | `refs` | | headBranch, head, entries (kind, name, target, detail, ahead, behind, gone) | |
 | `status` | | generation, branch, upstream, ahead, behind, entries (kind, path, origPath, index, worktree, staged, unstaged, submodule) | |
 | `commitDiff` | id or stash (ID), or history, rows, pair? (forward, reverse, mergeBase) | files (path, oldPath, kind, added, removed, binary), changes, selection, rows | diff lines (below) |
-| `workingDiff` | path, mode (unstaged, staged, combined) | diff, path, mode, binary, added, removed, rows | diff lines |
+| `workingDiff` | path, mode (unstaged, staged, combined) | diff, path, mode, binary, added, removed, rows, lineEndings (below) | diff lines |
 | `conflict` | path | path, rows | diff lines |
 | `stage`, `unstage` | paths | | |
 | `stageRows` | diff, rows, stage? (for a combined diff; false to unstage) | | |
@@ -70,6 +70,8 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 | `connection` | | sent, received, closed (the SSH host connection; null if local) | |
 
 Diff line records: rows (diff line × number of rows), textLengths u32, text (UTF-8), highlights (row, start, end as u32 × 3; byte positions of changed words). `commitDiff` starts each file with a header line (kind 8, text is the path, old and new are the numbers of removed and added lines). The line numbers (0-based) of `workingDiff` are the numbers that the rows of `stageRows` and `discardRows` refer to.
+
+`workingDiff`'s lineEndings (null for staged diffs, submodules and deleted files): index, worktree and checkout are each `none`, `lf`, `crlf` or `mixed` (what git stores, the working tree file, and what checkout would write); rule is the conversion in effect, written like `git check-attr` (`text=auto eol=crlf`, `-text`, `core.autocrlf=true`; empty if none or not notable); notable is true when the working tree and git differ in line endings or warning is true; warning is true when line endings are mixed, or the working tree's differ from what checkout would write. Diffs compare what git stores on both sides, so these differences don't show as changed lines; front-ends show them beside the diff when notable.
 
 ## Version
 

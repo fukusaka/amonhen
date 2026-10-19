@@ -336,6 +336,7 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
                         "added": r.json["added"],
                         "removed": r.json["removed"],
                         "rows": DiffRows::from(r).json(staged),
+                        "lineEndings": r.json["lineEndings"],
                     })
                 })
                 .collect(),
@@ -354,9 +355,16 @@ pub fn diff(args: &[String]) -> Result<ExitCode> {
                 tr!("Binary file")
             ));
         } else {
+            out.push_str(&paint(&format!("diff {path}"), "1", c.color));
+            out.push('\n');
+            if let Some(note) = line_endings_note(&r.json["lineEndings"]) {
+                let warning = r.json["lineEndings"]["warning"] == true;
+                out.push_str(&paint(&note, if warning { "33" } else { "90" }, c.color));
+                out.push('\n');
+            }
             DiffRows::from(r).render(
                 &mut out,
-                Some(path),
+                None,
                 numbers,
                 r.json["mode"] == "combined",
                 c.color,
@@ -502,6 +510,29 @@ pub fn resolve(front: &dyn Front, rev: &str) -> Result<String> {
         .as_str()
         .map(str::to_owned)
         .ok_or_else(|| tr!("Commit not found: {rev}", rev = rev).into())
+}
+
+/// 改行を変換している・改行が混ざっているファイルの説明（`workingDiff` の `lineEndings`。普段のファイルでは None）。
+fn line_endings_note(le: &Value) -> Option<String> {
+    if le["notable"] != true {
+        return None;
+    }
+    let name = |key: &str| match le[key].as_str() {
+        Some("lf") => "LF".to_owned(),
+        Some("crlf") => "CRLF".to_owned(),
+        Some("mixed") => tr!("mixed"),
+        _ => tr!("none"),
+    };
+    let mut note = tr!(
+        "line endings: working tree {worktree}, git {index}, checkout {checkout}",
+        worktree = name("worktree"),
+        index = name("index"),
+        checkout = name("checkout")
+    );
+    if let Some(rule) = le["rule"].as_str().filter(|r| !r.is_empty()) {
+        note.push_str(&format!(" ({rule})"));
+    }
+    Some(note)
 }
 
 fn stat_line(out: &mut String, path: &str, file: &Value) {

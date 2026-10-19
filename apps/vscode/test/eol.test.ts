@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { applyDiffSelection, computeDiff } from '../src/diff/fileDiff.ts';
 import { CliBackend } from '../src/git/backend.ts';
-import { parseCheckAttr, toGitForm } from '../src/git/eol.ts';
+import { eolOf, lineEndingRule, lineEndingsOf, parseCheckAttr, parseEolConfig, toGitForm } from '../src/git/eol.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { discardLines } from '../src/state/discard.ts';
 import { UndoLog } from '../src/state/undo.ts';
@@ -43,6 +43,41 @@ test('converts CRLF to LF as git does', () => {
 test('reads git check-attr -z output', () => {
   const out = 'a.txt\0text\0auto\0a.txt\0eol\0crlf\0a.txt\0filter\0unspecified\0a.txt\0ident\0set\0';
   assert.deepEqual(parseCheckAttr(out), { text: 'auto', eol: 'crlf', ident: 'set' });
+});
+
+test('tells line endings apart and names the conversion', () => {
+  assert.equal(eolOf(b('')), 'none');
+  assert.equal(eolOf(b('a\nb\n')), 'lf');
+  assert.equal(eolOf(b('a\r\nb\r\n')), 'crlf');
+  assert.equal(eolOf(b('a\r\nb\n')), 'mixed');
+  assert.deepEqual(parseEolConfig('core.autocrlf true\ncore.eol lf\n'), { autocrlf: 'true', eol: 'lf' });
+  assert.equal(lineEndingRule({}, { autocrlf: 'true' }), 'core.autocrlf=true');
+  assert.equal(lineEndingRule({ text: 'auto', eol: 'crlf' }, { autocrlf: 'true' }), 'text=auto eol=crlf');
+  assert.equal(lineEndingRule({ text: 'unset' }, { autocrlf: 'true' }), '-text');
+  assert.equal(lineEndingRule({ text: 'set' }, { eol: 'crlf' }), 'text core.eol=crlf');
+  assert.equal(lineEndingRule({}, { eol: 'crlf' }), '');
+});
+
+test('reports line endings only when they are worth showing', () => {
+  // 普段のファイル（変換なし、どちらも LF）
+  const plain = lineEndingsOf(b('1\nTWO\n'), b('1\n2\n'), {}, {});
+  assert.equal(plain.notable, false);
+  // core.autocrlf=true: 作業ツリーは CRLF、git には LF
+  assert.deepEqual(lineEndingsOf(b('1\r\nTWO\r\n'), b('1\n2\n'), {}, { autocrlf: 'true' }), {
+    index: 'lf',
+    worktree: 'crlf',
+    checkout: 'crlf',
+    rule: 'core.autocrlf=true',
+    notable: true,
+    warning: false,
+  });
+  // 改行が混ざっている
+  assert.equal(lineEndingsOf(b('1\r\nTWO\n'), b('1\n2\n'), {}, { autocrlf: 'true' }).warning, true);
+  // eol=lf なのに作業ツリーが CRLF（checkout すると LF）
+  const attr = lineEndingsOf(b('1\r\nTWO\r\n'), b('1\n2\n'), { eol: 'lf' }, {});
+  assert.equal(attr.checkout, 'lf');
+  assert.equal(attr.rule, 'eol=lf');
+  assert.equal(attr.warning, true);
 });
 
 let dir: string;
@@ -104,4 +139,17 @@ test('discards lines keeping the line endings of the other lines', async () => {
   assert.equal(readFileSync(join(dir, 'a.txt'), 'latin1'), '1\r\nTWO\n3\r\n4\r\n');
   await undo.undo();
   assert.equal(readFileSync(join(dir, 'a.txt'), 'latin1'), before);
+});
+
+test('reads the line endings of a CRLF file in a core.autocrlf repository', async () => {
+  writeFileSync(join(dir, 'a.txt'), '1\r\nTWO\r\n3\r\n4\r\n');
+  const le = await backend.lineEndings('a.txt', git('cat-file', 'blob', ':a.txt'));
+  assert.deepEqual(le, {
+    index: 'lf',
+    worktree: 'crlf',
+    checkout: 'crlf',
+    rule: 'core.autocrlf=true',
+    notable: true,
+    warning: false,
+  });
 });

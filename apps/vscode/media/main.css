@@ -582,6 +582,16 @@ button.secondary {
   gap: 6px;
 }
 
+.diff-head .eol {
+  font-size: 0.9em;
+  white-space: nowrap;
+  color: var(--vscode-descriptionForeground);
+}
+
+.diff-head .eol.warning {
+  color: var(--vscode-editorWarning-foreground);
+}
+
 .hunk {
   margin: 8px 12px 12px;
   border: 1px solid var(--vscode-panel-border);

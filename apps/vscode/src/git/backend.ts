@@ -5,7 +5,7 @@
 import { access, readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
-import { ATTRIBUTES, parseCheckAttr, toGitForm } from './eol.ts';
+import { ATTRIBUTES, lineEndingsOf, parseCheckAttr, parseEolConfig, toGitForm, type LineEndings } from './eol.ts';
 import { GitError, shellQuote, type GitExecutor } from './exec.ts';
 import { diffTreeArgs, logArgs, parseLog, parseNameStatus, type Commit, type FileChange } from './log.ts';
 import {
@@ -96,6 +96,8 @@ export interface RepositoryBackend {
   worktreeFile(path: string, index: Buffer | undefined): Promise<Buffer | undefined>;
   /** index の path の blob を、作業中のファイルに書く形で（checkout と同じ変換） */
   indexInWorktreeForm(path: string): Promise<Buffer>;
+  /** 作業中のファイルの改行（index はその path の index の blob。なければ空）。ファイルがなければ undefined */
+  lineEndings(path: string, index: Buffer): Promise<LineEndings | undefined>;
   /** 内容を blob として保存し、oid を返す（破棄した内容を Undo で戻すために残す） */
   writeBlob(content: Buffer): Promise<string>;
   /** 作業中のファイルを index の内容に戻す（stage していない変更を破棄する） */
@@ -320,6 +322,18 @@ export class CliBackend implements RepositoryBackend {
       this.read(['config', '--get', 'core.autocrlf'], [0, 1]).then((s) => s.trim() || undefined),
     ]);
     return toGitForm(data, attrs, autocrlf, index);
+  }
+
+  async lineEndings(path: string, index: Buffer): Promise<LineEndings | undefined> {
+    const raw = await readFile(join(this.root, path)).catch(() => undefined);
+    if (!raw) {
+      return undefined;
+    }
+    const [attrs, config] = await Promise.all([
+      this.read(['check-attr', '-z', ...ATTRIBUTES, '--', path]).then(parseCheckAttr),
+      this.read(['config', '--get-regexp', '^core\\.(autocrlf|eol)$'], [0, 1]).then(parseEolConfig),
+    ]);
+    return lineEndingsOf(raw, index, attrs, config);
   }
 
   indexInWorktreeForm(path: string): Promise<Buffer> {

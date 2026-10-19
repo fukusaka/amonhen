@@ -57,6 +57,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let discardButton = NSButton(title: "Discard Lines", target: nil, action: nil)
     var actions: Actions?
     private let titleLabel = NSTextField(labelWithString: "")
+    /// 改行を変換している・改行が混ざっているファイルの印（差分には出ないので）。
+    private let lineEndingsLabel = NSTextField(labelWithString: "")
     /// merge・rebase などの途中のときに出す帯。
     private let sequenceBar = NSStackView()
     private let sequenceLabel = NSTextField(labelWithString: "")
@@ -287,7 +289,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         ]
         conflictButtons.setViews(conflictActions.map { NSButton(title: $0.0, target: self, action: $0.1) }, in: .leading)
         conflictButtons.isHidden = true
-        let actionButtons = NSStackView(views: [sideControl, conflictButtons, discardButton, linesButton])
+        lineEndingsLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        lineEndingsLabel.isHidden = true
+        let actionButtons = NSStackView(views: [lineEndingsLabel, sideControl, conflictButtons, discardButton, linesButton])
         let bar = TitleAndButtonsBar(title: titleLabel, buttons: actionButtons)
         diffBar = bar
         diffView.isSelectable = true
@@ -437,6 +441,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             selectedKey = nil
             diffView.show(nil, message: allEntries.isEmpty ? L("No changes") : "")
             titleLabel.stringValue = ""
+            showLineEndings(nil)
             updateButtons()
         }
     }
@@ -592,6 +597,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         if entry.isConflict {
             let path = entry.item.path
             current = nil
+            showLineEndings(nil)
             updateButtons()
             if let editor = mergeEditors[path] {
                 embed(editor)
@@ -622,6 +628,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             sideControl.isHidden = combined || !(entry.item.isStaged && entry.item.isUnstaged)
             selectedKey = (entry.item.path, combined ? false : staged)
             current = diff
+            showLineEndings(diff?.lineEndings)
             if let diff, diff.isBinary {
                 diffView.show(nil, message: L("Binary file"))
             } else {
@@ -629,6 +636,34 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             }
             updateButtons()
         }
+    }
+
+    /// 改行を変換している（作業ツリーと git で違う）・改行が混ざっているファイルの印。普段のファイルでは出さない。
+    private func showLineEndings(_ lineEndings: LineEndings?) {
+        guard let le = lineEndings, le.notable else {
+            lineEndingsLabel.isHidden = true
+            return
+        }
+        let name: (LineEnding) -> String = {
+            switch $0 {
+            case .lf: "LF"
+            case .crlf: "CRLF"
+            case .mixed: L("Mixed")
+            case .none: L("None")
+            }
+        }
+        // 作業ツリーの形 → git に入る形。
+        let text = le.worktree != le.index && le.index != .none
+            ? "\(name(le.worktree)) → \(name(le.index))" : name(le.worktree)
+        lineEndingsLabel.stringValue = le.warning ? "⚠︎ \(text)" : text
+        lineEndingsLabel.textColor = le.warning ? .systemOrange : .secondaryLabelColor
+        var tip = [
+            L("Line endings: working tree %1$@, git %2$@, checkout %3$@", name(le.worktree), name(le.index), name(le.checkout))
+        ]
+        if !le.rule.isEmpty { tip.append(L("Conversion: %@", le.rule)) }
+        if le.warning { tip.append(L("The next commit or checkout may change the line endings of the whole file")) }
+        lineEndingsLabel.toolTip = tip.joined(separator: "\n")
+        lineEndingsLabel.isHidden = false
     }
 
     @objc private func sideChanged() {

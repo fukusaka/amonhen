@@ -3,6 +3,7 @@
 pub mod activity;
 mod backend;
 mod change;
+mod eol;
 mod extras;
 mod files;
 mod graph;
@@ -19,6 +20,7 @@ pub mod topo;
 
 pub use backend::{ConnectionState, Delegated, Error, GitBackend, Result};
 pub use change::{ChangeKind, FileChange};
+pub use eol::{Eol, LineEndings};
 pub use extras::{CommitExtras, FileStat, SignatureCheck, SignatureVerifier, SignerEmail};
 pub use files::{LocalFiles, RepoFiles, Root};
 pub use graph::{CommitGraph, CommitGraphBuilder};

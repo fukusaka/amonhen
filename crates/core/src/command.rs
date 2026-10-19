@@ -2716,4 +2716,54 @@ mod tests {
         repo.stage_rows(&diff, &[3]).unwrap();
         assert_eq!(index_blob(dir), b"1\r\n2\r\nTWO\r\n3\r\n");
     }
+
+    #[test]
+    fn reports_line_endings_beside_the_diff() {
+        use amonhen_model::{Eol, LineEndings};
+        let le = |repo: &Repository| unstaged_diff(repo).line_endings.unwrap();
+        // 普段のファイル（変換なし、どちらも LF）。見せない。
+        let (tmp, repo) = setup_converting(&[], b"1\n2\n");
+        std::fs::write(tmp.path().join("a.txt"), "1\nTWO\n").unwrap();
+        let plain = le(&repo);
+        assert_eq!(
+            (plain.index, plain.worktree, plain.checkout),
+            (Eol::Lf, Eol::Lf, Eol::Lf)
+        );
+        assert!(!plain.notable() && plain.rule.is_empty());
+
+        // core.autocrlf=true: 作業ツリーは CRLF、git には LF。
+        let (tmp, repo) = setup_converting(&[("core.autocrlf", "true")], b"1\n2\n");
+        std::fs::write(tmp.path().join("a.txt"), "1\r\nTWO\r\n").unwrap();
+        assert_eq!(
+            le(&repo),
+            LineEndings {
+                index: Eol::Lf,
+                worktree: Eol::Crlf,
+                checkout: Eol::Crlf,
+                rule: "core.autocrlf=true".into(),
+            }
+        );
+        assert!(le(&repo).notable() && !le(&repo).warning());
+        // stage 済みの差分には出さない。
+        let status = repo.load_status().unwrap();
+        let staged = repo
+            .working_diff(&status.status.entries[0], true, &FrontendProfile::MACOS)
+            .unwrap();
+        assert!(staged.line_endings.is_none());
+
+        // 改行が混ざっている。
+        std::fs::write(tmp.path().join("a.txt"), "1\r\nTWO\n").unwrap();
+        assert!(le(&repo).warning());
+
+        // eol=lf なのに作業ツリーが CRLF（checkout すると LF になる）。
+        let (tmp, _) = setup_converting(&[], b"1\n2\n");
+        let dir = tmp.path();
+        std::fs::write(dir.join(".git/info/attributes"), "*.txt eol=lf\n").unwrap();
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+        std::fs::write(dir.join("a.txt"), "1\r\nTWO\r\n").unwrap();
+        let attr = le(&repo);
+        assert_eq!((attr.worktree, attr.checkout), (Eol::Crlf, Eol::Lf));
+        assert_eq!(attr.rule, "eol=lf");
+        assert!(attr.warning());
+    }
 }

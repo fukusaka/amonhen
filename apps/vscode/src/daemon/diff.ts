@@ -2,6 +2,7 @@
  * daemon の差分（`workingDiff`・`commitDiff` の答え）を、メインビューの差分（`FileDiff`）にする。vscode に依存しない。
  * 行単位の stage・破棄は、選んだ行を daemon の差分の行の番号にして頼む
  */
+import type { Eol } from '../git/eol.ts';
 import { createHash } from 'node:crypto';
 import type { DiffHunk, DiffLine, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
 import type { FileChange } from '../git/log.ts';
@@ -83,7 +84,19 @@ export function toFileDiff(path: string, rows: readonly Row[], binary: boolean):
 export function readWorkingDiff(reply: Reply): DaemonDiff {
   const rows = readRowsOf(reply);
   const path = String(reply.json['path']);
-  return { diff: toFileDiff(path, rows, reply.json['binary'] === true), handle: reply.json['diff'], rows };
+  const diff = toFileDiff(path, rows, reply.json['binary'] === true);
+  const le = reply.json['lineEndings'] as Record<string, unknown> | null | undefined;
+  if (le) {
+    diff.lineEndings = {
+      index: le['index'] as Eol,
+      worktree: le['worktree'] as Eol,
+      checkout: le['checkout'] as Eol,
+      rule: String(le['rule'] ?? ''),
+      notable: le['notable'] === true,
+      warning: le['warning'] === true,
+    };
+  }
+  return { diff, handle: reply.json['diff'], rows };
 }
 
 /** 変更の行（追加・削除）の番号 */

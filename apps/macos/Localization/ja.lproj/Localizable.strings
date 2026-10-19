@@ -343,6 +343,10 @@
 "The message and the diff of %ld files" = "メッセージと、%ld ファイルの差分";
 "Explanation" = "解説";
 "Binary file" = "バイナリファイル";
+"Mixed" = "混在";
+"Line endings: working tree %1$@, git %2$@, checkout %3$@" = "改行: 作業ツリー %1$@、git %2$@、checkout %3$@";
+"Conversion: %@" = "変換: %@";
+"The next commit or checkout may change the line endings of the whole file" = "次の commit や checkout で、ファイル全体の改行が変わることがあります";
 
 /* MergeEditor.swift */
 "Resolve with AI" = "AI で解消";

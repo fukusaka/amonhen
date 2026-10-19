@@ -7,7 +7,7 @@ import { execFile, spawn } from 'node:child_process';
 import { connect, type Socket } from 'node:net';
 
 /** 窓口の取り決めの版（`amonhen_front::VERSION`） */
-export const FRONT_VERSION = 1;
+export const FRONT_VERSION = 2;
 
 const REQUEST = 1;
 const OK = 2;
