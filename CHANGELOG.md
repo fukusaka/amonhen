@@ -7,6 +7,12 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### [Unreleased]
+
+#### Changed
+
+- Stashes moved into Workspace in the sidebar, under History (and Conflicts).
+
 ### [0.2.4] - 2026-10-22
 
 The sidebar nests branches under the one they are built on more reliably: a branch forked from the default branch no

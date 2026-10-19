@@ -25,11 +25,11 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 │  Changes 5 │                                                                              │
 │  History   │                                                                              │
 │  Conflicts │                                                                              │
+│  Stashes 2 │                                                                              │
 │ BRANCHES   │                                                                              │
 │ REMOTES    │                                                                              │
 │ PULL REQS  │                                                                              │
 │ TAGS       │                                                                              │
-│ STASHES    │                                                                              │
 │ SUBMODULES │                                                                              │
 │ WORKTREES  │                                                                              │
 └────────────┴──────────────────────────────────────────────────────────────────────────────┘
@@ -42,6 +42,9 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 - Several branches or tags can be selected (⌘-click, ⇧-click). History then shows the commits reachable from any
   of them, and the context menu offers Copy Names and, for local branches, Favorites, Archive and Delete together (Delete asks
   first and lists the names).
+- Stashes sits under Workspace, after History (and Conflicts), because stashes are uncommitted work rather than refs
+  like Branches and Tags. It appears only when there are stashes, with a count, and starts collapsed; click it to
+  open or close it.
 - Pull Requests and Worktrees appear only when there is something to show.
 
 ## 1. Multiple repositories: tabs and separate windows

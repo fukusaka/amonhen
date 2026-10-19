@@ -25,11 +25,11 @@
 │  Changes 5 │                                                                              │
 │  History   │                                                                              │
 │  Conflicts │                                                                              │
+│  Stashes 2 │                                                                              │
 │ BRANCHES   │                                                                              │
 │ REMOTES    │                                                                              │
 │ PULL REQS  │                                                                              │
 │ TAGS       │                                                                              │
-│ STASHES    │                                                                              │
 │ SUBMODULES │                                                                              │
 │ WORKTREES  │                                                                              │
 └────────────┴──────────────────────────────────────────────────────────────────────────────┘
@@ -41,6 +41,8 @@
   Remotes・Tags を絞る。合ったものは名前のまま平らに並べる。Esc で消す。
 - ブランチ・タグは複数選べる（⌘ クリック、⇧ クリック）。History はそのどれかから辿れるコミットを出し、右クリックの
   メニューで名前をまとめてコピー、ローカルブランチだけならまとめてお気に入り・アーカイブ・削除ができる（削除は名前を並べて確かめる）。
+- Stashes は Workspace の History（と Conflicts）の下に置く。stash は Branches・Tags のような ref ではなく、
+  未コミットの作業だから。stash があるときだけ件数付きで出し、初めは畳んでおく。押せば開く・閉じる。
 - Pull Requests・Worktrees は該当するものがあるときだけ出す。
 
 ## 1. 複数のリポジトリ: タブと別ウィンドウ
