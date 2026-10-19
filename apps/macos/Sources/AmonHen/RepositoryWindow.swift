@@ -202,7 +202,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 // 上流と分かれていれば上流も一緒に辿り、先にある・遅れているコミットを両方 History に出す。
                 let upstream = item.kind == .local && (item.ahead > 0 || item.behind > 0)
                     ? self?.latestRefs?.items.first { $0.kind == .remote && $0.name == item.detail }?.target : nil
-                history.set(scope: .ref(item.name, target), select: target, companions: upstream.map { [$0] } ?? [])
+                history.set(scope: .ref(item.kind, item.name, target), select: target, companions: upstream.map { [$0] } ?? [])
             } else if item.kind == .stash {
                 detail?.show(commit: target, stash: true)
             } else if let row = history.currentHistory?.row(of: target) {
@@ -930,7 +930,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private func selectRef(named name: String) {
         guard let item = latestRefs?.items.first(where: { $0.name == name && [.local, .remote, .tag].contains($0.kind) }),
               let target = item.target else { return NSSound.beep() }
-        history.set(scope: .ref(item.name, target), select: target)
+        history.set(scope: .ref(item.kind, item.name, target), select: target)
     }
 
     /// View > Go to Parent（⌥⌘↓）・Go to Child（⌥⌘↑）。最初の親・最初の子へ移る。

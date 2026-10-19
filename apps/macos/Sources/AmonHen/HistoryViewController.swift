@@ -203,8 +203,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     enum Scope: Equatable {
         case all
         case current
-        /// サイドバーで選んだ ref（名前, コミット）。
-        case ref(String, Data)
+        /// サイドバーで選んだ ref（種類, 名前, コミット）。ref が動いたら、コミットを付け替える。
+        case ref(RefKind, String, Data)
     }
 
     private(set) var scope: Scope = .all
@@ -241,7 +241,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 一致したコミットだけを出しているときの、元の History（出していなければ nil）。
     private var baseHistory: History?
     /// HEAD のコミット（Current Branch で使う）。
-    var head: Data?
+    var head: Data? {
+        // ほかのプログラムで commit・rebase すると HEAD が動く。今のブランチに絞っていれば絞り込み直す。
+        didSet { if head != oldValue, scope == .current, history != nil { scheduleReloadScope() } }
+    }
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
     var onSelectCommit: ((Data?) -> Void)?
     /// 複数の行を選んだ（⇧・⌘ クリック）。まとめた差分を見せる。
@@ -435,7 +438,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private func updateScopePopup() {
         scopePopup.removeAllItems()
         scopePopup.addItems(withTitles: [L("All Branches"), L("Current Branch")])
-        if case let .ref(name, _) = scope {
+        if case let .ref(_, name, _) = scope {
             scopePopup.addItem(withTitle: name)
             scopePopup.selectItem(at: 2)
         } else {
@@ -462,12 +465,30 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         reloadScope(select: commit)
     }
 
-    private func reloadScope(select commit: Data? = nil) {
+    private var scopeWork: DispatchWorkItem?
+
+    /// ほかのプログラムの変化で絞り込み直す。History の読み直しと ref の読み直し（起点の付け替え）が続けて
+    /// 来るので、少し待って 1 回にまとめる（2 回出し直すと、途中の古い起点の一覧が一瞬見える）。
+    private func scheduleReloadScope() {
+        scopeWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.scopeWork = nil
+                self?.reloadScope(resetScroll: false)
+            }
+        }
+        scopeWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+    }
+
+    private func reloadScope(select commit: Data? = nil, resetScroll: Bool = true) {
+        scopeWork?.cancel()
+        scopeWork = nil
         let repository = self.repository
         let tips: [Data]? = switch scope {
         case .all: nil
         case .current: head.map { [$0] }
-        case let .ref(_, target): [target] + companionTips
+        case let .ref(_, _, target): [target] + companionTips
         }
         let fold = Settings.foldMergedBranches, expanded = Array(expandedMerges)
         Task {
@@ -475,8 +496,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 if fold { return try? repository.foldedHistory(tips: tips, expanded: expanded) }
                 return if let tips { try? repository.filteredHistory(tips: tips) } else { repository.latestHistory() }
             }.value
-            guard let next else { return }
-            showBase(next, resetScroll: true)
+            // 起点がもう History にない（ほかのプログラムの rebase で消えた HEAD を、ref を読み直す前に使った）と
+            // 空になる。空にはせず今の表示を残し、ref を読み直して起点を付け替えたときに出し直す。
+            guard let next, next.rowCount > 0 || repository.latestHistory()?.rowCount == 0 else { return }
+            showBase(next, resetScroll: resetScroll)
             if let commit, let row = next.row(of: commit) { select(row: row) }
         }
     }
@@ -512,7 +535,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             guard let latest = try? await Task.detached(priority: .userInitiated, operation: { try repository.loadHistory() }).value
             else { return }
             if !showsFullHistory {
-                reloadScope()
+                scheduleReloadScope()
             } else if latest.generation != (baseHistory ?? history)?.generation {
                 showBase(latest)
             }
@@ -704,6 +727,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// ref の一覧が変わった。各コミットのラベルを作り直して描き直す。
     func show(refs: Refs) {
         lastRefs = refs
+        // 絞り込んだ ref がほかのプログラムで動いた（rebase・commit・fetch）。前のコミットのままだと、消えた
+        // コミットから辿ることになり空になるので、新しいコミットに付け替えて絞り込み直す。
+        if case let .ref(kind, name, target) = scope,
+           let now = refs.items.first(where: { $0.kind == kind && $0.name == name })?.target, now != target {
+            scope = .ref(kind, name, now)
+            scheduleReloadScope()
+        }
         let head = editingBranch ?? refs.headBranch
         var labels: [Data: [RefLabel]] = [:]
         for item in refs.items {
