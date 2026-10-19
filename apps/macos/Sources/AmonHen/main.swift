@@ -68,6 +68,19 @@ enum Daemon {
     }
 }
 
+/// git と ssh が資格情報（HTTPS のユーザー名とパスワード、SSH の鍵のパスフレーズ）を尋ねる先。アプリは端末なしで
+/// git を動かすので、尋ねられると失敗していた。ダイアログで尋ねる小さなスクリプト（`Contents/Helpers/amonhen-askpass`、
+/// 開発中は `apps/macos/Helpers`）を `AMONHEN_ASKPASS` で渡し、コアが git を動かすときに `GIT_ASKPASS`・`SSH_ASKPASS` に
+/// する（共有の daemon にも引き継がれる）。
+enum Askpass {
+    static func install() {
+        guard ProcessInfo.processInfo.environment["AMONHEN_ASKPASS"] == nil else { return }
+        let helper = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/amonhen-askpass").path
+        let path = FileManager.default.isExecutableFile(atPath: helper) ? helper : Daemon.developmentFile("apps/macos/Helpers/amonhen-askpass")
+        if let path { setenv("AMONHEN_ASKPASS", path, 1) }
+    }
+}
+
 /// 子の画面を 1 つだけ表示し、切り替える。
 final class PageViewController: NSViewController {
     private var pages: [SidebarViewController.Page: NSViewController]
@@ -417,13 +430,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-// ターミナルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込む（git・daemon を動かす前に）。
+// ターミナルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込み、git が資格情報を尋ねる先（askpass）を決める
+// （git・daemon を動かす前に）。
 ShellEnvironment.import()
+Askpass.install()
 // --print-environment: 取り込んだあとの環境（git に渡るもの）を出して終わる（Finder からの起動を確かめる用）。
 if CommandLine.arguments.contains("--print-environment") {
     let env = ProcessInfo.processInfo.environment
     print("imported: \(ShellEnvironment.imported.joined(separator: " "))")
-    for key in ["PATH", "SSH_AUTH_SOCK"] + env.keys.filter({ $0.hasPrefix("GIT_") }).sorted() {
+    for key in ["PATH", "SSH_AUTH_SOCK", "AMONHEN_ASKPASS"] + env.keys.filter({ $0.hasPrefix("GIT_") }).sorted() {
         print("\(key)=\(env[key] ?? "")")
     }
     exit(0)

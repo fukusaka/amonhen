@@ -1,0 +1,21 @@
+#!/bin/sh
+# git と ssh が資格情報を尋ねるときに呼ぶ（GIT_ASKPASS・SSH_ASKPASS）。アプリは端末なしで git を動かすので、
+# 代わりにダイアログで尋ねる。引数はプロンプト（"Username for 'https://github.com': " や
+# "Enter passphrase for key '/Users/x/.ssh/id_ed25519': "）。答えを標準出力に出す。Cancel なら 1 で終わる
+# （git は認証に失敗したことにする）。パスワードとパスフレーズは伏せて入力させる。
+prompt=$1
+case "$prompt" in
+*[Uu]sername*) hidden=no ;;
+*) hidden=yes ;;
+esac
+exec osascript - "$prompt" "$hidden" <<'EOF'
+on run argv
+    set p to item 1 of argv
+    if item 2 of argv is "yes" then
+        set r to display dialog p default answer "" with hidden answer with title "Amon Hen" buttons {"Cancel", "OK"} default button "OK" with icon note
+    else
+        set r to display dialog p default answer "" with title "Amon Hen" buttons {"Cancel", "OK"} default button "OK" with icon note
+    end if
+    return text returned of r
+end run
+EOF

@@ -96,6 +96,13 @@ impl Git {
             .env("GIT_TERMINAL_PROMPT", "0")
             .args(["-c", "core.quotepath=off", "-c", "color.ui=false"])
             .args(args);
+        // 端末がないので、資格情報は FE が渡した askpass（ダイアログ）で尋ねる。git は GIT_ASKPASS を、git が動かす
+        // ssh は SSH_ASKPASS を使う（ssh は端末がなくても使うよう SSH_ASKPASS_REQUIRE）。
+        if let Some(askpass) = std::env::var_os("AMONHEN_ASKPASS") {
+            cmd.env("GIT_ASKPASS", &askpass)
+                .env("SSH_ASKPASS", &askpass)
+                .env("SSH_ASKPASS_REQUIRE", "prefer");
+        }
         cmd
     }
 

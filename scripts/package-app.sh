@@ -45,6 +45,8 @@ cp dist/bin/AmonHen "$app/Contents/MacOS/AmonHen"
 # （AmonHen を上書きする）。
 mkdir -p "$app/Contents/Helpers"
 cp dist/engine/amonhen-darwin-aarch64 "$app/Contents/Helpers/amonhen"
+# git と ssh が資格情報を尋ねるときのダイアログ（apps/macos/Sources/AmonHen/main.swift の Askpass）。
+cp apps/macos/Helpers/amonhen-askpass "$app/Contents/Helpers/amonhen-askpass"
 # SSH 先に送り込むエンジン（SSH 先の OS と CPU に合うもの。Windows のものは SSH 先には送らない）。
 mkdir -p "$app/Contents/Resources/engines"
 for f in dist/engine/amonhen-darwin-* dist/engine/amonhen-linux-*; do
