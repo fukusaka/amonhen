@@ -2,10 +2,11 @@
 # git と ssh が資格情報を尋ねるときに呼ぶ（GIT_ASKPASS・SSH_ASKPASS）。アプリは端末なしで git を動かすので、
 # 代わりにダイアログで尋ねる。引数はプロンプト（"Username for 'https://github.com': " や
 # "Enter passphrase for key '/Users/x/.ssh/id_ed25519': "）。答えを標準出力に出す。Cancel なら 1 で終わる
-# （git は認証に失敗したことにする）。パスワードとパスフレーズは伏せて入力させる。
+# （git は認証に失敗したことにする）。パスワードとパスフレーズは伏せて入力させ、ユーザー名と、初めてつなぐホストの
+# 鍵の確認（"Are you sure you want to continue connecting (yes/no/[fingerprint])?"）は見せる。
 prompt=$1
 case "$prompt" in
-*[Uu]sername*) hidden=no ;;
+*[Uu]sername* | *"(yes/no"*) hidden=no ;;
 *) hidden=yes ;;
 esac
 exec osascript - "$prompt" "$hidden" <<'EOF'
