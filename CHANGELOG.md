@@ -7,7 +7,16 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### [Unreleased]
+### [0.2.2] - 2026-10-20
+
+Fetch, Pull and Push work from the app as they do in a terminal: the app takes the login shell's environment at
+launch, so Homebrew's git, credential helpers and SSH agents are found, and a dialog asks for a password or passphrase
+when git needs one. Failures say what failed, why, and what to do next, and the bar for a rebase, merge, cherry-pick or
+revert says what is going on and where it stopped. The sidebar's branches are arranged for getting around: Favorites,
+the current branch with the branches it is built on, branches nested under the one they build on, marks for merged and
+gone branches with an explaining popover, and Inactive and Archived folded away. History follows branches that other
+programs rebase or commit to instead of going empty, the Pull sheet remembers the chosen way, and Working Copy shows a
+file's line endings when they matter. The remote protocol is now version 21.
 
 #### Added
 
@@ -54,9 +63,8 @@ becomes the GitHub Release notes.
   had launchd's bare environment, so Homebrew's git, credential helpers and SSH agents such as 1Password were not
   found; it now takes `PATH`, `SSH_AUTH_SOCK`, `GIT_*` and the like from your login shell at launch (cached, refreshed
   in the background; Settings > Advanced > Terminal Environment shows what was taken, reads it again, and turns it
-  off; `AmonHen --print-environment` prints it). When git or
-  ssh needs a password, a token or a key passphrase, a dialog asks for it instead of failing with "terminal prompts
-  disabled".
+  off; `AmonHen --print-environment` prints it). When git or ssh needs a password, a token or a key passphrase, a
+  dialog asks for it instead of failing with "terminal prompts disabled".
 - History no longer goes empty when another program (a terminal, an editor) rebases, amends or commits while it shows
   the current branch or a branch picked in the sidebar: it follows the branch to its new commit. Refreshing after such
   a change keeps the scroll position, loads the visible rows before swapping so the list does not blank out, cross-fades
