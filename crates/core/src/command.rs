@@ -299,6 +299,25 @@ pub struct Response {
     pub info: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// 失敗の種類（`failure` の定数）。見分けられなければ付けない。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_kind: Option<&'static str>,
+    /// 失敗に関わるパス（ほかの worktree の場所、ロックファイル）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_path: Option<String>,
+}
+
+impl Response {
+    /// 失敗の答え。種類を見分けられれば添える。
+    pub fn failed(message: String) -> Self {
+        let failure = crate::failure::classify(&message);
+        Self {
+            error_kind: failure.as_ref().map(|f| f.kind),
+            error_path: failure.and_then(|f| f.path),
+            error: Some(message),
+            ..Default::default()
+        }
+    }
 }
 
 fn outcome_name(o: Outcome) -> &'static str {
@@ -854,10 +873,7 @@ impl Repository {
         let response = match serde_json::from_str::<Command>(json) {
             Ok(command) => match self.run_tracked(command, op_name(json)) {
                 Ok(r) => r,
-                Err(e) => Response {
-                    error: Some(e.to_string()),
-                    ..Default::default()
-                },
+                Err(e) => Response::failed(e.to_string()),
             },
             Err(e) => Response {
                 error: Some(tr!("Can’t read the command: {e}", e = e)),

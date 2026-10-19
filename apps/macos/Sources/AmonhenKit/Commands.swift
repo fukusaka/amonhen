@@ -33,7 +33,9 @@ extension Repository {
         defer { amonhen_string_free(out) }
         let response = try JSONSerialization.jsonObject(with: Data(String(cString: out).utf8)) as? [String: Any] ?? [:]
         guard response["ok"] as? Bool == true else {
-            throw AmonhenError(description: response["error"] as? String ?? "失敗した")
+            throw AmonhenError(
+                description: response["error"] as? String ?? "失敗した", kind: response["errorKind"] as? String,
+                path: response["errorPath"] as? String)
         }
         return CommandResult(
             outcome: (response["outcome"] as? String).flatMap(Outcome.init), label: response["label"] as? String,

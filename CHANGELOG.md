@@ -31,6 +31,8 @@ becomes the GitHub Release notes.
   `archived`, `mine`, the tip's `time`).
 - Selecting a branch that has diverged from its upstream shows both in History, so the commits ahead and behind are
   in the list.
+- `amonhen run` answers a failed command with `errorKind` (`worktreeInUse`, `auth`, `hostKey`, `network`, `rejected`,
+  `diverged`, `localChanges`, `locked` or `noUpstream`) and `errorPath` when git's message tells what went wrong.
 
 #### Changed
 

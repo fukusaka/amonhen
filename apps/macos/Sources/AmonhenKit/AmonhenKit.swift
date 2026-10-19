@@ -7,9 +7,15 @@ import Foundation
 
 public struct AmonhenError: Error, CustomStringConvertible {
     public let description: String
+    /// 失敗の種類（`crates/core/src/failure.rs` の定数、`worktreeInUse`・`auth` など）。見分けられなければ nil。
+    public var kind: String?
+    /// 失敗に関わるパス（ほかの worktree の場所、ロックファイル）。
+    public var path: String?
 
-    public init(description: String) {
+    public init(description: String, kind: String? = nil, path: String? = nil) {
         self.description = description
+        self.kind = kind
+        self.path = path
     }
 
     static func last() -> AmonhenError {
