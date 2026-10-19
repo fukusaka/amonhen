@@ -1,25 +1,33 @@
 #!/bin/sh
 # GitHub Releases から Amon Hen を取ってきて /Applications に入れる（入っていれば置き換える）。
-#   scripts/install-app.sh [--user|--system] [stable|snapshot]
+#   scripts/install-app.sh [--user|--system|--dir <folder>] [stable|snapshot]
 # clone していなければ:
-#   curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-app.sh | sh -s -- [--user|--system] [stable|snapshot]
-# --user はユーザーのアプリフォルダ（~/Applications）に、--system は /Applications に入れる。どちらも付けなければ、
+#   curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-app.sh | sh -s -- [--user|--system|--dir <folder>] [stable|snapshot]
+# --user はユーザーのアプリフォルダ（~/Applications）に、--system は /Applications に、--dir は指定したフォルダ
+# （なければ作る）に入れる。どれも付けなければ、
 # 今入っているところ（~/Applications にだけあればそこ、なければ /Applications）を新しくする。
 # curl で取ってくるファイルには quarantine 属性が付かない（署名・公証してあるので、付いていても開ける）。
 set -eu
 usage() {
-    echo "usage: $0 [--user|--system] [stable|snapshot]" >&2
+    echo "usage: $0 [--user|--system|--dir <folder>] [stable|snapshot]" >&2
     exit 2
 }
 dir=
 mode=
-for arg in "$@"; do
-    case "$arg" in
+while [ $# -gt 0 ]; do
+    case "$1" in
     --user) dir="$HOME/Applications" ;;
     --system) dir=/Applications ;;
-    stable | snapshot) mode=$arg ;;
+    --dir)
+        [ $# -ge 2 ] && [ -n "$2" ] || usage
+        dir=$2
+        shift
+        ;;
+    --dir=?*) dir=${1#--dir=} ;;
+    stable | snapshot) mode=$1 ;;
     *) usage ;;
     esac
+    shift
 done
 mode=${mode:-stable}
 api=https://api.github.com/repos/fukusaka/amonhen/releases
@@ -49,6 +57,8 @@ for app in "$work"/app/*.app; do
         [ ! -e "/Applications/$name" ] && [ -e "$HOME/Applications/$name" ] && to="$HOME/Applications"
     fi
     mkdir -p "$to"
+    # 起動中かどうかをパスで見るので、相対パスは絶対パスにする。
+    to=$(cd "$to" && pwd)
     target="$to/$name"
     # 起動中でも置き換えられるが、動いているほうは古い版のまま。終わりに知らせる。
     running=

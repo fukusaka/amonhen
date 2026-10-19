@@ -12,7 +12,8 @@ becomes the GitHub Release notes.
 #### Added
 
 - `scripts/install-app.sh --user` installs the app into your own Applications folder (`~/Applications`); `--system`
-  picks `/Applications`. Without either, an update replaces the app where it is already installed.
+  picks `/Applications`, and `--dir <folder>` any folder. Without any of them, an update replaces the app where it is
+  already installed.
 
 ### [0.2.1] - 2026-10-19
 

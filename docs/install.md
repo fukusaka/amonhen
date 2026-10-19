@@ -85,7 +85,8 @@ Replace `stable` with `snapshot` for the latest development build. Run the same 
 open while you update it, the script tells you, and the new version is used the next time you open the app.
 
 The app goes into `/Applications`. Add `--user` (`sh -s -- --user stable`) to put it in your own Applications folder
-(`~/Applications`) instead, or `--system` for `/Applications`. Without either, an update replaces the app where it is
+(`~/Applications`) instead, `--system` for `/Applications`, or `--dir <folder>` for any folder (created if missing).
+Without any of them, an update replaces the app where it is
 already installed.
 
 From a clone of the repository, run `scripts/install-app.sh`, `scripts/install-engine.sh` and

@@ -86,7 +86,8 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 アプリを開いたまま入れ替えたときはスクリプトがそう知らせるので、アプリを開き直すと新しい版になります。
 
 アプリは `/Applications` に入ります。`--user` を付けると（`sh -s -- --user stable`）ユーザーのアプリフォルダ
-（`~/Applications`）に、`--system` を付けると `/Applications` に入れます。どちらも付けなければ、今入っているところで
+（`~/Applications`）に、`--system` を付けると `/Applications` に、`--dir <フォルダ>` を付けるとそのフォルダ（なければ
+作ります）に入れます。どれも付けなければ、今入っているところで
 入れ替えます。
 
 リポジトリを clone した手元では、`scripts/install-app.sh`・`scripts/install-engine.sh`・`scripts/install-vscode.sh`
