@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- `scripts/install-app.sh --user` installs the app into your own Applications folder (`~/Applications`); `--system`
+  picks `/Applications`. Without either, an update replaces the app where it is already installed.
+
 ### [0.2.1] - 2026-10-19
 
 Worktrees live in their repository's tab, listed with their changes under Working Copy and edited one at a time, also
