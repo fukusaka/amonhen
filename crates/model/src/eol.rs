@@ -64,13 +64,14 @@ pub struct LineEndings {
 }
 
 impl LineEndings {
-    /// 気をつけた方がよいか。作業ツリーの改行が混ざっている、または checkout したときに付く改行と違う
-    /// （次の commit や checkout で改行がそろえられ、ファイル全体が差分に出ることがある）。
+    /// 気をつけた方がよいか。改行が混ざっている、または作業ツリーが CRLF なのに checkout すると LF になる
+    /// （`eol=lf` など。次の commit や checkout で改行がそろえられ、ファイル全体が差分に出ることがある）。
+    /// 作業ツリーが LF で checkout すると CRLF になるだけ（Windows の `core.autocrlf=true` で、ツールが LF で書いた
+    /// ファイル）は、git に入る形が変わらないので気にしない。
     pub fn warning(&self) -> bool {
-        let differs = |a: Eol, b: Eol| a != b && a != Eol::None && b != Eol::None;
         self.worktree == Eol::Mixed
             || self.index == Eol::Mixed
-            || differs(self.worktree, self.checkout)
+            || (self.worktree == Eol::Crlf && self.checkout == Eol::Lf)
     }
 
     /// 見せる値打ちがあるか。改行を変換している（作業ツリーと git で違う）か、気をつけた方がよいとき。
@@ -113,6 +114,8 @@ mod tests {
         assert!(le(Eol::Lf, Eol::Mixed, Eol::Crlf).warning());
         // eol=lf なのに作業ツリーが CRLF。
         assert!(le(Eol::Lf, Eol::Crlf, Eol::Lf).warning());
+        // core.autocrlf=true で、ツールが LF で書いたファイル（checkout すると CRLF になるだけ）。見せない。
+        assert!(!le(Eol::Lf, Eol::Lf, Eol::Crlf).notable());
         // 新しい・空のファイル。
         assert!(!le(Eol::None, Eol::Lf, Eol::None).notable());
     }

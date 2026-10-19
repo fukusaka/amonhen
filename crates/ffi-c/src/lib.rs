@@ -1415,7 +1415,7 @@ pub struct AmonhenLineEndings {
     pub checkout: u8,
     /// 見せる値打ちがある（改行を変換している、または `warning`）。
     pub notable: bool,
-    /// 改行が混ざっている、または作業ツリーの改行が checkout したときと違う。
+    /// 改行が混ざっている、または作業ツリーが CRLF なのに checkout すると LF になる。
     pub warning: bool,
 }
 

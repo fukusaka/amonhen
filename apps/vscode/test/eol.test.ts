@@ -78,6 +78,10 @@ test('reports line endings only when they are worth showing', () => {
   assert.equal(attr.checkout, 'lf');
   assert.equal(attr.rule, 'eol=lf');
   assert.equal(attr.warning, true);
+  // core.autocrlf=true で、ツールが LF で書いたファイル（checkout すると CRLF になるだけ）。見せない
+  const lf = lineEndingsOf(b('1\nTWO\n'), b('1\n2\n'), {}, { autocrlf: 'true' });
+  assert.equal(lf.checkout, 'crlf');
+  assert.equal(lf.notable, false);
 });
 
 let dir: string;

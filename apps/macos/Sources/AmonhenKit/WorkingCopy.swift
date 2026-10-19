@@ -99,7 +99,7 @@ public struct LineEndings: Equatable, Sendable {
     public let rule: String
     /// 見せる値打ちがある（改行を変換している、または `warning`）。
     public let notable: Bool
-    /// 改行が混ざっている、または作業ツリーの改行が checkout したときと違う。
+    /// 改行が混ざっている、または作業ツリーが CRLF なのに checkout すると LF になる。
     public let warning: Bool
 }
 

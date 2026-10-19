@@ -108,7 +108,7 @@ export interface LineEndings {
   rule: string;
   /** 見せる値打ちがある（改行を変換している、または warning） */
   notable: boolean;
-  /** 改行が混ざっている、または作業ツリーの改行が checkout したときと違う */
+  /** 改行が混ざっている、または作業ツリーが CRLF なのに checkout すると LF になる */
   warning: boolean;
 }
 
@@ -142,7 +142,9 @@ export function lineEndingsOf(raw: Buffer, index: Buffer, attrs: Attributes, con
   const worktree = eolOf(raw);
   const checkout = index.length > 0 && toCrlfOnCheckout(index, attrs, config) ? 'crlf' : indexEol;
   const differs = (a: Eol, b: Eol) => a !== b && a !== 'none' && b !== 'none';
-  const warning = worktree === 'mixed' || indexEol === 'mixed' || differs(worktree, checkout);
+  // 作業ツリーが LF で checkout すると CRLF になるだけ（core.autocrlf=true でツールが LF で書いたファイル）は、
+  // git に入る形が変わらないので気にしない
+  const warning = worktree === 'mixed' || indexEol === 'mixed' || (worktree === 'crlf' && checkout === 'lf');
   const notable = differs(indexEol, worktree) || warning;
   return { index: indexEol, worktree, checkout, rule: notable ? lineEndingRule(attrs, config) : '', notable, warning };
 }

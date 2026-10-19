@@ -493,7 +493,7 @@ typedef struct {
    */
   bool notable;
   /**
-   * 改行が混ざっている、または作業ツリーの改行が checkout したときと違う。
+   * 改行が混ざっている、または作業ツリーが CRLF なのに checkout すると LF になる。
    */
   bool warning;
 } AmonhenLineEndings;
