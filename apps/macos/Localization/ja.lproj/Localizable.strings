@@ -883,3 +883,5 @@
 "Branches with no new commit for 90 days. Folded." = "90 日以上新しいコミットがないブランチ。畳んでおきます。";
 "Branches you archived from their menu. Folded. Archiving is kept in git’s config, so it follows a rename." = "右クリックのメニューでアーカイブしたブランチ。畳んでおきます。アーカイブは git の設定に記録するので、名前を変えてもついていきます。";
 "Built on %@ (its commits are on top of that branch)" = "%@ の上に積んだブランチ（コミットはそのブランチの先に続きます）";
+"Merged into %@" = "%@ に取り込み済み";
+"Its upstream %@ no longer exists on the remote" = "上流の %@ は、リモートにもうありません";

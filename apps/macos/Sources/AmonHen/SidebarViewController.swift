@@ -554,6 +554,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         cell.imageView?.image = NSImage(systemSymbolName: Self.symbol(for: node), accessibilityDescription: nil)
         cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
         var badge = node.badge ?? ""
+        /// 右端のアイコン（SF Symbols の名前, ツールチップ）。
+        var marks: [(String, String)] = []
         if let item = node.item, item.kind == .local, let other = otherWorktree(using: item.name) {
             // ほかの worktree が checkout している（git はここでは checkout させない）。名前は長いことが多いので、
             // 行には印だけを出し、worktree の名前はツールチップに（ブランチ名を隠さない）。メインの作業ツリーは ⌂、
@@ -564,12 +566,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if !other.main { cell.imageView?.contentTintColor = .systemGreen }
             return cell
         } else if let item = node.item, item.kind == .local {
-            if item.gone {
-                badge = "gone"
-            } else {
+            if !item.gone {
                 badge = [item.ahead > 0 ? "↑\(item.ahead)" : nil, item.behind > 0 ? "↓\(item.behind)" : nil]
                     .compactMap { $0 }.joined(separator: " ")
             }
+            // 取り込み済み（既定のブランチの先端と同じ、作ったばかりのものは除く）と gone は、文字でなくアイコンで
+            // （行の右端。意味はツールチップ）。
+            let merged = branchFacts[item.name].map { $0.merged && !$0.atBase } ?? false
+                && !node.isHead && item.name != branchGroups?.base
+            marks = [merged ? ("arrow.triangle.merge", L("Merged into %@", branchGroups?.base ?? "main")) : nil,
+                     item.gone ? ("icloud.slash", L("Its upstream %@ no longer exists on the remote", item.detail ?? "")) : nil]
+                .compactMap { $0 }
             // worktree が 2 つ以上なら、今のブランチ（書き込む先のもの）に ✎ を添える。
             if node.isHead, editingInfo != nil {
                 badge = badge.isEmpty ? "✎" : "✎ " + badge
@@ -585,12 +592,35 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             badge = w.prunable != nil ? L("missing") : w.locked != nil ? L("locked")
                 : (worktreeChanges[WorktreeInfo.canonical(w.path)]).flatMap { $0 > 0 ? "\($0)" : nil } ?? ""
         }
-        cell.badge.stringValue = badge
         cell.badge.textColor = .secondaryLabelColor
+        if marks.isEmpty {
+            cell.badge.stringValue = badge
+        } else {
+            // アイコンは文字に添付して並べる（アイコンの後に、数などの文字）。
+            let text = NSMutableAttributedString()
+            for (symbol, _) in marks {
+                let attachment = NSTextAttachment()
+                attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                    .withSymbolConfiguration(.init(pointSize: NSFont.smallSystemFontSize, weight: .regular))
+                let icon = NSMutableAttributedString(attachment: attachment)
+                icon.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: icon.length))
+                text.append(icon)
+                text.append(NSAttributedString(string: " "))
+            }
+            text.append(NSAttributedString(string: badge, attributes: [
+                .font: cell.badge.font ?? .systemFont(ofSize: NSFont.smallSystemFontSize),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ]))
+            cell.badge.attributedStringValue = text
+        }
         cell.toolTip = node === cleanWorktreesNode ? L("Worktrees with no changes (click to show)")
             : node.branchGroup.flatMap(Self.branchGroupHelp)
             ?? node.stackedOn.map { L("Built on %@ (its commits are on top of that branch)", $0) }
             ?? node.item?.detail
+        // 右端のアイコンの意味は、ツールチップの先頭に（上流の名前はその後ろに残す）。
+        if !marks.isEmpty {
+            cell.toolTip = (marks.map(\.1) + [cell.toolTip].compactMap { $0 }).joined(separator: "\n")
+        }
         if let w = node.worktree {
             cell.toolTip = [w.path, w.branch.map { L("Branch: %@", $0) } ?? L("detached HEAD"),
                             node.isHead ? L("Editing this worktree") : L("Click to edit this worktree"),
