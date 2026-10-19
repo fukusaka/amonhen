@@ -778,8 +778,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add("Merge \(dragged) into \(target)") {
                 actions.perform(["op": "mergeInto", "target": target, "rev": dragged])
             }
-            add("Rebase \(target) onto \(dragged)") {
-                actions.perform(sequence: checkout + [["op": "rebase", "onto": dragged]])
+            if let other = otherWorktree(using: target) {
+                // ほかの worktree が checkout しているブランチは、ここでは checkout できない。その worktree で行う。
+                add(L("Open the Worktree of %@ to Rebase It", target)) { [weak self] in self?.onSelectWorktree?(other.path) }
+            } else {
+                add("Rebase \(target) onto \(dragged)") {
+                    actions.perform(sequence: checkout + [["op": "rebase", "onto": dragged]])
+                }
             }
         } else if isLocal, let remote = node.remote ?? node.item.map({ String($0.name.split(separator: "/")[0]) }) {
             let remoteBranch = node.item.map { String($0.name.dropFirst(remote.count + 1)) } ?? dragged
@@ -858,7 +863,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         switch item.kind {
         case .local:
             if name != headBranch {
-                add("Checkout \(name)") { actions.perform(["op": "checkout", "branch": name]) }
+                if let other = otherWorktree(using: name) {
+                    // ほかの worktree が checkout しているブランチは checkout できない（git が断る）。その worktree を開く。
+                    add(L("Open Worktree %@", other.name)) { [weak self] in self?.onSelectWorktree?(other.path) }
+                } else {
+                    add("Checkout \(name)") { actions.perform(["op": "checkout", "branch": name]) }
+                }
                 add("Merge \(name) into \(current)") { actions.perform(["op": "merge", "rev": name]) }
                 add("Rebase \(current) onto \(name)") { actions.perform(["op": "rebase", "onto": name]) }
                 menu.addItem(.separator())

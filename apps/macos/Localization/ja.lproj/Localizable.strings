@@ -921,6 +921,8 @@
 "Not read yet" = "まだ読んでいません";
 "Couldn’t read %@" = "%@ から読めませんでした";
 "Read from %@ at %@" = "%1$@ から %2$@ に読みました";
+"Open the Worktree of %@ to Rebase It" = "%@ の worktree を開いて rebase する";
+"Open Worktree %@" = "worktree %@ を開く";
 "%@ is checked out in the worktree %@. A branch can be checked out in only one worktree." = "%1$@ は worktree %2$@ でチェックアウトされています。ブランチは 1 つの worktree でしかチェックアウトできません。";
 "Another git command is running in this repository, or one stopped and left a lock file." = "このリポジトリでほかの git が動いているか、止まった git がロックファイルを残しています。";
 "Both your branch and its upstream have new commits, so it can’t just move forward." = "手元と上流の両方に新しいコミットがあるので、進めるだけでは取り込めません。";

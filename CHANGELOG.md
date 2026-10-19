@@ -41,6 +41,8 @@ becomes the GitHub Release notes.
 - A failed operation names what failed (Pull Failed, Couldn’t Switch…), says why in plain words instead of git's first
   line, and offers the next step: open the worktree that has the branch checked out, Open in Terminal for sign-in
   problems, Try Again, Pull before Push, Open Working Copy or Set Upstream. Details adds how to fix it.
+- Checkout in the sidebar's menu, and Rebase when dropping onto a branch, open the worktree that has the branch
+  checked out instead of failing.
 
 #### Fixed
 
