@@ -451,9 +451,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
-    /// 表示する範囲を変えて読み直す。
-    func set(scope: Scope, select commit: Data? = nil) {
+    /// `.ref` の範囲に一緒に出すコミット（選んだブランチの上流。先にある・遅れているコミットを両方見せる）。
+    private var companionTips: [Data] = []
+
+    /// 表示する範囲を変えて読み直す。`companions` は `.ref` のときに一緒に辿る起点（ブランチの上流）。
+    func set(scope: Scope, select commit: Data? = nil, companions: [Data] = []) {
         self.scope = scope
+        companionTips = companions
         updateScopePopup()
         reloadScope(select: commit)
     }
@@ -463,7 +467,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let tips: [Data]? = switch scope {
         case .all: nil
         case .current: head.map { [$0] }
-        case let .ref(_, target): [target]
+        case let .ref(_, target): [target] + companionTips
         }
         let fold = Settings.foldMergedBranches, expanded = Array(expandedMerges)
         Task {

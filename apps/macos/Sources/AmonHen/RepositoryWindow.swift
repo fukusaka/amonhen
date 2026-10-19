@@ -196,10 +196,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.onSelectWorktree = { [weak self] path in self?.edit(worktree: path) }
         sidebar.onWorktreeAction = { [weak self] path, action in self?.worktreeAction(path, action) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。stash は詳細にだけ中身を出す。
-        sidebar.onSelect = { [weak history, weak detail] item in
+        sidebar.onSelect = { [weak self, weak history, weak detail] item in
             guard let history, let target = item.target else { return }
             if [.local, .remote, .tag].contains(item.kind) {
-                history.set(scope: .ref(item.name, target), select: target)
+                // 上流と分かれていれば上流も一緒に辿り、先にある・遅れているコミットを両方 History に出す。
+                let upstream = item.kind == .local && (item.ahead > 0 || item.behind > 0)
+                    ? self?.latestRefs?.items.first { $0.kind == .remote && $0.name == item.detail }?.target : nil
+                history.set(scope: .ref(item.name, target), select: target, companions: upstream.map { [$0] } ?? [])
             } else if item.kind == .stash {
                 detail?.show(commit: target, stash: true)
             } else if let row = history.currentHistory?.row(of: target) {
