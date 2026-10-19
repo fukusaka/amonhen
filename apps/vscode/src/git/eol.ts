@@ -79,3 +79,120 @@ function looksBinary(data: Buffer): boolean {
   }
   return printable >> 7 < nonPrintable;
 }
+
+/** `git config --get-regexp '^core\.(autocrlf|eol)$'` の出力を読む（キーは小文字で出る） */
+export function parseEolConfig(out: string): EolConfig {
+  const config: EolConfig = {};
+  for (const line of out.split('\n')) {
+    const [key, value] = [line.slice(0, line.indexOf(' ')), line.slice(line.indexOf(' ') + 1).trim()];
+    if (key === 'core.autocrlf') config.autocrlf = value;
+    else if (key === 'core.eol') config.eol = value;
+  }
+  return config;
+}
+
+/** ファイルの改行の種類（`git ls-files --eol` の `i/`・`w/` と同じ見方） */
+export type Eol = 'none' | 'lf' | 'crlf' | 'mixed';
+
+/**
+ * Working Copy の 1 ファイルの改行。差分は git に入れる形どうしで比べるので、改行の変換や混ざった改行は差分に
+ * 出ない。それを見せるためのもの（コアの `LineEndings` と同じ）
+ */
+export interface LineEndings {
+  /** git（index）に入っている形 */
+  index: Eol;
+  worktree: Eol;
+  /** index の内容を checkout したときの形 */
+  checkout: Eol;
+  /** かかっている変換（`text=auto eol=crlf`・`core.autocrlf=true` など。なければ空） */
+  rule: string;
+  /** 見せる値打ちがある（改行を変換している、または warning） */
+  notable: boolean;
+  /** 改行が混ざっている、または作業ツリーが CRLF なのに checkout すると LF になる */
+  warning: boolean;
+}
+
+/** data の改行の種類。NUL を含む（バイナリ）なら none */
+export function eolOf(data: Buffer): Eol {
+  if (data.subarray(0, 8000).includes(0)) {
+    return 'none';
+  }
+  let lf = false;
+  let crlf = false;
+  for (let i = data.indexOf(0x0a); i >= 0; i = data.indexOf(0x0a, i + 1)) {
+    if (i > 0 && data[i - 1] === 0x0d) crlf = true;
+    else lf = true;
+    if (lf && crlf) return 'mixed';
+  }
+  return lf ? 'lf' : crlf ? 'crlf' : 'none';
+}
+
+/** 改行の設定（`core.autocrlf`・`core.eol`） */
+export interface EolConfig {
+  autocrlf?: string;
+  eol?: string;
+}
+
+/**
+ * ファイルの改行。raw は作業中のファイルの生のバイト、index は index の blob（なければ空）。
+ * checkout したときの形は、git の checkout と同じ規則で求める（`working-tree-encoding` などは見ない）
+ */
+export function lineEndingsOf(raw: Buffer, index: Buffer, attrs: Attributes, config: EolConfig): LineEndings {
+  const indexEol = eolOf(index);
+  const worktree = eolOf(raw);
+  const checkout = index.length > 0 && toCrlfOnCheckout(index, attrs, config) ? 'crlf' : indexEol;
+  const differs = (a: Eol, b: Eol) => a !== b && a !== 'none' && b !== 'none';
+  // 作業ツリーが LF で checkout すると CRLF になるだけ（core.autocrlf=true でツールが LF で書いたファイル）は、
+  // git に入る形が変わらないので気にしない
+  const warning = worktree === 'mixed' || indexEol === 'mixed' || (worktree === 'crlf' && checkout === 'lf');
+  const notable = differs(indexEol, worktree) || warning;
+  return { index: indexEol, worktree, checkout, rule: notable ? lineEndingRule(attrs, config) : '', notable, warning };
+}
+
+/** checkout で LF を CRLF にするか */
+function toCrlfOnCheckout(index: Buffer, attrs: Attributes, config: EolConfig): boolean {
+  if (eolOf(index) === 'none' || attrs['working-tree-encoding'] !== undefined) {
+    return false;
+  }
+  const action = crlfAction(attrs, config.autocrlf);
+  if (action === 'none') {
+    return false;
+  }
+  // 自動の判定では、CR を含むかバイナリに見える blob は変換しない
+  if (action === 'auto' && (index.includes(0x0d) || looksBinary(index))) {
+    return false;
+  }
+  if (attrs.eol === 'crlf' || attrs.eol === 'lf') {
+    return attrs.eol === 'crlf';
+  }
+  if (attrs.crlf === 'input') {
+    return false;
+  }
+  const auto = config.autocrlf?.toLowerCase();
+  if (auto === 'input') return false;
+  if (auto === 'true' || auto === 'yes' || auto === 'on' || auto === '1') return true;
+  const eol = config.eol?.toLowerCase();
+  return eol === 'crlf' || ((eol === undefined || eol === 'native') && process.platform === 'win32');
+}
+
+/** かかっている変換を `git check-attr` と同じ書き方で（コアの `line_ending_rule` と同じ） */
+export function lineEndingRule(attrs: Attributes, config: EolConfig): string {
+  const parts: string[] = [];
+  for (const name of ['text', 'eol', 'crlf', 'working-tree-encoding'] as const) {
+    const value = attrs[name];
+    if (value === 'set') parts.push(name);
+    else if (value === 'unset') parts.push(`-${name}`);
+    else if (value !== undefined) parts.push(`${name}=${value}`);
+  }
+  // 設定は効くときだけ足す。テキストでないとしたファイルと、eol の属性があるファイルには効かない
+  const binary = attrs.text === 'unset' || attrs.crlf === 'unset';
+  const text = attrs.text === 'set' || attrs.text === 'auto' || attrs.crlf === 'set';
+  const auto = config.autocrlf?.toLowerCase();
+  const eol = config.eol?.toLowerCase();
+  if (!binary && attrs.eol === undefined) {
+    if (auto === 'true' || auto === 'yes' || auto === 'on' || auto === '1') parts.push('core.autocrlf=true');
+    else if (auto === 'input') parts.push('core.autocrlf=input');
+    else if (text && (eol === 'lf' || eol === 'crlf')) parts.push(`core.eol=${eol}`);
+  }
+  return parts.join(' ');
+}

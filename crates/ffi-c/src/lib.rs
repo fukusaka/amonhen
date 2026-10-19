@@ -1403,6 +1403,66 @@ pub unsafe extern "C" fn amonhen_working_diff_combined(
     }
 }
 
+/// Working Copy の差分のファイルの改行（`amonhen_working_diff_line_endings`）。改行は 0: なし、1: LF、2: CRLF、
+/// 3: 混在。`present` が false なら情報がない（stage 済みの差分・サブモジュール・消したファイル）。
+#[repr(C)]
+pub struct AmonhenLineEndings {
+    pub present: bool,
+    /// git（index）に入っている形。
+    pub index: u8,
+    pub worktree: u8,
+    /// index の内容を checkout したときの形。
+    pub checkout: u8,
+    /// 見せる値打ちがある（改行を変換している、または `warning`）。
+    pub notable: bool,
+    /// 改行が混ざっている、または作業ツリーが CRLF なのに checkout すると LF になる。
+    pub warning: bool,
+}
+
+/// # Safety
+/// `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_working_diff_line_endings(
+    diff: *const AmonhenWorkingDiff,
+) -> AmonhenLineEndings {
+    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    match &d.line_endings {
+        Some(le) => AmonhenLineEndings {
+            present: true,
+            index: le.index as u8,
+            worktree: le.worktree as u8,
+            checkout: le.checkout as u8,
+            notable: le.notable(),
+            warning: le.warning(),
+        },
+        None => AmonhenLineEndings {
+            present: false,
+            index: 0,
+            worktree: 0,
+            checkout: 0,
+            notable: false,
+            warning: false,
+        },
+    }
+}
+
+/// かかっている改行の変換（`text=auto eol=crlf`・`core.autocrlf=true` など。`amonhen_string_free` で解放する）。
+/// 見せる値打ちがないとき・変換がないときは NULL。
+///
+/// # Safety
+/// `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_working_diff_line_ending_rule(
+    diff: *const AmonhenWorkingDiff,
+) -> *mut c_char {
+    let d = unsafe { &*diff.cast::<WorkingDiff>() };
+    d.line_endings
+        .as_ref()
+        .filter(|le| !le.rule.is_empty())
+        .and_then(|le| CString::new(le.rule.clone()).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// # Safety
 /// `diff` は有効であること。返したポインタは解放するまで有効。
 #[unsafe(no_mangle)]

@@ -7,6 +7,16 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### [Unreleased]
+
+#### Added
+
+- Working Copy shows a file's line endings beside its diff when they matter: `CRLF → LF` when git converts them
+  (`core.autocrlf`, the `text` and `eol` attributes), and a warning when they are mixed or CRLF where checkout would
+  write LF, which the next commit or checkout may change for the whole file. The tooltip names the conversion.
+  `amonhen diff` prints the same under the file's header, and `--json` has `lineEndings`. The remote protocol is now
+  version 21.
+
 ### [0.2.1] - 2026-10-19
 
 Worktrees live in their repository's tab, listed with their changes under Working Copy and edited one at a time, also
@@ -179,6 +189,11 @@ First release.
 ## VSCode extension
 
 ### [Unreleased]
+
+#### Added
+
+- The Working Copy diff shows the file's line endings when they matter: `CRLF → LF` when git converts them, and a
+  warning when they are mixed or CRLF where checkout would write LF. The tooltip names the conversion.
 
 ### [0.2.1] - 2026-10-19
 

@@ -217,6 +217,8 @@
 "Commit not in History: {id}" = "History にないコミット: {id}";
 "Give one or two commits" = "コミットは 1 つか 2 つです";
 "Binary file" = "バイナリのファイル";
+"line endings: working tree {worktree}, git {index}, checkout {checkout}" = "改行: 作業ツリー {worktree}、git {index}、checkout {checkout}";
+"mixed" = "混在";
 "Commit not found: {rev}" = "コミットが見つかりません: {rev}";
 "binary" = "バイナリ";
 "--rows takes exactly one file" = "--rows には、ファイルを 1 つ渡してください";

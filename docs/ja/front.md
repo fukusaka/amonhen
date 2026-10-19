@@ -60,7 +60,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `refs` | | headBranch・head・entries（kind・name・target・detail・ahead・behind・gone） | |
 | `status` | | generation・branch・upstream・ahead・behind・entries（kind・path・origPath・index・worktree・staged・unstaged・submodule） | |
 | `commitDiff` | id か stash（ID）、または history・rows・pair?（forward・reverse・mergeBase） | files（path・oldPath・kind・added・removed・binary）・changes・selection・rows | 差分の行（下） |
-| `workingDiff` | path・mode（unstaged・staged・combined） | diff・path・mode・binary・added・removed・rows | 差分の行 |
+| `workingDiff` | path・mode（unstaged・staged・combined） | diff・path・mode・binary・added・removed・rows・lineEndings（下） | 差分の行 |
 | `conflict` | path | path・rows | 差分の行 |
 | `stage`・`unstage` | paths | | |
 | `stageRows` | diff・rows・stage?（combined の差分のとき。false で外す） | | |
@@ -70,6 +70,8 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `connection` | | sent・received・closed（SSH 先のつながり。手元なら null） | |
 
 差分の行のレコード: rows（差分の行 × 行の数）・textLengths u32・text（UTF-8）・highlights（行・始め・終わりの u32 × 3。変わった単語のバイト位置）。`commitDiff` は、ファイルごとに見出しの行（kind 8、text はパス、old・new は削除・追加の行数）から始まる。`workingDiff` の行の番号（0 始まり）が、`stageRows`・`discardRows` の rows で指す番号。
+
+`workingDiff` の lineEndings（stage 済みの差分・サブモジュール・消したファイルでは null）: index・worktree・checkout は、それぞれ git に入っている形・作業ツリーのファイル・checkout したときの形の改行で、`none`・`lf`・`crlf`・`mixed` のどれか。rule はかかっている変換で、`git check-attr` と同じ書き方（`text=auto eol=crlf`・`-text`・`core.autocrlf=true`。ない・見せないときは空）。notable は、作業ツリーと git で改行が違うか、warning のとき true。warning は、改行が混ざっているか、作業ツリーが CRLF なのに checkout すると LF になるとき true。差分は両側を git に入れる形で比べるので、こうした違いは変わった行として出ない。FE は notable のとき差分のそばに見せる。
 
 ## 版
 

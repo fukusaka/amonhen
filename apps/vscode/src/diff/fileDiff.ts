@@ -3,6 +3,7 @@
  * 行の計算は latin1 で行い（バイトと 1 対 1 で内容を壊さない）、表示する文字列だけ UTF-8 で読む。
  */
 import { createHash } from 'node:crypto';
+import type { LineEndings } from '../git/eol.ts';
 import { buildHunks } from './hunks.ts';
 import { applyLineSets, diffLines, splitLines, type LineChange } from './lineDiff.ts';
 
@@ -27,6 +28,8 @@ export interface FileDiff {
   hunks: DiffHunk[];
   binary?: boolean;
   tooLarge?: boolean;
+  /** ファイルの改行（Working Copy の stage していない差分だけ） */
+  lineEndings?: LineEndings;
 }
 
 /** 選んだ行。kind と、その側の行番号 */

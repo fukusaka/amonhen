@@ -411,6 +411,10 @@ impl GitBackend for RemoteBackend {
         Ok(bytes.0)
     }
 
+    fn line_ending_rule(&self, path: &str) -> Result<String> {
+        self.conn.call(&Request::LineEndingRule(path.to_owned()))
+    }
+
     fn stage(&self, paths: &[&str]) -> Result<()> {
         self.conn.call(&Request::Stage(owned(paths)))
     }

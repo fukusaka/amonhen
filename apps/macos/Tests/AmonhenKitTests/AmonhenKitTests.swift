@@ -176,6 +176,25 @@ private func makeRepo() throws -> URL {
     #expect(status.items.map { "\($0.indexState)\($0.worktreeState)" } == [".M", "??"])
 }
 
+@Test func reportsLineEndingsOfWorkingCopyFiles() throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let file = dir.appendingPathComponent("a.txt")
+    try "1\n2\n".write(to: file, atomically: true, encoding: .utf8)
+    try git(dir, "add", ".")
+    try git(dir, "commit", "-q", "-m", "add a")
+    // Windows の既定（core.autocrlf=true）: 作業ツリーは CRLF、git には LF。
+    try git(dir, "config", "core.autocrlf", "true")
+    try "1\r\nTWO\r\n".write(to: file, atomically: true, encoding: .utf8)
+
+    let status = try Repository(path: dir.path).loadStatus()
+    let le = try #require(try status.diff(of: status.items[0], staged: false).lineEndings)
+    #expect([le.index, le.worktree, le.checkout] == [.lf, .crlf, .crlf])
+    #expect(le.rule == "core.autocrlf=true" && le.notable && !le.warning)
+    #expect(try status.combinedDiff(of: status.items[0])?.lineEndings == le)
+    #expect(try status.diff(of: status.items[0], staged: true).lineEndings == nil)
+}
+
 @Test func runsCommandsAndUndoes() throws {
     let dir = try makeRepo()
     defer { try? FileManager.default.removeItem(at: dir) }

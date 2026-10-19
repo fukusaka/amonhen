@@ -589,6 +589,57 @@ impl GitBackend for GixBackend {
         })
     }
 
+    fn line_ending_rule(&self, path: &str) -> Result<String> {
+        self.with_filters(|filters, repo| {
+            let Filters {
+                pipeline,
+                attributes,
+                ..
+            } = filters;
+            let mut matches = attributes.selected_attribute_matches([
+                "text",
+                "eol",
+                "crlf",
+                "working-tree-encoding",
+            ]);
+            attributes
+                .at_entry(path, None, &repo.objects)?
+                .matching_attributes(&mut matches);
+            // `git check-attr` と同じ書き方（`text`・`-text`・`eol=crlf`）。
+            let mut parts: Vec<String> = matches
+                .iter_selected()
+                .filter_map(|m| {
+                    let name = m.assignment.name.as_str();
+                    match m.assignment.state {
+                        gix::attrs::StateRef::Set => Some(name.to_owned()),
+                        gix::attrs::StateRef::Unset => Some(format!("-{name}")),
+                        gix::attrs::StateRef::Value(v) => Some(format!("{name}={}", v.as_bstr())),
+                        gix::attrs::StateRef::Unspecified => None,
+                    }
+                })
+                .collect();
+            // 設定（core.autocrlf・core.eol）が効くときだけ足す。属性でテキストでないとしたファイルと、`eol` の
+            // 属性があるファイルには効かない。core.eol は、テキストとしたファイルにだけ効く。
+            let has = |name: &str| parts.iter().any(|p| p == name);
+            let binary = has("-text") || has("-crlf");
+            let eol_attr = parts.iter().any(|p| p.starts_with("eol="));
+            let text = has("text") || has("text=auto") || has("crlf");
+            let config = &pipeline.options_mut().eol_config;
+            use gix::filter::plumbing::eol::{AutoCrlf, Mode};
+            match (config.auto_crlf, config.eol) {
+                _ if binary || eol_attr => {}
+                (AutoCrlf::Enabled, _) => parts.push("core.autocrlf=true".into()),
+                (AutoCrlf::Input, _) => parts.push("core.autocrlf=input".into()),
+                (AutoCrlf::Disabled, Some(Mode::Lf)) if text => parts.push("core.eol=lf".into()),
+                (AutoCrlf::Disabled, Some(Mode::CrLf)) if text => {
+                    parts.push("core.eol=crlf".into())
+                }
+                (AutoCrlf::Disabled, _) => {}
+            }
+            Ok(parts.join(" "))
+        })
+    }
+
     fn to_worktree_form(&self, path: &str, content: &[u8]) -> Result<Vec<u8>> {
         self.with_filters(|filters, repo| {
             let Filters {

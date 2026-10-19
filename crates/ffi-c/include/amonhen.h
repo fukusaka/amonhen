@@ -473,6 +473,31 @@ typedef struct {
   uint32_t behind;
 } AmonhenStatusView;
 
+/**
+ * Working Copy の差分のファイルの改行（`amonhen_working_diff_line_endings`）。改行は 0: なし、1: LF、2: CRLF、
+ * 3: 混在。`present` が false なら情報がない（stage 済みの差分・サブモジュール・消したファイル）。
+ */
+typedef struct {
+  bool present;
+  /**
+   * git（index）に入っている形。
+   */
+  uint8_t index;
+  uint8_t worktree;
+  /**
+   * index の内容を checkout したときの形。
+   */
+  uint8_t checkout;
+  /**
+   * 見せる値打ちがある（改行を変換している、または `warning`）。
+   */
+  bool notable;
+  /**
+   * 改行が混ざっている、または作業ツリーが CRLF なのに checkout すると LF になる。
+   */
+  bool warning;
+} AmonhenLineEndings;
+
 #ifdef __cplusplus
 extern "C" {
 #endif // __cplusplus
@@ -939,6 +964,21 @@ AmonhenWorkingDiff *amonhen_working_diff_combined(const AmonhenRepo *repo_ptr,
                                                   const AmonhenStatus *status,
                                                   uint32_t index,
                                                   AmonhenEncoding encoding);
+
+/**
+ * # Safety
+ * `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。
+ */
+AmonhenLineEndings amonhen_working_diff_line_endings(const AmonhenWorkingDiff *diff);
+
+/**
+ * かかっている改行の変換（`text=auto eol=crlf`・`core.autocrlf=true` など。`amonhen_string_free` で解放する）。
+ * 見せる値打ちがないとき・変換がないときは NULL。
+ *
+ * # Safety
+ * `diff` は `amonhen_working_diff` が返したもので、まだ解放していないこと。
+ */
+char *amonhen_working_diff_line_ending_rule(const AmonhenWorkingDiff *diff);
 
 /**
  * # Safety

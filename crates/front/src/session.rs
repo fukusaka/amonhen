@@ -521,6 +521,14 @@ impl Session {
             "added": diff.view.added,
             "removed": diff.view.removed,
             "rows": diff.view.rows.len(),
+            "lineEndings": diff.line_endings.as_ref().map(|le| json!({
+                "index": le.index.name(),
+                "worktree": le.worktree.name(),
+                "checkout": le.checkout.name(),
+                "rule": le.rule,
+                "notable": le.notable(),
+                "warning": le.warning(),
+            })),
         }));
         self.diffs.lock().unwrap().insert(id, Arc::new(diff));
         Ok(reply)
