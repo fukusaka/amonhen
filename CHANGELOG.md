@@ -32,6 +32,11 @@ becomes the GitHub Release notes.
 - Selecting a branch that has diverged from its upstream shows both in History, so the commits ahead and behind are
   in the list.
 
+#### Fixed
+
+- A rebase, cherry-pick or revert finished by another program no longer stays shown as in progress (most often when a
+  hook or autostash ran at the end).
+
 ### [0.2.1] - 2026-10-19
 
 Worktrees live in their repository's tab, listed with their changes under Working Copy and edited one at a time, also

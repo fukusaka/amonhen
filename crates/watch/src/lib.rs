@@ -19,7 +19,7 @@ pub struct Changes(pub u32);
 impl Changes {
     /// HEAD・ブランチ・タグ・stash。History とサイドバーを読み直す。
     pub const REFS: Self = Self(1 << 0);
-    /// index（stage の状態）。
+    /// index（stage の状態）と、rebase などの途中の状態。
     pub const INDEX: Self = Self(1 << 1);
     /// 作業ツリーのファイル。
     pub const WORKTREE: Self = Self(1 << 2);
@@ -66,6 +66,11 @@ pub fn classify(paths: &RepoPaths, path: &Path) -> Changes {
             // stash は refs/stash の reflog に積まれる。
             Some("logs") if rel.starts_with("logs/refs/stash") => Changes::REFS,
             Some("index") => Changes::INDEX,
+            // rebase・cherry-pick・revert の途中の状態。stage の状態と一緒に出すので INDEX にする。
+            // 終わったときは HEAD を書いた後にこれらを消すので、消えたことも知らせないと「途中」のまま残る。
+            Some(
+                "rebase-merge" | "rebase-apply" | "sequencer" | "CHERRY_PICK_HEAD" | "REVERT_HEAD",
+            ) => Changes::INDEX,
             Some("config") => Changes::CONFIG,
             _ => Changes::default(),
         };
@@ -286,6 +291,12 @@ mod tests {
         assert_eq!(c("/r/.git/logs/refs/stash"), Changes::REFS);
         assert_eq!(c("/r/.git/logs/HEAD"), Changes::default());
         assert_eq!(c("/r/.git/index"), Changes::INDEX);
+        assert_eq!(c("/r/.git/rebase-merge"), Changes::INDEX);
+        assert_eq!(c("/r/.git/rebase-merge/msgnum"), Changes::INDEX);
+        assert_eq!(c("/r/.git/rebase-apply"), Changes::INDEX);
+        assert_eq!(c("/r/.git/sequencer/todo"), Changes::INDEX);
+        assert_eq!(c("/r/.git/CHERRY_PICK_HEAD"), Changes::INDEX);
+        assert_eq!(c("/r/.git/REVERT_HEAD"), Changes::INDEX);
         assert_eq!(c("/r/.git/config"), Changes::CONFIG);
         assert_eq!(c("/r/.git/objects/ab/cdef"), Changes::default());
         assert_eq!(c("/r/src/main.rs"), Changes::WORKTREE);
