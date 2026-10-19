@@ -1014,6 +1014,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
                 latestRefs = refs
                 sidebar.show(refs)
+                reloadBranchGroups()
                 detail.reloadInfo()
                 updateSubtitle()
                 history.head = refs.head
@@ -1028,6 +1029,19 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             } catch {
                 NSLog("ref を読めない: \(error)")
             }
+        }
+    }
+
+    /// ローカルブランチの分け方を裏で求め、サイドバーに出す（History のグラフから求める）。
+    private func reloadBranchGroups() {
+        let repository = self.repository
+        Task {
+            let started = CACurrentMediaTime()
+            guard let groups = await Task.detached(priority: .utility, operation: {
+                try? repository.info(["op": "branchGroups"], as: BranchGroups.self)
+            }).value else { return }
+            PerformanceLog.record("Sidebar: branch groups", ms: (CACurrentMediaTime() - started) * 1000)
+            sidebar.show(branchGroups: groups)
         }
     }
 

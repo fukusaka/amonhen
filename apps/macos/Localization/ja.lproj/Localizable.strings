@@ -878,3 +878,8 @@
 "Git repository" = "git のリポジトリ";
 "The engine on the host searches up to 3 levels below the folder. Double-click a folder to go into it." = "ホストの上のエンジンが、フォルダの 3 段下まで探します。フォルダはダブルクリックで中に入れます。";
 "Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent). Double-click a folder to go into it, and choose a repository (green)." = "SSH でつなぎます。パスワードなしでログインできる（鍵か ssh-agent の）ホストを使ってください。フォルダはダブルクリックで中に入れます。リポジトリ（緑）を選んでください。";
+"Archive" = "アーカイブ";
+"Unarchive" = "アーカイブから戻す";
+"Branches with no new commit for 90 days. Folded." = "90 日以上新しいコミットがないブランチ。畳んでおきます。";
+"Branches you archived from their menu. Folded. Archiving is kept in git’s config, so it follows a rename." = "右クリックのメニューでアーカイブしたブランチ。畳んでおきます。アーカイブは git の設定に記録するので、名前を変えてもついていきます。";
+"Built on %@ (its commits are on top of that branch)" = "%@ の上に積んだブランチ（コミットはそのブランチの先に続きます）";
