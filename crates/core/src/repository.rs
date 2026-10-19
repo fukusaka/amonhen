@@ -5,8 +5,8 @@ use std::sync::{Arc, OnceLock};
 
 use amonhen_layout::DiffRow;
 use amonhen_model::{
-    CommitGraph, FileChange, GitBackend, Oid, OidMap, Refs, RepoPaths, Result, Status, StatusEntry,
-    topo,
+    CommitGraph, Eol, FileChange, GitBackend, LineEndings, Oid, OidMap, Refs, RepoPaths, Result,
+    Status, StatusEntry, topo,
 };
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use arc_swap::ArcSwapOption;
@@ -46,6 +46,8 @@ pub struct WorkingDiff {
     pub combined: Option<Vec<bool>>,
     pub file: FileDiff,
     pub view: DiffView,
+    /// ファイルの改行（stage していない差分だけ。改行の変換や混ざった改行は差分に出ないので、FE が別に見せる）。
+    pub line_endings: Option<LineEndings>,
 }
 
 /// 2 つ選んだときの差分の取り方。
@@ -864,15 +866,17 @@ impl Repository {
                 None => Ok(Arc::default()),
             }
         };
-        let (old, new) = if staged {
-            (blob(&entry.head_id)?, blob(&entry.index_id)?)
+        let (old, new, line_endings) = if staged {
+            (blob(&entry.head_id)?, blob(&entry.index_id)?, None)
         } else {
             let worktree = match entry.worktree {
                 b'D' => Arc::default(),
                 _ if entry.submodule => Arc::default(),
                 _ => self.backend.worktree_file(&entry.path)?,
             };
-            (blob(&entry.index_id)?, worktree)
+            let index = blob(&entry.index_id)?;
+            let line_endings = self.line_endings(entry, &index)?;
+            (index, worktree, line_endings)
         };
         let file = diff::file_diff(old, new, 3);
         let view = DiffView::new(&file, profile).with_path(&entry.path);
@@ -882,7 +886,39 @@ impl Repository {
             combined: None,
             file,
             view,
+            line_endings,
         })
+    }
+
+    /// 作業ツリーのファイルの改行（`git ls-files --eol` と同じ見方）。差分は git に入れる形どうしで比べるので、
+    /// 改行の変換や混ざった改行は差分に出ない。サブモジュール・消したファイルでは None。
+    fn line_endings(&self, entry: &StatusEntry, index: &[u8]) -> Result<Option<LineEndings>> {
+        if entry.submodule || entry.worktree == b'D' {
+            return Ok(None);
+        }
+        let Some(raw) = self
+            .backend
+            .files()
+            .read(amonhen_model::Root::Workdir, &entry.path)?
+        else {
+            return Ok(None);
+        };
+        let checkout = if index.is_empty() {
+            Eol::None
+        } else {
+            Eol::of(&self.backend.to_worktree_form(&entry.path, index)?)
+        };
+        let mut line_endings = LineEndings {
+            index: Eol::of(index),
+            worktree: Eol::of(&raw),
+            checkout,
+            rule: String::new(),
+        };
+        // 変換の名前は、見せるときだけ引く（SSH 先では 1 往復かかる）。
+        if line_endings.notable() {
+            line_endings.rule = self.backend.line_ending_rule(&entry.path)?;
+        }
+        Ok(Some(line_endings))
     }
 
     /// Working Copy の 1 ファイルの、HEAD と作業ツリーの差分。変更の行ごとに、index に入っているか
@@ -912,6 +948,7 @@ impl Repository {
         let Some(staged) = diff::staged_lines(&file, &index) else {
             return Ok(None);
         };
+        let line_endings = self.line_endings(entry, &index)?;
         let mut view = DiffView::new(&file, profile).with_path(&entry.path);
         for (row, &on) in view.rows.iter_mut().zip(&staged) {
             if on {
@@ -924,6 +961,7 @@ impl Repository {
             combined: Some(staged),
             file,
             view,
+            line_endings,
         }))
     }
 

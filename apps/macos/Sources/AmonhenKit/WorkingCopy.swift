@@ -82,12 +82,35 @@ public final class WorkingStatus: @unchecked Sendable {
     }
 }
 
+/// ファイルの改行の種類。
+public enum LineEnding: UInt8, Sendable {
+    case none = 0, lf, crlf, mixed
+}
+
+/// Working Copy の 1 ファイルの改行。差分は git に入れる形どうしで比べるので、改行の変換や混ざった改行は差分に
+/// 出ない。それを見せるためのもの。
+public struct LineEndings: Equatable, Sendable {
+    /// git（index）に入っている形。
+    public let index: LineEnding
+    public let worktree: LineEnding
+    /// index の内容を checkout したときの形。
+    public let checkout: LineEnding
+    /// かかっている変換（`text=auto eol=crlf`・`core.autocrlf=true` など。なければ空）。
+    public let rule: String
+    /// 見せる値打ちがある（改行を変換している、または `warning`）。
+    public let notable: Bool
+    /// 改行が混ざっている、または作業ツリーが CRLF なのに checkout すると LF になる。
+    public let warning: Bool
+}
+
 /// Working Copy の 1 ファイルの差分。行を選んで stage・unstage できる。
 public final class WorkingFileDiff: FileDiff, @unchecked Sendable {
     public let item: StatusItem
     public let staged: Bool
     /// HEAD と作業ツリーの差分（`WorkingStatus.combinedDiff`）か。
     public let isCombined: Bool
+    /// ファイルの改行（stage していない差分だけ）。
+    public let lineEndings: LineEndings?
     let repository: Repository
 
     init(raw: OpaquePointer, status: WorkingStatus, item: StatusItem, staged: Bool, combined: Bool = false) {
@@ -95,6 +118,20 @@ public final class WorkingFileDiff: FileDiff, @unchecked Sendable {
         self.staged = staged
         self.isCombined = combined
         self.repository = status.repository
+        let le = amonhen_working_diff_line_endings(raw)
+        if le.present {
+            let rule = amonhen_working_diff_line_ending_rule(raw)
+            defer { if let rule { amonhen_string_free(rule) } }
+            self.lineEndings = LineEndings(
+                index: LineEnding(rawValue: le.index) ?? .none,
+                worktree: LineEnding(rawValue: le.worktree) ?? .none,
+                checkout: LineEnding(rawValue: le.checkout) ?? .none,
+                rule: rule.map { String(cString: $0) } ?? "",
+                notable: le.notable,
+                warning: le.warning)
+        } else {
+            self.lineEndings = nil
+        }
         super.init(
             raw: raw, owner: status, view: amonhen_working_diff_view(raw), free: { amonhen_working_diff_free($0) },
             syntax: { amonhen_working_diff_syntax($0) })

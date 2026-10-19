@@ -136,6 +136,9 @@ test('shows working diffs as hunks and discards lines that the extension can und
       d.diff.hunks[0]!.lines.map((l) => `${l.kind}${l.text}`),
       ['-main', '+MAIN', '+more'],
     );
+    // 改行の情報も届く（普段のファイルなので見せない）
+    assert.equal(d.diff.lineEndings?.worktree, 'lf');
+    assert.equal(d.diff.lineEndings?.notable, false);
     // 「more」の行だけを捨てる。記録は拡張と同じ undo.json に入り、拡張の Undo で戻せる
     const rows = selectedRows(d.rows, [{ kind: '+', new: 2 }]);
     assert.equal(rows.length, 1);

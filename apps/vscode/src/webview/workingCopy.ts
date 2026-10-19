@@ -6,6 +6,7 @@
 import type { Change, ChangeGroup } from '../state/changes.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import type { DiffHunk, FileDiff, SelectedLine } from '../diff/fileDiff.ts';
+import type { Eol, LineEndings } from '../git/eol.ts';
 import { el, post, type View } from './api.ts';
 import { lineKey, renderDiffBody } from './diffView.ts';
 
@@ -135,6 +136,19 @@ export function createWorkingCopyView(): View {
 
   // ---- 差分 ----
 
+  /** 改行を変換している（作業ツリーと git で違う）・改行が混ざっているファイルの印。差分には出ないので */
+  function lineEndingsBadge(le: LineEndings): HTMLElement {
+    const name = (e: Eol) => (e === 'lf' ? 'LF' : e === 'crlf' ? 'CRLF' : e === 'mixed' ? '混在' : 'なし');
+    // 作業ツリーの形 → git に入る形
+    const text = le.worktree !== le.index && le.index !== 'none' ? `${name(le.worktree)} → ${name(le.index)}` : name(le.worktree);
+    const badge = el('span', le.warning ? 'eol warning' : 'eol', le.warning ? `⚠ ${text}` : text);
+    const tip = [`改行: 作業ツリー ${name(le.worktree)}、git ${name(le.index)}、checkout ${name(le.checkout)}`];
+    if (le.rule) tip.push(`変換: ${le.rule}`);
+    if (le.warning) tip.push('次の commit や checkout で、ファイル全体の改行が変わることがあります');
+    badge.title = tip.join('\n');
+    return badge;
+  }
+
   function renderDiff(): void {
     if (!diff) {
       diffPane.replaceChildren(el('div', 'empty', files.length ? 'ファイルを選ぶと差分が出ます' : ''));
@@ -143,6 +157,9 @@ export function createWorkingCopyView(): View {
     const d = diff;
     const head = el('div', 'diff-head');
     head.append(el('span', 'path', d.path));
+    if (d.lineEndings?.notable) {
+      head.append(lineEndingsBadge(d.lineEndings));
+    }
     const actions = el('span', 'actions');
     const group = diffGroup!;
     if (group === 'conflicts') {

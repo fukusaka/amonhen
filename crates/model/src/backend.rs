@@ -102,6 +102,13 @@ pub trait GitBackend: Send + Sync {
         Ok(content.to_vec())
     }
 
+    /// `path` にかかる改行の変換（`text=auto eol=crlf`・`core.autocrlf=true`・`-text` など）。なければ空。
+    /// 変換しない実装は空を返す。
+    fn line_ending_rule(&self, path: &str) -> Result<String> {
+        let _ = path;
+        Ok(String::new())
+    }
+
     /// `paths` の変更（追加・削除を含む）を index に入れる。
     fn stage(&self, paths: &[&str]) -> Result<()>;
 

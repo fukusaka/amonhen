@@ -117,7 +117,11 @@ export class WorkingCopyController implements vscode.Disposable {
         const old = change.letter === 'U' ? undefined : await object(`:${change.path}`);
         // git に入れる形（改行の変換をかけたもの）で index と比べる
         const now = change.letter === 'D' ? undefined : await repo.backend.worktreeFile(change.path, old);
-        return computeDiff(change.path, old, now);
+        const computed = computeDiff(change.path, old, now);
+        if (change.letter !== 'D') {
+          computed.diff.lineEndings = await repo.backend.lineEndings(change.path, old ?? Buffer.alloc(0));
+        }
+        return computed;
       }
       case 'staged': {
         const old = change.letter === 'A' ? undefined : await object(`HEAD:${change.origPath ?? change.path}`);
