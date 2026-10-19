@@ -32,7 +32,8 @@ becomes the GitHub Release notes.
 - Selecting a branch that has diverged from its upstream shows both in History, so the commits ahead and behind are
   in the list.
 - `amonhen run` answers a failed command with `errorKind` (`worktreeInUse`, `auth`, `hostKey`, `network`, `rejected`,
-  `diverged`, `localChanges`, `locked` or `noUpstream`) and `errorPath` when git's message tells what went wrong.
+  `diverged`, `localChanges`, `locked` or `noUpstream`) and `errorPath` when git's message tells what went wrong, and
+  `{"op":"sequence"}` has `info` with the branch, where it is going, the step and the commit it stopped at.
 
 #### Changed
 
@@ -41,6 +42,9 @@ becomes the GitHub Release notes.
 - A failed operation names what failed (Pull Failed, Couldn’t Switch…), says why in plain words instead of git's first
   line, and offers the next step: open the worktree that has the branch checked out, Open in Terminal for sign-in
   problems, Try Again, Pull before Push, Open Working Copy or Set Upstream. Details adds how to fix it.
+- The bar shown during a rebase, merge, cherry-pick or revert is taller and tinted, and says what is going on
+  ("Rebasing topic onto main · step 2 of 5"), where it stopped and why (conflicts, a commit to edit, a failed command)
+  and what to do next.
 - Checkout in the sidebar's menu, and Rebase when dropping onto a branch, open the worktree that has the branch
   checked out instead of failing.
 

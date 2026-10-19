@@ -738,12 +738,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     private var sequenceBanner: NSTitlebarAccessoryViewController?
     private let sequenceLabel = NSTextField(labelWithString: "")
+    private let sequenceDetail = NSTextField(labelWithString: "")
     private let skipButton = NSButton(title: "Skip", target: nil, action: nil)
     private let continueButton = NSButton(title: "Continue", target: nil, action: nil)
 
-    /// merge・rebase・cherry-pick・revert の途中なら、ツールバーの下に帯を出す。コンフリクトが残っていれば数と
+    /// merge・rebase・cherry-pick・revert の途中なら、ツールバーの下に色の付いた帯を出す。1 行目に何をどこへして
+    /// いる途中か（何番目か）、2 行目にどこで・なぜ止まっていて次に何をすればよいか。コンフリクトが残っていれば数と
     /// Working Copy へのリンク、なければ Continue を強調する。
-    private func showSequenceBanner(_ sequence: String?, conflicts: Int) {
+    private func showSequenceBanner(_ sequence: SequenceInfo?, conflicts: Int) {
         guard let sequence else {
             if let banner = sequenceBanner,
                let index = window.titlebarAccessoryViewControllers.firstIndex(of: banner) {
@@ -752,32 +754,76 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             sequenceBanner = nil
             return
         }
-        let name = sequence.prefix(1).uppercased() + sequence.dropFirst()
-        sequenceLabel.stringValue = conflicts > 0
-            ? L("%@ in progress · %ld files with conflicts", name, conflicts)
-            : L("%@ in progress · conflicts resolved", name)
-        skipButton.isHidden = !(sequence.hasPrefix("rebase") || sequence == "cherry-pick")
+        sequenceLabel.stringValue = Self.sequenceTitle(sequence)
+        sequenceDetail.stringValue = Self.sequenceDetail(sequence, conflicts: conflicts)
+        sequenceDetail.toolTip = sequenceDetail.stringValue
+        skipButton.isHidden = !["rebase", "cherry-pick"].contains(sequence.kind)
         continueButton.keyEquivalent = conflicts == 0 ? "\r" : ""
         guard sequenceBanner == nil else { return }
         let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.triangle.merge", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemOrange
-        sequenceLabel.font = .boldSystemFont(ofSize: NSFont.smallSystemFontSize)
+        icon.symbolConfiguration = .init(pointSize: 18, weight: .regular)
+        sequenceLabel.font = .boldSystemFont(ofSize: NSFont.systemFontSize)
+        sequenceLabel.lineBreakMode = .byTruncatingTail
+        sequenceDetail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        sequenceDetail.lineBreakMode = .byTruncatingTail
+        for label in [sequenceLabel, sequenceDetail] {
+            label.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        }
+        let texts = NSStackView(views: [sequenceLabel, sequenceDetail])
+        texts.orientation = .vertical
+        texts.alignment = .leading
+        texts.spacing = 1
         let show = NSButton(title: L("Open Working Copy"), target: self, action: #selector(showWorkingCopy(_:)))
         continueButton.target = self
         continueButton.action = #selector(continueSequence(_:))
         skipButton.target = self
         skipButton.action = #selector(skipSequence(_:))
         let abort = NSButton(title: "Abort", target: self, action: #selector(abortSequence(_:)))
-        for b in [show, continueButton, skipButton, abort] { b.controlSize = .small }
-        let stack = NSStackView(views: [icon, sequenceLabel, NSView(), show, continueButton, skipButton, abort])
+        let stack = NSStackView(views: [icon, texts, NSView(), show, continueButton, skipButton, abort])
         stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
-        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
+        stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
+        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 46)
+        // 細い帯だと気づきにくいので、色を敷く（作業の途中であることを、どの画面でも見落とさないように）。
+        stack.wantsLayer = true
+        stack.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.14).cgColor
         let bar = NSTitlebarAccessoryViewController()
         bar.view = stack
         bar.layoutAttribute = .bottom
         window.addTitlebarAccessoryViewController(bar)
         sequenceBanner = bar
+    }
+
+    /// 帯の 1 行目: 何をどこへしている途中か。
+    private static func sequenceTitle(_ s: SequenceInfo) -> String {
+        let title = switch (s.kind, s.branch, s.onto ?? s.from) {
+        case let ("rebase", branch?, onto?): L("Rebasing %@ onto %@", branch, onto)
+        case let ("merge", branch?, from?): L("Merging %@ into %@", from, branch)
+        case let ("cherry-pick", branch?, _): L("Cherry-picking into %@", branch)
+        case let ("revert", branch?, _): L("Reverting in %@", branch)
+        case ("rebase", _, _): L("Rebase in progress")
+        case ("merge", _, _): L("Merge in progress")
+        case ("cherry-pick", _, _): L("Cherry-pick in progress")
+        default: L("Revert in progress")
+        }
+        guard let current = s.current, let total = s.total else { return title }
+        return title + " · " + L("step %ld of %ld", current, total)
+    }
+
+    /// 帯の 2 行目: どこで・なぜ止まっていて、次に何をすればよいか。
+    private static func sequenceDetail(_ s: SequenceInfo, conflicts: Int) -> String {
+        let subject = s.step?.subject.map { "“\($0)”" }
+        if s.step?.action == "exec", conflicts == 0 {
+            return L("The command %@ failed. Fix the problem, then Continue.", subject ?? "")
+        }
+        if conflicts > 0 {
+            return subject.map { L("%ld files have conflicts at %@. Resolve them in Working Copy, then Continue.", conflicts, $0) }
+                ?? L("%ld files have conflicts. Resolve them in Working Copy, then Continue.", conflicts)
+        }
+        if s.editing == true {
+            return L("Stopped to edit %@. Change files or amend the commit, then Continue.", subject ?? "")
+        }
+        return L("Conflicts resolved. Continue to finish, or Abort to go back to where you started.")
     }
 
     // MARK: - 失敗の帯

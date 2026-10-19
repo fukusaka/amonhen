@@ -484,6 +484,123 @@ impl Repository {
         Ok(serde_json::json!({ "base": base.map(|b| &b.name), "branches": branches }))
     }
 
+    /// 途中の操作（rebase・merge・cherry-pick・revert）の詳しいこと。FE の帯に、何をどこへしている途中で、
+    /// どこで止まっているかを出す。git dir の中の git の作業ファイルから読む（読めないものは付けない）。
+    ///
+    /// `{"kind", "current", "total", "branch", "onto"（rebase の先）, "from"（merge で取り込む側）,
+    /// "step": {"action", "oid", "subject"}, "editing"}`
+    fn sequence_info(
+        &self,
+        sequence: amonhen_model::Sequence,
+        progress: Option<(u32, u32)>,
+    ) -> Result<serde_json::Value> {
+        use amonhen_model::Sequence;
+        let files = self.backend().files();
+        let read = |path: &str| -> Option<String> {
+            let data = files.read(Root::GitDir, path).ok()??;
+            Some(String::from_utf8_lossy(&data).trim().to_owned()).filter(|t| !t.is_empty())
+        };
+        let mut info = serde_json::json!({ "kind": sequence.command() });
+        if let Some((current, total)) = progress {
+            info["current"] = current.into();
+            info["total"] = total.into();
+        }
+        // コミットを指す ref の名前（ローカルブランチ、リモートブランチ、タグの順）。なければ短い ID。
+        let name_of = |oid: &Oid| -> String {
+            let refs = self.refs().ok();
+            let mut found: Vec<&RefEntry> = refs
+                .iter()
+                .flat_map(|r| r.refs.entries.iter())
+                .filter(|e| e.target.as_ref() == Some(oid) && (e.kind as u8) <= RefKind::Tag as u8)
+                .collect();
+            found.sort_by_key(|e| e.kind as u8);
+            found
+                .first()
+                .map_or_else(|| oid.to_string()[..8].to_owned(), |e| e.name.clone())
+        };
+        let subject_of = |oid: &Oid| -> Option<String> {
+            let text = self
+                .backend()
+                .commit_texts(std::slice::from_ref(oid))
+                .ok()?
+                .pop()?;
+            let range = text.subject.start as usize..text.subject.end as usize;
+            Some(String::from_utf8_lossy(text.raw.get(range)?).into_owned())
+        };
+        match sequence {
+            Sequence::Rebase => {
+                let dir = if read("rebase-merge/head-name").is_some() {
+                    "rebase-merge"
+                } else {
+                    "rebase-apply"
+                };
+                if let Some(head) = read(&format!("{dir}/head-name")) {
+                    info["branch"] = head.strip_prefix("refs/heads/").unwrap_or(&head).into();
+                }
+                if let Some(onto) = read(&format!("{dir}/onto")).and_then(|h| Oid::from_hex(&h)) {
+                    info["onto"] = name_of(&onto).into();
+                }
+                // 最後に行った手順（`pick 1a2b3c4 件名`）。ここで止まっている。
+                if let Some(done) = read("rebase-merge/done")
+                    && let Some(line) = done
+                        .lines()
+                        .rev()
+                        .find(|l| !l.starts_with('#') && !l.trim().is_empty())
+                {
+                    let mut parts = line.splitn(3, ' ');
+                    let action = parts.next().unwrap_or_default();
+                    let mut step = serde_json::json!({ "action": action });
+                    if action == "exec" {
+                        step["subject"] = line["exec".len()..].trim().into();
+                    } else {
+                        if let Some(oid) = parts.next() {
+                            step["oid"] = oid.into();
+                        }
+                        if let Some(subject) = parts.next() {
+                            step["subject"] = subject.trim_start_matches("# ").into();
+                        }
+                    }
+                    info["step"] = step;
+                }
+                // edit・break で止めた（コンフリクトではない）。
+                info["editing"] = read("rebase-merge/amend").is_some().into();
+            }
+            Sequence::Merge => {
+                if let Some(head) =
+                    read("MERGE_HEAD").and_then(|h| h.lines().next().and_then(Oid::from_hex))
+                {
+                    info["from"] = name_of(&head).into();
+                }
+                if let Some(message) = read("MERGE_MSG") {
+                    info["step"] = serde_json::json!({
+                        "action": "merge",
+                        "subject": message.lines().next().unwrap_or_default(),
+                    });
+                }
+            }
+            Sequence::CherryPick | Sequence::Revert => {
+                let head = if sequence == Sequence::Revert {
+                    "REVERT_HEAD"
+                } else {
+                    "CHERRY_PICK_HEAD"
+                };
+                if let Some(oid) = read(head).and_then(|h| Oid::from_hex(&h)) {
+                    info["step"] = serde_json::json!({
+                        "action": sequence.command(),
+                        "oid": oid.to_string(),
+                        "subject": subject_of(&oid),
+                    });
+                }
+            }
+        }
+        if let Some(branch) = self.refs().ok().and_then(|r| r.refs.head_branch.clone())
+            && info.get("branch").is_none()
+        {
+            info["branch"] = branch.into();
+        }
+        Ok(info)
+    }
+
     /// コミットのメッセージ全文。
     pub fn commit_message(&self, commit: &Oid) -> Result<String> {
         let text = self
@@ -1660,16 +1777,23 @@ impl Repository {
             }
             Command::Sequence => {
                 // rebase なら何番目かも添える（"rebase (2/5)"）。
-                let text = match ops.sequence_in_progress()? {
-                    Some(amonhen_model::Sequence::Rebase) => Some(match ops.rebase_progress()? {
-                        Some((current, total)) => format!("rebase ({current}/{total})"),
-                        None => "rebase".to_owned(),
-                    }),
-                    other => other.map(|s| s.command().to_owned()),
+                let sequence = ops.sequence_in_progress()?;
+                let progress = match sequence {
+                    Some(amonhen_model::Sequence::Rebase) => ops.rebase_progress()?,
+                    _ => None,
+                };
+                let text = sequence.map(|s| match (s, progress) {
+                    (_, Some((current, total))) => format!("rebase ({current}/{total})"),
+                    (s, None) => s.command().to_owned(),
+                });
+                let info = match sequence {
+                    Some(s) => Some(self.sequence_info(s, progress)?),
+                    None => None,
                 };
                 Ok(Response {
                     ok: true,
                     text,
+                    info,
                     ..Default::default()
                 })
             }

@@ -43,6 +43,49 @@ extension Repository {
     }
 }
 
+/// 途中の操作（rebase・merge・cherry-pick・revert）。`{"op":"sequence"}` の `info`。
+public struct SequenceInfo: Decodable, Equatable, Sendable {
+    /// 止まっている手順（`pick`・`edit`・`exec`・`merge`・`cherry-pick` など）と、そのコミット。
+    public struct Step: Decodable, Equatable, Sendable {
+        public let action: String
+        public let oid: String?
+        public let subject: String?
+    }
+
+    /// `rebase`・`merge`・`cherry-pick`・`revert`。
+    public let kind: String
+    /// rebase の何番目か・全部でいくつか。
+    public var current: Int?
+    public var total: Int?
+    /// 操作しているブランチ。
+    public var branch: String?
+    /// rebase の先・merge で取り込む側（ref の名前、なければ短い ID）。
+    public var onto: String?
+    public var from: String?
+    public var step: Step?
+    /// edit・break で止めた（コンフリクトではない）。
+    public var editing: Bool?
+
+    public init(kind: String) {
+        self.kind = kind
+    }
+}
+
+extension Repository {
+    /// 途中の操作。なければ nil。裏のスレッドで呼ぶ。
+    public func sequence() throws -> SequenceInfo? {
+        struct Response: Decodable {
+            let text: String?
+            let info: SequenceInfo?
+        }
+        guard let out = amonhen_command(raw, #"{"op":"sequence"}"#) else { throw AmonhenError(description: "結果がない") }
+        defer { amonhen_string_free(out) }
+        let response = try JSONDecoder().decode(Response.self, from: Data(String(cString: out).utf8))
+        // 詳しいことを返さない古いエンジン（SSH 先）なら、種類だけ（"rebase (2/5)" の頭）。
+        return response.info ?? response.text.map { SequenceInfo(kind: String($0.prefix { $0 != " " })) }
+    }
+}
+
 extension WorkingFileDiff {
     /// `rows` 行目の変更を作業ツリーから取り除く（Undo できる）。stage していない差分にだけ使える。
     public func discard(rows: [Int]) throws {

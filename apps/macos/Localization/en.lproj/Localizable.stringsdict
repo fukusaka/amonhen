@@ -530,5 +530,37 @@
 			<string>%ld local commits too, so Fast-Forward Only can’t pull these</string>
 		</dict>
 	</dict>
+	<key>%ld files have conflicts at %@. Resolve them in Working Copy, then Continue.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@ at %@. Resolve them in Working Copy, then Continue.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file has conflicts</string>
+			<key>other</key>
+			<string>%ld files have conflicts</string>
+		</dict>
+	</dict>
+	<key>%ld files have conflicts. Resolve them in Working Copy, then Continue.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@. Resolve them in Working Copy, then Continue.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file has conflicts</string>
+			<key>other</key>
+			<string>%ld files have conflicts</string>
+		</dict>
+	</dict>
 </dict>
 </plist>
