@@ -11,15 +11,10 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
-- Push, Pull and Fetch over HTTPS no longer hang in Git Credential Manager when run from the app. The app's threads
-  block SIGCHLD, git inherited that mask, and the credential manager (.NET) waited forever for its `git version`
-  child to be reaped, while the same push went through in a terminal. git and ssh started by the engine, and by the
-  shared daemon the app starts, now begin with an empty signal mask.
-- The app no longer crashes at launch from the second launch on. Taking the login shell's environment (new in 0.2.2)
-  read the shell in the background once a cached result existed, and that read ran on the main actor's behalf from a
-  background queue, which the runtime's isolation check stopped with a trap. The first launch after installing, which
-  has no cache yet, was the only one that worked. Deleting the cache (`defaults delete io.github.fukusaka.amonhen
-  shellEnvironment`) or turning off "Take the login shell's environment at launch" works around it in 0.2.2.
+- Push, Pull and Fetch over HTTPS no longer hang in Git Credential Manager when run from the app. git inherited the
+  app's blocked SIGCHLD; git and ssh started by the engine now begin with an empty signal mask.
+- The app no longer crashes at every launch after the first (the shell environment's background read ran on the
+  main actor's behalf). In 0.2.2, turn off "Take the login shell's environment at launch" to work around it.
 
 ### [0.2.2] - 2026-10-20
 
