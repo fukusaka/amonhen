@@ -251,13 +251,18 @@ public final class History: @unchecked Sendable {
         }
     }
 
-    /// `rows` を表示するときの、レーンごとの中心の横位置（魚眼）を `positions` に書く（レーンの数に合わせる）。
-    public func lanePositions(rows: Range<Int>, metrics: AmonhenLaneMetrics, into positions: inout [Float]) {
+    /// `rows` を表示するときの、レーンごとの中心の横位置（魚眼）を `positions` に書き（レーンの数に合わせる）、
+    /// レーン全体の幅を返す。
+    @discardableResult
+    public func lanePositions(rows: Range<Int>, metrics: AmonhenLaneMetrics, into positions: inout [Float]) -> Float {
         if positions.count != laneCount { positions = [Float](repeating: 0, count: laneCount) }
+        var width: Float = 0
         _ = positions.withUnsafeMutableBufferPointer {
             amonhen_history_lane_positions(
-                raw, UInt32(rows.lowerBound), UInt32(rows.upperBound), metrics, $0.baseAddress, UInt32($0.count))
+                raw, UInt32(rows.lowerBound), UInt32(rows.upperBound), metrics, $0.baseAddress, UInt32($0.count),
+                &width)
         }
+        return width
     }
 
     /// `query` に合うコミットの行（昇順）。構文は `author:` `subject:` `commit:` `path:` `contents:` と

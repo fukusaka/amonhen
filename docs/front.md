@@ -55,7 +55,7 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 | `historySearch` | history, query (syntax of `crates/core/src/query.rs`) | count | rows u32 (ascending) |
 | `historyDensity` | history, buckets | buckets | density (f32 × 2: frequency, activity, 0 to 1) |
 | `historyLineage` | history, row | | rows (u64 bit set), edgeFrom u32 |
-| `historyLanes` | history, start, end, metrics (full, thin, minFull, minThin, available) | | positions f32 |
+| `historyLanes` | history, start, end, metrics (full, thin, minFull, minThin, available) | width (of all lanes) | positions f32 |
 | `historyRowOf` | history, id | row (null if absent) | |
 | `refs` | | headBranch, head, entries (kind, name, target, detail, ahead, behind, gone) | |
 | `status` | | generation, branch, upstream, ahead, behind, entries (kind, path, origPath, index, worktree, staged, unstaged, submodule) | |

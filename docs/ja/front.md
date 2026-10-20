@@ -55,7 +55,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `historySearch` | history・query（`crates/core/src/query.rs` の書き方） | count | rows u32（昇順） |
 | `historyDensity` | history・buckets | buckets | density（f32 × 2: 頻度・活動量、0〜1） |
 | `historyLineage` | history・row | | rows（u64 のビット列）・edgeFrom u32 |
-| `historyLanes` | history・start・end・metrics（full・thin・minFull・minThin・available） | | positions f32 |
+| `historyLanes` | history・start・end・metrics（full・thin・minFull・minThin・available） | width（レーン全体の幅） | positions f32 |
 | `historyRowOf` | history・id | row（なければ null） | |
 | `refs` | | headBranch・head・entries（kind・name・target・detail・ahead・behind・gone） | |
 | `status` | | generation・branch・upstream・ahead・behind・entries（kind・path・origPath・index・worktree・staged・unstaged・submodule） | |
