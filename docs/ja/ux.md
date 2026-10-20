@@ -37,6 +37,8 @@
 ```
 
 - Conflicts はコンフリクトがあるときだけサイドバーに出し、件数を付ける。
+- サイドバーの上の絞り込みの欄（Navigate > Filter Branches…、⌥⌘F）は、打った語をすべて含む名前だけに Branches・
+  Remotes・Tags を絞る。合ったものは名前のまま平らに並べる。Esc で消す。
 - Pull Requests・Worktrees は該当するものがあるときだけ出す。
 
 ## 1. 複数のリポジトリ: タブと別ウィンドウ

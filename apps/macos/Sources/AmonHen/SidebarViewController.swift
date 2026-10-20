@@ -76,6 +76,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let outline = SidebarOutlineView()
     private var groups: [Node] = []
     private var generation: UInt64?
+    /// ブランチ名の絞り込みの欄（サイドバーの上）。
+    private let filterField = NSSearchField()
+    /// 絞り込みの語（空白で区切る。小文字。名前がすべてを含む行だけ出す）。空なら絞り込まない。
+    private var filterWords: [String] = []
 
     override func loadView() {
         let column = NSTableColumn(identifier: .init("name"))
@@ -101,7 +105,47 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
-        view = scroll
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+
+        // 絞り込みの欄は表の上に。打つたびに絞り込む（Esc で消す）。
+        filterField.placeholderString = L("Filter branches")
+        filterField.controlSize = .small
+        filterField.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        filterField.sendsSearchStringImmediately = true
+        filterField.sendsWholeSearchString = false
+        filterField.target = self
+        filterField.action = #selector(filterChanged)
+        filterField.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView()
+        container.addSubview(filterField)
+        container.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            filterField.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 6),
+            filterField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+            filterField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            scroll.topAnchor.constraint(equalTo: filterField.bottomAnchor, constant: 4),
+            scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        view = container
+    }
+
+    @objc private func filterChanged() {
+        let words = filterField.stringValue.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        guard words != filterWords else { return }
+        filterWords = words
+        rebuild(first: false)
+    }
+
+    /// Navigate > Filter Branches…: 絞り込みの欄にカーソルを移す。
+    func focusFilter() {
+        view.window?.makeFirstResponder(filterField)
+    }
+
+    private func matchesFilter(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return filterWords.allSatisfy { lower.contains($0) }
     }
 
     private var refs: Refs?
@@ -254,6 +298,25 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let selectedTitle = (outline.item(atRow: outline.selectedRow) as? Node).map { ($0.title, $0.page) }
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
+        // 絞り込み中は、合うブランチ・タグを名前のまま平らに（フォルダや積み重ねにはしない）、見出しは開いて出す。
+        if !filterWords.isEmpty {
+            var groups: [Node] = []
+            for (kind, title) in [(RefKind.local, "Branches"), (.remote, "Remotes"), (.tag, "Tags")] {
+                let matched = items(kind).filter { matchesFilter($0.name) }.sorted { $0.name < $1.name }
+                guard !matched.isEmpty else { continue }
+                groups.append(Node(title: title, children: matched.map {
+                    Node(title: $0.name, item: $0, isHead: $0.kind == .local && $0.name == head)
+                }))
+            }
+            setWorktreeNodes(worktreeLayout())
+            self.groups = [workspace] + groups
+            outline.reloadData()
+            outline.expandItem(workspace)
+            outline.expandItem(workingCopyNode)
+            groups.forEach { outline.expandItem($0) }
+            if let (_, page) = selectedTitle, let page { select(page: page) }
+            return
+        }
         var groups: [Node] = []
         // feature/x・backup/x のような名前はフォルダにまとめる（ブランチとタグ）。
         func folders(_ title: String, _ list: [RefItem]) -> Node {

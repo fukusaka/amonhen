@@ -1245,6 +1245,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func showWorkingCopy(_ sender: Any?) { sidebar.select(page: .workingCopy) }
     @objc func showHistory(_ sender: Any?) { sidebar.select(page: .history) }
 
+    /// Navigate > Filter Branches…: サイドバーの絞り込みの欄にカーソルを移す（サイドバーが畳んであれば開く）。
+    @objc func filterBranches(_ sender: Any?) {
+        if let split = sidebar.parent as? NSSplitViewController, let item = split.splitViewItem(for: sidebar), item.isCollapsed {
+            item.animator().isCollapsed = false
+        }
+        sidebar.focusFilter()
+    }
+
     /// タイトルの下のブランチ名。ツールバーにブランチのボタンが出ていれば、同じ名前を 2 か所に出さない。
     private func updateSubtitle() {
         guard !CommandLine.arguments.contains("--show-latency") else { return }

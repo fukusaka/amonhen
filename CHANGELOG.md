@@ -7,6 +7,12 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- A filter field at the top of the sidebar (⌥⌘F) narrows branches, remotes and tags by name.
+
 ### [0.2.2] - 2026-10-20
 
 Fetch, Pull and Push work from the app as they do in a terminal: the app takes the login shell's environment at
