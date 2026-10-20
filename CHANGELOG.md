@@ -12,7 +12,7 @@ becomes the GitHub Release notes.
 #### Changed
 
 - Deleting a branch asks first. A branch with commits that are in neither the current branch nor its upstream lists
-  them and offers Delete Anyway (git refused and nothing happened before).
+  them and offers Delete Anyway (git refused and nothing happened before). Dropping a stash asks too.
 
 #### Fixed
 

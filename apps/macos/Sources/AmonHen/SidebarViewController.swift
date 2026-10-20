@@ -906,7 +906,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .stash:
             add("Apply \(name)") { actions.perform(["op": "stashApply", "name": name, "pop": false]) }
             add("Pop \(name)") { actions.perform(["op": "stashApply", "name": name, "pop": true]) }
-            add("Drop \(name)") { actions.perform(["op": "stashDrop", "name": name]) }
+            add(L("Drop %@…", name)) {
+                guard actions.confirm(L("Drop %@?", name), message: (item.detail.map { $0 + "\n" } ?? "") + L("You can Undo it afterwards (⌥⌘Z)."), ok: L("Drop")) else { return }
+                actions.perform(["op": "stashDrop", "name": name])
+            }
         case .submodule:
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
             add(L("Open %@ in New Window", name)) { [weak self] in self?.onOpenSubmodule?(name) }
