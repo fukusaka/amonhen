@@ -15,6 +15,13 @@ becomes the GitHub Release notes.
 - Several branches or tags can be selected in the sidebar: History shows the commits reachable from any of them, and
   the context menu copies their names or archives or deletes them together (Delete asks first).
 
+#### Fixed
+
+- Push, Pull and Fetch over HTTPS no longer hang in Git Credential Manager when run from the app. git inherited the
+  app's blocked SIGCHLD; git and ssh started by the engine now begin with an empty signal mask.
+- The app no longer crashes at every launch after the first (the shell environment's background read ran on the
+  main actor's behalf). In 0.2.2, turn off "Take the login shell's environment at launch" to work around it.
+
 ### [0.2.2] - 2026-10-20
 
 Fetch, Pull and Push work from the app as they do in a terminal: the app takes the login shell's environment at

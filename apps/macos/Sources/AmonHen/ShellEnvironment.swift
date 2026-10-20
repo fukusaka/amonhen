@@ -7,8 +7,8 @@ import Foundation
 /// 渡す（VSCode などと同じやり方）。
 enum ShellEnvironment {
     /// 取り込む変数。PATH はシェルのものを前に足し、残りはシェルのものがあれば置き換える。
-    private static let names: Set<String> = ["PATH", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
-    private static let prefixes = ["GIT_", "HOMEBREW_"]
+    nonisolated private static let names: Set<String> = ["PATH", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
+    nonisolated private static let prefixes = ["GIT_", "HOMEBREW_"]
 
     /// 取り込んだ変数の名前（`--print-environment` に出す）。取り込まなかったときは空。
     nonisolated(unsafe) private(set) static var imported: [String] = []
@@ -18,18 +18,22 @@ enum ShellEnvironment {
     nonisolated(unsafe) private(set) static var shell = ""
     nonisolated(unsafe) private(set) static var lastRead: Date?
     /// 取り込んだあとに知らせる（設定画面が開いていれば出し直す）。
-    static let didChange = Notification.Name("shellEnvironmentDidChange")
+    nonisolated static let didChange = Notification.Name("shellEnvironmentDidChange")
 
-    private static let cacheKey = "shellEnvironment"
+    nonisolated private static let cacheKey = "shellEnvironment"
 
     /// ログインシェルの環境を取り込む。シェルを動かすのに 0.2〜0.3 秒かかるので、前回の結果を覚えておいてまず
     /// それを使い、今回の分は裏で読んで次の git から使う（初回だけ待つ）。設定で切っていれば（`AMONHEN_NO_SHELL_ENV`
     /// でも）何もしない。
+    ///
+    /// 裏で読む側は `Task.detached`（メインアクターから外れる）で呼ぶ。このパッケージは既定でメインアクターに
+    /// 隔離されるので、`read`・`apply` は `nonisolated` にしてある。`DispatchQueue.async` のクロージャから呼ぶと、
+    /// 隔離の確認（`dispatch_assert_queue`）に落ちて、キャッシュのある 2 回目以降の起動で必ずクラッシュしていた。
     static func `import`() {
         guard isEnabled else { return }
         if let cached = UserDefaults.standard.dictionary(forKey: cacheKey) as? [String: String], !cached.isEmpty {
             apply(cached)
-            DispatchQueue.global(qos: .utility).async { if let fresh = read() { apply(fresh) } }
+            Task.detached(priority: .utility) { if let fresh = read() { apply(fresh) } }
         } else if let fresh = read() {
             apply(fresh)
         }
@@ -42,14 +46,14 @@ enum ShellEnvironment {
 
     /// 設定画面の「読み直す」: シェルをもう一度動かして取り込む（裏で。終わったら `didChange`）。
     static func reload() {
-        DispatchQueue.global(qos: .userInitiated).async {
+        Task.detached(priority: .userInitiated) {
             if let fresh = read() { apply(fresh) }
         }
     }
 
     /// ログインシェル（`$SHELL`、なければ zsh）を対話的に動かして `env -0` を読む（`.zshrc` で PATH を足す人が多い
     /// ので対話的に）。3 秒で諦める（遅い rc で起動を待たせない）。取り込む変数だけを返す。
-    private static func read() -> [String: String]? {
+    nonisolated private static func read() -> [String: String]? {
         let shell = ProcessInfo.processInfo.environment["SHELL"].flatMap { $0.isEmpty ? nil : $0 } ?? "/bin/zsh"
         Self.shell = shell
         guard let output = run(shell, ["-ilc", "env -0"]) ?? run(shell, ["-lc", "env -0"]) else {
@@ -72,7 +76,7 @@ enum ShellEnvironment {
     }
 
     /// 変数をこのプロセスの環境に入れる（これから動かす git・daemon・gh が引き継ぐ）。
-    private static func apply(_ values: [String: String]) {
+    nonisolated private static func apply(_ values: [String: String]) {
         let current = ProcessInfo.processInfo.environment
         var names: [String] = []
         for (key, value) in values {
@@ -92,7 +96,7 @@ enum ShellEnvironment {
         DispatchQueue.main.async { NotificationCenter.default.post(name: didChange, object: nil) }
     }
 
-    private static func run(_ shell: String, _ arguments: [String]) -> String? {
+    nonisolated private static func run(_ shell: String, _ arguments: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = arguments
