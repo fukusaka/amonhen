@@ -13,6 +13,11 @@ becomes the GitHub Release notes.
 
 - Kotlin (`.kt`, `.kts`) is highlighted in diffs.
 
+#### Changed
+
+- Highlighting picks the language by the shebang when the file name says nothing (`#!/usr/bin/env python3`, `#!/bin/sh`
+  and so on), treats a `.h` that looks like C++ as C++, and knows more file names (Cargo.lock, Podfile, BUILD, …).
+
 #### Fixed
 
 - Push, Pull and Fetch over HTTPS no longer hang in Git Credential Manager when run from the app. git inherited the
