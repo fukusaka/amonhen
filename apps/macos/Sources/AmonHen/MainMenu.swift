@@ -116,6 +116,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     private func navigateMenu() -> NSMenu {
         let menu = NSMenu(title: L("Navigate"))
         menu.addItem(item(L("Switch Branch…"), #selector(RepositoryWindow.switchBranch(_:)), "b", [.command, .shift]))
+        menu.addItem(item(L("Filter Branches…"), #selector(RepositoryWindow.filterBranches(_:)), "f", [.command, .option]))
         menu.addItem(item(L("Go to HEAD"), #selector(RepositoryWindow.goToHead(_:)), "h", [.command, .shift]))
         let down = String(UnicodeScalar(NSDownArrowFunctionKey)!), up = String(UnicodeScalar(NSUpArrowFunctionKey)!)
         menu.addItem(item(L("Go to Parent"), #selector(RepositoryWindow.goToParent(_:)), down, [.command, .option]))

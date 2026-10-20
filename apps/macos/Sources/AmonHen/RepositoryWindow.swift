@@ -209,6 +209,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 history.select(row: row)
             }
         }
+        // ブランチ・タグを複数選ぶと、それぞれから辿れる履歴をまとめて出す。
+        sidebar.onSelectMany = { [weak history] items in
+            history?.set(scope: .refs(items.compactMap { item in
+                item.target.map { HistoryViewController.Ref(kind: item.kind, name: item.name, target: $0) }
+            }))
+        }
         let root = repository.workdir ?? RepositoryLocation.path(location)
         let remote = RepositoryLocation.isRemote(location)
         sidebar.onOpenSubmodule = { [weak self] path in
@@ -1244,6 +1250,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc func showWorkingCopy(_ sender: Any?) { sidebar.select(page: .workingCopy) }
     @objc func showHistory(_ sender: Any?) { sidebar.select(page: .history) }
+
+    /// Navigate > Filter Branches…: サイドバーの絞り込みの欄にカーソルを移す（サイドバーが畳んであれば開く）。
+    @objc func filterBranches(_ sender: Any?) {
+        if let split = sidebar.parent as? NSSplitViewController, let item = split.splitViewItem(for: sidebar), item.isCollapsed {
+            item.animator().isCollapsed = false
+        }
+        sidebar.focusFilter()
+    }
 
     /// タイトルの下のブランチ名。ツールバーにブランチのボタンが出ていれば、同じ名前を 2 か所に出さない。
     private func updateSubtitle() {

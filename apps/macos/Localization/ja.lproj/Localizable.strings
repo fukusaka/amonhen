@@ -964,3 +964,16 @@
 "Try Again" = "もう一度";
 "Uncommitted changes would be overwritten. Commit or stash them first." = "コミットしていない変更を上書きしてしまいます。先にコミットするか stash してください。";
 "The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper osxkeychain`), or add the SSH key to the agent (`ssh-add --apple-use-keychain`). Settings > Advanced > Terminal Environment shows which git, agent and helpers the app uses." = "リモートがパスワード・トークン・SSH の鍵を受け付けませんでした。ダイアログでパスワードやパスフレーズを入れたなら、入力を確かめてください（GitHub はアカウントのパスワードではなくトークンです）。毎回聞かれないようにするには、credential helper に資格情報を保存する（例: `gh auth setup-git`、`git config --global credential.helper osxkeychain`）か、SSH の鍵を agent に入れてください（`ssh-add --apple-use-keychain`）。アプリが使う git・agent・helper は、設定 > Advanced > ターミナルの環境で分かります。";
+
+// サイドバーの絞り込みと複数選択
+"Filter branches" = "ブランチを絞り込む";
+"Filter Branches…" = "ブランチを絞り込む…";
+"%ld branches" = "%ld 本のブランチ";
+"Copy %ld Names" = "%ld 個の名前をコピー";
+"Add %ld to Favorites" = "%ld 本をお気に入りに入れる";
+"Remove %ld from Favorites" = "%ld 本をお気に入りから外す";
+"Archive %ld Branches" = "%ld 本のブランチをアーカイブ";
+"Unarchive %ld Branches" = "%ld 本のブランチをアーカイブから戻す";
+"Delete %ld Branches…" = "%ld 本のブランチを削除…";
+"Delete %ld branches?" = "%ld 本のブランチを削除しますか？";
+"A branch with commits that are merged nowhere is kept (git refuses)." = "どこにも取り込まれていないコミットを持つブランチは残ります（git が断ります）。";
