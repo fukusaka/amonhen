@@ -901,6 +901,22 @@ pub unsafe extern "C" fn amonhen_stash_changes(
     changes_handle(repo(repo_ptr).stash_changes(&id))
 }
 
+/// コミット `base`（20 バイト。NULL なら全ファイルの追加）から `tip`（20 バイト）への変更で変わったファイル。
+/// push で送る範囲（upstream..HEAD）などに（`amonhen_changes_free` で解放する）。
+///
+/// # Safety
+/// `repo` は有効なリポジトリ、`base` は NULL か 20 バイト読める領域、`tip` は 20 バイト読める領域であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_range_changes(
+    repo_ptr: *const AmonhenRepo,
+    base: *const u8,
+    tip: *const u8,
+) -> *mut AmonhenChanges {
+    let base = (!base.is_null()).then(|| Oid(unsafe { *base.cast::<[u8; 20]>() }));
+    let tip = Oid(unsafe { *tip.cast::<[u8; 20]>() });
+    changes_handle(repo(repo_ptr).changes_between(base.as_ref(), &tip))
+}
+
 fn changes_handle(result: amonhen_model::Result<Vec<FileChange>>) -> *mut AmonhenChanges {
     let changes = match result {
         Ok(c) => c,

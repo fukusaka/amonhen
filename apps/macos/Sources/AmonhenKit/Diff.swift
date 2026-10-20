@@ -221,6 +221,22 @@ extension Repository {
 }
 
 extension Repository {
+    /// コミット `base` から `tip` への変更で変わったファイル（push で送る範囲 upstream..HEAD など）。`base` が nil なら
+    /// 全ファイルの追加。差分は `CommitChanges.diff(at:)` で。裏のスレッドで呼ぶ。
+    public func changes(from base: Data?, to tip: Data) throws -> CommitChanges {
+        let raw: OpaquePointer? = tip.withUnsafeBytes { tipBytes in
+            let tipPtr = tipBytes.baseAddress!.assumingMemoryBound(to: UInt8.self)
+            guard let base else { return amonhen_range_changes(self.raw, nil, tipPtr) }
+            return base.withUnsafeBytes {
+                amonhen_range_changes(self.raw, $0.baseAddress!.assumingMemoryBound(to: UInt8.self), tipPtr)
+            }
+        }
+        guard let raw else { throw AmonhenError.last() }
+        return CommitChanges(raw: raw, repository: self)
+    }
+}
+
+extension Repository {
     /// stash（20 バイト）の中身。untracked のファイルを含めていればそれも。
     public func stashChanges(of stash: Data) throws -> CommitChanges {
         let raw = stash.withUnsafeBytes { amonhen_stash_changes(self.raw, $0.baseAddress!.assumingMemoryBound(to: UInt8.self)) }

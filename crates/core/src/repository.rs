@@ -641,6 +641,12 @@ impl Repository {
         self.backend.stash_changes(stash)
     }
 
+    /// コミット `base` から `tip` への変更（push で送る範囲 upstream..HEAD など）。`base` が None なら
+    /// 全ファイルの追加。
+    pub fn changes_between(&self, base: Option<&Oid>, tip: &Oid) -> Result<Vec<FileChange>> {
+        self.backend.changes_between(base, tip)
+    }
+
     /// 変わったファイル 1 つの、前後 3 行の文脈つきの差分。
     pub fn file_diff(&self, change: &FileChange, profile: &FrontendProfile) -> Result<DiffView> {
         let diff = match self.change_diffs(std::slice::from_ref(change))? {
