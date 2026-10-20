@@ -9,6 +9,10 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Kotlin (`.kt`, `.kts`) is highlighted in diffs.
+
 #### Fixed
 
 - Push, Pull and Fetch over HTTPS no longer hang in Git Credential Manager when run from the app. git inherited the

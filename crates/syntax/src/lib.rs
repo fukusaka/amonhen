@@ -66,6 +66,7 @@ pub enum Language {
     Java,
     JavaScript,
     Json,
+    Kotlin,
     Lua,
     Make,
     Python,
@@ -78,7 +79,7 @@ pub enum Language {
     Yaml,
 }
 
-const LANGUAGES: usize = 20;
+const LANGUAGES: usize = 21;
 
 impl Language {
     /// ファイル名（拡張子）から言語を決める。わからなければ `None`。
@@ -104,6 +105,7 @@ impl Language {
             "java" => Self::Java,
             "js" | "mjs" | "cjs" | "jsx" => Self::JavaScript,
             "json" | "jsonc" => Self::Json,
+            "kt" | "kts" => Self::Kotlin,
             "lua" => Self::Lua,
             "mk" | "mak" => Self::Make,
             "py" | "pyi" | "pyw" => Self::Python,
@@ -181,6 +183,11 @@ impl Language {
             Self::Json => one(
                 tree_sitter_json::LANGUAGE,
                 tree_sitter_json::HIGHLIGHTS_QUERY,
+            ),
+            // この文法はクエリを同梱しないので、自前のもの（queries/kotlin.scm）。
+            Self::Kotlin => one(
+                tree_sitter_kotlin_ng::LANGUAGE,
+                include_str!("../queries/kotlin.scm"),
             ),
             Self::Lua => one(tree_sitter_lua::LANGUAGE, tree_sitter_lua::HIGHLIGHTS_QUERY),
             Self::Make => one(
@@ -289,8 +296,8 @@ mod tests {
     fn every_language_compiles_its_query() {
         for path in [
             "a.sh", "a.c", "a.cs", "a.cpp", "a.css", "a.go", "a.html", "a.java", "a.js", "a.json",
-            "a.lua", "Makefile", "a.py", "a.rb", "a.rs", "a.swift", "a.toml", "a.tsx", "a.ts",
-            "a.yaml",
+            "a.kt", "a.lua", "Makefile", "a.py", "a.rb", "a.rs", "a.swift", "a.toml", "a.tsx",
+            "a.ts", "a.yaml",
         ] {
             let language = Language::from_path(path).unwrap();
             assert!(
@@ -314,6 +321,29 @@ mod tests {
             k.contains(&("42", S::CONSTANT)) || k.contains(&("42", S::NUMBER)),
             "{k:?}"
         );
+    }
+
+    #[test]
+    fn colors_kotlin() {
+        let k = kinds(
+            "App.kt",
+            "// note\nfun main() { val s = \"hi\"; val n = 42 }\n",
+        );
+        assert!(k.contains(&("// note", S::COMMENT)), "{k:?}");
+        assert!(k.contains(&("fun", S::KEYWORD)), "{k:?}");
+        assert!(k.contains(&("main", S::FUNCTION)), "{k:?}");
+        assert!(k.contains(&("\"hi\"", S::STRING)), "{k:?}");
+        assert!(k.contains(&("42", S::NUMBER)), "{k:?}");
+        let k = kinds(
+            "App.kt",
+            "@Suppress(\"x\")\nclass Greeter(val name: String) { fun hi() = name.trim() }\nval ok = true\n",
+        );
+        assert!(k.contains(&("@Suppress", S::ATTRIBUTE)), "{k:?}");
+        assert!(k.contains(&("Greeter", S::TYPE)), "{k:?}");
+        assert!(k.contains(&("String", S::TYPE)), "{k:?}");
+        assert!(k.contains(&("trim", S::FUNCTION)), "{k:?}");
+        assert!(k.contains(&("true", S::CONSTANT)), "{k:?}");
+        assert!(k.contains(&("class", S::KEYWORD)), "{k:?}");
     }
 
     #[test]
