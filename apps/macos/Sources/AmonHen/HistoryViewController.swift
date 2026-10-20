@@ -58,6 +58,15 @@ final class GraphView: NSView {
 /// 選択の色は表にフォーカスがあるかで変わるので、文字を描き直せるように知らせる。
 final class FocusTableView: NSTableView {
     var onFocusChange: (() -> Void)?
+    /// 行の印（CI など）の上で押した。true を返せば行を選ばない（吹き出しを出す）。点は表の座標。
+    var onClickMark: ((Int, NSPoint) -> Bool)?
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let row = row(at: point)
+        if row >= 0, onClickMark?(row, point) == true { return }
+        super.mouseDown(with: event)
+    }
     /// ドラッグする行の文字。セルを置いていないので、ドラッグの画像はこれから作る。
     var dragLabel: ((IndexSet) -> String?)?
 
@@ -176,6 +185,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     var ciStatus: [Data: PullRequest.CI] = [:] {
         didSet { if ciStatus != oldValue { redrawText() } }
     }
+    /// 行の右端の CI の印を押した（コミット、その印の矩形、矩形の座標の元のビュー）。詳細の吹き出しを出す。
+    var onClickCI: ((Data, PullRequest.CI, NSRect, NSView) -> Void)?
 
     /// 検証する側が変わったので、覚えていた結果を捨てて検証し直す（結果を引き継がない）。
     func forgetSignatures() {
@@ -291,6 +302,17 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         subject.title = L("Message")
         subject.width = 240
         tableView.addTableColumn(subject)
+        // 行の右端の CI の印（描くのと同じ位置: 2 列目の右端から 18 pt）を押したら、行を選ばずに詳細の吹き出し。
+        tableView.onClickMark = { [weak self] row, point in
+            guard let self, onClickCI != nil, let history, let id = history.commitID(row: row), let ci = ciStatus[id]
+            else { return false }
+            let column = tableView.rect(ofColumn: 1).insetBy(dx: 5, dy: 0)
+            guard point.x >= column.maxX - 18, point.x <= column.maxX + 2 else { return false }
+            let rowRect = tableView.rect(ofRow: row)
+            let mark = NSRect(x: column.maxX - 16, y: rowRect.midY - 7, width: 14, height: 14)
+            onClickCI?(id, ci, mark, tableView)
+            return true
+        }
         tableView.dataSource = self
         tableView.delegate = self
         tableView.dragLabel = { [weak self] rows in

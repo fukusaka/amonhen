@@ -18,6 +18,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onSelectPage: ((Page) -> Void)?
     /// プルリクエストの右クリック: チェックアウト（gh pr checkout）。
     var onCheckoutPullRequest: ((PullRequest) -> Void)?
+    /// プルリクエストの行の右端の CI の印を押した（詳細の吹き出しを、その印の下に）。
+    var onClickPullRequestCI: ((PullRequest, NSView) -> Void)?
 
     enum Page {
         case workingCopy, history
@@ -772,6 +774,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             cell.toolTip = ["#\(pr.number) \(pr.title)", "\(pr.author.login) · \(pr.headRefName) → \(pr.baseRefName)",
                             [ci, review].filter { !$0.isEmpty }.joined(separator: " · ")].joined(separator: "\n")
             cell.badge.textColor = pr.ci == .failing ? .systemRed : pr.ci == .passing ? .systemGreen : .secondaryLabelColor
+            // CI の印は押せる（History の行の印と同じ吹き出し）。
+            if pr.ci != .none, pr.headRefOid != nil {
+                cell.onBadgeClick = { [weak self, weak cell] in
+                    guard let self, let cell else { return }
+                    onClickPullRequestCI?(pr, cell.badge)
+                }
+            }
         }
         return cell
     }

@@ -148,6 +148,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             self?.selectedCommit = nil
             self?.detail.show(selection: rows, in: history)
         }
+        // 行の右端の CI の印を押したら、そのコミットのチェックの一覧を吹き出しで。
+        history.onClickCI = { [weak self] id, ci, rect, view in
+            guard let self, let gitHub else { return }
+            let sha = id.map { String(format: "%02x", $0) }.joined()
+            ciPopovers.toggle(key: sha, status: ci, sha: sha, repo: gitHub, relativeTo: rect, of: view)
+        }
         history.onSearchChanged = { [weak self] query in
             self?.detail.searchQuery = query
             self?.toolbar.setSearch(query)
@@ -193,6 +199,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         sidebar.onSelectConflicts = { [weak self] in self?.workingCopy.selectFirstConflict() }
         sidebar.onCheckoutPullRequest = { [weak self] pr in self?.checkout(pr) }
+        sidebar.onClickPullRequestCI = { [weak self] pr, view in
+            guard let self, let gitHub, let sha = pr.headRefOid else { return }
+            ciPopovers.toggle(key: "pr\(pr.number)", status: pr.ci, sha: sha, repo: gitHub, relativeTo: view.bounds, of: view)
+        }
         sidebar.onSelectWorktree = { [weak self] path in self?.edit(worktree: path) }
         sidebar.onWorktreeAction = { [weak self] path, action in self?.worktreeAction(path, action) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。stash は詳細にだけ中身を出す。
@@ -1424,6 +1434,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// このウィンドウで GitHub のアバターの URL を読んだか。
     private var avatarsLoaded = false
+    /// CI の吹き出し（同じ印をもう一度押したら閉じる）。
+    private let ciPopovers = CIPopoverPresenter()
 
     @objc private func gitHubSettingsChanged() {
         if !Settings.gitHubAvatars {

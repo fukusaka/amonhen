@@ -995,3 +995,20 @@
 "%ld commits look unfinished (fixup!, squash! or WIP)." = "整理し忘れらしいコミットが %ld 件あります（fixup!・squash!・WIP）。";
 "Adds files that may hold secrets: %@" = "秘密を含みそうなファイルを追加しています: %@";
 "Adds %ld binary files." = "バイナリのファイルを %ld 個追加しています。";
+
+// CI の印の吹き出し
+"Loading the checks…" = "チェックを読んでいます…";
+"No checks on this commit." = "このコミットにチェックはありません。";
+"%ld checks" = "%ld 件のチェック";
+"Couldn’t read the checks: %@" = "チェックを読めません: %@";
+"Open on GitHub" = "GitHub で開く";
+"passed" = "成功";
+"failed" = "失敗";
+"cancelled" = "取り消し";
+"timed out" = "時間切れ";
+"skipped" = "スキップ";
+"neutral" = "どちらでもない";
+"action required" = "対応が必要";
+"stale" = "古い";
+"queued" = "待ち";
+"running" = "実行中";
