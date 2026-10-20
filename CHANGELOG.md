@@ -7,6 +7,16 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Fixed
+
+- The app no longer crashes at launch from the second launch on. Taking the login shell's environment (new in 0.2.2)
+  read the shell in the background once a cached result existed, and that read ran on the main actor's behalf from a
+  background queue, which the runtime's isolation check stopped with a trap. The first launch after installing, which
+  has no cache yet, was the only one that worked. Deleting the cache (`defaults delete io.github.fukusaka.amonhen
+  shellEnvironment`) or turning off "Take the login shell's environment at launch" works around it in 0.2.2.
+
 ### [0.2.2] - 2026-10-20
 
 Fetch, Pull and Push work from the app as they do in a terminal: the app takes the login shell's environment at
