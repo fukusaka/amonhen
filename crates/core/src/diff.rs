@@ -547,7 +547,13 @@ impl DiffView {
 
     #[cfg(feature = "syntax")]
     fn part_syntax(&self, part: &Part, out: &mut Vec<SyntaxSpan>) {
-        if amonhen_syntax::Language::from_path(&part.path).is_none()
+        // 言語は名前と中身（shebang、`.h` の C++ らしさ）で決める。消したファイルは古い側の中身で。
+        let sample = if part.new.is_empty() {
+            &part.old
+        } else {
+            &part.new
+        };
+        if amonhen_syntax::Language::detect(&part.path, sample).is_none()
             || is_binary(&part.old)
             || is_binary(&part.new)
         {
@@ -643,7 +649,7 @@ impl StackedDiff {
 /// 先頭からの UTF-16 の位置で、`row` は 0。言語がわからなければ空。
 #[cfg(feature = "syntax")]
 pub fn text_syntax(path: &str, text: &[u8]) -> Vec<SyntaxSpan> {
-    if amonhen_syntax::Language::from_path(path).is_none() {
+    if amonhen_syntax::Language::detect(path, text).is_none() {
         return Vec::new();
     }
     let tokens = amonhen_syntax::highlight(path, text);
