@@ -27,6 +27,8 @@ becomes the GitHub Release notes.
   and so on), treats a `.h` that looks like C++ as C++, and knows more file names (Cargo.lock, Podfile, BUILD, …).
 - Deleting a branch asks first. A branch with commits that are in neither the current branch nor its upstream lists
   them and offers Delete Anyway (git refused and nothing happened before). Dropping a stash asks too.
+- History's graph column is only as wide as the visible lanes need, so the message sits right next to the graph
+  instead of a fixed 120 pt away.
 
 #### Fixed
 

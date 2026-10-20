@@ -296,7 +296,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.style = .plain
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         graphColumn.title = ""
+        // 幅は見えているレーンの分だけ取る（`layoutGraphView` が描くたびに合わせる）。
         graphColumn.width = 120
+        graphColumn.resizingMask = []
         tableView.addTableColumn(graphColumn)
         let subject = NSTableColumn(identifier: .init("subject"))
         subject.title = L("Message")
@@ -699,7 +701,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             tableView.selectRowIndexes([0], byExtendingSelection: false)
         }
         updateLineage()
-        redrawGraph()
+        // History が替わるとレーンの数も替わる。列の幅を合わせてから描く。
+        layoutGraphView()
         updateDensity()
     }
 
@@ -772,19 +775,36 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         updateLineage()
     }
 
-    /// グラフの列と、その右の文字の列のうち、ヘッダーの下で見えている範囲に重ねる。
+    /// グラフの列と、その右の文字の列のうち、ヘッダーの下で見えている範囲に重ねる。グラフの列は見えている
+    /// レーンの分だけ取り（文字との隙間を空けない）、幅が変わればその場で列を変えて置き直す。
     private func layoutGraphView() {
         let clip = scrollView.contentView
         let clipFrame = view.convert(clip.frame, from: scrollView)
+        let height = max(0, clipFrame.height - clip.contentInsets.top)
+        // 2 つのビュー（Metal の層）は列の幅に合わせて伸び縮みさせない。幅が変わるたびに描画先を作り直すと、
+        // 列の幅のアニメーションの間、1 フレームごとに数 ms 止まる。グラフは上限の幅、文字は列の左端から右端まで
+        // 取り（文字のビューが上。どちらもクリックは通す）、文字の位置は表の列の矩形から決める。
         let column = tableView.rect(ofColumn: tableView.column(withIdentifier: graphColumn.identifier))
         let x = view.convert(column.origin, from: tableView).x
-        let height = max(0, clipFrame.height - clip.contentInsets.top)
-        graphView.frame = NSRect(x: x, y: clipFrame.minY, width: column.width, height: height)
-        let textX = x + column.width
-        textView.frame = NSRect(x: textX, y: clipFrame.minY, width: max(0, clipFrame.maxX - textX), height: height)
+        graphView.frame = NSRect(
+            x: x, y: clipFrame.minY, width: CGFloat(renderer.metrics.maxWidth), height: height)
+        textView.frame = NSRect(x: x, y: clipFrame.minY, width: max(0, clipFrame.maxX - x), height: height)
+        if let history {
+            let scrollY = Float(tableView.convert(NSPoint(x: 0, y: 0), from: graphView).y)
+            let width = CGFloat(renderer.prepareLanes(history: history, scrollY: scrollY, height: Float(height)))
+            if width != graphColumn.width {
+                // 列を変えると columnDidResize が来るが、ここで置き直すので受けない。
+                resizingGraphColumn = true
+                graphColumn.width = width
+                tableView.sizeLastColumnToFit()
+                resizingGraphColumn = false
+            }
+        }
         redrawGraph()
         redrawText()
     }
+
+    private var resizingGraphColumn = false
 
     private func redrawText() {
         guard history != nil, textView.window != nil else { return }
@@ -1045,6 +1065,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc private func contentDidScroll() {
+        guard !resizingGraphColumn else { return }
         motion?.add(y: scrollView.contentView.bounds.minY)
         layoutGraphView()
         updateDensityViewport()
@@ -1060,16 +1081,21 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             return
         }
         if laneAnimation == nil {
-            let link = graphView.displayLink(target: self, selector: #selector(laneAnimationTick))
+            let link = graphView.displayLink(target: self, selector: #selector(laneAnimationTick(_:)))
             link.add(to: .main, forMode: .common)
             laneAnimation = link
         }
         laneAnimation?.isPaused = false
     }
 
-    @objc private func laneAnimationTick() {
-        // スクロールで同じフレームにもう描いていれば描かない。
-        if CACurrentMediaTime() - lastGraphDraw > 0.004 { redrawGraph() }
+    private var drawnAtLastTick = 0
+
+    @objc private func laneAnimationTick(_ link: CADisplayLink) {
+        // 前の tick からスクロールで描いていれば描かない（そちらが位置を進めている。同じフレームに 2 回描くと、
+        // 先のほうは表示されずに捨てられる）。列の幅も動くので、置き直しから。
+        let drawn = renderer.drawnFrames
+        defer { drawnAtLastTick = renderer.drawnFrames }
+        if drawn == drawnAtLastTick { layoutGraphView() }
     }
 
     private func redrawGraph() {
