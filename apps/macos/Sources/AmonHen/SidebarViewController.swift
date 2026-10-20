@@ -7,6 +7,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 {
     /// 項目を選んだとき（指すコミットがあれば History でその行を選ぶ）。
     var onSelect: ((RefItem) -> Void)?
+    /// ブランチ・タグを複数選んだとき（それぞれから辿れる履歴をまとめて出す）。
+    var onSelectMany: (([RefItem]) -> Void)?
     var actions: Actions?
     /// チェックアウト中のブランチ。
     private var headBranch: String?
@@ -76,6 +78,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let outline = SidebarOutlineView()
     private var groups: [Node] = []
     private var generation: UInt64?
+    /// ブランチ名の絞り込みの欄（サイドバーの上）。
+    private let filterField = NSSearchField()
+    /// 絞り込みの語（空白で区切る。小文字。名前がすべてを含む行だけ出す）。空なら絞り込まない。
+    private var filterWords: [String] = []
 
     override func loadView() {
         let column = NSTableColumn(identifier: .init("name"))
@@ -91,6 +97,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         outline.target = self
         outline.action = #selector(outlineClicked)
         outline.allowsTypeSelect = true
+        // ブランチ・タグは複数選べる（まとめて履歴を見る、まとめて消す・アーカイブする）。
+        outline.allowsMultipleSelection = true
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
@@ -101,7 +109,47 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
-        view = scroll
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+
+        // 絞り込みの欄は表の上に。打つたびに絞り込む（Esc で消す）。
+        filterField.placeholderString = L("Filter branches")
+        filterField.controlSize = .small
+        filterField.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        filterField.sendsSearchStringImmediately = true
+        filterField.sendsWholeSearchString = false
+        filterField.target = self
+        filterField.action = #selector(filterChanged)
+        filterField.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView()
+        container.addSubview(filterField)
+        container.addSubview(scroll)
+        NSLayoutConstraint.activate([
+            filterField.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: 6),
+            filterField.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+            filterField.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+            scroll.topAnchor.constraint(equalTo: filterField.bottomAnchor, constant: 4),
+            scroll.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scroll.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            scroll.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+        view = container
+    }
+
+    @objc private func filterChanged() {
+        let words = filterField.stringValue.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        guard words != filterWords else { return }
+        filterWords = words
+        rebuild(first: false)
+    }
+
+    /// Navigate > Filter Branches…: 絞り込みの欄にカーソルを移す。
+    func focusFilter() {
+        view.window?.makeFirstResponder(filterField)
+    }
+
+    private func matchesFilter(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        return filterWords.allSatisfy { lower.contains($0) }
     }
 
     private var refs: Refs?
@@ -254,6 +302,25 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let selectedTitle = (outline.item(atRow: outline.selectedRow) as? Node).map { ($0.title, $0.page) }
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
+        // 絞り込み中は、合うブランチ・タグを名前のまま平らに（フォルダや積み重ねにはしない）、見出しは開いて出す。
+        if !filterWords.isEmpty {
+            var groups: [Node] = []
+            for (kind, title) in [(RefKind.local, "Branches"), (.remote, "Remotes"), (.tag, "Tags")] {
+                let matched = items(kind).filter { matchesFilter($0.name) }.sorted { $0.name < $1.name }
+                guard !matched.isEmpty else { continue }
+                groups.append(Node(title: title, children: matched.map {
+                    Node(title: $0.name, item: $0, isHead: $0.kind == .local && $0.name == head)
+                }))
+            }
+            setWorktreeNodes(worktreeLayout())
+            self.groups = [workspace] + groups
+            outline.reloadData()
+            outline.expandItem(workspace)
+            outline.expandItem(workingCopyNode)
+            groups.forEach { outline.expandItem($0) }
+            if let (_, page) = selectedTitle, let page { select(page: page) }
+            return
+        }
         var groups: [Node] = []
         // feature/x・backup/x のような名前はフォルダにまとめる（ブランチとタグ）。
         func folders(_ title: String, _ list: [RefItem]) -> Node {
@@ -848,6 +915,44 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         func add(_ title: String, _ action: @escaping () -> Void) {
             menu.addItem(ClosureMenuItem(title: title, action: action))
         }
+        // 複数選んだ行の上で開いたら、選んだものをまとめて扱う（名前をコピー。ローカルブランチだけなら、まとめて
+        // お気に入り・アーカイブ・削除も）。
+        let selected = outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.item }
+        if selected.count > 1, outline.selectedRowIndexes.contains(outline.clickedRow) {
+            let names = selected.map(\.name)
+            add(L("Copy %ld Names", names.count)) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(names.joined(separator: "\n"), forType: .string)
+            }
+            let locals = selected.filter { $0.kind == .local }.map(\.name)
+            if locals.count == selected.count {
+                menu.addItem(.separator())
+                // お気に入りは、全部入っていれば外す、そうでなければ（まだのものを）入れる。
+                let allPinned = locals.allSatisfy { pinnedOrder.contains($0) }
+                add(allPinned ? L("Remove %ld from Favorites", locals.count) : L("Add %ld to Favorites", locals.count)) { [weak self] in
+                    guard let self else { return }
+                    if allPinned {
+                        savePinnedOrder(pinnedOrder.filter { !locals.contains($0) })
+                        actions.perform(sequence: locals.map {
+                            ["op": "configSet", "key": "branch.\($0).amonhenPinned", "value": NSNull()]
+                        })
+                    } else {
+                        savePinnedOrder(pinnedOrder + locals.filter { !pinnedOrder.contains($0) })
+                    }
+                }
+                let allArchived = locals.allSatisfy { branchFacts[$0]?.archived == true }
+                add(allArchived ? L("Unarchive %ld Branches", locals.count) : L("Archive %ld Branches", locals.count)) {
+                    actions.perform(sequence: locals.map {
+                        ["op": "configSet", "key": "branch.\($0).amonhenArchived", "value": allArchived ? NSNull() : "true"]
+                    })
+                }
+                // 今のブランチと、ほかの worktree が checkout しているブランチは消せない（git が断る）。
+                if locals.allSatisfy({ $0 != headBranch && otherWorktree(using: $0) == nil }) {
+                    add(L("Delete %ld Branches…", locals.count)) { [weak self] in self?.confirmDelete(locals) }
+                }
+            }
+            return
+        }
         let current = headBranch ?? "HEAD"
         // 名前をコピー（ターミナルや PR に貼るため。リモートブランチは origin/ を付けたまま）。
         let copyTitle = switch item.kind {
@@ -916,7 +1021,35 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
+    /// 選んだブランチをまとめて消す前に、名前を並べて確かめる。消すのは 1 つずつ（git が断ったらそこで止まり、
+    /// 帯に出る）。
+    private func confirmDelete(_ names: [String]) {
+        guard let actions, let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = L("Delete %ld branches?", names.count)
+        alert.informativeText = names.joined(separator: "\n") + "\n\n"
+            + L("A branch with commits that are merged nowhere is kept (git refuses).") + " "
+            + L("You can Undo it afterwards (⌥⌘Z).")
+        let button = alert.addButton(withTitle: L("Delete"))
+        button.hasDestructiveAction = true
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { response in
+            guard response == .alertFirstButtonReturn else { return }
+            actions.perform(sequence: names.map { ["op": "deleteBranch", "name": $0, "force": false] })
+        }
+    }
+
     func outlineViewSelectionDidChange(_ notification: Notification) {
+        // ブランチ・タグを複数選んだら、それぞれから辿れる履歴をまとめて出す。
+        if outline.selectedRowIndexes.count > 1 {
+            let selected = outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.item }
+                .filter { [.local, .remote, .tag].contains($0.kind) && $0.target != nil }
+            if selected.count > 1 {
+                onSelectPage?(.history)
+                onSelectMany?(selected)
+                return
+            }
+        }
         guard let node = outline.item(atRow: outline.selectedRow) as? Node else { return }
         if node === conflictsNode {
             onSelectPage?(.workingCopy)
