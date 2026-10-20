@@ -278,11 +278,13 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
         if let Some(status) = child.try_wait()? {
             break status;
         }
+        // 止めたあとは、出力を読む 2 つのスレッドを待たない。git の子（git-remote-https・ssh・ext:: の
+        // コマンド）が親より先に切り離されていると、Windows の taskkill /T はそれを殺せず、パイプを握ったまま
+        // 残る。待つと、その子が終わるまで（ext::sleep 30 なら 30 秒）返らない。スレッドはパイプが閉じれば
+        // 勝手に終わる。
         if activity::take_cancel(seq) {
             kill_tree(&mut child);
             let _ = child.wait();
-            let _ = out_thread.join();
-            let _ = err_thread.join();
             return Err(amonhen_model::i18n::cancelled().into());
         }
         let silent = started.elapsed().as_millis() as u64 - heard.load(Ordering::Relaxed);
@@ -290,8 +292,6 @@ fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
         if silent > limit.as_millis() as u64 {
             kill_tree(&mut child);
             let _ = child.wait();
-            let _ = out_thread.join();
-            let _ = err_thread.join();
             return Err(tr!(
                 "Stopped after {seconds} seconds without a response. It may have been waiting for a sign-in (a password or passphrase dialog, or the SSH agent) or for the network",
                 seconds = limit.as_secs()
