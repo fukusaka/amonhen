@@ -304,6 +304,51 @@ extension Actions {
         }
     }
 
+    // MARK: - Delete branch
+
+    /// ブランチを消す前に確かめる。今のブランチにも上流にも取り込まれていないコミットがあれば（git は `-d` を断る）、
+    /// それを並べて見せ、Delete Anyway（`-D`）で消す。どちらも Undo で戻せる。
+    func deleteBranchWithConfirmation(_ item: RefItem) {
+        let repository = self.repository
+        let name = item.name
+        let upstream = item.gone ? nil : item.detail
+        Task { @MainActor in
+            // このブランチにしかないコミット。git と同じく、今のブランチか上流のどちらかに取り込まれていれば消せる。
+            let result = await Task.detached { () -> Result<CommitRange, Error> in
+                Result {
+                    func only(_ base: String) throws -> CommitRange {
+                        try repository.info(["op": "between", "base": base, "tip": name, "limit": 30], as: CommitRange.self)
+                    }
+                    let fromHead = try only("HEAD")
+                    guard fromHead.count > 0, let upstream else { return fromHead }
+                    let fromUpstream = try only(upstream)
+                    return fromUpstream.count < fromHead.count ? fromUpstream : fromHead
+                }
+            }.value
+            let unique: CommitRange
+            switch result {
+            case let .failure(error): return await inform(L("Can’t check %@", name), "\(error)")
+            case let .success(range): unique = range
+            }
+            let alert: NSAlert
+            if unique.count == 0 {
+                alert = makeAlert(L("Delete %@?", name), L("You can Undo it afterwards (⌥⌘Z)."))
+                alert.addButton(withTitle: L("Delete")).hasDestructiveAction = true
+            } else {
+                alert = makeAlert(
+                    L("Delete %@?", name),
+                    L("These commits are on no other branch (not in the current branch, nor in its upstream), so git refuses a plain delete. Delete Anyway removes them with the branch.")
+                        + " " + L("You can Undo it afterwards (⌥⌘Z)."))
+                alert.accessoryView = Self.commitLists([(L("Commits only on %@", name), unique, true)])
+                alert.addButton(withTitle: L("Delete Anyway")).hasDestructiveAction = true
+            }
+            alert.addButton(withTitle: L("Cancel"))
+            if await present(alert) == .alertFirstButtonReturn {
+                perform(["op": "deleteBranch", "name": name, "force": unique.count > 0])
+            }
+        }
+    }
+
     @MainActor
     private func makeAlert(_ title: String, _ message: String) -> NSAlert {
         let alert = NSAlert()
