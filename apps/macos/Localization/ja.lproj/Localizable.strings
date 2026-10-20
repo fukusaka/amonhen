@@ -964,3 +964,11 @@
 "Try Again" = "もう一度";
 "Uncommitted changes would be overwritten. Commit or stash them first." = "コミットしていない変更を上書きしてしまいます。先にコミットするか stash してください。";
 "The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper osxkeychain`), or add the SSH key to the agent (`ssh-add --apple-use-keychain`). Settings > Advanced > Terminal Environment shows which git, agent and helpers the app uses." = "リモートがパスワード・トークン・SSH の鍵を受け付けませんでした。ダイアログでパスワードやパスフレーズを入れたなら、入力を確かめてください（GitHub はアカウントのパスワードではなくトークンです）。毎回聞かれないようにするには、credential helper に資格情報を保存する（例: `gh auth setup-git`、`git config --global credential.helper osxkeychain`）か、SSH の鍵を agent に入れてください（`ssh-add --apple-use-keychain`）。アプリが使う git・agent・helper は、設定 > Advanced > ターミナルの環境で分かります。";
+
+
+// ブランチの削除の確認
+"Delete %@…" = "%@ を削除…";
+"Delete Anyway" = "それでも削除";
+"Can’t check %@" = "%@ を調べられません";
+"These commits are on no other branch (not in the current branch, nor in its upstream), so git refuses a plain delete. Delete Anyway removes them with the branch." = "これらのコミットはほかのどのブランチにもありません（今のブランチにも上流にも取り込まれていません）。ふつうの削除は git が断るので、「それでも削除」でブランチごと消します。";
+"Commits only on %@" = "%@ にしかないコミット";

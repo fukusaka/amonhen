@@ -9,6 +9,11 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Changed
+
+- Deleting a branch asks first. A branch with commits that are in neither the current branch nor its upstream lists
+  them and offers Delete Anyway (git refused and nothing happened before).
+
 #### Fixed
 
 - Push, Pull and Fetch over HTTPS no longer hang in Git Credential Manager when run from the app. git inherited the

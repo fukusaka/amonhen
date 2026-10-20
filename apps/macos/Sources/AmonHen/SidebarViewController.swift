@@ -457,7 +457,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         popover.delegate = self
         popover.contentViewController = BranchStatusPopover(
             facts: facts,
-            onDelete: { [weak self] in self?.actions?.perform(["op": "deleteBranch", "name": item.name, "force": false]) },
+            onDelete: { [weak self] in self?.actions?.deleteBranchWithConfirmation(item) },
             onArchive: { [weak self] in
                 self?.actions?.perform(["op": "configSet", "key": "branch.\(item.name).amonhenArchived", "value": "true"])
             },
@@ -892,7 +892,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 actions.perform(["op": "renameBranch", "from": name, "to": to])
             }
             if name != headBranch {
-                add(L("Delete %@", name)) { actions.perform(["op": "deleteBranch", "name": name, "force": false]) }
+                add(L("Delete %@…", name)) { actions.deleteBranchWithConfirmation(item) }
             }
         case .remote:
             add("Checkout \(name) as Local Branch") { actions.perform(["op": "track", "remoteBranch": name]) }
