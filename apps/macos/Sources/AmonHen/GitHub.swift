@@ -60,6 +60,8 @@ struct PullRequest: Decodable, Sendable, Hashable {
     let author: Author
     let reviewDecision: String?
     let statusCheckRollup: [Check]?
+    /// head のコミット ID（CI の吹き出しで、そのコミットのチェックを読む）。
+    let headRefOid: String?
 
     enum CI { case passing, failing, pending, none }
 
@@ -83,6 +85,42 @@ struct PullRequest: Decodable, Sendable, Hashable {
         case .failing: "✗"
         case .pending: "●"
         case .none: ""
+        }
+    }
+}
+
+/// 1 つのコミットのチェック 1 つ（GitHub Actions のジョブ、または外部の status）。
+struct CommitCheck: Sendable, Hashable {
+    let name: String
+    /// CheckRun なら conclusion（success・failure・cancelled・skipped・timed_out・action_required・neutral…。走っている
+    /// 途中は status: queued・in_progress）、status context なら state（success・failure・error・pending）。小文字。
+    let result: String
+    let url: String?
+    /// かかった時間（秒。終わっていなければ nil）。
+    let seconds: Int?
+
+    var ci: PullRequest.CI {
+        switch result {
+        case "success": .passing
+        case "failure", "error", "timed_out", "cancelled", "action_required", "startup_failure", "stale": .failing
+        case "queued", "in_progress", "pending", "waiting", "requested", "expected": .pending
+        default: .none
+        }
+    }
+
+    var resultLabel: String {
+        switch result {
+        case "success": L("passed")
+        case "failure", "error", "startup_failure": L("failed")
+        case "cancelled": L("cancelled")
+        case "timed_out": L("timed out")
+        case "skipped": L("skipped")
+        case "neutral": L("neutral")
+        case "action_required": L("action required")
+        case "stale": L("stale")
+        case "queued", "waiting", "requested", "expected": L("queued")
+        case "in_progress", "pending": L("running")
+        default: result
         }
     }
 }
@@ -138,7 +176,7 @@ enum GitHub {
     static func pullRequests(_ repo: GitHubRepository) async throws -> [PullRequest] {
         let data = try await run([
             "pr", "list", "-R", repo.slug, "--state", "open", "--limit", "50",
-            "--json", "number,title,url,headRefName,baseRefName,isDraft,author,reviewDecision,statusCheckRollup",
+            "--json", "number,title,url,headRefName,baseRefName,isDraft,author,reviewDecision,statusCheckRollup,headRefOid",
         ])
         return try JSONDecoder().decode([PullRequest].self, from: data)
     }
@@ -229,6 +267,48 @@ enum GitHub {
             }
         }
         return (ci, avatars)
+    }
+
+    /// `sha` のコミットのチェック（Actions の check run と、外部の status）。印を押したときに読む。
+    static func commitChecks(_ repo: GitHubRepository, sha: String) async throws -> [CommitCheck] {
+        var host: [String] = []
+        if repo.host != "github.com" { host = ["--hostname", repo.host] }
+        let base = "repos/\(repo.owner)/\(repo.name)/commits/\(sha)"
+        async let runsData = run(["api", "\(base)/check-runs?per_page=100"] + host)
+        async let statusData = run(["api", "\(base)/status"] + host)
+        struct Runs: Decodable {
+            struct Run: Decodable {
+                let name: String
+                let status: String?
+                let conclusion: String?
+                let html_url: String?
+                let started_at: String?
+                let completed_at: String?
+            }
+            let check_runs: [Run]
+        }
+        struct Status: Decodable {
+            struct Context: Decodable {
+                let context: String
+                let state: String
+                let target_url: String?
+            }
+            let statuses: [Context]
+        }
+        let iso = ISO8601DateFormatter()
+        var out: [CommitCheck] = []
+        for run in try JSONDecoder().decode(Runs.self, from: try await runsData).check_runs {
+            let result = (run.conclusion ?? run.status ?? "").lowercased()
+            let seconds: Int? = {
+                guard let s = run.started_at.flatMap(iso.date(from:)), let e = run.completed_at.flatMap(iso.date(from:)) else { return nil }
+                return Int(e.timeIntervalSince(s))
+            }()
+            out.append(CommitCheck(name: run.name, result: result, url: run.html_url, seconds: seconds))
+        }
+        for context in try JSONDecoder().decode(Status.self, from: try await statusData).statuses {
+            out.append(CommitCheck(name: context.context, result: context.state.lowercased(), url: context.target_url, seconds: nil))
+        }
+        return out
     }
 
     /// プルリクエストのブランチをチェックアウトする（なければ作る）。

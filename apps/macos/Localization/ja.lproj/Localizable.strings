@@ -977,3 +977,20 @@
 "Delete %ld Branches…" = "%ld 本のブランチを削除…";
 "Delete %ld branches?" = "%ld 本のブランチを削除しますか？";
 "A branch with commits that are merged nowhere is kept (git refuses)." = "どこにも取り込まれていないコミットを持つブランチは残ります（git が断ります）。";
+
+// CI の印の吹き出し
+"Loading the checks…" = "チェックを読んでいます…";
+"No checks on this commit." = "このコミットにチェックはありません。";
+"%ld checks" = "%ld 件のチェック";
+"Couldn’t read the checks: %@" = "チェックを読めません: %@";
+"Open on GitHub" = "GitHub で開く";
+"passed" = "成功";
+"failed" = "失敗";
+"cancelled" = "取り消し";
+"timed out" = "時間切れ";
+"skipped" = "スキップ";
+"neutral" = "どちらでもない";
+"action required" = "対応が必要";
+"stale" = "古い";
+"queued" = "待ち";
+"running" = "実行中";
