@@ -11,6 +11,10 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Push, Pull and Fetch over HTTPS no longer hang in Git Credential Manager when run from the app. The app's threads
+  block SIGCHLD, git inherited that mask, and the credential manager (.NET) waited forever for its `git version`
+  child to be reaped, while the same push went through in a terminal. git and ssh started by the engine, and by the
+  shared daemon the app starts, now begin with an empty signal mask.
 - The app no longer crashes at launch from the second launch on. Taking the login shell's environment (new in 0.2.2)
   read the shell in the background once a cached result existed, and that read ran on the main actor's behalf from a
   background queue, which the runtime's isolation check stopped with a trap. The first launch after installing, which
