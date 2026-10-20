@@ -243,7 +243,10 @@ First release.
 
 ## VSCode extension
 
-### [Unreleased]
+### [0.2.2] - 2026-10-20
+
+The bundled engines are the 0.2.2 ones and speak remote protocol 21, like the 0.2.2 app and CLI, so all three share
+one daemon again. The Working Copy diff shows a file's line endings when they matter.
 
 #### Added
 
