@@ -209,6 +209,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 history.select(row: row)
             }
         }
+        // ブランチ・タグを複数選ぶと、それぞれから辿れる履歴をまとめて出す。
+        sidebar.onSelectMany = { [weak history] items in
+            history?.set(scope: .refs(items.compactMap { item in
+                item.target.map { HistoryViewController.Ref(kind: item.kind, name: item.name, target: $0) }
+            }))
+        }
         let root = repository.workdir ?? RepositoryLocation.path(location)
         let remote = RepositoryLocation.isRemote(location)
         sidebar.onOpenSubmodule = { [weak self] path in

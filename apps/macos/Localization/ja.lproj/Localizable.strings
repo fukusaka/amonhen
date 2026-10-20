@@ -968,3 +968,10 @@
 // サイドバーの絞り込みと複数選択
 "Filter branches" = "ブランチを絞り込む";
 "Filter Branches…" = "ブランチを絞り込む…";
+"%ld branches" = "%ld 本のブランチ";
+"Copy %ld Names" = "%ld 個の名前をコピー";
+"Archive %ld Branches" = "%ld 本のブランチをアーカイブ";
+"Unarchive %ld Branches" = "%ld 本のブランチをアーカイブから戻す";
+"Delete %ld Branches…" = "%ld 本のブランチを削除…";
+"Delete %ld branches?" = "%ld 本のブランチを削除しますか？";
+"A branch with commits that are merged nowhere is kept (git refuses)." = "どこにも取り込まれていないコミットを持つブランチは残ります（git が断ります）。";

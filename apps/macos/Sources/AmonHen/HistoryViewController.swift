@@ -205,6 +205,15 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         case current
         /// サイドバーで選んだ ref（種類, 名前, コミット）。ref が動いたら、コミットを付け替える。
         case ref(RefKind, String, Data)
+        /// サイドバーで複数選んだ ref。それぞれから辿れるコミットをまとめて出す。
+        case refs([Ref])
+    }
+
+    /// `Scope.refs` の 1 つ。
+    struct Ref: Equatable {
+        let kind: RefKind
+        let name: String
+        var target: Data
     }
 
     private(set) var scope: Scope = .all
@@ -438,10 +447,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private func updateScopePopup() {
         scopePopup.removeAllItems()
         scopePopup.addItems(withTitles: [L("All Branches"), L("Current Branch")])
-        if case let .ref(_, name, _) = scope {
+        switch scope {
+        case let .ref(_, name, _):
             scopePopup.addItem(withTitle: name)
             scopePopup.selectItem(at: 2)
-        } else {
+        case let .refs(list):
+            scopePopup.addItem(withTitle: L("%ld branches", list.count))
+            scopePopup.selectItem(at: 2)
+        default:
             scopePopup.selectItem(at: scope == .current ? 1 : 0)
         }
     }
@@ -489,6 +502,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         case .all: nil
         case .current: head.map { [$0] }
         case let .ref(_, _, target): [target] + companionTips
+        case let .refs(list): list.map(\.target)
         }
         let fold = Settings.foldMergedBranches, expanded = Array(expandedMerges)
         Task {
@@ -785,6 +799,17 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
            let now = refs.items.first(where: { $0.kind == kind && $0.name == name })?.target, now != target {
             scope = .ref(kind, name, now)
             scheduleReloadScope()
+        }
+        if case let .refs(list) = scope {
+            let moved = list.map { ref in
+                var ref = ref
+                if let now = refs.items.first(where: { $0.kind == ref.kind && $0.name == ref.name })?.target { ref.target = now }
+                return ref
+            }
+            if moved != list {
+                scope = .refs(moved)
+                scheduleReloadScope()
+            }
         }
         let head = editingBranch ?? refs.headBranch
         var labels: [Data: [RefLabel]] = [:]

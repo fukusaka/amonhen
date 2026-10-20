@@ -39,6 +39,9 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 - Conflicts appears in the sidebar only when there are conflicts, with a count.
 - A filter field at the top of the sidebar (Navigate > Filter Branches…, ⌥⌘F) narrows Branches, Remotes and Tags to
   the names containing every word typed; matches are listed flat with their full names. Esc clears it.
+- Several branches or tags can be selected (⌘-click, ⇧-click). History then shows the commits reachable from any
+  of them, and the context menu offers Copy Names and, for local branches, Archive and Delete together (Delete asks
+  first and lists the names).
 - Pull Requests and Worktrees appear only when there is something to show.
 
 ## 1. Multiple repositories: tabs and separate windows
