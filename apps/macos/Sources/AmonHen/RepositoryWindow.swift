@@ -254,6 +254,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         slot.actions.window = window
         slot.actions.onFailure = { [weak self] failure in self?.showFailure(failure) }
+        // Push のシートは、右の欄と同じ詳細の表示を読み取り専用で埋め込む（同じ描画器で）。
+        slot.actions.makeDetailView = { [weak self, weak slot] in
+            guard let self, let slot else { return nil }
+            return CommitDetailViewController(repository: slot.repository, renderer: textRenderer)
+        }
         slot.actions.onChange = { [weak self, weak slot] in
             self?.history.refresh()
             self?.reloadRefs()

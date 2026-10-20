@@ -977,3 +977,13 @@
 "Delete %ld Branches…" = "%ld 本のブランチを削除…";
 "Delete %ld branches?" = "%ld 本のブランチを削除しますか？";
 "A branch with commits that are merged nowhere is kept (git refuses)." = "どこにも取り込まれていないコミットを持つブランチは残ります（git が断ります）。";
+
+// Push のシート（送るコミットと中身、注意）
+"All changes to send (%ld)" = "送る変更すべて（%ld）";
+"From upstream to HEAD, all files" = "上流から HEAD まで、全ファイル";
+"Commits upstream will lose (%ld)" = "上流から消えるコミット（%ld）";
+"%ld files changed" = "%ld ファイルが変わります";
+"This pushes straight to %@." = "%@ に直接 push します。";
+"%ld commits look unfinished (fixup!, squash! or WIP)." = "整理し忘れらしいコミットが %ld 件あります（fixup!・squash!・WIP）。";
+"Adds files that may hold secrets: %@" = "秘密を含みそうなファイルを追加しています: %@";
+"Adds %ld binary files." = "バイナリのファイルを %ld 個追加しています。";

@@ -134,7 +134,7 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 | Location | Branch (in the title position) | Branch switcher panel (fuzzy search, recent branches on top) | — (rename and upstream are in the Repository menu) |
 | Sync | Fetch | Fetch the default remote | All remotes, with prune, tags too |
 | | Pull | Confirmation sheet: the commits to bring in and the local-only ones, how to integrate (merge / rebase / ff-only, the default from settings) with what that does (a merge commit, rewritten IDs, ff-only fails), a warning about uncommitted changes | — |
-| | Push | Confirmation sheet: the commits to send. If upstream has commits we lack, suggest Pull (Force Push… only from there, listing the commits upstream would lose); if there is no upstream, confirm creating one | — |
+| | Push | Confirmation window (modal, movable and resizable): where it goes, warnings worth a look (straight to the default branch, fixup!/WIP commits, files that may hold secrets, binaries added), the commits to send on the left and, on the right, the same message, files and diff as the detail column for the selected commit or for all changes together (read-only). ↩ pushes. If upstream has commits we lack, suggest Pull (Force Push… only from there, listing the commits upstream would lose); if there is no upstream, confirm creating one | — |
 | Integrate | Merge | Merge the selected commit or branch into the current branch (choose no-ff or squash in the confirmation sheet) | List of recent branches |
 | | Rebase | Rebase the current branch onto the selection | interactive (enters History's edit mode), onto |
 | Stash | Stash | Stash (with a message field; ⌥-click stashes immediately) | Include untracked, staged only, selected files only |

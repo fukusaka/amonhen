@@ -14,6 +14,9 @@ becomes the GitHub Release notes.
 - A filter field at the top of the sidebar (⌥⌘F) narrows branches, remotes and tags by name.
 - Several branches or tags can be selected in the sidebar: History shows the commits reachable from any of them, and
   the context menu copies their names, or adds them to Favorites, archives or deletes them together (Delete asks first).
+- The Push confirmation is a window of its own (movable, resizable) that shows what it sends: warnings worth a look (straight to the default branch, fixup!/WIP commits,
+  files that may hold secrets, binaries added), the commits on the left, and on the right the message, files and
+  diff of the selected commit or of all changes together, as in the detail column.
 
 #### Fixed
 
