@@ -15,6 +15,11 @@ becomes the GitHub Release notes.
 - Several branches or tags can be selected in the sidebar: History shows the commits reachable from any of them, and
   the context menu copies their names, or adds them to Favorites, archives or deletes them together (Delete asks first).
 
+#### Changed
+
+- Deleting a branch asks first. A branch with commits that are in neither the current branch nor its upstream lists
+  them and offers Delete Anyway (git refused and nothing happened before). Dropping a stash asks too.
+
 #### Fixed
 
 - Push, Pull and Fetch over HTTPS no longer hang in Git Credential Manager when run from the app. git inherited the

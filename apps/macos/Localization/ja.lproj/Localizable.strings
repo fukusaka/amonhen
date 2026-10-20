@@ -977,3 +977,11 @@
 "Delete %ld Branches…" = "%ld 本のブランチを削除…";
 "Delete %ld branches?" = "%ld 本のブランチを削除しますか？";
 "A branch with commits that are merged nowhere is kept (git refuses)." = "どこにも取り込まれていないコミットを持つブランチは残ります（git が断ります）。";
+
+// ブランチの削除と stash の drop の確認
+"Delete %@…" = "%@ を削除…";
+"Delete Anyway" = "それでも削除";
+"Can’t check %@" = "%@ を調べられません";
+"These commits are on no other branch (not in the current branch, nor in its upstream), so git refuses a plain delete. Delete Anyway removes them with the branch." = "これらのコミットはほかのどのブランチにもありません（今のブランチにも上流にも取り込まれていません）。ふつうの削除は git が断るので、「それでも削除」でブランチごと消します。";
+"Commits only on %@" = "%@ にしかないコミット";
+"Drop %@…" = "%@ を drop…";

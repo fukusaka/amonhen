@@ -524,7 +524,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         popover.delegate = self
         popover.contentViewController = BranchStatusPopover(
             facts: facts,
-            onDelete: { [weak self] in self?.actions?.perform(["op": "deleteBranch", "name": item.name, "force": false]) },
+            onDelete: { [weak self] in self?.actions?.deleteBranchWithConfirmation(item) },
             onArchive: { [weak self] in
                 self?.actions?.perform(["op": "configSet", "key": "branch.\(item.name).amonhenArchived", "value": "true"])
             },
@@ -997,7 +997,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 actions.perform(["op": "renameBranch", "from": name, "to": to])
             }
             if name != headBranch {
-                add(L("Delete %@", name)) { actions.perform(["op": "deleteBranch", "name": name, "force": false]) }
+                add(L("Delete %@…", name)) { actions.deleteBranchWithConfirmation(item) }
             }
         case .remote:
             add("Checkout \(name) as Local Branch") { actions.perform(["op": "track", "remoteBranch": name]) }
@@ -1011,7 +1011,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .stash:
             add("Apply \(name)") { actions.perform(["op": "stashApply", "name": name, "pop": false]) }
             add("Pop \(name)") { actions.perform(["op": "stashApply", "name": name, "pop": true]) }
-            add("Drop \(name)") { actions.perform(["op": "stashDrop", "name": name]) }
+            add(L("Drop %@…", name)) {
+                guard actions.confirm(L("Drop %@?", name), message: (item.detail.map { $0 + "\n" } ?? "") + L("You can Undo it afterwards (⌥⌘Z)."), ok: L("Drop")) else { return }
+                actions.perform(["op": "stashDrop", "name": name])
+            }
         case .submodule:
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
             add(L("Open %@ in New Window", name)) { [weak self] in self?.onOpenSubmodule?(name) }
