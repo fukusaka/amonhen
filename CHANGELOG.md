@@ -15,6 +15,9 @@ becomes the GitHub Release notes.
 - Several branches or tags can be selected in the sidebar: History shows the commits reachable from any of them, and
   the context menu copies their names, or adds them to Favorites, archives or deletes them together (Delete asks first).
 - Kotlin (`.kt`, `.kts`) is highlighted in diffs.
+- The Push confirmation is a window of its own (movable, resizable) that shows what it sends: warnings worth a look (straight to the default branch, fixup!/WIP commits,
+  files that may hold secrets, binaries added), the commits on the left, and on the right the message, files and
+  diff of the selected commit or of all changes together, as in the detail column.
 - Clicking a commit's CI mark in History, or a pull request's in the sidebar, opens a popover listing its checks
   (result, name, duration), each linking to its log, with a button to the checks page on GitHub.
 

@@ -783,6 +783,17 @@ AmonhenChanges *amonhen_stash_changes(const AmonhenRepo *repo_ptr,
                                       const uint8_t *stash);
 
 /**
+ * コミット `base`（20 バイト。NULL なら全ファイルの追加）から `tip`（20 バイト）への変更で変わったファイル。
+ * push で送る範囲（upstream..HEAD）などに（`amonhen_changes_free` で解放する）。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリ、`base` は NULL か 20 バイト読める領域、`tip` は 20 バイト読める領域であること。
+ */
+AmonhenChanges *amonhen_range_changes(const AmonhenRepo *repo_ptr,
+                                      const uint8_t *base,
+                                      const uint8_t *tip);
+
+/**
  * # Safety
  * `changes` は有効であること。返したポインタは解放するまで有効。
  */

@@ -13,6 +13,8 @@ final class Actions {
     var onFailure: ((OperationFailure) -> Void)?
     /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。確認のシートに出す。
     var worktreeName: String?
+    /// Push のシートに埋め込む詳細の欄（メッセージ・変更ファイル・差分）を作る。Metal の描画器を持つウィンドウが渡す。
+    var makeDetailView: (() -> CommitDetailViewController?)?
 
     init(repository: Repository) {
         self.repository = repository

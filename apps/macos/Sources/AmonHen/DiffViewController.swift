@@ -1149,6 +1149,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     }
     private let styleControl = NSSegmentedControl(
         labels: CommitHeaderStyle.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
+    /// Push の確認に埋め込むとき: メタ情報は「標準」に固定して切り替えを出さず、広げる・翻訳・AI のボタンも出さない。
+    /// `view` を作る前に設定する。
+    var isPreview = false
 
     init(repository: Repository, renderer: TextRenderer) {
         self.repository = repository
@@ -1174,7 +1177,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         // パスの列を表の幅いっぱいにする（狭いと途中が省略される）。
         files.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         files.headerView = nil
-        files.style = .sourceList
+        // 別の窓（Push の確認）では、sourceList の透ける背景が窓の後ろを映すので、ふつうの一覧にする。
+        files.style = isPreview ? .inset : .sourceList
         files.dataSource = self
         files.delegate = self
         let fileMenu = NSMenu()
@@ -1218,7 +1222,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         headerContainer.addSubview(peopleStrip)
         styleControl.controlSize = .mini
         styleControl.font = .systemFont(ofSize: NSFont.systemFontSize(for: .mini))
-        styleControl.selectedSegment = CommitHeaderStyle.saved.rawValue
+        styleControl.selectedSegment = isPreview ? CommitHeaderStyle.standard.rawValue : CommitHeaderStyle.saved.rawValue
+        styleControl.isHidden = isPreview
         styleControl.target = self
         styleControl.action = #selector(styleChanged)
         styleControl.sizeToFit()
@@ -1240,6 +1245,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             x: styleControl.frame.minX - expandButton.frame.width - 4,
             y: styleControl.frame.midY - expandButton.frame.height / 2)
         expandButton.autoresizingMask = [.minXMargin, .minYMargin]
+        expandButton.isHidden = isPreview
         headerContainer.addSubview(expandButton)
         var right = expandButton.frame.minX
         for (button, symbol, tip, action) in [
@@ -1262,7 +1268,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         updateAssistantButtons()
         NotificationCenter.default.addObserver(
             self, selector: #selector(updateAssistantButtons), name: .assistantChanged, object: nil)
-        if CommitHeaderStyle.saved == .compact {
+        if CommitHeaderStyle.saved == .compact, !isPreview {
             // 簡潔で始めるなら、最初から低くしておく。
             headerContainer.frame.size.height = 48
         }
@@ -1588,6 +1594,58 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
     }
 
+    /// Push のシートの「送る変更すべて」: `base`..`tip`（上流から HEAD まで）の差分を、全ファイル縦に並べて出す。
+    /// 見出しは `title` と、送るコミットの 1 行ずつ（`lines`）。
+    func show(range base: Data, to tip: Data, title: String, lines: [String]) {
+        endReword()
+        shownSelection = nil
+        request += 1
+        headerRequest += 1
+        let request = self.request
+        shownCommit = nil
+        commitHex = nil
+        info = nil
+        extras = nil
+        changes = nil
+        stacked = nil
+        reloadFiles()
+        renderRangeHeader(title: title, lines: lines, note: L("Loading the diff…"))
+        diffView.show(nil, message: L("Loading the diff…"))
+        let repository = self.repository
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                try? repository.changes(from: base, to: tip).stacked()
+            }.value
+            guard request == self.request else { return }
+            guard let stacked = result else {
+                diffView.show(nil, message: L("Couldn’t load the diff"))
+                return
+            }
+            self.stacked = stacked
+            reloadFiles()
+            renderRangeHeader(title: title, lines: lines, note: L("%ld files changed", stacked.count))
+            if stacked.count == 0 {
+                diffView.show(nil, message: L("No changes"))
+                return
+            }
+            let hex = { (d: Data) in d.map { String(format: "%02x", $0) }.joined() }
+            showStacked(stacked, key: hex(base) + ".." + hex(tip))
+        }
+    }
+
+    private func renderRangeHeader(title: String, lines: [String], note: String) {
+        let text = NSMutableAttributedString()
+        let bold: [NSAttributedString.Key: Any] = [.font: NSFont.boldSystemFont(ofSize: 13), .foregroundColor: NSColor.labelColor]
+        let small: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 11), .foregroundColor: NSColor.secondaryLabelColor]
+        let body: [NSAttributedString.Key: Any] = [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.labelColor]
+        text.append(NSAttributedString(string: title + "\n", attributes: bold))
+        text.append(NSAttributedString(string: note + "\n\n", attributes: small))
+        for line in lines { text.append(NSAttributedString(string: line + "\n", attributes: body)) }
+        layoutPeopleStrip(visible: false)
+        header.textStorage?.setAttributedString(text)
+        scheduleHeaderFit()
+    }
+
     /// 選んだコミットの数・差分の取り方・各コミットの 1 行。
     private func renderSelectionHeader(rows: [Int], history: History, kind: SelectionKind?, pair: PairMode = .forward) {
         let sorted = rows.sorted()
@@ -1827,8 +1885,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     // MARK: - AI
 
     @objc private func updateAssistantButtons() {
-        translateButton.isHidden = !Assistant.isConfigured
-        explainButton.isHidden = !Assistant.isConfigured
+        translateButton.isHidden = !Assistant.isConfigured || isPreview
+        explainButton.isHidden = !Assistant.isConfigured || isPreview
     }
 
     /// メッセージ（複数のコミットを選んでいれば、上の欄の一覧）。

@@ -38,9 +38,16 @@ extension Actions {
             }
             let (outgoing, incoming) = (state.outgoing, state.incoming)
             if force {
-                let alert = makeAlert(
-                    L("Force push %@?", branch),
-                    L("This replaces %@ with your %@ (--force-with-lease: it fails if someone pushed in the meantime).", upstream, branch))
+                let title = L("Force push %@?", branch)
+                let message = L("This replaces %@ with your %@ (--force-with-lease: it fails if someone pushed in the meantime).", upstream, branch)
+                if let range = state.range, let detail = makeDetailView?(), let window {
+                    let sheet = PushSheet(
+                        title: title, message: sheetMessage(message), warnings: state.warnings, commits: outgoing,
+                        lost: incoming, range: range, detail: detail, ok: "Force Push", destructive: true)
+                    if await sheet.present(in: window) { push(force: true) }
+                    return
+                }
+                let alert = makeAlert(title, message)
                 alert.accessoryView = Self.commitLists([
                     (L("Commits to send"), outgoing, false), (L("Commits %@ will lose", upstream), incoming, true),
                 ])
@@ -70,7 +77,16 @@ extension Actions {
             if outgoing.count == 0 {
                 return await inform(L("Nothing to push"), L("%@ is the same as %@ (as of the last Fetch).", branch, upstream))
             }
-            let alert = makeAlert(L("Push %ld commits to %@?", outgoing.count, upstream), "")
+            let title = L("Push %ld commits to %@?", outgoing.count, upstream)
+            // 送るコミットとその中身を、右の欄と同じ表示で読んでから押す（Metal がなければ一覧だけのシート）。
+            if let range = state.range, let detail = makeDetailView?(), let window {
+                let sheet = PushSheet(
+                    title: title, message: sheetMessage(""), warnings: state.warnings, commits: outgoing, lost: nil,
+                    range: range, detail: detail, ok: "Push", destructive: false)
+                if await sheet.present(in: window) { push(force: false) }
+                return
+            }
+            let alert = makeAlert(title, "")
             alert.accessoryView = Self.commitLists([(L("Commits to send"), outgoing, false)])
             alert.addButton(withTitle: "Push")
             alert.addButton(withTitle: L("Cancel"))
@@ -212,6 +228,48 @@ extension Actions {
         let outgoing: CommitRange
         /// 上流にあって手元にない（pull で取り込む）。
         let incoming: CommitRange
+        /// 送る範囲の両端（上流のコミットと HEAD）。送るものがなければ nil。
+        var range: (base: Data, tip: Data)? = nil
+        /// Push の前に目を向けてほしいこと（既定のブランチへ直接、整理し忘れのコミット、秘密らしきファイルの追加など）。
+        var warnings: [String] = []
+    }
+
+    /// シートの説明文（worktree が 2 つ以上なら、どの worktree かを先頭に）。
+    private func sheetMessage(_ message: String) -> String {
+        worktreeName.map { L("In the worktree “%@”.", $0) + (message.isEmpty ? "" : "\n" + message) } ?? message
+    }
+
+    /// Push の前の注意。送るコミットの件名と、送る範囲で足すファイルから。
+    nonisolated private static func pushWarnings(upstream: String, outgoing: CommitRange, changes: CommitChanges) -> [String] {
+        var out: [String] = []
+        let remoteBranch = upstream.split(separator: "/", maxSplits: 1).last.map(String.init) ?? upstream
+        if ["main", "master", "trunk", "develop"].contains(remoteBranch) {
+            out.append(L("This pushes straight to %@.", upstream))
+        }
+        let unfinished = outgoing.commits.filter { c in
+            let s = c.subject.lowercased()
+            return s.hasPrefix("fixup!") || s.hasPrefix("squash!") || s.hasPrefix("amend!") || s.hasPrefix("wip") || s.contains(" wip ") || s.hasSuffix(" wip")
+        }
+        if !unfinished.isEmpty {
+            out.append(L("%ld commits look unfinished (fixup!, squash! or WIP).", unfinished.count))
+        }
+        let added = changes.items.filter { $0.kind == .added }
+        let secretLike = added.map(\.path).filter { path in
+            let name = (path as NSString).lastPathComponent.lowercased()
+            return name == ".env" || name.hasPrefix(".env.") || name.hasSuffix(".pem") || name.hasSuffix(".key")
+                || name.hasSuffix(".p12") || name.hasSuffix(".pfx") || name.hasPrefix("id_rsa") || name.hasPrefix("id_ed25519")
+                || name.contains("credential") || name.contains("secret")
+        }
+        if !secretLike.isEmpty {
+            out.append(L("Adds files that may hold secrets: %@", secretLike.prefix(3).joined(separator: ", ")))
+        }
+        // バイナリの追加（画像や成果物をうっかり入れたとき）。数えるのに blob を読むので、先頭の 100 ファイルまで。
+        var binaries = 0
+        for (i, item) in changes.items.prefix(100).enumerated() where item.kind == .added {
+            if let diff = try? changes.diff(at: i), diff.isBinary { binaries += 1 }
+        }
+        if binaries > 0 { out.append(L("Adds %ld binary files.", binaries)) }
+        return out
     }
 
     @MainActor
@@ -224,9 +282,18 @@ extension Actions {
                     return SyncState(status: status, outgoing: .empty, incoming: .empty)
                 }
                 func range(_ base: String, _ tip: String) throws -> CommitRange {
-                    try repository.info(["op": "between", "base": base, "tip": tip, "limit": 30], as: CommitRange.self)
+                    try repository.info(["op": "between", "base": base, "tip": tip, "limit": 500], as: CommitRange.self)
                 }
-                return SyncState(status: status, outgoing: try range(upstream, "HEAD"), incoming: try range("HEAD", upstream))
+                var state = SyncState(status: status, outgoing: try range(upstream, "HEAD"), incoming: try range("HEAD", upstream))
+                // 送るものがあれば、その範囲の両端（シートの「送る変更すべて」の差分）と、注意を求める。
+                let refs = try repository.loadRefs()
+                if state.outgoing.count > 0, let tip = refs.head,
+                   let base = refs.items.first(where: { $0.kind == .remote && $0.name == upstream })?.target {
+                    state.range = (base, tip)
+                    let changes = try repository.changes(from: base, to: tip)
+                    state.warnings = Self.pushWarnings(upstream: upstream, outgoing: state.outgoing, changes: changes)
+                }
+                return state
             }
         }.value
         switch result {
