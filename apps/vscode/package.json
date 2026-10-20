@@ -3,7 +3,7 @@
   "displayName": "Amon Hen",
   "description": "A personal extension for working with Git comfortably in VSCode, on the Amon Hen engine",
   "icon": "media/icon.png",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "publisher": "fukusaka",
   "private": true,
   "license": "(MIT OR Apache-2.0)",
