@@ -14,8 +14,16 @@ becomes the GitHub Release notes.
 - A filter field at the top of the sidebar (⌥⌘F) narrows branches, remotes and tags by name.
 - Several branches or tags can be selected in the sidebar: History shows the commits reachable from any of them, and
   the context menu copies their names, or adds them to Favorites, archives or deletes them together (Delete asks first).
+- Kotlin (`.kt`, `.kts`) is highlighted in diffs.
 - Clicking a commit's CI mark in History, or a pull request's in the sidebar, opens a popover listing its checks
   (result, name, duration), each linking to its log, with a button to the checks page on GitHub.
+
+#### Changed
+
+- Highlighting picks the language by the shebang when the file name says nothing (`#!/usr/bin/env python3`, `#!/bin/sh`
+  and so on), treats a `.h` that looks like C++ as C++, and knows more file names (Cargo.lock, Podfile, BUILD, …).
+- Deleting a branch asks first. A branch with commits that are in neither the current branch nor its upstream lists
+  them and offers Delete Anyway (git refused and nothing happened before). Dropping a stash asks too.
 
 #### Fixed
 
