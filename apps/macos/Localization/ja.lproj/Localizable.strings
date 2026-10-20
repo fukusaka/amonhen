@@ -970,6 +970,8 @@
 "Filter Branches…" = "ブランチを絞り込む…";
 "%ld branches" = "%ld 本のブランチ";
 "Copy %ld Names" = "%ld 個の名前をコピー";
+"Add %ld to Favorites" = "%ld 本をお気に入りに入れる";
+"Remove %ld from Favorites" = "%ld 本をお気に入りから外す";
 "Archive %ld Branches" = "%ld 本のブランチをアーカイブ";
 "Unarchive %ld Branches" = "%ld 本のブランチをアーカイブから戻す";
 "Delete %ld Branches…" = "%ld 本のブランチを削除…";

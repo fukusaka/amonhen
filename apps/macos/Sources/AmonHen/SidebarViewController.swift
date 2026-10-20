@@ -916,7 +916,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             menu.addItem(ClosureMenuItem(title: title, action: action))
         }
         // 複数選んだ行の上で開いたら、選んだものをまとめて扱う（名前をコピー。ローカルブランチだけなら、まとめて
-        // アーカイブ・削除も）。
+        // お気に入り・アーカイブ・削除も）。
         let selected = outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.item }
         if selected.count > 1, outline.selectedRowIndexes.contains(outline.clickedRow) {
             let names = selected.map(\.name)
@@ -927,6 +927,19 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let locals = selected.filter { $0.kind == .local }.map(\.name)
             if locals.count == selected.count {
                 menu.addItem(.separator())
+                // お気に入りは、全部入っていれば外す、そうでなければ（まだのものを）入れる。
+                let allPinned = locals.allSatisfy { pinnedOrder.contains($0) }
+                add(allPinned ? L("Remove %ld from Favorites", locals.count) : L("Add %ld to Favorites", locals.count)) { [weak self] in
+                    guard let self else { return }
+                    if allPinned {
+                        savePinnedOrder(pinnedOrder.filter { !locals.contains($0) })
+                        actions.perform(sequence: locals.map {
+                            ["op": "configSet", "key": "branch.\($0).amonhenPinned", "value": NSNull()]
+                        })
+                    } else {
+                        savePinnedOrder(pinnedOrder + locals.filter { !pinnedOrder.contains($0) })
+                    }
+                }
                 let allArchived = locals.allSatisfy { branchFacts[$0]?.archived == true }
                 add(allArchived ? L("Unarchive %ld Branches", locals.count) : L("Archive %ld Branches", locals.count)) {
                     actions.perform(sequence: locals.map {
