@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "types": ["node", "vscode"]
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "e2e"]
 }

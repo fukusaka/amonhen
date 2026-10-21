@@ -606,12 +606,16 @@
     "watch": "node esbuild.mjs --watch",
     "typecheck": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.ts\"",
+    "test:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/run.mjs",
     "package": "vsce package --skip-license",
     "vscode:prepublish": "npm run typecheck && node esbuild.mjs --production"
   },
   "devDependencies": {
+    "@types/mocha": "^10.0.10",
     "@types/node": "^22.20.5",
     "@types/vscode": "~1.120.0",
+    "@vscode/test-cli": "^0.0.15",
+    "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
     "typescript": "^7.0.2"
