@@ -27,18 +27,20 @@ const EMPTY: u8 = 0;
 const PASS: u8 = 1;
 const ACTIVE: u8 = 2;
 
-/// `rows` を表示するときの、レーンごとの中心の横位置（左端を 0 とする）。何もないレーンは幅を取らず、
-/// 次のレーンと同じ位置になる（アニメーションで点が湧き出るように見せるため、位置は必ず持たせる）。
-pub fn lane_positions(layout: &GraphLayout, rows: Range<u32>, m: &LaneMetrics) -> Vec<f32> {
+/// `rows` を表示するときの、レーンごとの中心の横位置（左端を 0 とする）と、レーン全体の幅。何もないレーンは
+/// 幅を取らず、次のレーンと同じ位置になる（アニメーションで点が湧き出るように見せるため、位置は必ず持たせる）。
+/// 全体の幅は FE がグラフの列の幅を決めるのに使う（見えているレーンの分だけ取り、文字との隙間を空けない）。
+pub fn lane_positions(layout: &GraphLayout, rows: Range<u32>, m: &LaneMetrics) -> (Vec<f32>, f32) {
     let mut x = 0.0;
-    lane_widths(layout, rows, m)
+    let centers = lane_widths(layout, rows, m)
         .into_iter()
         .map(|width| {
             let center = x + width / 2.0;
             x += width;
             center
         })
-        .collect()
+        .collect();
+    (centers, x)
 }
 
 /// レーンごとの幅。
@@ -128,8 +130,9 @@ mod tests {
             "この範囲には線だけのレーンも空のレーンもある"
         );
         // 中心は、左のレーンの幅の合計 + 自分の幅の半分。
-        let x = lane_positions(&l, 250..280, &M);
+        let (x, total) = lane_positions(&l, 250..280, &M);
         assert_eq!(x[1], widths[0] + widths[1] / 2.0);
+        assert_eq!(total, widths.iter().sum::<f32>());
     }
 
     #[test]

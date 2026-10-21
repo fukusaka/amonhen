@@ -39,6 +39,10 @@ final class GraphRenderer {
         var thinLaneWidth: Float = 3
         var minLaneWidth: Float = 7
         var minThinLaneWidth: Float = 0
+        /// グラフの列の幅の上限。見えているレーンがこれに収まらなければ魚眼で詰める。
+        var maxWidth: Float = 120
+        /// 右端のレーンと文字との間の余白。
+        var rightInset: Float = 4
     }
 
     let device: MTLDevice
@@ -92,9 +96,12 @@ final class GraphRenderer {
     /// 今描いているレーンの位置と、向かっている位置（コアが見えている範囲から決める）。
     private var currentX: [Float] = []
     private var targetX: [Float] = []
-    private var targetKey: (history: ObjectIdentifier, rows: Range<Int>, width: Float)?
+    /// グラフの列の幅（見えているレーンの分だけ取る）。位置と同じく、今の幅と向かっている幅。
+    private var currentWidth: Float = 0
+    private var targetWidth: Float = 0
+    private var targetKey: (history: ObjectIdentifier, rows: Range<Int>)?
     private var lastAdvance: CFTimeInterval = 0
-    /// レーンの位置がまだ動いている（FE は止まるまで描き直す）。
+    /// レーンの位置や列の幅がまだ動いている（FE は止まるまで描き直す）。
     private(set) var isAnimating = false
 
     func laneX(_ lane: UInt16) -> Float {
@@ -103,33 +110,65 @@ final class GraphRenderer {
         return metrics.leftInset - metrics.laneWidth / 2 + x
     }
 
-    /// 見えている行 `rows` に合わせてレーンの位置を決め、`animate` なら今の位置から少しずつ近づける。
-    private func updateLanes(history: History, rows: Range<Int>, width: Float, animate: Bool) {
+    /// 今のグラフの列の幅（ポイント。文字の位置がにじまないように整数にする）。
+    var columnWidth: Float { currentWidth.rounded() }
+
+    /// 最後に描いた行ごとの、グラフの右端（列の左端から。その行の点と、その行を通る線のいちばん右）。
+    /// FE は行の文字をここのすぐ右から始める（行ごとに左端が違う）。
+    private var rowExtents: [Float] = []
+    private var extentRows: Range<Int> = 0..<0
+
+    func rightExtent(row: Int) -> Float? {
+        extentRows.contains(row) ? rowExtents[row - extentRows.lowerBound] : nil
+    }
+
+    /// `scrollY` から `height` の高さに見える行（上下に少し余裕をとる）。
+    private func visibleRows(history: History, scrollY: Float, height: Float) -> Range<Int> {
+        let rowHeight = metrics.rowHeight
+        let first = max(0, Int(scrollY / rowHeight) - 1)
+        let last = min(history.rowCount, Int((scrollY + height) / rowHeight) + 2)
+        return first..<max(first, last)
+    }
+
+    /// 描く前に呼ぶ。見える範囲に合わせてレーンの位置と列の幅を少しずつ近づけ、今の列の幅を返す。
+    func prepareLanes(history: History, scrollY: Float, height: Float) -> Float {
+        let rows = visibleRows(history: history, scrollY: scrollY, height: height)
+        if !rows.isEmpty { retargetLanes(history: history, rows: rows) }
+        advanceLanes()
+        return columnWidth
+    }
+
+    /// 見えている行 `rows` に合わせて、レーンの向かう位置と列の向かう幅を決める。
+    private func retargetLanes(history: History, rows: Range<Int>) {
         // 少し先の行まで含めて決め、スクロールで点が入ってくる直前に広げ始める。
         let margin = 4
         // History を差し替えた直後は、見えている行が新しい History の外のことがある（下端を超えないようにする）。
         let upper = min(history.rowCount, rows.upperBound + margin)
         let window = min(max(0, rows.lowerBound - margin), upper)..<upper
-        let key = (ObjectIdentifier(history), window, width)
-        let historyChanged = targetKey?.history != key.0
-        if targetKey == nil || historyChanged || targetKey!.rows != window || targetKey!.width != width {
-            let m = AmonhenLaneMetrics(
-                full: metrics.laneWidth, thin: metrics.thinLaneWidth, min_full: metrics.minLaneWidth,
-                min_thin: metrics.minThinLaneWidth,
-                available: width - (metrics.leftInset - metrics.laneWidth / 2) - 4)
-            history.lanePositions(rows: window, metrics: m, into: &targetX)
-            targetKey = key
-            // 別の History に替わったときは、動かさずにその位置から始める。
-            if historyChanged || currentX.count != targetX.count { currentX = targetX }
+        let historyChanged = targetKey?.history != ObjectIdentifier(history)
+        guard targetKey == nil || historyChanged || targetKey!.rows != window else { return }
+        let slack = (metrics.leftInset - metrics.laneWidth / 2) + metrics.rightInset
+        let m = AmonhenLaneMetrics(
+            full: metrics.laneWidth, thin: metrics.thinLaneWidth, min_full: metrics.minLaneWidth,
+            min_thin: metrics.minThinLaneWidth, available: metrics.maxWidth - slack)
+        let total = history.lanePositions(rows: window, metrics: m, into: &targetX)
+        // 幹線の分は必ず取る（レーンが 0 本の History でも列を消さない）。
+        targetWidth = min(metrics.maxWidth, slack + max(total, metrics.laneWidth))
+        targetKey = (ObjectIdentifier(history), window)
+        // 別の History に替わったときは、動かさずにその位置から始める。
+        if historyChanged || currentX.count != targetX.count {
+            currentX = targetX
+            currentWidth = targetWidth
+        } else {
+            isAnimating = true
         }
+    }
+
+    /// レーンの位置と列の幅を、向かっている先へ少し進める。
+    private func advanceLanes() {
         let now = CACurrentMediaTime()
         let dt = min(Float(now - lastAdvance), 0.05)
         lastAdvance = now
-        guard animate else {
-            currentX = targetX
-            isAnimating = false
-            return
-        }
         // 約 0.15 秒で近づく指数的な動き。
         let k = min(1, dt * 18)
         var moving = false
@@ -142,7 +181,23 @@ final class GraphRenderer {
                 moving = true
             }
         }
+        // 列は、広がるときはレーンと同じ速さで（点が列からはみ出ないように）、狭まるときはゆっくり
+        // （スクロール中にレーンの数が行き来しても、文字が左右に揺れないように）。
+        let d = targetWidth - currentWidth
+        if abs(d) < 0.05 {
+            currentWidth = targetWidth
+        } else {
+            currentWidth += d * (d > 0 ? k : min(1, dt * 4))
+            moving = true
+        }
         isAnimating = moving
+    }
+
+    /// アニメーションせずに、向かっている位置と幅にそろえる（画像に描くとき）。
+    private func settleLanes() {
+        currentX = targetX
+        currentWidth = targetWidth
+        isAnimating = false
     }
 
     func rowY(_ row: UInt32, scrollY: Float) -> Float {
@@ -210,15 +265,15 @@ final class GraphRenderer {
         history: History, into texture: MTLTexture, size: CGSize, scale: Float, scrollY: Float, animate: Bool,
         commands: MTLCommandBuffer
     ) {
-        let rowHeight = metrics.rowHeight
-        let first = max(0, Int(scrollY / rowHeight) - 1)
-        let last = min(history.rowCount, Int((scrollY + Float(size.height)) / rowHeight) + 2)
+        let rows = visibleRows(history: history, scrollY: scrollY, height: Float(size.height))
         instances.removeAll(keepingCapacity: true)
-        if first < last {
+        if !rows.isEmpty {
+            // 位置は FE が描く前に `prepareLanes` で進めている（同じ範囲なら、ここでは何もしない）。
             FrameProfile.measure("graph: lane positions") {
-                updateLanes(history: history, rows: first..<last, width: Float(size.width), animate: animate)
+                retargetLanes(history: history, rows: rows)
+                if !animate { settleLanes() }
             }
-            buildInstances(history: history, rows: first..<last, scrollY: scrollY)
+            buildInstances(history: history, rows: rows, scrollY: scrollY)
         }
 
         var uniforms = Uniforms(viewport: [Float(size.width), Float(size.height)], scale: scale)
@@ -259,11 +314,22 @@ final class GraphRenderer {
         let m = metrics
         let edgeIndices = FrameProfile.measure("graph: edge indices (FFI)") { history.edgeIndices(in: rows) }
         let lineage = self.lineage.flatMap { $0.history === history ? $0 : nil }
+        // 行ごとの右端。幹線の点の分は必ず取る。
+        rowExtents = [Float](repeating: laneX(0) + m.nodeRadius, count: rows.count)
+        extentRows = rows
         history.withEdges { edges in
             for i in edgeIndices {
                 let e = edges[Int(i)]
                 let a = SIMD2(laneX(e.lane_start), rowY(e.row_start, scrollY: scrollY))
                 let b = SIMD2(laneX(e.lane_end), rowY(e.row_end, scrollY: scrollY))
+                // 線は 2 つのレーンの間に収まる（曲線もその間）。通る行の右端を広げる。
+                let lower = max(Int(e.row_start), rows.lowerBound), upper = min(Int(e.row_end), rows.upperBound - 1)
+                if lower <= upper {
+                    let right = max(a.x, b.x) + m.firstParentWidth / 2
+                    for r in lower...upper where rowExtents[r - rows.lowerBound] < right {
+                        rowExtents[r - rows.lowerBound] = right
+                    }
+                }
                 // 祖先を強調するときは、光らない線（や縦線の光らない上の部分）を薄くする。
                 var dimmed = false
                 if let lineage {
@@ -284,6 +350,8 @@ final class GraphRenderer {
         history.withNodes { nodes in
             for n in nodes[rows] {
                 let p = SIMD2(laneX(n.lane), rowY(n.row, scrollY: scrollY))
+                let i = Int(n.row) - rows.lowerBound
+                if i >= 0, i < rowExtents.count { rowExtents[i] = max(rowExtents[i], p.x + m.nodeRadius) }
                 let alpha: Float = lineage.map { $0.contains(row: Int(n.row)) ? 1 : dimmedAlpha } ?? 1
                 instances.append(Instance(
                     a: p, b: p, width: m.nodeRadius, color: UInt32(n.color), kind: Instance.circle, alpha: alpha))

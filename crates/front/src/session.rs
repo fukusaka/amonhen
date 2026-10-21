@@ -268,11 +268,11 @@ impl Session {
                     u64_arg(request, "start")? as u32,
                     u64_arg(request, "end")? as u32,
                 );
-                let positions =
+                let (positions, width) =
                     amonhen_core::lanes::lane_positions(&h.layout, start..end, &metrics);
                 let mut r = Records::new();
                 r.put_slice("positions", &positions);
-                r.finish(json!({}))
+                r.finish(json!({"width": width}))
             }
             "historyRowOf" => {
                 let h = self.history(request)?;

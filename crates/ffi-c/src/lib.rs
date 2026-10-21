@@ -514,10 +514,11 @@ pub struct AmonhenLaneMetrics {
 
 /// `start..end` 行を表示するときの、レーンごとの中心の横位置（魚眼）を `out` に書く。見えている範囲に点の
 /// あるレーンを広く、線だけのレーンを細く、何もないレーンを幅 0 にする。
-/// レーンの数を返す（`capacity` を超えた分は書かない）。
+/// レーンの数を返す（`capacity` を超えた分は書かない）。`width` が NULL でなければ、レーン全体の幅を書く。
 ///
 /// # Safety
-/// `history` は有効なスナップショット、`out` は `capacity` 個の `float` を書ける領域であること。
+/// `history` は有効なスナップショット、`out` は `capacity` 個の `float` を書ける領域、`width` は NULL か
+/// `float` を 1 つ書ける領域であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_history_lane_positions(
     history_ptr: *const AmonhenHistory,
@@ -526,6 +527,7 @@ pub unsafe extern "C" fn amonhen_history_lane_positions(
     metrics: AmonhenLaneMetrics,
     out: *mut f32,
     capacity: u32,
+    width: *mut f32,
 ) -> u32 {
     let m = amonhen_core::lanes::LaneMetrics {
         full: metrics.full,
@@ -534,10 +536,13 @@ pub unsafe extern "C" fn amonhen_history_lane_positions(
         min_thin: metrics.min_thin,
         available: metrics.available,
     };
-    let positions =
+    let (positions, total) =
         amonhen_core::lanes::lane_positions(&history(history_ptr).layout, start..end, &m);
     for (i, x) in positions.iter().take(capacity as usize).enumerate() {
         unsafe { out.add(i).write(*x) };
+    }
+    if !width.is_null() {
+        unsafe { width.write(total) };
     }
     positions.len() as u32
 }

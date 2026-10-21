@@ -122,6 +122,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let textView = GraphView()
     private let text: TextRenderer
     /// 行は 2 行: 1 行目に ref のラベルと件名、2 行目に作者・日時・短い ID。
+    /// その行のグラフの右端から文字までの余白。
+    private static let graphGap: CGFloat = 10
+
     private struct RowText {
         var subject: TextRenderer.ShapedLine
         var meta: TextRenderer.ShapedLine
@@ -296,7 +299,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.style = .plain
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         graphColumn.title = ""
+        // 幅は見えているレーンの分だけ取る（`layoutGraphView` が描くたびに合わせる）。
         graphColumn.width = 120
+        graphColumn.resizingMask = []
         tableView.addTableColumn(graphColumn)
         let subject = NSTableColumn(identifier: .init("subject"))
         subject.title = L("Message")
@@ -699,7 +704,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             tableView.selectRowIndexes([0], byExtendingSelection: false)
         }
         updateLineage()
-        redrawGraph()
+        // History が替わるとレーンの数も替わる。列の幅を合わせてから描く。
+        layoutGraphView()
         updateDensity()
     }
 
@@ -772,19 +778,36 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         updateLineage()
     }
 
-    /// グラフの列と、その右の文字の列のうち、ヘッダーの下で見えている範囲に重ねる。
+    /// グラフの列と、その右の文字の列のうち、ヘッダーの下で見えている範囲に重ねる。グラフの列は見えている
+    /// レーンの分だけ取り（文字との隙間を空けない）、幅が変わればその場で列を変えて置き直す。
     private func layoutGraphView() {
         let clip = scrollView.contentView
         let clipFrame = view.convert(clip.frame, from: scrollView)
+        let height = max(0, clipFrame.height - clip.contentInsets.top)
+        // 2 つのビュー（Metal の層）は列の幅に合わせて伸び縮みさせない。幅が変わるたびに描画先を作り直すと、
+        // 列の幅のアニメーションの間、1 フレームごとに数 ms 止まる。グラフは上限の幅、文字は列の左端から右端まで
+        // 取り（文字のビューが上。どちらもクリックは通す）、文字の位置は表の列の矩形から決める。
         let column = tableView.rect(ofColumn: tableView.column(withIdentifier: graphColumn.identifier))
         let x = view.convert(column.origin, from: tableView).x
-        let height = max(0, clipFrame.height - clip.contentInsets.top)
-        graphView.frame = NSRect(x: x, y: clipFrame.minY, width: column.width, height: height)
-        let textX = x + column.width
-        textView.frame = NSRect(x: textX, y: clipFrame.minY, width: max(0, clipFrame.maxX - textX), height: height)
+        graphView.frame = NSRect(
+            x: x, y: clipFrame.minY, width: CGFloat(renderer.metrics.maxWidth), height: height)
+        textView.frame = NSRect(x: x, y: clipFrame.minY, width: max(0, clipFrame.maxX - x), height: height)
+        if let history {
+            let scrollY = Float(tableView.convert(NSPoint(x: 0, y: 0), from: graphView).y)
+            let width = CGFloat(renderer.prepareLanes(history: history, scrollY: scrollY, height: Float(height)))
+            if width != graphColumn.width {
+                // 列を変えると columnDidResize が来るが、ここで置き直すので受けない。
+                resizingGraphColumn = true
+                graphColumn.width = width
+                tableView.sizeLastColumnToFit()
+                resizingGraphColumn = false
+            }
+        }
         redrawGraph()
         redrawText()
     }
+
+    private var resizingGraphColumn = false
 
     private func redrawText() {
         guard history != nil, textView.window != nil else { return }
@@ -887,13 +910,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             guard let line = FrameProfile.measure("text: row text", { shapedRow(row, scale: scale) }) else { continue }
             let rowTop = tableView.rect(ofRow: row).minY - scrollY
             let isSelected = selection.contains(row)
+            // 文字はその行のグラフの右端のすぐ右から（行ごとに左端が違う。グラフと文字のビューは左端が同じ）。
+            // グラフを描いていない行（History を隠しているとき）は列の位置。
+            let start = renderer.rightExtent(row: row).map { CGFloat($0) + Self.graphGap } ?? (column.minX - originX)
+            let end = column.maxX - originX
             if !isSelected, searchRowSet.contains(row) {
                 text.addRoundedRect(
-                    CGRect(x: column.minX - originX - 3, y: rowTop + 1, width: column.width + 6, height: tableView.rowHeight - 2),
+                    CGRect(x: start - 3, y: rowTop + 1, width: end - start + 6, height: tableView.rowHeight - 2),
                     radius: 4, color: NSColor.systemYellow.withAlphaComponent(0.14).rgba)
             }
-            var x = column.minX - originX
-            let end = column.maxX - originX
+            var x = start
             let id = FrameProfile.measure("text: commit id (FFI)") { history.commitID(row: row) }
             let labels = id.flatMap { id -> [RefLabel]? in
                 let all = (worktreeLabels[id] ?? []) + (refLabels[id] ?? [])
@@ -925,15 +951,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             text.addLine(
                 line.subject, origin: CGPoint(x: x, y: rowTop + subjectBaseline), color: isSelected ? selected : primary,
                 scale: scale, maxWidth: max(0, subjectEnd - x), ellipsis: ellipsis)
+            let metaMax = end - start - dot - ciSpace
             text.addLine(
-                line.meta, origin: CGPoint(x: compact ? right - metaWidth : column.minX - originX, y: rowTop + metaBaseline),
+                line.meta, origin: CGPoint(x: compact ? right - metaWidth : start, y: rowTop + metaBaseline),
                 color: isSelected ? selectedSecondary : secondary, scale: scale,
-                maxWidth: compact ? metaWidth : column.width - dot - ciSpace, ellipsis: metaEllipsis)
+                maxWidth: compact ? metaWidth : metaMax, ellipsis: metaEllipsis)
             if signed {
                 // 署名の状態のアイコン（信用度は形で分かる。塗りつぶしの seal は強い信用）。
                 let centerX = compact
                     ? right - metaWidth - 7
-                    : column.minX - originX + min(line.meta.width, column.width - dot - ciSpace) + 9
+                    : start + min(line.meta.width, metaMax) + 9
                 let centerY = rowTop + metaBaseline - CTFontGetXHeight(metaFont) / 2
                 text.addSymbol(
                     status.symbol, pointSize: 9.5, center: CGPoint(x: centerX, y: centerY),
@@ -1045,6 +1072,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc private func contentDidScroll() {
+        guard !resizingGraphColumn else { return }
         motion?.add(y: scrollView.contentView.bounds.minY)
         layoutGraphView()
         updateDensityViewport()
@@ -1060,16 +1088,21 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             return
         }
         if laneAnimation == nil {
-            let link = graphView.displayLink(target: self, selector: #selector(laneAnimationTick))
+            let link = graphView.displayLink(target: self, selector: #selector(laneAnimationTick(_:)))
             link.add(to: .main, forMode: .common)
             laneAnimation = link
         }
         laneAnimation?.isPaused = false
     }
 
-    @objc private func laneAnimationTick() {
-        // スクロールで同じフレームにもう描いていれば描かない。
-        if CACurrentMediaTime() - lastGraphDraw > 0.004 { redrawGraph() }
+    private var drawnAtLastTick = 0
+
+    @objc private func laneAnimationTick(_ link: CADisplayLink) {
+        // 前の tick からスクロールで描いていれば描かない（そちらが位置を進めている。同じフレームに 2 回描くと、
+        // 先のほうは表示されずに捨てられる）。列の幅も動くので、置き直しから。
+        let drawn = renderer.drawnFrames
+        defer { drawnAtLastTick = renderer.drawnFrames }
+        if drawn == drawnAtLastTick { layoutGraphView() }
     }
 
     private func redrawGraph() {

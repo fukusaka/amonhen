@@ -649,17 +649,19 @@ void amonhen_lineage_free(AmonhenLineage *lineage);
 /**
  * `start..end` 行を表示するときの、レーンごとの中心の横位置（魚眼）を `out` に書く。見えている範囲に点の
  * あるレーンを広く、線だけのレーンを細く、何もないレーンを幅 0 にする。
- * レーンの数を返す（`capacity` を超えた分は書かない）。
+ * レーンの数を返す（`capacity` を超えた分は書かない）。`width` が NULL でなければ、レーン全体の幅を書く。
  *
  * # Safety
- * `history` は有効なスナップショット、`out` は `capacity` 個の `float` を書ける領域であること。
+ * `history` は有効なスナップショット、`out` は `capacity` 個の `float` を書ける領域、`width` は NULL か
+ * `float` を 1 つ書ける領域であること。
  */
 uint32_t amonhen_history_lane_positions(const AmonhenHistory *history_ptr,
                                         uint32_t start,
                                         uint32_t end,
                                         AmonhenLaneMetrics metrics,
                                         float *out,
-                                        uint32_t capacity);
+                                        uint32_t capacity,
+                                        float *width);
 
 /**
  * `query` に合うコミットの行（昇順、`amonhen_rows_free` で解放する）。構文は `amonhen-core` の
