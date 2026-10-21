@@ -7,7 +7,15 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.3] - 2026-10-21
+
+History is easier to read and to shape: each row's message sits right next to its graph, and View > History Items and
+History Order (also from a button at the right of History's bar) choose what a row shows and whether commits come in
+date or topological order. Push shows what it sends in a window of its own, with warnings worth a look, and a pull
+request is created from the branch's context menu or status popover once the branch is pushed. The sidebar gets a
+branch filter and multi-selection, deleting a branch or dropping a stash asks first, a commit's CI mark opens a popover
+with its checks, and Kotlin is highlighted. Push, Pull and Fetch over HTTPS no longer hang in Git Credential Manager,
+and the crash at every launch after the first in 0.2.2 is fixed.
 
 #### Added
 
