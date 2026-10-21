@@ -454,6 +454,10 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::VerifySignatures(ids.to_vec()))
     }
 
+    fn branch_created_at(&self, names: &[&str]) -> Result<Vec<Option<Oid>>> {
+        self.conn.call(&Request::BranchCreatedAt(owned(names)))
+    }
+
     fn connection_state(&self) -> Option<ConnectionState> {
         let (sent, received) = self.conn.traffic();
         Some(ConnectionState {

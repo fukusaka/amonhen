@@ -194,6 +194,14 @@ pub trait GitBackend: Send + Sync {
 
     /// コミットの本文。History で見えている行の分だけ呼ぶ。
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>>;
+
+    /// ローカルブランチ `names` を作った点のコミット（reflog の最初の行が「なし → コミット」のもの）を同じ順に
+    /// 返す。reflog がない・作った行が残っていないものは `None`。ref の置き場所（linked worktree の共通の
+    /// git dir、reftable）は実装が知っているので、コアはファイルを読まずにここを使う。対応しない実装はすべて
+    /// `None` を返す。
+    fn branch_created_at(&self, names: &[&str]) -> Result<Vec<Option<Oid>>> {
+        Ok(vec![None; names.len()])
+    }
 }
 
 /// daemon とのつながりの様子（FE が読み込みの進み具合や切断を出すのに使う）。

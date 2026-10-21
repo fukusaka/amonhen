@@ -7,6 +7,14 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Fixed
+
+- Opened from a linked worktree (`git worktree add`), the sidebar still nests a branch under the base it was created
+  on when the base has moved on since: where a branch was created is now read through the git backend, which finds
+  the reflog in the shared git dir. The remote protocol is now version 22.
+
 ### [0.2.4] - 2026-10-22
 
 The sidebar nests branches under the one they are built on more reliably: a branch forked from the default branch no

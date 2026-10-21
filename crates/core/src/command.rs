@@ -445,43 +445,35 @@ impl Repository {
                     && upstream.rsplit_once('/').is_some_and(|(_, n)| n == l.name)
             })
         };
-        // ブランチを作った点: reflog の最初の行（`0000… <コミット> … branch: Created from …`）。土台が分かれた
-        // あとに進んでも、土台と積んだほうを取り違えないため。取り込み済みのものには要らない。
-        let files = self.backend().files();
-        let created_at = |name: &str| -> Option<u32> {
-            let log = files
-                .read(Root::GitDir, &format!("logs/refs/heads/{name}"))
-                .ok()??;
-            let line = log.split(|&b| b == b'\n').next()?;
-            let mut fields = line.split(|&b| b == b' ');
-            let old = fields.next()?;
-            if !old.iter().all(|&b| b == b'0') {
-                return None;
-            }
-            let oid = Oid::from_hex(std::str::from_utf8(fields.next()?).ok()?)?;
-            history.row_of(&oid)
-        };
+        // ブランチを作った点（reflog の最初の行）。土台が分かれたあとに進んでも、土台と積んだほうを取り違えない
+        // ため。取り込み済みのものには要らない。置き場所（linked worktree では共通の git dir）はバックエンドが
+        // 知っているので、まとめて 1 回で聞く（daemon 越しでも往復は 1 回）。
+        let merged: Vec<bool> = facts
+            .iter()
+            .map(|f| f.as_ref().is_some_and(|f| f.merged))
+            .collect();
+        let wanted: Vec<usize> = (0..locals.len())
+            .filter(|&i| !merged[i] && tips[i].is_some())
+            .collect();
+        let names: Vec<&str> = wanted.iter().map(|&i| locals[i].name.as_str()).collect();
+        let mut created_at = vec![None; locals.len()];
+        for (&i, oid) in wanted.iter().zip(self.backend().branch_created_at(&names)?) {
+            created_at[i] = oid.and_then(|oid| history.row_of(&oid));
+        }
         let candidates: Vec<branches::Candidate> = locals
             .iter()
             .zip(&tips)
-            .zip(&facts)
-            .map(|((e, &tip), f)| {
-                let merged = f.as_ref().is_some_and(|f| f.merged);
-                branches::Candidate {
-                    tip,
-                    trunk: e
-                        .detail
-                        .as_deref()
-                        .is_some_and(|u| u.rsplit_once('/').is_some_and(|(_, n)| n == e.name)),
-                    has_upstream: e.detail.is_some(),
-                    upstream_local: e.detail.as_deref().and_then(local_of_upstream),
-                    merged,
-                    created_at: if merged || tip.is_none() {
-                        None
-                    } else {
-                        created_at(&e.name)
-                    },
-                }
+            .zip(merged.iter().zip(&created_at))
+            .map(|((e, &tip), (&merged, &created_at))| branches::Candidate {
+                tip,
+                trunk: e
+                    .detail
+                    .as_deref()
+                    .is_some_and(|u| u.rsplit_once('/').is_some_and(|(_, n)| n == e.name)),
+                has_upstream: e.detail.is_some(),
+                upstream_local: e.detail.as_deref().and_then(local_of_upstream),
+                merged,
+                created_at,
             })
             .collect();
         let parents = branches::parents(graph, &in_base, &candidates);
@@ -2274,6 +2266,87 @@ mod tests {
         );
         assert!(trailers("Fix: subject only").is_empty());
         assert!(trailers("Fix\n\nNot a trailer line\nKey: value").is_empty());
+    }
+
+    /// linked worktree で開いても、ブランチを作った点（reflog）が読めて、土台が後から進んだ積み重ねの土台が分かる。
+    #[test]
+    fn reads_where_branches_were_created_from_a_linked_worktree() {
+        let (tmp, _) = setup();
+        let dir = tmp.path();
+        // push 済み（幹）の base の上に stacked を積み、そのあと base が進む。コミットの日時を決めて、作った点が
+        // 分からないときの「先端の古いほうが土台」が stacked を base の土台にしてしまう形にする。
+        let remote = dir.join("remote.git");
+        git(dir, &["init", "-q", "--bare", remote.to_str().unwrap()]);
+        git(dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let commit_at = |name: &str, offset: u64| {
+            std::fs::write(dir.join(name), "x\n").unwrap();
+            git(dir, &["add", "."]);
+            let date = format!("{} +0000", now + offset);
+            let out = Process::new("git")
+                .args(["commit", "-q", "-m", name])
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_AUTHOR_DATE", &date)
+                .env("GIT_COMMITTER_DATE", &date)
+                .output()
+                .unwrap();
+            assert!(
+                out.status.success(),
+                "{}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            git(dir, &["rev-parse", "HEAD"])
+        };
+        let first = git(dir, &["rev-parse", "HEAD"]);
+        git(dir, &["switch", "-q", "-c", "base"]);
+        let b1 = commit_at("b1", 100);
+        git(dir, &["push", "-q", "-u", "origin", "base"]);
+        git(dir, &["switch", "-q", "-c", "stacked"]);
+        commit_at("s1", 200);
+        git(dir, &["push", "-q", "-u", "origin", "stacked"]);
+        git(dir, &["switch", "-q", "base"]);
+        commit_at("b2", 300);
+        let wt = dir.join("wt");
+        git(
+            dir,
+            &["worktree", "add", "-q", wt.to_str().unwrap(), "stacked"],
+        );
+
+        let repo = Repository::new(GixBackend::open(&wt).unwrap());
+        let paths = repo.backend().paths();
+        assert_ne!(
+            paths.git_dir, paths.common_dir,
+            "opened as a linked worktree"
+        );
+        // 作った点は共通の git dir の reflog から読める（worktree の git dir にはない）。
+        let created = repo
+            .backend()
+            .branch_created_at(&["base", "stacked", "nonexistent"])
+            .unwrap();
+        assert_eq!(
+            created,
+            vec![
+                Some(Oid::from_hex(&first).unwrap()),
+                Some(Oid::from_hex(&b1).unwrap()),
+                None
+            ]
+        );
+        let groups = run(&repo, r#"{"op":"branchGroups"}"#);
+        let branches = groups["info"]["branches"].as_array().unwrap();
+        let parent_of = |name: &str| {
+            branches
+                .iter()
+                .find(|b| b["name"] == name)
+                .map(|b| b["parent"].clone())
+                .unwrap()
+        };
+        assert_eq!(parent_of("stacked"), "base", "{groups}");
+        assert_eq!(parent_of("base"), serde_json::Value::Null, "{groups}");
     }
 
     #[test]

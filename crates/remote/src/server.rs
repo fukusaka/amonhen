@@ -295,6 +295,10 @@ fn handle(
         }
         Request::CommitExtras(id) => encode(&backend.commit_extras(&id)?),
         Request::VerifySignatures(ids) => encode(&backend.verify_signatures(&ids)?),
+        Request::BranchCreatedAt(names) => {
+            let names: Vec<&str> = names.iter().map(String::as_str).collect();
+            encode(&backend.branch_created_at(&names)?)
+        }
         Request::SearchTexts { tips, terms } => {
             let ids = commits_from(backend, &search.commits, &tips)?;
             let words =
