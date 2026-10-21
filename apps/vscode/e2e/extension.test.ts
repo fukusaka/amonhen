@@ -10,6 +10,7 @@ import childProcess from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
+import { DaemonClient } from '../src/daemon/client.ts';
 import type { SelectedLine } from '../src/diff/fileDiff.ts';
 import type { activate } from '../src/extension.ts';
 import type { HostMessage } from '../src/view/protocol.ts';
@@ -103,7 +104,7 @@ async function showView(command: 'amonhen.showWorkingCopy' | 'amonhen.showHistor
 }
 
 /** daemon の様子（`amonhen daemon status --json`）。動いていなければ undefined */
-function daemonStatus(): { repos: { path: string }[] } | undefined {
+function daemonStatus(): { pid: number; connections: number; repos: { path: string }[] } | undefined {
   const engine = process.env['AMONHEN_E2E_ENGINE']!;
   try {
     return JSON.parse(childProcess.execFileSync(engine, ['daemon', 'status', '--json'], { encoding: 'utf8' }));
@@ -243,6 +244,28 @@ suite('Amon Hen in VSCode', () => {
       spawned.slice(mark).filter((s) => s.args.includes('update-index')),
       [],
     );
+  });
+
+  test('shares one daemon with another window and the CLI', async () => {
+    const engine = process.env['AMONHEN_E2E_ENGINE']!;
+    const before = await until('daemon', () => daemonStatus());
+    // もう 1 つの窓の拡張と同じつなぎ方で、同じリポジトリを開く
+    const other = await DaemonClient.open(engine, root);
+    try {
+      const during = daemonStatus()!;
+      assert.equal(during.pid, before.pid, '新しい daemon を起動しない');
+      assert.equal(during.connections, before.connections + 1);
+      // CLI も同じ daemon を通して読む
+      const log = JSON.parse(
+        childProcess.execFileSync(engine, ['log', '-C', `daemon:${root}`, '-n', '1', '--no-graph', '--json'], {
+          encoding: 'utf8',
+        }),
+      ) as { id: string }[];
+      assert.equal(log[0]!.id, git('rev-parse', 'HEAD').trim());
+      assert.equal(daemonStatus()!.pid, before.pid, 'CLI も同じ daemon を使う');
+    } finally {
+      other.dispose();
+    }
   });
 
   test('does the same on the git execution layer with the daemon off', async () => {

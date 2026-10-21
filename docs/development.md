@@ -58,7 +58,7 @@ is left alone. The tests (`e2e/*.test.ts`, mocha) run in the extension host. The
 messages its Webview would send to the extension host (`activate` returns the panel) and check the messages sent back
 and the repository with git. They cover activation with the bundled engine, History through the shared daemon, line
 staging, discarding lines, Undo and commit on a CRLF file both through the daemon and with `amonhen.daemon.enabled`
-off, that every process the extension starts has `windowsHide`, and that its git processes end when the repositories
+off, one daemon shared with another client and the CLI, that every process the extension starts has `windowsHide`, and that its git processes end when the repositories
 are closed. A run takes about 10 seconds once VSCode is downloaded. On Linux
 without a display, use `xvfb-run -a npm run test:e2e` (as CI does).
 
