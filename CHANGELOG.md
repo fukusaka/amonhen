@@ -292,6 +292,11 @@ First release.
 
 ## VSCode extension
 
+### [0.2.3] - 2026-10-21
+
+The bundled engines are the 0.2.3 ones and still speak remote protocol 21, so the extension shares one daemon with the
+0.2.3 app and CLI. Nothing changed in the extension itself.
+
 ### [0.2.2] - 2026-10-20
 
 The bundled engines are the 0.2.2 ones and speak remote protocol 21, like the 0.2.2 app and CLI, so all three share
