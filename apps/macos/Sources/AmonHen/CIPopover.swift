@@ -138,6 +138,9 @@ final class CIPopover: NSViewController {
                 : Self.look(check.ci)
             let icon = NSImageView()
             icon.image = CommitHeaderRenderer.symbolImage(look.symbol, color: look.color, size: 12)
+            // 行の幅は決まっている。名前が長いときは名前を省略し、記号と結果は縮めない（同じ優先度だと記号が幅 0 になる）。
+            icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+            icon.setContentHuggingPriority(.required, for: .horizontal)
             let name: NSView
             if let url = check.url.flatMap(URL.init(string:)) {
                 let button = NSButton(title: check.name, target: self, action: #selector(openCheck(_:)))
@@ -145,15 +148,17 @@ final class CIPopover: NSViewController {
                 button.contentTintColor = .linkColor
                 button.font = .systemFont(ofSize: 12)
                 button.lineBreakMode = .byTruncatingTail
-                button.toolTip = url.absoluteString
+                button.toolTip = check.name + "\n" + url.absoluteString
                 button.identifier = NSUserInterfaceItemIdentifier(url.absoluteString)
                 name = button
             } else {
                 let label = NSTextField(labelWithString: check.name)
                 label.font = .systemFont(ofSize: 12)
                 label.lineBreakMode = .byTruncatingTail
+                label.toolTip = check.name
                 name = label
             }
+            name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let result = NSTextField(labelWithString: check.resultLabel + (check.seconds.map { "  " + Self.duration($0) } ?? ""))
             result.font = .systemFont(ofSize: 11)
             result.textColor = .secondaryLabelColor
