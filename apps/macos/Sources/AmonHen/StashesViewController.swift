@@ -21,10 +21,14 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
     private let applyButton = NSButton()
     private let popButton = NSButton()
     private let dropButton = NSButton()
+    private let branchButton = NSButton()
     private let target = NSTextField(labelWithString: "")
     private var stashes: [Stash] = []
     /// stash のコミットの情報（土台・untracked を含むか・日時）。ID で引く。stash の数は少ないので全部読む。
     private var infos: [Data: CommitInfo] = [:]
+    /// 土台と、書き込む先の worktree の HEAD の離れ具合（stash の名前で引く）。
+    private var bases: [String: StashBase] = [:]
+    private var basesRequest = 0
 
     /// 一覧の 1 行。
     private struct Stash {
@@ -80,6 +84,8 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
             (applyButton, "Apply", #selector(applyStash), L("Apply the stash to the working tree and keep it in the list")),
             (popButton, "Pop", #selector(popStash), L("Apply the stash to the working tree and remove it from the list")),
             (dropButton, L("Drop…"), #selector(dropStash), L("Remove the stash without applying it (you can Undo it)")),
+            (branchButton, L("Branch…"), #selector(branchFromStash),
+             L("Create a branch at the commit the stash was made on, switch to it and apply the stash there (git stash branch)")),
         ] {
             button.title = title
             button.bezelStyle = .push
@@ -92,10 +98,10 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
         target.textColor = .secondaryLabelColor
         target.lineBreakMode = .byTruncatingMiddle
         target.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        let bar = NSStackView(views: [applyButton, popButton, dropButton, target])
+        let bar = NSStackView(views: [applyButton, popButton, dropButton, branchButton, target])
         bar.spacing = 6
         bar.edgeInsets = NSEdgeInsets(top: 6, left: 8, bottom: 6, right: 8)
-        bar.setCustomSpacing(12, after: dropButton)
+        bar.setCustomSpacing(12, after: branchButton)
 
         let column = NSTableColumn(identifier: .init("stash"))
         table.addTableColumn(column)
@@ -145,6 +151,21 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
         updateButtons()
     }
 
+    /// 土台と HEAD の離れ具合を読み直す（ref が変わった・書き込む先の worktree を変えたとき）。
+    func reloadBases() {
+        guard let repository = actions?.repository, !stashes.isEmpty else { return }
+        basesRequest += 1
+        let request = basesRequest
+        Task {
+            let loaded = (try? await Task.detached(priority: .utility) { try repository.stashBases() }.value) ?? []
+            guard request == basesRequest else { return }
+            let next = Dictionary(loaded.map { ($0.name, $0) }, uniquingKeysWith: { a, _ in a })
+            guard next != bases else { return }
+            bases = next
+            table.reloadData()
+        }
+    }
+
     /// まだ読んでいない stash のコミットの情報を裏で読む。
     private func loadInfos() {
         let missing = stashes.map(\.id).filter { infos[$0] == nil }
@@ -171,7 +192,7 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
     }
 
     private func updateButtons() {
-        for button in [applyButton, popButton, dropButton] { button.isEnabled = selected != nil }
+        for button in [applyButton, popButton, dropButton, branchButton] { button.isEnabled = selected != nil }
     }
 
     private func updateTarget() {
@@ -183,6 +204,18 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
     @objc private func applyStash() { selected.map { apply($0, pop: false) } }
     @objc private func popStash() { selected.map { apply($0, pop: true) } }
     @objc private func dropStash() { selected.map(drop) }
+    @objc private func branchFromStash() { selected.map(branch(from:)) }
+
+    /// `git stash branch`: 土台から新しいブランチを作って切り替え、そこに戻す。HEAD が進んでいても重ならない。
+    private func branch(from stash: Stash) {
+        guard let actions else { return }
+        let name = stash.item.name
+        guard let branch = actions.ask(
+            L("New Branch from %@", name),
+            message: L("Creates the branch at the commit %@ was made on, switches to it and applies the stash there. The stash is removed once it applies.", name),
+            ok: L("Create")) else { return }
+        actions.perform(["op": "stashBranch", "name": name, "branch": branch])
+    }
 
     private func apply(_ stash: Stash, pop: Bool) {
         actions?.perform(["op": "stashApply", "name": stash.item.name, "pop": pop])
@@ -207,6 +240,7 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
         add("Apply \(name)") { [weak self] in self?.apply(stash, pop: false) }
         add("Pop \(name)") { [weak self] in self?.apply(stash, pop: true) }
         add(L("Drop %@…", name)) { [weak self] in self?.drop(stash) }
+        add(L("New Branch from %@…", name)) { [weak self] in self?.branch(from: stash) }
         menu.addItem(.separator())
         add(L("Copy Name")) {
             NSPasteboard.general.clearContents()
@@ -231,7 +265,7 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
         cell.title.attributedStringValue = title
         cell.title.toolTip = stash.item.detail
 
-        // 2 行目: 作ったブランチ・土台のコミット・いつ・untracked を含むか。
+        // 2 行目: 作ったブランチ・土台と HEAD の関係・いつ・untracked を含むか・土台の短い ID（狭ければ後ろから切れる）。
         let small = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize)
         let sub = NSMutableAttributedString()
         func part(_ text: String, _ color: NSColor = .secondaryLabelColor) {
@@ -241,11 +275,19 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
         if let branch = stash.branch {
             part(branch, branch == currentBranch ? .secondaryLabelColor : .tertiaryLabelColor)
         }
+        // 土台が今の HEAD の履歴にない（ほかの系統で作った）と、戻すときに重なりやすい。
+        if let b = bases[stash.item.name] {
+            if b.behind > 0 {
+                part(L("not in HEAD’s history"), .systemOrange)
+            } else {
+                part(b.ahead == 0 ? L("at HEAD") : L("%ld behind HEAD", b.ahead))
+            }
+        }
         if let info = infos[stash.id] {
-            if let base = info.parents.first { part(String(base.prefix(7))) }
             part(Self.relative.localizedString(for: Date(timeIntervalSince1970: TimeInterval(info.committerTime)), relativeTo: Date()))
             // 3 つ目の親が untracked のファイル（`git stash -u`）。
             if info.parents.count > 2 { part(L("with untracked files")) }
+            if let base = info.parents.first { part(String(base.prefix(7))) }
         }
         cell.subtitle.attributedStringValue = sub
         return cell

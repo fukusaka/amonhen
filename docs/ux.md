@@ -167,10 +167,13 @@ worktree being edited.
 - Selecting Stashes in the sidebar (View > Stashes ⌘4) opens this view: the stashes on the left, newest first, and the
   selected one's contents on the right, in the same column as History's detail (its base is the first parent link).
 - Each row shows `stash@{n}` and the message (for a stash made without one, WIP and the subject of its base), then
-  the branch it was made on (dimmed when it is not the current branch), the base's short ID, when, and whether it
-  holds untracked files.
-- Apply, Pop and Drop… sit above the list and in each row's context menu. Drop asks first and can be undone. With two
-  or more worktrees, the bar says which worktree it applies to (✎).
+  the branch it was made on (dimmed when it is not the current branch), where its base stands against the edited
+  worktree's HEAD (at HEAD, N behind HEAD, or, in orange, not in HEAD's history, where applying is likelier to
+  conflict), when, whether it holds untracked files, and the base's short ID.
+- Apply, Pop, Drop… and Branch… sit above the list and in each row's context menu. Apply and Pop restore what was
+  staged as staged when they can (`--index`). Drop asks first and can be undone. Branch… is `git stash branch`: it
+  creates a branch at the base, switches to it and applies the stash there, so it does not conflict however far HEAD
+  has moved. With two or more worktrees, the bar says which worktree it applies to (✎).
 - After the last stash is popped or dropped, the view switches to History.
 
 ## 6. Working Copy
