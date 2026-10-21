@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- The main worktree always stays at the top of the sidebar's worktrees, instead of being folded into "No changes" when
+  it has none.
+
 ### [0.2.4] - 2026-10-22
 
 The sidebar nests branches under the one they are built on more reliably: a branch forked from the default branch no

@@ -238,7 +238,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return node
     }()
 
-    /// Working Copy の下に並べる worktree: 書き込む先、変更のあるもの、フォルダが消えた・ロックしたもの（メインの
+    /// Working Copy の下に並べる worktree: メインの作業ツリー（変更がなくてもいつも出す）、書き込む先、変更のあるもの、
+    /// フォルダが消えた・ロックしたもの（メインの
     /// 作業ツリーを先に、残りは名前の順。w2 は w10 より前）と、「変更なし」にまとめるもの（2 つ以上あるときだけ
     /// まとめる）。worktree が 1 つなら出さない。
     private func worktreeLayout() -> (shown: [WorktreeInfo], clean: [WorktreeInfo]) {
@@ -249,7 +250,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var shown: [WorktreeInfo] = [], clean: [WorktreeInfo] = []
         for w in ordered {
             let changes = worktreeChanges[WorktreeInfo.canonical(w.path)] ?? 0
-            if w == editingInfo || changes > 0 || w.prunable != nil || w.locked != nil { shown.append(w) } else { clean.append(w) }
+            let always = w.main || w == editingInfo || w.prunable != nil || w.locked != nil
+            if always || changes > 0 { shown.append(w) } else { clean.append(w) }
         }
         return clean.count < 2 ? (ordered, []) : (shown, clean)
     }
