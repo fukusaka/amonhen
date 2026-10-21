@@ -242,6 +242,11 @@ pub trait Operations: Send + Sync {
     fn stash_drop(&self, name: &str) -> Result<()>;
     /// 消した stash を戻す。
     fn stash_store(&self, oid: &Oid, message: &str) -> Result<()>;
+    /// `git stash branch`: stash を作ったときのコミットから `branch` を作って切り替え、そこに stash を戻す
+    /// （戻せたら stash を消す）。
+    fn stash_branch(&self, branch: &str, name: &str) -> Result<Outcome>;
+    /// `left` にだけあるコミットと、`right` にだけあるコミットの数（`git rev-list --left-right --count`）。
+    fn count_apart(&self, left: &str, right: &str) -> Result<(u32, u32)>;
     fn update_submodules(&self, paths: &[&str]) -> Result<()>;
 
     /// すべての設定と、それぞれがどこで決まっているか（後に出るものほど優先）。

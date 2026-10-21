@@ -487,6 +487,32 @@ impl Operations for Git {
         self.write(&["stash", "drop", name]).map(drop)
     }
 
+    fn stash_branch(&self, branch: &str, name: &str) -> Result<Outcome> {
+        match self.write(&["stash", "branch", branch, name]) {
+            Ok(_) => Ok(Outcome::Done),
+            // 土台の上に戻すのでふつうは重ならないが、untracked のファイルなどで重なれば止まる。
+            Err(e) => {
+                let conflicted = self
+                    .status()?
+                    .entries
+                    .iter()
+                    .any(|e| e.kind == amonhen_model::StatusKind::Unmerged);
+                if conflicted {
+                    Ok(Outcome::Conflict)
+                } else {
+                    Err(e)
+                }
+            }
+        }
+    }
+
+    fn count_apart(&self, left: &str, right: &str) -> Result<(u32, u32)> {
+        let range = format!("{left}...{right}");
+        let out = text(self.read(&["rev-list", "--left-right", "--count", &range])?)?;
+        let mut counts = out.split_whitespace().map(|n| n.parse().unwrap_or(0));
+        Ok((counts.next().unwrap_or(0), counts.next().unwrap_or(0)))
+    }
+
     fn stash_store(&self, oid: &Oid, message: &str) -> Result<()> {
         self.write(&["stash", "store", "--message", message, &hex(oid)])
             .map(drop)
