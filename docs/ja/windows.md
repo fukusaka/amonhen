@@ -197,6 +197,29 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e-windows.ps1 -Des
 
 次の snapshot かリリースの `.vsix` を入れれば、すべて元に戻る。
 
+## 実機でリリースを確かめる
+
+リリースのたびに（試したい snapshot も）、実機で `scripts/check-windows.ps1` を流す。`scripts/install-engine.ps1` で
+エンジンを入れ（新しい版が入っていても `current` をそれに向ける）、次を確かめる: ビルドの由来の証明（`gh` が
+ログインしていれば）、取ってきた zip と `bin\amonhen.exe` に Mark of the Web が付いていないこと、版、
+`%LOCALAPPDATA%\amonhen` のファイル、`core.autocrlf=true` で CRLF のファイルを持つ一時リポジトリでの CLI（`log`、
+`status`、変えた行が 1 行ずつ出て `lineEndings` が付く `diff`、index に CR が入らない行単位の `stage`、ほかの行の CRLF を
+残す行単位の `discard`、`commit`、`undo`）、2 つの `daemon:` のクライアントが 1 つの共有の daemon を使うこと。最後に
+通った・通らなかったの表を出し、1 つでも通らなければ終了コードは 1。
+
+スクリプトが `-EncodedCommand` には長すぎる（コマンドラインは 32767 文字まで）ので、clone から動かすか、写して動かす。
+
+```sh
+ssh winpc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
+scp scripts/install-engine.ps1 scripts/check-windows.ps1 winpc:
+ssh winpc 'powershell -NoProfile -File check-windows.ps1 -Release v0.2.4'
+```
+
+`-Release` は `stable`（既定）・`snapshot`・タグ。`-ExpectVersion` で zip の名前から読む版の代わりを指定し、
+`-SkipInstall` で入っているエンジンをそのまま確かめ、`-Verify require|skip` は入れるスクリプトに渡し、`-KeepTemp` で
+一時リポジトリを残す。すでに動いている共有の daemon（VSCode のものなど）はそのまま使って残し、確かめるときに
+起動したものは最後に止める。
+
 ## 実機で確かめること
 
 次は `npm run test:e2e` が確かめる（上の `scripts\e2e-windows.ps1` で走らせる）。
@@ -213,4 +236,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e-windows.ps1 -Des
 まだ手で確かめるもの:
 
 - Mac から実機への Remote-SSH と、そこで動く拡張。
-- ブラウザーで落としたリリースの zip（SmartScreen）と、`amonhen.exe install`。
+- ブラウザーで落としたリリースの zip（SmartScreen）と、`amonhen.exe install`。CLI と共有の daemon は
+  `scripts/check-windows.ps1` で確かめられるが、VSCode と画面は確かめられない。

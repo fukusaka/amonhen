@@ -24,6 +24,8 @@ How releases are made, and signing, notarization and build provenance attestatio
   macOS build, and a last job bundles and publishes everything.
 - Changes go in [CHANGELOG.md](../CHANGELOG.md) (one file, with sections for the app and engine and for the VSCode
   extension). Before tagging, rename that section's `Unreleased` to the version and date, write a short summary under it, and commit it.
+- After a release, check it on a real Windows machine with `scripts/check-windows.ps1` (see
+  [windows.md](windows.md#checking-a-release-on-the-machine)).
 
 ## VSCode extension
 
