@@ -66,13 +66,15 @@ function waitPosted<T extends HostMessage['type']>(
  * 拡張は child_process の関数を呼ぶたびに引くので、モジュールの関数を差し替えれば拡張の呼び出しも通る
  */
 function recordSpawns(): void {
-  const own = join(ext.extensionPath, 'dist', 'extension.js');
+  // Windows ではドライブ文字の大文字小文字が extensionPath とスタックで違うことがあるので、そろえて比べる
+  const normalize = (path: string) => path.replaceAll('\\', '/').toLowerCase();
+  const own = normalize(join(ext.extensionPath, 'dist', 'extension.js'));
   const cp = childProcess as unknown as Record<string, (...a: unknown[]) => childProcess.ChildProcess>;
   for (const name of ['spawn', 'execFile']) {
     const original = cp[name]!;
     cp[name] = function (this: unknown, ...a: unknown[]) {
       const child = original.apply(this, a);
-      if (new Error().stack?.includes(own)) {
+      if (normalize(new Error().stack ?? '').includes(own)) {
         const args = Array.isArray(a[1]) ? (a[1] as string[]) : [];
         const options = (a.slice(1).find((x) => x && typeof x === 'object' && !Array.isArray(x)) ?? {}) as childProcess.SpawnOptions;
         spawned.push({ args, options, child });
