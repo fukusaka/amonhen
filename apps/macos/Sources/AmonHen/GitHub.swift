@@ -99,13 +99,38 @@ struct CommitCheck: Sendable, Hashable {
     /// かかった時間（秒。終わっていなければ nil）。
     let seconds: Int?
 
+    /// 吹き出しの行の見た目に使う状態。取り消しは失敗ではない（やり直す前の run や、上書きされた run）。
     var ci: PullRequest.CI {
         switch result {
         case "success": .passing
-        case "failure", "error", "timed_out", "cancelled", "action_required", "startup_failure", "stale": .failing
+        case "failure", "error", "timed_out", "action_required", "startup_failure", "stale": .failing
         case "queued", "in_progress", "pending", "waiting", "requested", "expected": .pending
         default: .none
         }
+    }
+
+    var isCancelled: Bool { result == "cancelled" }
+
+    /// 同じ名前のチェック（やり直しや上書きで run が増えたもの）を 1 つにまとめる。成功があれば成功 1 つ（取り消しや
+    /// ほかの成功は出さない）、なければ失敗、走っている途中、取り消し、その他の順で代表を選ぶ。順は読んだ順
+    /// （新しい run が先）。
+    static func collapsed(_ checks: [CommitCheck]) -> [CommitCheck] {
+        var names: [String] = []
+        var runs: [String: [CommitCheck]] = [:]
+        for check in checks {
+            if runs[check.name] == nil { names.append(check.name) }
+            runs[check.name, default: []].append(check)
+        }
+        let rank: (CommitCheck) -> Int = { check in
+            switch check.ci {
+            case .passing: 0
+            case .failing: 1
+            case .pending: 2
+            case .none: check.isCancelled ? 3 : 4
+            }
+        }
+        // min は同じ順位なら先のもの（新しい run）を残す。
+        return names.compactMap { runs[$0]?.min { rank($0) < rank($1) } }
     }
 
     var resultLabel: String {

@@ -115,7 +115,9 @@ final class CIPopover: NSViewController {
     }
 
     /// 読めたチェックを並べる（失敗を上に、走っているもの、成功の順）。
-    private func show(_ checks: [CommitCheck]) {
+    private func show(_ all: [CommitCheck]) {
+        // 同じ名前の run は 1 つに（成功があれば、やり直す前の取り消しは出さない）。
+        let checks = CommitCheck.collapsed(all)
         if checks.isEmpty {
             note.stringValue = L("No checks on this commit.")
             return
@@ -125,12 +127,15 @@ final class CIPopover: NSViewController {
             switch c.ci {
             case .failing: 0
             case .pending: 1
-            case .passing: 2
-            case .none: 3
+            case .none: c.isCancelled ? 2 : 4
+            case .passing: 3
             }
         }
         for check in checks.sorted(by: { (order($0), $0.name) < (order($1), $1.name) }) {
-            let look = Self.look(check.ci)
+            // 取り消しで終わったものは、失敗ではなく止まった印（灰色）。
+            let look = check.isCancelled
+                ? (symbol: "slash.circle", color: NSColor.secondaryLabelColor, label: "")
+                : Self.look(check.ci)
             let icon = NSImageView()
             icon.image = CommitHeaderRenderer.symbolImage(look.symbol, color: look.color, size: 12)
             let name: NSView
