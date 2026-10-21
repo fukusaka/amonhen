@@ -18,6 +18,8 @@ becomes the GitHub Release notes.
 
 - The repository page no longer stalls for a moment whenever a scan finishes: when only the counts change, the left
   side is redrawn instead of rebuilt.
+- Bookmarks, groups and folders to scan are no longer lost when more than one copy of the app runs (the stable
+  release, the snapshot, a development build): each change now rereads the file and writes on top of it.
 
 ### [0.2.4] - 2026-10-22
 
