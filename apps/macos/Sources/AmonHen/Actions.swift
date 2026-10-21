@@ -251,16 +251,23 @@ final class Actions {
         perform(command)
     }
 
-    /// 今のブランチを上流に push する。上流がなければ origin に同じ名前で作る。
-    func push(force: Bool = false) {
+    /// ブランチ（nil なら今のブランチ）を上流に push する。上流がなければ origin に同じ名前で作る。
+    func push(branch: String? = nil, force: Bool = false) {
         let repository = self.repository
         Task {
-            guard let status = try? await Task.detached(operation: { try repository.loadStatus() }).value,
-                  let branch = status.branch else {
+            let (branch, upstream): (String?, String?) = await Task.detached {
+                if let branch {
+                    let item = (try? repository.loadRefs())?.items.first { $0.kind == .local && $0.name == branch }
+                    return (branch, item.flatMap { $0.gone ? nil : $0.detail })
+                }
+                let status = try? repository.loadStatus()
+                return (status?.branch, status?.upstream)
+            }.value
+            guard let branch else {
                 await alert(L("Can’t Push"), L("No branch is checked out."))
                 return
             }
-            if let upstream = status.upstream, let slash = upstream.firstIndex(of: "/") {
+            if let upstream, let slash = upstream.firstIndex(of: "/") {
                 let remote = String(upstream[..<slash])
                 let remoteBranch = String(upstream[upstream.index(after: slash)...])
                 perform(["op": "push", "remote": remote, "branch": branch, "remoteBranch": remoteBranch,

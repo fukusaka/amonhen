@@ -627,9 +627,6 @@
 "Set" = "設定";
 "Can’t read pull requests: %@" = "プルリクエストを読めない: %@";
 "Can’t read the CI status: %@" = "CI の状態を読めない: %@";
-"Push %@ First" = "先に %@ を push してください";
-"This branch isn’t on the remote yet." = "このブランチはまだリモートにありません。";
-"It is %ld commits ahead of its upstream." = "上流より %ld コミット先にあります。";
 "Pull Request Created" = "プルリクエストを作りました";
 "Automatic fetch" = "自動の fetch";
 "Automatic fetch failed: %@" = "自動の fetch に失敗: %@";
@@ -1040,3 +1037,8 @@
 // Settings > Appearance の History の並び順と表示項目
 "Topological order keeps a branch’s commits together under the merge that brought them in." = "トポロジー順は、枝のコミットを取り込んだ merge の下にまとめます。";
 "What each commit’s row shows besides the subject. With none of author, date and ID, rows are one line." = "各コミットの行に、件名のほかに出すもの。作者・日時・ID をすべて消すと 1 行になります。";
+
+// プルリクエストを作る（ブランチの右クリック・印の吹き出し）
+"Open Pull Request #%ld" = "プルリクエスト #%ld を開く";
+"Pull Request" = "プルリクエスト";
+"(draft)" = "（下書き）";

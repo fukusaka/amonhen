@@ -28,6 +28,9 @@ becomes the GitHub Release notes.
   together under the merge that brought them in. The CLI has `amonhen log --topo-order`.
 - Both are also in Settings > Appearance and in the menu of the new button at the right of History's bar (and the
   header's context menu), which also has One Line per Commit, Fold Merged Branches and Highlight Ancestors.
+- Create Pull Request… is also in a local branch's context menu and in the branch's status popover (once the branch
+  is pushed; an open pull request is shown and opened instead), and can start from a branch other than the current
+  one. A branch not pushed yet gets the Push confirmation window instead of a plain alert.
 
 #### Changed
 

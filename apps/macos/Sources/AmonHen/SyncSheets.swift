@@ -22,18 +22,19 @@ extension Actions {
     // MARK: - Push
 
     /// Push の前に、送るコミットを見せる。上流が先に進んでいれば Pull を勧め、`force` なら上流から消えるコミットを見せる。
-    func pushWithConfirmation(force: Bool = false) {
+    /// `branch` を渡せば今のブランチ以外も送れる（Create Pull Request の前など）。
+    func pushWithConfirmation(branch: String? = nil, force: Bool = false) {
         Task { @MainActor in
-            guard let state = await syncState() else { return }
-            guard let branch = state.status.branch else {
+            guard let state = await syncState(branch: branch) else { return }
+            guard let branch = state.branch else {
                 return await inform(L("Can’t Push"), L("No branch is checked out (detached HEAD)."))
             }
-            guard let upstream = state.status.upstream else {
+            guard let upstream = state.upstream else {
                 let alert = makeAlert(L("Push %@ to origin?", branch),
                                       L("origin has no %@ yet. This creates origin/%@ and makes it the upstream.", branch, branch))
                 alert.addButton(withTitle: "Push")
                 alert.addButton(withTitle: L("Cancel"))
-                if await present(alert) == .alertFirstButtonReturn { push(force: false) }
+                if await present(alert) == .alertFirstButtonReturn { push(branch: branch, force: false) }
                 return
             }
             let (outgoing, incoming) = (state.outgoing, state.incoming)
@@ -44,7 +45,7 @@ extension Actions {
                     let sheet = PushSheet(
                         title: title, message: sheetMessage(message), warnings: state.warnings, commits: outgoing,
                         lost: incoming, range: range, detail: detail, ok: "Force Push", destructive: true)
-                    if await sheet.present(in: window) { push(force: true) }
+                    if await sheet.present(in: window) { push(branch: branch, force: true) }
                     return
                 }
                 let alert = makeAlert(title, message)
@@ -54,7 +55,7 @@ extension Actions {
                 let button = alert.addButton(withTitle: "Force Push")
                 button.hasDestructiveAction = true
                 alert.addButton(withTitle: L("Cancel"))
-                if await present(alert) == .alertFirstButtonReturn { push(force: true) }
+                if await present(alert) == .alertFirstButtonReturn { push(branch: branch, force: true) }
                 return
             }
             if incoming.count > 0 {
@@ -69,7 +70,7 @@ extension Actions {
                 if outgoing.count > 0 { alert.addButton(withTitle: "Force Push…") }
                 switch await present(alert) {
                 case .alertFirstButtonReturn: pullWithConfirmation(mode: Settings.pullMode)
-                case .alertThirdButtonReturn: pushWithConfirmation(force: true)
+                case .alertThirdButtonReturn: pushWithConfirmation(branch: branch, force: true)
                 default: break
                 }
                 return
@@ -83,14 +84,14 @@ extension Actions {
                 let sheet = PushSheet(
                     title: title, message: sheetMessage(""), warnings: state.warnings, commits: outgoing, lost: nil,
                     range: range, detail: detail, ok: "Push", destructive: false)
-                if await sheet.present(in: window) { push(force: false) }
+                if await sheet.present(in: window) { push(branch: branch, force: false) }
                 return
             }
             let alert = makeAlert(title, "")
             alert.accessoryView = Self.commitLists([(L("Commits to send"), outgoing, false)])
             alert.addButton(withTitle: "Push")
             alert.addButton(withTitle: L("Cancel"))
-            if await present(alert) == .alertFirstButtonReturn { push(force: false) }
+            if await present(alert) == .alertFirstButtonReturn { push(branch: branch, force: false) }
         }
     }
 
@@ -224,6 +225,9 @@ extension Actions {
 
     private struct SyncState {
         let status: WorkingStatus
+        /// 送るブランチとその上流（今のブランチなら status のもの、ほかのブランチなら ref から）。
+        var branch: String?
+        var upstream: String?
         /// 上流になくて手元にある（push で送る）。
         let outgoing: CommitRange
         /// 上流にあって手元にない（pull で取り込む）。
@@ -273,21 +277,28 @@ extension Actions {
     }
 
     @MainActor
-    private func syncState() async -> SyncState? {
+    /// `branch` が nil なら今のブランチ（HEAD）。ほかのブランチは ref の一覧から上流と先端を取る。
+    private func syncState(branch: String? = nil) async -> SyncState? {
         let repository = self.repository
         let result = await Task.detached { () -> Result<SyncState, Error> in
             Result {
                 let status = try repository.loadStatus()
-                guard let upstream = status.upstream else {
-                    return SyncState(status: status, outgoing: .empty, incoming: .empty)
+                let refs = try repository.loadRefs()
+                let local = branch.flatMap { name in refs.items.first { $0.kind == .local && $0.name == name } }
+                let name = local?.name ?? status.branch
+                let upstream = local.map { $0.gone ? nil : $0.detail } ?? status.upstream
+                let tipRef = local?.name ?? "HEAD"
+                guard let upstream else {
+                    return SyncState(status: status, branch: name, upstream: nil, outgoing: .empty, incoming: .empty)
                 }
                 func range(_ base: String, _ tip: String) throws -> CommitRange {
                     try repository.info(["op": "between", "base": base, "tip": tip, "limit": 500], as: CommitRange.self)
                 }
-                var state = SyncState(status: status, outgoing: try range(upstream, "HEAD"), incoming: try range("HEAD", upstream))
+                var state = SyncState(
+                    status: status, branch: name, upstream: upstream, outgoing: try range(upstream, tipRef),
+                    incoming: try range(tipRef, upstream))
                 // 送るものがあれば、その範囲の両端（シートの「送る変更すべて」の差分）と、注意を求める。
-                let refs = try repository.loadRefs()
-                if state.outgoing.count > 0, let tip = refs.head,
+                if state.outgoing.count > 0, let tip = local?.target ?? refs.head,
                    let base = refs.items.first(where: { $0.kind == .remote && $0.name == upstream })?.target {
                     state.range = (base, tip)
                     let changes = try repository.changes(from: base, to: tip)

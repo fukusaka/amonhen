@@ -405,7 +405,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | アカウント | 手元の `gh`（GitHub CLI）に任せる。アプリはトークンに触れず、`gh` を起動して読み書きする（ログインは `gh auth login`）。gh がなければ連携の機能を出さない。GitLab・Gitea は後で |
 | リモートの判定 | origin などの URL から GitHub のリポジトリを判定（今の `#123` のリンクと同じ） |
 | Pull Requests | サイドバーに一覧（自分のもの・レビュー依頼・すべて）。状態（draft・レビュー・CI）。チェックアウト、ブラウザで開く |
-| PR を作る | Push の後に「Create Pull Request…」。タイトル・本文をコミットから（AI の要約も選べる）、base の選択、draft |
+| PR を作る | 「Create Pull Request…」は Repository メニュー、ローカルブランチの右クリック、ブランチの印の吹き出し（push 済みで開いている PR がないとき。あればそれを開く）から。まだ push していない・上流より先にあるブランチは、先に push の確認の窓が出る（push 起因の CI を見てから作る）。タイトル・本文はブランチの先頭のコミットから（AI の要約も選べる）、base の選択、draft |
 | CI の状態 | History のブランチの先頭と各コミットに ✓ / ✗ / ● を出す（見えている範囲だけ、ETag で条件付きで取得し、永続キャッシュに入れる） |
 | アバター | GitHub のアカウントがあれば GitHub のアバター、なければ今の Gravatar |
 | Clone | 自分のリポジトリの一覧から選んで clone |

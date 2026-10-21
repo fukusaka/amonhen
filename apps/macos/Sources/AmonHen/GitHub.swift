@@ -223,11 +223,11 @@ enum GitHub {
         return data.flatMap { try? JSONDecoder().decode(View.self, from: $0) }?.defaultBranchRef?.name
     }
 
-    /// プルリクエストを作り、その URL を返す。今のブランチを push してあること。
+    /// `head` のブランチからプルリクエストを作り、その URL を返す。そのブランチを push してあること。
     static func createPullRequest(
-        in dir: String, repo: GitHubRepository, title: String, body: String, base: String, draft: Bool
+        in dir: String, repo: GitHubRepository, head: String, title: String, body: String, base: String, draft: Bool
     ) async throws -> String {
-        var args = ["pr", "create", "-R", repo.slug, "--title", title, "--body", body, "--base", base]
+        var args = ["pr", "create", "-R", repo.slug, "--head", head, "--title", title, "--body", body, "--base", base]
         if draft { args.append("--draft") }
         let data = try await run(args, in: dir)
         return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)

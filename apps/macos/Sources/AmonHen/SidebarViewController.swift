@@ -18,6 +18,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onSelectPage: ((Page) -> Void)?
     /// プルリクエストの右クリック: チェックアウト（gh pr checkout）。
     var onCheckoutPullRequest: ((PullRequest) -> Void)?
+    /// ローカルブランチからプルリクエストを作る（右クリックと、印の吹き出しから）。
+    var onCreatePullRequest: ((String) -> Void)?
+    /// GitHub のリポジトリで gh が使える（プルリクエストを作れる）。
+    var canCreatePullRequest = false
     /// プルリクエストの行の右端の CI の印を押した（詳細の吹き出しを、その印の下に）。
     var onClickPullRequestCI: ((PullRequest, NSView) -> Void)?
 
@@ -521,6 +525,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var facts = BranchStatusPopover.Facts(item: item, branch: branchFacts[item.name], base: branchGroups?.base, isHead: isHead)
         facts.otherWorktree = otherWorktree
         facts.editing = editing
+        facts.pullRequest = openPullRequest(for: item.name)
+        facts.canCreatePullRequest = canCreatePullRequest && item.name != branchGroups?.base
         let popover = NSPopover()
         popover.behavior = .transient
         popover.delegate = self
@@ -530,13 +536,19 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             onArchive: { [weak self] in
                 self?.actions?.perform(["op": "configSet", "key": "branch.\(item.name).amonhenArchived", "value": "true"])
             },
-            onOpenWorktree: { [weak self] path in self?.onSelectWorktree?(path) })
+            onOpenWorktree: { [weak self] path in self?.onSelectWorktree?(path) },
+            onCreatePullRequest: { [weak self] in self?.onCreatePullRequest?(item.name) })
         popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
         statusPopover = popover
         statusShown = item.name
     }
 
     private var statusShown: String?
+
+    /// `branch` から開いているプルリクエスト。
+    private func openPullRequest(for branch: String) -> PullRequest? {
+        pullRequests.first { $0.headRefName == branch }
+    }
 
     func popoverDidClose(_ notification: Notification) {
         guard notification.object as? NSPopover === statusPopover else { return }
@@ -1007,6 +1019,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
             if name != headBranch {
                 add(L("Delete %@…", name)) { actions.deleteBranchWithConfirmation(item) }
+            }
+            // プルリクエスト: 既定のブランチ以外から。開いているものがあれば作らずにそれを開く。
+            if canCreatePullRequest, name != branchGroups?.base {
+                menu.addItem(.separator())
+                if let pr = openPullRequest(for: name) {
+                    add(L("Open Pull Request #%ld", pr.number)) { if let url = URL(string: pr.url) { NSWorkspace.shared.open(url) } }
+                } else {
+                    add(L("Create Pull Request…")) { [weak self] in self?.onCreatePullRequest?(name) }
+                }
             }
         case .remote:
             add("Checkout \(name) as Local Branch") { actions.perform(["op": "track", "remoteBranch": name]) }
