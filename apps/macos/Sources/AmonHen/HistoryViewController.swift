@@ -122,6 +122,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let textView = GraphView()
     private let text: TextRenderer
     /// 行は 2 行: 1 行目に ref のラベルと件名、2 行目に作者・日時・短い ID。
+    /// その行のグラフの右端から文字までの余白。
+    private static let graphGap: CGFloat = 10
+
     private struct RowText {
         var subject: TextRenderer.ShapedLine
         var meta: TextRenderer.ShapedLine
@@ -907,13 +910,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             guard let line = FrameProfile.measure("text: row text", { shapedRow(row, scale: scale) }) else { continue }
             let rowTop = tableView.rect(ofRow: row).minY - scrollY
             let isSelected = selection.contains(row)
+            // 文字はその行のグラフの右端のすぐ右から（行ごとに左端が違う。グラフと文字のビューは左端が同じ）。
+            // グラフを描いていない行（History を隠しているとき）は列の位置。
+            let start = renderer.rightExtent(row: row).map { CGFloat($0) + Self.graphGap } ?? (column.minX - originX)
+            let end = column.maxX - originX
             if !isSelected, searchRowSet.contains(row) {
                 text.addRoundedRect(
-                    CGRect(x: column.minX - originX - 3, y: rowTop + 1, width: column.width + 6, height: tableView.rowHeight - 2),
+                    CGRect(x: start - 3, y: rowTop + 1, width: end - start + 6, height: tableView.rowHeight - 2),
                     radius: 4, color: NSColor.systemYellow.withAlphaComponent(0.14).rgba)
             }
-            var x = column.minX - originX
-            let end = column.maxX - originX
+            var x = start
             let id = FrameProfile.measure("text: commit id (FFI)") { history.commitID(row: row) }
             let labels = id.flatMap { id -> [RefLabel]? in
                 let all = (worktreeLabels[id] ?? []) + (refLabels[id] ?? [])
@@ -945,15 +951,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             text.addLine(
                 line.subject, origin: CGPoint(x: x, y: rowTop + subjectBaseline), color: isSelected ? selected : primary,
                 scale: scale, maxWidth: max(0, subjectEnd - x), ellipsis: ellipsis)
+            let metaMax = end - start - dot - ciSpace
             text.addLine(
-                line.meta, origin: CGPoint(x: compact ? right - metaWidth : column.minX - originX, y: rowTop + metaBaseline),
+                line.meta, origin: CGPoint(x: compact ? right - metaWidth : start, y: rowTop + metaBaseline),
                 color: isSelected ? selectedSecondary : secondary, scale: scale,
-                maxWidth: compact ? metaWidth : column.width - dot - ciSpace, ellipsis: metaEllipsis)
+                maxWidth: compact ? metaWidth : metaMax, ellipsis: metaEllipsis)
             if signed {
                 // 署名の状態のアイコン（信用度は形で分かる。塗りつぶしの seal は強い信用）。
                 let centerX = compact
                     ? right - metaWidth - 7
-                    : column.minX - originX + min(line.meta.width, column.width - dot - ciSpace) + 9
+                    : start + min(line.meta.width, metaMax) + 9
                 let centerY = rowTop + metaBaseline - CTFontGetXHeight(metaFont) / 2
                 text.addSymbol(
                     status.symbol, pointSize: 9.5, center: CGPoint(x: centerX, y: centerY),

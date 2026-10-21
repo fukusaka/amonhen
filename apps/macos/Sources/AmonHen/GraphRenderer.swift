@@ -113,6 +113,15 @@ final class GraphRenderer {
     /// 今のグラフの列の幅（ポイント。文字の位置がにじまないように整数にする）。
     var columnWidth: Float { currentWidth.rounded() }
 
+    /// 最後に描いた行ごとの、グラフの右端（列の左端から。その行の点と、その行を通る線のいちばん右）。
+    /// FE は行の文字をここのすぐ右から始める（行ごとに左端が違う）。
+    private var rowExtents: [Float] = []
+    private var extentRows: Range<Int> = 0..<0
+
+    func rightExtent(row: Int) -> Float? {
+        extentRows.contains(row) ? rowExtents[row - extentRows.lowerBound] : nil
+    }
+
     /// `scrollY` から `height` の高さに見える行（上下に少し余裕をとる）。
     private func visibleRows(history: History, scrollY: Float, height: Float) -> Range<Int> {
         let rowHeight = metrics.rowHeight
@@ -305,11 +314,22 @@ final class GraphRenderer {
         let m = metrics
         let edgeIndices = FrameProfile.measure("graph: edge indices (FFI)") { history.edgeIndices(in: rows) }
         let lineage = self.lineage.flatMap { $0.history === history ? $0 : nil }
+        // 行ごとの右端。幹線の点の分は必ず取る。
+        rowExtents = [Float](repeating: laneX(0) + m.nodeRadius, count: rows.count)
+        extentRows = rows
         history.withEdges { edges in
             for i in edgeIndices {
                 let e = edges[Int(i)]
                 let a = SIMD2(laneX(e.lane_start), rowY(e.row_start, scrollY: scrollY))
                 let b = SIMD2(laneX(e.lane_end), rowY(e.row_end, scrollY: scrollY))
+                // 線は 2 つのレーンの間に収まる（曲線もその間）。通る行の右端を広げる。
+                let lower = max(Int(e.row_start), rows.lowerBound), upper = min(Int(e.row_end), rows.upperBound - 1)
+                if lower <= upper {
+                    let right = max(a.x, b.x) + m.firstParentWidth / 2
+                    for r in lower...upper where rowExtents[r - rows.lowerBound] < right {
+                        rowExtents[r - rows.lowerBound] = right
+                    }
+                }
                 // 祖先を強調するときは、光らない線（や縦線の光らない上の部分）を薄くする。
                 var dimmed = false
                 if let lineage {
@@ -330,6 +350,8 @@ final class GraphRenderer {
         history.withNodes { nodes in
             for n in nodes[rows] {
                 let p = SIMD2(laneX(n.lane), rowY(n.row, scrollY: scrollY))
+                let i = Int(n.row) - rows.lowerBound
+                if i >= 0, i < rowExtents.count { rowExtents[i] = max(rowExtents[i], p.x + m.nodeRadius) }
                 let alpha: Float = lineage.map { $0.contains(row: Int(n.row)) ? 1 : dimmedAlpha } ?? 1
                 instances.append(Instance(
                     a: p, b: p, width: m.nodeRadius, color: UInt32(n.color), kind: Instance.circle, alpha: alpha))
