@@ -9,6 +9,11 @@ becomes the GitHub Release notes.
 
 ### [Unreleased]
 
+#### Added
+
+- Stashes shows where each stash's base stands against HEAD (in orange when it is not in HEAD's history), and
+  Branch… creates a branch from a stash (`git stash branch`). The remote protocol goes up to 22.
+
 #### Changed
 
 - Stashes moved into the sidebar's Workspace as one row that opens a Stashes view: the stashes with their branch, base

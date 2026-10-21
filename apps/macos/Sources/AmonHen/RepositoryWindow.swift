@@ -517,6 +517,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.actions = slot.actions
         history.actions = slot.actions
         stashes.actions = slot.actions
+        stashes.reloadBases()
         slot.actions.refreshUndo()
         slot.workingCopy.refresh()
         changeCount = worktreeChanges[WorktreeInfo.canonical(slot.path)] ?? 0
@@ -1130,6 +1131,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 latestRefs = refs
                 sidebar.show(refs)
                 stashes.show(refs.items)
+                stashes.reloadBases()
                 // 最後の stash を戻した・消したら、空の Stashes の画面から History に移る。
                 if pages?.page == .stashes, !refs.items.contains(where: { $0.kind == .stash }) {
                     sidebar.select(page: .history)

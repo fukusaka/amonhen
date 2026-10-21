@@ -1049,3 +1049,10 @@
 "Remove the stash without applying it (you can Undo it)" = "戻さずに stash を消す（Undo で戻せる）";
 "Applies to ✎ %@" = "戻す先: ✎ %@";
 "with untracked files" = "untracked のファイルを含む";
+"Create a branch at the commit the stash was made on, switch to it and apply the stash there (git stash branch)" = "stash を作ったときのコミットにブランチを作って切り替え、そこに stash を戻す（git stash branch）";
+"New Branch from %@" = "%@ から新しいブランチ";
+"New Branch from %@…" = "%@ から新しいブランチ…";
+"Creates the branch at the commit %@ was made on, switches to it and applies the stash there. The stash is removed once it applies." = "%@ を作ったときのコミットにブランチを作って切り替え、そこに戻します。戻せたら stash は消えます。";
+"not in HEAD’s history" = "HEAD の履歴にない";
+"at HEAD" = "HEAD と同じ";
+"%ld behind HEAD" = "HEAD から %ld 個後ろ";

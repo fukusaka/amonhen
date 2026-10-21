@@ -154,6 +154,20 @@ public struct SignerEmail: Decodable, Sendable {
 }
 
 /// コミットの詳細のうち時間のかかる分（署名の検証・notes・行数・子・含むブランチとタグ）。
+/// stash の土台（作ったときの HEAD）と、今の HEAD の離れ具合。
+public struct StashBase: Decodable, Equatable, Sendable {
+    public let name: String
+    public let base: String
+    /// HEAD にだけあるコミット（stash を作った後に HEAD が進んだ分）。
+    public let ahead: Int
+    /// 土台にだけあるコミット（0 でなければ、土台は今の HEAD の履歴にない）。
+    public let behind: Int
+}
+
+private struct StashBases: Decodable {
+    let stashes: [StashBase]
+}
+
 public struct CommitExtras: Decodable, Sendable {
     public let signature: Signature?
     public let notes: String
@@ -228,6 +242,12 @@ extension Repository {
     /// コミットの詳細。裏のスレッドで呼ぶ。
     public func commitInfo(oid: String) throws -> CommitInfo {
         try info(["op": "commitInfo", "oid": oid])
+    }
+
+    /// stash ごとの土台と、今の HEAD の離れ具合。HEAD は、このリポジトリ（worktree）のもの。裏のスレッドで呼ぶ。
+    public func stashBases() throws -> [StashBase] {
+        let bases: StashBases = try info(["op": "stashBases"])
+        return bases.stashes
     }
 
     /// コミットの詳細のうち時間のかかる分（git で署名を検証するなど）。裏のスレッドで呼ぶ。

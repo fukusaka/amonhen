@@ -156,9 +156,12 @@ stash は `refs/stash` とその reflog に置かれるコミット。中身は�
 - サイドバーの Stashes（View > Stashes ⌘4）を選ぶと、この画面を開く。左に stash の一覧（新しい順）、右に選んだ
   stash の中身（History の詳細と同じ欄。土台は 1 つ目の親のリンク）。
 - 各行は `stash@{n}` とメッセージ（メッセージなしで作ったものは WIP と土台の件名）、その下に作ったブランチ（今の
-  ブランチでなければ薄く）・土台の短い ID・いつ・untracked のファイルを含むか。
-- Apply・Pop・Drop… は一覧の上と、各行の右クリック。Drop は先に確かめ、Undo できる。worktree が 2 つ以上あれば、
-  戻す先の worktree（✎）を帯に出す。
+  ブランチでなければ薄く）、土台と書き込む先の worktree の HEAD の関係（HEAD と同じ・HEAD から N 個後ろ・橙で
+  HEAD の履歴にない。履歴にないと戻すときに重なりやすい）、いつ、untracked のファイルを含むか、土台の短い ID。
+- Apply・Pop・Drop…・Branch… は一覧の上と、各行の右クリック。Apply・Pop は、stage していた分をできれば stage
+  したまま戻す（`--index`）。Drop は先に確かめ、Undo できる。Branch… は `git stash branch`: 土台にブランチを作って
+  切り替え、そこに戻すので、HEAD がどれだけ進んでいても重ならない。worktree が 2 つ以上あれば、戻す先の
+  worktree（✎）を帯に出す。
 - 最後の stash を pop・drop したら、History に移る。
 
 ## 6. Working Copy
