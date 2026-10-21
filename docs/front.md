@@ -57,6 +57,7 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 | `historyLineage` | history, row | | rows (u64 bit set), edgeFrom u32 |
 | `historyLanes` | history, start, end, metrics (full, thin, minFull, minThin, available) | width (of all lanes) | positions f32 |
 | `historyRowOf` | history, id | row (null if absent) | |
+| `historyOrder` | order (`date`, or `topo` to keep a branch's commits together under its merge; applies to every History this session loads from now on, and the current one is reordered without rereading git) | order | |
 | `refs` | | headBranch, head, entries (kind, name, target, detail, ahead, behind, gone) | |
 | `status` | | generation, branch, upstream, ahead, behind, entries (kind, path, origPath, index, worktree, staged, unstaged, submodule) | |
 | `commitDiff` | id or stash (ID), or history, rows, pair? (forward, reverse, mergeBase) | files (path, oldPath, kind, added, removed, binary), changes, selection, rows | diff lines (below) |

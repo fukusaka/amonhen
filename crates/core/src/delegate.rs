@@ -30,6 +30,9 @@ pub(crate) enum Request {
     },
     /// History を最初から作り直す（`Repository::rebuild_history`）。daemon の永続キャッシュも作り直す。
     RebuildHistory,
+    /// History の並び順を変える（`Repository::set_history_order`。`HistoryOrder::name`）。daemon の永続キャッシュも
+    /// その順になる。
+    SetHistoryOrder(String),
 }
 
 #[derive(Serialize, Deserialize)]

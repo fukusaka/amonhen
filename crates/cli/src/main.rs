@@ -33,7 +33,7 @@ pub(crate) fn usage() -> String {
     tr!("\
 usage: amonhen [<path>]
        amonhen open [<path> | ssh://host/path] [--daemon] [--snapshot]
-       amonhen log [-n <count> | --all] [--fold] [--branch <name>]… [--no-graph] [--rebuild] [--json] [<query>…]
+       amonhen log [-n <count> | --all] [--fold] [--topo-order] [--branch <name>]… [--no-graph] [--rebuild] [--json] [<query>…]
        amonhen status [--json]
        amonhen diff [--staged | --combined] [--rows] [--stat] [--json] [<rev> [<rev>]] [[--] <path>…]
        amonhen show [<rev>] [--stat] [--no-patch] [--rows] [--json]
@@ -402,6 +402,7 @@ fn log(args: &[String]) -> Result<ExitCode> {
     let mut query: Vec<String> = Vec::new();
     let mut rebuild = false;
     let mut as_json = false;
+    let mut topo_order = false;
     let mut a = Args::new(args);
     while let Some(arg) = a.rest.next() {
         match arg.as_str() {
@@ -409,6 +410,7 @@ fn log(args: &[String]) -> Result<ExitCode> {
             "-n" => count = Some(a.value("-n")?.parse()?),
             "--all" => count = Some(usize::MAX),
             "--fold" => fold = true,
+            "--topo-order" => topo_order = true,
             "--rebuild" => rebuild = true,
             "--json" => as_json = true,
             "--branch" | "-b" => branches.push(a.value("--branch")?.to_owned()),
@@ -445,6 +447,12 @@ fn log(args: &[String]) -> Result<ExitCode> {
                 .ok_or_else(|| tr!("Branch not found: {name}", name = name))
         })
         .collect::<std::result::Result<_, _>>()?;
+    if topo_order {
+        call(
+            &*front,
+            serde_json::json!({"op": "historyOrder", "order": "topo"}),
+        )?;
+    }
     let mut request = serde_json::json!({"op": "history", "rebuild": rebuild, "fold": fold});
     if !tips.is_empty() {
         request["tips"] = serde_json::json!(tips);

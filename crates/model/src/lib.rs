@@ -32,4 +32,4 @@ pub use ops::{
 pub use refs::{RefEntry, RefKind, Refs, RepoPaths};
 pub use status::{Status, StatusEntry, StatusKind};
 pub use text::CommitText;
-pub use topo::RawCommit;
+pub use topo::{Order as HistoryOrder, RawCommit};

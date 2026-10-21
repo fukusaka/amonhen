@@ -10,14 +10,14 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use amonhen_layout::{Pod, Slab};
-use amonhen_model::{CommitGraph, Oid, Result};
+use amonhen_model::{CommitGraph, HistoryOrder, Oid, Result};
 use memmap2::Mmap;
 
 use crate::graph::{Checkpoint, GraphLayout, State, Track};
 
 const MAGIC: [u8; 8] = *b"AMONHIST";
 /// 形式を変えたら上げる。違うバージョンのキャッシュは読まずに作り直す。
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
 const ALIGN: usize = 16;
 
 #[repr(usize)]
@@ -43,6 +43,9 @@ struct Header {
     has_head: u32,
     head: [u8; 20],
     lane_count: u32,
+    /// 並び順（`HistoryOrder`。0 が日付順、1 がトポロジー順）。
+    order: u32,
+    reserved: u32,
     /// 区画ごとの（ファイル先頭からのバイト位置, 要素数）。
     sections: [[u64; 2]; SECTIONS],
 }
@@ -53,8 +56,25 @@ unsafe impl Pod for Header {}
 pub struct CachedHistory {
     pub tips: Vec<Oid>,
     pub head: Option<Oid>,
+    /// `graph` の並び順。
+    pub order: HistoryOrder,
     pub graph: CommitGraph,
     pub layout: GraphLayout,
+}
+
+fn order_code(order: HistoryOrder) -> u32 {
+    match order {
+        HistoryOrder::Date => 0,
+        HistoryOrder::Topo => 1,
+    }
+}
+
+fn order_from_code(code: u32) -> Option<HistoryOrder> {
+    match code {
+        0 => Some(HistoryOrder::Date),
+        1 => Some(HistoryOrder::Topo),
+        _ => None,
+    }
 }
 
 /// `dir` の中の、`key`（リポジトリのパスなど）ごとのキャッシュファイル。
@@ -111,6 +131,8 @@ fn write_to(path: &Path, h: &CachedHistory) -> Result<()> {
         has_head: u32::from(h.head.is_some()),
         head: h.head.map_or([0; 20], |o| o.0),
         lane_count: u32::from(h.layout.lane_count),
+        order: order_code(h.order),
+        reserved: 0,
         sections: [[0; 2]; SECTIONS],
     };
     let mut offset = size_of::<Header>().next_multiple_of(ALIGN);
@@ -174,6 +196,7 @@ pub fn read(path: &Path) -> Option<CachedHistory> {
     Some(CachedHistory {
         tips: slab::<Oid>(&map, &header, Section::Tips)?.to_vec(),
         head: (header.has_head != 0).then_some(Oid(header.head)),
+        order: order_from_code(header.order)?,
         graph,
         layout,
     })
@@ -272,6 +295,7 @@ mod tests {
             &CachedHistory {
                 tips: tips.clone(),
                 head,
+                order: HistoryOrder::Topo,
                 graph: graph.clone(),
                 layout: layout.clone(),
             },
@@ -280,6 +304,7 @@ mod tests {
         let read = read(&path).unwrap();
         assert_eq!(read.tips, tips);
         assert_eq!(read.head, head);
+        assert_eq!(read.order, HistoryOrder::Topo);
         assert_eq!(read.graph, graph);
         assert_eq!(read.layout.nodes(), layout.nodes());
         assert_eq!(read.layout.edges(), layout.edges());
@@ -304,6 +329,7 @@ mod tests {
             &CachedHistory {
                 tips: vec![],
                 head: None,
+                order: HistoryOrder::Date,
                 graph,
                 layout,
             },

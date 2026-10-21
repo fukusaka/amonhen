@@ -336,6 +336,34 @@ pub unsafe extern "C" fn amonhen_history_load(
     }
 }
 
+/// History の並び順を変える（`order` は 0 が日付順、1 がトポロジー順）。公開している History があれば、
+/// git を読み直さずにその順に並べ直して公開し直す（大きなリポジトリでは秒単位。裏のスレッドから呼ぶこと）。
+/// 手元の共有の daemon につないでいれば、daemon の分も変える。失敗なら false。
+///
+/// # Safety
+/// `repo` は有効なリポジトリであること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_set_order(
+    repo_ptr: *const AmonhenRepo,
+    order: u32,
+) -> bool {
+    let order = match order {
+        0 => amonhen_model::HistoryOrder::Date,
+        1 => amonhen_model::HistoryOrder::Topo,
+        _ => {
+            set_error(tr!("Unknown History order"));
+            return false;
+        }
+    };
+    match repo(repo_ptr).set_history_order(order) {
+        Ok(()) => true,
+        Err(e) => {
+            set_error(e);
+            false
+        }
+    }
+}
+
 /// History を最初から作り直して公開し、そのスナップショットを返す（`amonhen_history_release` で手放す）。
 /// 永続キャッシュを捨てる（手元の共有の daemon につないでいれば、daemon の分も）。裏のスレッドから呼ぶこと。
 ///
