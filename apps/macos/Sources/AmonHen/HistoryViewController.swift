@@ -261,6 +261,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let previousMatchButton = NSButton()
     private let nextMatchButton = NSButton()
     private let matchOnlyButton = NSButton()
+    /// 並び順・項目・1 行表示のメニューを出すボタン（バーの右端）。
+    private let displayButton = NSButton()
     /// 一致したコミットだけを出しているときの、元の History（出していなければ nil）。
     private var baseHistory: History?
     /// HEAD のコミット（Current Branch で使う）。
@@ -300,8 +302,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.allowsMultipleSelection = true
         tableView.style = .plain
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-        // ヘッダーの右クリックで、行に出す項目を選ぶ（View メニューと同じ）。
-        tableView.headerView?.menu = HistoryItemsMenu.shared.make()
+        // ヘッダーの右クリックで、並び順と行に出す項目を選ぶ（バーの右端のボタンと同じ）。
+        tableView.headerView?.menu = HistoryDisplayMenu.shared.displayMenu()
         graphColumn.title = ""
         // 幅は見えているレーンの分だけ取る（`layoutGraphView` が描くたびに合わせる）。
         graphColumn.width = 120
@@ -382,6 +384,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             (previousMatchButton, "chevron.up", L("Previous Match (⇧↩, ⌘⇧G)"), #selector(previousMatchClicked)),
             (nextMatchButton, "chevron.down", L("Next Match (↩, ⌘G)"), #selector(nextMatchClicked)),
             (matchOnlyButton, "line.3.horizontal.decrease.circle", L("Show Only Matching Commits"), #selector(matchOnlyClicked)),
+            (displayButton, "slider.horizontal.3", L("History Display: order, items, one line per commit"), #selector(displayClicked)),
         ] {
             button.bezelStyle = .accessoryBarAction
             button.isBordered = false
@@ -394,6 +397,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             container.addSubview(button)
         }
         matchOnlyButton.setButtonType(.pushOnPushOff)
+        displayButton.isEnabled = true
         container.addSubview(searchField)
         container.addSubview(searchCount)
         container.addSubview(searchSpinner)
@@ -438,8 +442,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let barY = view.bounds.height - barHeight + 2
         scopePopup.frame = NSRect(x: 6, y: barY, width: 180, height: barHeight - 4)
         let countWidth: CGFloat = 96
-        // 右から、絞り込み・次・前・件数。
-        let buttons: CGFloat = 3 * 22
+        // 右から、表示のメニュー・絞り込み・次・前・件数。
+        let buttons: CGFloat = 4 * 22
         let ownField = toolbarSearchShown?() != true
         searchField.isHidden = !ownField
         searchField.frame = NSRect(
@@ -448,7 +452,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         searchSpinner.frame = NSRect(x: (ownField ? searchField.frame.maxX : 186) + 6, y: barY + 3, width: 16, height: 16)
         let countX = view.bounds.width - countWidth - buttons - 6
         searchCount.frame = NSRect(x: countX, y: barY + 2, width: countWidth, height: 16)
-        for (i, button) in [previousMatchButton, nextMatchButton, matchOnlyButton].enumerated() {
+        for (i, button) in [previousMatchButton, nextMatchButton, matchOnlyButton, displayButton].enumerated() {
             button.frame = NSRect(x: countX + countWidth + CGFloat(i) * 22, y: barY, width: 22, height: barHeight - 4)
         }
         // 右端に密度の帯（スクロールバーの左）。
@@ -796,6 +800,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             renderer.lineage = lineage
             redrawGraph()
         }
+    }
+
+    /// バーの右端のボタン: 並び順・項目・1 行表示のメニューをボタンの下に出す。
+    @objc private func displayClicked() {
+        let menu = HistoryDisplayMenu.shared.displayMenu()
+        menu.popUp(positioning: nil, at: NSPoint(x: 0, y: displayButton.bounds.minY - 4), in: displayButton)
     }
 
     @objc private func highlightAncestorsChanged() {
