@@ -9,8 +9,15 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Stashes shows where each stash's base stands against HEAD (in orange when it is not in HEAD's history), and
+  Branch… creates a branch from a stash (`git stash branch`). The remote protocol goes up to 22.
+
 #### Changed
 
+- Stashes moved into the sidebar's Workspace as one row that opens a Stashes view: the stashes with their branch, base
+  and date on the left, the selected one's changes on the right, and Apply, Pop and Drop (View > Stashes ⌘4).
 - The main worktree always stays at the top of the sidebar's worktrees, instead of being folded into "No changes" when
   it has none.
 

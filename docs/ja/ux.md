@@ -21,15 +21,15 @@
 ┌ タブ: amonhen-standalone │ linux │ vscode-amonhen │ + ─────────────────────────────────────────┐
 │ [◧] main ↑2↓0 │ Fetch Pull Push │ Branch Merge Rebase │ Stash Pop │  ⟳ 2 ops  ↶  🔍____ │
 ├────────────┬──────────────────────────────────────────────────────────────────────────────┤
-│ WORKSPACE  │ （Working Copy / History / Conflicts のどれか）                               │
+│ WORKSPACE  │ （Working Copy / History / Conflicts / Stashes のどれか）                     │
 │  Changes 5 │                                                                              │
 │  History   │                                                                              │
 │  Conflicts │                                                                              │
+│  Stashes 2 │                                                                              │
 │ BRANCHES   │                                                                              │
 │ REMOTES    │                                                                              │
 │ PULL REQS  │                                                                              │
 │ TAGS       │                                                                              │
-│ STASHES    │                                                                              │
 │ SUBMODULES │                                                                              │
 │ WORKTREES  │                                                                              │
 └────────────┴──────────────────────────────────────────────────────────────────────────────┘
@@ -41,6 +41,8 @@
   Remotes・Tags を絞る。合ったものは名前のまま平らに並べる。Esc で消す。
 - ブランチ・タグは複数選べる（⌘ クリック、⇧ クリック）。History はそのどれかから辿れるコミットを出し、右クリックの
   メニューで名前をまとめてコピー、ローカルブランチだけならまとめてお気に入り・アーカイブ・削除ができる（削除は名前を並べて確かめる）。
+- Workspace には、メインの画面を切り替える行を置く。Stashes は History（と Conflicts）の下に、stash があるときだけ
+  件数付きで出し、選ぶと Stashes の画面（5a 節）を開く。stash そのものはサイドバーではなく、その画面に並べる。
 - Pull Requests・Worktrees は該当するものがあるときだけ出す。
 
 ## 1. 複数のリポジトリ: タブと別ウィンドウ
@@ -131,7 +133,7 @@ macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewCont
 | 統合 | Merge | 選んでいるコミット・ブランチを今のブランチへ（確認シートで no-ff・squash を選ぶ） | 最近のブランチの一覧 |
 | | Rebase | 今のブランチを選んだものの上へ | interactive（History の編集モードに入る）、onto |
 | 退避 | Stash | 退避（メッセージ入力つき、⌥ クリックで即退避） | untracked も、stage 済みだけ、選んだファイルだけ |
-| | Pop | stash の名前とメッセージを見せて確かめてから、最新を pop | —（選んで apply・pop するのはサイドバー） |
+| | Pop | stash の名前とメッセージを見せて確かめてから、最新を pop | —（選んで apply・pop するのは Stashes） |
 | 状態 | Activity | 実行中の操作の数とスピナー。押すと Activity | — |
 | | Refresh | status・ref・History を読み直す（⌘R） | 作業ツリーを全部読み直す（fsmonitor と status のキャッシュを使わない）、永続キャッシュを捨てて History を作り直す |
 | | Undo | 操作の名前を見せて確かめてから戻す | —（操作ログは Activity） |
@@ -145,6 +147,22 @@ macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewCont
 - Pull・Push・ブランチに ▾ のメニューは付けない。アイコンを 1 回押しただけで、外に送ったり履歴を書き換えたりしないこと。外に出る・ブランチが動く操作（Pull・Push・Pop・Undo）は、何が起きるかをシートで見せる。↩ で実行するので、キーボードからは 1 打増えるだけ。Fetch・Refresh はすぐ実行する（手元のものを変えない）。メニューのショートカット（⌃⌘L・⌃⌘P）も同じシートを出す。Commit and Push は重ねて聞かない。
 - 同じものは 1 か所に: ツールバーに検索欄があれば History の中の検索欄は隠す（一致の件数・前・次・絞り込みは History に残す）。ツールバーに Branch があれば、ウィンドウのサブタイトルにブランチ名を出さない。
 - ネットワークを使う git が 120 秒なにも出さなければ（ふつうは誰にも見えない認証の入力待ち）、そう書いたエラーで止める。Activity から取り消すこともできる。
+
+## 5a. Stashes
+
+stash は `refs/stash` とその reflog に置かれるコミット。中身は作業ツリーで、作ったときの HEAD（土台）と index を親に
+もつ（`-u` なら untracked のファイルも）。一覧はすべての worktree で共有で、戻す先は書き込む先の worktree。
+
+- サイドバーの Stashes（View > Stashes ⌘4）を選ぶと、この画面を開く。左に stash の一覧（新しい順）、右に選んだ
+  stash の中身（History の詳細と同じ欄。土台は 1 つ目の親のリンク）。
+- 各行は `stash@{n}` とメッセージ（メッセージなしで作ったものは WIP と土台の件名）、その下に作ったブランチ（今の
+  ブランチでなければ薄く）、土台と書き込む先の worktree の HEAD の関係（HEAD と同じ・HEAD から N 個後ろ・橙で
+  HEAD の履歴にない。履歴にないと戻すときに重なりやすい）、いつ、untracked のファイルを含むか、土台の短い ID。
+- Apply・Pop・Drop…・Branch… は一覧の上と、各行の右クリック。Apply・Pop は、stage していた分をできれば stage
+  したまま戻す（`--index`）。Drop は先に確かめ、Undo できる。Branch… は `git stash branch`: 土台にブランチを作って
+  切り替え、そこに戻すので、HEAD がどれだけ進んでいても重ならない。worktree が 2 つ以上あれば、戻す先の
+  worktree（✎）を帯に出す。
+- 最後の stash を pop・drop したら、History に移る。
 
 ## 6. Working Copy
 
@@ -387,7 +405,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Amon Hen | About、Settings… ⌘,、Services、隠す、終了 |
 | File | New Window ⌘N、New Tab ⌘T、Open… ⌘O、Quick Open… ⌘⇧O、Open Recent ▸、Clone… ⌃⌘C、Add Remote Repository…、Init…、Close Tab ⌘W、Close Window ⌘⇧W |
 | Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
-| View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
+| View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Stashes ⌘4、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
 | Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings… ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Create Patch… |

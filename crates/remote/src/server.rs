@@ -397,6 +397,8 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::StashApply { name, pop } => encode(&ops.stash_apply(&name, pop)?),
         Op::StashDrop(name) => encode(&ops.stash_drop(&name)?),
         Op::StashStore { oid, message } => encode(&ops.stash_store(&oid, &message)?),
+        Op::StashBranch { branch, name } => encode(&ops.stash_branch(&branch, &name)?),
+        Op::CountApart { left, right } => encode(&ops.count_apart(&left, &right)?),
         Op::UpdateSubmodules(paths) => encode(&ops.update_submodules(&strs(&paths))?),
         Op::ConfigList => encode(&ops.config_list()?),
         Op::ConfigSet(key, value) => encode(&ops.config_set(&key, value.as_deref())?),

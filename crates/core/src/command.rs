@@ -96,6 +96,15 @@ pub enum Command {
     StashDrop {
         name: String,
     },
+    /// stash を作ったときのコミットから `branch` を作って切り替え、そこに stash を戻す（`git stash branch`。戻せたら
+    /// stash は消える）。
+    StashBranch {
+        name: String,
+        branch: String,
+    },
+    /// stash ごとの土台（作ったときの HEAD）と、今の HEAD の離れ具合（`info.stashes`: name・base・`ahead`（HEAD に
+    /// だけあるコミットの数）・`behind`（土台にだけあるコミットの数））。HEAD がまだなければ空。
+    StashBases,
     UpdateSubmodules {
         paths: Vec<String>,
     },
@@ -1256,6 +1265,33 @@ impl Repository {
                 undo.record_stash_drop(ops, &name, &target, &message)?;
                 ok()
             }
+            Command::StashBranch { name, branch } => done(ops.stash_branch(&branch, &name)?),
+            Command::StashBases => {
+                let refs = self.load_refs()?;
+                let mut stashes = Vec::new();
+                if ops.resolve("HEAD").is_ok() {
+                    for entry in refs.refs.entries.iter() {
+                        let (amonhen_model::RefKind::Stash, Some(target)) =
+                            (entry.kind, entry.target)
+                        else {
+                            continue;
+                        };
+                        let base = ops.resolve(&format!("{target}^1"))?;
+                        let (ahead, behind) = ops.count_apart("HEAD", &base.to_string())?;
+                        stashes.push(serde_json::json!({
+                            "name": entry.name,
+                            "base": base.to_string(),
+                            "ahead": ahead,
+                            "behind": behind,
+                        }));
+                    }
+                }
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "stashes": stashes })),
+                    ..Default::default()
+                })
+            }
             Command::UpdateSubmodules { paths } => {
                 let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
                 ops.update_submodules(&paths)?;
@@ -2366,6 +2402,45 @@ mod tests {
         assert_eq!(bad["ok"], false);
         assert!(!bad["error"].as_str().unwrap().is_empty());
         assert_eq!(run(&repo, r#"{"op":"nonsense"}"#)["ok"], false);
+    }
+
+    #[test]
+    fn measures_stash_bases_and_branches_from_a_stash() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let base = git(dir, &["rev-parse", "HEAD"]);
+        std::fs::write(dir.join("a.txt"), "1\n2\n3\n4\n").unwrap();
+        git(dir, &["stash", "-q"]);
+        // stash を作った後に HEAD が 2 つ進んだ。
+        commit_file(dir, "b.txt", "second");
+        commit_file(dir, "c.txt", "third");
+
+        let bases = run(&repo, r#"{"op":"stashBases"}"#);
+        assert_eq!(bases["ok"], true, "{bases}");
+        let stashes = bases["info"]["stashes"].as_array().unwrap();
+        assert_eq!(stashes.len(), 1);
+        assert_eq!(stashes[0]["name"], "stash@{0}");
+        assert_eq!(stashes[0]["base"], base);
+        assert_eq!(
+            (stashes[0]["ahead"].as_u64(), stashes[0]["behind"].as_u64()),
+            (Some(2), Some(0))
+        );
+
+        // 土台から枝を作って戻すので、HEAD が進んでいても重ならない。戻せた stash は消える。
+        let r = run(
+            &repo,
+            r#"{"op":"stashBranch","name":"stash@{0}","branch":"wip"}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(git(dir, &["branch", "--show-current"]), "wip");
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), base);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\n2\n3\n4\n"
+        );
+        assert!(git(dir, &["stash", "list"]).is_empty());
+        let none = run(&repo, r#"{"op":"stashBases"}"#);
+        assert_eq!(none["info"]["stashes"].as_array().unwrap().len(), 0);
     }
 
     fn log(dir: &std::path::Path) -> Vec<String> {
