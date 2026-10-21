@@ -59,7 +59,7 @@ messages its Webview would send to the extension host (`activate` returns the pa
 and the repository with git. They cover activation with the bundled engine, History through the shared daemon, line
 staging, discarding lines, Undo and commit on a CRLF file both through the daemon and with `amonhen.daemon.enabled`
 off, that every process the extension starts has `windowsHide`, and that its git processes end when the repositories
-are closed. A run takes about 15 to 30 seconds, most of it VSCode starting and the first Webview loading. On Linux
+are closed. A run takes about 10 seconds once VSCode is downloaded. On Linux
 without a display, use `xvfb-run -a npm run test:e2e` (as CI does).
 
 Pressing F5 in VSCode opens a window with the extension loaded. Setting the log level of "Amon Hen" in Output to Trace shows the time taken by each git command.

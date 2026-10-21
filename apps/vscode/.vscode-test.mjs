@@ -21,13 +21,12 @@ export default defineConfig({
     .map((f) => join(paths.ext, 'e2e', f)),
   workspaceFolder: paths.repo,
   launchArgs: [
-    // 裏に回った窓でも Webview の読み込みを間引かせない（間引かれると開くのに数十秒かかる）。VSCode の知らない
-    // オプションは次の引数を値として取るので、VSCode のオプションの前に置く
-    '--disable-renderer-backgrounding',
-    '--disable-backgrounding-occluded-windows',
-    '--disable-background-timer-throttling',
+    // VSCode の知らない（Chromium の）オプションは次の引数を値として取るので、VSCode のオプションの前に置く
     // Linux（Ubuntu 24.04 の CI）は、展開しただけの VSCode では Chromium のサンドボックスが使えない
     ...(process.platform === 'linux' ? ['--no-sandbox'] : []),
+    // macOS は HOME を一時ディレクトリに向けるので、キーチェーンがないというダイアログが出て、閉じるまで Webview が
+    // 開かない。キーチェーンを使わせない
+    ...(process.platform === 'darwin' ? ['--use-mock-keychain'] : []),
     '--user-data-dir',
     paths.user,
     '--disable-workspace-trust',

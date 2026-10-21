@@ -56,7 +56,7 @@ mocha）は拡張ホストで動く。メインビューの Webview が送るは
 がパネルを返す）、送り返されるメッセージとリポジトリの様子を git で確かめる。同梱のエンジンでの起動、共有の daemon を
 通した History、CRLF のファイルでの行単位の stage・行の破棄・Undo・commit（daemon で、と `amonhen.daemon.enabled` を
 切って）、拡張が起動するプロセスがすべて `windowsHide` であること、リポジトリを閉じると git のプロセスが終わることを
-確かめる。1 回 15〜30 秒ほどで、大半は VSCode の起動と最初の Webview の読み込み。画面のない Linux では
+確かめる。VSCode を落としたあとは、1 回 10 秒ほど。画面のない Linux では
 `xvfb-run -a npm run test:e2e`（CI と同じ）。
 
 VSCode で F5 を押すと、拡張を読み込んだウィンドウが開く。Output の「Amon Hen」でログレベルを Trace にすると、git コマンドごとの所要時間が出る。

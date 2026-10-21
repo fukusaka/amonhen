@@ -55,12 +55,9 @@ function waitPosted<T extends HostMessage['type']>(
   type: T,
   since: number,
   match: (m: Message<T>) => boolean = () => true,
-  ms?: number,
 ): Promise<Message<T>> {
-  return until(
-    `${type} のメッセージ`,
-    () => posted.slice(since).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
-    ms,
+  return until(`${type} のメッセージ`, () =>
+    posted.slice(since).find((m): m is Message<T> => m.type === type && match(m as Message<T>)),
   );
 }
 
@@ -211,12 +208,10 @@ suite('Amon Hen in VSCode', () => {
     assert.ok(existsSync(link), `${link} がある`);
   });
 
-  test('shows History, commit details and diffs through the daemon', async function () {
-    this.timeout(120_000);
+  test('shows History, commit details and diffs through the daemon', async () => {
     const mark = posted.length;
     const panel = await showView('amonhen.showHistory');
-    // 起動して最初の Webview は、読み込みに 5〜15 秒かかる
-    const rows = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.subject === 'add crlf.txt'), 90_000);
+    const rows = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.subject === 'add crlf.txt'));
     const commit = rows.rows.find((r) => r.subject === 'add crlf.txt')!;
     await panel.history.handle({ type: 'select', oid: commit.oid });
     const { details } = await waitPosted('details', mark, (m) => m.details.oid === commit.oid);
