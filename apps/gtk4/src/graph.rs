@@ -95,7 +95,7 @@ impl Lanes {
                 min_thin: m.min_thin_lane_width,
                 available: width - (m.left_inset - m.lane_width / 2.0) - 4.0,
             };
-            self.target = lane_positions(&history.layout, window, &metrics);
+            self.target = lane_positions(&history.layout, window, &metrics).0;
             self.key = Some(key);
             // 別の History に替わったときは、動かさずにその位置から始める。
             if history_changed || self.current.len() != self.target.len() {
