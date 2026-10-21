@@ -168,6 +168,40 @@ enum Settings {
             NotificationCenter.default.post(name: .historyRowsChanged, object: nil)
         }
     }
+
+    /// History の行に出す項目（既定はすべて）。変えたら `historyRowsChanged` を知らせる。
+    static var historyItems: HistoryItems {
+        get {
+            // 値がなければすべて（0 は「何も出さない」）。`integer(forKey:)` は引数（`-historyItems 3`）の文字列も数にする。
+            let defaults = UserDefaults.standard
+            return defaults.object(forKey: "historyItems") == nil ? .all : HistoryItems(rawValue: defaults.integer(forKey: "historyItems"))
+        }
+        set {
+            UserDefaults.standard.set(newValue.rawValue, forKey: "historyItems")
+            NotificationCenter.default.post(name: .historyRowsChanged, object: nil)
+        }
+    }
+
+    /// History の行を実際に 1 行で出すか: 設定で 1 行にしたか、作者・日時の行に出す項目が 1 つもないとき。
+    static var oneLineHistoryRows: Bool { compactHistoryRows || !historyItems.hasMeta }
+}
+
+/// History の行に出す項目。件名はいつも出す。
+nonisolated struct HistoryItems: OptionSet, Sendable, Hashable {
+    let rawValue: Int
+    /// ブランチ・タグ（と worktree）のラベル。
+    static let refs = HistoryItems(rawValue: 1)
+    static let author = HistoryItems(rawValue: 2)
+    static let date = HistoryItems(rawValue: 4)
+    /// 短いコミット ID。
+    static let id = HistoryItems(rawValue: 8)
+    /// 署名の検証結果の印。
+    static let signature = HistoryItems(rawValue: 16)
+    /// GitHub の CI の状態の印。
+    static let ci = HistoryItems(rawValue: 32)
+    static let all: HistoryItems = [.refs, .author, .date, .id, .signature, .ci]
+    /// 作者・日時の行に出すものがあるか。
+    var hasMeta: Bool { !isDisjoint(with: [.author, .date, .id]) }
 }
 
 extension Notification.Name {

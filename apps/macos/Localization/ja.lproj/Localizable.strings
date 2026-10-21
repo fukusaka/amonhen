@@ -1012,3 +1012,13 @@
 "stale" = "古い";
 "queued" = "待ち";
 "running" = "実行中";
+
+
+// History の行に出す項目
+"History Items" = "History の表示項目";
+"Choose what each commit's row in History shows besides the subject (also in the History header's context menu)" = "History の各コミットの行に、件名のほかに何を出すかを選ぶ（History のヘッダーの右クリックでも選べる）";
+"Branches and Tags" = "ブランチとタグ";
+"Date" = "日時";
+"Commit ID" = "コミット ID";
+"Signature" = "署名";
+"CI Status" = "CI の状態";

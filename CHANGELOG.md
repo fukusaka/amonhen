@@ -20,6 +20,8 @@ becomes the GitHub Release notes.
   diff of the selected commit or of all changes together, as in the detail column.
 - Clicking a commit's CI mark in History, or a pull request's in the sidebar, opens a popover listing its checks
   (result, name, duration), each linking to its log, with a button to the checks page on GitHub.
+- View > History Items (and the History header's context menu) chooses what each row shows besides the subject:
+  branches and tags, author, date, commit ID, signature and CI status. With none of author, date and ID, rows are one line.
 
 #### Changed
 

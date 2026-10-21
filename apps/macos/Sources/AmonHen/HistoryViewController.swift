@@ -298,6 +298,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.allowsMultipleSelection = true
         tableView.style = .plain
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        // ヘッダーの右クリックで、行に出す項目を選ぶ（View メニューと同じ）。
+        tableView.headerView?.menu = HistoryItemsMenu.shared.make()
         graphColumn.title = ""
         // 幅は見えているレーンの分だけ取る（`layoutGraphView` が描くたびに合わせる）。
         graphColumn.width = 120
@@ -309,7 +311,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.addTableColumn(subject)
         // 行の右端の CI の印（描くのと同じ位置: 2 列目の右端から 18 pt）を押したら、行を選ばずに詳細の吹き出し。
         tableView.onClickMark = { [weak self] row, point in
-            guard let self, onClickCI != nil, let history, let id = history.commitID(row: row), let ci = ciStatus[id]
+            guard let self, onClickCI != nil, Settings.historyItems.contains(.ci), let history,
+                  let id = history.commitID(row: row), let ci = ciStatus[id]
             else { return false }
             let column = tableView.rect(ofColumn: 1).insetBy(dx: 5, dy: 0)
             guard point.x >= column.maxX - 18, point.x <= column.maxX + 2 else { return false }
@@ -614,17 +617,19 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let first = top / Self.chunkRows
         let last = max(first, (top + max(visible.length, 1) - 1) / Self.chunkRows)
         let indices = (first...last).filter { $0 * Self.chunkRows < next.rowCount }
-        let fonts = rowFonts, compact = Settings.compactHistoryRows, chunkRows = Self.chunkRows
+        let fonts = rowFonts, compact = Settings.oneLineHistoryRows, items = Settings.historyItems
+        let chunkRows = Self.chunkRows
         Task {
             let loaded: Preloaded = await Task.detached(priority: .userInitiated) {
                 indices.compactMap { index in
                     let rows = index * chunkRows..<min(next.rowCount, (index + 1) * chunkRows)
-                    let (chunk, prepared) = Self.loadChunk(rows: rows, of: next, fonts: fonts, compact: compact)
+                    let (chunk, prepared) = Self.loadChunk(rows: rows, of: next, fonts: fonts, compact: compact, items: items)
                     return chunk.map { (index, $0, prepared) }
                 }
             }.value
             guard request == presentRequest else { return }
-            show(next, resetScroll: resetScroll, preloaded: compact == Settings.compactHistoryRows ? loaded : [])
+            let same = compact == Settings.oneLineHistoryRows && items == Settings.historyItems
+            show(next, resetScroll: resetScroll, preloaded: same ? loaded : [])
         }
     }
 
@@ -817,7 +822,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     /// 1 行・2 行の表示に合わせて、行の高さ（表とグラフで共通）を決める。
     private func applyRowStyle() {
-        renderer.metrics.rowHeight = Settings.compactHistoryRows ? 24 : 38
+        renderer.metrics.rowHeight = Settings.oneLineHistoryRows ? 24 : 38
         tableView.rowHeight = CGFloat(renderer.metrics.rowHeight)
     }
 
@@ -885,7 +890,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let metaEllipsis = self.metaEllipsis ?? text.shape("…" as CFString, font: metaFont, scale: scale)
         self.metaEllipsis = metaEllipsis
         // 2 行なら行の高さの中ほどに 2 行を、1 行なら件名と同じ高さに作者・日時を置く。
-        let compact = Settings.compactHistoryRows
+        let compact = Settings.oneLineHistoryRows
+        let items = Settings.historyItems
         let subjectHeight = CTFontGetAscent(font) + CTFontGetDescent(font)
         let metaHeight = CTFontGetAscent(metaFont) + CTFontGetDescent(metaFont)
         let gap: CGFloat = 2
@@ -925,13 +931,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 let all = (worktreeLabels[id] ?? []) + (refLabels[id] ?? [])
                 return all.isEmpty ? nil : all
             }
-            if let labels {
+            if let labels, items.contains(.refs) {
                 x = drawLabels(labels, x: x, maxX: end - 40, baseline: rowTop + subjectBaseline, scale: scale,
                                selected: isSelected && focused)
             }
             // 署名があれば、作者・日時の行に検証の結果の色の丸を置く。結果をまだ知らなければ、裏で検証する。
             let kind = chunks[row / Self.chunkRows]?.signature(row: row) ?? 0
-            let signed = kind != 0
+            let signed = kind != 0 && items.contains(.signature)
             var status = SignatureStatus.pending
             if signed, let id {
                 if let known = verifiedSignatures[id] {
@@ -941,7 +947,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                 }
             }
             // GitHub の CI の状態（知っていれば）。行の右端に置き、署名の印とは離す。
-            let ci = id.flatMap { ciStatus[$0] }
+            let ci = items.contains(.ci) ? id.flatMap { ciStatus[$0] } : nil
             let ciSpace: CGFloat = ci != nil ? 18 : 0
             let right = end - ciSpace
             let dot: CGFloat = signed ? 12 : 0
@@ -1063,7 +1069,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         if let cached = rowText[row] { return cached }
         // 裏で並べておいた行なら、アトラスからグリフを引くだけで済む。
         let prepared = preparedRows.removeValue(forKey: row) ?? chunk(row: row).map { chunk in
-            RowPreparation.prepare(row: row, chunk: chunk, history: history, fonts: rowFonts, compact: Settings.compactHistoryRows)
+            RowPreparation.prepare(
+                row: row, chunk: chunk, history: history, fonts: rowFonts, compact: Settings.oneLineHistoryRows,
+                items: Settings.historyItems)
         }
         guard let prepared else { return nil }
         let line = RowText(subject: text.shape(prepared.subject, scale: scale), meta: text.shape(prepared.meta, scale: scale))
@@ -1404,12 +1412,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     /// `rows` の件名などを読み、同じ裏のスレッドで行の文字も並べておく（Core Text の処理をメインスレッドから外す）。
     nonisolated private static func loadChunk(
-        rows: Range<Int>, of history: History, fonts: RowPreparation.Fonts, compact: Bool
+        rows: Range<Int>, of history: History, fonts: RowPreparation.Fonts, compact: Bool, items: HistoryItems
     ) -> (HistoryChunk?, [Int: RowPreparation.Row]) {
         guard let chunk = try? history.chunk(rows: rows) else { return (nil, [:]) }
         var prepared: [Int: RowPreparation.Row] = [:]
         for row in rows {
-            prepared[row] = RowPreparation.prepare(row: row, chunk: chunk, history: history, fonts: fonts, compact: compact)
+            prepared[row] = RowPreparation.prepare(
+                row: row, chunk: chunk, history: history, fonts: fonts, compact: compact, items: items)
         }
         return (chunk, prepared)
     }
@@ -1420,17 +1429,17 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         loadingChunks.insert(index)
         let rows = index * Self.chunkRows..<min(history.rowCount, (index + 1) * Self.chunkRows)
         let fonts = rowFonts
-        let compact = Settings.compactHistoryRows
+        let compact = Settings.oneLineHistoryRows, items = Settings.historyItems
         Task {
             let (chunk, prepared) = await Task.detached(priority: priority) {
-                Self.loadChunk(rows: rows, of: history, fonts: fonts, compact: compact)
+                Self.loadChunk(rows: rows, of: history, fonts: fonts, compact: compact, items: items)
             }.value
             do {
                 // 読んでいる間に History や行の表示が変わっていたら捨てる。
                 guard self.history === history else { return }
                 self.loadingChunks.remove(index)
                 self.chunks[index] = chunk
-                if compact == Settings.compactHistoryRows {
+                if compact == Settings.oneLineHistoryRows, items == Settings.historyItems {
                     self.preparedRows.merge(prepared) { new, _ in new }
                 }
                 self.trimChunks()
@@ -1693,20 +1702,21 @@ enum RowPreparation {
         return f
     }()
 
-    nonisolated static func prepare(row: Int, chunk: HistoryChunk, history: History?, fonts: Fonts, compact: Bool) -> Row {
+    nonisolated static func prepare(
+        row: Int, chunk: HistoryChunk, history: History?, fonts: Fonts, compact: Bool, items: HistoryItems
+    ) -> Row {
         let subject = chunk.withSubject(row: row) { TextRenderer.prepare($0, font: fonts.subject) }
-        let time = chunk.authorTime(row: row)
-        var meta: String
-        if compact {
-            // 1 行では件名に幅を譲り、作者と短い日時だけにする（ID は詳細に出る）。
-            meta = "\(chunk.authorName(row: row))  \(shortDate.string(from: time))"
-        } else {
-            let short = history?.commitID(row: row).map { $0.prefix(4).map { String(format: "%02x", $0) }.joined() } ?? ""
-            meta = "\(chunk.authorName(row: row))  ·  \(date.string(from: time))  ·  \(short)"
+        // 作者・日時・ID のうち出すもの。1 行では件名に幅を譲り、短い日時にして詰めて並べる。
+        var parts: [String] = []
+        if items.contains(.author) { parts.append(chunk.authorName(row: row)) }
+        if items.contains(.date) { parts.append((compact ? shortDate : date).string(from: chunk.authorTime(row: row))) }
+        if items.contains(.id), let id = history?.commitID(row: row) {
+            parts.append(id.prefix(4).map { String(format: "%02x", $0) }.joined())
         }
         // 折りたたんだ merge は、隠しているコミットの数を添える。
         let hidden = history?.hiddenCount(row: row) ?? 0
-        let shown = hidden > 0 ? meta + "  ·  ⊕ " + L("%ld folded", hidden) : meta
+        if hidden > 0 { parts.append("⊕ " + L("%ld folded", hidden)) }
+        let shown = parts.joined(separator: compact ? "  " : "  ·  ")
         return Row(subject: subject, meta: TextRenderer.prepare(shown as CFString, font: fonts.meta))
     }
 }
