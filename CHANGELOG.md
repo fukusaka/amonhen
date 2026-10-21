@@ -9,6 +9,13 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Changed
+
+- A pushed branch built on another one is nested under it in the sidebar too (↳), so a stack of pull requests shows
+  as a stack. Which of two branches is the base is read from where each was created (its reflog) when the base has
+  moved on since, and only a branch's own line (first parents) counts, so an integration branch is not nested under
+  what it merged.
+
 #### Fixed
 
 - A branch forked from the default branch is no longer nested under an unrelated pushed branch in the sidebar (nor
