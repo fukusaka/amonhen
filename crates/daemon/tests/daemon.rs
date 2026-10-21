@@ -1,5 +1,6 @@
 //! `amonhend` を子プロセスとして起動してつなぐ（SSH の代わりに手元で起動するだけで、通信は同じ）。
 //! 偽の ssh や daemon の停止に sh を使うので、Unix だけで動かす。
+#![allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 #![cfg(unix)]
 
 use std::path::Path;

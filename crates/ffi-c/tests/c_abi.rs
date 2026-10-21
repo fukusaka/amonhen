@@ -1,3 +1,4 @@
+#![allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 use std::ffi::{CStr, CString};
 use std::process::Command;
 

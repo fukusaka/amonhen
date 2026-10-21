@@ -1,6 +1,7 @@
 //! 起点が変わったときの読み直しの時間を測る。`<repo>` にコミットを 1 つ足すので、使い捨ての
 //! 複製（`git clone --shared` など）で実行すること。
 //! `cargo run --release -p amonhen-core --example incremental -- <repo>`
+#![allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 
 use std::process::Command;
 use std::time::Instant;

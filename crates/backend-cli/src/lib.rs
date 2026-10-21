@@ -483,6 +483,7 @@ pub(crate) fn kill_tree(child: &mut std::process::Child) {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 mod tests {
     use super::*;
 
@@ -692,6 +693,7 @@ mod ops_tests {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 mod streaming_tests {
     use super::*;
 

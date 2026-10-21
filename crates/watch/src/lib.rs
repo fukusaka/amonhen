@@ -254,6 +254,7 @@ impl WorktreeWatch {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};

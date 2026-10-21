@@ -1,4 +1,5 @@
 //! コミットのヘッダーから署名の種類を読む（検証はしない）。
+#![allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 
 use std::io::Write;
 use std::path::Path;
