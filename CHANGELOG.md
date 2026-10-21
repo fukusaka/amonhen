@@ -7,6 +7,14 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Fixed
+
+- A branch forked from the default branch is no longer nested under an unrelated pushed branch in the sidebar (nor
+  "Built on" it in the status popover). A pushed branch counts as the base only where its own commits, not the default
+  branch's, are in the history, and the walk stops at the first base it reaches.
+
 ### [0.2.3] - 2026-10-21
 
 History is easier to read and to shape: each row's message sits right next to its graph, and View > History Items and

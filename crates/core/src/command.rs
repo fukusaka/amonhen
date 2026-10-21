@@ -460,7 +460,7 @@ impl Repository {
                 merged: f.as_ref().is_some_and(|f| f.merged),
             })
             .collect();
-        let parents = branches::parents(graph, &candidates);
+        let parents = branches::parents(graph, &in_base, &candidates);
         let branches: Vec<serde_json::Value> = locals
             .iter()
             .zip(&facts)

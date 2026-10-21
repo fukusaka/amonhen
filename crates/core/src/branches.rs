@@ -84,42 +84,59 @@ pub struct Candidate {
 /// 土台を探すときに、先端から辿るコミットの数の上限。これより前で分かれたブランチは、土台とは見なさない。
 pub const PARENT_WALK: usize = 5000;
 
-/// ブランチごとの土台のブランチ（`candidates` の添字）。次の順で決める。
+/// ブランチごとの土台のブランチ（`candidates` の添字）。`in_base` は既定のブランチから辿れる行の印
+/// （[`reachable`]）。次の順で決める。
 ///
 /// 1. 上流に当たる手元のブランチ（`wip` の上流が `origin/current` なら `current`）。上流は人が決めたものなので、
 ///    履歴より優先する。
 /// 2. なければ、先端から親を辿って最初に当たる、ほかのブランチの先端（そのブランチの上に積んである）。同じ先端が
 ///    複数あれば、幹、上流のあるものの順。
-/// 3. なければ、辿っていって最初に履歴に当たる幹（最後に分かれた幹。幹が分かれたあとに進んでいても見つかる）。
+/// 3. 先端より先に幹の固有のコミット（既定のブランチにないもの）に当たれば、その幹（最後に分かれた幹。幹が
+///    分かれたあとに進んでいても見つかる）。同じコミットを複数の幹が持っていれば、固有のコミットが少ない幹
+///    （積み重ねの下のほう）。
 ///
 /// 幹と取り込み済みのものは土台を持たない。先端が同じブランチどうしは土台にしない。幹でないブランチは、先端が
 /// 履歴にあるときだけ土台になる（同じ点から分かれた兄弟どうしを、互いの土台にしない）。
-pub fn parents(graph: &CommitGraph, candidates: &[Candidate]) -> Vec<Option<usize>> {
+///
+/// 既定のブランチの履歴は、どの幹の履歴にも入っている（push したブランチはどれも幹）ので、そこは幹の印と
+/// 見なさない。見なすと、既定のブランチから分かれただけのブランチが、あとから分かれた無関係な幹の下に入る。
+/// 辿るのも既定のブランチの履歴に入ったところで止める（その先に未マージの先端も幹の固有のコミットもない）。
+/// 幹の固有のコミットに当たったら、その先は辿らない（その先で見つかる先端は、その幹の土台であって、この
+/// ブランチの土台ではない）。
+pub fn parents(
+    graph: &CommitGraph,
+    in_base: &[bool],
+    candidates: &[Candidate],
+) -> Vec<Option<usize>> {
     let n = candidates.len();
-    // 幹ごとの、辿れる行のビット。
+    let in_base = |row: u32| in_base.get(row as usize).copied().unwrap_or(false);
+    // 幹ごとの、固有のコミット（既定のブランチの履歴に入る前まで）の行のビットと、その数。
     let words = graph.len().div_ceil(64);
-    let trunk_sets: Vec<Option<Vec<u64>>> = candidates
+    let trunk_sets: Vec<Option<(Vec<u64>, usize)>> = candidates
         .iter()
         .map(|c| {
             let tip = c.tip.filter(|_| c.trunk && !c.merged)?;
             let mut bits = vec![0u64; words];
+            let mut count = 0;
             let mut stack = vec![tip];
             while let Some(row) = stack.pop() {
                 let (w, b) = (row as usize / 64, row % 64);
-                if bits[w] & (1 << b) != 0 {
+                if in_base(row) || bits[w] & (1 << b) != 0 {
                     continue;
                 }
                 bits[w] |= 1 << b;
+                count += 1;
                 stack.extend(graph.parents(row as usize));
             }
-            Some(bits)
+            Some((bits, count))
         })
         .collect();
     let in_trunk = |a: usize, row: u32| {
         trunk_sets[a]
             .as_ref()
-            .is_some_and(|bits| bits[row as usize / 64] & (1 << (row % 64)) != 0)
+            .is_some_and(|(bits, _)| bits[row as usize / 64] & (1 << (row % 64)) != 0)
     };
+    let trunk_size = |a: usize| trunk_sets[a].as_ref().map_or(0, |(_, count)| *count);
     // 先端の行 → その先端のブランチ。
     let mut at_tip: std::collections::HashMap<u32, Vec<usize>> = std::collections::HashMap::new();
     for (a, c) in candidates.iter().enumerate() {
@@ -144,7 +161,13 @@ pub fn parents(graph: &CommitGraph, candidates: &[Candidate]) -> Vec<Option<usiz
             }
             let prefer = |a: usize| {
                 let k = &candidates[a];
-                (c.upstream_local != Some(a), !k.trunk, !k.has_upstream, a)
+                (
+                    c.upstream_local != Some(a),
+                    !k.trunk,
+                    !k.has_upstream,
+                    trunk_size(a),
+                    a,
+                )
             };
             let trunks: Vec<usize> = (0..n)
                 .filter(|&a| a != b && trunk_sets[a].is_some() && candidates[a].tip != c.tip)
@@ -154,32 +177,32 @@ pub fn parents(graph: &CommitGraph, candidates: &[Candidate]) -> Vec<Option<usiz
             let mut heap = std::collections::BinaryHeap::new();
             let mut seen = std::collections::HashSet::new();
             heap.push(std::cmp::Reverse(tip));
-            let mut trunk_hit: Option<usize> = None;
             let mut walked = 0;
             while let Some(std::cmp::Reverse(row)) = heap.pop() {
-                if !seen.insert(row) {
+                if in_base(row) || !seen.insert(row) {
                     continue;
                 }
                 walked += 1;
                 if walked > PARENT_WALK {
                     break;
                 }
-                if row != tip
-                    && let Some(found) = at_tip.get(&row).and_then(|list| {
+                if row != tip {
+                    if let Some(found) = at_tip.get(&row).and_then(|list| {
                         list.iter()
                             .copied()
                             .filter(|&a| a != b)
                             .min_by_key(|&a| prefer(a))
-                    })
-                {
-                    return Some(found);
-                }
-                if trunk_hit.is_none() {
-                    trunk_hit = trunks
+                    }) {
+                        return Some(found);
+                    }
+                    if let Some(found) = trunks
                         .iter()
                         .copied()
                         .filter(|&a| in_trunk(a, row))
-                        .min_by_key(|&a| prefer(a));
+                        .min_by_key(|&a| prefer(a))
+                    {
+                        return Some(found);
+                    }
                 }
                 heap.extend(
                     graph
@@ -188,7 +211,7 @@ pub fn parents(graph: &CommitGraph, candidates: &[Candidate]) -> Vec<Option<usiz
                         .map(|&p| std::cmp::Reverse(p)),
                 );
             }
-            trunk_hit
+            None
         })
         .collect()
 }
@@ -272,7 +295,7 @@ mod tests {
             cand(3, true),
         ];
         assert_eq!(
-            parents(&g, &cands),
+            parents(&g, &[false; 4], &cands),
             vec![Some(4), Some(0), Some(1), Some(0), None]
         );
     }
@@ -303,7 +326,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            parents(&g, &[trunk.clone(), wip.clone()]),
+            parents(&g, &[false; 4], &[trunk.clone(), wip.clone()]),
             vec![None, Some(0)]
         );
         let mut builder = CommitGraphBuilder::with_capacity(5);
@@ -327,8 +350,109 @@ mod tests {
             ..trunk
         };
         assert_eq!(
-            parents(&g, &[sibling, trunk, wip]),
+            parents(&g, &[false; 5], &[sibling, trunk, wip]),
             vec![Some(1), None, Some(1)]
+        );
+    }
+
+    fn trunk(tip: u32) -> Candidate {
+        Candidate {
+            tip: Some(tip),
+            trunk: true,
+            has_upstream: true,
+            ..Default::default()
+        }
+    }
+
+    fn topic(tip: u32) -> Candidate {
+        Candidate {
+            tip: Some(tip),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn does_not_stack_on_a_trunk_that_only_shares_the_default_branch() {
+        // 0（pr の先、親 1）、1（main の先、親 2）、2（old の先、親 3）、3。old は main の古い所から分かれた
+        // だけで、あとから main を push した pr とは無関係。pr の履歴は main の履歴ごと持つが、それを幹の印と
+        // 見なさない。
+        let mut builder = CommitGraphBuilder::with_capacity(4);
+        builder.push(id(4), 40, [id(2)]);
+        builder.push(id(3), 30, [id(1)]);
+        builder.push(id(2), 20, [id(0)]);
+        builder.push(id(1), 10, []);
+        let g = builder.build();
+        let in_base = reachable(&g, &[1]);
+        let main = Candidate {
+            merged: true,
+            ..trunk(1)
+        };
+        assert_eq!(
+            parents(&g, &in_base, &[trunk(0), main, topic(2)]),
+            vec![None, None, None]
+        );
+        // pr の固有のコミットから分かれたものは、pr の上。
+        let mut builder = CommitGraphBuilder::with_capacity(5);
+        builder.push(id(5), 50, [id(4)]);
+        builder.push(id(4), 40, [id(2)]);
+        builder.push(id(3), 30, [id(1)]);
+        builder.push(id(2), 20, [id(0)]);
+        builder.push(id(1), 10, []);
+        let g = builder.build();
+        let in_base = reachable(&g, &[2]);
+        let main = Candidate {
+            merged: true,
+            ..trunk(2)
+        };
+        assert_eq!(
+            parents(&g, &in_base, &[topic(0), trunk(1), main]),
+            vec![Some(1), None, None]
+        );
+    }
+
+    #[test]
+    fn stops_at_the_trunk_it_forked_from() {
+        // 0（x の先、親 2）、1（pr の先、親 2）、2（pr の古いコミット、親 3）、3（stale の先、親 4）、4（main）。
+        // pr は stale の上に作ったあと進み、x は pr の途中から分かれた。x の土台は pr であって、その向こうの
+        // stale ではない。
+        let mut builder = CommitGraphBuilder::with_capacity(5);
+        builder.push(id(5), 50, [id(3)]);
+        builder.push(id(4), 40, [id(3)]);
+        builder.push(id(3), 30, [id(2)]);
+        builder.push(id(2), 20, [id(1)]);
+        builder.push(id(1), 10, []);
+        let g = builder.build();
+        let in_base = reachable(&g, &[4]);
+        let main = Candidate {
+            merged: true,
+            ..trunk(4)
+        };
+        assert_eq!(
+            parents(&g, &in_base, &[topic(0), trunk(1), topic(3), main]),
+            vec![Some(1), None, None, None]
+        );
+    }
+
+    #[test]
+    fn prefers_the_lower_trunk_when_both_hold_the_fork_point() {
+        // 0（upper の先、親 1）、1（lower の先、親 3）、2（x の先、親 3）、3（lower の古いコミット、親 4）、
+        // 4（main）。upper は lower の上に積んであり、x は lower の途中から分かれた。どちらの幹も 3 を持つが、
+        // 土台は固有のコミットが少ない lower（添字は upper のほうが小さくても）。
+        let mut builder = CommitGraphBuilder::with_capacity(5);
+        builder.push(id(5), 50, [id(4)]);
+        builder.push(id(4), 40, [id(2)]);
+        builder.push(id(3), 30, [id(2)]);
+        builder.push(id(2), 20, [id(1)]);
+        builder.push(id(1), 10, []);
+        let g = builder.build();
+        let in_base = reachable(&g, &[4]);
+        let main = Candidate {
+            merged: true,
+            ..trunk(4)
+        };
+        assert_eq!(
+            parents(&g, &in_base, &[trunk(0), trunk(1), topic(2), main]),
+            vec![None, None, Some(1), None]
         );
     }
 
