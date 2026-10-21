@@ -538,6 +538,31 @@ impl GitBackend for GixBackend {
         self.git()?.verify_signatures(ids)
     }
 
+    /// gix が reflog の置き場所を決める（`refs/heads/*` のものは linked worktree からでも共通の git dir）。
+    fn branch_created_at(&self, names: &[&str]) -> Result<Vec<Option<Oid>>> {
+        let repo = self.repo.to_thread_local();
+        names
+            .iter()
+            .map(|name| {
+                let Ok(reference) = repo.find_reference(&format!("refs/heads/{name}")) else {
+                    return Ok(None);
+                };
+                let mut log = reference.log_iter();
+                let Some(mut lines) = log.all()? else {
+                    return Ok(None);
+                };
+                let Some(first) = lines.next() else {
+                    return Ok(None);
+                };
+                let first = first?;
+                if !first.previous_oid().is_null() {
+                    return Ok(None);
+                }
+                Ok(Some(to_oid(&first.new_oid())?))
+            })
+            .collect()
+    }
+
     fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>> {
         let data = std::fs::read(self.git()?.workdir().join(path))?;
         self.with_filters(|filters, repo| {

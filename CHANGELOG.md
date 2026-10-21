@@ -12,7 +12,7 @@ becomes the GitHub Release notes.
 #### Added
 
 - Stashes shows where each stash's base stands against HEAD (in orange when it is not in HEAD's history), and
-  Branch… creates a branch from a stash (`git stash branch`). The remote protocol goes up to 22.
+  Branch… creates a branch from a stash (`git stash branch`).
 
 #### Changed
 
@@ -27,6 +27,9 @@ becomes the GitHub Release notes.
   side is redrawn instead of rebuilt.
 - Bookmarks, groups and folders to scan are no longer lost when more than one copy of the app runs (the stable
   release, the snapshot, a development build): each change now rereads the file and writes on top of it.
+- Opened from a linked worktree (`git worktree add`), the sidebar still nests a branch under the base it was created
+  on when the base has moved on since: where a branch was created is now read through the git backend, which finds
+  the reflog in the shared git dir. The remote protocol is now version 23 (the stash bases took it to 22).
 
 ### [0.2.4] - 2026-10-22
 
