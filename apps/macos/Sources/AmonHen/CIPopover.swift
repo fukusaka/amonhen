@@ -115,7 +115,9 @@ final class CIPopover: NSViewController {
     }
 
     /// 読めたチェックを並べる（失敗を上に、走っているもの、成功の順）。
-    private func show(_ checks: [CommitCheck]) {
+    private func show(_ all: [CommitCheck]) {
+        // 同じ名前の run は 1 つに（成功があれば、やり直す前の取り消しは出さない）。
+        let checks = CommitCheck.collapsed(all)
         if checks.isEmpty {
             note.stringValue = L("No checks on this commit.")
             return
@@ -125,14 +127,20 @@ final class CIPopover: NSViewController {
             switch c.ci {
             case .failing: 0
             case .pending: 1
-            case .passing: 2
-            case .none: 3
+            case .none: c.isCancelled ? 2 : 4
+            case .passing: 3
             }
         }
         for check in checks.sorted(by: { (order($0), $0.name) < (order($1), $1.name) }) {
-            let look = Self.look(check.ci)
+            // 取り消しで終わったものは、失敗ではなく止まった印（灰色）。
+            let look = check.isCancelled
+                ? (symbol: "slash.circle", color: NSColor.secondaryLabelColor, label: "")
+                : Self.look(check.ci)
             let icon = NSImageView()
             icon.image = CommitHeaderRenderer.symbolImage(look.symbol, color: look.color, size: 12)
+            // 行の幅は決まっている。名前が長いときは名前を省略し、記号と結果は縮めない（同じ優先度だと記号が幅 0 になる）。
+            icon.setContentCompressionResistancePriority(.required, for: .horizontal)
+            icon.setContentHuggingPriority(.required, for: .horizontal)
             let name: NSView
             if let url = check.url.flatMap(URL.init(string:)) {
                 let button = NSButton(title: check.name, target: self, action: #selector(openCheck(_:)))
@@ -140,15 +148,17 @@ final class CIPopover: NSViewController {
                 button.contentTintColor = .linkColor
                 button.font = .systemFont(ofSize: 12)
                 button.lineBreakMode = .byTruncatingTail
-                button.toolTip = url.absoluteString
+                button.toolTip = check.name + "\n" + url.absoluteString
                 button.identifier = NSUserInterfaceItemIdentifier(url.absoluteString)
                 name = button
             } else {
                 let label = NSTextField(labelWithString: check.name)
                 label.font = .systemFont(ofSize: 12)
                 label.lineBreakMode = .byTruncatingTail
+                label.toolTip = check.name
                 name = label
             }
+            name.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
             let result = NSTextField(labelWithString: check.resultLabel + (check.seconds.map { "  " + Self.duration($0) } ?? ""))
             result.font = .systemFont(ofSize: 11)
             result.textColor = .secondaryLabelColor

@@ -19,7 +19,9 @@ becomes the GitHub Release notes.
   files that may hold secrets, binaries added), the commits on the left, and on the right the message, files and
   diff of the selected commit or of all changes together, as in the detail column.
 - Clicking a commit's CI mark in History, or a pull request's in the sidebar, opens a popover listing its checks
-  (result, name, duration), each linking to its log, with a button to the checks page on GitHub.
+  (result, name, duration), each linking to its log, with a button to the checks page on GitHub. Re-runs are
+  collapsed to one row per check: a success hides the cancelled runs before it, and a check that ended cancelled
+  shows as cancelled, not failed.
 - View > History Items chooses what each row shows besides the subject: branches and tags, author, date, commit ID,
   signature and CI status. With none of author, date and ID, rows are one line.
 - View > History Order switches History between date order and topological order, which keeps a branch's commits
