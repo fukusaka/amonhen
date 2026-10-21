@@ -2,7 +2,7 @@ import AmonhenKit
 import AppKit
 
 /// History の見せ方を選ぶメニュー。View メニューの「History Items」「History Order」、History の上のバーの右端の
-/// ボタン、History のヘッダーの右クリックに同じものを出す。
+/// ボタン、History のヘッダーの右クリックに同じものを出す（ボタンとヘッダーには 1 行表示・折りたたみ・祖先の強調も）。
 final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
     static let shared = HistoryDisplayMenu()
 
@@ -26,7 +26,7 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
         return menu
     }
 
-    /// 並び順・項目・1 行表示をまとめたメニュー（バーのボタンとヘッダーの右クリック）。
+    /// 並び順・項目と、1 行表示・折りたたみ・祖先の強調をまとめたメニュー（バーのボタンとヘッダーの右クリック）。
     func displayMenu() -> NSMenu {
         let menu = NSMenu(title: L("History Display"))
         menu.addItem(.sectionHeader(title: L("Order")))
@@ -35,9 +35,18 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
         menu.addItem(.sectionHeader(title: L("Items")))
         addItems(to: menu)
         menu.addItem(.separator())
-        let oneLine = NSMenuItem(title: L("One Line per Commit"), action: #selector(toggleOneLine(_:)), keyEquivalent: "")
-        oneLine.target = self
-        menu.addItem(oneLine)
+        for (title, action, tip) in [
+            (L("One Line per Commit"), #selector(toggleOneLine(_:)), nil),
+            (L("Fold Merged Branches"), #selector(toggleFold(_:)),
+             L("In History, hide the commits brought in by a merge and show their count on the merge row (right-click to expand)")),
+            (L("Highlight Ancestors"), #selector(toggleAncestors(_:)),
+             L("Draw only the selected commit’s ancestors and the lines between them in full color, and dim the rest")),
+        ] as [(String, Selector, String?)] {
+            let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            entry.target = self
+            entry.toolTip = tip
+            menu.addItem(entry)
+        }
         return menu
     }
 
@@ -70,12 +79,16 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
     }
 
     @objc private func toggleOneLine(_ sender: NSMenuItem) { Settings.compactHistoryRows.toggle() }
+    @objc private func toggleFold(_ sender: NSMenuItem) { Settings.foldMergedBranches.toggle() }
+    @objc private func toggleAncestors(_ sender: NSMenuItem) { Settings.highlightAncestors.toggle() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         let on = switch item.action {
         case #selector(toggleItem(_:)): Settings.historyItems.contains(HistoryItems(rawValue: item.tag))
         case #selector(setOrder(_:)): Settings.historyOrder.rawValue == UInt32(item.tag)
         case #selector(toggleOneLine(_:)): Settings.compactHistoryRows
+        case #selector(toggleFold(_:)): Settings.foldMergedBranches
+        case #selector(toggleAncestors(_:)): Settings.highlightAncestors
         default: false
         }
         item.state = on ? .on : .off

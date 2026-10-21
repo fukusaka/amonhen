@@ -24,7 +24,8 @@ becomes the GitHub Release notes.
   signature and CI status. With none of author, date and ID, rows are one line.
 - View > History Order switches History between date order and topological order, which keeps a branch's commits
   together under the merge that brought them in. The CLI has `amonhen log --topo-order`.
-- Both are also in the menu of the new button at the right of History's bar, and in the header's context menu.
+- Both are also in Settings > Appearance and in the menu of the new button at the right of History's bar (and the
+  header's context menu), which also has One Line per Commit, Fold Merged Branches and Highlight Ancestors.
 
 #### Changed
 

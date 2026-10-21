@@ -275,6 +275,8 @@ enum PullMode: String, CaseIterable {
 final class SettingsModel {
     var pullMode = Settings.pullMode { didSet { Settings.pullMode = pullMode } }
     var compactHistoryRows = Settings.compactHistoryRows { didSet { Settings.compactHistoryRows = compactHistoryRows } }
+    var historyOrder = Settings.historyOrder { didSet { Settings.historyOrder = historyOrder } }
+    var historyItems = Settings.historyItems { didSet { Settings.historyItems = historyItems } }
     var highlightAncestors = Settings.highlightAncestors { didSet { Settings.highlightAncestors = highlightAncestors } }
     var monospacedCommitMessage = Settings.monospacedCommitMessage {
         didSet { Settings.monospacedCommitMessage = monospacedCommitMessage }
@@ -389,9 +391,21 @@ private struct AppearanceSettings: View {
     var body: some View {
         Form {
             Section("History") {
+                Picker(L("Order"), selection: $model.historyOrder) {
+                    ForEach(HistoryOrder.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Note(L("Topological order keeps a branch’s commits together under the merge that brought them in."))
                 Toggle(L("Show each commit on one line"), isOn: $model.compactHistoryRows)
                 Toggle(L("Highlight the selected commit’s ancestors"), isOn: $model.highlightAncestors)
                 Note(L("Draws only the selected commit’s ancestors and the lines between them at full strength, and dims the rest."))
+            }
+            Section(L("Items")) {
+                ForEach(HistoryDisplayMenu.entries, id: \.0.rawValue) { item, title in
+                    Toggle(L(title), isOn: Binding(
+                        get: { model.historyItems.contains(item) },
+                        set: { on in if on { model.historyItems.insert(item) } else { model.historyItems.remove(item) } }))
+                }
+                Note(L("What each commit’s row shows besides the subject. With none of author, date and ID, rows are one line."))
             }
             Section(L("Commit Details")) {
                 Toggle(L("Show the message in a monospaced font"), isOn: $model.monospacedCommitMessage)

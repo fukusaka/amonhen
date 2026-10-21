@@ -1036,3 +1036,7 @@
 "History Display" = "History の表示";
 "Order" = "並び順";
 "Items" = "表示項目";
+
+// Settings > Appearance の History の並び順と表示項目
+"Topological order keeps a branch’s commits together under the merge that brought them in." = "トポロジー順は、枝のコミットを取り込んだ merge の下にまとめます。";
+"What each commit’s row shows besides the subject. With none of author, date and ID, rows are one line." = "各コミットの行に、件名のほかに出すもの。作者・日時・ID をすべて消すと 1 行になります。";
