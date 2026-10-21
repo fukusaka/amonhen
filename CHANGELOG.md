@@ -7,6 +7,20 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- The main worktree always stays at the top of the sidebar's worktrees, instead of being folded into "No changes" when
+  it has none.
+
+#### Fixed
+
+- The repository page no longer stalls for a moment whenever a scan finishes: when only the counts change, the left
+  side is redrawn instead of rebuilt.
+- Bookmarks, groups and folders to scan are no longer lost when more than one copy of the app runs (the stable
+  release, the snapshot, a development build): each change now rereads the file and writes on top of it.
+
 ### [0.2.4] - 2026-10-22
 
 The sidebar nests branches under the one they are built on more reliably: a branch forked from the default branch no
