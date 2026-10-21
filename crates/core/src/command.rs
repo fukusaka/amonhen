@@ -445,22 +445,46 @@ impl Repository {
                     && upstream.rsplit_once('/').is_some_and(|(_, n)| n == l.name)
             })
         };
+        // ブランチを作った点: reflog の最初の行（`0000… <コミット> … branch: Created from …`）。土台が分かれた
+        // あとに進んでも、土台と積んだほうを取り違えないため。取り込み済みのものには要らない。
+        let files = self.backend().files();
+        let created_at = |name: &str| -> Option<u32> {
+            let log = files
+                .read(Root::GitDir, &format!("logs/refs/heads/{name}"))
+                .ok()??;
+            let line = log.split(|&b| b == b'\n').next()?;
+            let mut fields = line.split(|&b| b == b' ');
+            let old = fields.next()?;
+            if !old.iter().all(|&b| b == b'0') {
+                return None;
+            }
+            let oid = Oid::from_hex(std::str::from_utf8(fields.next()?).ok()?)?;
+            history.row_of(&oid)
+        };
         let candidates: Vec<branches::Candidate> = locals
             .iter()
             .zip(&tips)
             .zip(&facts)
-            .map(|((e, &tip), f)| branches::Candidate {
-                tip,
-                trunk: e
-                    .detail
-                    .as_deref()
-                    .is_some_and(|u| u.rsplit_once('/').is_some_and(|(_, n)| n == e.name)),
-                has_upstream: e.detail.is_some(),
-                upstream_local: e.detail.as_deref().and_then(local_of_upstream),
-                merged: f.as_ref().is_some_and(|f| f.merged),
+            .map(|((e, &tip), f)| {
+                let merged = f.as_ref().is_some_and(|f| f.merged);
+                branches::Candidate {
+                    tip,
+                    trunk: e
+                        .detail
+                        .as_deref()
+                        .is_some_and(|u| u.rsplit_once('/').is_some_and(|(_, n)| n == e.name)),
+                    has_upstream: e.detail.is_some(),
+                    upstream_local: e.detail.as_deref().and_then(local_of_upstream),
+                    merged,
+                    created_at: if merged || tip.is_none() {
+                        None
+                    } else {
+                        created_at(&e.name)
+                    },
+                }
             })
             .collect();
-        let parents = branches::parents(graph, &candidates);
+        let parents = branches::parents(graph, &in_base, &candidates);
         let branches: Vec<serde_json::Value> = locals
             .iter()
             .zip(&facts)

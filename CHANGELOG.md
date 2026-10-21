@@ -7,6 +7,21 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- A pushed branch built on another one is nested under it in the sidebar too (↳), so a stack of pull requests shows
+  as a stack. Which of two branches is the base is read from where each was created (its reflog) when the base has
+  moved on since, and only a branch's own line (first parents) counts, so an integration branch is not nested under
+  what it merged.
+
+#### Fixed
+
+- A branch forked from the default branch is no longer nested under an unrelated pushed branch in the sidebar (nor
+  "Built on" it in the status popover). A pushed branch counts as the base only where its own commits, not the default
+  branch's, are in the history, and the walk stops at the first base it reaches.
+
 ### [0.2.3] - 2026-10-21
 
 History rows sit right next to the graph, and what a row shows and the commit order (date or topological) can be
