@@ -19,7 +19,13 @@ import { registerUndoCommand } from './ui/undoCommand.ts';
 /** 戻り値は結合テストから中身を確かめるためのもの */
 export async function activate(
   context: vscode.ExtensionContext,
-): Promise<{ manager: RepositoryManager; sidebar: SidebarProvider; dragAndDrop: SidebarDragAndDrop }> {
+): Promise<{
+  manager: RepositoryManager;
+  sidebar: SidebarProvider;
+  dragAndDrop: SidebarDragAndDrop;
+  /** 開いているメインビュー（e2e のテストが Webview の代わりにメッセージを入れる） */
+  panel: () => MainPanel | undefined;
+}> {
   const start = performance.now();
   const log = vscode.window.createOutputChannel('Amon Hen', { log: true });
   // daemon が作るエラーの文を、VSCode の表示言語にする
@@ -70,7 +76,7 @@ export async function activate(
   await manager.initialize();
   updateDescription();
   log.info(`activated in ${Math.round(performance.now() - start)}ms`);
-  return { manager, sidebar, dragAndDrop };
+  return { manager, sidebar, dragAndDrop, panel: () => MainPanel.active };
 }
 
 export function deactivate(): void {

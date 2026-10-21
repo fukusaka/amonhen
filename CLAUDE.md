@@ -39,6 +39,7 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - `scripts/build-core.sh && (cd apps/macos && swift test)`
 - 見た目: `apps/macos/.build/debug/AmonHen <repo> --snapshot out.png`、速さ: `--measure-scroll`
 - VSCode 拡張: `cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm run typecheck && npm test)`
+- VSCode 拡張を実際の VSCode で: `(cd apps/vscode && npm run test:e2e)`（Linux で画面がなければ `xvfb-run -a`、Windows の実機に ssh からなら `scripts\e2e-windows.ps1 -Desktop`）
 - GTK4 のアプリ: `(cd apps/gtk4 && cargo fmt --check && cargo clippy --all-targets -- -D warnings)`、見た目: `cargo run --release -- <repo> --snapshot out.png`、速さ: `--measure-scroll`
 
 ## VSCode 拡張（`apps/vscode`）
