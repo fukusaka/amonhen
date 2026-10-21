@@ -7,7 +7,11 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.4] - 2026-10-22
+
+The sidebar nests branches under the one they are built on more reliably: a branch forked from the default branch no
+longer lands under an unrelated pushed branch, and pushed branches are stacked too, so a stack of pull requests shows
+as a stack.
 
 #### Changed
 
