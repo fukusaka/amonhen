@@ -1042,3 +1042,10 @@
 "Open Pull Request #%ld" = "プルリクエスト #%ld を開く";
 "Pull Request" = "プルリクエスト";
 "(draft)" = "（下書き）";
+
+// Stashes の画面
+"Apply the stash to the working tree and keep it in the list" = "stash を作業ツリーに戻し、一覧に残す";
+"Apply the stash to the working tree and remove it from the list" = "stash を作業ツリーに戻し、一覧から消す";
+"Remove the stash without applying it (you can Undo it)" = "戻さずに stash を消す（Undo で戻せる）";
+"Applies to ✎ %@" = "戻す先: ✎ %@";
+"with untracked files" = "untracked のファイルを含む";

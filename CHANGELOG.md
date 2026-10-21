@@ -11,7 +11,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
-- Stashes moved into Workspace in the sidebar, under History (and Conflicts).
+- Stashes moved into the sidebar's Workspace as one row that opens a Stashes view: the stashes with their branch, base
+  and date on the left, the selected one's changes on the right, and Apply, Pop and Drop (View > Stashes ⌘4).
 
 ### [0.2.4] - 2026-10-22
 
