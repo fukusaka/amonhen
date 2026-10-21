@@ -16,19 +16,25 @@ final class BranchStatusPopover: NSViewController {
         var otherWorktree: WorktreeInfo?
         /// 今のブランチで、worktree が 2 つ以上あり、Working Copy がこのブランチの worktree を編集している（✎ の印）。
         var editing = false
+        /// このブランチから開いているプルリクエスト。
+        var pullRequest: PullRequest?
+        /// プルリクエストを作れる（GitHub のリポジトリで gh が使え、既定のブランチでない）。
+        var canCreatePullRequest = false
     }
 
     private let facts: Facts
     private let onDelete: () -> Void
     private let onArchive: () -> Void
     private let onOpenWorktree: (String) -> Void
+    private let onCreatePullRequest: () -> Void
 
     init(facts: Facts, onDelete: @escaping () -> Void, onArchive: @escaping () -> Void,
-         onOpenWorktree: @escaping (String) -> Void) {
+         onOpenWorktree: @escaping (String) -> Void, onCreatePullRequest: @escaping () -> Void) {
         self.facts = facts
         self.onDelete = onDelete
         self.onArchive = onArchive
         self.onOpenWorktree = onOpenWorktree
+        self.onCreatePullRequest = onCreatePullRequest
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -109,6 +115,9 @@ final class BranchStatusPopover: NSViewController {
         if merged {
             rows.append((L("Merged into"), value(base, color: .systemGreen)))
         }
+        if let pr = facts.pullRequest {
+            rows.append((L("Pull Request"), value("#\(pr.number) \(pr.title)" + (pr.isDraft ? " " + L("(draft)") : ""))))
+        }
 
         let grid = NSGridView(views: rows.map { label, view in
             let l = NSTextField(labelWithString: label)
@@ -139,6 +148,17 @@ final class BranchStatusPopover: NSViewController {
                 buttons.addArrangedSubview(NSButton(title: L("Archive"), target: self, action: #selector(archive)))
             }
         }
+        // プルリクエスト: 開いていればそれを開く。なければ、push 済み（上流があり先行コミットがない）で未マージのときに作る
+        // （push 起因の CI を見てから作る流れ。まだ push していなければ、作る前に push の確認の窓が出る）。
+        if let pr = facts.pullRequest {
+            let open = NSButton(title: L("Open Pull Request #%ld", pr.number), target: self, action: #selector(openPullRequest))
+            open.bezelColor = .controlAccentColor
+            buttons.addArrangedSubview(open)
+        } else if facts.canCreatePullRequest, !merged, item.detail != nil, !item.gone, item.ahead == 0 {
+            let create = NSButton(title: L("Create Pull Request…"), target: self, action: #selector(createPullRequest))
+            if buttons.arrangedSubviews.isEmpty { create.bezelColor = .controlAccentColor }
+            buttons.addArrangedSubview(create)
+        }
         for b in buttons.arrangedSubviews { (b as? NSButton)?.controlSize = .small }
 
         let stack = NSStackView(views: [header] + (explanation.isEmpty ? [] : [explanationField]) + [grid]
@@ -159,6 +179,16 @@ final class BranchStatusPopover: NSViewController {
     @objc private func archive() {
         dismiss(nil)
         onArchive()
+    }
+
+    @objc private func createPullRequest() {
+        dismiss(nil)
+        onCreatePullRequest()
+    }
+
+    @objc private func openPullRequest() {
+        dismiss(nil)
+        if let url = facts.pullRequest.flatMap({ URL(string: $0.url) }) { NSWorkspace.shared.open(url) }
     }
 
     @objc private func openWorktree() {

@@ -199,6 +199,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         sidebar.onSelectConflicts = { [weak self] in self?.workingCopy.selectFirstConflict() }
         sidebar.onCheckoutPullRequest = { [weak self] pr in self?.checkout(pr) }
+        sidebar.onCreatePullRequest = { [weak self] branch in self?.createPullRequest(from: branch) }
         sidebar.onClickPullRequestCI = { [weak self] pr, view in
             guard let self, let gitHub, let sha = pr.headRefOid else { return }
             ciPopovers.toggle(key: "pr\(pr.number)", status: pr.ci, sha: sha, repo: gitHub, relativeTo: view.bounds, of: view)
@@ -1394,6 +1395,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             let remotes = try? await Task.detached { try repository.info(["op": "remotes"], as: Remotes.self) }.value
             let remote = remotes?.remotes.first { $0.name == "origin" } ?? remotes?.remotes.first
             gitHub = remote.flatMap { GitHubRepository(remoteURL: $0.fetchUrl) }
+            sidebar.canCreatePullRequest = gitHub != nil && GitHub.isAvailable
             guard let gitHub else {
                 sidebar.show(pullRequests: [])
                 return
@@ -1482,25 +1484,28 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         NSWorkspace.shared.open(url)
     }
 
-    /// Repository > Create Pull Request…: 今のブランチからプルリクエストを作る。上流がなければ先に push してもらう。
+    /// Repository > Create Pull Request…: 今のブランチからプルリクエストを作る。
     @objc func createPullRequest(_ sender: Any?) {
-        guard let gitHub, let branch = latestRefs?.headBranch, let dir = repository.workdir else { return NSSound.beep() }
+        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        createPullRequest(from: branch)
+    }
+
+    /// `branch` からプルリクエストを作る（メニュー、サイドバーの右クリック、ブランチの印の吹き出しから）。まだ push して
+    /// いない（上流がない・先行コミットがある）なら、まず push の確認の窓を出してそこで終わる。CI を見てから、
+    /// 吹き出しなどからもう一度作ってもらう。
+    func createPullRequest(from branch: String) {
+        guard let gitHub, let dir = repository.workdir else { return NSSound.beep() }
         let repository = self.repository
         Task {
-            let status = try? await Task.detached { try repository.loadStatus() }.value
-            if status?.upstream == nil || (status?.ahead ?? 0) > 0 {
-                let alert = NSAlert()
-                alert.messageText = L("Push %@ First", branch)
-                alert.informativeText = status?.upstream == nil
-                    ? L("This branch isn’t on the remote yet.")
-                    : L("It is %ld commits ahead of its upstream.", status?.ahead ?? 0)
-                alert.addButton(withTitle: "Push")
-                alert.addButton(withTitle: L("Cancel"))
-                if await alert.beginSheetModal(for: window) == .alertFirstButtonReturn { actions.push() }
+            let refs = (try? await Task.detached { try repository.loadRefs() }.value) ?? latestRefs
+            let item = refs?.items.first { $0.kind == .local && $0.name == branch }
+            if item?.detail == nil || item?.gone == true || (item?.ahead ?? 0) > 0 {
+                actions.pushWithConfirmation(branch: branch)
                 return
             }
-            // タイトルと本文は、今のコミットのメッセージから。
-            let message = (try? await Task.detached { try repository.run(["op": "commitMessage", "oid": "HEAD"]).text }.value) ?? nil
+            // タイトルと本文は、ブランチの先頭のコミットのメッセージから（命令はコミット ID を取る）。
+            let tip = item?.target.map { $0.map { String(format: "%02x", $0) }.joined() } ?? "HEAD"
+            let message = (try? await Task.detached { try repository.run(["op": "commitMessage", "oid": tip]).text }.value) ?? nil
             let parts = (message ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
             let title = parts.first.map(String.init) ?? branch
@@ -1513,7 +1518,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                     defer { RunningOperations.end() }
                     do {
                         let url = try await GitHub.createPullRequest(
-                            in: dir, repo: gitHub, title: answer.title, body: answer.body, base: answer.base, draft: answer.draft)
+                            in: dir, repo: gitHub, head: branch, title: answer.title, body: answer.body, base: answer.base,
+                            draft: answer.draft)
                         let done = NSAlert()
                         done.messageText = L("Pull Request Created")
                         done.informativeText = url

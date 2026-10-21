@@ -414,7 +414,7 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 | Accounts | Left to the local `gh` (GitHub CLI). The app never touches tokens; it spawns `gh` to read and write (log in with `gh auth login`). Without gh, the integration features are not shown. GitLab and Gitea later |
 | Remote detection | Detect the GitHub repository from the URL of origin and others (the same as today's `#123` links) |
 | Pull Requests | A list in the sidebar (mine, review requests, all). Status (draft, review, CI). Check out, open in the browser |
-| Creating a PR | "Create Pull Request…" after Push. Title and body from the commits (an AI summary can also be chosen), choice of base, draft |
+| Creating a PR | "Create Pull Request…" from Repository, from a local branch's context menu, and from the branch's status popover once the branch is pushed and has no open pull request (the popover shows the open one instead). A branch not pushed yet, or ahead of its upstream, gets the Push confirmation window first; create the pull request after its CI has run. Title and body from the branch's last commit (an AI summary can also be chosen), choice of base, draft |
 | CI status | Show ✓ / ✗ / ● on branch heads and each commit in History (only the visible range, fetched conditionally with ETag and stored in the persistent cache) |
 | Avatars | GitHub avatars if there is a GitHub account, otherwise today's Gravatar |
 | Clone | Choose from the list of your own repositories and clone |
