@@ -16,6 +16,7 @@ scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # 作ったエン�
 scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md（cargo install --locked cargo-about --features cli）
 cargo deny check licenses        # 依存が deny.toml で許したライセンスだけか（cargo install --locked cargo-deny）
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 拡張
+(cd apps/vscode && npm run test:e2e)   # 実際の VSCode での VSCode 拡張（上の行のあとで）
 (cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 のアプリ（GTK 4.14 以降が要る。libgtk-4-dev か brew install gtk4 pkgconf）
 scripts/package-gtk4.sh          # GTK4 のアプリを dist/amonhen-gtk-<版>-linux-<arch>.tar.gz に（Linux で。dist/engine の Linux のエンジンがあれば入れる）
 ```
@@ -44,7 +45,19 @@ npm install
 npm run build      # dist/extension.js を生成
 npm run typecheck
 npm test
+npm run test:e2e   # 実際の VSCode で（VSCode 1.120.0 を .vscode-test/ に落とす）
 ```
+
+`npm run test:e2e`（`e2e/run.mjs`）は、拡張をビルドして一時ディレクトリに `.vsix` と同じ形で並べ（`bin/` にルートで
+作ったエンジン）、そこに `core.autocrlf=true` でリポジトリを clone して（ファイルは CRLF になる）、拡張を読み込んだ
+VSCode で開く（`@vscode/test-cli`、設定は `.vscode-test.mjs`）。エンジンの置き場所、共有の daemon のソケットとキャッシュ、
+`HOME` は一時ディレクトリの中に向けるので、手元で動いている daemon やアプリには触らない。テスト（`e2e/*.test.ts`、
+mocha）は拡張ホストで動く。メインビューの Webview が送るはずのメッセージを拡張ホストに渡して画面を動かし（`activate`
+がパネルを返す）、送り返されるメッセージとリポジトリの様子を git で確かめる。同梱のエンジンでの起動、共有の daemon を
+通した History、CRLF のファイルでの行単位の stage・行の破棄・Undo・commit（daemon で、と `amonhen.daemon.enabled` を
+切って）、拡張が起動するプロセスがすべて `windowsHide` であること、リポジトリを閉じると git のプロセスが終わることを
+確かめる。1 回 15〜30 秒ほどで、大半は VSCode の起動と最初の Webview の読み込み。画面のない Linux では
+`xvfb-run -a npm run test:e2e`（CI と同じ）。
 
 VSCode で F5 を押すと、拡張を読み込んだウィンドウが開く。Output の「Amon Hen」でログレベルを Trace にすると、git コマンドごとの所要時間が出る。
 
@@ -60,4 +73,5 @@ VSCode で F5 を押すと、拡張を読み込んだウィンドウが開く。
 | `src/ui/` | サイドバーのナビ、メインビューのパネルと画面ごとのコントローラー、コマンド |
 | `src/webview/` | メインビューの Webview（Working Copy、History、差分の描画） |
 | `test/` | `node --test` で動くテスト。git 実行層は一時ディレクトリの実リポジトリで確かめる |
-| `scripts/` | エンジンを `bin/` に写す処理と、snapshot のバージョン計算 |
+| `e2e/` | 拡張を読み込んだ実際の VSCode で動くテスト（`npm run test:e2e`） |
+| `scripts/` | エンジンを `bin/` に写す処理、snapshot のバージョン計算、ssh から Windows のデスクトップで `test:e2e` を走らせる処理 |

@@ -159,6 +159,27 @@ cargo build -p amonhen-cli
 cd apps\vscode; npm.cmd ci; npm.cmd run typecheck; npm.cmd test
 ```
 
+## 実際の VSCode での拡張のテスト
+
+`npm run test:e2e`（[development.md](development.md)）は、拡張を読み込んだ VSCode を起動し、これまで手で確かめていた
+ことの大半を、CRLF で取り出したファイルで確かめる。置き場所に置かれたエンジンでの起動、History、コミットの詳細と差分、
+daemon と git 実行層それぞれでの行単位の stage・行の破棄・Undo・commit、拡張が起動するプロセスがすべて `windowsHide`
+であること。CI も Windows で走らせるが、全体に `core.autocrlf false` を設定している。テストのリポジトリは自分で
+`core.autocrlf=true` にする。
+
+`apps\vscode` の `scripts\e2e-windows.ps1` が走らせて、終了コードを返す。`-Desktop` を付けると、ログオンしている利用者の
+デスクトップで、1 回だけのタスクとして走らせ、出力を少しずつ ssh に出す。ssh のセッションにはデスクトップがないので、
+ssh から VSCode が起動しないときや、VSCode を画面で（リモート デスクトップか実機で）見たいときに使う。利用者が
+ログオンしている必要がある（画面のロックはかまわない）。タスクの PowerShell の窓が一瞬見えることがあるが、それは
+スクリプトのもので、拡張のものではない。
+
+```powershell
+cd C:\src\amonhen
+cargo build -p amonhen-cli
+cd apps\vscode; npm.cmd ci
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e-windows.ps1 -Desktop
+```
+
 ## ブランチから作ったエンジンを VSCode で試す
 
 拡張は、`current` のエンジンの protocol が同梱のエンジンと同じときだけそれで共有の daemon を起動し、違えば同梱の
@@ -178,10 +199,18 @@ cd apps\vscode; npm.cmd ci; npm.cmd run typecheck; npm.cmd test
 
 ## 実機で確かめること
 
+次は `npm run test:e2e` が確かめる（上の `scripts\e2e-windows.ps1` で走らせる）。
+
 - VSCode での拡張: `%LOCALAPPDATA%\amonhen` に置かれるエンジン（`current`、`bin\amonhen.exe`）、History、コミットの詳細
   と差分、Working Copy の行単位の stage、行単位の破棄と Undo、commit。どれも CRLF で取り出したファイルで。
-- 拡張を使っている間（ブランチを選ぶ、更新する）にコンソールの窓が一瞬開かない。
-- 複数の VSCode の窓と CLI で 1 つの共有の daemon（`amonhen daemon status` でつながりが分かる）。
 - `amonhen.daemon.enabled` を切って、拡張の git 実行層で同じ Working Copy の操作。
+- 拡張が起動するプロセスがすべて `windowsHide`（コンソールの窓が一瞬開く原因）で、リポジトリを閉じると常駐の
+  `git cat-file` が終わる。
+
+まだ手で確かめるもの:
+
+- 拡張を使っている間（ブランチを選ぶ、更新する）にコンソールの窓が一瞬開かない。テストが確かめるのは拡張が自分で
+  起動するプロセスだけで、daemon が起動するものは含まない。
+- 複数の VSCode の窓と CLI で 1 つの共有の daemon（`amonhen daemon status` でつながりが分かる）。
 - Mac から実機への Remote-SSH と、そこで動く拡張。
 - ブラウザーで落としたリリースの zip（SmartScreen）と、`amonhen.exe install`。

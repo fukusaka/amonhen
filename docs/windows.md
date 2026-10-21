@@ -159,6 +159,27 @@ cargo build -p amonhen-cli
 cd apps\vscode; npm.cmd ci; npm.cmd run typecheck; npm.cmd test
 ```
 
+## The extension's tests in a real VSCode
+
+`npm run test:e2e` (see [development.md](development.md)) starts VSCode with the extension and checks, on files checked
+out with CRLF, most of what used to be checked by hand: activation with the engine placed in its data directory,
+History, commit details and diffs, line staging, discarding lines, Undo and commit through the daemon and on the git
+execution layer, and `windowsHide` on every process the extension starts. CI runs it on Windows too, but with
+`core.autocrlf false` set globally; the test repository sets `core.autocrlf=true` itself.
+
+`scripts\e2e-windows.ps1` in `apps\vscode` runs it and returns its exit code. With `-Desktop`, it runs it on the desktop
+of the user who is logged on, through a one-time scheduled task, and prints its output over ssh as it goes: an ssh
+session has no desktop, so use it when VSCode doesn't start from ssh, or to watch VSCode on the screen (Remote Desktop
+or in person). The user must be logged on (a locked screen is fine). PowerShell's own window for the task may show
+briefly; that is the script, not the extension.
+
+```powershell
+cd C:\src\amonhen
+cargo build -p amonhen-cli
+cd apps\vscode; npm.cmd ci
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e-windows.ps1 -Desktop
+```
+
 ## Trying an engine built from a branch in VSCode
 
 The extension starts the shared daemon with the `current` engine only when its protocol matches the bundled engine's,
@@ -178,11 +199,19 @@ Installing the next snapshot or release `.vsix` puts everything back.
 
 ## What to check on the machine
 
+`npm run test:e2e` covers these (run it with `scripts\e2e-windows.ps1`, above):
+
 - The extension in VSCode: the engine placed in `%LOCALAPPDATA%\amonhen` (`current`, `bin\amonhen.exe`), History,
   commit details and diffs, Working Copy with line staging, discarding lines and Undo, commit, all on a file checked out
   with CRLF.
-- No console window flashes while using the extension (selecting branches, refreshing).
-- One shared daemon for several VSCode windows and the CLI (`amonhen daemon status` lists the connections).
 - With `amonhen.daemon.enabled` off, the same Working Copy operations on the extension's git execution layer.
+- Every process the extension starts has `windowsHide` (the cause of console windows flashing), and its resident
+  `git cat-file` ends when the repository is closed.
+
+Still by hand:
+
+- No console window flashes while using the extension (selecting branches, refreshing). The tests check only the
+  processes the extension starts itself, not those the daemon starts.
+- One shared daemon for several VSCode windows and the CLI (`amonhen daemon status` lists the connections).
 - Remote-SSH from the Mac to the machine, with the extension running there.
 - A Release zip downloaded with a browser (SmartScreen), and `amonhen.exe install`.
