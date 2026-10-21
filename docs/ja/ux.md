@@ -98,7 +98,7 @@ macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewCont
 | General | 起動時に前回のリポジトリを開く、開いたリポジトリをブックマークに足す、リポジトリを開く既定（タブ / ウィンドウ）、外部エディタ・ターミナル・差分ツールの選択 |
 | Git | git の実行ファイルの場所と版、グローバルの `user.name`・`user.email`・署名の鍵（`git config --global` を読み書き）、pull の既定（merge / rebase / ff-only）、fetch の `--prune`、自動 fetch の間隔、push 前の確認 |
 | Accounts | GitHub・GitLab などのアカウント（後述）。トークンはキーチェーン |
-| Appearance | テーマ（システム / ライト / ダーク）、差分とメッセージのフォントと大きさ、History の 1 行表示・アバター・祖先の強調、グラフの色 |
+| Appearance | テーマ（システム / ライト / ダーク）、差分とメッセージのフォントと大きさ、History の並び順・1 行表示・表示項目・アバター・祖先の強調、グラフの色 |
 | Diff & Merge | unified / split の既定、空白の無視、前後の行数、折り返し、タブ幅、マージエディタの既定の並び（後述）、diff3 |
 | Commit | 件名の文字数の目安（50 / 72）、Sign-off を付ける、Conventional Commits の補完、コミット後に push |
 | AI | 使う AI（なし / Apple Intelligence（端末内）/ Claude Code / Codex。既定は、端末内のモデルが使えればそれ、なければ「なし」）、選んだ CLI の場所・版・ログインの状態（見つからなければ入れ方を案内）、モデル、翻訳先の言語、リポジトリごとに送らない設定。詳細で用途ごとのプロンプト（9 章） |
@@ -387,7 +387,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Amon Hen | About、Settings… ⌘,、Services、隠す、終了 |
 | File | New Window ⌘N、New Tab ⌘T、Open… ⌘O、Quick Open… ⌘⇧O、Open Recent ▸、Clone… ⌃⌘C、Add Remote Repository…、Init…、Close Tab ⌘W、Close Window ⌘⇧W |
 | Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
-| View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ（History のヘッダーの右クリックでも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
+| View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
 | Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings… ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Create Patch… |

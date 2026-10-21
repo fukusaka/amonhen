@@ -57,6 +57,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `historyLineage` | history・row | | rows（u64 のビット列）・edgeFrom u32 |
 | `historyLanes` | history・start・end・metrics（full・thin・minFull・minThin・available） | width（レーン全体の幅） | positions f32 |
 | `historyRowOf` | history・id | row（なければ null） | |
+| `historyOrder` | order（`date` か、枝のコミットを merge の下にまとめる `topo`。これから読む History すべてに効き、今の History は git を読み直さずに並べ直す） | order | |
 | `refs` | | headBranch・head・entries（kind・name・target・detail・ahead・behind・gone） | |
 | `status` | | generation・branch・upstream・ahead・behind・entries（kind・path・origPath・index・worktree・staged・unstaged・submodule） | |
 | `commitDiff` | id か stash（ID）、または history・rows・pair?（forward・reverse・mergeBase） | files（path・oldPath・kind・added・removed・binary）・changes・selection・rows | 差分の行（下） |

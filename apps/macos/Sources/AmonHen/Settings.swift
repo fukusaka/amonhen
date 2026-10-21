@@ -184,6 +184,44 @@ enum Settings {
 
     /// History の行を実際に 1 行で出すか: 設定で 1 行にしたか、作者・日時の行に出す項目が 1 つもないとき。
     static var oneLineHistoryRows: Bool { compactHistoryRows || !historyItems.hasMeta }
+
+    /// History の並び順（既定は日付順）。変えたら `historyOrderChanged` を知らせる。
+    static var historyOrder: HistoryOrder {
+        get { UserDefaults.standard.string(forKey: "historyOrder").flatMap(HistoryOrder.init(name:)) ?? .date }
+        set {
+            UserDefaults.standard.set(newValue.name, forKey: "historyOrder")
+            NotificationCenter.default.post(name: .historyOrderChanged, object: nil)
+        }
+    }
+}
+
+extension HistoryOrder {
+    /// 設定・メニューで使う名前。
+    var name: String {
+        switch self {
+        case .date: "date"
+        case .topo: "topo"
+        }
+    }
+
+    init?(name: String) {
+        guard let order = Self.allCases.first(where: { $0.name == name }) else { return nil }
+        self = order
+    }
+
+    var title: String {
+        switch self {
+        case .date: L("Date Order")
+        case .topo: L("Topological Order")
+        }
+    }
+
+    var toolTip: String {
+        switch self {
+        case .date: L("Newest first wherever the graph allows (like git log --date-order)")
+        case .topo: L("Keep a branch’s commits together under the merge that brought them in (like git log --topo-order)")
+        }
+    }
 }
 
 /// History の行に出す項目。件名はいつも出す。
@@ -206,6 +244,7 @@ nonisolated struct HistoryItems: OptionSet, Sendable, Hashable {
 
 extension Notification.Name {
     static let historyRowsChanged = Notification.Name("historyRowsChanged")
+    static let historyOrderChanged = Notification.Name("historyOrderChanged")
     static let highlightAncestorsChanged = Notification.Name("highlightAncestorsChanged")
     static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")
@@ -236,6 +275,8 @@ enum PullMode: String, CaseIterable {
 final class SettingsModel {
     var pullMode = Settings.pullMode { didSet { Settings.pullMode = pullMode } }
     var compactHistoryRows = Settings.compactHistoryRows { didSet { Settings.compactHistoryRows = compactHistoryRows } }
+    var historyOrder = Settings.historyOrder { didSet { Settings.historyOrder = historyOrder } }
+    var historyItems = Settings.historyItems { didSet { Settings.historyItems = historyItems } }
     var highlightAncestors = Settings.highlightAncestors { didSet { Settings.highlightAncestors = highlightAncestors } }
     var monospacedCommitMessage = Settings.monospacedCommitMessage {
         didSet { Settings.monospacedCommitMessage = monospacedCommitMessage }
@@ -350,9 +391,21 @@ private struct AppearanceSettings: View {
     var body: some View {
         Form {
             Section("History") {
+                Picker(L("Order"), selection: $model.historyOrder) {
+                    ForEach(HistoryOrder.allCases, id: \.self) { Text($0.title).tag($0) }
+                }
+                Note(L("Topological order keeps a branch’s commits together under the merge that brought them in."))
                 Toggle(L("Show each commit on one line"), isOn: $model.compactHistoryRows)
                 Toggle(L("Highlight the selected commit’s ancestors"), isOn: $model.highlightAncestors)
                 Note(L("Draws only the selected commit’s ancestors and the lines between them at full strength, and dims the rest."))
+            }
+            Section(L("Items")) {
+                ForEach(HistoryDisplayMenu.entries, id: \.0.rawValue) { item, title in
+                    Toggle(L(title), isOn: Binding(
+                        get: { model.historyItems.contains(item) },
+                        set: { on in if on { model.historyItems.insert(item) } else { model.historyItems.remove(item) } }))
+                }
+                Note(L("What each commit’s row shows besides the subject. With none of author, date and ID, rows are one line."))
             }
             Section(L("Commit Details")) {
                 Toggle(L("Show the message in a monospaced font"), isOn: $model.monospacedCommitMessage)

@@ -5,8 +5,8 @@ use std::sync::{Arc, OnceLock};
 
 use amonhen_layout::DiffRow;
 use amonhen_model::{
-    CommitGraph, Eol, FileChange, GitBackend, LineEndings, Oid, OidMap, Refs, RepoPaths, Result,
-    Status, StatusEntry, topo,
+    CommitGraph, Eol, FileChange, GitBackend, HistoryOrder, LineEndings, Oid, OidMap, Refs,
+    RepoPaths, Result, Status, StatusEntry, topo,
 };
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use arc_swap::ArcSwapOption;
@@ -227,6 +227,8 @@ pub struct Repository {
     verifier: std::sync::Mutex<Option<Arc<dyn amonhen_model::SignatureVerifier>>>,
     /// History の検索で探す、件名と作者名の索引（初めて探すときに作る）。
     texts: amonhen_model::search::TextIndexCache,
+    /// History の並び順（`set_history_order`）。
+    history_order: std::sync::Mutex<HistoryOrder>,
 }
 
 impl Repository {
@@ -243,7 +245,59 @@ impl Repository {
             signatures: Default::default(),
             verifier: Default::default(),
             texts: Default::default(),
+            history_order: Default::default(),
         }
+    }
+
+    /// History の並び順。
+    pub fn history_order(&self) -> HistoryOrder {
+        *self.history_order.lock().unwrap()
+    }
+
+    /// History の並び順を変える。公開している History があればその順に並べ直して公開し直し、永続キャッシュも
+    /// その順で書く（git は読み直さない）。手元の共有の daemon につないでいれば、daemon の分も変える。
+    pub fn set_history_order(&self, order: HistoryOrder) -> Result<()> {
+        self.delegate_done(&crate::delegate::Request::SetHistoryOrder(
+            order.name().to_owned(),
+        ))?;
+        let previous = std::mem::replace(&mut *self.history_order.lock().unwrap(), order);
+        if previous == order {
+            return Ok(());
+        }
+        if let Some(current) = self.history.load_full() {
+            let graph = topo::reorder(&current.graph, order);
+            let head_row = Self::head_row(&graph, current.head);
+            let layout = graph::layout(&graph, head_row);
+            let cached = CachedHistory {
+                tips: current.tips.clone(),
+                head: current.head,
+                order,
+                graph,
+                layout,
+            };
+            if let Some(path) = &self.cache_path {
+                let _ = cache::write(path, &cached);
+            }
+            self.publish(cached.tips, cached.head, cached.graph, cached.layout);
+        }
+        Ok(())
+    }
+
+    fn head_row(graph: &CommitGraph, head: Option<Oid>) -> Option<u32> {
+        head.and_then(|h| graph.ids().iter().position(|id| *id == h))
+            .map(|r| r as u32)
+    }
+
+    /// キャッシュから読んだ History を公開する。並び順が今のものと違えば（別の順で書いたキャッシュ）、並べ直す。
+    fn publish_cached(&self, cached: CachedHistory) -> Arc<HistorySnapshot> {
+        let order = self.history_order();
+        if cached.order == order {
+            return self.publish(cached.tips, cached.head, cached.graph, cached.layout);
+        }
+        let graph = topo::reorder(&cached.graph, order);
+        let head_row = Self::head_row(&graph, cached.head);
+        let layout = graph::layout(&graph, head_row);
+        self.publish(cached.tips, cached.head, graph, layout)
     }
 
     /// 署名を手元で検証するもの（`None` ならリポジトリのある側の git で検証する）。変えると、覚えていた
@@ -396,7 +450,7 @@ impl Repository {
             return Some(current);
         }
         let cached = cache::read(self.cache_path.as_deref()?)?;
-        Some(self.publish(cached.tips, cached.head, cached.graph, cached.layout))
+        Some(self.publish_cached(cached))
     }
 
     /// History を読み直して公開する。起点と HEAD が前回と同じなら何もしない。
@@ -413,7 +467,7 @@ impl Repository {
             {
                 return Ok(current);
             }
-            return Ok(self.publish(cached.tips, cached.head, cached.graph, cached.layout));
+            return Ok(self.publish_cached(cached));
         }
         let tips = self.backend.tips()?;
         let head = self.backend.head()?;
@@ -436,9 +490,13 @@ impl Repository {
             }
             None => self.backend.commit_graph(&tips)?,
         };
-        let head_row = head
-            .and_then(|h| graph.ids().iter().position(|id| *id == h))
-            .map(|r| r as u32);
+        // 日付順以外は全体を並べ直す（読み足した分は先頭に置かれるだけなので）。
+        let order = self.history_order();
+        let graph = match order {
+            HistoryOrder::Date => graph,
+            HistoryOrder::Topo => topo::reorder(&graph, order),
+        };
+        let head_row = Self::head_row(&graph, head);
         let layout = match current {
             Some(old) => graph::relayout(&old.layout, &old.graph, &graph, head_row),
             None => graph::layout(&graph, head_row),
@@ -447,6 +505,7 @@ impl Repository {
             let cached = CachedHistory {
                 tips,
                 head,
+                order,
                 graph,
                 layout,
             };
@@ -803,6 +862,12 @@ impl Repository {
             }
             Request::RebuildHistory => {
                 self.rebuild_history()?;
+                (Reply::Done, Vec::new())
+            }
+            Request::SetHistoryOrder(name) => {
+                let order = HistoryOrder::from_name(&name)
+                    .ok_or_else(|| tr!("Unknown History order: {name}", name = name))?;
+                self.set_history_order(order)?;
                 (Reply::Done, Vec::new())
             }
             Request::ChangeDiffs(changes) => {

@@ -1016,9 +1016,27 @@
 
 // History の行に出す項目
 "History Items" = "History の表示項目";
-"Choose what each commit's row in History shows besides the subject (also in the History header's context menu)" = "History の各コミットの行に、件名のほかに何を出すかを選ぶ（History のヘッダーの右クリックでも選べる）";
+"Choose what each commit's row in History shows besides the subject (also from the button at the right of History’s bar and the header’s context menu)" = "History の各コミットの行に、件名のほかに何を出すかを選ぶ（History の上のバーの右端のボタンと、ヘッダーの右クリックでも選べる）";
 "Branches and Tags" = "ブランチとタグ";
 "Date" = "日時";
 "Commit ID" = "コミット ID";
 "Signature" = "署名";
 "CI Status" = "CI の状態";
+
+// History の並び順
+"History Order" = "History の並び順";
+"How History orders commits (also for the fold and the branch filter)" = "History のコミットの並べ方（折りたたみ・ブランチの絞り込みにも効く）";
+"Date Order" = "日付順";
+"Topological Order" = "トポロジー順";
+"Newest first wherever the graph allows (like git log --date-order)" = "グラフが許す限り新しいものから（git log --date-order と同じ）";
+"Keep a branch’s commits together under the merge that brought them in (like git log --topo-order)" = "枝のコミットを散らさず、取り込んだ merge の下にまとめる（git log --topo-order と同じ）";
+
+// History の上のバーの右端のボタン
+"History Display: order, items, one line per commit" = "History の表示: 並び順・表示項目・1 行表示";
+"History Display" = "History の表示";
+"Order" = "並び順";
+"Items" = "表示項目";
+
+// Settings > Appearance の History の並び順と表示項目
+"Topological order keeps a branch’s commits together under the merge that brought them in." = "トポロジー順は、枝のコミットを取り込んだ merge の下にまとめます。";
+"What each commit’s row shows besides the subject. With none of author, date and ID, rows are one line." = "各コミットの行に、件名のほかに出すもの。作者・日時・ID をすべて消すと 1 行になります。";

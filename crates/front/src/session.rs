@@ -278,6 +278,13 @@ impl Session {
                 let h = self.history(request)?;
                 Reply::json(json!({"row": h.row_of(&oid(str_arg(request, "id")?)?)}))
             }
+            "historyOrder" => {
+                let name = str_arg(request, "order")?;
+                let order = amonhen_model::HistoryOrder::from_name(name)
+                    .ok_or_else(|| tr!("Unknown History order: {name}", name = name))?;
+                repo.set_history_order(order)?;
+                Reply::json(json!({"order": order.name()}))
+            }
 
             // MARK: 参照・状態
             "refs" => Reply::json(refs_json(&repo.load_refs()?.refs)),

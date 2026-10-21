@@ -33,6 +33,7 @@ fn bench(c: &mut Criterion) {
     let history = CachedHistory {
         tips: vec![old_g.ids()[0]],
         head: None,
+        order: amonhen_model::HistoryOrder::Date,
         graph: old_g.clone(),
         layout: old.clone(),
     };
