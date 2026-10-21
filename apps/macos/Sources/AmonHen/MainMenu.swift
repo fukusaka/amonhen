@@ -96,6 +96,16 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         items.toolTip = L("Choose what each commit's row in History shows besides the subject (also in the History header's context menu)")
         items.submenu = HistoryItemsMenu.shared.make()
         menu.addItem(items)
+        let order = NSMenuItem(title: L("History Order"), action: nil, keyEquivalent: "")
+        order.toolTip = L("How History orders commits (also for the fold and the branch filter)")
+        order.submenu = NSMenu(title: L("History Order"))
+        for choice in HistoryOrder.allCases {
+            let entry = item(choice.title, #selector(setHistoryOrder(_:)), "", target: self)
+            entry.toolTip = choice.toolTip
+            entry.representedObject = choice.name
+            order.submenu?.addItem(entry)
+        }
+        menu.addItem(order)
         let ancestors = item(L("Highlight Ancestors"), #selector(toggleHighlightAncestors(_:)), "", target: self)
         ancestors.toolTip = L("Draw only the selected commit’s ancestors and the lines between them in full color, and dim the rest")
         menu.addItem(ancestors)
@@ -234,6 +244,10 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     // MARK: - 設定
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        if item.action == #selector(setHistoryOrder(_:)) {
+            item.state = (item.representedObject as? String) == Settings.historyOrder.name ? .on : .off
+            return true
+        }
         let on: Bool? = switch item.action {
         case #selector(toggleCompactRows(_:)): Settings.compactHistoryRows
         case #selector(toggleHighlightAncestors(_:)): Settings.highlightAncestors
@@ -255,6 +269,11 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     @objc private func toggleMonospacedMessage(_ item: NSMenuItem) { Settings.monospacedCommitMessage.toggle() }
     @objc private func toggleHighlightAncestors(_ item: NSMenuItem) { Settings.highlightAncestors.toggle() }
     @objc private func toggleCompactRows(_ item: NSMenuItem) { Settings.compactHistoryRows.toggle() }
+    @objc private func setHistoryOrder(_ item: NSMenuItem) {
+        guard let order = (item.representedObject as? String).flatMap(HistoryOrder.init(name:)),
+              order != Settings.historyOrder else { return }
+        Settings.historyOrder = order
+    }
     @objc private func toggleStackedDiff(_ item: NSMenuItem) { Settings.stackedCommitDiff.toggle() }
     @objc private func toggleFileTree(_ item: NSMenuItem) { Settings.historyFileTree.toggle() }
     @objc private func toggleFoldMerged(_ item: NSMenuItem) { Settings.foldMergedBranches.toggle() }

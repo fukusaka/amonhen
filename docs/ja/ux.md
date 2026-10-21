@@ -387,7 +387,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Amon Hen | About、Settings… ⌘,、Services、隠す、終了 |
 | File | New Window ⌘N、New Tab ⌘T、Open… ⌘O、Quick Open… ⌘⇧O、Open Recent ▸、Clone… ⌃⌘C、Add Remote Repository…、Init…、Close Tab ⌘W、Close Window ⌘⇧W |
 | Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
-| View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ（History のヘッダーの右クリックでも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
+| View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ（History のヘッダーの右クリックでも）、History Order ▸ 日付順 / トポロジー順、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
 | Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings… ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Create Patch… |

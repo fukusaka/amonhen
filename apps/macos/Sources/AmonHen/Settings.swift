@@ -184,6 +184,44 @@ enum Settings {
 
     /// History の行を実際に 1 行で出すか: 設定で 1 行にしたか、作者・日時の行に出す項目が 1 つもないとき。
     static var oneLineHistoryRows: Bool { compactHistoryRows || !historyItems.hasMeta }
+
+    /// History の並び順（既定は日付順）。変えたら `historyOrderChanged` を知らせる。
+    static var historyOrder: HistoryOrder {
+        get { UserDefaults.standard.string(forKey: "historyOrder").flatMap(HistoryOrder.init(name:)) ?? .date }
+        set {
+            UserDefaults.standard.set(newValue.name, forKey: "historyOrder")
+            NotificationCenter.default.post(name: .historyOrderChanged, object: nil)
+        }
+    }
+}
+
+extension HistoryOrder {
+    /// 設定・メニューで使う名前。
+    var name: String {
+        switch self {
+        case .date: "date"
+        case .topo: "topo"
+        }
+    }
+
+    init?(name: String) {
+        guard let order = Self.allCases.first(where: { $0.name == name }) else { return nil }
+        self = order
+    }
+
+    var title: String {
+        switch self {
+        case .date: L("Date Order")
+        case .topo: L("Topological Order")
+        }
+    }
+
+    var toolTip: String {
+        switch self {
+        case .date: L("Newest first wherever the graph allows (like git log --date-order)")
+        case .topo: L("Keep a branch’s commits together under the merge that brought them in (like git log --topo-order)")
+        }
+    }
 }
 
 /// History の行に出す項目。件名はいつも出す。
@@ -206,6 +244,7 @@ nonisolated struct HistoryItems: OptionSet, Sendable, Hashable {
 
 extension Notification.Name {
     static let historyRowsChanged = Notification.Name("historyRowsChanged")
+    static let historyOrderChanged = Notification.Name("historyOrderChanged")
     static let highlightAncestorsChanged = Notification.Name("highlightAncestorsChanged")
     static let signatureCheckChanged = Notification.Name("signatureCheckChanged")
     static let commitMessageStyleChanged = Notification.Name("commitMessageStyleChanged")

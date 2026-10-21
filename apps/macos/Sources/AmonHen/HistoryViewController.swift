@@ -290,6 +290,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         NotificationCenter.default.addObserver(
             self, selector: #selector(rowStyleChanged), name: .historyRowsChanged, object: nil)
         NotificationCenter.default.addObserver(
+            self, selector: #selector(historyOrderChanged), name: .historyOrderChanged, object: nil)
+        NotificationCenter.default.addObserver(
             self, selector: #selector(highlightAncestorsChanged), name: .highlightAncestorsChanged, object: nil)
         tableView.intercellSpacing = NSSize(width: 6, height: 0)
         tableView.usesAlternatingRowBackgroundColors = false
@@ -553,10 +555,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         if let cached = repository.loadCachedHistory() {
             show(cached)
         }
-        let repository = self.repository
+        let repository = self.repository, order = Settings.historyOrder
         Task {
             do {
-                let latest = try await Task.detached(priority: .userInitiated) { try repository.loadHistory() }.value
+                let latest = try await Task.detached(priority: .userInitiated) {
+                    // 並び順は読む前にコアへ（既定の日付順なら何もしない）。
+                    if order != .date { try repository.setHistoryOrder(order) }
+                    return try repository.loadHistory()
+                }.value
                 if !showsFullHistory {
                     reloadScope()
                 } else if latest.generation != (baseHistory ?? history)?.generation {
@@ -583,6 +589,19 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             } else if latest.generation != (baseHistory ?? history)?.generation {
                 showBase(latest)
             }
+        }
+    }
+
+    /// 並び順が変わった。コアに並べ直させて（git は読み直さない）、表示し直す。選んでいたコミットは `show` が探し直す。
+    @objc private func historyOrderChanged() {
+        let repository = self.repository, order = Settings.historyOrder
+        Task {
+            let latest: History? = await Task.detached(priority: .userInitiated) {
+                guard (try? repository.setHistoryOrder(order)) != nil else { return nil }
+                return try? repository.loadHistory()
+            }.value
+            guard let latest else { return }
+            if showsFullHistory { showBase(latest) } else { reloadScope(resetScroll: false) }
         }
     }
 

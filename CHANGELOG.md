@@ -22,6 +22,8 @@ becomes the GitHub Release notes.
   (result, name, duration), each linking to its log, with a button to the checks page on GitHub.
 - View > History Items (and the History header's context menu) chooses what each row shows besides the subject:
   branches and tags, author, date, commit ID, signature and CI status. With none of author, date and ID, rows are one line.
+- View > History Order switches History between date order and topological order, which keeps a branch's commits
+  together under the merge that brought them in. The CLI has `amonhen log --topo-order`.
 
 #### Changed
 

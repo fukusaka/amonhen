@@ -83,6 +83,12 @@ public final class Repository: @unchecked Sendable {
         return History(raw: raw, repository: self)
     }
 
+    /// History の並び順を変える。公開している History があれば、git を読み直さずにその順に並べ直す（大きなリポジトリでは
+    /// 秒単位。裏のスレッドから呼ぶこと）。共有の daemon 越しなら daemon の分も変える。
+    public func setHistoryOrder(_ order: HistoryOrder) throws {
+        guard amonhen_history_set_order(raw, order.rawValue) else { throw AmonhenError.last() }
+    }
+
     /// History を最初から作り直す（永続キャッシュを捨てる。共有の daemon 越しなら daemon の分も）。裏のスレッドから呼ぶこと。
     public func rebuildHistory() throws -> History {
         guard let raw = amonhen_history_rebuild(raw) else { throw AmonhenError.last() }
@@ -140,6 +146,14 @@ public final class Repository: @unchecked Sendable {
     public func latestHistory() -> History? {
         amonhen_history_acquire(raw).map { History(raw: $0, repository: self) }
     }
+}
+
+/// History の並び順（コアの `HistoryOrder`）。
+public enum HistoryOrder: UInt32, Sendable, CaseIterable {
+    /// 子が親より先で、並べられるもののうちでは新しいものを先に（`git log --date-order`）。
+    case date = 0
+    /// 枝のコミットを散らさず、取り込んだ merge の下にまとめる（`git log --topo-order`）。
+    case topo = 1
 }
 
 public enum ConnectionState: Equatable, Sendable {

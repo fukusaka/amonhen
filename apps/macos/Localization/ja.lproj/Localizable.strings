@@ -1022,3 +1022,11 @@
 "Commit ID" = "コミット ID";
 "Signature" = "署名";
 "CI Status" = "CI の状態";
+
+// History の並び順
+"History Order" = "History の並び順";
+"How History orders commits (also for the fold and the branch filter)" = "History のコミットの並べ方（折りたたみ・ブランチの絞り込みにも効く）";
+"Date Order" = "日付順";
+"Topological Order" = "トポロジー順";
+"Newest first wherever the graph allows (like git log --date-order)" = "グラフが許す限り新しいものから（git log --date-order と同じ）";
+"Keep a branch’s commits together under the merge that brought them in (like git log --topo-order)" = "枝のコミットを散らさず、取り込んだ merge の下にまとめる（git log --topo-order と同じ）";
