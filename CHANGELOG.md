@@ -9,11 +9,27 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Stashes shows where each stash's base stands against HEAD (in orange when it is not in HEAD's history), and
+  Branch… creates a branch from a stash (`git stash branch`).
+
+#### Changed
+
+- Stashes moved into the sidebar's Workspace as one row that opens a Stashes view: the stashes with their branch, base
+  and date on the left, the selected one's changes on the right, and Apply, Pop and Drop (View > Stashes ⌘4).
+- The main worktree always stays at the top of the sidebar's worktrees, instead of being folded into "No changes" when
+  it has none.
+
 #### Fixed
 
+- The repository page no longer stalls for a moment whenever a scan finishes: when only the counts change, the left
+  side is redrawn instead of rebuilt.
+- Bookmarks, groups and folders to scan are no longer lost when more than one copy of the app runs (the stable
+  release, the snapshot, a development build): each change now rereads the file and writes on top of it.
 - Opened from a linked worktree (`git worktree add`), the sidebar still nests a branch under the base it was created
   on when the base has moved on since: where a branch was created is now read through the git backend, which finds
-  the reflog in the shared git dir. The remote protocol is now version 22.
+  the reflog in the shared git dir. The remote protocol is now version 23 (the stash bases took it to 22).
 
 ### [0.2.4] - 2026-10-22
 

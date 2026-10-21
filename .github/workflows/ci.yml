@@ -112,3 +112,10 @@ jobs:
           npm ci
           npm run typecheck
           npm test
+      # VSCode を起動する結合テスト（e2e/）。ダウンロードした VSCode はキャッシュする。Linux は画面がないので xvfb で
+      - uses: actions/cache@v4
+        with:
+          path: apps/vscode/.vscode-test
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/vscode/.vscode-test.mjs') }}
+      - working-directory: apps/vscode
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}npm run test:e2e

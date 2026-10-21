@@ -237,6 +237,14 @@ pub enum Op {
         oid: Oid,
         message: String,
     },
+    StashBranch {
+        branch: String,
+        name: String,
+    },
+    CountApart {
+        left: String,
+        right: String,
+    },
     UpdateSubmodules(Vec<String>),
     ConfigList,
     ConfigSet(String, Option<String>),

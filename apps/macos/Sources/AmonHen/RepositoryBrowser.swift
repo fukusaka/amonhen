@@ -207,6 +207,9 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
         /// 開いた・閉じたを覚えるための名前。
         var key: String { category?.key ?? "header:" + (header ?? title) }
+
+        /// 木の形（名前・印・分類と子の並び）。同じなら作り直さずに、行の数だけ描き直せる。
+        var shape: String { key + "\u{1}" + title + "\u{1}" + symbol + "(" + children.map(\.shape).joined(separator: ",") + ")" }
     }
 
     private static let categoryKey = "repositoryPageCategory"
@@ -215,6 +218,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     }
 
     private var sideRoots: [SideNode] = []
+    private var sideShape = ""
     /// 開いている節（`SideNode.key`）。最初は見出しと「このMac」を開く。
     private static let expandedKey = "repositoryPageExpanded"
     private var expanded: Set<String> = Set(
@@ -276,8 +280,19 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         guard isViewLoaded, view.window != nil else { return }
         scanning.isHidden = !Bookmarks.shared.isScanning
         if Bookmarks.shared.isScanning { scanning.startAnimation(nil) } else { scanning.stopAnimation(nil) }
-        reload()
+        // スキャンの始まりと終わり、SSH 先のホームが分かったときなどに続けて来るので、少し待って 1 回にまとめる。
+        reloadWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.reloadWork = nil
+                self?.reload()
+            }
+        }
+        reloadWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
+
+    private var reloadWork: DispatchWorkItem?
 
     /// 行の状態が変わった。その行だけ描き直す（並びは変えない。読めるたびに行が動くと選びにくい）。
     private func rowChanged(_ path: String) {
@@ -519,16 +534,6 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         return roots
     }
 
-    /// `location` が、同じ場所（`host`。手元なら nil）のスキャンするフォルダの下にあるか。
-    private static func isScanned(_ location: String, host: String?) -> Bool {
-        let path = pathPart(location)
-        return Bookmarks.shared.data.scanRoots.contains { root in
-            guard sshHost(root.path) == host else { return false }
-            let base = pathPart(root.path)
-            return path == base || path.hasPrefix(base + "/")
-        }
-    }
-
     /// 場所の中のパス（SSH 先ならそのホストの上のパス、手元の共有の daemon 越しなら手元のパス）。
     /// SSH 先では、ホームの下の絶対パスを `~` に揃える（`~/prj` と `/home/me/prj` を同じ木に並べる）。
     static func pathPart(_ location: String) -> String {
@@ -611,51 +616,111 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     /// Worktrees から使う。docs/ux.md の「Worktrees」）。
     private func paths(in category: Category) -> [String] {
         if let known = pathsCache[category] { return known }
-        let all = listedCache ?? Set(Bookmarks.shared.allLocations.map(Self.localPath))
-        listedCache = all
-        let paths = allPaths(in: category).filter { path in
-            guard let main = RepositoryList.mainRepository(ofWorktree: Self.localPath(path)) else { return true }
-            return !all.contains(main)
+        let index = locationIndex()
+        let paths: [String]
+        switch category {
+        case .all: paths = index.entries.filter { !$0.hidden }.map(\.location)
+        case .local: paths = index.entries.filter { !$0.hidden && $0.host == nil }.map(\.location)
+        case let .host(name): paths = index.entries.filter { !$0.hidden && $0.host == name }.map(\.location)
+        // 場所の下のフォルダは、スキャンするフォルダの外のものだけ（左の木と同じ。スキャンした分は 🔍 の下に出す）。
+        case let .folder(prefix):
+            let under = prefix + "/"
+            paths = index.entries.filter { !$0.hidden && $0.host == nil && !$0.scanned && $0.path.hasPrefix(under) }.map(\.location)
+        case let .hostFolder(host, prefix):
+            let under = prefix + "/"
+            paths = index.entries.filter { !$0.hidden && $0.host == host && !$0.scanned && $0.path.hasPrefix(under) }.map(\.location)
+        case .favorites, .group, .scan, .scanFolder:
+            paths = otherPaths(in: category).filter { !index.hidden($0) }
         }
         pathsCache[category] = paths
         return paths
     }
 
-    /// 分類ごとのリポジトリと、一覧にあるもの全部（左の行を描くたびに数え直すと、分類が多いとき作り直しのたびに
-    /// 数百 ms 止まる）。一覧が変わったら `reload` で捨てる。
+    /// 分類ごとのリポジトリ（左の行ごとに数を出すので、作り直すたびに分類の数だけ引かれる）。一覧が変わったら
+    /// `reload` で捨てる。
     private var pathsCache: [Category: [String]] = [:]
-    private var listedCache: Set<String>?
 
-    private func allPaths(in category: Category) -> [String] {
+    /// 一覧にある場所ごとの、分類に使う値（ホスト・場所の中のパス・スキャンするフォルダの下か・隠す worktree か）。
+    /// 分類ごとに求め直すと、左の木の行の数だけ（数十回）全部の場所を辿り直し、そのたびに設定を読むので、
+    /// 作り直すたびに 1 度だけ求める。`reload` で捨てる。
+    private struct LocationIndex {
+        struct Entry {
+            let location: String
+            let host: String?
+            let path: String
+            let scanned: Bool
+            let hidden: Bool
+        }
+        let entries: [Entry]
+        /// 一覧にあるリポジトリの手元のパス（追加した worktree は、元のリポジトリが一覧にあれば隠す）。
+        let listed: Set<String>
+
+        func hidden(_ location: String) -> Bool {
+            guard let main = RepositoryList.mainRepository(ofWorktree: RepositoryBrowser.localPath(location)) else { return false }
+            return listed.contains(main)
+        }
+    }
+    private var indexCache: LocationIndex?
+
+    private func locationIndex() -> LocationIndex {
+        if let indexCache { return indexCache }
+        let bookmarks = Bookmarks.shared
+        // UserDefaults から来た文字列は NSString のままで、比べるたびに遅い道を通るので、Swift の文字列にしておく。
+        let locations = bookmarks.allLocations.map { location -> String in
+            var native = location
+            native.makeContiguousUTF8()
+            return native
+        }
+        let listed = Set(locations.map(Self.localPath))
+        let roots = bookmarks.data.scanRoots.map { (host: Self.sshHost($0.path), base: Self.pathPart($0.path)) }
+        var entries: [LocationIndex.Entry] = []
+        entries.reserveCapacity(locations.count)
+        let probe = LocationIndex(entries: [], listed: listed)
+        for location in locations {
+            let host = Self.sshHost(location)
+            let path = Self.pathPart(location)
+            let scanned = roots.contains { $0.host == host && (path == $0.base || path.hasPrefix($0.base + "/")) }
+            entries.append(.init(location: location, host: host, path: path, scanned: scanned, hidden: probe.hidden(location)))
+        }
+        let index = LocationIndex(entries: entries, listed: listed)
+        indexCache = index
+        return index
+    }
+
+    /// お気に入り・グループ・スキャンの分類（一覧のほかの場所から引かないもの）。
+    private func otherPaths(in category: Category) -> [String] {
         let bookmarks = Bookmarks.shared
         switch category {
-        case .all: return bookmarks.allLocations
         case .favorites: return bookmarks.data.items.filter(\.favorite).map(\.path)
-        case .local: return bookmarks.allLocations.filter { Self.sshHost($0) == nil }
-        case let .host(name): return bookmarks.allLocations.filter { Self.sshHost($0) == name }
         case let .group(name): return bookmarks.data.items.filter { $0.group == name }.map(\.path)
         case let .scan(path): return bookmarks.scanned[path] ?? []
-        // 場所の下のフォルダは、スキャンするフォルダの外のものだけ（左の木と同じ。スキャンした分は 🔍 の下に出す）。
-        case let .folder(prefix):
-            return bookmarks.allLocations.filter {
-                Self.sshHost($0) == nil && Self.localPath($0).hasPrefix(prefix + "/") && !Self.isScanned($0, host: nil)
-            }
-        case let .hostFolder(host, prefix):
-            return bookmarks.allLocations.filter {
-                Self.sshHost($0) == host && Self.pathPart($0).hasPrefix(prefix + "/") && !Self.isScanned($0, host: host)
-            }
         case let .scanFolder(root, prefix):
             return (bookmarks.scanned[root] ?? []).filter { Self.pathPart($0).hasPrefix(prefix + "/") }
+        case .all, .local, .host, .folder, .hostFolder: return []
         }
     }
 
     /// 左と右を作り直す。選んでいた行とスクロールの位置は保つ。
     private func reload() {
+        let started = CACurrentMediaTime()
+        defer {
+            let ms = (CACurrentMediaTime() - started) * 1000
+            PerformanceLog.record("Repositories: rebuild the page", ms: ms)
+        }
         pathsCache = [:]
-        listedCache = nil
-        let bookmarks = Bookmarks.shared
+        indexCache = nil
         if style == .page {
-            sideRoots = makeSidebar()
+            let roots = makeSidebar()
+            let shape = roots.map(\.shape).joined(separator: ",")
+            // スキャンが終わったときなど、木の形が同じで数だけが変わることが多い。そのときは作り直さず（開き直すと
+            // 行を全部作り直して数十 ms かかる）、見えている行の数だけ描き直す。
+            if shape == sideShape, !sideRoots.isEmpty {
+                sidebar.reloadData(forRowIndexes: IndexSet(integersIn: 0..<sidebar.numberOfRows), columnIndexes: [0])
+                reloadTable()
+                return
+            }
+            sideShape = shape
+            sideRoots = roots
             var all: [Category] = []
             func collect(_ nodes: [SideNode]) { for n in nodes { if let c = n.category { all.append(c) }; collect(n.children) } }
             collect(sideRoots)
@@ -679,6 +744,12 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             rebuildingSidebar = false
         }
 
+        reloadTable()
+    }
+
+    /// 右の一覧を作り直す。選んでいた行とスクロールの位置は保つ。
+    private func reloadTable() {
+        let bookmarks = Bookmarks.shared
         let selected = Set(table.selectedRowIndexes.compactMap { $0 < shown.count ? shown[$0] : nil })
         let scrolled = tableScroll.contentView.bounds.origin
         let query = filter.stringValue.trimmingCharacters(in: .whitespaces).lowercased()

@@ -16,6 +16,7 @@ scripts/check-engine.sh dist/engine/amonhen-darwin-aarch64   # run a built engin
 scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md (cargo install --locked cargo-about --features cli)
 cargo deny check licenses        # dependencies use only the licenses allowed in deny.toml (cargo install --locked cargo-deny)
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode extension
+(cd apps/vscode && npm run test:e2e)   # VSCode extension in a real VSCode (after the line above)
 (cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 app (needs GTK 4.14 or later: libgtk-4-dev, or brew install gtk4 pkgconf)
 scripts/package-gtk4.sh          # GTK4 app into dist/amonhen-gtk-<version>-linux-<arch>.tar.gz (on Linux; includes dist/engine's Linux engines if built)
 ```
@@ -46,7 +47,20 @@ npm install
 npm run build      # generate dist/extension.js
 npm run typecheck
 npm test
+npm run test:e2e   # in a real VSCode (downloads VSCode 1.120.0 into .vscode-test/)
 ```
+
+`npm run test:e2e` (`e2e/run.mjs`) builds the extension and lays it out like the `.vsix` in a temporary directory, with
+the engine built at the root in `bin/`, clones a repository there with `core.autocrlf=true` (so its files are CRLF), and
+opens it in VSCode with the extension (`@vscode/test-cli`, settings in `.vscode-test.mjs`). The engine's data directory,
+the shared daemon's socket and cache, and `HOME` point into the temporary directory, so a daemon or app already running
+is left alone. The tests (`e2e/*.test.ts`, mocha) run in the extension host. They drive the main view by handing the
+messages its Webview would send to the extension host (`activate` returns the panel) and check the messages sent back
+and the repository with git. They cover activation with the bundled engine, History through the shared daemon, line
+staging, discarding lines, Undo and commit on a CRLF file both through the daemon and with `amonhen.daemon.enabled`
+off, that every process the extension starts has `windowsHide`, and that its git processes end when the repositories
+are closed. A run takes about 10 seconds once VSCode is downloaded. On Linux
+without a display, use `xvfb-run -a npm run test:e2e` (as CI does).
 
 Pressing F5 in VSCode opens a window with the extension loaded. Setting the log level of "Amon Hen" in Output to Trace shows the time taken by each git command.
 
@@ -62,4 +76,5 @@ Directories under `apps/vscode`:
 | `src/ui/` | The sidebar nav, the main view panel and per-screen controllers, commands |
 | `src/webview/` | The main view's Webview (Working Copy, History, diff rendering) |
 | `test/` | Tests run with `node --test`. The git execution layer is checked against real repositories in temporary directories |
-| `scripts/` | Bundling the engines into `bin/` and the snapshot version calculation |
+| `e2e/` | Tests run in a real VSCode with the extension loaded (`npm run test:e2e`) |
+| `scripts/` | Bundling the engines into `bin/`, the snapshot version calculation, and running `test:e2e` on a Windows desktop over ssh |

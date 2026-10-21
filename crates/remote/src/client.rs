@@ -822,6 +822,20 @@ impl Operations for RemoteOperations {
         })
     }
 
+    fn stash_branch(&self, branch: &str, name: &str) -> Result<Outcome> {
+        self.op(Op::StashBranch {
+            branch: branch.to_owned(),
+            name: name.to_owned(),
+        })
+    }
+
+    fn count_apart(&self, left: &str, right: &str) -> Result<(u32, u32)> {
+        self.op(Op::CountApart {
+            left: left.to_owned(),
+            right: right.to_owned(),
+        })
+    }
+
     fn update_submodules(&self, paths: &[&str]) -> Result<()> {
         self.op(Op::UpdateSubmodules(owned(paths)))
     }

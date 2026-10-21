@@ -1,7 +1,8 @@
 import AmonhenKit
 import AppKit
 
-/// サイドバー: Branches / Pull Requests / Remotes / Tags / Stashes / Submodules。
+/// サイドバー: Workspace（Working Copy・History・Conflicts・Stashes）/ Branches / Pull Requests / Remotes / Tags /
+/// Submodules。Workspace の行は、メインの画面を切り替える（Stashes は stash の画面を開く）。
 final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate,
     NSPopoverDelegate
 {
@@ -14,7 +15,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var headBranch: String?
     /// サブモジュールを新しいウィンドウで開く（作業ツリーからのパス）。
     var onOpenSubmodule: ((String) -> Void)?
-    /// Working Copy か History を選んだとき。
+    /// Working Copy・History・Stashes を選んだとき。
     var onSelectPage: ((Page) -> Void)?
     /// プルリクエストの右クリック: チェックアウト（gh pr checkout）。
     var onCheckoutPullRequest: ((PullRequest) -> Void)?
@@ -26,7 +27,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onClickPullRequestCI: ((PullRequest, NSView) -> Void)?
 
     enum Page {
-        case workingCopy, history
+        case workingCopy, history, stashes
     }
 
     private final class Node {
@@ -65,17 +66,30 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let historyNode = Node(title: "History", page: .history)
     /// コンフリクトがあるときだけ出す。選ぶと Working Copy で最初のコンフリクトのファイルを開く。
     private let conflictsNode = Node(title: L("Conflicts"), page: .workingCopy)
+    /// stash があるときだけ、数を添えて出す。選ぶと Stashes の画面を開く。
+    private let stashesNode = Node(title: "Stashes", page: .stashes)
     private lazy var workspace = Node(title: "Workspace", children: [workingCopyNode, historyNode])
     /// Conflicts を選んだ（最初のコンフリクトのファイルを開く）。
     var onSelectConflicts: (() -> Void)?
+
+    /// Workspace の中身: Working Copy・History と、あるときだけ Conflicts・Stashes。
+    private func workspaceChildren() -> [Node] {
+        [workingCopyNode, historyNode]
+            + (conflictsNode.badge != nil ? [conflictsNode] : [])
+            + (stashesNode.badge != nil ? [stashesNode] : [])
+    }
 
     /// コンフリクトのファイルの数（0 なら Conflicts を出さない）。
     func setConflictCount(_ count: Int) {
         let shown = workspace.children.contains { $0 === conflictsNode }
         conflictsNode.badge = count > 0 ? "\(count)" : nil
         if (count > 0) != shown {
-            workspace.children = count > 0 ? [workingCopyNode, historyNode, conflictsNode] : [workingCopyNode, historyNode]
+            let cleanOpen = outline.isItemExpanded(cleanWorktreesNode)
+            workspace.children = workspaceChildren()
             outline.reloadItem(workspace, reloadChildren: true)
+            // 子を読み直すと開いていた行が畳まれるので、開き直す。
+            outline.expandItem(workingCopyNode)
+            if cleanOpen { outline.expandItem(cleanWorktreesNode) }
         } else if shown {
             outline.reloadItem(conflictsNode)
         }
@@ -238,7 +252,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return node
     }()
 
-    /// Working Copy の下に並べる worktree: 書き込む先、変更のあるもの、フォルダが消えた・ロックしたもの（メインの
+    /// Working Copy の下に並べる worktree: メインの作業ツリー（変更がなくてもいつも出す）、書き込む先、変更のあるもの、
+    /// フォルダが消えた・ロックしたもの（メインの
     /// 作業ツリーを先に、残りは名前の順。w2 は w10 より前）と、「変更なし」にまとめるもの（2 つ以上あるときだけ
     /// まとめる）。worktree が 1 つなら出さない。
     private func worktreeLayout() -> (shown: [WorktreeInfo], clean: [WorktreeInfo]) {
@@ -249,7 +264,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var shown: [WorktreeInfo] = [], clean: [WorktreeInfo] = []
         for w in ordered {
             let changes = worktreeChanges[WorktreeInfo.canonical(w.path)] ?? 0
-            if w == editingInfo || changes > 0 || w.prunable != nil || w.locked != nil { shown.append(w) } else { clean.append(w) }
+            let always = w.main || w == editingInfo || w.prunable != nil || w.locked != nil
+            if always || changes > 0 { shown.append(w) } else { clean.append(w) }
         }
         return clean.count < 2 ? (ordered, []) : (shown, clean)
     }
@@ -379,10 +395,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         let tagRoot = folders("Tags", items(.tag))
         if !tagRoot.children.isEmpty { groups.append(tagRoot) }
-        for (kind, title) in [(RefKind.stash, "Stashes"), (.submodule, "Submodules")] {
-            let nodes = items(kind).map { Node(title: $0.name, item: $0) }
-            if !nodes.isEmpty { groups.append(Node(title: title, children: nodes)) }
-        }
+        let submodules = items(.submodule).map { Node(title: $0.name, item: $0) }
+        if !submodules.isEmpty { groups.append(Node(title: "Submodules", children: submodules)) }
+
+        // stash は Workspace の History（と Conflicts）の下の 1 行に、数だけ。
+        let stashCount = items(.stash).count
+        stashesNode.badge = stashCount > 0 ? "\(stashCount)" : nil
+        workspace.children = workspaceChildren()
 
         self.groups = [workspace] + groups
         outline.reloadData()
@@ -646,13 +665,19 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     func select(page: Page) {
-        let node = page == .workingCopy ? workingCopyNode : historyNode
+        let node = switch page {
+        case .workingCopy: workingCopyNode
+        case .history: historyNode
+        case .stashes: stashesNode
+        }
         if groups.isEmpty {
             groups = [workspace]
             outline.reloadData()
             outline.expandItem(workspace)
         }
-        outline.selectRowIndexes([outline.row(forItem: node)], byExtendingSelection: false)
+        let row = outline.row(forItem: node)
+        guard row >= 0 else { return }
+        outline.selectRowIndexes([row], byExtendingSelection: false)
     }
 
     func outlineView(_ outlineView: NSOutlineView, viewFor tableColumn: NSTableColumn?, item: Any) -> NSView? {
@@ -799,7 +824,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     private static func symbol(for node: Node) -> String {
         if node.title == L("Conflicts"), node.page != nil { return "exclamationmark.triangle" }
-        if let page = node.page { return page == .workingCopy ? "square.and.pencil" : "clock" }
+        if let page = node.page {
+            switch page {
+            case .workingCopy: return "square.and.pencil"
+            case .history: return "clock"
+            case .stashes: return "tray.2"
+            }
+        }
         if node.pullRequest != nil { return "arrow.triangle.pull" }
         if node.isCleanWorktrees { return "checkmark.circle" }
         if let w = node.worktree { return node.isHead ? "pencil.circle" : w.main ? "house" : "arrow.triangle.branch" }
@@ -1039,12 +1070,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add("Merge \(name) into \(current)") { actions.perform(["op": "merge", "rev": name]) }
             add("New Branch from \(name)…") { actions.newBranch(at: name) }
         case .stash:
-            add("Apply \(name)") { actions.perform(["op": "stashApply", "name": name, "pop": false]) }
-            add("Pop \(name)") { actions.perform(["op": "stashApply", "name": name, "pop": true]) }
-            add(L("Drop %@…", name)) {
-                guard actions.confirm(L("Drop %@?", name), message: (item.detail.map { $0 + "\n" } ?? "") + L("You can Undo it afterwards (⌥⌘Z)."), ok: L("Drop")) else { return }
-                actions.perform(["op": "stashDrop", "name": name])
-            }
+            // stash の行はサイドバーにない（Stashes の画面の一覧で操作する）。
+            break
         case .submodule:
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
             add(L("Open %@ in New Window", name)) { [weak self] in self?.onOpenSubmodule?(name) }

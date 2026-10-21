@@ -38,6 +38,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var worktrees: [WorktreeInfo] = []
     private var workingCopy: WorkingCopyViewController { editing.workingCopy }
     private let detail: CommitDetailViewController
+    /// Stashes の画面（stash の一覧と、選んだ stash の中身）。
+    private let stashes: StashesViewController
     private var actions: Actions { editing.actions }
     private let toolbar: MainToolbar
     private var watch: RepositoryWatch?
@@ -82,6 +84,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         history = HistoryViewController(repository: repository, renderer: renderer, text: text)
         sidebar = SidebarViewController()
         detail = CommitDetailViewController(repository: repository, renderer: text)
+        stashes = StashesViewController(repository: repository, renderer: text)
         let slot = WorktreeSlot(path: repository.workdir ?? RepositoryLocation.path(location), repository: repository, renderer: text)
         opened = slot
         editing = slot
@@ -135,7 +138,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let detailItem = NSSplitViewItem(viewController: detail)
         detailItem.minimumThickness = 420
         content.addSplitViewItem(detailItem)
-        let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy])
+        let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes])
         self.pages = pages
         split.addSplitViewItem(NSSplitViewItem(viewController: pages))
         window.contentViewController = split
@@ -195,6 +198,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             }
         }
         sidebar.onSelectPage = { [weak pages] page in pages?.show(page) }
+        // stash の詳細の親（土台）のリンクは、History でそのコミットを選ぶ。
+        stashes.detail.onSelectCommit = { [weak self] hex in
+            guard let self, let id = Data(hex: hex) else { return }
+            sidebar.select(page: .history)
+            if let row = history.currentHistory?.row(of: id) {
+                history.select(row: row)
+            } else {
+                history.set(scope: .all, select: id)
+            }
+        }
+        stashes.detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
+        stashes.detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
         detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         sidebar.onSelectConflicts = { [weak self] in self?.workingCopy.selectFirstConflict() }
@@ -206,7 +221,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         sidebar.onSelectWorktree = { [weak self] path in self?.edit(worktree: path) }
         sidebar.onWorktreeAction = { [weak self] path, action in self?.worktreeAction(path, action) }
-        // ブランチ・タグを選ぶと、その履歴に絞り込む。stash は詳細にだけ中身を出す。
+        // ブランチ・タグを選ぶと、その履歴に絞り込む。
         sidebar.onSelect = { [weak self, weak history, weak detail] item in
             guard let history, let target = item.target else { return }
             if [.local, .remote, .tag].contains(item.kind) {
@@ -214,8 +229,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 let upstream = item.kind == .local && (item.ahead > 0 || item.behind > 0)
                     ? self?.latestRefs?.items.first { $0.kind == .remote && $0.name == item.detail }?.target : nil
                 history.set(scope: .ref(item.kind, item.name, target), select: target, companions: upstream.map { [$0] } ?? [])
-            } else if item.kind == .stash {
-                detail?.show(commit: target, stash: true)
             } else if let row = history.currentHistory?.row(of: target) {
                 history.select(row: row)
             }
@@ -239,6 +252,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         wire(editing)
         sidebar.actions = actions
         history.actions = actions
+        stashes.actions = actions
         window.toolbar = toolbar.toolbar
         toolbar.setRepository(window.title)
     }
@@ -317,6 +331,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private func actionsWorktreeName() {
         let name = worktrees.count > 1 ? worktrees.first { $0.isSame(editing.path) }?.name : nil
         editing.actions.worktreeName = name
+        stashes.worktreeName = name
     }
 
     /// `path` の worktree を書き込む先にする。まだ開いていなければ開く（SSH 先なら同じ接続先の上のパス）。
@@ -501,6 +516,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         pages?.replace(.workingCopy, with: slot.workingCopy)
         sidebar.actions = slot.actions
         history.actions = slot.actions
+        stashes.actions = slot.actions
+        stashes.reloadBases()
         slot.actions.refreshUndo()
         slot.workingCopy.refresh()
         changeCount = worktreeChanges[WorktreeInfo.canonical(slot.path)] ?? 0
@@ -522,6 +539,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // 書き込む先のブランチ（開いたリポジトリに戻ったときも、そのブランチに戻す）。
         let branch = editing === opened ? latestRefs?.headBranch : info?.branch
         toolbar.setBranch(branch)
+        stashes.currentBranch = branch
         let current = latestRefs?.items.first { $0.kind == .local && $0.name == branch }
         toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0)
         if editing === opened, let head = latestRefs?.head { history.head = head }
@@ -976,6 +994,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             }
         }
         if CommandLine.arguments.contains("--log-scroll") { history.logScrollGestures() }
+        // --stashes で、Stashes の画面を開く（stash は ref を読んだ後に出るので、少し待つ）。
+        if CommandLine.arguments.contains("--stashes") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .stashes) }
+        }
         // --blame PATH・--file-history PATH で、そのファイルの blame・履歴を開く（見た目の確認用）。
         if let path = AppDelegate.option("--blame") { openBlame(path: path, rev: nil) }
         if let path = AppDelegate.option("--file-history") { openFileHistory(path: path) }
@@ -991,7 +1013,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             if let selectRow { history.select(row: selectRow) }
         }
         if let output = AppDelegate.option("--snapshot") {
-            let wait = selectRow != nil || CommandLine.arguments.contains("--working-copy")
+            let wait = selectRow != nil || CommandLine.arguments.contains("--working-copy") || CommandLine.arguments.contains("--stashes")
             if let query = AppDelegate.option("--find") {
                 // 選んだコミットの差分を検索した状態（検索欄と強調）を確かめる。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in detail.find(query) }
@@ -1010,7 +1032,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
                 let rep = mergePath != nil
                     ? MergeEditorWindowController.snapshot()
-                    : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays())
+                    : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays() + stashes.detail.overlays())
                 try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
                 NSApp.terminate(nil)
             }
@@ -1108,6 +1130,12 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 let refs = try await Task.detached(priority: .userInitiated) { try repository.loadRefs() }.value
                 latestRefs = refs
                 sidebar.show(refs)
+                stashes.show(refs.items)
+                stashes.reloadBases()
+                // 最後の stash を戻した・消したら、空の Stashes の画面から History に移る。
+                if pages?.page == .stashes, !refs.items.contains(where: { $0.kind == .stash }) {
+                    sidebar.select(page: .history)
+                }
                 reloadBranchGroups()
                 detail.reloadInfo()
                 updateSubtitle()
@@ -1266,6 +1294,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc func showWorkingCopy(_ sender: Any?) { sidebar.select(page: .workingCopy) }
     @objc func showHistory(_ sender: Any?) { sidebar.select(page: .history) }
+    @objc func showStashes(_ sender: Any?) { sidebar.select(page: .stashes) }
 
     /// Navigate > Filter Branches…: サイドバーの絞り込みの欄にカーソルを移す（サイドバーが畳んであれば開く）。
     @objc func filterBranches(_ sender: Any?) {
@@ -1662,7 +1691,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(pull(_:)), #selector(pullMerge(_:)), #selector(pullRebase(_:)), #selector(pullFastForward(_:)):
             return latestRefs?.headBranch != nil && sequence == nil
         case #selector(mergeIntoCurrent(_:)), #selector(rebaseCurrent(_:)): return latestRefs != nil && sequence == nil
-        case #selector(popStash(_:)): return latestStash != nil
+        case #selector(popStash(_:)), #selector(showStashes(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil
         case #selector(goToHead(_:)): return latestRefs?.head != nil
         case #selector(switchBranch(_:)): return latestRefs != nil
@@ -1694,6 +1723,8 @@ extension RepositoryWindow {
             item.state = pages?.page == .workingCopy ? .on : .off
         case #selector(showHistory(_:)):
             item.state = pages?.page == .history ? .on : .off
+        case #selector(showStashes(_:)):
+            item.state = pages?.page == .stashes ? .on : .off
         default:
             break
         }

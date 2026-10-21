@@ -21,15 +21,15 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 ┌ Tabs: amonhen-standalone │ linux │ vscode-amonhen │ + ─────────────────────────────────────────┐
 │ [◧] main ↑2↓0 │ Fetch Pull Push │ Branch Merge Rebase │ Stash Pop │  ⟳ 2 ops  ↶  🔍____ │
 ├────────────┬──────────────────────────────────────────────────────────────────────────────┤
-│ WORKSPACE  │ (one of Working Copy / History / Conflicts)                                  │
+│ WORKSPACE  │ (one of Working Copy / History / Conflicts / Stashes)                        │
 │  Changes 5 │                                                                              │
 │  History   │                                                                              │
 │  Conflicts │                                                                              │
+│  Stashes 2 │                                                                              │
 │ BRANCHES   │                                                                              │
 │ REMOTES    │                                                                              │
 │ PULL REQS  │                                                                              │
 │ TAGS       │                                                                              │
-│ STASHES    │                                                                              │
 │ SUBMODULES │                                                                              │
 │ WORKTREES  │                                                                              │
 └────────────┴──────────────────────────────────────────────────────────────────────────────┘
@@ -42,6 +42,9 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 - Several branches or tags can be selected (⌘-click, ⇧-click). History then shows the commits reachable from any
   of them, and the context menu offers Copy Names and, for local branches, Favorites, Archive and Delete together (Delete asks
   first and lists the names).
+- Workspace holds the rows that switch the main view. Stashes, after History (and Conflicts), appears only when there
+  are stashes, with a count, and opens the Stashes view (section 5a); the stashes themselves are listed there, not in
+  the sidebar.
 - Pull Requests and Worktrees appear only when there is something to show.
 
 ## 1. Multiple repositories: tabs and separate windows
@@ -138,7 +141,7 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 | Integrate | Merge | Merge the selected commit or branch into the current branch (choose no-ff or squash in the confirmation sheet) | List of recent branches |
 | | Rebase | Rebase the current branch onto the selection | interactive (enters History's edit mode), onto |
 | Stash | Stash | Stash (with a message field; ⌥-click stashes immediately) | Include untracked, staged only, selected files only |
-| | Pop | Confirm, naming the stash and its message, then pop the latest | — (apply or pop a chosen one from the sidebar) |
+| | Pop | Confirm, naming the stash and its message, then pop the latest | — (apply or pop a chosen one in Stashes) |
 | Status | Activity | Number of running operations and a spinner. Click to open Activity | — |
 | | Refresh | Reload status, refs and History (⌘R) | Reload the whole working tree (without the fsmonitor and status caches), discard the persistent cache and rebuild History |
 | | Undo | Confirm, naming the operation, then revert it | — (the operation log in Activity) |
@@ -154,6 +157,24 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 - One name in one place: while the toolbar shows the search field, History hides its own (the match count, previous,
   next and "matching only" stay in History); while it shows Branch, the window subtitle leaves the branch out.
 - Network git that prints nothing for 120 seconds (usually a credential prompt nobody sees) is stopped with an error saying so. It can also be cancelled from Activity.
+
+## 5a. Stashes
+
+A stash is a commit kept in `refs/stash` and its reflog: the working tree, with the HEAD it was made on (its base) and
+the index as parents, plus the untracked files with `-u`. The list is shared by all worktrees; applying goes to the
+worktree being edited.
+
+- Selecting Stashes in the sidebar (View > Stashes ⌘4) opens this view: the stashes on the left, newest first, and the
+  selected one's contents on the right, in the same column as History's detail (its base is the first parent link).
+- Each row shows `stash@{n}` and the message (for a stash made without one, WIP and the subject of its base), then
+  the branch it was made on (dimmed when it is not the current branch), where its base stands against the edited
+  worktree's HEAD (at HEAD, N behind HEAD, or, in orange, not in HEAD's history, where applying is likelier to
+  conflict), when, whether it holds untracked files, and the base's short ID.
+- Apply, Pop, Drop… and Branch… sit above the list and in each row's context menu. Apply and Pop restore what was
+  staged as staged when they can (`--index`). Drop asks first and can be undone. Branch… is `git stash branch`: it
+  creates a branch at the base, switches to it and applies the stash there, so it does not conflict however far HEAD
+  has moved. With two or more worktrees, the bar says which worktree it applies to (✎).
+- After the last stash is popped or dropped, the view switches to History.
 
 ## 6. Working Copy
 
@@ -396,7 +417,7 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 | Amon Hen | About, Settings… ⌘,, Services, Hide, Quit |
 | File | New Window ⌘N, New Tab ⌘T, Open… ⌘O, Quick Open… ⌘⇧O, Open Recent ▸, Clone… ⌃⌘C, Add Remote Repository…, Init…, Close Tab ⌘W, Close Window ⌘⇧W |
 | Edit | Standard (Undo and Redo undo text edits), Find ⌘F, Find in History ⌘⇧F, Find Next / Previous ⌘G / ⌘⇧G |
-| View | Working Copy ⌘1, History ⌘2, Conflicts ⌘3, Refresh ⌘R, Show Sidebar ⌃⌘S, Diff: Unified / Split ⌥⌘D, Ignore Whitespace, Wrap Lines, Font Size ⌘+ / ⌘−, History display (one line, History Items ▸ to choose branches and tags, author, date, commit ID, signature and CI status, History Order ▸ Date Order / Topological Order (both also from the button at the right of History's bar and the header's context menu, whose menu also has One Line per Commit, Fold Merged Branches and Highlight Ancestors, and from Settings > Appearance), avatars, ancestor highlighting), Commit Details: Compact / Standard / Detailed |
+| View | Working Copy ⌘1, History ⌘2, Conflicts ⌘3, Stashes ⌘4, Refresh ⌘R, Show Sidebar ⌃⌘S, Diff: Unified / Split ⌥⌘D, Ignore Whitespace, Wrap Lines, Font Size ⌘+ / ⌘−, History display (one line, History Items ▸ to choose branches and tags, author, date, commit ID, signature and CI status, History Order ▸ Date Order / Topological Order (both also from the button at the right of History's bar and the header's context menu, whose menu also has One Line per Commit, Fold Merged Branches and Highlight Ancestors, and from Settings > Appearance), avatars, ancestor highlighting), Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H, Go to Ref… ⌘⇧J, Go to Parent / Child ⌥⌘↓ / ⌥⌘↑, Next / Previous Hunk, Next / Previous File, Next Conflict |
 | Repository | Fetch ⌃⌘F, Pull ⌃⌘L, Push ⌃⌘P, Stash ⌥⌘S, Pop ⌥⌘⇧S, New Branch… ⌥⌘B, New Tag… ⌥⌘T, Merge… ⌥⌘M, Rebase… ⌥⌘R, Interactive Rebase…, Continue / Skip / Abort, Undo (operation name) ⌥⌘Z, Repository Settings… ⌘;, Open in Terminal, Reveal in Finder, Open in Editor, Open on GitHub |
 | Commit | Commit ⌘↩, Commit and Push ⌘⇧↩, Amend ⌥⌘↩, Include All, Exclude All, Toggle Selection (Space), Discard…, Cherry-pick, Revert, Reword…, Create Patch… |
@@ -489,7 +510,7 @@ Viewing mixes them, editing names one:
 - **View (all worktrees together).** Under Working Copy in the sidebar, every worktree is listed with its number of changes (✎ the edited one); picking
   one edits it and shows its changes. The main worktree comes first, then the rest by name (w2 before w10); worktrees with no changes are
   folded into "No changes N" (closed at first) so the ones being worked on stand out; worktrees whose folders share a name show
-  enough parent folders to tell them apart (`aslr/src`, `ssp/src`); the edited one, a missing or a locked one always shows. History labels each worktree's HEAD commit (green, before the branch labels: ✎ for the edited one, ⌂ for the
+  enough parent folders to tell them apart (`aslr/src`, `ssp/src`); the main worktree, the edited one, a missing or a locked one always shows. History labels each worktree's HEAD commit (green, before the branch labels: ✎ for the edited one, ⌂ for the
   main worktree, ⑂ for linked ones, with the number of changed files), so where every worktree is and how much it has changed shows on one
   screen. Working Copy itself shows only the edited worktree's changes (an earlier version listed every worktree's changes there; with many worktrees that was hard to scan, so the list moved to the sidebar).
 - **Edit (one worktree, always shown).** The toolbar shows the edited worktree (✎ name) next to its branch. Picking a

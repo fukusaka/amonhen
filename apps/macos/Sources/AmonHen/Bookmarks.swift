@@ -24,7 +24,7 @@ struct ScanRoot: Codable, Hashable {
     var excludes = ["node_modules", "target", "build", ".build", "vendor", "Pods", "DerivedData", "dist"]
 }
 
-struct BookmarkData: Codable {
+struct BookmarkData: Codable, Equatable {
     var items: [Bookmark] = []
     var groups: [String] = []
     var scanRoots: [ScanRoot] = []
@@ -57,21 +57,83 @@ final class Bookmarks {
     }
 
     private init() {
-        data = (try? Data(contentsOf: Self.file)).flatMap { try? JSONDecoder().decode(BookmarkData.self, from: $0) }
-            ?? BookmarkData()
+        data = Self.read() ?? BookmarkData()
+        stamp = Self.modified()
+        // ほかの Amon Hen（正式版と snapshot、開発中のビルド）も同じファイルを書く。前に来たときに読み直す。
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { Bookmarks.shared.reloadIfChanged() }
+        }
     }
 
-    private func save() {
+    /// 最後に読んだか書いたときの、ファイルの更新時刻（ほかのプロセスが書いたかを見分ける）。
+    private var stamp: Date?
+
+    private static func read() -> BookmarkData? {
+        (try? Data(contentsOf: file)).flatMap { try? JSONDecoder().decode(BookmarkData.self, from: $0) }
+    }
+
+    private static func modified() -> Date? {
+        (try? FileManager.default.attributesOfItem(atPath: file.path))?[.modificationDate] as? Date
+    }
+
+    /// ほかのプロセスが書き換えていたら読み直す。変わったら `true`。
+    @discardableResult
+    private func refresh() -> Bool {
+        let now = Self.modified()
+        guard now != stamp else { return false }
+        stamp = now
+        guard let fresh = Self.read(), fresh != data else { return false }
+        data = fresh
+        return true
+    }
+
+    /// ほかのプロセスが書き換えていたら読み直し、一覧を描き直す（スキャンするフォルダが変わっていれば探し直す）。
+    func reloadIfChanged() {
+        let roots = data.scanRoots
+        guard refresh() else { return }
+        if data.scanRoots != roots {
+            rescan()
+            watchScanRoots()
+        }
+        onChange?()
+    }
+
+    /// 変える。ファイルをロックしてから最新を読み直し、その上で `change` を当てて書く（ほかの Amon Hen が同時に
+    /// 動いていても、相手の変更を手元の古い内容で消さない。前は手元の内容で丸ごと書き直していた）。
+    private func edit(_ change: (inout BookmarkData) -> Void) {
+        guard write(change) else { return }
+        // ロックを外してから知らせる（知らせを受けた側がまた変えても、待ち合わない）。
+        onChange?()
+    }
+
+    /// ロックの中で読み直し、`change` を当てて書く。変えたら `true`。
+    private func write(_ change: (inout BookmarkData) -> Void) -> Bool {
+        let directory = Self.file.deletingLastPathComponent()
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let lock = open(directory.appendingPathComponent("bookmarks.lock").path, O_CREAT | O_RDWR, 0o644)
+        if lock >= 0 { flock(lock, LOCK_EX) }
+        defer {
+            if lock >= 0 {
+                flock(lock, LOCK_UN)
+                close(lock)
+            }
+        }
+        refresh()
+        var next = data
+        change(&next)
+        guard next != data else { return false }
+        data = next
         do {
-            try FileManager.default.createDirectory(
-                at: Self.file.deletingLastPathComponent(), withIntermediateDirectories: true)
             let encoder = JSONEncoder()
             encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
             try encoder.encode(data).write(to: Self.file, options: .atomic)
+            stamp = Self.modified()
         } catch {
             NSLog("ブックマークを保存できない: \(error)")
         }
-        onChange?()
+        return true
     }
 
     // MARK: - 編集
@@ -79,9 +141,10 @@ final class Bookmarks {
     func bookmark(_ path: String) -> Bookmark? { data.items.first { $0.path == path } }
 
     func add(_ path: String, group: String? = nil) {
-        guard bookmark(path) == nil else { return }
-        data.items.append(Bookmark(path: path, group: group))
-        save()
+        edit { data in
+            guard !data.items.contains(where: { $0.path == path }) else { return }
+            data.items.append(Bookmark(path: path, group: group))
+        }
     }
 
     /// 開いたリポジトリを、まだどこにもなければ（ブックマークにも、スキャンするフォルダの下にもない）ブックマークに入れる。
@@ -92,15 +155,15 @@ final class Bookmarks {
     }
 
     func remove(_ path: String) {
-        data.items.removeAll { $0.path == path }
-        save()
+        edit { $0.items.removeAll { $0.path == path } }
     }
 
     private func update(_ path: String, _ change: (inout Bookmark) -> Void) {
-        if bookmark(path) == nil { data.items.append(Bookmark(path: path)) }
-        guard let i = data.items.firstIndex(where: { $0.path == path }) else { return }
-        change(&data.items[i])
-        save()
+        edit { data in
+            if !data.items.contains(where: { $0.path == path }) { data.items.append(Bookmark(path: path)) }
+            guard let i = data.items.firstIndex(where: { $0.path == path }) else { return }
+            change(&data.items[i])
+        }
     }
 
     func toggleFavorite(_ path: String) { update(path) { $0.favorite.toggle() } }
@@ -118,51 +181,55 @@ final class Bookmarks {
 
     /// `path` を `target` の前（nil ならそのグループの末尾）に動かし、グループを `group` にする（ドラッグでの並べ替え）。
     func reorder(_ path: String, before target: String?, group: String?) {
-        if bookmark(path) == nil { data.items.append(Bookmark(path: path)) }
-        guard let i = data.items.firstIndex(where: { $0.path == path }), path != target else { return }
-        var item = data.items.remove(at: i)
-        item.group = group
-        let j = target.flatMap { t in data.items.firstIndex { $0.path == t } }
-            ?? data.items.lastIndex { $0.group == group }.map { $0 + 1 }
-            ?? data.items.endIndex
-        data.items.insert(item, at: j)
-        save()
+        edit { data in
+            if !data.items.contains(where: { $0.path == path }) { data.items.append(Bookmark(path: path)) }
+            guard let i = data.items.firstIndex(where: { $0.path == path }), path != target else { return }
+            var item = data.items.remove(at: i)
+            item.group = group
+            let j = target.flatMap { t in data.items.firstIndex { $0.path == t } }
+                ?? data.items.lastIndex { $0.group == group }.map { $0 + 1 }
+                ?? data.items.endIndex
+            data.items.insert(item, at: j)
+        }
     }
     func rename(_ path: String, to name: String?) { update(path) { $0.name = name } }
     func move(_ path: String, to group: String?) { update(path) { $0.group = group } }
 
     func addGroup(_ name: String) {
-        guard !data.groups.contains(name) else { return }
-        data.groups.append(name)
-        save()
+        edit { data in
+            guard !data.groups.contains(name) else { return }
+            data.groups.append(name)
+        }
     }
 
     /// グループを消す（中のリポジトリはグループなしに戻す）。
     func removeGroup(_ name: String) {
-        data.groups.removeAll { $0 == name }
-        for i in data.items.indices where data.items[i].group == name { data.items[i].group = nil }
-        save()
+        edit { data in
+            data.groups.removeAll { $0 == name }
+            for i in data.items.indices where data.items[i].group == name { data.items[i].group = nil }
+        }
     }
 
     func addScanRoot(_ path: String) {
-        guard !data.scanRoots.contains(where: { $0.path == path }) else { return }
-        data.scanRoots.append(ScanRoot(path: path))
-        save()
+        edit { data in
+            guard !data.scanRoots.contains(where: { $0.path == path }) else { return }
+            data.scanRoots.append(ScanRoot(path: path))
+        }
         rescan()
         watchScanRoots()
     }
 
     func removeScanRoot(_ path: String) {
-        data.scanRoots.removeAll { $0.path == path }
         scanned[path] = nil
-        save()
+        edit { $0.scanRoots.removeAll { $0.path == path } }
         watchScanRoots()
     }
 
     func setDepth(_ depth: Int, of path: String) {
-        guard let i = data.scanRoots.firstIndex(where: { $0.path == path }) else { return }
-        data.scanRoots[i].depth = depth
-        save()
+        edit { data in
+            guard let i = data.scanRoots.firstIndex(where: { $0.path == path }) else { return }
+            data.scanRoots[i].depth = depth
+        }
         rescan()
     }
 
