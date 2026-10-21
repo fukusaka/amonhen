@@ -51,7 +51,8 @@ On Windows, download `amonhen-<version>-windows-<cpu>.zip`, unzip it, then:
 .\amonhen.exe install    # copies it to %LOCALAPPDATA%\amonhen
 ```
 
-and add `%LOCALAPPDATA%\amonhen\bin` to your `PATH`.
+and add `%LOCALAPPDATA%\amonhen\bin` to your `PATH`. Or use the PowerShell script below, which does all of this
+except the `PATH`.
 
 ## VSCode extension
 
@@ -81,6 +82,18 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- stable
 ```
 
+On Windows, in PowerShell:
+
+```powershell
+# Command line only (Windows)
+irm https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.ps1 | iex
+# the snapshot, or a given release (such as v0.2.4)
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.ps1))) snapshot
+```
+
+It picks the zip for the machine's CPU, checks its attestation when the [GitHub CLI](https://cli.github.com/) is
+installed and logged in (`-Verify require` to insist, `-Verify skip` to skip it), and runs `amonhen.exe install`.
+
 Replace `stable` with `snapshot` for the latest development build. Run the same line again to update. If the app is
 open while you update it, the script tells you, and the new version is used the next time you open the app.
 
@@ -89,8 +102,8 @@ The app goes into `/Applications`. Add `--user` (`sh -s -- --user stable`) to pu
 Without any of them, an update replaces the app where it is
 already installed.
 
-From a clone of the repository, run `scripts/install-app.sh`, `scripts/install-engine.sh` and
-`scripts/install-vscode.sh` directly.
+From a clone of the repository, run `scripts/install-app.sh`, `scripts/install-engine.sh`,
+`scripts/install-vscode.sh` and `scripts\install-engine.ps1` directly.
 
 ## Checking a download
 
