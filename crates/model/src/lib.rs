@@ -29,7 +29,7 @@ pub use ops::{
     ConfigEntry, HeadState, Operations, Outcome, PullMode, RemoteChange, RemoteEntry, ResetMode,
     Sequence, WorktreeChange, WorktreeChanges,
 };
-pub use refs::{RefEntry, RefKind, Refs, RepoPaths};
+pub use refs::{RefEntry, RefKind, ReflogEntry, Refs, RepoPaths};
 pub use status::{Status, StatusEntry, StatusKind};
 pub use text::CommitText;
 pub use topo::{Order as HistoryOrder, RawCommit};

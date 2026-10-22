@@ -168,6 +168,28 @@ private struct StashBases: Decodable {
     let stashes: [StashBase]
 }
 
+/// reflog の 1 行（`git reflog` の 1 行）。
+public struct ReflogEntry: Decodable, Equatable, Sendable {
+    /// `HEAD@{0}` など。
+    public let selector: String
+    /// 前に指していたコミット。ref を作った行なら `nil`。
+    public let old: String?
+    /// 新しく指したコミット。
+    public let new: String
+    /// 動かした日時（UNIX 時刻、秒）。
+    public let time: Int64
+    /// 何をしたか（`commit: …`、`checkout: moving from a to b`、`reset: moving to HEAD~1` など）。
+    public let message: String
+    /// `new` の件名（読めなければ空）。
+    public let subject: String
+    /// ref から辿れる（History にある）。`false` なら、どのブランチにも残っていない。
+    public let reachable: Bool
+}
+
+private struct Reflog: Decodable {
+    let entries: [ReflogEntry]
+}
+
 public struct CommitExtras: Decodable, Sendable {
     public let signature: Signature?
     public let notes: String
@@ -248,6 +270,12 @@ extension Repository {
     public func stashBases() throws -> [StashBase] {
         let bases: StashBases = try info(["op": "stashBases"])
         return bases.stashes
+    }
+
+    /// HEAD（このリポジトリ・worktree のもの）の reflog を新しい順に。裏のスレッドで呼ぶ。
+    public func reflog(limit: Int = 500) throws -> [ReflogEntry] {
+        let reflog: Reflog = try info(["op": "reflog", "limit": limit])
+        return reflog.entries
     }
 
     /// コミットの詳細のうち時間のかかる分（git で署名を検証するなど）。裏のスレッドで呼ぶ。

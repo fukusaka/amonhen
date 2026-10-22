@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Reflog in the sidebar's Workspace opens a view of where HEAD has been, marking commits no branch reaches any more
+  (left behind by a reset, rebase or amend), with New Branch… and Checkout to bring them back (View > Reflog ⌘5).
 - `scripts/install-engine.ps1` installs or updates the command line tool on Windows in one line (with the attestation
   checked when the GitHub CLI is logged in).
 

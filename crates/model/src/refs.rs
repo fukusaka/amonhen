@@ -42,6 +42,20 @@ pub struct Refs {
     pub entries: Vec<RefEntry>,
 }
 
+/// reflog の 1 行（`git reflog` の 1 行）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ReflogEntry {
+    /// 前に指していたコミット。ref を作った行なら `None`。
+    pub old: Option<Oid>,
+    /// 新しく指したコミット。
+    pub new: Oid,
+    /// 動かした日時（UNIX 時刻、秒）。
+    pub time: i64,
+    /// 何をしたか（`commit: …`、`checkout: moving from a to b`、`reset: moving to HEAD~1` など）。
+    pub message: String,
+}
+
 /// リポジトリの場所。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]

@@ -21,11 +21,12 @@
 ┌ タブ: amonhen-standalone │ linux │ vscode-amonhen │ + ─────────────────────────────────────────┐
 │ [◧] main ↑2↓0 │ Fetch Pull Push │ Branch Merge Rebase │ Stash Pop │  ⟳ 2 ops  ↶  🔍____ │
 ├────────────┬──────────────────────────────────────────────────────────────────────────────┤
-│ WORKSPACE  │ （Working Copy / History / Conflicts / Stashes のどれか）                     │
+│ WORKSPACE  │ （Working Copy / History / Conflicts / Stashes / Reflog のどれか）            │
 │  Changes 5 │                                                                              │
 │  History   │                                                                              │
 │  Conflicts │                                                                              │
 │  Stashes 2 │                                                                              │
+│  Reflog    │                                                                              │
 │ BRANCHES   │                                                                              │
 │ REMOTES    │                                                                              │
 │ PULL REQS  │                                                                              │
@@ -43,6 +44,7 @@
   メニューで名前をまとめてコピー、ローカルブランチだけならまとめてお気に入り・アーカイブ・削除ができる（削除は名前を並べて確かめる）。
 - Workspace には、メインの画面を切り替える行を置く。Stashes は History（と Conflicts）の下に、stash があるときだけ
   件数付きで出し、選ぶと Stashes の画面（5a 節）を開く。stash そのものはサイドバーではなく、その画面に並べる。
+  Reflog はいつも最後に出し、選ぶと Reflog の画面（5b 節）を開く。
 - Pull Requests・Worktrees は該当するものがあるときだけ出す。
 
 ## 1. 複数のリポジトリ: タブと別ウィンドウ
@@ -165,6 +167,20 @@ stash は `refs/stash` とその reflog に置かれるコミット。中身は�
   切り替え、そこに戻すので、HEAD がどれだけ進んでいても重ならない。worktree が 2 つ以上あれば、戻す先の
   worktree（✎）を帯に出す。
 - 最後の stash を pop・drop したら、History に移る。
+
+## 5b. Reflog
+
+書き込む先の worktree の HEAD の reflog。HEAD が指してきたところを新しい順に並べる。reset・rebase・amend で外れて、
+もうどのブランチからも辿れないコミットも入る。そういうコミットを見つけて取り戻すところ。
+
+- サイドバーの Reflog（View > Reflog ⌘5）を選ぶと、この画面を開く。左に reflog の行、右に選んだ行のコミット
+  （History の詳細と同じ欄）。
+- 各行は `HEAD@{n}` と何をしたか（git のメッセージ: `commit: …`、`checkout: moving from a to b`、
+  `reset: moving to …`）、その下に、どの ref からも辿れなければ橙で「どのブランチにもない」、いつ、短い ID、
+  コミットの件名。
+- New Branch… と Checkout（detached）は一覧の上。各行の右クリックには、ほかに New Tag、History で見る（History に
+  あるコミットだけ）、Copy Commit ID、Copy Name。worktree が 2 つ以上あれば、どの worktree の HEAD か（✎）を帯に出す。
+- HEAD が動いたとき、書き込む先の worktree を変えたときに読み直す。
 
 ## 6. Working Copy
 
@@ -407,7 +423,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Amon Hen | About、Settings… ⌘,、Services、隠す、終了 |
 | File | New Window ⌘N、New Tab ⌘T、Open… ⌘O、Quick Open… ⌘⇧O、Open Recent ▸、Clone… ⌃⌘C、Add Remote Repository…、Init…、Close Tab ⌘W、Close Window ⌘⇧W |
 | Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
-| View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Stashes ⌘4、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
+| View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Stashes ⌘4、Reflog ⌘5、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
 | Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings… ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Create Patch… |

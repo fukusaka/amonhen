@@ -202,6 +202,13 @@ pub trait GitBackend: Send + Sync {
     fn branch_created_at(&self, names: &[&str]) -> Result<Vec<Option<Oid>>> {
         Ok(vec![None; names.len()])
     }
+
+    /// ref `name`（`HEAD`・`refs/heads/main` など）の reflog を、新しい順に `limit` 行まで返す。`HEAD` は開いた
+    /// worktree のもの。reflog がなければ空。対応しない実装は空を返す。
+    fn reflog(&self, name: &str, limit: usize) -> Result<Vec<crate::ReflogEntry>> {
+        let _ = (name, limit);
+        Ok(Vec::new())
+    }
 }
 
 /// daemon とのつながりの様子（FE が読み込みの進み具合や切断を出すのに使う）。

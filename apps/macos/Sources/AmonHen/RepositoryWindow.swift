@@ -40,6 +40,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private let detail: CommitDetailViewController
     /// Stashes の画面（stash の一覧と、選んだ stash の中身）。
     private let stashes: StashesViewController
+    /// Reflog の画面（書き込む先の worktree の HEAD の reflog と、選んだ行のコミットの中身）。
+    private let reflog: ReflogViewController
     private var actions: Actions { editing.actions }
     private let toolbar: MainToolbar
     private var watch: RepositoryWatch?
@@ -86,6 +88,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar = SidebarViewController()
         detail = CommitDetailViewController(repository: repository, renderer: text)
         stashes = StashesViewController(repository: repository, renderer: text)
+        reflog = ReflogViewController(repository: repository, renderer: text)
         let slot = WorktreeSlot(path: repository.workdir ?? RepositoryLocation.path(location), repository: repository, renderer: text)
         opened = slot
         editing = slot
@@ -139,7 +142,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let detailItem = NSSplitViewItem(viewController: detail)
         detailItem.minimumThickness = 420
         content.addSplitViewItem(detailItem)
-        let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes])
+        let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes, .reflog: reflog])
         self.pages = pages
         split.addSplitViewItem(NSSplitViewItem(viewController: pages))
         window.contentViewController = split
@@ -211,6 +214,20 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         stashes.detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
         stashes.detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
+        // reflog の行のコミット・詳細の親のリンクは、History でそのコミットを選ぶ。
+        let showInHistory = { [weak self] (id: Data) in
+            guard let self else { return }
+            sidebar.select(page: .history)
+            if let row = history.currentHistory?.row(of: id) {
+                history.select(row: row)
+            } else {
+                history.set(scope: .all, select: id)
+            }
+        }
+        reflog.onShowInHistory = showInHistory
+        reflog.detail.onSelectCommit = { hex in Data(hex: hex).map(showInHistory) }
+        reflog.detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
+        reflog.detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
         detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
         sidebar.onSelectConflicts = { [weak self] in self?.workingCopy.selectFirstConflict() }
@@ -254,6 +271,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.actions = actions
         history.actions = actions
         stashes.actions = actions
+        reflog.actions = actions
         window.toolbar = toolbar.toolbar
         toolbar.setRepository(window.title)
     }
@@ -333,6 +351,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let name = worktrees.count > 1 ? worktrees.first { $0.isSame(editing.path) }?.name : nil
         editing.actions.worktreeName = name
         stashes.worktreeName = name
+        reflog.worktreeName = name
     }
 
     /// `path` の worktree を書き込む先にする。まだ開いていなければ開く（SSH 先なら同じ接続先の上のパス）。
@@ -519,6 +538,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         history.actions = slot.actions
         stashes.actions = slot.actions
         stashes.reloadBases()
+        reflog.actions = slot.actions
         slot.actions.refreshUndo()
         slot.workingCopy.refresh()
         changeCount = worktreeChanges[WorktreeInfo.canonical(slot.path)] ?? 0
@@ -999,6 +1019,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if CommandLine.arguments.contains("--stashes") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .stashes) }
         }
+        // --reflog で、Reflog の画面を開く。
+        if CommandLine.arguments.contains("--reflog") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .reflog) }
+        }
         // --blame PATH・--file-history PATH で、そのファイルの blame・履歴を開く（見た目の確認用）。
         if let path = AppDelegate.option("--blame") { openBlame(path: path, rev: nil) }
         if let path = AppDelegate.option("--file-history") { openFileHistory(path: path) }
@@ -1015,6 +1039,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         if let output = AppDelegate.option("--snapshot") {
             let wait = selectRow != nil || CommandLine.arguments.contains("--working-copy") || CommandLine.arguments.contains("--stashes")
+                || CommandLine.arguments.contains("--reflog")
             if let query = AppDelegate.option("--find") {
                 // 選んだコミットの差分を検索した状態（検索欄と強調）を確かめる。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in detail.find(query) }
@@ -1033,7 +1058,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
                 let rep = mergePath != nil
                     ? MergeEditorWindowController.snapshot()
-                    : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays() + stashes.detail.overlays())
+                    : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays() + stashes.detail.overlays() + reflog.detail.overlays())
                 try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
                 NSApp.terminate(nil)
             }
@@ -1133,6 +1158,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 sidebar.show(refs)
                 stashes.show(refs.items)
                 stashes.reloadBases()
+                reflog.reload()
                 // 最後の stash を戻した・消したら、空の Stashes の画面から History に移る。
                 if pages?.page == .stashes, !refs.items.contains(where: { $0.kind == .stash }) {
                     sidebar.select(page: .history)
@@ -1296,6 +1322,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func showWorkingCopy(_ sender: Any?) { sidebar.select(page: .workingCopy) }
     @objc func showHistory(_ sender: Any?) { sidebar.select(page: .history) }
     @objc func showStashes(_ sender: Any?) { sidebar.select(page: .stashes) }
+    @objc func showReflog(_ sender: Any?) { sidebar.select(page: .reflog) }
 
     /// Navigate > Filter Branches…: サイドバーの絞り込みの欄にカーソルを移す（サイドバーが畳んであれば開く）。
     @objc func filterBranches(_ sender: Any?) {
@@ -1726,6 +1753,8 @@ extension RepositoryWindow {
             item.state = pages?.page == .history ? .on : .off
         case #selector(showStashes(_:)):
             item.state = pages?.page == .stashes ? .on : .off
+        case #selector(showReflog(_:)):
+            item.state = pages?.page == .reflog ? .on : .off
         default:
             break
         }

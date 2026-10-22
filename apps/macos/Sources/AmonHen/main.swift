@@ -469,7 +469,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search", "--blame", "--file-history", "--measure-select"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
-        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--stashes", "--log-scroll", "--show-latency"].contains($0) }
+        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--stashes", "--reflog", "--log-scroll", "--show-latency"].contains($0) }
         return args.first
     }
 }
