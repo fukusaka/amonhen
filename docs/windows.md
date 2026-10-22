@@ -167,10 +167,10 @@ History, commit details and diffs, line staging, discarding lines, Undo and comm
 execution layer, and `windowsHide` on every process the extension starts. CI runs it on Windows too, but with
 `core.autocrlf false` set globally; the test repository sets `core.autocrlf=true` itself.
 
-`scripts\e2e-windows.ps1` in `apps\vscode` runs it and returns its exit code. With `-Desktop`, it runs it on the desktop
-of the user who is logged on, through a one-time scheduled task, and prints its output over ssh as it goes: an ssh
-session has no desktop, so use it when VSCode doesn't start from ssh, or to watch VSCode on the screen (Remote Desktop
-or in person). The user must be logged on (a locked screen is fine). PowerShell's own window for the task may show
+`scripts\e2e-windows.ps1` in `apps\vscode` runs it and returns its exit code. VSCode starts from an ssh session too,
+without a desktop (about 20 seconds). With `-Desktop`, it runs on the desktop of the user who is logged on instead,
+through a one-time scheduled task, and prints its output over ssh as it goes: use it to watch VSCode on the screen
+(Remote Desktop or in person). The user must be logged on (a locked screen is fine). PowerShell's own window for the task may show
 briefly; that is the script, not the extension.
 
 ```powershell
