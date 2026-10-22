@@ -21,6 +21,8 @@ becomes the GitHub Release notes.
   doing nothing.
 - Repositories on SSH hosts or opened through the daemon are restored at launch in their windows and tab order, and
   one that could not connect is still reopened next time.
+- Working Copy and Workspace in the sidebar stay folded when you fold them, instead of opening again whenever the
+  repository changes outside the app.
 
 ### [0.2.5] - 2026-10-22
 
