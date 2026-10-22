@@ -9,8 +9,18 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Changed
+
+- A repository on an SSH host or opened through the daemon gets its tab in place at once, showing that it is
+  connecting; if connecting fails, the tab stays with the error and Try Again instead of an alert, replacing the
+  separate connecting window.
+
 #### Fixed
 
+- Clicking the Dock icon with no window open shows the repository page (or brings back minimized windows) instead of
+  doing nothing.
+- Repositories on SSH hosts or opened through the daemon are restored at launch in their windows and tab order, and
+  one that could not connect is still reopened next time.
 - Working Copy and Workspace in the sidebar stay folded when you fold them, instead of opening again whenever the
   repository changes outside the app.
 
