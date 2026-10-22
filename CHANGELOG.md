@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Fixed
+
+- Working Copy and Workspace in the sidebar stay folded when you fold them, instead of opening again whenever the
+  repository changes outside the app.
+
 ### [0.2.5] - 2026-10-22
 
 Stashes moved into the sidebar's Workspace and open as a view of their own, showing where each stash's base stands

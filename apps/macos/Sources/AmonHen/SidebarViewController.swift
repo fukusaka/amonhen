@@ -85,10 +85,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         conflictsNode.badge = count > 0 ? "\(count)" : nil
         if (count > 0) != shown {
             let cleanOpen = outline.isItemExpanded(cleanWorktreesNode)
+            let workingCopyOpen = isWorkingCopyOpen
             workspace.children = workspaceChildren()
             outline.reloadItem(workspace, reloadChildren: true)
-            // 子を読み直すと開いていた行が畳まれるので、開き直す。
-            outline.expandItem(workingCopyNode)
+            // 子を読み直すと開いていた行が畳まれるので、開き直す（畳んであったものは畳んだまま）。
+            if workingCopyOpen { outline.expandItem(workingCopyNode) }
             if cleanOpen { outline.expandItem(cleanWorktreesNode) }
         } else if shown {
             outline.reloadItem(conflictsNode)
@@ -270,6 +271,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         return clean.count < 2 ? (ordered, []) : (shown, clean)
     }
 
+    /// Working Copy の行を開いておくか: 利用者が畳んでいなければ。worktree が 1 つで子がなかったときは開く
+    /// （worktree が増えたら、その並びを見せる）。子を読み直す前に調べる。
+    private var isWorkingCopyOpen: Bool {
+        workingCopyNode.children.isEmpty || outline.isItemExpanded(workingCopyNode)
+    }
+
     private func setWorktreeNodes(_ layout: (shown: [WorktreeInfo], clean: [WorktreeInfo])) {
         func node(_ w: WorktreeInfo) -> Node {
             let node = Node(title: w.name, isHead: w == editingInfo)
@@ -287,10 +294,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard layout.shown.map(\.path) != current || layout.clean.map(\.path) != cleanWorktreesNode.children.compactMap({ $0.worktree?.path })
         else { return false }
         let cleanOpen = outline.isItemExpanded(cleanWorktreesNode)
+        let workingCopyOpen = isWorkingCopyOpen
         let selected = (outline.item(atRow: outline.selectedRow) as? Node)?.worktree?.path
         setWorktreeNodes(layout)
         outline.reloadItem(workingCopyNode, reloadChildren: true)
-        outline.expandItem(workingCopyNode)
+        if workingCopyOpen { outline.expandItem(workingCopyNode) }
         if cleanOpen { outline.expandItem(cleanWorktreesNode) }
         if let selected, let row = (0..<outline.numberOfRows).first(where: {
             (outline.item(atRow: $0) as? Node)?.worktree?.path == selected
@@ -321,6 +329,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         headBranch = editingInfo.map(\.branch) ?? refs.headBranch
         let head = headBranch
         let expanded = Set(groups.filter { outline.isItemExpanded($0) }.map(\.title))
+        // Workspace と Working Copy は、畳んであれば畳んだまま（初めは開く）。
+        let workspaceOpen = first || expanded.contains(workspace.title)
+        let workingCopyOpen = isWorkingCopyOpen
         let selectedTitle = (outline.item(atRow: outline.selectedRow) as? Node).map { ($0.title, $0.page) }
 
         func items(_ kind: RefKind) -> [RefItem] { refs.items.filter { $0.kind == kind } }
@@ -337,8 +348,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             setWorktreeNodes(worktreeLayout())
             self.groups = [workspace] + groups
             outline.reloadData()
-            outline.expandItem(workspace)
-            outline.expandItem(workingCopyNode)
+            if workspaceOpen { outline.expandItem(workspace) }
+            if workingCopyOpen { outline.expandItem(workingCopyNode) }
             groups.forEach { outline.expandItem($0) }
             if let (_, page) = selectedTitle, let page { select(page: page) }
             return
@@ -405,8 +416,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
         self.groups = [workspace] + groups
         outline.reloadData()
-        outline.expandItem(workspace)
-        outline.expandItem(workingCopyNode)
+        if workspaceOpen { outline.expandItem(workspace) }
+        if workingCopyOpen { outline.expandItem(workingCopyNode) }
         if cleanOpen { outline.expandItem(cleanWorktreesNode) }
         for group in groups {
             let open = expanded.contains(group.title) || (first && group.title == "Branches")
