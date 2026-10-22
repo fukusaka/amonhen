@@ -1,5 +1,6 @@
 //! 手元のリポジトリを、同じプロセスの daemon（パイプでつないだ `Server`）越しに使い、直接使った場合と
 //! 同じ結果になることを確かめる。
+#![allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 
 use std::path::Path;
 use std::process::Command;

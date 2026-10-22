@@ -206,12 +206,12 @@ Installing the next snapshot or release `.vsix` puts everything back.
   with CRLF.
 - With `amonhen.daemon.enabled` off, the same Working Copy operations on the extension's git execution layer.
 - Every process the extension starts has `windowsHide` (the cause of console windows flashing), and its resident
-  `git cat-file` ends when the repository is closed.
+  `git cat-file` ends when the repository is closed. The engine starts its processes through
+  `amonhen_model::process::command` (`CREATE_NO_WINDOW`), which clippy enforces (`clippy.toml`).
+- One shared daemon for the extension, another client connecting the way a second window does, and the CLI
+  (`amonhen daemon status` shows the same daemon and the extra connection).
 
 Still by hand:
 
-- No console window flashes while using the extension (selecting branches, refreshing). The tests check only the
-  processes the extension starts itself, not those the daemon starts.
-- One shared daemon for several VSCode windows and the CLI (`amonhen daemon status` lists the connections).
 - Remote-SSH from the Mac to the machine, with the extension running there.
 - A Release zip downloaded with a browser (SmartScreen), and `amonhen.exe install`.

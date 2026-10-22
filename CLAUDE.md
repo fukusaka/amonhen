@@ -10,6 +10,7 @@ Amon Hen（リポジトリは fukusaka/amonhen。もとの名前は amonhen-stan
 - アプリ名は `Amon Hen`、バンドル ID は `io.github.fukusaka.amonhen`（snapshot 版は `.snapshot` を付ける）
 - コアに OS 固有のコードを入れない。OS の機能は `amonhen-platform` のトレイトで FE から注入する
 - git の読み取りは gix、書き込みは `GitBackend` の実装（デスクトップは `git` を spawn）
+- 子プロセスは `amonhen_model::process::command` で起動する（Windows で窓を出さない。`clippy.toml` が `Command::new` を止める）
 - FE に渡すデータはゼロコピーを原則とし、形式の変換は `amonhen-projection` に閉じ込める
 - 速度に関わる変更は計測してから入れる（Rust は criterion、Swift は os_signpost）
 

@@ -789,6 +789,8 @@ fn pop_stash(p: &Rc<Parts>) {
 }
 
 /// 作業ツリーで端末を開く。デスクトップごとに端末が違うので、あるものを順に試す。
+// 端末を開く（窓を出すのが目的）ので、process::command は使わない
+#[allow(clippy::disallowed_methods)]
 fn open_in_terminal(p: &Rc<Parts>) {
     let Some(dir) = workdir(p) else {
         return p.window.error_bell();

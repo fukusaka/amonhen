@@ -10,6 +10,8 @@ use amonhen_model::tr;
 
 use crate::Result;
 
+// macOS の open を呼ぶだけ（Windows では呼ばない）なので、process::command は使わない
+#[allow(clippy::disallowed_methods)]
 pub fn run(args: &[String]) -> Result<ExitCode> {
     let mut bundle =
         std::env::var("AMONHEN_BUNDLE_ID").unwrap_or_else(|_| "io.github.fukusaka.amonhen".into());

@@ -16,7 +16,8 @@ use std::process::Command;
 /// アプリが起動した daemon も同じマスクを受け継ぐ。塞がれたシグナルがあるときだけ、fork と exec の間でマスクを
 /// 空にする（`pre_exec` があると posix_spawn の速い経路を使えないので、要らないときは付けない）。
 pub fn command(program: impl AsRef<OsStr>) -> Command {
-    #[allow(unused_mut)]
+    // ここだけが Command::new を直接呼ぶ（clippy.toml の disallowed-methods）
+    #[allow(unused_mut, clippy::disallowed_methods)]
     let mut cmd = Command::new(program);
     #[cfg(windows)]
     {

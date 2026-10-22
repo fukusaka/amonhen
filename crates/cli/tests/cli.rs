@@ -1,4 +1,5 @@
 //! `amonhen` を実際に起動して確かめる。
+#![allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 
 use std::path::Path;
 use std::process::Command;

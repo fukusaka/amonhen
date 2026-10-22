@@ -1,0 +1,5 @@
+# 子プロセスは amonhen_model::process::command で起動する。Windows でコンソールの窓を出さず（共有の daemon は
+# コンソールを持たないので、git や ssh を起動するたびに窓が開く）、Unix では子のシグナルマスクを空にする。
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "use amonhen_model::process::command (no console window on Windows, empty signal mask on Unix)" },
+]

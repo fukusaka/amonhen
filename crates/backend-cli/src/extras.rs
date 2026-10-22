@@ -317,6 +317,7 @@ pub(crate) fn parse_numstat(out: &[u8]) -> Vec<FileStat> {
 }
 
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 mod tests {
     use super::*;
 

@@ -55,7 +55,7 @@ VSCode で開く（`@vscode/test-cli`、設定は `.vscode-test.mjs`）。エン
 mocha）は拡張ホストで動く。メインビューの Webview が送るはずのメッセージを拡張ホストに渡して画面を動かし（`activate`
 がパネルを返す）、送り返されるメッセージとリポジトリの様子を git で確かめる。同梱のエンジンでの起動、共有の daemon を
 通した History、CRLF のファイルでの行単位の stage・行の破棄・Undo・commit（daemon で、と `amonhen.daemon.enabled` を
-切って）、拡張が起動するプロセスがすべて `windowsHide` であること、リポジトリを閉じると git のプロセスが終わることを
+切って）、別のつながりと CLI との 1 つの daemon の共有、拡張が起動するプロセスがすべて `windowsHide` であること、リポジトリを閉じると git のプロセスが終わることを
 確かめる。VSCode を落としたあとは、1 回 10 秒ほど。画面のない Linux では
 `xvfb-run -a npm run test:e2e`（CI と同じ）。
 

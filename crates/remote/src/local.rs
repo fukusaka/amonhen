@@ -149,6 +149,8 @@ pub fn stream(daemon: &str) -> Result<crate::endpoint::Duplex> {
 }
 
 /// daemon を、つないだ側と切り離して起動する（つないだ側が終わっても残る）。
+// 窓を出さない・切り離すフラグを自分で付けるので、process::command は使わない
+#[allow(clippy::disallowed_methods)]
 fn launch(daemon: &str, endpoint: &str) -> Result<()> {
     let mut command = std::process::Command::new(daemon);
     command

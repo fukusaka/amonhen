@@ -205,12 +205,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e-windows.ps1 -Des
   と差分、Working Copy の行単位の stage、行単位の破棄と Undo、commit。どれも CRLF で取り出したファイルで。
 - `amonhen.daemon.enabled` を切って、拡張の git 実行層で同じ Working Copy の操作。
 - 拡張が起動するプロセスがすべて `windowsHide`（コンソールの窓が一瞬開く原因）で、リポジトリを閉じると常駐の
-  `git cat-file` が終わる。
+  `git cat-file` が終わる。エンジンは子プロセスを `amonhen_model::process::command`（`CREATE_NO_WINDOW`）で起動し、
+  それを clippy が守らせる（`clippy.toml`）。
+- 拡張、2 つ目の窓と同じつなぎ方をする別のつながり、CLI で 1 つの共有の daemon（`amonhen daemon status` で、同じ
+  daemon と増えたつながりが分かる）。
 
 まだ手で確かめるもの:
 
-- 拡張を使っている間（ブランチを選ぶ、更新する）にコンソールの窓が一瞬開かない。テストが確かめるのは拡張が自分で
-  起動するプロセスだけで、daemon が起動するものは含まない。
-- 複数の VSCode の窓と CLI で 1 つの共有の daemon（`amonhen daemon status` でつながりが分かる）。
 - Mac から実機への Remote-SSH と、そこで動く拡張。
 - ブラウザーで落としたリリースの zip（SmartScreen）と、`amonhen.exe install`。
