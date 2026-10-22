@@ -73,8 +73,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
 
     /// 開いた `repository` のウィンドウを作る。
-    /// `tabWith` があればそのウィンドウのタブに入れ、なければ新しいウィンドウにする。
-    init(location: String, repository: Repository, debug: Bool, tabWith: NSWindow?) throws {
+    /// `tabWith` があればそのウィンドウのタブに入れ、なければ新しいウィンドウにする。`front` でなければ、タブに入れる
+    /// だけで前に出さない（裏で接続が終わったタブ）。
+    init(location: String, repository: Repository, debug: Bool, tabWith: NSWindow?, front: Bool = true) throws {
         self.location = location
         self.repository = repository
         guard let renderer = GraphRenderer(), let text = TextRenderer(device: renderer.device) else {
@@ -111,7 +112,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         window.tabbingIdentifier = Self.tabbingIdentifier
         if let tabWith {
             tabWith.addTabbedWindow(window, ordered: .above)
-            window.makeKeyAndOrderFront(nil)
+            if front { window.makeKeyAndOrderFront(nil) }
         } else {
             // 新しいウィンドウにする（タブにしない）。出した後は、ほかのウィンドウをタブとして受け入れる。
             window.tabbingMode = .disallowed
