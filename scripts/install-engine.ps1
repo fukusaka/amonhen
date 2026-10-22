@@ -1,13 +1,14 @@
 <#
-GitHub Releases からエンジン（CLI と daemon）を取ってきて置く（Windows。install-engine.sh の Windows 版）。
-置き場所は %LOCALAPPDATA%\amonhen で、`amonhen.exe install` が `current` を向け、bin\amonhen.exe に写す。
-  scripts\install-engine.ps1 [[-Release] stable|snapshot|<タグ>] [-Verify auto|require|skip] [-Force] [-NoLink]
-                             [-KeepDownload <フォルダー>]
-clone していなければ:
+Downloads the engine (CLI and daemon) from GitHub Releases and installs it (Windows; install-engine.sh elsewhere).
+`amonhen.exe install` puts it in %LOCALAPPDATA%\amonhen, points `current` at it and copies it to bin\amonhen.exe.
+  scripts\install-engine.ps1 [[-Release] stable|snapshot|<tag>] [-Verify auto|require|skip] [-Force] [-NoLink]
+                             [-KeepDownload <dir>]
+Without a clone:
   irm https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.ps1 | iex
   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.ps1))) snapshot
--Verify: auto は gh がログイン済みなら build provenance attestation を確かめる。require は確かめられなければ止める。
-Windows PowerShell 5.1 と PowerShell 7 の両方で動く。iex でも使うので、失敗は exit ではなく throw で返す。
+-Verify: auto checks the build provenance attestation when gh is logged in; require stops when it can't be checked.
+Runs on Windows PowerShell 5.1 and PowerShell 7. It is also run through iex, so failures throw instead of exiting.
+Keep this file ASCII: PowerShell 5.1 reads a UTF-8 file without a BOM in the ANSI code page.
 #>
 param(
     [Parameter(Position = 0)][string]$Release = 'stable',
@@ -17,12 +18,12 @@ param(
     [string]$KeepDownload
 )
 $ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue' # 5.1 の Invoke-WebRequest は進み具合を描くと遅い
+$ProgressPreference = 'SilentlyContinue' # 5.1's Invoke-WebRequest is slow while drawing progress
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $repo = 'fukusaka/amonhen'
 $api = "https://api.github.com/repos/$repo/releases"
 
-# 外のコマンドを動かして終了コードを返す（5.1 では標準エラーへの出力が Stop で止まるので、その間だけ Continue に）。
+# Runs a native command and returns its exit code (in 5.1, its stderr would stop the script under Stop).
 function Invoke-Native([scriptblock]$Command) {
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -30,7 +31,7 @@ function Invoke-Native([scriptblock]$Command) {
     $LASTEXITCODE
 }
 
-# CPU。x64 の PowerShell を ARM 機でエミュレーションしていても、OS の CPU を見る。
+# The OS's CPU, even when an x64 PowerShell runs emulated on an ARM machine.
 $arch = $null
 try { $arch = [string][Runtime.InteropServices.RuntimeInformation]::OSArchitecture } catch {}
 if (-not $arch) { $arch = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE } }
@@ -40,13 +41,14 @@ $cpu = switch -regex ($arch) {
     default { throw "unsupported CPU: $arch" }
 }
 
-# Release を選ぶ。アプリとエンジンの正式版はタグ v<数字>（VSCode 拡張の vscode-v* とは別）。一覧は新しい順。
+# Stable releases of the app and engine are tagged v<number> (the VSCode extension's are vscode-v*). Newest first.
 $headers = @{ 'User-Agent' = 'amonhen-install-engine' }
 $pattern = "^amonhen-.+-windows-$cpu\.zip$"
-$releases = switch ($Release) {
-    'stable' { Invoke-RestMethod -Uri "$api`?per_page=100" -Headers $headers | Where-Object { $_.tag_name -match '^v\d' -and -not $_.prerelease -and -not $_.draft } }
-    default { Invoke-RestMethod -Uri "$api/tags/$Release" -Headers $headers }
-}
+$uri = if ($Release -eq 'stable') { "$api`?per_page=100" } else { "$api/tags/$Release" }
+try { $releases = Invoke-RestMethod -Uri $uri -Headers $headers } catch { throw "no release $Release found ($($_.Exception.Message))" }
+# Through a variable: 5.1's Invoke-RestMethod emits a JSON array as one object
+$releases = @($releases)
+if ($Release -eq 'stable') { $releases = $releases | Where-Object { $_.tag_name -match '^v\d' -and -not $_.prerelease -and -not $_.draft } }
 $asset = $null
 foreach ($r in $releases) {
     $asset = $r.assets | Where-Object { $_.name -match $pattern } | Select-Object -First 1

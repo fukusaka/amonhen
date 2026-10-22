@@ -93,6 +93,7 @@ irm https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engi
 
 It picks the zip for the machine's CPU, checks its attestation when the [GitHub CLI](https://cli.github.com/) is
 installed and logged in (`-Verify require` to insist, `-Verify skip` to skip it), and runs `amonhen.exe install`.
+Downloaded this way, the files carry no Mark of the Web (which browsers add), so SmartScreen doesn't stop them.
 
 Replace `stable` with `snapshot` for the latest development build. Run the same line again to update. If the app is
 open while you update it, the script tells you, and the new version is used the next time you open the app.

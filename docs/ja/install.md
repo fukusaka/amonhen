@@ -94,6 +94,7 @@ irm https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engi
 
 マシンの CPU に合う zip を選び、[GitHub CLI](https://cli.github.com/) が入っていてログインしていればビルドの由来の
 証明を確かめ（必ず確かめるなら `-Verify require`、確かめないなら `-Verify skip`）、`amonhen.exe install` を実行します。
+こうして取ってきたファイルには（ブラウザーが付ける）Mark of the Web が付かないので、SmartScreen に止められません。
 
 開発中の最新版を入れるときは、`stable` を `snapshot` にします。同じ行をもう一度実行すると、新しい版に入れ替わります。
 アプリを開いたまま入れ替えたときはスクリプトがそう知らせるので、アプリを開き直すと新しい版になります。
