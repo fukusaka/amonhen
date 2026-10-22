@@ -7,7 +7,11 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.5] - 2026-10-22
+
+Stashes moved into the sidebar's Workspace and open as a view of their own, showing where each stash's base stands
+against HEAD, with Branch… to make a branch from one. Bookmarks are no longer lost when more than one copy of the app
+runs, and branches are nested correctly when the app is opened from a linked worktree.
 
 #### Added
 
