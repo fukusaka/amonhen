@@ -197,6 +197,31 @@ with a new protocol is used only when it is also the bundled one:
 
 Installing the next snapshot or release `.vsix` puts everything back.
 
+## Checking a release on the machine
+
+After each release (and for a snapshot worth trying), run `scripts/check-windows.ps1` on the machine. It installs the
+engine with `scripts/install-engine.ps1` (pointing `current` at it even when a newer one is installed), then checks:
+the attestation (when `gh` is logged in), that the download and `bin\amonhen.exe` carry no Mark of the Web, the
+version, the files in `%LOCALAPPDATA%\amonhen`, the CLI on a temporary repository with `core.autocrlf=true` and CRLF
+files (`log`, `status`, `diff` with one line per changed line and `lineEndings`, line `stage` with no CR in the index,
+line `discard` that keeps CRLF on the other lines, `commit` and `undo`), and two `daemon:` clients on one shared daemon.
+It prints a pass/fail table and exits with 1 if anything failed.
+
+The script is too long for `-EncodedCommand` (the command line is limited to 32767 characters), so run it from the
+clone or copy it over:
+
+```sh
+ssh winpc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
+scp scripts/install-engine.ps1 scripts/check-windows.ps1 winpc:
+ssh winpc 'powershell -NoProfile -ExecutionPolicy Bypass -File check-windows.ps1 -Release v0.2.4'
+```
+
+`-Release` takes `stable` (the default), `snapshot` or a tag; `-ExpectVersion` overrides the version expected from the
+zip's name, `-SkipInstall` checks the engine already installed, `-Verify require|skip` is passed to the installer, and
+`-KeepTemp` keeps the temporary repository. Both scripts run on Windows PowerShell 5.1 and PowerShell 7, and stay
+ASCII-only: 5.1 reads a UTF-8 file without a BOM in the ANSI code page. A shared daemon that is already running (for VSCode) is used and left
+running; one the check started is stopped at the end.
+
 ## What to check on the machine
 
 `npm run test:e2e` covers these (run it with `scripts\e2e-windows.ps1`, above):
@@ -214,4 +239,5 @@ Installing the next snapshot or release `.vsix` puts everything back.
 Still by hand:
 
 - Remote-SSH from the Mac to the machine, with the extension running there.
-- A Release zip downloaded with a browser (SmartScreen), and `amonhen.exe install`.
+- A Release zip downloaded with a browser (SmartScreen), and `amonhen.exe install`. `scripts/check-windows.ps1`
+  covers the rest of the CLI and the shared daemon, but not VSCode or the screen.

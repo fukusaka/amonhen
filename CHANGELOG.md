@@ -9,6 +9,11 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- `scripts/install-engine.ps1` installs or updates the command line tool on Windows in one line (with the attestation
+  checked when the GitHub CLI is logged in).
+
 #### Changed
 
 - A repository on an SSH host or opened through the daemon gets its tab in place at once, showing that it is

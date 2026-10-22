@@ -4,7 +4,7 @@
 #   scripts/install-engine.sh [stable|snapshot] [--no-link|--force]
 # clone していなければ:
 #   curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.sh | sh -s -- [stable|snapshot]
-# Windows は Release の zip を展開して `amonhen.exe install`。
+# Windows は scripts/install-engine.ps1。
 set -eu
 mode=${1:-stable}
 [ $# -gt 0 ] && shift

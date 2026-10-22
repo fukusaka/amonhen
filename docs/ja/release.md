@@ -21,6 +21,7 @@
   仕事で同梱して載せる。
 - 変更は [CHANGELOG.md](../../CHANGELOG.md)（英語。アプリとエンジン、VSCode 拡張の節に分けた 1 つのファイル）に書く。
   タグを打つ前に、その節の `Unreleased` を版と日付の見出しに改め、その下に要約を書いてコミットする。
+- リリースのあとは、Windows の実機で `scripts/check-windows.ps1` を流して確かめる（[windows.md](windows.md#実機でリリースを確かめる)）。
 
 ## VSCode 拡張
 

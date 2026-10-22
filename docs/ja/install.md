@@ -52,7 +52,8 @@ Windows では、`amonhen-<版>-windows-<CPU>.zip` を取ってきて展開し�
 .\amonhen.exe install    # %LOCALAPPDATA%\amonhen に置きます
 ```
 
-そのあと、`%LOCALAPPDATA%\amonhen\bin` を `PATH` に足してください。
+そのあと、`%LOCALAPPDATA%\amonhen\bin` を `PATH` に足してください。下の PowerShell のスクリプトを使えば、`PATH` の
+ほかはまとめて行えます。
 
 ## VSCode 拡張
 
@@ -82,6 +83,19 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-vscode.sh | sh -s -- stable
 ```
 
+Windows では PowerShell で次を実行します。
+
+```powershell
+# コマンドだけ（Windows）
+irm https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.ps1 | iex
+# snapshot や、決まったリリース（v0.2.4 など）
+& ([scriptblock]::Create((irm https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/install-engine.ps1))) snapshot
+```
+
+マシンの CPU に合う zip を選び、[GitHub CLI](https://cli.github.com/) が入っていてログインしていればビルドの由来の
+証明を確かめ（必ず確かめるなら `-Verify require`、確かめないなら `-Verify skip`）、`amonhen.exe install` を実行します。
+こうして取ってきたファイルには（ブラウザーが付ける）Mark of the Web が付かないので、SmartScreen に止められません。
+
 開発中の最新版を入れるときは、`stable` を `snapshot` にします。同じ行をもう一度実行すると、新しい版に入れ替わります。
 アプリを開いたまま入れ替えたときはスクリプトがそう知らせるので、アプリを開き直すと新しい版になります。
 
@@ -90,8 +104,8 @@ curl -fsSL https://raw.githubusercontent.com/fukusaka/amonhen/main/scripts/insta
 作ります）に入れます。どれも付けなければ、今入っているところで
 入れ替えます。
 
-リポジトリを clone した手元では、`scripts/install-app.sh`・`scripts/install-engine.sh`・`scripts/install-vscode.sh`
-をそのまま実行します。
+リポジトリを clone した手元では、`scripts/install-app.sh`・`scripts/install-engine.sh`・`scripts/install-vscode.sh`・
+`scripts\install-engine.ps1` をそのまま実行します。
 
 ## 取ってきたファイルを確かめる
 
