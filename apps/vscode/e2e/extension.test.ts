@@ -208,7 +208,8 @@ suite('Amon Hen in VSCode', () => {
     await until('エンジンの置き場所', () => existsSync(join(data, 'current')));
     const link =
       process.platform === 'win32' ? join(data, 'bin', 'amonhen.exe') : join(process.env['HOME']!, '.local', 'bin', 'amonhen');
-    assert.ok(existsSync(link), `${link} がある`);
+    // install は current を書いてから CLI を写す（Windows では写すのに時間がかかる）
+    await until(`${link} がある`, () => existsSync(link));
   });
 
   test('shows History, commit details and diffs through the daemon', async () => {
