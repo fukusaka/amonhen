@@ -72,5 +72,30 @@ gh secret set AMONHEN_NOTARY_ISSUER --env release --body "<Issuer ID>"
 
 Developer ID の証明書は期限（いまは約 1 年）が来る前に作り直し、`AMONHEN_CERT_P12` と `AMONHEN_CERT_PASSWORD` を
 入れ替える。secret がなければ ad-hoc 署名で作る。手元では `AMONHEN_SIGN_IDENTITY` に証明書の名前を渡すと、同じ
-証明書で署名する。Windows・Linux のエンジンは署名していない（Windows でブラウザから取ると SmartScreen が警告する。
-VSCode 拡張に同梱したものは警告なしで動く）。
+証明書で署名する。Windows・Linux のエンジンは署名していない（下を参照）。
+
+## Windows のエンジンは署名しない
+
+Windows のエンジンは、いまは署名しない。2026 年 10 月に v0.2.5 と vscode-v0.2.3 を Windows 11 Pro で確かめた:
+
+- ブラウザで取った zip には Windows が Mark of the Web を付ける。エクスプローラーの「すべて展開」は `amonhen.exe` に
+  引き継ぎ、`Expand-Archive`（Windows PowerShell 5.1 と PowerShell 7）は引き継がない。`Invoke-WebRequest` と
+  `curl` は、そもそも付けない。
+- SmartScreen（「Windows によって PC が保護されました」）が出るのは、印の付いた `amonhen.exe` をエクスプローラーから
+  （ダブルクリックで）起動したときだけ。端末から起動すれば、印があっても警告なしで動く。
+- `amonhen.exe install` はエンジンを `%LOCALAPPDATA%\amonhen` に新しいファイルとして書くので、入れたエンジン（CLI と
+  共有の daemon）に印は付かない。
+- .vsix に同梱したエンジンにも印は付かず（Remote-SSH でも同じ）、拡張は警告なしで起動する。
+- Smart App Control（Windows 11）は、どこから来たかによらず署名のない実行ファイルを止める（同梱のエンジンも）。有効
+  なのは一部のまっさらなインストールだけで、確かめた機械では切れていた。
+
+署名で何が変わるかと比べた:
+
+- Azure Artifact Signing（もとの Trusted Signing、月 $9.99）は、個人は米国とカナダしか受け付けない。
+- 個人（IV・OV）の証明書と CI から使えるクラウド署名（SSL.com eSigner など）は年に約 $300 かかり、証明書の期間は
+  いまは最長 460 日。
+- 署名しても SmartScreen の警告はすぐには消えない（EV でも消えなくなった）。評判は積み上げることになる。変わるのは、
+  Smart App Control がエンジンを止めなくなること。
+
+Smart App Control が利用者のところでエンジンを止めたとき、Artifact Signing が米国・カナダ以外の個人を受け付けたとき、
+Windows の FE（ダブルクリックで起動するアプリ）を出すときに見直す。
