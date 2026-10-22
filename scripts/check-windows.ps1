@@ -1,10 +1,10 @@
 <#
-Windows の実機で、Release か snapshot のエンジンを確かめる（リリースのたびに ssh で流す）。
-  scripts\check-windows.ps1 [[-Release] stable|snapshot|<タグ>] [-ExpectVersion <版>] [-SkipInstall]
+Checks a release or the snapshot of the engine on a Windows machine (run over ssh after each release).
+  scripts\check-windows.ps1 [[-Release] stable|snapshot|<tag>] [-ExpectVersion <version>] [-SkipInstall]
                             [-Verify auto|require|skip] [-KeepTemp]
-install-engine.ps1 で入れ（current もこの版に向ける）、置いたファイル、CRLF のリポジトリ（core.autocrlf=true）での
-CLI の log・status・diff・stage・discard・commit・undo、共有の daemon を 2 つのクライアントで使えることを確かめ、
-結果を表にする。1 つでも通らなければ終了コードは 1。
+Installs it with install-engine.ps1 (pointing current at it), then checks the files it placed, the CLI's log, status,
+diff, stage, discard, commit and undo on a CRLF repository (core.autocrlf=true), and two clients sharing the daemon.
+Prints a table and exits with 1 if any check failed. Keep this file ASCII (see install-engine.ps1).
 #>
 param(
     [Parameter(Position = 0)][string]$Release = 'stable',
@@ -23,11 +23,11 @@ function Add-Result([string]$Name, [string]$Result, [string]$Detail) {
     $color = @{ PASS = 'Green'; FAIL = 'Red'; SKIP = 'Yellow' }[$Result]
     Write-Host ("[{0}] {1}: {2}" -f $Result, $Name, $Detail) -ForegroundColor $color
 }
-# 確かめる 1 項目。$Body が文字列を返せば PASS（その説明）、throw すれば FAIL。
+# One check: PASS with the string $Body returns, FAIL when it throws.
 function Test-Step([string]$Name, [scriptblock]$Body) {
     try { Add-Result $Name 'PASS' ([string](& $Body)) } catch { Add-Result $Name 'FAIL' $_.Exception.Message }
 }
-# 外のコマンドの標準出力を文字列で返す（標準エラーは捨てる）。終了コードが 0 でなければ throw。
+# A native command's stdout as a string (stderr dropped). Throws on a non-zero exit code.
 function Invoke-Tool([string]$Exe, [string[]]$Arguments) {
     $saved = $ErrorActionPreference
     $ErrorActionPreference = 'Continue'
@@ -43,7 +43,7 @@ function Get-Sha1Prefix([string]$Path) {
 }
 function Get-Text([string]$Path) { [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($Path)) }
 function Show-Bytes([string]$Text) { $Text.Replace("`r", '\r').Replace("`n", '\n') }
-# diff の JSON（ファイルの配列）から、f.txt の行のうち種類と中身が合うものの番号（配列の位置が行の番号）。
+# The row number (its index) of f.txt's row with this kind and text, in diff --json output.
 function Find-Row($Diff, [string]$Kind, [string]$Text) {
     $rows = @(@($Diff) | Where-Object { $_.path -eq 'f.txt' })[0].rows
     for ($i = 0; $i -lt $rows.Count; $i++) { if ($rows[$i].kind -eq $Kind -and $rows[$i].text -eq $Text) { return $i } }
@@ -56,7 +56,7 @@ $temp = Join-Path ([IO.Path]::GetTempPath()) "amonhen-check-$([Guid]::NewGuid().
 New-Item -ItemType Directory -Path $temp | Out-Null
 $downloads = Join-Path $temp 'download'
 
-# 1. 入れる
+# 1. Install
 $zip = $null
 if ($SkipInstall) {
     Add-Result 'install' 'SKIP' 'using the installed engine'
@@ -68,13 +68,13 @@ if ($SkipInstall) {
     }
     $log = $null
     try {
-        $log = & $installer $Release -Verify $Verify -Force -KeepDownload $downloads 6>&1 | Out-String
+        & $installer $Release -Verify $Verify -Force -KeepDownload $downloads 6>&1 | Tee-Object -Variable lines | Out-Host
+        $log = $lines | Out-String
         $zip = Get-ChildItem -Path $downloads -Filter 'amonhen-*.zip' | Select-Object -First 1
         Add-Result 'install' 'PASS' $zip.Name
     } catch {
         Add-Result 'install' 'FAIL' $_.Exception.Message
     }
-    Write-Host $log
     $attest = [regex]::Match([string]$log, 'attestation: (.*)').Groups[1].Value.Trim()
     if ($attest -eq 'verified') { Add-Result 'attestation' 'PASS' 'gh attestation verify' }
     elseif ($attest -match 'failed') { Add-Result 'attestation' 'FAIL' $attest }
@@ -82,7 +82,7 @@ if ($SkipInstall) {
 }
 if (-not $ExpectVersion -and $zip) { $ExpectVersion = [regex]::Match($zip.Name, '^amonhen-(.+)-windows-[^-]+\.zip$').Groups[1].Value }
 
-# 2. Mark of the Web（Invoke-WebRequest で取ったものには付かないはず）
+# 2. Mark of the Web (Invoke-WebRequest shouldn't add it)
 if ($zip) {
     Test-Step 'mark of the web' {
         $marked = @($zip.FullName, $amonhen) | Where-Object { Get-Item -Path $_ -Stream Zone.Identifier -ErrorAction SilentlyContinue }
@@ -91,14 +91,14 @@ if ($zip) {
     }
 }
 
-# 3. 版
+# 3. Version
 Test-Step 'version' {
     $out = Invoke-Amonhen @('--version')
     if ($ExpectVersion -and $out -notlike "amonhen $ExpectVersion (protocol *") { throw "$out (expected $ExpectVersion)" }
     $out
 }
 
-# 4. 置いたファイル: current → engine\<ハッシュ>\amonhen.exe（ハッシュは中身の SHA-1）、bin\amonhen.exe は同じもの
+# 4. Files: current -> engine\<hash>\amonhen.exe (the SHA-1 of its contents), and bin\amonhen.exe is the same
 Test-Step 'files' {
     $current = (Get-Content -Raw (Join-Path $root 'current')).Trim()
     $engine = Join-Path (Join-Path $root $current) 'amonhen.exe'
@@ -110,7 +110,7 @@ Test-Step 'files' {
     "current = $current, bin\amonhen.exe is the same"
 }
 
-# 5. CRLF のリポジトリ: f.txt（a〜e の 5 行）を LF でコミットし、core.autocrlf=true で CRLF で取り出す
+# 5. A CRLF repository: f.txt (lines a to e) committed with LF, checked out with CRLF by core.autocrlf=true
 $repo = Join-Path $temp 'repo'
 $crlf = "a`r`nB`r`nc`r`nD`r`ne`r`n"
 try {
@@ -130,7 +130,7 @@ try {
     Invoke-Git @('checkout', '--', 'f.txt') | Out-Null
     $checkedOut = Get-Text (Join-Path $repo 'f.txt')
     if ($checkedOut -ne "a`r`nb`r`nc`r`nd`r`ne`r`n") { throw "f.txt was checked out as $(Show-Bytes $checkedOut)" }
-    # b と d を変える（CRLF のまま）
+    # Change b and d, keeping CRLF
     [IO.File]::WriteAllText((Join-Path $repo 'f.txt'), $crlf)
     $repoReady = $true
 } catch {
@@ -141,7 +141,7 @@ try {
 if ($repoReady) {
     Test-Step 'log' {
         $rows = Invoke-Amonhen @('log', '--json', '-C', $repo) | ConvertFrom-Json
-        $rows = @($rows) # 5.1 の ConvertFrom-Json は配列を 1 つのものとして流すので、変数に入れてから配列に
+        $rows = @($rows) # 5.1's ConvertFrom-Json emits an array as one object
         if ($rows.Count -ne 2 -or $rows[0].subject -ne 'two') { throw "$($rows.Count) commits, first '$($rows[0].subject)'" }
         '2 commits'
     }
@@ -155,20 +155,22 @@ if ($repoReady) {
     Test-Step 'diff' {
         $diff = Invoke-Amonhen @('diff', '--json', '-C', $repo) | ConvertFrom-Json
         $f = @($diff) | Where-Object { $_.path -eq 'f.txt' }
-        # 改行の違いで全行が変わったことにならず、変えた 2 行だけが 1 行ずつ出る
+        # Only the 2 changed lines, not every line because of the line endings
         if ($f.added -ne 2 -or $f.removed -ne 2) { throw "+$($f.added) -$($f.removed) (expected +2 -2)" }
         $le = $f.lineEndings
         if (-not $le -or $le.worktree -ne 'crlf' -or $le.index -ne 'lf' -or -not $le.notable) { throw "lineEndings: $($le | ConvertTo-Json -Compress)" }
         "+2 -2, lineEndings worktree $($le.worktree), index $($le.index), $($le.rule)"
     }
     Test-Step 'stage line' {
-        $row = Find-Row (Invoke-Amonhen @('diff', '--combined', '--json', '-C', $repo) | ConvertFrom-Json) 'added' 'B'
-        Invoke-Amonhen @('stage', '--rows', "$row", '-C', $repo, 'f.txt') | Out-Null
+        # Stage b -> B (both rows); d -> D stays unstaged
+        $diff = Invoke-Amonhen @('diff', '--combined', '--json', '-C', $repo) | ConvertFrom-Json
+        $row = "$(Find-Row $diff 'removed' 'b'),$(Find-Row $diff 'added' 'B')"
+        Invoke-Amonhen @('stage', '--rows', $row, '-C', $repo, 'f.txt') | Out-Null
         $eol = Invoke-Git @('ls-files', '--eol', '--', 'f.txt')
         if ($eol -notmatch '^i/lf\s') { throw "index: $eol" }
         $index = (Invoke-Git @('show', ':f.txt')) -split "`r?`n"
         if (($index -join ',') -ne 'a,B,c,d,e') { throw "index has $($index -join ',')" }
-        "row $row staged; index LF only (a,B,c,d,e)"
+        "rows $row staged; index LF only (a,B,c,d,e)"
     }
     Test-Step 'discard lines' {
         $diff = Invoke-Amonhen @('diff', '--json', '-C', $repo) | ConvertFrom-Json
@@ -198,7 +200,7 @@ if ($repoReady) {
         'HEAD back to the commit before'
     }
 
-    # 6. 共有の daemon: daemon: のクライアントを 2 つ常駐させ（watch）、同じ daemon が 2 つとも受けていること
+    # 6. Shared daemon: two daemon: clients (watch) kept running, both served by one daemon
     $watchers = @()
     $wasRunning = $false
     Test-Step 'shared daemon' {

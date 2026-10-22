@@ -211,14 +211,15 @@ The script is too long for `-EncodedCommand` (the command line is limited to 327
 clone or copy it over:
 
 ```sh
-ssh winpc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
+ssh winpc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
 scp scripts/install-engine.ps1 scripts/check-windows.ps1 winpc:
-ssh winpc 'powershell -NoProfile -File check-windows.ps1 -Release v0.2.4'
+ssh winpc 'powershell -NoProfile -ExecutionPolicy Bypass -File check-windows.ps1 -Release v0.2.4'
 ```
 
 `-Release` takes `stable` (the default), `snapshot` or a tag; `-ExpectVersion` overrides the version expected from the
 zip's name, `-SkipInstall` checks the engine already installed, `-Verify require|skip` is passed to the installer, and
-`-KeepTemp` keeps the temporary repository. A shared daemon that is already running (for VSCode) is used and left
+`-KeepTemp` keeps the temporary repository. Both scripts run on Windows PowerShell 5.1 and PowerShell 7, and stay
+ASCII-only: 5.1 reads a UTF-8 file without a BOM in the ANSI code page. A shared daemon that is already running (for VSCode) is used and left
 running; one the check started is stopped at the end.
 
 ## What to check on the machine

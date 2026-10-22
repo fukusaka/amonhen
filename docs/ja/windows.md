@@ -210,14 +210,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\e2e-windows.ps1 -Des
 スクリプトが `-EncodedCommand` には長すぎる（コマンドラインは 32767 文字まで）ので、clone から動かすか、写して動かす。
 
 ```sh
-ssh winpc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
+ssh winpc 'git -C C:\src\amonhen pull -q; pwsh -NoProfile -ExecutionPolicy Bypass -File C:\src\amonhen\scripts\check-windows.ps1 snapshot'
 scp scripts/install-engine.ps1 scripts/check-windows.ps1 winpc:
-ssh winpc 'powershell -NoProfile -File check-windows.ps1 -Release v0.2.4'
+ssh winpc 'powershell -NoProfile -ExecutionPolicy Bypass -File check-windows.ps1 -Release v0.2.4'
 ```
 
 `-Release` は `stable`（既定）・`snapshot`・タグ。`-ExpectVersion` で zip の名前から読む版の代わりを指定し、
 `-SkipInstall` で入っているエンジンをそのまま確かめ、`-Verify require|skip` は入れるスクリプトに渡し、`-KeepTemp` で
-一時リポジトリを残す。すでに動いている共有の daemon（VSCode のものなど）はそのまま使って残し、確かめるときに
+一時リポジトリを残す。どちらのスクリプトも Windows PowerShell 5.1 と PowerShell 7 で動き、ASCII だけで書く（5.1 は BOM の
+ない UTF-8 のファイルを ANSI のコードページで読む）。すでに動いている共有の daemon（VSCode のものなど）はそのまま使って残し、確かめるときに
 起動したものは最後に止める。
 
 ## 実機で確かめること
