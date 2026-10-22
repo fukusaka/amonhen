@@ -103,7 +103,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
 
     /// リポジトリを開いていないタブ（リポジトリのページ）: 名前の代わりに案内を出し、押せなくする。
     func showNoRepository() {
-        repositoryButton.title = L("Choose a Repository")
+        showUnopened(L("Choose a Repository"))
+    }
+
+    /// まだ開けていないリポジトリのタブ（つないでいる途中・つなげなかった）: `name` を出し、押せなくする。
+    func showUnopened(_ name: String) {
+        repositoryButton.title = name
         repositoryButton.isEnabled = false
         repositoryItem.toolTip = nil
         branchButton.title = "—"

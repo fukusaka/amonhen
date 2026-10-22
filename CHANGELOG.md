@@ -7,6 +7,21 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- A repository on an SSH host or opened through the daemon gets its tab in place at once, showing that it is
+  connecting; if connecting fails, the tab stays with the error and Try Again instead of an alert, replacing the
+  separate connecting window.
+
+#### Fixed
+
+- Clicking the Dock icon with no window open shows the repository page (or brings back minimized windows) instead of
+  doing nothing.
+- Repositories on SSH hosts or opened through the daemon are restored at launch in their windows and tab order, and
+  one that could not connect is still reopened next time.
+
 ### [0.2.5] - 2026-10-22
 
 Stashes moved into the sidebar's Workspace and open as a view of their own, showing where each stash's base stands

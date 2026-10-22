@@ -153,8 +153,9 @@
 "⏎ Open in Tab   ⌘⏎ Open in New Window   esc Close" = "⏎ タブで開く　⌘⏎ 新しいウィンドウで開く　esc 閉じる";
 
 /* Connecting.swift */
-"Connecting" = "接続中";
 "Connecting to %@…" = "%@ に接続しています…";
+"Couldn’t open %@" = "%@ を開けませんでした";
+"Close Tab" = "タブを閉じる";
 
 /* Clone.swift */
 "https://github.com/owner/repo.git or git@host:owner/repo.git" = "https://github.com/owner/repo.git や git@host:owner/repo.git";

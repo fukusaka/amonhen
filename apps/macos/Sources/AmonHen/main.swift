@@ -128,16 +128,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         didSet { saveOpenWindows() }
     }
 
+    /// まだ開けていないリポジトリのタブ（つないでいる途中・つなげなかった）。リポジトリのタブと同じく記録する。
+    private var connecting: [ConnectingTab] = [] {
+        didSet { saveOpenWindows() }
+    }
+
+    /// 起動時に前回のものを開き直している途中（終わってからまとめて記録する）。
+    private var isRestoring = false
+
     /// 開いているリポジトリを、ウィンドウごとにタブの順で記録する（次の起動で同じ並びに開き直す）。
     /// 終了するときにウィンドウが閉じても、記録は消さない。
     private func saveOpenWindows() {
-        guard !isTerminating, !Self.isCheckRun else { return }
+        guard !isTerminating, !isRestoring, !Self.isCheckRun else { return }
+        let opened = windows.map { ($0.window, $0.location) } + connecting.map { ($0.window, $0.location) }
         var groups: [[String]] = []
         var seen = Set<ObjectIdentifier>()
-        for w in windows where !seen.contains(ObjectIdentifier(w.window)) {
-            let tabs = (w.window.tabbedWindows ?? [w.window]).compactMap { tab in windows.first { $0.window === tab } }
-            for tab in tabs { seen.insert(ObjectIdentifier(tab.window)) }
-            groups.append((tabs.isEmpty ? [w] : tabs).map(\.location))
+        for (window, location) in opened where !seen.contains(ObjectIdentifier(window)) {
+            let tabs = window.tabbedWindows ?? [window]
+            for tab in tabs { seen.insert(ObjectIdentifier(tab)) }
+            let locations = tabs.compactMap { tab in opened.first { $0.0 === tab }?.1 }
+            groups.append(locations.isEmpty ? [location] : locations)
         }
         RepositoryList.openWindows = groups
     }
@@ -184,11 +194,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let path = repositoryPath() {
             open(path: path, debug: true)
         } else {
+            // 1 つ前に開いたタブの隣に入れていく（つなぐのを待たずにタブを置くので、並びが崩れない）。
+            isRestoring = true
             for group in RepositoryList.openWindows {
-                for (i, path) in group.enumerated() where RepositoryList.isRepository(path) {
-                    open(path: path, inNewWindow: i == 0)
+                var previous: NSWindow?
+                for path in group where RepositoryList.isRepository(path) {
+                    previous = open(path: path, inNewWindow: previous == nil, after: previous) ?? previous
                 }
             }
+            isRestoring = false
+            saveOpenWindows()
             showHomeIfNothingOpen()
         }
         // 起動の途中で受け取った「開く」（`amonhen` コマンド・Finder から）を、ここで開く。
@@ -204,6 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 if let id, let window = self.windows.first(where: { ObjectIdentifier($0.window) == id })?.window
+                    ?? self.connecting.first(where: { ObjectIdentifier($0.window) == id })?.window
                     ?? self.homes.first(where: { ObjectIdentifier($0.window) == id })?.window {
                     self.lastActiveWindow = window
                 }
@@ -242,36 +258,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     /// `replacing` を渡すと、そのタブ（リポジトリのページ、ツールバーの一覧から切り替える前のリポジトリ）の隣に
-    /// 開いてから、それを閉じる（そのタブがそのリポジトリに替わる）。
-    func open(path: String, debug: Bool = false, inNewWindow: Bool = false, replacing: NSWindow? = nil) {
+    /// 開いてから、それを閉じる（そのタブがそのリポジトリに替わる）。`after` を渡すと、そのタブの隣に開く。
+    /// 開いた（つなぎ始めた）タブを返す。
+    @discardableResult
+    func open(path: String, debug: Bool = false, inNewWindow: Bool = false, replacing: NSWindow? = nil,
+              after: NSWindow? = nil) -> NSWindow? {
         // 追加した worktree は、元のリポジトリのタブを開き、その worktree を書き込む先にする（別のリポジトリに
         // しない。docs/ux.md の「Worktrees」）。
         if !RepositoryLocation.isRemote(path), let main = RepositoryList.mainRepository(ofWorktree: path) {
-            open(path: main, debug: debug, inNewWindow: inNewWindow, replacing: replacing)
+            let opened = open(path: main, debug: debug, inNewWindow: inNewWindow, replacing: replacing, after: after)
             // `/private/tmp` と `/tmp` のような違いがあるので、リンクを解いて比べる。
             let key = WorktreeInfo.canonical(main)
             if let window = windows.first(where: { WorktreeInfo.canonical(RepositoryLocation.path($0.location)) == key }) {
                 window.edit(worktree: path)
             }
-            return
+            return opened
         }
         var location = RepositoryLocation.isRemote(path) ? path : URL(fileURLWithPath: path).standardizedFileURL.path
         // 共有の daemon 越しに開く設定なら、`daemon:` の場所にする（SSH 先も `daemon:ssh://…`）。
         if Settings.openThroughDaemon, !location.hasPrefix("daemon:") { location = "daemon:" + location }
-        if let existing = windows.first(where: { $0.location == location }) {
-            existing.window.makeKeyAndOrderFront(nil)
-            return
+        if let existing = windows.first(where: { $0.location == location })?.window
+            ?? connecting.first(where: { $0.location == location })?.window {
+            existing.makeKeyAndOrderFront(nil)
+            return existing
         }
+        let tabWith = inNewWindow ? nil : replacing ?? after ?? tabTarget
         if RepositoryLocation.isRemote(location) {
-            connect(location: location, debug: debug, inNewWindow: inNewWindow, replacing: replacing)
-            return
+            return connect(location: location, debug: debug, tabWith: tabWith, replacing: replacing)
         }
         do {
-            add(try RepositoryWindow(location: location, debug: debug, tabWith: inNewWindow ? nil : replacing ?? tabTarget),
-                replacing: replacing)
+            let window = try RepositoryWindow(location: location, debug: debug, tabWith: tabWith)
+            add(window, replacing: replacing)
+            return window.window
         } catch {
+            // 起動時に開けなかったものは、エラーを出したタブを残す（閉じるまで次の起動でも開き直す）。
+            if isRestoring {
+                return connect(location: location, debug: debug, tabWith: tabWith, failed: error)
+            }
             NSAlert(error: error).runModal()
             showHomeIfNothingOpen()
+            return nil
         }
     }
 
@@ -305,9 +331,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if windows.isEmpty, homes.isEmpty, connecting.isEmpty { showHome(newWindow: true) }
     }
 
-    /// つないでいる daemon 越しのリポジトリ（同じ場所を二重につながない）。
-    private var connecting: [ConnectingWindow] = []
-
     /// 最後に前に出ていたリポジトリのウィンドウ（アプリが後ろにいるときに、外から開いたものを入れる先）。
     private weak var lastActiveWindow: NSWindow?
 
@@ -315,43 +338,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Finder から開いたとき）、最後に使っていたウィンドウ。どれもなければ新しいウィンドウ。
     private var tabTarget: NSWindow? {
         let candidates = [NSApp.keyWindow, NSApp.mainWindow, lastActiveWindow].compactMap { $0 }
-        return candidates.first { w in windows.contains { $0.window === w } || homes.contains { $0.window === w } }
-            ?? windows.last?.window ?? homes.last?.window
+        return candidates.first { w in
+            windows.contains { $0.window === w } || connecting.contains { $0.window === w } || homes.contains { $0.window === w }
+        } ?? windows.last?.window ?? connecting.last?.window ?? homes.last?.window
     }
 
-    /// daemon 越しのリポジトリに裏でつなぎ、つながったらウィンドウを開く。その間は接続中のウィンドウを出す。
-    private func connect(location: String, debug: Bool, inNewWindow: Bool = false, replacing: NSWindow? = nil) {
-        if let existing = connecting.first(where: { $0.location == location }) {
-            existing.window.makeKeyAndOrderFront(nil)
-            return
+    /// daemon 越し・SSH 先のリポジトリ: すぐにそのタブを `tabWith` の隣（なければ新しいウィンドウ）に置き、裏で
+    /// つなぎ、つながったらリポジトリのタブに替える。`failed` を渡すと、つながずにそのエラーを出す。
+    private func connect(location: String, debug: Bool, tabWith: NSWindow?, replacing: NSWindow? = nil,
+                         failed: Error? = nil) -> NSWindow {
+        let tab = ConnectingTab(location: location, tabWith: tabWith)
+        tab.onRetry = { [weak self, weak tab] in
+            if let self, let tab { start(tab, debug: debug) }
         }
-        let progress = ConnectingWindow(location: location)
-        progress.onCancel = { [weak self, weak progress] in
-            self?.connecting.removeAll { $0 === progress }
+        tab.onClose = { [weak self, weak tab] in
+            self?.connecting.removeAll { $0 === tab }
             self?.showHomeIfNothingOpen()
         }
-        connecting.append(progress)
-        let daemon = Daemon.path, daemons = Daemon.bundledDirectory
+        connecting.append(tab)
+        replacing?.close()
+        if let failed { tab.showError(failed) } else { start(tab, debug: debug) }
+        return tab.window
+    }
+
+    private func start(_ tab: ConnectingTab, debug: Bool) {
+        tab.showConnecting()
+        let location = tab.location, daemon = Daemon.path, daemons = Daemon.bundledDirectory
         Task {
             let result = await Task.detached(priority: .userInitiated) {
                 Result { try RepositoryWindow.openRepository(location: location, daemon: daemon, daemons: daemons) }
             }.value
-            // 取り消されていたら、つないだ結果を捨てる（Repository を手放すと daemon も終わる）。
-            guard !progress.isCancelled else { return }
-            progress.finish()
-            connecting.removeAll { $0 === progress }
+            // 閉じられていたら、つないだ結果を捨てる（Repository を手放すと daemon も終わる）。
+            guard !tab.isClosed else { return }
             do {
-                add(try RepositoryWindow(
-                    location: location, repository: try result.get(), debug: debug,
-                    tabWith: inNewWindow ? nil : replacing ?? tabTarget), replacing: replacing)
+                try replace(tab, with: result.get(), debug: debug)
             } catch {
-                let alert = NSAlert(error: error)
-                alert.messageText = L("Couldn’t connect to %@", RepositoryLocation.host(location) ?? location)
-                alert.informativeText = String(describing: error)
-                alert.runModal()
-                showHomeIfNothingOpen()
+                tab.showError(error)
             }
         }
+    }
+
+    /// つながったタブを、リポジトリのタブに替える。前に出すのは、そのタブが前にあったときだけ。
+    private func replace(_ tab: ConnectingTab, with repository: Repository, debug: Bool) throws {
+        let group = tab.window.tabGroup
+        let selected = group?.selectedWindow === tab.window
+        let key = tab.window.isKeyWindow || (!NSApp.isActive && lastActiveWindow === tab.window)
+        let window = try RepositoryWindow(
+            location: tab.location, repository: repository, debug: debug, tabWith: tab.window, front: key)
+        if selected, !key { group?.selectedWindow = window.window }
+        if lastActiveWindow === tab.window { lastActiveWindow = window.window }
+        connecting.removeAll { $0 === tab }
+        add(window)
+        tab.finish()
     }
 
     private func add(_ window: RepositoryWindow, replacing: NSWindow? = nil) {
@@ -363,9 +401,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.onShowRepositories = { [weak self] in self?.showHome() }
         window.onReconnect = { [weak self, weak window] in
             guard let self, let window else { return }
-            // 先につなぎ始めてから閉じる（閉じたときにリポジトリの一覧を出さないため）。
-            connect(location: window.location, debug: false, inNewWindow: window.window.tabbedWindows == nil)
-            window.window.close()
+            // 同じ場所につなぎ直すタブに置き換える（閉じたときにリポジトリのページを出さないよう、先に置く）。
+            connect(location: window.location, debug: false, tabWith: window.window, replacing: window.window)
         }
         window.onClose = { [weak self, weak window] in
             self?.windows.removeAll { $0 === window }
@@ -412,6 +449,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// リポジトリをすべて閉じても終わらない（リポジトリのページから開き直せる）。終えるのは ⌘Q。
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
+
+    /// Dock のアイコンをクリックしたとき: 見えているウィンドウがなければ、しまってあるウィンドウを戻し（AppKit に
+    /// 任せる）、それもなければリポジトリのページを出す。
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag, !sender.windows.contains(where: \.isMiniaturized) { showHomeIfNothingOpen() }
+        return true
+    }
 
     static func option(_ name: String) -> String? {
         let args = CommandLine.arguments
