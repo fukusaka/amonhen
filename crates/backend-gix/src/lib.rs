@@ -563,6 +563,31 @@ impl GitBackend for GixBackend {
             .collect()
     }
 
+    /// `HEAD` は開いた worktree の git dir の、ブランチは共通の git dir の reflog（置き場所は gix が決める）。
+    fn reflog(&self, name: &str, limit: usize) -> Result<Vec<amonhen_model::ReflogEntry>> {
+        let repo = self.repo.to_thread_local();
+        let Ok(reference) = repo.find_reference(name) else {
+            return Ok(Vec::new());
+        };
+        let mut log = reference.log_iter();
+        let Some(lines) = log.rev()? else {
+            return Ok(Vec::new());
+        };
+        let mut entries = Vec::new();
+        for line in lines.take(limit) {
+            let line = line?;
+            entries.push(amonhen_model::ReflogEntry {
+                old: (!line.previous_oid.is_null())
+                    .then(|| to_oid(&line.previous_oid))
+                    .transpose()?,
+                new: to_oid(&line.new_oid)?,
+                time: line.signature.time.seconds,
+                message: line.message.to_string(),
+            });
+        }
+        Ok(entries)
+    }
+
     fn worktree_file(&self, path: &str) -> Result<Arc<Vec<u8>>> {
         let data = std::fs::read(self.git()?.workdir().join(path))?;
         self.with_filters(|filters, repo| {

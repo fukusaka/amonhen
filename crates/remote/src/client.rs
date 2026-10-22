@@ -458,6 +458,13 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::BranchCreatedAt(owned(names)))
     }
 
+    fn reflog(&self, name: &str, limit: usize) -> Result<Vec<amonhen_model::ReflogEntry>> {
+        self.conn.call(&Request::Reflog {
+            name: name.to_owned(),
+            limit,
+        })
+    }
+
     fn connection_state(&self) -> Option<ConnectionState> {
         let (sent, received) = self.conn.traffic();
         Some(ConnectionState {

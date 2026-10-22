@@ -299,6 +299,7 @@ fn handle(
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
             encode(&backend.branch_created_at(&names)?)
         }
+        Request::Reflog { name, limit } => encode(&backend.reflog(&name, limit)?),
         Request::SearchTexts { tips, terms } => {
             let ids = commits_from(backend, &search.commits, &tips)?;
             let words =

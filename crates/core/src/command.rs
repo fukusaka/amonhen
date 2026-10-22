@@ -105,6 +105,13 @@ pub enum Command {
     /// stash ごとの土台（作ったときの HEAD）と、今の HEAD の離れ具合（`info.stashes`: name・base・`ahead`（HEAD に
     /// だけあるコミットの数）・`behind`（土台にだけあるコミットの数））。HEAD がまだなければ空。
     StashBases,
+    /// ref の reflog（`info.entries`: 新しい順に `selector`（`HEAD@{0}`）・`old`（ref を作った行なら null）・`new`・
+    /// `time`・`message`・`subject`（`new` の件名。読めなければ空）・`reachable`（ref から辿れる、つまり History に
+    /// ある））。`name` の既定は `HEAD`（書き込む先の worktree のもの）、`limit` の既定は 500。
+    Reflog {
+        name: Option<String>,
+        limit: Option<usize>,
+    },
     UpdateSubmodules {
         paths: Vec<String>,
     },
@@ -1258,6 +1265,34 @@ impl Repository {
                 ok()
             }
             Command::StashBranch { name, branch } => done(ops.stash_branch(&branch, &name)?),
+            Command::Reflog { name, limit } => {
+                let name = name.as_deref().unwrap_or("HEAD");
+                let entries = self.backend().reflog(name, limit.unwrap_or(500))?;
+                let history = self.load_history()?;
+                let ids: Vec<Oid> = entries.iter().map(|e| e.new).collect();
+                // 消えたコミット（gc 済み）があるとまとめて読めないので、そのときは件名なしで出す。
+                let texts = self.commit_texts(&ids).unwrap_or_default();
+                let entries: Vec<serde_json::Value> = entries
+                    .iter()
+                    .enumerate()
+                    .map(|(i, e)| {
+                        serde_json::json!({
+                            "selector": format!("{name}@{{{i}}}"),
+                            "old": e.old.map(|o| o.to_string()),
+                            "new": e.new.to_string(),
+                            "time": e.time,
+                            "message": e.message,
+                            "subject": texts.get(i).map(|t| String::from_utf8_lossy(t.subject()).into_owned()).unwrap_or_default(),
+                            "reachable": history.row_of(&e.new).is_some(),
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "entries": entries })),
+                    ..Default::default()
+                })
+            }
             Command::StashBases => {
                 let refs = self.load_refs()?;
                 let mut stashes = Vec::new();
@@ -2515,6 +2550,61 @@ mod tests {
         assert!(git(dir, &["stash", "list"]).is_empty());
         let none = run(&repo, r#"{"op":"stashBases"}"#);
         assert_eq!(none["info"]["stashes"].as_array().unwrap().len(), 0);
+    }
+
+    /// HEAD の reflog は新しい順で、reset で外れたコミットは辿れない（History にない）と分かる。linked worktree で
+    /// 開けば、その worktree の HEAD の reflog を読む。
+    #[test]
+    fn reads_the_reflog_and_marks_commits_left_behind() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let first = git(dir, &["rev-parse", "HEAD"]);
+        let lost = commit_file(dir, "b.txt", "second");
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+
+        let r = run(&repo, r#"{"op":"reflog"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        let entries = r["info"]["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 3, "{r}");
+        assert_eq!(entries[0]["selector"], "HEAD@{0}");
+        assert_eq!(entries[0]["new"], first);
+        assert_eq!(entries[0]["old"], lost);
+        assert!(
+            entries[0]["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("reset: moving to")
+        );
+        assert_eq!(entries[0]["reachable"], true);
+        assert_eq!(entries[1]["new"], lost);
+        assert_eq!(entries[1]["subject"], "second");
+        assert_eq!(entries[1]["reachable"], false);
+        // 最初のコミットの行は、HEAD を作った行。
+        assert_eq!(entries[2]["old"], serde_json::Value::Null);
+        assert_eq!(entries[2]["subject"], "first");
+
+        let limited = run(&repo, r#"{"op":"reflog","limit":1}"#);
+        assert_eq!(limited["info"]["entries"].as_array().unwrap().len(), 1);
+        let branch = run(&repo, r#"{"op":"reflog","name":"refs/heads/main"}"#);
+        assert_eq!(
+            branch["info"]["entries"][0]["selector"],
+            "refs/heads/main@{0}"
+        );
+        let none = run(&repo, r#"{"op":"reflog","name":"refs/heads/nothing"}"#);
+        assert_eq!(none["info"]["entries"].as_array().unwrap().len(), 0);
+
+        // linked worktree の HEAD の reflog は、その worktree のもの（作ったときの行と、そこでのコミット）。
+        let wt = dir.join("wt");
+        git(
+            dir,
+            &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()],
+        );
+        let side = commit_file(&wt, "c.txt", "on side");
+        let linked = Repository::new(GixBackend::open(&wt).unwrap());
+        let r = run(&linked, r#"{"op":"reflog"}"#);
+        let entries = r["info"]["entries"].as_array().unwrap();
+        assert_eq!(entries[0]["new"], side, "{r}");
+        assert!(entries.iter().skip(1).all(|e| e["new"] == first), "{r}");
     }
 
     fn log(dir: &std::path::Path) -> Vec<String> {
