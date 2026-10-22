@@ -21,11 +21,12 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 ┌ Tabs: amonhen-standalone │ linux │ vscode-amonhen │ + ─────────────────────────────────────────┐
 │ [◧] main ↑2↓0 │ Fetch Pull Push │ Branch Merge Rebase │ Stash Pop │  ⟳ 2 ops  ↶  🔍____ │
 ├────────────┬──────────────────────────────────────────────────────────────────────────────┤
-│ WORKSPACE  │ (one of Working Copy / History / Conflicts / Stashes)                        │
+│ WORKSPACE  │ (one of Working Copy / History / Conflicts / Stashes / Reflog)               │
 │  Changes 5 │                                                                              │
 │  History   │                                                                              │
 │  Conflicts │                                                                              │
 │  Stashes 2 │                                                                              │
+│  Reflog    │                                                                              │
 │ BRANCHES   │                                                                              │
 │ REMOTES    │                                                                              │
 │ PULL REQS  │                                                                              │
@@ -44,7 +45,7 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
   first and lists the names).
 - Workspace holds the rows that switch the main view. Stashes, after History (and Conflicts), appears only when there
   are stashes, with a count, and opens the Stashes view (section 5a); the stashes themselves are listed there, not in
-  the sidebar.
+  the sidebar. Reflog, always last, opens the Reflog view (section 5b).
 - Pull Requests and Worktrees appear only when there is something to show.
 
 ## 1. Multiple repositories: tabs and separate windows
@@ -177,6 +178,21 @@ worktree being edited.
   creates a branch at the base, switches to it and applies the stash there, so it does not conflict however far HEAD
   has moved. With two or more worktrees, the bar says which worktree it applies to (✎).
 - After the last stash is popped or dropped, the view switches to History.
+
+## 5b. Reflog
+
+The reflog of the edited worktree's HEAD: every place HEAD has been, newest first, including commits that a reset,
+rebase or amend left behind and that no branch reaches any more. It is where those are found and brought back.
+
+- Selecting Reflog in the sidebar (View > Reflog ⌘5) opens this view: the entries on the left and the selected
+  entry's commit on the right, in the same column as History's detail.
+- Each row shows `HEAD@{n}` and what was done (git's message: `commit: …`, `checkout: moving from a to b`,
+  `reset: moving to …`), then, in orange, "not on any branch" when no ref reaches the commit, when, the short ID and
+  the commit's subject.
+- New Branch… and Checkout (detached) sit above the list. Each row's context menu also has New Tag, Show in History
+  (for commits History has), Copy Commit ID and Copy Name. With two or more worktrees, the bar says whose HEAD it is
+  (✎).
+- It reloads when HEAD moves and when the edited worktree changes.
 
 ## 6. Working Copy
 
@@ -419,7 +435,7 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 | Amon Hen | About, Settings… ⌘,, Services, Hide, Quit |
 | File | New Window ⌘N, New Tab ⌘T, Open… ⌘O, Quick Open… ⌘⇧O, Open Recent ▸, Clone… ⌃⌘C, Add Remote Repository…, Init…, Close Tab ⌘W, Close Window ⌘⇧W |
 | Edit | Standard (Undo and Redo undo text edits), Find ⌘F, Find in History ⌘⇧F, Find Next / Previous ⌘G / ⌘⇧G |
-| View | Working Copy ⌘1, History ⌘2, Conflicts ⌘3, Stashes ⌘4, Refresh ⌘R, Show Sidebar ⌃⌘S, Diff: Unified / Split ⌥⌘D, Ignore Whitespace, Wrap Lines, Font Size ⌘+ / ⌘−, History display (one line, History Items ▸ to choose branches and tags, author, date, commit ID, signature and CI status, History Order ▸ Date Order / Topological Order (both also from the button at the right of History's bar and the header's context menu, whose menu also has One Line per Commit, Fold Merged Branches and Highlight Ancestors, and from Settings > Appearance), avatars, ancestor highlighting), Commit Details: Compact / Standard / Detailed |
+| View | Working Copy ⌘1, History ⌘2, Conflicts ⌘3, Stashes ⌘4, Reflog ⌘5, Refresh ⌘R, Show Sidebar ⌃⌘S, Diff: Unified / Split ⌥⌘D, Ignore Whitespace, Wrap Lines, Font Size ⌘+ / ⌘−, History display (one line, History Items ▸ to choose branches and tags, author, date, commit ID, signature and CI status, History Order ▸ Date Order / Topological Order (both also from the button at the right of History's bar and the header's context menu, whose menu also has One Line per Commit, Fold Merged Branches and Highlight Ancestors, and from Settings > Appearance), avatars, ancestor highlighting), Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H, Go to Ref… ⌘⇧J, Go to Parent / Child ⌥⌘↓ / ⌥⌘↑, Next / Previous Hunk, Next / Previous File, Next Conflict |
 | Repository | Fetch ⌃⌘F, Pull ⌃⌘L, Push ⌃⌘P, Stash ⌥⌘S, Pop ⌥⌘⇧S, New Branch… ⌥⌘B, New Tag… ⌥⌘T, Merge… ⌥⌘M, Rebase… ⌥⌘R, Interactive Rebase…, Continue / Skip / Abort, Undo (operation name) ⌥⌘Z, Repository Settings… ⌘;, Open in Terminal, Reveal in Finder, Open in Editor, Open on GitHub |
 | Commit | Commit ⌘↩, Commit and Push ⌘⇧↩, Amend ⌥⌘↩, Include All, Exclude All, Toggle Selection (Space), Discard…, Cherry-pick, Revert, Reword…, Create Patch… |

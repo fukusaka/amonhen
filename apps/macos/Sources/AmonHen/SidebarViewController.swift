@@ -1,8 +1,9 @@
 import AmonhenKit
 import AppKit
 
-/// サイドバー: Workspace（Working Copy・History・Conflicts・Stashes）/ Branches / Pull Requests / Remotes / Tags /
-/// Submodules。Workspace の行は、メインの画面を切り替える（Stashes は stash の画面を開く）。
+/// サイドバー: Workspace（Working Copy・History・Conflicts・Stashes・Reflog）/ Branches / Pull Requests / Remotes /
+/// Tags / Submodules。Workspace の行は、メインの画面を切り替える（Stashes は stash の画面、Reflog は HEAD の reflog
+/// の画面を開く）。
 final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate,
     NSPopoverDelegate
 {
@@ -15,7 +16,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private var headBranch: String?
     /// サブモジュールを新しいウィンドウで開く（作業ツリーからのパス）。
     var onOpenSubmodule: ((String) -> Void)?
-    /// Working Copy・History・Stashes を選んだとき。
+    /// Working Copy・History・Stashes・Reflog を選んだとき。
     var onSelectPage: ((Page) -> Void)?
     /// プルリクエストの右クリック: チェックアウト（gh pr checkout）。
     var onCheckoutPullRequest: ((PullRequest) -> Void)?
@@ -27,7 +28,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onClickPullRequestCI: ((PullRequest, NSView) -> Void)?
 
     enum Page {
-        case workingCopy, history, stashes
+        case workingCopy, history, stashes, reflog
     }
 
     private final class Node {
@@ -68,15 +69,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let conflictsNode = Node(title: L("Conflicts"), page: .workingCopy)
     /// stash があるときだけ、数を添えて出す。選ぶと Stashes の画面を開く。
     private let stashesNode = Node(title: "Stashes", page: .stashes)
-    private lazy var workspace = Node(title: "Workspace", children: [workingCopyNode, historyNode])
+    /// いつも Workspace の最後に出す。選ぶと Reflog の画面を開く。
+    private let reflogNode = Node(title: "Reflog", page: .reflog)
+    private lazy var workspace = Node(title: "Workspace", children: [workingCopyNode, historyNode, reflogNode])
     /// Conflicts を選んだ（最初のコンフリクトのファイルを開く）。
     var onSelectConflicts: (() -> Void)?
 
-    /// Workspace の中身: Working Copy・History と、あるときだけ Conflicts・Stashes。
+    /// Workspace の中身: Working Copy・History と、あるときだけ Conflicts・Stashes、最後に Reflog。
     private func workspaceChildren() -> [Node] {
         [workingCopyNode, historyNode]
             + (conflictsNode.badge != nil ? [conflictsNode] : [])
             + (stashesNode.badge != nil ? [stashesNode] : [])
+            + [reflogNode]
     }
 
     /// コンフリクトのファイルの数（0 なら Conflicts を出さない）。
@@ -680,6 +684,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .workingCopy: workingCopyNode
         case .history: historyNode
         case .stashes: stashesNode
+        case .reflog: reflogNode
         }
         if groups.isEmpty {
             groups = [workspace]
@@ -840,6 +845,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case .workingCopy: return "square.and.pencil"
             case .history: return "clock"
             case .stashes: return "tray.2"
+            case .reflog: return "clock.arrow.circlepath"
             }
         }
         if node.pullRequest != nil { return "arrow.triangle.pull" }

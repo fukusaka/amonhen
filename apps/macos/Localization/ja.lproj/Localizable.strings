@@ -1057,3 +1057,10 @@
 "not in HEAD’s history" = "HEAD の履歴にない";
 "at HEAD" = "HEAD と同じ";
 "%ld behind HEAD" = "HEAD から %ld 個後ろ";
+
+// Reflog の画面
+"Create a branch at this commit and switch to it" = "このコミットにブランチを作って切り替える";
+"Check out this commit as a detached HEAD" = "このコミットを detached HEAD でチェックアウトする";
+"HEAD of ✎ %@" = "✎ %@ の HEAD";
+"not on any branch" = "どのブランチにもない";
+"Show in History" = "History で見る";

@@ -85,6 +85,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(item("Working Copy", #selector(RepositoryWindow.showWorkingCopy(_:)), "1"))
         menu.addItem(item("History", #selector(RepositoryWindow.showHistory(_:)), "2"))
         menu.addItem(item("Stashes", #selector(RepositoryWindow.showStashes(_:)), "4"))
+        menu.addItem(item("Reflog", #selector(RepositoryWindow.showReflog(_:)), "5"))
         menu.addItem(.separator())
         let refresh = item(L("Refresh"), #selector(RepositoryWindow.refreshRepository(_:)), "r")
         refresh.toolTip = L("Reload History, branches and Working Copy (they normally reload on their own when something changes)")

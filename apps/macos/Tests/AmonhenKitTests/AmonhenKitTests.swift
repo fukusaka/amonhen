@@ -210,6 +210,21 @@ private func makeRepo() throws -> URL {
     #expect(refs.items.map(\.name) == ["main"])
 }
 
+@Test func readsTheReflog() throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    try git(dir, "reset", "-q", "--hard", "HEAD~1")
+    let repo = try Repository(path: dir.path)
+    let entries = try repo.reflog()
+    #expect(entries.map(\.selector) == ["HEAD@{0}", "HEAD@{1}", "HEAD@{2}"])
+    #expect(entries[0].message.hasPrefix("reset: moving to"))
+    // reset で外れたコミットは、どのブランチからも辿れない。
+    #expect(entries[1].subject == "日本語の件名")
+    #expect(!entries[1].reachable)
+    #expect(entries[2].old == nil && entries[2].reachable)
+    #expect(try repo.reflog(limit: 1).count == 1)
+}
+
 @Test func reportsOpenErrors() {
     #expect(throws: AmonhenError.self) {
         try Repository(path: "/nonexistent/amonhen")
