@@ -77,5 +77,30 @@ gh secret set AMONHEN_NOTARY_ISSUER --env release --body "<Issuer ID>"
 
 Recreate the Developer ID certificate before it expires (currently about 1 year) and replace `AMONHEN_CERT_P12` and
 `AMONHEN_CERT_PASSWORD`. Without the secrets, builds are ad-hoc signed. Locally, passing a certificate name in
-`AMONHEN_SIGN_IDENTITY` signs with that certificate. The Windows and Linux engines are not signed (downloading on
-Windows with a browser triggers a SmartScreen warning; the one bundled with the VSCode extension runs without a warning).
+`AMONHEN_SIGN_IDENTITY` signs with that certificate. The Windows and Linux engines are not signed (see below).
+
+## Windows engines are not signed
+
+The Windows engines are left unsigned for now. Checked in October 2026 with v0.2.5 and vscode-v0.2.3 on Windows 11 Pro:
+
+- Windows adds the Mark of the Web to a zip downloaded with a browser. Explorer's Extract All carries it over to
+  `amonhen.exe`; `Expand-Archive` (Windows PowerShell 5.1 and PowerShell 7) doesn't. `Invoke-WebRequest` and `curl`
+  don't add it in the first place.
+- SmartScreen ("Windows protected your PC") appears only when a marked `amonhen.exe` is started from Explorer
+  (double-click). Started from a terminal, even a marked one runs without a warning.
+- `amonhen.exe install` writes the engine into `%LOCALAPPDATA%\amonhen` as a new file, so the installed engine (the CLI
+  and the shared daemon) has no mark.
+- The engines bundled in the .vsix have no mark (also over Remote-SSH), and the extension starts them without a warning.
+- Smart App Control (Windows 11) blocks unsigned executables wherever they come from, the bundled engine included. It
+  is on only on some clean installs, and was off on the machine checked.
+
+Signing was weighed against what it would change:
+
+- Azure Artifact Signing (formerly Trusted Signing, $9.99 a month) takes individuals only in the US and Canada.
+- An individual (IV/OV) certificate with cloud signing usable from CI (such as SSL.com eSigner) costs about $300 a year,
+  and certificates now last at most 460 days.
+- Signing doesn't remove the SmartScreen warning at once (EV no longer does either): the reputation still has to build
+  up. What it would fix is Smart App Control blocking the engine.
+
+Reconsider when Smart App Control blocks the engine for a user, when Artifact Signing accepts individuals outside the US
+and Canada, or when a Windows FE (an app started by double-click) is released.
