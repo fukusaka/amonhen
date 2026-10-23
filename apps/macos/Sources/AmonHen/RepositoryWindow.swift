@@ -1236,9 +1236,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     private func openFileHistory(path: String) {
-        FileHistoryWindowController.show(path: path, repository: repository, renderer: textRenderer) { [weak self] id in
-            self?.reveal(commit: id)
-        }
+        FileHistoryWindowController.show(
+            path: path, repository: repository, renderer: textRenderer,
+            onSelectCommit: { [weak self] id in self?.reveal(commit: id) },
+            onBlame: { [weak self] path, commit in self?.openBlame(path: path, rev: commit) })
     }
 
     /// History に切り替えて `commit` を選ぶ。今の範囲になければ全ブランチにする。

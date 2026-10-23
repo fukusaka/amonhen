@@ -156,7 +156,7 @@ final class BlameRowView: NSTableRowView {
 /// ファイルの履歴: 左にファイルを変えたコミット、右にそのコミットでのファイルの差分。名前の変更も追う。
 /// 窓はすぐに開き、新しい方の `firstPage` 個を先に出してから残りを足す。名前が変わっていれば、名前ごとにその時点の
 /// パスの見出しを挟む（上に張り付くので、今どの名前の頃を見ているかが分かる）。
-final class FileHistoryWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
+final class FileHistoryWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     /// 一覧の行。
     enum Row: Equatable {
         /// その下のコミットの時点のパス。`index` はその下の最初のコミットの番号。
@@ -174,26 +174,44 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
     private var entries: [FileHistory.Entry] = []
     private var rows: [Row] = [.loading]
     private var complete = false
-    private let table = NSTableView()
+    private let table = Table()
     private let diffView: DiffViewController
     private let onSelectCommit: (Data) -> Void
+    private let onBlame: (String, String) -> Void
     /// 差分を出しているコミット（読み直して選び直しても、同じなら読み直さない）。
     private var shown: String?
     private var request = 0
 
-    static func show(path: String, repository: Repository, renderer: TextRenderer, onSelectCommit: @escaping (Data) -> Void) {
+    /// ⏎ で History へ、⌘C で ID をコピーする（表の中で）。
+    private final class Table: NSTableView {
+        var onReturn: (() -> Void)?
+        var onCopy: (() -> Void)?
+        override func keyDown(with event: NSEvent) {
+            if event.keyCode == 36 || event.keyCode == 76 { onReturn?() } else { super.keyDown(with: event) }
+        }
+        @objc func copy(_ sender: Any?) { onCopy?() }
+    }
+
+    static func show(
+        path: String, repository: Repository, renderer: TextRenderer,
+        onSelectCommit: @escaping (Data) -> Void, onBlame: @escaping (_ path: String, _ commit: String) -> Void
+    ) {
         let controller = FileHistoryWindowController(
-            path: path, repository: repository, renderer: renderer, onSelectCommit: onSelectCommit)
+            path: path, repository: repository, renderer: renderer, onSelectCommit: onSelectCommit, onBlame: onBlame)
         controller.showWindow(nil)
         FileToolWindows.keep(controller)
         controller.load()
     }
 
-    private init(path: String, repository: Repository, renderer: TextRenderer, onSelectCommit: @escaping (Data) -> Void) {
+    private init(
+        path: String, repository: Repository, renderer: TextRenderer,
+        onSelectCommit: @escaping (Data) -> Void, onBlame: @escaping (String, String) -> Void
+    ) {
         self.path = path
         self.repository = repository
         self.diffView = DiffViewController(renderer: renderer)
         self.onSelectCommit = onSelectCommit
+        self.onBlame = onBlame
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
@@ -218,6 +236,11 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
         table.delegate = self
         table.target = self
         table.doubleAction = #selector(openClickedCommit)
+        table.onReturn = { [weak self] in self?.selectedEntry.map { self?.showInHistory($0) } }
+        table.onCopy = { [weak self] in self?.selectedEntry.map { self?.copy($0.oid) } }
+        let menu = NSMenu()
+        menu.delegate = self
+        table.menu = menu
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 780))
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -307,6 +330,31 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
     private func showInHistory(_ entry: FileHistory.Entry) {
         guard let id = Data(hex: entry.oid) else { return }
         onSelectCommit(id)
+    }
+
+    private func copy(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
+    }
+
+    // MARK: - NSMenuDelegate
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+        guard let entry = entry(at: table.clickedRow) else { return }
+        let short = String(entry.oid.prefix(8))
+        func add(_ title: String, key: String = "", _ handler: @escaping () -> Void) {
+            let item = ClosureMenuItem(title: title, action: handler)
+            item.keyEquivalent = key
+            item.keyEquivalentModifierMask = key == "c" ? .command : []
+            menu.addItem(item)
+        }
+        add(L("Show in History"), key: "\r") { [weak self] in self?.showInHistory(entry) }
+        add("Blame at \(short)") { [weak self] in self?.onBlame(entry.path, entry.oid) }
+        menu.addItem(.separator())
+        add(L("Copy Commit ID"), key: "c") { [weak self] in self?.copy(entry.oid) }
+        add(L("Copy Short ID")) { [weak self] in self?.copy(short) }
+        add(L("Copy Path")) { [weak self] in self?.copy(entry.path) }
     }
 
     // MARK: - NSTableView
