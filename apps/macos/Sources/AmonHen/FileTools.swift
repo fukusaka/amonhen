@@ -1,5 +1,6 @@
 import AmonhenKit
 import AppKit
+import CAmonhen
 
 private let fileToolDate: DateFormatter = {
     let f = DateFormatter()
@@ -129,6 +130,10 @@ final class BlameViewController: FileToolViewController, NSTableViewDataSource, 
     private var blame: Blame?
     /// 行ごとの、まとまりの番号（背景を交互に変える）と、まとまりの中で何行目か。
     private var blocks: [(index: Int, offset: Int)] = []
+    /// 構文の色の範囲（行をつないだ文章の先頭からの UTF-16、始まりの順）と、各行の先頭の位置。読めたら描き直す。
+    private var syntax: [AmonhenSyntaxSpan] = []
+    private var lineStarts: [Int] = []
+    private let palette = SyntaxColors.palette
     private let table = NSTableView()
     private let message = NSTextField(labelWithString: L("Loading…"))
     private let onSelectCommit: (Data) -> Void
@@ -179,6 +184,52 @@ final class BlameViewController: FileToolViewController, NSTableViewDataSource, 
         self.blame = blame
         message.isHidden = true
         table.reloadData()
+        colorSyntax(blame)
+    }
+
+    /// 行をつないだ文章を裏で解析し、構文の色を付ける（差分と同じ色）。
+    private func colorSyntax(_ blame: Blame) {
+        var starts: [Int] = []
+        var position = 0
+        for line in blame.lines {
+            starts.append(position)
+            position += (line.t as NSString).length + 1
+        }
+        let text = blame.lines.map(\.t).joined(separator: "\n")
+        let path = self.path
+        Task { [weak self] in
+            let spans = await Task.detached(priority: .utility) {
+                SyntaxSpans.highlight(path: path, text: text)?.withSpans { Array($0) } ?? []
+            }.value
+            guard let self, !spans.isEmpty else { return }
+            lineStarts = starts
+            syntax = spans
+            let code = table.column(withIdentifier: .init("code"))
+            if code >= 0 { table.reloadData(forRowIndexes: IndexSet(0..<table.numberOfRows), columnIndexes: [code]) }
+        }
+    }
+
+    /// `row` 行目の文字に、構文の色を付けたもの。
+    private func colored(_ text: String, row: Int, font: NSFont?) -> NSAttributedString {
+        let result = NSMutableAttributedString(string: text, attributes: [
+            .font: font ?? .monospacedSystemFont(ofSize: 12, weight: .regular), .foregroundColor: NSColor.labelColor,
+        ])
+        let start = lineStarts[row], end = start + result.length
+        // 範囲は重ならず始まりの順なので、終わりもその順。この行にかかる最初の範囲を二分探索で探す。
+        var low = 0, high = syntax.count
+        while low < high {
+            let mid = (low + high) / 2
+            if Int(syntax[mid].end) <= start { low = mid + 1 } else { high = mid }
+        }
+        while low < syntax.count, Int(syntax[low].start) < end {
+            let span = syntax[low]
+            let from = max(Int(span.start), start) - start, to = min(Int(span.end), end) - start
+            if to > from {
+                result.addAttribute(.foregroundColor, value: palette[Int(span.kind) & 15], range: NSRange(location: from, length: to - from))
+            }
+            low += 1
+        }
+        return result
     }
 
     override func makeContent() -> NSView {
@@ -263,7 +314,11 @@ final class BlameViewController: FileToolViewController, NSTableViewDataSource, 
         case "number":
             field.stringValue = "\(row + 1)"
         default:
-            field.stringValue = line.t
+            if syntax.isEmpty || row >= lineStarts.count {
+                field.stringValue = line.t
+            } else {
+                field.attributedStringValue = colored(line.t, row: row, font: field.font)
+            }
         }
         return field
     }

@@ -11,6 +11,7 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Blame colors the code by syntax, as diffs do.
 - View > Show Tab Bar (⇧⌘T) shows the tab bar of a window with one tab, so its tab can be dragged into another
   window, and Window > Move Tab to Window ▸ moves the front tab into the window chosen (for File History and Blame,
   the repository's window comes first).
