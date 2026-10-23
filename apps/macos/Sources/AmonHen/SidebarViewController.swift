@@ -101,8 +101,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     private let outline = SidebarOutlineView()
-    /// リモートの名前（リモートブランチのあるもの）。タグの push・削除の送り先。
-    private var remoteNames: [String] = []
+    /// リモートブランチのあるリモートの名前（タグの様子をまだ読んでいないときの、タグの送り先）。
+    private var branchRemotes: [String] = []
+    /// タグがどのリモートにあるか（fetch のときにコアが読んで覚えたもの）。
+    private var tagRemotes: TagRemotes?
+    /// タグの push・削除の送り先（すべてのリモート）。
+    private var remoteNames: [String] { tagRemotes?.remotes.map(\.name) ?? branchRemotes }
+
+    func show(tagRemotes: TagRemotes) {
+        guard tagRemotes != self.tagRemotes else { return }
+        self.tagRemotes = tagRemotes
+        rebuild(first: false)
+    }
     private var groups: [Node] = []
     private var generation: UInt64?
     /// ブランチ名の絞り込みの欄（サイドバーの上）。
@@ -403,7 +413,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let parts = item.name.split(separator: "/", maxSplits: 1).map(String.init)
             remotes[parts[0], default: []].append(Node(title: parts.count > 1 ? parts[1] : item.name, item: item))
         }
-        remoteNames = remotes.keys.sorted()
+        branchRemotes = remotes.keys.sorted()
         if !remotes.isEmpty {
             groups.append(Node(title: "Remotes", children: remotes.keys.sorted().map {
                 let node = Node(title: $0, children: remotes[$0]!)
@@ -728,7 +738,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
         var badge = node.badge ?? ""
         /// 右端のアイコン（SF Symbols の名前, ツールチップ）。
-        var marks: [(String, String)] = []
+        var marks: [(String, String, NSColor)] = []
         if let item = node.item, item.kind == .local, let other = otherWorktree(using: item.name) {
             // ほかの worktree が checkout している（git はここでは checkout させない）。名前は長いことが多いので、
             // 行には印だけを出し、worktree の名前はツールチップに（ブランチ名を隠さない）。メインの作業ツリーは ⌂、
@@ -751,8 +761,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             // （行の右端。意味はツールチップ）。
             let merged = branchFacts[item.name].map { $0.merged && !$0.atBase } ?? false
                 && !node.isHead && item.name != branchGroups?.base
-            marks = [merged ? ("arrow.triangle.merge", L("Merged into %@", branchGroups?.base ?? "main")) : nil,
-                     item.gone ? ("icloud.slash", L("Its upstream %@ no longer exists on the remote", item.detail ?? "")) : nil]
+            marks = [merged ? ("arrow.triangle.merge", L("Merged into %@", branchGroups?.base ?? "main"), .secondaryLabelColor) : nil,
+                     item.gone ? ("icloud.slash", L("Its upstream %@ no longer exists on the remote", item.detail ?? ""), .secondaryLabelColor) : nil]
                 .compactMap { $0 }
             // worktree が 2 つ以上なら、今のブランチ（書き込む先のもの）に ✎ を添える。
             if node.isHead, editingInfo != nil {
@@ -763,6 +773,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             if node.isPinned, node.stackedOn != nil {
                 badge = badge.isEmpty ? "↳" : "↳ " + badge
             }
+        }
+        if let item = node.item, item.kind == .tag, let mark = tagMark(item.name) {
+            marks = [mark]
         }
         if node === cleanWorktreesNode { badge = "\(node.children.count)" }
         if let w = node.worktree {
@@ -775,12 +788,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         } else {
             // アイコンは文字に添付して並べる（アイコンの後に、数などの文字）。
             let text = NSMutableAttributedString()
-            for (symbol, _) in marks {
+            for (symbol, _, color) in marks {
                 let attachment = NSTextAttachment()
                 attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
                     .withSymbolConfiguration(.init(pointSize: NSFont.smallSystemFontSize, weight: .regular))
                 let icon = NSMutableAttributedString(attachment: attachment)
-                icon.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: NSRange(location: 0, length: icon.length))
+                icon.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: icon.length))
                 text.append(icon)
                 text.append(NSAttributedString(string: " "))
             }
@@ -805,6 +818,17 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             cell.onBadgeClick = { [weak self, weak cell] in
                 guard let self, let cell else { return }
                 showBranchStatus(item, isHead: node.isHead, editing: editing, from: cell.badge)
+            }
+        }
+        // タグは、どのリモートにあるかをツールチップに（手元の ref からは分からないので、fetch のときに読んだもの）。
+        if let item = node.item, item.kind == .tag {
+            cell.toolTip = ([marks.first?.1] + remoteNames.map { tagStateText(item.name, on: $0) })
+                .compactMap { $0 }.joined(separator: "\n")
+            if !marks.isEmpty {
+                cell.onBadgeClick = { [weak self, weak cell] in
+                    guard let self, let cell else { return }
+                    showTagStatus(item, from: cell.badge)
+                }
             }
         }
         if let w = node.worktree {
@@ -1105,46 +1129,135 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    /// タグの push と削除。手元の削除は Undo できる。リモートからの削除は戻せない（もう一度 push するしかない）
-    /// ので、名前を並べて確かめる。
+    /// タグの push と削除。fetch のときに読んだリモートの様子に合わせて、まだないリモートにだけ Push、違うコミットを
+    /// 指すリモートには Replace（置き換え）、あるリモートにだけ「… から削除」を出す。まだ読んでいないリモートには
+    /// 全部出し、そう断る。手元の削除は Undo できる。リモートでの置き換え・削除は戻せない（もう一度 push する
+    /// しかない）ので、名前を並べて確かめる。
     private func addTagItems(_ names: [String], to menu: NSMenu, actions: Actions) {
-        let one = names.count == 1 ? names[0] : nil
-        let list = names.joined(separator: "\n") + "\n\n"
+        let list = { (names: [String]) in names.joined(separator: "\n") + "\n\n" }
         func add(_ title: String, _ action: @escaping () -> Void) {
             menu.addItem(ClosureMenuItem(title: title, action: action))
         }
+        var pushes: [(String, [String])] = []
+        var replaces: [(String, [String])] = []
+        var deletes: [(String, [String])] = []
         for remote in remoteNames {
-            add(one.map { "Push \($0) to \(remote)" } ?? L("Push %ld Tags to %@", names.count, remote)) {
-                actions.perform(["op": "pushTags", "remote": remote, "names": names])
+            let checked = tagRemotes?.checked(remote) != nil
+            let state = { (name: String) in self.tagRemotes?.state(of: name, on: remote) }
+            let toPush = checked ? names.filter { state($0) == .missing } : names
+            let toReplace = checked ? names.filter { state($0) == .different } : []
+            let onRemote = checked ? names.filter { state($0) != .missing } : names
+            if !toPush.isEmpty { pushes.append((remote, toPush)) }
+            if !toReplace.isEmpty { replaces.append((remote, toReplace)) }
+            if !onRemote.isEmpty { deletes.append((remote, onRemote)) }
+        }
+        for (remote, tags) in pushes {
+            add(tags.count == 1 ? "Push \(tags[0]) to \(remote)" : L("Push %ld Tags to %@", tags.count, remote)) {
+                actions.perform(["op": "pushTags", "remote": remote, "names": tags])
             }
         }
-        add(one.map { L("Delete %@…", $0) } ?? L("Delete %ld Tags…", names.count)) { [weak self] in
+        for (remote, tags) in replaces {
+            add(tags.count == 1 ? L("Replace %@ on %@…", tags[0], remote) : L("Replace %ld Tags on %@…", tags.count, remote)) { [weak self] in
+                self?.confirmReplace(tags, on: remote, actions: actions)
+            }
+        }
+        if !pushes.isEmpty || !replaces.isEmpty { menu.addItem(.separator()) }
+        add(names.count == 1 ? L("Delete %@…", names[0]) : L("Delete %ld Tags…", names.count)) { [weak self] in
             self?.confirmDestructive(
-                one.map { L("Delete tag %@?", $0) } ?? L("Delete %ld tags?", names.count),
-                message: list + L("Only your own copy is deleted; the remotes keep theirs.") + " " + L("You can Undo it afterwards (⌥⌘Z).")
+                names.count == 1 ? L("Delete tag %@?", names[0]) : L("Delete %ld tags?", names.count),
+                message: list(names) + L("Only your own copy is deleted; the remotes keep theirs.") + " " + L("You can Undo it afterwards (⌥⌘Z).")
             ) {
                 actions.perform(sequence: names.map { ["op": "deleteTag", "name": $0] })
             }
         }
-        for remote in remoteNames {
-            add(one.map { L("Delete %@ from %@…", $0, remote) } ?? L("Delete %ld Tags from %@…", names.count, remote)) { [weak self] in
+        for (remote, tags) in deletes {
+            let unchecked = tagRemotes?.checked(remote) == nil
+            add(tags.count == 1 ? L("Delete %@ from %@…", tags[0], remote) : L("Delete %ld Tags from %@…", tags.count, remote)) { [weak self] in
                 self?.confirmDestructive(
-                    one.map { L("Delete %@ from %@?", $0, remote) } ?? L("Delete %ld tags from %@?", names.count, remote),
-                    message: list + L("Everyone who fetches from %@ loses them. This can’t be undone; push them again to bring them back. Your own tags are kept.", remote)
+                    tags.count == 1 ? L("Delete %@ from %@?", tags[0], remote) : L("Delete %ld tags from %@?", tags.count, remote),
+                    message: list(tags)
+                        + L("Everyone who fetches from %@ loses them. This can’t be undone; push them again to bring them back. Your own tags are kept.", remote)
+                        + (unchecked ? " " + L("Whether %@ has them hasn’t been checked yet (Fetch reads it).", remote) : "")
                 ) {
-                    actions.perform(["op": "pushTags", "remote": remote, "names": names, "delete": true])
+                    actions.perform(["op": "pushTags", "remote": remote, "names": tags, "delete": true])
                 }
             }
         }
     }
 
-    /// 消す操作の前に、シートで確かめる（Delete は赤いボタン）。
-    private func confirmDestructive(_ title: String, message: String, then perform: @escaping () -> Void) {
+    /// 同じ名前で違うコミットを指すリモートのタグを、手元のもので置き換える前に確かめる。
+    private func confirmReplace(_ tags: [String], on remote: String, actions: Actions) {
+        confirmDestructive(
+            tags.count == 1 ? L("Replace %@ on %@?", tags[0], remote) : L("Replace %ld tags on %@?", tags.count, remote),
+            message: tags.joined(separator: "\n") + "\n\n"
+                + L("On %@, a tag with this name points to another commit. Replacing it moves the tag there to your commit for everyone who fetches from %@ (their own copies stay until they fetch with --force). This can’t be undone.", remote, remote),
+            ok: L("Replace")
+        ) {
+            actions.perform(["op": "pushTags", "remote": remote, "names": tags, "force": true])
+        }
+    }
+
+    /// タグの行の右端の印: どの（読んだ）リモートにもない、または、どれかのリモートで違うコミットを指す。
+    private func tagMark(_ name: String) -> (String, String, NSColor)? {
+        guard let tagRemotes else { return nil }
+        let checked = tagRemotes.remotes.filter { $0.checked != nil }.map(\.name)
+        guard !checked.isEmpty else { return nil }
+        let different = checked.filter { tagRemotes.state(of: name, on: $0) == .different }
+        if !different.isEmpty {
+            return ("exclamationmark.icloud", L("Points to a different commit on %@", different.joined(separator: ", ")), .systemOrange)
+        }
+        if checked.allSatisfy({ tagRemotes.state(of: name, on: $0) == .missing }) {
+            return ("icloud.slash", L("Not on any remote (as of the last fetch)"), .secondaryLabelColor)
+        }
+        return nil
+    }
+
+    /// タグの、リモート 1 つでの様子の一文（ツールチップ・吹き出し）。
+    private func tagStateText(_ name: String, on remote: String) -> String {
+        guard tagRemotes?.checked(remote) != nil else { return L("%@: not checked yet (Fetch reads it)", remote) }
+        return switch tagRemotes?.state(of: name, on: remote) {
+        case .same?: L("%@: has it", remote)
+        case .different?: L("%@: has this name on another commit", remote)
+        case .missing?, nil: L("%@: doesn’t have it", remote)
+        }
+    }
+
+    /// タグの行の右端の印を押したときの吹き出し（リモートごとの様子と、push・置き換え）。
+    private func showTagStatus(_ item: RefItem, from view: NSView) {
+        let key = "tag:" + item.name
+        if let shown = statusPopover, shown.isShown, statusShown == key {
+            shown.close()
+            return
+        }
+        if let closed = statusClosed, closed.name == key, CACurrentMediaTime() - closed.at < 0.3 {
+            statusClosed = nil
+            return
+        }
+        guard let actions, let mark = tagMark(item.name) else { return }
+        let rows: [TagStatusPopover.Row] = remoteNames.map { remote in
+            TagStatusPopover.Row(
+                remote: remote, state: tagRemotes?.state(of: item.name, on: remote),
+                checked: tagRemotes?.checked(remote).map { Date(timeIntervalSince1970: TimeInterval($0) / 1000) })
+        }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.delegate = self
+        popover.contentViewController = TagStatusPopover(
+            item: item, mark: mark, rows: rows,
+            onPush: { remote in actions.perform(["op": "pushTags", "remote": remote, "names": [item.name]]) },
+            onReplace: { [weak self] remote in self?.confirmReplace([item.name], on: remote, actions: actions) })
+        popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+        statusPopover = popover
+        statusShown = key
+    }
+
+    /// 消す・置き換える操作の前に、シートで確かめる（ボタンは赤）。
+    private func confirmDestructive(_ title: String, message: String, ok: String = L("Delete"), then perform: @escaping () -> Void) {
         guard let window = view.window else { return }
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        let button = alert.addButton(withTitle: L("Delete"))
+        let button = alert.addButton(withTitle: ok)
         button.hasDestructiveAction = true
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { response in

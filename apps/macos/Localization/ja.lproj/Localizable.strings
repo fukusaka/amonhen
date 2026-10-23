@@ -1086,3 +1086,28 @@
 "Delete %@ from %@?" = "%@ を %@ から削除しますか？";
 "Delete %ld tags from %@?" = "%ld 個のタグを %@ から削除しますか？";
 "Everyone who fetches from %@ loses them. This can’t be undone; push them again to bring them back. Your own tags are kept." = "%@ から fetch する人みんなから消えます。Undo できません（戻すには、もう一度 push します）。手元のタグは残ります。";
+
+// タグがどのリモートにあるか（タグの行の印・ツールチップ・吹き出し・メニュー）
+"Points to a different commit on %@" = "%@ では違うコミットを指している";
+"Not on any remote (as of the last fetch)" = "どのリモートにもない（最後の fetch の時点）";
+"%@: not checked yet (Fetch reads it)" = "%@: まだ確かめていない（Fetch で読む）";
+"%@: has it" = "%@: ある";
+"%@: has this name on another commit" = "%@: 同じ名前で違うコミット";
+"%@: doesn’t have it" = "%@: ない";
+"Replace %@ on %@…" = "%2$@ の %1$@ を置き換える…";
+"Replace %ld Tags on %@…" = "%2$@ の %1$ld 個のタグを置き換える…";
+"Replace %@ on %@?" = "%2$@ の %1$@ を置き換えますか？";
+"Replace %ld tags on %@?" = "%2$@ の %1$ld 個のタグを置き換えますか？";
+"Replace" = "置き換える";
+"Replace on %@…" = "%@ で置き換える…";
+"On %@, a tag with this name points to another commit. Replacing it moves the tag there to your commit for everyone who fetches from %@ (their own copies stay until they fetch with --force). This can’t be undone." = "%1$@ では、この名前のタグが違うコミットを指しています。置き換えると、%2$@ から fetch する人みんなにとって、そのタグが手元のコミットに移ります（それぞれの手元のタグは、--force で fetch するまで残ります）。Undo できません。";
+"Whether %@ has them hasn’t been checked yet (Fetch reads it)." = "%@ にあるかは、まだ確かめていません（Fetch で読みます）。";
+"Tag" = "タグ";
+"Commit" = "コミット";
+"Has it" = "ある";
+"Has this name on another commit" = "同じ名前で違うコミット";
+"Doesn’t have it" = "ない";
+"Not checked yet (Fetch reads it)" = "まだ確かめていない（Fetch で読む）";
+"read %@" = "%@に読んだ";
+"A tag with the same name points to another commit there. Fetch doesn’t overwrite your tag, so the two stay apart until one of them is replaced." = "そこでは、同じ名前のタグが違うコミットを指しています。Fetch は手元のタグを上書きしないので、どちらかを置き換えるまで、ずれたままです。";
+"Tags have no remote copies here the way branches do, so this was read from each remote at the last Fetch. Push doesn’t send tags; push this one to share it." = "タグには、ブランチのようなリモートの写しが手元にないので、最後の Fetch のときに各リモートから読みました。Push はタグを送らないので、共有するにはこのタグを push します。";

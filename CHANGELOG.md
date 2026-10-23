@@ -11,8 +11,10 @@ becomes the GitHub Release notes.
 
 #### Added
 
-- Tags can be pushed to a remote, deleted (undoably) and deleted from a remote from their context menu in the sidebar,
-  one at a time or several selected together.
+- Tags can be pushed to a remote, deleted (undoably), replaced on a remote and deleted from a remote from their
+  context menu in the sidebar, one at a time or several selected together.
+- Fetch also reads which remote has which tag, and a tag row is marked when no remote has it or a remote has the name
+  on another commit; its tooltip and popover list every remote, and the menu offers only what applies.
 
 ### [0.2.6] - 2026-10-23
 

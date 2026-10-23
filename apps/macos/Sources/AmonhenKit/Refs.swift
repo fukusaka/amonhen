@@ -178,3 +178,36 @@ public struct BranchGroups: Decodable, Equatable, Sendable {
     public let base: String?
     public let branches: [Branch]
 }
+
+/// 手元のタグごとの、リモートでの様子（`{"op":"tagRemotes"}`。`crates/core/src/remote_tags.rs`）。fetch のときに
+/// 読んで覚えたもので、手元の ref からは分からない。
+public struct TagRemotes: Decodable, Equatable, Sendable {
+    public struct Remote: Decodable, Equatable, Sendable {
+        public let name: String
+        /// タグを読んだ時刻（UNIX 時刻のミリ秒）。まだ読んでいなければ nil（そのリモートのことは分からない）。
+        public let checked: Int64?
+    }
+
+    public enum State: String, Decodable, Sendable {
+        /// 同じ名前のタグが、同じコミットを指している。
+        case same
+        /// 同じ名前のタグが、違うコミットを指している。
+        case different
+        /// そのリモートにはない。
+        case missing
+    }
+
+    /// すべてのリモート。
+    public let remotes: [Remote]
+    /// タグ → 読んだリモート → 様子（読んでいないリモートは入らない）。
+    public let tags: [String: [String: State]]
+
+    /// `tag` の `remote` での様子。まだ読んでいないリモートなら nil。
+    public func state(of tag: String, on remote: String) -> State? {
+        tags[tag]?[remote]
+    }
+
+    public func checked(_ remote: String) -> Int64? {
+        remotes.first { $0.name == remote }?.checked
+    }
+}
