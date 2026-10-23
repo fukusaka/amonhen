@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- Amon Hen needs git 2.23 or later (also on SSH hosts), as documented now; when a git command fails with an older
+  git, the error says so.
+
 ### [0.2.6] - 2026-10-23
 
 History and Reflog rows can reset the current branch to a commit (Soft, Mixed or Hard, all undoable), and a Reflog
