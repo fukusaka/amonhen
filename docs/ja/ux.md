@@ -178,9 +178,21 @@ stash は `refs/stash` とその reflog に置かれるコミット。中身は�
 - 各行は `HEAD@{n}` と何をしたか（git のメッセージ: `commit: …`、`checkout: moving from a to b`、
   `reset: moving to …`）、その下に、どの ref からも辿れなければ橙で「どのブランチにもない」、いつ、短い ID、
   コミットの件名。
-- New Branch… と Checkout（detached）は一覧の上。各行の右クリックには、ほかに New Tag、History で見る（History に
-  あるコミットだけ）、Copy Commit ID、Copy Name。worktree が 2 つ以上あれば、どの worktree の HEAD か（✎）を帯に出す。
+- New Branch… と Checkout（detached）は一覧の上。各行の右クリックには、ほかに New Tag、Reset ▸（5c 節）、History で
+  見る（History にあるコミットだけ）、Copy Commit ID、Copy Name。worktree が 2 つ以上あれば、どの worktree の HEAD か（✎）を帯に出す。
 - HEAD が動いたとき、書き込む先の worktree を変えたときに読み直す。
+
+## 5c. Reset
+
+History の行と Reflog の行の右クリックの「Reset <ブランチ> to <コミット> ▸」は、書き込む先の worktree の今のブランチ
+（detached なら HEAD）をそのコミットに動かす（`git reset`）。先に、ブランチとコミットを書いて確かめる。
+
+- Soft は外したコミットの変更を stage したまま残し、Mixed は stage せずに作業ツリーに残し、Hard は index と作業
+  ツリーもそのコミットに合わせる。
+- Hard は、コミットしていない変更を先に stash に残す（「Before reset --hard to …」。untracked のファイルは git と
+  同じく触らない）ので、なにも失わない。
+- どれも Undo（⌥⌘Z）できる: Soft と Mixed は同じ種類の reset で、Hard は `--keep` で戻す。外したコミットは Reflog
+  から辿れる。merge・rebase・cherry-pick・revert の途中はできない。
 
 ## 6. Working Copy
 

@@ -561,6 +561,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let branch = editing === opened ? latestRefs?.headBranch : info?.branch
         toolbar.setBranch(branch)
         stashes.currentBranch = branch
+        editing.actions.currentBranch = branch
         let current = latestRefs?.items.first { $0.kind == .local && $0.name == branch }
         toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0)
         if editing === opened, let head = latestRefs?.head { history.head = head }
