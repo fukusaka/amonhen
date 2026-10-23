@@ -322,7 +322,19 @@ linux（1,485,021 コミット、ref 952 個、Apple Silicon、release ビルド
 - レイアウトは各行で全レーンを走査していた（821 本で 1.0 s）。待っている行からレーンを引く索引と空きレーンの集合を持つようにした（0.18〜0.23 s）。
 - 起点が変わったら全履歴を読み直していた。前回の History に当たったら止めて、新しいコミットだけを足すようにした（`model::topo::extend`）。
 
-キャッシュがない初回の 2.4 s は、commit-graph があれば約 1.2 s になる。commit-graph がないリポジトリで `git commit-graph write --reachable` を裏で実行するかは設定で選ぶ（`writeCommitGraph`、既定は行わない。リポジトリの `.git` に書き込むため）。
+キャッシュがない初回の 2.4 s は、commit-graph があれば約 1.2 s になる。commit-graph がないリポジトリで `git commit-graph write --reachable` を裏で実行するかは設定で選ぶ（`writeCommitGraph`、既定は行わない。リポジトリの `.git` に書き込むため）。パスごとの履歴を速くする、変更のあったパスの Bloom フィルタ（`--changed-paths`）も書く。2.27 より前の git はこのオプションを知らないので、付けずに書き直す。
+
+ファイル単位の履歴（`fileHistory`）は `git log --follow` を使わない（履歴の単純化も Bloom フィルタも効かず、全コミットを歩く）。`git log --no-merges -- <path>` で辿り、いちばん古いコミットでそのパスが改名かコピーで生まれていたら（`git diff-tree -C`）、そのコミットの親から元の名前で続ける。linux（上と同じく `git clone --shared` した複製）での `amonhen run` の時間を、`git log --follow` と比べる:
+
+| ファイル | `--follow` | 今 | 今（Bloom フィルタあり） | コミットの数（`--follow` / 今） |
+| --- | --- | --- | --- | --- |
+| `kernel/sched/core.c`（改名あり） | 86 s | 1.6 s | 0.74 s | 2,924 / 2,909 |
+| `drivers/net/ethernet/intel/e1000/e1000_param.c`（改名あり） | 28 s | 1.7 s | 0.48 s | 38 / 38 |
+| `mm/page_alloc.c` | 13 s | 1.2 s | 0.52 s | 2,285 / 2,279 |
+| `MAINTAINERS` | 10 s | 3.7 s | 1.4 s | 12,808 / 12,757 |
+| `COPYING` | 9.5 s | 0.56 s | 0.25 s | 6 / 4 |
+
+- `--follow` だけが出すコミット: マージで捨てられた枝の変更（取り消された、両側に同じ変更がある）、別の根からマージした履歴の同じ名前のファイル、改名と並行して別の枝で元の名前のファイルに加え、改名の後にマージした変更。`--follow` はそのコミットで変えていないファイルからのコピーも追うが、こちらは同じコミットで変えたファイルからのコピーだけを追う。
 
 History の読み込み（起点の収集＋トポロジカル順の走査、`crates/backend-gix/examples/walk.rs`、Apple Silicon、release ビルド）:
 

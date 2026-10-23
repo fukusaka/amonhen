@@ -7,6 +7,18 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- File History is much faster in large repositories (a file in the linux kernel repository: 86 s → 1.6 s): it
+  follows renames itself instead of using `git log --follow`, so history simplification and commit-graph's changed-path
+  Bloom filters apply.
+
+#### Fixed
+
+- Writing commit-graph in the background also works with git older than 2.27, without the changed-path Bloom filters.
+
 ### [0.2.6] - 2026-10-23
 
 History and Reflog rows can reset the current branch to a commit (Soft, Mixed or Hard, all undoable), and a Reflog
