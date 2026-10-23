@@ -154,10 +154,13 @@ final class BlameRowView: NSTableRowView {
 }
 
 /// ファイルの履歴: 左にファイルを変えたコミット、右にそのコミットでのファイルの差分。名前の変更も追う。
-/// 窓はすぐに開き、新しい方の `firstPage` 個を先に出してから残りを足す。
+/// 窓はすぐに開き、新しい方の `firstPage` 個を先に出してから残りを足す。名前が変わっていれば、名前ごとにその時点の
+/// パスの見出しを挟む（上に張り付くので、今どの名前の頃を見ているかが分かる）。
 final class FileHistoryWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
     /// 一覧の行。
     enum Row: Equatable {
+        /// その下のコミットの時点のパス。`index` はその下の最初のコミットの番号。
+        case path(String, index: Int)
         case entry(Int)
         /// 残りを読んでいる。
         case loading
@@ -255,12 +258,12 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
         }.value
     }
 
-    /// 一覧を入れ替える。選んでいたコミットは選んだまま。
+    /// 一覧を入れ替える。選んでいたコミットは選んだまま（見出しが増えて行がずれても）。
     private func show(_ entries: [FileHistory.Entry], complete: Bool) {
         let selected = selectedEntry?.oid
         self.entries = entries
         self.complete = complete
-        rows = Self.rows(count: entries.count, complete: complete)
+        rows = Self.rows(for: entries.map(\.path), complete: complete)
         table.reloadData()
         updateTitle()
         let oid = selected ?? entries.first?.oid
@@ -271,9 +274,16 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
         }
     }
 
-    /// 各コミットの行と、まだ読んでいれば最後に読んでいる印。
-    static func rows(count: Int, complete: Bool) -> [Row] {
-        (0..<count).map(Row.entry) + (complete ? [] : [.loading])
+    /// 各コミットの時点のパスから、一覧の行を作る。名前が 1 つだけなら見出しは入れない（窓の題にある）。
+    static func rows(for paths: [String], complete: Bool) -> [Row] {
+        var rows: [Row] = []
+        let renamed = Set(paths).count > 1
+        for (i, path) in paths.enumerated() {
+            if renamed, i == 0 || paths[i - 1] != path { rows.append(.path(path, index: i)) }
+            rows.append(.entry(i))
+        }
+        if !complete { rows.append(.loading) }
+        return rows
     }
 
     private func updateTitle() {
@@ -303,12 +313,17 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
 
+    func tableView(_ tableView: NSTableView, isGroupRow row: Int) -> Bool {
+        if case .path = rows[row] { true } else { false }
+    }
+
     func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
         if case .entry = rows[row] { true } else { false }
     }
 
     func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
         switch rows[row] {
+        case .path: 24
         case .entry: 38
         case .loading: 30
         }
@@ -316,6 +331,26 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         switch rows[row] {
+        case .path(let path, let index):
+            // ファイル名を先に（狭くても切れない）、ディレクトリを薄く後ろに。
+            let name = (path as NSString).lastPathComponent
+            let directory = (path as NSString).deletingLastPathComponent
+            let font = NSFont.systemFont(ofSize: NSFont.smallSystemFontSize, weight: .semibold)
+            let text = NSMutableAttributedString(string: name, attributes: [.font: font, .foregroundColor: NSColor.labelColor])
+            if !directory.isEmpty {
+                text.append(NSAttributedString(string: "  " + directory, attributes: [
+                    .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize), .foregroundColor: NSColor.secondaryLabelColor,
+                ]))
+            }
+            let label = NSTextField(labelWithAttributedString: text)
+            label.lineBreakMode = .byTruncatingTail
+            label.toolTip = path
+            // 1 つ上（新しい方）のコミットで、今の名前（の 1 つ前）に変わった。
+            if index > 0 {
+                let newer = entries[index - 1]
+                label.toolTip = path + "\n" + L("Renamed or copied to %@ in %@", newer.path, String(newer.oid.prefix(8)))
+            }
+            return label
         case .entry(let i):
             let cell = tableView.makeView(withIdentifier: .init("entry"), owner: nil) as? TwoLineCell ?? TwoLineCell()
             let entry = entries[i]

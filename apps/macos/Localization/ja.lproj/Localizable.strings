@@ -403,6 +403,7 @@
 "History — %@ (%ld commits)" = "History — %@（%ld コミット）";
 "History — %@ (%ld+ commits)" = "History — %@（%ld+ コミット）";
 "History — %@ (loading…)" = "History — %@（読んでいます…）";
+"Renamed or copied to %@ in %@" = "%2$@ で %1$@ に名前を変えた（またはコピーした）";
 "No commits changed this file." = "このファイルを変えたコミットはありません";
 "Can’t read the diff" = "差分を読めません";
 
