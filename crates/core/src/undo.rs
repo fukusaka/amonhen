@@ -8,7 +8,7 @@ use amonhen_model::tr;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use amonhen_model::{HeadState, Oid, Operations, RepoFiles, ResetMode, Result, Root};
+use amonhen_model::{HeadState, Oid, Operations, RefUpdate, RepoFiles, ResetMode, Result, Root};
 use serde::{Deserialize, Serialize};
 
 const MAX_ENTRIES: usize = 50;
@@ -510,7 +510,8 @@ impl UndoLog {
                 oid: parse(&before.head.oid),
             })?;
         }
-        // 3. 残りの ref を戻す。
+        // 3. 残りの ref を戻す。チェックアウトしていないものは、1 つのトランザクションでまとめて書く。
+        let mut updates = Vec::new();
         for (name, value) in &before.refs {
             let current = after.refs.get(name).cloned().flatten();
             if done.contains(name) || *value == current {
@@ -523,8 +524,15 @@ impl UndoLog {
                 // チェックアウト中のブランチは update-ref だと作業ツリーとずれるので reset で戻す。
                 ops.reset(mode, &v)?;
             } else {
-                ops.update_ref(name, value.as_ref(), parse(&current).as_ref())?;
+                updates.push(RefUpdate {
+                    name: name.clone(),
+                    value,
+                    expected: parse(&current),
+                });
             }
+        }
+        if !updates.is_empty() {
+            ops.update_refs(&updates)?;
         }
         Ok(())
     }
@@ -667,6 +675,43 @@ mod tests {
         ];
         let values = git.resolve_refs(&refs).unwrap();
         assert!(values[0].1.is_some() && values[1].1.is_none());
+    }
+
+    #[test]
+    fn updates_refs_all_or_nothing() {
+        let (tmp, git, _) = repo();
+        let first = commit(&tmp, &git, "a.txt", "1\n");
+        let second = commit(&tmp, &git, "a.txt", "2\n");
+        git.create_branch("a", "main", false).unwrap();
+        let names = ["refs/heads/a".to_owned(), "refs/heads/b".to_owned()];
+        let update = |expected_a: Oid| {
+            git.update_refs(&[
+                RefUpdate {
+                    name: names[0].clone(),
+                    value: Some(first),
+                    expected: Some(expected_a),
+                },
+                RefUpdate {
+                    name: names[1].clone(),
+                    value: Some(first),
+                    expected: None,
+                },
+            ])
+        };
+        // a の期待値が違えば、b も作られない。
+        assert!(update(first).is_err());
+        assert_eq!(
+            git.resolve_refs(&names).unwrap(),
+            [(names[0].clone(), Some(second)), (names[1].clone(), None)]
+        );
+        update(second).unwrap();
+        assert_eq!(
+            git.resolve_refs(&names).unwrap(),
+            [
+                (names[0].clone(), Some(first)),
+                (names[1].clone(), Some(first))
+            ]
+        );
     }
 
     #[test]

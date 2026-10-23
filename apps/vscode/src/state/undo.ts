@@ -253,7 +253,8 @@ export class UndoLog {
     if (before.head.oid && before.head.branch !== after.head.branch) {
       await this.backend.switchTo({ ...before.head, oid: before.head.oid });
     }
-    // 3. 残りの ref を戻す
+    // 3. 残りの ref を戻す。checkout していないものは、1 つのトランザクションでまとめて書く
+    const updates: { name: string; value: string | null; expected: string | null }[] = [];
     for (const [name, value] of Object.entries(before.refs)) {
       const current = after.refs[name] ?? null;
       if (done.has(name) || value === current) {
@@ -263,8 +264,11 @@ export class UndoLog {
         // checkout 中のブランチは update-ref だと作業ツリーとずれるので reset で戻す
         await this.backend.reset(mode, value);
       } else {
-        await this.backend.updateRef(name, value, current);
+        updates.push({ name, value, expected: current });
       }
+    }
+    if (updates.length > 0) {
+      await this.backend.updateRefs(updates);
     }
 
     entries.pop();

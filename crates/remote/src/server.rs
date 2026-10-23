@@ -349,6 +349,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             value,
             expected,
         } => encode(&ops.update_ref(&name, value.as_ref(), expected.as_ref())?),
+        Op::UpdateRefs(updates) => encode(&ops.update_refs(&updates)?),
         Op::Reset { mode, oid } => encode(&ops.reset(mode, &oid)?),
         Op::SwitchTo(head) => encode(&ops.switch_to(&head)?),
         Op::WriteBlob(content) => encode(&ops.write_blob(&content.0)?),

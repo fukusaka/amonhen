@@ -7,17 +7,17 @@ use std::sync::Arc;
 use amonhen_layout::{Pod, Slab};
 use amonhen_model::search::TextTerm;
 use amonhen_model::{
-    CommitGraph, CommitText, HeadState, Oid, PullMode, RemoteChange, ResetMode, Result, Root,
-    Sequence, WorktreeChange,
+    CommitGraph, CommitText, HeadState, Oid, PullMode, RefUpdate, RemoteChange, ResetMode, Result,
+    Root, Sequence, WorktreeChange,
 };
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 25;
+pub const PROTOCOL_VERSION: u32 = 26;
 
 /// エンジンの実行ファイルに埋め込む印（`PROTOCOL_VERSION` と同じ数）。SSH 先へ送る前に、同梱のエンジンが
 /// この版で作られたものかを中身で確かめる（古いまま送って、つないでから版の違いで断られないように）。
-pub const PROTOCOL_MARK: &str = "amonhen-protocol=25;";
+pub const PROTOCOL_MARK: &str = "amonhen-protocol=26;";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -162,6 +162,7 @@ pub enum Op {
         value: Option<Oid>,
         expected: Option<Oid>,
     },
+    UpdateRefs(Vec<RefUpdate>),
     Reset {
         mode: ResetMode,
         oid: Oid,

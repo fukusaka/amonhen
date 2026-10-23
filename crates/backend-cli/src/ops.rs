@@ -1,7 +1,7 @@
 use amonhen_model::tr;
 use amonhen_model::{
-    ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RemoteChange, RemoteEntry,
-    ResetMode, Result, Sequence, WorktreeChange, WorktreeChanges,
+    ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RefUpdate, RemoteChange,
+    RemoteEntry, ResetMode, Result, Sequence, WorktreeChange, WorktreeChanges,
 };
 
 use crate::Git;
@@ -183,6 +183,22 @@ impl Operations for Git {
             None => self.write(&["update-ref", "-d", name, &expected]),
         }
         .map(drop)
+    }
+
+    fn update_refs(&self, updates: &[RefUpdate]) -> Result<()> {
+        // `update-ref --stdin` は全部を 1 つのトランザクションで書く（どれかの期待値が違えば何も変えない）。
+        // 「まだない」は 0 の oid で表す。
+        let zero = "0".repeat(40);
+        let mut input = String::new();
+        for u in updates {
+            let expected = u.expected.as_ref().map_or_else(|| zero.clone(), hex);
+            match &u.value {
+                Some(v) => input.push_str(&format!("update {} {} {expected}\n", u.name, hex(v))),
+                None => input.push_str(&format!("delete {} {expected}\n", u.name)),
+            }
+        }
+        self.write_with_input(&["update-ref", "--stdin"], input.as_bytes())
+            .map(drop)
     }
 
     fn reset(&self, mode: ResetMode, oid: &Oid) -> Result<()> {

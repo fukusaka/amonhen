@@ -13,8 +13,8 @@ use std::time::Duration;
 
 use amonhen_model::{
     CommitGraph, CommitText, ConfigEntry, ConnectionState, FileChange, GitBackend, HeadState, Oid,
-    Operations, Outcome, PullMode, RawCommit, Refs, RemoteChange, RemoteEntry, RepoFiles,
-    RepoPaths, ResetMode, Result, Root, Sequence, Status, WorktreeChange,
+    Operations, Outcome, PullMode, RawCommit, RefUpdate, Refs, RemoteChange, RemoteEntry,
+    RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -642,6 +642,10 @@ impl Operations for RemoteOperations {
             value: value.copied(),
             expected: expected.copied(),
         })
+    }
+
+    fn update_refs(&self, updates: &[RefUpdate]) -> Result<()> {
+        self.op(Op::UpdateRefs(updates.to_vec()))
     }
 
     fn reset(&self, mode: ResetMode, oid: &Oid) -> Result<()> {
