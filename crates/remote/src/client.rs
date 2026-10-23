@@ -699,6 +699,18 @@ impl Operations for RemoteOperations {
         })
     }
 
+    fn delete_tag(&self, name: &str) -> Result<()> {
+        self.op(Op::DeleteTag(name.to_owned()))
+    }
+
+    fn push_tags(&self, remote: &str, names: &[&str], delete: bool) -> Result<()> {
+        self.op(Op::PushTags {
+            remote: remote.to_owned(),
+            names: owned(names),
+            delete,
+        })
+    }
+
     fn check_branch_name(&self, name: &str) -> Result<Option<String>> {
         self.op(Op::CheckBranchName(name.to_owned()))
     }

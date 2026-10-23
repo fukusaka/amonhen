@@ -57,6 +57,17 @@ pub enum Command {
         target: String,
         message: Option<String>,
     },
+    /// 手元のタグを消す（Undo できる。注釈付きのタグも、タグのオブジェクトごと戻る）。
+    DeleteTag {
+        name: String,
+    },
+    /// タグ `names` を `remote` に push する。`delete` なら `remote` から消す（リモートのことなので Undo できない）。
+    PushTags {
+        remote: String,
+        names: Vec<String>,
+        #[serde(default)]
+        delete: bool,
+    },
     /// 今のブランチに `rev` を merge する。
     Merge {
         rev: String,
@@ -1158,6 +1169,26 @@ impl Repository {
                     || ops.rename_branch(&from, &to),
                     |_| false,
                 )?;
+                ok()
+            }
+            Command::DeleteTag { name } => {
+                undo.record(
+                    ops,
+                    &format!("Delete tag {name}"),
+                    &[format!("refs/tags/{name}")],
+                    false,
+                    || ops.delete_tag(&name),
+                    |_| false,
+                )?;
+                ok()
+            }
+            Command::PushTags {
+                remote,
+                names,
+                delete,
+            } => {
+                let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                ops.push_tags(&remote, &names, delete)?;
                 ok()
             }
             Command::CreateTag {
@@ -2599,6 +2630,45 @@ mod tests {
         assert!(git(dir, &["stash", "list"]).is_empty());
         let none = run(&repo, r#"{"op":"stashBases"}"#);
         assert_eq!(none["info"]["stashes"].as_array().unwrap().len(), 0);
+    }
+
+    /// 消したタグは Undo で戻り、注釈付きのタグはタグのオブジェクトごと戻る。タグはまとめてリモートに push でき、
+    /// リモートから消せる。
+    #[test]
+    fn deletes_tags_with_undo_and_pushes_and_deletes_them_on_a_remote() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["tag", "-a", "v1", "-m", "first release"]);
+        git(dir, &["tag", "light"]);
+        let object = git(dir, &["rev-parse", "refs/tags/v1"]);
+
+        let r = run(&repo, r#"{"op":"deleteTag","name":"v1"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(git(dir, &["tag", "--list"]), "light");
+        assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "Delete tag v1");
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(git(dir, &["rev-parse", "refs/tags/v1"]), object);
+        assert_eq!(git(dir, &["cat-file", "-t", "refs/tags/v1"]), "tag");
+
+        let remote = dir.join("remote.git");
+        git(dir, &["init", "-q", "--bare", remote.to_str().unwrap()]);
+        git(dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        let tags = |dir: &std::path::Path| git(dir, &["tag", "--list"]);
+        let r = run(
+            &repo,
+            r#"{"op":"pushTags","remote":"origin","names":["v1","light"]}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(tags(&remote), "light\nv1");
+        assert_eq!(git(&remote, &["cat-file", "-t", "refs/tags/v1"]), "tag");
+        let r = run(
+            &repo,
+            r#"{"op":"pushTags","remote":"origin","names":["light"],"delete":true}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(tags(&remote), "v1");
+        // 手元のタグは残る。
+        assert_eq!(tags(dir), "light\nv1");
     }
 
     /// soft・mixed・hard の reset は、それぞれ index と作業ツリーを git と同じに扱い、Undo で前の状態に戻る。hard は

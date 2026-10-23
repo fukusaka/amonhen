@@ -253,6 +253,24 @@ impl Operations for Git {
         .map(drop)
     }
 
+    fn delete_tag(&self, name: &str) -> Result<()> {
+        self.write(&["tag", "--delete", "--", name]).map(drop)
+    }
+
+    fn push_tags(&self, remote: &str, names: &[&str], delete: bool) -> Result<()> {
+        // 同じ名前のブランチと取り違えないよう、完全な名前で送る。
+        let refspecs: Vec<String> = names
+            .iter()
+            .map(|n| match delete {
+                true => format!(":refs/tags/{n}"),
+                false => format!("refs/tags/{n}:refs/tags/{n}"),
+            })
+            .collect();
+        let mut args = vec!["push", remote];
+        args.extend(refspecs.iter().map(String::as_str));
+        self.write(&args).map(drop)
+    }
+
     fn check_branch_name(&self, name: &str) -> Result<Option<String>> {
         Ok(self
             .read(&["check-ref-format", "--branch", name])
