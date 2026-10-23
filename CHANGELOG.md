@@ -25,6 +25,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Blame of uncommitted contents and File History read the worktree chosen in Working Copy, not the repository's main
+  checkout.
 - Writing commit-graph in the background also works with git older than 2.27, without the changed-path Bloom filters.
 
 ### [0.2.6] - 2026-10-23

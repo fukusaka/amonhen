@@ -293,9 +293,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             changeCount = count
             updateTabTitle()
         }
-        slot.workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
+        slot.workingCopy.onBlame = { [weak self, weak slot] path in self?.openBlame(path: path, rev: nil, in: slot?.repository) }
         slot.workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
-        slot.workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
+        slot.workingCopy.onFileHistory = { [weak self, weak slot] path in self?.openFileHistory(path: path, in: slot?.repository) }
         slot.actions.window = window
         slot.actions.onFailure = { [weak self] failure in self?.showFailure(failure) }
         // Push のシートは、右の欄と同じ詳細の表示を読み取り専用で埋め込む（同じ描画器で）。
@@ -1231,16 +1231,21 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     // MARK: - blame・ファイルの履歴
 
-    private func openBlame(path: String, rev: String?) {
-        let tool = BlameViewController(path: path, rev: rev, repository: repository) { [weak self] id in self?.reveal(commit: id) }
+    /// 作業ツリーの内容（`rev` なし）とファイルの履歴の起点（HEAD）は worktree ごとに違うので、`repository`（なければ
+    /// 書き込む先の worktree）で読む。開いたリポジトリで読むと、ほかの worktree の作業ツリー・ブランチを見てしまう。
+    private func openBlame(path: String, rev: String?, in repository: Repository? = nil) {
+        let tool = BlameViewController(path: path, rev: rev, repository: repository ?? editing.repository) { [weak self] id in
+            self?.reveal(commit: id)
+        }
         showFileTool(tool, page: .blame)
     }
 
-    private func openFileHistory(path: String) {
+    private func openFileHistory(path: String, in repository: Repository? = nil) {
+        let repository = repository ?? editing.repository
         let tool = FileHistoryViewController(
             path: path, repository: repository, renderer: textRenderer,
             onSelectCommit: { [weak self] id in self?.reveal(commit: id) },
-            onBlame: { [weak self] path, commit in self?.openBlame(path: path, rev: commit) })
+            onBlame: { [weak self] path, commit in self?.openBlame(path: path, rev: commit, in: repository) })
         showFileTool(tool, page: .fileHistory)
     }
 
