@@ -400,7 +400,10 @@
 /* FileTools.swift */
 "Not committed yet" = "まだコミットしていない";
 "Double-click to show in History." = "ダブルクリックで History に表示";
-"History — %@ (%ld commits)" = "History — %@（%ld コミット）";
+"File History — %@ (%ld commits)" = "File History — %@（%ld コミット）";
+"File History — %@ (%ld+ commits)" = "File History — %@（%ld+ コミット）";
+"File History — %@ (loading…)" = "File History — %@（読んでいます…）";
+"Renamed or copied to %@ in %@" = "%2$@ で %1$@ に名前を変えた（またはコピーした）";
 "No commits changed this file." = "このファイルを変えたコミットはありません";
 "Can’t read the diff" = "差分を読めません";
 
@@ -692,6 +695,7 @@
 "View" = "表示";
 "Reload History, branches and Working Copy (they normally reload on their own when something changes)" = "History・ブランチ・Working Copy を読み直す（ふだんは変化を検知して自動で読み直す）";
 "Show Sidebar" = "サイドバーを表示";
+"Show Tab Bar" = "タブバーを表示";
 "One Line per Commit" = "コミットを 1 行で表示";
 "Highlight Ancestors" = "祖先を強調";
 "Draw only the selected commit’s ancestors and the lines between them in full color, and dim the rest" = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする";
@@ -723,6 +727,8 @@
 "Show Previous Tab" = "前のタブを表示";
 "Move Tab to New Window" = "タブを新規ウインドウに移動";
 "Merge All Windows" = "すべてのウインドウを結合";
+"Move Tab to Window" = "タブをウインドウに移動";
+"%@ (+%ld)" = "%@（ほか %ld タブ）";
 "Bring All to Front" = "すべてを手前に移動";
 
 /* HistoryViewController.swift */
