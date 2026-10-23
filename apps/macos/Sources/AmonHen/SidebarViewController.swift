@@ -111,7 +111,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     func show(tagRemotes: TagRemotes) {
         guard tagRemotes != self.tagRemotes else { return }
         self.tagRemotes = tagRemotes
-        rebuild(first: false)
+        // 変わるのはタグの行の印とツールチップだけなので、作り直さずにその行だけを描き直す。
+        let rows = IndexSet((0..<outline.numberOfRows).filter { (outline.item(atRow: $0) as? Node)?.item?.kind == .tag })
+        outline.reloadData(forRowIndexes: rows, columnIndexes: [0])
     }
     private var groups: [Node] = []
     private var generation: UInt64?
@@ -341,6 +343,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     private func rebuild(first: Bool) {
         guard let refs else { return }
+        // 作り直しの間に届く「閉じた」の知らせで、開いていたフォルダの覚えを消さない。
+        rebuilding = true
+        defer { rebuilding = false }
         // 今のブランチは、書き込む先の worktree のもの（worktree が 1 つなら開いたリポジトリの HEAD）。
         headBranch = editingInfo.map(\.branch) ?? refs.headBranch
         let head = headBranch
@@ -443,6 +448,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         if !pullRequests.isEmpty { pullRequestsFirstShown = false }
         expandBranchGroups()
+        expandFolders()
         // 作り直す前に選んでいた Working Copy・History を選び直す。
         if let (_, page) = selectedTitle, let page { select(page: page) }
     }
@@ -634,16 +640,55 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
+    /// 開いているフォルダ（ブランチ・タグの `/` のフォルダと、Remotes の下のリモート）。fetch・push などで ref が
+    /// 変わるとサイドバーを作り直すので、見出しからの道筋で覚えておき、作り直した後に開き直す（初めは畳む）。
+    private var openFolders: Set<String> = []
+    private var rebuilding = false
+
+    /// 名前のまとまりだけの行（ブランチ・タグ・ページ・分け方のフォルダ・worktree などではない）。
+    private func isFolder(_ node: Node) -> Bool {
+        node.item == nil && node.page == nil && node.branchGroup == nil && node.worktree == nil
+            && node.pullRequest == nil && !node.isCleanWorktrees && !groups.contains { $0 === node }
+    }
+
+    /// 見出しからの道筋（名前に入らない文字でつなぐ）。
+    private static let pathSeparator = "\u{1F}"
+
+    private func path(of node: Node) -> String {
+        var parts = [node.title]
+        var parent = outline.parent(forItem: node) as? Node
+        while let p = parent {
+            parts.insert(p.title, at: 0)
+            parent = outline.parent(forItem: p) as? Node
+        }
+        return parts.joined(separator: Self.pathSeparator)
+    }
+
+    /// 作り直した後に、開いていたフォルダを開き直す（親から順に）。
+    private func expandFolders() {
+        guard !openFolders.isEmpty else { return }
+        func walk(_ node: Node, _ path: String) {
+            for child in node.children where !child.children.isEmpty {
+                let childPath = path + Self.pathSeparator + child.title
+                if isFolder(child), openFolders.contains(childPath) { outline.expandItem(child) }
+                walk(child, childPath)
+            }
+        }
+        for group in groups { walk(group, group.title) }
+    }
+
     func outlineViewItemDidExpand(_ notification: Notification) {
         guard let node = notification.userInfo?["NSObject"] as? Node else { return }
         if let key = node.branchGroup { openBranchGroups.insert(key) }
         if let item = node.item, item.kind == .local { foldedStacks.remove(item.name) }
+        if isFolder(node) { openFolders.insert(path(of: node)) }
     }
 
     func outlineViewItemDidCollapse(_ notification: Notification) {
         guard let node = notification.userInfo?["NSObject"] as? Node else { return }
         if let key = node.branchGroup { openBranchGroups.remove(key) }
         if let item = node.item, item.kind == .local { foldedStacks.insert(item.name) }
+        if isFolder(node), !rebuilding { openFolders.remove(path(of: node)) }
     }
 
     /// プルリクエストの見出しを初めて出すときは開いておく。

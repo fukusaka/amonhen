@@ -16,6 +16,11 @@ becomes the GitHub Release notes.
 - Fetch also reads which remote has which tag, and a tag row is marked when no remote has it or a remote has the name
   on another commit; its tooltip and popover list every remote, and the menu offers only what applies.
 
+#### Fixed
+
+- Folders in the sidebar (`/` folders of branches and tags, and the remotes under Remotes) stay open when a fetch, a
+  push or another change to the refs rebuilds it, instead of folding up each time.
+
 ### [0.2.6] - 2026-10-23
 
 History and Reflog rows can reset the current branch to a commit (Soft, Mixed or Hard, all undoable), and a Reflog
