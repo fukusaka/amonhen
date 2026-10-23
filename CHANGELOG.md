@@ -7,6 +7,19 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- Rebasing the current branch, or editing its History, moves the branches stacked under it along (git 2.38 or later;
+  set `rebase.updateRefs` to false to keep them). Undo puts them back too.
+- Undo restores the branches that are not checked out in one transaction, so it changes all of them or none.
+
+#### Fixed
+
+- Undoing a branch rename works for the checked-out branch, and keeps the branch's settings (upstream, description,
+  Archive and Favorites).
+
 ### [0.2.6] - 2026-10-23
 
 History and Reflog rows can reset the current branch to a commit (Soft, Mixed or Hard, all undoable), and a Reflog
