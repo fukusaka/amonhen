@@ -9,9 +9,10 @@ becomes the GitHub Release notes.
 
 ### [0.2.6] - 2026-10-23
 
-A Reflog view in the sidebar's Workspace brings back commits left behind by a reset, rebase or amend. Repositories on
-SSH hosts or through the daemon get their tab at once and are restored at launch, and Windows gets a one-line
-installer for the command line tool.
+History and Reflog rows can reset the current branch to a commit (Soft, Mixed or Hard, all undoable), and a Reflog
+view in the sidebar's Workspace brings back commits left behind by a reset, rebase or amend. Repositories on SSH hosts
+or through the daemon get their tab at once and are restored at launch, and Windows gets a one-line installer for the
+command line tool.
 
 #### Added
 
