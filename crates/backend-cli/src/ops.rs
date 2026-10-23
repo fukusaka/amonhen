@@ -50,6 +50,22 @@ fn literal_regex(text: &str) -> String {
     out
 }
 
+/// `git diff-tree -z --name-status` の出力から、`path` へ名前を変えたときの元の名前を探す。
+fn renamed_from(out: &[u8], path: &str) -> Option<String> {
+    let mut fields = out.split(|&b| b == 0).filter(|f| !f.is_empty());
+    while let Some(status) = fields.next() {
+        if status.starts_with(b"R") || status.starts_with(b"C") {
+            let (from, to) = (fields.next()?, fields.next()?);
+            if to == path.as_bytes() {
+                return Some(String::from_utf8_lossy(from).into_owned());
+            }
+        } else {
+            fields.next()?;
+        }
+    }
+    None
+}
+
 impl Operations for Git {
     fn blame(&self, path: &str, rev: Option<&Oid>) -> Result<Vec<u8>> {
         let rev = rev.map(|r| r.to_string());
@@ -61,17 +77,51 @@ impl Operations for Git {
         self.read(&args)
     }
 
+    /// `--follow` は使わない（履歴の単純化も changed-path の Bloom フィルターも効かず、全コミットを歩く）。
+    /// パスを絞った log で辿り、いちばん古いコミットでそのパスが改名で生まれていたら、元の名前でその親から続ける。
     fn file_log(&self, path: &str) -> Result<Vec<u8>> {
-        self.read(&[
-            "log",
-            "--follow",
-            "-z",
-            "--name-only",
-            "--format=%x01%H%x00%s%x00%an%x00%at",
-            "HEAD",
-            "--",
-            path,
-        ])
+        let mut out = Vec::new();
+        let mut path = path.to_owned();
+        let mut start = "HEAD".to_owned();
+        loop {
+            let part = self.read(&[
+                "log",
+                "--no-merges",
+                "-z",
+                "--name-only",
+                "--format=%x01%H%x00%s%x00%an%x00%at",
+                &start,
+                "--",
+                &path,
+            ])?;
+            // 各コミットは \x01 で始まり、ID が先頭に来る。
+            let oldest = part
+                .rsplit(|&b| b == 1)
+                .next()
+                .and_then(|r| r.split(|&b| b == 0).next())
+                .map(|oid| String::from_utf8_lossy(oid).into_owned())
+                .filter(|oid| !oid.is_empty());
+            out.extend_from_slice(&part);
+            let Some(oldest) = oldest else { break };
+            let Some(from) = renamed_from(
+                &self.read(&[
+                    "diff-tree",
+                    "--no-commit-id",
+                    "-C",
+                    "-r",
+                    "-z",
+                    "--name-status",
+                    "--root",
+                    &oldest,
+                ])?,
+                &path,
+            ) else {
+                break;
+            };
+            path = from;
+            start = format!("{oldest}^");
+        }
+        Ok(out)
     }
 
     fn log_matching(

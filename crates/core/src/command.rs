@@ -3234,6 +3234,78 @@ mod tests {
     }
 
     #[test]
+    fn follows_a_file_renamed_twice_across_a_merge() {
+        // a.txt は根のコミット（first）で生まれる。
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        commit_file(dir, "a.txt", "second");
+        git(dir, &["mv", "a.txt", "b.txt"]);
+        git(dir, &["commit", "-q", "-m", "to b"]);
+        git(dir, &["switch", "-q", "-c", "side"]);
+        commit_file(dir, "b.txt", "side");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "other.txt", "other");
+        git(dir, &["merge", "-q", "--no-ff", "-m", "merge", "side"]);
+        git(dir, &["mv", "b.txt", "c.txt"]);
+        git(dir, &["commit", "-q", "-m", "to c"]);
+        commit_file(dir, "c.txt", "last");
+
+        let history = run(&repo, r#"{"op":"fileHistory","path":"c.txt"}"#);
+        let entries = history["info"]["entries"].as_array().unwrap();
+        let got: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|e| (e["subject"].as_str().unwrap(), e["path"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("last", "c.txt"),
+                ("to c", "c.txt"),
+                ("side", "b.txt"),
+                ("to b", "b.txt"),
+                ("second", "a.txt"),
+                ("first", "a.txt"),
+            ],
+            "マージは出さない"
+        );
+        let oids: Vec<&str> = entries.iter().map(|e| e["oid"].as_str().unwrap()).collect();
+        let follow = git(
+            dir,
+            &[
+                "log",
+                "--follow",
+                "--no-merges",
+                "--format=%H",
+                "--",
+                "c.txt",
+            ],
+        );
+        assert_eq!(oids, follow.lines().collect::<Vec<_>>(), "--follow と同じ");
+    }
+
+    #[test]
+    fn follows_a_file_copied_from_one_changed_in_the_same_commit() {
+        // 訳す前の README を README.ja.md に移し、README は書き直す（ファイルとしては変更とコピー）。
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let text = "one\ntwo\nthree\nfour\nfive\n";
+        commit_file(dir, "README", text);
+        std::fs::write(dir.join("README.ja"), format!("{text}six\n")).unwrap();
+        std::fs::write(dir.join("README"), "translated\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "translate"]);
+
+        let history = run(&repo, r#"{"op":"fileHistory","path":"README.ja"}"#);
+        let paths: Vec<&str> = history["info"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, ["README.ja", "README"], "{history}");
+    }
+
+    #[test]
     fn fast_forwards_a_branch_without_checking_it_out() {
         let (tmp, repo) = setup();
         let dir = tmp.path();
