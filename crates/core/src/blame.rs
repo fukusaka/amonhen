@@ -83,7 +83,8 @@ pub struct FileLogEntry {
     pub path: String,
 }
 
-/// `git log --follow -z --name-only --format=%x01%H%x00%s%x00%an%x00%at` を読む。
+/// `Operations::file_log` の出力（`git log -z --name-only --format=%x01%H%x00%s%x00%an%x00%at` を、
+/// 名前を変える前の分もつないだもの）を読む。
 pub fn parse_file_log(out: &[u8]) -> Vec<FileLogEntry> {
     let text = String::from_utf8_lossy(out);
     text.split('\u{1}')
