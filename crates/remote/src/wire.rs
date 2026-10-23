@@ -190,9 +190,11 @@ pub enum Op {
         message: Option<String>,
     },
     DeleteTag(String),
+    RemoteTags(String),
     PushTags {
         remote: String,
         names: Vec<String>,
+        force: bool,
         delete: bool,
     },
     CheckBranchName(String),

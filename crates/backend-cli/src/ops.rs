@@ -257,13 +257,38 @@ impl Operations for Git {
         self.write(&["tag", "--delete", "--", name]).map(drop)
     }
 
-    fn push_tags(&self, remote: &str, names: &[&str], delete: bool) -> Result<()> {
-        // 同じ名前のブランチと取り違えないよう、完全な名前で送る。
+    fn remote_tags(&self, remote: &str) -> Result<Vec<(String, Oid)>> {
+        // `<oid>\trefs/tags/<name>` の行。注釈付きのタグには、たどった先のコミットの `<name>^{}` の行が続く。
+        let out = text(self.read(&["ls-remote", "--tags", remote])?)?;
+        let mut tags: Vec<(String, Oid)> = Vec::new();
+        for line in out.lines() {
+            let Some((oid, name)) = line.split_once('\t') else {
+                continue;
+            };
+            let (Some(name), Some(oid)) = (name.strip_prefix("refs/tags/"), Oid::from_hex(oid))
+            else {
+                continue;
+            };
+            match name.strip_suffix("^{}") {
+                Some(tag) => {
+                    if let Some(entry) = tags.iter_mut().find(|(n, _)| n == tag) {
+                        entry.1 = oid;
+                    }
+                }
+                None => tags.push((name.to_owned(), oid)),
+            }
+        }
+        Ok(tags)
+    }
+
+    fn push_tags(&self, remote: &str, names: &[&str], force: bool, delete: bool) -> Result<()> {
+        // 同じ名前のブランチと取り違えないよう、完全な名前で送る（`+` は置き換え）。
         let refspecs: Vec<String> = names
             .iter()
-            .map(|n| match delete {
-                true => format!(":refs/tags/{n}"),
-                false => format!("refs/tags/{n}:refs/tags/{n}"),
+            .map(|n| match (delete, force) {
+                (true, _) => format!(":refs/tags/{n}"),
+                (false, true) => format!("+refs/tags/{n}:refs/tags/{n}"),
+                (false, false) => format!("refs/tags/{n}:refs/tags/{n}"),
             })
             .collect();
         let mut args = vec!["push", remote];

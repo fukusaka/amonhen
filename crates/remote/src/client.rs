@@ -703,10 +703,15 @@ impl Operations for RemoteOperations {
         self.op(Op::DeleteTag(name.to_owned()))
     }
 
-    fn push_tags(&self, remote: &str, names: &[&str], delete: bool) -> Result<()> {
+    fn remote_tags(&self, remote: &str) -> Result<Vec<(String, Oid)>> {
+        self.op(Op::RemoteTags(remote.to_owned()))
+    }
+
+    fn push_tags(&self, remote: &str, names: &[&str], force: bool, delete: bool) -> Result<()> {
         self.op(Op::PushTags {
             remote: remote.to_owned(),
             names: owned(names),
+            force,
             delete,
         })
     }

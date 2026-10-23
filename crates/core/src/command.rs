@@ -61,13 +61,18 @@ pub enum Command {
     DeleteTag {
         name: String,
     },
-    /// タグ `names` を `remote` に push する。`delete` なら `remote` から消す（リモートのことなので Undo できない）。
+    /// タグ `names` を `remote` に push する。`force` なら、同じ名前で違うコミットを指すリモートのタグを置き換える。
+    /// `delete` なら `remote` から消す（リモートのことなので Undo できない）。
     PushTags {
         remote: String,
         names: Vec<String>,
         #[serde(default)]
+        force: bool,
+        #[serde(default)]
         delete: bool,
     },
+    /// 手元のタグごとの、リモートでの様子（fetch のときに読んで覚えたもの。`crate::remote_tags::status`）。
+    TagRemotes,
     /// 今のブランチに `rev` を merge する。
     Merge {
         rev: String,
@@ -376,6 +381,14 @@ fn op_name(json: &str) -> String {
         .ok()
         .and_then(|v| v.get("op").and_then(|o| o.as_str()).map(str::to_owned))
         .unwrap_or_default()
+}
+
+/// 手元のタグ `name` が指すコミット。
+fn local_tag(entries: &[RefEntry], name: &str) -> Option<Oid> {
+    entries
+        .iter()
+        .find(|e| e.kind == RefKind::Tag && e.name == name)
+        .and_then(|e| e.target)
 }
 
 fn oid(hex: &str) -> Result<Oid> {
@@ -1185,11 +1198,37 @@ impl Repository {
             Command::PushTags {
                 remote,
                 names,
+                force,
                 delete,
             } => {
                 let names: Vec<&str> = names.iter().map(String::as_str).collect();
-                ops.push_tags(&remote, &names, delete)?;
+                ops.push_tags(&remote, &names, force, delete)?;
+                let refs = self.load_refs()?;
+                let tags: Vec<(&str, Option<Oid>)> = names
+                    .iter()
+                    .map(|&n| (n, local_tag(&refs.refs.entries, n)))
+                    .collect();
+                crate::remote_tags::record_push(&*self.backend().files(), &remote, &tags, delete)?;
                 ok()
+            }
+            Command::TagRemotes => {
+                let refs = self.refs()?;
+                let tags: Vec<(&str, Option<Oid>)> = refs
+                    .refs
+                    .entries
+                    .iter()
+                    .filter(|e| e.kind == RefKind::Tag)
+                    .map(|e| (e.name.as_str(), e.target))
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(crate::remote_tags::status(
+                        ops,
+                        &*self.backend().files(),
+                        &tags,
+                    )?),
+                    ..Default::default()
+                })
             }
             Command::CreateTag {
                 name,
@@ -1299,6 +1338,8 @@ impl Repository {
             }
             Command::Fetch => {
                 ops.fetch()?;
+                // リモートのタグは手元の ref からは分からないので、ついでに読んでおく（読めなくても fetch は成功）。
+                let _ = crate::remote_tags::refresh(ops, &*self.backend().files());
                 ok()
             }
             Command::Pull { mode } => {
@@ -2669,6 +2710,92 @@ mod tests {
         assert_eq!(tags(&remote), "v1");
         // 手元のタグは残る。
         assert_eq!(tags(dir), "light\nv1");
+    }
+
+    /// fetch のついでにリモートのタグを読み、タグごとに「同じ・違うコミット・ない」を返す。push・削除の結果は
+    /// fetch しなくても反映され、まだ読んでいないリモートは分からないまま。覚えは worktree で共有。
+    #[test]
+    fn tells_which_remotes_have_each_tag() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        commit_file(dir, "b.txt", "second");
+        git(dir, &["tag", "-a", "v1", "-m", "first release"]);
+        git(dir, &["tag", "light", "HEAD~1"]);
+        for name in ["origin", "backup"] {
+            let remote = dir.join(format!("{name}.git"));
+            git(dir, &["init", "-q", "--bare", remote.to_str().unwrap()]);
+            git(dir, &["remote", "add", name, remote.to_str().unwrap()]);
+            git(dir, &["push", "-q", name, "main"]);
+        }
+        git(dir, &["push", "-q", "origin", "v1"]);
+        git(dir, &["push", "-q", "backup", "light"]);
+        // backup の light と、手元の light は違うコミットを指す。
+        git(dir, &["tag", "-f", "light", "HEAD"]);
+        let states = |repo: &Repository| {
+            let r = run(repo, r#"{"op":"tagRemotes"}"#);
+            assert_eq!(r["ok"], true, "{r}");
+            r["info"].clone()
+        };
+        // まだ読んでいない。
+        let before = states(&repo);
+        assert_eq!(before["remotes"][0]["checked"], serde_json::Value::Null);
+        assert_eq!(before["tags"]["v1"], serde_json::json!({}));
+
+        assert_eq!(run(&repo, r#"{"op":"fetch"}"#)["ok"], true);
+        let after = states(&repo);
+        assert!(after["remotes"][0]["checked"].is_u64(), "{after}");
+        assert_eq!(
+            after["tags"]["v1"],
+            serde_json::json!({"origin": "same", "backup": "missing"})
+        );
+        assert_eq!(
+            after["tags"]["light"],
+            serde_json::json!({"origin": "missing", "backup": "different"})
+        );
+
+        // 置き換えの push と削除は、その場で反映される。
+        let r = run(
+            &repo,
+            r#"{"op":"pushTags","remote":"backup","names":["light"],"force":true}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        let r = run(
+            &repo,
+            r#"{"op":"pushTags","remote":"origin","names":["v1"],"delete":true}"#,
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        let pushed = states(&repo);
+        assert_eq!(pushed["tags"]["light"]["backup"], "same");
+        assert_eq!(pushed["tags"]["v1"]["origin"], "missing");
+
+        // linked worktree から開いても、同じ覚えを読む。足したばかりのリモートは分からないまま。
+        let wt = dir.join("wt");
+        git(
+            dir,
+            &["worktree", "add", "-q", "-b", "side", wt.to_str().unwrap()],
+        );
+        git(
+            dir,
+            &[
+                "remote",
+                "add",
+                "later",
+                dir.join("origin.git").to_str().unwrap(),
+            ],
+        );
+        let linked = Repository::new(GixBackend::open(&wt).unwrap());
+        let seen = states(&linked);
+        assert_eq!(
+            seen["tags"]["light"],
+            serde_json::json!({"origin": "missing", "backup": "same"})
+        );
+        let later = seen["remotes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == "later")
+            .unwrap();
+        assert_eq!(later["checked"], serde_json::Value::Null);
     }
 
     /// soft・mixed・hard の reset は、それぞれ index と作業ツリーを git と同じに扱い、Undo で前の状態に戻る。hard は
