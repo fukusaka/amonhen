@@ -226,9 +226,11 @@ pub enum Command {
         path: String,
         rev: Option<String>,
     },
-    /// HEAD から `path` を変えたコミット（`info.entries`: oid・subject・author・time・その時点の path）。
+    /// HEAD から `path` を変えたコミット（`info.entries`: oid・subject・author・time・その時点の path）。`limit`
+    /// があれば新しい方からその数までで、`info.more` はその先もあるか。
     FileHistory {
         path: String,
+        limit: Option<usize>,
     },
     /// `tip` から辿れて `base` から辿れないコミット（`git log base..tip`）。`info`: 全部の数 `count` と、新しい順に
     /// `limit` 個（既定 50）までの `commits`（oid・subject・author・time）。Push・Pull の前に、送る・取り込む
@@ -1646,11 +1648,17 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::FileHistory { path } => {
-                let entries = crate::blame::parse_file_log(&ops.file_log(&path)?);
+            Command::FileHistory { path, limit } => {
+                // 1 つ多く読んで、その先があるかを知る。
+                let mut entries =
+                    crate::blame::parse_file_log(&ops.file_log(&path, limit.map(|n| n + 1))?);
+                let more = limit.is_some_and(|n| entries.len() > n);
+                if let Some(n) = limit {
+                    entries.truncate(n);
+                }
                 Ok(Response {
                     ok: true,
-                    info: Some(serde_json::json!({ "entries": entries })),
+                    info: Some(serde_json::json!({ "entries": entries, "more": more })),
                     ..Default::default()
                 })
             }
@@ -3281,6 +3289,22 @@ mod tests {
             ],
         );
         assert_eq!(oids, follow.lines().collect::<Vec<_>>(), "--follow と同じ");
+        assert_eq!(history["info"]["more"], false);
+
+        // 件数を限ると、改名をまたいでその数で止め、その先があるかを返す。
+        for (limit, more) in [(1, true), (4, true), (6, false), (9, false)] {
+            let json = serde_json::json!({"op": "fileHistory", "path": "c.txt", "limit": limit});
+            let part = run(&repo, &json.to_string());
+            let subjects: Vec<&str> = part["info"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["subject"].as_str().unwrap())
+                .collect();
+            let want: Vec<&str> = got.iter().take(limit).map(|(s, _)| *s).collect();
+            assert_eq!(subjects, want, "{limit}");
+            assert_eq!(part["info"]["more"], more, "{limit}");
+        }
     }
 
     #[test]

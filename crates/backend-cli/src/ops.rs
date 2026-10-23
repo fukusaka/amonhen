@@ -79,21 +79,17 @@ impl Operations for Git {
 
     /// `--follow` は使わない（履歴の単純化も changed-path の Bloom フィルターも効かず、全コミットを歩く）。
     /// パスを絞った log で辿り、いちばん古いコミットでそのパスが改名で生まれていたら、元の名前でその親から続ける。
-    fn file_log(&self, path: &str) -> Result<Vec<u8>> {
+    fn file_log(&self, path: &str, limit: Option<usize>) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         let mut path = path.to_owned();
         let mut start = "HEAD".to_owned();
+        let mut left = limit;
         loop {
-            let part = self.read(&[
-                "log",
-                "--no-merges",
-                "-z",
-                "--name-only",
-                "--format=%x01%H%x00%s%x00%an%x00%at",
-                &start,
-                "--",
-                &path,
-            ])?;
+            let max_count = left.map(|n| format!("--max-count={n}"));
+            let mut args = vec!["log", "--no-merges", "-z", "--name-only"];
+            args.extend(max_count.as_deref());
+            args.extend(["--format=%x01%H%x00%s%x00%an%x00%at", &start, "--", &path]);
+            let part = self.read(&args)?;
             // 各コミットは \x01 で始まり、ID が先頭に来る。
             let oldest = part
                 .rsplit(|&b| b == 1)
@@ -103,6 +99,12 @@ impl Operations for Git {
                 .filter(|oid| !oid.is_empty());
             out.extend_from_slice(&part);
             let Some(oldest) = oldest else { break };
+            if let Some(n) = &mut left {
+                *n = n.saturating_sub(part.iter().filter(|&&b| b == 1).count());
+                if *n == 0 {
+                    break;
+                }
+            }
             let Some(from) = renamed_from(
                 &self.read(&[
                     "diff-tree",
