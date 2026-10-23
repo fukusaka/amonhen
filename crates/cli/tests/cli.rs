@@ -39,7 +39,8 @@ fn amonhen(home: &Path, args: &[&str]) -> (String, i32) {
 fn repository() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(dir, &["config", "user.name", "a"]);
     git(dir, &["config", "user.email", "a@example.com"]);
     commit(dir, "a.txt", "first");
@@ -156,7 +157,8 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
-    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(&repo, &["config", "user.name", "a"]);
     git(&repo, &["config", "user.email", "a@example.com"]);
     std::fs::write(repo.join("f.txt"), "a\nb\nc\nd\ne\n").unwrap();
@@ -469,7 +471,8 @@ fn works_through_the_shared_daemon_on_every_platform() {
     let tmp = tempfile::tempdir().unwrap();
     let repo = tmp.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
-    git(&repo, &["init", "-q", "-b", "main"]);
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(&repo, &["config", "user.name", "a"]);
     git(&repo, &["config", "user.email", "a@example.com"]);
     git(&repo, &["config", "core.autocrlf", "false"]);

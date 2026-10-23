@@ -42,7 +42,7 @@ Inherit all of the extension's requirements ("Overview" in vscode-amonhen's `doc
 | --- | --- | --- |
 | Core | Rust | No GC pauses, and memory layout can be controlled |
 | Reading git | gix (gitoxide) in the same process | Removes the spawn cost (about 6 ms each) and pipe copies. Can read commit-graph directly |
-| Writing git | Spawn `git` on desktop, gix and libgit2 on iOS / Android | Leave rebase, merge, push etc. to upstream git to keep correctness and compatibility. git cannot be launched on mobile. Swapped via `GitBackend` |
+| Writing git | Spawn `git` on desktop, gix and libgit2 on iOS / Android | Leave rebase, merge, push etc. to upstream git to keep correctness and compatibility. git cannot be launched on mobile. Swapped via `GitBackend`. Needs git 2.23 or later (`git switch`); features of newer git are used only when present, with a fallback (`MIN_GIT_VERSION`, `git_version` in `amonhen-backend-cli`) |
 | Async | tokio (I/O, processes) + rayon (CPU) | Stale requests are cancelled immediately |
 | Diff | imara-diff, highlighting with tree-sitter | Highlighting comes later; show without colors first, immediately |
 | Bridge | Built on a C ABI (cbindgen), UniFFI (Swift / Kotlin), Linux and Windows use it directly from Rust | Type-safe for operations, zero-copy for row data |

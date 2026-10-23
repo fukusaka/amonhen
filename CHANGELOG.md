@@ -26,12 +26,15 @@ becomes the GitHub Release notes.
 - File History is much faster in large repositories (a file in the linux kernel repository: 86 s → 1.6 s): it
   follows renames itself instead of using `git log --follow`, so history simplification and commit-graph's changed-path
   Bloom filters apply.
+- Amon Hen needs git 2.23 or later (also on SSH hosts), as documented now; when a git command fails with an older
+  git, the error says so.
 
 #### Fixed
 
 - Blame of uncommitted contents and File History read the worktree chosen in Working Copy, not the repository's main
   checkout.
 - Writing commit-graph in the background also works with git older than 2.27, without the changed-path Bloom filters.
+- Commit details, worktrees, repository settings and the signature's trust level work with git older than 2.36.
 
 ### [0.2.6] - 2026-10-23
 

@@ -28,6 +28,39 @@ jobs:
       # build.rs が生成する C のヘッダーがコミット済みのものと一致するか。
       - run: git diff --exit-code crates/ffi-c/include
 
+  # サポートする最低の git（docs/install.md の「Requirements」）で試験を流し、新しい git にしかない機能を使って
+  # いないか（使うなら古いやり方に戻しているか）を確かめる。git はソースから作り、作ったものをキャッシュする。
+  git-minimum:
+    runs-on: ubuntu-latest
+    env:
+      GIT_VERSION: 2.23.4
+      GIT_SHA256: d008bf4461f7cf92405a67851456496e5e5f6c495064c1058d2de6a390d8bb60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: git-minimum
+      - id: git-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/git-minimum
+          key: git-${{ env.GIT_VERSION }}-${{ runner.os }}-${{ runner.arch }}
+      - if: steps.git-cache.outputs.cache-hit != 'true'
+        run: |
+          curl -sSfLO "https://mirrors.edge.kernel.org/pub/software/scm/git/git-$GIT_VERSION.tar.xz"
+          echo "$GIT_SHA256  git-$GIT_VERSION.tar.xz" | sha256sum -c -
+          tar xf "git-$GIT_VERSION.tar.xz"
+          # 試験に要らないもの（HTTP・翻訳・Perl・Python・Tcl/Tk）は外す。
+          make -C "git-$GIT_VERSION" -j"$(nproc)" prefix="$HOME/git-minimum" \
+            NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_PERL=1 NO_PYTHON=1 NO_TCLTK=1 install
+      # 試験は手元の git の設定を GIT_CONFIG_GLOBAL で読ませないが、これは git 2.32 からなので、HOME を空にする。
+      - run: |
+          export CARGO_HOME="$HOME/.cargo" RUSTUP_HOME="$HOME/.rustup"
+          export PATH="$HOME/git-minimum/bin:$PATH"
+          git --version | grep -qx "git version $GIT_VERSION"
+          HOME="$(mktemp -d)" cargo test --workspace --no-fail-fast
+
   swift:
     runs-on: macos-latest
     steps:

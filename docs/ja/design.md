@@ -42,7 +42,7 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 | --- | --- | --- |
 | コア | Rust | GC 停止がなく、メモリ配置を制御できる |
 | git の読み取り | gix（gitoxide）を同一プロセスで | spawn のコスト（1 回 約 6 ms）とパイプのコピーをなくす。commit-graph を直接読める |
-| git の書き込み | デスクトップは `git` を spawn、iOS / Android は gix と libgit2 | rebase・merge・push などは本家に任せて正しさと互換性を保つ。モバイルでは git を起動できない。`GitBackend` で差し替える |
+| git の書き込み | デスクトップは `git` を spawn、iOS / Android は gix と libgit2 | rebase・merge・push などは本家に任せて正しさと互換性を保つ。モバイルでは git を起動できない。`GitBackend` で差し替える。git は 2.23 以降（`git switch`）。より新しい git の機能は、あるときだけ使い、なければ古いやり方に戻す（`amonhen-backend-cli` の `MIN_GIT_VERSION`・`git_version`） |
 | 非同期 | tokio（I/O・プロセス）＋ rayon（CPU） | 古い要求は即キャンセルする |
 | 差分 | imara-diff、色付けは tree-sitter | 色付けは後追いで、まず色なしで即表示 |
 | 橋渡し | C ABI（cbindgen）を土台に、UniFFI（Swift / Kotlin）、Linux・Windows は Rust から直接 | 操作系は型安全に、行データはゼロコピーで |

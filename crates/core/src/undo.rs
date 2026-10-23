@@ -514,7 +514,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let git = Git::new(tmp.path());
         for args in [
-            &["init", "-q", "-b", "main"][..],
+            &["init", "-q"][..],
+            &["symbolic-ref", "HEAD", "refs/heads/main"],
             &["config", "user.name", "a"],
             &["config", "user.email", "a@example.com"],
             // Windows の CI では autocrlf が有効で、取り出したファイルの改行が変わる。

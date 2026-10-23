@@ -21,8 +21,9 @@ impl Git {
         ])?;
         let (signature, primary, notes) = parse_signature_and_notes(&String::from_utf8_lossy(&log));
         let signature = signature.map(|s| self.with_emails(vec![(s, primary)]).remove(0));
-        // 最初の親と比べる（merge でも、変わったファイルの一覧と同じ比べ方にする）。
-        let numstat = self.read(&[
+        // 最初の親と比べる（merge でも、変わったファイルの一覧と同じ比べ方にする）。`--diff-merges` は git 2.31
+        // から。それより前は `-m --first-parent` が同じ意味になる（新しい git では両方の親と比べてしまう）。
+        let mut args = vec![
             "diff-tree",
             "-r",
             "-z",
@@ -30,9 +31,14 @@ impl Git {
             "--numstat",
             "--root",
             "--no-commit-id",
-            "--diff-merges=first-parent",
-            &hex,
-        ])?;
+        ];
+        if crate::git_at_least(2, 31) {
+            args.push("--diff-merges=first-parent");
+        } else {
+            args.extend(["-m", "--first-parent"]);
+        }
+        args.push(&hex);
+        let numstat = self.read(&args)?;
         Ok(CommitExtras {
             signature,
             notes,
@@ -68,7 +74,7 @@ impl Git {
                 .filter_map(|line| {
                     let (hex, rest) = line.split_once('\0')?;
                     let mut f = rest.split('\0');
-                    let mut next = || f.next().unwrap_or_default().to_owned();
+                    let mut next = || known(f.next().unwrap_or_default());
                     let status = next().chars().next()?;
                     let check = SignatureCheck {
                         status,
@@ -227,10 +233,20 @@ fn no_fetch_wrapper(_program: &str) -> Option<std::path::PathBuf> {
     None
 }
 
+/// `--format` の欄。git が知らない書式（`%GT` は 2.26 から）はそのまま出てくるので、空とみなす。
+fn known(field: &str) -> String {
+    let unknown = field.len() == 3 && field.starts_with("%G");
+    if unknown {
+        String::new()
+    } else {
+        field.to_owned()
+    }
+}
+
 /// `%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00%N` を読む（署名と主鍵の指紋と notes）。署名がなければ（N）`None`。
 fn parse_signature_and_notes(out: &str) -> (Option<SignatureCheck>, String, String) {
     let mut fields = out.splitn(7, '\0');
-    let mut next = || fields.next().unwrap_or_default().to_owned();
+    let mut next = || known(fields.next().unwrap_or_default());
     let (status, signer, key, fingerprint, trust, primary, notes) =
         (next(), next(), next(), next(), next(), next(), next());
     let status = status.trim().chars().next().unwrap_or('N');
@@ -341,6 +357,12 @@ mod tests {
             parse_signature_and_notes("N\0\0\0\0\0\0\n"),
             (None, String::new(), String::new())
         );
+        // git 2.26 より前は `%GT` を知らず、そのまま出す。
+        let (sig, primary, _) = parse_signature_and_notes("G\0Alice\0KEY\0FPR\0%GT\0ABCD\0\n");
+        assert_eq!(
+            (sig.unwrap().trust.as_str(), primary.as_str()),
+            ("", "ABCD")
+        );
     }
 
     #[cfg(unix)]
@@ -402,7 +424,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let git = Git::new(tmp.path());
         for args in [
-            &["init", "-q", "-b", "main"][..],
+            &["init", "-q"][..],
+            &["symbolic-ref", "HEAD", "refs/heads/main"],
             &["config", "user.name", "a"],
             &["config", "user.email", "a@example.com"],
             &["config", "commit.gpgsign", "false"],
