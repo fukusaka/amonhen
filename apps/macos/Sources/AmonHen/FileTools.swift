@@ -365,6 +365,8 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
     private var generation = 0
     /// マージも出すか（Settings の File History。一覧の右クリックで切り替える）。
     private var merges = Settings.fileHistoryMerges
+    /// 読み直す前に選んでいたコミット（読み直した一覧にあれば選び直す）。
+    private var keptSelection: String?
 
     /// ⏎ で History へ、⌘C で ID をコピーする（表の中で）。
     private final class Table: NSTableView {
@@ -402,6 +404,7 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
 
     /// マージを出す・出さないを変えたので、初めから読み直す（選んでいたコミットは、まだあれば選んだまま）。
     private func reload() {
+        keptSelection = selectedEntry?.oid ?? keptSelection
         entries = []
         complete = false
         rows = [.loading]
@@ -478,15 +481,19 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
 
     /// 一覧を入れ替える。選んでいたコミットは選んだまま（見出しが増えて行がずれても）。
     private func show(_ entries: [FileHistory.Entry], complete: Bool) {
-        let selected = selectedEntry?.oid
+        let selected = selectedEntry?.oid ?? keptSelection
+        if complete { keptSelection = nil }
         self.entries = entries
         self.complete = complete
         rows = Self.rows(for: entries.map(\.path), complete: complete)
         updateTitle()
         guard isViewLoaded else { return }
         table.reloadData()
-        let oid = selected ?? entries.first?.oid
-        if let row = rows.firstIndex(where: { if case .entry(let i) = $0 { entries[i].oid == oid } else { false } }) {
+        let row = { (oid: String?) in
+            self.rows.firstIndex(where: { if case .entry(let i) = $0 { entries[i].oid == oid } else { false } })
+        }
+        // 選んでいたコミットが読み直した一覧になければ、読み終えたところで先頭を選ぶ。
+        if let row = row(selected ?? entries.first?.oid) ?? (complete ? row(entries.first?.oid) : nil) {
             table.selectRowIndexes([row], byExtendingSelection: false)
         } else if complete, entries.isEmpty, shown == nil {
             diffView.show(nil, message: L("No commits changed this file."))
