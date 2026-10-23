@@ -109,19 +109,6 @@ final class PageViewController: NSViewController {
         }
     }
 
-    func has(_ page: SidebarViewController.Page) -> Bool { pages[page] != nil }
-
-    /// `page` の画面を外す（閉じた File History・Blame）。表示中なら何も出さない。
-    func remove(_ page: SidebarViewController.Page) {
-        guard let controller = pages.removeValue(forKey: page) else { return }
-        if current === controller {
-            current = nil
-            self.page = nil
-        }
-        controller.view.removeFromSuperview()
-        controller.removeFromParent()
-    }
-
     func show(_ page: SidebarViewController.Page) {
         guard let next = pages[page], next !== current else { return }
         current?.view.removeFromSuperview()

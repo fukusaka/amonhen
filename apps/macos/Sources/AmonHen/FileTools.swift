@@ -8,30 +8,14 @@ private let fileToolDate: DateFormatter = {
     return f
 }()
 
-/// File History・Blame の中身。メインの窓のページにも、⧉ で移したタブ（引き出せば別の窓）にも置ける。ページでは
-/// 上の帯に何のファイルかと ⧉・× を出し、タブでは帯を隠して同じ文字を窓の題にする。
+/// File History・Blame の中身。リポジトリのタブの隣のタブ（`FileToolWindowController`）に置く。
 class FileToolViewController: NSViewController {
     let path: String
-    /// 帯の文字（別の窓では窓の題）。
-    var heading = "" {
-        didSet {
-            headingLabel.stringValue = heading
-            onHeadingChange?(heading)
-        }
-    }
+    /// 何を出しているか（窓の題）。
+    var heading = "" { didSet { onHeadingChange?(heading) } }
     var onHeadingChange: ((String) -> Void)?
     /// タブの短い題（種類とファイル名）。
     var tabTitle: String { (path as NSString).lastPathComponent }
-    /// ⧉（タブに移す）と ×（ページを閉じる）。どちらもなければ帯を隠す。
-    var onPopOut: (() -> Void)? { didSet { updateBar() } }
-    var onClose: (() -> Void)? { didSet { updateBar() } }
-
-    private let bar = NSStackView()
-    private let headingLabel = NSTextField(labelWithString: "")
-    private let popOutButton = NSButton()
-    private let closeButton = NSButton()
-    private let separator = NSBox()
-    private lazy var content = makeContent()
 
     init(path: String) {
         self.path = path
@@ -40,81 +24,40 @@ class FileToolViewController: NSViewController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    /// 帯の下に置く中身（サブクラスが作る）。
+    /// 中身（サブクラスが作る）。
     func makeContent() -> NSView { NSView() }
 
     override func loadView() {
-        headingLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
-        headingLabel.lineBreakMode = .byTruncatingMiddle
-        headingLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-        headingLabel.stringValue = heading
-        for (button, symbol, help, action) in [
-            (popOutButton, "macwindow.on.rectangle", L("Open in New Tab"), #selector(popOut)),
-            (closeButton, "xmark", L("Close"), #selector(closePage)),
-        ] {
-            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)
-            button.isBordered = false
-            button.toolTip = help
-            button.target = self
-            button.action = action
-        }
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        for v in [headingLabel, spacer, popOutButton, closeButton] { bar.addArrangedSubview(v) }
-        bar.spacing = 10
-        bar.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
-        separator.boxType = .separator
-        // 分割ビューを中に持つので、並べ方は frame で（帯は上に固定、中身は残りいっぱい）。
-        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 780))
-        bar.autoresizingMask = [.width, .minYMargin]
-        separator.autoresizingMask = [.width, .minYMargin]
-        content.autoresizingMask = [.width, .height]
-        for v in [content, separator, bar] { root.addSubview(v) }
-        view = root
-        updateBar()
+        let content = makeContent()
+        content.frame = NSRect(x: 0, y: 0, width: 1200, height: 780)
+        view = content
     }
-
-    /// 帯の高さ。
-    private static let barHeight: CGFloat = 32
-
-    private func updateBar() {
-        guard isViewLoaded else { return }
-        popOutButton.isHidden = onPopOut == nil
-        closeButton.isHidden = onClose == nil
-        let hidden = onPopOut == nil && onClose == nil
-        bar.isHidden = hidden
-        separator.isHidden = hidden
-        let bounds = view.bounds
-        let top = hidden ? 0 : Self.barHeight + 1
-        bar.frame = NSRect(x: 0, y: bounds.height - Self.barHeight, width: bounds.width, height: Self.barHeight)
-        separator.frame = NSRect(x: 0, y: bounds.height - top, width: bounds.width, height: 1)
-        content.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - top)
-    }
-
-    @objc private func popOut() { onPopOut?() }
-    @objc private func closePage() { onClose?() }
 }
 
-/// ⧉ で移した File History・Blame の窓。リポジトリのタブ（`tabWith`）の隣のタブにする（タブを引き出せば別の窓）。
-/// リポジトリのタブと同じツールバーを付けるので、タブを切り替えても上の並びと中身の大きさが変わらない。ツールバーと
-/// メニューの操作は、リポジトリのタブに切り替えてからリポジトリ（`RepositoryWindow`）に渡す。
+/// File History・Blame のタブ。リポジトリのタブ（`tabWith`）の隣に開く（タブを引き出せば別の窓）。リポジトリのタブと
+/// 同じツールバーを付けるので、タブを切り替えても上の並びと中身の大きさが変わらない。ツールバーとメニューの操作は、
+/// リポジトリのタブに切り替えてからリポジトリ（`RepositoryWindow`）に渡す。
 /// 次の起動で開き直すタブの記録には入らない（記録するのはリポジトリのタブだけ）。閉じるまで `FileToolWindows` が持つ。
 final class FileToolWindowController: NSWindowController {
     private var toolbar: MainToolbar?
     private var forwarder: RepositoryForwarder?
+    /// 何のタブか（同じものを開き直したら、前のタブを閉じて入れ替える）。
+    private var key = ""
 
-    static func show(_ tool: FileToolViewController, tabWith: NSWindow?, toolbar: MainToolbar?, repository: RepositoryWindow?) {
+    static func show(
+        _ tool: FileToolViewController, key: String, tabWith: NSWindow?, toolbar: MainToolbar?, repository: RepositoryWindow?
+    ) {
+        let previous = FileToolWindows.controllers.first { ($0 as? FileToolWindowController)?.key == key }
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
             styleMask: tabWith?.styleMask ?? [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        tool.onPopOut = nil
-        tool.onClose = nil
         tool.onHeadingChange = { [weak window] in window?.title = $0 }
         window.title = tool.heading
         window.tab.title = tool.tabTitle
         window.contentViewController = tool
         window.setContentSize(NSSize(width: 1200, height: 780))
         let controller = FileToolWindowController(window: window)
+        controller.key = key
         controller.toolbar = toolbar
         window.toolbar = toolbar?.toolbar
         if let repository {
@@ -122,7 +65,12 @@ final class FileToolWindowController: NSWindowController {
         }
         FileToolWindows.keep(controller)
         window.tabbingIdentifier = RepositoryWindow.tabbingIdentifier
-        if let tabWith {
+        if let previous, let old = previous.window, old.tabGroup != nil {
+            // 前のタブの場所に入れ替える（読み直した中身にする）。
+            old.addTabbedWindow(window, ordered: .above)
+            window.makeKeyAndOrderFront(nil)
+            previous.close()
+        } else if let tabWith {
             tabWith.addTabbedWindow(window, ordered: .above)
             window.makeKeyAndOrderFront(nil)
         } else {
@@ -631,6 +579,7 @@ final class TwoLineCell: NSTableCellView {
 /// 開いている blame・ファイルの履歴のウィンドウを、閉じるまで保持する。
 enum FileToolWindows {
     private static var open: [NSWindowController] = []
+    static var controllers: [NSWindowController] { open }
 
     static func keep(_ controller: NSWindowController) {
         open.append(controller)

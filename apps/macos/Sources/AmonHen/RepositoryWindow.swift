@@ -1234,10 +1234,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// 作業ツリーの内容（`rev` なし）とファイルの履歴の起点（HEAD）は worktree ごとに違うので、`repository`（なければ
     /// 書き込む先の worktree）で読む。開いたリポジトリで読むと、ほかの worktree の作業ツリー・ブランチを見てしまう。
     private func openBlame(path: String, rev: String?, in repository: Repository? = nil) {
-        let tool = BlameViewController(path: path, rev: rev, repository: repository ?? editing.repository) { [weak self] id in
+        let repository = repository ?? editing.repository
+        let tool = BlameViewController(path: path, rev: rev, repository: repository) { [weak self] id in
             self?.reveal(commit: id)
         }
-        showFileTool(tool, page: .blame)
+        showFileTool(tool, key: "blame \(path) \(rev ?? "") \(ObjectIdentifier(repository).hashValue)")
     }
 
     private func openFileHistory(path: String, in repository: Repository? = nil) {
@@ -1246,30 +1247,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             path: path, repository: repository, renderer: textRenderer,
             onSelectCommit: { [weak self] id in self?.reveal(commit: id) },
             onBlame: { [weak self] path, commit in self?.openBlame(path: path, rev: commit, in: repository) })
-        showFileTool(tool, page: .fileHistory)
+        showFileTool(tool, key: "fileHistory \(path) \(ObjectIdentifier(repository).hashValue)")
     }
 
-    /// File History・Blame を開く前に出していたページ（閉じたら戻る）。
-    private var pageBeforeFileTool: [SidebarViewController.Page: SidebarViewController.Page] = [:]
-
-    /// File History・Blame をページに出す（同じ種類のものは置き換える）。⧉ でこのタブの隣のタブに移し、× で閉じる。
-    private func showFileTool(_ tool: FileToolViewController, page: SidebarViewController.Page) {
-        if let current = pages?.page, current != page { pageBeforeFileTool[page] = current }
-        tool.onPopOut = { [weak self, weak tool] in
-            guard let self, let tool else { return }
-            closeFileTool(page)
-            FileToolWindowController.show(tool, tabWith: window, toolbar: mirrorToolbar(), repository: self)
-        }
-        tool.onClose = { [weak self] in self?.closeFileTool(page) }
-        tool.onHeadingChange = { [weak self, weak tool] heading in
-            guard let tool else { return }
-            self?.sidebar.setFileTool(page, path: tool.path, heading: heading)
-        }
-        pages?.replace(page, with: tool)
-        sidebar.setFileTool(page, path: tool.path, heading: tool.heading)
-        sidebar.select(page: page)
-        pages?.show(page)
-        window.makeKeyAndOrderFront(nil)
+    /// File History・Blame を、このリポジトリのタブの隣のタブで開く。同じものがもう開いていれば、そのタブを読み直した
+    /// ものに入れ替える。
+    private func showFileTool(_ tool: FileToolViewController, key: String) {
+        FileToolWindowController.show(tool, key: key, tabWith: window, toolbar: mirrorToolbar(), repository: self)
     }
 
     /// File History・Blame のタブに付ける、このタブと同じツールバー。検索はこのタブに戻って History で探す。
@@ -1284,18 +1268,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             self?.toolbar.onSearchStep?(step)
         }
         return mirror
-    }
-
-    private func closeFileTool(_ page: SidebarViewController.Page) {
-        let showing = pages?.page == page
-        pages?.remove(page)
-        sidebar.setFileTool(page, path: nil, heading: nil)
-        guard showing else { return }
-        // 戻る先も閉じていれば History へ。
-        var back = pageBeforeFileTool[page] ?? .history
-        if back == .fileHistory || back == .blame, pages?.has(back) != true { back = .history }
-        sidebar.select(page: back)
-        pages?.show(back)
     }
 
     /// History に切り替えて `commit` を選ぶ。今の範囲になければ全ブランチにする。

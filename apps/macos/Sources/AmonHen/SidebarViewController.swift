@@ -28,7 +28,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onClickPullRequestCI: ((PullRequest, NSView) -> Void)?
 
     enum Page {
-        case workingCopy, history, stashes, reflog, fileHistory, blame
+        case workingCopy, history, stashes, reflog
     }
 
     private final class Node {
@@ -53,8 +53,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         var stackedOn: String?
         /// お気に入り（Branches の一番上に、決めた順で出す）。
         var isPinned = false
-        /// ツールチップ（File History・Blame の行の、何を出しているか）。
-        var help: String?
 
         init(title: String, item: RefItem? = nil, page: Page? = nil, children: [Node] = [], isHead: Bool = false) {
             self.title = title
@@ -73,46 +71,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let stashesNode = Node(title: "Stashes", page: .stashes)
     /// いつも Workspace の最後に出す。選ぶと Reflog の画面を開く。
     private let reflogNode = Node(title: "Reflog", page: .reflog)
-    /// 開いているときだけ Reflog の後に、ファイル名で出す。選ぶと File History・Blame のページを開く。
-    private let fileHistoryNode = Node(title: "File History", page: .fileHistory)
-    private let blameNode = Node(title: "Blame", page: .blame)
     private lazy var workspace = Node(title: "Workspace", children: [workingCopyNode, historyNode, reflogNode])
     /// Conflicts を選んだ（最初のコンフリクトのファイルを開く）。
     var onSelectConflicts: (() -> Void)?
 
-    /// Workspace の中身: Working Copy・History と、あるときだけ Conflicts・Stashes、Reflog、開いていれば File History・
-    /// Blame。
+    /// Workspace の中身: Working Copy・History と、あるときだけ Conflicts・Stashes、最後に Reflog。
     private func workspaceChildren() -> [Node] {
         [workingCopyNode, historyNode]
             + (conflictsNode.badge != nil ? [conflictsNode] : [])
             + (stashesNode.badge != nil ? [stashesNode] : [])
             + [reflogNode]
-            + [fileHistoryNode, blameNode].filter { $0.help != nil }
-    }
-
-    /// File History・Blame のページに出しているファイル（`nil` なら閉じた）を、Workspace の行に出す・消す。
-    func setFileTool(_ page: Page, path: String?, heading: String?) {
-        let node = page == .blame ? blameNode : fileHistoryNode
-        let wasShown = node.help != nil
-        node.title = path.map { ($0 as NSString).lastPathComponent } ?? (page == .blame ? "Blame" : "File History")
-        node.help = heading
-        guard !groups.isEmpty else { return }
-        if wasShown != (path != nil) {
-            reloadWorkspace()
-        } else if wasShown {
-            outline.reloadItem(node)
-        }
-    }
-
-    /// Workspace の子を作り直す（開いていた行は開き直す）。
-    private func reloadWorkspace() {
-        let cleanOpen = outline.isItemExpanded(cleanWorktreesNode)
-        let workingCopyOpen = isWorkingCopyOpen
-        workspace.children = workspaceChildren()
-        outline.reloadItem(workspace, reloadChildren: true)
-        // 子を読み直すと開いていた行が畳まれるので、開き直す（畳んであったものは畳んだまま）。
-        if workingCopyOpen { outline.expandItem(workingCopyNode) }
-        if cleanOpen { outline.expandItem(cleanWorktreesNode) }
     }
 
     /// コンフリクトのファイルの数（0 なら Conflicts を出さない）。
@@ -120,7 +88,13 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let shown = workspace.children.contains { $0 === conflictsNode }
         conflictsNode.badge = count > 0 ? "\(count)" : nil
         if (count > 0) != shown {
-            reloadWorkspace()
+            let cleanOpen = outline.isItemExpanded(cleanWorktreesNode)
+            let workingCopyOpen = isWorkingCopyOpen
+            workspace.children = workspaceChildren()
+            outline.reloadItem(workspace, reloadChildren: true)
+            // 子を読み直すと開いていた行が畳まれるので、開き直す（畳んであったものは畳んだまま）。
+            if workingCopyOpen { outline.expandItem(workingCopyNode) }
+            if cleanOpen { outline.expandItem(cleanWorktreesNode) }
         } else if shown {
             outline.reloadItem(conflictsNode)
         }
@@ -711,8 +685,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .history: historyNode
         case .stashes: stashesNode
         case .reflog: reflogNode
-        case .fileHistory: fileHistoryNode
-        case .blame: blameNode
         }
         if groups.isEmpty {
             groups = [workspace]
@@ -819,7 +791,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             : node.branchGroup.flatMap(Self.branchGroupHelp)
             ?? node.stackedOn.map { L("Built on %@ (its commits are on top of that branch)", $0) }
             ?? node.item?.detail
-            ?? node.help
         // 右端のアイコンの意味は、ツールチップの先頭に（上流の名前はその後ろに残す）。右端に何か出ているローカル
         // ブランチは、押すと詳細の吹き出し。
         cell.onBadgeClick = nil
@@ -875,8 +846,6 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case .history: return "clock"
             case .stashes: return "tray.2"
             case .reflog: return "clock.arrow.circlepath"
-            case .fileHistory: return "doc.text.magnifyingglass"
-            case .blame: return "person.text.rectangle"
             }
         }
         if node.pullRequest != nil { return "arrow.triangle.pull" }
