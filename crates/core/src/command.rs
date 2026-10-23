@@ -1150,14 +1150,7 @@ impl Repository {
                 ok()
             }
             Command::RenameBranch { from, to } => {
-                undo.record(
-                    ops,
-                    &format!("Rename {from} to {to}"),
-                    &[heads(&from), heads(&to)],
-                    false,
-                    || ops.rename_branch(&from, &to),
-                    |_| false,
-                )?;
+                undo.record_rename(ops, &format!("Rename {from} to {to}"), &from, &to)?;
                 ok()
             }
             Command::CreateTag {

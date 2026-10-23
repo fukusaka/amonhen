@@ -38,6 +38,8 @@ export interface UndoEntry {
   files?: FileBackup[];
   /** あれば、消した stash を戻す操作 */
   stash?: { oid: string; message: string };
+  /** あれば、ブランチの改名（短い名前）。逆向きに改名して戻す（設定と reflog も戻る） */
+  rename?: { from: string; to: string };
 }
 
 /** 記録した後に、ほかの操作でブランチや HEAD が動いている */
@@ -225,6 +227,12 @@ export class UndoLog {
     const { before, after, mode } = entry;
     if (!sameSnapshot(await this.snapshot(Object.keys(after.refs)), after)) {
       throw new UndoConflictError(entry);
+    }
+    if (entry.rename) {
+      await this.backend.renameBranch(entry.rename.to, entry.rename.from);
+      entries.pop();
+      await this.save();
+      return entry;
     }
 
     const done = new Set<string>();
