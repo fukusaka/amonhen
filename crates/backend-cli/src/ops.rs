@@ -50,6 +50,30 @@ fn literal_regex(text: &str) -> String {
     out
 }
 
+/// マージは `--name-only` でもファイル名が出ないので、パスのないコミットに今のパスを添える（`-- <path>` で絞って
+/// いるので、出てくるマージはそのパスを変えている）。
+fn with_merge_paths(part: &[u8], path: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(part.len());
+    for record in part.split(|&b| b == 1).filter(|r| !r.is_empty()) {
+        out.push(1);
+        out.extend_from_slice(record);
+        // ID・件名・作者・時刻の 4 つの後に、パスがあるか。
+        let has_path = record
+            .split(|&b| b == 0)
+            .nth(4)
+            .is_some_and(|p| p.iter().any(|&b| b != b'\n'));
+        if !has_path {
+            if record.last() != Some(&0) {
+                out.push(0);
+            }
+            out.push(b'\n');
+            out.extend_from_slice(path.as_bytes());
+            out.push(0);
+        }
+    }
+    out
+}
+
 /// `git diff-tree -z --name-status` の出力から、`path` へ名前を変えたときの元の名前を探す。
 fn renamed_from(out: &[u8], path: &str) -> Option<String> {
     let mut fields = out.split(|&b| b == 0).filter(|f| !f.is_empty());
@@ -79,17 +103,23 @@ impl Operations for Git {
 
     /// `--follow` は使わない（履歴の単純化も changed-path の Bloom フィルターも効かず、全コミットを歩く）。
     /// パスを絞った log で辿り、いちばん古いコミットでそのパスが改名で生まれていたら、元の名前でその親から続ける。
-    fn file_log(&self, path: &str, limit: Option<usize>) -> Result<Vec<u8>> {
+    fn file_log(&self, path: &str, limit: Option<usize>, merges: bool) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         let mut path = path.to_owned();
         let mut start = "HEAD".to_owned();
         let mut left = limit;
         loop {
             let max_count = left.map(|n| format!("--max-count={n}"));
-            let mut args = vec!["log", "--no-merges", "-z", "--name-only"];
+            let mut args = vec!["log", "-z", "--name-only"];
+            if !merges {
+                args.push("--no-merges");
+            }
             args.extend(max_count.as_deref());
             args.extend(["--format=%x01%H%x00%s%x00%an%x00%at", &start, "--", &path]);
-            let part = self.read(&args)?;
+            let mut part = self.read(&args)?;
+            if merges {
+                part = with_merge_paths(&part, &path);
+            }
             // 各コミットは \x01 で始まり、ID が先頭に来る。
             let oldest = part
                 .rsplit(|&b| b == 1)
