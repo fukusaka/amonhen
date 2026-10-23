@@ -42,7 +42,10 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
   the names containing every word typed; matches are listed flat with their full names. Esc clears it.
 - Several branches or tags can be selected (⌘-click, ⇧-click). History then shows the commits reachable from any
   of them, and the context menu offers Copy Names and, for local branches, Favorites, Archive and Delete together (Delete asks
-  first and lists the names).
+  first and lists the names), and for tags, the tag items below together.
+- A tag's context menu has Push <tag> to <remote> (one item per remote), Delete…, which deletes your own copy only and
+  can be undone (an annotated tag comes back with its message), and Delete from <remote>…, which removes it on the
+  remote for everyone and cannot be undone. Both deletions ask first, naming the tags.
 - Workspace holds the rows that switch the main view. Stashes, after History (and Conflicts), appears only when there
   are stashes, with a count, and opens the Stashes view (section 5a); the stashes themselves are listed there, not in
   the sidebar. Reflog, always last, opens the Reflog view (section 5b).

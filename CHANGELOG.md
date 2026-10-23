@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- Tags can be pushed to a remote, deleted (undoably) and deleted from a remote from their context menu in the sidebar,
+  one at a time or several selected together.
+
 ### [0.2.6] - 2026-10-23
 
 History and Reflog rows can reset the current branch to a commit (Soft, Mixed or Hard, all undoable), and a Reflog

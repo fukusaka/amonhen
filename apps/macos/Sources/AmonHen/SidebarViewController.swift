@@ -101,6 +101,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     private let outline = SidebarOutlineView()
+    /// リモートの名前（リモートブランチのあるもの）。タグの push・削除の送り先。
+    private var remoteNames: [String] = []
     private var groups: [Node] = []
     private var generation: UInt64?
     /// ブランチ名の絞り込みの欄（サイドバーの上）。
@@ -401,6 +403,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let parts = item.name.split(separator: "/", maxSplits: 1).map(String.init)
             remotes[parts[0], default: []].append(Node(title: parts.count > 1 ? parts[1] : item.name, item: item))
         }
+        remoteNames = remotes.keys.sorted()
         if !remotes.isEmpty {
             groups.append(Node(title: "Remotes", children: remotes.keys.sorted().map {
                 let node = Node(title: $0, children: remotes[$0]!)
@@ -1020,6 +1023,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                     add(L("Delete %ld Branches…", locals.count)) { [weak self] in self?.confirmDelete(locals) }
                 }
             }
+            let tags = selected.filter { $0.kind == .tag }.map(\.name)
+            if tags.count == selected.count {
+                menu.addItem(.separator())
+                addTagItems(tags, to: menu, actions: actions)
+            }
             return
         }
         let current = headBranch ?? "HEAD"
@@ -1086,12 +1094,61 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .tag:
             add("Merge \(name) into \(current)") { actions.perform(["op": "merge", "rev": name]) }
             add("New Branch from \(name)…") { actions.newBranch(at: name) }
+            menu.addItem(.separator())
+            addTagItems([name], to: menu, actions: actions)
         case .stash:
             // stash の行はサイドバーにない（Stashes の画面の一覧で操作する）。
             break
         case .submodule:
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
             add(L("Open %@ in New Window", name)) { [weak self] in self?.onOpenSubmodule?(name) }
+        }
+    }
+
+    /// タグの push と削除。手元の削除は Undo できる。リモートからの削除は戻せない（もう一度 push するしかない）
+    /// ので、名前を並べて確かめる。
+    private func addTagItems(_ names: [String], to menu: NSMenu, actions: Actions) {
+        let one = names.count == 1 ? names[0] : nil
+        let list = names.joined(separator: "\n") + "\n\n"
+        func add(_ title: String, _ action: @escaping () -> Void) {
+            menu.addItem(ClosureMenuItem(title: title, action: action))
+        }
+        for remote in remoteNames {
+            add(one.map { "Push \($0) to \(remote)" } ?? L("Push %ld Tags to %@", names.count, remote)) {
+                actions.perform(["op": "pushTags", "remote": remote, "names": names])
+            }
+        }
+        add(one.map { L("Delete %@…", $0) } ?? L("Delete %ld Tags…", names.count)) { [weak self] in
+            self?.confirmDestructive(
+                one.map { L("Delete tag %@?", $0) } ?? L("Delete %ld tags?", names.count),
+                message: list + L("Only your own copy is deleted; the remotes keep theirs.") + " " + L("You can Undo it afterwards (⌥⌘Z).")
+            ) {
+                actions.perform(sequence: names.map { ["op": "deleteTag", "name": $0] })
+            }
+        }
+        for remote in remoteNames {
+            add(one.map { L("Delete %@ from %@…", $0, remote) } ?? L("Delete %ld Tags from %@…", names.count, remote)) { [weak self] in
+                self?.confirmDestructive(
+                    one.map { L("Delete %@ from %@?", $0, remote) } ?? L("Delete %ld tags from %@?", names.count, remote),
+                    message: list + L("Everyone who fetches from %@ loses them. This can’t be undone; push them again to bring them back. Your own tags are kept.", remote)
+                ) {
+                    actions.perform(["op": "pushTags", "remote": remote, "names": names, "delete": true])
+                }
+            }
+        }
+    }
+
+    /// 消す操作の前に、シートで確かめる（Delete は赤いボタン）。
+    private func confirmDestructive(_ title: String, message: String, then perform: @escaping () -> Void) {
+        guard let window = view.window else { return }
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        let button = alert.addButton(withTitle: L("Delete"))
+        button.hasDestructiveAction = true
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { response in
+            if response == .alertFirstButtonReturn { perform() }
         }
     }
 
