@@ -9,8 +9,14 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- File History marks where the file was renamed with a heading for each name, and its commits have a context menu
+  (Show in History, Blame at the commit, copying the ID or path), with Return and ⌘C.
+
 #### Changed
 
+- File History opens at once with the newest 100 commits and adds the rest as they are read.
 - File History is much faster in large repositories (a file in the linux kernel repository: 86 s → 1.6 s): it
   follows renames itself instead of using `git log --follow`, so history simplification and commit-graph's changed-path
   Bloom filters apply.
