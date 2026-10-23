@@ -16,6 +16,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- File History and Blame open as pages of the repository window (listed under Workspace in the sidebar) instead of
+  separate windows; ⧉ moves one into a separate window and × closes it.
 - File History opens at once with the newest 100 commits and adds the rest as they are read.
 - File History is much faster in large repositories (a file in the linux kernel repository: 86 s → 1.6 s): it
   follows renames itself instead of using `git log --follow`, so history simplification and commit-graph's changed-path
