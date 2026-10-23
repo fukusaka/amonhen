@@ -404,6 +404,9 @@
 "File History — %@ (%ld+ commits)" = "File History — %@（%ld+ コミット）";
 "File History — %@ (loading…)" = "File History — %@（読んでいます…）";
 "Renamed or copied to %@ in %@" = "%2$@ で %1$@ に名前を変えた（またはコピーした）";
+"Show Merge Commits" = "マージのコミットを表示";
+"Show merge commits" = "マージのコミットも出す";
+"Also lists the merges that changed the file, such as one that resolved a conflict or brought in changes made under an earlier name. Also from the list’s context menu." = "ファイルを変えたマージも並べます（コンフリクトを解いたマージや、前の名前のときの変更を取り込んだマージなど）。一覧の右クリックでも切り替えられます。";
 "No commits changed this file." = "このファイルを変えたコミットはありません";
 "Can’t read the diff" = "差分を読めません";
 
