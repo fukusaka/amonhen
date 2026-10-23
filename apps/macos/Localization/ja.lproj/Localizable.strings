@@ -1064,3 +1064,13 @@
 "HEAD of ✎ %@" = "✎ %@ の HEAD";
 "not on any branch" = "どのブランチにもない";
 "Show in History" = "History で見る";
+
+// Reset（History と Reflog の右クリック）
+"Soft (Keep Changes Staged)…" = "Soft（変更を stage したまま残す）…";
+"Mixed (Keep Changes Unstaged)…" = "Mixed（変更を stage せずに残す）…";
+"Hard (Match the Commit)…" = "Hard（作業ツリーもコミットに合わせる）…";
+"Reset %@ to %@?" = "%@ を %@ に reset しますか？";
+"Moves %@ to %@. The changes of the commits taken off stay staged." = "%@ を %@ に動かします。外したコミットの変更は stage したまま残ります。";
+"Moves %@ to %@. The changes of the commits taken off stay in the working tree, unstaged." = "%@ を %@ に動かします。外したコミットの変更は、stage せずに作業ツリーに残ります。";
+"Moves %@ to %@ and makes the working tree match it. Uncommitted changes, if any, are kept as a stash first." = "%@ を %@ に動かし、作業ツリーもそのコミットに合わせます。コミットしていない変更があれば、先に stash に残します。";
+"Commits taken off can still be found in Reflog. You can Undo it afterwards (⌥⌘Z)." = "外したコミットは Reflog から辿れます。あとから Undo（⌥⌘Z）で戻せます。";

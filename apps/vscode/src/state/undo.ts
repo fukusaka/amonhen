@@ -30,8 +30,8 @@ export interface FileBackup {
 export interface UndoEntry {
   label: string;
   time: number;
-  /** 現在のブランチを戻すときの reset の種類。commit は soft、merge や rebase は keep */
-  mode: 'soft' | 'keep';
+  /** 現在のブランチを戻すときの reset の種類。commit は soft、merge や rebase は keep、reset --mixed は mixed */
+  mode: 'soft' | 'mixed' | 'keep';
   before: RefSnapshot;
   after: RefSnapshot;
   /** あれば、ref ではなく作業中のファイルを戻す操作 */

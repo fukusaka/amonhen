@@ -59,6 +59,8 @@ struct StashBackup {
 #[serde(rename_all = "lowercase")]
 enum Mode {
     Soft,
+    /// reset --mixed の Undo（index を戻し、作業ツリーはそのまま）。
+    Mixed,
     Keep,
 }
 
@@ -189,6 +191,36 @@ impl UndoLog {
         f: impl FnOnce() -> Result<T>,
         skip: impl FnOnce(&T) -> bool,
     ) -> Result<T> {
+        let mode = if soft { Mode::Soft } else { Mode::Keep };
+        self.record_mode(ops, label, refs, mode, f, skip)
+    }
+
+    /// 今のブランチ（または detached HEAD）を `mode` で動かす reset を実行し、記録する。Undo は同じ種類の reset
+    /// で戻す（hard は作業中の変更を残す keep で。消した変更は戻らない）。
+    pub fn record_reset(
+        &self,
+        ops: &dyn Operations,
+        label: &str,
+        mode: ResetMode,
+        f: impl FnOnce() -> Result<()>,
+    ) -> Result<()> {
+        let mode = match mode {
+            ResetMode::Soft => Mode::Soft,
+            ResetMode::Mixed => Mode::Mixed,
+            ResetMode::Hard | ResetMode::Keep => Mode::Keep,
+        };
+        self.record_mode(ops, label, &[], mode, f, |_| false)
+    }
+
+    fn record_mode<T>(
+        &self,
+        ops: &dyn Operations,
+        label: &str,
+        refs: &[String],
+        mode: Mode,
+        f: impl FnOnce() -> Result<T>,
+        skip: impl FnOnce(&T) -> bool,
+    ) -> Result<T> {
         let mut refs = refs.to_vec();
         if let Some(branch) = ops.head_state()?.branch
             && !refs.contains(&branch)
@@ -205,7 +237,7 @@ impl UndoLog {
             self.push(Entry {
                 label: label.to_owned(),
                 time: now_ms(),
-                mode: if soft { Mode::Soft } else { Mode::Keep },
+                mode,
                 before,
                 after,
                 files: None,
@@ -403,6 +435,7 @@ impl UndoLog {
         let (before, after) = (&entry.before, &entry.after);
         let mode = match entry.mode {
             Mode::Soft => ResetMode::Soft,
+            Mode::Mixed => ResetMode::Mixed,
             Mode::Keep => ResetMode::Keep,
         };
         let parse = |s: &Option<String>| s.as_deref().and_then(Oid::from_hex);

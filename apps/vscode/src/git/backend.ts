@@ -110,7 +110,7 @@ export interface RepositoryBackend {
   /** 現在の値が expected のときだけ書き換える。value が null なら削除する */
   updateRef(name: string, value: string | null, expected: string | null): Promise<void>;
   /** 現在のブランチ（detached なら HEAD）を oid に戻す。keep は作業中の変更を残し、衝突するなら失敗する */
-  reset(mode: 'soft' | 'keep', oid: string): Promise<void>;
+  reset(mode: 'soft' | 'mixed' | 'keep', oid: string): Promise<void>;
   /** branch に切り替える。branch が無ければ oid で detached HEAD にする */
   switchTo(target: HeadState & { oid: string }): Promise<void>;
   isAncestor(ancestor: string, descendant: string): Promise<boolean>;
@@ -391,7 +391,7 @@ export class CliBackend implements RepositoryBackend {
     await this.git.exec(args, { cwd: this.root });
   }
 
-  async reset(mode: 'soft' | 'keep', oid: string): Promise<void> {
+  async reset(mode: 'soft' | 'mixed' | 'keep', oid: string): Promise<void> {
     await this.git.exec(['reset', `--${mode}`, oid], { cwd: this.root });
   }
 

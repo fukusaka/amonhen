@@ -10,6 +10,15 @@ use crate::rewrite::{self, ChainCommit, HistoryEdit};
 /// 編集できる範囲を調べるときに辿るコミットの数。
 const CHAIN_LIMIT: usize = 500;
 
+/// `Command::Reset` の種類。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ResetKind {
+    Soft,
+    Mixed,
+    Hard,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Command {
@@ -23,6 +32,12 @@ pub enum Command {
     /// コミットを detached HEAD でチェックアウトする。
     Detach {
         oid: String,
+    },
+    /// 今のブランチ（detached HEAD なら HEAD）を `oid` に動かす（`git reset --soft|--mixed|--hard`）。Undo できる。
+    /// hard で作業中の変更（untracked のファイルは除く）があれば、消す前に stash に残す（`info.stashed`）。
+    Reset {
+        oid: String,
+        mode: ResetKind,
     },
     CreateBranch {
         name: String,
@@ -1073,6 +1088,40 @@ impl Repository {
                     oid: Some(oid(&o)?),
                 })?;
                 ok()
+            }
+            Command::Reset { oid: o, mode } => {
+                if ops.sequence_in_progress()?.is_some() {
+                    return Err(
+                        tr!("A merge or rebase is in progress. Finish or abort it first").into(),
+                    );
+                }
+                let target = oid(&o)?;
+                let short = &target.to_string()[..8];
+                let (mode, name) = match mode {
+                    ResetKind::Soft => (amonhen_model::ResetMode::Soft, "soft"),
+                    ResetKind::Mixed => (amonhen_model::ResetMode::Mixed, "mixed"),
+                    ResetKind::Hard => (amonhen_model::ResetMode::Hard, "hard"),
+                };
+                // hard は作業中の変更を消し、Undo でも戻らないので、先に stash に残す（untracked は hard でも残る）。
+                let stashed = mode == amonhen_model::ResetMode::Hard
+                    && self
+                        .backend()
+                        .status()?
+                        .entries
+                        .iter()
+                        .any(|e| e.kind != amonhen_model::StatusKind::Untracked);
+                if stashed {
+                    ops.stash_push(Some(&format!("Before reset --hard to {short}")), false)?;
+                }
+                undo.record_reset(ops, &format!("Reset ({name}) to {short}"), mode, || {
+                    ops.reset(mode, &target)
+                })?;
+                Ok(Response {
+                    ok: true,
+                    outcome: Some(outcome_name(Outcome::Done)),
+                    info: Some(serde_json::json!({ "stashed": stashed })),
+                    ..Default::default()
+                })
             }
             Command::CreateBranch {
                 name,
@@ -2550,6 +2599,62 @@ mod tests {
         assert!(git(dir, &["stash", "list"]).is_empty());
         let none = run(&repo, r#"{"op":"stashBases"}"#);
         assert_eq!(none["info"]["stashes"].as_array().unwrap().len(), 0);
+    }
+
+    /// soft・mixed・hard の reset は、それぞれ index と作業ツリーを git と同じに扱い、Undo で前の状態に戻る。hard は
+    /// 作業中の変更を先に stash に残す。
+    #[test]
+    fn resets_softly_mixed_and_hard_and_undoes_each() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let first = git(dir, &["rev-parse", "HEAD"]);
+        let second = commit_file(dir, "b.txt", "second");
+        let reset = |mode: &str| {
+            let r = run(
+                &repo,
+                &format!(r#"{{"op":"reset","oid":"{first}","mode":"{mode}"}}"#),
+            );
+            assert_eq!(r["ok"], true, "{r}");
+            r
+        };
+        let undo = || {
+            let r = run(&repo, r#"{"op":"undo"}"#);
+            assert_eq!(r["ok"], true, "{r}");
+            assert_eq!(git(dir, &["rev-parse", "HEAD"]), second);
+            assert_eq!(git(dir, &["status", "--porcelain"]), "");
+        };
+
+        // soft: 外したコミットの変更は stage されたまま。
+        reset("soft");
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), first);
+        assert_eq!(git(dir, &["status", "--porcelain"]), "A  b.txt");
+        assert_eq!(
+            run(&repo, r#"{"op":"undoPeek"}"#)["label"],
+            format!("Reset (soft) to {}", &first[..8])
+        );
+        undo();
+
+        // mixed: 変更は作業ツリーにだけ残る（stage されない）。
+        reset("mixed");
+        assert_eq!(git(dir, &["status", "--porcelain"]), "?? b.txt");
+        undo();
+
+        // hard: 作業中の変更は stash に残してから、作業ツリーごと動かす。
+        std::fs::write(dir.join("a.txt"), "edited\n").unwrap();
+        let r = reset("hard");
+        assert_eq!(r["info"]["stashed"], true);
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), first);
+        assert_eq!(git(dir, &["status", "--porcelain"]), "");
+        assert!(!dir.join("b.txt").exists());
+        assert!(
+            git(dir, &["stash", "list"])
+                .contains(&format!("Before reset --hard to {}", &first[..8]))
+        );
+        undo();
+        assert!(dir.join("b.txt").exists());
+        // 変更がなければ stash は作らない。
+        assert_eq!(reset("hard")["info"]["stashed"], false);
+        assert_eq!(git(dir, &["stash", "list"]).lines().count(), 1);
     }
 
     /// HEAD の reflog は新しい順で、reset で外れたコミットは辿れない（History にない）と分かる。linked worktree で

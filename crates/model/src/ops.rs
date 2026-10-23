@@ -140,12 +140,16 @@ pub enum Outcome {
     Stopped,
 }
 
-/// Undo で現在のブランチを戻すときの reset の種類。
+/// 今のブランチ（または detached HEAD）を動かす reset の種類（`git reset --<mode>`）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ResetMode {
     /// index と作業ツリーはそのまま（コミットの Undo）。
     Soft,
+    /// index も動かし、作業ツリーはそのまま。
+    Mixed,
+    /// index と作業ツリーも合わせる（作業中の変更は消える）。
+    Hard,
     /// 作業中の変更を残したまま戻す（merge・rebase の Undo）。
     Keep,
 }

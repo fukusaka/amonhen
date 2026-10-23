@@ -169,6 +169,7 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
         add("New Branch at \(short)…") { actions.newBranch(at: hex) }
         add("New Tag at \(short)…") { actions.newTag(at: hex) }
         add("Checkout \(short) (Detached)") { actions.perform(["op": "detach", "oid": hex]) }
+        menu.addItem(actions.resetMenuItem(to: hex))
         if entry.reachable, let id = Data(hex: hex) {
             menu.addItem(.separator())
             add(L("Show in History")) { [weak self] in self?.onShowInHistory?(id) }

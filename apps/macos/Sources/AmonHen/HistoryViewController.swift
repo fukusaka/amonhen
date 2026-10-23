@@ -1565,6 +1565,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         add("New Branch at \(short)…") { actions.newBranch(at: hex) }
         add("New Tag at \(short)…") { actions.newTag(at: hex) }
         add("Checkout \(short) (Detached)") { actions.perform(["op": "detach", "oid": hex]) }
+        menu.addItem(actions.resetMenuItem(to: hex))
         menu.addItem(.separator())
         if !isMerge {
             add(L("Edit Message…")) { actions.reword(hex) }

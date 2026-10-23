@@ -189,10 +189,22 @@ rebase or amend left behind and that no branch reaches any more. It is where tho
 - Each row shows `HEAD@{n}` and what was done (git's message: `commit: …`, `checkout: moving from a to b`,
   `reset: moving to …`), then, in orange, "not on any branch" when no ref reaches the commit, when, the short ID and
   the commit's subject.
-- New Branch… and Checkout (detached) sit above the list. Each row's context menu also has New Tag, Show in History
-  (for commits History has), Copy Commit ID and Copy Name. With two or more worktrees, the bar says whose HEAD it is
+- New Branch… and Checkout (detached) sit above the list. Each row's context menu also has New Tag, Reset ▸ (section
+  5c), Show in History (for commits History has), Copy Commit ID and Copy Name. With two or more worktrees, the bar says whose HEAD it is
   (✎).
 - It reloads when HEAD moves and when the edited worktree changes.
+
+## 5c. Reset
+
+"Reset <branch> to <commit> ▸" in the context menu of a History row and of a Reflog row moves the edited worktree's
+current branch (HEAD when detached) to that commit, like `git reset`. It asks first, naming the branch and the commit.
+
+- Soft keeps the changes of the commits taken off staged; Mixed keeps them in the working tree, unstaged; Hard makes
+  the index and the working tree match the commit.
+- Hard keeps uncommitted changes (untracked files are left alone, as git does) as a stash first ("Before reset --hard
+  to …"), so nothing is lost.
+- All three can be undone (⌥⌘Z): Soft and Mixed with the same kind of reset, Hard with `--keep`. Commits taken off
+  stay reachable from Reflog. Not during a merge, rebase, cherry-pick or revert.
 
 ## 6. Working Copy
 

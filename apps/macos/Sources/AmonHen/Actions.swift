@@ -13,6 +13,8 @@ final class Actions {
     var onFailure: ((OperationFailure) -> Void)?
     /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。確認のシートに出す。
     var worktreeName: String?
+    /// 書き込む先の worktree のブランチ（detached HEAD なら nil）。reset の確認に出す。
+    var currentBranch: String?
     /// Push のシートに埋め込む詳細の欄（メッセージ・変更ファイル・差分）を作る。Metal の描画器を持つウィンドウが渡す。
     var makeDetailView: (() -> CommitDetailViewController?)?
 
@@ -227,6 +229,35 @@ final class Actions {
 
     func fetch() {
         perform(["op": "fetch"])
+    }
+
+    /// 今のブランチ（detached HEAD なら HEAD）を `target` に動かす（`mode`: soft・mixed・hard）。先に確かめる。
+    func reset(to target: String, mode: String) {
+        let short = String(target.prefix(8))
+        let name = currentBranch ?? "HEAD"
+        let what = switch mode {
+        case "soft": L("Moves %@ to %@. The changes of the commits taken off stay staged.", name, short)
+        case "mixed": L("Moves %@ to %@. The changes of the commits taken off stay in the working tree, unstaged.", name, short)
+        default: L("Moves %@ to %@ and makes the working tree match it. Uncommitted changes, if any, are kept as a stash first.", name, short)
+        }
+        let message = what + "\n" + L("Commits taken off can still be found in Reflog. You can Undo it afterwards (⌥⌘Z).")
+        guard confirm(L("Reset %@ to %@?", name, short), message: message, ok: "Reset") else { return }
+        perform(["op": "reset", "oid": target, "mode": mode])
+    }
+
+    /// 右クリックの「Reset … to …」（Soft・Mixed・Hard を選ぶ小メニュー）。History と Reflog で使う。
+    func resetMenuItem(to target: String) -> NSMenuItem {
+        let item = NSMenuItem(title: "Reset \(currentBranch ?? "HEAD") to \(target.prefix(8))", action: nil, keyEquivalent: "")
+        let menu = NSMenu()
+        for (title, mode) in [
+            (L("Soft (Keep Changes Staged)…"), "soft"),
+            (L("Mixed (Keep Changes Unstaged)…"), "mixed"),
+            (L("Hard (Match the Commit)…"), "hard"),
+        ] {
+            menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.reset(to: target, mode: mode) })
+        }
+        item.submenu = menu
+        return item
     }
 
     /// 作業中の変更を stash する。untracked のファイルを含めるかを選べる。
