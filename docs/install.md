@@ -121,4 +121,7 @@ gh attestation verify <file> --repo fukusaka/amonhen
 - **GTK4 app**: Linux (x86_64 or arm64) with GTK 4.14 or later (Ubuntu 24.04, Debian 13 or later).
 - **Command line and VSCode extension**: macOS on Apple silicon, Linux (x86_64 or arm64, any distribution), or Windows
   (x86_64 or arm64).
-- `git` must be installed.
+- `git` 2.23 or later must be installed, on the Mac and on SSH hosts alike (it covers the git of every Ubuntu,
+  Debian and RHEL release still supported, and of Xcode). Features of newer git (such as changed-path Bloom filters
+  for commit-graph) are used when the git there has them, with the older way otherwise. When a git command fails and
+  the git is older than 2.23, the error says so.

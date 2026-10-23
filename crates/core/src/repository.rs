@@ -1432,7 +1432,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("repo");
         std::fs::create_dir(&dir).unwrap();
-        git(&dir, &["init", "-q", "-b", "main"]);
+        git(&dir, &["init", "-q"]);
+        git(&dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         git(&dir, &["commit", "--allow-empty", "-q", "-m", "first"]);
         let cache = tmp.path().join("cache/history.bin");
 
@@ -1475,7 +1476,8 @@ mod tests {
     fn searches_subjects_authors_and_commit_ids() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         for message in ["Add Parser", "fix typo", "parse more", "release"] {
             git(dir, &["commit", "--allow-empty", "-q", "-m", message]);
         }
@@ -1519,7 +1521,8 @@ mod tests {
     fn searches_paths_and_contents_through_git() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::create_dir(dir.join("src")).unwrap();
         std::fs::write(dir.join("src/a.rs"), "fn a() {}\n").unwrap();
         git(dir, &["add", "."]);
@@ -1556,7 +1559,8 @@ mod tests {
     fn reads_only_new_commits_and_drops_deleted_branches() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         git(dir, &["commit", "--allow-empty", "-q", "-m", "root"]);
         git(dir, &["switch", "-q", "-c", "topic"]);
         git(dir, &["commit", "--allow-empty", "-q", "-m", "topic"]);
@@ -1607,7 +1611,8 @@ mod tests {
     fn stages_and_unstages_selected_lines() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "first"]);
@@ -1649,7 +1654,8 @@ mod tests {
     fn marks_and_toggles_staged_lines_in_one_diff() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "first"]);
@@ -1710,7 +1716,8 @@ mod tests {
     fn falls_back_when_the_index_is_not_part_of_the_worktree_change() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "first"]);
@@ -1732,7 +1739,8 @@ mod tests {
     fn stages_part_of_a_new_file_and_unstages_it_entirely() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::write(dir.join("a.txt"), "1\n").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "first"]);
@@ -1776,7 +1784,8 @@ mod tests {
     fn diffs_a_range_a_pair_or_each_selected_commit() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         // 0: c4（a を 4 に）、1: c3（b を足す）、2: c2（a を 2 に）、3: c1（a を作る）
         for (file, text, message) in [
             ("a.txt", "1\n", "c1"),
@@ -1823,7 +1832,8 @@ mod tests {
     fn diffs_a_pair_reversed_or_from_the_merge_base() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::write(dir.join("a.txt"), "1\n").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "base"]);
@@ -1872,7 +1882,8 @@ mod tests {
     fn publishes_a_new_generation_on_every_load() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         git(dir, &["commit", "--allow-empty", "-q", "-m", "first"]);
 
         let repo = Repository::new(GixBackend::open(dir).unwrap());

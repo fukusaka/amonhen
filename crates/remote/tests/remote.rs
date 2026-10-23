@@ -29,7 +29,8 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn init(dir: &Path) {
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     for (k, v) in [
         ("user.name", "a"),
         ("user.email", "a@example.com"),

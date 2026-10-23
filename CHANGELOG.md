@@ -29,6 +29,8 @@ becomes the GitHub Release notes.
 - Rebasing the current branch, or editing its History, moves the branches stacked under it along (git 2.38 or later;
   set `rebase.updateRefs` to false to keep them). Undo puts them back too.
 - Undo restores the branches that are not checked out in one transaction, so it changes all of them or none.
+- Amon Hen needs git 2.23 or later (also on SSH hosts), as documented now; when a git command fails with an older
+  git, the error says so.
 
 #### Fixed
 
@@ -37,6 +39,7 @@ becomes the GitHub Release notes.
 - Writing commit-graph in the background also works with git older than 2.27, without the changed-path Bloom filters.
 - Undoing a branch rename works for the checked-out branch, and keeps the branch's settings (upstream, description,
   Archive and Favorites).
+- Commit details, worktrees, repository settings and the signature's trust level work with git older than 2.36.
 
 ### [0.2.6] - 2026-10-23
 

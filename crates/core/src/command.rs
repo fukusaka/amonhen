@@ -2209,7 +2209,8 @@ mod tests {
     fn setup() -> (tempfile::TempDir, Repository) {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         git(dir, &["config", "user.name", "a"]);
         git(dir, &["config", "user.email", "a@example.com"]);
         std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
@@ -2800,6 +2801,11 @@ mod tests {
         git(dir, &["rev-parse", "HEAD"])
     }
 
+    /// git が積み重ねたブランチを一緒に動かせる（2.38 から）。古ければ動かさないことを確かめる。
+    fn updates_stacked_branches() -> bool {
+        amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 38))
+    }
+
     /// main ─ one ─ two と積み、two をチェックアウトする。one と two の先頭を返す。
     fn stack(dir: &std::path::Path) -> (String, String) {
         git(dir, &["switch", "-q", "-c", "one"]);
@@ -2820,15 +2826,20 @@ mod tests {
 
         let r = run(&repo, r#"{"op":"rebase","onto":"main"}"#);
         assert_eq!(r["outcome"], "done", "{r}");
-        assert_eq!(r["info"]["movedBranches"], serde_json::json!(["one"]));
         assert_eq!(
-            git(dir, &["rev-parse", "one^"]),
+            git(dir, &["rev-parse", "two^^"]),
             git(dir, &["rev-parse", "main"])
         );
-        assert_eq!(
-            git(dir, &["rev-parse", "two^"]),
-            git(dir, &["rev-parse", "one"])
-        );
+        if updates_stacked_branches() {
+            assert_eq!(r["info"]["movedBranches"], serde_json::json!(["one"]));
+            assert_eq!(
+                git(dir, &["rev-parse", "two^"]),
+                git(dir, &["rev-parse", "one"])
+            );
+        } else {
+            assert!(r["info"].is_null(), "{r}");
+            assert_eq!(git(dir, &["rev-parse", "one"]), one);
+        }
 
         let r = run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(r["ok"], true, "{r}");
@@ -2846,8 +2857,13 @@ mod tests {
         // one の先頭を消すと、one はその前（main）へ。
         let r = rewrite(&repo, serde_json::json!({"kind": "drop", "oid": one}));
         assert_eq!(r["outcome"], "done", "{r}");
-        assert_eq!(git(dir, &["rev-parse", "one"]), first);
         assert_eq!(git(dir, &["rev-parse", "two^"]), first);
+        let expected = if updates_stacked_branches() {
+            &first
+        } else {
+            &one
+        };
+        assert_eq!(&git(dir, &["rev-parse", "one"]), expected);
 
         let r = run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(r["ok"], true, "{r}");
@@ -3505,7 +3521,8 @@ mod tests {
     ) -> (tempfile::TempDir, Repository) {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::write(dir.join("a.txt"), committed).unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "first"]);
