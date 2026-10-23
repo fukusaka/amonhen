@@ -92,6 +92,9 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(refresh)
         menu.addItem(.separator())
         menu.addItem(item(L("Show Sidebar"), #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]))
+        // タブが 1 つの窓でもタブバーを出す（タブをつかんで、ほかの窓のタブバーに落とせる）。題は AppKit が
+        // Show・Hide に替える。
+        menu.addItem(item(L("Show Tab Bar"), #selector(NSWindow.toggleTabBar(_:)), "t", [.command, .shift]))
         menu.addItem(.separator())
         menu.addItem(item(L("One Line per Commit"), #selector(toggleCompactRows(_:)), "", target: self))
         let items = NSMenuItem(title: L("History Items"), action: nil, keyEquivalent: "")
@@ -196,6 +199,8 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(item(L("Show Previous Tab"), #selector(NSWindow.selectPreviousTab(_:)), "[", [.command, .shift]))
         menu.addItem(item(L("Move Tab to New Window"), #selector(NSWindow.moveTabToNewWindow(_:)), ""))
         menu.addItem(item(L("Merge All Windows"), #selector(NSWindow.mergeAllWindows(_:)), ""))
+        // 別の窓にした File History・Blame を、開いたリポジトリの窓のタブに戻す。
+        menu.addItem(item(L("Move Tab to Repository Window"), #selector(FileToolWindowController.moveTabToRepositoryWindow(_:)), ""))
         menu.addItem(.separator())
         menu.addItem(item("Repositories", #selector(showRepositories(_:)), "r", [.command, .shift], target: self))
         menu.addItem(item(L("Settings"), #selector(showSettings(_:)), "", target: self))

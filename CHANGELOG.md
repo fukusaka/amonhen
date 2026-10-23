@@ -11,6 +11,9 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- View > Show Tab Bar (⇧⌘T) shows the tab bar of a window with one tab, so its tab can be dragged into another
+  window, and Window > Move Tab to Repository Window puts a File History or Blame window back among its repository's
+  tabs.
 - File History marks where the file was renamed with a heading for each name, and its commits have a context menu
   (Show in History, Blame at the commit, copying the ID or path), with Return and ⌘C.
 
