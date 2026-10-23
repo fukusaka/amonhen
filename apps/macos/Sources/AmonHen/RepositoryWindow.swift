@@ -1252,13 +1252,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// File History・Blame を開く前に出していたページ（閉じたら戻る）。
     private var pageBeforeFileTool: [SidebarViewController.Page: SidebarViewController.Page] = [:]
 
-    /// File History・Blame をページに出す（同じ種類のものは置き換える）。⧉ で別の窓に移し、× で閉じる。
+    /// File History・Blame をページに出す（同じ種類のものは置き換える）。⧉ でこのタブの隣のタブに移し、× で閉じる。
     private func showFileTool(_ tool: FileToolViewController, page: SidebarViewController.Page) {
         if let current = pages?.page, current != page { pageBeforeFileTool[page] = current }
         tool.onPopOut = { [weak self, weak tool] in
             guard let self, let tool else { return }
             closeFileTool(page)
-            FileToolWindowController.show(tool)
+            FileToolWindowController.show(tool, tabWith: window, toolbar: mirrorToolbar(), repository: self)
         }
         tool.onClose = { [weak self] in self?.closeFileTool(page) }
         tool.onHeadingChange = { [weak self, weak tool] heading in
@@ -1270,6 +1270,20 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         sidebar.select(page: page)
         pages?.show(page)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// File History・Blame のタブに付ける、このタブと同じツールバー。検索はこのタブに戻って History で探す。
+    private func mirrorToolbar() -> MainToolbar {
+        let mirror = toolbar.mirror()
+        mirror.onSearch = { [weak self] query in
+            self?.window.makeKeyAndOrderFront(nil)
+            self?.toolbar.onSearch?(query)
+        }
+        mirror.onSearchStep = { [weak self] step in
+            self?.window.makeKeyAndOrderFront(nil)
+            self?.toolbar.onSearchStep?(step)
+        }
+        return mirror
     }
 
     private func closeFileTool(_ page: SidebarViewController.Page) {

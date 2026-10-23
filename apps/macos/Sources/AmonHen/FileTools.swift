@@ -8,8 +8,8 @@ private let fileToolDate: DateFormatter = {
     return f
 }()
 
-/// File History・Blame の中身。メインの窓のページにも、⧉ で移した別の窓にも置ける。ページでは上の帯に何のファイルか
-/// と ⧉・× を出し、別の窓では帯を隠して同じ文字を窓の題にする。
+/// File History・Blame の中身。メインの窓のページにも、⧉ で移したタブ（引き出せば別の窓）にも置ける。ページでは
+/// 上の帯に何のファイルかと ⧉・× を出し、タブでは帯を隠して同じ文字を窓の題にする。
 class FileToolViewController: NSViewController {
     let path: String
     /// 帯の文字（別の窓では窓の題）。
@@ -20,7 +20,9 @@ class FileToolViewController: NSViewController {
         }
     }
     var onHeadingChange: ((String) -> Void)?
-    /// ⧉（別の窓に移す）と ×（ページを閉じる）。どちらもなければ帯を隠す。
+    /// タブの短い題（種類とファイル名）。
+    var tabTitle: String { (path as NSString).lastPathComponent }
+    /// ⧉（タブに移す）と ×（ページを閉じる）。どちらもなければ帯を隠す。
     var onPopOut: (() -> Void)? { didSet { updateBar() } }
     var onClose: (() -> Void)? { didSet { updateBar() } }
 
@@ -47,7 +49,7 @@ class FileToolViewController: NSViewController {
         headingLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         headingLabel.stringValue = heading
         for (button, symbol, help, action) in [
-            (popOutButton, "macwindow.on.rectangle", L("Open in a Separate Window"), #selector(popOut)),
+            (popOutButton, "macwindow.on.rectangle", L("Open in New Tab"), #selector(popOut)),
             (closeButton, "xmark", L("Close"), #selector(closePage)),
         ] {
             button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)
@@ -93,22 +95,75 @@ class FileToolViewController: NSViewController {
     @objc private func closePage() { onClose?() }
 }
 
-/// ⧉ で移した File History・Blame の窓。閉じるまで `FileToolWindows` が持つ。
+/// ⧉ で移した File History・Blame の窓。リポジトリのタブ（`tabWith`）の隣のタブにする（タブを引き出せば別の窓）。
+/// リポジトリのタブと同じツールバーを付けるので、タブを切り替えても上の並びと中身の大きさが変わらない。ツールバーと
+/// メニューの操作は、リポジトリのタブに切り替えてからリポジトリ（`RepositoryWindow`）に渡す。
+/// 次の起動で開き直すタブの記録には入らない（記録するのはリポジトリのタブだけ）。閉じるまで `FileToolWindows` が持つ。
 final class FileToolWindowController: NSWindowController {
-    static func show(_ tool: FileToolViewController) {
+    private var toolbar: MainToolbar?
+    private var forwarder: RepositoryForwarder?
+
+    static func show(_ tool: FileToolViewController, tabWith: NSWindow?, toolbar: MainToolbar?, repository: RepositoryWindow?) {
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+            styleMask: tabWith?.styleMask ?? [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         tool.onPopOut = nil
         tool.onClose = nil
         tool.onHeadingChange = { [weak window] in window?.title = $0 }
         window.title = tool.heading
+        window.tab.title = tool.tabTitle
         window.contentViewController = tool
         window.setContentSize(NSSize(width: 1200, height: 780))
-        window.center()
         let controller = FileToolWindowController(window: window)
-        controller.showWindow(nil)
+        controller.toolbar = toolbar
+        window.toolbar = toolbar?.toolbar
+        if let repository {
+            controller.forwarder = RepositoryForwarder(repository: repository)
+        }
         FileToolWindows.keep(controller)
+        window.tabbingIdentifier = RepositoryWindow.tabbingIdentifier
+        if let tabWith {
+            tabWith.addTabbedWindow(window, ordered: .above)
+            window.makeKeyAndOrderFront(nil)
+        } else {
+            window.center()
+            controller.showWindow(nil)
+        }
+    }
+
+    override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
+        if let forwarder, forwarder.responds(to: action) { return forwarder }
+        return super.supplementalTarget(forAction: action, sender: sender)
+    }
+}
+
+/// File History・Blame のタブで受けたメニューとツールバーの操作を、リポジトリに渡す。シートや一覧はリポジトリの窓に出る
+/// ので、先にリポジトリのタブに切り替える（使えるかの問い合わせは、切り替えずに渡す）。
+private final class RepositoryForwarder: NSObject {
+    private weak var repository: RepositoryWindow?
+
+    init(repository: RepositoryWindow) {
+        self.repository = repository
+    }
+
+    private static let validations: Set<Selector> = [
+        #selector(NSToolbarItemValidation.validateToolbarItem(_:)),
+        #selector(NSMenuItemValidation.validateMenuItem(_:)),
+        NSSelectorFromString("validateUserInterfaceItem:"),
+    ]
+
+    // レスポンダチェーンから（メインスレッドで）呼ばれる。
+    nonisolated override func responds(to selector: Selector!) -> Bool {
+        MainActor.assumeIsolated { repository?.responds(to: selector) ?? false }
+    }
+
+    nonisolated override func forwardingTarget(for selector: Selector!) -> Any? {
+        let target: RepositoryWindow? = MainActor.assumeIsolated {
+            guard let repository else { return nil }
+            if !Self.validations.contains(selector) { repository.window.makeKeyAndOrderFront(nil) }
+            return repository
+        }
+        return target
     }
 }
 
@@ -132,6 +187,8 @@ final class BlameViewController: FileToolViewController, NSTableViewDataSource, 
         heading = "Blame — \(path)" + (rev.map { " @ \($0.prefix(8))" } ?? "")
         load()
     }
+
+    override var tabTitle: String { "Blame — " + super.tabTitle }
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -319,6 +376,8 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
         updateTitle()
         load()
     }
+
+    override var tabTitle: String { "File History — " + super.tabTitle }
 
     required init?(coder: NSCoder) { fatalError() }
 
