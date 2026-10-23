@@ -154,52 +154,51 @@ final class BlameRowView: NSTableRowView {
 }
 
 /// ファイルの履歴: 左にファイルを変えたコミット、右にそのコミットでのファイルの差分。名前の変更も追う。
+/// 窓はすぐに開き、新しい方の `firstPage` 個を先に出してから残りを足す。
 final class FileHistoryWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
-    private let history: FileHistory
+    /// 一覧の行。
+    enum Row: Equatable {
+        case entry(Int)
+        /// 残りを読んでいる。
+        case loading
+    }
+
+    /// 先に読む数（`git log -n` は Bloom フィルタがなくても早く返る）。
+    static let firstPage = 100
+
+    private let path: String
     private let repository: Repository
+    private var entries: [FileHistory.Entry] = []
+    private var rows: [Row] = [.loading]
+    private var complete = false
     private let table = NSTableView()
     private let diffView: DiffViewController
     private let onSelectCommit: (Data) -> Void
+    /// 差分を出しているコミット（読み直して選び直しても、同じなら読み直さない）。
+    private var shown: String?
     private var request = 0
 
     static func show(path: String, repository: Repository, renderer: TextRenderer, onSelectCommit: @escaping (Data) -> Void) {
-        Task {
-            do {
-                let json = try Repository.json(["op": "fileHistory", "path": path])
-                let history = try await Task.detached(priority: .userInitiated) {
-                    try repository.info(json: json, as: FileHistory.self)
-                }.value
-                let controller = FileHistoryWindowController(
-                    path: path, history: history, repository: repository, renderer: renderer, onSelectCommit: onSelectCommit)
-                controller.showWindow(nil)
-                FileToolWindows.keep(controller)
-            } catch {
-                NSLog("ファイルの情報を読めない: \(error)")
-                NSAlert(error: error).runModal()
-            }
-        }
+        let controller = FileHistoryWindowController(
+            path: path, repository: repository, renderer: renderer, onSelectCommit: onSelectCommit)
+        controller.showWindow(nil)
+        FileToolWindows.keep(controller)
+        controller.load()
     }
 
-    private init(
-        path: String, history: FileHistory, repository: Repository, renderer: TextRenderer,
-        onSelectCommit: @escaping (Data) -> Void
-    ) {
-        self.history = history
+    private init(path: String, repository: Repository, renderer: TextRenderer, onSelectCommit: @escaping (Data) -> Void) {
+        self.path = path
         self.repository = repository
         self.diffView = DiffViewController(renderer: renderer)
         self.onSelectCommit = onSelectCommit
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
             styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = L("History — %@ (%ld commits)", path, history.entries.count)
         window.center()
         super.init(window: window)
         build()
-        if !history.entries.isEmpty {
-            table.selectRowIndexes([0], byExtendingSelection: false)
-        } else {
-            diffView.show(nil, message: L("No commits changed this file."))
-        }
+        updateTitle()
+        diffView.show(nil, message: L("Loading…"))
     }
 
     required init?(coder: NSCoder) { fatalError() }
@@ -210,13 +209,12 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
         column.width = 340
         table.addTableColumn(column)
         table.headerView = nil
-        table.rowHeight = 38
         table.style = .inset
         table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         table.dataSource = self
         table.delegate = self
         table.target = self
-        table.doubleAction = #selector(openCommit)
+        table.doubleAction = #selector(openClickedCommit)
         let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 360, height: 780))
         scroll.documentView = table
         scroll.hasVerticalScroller = true
@@ -230,29 +228,115 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
         window?.contentView = split
     }
 
-    @objc private func openCommit() {
-        let row = table.clickedRow
-        guard row >= 0, let id = Data(hex: history.entries[row].oid) else { return }
+    private func load() {
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let first = try await read(limit: Self.firstPage)
+                show(first.entries, complete: !(first.more ?? false))
+                guard !complete, window?.isVisible == true else { return }
+                show(try await read(limit: nil).entries, complete: true)
+            } catch {
+                NSLog("ファイルの履歴を読めない: \(error)")
+                complete = true
+                show(entries, complete: true)
+                diffView.show(nil, message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func read(limit: Int?) async throws -> FileHistory {
+        var command: [String: Any] = ["op": "fileHistory", "path": path]
+        if let limit { command["limit"] = limit }
+        let json = try Repository.json(command)
+        let repository = self.repository
+        return try await Task.detached(priority: .userInitiated) {
+            try repository.info(json: json, as: FileHistory.self)
+        }.value
+    }
+
+    /// 一覧を入れ替える。選んでいたコミットは選んだまま。
+    private func show(_ entries: [FileHistory.Entry], complete: Bool) {
+        let selected = selectedEntry?.oid
+        self.entries = entries
+        self.complete = complete
+        rows = Self.rows(count: entries.count, complete: complete)
+        table.reloadData()
+        updateTitle()
+        let oid = selected ?? entries.first?.oid
+        if let row = rows.firstIndex(where: { if case .entry(let i) = $0 { entries[i].oid == oid } else { false } }) {
+            table.selectRowIndexes([row], byExtendingSelection: false)
+        } else if complete, entries.isEmpty, shown == nil {
+            diffView.show(nil, message: L("No commits changed this file."))
+        }
+    }
+
+    /// 各コミットの行と、まだ読んでいれば最後に読んでいる印。
+    static func rows(count: Int, complete: Bool) -> [Row] {
+        (0..<count).map(Row.entry) + (complete ? [] : [.loading])
+    }
+
+    private func updateTitle() {
+        window?.title =
+            if complete { L("History — %@ (%ld commits)", path, entries.count) }
+            else if entries.isEmpty { L("History — %@ (loading…)", path) }
+            else { L("History — %@ (%ld+ commits)", path, entries.count) }
+    }
+
+    private var selectedEntry: FileHistory.Entry? { entry(at: table.selectedRow) }
+
+    private func entry(at row: Int) -> FileHistory.Entry? {
+        guard rows.indices.contains(row), case .entry(let i) = rows[row] else { return nil }
+        return entries[i]
+    }
+
+    @objc private func openClickedCommit() {
+        entry(at: table.clickedRow).map(showInHistory)
+    }
+
+    private func showInHistory(_ entry: FileHistory.Entry) {
+        guard let id = Data(hex: entry.oid) else { return }
         onSelectCommit(id)
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { history.entries.count }
+    // MARK: - NSTableView
+
+    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool {
+        if case .entry = rows[row] { true } else { false }
+    }
+
+    func tableView(_ tableView: NSTableView, heightOfRow row: Int) -> CGFloat {
+        switch rows[row] {
+        case .entry: 38
+        case .loading: 30
+        }
+    }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let cell = tableView.makeView(withIdentifier: .init("entry"), owner: nil) as? TwoLineCell ?? TwoLineCell()
-        let entry = history.entries[row]
-        cell.top.stringValue = entry.subject
-        let date = fileToolDate.string(from: Date(timeIntervalSince1970: TimeInterval(entry.time)))
-        cell.bottom.stringValue = "\(entry.author)  ·  \(date)  ·  \(entry.oid.prefix(8))"
-        cell.toolTip = entry.path
-        return cell
+        switch rows[row] {
+        case .entry(let i):
+            let cell = tableView.makeView(withIdentifier: .init("entry"), owner: nil) as? TwoLineCell ?? TwoLineCell()
+            let entry = entries[i]
+            cell.top.stringValue = entry.subject
+            let date = fileToolDate.string(from: Date(timeIntervalSince1970: TimeInterval(entry.time)))
+            cell.bottom.stringValue = "\(entry.author)  ·  \(date)  ·  \(entry.oid.prefix(8))"
+            cell.toolTip = entry.path
+            return cell
+        case .loading:
+            let label = NSTextField(labelWithString: L("Loading…"))
+            label.textColor = .secondaryLabelColor
+            label.alignment = .center
+            return label
+        }
     }
 
     /// 選んだコミットの変更から、そのときのパスのファイルを探して差分を出す。
     func tableViewSelectionDidChange(_ notification: Notification) {
-        let row = table.selectedRow
-        guard row >= 0, let id = Data(hex: history.entries[row].oid) else { return }
-        let path = history.entries[row].path
+        guard let entry = selectedEntry, entry.oid != shown, let id = Data(hex: entry.oid) else { return }
+        shown = entry.oid
+        let path = entry.path
         request += 1
         let request = self.request
         let repository = self.repository
