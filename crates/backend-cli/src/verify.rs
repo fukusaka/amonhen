@@ -105,7 +105,8 @@ mod tests {
         let source = Git::new(tmp.path().join("source"));
         std::fs::create_dir(tmp.path().join("source")).unwrap();
         for args in [
-            &["init", "-q", "-b", "main"][..],
+            &["init", "-q"][..],
+            &["symbolic-ref", "HEAD", "refs/heads/main"],
             &["config", "user.name", "a"],
             &["config", "user.email", "a@example.com"],
             &["config", "commit.gpgsign", "false"],

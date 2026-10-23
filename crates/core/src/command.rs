@@ -2135,7 +2135,8 @@ mod tests {
     fn setup() -> (tempfile::TempDir, Repository) {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         git(dir, &["config", "user.name", "a"]);
         git(dir, &["config", "user.email", "a@example.com"]);
         std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
@@ -3288,7 +3289,8 @@ mod tests {
     ) -> (tempfile::TempDir, Repository) {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::write(dir.join("a.txt"), committed).unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "first"]);
