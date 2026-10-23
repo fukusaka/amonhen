@@ -223,6 +223,11 @@ pub fn git_version() -> Option<(u32, u32, u32)> {
     })
 }
 
+/// git が `major.minor` 以上か（版を読めなければ新しいとみなす）。新しい機能は、これで見て古いやり方に戻す。
+pub(crate) fn git_at_least(major: u32, minor: u32) -> bool {
+    git_version().is_none_or(|(a, b, _)| (a, b) >= (major, minor))
+}
+
 /// `git version 2.39.5 (Apple Git-154)`・`git version 2.45.1.windows.1` などの、先頭の数を 3 つ読む。
 fn parse_git_version(text: &str) -> Option<(u32, u32, u32)> {
     let rest = text.trim().strip_prefix("git version ")?;

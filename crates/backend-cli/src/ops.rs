@@ -527,27 +527,53 @@ impl Operations for Git {
     }
 
     fn config_list(&self) -> Result<Vec<ConfigEntry>> {
-        let out = self.read(&["config", "--list", "--show-origin", "--show-scope", "-z"])?;
-        // 1 項目は `scope\0origin\0key\nvalue\0`（値のない項目は `key\0`）。
-        let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
-        Ok(fields
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|f| {
-                let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-                let (key, value) = match f[2].iter().position(|&b| b == b'\n') {
-                    Some(i) => (text(&f[2][..i]), text(&f[2][i + 1..])),
-                    None => (text(f[2]), String::new()),
-                };
-                ConfigEntry {
-                    scope: text(f[0]),
-                    origin: text(f[1]),
-                    key,
-                    value,
-                }
-            })
-            .collect())
+        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        // `origin\0key\nvalue\0`（値のない項目は `key\0`）。
+        let entry = |scope: String, origin: &[u8], item: &[u8]| {
+            let (key, value) = match item.iter().position(|&b| b == b'\n') {
+                Some(i) => (text(&item[..i]), text(&item[i + 1..])),
+                None => (text(item), String::new()),
+            };
+            ConfigEntry {
+                scope,
+                origin: text(origin),
+                key,
+                value,
+            }
+        };
+        if crate::git_at_least(2, 26) {
+            let out = self.read(&["config", "--list", "--show-origin", "--show-scope", "-z"])?;
+            // 1 項目は `scope\0origin\0key\nvalue\0`。
+            let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
+            return Ok(fields
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|f| entry(text(f[0]), f[1], f[2]))
+                .collect());
+        }
+        // `--show-scope` は git 2.26 から。それより前は場所ごとに読む（ファイルがなければ読めないので、空とみなす）。
+        let mut entries = Vec::new();
+        for scope in ["system", "global", "local"] {
+            let Ok(out) = self.read(&[
+                "config",
+                "--list",
+                "--show-origin",
+                "-z",
+                &format!("--{scope}"),
+            ]) else {
+                continue;
+            };
+            let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
+            entries.extend(
+                fields
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|f| entry(scope.to_owned(), f[0], f[1])),
+            );
+        }
+        Ok(entries)
     }
 
     fn config_set(&self, key: &str, value: Option<&str>) -> Result<()> {
@@ -641,7 +667,17 @@ impl Operations for Git {
     }
 
     fn worktree_list(&self) -> Result<Vec<u8>> {
-        self.read(&["worktree", "list", "--porcelain", "-z"])
+        if crate::git_at_least(2, 36) {
+            return self.read(&["worktree", "list", "--porcelain", "-z"]);
+        }
+        // `-z` は git 2.36 から。それより前は行の区切りを NUL に替えて同じ形にする（パスに改行があれば読めない）。
+        let mut out = self.read(&["worktree", "list", "--porcelain"])?;
+        for b in &mut out {
+            if *b == b'\n' {
+                *b = 0;
+            }
+        }
+        Ok(out)
     }
 
     fn change_worktree(&self, change: &WorktreeChange) -> Result<()> {
