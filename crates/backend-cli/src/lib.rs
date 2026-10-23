@@ -193,7 +193,8 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
     if network && input.is_none() && !cmd.get_args().any(|a| a == "--") {
         return amonhen_model::activity::track_with("git", &repo, label, |seq| {
             spawn_streaming(cmd, seq)
-        });
+        })
+        .map_err(explain_old_git);
     }
     amonhen_model::activity::track_with("git", &repo, label, |seq| {
         let (out, err) = spawn_with_stderr(cmd, input)?;
@@ -204,6 +205,56 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
         }
         Ok(out)
     })
+    .map_err(explain_old_git)
+}
+
+/// Amon Hen が使う git の最低の版（`git switch` が 2.23 から）。それより新しい機能は、版を見て古いやり方に戻す。
+pub const MIN_GIT_VERSION: (u32, u32) = (2, 23);
+
+/// `git` の版（`git version` の数の 3 つ）。読めなければ `None`。プロセスで 1 回だけ調べる。
+pub fn git_version() -> Option<(u32, u32, u32)> {
+    static VERSION: std::sync::OnceLock<Option<(u32, u32, u32)>> = std::sync::OnceLock::new();
+    *VERSION.get_or_init(|| {
+        let out = amonhen_model::process::command("git")
+            .arg("version")
+            .output()
+            .ok()?;
+        parse_git_version(&String::from_utf8_lossy(&out.stdout))
+    })
+}
+
+/// `git version 2.39.5 (Apple Git-154)`・`git version 2.45.1.windows.1` などの、先頭の数を 3 つ読む。
+fn parse_git_version(text: &str) -> Option<(u32, u32, u32)> {
+    let rest = text.trim().strip_prefix("git version ")?;
+    let mut numbers = rest
+        .split(|c: char| !c.is_ascii_digit())
+        .take_while(|part| !part.is_empty())
+        .map(|part| part.parse::<u32>().ok());
+    Some((
+        numbers.next()??,
+        numbers.next()??,
+        numbers.next().flatten().unwrap_or(0),
+    ))
+}
+
+/// git が失敗したとき、版が最低より古ければ、それが理由かもしれないと添える（古い git は知らない命令やオプションを
+/// 分かりにくい言葉で断る）。取り消しには添えない。
+fn explain_old_git(error: amonhen_model::Error) -> amonhen_model::Error {
+    let message = error.to_string();
+    match git_version() {
+        Some((major, minor, patch))
+            if (major, minor) < MIN_GIT_VERSION && !amonhen_model::i18n::is_cancelled(&message) =>
+        {
+            tr!(
+                "{message}\n(git {version} is older than {minimum}, which Amon Hen needs. Update git.)",
+                message = message,
+                version = format!("{major}.{minor}.{patch}"),
+                minimum = format!("{}.{}", MIN_GIT_VERSION.0, MIN_GIT_VERSION.1),
+            )
+            .into()
+        }
+        _ => error,
+    }
 }
 
 /// ネットワークを使う git が、これだけ何も出さなければ止める（`--progress` なので、動いていれば数秒ごとに出す）。
@@ -486,6 +537,22 @@ pub(crate) fn kill_tree(child: &mut std::process::Child) {
 #[allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_git_version() {
+        assert_eq!(
+            parse_git_version("git version 2.39.5 (Apple Git-154)\n"),
+            Some((2, 39, 5))
+        );
+        assert_eq!(
+            parse_git_version("git version 2.45.1.windows.1"),
+            Some((2, 45, 1))
+        );
+        assert_eq!(parse_git_version("git version 1.8.3.1"), Some((1, 8, 3)));
+        assert_eq!(parse_git_version("git version 2.50"), Some((2, 50, 0)));
+        assert_eq!(parse_git_version("usage: git"), None);
+        assert!(git_version().is_some_and(|(major, minor, _)| (major, minor) >= MIN_GIT_VERSION));
+    }
 
     fn repo() -> (tempfile::TempDir, Git) {
         let tmp = tempfile::tempdir().unwrap();
