@@ -361,6 +361,10 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
     /// 差分を出しているコミット（読み直して選び直しても、同じなら読み直さない）。
     private var shown: String?
     private var request = 0
+    /// 読み直した回数（前の読み込みの結果を捨てる）。
+    private var generation = 0
+    /// マージも出すか（Settings の File History。一覧の右クリックで切り替える）。
+    private var merges = Settings.fileHistoryMerges
 
     /// ⏎ で History へ、⌘C で ID をコピーする（表の中で）。
     private final class Table: NSTableView {
@@ -384,9 +388,27 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
         addChild(diffView)
         updateTitle()
         load()
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(mergesSettingChanged), name: .fileHistoryMergesChanged, object: nil)
     }
 
     override var tabTitle: String { "File History — " + super.tabTitle }
+
+    @objc private func mergesSettingChanged() {
+        guard merges != Settings.fileHistoryMerges else { return }
+        merges = Settings.fileHistoryMerges
+        reload()
+    }
+
+    /// マージを出す・出さないを変えたので、初めから読み直す（選んでいたコミットは、まだあれば選んだまま）。
+    private func reload() {
+        entries = []
+        complete = false
+        rows = [.loading]
+        if isViewLoaded { table.reloadData() }
+        updateTitle()
+        load()
+    }
 
     required init?(coder: NSCoder) { fatalError() }
 
@@ -422,14 +444,20 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
     }
 
     private func load() {
+        generation += 1
+        let generation = self.generation
         Task { [weak self] in
             guard let self else { return }
             do {
                 let first = try await read(limit: Self.firstPage)
+                guard generation == self.generation else { return }
                 show(first.entries, complete: !(first.more ?? false))
                 guard !complete else { return }
-                show(try await read(limit: nil).entries, complete: true)
+                let all = try await read(limit: nil)
+                guard generation == self.generation else { return }
+                show(all.entries, complete: true)
             } catch {
+                guard generation == self.generation else { return }
                 NSLog("ファイルの履歴を読めない: \(error)")
                 complete = true
                 show(entries, complete: true)
@@ -439,7 +467,7 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
     }
 
     private func read(limit: Int?) async throws -> FileHistory {
-        var command: [String: Any] = ["op": "fileHistory", "path": path]
+        var command: [String: Any] = ["op": "fileHistory", "path": path, "merges": merges]
         if let limit { command["limit"] = limit }
         let json = try Repository.json(command)
         let repository = self.repository
@@ -509,20 +537,25 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        guard let entry = entry(at: table.clickedRow) else { return }
-        let short = String(entry.oid.prefix(8))
         func add(_ title: String, key: String = "", _ handler: @escaping () -> Void) {
             let item = ClosureMenuItem(title: title, action: handler)
             item.keyEquivalent = key
             item.keyEquivalentModifierMask = key == "c" ? .command : []
             menu.addItem(item)
         }
-        add(L("Show in History"), key: "\r") { [weak self] in self?.showInHistory(entry) }
-        add("Blame at \(short)") { [weak self] in self?.onBlame(entry.path, entry.oid) }
-        menu.addItem(.separator())
-        add(L("Copy Commit ID"), key: "c") { [weak self] in self?.copy(entry.oid) }
-        add(L("Copy Short ID")) { [weak self] in self?.copy(short) }
-        add(L("Copy Path")) { [weak self] in self?.copy(entry.path) }
+        if let entry = entry(at: table.clickedRow) {
+            let short = String(entry.oid.prefix(8))
+            add(L("Show in History"), key: "\r") { [weak self] in self?.showInHistory(entry) }
+            add("Blame at \(short)") { [weak self] in self?.onBlame(entry.path, entry.oid) }
+            menu.addItem(.separator())
+            add(L("Copy Commit ID"), key: "c") { [weak self] in self?.copy(entry.oid) }
+            add(L("Copy Short ID")) { [weak self] in self?.copy(short) }
+            add(L("Copy Path")) { [weak self] in self?.copy(entry.path) }
+            menu.addItem(.separator())
+        }
+        // 既定（Settings）も変え、開いているほかの File History も読み直す。
+        add(L("Show Merge Commits")) { Settings.fileHistoryMerges.toggle() }
+        menu.items.last?.state = merges ? .on : .off
     }
 
     // MARK: - NSTableView

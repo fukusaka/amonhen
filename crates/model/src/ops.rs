@@ -175,10 +175,11 @@ pub trait Operations: Send + Sync {
         Err(crate::tr!("Can’t blame here").into())
     }
 
-    /// HEAD から `path` を変えたコミット（名前の変更を追う。マージは出さない）。`git log -z --name-only` の、
-    /// 各コミットが `\x01ID\0件名\0作者\0時刻\0\nその時点のパス\0` になる出力。`limit` があれば新しい方からその数まで。
-    fn file_log(&self, path: &str, limit: Option<usize>) -> Result<Vec<u8>> {
-        let _ = (path, limit);
+    /// HEAD から `path` を変えたコミット（名前の変更を追う。`merges` でなければマージは出さない）。
+    /// `git log -z --name-only` の、各コミットが `\x01ID\0件名\0作者\0時刻\0\nその時点のパス\0` になる出力。
+    /// `limit` があれば新しい方からその数まで。
+    fn file_log(&self, path: &str, limit: Option<usize>, merges: bool) -> Result<Vec<u8>> {
+        let _ = (path, limit, merges);
         Err(crate::tr!("Can’t read file history here").into())
     }
 

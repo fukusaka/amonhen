@@ -324,7 +324,7 @@ linux（1,485,021 コミット、ref 952 個、Apple Silicon、release ビルド
 
 キャッシュがない初回の 2.4 s は、commit-graph があれば約 1.2 s になる。commit-graph がないリポジトリで `git commit-graph write --reachable` を裏で実行するかは設定で選ぶ（`writeCommitGraph`、既定は行わない。リポジトリの `.git` に書き込むため）。パスごとの履歴を速くする、変更のあったパスの Bloom フィルタ（`--changed-paths`）も書く。2.27 より前の git はこのオプションを知らないので、付けずに書き直す。
 
-ファイル単位の履歴（`fileHistory`）は `git log --follow` を使わない（履歴の単純化も Bloom フィルタも効かず、全コミットを歩く）。`git log --no-merges -- <path>` で辿り、いちばん古いコミットでそのパスが改名かコピーで生まれていたら（`git diff-tree -C`）、そのコミットの親から元の名前で続ける。`limit` があれば残りの数を各 `git log` に渡し、その先があるかを `more` で返す。macOS の File History の窓は、まず 100 コミットを、次に全部を求める。linux（上と同じく `git clone --shared` した複製）での `amonhen run` の時間を、`git log --follow` と比べる:
+ファイル単位の履歴（`fileHistory`）は `git log --follow` を使わない（履歴の単純化も Bloom フィルタも効かず、全コミットを歩く）。`git log --no-merges -- <path>` で辿り（`merges` なら `--no-merges` を付けない。マージにはファイル名が出ないので、その時点のパスを添える）、いちばん古いコミットでそのパスが改名かコピーで生まれていたら（`git diff-tree -C`）、そのコミットの親から元の名前で続ける。`limit` があれば残りの数を各 `git log` に渡し、その先があるかを `more` で返す。macOS の File History の窓は、まず 100 コミットを、次に全部を求める。linux（上と同じく `git clone --shared` した複製）での `amonhen run` の時間を、`git log --follow` と比べる:
 
 | ファイル | `--follow` | 今 | 今（Bloom フィルタあり） | コミットの数（`--follow` / 今） |
 | --- | --- | --- | --- | --- |

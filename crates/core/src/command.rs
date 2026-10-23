@@ -227,10 +227,12 @@ pub enum Command {
         rev: Option<String>,
     },
     /// HEAD から `path` を変えたコミット（`info.entries`: oid・subject・author・time・その時点の path）。`limit`
-    /// があれば新しい方からその数までで、`info.more` はその先もあるか。
+    /// があれば新しい方からその数までで、`info.more` はその先もあるか。`merges` ならマージも出す（既定は出さない）。
     FileHistory {
         path: String,
         limit: Option<usize>,
+        #[serde(default)]
+        merges: bool,
     },
     /// `tip` から辿れて `base` から辿れないコミット（`git log base..tip`）。`info`: 全部の数 `count` と、新しい順に
     /// `limit` 個（既定 50）までの `commits`（oid・subject・author・time）。Push・Pull の前に、送る・取り込む
@@ -1648,10 +1650,17 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::FileHistory { path, limit } => {
+            Command::FileHistory {
+                path,
+                limit,
+                merges,
+            } => {
                 // 1 つ多く読んで、その先があるかを知る。
-                let mut entries =
-                    crate::blame::parse_file_log(&ops.file_log(&path, limit.map(|n| n + 1))?);
+                let mut entries = crate::blame::parse_file_log(&ops.file_log(
+                    &path,
+                    limit.map(|n| n + 1),
+                    merges,
+                )?);
                 let more = limit.is_some_and(|n| entries.len() > n);
                 if let Some(n) = limit {
                     entries.truncate(n);
@@ -3306,6 +3315,46 @@ mod tests {
             assert_eq!(subjects, want, "{limit}");
             assert_eq!(part["info"]["more"], more, "{limit}");
         }
+    }
+
+    #[test]
+    fn shows_merges_in_file_history_only_when_asked() {
+        // 両方の枝で f.txt の別の行を変えて merge する（merge の中身はどちらの親とも違う）。その後で名前を変える。
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        commit_file(dir, "f.txt", "1\n2\n3\n4\n5\n6\n");
+        git(dir, &["switch", "-q", "-c", "side"]);
+        commit_file(dir, "f.txt", "one\n2\n3\n4\n5\n6\n");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "f.txt", "1\n2\n3\n4\n5\nsix\n");
+        git(dir, &["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+        git(dir, &["mv", "f.txt", "g.txt"]);
+        git(dir, &["commit", "-q", "-m", "rename"]);
+
+        let subjects = |json: &str| -> Vec<(String, String)> {
+            run(&repo, json)["info"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| {
+                    (
+                        e["subject"].as_str().unwrap().to_owned(),
+                        e["path"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect()
+        };
+        let without = subjects(r#"{"op":"fileHistory","path":"g.txt"}"#);
+        assert!(
+            !without.iter().any(|(s, _)| s == "merge side"),
+            "{without:?}"
+        );
+        let with = subjects(r#"{"op":"fileHistory","path":"g.txt","merges":true}"#);
+        assert_eq!(with.len(), without.len() + 1, "{with:?}");
+        assert!(
+            with.contains(&("merge side".to_owned(), "f.txt".to_owned())),
+            "マージにはその時点のパスを添える: {with:?}"
+        );
     }
 
     #[test]
