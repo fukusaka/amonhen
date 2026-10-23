@@ -8,47 +8,154 @@ private let fileToolDate: DateFormatter = {
     return f
 }()
 
+/// File History・Blame の中身。メインの窓のページにも、⧉ で移した別の窓にも置ける。ページでは上の帯に何のファイルか
+/// と ⧉・× を出し、別の窓では帯を隠して同じ文字を窓の題にする。
+class FileToolViewController: NSViewController {
+    let path: String
+    /// 帯の文字（別の窓では窓の題）。
+    var heading = "" {
+        didSet {
+            headingLabel.stringValue = heading
+            onHeadingChange?(heading)
+        }
+    }
+    var onHeadingChange: ((String) -> Void)?
+    /// ⧉（別の窓に移す）と ×（ページを閉じる）。どちらもなければ帯を隠す。
+    var onPopOut: (() -> Void)? { didSet { updateBar() } }
+    var onClose: (() -> Void)? { didSet { updateBar() } }
+
+    private let bar = NSStackView()
+    private let headingLabel = NSTextField(labelWithString: "")
+    private let popOutButton = NSButton()
+    private let closeButton = NSButton()
+    private let separator = NSBox()
+    private lazy var content = makeContent()
+
+    init(path: String) {
+        self.path = path
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    /// 帯の下に置く中身（サブクラスが作る）。
+    func makeContent() -> NSView { NSView() }
+
+    override func loadView() {
+        headingLabel.font = .systemFont(ofSize: NSFont.systemFontSize, weight: .semibold)
+        headingLabel.lineBreakMode = .byTruncatingMiddle
+        headingLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        headingLabel.stringValue = heading
+        for (button, symbol, help, action) in [
+            (popOutButton, "macwindow.on.rectangle", L("Open in a Separate Window"), #selector(popOut)),
+            (closeButton, "xmark", L("Close"), #selector(closePage)),
+        ] {
+            button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)
+            button.isBordered = false
+            button.toolTip = help
+            button.target = self
+            button.action = action
+        }
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.init(1), for: .horizontal)
+        for v in [headingLabel, spacer, popOutButton, closeButton] { bar.addArrangedSubview(v) }
+        bar.spacing = 10
+        bar.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 12)
+        separator.boxType = .separator
+        // 分割ビューを中に持つので、並べ方は frame で（帯は上に固定、中身は残りいっぱい）。
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 1200, height: 780))
+        bar.autoresizingMask = [.width, .minYMargin]
+        separator.autoresizingMask = [.width, .minYMargin]
+        content.autoresizingMask = [.width, .height]
+        for v in [content, separator, bar] { root.addSubview(v) }
+        view = root
+        updateBar()
+    }
+
+    /// 帯の高さ。
+    private static let barHeight: CGFloat = 32
+
+    private func updateBar() {
+        guard isViewLoaded else { return }
+        popOutButton.isHidden = onPopOut == nil
+        closeButton.isHidden = onClose == nil
+        let hidden = onPopOut == nil && onClose == nil
+        bar.isHidden = hidden
+        separator.isHidden = hidden
+        let bounds = view.bounds
+        let top = hidden ? 0 : Self.barHeight + 1
+        bar.frame = NSRect(x: 0, y: bounds.height - Self.barHeight, width: bounds.width, height: Self.barHeight)
+        separator.frame = NSRect(x: 0, y: bounds.height - top, width: bounds.width, height: 1)
+        content.frame = NSRect(x: 0, y: 0, width: bounds.width, height: bounds.height - top)
+    }
+
+    @objc private func popOut() { onPopOut?() }
+    @objc private func closePage() { onClose?() }
+}
+
+/// ⧉ で移した File History・Blame の窓。閉じるまで `FileToolWindows` が持つ。
+final class FileToolWindowController: NSWindowController {
+    static func show(_ tool: FileToolViewController) {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        tool.onPopOut = nil
+        tool.onClose = nil
+        tool.onHeadingChange = { [weak window] in window?.title = $0 }
+        window.title = tool.heading
+        window.contentViewController = tool
+        window.setContentSize(NSSize(width: 1200, height: 780))
+        window.center()
+        let controller = FileToolWindowController(window: window)
+        controller.showWindow(nil)
+        FileToolWindows.keep(controller)
+    }
+}
+
 /// blame: ファイルの各行を最後に変えたコミット。同じコミットの行をまとめ、まとまりの先頭にコミットを出す。
-/// 行をダブルクリックすると、そのコミットを History で選ぶ。
-final class BlameWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate {
-    private let blame: Blame
+/// 行をダブルクリックすると、そのコミットを History で選ぶ。読み終える前から（読んでいます…と）出す。
+final class BlameViewController: FileToolViewController, NSTableViewDataSource, NSTableViewDelegate {
+    private let rev: String?
+    private let repository: Repository
+    private var blame: Blame?
     /// 行ごとの、まとまりの番号（背景を交互に変える）と、まとまりの中で何行目か。
     private var blocks: [(index: Int, offset: Int)] = []
     private let table = NSTableView()
+    private let message = NSTextField(labelWithString: L("Loading…"))
     private let onSelectCommit: (Data) -> Void
 
-    static func show(path: String, rev: String?, repository: Repository, onSelectCommit: @escaping (Data) -> Void) {
-        Task {
+    init(path: String, rev: String?, repository: Repository, onSelectCommit: @escaping (Data) -> Void) {
+        self.rev = rev
+        self.repository = repository
+        self.onSelectCommit = onSelectCommit
+        super.init(path: path)
+        heading = "Blame — \(path)" + (rev.map { " @ \($0.prefix(8))" } ?? "")
+        load()
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    private func load() {
+        var command: [String: Any] = ["op": "blame", "path": path]
+        if let rev { command["rev"] = rev }
+        let repository = self.repository
+        Task { [weak self] in
             do {
-                var command: [String: Any] = ["op": "blame", "path": path]
-                if let rev { command["rev"] = rev }
                 let json = try Repository.json(command)
                 let blame = try await Task.detached(priority: .userInitiated) {
                     try repository.info(json: json, as: Blame.self)
                 }.value
-                let controller = BlameWindowController(
-                    blame: blame, title: "Blame — \(path)" + (rev.map { " @ \($0.prefix(8))" } ?? ""),
-                    onSelectCommit: onSelectCommit)
-                controller.showWindow(nil)
-                FileToolWindows.keep(controller)
+                self?.show(blame)
             } catch {
                 NSLog("ファイルの情報を読めない: \(error)")
-                NSAlert(error: error).runModal()
+                self?.message.stringValue = error.localizedDescription
             }
         }
     }
 
-    private init(blame: Blame, title: String, onSelectCommit: @escaping (Data) -> Void) {
-        self.blame = blame
-        self.onSelectCommit = onSelectCommit
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1100, height: 760),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = title
-        window.center()
-        super.init(window: window)
+    private func show(_ blame: Blame) {
         var index = -1, offset = 0, previous = -1
-        for line in blame.lines {
+        blocks = blame.lines.map { line in
             if line.c != previous {
                 index += 1
                 offset = 0
@@ -56,14 +163,14 @@ final class BlameWindowController: NSWindowController, NSTableViewDataSource, NS
             } else {
                 offset += 1
             }
-            blocks.append((index, offset))
+            return (index, offset)
         }
-        build()
+        self.blame = blame
+        message.isHidden = true
+        table.reloadData()
     }
 
-    required init?(coder: NSCoder) { fatalError() }
-
-    private func build() {
+    override func makeContent() -> NSView {
         for (id, title, width) in [("info", "Commit", 240.0), ("number", "", 48.0), ("code", "", 700.0)] {
             let column = NSTableColumn(identifier: .init(id))
             column.title = title
@@ -83,18 +190,25 @@ final class BlameWindowController: NSWindowController, NSTableViewDataSource, NS
         scroll.documentView = table
         scroll.hasVerticalScroller = true
         scroll.hasHorizontalScroller = true
-        window?.contentView = scroll
+        message.textColor = .secondaryLabelColor
+        message.translatesAutoresizingMaskIntoConstraints = false
+        scroll.addSubview(message)
+        NSLayoutConstraint.activate([
+            message.centerXAnchor.constraint(equalTo: scroll.centerXAnchor),
+            message.centerYAnchor.constraint(equalTo: scroll.centerYAnchor),
+        ])
+        return scroll
     }
 
     @objc private func openCommit() {
         let row = table.clickedRow
-        guard row >= 0 else { return }
+        guard row >= 0, let blame else { return }
         let commit = blame.commits[blame.lines[row].c]
         guard commit.isCommitted, let id = Data(hex: commit.oid) else { return }
         onSelectCommit(id)
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { blame.lines.count }
+    func numberOfRows(in tableView: NSTableView) -> Int { blame?.lines.count ?? 0 }
 
     func tableView(_ tableView: NSTableView, rowViewForRow row: Int) -> NSTableRowView? {
         let view = BlameRowView()
@@ -116,6 +230,7 @@ final class BlameWindowController: NSWindowController, NSTableViewDataSource, NS
             }
             return f
         }()
+        guard let blame else { return nil }
         let line = blame.lines[row]
         let commit = blame.commits[line.c]
         switch id {
@@ -154,9 +269,9 @@ final class BlameRowView: NSTableRowView {
 }
 
 /// ファイルの履歴: 左にファイルを変えたコミット、右にそのコミットでのファイルの差分。名前の変更も追う。
-/// 窓はすぐに開き、新しい方の `firstPage` 個を先に出してから残りを足す。名前が変わっていれば、名前ごとにその時点の
+/// すぐに出し、新しい方の `firstPage` 個を先に出してから残りを足す。名前が変わっていれば、名前ごとにその時点の
 /// パスの見出しを挟む（上に張り付くので、今どの名前の頃を見ているかが分かる）。
-final class FileHistoryWindowController: NSWindowController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
+final class FileHistoryViewController: FileToolViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
     /// 一覧の行。
     enum Row: Equatable {
         /// その下のコミットの時点のパス。`index` はその下の最初のコミットの番号。
@@ -169,7 +284,6 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
     /// 先に読む数（`git log -n` は Bloom フィルタがなくても早く返る）。
     static let firstPage = 100
 
-    private let path: String
     private let repository: Repository
     private var entries: [FileHistory.Entry] = []
     private var rows: [Row] = [.loading]
@@ -192,39 +306,23 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
         @objc func copy(_ sender: Any?) { onCopy?() }
     }
 
-    static func show(
+    init(
         path: String, repository: Repository, renderer: TextRenderer,
         onSelectCommit: @escaping (Data) -> Void, onBlame: @escaping (_ path: String, _ commit: String) -> Void
     ) {
-        let controller = FileHistoryWindowController(
-            path: path, repository: repository, renderer: renderer, onSelectCommit: onSelectCommit, onBlame: onBlame)
-        controller.showWindow(nil)
-        FileToolWindows.keep(controller)
-        controller.load()
-    }
-
-    private init(
-        path: String, repository: Repository, renderer: TextRenderer,
-        onSelectCommit: @escaping (Data) -> Void, onBlame: @escaping (String, String) -> Void
-    ) {
-        self.path = path
         self.repository = repository
         self.diffView = DiffViewController(renderer: renderer)
         self.onSelectCommit = onSelectCommit
         self.onBlame = onBlame
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 780),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.center()
-        super.init(window: window)
-        build()
+        super.init(path: path)
+        addChild(diffView)
         updateTitle()
-        diffView.show(nil, message: L("Loading…"))
+        load()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
-    private func build() {
+    override func makeContent() -> NSView {
         let column = NSTableColumn(identifier: .init("commit"))
         column.resizingMask = .autoresizingMask
         column.width = 340
@@ -251,7 +349,8 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
         diffView.view.frame = NSRect(x: 0, y: 0, width: 840, height: 780)
         split.addArrangedSubview(diffView.view)
         split.setHoldingPriority(.init(260), forSubviewAt: 0)
-        window?.contentView = split
+        diffView.show(nil, message: L("Loading…"))
+        return split
     }
 
     private func load() {
@@ -260,7 +359,7 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
             do {
                 let first = try await read(limit: Self.firstPage)
                 show(first.entries, complete: !(first.more ?? false))
-                guard !complete, window?.isVisible == true else { return }
+                guard !complete else { return }
                 show(try await read(limit: nil).entries, complete: true)
             } catch {
                 NSLog("ファイルの履歴を読めない: \(error)")
@@ -287,8 +386,9 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
         self.entries = entries
         self.complete = complete
         rows = Self.rows(for: entries.map(\.path), complete: complete)
-        table.reloadData()
         updateTitle()
+        guard isViewLoaded else { return }
+        table.reloadData()
         let oid = selected ?? entries.first?.oid
         if let row = rows.firstIndex(where: { if case .entry(let i) = $0 { entries[i].oid == oid } else { false } }) {
             table.selectRowIndexes([row], byExtendingSelection: false)
@@ -310,10 +410,10 @@ final class FileHistoryWindowController: NSWindowController, NSTableViewDataSour
     }
 
     private func updateTitle() {
-        window?.title =
-            if complete { L("History — %@ (%ld commits)", path, entries.count) }
-            else if entries.isEmpty { L("History — %@ (loading…)", path) }
-            else { L("History — %@ (%ld+ commits)", path, entries.count) }
+        heading =
+            if complete { L("File History — %@ (%ld commits)", path, entries.count) }
+            else if entries.isEmpty { L("File History — %@ (loading…)", path) }
+            else { L("File History — %@ (%ld+ commits)", path, entries.count) }
     }
 
     private var selectedEntry: FileHistory.Entry? { entry(at: table.selectedRow) }

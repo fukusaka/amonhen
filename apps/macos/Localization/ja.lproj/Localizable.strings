@@ -400,9 +400,9 @@
 /* FileTools.swift */
 "Not committed yet" = "まだコミットしていない";
 "Double-click to show in History." = "ダブルクリックで History に表示";
-"History — %@ (%ld commits)" = "History — %@（%ld コミット）";
-"History — %@ (%ld+ commits)" = "History — %@（%ld+ コミット）";
-"History — %@ (loading…)" = "History — %@（読んでいます…）";
+"File History — %@ (%ld commits)" = "File History — %@（%ld コミット）";
+"File History — %@ (%ld+ commits)" = "File History — %@（%ld+ コミット）";
+"File History — %@ (loading…)" = "File History — %@（読んでいます…）";
 "Renamed or copied to %@ in %@" = "%2$@ で %1$@ に名前を変えた（またはコピーした）";
 "No commits changed this file." = "このファイルを変えたコミットはありません";
 "Can’t read the diff" = "差分を読めません";
