@@ -367,6 +367,8 @@ public struct FileHistory: Decodable, Sendable {
     }
 
     public let entries: [Entry]
+    /// `limit` で止めたとき、その先もあるか。
+    public let more: Bool?
 }
 
 /// Activity の記録（git の起動とコマンドの実行）。

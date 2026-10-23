@@ -341,7 +341,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             })?,
         ),
         Op::Blame { path, rev } => encode(&Bytes(ops.blame(&path, rev.as_ref())?)),
-        Op::FileLog { path } => encode(&Bytes(ops.file_log(&path)?)),
+        Op::FileLog { path, limit } => encode(&Bytes(ops.file_log(&path, limit)?)),
         Op::HeadState => encode(&ops.head_state()?),
         Op::ResolveRefs(names) => encode(&ops.resolve_refs(&names)?),
         Op::UpdateRef {

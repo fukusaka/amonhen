@@ -338,10 +338,10 @@
 			<string>%ld minutes</string>
 		</dict>
 	</dict>
-	<key>History — %@ (%ld commits)</key>
+	<key>File History — %@ (%ld commits)</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
-		<string>History — %@ (%#@n0@)</string>
+		<string>File History — %@ (%#@n0@)</string>
 		<key>n0</key>
 		<dict>
 			<key>NSStringFormatSpecTypeKey</key>
