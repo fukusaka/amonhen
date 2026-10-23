@@ -188,6 +188,8 @@ impl Operations for Git {
     fn reset(&self, mode: ResetMode, oid: &Oid) -> Result<()> {
         let mode = match mode {
             ResetMode::Soft => "--soft",
+            ResetMode::Mixed => "--mixed",
+            ResetMode::Hard => "--hard",
             ResetMode::Keep => "--keep",
         };
         self.write(&["reset", mode, &hex(oid)]).map(drop)
