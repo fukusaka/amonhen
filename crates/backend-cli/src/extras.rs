@@ -380,12 +380,23 @@ mod tests {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
         let wrapper = no_fetch_wrapper(fake.to_str().unwrap()).unwrap();
-        let ok = std::process::Command::new(&wrapper)
-            .args(["--status-fd=1", "--verify", "sig", "-"])
-            .status()
-            .unwrap()
-            .success();
-        assert!(ok);
+        // 書いたばかりのファイルは、並んで走るほかの試験が子プロセスを作った瞬間にその子へ書き込みの記述子が渡り、
+        // Linux では実行すると「Text file busy」で断られることがある。そのときは少し待って実行し直す。
+        let status = (0..20)
+            .find_map(|_| {
+                match std::process::Command::new(&wrapper)
+                    .args(["--status-fd=1", "--verify", "sig", "-"])
+                    .status()
+                {
+                    Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        None
+                    }
+                    other => Some(other.unwrap()),
+                }
+            })
+            .expect("still busy after retries");
+        assert!(status.success());
         assert_eq!(
             std::fs::read_to_string(&log).unwrap().trim(),
             "--no-auto-key-retrieve --status-fd=1 --verify sig -"
