@@ -9,14 +9,32 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Blame colors the code by syntax, as diffs do.
+- View > Show Tab Bar (⇧⌘T) shows the tab bar of a window with one tab, so its tab can be dragged into another
+  window, and Window > Move Tab to Window ▸ moves the front tab into the window chosen (for File History and Blame,
+  the repository's window comes first).
+- File History marks where the file was renamed with a heading for each name, and its commits have a context menu
+  (Show in History, Blame at the commit, copying the ID or path), with Return and ⌘C.
+
 #### Changed
 
+- File History and Blame open in a tab next to the repository's tab instead of a separate window, with the same
+  toolbar, so switching tabs keeps the toolbar and the size (drag the tab out for a window).
+- File History opens at once with the newest 100 commits and adds the rest as they are read.
+- File History is much faster in large repositories (a file in the linux kernel repository: 86 s → 1.6 s): it
+  follows renames itself instead of using `git log --follow`, so history simplification and commit-graph's changed-path
+  Bloom filters apply.
 - Rebasing the current branch, or editing its History, moves the branches stacked under it along (git 2.38 or later;
   set `rebase.updateRefs` to false to keep them). Undo puts them back too.
 - Undo restores the branches that are not checked out in one transaction, so it changes all of them or none.
 
 #### Fixed
 
+- Blame of uncommitted contents and File History read the worktree chosen in Working Copy, not the repository's main
+  checkout.
+- Writing commit-graph in the background also works with git older than 2.27, without the changed-path Bloom filters.
 - Undoing a branch rename works for the checked-out branch, and keeps the branch's settings (upstream, description,
   Archive and Favorites).
 

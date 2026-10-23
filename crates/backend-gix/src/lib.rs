@@ -742,25 +742,25 @@ impl GitBackend for GixBackend {
     // gix には commit-graph を書く機能がないので git に任せる。書き込み系の CliBackend を作ったら移す。
     fn write_commit_graph(&self) -> Result<()> {
         let repo = self.repo.to_thread_local();
-        let out = amonhen_model::process::command("git")
-            .arg("--git-dir")
-            .arg(repo.common_dir())
-            // 変更のあったパスの Bloom フィルタも書き、パスでの履歴の検索（`git log -- <path>`）を速くする。
-            .args([
-                "commit-graph",
-                "write",
-                "--reachable",
-                "--changed-paths",
-                "--no-progress",
-            ])
-            .output()?;
-        if !out.status.success() {
-            return Err(String::from_utf8_lossy(&out.stderr)
-                .trim()
-                .to_owned()
-                .into());
-        }
-        Ok(())
+        let write = |args: &[&str]| -> Result<()> {
+            let out = amonhen_model::process::command("git")
+                .arg("--git-dir")
+                .arg(repo.common_dir())
+                .args(["commit-graph", "write", "--reachable"])
+                .args(args)
+                .output()?;
+            if !out.status.success() {
+                return Err(String::from_utf8_lossy(&out.stderr)
+                    .trim()
+                    .to_owned()
+                    .into());
+            }
+            Ok(())
+        };
+        // 変更のあったパスの Bloom フィルタも書き、パスでの履歴の検索（`git log -- <path>`）を速くする。
+        // `--changed-paths`（2.27）・`--no-progress`（2.24）を知らない git では、付けずに書き直す
+        // （標準エラーは端末でないので、進み具合はもともと出ない）。
+        write(&["--changed-paths", "--no-progress"]).or_else(|_| write(&[]))
     }
 
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
