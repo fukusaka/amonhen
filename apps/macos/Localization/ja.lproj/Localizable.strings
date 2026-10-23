@@ -727,7 +727,8 @@
 "Show Previous Tab" = "前のタブを表示";
 "Move Tab to New Window" = "タブを新規ウインドウに移動";
 "Merge All Windows" = "すべてのウインドウを結合";
-"Move Tab to Repository Window" = "タブをリポジトリのウインドウに移動";
+"Move Tab to Window" = "タブをウインドウに移動";
+"%@ (+%ld)" = "%@（ほか %ld タブ）";
 "Bring All to Front" = "すべてを手前に移動";
 
 /* HistoryViewController.swift */

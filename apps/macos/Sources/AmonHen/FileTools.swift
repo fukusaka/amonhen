@@ -38,7 +38,7 @@ class FileToolViewController: NSViewController {
 /// 同じツールバーを付けるので、タブを切り替えても上の並びと中身の大きさが変わらない。ツールバーとメニューの操作は、
 /// リポジトリのタブに切り替えてからリポジトリ（`RepositoryWindow`）に渡す。
 /// 次の起動で開き直すタブの記録には入らない（記録するのはリポジトリのタブだけ）。閉じるまで `FileToolWindows` が持つ。
-final class FileToolWindowController: NSWindowController, NSMenuItemValidation {
+final class FileToolWindowController: NSWindowController {
     private var toolbar: MainToolbar?
     private var forwarder: RepositoryForwarder?
     /// 何のタブか（同じものを開き直したら、前のタブを閉じて入れ替える）。
@@ -79,19 +79,8 @@ final class FileToolWindowController: NSWindowController, NSMenuItemValidation {
         }
     }
 
-    /// Window > Move Tab to Repository Window: 別の窓にしたこのタブを、開いたリポジトリの窓のタブに戻す。
-    @objc func moveTabToRepositoryWindow(_ sender: Any?) {
-        guard let window, let home = forwarder?.repositoryWindow else { return NSSound.beep() }
-        home.addTabbedWindow(window, ordered: .above)
-        window.makeKeyAndOrderFront(nil)
-    }
-
-    func validateMenuItem(_ item: NSMenuItem) -> Bool {
-        guard item.action == #selector(moveTabToRepositoryWindow(_:)) else { return true }
-        // もうリポジトリの窓のタブなら使えない。
-        guard let window, let home = forwarder?.repositoryWindow else { return false }
-        return home.tabGroup?.windows.contains(window) != true
-    }
+    /// 開いたリポジトリの窓（Window > Move Tab to Window で先頭に出す）。
+    var repositoryWindow: NSWindow? { forwarder?.repositoryWindow }
 
     override func supplementalTarget(forAction action: Selector, sender: Any?) -> Any? {
         if let forwarder, forwarder.responds(to: action) { return forwarder }
