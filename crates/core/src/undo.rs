@@ -259,16 +259,23 @@ impl UndoLog {
     }
 
     /// `record` と同じだが、`pending` が真を返したら操作の前の状態だけを保留しておき、
-    /// `settle_pending` で確定する（edit や split で rebase が途中で止まったとき）。
+    /// `settle_pending` で確定する（edit や split で rebase が途中で止まったとき）。`refs` は、HEAD の
+    /// ブランチのほかに動きうる ref（一緒に動かす積み重ねたブランチ）。
     pub fn record_stoppable<T>(
         &self,
         ops: &dyn Operations,
         label: &str,
+        refs: &[String],
         f: impl FnOnce() -> Result<T>,
         skip: impl FnOnce(&T) -> bool,
         pending: impl FnOnce(&T) -> bool,
     ) -> Result<T> {
-        let refs: Vec<String> = ops.head_state()?.branch.into_iter().collect();
+        let mut refs = refs.to_vec();
+        if let Some(branch) = ops.head_state()?.branch
+            && !refs.contains(&branch)
+        {
+            refs.push(branch);
+        }
         let before = Self::snapshot(ops, &refs)?;
         let result = f()?;
         if pending(&result) {

@@ -306,7 +306,13 @@ impl Operations for Git {
     }
 
     fn rebase(&self, onto: &str) -> Result<Outcome> {
-        self.stoppable(&["rebase", onto], &[])
+        // 積み重ねたブランチも一緒に動かす。利用者が `rebase.updateRefs` を決めていればそれに従い、
+        // 決めていなければ有効にする（2.38 より前の git は知らない設定として無視する）。
+        if self.read(&["config", "--get", "rebase.updateRefs"]).is_ok() {
+            self.stoppable(&["rebase", onto], &[])
+        } else {
+            self.stoppable(&["-c", "rebase.updateRefs=true", "rebase", onto], &[])
+        }
     }
 
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
@@ -328,6 +334,18 @@ impl Operations for Git {
     }
 
     fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome> {
+        // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は git 2.38 から。使えなければ除く。
+        if !self.updates_refs_in_rebase() {
+            let text = std::fs::read_to_string(todo)?;
+            if text.lines().any(|l| l.starts_with("update-ref ")) {
+                let kept: String = text
+                    .lines()
+                    .filter(|l| !l.starts_with("update-ref "))
+                    .map(|l| format!("{l}\n"))
+                    .collect();
+                std::fs::write(todo, kept)?;
+            }
+        }
         // git は `$GIT_SEQUENCE_EDITOR <todo>` を sh で実行するので、用意した todo を上書きコピーさせる。
         let base = base.map(hex);
         // sh で実行されるので、Windows でも / 区切りにして引用符で囲む。

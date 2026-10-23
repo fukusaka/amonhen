@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use amonhen_model::Result;
@@ -104,6 +104,28 @@ impl Git {
                 .env("SSH_ASKPASS_REQUIRE", "prefer");
         }
         cmd
+    }
+
+    /// git の版（major, minor）。読めなければ (0, 0)。一度だけ調べる。
+    pub fn version(&self) -> (u32, u32) {
+        static VERSION: OnceLock<(u32, u32)> = OnceLock::new();
+        *VERSION.get_or_init(|| {
+            self.read(&["--version"])
+                .map(|out| parse_version(&String::from_utf8_lossy(&out)))
+                .unwrap_or_default()
+        })
+    }
+
+    /// rebase で、積み重ねたブランチも一緒に動かすか（`--update-refs`）。git 2.38 から。利用者が
+    /// `rebase.updateRefs` を false にしていれば動かさない。
+    pub fn updates_refs_in_rebase(&self) -> bool {
+        self.version() >= (2, 38) && !self.rebase_update_refs_off()
+    }
+
+    /// `rebase.updateRefs` が false に設定されている。
+    pub(crate) fn rebase_update_refs_off(&self) -> bool {
+        self.read(&["config", "--bool", "--get", "rebase.updateRefs"])
+            .is_ok_and(|out| String::from_utf8_lossy(&out).trim() == "false")
     }
 
     /// 読み取り系。利用者自身の git 操作とロックを奪い合わないよう、任意のロックを取らない。
@@ -482,10 +504,29 @@ pub(crate) fn kill_tree(child: &mut std::process::Child) {
     let _ = child.kill();
 }
 
+/// `git version 2.39.3 (Apple Git-146)`・`git version 2.45.1.windows.1` から (major, minor)。
+fn parse_version(out: &str) -> (u32, u32) {
+    let mut parts = out
+        .split_whitespace()
+        .nth(2)
+        .unwrap_or_default()
+        .split('.')
+        .map(|p| p.parse().unwrap_or(0));
+    (parts.next().unwrap_or(0), parts.next().unwrap_or(0))
+}
+
 #[cfg(test)]
 #[allow(clippy::disallowed_methods)] // テストの git などはそのまま起動する
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_the_git_version() {
+        assert_eq!(parse_version("git version 2.56.0\n"), (2, 56));
+        assert_eq!(parse_version("git version 2.39.3 (Apple Git-146)"), (2, 39));
+        assert_eq!(parse_version("git version 2.45.1.windows.1"), (2, 45));
+        assert_eq!(parse_version("garbage"), (0, 0));
+    }
 
     fn repo() -> (tempfile::TempDir, Git) {
         let tmp = tempfile::tempdir().unwrap();
