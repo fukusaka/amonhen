@@ -246,6 +246,10 @@
 "Removed %@ from this repository" = "%@ をこのリポジトリから消しました";
 "Removed %ld keys from this repository" = "%ld 個のキーをこのリポジトリから消しました";
 "Restore" = "戻す";
+"Change %@" = "%@ の変更";
+"Add %@" = "%@ の追加";
+"Remove %@" = "%@ の削除";
+"Remove %ld keys" = "%ld 個のキーの削除";
 "Location" = "場所";
 "File" = "ファイル";
 "Done" = "完了";

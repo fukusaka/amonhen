@@ -47,7 +47,7 @@ final class RepositorySettingsModel {
     private(set) var detectedBase: String?
     /// git の設定・リモートなどを変えた（画面を読み直す）。
     var onRepositoryChange: (() -> Void)?
-    /// git config の表でこのリポジトリから消したキーと値。表の下の「戻す」と ⌘Z で書き戻す。次の書き換えで忘れる。
+    /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。次の書き換えで忘れる。
     var removedConfig: [(key: String, value: String)] = []
 
     /// SSH 先のリポジトリなら、その SSH 先の名前。
@@ -334,7 +334,9 @@ extension RepositorySettingsModel {
 /// すべてのリポジトリ・このリポジトリ・この worktree）の値。効いている段の値は太字。「このリポジトリ」の列だけ
 /// 書ける: 行をダブルクリック（か右クリックの「編集」）で欄になり、Return で書く。空にするとここでは消える。
 /// 「+」で新しい行が出て、キーと値を入れる（キーと値がそろわないまま離れたら消える）。「−」と ⌫ で選んだ行の
-/// このリポジトリの値を消し、下の「戻す」の 1 行と ⌘Z で書き戻せる。⌘C で選んだ行を `key = value` の形でコピーする。
+/// このリポジトリの値を消す。表からの書き換え（編集・追加・削除）はすべてウィンドウの UndoManager に逆の書き換えと
+/// 一緒に登録するので、⌘Z／⇧⌘Z で何段でも行き来できる（ページを開いている間）。最後の削除は下の 1 行にも出て、
+/// その「戻す」は 1 段の ⌘Z と同じ。⌘C で選んだ行を `key = value` の形でコピーする。
 /// 上の切り替えも Xcode と同じで、語も Xcode のまま（ページ名と同じく訳さない）: 行は Basic（ページが尋ねるキー。
 /// 未設定でも出す）／Customized（このリポジトリで設定したもの）／All、列は Combined（効いている値と設定元）／Levels。
 /// All は git が知っているすべての変数（未設定は空欄で、設定元は git の既定）。
@@ -634,9 +636,10 @@ private struct AllSettingsTab: View {
         guard let key = editing else { return }
         editing = nil
         let value = draft.trimmingCharacters(in: .whitespaces)
-        if value != (model.local(key) ?? "") {
-            model.removedConfig = []
-            model.set(key, value)
+        let old = model.local(key)
+        if value != (old ?? "") {
+            write([ConfigChange(key: key, old: old, new: value.isEmpty ? nil : value)],
+                  name: value.isEmpty ? L("Remove %@", key) : L("Change %@", key))
         }
     }
 
@@ -654,30 +657,49 @@ private struct AllSettingsTab: View {
         let key = newKey.trimmingCharacters(in: .whitespaces), value = draft.trimmingCharacters(in: .whitespaces)
         cancelAdding()
         guard !key.isEmpty, !value.isEmpty else { return }
-        model.removedConfig = []
-        model.set(key, value)
+        write([ConfigChange(key: key, old: model.local(key), new: value)], name: L("Add %@", key))
         selection = [key]
     }
 
-    /// 選んだ行のこのリポジトリの値を消す。消したものは覚えておき、「戻す」と ⌘Z（Edit > Undo）で書き戻す。
+    /// 選んだ行のこのリポジトリの値を消す。最後に消したものは下の 1 行に出す。
     private func remove(_ keys: Set<String>) {
-        let gone = keys.sorted().compactMap { k in model.local(k).map { (key: k, value: $0) } }
+        let gone = keys.sorted().compactMap { k in model.local(k).map { ConfigChange(key: k, old: $0, new: nil) } }
         guard !gone.isEmpty else { return }
-        let model = self.model
-        for g in gone { model.set(g.key, nil) }
-        model.removedConfig = gone
-        undoManager?.registerUndo(withTarget: model) { m in
-            for g in gone { m.set(g.key, g.value) }
-            m.removedConfig = []
-        }
-        undoManager?.setActionName(L("Remove from This Repository"))
+        write(gone, name: gone.count == 1 ? L("Remove %@", gone[0].key) : L("Remove %ld keys", gone.count), showRemoved: true)
     }
 
-    /// 消したキーを書き戻す。
+    /// 下の 1 行の「戻す」: 最後の削除を 1 段戻す（⌘Z と同じ）。
     private func restore() {
-        for g in model.removedConfig { model.set(g.key, g.value) }
-        model.removedConfig = []
-        undoManager?.removeAllActions(withTarget: model)
+        if let undoManager, undoManager.canUndo {
+            undoManager.undo()
+        } else {
+            let back = model.removedConfig.map { ConfigChange(key: $0.key, old: nil, new: $0.value) }
+            write(back, name: L("Restore"))
+        }
+    }
+
+    /// このリポジトリの値の書き換え 1 つ（`new` が nil なら消す）。
+    private struct ConfigChange {
+        let key: String
+        let old: String?
+        let new: String?
+        var inverse: ConfigChange { ConfigChange(key: key, old: new, new: old) }
+    }
+
+    /// 表からの書き換えはすべてここを通す: 書いて、UndoManager に逆の書き換えを登録する。逆の中でまたその逆を
+    /// 登録するので、⌘Z のあと ⇧⌘Z でやり直せる。`showRemoved` なら消したものを下の 1 行に出す（それ以外の
+    /// 書き換えとやり直しでは消す）。
+    private func write(_ changes: [ConfigChange], name: String, showRemoved: Bool = false) {
+        Self.apply(changes, to: model, undoManager: undoManager, name: name, showRemoved: showRemoved)
+    }
+
+    private static func apply(_ changes: [ConfigChange], to model: RepositorySettingsModel, undoManager: UndoManager?, name: String, showRemoved: Bool) {
+        for c in changes { model.set(c.key, c.new) }
+        model.removedConfig = showRemoved ? changes.compactMap { c in c.old.map { (key: c.key, value: $0) } } : []
+        undoManager?.registerUndo(withTarget: model) { m in
+            apply(changes.map(\.inverse), to: m, undoManager: undoManager, name: name, showRemoved: false)
+        }
+        undoManager?.setActionName(name)
     }
 
     private func cancelAdding() {
