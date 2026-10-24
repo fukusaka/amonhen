@@ -34,8 +34,8 @@ becomes the GitHub Release notes.
 - File History is much faster in large repositories (a file in the linux kernel repository: 86 s → 1.6 s): it
   follows renames itself instead of using `git log --follow`, so history simplification and commit-graph's changed-path
   Bloom filters apply.
-- Rebasing the current branch, or editing its History, moves the branches stacked under it along (git 2.38 or later;
-  set `rebase.updateRefs` to false to keep them). Undo puts them back too.
+- With git's `rebase.updateRefs` set to true (git 2.38 or later), editing History moves the branches stacked under the
+  current one along, as a rebase does. Undo puts back the branches a rebase or a History edit moved.
 - Undo restores the branches that are not checked out in one transaction, so it changes all of them or none.
 - Amon Hen needs git 2.23 or later (also on SSH hosts), as documented now; when a git command fails with an older
   git, the error says so.

@@ -464,13 +464,8 @@ impl Operations for Git {
     }
 
     fn rebase(&self, onto: &str) -> Result<Outcome> {
-        // 積み重ねたブランチも一緒に動かす。利用者が `rebase.updateRefs` を決めていればそれに従い、
-        // 決めていなければ有効にする（2.38 より前の git は知らない設定として無視する）。
-        if self.read(&["config", "--get", "rebase.updateRefs"]).is_ok() {
-            self.stoppable(&["rebase", onto], &[])
-        } else {
-            self.stoppable(&["-c", "rebase.updateRefs=true", "rebase", onto], &[])
-        }
+        // 積み重ねたブランチも一緒に動かすかは、git の `rebase.updateRefs` に任せる（git の既定はオフ）。
+        self.stoppable(&["rebase", onto], &[])
     }
 
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
@@ -492,7 +487,8 @@ impl Operations for Git {
     }
 
     fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome> {
-        // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は git 2.38 から。使えなければ除く。
+        // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は、`rebase.updateRefs` が true で、git が
+        // 2.38 以降のときだけ残す（git の rebase と同じ条件）。
         if !self.updates_refs_in_rebase() {
             let text = std::fs::read_to_string(todo)?;
             if text.lines().any(|l| l.starts_with("update-ref ")) {

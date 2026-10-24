@@ -100,7 +100,8 @@ pub fn shell_quote(s: &str) -> String {
 /// `chain` は HEAD から first-parent で辿ったコミット（新しい順）で、間に merge がないこと。
 /// `message_dir` はメッセージのファイルを置くディレクトリ（exec に絶対パスで渡す）。
 /// `branches` は、編集の範囲にあるかもしれない、積み重ねたブランチの先頭と完全な名前。範囲にあるものは
-/// todo に `update-ref` を入れて一緒に動かす（先頭のコミットについて行く。消したコミットなら、その前のコミットへ）。
+/// todo に `update-ref` を入れる（先頭のコミットについて行く。消したコミットなら、その前のコミットへ）。
+/// `rebase.updateRefs` が true でなければ、実行するときに除く（`Operations::rebase_todo`）。
 pub fn plan_rebase(
     chain: &[ChainCommit],
     edit: &HistoryEdit,

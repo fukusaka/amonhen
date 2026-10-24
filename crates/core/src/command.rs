@@ -1025,7 +1025,7 @@ impl Repository {
         Ok(chain)
     }
 
-    /// 先頭が `ids` のどれかにあるローカルブランチ（先頭と完全な名前）。rebase で一緒に動かす。チェックアウト中の
+    /// 先頭が `ids` のどれかにあるローカルブランチ（先頭と完全な名前）。rebase で一緒に動きうる。チェックアウト中の
     /// ブランチと、ほかの worktree でチェックアウト中のもの（git が動かさない）は除く。
     fn stacked_branches(
         &self,
@@ -1339,7 +1339,8 @@ impl Repository {
                 )?)
             }
             Command::Rebase { onto } => {
-                // 載せ直すコミット（onto..HEAD）に先頭があるブランチも、git が一緒に動かす（--update-refs）。
+                // 載せ直すコミット（onto..HEAD）に先頭があるブランチは、`rebase.updateRefs` が true なら git が
+                // 一緒に動かす。動きうるので Undo に記録する。
                 let stacked = match (ops.head_state()?.oid, ops.resolve(&onto)) {
                     (Some(head), Ok(base)) => {
                         let ids = self
@@ -3067,13 +3068,18 @@ mod tests {
         git(dir, &["rev-parse", "HEAD"])
     }
 
-    /// git が積み重ねたブランチを一緒に動かせる（2.38 から）。古ければ動かさないことを確かめる。
-    fn updates_stacked_branches() -> bool {
-        amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 38))
+    /// 積み重ねたブランチが一緒に動くはずか（`rebase.updateRefs` が true で、git が 2.38 以降）。backend と同じ
+    /// 見方で読む（利用者の全体の設定も含む）。
+    fn updates_stacked_branches(dir: &std::path::Path) -> bool {
+        amonhen_backend_cli::Git::new(dir).updates_refs_in_rebase()
     }
 
-    /// main ─ one ─ two と積み、two をチェックアウトする。one と two の先頭を返す。
-    fn stack(dir: &std::path::Path) -> (String, String) {
+    /// main ─ one ─ two と積み、two をチェックアウトする。`setting` があればリポジトリの
+    /// `rebase.updateRefs` に書く。one と two の先頭を返す。
+    fn stack(dir: &std::path::Path, setting: Option<&str>) -> (String, String) {
+        if let Some(value) = setting {
+            git(dir, &["config", "rebase.updateRefs", value]);
+        }
         git(dir, &["switch", "-q", "-c", "one"]);
         let one = commit_file(dir, "one.txt", "one");
         git(dir, &["switch", "-q", "-c", "two"]);
@@ -3082,59 +3088,68 @@ mod tests {
     }
 
     #[test]
-    fn rebase_moves_the_branches_stacked_under_the_current_one() {
-        let (tmp, repo) = setup();
-        let dir = tmp.path();
-        let (one, two) = stack(dir);
-        git(dir, &["switch", "-q", "main"]);
-        commit_file(dir, "main.txt", "main");
-        git(dir, &["switch", "-q", "two"]);
+    fn rebase_moves_stacked_branches_only_when_the_setting_is_on() {
+        // 書いていなければ git の既定（オフ）。Amon Hen が勝手に有効にしない。
+        for setting in [None, Some("false"), Some("true")] {
+            let (tmp, repo) = setup();
+            let dir = tmp.path();
+            let (one, two) = stack(dir, setting);
+            git(dir, &["switch", "-q", "main"]);
+            commit_file(dir, "main.txt", "main");
+            git(dir, &["switch", "-q", "two"]);
+            let moves = updates_stacked_branches(dir);
+            if setting == Some("false") {
+                assert!(!moves);
+            }
 
-        let r = run(&repo, r#"{"op":"rebase","onto":"main"}"#);
-        assert_eq!(r["outcome"], "done", "{r}");
-        assert_eq!(
-            git(dir, &["rev-parse", "two^^"]),
-            git(dir, &["rev-parse", "main"])
-        );
-        if updates_stacked_branches() {
-            assert_eq!(r["info"]["movedBranches"], serde_json::json!(["one"]));
+            let r = run(&repo, r#"{"op":"rebase","onto":"main"}"#);
+            assert_eq!(r["outcome"], "done", "{setting:?} {r}");
             assert_eq!(
-                git(dir, &["rev-parse", "two^"]),
-                git(dir, &["rev-parse", "one"])
+                git(dir, &["rev-parse", "two^^"]),
+                git(dir, &["rev-parse", "main"])
             );
-        } else {
-            assert!(r["info"].is_null(), "{r}");
-            assert_eq!(git(dir, &["rev-parse", "one"]), one);
-        }
+            if moves {
+                assert_eq!(r["info"]["movedBranches"], serde_json::json!(["one"]));
+                assert_eq!(
+                    git(dir, &["rev-parse", "two^"]),
+                    git(dir, &["rev-parse", "one"])
+                );
+            } else {
+                assert!(r["info"].is_null(), "{setting:?} {r}");
+                assert_eq!(git(dir, &["rev-parse", "one"]), one);
+            }
 
-        let r = run(&repo, r#"{"op":"undo"}"#);
-        assert_eq!(r["ok"], true, "{r}");
-        assert_eq!(git(dir, &["rev-parse", "one"]), one);
-        assert_eq!(git(dir, &["rev-parse", "two"]), two);
+            let r = run(&repo, r#"{"op":"undo"}"#);
+            assert_eq!(r["ok"], true, "{setting:?} {r}");
+            assert_eq!(git(dir, &["rev-parse", "one"]), one);
+            assert_eq!(git(dir, &["rev-parse", "two"]), two);
+        }
     }
 
     #[test]
-    fn history_edits_move_the_branches_stacked_under_the_current_one() {
-        let (tmp, repo) = setup();
-        let dir = tmp.path();
-        let (one, two) = stack(dir);
-        let first = git(dir, &["rev-parse", "main"]);
+    fn history_edits_move_stacked_branches_only_when_the_setting_is_on() {
+        for setting in [None, Some("false"), Some("true")] {
+            let (tmp, repo) = setup();
+            let dir = tmp.path();
+            let (one, two) = stack(dir, setting);
+            let first = git(dir, &["rev-parse", "main"]);
+            let moves = updates_stacked_branches(dir);
+            if setting == Some("false") {
+                assert!(!moves);
+            }
 
-        // one の先頭を消すと、one はその前（main）へ。
-        let r = rewrite(&repo, serde_json::json!({"kind": "drop", "oid": one}));
-        assert_eq!(r["outcome"], "done", "{r}");
-        assert_eq!(git(dir, &["rev-parse", "two^"]), first);
-        let expected = if updates_stacked_branches() {
-            &first
-        } else {
-            &one
-        };
-        assert_eq!(&git(dir, &["rev-parse", "one"]), expected);
+            // one の先頭を消す。動かすなら one はその前（main）へ、動かさなければ消したコミットに残る。
+            let r = rewrite(&repo, serde_json::json!({"kind": "drop", "oid": one}));
+            assert_eq!(r["outcome"], "done", "{setting:?} {r}");
+            assert_eq!(git(dir, &["rev-parse", "two^"]), first);
+            let expected = if moves { &first } else { &one };
+            assert_eq!(&git(dir, &["rev-parse", "one"]), expected, "{setting:?}");
 
-        let r = run(&repo, r#"{"op":"undo"}"#);
-        assert_eq!(r["ok"], true, "{r}");
-        assert_eq!(git(dir, &["rev-parse", "one"]), one);
-        assert_eq!(git(dir, &["rev-parse", "two"]), two);
+            let r = run(&repo, r#"{"op":"undo"}"#);
+            assert_eq!(r["ok"], true, "{setting:?} {r}");
+            assert_eq!(git(dir, &["rev-parse", "one"]), one);
+            assert_eq!(git(dir, &["rev-parse", "two"]), two);
+        }
     }
 
     fn rewrite(repo: &Repository, edit: serde_json::Value) -> serde_json::Value {
