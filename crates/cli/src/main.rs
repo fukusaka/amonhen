@@ -11,6 +11,7 @@
 //!   amonhen undo [--list|--peek]        Amon Hen の操作ログで、直前の操作を戻す
 //!   amonhen worktree [list|add|remove|prune]  worktree（`git worktree` と同じ並び）
 //!   amonhen merge-file [--all] <file>…  コンフリクトのあるファイルに Magic Merge をかける
+//!   amonhen merge-check <rev>           マージしたらコンフリクトするファイル（作業ツリーには触らない）
 //!   amonhen clone <url> [<dir>]
 //!   amonhen install / engine           エンジンの置き場所（`install.rs`）
 //!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon
@@ -47,6 +48,7 @@ usage: amonhen [<path>]
        amonhen undo [--list | --peek]
        amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune]
        amonhen merge-file [--all] [--check] <file>…
+       amonhen merge-check [--into <branch>] [--json] <rev>
        amonhen clone <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)
@@ -69,7 +71,9 @@ log --rebuild and daemon rebuild throw away the History cache and build it again
 merge-file applies only the rules that can't go wrong by default (--all for every rule). If conflicts remain the exit
 code is 1, so it also works as git's mergetool:
   git config mergetool.amonhen.cmd 'amonhen merge-file \"$MERGED\"'
-  git config mergetool.amonhen.trustExitCode true")
+  git config mergetool.amonhen.trustExitCode true
+merge-check lists the files that merging <rev> into HEAD (or --into <branch>) would conflict in, without touching the
+worktree. The exit code is 1 if there are conflicts, and 2 if it can't tell (git older than 2.38).")
 }
 
 fn main() -> ExitCode {
@@ -96,6 +100,7 @@ fn main() -> ExitCode {
         Some("undo") => undo(&args[1..]),
         Some("worktree") => worktree(&args[1..]),
         Some("merge-file") => merge_file(&args[1..]),
+        Some("merge-check") => work::merge_check(&args[1..]),
         Some("find-repositories") => find_repositories(&args[1..]),
         Some("daemon") => daemon(&args[1..]),
         Some("install") => install::install(&args[1..]),
