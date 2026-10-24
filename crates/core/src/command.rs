@@ -441,19 +441,27 @@ impl Repository {
                 .find(|e| e.key.eq_ignore_ascii_case(key))
                 .map(|e| e.value.clone())
         };
-        // 既定のブランチ: リモートの HEAD（origin を先に）が指すもの、なければ手元の main・master。
+        // 既定のブランチ: 利用者が `amonhen.defaultBranch` で決めていればそのローカルブランチ。なければリモートの
+        // HEAD（origin を先に）が指すもの、それもなければ手元の main・master。
+        let chosen = config_value("amonhen.defaultBranch").and_then(|name| {
+            entries
+                .iter()
+                .find(|e| e.kind == RefKind::Local && e.name == name)
+        });
         let remote_head = entries
             .iter()
             .filter(|e| e.kind == RefKind::Remote && e.name.ends_with("/HEAD"))
             .min_by_key(|e| !e.name.starts_with("origin/"));
-        let base = remote_head
-            .and_then(|h| {
-                let remote = h.name.trim_end_matches("/HEAD");
-                entries.iter().find(|e| {
-                    e.kind == RefKind::Remote
-                        && e.target == h.target
-                        && e.name.starts_with(remote)
-                        && !e.name.ends_with("/HEAD")
+        let base = chosen
+            .or_else(|| {
+                remote_head.and_then(|h| {
+                    let remote = h.name.trim_end_matches("/HEAD");
+                    entries.iter().find(|e| {
+                        e.kind == RefKind::Remote
+                            && e.target == h.target
+                            && e.name.starts_with(remote)
+                            && !e.name.ends_with("/HEAD")
+                    })
                 })
             })
             .or_else(|| {
@@ -3429,6 +3437,20 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert!(entries[0]["label"].as_str().unwrap().contains('b'));
         assert!(entries[0]["time"].as_u64().unwrap() >= entries[1]["time"].as_u64().unwrap());
+    }
+
+    #[test]
+    fn the_default_branch_can_be_chosen_in_config() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["branch", "trunk"]);
+        let base = || run(&repo, r#"{"op":"branchGroups"}"#)["info"]["base"].clone();
+        assert_eq!(base(), "main");
+        git(dir, &["config", "amonhen.defaultBranch", "trunk"]);
+        assert_eq!(base(), "trunk");
+        // ないブランチなら、判定したものに戻る。
+        git(dir, &["config", "amonhen.defaultBranch", "gone"]);
+        assert_eq!(base(), "main");
     }
 
     #[test]
