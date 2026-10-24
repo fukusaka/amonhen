@@ -107,6 +107,10 @@
 
 保存は UserDefaults ではなく `~/Library/Application Support/Amon Hen/bookmarks.json`（構造があり、手で直せるように）。スキャンの結果は保存せず、起動時に裏で取り直す。
 
+### SSH 先のホストごとの設定
+
+Places の SSH 先の項目を選ぶと（右クリックの「ホストの設定…」でも）、そのホストの設定が開く。ホストにあるすべてのリポジトリに効く。リポジトリではなく機械の性質だから。使う git（ホストの PATH で見つけたもの、またはパス）、エンジン（ホストの PATH の `amonhen`、Amon Hen が送り込んだもの、またはパス。送り込むかどうか）、署名をこの Mac の鍵で検証するかホストの鍵で検証するか、探すフォルダ。環境変数（`AMONHEN_REMOTE_ENGINE`・`AMONHEN_PUSH`）はこれより優先する。リポジトリの Settings の一覧の下の 1 行（`git 2.34 · build-1`）を押すと、このシートが開く。
+
 ## 3. 設定画面（Settings…、⌘,）
 
 macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewController` の `.toolbar` スタイル、中身は SwiftUI の `Form`）。今アプリメニューにあるトグルはここへ移す。
@@ -214,24 +218,18 @@ SSH 先のリポジトリでは、「あなたの設定」は SSH 先のユー�
 
 ### 4.5 ページ
 
-左に一覧、右に選んだページ（システム設定と同じ形）。一覧は 2 つの組に分かれる。
-
-**設定**
+左に一覧、右に選んだページ（システム設定と同じ形）。一覧に組はない。よく変えるページを先に、たまに見る 2 つを最後に並べ、一覧の下に小さな 1 行で、このリポジトリを動かしている git を出す（`git 2.54.0 · この Mac`、`git 2.34 · build-1`）。押すとその機械の設定が開く（この Mac なら Settings… > Git、SSH 先なら Repositories の画面のホストの設定。2 章）。ページの名前は中身で付ける。「〜について」「すべての〜」という名前は付けない。ここにあるものはどれも、このリポジトリの設定だから。
 
 | ページ | 行 |
 | --- | --- |
 | 作者と署名 | **名前**、**メール**（`user.name`・`user.email`。一覧にできないので手で書く）。**署名**: 1 つの選択で、署名しない／OpenPGP／SSH／X.509（`commit.gpgsign` と `gpg.format` を一緒に書く）。**鍵**: 選んだ形式に合わせて集めた一覧（OpenPGP は `gpg --list-secret-keys` でメールアドレスの合う鍵を先頭に、SSH は `~/.ssh/*.pub` と `ssh-add -L`、X.509 は `gpgsm --list-secret-keys`）と、一覧にない値のための「その他…」。集めるのはコアなので、SSH 先のリポジトリなら SSH 先で集める（`user.signingkey`）。gpg・ssh-keygen・gpgsm のプログラムは Amon Hen が見つけ、Settings… > Git に出して、そこで上書きできる。 |
 | コミット | **メッセージのテンプレート**: なし（空から始める）／Settings… > Git の一覧にあるテンプレート／ファイル…（git の `commit.template`。ファイルの選択で）。選んだテンプレートは行の下に下見を出す。一覧のテンプレートには、コミット欄を開くときに Amon Hen が埋める置換文字列を書ける: `{branch}`、`{issue}`（ブランチ名から取った番号）、`{date}`。git のファイルのテンプレートには置換はない。ほかには置かない。`commit.cleanup` は「すべての設定」に残す。 |
+| ブランチ | **既定のブランチ**: 判定したもの（`origin/HEAD`、なければ `main`・`master`）か、それがないリポジトリのためにここで選ぶローカルブランチ。Amon Hen 独自のキー `amonhen.defaultBranch` を `.git/config` に書くので、CLI と拡張からも見える。Branches の「取り込み済み」と幹の判定に使う。何も選んでいない間、札は「自動で判定」。 |
 | 操作 | **Pull**: pull のとき、どう取り込むか（マージする／rebase する／fast-forward。`pull.rebase`。最後のものは `pull.ff=only` と `pull.rebase=false` を両方書く）。**Fetch**: リモートで消えたブランチを片づける（`fetch.prune`。説明に、未設定なら Amon Hen は片づけ、端末は残すと書く）。**Rebase**: rebase の前に変更を退避する（`rebase.autoStash`。History の編集はいつも退避する）、rebase と History の編集で、積み重ねたブランチも一緒に動かす（`rebase.updateRefs`。git 2.38 未満では見つかった版を添えて選べなくする）。**Merge**: コンフリクトをファイルにどう書くか（両側／両側と元／両側と元（共通の部分を省く）。`merge.conflictStyle`。説明に、マージエディタは 3 つとも扱え、元があれば片側だけの変更と単語単位のコンフリクトを自分で解けるので、Amon Hen のおすすめは zdiff3 と書く）。Push の行は置かない: Amon Hen の Push は、シートで決めた先へ refspec と `--set-upstream` を明示して送るので、`push.default` と `push.autoSetupRemote` は端末にしか効かない（「すべての設定」に）。 |
 | Working Copy | **改行**（`core.autocrlf`: コミットのまま／作業ツリーは CRLF でコミットは LF／コミットは LF）。**実行の権限の変化を追う**（`core.fileMode`）。**このリポジトリだけで無視する**: `.git/info/exclude` のエディタ。各行に合うファイルの数を、書いたそばから行の右に出す（ボタンは置かない）。`status.showUntrackedFiles` は置かない（Amon Hen の status は untracked をいつもすべて出す）。`.gitignore` も置かない。リポジトリのファイルだから（4.7）。 |
 | リモート | リモートの表（名前、fetch の URL、違うときだけ push の URL、GitHub などに紐づくか）。追加・編集・削除は 1 つのシートで: 名前、fetch の URL、push の URL（空なら同じ）、URL が指すもの（GitHub、GitLab、パス、SSH 先）、保存する前の接続の確認（`git ls-remote`）。prune はリモートごと。同じ操作をサイドバーにも置く: Remotes の見出しの右クリックに「リモートを追加…」、各リモートの右クリックに「名前を変える」「URL を編集…」「削除」「prune」。 |
-
-**情報**
-
-| ページ | 中身 |
-| --- | --- |
-| このリポジトリについて | **使っている git**: パスとバージョン。SSH 先のリポジトリならそのホストも。Settings… > Git へのリンク。そこで、この Mac で使う git を見つかったもの（/usr/bin/git、Homebrew、Xcode）から選ぶか、パスで指定する。**既定のブランチ**: 判定したもの（`origin/HEAD`・`main`・`master`）か、それがないリポジトリのためにここで選ぶ上書き（Amon Hen が持つ。Branches の「取り込み済み」の判定に使う）。**Hooks**: 表。hook の名前、git がいつ動かすか（コミットの前、push の前、…）、有効かのスイッチ（実行権限）、エディタで開く。`core.hooksPath` のときはその場所。**LFS**: git-lfs が入っているか（なければ入れ方）、`.gitattributes` の追跡するパターンの表と「パターンを追加…」（`git lfs track`）と削除、LFS にあるファイルの数。**Worktree**: 一覧とそれぞれのブランチ。 |
-| すべての設定 | Xcode の Build Settings のような表。列はキー、効いている値、そして段ごと（system・global・local・worktree）の列にその段の値。効いている値は太字。local の列のセルをダブルクリックすると編集でき、空にするとここでは消える。「+」の行でキーを足す。キーか値で検索、どの列でも並べ替え、⌘C で選んだ行を `key = value` の形でコピー。キーと値を別の欄に書く必要はない。 |
+| Hooks・LFS | **Hooks**: 表。hook の名前、git がいつ動かすか（コミットの前、push の前、…）、有効かのスイッチ（実行権限）、エディタで開く。`core.hooksPath` のときはその場所。**LFS**: git-lfs が入っているか（なければ入れ方）、`.gitattributes` の追跡するパターンの表と「パターンを追加…」（`git lfs track`）と削除、LFS にあるファイルの数。名前は中身のまま。両方を 1 語で括れる名前はなく、worktree はサイドバーの Working Copy の下にすでに並んでいる。 |
+| git config | ページは `git config` そのものなので、その名で呼び、訳さない。Xcode の Build Settings のような表。列はキー、効いている値、そして段ごと（system・global・local・worktree）の列にその段の値。効いている値は太字。local の列のセルをダブルクリックすると編集でき、空にするとここでは消える。「+」の行でキーを足す。キーか値で検索、どの列でも並べ替え、⌘C で選んだ行を `key = value` の形でコピー。キーと値を別の欄に書く必要はない。 |
 
 ### 4.6 古い git と SSH 先
 
@@ -249,7 +247,8 @@ SSH 先のリポジトリでは、「あなたの設定」は SSH 先のユー�
 | `push.default`・`push.autoSetupRemote`・`status.showUntrackedFiles` | すべての設定 | Amon Hen の操作は引数を明示するので、端末にしか効かない |
 | `.gitignore` | Working Copy でファイルとして開く。無視されたファイルの右クリックに「.gitignore に加える」 | リポジトリのファイルで、コミットで共有される |
 | 全体の excludes（`core.excludesFile`） | Settings… > Git | 共有のもの |
-| hooks、LFS、git のバージョン | このリポジトリについて | 操作つきの情報であって、設定ではない |
+| git のバージョン | 一覧の下の 1 行。押すと機械の設定が開く | リポジトリではなく機械（この Mac か SSH 先）のもので、そこにあるどのリポジトリでも同じ |
+| worktree | サイドバーの Working Copy の下 | すでにそこに並んでいる |
 
 ### 4.8 段階
 
@@ -259,9 +258,9 @@ SSH 先のリポジトリでは、「あなたの設定」は SSH 先のユー�
 2. Settings… > Git のテンプレートの一覧と置換文字列、そこから選ぶコミットのページ。
 3. 操作を 1 ページに。Working Copy に exclude のエディタと合う数。`.gitignore` を画面から外す。
 4. リモート: 接続の確認つきのシートと、サイドバーの右クリック。
-5. このリポジトリについて: 使っている git と Settings… > Git での git の選択、既定のブランチの上書き、hooks と LFS の表、worktree。
-6. すべての設定を Xcode の形の表に。
-7. Settings… > Git: すべてのリポジトリの自動 fetch、全体の excludes、gpg のプログラム。
+5. Hooks・LFS を操作つきの表に。
+6. git config を Xcode の形の表に。
+7. 機械の設定: この Mac の Settings… > Git で使う git の選択、全体の excludes、gpg のプログラム。SSH 先はホストごとの設定のシート（Repositories の画面、2 章）に、使う git・エンジン・署名の検証。
 
 ## 5. ツールバー
 
@@ -698,7 +697,7 @@ git の考え方と、アプリが守ること:
 - [x] U18. サイドバーの Working Copy の下に worktree を変更の数つきで並べる（はじめは Working Copy の中に全部の worktree の変更を並べ、のちにサイドバーに移した）。
 - [x] U19. History で、各 worktree の HEAD に札（名前と変更のあるファイルの数、書き込む先は ✎）。worktree が
   コミットしたり、ファイルを書き換えたりしたら付け直す。
-- [ ] U20. リポジトリの設定を、使う人から作り直す（4 章）。済み: サイドバーの Workspace の画面とページの一覧、効いている値を出す行、札、↩︎ と ⓘ、Pull と Fetch が git の設定に従うこと、端末にしか効かない行を画面から外したこと。予定（4.8 の段階で）: 署名を 1 つの選択にして鍵を集める、テンプレートの一覧、操作を 1 ページにして exclude のエディタに合う数を出す、リモートのシートとサイドバーの操作、「このリポジトリについて」に使っている git・既定のブランチ・hooks・LFS・worktree、「すべての設定」を Xcode の形の表に、共有の設定を Settings… > Git に。
+- [ ] U20. リポジトリの設定を、使う人から作り直す（4 章）。済み: サイドバーの Workspace の画面とページの一覧（作者と署名、コミット、操作、ブランチ、Working Copy、リモート、Hooks・LFS、git config）とその下の git の 1 行、効いている値を出す行、札、↩︎ と ⓘ、既定のブランチの上書き（`amonhen.defaultBranch`）、Pull と Fetch が git の設定に従うこと、端末にしか効かない行を画面から外したこと。予定（4.8 の段階で）: 署名を 1 つの選択にして鍵を集める、テンプレートの一覧、exclude の合う数と `.gitignore` を Working Copy から、リモートのシートとサイドバーの操作、Hooks・LFS を操作つきの表に、git config を Xcode の形の表に、機械の設定（この Mac と SSH 先ごと）。
 
 ## 決めたこと
 

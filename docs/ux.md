@@ -115,6 +115,10 @@ The list appears in two places, with the same contents and operations (`Reposito
 
 Saved not in UserDefaults but in `~/Library/Application Support/Amon Hen/bookmarks.json` (structured, and editable by hand). Scan results are not saved; they are collected again in the background at launch.
 
+### Settings per SSH host
+
+An SSH host's entry in Places opens that host's settings (also "Host Settings…" on its context menu). They apply to every repository on the host, because they are properties of the machine, not of a repository: the git to use there (found on the host's PATH, or a path), the engine (`amonhen` on the host's PATH, the one Amon Hen sent, or a path; whether to send one), whether signatures are verified with this Mac's keys or the host's, and the folders to scan. Environment variables (`AMONHEN_REMOTE_ENGINE`, `AMONHEN_PUSH`) keep overriding them. The line under a repository's Settings list (`git 2.34 · build-1`) opens this sheet.
+
 ## 3. Settings (Settings…, ⌘,)
 
 The standard macOS layout with a row of tabs with icons at the top (`NSTabViewController` with the `.toolbar` style, contents in SwiftUI `Form`). The toggles currently in the app menu move here.
@@ -222,24 +226,18 @@ For a repository on an SSH host, "your settings" means the settings of the user 
 
 ### 4.5 Pages
 
-A list on the left and the chosen page on the right, like System Settings. The list has two groups.
-
-**Settings**
+A list on the left and the chosen page on the right, like System Settings. The list has no groups: the pages people change often come first, the two they look at now and then last, and under the list one small line says which git runs this repository (`git 2.54.0 · This Mac`, or `git 2.34 · build-1`); clicking it opens that machine's settings (Settings… > Git for this Mac, the host's settings on the Repositories screen for an SSH host, chapter 2). Pages are named by their contents; no page is called "about" or "all", because every page here is a setting of this repository.
 
 | Page | Rows |
 | --- | --- |
 | Author and signing | **Name**, **Email** (`user.name`, `user.email`; typed, since they are not a list). **Signing**: one choice, No signing / OpenPGP / SSH / X.509 (writes `commit.gpgsign` and `gpg.format` together). **Key**: a list collected for the chosen format (OpenPGP: `gpg --list-secret-keys`, the keys for the email first; SSH: `~/.ssh/*.pub` and `ssh-add -L`; X.509: `gpgsm --list-secret-keys`), plus Other… for a value not in the list; collected by the core, so on the SSH host for a repository there (`user.signingkey`). The gpg / ssh-keygen / gpgsm programs are found by Amon Hen and shown in Settings… > Git, where they can be overridden. |
 | Commits | **Message template**: None (start empty) / one of the templates in Settings… > Git's library / A file… (git's `commit.template`, with a file chooser). The chosen template is previewed under the row. Library templates can contain placeholders that Amon Hen fills when the commit box opens: `{branch}`, `{issue}` (a number taken from the branch name), `{date}`; git's own file templates have none. Nothing else: `commit.cleanup` stays in All settings. |
+| Branches | **Default branch**: the one detected (`origin/HEAD`, then `main`, `master`), or a local branch chosen here for repositories without one. Amon Hen's own key, `amonhen.defaultBranch` in `.git/config`, so the CLI and the extension see it too; it decides "merged" and the trunk in Branches. The badge says "detected" while nothing is chosen. |
 | Operations | **Pull**: When pulling, how are the changes brought in? (Merge / Rebase / Fast-forward; `pull.rebase`, and `pull.ff=only` with `pull.rebase=false` for the last). **Fetch**: Remove remote-tracking branches deleted on the remote (`fetch.prune`; the help says that unset means Amon Hen removes them and a terminal keeps them). **Rebase**: Stash changes before rebasing (`rebase.autoStash`; History edits always stash); Move stacked branches along when rebasing or editing History (`rebase.updateRefs`; disabled below git 2.38 with the version found). **Merge**: How conflicts are written in files (Both sides / Both sides and the base / Both sides and the base, shortened; `merge.conflictStyle`; the help says the merge editor works with all three, and that with the base it resolves one-sided and word-level conflicts by itself, so zdiff3 is what Amon Hen recommends). No Push rows: Amon Hen's Push sends the branch to the target chosen in its sheet with an explicit refspec and `--set-upstream`, so `push.default` and `push.autoSetupRemote` only affect a terminal (All settings). |
 | Working Copy | **Line endings** (`core.autocrlf`: Keep as committed / CRLF in the working tree, LF in commits / LF in commits). **Track changes to the executable bit** (`core.fileMode`). **Ignore in this repository only**: an editor for `.git/info/exclude`, with the number of files each line matches shown at the right of the line as it is typed (no button). Not `status.showUntrackedFiles` (Amon Hen's status always lists every untracked file) and not `.gitignore`, which is a file of the repository (4.7). |
 | Remotes | A table of the remotes (name, fetch URL, push URL when different, whether it is on GitHub or similar). Add, Edit and Remove open one sheet: name, fetch URL, push URL (empty means the same), what the URL points to (GitHub, GitLab, a path, an SSH host) and a connection check (`git ls-remote`) before saving. Prune per remote. The same actions are in the sidebar: Add Remote… on the Remotes group's context menu; Rename, Edit URL…, Remove and Prune on a remote's. |
-
-**Information**
-
-| Page | Contents |
-| --- | --- |
-| About this repository | **The git in use**: its path and version, with the host for a repository on an SSH host; a link to Settings… > Git, where the git executable for this Mac is chosen among those found (/usr/bin/git, Homebrew, Xcode) or given by path. **Default branch**: the one detected (`origin/HEAD`, `main`, `master`) or an override chosen here for repositories without one (kept by Amon Hen; it decides "merged" in Branches). **Hooks**: a table with each hook's name, when git runs it (before a commit, before a push, …), an Enabled switch (the executable bit) and Open in Editor; where they live when `core.hooksPath` is set. **LFS**: whether git-lfs is installed (with how to install it if not), the tracked patterns from `.gitattributes` with Track Pattern… (`git lfs track`) and Remove, and how many files are in LFS. **Worktrees**: the list with their branches. |
-| All settings | A table like Xcode's Build Settings: Key, Value in effect, then one column per scope (system, global, local, worktree) with the value set there. The value in effect is bold. Double-clicking a cell in the local column edits it; emptying it removes the key here; a "+" row adds a key. Search by key or value, sorting by any column, ⌘C copies the selected rows as `key = value`. Nothing on this page needs to be typed into separate key and value fields. |
+| Hooks · LFS | **Hooks**: a table with each hook's name, when git runs it (before a commit, before a push, …), an Enabled switch (the executable bit) and Open in Editor; where they live when `core.hooksPath` is set. **LFS**: whether git-lfs is installed (with how to install it if not), the tracked patterns from `.gitattributes` with Track Pattern… (`git lfs track`) and Remove, and how many files are in LFS. Named by its contents: no single word covers both, and the worktrees are already listed under Working Copy in the sidebar. |
+| git config | The page is `git config` itself, so it is called that and not translated. A table like Xcode's Build Settings: Key, Value in effect, then one column per scope (system, global, local, worktree) with the value set there. The value in effect is bold. Double-clicking a cell in the local column edits it; emptying it removes the key here; a "+" row adds a key. Search by key or value, sorting by any column, ⌘C copies the selected rows as `key = value`. Nothing on this page needs to be typed into separate key and value fields. |
 
 ### 4.6 Older git and SSH hosts
 
@@ -257,7 +255,8 @@ A list on the left and the chosen page on the right, like System Settings. The l
 | `push.default`, `push.autoSetupRemote`, `status.showUntrackedFiles` | All settings | Amon Hen's own operations pass explicit flags, so they only affect a terminal |
 | `.gitignore` | Working Copy, opened as a file; Add to .gitignore on an ignored file's context menu | A file of the repository, shared through commits |
 | Global excludes (`core.excludesFile`) | Settings… > Git | Shared |
-| Hooks, LFS, the git version | About this repository | Information with actions, not settings |
+| The git version | The line under the list, which opens the machine's settings | It belongs to the machine (this Mac, or the SSH host), not to the repository; it is the same for every repository there |
+| Worktrees | The sidebar, under Working Copy | Already listed there |
 
 ### 4.8 Stages
 
@@ -267,9 +266,9 @@ Each stage is its own pull request after the page's framework (the list, the row
 2. The template library in Settings… > Git with placeholders, and the Commits page choosing from it.
 3. Operations as one page; Working Copy with the exclude editor's match counts; `.gitignore` out of the page.
 4. Remotes: the sheet with the connection check, and the sidebar's context menus.
-5. About this repository: the git in use with Settings… > Git's choice of executable, the default branch override, the hooks and LFS tables, the worktrees.
-6. All settings as the Xcode-style table.
-7. Settings… > Git: auto-fetch for all repositories, the global excludes, the gpg programs.
+5. Hooks · LFS as tables with actions.
+6. git config as the Xcode-style table.
+7. The machine's settings: Settings… > Git's choice of git executable, the global excludes and the gpg programs for this Mac; a settings sheet per SSH host on the Repositories screen (chapter 2), with the git to use there, the engine, and signature verification.
 
 ## 5. Toolbar
 
@@ -721,7 +720,7 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
 - [x] U18. Worktrees under Working Copy in the sidebar with their change counts (first built as every worktree's changes inside Working Copy, then moved to the sidebar).
 - [x] U19. History's labels at each worktree's HEAD (name and number of changed files; ✎ for the edited one), kept up
   to date when a worktree commits or changes files.
-- [ ] U20. Repository settings redone from the person using it (chapter 4). Done: the page in the sidebar's Workspace with its list of pages, the rows with the value in effect, the badge, ↩︎ and ⓘ, Pull and Fetch following git's settings, and rows that only a terminal honors taken off the page. Planned, in the stages of 4.8: signing as one choice with the key collected; the template library; Operations as one page and the exclude editor with match counts; the remotes sheet and sidebar actions; About this repository with the git in use, the default branch, hooks, LFS and worktrees; All settings as the Xcode-style table; the shared settings in Settings… > Git.
+- [ ] U20. Repository settings redone from the person using it (chapter 4). Done: the page in the sidebar's Workspace with its list of pages (Author and Signing, Commits, Operations, Branches, Working Copy, Remotes, Hooks · LFS, git config) and the git line under it, the rows with the value in effect, the badge, ↩︎ and ⓘ, the default branch override (`amonhen.defaultBranch`), Pull and Fetch following git's settings, and rows that only a terminal honors taken off the page. Planned, in the stages of 4.8: signing as one choice with the key collected; the template library; the exclude editor's match counts and `.gitignore` from Working Copy; the remotes sheet and sidebar actions; Hooks · LFS as tables with actions; git config as the Xcode-style table; the machine's settings (this Mac, and per SSH host).
 
 ## Decisions
 
