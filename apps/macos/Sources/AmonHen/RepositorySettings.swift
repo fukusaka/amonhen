@@ -24,19 +24,12 @@ struct RemoteEntry: Decodable, Hashable, Identifiable {
 @Observable
 final class RepositorySettingsModel {
     let repository: Repository
-    /// リポジトリの場所（表示名・色ラベル・自動 fetch はブックマークに置く）。
+    /// リポジトリの場所。
     let location: String
-    var displayName: String
-    var color: String?
-    var autoFetch: Int
     private(set) var hooksPath: String?
     private(set) var hooks: [HookEntry] = []
     private(set) var lfs = false
     private(set) var lfsPatterns: [String] = []
-    /// Ignore の各行に合うファイル（「合うファイルを見る」を押したとき）。
-    private(set) var ignoreMatches: [IgnoreMatch]?
-    private(set) var excludeMatches: [IgnoreMatch]?
-    private(set) var matching = false
     private(set) var entries: [ConfigEntry] = []
     private(set) var remotes: [RemoteEntry] = []
     var gitignore = ""
@@ -47,8 +40,6 @@ final class RepositorySettingsModel {
     private(set) var gitVersion: String?
     /// rebase で積み重ねたブランチを一緒に動かせるか（git 2.38 から）。
     private(set) var updateRefsSupported = true
-    /// 表示名・色ラベル・自動 fetch を変えた（ウィンドウの題名などを直す）。
-    var onGeneralChange: (() -> Void)?
     /// git の設定・リモートなどを変えた（画面を読み直す）。
     var onRepositoryChange: (() -> Void)?
 
@@ -58,44 +49,6 @@ final class RepositorySettingsModel {
     init(repository: Repository, location: String) {
         self.repository = repository
         self.location = location
-        let bookmark = Bookmarks.shared.bookmark(location)
-        displayName = bookmark?.name ?? ""
-        color = bookmark?.color
-        autoFetch = bookmark?.autoFetch ?? 0
-    }
-
-    /// 表示名・色ラベル・自動 fetch をブックマークに書く（ブックマークになければ加える）。
-    func saveGeneral() {
-        let bookmarks = Bookmarks.shared
-        let name = displayName.trimmingCharacters(in: .whitespaces)
-        if bookmarks.bookmark(location)?.name ?? "" != name { bookmarks.rename(location, to: name.isEmpty ? nil : name) }
-        if bookmarks.bookmark(location)?.color != color { bookmarks.setColor(location, color) }
-        let minutes = autoFetch > 0 ? autoFetch : nil
-        if bookmarks.bookmark(location)?.autoFetch != minutes { bookmarks.setAutoFetch(location, minutes: minutes) }
-        onGeneralChange?()
-    }
-
-    /// .gitignore と exclude の各行に合うファイルを探す（git に聞くので裏で）。
-    func findIgnoreMatches() {
-        let repository = self.repository
-        let texts = (gitignore, exclude)
-        matching = true
-        Task {
-            struct Lines: Decodable { let lines: [IgnoreMatch] }
-            do {
-                let (a, b) = try await Task.detached(priority: .userInitiated) {
-                    (
-                        try repository.info(["op": "ignoreMatches", "text": texts.0], as: Lines.self).lines,
-                        try repository.info(["op": "ignoreMatches", "text": texts.1], as: Lines.self).lines
-                    )
-                }.value
-                ignoreMatches = a
-                excludeMatches = b
-            } catch {
-                self.error = "\(error)"
-            }
-            matching = false
-        }
     }
 
     func load() {
@@ -199,32 +152,6 @@ struct HookEntry: Decodable, Hashable, Identifiable {
     var id: String { name }
 }
 
-struct IgnoreMatch: Decodable, Hashable, Identifiable {
-    let line: Int
-    let pattern: String
-    let examples: [String]
-    let count: Int
-    var id: Int { line }
-}
-
-/// Ignore の各行に合うファイルの一覧。
-private struct IgnoreMatchList: View {
-    let matches: [IgnoreMatch]
-    var body: some View {
-        ForEach(matches) { m in
-            VStack(alignment: .leading, spacing: 1) {
-                Text(m.count == 0 ? L("%ld: %@ — no matching files", m.line, m.pattern) : L("%ld: %@ — %ld files", m.line, m.pattern, m.count))
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(m.count == 0 ? Color.orange : Color.primary)
-                if !m.examples.isEmpty {
-                    Text(m.examples.joined(separator: "　") + (m.count > m.examples.count ? "　…" : ""))
-                        .font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                }
-            }
-        }
-    }
-}
-
 /// 段の名前と、ファイルの場所（`file:` を取り、ホームは ~ にする）。
 private func describe(_ entry: ConfigEntry) -> String {
     var origin = entry.origin
@@ -313,33 +240,18 @@ private struct RemotesTab: View {
     }
 }
 
-private struct IgnoreEditor: View {
+/// このリポジトリだけで無視するファイル（`.git/info/exclude`）のエディタ。`.gitignore` はリポジトリのファイルなので
+/// ここでは扱わない（Working Copy で開く）。
+private struct ExcludeEditor: View {
     @Bindable var model: RepositorySettingsModel
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(L(".gitignore (at the top of the working tree; committed and shared)")).font(.headline)
-            TextEditor(text: $model.gitignore).font(.system(.body, design: .monospaced)).frame(minHeight: 140)
-            Text(L(".git/info/exclude (this repository only; not shared)")).font(.headline)
-            TextEditor(text: $model.exclude).font(.system(.body, design: .monospaced)).frame(minHeight: 80)
-            if model.ignoreMatches != nil || model.excludeMatches != nil {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        IgnoreMatchList(matches: model.ignoreMatches ?? [])
-                        if let exclude = model.excludeMatches, !exclude.isEmpty {
-                            Text("exclude").font(.caption.bold())
-                            IgnoreMatchList(matches: exclude)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .frame(maxHeight: 120)
-            }
+            Text(L("Ignore in this repository only")).font(.headline)
+            Text(L("Patterns in .git/info/exclude, one per line (`*.log`, `build/` and so on; text after # is a comment). Not shared with anyone. Patterns everyone should share go in .gitignore, which is a file of the repository."))
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            TextEditor(text: $model.exclude).font(.system(.body, design: .monospaced)).frame(minHeight: 120, maxHeight: 240)
             HStack {
-                Text(LocalizedStringKey(L("One pattern per line (`*.log`, `build/` and so on). Text after # is a comment."))).font(.caption).foregroundStyle(.secondary)
                 Spacer()
-                Button(model.matching ? L("Searching…") : L("Show Matching Files")) { model.findIgnoreMatches() }
-                    .disabled(model.matching)
-                    .help(L("Show how many files (tracked ones included) match each line of the unsaved text, with examples."))
                 Button("Revert") { model.load() }.disabled(!model.ignoreChanged)
                 Button(L("Save")) { model.saveIgnore() }.disabled(!model.ignoreChanged).keyboardShortcut("s")
             }
@@ -447,8 +359,9 @@ private struct SettingRow<Control: View>: View {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(question)
-                    Text(help).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(help).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.leading, 8)
                 }
+                .frame(maxWidth: 520, alignment: .leading)
                 Spacer()
                 control().disabled(disabledReason != nil)
                 if overriding {
@@ -492,23 +405,6 @@ private struct SettingRow<Control: View>: View {
         .textSelection(.enabled)
         .padding(12)
         .frame(minWidth: 240, alignment: .leading)
-    }
-}
-
-/// めったに変えない行を畳んでおく。見出しのどこを押しても開く（標準の DisclosureGroup は矢印しか効かない）。
-private struct MoreGroup<Content: View>: View {
-    @ViewBuilder let content: () -> Content
-    @State private var expanded = false
-
-    var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            content()
-        } label: {
-            Text(L("More"))
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { expanded.toggle() }
-        }
     }
 }
 
@@ -621,7 +517,7 @@ private struct PullMethodRow: View {
         switch m {
         case .merge: L("Merge")
         case .rebase: L("Rebase")
-        case .ffOnly: L("Only fast-forward")
+        case .ffOnly: L("Fast-forward")
         }
     }
 
@@ -653,61 +549,28 @@ private struct PullMethodRow: View {
     }
 }
 
-// MARK: - ページ
+// MARK: - ページ（docs/ux.md の 4.5）
 
 /// 左の一覧の項目。
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case amonhen, author, commits, sync, rewriting, workingCopy, ignore, remotes
+    case author, commits, operations, workingCopy, remotes
     case about, all
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .amonhen: L("In Amon Hen")
         case .author: L("Author and Signing")
         case .commits: L("Commits")
-        case .sync: L("Pull, Push and Fetch")
-        case .rewriting: L("Rebase and Merge")
+        case .operations: L("Operations")
         case .workingCopy: "Working Copy"
-        case .ignore: L("Ignored Files")
         case .remotes: L("Remotes")
         case .about: L("About This Repository")
         case .all: L("All Settings")
         }
     }
 
-    static let settings: [SettingsPage] = [.amonhen, .author, .commits, .sync, .rewriting, .workingCopy, .ignore, .remotes]
+    static let settings: [SettingsPage] = [.author, .commits, .operations, .workingCopy, .remotes]
     static let information: [SettingsPage] = [.about, .all]
-}
-
-/// 表示名・色ラベル・自動 fetch（このアプリの中だけの設定。ブックマークに置く）。
-private struct InAmonHenPage: View {
-    @Bindable var model: RepositorySettingsModel
-    var body: some View {
-        Form {
-            Section {
-                TextField(L("Display name"), text: $model.displayName, prompt: Text((RepositoryLocation.path(model.location) as NSString).lastPathComponent))
-                Picker(L("Color label"), selection: $model.color) {
-                    Text(L("None")).tag(String?.none)
-                    ForEach(Bookmarks.colors, id: \.name) { entry in
-                        Label { Text(entry.title) } icon: { Image(nsImage: RepositoryCell.dot(entry.color) ?? NSImage()) }
-                            .tag(Optional(entry.name))
-                    }
-                }
-                Picker(L("Fetch automatically"), selection: $model.autoFetch) {
-                    Text(L("Never")).tag(0)
-                    ForEach([5, 15, 30, 60], id: \.self) { Text(L("Every %ld minutes", $0)).tag($0) }
-                }
-            } footer: {
-                Text(L("These settings are kept in this app only (not written to the git config). The display name appears in windows, tabs and the repository list. Automatic fetch runs only while this repository is open."))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .onChange(of: model.displayName) { model.saveGeneral() }
-        .onChange(of: model.color) { model.saveGeneral() }
-        .onChange(of: model.autoFetch) { model.saveGeneral() }
-    }
 }
 
 private struct AuthorSigningPage: View {
@@ -728,17 +591,6 @@ private struct AuthorSigningPage: View {
                 TextRow(model: model, question: L("Key"),
                         help: format == "ssh" ? L("The path of the SSH public key, or the key itself (“ssh-ed25519 AAAA…”).") : L("The fingerprint or ID of the key; empty uses the key for your email."),
                         key: "user.signingkey", placeholder: format == "ssh" ? "~/.ssh/id_ed25519.pub" : L("Key for your email"))
-                MoreGroup {
-                    switch format {
-                    case "ssh":
-                        TextRow(model: model, question: L("Allowed signers"), help: L("The file that lists whose SSH keys are trusted when verifying signatures."), key: "gpg.ssh.allowedSignersFile", placeholder: "~/.ssh/allowed_signers")
-                        TextRow(model: model, question: L("ssh-keygen program"), help: L("The ssh-keygen to run for SSH signing and verification."), key: "gpg.ssh.program", placeholder: "ssh-keygen")
-                    case "x509":
-                        TextRow(model: model, question: L("gpgsm program"), help: L("The gpgsm to run for X.509 signing and verification."), key: "gpg.x509.program", placeholder: "gpgsm")
-                    default:
-                        TextRow(model: model, question: L("gpg program"), help: L("The gpg to run for OpenPGP signing and verification."), key: "gpg.program", placeholder: "gpg")
-                    }
-                }
             } header: {
                 Text(L("Signing"))
             }
@@ -754,14 +606,9 @@ private struct CommitsPage: View {
     var body: some View {
         Form {
             Section {
-                TextRow(model: model, question: L("Message template"), help: L("A file whose contents start every new commit message (the commit box in Working Copy starts from it too)."), key: "commit.template", placeholder: L("None"))
+                TextRow(model: model, question: L("Message template"), help: L("A file whose contents start every new commit message (the commit box in Working Copy starts from it too). Empty: messages start empty."), key: "commit.template", placeholder: L("None"))
                 if let preview, !preview.isEmpty {
-                    Text(preview).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).lineLimit(8).textSelection(.enabled)
-                }
-                MoreGroup {
-                    ChoiceRow(model: model, question: L("Message cleanup"), help: L("What git strips from the message before committing. Amon Hen passes the message as written, so “Default” acts as “Blank lines and trailing spaces” here."), key: "commit.cleanup",
-                              options: [("default", L("Default")), ("strip", L("Comment lines, blank lines around and in a row, trailing spaces")), ("whitespace", L("Blank lines around and in a row, trailing spaces")), ("verbatim", L("Nothing")), ("scissors", L("Blank lines and spaces as above, and everything after the scissors line"))],
-                              defaultValue: "default")
+                    Text(preview).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(8).textSelection(.enabled)
                 }
             } header: {
                 Text(L("Message"))
@@ -780,9 +627,11 @@ private struct CommitsPage: View {
     }
 }
 
-private struct SyncPage: View {
+/// Pull・Fetch・Rebase・Merge の設定。
+private struct OperationsPage: View {
     let model: RepositorySettingsModel
     var body: some View {
+        let tooOld = model.updateRefsSupported ? nil : L("Needs git 2.38 or later. This repository’s git is %@%@.", model.gitVersion ?? "?", model.host.map { " (\($0))" } ?? "")
         Form {
             Section("Pull") {
                 PullMethodRow(model: model)
@@ -793,18 +642,8 @@ private struct SyncPage: View {
                 Text("Fetch")
             } footer: {
                 Text(L("Push has no settings here: Amon Hen’s Push sends the branch to the target chosen in its sheet, so push.default and push.autoSetupRemote only affect git push in a terminal (see All Settings)."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .foregroundStyle(.secondary)
             }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-private struct RewritingPage: View {
-    let model: RepositorySettingsModel
-    var body: some View {
-        let tooOld = model.updateRefsSupported ? nil : L("Needs git 2.38 or later. This repository’s git is %@%@.", model.gitVersion ?? "?", model.host.map { " (\($0))" } ?? "")
-        Form {
             Section("Rebase") {
                 SwitchRow(model: model, question: L("Stash changes before rebasing"), help: L("Uncommitted changes are stashed before a rebase or a pull with rebase and restored after it. History edits (reword, squash and so on) always stash, whatever this says."), key: "rebase.autoStash", defaultOn: false)
                 ChoiceRow(model: model, question: L("Move stacked branches along when rebasing or editing History"),
@@ -812,7 +651,7 @@ private struct RewritingPage: View {
                           key: "rebase.updateRefs", options: [("false", L("Leave them")), ("true", L("Move them along"))], defaultValue: "false", isBool: true, disabledReason: tooOld)
             }
             Section("Merge") {
-                ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("diff3 and zdiff3 also write the common base between the two sides; zdiff3 leaves out lines both sides changed the same way. With the base, Amon Hen’s merge editor can resolve conflicts where only one side changed by itself."), key: "merge.conflictStyle",
+                ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("Amon Hen’s merge editor works with all three. With the base (diff3, zdiff3) it resolves conflicts where only one side changed, or the sides changed different words, by itself; zdiff3 also leaves out lines both sides changed the same way. Amon Hen recommends zdiff3."), key: "merge.conflictStyle",
                           options: [("merge", L("Both sides")), ("diff3", L("Both sides and the common base")), ("zdiff3", L("Both sides and the base, shortened"))], defaultValue: "merge")
             }
         }
@@ -821,21 +660,22 @@ private struct RewritingPage: View {
 }
 
 private struct WorkingCopyPage: View {
-    let model: RepositorySettingsModel
+    @Bindable var model: RepositorySettingsModel
     var body: some View {
-        Form {
-            Section {
-                ChoiceRow(model: model, question: L("Line endings"), help: L("What git does with CRLF and LF when checking out and committing text files. Amon Hen’s diffs follow it."), key: "core.autocrlf",
-                          options: [("false", L("Keep as committed")), ("true", L("CRLF in the working tree, LF in commits")), ("input", L("LF in commits, no change on checkout"))],
-                          defaultValue: "false", isBool: false)
-                SwitchRow(model: model, question: L("Track changes to the executable bit"), help: L("Off ignores file mode changes, as on file systems that don’t keep them."), key: "core.fileMode", defaultOn: true)
-                MoreGroup {
-                    ChoiceRow(model: model, question: L("Line ending written on checkout"), help: L("Used when line endings are converted (text files with eol or the setting above)."), key: "core.eol",
-                              options: [("native", L("This platform’s")), ("lf", "LF"), ("crlf", "CRLF")], defaultValue: "native")
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    ChoiceRow(model: model, question: L("Line endings"), help: L("What git does with CRLF and LF when checking out and committing text files. Amon Hen’s diffs follow it."), key: "core.autocrlf",
+                              options: [("false", L("Keep as committed")), ("true", L("CRLF in the working tree, LF in commits")), ("input", L("LF in commits, no change on checkout"))],
+                              defaultValue: "false", isBool: false)
+                    SwitchRow(model: model, question: L("Track changes to the executable bit"), help: L("Off ignores file mode changes, as on file systems that don’t keep them."), key: "core.fileMode", defaultOn: true)
                 }
             }
+            .formStyle(.grouped)
+            .frame(height: 220)
+            // Form の中身と同じ幅にそろえる。
+            ExcludeEditor(model: model).frame(maxWidth: 740)
         }
-        .formStyle(.grouped)
     }
 }
 
@@ -851,7 +691,7 @@ private struct AboutPage: View {
                 Text("git")
             } footer: {
                 Text(L("The git that reads and writes this repository. Settings marked “your settings” are that git’s user settings (git config --global)."))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .foregroundStyle(.secondary)
             }
             Section {
                 if model.hooks.isEmpty {
@@ -870,7 +710,7 @@ private struct AboutPage: View {
                 Text("Hooks")
             } footer: {
                 Text(L("Location: %@. .sample files aren’t counted. git runs these on commit, push and so on.", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
-                    .font(.caption).foregroundStyle(.secondary)
+                    .foregroundStyle(.secondary)
             }
             Section {
                 LabeledContent("Git LFS", value: model.lfs ? L("Installed (filter.lfs is set)") : L("Not installed"))
@@ -883,7 +723,7 @@ private struct AboutPage: View {
             } footer: {
                 if !model.lfs && !model.lfsPatterns.isEmpty {
                     Text(L("There are LFS patterns, but git lfs isn’t installed. Install it with brew install git-lfs and git lfs install."))
-                        .font(.caption).foregroundStyle(.orange)
+                        .foregroundStyle(.orange)
                 }
             }
         }
@@ -925,13 +765,10 @@ private struct RepositorySettingsView: View {
 
     @ViewBuilder private var content: some View {
         switch page {
-        case .amonhen: InAmonHenPage(model: model)
         case .author: AuthorSigningPage(model: model)
         case .commits: CommitsPage(model: model)
-        case .sync: SyncPage(model: model)
-        case .rewriting: RewritingPage(model: model)
+        case .operations: OperationsPage(model: model)
         case .workingCopy: WorkingCopyPage(model: model)
-        case .ignore: IgnoreEditor(model: model)
         case .remotes: RemotesTab(model: model)
         case .about: AboutPage(model: model)
         case .all: AllSettingsTab(model: model)
@@ -945,7 +782,7 @@ final class RepositorySettingsPage: NSHostingController<AnyView> {
 
     init(repository: Repository, location: String) {
         model = RepositorySettingsModel(repository: repository, location: location)
-        let page = AppDelegate.option("--settings-page").flatMap(SettingsPage.init) ?? .amonhen
+        let page = AppDelegate.option("--settings-page").flatMap(SettingsPage.init) ?? .author
         super.init(rootView: AnyView(RepositorySettingsView(model: model, page: page)))
     }
 
