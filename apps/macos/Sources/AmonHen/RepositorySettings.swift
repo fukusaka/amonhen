@@ -344,7 +344,8 @@ private struct AllSettingsTab: View {
     /// 見出しで並べ替える。初めはキーの順（`onAppear` で入れる。`@State` の初期値にキーパスは置けない）。
     @State private var sortOrder: [KeyPathComparator<ConfigRow>] = []
     @State private var columns = TableColumnCustomization<ConfigRow>()
-    @AppStorage("configTableRows") private var rowsMode = RowsMode.all
+    /// 切り替えはアプリ全体で 1 つ（リポジトリをまたいで覚える）。初めは Customized。
+    @AppStorage("configTableRows") private var rowsMode = RowsMode.customized
     @AppStorage("configTableColumns") private var columnsMode = ColumnsMode.levels
     /// 「このリポジトリ」の列を編集しているキーと、欄の中身。
     @State private var editing: String?
