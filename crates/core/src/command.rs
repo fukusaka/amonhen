@@ -387,12 +387,19 @@ fn op_name(json: &str) -> String {
         .unwrap_or_default()
 }
 
-/// 手元のタグ `name` が指すコミット。
-fn local_tag(entries: &[RefEntry], name: &str) -> Option<Oid> {
-    entries
+/// 手元のタグ `names` の ref が指すオブジェクト（注釈付きのタグはタグのオブジェクト）。リモートのタグと比べる
+/// のに使う: 同じコミットでも、作り直した注釈付きのタグは別のタグで、push は断られる。
+fn tag_objects<'a>(
+    ops: &dyn amonhen_model::Operations,
+    names: &[&'a str],
+) -> Result<Vec<(&'a str, Option<Oid>)>> {
+    let full: Vec<String> = names.iter().map(|n| format!("refs/tags/{n}")).collect();
+    let objects = ops.resolve_refs(&full)?;
+    Ok(names
         .iter()
-        .find(|e| e.kind == RefKind::Tag && e.name == name)
-        .and_then(|e| e.target)
+        .zip(objects)
+        .map(|(&n, (_, oid))| (n, oid))
+        .collect())
 }
 
 fn oid(hex: &str) -> Result<Oid> {
@@ -1207,23 +1214,20 @@ impl Repository {
             } => {
                 let names: Vec<&str> = names.iter().map(String::as_str).collect();
                 ops.push_tags(&remote, &names, force, delete)?;
-                let refs = self.load_refs()?;
-                let tags: Vec<(&str, Option<Oid>)> = names
-                    .iter()
-                    .map(|&n| (n, local_tag(&refs.refs.entries, n)))
-                    .collect();
+                let tags = tag_objects(ops, &names)?;
                 crate::remote_tags::record_push(&*self.backend().files(), &remote, &tags, delete)?;
                 ok()
             }
             Command::TagRemotes => {
                 let refs = self.refs()?;
-                let tags: Vec<(&str, Option<Oid>)> = refs
+                let names: Vec<&str> = refs
                     .refs
                     .entries
                     .iter()
                     .filter(|e| e.kind == RefKind::Tag)
-                    .map(|e| (e.name.as_str(), e.target))
+                    .map(|e| e.name.as_str())
                     .collect();
+                let tags = tag_objects(ops, &names)?;
                 Ok(Response {
                     ok: true,
                     info: Some(crate::remote_tags::status(
@@ -2730,7 +2734,7 @@ mod tests {
         assert_eq!(tags(dir), "light\nv1");
     }
 
-    /// fetch のついでにリモートのタグを読み、タグごとに「同じ・違うコミット・ない」を返す。push・削除の結果は
+    /// fetch のついでにリモートのタグを読み、タグごとに「同じ・別のタグ・ない」を返す。push・削除の結果は
     /// fetch しなくても反映され、まだ読んでいないリモートは分からないまま。覚えは worktree で共有。
     #[test]
     fn tells_which_remotes_have_each_tag() {
@@ -2785,6 +2789,13 @@ mod tests {
         let pushed = states(&repo);
         assert_eq!(pushed["tags"]["light"]["backup"], "same");
         assert_eq!(pushed["tags"]["v1"]["origin"], "missing");
+
+        // 同じコミットに作り直した注釈付きのタグは、別のタグ（置き換えないと push できない）。
+        git(dir, &["push", "-q", "origin", "v1"]);
+        assert_eq!(run(&repo, r#"{"op":"fetch"}"#)["ok"], true);
+        assert_eq!(states(&repo)["tags"]["v1"]["origin"], "same");
+        git(dir, &["tag", "-f", "-a", "v1", "-m", "again", "v1^{}"]);
+        assert_eq!(states(&repo)["tags"]["v1"]["origin"], "different");
 
         // linked worktree から開いても、同じ覚えを読む。足したばかりのリモートは分からないまま。
         let wt = dir.join("wt");

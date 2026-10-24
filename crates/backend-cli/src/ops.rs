@@ -340,27 +340,20 @@ impl Operations for Git {
     }
 
     fn remote_tags(&self, remote: &str) -> Result<Vec<(String, Oid)>> {
-        // `<oid>\trefs/tags/<name>` の行。注釈付きのタグには、たどった先のコミットの `<name>^{}` の行が続く。
+        // `<oid>\trefs/tags/<name>` の行。注釈付きのタグの後には、たどった先のコミットの `<name>^{}` の行が
+        // 続くが、比べるのはタグのオブジェクトなので読まない。
         let out = text(self.read(&["ls-remote", "--tags", remote])?)?;
-        let mut tags: Vec<(String, Oid)> = Vec::new();
-        for line in out.lines() {
-            let Some((oid, name)) = line.split_once('\t') else {
-                continue;
-            };
-            let (Some(name), Some(oid)) = (name.strip_prefix("refs/tags/"), Oid::from_hex(oid))
-            else {
-                continue;
-            };
-            match name.strip_suffix("^{}") {
-                Some(tag) => {
-                    if let Some(entry) = tags.iter_mut().find(|(n, _)| n == tag) {
-                        entry.1 = oid;
-                    }
+        Ok(out
+            .lines()
+            .filter_map(|line| {
+                let (oid, name) = line.split_once('\t')?;
+                let name = name.strip_prefix("refs/tags/")?;
+                if name.ends_with("^{}") {
+                    return None;
                 }
-                None => tags.push((name.to_owned(), oid)),
-            }
-        }
-        Ok(tags)
+                Some((name.to_owned(), Oid::from_hex(oid)?))
+            })
+            .collect())
     }
 
     fn push_tags(&self, remote: &str, names: &[&str], force: bool, delete: bool) -> Result<()> {

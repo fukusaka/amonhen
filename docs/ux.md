@@ -46,11 +46,13 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 - Unlike branches, tags have no remote copies in the repository (fetched tags join your own `refs/tags`), so which
   remote has which tag cannot be told from local refs. Each Fetch (automatic ones too) also reads every remote's tags
   (`git ls-remote --tags`) into `<common git dir>/amonhen/remote-tags.json`; pushing or deleting tags updates it at
-  once. A tag row then shows a mark at its right when no remote has the tag (☁ with a slash) or when a remote has the
-  name on another commit (orange). Its tooltip lists every remote (has it, another commit, doesn't have it, not checked
-  yet), and clicking the mark opens a popover with the same, when each remote was read, and Push to / Replace on.
+  once. Tags are compared by the object their refs point to, so an annotated tag made again on the same commit is a
+  different tag (Push would be refused). A tag row then shows a mark at its right when no remote has the tag (☁ with
+  a slash) or when a remote has a different tag with the name (orange). Its tooltip lists every remote (has it, a
+  different tag, doesn't have it, not checked yet), and clicking the mark opens a popover with the same, when each
+  remote was read, and Push to / Replace on.
 - A tag's context menu follows what is known: Push <tag> to <remote> for remotes that lack it, Replace <tag> on
-  <remote>… (a forced push) where the name points to another commit, Delete…, which deletes your own copy only and can
+  <remote>… (a forced push) where the remote has a different tag with the name, Delete…, which deletes your own copy only and can
   be undone (an annotated tag comes back with its message), and Delete <tag> from <remote>… for remotes that have it,
   which removes it for everyone and cannot be undone. A remote not read yet gets Push and Delete from, and the sheet
   says it was not checked. Deleting and replacing ask first, naming the tags.

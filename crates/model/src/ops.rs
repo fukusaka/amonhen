@@ -202,7 +202,8 @@ pub trait Operations: Send + Sync {
     fn rename_branch(&self, from: &str, to: &str) -> Result<()>;
     fn create_tag(&self, name: &str, target: &str, message: Option<&str>) -> Result<()>;
     fn delete_tag(&self, name: &str) -> Result<()>;
-    /// `remote` にあるタグと、それぞれが指すコミット（注釈付きのタグはたどった先）。`git ls-remote --tags`。
+    /// `remote` にあるタグと、それぞれの ref が指すオブジェクト（注釈付きのタグはタグのオブジェクト）。
+    /// `git ls-remote --tags`。
     fn remote_tags(&self, remote: &str) -> Result<Vec<(String, Oid)>>;
     /// タグ `names` を `remote` に push する（`force` なら同じ名前のリモートのタグを置き換え、`delete` なら
     /// `remote` から消す）。

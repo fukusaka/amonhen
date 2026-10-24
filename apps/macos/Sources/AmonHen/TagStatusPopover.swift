@@ -1,7 +1,7 @@
 import AmonhenKit
 import AppKit
 
-/// サイドバーのタグの行の右端の印（どのリモートにもない・違うコミットを指すリモートがある）を押したときの吹き出し
+/// サイドバーのタグの行の右端の印（どのリモートにもない・同じ名前の別のタグがあるリモートがある）を押したときの吹き出し
 /// （ブランチの吹き出しと同じ作り）。タグはブランチと違って手元にリモートの写しがないので、どこから分かったか
 /// （fetch のときに読んだ）と、リモートごとの様子、次にできること（push・置き換え）を出す。
 final class TagStatusPopover: NSViewController {
@@ -43,7 +43,7 @@ final class TagStatusPopover: NSViewController {
         header.spacing = 6
 
         let explanation = different
-            ? L("A tag with the same name points to another commit there. Fetch doesn’t overwrite your tag, so the two stay apart until one of them is replaced.")
+            ? L("There, a tag with the same name is a different tag: it points to another commit, or it is another annotated tag on the same commit. Fetch doesn’t overwrite your tag and Push is refused, so the two stay apart until one of them is replaced.")
             : L("Tags have no remote copies here the way branches do, so this was read from each remote at the last Fetch. Push doesn’t send tags; push this one to share it.")
         let explanationField = NSTextField(wrappingLabelWithString: explanation)
         explanationField.font = .systemFont(ofSize: 12)
@@ -66,7 +66,7 @@ final class TagStatusPopover: NSViewController {
         for row in rows {
             let (text, color): (String, NSColor) = switch row.state {
             case .same?: (L("Has it"), .labelColor)
-            case .different?: (L("Has this name on another commit"), .systemOrange)
+            case .different?: (L("Has a different tag with this name"), .systemOrange)
             case .missing?: (L("Doesn’t have it"), .secondaryLabelColor)
             case nil: (L("Not checked yet (Fetch reads it)"), .tertiaryLabelColor)
             }
@@ -84,7 +84,7 @@ final class TagStatusPopover: NSViewController {
         gridView.columnSpacing = 10
         for i in 0..<gridView.numberOfRows { gridView.row(at: i).rowAlignment = .firstBaseline }
 
-        // 次にできること: ないリモートへ push、違うコミットを指すリモートは置き換え（確かめてから）。
+        // 次にできること: ないリモートへ push、別のタグがあるリモートは置き換え（確かめてから）。
         let buttons = NSStackView()
         buttons.spacing = 8
         for row in rows where row.state == .missing {

@@ -189,9 +189,9 @@ public struct TagRemotes: Decodable, Equatable, Sendable {
     }
 
     public enum State: String, Decodable, Sendable {
-        /// 同じ名前のタグが、同じコミットを指している。
+        /// 同じタグ（ref が同じオブジェクトを指す）。
         case same
-        /// 同じ名前のタグが、違うコミットを指している。
+        /// 同じ名前の別のタグ（違うコミットを指すか、同じコミットを指す別の注釈付きのタグ）。置き換えないと push できない。
         case different
         /// そのリモートにはない。
         case missing

@@ -13,8 +13,8 @@ becomes the GitHub Release notes.
 
 - Tags can be pushed to a remote, deleted (undoably), replaced on a remote and deleted from a remote from their
   context menu in the sidebar, one at a time or several selected together.
-- Fetch also reads which remote has which tag, and a tag row is marked when no remote has it or a remote has the name
-  on another commit; its tooltip and popover list every remote, and the menu offers only what applies.
+- Fetch also reads which remote has which tag, and a tag row is marked when no remote has it or a remote has a
+  different tag with the name; its tooltip and popover list every remote, and the menu offers only what applies.
 - File History can list merge commits too (Show Merge Commits in the list's context menu, or Settings > Appearance >
   File History); they stay out by default.
 - Blame colors the code by syntax, as diffs do.

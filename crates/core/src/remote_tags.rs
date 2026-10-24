@@ -14,7 +14,7 @@ const FILE: &str = "amonhen/remote-tags.json";
 struct Known {
     /// 読んだ時刻（UNIX 時刻のミリ秒）。
     checked: u64,
-    /// タグの名前 → 指すコミット（注釈付きのタグはたどった先）。
+    /// タグの名前 → ref が指すオブジェクト（注釈付きのタグはタグのオブジェクト）。
     tags: BTreeMap<String, String>,
 }
 
@@ -61,8 +61,8 @@ pub fn refresh(ops: &dyn Operations, files: &dyn RepoFiles) -> Result<()> {
     save(files, &cache)
 }
 
-/// タグを `remote` に push した（`delete` なら消した）結果で覚えを直す。`tags` は名前と、手元のタグが指す
-/// コミット。まだ読んだことのないリモートは、読んだことにしない（ほかのタグは分からないまま）。
+/// タグを `remote` に push した（`delete` なら消した）結果で覚えを直す。`tags` は名前と、手元のタグの ref が
+/// 指すオブジェクト。まだ読んだことのないリモートは、読んだことにしない（ほかのタグは分からないまま）。
 pub fn record_push(
     files: &dyn RepoFiles,
     remote: &str,
@@ -83,9 +83,10 @@ pub fn record_push(
     save(files, &cache)
 }
 
-/// 手元のタグ（名前と指すコミット）ごとの、リモートでの様子。`remotes` はすべてのリモートと読んだ時刻
-/// （読んだことがなければ null）、`tags` はタグ → 読んだリモート → `same`（同じコミット）・`different`
-/// （同じ名前で違うコミット）・`missing`（ない）。
+/// 手元のタグ（名前と ref が指すオブジェクト）ごとの、リモートでの様子。`remotes` はすべてのリモートと読んだ
+/// 時刻（読んだことがなければ null）、`tags` はタグ → 読んだリモート → `same`（同じタグ）・`different`（同じ
+/// 名前の別のタグ: 違うコミット、または同じコミットを指す別の注釈付きのタグ）・`missing`（ない）。比べるのは
+/// タグのオブジェクトなので、`different` のタグは置き換えないと push できない。
 pub fn status(
     ops: &dyn Operations,
     files: &dyn RepoFiles,

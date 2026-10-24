@@ -1174,8 +1174,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    /// タグの push と削除。fetch のときに読んだリモートの様子に合わせて、まだないリモートにだけ Push、違うコミットを
-    /// 指すリモートには Replace（置き換え）、あるリモートにだけ「… から削除」を出す。まだ読んでいないリモートには
+    /// タグの push と削除。fetch のときに読んだリモートの様子に合わせて、まだないリモートにだけ Push、同じ名前の別の
+    /// タグがあるリモートには Replace（置き換え）、あるリモートにだけ「… から削除」を出す。まだ読んでいないリモートには
     /// 全部出し、そう断る。手元の削除は Undo できる。リモートでの置き換え・削除は戻せない（もう一度 push する
     /// しかない）ので、名前を並べて確かめる。
     private func addTagItems(_ names: [String], to menu: NSMenu, actions: Actions) {
@@ -1230,26 +1230,26 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
     }
 
-    /// 同じ名前で違うコミットを指すリモートのタグを、手元のもので置き換える前に確かめる。
+    /// リモートにある同じ名前の別のタグを、手元のもので置き換える前に確かめる。
     private func confirmReplace(_ tags: [String], on remote: String, actions: Actions) {
         confirmDestructive(
             tags.count == 1 ? L("Replace %@ on %@?", tags[0], remote) : L("Replace %ld tags on %@?", tags.count, remote),
             message: tags.joined(separator: "\n") + "\n\n"
-                + L("On %@, a tag with this name points to another commit. Replacing it moves the tag there to your commit for everyone who fetches from %@ (their own copies stay until they fetch with --force). This can’t be undone.", remote, remote),
+                + L("On %@, a tag with this name is a different tag (another commit, or another annotated tag). Replacing it puts yours there for everyone who fetches from %@ (their own copies stay until they fetch with --force). This can’t be undone.", remote, remote),
             ok: L("Replace")
         ) {
             actions.perform(["op": "pushTags", "remote": remote, "names": tags, "force": true])
         }
     }
 
-    /// タグの行の右端の印: どの（読んだ）リモートにもない、または、どれかのリモートで違うコミットを指す。
+    /// タグの行の右端の印: どの（読んだ）リモートにもない、または、どれかのリモートに同じ名前の別のタグがある。
     private func tagMark(_ name: String) -> (String, String, NSColor)? {
         guard let tagRemotes else { return nil }
         let checked = tagRemotes.remotes.filter { $0.checked != nil }.map(\.name)
         guard !checked.isEmpty else { return nil }
         let different = checked.filter { tagRemotes.state(of: name, on: $0) == .different }
         if !different.isEmpty {
-            return ("exclamationmark.icloud", L("Points to a different commit on %@", different.joined(separator: ", ")), .systemOrange)
+            return ("exclamationmark.icloud", L("A different tag with this name is on %@", different.joined(separator: ", ")), .systemOrange)
         }
         if checked.allSatisfy({ tagRemotes.state(of: name, on: $0) == .missing }) {
             return ("icloud.slash", L("Not on any remote (as of the last fetch)"), .secondaryLabelColor)
@@ -1262,7 +1262,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard tagRemotes?.checked(remote) != nil else { return L("%@: not checked yet (Fetch reads it)", remote) }
         return switch tagRemotes?.state(of: name, on: remote) {
         case .same?: L("%@: has it", remote)
-        case .different?: L("%@: has this name on another commit", remote)
+        case .different?: L("%@: has a different tag with this name", remote)
         case .missing?, nil: L("%@: doesn’t have it", remote)
         }
     }
