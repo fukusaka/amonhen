@@ -234,9 +234,9 @@
 "Key" = "キー";
 "Value" = "値";
 "Value in effect" = "効いている値";
-"Source" = "出どころ";
+"Source" = "設定元";
 "Basic: the settings the pages here ask about, set or not. Customized: the keys set in this repository or this worktree. All: every key git reads." = "Basic: ここのページが尋ねる設定（未設定のものも）。Customized: このリポジトリかこの worktree で設定したキー。All: git が読むすべてのキー。";
-"Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold." = "Combined: 効いている値とその出どころ。Levels: 出どころごとの列で、効いている段が太字。";
+"Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold." = "Combined: 効いている値とその設定元。Levels: 設定元ごとの列で、効いている段が太字。";
 "(empty)" = "（空）";
 "Search by key or value" = "キーか値で検索";
 "Add a key to this repository" = "このリポジトリにキーを足す";
@@ -1167,7 +1167,7 @@
 "all repositories" = "すべてのリポジトリ";
 "all repositories on %@" = "%@ のすべてのリポジトリ";
 "Without the override here: %@" = "ここで上書きしなければ: %@";
-"Where the value comes from" = "値の出どころ";
+"Where the value comes from" = "値の設定元";
 "Every open repository is fetched at this interval while its window is open." = "開いているすべてのリポジトリを、ウィンドウが開いている間、この間隔で fetch します。";
 "Fast-forward" = "fast-forward";
 "Ignore in this repository only" = "このリポジトリだけで無視する";

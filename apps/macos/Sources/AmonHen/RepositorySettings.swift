@@ -99,7 +99,7 @@ final class RepositorySettingsModel {
         }
     }
 
-    /// 今効いている値（後に出るものほど優先）と、その出どころ。
+    /// 今効いている値（後に出るものほど優先）と、その設定元。
     func effective(_ key: String) -> ConfigEntry? {
         entries.last { $0.key.lowercased() == key.lowercased() }
     }
@@ -264,7 +264,7 @@ private struct RemotesTab: View {
     }
 }
 
-/// git config の表の 1 行: 1 つのキーと、出どころ（段）ごとの値（docs/ux.md の 4.5）。同じ段に同じキーが
+/// git config の表の 1 行: 1 つのキーと、設定元（段）ごとの値（docs/ux.md の 4.5）。同じ段に同じキーが
 /// 複数あれば（`remote.origin.fetch` など）、改行で並べる。
 nonisolated struct ConfigRow: Identifiable, Hashable, Sendable {
     let key: String
@@ -312,7 +312,7 @@ extension RepositorySettingsModel {
 /// 書ける: 行をダブルクリック（か右クリックの「編集」）で欄になり、Return で書く。空にするとここでは消える。
 /// 「+」で新しい行が出て、キーと値を入れる。⌘C で選んだ行を `key = value` の形でコピーする。
 /// 上の切り替えも Xcode と同じで、語も Xcode のまま（ページ名と同じく訳さない）: 行は Basic（ページが尋ねるキー。
-/// 未設定でも出す）／Customized（このリポジトリで設定したもの）／All、列は Combined（効いている値と出どころ）／Levels。
+/// 未設定でも出す）／Customized（このリポジトリで設定したもの）／All、列は Combined（効いている値と設定元）／Levels。
 /// 行は Xcode が分類ごとにまとめるのと同じく section（`core`・`user`・`remote` など）ごとに見出しの行でまとめる
 /// （すべて開いた形。SwiftUI の Table の開閉は初めがすべて閉じで、開く手段がない）。
 private struct AllSettingsTab: View {
@@ -480,7 +480,7 @@ private struct AllSettingsTab: View {
         }
     }
 
-    /// 段の列の見出し: 4.3 の出どころの言葉を、文の頭だけ大文字に。
+    /// 段の列の見出し: 4.3 の設定元の言葉を、文の頭だけ大文字に。
     private func header(_ scope: String) -> String {
         let label = scopeLabel(scope, host: model.host)
         return label.prefix(1).uppercased() + label.dropFirst()
@@ -591,7 +591,7 @@ private func normalizedBool(_ value: String) -> String? {
 }
 
 extension RepositorySettingsModel {
-    /// `key` の今効いている値の出どころの言い方と、そのファイル。どこにも書かれていなければ「git の既定」。
+    /// `key` の今効いている値の設定元の言い方と、そのファイル。どこにも書かれていなければ「git の既定」。
     func origin(of key: String) -> (label: String, file: String?) {
         guard let e = effective(key) else { return (L("git’s default"), nil) }
         var file = e.origin
@@ -606,7 +606,7 @@ extension RepositorySettingsModel {
     }
 }
 
-/// 出どころ（`git config` の scope）の言い方。行の右と git config の表で同じ言葉を使う。
+/// 設定元（`git config` の scope）の言い方。行の右と git config の表で同じ言葉を使う。
 func scopeLabel(_ scope: String, host: String?) -> String {
     switch scope {
     case "local": L("this repository")
@@ -617,7 +617,7 @@ func scopeLabel(_ scope: String, host: String?) -> String {
     }
 }
 
-/// 行の右に出す、値の出どころ。
+/// 行の右に出す、値の設定元。
 private struct SourceLabel: View {
     let model: RepositorySettingsModel
     let key: String
@@ -632,12 +632,12 @@ private struct SourceLabel: View {
 }
 
 /// 行の共通の形: 左に質問とその下に 1 文の説明、右に効いている値の欄、このリポジトリが上書きしている間だけ ↩︎、
-/// 最後に出どころ。その横の ⓘ で、キーと値とファイル、上書きしなければ効く値が吹き出しに出る。
+/// 最後に設定元。その横の ⓘ で、キーと値とファイル、上書きしなければ効く値が吹き出しに出る。
 private struct SettingRow<Control: View>: View {
     let model: RepositorySettingsModel
     let question: String
     let help: String
-    /// この行が読み書きするキー。出どころは先頭のキーのもの。↩︎ はすべての local を消す。
+    /// この行が読み書きするキー。設定元は先頭のキーのもの。↩︎ はすべての local を消す。
     let keys: [String]
     /// 生の値を人の言葉にする（吹き出しの表示に使う）。
     var describe: (String) -> String = { $0 }
@@ -804,7 +804,7 @@ private struct PullMethodRow: View {
     }
 
     private var current: Method { method(rebase: model.effective("pull.rebase")?.value, ff: model.effective("pull.ff")?.value) }
-    /// 出どころに出すのは、取り込み方を決めているほうのキー。
+    /// 設定元に出すのは、取り込み方を決めているほうのキー。
     private var decidingKey: String { model.effective("pull.ff")?.value.lowercased() == "only" ? "pull.ff" : "pull.rebase" }
 
     private func label(_ m: Method) -> String {
