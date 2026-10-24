@@ -247,40 +247,27 @@ private struct RemotesTab: View {
     }
 }
 
-/// このリポジトリだけで無視するファイル（`.git/info/exclude`）のエディタ。`.gitignore` はリポジトリのファイルなので
-/// ここでは扱わない（Working Copy で開く）。
-private struct ExcludeEditor: View {
-    @Bindable var model: RepositorySettingsModel
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(L("Ignore in this repository only")).font(.headline)
-            Text(L("Patterns in .git/info/exclude, one per line (`*.log`, `build/` and so on; text after # is a comment). Not shared with anyone. Patterns everyone should share go in .gitignore, which is a file of the repository."))
-                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            TextEditor(text: $model.exclude).font(.system(.body, design: .monospaced)).frame(minHeight: 120, maxHeight: 240)
-            HStack {
-                Spacer()
-                Button("Revert") { model.load() }.disabled(!model.ignoreChanged)
-                Button(L("Save")) { model.saveIgnore() }.disabled(!model.ignoreChanged).keyboardShortcut("s")
-            }
-        }
-        .padding()
-    }
-}
-
 private struct AllSettingsTab: View {
     let model: RepositorySettingsModel
     @State private var filter = ""
     @State private var key = ""
     @State private var value = ""
+    /// 見出しで並べ替える。初めは git の順（後のものほど優先）。
+    @State private var sortOrder: [KeyPathComparator<ConfigEntry>] = []
+
+    private var rows: [ConfigEntry] {
+        let shown = model.entries.filter { filter.isEmpty || $0.key.localizedCaseInsensitiveContains(filter) }
+        return sortOrder.isEmpty ? shown : shown.sorted(using: sortOrder)
+    }
 
     var body: some View {
         VStack(alignment: .leading) {
             TextField(L("Filter by key"), text: $filter)
-            Table(model.entries.filter { filter.isEmpty || $0.key.localizedCaseInsensitiveContains(filter) }) {
+            Table(rows, sortOrder: $sortOrder) {
                 TableColumn(L("Key"), value: \.key).width(min: 140, ideal: 200)
                 TableColumn(L("Value"), value: \.value)
                 TableColumn(L("Scope"), value: \.scope).width(min: 50, ideal: 60)
-                TableColumn(L("Location")) { e in Text(describe(e)).foregroundStyle(.secondary) }
+                TableColumn(L("Location"), value: \.origin) { e in Text(describe(e)).foregroundStyle(.secondary) }
             }
             HStack {
                 TextField(L("Key (e.g. core.autocrlf)"), text: $key).frame(width: 200)
@@ -362,13 +349,9 @@ private struct SettingRow<Control: View>: View {
     private var overriding: Bool { keys.contains { model.local($0) != nil } }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(question)
-                    Text(help).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.leading, 8)
-                }
-                .frame(maxWidth: 520, alignment: .leading)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(question)
                 Spacer()
                 control().disabled(disabledReason != nil)
                 if overriding {
@@ -384,10 +367,12 @@ private struct SettingRow<Control: View>: View {
                     .help(L("Where this is set"))
                     .popover(isPresented: $showingDetails, arrowEdge: .trailing) { details }
             }
+            Text(help).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let disabledReason {
-                Text("⚠ " + disabledReason).font(.caption).foregroundStyle(.orange)
+                Text("⚠ " + disabledReason).foregroundStyle(.orange)
             }
         }
+        .padding(.vertical, 6)
     }
 
     private var details: some View {
@@ -544,7 +529,7 @@ private struct PullMethodRow: View {
     var body: some View {
         SettingRow(
             model: model, question: L("When pulling, how are the changes brought in?"),
-            help: L("Merge records a merge commit when both sides have new commits. Rebase replays your commits on top of the fetched ones, keeping History in one line. Only fast-forward refuses when the branches have diverged. Amon Hen’s Pull follows this when Settings > Git’s Default Pull is “Follow git’s settings”."),
+            help: L("Merge makes a merge commit, rebase replays your commits on top, fast-forward refuses when the branches have diverged."),
             keys: [decidingKey, decidingKey == "pull.ff" ? "pull.rebase" : "pull.ff"]
         ) {
             Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
@@ -584,14 +569,9 @@ private struct DefaultBranchRow: View {
 
     var body: some View {
         let chosen = model.local(key)
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(L("Default branch"))
-                    Text(L("The branch the others are measured against: Branches marks a branch merged when it is in this one, and finds the trunk from it. Detected from origin/HEAD, then main or master; choose one here when the repository has none of those."))
-                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.leading, 8)
-                }
-                .frame(maxWidth: 520, alignment: .leading)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text(L("Default branch"))
                 Spacer()
                 Picker("", selection: Binding(get: { chosen ?? "" }, set: { model.set(key, $0.isEmpty ? nil : $0) })) {
                     Text(model.detectedBase.map { L("Detected (%@)", $0) } ?? L("Detected (none)")).tag("")
@@ -609,10 +589,13 @@ private struct DefaultBranchRow: View {
                     .font(.caption).foregroundStyle(.secondary).frame(width: 118, alignment: .trailing)
                 Color.clear.frame(width: 16, height: 1)
             }
+            Text(L("Branches measures the others against it. Detected from origin/HEAD, main or master; choose one when there is none."))
+                .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let chosen, !model.localBranches.contains(chosen) {
                 Text("⚠ " + L("There is no branch named %@, so the detected branch is used.", chosen)).foregroundStyle(.orange)
             }
         }
+        .padding(.vertical, 6)
     }
 }
 
@@ -634,17 +617,17 @@ private struct AuthorSigningPage: View {
         let format = model.effective("gpg.format")?.value.lowercased() ?? "openpgp"
         Form {
             Section {
-                TextRow(model: model, question: L("Name"), help: L("Recorded as the author and committer of commits made here."), key: "user.name")
-                TextRow(model: model, question: L("Email"), help: L("Recorded with the name. Set these here to keep work and personal commits apart."), key: "user.email")
+                TextRow(model: model, question: L("Name"), help: L("Recorded as the author of commits made here."), key: "user.name")
+                TextRow(model: model, question: L("Email"), help: L("Set here to keep work and personal commits apart."), key: "user.email")
             } header: {
                 Text(L("Author"))
             }
             Section {
-                SwitchRow(model: model, question: L("Sign commits"), help: L("Every commit made here is signed with the key below."), key: "commit.gpgsign", defaultOn: false)
-                ChoiceRow(model: model, question: L("Signature format"), help: L("OpenPGP uses gpg. SSH signs with an SSH key, and X.509 with gpgsm."), key: "gpg.format",
+                SwitchRow(model: model, question: L("Sign commits"), help: L("Signs every commit made here with the key below."), key: "commit.gpgsign", defaultOn: false)
+                ChoiceRow(model: model, question: L("Signature format"), help: L("OpenPGP signs with gpg, SSH with an SSH key, X.509 with gpgsm."), key: "gpg.format",
                           options: [("openpgp", "OpenPGP"), ("ssh", "SSH"), ("x509", "X.509")], defaultValue: "openpgp")
                 TextRow(model: model, question: L("Key"),
-                        help: format == "ssh" ? L("The path of the SSH public key, or the key itself (“ssh-ed25519 AAAA…”).") : L("The fingerprint or ID of the key; empty uses the key for your email."),
+                        help: format == "ssh" ? L("The SSH public key’s path, or the key itself.") : L("The key’s fingerprint or ID; empty picks the key for your email."),
                         key: "user.signingkey", placeholder: format == "ssh" ? "~/.ssh/id_ed25519.pub" : L("Key for your email"))
             } header: {
                 Text(L("Signing"))
@@ -661,7 +644,7 @@ private struct CommitsPage: View {
     var body: some View {
         Form {
             Section {
-                TextRow(model: model, question: L("Message template"), help: L("A file whose contents start every new commit message (the commit box in Working Copy starts from it too). Empty: messages start empty."), key: "commit.template", placeholder: L("None"))
+                TextRow(model: model, question: L("Message template"), help: L("A file every new commit message starts from. Empty: messages start empty."), key: "commit.template", placeholder: L("None"))
                 if let preview, !preview.isEmpty {
                     Text(preview).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(8).textSelection(.enabled)
                 }
@@ -691,22 +674,17 @@ private struct OperationsPage: View {
             Section("Pull") {
                 PullMethodRow(model: model)
             }
-            Section {
-                SwitchRow(model: model, question: L("Remove remote-tracking branches deleted on the remote"), help: L("When nothing is set, Amon Hen’s Fetch removes them and git fetch in a terminal keeps them. Off: neither removes them. On: both do."), key: "fetch.prune", defaultOn: false)
-            } header: {
-                Text("Fetch")
-            } footer: {
-                Text(L("Push has no settings here: Amon Hen’s Push sends the branch to the target chosen in its sheet, so push.default and push.autoSetupRemote only affect git push in a terminal (see All Settings)."))
-                    .foregroundStyle(.secondary)
+            Section("Fetch") {
+                SwitchRow(model: model, question: L("Remove remote-tracking branches deleted on the remote"), help: L("Unset: Amon Hen removes them, a terminal keeps them. Off: neither does."), key: "fetch.prune", defaultOn: false)
             }
             Section("Rebase") {
-                SwitchRow(model: model, question: L("Stash changes before rebasing"), help: L("Uncommitted changes are stashed before a rebase or a pull with rebase and restored after it. History edits (reword, squash and so on) always stash, whatever this says."), key: "rebase.autoStash", defaultOn: false)
+                SwitchRow(model: model, question: L("Stash changes before rebasing"), help: L("Stashes uncommitted changes before a rebase and restores them after. History edits always do."), key: "rebase.autoStash", defaultOn: false)
                 ChoiceRow(model: model, question: L("Move stacked branches along when rebasing or editing History"),
-                          help: L("Branches whose tips are among the rewritten commits (stacked under the current one) move to the rewritten commits, or stay on the old ones. Branches checked out here or in another worktree always stay. Undo puts back whatever moved."),
+                          help: L("Branches whose tips are among the rewritten commits move with them, or stay on the old ones. Undo puts them back."),
                           key: "rebase.updateRefs", options: [("false", L("Leave them")), ("true", L("Move them along"))], defaultValue: "false", isBool: true, disabledReason: tooOld)
             }
             Section("Merge") {
-                ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("Amon Hen’s merge editor works with all three. With the base (diff3, zdiff3) it resolves conflicts where only one side changed, or the sides changed different words, by itself; zdiff3 also leaves out lines both sides changed the same way. Amon Hen recommends zdiff3."), key: "merge.conflictStyle",
+                ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("With the base (diff3, zdiff3) the merge editor resolves one-sided conflicts by itself. Amon Hen recommends zdiff3."), key: "merge.conflictStyle",
                           options: [("merge", L("Both sides")), ("diff3", L("Both sides and the common base")), ("zdiff3", L("Both sides and the base, shortened"))], defaultValue: "merge")
             }
         }
@@ -717,20 +695,33 @@ private struct OperationsPage: View {
 private struct WorkingCopyPage: View {
     @Bindable var model: RepositorySettingsModel
     var body: some View {
-        VStack(spacing: 0) {
-            Form {
-                Section {
-                    ChoiceRow(model: model, question: L("Line endings"), help: L("What git does with CRLF and LF when checking out and committing text files. Amon Hen’s diffs follow it."), key: "core.autocrlf",
-                              options: [("false", L("Keep as committed")), ("true", L("CRLF in the working tree, LF in commits")), ("input", L("LF in commits, no change on checkout"))],
-                              defaultValue: "false", isBool: false)
-                    SwitchRow(model: model, question: L("Track changes to the executable bit"), help: L("Off ignores file mode changes, as on file systems that don’t keep them."), key: "core.fileMode", defaultOn: true)
-                }
+        Form {
+            Section {
+                ChoiceRow(model: model, question: L("Line endings"), help: L("What git does with CRLF and LF on checkout and commit. Diffs follow it."), key: "core.autocrlf",
+                          options: [("false", L("Keep as committed")), ("true", L("CRLF in the working tree, LF in commits")), ("input", L("LF in commits, no change on checkout"))],
+                          defaultValue: "false", isBool: false)
+                SwitchRow(model: model, question: L("Track changes to the executable bit"), help: L("Off ignores file mode changes, for file systems that don’t keep them."), key: "core.fileMode", defaultOn: true)
             }
-            .formStyle(.grouped)
-            .frame(height: 220)
-            // Form の中身と同じ幅にそろえる。
-            ExcludeEditor(model: model).frame(maxWidth: 740)
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(L("Patterns in .git/info/exclude, one per line. Not shared; shared patterns go in .gitignore."))
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    TextEditor(text: $model.exclude)
+                        .font(.system(.body, design: .monospaced))
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 320)
+                    HStack {
+                        Spacer()
+                        Button("Revert") { model.load() }.disabled(!model.ignoreChanged)
+                        Button(L("Save")) { model.saveIgnore() }.disabled(!model.ignoreChanged).keyboardShortcut("s")
+                    }
+                }
+                .padding(.vertical, 6)
+            } header: {
+                Text(L("Ignore in this repository only"))
+            }
         }
+        .formStyle(.grouped)
     }
 }
 
