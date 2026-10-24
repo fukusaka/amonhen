@@ -235,12 +235,8 @@
 "Value" = "値";
 "Value in effect" = "効いている値";
 "Source" = "出どころ";
-"Basic" = "基本";
-"This Repository" = "このリポジトリ";
-"Combined" = "まとめて";
-"Levels" = "段ごと";
-"Basic: the settings the pages here ask about, set or not. This Repository: the keys set in this repository or this worktree. All: every key git reads." = "基本: ここのページが尋ねる設定（未設定のものも）。このリポジトリ: このリポジトリかこの worktree で設定したキー。すべて: git が読むすべてのキー。";
-"Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold." = "まとめて: 効いている値とその出どころ。段ごと: 出どころごとの列で、効いている段が太字。";
+"Basic: the settings the pages here ask about, set or not. Customized: the keys set in this repository or this worktree. All: every key git reads." = "Basic: ここのページが尋ねる設定（未設定のものも）。Customized: このリポジトリかこの worktree で設定したキー。All: git が読むすべてのキー。";
+"Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold." = "Combined: 効いている値とその出どころ。Levels: 出どころごとの列で、効いている段が太字。";
 "(empty)" = "（空）";
 "Search by key or value" = "キーか値で検索";
 "Add a key to this repository" = "このリポジトリにキーを足す";

@@ -307,8 +307,8 @@ extension RepositorySettingsModel {
 /// すべてのリポジトリ・このリポジトリ・この worktree）の値。効いている段の値は太字。「このリポジトリ」の列だけ
 /// 書ける: 行をダブルクリック（か右クリックの「編集」）で欄になり、Return で書く。空にするとここでは消える。
 /// 「+」で新しい行が出て、キーと値を入れる。⌘C で選んだ行を `key = value` の形でコピーする。
-/// 上の切り替えも Xcode と同じ: 行は「基本（ページが尋ねるキー。未設定でも出す）／このリポジトリ／すべて」、
-/// 列は「まとめて（効いている値と出どころ）／段ごと」。
+/// 上の切り替えも Xcode と同じで、語も Xcode のまま（ページ名と同じく訳さない）: 行は Basic（ページが尋ねるキー。
+/// 未設定でも出す）／Customized（このリポジトリで設定したもの）／All、列は Combined（効いている値と出どころ）／Levels。
 private struct AllSettingsTab: View {
     let model: RepositorySettingsModel
     @State private var filter = ""
@@ -327,7 +327,7 @@ private struct AllSettingsTab: View {
     @FocusState private var focus: Field?
 
     private enum Field: Hashable { case value, newKey, newValue }
-    private enum RowsMode: String { case basic, thisRepository, all }
+    private enum RowsMode: String { case basic, customized, all }
     private enum ColumnsMode: String { case combined, levels }
     /// 足している途中の行の id（キーは空）。
     private static let newRowID = ""
@@ -343,7 +343,7 @@ private struct AllSettingsTab: View {
         var all = model.configRows
         switch rowsMode {
         case .all: break
-        case .thisRepository: all = all.filter { $0.values["local"] != nil || $0.values["worktree"] != nil }
+        case .customized: all = all.filter { $0.values["local"] != nil || $0.values["worktree"] != nil }
         case .basic:
             let byKey = Dictionary(all.map { ($0.key.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
             all = Self.basicKeys.map { byKey[$0] ?? ConfigRow(key: $0, effective: "", effectiveScope: "", values: [:], files: [:]) }
@@ -362,15 +362,15 @@ private struct AllSettingsTab: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Picker("", selection: $rowsMode) {
-                    Text(L("Basic")).tag(RowsMode.basic)
-                    Text(L("This Repository")).tag(RowsMode.thisRepository)
-                    Text(L("All")).tag(RowsMode.all)
+                    Text("Basic").tag(RowsMode.basic)
+                    Text("Customized").tag(RowsMode.customized)
+                    Text("All").tag(RowsMode.all)
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
-                .help(L("Basic: the settings the pages here ask about, set or not. This Repository: the keys set in this repository or this worktree. All: every key git reads."))
+                .help(L("Basic: the settings the pages here ask about, set or not. Customized: the keys set in this repository or this worktree. All: every key git reads."))
                 Picker("", selection: $columnsMode) {
-                    Text(L("Combined")).tag(ColumnsMode.combined)
-                    Text(L("Levels")).tag(ColumnsMode.levels)
+                    Text("Combined").tag(ColumnsMode.combined)
+                    Text("Levels").tag(ColumnsMode.levels)
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
                 .help(L("Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold."))
