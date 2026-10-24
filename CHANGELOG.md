@@ -35,9 +35,10 @@ becomes the GitHub Release notes.
 - Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
   from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
   where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
-  file; pages for the author and signing, commits, operations (pull, fetch, rebase, merge), Working Copy (line endings,
-  the executable bit, ignoring in this repository only) and remotes, with About this repository and All settings under
-  Information. Settings that only a terminal honors stay in All settings.
+  file. Its pages are Author and Signing, Commits, Operations (pull, fetch, rebase, merge), Branches (the default
+  branch, which Branches measures the others against: detected, or chosen for repositories without one), Working Copy
+  (line endings, the executable bit, ignoring in this repository only), Remotes, Hooks · LFS and git config, with the
+  git that runs the repository shown under the list. Settings that only a terminal honors stay in git config.
 - Fetch automatically is one interval for all open repositories, in Settings > Git, instead of a setting per
   repository.
 - `.gitignore` is no longer edited in Repository Settings (it is a file of the repository); `.git/info/exclude` is,
