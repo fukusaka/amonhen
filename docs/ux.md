@@ -153,23 +153,25 @@ The first version (a sheet with tabs, U11) showed git's configuration as git sto
 A choice, with nothing set in this repository (the user-wide value, or git's default, is in effect):
 
 ```
-When pulling, how are the changes brought in?      ( Merge              ⌄ )   git's default
+When pulling, how are the changes brought in?      ( Merge              ⌄ )   git's default  ⓘ
+  Merge records a merge commit when both sides have new commits. Rebase replays your
+  commits on top of the fetched ones. Only fast-forward refuses when they have diverged.
 ```
 
 The same row after choosing Rebase here:
 
 ```
-When pulling, how are the changes brought in?      ( Rebase             ⌄ ) ↩︎  this repository
+When pulling, how are the changes brought in?      ( Rebase             ⌄ ) ↩︎  this repository  ⓘ
+  Merge records a merge commit when both sides have new commits. …
 ```
 
-Expanded (click the row's title or ⌄ at the left):
+The ⓘ opens a popover with where the value is set (no row expands; a chevron that only reacts to a precise click was
+tried first and was hard to use):
 
 ```
-⌄ When pulling, how are the changes brought in?    ( Rebase             ⌄ ) ↩︎  this repository
-    pull.rebase = true          .git/config
-    Your settings: merge        ~/.gitconfig
-    Help: Rebase replays your commits on top of the fetched ones, keeping History in one line.
-          Merge records a merge commit. Only fast-forward refuses when the branches have diverged.
+  pull.rebase = true
+  this repository (.git/config)
+  Above: Merge
 ```
 
 A yes/no setting is a switch with the same badge:
@@ -192,7 +194,7 @@ Move stacked branches along when rebasing              ( Leave them   ⌄ )   gi
    ⚠ Needs git 2.38 or later. This repository's git is 2.34 (host build-1).
 ```
 
-The parts, left to right: the question; the control showing the value in effect; ↩︎ while this repository overrides; the badge. The help sentence sits under the question in secondary text when the row is expanded, and the ⓘ at the right of the question opens the longer help.
+The parts, left to right: the question with its one sentence of help under it; the control showing the value in effect; ↩︎ while this repository overrides; the badge; ⓘ for the key, file and the value above. "More" at the bottom of a page opens by clicking anywhere on its label.
 
 ### 4.3 The badge: where the value comes from
 
@@ -222,11 +224,11 @@ The page has a list on the left and the chosen page on the right, like System Se
 | Page | Rows (question → answers; key) | Amon Hen follows it |
 | --- | --- | --- |
 | In Amon Hen | Display name; Color label; Fetch automatically (never / every 5, 15, 30, 60 minutes); Default branch (detected / choose) — kept in the bookmark, not in git | Yes |
-| Author and signing | Name, Email (`user.name`, `user.email`); Sign commits (switch, `commit.gpgsign`); Signature format (OpenPGP / SSH / X.509, `gpg.format`); Key (`user.signingkey`, with a hint that depends on the format). More: gpg program (`gpg.program`), allowed signers for SSH (`gpg.ssh.allowedSignersFile`) | Yes (commits and verification) |
-| Commits | Message template (`commit.template`, path with a preview). More: message cleanup (`commit.cleanup`) | Yes (the commit box starts from the template) |
-| Pull, push and fetch | When pulling, how are the changes brought in? (Merge / Rebase / Only fast-forward; `pull.rebase`, `pull.ff`); Which branch does push go to? (`push.default`: the branch with the same name / its upstream / nothing without an upstream; the rest under More); Set the upstream on the first push (`push.autoSetupRemote`); Remove remote-tracking branches deleted on the remote when fetching (`fetch.prune`) | Yes: the Pull sheet preselects this method when Settings… > Git's pull default is "Follow git's settings"; Fetch prunes when this is on or unset |
-| Rebase and merge | Stash changes before rebasing (`rebase.autoStash`); Move stacked branches along when rebasing or editing History (`rebase.updateRefs`; disabled below git 2.38 with the version found); How conflicts are written in files (merge / diff3 / zdiff3; `merge.conflictStyle`) | Yes |
-| Working Copy | Line endings (`core.autocrlf`, `core.eol`: as committed / convert to the platform's / convert to LF); Track file mode changes (`core.fileMode`); Untracked files in status (all / top-level folders only / none; `status.showUntrackedFiles`) | Yes (diffs, status) |
+| Author and signing | Name, Email (`user.name`, `user.email`); Sign commits (switch, `commit.gpgsign`); Signature format (OpenPGP / SSH / X.509, `gpg.format`); Key (`user.signingkey`, with a hint that depends on the format). More, by format: gpg program (`gpg.program`) for OpenPGP; allowed signers and ssh-keygen program (`gpg.ssh.allowedSignersFile`, `gpg.ssh.program`) for SSH; gpgsm program (`gpg.x509.program`) for X.509 | Yes (commits and verification) |
+| Commits | Message template (`commit.template`, path with a preview). More: message cleanup (`commit.cleanup`, with git's own definitions; Amon Hen passes the message as written, so "default" acts as "whitespace") | Yes (the commit box starts from the template; cleanup applies to Amon Hen's commits too) |
+| Pull, push and fetch | When pulling, how are the changes brought in? (Merge / Rebase / Only fast-forward; `pull.rebase`, and `pull.ff=only` with `pull.rebase=false` for the last, so git's version cannot change which wins); Remove remote-tracking branches deleted on the remote when fetching (`fetch.prune`; the help says that unset means Amon Hen removes them and a terminal keeps them). No Push rows: Amon Hen's Push sends the branch to the target chosen in its sheet with an explicit refspec and `--set-upstream`, so `push.default` and `push.autoSetupRemote` affect only `git push` in a terminal; a footer says so and points to All Settings | Yes: the Pull sheet preselects this method when Settings… > Git's pull default is "Follow git's settings"; Fetch prunes when this is on or unset |
+| Rebase and merge | Stash changes before rebasing (`rebase.autoStash`; the help says History edits always stash); Move stacked branches along when rebasing or editing History (`rebase.updateRefs`; disabled below git 2.38 with the version found); How conflicts are written in files (merge / diff3 / zdiff3; `merge.conflictStyle`; the help says that with the base the merge editor resolves one-sided conflicts by itself) | Yes |
+| Working Copy | Line endings (`core.autocrlf`: keep as committed / CRLF in the working tree, LF in commits / LF in commits; `core.eol` under More); Track changes to the executable bit (`core.fileMode`). Not `status.showUntrackedFiles`: Amon Hen's status always lists every untracked file, so it would affect only a terminal | Yes (diffs, checkout) |
 | Ignored files | Editors for `.gitignore` and `.git/info/exclude`, full width, with Show Matching Files, Revert and Save | — |
 | Remotes | Table: add, rename, edit URL, remove, prune; whether a remote is on GitHub or similar | — |
 

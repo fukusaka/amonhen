@@ -145,23 +145,25 @@ macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewCont
 選ぶ設定で、このリポジトリには何も書かれていない（全体の値か git の既定が効いている）とき:
 
 ```
-pull のとき、どう取り込むか                    ( マージする            ⌄ )   git の既定
+pull のとき、どう取り込むか                    ( マージする            ⌄ )   git の既定  ⓘ
+  マージは、両側に新しいコミットがあればマージコミットを作る。rebase は、自分のコミットを
+  取ってきたコミットの上に載せ直す。fast-forward だけは、分かれていれば取り込まない。
 ```
 
 同じ行で、ここで「rebase する」を選んだ後:
 
 ```
-pull のとき、どう取り込むか                    ( rebase する           ⌄ ) ↩︎  このリポジトリ
+pull のとき、どう取り込むか                    ( rebase する           ⌄ ) ↩︎  このリポジトリ  ⓘ
+  マージは、両側に新しいコミットがあればマージコミットを作る。…
 ```
 
-開いたとき（行の題名か、左の ⌄ を押す）:
+ⓘ を押すと、どこに書かれているかが吹き出しに出る（行は開かない。左の小さな矢印を正確に押さないと開かない形を先に
+試し、使いにくかった）:
 
 ```
-⌄ pull のとき、どう取り込むか                  ( rebase する           ⌄ ) ↩︎  このリポジトリ
-    pull.rebase = true          .git/config
-    あなたの設定: マージする      ~/.gitconfig
-    説明: rebase は、自分のコミットを取ってきたコミットの上に載せ直し、History を一本に保つ。
-          マージはマージコミットを作る。fast-forward だけは、分かれていれば取り込まない。
+  pull.rebase = true
+  このリポジトリ（.git/config）
+  上の値: マージする
 ```
 
 はい／いいえの設定は、同じ札つきのスイッチ:
@@ -184,7 +186,7 @@ rebase のとき、積み重ねたブランチも一緒に動かす      ( 動�
    ⚠ git 2.38 以降が必要。このリポジトリの git は 2.34（build-1）。
 ```
 
-左から順に: 質問、効いている値を出す欄、このリポジトリが上書きしている間の ↩︎、札。説明の 1 文は、行を開いたときに質問の下に薄い字で出す。質問の右の ⓘ が、長い説明を開く。
+左から順に: 質問とその下の 1 文の説明、効いている値を出す欄、このリポジトリが上書きしている間の ↩︎、札、キー・ファイル・上の値を出す ⓘ。ページの下の「詳細」は、見出しのどこを押しても開く。
 
 ### 4.3 札: 値の出どころ
 
@@ -214,11 +216,11 @@ SSH 先のリポジトリでは、「あなたの設定」は SSH 先のユー�
 | ページ | 行（質問 → 答え。キー） | Amon Hen が従うか |
 | --- | --- | --- |
 | この Amon Hen で | 表示名、色ラベル、自動で fetch（しない／5・15・30・60 分ごと）、既定のブランチ（自動で判定／選ぶ）。ブックマークに置き、git には書かない | 従う |
-| 作者と署名 | 名前、メール（`user.name`・`user.email`）、コミットに署名する（スイッチ、`commit.gpgsign`）、署名の形式（OpenPGP／SSH／X.509、`gpg.format`）、鍵（`user.signingkey`。形式に合わせた案内つき）。詳細: gpg のプログラム（`gpg.program`）、SSH の allowed signers（`gpg.ssh.allowedSignersFile`） | 従う（コミットと検証） |
-| コミット | メッセージのテンプレート（`commit.template`。パスと内容の下見）。詳細: メッセージの整形（`commit.cleanup`） | 従う（コミット欄の初期値） |
-| Pull・Push・Fetch | pull のとき、どう取り込むか（マージする／rebase する／fast-forward できるときだけ。`pull.rebase`・`pull.ff`）、push はどのブランチへ（`push.default`: 同じ名前のブランチ／上流／上流がなければしない。残りは詳細）、最初の push で上流を決める（`push.autoSetupRemote`）、fetch のとき、リモートで消えたブランチを片づける（`fetch.prune`） | 従う: Settings… > Git の pull の既定が「git の設定に従う」なら、Pull のシートはこの方式を最初に選ぶ。Fetch は、これがオンか未設定なら prune する |
-| Rebase・Merge | rebase の前に変更を退避する（`rebase.autoStash`）、rebase と History の編集で、積み重ねたブランチも一緒に動かす（`rebase.updateRefs`。git 2.38 未満では見つかった版を添えて選べなくする）、コンフリクトをファイルにどう書くか（merge／diff3／zdiff3。`merge.conflictStyle`） | 従う |
-| Working Copy | 改行（`core.autocrlf`・`core.eol`: コミットのまま／この OS の改行に変換／LF に変換）、ファイルの権限の変化を追う（`core.fileMode`）、status に出す untracked（すべて／上のフォルダだけ／出さない。`status.showUntrackedFiles`） | 従う（差分、status） |
+| 作者と署名 | 名前、メール（`user.name`・`user.email`）、コミットに署名する（スイッチ、`commit.gpgsign`）、署名の形式（OpenPGP／SSH／X.509、`gpg.format`）、鍵（`user.signingkey`。形式に合わせた案内つき）。詳細は形式で出し分ける: OpenPGP なら gpg のプログラム（`gpg.program`）、SSH なら信頼する署名者と ssh-keygen のプログラム（`gpg.ssh.allowedSignersFile`・`gpg.ssh.program`）、X.509 なら gpgsm のプログラム（`gpg.x509.program`） | 従う（コミットと検証） |
+| コミット | メッセージのテンプレート（`commit.template`。パスと内容の下見）。詳細: メッセージの整形（`commit.cleanup`。言い方は git の定義どおり。Amon Hen はメッセージを書いたまま渡すので、「既定」は whitespace と同じに働く） | 従う（コミット欄の初期値。整形は Amon Hen のコミットにも効く） |
+| Pull・Push・Fetch | pull のとき、どう取り込むか（マージする／rebase する／fast-forward できるときだけ。`pull.rebase`。最後のものは `pull.ff=only` と `pull.rebase=false` を両方書き、git の版でどちらが勝つかが変わらないようにする）、fetch のとき、リモートで消えたブランチを片づける（`fetch.prune`。説明に、未設定なら Amon Hen は片づけ、端末は片づけないと書く）。Push の行は置かない: Amon Hen の Push は、シートで決めた先へ refspec と `--set-upstream` を明示して送るので、`push.default` と `push.autoSetupRemote` は端末の `git push` にしか効かない。その旨を脚注に書き、「すべての設定」を案内する | 従う: Settings… > Git の pull の既定が「git の設定に従う」なら、Pull のシートはこの方式を最初に選ぶ。Fetch は、これがオンか未設定なら prune する |
+| Rebase・Merge | rebase の前に変更を退避する（`rebase.autoStash`。説明に、History の編集はいつも退避すると書く）、rebase と History の編集で、積み重ねたブランチも一緒に動かす（`rebase.updateRefs`。git 2.38 未満では見つかった版を添えて選べなくする）、コンフリクトをファイルにどう書くか（merge／diff3／zdiff3。`merge.conflictStyle`。説明に、元があればマージエディタが片側だけの変更を自分で解けると書く） | 従う |
+| Working Copy | 改行（`core.autocrlf`: コミットのまま／作業ツリーは CRLF でコミットは LF／コミットは LF。`core.eol` は詳細に）、実行の権限の変化を追う（`core.fileMode`）。`status.showUntrackedFiles` は置かない: Amon Hen の status は untracked のファイルをいつもすべて出すので、端末にしか効かない | 従う（差分、チェックアウト） |
 | 無視するファイル | `.gitignore` と `.git/info/exclude` のエディタ。幅いっぱいで、合うファイルを見る・Revert・保存つき | — |
 | リモート | 表: 追加・改名・URL の編集・削除・prune。GitHub などに紐づくか | — |
 
