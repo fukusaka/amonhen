@@ -123,16 +123,16 @@ macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewCont
 | Performance | commit-graph の自動書き出し、fsmonitor、永続キャッシュの場所と大きさ・消去、裏のタブの扱い |
 | Advanced | SSH 先の署名の検証、daemon の送り込み先、ログの詳しさ、計測の記録 |
 
-## 4. リポジトリの設定（Repository Settings…、⌘;）
+## 4. リポジトリの設定（サイドバーの Workspace の Settings、⌘;）
 
-リポジトリごとのシート。git の設定は「実際に効いている値」と「どこで決まっているか」（`git config --show-origin`：system / global / local / worktree）を並べ、local で上書き・上書きをやめる、を選べるようにする。
+リポジトリごとの画面で、サイドバーの Workspace の最後の行（Repository > Repository Settings、⌘; でも開く）。git の設定は「実際に効いている値」と「どこで決まっているか」（`git config --show-origin`：system / global / local / worktree）を並べ、local で上書き・上書きをやめる、を選べるようにする。
 
 | タブ | 項目 |
 | --- | --- |
 | General | 表示名・色ラベル、既定のブランチ、自動 fetch の有無 |
 | Identity | `user.name`・`user.email`・`user.signingkey`・`commit.gpgsign` の上書き（仕事用と個人用を分けるため） |
 | Remotes | 追加・名前の変更・URL の編集・削除・prune。GitHub などに紐づくかを表示 |
-| Branches | 上流の設定、`pull.rebase`・`rebase.autoStash`・`push.autoSetupRemote` |
+| Branches | 上流の設定、`pull.rebase`・`rebase.autoStash`・`push.autoSetupRemote`、rebase と History の編集で積み重ねたブランチも一緒に動かすか（`rebase.updateRefs`。このリポジトリと、すべてのリポジトリ＝その git を動かすユーザーの `--global`。git が 2.38 より古ければ、要る版を添えて選べなくする） |
 | Ignore | `.gitignore` と `.git/info/exclude` の編集（パターンに合うファイルの例を横に） |
 | Advanced | `core.autocrlf`・`core.fileMode`・LFS・hooks の一覧（有効 / 無効）、submodule の更新方針、すべての local 設定の表（キーと値を直接編集） |
 
@@ -449,7 +449,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
 | View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Stashes ⌘4、Reflog ⌘5、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
-| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings… ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
+| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Create Patch… |
 | Window | 標準（最小化・タブ・すべてのウィンドウを結合）、Repositories ⌘⇧R、Activity ⌥⌘A |
 | Help | ショートカットの一覧、ログの場所を開く |
@@ -557,7 +557,7 @@ git の考え方と、アプリが守ること:
 - [x] U8. マージエディタの埋め込み・3 列の並び・帯、Magic Merge（コアの単語単位のマージ）。Working Copy の右に埋め込み（⧉ で別ウィンドウへ）、Current・Result・Incoming の 3 列（Base は切り替え）、コンフリクトをつなぐ帯と ≫・≪、コンフリクトの位置で揃えるスクロール、Magic Merge の規則 1〜5（import の並びの判定を含む）、ウィンドウの帯（途中の操作・コンフリクトの数・Continue / Skip / Abort）、サイドバーの Conflicts（数のバッジ、押すと最初のファイルを開く）、開いたときに間違えようのない規則だけを自動でかける（設定で切れる）、Magic Merge をコンフリクト 1 つずつ ⌘Z で戻せる、まで済み
 - [x] U9. ウィンドウのタブと、開いていたタブの復元。開くリポジトリは前のウィンドウのタブに入れ、⌘N だけ新しいウィンドウ。タブバーの「+」と ⌘T、Window メニューのタブの操作、ウィンドウごとのタブの並びの記録と復元、裏のタブでは作業ツリーの読み直しを前に出るまで待つ、タブの名前の ●・↑↓、裏になったタブの History は見えている所のチャンクだけを残す（linux を 6,000 行ほど読んだ後に裏にすると 397 → 356 MB）、まで済み
 - [x] U10. ブックマーク（グループ、フォルダのスキャン、状態の表示、Quick Open）。Favorites・Recent・Bookmarks・手で作ったグループ・スキャンするフォルダの見出し、右クリック（お気に入り・名前・グループ・Finder・ターミナル）、スキャン（深さ・除外、一覧を開くたびに探し直す）、行の状態、Quick Open（⌘⇧O・⌘T・⌘N、あいまい検索）、スキャンするフォルダの FSEvents での見張り（リポジトリが増えた・消えたら探し直す。見つけたリポジトリの中の変化は見ない）、ドラッグでの並べ替え（ブックマーク・グループ・お気に入り）、色ラベル、選んだもの・見出しの中のすべての一括 Fetch（4 つずつ、失敗は行に赤で）、開いたリポジトリの自動の登録（スキャンするフォルダの下は除く。Settings で切れる）も済み
-- [x] U11. リポジトリの設定（git の設定と出どころ、Remotes、Ignore）。Repository > Repository Settings…（⌘;）のシートに Identity・Branches・Remotes・Ignore・All Settings。各項目に今効いている値とどこで決まっているか、このリポジトリ（local）での上書き・取り消し、リモートの追加・名前の変更・URL・削除・prune、`.gitignore` と `.git/info/exclude` の編集、General（表示名・色ラベル・開いている間の自動 fetch。アプリの中だけの設定でブックマークに置く）、Hooks・LFS（.git/hooks か core.hooksPath の hook と実行できるか、git lfs が入っているか、.gitattributes の LFS のパターン）、Ignore の各行に合うファイルの例と数（保存する前の中身で、git ls-files -i に聞く）も済み
+- [x] U11. リポジトリの設定（git の設定と出どころ、Remotes、Ignore）。サイドバーの Workspace の画面（Repository > Repository Settings、⌘;。design の 21 まではシート）に Identity・Branches・Remotes・Ignore・All Settings。各項目に今効いている値とどこで決まっているか、このリポジトリ（local）での上書き・取り消し、リモートの追加・名前の変更・URL・削除・prune、`.gitignore` と `.git/info/exclude` の編集、General（表示名・色ラベル・開いている間の自動 fetch。アプリの中だけの設定でブックマークに置く）、Hooks・LFS（.git/hooks か core.hooksPath の hook と実行できるか、git lfs が入っているか、.gitattributes の LFS のパターン）、Ignore の各行に合うファイルの例と数（保存する前の中身で、git ls-files -i に聞く）も済み
 - [x] U12. Activity（コアのリングバッファ、Operations・History・Performance・Events）。Window > Activity（⌥⌘A）とツールバーの Activity（操作の間は回る）。Operations は git の起動とコアの命令（リポジトリ・内容・時間・成否・エラー、絞り込み、JSON に書き出し）、History は操作ログと「ここまで戻す」、Performance は History の入力 → 表示・選択 → 差分・Working Copy の読み直しの p50 / p95 / 最大、Events はファイルの変化の知らせ。SSH 先の daemon で起動した git の記録（2 秒ごとに daemon から読む）、fetch・pull・push・clone の進み具合（`--progress` の行を流しながら拾う）と取り消し（プロセスグループごと止める。SSH 先も daemon に頼む）、操作の失敗をウィンドウの帯で知らせる（fatal:・error: の行、詳細・Activity・閉じる。取り消したときも）も済み
 - [x] U13. GitHub 連携（アカウント、PR の一覧と作成、CI の状態）。gh に任せる。origin の URL から GitHub のリポジトリを判定し、サイドバーの Pull Requests に開いている PR（CI の ✓・✗・●、draft、レビューの状態。CI の印を押すと History と同じチェックの吹き出し）、右クリックでチェックアウト・ブラウザで開く・URL のコピー、選ぶとそのブランチの履歴。Repository > Create Pull Request…（今のコミットのメッセージから、base は既定のブランチ）と Open on GitHub、History のコミットごとの CI の状態（今のブランチと既定のブランチの直近 100 コミットを GraphQL で 1 回に読み、署名の印の右に ✓・✗・時計）、GitHub のアバター（同じ問い合わせで作者の avatarUrl を取り、Gravatar より優先）、自分のリポジトリから Clone（U1）も済み
 - [x] U14. AI（Claude Code / Codex の CLI 経由の翻訳・解説・メッセージの提案、コンフリクトの解消、用途ごとのプロンプトの設定）。印を押すと、そのコミットのチェック（結果・名前・かかった時間。名前からログへ）を吹き出しで並べ、下のボタンで GitHub のチェックのページを開く。やり直した run は名前ごとに 1 行にまとめ（成功があれば、その前の取り消しは出さない）、取り消しで終わったチェックは失敗ではなく取り消しとして出す。Settings > AI で CLI（既定は使わない）・モデル・言語を選び、用途ごとのプロンプトをファイルで編集・既定に戻す。History の詳細の翻訳・解説（複数選択ではまとめた差分）、Working Copy の ✨ 提案（「メッセージに入れる」）、マージエディタの「AI で解消」（JSON で受け、マーカーが残れば捨てる。「Result に入れる」で置き換え、⌘Z で戻せる）と「AI で解説」、結果は流しながら出し、キャッシュする。リポジトリごとの初回の確認、リポジトリのプロンプトの確認、差分の hunk の右クリックからの解説（用途「hunk の解説」、History・Working Copy）、Settings のプロンプトの「試す」（見本の差分・メッセージで今のプロンプトを送る）も済み。Codex はこの Mac に入っていないので、出力の読み取りは確かめていない
