@@ -425,31 +425,30 @@ private struct OriginBadge: View {
     }
 }
 
-/// 行の共通の形: 左に質問、右に効いている値の欄、このリポジトリが上書きしている間だけ ↩︎、最後に札。
-/// 左の ⌄ で開くと、キーと値とファイル、上の値、説明が出る。
+/// 行の共通の形: 左に質問とその下に 1 文の説明、右に効いている値の欄、このリポジトリが上書きしている間だけ ↩︎、
+/// 最後に札。札の横の ⓘ で、キーと値とファイル、上の値が吹き出しに出る。
 private struct SettingRow<Control: View>: View {
     let model: RepositorySettingsModel
     let question: String
     let help: String
     /// この行が読み書きするキー。札は先頭のキーのもの。↩︎ はすべての local を消す。
     let keys: [String]
-    /// 生の値を人の言葉にする（開いたときの表示に使う）。
+    /// 生の値を人の言葉にする（吹き出しの表示に使う）。
     var describe: (String) -> String = { $0 }
     /// 使えないときの理由（古い git など）。あれば欄を灰色にして、下に出す。
     var disabledReason: String?
     @ViewBuilder let control: () -> Control
-    @State private var expanded = false
+    @State private var showingDetails = false
 
     private var overriding: Bool { keys.contains { model.local($0) != nil } }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 8) {
-                Button { expanded.toggle() } label: {
-                    Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.caption).frame(width: 12)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(question)
+                    Text(help).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
-                Text(question)
                 Spacer()
                 control().disabled(disabledReason != nil)
                 if overriding {
@@ -457,32 +456,58 @@ private struct SettingRow<Control: View>: View {
                         .buttonStyle(.borderless)
                         .help(L("Stop overriding here. The value above takes over."))
                 } else {
-                    Color.clear.frame(width: 20)
+                    Color.clear.frame(width: 20, height: 1)
                 }
                 OriginBadge(model: model, key: keys[0])
+                Button { showingDetails.toggle() } label: { Image(systemName: "info.circle") }
+                    .buttonStyle(.borderless)
+                    .help(L("Where this is set"))
+                    .popover(isPresented: $showingDetails, arrowEdge: .trailing) { details }
             }
             if let disabledReason {
-                Text("⚠ " + disabledReason).font(.caption).foregroundStyle(.orange).padding(.leading, 20)
+                Text("⚠ " + disabledReason).font(.caption).foregroundStyle(.orange)
             }
-            if expanded {
+        }
+    }
+
+    private var details: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(keys, id: \.self) { key in
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(keys, id: \.self) { key in
-                        if let e = model.effective(key) {
-                            Text("\(key) = \(e.value)　\(model.origin(of: key).file ?? "")")
-                        } else {
-                            Text(L("%@ is not set", key))
-                        }
-                        if model.local(key) != nil, let above = model.inherited(key) {
-                            Text(L("Above: %@　%@", describe(above.value), model.origin(of: key).file.map { _ in "" } ?? ""))
-                                .foregroundStyle(.secondary)
-                        }
+                    if let e = model.effective(key) {
+                        Text("\(key) = \(e.value)").font(.system(.body, design: .monospaced))
+                        Text(model.origin(of: key).file.map { L("%@ (%@)", model.origin(of: key).label, $0) } ?? model.origin(of: key).label)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text(L("%@ is not set", key)).font(.system(.body, design: .monospaced))
+                        Text(L("git’s default")).foregroundStyle(.secondary)
                     }
-                    Text(help).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if model.local(key) != nil, let above = model.inherited(key) {
+                        Text(L("Above: %@", describe(above.value))).foregroundStyle(.secondary)
+                    }
                 }
-                .font(.caption)
-                .textSelection(.enabled)
-                .padding(.leading, 20)
             }
+        }
+        .font(.callout)
+        .textSelection(.enabled)
+        .padding(12)
+        .frame(minWidth: 240, alignment: .leading)
+    }
+}
+
+/// めったに変えない行を畳んでおく。見出しのどこを押しても開く（標準の DisclosureGroup は矢印しか効かない）。
+private struct MoreGroup<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            content()
+        } label: {
+            Text(L("More"))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture { expanded.toggle() }
         }
     }
 }
@@ -606,7 +631,10 @@ private struct PullMethodRow: View {
         switch m {
         case .merge: model.set("pull.rebase", "false")
         case .rebase: model.set("pull.rebase", "true")
-        case .ffOnly: model.set("pull.ff", "only")
+        case .ffOnly:
+            // pull.rebase=true が残っていると、どちらが勝つかが git の版で変わる。両方書いて曖昧さをなくす。
+            model.set("pull.rebase", "false")
+            model.set("pull.ff", "only")
         }
     }
 
@@ -700,9 +728,16 @@ private struct AuthorSigningPage: View {
                 TextRow(model: model, question: L("Key"),
                         help: format == "ssh" ? L("The path of the SSH public key, or the key itself (“ssh-ed25519 AAAA…”).") : L("The fingerprint or ID of the key; empty uses the key for your email."),
                         key: "user.signingkey", placeholder: format == "ssh" ? "~/.ssh/id_ed25519.pub" : L("Key for your email"))
-                DisclosureGroup(L("More")) {
-                    TextRow(model: model, question: L("gpg program"), help: L("The gpg to run for OpenPGP signing and verification."), key: "gpg.program", placeholder: "gpg")
-                    TextRow(model: model, question: L("Allowed signers (SSH)"), help: L("The file that lists whose SSH keys are trusted when verifying signatures."), key: "gpg.ssh.allowedSignersFile", placeholder: "~/.ssh/allowed_signers")
+                MoreGroup {
+                    switch format {
+                    case "ssh":
+                        TextRow(model: model, question: L("Allowed signers"), help: L("The file that lists whose SSH keys are trusted when verifying signatures."), key: "gpg.ssh.allowedSignersFile", placeholder: "~/.ssh/allowed_signers")
+                        TextRow(model: model, question: L("ssh-keygen program"), help: L("The ssh-keygen to run for SSH signing and verification."), key: "gpg.ssh.program", placeholder: "ssh-keygen")
+                    case "x509":
+                        TextRow(model: model, question: L("gpgsm program"), help: L("The gpgsm to run for X.509 signing and verification."), key: "gpg.x509.program", placeholder: "gpgsm")
+                    default:
+                        TextRow(model: model, question: L("gpg program"), help: L("The gpg to run for OpenPGP signing and verification."), key: "gpg.program", placeholder: "gpg")
+                    }
                 }
             } header: {
                 Text(L("Signing"))
@@ -723,9 +758,9 @@ private struct CommitsPage: View {
                 if let preview, !preview.isEmpty {
                     Text(preview).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).lineLimit(8).textSelection(.enabled)
                 }
-                DisclosureGroup(L("More")) {
-                    ChoiceRow(model: model, question: L("Message cleanup"), help: L("What git strips from the message before committing."), key: "commit.cleanup",
-                              options: [("default", L("Comments and surrounding blank lines")), ("strip", L("Comments, blank lines and trailing spaces")), ("whitespace", L("Blank lines and trailing spaces only")), ("verbatim", L("Nothing")), ("scissors", L("Everything after the scissors line"))],
+                MoreGroup {
+                    ChoiceRow(model: model, question: L("Message cleanup"), help: L("What git strips from the message before committing. Amon Hen passes the message as written, so “Default” acts as “Blank lines and trailing spaces” here."), key: "commit.cleanup",
+                              options: [("default", L("Default")), ("strip", L("Comment lines, blank lines around and in a row, trailing spaces")), ("whitespace", L("Blank lines around and in a row, trailing spaces")), ("verbatim", L("Nothing")), ("scissors", L("Blank lines and spaces as above, and everything after the scissors line"))],
                               defaultValue: "default")
                 }
             } header: {
@@ -752,14 +787,13 @@ private struct SyncPage: View {
             Section("Pull") {
                 PullMethodRow(model: model)
             }
-            Section("Push") {
-                ChoiceRow(model: model, question: L("Which branch does push go to?"), help: L("“Same name” pushes to the branch with the current branch’s name. “Upstream” pushes to the branch it tracks. “Nothing without an upstream” refuses until one is set."), key: "push.default",
-                          options: [("simple", L("Same name (and it must be the upstream)")), ("current", L("Same name")), ("upstream", L("Upstream")), ("nothing", L("Nothing without an upstream")), ("matching", L("All branches with the same name"))],
-                          defaultValue: "simple")
-                SwitchRow(model: model, question: L("Set the upstream on the first push"), help: L("The first push of a new branch also makes the remote branch its upstream, so later pushes and pulls need no branch name."), key: "push.autoSetupRemote", defaultOn: false)
-            }
-            Section("Fetch") {
-                SwitchRow(model: model, question: L("Remove remote-tracking branches deleted on the remote"), help: L("Amon Hen’s Fetch removes them unless this is off. git fetch in a terminal removes them only when this is on."), key: "fetch.prune", defaultOn: false)
+            Section {
+                SwitchRow(model: model, question: L("Remove remote-tracking branches deleted on the remote"), help: L("When nothing is set, Amon Hen’s Fetch removes them and git fetch in a terminal keeps them. Off: neither removes them. On: both do."), key: "fetch.prune", defaultOn: false)
+            } header: {
+                Text("Fetch")
+            } footer: {
+                Text(L("Push has no settings here: Amon Hen’s Push sends the branch to the target chosen in its sheet, so push.default and push.autoSetupRemote only affect git push in a terminal (see All Settings)."))
+                    .font(.caption).foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -772,13 +806,13 @@ private struct RewritingPage: View {
         let tooOld = model.updateRefsSupported ? nil : L("Needs git 2.38 or later. This repository’s git is %@%@.", model.gitVersion ?? "?", model.host.map { " (\($0))" } ?? "")
         Form {
             Section("Rebase") {
-                SwitchRow(model: model, question: L("Stash changes before rebasing"), help: L("Uncommitted changes are stashed before the rebase and restored after it. Pull with rebase uses this too."), key: "rebase.autoStash", defaultOn: false)
+                SwitchRow(model: model, question: L("Stash changes before rebasing"), help: L("Uncommitted changes are stashed before a rebase or a pull with rebase and restored after it. History edits (reword, squash and so on) always stash, whatever this says."), key: "rebase.autoStash", defaultOn: false)
                 ChoiceRow(model: model, question: L("Move stacked branches along when rebasing or editing History"),
                           help: L("Branches whose tips are among the rewritten commits (stacked under the current one) move to the rewritten commits, or stay on the old ones. Branches checked out here or in another worktree always stay. Undo puts back whatever moved."),
                           key: "rebase.updateRefs", options: [("false", L("Leave them")), ("true", L("Move them along"))], defaultValue: "false", isBool: true, disabledReason: tooOld)
             }
             Section("Merge") {
-                ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("diff3 and zdiff3 add the common ancestor between the two sides; zdiff3 leaves out lines both sides changed the same way."), key: "merge.conflictStyle",
+                ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("diff3 and zdiff3 also write the common base between the two sides; zdiff3 leaves out lines both sides changed the same way. With the base, Amon Hen’s merge editor can resolve conflicts where only one side changed by itself."), key: "merge.conflictStyle",
                           options: [("merge", L("Both sides")), ("diff3", L("Both sides and the common base")), ("zdiff3", L("Both sides and the base, shortened"))], defaultValue: "merge")
             }
         }
@@ -795,9 +829,7 @@ private struct WorkingCopyPage: View {
                           options: [("false", L("Keep as committed")), ("true", L("CRLF in the working tree, LF in commits")), ("input", L("LF in commits, no change on checkout"))],
                           defaultValue: "false", isBool: false)
                 SwitchRow(model: model, question: L("Track changes to the executable bit"), help: L("Off ignores file mode changes, as on file systems that don’t keep them."), key: "core.fileMode", defaultOn: true)
-                ChoiceRow(model: model, question: L("Untracked files in status"), help: L("“Top-level folders only” shows an untracked folder as one entry instead of listing its files."), key: "status.showUntrackedFiles",
-                          options: [("normal", L("Top-level folders only")), ("all", L("Every file")), ("no", L("Hide them"))], defaultValue: "normal")
-                DisclosureGroup(L("More")) {
+                MoreGroup {
                     ChoiceRow(model: model, question: L("Line ending written on checkout"), help: L("Used when line endings are converted (text files with eol or the setting above)."), key: "core.eol",
                               options: [("native", L("This platform’s")), ("lf", "LF"), ("crlf", "CRLF")], defaultValue: "native")
                 }
