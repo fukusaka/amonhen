@@ -183,6 +183,7 @@ private struct RemotesTab: View {
                     Text(r.pushUrl == r.fetchUrl ? L("(same)") : r.pushUrl).foregroundStyle(r.pushUrl == r.fetchUrl ? .secondary : .primary)
                 }
             }
+            .scrollContentBackground(.hidden)
             HStack {
                 Button(L("Add…")) { add() }
                 Button(L("Rename…")) { rename() }.disabled(selection == nil)
@@ -383,6 +384,8 @@ private struct AllSettingsTab: View {
                     .width(min: 80, ideal: 120)
                     .customizationID("worktree")
             }
+            // 表の自前の背景（暗い青みの色）を消して、ページの背景の上に置く。
+            .scrollContentBackground(.hidden)
             .contextMenu(forSelectionType: String.self) { keys in
                 let keys = keys.filter { $0 != Self.newRowID }
                 Button(L("Edit in This Repository")) { keys.first.map(beginEditing) }.disabled(keys.count != 1)
