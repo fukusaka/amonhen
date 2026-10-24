@@ -113,14 +113,15 @@ macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewCont
 
 | タブ | 項目 |
 | --- | --- |
-| 一般 | 表示名・色ラベル・自動 fetch（アプリの中だけの設定）、このリポジトリを動かす git（版と、SSH 先のリポジトリならそのホスト） |
-| 名前と署名 | `user.name`・`user.email` の上書き（仕事用と個人用を分けるため）、署名（`user.signingkey`・`commit.gpgsign`・`gpg.format`） |
-| 同期 | Pull（`pull.rebase`・`pull.ff`）、Push（`push.default`・`push.autoSetupRemote`）、Fetch（`fetch.prune`） |
-| 書き換え | Rebase（`rebase.autoStash`。rebase で取り込む pull にも効く）、積み重ねたブランチ（`rebase.updateRefs`。このリポジトリと、すべてのリポジトリ＝その git を動かすユーザーの `--global`。git が 2.38 より古ければ、見つかった版を添えて選べなくする）、Merge（`merge.conflictStyle`） |
-| Remotes | 追加・名前の変更・URL の編集・削除・prune。GitHub などに紐づくかを表示 |
-| ファイル | `.gitignore` と `.git/info/exclude` の編集（パターンに合うファイルの例つき）と、Git LFS（入っているか、`.gitattributes` の LFS のパターン） |
-| Hooks | `.git/hooks` か `core.hooksPath` の hook と、それぞれ実行できるか |
-| すべての設定 | すべての設定の表（段とファイルつき）、local のキーを直接書く・消す |
+| General | 起動時に前回のリポジトリを開く、開いたリポジトリをブックマークに足す、リポジトリを開く既定（タブ / ウィンドウ）、外部エディタ・ターミナル・差分ツールの選択 |
+| Git | git の実行ファイルの場所と版、グローバルの `user.name`・`user.email`・署名の鍵（`git config --global` を読み書き）、pull の既定（merge / rebase / ff-only）、fetch の `--prune`、自動 fetch の間隔、push 前の確認 |
+| Accounts | GitHub・GitLab などのアカウント（後述）。トークンはキーチェーン |
+| Appearance | テーマ（システム / ライト / ダーク）、差分とメッセージのフォントと大きさ、History の並び順・1 行表示・表示項目・アバター・祖先の強調、グラフの色 |
+| Diff & Merge | unified / split の既定、空白の無視、前後の行数、折り返し、タブ幅、マージエディタの既定の並び（後述）、diff3 |
+| Commit | 件名の文字数の目安（50 / 72）、Sign-off を付ける、Conventional Commits の補完、コミット後に push |
+| AI | 使う AI（なし / Apple Intelligence（端末内）/ Claude Code / Codex。既定は、端末内のモデルが使えればそれ、なければ「なし」）、選んだ CLI の場所・版・ログインの状態（見つからなければ入れ方を案内）、モデル、翻訳先の言語、リポジトリごとに送らない設定。詳細で用途ごとのプロンプト（9 章） |
+| Performance | commit-graph の自動書き出し、fsmonitor、永続キャッシュの場所と大きさ・消去、裏のタブの扱い |
+| Advanced | SSH 先の署名の検証、daemon の送り込み先、ログの詳しさ、計測の記録 |
 
 ## 4. リポジトリの設定（サイドバーの Workspace の Settings、⌘;）
 

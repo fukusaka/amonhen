@@ -121,14 +121,15 @@ The standard macOS layout with a row of tabs with icons at the top (`NSTabViewCo
 
 | Tab | Items |
 | --- | --- |
-| General | Display name, color label and auto-fetch (kept in the app only), and the git that runs the repository (its version, and the SSH host for a repository there) |
-| Identity | Overrides of `user.name` and `user.email` (to keep work and personal apart), and signing: `user.signingkey`, `commit.gpgsign`, `gpg.format` |
-| Sync | Pull (`pull.rebase`, `pull.ff`), Push (`push.default`, `push.autoSetupRemote`), Fetch (`fetch.prune`) |
-| Rewriting | Rebase (`rebase.autoStash`, which pull with rebase uses too), stacked branches (`rebase.updateRefs`, for this repository and for all repositories, that is `--global` of the user running its git; disabled with the version found when git is older than 2.38), Merge (`merge.conflictStyle`) |
-| Remotes | Add, rename, edit URL, remove, prune. Shows whether a remote is linked to GitHub or similar |
-| Files | Editing `.gitignore` and `.git/info/exclude` (with examples of matching files), and Git LFS (installed or not, the LFS patterns in `.gitattributes`) |
-| Hooks | The hooks in `.git/hooks` or `core.hooksPath`, and whether each is executable |
-| All Settings | A table of every setting with its scope and file, and setting or unsetting a local key directly |
+| General | Open the previous repositories at launch, add opened repositories to bookmarks, default for opening repositories (tab / window), choice of external editor, terminal and diff tool |
+| Git | Location and version of the git executable, global `user.name`, `user.email` and signing key (read and write `git config --global`), pull default (merge / rebase / ff-only), `--prune` for fetch, auto-fetch interval, confirmation before push |
+| Accounts | Accounts for GitHub, GitLab and others (see below). Tokens in the keychain |
+| Appearance | Theme (system / light / dark), font and size for diffs and messages, History order, one-line display, row items, avatars and ancestor highlighting, graph colors |
+| Diff & Merge | Default unified / split, ignore whitespace, context lines, wrapping, tab width, default layout of the merge editor (see below), diff3 |
+| Commit | Subject length guide (50 / 72), add Sign-off, Conventional Commits completion, push after commit |
+| AI | The AI to use (none / Apple Intelligence on-device / Claude Code / Codex; by default the on-device model where it is available, otherwise none), the chosen CLI's location, version and login state (with install guidance if not found), model, target language for translation, per-repository opt-out. Per-purpose prompts under the advanced section (chapter 9) |
+| Performance | Automatic commit-graph writing, fsmonitor, location, size and clearing of the persistent cache, handling of background tabs |
+| Advanced | Signature verification on SSH hosts, where the daemon is deployed, log verbosity, recording of measurements |
 
 ## 4. Repository settings (Settings in the sidebar's Workspace, ⌘;)
 
