@@ -293,9 +293,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             changeCount = count
             updateTabTitle()
         }
-        slot.workingCopy.onBlame = { [weak self] path in self?.openBlame(path: path, rev: nil) }
+        slot.workingCopy.onBlame = { [weak self, weak slot] path in self?.openBlame(path: path, rev: nil, in: slot?.repository) }
         slot.workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
-        slot.workingCopy.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
+        slot.workingCopy.onFileHistory = { [weak self, weak slot] path in self?.openFileHistory(path: path, in: slot?.repository) }
         slot.actions.window = window
         slot.actions.onFailure = { [weak self] failure in self?.showFailure(failure) }
         // Push のシートは、右の欄と同じ詳細の表示を読み取り専用で埋め込む（同じ描画器で）。
@@ -1243,14 +1243,43 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     // MARK: - blame・ファイルの履歴
 
-    private func openBlame(path: String, rev: String?) {
-        BlameWindowController.show(path: path, rev: rev, repository: repository) { [weak self] id in self?.reveal(commit: id) }
-    }
-
-    private func openFileHistory(path: String) {
-        FileHistoryWindowController.show(path: path, repository: repository, renderer: textRenderer) { [weak self] id in
+    /// 作業ツリーの内容（`rev` なし）とファイルの履歴の起点（HEAD）は worktree ごとに違うので、`repository`（なければ
+    /// 書き込む先の worktree）で読む。開いたリポジトリで読むと、ほかの worktree の作業ツリー・ブランチを見てしまう。
+    private func openBlame(path: String, rev: String?, in repository: Repository? = nil) {
+        let repository = repository ?? editing.repository
+        let tool = BlameViewController(path: path, rev: rev, repository: repository) { [weak self] id in
             self?.reveal(commit: id)
         }
+        showFileTool(tool, key: "blame \(path) \(rev ?? "") \(ObjectIdentifier(repository).hashValue)")
+    }
+
+    private func openFileHistory(path: String, in repository: Repository? = nil) {
+        let repository = repository ?? editing.repository
+        let tool = FileHistoryViewController(
+            path: path, repository: repository, renderer: textRenderer,
+            onSelectCommit: { [weak self] id in self?.reveal(commit: id) },
+            onBlame: { [weak self] path, commit in self?.openBlame(path: path, rev: commit, in: repository) })
+        showFileTool(tool, key: "fileHistory \(path) \(ObjectIdentifier(repository).hashValue)")
+    }
+
+    /// File History・Blame を、このリポジトリのタブの隣のタブで開く。同じものがもう開いていれば、そのタブを読み直した
+    /// ものに入れ替える。
+    private func showFileTool(_ tool: FileToolViewController, key: String) {
+        FileToolWindowController.show(tool, key: key, tabWith: window, toolbar: mirrorToolbar(), repository: self)
+    }
+
+    /// File History・Blame のタブに付ける、このタブと同じツールバー。検索はこのタブに戻って History で探す。
+    private func mirrorToolbar() -> MainToolbar {
+        let mirror = toolbar.mirror()
+        mirror.onSearch = { [weak self] query in
+            self?.window.makeKeyAndOrderFront(nil)
+            self?.toolbar.onSearch?(query)
+        }
+        mirror.onSearchStep = { [weak self] step in
+            self?.window.makeKeyAndOrderFront(nil)
+            self?.toolbar.onSearchStep?(step)
+        }
+        return mirror
     }
 
     /// History に切り替えて `commit` を選ぶ。今の範囲になければ全ブランチにする。

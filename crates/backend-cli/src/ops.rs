@@ -50,6 +50,46 @@ fn literal_regex(text: &str) -> String {
     out
 }
 
+/// マージは `--name-only` でもファイル名が出ないので、パスのないコミットに今のパスを添える（`-- <path>` で絞って
+/// いるので、出てくるマージはそのパスを変えている）。
+fn with_merge_paths(part: &[u8], path: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(part.len());
+    for record in part.split(|&b| b == 1).filter(|r| !r.is_empty()) {
+        out.push(1);
+        out.extend_from_slice(record);
+        // ID・件名・作者・時刻の 4 つの後に、パスがあるか。
+        let has_path = record
+            .split(|&b| b == 0)
+            .nth(4)
+            .is_some_and(|p| p.iter().any(|&b| b != b'\n'));
+        if !has_path {
+            if record.last() != Some(&0) {
+                out.push(0);
+            }
+            out.push(b'\n');
+            out.extend_from_slice(path.as_bytes());
+            out.push(0);
+        }
+    }
+    out
+}
+
+/// `git diff-tree -z --name-status` の出力から、`path` へ名前を変えたときの元の名前を探す。
+fn renamed_from(out: &[u8], path: &str) -> Option<String> {
+    let mut fields = out.split(|&b| b == 0).filter(|f| !f.is_empty());
+    while let Some(status) = fields.next() {
+        if status.starts_with(b"R") || status.starts_with(b"C") {
+            let (from, to) = (fields.next()?, fields.next()?);
+            if to == path.as_bytes() {
+                return Some(String::from_utf8_lossy(from).into_owned());
+            }
+        } else {
+            fields.next()?;
+        }
+    }
+    None
+}
+
 impl Operations for Git {
     fn blame(&self, path: &str, rev: Option<&Oid>) -> Result<Vec<u8>> {
         let rev = rev.map(|r| r.to_string());
@@ -61,17 +101,59 @@ impl Operations for Git {
         self.read(&args)
     }
 
-    fn file_log(&self, path: &str) -> Result<Vec<u8>> {
-        self.read(&[
-            "log",
-            "--follow",
-            "-z",
-            "--name-only",
-            "--format=%x01%H%x00%s%x00%an%x00%at",
-            "HEAD",
-            "--",
-            path,
-        ])
+    /// `--follow` は使わない（履歴の単純化も changed-path の Bloom フィルターも効かず、全コミットを歩く）。
+    /// パスを絞った log で辿り、いちばん古いコミットでそのパスが改名で生まれていたら、元の名前でその親から続ける。
+    fn file_log(&self, path: &str, limit: Option<usize>, merges: bool) -> Result<Vec<u8>> {
+        let mut out = Vec::new();
+        let mut path = path.to_owned();
+        let mut start = "HEAD".to_owned();
+        let mut left = limit;
+        loop {
+            let max_count = left.map(|n| format!("--max-count={n}"));
+            let mut args = vec!["log", "-z", "--name-only"];
+            if !merges {
+                args.push("--no-merges");
+            }
+            args.extend(max_count.as_deref());
+            args.extend(["--format=%x01%H%x00%s%x00%an%x00%at", &start, "--", &path]);
+            let mut part = self.read(&args)?;
+            if merges {
+                part = with_merge_paths(&part, &path);
+            }
+            // 各コミットは \x01 で始まり、ID が先頭に来る。
+            let oldest = part
+                .rsplit(|&b| b == 1)
+                .next()
+                .and_then(|r| r.split(|&b| b == 0).next())
+                .map(|oid| String::from_utf8_lossy(oid).into_owned())
+                .filter(|oid| !oid.is_empty());
+            out.extend_from_slice(&part);
+            let Some(oldest) = oldest else { break };
+            if let Some(n) = &mut left {
+                *n = n.saturating_sub(part.iter().filter(|&&b| b == 1).count());
+                if *n == 0 {
+                    break;
+                }
+            }
+            let Some(from) = renamed_from(
+                &self.read(&[
+                    "diff-tree",
+                    "--no-commit-id",
+                    "-C",
+                    "-r",
+                    "-z",
+                    "--name-status",
+                    "--root",
+                    &oldest,
+                ])?,
+                &path,
+            ) else {
+                break;
+            };
+            path = from;
+            start = format!("{oldest}^");
+        }
+        Ok(out)
     }
 
     fn log_matching(
@@ -570,27 +652,53 @@ impl Operations for Git {
     }
 
     fn config_list(&self) -> Result<Vec<ConfigEntry>> {
-        let out = self.read(&["config", "--list", "--show-origin", "--show-scope", "-z"])?;
-        // 1 項目は `scope\0origin\0key\nvalue\0`（値のない項目は `key\0`）。
-        let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
-        Ok(fields
-            .as_chunks::<3>()
-            .0
-            .iter()
-            .map(|f| {
-                let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
-                let (key, value) = match f[2].iter().position(|&b| b == b'\n') {
-                    Some(i) => (text(&f[2][..i]), text(&f[2][i + 1..])),
-                    None => (text(f[2]), String::new()),
-                };
-                ConfigEntry {
-                    scope: text(f[0]),
-                    origin: text(f[1]),
-                    key,
-                    value,
-                }
-            })
-            .collect())
+        let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+        // `origin\0key\nvalue\0`（値のない項目は `key\0`）。
+        let entry = |scope: String, origin: &[u8], item: &[u8]| {
+            let (key, value) = match item.iter().position(|&b| b == b'\n') {
+                Some(i) => (text(&item[..i]), text(&item[i + 1..])),
+                None => (text(item), String::new()),
+            };
+            ConfigEntry {
+                scope,
+                origin: text(origin),
+                key,
+                value,
+            }
+        };
+        if crate::git_at_least(2, 26) {
+            let out = self.read(&["config", "--list", "--show-origin", "--show-scope", "-z"])?;
+            // 1 項目は `scope\0origin\0key\nvalue\0`。
+            let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
+            return Ok(fields
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|f| entry(text(f[0]), f[1], f[2]))
+                .collect());
+        }
+        // `--show-scope` は git 2.26 から。それより前は場所ごとに読む（ファイルがなければ読めないので、空とみなす）。
+        let mut entries = Vec::new();
+        for scope in ["system", "global", "local"] {
+            let Ok(out) = self.read(&[
+                "config",
+                "--list",
+                "--show-origin",
+                "-z",
+                &format!("--{scope}"),
+            ]) else {
+                continue;
+            };
+            let fields: Vec<&[u8]> = out.split(|&b| b == 0).collect();
+            entries.extend(
+                fields
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .map(|f| entry(scope.to_owned(), f[0], f[1])),
+            );
+        }
+        Ok(entries)
     }
 
     fn config_set(&self, key: &str, value: Option<&str>) -> Result<()> {
@@ -684,7 +792,17 @@ impl Operations for Git {
     }
 
     fn worktree_list(&self) -> Result<Vec<u8>> {
-        self.read(&["worktree", "list", "--porcelain", "-z"])
+        if crate::git_at_least(2, 36) {
+            return self.read(&["worktree", "list", "--porcelain", "-z"]);
+        }
+        // `-z` は git 2.36 から。それより前は行の区切りを NUL に替えて同じ形にする（パスに改行があれば読めない）。
+        let mut out = self.read(&["worktree", "list", "--porcelain"])?;
+        for b in &mut out {
+            if *b == b'\n' {
+                *b = 0;
+            }
+        }
+        Ok(out)
     }
 
     fn change_worktree(&self, change: &WorktreeChange) -> Result<()> {

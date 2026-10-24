@@ -621,9 +621,11 @@ impl Operations for RemoteOperations {
         Ok(bytes.0)
     }
 
-    fn file_log(&self, path: &str) -> Result<Vec<u8>> {
+    fn file_log(&self, path: &str, limit: Option<usize>, merges: bool) -> Result<Vec<u8>> {
         let bytes: Bytes = self.op(Op::FileLog {
             path: path.to_owned(),
+            limit,
+            merges,
         })?;
         Ok(bytes.0)
     }

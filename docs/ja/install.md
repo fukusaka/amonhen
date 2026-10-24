@@ -122,4 +122,7 @@ gh attestation verify <ファイル> --repo fukusaka/amonhen
 - **GTK4 のアプリ**: Linux（x86_64・arm64）で GTK 4.14 以降（Ubuntu 24.04・Debian 13 以降）。
 - **コマンドと VSCode 拡張**: Apple シリコンの macOS、Linux（x86_64・arm64、ディストリビューションは問いません）、
   Windows（x86_64・arm64）。
-- `git` が入っている必要があります。
+- `git` 2.23 以降が入っている必要があります（Mac でも SSH 先でも）。サポートが続いている Ubuntu・Debian・RHEL と、
+  Xcode の git はどれも満たします。より新しい git の機能（commit-graph の変更のあったパスの Bloom フィルタなど）は、
+  そこの git にあれば使い、なければ古いやり方で行います。git の操作が失敗したとき、git が 2.23 より古ければ、
+  エラーにそう添えます。

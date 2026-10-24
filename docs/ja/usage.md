@@ -14,7 +14,7 @@
 - History: グラフ付きの一覧（件名とブランチ・タグのラベル、その下に作者・日時・ID）。右クリックでコミットの編集（Edit Message・Squash・Fixup・Edit・Split・Drop）、cherry-pick・revert、ブランチ・タグの作成。ドラッグで並べ替え。上部で All Branches / Current Branch / 選んだ ref を切り替える。⌘F でコミットを検索（Enter・⌘G で次へ、⇧Enter・⇧⌘G で前へ。一致したコミットだけを出すこともできる）。
 - 差分: ドラッグで文字を選んで ⌘C、⌘F で検索。構文の色付けは表示の後に裏で付く。
 - History の検索の構文: 語は件名・作者・ID から探す。空白で区切ると AND、`or` で OR、括弧でまとめる。`author:` `subject:` `commit:` `path:` `contents:"..."`（例: `path:fs/ (author:linus or author:greg)`）。
-- ファイルの右クリック（Working Copy・History の変更ファイル）で Blame と File History（名前の変更も追う）。行やコミットをダブルクリックすると History で選ぶ。
+- ファイルの右クリック（Working Copy・History の変更ファイル）で Blame と File History（名前の変更も追う）。どちらもリポジトリの隣のタブで開き、同じツールバーが付く（ボタンを押すと、リポジトリのタブに戻ってそこで操作する）。タブを引き出せば別のウィンドウになり、Window > Move Tab to Window ▸ でリポジトリのタブに戻せる（前のタブを選んだ窓のタブに移す。リポジトリの窓が先頭に出る。タブをタブバーに落としてもよい。タブが 1 つのウィンドウでは View > Show Tab Bar、⇧⌘T でタブバーを出す）。同じものを開き直すと、そのタブを読み直したものに入れ替える。マージのコミットは、Show Merge Commits（一覧の右クリック、または Settings > 表示 > File History）を入れたときだけ出す。行やコミットをダブルクリックすると History で選ぶ。File History はすぐに開いて新しい方の 100 コミットを出し、残りは読めたら足す。名前を変えていれば、名前ごとにその時点の名前の見出しをコミットの上に出す。コミットの右クリックで History で見る・そのコミットでの Blame・ID やパスのコピー（Return で History に出し、⌘C で ID をコピーする）。
 - View > One Line per Commit で History の行を 1 行にする。終了したときに開いていたリポジトリは、次の起動で開き直す。
 
 ## SSH 先のリポジトリ

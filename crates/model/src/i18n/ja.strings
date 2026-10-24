@@ -80,6 +80,7 @@
 "paths must be an array of strings" = "paths は文字列の配列です";
 
 /* backend-cli */
+"{message}\n(git {version} is older than {minimum}, which Amon Hen needs. Update git.)" = "{message}\n（git {version} は、Amon Hen に要る {minimum} より古い版です。git を新しくしてください）";
 "status line is too short: {text}" = "status の行が短い: {text}";
 "Missing the original path of a rename" = "名前の変更の元のパスがない";
 "The contents of commit {id} don’t match its ID" = "コミット {id} の中身が ID と合わない";

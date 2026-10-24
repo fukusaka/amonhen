@@ -82,6 +82,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
 
     private func viewMenu() -> NSMenu {
         let menu = NSMenu(title: L("View"))
+        menu.delegate = self
         menu.addItem(item("Working Copy", #selector(RepositoryWindow.showWorkingCopy(_:)), "1"))
         menu.addItem(item("History", #selector(RepositoryWindow.showHistory(_:)), "2"))
         menu.addItem(item("Stashes", #selector(RepositoryWindow.showStashes(_:)), "4"))
@@ -92,6 +93,9 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(refresh)
         menu.addItem(.separator())
         menu.addItem(item(L("Show Sidebar"), #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]))
+        // タブが 1 つの窓でもタブバーを出す（タブをつかんで、ほかの窓のタブバーに落とせる）。出していれば、題は
+        // メニューを開くときに Hide にする（AppKit は替えない）。
+        menu.addItem(item(L("Show Tab Bar"), #selector(NSWindow.toggleTabBar(_:)), "t", [.command, .shift]))
         menu.addItem(.separator())
         menu.addItem(item(L("One Line per Commit"), #selector(toggleCompactRows(_:)), "", target: self))
         let items = NSMenuItem(title: L("History Items"), action: nil, keyEquivalent: "")
@@ -196,6 +200,12 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(item(L("Show Previous Tab"), #selector(NSWindow.selectPreviousTab(_:)), "[", [.command, .shift]))
         menu.addItem(item(L("Move Tab to New Window"), #selector(NSWindow.moveTabToNewWindow(_:)), ""))
         menu.addItem(item(L("Merge All Windows"), #selector(NSWindow.mergeAllWindows(_:)), ""))
+        // 前の窓のタブを、選んだほかの窓のタブに移す（標準は新しい窓か、全部をまとめるかだけ）。中身は開くときに作る。
+        let moveTab = NSMenu(title: L("Move Tab to Window"))
+        moveTab.delegate = self
+        let moveTabItem = NSMenuItem(title: moveTab.title, action: nil, keyEquivalent: "")
+        moveTabItem.submenu = moveTab
+        menu.addItem(moveTabItem)
         menu.addItem(.separator())
         menu.addItem(item("Repositories", #selector(showRepositories(_:)), "r", [.command, .shift], target: self))
         menu.addItem(item(L("Settings"), #selector(showSettings(_:)), "", target: self))
@@ -218,6 +228,13 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     // MARK: - Open Recent
 
     func menuNeedsUpdate(_ menu: NSMenu) {
+        if menu.title == L("Move Tab to Window") { return fillMoveTabMenu(menu) }
+        if menu.title == L("View") {
+            let shown = (NSApp.keyWindow ?? NSApp.mainWindow)?.tabGroup?.isTabBarVisible == true
+            menu.items.first { $0.action == #selector(NSWindow.toggleTabBar(_:)) }?.title =
+                shown ? L("Hide Tab Bar") : L("Show Tab Bar")
+            return
+        }
         guard menu.title == L("Open Recent") else { return }
         menu.removeAllItems()
         for path in RepositoryList.paths.prefix(15) {
@@ -235,6 +252,45 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     @objc private func openRecent(_ sender: NSMenuItem) {
         guard let path = sender.representedObject as? String else { return }
         open(path: path)
+    }
+
+    // MARK: - Move Tab to Window
+
+    /// 移す先: 前の窓とは別の、リポジトリ（と File History・Blame）の窓ごとに 1 つ。その窓で選んでいるタブの名前と、
+    /// ほかのタブの数で出す。File History・Blame からは、開いたリポジトリの窓を先頭に。
+    private func fillMoveTabMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let id = RepositoryWindow.tabbingIdentifier
+        if let source = NSApp.keyWindow ?? NSApp.mainWindow, source.tabbingIdentifier == id {
+            var groups: [NSWindowTabGroup] = []
+            for w in NSApp.windows where w.tabbingIdentifier == id && w.isVisible {
+                guard let group = w.tabGroup, group !== source.tabGroup, !groups.contains(where: { $0 === group }) else { continue }
+                groups.append(group)
+            }
+            if let home = (source.windowController as? FileToolWindowController)?.repositoryWindow?.tabGroup,
+               let i = groups.firstIndex(where: { $0 === home }) {
+                groups.insert(groups.remove(at: i), at: 0)
+            }
+            for group in groups {
+                guard let shown = group.selectedWindow ?? group.windows.first else { continue }
+                let name = shown.tab.title.flatMap { $0.isEmpty ? nil : $0 } ?? shown.title
+                let others = group.windows.count - 1
+                let item = NSMenuItem(
+                    title: others > 0 ? L("%@ (+%ld)", name, others) : name, action: #selector(moveTab(toWindow:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = shown
+                menu.addItem(item)
+            }
+        }
+        if menu.items.isEmpty {
+            menu.addItem(NSMenuItem(title: L("None"), action: nil, keyEquivalent: ""))
+        }
+    }
+
+    @objc private func moveTab(toWindow sender: NSMenuItem) {
+        guard let target = sender.representedObject as? NSWindow, let source = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        target.addTabbedWindow(source, ordered: .above)
+        source.makeKeyAndOrderFront(nil)
     }
 
     // MARK: - 設定

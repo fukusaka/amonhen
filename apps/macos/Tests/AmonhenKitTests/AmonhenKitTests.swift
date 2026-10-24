@@ -26,7 +26,8 @@ private func git(_ dir: URL, _ args: String...) throws {
 private func makeRepo() throws -> URL {
     let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-    try git(dir, "init", "-q", "-b", "main")
+    try git(dir, "init", "-q")
+    try git(dir, "symbolic-ref", "HEAD", "refs/heads/main")
     try git(dir, "commit", "--allow-empty", "-q", "-m", "first")
     try git(dir, "commit", "--allow-empty", "-q", "-m", "日本語の件名")
     return dir

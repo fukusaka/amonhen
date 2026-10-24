@@ -242,9 +242,13 @@ pub enum Command {
         path: String,
         rev: Option<String>,
     },
-    /// HEAD から `path` を変えたコミット（`info.entries`: oid・subject・author・time・その時点の path）。
+    /// HEAD から `path` を変えたコミット（`info.entries`: oid・subject・author・time・その時点の path）。`limit`
+    /// があれば新しい方からその数までで、`info.more` はその先もあるか。`merges` ならマージも出す（既定は出さない）。
     FileHistory {
         path: String,
+        limit: Option<usize>,
+        #[serde(default)]
+        merges: bool,
     },
     /// `tip` から辿れて `base` から辿れないコミット（`git log base..tip`）。`info`: 全部の数 `count` と、新しい順に
     /// `limit` 個（既定 50）までの `commits`（oid・subject・author・time）。Push・Pull の前に、送る・取り込む
@@ -1718,11 +1722,24 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::FileHistory { path } => {
-                let entries = crate::blame::parse_file_log(&ops.file_log(&path)?);
+            Command::FileHistory {
+                path,
+                limit,
+                merges,
+            } => {
+                // 1 つ多く読んで、その先があるかを知る。
+                let mut entries = crate::blame::parse_file_log(&ops.file_log(
+                    &path,
+                    limit.map(|n| n + 1),
+                    merges,
+                )?);
+                let more = limit.is_some_and(|n| entries.len() > n);
+                if let Some(n) = limit {
+                    entries.truncate(n);
+                }
                 Ok(Response {
                     ok: true,
-                    info: Some(serde_json::json!({ "entries": entries })),
+                    info: Some(serde_json::json!({ "entries": entries, "more": more })),
                     ..Default::default()
                 })
             }
@@ -2207,7 +2224,8 @@ mod tests {
     fn setup() -> (tempfile::TempDir, Repository) {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         git(dir, &["config", "user.name", "a"]);
         git(dir, &["config", "user.email", "a@example.com"]);
         std::fs::write(dir.join("a.txt"), "1\n2\n3\n").unwrap();
@@ -3431,6 +3449,134 @@ mod tests {
     }
 
     #[test]
+    fn follows_a_file_renamed_twice_across_a_merge() {
+        // a.txt は根のコミット（first）で生まれる。
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        commit_file(dir, "a.txt", "second");
+        git(dir, &["mv", "a.txt", "b.txt"]);
+        git(dir, &["commit", "-q", "-m", "to b"]);
+        git(dir, &["switch", "-q", "-c", "side"]);
+        commit_file(dir, "b.txt", "side");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "other.txt", "other");
+        git(dir, &["merge", "-q", "--no-ff", "-m", "merge", "side"]);
+        git(dir, &["mv", "b.txt", "c.txt"]);
+        git(dir, &["commit", "-q", "-m", "to c"]);
+        commit_file(dir, "c.txt", "last");
+
+        let history = run(&repo, r#"{"op":"fileHistory","path":"c.txt"}"#);
+        let entries = history["info"]["entries"].as_array().unwrap();
+        let got: Vec<(&str, &str)> = entries
+            .iter()
+            .map(|e| (e["subject"].as_str().unwrap(), e["path"].as_str().unwrap()))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("last", "c.txt"),
+                ("to c", "c.txt"),
+                ("side", "b.txt"),
+                ("to b", "b.txt"),
+                ("second", "a.txt"),
+                ("first", "a.txt"),
+            ],
+            "マージは出さない"
+        );
+        let oids: Vec<&str> = entries.iter().map(|e| e["oid"].as_str().unwrap()).collect();
+        let follow = git(
+            dir,
+            &[
+                "log",
+                "--follow",
+                "--no-merges",
+                "--format=%H",
+                "--",
+                "c.txt",
+            ],
+        );
+        assert_eq!(oids, follow.lines().collect::<Vec<_>>(), "--follow と同じ");
+        assert_eq!(history["info"]["more"], false);
+
+        // 件数を限ると、改名をまたいでその数で止め、その先があるかを返す。
+        for (limit, more) in [(1, true), (4, true), (6, false), (9, false)] {
+            let json = serde_json::json!({"op": "fileHistory", "path": "c.txt", "limit": limit});
+            let part = run(&repo, &json.to_string());
+            let subjects: Vec<&str> = part["info"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["subject"].as_str().unwrap())
+                .collect();
+            let want: Vec<&str> = got.iter().take(limit).map(|(s, _)| *s).collect();
+            assert_eq!(subjects, want, "{limit}");
+            assert_eq!(part["info"]["more"], more, "{limit}");
+        }
+    }
+
+    #[test]
+    fn shows_merges_in_file_history_only_when_asked() {
+        // 両方の枝で f.txt の別の行を変えて merge する（merge の中身はどちらの親とも違う）。その後で名前を変える。
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        commit_file(dir, "f.txt", "1\n2\n3\n4\n5\n6\n");
+        git(dir, &["switch", "-q", "-c", "side"]);
+        commit_file(dir, "f.txt", "one\n2\n3\n4\n5\n6\n");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "f.txt", "1\n2\n3\n4\n5\nsix\n");
+        git(dir, &["merge", "-q", "--no-ff", "-m", "merge side", "side"]);
+        git(dir, &["mv", "f.txt", "g.txt"]);
+        git(dir, &["commit", "-q", "-m", "rename"]);
+
+        let subjects = |json: &str| -> Vec<(String, String)> {
+            run(&repo, json)["info"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| {
+                    (
+                        e["subject"].as_str().unwrap().to_owned(),
+                        e["path"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect()
+        };
+        let without = subjects(r#"{"op":"fileHistory","path":"g.txt"}"#);
+        assert!(
+            !without.iter().any(|(s, _)| s == "merge side"),
+            "{without:?}"
+        );
+        let with = subjects(r#"{"op":"fileHistory","path":"g.txt","merges":true}"#);
+        assert_eq!(with.len(), without.len() + 1, "{with:?}");
+        assert!(
+            with.contains(&("merge side".to_owned(), "f.txt".to_owned())),
+            "マージにはその時点のパスを添える: {with:?}"
+        );
+    }
+
+    #[test]
+    fn follows_a_file_copied_from_one_changed_in_the_same_commit() {
+        // 訳す前の README を README.ja.md に移し、README は書き直す（ファイルとしては変更とコピー）。
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let text = "one\ntwo\nthree\nfour\nfive\n";
+        commit_file(dir, "README", text);
+        std::fs::write(dir.join("README.ja"), format!("{text}six\n")).unwrap();
+        std::fs::write(dir.join("README"), "translated\n").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "translate"]);
+
+        let history = run(&repo, r#"{"op":"fileHistory","path":"README.ja"}"#);
+        let paths: Vec<&str> = history["info"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, ["README.ja", "README"], "{history}");
+    }
+
+    #[test]
     fn fast_forwards_a_branch_without_checking_it_out() {
         let (tmp, repo) = setup();
         let dir = tmp.path();
@@ -3485,7 +3631,8 @@ mod tests {
     ) -> (tempfile::TempDir, Repository) {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        git(dir, &["init", "-q", "-b", "main"]);
+        git(dir, &["init", "-q"]);
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
         std::fs::write(dir.join("a.txt"), committed).unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "first"]);

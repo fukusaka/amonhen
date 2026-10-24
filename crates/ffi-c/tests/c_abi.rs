@@ -34,7 +34,8 @@ fn git(dir: &std::path::Path, args: &[&str]) {
 fn reads_history_through_the_c_abi() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(dir, &["commit", "--allow-empty", "-q", "-m", "first"]);
     git(dir, &["commit", "--allow-empty", "-q", "-m", "second"]);
 
@@ -88,7 +89,8 @@ fn shows_the_cached_history_on_the_next_open() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("repo");
     std::fs::create_dir(&dir).unwrap();
-    git(&dir, &["init", "-q", "-b", "main"]);
+    git(&dir, &["init", "-q"]);
+    git(&dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(&dir, &["commit", "--allow-empty", "-q", "-m", "first"]);
     let path = CString::new(dir.to_str().unwrap()).unwrap();
     let cache = CString::new(tmp.path().join("cache").to_str().unwrap()).unwrap();
@@ -111,7 +113,8 @@ fn shows_the_cached_history_on_the_next_open() {
 fn lists_refs_and_finds_their_rows() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(dir, &["commit", "--allow-empty", "-q", "-m", "first"]);
     git(dir, &["branch", "topic"]);
     git(dir, &["commit", "--allow-empty", "-q", "-m", "second"]);
@@ -160,7 +163,8 @@ fn lists_refs_and_finds_their_rows() {
 fn shows_the_files_a_commit_changed_and_their_diffs() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     std::fs::write(dir.join("a.txt"), "one\ntwo\n").unwrap();
     git(dir, &["add", "."]);
     git(dir, &["commit", "-q", "-m", "first"]);

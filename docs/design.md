@@ -42,7 +42,7 @@ Inherit all of the extension's requirements ("Overview" in vscode-amonhen's `doc
 | --- | --- | --- |
 | Core | Rust | No GC pauses, and memory layout can be controlled |
 | Reading git | gix (gitoxide) in the same process | Removes the spawn cost (about 6 ms each) and pipe copies. Can read commit-graph directly |
-| Writing git | Spawn `git` on desktop, gix and libgit2 on iOS / Android | Leave rebase, merge, push etc. to upstream git to keep correctness and compatibility. git cannot be launched on mobile. Swapped via `GitBackend` |
+| Writing git | Spawn `git` on desktop, gix and libgit2 on iOS / Android | Leave rebase, merge, push etc. to upstream git to keep correctness and compatibility. git cannot be launched on mobile. Swapped via `GitBackend`. Needs git 2.23 or later (`git switch`); features of newer git are used only when present, with a fallback (`MIN_GIT_VERSION`, `git_version` in `amonhen-backend-cli`) |
 | Async | tokio (I/O, processes) + rayon (CPU) | Stale requests are cancelled immediately |
 | Diff | imara-diff, highlighting with tree-sitter | Highlighting comes later; show without colors first, immediately |
 | Bridge | Built on a C ABI (cbindgen), UniFFI (Swift / Kotlin), Linux and Windows use it directly from Rust | Type-safe for operations, zero-copy for row data |
@@ -322,7 +322,19 @@ What was fixed to get here:
 - Layout scanned all lanes on every row (1.0 s with 821 lanes). Now it keeps an index from awaited rows to lanes and a set of free lanes (0.18–0.23 s).
 - When the starting points changed, the whole history was reloaded. Now it stops when it hits the previous History and adds only the new commits (`model::topo::extend`).
 
-The 2.4 s for the first load without cache becomes about 1.2 s with commit-graph. Whether to run `git commit-graph write --reachable` in the background in repositories without commit-graph is chosen in settings (`writeCommitGraph`, off by default, since it writes into the repository's `.git`).
+The 2.4 s for the first load without cache becomes about 1.2 s with commit-graph. Whether to run `git commit-graph write --reachable` in the background in repositories without commit-graph is chosen in settings (`writeCommitGraph`, off by default, since it writes into the repository's `.git`). It also writes the changed-path Bloom filters (`--changed-paths`) that speed up per-path history; git older than 2.27 does not know the option, so it writes again without it.
+
+File History (`fileHistory`) does not use `git log --follow`: with it, history simplification and the Bloom filters do not apply and every commit is walked. It walks with `git log --no-merges -- <path>` (without `--no-merges` when `merges` is set; git prints no file name for a merge, so the path at that point is added), and when the path was born by a rename or copy in the oldest commit (`git diff-tree -C`), it continues from that commit's parent with the old name. With `limit`, it passes the remaining count to each `git log` and returns `more`; the macOS File History window first asks for 100 commits, then for all. Time of `amonhen run` for linux (as above, `git clone --shared`), against `git log --follow`:
+
+| File | `--follow` | Now | Now, with Bloom filters | Commits (`--follow` / now) |
+| --- | --- | --- | --- | --- |
+| `kernel/sched/core.c` (renamed) | 86 s | 1.6 s | 0.74 s | 2,924 / 2,909 |
+| `drivers/net/ethernet/intel/e1000/e1000_param.c` (renamed) | 28 s | 1.7 s | 0.48 s | 38 / 38 |
+| `mm/page_alloc.c` | 13 s | 1.2 s | 0.52 s | 2,285 / 2,279 |
+| `MAINTAINERS` | 10 s | 3.7 s | 1.4 s | 12,808 / 12,757 |
+| `COPYING` | 9.5 s | 0.56 s | 0.25 s | 6 / 4 |
+
+- Commits only `--follow` shows: changes on side branches that a merge dropped (reverted, or the same change on both sides), files of the same name in histories merged from another root, and changes made to the old name on branches merged after the rename. `--follow` also follows copies from files the commit did not change; this follows copies only from files the same commit changed.
 
 Loading History (collecting starting points + topological-order walk, `crates/backend-gix/examples/walk.rs`, Apple Silicon, release build):
 

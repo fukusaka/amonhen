@@ -44,7 +44,8 @@ fn commit(dir: &Path, message: &str) {
 fn reads_branches_and_merges_in_topological_order() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     commit(dir, "root");
     git(dir, &["switch", "-q", "-c", "topic"]);
     commit(dir, "topic 1");
@@ -90,7 +91,8 @@ fn reads_branches_and_merges_in_topological_order() {
 #[test]
 fn unborn_head_has_no_commit() {
     let tmp = tempfile::tempdir().unwrap();
-    git(tmp.path(), &["init", "-q", "-b", "main"]);
+    git(tmp.path(), &["init", "-q"]);
+    git(tmp.path(), &["symbolic-ref", "HEAD", "refs/heads/main"]);
     let backend = GixBackend::open(tmp.path()).unwrap();
     assert_eq!(backend.head().unwrap(), None);
     assert!(backend.tips().unwrap().is_empty());
@@ -100,7 +102,8 @@ fn unborn_head_has_no_commit() {
 fn reads_subject_and_author_without_copying() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(
         dir,
         &[
@@ -127,7 +130,8 @@ fn reads_subject_and_author_without_copying() {
 fn writes_a_commit_graph_on_request() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     commit(dir, "first");
     let backend = GixBackend::open(dir).unwrap();
     assert!(!backend.has_commit_graph().unwrap());
@@ -142,13 +146,15 @@ fn lists_branches_remotes_tags_stashes_and_submodules() {
     let tmp = tempfile::tempdir().unwrap();
     let sub = tmp.path().join("sub");
     std::fs::create_dir(&sub).unwrap();
-    git(&sub, &["init", "-q", "-b", "main"]);
+    git(&sub, &["init", "-q"]);
+    git(&sub, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     commit(&sub, "sub");
 
     let dir = tmp.path().join("repo");
     std::fs::create_dir(&dir).unwrap();
     let dir = dir.as_path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     std::fs::write(dir.join("a.txt"), "a").unwrap();
     git(dir, &["add", "a.txt"]);
     commit(dir, "first");
@@ -242,7 +248,8 @@ fn lists_changed_files_with_renames_and_reads_blobs() {
 
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     let long = "line\n".repeat(20);
     std::fs::write(dir.join("keep.txt"), "a\n").unwrap();
     std::fs::write(dir.join("gone.txt"), "x\n").unwrap();
@@ -300,7 +307,8 @@ fn lists_changed_files_with_renames_and_reads_blobs() {
 fn shows_stash_contents_including_untracked_files_but_keeps_them_out_of_history() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     std::fs::write(dir.join("a.txt"), "1\n").unwrap();
     git(dir, &["add", "."]);
     commit(dir, "first");

@@ -22,6 +22,29 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     private let pullItem = NSToolbarItem(itemIdentifier: .pull)
     private let activityItem = NSToolbarItem(itemIdentifier: .activity)
     private let spinner = NSProgressIndicator()
+    /// 同じリポジトリの File History・Blame のタブに付けた、同じ並びのツールバー（中身をこちらに合わせ続ける）。
+    private let mirrors = NSHashTable<MainToolbar>.weakObjects()
+
+    /// File History・Blame のタブに付ける、同じ並びと中身のツールバー。タブを切り替えても、上の並びと中身の大きさが
+    /// 変わらない。こちらを変えると、同じように変わる。
+    func mirror() -> MainToolbar {
+        let other = MainToolbar()
+        other.repositoryButton.title = repositoryButton.title
+        other.repositoryButton.isEnabled = repositoryButton.isEnabled
+        other.repositoryItem.toolTip = repositoryItem.toolTip
+        other.branchButton.title = branchButton.title
+        other.branchButton.isEnabled = branchButton.isEnabled
+        other.branchItem.toolTip = branchItem.toolTip
+        other.undoItem.toolTip = undoItem.toolTip
+        for (mine, theirs) in [(pushItem, other.pushItem), (pullItem, other.pullItem)] {
+            theirs.label = mine.label
+            theirs.toolTip = mine.toolTip
+            if #available(macOS 26.0, *) { theirs.badge = mine.badge }
+        }
+        other.searchItem.searchField.stringValue = searchItem.searchField.stringValue
+        mirrors.add(other)
+        return other
+    }
 
     override init() {
         super.init()
@@ -99,6 +122,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         repositoryButton.title = worktree.map { "\(name) ✎ \($0)" } ?? name
         repositoryItem.toolTip = worktree.map { L("%@ — editing the worktree %@. Click to switch repository", name, $0) }
             ?? L("%@ — click to switch repository", name)
+        for m in mirrors.allObjects { m.setRepository(name, worktree: worktree) }
     }
 
     /// リポジトリを開いていないタブ（リポジトリのページ）: 名前の代わりに案内を出し、押せなくする。
@@ -122,12 +146,14 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     func setBranch(_ name: String?) {
         branchButton.title = name ?? "detached"
         branchItem.toolTip = L("%@ — click to switch branch (⌘⇧B)", name ?? "detached HEAD")
+        for m in mirrors.allObjects { m.setBranch(name) }
     }
 
     /// History の検索欄の中身と揃える。
     func setSearch(_ query: String?) {
         let field = searchItem.searchField
         if field.currentEditor() == nil { field.stringValue = query ?? "" }
+        for m in mirrors.allObjects { m.setSearch(query) }
     }
 
     /// ⌘⇧F: 検索欄に移る。
@@ -167,6 +193,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     func setUndo(_ label: String?) {
         // ラベルの長さでツールバーの幅が変わらないよう、操作の名前はツールチップに出す。
         undoItem.toolTip = label.map { L("Undo: %@ (⌥⌘Z)", $0) } ?? L("Nothing to Undo")
+        for m in mirrors.allObjects { m.setUndo(label) }
     }
 
     /// 今のブランチが上流より先（push できる）・後ろ（pull できる）にあるコミットの数を、ボタンのバッジに出す。
@@ -181,6 +208,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         }
         pushItem.toolTip = ahead > 0 ? L("%ld commits ahead of upstream (⌃⌘P)", ahead) : L("Push (⌃⌘P)")
         pullItem.toolTip = behind > 0 ? L("%ld commits behind upstream (⌃⌘L)", behind) : L("Pull (⌃⌘L)")
+        for m in mirrors.allObjects { m.setTracking(ahead: ahead, behind: behind) }
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {

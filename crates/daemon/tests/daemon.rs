@@ -31,7 +31,8 @@ fn git(dir: &Path, args: &[&str]) {
 fn talks_to_the_daemon_process_and_hears_about_changes() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
 
     let conn = Connection::spawn(
@@ -59,7 +60,8 @@ fn talks_to_the_daemon_process_and_hears_about_changes() {
 fn reports_progress_and_the_reason_when_the_daemon_goes_away() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    git(dir, &["init", "-q", "-b", "main"]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
 
     // 2 秒たったら daemon を止める（ネットワークが切れた代わり）。
@@ -159,7 +161,8 @@ fn provisions_the_engine_on_ssh_hosts() {
     let tmp = tempfile::tempdir().unwrap();
     let repo_dir = tmp.path().join("repo");
     std::fs::create_dir(&repo_dir).unwrap();
-    git(&repo_dir, &["init", "-q", "-b", "main"]);
+    git(&repo_dir, &["init", "-q"]);
+    git(&repo_dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(&repo_dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
     let home = tmp.path().join("home");
     std::fs::create_dir(&home).unwrap();
@@ -259,7 +262,8 @@ fn shares_one_daemon_between_clients() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path().join("repo");
     std::fs::create_dir(&dir).unwrap();
-    git(&dir, &["init", "-q", "-b", "main"]);
+    git(&dir, &["init", "-q"]);
+    git(&dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     // daemon が起動する git でもコミットできるように（CI には全体の設定がない）。
     git(&dir, &["config", "user.name", "a"]);
     git(&dir, &["config", "user.email", "a@example.com"]);
@@ -449,7 +453,8 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     let tmp = tempfile::tempdir().unwrap();
     let repo_dir = tmp.path().join("repo");
     std::fs::create_dir(&repo_dir).unwrap();
-    git(&repo_dir, &["init", "-q", "-b", "main"]);
+    git(&repo_dir, &["init", "-q"]);
+    git(&repo_dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     git(&repo_dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
     // SSH 先のホーム（送り込んだ daemon が置かれる）と、手元の daemon のホーム（History のキャッシュ）。
     let remote_home = tmp.path().join("remote-home");
