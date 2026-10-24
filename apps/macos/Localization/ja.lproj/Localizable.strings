@@ -243,7 +243,6 @@
 "Later rows take precedence (system → global → local → worktree). Only this repository’s (local) values can be changed." = "後の行ほど優先される（system → global → local → worktree）。変えられるのはこのリポジトリ（local）の値だけ。";
 "General" = "一般";
 "Identity" = "名前と署名";
-"Ignore" = "無視するファイル";
 "All Settings" = "すべての設定";
 "Done" = "完了";
 
@@ -1140,3 +1139,12 @@
 "“All repositories” is your git config --global, also used by git in a terminal." = "「すべてのリポジトリ」は、あなたの git config --global です。端末の git も同じ設定に従います。";
 "Needs git 2.38 or later (this git is %@)." = "git 2.38 以降が必要です（この git は %@）。";
 "When a rebase or a History edit rewrites commits, the branches whose tips are among them (branches stacked under the current one) can move along to the rewritten commits, or stay on the old ones. This is git config --global rebase.updateRefs on this Mac, also used by git in a terminal. Each repository can override it in its Settings, and repositories on SSH hosts use the host’s own setting." = "rebase や History の編集でコミットを書き換えるとき、先頭がそのコミットにあるブランチ（今のブランチの下に積んだブランチ）を、書き換えた後のコミットへ一緒に動かすか、古いコミットに残すかを選びます。この Mac の git config --global の rebase.updateRefs で、端末の git も同じ設定に従います。リポジトリごとの値は、そのリポジトリの Settings で変えられます。SSH 先のリポジトリは、SSH 先の設定に従います。";
+"Version" = "版";
+"Unknown" = "不明";
+"Runs on" = "動く場所";
+"The git that reads and writes this repository. Settings marked “all repositories” are that git’s user settings (git config --global)." = "このリポジトリを読み書きする git です。「すべてのリポジトリ」の設定は、この git のユーザーの設定（git config --global）です。";
+"Sync" = "同期";
+"Rewriting" = "書き換え";
+"Files" = "ファイル";
+"Stacked Branches" = "積み重ねたブランチ";
+"Also used by pull with rebase." = "rebase で取り込む pull にも効きます。";

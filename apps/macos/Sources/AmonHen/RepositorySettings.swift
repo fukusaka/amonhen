@@ -227,6 +227,15 @@ private struct GeneralTab: View {
                 Text(L("These settings are kept in this app only (not written to the git config). The display name appears in windows, tabs and the repository list. Automatic fetch runs only while this repository is open."))
                     .font(.caption).foregroundStyle(.secondary)
             }
+            Section {
+                LabeledContent(L("Version"), value: model.gitVersion ?? L("Unknown"))
+                LabeledContent(L("Runs on"), value: model.host ?? L("This Mac"))
+            } header: {
+                Text("git")
+            } footer: {
+                Text(L("The git that reads and writes this repository. Settings marked “all repositories” are that git’s user settings (git config --global)."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
         }
         .formStyle(.grouped)
         .onChange(of: model.displayName) { model.saveGeneral() }
@@ -235,7 +244,7 @@ private struct GeneralTab: View {
     }
 }
 
-/// hooks（git が呼ぶスクリプト）と Git LFS の様子。
+/// hooks（git が呼ぶスクリプト）。
 private struct HooksTab: View {
     let model: RepositorySettingsModel
     var body: some View {
@@ -259,6 +268,16 @@ private struct HooksTab: View {
                 Text(L("Location: %@. .sample files aren’t counted. git runs these on commit, push and so on.", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
                     .font(.caption).foregroundStyle(.secondary)
             }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// Git LFS の様子（入っているか、.gitattributes の LFS のパターン）。
+private struct LFSSection: View {
+    let model: RepositorySettingsModel
+    var body: some View {
+        Form {
             Section {
                 LabeledContent("Git LFS", value: model.lfs ? L("Installed (filter.lfs is set)") : L("Not installed"))
                 if model.lfsPatterns.isEmpty {
@@ -378,7 +397,7 @@ private struct StackedBranchesSection: View {
             }
             Origin(model: model, key: key)
         } header: {
-            Text(L("Stacked Branches in Rebase and History Edits"))
+            Text(L("Stacked Branches"))
         } footer: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(L("When a rebase or a History edit rewrites commits, the branches whose tips are among them (branches stacked under the current one) can move along to the rewritten commits, or stay on the old ones. Branches checked out here or in another worktree always stay. Undo puts back whatever moved."))
@@ -427,26 +446,58 @@ private struct IdentityTab: View {
     }
 }
 
-private struct BranchesTab: View {
+/// リモートとのやり取り（pull・push・fetch）。
+private struct SyncTab: View {
     let model: RepositorySettingsModel
     var body: some View {
         Form {
             Section("Pull") {
                 ChoiceSetting(model: model, title: L("Rebase on pull"), key: "pull.rebase", choices: ["false", "true", "merges"])
                 ChoiceSetting(model: model, title: L("Fast-forward only"), key: "pull.ff", choices: ["true", "false", "only"])
-                ChoiceSetting(model: model, title: L("Stash before rebase"), key: "rebase.autoStash", choices: ["true", "false"])
             }
-            Section("Push・Fetch") {
-                ChoiceSetting(model: model, title: L("Set up the upstream if missing"), key: "push.autoSetupRemote", choices: ["true", "false"])
+            Section("Push") {
                 ChoiceSetting(model: model, title: L("Default push behavior"), key: "push.default", choices: ["simple", "current", "upstream", "matching", "nothing"])
+                ChoiceSetting(model: model, title: L("Set up the upstream if missing"), key: "push.autoSetupRemote", choices: ["true", "false"])
+            }
+            Section("Fetch") {
                 ChoiceSetting(model: model, title: L("Prune deleted branches on fetch"), key: "fetch.prune", choices: ["true", "false"])
             }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// 履歴を書き換える・つなぐ操作（rebase と History の編集、merge）。
+private struct RewritingTab: View {
+    let model: RepositorySettingsModel
+    var body: some View {
+        Form {
+            Section {
+                ChoiceSetting(model: model, title: L("Stash before rebase"), key: "rebase.autoStash", choices: ["true", "false"])
+            } header: {
+                Text("Rebase")
+            } footer: {
+                Text(L("Also used by pull with rebase."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            StackedBranchesSection(model: model)
             Section("Merge") {
                 ChoiceSetting(model: model, title: L("Conflict style"), key: "merge.conflictStyle", choices: ["merge", "diff3", "zdiff3"])
             }
-            StackedBranchesSection(model: model)
         }
         .formStyle(.grouped)
+    }
+}
+
+/// 無視するファイルと LFS。
+private struct FilesTab: View {
+    @Bindable var model: RepositorySettingsModel
+    var body: some View {
+        VStack(spacing: 0) {
+            IgnoreEditor(model: model)
+            // 上の Ignore と同じ地の色にする。
+            LFSSection(model: model).scrollContentBackground(.hidden).frame(height: 180)
+        }
     }
 }
 
@@ -531,7 +582,7 @@ private struct RemotesTab: View {
     }
 }
 
-private struct IgnoreTab: View {
+private struct IgnoreEditor: View {
     @Bindable var model: RepositorySettingsModel
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -605,10 +656,11 @@ private struct RepositorySettingsView: View {
             TabView(selection: $tab) {
                 GeneralTab(model: model).tabItem { Text(L("General")) }.tag("general")
                 IdentityTab(model: model).tabItem { Text(L("Identity")) }.tag("identity")
-                BranchesTab(model: model).tabItem { Text("Branches") }.tag("branches")
+                SyncTab(model: model).tabItem { Text(L("Sync")) }.tag("sync")
+                RewritingTab(model: model).tabItem { Text(L("Rewriting")) }.tag("rewriting")
                 RemotesTab(model: model).tabItem { Text("Remotes") }.tag("remotes")
-                IgnoreTab(model: model).tabItem { Text(L("Ignore")) }.tag("ignore")
-                HooksTab(model: model).tabItem { Text("Hooks・LFS") }.tag("hooks")
+                FilesTab(model: model).tabItem { Text(L("Files")) }.tag("files")
+                HooksTab(model: model).tabItem { Text("Hooks") }.tag("hooks")
                 AllSettingsTab(model: model).tabItem { Text(L("All Settings")) }.tag("all")
             }
             .frame(maxWidth: 820)
