@@ -25,8 +25,13 @@ becomes the GitHub Release notes.
   (Show in History, Blame at the commit, copying the ID or path), with Return and ⌘C.
 - The Pull sheet, the Merge… and Rebase… sheets and a branch's popover show which files would conflict before you
   merge, pull or rebase (git 2.38 or newer; for rebase it is an estimate). `amonhen merge-check` does the same.
+- Settings > Git and each repository's Settings (Branches) choose whether a rebase or a History edit moves the
+  branches stacked under the current one along (git's `rebase.updateRefs`, for all repositories or one; git 2.38 or
+  newer).
 
 #### Changed
+
+- Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it).
 
 - File History and Blame open in a tab next to the repository's tab instead of a separate window, with the same
   toolbar, so switching tabs keeps the toolbar and the size (drag the tab out for a window).
