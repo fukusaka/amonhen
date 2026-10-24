@@ -23,6 +23,8 @@ becomes the GitHub Release notes.
   the repository's window comes first).
 - File History marks where the file was renamed with a heading for each name, and its commits have a context menu
   (Show in History, Blame at the commit, copying the ID or path), with Return and ⌘C.
+- The Pull sheet, the Merge… and Rebase… sheets and a branch's popover show which files would conflict before you
+  merge, pull or rebase (git 2.38 or newer; for rebase it is an estimate). `amonhen merge-check` does the same.
 
 #### Changed
 
