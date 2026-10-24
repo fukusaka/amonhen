@@ -88,6 +88,7 @@
 "Nothing to switch to" = "切り替え先がない";
 "Can’t read the blob ID: {out}" = "blob の ID を読めない: {out}";
 "Can’t compare {ancestor} and {descendant}" = "{ancestor} と {descendant} を比べられない";
+"Can’t merge {theirs} into {ours}: {error}" = "{theirs} を {ours} にマージできない: {error}";
 "{rev} not found" = "{rev} が見つからない";
 "The clone destination folder is invalid" = "clone する先のフォルダがおかしい";
 "The clone destination folder’s name is invalid" = "clone する先のフォルダの名前がおかしい";

@@ -413,6 +413,46 @@ impl Operations for Git {
         }
     }
 
+    fn predict_merge(&self, ours: &str, theirs: &str) -> Result<Option<Vec<String>>> {
+        // `merge-tree --write-tree` は git 2.38 から。それより古い git では調べない（マージを試すと作業ツリーに触る）。
+        if !crate::git_at_least(2, 38) {
+            return Ok(None);
+        }
+        let args = [
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            "-z",
+            ours,
+            theirs,
+        ];
+        let mut cmd = self.command(&args);
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
+        let repo = self.workdir.to_string_lossy().into_owned();
+        let label = format!("git {}", args.join(" "));
+        let out = amonhen_model::activity::track("git", &repo, label, || cmd.output())?;
+        // 終了コードは、きれいにマージできれば 0、コンフリクトすれば 1。1 は名前が読めないときにも返るので、
+        // 先頭の木の ID で見分ける。出力は 木の ID、コンフリクトするファイル（-z で NUL 区切り）。
+        let mut fields = out.stdout.split(|&b| b == 0);
+        let tree = fields.next().and_then(|f| std::str::from_utf8(f).ok());
+        match out.status.code() {
+            Some(0 | 1) if tree.and_then(Oid::from_hex).is_some() => Ok(Some(
+                fields
+                    .filter(|f| !f.is_empty())
+                    .map(|f| String::from_utf8_lossy(f).into_owned())
+                    .collect(),
+            )),
+            _ => Err(tr!(
+                "Can’t merge {theirs} into {ours}: {error}",
+                theirs = theirs,
+                ours = ours,
+                error = String::from_utf8_lossy(&out.stderr).trim()
+            )
+            .into()),
+        }
+    }
+
     fn resolve(&self, rev: &str) -> Result<Oid> {
         let spec = format!("{rev}^{{commit}}");
         let out = text(self.read(&["rev-parse", "--verify", "--quiet", &spec])?)?;

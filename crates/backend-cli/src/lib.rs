@@ -728,6 +728,39 @@ mod ops_tests {
     }
 
     #[test]
+    fn predicts_the_files_a_merge_would_conflict_in() {
+        let (tmp, git) = repo();
+        commit_file(&tmp, &git, "a.txt", "base\n");
+        commit_file(&tmp, &git, "b c.txt", "base\n");
+        git.create_branch("topic", "main", true).unwrap();
+        commit_file(&tmp, &git, "a.txt", "topic\n");
+        commit_file(&tmp, &git, "b c.txt", "topic\n");
+        commit_file(&tmp, &git, "t.txt", "topic\n");
+        git.switch_branch("main").unwrap();
+        commit_file(&tmp, &git, "a.txt", "main\n");
+        commit_file(&tmp, &git, "b c.txt", "main\n");
+        let head = git.head_state().unwrap();
+
+        let predicted = git.predict_merge("main", "topic").unwrap();
+        let clean = git.predict_merge("topic", "topic~1").unwrap();
+        if git_at_least(2, 38) {
+            assert_eq!(predicted, Some(vec!["a.txt".into(), "b c.txt".into()]));
+            assert_eq!(clean, Some(vec![]));
+            assert!(git.predict_merge("main", "nothing").is_err());
+        } else {
+            assert_eq!(
+                predicted, None,
+                "merge-tree --write-tree がない git では調べない"
+            );
+            assert_eq!(clean, None);
+        }
+        // 作業ツリーと index、HEAD はそのまま。
+        assert_eq!(git.head_state().unwrap(), head);
+        assert!(git.status().unwrap().entries.is_empty());
+        assert_eq!(git.sequence_in_progress().unwrap(), None);
+    }
+
+    #[test]
     fn moves_refs_only_when_they_are_where_we_expect() {
         let (tmp, git) = repo();
         let first = commit_file(&tmp, &git, "a.txt", "1\n");

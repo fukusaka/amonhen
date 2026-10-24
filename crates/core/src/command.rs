@@ -258,6 +258,13 @@ pub enum Command {
         tip: String,
         limit: Option<usize>,
     },
+    /// `theirs` を `ours`（既定は HEAD）にマージしたらコンフリクトするファイル（`info.conflicts`。なければ空、
+    /// git が古くて調べられなければ null）。作業ツリーと index には触らない（`git merge-tree --write-tree`）。
+    /// Merge・Pull の前に見せる。rebase は最後の結果が同じになるので、目安に使える。
+    PredictMerge {
+        ours: Option<String>,
+        theirs: String,
+    },
     /// untracked のファイルを消す（git の記録にないので Undo では戻せない）。
     DeleteUntracked {
         paths: Vec<String>,
@@ -1813,6 +1820,14 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::PredictMerge { ours, theirs } => {
+                let conflicts = ops.predict_merge(ours.as_deref().unwrap_or("HEAD"), &theirs)?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "conflicts": conflicts })),
+                    ..Default::default()
+                })
+            }
             Command::Between { base, tip, limit } => {
                 let history = self.load_history()?;
                 let graph = &history.graph;
@@ -2478,6 +2493,40 @@ mod tests {
         assert_eq!(limited["info"]["commits"].as_array().unwrap().len(), 1);
         let back = run(&repo, r#"{"op":"between","base":"topic","tip":"main"}"#);
         assert_eq!(back["info"]["count"], 0);
+    }
+
+    #[test]
+    fn predicts_merge_conflicts_without_touching_the_worktree() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        std::fs::write(dir.join("a.txt"), "1\ntopic\n3\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "topic"]);
+        git(dir, &["switch", "-q", "main"]);
+        std::fs::write(dir.join("a.txt"), "1\nmain\n3\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "main"]);
+        let conflicts = run(&repo, r#"{"op":"predictMerge","theirs":"topic"}"#);
+        let clean = run(
+            &repo,
+            r#"{"op":"predictMerge","ours":"topic","theirs":"main~1"}"#,
+        );
+        assert_eq!(conflicts["ok"], true, "{conflicts}");
+        if amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 38)) {
+            assert_eq!(conflicts["info"]["conflicts"], serde_json::json!(["a.txt"]));
+            assert_eq!(clean["info"]["conflicts"], serde_json::json!([]));
+        } else {
+            // 古い git では調べられない（わからない）。
+            assert!(conflicts["info"]["conflicts"].is_null(), "{conflicts}");
+            assert!(clean["info"]["conflicts"].is_null(), "{clean}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\nmain\n3\n"
+        );
+        assert_eq!(
+            run(&repo, r#"{"op":"sequence"}"#)["text"],
+            serde_json::Value::Null
+        );
     }
 
     #[test]
