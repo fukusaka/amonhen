@@ -18,7 +18,7 @@ struct RemoteEntry: Decodable, Hashable, Identifiable {
     var id: String { name }
 }
 
-/// リポジトリの設定（Repository > Repository Settings…、⌘;）の中身。読み書きはコアの命令を裏で呼ぶ。
+/// リポジトリの設定（サイドバーの Workspace の Settings、⌘;）の中身。読み書きはコアの命令を裏で呼ぶ。
 @Observable
 final class RepositorySettingsModel {
     let repository: Repository
@@ -597,48 +597,52 @@ private struct AllSettingsTab: View {
 
 private struct RepositorySettingsView: View {
     let model: RepositorySettingsModel
-    let onClose: () -> Void
+    /// 開いているタブ（`general`・`branches` など）。
+    @State var tab: String
 
     var body: some View {
         VStack(spacing: 0) {
-            TabView {
-                GeneralTab(model: model).tabItem { Text(L("General")) }
-                IdentityTab(model: model).tabItem { Text(L("Identity")) }
-                BranchesTab(model: model).tabItem { Text("Branches") }
-                RemotesTab(model: model).tabItem { Text("Remotes") }
-                IgnoreTab(model: model).tabItem { Text(L("Ignore")) }
-                HooksTab(model: model).tabItem { Text("Hooks・LFS") }
-                AllSettingsTab(model: model).tabItem { Text(L("All Settings")) }
+            TabView(selection: $tab) {
+                GeneralTab(model: model).tabItem { Text(L("General")) }.tag("general")
+                IdentityTab(model: model).tabItem { Text(L("Identity")) }.tag("identity")
+                BranchesTab(model: model).tabItem { Text("Branches") }.tag("branches")
+                RemotesTab(model: model).tabItem { Text("Remotes") }.tag("remotes")
+                IgnoreTab(model: model).tabItem { Text(L("Ignore")) }.tag("ignore")
+                HooksTab(model: model).tabItem { Text("Hooks・LFS") }.tag("hooks")
+                AllSettingsTab(model: model).tabItem { Text(L("All Settings")) }.tag("all")
             }
+            .frame(maxWidth: 820)
             .padding([.top, .horizontal])
-            HStack {
-                if let error = model.error {
+            if let error = model.error {
+                HStack {
                     Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
+                    Spacer()
                 }
-                Spacer()
-                Button(L("Done")) { onClose() }.keyboardShortcut(.defaultAction)
+                .frame(maxWidth: 820)
+                .padding([.horizontal, .bottom])
             }
-            .padding()
         }
-        .frame(width: 720, height: 560)
+        .padding(.bottom)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
-/// リポジトリの設定をシートで出す。
-enum RepositorySettingsSheet {
-    /// `onClose`: 閉じた（リモートなどが変わったかもしれないので、画面を読み直す）。
-    static func show(
-        for repository: Repository, location: String, title: String, in window: NSWindow, onClose: @escaping () -> Void
-    ) {
-        let model = RepositorySettingsModel(repository: repository, location: location)
+/// リポジトリの設定の画面（サイドバーの Workspace の Settings）。
+final class RepositorySettingsPage: NSHostingController<AnyView> {
+    let model: RepositorySettingsModel
+
+    init(repository: Repository, location: String) {
+        model = RepositorySettingsModel(repository: repository, location: location)
+        let tab = AppDelegate.option("--settings-tab")?.lowercased() ?? "general"
+        super.init(rootView: AnyView(RepositorySettingsView(model: model, tab: tab)))
+    }
+
+    @MainActor required dynamic init?(coder: NSCoder) { fatalError() }
+
+    /// 開くたびに読み直す（端末などで変えたかもしれない）。
+    override func viewWillAppear() {
+        super.viewWillAppear()
         model.load()
-        let sheet = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 720, height: 560), styleMask: [.titled], backing: .buffered, defer: false)
-        sheet.title = L("%@ Settings", title)
-        sheet.contentViewController = NSHostingController(
-            rootView: RepositorySettingsView(model: model) { [weak window, weak sheet] in
-                if let sheet { window?.endSheet(sheet) }
-                onClose()
-            })
-        window.beginSheet(sheet)
     }
 }

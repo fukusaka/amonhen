@@ -246,7 +246,6 @@
 "Ignore" = "無視するファイル";
 "All Settings" = "すべての設定";
 "Done" = "完了";
-"%@ Settings" = "%@ の設定";
 
 /* Settings.swift */
 "Default Pull" = "Pull の既定";
@@ -726,7 +725,7 @@
 "Go to Parent" = "親へ移動";
 "Go to Child" = "子へ移動";
 "Pull With" = "Pull の取り込み方";
-"Repository Settings…" = "リポジトリの設定…";
+"Repository Settings" = "リポジトリの設定";
 "Rebuild History" = "History を作り直す";
 "Discard the History cache and rebuild it from scratch (over the shared daemon, the daemon’s too)" = "History のキャッシュを捨てて最初から作り直す（共有の daemon 越しなら daemon の分も）";
 "Create Pull Request…" = "プルリクエストを作成…";
