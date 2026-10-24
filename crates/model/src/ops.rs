@@ -27,8 +27,10 @@ pub struct HeadState {
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 #[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
 pub enum PullMode {
-    /// merge する（fast-forward で済めばそうする）。
+    /// git の設定（`pull.rebase`・`pull.ff`）に任せる。端末の `git pull` と同じ。
     #[default]
+    Git,
+    /// merge する（fast-forward で済めばそうする）。
     Merge,
     Rebase,
     /// fast-forward で済むときだけ取り込む。
