@@ -31,7 +31,9 @@ becomes the GitHub Release notes.
 
 #### Changed
 
-- Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it).
+- Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), and
+  its tabs are regrouped: General (now with the git in use), Identity, Sync, Rewriting, Remotes, Files, Hooks and All
+  Settings.
 
 - File History and Blame open in a tab next to the repository's tab instead of a separate window, with the same
   toolbar, so switching tabs keeps the toolbar and the size (drag the tab out for a window).
