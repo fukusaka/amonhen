@@ -266,7 +266,8 @@ private struct AllSettingsTab: View {
             Table(rows, sortOrder: $sortOrder) {
                 TableColumn(L("Key"), value: \.key).width(min: 140, ideal: 200)
                 TableColumn(L("Value"), value: \.value)
-                TableColumn(L("Scope"), value: \.scope).width(min: 50, ideal: 60)
+                TableColumn(L("Scope"), value: \.scope) { e in Text(scopeLabel(e.scope, host: model.host)).help(e.scope) }
+                    .width(min: 90, ideal: 110)
                 TableColumn(L("Location"), value: \.origin) { e in Text(describe(e)).foregroundStyle(.secondary) }
             }
             HStack {
@@ -301,19 +302,23 @@ extension RepositorySettingsModel {
         var file = e.origin
         if file.hasPrefix("file:") { file = String(file.dropFirst(5)) }
         file = (file as NSString).abbreviatingWithTildeInPath
-        let label = switch e.scope {
-        case "local": L("this repository")
-        case "global": host.map { L("your settings on %@", $0) } ?? L("your settings")
-        case "worktree": L("this worktree")
-        case "system": L("system")
-        default: e.scope
-        }
-        return (label, file)
+        return (scopeLabel(e.scope, host: host), file)
     }
 
     /// local の値を消す（上の値に戻る）。
     func revert(_ keys: [String]) {
         for key in keys where local(key) != nil { set(key, nil) }
+    }
+}
+
+/// 段（`git config` の scope）の言い方。札と git config の表で同じ言葉を使う。
+func scopeLabel(_ scope: String, host: String?) -> String {
+    switch scope {
+    case "local": L("this repository")
+    case "global": host.map { L("your settings on %@", $0) } ?? L("your settings")
+    case "worktree": L("this worktree")
+    case "system": L("system")
+    default: scope
     }
 }
 
@@ -677,7 +682,7 @@ private struct OperationsPage: View {
                 PullMethodRow(model: model)
             }
             Section("Fetch") {
-                SwitchRow(model: model, question: L("Remove remote-tracking branches deleted on the remote"), help: L("Unset: Amon Hen removes them, a terminal keeps them. Off: neither does."), key: "fetch.prune", defaultOn: false)
+                SwitchRow(model: model, question: L("Remove remote-tracking branches deleted on the remote"), help: "", key: "fetch.prune", defaultOn: false)
             }
             Section("Rebase") {
                 SwitchRow(model: model, question: L("Stash changes before rebasing"), help: L("History edits always stash, whatever this says."), key: "rebase.autoStash", defaultOn: false)

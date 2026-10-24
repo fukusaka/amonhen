@@ -584,15 +584,8 @@ impl Operations for Git {
     }
 
     fn fetch(&self) -> Result<()> {
-        // リモートで消えたブランチは片づける。利用者が `fetch.prune` を false にしていれば、git と同じく残す。
-        let prune = self
-            .read(&["config", "--bool", "--get", "fetch.prune"])
-            .map_or(true, |out| String::from_utf8_lossy(&out).trim() != "false");
-        let mut args = vec!["fetch", "--all"];
-        if prune {
-            args.push("--prune");
-        }
-        self.write(&args).map(drop)
+        // リモートで消えたブランチを片づけるかは、端末の `git fetch` と同じく `fetch.prune` に任せる。
+        self.write(&["fetch", "--all"]).map(drop)
     }
 
     fn pull(&self, mode: PullMode) -> Result<Outcome> {

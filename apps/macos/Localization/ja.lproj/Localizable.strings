@@ -1184,7 +1184,6 @@
 "Branches measures the others against it. Detected from origin/HEAD, main or master; choose one when there is none." = "Branches がほかのブランチの基準にします。origin/HEAD・main・master から判定し、どれもなければここで選びます。";
 "The SSH public key’s path, or the key itself." = "SSH の公開鍵のパスか、鍵そのものです。";
 "The key’s fingerprint or ID; empty picks the key for your email." = "鍵の指紋か ID です。空ならメールアドレスの鍵を使います。";
-"Unset: Amon Hen removes them, a terminal keeps them. Off: neither does." = "未設定なら Amon Hen は片づけ、端末は残します。オフなら、どちらも残します。";
 "With the base (diff3, zdiff3) the merge editor resolves one-sided conflicts by itself. Amon Hen recommends zdiff3." = "元がある形式（diff3・zdiff3）なら、マージエディタが片側だけの変更を自分で解けます。Amon Hen のおすすめは zdiff3 です。";
 ".git/info/exclude, one pattern per line. Shared patterns go in .gitignore." = ".git/info/exclude。1 行に 1 つ。共有するパターンは .gitignore に書きます。";
 "Branches whose tips are among the rewritten commits. Undo puts them back." = "先頭が書き換えるコミットにあるブランチです。Undo で戻ります。";
