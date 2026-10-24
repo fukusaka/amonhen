@@ -90,6 +90,21 @@ fn renamed_from(out: &[u8], path: &str) -> Option<String> {
     None
 }
 
+impl Git {
+    /// `scope`（`--local`・`--global`）の設定を変える。`value` が None なら消す。
+    fn config_set_in(&self, scope: &str, key: &str, value: Option<&str>) -> Result<()> {
+        match value {
+            Some(v) => self.write(&["config", scope, key, v]).map(drop),
+            None => match self.write(&["config", scope, "--unset-all", key]) {
+                Ok(_) => Ok(()),
+                // もともとない（終了コード 5）なら、消したのと同じ。
+                Err(_) if self.read(&["config", scope, "--get-all", key]).is_err() => Ok(()),
+                Err(e) => Err(e),
+            },
+        }
+    }
+}
+
 impl Operations for Git {
     fn blame(&self, path: &str, rev: Option<&Oid>) -> Result<Vec<u8>> {
         let rev = rev.map(|r| r.to_string());
@@ -569,11 +584,14 @@ impl Operations for Git {
     }
 
     fn fetch(&self) -> Result<()> {
-        self.write(&["fetch", "--all", "--prune"]).map(drop)
+        // リモートで消えたブランチを片づけるかは、端末の `git fetch` と同じく `fetch.prune` に任せる。
+        self.write(&["fetch", "--all"]).map(drop)
     }
 
     fn pull(&self, mode: PullMode) -> Result<Outcome> {
         let how = match mode {
+            // git の設定（pull.rebase・pull.ff）に任せる。
+            PullMode::Git => return self.stoppable(&["pull", "--no-edit"], &[]),
             PullMode::Merge => "--no-rebase",
             PullMode::Rebase => "--rebase",
             PullMode::FastForwardOnly => "--ff-only",
@@ -765,15 +783,15 @@ impl Operations for Git {
     }
 
     fn config_set(&self, key: &str, value: Option<&str>) -> Result<()> {
-        match value {
-            Some(v) => self.write(&["config", "--local", key, v]).map(drop),
-            None => match self.write(&["config", "--local", "--unset-all", key]) {
-                Ok(_) => Ok(()),
-                // もともとない（終了コード 5）なら、消したのと同じ。
-                Err(_) if self.read(&["config", "--local", "--get-all", key]).is_err() => Ok(()),
-                Err(e) => Err(e),
-            },
-        }
+        self.config_set_in("--local", key, value)
+    }
+
+    fn config_set_global(&self, key: &str, value: Option<&str>) -> Result<()> {
+        self.config_set_in("--global", key, value)
+    }
+
+    fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
+        Ok(crate::git_version())
     }
 
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {
