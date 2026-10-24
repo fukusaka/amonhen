@@ -881,6 +881,10 @@ impl Operations for RemoteOperations {
         self.op(Op::ConfigList)
     }
 
+    fn config_keys(&self) -> Result<Vec<String>> {
+        self.op(Op::ConfigKeys)
+    }
+
     fn config_set(&self, key: &str, value: Option<&str>) -> Result<()> {
         self.op(Op::ConfigSet(key.to_owned(), value.map(str::to_owned)))
     }

@@ -420,6 +420,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::CountApart { left, right } => encode(&ops.count_apart(&left, &right)?),
         Op::UpdateSubmodules(paths) => encode(&ops.update_submodules(&strs(&paths))?),
         Op::ConfigList => encode(&ops.config_list()?),
+        Op::ConfigKeys => encode(&ops.config_keys()?),
         Op::ConfigSet(key, value) => encode(&ops.config_set(&key, value.as_deref())?),
         Op::ConfigSetGlobal(key, value) => encode(&ops.config_set_global(&key, value.as_deref())?),
         Op::GitVersion => encode(&ops.git_version()?),
