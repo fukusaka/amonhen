@@ -309,6 +309,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             slot?.workingCopy.refresh()
             self?.reloadWorktrees()
         }
+        slot.actions.onFetch = { [weak self] in self?.updateCommitGraph() }
         slot.actions.onUndoChange = { [weak self, weak slot] label in
             guard let self, slot === editing else { return }
             undoLabel = label
@@ -695,15 +696,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             self?.history.loadingMessage = nil
             if let error, self?.isDisconnected != true { NSAlert(error: error).runModal() }
             NSLog("History を最新にするまで %.0f ms", Date().timeIntervalSince(started) * 1000)
-            if error == nil, Settings.writeCommitGraph {
-                Task.detached(priority: .utility) {
-                    do {
-                        if try repository.writeCommitGraphIfMissing() { NSLog("commit-graph を書き出した") }
-                    } catch {
-                        NSLog("commit-graph を書き出せない: \(error)")
-                    }
-                }
-            }
+            if error == nil { self?.updateCommitGraph() }
         }
         NSLog("History を %.0f ms で表示（キャッシュ）", Date().timeIntervalSince(started) * 1000)
         actions.refreshUndo()
@@ -1654,6 +1647,36 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
+    // MARK: - commit-graph
+
+    /// commit-graph を書いている間に、もう一度呼ばれた。
+    private var commitGraphUpdate: (running: Bool, again: Bool) = (false, false)
+
+    /// 設定（Settings > Performance）で選ばれていれば、commit-graph を裏で最新にする。なければ書き出し、
+    /// あれば増えたコミットだけを書き足す。開いたときと fetch・pull の後に呼ぶ。書き足しは増えた数に比例し
+    /// （linux で 1 万 7 千コミットなら 2 秒）、増えていなければ何も書かない。書いている間に呼ばれたら、
+    /// 終わってからもう一度書き足す。
+    func updateCommitGraph() {
+        guard Settings.writeCommitGraph else { return }
+        guard !commitGraphUpdate.running else {
+            commitGraphUpdate.again = true
+            return
+        }
+        commitGraphUpdate = (true, false)
+        let repository = self.repository
+        Task {
+            do {
+                let written = try await Task.detached(priority: .utility) { try repository.updateCommitGraph() }.value
+                if written { NSLog("commit-graph を書き出した") }
+            } catch {
+                NSLog("commit-graph を書き出せない: \(error)")
+            }
+            let again = commitGraphUpdate.again
+            commitGraphUpdate = (false, false)
+            if again { updateCommitGraph() }
+        }
+    }
+
     // MARK: - 自動の fetch
 
     private var autoFetchTimer: Timer?
@@ -1677,6 +1700,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 EventLog.add(repo: name, L("Automatic fetch"))
                 // ref が変わらなくても、リモートのタグは読み直している。
                 reloadTagRemotes()
+                updateCommitGraph()
             } catch {
                 EventLog.add(repo: name, L("Automatic fetch failed: %@", "\(error)"))
                 showFailure(OperationFailure(error, command: ["op": "fetch"]), title: L("Automatic Fetch Failed"))

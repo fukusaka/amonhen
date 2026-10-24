@@ -442,8 +442,8 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::HasCommitGraph)
     }
 
-    fn write_commit_graph(&self) -> Result<()> {
-        self.conn.call(&Request::WriteCommitGraph)
+    fn write_commit_graph(&self, split: bool) -> Result<()> {
+        self.conn.call(&Request::WriteCommitGraph { split })
     }
 
     fn commit_extras(&self, commit: &Oid) -> Result<amonhen_model::CommitExtras> {

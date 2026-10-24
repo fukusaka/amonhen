@@ -271,7 +271,7 @@
 "Show changed files as a tree left of the diff" = "変更ファイルを差分の左に木で表示する";
 "Shows the diffs of the changed files one after another, like a GitHub pull request. Click a file header to collapse it; Viewed collapses files you’ve seen. Commits with more than 200 changed files show one file at a time." = "GitHub のプルリクエストのように、変更ファイルの差分を続けて見せる。ファイルの見出しで畳め、Viewed で見たものを畳む。変更ファイルが 200 を超えるコミットでは 1 ファイルずつ。";
 "Write commit-graph automatically" = "commit-graph を自動で書き出す";
-"When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster." = "commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable --changed-paths を実行する（.git に書き込む）。履歴の読み込みと path: での検索が速くなる。";
+"Keeps the commit-graph up to date in the background (writes to .git): runs git commit-graph write --reachable --changed-paths when you open a repository without one, and adds just the new commits to it (--split) when you open a repository or fetch. Loading history and searching with path: get faster." = "裏で commit-graph を最新に保つ（.git に書き込む）。commit-graph がないリポジトリを開いたときは git commit-graph write --reachable --changed-paths を実行し、あれば開いたときと fetch の後に、増えたコミットだけを書き足す（--split）。履歴の読み込みと path: での検索が速くなる。";
 "Speed up status with fsmonitor" = "fsmonitor で status を速くする";
 "Uses git’s fsmonitor for the status of repositories on this Mac (a git fsmonitor--daemon runs for each repository and creates a socket in .git)." = "この Mac のリポジトリの status で git の fsmonitor を使う（リポジトリごとに git fsmonitor--daemon が常駐し、.git にソケットを作る）。";
 "CLI to use" = "使う CLI";

@@ -324,6 +324,15 @@ What was fixed to get here:
 
 The 2.4 s for the first load without cache becomes about 1.2 s with commit-graph. Whether to run `git commit-graph write --reachable` in the background in repositories without commit-graph is chosen in settings (`writeCommitGraph`, off by default, since it writes into the repository's `.git`). It also writes the changed-path Bloom filters (`--changed-paths`) that speed up per-path history; git older than 2.27 does not know the option, so it writes again without it.
 
+When the repository already has commit-graph, it adds only the commits the graph lacks as a new layer (`--split`; git merges small layers as they pile up), when the repository is opened and after a fetch or pull; with nothing new, git writes nothing (30 ms). Otherwise commits added after the graph was written are read from their objects, and searched by path without Bloom filters, until git's auto gc rewrites the graph. git 2.23, the oldest supported, knows `--split`. linux, with the graph written that many commits before the tip (a copy made with `git clone --shared`):
+
+| Commits not in commit-graph | Adding them | Loading History | File History, first 100 (`kernel/sched/core.c` / `MAINTAINERS`) | `git rev-list --count` of those commits |
+| --- | --- | --- | --- | --- |
+| 17,180 (a merge window) | 1.7 s | 542 → 521 ms | 0.09 → 0.08 s / 0.12 → 0.06 s | 0.24 → 0.06 s |
+| 98,901 (a year) | 13 s | 771 → 548 ms | 0.15 → 0.09 s / 0.13 → 0.07 s | 1.23 → 0.11 s |
+
+Adding takes time in proportion to the new commits (1: 0.05 s, 1,526: 0.3 s, 5,212: 0.7 s), against 141 s for writing the whole graph again, so there is no threshold on the count.
+
 File History (`fileHistory`) does not use `git log --follow`: with it, history simplification and the Bloom filters do not apply and every commit is walked. It walks with `git log --no-merges -- <path>` (without `--no-merges` when `merges` is set; git prints no file name for a merge, so the path at that point is added), and when the path was born by a rename or copy in the oldest commit (`git diff-tree -C`), it continues from that commit's parent with the old name. With `limit`, it passes the remaining count to each `git log` and returns `more`; the macOS File History window first asks for 100 commits, then for all. Time of `amonhen run` for linux (as above, `git clone --shared`), against `git log --follow`:
 
 | File | `--follow` | Now | Now, with Bloom filters | Commits (`--follow` / now) |

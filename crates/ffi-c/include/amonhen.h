@@ -595,13 +595,14 @@ const AmonhenHistory *amonhen_history_rebuild(const AmonhenRepo *repo_ptr);
 const AmonhenHistory *amonhen_history_load_cached(const AmonhenRepo *repo_ptr);
 
 /**
- * commit-graph がなければ書き出す（`git commit-graph write --reachable`）。書き出したら 1、
- * すでにあれば 0、失敗したら -1 を返す。利用者が設定で選んだときだけ、裏のスレッドから呼ぶこと。
+ * commit-graph を最新にする（`git commit-graph write --reachable`）。なければ全体を書き出して 1、
+ * あれば後から増えたコミットだけを書き足して（`--split`）0、失敗したら -1 を返す。利用者が設定で
+ * 選んだときだけ、裏のスレッドから呼ぶこと。
  *
  * # Safety
  * `repo` は有効なリポジトリであること。
  */
-int32_t amonhen_repo_write_commit_graph_if_missing(const AmonhenRepo *repo_ptr);
+int32_t amonhen_repo_update_commit_graph(const AmonhenRepo *repo_ptr);
 
 /**
  * 最新のスナップショット。まだ読んでいなければ NULL。

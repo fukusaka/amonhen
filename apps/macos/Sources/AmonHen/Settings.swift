@@ -441,7 +441,7 @@ private struct PerformanceSettings: View {
         Form {
             Section {
                 Toggle(L("Write commit-graph automatically"), isOn: $model.writeCommitGraph)
-                Note(L("When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster."))
+                Note(L("Keeps the commit-graph up to date in the background (writes to .git): runs git commit-graph write --reachable --changed-paths when you open a repository without one, and adds just the new commits to it (--split) when you open a repository or fetch. Loading history and searching with path: get faster."))
                 Toggle(L("Speed up status with fsmonitor"), isOn: $model.useFSMonitor)
                 Note(L("Uses git’s fsmonitor for the status of repositories on this Mac (a git fsmonitor--daemon runs for each repository and creates a socket in .git)."))
             }

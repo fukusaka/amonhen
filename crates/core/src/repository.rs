@@ -1163,14 +1163,14 @@ impl Repository {
             })
     }
 
-    /// commit-graph がなければ書き出し、書き出したら true を返す。リポジトリの `.git` に書き込むので、
-    /// 利用者が設定で選んだときだけ呼ぶ。大きなリポジトリでは数十秒かかるので裏のスレッドで呼ぶこと。
-    pub fn write_commit_graph_if_missing(&self) -> Result<bool> {
-        if self.backend.has_commit_graph()? {
-            return Ok(false);
-        }
-        self.backend.write_commit_graph()?;
-        Ok(true)
+    /// commit-graph を最新にする。なければ全体を書き出して true を、あれば後から増えたコミットだけを
+    /// 書き足して false を返す（増えていなければ git は何も書かない）。開いたときと fetch の後に呼ぶ。
+    /// リポジトリの `.git` に書き込むので、利用者が設定で選んだときだけ呼ぶ。大きなリポジトリでは
+    /// 全体の書き出しに数十秒〜数分かかるので、裏のスレッドで呼ぶこと。
+    pub fn update_commit_graph(&self) -> Result<bool> {
+        let missing = !self.backend.has_commit_graph()?;
+        self.backend.write_commit_graph(!missing)?;
+        Ok(missing)
     }
 
     /// `snapshot` の `start` 行から `count` 行分の、FE 向けの列。
