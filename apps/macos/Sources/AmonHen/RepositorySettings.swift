@@ -313,8 +313,8 @@ extension RepositorySettingsModel {
 /// 「+」で新しい行が出て、キーと値を入れる。⌘C で選んだ行を `key = value` の形でコピーする。
 /// 上の切り替えも Xcode と同じで、語も Xcode のまま（ページ名と同じく訳さない）: 行は Basic（ページが尋ねるキー。
 /// 未設定でも出す）／Customized（このリポジトリで設定したもの）／All、列は Combined（効いている値と設定元）／Levels。
-/// 行は Xcode が分類ごとにまとめるのと同じく section（`core`・`user`・`remote` など）ごとに見出しの行でまとめる
-/// （すべて開いた形。SwiftUI の Table の開閉は初めがすべて閉じで、開く手段がない）。
+/// 行は Xcode が分類ごとにまとめるのと同じく section（`core`・`user`・`remote` など）ごとの開閉できる組にする
+/// （`DisclosureTableRow`。初めはすべて開いている）。
 private struct AllSettingsTab: View {
     let model: RepositorySettingsModel
     @State private var filter = ""
@@ -330,6 +330,8 @@ private struct AllSettingsTab: View {
     /// 「+」で足している途中（表の最後に、キーと値の欄だけの行が出る）。
     @State private var adding = false
     @State private var newKey = ""
+    /// 閉じた section（初めはすべて開いている）。
+    @State private var collapsed = Set<String>()
     @FocusState private var focus: Field?
 
     private enum Field: Hashable { case value, newKey, newValue }
@@ -344,7 +346,14 @@ private struct AllSettingsTab: View {
         "merge.conflictstyle", "core.autocrlf", "core.filemode",
     ]
 
-    private var rows: [ConfigRow] {
+    /// section ごとの組: 見出しの行と、その中の行。
+    private struct Section: Identifiable {
+        let header: ConfigRow
+        let rows: [ConfigRow]
+        var id: String { header.key }
+    }
+
+    private var sections: [Section] {
         let f = filter.trimmingCharacters(in: .whitespaces)
         var all = model.configRows
         switch rowsMode {
@@ -357,21 +366,19 @@ private struct AllSettingsTab: View {
         let sorted = all
             .filter { f.isEmpty || $0.key.localizedCaseInsensitiveContains(f) || $0.values.values.contains { $0.localizedCaseInsensitiveContains(f) } }
             .sorted(using: sortOrder)
-        // section ごとに見出しの行を入れる。section の順はキーの並びと同じ向き、中の順は並べ替えのまま。
+        // section の順はキーの並びと同じ向き、中の順は並べ替えのまま。
         var bySection: [String: [ConfigRow]] = [:]
         for row in sorted { bySection[row.section, default: []].append(row) }
-        var sections = bySection.keys.sorted()
-        if let first = sortOrder.first, first.keyPath == \ConfigRow.key, first.order == .reverse { sections.reverse() }
-        var shown: [ConfigRow] = []
-        for section in sections {
-            shown.append(ConfigRow(key: section, effective: "", effectiveScope: "", values: [:], files: [:], isGroup: true))
-            shown += bySection[section] ?? []
+        var names = bySection.keys.sorted()
+        if let first = sortOrder.first, first.keyPath == \ConfigRow.key, first.order == .reverse { names.reverse() }
+        return names.map { name in
+            Section(header: ConfigRow(key: name, effective: "", effectiveScope: "", values: [:], files: [:], isGroup: true),
+                    rows: bySection[name] ?? [])
         }
-        if adding {
-            shown.append(ConfigRow(key: Self.newRowID, effective: "", effectiveScope: "", values: [:], files: [:]))
-        }
-        return shown
     }
+
+    /// 表に出ている行（見出しも含む。コピーの元）。
+    private var rows: [ConfigRow] { sections.flatMap { [$0.header] + $0.rows } }
 
     var body: some View {
         GroupedPage {
@@ -395,7 +402,7 @@ private struct AllSettingsTab: View {
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 240)
             }
-            Table(rows, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
+            Table(of: ConfigRow.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
                 TableColumn(L("Key"), value: \.key) { row in
                     if row.key == Self.newRowID {
                         TextField(L("Key"), text: $newKey)
@@ -452,6 +459,18 @@ private struct AllSettingsTab: View {
                     TableColumn(header("worktree"), value: \.worktree) { row in cell(row, scope: "worktree") }
                         .width(min: 80, ideal: 120)
                         .customizationID("worktree")
+                }
+            } rows: {
+                ForEach(sections) { section in
+                    DisclosureTableRow(section.header, isExpanded: Binding(
+                        get: { !collapsed.contains(section.id) },
+                        set: { open in if open { collapsed.remove(section.id) } else { collapsed.insert(section.id) } }
+                    )) {
+                        ForEach(section.rows) { TableRow($0) }
+                    }
+                }
+                if adding {
+                    TableRow(ConfigRow(key: Self.newRowID, effective: "", effectiveScope: "", values: [:], files: [:]))
                 }
             }
             .contextMenu(forSelectionType: String.self) { keys in
