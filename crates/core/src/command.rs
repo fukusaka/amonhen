@@ -281,11 +281,20 @@ pub enum Command {
     },
     /// すべての設定と、それぞれがどこで決まっているか（`info.entries`。後のものほど優先）。
     ConfigList,
-    /// このリポジトリ（local）の設定を変える。`value` がなければ消す。
+    /// 設定を変える。`value` がなければ消す。`scope` が `"global"` なら、git を動かしているユーザー全体の
+    /// 設定（SSH 先のリポジトリなら SSH 先のユーザーのもの）、なければこのリポジトリ（local）。
     ConfigSet {
         key: String,
         value: Option<String>,
+        #[serde(default)]
+        scope: Option<String>,
     },
+    /// このリポジトリを扱う git の版（`info.version`、読めなければ null）と、rebase で積み重ねたブランチを
+    /// 一緒に動かせるか（`info.updateRefs`。git 2.38 から。版が読めなければ true）。
+    GitVersion,
+    /// git の設定から決まる、pull と fetch のふるまい（`info.pull`: `merge`・`rebase`・`fastForwardOnly`、
+    /// `info.prune`）。Pull のシートが「git の設定に従う」の中身を見せるのに使う。
+    SyncDefaults,
     /// リモート（`info.remotes`）。
     Remotes,
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（`info.stats`: `path`・`added`・`removed`。
@@ -432,19 +441,27 @@ impl Repository {
                 .find(|e| e.key.eq_ignore_ascii_case(key))
                 .map(|e| e.value.clone())
         };
-        // 既定のブランチ: リモートの HEAD（origin を先に）が指すもの、なければ手元の main・master。
+        // 既定のブランチ: 利用者が `amonhen.defaultBranch` で決めていればそのローカルブランチ。なければリモートの
+        // HEAD（origin を先に）が指すもの、それもなければ手元の main・master。
+        let chosen = config_value("amonhen.defaultBranch").and_then(|name| {
+            entries
+                .iter()
+                .find(|e| e.kind == RefKind::Local && e.name == name)
+        });
         let remote_head = entries
             .iter()
             .filter(|e| e.kind == RefKind::Remote && e.name.ends_with("/HEAD"))
             .min_by_key(|e| !e.name.starts_with("origin/"));
-        let base = remote_head
-            .and_then(|h| {
-                let remote = h.name.trim_end_matches("/HEAD");
-                entries.iter().find(|e| {
-                    e.kind == RefKind::Remote
-                        && e.target == h.target
-                        && e.name.starts_with(remote)
-                        && !e.name.ends_with("/HEAD")
+        let base = chosen
+            .or_else(|| {
+                remote_head.and_then(|h| {
+                    let remote = h.name.trim_end_matches("/HEAD");
+                    entries.iter().find(|e| {
+                        e.kind == RefKind::Remote
+                            && e.target == h.target
+                            && e.name.starts_with(remote)
+                            && !e.name.ends_with("/HEAD")
+                    })
                 })
             })
             .or_else(|| {
@@ -1906,9 +1923,54 @@ impl Repository {
                 info: Some(serde_json::json!({ "entries": ops.config_list()? })),
                 ..Default::default()
             }),
-            Command::ConfigSet { key, value } => {
-                ops.config_set(&key, value.as_deref())?;
+            Command::ConfigSet { key, value, scope } => {
+                match scope.as_deref() {
+                    None | Some("local") => ops.config_set(&key, value.as_deref())?,
+                    Some("global") => ops.config_set_global(&key, value.as_deref())?,
+                    Some(other) => return Err(tr!("Unknown scope: {scope}", scope = other).into()),
+                }
                 ok()
+            }
+            Command::SyncDefaults => {
+                let config = ops.config_list()?;
+                // 後のものほど優先（`git config --list` の順）。
+                let value = |key: &str| {
+                    config
+                        .iter()
+                        .rev()
+                        .find(|e| e.key.eq_ignore_ascii_case(key))
+                        .map(|e| e.value.to_ascii_lowercase())
+                };
+                let pull = if value("pull.ff").as_deref() == Some("only") {
+                    "fastForwardOnly"
+                } else if matches!(
+                    value("pull.rebase").as_deref(),
+                    Some("true" | "yes" | "on" | "1" | "merges" | "interactive")
+                ) {
+                    "rebase"
+                } else {
+                    "merge"
+                };
+                let prune = matches!(
+                    value("fetch.prune").as_deref(),
+                    Some("true" | "yes" | "on" | "1")
+                );
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "pull": pull, "prune": prune })),
+                    ..Default::default()
+                })
+            }
+            Command::GitVersion => {
+                let version = ops.git_version()?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({
+                        "version": version.map(|(a, b, c)| format!("{a}.{b}.{c}")),
+                        "updateRefs": version.is_none_or(|(a, b, _)| (a, b) >= (2, 38)),
+                    })),
+                    ..Default::default()
+                })
             }
             Command::IgnoreMatches { text } => {
                 let lines: Vec<(usize, String)> = text
@@ -3381,6 +3443,57 @@ mod tests {
     }
 
     #[test]
+    fn the_default_branch_can_be_chosen_in_config() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["branch", "trunk"]);
+        let base = || run(&repo, r#"{"op":"branchGroups"}"#)["info"]["base"].clone();
+        assert_eq!(base(), "main");
+        git(dir, &["config", "amonhen.defaultBranch", "trunk"]);
+        assert_eq!(base(), "trunk");
+        // ないブランチなら、判定したものに戻る。
+        git(dir, &["config", "amonhen.defaultBranch", "gone"]);
+        assert_eq!(base(), "main");
+    }
+
+    #[test]
+    fn reads_pull_and_fetch_defaults_from_git_config() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let defaults = || run(&repo, r#"{"op":"syncDefaults"}"#)["info"].clone();
+        let d = defaults();
+        assert_eq!(d["pull"], "merge", "{d}");
+        assert_eq!(d["prune"], false, "{d}");
+
+        git(dir, &["config", "pull.rebase", "merges"]);
+        git(dir, &["config", "fetch.prune", "true"]);
+        let d = defaults();
+        assert_eq!(d["pull"], "rebase", "{d}");
+        assert_eq!(d["prune"], true, "{d}");
+
+        // pull.ff=only は pull.rebase より強い。
+        git(dir, &["config", "pull.ff", "only"]);
+        assert_eq!(defaults()["pull"], "fastForwardOnly");
+    }
+
+    #[test]
+    fn reports_the_git_version_and_whether_rebase_can_move_stacked_branches() {
+        let (_tmp, repo) = setup();
+        let r = run(&repo, r#"{"op":"gitVersion"}"#);
+        let version = r["info"]["version"].as_str().unwrap();
+        let mut parts = version.split('.').map(|p| p.parse::<u32>().unwrap());
+        let (major, minor) = (parts.next().unwrap(), parts.next().unwrap());
+        assert_eq!(r["info"]["updateRefs"], (major, minor) >= (2, 38), "{r}");
+
+        // 段は local・global だけ。
+        let r = run(
+            &repo,
+            r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
+        );
+        assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
+    }
+
+    #[test]
     fn edits_local_config_remotes_and_ignore_files() {
         let (tmp, repo) = setup();
         let dir = tmp.path();
@@ -3496,7 +3609,8 @@ mod tests {
         // rebase なので merge コミットはなく、手元のコミットが上流の上に載る。
         assert_eq!(git(&dir, &["log", "--format=%s"]), "local\nupstream\nfirst");
         assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
-        // mode を省くと merge。
+        // mode を省くと git の設定に従う（端末の `git pull` と同じ）。pull.rebase=false なら merge。
+        git(&dir, &["config", "pull.rebase", "false"]);
         let r = run(&repo, r#"{"op":"pull"}"#);
         assert_eq!(r["outcome"], "done", "{r}");
         assert_eq!(git(&dir, &["rev-list", "--count", "--merges", "HEAD"]), "1");

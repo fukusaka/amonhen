@@ -107,6 +107,10 @@
 
 保存は UserDefaults ではなく `~/Library/Application Support/Amon Hen/bookmarks.json`（構造があり、手で直せるように）。スキャンの結果は保存せず、起動時に裏で取り直す。
 
+### SSH 先のホストごとの設定
+
+Places の SSH 先の項目を選ぶと（右クリックの「ホストの設定…」でも）、そのホストの設定が開く。ホストにあるすべてのリポジトリに効く。リポジトリではなく機械の性質だから。使う git（ホストの PATH で見つけたもの、またはパス）、エンジン（ホストの PATH の `amonhen`、Amon Hen が送り込んだもの、またはパス。送り込むかどうか）、署名をこの Mac の鍵で検証するかホストの鍵で検証するか、探すフォルダ。環境変数（`AMONHEN_REMOTE_ENGINE`・`AMONHEN_PUSH`）はこれより優先する。リポジトリの Settings の一覧の下の 1 行（`git 2.34 · build-1`）を押すと、このシートが開く。
+
 ## 3. 設定画面（Settings…、⌘,）
 
 macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewController` の `.toolbar` スタイル、中身は SwiftUI の `Form`）。今アプリメニューにあるトグルはここへ移す。
@@ -114,7 +118,7 @@ macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewCont
 | タブ | 項目 |
 | --- | --- |
 | General | 起動時に前回のリポジトリを開く、開いたリポジトリをブックマークに足す、リポジトリを開く既定（タブ / ウィンドウ）、外部エディタ・ターミナル・差分ツールの選択 |
-| Git | git の実行ファイルの場所と版、グローバルの `user.name`・`user.email`・署名の鍵（`git config --global` を読み書き）、pull の既定（merge / rebase / ff-only）、fetch の `--prune`、自動 fetch の間隔、push 前の確認 |
+| Git | 使う git（見つかったものから選ぶか、パスで）とそのバージョン、pull の既定（git の設定に従う／マージ／rebase／fast-forward）、開いているすべてのリポジトリの自動 fetch の間隔、ユーザー全体の `rebase.updateRefs`、コミットのテンプレートの一覧（名前つき。`{branch}`・`{issue}`・`{date}` の置換）、全体の excludes（`core.excludesFile`）、見つかった gpg・ssh-keygen・gpgsm のプログラム（上書きできる）、グローバルの `user.name`・`user.email`・署名の鍵（`git config --global`）、push 前の確認。`--global` に書く唯一の場所で、端末の git も従うと書く |
 | Accounts | GitHub・GitLab などのアカウント（後述）。トークンはキーチェーン |
 | Appearance | テーマ（システム / ライト / ダーク）、差分とメッセージのフォントと大きさ、History の並び順・1 行表示・表示項目・アバター・祖先の強調、グラフの色 |
 | Diff & Merge | unified / split の既定、空白の無視、前後の行数、折り返し、タブ幅、マージエディタの既定の並び（後述）、diff3 |
@@ -123,18 +127,140 @@ macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewCont
 | Performance | commit-graph の自動書き出し、fsmonitor、永続キャッシュの場所と大きさ・消去、裏のタブの扱い |
 | Advanced | SSH 先の署名の検証、daemon の送り込み先、ログの詳しさ、計測の記録 |
 
-## 4. リポジトリの設定（Repository Settings…、⌘;）
+## 4. リポジトリの設定（サイドバーの Workspace の Settings、⌘;）
 
-リポジトリごとのシート。git の設定は「実際に効いている値」と「どこで決まっているか」（`git config --show-origin`：system / global / local / worktree）を並べ、local で上書き・上書きをやめる、を選べるようにする。
+リポジトリ 1 つの画面で、サイドバーの Workspace の最後の行（Repository > Repository Settings、⌘; でも開く）。置くのは、このリポジトリに属していて、かつ「設定」であるものだけ。リポジトリに対する git 自身の設定と、Amon Hen がリポジトリごとに持つわずかなもの。ほかのリポジトリに及ぶものは置かず、リポジトリのファイルやリポジトリの一覧の属性も置かない（それぞれの居場所は 4.7）。
 
-| タブ | 項目 |
+最初の版（タブのあるシート、U11）は、git の設定を git が持つ形のまま見せていた。2 つ目（最初の画面の版）もその形を引きずっていた。「詳細」に畳んだ行、正確に押さないと開かない矢印、端末でしか効かない設定、一覧の属性。この設計は、使う人と、各行が何をするかから始める。
+
+### 4.1 原則
+
+1. **何が起きるかの言葉で問う。** 行はふつうの言葉の質問（「pull のとき、どう取り込むか」）で、答えもふつうの言葉（「マージする」「rebase する」「fast-forward」）。git のキーと生の値は、求めたとき（ⓘ）と「すべての設定」にだけ出す。
+2. **今どう動くかを、いつも 1 つの値で見せる。** 欄には効いている値を出す。どこにも書かれていなければ「未設定」ではなく、git の既定の動きを出す。横に値の出どころ（git の既定、すべてのリポジトリ、このリポジトリ）を書く。
+3. **変えることと、戻すことは別。** 値を選ぶと、このリポジトリに書く。↩︎ はこのリポジトリが上書きしている間だけ出て、押すと上書きが消える。メニューに「上の段のまま」は置かない。
+4. **1 つの判断は 1 つの選択。** git の 2 つのキーで 1 つのことが決まるなら（署名するかと形式、pull の方式）、行は 1 つの選択にして、両方のキーを書く。
+5. **書かせず、選ばせる。** 答えを並べられるなら（署名の鍵、テンプレート、使う git、リモート）、行は一覧から選ぶ。手で書くのは「その他…」の項目であって、行そのものではない。
+6. **Amon Hen が従うものだけ。** Amon Hen 自身の操作が無視する git の設定（明示的に引数を渡しているため）は、この画面に置かず、「すべての設定」に残す。同じ値でも端末と Amon Hen で動きが違うなら、説明にそう書く。
+7. **共有のものは共有の場所に。** すべてのリポジトリに効くもの（自動 fetch、使う git、gpg のプログラム、テンプレートの一覧、全体の excludes、ユーザー全体の `rebase.updateRefs`）は Settings… > Git に置き、ここには置かない。この画面は、全体の値が効いているときに出どころを「すべてのリポジトリ」と示す。
+8. **「詳細」は置かない。** 行は、この画面に置く価値があるか、ないかのどちらか。畳んで隠すものはない。
+9. **設定でないものは、設定の顔をしない。** 使っている git、既定のブランチ、hooks、LFS、worktree は「操作つきの情報」として「このリポジトリについて」に。リポジトリのファイル（`.gitignore`）は Working Copy でファイルとして編集する。
+10. **説明は読める大きさで。** 各質問の下に 1 文、本文と同じ大きさの薄い字で、質問より少し内側に。小さな字は使わない。
+11. **言葉を 1 つにする。** 表示の言語にすべての名前を揃える。ページの名前も。キー・値・ファイル名は git のつづりのまま。
+
+### 4.2 行の形
+
+選ぶ設定で、このリポジトリには何も書かれていない（全体の値か git の既定が効いている）とき:
+
+```
+pull のとき、どう取り込むか                      ( マージする          ⌄ )   git の既定  ⓘ
+    マージは、両側に新しいコミットがあればマージコミットを作る。rebase は、自分のコミットを
+    取ってきたコミットの上に載せ直す。fast-forward は、分かれていれば取り込まない。
+```
+
+同じ行で、ここで「rebase する」を選んだ後:
+
+```
+pull のとき、どう取り込むか                      ( rebase する         ⌄ ) ↩︎  このリポジトリ  ⓘ
+    マージは、両側に新しいコミットがあればマージコミットを作る。…
+```
+
+ⓘ を押すと、どこに書かれているかが吹き出しに出る。行は開かない:
+
+```
+  pull.rebase = true
+  このリポジトリ（.git/config）
+  ここで上書きしなければ: マージする（すべてのリポジトリ、~/.gitconfig）
+```
+
+はい／いいえの設定は、同じ出どころつきのスイッチ:
+
+```
+rebase の前に変更を退避する                                   (  ●)   このリポジトリ  ↩︎  ⓘ
+    コミットしていない変更を、rebase と rebase で取り込む pull の前に退避し、後で戻す。
+    History の編集はいつも退避する。
+```
+
+答えを集めて並べる選択（署名の鍵。上で選んだ形式で一覧が変わる）:
+
+```
+鍵                                ( 0F8A 1B2C … Ada Lovelace <ada@example.com>  ⌄ )   すべてのリポジトリ  ⓘ
+                                    ├ 0F8A 1B2C … Ada Lovelace <ada@example.com>
+                                    ├ 7D3E 9A10 … Ada Lovelace (work) <ada@work.example>
+                                    └ その他…
+```
+
+使っている git が従えない行（ここでは git 2.38 未満での積み重ねたブランチ）:
+
+```
+rebase のとき、積み重ねたブランチも一緒に動かす      ( 動かさない   ⌄ )   git の既定  ⓘ
+    ⚠ git 2.38 以降が必要。このリポジトリの git は 2.34（build-1）。
+```
+
+左から順に: 質問とその下の説明、効いている値を出す欄、このリポジトリが上書きしている間の ↩︎、出どころ、ⓘ。
+
+### 4.3 値の出どころ
+
+| 出どころ | 意味 | git では |
+| --- | --- | --- |
+| git の既定 | どこにも書かれていない。git 自身の既定の動きを出している | — |
+| すべてのリポジトリ | git を動かすユーザーが、すべてのリポジトリに決めた（Settings… > Git） | `--global`（`~/.gitconfig`） |
+| このリポジトリ | ここで決めた。↩︎ で消せる | `--local`（`.git/config`） |
+| この worktree | 今の worktree だけに決めた | `--worktree` |
+| システム全体 | この機械のすべてのユーザーに決めてある（ここでは読むだけ） | `--system` |
+
+SSH 先のリポジトリでは、「すべてのリポジトリ」は SSH 先のユーザーのもので、出どころもそう言う（「build-1 のすべてのリポジトリ」）。ツールチップにファイルを出す。git の scope を指す言葉はアプリ全体でこれだけにする。git config の表の「出どころ」の列も同じ言葉で、「global」「local」「system」はその列のツールチップにしか出さない。
+
+### 4.4 書くことと、戻すこと
+
+- 値を選ぶと、すぐこのリポジトリに書く（`git config --local`）。確認は出さない。↩︎ が戻る道で、書けた時点で出どころが変わる。
+- 書けなかったら、行の下に赤でその理由を出し、欄は前の値に戻る。
+- この画面は `--global` には書かない。Settings… > Git が書き、そこに「端末の git もこの設定に従う」と 1 行添える。
+
+### 4.5 ページ
+
+左に一覧、右に選んだページ（システム設定と同じ形）。一覧に組はない。よく変えるページを先に、たまに見る 2 つを最後に並べ、一覧の下に小さな 1 行で、このリポジトリを動かしている git を出す（`git 2.54.0 · この Mac`、`git 2.34 · build-1`）。押すとその機械の設定が開く（この Mac なら Settings… > Git、SSH 先なら Repositories の画面のホストの設定。2 章）。ページの名前は中身で付ける。「〜について」「すべての〜」という名前は付けない。ここにあるものはどれも、このリポジトリの設定だから。
+
+| ページ | 行 |
 | --- | --- |
-| General | 表示名・色ラベル、既定のブランチ、自動 fetch の有無 |
-| Identity | `user.name`・`user.email`・`user.signingkey`・`commit.gpgsign` の上書き（仕事用と個人用を分けるため） |
-| Remotes | 追加・名前の変更・URL の編集・削除・prune。GitHub などに紐づくかを表示 |
-| Branches | 上流の設定、`pull.rebase`・`rebase.autoStash`・`push.autoSetupRemote` |
-| Ignore | `.gitignore` と `.git/info/exclude` の編集（パターンに合うファイルの例を横に） |
-| Advanced | `core.autocrlf`・`core.fileMode`・LFS・hooks の一覧（有効 / 無効）、submodule の更新方針、すべての local 設定の表（キーと値を直接編集） |
+| 作者と署名 | **名前**、**メール**（`user.name`・`user.email`。一覧にできないので手で書く）。**署名**: 1 つの選択で、署名しない／OpenPGP／SSH／X.509（`commit.gpgsign` と `gpg.format` を一緒に書く）。**鍵**: 選んだ形式に合わせて集めた一覧（OpenPGP は `gpg --list-secret-keys` でメールアドレスの合う鍵を先頭に、SSH は `~/.ssh/*.pub` と `ssh-add -L`、X.509 は `gpgsm --list-secret-keys`）と、一覧にない値のための「その他…」。集めるのはコアなので、SSH 先のリポジトリなら SSH 先で集める（`user.signingkey`）。gpg・ssh-keygen・gpgsm のプログラムは Amon Hen が見つけ、Settings… > Git に出して、そこで上書きできる。 |
+| コミット | **メッセージのテンプレート**: なし（空から始める）／Settings… > Git の一覧にあるテンプレート／ファイル…（git の `commit.template`。ファイルの選択で）。選んだテンプレートは行の下に下見を出す。一覧のテンプレートには、コミット欄を開くときに Amon Hen が埋める置換文字列を書ける: `{branch}`、`{issue}`（ブランチ名から取った番号）、`{date}`。git のファイルのテンプレートには置換はない。ほかには置かない。`commit.cleanup` は「すべての設定」に残す。 |
+| ブランチ | **既定のブランチ**: 判定したもの（`origin/HEAD`、なければ `main`・`master`）か、それがないリポジトリのためにここで選ぶローカルブランチ。Amon Hen 独自のキー `amonhen.defaultBranch` を `.git/config` に書くので、CLI と拡張からも見える。Branches の「取り込み済み」と幹の判定に使う。何も選んでいない間、出どころは「自動で判定」。 |
+| 操作 | **Pull**: pull のとき、どう取り込むか（マージする／rebase する／fast-forward。`pull.rebase`。最後のものは `pull.ff=only` と `pull.rebase=false` を両方書く）。**Fetch**: リモートで消えたブランチを片づける（`fetch.prune`。Amon Hen の Fetch も、端末の `git fetch` と同じく、オンのときだけ `--prune` を付ける。だから説明は要らない）。**Rebase**: rebase の前に変更を退避する（`rebase.autoStash`。History の編集はいつも退避する）、rebase と History の編集で、積み重ねたブランチも一緒に動かす（`rebase.updateRefs`。git 2.38 未満では見つかった版を添えて選べなくする）。**Merge**: コンフリクトをファイルにどう書くか（両側／両側と元／両側と元（共通の部分を省く）。`merge.conflictStyle`。説明に、マージエディタは 3 つとも扱え、元があれば片側だけの変更と単語単位のコンフリクトを自分で解けるので、Amon Hen のおすすめは zdiff3 と書く）。Push の行は置かない: Amon Hen の Push は、シートで決めた先へ refspec と `--set-upstream` を明示して送るので、`push.default` と `push.autoSetupRemote` は端末にしか効かない（「すべての設定」に）。 |
+| Working Copy | **改行**（`core.autocrlf`: コミットのまま／作業ツリーは CRLF でコミットは LF／コミットは LF）。**実行の権限の変化を追う**（`core.fileMode`）。**このリポジトリだけで無視する**: `.git/info/exclude` のエディタ。各行に合うファイルの数を、書いたそばから行の右に出す（ボタンは置かない）。`status.showUntrackedFiles` は置かない（Amon Hen の status は untracked をいつもすべて出す）。`.gitignore` も置かない。リポジトリのファイルだから（4.7）。 |
+| リモート | リモートの表（名前、fetch の URL、違うときだけ push の URL、GitHub などに紐づくか）。追加・編集・削除は 1 つのシートで: 名前、fetch の URL、push の URL（空なら同じ）、URL が指すもの（GitHub、GitLab、パス、SSH 先）、保存する前の接続の確認（`git ls-remote`）。prune はリモートごと。同じ操作をサイドバーにも置く: Remotes の見出しの右クリックに「リモートを追加…」、各リモートの右クリックに「名前を変える」「URL を編集…」「削除」「prune」。 |
+| Hooks・LFS | **Hooks**: 表。hook の名前、git がいつ動かすか（コミットの前、push の前、…）、有効かのスイッチ（実行権限）、エディタで開く。`core.hooksPath` のときはその場所。**LFS**: git-lfs が入っているか（なければ入れ方）、`.gitattributes` の追跡するパターンの表と「パターンを追加…」（`git lfs track`）と削除、LFS にあるファイルの数。名前は中身のまま。両方を 1 語で括れる名前はなく、worktree はサイドバーの Working Copy の下にすでに並んでいる。 |
+| git config | ページは `git config` そのものなので、その名で呼び、訳さない。Xcode の Build Settings のような表。列はキー、効いている値、そして出どころごと（システム全体・すべてのリポジトリ・このリポジトリ・この worktree）の列にその値。効いている値は太字。local の列のセルをダブルクリックすると編集でき、空にするとここでは消える。「+」の行でキーを足す。キーか値で検索、どの列でも並べ替え、⌘C で選んだ行を `key = value` の形でコピー。キーと値を別の欄に書く必要はない。 |
+
+### 4.6 古い git と SSH 先
+
+- 使っている git が知らない設定の行は、隠さずに、選べない形で出す。要る版と、見つかった版（とホスト）を添える。隠さないのは、なぜその動きがないかを使う人が知るため。
+- SSH 先では、どの行も SSH 先の git を読み書きし、一覧（署名の鍵、リモートに届くか）も SSH 先で集める。そこでの `--global` の値は、出どころに「<ホスト> のすべてのリポジトリ」と出す。
+
+### 4.7 この画面に置かないものと、その居場所
+
+| 前はここに | 今は | 理由 |
+| --- | --- | --- |
+| 表示名、色ラベル | Repositories の画面（リポジトリの右クリックの「名前を変える」「色ラベル」） | 一覧の属性で、すでにそこにある |
+| 自動で fetch | Settings… > Git。開いているすべてのリポジトリに 1 つの間隔 | 共有のもの |
+| gpg のプログラムなど | Settings… > Git。Amon Hen が見つけ、上書きできる | 共有のもの |
+| メッセージの整形（`commit.cleanup`） | すべての設定 | ここで決める必要のある判断ではない |
+| `push.default`・`push.autoSetupRemote`・`status.showUntrackedFiles` | すべての設定 | Amon Hen の操作は引数を明示するので、端末にしか効かない |
+| `.gitignore` | Working Copy でファイルとして開く。無視されたファイルの右クリックに「.gitignore に加える」 | リポジトリのファイルで、コミットで共有される |
+| 全体の excludes（`core.excludesFile`） | Settings… > Git | 共有のもの |
+| git のバージョン | 一覧の下の 1 行。押すと機械の設定が開く | リポジトリではなく機械（この Mac か SSH 先）のもので、そこにあるどのリポジトリでも同じ |
+| worktree | サイドバーの Working Copy の下 | すでにそこに並んでいる |
+
+### 4.8 段階
+
+画面の枠組み（一覧、行、出どころと ↩︎、Pull と Fetch が git の設定に従うこと）の後は、それぞれを別の PR にする。
+
+1. 作者と署名を 1 つの選択にし、鍵をコアで集める。
+2. Settings… > Git のテンプレートの一覧と置換文字列、そこから選ぶコミットのページ。
+3. 操作を 1 ページに。Working Copy に exclude のエディタと合う数。`.gitignore` を画面から外す。
+4. リモート: 接続の確認つきのシートと、サイドバーの右クリック。
+5. Hooks・LFS を操作つきの表に。
+6. git config を Xcode の形の表に。
+7. 機械の設定: この Mac の Settings… > Git で使う git の選択、全体の excludes、gpg のプログラム。SSH 先はホストごとの設定のシート（Repositories の画面、2 章）に、使う git・エンジン・署名の検証。
 
 ## 5. ツールバー
 
@@ -449,7 +575,7 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
 | View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Stashes ⌘4、Reflog ⌘5、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
-| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings… ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
+| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
 | Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Create Patch… |
 | Window | 標準（最小化・タブ・すべてのウィンドウを結合）、Repositories ⌘⇧R、Activity ⌥⌘A |
 | Help | ショートカットの一覧、ログの場所を開く |
@@ -557,7 +683,7 @@ git の考え方と、アプリが守ること:
 - [x] U8. マージエディタの埋め込み・3 列の並び・帯、Magic Merge（コアの単語単位のマージ）。Working Copy の右に埋め込み（⧉ で別ウィンドウへ）、Current・Result・Incoming の 3 列（Base は切り替え）、コンフリクトをつなぐ帯と ≫・≪、コンフリクトの位置で揃えるスクロール、Magic Merge の規則 1〜5（import の並びの判定を含む）、ウィンドウの帯（途中の操作・コンフリクトの数・Continue / Skip / Abort）、サイドバーの Conflicts（数のバッジ、押すと最初のファイルを開く）、開いたときに間違えようのない規則だけを自動でかける（設定で切れる）、Magic Merge をコンフリクト 1 つずつ ⌘Z で戻せる、まで済み
 - [x] U9. ウィンドウのタブと、開いていたタブの復元。開くリポジトリは前のウィンドウのタブに入れ、⌘N だけ新しいウィンドウ。タブバーの「+」と ⌘T、Window メニューのタブの操作、ウィンドウごとのタブの並びの記録と復元、裏のタブでは作業ツリーの読み直しを前に出るまで待つ、タブの名前の ●・↑↓、裏になったタブの History は見えている所のチャンクだけを残す（linux を 6,000 行ほど読んだ後に裏にすると 397 → 356 MB）、まで済み
 - [x] U10. ブックマーク（グループ、フォルダのスキャン、状態の表示、Quick Open）。Favorites・Recent・Bookmarks・手で作ったグループ・スキャンするフォルダの見出し、右クリック（お気に入り・名前・グループ・Finder・ターミナル）、スキャン（深さ・除外、一覧を開くたびに探し直す）、行の状態、Quick Open（⌘⇧O・⌘T・⌘N、あいまい検索）、スキャンするフォルダの FSEvents での見張り（リポジトリが増えた・消えたら探し直す。見つけたリポジトリの中の変化は見ない）、ドラッグでの並べ替え（ブックマーク・グループ・お気に入り）、色ラベル、選んだもの・見出しの中のすべての一括 Fetch（4 つずつ、失敗は行に赤で）、開いたリポジトリの自動の登録（スキャンするフォルダの下は除く。Settings で切れる）も済み
-- [x] U11. リポジトリの設定（git の設定と出どころ、Remotes、Ignore）。Repository > Repository Settings…（⌘;）のシートに Identity・Branches・Remotes・Ignore・All Settings。各項目に今効いている値とどこで決まっているか、このリポジトリ（local）での上書き・取り消し、リモートの追加・名前の変更・URL・削除・prune、`.gitignore` と `.git/info/exclude` の編集、General（表示名・色ラベル・開いている間の自動 fetch。アプリの中だけの設定でブックマークに置く）、Hooks・LFS（.git/hooks か core.hooksPath の hook と実行できるか、git lfs が入っているか、.gitattributes の LFS のパターン）、Ignore の各行に合うファイルの例と数（保存する前の中身で、git ls-files -i に聞く）も済み
+- [x] U11. リポジトリの設定（git の設定と出どころ、Remotes、Ignore）。サイドバーの Workspace の画面（Repository > Repository Settings、⌘;。design の 21 まではシート）に Identity・Branches・Remotes・Ignore・All Settings。各項目に今効いている値とどこで決まっているか、このリポジトリ（local）での上書き・取り消し、リモートの追加・名前の変更・URL・削除・prune、`.gitignore` と `.git/info/exclude` の編集、General（表示名・色ラベル・開いている間の自動 fetch。アプリの中だけの設定でブックマークに置く）、Hooks・LFS（.git/hooks か core.hooksPath の hook と実行できるか、git lfs が入っているか、.gitattributes の LFS のパターン）、Ignore の各行に合うファイルの例と数（保存する前の中身で、git ls-files -i に聞く）も済み
 - [x] U12. Activity（コアのリングバッファ、Operations・History・Performance・Events）。Window > Activity（⌥⌘A）とツールバーの Activity（操作の間は回る）。Operations は git の起動とコアの命令（リポジトリ・内容・時間・成否・エラー、絞り込み、JSON に書き出し）、History は操作ログと「ここまで戻す」、Performance は History の入力 → 表示・選択 → 差分・Working Copy の読み直しの p50 / p95 / 最大、Events はファイルの変化の知らせ。SSH 先の daemon で起動した git の記録（2 秒ごとに daemon から読む）、fetch・pull・push・clone の進み具合（`--progress` の行を流しながら拾う）と取り消し（プロセスグループごと止める。SSH 先も daemon に頼む）、操作の失敗をウィンドウの帯で知らせる（fatal:・error: の行、詳細・Activity・閉じる。取り消したときも）も済み
 - [x] U13. GitHub 連携（アカウント、PR の一覧と作成、CI の状態）。gh に任せる。origin の URL から GitHub のリポジトリを判定し、サイドバーの Pull Requests に開いている PR（CI の ✓・✗・●、draft、レビューの状態。CI の印を押すと History と同じチェックの吹き出し）、右クリックでチェックアウト・ブラウザで開く・URL のコピー、選ぶとそのブランチの履歴。Repository > Create Pull Request…（今のコミットのメッセージから、base は既定のブランチ）と Open on GitHub、History のコミットごとの CI の状態（今のブランチと既定のブランチの直近 100 コミットを GraphQL で 1 回に読み、署名の印の右に ✓・✗・時計）、GitHub のアバター（同じ問い合わせで作者の avatarUrl を取り、Gravatar より優先）、自分のリポジトリから Clone（U1）も済み
 - [x] U14. AI（Claude Code / Codex の CLI 経由の翻訳・解説・メッセージの提案、コンフリクトの解消、用途ごとのプロンプトの設定）。印を押すと、そのコミットのチェック（結果・名前・かかった時間。名前からログへ）を吹き出しで並べ、下のボタンで GitHub のチェックのページを開く。やり直した run は名前ごとに 1 行にまとめ（成功があれば、その前の取り消しは出さない）、取り消しで終わったチェックは失敗ではなく取り消しとして出す。Settings > AI で CLI（既定は使わない）・モデル・言語を選び、用途ごとのプロンプトをファイルで編集・既定に戻す。History の詳細の翻訳・解説（複数選択ではまとめた差分）、Working Copy の ✨ 提案（「メッセージに入れる」）、マージエディタの「AI で解消」（JSON で受け、マーカーが残れば捨てる。「Result に入れる」で置き換え、⌘Z で戻せる）と「AI で解説」、結果は流しながら出し、キャッシュする。リポジトリごとの初回の確認、リポジトリのプロンプトの確認、差分の hunk の右クリックからの解説（用途「hunk の解説」、History・Working Copy）、Settings のプロンプトの「試す」（見本の差分・メッセージで今のプロンプトを送る）も済み。Codex はこの Mac に入っていないので、出力の読み取りは確かめていない
@@ -571,6 +697,7 @@ git の考え方と、アプリが守ること:
 - [x] U18. サイドバーの Working Copy の下に worktree を変更の数つきで並べる（はじめは Working Copy の中に全部の worktree の変更を並べ、のちにサイドバーに移した）。
 - [x] U19. History で、各 worktree の HEAD に札（名前と変更のあるファイルの数、書き込む先は ✎）。worktree が
   コミットしたり、ファイルを書き換えたりしたら付け直す。
+- [ ] U20. リポジトリの設定を、使う人から作り直す（4 章）。済み: サイドバーの Workspace の画面とページの一覧（作者と署名、コミット、操作、ブランチ、Working Copy、リモート、Hooks・LFS、git config）とその下の git の 1 行、効いている値を出す行、その出どころ、↩︎ と ⓘ、既定のブランチの上書き（`amonhen.defaultBranch`）、Pull と Fetch が git の設定に従うこと、端末にしか効かない行を画面から外したこと。予定（4.8 の段階で）: 署名を 1 つの選択にして鍵を集める、テンプレートの一覧、exclude の合う数と `.gitignore` を Working Copy から、リモートのシートとサイドバーの操作、Hooks・LFS を操作つきの表に、git config を Xcode の形の表に、機械の設定（この Mac と SSH 先ごと）。
 
 ## 決めたこと
 

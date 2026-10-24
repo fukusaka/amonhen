@@ -100,9 +100,19 @@ enum Settings {
         }
     }
 
+    /// 開いているすべてのリポジトリを、何分ごとに自動で fetch するか（0 ならしない）。変えたら
+    /// `autoFetchChanged` を知らせ、開いているウィンドウがタイマーを組み直す。
+    static var autoFetchMinutes: Int {
+        get { UserDefaults.standard.integer(forKey: "autoFetchMinutes") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "autoFetchMinutes")
+            NotificationCenter.default.post(name: .autoFetchChanged, object: nil)
+        }
+    }
+
     /// Pull（ツールバーのボタン・⌃⌘L）で上流を取り込む既定の方法。`pullMode` の命令に渡す値。
     static var pullMode: PullMode {
-        get { UserDefaults.standard.string(forKey: "pullMode").flatMap(PullMode.init) ?? .merge }
+        get { UserDefaults.standard.string(forKey: "pullMode").flatMap(PullMode.init) ?? .git }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "pullMode") }
     }
 
@@ -262,6 +272,7 @@ extension Notification.Name {
     static let foldMergedBranchesChanged = Notification.Name("foldMergedBranchesChanged")
     static let fileHistoryMergesChanged = Notification.Name("fileHistoryMergesChanged")
     static let gitHubSettingsChanged = Notification.Name("gitHubSettingsChanged")
+    static let autoFetchChanged = Notification.Name("autoFetchChanged")
     /// AI の CLI の選択が変わった（AI のボタンを出す・隠す）。
     static let assistantChanged = Notification.Name("assistantChanged")
 }
@@ -269,21 +280,28 @@ extension Notification.Name {
 
 /// pull での上流の取り込み方（`crates/model` の `PullMode`）。
 enum PullMode: String, CaseIterable {
+    /// git の設定（`pull.rebase`・`pull.ff`）に任せる。端末の `git pull` と同じ。
+    case git
     case merge, rebase, fastForwardOnly
 
     var title: String {
         switch self {
+        case .git: L("Follow git’s settings")
         case .merge: "Merge"
         case .rebase: "Rebase"
         case .fastForwardOnly: "Fast-Forward Only"
         }
     }
+
+    /// 取り込み方そのもの（`.git` 以外）。
+    static let methods: [PullMode] = [.merge, .rebase, .fastForwardOnly]
 }
 
 /// Settings ウィンドウ（⌘,）の中身。開くたびに `Settings` から読み直し、変えたらすぐ書き戻す。
 @Observable
 final class SettingsModel {
     var pullMode = Settings.pullMode { didSet { Settings.pullMode = pullMode } }
+    var autoFetchMinutes = Settings.autoFetchMinutes { didSet { Settings.autoFetchMinutes = autoFetchMinutes } }
     var compactHistoryRows = Settings.compactHistoryRows { didSet { Settings.compactHistoryRows = compactHistoryRows } }
     var historyOrder = Settings.historyOrder { didSet { Settings.historyOrder = historyOrder } }
     var historyItems = Settings.historyItems { didSet { Settings.historyItems = historyItems } }
@@ -325,6 +343,7 @@ final class SettingsModel {
     /// メニューで変えた分を拾う（同じ値なら書き戻さない）。
     func reload() {
         if pullMode != Settings.pullMode { pullMode = Settings.pullMode }
+        if autoFetchMinutes != Settings.autoFetchMinutes { autoFetchMinutes = Settings.autoFetchMinutes }
         if compactHistoryRows != Settings.compactHistoryRows { compactHistoryRows = Settings.compactHistoryRows }
         if highlightAncestors != Settings.highlightAncestors { highlightAncestors = Settings.highlightAncestors }
         if monospacedCommitMessage != Settings.monospacedCommitMessage {
@@ -365,7 +384,14 @@ private struct GitSettings: View {
                 Picker(L("Default Pull"), selection: $model.pullMode) {
                     ForEach(PullMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                Note(L("The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With."))
+                Note(L("The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With. “Follow git’s settings” uses the repository’s pull.rebase and pull.ff, as git pull in a terminal does."))
+            }
+            Section {
+                Picker(L("Fetch automatically"), selection: $model.autoFetchMinutes) {
+                    Text(L("Never")).tag(0)
+                    ForEach([5, 15, 30, 60], id: \.self) { Text(L("Every %ld minutes", $0)).tag($0) }
+                }
+                Note(L("Every open repository is fetched at this interval while its window is open."))
             }
             Section(L("Repository List")) {
                 Toggle(L("Bookmark repositories you open"), isOn: $model.autoBookmark)
@@ -392,8 +418,64 @@ private struct GitSettings: View {
                 Toggle(L("Resolve unambiguous conflicts when the merge editor opens"), isOn: $model.autoMagicMerge)
                 Note(L("Conflicts where both sides are the same, or only one side changed. ⌘Z undoes it. Use ✨ Magic Merge for the rest."))
             }
+            StackedBranchesSettings()
         }
         .formStyle(.grouped)
+    }
+}
+
+/// rebase と History の編集で、積み重ねたブランチも一緒に動かすか（この Mac の `git config --global` の
+/// `rebase.updateRefs`）。リポジトリごとの値は、リポジトリの設定の画面で選ぶ。
+private struct StackedBranchesSettings: View {
+    /// 読み込むまでは nil。
+    @State private var loaded: (value: String, version: String?)?
+    @State private var error: String?
+
+    private var supported: Bool {
+        guard let version = loaded?.version else { return true }
+        let parts = version.split(separator: ".").compactMap { Int($0) }
+        return parts.count < 2 || (parts[0], parts[1]) >= (2, 38)
+    }
+
+    var body: some View {
+        Section(L("Stacked Branches")) {
+            Picker(L("Move stacked branches along when rebasing"), selection: Binding(
+                get: { loaded?.value ?? "" },
+                set: { save($0) }
+            )) {
+                Text(L("Leave them (git’s default)")).tag("")
+                Text(L("Move them along")).tag("true")
+                Text(L("Leave them")).tag("false")
+            }
+            .disabled(loaded == nil || !supported)
+            Note(L("For all repositories on this Mac (git config --global rebase.updateRefs; git in a terminal follows it too). A repository can choose differently in its own Settings. Branches stacked under the current one are those whose tips are among the commits a rebase or a History edit rewrites."))
+            if !supported {
+                Text(L("Needs git 2.38 or later (this git is %@).", loaded?.version ?? "?"))
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        let read = await Task.detached { (LocalGit.globalConfig("rebase.updateRefs") ?? "", LocalGit.version()) }.value
+        loaded = (read.0, read.1)
+    }
+
+    private func save(_ value: String) {
+        loaded?.value = value
+        Task {
+            do {
+                try await Task.detached { try LocalGit.setGlobalConfig("rebase.updateRefs", value.isEmpty ? nil : value) }.value
+                error = nil
+            } catch {
+                self.error = "\(error)"
+            }
+            await load()
+        }
     }
 }
 

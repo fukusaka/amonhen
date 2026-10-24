@@ -25,8 +25,26 @@ becomes the GitHub Release notes.
   (Show in History, Blame at the commit, copying the ID or path), with Return and ⌘C.
 - The Pull sheet, the Merge… and Rebase… sheets and a branch's popover show which files would conflict before you
   merge, pull or rebase (git 2.38 or newer; for rebase it is an estimate). `amonhen merge-check` does the same.
+- Settings > Git and each repository's Settings choose whether a rebase or a History edit moves the branches stacked
+  under the current one along (git's `rebase.updateRefs`; git 2.38 or newer).
+- Pull can follow git's own settings (`pull.rebase`, `pull.ff`), as `git pull` in a terminal does: "Follow git's
+  settings" in Settings > Git, now the default, and in the Pull sheet, which says what those settings choose.
 
 #### Changed
+
+- Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
+  from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
+  where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
+  file. Its pages are Author and Signing, Commits, Operations (pull, fetch, rebase, merge), Branches (the default
+  branch, which Branches measures the others against: detected, or chosen for repositories without one), Working Copy
+  (line endings, the executable bit, ignoring in this repository only), Remotes, Hooks · LFS and git config, with the
+  git that runs the repository shown under the list. Settings that only a terminal honors stay in git config.
+- Fetch automatically is one interval for all open repositories, in Settings > Git, instead of a setting per
+  repository.
+- `.gitignore` is no longer edited in Repository Settings (it is a file of the repository); `.git/info/exclude` is,
+  under Working Copy.
+- Fetch removes remote-tracking branches deleted on the remote only when `fetch.prune` is on, as `git fetch` does;
+  it used to always remove them.
 
 - File History and Blame open in a tab next to the repository's tab instead of a separate window, with the same
   toolbar, so switching tabs keeps the toolbar and the size (drag the tab out for a window).

@@ -514,6 +514,31 @@ const char *amonhen_last_error(void);
 void amonhen_set_fsmonitor(bool enabled);
 
 /**
+ * この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
+ * ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
+ */
+char *amonhen_git_version(void);
+
+/**
+ * この機械のユーザー全体（`git config --global`）の `key` の値。なければ、または読めなければ NULL（読めなければ
+ * `amonhen_last_error` に理由）。`amonhen_string_free` で解放する。git を起動するので、裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `key` は NUL 終端の UTF-8 文字列であること。
+ */
+char *amonhen_global_config(const char *key);
+
+/**
+ * この機械のユーザー全体（`git config --global`）の `key` を変える。`value` が NULL なら消す。失敗したら false
+ * （理由は `amonhen_last_error`）。git を起動するので、裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `key` は NUL 終端の UTF-8 文字列、`value` は NULL か NUL 終端の UTF-8 文字列であること。
+ */
+bool amonhen_set_global_config(const char *key,
+                               const char *value);
+
+/**
  * SSH 先のフォルダの下のリポジトリを探す（リポジトリの一覧の、SSH 先のスキャンするフォルダ）。`location` は
  * `ssh://[user@]host[:port]/path`。エンジンの用意は SSH 先のリポジトリを開くときと同じ（`daemon`・`daemons_dir`）。
  * `excludes` は入らないフォルダの名前を改行でつないだもの。見つけたリポジトリの場所（`ssh://host/path`）を改行で
