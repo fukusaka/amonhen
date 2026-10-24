@@ -1028,6 +1028,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if CommandLine.arguments.contains("--settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .settings) }
         }
+        // --working-copy で、Working Copy を開く（見た目の確認用）。
+        if CommandLine.arguments.contains("--working-copy") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .workingCopy) }
+        }
+        // --app-settings で、アプリの Settings ウィンドウ（Git のタブ）を開く（見た目の確認用）。
+        if CommandLine.arguments.contains("--app-settings") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { SettingsWindowController.shared.show() }
+        }
         // --blame PATH・--file-history PATH で、そのファイルの blame・履歴を開く（見た目の確認用）。
         if let path = AppDelegate.option("--blame") { openBlame(path: path, rev: nil) }
         if let path = AppDelegate.option("--file-history") { openFileHistory(path: path) }
