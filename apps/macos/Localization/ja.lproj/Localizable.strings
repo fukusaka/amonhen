@@ -1128,3 +1128,16 @@
 "read %@" = "%@に読んだ";
 "There, a tag with the same name is a different tag: it points to another commit, or it is another annotated tag on the same commit. Fetch doesn’t overwrite your tag and Push is refused, so the two stay apart until one of them is replaced." = "そこでは、同じ名前で別のタグになっています（違うコミットを指しているか、同じコミットを指す別の注釈付きのタグ）。Fetch は手元のタグを上書きせず、Push は断られるので、どちらかを置き換えるまで、ずれたままです。";
 "Tags have no remote copies here the way branches do, so this was read from each remote at the last Fetch. Push doesn’t send tags; push this one to share it." = "タグには、ブランチのようなリモートの写しが手元にないので、最後の Fetch のときに各リモートから読みました。Push はタグを送らないので、共有するにはこのタグを push します。";
+"Not set (%@)" = "未設定（%@）";
+"Move them along" = "一緒に動かす";
+"Leave them" = "動かさない";
+"git’s default: leave them" = "git の既定: 動かさない";
+"This repository" = "このリポジトリ";
+"All repositories" = "すべてのリポジトリ";
+"All repositories on %@" = "%@ のすべてのリポジトリ";
+"Stacked Branches in Rebase and History Edits" = "rebase と History の編集での、積み重ねたブランチ";
+"When a rebase or a History edit rewrites commits, the branches whose tips are among them (branches stacked under the current one) can move along to the rewritten commits, or stay on the old ones. Branches checked out here or in another worktree always stay. Undo puts back whatever moved." = "rebase や History の編集でコミットを書き換えるとき、先頭がそのコミットにあるブランチ（今のブランチの下に積んだブランチ）を、書き換えた後のコミットへ一緒に動かすか、古いコミットに残すかを選びます。ここやほかの worktree でチェックアウト中のブランチは、いつも残ります。動いたものは Undo で戻ります。";
+"“All repositories on %@” is the git config --global of the user on that host." = "「%@ のすべてのリポジトリ」は、その SSH 先のユーザーの git config --global です。";
+"“All repositories” is your git config --global, also used by git in a terminal." = "「すべてのリポジトリ」は、あなたの git config --global です。端末の git も同じ設定に従います。";
+"Needs git 2.38 or later (this git is %@)." = "git 2.38 以降が必要です（この git は %@）。";
+"When a rebase or a History edit rewrites commits, the branches whose tips are among them (branches stacked under the current one) can move along to the rewritten commits, or stay on the old ones. This is git config --global rebase.updateRefs on this Mac, also used by git in a terminal. Each repository can override it in its Settings, and repositories on SSH hosts use the host’s own setting." = "rebase や History の編集でコミットを書き換えるとき、先頭がそのコミットにあるブランチ（今のブランチの下に積んだブランチ）を、書き換えた後のコミットへ一緒に動かすか、古いコミットに残すかを選びます。この Mac の git config --global の rebase.updateRefs で、端末の git も同じ設定に従います。リポジトリごとの値は、そのリポジトリの Settings で変えられます。SSH 先のリポジトリは、SSH 先の設定に従います。";

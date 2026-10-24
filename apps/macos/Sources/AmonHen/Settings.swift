@@ -392,8 +392,64 @@ private struct GitSettings: View {
                 Toggle(L("Resolve unambiguous conflicts when the merge editor opens"), isOn: $model.autoMagicMerge)
                 Note(L("Conflicts where both sides are the same, or only one side changed. ⌘Z undoes it. Use ✨ Magic Merge for the rest."))
             }
+            StackedBranchesSettings()
         }
         .formStyle(.grouped)
+    }
+}
+
+/// rebase と History の編集で、積み重ねたブランチも一緒に動かすか（この Mac の `git config --global` の
+/// `rebase.updateRefs`）。リポジトリごとの値は、リポジトリの設定の画面で選ぶ。
+private struct StackedBranchesSettings: View {
+    /// 読み込むまでは nil。
+    @State private var loaded: (value: String, version: String?)?
+    @State private var error: String?
+
+    private var supported: Bool {
+        guard let version = loaded?.version else { return true }
+        let parts = version.split(separator: ".").compactMap { Int($0) }
+        return parts.count < 2 || (parts[0], parts[1]) >= (2, 38)
+    }
+
+    var body: some View {
+        Section(L("Stacked Branches in Rebase and History Edits")) {
+            Picker(L("All repositories"), selection: Binding(
+                get: { loaded?.value ?? "" },
+                set: { save($0) }
+            )) {
+                Text(L("Not set (%@)", L("git’s default: leave them"))).tag("")
+                Text("true — \(L("Move them along"))").tag("true")
+                Text("false — \(L("Leave them"))").tag("false")
+            }
+            .disabled(loaded == nil || !supported)
+            Note(L("When a rebase or a History edit rewrites commits, the branches whose tips are among them (branches stacked under the current one) can move along to the rewritten commits, or stay on the old ones. This is git config --global rebase.updateRefs on this Mac, also used by git in a terminal. Each repository can override it in its Settings, and repositories on SSH hosts use the host’s own setting."))
+            if !supported {
+                Text(L("Needs git 2.38 or later (this git is %@).", loaded?.version ?? "?"))
+                    .font(.caption).foregroundStyle(.orange)
+            }
+            if let error {
+                Text(error).font(.caption).foregroundStyle(.red)
+            }
+        }
+        .task { await load() }
+    }
+
+    private func load() async {
+        let read = await Task.detached { (LocalGit.globalConfig("rebase.updateRefs") ?? "", LocalGit.version()) }.value
+        loaded = (read.0, read.1)
+    }
+
+    private func save(_ value: String) {
+        loaded?.value = value
+        Task {
+            do {
+                try await Task.detached { try LocalGit.setGlobalConfig("rebase.updateRefs", value.isEmpty ? nil : value) }.value
+                error = nil
+            } catch {
+                self.error = "\(error)"
+            }
+            await load()
+        }
     }
 }
 

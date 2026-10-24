@@ -41,6 +41,17 @@ final class RepositorySettingsModel {
     var exclude = ""
     private(set) var savedIgnore = ("", "")
     var error: String?
+    /// このリポジトリを扱う git の版（SSH 先なら SSH 先の git）。読めなければ nil。
+    private(set) var gitVersion: String?
+    /// rebase で積み重ねたブランチを一緒に動かせるか（git 2.38 から）。
+    private(set) var updateRefsSupported = true
+    /// 表示名・色ラベル・自動 fetch を変えた（ウィンドウの題名などを直す）。
+    var onGeneralChange: (() -> Void)?
+    /// git の設定・リモートなどを変えた（画面を読み直す）。
+    var onRepositoryChange: (() -> Void)?
+
+    /// SSH 先のリポジトリなら、その SSH 先の名前。
+    var host: String? { RepositoryLocation.isRemote(location) ? RepositoryLocation.host(location) : nil }
 
     init(repository: Repository, location: String) {
         self.repository = repository
@@ -59,6 +70,7 @@ final class RepositorySettingsModel {
         if bookmarks.bookmark(location)?.color != color { bookmarks.setColor(location, color) }
         let minutes = autoFetch > 0 ? autoFetch : nil
         if bookmarks.bookmark(location)?.autoFetch != minutes { bookmarks.setAutoFetch(location, minutes: minutes) }
+        onGeneralChange?()
     }
 
     /// .gitignore と exclude の各行に合うファイルを探す（git に聞くので裏で）。
@@ -91,15 +103,19 @@ final class RepositorySettingsModel {
             struct Remotes: Decodable { let remotes: [RemoteEntry] }
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
             struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String] }
+            struct Version: Decodable { let version: String?; let updateRefs: Bool }
             do {
-                let (e, r, i, h) = try await Task.detached(priority: .userInitiated) {
+                let (e, r, i, h, v) = try await Task.detached(priority: .userInitiated) {
                     (
                         try repository.info(["op": "configList"], as: Entries.self),
                         try repository.info(["op": "remotes"], as: Remotes.self),
                         try repository.info(["op": "ignoreFiles"], as: Ignore.self),
-                        try repository.info(["op": "hooksAndLfs"], as: Hooks.self)
+                        try repository.info(["op": "hooksAndLfs"], as: Hooks.self),
+                        try repository.info(["op": "gitVersion"], as: Version.self)
                     )
                 }.value
+                gitVersion = v.version
+                updateRefsSupported = v.updateRefs
                 hooksPath = h.hooksPath
                 hooks = h.hooks
                 lfs = h.lfs
@@ -132,10 +148,21 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope != "local" }
     }
 
+    /// ユーザー全体（global）での値。
+    func global(_ key: String) -> String? {
+        entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == "global" }?.value
+    }
+
     /// local の値を変える。nil か空なら消す。
     func set(_ key: String, _ value: String?) {
         let value = value?.trimmingCharacters(in: .whitespaces)
         run(["op": "configSet", "key": key, "value": (value?.isEmpty ?? true) ? NSNull() : value!])
+    }
+
+    /// ユーザー全体（global。SSH 先のリポジトリなら SSH 先のユーザー）の値を変える。nil か空なら消す。
+    func setGlobal(_ key: String, _ value: String?) {
+        let value = value?.trimmingCharacters(in: .whitespaces)
+        run(["op": "configSet", "key": key, "value": (value?.isEmpty ?? true) ? NSNull() : value!, "scope": "global"])
     }
 
     func changeRemote(_ change: [String: Any]) {
@@ -159,6 +186,7 @@ final class RepositorySettingsModel {
                 self.error = "\(error)"
             }
             load()
+            onRepositoryChange?()
         }
     }
 }
@@ -299,6 +327,12 @@ private struct ChoiceSetting: View {
     let title: String
     let key: String
     let choices: [String]
+    /// 値の横に添える意味（`true` → 動かす など）。
+    var meanings: [String: String] = [:]
+    /// どこにも書かれていないときの意味（git の既定）。
+    var unset: String?
+    /// 欄の下に、今効いている値がどこで決まっているかを出す。
+    var showsOrigin = true
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -306,11 +340,58 @@ private struct ChoiceSetting: View {
                 get: { model.local(key) ?? "" },
                 set: { model.set(key, $0) }
             )) {
-                Text(L("Inherited (%@)", model.inherited(key)?.value ?? L("Not set"))).tag("")
-                ForEach(choices, id: \.self) { Text($0).tag($0) }
+                Text(L("Inherited (%@)", inheritedText)).tag("")
+                ForEach(choices, id: \.self) { Text(label($0)).tag($0) }
+            }
+            if showsOrigin { Origin(model: model, key: key) }
+        }
+    }
+
+    private var inheritedText: String {
+        if let value = model.inherited(key)?.value { return label(value) }
+        return unset ?? L("Not set")
+    }
+
+    private func label(_ value: String) -> String {
+        meanings[value].map { "\(value) — \($0)" } ?? value
+    }
+}
+
+/// rebase と History の編集で、積み重ねたブランチも一緒に動かすか（git の `rebase.updateRefs`）。このリポジトリと、
+/// ユーザー全体の 2 段で選ぶ。git が古ければ選べない。
+private struct StackedBranchesSection: View {
+    let model: RepositorySettingsModel
+    private let key = "rebase.updateRefs"
+    private var meanings: [String: String] { ["true": L("Move them along"), "false": L("Leave them")] }
+
+    var body: some View {
+        Section {
+            ChoiceSetting(
+                model: model, title: L("This repository"), key: key, choices: ["true", "false"],
+                meanings: meanings, unset: L("git’s default: leave them"), showsOrigin: false)
+            Picker(model.host.map { L("All repositories on %@", $0) } ?? L("All repositories"), selection: Binding(
+                get: { model.global(key) ?? "" },
+                set: { model.setGlobal(key, $0) }
+            )) {
+                Text(L("Not set (%@)", L("git’s default: leave them"))).tag("")
+                ForEach(["true", "false"], id: \.self) { Text("\($0) — \(meanings[$0] ?? "")").tag($0) }
             }
             Origin(model: model, key: key)
+        } header: {
+            Text(L("Stacked Branches in Rebase and History Edits"))
+        } footer: {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L("When a rebase or a History edit rewrites commits, the branches whose tips are among them (branches stacked under the current one) can move along to the rewritten commits, or stay on the old ones. Branches checked out here or in another worktree always stay. Undo puts back whatever moved."))
+                Text(model.host.map { L("“All repositories on %@” is the git config --global of the user on that host.", $0) }
+                    ?? L("“All repositories” is your git config --global, also used by git in a terminal."))
+                if !model.updateRefsSupported {
+                    Text(L("Needs git 2.38 or later (this git is %@).", model.gitVersion ?? "?"))
+                        .foregroundStyle(.orange)
+                }
+            }
+            .font(.caption).foregroundStyle(.secondary)
         }
+        .disabled(!model.updateRefsSupported)
     }
 }
 
@@ -363,6 +444,7 @@ private struct BranchesTab: View {
             Section("Merge") {
                 ChoiceSetting(model: model, title: L("Conflict style"), key: "merge.conflictStyle", choices: ["merge", "diff3", "zdiff3"])
             }
+            StackedBranchesSection(model: model)
         }
         .formStyle(.grouped)
     }
