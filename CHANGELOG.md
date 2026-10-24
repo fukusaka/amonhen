@@ -11,7 +11,7 @@ becomes the GitHub Release notes.
 
 #### Added
 
-- File History can list merge commits too (Show Merge Commits in the list's context menu, or Settings > History >
+- File History can list merge commits too (Show Merge Commits in the list's context menu, or Settings > Appearance >
   File History); they stay out by default.
 - Blame colors the code by syntax, as diffs do.
 - View > Show Tab Bar (⇧⌘T) shows the tab bar of a window with one tab, so its tab can be dragged into another
