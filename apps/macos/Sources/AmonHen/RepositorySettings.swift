@@ -295,6 +295,8 @@ extension RepositorySettingsModel {
 /// すべてのリポジトリ・このリポジトリ・この worktree）の値。効いている段の値は太字。「このリポジトリ」の列だけ
 /// 書ける: 行をダブルクリック（か右クリックの「編集」）で欄になり、Return で書く。空にするとここでは消える。
 /// 「+」で新しい行が出て、キーと値を入れる。⌘C で選んだ行を `key = value` の形でコピーする。
+/// 上の切り替えも Xcode と同じ: 行は「基本（ページが尋ねるキー。未設定でも出す）／ここで設定／すべて」、
+/// 列は「まとめて（効いている値と出どころ）／段ごと」。
 private struct AllSettingsTab: View {
     let model: RepositorySettingsModel
     @State private var filter = ""
@@ -302,6 +304,8 @@ private struct AllSettingsTab: View {
     /// 見出しで並べ替える。初めはキーの順（`onAppear` で入れる。`@State` の初期値にキーパスは置けない）。
     @State private var sortOrder: [KeyPathComparator<ConfigRow>] = []
     @State private var columns = TableColumnCustomization<ConfigRow>()
+    @AppStorage("configTableRows") private var rowsMode = RowsMode.all
+    @AppStorage("configTableColumns") private var columnsMode = ColumnsMode.levels
     /// 「このリポジトリ」の列を編集しているキーと、欄の中身。
     @State private var editing: String?
     @State private var draft = ""
@@ -311,12 +315,28 @@ private struct AllSettingsTab: View {
     @FocusState private var focus: Field?
 
     private enum Field: Hashable { case value, newKey, newValue }
+    private enum RowsMode: String { case basic, setHere, all }
+    private enum ColumnsMode: String { case combined, levels }
     /// 足している途中の行の id（キーは空）。
     private static let newRowID = ""
+    /// 「基本」のキー: このページ群が尋ねるもの（docs/ux.md の 4.5）。git が出す形（小文字）で。
+    private static let basicKeys = [
+        "user.name", "user.email", "commit.gpgsign", "gpg.format", "user.signingkey", "commit.template",
+        "amonhen.defaultbranch", "pull.rebase", "pull.ff", "fetch.prune", "rebase.autostash", "rebase.updaterefs",
+        "merge.conflictstyle", "core.autocrlf", "core.filemode",
+    ]
 
     private var rows: [ConfigRow] {
         let f = filter.trimmingCharacters(in: .whitespaces)
-        var shown = model.configRows
+        var all = model.configRows
+        switch rowsMode {
+        case .all: break
+        case .setHere: all = all.filter { $0.values["local"] != nil || $0.values["worktree"] != nil }
+        case .basic:
+            let byKey = Dictionary(all.map { ($0.key.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
+            all = Self.basicKeys.map { byKey[$0] ?? ConfigRow(key: $0, effective: "", effectiveScope: "", values: [:], files: [:]) }
+        }
+        var shown = all
             .filter { f.isEmpty || $0.key.localizedCaseInsensitiveContains(f) || $0.values.values.contains { $0.localizedCaseInsensitiveContains(f) } }
             .sorted(using: sortOrder)
         if adding {
@@ -328,6 +348,19 @@ private struct AllSettingsTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
+                Picker("", selection: $rowsMode) {
+                    Text(L("Basic")).tag(RowsMode.basic)
+                    Text(L("Set Here")).tag(RowsMode.setHere)
+                    Text(L("All")).tag(RowsMode.all)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .help(L("Basic: the settings the pages here ask about, set or not. Set Here: the keys set in this repository or this worktree. All: every key git reads."))
+                Picker("", selection: $columnsMode) {
+                    Text(L("Combined")).tag(ColumnsMode.combined)
+                    Text(L("Levels")).tag(ColumnsMode.levels)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .help(L("Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold."))
                 Spacer()
                 TextField(L("Search by key or value"), text: $filter)
                     .textFieldStyle(.roundedBorder)
@@ -349,40 +382,46 @@ private struct AllSettingsTab: View {
                 .customizationID("key")
                 .disabledCustomizationBehavior(.all)
                 TableColumn(L("Value in effect"), value: \.effective) { row in
-                    valueText(row.effective)
-                        .help(row.effectiveScope.isEmpty ? "" : "\(scopeLabel(row.effectiveScope, host: model.host)) · \(row.files[row.effectiveScope] ?? "")")
+                    // まとめての表では、ここが「このリポジトリ」の値の欄にもなる。
+                    if columnsMode == .combined && isEditing(row) {
+                        valueField(row)
+                    } else if row.effectiveScope.isEmpty {
+                        // どこにも設定がない（「基本」の未設定のキー）: 空の値とは違うので、何も出さない。
+                        Text("")
+                    } else {
+                        valueText(row.effective)
+                            .help(row.effectiveScope.isEmpty ? "" : "\(scopeLabel(row.effectiveScope, host: model.host)) · \(row.files[row.effectiveScope] ?? "")")
+                    }
                 }
                 .width(min: 100, ideal: 160)
                 .customizationID("effective")
-                TableColumn(header("system"), value: \.system) { row in cell(row, scope: "system") }
-                    .width(min: 80, ideal: 120)
-                    .customizationID("system")
-                TableColumn(header("global"), value: \.global) { row in cell(row, scope: "global") }
-                    .width(min: 80, ideal: 140)
-                    .customizationID("global")
-                TableColumn(header("local"), value: \.local) { row in
-                    if row.key == Self.newRowID {
-                        TextField(L("Value"), text: $draft)
-                            .textFieldStyle(.plain)
-                            .focused($focus, equals: .newValue)
-                            .onSubmit { commitAdding() }
-                            .onExitCommand { cancelAdding() }
-                    } else if editing == row.key {
-                        TextField("", text: $draft)
-                            .textFieldStyle(.plain)
-                            .focused($focus, equals: .value)
-                            .onSubmit { commitEditing() }
-                            .onExitCommand { editing = nil }
-                    } else {
-                        cell(row, scope: "local")
-                    }
-                }
-                .width(min: 80, ideal: 140)
-                .customizationID("local")
                 .disabledCustomizationBehavior(.all)
-                TableColumn(header("worktree"), value: \.worktree) { row in cell(row, scope: "worktree") }
-                    .width(min: 80, ideal: 120)
-                    .customizationID("worktree")
+                if columnsMode == .combined {
+                    TableColumn(L("Source"), value: \.effectiveScope) { row in
+                        Text(row.effectiveScope.isEmpty ? L("git’s default") : scopeLabel(row.effectiveScope, host: model.host))
+                            .foregroundStyle(row.effectiveScope.isEmpty ? .secondary : .primary)
+                            .help(row.effectiveScope.isEmpty ? "" : "\(row.effectiveScope) · \(row.files[row.effectiveScope] ?? "")")
+                    }
+                    .width(min: 110, ideal: 170)
+                    .customizationID("source")
+                    .disabledCustomizationBehavior(.all)
+                } else {
+                    TableColumn(header("system"), value: \.system) { row in cell(row, scope: "system") }
+                        .width(min: 80, ideal: 120)
+                        .customizationID("system")
+                    TableColumn(header("global"), value: \.global) { row in cell(row, scope: "global") }
+                        .width(min: 80, ideal: 140)
+                        .customizationID("global")
+                    TableColumn(header("local"), value: \.local) { row in
+                        if isEditing(row) { valueField(row) } else { cell(row, scope: "local") }
+                    }
+                    .width(min: 80, ideal: 140)
+                    .customizationID("local")
+                    .disabledCustomizationBehavior(.all)
+                    TableColumn(header("worktree"), value: \.worktree) { row in cell(row, scope: "worktree") }
+                        .width(min: 80, ideal: 120)
+                        .customizationID("worktree")
+                }
             }
             // 表の自前の背景（暗い青みの色）を消して、ページの背景の上に置く。
             .scrollContentBackground(.hidden)
@@ -436,6 +475,26 @@ private struct AllSettingsTab: View {
             .reduce(nil) { (acc: Text?, t: Text) in acc.map { $0 + Text("\n") + t } ?? t } ?? Text("")
     }
 
+    /// 足している途中の行か、編集中の行か。
+    private func isEditing(_ row: ConfigRow) -> Bool { row.key == Self.newRowID || editing == row.key }
+
+    /// 「このリポジトリ」の値の欄（足している途中の行と、編集中の行）。
+    @ViewBuilder private func valueField(_ row: ConfigRow) -> some View {
+        if row.key == Self.newRowID {
+            TextField(L("Value"), text: $draft)
+                .textFieldStyle(.plain)
+                .focused($focus, equals: .newValue)
+                .onSubmit { commitAdding() }
+                .onExitCommand { cancelAdding() }
+        } else {
+            TextField("", text: $draft)
+                .textFieldStyle(.plain)
+                .focused($focus, equals: .value)
+                .onSubmit { commitEditing() }
+                .onExitCommand { editing = nil }
+        }
+    }
+
     private func beginEditing(_ key: String) {
         cancelAdding()
         if editing != nil, editing != key { commitEditing() }
@@ -475,9 +534,9 @@ private struct AllSettingsTab: View {
         if focus == .newKey || focus == .newValue { focus = nil }
     }
 
-    /// 選んだ行を `key = value` の形に（効いている値。複数あれば 1 行ずつ）。
+    /// 選んだ行を `key = value` の形に（効いている値。複数あれば 1 行ずつ。どこにも設定のない行は飛ばす）。
     private func copyText(_ keys: Set<String>) -> String {
-        rows.filter { keys.contains($0.key) && $0.key != Self.newRowID }
+        rows.filter { keys.contains($0.key) && $0.key != Self.newRowID && !$0.effectiveScope.isEmpty }
             .flatMap { row in row.effective.split(separator: "\n", omittingEmptySubsequences: false).map { "\(row.key) = \($0)" } }
             .joined(separator: "\n")
     }
