@@ -16,6 +16,22 @@ nonisolated struct CommitRange: Decodable, Sendable {
     static let empty = CommitRange(count: 0, commits: [])
 }
 
+/// `predictMerge` の答え: マージしたらコンフリクトするファイル。git が古くて調べられなければ nil。
+nonisolated struct MergeForecast: Decodable, Sendable {
+    let conflicts: [String]?
+
+    var hasConflicts: Bool { conflicts?.isEmpty == false }
+
+    /// 見せる文。`estimate` なら、rebase の目安だと書き添える（rebase はコミットを 1 つずつ載せ直すので、途中で
+    /// 止まることも、最後の結果では重ならないこともある）。
+    func text(estimate: Bool) -> String {
+        guard let conflicts else { return L("Can’t check for conflicts ahead (needs git 2.38 or newer).") }
+        let names = conflicts.prefix(3).joined(separator: ", ") + (conflicts.count > 3 ? ", …" : "")
+        let line = conflicts.isEmpty ? L("No conflicts expected.") : L("⚠︎ Conflicts expected in %ld files: %@", conflicts.count, names)
+        return estimate ? line + " " + L("Rebase applies the commits one at a time, so this is only an estimate.") : line
+    }
+}
+
 /// Push・Pull・Pop・Undo の前の確認。ボタンを押しただけで、外に出たり履歴が変わったりしないように、何が起きるか
 /// （送る・取り込むコミット、分岐、作業中の変更）をシートで見せてから実行する。↩ で実行できる。
 extension Actions {
@@ -162,12 +178,39 @@ extension Actions {
                 note.stringValue = describe(PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? .merge)
             }
             update()
-            let target = ClosureTarget(update)
+            // 両方に新しいコミットがあるときだけ、取り込むとコンフリクトするかを裏で調べる（fast-forward なら重ならない）。
+            // Fast-Forward Only はマージしないので出さない。rebase は最後の結果での目安。
+            let forecastLabel = incoming.count > 0 && outgoing.count > 0 ? Self.forecastLabel() : nil
+            final class Answer { var forecast: MergeForecast?; var done = false }
+            let answer = Answer()
+            let showForecast = {
+                guard let forecastLabel else { return }
+                let m = PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? .merge
+                if m == .fastForwardOnly {
+                    forecastLabel.stringValue = ""
+                } else if answer.done {
+                    Self.show(answer.forecast, estimate: m == .rebase, in: forecastLabel)
+                } else {
+                    forecastLabel.stringValue = L("Checking for conflicts…")
+                }
+            }
+            showForecast()
+            let target = ClosureTarget {
+                update()
+                showForecast()
+            }
             popup.target = target
             popup.action = #selector(ClosureTarget.fire)
+            if forecastLabel != nil {
+                Task { @MainActor in
+                    answer.forecast = await predictMerge(theirs: upstream)
+                    answer.done = true
+                    showForecast()
+                }
+            }
             let modeRow = NSStackView(views: [NSTextField(labelWithString: L("Integrate with:")), popup])
             modeRow.spacing = 6
-            let stack = NSStackView(views: [modeRow, note])
+            let stack = NSStackView(views: [modeRow, note] + (forecastLabel.map { [$0] } ?? []))
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = 8
@@ -222,6 +265,37 @@ extension Actions {
     }
 
     // MARK: - 部品
+
+    /// `theirs` を `ours` にマージしたらコンフリクトするか（裏で `predictMerge`。作業ツリーと index には触らない）。
+    /// 調べられなければ nil。
+    func predictMerge(ours: String = "HEAD", theirs: String) async -> MergeForecast? {
+        let repository = self.repository
+        return await Task.detached {
+            try? repository.info(["op": "predictMerge", "ours": ours, "theirs": theirs], as: MergeForecast.self)
+        }.value
+    }
+
+    /// シートに出す、コンフリクトの見込みの行。最初は「調べています」で、答えが来たら `show` で書き換える。高さは
+    /// 3 行分に決めておく（答えが来てもシートの大きさを変えないため）。
+    @MainActor
+    static func forecastLabel(width: CGFloat = 440) -> NSTextField {
+        let label = NSTextField(wrappingLabelWithString: "\n\n")
+        label.preferredMaxLayoutWidth = width
+        label.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        label.textColor = .secondaryLabelColor
+        label.maximumNumberOfLines = 3
+        label.cell?.truncatesLastVisibleLine = true
+        label.heightAnchor.constraint(equalToConstant: label.fittingSize.height).isActive = true
+        label.stringValue = L("Checking for conflicts…")
+        return label
+    }
+
+    /// 見込みの行に答えを書く（調べられなかったら空にする）。
+    @MainActor
+    static func show(_ forecast: MergeForecast?, estimate: Bool, in label: NSTextField) {
+        label.stringValue = forecast?.text(estimate: estimate) ?? ""
+        label.textColor = forecast?.hasConflicts == true ? .systemOrange : .secondaryLabelColor
+    }
 
     private struct SyncState {
         let status: WorkingStatus

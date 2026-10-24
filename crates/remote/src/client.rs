@@ -733,6 +733,13 @@ impl Operations for RemoteOperations {
         })
     }
 
+    fn predict_merge(&self, ours: &str, theirs: &str) -> Result<Option<Vec<String>>> {
+        self.op(Op::PredictMerge {
+            ours: ours.to_owned(),
+            theirs: theirs.to_owned(),
+        })
+    }
+
     fn resolve(&self, rev: &str) -> Result<Oid> {
         self.op(Op::Resolve(rev.to_owned()))
     }

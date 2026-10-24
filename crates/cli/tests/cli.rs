@@ -116,6 +116,47 @@ fn undo_and_merge_file() {
 }
 
 #[test]
+fn merge_check_lists_the_files_that_would_conflict() {
+    let repo = repository();
+    let dir = repo.path();
+    let home = tempfile::tempdir().unwrap();
+    let path = dir.to_str().unwrap();
+    git(dir, &["switch", "-q", "-c", "other", "main~2"]);
+    commit(dir, "m.txt", "other work");
+    git(dir, &["switch", "-q", "main"]);
+    let (conflicts, conflicts_code) = amonhen(home.path(), &["merge-check", "-C", path, "other"]);
+    let (json, _) = amonhen(home.path(), &["merge-check", "-C", path, "--json", "other"]);
+    let (clean, clean_code) = amonhen(
+        home.path(),
+        &["merge-check", "-C", path, "--into", "topic", "main"],
+    );
+    if amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 38)) {
+        assert_eq!(conflicts_code, 1, "{conflicts}");
+        assert!(
+            conflicts.contains("Merging other into HEAD would conflict in 1 files:\n  m.txt"),
+            "{conflicts}"
+        );
+        assert_eq!(json.trim(), r#"{"conflicts":["m.txt"]}"#);
+        assert_eq!(clean_code, 0, "{clean}");
+        assert!(
+            clean.contains("main merges into topic without conflicts"),
+            "{clean}"
+        );
+    } else {
+        // 古い git ではわからない。
+        assert_eq!(conflicts_code, 2, "{conflicts}");
+        assert!(conflicts.contains("git 2.38 or newer"), "{conflicts}");
+        assert_eq!(json.trim(), r#"{"conflicts":null}"#);
+        assert_eq!(clean_code, 2, "{clean}");
+    }
+    let (status, _) = amonhen(home.path(), &["status", "-C", path, "--json"]);
+    assert!(
+        !status.contains("m.txt"),
+        "作業ツリーには触らない: {status}"
+    );
+}
+
+#[test]
 fn worktree_lists_adds_and_removes() {
     let repo = repository();
     let home = tempfile::tempdir().unwrap();

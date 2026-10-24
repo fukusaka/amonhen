@@ -207,6 +207,10 @@ pub enum Op {
         ancestor: String,
         descendant: String,
     },
+    PredictMerge {
+        ours: String,
+        theirs: String,
+    },
     Resolve(String),
     Merge(String),
     Rebase(String),

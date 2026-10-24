@@ -232,6 +232,9 @@ pub trait Operations: Send + Sync {
 
     /// `ancestor` が `descendant` の祖先か（fast-forward できるか）。
     fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool>;
+    /// `theirs` を `ours` にマージしたらコンフリクトするファイル（なければ空）。作業ツリーと index には触らない。
+    /// git が古くて調べられなければ `None`。
+    fn predict_merge(&self, ours: &str, theirs: &str) -> Result<Option<Vec<String>>>;
     /// 名前（`main`・`origin/main`・コミット ID など）が指すコミット。
     fn resolve(&self, rev: &str) -> Result<Oid>;
     fn merge(&self, rev: &str) -> Result<Outcome>;

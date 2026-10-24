@@ -698,6 +698,55 @@ pub fn commit(args: &[String]) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+// MARK: - merge-check
+
+/// `rev` を HEAD（`--into` ならそのブランチ）にマージしたらコンフリクトするファイル。終了コードは、なければ 0、
+/// あれば 1、git が古くてわからなければ 2。
+pub fn merge_check(args: &[String]) -> Result<ExitCode> {
+    let (c, seen) = common(args, &["--into"], &["--into"])?;
+    let [rev] = c.rest.as_slice() else {
+        return Err(format!("{}\n\n{}", tr!("Give the commit to merge"), usage()).into());
+    };
+    let ours = value(&seen, "--into").unwrap_or("HEAD");
+    let front = open_repository(&c.dir)?;
+    let response = command(
+        &*front,
+        json!({"op": "predictMerge", "ours": ours, "theirs": rev}),
+    )?;
+    let conflicts = &response["info"]["conflicts"];
+    if c.json {
+        print_json(&response["info"]);
+    } else if conflicts.is_null() {
+        println!("{}", tr!("Can’t tell without git 2.38 or newer"));
+    } else if let Some(paths) = conflicts.as_array().filter(|p| !p.is_empty()) {
+        let mut out = tr!(
+            "Merging {rev} into {ours} would conflict in {count} files:",
+            rev = rev,
+            ours = ours,
+            count = paths.len()
+        );
+        out.push('\n');
+        for path in paths {
+            out.push_str(&format!("  {}\n", path.as_str().unwrap_or("")));
+        }
+        term::write(&out);
+    } else {
+        println!(
+            "{}",
+            tr!(
+                "{rev} merges into {ours} without conflicts",
+                rev = rev,
+                ours = ours
+            )
+        );
+    }
+    Ok(match conflicts.as_array() {
+        None => ExitCode::from(2),
+        Some(paths) if paths.is_empty() => ExitCode::SUCCESS,
+        Some(_) => ExitCode::from(1),
+    })
+}
+
 fn done(c: &Common) -> Result<ExitCode> {
     if c.json {
         print_json(&json!({"ok": true}));

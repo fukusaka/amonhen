@@ -1324,16 +1324,22 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc func mergeIntoCurrent(_ sender: Any?) {
         let current = latestRefs?.headBranch ?? "HEAD"
-        guard let rev = chooseRevision(
-            title: L("Merge into %@", current), message: L("The branch, tag or commit to merge in"), ok: "Merge") else { return }
-        actions.perform(["op": "merge", "rev": rev])
+        Task { @MainActor in
+            guard let rev = await chooseRevision(
+                title: L("Merge into %@", current), message: L("The branch, tag or commit to merge in"), ok: "Merge",
+                forecast: .merge) else { return }
+            actions.perform(["op": "merge", "rev": rev])
+        }
     }
 
     @objc func rebaseCurrent(_ sender: Any?) {
         let current = latestRefs?.headBranch ?? "HEAD"
-        guard let rev = chooseRevision(
-            title: L("Rebase %@", current), message: L("The branch, tag or commit to rebase onto"), ok: "Rebase") else { return }
-        actions.perform(["op": "rebase", "onto": rev])
+        Task { @MainActor in
+            guard let rev = await chooseRevision(
+                title: L("Rebase %@", current), message: L("The branch, tag or commit to rebase onto"), ok: "Rebase",
+                forecast: .rebase) else { return }
+            actions.perform(["op": "rebase", "onto": rev])
+        }
     }
 
     /// 新しいブランチ・タグの起点。History で選んでいるコミットがあればそれ、なければ HEAD。
@@ -1725,9 +1731,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: editing.path)])
     }
 
+    /// 選んだものを今のブランチに取り込んだら、コンフリクトするか（rebase は目安）。
+    private enum Forecast { case merge, rebase }
+
     /// Merge・Rebase の相手を選んでもらう。候補は History で選んでいるコミット（あれば先頭）、
-    /// 今のブランチ以外のローカルブランチ、リモートブランチ、タグ。キャンセルなら nil。
-    private func chooseRevision(title: String, message: String, ok: String) -> String? {
+    /// 今のブランチ以外のローカルブランチ、リモートブランチ、タグ。キャンセルなら nil。`forecast` なら、選ぶたびに
+    /// コンフリクトするかを裏で調べて見せる。シートで出す（`runModal` の間は、裏で調べた答えを画面に戻せない）。
+    private func chooseRevision(title: String, message: String, ok: String, forecast: Forecast? = nil) async -> String? {
         var choices: [(title: String, rev: String)] = []
         if let selectedCommit, selectedCommit != latestRefs?.head {
             let hex = selectedCommit.map { String(format: "%02x", $0) }.joined()
@@ -1754,8 +1764,44 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         alert.addButton(withTitle: ok)
         alert.addButton(withTitle: L("Cancel"))
         alert.accessoryView = popup
+        // 選び直すたびに調べる（答えは覚えておき、遅れて来た前の答えは捨てる）。
+        var target: ClosureTarget?
+        if let forecast {
+            let label = Actions.forecastLabel(width: popup.frame.width)
+            final class Answers { var known: [String: MergeForecast?] = [:]; var shown = "" }
+            let answers = Answers()
+            let actions = self.actions
+            let update = {
+                guard let item = popup.selectedItem else { return }
+                let rev = choices[item.tag].rev
+                answers.shown = rev
+                if let known = answers.known[rev] {
+                    return Actions.show(known, estimate: forecast == .rebase, in: label)
+                }
+                label.stringValue = L("Checking for conflicts…")
+                label.textColor = .secondaryLabelColor
+                Task { @MainActor in
+                    let answer = await actions.predictMerge(theirs: rev)
+                    answers.known[rev] = answer
+                    if answers.shown == rev { Actions.show(answer, estimate: forecast == .rebase, in: label) }
+                }
+            }
+            update()
+            target = ClosureTarget(update)
+            popup.target = target
+            popup.action = #selector(ClosureTarget.fire)
+            let stack = NSStackView(views: [popup, label])
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 8
+            stack.layoutSubtreeIfNeeded()
+            stack.frame.size = stack.fittingSize
+            alert.accessoryView = stack
+        }
         alert.window.initialFirstResponder = popup
-        guard alert.runModal() == .alertFirstButtonReturn, let item = popup.selectedItem else { return nil }
+        let response = await alert.beginSheetModal(for: window)
+        withExtendedLifetime(target) {}
+        guard response == .alertFirstButtonReturn, let item = popup.selectedItem else { return nil }
         return choices[item.tag].rev
     }
 
