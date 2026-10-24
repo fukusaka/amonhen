@@ -287,6 +287,15 @@ pub trait Operations: Send + Sync {
     fn config_list(&self) -> Result<Vec<ConfigEntry>>;
     /// このリポジトリ（local）の設定を変える。`value` が None なら消す（上の段の値に戻る）。
     fn config_set(&self, key: &str, value: Option<&str>) -> Result<()>;
+    /// git を動かしているユーザー全体（global）の設定を変える。SSH 先のリポジトリなら SSH 先のユーザーのもの。
+    fn config_set_global(&self, key: &str, value: Option<&str>) -> Result<()> {
+        let _ = (key, value);
+        Err(crate::tr!("Can’t change the user’s git settings here").into())
+    }
+    /// このリポジトリを扱う git の版（major, minor, patch）。読めなければ `None`。
+    fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
+        Ok(None)
+    }
     fn remotes(&self) -> Result<Vec<RemoteEntry>>;
     fn change_remote(&self, change: &RemoteChange) -> Result<()>;
     /// worktree の一覧。`git worktree list --porcelain -z` の出力。

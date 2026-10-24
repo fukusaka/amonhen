@@ -13,11 +13,11 @@ use amonhen_model::{
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 31;
+pub const PROTOCOL_VERSION: u32 = 32;
 
 /// エンジンの実行ファイルに埋め込む印（`PROTOCOL_VERSION` と同じ数）。SSH 先へ送る前に、同梱のエンジンが
 /// この版で作られたものかを中身で確かめる（古いまま送って、つないでから版の違いで断られないように）。
-pub const PROTOCOL_MARK: &str = "amonhen-protocol=31;";
+pub const PROTOCOL_MARK: &str = "amonhen-protocol=32;";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -270,6 +270,8 @@ pub enum Op {
     UpdateSubmodules(Vec<String>),
     ConfigList,
     ConfigSet(String, Option<String>),
+    ConfigSetGlobal(String, Option<String>),
+    GitVersion,
     Remotes,
     ChangeRemote(RemoteChange),
     WorkingStats,

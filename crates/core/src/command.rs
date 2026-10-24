@@ -281,11 +281,17 @@ pub enum Command {
     },
     /// すべての設定と、それぞれがどこで決まっているか（`info.entries`。後のものほど優先）。
     ConfigList,
-    /// このリポジトリ（local）の設定を変える。`value` がなければ消す。
+    /// 設定を変える。`value` がなければ消す。`scope` が `"global"` なら、git を動かしているユーザー全体の
+    /// 設定（SSH 先のリポジトリなら SSH 先のユーザーのもの）、なければこのリポジトリ（local）。
     ConfigSet {
         key: String,
         value: Option<String>,
+        #[serde(default)]
+        scope: Option<String>,
     },
+    /// このリポジトリを扱う git の版（`info.version`、読めなければ null）と、rebase で積み重ねたブランチを
+    /// 一緒に動かせるか（`info.updateRefs`。git 2.38 から。版が読めなければ true）。
+    GitVersion,
     /// リモート（`info.remotes`）。
     Remotes,
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（`info.stats`: `path`・`added`・`removed`。
@@ -1906,9 +1912,24 @@ impl Repository {
                 info: Some(serde_json::json!({ "entries": ops.config_list()? })),
                 ..Default::default()
             }),
-            Command::ConfigSet { key, value } => {
-                ops.config_set(&key, value.as_deref())?;
+            Command::ConfigSet { key, value, scope } => {
+                match scope.as_deref() {
+                    None | Some("local") => ops.config_set(&key, value.as_deref())?,
+                    Some("global") => ops.config_set_global(&key, value.as_deref())?,
+                    Some(other) => return Err(tr!("Unknown scope: {scope}", scope = other).into()),
+                }
                 ok()
+            }
+            Command::GitVersion => {
+                let version = ops.git_version()?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({
+                        "version": version.map(|(a, b, c)| format!("{a}.{b}.{c}")),
+                        "updateRefs": version.is_none_or(|(a, b, _)| (a, b) >= (2, 38)),
+                    })),
+                    ..Default::default()
+                })
             }
             Command::IgnoreMatches { text } => {
                 let lines: Vec<(usize, String)> = text
@@ -3378,6 +3399,23 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert!(entries[0]["label"].as_str().unwrap().contains('b'));
         assert!(entries[0]["time"].as_u64().unwrap() >= entries[1]["time"].as_u64().unwrap());
+    }
+
+    #[test]
+    fn reports_the_git_version_and_whether_rebase_can_move_stacked_branches() {
+        let (_tmp, repo) = setup();
+        let r = run(&repo, r#"{"op":"gitVersion"}"#);
+        let version = r["info"]["version"].as_str().unwrap();
+        let mut parts = version.split('.').map(|p| p.parse::<u32>().unwrap());
+        let (major, minor) = (parts.next().unwrap(), parts.next().unwrap());
+        assert_eq!(r["info"]["updateRefs"], (major, minor) >= (2, 38), "{r}");
+
+        // 段は local・global だけ。
+        let r = run(
+            &repo,
+            r#"{"op":"configSet","key":"pull.rebase","value":"true","scope":"system"}"#,
+        );
+        assert!(r["error"].as_str().unwrap().contains("system"), "{r}");
     }
 
     #[test]

@@ -885,6 +885,17 @@ impl Operations for RemoteOperations {
         self.op(Op::ConfigSet(key.to_owned(), value.map(str::to_owned)))
     }
 
+    fn config_set_global(&self, key: &str, value: Option<&str>) -> Result<()> {
+        self.op(Op::ConfigSetGlobal(
+            key.to_owned(),
+            value.map(str::to_owned),
+        ))
+    }
+
+    fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
+        self.op(Op::GitVersion)
+    }
+
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {
         self.op(Op::Remotes)
     }
