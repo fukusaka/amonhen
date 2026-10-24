@@ -274,7 +274,11 @@ nonisolated struct ConfigRow: Identifiable, Hashable, Sendable {
     /// 段ごとの値と、その段のファイル。
     let values: [String: String]
     let files: [String: String]
+    /// section（`core`・`remote` など、最初のドットの前）の見出しの行。`key` はその section の名前。
+    var isGroup = false
     var id: String { key }
+    /// キーの section。キーは必ず `section.name`（か `section.sub.name`）の形。
+    var section: String { String(key.prefix { $0 != "." }) }
     var system: String { values["system"] ?? "" }
     var global: String { values["global"] ?? "" }
     var local: String { values["local"] ?? "" }
@@ -309,6 +313,8 @@ extension RepositorySettingsModel {
 /// 「+」で新しい行が出て、キーと値を入れる。⌘C で選んだ行を `key = value` の形でコピーする。
 /// 上の切り替えも Xcode と同じで、語も Xcode のまま（ページ名と同じく訳さない）: 行は Basic（ページが尋ねるキー。
 /// 未設定でも出す）／Customized（このリポジトリで設定したもの）／All、列は Combined（効いている値と出どころ）／Levels。
+/// 行は Xcode が分類ごとにまとめるのと同じく section（`core`・`user`・`remote` など）ごとに見出しの行でまとめる
+/// （すべて開いた形。SwiftUI の Table の開閉は初めがすべて閉じで、開く手段がない）。
 private struct AllSettingsTab: View {
     let model: RepositorySettingsModel
     @State private var filter = ""
@@ -348,9 +354,19 @@ private struct AllSettingsTab: View {
             let byKey = Dictionary(all.map { ($0.key.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
             all = Self.basicKeys.map { byKey[$0] ?? ConfigRow(key: $0, effective: "", effectiveScope: "", values: [:], files: [:]) }
         }
-        var shown = all
+        let sorted = all
             .filter { f.isEmpty || $0.key.localizedCaseInsensitiveContains(f) || $0.values.values.contains { $0.localizedCaseInsensitiveContains(f) } }
             .sorted(using: sortOrder)
+        // section ごとに見出しの行を入れる。section の順はキーの並びと同じ向き、中の順は並べ替えのまま。
+        var bySection: [String: [ConfigRow]] = [:]
+        for row in sorted { bySection[row.section, default: []].append(row) }
+        var sections = bySection.keys.sorted()
+        if let first = sortOrder.first, first.keyPath == \ConfigRow.key, first.order == .reverse { sections.reverse() }
+        var shown: [ConfigRow] = []
+        for section in sections {
+            shown.append(ConfigRow(key: section, effective: "", effectiveScope: "", values: [:], files: [:], isGroup: true))
+            shown += bySection[section] ?? []
+        }
         if adding {
             shown.append(ConfigRow(key: Self.newRowID, effective: "", effectiveScope: "", values: [:], files: [:]))
         }
@@ -387,6 +403,8 @@ private struct AllSettingsTab: View {
                             .focused($focus, equals: .newKey)
                             .onSubmit { focus = .newValue }
                             .onExitCommand { cancelAdding() }
+                    } else if row.isGroup {
+                        Text(row.key).fontWeight(.bold)
                     } else {
                         Text(row.key)
                     }
@@ -411,7 +429,7 @@ private struct AllSettingsTab: View {
                 .disabledCustomizationBehavior(.all)
                 if columnsMode == .combined {
                     TableColumn(L("Source"), value: \.effectiveScope) { row in
-                        Text(row.effectiveScope.isEmpty ? L("git’s default") : scopeLabel(row.effectiveScope, host: model.host))
+                        Text(row.isGroup || row.key == Self.newRowID ? "" : row.effectiveScope.isEmpty ? L("git’s default") : scopeLabel(row.effectiveScope, host: model.host))
                             .foregroundStyle(row.effectiveScope.isEmpty ? .secondary : .primary)
                             .help(row.effectiveScope.isEmpty ? "" : "\(row.effectiveScope) · \(row.files[row.effectiveScope] ?? "")")
                     }
@@ -437,14 +455,14 @@ private struct AllSettingsTab: View {
                 }
             }
             .contextMenu(forSelectionType: String.self) { keys in
-                let keys = keys.filter { $0 != Self.newRowID }
+                let keys = keys.filter { !isGroupOrNewRow($0) }
                 Button(L("Edit in This Repository")) { keys.first.map(beginEditing) }.disabled(keys.count != 1)
                 Button(L("Remove from This Repository")) { for k in keys where model.local(k) != nil { model.set(k, nil) } }
                     .disabled(!keys.contains { model.local($0) != nil })
                 Divider()
                 Button(L("Copy")) { copy(keys) }.disabled(keys.isEmpty)
             } primaryAction: { keys in
-                if keys.count == 1, let key = keys.first, key != Self.newRowID { beginEditing(key) }
+                if keys.count == 1, let key = keys.first, !isGroupOrNewRow(key) { beginEditing(key) }
             }
             .copyable([copyText(selection)])
             .onAppear { if sortOrder.isEmpty { sortOrder = [KeyPathComparator(\.key)] } }
@@ -488,6 +506,9 @@ private struct AllSettingsTab: View {
 
     /// 足している途中の行か、編集中の行か。
     private func isEditing(_ row: ConfigRow) -> Bool { row.key == Self.newRowID || editing == row.key }
+
+    /// section の見出しの行か、足している途中の行か（キーは必ずドットを含むので、含まなければ見出し）。
+    private func isGroupOrNewRow(_ id: String) -> Bool { !id.contains(".") }
 
     /// 「このリポジトリ」の値の欄（足している途中の行と、編集中の行）。
     @ViewBuilder private func valueField(_ row: ConfigRow) -> some View {

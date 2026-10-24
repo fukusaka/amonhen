@@ -39,7 +39,7 @@ becomes the GitHub Release notes.
   branch, which Branches measures the others against: detected, or chosen for repositories without one), Working Copy
   (line endings, the executable bit, ignoring in this repository only), Remotes, Hooks · LFS and git config, with the
   git that runs the repository shown under the list. Settings that only a terminal honors stay in git config.
-- git config in Repository Settings is a table like Xcode's Build Settings: one row per key with the value in effect
+- git config in Repository Settings is a table like Xcode's Build Settings: one row per key, grouped by section, with the value in effect
   and a column per source (system-wide, all repositories, this repository, this worktree), the source in effect in
   bold. Double-click a row to set the key in this repository (empty removes it), + adds a key, ⌘C copies the selected
   rows as `key = value`; search matches keys and values, and every column sorts. Above it, Xcode's switches: Basic
