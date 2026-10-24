@@ -40,6 +40,9 @@ final class RepositorySettingsModel {
     private(set) var gitVersion: String?
     /// rebase で積み重ねたブランチを一緒に動かせるか（git 2.38 から）。
     private(set) var updateRefsSupported = true
+    /// ローカルブランチの名前と、判定した既定のブランチ（`branchGroups` の `base`。`amonhen.defaultBranch` も効いた後）。
+    private(set) var localBranches: [String] = []
+    private(set) var detectedBase: String?
     /// git の設定・リモートなどを変えた（画面を読み直す）。
     var onRepositoryChange: (() -> Void)?
 
@@ -59,18 +62,22 @@ final class RepositorySettingsModel {
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
             struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String] }
             struct Version: Decodable { let version: String?; let updateRefs: Bool }
+            struct Groups: Decodable { struct Branch: Decodable { let name: String }; let base: String?; let branches: [Branch] }
             do {
-                let (e, r, i, h, v) = try await Task.detached(priority: .userInitiated) {
+                let (e, r, i, h, v, g) = try await Task.detached(priority: .userInitiated) {
                     (
                         try repository.info(["op": "configList"], as: Entries.self),
                         try repository.info(["op": "remotes"], as: Remotes.self),
                         try repository.info(["op": "ignoreFiles"], as: Ignore.self),
                         try repository.info(["op": "hooksAndLfs"], as: Hooks.self),
-                        try repository.info(["op": "gitVersion"], as: Version.self)
+                        try repository.info(["op": "gitVersion"], as: Version.self),
+                        try? repository.info(["op": "branchGroups"], as: Groups.self)
                     )
                 }.value
                 gitVersion = v.version
                 updateRefsSupported = v.updateRefs
+                localBranches = g?.branches.map(\.name).sorted() ?? []
+                detectedBase = g?.base
                 hooksPath = h.hooksPath
                 hooks = h.hooks
                 lfs = h.lfs
@@ -551,10 +558,9 @@ private struct PullMethodRow: View {
 
 // MARK: - ページ（docs/ux.md の 4.5）
 
-/// 左の一覧の項目。
+/// 左の一覧の項目。組はなく、よく変えるものを先に、たまに見る 2 つを最後に。
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case author, commits, operations, workingCopy, remotes
-    case about, all
+    case author, commits, operations, branches, workingCopy, remotes, hooks, config
     var id: String { rawValue }
 
     var title: String {
@@ -562,15 +568,64 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .author: L("Author and Signing")
         case .commits: L("Commits")
         case .operations: L("Operations")
+        case .branches: L("Branches")
         case .workingCopy: "Working Copy"
         case .remotes: L("Remotes")
-        case .about: L("About This Repository")
-        case .all: L("All Settings")
+        case .hooks: "Hooks · LFS"
+        case .config: "git config"
         }
     }
+}
 
-    static let settings: [SettingsPage] = [.author, .commits, .operations, .workingCopy, .remotes]
-    static let information: [SettingsPage] = [.about, .all]
+/// 既定のブランチ（Amon Hen の `amonhen.defaultBranch`。なければ判定したもの）。
+private struct DefaultBranchRow: View {
+    let model: RepositorySettingsModel
+    private let key = "amonhen.defaultBranch"
+
+    var body: some View {
+        let chosen = model.local(key)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(L("Default branch"))
+                    Text(L("The branch the others are measured against: Branches marks a branch merged when it is in this one, and finds the trunk from it. Detected from origin/HEAD, then main or master; choose one here when the repository has none of those."))
+                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.leading, 8)
+                }
+                .frame(maxWidth: 520, alignment: .leading)
+                Spacer()
+                Picker("", selection: Binding(get: { chosen ?? "" }, set: { model.set(key, $0.isEmpty ? nil : $0) })) {
+                    Text(model.detectedBase.map { L("Detected (%@)", $0) } ?? L("Detected (none)")).tag("")
+                    ForEach(model.localBranches, id: \.self) { Text($0).tag($0) }
+                    if let chosen, !model.localBranches.contains(chosen) { Text(chosen).tag(chosen) }
+                }
+                .labelsHidden().fixedSize()
+                if chosen != nil {
+                    Button { model.set(key, nil) } label: { Image(systemName: "arrow.uturn.backward") }
+                        .buttonStyle(.borderless).help(L("Go back to the detected branch."))
+                } else {
+                    Color.clear.frame(width: 20, height: 1)
+                }
+                Text(chosen == nil ? L("detected") : L("this repository"))
+                    .font(.caption).foregroundStyle(.secondary).frame(width: 118, alignment: .trailing)
+                Color.clear.frame(width: 16, height: 1)
+            }
+            if let chosen, !model.localBranches.contains(chosen) {
+                Text("⚠ " + L("There is no branch named %@, so the detected branch is used.", chosen)).foregroundStyle(.orange)
+            }
+        }
+    }
+}
+
+private struct BranchesPage: View {
+    let model: RepositorySettingsModel
+    var body: some View {
+        Form {
+            Section {
+                DefaultBranchRow(model: model)
+            }
+        }
+        .formStyle(.grouped)
+    }
 }
 
 private struct AuthorSigningPage: View {
@@ -679,20 +734,11 @@ private struct WorkingCopyPage: View {
     }
 }
 
-/// このリポジトリについて（動かしている git、hooks、LFS）。設定ではなく情報。
-private struct AboutPage: View {
+/// hooks と LFS。
+private struct HooksLFSPage: View {
     let model: RepositorySettingsModel
     var body: some View {
         Form {
-            Section {
-                LabeledContent(L("Version"), value: model.gitVersion ?? L("Unknown"))
-                LabeledContent(L("Runs on"), value: model.host ?? L("This Mac"))
-            } header: {
-                Text("git")
-            } footer: {
-                Text(L("The git that reads and writes this repository. Settings marked “your settings” are that git’s user settings (git config --global)."))
-                    .foregroundStyle(.secondary)
-            }
             Section {
                 if model.hooks.isEmpty {
                     Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? L("core.hooksPath (%@) is outside the working tree, so its contents can’t be shown.", $0) : L("None") } ?? L("None"))
@@ -737,22 +783,32 @@ private struct RepositorySettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            List(selection: Binding(get: { Optional(page) }, set: { if let p = $0 { page = p } })) {
-                Section(L("Settings")) {
-                    ForEach(SettingsPage.settings) { Text($0.title).tag($0) }
+            VStack(spacing: 0) {
+                List(selection: Binding(get: { Optional(page) }, set: { if let p = $0 { page = p } })) {
+                    ForEach(SettingsPage.allCases) { Text($0.title).tag($0) }
                 }
-                Section(L("Information")) {
-                    ForEach(SettingsPage.information) { Text($0.title).tag($0) }
+                .listStyle(.sidebar)
+                // このリポジトリを動かしている git。機械（この Mac か SSH 先）のものなので、変えるのはその機械の設定で。
+                Button {
+                    if model.host == nil { SettingsWindowController.shared.show() }
+                } label: {
+                    Text("git \(model.gitVersion ?? "?") · \(model.host ?? L("This Mac"))")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
+                .help(model.host.map { L("The git on %@ runs this repository. Every repository on that host uses it.", $0) }
+                    ?? L("This Mac’s git runs this repository. Choose it in Settings > Git."))
+                .padding(.horizontal, 14).padding(.vertical, 8)
             }
-            .listStyle(.sidebar)
             .frame(width: 200)
             Divider()
             VStack(spacing: 0) {
                 content
                 if let error = model.error {
                     HStack {
-                        Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
+                        Text(error).foregroundStyle(.red).lineLimit(2)
                         Spacer()
                     }
                     .padding([.horizontal, .bottom])
@@ -768,10 +824,11 @@ private struct RepositorySettingsView: View {
         case .author: AuthorSigningPage(model: model)
         case .commits: CommitsPage(model: model)
         case .operations: OperationsPage(model: model)
+        case .branches: BranchesPage(model: model)
         case .workingCopy: WorkingCopyPage(model: model)
         case .remotes: RemotesTab(model: model)
-        case .about: AboutPage(model: model)
-        case .all: AllSettingsTab(model: model)
+        case .hooks: HooksLFSPage(model: model)
+        case .config: AllSettingsTab(model: model)
         }
     }
 }
