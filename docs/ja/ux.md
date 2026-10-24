@@ -697,7 +697,7 @@ git の考え方と、アプリが守ること:
 - [x] U18. サイドバーの Working Copy の下に worktree を変更の数つきで並べる（はじめは Working Copy の中に全部の worktree の変更を並べ、のちにサイドバーに移した）。
 - [x] U19. History で、各 worktree の HEAD に札（名前と変更のあるファイルの数、書き込む先は ✎）。worktree が
   コミットしたり、ファイルを書き換えたりしたら付け直す。
-- [ ] U20. リポジトリの設定を、使う人から作り直す（4 章）。済み: サイドバーの Workspace の画面とページの一覧（作者と署名、コミット、操作、ブランチ、Working Copy、リモート、Hooks・LFS、git config）とその下の git の 1 行、効いている値を出す行、その設定元、↩︎ と ⓘ、既定のブランチの上書き（`amonhen.defaultBranch`）、Pull と Fetch が git の設定に従うこと、端末にしか効かない行を画面から外したこと、git config を Xcode の形の表にしたこと（キーごとに 1 行、設定元ごとの列、local の列は編集できる、Basic / Customized / All と Combined / Levels の切り替え）。予定（4.8 の段階で）: 署名を 1 つの選択にして鍵を集める、テンプレートの一覧、exclude の合う数と `.gitignore` を Working Copy から、リモートのシートとサイドバーの操作、Hooks・LFS を操作つきの表に、機械の設定（この Mac と SSH 先ごと）。
+- [ ] U20. リポジトリの設定を、使う人から作り直す（4 章）。済み: サイドバーの Workspace の画面とページの一覧（作者と署名、コミット、操作、ブランチ、Working Copy、リモート、Hooks・LFS、git config）とその下の git の 1 行、効いている値を出す行、その設定元、↩︎ と ⓘ、既定のブランチの上書き（`amonhen.defaultBranch`）、Pull と Fetch が git の設定に従うこと、端末にしか効かない行を画面から外したこと、git config を Xcode の形の表にしたこと（キーごとに 1 行、設定元ごとの列、local の列は編集できる、Basic / Customized / All と Combined / Levels の切り替え）、署名を 1 つの選択（署名しない／OpenPGP／SSH／X.509）にしてコアが集めた鍵から選ぶこと。予定（4.8 の段階で）: テンプレートの一覧、exclude の合う数と `.gitignore` を Working Copy から、リモートのシートとサイドバーの操作、Hooks・LFS を操作つきの表に、機械の設定（この Mac と SSH 先ごと）。
 
 ## 決めたこと
 

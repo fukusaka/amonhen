@@ -11,6 +11,13 @@ struct ConfigEntry: Decodable, Hashable, Identifiable {
     var id: String { "\(scope)|\(origin)|\(key)|\(value)" }
 }
 
+/// 署名に使える鍵（コアの `signingKeys`）。
+struct SigningKey: Decodable, Hashable, Identifiable {
+    let id: String
+    let label: String
+    let emails: [String]
+}
+
 struct RemoteEntry: Decodable, Hashable, Identifiable {
     let name: String
     let fetchUrl: String
@@ -49,6 +56,25 @@ final class RepositorySettingsModel {
     var onRepositoryChange: (() -> Void)?
     /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。次の書き換えで忘れる。
     var removedConfig: [(key: String, value: String)] = []
+    /// 署名の形式ごとに集めた鍵（`user.email` の鍵を先に）。コアが集める（SSH 先のリポジトリなら SSH 先で）。
+    private(set) var signingKeys: [String: [SigningKey]] = [:]
+
+    /// `format`（`openpgp`・`ssh`・`x509`）の鍵を集める。集められなければ空。
+    func loadSigningKeys(_ format: String) {
+        let repository = self.repository
+        Task {
+            struct Keys: Decodable { let keys: [SigningKey] }
+            let keys = (try? await Task.detached(priority: .userInitiated) {
+                try repository.info(["op": "signingKeys", "format": format], as: Keys.self)
+            }.value)?.keys ?? []
+            let email = effective("user.email")?.value.lowercased() ?? ""
+            signingKeys[format] = keys.sorted { a, b in
+                let am = !email.isEmpty && a.emails.contains { $0.lowercased() == email }
+                let bm = !email.isEmpty && b.emails.contains { $0.lowercased() == email }
+                return am != bm ? am : false
+            }
+        }
+    }
 
     /// SSH 先のリポジトリなら、その SSH 先の名前。
     var host: String? { RepositoryLocation.isRemote(location) ? RepositoryLocation.host(location) : nil }
@@ -1067,17 +1093,135 @@ private struct AuthorSigningPage: View {
                 Text(L("Author"))
             }
             Section {
-                SwitchRow(model: model, question: L("Sign commits"), help: "", key: "commit.gpgsign", defaultOn: false)
-                ChoiceRow(model: model, question: L("Signature format"), help: "", key: "gpg.format",
-                          options: [("openpgp", "OpenPGP"), ("ssh", "SSH"), ("x509", "X.509")], defaultValue: "openpgp")
-                TextRow(model: model, question: L("Key"),
-                        help: format == "ssh" ? L("The SSH public key’s path, or the key itself.") : L("The key’s fingerprint or ID; empty picks the key for your email."),
-                        key: "user.signingkey", placeholder: format == "ssh" ? "~/.ssh/id_ed25519.pub" : L("Key for your email"))
+                SigningRow(model: model)
+                SigningKeyRow(model: model, format: format)
             } header: {
                 Text(L("Signing"))
             }
         }
         .formStyle(.grouped)
+        .task { for f in SigningRow.formats { model.loadSigningKeys(f) } }
+    }
+}
+
+/// 署名: 1 つの選択（署名しない／OpenPGP／SSH／X.509）で、`commit.gpgsign` と `gpg.format` を一緒に書く。
+private struct SigningRow: View {
+    let model: RepositorySettingsModel
+    static let formats = ["openpgp", "ssh", "x509"]
+
+    static func name(_ format: String) -> String {
+        switch format {
+        case "openpgp": "OpenPGP"
+        case "ssh": "SSH"
+        case "x509": "X.509"
+        default: format
+        }
+    }
+
+    private var signing: Bool { model.effective("commit.gpgsign").map { normalizedBool($0.value) == "true" } ?? false }
+    private var format: String {
+        let f = model.effective("gpg.format")?.value.lowercased() ?? "openpgp"
+        return Self.formats.contains(f) ? f : "openpgp"
+    }
+    private var current: String { signing ? format : "" }
+
+    private func label(_ value: String) -> String { value.isEmpty ? L("No signing") : Self.name(value) }
+
+    private func choose(_ value: String) {
+        if value.isEmpty {
+            model.set("commit.gpgsign", "false")
+        } else {
+            model.set("commit.gpgsign", "true")
+            if format != value || model.local("gpg.format") != nil { model.set("gpg.format", value) }
+        }
+    }
+
+    var body: some View {
+        SettingRow(model: model, question: L("Signing"), help: "", keys: ["commit.gpgsign", "gpg.format"],
+                   describe: { normalizedBool($0) == "true" ? L("On") : normalizedBool($0) == "false" ? L("Off") : label($0.lowercased()) }) {
+            Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
+                ForEach([""] + Self.formats, id: \.self) { Text(label($0)).tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+}
+
+/// 鍵: コアが集めた鍵（OpenPGP・SSH・X.509 の種類ごと。`user.email` の鍵が先）から選ぶ。git の `user.signingkey` は
+/// 1 つなので、鍵を選ぶとその種類を `gpg.format` にも書く。一覧にないものは「その他…」で入れる。
+private struct SigningKeyRow: View {
+    let model: RepositorySettingsModel
+    let format: String
+    private let key = "user.signingkey"
+    private static let other = "\u{1}other"
+    @State private var typing = false
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    private var current: String { model.effective(key)?.value ?? "" }
+    /// 値 `id` の鍵の種類（一覧にあれば）。
+    private func kind(of id: String) -> String? {
+        SigningRow.formats.first { f in (model.signingKeys[f] ?? []).contains { $0.id == id } }
+    }
+
+    private func label(_ value: String) -> String {
+        if value.isEmpty { return format == "openpgp" ? L("Key for your email") : L("None") }
+        return kind(of: value).flatMap { f in model.signingKeys[f]?.first { $0.id == value }?.label } ?? value
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            SettingRow(model: model, question: L("Key"), help: L("The keys gpg, ~/.ssh, ssh-agent and gpgsm know, the ones for your email first. Choosing a key chooses its format too. Empty picks gpg’s key for your email."),
+                       keys: [key], describe: label) {
+                Picker("", selection: Binding(get: { typing ? Self.other : current }, set: { choose($0) })) {
+                    Text(label("")).tag("")
+                    ForEach(SigningRow.formats, id: \.self) { f in
+                        if let keys = model.signingKeys[f], !keys.isEmpty {
+                            Section(SigningRow.name(f)) { ForEach(keys) { Text($0.label).tag($0.id) } }
+                        }
+                    }
+                    if !current.isEmpty, kind(of: current) == nil {
+                        Text(current).tag(current)
+                    }
+                    Divider()
+                    Text(L("Other…")).tag(Self.other)
+                }
+                .labelsHidden()
+                .frame(maxWidth: 360)
+            }
+            if let k = kind(of: current), k != format {
+                Text("⚠ " + L("This is an %1$@ key, but the format is %2$@.", SigningRow.name(k), SigningRow.name(format)))
+                    .foregroundStyle(.orange).padding(.horizontal, 8)
+            }
+            if typing {
+                TextField("", text: $text, prompt: Text(format == "ssh" ? "~/.ssh/id_ed25519.pub" : L("Fingerprint or key ID")))
+                    .focused($focused)
+                    .onSubmit { commit() }
+                    .onExitCommand { typing = false }
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
+            }
+        }
+    }
+
+    private func choose(_ value: String) {
+        if value == Self.other {
+            text = current
+            typing = true
+            DispatchQueue.main.async { focused = true }
+        } else {
+            typing = false
+            model.set(key, value.isEmpty ? nil : value)
+            // 選んだ鍵の種類が今の形式と違えば、形式も合わせる。
+            if let f = kind(of: value), f != format { model.set("gpg.format", f) }
+        }
+    }
+
+    private func commit() {
+        typing = false
+        let value = text.trimmingCharacters(in: .whitespaces)
+        if value != current { model.set(key, value.isEmpty ? nil : value) }
     }
 }
 
