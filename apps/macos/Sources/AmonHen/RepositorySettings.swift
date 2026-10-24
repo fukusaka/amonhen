@@ -95,7 +95,7 @@ final class RepositorySettingsModel {
         }
     }
 
-    /// 今効いている値（後に出るものほど優先）と、その段。
+    /// 今効いている値（後に出るものほど優先）と、その出どころ。
     func effective(_ key: String) -> ConfigEntry? {
         entries.last { $0.key.lowercased() == key.lowercased() }
     }
@@ -159,11 +159,11 @@ struct HookEntry: Decodable, Hashable, Identifiable {
     var id: String { name }
 }
 
-/// 段の名前と、ファイルの場所（`file:` を取り、ホームは ~ にする）。
-private func describe(_ entry: ConfigEntry) -> String {
+/// 設定が書かれているファイル（`file:` を取り、ホームは ~ にする）。
+private func configFile(_ entry: ConfigEntry) -> String {
     var origin = entry.origin
     if origin.hasPrefix("file:") { origin = String(origin.dropFirst(5)) }
-    return L("%@ (%@)", entry.scope, (origin as NSString).abbreviatingWithTildeInPath)
+    return (origin as NSString).abbreviatingWithTildeInPath
 }
 
 private struct RemotesTab: View {
@@ -266,9 +266,9 @@ private struct AllSettingsTab: View {
             Table(rows, sortOrder: $sortOrder) {
                 TableColumn(L("Key"), value: \.key).width(min: 140, ideal: 200)
                 TableColumn(L("Value"), value: \.value)
-                TableColumn(L("Scope"), value: \.scope) { e in Text(scopeLabel(e.scope, host: model.host)).help(e.scope) }
-                    .width(min: 90, ideal: 110)
-                TableColumn(L("Location"), value: \.origin) { e in Text(describe(e)).foregroundStyle(.secondary) }
+                TableColumn(L("Source"), value: \.scope) { e in Text(scopeLabel(e.scope, host: model.host)).help(e.scope) }
+                    .width(min: 110, ideal: 130)
+                TableColumn(L("File"), value: \.origin) { e in Text(configFile(e)).foregroundStyle(.secondary) }
             }
             HStack {
                 TextField(L("Key (e.g. core.autocrlf)"), text: $key).frame(width: 200)
@@ -277,7 +277,7 @@ private struct AllSettingsTab: View {
                 Button(L("Unset Local")) { model.set(key, nil) }.disabled(key.isEmpty)
                     .help(L("Remove this repository’s (local) value and go back to the inherited one."))
             }
-            Text(L("Later rows take precedence (system → global → local → worktree). Only this repository’s (local) values can be changed."))
+            Text(L("Later rows take precedence (system-wide → all repositories → this repository → this worktree). Only this repository’s values can be changed here."))
                 .font(.caption).foregroundStyle(.secondary)
         }
         .padding()
@@ -296,7 +296,7 @@ private func normalizedBool(_ value: String) -> String? {
 }
 
 extension RepositorySettingsModel {
-    /// `key` の今効いている値の出どころ（札の言葉）と、そのファイル。どこにも書かれていなければ「git の既定」。
+    /// `key` の今効いている値の出どころの言い方と、そのファイル。どこにも書かれていなければ「git の既定」。
     func origin(of key: String) -> (label: String, file: String?) {
         guard let e = effective(key) else { return (L("git’s default"), nil) }
         var file = e.origin
@@ -311,19 +311,19 @@ extension RepositorySettingsModel {
     }
 }
 
-/// 段（`git config` の scope）の言い方。札と git config の表で同じ言葉を使う。
+/// 出どころ（`git config` の scope）の言い方。行の右と git config の表で同じ言葉を使う。
 func scopeLabel(_ scope: String, host: String?) -> String {
     switch scope {
     case "local": L("this repository")
-    case "global": host.map { L("your settings on %@", $0) } ?? L("your settings")
+    case "global": host.map { L("all repositories on %@", $0) } ?? L("all repositories")
     case "worktree": L("this worktree")
-    case "system": L("system")
+    case "system": L("system-wide")
     default: scope
     }
 }
 
-/// 値の出どころの札。
-private struct OriginBadge: View {
+/// 行の右に出す、値の出どころ。
+private struct SourceLabel: View {
     let model: RepositorySettingsModel
     let key: String
     var body: some View {
@@ -337,12 +337,12 @@ private struct OriginBadge: View {
 }
 
 /// 行の共通の形: 左に質問とその下に 1 文の説明、右に効いている値の欄、このリポジトリが上書きしている間だけ ↩︎、
-/// 最後に札。札の横の ⓘ で、キーと値とファイル、上の値が吹き出しに出る。
+/// 最後に出どころ。その横の ⓘ で、キーと値とファイル、上書きしなければ効く値が吹き出しに出る。
 private struct SettingRow<Control: View>: View {
     let model: RepositorySettingsModel
     let question: String
     let help: String
-    /// この行が読み書きするキー。札は先頭のキーのもの。↩︎ はすべての local を消す。
+    /// この行が読み書きするキー。出どころは先頭のキーのもの。↩︎ はすべての local を消す。
     let keys: [String]
     /// 生の値を人の言葉にする（吹き出しの表示に使う）。
     var describe: (String) -> String = { $0 }
@@ -366,10 +366,10 @@ private struct SettingRow<Control: View>: View {
                 } else {
                     Color.clear.frame(width: 20, height: 1)
                 }
-                OriginBadge(model: model, key: keys[0])
+                SourceLabel(model: model, key: keys[0])
                 Button { showingDetails.toggle() } label: { Image(systemName: "info.circle") }
                     .buttonStyle(.borderless)
-                    .help(L("Where this is set"))
+                    .help(L("Where the value comes from"))
                     .popover(isPresented: $showingDetails, arrowEdge: .trailing) { details }
             }
             if !help.isEmpty {
@@ -395,7 +395,7 @@ private struct SettingRow<Control: View>: View {
                         Text(L("git’s default")).foregroundStyle(.secondary)
                     }
                     if model.local(key) != nil, let above = model.inherited(key) {
-                        Text(L("Above: %@", describe(above.value))).foregroundStyle(.secondary)
+                        Text(L("Without the override here: %@", describe(above.value))).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -509,7 +509,7 @@ private struct PullMethodRow: View {
     }
 
     private var current: Method { method(rebase: model.effective("pull.rebase")?.value, ff: model.effective("pull.ff")?.value) }
-    /// 札に出すのは、取り込み方を決めているほうのキー。
+    /// 出どころに出すのは、取り込み方を決めているほうのキー。
     private var decidingKey: String { model.effective("pull.ff")?.value.lowercased() == "only" ? "pull.ff" : "pull.rebase" }
 
     private func label(_ m: Method) -> String {

@@ -234,8 +234,9 @@
 "Filter by key" = "キーで絞り込む";
 "Key" = "キー";
 "Value" = "値";
-"Scope" = "段";
+"Source" = "出どころ";
 "Location" = "場所";
+"File" = "ファイル";
 "Key (e.g. core.autocrlf)" = "キー（core.autocrlf など）";
 "Set Local" = "local に設定";
 "Unset Local" = "local の値を消す";
@@ -686,7 +687,6 @@
 "Hide Others" = "ほかを隠す";
 "Show All" = "すべてを表示";
 "Quit Amon Hen" = "Amon Hen を終了";
-"File" = "ファイル";
 "New Tab" = "新規タブ";
 "New Window" = "新規ウインドウ";
 "Open…" = "開く…";
@@ -1162,13 +1162,13 @@
 "Track changes to the executable bit" = "実行の権限の変化を追う";
 "When pulling, how are the changes brought in?" = "pull のとき、どう取り込むか";
 "git’s default" = "git の既定";
-"system" = "システム";
+"system-wide" = "システム全体";
 "this repository" = "このリポジトリ";
 "this worktree" = "この worktree";
-"your settings" = "あなたの設定";
-"your settings on %@" = "%@ でのあなたの設定";
-"Above: %@" = "上の値: %@";
-"Where this is set" = "どこに書かれているか";
+"all repositories" = "すべてのリポジトリ";
+"all repositories on %@" = "%@ のすべてのリポジトリ";
+"Without the override here: %@" = "ここで上書きしなければ: %@";
+"Where the value comes from" = "値の出どころ";
 "Every open repository is fetched at this interval while its window is open." = "開いているすべてのリポジトリを、ウィンドウが開いている間、この間隔で fetch します。";
 "Fast-forward" = "fast-forward";
 "Ignore in this repository only" = "このリポジトリだけで無視する";
@@ -1188,3 +1188,4 @@
 ".git/info/exclude, one pattern per line. Shared patterns go in .gitignore." = ".git/info/exclude。1 行に 1 つ。共有するパターンは .gitignore に書きます。";
 "Branches whose tips are among the rewritten commits. Undo puts them back." = "先頭が書き換えるコミットにあるブランチです。Undo で戻ります。";
 "History edits always stash, whatever this says." = "History の編集は、この設定に関わらずいつも退避します。";
+"Later rows take precedence (system-wide → all repositories → this repository → this worktree). Only this repository’s values can be changed here." = "後の行ほど優先されます（システム全体 → すべてのリポジトリ → このリポジトリ → この worktree）。ここで変えられるのは、このリポジトリの値だけです。";

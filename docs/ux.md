@@ -144,12 +144,12 @@ The first version (a sheet with tabs, U11) showed git's configuration as git sto
 ### 4.1 Principles
 
 1. **Ask in terms of what happens.** A row is a question in plain words ("When pulling, how are the changes brought in?") and its answers are plain words ("Merge", "Rebase", "Fast-forward"). git's key and raw value are shown only on request (ⓘ) and in All settings.
-2. **Always show what happens now, as one value.** The control shows the value in effect. When nothing is set anywhere, it shows git's default behavior, not "Not set". A badge next to it says where the value comes from.
+2. **Always show what happens now, as one value.** The control shows the value in effect. When nothing is set anywhere, it shows git's default behavior, not "Not set". Its source is written next to it (git's default, all repositories, this repository).
 3. **Changing and reverting are two different things.** Picking a value writes it for this repository. ↩︎, shown only while this repository overrides, removes the override. There is no "Inherited" entry in a menu.
 4. **One choice per decision.** When two git keys make one decision (sign or not and in which format; the pull method), the row is one choice and writes both keys.
 5. **Choose, don't type.** When the answers can be listed (signing keys, templates, git executables, remotes), the row lists them; typing is the "Other…" entry, not the row.
 6. **Only what Amon Hen follows.** A git setting that Amon Hen's own operations ignore (because they pass an explicit flag) is not on the page; it stays in All settings. Where Amon Hen's behavior differs from a terminal's with the same value, the help says so.
-7. **Shared things are shared.** What applies to every repository (auto-fetch, the git executable, the gpg program, the template library, the global excludes, the user-wide `rebase.updateRefs`) is in Settings… > Git, not here. This page shows, in the badge, when a user-wide value is in effect.
+7. **Shared things are shared.** What applies to every repository (auto-fetch, the git executable, the gpg program, the template library, the global excludes, the user-wide `rebase.updateRefs`) is in Settings… > Git, not here. This page shows "all repositories" as the source when a user-wide value is in effect.
 8. **No "More".** A row is either worth a place on the page or it is not. Nothing is folded away.
 9. **What is not a setting does not look like one.** The git in use, the default branch, hooks, LFS and the worktrees are information with actions, on About this repository. Files of the repository (`.gitignore`) are edited as files, in Working Copy.
 10. **Help is readable.** One sentence under each question, in body size and secondary color, set in from the question. Nothing in caption size.
@@ -177,10 +177,10 @@ When pulling, how are the changes brought in?        ( Rebase           ⌄ ) �
 ```
   pull.rebase = true
   this repository (.git/config)
-  Above: Merge (your settings, ~/.gitconfig)
+  Without the override here: Merge (all repositories, ~/.gitconfig)
 ```
 
-A yes/no setting is a switch with the same badge:
+A yes/no setting is a switch with the same source:
 
 ```
 Stash changes before rebasing                                     (  ●)   this repository  ↩︎  ⓘ
@@ -191,7 +191,7 @@ Stash changes before rebasing                                     (  ●)   this
 A choice whose answers are collected (the signing key; the list depends on the format chosen above it):
 
 ```
-Key                               ( 5C37 A27D … Shoichi Fukusaka <me@example.com>  ⌄ )   your settings  ⓘ
+Key                               ( 5C37 A27D … Shoichi Fukusaka <me@example.com>  ⌄ )   all repositories  ⓘ
                                     ├ 5C37 A27D … Shoichi Fukusaka <me@example.com>
                                     ├ 9F02 11AB … Shoichi Fukusaka (work) <s@work.example>
                                     └ Other…
@@ -204,23 +204,23 @@ Move stacked branches along when rebasing              ( Leave them   ⌄ )   gi
     ⚠ Needs git 2.38 or later. This repository's git is 2.34 (build-1).
 ```
 
-The parts, left to right: the question with its help under it; the control showing the value in effect; ↩︎ while this repository overrides; the badge; ⓘ.
+The parts, left to right: the question with its help under it; the control showing the value in effect; ↩︎ while this repository overrides; the source; ⓘ.
 
-### 4.3 The badge: where the value comes from
+### 4.3 The source: where the value comes from
 
-| Badge | Meaning | Source in git |
+| Source | Meaning | In git |
 | --- | --- | --- |
 | git's default | Nothing is set anywhere; git's own default behavior is shown | — |
-| your settings | The user running git set it for all repositories (Settings… > Git) | `--global` (`~/.gitconfig`) |
+| all repositories | The user running git set it for every repository (Settings… > Git) | `--global` (`~/.gitconfig`) |
 | this repository | Set here; ↩︎ removes it | `--local` (`.git/config`) |
 | this worktree | Set for the current worktree only | `--worktree` |
-| system | Set for the whole machine (read-only here) | `--system` |
+| system-wide | Set for every user of the machine (read-only here) | `--system` |
 
-For a repository on an SSH host, "your settings" means the settings of the user on that host, and the badge says so ("your settings on build-1"). The badge's tooltip shows the file.
+For a repository on an SSH host, "all repositories" means those of the user on that host, and the source says so ("all repositories on build-1"). Its tooltip shows the file. These words are the only names for git's scopes in the app: git config's Source column uses the same ones, and "global", "local" and "system" appear only in that column's tooltips.
 
 ### 4.4 Writing and reverting
 
-- Choosing a value writes it to this repository at once (`git config --local`), with no confirmation. ↩︎ is the way back, and the badge changes as soon as the write lands.
+- Choosing a value writes it to this repository at once (`git config --local`), with no confirmation. ↩︎ is the way back, and the source changes as soon as the write lands.
 - A failed write shows its error under the row, in red, and the control goes back to the previous value.
 - Nothing on this page writes `--global`. Settings… > Git does, with one line saying that git in a terminal follows those settings too.
 
@@ -232,17 +232,17 @@ A list on the left and the chosen page on the right, like System Settings. The l
 | --- | --- |
 | Author and signing | **Name**, **Email** (`user.name`, `user.email`; typed, since they are not a list). **Signing**: one choice, No signing / OpenPGP / SSH / X.509 (writes `commit.gpgsign` and `gpg.format` together). **Key**: a list collected for the chosen format (OpenPGP: `gpg --list-secret-keys`, the keys for the email first; SSH: `~/.ssh/*.pub` and `ssh-add -L`; X.509: `gpgsm --list-secret-keys`), plus Other… for a value not in the list; collected by the core, so on the SSH host for a repository there (`user.signingkey`). The gpg / ssh-keygen / gpgsm programs are found by Amon Hen and shown in Settings… > Git, where they can be overridden. |
 | Commits | **Message template**: None (start empty) / one of the templates in Settings… > Git's library / A file… (git's `commit.template`, with a file chooser). The chosen template is previewed under the row. Library templates can contain placeholders that Amon Hen fills when the commit box opens: `{branch}`, `{issue}` (a number taken from the branch name), `{date}`; git's own file templates have none. Nothing else: `commit.cleanup` stays in All settings. |
-| Branches | **Default branch**: the one detected (`origin/HEAD`, then `main`, `master`), or a local branch chosen here for repositories without one. Amon Hen's own key, `amonhen.defaultBranch` in `.git/config`, so the CLI and the extension see it too; it decides "merged" and the trunk in Branches. The badge says "detected" while nothing is chosen. |
+| Branches | **Default branch**: the one detected (`origin/HEAD`, then `main`, `master`), or a local branch chosen here for repositories without one. Amon Hen's own key, `amonhen.defaultBranch` in `.git/config`, so the CLI and the extension see it too; it decides "merged" and the trunk in Branches. The source reads "detected" while nothing is chosen. |
 | Operations | **Pull**: When pulling, how are the changes brought in? (Merge / Rebase / Fast-forward; `pull.rebase`, and `pull.ff=only` with `pull.rebase=false` for the last). **Fetch**: Remove remote-tracking branches deleted on the remote (`fetch.prune`; Amon Hen's Fetch passes `--prune` only when it is on, as `git fetch` does, so the switch needs no explanation). **Rebase**: Stash changes before rebasing (`rebase.autoStash`; History edits always stash); Move stacked branches along when rebasing or editing History (`rebase.updateRefs`; disabled below git 2.38 with the version found). **Merge**: How conflicts are written in files (Both sides / Both sides and the base / Both sides and the base, shortened; `merge.conflictStyle`; the help says the merge editor works with all three, and that with the base it resolves one-sided and word-level conflicts by itself, so zdiff3 is what Amon Hen recommends). No Push rows: Amon Hen's Push sends the branch to the target chosen in its sheet with an explicit refspec and `--set-upstream`, so `push.default` and `push.autoSetupRemote` only affect a terminal (All settings). |
 | Working Copy | **Line endings** (`core.autocrlf`: Keep as committed / CRLF in the working tree, LF in commits / LF in commits). **Track changes to the executable bit** (`core.fileMode`). **Ignore in this repository only**: an editor for `.git/info/exclude`, with the number of files each line matches shown at the right of the line as it is typed (no button). Not `status.showUntrackedFiles` (Amon Hen's status always lists every untracked file) and not `.gitignore`, which is a file of the repository (4.7). |
 | Remotes | A table of the remotes (name, fetch URL, push URL when different, whether it is on GitHub or similar). Add, Edit and Remove open one sheet: name, fetch URL, push URL (empty means the same), what the URL points to (GitHub, GitLab, a path, an SSH host) and a connection check (`git ls-remote`) before saving. Prune per remote. The same actions are in the sidebar: Add Remote… on the Remotes group's context menu; Rename, Edit URL…, Remove and Prune on a remote's. |
 | Hooks · LFS | **Hooks**: a table with each hook's name, when git runs it (before a commit, before a push, …), an Enabled switch (the executable bit) and Open in Editor; where they live when `core.hooksPath` is set. **LFS**: whether git-lfs is installed (with how to install it if not), the tracked patterns from `.gitattributes` with Track Pattern… (`git lfs track`) and Remove, and how many files are in LFS. Named by its contents: no single word covers both, and the worktrees are already listed under Working Copy in the sidebar. |
-| git config | The page is `git config` itself, so it is called that and not translated. A table like Xcode's Build Settings: Key, Value in effect, then one column per scope (system, global, local, worktree) with the value set there. The value in effect is bold. Double-clicking a cell in the local column edits it; emptying it removes the key here; a "+" row adds a key. Search by key or value, sorting by any column, ⌘C copies the selected rows as `key = value`. Nothing on this page needs to be typed into separate key and value fields. |
+| git config | The page is `git config` itself, so it is called that and not translated. A table like Xcode's Build Settings: Key, Value in effect, then one column per source (system-wide, all repositories, this repository, this worktree) with the value set there. The value in effect is bold. Double-clicking a cell in the local column edits it; emptying it removes the key here; a "+" row adds a key. Search by key or value, sorting by any column, ⌘C copies the selected rows as `key = value`. Nothing on this page needs to be typed into separate key and value fields. |
 
 ### 4.6 Older git and SSH hosts
 
 - A row whose setting the git in use does not understand is shown disabled, with the version needed and the version found (and the host). It is not hidden, so the user learns why the behavior is missing.
-- On an SSH host, every row reads and writes the host's git, and lists (signing keys, remotes' reachability) are collected there. The badge says "your settings on <host>" for `--global` values there.
+- On an SSH host, every row reads and writes the host's git, and lists (signing keys, remotes' reachability) are collected there. The source reads "all repositories on <host>" for `--global` values there.
 
 ### 4.7 What is not on this page, and where it is
 
@@ -260,7 +260,7 @@ A list on the left and the chosen page on the right, like System Settings. The l
 
 ### 4.8 Stages
 
-Each stage is its own pull request after the page's framework (the list, the rows, the badge and ↩︎, Pull and Fetch following git's settings):
+Each stage is its own pull request after the page's framework (the list, the rows, the source and ↩︎, Pull and Fetch following git's settings):
 
 1. Author and signing as one choice, and the key collected by the core.
 2. The template library in Settings… > Git with placeholders, and the Commits page choosing from it.
@@ -720,7 +720,7 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
 - [x] U18. Worktrees under Working Copy in the sidebar with their change counts (first built as every worktree's changes inside Working Copy, then moved to the sidebar).
 - [x] U19. History's labels at each worktree's HEAD (name and number of changed files; ✎ for the edited one), kept up
   to date when a worktree commits or changes files.
-- [ ] U20. Repository settings redone from the person using it (chapter 4). Done: the page in the sidebar's Workspace with its list of pages (Author and Signing, Commits, Operations, Branches, Working Copy, Remotes, Hooks · LFS, git config) and the git line under it, the rows with the value in effect, the badge, ↩︎ and ⓘ, the default branch override (`amonhen.defaultBranch`), Pull and Fetch following git's settings, and rows that only a terminal honors taken off the page. Planned, in the stages of 4.8: signing as one choice with the key collected; the template library; the exclude editor's match counts and `.gitignore` from Working Copy; the remotes sheet and sidebar actions; Hooks · LFS as tables with actions; git config as the Xcode-style table; the machine's settings (this Mac, and per SSH host).
+- [ ] U20. Repository settings redone from the person using it (chapter 4). Done: the page in the sidebar's Workspace with its list of pages (Author and Signing, Commits, Operations, Branches, Working Copy, Remotes, Hooks · LFS, git config) and the git line under it, the rows with the value in effect, its source, ↩︎ and ⓘ, the default branch override (`amonhen.defaultBranch`), Pull and Fetch following git's settings, and rows that only a terminal honors taken off the page. Planned, in the stages of 4.8: signing as one choice with the key collected; the template library; the exclude editor's match counts and `.gitignore` from Working Copy; the remotes sheet and sidebar actions; Hooks · LFS as tables with actions; git config as the Xcode-style table; the machine's settings (this Mac, and per SSH host).
 
 ## Decisions
 
