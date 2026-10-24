@@ -324,6 +324,15 @@ linux（1,485,021 コミット、ref 952 個、Apple Silicon、release ビルド
 
 キャッシュがない初回の 2.4 s は、commit-graph があれば約 1.2 s になる。commit-graph がないリポジトリで `git commit-graph write --reachable` を裏で実行するかは設定で選ぶ（`writeCommitGraph`、既定は行わない。リポジトリの `.git` に書き込むため）。パスごとの履歴を速くする、変更のあったパスの Bloom フィルタ（`--changed-paths`）も書く。2.27 より前の git はこのオプションを知らないので、付けずに書き直す。
 
+commit-graph がすでにあれば、開いたときと fetch・pull の後に、commit-graph にないコミットだけを新しい層として書き足す（`--split`。小さい層が積み重なると git がまとめる）。増えていなければ git は何も書かない（30 ms）。書き足さないと、commit-graph を書いた後に増えたコミットは、git の自動 gc が書き直すまで、オブジェクトから読まれ、パスでの検索でも Bloom フィルタが効かない。サポートの最低の git 2.23 も `--split` を知っている。linux で、先頭からその数だけ前に commit-graph を書いた状態（`git clone --shared` した複製）:
+
+| commit-graph にないコミット | 書き足し | History の読み込み | File History の最初の 100 件（`kernel/sched/core.c` / `MAINTAINERS`） | それらのコミットの `git rev-list --count` |
+| --- | --- | --- | --- | --- |
+| 17,180（マージウィンドウ 1 回分） | 1.7 s | 542 → 521 ms | 0.09 → 0.08 s / 0.12 → 0.06 s | 0.24 → 0.06 s |
+| 98,901（1 年分） | 13 s | 771 → 548 ms | 0.15 → 0.09 s / 0.13 → 0.07 s | 1.23 → 0.11 s |
+
+書き足しは増えた数に比例し（1: 0.05 s、1,526: 0.3 s、5,212: 0.7 s）、全体の書き直しの 141 s よりずっと短いので、数でのしきい値は設けない。
+
 ファイル単位の履歴（`fileHistory`）は `git log --follow` を使わない（履歴の単純化も Bloom フィルタも効かず、全コミットを歩く）。`git log --no-merges -- <path>` で辿り（`merges` なら `--no-merges` を付けない。マージにはファイル名が出ないので、その時点のパスを添える）、いちばん古いコミットでそのパスが改名かコピーで生まれていたら（`git diff-tree -C`）、そのコミットの親から元の名前で続ける。`limit` があれば残りの数を各 `git log` に渡し、その先があるかを `more` で返す。macOS の File History の窓は、まず 100 コミットを、次に全部を求める。linux（上と同じく `git clone --shared` した複製）での `amonhen run` の時間を、`git log --follow` と比べる:
 
 | ファイル | `--follow` | 今 | 今（Bloom フィルタあり） | コミットの数（`--follow` / 今） |
