@@ -126,9 +126,11 @@ pub trait GitBackend: Send + Sync {
         Ok(true)
     }
 
-    /// commit-graph を書き出す（`git commit-graph write --reachable`）。リポジトリの `.git` に
-    /// 書き込むので、利用者が設定で選んだときだけ呼ぶ。対応しない実装は何もしない。
-    fn write_commit_graph(&self) -> Result<()> {
+    /// commit-graph を書き出す（`git commit-graph write --reachable`）。`split` なら、今の commit-graph に
+    /// ないコミットだけを層として書き足す（`--split`）。リポジトリの `.git` に書き込むので、利用者が
+    /// 設定で選んだときだけ呼ぶ。対応しない実装は何もしない。
+    fn write_commit_graph(&self, split: bool) -> Result<()> {
+        let _ = split;
         Ok(())
     }
 

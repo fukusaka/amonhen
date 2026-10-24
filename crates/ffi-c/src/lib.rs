@@ -396,16 +396,15 @@ pub unsafe extern "C" fn amonhen_history_load_cached(
         .map_or(std::ptr::null(), into_history)
 }
 
-/// commit-graph がなければ書き出す（`git commit-graph write --reachable`）。書き出したら 1、
-/// すでにあれば 0、失敗したら -1 を返す。利用者が設定で選んだときだけ、裏のスレッドから呼ぶこと。
+/// commit-graph を最新にする（`git commit-graph write --reachable`）。なければ全体を書き出して 1、
+/// あれば後から増えたコミットだけを書き足して（`--split`）0、失敗したら -1 を返す。利用者が設定で
+/// 選んだときだけ、裏のスレッドから呼ぶこと。
 ///
 /// # Safety
 /// `repo` は有効なリポジトリであること。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_repo_write_commit_graph_if_missing(
-    repo_ptr: *const AmonhenRepo,
-) -> i32 {
-    match repo(repo_ptr).write_commit_graph_if_missing() {
+pub unsafe extern "C" fn amonhen_repo_update_commit_graph(repo_ptr: *const AmonhenRepo) -> i32 {
+    match repo(repo_ptr).update_commit_graph() {
         Ok(written) => i32::from(written),
         Err(e) => {
             set_error(e);

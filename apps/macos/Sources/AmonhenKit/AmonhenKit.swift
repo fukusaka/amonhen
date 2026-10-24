@@ -100,10 +100,10 @@ public final class Repository: @unchecked Sendable {
         amonhen_history_load_cached(raw).map { History(raw: $0, repository: self) }
     }
 
-    /// commit-graph がなければ書き出し、書き出したら true を返す。リポジトリの `.git` に書き込むので、
-    /// 設定で選ばれたときだけ、裏のスレッドから呼ぶこと。
-    public func writeCommitGraphIfMissing() throws -> Bool {
-        switch amonhen_repo_write_commit_graph_if_missing(raw) {
+    /// commit-graph を最新にする。なければ全体を書き出して true を、あれば後から増えたコミットだけを
+    /// 書き足して false を返す。リポジトリの `.git` に書き込むので、設定で選ばれたときだけ、裏のスレッドから呼ぶこと。
+    public func updateCommitGraph() throws -> Bool {
+        switch amonhen_repo_update_commit_graph(raw) {
         case 1: return true
         case 0: return false
         default: throw AmonhenError.last()

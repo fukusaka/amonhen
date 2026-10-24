@@ -135,8 +135,32 @@ fn writes_a_commit_graph_on_request() {
     commit(dir, "first");
     let backend = GixBackend::open(dir).unwrap();
     assert!(!backend.has_commit_graph().unwrap());
-    backend.write_commit_graph().unwrap();
+    backend.write_commit_graph(false).unwrap();
     assert!(GixBackend::open(dir).unwrap().has_commit_graph().unwrap());
+}
+
+#[test]
+fn adds_new_commits_to_the_commit_graph() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    commit(dir, "first");
+    let backend = GixBackend::open(dir).unwrap();
+    backend.write_commit_graph(false).unwrap();
+    commit(dir, "second");
+    commit(dir, "third");
+    let in_graph = |rev: &str| {
+        let id = gix::ObjectId::from_hex(git(dir, &["rev-parse", rev]).as_bytes()).unwrap();
+        let graph = gix::open(dir).unwrap().commit_graph().unwrap();
+        graph.lookup(id).is_some()
+    };
+    assert!(in_graph("HEAD~2"));
+    assert!(!in_graph("HEAD"));
+    backend.write_commit_graph(true).unwrap();
+    assert!(in_graph("HEAD~2"));
+    assert!(in_graph("HEAD~1"));
+    assert!(in_graph("HEAD"));
 }
 
 #[test]

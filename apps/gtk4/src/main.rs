@@ -1073,10 +1073,10 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
             return;
         }
     };
-    // Settings > Performance: commit-graph がなければ書き出す（手元のリポジトリだけ）。
+    // Settings > Performance: commit-graph がなければ書き出し、あれば増えた分を書き足す（手元のリポジトリだけ）。
     if settings::bool(settings::WRITE_COMMIT_GRAPH) && repo.connection_state().is_none() {
         let repo = repo.clone();
-        std::thread::spawn(move || match repo.write_commit_graph_if_missing() {
+        std::thread::spawn(move || match repo.update_commit_graph() {
             Ok(true) => eprintln!("commit-graph を書き出した"),
             Ok(false) => {}
             Err(e) => eprintln!("commit-graph を書き出せない: {e}"),

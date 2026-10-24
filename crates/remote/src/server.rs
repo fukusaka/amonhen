@@ -279,7 +279,7 @@ fn handle(
         } => encode(&backend.set_index_content(&path, mode, &content.0)?),
         Request::Commit { message, amend } => encode(&backend.commit(&message, amend)?),
         Request::HasCommitGraph => encode(&backend.has_commit_graph()?),
-        Request::WriteCommitGraph => encode(&backend.write_commit_graph()?),
+        Request::WriteCommitGraph { split } => encode(&backend.write_commit_graph(split)?),
         Request::CommitTexts(ids) => {
             let texts: Vec<CommitTextWire> =
                 backend.commit_texts(&ids)?.iter().map(Into::into).collect();
