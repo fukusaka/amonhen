@@ -1018,6 +1018,50 @@ impl Repository {
         Ok(chain)
     }
 
+    /// 先頭が `ids` のどれかにあるローカルブランチ（先頭と完全な名前）。rebase で一緒に動かす。チェックアウト中の
+    /// ブランチと、ほかの worktree でチェックアウト中のもの（git が動かさない）は除く。
+    fn stacked_branches(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        ids: &std::collections::HashSet<Oid>,
+    ) -> Result<Vec<(Oid, String)>> {
+        let refs = self.load_refs()?;
+        let mut busy: Vec<String> = refs.refs.head_branch.iter().cloned().collect();
+        if let Ok(list) = ops.worktree_list() {
+            let paths = self.paths();
+            busy.extend(
+                crate::worktree::parse(&list, paths.workdir.as_deref())
+                    .into_iter()
+                    .filter_map(|w| w.branch),
+            );
+        }
+        Ok(refs
+            .refs
+            .entries
+            .iter()
+            .filter(|e| e.kind == RefKind::Local && !busy.contains(&e.name))
+            .filter_map(|e| {
+                let tip = e.target.filter(|t| ids.contains(t))?;
+                Some((tip, format!("refs/heads/{}", e.name)))
+            })
+            .collect())
+    }
+
+    /// `names` のうち、`before` から動いたブランチの短い名前。
+    fn moved_branches(
+        ops: &dyn amonhen_model::Operations,
+        before: &[(String, Option<Oid>)],
+    ) -> Result<Vec<String>> {
+        let names: Vec<String> = before.iter().map(|(n, _)| n.clone()).collect();
+        Ok(ops
+            .resolve_refs(&names)?
+            .into_iter()
+            .zip(before)
+            .filter(|((_, now), (_, was))| now != was)
+            .map(|((name, _), _)| name.trim_start_matches("refs/heads/").to_owned())
+            .collect())
+    }
+
     /// コミットを編集する。非対話の rebase で行い、Undo できるように記録する。
     pub fn rewrite(&self, label: &str, edit: &HistoryEdit) -> Result<Outcome> {
         let ops = self.backend().operations()?;
@@ -1029,7 +1073,10 @@ impl Repository {
         let chain = self.editable_chain()?;
         // メッセージと todo は `.git/amonhen` に書く。git に渡すのはリポジトリ側の絶対パス。
         let dir = self.backend().paths().git_dir.join("amonhen");
-        let plan = rewrite::plan_rebase(&chain, edit, &dir)?;
+        let ids = chain.iter().map(|c| c.oid).collect();
+        let stacked = self.stacked_branches(ops, &ids)?;
+        let plan = rewrite::plan_rebase(&chain, edit, &dir, &stacked)?;
+        let names: Vec<String> = stacked.into_iter().map(|(_, name)| name).collect();
         let files = self.backend().files();
         for (name, message) in &plan.messages {
             files.write(Root::GitDir, &format!("amonhen/{name}"), message.as_bytes())?;
@@ -1039,6 +1086,7 @@ impl Repository {
         self.undo_log()?.record_stoppable(
             ops,
             label,
+            &names,
             || ops.rebase_todo(plan.base.as_ref(), &todo),
             |o| *o == Outcome::Conflict,
             |o| *o == Outcome::Stopped,
@@ -1185,14 +1233,7 @@ impl Repository {
                 ok()
             }
             Command::RenameBranch { from, to } => {
-                undo.record(
-                    ops,
-                    &format!("Rename {from} to {to}"),
-                    &[heads(&from), heads(&to)],
-                    false,
-                    || ops.rename_branch(&from, &to),
-                    |_| false,
-                )?;
+                undo.record_rename(ops, &format!("Rename {from} to {to}"), &from, &to)?;
                 ok()
             }
             Command::DeleteTag { name } => {
@@ -1290,14 +1331,39 @@ impl Repository {
                     not_done,
                 )?)
             }
-            Command::Rebase { onto } => done(undo.record(
-                ops,
-                &format!("Rebase onto {onto}"),
-                &[],
-                false,
-                || ops.rebase(&onto),
-                not_done,
-            )?),
+            Command::Rebase { onto } => {
+                // 載せ直すコミット（onto..HEAD）に先頭があるブランチも、git が一緒に動かす（--update-refs）。
+                let stacked = match (ops.head_state()?.oid, ops.resolve(&onto)) {
+                    (Some(head), Ok(base)) => {
+                        let ids = self
+                            .backend()
+                            .commits_since(&[head], &[base])?
+                            .into_iter()
+                            .map(|c| c.id)
+                            .collect();
+                        self.stacked_branches(ops, &ids)?
+                    }
+                    _ => Vec::new(),
+                };
+                let names: Vec<String> = stacked.into_iter().map(|(_, name)| name).collect();
+                let before = ops.resolve_refs(&names)?;
+                let outcome = undo.record(
+                    ops,
+                    &format!("Rebase onto {onto}"),
+                    &names,
+                    false,
+                    || ops.rebase(&onto),
+                    not_done,
+                )?;
+                let moved = Self::moved_branches(ops, &before)?;
+                Ok(Response {
+                    ok: true,
+                    outcome: Some(outcome_name(outcome)),
+                    info: (!moved.is_empty())
+                        .then(|| serde_json::json!({ "movedBranches": moved })),
+                    ..Default::default()
+                })
+            }
             Command::CherryPick { oid: o, is_merge } => {
                 let id = oid(&o)?;
                 done(undo.record(
@@ -2950,6 +3016,76 @@ mod tests {
         git(dir, &["add", name]);
         git(dir, &["commit", "-q", "-m", subject]);
         git(dir, &["rev-parse", "HEAD"])
+    }
+
+    /// git が積み重ねたブランチを一緒に動かせる（2.38 から）。古ければ動かさないことを確かめる。
+    fn updates_stacked_branches() -> bool {
+        amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 38))
+    }
+
+    /// main ─ one ─ two と積み、two をチェックアウトする。one と two の先頭を返す。
+    fn stack(dir: &std::path::Path) -> (String, String) {
+        git(dir, &["switch", "-q", "-c", "one"]);
+        let one = commit_file(dir, "one.txt", "one");
+        git(dir, &["switch", "-q", "-c", "two"]);
+        let two = commit_file(dir, "two.txt", "two");
+        (one, two)
+    }
+
+    #[test]
+    fn rebase_moves_the_branches_stacked_under_the_current_one() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let (one, two) = stack(dir);
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "main.txt", "main");
+        git(dir, &["switch", "-q", "two"]);
+
+        let r = run(&repo, r#"{"op":"rebase","onto":"main"}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(
+            git(dir, &["rev-parse", "two^^"]),
+            git(dir, &["rev-parse", "main"])
+        );
+        if updates_stacked_branches() {
+            assert_eq!(r["info"]["movedBranches"], serde_json::json!(["one"]));
+            assert_eq!(
+                git(dir, &["rev-parse", "two^"]),
+                git(dir, &["rev-parse", "one"])
+            );
+        } else {
+            assert!(r["info"].is_null(), "{r}");
+            assert_eq!(git(dir, &["rev-parse", "one"]), one);
+        }
+
+        let r = run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(git(dir, &["rev-parse", "one"]), one);
+        assert_eq!(git(dir, &["rev-parse", "two"]), two);
+    }
+
+    #[test]
+    fn history_edits_move_the_branches_stacked_under_the_current_one() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let (one, two) = stack(dir);
+        let first = git(dir, &["rev-parse", "main"]);
+
+        // one の先頭を消すと、one はその前（main）へ。
+        let r = rewrite(&repo, serde_json::json!({"kind": "drop", "oid": one}));
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(git(dir, &["rev-parse", "two^"]), first);
+        let expected = if updates_stacked_branches() {
+            &first
+        } else {
+            &one
+        };
+        assert_eq!(&git(dir, &["rev-parse", "one"]), expected);
+
+        let r = run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(git(dir, &["rev-parse", "one"]), one);
+        assert_eq!(git(dir, &["rev-parse", "two"]), two);
     }
 
     fn rewrite(repo: &Repository, edit: serde_json::Value) -> serde_json::Value {

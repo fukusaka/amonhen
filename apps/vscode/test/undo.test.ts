@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
@@ -136,4 +136,25 @@ test('undo a dropped stash', async () => {
   assert.equal(git('stash', 'list'), '');
   await log.undo();
   assert.equal(git('rev-parse', 'stash@{0}'), oid);
+});
+
+test('undo a rename recorded by the engine by renaming back', async () => {
+  const oid = git('rev-parse', 'HEAD');
+  git('config', 'branch.main.description', 'keep me');
+  git('branch', '--move', 'main', 'trunk');
+  const head = (branch: string) => ({ branch: `refs/heads/${branch}`, oid });
+  const entry = {
+    label: 'Rename main to trunk',
+    time: Date.now(),
+    mode: 'keep',
+    before: { head: head('main'), refs: { 'refs/heads/main': oid, 'refs/heads/trunk': null } },
+    after: { head: head('trunk'), refs: { 'refs/heads/main': null, 'refs/heads/trunk': oid } },
+    rename: { from: 'main', to: 'trunk' },
+  };
+  const store = join(git('rev-parse', '--absolute-git-dir'), 'amonhen');
+  mkdirSync(store, { recursive: true });
+  writeFileSync(join(store, 'undo.json'), JSON.stringify([entry]));
+  assert.equal((await log.undo())?.label, 'Rename main to trunk');
+  assert.equal(git('branch', '--show-current'), 'main');
+  assert.equal(git('config', 'branch.main.description'), 'keep me');
 });

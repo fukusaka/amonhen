@@ -38,6 +38,8 @@ export interface UndoEntry {
   files?: FileBackup[];
   /** あれば、消した stash を戻す操作 */
   stash?: { oid: string; message: string };
+  /** あれば、ブランチの改名（短い名前）。逆向きに改名して戻す（設定と reflog も戻る） */
+  rename?: { from: string; to: string };
 }
 
 /** 記録した後に、ほかの操作でブランチや HEAD が動いている */
@@ -226,6 +228,12 @@ export class UndoLog {
     if (!sameSnapshot(await this.snapshot(Object.keys(after.refs)), after)) {
       throw new UndoConflictError(entry);
     }
+    if (entry.rename) {
+      await this.backend.renameBranch(entry.rename.to, entry.rename.from);
+      entries.pop();
+      await this.save();
+      return entry;
+    }
 
     const done = new Set<string>();
     // 1. いま checkout しているブランチ（または detached HEAD）を、作業中の変更を残したまま戻す
@@ -245,7 +253,8 @@ export class UndoLog {
     if (before.head.oid && before.head.branch !== after.head.branch) {
       await this.backend.switchTo({ ...before.head, oid: before.head.oid });
     }
-    // 3. 残りの ref を戻す
+    // 3. 残りの ref を戻す。checkout していないものは、1 つのトランザクションでまとめて書く
+    const updates: { name: string; value: string | null; expected: string | null }[] = [];
     for (const [name, value] of Object.entries(before.refs)) {
       const current = after.refs[name] ?? null;
       if (done.has(name) || value === current) {
@@ -255,8 +264,11 @@ export class UndoLog {
         // checkout 中のブランチは update-ref だと作業ツリーとずれるので reset で戻す
         await this.backend.reset(mode, value);
       } else {
-        await this.backend.updateRef(name, value, current);
+        updates.push({ name, value, expected: current });
       }
+    }
+    if (updates.length > 0) {
+      await this.backend.updateRefs(updates);
     }
 
     entries.pop();

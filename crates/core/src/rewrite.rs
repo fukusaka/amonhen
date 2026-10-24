@@ -99,10 +99,13 @@ pub fn shell_quote(s: &str) -> String {
 
 /// `chain` は HEAD から first-parent で辿ったコミット（新しい順）で、間に merge がないこと。
 /// `message_dir` はメッセージのファイルを置くディレクトリ（exec に絶対パスで渡す）。
+/// `branches` は、編集の範囲にあるかもしれない、積み重ねたブランチの先頭と完全な名前。範囲にあるものは
+/// todo に `update-ref` を入れて一緒に動かす（先頭のコミットについて行く。消したコミットなら、その前のコミットへ）。
 pub fn plan_rebase(
     chain: &[ChainCommit],
     edit: &HistoryEdit,
     message_dir: &Path,
+    branches: &[(Oid, String)],
 ) -> Result<RebasePlan> {
     // 古い順にする。
     let original: Vec<ChainCommit> = chain.iter().rev().copied().collect();
@@ -203,6 +206,7 @@ pub fn plan_rebase(
             HistoryEdit::Move { .. } => lines.push(format!("pick {}", c.oid)),
         }
     }
+    let lines = with_update_refs(lines, branches);
     let mut todo = lines.join("\n");
     todo.push('\n');
     Ok(RebasePlan {
@@ -210,6 +214,33 @@ pub fn plan_rebase(
         todo,
         messages,
     })
+}
+
+/// 先頭が `pick`・`fixup`・`drop` したコミットのブランチの `update-ref` を、そのコミットのまとまり（続く fixup・
+/// exec・break）の後、次の `pick`・`drop` の前に入れる。
+fn with_update_refs(lines: Vec<String>, branches: &[(Oid, String)]) -> Vec<String> {
+    let mut out = Vec::with_capacity(lines.len() + branches.len());
+    let mut pending: Vec<&str> = Vec::new();
+    for line in lines {
+        let mut words = line.split(' ');
+        let command = words.next().unwrap_or_default();
+        if matches!(command, "pick" | "drop") {
+            out.extend(pending.drain(..).map(|r| format!("update-ref {r}")));
+        }
+        if matches!(command, "pick" | "fixup" | "drop")
+            && let Some(oid) = words.next().and_then(Oid::from_hex)
+        {
+            pending.extend(
+                branches
+                    .iter()
+                    .filter(|(tip, _)| *tip == oid)
+                    .map(|(_, name)| name.as_str()),
+            );
+        }
+        out.push(line);
+    }
+    out.extend(pending.drain(..).map(|r| format!("update-ref {r}")));
+    out
 }
 
 #[cfg(test)]
@@ -242,7 +273,7 @@ mod tests {
     }
 
     fn plan(edit: HistoryEdit) -> Result<RebasePlan> {
-        plan_rebase(&chain(), &edit, Path::new("/g"))
+        plan_rebase(&chain(), &edit, Path::new("/g"), &[])
     }
 
     /// todo の中の 40 桁の ID を 1 文字に縮めて読みやすくする。
@@ -252,6 +283,36 @@ mod tests {
             s = s.replace(&hex(ch), &ch.to_string());
         }
         s
+    }
+
+    #[test]
+    fn stacked_branches_follow_their_tips() {
+        let branches = [
+            (oid('b'), "refs/heads/one".to_owned()),
+            (oid('c'), "refs/heads/two".to_owned()),
+            // 編集の範囲より前は動かないので、todo に入れない。
+            (oid('a'), "refs/heads/zero".to_owned()),
+        ];
+        let plan = |edit| plan_rebase(&chain(), &edit, Path::new("/g"), &branches).unwrap();
+        // 消したコミットのブランチは、その前のコミットへ。
+        assert_eq!(
+            short(&plan(HistoryEdit::Drop { oid: hex('b') }).todo),
+            "drop b\nupdate-ref refs/heads/one\npick c\nupdate-ref refs/heads/two\npick d\n"
+        );
+        // まとめたコミットのブランチは、まとめた後（メッセージを直した後）のコミットへ。
+        let todo = short(
+            &plan(HistoryEdit::Squash {
+                oid: hex('c'),
+                message: "b+c".into(),
+            })
+            .todo,
+        );
+        assert!(
+            todo.ends_with(
+                "message-c.txt'\nupdate-ref refs/heads/one\nupdate-ref refs/heads/two\npick d\n"
+            ),
+            "{todo}"
+        );
     }
 
     #[test]
@@ -355,6 +416,7 @@ mod tests {
             &partial,
             &HistoryEdit::Drop { oid: hex('c') },
             Path::new("/g"),
+            &[],
         )
         .unwrap();
         assert_eq!(p.base, Some(oid('e')));

@@ -8,7 +8,7 @@ use amonhen_model::tr;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use amonhen_model::{HeadState, Oid, Operations, RepoFiles, ResetMode, Result, Root};
+use amonhen_model::{HeadState, Oid, Operations, RefUpdate, RepoFiles, ResetMode, Result, Root};
 use serde::{Deserialize, Serialize};
 
 const MAX_ENTRIES: usize = 50;
@@ -55,6 +55,14 @@ struct StashBackup {
     message: String,
 }
 
+/// ブランチの改名（短い名前）。Undo は逆向きに改名する（ref を作り直すと、`branch.<name>.*` の設定と
+/// reflog が戻らない。チェックアウト中のブランチは、元の名前へ切り替えることもできない）。
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct RenameBackup {
+    from: String,
+    to: String,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum Mode {
@@ -76,6 +84,8 @@ struct Entry {
     files: Option<Vec<FileBackup>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     stash: Option<StashBackup>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    rename: Option<RenameBackup>,
 }
 
 /// 記録した後に、ほかの操作でブランチや HEAD が動いている。
@@ -242,22 +252,30 @@ impl UndoLog {
                 after,
                 files: None,
                 stash: None,
+                rename: None,
             })?;
         }
         Ok(result)
     }
 
     /// `record` と同じだが、`pending` が真を返したら操作の前の状態だけを保留しておき、
-    /// `settle_pending` で確定する（edit や split で rebase が途中で止まったとき）。
+    /// `settle_pending` で確定する（edit や split で rebase が途中で止まったとき）。`refs` は、HEAD の
+    /// ブランチのほかに動きうる ref（一緒に動かす積み重ねたブランチ）。
     pub fn record_stoppable<T>(
         &self,
         ops: &dyn Operations,
         label: &str,
+        refs: &[String],
         f: impl FnOnce() -> Result<T>,
         skip: impl FnOnce(&T) -> bool,
         pending: impl FnOnce(&T) -> bool,
     ) -> Result<T> {
-        let refs: Vec<String> = ops.head_state()?.branch.into_iter().collect();
+        let mut refs = refs.to_vec();
+        if let Some(branch) = ops.head_state()?.branch
+            && !refs.contains(&branch)
+        {
+            refs.push(branch);
+        }
         let before = Self::snapshot(ops, &refs)?;
         let result = f()?;
         if pending(&result) {
@@ -291,6 +309,7 @@ impl UndoLog {
                 after,
                 files: None,
                 stash: None,
+                rename: None,
             })?;
         }
         Ok(result)
@@ -328,6 +347,7 @@ impl UndoLog {
                 after,
                 files: None,
                 stash: None,
+                rename: None,
             })?;
         }
         self.files.remove(Root::GitDir, PENDING_FILE)?;
@@ -375,6 +395,7 @@ impl UndoLog {
                 after: snapshot,
                 files: Some(files),
                 stash: None,
+                rename: None,
             })?;
         }
         Ok(result)
@@ -401,6 +422,34 @@ impl UndoLog {
                 oid: oid.to_string(),
                 message: message.to_owned(),
             }),
+            rename: None,
+        })
+    }
+
+    /// ブランチを改名し、Undo で逆向きに改名できるように記録する。`from`・`to` は短い名前。
+    pub fn record_rename(
+        &self,
+        ops: &dyn Operations,
+        label: &str,
+        from: &str,
+        to: &str,
+    ) -> Result<()> {
+        let refs = [format!("refs/heads/{from}"), format!("refs/heads/{to}")];
+        let before = Self::snapshot(ops, &refs)?;
+        ops.rename_branch(from, to)?;
+        let after = Self::snapshot(ops, &refs)?;
+        self.push(Entry {
+            label: label.to_owned(),
+            time: now_ms(),
+            mode: Mode::Keep,
+            before,
+            after,
+            files: None,
+            stash: None,
+            rename: Some(RenameBackup {
+                from: from.to_owned(),
+                to: to.to_owned(),
+            }),
         })
     }
 
@@ -419,6 +468,12 @@ impl UndoLog {
             ops.stash_store(&oid(&stash.oid)?, &stash.message)?;
         } else if let Some(files) = &entry.files {
             self.undo_files(ops, &entry, files)?;
+        } else if let Some(rename) = &entry.rename {
+            let refs: Vec<String> = entry.after.refs.keys().cloned().collect();
+            if !Self::snapshot(ops, &refs)?.same(&entry.after) {
+                return Err(UndoConflict(entry.label.clone()).into());
+            }
+            ops.rename_branch(&rename.to, &rename.from)?;
         } else {
             let refs: Vec<String> = entry.after.refs.keys().cloned().collect();
             if !Self::snapshot(ops, &refs)?.same(&entry.after) {
@@ -462,7 +517,8 @@ impl UndoLog {
                 oid: parse(&before.head.oid),
             })?;
         }
-        // 3. 残りの ref を戻す。
+        // 3. 残りの ref を戻す。チェックアウトしていないものは、1 つのトランザクションでまとめて書く。
+        let mut updates = Vec::new();
         for (name, value) in &before.refs {
             let current = after.refs.get(name).cloned().flatten();
             if done.contains(name) || *value == current {
@@ -475,8 +531,15 @@ impl UndoLog {
                 // チェックアウト中のブランチは update-ref だと作業ツリーとずれるので reset で戻す。
                 ops.reset(mode, &v)?;
             } else {
-                ops.update_ref(name, value.as_ref(), parse(&current).as_ref())?;
+                updates.push(RefUpdate {
+                    name: name.clone(),
+                    value,
+                    expected: parse(&current),
+                });
             }
+        }
+        if !updates.is_empty() {
+            ops.update_refs(&updates)?;
         }
         Ok(())
     }
@@ -581,6 +644,82 @@ mod tests {
         assert_eq!(git.head_state().unwrap().oid, Some(before_merge));
         assert!(git.status().unwrap().entries.is_empty());
         assert_eq!(log.peek(), None);
+    }
+
+    #[test]
+    fn undoes_a_rename_by_renaming_back() {
+        let (tmp, git, log) = repo();
+        commit(&tmp, &git, "a.txt", "1\n");
+        let description = |name: &str| {
+            git.read(&["config", &format!("branch.{name}.description")])
+                .ok()
+                .map(|d| String::from_utf8_lossy(&d).trim().to_owned())
+        };
+
+        // チェックアウト中のブランチ。
+        log.record_rename(&git, "Rename main to trunk", "main", "trunk")
+            .unwrap();
+        assert_eq!(
+            log.undo(&git).unwrap().as_deref(),
+            Some("Rename main to trunk")
+        );
+        assert_eq!(
+            git.head_state().unwrap().branch.as_deref(),
+            Some("refs/heads/main")
+        );
+
+        // ほかのブランチ。設定もついて戻る。
+        git.create_branch("topic", "main", false).unwrap();
+        git.config_set("branch.topic.description", Some("keep me"))
+            .unwrap();
+        log.record_rename(&git, "Rename topic to feature", "topic", "feature")
+            .unwrap();
+        assert_eq!(description("feature").as_deref(), Some("keep me"));
+        log.undo(&git).unwrap();
+        assert_eq!(description("topic").as_deref(), Some("keep me"));
+        let refs = [
+            "refs/heads/topic".to_owned(),
+            "refs/heads/feature".to_owned(),
+        ];
+        let values = git.resolve_refs(&refs).unwrap();
+        assert!(values[0].1.is_some() && values[1].1.is_none());
+    }
+
+    #[test]
+    fn updates_refs_all_or_nothing() {
+        let (tmp, git, _) = repo();
+        let first = commit(&tmp, &git, "a.txt", "1\n");
+        let second = commit(&tmp, &git, "a.txt", "2\n");
+        git.create_branch("a", "main", false).unwrap();
+        let names = ["refs/heads/a".to_owned(), "refs/heads/b".to_owned()];
+        let update = |expected_a: Oid| {
+            git.update_refs(&[
+                RefUpdate {
+                    name: names[0].clone(),
+                    value: Some(first),
+                    expected: Some(expected_a),
+                },
+                RefUpdate {
+                    name: names[1].clone(),
+                    value: Some(first),
+                    expected: None,
+                },
+            ])
+        };
+        // a の期待値が違えば、b も作られない。
+        assert!(update(first).is_err());
+        assert_eq!(
+            git.resolve_refs(&names).unwrap(),
+            [(names[0].clone(), Some(second)), (names[1].clone(), None)]
+        );
+        update(second).unwrap();
+        assert_eq!(
+            git.resolve_refs(&names).unwrap(),
+            [
+                (names[0].clone(), Some(first)),
+                (names[1].clone(), Some(first))
+            ]
+        );
     }
 
     #[test]

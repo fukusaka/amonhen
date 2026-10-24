@@ -109,6 +109,8 @@ export interface RepositoryBackend {
   resolveRefs(names: readonly string[]): Promise<Map<string, string | null>>;
   /** 現在の値が expected のときだけ書き換える。value が null なら削除する */
   updateRef(name: string, value: string | null, expected: string | null): Promise<void>;
+  /** 複数の ref を、すべて書き換えるか何も変えないかのどちらかで書き換える */
+  updateRefs(updates: readonly { name: string; value: string | null; expected: string | null }[]): Promise<void>;
   /** 現在のブランチ（detached なら HEAD）を oid に戻す。keep は作業中の変更を残し、衝突するなら失敗する */
   reset(mode: 'soft' | 'mixed' | 'keep', oid: string): Promise<void>;
   /** branch に切り替える。branch が無ければ oid で detached HEAD にする */
@@ -389,6 +391,17 @@ export class CliBackend implements RepositoryBackend {
         : // expected が空文字なら「まだ存在しないこと」を条件にする
           ['update-ref', name, value, expected ?? ''];
     await this.git.exec(args, { cwd: this.root });
+  }
+
+  async updateRefs(updates: readonly { name: string; value: string | null; expected: string | null }[]): Promise<void> {
+    // update-ref --stdin は全部を 1 つのトランザクションで書く。「まだ存在しないこと」は 0 の oid で表す
+    const zero = '0'.repeat(40);
+    const input = updates
+      .map(({ name, value, expected }) =>
+        value === null ? `delete ${name} ${expected ?? zero}\n` : `update ${name} ${value} ${expected ?? zero}\n`,
+      )
+      .join('');
+    await this.git.exec(['update-ref', '--stdin'], { cwd: this.root, input });
   }
 
   async reset(mode: 'soft' | 'mixed' | 'keep', oid: string): Promise<void> {

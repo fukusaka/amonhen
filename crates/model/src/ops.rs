@@ -1,5 +1,17 @@
 use crate::{Oid, Result};
 
+/// ref の書き換え 1 つ（`Operations::update_refs`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RefUpdate {
+    /// 完全な ref 名。
+    pub name: String,
+    /// 新しい値。`None` なら消す。
+    pub value: Option<Oid>,
+    /// 今の値がこれのときだけ書き換える（`None` は「まだない」）。
+    pub expected: Option<Oid>,
+}
+
 /// HEAD の状態。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -188,6 +200,13 @@ pub trait Operations: Send + Sync {
     fn resolve_refs(&self, names: &[String]) -> Result<Vec<(String, Option<Oid>)>>;
     /// `expected` が今の値のときだけ書き換える（`None` は「まだない」）。`value` が `None` なら消す。
     fn update_ref(&self, name: &str, value: Option<&Oid>, expected: Option<&Oid>) -> Result<()>;
+    /// 複数の ref を、すべて書き換えるか何も変えないかのどちらかで書き換える。対応しない実装は 1 つずつ。
+    fn update_refs(&self, updates: &[RefUpdate]) -> Result<()> {
+        for u in updates {
+            self.update_ref(&u.name, u.value.as_ref(), u.expected.as_ref())?;
+        }
+        Ok(())
+    }
     fn reset(&self, mode: ResetMode, oid: &Oid) -> Result<()>;
     /// ブランチ（完全な名前）か、detached HEAD に切り替える。
     fn switch_to(&self, head: &HeadState) -> Result<()>;

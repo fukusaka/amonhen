@@ -1,7 +1,7 @@
 use amonhen_model::tr;
 use amonhen_model::{
-    ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RemoteChange, RemoteEntry,
-    ResetMode, Result, Sequence, WorktreeChange, WorktreeChanges,
+    ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RefUpdate, RemoteChange,
+    RemoteEntry, ResetMode, Result, Sequence, WorktreeChange, WorktreeChanges,
 };
 
 use crate::Git;
@@ -267,6 +267,22 @@ impl Operations for Git {
         .map(drop)
     }
 
+    fn update_refs(&self, updates: &[RefUpdate]) -> Result<()> {
+        // `update-ref --stdin` は全部を 1 つのトランザクションで書く（どれかの期待値が違えば何も変えない）。
+        // 「まだない」は 0 の oid で表す。
+        let zero = "0".repeat(40);
+        let mut input = String::new();
+        for u in updates {
+            let expected = u.expected.as_ref().map_or_else(|| zero.clone(), hex);
+            match &u.value {
+                Some(v) => input.push_str(&format!("update {} {} {expected}\n", u.name, hex(v))),
+                None => input.push_str(&format!("delete {} {expected}\n", u.name)),
+            }
+        }
+        self.write_with_input(&["update-ref", "--stdin"], input.as_bytes())
+            .map(drop)
+    }
+
     fn reset(&self, mode: ResetMode, oid: &Oid) -> Result<()> {
         let mode = match mode {
             ResetMode::Soft => "--soft",
@@ -408,7 +424,13 @@ impl Operations for Git {
     }
 
     fn rebase(&self, onto: &str) -> Result<Outcome> {
-        self.stoppable(&["rebase", onto], &[])
+        // 積み重ねたブランチも一緒に動かす。利用者が `rebase.updateRefs` を決めていればそれに従い、
+        // 決めていなければ有効にする（2.38 より前の git は知らない設定として無視する）。
+        if self.read(&["config", "--get", "rebase.updateRefs"]).is_ok() {
+            self.stoppable(&["rebase", onto], &[])
+        } else {
+            self.stoppable(&["-c", "rebase.updateRefs=true", "rebase", onto], &[])
+        }
     }
 
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
@@ -430,6 +452,18 @@ impl Operations for Git {
     }
 
     fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome> {
+        // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は git 2.38 から。使えなければ除く。
+        if !self.updates_refs_in_rebase() {
+            let text = std::fs::read_to_string(todo)?;
+            if text.lines().any(|l| l.starts_with("update-ref ")) {
+                let kept: String = text
+                    .lines()
+                    .filter(|l| !l.starts_with("update-ref "))
+                    .map(|l| format!("{l}\n"))
+                    .collect();
+                std::fs::write(todo, kept)?;
+            }
+        }
         // git は `$GIT_SEQUENCE_EDITOR <todo>` を sh で実行するので、用意した todo を上書きコピーさせる。
         let base = base.map(hex);
         // sh で実行されるので、Windows でも / 区切りにして引用符で囲む。
