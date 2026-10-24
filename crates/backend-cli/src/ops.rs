@@ -335,6 +335,42 @@ impl Operations for Git {
         .map(drop)
     }
 
+    fn delete_tag(&self, name: &str) -> Result<()> {
+        self.write(&["tag", "--delete", "--", name]).map(drop)
+    }
+
+    fn remote_tags(&self, remote: &str) -> Result<Vec<(String, Oid)>> {
+        // `<oid>\trefs/tags/<name>` の行。注釈付きのタグの後には、たどった先のコミットの `<name>^{}` の行が
+        // 続くが、比べるのはタグのオブジェクトなので読まない。
+        let out = text(self.read(&["ls-remote", "--tags", remote])?)?;
+        Ok(out
+            .lines()
+            .filter_map(|line| {
+                let (oid, name) = line.split_once('\t')?;
+                let name = name.strip_prefix("refs/tags/")?;
+                if name.ends_with("^{}") {
+                    return None;
+                }
+                Some((name.to_owned(), Oid::from_hex(oid)?))
+            })
+            .collect())
+    }
+
+    fn push_tags(&self, remote: &str, names: &[&str], force: bool, delete: bool) -> Result<()> {
+        // 同じ名前のブランチと取り違えないよう、完全な名前で送る（`+` は置き換え）。
+        let refspecs: Vec<String> = names
+            .iter()
+            .map(|n| match (delete, force) {
+                (true, _) => format!(":refs/tags/{n}"),
+                (false, true) => format!("+refs/tags/{n}:refs/tags/{n}"),
+                (false, false) => format!("refs/tags/{n}:refs/tags/{n}"),
+            })
+            .collect();
+        let mut args = vec!["push", remote];
+        args.extend(refspecs.iter().map(String::as_str));
+        self.write(&args).map(drop)
+    }
+
     fn check_branch_name(&self, name: &str) -> Result<Option<String>> {
         Ok(self
             .read(&["check-ref-format", "--branch", name])

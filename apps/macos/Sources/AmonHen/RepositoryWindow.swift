@@ -1165,6 +1165,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                     sidebar.select(page: .history)
                 }
                 reloadBranchGroups()
+                reloadTagRemotes()
                 detail.reloadInfo()
                 updateSubtitle()
                 history.head = refs.head
@@ -1183,6 +1184,17 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// ローカルブランチの分け方を裏で求め、サイドバーに出す（History のグラフから求める）。
+    /// タグがどのリモートにあるか（fetch のときにコアが読んで覚えたもの）を読み直す。
+    private func reloadTagRemotes() {
+        let repository = self.repository
+        Task {
+            guard let remotes = await Task.detached(priority: .utility, operation: {
+                try? repository.info(["op": "tagRemotes"], as: TagRemotes.self)
+            }).value else { return }
+            sidebar.show(tagRemotes: remotes)
+        }
+    }
+
     private func reloadBranchGroups() {
         let repository = self.repository
         Task {
@@ -1663,6 +1675,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             do {
                 try await Task.detached(priority: .utility) { try repository.run(json: #"{"op":"fetch"}"#) }.value
                 EventLog.add(repo: name, L("Automatic fetch"))
+                // ref が変わらなくても、リモートのタグは読み直している。
+                reloadTagRemotes()
             } catch {
                 EventLog.add(repo: name, L("Automatic fetch failed: %@", "\(error)"))
                 showFailure(OperationFailure(error, command: ["op": "fetch"]), title: L("Automatic Fetch Failed"))

@@ -371,6 +371,14 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             target,
             message,
         } => encode(&ops.create_tag(&name, &target, message.as_deref())?),
+        Op::DeleteTag(name) => encode(&ops.delete_tag(&name)?),
+        Op::RemoteTags(remote) => encode(&ops.remote_tags(&remote)?),
+        Op::PushTags {
+            remote,
+            names,
+            force,
+            delete,
+        } => encode(&ops.push_tags(&remote, &strs(&names), force, delete)?),
         Op::CheckBranchName(name) => encode(&ops.check_branch_name(&name)?),
         Op::IsAncestor {
             ancestor,

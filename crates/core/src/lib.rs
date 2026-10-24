@@ -13,6 +13,7 @@ pub mod graph;
 pub mod lanes;
 pub mod lineage;
 pub mod query;
+pub mod remote_tags;
 mod repository;
 pub mod rewrite;
 pub mod undo;
