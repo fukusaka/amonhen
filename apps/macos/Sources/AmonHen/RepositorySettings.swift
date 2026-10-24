@@ -31,6 +31,8 @@ final class RepositorySettingsModel {
     private(set) var lfs = false
     private(set) var lfsPatterns: [String] = []
     private(set) var entries: [ConfigEntry] = []
+    /// git が知っている設定の変数の名前（設定の有無は問わない。読めなければ空）。
+    private(set) var knownKeys: [String] = []
     private(set) var remotes: [RemoteEntry] = []
     var gitignore = ""
     var exclude = ""
@@ -58,15 +60,17 @@ final class RepositorySettingsModel {
         let repository = self.repository
         Task {
             struct Entries: Decodable { let entries: [ConfigEntry] }
+            struct Keys: Decodable { let keys: [String] }
             struct Remotes: Decodable { let remotes: [RemoteEntry] }
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
             struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String] }
             struct Version: Decodable { let version: String?; let updateRefs: Bool }
             struct Groups: Decodable { struct Branch: Decodable { let name: String }; let base: String?; let branches: [Branch] }
             do {
-                let (e, r, i, h, v, g) = try await Task.detached(priority: .userInitiated) {
+                let (e, k, r, i, h, v, g) = try await Task.detached(priority: .userInitiated) {
                     (
                         try repository.info(["op": "configList"], as: Entries.self),
+                        try? repository.info(["op": "configKeys"], as: Keys.self),
                         try repository.info(["op": "remotes"], as: Remotes.self),
                         try repository.info(["op": "ignoreFiles"], as: Ignore.self),
                         try repository.info(["op": "hooksAndLfs"], as: Hooks.self),
@@ -87,6 +91,7 @@ final class RepositorySettingsModel {
                 entries = e.entries.filter { $0.scope != "command" }.map {
                     $0.scope == "unknown" ? ConfigEntry(scope: "system", origin: $0.origin, key: $0.key, value: $0.value) : $0
                 }
+                knownKeys = k?.keys ?? []
                 remotes = r.remotes
                 if (gitignore, exclude) == savedIgnore {
                     gitignore = i.gitignore
@@ -274,11 +279,19 @@ nonisolated struct ConfigRow: Identifiable, Hashable, Sendable {
     /// 段ごとの値と、その段のファイル。
     let values: [String: String]
     let files: [String: String]
-    /// section（`core`・`remote` など、最初のドットの前）の見出しの行。`key` はその section の名前。
+    /// 組（section か subsection）の見出しの行。`key` はその組までのキー（`remote`・`remote.origin`）。
     var isGroup = false
+    /// 表のキーの列に出す字。葉は組からの相対の名前（`remote.origin.url` なら `url`）、組はその名前。
+    var label: String?
     var id: String { key }
-    /// キーの section。キーは必ず `section.name`（か `section.sub.name`）の形。
-    var section: String { String(key.prefix { $0 != "." }) }
+    /// キーの 3 つの部分。`section.name` か `section.subsection.name` で、subsection にはドットが入りうる
+    /// （`url.https://….insteadOf`）ので、最初と最後のドットで切る。
+    var parts: (section: String, subsection: String?, name: String) {
+        guard let first = key.firstIndex(of: "."), let last = key.lastIndex(of: ".") else { return (key, nil, "") }
+        let section = String(key[..<first]), name = String(key[key.index(after: last)...])
+        let subsection = first == last ? nil : String(key[key.index(after: first)..<last])
+        return (section, subsection, name)
+    }
     var system: String { values["system"] ?? "" }
     var global: String { values["global"] ?? "" }
     var local: String { values["local"] ?? "" }
@@ -286,13 +299,21 @@ nonisolated struct ConfigRow: Identifiable, Hashable, Sendable {
 }
 
 extension RepositorySettingsModel {
+    /// git が知っている変数の綴り（`core.fileMode`）を、小文字のキーから引く。`git config --list` は小文字で出す。
+    var canonicalKeys: [String: String] {
+        Dictionary(knownKeys.map { ($0.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
     /// `entries` をキーごとに 1 行にまとめる。順は git が出した順（表はこれを見出しで並べ替える）。
+    /// キーは git が知っている綴り（`core.fileMode`）にそろえる。
     var configRows: [ConfigRow] {
+        let canonical = canonicalKeys
         var order: [String] = []
         var byKey: [String: [ConfigEntry]] = [:]
         for e in entries {
-            if byKey[e.key] == nil { order.append(e.key) }
-            byKey[e.key, default: []].append(e)
+            let key = canonical[e.key.lowercased()] ?? e.key
+            if byKey[key] == nil { order.append(key) }
+            byKey[key, default: []].append(e)
         }
         return order.map { key in
             let es = byKey[key] ?? []
@@ -313,8 +334,9 @@ extension RepositorySettingsModel {
 /// 「+」で新しい行が出て、キーと値を入れる。⌘C で選んだ行を `key = value` の形でコピーする。
 /// 上の切り替えも Xcode と同じで、語も Xcode のまま（ページ名と同じく訳さない）: 行は Basic（ページが尋ねるキー。
 /// 未設定でも出す）／Customized（このリポジトリで設定したもの）／All、列は Combined（効いている値と設定元）／Levels。
-/// 行は Xcode が分類ごとにまとめるのと同じく section（`core`・`user`・`remote` など）ごとの開閉できる組にする
-/// （`DisclosureTableRow`。初めはすべて開いている）。
+/// All は git が知っているすべての変数（未設定は空欄で、設定元は git の既定）。
+/// 行は Xcode が分類ごとにまとめるのと同じく、キーのドットで開閉できる組にする（section、その下に subsection。
+/// `DisclosureTableRow`。初めはすべて開いている）。
 private struct AllSettingsTab: View {
     let model: RepositorySettingsModel
     @State private var filter = ""
@@ -346,39 +368,71 @@ private struct AllSettingsTab: View {
         "merge.conflictstyle", "core.autocrlf", "core.filemode",
     ]
 
-    /// section ごとの組: 見出しの行と、その中の行。
-    private struct Section: Identifiable {
+    /// 組（section か subsection）: 見出しの行と、その中の行と組。
+    private struct Group: Identifiable {
         let header: ConfigRow
-        let rows: [ConfigRow]
+        var rows: [ConfigRow] = []
+        var groups: [Group] = []
         var id: String { header.key }
     }
 
-    private var sections: [Section] {
+    /// 出す行を、キーのドットで組にしたもの（section の下に subsection）。組の順はキーの並びと同じ向き、
+    /// 中の行の順は並べ替えのまま。
+    private var groups: [Group] {
         let f = filter.trimmingCharacters(in: .whitespaces)
         var all = model.configRows
+        let blank = { (key: String) in ConfigRow(key: key, effective: "", effectiveScope: "", values: [:], files: [:]) }
         switch rowsMode {
-        case .all: break
+        case .all:
+            let set = Set(all.map { $0.key.lowercased() })
+            all += model.knownKeys.filter { !set.contains($0.lowercased()) }.map(blank)
         case .customized: all = all.filter { $0.values["local"] != nil || $0.values["worktree"] != nil }
         case .basic:
             let byKey = Dictionary(all.map { ($0.key.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
-            all = Self.basicKeys.map { byKey[$0] ?? ConfigRow(key: $0, effective: "", effectiveScope: "", values: [:], files: [:]) }
+            let canonical = model.canonicalKeys
+            all = Self.basicKeys.map { byKey[$0] ?? blank(canonical[$0] ?? $0) }
         }
         let sorted = all
             .filter { f.isEmpty || $0.key.localizedCaseInsensitiveContains(f) || $0.values.values.contains { $0.localizedCaseInsensitiveContains(f) } }
             .sorted(using: sortOrder)
-        // section の順はキーの並びと同じ向き、中の順は並べ替えのまま。
-        var bySection: [String: [ConfigRow]] = [:]
-        for row in sorted { bySection[row.section, default: []].append(row) }
-        var names = bySection.keys.sorted()
-        if let first = sortOrder.first, first.keyPath == \ConfigRow.key, first.order == .reverse { names.reverse() }
-        return names.map { name in
-            Section(header: ConfigRow(key: name, effective: "", effectiveScope: "", values: [:], files: [:], isGroup: true),
-                    rows: bySection[name] ?? [])
+        let reversed = sortOrder.first.map { $0.keyPath == \ConfigRow.key && $0.order == .reverse } ?? false
+        let header = { (key: String, name: String) in
+            ConfigRow(key: key, effective: "", effectiveScope: "", values: [:], files: [:], isGroup: true, label: name)
+        }
+        var sections: [String: Group] = [:]
+        for var row in sorted {
+            let p = row.parts
+            row.label = p.name
+            var section = sections[p.section] ?? Group(header: header(p.section, p.section))
+            if let sub = p.subsection {
+                let key = "\(p.section).\(sub)"
+                if let i = section.groups.firstIndex(where: { $0.id == key }) {
+                    section.groups[i].rows.append(row)
+                } else {
+                    section.groups.append(Group(header: header(key, sub), rows: [row]))
+                }
+            } else {
+                section.rows.append(row)
+            }
+            sections[p.section] = section
+        }
+        let order = { (a: String, b: String) in reversed ? a > b : a < b }
+        return sections.values.sorted { order($0.id, $1.id) }.map { section in
+            var section = section
+            section.groups.sort { order($0.id, $1.id) }
+            return section
         }
     }
 
     /// 表に出ている行（見出しも含む。コピーの元）。
-    private var rows: [ConfigRow] { sections.flatMap { [$0.header] + $0.rows } }
+    private var rows: [ConfigRow] {
+        groups.flatMap { [$0.header] + $0.rows + $0.groups.flatMap { [$0.header] + $0.rows } }
+    }
+
+    /// 組の見出しの行の id。
+    private var groupIDs: Set<String> {
+        Set(groups.flatMap { [$0.id] + $0.groups.map(\.id) })
+    }
 
     var body: some View {
         GroupedPage {
@@ -411,9 +465,9 @@ private struct AllSettingsTab: View {
                             .onSubmit { focus = .newValue }
                             .onExitCommand { cancelAdding() }
                     } else if row.isGroup {
-                        Text(row.key).fontWeight(.bold)
+                        Text(row.label ?? row.key).fontWeight(.bold)
                     } else {
-                        Text(row.key)
+                        Text(row.label ?? row.key).help(row.key)
                     }
                 }
                 .width(min: 140, ideal: 220)
@@ -461,12 +515,14 @@ private struct AllSettingsTab: View {
                         .customizationID("worktree")
                 }
             } rows: {
-                ForEach(sections) { section in
-                    DisclosureTableRow(section.header, isExpanded: Binding(
-                        get: { !collapsed.contains(section.id) },
-                        set: { open in if open { collapsed.remove(section.id) } else { collapsed.insert(section.id) } }
-                    )) {
+                ForEach(groups) { section in
+                    DisclosureTableRow(section.header, isExpanded: expanded(section.id)) {
                         ForEach(section.rows) { TableRow($0) }
+                        ForEach(section.groups) { sub in
+                            DisclosureTableRow(sub.header, isExpanded: expanded(sub.id)) {
+                                ForEach(sub.rows) { TableRow($0) }
+                            }
+                        }
                     }
                 }
                 if adding {
@@ -474,14 +530,15 @@ private struct AllSettingsTab: View {
                 }
             }
             .contextMenu(forSelectionType: String.self) { keys in
-                let keys = keys.filter { !isGroupOrNewRow($0) }
+                let groupIDs = self.groupIDs
+                let keys = keys.filter { $0 != Self.newRowID && !groupIDs.contains($0) }
                 Button(L("Edit in This Repository")) { keys.first.map(beginEditing) }.disabled(keys.count != 1)
                 Button(L("Remove from This Repository")) { for k in keys where model.local(k) != nil { model.set(k, nil) } }
                     .disabled(!keys.contains { model.local($0) != nil })
                 Divider()
                 Button(L("Copy")) { copy(keys) }.disabled(keys.isEmpty)
             } primaryAction: { keys in
-                if keys.count == 1, let key = keys.first, !isGroupOrNewRow(key) { beginEditing(key) }
+                if keys.count == 1, let key = keys.first, key != Self.newRowID, !groupIDs.contains(key) { beginEditing(key) }
             }
             .copyable([copyText(selection)])
             .onAppear { if sortOrder.isEmpty { sortOrder = [KeyPathComparator(\.key)] } }
@@ -526,8 +583,10 @@ private struct AllSettingsTab: View {
     /// 足している途中の行か、編集中の行か。
     private func isEditing(_ row: ConfigRow) -> Bool { row.key == Self.newRowID || editing == row.key }
 
-    /// section の見出しの行か、足している途中の行か（キーは必ずドットを含むので、含まなければ見出し）。
-    private func isGroupOrNewRow(_ id: String) -> Bool { !id.contains(".") }
+    /// 組が開いているか（初めはすべて開いている）。
+    private func expanded(_ id: String) -> Binding<Bool> {
+        Binding(get: { !collapsed.contains(id) }, set: { open in if open { collapsed.remove(id) } else { collapsed.insert(id) } })
+    }
 
     /// 「このリポジトリ」の値の欄（足している途中の行と、編集中の行）。
     @ViewBuilder private func valueField(_ row: ConfigRow) -> some View {
