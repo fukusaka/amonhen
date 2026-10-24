@@ -107,15 +107,15 @@ impl Git {
     }
 
     /// rebase で、積み重ねたブランチも一緒に動かすか（`--update-refs`）。git 2.38 から。利用者が
-    /// `rebase.updateRefs` を false にしていれば動かさない。
+    /// `rebase.updateRefs` を true にしているときだけ動かす（git の既定はオフ）。
     pub fn updates_refs_in_rebase(&self) -> bool {
-        git_at_least(2, 38) && !self.rebase_update_refs_off()
+        git_at_least(2, 38) && self.rebase_update_refs_on()
     }
 
-    /// `rebase.updateRefs` が false に設定されている。
-    pub(crate) fn rebase_update_refs_off(&self) -> bool {
+    /// `rebase.updateRefs` が true に設定されている。
+    fn rebase_update_refs_on(&self) -> bool {
         self.read(&["config", "--bool", "--get", "rebase.updateRefs"])
-            .is_ok_and(|out| String::from_utf8_lossy(&out).trim() == "false")
+            .is_ok_and(|out| String::from_utf8_lossy(&out).trim() == "true")
     }
 
     /// 読み取り系。利用者自身の git 操作とロックを奪い合わないよう、任意のロックを取らない。
