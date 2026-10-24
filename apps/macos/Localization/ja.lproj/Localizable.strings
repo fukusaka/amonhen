@@ -1129,11 +1129,7 @@
 "Move them along" = "一緒に動かす";
 "Leave them" = "動かさない";
 "Needs git 2.38 or later (this git is %@)." = "git 2.38 以降が必要です（この git は %@）。";
-"Version" = "バージョン";
-"Unknown" = "不明";
-"Runs on" = "動かしている場所";
 "Stacked Branches" = "積み重ねたブランチ";
-"About This Repository" = "このリポジトリについて";
 "Author and Signing" = "作者と署名";
 "Both sides" = "両側";
 "Both sides and the base, shortened" = "両側と元（共通の部分を省く）";
@@ -1145,7 +1141,6 @@
 "Follow git’s settings" = "git の設定に従う";
 "For all repositories on this Mac (git config --global rebase.updateRefs; git in a terminal follows it too). A repository can choose differently in its own Settings. Branches stacked under the current one are those whose tips are among the commits a rebase or a History edit rewrites." = "この Mac のすべてのリポジトリに効きます（git config --global の rebase.updateRefs。端末の git も従います）。リポジトリごとに違う値を選ぶには、そのリポジトリの Settings を使います。今のブランチの下に積んだブランチとは、先頭が rebase や History の編集で書き換えるコミットにあるブランチです。";
 "How conflicts are written in files" = "コンフリクトをファイルにどう書くか";
-"Information" = "情報";
 "Keep as committed" = "コミットのまま";
 "Key for your email" = "メールアドレスの鍵";
 "LF in commits, no change on checkout" = "コミットは LF、チェックアウトでは変えない";
@@ -1171,7 +1166,6 @@
 "Stop overriding here. The value above takes over." = "ここでの上書きをやめます。上の値が効くようになります。";
 "The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With. “Follow git’s settings” uses the repository’s pull.rebase and pull.ff, as git pull in a terminal does." = "Pull のシート（ツールバーと ⌃⌘L）で最初に選ばれている取り込み方です。シートでそのたびに変えられ、Repository > Pull With でも選べます。「git の設定に従う」は、端末の git pull と同じく、リポジトリの pull.rebase と pull.ff で決めます。";
 "The fingerprint or ID of the key; empty uses the key for your email." = "鍵の指紋か ID です。空ならメールアドレスの鍵を使います。";
-"The git that reads and writes this repository. Settings marked “your settings” are that git’s user settings (git config --global)." = "このリポジトリを読み書きする git です。「あなたの設定」の札は、この git のユーザーの設定（git config --global）を指します。";
 "The path of the SSH public key, or the key itself (“ssh-ed25519 AAAA…”)." = "SSH の公開鍵のパスか、鍵そのもの（「ssh-ed25519 AAAA…」）です。";
 "This repository’s git settings (pull.rebase, pull.ff) choose %@, as git pull in a terminal would." = "このリポジトリの git の設定（pull.rebase・pull.ff）では「%@」になります。端末の git pull と同じです。";
 "Track changes to the executable bit" = "実行の権限の変化を追う";
@@ -1194,3 +1188,13 @@
 "Fast-forward" = "fast-forward";
 "Ignore in this repository only" = "このリポジトリだけで無視する";
 "Patterns in .git/info/exclude, one per line (`*.log`, `build/` and so on; text after # is a comment). Not shared with anyone. Patterns everyone should share go in .gitignore, which is a file of the repository." = ".git/info/exclude のパターンで、1 行に 1 つ（`*.log`、`build/` など。# から後は説明）。誰とも共有しません。全員で共有するパターンは、リポジトリのファイルである .gitignore に書きます。";
+"Branches" = "ブランチ";
+"Default branch" = "既定のブランチ";
+"Detected (%@)" = "自動で判定（%@）";
+"Detected (none)" = "自動で判定（なし）";
+"Go back to the detected branch." = "判定したブランチに戻します。";
+"The branch the others are measured against: Branches marks a branch merged when it is in this one, and finds the trunk from it. Detected from origin/HEAD, then main or master; choose one here when the repository has none of those." = "ほかのブランチの基準になるブランチです。Branches は、このブランチに入っているブランチを「取り込み済み」とし、幹もここから判定します。origin/HEAD、なければ main か master から判定します。どれもないリポジトリでは、ここで選びます。";
+"The git on %@ runs this repository. Every repository on that host uses it." = "%@ の git がこのリポジトリを動かしています。そのホストのすべてのリポジトリが同じ git を使います。";
+"There is no branch named %@, so the detected branch is used." = "%@ というブランチはないので、判定したブランチを使います。";
+"This Mac’s git runs this repository. Choose it in Settings > Git." = "この Mac の git がこのリポジトリを動かしています。Settings > Git で選びます。";
+"detected" = "自動で判定";
