@@ -170,11 +170,24 @@ private func configFile(_ entry: ConfigEntry) -> String {
     return (origin as NSString).abbreviatingWithTildeInPath
 }
 
+/// 表のページ（リモート・git config）に、ほかのページのグループ化した Form と同じ地を敷く。Form の地は素材
+/// （単色では同じにならない）なので、空の Form を後ろに置く。
+private struct GroupedPage<Content: View>: View {
+    @ViewBuilder let content: Content
+    var body: some View {
+        ZStack {
+            Form { EmptyView() }.formStyle(.grouped)
+            content.padding()
+        }
+    }
+}
+
 private struct RemotesTab: View {
     let model: RepositorySettingsModel
     @State private var selection: String?
 
     var body: some View {
+        GroupedPage {
         VStack(alignment: .leading) {
             Table(model.remotes, selection: $selection) {
                 TableColumn(L("Name"), value: \.name).width(min: 80, ideal: 100)
@@ -183,7 +196,6 @@ private struct RemotesTab: View {
                     Text(r.pushUrl == r.fetchUrl ? L("(same)") : r.pushUrl).foregroundStyle(r.pushUrl == r.fetchUrl ? .secondary : .primary)
                 }
             }
-            .scrollContentBackground(.hidden)
             HStack {
                 Button(L("Add…")) { add() }
                 Button(L("Rename…")) { rename() }.disabled(selection == nil)
@@ -195,7 +207,7 @@ private struct RemotesTab: View {
                 Button(L("Delete"), role: .destructive) { remove() }.disabled(selection == nil)
             }
         }
-        .padding()
+        }
     }
 
     private func add() {
@@ -346,6 +358,7 @@ private struct AllSettingsTab: View {
     }
 
     var body: some View {
+        GroupedPage {
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Picker("", selection: $rowsMode) {
@@ -423,8 +436,6 @@ private struct AllSettingsTab: View {
                         .customizationID("worktree")
                 }
             }
-            // 表の自前の背景（暗い青みの色）を消して、ページの背景の上に置く。
-            .scrollContentBackground(.hidden)
             .contextMenu(forSelectionType: String.self) { keys in
                 let keys = keys.filter { $0 != Self.newRowID }
                 Button(L("Edit in This Repository")) { keys.first.map(beginEditing) }.disabled(keys.count != 1)
@@ -448,7 +459,7 @@ private struct AllSettingsTab: View {
                 Spacer()
             }
         }
-        .padding()
+        }
     }
 
     /// 段の列の見出し: 4.3 の出どころの言葉を、文の頭だけ大文字に。
