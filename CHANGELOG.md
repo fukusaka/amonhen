@@ -42,7 +42,9 @@ becomes the GitHub Release notes.
 - git config in Repository Settings is a table like Xcode's Build Settings: one row per key with the value in effect
   and a column per source (system-wide, all repositories, this repository, this worktree), the source in effect in
   bold. Double-click a row to set the key in this repository (empty removes it), + adds a key, ⌘C copies the selected
-  rows as `key = value`; search matches keys and values, and every column sorts.
+  rows as `key = value`; search matches keys and values, and every column sorts. Above it, Xcode's switches: Basic
+  (the keys the settings pages ask about, set or not), Set Here (keys set in this repository) or All, and Combined (the
+  value in effect and its source) or Levels (a column per source).
 - Fetch automatically is one interval for all open repositories, in Settings > Git, instead of a setting per
   repository.
 - `.gitignore` is no longer edited in Repository Settings (it is a file of the repository); `.git/info/exclude` is,
