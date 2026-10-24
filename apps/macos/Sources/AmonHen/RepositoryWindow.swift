@@ -42,6 +42,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private let stashes: StashesViewController
     /// Reflog の画面（書き込む先の worktree の HEAD の reflog と、選んだ行のコミットの中身）。
     private let reflog: ReflogViewController
+    /// リポジトリの設定の画面（サイドバーの Workspace の Settings）。
+    private let settings: RepositorySettingsPage
     private var actions: Actions { editing.actions }
     private let toolbar: MainToolbar
     private var watch: RepositoryWatch?
@@ -89,6 +91,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail = CommitDetailViewController(repository: repository, renderer: text)
         stashes = StashesViewController(repository: repository, renderer: text)
         reflog = ReflogViewController(repository: repository, renderer: text)
+        settings = RepositorySettingsPage(repository: repository, location: location)
         let slot = WorktreeSlot(path: repository.workdir ?? RepositoryLocation.path(location), repository: repository, renderer: text)
         opened = slot
         editing = slot
@@ -142,7 +145,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let detailItem = NSSplitViewItem(viewController: detail)
         detailItem.minimumThickness = 420
         content.addSplitViewItem(detailItem)
-        let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes, .reflog: reflog])
+        let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes, .reflog: reflog, .settings: settings])
         self.pages = pages
         split.addSplitViewItem(NSSplitViewItem(viewController: pages))
         window.contentViewController = split
@@ -272,6 +275,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         history.actions = actions
         stashes.actions = actions
         reflog.actions = actions
+        // 表示名・自動 fetch を変えたら、題名とタブと自動 fetch を直す。git の設定・リモートを変えたら、読み直す。
+        settings.model.onGeneralChange = { [weak self] in
+            guard let self else { return }
+            window.title = Bookmarks.shared.displayName(location)
+            toolbar.setRepository(window.title)
+            updateTabTitle()
+            scheduleAutoFetch()
+        }
+        settings.model.onRepositoryChange = { [weak self] in self?.refreshRepository(nil) }
         window.toolbar = toolbar.toolbar
         toolbar.setRepository(window.title)
     }
@@ -1017,6 +1029,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if CommandLine.arguments.contains("--reflog") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .reflog) }
         }
+        // --settings で、リポジトリの設定の画面を開く（--settings-tab NAME で、そのタブ。見た目の確認用）。
+        if CommandLine.arguments.contains("--settings") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .settings) }
+        }
         // --blame PATH・--file-history PATH で、そのファイルの blame・履歴を開く（見た目の確認用）。
         if let path = AppDelegate.option("--blame") { openBlame(path: path, rev: nil) }
         if let path = AppDelegate.option("--file-history") { openFileHistory(path: path) }
@@ -1033,7 +1049,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         if let output = AppDelegate.option("--snapshot") {
             let wait = selectRow != nil || CommandLine.arguments.contains("--working-copy") || CommandLine.arguments.contains("--stashes")
-                || CommandLine.arguments.contains("--reflog")
+                || CommandLine.arguments.contains("--reflog") || CommandLine.arguments.contains("--settings")
             if let query = AppDelegate.option("--find") {
                 // 選んだコミットの差分を検索した状態（検索欄と強調）を確かめる。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in detail.find(query) }
@@ -1640,18 +1656,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         ActivityRepository(name: window.title, repository: repository, actions: actions, isRemote: !isLocal, location: location)
     }
 
-    /// Repository > Repository Settings…（⌘;）。
-    @objc func showRepositorySettings(_ sender: Any?) {
-        RepositorySettingsSheet.show(for: repository, location: location, title: window.title, in: window) { [weak self] in
-            guard let self else { return }
-            // 表示名・自動 fetch が変わったかもしれない。
-            window.title = Bookmarks.shared.displayName(location)
-            toolbar.setRepository(window.title)
-            updateTabTitle()
-            scheduleAutoFetch()
-            refreshRepository(nil)
-        }
-    }
+    /// Repository > Repository Settings（⌘;）。サイドバーの Workspace の Settings を開く。
+    @objc func showRepositorySettings(_ sender: Any?) { sidebar.select(page: .settings) }
 
     // MARK: - commit-graph
 
@@ -1869,6 +1875,8 @@ extension RepositoryWindow {
             item.state = pages?.page == .stashes ? .on : .off
         case #selector(showReflog(_:)):
             item.state = pages?.page == .reflog ? .on : .off
+        case #selector(showRepositorySettings(_:)):
+            item.state = pages?.page == .settings ? .on : .off
         default:
             break
         }

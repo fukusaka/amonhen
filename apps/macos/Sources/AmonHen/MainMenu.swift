@@ -169,7 +169,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(item("Undo", #selector(RepositoryWindow.undoOperation(_:)), "z", [.command, .option]))
         menu.addItem(.separator())
-        menu.addItem(item(L("Repository Settings…"), #selector(RepositoryWindow.showRepositorySettings(_:)), ";"))
+        menu.addItem(item(L("Repository Settings"), #selector(RepositoryWindow.showRepositorySettings(_:)), ";"))
         let rebuild = item(L("Rebuild History"), #selector(RepositoryWindow.rebuildHistory(_:)), "")
         rebuild.toolTip = L("Discard the History cache and rebuild it from scratch (over the shared daemon, the daemon’s too)")
         menu.addItem(rebuild)

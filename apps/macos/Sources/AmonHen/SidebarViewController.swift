@@ -1,7 +1,7 @@
 import AmonhenKit
 import AppKit
 
-/// サイドバー: Workspace（Working Copy・History・Conflicts・Stashes・Reflog）/ Branches / Pull Requests / Remotes /
+/// サイドバー: Workspace（Working Copy・History・Conflicts・Stashes・Reflog・Settings）/ Branches / Pull Requests / Remotes /
 /// Tags / Submodules。Workspace の行は、メインの画面を切り替える（Stashes は stash の画面、Reflog は HEAD の reflog
 /// の画面を開く）。
 final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NSOutlineViewDelegate, NSMenuDelegate,
@@ -28,7 +28,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onClickPullRequestCI: ((PullRequest, NSView) -> Void)?
 
     enum Page {
-        case workingCopy, history, stashes, reflog
+        case workingCopy, history, stashes, reflog, settings
     }
 
     private final class Node {
@@ -71,16 +71,18 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let stashesNode = Node(title: "Stashes", page: .stashes)
     /// いつも Workspace の最後に出す。選ぶと Reflog の画面を開く。
     private let reflogNode = Node(title: "Reflog", page: .reflog)
-    private lazy var workspace = Node(title: "Workspace", children: [workingCopyNode, historyNode, reflogNode])
+    /// いつも Workspace の一番最後に出す。選ぶとリポジトリの設定の画面を開く。
+    private let settingsNode = Node(title: "Settings", page: .settings)
+    private lazy var workspace = Node(title: "Workspace", children: [workingCopyNode, historyNode, reflogNode, settingsNode])
     /// Conflicts を選んだ（最初のコンフリクトのファイルを開く）。
     var onSelectConflicts: (() -> Void)?
 
-    /// Workspace の中身: Working Copy・History と、あるときだけ Conflicts・Stashes、最後に Reflog。
+    /// Workspace の中身: Working Copy・History と、あるときだけ Conflicts・Stashes、最後に Reflog と Settings。
     private func workspaceChildren() -> [Node] {
         [workingCopyNode, historyNode]
             + (conflictsNode.badge != nil ? [conflictsNode] : [])
             + (stashesNode.badge != nil ? [stashesNode] : [])
-            + [reflogNode]
+            + [reflogNode, settingsNode]
     }
 
     /// コンフリクトのファイルの数（0 なら Conflicts を出さない）。
@@ -746,6 +748,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .history: historyNode
         case .stashes: stashesNode
         case .reflog: reflogNode
+        case .settings: settingsNode
         }
         if groups.isEmpty {
             groups = [workspace]
@@ -921,6 +924,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case .history: return "clock"
             case .stashes: return "tray.2"
             case .reflog: return "clock.arrow.circlepath"
+            case .settings: return "gearshape"
             }
         }
         if node.pullRequest != nil { return "arrow.triangle.pull" }
