@@ -143,6 +143,8 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(item("Fetch", #selector(RepositoryWindow.fetch(_:)), "f", [.command, .control]))
         menu.addItem(item("Pull", #selector(RepositoryWindow.pull(_:)), "l", [.command, .control]))
         let pullWith = NSMenu(title: L("Pull With"))
+        pullWith.addItem(item(L("Follow git’s settings"), #selector(RepositoryWindow.pullGit(_:)), ""))
+        pullWith.addItem(.separator())
         pullWith.addItem(item("Merge", #selector(RepositoryWindow.pullMerge(_:)), ""))
         pullWith.addItem(item("Rebase", #selector(RepositoryWindow.pullRebase(_:)), ""))
         pullWith.addItem(item("Fast-Forward Only", #selector(RepositoryWindow.pullFastForward(_:)), ""))

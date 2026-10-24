@@ -102,7 +102,7 @@ enum Settings {
 
     /// Pull（ツールバーのボタン・⌃⌘L）で上流を取り込む既定の方法。`pullMode` の命令に渡す値。
     static var pullMode: PullMode {
-        get { UserDefaults.standard.string(forKey: "pullMode").flatMap(PullMode.init) ?? .merge }
+        get { UserDefaults.standard.string(forKey: "pullMode").flatMap(PullMode.init) ?? .git }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: "pullMode") }
     }
 
@@ -269,15 +269,21 @@ extension Notification.Name {
 
 /// pull での上流の取り込み方（`crates/model` の `PullMode`）。
 enum PullMode: String, CaseIterable {
+    /// git の設定（`pull.rebase`・`pull.ff`）に任せる。端末の `git pull` と同じ。
+    case git
     case merge, rebase, fastForwardOnly
 
     var title: String {
         switch self {
+        case .git: L("Follow git’s settings")
         case .merge: "Merge"
         case .rebase: "Rebase"
         case .fastForwardOnly: "Fast-Forward Only"
         }
     }
+
+    /// 取り込み方そのもの（`.git` 以外）。
+    static let methods: [PullMode] = [.merge, .rebase, .fastForwardOnly]
 }
 
 /// Settings ウィンドウ（⌘,）の中身。開くたびに `Settings` から読み直し、変えたらすぐ書き戻す。
@@ -365,7 +371,7 @@ private struct GitSettings: View {
                 Picker(L("Default Pull"), selection: $model.pullMode) {
                     ForEach(PullMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
-                Note(L("The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With."))
+                Note(L("The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With. “Follow git’s settings” uses the repository’s pull.rebase and pull.ff, as git pull in a terminal does."))
             }
             Section(L("Repository List")) {
                 Toggle(L("Bookmark repositories you open"), isOn: $model.autoBookmark)
@@ -412,17 +418,17 @@ private struct StackedBranchesSettings: View {
     }
 
     var body: some View {
-        Section(L("Stacked Branches in Rebase and History Edits")) {
-            Picker(L("All repositories"), selection: Binding(
+        Section(L("Stacked Branches")) {
+            Picker(L("Move stacked branches along when rebasing"), selection: Binding(
                 get: { loaded?.value ?? "" },
                 set: { save($0) }
             )) {
-                Text(L("Not set (%@)", L("git’s default: leave them"))).tag("")
-                Text("true — \(L("Move them along"))").tag("true")
-                Text("false — \(L("Leave them"))").tag("false")
+                Text(L("Leave them (git’s default)")).tag("")
+                Text(L("Move them along")).tag("true")
+                Text(L("Leave them")).tag("false")
             }
             .disabled(loaded == nil || !supported)
-            Note(L("When a rebase or a History edit rewrites commits, the branches whose tips are among them (branches stacked under the current one) can move along to the rewritten commits, or stay on the old ones. This is git config --global rebase.updateRefs on this Mac, also used by git in a terminal. Each repository can override it in its Settings, and repositories on SSH hosts use the host’s own setting."))
+            Note(L("For all repositories on this Mac (git config --global rebase.updateRefs; git in a terminal follows it too). A repository can choose differently in its own Settings. Branches stacked under the current one are those whose tips are among the commits a rebase or a History edit rewrites."))
             if !supported {
                 Text(L("Needs git 2.38 or later (this git is %@).", loaded?.version ?? "?"))
                     .font(.caption).foregroundStyle(.orange)

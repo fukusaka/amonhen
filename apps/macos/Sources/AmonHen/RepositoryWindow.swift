@@ -1316,6 +1316,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     @objc func fetch(_ sender: Any?) { actions.fetch() }
     @objc func pull(_ sender: Any?) { pull(mode: Settings.pullMode) }
+    @objc func pullGit(_ sender: Any?) { pull(mode: .git) }
     @objc func pullMerge(_ sender: Any?) { pull(mode: .merge) }
     @objc func pullRebase(_ sender: Any?) { pull(mode: .rebase) }
     @objc func pullFastForward(_ sender: Any?) { pull(mode: .fastForwardOnly) }
