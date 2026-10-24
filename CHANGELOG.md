@@ -11,6 +11,12 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Tags can be pushed to a remote, deleted (undoably), replaced on a remote and deleted from a remote from their
+  context menu in the sidebar, one at a time or several selected together.
+- Fetch also reads which remote has which tag, and a tag row is marked when no remote has it or a remote has a
+  different tag with the name; its tooltip and popover list every remote, and the menu offers only what applies.
+- File History can list merge commits too (Show Merge Commits in the list's context menu, or Settings > Appearance >
+  File History); they stay out by default.
 - Blame colors the code by syntax, as diffs do.
 - View > Show Tab Bar (⇧⌘T) shows the tab bar of a window with one tab, so its tab can be dragged into another
   window, and Window > Move Tab to Window ▸ moves the front tab into the window chosen (for File History and Blame,
@@ -40,6 +46,8 @@ becomes the GitHub Release notes.
 - Undoing a branch rename works for the checked-out branch, and keeps the branch's settings (upstream, description,
   Archive and Favorites).
 - Commit details, worktrees, repository settings and the signature's trust level work with git older than 2.36.
+- Folders in the sidebar (`/` folders of branches and tags, and the remotes under Remotes) stay open when a fetch, a
+  push or another change to the refs rebuilds it, instead of folding up each time.
 
 ### [0.2.6] - 2026-10-23
 

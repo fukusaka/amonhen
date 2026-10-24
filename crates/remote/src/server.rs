@@ -341,7 +341,11 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             })?,
         ),
         Op::Blame { path, rev } => encode(&Bytes(ops.blame(&path, rev.as_ref())?)),
-        Op::FileLog { path, limit } => encode(&Bytes(ops.file_log(&path, limit)?)),
+        Op::FileLog {
+            path,
+            limit,
+            merges,
+        } => encode(&Bytes(ops.file_log(&path, limit, merges)?)),
         Op::HeadState => encode(&ops.head_state()?),
         Op::ResolveRefs(names) => encode(&ops.resolve_refs(&names)?),
         Op::UpdateRef {
@@ -368,6 +372,14 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             target,
             message,
         } => encode(&ops.create_tag(&name, &target, message.as_deref())?),
+        Op::DeleteTag(name) => encode(&ops.delete_tag(&name)?),
+        Op::RemoteTags(remote) => encode(&ops.remote_tags(&remote)?),
+        Op::PushTags {
+            remote,
+            names,
+            force,
+            delete,
+        } => encode(&ops.push_tags(&remote, &strs(&names), force, delete)?),
         Op::CheckBranchName(name) => encode(&ops.check_branch_name(&name)?),
         Op::IsAncestor {
             ancestor,

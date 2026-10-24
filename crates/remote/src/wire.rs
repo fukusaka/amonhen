@@ -13,11 +13,11 @@ use amonhen_model::{
 use serde::{Deserialize, Serialize};
 
 /// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 27;
+pub const PROTOCOL_VERSION: u32 = 29;
 
 /// エンジンの実行ファイルに埋め込む印（`PROTOCOL_VERSION` と同じ数）。SSH 先へ送る前に、同梱のエンジンが
 /// この版で作られたものかを中身で確かめる（古いまま送って、つないでから版の違いで断られないように）。
-pub const PROTOCOL_MARK: &str = "amonhen-protocol=27;";
+pub const PROTOCOL_MARK: &str = "amonhen-protocol=29;";
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
@@ -155,6 +155,7 @@ pub enum Op {
     FileLog {
         path: String,
         limit: Option<usize>,
+        merges: bool,
     },
     HeadState,
     ResolveRefs(Vec<String>),
@@ -190,6 +191,14 @@ pub enum Op {
         name: String,
         target: String,
         message: Option<String>,
+    },
+    DeleteTag(String),
+    RemoteTags(String),
+    PushTags {
+        remote: String,
+        names: Vec<String>,
+        force: bool,
+        delete: bool,
     },
     CheckBranchName(String),
     IsAncestor {

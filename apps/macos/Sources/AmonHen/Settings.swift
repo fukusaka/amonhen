@@ -135,6 +135,15 @@ enum Settings {
         }
     }
 
+    /// File History にマージのコミットも出すか（既定は出さない）。変えたら `fileHistoryMergesChanged` を知らせる。
+    static var fileHistoryMerges: Bool {
+        get { UserDefaults.standard.bool(forKey: "fileHistoryMerges") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "fileHistoryMerges")
+            NotificationCenter.default.post(name: .fileHistoryMergesChanged, object: nil)
+        }
+    }
+
     /// リポジトリ（手元も SSH 先も）を、共有の daemon 越しに開くか（既定は開かない。このアプリの中で開く）。
     static var openThroughDaemon: Bool {
         get { UserDefaults.standard.bool(forKey: "openThroughDaemon") }
@@ -251,6 +260,7 @@ extension Notification.Name {
     static let stackedCommitDiffChanged = Notification.Name("stackedCommitDiffChanged")
     static let historyFileTreeChanged = Notification.Name("historyFileTreeChanged")
     static let foldMergedBranchesChanged = Notification.Name("foldMergedBranchesChanged")
+    static let fileHistoryMergesChanged = Notification.Name("fileHistoryMergesChanged")
     static let gitHubSettingsChanged = Notification.Name("gitHubSettingsChanged")
     /// AI の CLI の選択が変わった（AI のボタンを出す・隠す）。
     static let assistantChanged = Notification.Name("assistantChanged")
@@ -292,6 +302,7 @@ final class SettingsModel {
     var importShellEnvironment = Settings.importShellEnvironment { didSet { Settings.importShellEnvironment = importShellEnvironment } }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var historyFileTree = Settings.historyFileTree { didSet { Settings.historyFileTree = historyFileTree } }
+    var fileHistoryMerges = Settings.fileHistoryMerges { didSet { Settings.fileHistoryMerges = fileHistoryMerges } }
     var autoMagicMerge = Settings.autoMagicMerge { didSet { Settings.autoMagicMerge = autoMagicMerge } }
     var writeCommitGraph = Settings.writeCommitGraph { didSet { Settings.writeCommitGraph = writeCommitGraph } }
     var useFSMonitor = Settings.useFSMonitor { didSet { Settings.useFSMonitor = useFSMonitor } }
@@ -414,6 +425,10 @@ private struct AppearanceSettings: View {
                 Toggle(L("Stack the diffs of all files"), isOn: $model.stackedCommitDiff)
                 Toggle(L("Show changed files as a tree left of the diff"), isOn: $model.historyFileTree)
                 Note(L("Shows the diffs of the changed files one after another, like a GitHub pull request. Click a file header to collapse it; Viewed collapses files you’ve seen. Commits with more than 200 changed files show one file at a time."))
+            }
+            Section("File History") {
+                Toggle(L("Show merge commits"), isOn: $model.fileHistoryMerges)
+                Note(L("Also lists the merges that changed the file, such as one that resolved a conflict or brought in changes made under an earlier name. Also from the list’s context menu."))
             }
         }
         .formStyle(.grouped)

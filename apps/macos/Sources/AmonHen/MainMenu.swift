@@ -82,6 +82,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
 
     private func viewMenu() -> NSMenu {
         let menu = NSMenu(title: L("View"))
+        menu.delegate = self
         menu.addItem(item("Working Copy", #selector(RepositoryWindow.showWorkingCopy(_:)), "1"))
         menu.addItem(item("History", #selector(RepositoryWindow.showHistory(_:)), "2"))
         menu.addItem(item("Stashes", #selector(RepositoryWindow.showStashes(_:)), "4"))
@@ -92,8 +93,8 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(refresh)
         menu.addItem(.separator())
         menu.addItem(item(L("Show Sidebar"), #selector(NSSplitViewController.toggleSidebar(_:)), "s", [.command, .control]))
-        // タブが 1 つの窓でもタブバーを出す（タブをつかんで、ほかの窓のタブバーに落とせる）。題は AppKit が
-        // Show・Hide に替える。
+        // タブが 1 つの窓でもタブバーを出す（タブをつかんで、ほかの窓のタブバーに落とせる）。出していれば、題は
+        // メニューを開くときに Hide にする（AppKit は替えない）。
         menu.addItem(item(L("Show Tab Bar"), #selector(NSWindow.toggleTabBar(_:)), "t", [.command, .shift]))
         menu.addItem(.separator())
         menu.addItem(item(L("One Line per Commit"), #selector(toggleCompactRows(_:)), "", target: self))
@@ -228,6 +229,12 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         if menu.title == L("Move Tab to Window") { return fillMoveTabMenu(menu) }
+        if menu.title == L("View") {
+            let shown = (NSApp.keyWindow ?? NSApp.mainWindow)?.tabGroup?.isTabBarVisible == true
+            menu.items.first { $0.action == #selector(NSWindow.toggleTabBar(_:)) }?.title =
+                shown ? L("Hide Tab Bar") : L("Show Tab Bar")
+            return
+        }
         guard menu.title == L("Open Recent") else { return }
         menu.removeAllItems()
         for path in RepositoryList.paths.prefix(15) {

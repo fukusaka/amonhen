@@ -198,13 +198,18 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
         label.push_str(&arg.to_string_lossy());
     }
     // ネットワークを使う操作は、進み具合を流しながら読み、取り消せるようにする。
-    let network = cmd
+    let subcommand = cmd
         .get_args()
         .find(|a| !a.to_string_lossy().starts_with('-') && !a.to_string_lossy().contains('='))
-        .is_some_and(|a| ["fetch", "pull", "push", "clone"].contains(&&*a.to_string_lossy()));
+        .map(|a| a.to_string_lossy().into_owned());
+    let network = subcommand
+        .as_deref()
+        .is_some_and(|a| ["fetch", "pull", "push", "clone", "ls-remote"].contains(&a));
     if network && input.is_none() && !cmd.get_args().any(|a| a == "--") {
+        // ls-remote は進み具合を出さない（`--progress` を受け付けない）。
+        let progress = subcommand.as_deref() != Some("ls-remote");
         return amonhen_model::activity::track_with("git", &repo, label, |seq| {
-            spawn_streaming(cmd, seq)
+            spawn_streaming(cmd, seq, progress)
         })
         .map_err(explain_old_git);
     }
@@ -289,10 +294,12 @@ fn network_silence() -> Duration {
 
 /// `--progress` を付けて実行し、標準エラーの進み具合（\r で上書きされる行）を Activity に書く。取り消しを
 /// 頼まれたら git を止める。
-fn spawn_streaming(mut cmd: Command, seq: u64) -> Result<Vec<u8>> {
+fn spawn_streaming(mut cmd: Command, seq: u64, progress: bool) -> Result<Vec<u8>> {
     use amonhen_model::activity;
     use std::io::Read;
-    cmd.arg("--progress");
+    if progress {
+        cmd.arg("--progress");
+    }
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null());

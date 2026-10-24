@@ -404,6 +404,9 @@
 "File History — %@ (%ld+ commits)" = "File History — %@（%ld+ コミット）";
 "File History — %@ (loading…)" = "File History — %@（読んでいます…）";
 "Renamed or copied to %@ in %@" = "%2$@ で %1$@ に名前を変えた（またはコピーした）";
+"Show Merge Commits" = "マージのコミットを表示";
+"Show merge commits" = "マージのコミットも出す";
+"Also lists the merges that changed the file, such as one that resolved a conflict or brought in changes made under an earlier name. Also from the list’s context menu." = "ファイルを変えたマージも並べます（コンフリクトを解いたマージや、前の名前のときの変更を取り込んだマージなど）。一覧の右クリックでも切り替えられます。";
 "No commits changed this file." = "このファイルを変えたコミットはありません";
 "Can’t read the diff" = "差分を読めません";
 
@@ -696,6 +699,7 @@
 "Reload History, branches and Working Copy (they normally reload on their own when something changes)" = "History・ブランチ・Working Copy を読み直す（ふだんは変化を検知して自動で読み直す）";
 "Show Sidebar" = "サイドバーを表示";
 "Show Tab Bar" = "タブバーを表示";
+"Hide Tab Bar" = "タブバーを隠す";
 "One Line per Commit" = "コミットを 1 行で表示";
 "Highlight Ancestors" = "祖先を強調";
 "Draw only the selected commit’s ancestors and the lines between them in full color, and dim the rest" = "選んだコミットの祖先と、それをつなぐ線だけを濃く描き、ほかを薄くする";
@@ -1080,3 +1084,40 @@
 "Moves %@ to %@. The changes of the commits taken off stay in the working tree, unstaged." = "%@ を %@ に動かします。外したコミットの変更は、stage せずに作業ツリーに残ります。";
 "Moves %@ to %@ and makes the working tree match it. Uncommitted changes, if any, are kept as a stash first." = "%@ を %@ に動かし、作業ツリーもそのコミットに合わせます。コミットしていない変更があれば、先に stash に残します。";
 "Commits taken off can still be found in Reflog. You can Undo it afterwards (⌥⌘Z)." = "外したコミットは Reflog から辿れます。あとから Undo（⌥⌘Z）で戻せます。";
+
+// タグの push と削除（サイドバーの Tags の右クリック）
+"Push %ld Tags to %@" = "%ld 個のタグを %@ に Push";
+"Delete %ld Tags…" = "%ld 個のタグを削除…";
+"Delete tag %@?" = "タグ %@ を削除しますか？";
+"Delete %ld tags?" = "%ld 個のタグを削除しますか？";
+"Only your own copy is deleted; the remotes keep theirs." = "消すのは手元のタグだけで、リモートのものは残ります。";
+"Delete %@ from %@…" = "%@ を %@ から削除…";
+"Delete %ld Tags from %@…" = "%ld 個のタグを %@ から削除…";
+"Delete %@ from %@?" = "%@ を %@ から削除しますか？";
+"Delete %ld tags from %@?" = "%ld 個のタグを %@ から削除しますか？";
+"Everyone who fetches from %@ loses them. This can’t be undone; push them again to bring them back. Your own tags are kept." = "%@ から fetch する人みんなから消えます。Undo できません（戻すには、もう一度 push します）。手元のタグは残ります。";
+
+// タグがどのリモートにあるか（タグの行の印・ツールチップ・吹き出し・メニュー）
+"A different tag with this name is on %@" = "%@ に同じ名前の別のタグがある";
+"Not on any remote (as of the last fetch)" = "どのリモートにもない（最後の fetch の時点）";
+"%@: not checked yet (Fetch reads it)" = "%@: まだ確かめていない（Fetch で読む）";
+"%@: has it" = "%@: ある";
+"%@: has a different tag with this name" = "%@: 同じ名前の別のタグ";
+"%@: doesn’t have it" = "%@: ない";
+"Replace %@ on %@…" = "%2$@ の %1$@ を置き換える…";
+"Replace %ld Tags on %@…" = "%2$@ の %1$ld 個のタグを置き換える…";
+"Replace %@ on %@?" = "%2$@ の %1$@ を置き換えますか？";
+"Replace %ld tags on %@?" = "%2$@ の %1$ld 個のタグを置き換えますか？";
+"Replace" = "置き換える";
+"Replace on %@…" = "%@ で置き換える…";
+"On %@, a tag with this name is a different tag (another commit, or another annotated tag). Replacing it puts yours there for everyone who fetches from %@ (their own copies stay until they fetch with --force). This can’t be undone." = "%1$@ では、この名前で別のタグになっています（違うコミット、または別の注釈付きのタグ）。置き換えると、%2$@ から fetch する人みんなにとって、手元のタグになります（それぞれの手元のタグは、--force で fetch するまで残ります）。Undo できません。";
+"Whether %@ has them hasn’t been checked yet (Fetch reads it)." = "%@ にあるかは、まだ確かめていません（Fetch で読みます）。";
+"Tag" = "タグ";
+"Commit" = "コミット";
+"Has it" = "ある";
+"Has a different tag with this name" = "同じ名前の別のタグ";
+"Doesn’t have it" = "ない";
+"Not checked yet (Fetch reads it)" = "まだ確かめていない（Fetch で読む）";
+"read %@" = "%@に読んだ";
+"There, a tag with the same name is a different tag: it points to another commit, or it is another annotated tag on the same commit. Fetch doesn’t overwrite your tag and Push is refused, so the two stay apart until one of them is replaced." = "そこでは、同じ名前で別のタグになっています（違うコミットを指しているか、同じコミットを指す別の注釈付きのタグ）。Fetch は手元のタグを上書きせず、Push は断られるので、どちらかを置き換えるまで、ずれたままです。";
+"Tags have no remote copies here the way branches do, so this was read from each remote at the last Fetch. Push doesn’t send tags; push this one to share it." = "タグには、ブランチのようなリモートの写しが手元にないので、最後の Fetch のときに各リモートから読みました。Push はタグを送らないので、共有するにはこのタグを push します。";

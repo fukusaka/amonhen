@@ -187,10 +187,11 @@ pub trait Operations: Send + Sync {
         Err(crate::tr!("Can’t blame here").into())
     }
 
-    /// HEAD から `path` を変えたコミット（名前の変更を追う。マージは出さない）。`git log -z --name-only` の、
-    /// 各コミットが `\x01ID\0件名\0作者\0時刻\0\nその時点のパス\0` になる出力。`limit` があれば新しい方からその数まで。
-    fn file_log(&self, path: &str, limit: Option<usize>) -> Result<Vec<u8>> {
-        let _ = (path, limit);
+    /// HEAD から `path` を変えたコミット（名前の変更を追う。`merges` でなければマージは出さない）。
+    /// `git log -z --name-only` の、各コミットが `\x01ID\0件名\0作者\0時刻\0\nその時点のパス\0` になる出力。
+    /// `limit` があれば新しい方からその数まで。
+    fn file_log(&self, path: &str, limit: Option<usize>, merges: bool) -> Result<Vec<u8>> {
+        let _ = (path, limit, merges);
         Err(crate::tr!("Can’t read file history here").into())
     }
 
@@ -219,6 +220,13 @@ pub trait Operations: Send + Sync {
     fn delete_branch(&self, name: &str, force: bool) -> Result<()>;
     fn rename_branch(&self, from: &str, to: &str) -> Result<()>;
     fn create_tag(&self, name: &str, target: &str, message: Option<&str>) -> Result<()>;
+    fn delete_tag(&self, name: &str) -> Result<()>;
+    /// `remote` にあるタグと、それぞれの ref が指すオブジェクト（注釈付きのタグはタグのオブジェクト）。
+    /// `git ls-remote --tags`。
+    fn remote_tags(&self, remote: &str) -> Result<Vec<(String, Oid)>>;
+    /// タグ `names` を `remote` に push する（`force` なら同じ名前のリモートのタグを置き換え、`delete` なら
+    /// `remote` から消す）。
+    fn push_tags(&self, remote: &str, names: &[&str], force: bool, delete: bool) -> Result<()>;
     /// ブランチ名として使えなければ理由。
     fn check_branch_name(&self, name: &str) -> Result<Option<String>>;
 

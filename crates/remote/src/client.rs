@@ -621,10 +621,11 @@ impl Operations for RemoteOperations {
         Ok(bytes.0)
     }
 
-    fn file_log(&self, path: &str, limit: Option<usize>) -> Result<Vec<u8>> {
+    fn file_log(&self, path: &str, limit: Option<usize>, merges: bool) -> Result<Vec<u8>> {
         let bytes: Bytes = self.op(Op::FileLog {
             path: path.to_owned(),
             limit,
+            merges,
         })?;
         Ok(bytes.0)
     }
@@ -701,6 +702,23 @@ impl Operations for RemoteOperations {
             name: name.to_owned(),
             target: target.to_owned(),
             message: message.map(str::to_owned),
+        })
+    }
+
+    fn delete_tag(&self, name: &str) -> Result<()> {
+        self.op(Op::DeleteTag(name.to_owned()))
+    }
+
+    fn remote_tags(&self, remote: &str) -> Result<Vec<(String, Oid)>> {
+        self.op(Op::RemoteTags(remote.to_owned()))
+    }
+
+    fn push_tags(&self, remote: &str, names: &[&str], force: bool, delete: bool) -> Result<()> {
+        self.op(Op::PushTags {
+            remote: remote.to_owned(),
+            names: owned(names),
+            force,
+            delete,
         })
     }
 

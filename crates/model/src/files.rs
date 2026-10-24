@@ -13,6 +13,8 @@ pub enum Root {
     Workdir,
     /// worktree ごとの `.git`。
     GitDir,
+    /// refs・config がある `.git`（すべての worktree で共通。linked worktree でなければ `GitDir` と同じ）。
+    CommonDir,
 }
 
 pub trait RepoFiles: Send + Sync {
@@ -31,13 +33,21 @@ pub trait RepoFiles: Send + Sync {
 pub struct LocalFiles {
     workdir: Option<PathBuf>,
     git_dir: PathBuf,
+    common_dir: PathBuf,
 }
 
 impl LocalFiles {
     pub fn new(git_dir: impl Into<PathBuf>, workdir: Option<PathBuf>) -> Arc<Self> {
+        let git_dir = git_dir.into();
+        // linked worktree の `.git` には、共通の git dir の場所が `commondir` に書いてある（相対なら `.git` から）。
+        let common_dir = std::fs::read_to_string(git_dir.join("commondir"))
+            .ok()
+            .map(|dir| git_dir.join(dir.trim()))
+            .unwrap_or_else(|| git_dir.clone());
         Arc::new(Self {
             workdir,
-            git_dir: git_dir.into(),
+            git_dir,
+            common_dir,
         })
     }
 
@@ -48,6 +58,7 @@ impl LocalFiles {
                 .as_ref()
                 .ok_or_else(|| crate::tr!("The repository has no working tree"))?,
             Root::GitDir => &self.git_dir,
+            Root::CommonDir => &self.common_dir,
         };
         let relative = Path::new(path);
         if !relative
