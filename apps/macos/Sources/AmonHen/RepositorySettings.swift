@@ -31,6 +31,8 @@ final class RepositorySettingsModel {
     private(set) var lfs = false
     private(set) var lfsPatterns: [String] = []
     private(set) var entries: [ConfigEntry] = []
+    /// git が知っている設定の変数の名前（設定の有無は問わない。読めなければ空）。
+    private(set) var knownKeys: [String] = []
     private(set) var remotes: [RemoteEntry] = []
     var gitignore = ""
     var exclude = ""
@@ -45,6 +47,8 @@ final class RepositorySettingsModel {
     private(set) var detectedBase: String?
     /// git の設定・リモートなどを変えた（画面を読み直す）。
     var onRepositoryChange: (() -> Void)?
+    /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。次の書き換えで忘れる。
+    var removedConfig: [(key: String, value: String)] = []
 
     /// SSH 先のリポジトリなら、その SSH 先の名前。
     var host: String? { RepositoryLocation.isRemote(location) ? RepositoryLocation.host(location) : nil }
@@ -58,15 +62,17 @@ final class RepositorySettingsModel {
         let repository = self.repository
         Task {
             struct Entries: Decodable { let entries: [ConfigEntry] }
+            struct Keys: Decodable { let keys: [String] }
             struct Remotes: Decodable { let remotes: [RemoteEntry] }
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
             struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String] }
             struct Version: Decodable { let version: String?; let updateRefs: Bool }
             struct Groups: Decodable { struct Branch: Decodable { let name: String }; let base: String?; let branches: [Branch] }
             do {
-                let (e, r, i, h, v, g) = try await Task.detached(priority: .userInitiated) {
+                let (e, k, r, i, h, v, g) = try await Task.detached(priority: .userInitiated) {
                     (
                         try repository.info(["op": "configList"], as: Entries.self),
+                        try? repository.info(["op": "configKeys"], as: Keys.self),
                         try repository.info(["op": "remotes"], as: Remotes.self),
                         try repository.info(["op": "ignoreFiles"], as: Ignore.self),
                         try repository.info(["op": "hooksAndLfs"], as: Hooks.self),
@@ -82,7 +88,12 @@ final class RepositorySettingsModel {
                 hooks = h.hooks
                 lfs = h.lfs
                 lfsPatterns = h.lfsPatterns
-                entries = e.entries
+                // `command` は Amon Hen が git を起動するときの `-c`（色を切るなど）で、リポジトリの設定ではない。
+                // `unknown` は git が組み込みで読むファイル（Apple の git の Xcode の gitconfig）で、機械全体のもの。
+                entries = e.entries.filter { $0.scope != "command" }.map {
+                    $0.scope == "unknown" ? ConfigEntry(scope: "system", origin: $0.origin, key: $0.key, value: $0.value) : $0
+                }
+                knownKeys = k?.keys ?? []
                 remotes = r.remotes
                 if (gitignore, exclude) == savedIgnore {
                     gitignore = i.gitignore
@@ -95,7 +106,7 @@ final class RepositorySettingsModel {
         }
     }
 
-    /// 今効いている値（後に出るものほど優先）と、その出どころ。
+    /// 今効いている値（後に出るものほど優先）と、その設定元。
     func effective(_ key: String) -> ConfigEntry? {
         entries.last { $0.key.lowercased() == key.lowercased() }
     }
@@ -166,11 +177,24 @@ private func configFile(_ entry: ConfigEntry) -> String {
     return (origin as NSString).abbreviatingWithTildeInPath
 }
 
+/// 表のページ（リモート・git config）に、ほかのページのグループ化した Form と同じ地を敷く。Form の地は素材
+/// （単色では同じにならない）なので、空の Form を後ろに置く。
+private struct GroupedPage<Content: View>: View {
+    @ViewBuilder let content: Content
+    var body: some View {
+        ZStack {
+            Form { EmptyView() }.formStyle(.grouped)
+            content.padding()
+        }
+    }
+}
+
 private struct RemotesTab: View {
     let model: RepositorySettingsModel
     @State private var selection: String?
 
     var body: some View {
+        GroupedPage {
         VStack(alignment: .leading) {
             Table(model.remotes, selection: $selection) {
                 TableColumn(L("Name"), value: \.name).width(min: 80, ideal: 100)
@@ -190,7 +214,7 @@ private struct RemotesTab: View {
                 Button(L("Delete"), role: .destructive) { remove() }.disabled(selection == nil)
             }
         }
-        .padding()
+        }
     }
 
     private func add() {
@@ -247,40 +271,453 @@ private struct RemotesTab: View {
     }
 }
 
+/// git config の表の 1 行: 1 つのキーと、設定元（段）ごとの値（docs/ux.md の 4.5）。同じ段に同じキーが
+/// 複数あれば（`remote.origin.fetch` など）、改行で並べる。
+nonisolated struct ConfigRow: Identifiable, Hashable, Sendable {
+    let key: String
+    /// 今効いている値（後の段ほど優先）と、その段。どの段にもなければ空。
+    let effective: String
+    let effectiveScope: String
+    /// 段ごとの値と、その段のファイル。
+    let values: [String: String]
+    let files: [String: String]
+    /// 組（section か subsection）の見出しの行。`key` はその組までのキー（`remote`・`remote.origin`）。
+    var isGroup = false
+    /// 表のキーの列に出す字。葉は組からの相対の名前（`remote.origin.url` なら `url`）、組はその名前。
+    var label: String?
+    var id: String { key }
+    /// キーの 3 つの部分。`section.name` か `section.subsection.name` で、subsection にはドットが入りうる
+    /// （`url.https://….insteadOf`）ので、最初と最後のドットで切る。
+    var parts: (section: String, subsection: String?, name: String) {
+        guard let first = key.firstIndex(of: "."), let last = key.lastIndex(of: ".") else { return (key, nil, "") }
+        let section = String(key[..<first]), name = String(key[key.index(after: last)...])
+        let subsection = first == last ? nil : String(key[key.index(after: first)..<last])
+        return (section, subsection, name)
+    }
+    var system: String { values["system"] ?? "" }
+    var global: String { values["global"] ?? "" }
+    var local: String { values["local"] ?? "" }
+    var worktree: String { values["worktree"] ?? "" }
+}
+
+extension RepositorySettingsModel {
+    /// git が知っている変数の綴り（`core.fileMode`）を、小文字のキーから引く。`git config --list` は小文字で出す。
+    var canonicalKeys: [String: String] {
+        Dictionary(knownKeys.map { ($0.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
+    }
+
+    /// `entries` をキーごとに 1 行にまとめる。順は git が出した順（表はこれを見出しで並べ替える）。
+    /// キーは git が知っている綴り（`core.fileMode`）にそろえる。
+    var configRows: [ConfigRow] {
+        let canonical = canonicalKeys
+        var order: [String] = []
+        var byKey: [String: [ConfigEntry]] = [:]
+        for e in entries {
+            let key = canonical[e.key.lowercased()] ?? e.key
+            if byKey[key] == nil { order.append(key) }
+            byKey[key, default: []].append(e)
+        }
+        return order.map { key in
+            let es = byKey[key] ?? []
+            var values: [String: String] = [:], files: [String: String] = [:]
+            for e in es {
+                values[e.scope] = values[e.scope].map { $0 + "\n" + e.value } ?? e.value
+                files[e.scope] = configFile(e)
+            }
+            let scope = es.last?.scope ?? ""
+            return ConfigRow(key: key, effective: values[scope] ?? "", effectiveScope: scope, values: values, files: files)
+        }
+    }
+}
+
+/// `git config` のページ: Xcode の Build Settings のような表。列はキー、効いている値、そして段ごと（システム全体・
+/// すべてのリポジトリ・このリポジトリ・この worktree）の値。効いている段の値は太字。「このリポジトリ」の列だけ
+/// 書ける: 行をダブルクリック（か右クリックの「編集」）で欄になり、Return で書く。空にするとここでは消える。
+/// 「+」で新しい行が出て、キーと値を入れる（キーと値がそろわないまま離れたら消える）。「−」と ⌫ で選んだ行の
+/// このリポジトリの値を消す。表からの書き換え（編集・追加・削除）はすべてウィンドウの UndoManager に逆の書き換えと
+/// 一緒に登録するので、⌘Z／⇧⌘Z で何段でも行き来できる（ページを開いている間）。最後の削除は下の 1 行にも出て、
+/// その「戻す」は 1 段の ⌘Z と同じ。⌘C で選んだ行を `key = value` の形でコピーする。
+/// 上の切り替えも Xcode と同じで、語も Xcode のまま（ページ名と同じく訳さない）: 行は Basic（ページが尋ねるキー。
+/// 未設定でも出す）／Customized（このリポジトリで設定したもの）／All、列は Combined（効いている値と設定元）／Levels。
+/// All は git が知っているすべての変数（未設定は空欄で、設定元は git の既定）。
+/// 行は Xcode が分類ごとにまとめるのと同じく、キーのドットで開閉できる組にする（section、その下に subsection。
+/// `DisclosureTableRow`。初めはすべて開いている）。
 private struct AllSettingsTab: View {
     let model: RepositorySettingsModel
     @State private var filter = ""
-    @State private var key = ""
-    @State private var value = ""
-    /// 見出しで並べ替える。初めは git の順（後のものほど優先）。
-    @State private var sortOrder: [KeyPathComparator<ConfigEntry>] = []
+    @State private var selection = Set<String>()
+    /// 見出しで並べ替える。初めはキーの順（`onAppear` で入れる。`@State` の初期値にキーパスは置けない）。
+    @State private var sortOrder: [KeyPathComparator<ConfigRow>] = []
+    @State private var columns = TableColumnCustomization<ConfigRow>()
+    /// 切り替えはアプリ全体で 1 つ（リポジトリをまたいで覚える）。初めは Customized。
+    @AppStorage("configTableRows") private var rowsMode = RowsMode.customized
+    @AppStorage("configTableColumns") private var columnsMode = ColumnsMode.levels
+    /// 「このリポジトリ」の列を編集しているキーと、欄の中身。
+    @State private var editing: String?
+    @State private var draft = ""
+    /// 「+」で足している途中（表の最後に、キーと値の欄だけの行が出る）。
+    @State private var adding = false
+    @State private var newKey = ""
+    /// 閉じた section（初めはすべて開いている）。
+    @State private var collapsed = Set<String>()
+    @Environment(\.undoManager) private var undoManager
+    @FocusState private var focus: Field?
 
-    private var rows: [ConfigEntry] {
-        let shown = model.entries.filter { filter.isEmpty || $0.key.localizedCaseInsensitiveContains(filter) }
-        return sortOrder.isEmpty ? shown : shown.sorted(using: sortOrder)
+    private enum Field: Hashable { case value, newKey, newValue }
+    private enum RowsMode: String { case basic, customized, all }
+    private enum ColumnsMode: String { case combined, levels }
+    /// 足している途中の行の id（キーは空）。
+    private static let newRowID = ""
+    /// 「基本」のキー: このページ群が尋ねるもの（docs/ux.md の 4.5）。git が出す形（小文字）で。
+    private static let basicKeys = [
+        "user.name", "user.email", "commit.gpgsign", "gpg.format", "user.signingkey", "commit.template",
+        "amonhen.defaultbranch", "pull.rebase", "pull.ff", "fetch.prune", "rebase.autostash", "rebase.updaterefs",
+        "merge.conflictstyle", "core.autocrlf", "core.filemode",
+    ]
+
+    /// 組（section か subsection）: 見出しの行と、その中の行と組。
+    private struct Group: Identifiable {
+        let header: ConfigRow
+        var rows: [ConfigRow] = []
+        var groups: [Group] = []
+        var id: String { header.key }
+    }
+
+    /// 出す行を、キーのドットで組にしたもの（section の下に subsection）。組の順はキーの並びと同じ向き、
+    /// 中の行の順は並べ替えのまま。
+    private var groups: [Group] {
+        let f = filter.trimmingCharacters(in: .whitespaces)
+        var all = model.configRows
+        let blank = { (key: String) in ConfigRow(key: key, effective: "", effectiveScope: "", values: [:], files: [:]) }
+        switch rowsMode {
+        case .all:
+            let set = Set(all.map { $0.key.lowercased() })
+            all += model.knownKeys.filter { !set.contains($0.lowercased()) }.map(blank)
+        case .customized: all = all.filter { $0.values["local"] != nil || $0.values["worktree"] != nil }
+        case .basic:
+            let byKey = Dictionary(all.map { ($0.key.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
+            let canonical = model.canonicalKeys
+            all = Self.basicKeys.map { byKey[$0] ?? blank(canonical[$0] ?? $0) }
+        }
+        let sorted = all
+            .filter { f.isEmpty || $0.key.localizedCaseInsensitiveContains(f) || $0.values.values.contains { $0.localizedCaseInsensitiveContains(f) } }
+            .sorted(using: sortOrder)
+        let reversed = sortOrder.first.map { $0.keyPath == \ConfigRow.key && $0.order == .reverse } ?? false
+        let header = { (key: String, name: String) in
+            ConfigRow(key: key, effective: "", effectiveScope: "", values: [:], files: [:], isGroup: true, label: name)
+        }
+        var sections: [String: Group] = [:]
+        for var row in sorted {
+            let p = row.parts
+            row.label = p.name
+            var section = sections[p.section] ?? Group(header: header(p.section, p.section))
+            if let sub = p.subsection {
+                let key = "\(p.section).\(sub)"
+                if let i = section.groups.firstIndex(where: { $0.id == key }) {
+                    section.groups[i].rows.append(row)
+                } else {
+                    section.groups.append(Group(header: header(key, sub), rows: [row]))
+                }
+            } else {
+                section.rows.append(row)
+            }
+            sections[p.section] = section
+        }
+        let order = { (a: String, b: String) in reversed ? a > b : a < b }
+        return sections.values.sorted { order($0.id, $1.id) }.map { section in
+            var section = section
+            section.groups.sort { order($0.id, $1.id) }
+            return section
+        }
+    }
+
+    /// 表に出ている行（見出しも含む。コピーの元）。
+    private var rows: [ConfigRow] {
+        groups.flatMap { [$0.header] + $0.rows + $0.groups.flatMap { [$0.header] + $0.rows } }
+    }
+
+    /// 組の見出しの行の id。
+    private var groupIDs: Set<String> {
+        Set(groups.flatMap { [$0.id] + $0.groups.map(\.id) })
     }
 
     var body: some View {
-        VStack(alignment: .leading) {
-            TextField(L("Filter by key"), text: $filter)
-            Table(rows, sortOrder: $sortOrder) {
-                TableColumn(L("Key"), value: \.key).width(min: 140, ideal: 200)
-                TableColumn(L("Value"), value: \.value)
-                TableColumn(L("Source"), value: \.scope) { e in Text(scopeLabel(e.scope, host: model.host)).help(e.scope) }
-                    .width(min: 110, ideal: 130)
-                TableColumn(L("File"), value: \.origin) { e in Text(configFile(e)).foregroundStyle(.secondary) }
+        GroupedPage {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Picker("", selection: $rowsMode) {
+                    Text("Basic").tag(RowsMode.basic)
+                    Text("Customized").tag(RowsMode.customized)
+                    Text("All").tag(RowsMode.all)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .help(L("Basic: the settings the pages here ask about, set or not. Customized: the keys set in this repository or this worktree. All: every key git reads."))
+                Picker("", selection: $columnsMode) {
+                    Text("Combined").tag(ColumnsMode.combined)
+                    Text("Levels").tag(ColumnsMode.levels)
+                }
+                .pickerStyle(.segmented).labelsHidden().fixedSize()
+                .help(L("Combined: the value in effect and where it comes from. Levels: a column per source, the one in effect in bold."))
+                Spacer()
+                TextField(L("Search by key or value"), text: $filter)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 240)
+            }
+            Table(of: ConfigRow.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
+                TableColumn(L("Key"), value: \.key) { row in
+                    if row.key == Self.newRowID {
+                        TextField(L("Key"), text: $newKey)
+                            .textFieldStyle(.plain)
+                            .focused($focus, equals: .newKey)
+                            .onSubmit { focus = .newValue }
+                            .onExitCommand { cancelAdding() }
+                    } else if row.isGroup {
+                        Text(row.label ?? row.key).fontWeight(.bold)
+                    } else {
+                        Text(row.label ?? row.key).help(row.key)
+                    }
+                }
+                .width(min: 140, ideal: 220)
+                .customizationID("key")
+                .disabledCustomizationBehavior(.all)
+                TableColumn(L("Value in effect"), value: \.effective) { row in
+                    // まとめての表では、ここが「このリポジトリ」の値の欄にもなる。
+                    if columnsMode == .combined && isEditing(row) {
+                        valueField(row)
+                    } else if row.effectiveScope.isEmpty {
+                        // どこにも設定がない（「基本」の未設定のキー）: 空の値とは違うので、何も出さない。
+                        Text("")
+                    } else {
+                        valueText(row.effective)
+                            .help(row.effectiveScope.isEmpty ? "" : "\(scopeLabel(row.effectiveScope, host: model.host)) · \(row.files[row.effectiveScope] ?? "")")
+                    }
+                }
+                .width(min: 100, ideal: 160)
+                .customizationID("effective")
+                .disabledCustomizationBehavior(.all)
+                if columnsMode == .combined {
+                    TableColumn(L("Source"), value: \.effectiveScope) { row in
+                        Text(row.isGroup || row.key == Self.newRowID ? "" : row.effectiveScope.isEmpty ? L("git’s default") : scopeLabel(row.effectiveScope, host: model.host))
+                            .foregroundStyle(row.effectiveScope.isEmpty ? .secondary : .primary)
+                            .help(row.effectiveScope.isEmpty ? "" : "\(row.effectiveScope) · \(row.files[row.effectiveScope] ?? "")")
+                    }
+                    .width(min: 110, ideal: 170)
+                    .customizationID("source")
+                    .disabledCustomizationBehavior(.all)
+                } else {
+                    TableColumn(header("system"), value: \.system) { row in cell(row, scope: "system") }
+                        .width(min: 80, ideal: 120)
+                        .customizationID("system")
+                    TableColumn(header("global"), value: \.global) { row in cell(row, scope: "global") }
+                        .width(min: 80, ideal: 140)
+                        .customizationID("global")
+                    TableColumn(header("local"), value: \.local) { row in
+                        if isEditing(row) { valueField(row) } else { cell(row, scope: "local") }
+                    }
+                    .width(min: 80, ideal: 140)
+                    .customizationID("local")
+                    .disabledCustomizationBehavior(.all)
+                    TableColumn(header("worktree"), value: \.worktree) { row in cell(row, scope: "worktree") }
+                        .width(min: 80, ideal: 120)
+                        .customizationID("worktree")
+                }
+            } rows: {
+                ForEach(groups) { section in
+                    DisclosureTableRow(section.header, isExpanded: expanded(section.id)) {
+                        ForEach(section.rows) { TableRow($0) }
+                        ForEach(section.groups) { sub in
+                            DisclosureTableRow(sub.header, isExpanded: expanded(sub.id)) {
+                                ForEach(sub.rows) { TableRow($0) }
+                            }
+                        }
+                    }
+                }
+                if adding {
+                    TableRow(ConfigRow(key: Self.newRowID, effective: "", effectiveScope: "", values: [:], files: [:]))
+                }
+            }
+            .contextMenu(forSelectionType: String.self) { keys in
+                let groupIDs = self.groupIDs
+                let keys = keys.filter { $0 != Self.newRowID && !groupIDs.contains($0) }
+                Button(L("Edit in This Repository")) { keys.first.map(beginEditing) }.disabled(keys.count != 1)
+                Button(L("Remove from This Repository")) { remove(keys) }
+                    .disabled(!keys.contains { model.local($0) != nil })
+                Divider()
+                Button(L("Copy")) { copy(keys) }.disabled(keys.isEmpty)
+            } primaryAction: { keys in
+                if keys.count == 1, let key = keys.first, key != Self.newRowID, !groupIDs.contains(key) { beginEditing(key) }
+            }
+            .copyable([copyText(selection)])
+            .onDeleteCommand { remove(selection) }
+            .onAppear { if sortOrder.isEmpty { sortOrder = [KeyPathComparator(\.key)] } }
+            .onChange(of: focus) { _, now in
+                // 欄から離れたら、編集中の値は書く。足している途中の行は、キーと値がそろっていれば書き、なければ消す。
+                if now != .value, editing != nil { commitEditing() }
+                if now != .newKey, now != .newValue, adding { commitAdding() }
             }
             HStack {
-                TextField(L("Key (e.g. core.autocrlf)"), text: $key).frame(width: 200)
-                TextField(L("Value"), text: $value)
-                Button(L("Set Local")) { model.set(key, value) }.disabled(key.isEmpty || value.isEmpty)
-                Button(L("Unset Local")) { model.set(key, nil) }.disabled(key.isEmpty)
-                    .help(L("Remove this repository’s (local) value and go back to the inherited one."))
+                Button { beginAdding() } label: { Image(systemName: "plus") }
+                    .help(L("Add a key to this repository"))
+                    .disabled(adding)
+                Button { remove(selection) } label: { Image(systemName: "minus") }
+                    .help(L("Remove the selected keys from this repository (⌫)"))
+                    .disabled(!selection.contains { model.local($0) != nil })
+                if !model.removedConfig.isEmpty {
+                    let r = model.removedConfig
+                    Text(r.count == 1 ? L("Removed %@ from this repository", "\(r[0].key) = \(r[0].value)") : L("Removed %ld keys from this repository", r.count))
+                        .foregroundStyle(.secondary).lineLimit(1).padding(.leading, 8)
+                    Button(L("Restore")) { restore() }
+                }
+                Spacer()
             }
-            Text(L("Later rows take precedence (system-wide → all repositories → this repository → this worktree). Only this repository’s values can be changed here."))
-                .font(.caption).foregroundStyle(.secondary)
         }
-        .padding()
+        }
+    }
+
+    /// 段の列の見出し: 4.3 の設定元の言葉を、文の頭だけ大文字に。
+    private func header(_ scope: String) -> String {
+        let label = scopeLabel(scope, host: model.host)
+        return label.prefix(1).uppercased() + label.dropFirst()
+    }
+
+    /// 段の列のセル。効いている段なら太字。ツールチップに git の呼び名（global など）とファイル。
+    @ViewBuilder private func cell(_ row: ConfigRow, scope: String) -> some View {
+        if let value = row.values[scope] {
+            valueText(value)
+                .fontWeight(row.effectiveScope == scope ? .bold : .regular)
+                .help("\(scope) · \(row.files[scope] ?? "")")
+        } else {
+            Text("")
+        }
+    }
+
+    /// 値の見せ方: 同じ段に複数あれば 1 行ずつ（行の高さが伸びる）、明示的に空の値は「(empty)」。
+    private func valueText(_ value: String) -> Text {
+        let lines = value.split(separator: "\n", omittingEmptySubsequences: false)
+        return lines.map { $0.isEmpty ? Text(L("(empty)")).foregroundStyle(.secondary) : Text($0) }
+            .reduce(nil) { (acc: Text?, t: Text) in acc.map { $0 + Text("\n") + t } ?? t } ?? Text("")
+    }
+
+    /// 足している途中の行か、編集中の行か。
+    private func isEditing(_ row: ConfigRow) -> Bool { row.key == Self.newRowID || editing == row.key }
+
+    /// 組が開いているか（初めはすべて開いている）。
+    private func expanded(_ id: String) -> Binding<Bool> {
+        Binding(get: { !collapsed.contains(id) }, set: { open in if open { collapsed.remove(id) } else { collapsed.insert(id) } })
+    }
+
+    /// 「このリポジトリ」の値の欄（足している途中の行と、編集中の行）。
+    @ViewBuilder private func valueField(_ row: ConfigRow) -> some View {
+        if row.key == Self.newRowID {
+            TextField(L("Value"), text: $draft)
+                .textFieldStyle(.plain)
+                .focused($focus, equals: .newValue)
+                .onSubmit { commitAdding() }
+                .onExitCommand { cancelAdding() }
+        } else {
+            TextField("", text: $draft)
+                .textFieldStyle(.plain)
+                .focused($focus, equals: .value)
+                .onSubmit { commitEditing() }
+                .onExitCommand { editing = nil }
+        }
+    }
+
+    private func beginEditing(_ key: String) {
+        cancelAdding()
+        if editing != nil, editing != key { commitEditing() }
+        draft = model.local(key) ?? ""
+        editing = key
+        selection = [key]
+        DispatchQueue.main.async { focus = .value }
+    }
+
+    private func commitEditing() {
+        guard let key = editing else { return }
+        editing = nil
+        let value = draft.trimmingCharacters(in: .whitespaces)
+        let old = model.local(key)
+        if value != (old ?? "") {
+            write([ConfigChange(key: key, old: old, new: value.isEmpty ? nil : value)],
+                  name: value.isEmpty ? L("Remove %@", key) : L("Change %@", key))
+        }
+    }
+
+    private func beginAdding() {
+        if editing != nil { commitEditing() }
+        newKey = ""
+        draft = ""
+        adding = true
+        selection = [Self.newRowID]
+        DispatchQueue.main.async { focus = .newKey }
+    }
+
+    /// 足している行を書く。キーと値がそろっていなければ、行を消すだけ。
+    private func commitAdding() {
+        let key = newKey.trimmingCharacters(in: .whitespaces), value = draft.trimmingCharacters(in: .whitespaces)
+        cancelAdding()
+        guard !key.isEmpty, !value.isEmpty else { return }
+        write([ConfigChange(key: key, old: model.local(key), new: value)], name: L("Add %@", key))
+        selection = [key]
+    }
+
+    /// 選んだ行のこのリポジトリの値を消す。最後に消したものは下の 1 行に出す。
+    private func remove(_ keys: Set<String>) {
+        let gone = keys.sorted().compactMap { k in model.local(k).map { ConfigChange(key: k, old: $0, new: nil) } }
+        guard !gone.isEmpty else { return }
+        write(gone, name: gone.count == 1 ? L("Remove %@", gone[0].key) : L("Remove %ld keys", gone.count), showRemoved: true)
+    }
+
+    /// 下の 1 行の「戻す」: 最後の削除を 1 段戻す（⌘Z と同じ）。
+    private func restore() {
+        if let undoManager, undoManager.canUndo {
+            undoManager.undo()
+        } else {
+            let back = model.removedConfig.map { ConfigChange(key: $0.key, old: nil, new: $0.value) }
+            write(back, name: L("Restore"))
+        }
+    }
+
+    /// このリポジトリの値の書き換え 1 つ（`new` が nil なら消す）。
+    private struct ConfigChange {
+        let key: String
+        let old: String?
+        let new: String?
+        var inverse: ConfigChange { ConfigChange(key: key, old: new, new: old) }
+    }
+
+    /// 表からの書き換えはすべてここを通す: 書いて、UndoManager に逆の書き換えを登録する。逆の中でまたその逆を
+    /// 登録するので、⌘Z のあと ⇧⌘Z でやり直せる。`showRemoved` なら消したものを下の 1 行に出す（それ以外の
+    /// 書き換えとやり直しでは消す）。
+    private func write(_ changes: [ConfigChange], name: String, showRemoved: Bool = false) {
+        Self.apply(changes, to: model, undoManager: undoManager, name: name, showRemoved: showRemoved)
+    }
+
+    private static func apply(_ changes: [ConfigChange], to model: RepositorySettingsModel, undoManager: UndoManager?, name: String, showRemoved: Bool) {
+        for c in changes { model.set(c.key, c.new) }
+        model.removedConfig = showRemoved ? changes.compactMap { c in c.old.map { (key: c.key, value: $0) } } : []
+        undoManager?.registerUndo(withTarget: model) { m in
+            apply(changes.map(\.inverse), to: m, undoManager: undoManager, name: name, showRemoved: false)
+        }
+        undoManager?.setActionName(name)
+    }
+
+    private func cancelAdding() {
+        adding = false
+        newKey = ""
+        if focus == .newKey || focus == .newValue { focus = nil }
+    }
+
+    /// 選んだ行を `key = value` の形に（効いている値。複数あれば 1 行ずつ。どこにも設定のない行は飛ばす）。
+    private func copyText(_ keys: Set<String>) -> String {
+        rows.filter { keys.contains($0.key) && $0.key != Self.newRowID && !$0.effectiveScope.isEmpty }
+            .flatMap { row in row.effective.split(separator: "\n", omittingEmptySubsequences: false).map { "\(row.key) = \($0)" } }
+            .joined(separator: "\n")
+    }
+
+    private func copy(_ keys: Set<String>) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(copyText(keys), forType: .string)
     }
 }
 
@@ -296,7 +733,7 @@ private func normalizedBool(_ value: String) -> String? {
 }
 
 extension RepositorySettingsModel {
-    /// `key` の今効いている値の出どころの言い方と、そのファイル。どこにも書かれていなければ「git の既定」。
+    /// `key` の今効いている値の設定元の言い方と、そのファイル。どこにも書かれていなければ「git の既定」。
     func origin(of key: String) -> (label: String, file: String?) {
         guard let e = effective(key) else { return (L("git’s default"), nil) }
         var file = e.origin
@@ -311,7 +748,7 @@ extension RepositorySettingsModel {
     }
 }
 
-/// 出どころ（`git config` の scope）の言い方。行の右と git config の表で同じ言葉を使う。
+/// 設定元（`git config` の scope）の言い方。行の右と git config の表で同じ言葉を使う。
 func scopeLabel(_ scope: String, host: String?) -> String {
     switch scope {
     case "local": L("this repository")
@@ -322,7 +759,7 @@ func scopeLabel(_ scope: String, host: String?) -> String {
     }
 }
 
-/// 行の右に出す、値の出どころ。
+/// 行の右に出す、値の設定元。
 private struct SourceLabel: View {
     let model: RepositorySettingsModel
     let key: String
@@ -337,12 +774,12 @@ private struct SourceLabel: View {
 }
 
 /// 行の共通の形: 左に質問とその下に 1 文の説明、右に効いている値の欄、このリポジトリが上書きしている間だけ ↩︎、
-/// 最後に出どころ。その横の ⓘ で、キーと値とファイル、上書きしなければ効く値が吹き出しに出る。
+/// 最後に設定元。その横の ⓘ で、キーと値とファイル、上書きしなければ効く値が吹き出しに出る。
 private struct SettingRow<Control: View>: View {
     let model: RepositorySettingsModel
     let question: String
     let help: String
-    /// この行が読み書きするキー。出どころは先頭のキーのもの。↩︎ はすべての local を消す。
+    /// この行が読み書きするキー。設定元は先頭のキーのもの。↩︎ はすべての local を消す。
     let keys: [String]
     /// 生の値を人の言葉にする（吹き出しの表示に使う）。
     var describe: (String) -> String = { $0 }
@@ -509,7 +946,7 @@ private struct PullMethodRow: View {
     }
 
     private var current: Method { method(rebase: model.effective("pull.rebase")?.value, ff: model.effective("pull.ff")?.value) }
-    /// 出どころに出すのは、取り込み方を決めているほうのキー。
+    /// 設定元に出すのは、取り込み方を決めているほうのキー。
     private var decidingKey: String { model.effective("pull.ff")?.value.lowercased() == "only" ? "pull.ff" : "pull.rebase" }
 
     private func label(_ m: Method) -> String {

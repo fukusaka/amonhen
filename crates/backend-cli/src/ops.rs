@@ -782,6 +782,18 @@ impl Operations for Git {
         Ok(entries)
     }
 
+    fn config_keys(&self) -> Result<Vec<String>> {
+        // `git help --config-for-completion`（git 2.20 から）は 1 行 1 変数。`remote.` のように `.` で終わる行は
+        // `remote.<name>.…` の形の変数のまとめで、キーではないので外す。
+        let out = text(self.read(&["help", "--config-for-completion"])?)?;
+        Ok(out
+            .lines()
+            .map(str::trim)
+            .filter(|l| !l.is_empty() && !l.ends_with('.'))
+            .map(str::to_owned)
+            .collect())
+    }
+
     fn config_set(&self, key: &str, value: Option<&str>) -> Result<()> {
         self.config_set_in("--local", key, value)
     }

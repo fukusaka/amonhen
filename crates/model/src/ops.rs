@@ -287,6 +287,11 @@ pub trait Operations: Send + Sync {
 
     /// すべての設定と、それぞれがどこで決まっているか（後に出るものほど優先）。
     fn config_list(&self) -> Result<Vec<ConfigEntry>>;
+    /// git が知っている設定の変数の名前（`core.fileMode` のような綴りで。設定の有無は問わない）。
+    /// `remote.<name>.url` のように名前が入るものは含まない。読めなければ空。
+    fn config_keys(&self) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
     /// このリポジトリ（local）の設定を変える。`value` が None なら消す（上の段の値に戻る）。
     fn config_set(&self, key: &str, value: Option<&str>) -> Result<()>;
     /// git を動かしているユーザー全体（global）の設定を変える。SSH 先のリポジトリなら SSH 先のユーザーのもの。
