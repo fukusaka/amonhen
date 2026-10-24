@@ -231,20 +231,16 @@
 "Show Matching Files" = "合うファイルを見る";
 "Show how many files (tracked ones included) match each line of the unsaved text, with examples." = "保存する前の中身で、各行に合うファイル（追跡しているものも含む）の例と数を出す";
 "Save" = "保存";
-"Filter by key" = "キーで絞り込む";
 "Key" = "キー";
 "Value" = "値";
-"Source" = "出どころ";
+"Value in effect" = "効いている値";
+"(empty)" = "（空）";
+"Search by key or value" = "キーか値で検索";
+"Add a key to this repository" = "このリポジトリにキーを足す";
+"Edit in This Repository" = "このリポジトリの値を編集";
+"Remove from This Repository" = "このリポジトリの値を消す";
 "Location" = "場所";
 "File" = "ファイル";
-"Key (e.g. core.autocrlf)" = "キー（core.autocrlf など）";
-"Set Local" = "local に設定";
-"Unset Local" = "local の値を消す";
-"Remove this repository’s (local) value and go back to the inherited one." = "このリポジトリ（local）の値を消し、上の段の値に戻す";
-"Later rows take precedence (system → global → local → worktree). Only this repository’s (local) values can be changed." = "後の行ほど優先される（system → global → local → worktree）。変えられるのはこのリポジトリ（local）の値だけ。";
-"General" = "一般";
-"Identity" = "名前と署名";
-"All Settings" = "すべての設定";
 "Done" = "完了";
 
 /* Settings.swift */
@@ -1188,4 +1184,3 @@
 ".git/info/exclude, one pattern per line. Shared patterns go in .gitignore." = ".git/info/exclude。1 行に 1 つ。共有するパターンは .gitignore に書きます。";
 "Branches whose tips are among the rewritten commits. Undo puts them back." = "先頭が書き換えるコミットにあるブランチです。Undo で戻ります。";
 "History edits always stash, whatever this says." = "History の編集は、この設定に関わらずいつも退避します。";
-"Later rows take precedence (system-wide → all repositories → this repository → this worktree). Only this repository’s values can be changed here." = "後の行ほど優先されます（システム全体 → すべてのリポジトリ → このリポジトリ → この worktree）。ここで変えられるのは、このリポジトリの値だけです。";
