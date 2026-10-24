@@ -1232,7 +1232,7 @@ private struct CommitsPage: View {
     var body: some View {
         Form {
             Section {
-                TextRow(model: model, question: L("Message template"), help: "", key: "commit.template", placeholder: L("None"))
+                TemplateRow(model: model)
                 if let preview, !preview.isEmpty {
                     Text(preview).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(8).textSelection(.enabled)
                 }
@@ -1241,16 +1241,91 @@ private struct CommitsPage: View {
             }
         }
         .formStyle(.grouped)
-        .task(id: model.effective("commit.template")?.value) { preview = await templatePreview() }
+        .task(id: "\(model.effective(TemplateRow.libraryKey)?.value ?? "")|\(model.effective(TemplateRow.fileKey)?.value ?? "")") {
+            preview = await templatePreview()
+        }
     }
 
-    /// テンプレートの中身（手元のリポジトリだけ。SSH 先は読まない）。
+    /// 選んだテンプレートの中身: 一覧のものはその文（置換文字列はそのまま）、ファイルはその中身（手元のリポジトリ
+    /// だけ。SSH 先は読まない）。
     private func templatePreview() async -> String? {
-        guard model.host == nil, var path = model.effective("commit.template")?.value, !path.isEmpty else { return nil }
+        if let name = model.effective(TemplateRow.libraryKey)?.value,
+           let t = Settings.commitTemplates.first(where: { $0.name == name }) {
+            return t.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        guard model.host == nil, var path = model.effective(TemplateRow.fileKey)?.value, !path.isEmpty else { return nil }
         path = (path as NSString).expandingTildeInPath
         if !path.hasPrefix("/") { path = (RepositoryLocation.path(model.location) as NSString).appendingPathComponent(path) }
         return (try? String(contentsOfFile: path, encoding: .utf8)).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
     }
+}
+
+/// メッセージのテンプレート: なし／Settings > Git の一覧のテンプレート（`amonhen.commitTemplate` に名前。Amon Hen の
+/// コミット欄だけが使い、置換文字列を埋める）／ファイル…（git の `commit.template`。端末の git も使う）。
+private struct TemplateRow: View {
+    let model: RepositorySettingsModel
+    static let libraryKey = "amonhen.commitTemplate", fileKey = "commit.template"
+    private static let pickFile = "\u{1}file"
+
+    private var templates: [CommitTemplate] { Settings.commitTemplates }
+    /// 一覧から選んでいる名前（一覧にまだあるものだけ）。
+    private var libraryName: String? {
+        model.effective(Self.libraryKey)?.value.nonEmpty.flatMap { n in templates.contains { $0.name == n } ? n : nil }
+    }
+    private var file: String? { model.effective(Self.fileKey)?.value.nonEmpty }
+    private var current: String {
+        if let libraryName { return "lib:" + libraryName }
+        if let file { return "file:" + file }
+        return ""
+    }
+    private var decidingKey: String { libraryName != nil ? Self.libraryKey : Self.fileKey }
+
+    private func label(_ value: String) -> String {
+        if value.hasPrefix("lib:") { return String(value.dropFirst(4)) }
+        if value.hasPrefix("file:") { return L("File: %@", (String(value.dropFirst(5)) as NSString).abbreviatingWithTildeInPath) }
+        return L("None")
+    }
+
+    var body: some View {
+        SettingRow(model: model, question: L("Message template"),
+                   help: L("Templates from Settings > Git are Amon Hen’s: the commit box fills {branch}, {issue} and {date}. A file is git’s commit.template, which git in a terminal uses too."),
+                   keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: label) {
+            Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
+                Text(L("None")).tag("")
+                if !templates.isEmpty {
+                    Section(L("Settings > Git")) { ForEach(templates) { Text($0.name).tag("lib:" + $0.name) } }
+                }
+                if let file { Text(label("file:" + file)).tag("file:" + file) }
+                Divider()
+                Text(L("A file…")).tag(Self.pickFile)
+            }
+            .labelsHidden()
+            .frame(maxWidth: 320)
+        }
+    }
+
+    private func choose(_ value: String) {
+        if value == Self.pickFile {
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = false
+            panel.allowsMultipleSelection = false
+            panel.message = L("Choose a commit message template file")
+            guard panel.runModal() == .OK, let url = panel.url else { return }
+            model.set(Self.fileKey, url.path)
+            if model.local(Self.libraryKey) != nil { model.set(Self.libraryKey, nil) }
+        } else if value.hasPrefix("lib:") {
+            model.set(Self.libraryKey, String(value.dropFirst(4)))
+            if model.local(Self.fileKey) != nil { model.set(Self.fileKey, nil) }
+        } else if value.hasPrefix("file:") {
+            if model.local(Self.libraryKey) != nil { model.set(Self.libraryKey, nil) }
+        } else {
+            for key in [Self.libraryKey, Self.fileKey] where model.local(key) != nil { model.set(key, nil) }
+        }
+    }
+}
+
+private extension String {
+    var nonEmpty: String? { isEmpty ? nil : self }
 }
 
 /// Pull・Fetch・Rebase・Merge の設定。

@@ -1036,7 +1036,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         draftBeforeRecall = nil
     }
 
-    /// 下書きがあればそれを、なければ `commit.template` の中身（# の行は除く）を入れる。
+    /// 下書きがあればそれを、なければテンプレートを入れる: リポジトリが Settings > Git の一覧から選んだもの
+    /// （`amonhen.commitTemplate`。`{branch}`・`{issue}`・`{date}` を埋める）、なければ `commit.template` の
+    /// ファイルの中身（手元のリポジトリだけ）。どちらも # の行は除く。
     private func restoreDraftOrTemplate() {
         if let draft = UserDefaults.standard.stringArray(forKey: draftKey), draft.count == 2 {
             summary.stringValue = draft[0]
@@ -1044,19 +1046,27 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             updateButtons()
             return
         }
-        guard let workdir = repository.workdir else { return }
         let repository = self.repository
+        let workdir = repository.workdir
         Task {
             struct Entries: Decodable {
                 struct Entry: Decodable { let key: String; let value: String }
                 let entries: [Entry]
             }
             let entries = try? await Task.detached { try repository.info(["op": "configList"], as: Entries.self) }.value
-            guard let path = entries?.entries.last(where: { $0.key.lowercased() == "commit.template" })?.value else { return }
-            let expanded = (path as NSString).expandingTildeInPath
-            let file = expanded.hasPrefix("/") ? expanded : (workdir as NSString).appendingPathComponent(expanded)
-            guard let text = try? String(contentsOfFile: file, encoding: .utf8),
-                  summary.stringValue.isEmpty, message.string.isEmpty else { return }
+            let value = { (key: String) in entries?.entries.last { $0.key.lowercased() == key }?.value }
+            let text: String
+            if let name = value("amonhen.committemplate"), let t = Settings.commitTemplates.first(where: { $0.name == name }) {
+                let branch = await Task.detached { try? repository.loadRefs().headBranch }.value
+                text = Settings.fillCommitTemplate(t.text, branch: branch)
+            } else {
+                guard let workdir, let path = value("commit.template") else { return }
+                let expanded = (path as NSString).expandingTildeInPath
+                let file = expanded.hasPrefix("/") ? expanded : (workdir as NSString).appendingPathComponent(expanded)
+                guard let read = try? String(contentsOfFile: file, encoding: .utf8) else { return }
+                text = read
+            }
+            guard summary.stringValue.isEmpty, message.string.isEmpty else { return }
             let lines = text.components(separatedBy: "\n").filter { !$0.hasPrefix("#") }
             let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             let parts = body.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)

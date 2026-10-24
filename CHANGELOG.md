@@ -42,6 +42,10 @@ becomes the GitHub Release notes.
 - Signing in Repository Settings is one choice, No signing / OpenPGP / SSH / X.509, and the key is chosen from the
   ones found (gpg's secret keys with the ones for your email first, `~/.ssh/*.pub` and ssh-agent's keys, gpgsm's
   certificates; on an SSH host, those on the host), with Other… for a key that is not listed.
+- Settings > Git keeps a library of commit message templates, with `{branch}`, `{issue}` (the first number in the
+  branch name) and `{date}` filled in when the commit box opens. Repository Settings > Commits chooses one of them
+  (kept as `amonhen.commitTemplate` in the repository's git config), or a file (git's `commit.template`) with a file
+  chooser, and previews it.
 - git config in Repository Settings is a table like Xcode's Build Settings: one row per key, grouped by the key's dots, with the value in effect
   and a column per source (system-wide, all repositories, this repository, this worktree), the source in effect in
   bold. Double-click a row to set the key in this repository (empty removes it), + adds a key, − and ⌫ remove the

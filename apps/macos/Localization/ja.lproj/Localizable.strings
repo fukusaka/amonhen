@@ -179,6 +179,11 @@
 "Couldn’t clone" = "clone できませんでした";
 
 /* RepositorySettings.swift */
+"Templates from Settings > Git are Amon Hen’s: the commit box fills {branch}, {issue} and {date}. A file is git’s commit.template, which git in a terminal uses too." = "Settings > Git のテンプレートは Amon Hen のもので、コミット欄が {branch}・{issue}・{date} を埋めます。ファイルは git の commit.template で、端末の git も使います。";
+"File: %@" = "ファイル: %@";
+"Settings > Git" = "Settings > Git";
+"A file…" = "ファイル…";
+"Choose a commit message template file" = "コミットメッセージのテンプレートのファイルを選ぶ";
 "Display name" = "表示名";
 "Color label" = "色ラベル";
 "Fetch automatically" = "自動で fetch";
@@ -257,6 +262,11 @@
 "Done" = "完了";
 
 /* Settings.swift */
+"Message Templates" = "メッセージのテンプレート";
+"Untitled" = "名前なし";
+"No templates yet. + adds one." = "テンプレートはまだありません。+ で足します。";
+"Select a template to edit it." = "テンプレートを選ぶと編集できます。";
+"A repository chooses one in its Settings > Commits. When the commit box opens, {branch} becomes the branch name, {issue} the first number in it and {date} today’s date. git in a terminal doesn’t see these templates; it uses commit.template, a file." = "リポジトリはその Settings > コミットで 1 つを選びます。コミット欄が開くとき、{branch} はブランチ名、{issue} はその中の最初の数、{date} は今日の日付になります。端末の git はこのテンプレートを知りません（git が使うのはファイルの commit.template です）。";
 "Default Pull" = "Pull の既定";
 "The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With." = "Pull の確認のシートで最初に選ばれている取り込み方（ツールバーと ⌃⌘L）。シートでその都度変えられ、Repository > Pull With でも選べる。";
 "Repository List" = "リポジトリの一覧";
