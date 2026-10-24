@@ -25,15 +25,19 @@ becomes the GitHub Release notes.
   (Show in History, Blame at the commit, copying the ID or path), with Return and ⌘C.
 - The Pull sheet, the Merge… and Rebase… sheets and a branch's popover show which files would conflict before you
   merge, pull or rebase (git 2.38 or newer; for rebase it is an estimate). `amonhen merge-check` does the same.
-- Settings > Git and each repository's Settings (Branches) choose whether a rebase or a History edit moves the
-  branches stacked under the current one along (git's `rebase.updateRefs`, for all repositories or one; git 2.38 or
-  newer).
+- Settings > Git and each repository's Settings choose whether a rebase or a History edit moves the branches stacked
+  under the current one along (git's `rebase.updateRefs`; git 2.38 or newer).
+- Pull can follow git's own settings (`pull.rebase`, `pull.ff`), as `git pull` in a terminal does: "Follow git's
+  settings" in Settings > Git, now the default, and in the Pull sheet, which says what those settings choose.
 
 #### Changed
 
-- Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), and
-  its tabs are regrouped: General (now with the git in use), Identity, Sync, Rewriting, Remotes, Files, Hooks and All
-  Settings.
+- Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
+  from the person using it: rows ask in plain words and show the value in effect with where it comes from (git's
+  default, your settings, this repository) and ↩︎ to stop overriding; pages for the author and signing, commits, pull,
+  push and fetch, rebase and merge, Working Copy, ignored files and remotes; About this repository and All settings
+  under Information.
+- Fetch keeps remote-tracking branches deleted on the remote when `fetch.prune` is false, as `git fetch` does.
 
 - File History and Blame open in a tab next to the repository's tab instead of a separate window, with the same
   toolbar, so switching tabs keeps the toolbar and the size (drag the tab out for a window).
