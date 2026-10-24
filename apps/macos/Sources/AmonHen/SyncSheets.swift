@@ -132,12 +132,19 @@ extension Actions {
             }
             let (outgoing, incoming) = (state.outgoing, state.incoming)
             let changed = state.status.items.filter { $0.kind != .untracked }.count
+            // git の設定（pull.rebase・pull.ff）が決める取り込み方。「git の設定に従う」の中身として見せる。
+            struct Defaults: Decodable { let pull: String }
+            let repository = self.repository
+            let byGit = await Task.detached { try? repository.info(["op": "syncDefaults"], as: Defaults.self) }.value
+                .flatMap { PullMode(rawValue: $0.pull) } ?? .merge
+            // 選んだ取り込み方が実際に行うこと（.git なら git の設定が決める方）。
+            let method = { (m: PullMode) -> PullMode in m == .git ? byGit : m }
             let alert = makeAlert(
                 incoming.count > 0 ? L("Pull %ld commits from %@?", incoming.count, upstream) : L("Pull from %@?", upstream),
                 "")
             let popup = NSPopUpButton(frame: .zero, pullsDown: false)
             for m in PullMode.allCases {
-                popup.addItem(withTitle: m.title)
+                popup.addItem(withTitle: m == .git ? L("%@ (%@)", m.title, byGit.title) : m.title)
                 popup.lastItem?.representedObject = m.rawValue
             }
             popup.selectItem(at: PullMode.allCases.firstIndex(of: mode) ?? 0)
@@ -145,12 +152,17 @@ extension Actions {
             note.preferredMaxLayoutWidth = 440
             note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             note.textColor = .secondaryLabelColor
-            let describe = { (m: PullMode) -> String in
+            let describe = { (chosen: PullMode) -> String in
                 // 取り込み方そのものの説明（選び直すと必ず変わる）と、今の状態でそれが何をするか。
+                let m = method(chosen)
                 var lines: [String] = switch m {
                 case .merge: [L("Merge brings the upstream commits into %@. When both sides have new commits, a merge commit joins them.", branch)]
                 case .rebase: [L("Rebase puts your local commits on top of the upstream commits, keeping the History in one line.")]
                 case .fastForwardOnly: [L("Fast-Forward Only just moves %@ forward. If you have local commits too, it stops without changing anything.", branch)]
+                case .git: []
+                }
+                if chosen == .git {
+                    lines.insert(L("This repository’s git settings (pull.rebase, pull.ff) choose %@, as git pull in a terminal would.", m.title), at: 0)
                 }
                 if incoming.count == 0 {
                     lines.append(L("Nothing new as of the last Fetch (Pull fetches first)."))
@@ -161,6 +173,7 @@ extension Actions {
                     case .merge: lines.append(L("You have %ld local commits, so this makes a merge commit.", outgoing.count))
                     case .rebase: lines.append(L("Your %ld local commits are replayed on top (their IDs change).", outgoing.count))
                     case .fastForwardOnly: lines.append(L("⚠︎ You have %ld local commits too, so Fast-Forward Only can’t pull these.", outgoing.count))
+                    case .git: break
                     }
                 }
                 if changed > 0 { lines.append(L("%ld files have uncommitted changes. Pull stops if the incoming changes touch them.", changed)) }
@@ -185,7 +198,7 @@ extension Actions {
             let answer = Answer()
             let showForecast = {
                 guard let forecastLabel else { return }
-                let m = PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? .merge
+                let m = method(PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? .merge)
                 if m == .fastForwardOnly {
                     forecastLabel.stringValue = ""
                 } else if answer.done {
