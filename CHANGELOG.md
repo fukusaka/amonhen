@@ -43,7 +43,8 @@ becomes the GitHub Release notes.
   repository.
 - `.gitignore` is no longer edited in Repository Settings (it is a file of the repository); `.git/info/exclude` is,
   under Working Copy.
-- Fetch keeps remote-tracking branches deleted on the remote when `fetch.prune` is false, as `git fetch` does.
+- Fetch removes remote-tracking branches deleted on the remote only when `fetch.prune` is on, as `git fetch` does;
+  it used to always remove them.
 
 - File History and Blame open in a tab next to the repository's tab instead of a separate window, with the same
   toolbar, so switching tabs keeps the toolbar and the size (drag the tab out for a window).
