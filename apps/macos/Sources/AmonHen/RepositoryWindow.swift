@@ -270,19 +270,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
         NotificationCenter.default.addObserver(
             self, selector: #selector(gitHubSettingsChanged), name: .gitHubSettingsChanged, object: nil)
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(autoFetchSettingChanged), name: .autoFetchChanged, object: nil)
         wire(editing)
         sidebar.actions = actions
         history.actions = actions
         stashes.actions = actions
         reflog.actions = actions
-        // 表示名・自動 fetch を変えたら、題名とタブと自動 fetch を直す。git の設定・リモートを変えたら、読み直す。
-        settings.model.onGeneralChange = { [weak self] in
-            guard let self else { return }
-            window.title = Bookmarks.shared.displayName(location)
-            toolbar.setRepository(window.title)
-            updateTabTitle()
-            scheduleAutoFetch()
-        }
+        // git の設定・リモートを変えたら、読み直す。
         settings.model.onRepositoryChange = { [weak self] in self?.refreshRepository(nil) }
         window.toolbar = toolbar.toolbar
         toolbar.setRepository(window.title)
@@ -1554,6 +1549,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// CI の吹き出し（同じ印をもう一度押したら閉じる）。
     private let ciPopovers = CIPopoverPresenter()
 
+    @objc private func autoFetchSettingChanged() { scheduleAutoFetch() }
+
     @objc private func gitHubSettingsChanged() {
         if !Settings.gitHubAvatars {
             Avatars.shared.forgetGitHub()
@@ -1698,7 +1695,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     func scheduleAutoFetch() {
         autoFetchTimer?.invalidate()
         autoFetchTimer = nil
-        guard let minutes = Bookmarks.shared.bookmark(location)?.autoFetch, minutes > 0 else { return }
+        let minutes = Settings.autoFetchMinutes
+        guard minutes > 0 else { return }
         autoFetchTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(minutes * 60), repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.autoFetch() }
         }

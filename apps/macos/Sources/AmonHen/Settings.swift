@@ -100,6 +100,16 @@ enum Settings {
         }
     }
 
+    /// 開いているすべてのリポジトリを、何分ごとに自動で fetch するか（0 ならしない）。変えたら
+    /// `autoFetchChanged` を知らせ、開いているウィンドウがタイマーを組み直す。
+    static var autoFetchMinutes: Int {
+        get { UserDefaults.standard.integer(forKey: "autoFetchMinutes") }
+        set {
+            UserDefaults.standard.set(newValue, forKey: "autoFetchMinutes")
+            NotificationCenter.default.post(name: .autoFetchChanged, object: nil)
+        }
+    }
+
     /// Pull（ツールバーのボタン・⌃⌘L）で上流を取り込む既定の方法。`pullMode` の命令に渡す値。
     static var pullMode: PullMode {
         get { UserDefaults.standard.string(forKey: "pullMode").flatMap(PullMode.init) ?? .git }
@@ -262,6 +272,7 @@ extension Notification.Name {
     static let foldMergedBranchesChanged = Notification.Name("foldMergedBranchesChanged")
     static let fileHistoryMergesChanged = Notification.Name("fileHistoryMergesChanged")
     static let gitHubSettingsChanged = Notification.Name("gitHubSettingsChanged")
+    static let autoFetchChanged = Notification.Name("autoFetchChanged")
     /// AI の CLI の選択が変わった（AI のボタンを出す・隠す）。
     static let assistantChanged = Notification.Name("assistantChanged")
 }
@@ -290,6 +301,7 @@ enum PullMode: String, CaseIterable {
 @Observable
 final class SettingsModel {
     var pullMode = Settings.pullMode { didSet { Settings.pullMode = pullMode } }
+    var autoFetchMinutes = Settings.autoFetchMinutes { didSet { Settings.autoFetchMinutes = autoFetchMinutes } }
     var compactHistoryRows = Settings.compactHistoryRows { didSet { Settings.compactHistoryRows = compactHistoryRows } }
     var historyOrder = Settings.historyOrder { didSet { Settings.historyOrder = historyOrder } }
     var historyItems = Settings.historyItems { didSet { Settings.historyItems = historyItems } }
@@ -331,6 +343,7 @@ final class SettingsModel {
     /// メニューで変えた分を拾う（同じ値なら書き戻さない）。
     func reload() {
         if pullMode != Settings.pullMode { pullMode = Settings.pullMode }
+        if autoFetchMinutes != Settings.autoFetchMinutes { autoFetchMinutes = Settings.autoFetchMinutes }
         if compactHistoryRows != Settings.compactHistoryRows { compactHistoryRows = Settings.compactHistoryRows }
         if highlightAncestors != Settings.highlightAncestors { highlightAncestors = Settings.highlightAncestors }
         if monospacedCommitMessage != Settings.monospacedCommitMessage {
@@ -372,6 +385,13 @@ private struct GitSettings: View {
                     ForEach(PullMode.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
                 Note(L("The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With. “Follow git’s settings” uses the repository’s pull.rebase and pull.ff, as git pull in a terminal does."))
+            }
+            Section {
+                Picker(L("Fetch automatically"), selection: $model.autoFetchMinutes) {
+                    Text(L("Never")).tag(0)
+                    ForEach([5, 15, 30, 60], id: \.self) { Text(L("Every %ld minutes", $0)).tag($0) }
+                }
+                Note(L("Every open repository is fetched at this interval while its window is open."))
             }
             Section(L("Repository List")) {
                 Toggle(L("Bookmark repositories you open"), isOn: $model.autoBookmark)
