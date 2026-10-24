@@ -41,8 +41,8 @@ becomes the GitHub Release notes.
   git that runs the repository shown under the list. Settings that only a terminal honors stay in git config.
 - git config in Repository Settings is a table like Xcode's Build Settings: one row per key, grouped by the key's dots, with the value in effect
   and a column per source (system-wide, all repositories, this repository, this worktree), the source in effect in
-  bold. Double-click a row to set the key in this repository (empty removes it), + adds a key, ⌘C copies the selected
-  rows as `key = value`; search matches keys and values, and every column sorts. Above it, Xcode's switches: Basic
+  bold. Double-click a row to set the key in this repository (empty removes it), + adds a key, − and ⌫ remove the
+  selected keys with Restore and ⌘Z to put them back, ⌘C copies the selected rows as `key = value`; search matches keys and values, and every column sorts. Above it, Xcode's switches: Basic
   (the keys the settings pages ask about, set or not), Customized (keys set in this repository, the default) or All (every variable
   git knows, blank when set nowhere), and Combined (the value in effect and its source) or Levels (a column per source).
 - Fetch automatically is one interval for all open repositories, in Settings > Git, instead of a setting per

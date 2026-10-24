@@ -242,6 +242,10 @@
 "Add a key to this repository" = "このリポジトリにキーを足す";
 "Edit in This Repository" = "このリポジトリの値を編集";
 "Remove from This Repository" = "このリポジトリの値を消す";
+"Remove the selected keys from this repository (⌫)" = "選んだキーをこのリポジトリから消す（⌫）";
+"Removed %@ from this repository" = "%@ をこのリポジトリから消しました";
+"Removed %ld keys from this repository" = "%ld 個のキーをこのリポジトリから消しました";
+"Restore" = "戻す";
 "Location" = "場所";
 "File" = "ファイル";
 "Done" = "完了";

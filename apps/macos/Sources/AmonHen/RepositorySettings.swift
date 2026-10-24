@@ -47,6 +47,8 @@ final class RepositorySettingsModel {
     private(set) var detectedBase: String?
     /// git の設定・リモートなどを変えた（画面を読み直す）。
     var onRepositoryChange: (() -> Void)?
+    /// git config の表でこのリポジトリから消したキーと値。表の下の「戻す」と ⌘Z で書き戻す。次の書き換えで忘れる。
+    var removedConfig: [(key: String, value: String)] = []
 
     /// SSH 先のリポジトリなら、その SSH 先の名前。
     var host: String? { RepositoryLocation.isRemote(location) ? RepositoryLocation.host(location) : nil }
@@ -331,7 +333,8 @@ extension RepositorySettingsModel {
 /// `git config` のページ: Xcode の Build Settings のような表。列はキー、効いている値、そして段ごと（システム全体・
 /// すべてのリポジトリ・このリポジトリ・この worktree）の値。効いている段の値は太字。「このリポジトリ」の列だけ
 /// 書ける: 行をダブルクリック（か右クリックの「編集」）で欄になり、Return で書く。空にするとここでは消える。
-/// 「+」で新しい行が出て、キーと値を入れる。⌘C で選んだ行を `key = value` の形でコピーする。
+/// 「+」で新しい行が出て、キーと値を入れる（キーと値がそろわないまま離れたら消える）。「−」と ⌫ で選んだ行の
+/// このリポジトリの値を消し、下の「戻す」の 1 行と ⌘Z で書き戻せる。⌘C で選んだ行を `key = value` の形でコピーする。
 /// 上の切り替えも Xcode と同じで、語も Xcode のまま（ページ名と同じく訳さない）: 行は Basic（ページが尋ねるキー。
 /// 未設定でも出す）／Customized（このリポジトリで設定したもの）／All、列は Combined（効いている値と設定元）／Levels。
 /// All は git が知っているすべての変数（未設定は空欄で、設定元は git の既定）。
@@ -355,6 +358,7 @@ private struct AllSettingsTab: View {
     @State private var newKey = ""
     /// 閉じた section（初めはすべて開いている）。
     @State private var collapsed = Set<String>()
+    @Environment(\.undoManager) private var undoManager
     @FocusState private var focus: Field?
 
     private enum Field: Hashable { case value, newKey, newValue }
@@ -534,7 +538,7 @@ private struct AllSettingsTab: View {
                 let groupIDs = self.groupIDs
                 let keys = keys.filter { $0 != Self.newRowID && !groupIDs.contains($0) }
                 Button(L("Edit in This Repository")) { keys.first.map(beginEditing) }.disabled(keys.count != 1)
-                Button(L("Remove from This Repository")) { for k in keys where model.local(k) != nil { model.set(k, nil) } }
+                Button(L("Remove from This Repository")) { remove(keys) }
                     .disabled(!keys.contains { model.local($0) != nil })
                 Divider()
                 Button(L("Copy")) { copy(keys) }.disabled(keys.isEmpty)
@@ -542,15 +546,26 @@ private struct AllSettingsTab: View {
                 if keys.count == 1, let key = keys.first, key != Self.newRowID, !groupIDs.contains(key) { beginEditing(key) }
             }
             .copyable([copyText(selection)])
+            .onDeleteCommand { remove(selection) }
             .onAppear { if sortOrder.isEmpty { sortOrder = [KeyPathComparator(\.key)] } }
             .onChange(of: focus) { _, now in
-                // 欄から離れたら、編集中の値は書き、足している途中の行はそのまま（また戻って続けられる）。
+                // 欄から離れたら、編集中の値は書く。足している途中の行は、キーと値がそろっていれば書き、なければ消す。
                 if now != .value, editing != nil { commitEditing() }
+                if now != .newKey, now != .newValue, adding { commitAdding() }
             }
             HStack {
                 Button { beginAdding() } label: { Image(systemName: "plus") }
                     .help(L("Add a key to this repository"))
                     .disabled(adding)
+                Button { remove(selection) } label: { Image(systemName: "minus") }
+                    .help(L("Remove the selected keys from this repository (⌫)"))
+                    .disabled(!selection.contains { model.local($0) != nil })
+                if !model.removedConfig.isEmpty {
+                    let r = model.removedConfig
+                    Text(r.count == 1 ? L("Removed %@ from this repository", "\(r[0].key) = \(r[0].value)") : L("Removed %ld keys from this repository", r.count))
+                        .foregroundStyle(.secondary).lineLimit(1).padding(.leading, 8)
+                    Button(L("Restore")) { restore() }
+                }
                 Spacer()
             }
         }
@@ -619,7 +634,10 @@ private struct AllSettingsTab: View {
         guard let key = editing else { return }
         editing = nil
         let value = draft.trimmingCharacters(in: .whitespaces)
-        if value != (model.local(key) ?? "") { model.set(key, value) }
+        if value != (model.local(key) ?? "") {
+            model.removedConfig = []
+            model.set(key, value)
+        }
     }
 
     private func beginAdding() {
@@ -631,12 +649,35 @@ private struct AllSettingsTab: View {
         DispatchQueue.main.async { focus = .newKey }
     }
 
+    /// 足している行を書く。キーと値がそろっていなければ、行を消すだけ。
     private func commitAdding() {
         let key = newKey.trimmingCharacters(in: .whitespaces), value = draft.trimmingCharacters(in: .whitespaces)
         cancelAdding()
         guard !key.isEmpty, !value.isEmpty else { return }
+        model.removedConfig = []
         model.set(key, value)
         selection = [key]
+    }
+
+    /// 選んだ行のこのリポジトリの値を消す。消したものは覚えておき、「戻す」と ⌘Z（Edit > Undo）で書き戻す。
+    private func remove(_ keys: Set<String>) {
+        let gone = keys.sorted().compactMap { k in model.local(k).map { (key: k, value: $0) } }
+        guard !gone.isEmpty else { return }
+        let model = self.model
+        for g in gone { model.set(g.key, nil) }
+        model.removedConfig = gone
+        undoManager?.registerUndo(withTarget: model) { m in
+            for g in gone { m.set(g.key, g.value) }
+            m.removedConfig = []
+        }
+        undoManager?.setActionName(L("Remove from This Repository"))
+    }
+
+    /// 消したキーを書き戻す。
+    private func restore() {
+        for g in model.removedConfig { model.set(g.key, g.value) }
+        model.removedConfig = []
+        undoManager?.removeAllActions(withTarget: model)
     }
 
     private func cancelAdding() {
