@@ -174,6 +174,60 @@ pub extern "C" fn amonhen_set_fsmonitor(enabled: bool) {
     amonhen_backend_cli::set_fsmonitor(enabled);
 }
 
+/// この機械の git の版（`2.39.5`）。読めなければ NULL。`amonhen_string_free` で解放する。git を起動する
+/// ことがあるので（初めの 1 回だけ）、裏のスレッドで呼ぶ。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_git_version() -> *mut c_char {
+    amonhen_backend_cli::git_version()
+        .map(|(a, b, c)| {
+            CString::new(format!("{a}.{b}.{c}"))
+                .unwrap_or_default()
+                .into_raw()
+        })
+        .unwrap_or(std::ptr::null_mut())
+}
+
+/// この機械のユーザー全体（`git config --global`）の `key` の値。なければ、または読めなければ NULL（読めなければ
+/// `amonhen_last_error` に理由）。`amonhen_string_free` で解放する。git を起動するので、裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `key` は NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_global_config(key: *const c_char) -> *mut c_char {
+    let result = str_arg(key)
+        .map_err(Into::into)
+        .and_then(amonhen_backend_cli::global_config);
+    match result {
+        Ok(Some(value)) => CString::new(value).unwrap_or_default().into_raw(),
+        Ok(None) => std::ptr::null_mut(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+/// この機械のユーザー全体（`git config --global`）の `key` を変える。`value` が NULL なら消す。失敗したら false
+/// （理由は `amonhen_last_error`）。git を起動するので、裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `key` は NUL 終端の UTF-8 文字列、`value` は NULL か NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_set_global_config(
+    key: *const c_char,
+    value: *const c_char,
+) -> bool {
+    let value = if value.is_null() {
+        Ok(None)
+    } else {
+        str_arg(value).map(Some)
+    };
+    match (str_arg(key), value) {
+        (Ok(key), Ok(value)) => done(amonhen_backend_cli::set_global_config(key, value)),
+        (Err(e), _) | (_, Err(e)) => done(Err(e.into())),
+    }
+}
+
 /// SSH 先のフォルダの下のリポジトリを探す（リポジトリの一覧の、SSH 先のスキャンするフォルダ）。`location` は
 /// `ssh://[user@]host[:port]/path`。エンジンの用意は SSH 先のリポジトリを開くときと同じ（`daemon`・`daemons_dir`）。
 /// `excludes` は入らないフォルダの名前を改行でつないだもの。見つけたリポジトリの場所（`ssh://host/path`）を改行で

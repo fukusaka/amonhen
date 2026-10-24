@@ -264,3 +264,5 @@
 "Can’t tell without git 2.38 or newer" = "git 2.38 以降でないとわからない";
 "Merging {rev} into {ours} would conflict in {count} files:" = "{rev} を {ours} にマージすると、{count} 個のファイルでコンフリクトする:";
 "{rev} merges into {ours} without conflicts" = "{rev} は {ours} にコンフリクトなしでマージできる";
+"Can’t change the user’s git settings here" = "この環境では、ユーザー全体の git の設定を変えられません";
+"Unknown scope: {scope}" = "知らない scope: {scope}";

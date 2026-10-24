@@ -240,6 +240,23 @@ pub fn git_version() -> Option<(u32, u32, u32)> {
     })
 }
 
+/// この機械のユーザー全体（`git config --global`）の `key` の値。なければ `None`。
+pub fn global_config(key: &str) -> Result<Option<String>> {
+    let git = Git::new(std::env::temp_dir());
+    match git.read(&["config", "--global", "--get", key]) {
+        Ok(out) => Ok(Some(String::from_utf8_lossy(&out).trim().to_owned())),
+        // ない（終了コード 1）なら None。ほかの失敗は、もう一度一覧で確かめる。
+        Err(_) if git.read(&["config", "--global", "--get-all", key]).is_err() => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+/// この機械のユーザー全体（`git config --global`）の `key` を変える。`value` が None なら消す。
+pub fn set_global_config(key: &str, value: Option<&str>) -> Result<()> {
+    use amonhen_model::Operations;
+    Git::new(std::env::temp_dir()).config_set_global(key, value)
+}
+
 /// git が `major.minor` 以上か（版を読めなければ新しいとみなす）。新しい機能は、これで見て古いやり方に戻す。
 pub(crate) fn git_at_least(major: u32, minor: u32) -> bool {
     git_version().is_none_or(|(a, b, _)| (a, b) >= (major, minor))
