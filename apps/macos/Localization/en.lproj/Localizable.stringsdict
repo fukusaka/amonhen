@@ -194,6 +194,22 @@
 			<string>%ld conflicts remain</string>
 		</dict>
 	</dict>
+	<key>⚠︎ Conflicts expected in %ld files: %@</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>⚠︎ Conflicts expected in %#@n0@: %@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file</string>
+			<key>other</key>
+			<string>%ld files</string>
+		</dict>
+	</dict>
 	<key>%ld files have uncommitted changes. Pull stops if the incoming changes touch them.</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>

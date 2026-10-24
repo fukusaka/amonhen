@@ -580,6 +580,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         facts.editing = editing
         facts.pullRequest = openPullRequest(for: item.name)
         facts.canCreatePullRequest = canCreatePullRequest && item.name != branchGroups?.base
+        if let base = branchGroups?.base, let actions {
+            facts.predictMergeIntoBase = { [weak actions] in await actions?.predictMerge(ours: base, theirs: item.name) }
+        }
         let popover = NSPopover()
         popover.behavior = .transient
         popover.delegate = self

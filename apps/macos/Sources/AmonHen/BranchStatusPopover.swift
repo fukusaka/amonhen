@@ -20,6 +20,8 @@ final class BranchStatusPopover: NSViewController {
         var pullRequest: PullRequest?
         /// プルリクエストを作れる（GitHub のリポジトリで gh が使え、既定のブランチでない）。
         var canCreatePullRequest = false
+        /// このブランチを既定のブランチにマージしたらコンフリクトするか（`predictMerge`）。開いたときに 1 回だけ呼ぶ。
+        var predictMergeIntoBase: (() async -> MergeForecast?)?
     }
 
     private let facts: Facts
@@ -115,6 +117,14 @@ final class BranchStatusPopover: NSViewController {
         if merged {
             rows.append((L("Merged into"), value(base, color: .systemGreen)))
         }
+        // 既定のブランチに取り込んだらコンフリクトするか。取り込み済み・既定のブランチそのものなら調べない。
+        var forecastField: NSTextField?
+        if facts.predictMergeIntoBase != nil, !merged, facts.branch?.atBase != true, item.name != base,
+           !base.hasSuffix("/" + item.name) {
+            let field = value(L("Checking for conflicts…"), color: .secondaryLabelColor)
+            rows.append((L("Merging into %@", base), field))
+            forecastField = field
+        }
         if let pr = facts.pullRequest {
             rows.append((L("Pull Request"), value("#\(pr.number) \(pr.title)" + (pr.isDraft ? " " + L("(draft)") : ""))))
         }
@@ -169,6 +179,15 @@ final class BranchStatusPopover: NSViewController {
         stack.edgeInsets = NSEdgeInsets(top: 14, left: 16, bottom: 14, right: 16)
         stack.widthAnchor.constraint(equalToConstant: 420).isActive = true
         view = stack
+        if let forecastField, let predict = facts.predictMergeIntoBase {
+            Task { @MainActor [weak self] in
+                let answer = await predict()
+                forecastField.stringValue = answer?.text(estimate: false) ?? L("Couldn’t check for conflicts.")
+                forecastField.textColor = answer?.hasConflicts == true ? .systemOrange : .labelColor
+                // 文の長さが変わるので、吹き出しの大きさを合わせる。
+                if let self { self.preferredContentSize = self.view.fittingSize }
+            }
+        }
     }
 
     @objc private func deleteBranch() {

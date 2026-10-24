@@ -38,6 +38,13 @@
 "Integrate with:" = "取り込み方:";
 "Commits to pull" = "取り込むコミット";
 "Commits only here" = "手元にだけあるコミット";
+"Checking for conflicts…" = "コンフリクトするかを調べています…";
+"No conflicts expected." = "コンフリクトしない見込みです。";
+"⚠︎ Conflicts expected in %ld files: %@" = "⚠︎ %1$ld ファイルでコンフリクトする見込みです: %2$@";
+"Rebase applies the commits one at a time, so this is only an estimate." = "Rebase はコミットを 1 つずつ載せ直すので、これは目安です。";
+"Can’t check for conflicts ahead (needs git 2.38 or newer)." = "前もってコンフリクトを調べられません（git 2.38 以降が必要です）。";
+"Couldn’t check for conflicts." = "コンフリクトを調べられませんでした。";
+"Merging into %@" = "%@ への merge";
 "Pop %@?" = "%@ を戻して消しますか？";
 "This applies it to the working tree and removes it from the stash list (it is kept if it conflicts)." = "作業ツリーに戻し、stash の一覧から消します（重なってコンフリクトしたときは消しません）。";
 "Nothing to Undo" = "Undo できる操作はありません";
