@@ -1951,7 +1951,10 @@ impl Repository {
                 } else {
                     "merge"
                 };
-                let prune = value("fetch.prune").as_deref() != Some("false");
+                let prune = matches!(
+                    value("fetch.prune").as_deref(),
+                    Some("true" | "yes" | "on" | "1")
+                );
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "pull": pull, "prune": prune })),
@@ -3460,13 +3463,13 @@ mod tests {
         let defaults = || run(&repo, r#"{"op":"syncDefaults"}"#)["info"].clone();
         let d = defaults();
         assert_eq!(d["pull"], "merge", "{d}");
-        assert_eq!(d["prune"], true, "{d}");
+        assert_eq!(d["prune"], false, "{d}");
 
         git(dir, &["config", "pull.rebase", "merges"]);
-        git(dir, &["config", "fetch.prune", "false"]);
+        git(dir, &["config", "fetch.prune", "true"]);
         let d = defaults();
         assert_eq!(d["pull"], "rebase", "{d}");
-        assert_eq!(d["prune"], false, "{d}");
+        assert_eq!(d["prune"], true, "{d}");
 
         // pull.ff=only は pull.rebase より強い。
         git(dir, &["config", "pull.ff", "only"]);
