@@ -425,6 +425,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ConfigSetGlobal(key, value) => encode(&ops.config_set_global(&key, value.as_deref())?),
         Op::GitVersion => encode(&ops.git_version()?),
         Op::Remotes => encode(&ops.remotes()?),
+        Op::SigningKeys(format) => encode(&ops.signing_keys(&format)?),
         Op::ChangeRemote(change) => encode(&ops.change_remote(&change)?),
         Op::WorktreeList => encode(&Bytes(ops.worktree_list()?)),
         Op::WorktreeChanges(paths, fresh) => encode(&ops.worktree_changes(&paths, fresh)?),

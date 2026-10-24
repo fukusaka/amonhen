@@ -284,6 +284,11 @@ pub enum Command {
     /// git が知っている設定の変数の名前（`info.keys`。設定の有無は問わない。`remote.<name>.url` のように
     /// 名前が入るものは含まない）。
     ConfigKeys,
+    /// `format`（`openpgp`・`ssh`・`x509`）で署名に使える鍵（`info.keys`: `id`・`label`・`emails`）。
+    /// SSH 先のリポジトリなら SSH 先で集める。集められなければ空。
+    SigningKeys {
+        format: String,
+    },
     /// 設定を変える。`value` がなければ消す。`scope` が `"global"` なら、git を動かしているユーザー全体の
     /// 設定（SSH 先のリポジトリなら SSH 先のユーザーのもの）、なければこのリポジトリ（local）。
     ConfigSet {
@@ -1931,6 +1936,11 @@ impl Repository {
                 info: Some(serde_json::json!({ "keys": ops.config_keys()? })),
                 ..Default::default()
             }),
+            Command::SigningKeys { format } => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "keys": ops.signing_keys(&format)? })),
+                ..Default::default()
+            }),
             Command::ConfigSet { key, value, scope } => {
                 match scope.as_deref() {
                     None | Some("local") => ops.config_set(&key, value.as_deref())?,
@@ -3541,6 +3551,10 @@ mod tests {
                 .iter()
                 .any(|e| e["key"] == "pull.rebase" && e["scope"] == "local")
         );
+
+        // 署名の鍵: 知らない形式は断る（形式ごとの一覧は環境次第なので、ここでは読まない）。
+        let r = run(&repo, r#"{"op":"signingKeys","format":"smime"}"#);
+        assert!(r["error"].as_str().unwrap().contains("smime"), "{r}");
 
         // git が知っている変数の名前（設定の有無は問わない）。名前が入るものはない。
         let known = run(&repo, r#"{"op":"configKeys"}"#);

@@ -14,7 +14,7 @@ use std::time::Duration;
 use amonhen_model::{
     CommitGraph, CommitText, ConfigEntry, ConnectionState, FileChange, GitBackend, HeadState, Oid,
     Operations, Outcome, PullMode, RawCommit, RefUpdate, Refs, RemoteChange, RemoteEntry,
-    RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, Status, WorktreeChange,
+    RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, SigningKey, Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -902,6 +902,10 @@ impl Operations for RemoteOperations {
 
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {
         self.op(Op::Remotes)
+    }
+
+    fn signing_keys(&self, format: &str) -> Result<Vec<SigningKey>> {
+        self.op(Op::SigningKeys(format.to_owned()))
     }
 
     fn change_remote(&self, change: &RemoteChange) -> Result<()> {
