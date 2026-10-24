@@ -1029,7 +1029,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if CommandLine.arguments.contains("--reflog") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .reflog) }
         }
-        // --settings で、リポジトリの設定の画面を開く（--settings-tab NAME で、そのタブ。見た目の確認用）。
+        // --settings で、リポジトリの設定の画面を開く（--settings-page NAME で、そのページ。見た目の確認用）。
         if CommandLine.arguments.contains("--settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .settings) }
         }

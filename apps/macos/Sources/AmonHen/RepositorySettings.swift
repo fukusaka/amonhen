@@ -18,6 +18,8 @@ struct RemoteEntry: Decodable, Hashable, Identifiable {
     var id: String { name }
 }
 
+
+
 /// リポジトリの設定（サイドバーの Workspace の Settings、⌘;）の中身。読み書きはコアの命令を裏で呼ぶ。
 @Observable
 final class RepositorySettingsModel {
@@ -205,98 +207,6 @@ struct IgnoreMatch: Decodable, Hashable, Identifiable {
     var id: Int { line }
 }
 
-/// 表示名・色ラベル・自動 fetch（このアプリの中だけの設定。ブックマークに置く）。
-private struct GeneralTab: View {
-    @Bindable var model: RepositorySettingsModel
-    var body: some View {
-        Form {
-            Section {
-                TextField(L("Display name"), text: $model.displayName, prompt: Text((RepositoryLocation.path(model.location) as NSString).lastPathComponent))
-                Picker(L("Color label"), selection: $model.color) {
-                    Text(L("None")).tag(String?.none)
-                    ForEach(Bookmarks.colors, id: \.name) { entry in
-                        Label { Text(entry.title) } icon: { Image(nsImage: RepositoryCell.dot(entry.color) ?? NSImage()) }
-                            .tag(Optional(entry.name))
-                    }
-                }
-                Picker(L("Fetch automatically"), selection: $model.autoFetch) {
-                    Text(L("Never")).tag(0)
-                    ForEach([5, 15, 30, 60], id: \.self) { Text(L("Every %ld minutes", $0)).tag($0) }
-                }
-            } footer: {
-                Text(L("These settings are kept in this app only (not written to the git config). The display name appears in windows, tabs and the repository list. Automatic fetch runs only while this repository is open."))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section {
-                LabeledContent(L("Version"), value: model.gitVersion ?? L("Unknown"))
-                LabeledContent(L("Runs on"), value: model.host ?? L("This Mac"))
-            } header: {
-                Text("git")
-            } footer: {
-                Text(L("The git that reads and writes this repository. Settings marked “all repositories” are that git’s user settings (git config --global)."))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-        .onChange(of: model.displayName) { model.saveGeneral() }
-        .onChange(of: model.color) { model.saveGeneral() }
-        .onChange(of: model.autoFetch) { model.saveGeneral() }
-    }
-}
-
-/// hooks（git が呼ぶスクリプト）。
-private struct HooksTab: View {
-    let model: RepositorySettingsModel
-    var body: some View {
-        Form {
-            Section {
-                if model.hooks.isEmpty {
-                    Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? L("core.hooksPath (%@) is outside the working tree, so its contents can’t be shown.", $0) : L("None") } ?? L("None"))
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(model.hooks) { hook in
-                    HStack {
-                        Text(hook.name).font(.system(.body, design: .monospaced))
-                        Spacer()
-                        Text(hook.enabled ? L("Enabled") : L("Not executable (no chmod +x)"))
-                            .foregroundStyle(hook.enabled ? Color.green : Color.secondary)
-                    }
-                }
-            } header: {
-                Text("Hooks")
-            } footer: {
-                Text(L("Location: %@. .sample files aren’t counted. git runs these on commit, push and so on.", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-/// Git LFS の様子（入っているか、.gitattributes の LFS のパターン）。
-private struct LFSSection: View {
-    let model: RepositorySettingsModel
-    var body: some View {
-        Form {
-            Section {
-                LabeledContent("Git LFS", value: model.lfs ? L("Installed (filter.lfs is set)") : L("Not installed"))
-                if model.lfsPatterns.isEmpty {
-                    Text(L("No LFS patterns in .gitattributes.")).foregroundStyle(.secondary)
-                }
-                ForEach(model.lfsPatterns, id: \.self) { Text($0).font(.system(.body, design: .monospaced)) }
-            } header: {
-                Text("LFS")
-            } footer: {
-                if !model.lfs && !model.lfsPatterns.isEmpty {
-                    Text(L("There are LFS patterns, but git lfs isn’t installed. Install it with brew install git-lfs and git lfs install."))
-                        .font(.caption).foregroundStyle(.orange)
-                }
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
 /// Ignore の各行に合うファイルの一覧。
 private struct IgnoreMatchList: View {
     let matches: [IgnoreMatch]
@@ -320,185 +230,6 @@ private func describe(_ entry: ConfigEntry) -> String {
     var origin = entry.origin
     if origin.hasPrefix("file:") { origin = String(origin.dropFirst(5)) }
     return L("%@ (%@)", entry.scope, (origin as NSString).abbreviatingWithTildeInPath)
-}
-
-/// 文字の設定: このリポジトリでの値を入れる（空なら、上の段の値をそのまま使う）。
-private struct TextSetting: View {
-    let model: RepositorySettingsModel
-    let title: String
-    let key: String
-    @State private var text = ""
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            TextField(title, text: $text, prompt: Text(model.inherited(key)?.value ?? L("Not set")))
-                .onSubmit { model.set(key, text) }
-                .onAppear { text = model.local(key) ?? "" }
-                .onChange(of: model.local(key)) { _, new in text = new ?? "" }
-            Origin(model: model, key: key)
-        }
-    }
-}
-
-/// 選ぶ設定: 「上の段のまま」か、このリポジトリでの値。
-private struct ChoiceSetting: View {
-    let model: RepositorySettingsModel
-    let title: String
-    let key: String
-    let choices: [String]
-    /// 値の横に添える意味（`true` → 動かす など）。
-    var meanings: [String: String] = [:]
-    /// どこにも書かれていないときの意味（git の既定）。
-    var unset: String?
-    /// 欄の下に、今効いている値がどこで決まっているかを出す。
-    var showsOrigin = true
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Picker(title, selection: Binding(
-                get: { model.local(key) ?? "" },
-                set: { model.set(key, $0) }
-            )) {
-                Text(L("Inherited (%@)", inheritedText)).tag("")
-                ForEach(choices, id: \.self) { Text(label($0)).tag($0) }
-            }
-            if showsOrigin { Origin(model: model, key: key) }
-        }
-    }
-
-    private var inheritedText: String {
-        if let value = model.inherited(key)?.value { return label(value) }
-        return unset ?? L("Not set")
-    }
-
-    private func label(_ value: String) -> String {
-        meanings[value].map { "\(value) — \($0)" } ?? value
-    }
-}
-
-/// rebase と History の編集で、積み重ねたブランチも一緒に動かすか（git の `rebase.updateRefs`）。このリポジトリと、
-/// ユーザー全体の 2 段で選ぶ。git が古ければ選べない。
-private struct StackedBranchesSection: View {
-    let model: RepositorySettingsModel
-    private let key = "rebase.updateRefs"
-    private var meanings: [String: String] { ["true": L("Move them along"), "false": L("Leave them")] }
-
-    var body: some View {
-        Section {
-            ChoiceSetting(
-                model: model, title: L("This repository"), key: key, choices: ["true", "false"],
-                meanings: meanings, unset: L("git’s default: leave them"), showsOrigin: false)
-            Picker(model.host.map { L("All repositories on %@", $0) } ?? L("All repositories"), selection: Binding(
-                get: { model.global(key) ?? "" },
-                set: { model.setGlobal(key, $0) }
-            )) {
-                Text(L("Not set (%@)", L("git’s default: leave them"))).tag("")
-                ForEach(["true", "false"], id: \.self) { Text("\($0) — \(meanings[$0] ?? "")").tag($0) }
-            }
-            Origin(model: model, key: key)
-        } header: {
-            Text(L("Stacked Branches"))
-        } footer: {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(L("When a rebase or a History edit rewrites commits, the branches whose tips are among them (branches stacked under the current one) can move along to the rewritten commits, or stay on the old ones. Branches checked out here or in another worktree always stay. Undo puts back whatever moved."))
-                Text(model.host.map { L("“All repositories on %@” is the git config --global of the user on that host.", $0) }
-                    ?? L("“All repositories” is your git config --global, also used by git in a terminal."))
-                if !model.updateRefsSupported {
-                    Text(L("Needs git 2.38 or later (this git is %@).", model.gitVersion ?? "?"))
-                        .foregroundStyle(.orange)
-                }
-            }
-            .font(.caption).foregroundStyle(.secondary)
-        }
-        .disabled(!model.updateRefsSupported)
-    }
-}
-
-/// 今効いている値がどこで決まっているか。
-private struct Origin: View {
-    let model: RepositorySettingsModel
-    let key: String
-
-    var body: some View {
-        let text = model.effective(key).map { "\(key) = \($0.value)　← \(describe($0))" } ?? L("%@ is not set", key)
-        Text(text).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-    }
-}
-
-private struct IdentityTab: View {
-    let model: RepositorySettingsModel
-    var body: some View {
-        Form {
-            Section {
-                TextSetting(model: model, title: L("Name"), key: "user.name")
-                TextSetting(model: model, title: L("Email"), key: "user.email")
-            } footer: {
-                Text(L("Used only for commits in this repository (for example, to separate work and personal). Leave empty to use the inherited value (global and so on)."))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Section(L("Signing")) {
-                TextSetting(model: model, title: L("Signing key"), key: "user.signingkey")
-                ChoiceSetting(model: model, title: L("Sign commits"), key: "commit.gpgsign", choices: ["true", "false"])
-                ChoiceSetting(model: model, title: L("Signature format"), key: "gpg.format", choices: ["openpgp", "ssh", "x509"])
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-/// リモートとのやり取り（pull・push・fetch）。
-private struct SyncTab: View {
-    let model: RepositorySettingsModel
-    var body: some View {
-        Form {
-            Section("Pull") {
-                ChoiceSetting(model: model, title: L("Rebase on pull"), key: "pull.rebase", choices: ["false", "true", "merges"])
-                ChoiceSetting(model: model, title: L("Fast-forward only"), key: "pull.ff", choices: ["true", "false", "only"])
-            }
-            Section("Push") {
-                ChoiceSetting(model: model, title: L("Default push behavior"), key: "push.default", choices: ["simple", "current", "upstream", "matching", "nothing"])
-                ChoiceSetting(model: model, title: L("Set up the upstream if missing"), key: "push.autoSetupRemote", choices: ["true", "false"])
-            }
-            Section("Fetch") {
-                ChoiceSetting(model: model, title: L("Prune deleted branches on fetch"), key: "fetch.prune", choices: ["true", "false"])
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-/// 履歴を書き換える・つなぐ操作（rebase と History の編集、merge）。
-private struct RewritingTab: View {
-    let model: RepositorySettingsModel
-    var body: some View {
-        Form {
-            Section {
-                ChoiceSetting(model: model, title: L("Stash before rebase"), key: "rebase.autoStash", choices: ["true", "false"])
-            } header: {
-                Text("Rebase")
-            } footer: {
-                Text(L("Also used by pull with rebase."))
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            StackedBranchesSection(model: model)
-            Section("Merge") {
-                ChoiceSetting(model: model, title: L("Conflict style"), key: "merge.conflictStyle", choices: ["merge", "diff3", "zdiff3"])
-            }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-/// 無視するファイルと LFS。
-private struct FilesTab: View {
-    @Bindable var model: RepositorySettingsModel
-    var body: some View {
-        VStack(spacing: 0) {
-            IgnoreEditor(model: model)
-            // 上の Ignore と同じ地の色にする。
-            LFSSection(model: model).scrollContentBackground(.hidden).frame(height: 180)
-        }
-    }
 }
 
 private struct RemotesTab: View {
@@ -646,37 +377,533 @@ private struct AllSettingsTab: View {
     }
 }
 
-private struct RepositorySettingsView: View {
+// MARK: - 行の部品（docs/ux.md の 4 章）
+
+/// git の真偽値を `true`・`false` にそろえる（`yes`・`on`・`1` も true）。
+private func normalizedBool(_ value: String) -> String? {
+    switch value.lowercased() {
+    case "true", "yes", "on", "1", "": "true"
+    case "false", "no", "off", "0": "false"
+    default: nil
+    }
+}
+
+extension RepositorySettingsModel {
+    /// `key` の今効いている値の出どころ（札の言葉）と、そのファイル。どこにも書かれていなければ「git の既定」。
+    func origin(of key: String) -> (label: String, file: String?) {
+        guard let e = effective(key) else { return (L("git’s default"), nil) }
+        var file = e.origin
+        if file.hasPrefix("file:") { file = String(file.dropFirst(5)) }
+        file = (file as NSString).abbreviatingWithTildeInPath
+        let label = switch e.scope {
+        case "local": L("this repository")
+        case "global": host.map { L("your settings on %@", $0) } ?? L("your settings")
+        case "worktree": L("this worktree")
+        case "system": L("system")
+        default: e.scope
+        }
+        return (label, file)
+    }
+
+    /// local の値を消す（上の値に戻る）。
+    func revert(_ keys: [String]) {
+        for key in keys where local(key) != nil { set(key, nil) }
+    }
+}
+
+/// 値の出どころの札。
+private struct OriginBadge: View {
     let model: RepositorySettingsModel
-    /// 開いているタブ（`general`・`branches` など）。
-    @State var tab: String
+    let key: String
+    var body: some View {
+        let o = model.origin(of: key)
+        Text(o.label)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(width: 118, alignment: .trailing)
+            .help(o.file ?? L("Nothing is set anywhere, so git’s own default applies."))
+    }
+}
+
+/// 行の共通の形: 左に質問、右に効いている値の欄、このリポジトリが上書きしている間だけ ↩︎、最後に札。
+/// 左の ⌄ で開くと、キーと値とファイル、上の値、説明が出る。
+private struct SettingRow<Control: View>: View {
+    let model: RepositorySettingsModel
+    let question: String
+    let help: String
+    /// この行が読み書きするキー。札は先頭のキーのもの。↩︎ はすべての local を消す。
+    let keys: [String]
+    /// 生の値を人の言葉にする（開いたときの表示に使う）。
+    var describe: (String) -> String = { $0 }
+    /// 使えないときの理由（古い git など）。あれば欄を灰色にして、下に出す。
+    var disabledReason: String?
+    @ViewBuilder let control: () -> Control
+    @State private var expanded = false
+
+    private var overriding: Bool { keys.contains { model.local($0) != nil } }
 
     var body: some View {
-        VStack(spacing: 0) {
-            TabView(selection: $tab) {
-                GeneralTab(model: model).tabItem { Text(L("General")) }.tag("general")
-                IdentityTab(model: model).tabItem { Text(L("Identity")) }.tag("identity")
-                SyncTab(model: model).tabItem { Text(L("Sync")) }.tag("sync")
-                RewritingTab(model: model).tabItem { Text(L("Rewriting")) }.tag("rewriting")
-                RemotesTab(model: model).tabItem { Text("Remotes") }.tag("remotes")
-                FilesTab(model: model).tabItem { Text(L("Files")) }.tag("files")
-                HooksTab(model: model).tabItem { Text("Hooks") }.tag("hooks")
-                AllSettingsTab(model: model).tabItem { Text(L("All Settings")) }.tag("all")
-            }
-            .frame(maxWidth: 820)
-            .padding([.top, .horizontal])
-            if let error = model.error {
-                HStack {
-                    Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
-                    Spacer()
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Button { expanded.toggle() } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right").font(.caption).frame(width: 12)
                 }
-                .frame(maxWidth: 820)
-                .padding([.horizontal, .bottom])
+                .buttonStyle(.plain).foregroundStyle(.secondary)
+                Text(question)
+                Spacer()
+                control().disabled(disabledReason != nil)
+                if overriding {
+                    Button { model.revert(keys) } label: { Image(systemName: "arrow.uturn.backward") }
+                        .buttonStyle(.borderless)
+                        .help(L("Stop overriding here. The value above takes over."))
+                } else {
+                    Color.clear.frame(width: 20)
+                }
+                OriginBadge(model: model, key: keys[0])
+            }
+            if let disabledReason {
+                Text("⚠ " + disabledReason).font(.caption).foregroundStyle(.orange).padding(.leading, 20)
+            }
+            if expanded {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(keys, id: \.self) { key in
+                        if let e = model.effective(key) {
+                            Text("\(key) = \(e.value)　\(model.origin(of: key).file ?? "")")
+                        } else {
+                            Text(L("%@ is not set", key))
+                        }
+                        if model.local(key) != nil, let above = model.inherited(key) {
+                            Text(L("Above: %@　%@", describe(above.value), model.origin(of: key).file.map { _ in "" } ?? ""))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text(help).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                }
+                .font(.caption)
+                .textSelection(.enabled)
+                .padding(.leading, 20)
             }
         }
-        .padding(.bottom)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
+
+/// 選ぶ設定。欄には効いている値（なければ git の既定）を出す。
+private struct ChoiceRow: View {
+    let model: RepositorySettingsModel
+    let question: String
+    let help: String
+    let key: String
+    /// 生の値と、その言い方。
+    let options: [(value: String, label: String)]
+    /// git の既定（生の値）。
+    let defaultValue: String
+    var isBool = false
+    var disabledReason: String?
+
+    private func label(_ value: String) -> String {
+        let v = isBool ? (normalizedBool(value) ?? value) : value.lowercased()
+        return options.first { $0.value == v }?.label ?? value
+    }
+
+    private var current: String {
+        guard let value = model.effective(key)?.value else { return defaultValue }
+        return isBool ? (normalizedBool(value) ?? value) : value.lowercased()
+    }
+
+    var body: some View {
+        SettingRow(model: model, question: question, help: help, keys: [key], describe: label, disabledReason: disabledReason) {
+            Picker("", selection: Binding(get: { current }, set: { model.set(key, $0) })) {
+                ForEach(options, id: \.value) { Text($0.label).tag($0.value) }
+                if !options.contains(where: { $0.value == current }) {
+                    Text(current).tag(current)
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+}
+
+/// はい／いいえの設定。
+private struct SwitchRow: View {
+    let model: RepositorySettingsModel
+    let question: String
+    let help: String
+    let key: String
+    let defaultOn: Bool
+    var disabledReason: String?
+
+    var body: some View {
+        SettingRow(model: model, question: question, help: help, keys: [key],
+                   describe: { normalizedBool($0) == "true" ? L("On") : L("Off") }, disabledReason: disabledReason) {
+            Toggle("", isOn: Binding(
+                get: { model.effective(key).map { normalizedBool($0.value) == "true" } ?? defaultOn },
+                set: { model.set(key, $0 ? "true" : "false") }
+            ))
+            .labelsHidden()
+            .toggleStyle(.switch)
+            .controlSize(.small)
+        }
+    }
+}
+
+/// 文字の設定。欄から離れたときか Return で書く。空にすると上書きを消す。
+private struct TextRow: View {
+    let model: RepositorySettingsModel
+    let question: String
+    let help: String
+    let key: String
+    var placeholder = ""
+    @State private var text = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        SettingRow(model: model, question: question, help: help, keys: [key]) {
+            TextField("", text: $text, prompt: Text(model.effective(key)?.value ?? placeholder))
+                .labelsHidden()
+                .frame(width: 260)
+                .focused($focused)
+                .onSubmit { commit() }
+                .onChange(of: focused) { _, now in if !now { commit() } }
+                .onAppear { text = model.local(key) ?? "" }
+                .onChange(of: model.local(key)) { _, new in text = new ?? "" }
+        }
+    }
+
+    private func commit() {
+        let value = text.trimmingCharacters(in: .whitespaces)
+        if value != (model.local(key) ?? "") { model.set(key, value.isEmpty ? nil : value) }
+    }
+}
+
+/// pull のとき、どう取り込むか。`pull.rebase` と `pull.ff` の 2 つで決まる（コアの `syncDefaults` と同じ読み方）。
+private struct PullMethodRow: View {
+    let model: RepositorySettingsModel
+
+    private enum Method: String { case merge, rebase, ffOnly }
+
+    private func method(rebase: String?, ff: String?) -> Method {
+        if ff?.lowercased() == "only" { return .ffOnly }
+        if let r = rebase?.lowercased(), ["true", "yes", "on", "1", "merges", "interactive"].contains(r) { return .rebase }
+        return .merge
+    }
+
+    private var current: Method { method(rebase: model.effective("pull.rebase")?.value, ff: model.effective("pull.ff")?.value) }
+    /// 札に出すのは、取り込み方を決めているほうのキー。
+    private var decidingKey: String { model.effective("pull.ff")?.value.lowercased() == "only" ? "pull.ff" : "pull.rebase" }
+
+    private func label(_ m: Method) -> String {
+        switch m {
+        case .merge: L("Merge")
+        case .rebase: L("Rebase")
+        case .ffOnly: L("Only fast-forward")
+        }
+    }
+
+    private func choose(_ m: Method) {
+        // fast-forward だけ → pull.ff=only。それ以外は pull.ff の only を消してから pull.rebase を書く。
+        if model.local("pull.ff")?.lowercased() == "only" { model.set("pull.ff", nil) }
+        switch m {
+        case .merge: model.set("pull.rebase", "false")
+        case .rebase: model.set("pull.rebase", "true")
+        case .ffOnly: model.set("pull.ff", "only")
+        }
+    }
+
+    var body: some View {
+        SettingRow(
+            model: model, question: L("When pulling, how are the changes brought in?"),
+            help: L("Merge records a merge commit when both sides have new commits. Rebase replays your commits on top of the fetched ones, keeping History in one line. Only fast-forward refuses when the branches have diverged. Amon Hen’s Pull follows this when Settings > Git’s Default Pull is “Follow git’s settings”."),
+            keys: [decidingKey, decidingKey == "pull.ff" ? "pull.rebase" : "pull.ff"]
+        ) {
+            Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
+                ForEach([Method.merge, .rebase, .ffOnly], id: \.self) { Text(label($0)).tag($0) }
+            }
+            .labelsHidden()
+            .fixedSize()
+        }
+    }
+}
+
+// MARK: - ページ
+
+/// 左の一覧の項目。
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case amonhen, author, commits, sync, rewriting, workingCopy, ignore, remotes
+    case about, all
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .amonhen: L("In Amon Hen")
+        case .author: L("Author and Signing")
+        case .commits: L("Commits")
+        case .sync: L("Pull, Push and Fetch")
+        case .rewriting: L("Rebase and Merge")
+        case .workingCopy: "Working Copy"
+        case .ignore: L("Ignored Files")
+        case .remotes: L("Remotes")
+        case .about: L("About This Repository")
+        case .all: L("All Settings")
+        }
+    }
+
+    static let settings: [SettingsPage] = [.amonhen, .author, .commits, .sync, .rewriting, .workingCopy, .ignore, .remotes]
+    static let information: [SettingsPage] = [.about, .all]
+}
+
+/// 表示名・色ラベル・自動 fetch（このアプリの中だけの設定。ブックマークに置く）。
+private struct InAmonHenPage: View {
+    @Bindable var model: RepositorySettingsModel
+    var body: some View {
+        Form {
+            Section {
+                TextField(L("Display name"), text: $model.displayName, prompt: Text((RepositoryLocation.path(model.location) as NSString).lastPathComponent))
+                Picker(L("Color label"), selection: $model.color) {
+                    Text(L("None")).tag(String?.none)
+                    ForEach(Bookmarks.colors, id: \.name) { entry in
+                        Label { Text(entry.title) } icon: { Image(nsImage: RepositoryCell.dot(entry.color) ?? NSImage()) }
+                            .tag(Optional(entry.name))
+                    }
+                }
+                Picker(L("Fetch automatically"), selection: $model.autoFetch) {
+                    Text(L("Never")).tag(0)
+                    ForEach([5, 15, 30, 60], id: \.self) { Text(L("Every %ld minutes", $0)).tag($0) }
+                }
+            } footer: {
+                Text(L("These settings are kept in this app only (not written to the git config). The display name appears in windows, tabs and the repository list. Automatic fetch runs only while this repository is open."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .onChange(of: model.displayName) { model.saveGeneral() }
+        .onChange(of: model.color) { model.saveGeneral() }
+        .onChange(of: model.autoFetch) { model.saveGeneral() }
+    }
+}
+
+private struct AuthorSigningPage: View {
+    let model: RepositorySettingsModel
+    var body: some View {
+        let format = model.effective("gpg.format")?.value.lowercased() ?? "openpgp"
+        Form {
+            Section {
+                TextRow(model: model, question: L("Name"), help: L("Recorded as the author and committer of commits made here."), key: "user.name")
+                TextRow(model: model, question: L("Email"), help: L("Recorded with the name. Set these here to keep work and personal commits apart."), key: "user.email")
+            } header: {
+                Text(L("Author"))
+            }
+            Section {
+                SwitchRow(model: model, question: L("Sign commits"), help: L("Every commit made here is signed with the key below."), key: "commit.gpgsign", defaultOn: false)
+                ChoiceRow(model: model, question: L("Signature format"), help: L("OpenPGP uses gpg. SSH signs with an SSH key, and X.509 with gpgsm."), key: "gpg.format",
+                          options: [("openpgp", "OpenPGP"), ("ssh", "SSH"), ("x509", "X.509")], defaultValue: "openpgp")
+                TextRow(model: model, question: L("Key"),
+                        help: format == "ssh" ? L("The path of the SSH public key, or the key itself (“ssh-ed25519 AAAA…”).") : L("The fingerprint or ID of the key; empty uses the key for your email."),
+                        key: "user.signingkey", placeholder: format == "ssh" ? "~/.ssh/id_ed25519.pub" : L("Key for your email"))
+                DisclosureGroup(L("More")) {
+                    TextRow(model: model, question: L("gpg program"), help: L("The gpg to run for OpenPGP signing and verification."), key: "gpg.program", placeholder: "gpg")
+                    TextRow(model: model, question: L("Allowed signers (SSH)"), help: L("The file that lists whose SSH keys are trusted when verifying signatures."), key: "gpg.ssh.allowedSignersFile", placeholder: "~/.ssh/allowed_signers")
+                }
+            } header: {
+                Text(L("Signing"))
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct CommitsPage: View {
+    let model: RepositorySettingsModel
+    @State private var preview: String?
+
+    var body: some View {
+        Form {
+            Section {
+                TextRow(model: model, question: L("Message template"), help: L("A file whose contents start every new commit message (the commit box in Working Copy starts from it too)."), key: "commit.template", placeholder: L("None"))
+                if let preview, !preview.isEmpty {
+                    Text(preview).font(.system(.caption, design: .monospaced)).foregroundStyle(.secondary).lineLimit(8).textSelection(.enabled)
+                }
+                DisclosureGroup(L("More")) {
+                    ChoiceRow(model: model, question: L("Message cleanup"), help: L("What git strips from the message before committing."), key: "commit.cleanup",
+                              options: [("default", L("Comments and surrounding blank lines")), ("strip", L("Comments, blank lines and trailing spaces")), ("whitespace", L("Blank lines and trailing spaces only")), ("verbatim", L("Nothing")), ("scissors", L("Everything after the scissors line"))],
+                              defaultValue: "default")
+                }
+            } header: {
+                Text(L("Message"))
+            }
+        }
+        .formStyle(.grouped)
+        .task(id: model.effective("commit.template")?.value) { preview = await templatePreview() }
+    }
+
+    /// テンプレートの中身（手元のリポジトリだけ。SSH 先は読まない）。
+    private func templatePreview() async -> String? {
+        guard model.host == nil, var path = model.effective("commit.template")?.value, !path.isEmpty else { return nil }
+        path = (path as NSString).expandingTildeInPath
+        if !path.hasPrefix("/") { path = (RepositoryLocation.path(model.location) as NSString).appendingPathComponent(path) }
+        return (try? String(contentsOfFile: path, encoding: .utf8)).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+    }
+}
+
+private struct SyncPage: View {
+    let model: RepositorySettingsModel
+    var body: some View {
+        Form {
+            Section("Pull") {
+                PullMethodRow(model: model)
+            }
+            Section("Push") {
+                ChoiceRow(model: model, question: L("Which branch does push go to?"), help: L("“Same name” pushes to the branch with the current branch’s name. “Upstream” pushes to the branch it tracks. “Nothing without an upstream” refuses until one is set."), key: "push.default",
+                          options: [("simple", L("Same name (and it must be the upstream)")), ("current", L("Same name")), ("upstream", L("Upstream")), ("nothing", L("Nothing without an upstream")), ("matching", L("All branches with the same name"))],
+                          defaultValue: "simple")
+                SwitchRow(model: model, question: L("Set the upstream on the first push"), help: L("The first push of a new branch also makes the remote branch its upstream, so later pushes and pulls need no branch name."), key: "push.autoSetupRemote", defaultOn: false)
+            }
+            Section("Fetch") {
+                SwitchRow(model: model, question: L("Remove remote-tracking branches deleted on the remote"), help: L("Amon Hen’s Fetch removes them unless this is off. git fetch in a terminal removes them only when this is on."), key: "fetch.prune", defaultOn: false)
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct RewritingPage: View {
+    let model: RepositorySettingsModel
+    var body: some View {
+        let tooOld = model.updateRefsSupported ? nil : L("Needs git 2.38 or later. This repository’s git is %@%@.", model.gitVersion ?? "?", model.host.map { " (\($0))" } ?? "")
+        Form {
+            Section("Rebase") {
+                SwitchRow(model: model, question: L("Stash changes before rebasing"), help: L("Uncommitted changes are stashed before the rebase and restored after it. Pull with rebase uses this too."), key: "rebase.autoStash", defaultOn: false)
+                ChoiceRow(model: model, question: L("Move stacked branches along when rebasing or editing History"),
+                          help: L("Branches whose tips are among the rewritten commits (stacked under the current one) move to the rewritten commits, or stay on the old ones. Branches checked out here or in another worktree always stay. Undo puts back whatever moved."),
+                          key: "rebase.updateRefs", options: [("false", L("Leave them")), ("true", L("Move them along"))], defaultValue: "false", isBool: true, disabledReason: tooOld)
+            }
+            Section("Merge") {
+                ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("diff3 and zdiff3 add the common ancestor between the two sides; zdiff3 leaves out lines both sides changed the same way."), key: "merge.conflictStyle",
+                          options: [("merge", L("Both sides")), ("diff3", L("Both sides and the common base")), ("zdiff3", L("Both sides and the base, shortened"))], defaultValue: "merge")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct WorkingCopyPage: View {
+    let model: RepositorySettingsModel
+    var body: some View {
+        Form {
+            Section {
+                ChoiceRow(model: model, question: L("Line endings"), help: L("What git does with CRLF and LF when checking out and committing text files. Amon Hen’s diffs follow it."), key: "core.autocrlf",
+                          options: [("false", L("Keep as committed")), ("true", L("CRLF in the working tree, LF in commits")), ("input", L("LF in commits, no change on checkout"))],
+                          defaultValue: "false", isBool: false)
+                SwitchRow(model: model, question: L("Track changes to the executable bit"), help: L("Off ignores file mode changes, as on file systems that don’t keep them."), key: "core.fileMode", defaultOn: true)
+                ChoiceRow(model: model, question: L("Untracked files in status"), help: L("“Top-level folders only” shows an untracked folder as one entry instead of listing its files."), key: "status.showUntrackedFiles",
+                          options: [("normal", L("Top-level folders only")), ("all", L("Every file")), ("no", L("Hide them"))], defaultValue: "normal")
+                DisclosureGroup(L("More")) {
+                    ChoiceRow(model: model, question: L("Line ending written on checkout"), help: L("Used when line endings are converted (text files with eol or the setting above)."), key: "core.eol",
+                              options: [("native", L("This platform’s")), ("lf", "LF"), ("crlf", "CRLF")], defaultValue: "native")
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+/// このリポジトリについて（動かしている git、hooks、LFS）。設定ではなく情報。
+private struct AboutPage: View {
+    let model: RepositorySettingsModel
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent(L("Version"), value: model.gitVersion ?? L("Unknown"))
+                LabeledContent(L("Runs on"), value: model.host ?? L("This Mac"))
+            } header: {
+                Text("git")
+            } footer: {
+                Text(L("The git that reads and writes this repository. Settings marked “your settings” are that git’s user settings (git config --global)."))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                if model.hooks.isEmpty {
+                    Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? L("core.hooksPath (%@) is outside the working tree, so its contents can’t be shown.", $0) : L("None") } ?? L("None"))
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(model.hooks) { hook in
+                    HStack {
+                        Text(hook.name).font(.system(.body, design: .monospaced))
+                        Spacer()
+                        Text(hook.enabled ? L("Enabled") : L("Not executable (no chmod +x)"))
+                            .foregroundStyle(hook.enabled ? Color.green : Color.secondary)
+                    }
+                }
+            } header: {
+                Text("Hooks")
+            } footer: {
+                Text(L("Location: %@. .sample files aren’t counted. git runs these on commit, push and so on.", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                LabeledContent("Git LFS", value: model.lfs ? L("Installed (filter.lfs is set)") : L("Not installed"))
+                if model.lfsPatterns.isEmpty {
+                    Text(L("No LFS patterns in .gitattributes.")).foregroundStyle(.secondary)
+                }
+                ForEach(model.lfsPatterns, id: \.self) { Text($0).font(.system(.body, design: .monospaced)) }
+            } header: {
+                Text("LFS")
+            } footer: {
+                if !model.lfs && !model.lfsPatterns.isEmpty {
+                    Text(L("There are LFS patterns, but git lfs isn’t installed. Install it with brew install git-lfs and git lfs install."))
+                        .font(.caption).foregroundStyle(.orange)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct RepositorySettingsView: View {
+    let model: RepositorySettingsModel
+    @State var page: SettingsPage
+
+    var body: some View {
+        HStack(spacing: 0) {
+            List(selection: Binding(get: { Optional(page) }, set: { if let p = $0 { page = p } })) {
+                Section(L("Settings")) {
+                    ForEach(SettingsPage.settings) { Text($0.title).tag($0) }
+                }
+                Section(L("Information")) {
+                    ForEach(SettingsPage.information) { Text($0.title).tag($0) }
+                }
+            }
+            .listStyle(.sidebar)
+            .frame(width: 200)
+            Divider()
+            VStack(spacing: 0) {
+                content
+                if let error = model.error {
+                    HStack {
+                        Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)
+                        Spacer()
+                    }
+                    .padding([.horizontal, .bottom])
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        }
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    @ViewBuilder private var content: some View {
+        switch page {
+        case .amonhen: InAmonHenPage(model: model)
+        case .author: AuthorSigningPage(model: model)
+        case .commits: CommitsPage(model: model)
+        case .sync: SyncPage(model: model)
+        case .rewriting: RewritingPage(model: model)
+        case .workingCopy: WorkingCopyPage(model: model)
+        case .ignore: IgnoreEditor(model: model)
+        case .remotes: RemotesTab(model: model)
+        case .about: AboutPage(model: model)
+        case .all: AllSettingsTab(model: model)
+        }
     }
 }
 
@@ -686,8 +913,8 @@ final class RepositorySettingsPage: NSHostingController<AnyView> {
 
     init(repository: Repository, location: String) {
         model = RepositorySettingsModel(repository: repository, location: location)
-        let tab = AppDelegate.option("--settings-tab")?.lowercased() ?? "general"
-        super.init(rootView: AnyView(RepositorySettingsView(model: model, tab: tab)))
+        let page = AppDelegate.option("--settings-page").flatMap(SettingsPage.init) ?? .amonhen
+        super.init(rootView: AnyView(RepositorySettingsView(model: model, page: page)))
     }
 
     @MainActor required dynamic init?(coder: NSCoder) { fatalError() }
