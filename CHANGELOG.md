@@ -33,10 +33,15 @@ becomes the GitHub Release notes.
 #### Changed
 
 - Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
-  from the person using it: rows ask in plain words and show the value in effect with where it comes from (git's
-  default, your settings, this repository) and ↩︎ to stop overriding; pages for the author and signing, commits, pull,
-  push and fetch, rebase and merge, Working Copy, ignored files and remotes; About this repository and All settings
-  under Information.
+  from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
+  where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
+  file; pages for the author and signing, commits, operations (pull, fetch, rebase, merge), Working Copy (line endings,
+  the executable bit, ignoring in this repository only) and remotes, with About this repository and All settings under
+  Information. Settings that only a terminal honors stay in All settings.
+- Fetch automatically is one interval for all open repositories, in Settings > Git, instead of a setting per
+  repository.
+- `.gitignore` is no longer edited in Repository Settings (it is a file of the repository); `.git/info/exclude` is,
+  under Working Copy.
 - Fetch keeps remote-tracking branches deleted on the remote when `fetch.prune` is false, as `git fetch` does.
 
 - File History and Blame open in a tab next to the repository's tab instead of a separate window, with the same
