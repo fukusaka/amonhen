@@ -7,6 +7,8 @@ final class Actions {
     weak var window: NSWindow?
     /// 操作の後に、History・サイドバー・Working Copy を読み直す。
     var onChange: (() -> Void)?
+    /// fetch・pull が終わった（commit-graph に増えたコミットを書き足す）。
+    var onFetch: (() -> Void)?
     /// 次に Undo される操作の名前が変わった。
     var onUndoChange: ((String?) -> Void)?
     /// 操作が失敗した（ウィンドウの帯で知らせる）。なければ警告のシートを出す。
@@ -40,6 +42,7 @@ final class Actions {
                     break
                 }
                 completion?(result)
+                if let op = command["op"] as? String, op == "fetch" || op == "pull" { onFetch?() }
             } catch {
                 await fail(OperationFailure(error, command: command))
             }

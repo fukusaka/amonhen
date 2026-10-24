@@ -37,6 +37,8 @@ becomes the GitHub Release notes.
 - Undo restores the branches that are not checked out in one transaction, so it changes all of them or none.
 - Amon Hen needs git 2.23 or later (also on SSH hosts), as documented now; when a git command fails with an older
   git, the error says so.
+- With Settings > Performance > Write commit-graph automatically, a repository that already has a commit-graph gets
+  the new commits added to it (and their changed-path Bloom filters) when it is opened and after each fetch or pull.
 
 #### Fixed
 

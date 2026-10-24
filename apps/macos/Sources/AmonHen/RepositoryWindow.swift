@@ -309,6 +309,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             slot?.workingCopy.refresh()
             self?.reloadWorktrees()
         }
+        slot.actions.onFetch = { [weak self] in self?.updateCommitGraph() }
         slot.actions.onUndoChange = { [weak self, weak slot] label in
             guard let self, slot === editing else { return }
             undoLabel = label
@@ -1652,7 +1653,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private var commitGraphUpdate: (running: Bool, again: Bool) = (false, false)
 
     /// 設定（Settings > Performance）で選ばれていれば、commit-graph を裏で最新にする。なければ書き出し、
-    /// あれば増えたコミットだけを書き足す。書いている間に呼ばれたら、終わってからもう一度書き足す。
+    /// あれば増えたコミットだけを書き足す。開いたときと fetch・pull の後に呼ぶ。書き足しは増えた数に比例し
+    /// （linux で 1 万 7 千コミットなら 2 秒）、増えていなければ何も書かない。書いている間に呼ばれたら、
+    /// 終わってからもう一度書き足す。
     func updateCommitGraph() {
         guard Settings.writeCommitGraph else { return }
         guard !commitGraphUpdate.running else {
@@ -1697,6 +1700,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 EventLog.add(repo: name, L("Automatic fetch"))
                 // ref が変わらなくても、リモートのタグは読み直している。
                 reloadTagRemotes()
+                updateCommitGraph()
             } catch {
                 EventLog.add(repo: name, L("Automatic fetch failed: %@", "\(error)"))
                 showFailure(OperationFailure(error, command: ["op": "fetch"]), title: L("Automatic Fetch Failed"))
