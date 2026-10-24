@@ -233,3 +233,26 @@ public enum RemoteScan {
         return String(cString: out).split(separator: "\n").map(String.init)
     }
 }
+
+/// この Mac の git（リポジトリに依らないもの）。どれも git を起動することがあるので、裏のスレッドで呼ぶ。
+public enum LocalGit {
+    /// git の版（`2.39.5`）。読めなければ nil。
+    public static func version() -> String? {
+        guard let out = amonhen_git_version() else { return nil }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
+
+    /// ユーザー全体（`git config --global`）の `key` の値。なければ nil。
+    public static func globalConfig(_ key: String) -> String? {
+        guard let out = amonhen_global_config(key) else { return nil }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
+
+    /// ユーザー全体（`git config --global`）の `key` を変える。nil なら消す。
+    public static func setGlobalConfig(_ key: String, _ value: String?) throws {
+        let ok = value.map { amonhen_set_global_config(key, $0) } ?? amonhen_set_global_config(key, nil)
+        if !ok { throw AmonhenError.last() }
+    }
+}
