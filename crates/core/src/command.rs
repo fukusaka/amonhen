@@ -292,6 +292,9 @@ pub enum Command {
     /// このリポジトリを扱う git の版（`info.version`、読めなければ null）と、rebase で積み重ねたブランチを
     /// 一緒に動かせるか（`info.updateRefs`。git 2.38 から。版が読めなければ true）。
     GitVersion,
+    /// git の設定から決まる、pull と fetch のふるまい（`info.pull`: `merge`・`rebase`・`fastForwardOnly`、
+    /// `info.prune`）。Pull のシートが「git の設定に従う」の中身を見せるのに使う。
+    SyncDefaults,
     /// リモート（`info.remotes`）。
     Remotes,
     /// HEAD と作業ツリーの、ファイルごとの追加・削除の行数（`info.stats`: `path`・`added`・`removed`。
@@ -1920,6 +1923,33 @@ impl Repository {
                 }
                 ok()
             }
+            Command::SyncDefaults => {
+                let config = ops.config_list()?;
+                // 後のものほど優先（`git config --list` の順）。
+                let value = |key: &str| {
+                    config
+                        .iter()
+                        .rev()
+                        .find(|e| e.key.eq_ignore_ascii_case(key))
+                        .map(|e| e.value.to_ascii_lowercase())
+                };
+                let pull = if value("pull.ff").as_deref() == Some("only") {
+                    "fastForwardOnly"
+                } else if matches!(
+                    value("pull.rebase").as_deref(),
+                    Some("true" | "yes" | "on" | "1" | "merges" | "interactive")
+                ) {
+                    "rebase"
+                } else {
+                    "merge"
+                };
+                let prune = value("fetch.prune").as_deref() != Some("false");
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "pull": pull, "prune": prune })),
+                    ..Default::default()
+                })
+            }
             Command::GitVersion => {
                 let version = ops.git_version()?;
                 Ok(Response {
@@ -3402,6 +3432,26 @@ mod tests {
     }
 
     #[test]
+    fn reads_pull_and_fetch_defaults_from_git_config() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let defaults = || run(&repo, r#"{"op":"syncDefaults"}"#)["info"].clone();
+        let d = defaults();
+        assert_eq!(d["pull"], "merge", "{d}");
+        assert_eq!(d["prune"], true, "{d}");
+
+        git(dir, &["config", "pull.rebase", "merges"]);
+        git(dir, &["config", "fetch.prune", "false"]);
+        let d = defaults();
+        assert_eq!(d["pull"], "rebase", "{d}");
+        assert_eq!(d["prune"], false, "{d}");
+
+        // pull.ff=only は pull.rebase より強い。
+        git(dir, &["config", "pull.ff", "only"]);
+        assert_eq!(defaults()["pull"], "fastForwardOnly");
+    }
+
+    #[test]
     fn reports_the_git_version_and_whether_rebase_can_move_stacked_branches() {
         let (_tmp, repo) = setup();
         let r = run(&repo, r#"{"op":"gitVersion"}"#);
@@ -3534,7 +3584,8 @@ mod tests {
         // rebase なので merge コミットはなく、手元のコミットが上流の上に載る。
         assert_eq!(git(&dir, &["log", "--format=%s"]), "local\nupstream\nfirst");
         assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
-        // mode を省くと merge。
+        // mode を省くと git の設定に従う（端末の `git pull` と同じ）。pull.rebase=false なら merge。
+        git(&dir, &["config", "pull.rebase", "false"]);
         let r = run(&repo, r#"{"op":"pull"}"#);
         assert_eq!(r["outcome"], "done", "{r}");
         assert_eq!(git(&dir, &["rev-list", "--count", "--merges", "HEAD"]), "1");

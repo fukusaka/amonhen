@@ -584,11 +584,21 @@ impl Operations for Git {
     }
 
     fn fetch(&self) -> Result<()> {
-        self.write(&["fetch", "--all", "--prune"]).map(drop)
+        // リモートで消えたブランチは片づける。利用者が `fetch.prune` を false にしていれば、git と同じく残す。
+        let prune = self
+            .read(&["config", "--bool", "--get", "fetch.prune"])
+            .map_or(true, |out| String::from_utf8_lossy(&out).trim() != "false");
+        let mut args = vec!["fetch", "--all"];
+        if prune {
+            args.push("--prune");
+        }
+        self.write(&args).map(drop)
     }
 
     fn pull(&self, mode: PullMode) -> Result<Outcome> {
         let how = match mode {
+            // git の設定（pull.rebase・pull.ff）に任せる。
+            PullMode::Git => return self.stoppable(&["pull", "--no-edit"], &[]),
             PullMode::Merge => "--no-rebase",
             PullMode::Rebase => "--rebase",
             PullMode::FastForwardOnly => "--ff-only",
