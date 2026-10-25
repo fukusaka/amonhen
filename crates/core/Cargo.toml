@@ -6,6 +6,9 @@ rust-version.workspace = true
 publish.workspace = true
 license.workspace = true
 
+[build-dependencies]
+sha1_smol = "1.0.1"
+
 [dependencies]
 amonhen-layout.workspace = true
 amonhen-model = { workspace = true, features = ["serde"] }
