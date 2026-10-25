@@ -1038,8 +1038,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// 下書きがあればそれを、なければテンプレートを入れる: リポジトリが Settings > Git の共有の一覧から選んだもの
     /// （`amonhen.commitTemplate`）、なければ `commit.template` のファイル（このリポジトリ専用のものはコアから読むので
-    /// SSH 先でも入る。ほかのファイルは手元のリポジトリだけ）。どれも `{branch}`・`{issue}`・`{date}` を埋め、# の
-    /// 行は除く。
+    /// SSH 先でも入る。ほかのファイルは手元のリポジトリだけ）。どれも置換文字列（`Settings.fillCommitTemplate`）を
+    /// 埋め、# の行は除く。
     private func restoreDraftOrTemplate() {
         if let draft = UserDefaults.standard.stringArray(forKey: draftKey), draft.count == 2 {
             summary.stringValue = draft[0]
@@ -1074,8 +1074,12 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                     text = read
                 }
             }
-            let branch = await Task.detached { try? repository.loadRefs().headBranch }.value
-            text = Settings.fillCommitTemplate(text, branch: branch)
+            struct Groups: Decodable { let base: String? }
+            let (branch, base) = await Task.detached {
+                (try? repository.loadRefs().headBranch, (try? repository.info(["op": "branchGroups"], as: Groups.self))?.base)
+            }.value
+            let repo = workdir.map { ($0 as NSString).lastPathComponent } ?? view.window?.title
+            text = Settings.fillCommitTemplate(text, .init(branch: branch, base: base, name: value("user.name"), email: value("user.email"), repo: repo))
             guard summary.stringValue.isEmpty, message.string.isEmpty else { return }
             let lines = text.components(separatedBy: "\n").filter { !$0.hasPrefix("#") }
             let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1352,7 +1352,7 @@ private struct TemplateRow: View {
 
     var body: some View {
         SettingRow(model: model, question: L("Message template"),
-                   help: L("Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too. The commit box fills {branch}, {issue} and {date} in any template."),
+                   help: L("Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too. The commit box fills {branch}, {issue}, {date} and the others listed in Settings > Git in any template."),
                    keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: label) {
             Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
                 Text(L("None")).tag("")
