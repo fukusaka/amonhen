@@ -179,9 +179,14 @@
 "Couldn’t clone" = "clone できませんでした";
 
 /* RepositorySettings.swift */
-"Templates from Settings > Git are Amon Hen’s: the commit box fills {branch}, {issue} and {date}. A file is git’s commit.template, which git in a terminal uses too." = "Settings > Git のテンプレートは Amon Hen のもので、コミット欄が {branch}・{issue}・{date} を埋めます。ファイルは git の commit.template で、端末の git も使います。";
+"Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too. The commit box fills {branch}, {issue} and {date} in any template." = "共有のテンプレートは Settings > Git にあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。コミット欄はどのテンプレートでも {branch}・{issue}・{date} を埋めます。";
+"Shared" = "共有";
+"This repository’s own" = "このリポジトリ専用";
+"Edit in Settings > Git…" = "Settings > Git で編集…";
+"Copy to This Repository" = "このリポジトリ専用に写す";
+"Makes a copy of this template for this repository alone, which git in a terminal uses too." = "このテンプレートの写しをこのリポジトリ専用に作ります。端末の git も使います。";
+"Revert" = "元に戻す";
 "File: %@" = "ファイル: %@";
-"Settings > Git" = "Settings > Git";
 "A file…" = "ファイル…";
 "Choose a commit message template file" = "コミットメッセージのテンプレートのファイルを選ぶ";
 "Display name" = "表示名";

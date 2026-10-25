@@ -56,6 +56,14 @@ final class RepositorySettingsModel {
     var onRepositoryChange: (() -> Void)?
     /// git config の表で「−」などで最後に消したキーと値（表の下の「戻す」の 1 行）。次の書き換えで忘れる。
     var removedConfig: [(key: String, value: String)] = []
+    /// このリポジトリ専用のコミットのテンプレート: 中身（ファイルがなければ nil）と、`commit.template` に書くパス。
+    private(set) var commitTemplate: (text: String?, path: String)?
+
+    /// 専用のテンプレートを書く（`commit.template` もそれに向く）。
+    func saveCommitTemplate(_ text: String) {
+        run(["op": "saveCommitTemplate", "text": text])
+    }
+
     /// 署名の形式ごとに集めた鍵（`user.email` の鍵を先に）。コアが集める（SSH 先のリポジトリなら SSH 先で）。
     private(set) var signingKeys: [String: [SigningKey]] = [:]
 
@@ -93,9 +101,10 @@ final class RepositorySettingsModel {
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
             struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String] }
             struct Version: Decodable { let version: String?; let updateRefs: Bool }
+            struct Template: Decodable { let text: String?; let path: String }
             struct Groups: Decodable { struct Branch: Decodable { let name: String }; let base: String?; let branches: [Branch] }
             do {
-                let (e, k, r, i, h, v, g) = try await Task.detached(priority: .userInitiated) {
+                let (e, k, r, i, h, v, g, t) = try await Task.detached(priority: .userInitiated) {
                     (
                         try repository.info(["op": "configList"], as: Entries.self),
                         try? repository.info(["op": "configKeys"], as: Keys.self),
@@ -103,9 +112,11 @@ final class RepositorySettingsModel {
                         try repository.info(["op": "ignoreFiles"], as: Ignore.self),
                         try repository.info(["op": "hooksAndLfs"], as: Hooks.self),
                         try repository.info(["op": "gitVersion"], as: Version.self),
-                        try? repository.info(["op": "branchGroups"], as: Groups.self)
+                        try? repository.info(["op": "branchGroups"], as: Groups.self),
+                        try? repository.info(["op": "commitTemplate"], as: Template.self)
                     )
                 }.value
+                commitTemplate = t.map { ($0.text, $0.path) }
                 gitVersion = v.version
                 updateRefsSupported = v.updateRefs
                 localBranches = g?.branches.map(\.name).sorted() ?? []
@@ -1228,31 +1239,65 @@ private struct SigningKeyRow: View {
 private struct CommitsPage: View {
     let model: RepositorySettingsModel
     @State private var preview: String?
+    /// 専用のテンプレートの編集中の文。
+    @State private var draft = ""
+
+    private var choice: TemplateRow.Choice { TemplateRow.choice(model) }
+    private var saved: String { model.commitTemplate?.text ?? "" }
 
     var body: some View {
         Form {
             Section {
                 TemplateRow(model: model)
-                if let preview, !preview.isEmpty {
-                    Text(preview).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(8).textSelection(.enabled)
+                switch choice {
+                case .own:
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextEditor(text: $draft)
+                            .font(.system(.body, design: .monospaced))
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 160)
+                        HStack {
+                            Spacer()
+                            Button(L("Revert")) { draft = saved }.disabled(draft == saved)
+                            Button(L("Save")) { model.saveCommitTemplate(draft) }.disabled(draft == saved).keyboardShortcut("s")
+                        }
+                    }
+                    .padding(.vertical, 6)
+                    .onAppear { draft = saved }
+                    .onChange(of: saved) { _, new in draft = new }
+                case .shared(let name):
+                    let text = Settings.commitTemplates.first { $0.name == name }?.text ?? ""
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                            .font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(12).textSelection(.enabled)
+                        HStack {
+                            Spacer()
+                            Button(L("Edit in Settings > Git…")) { SettingsWindowController.shared.show() }
+                            Button(L("Copy to This Repository")) {
+                                model.saveCommitTemplate(text)
+                                model.set(TemplateRow.libraryKey, nil)
+                            }
+                            .help(L("Makes a copy of this template for this repository alone, which git in a terminal uses too."))
+                        }
+                    }
+                    .padding(.vertical, 6)
+                case .file:
+                    if let preview, !preview.isEmpty {
+                        Text(preview).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(12).textSelection(.enabled)
+                    }
+                case .none:
+                    EmptyView()
                 }
             } header: {
                 Text(L("Message"))
             }
         }
         .formStyle(.grouped)
-        .task(id: "\(model.effective(TemplateRow.libraryKey)?.value ?? "")|\(model.effective(TemplateRow.fileKey)?.value ?? "")") {
-            preview = await templatePreview()
-        }
+        .task(id: model.effective(TemplateRow.fileKey)?.value ?? "") { preview = await filePreview() }
     }
 
-    /// 選んだテンプレートの中身: 一覧のものはその文（置換文字列はそのまま）、ファイルはその中身（手元のリポジトリ
-    /// だけ。SSH 先は読まない）。
-    private func templatePreview() async -> String? {
-        if let name = model.effective(TemplateRow.libraryKey)?.value,
-           let t = Settings.commitTemplates.first(where: { $0.name == name }) {
-            return t.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
+    /// ファイルのテンプレートの中身（手元のリポジトリだけ。SSH 先は読まない）。
+    private func filePreview() async -> String? {
         guard model.host == nil, var path = model.effective(TemplateRow.fileKey)?.value, !path.isEmpty else { return nil }
         path = (path as NSString).expandingTildeInPath
         if !path.hasPrefix("/") { path = (RepositoryLocation.path(model.location) as NSString).appendingPathComponent(path) }
@@ -1260,42 +1305,62 @@ private struct CommitsPage: View {
     }
 }
 
-/// メッセージのテンプレート: なし／Settings > Git の一覧のテンプレート（`amonhen.commitTemplate` に名前。Amon Hen の
-/// コミット欄だけが使い、置換文字列を埋める）／ファイル…（git の `commit.template`。端末の git も使う）。
+/// メッセージのテンプレート: なし／Settings > Git の共有のテンプレート（`amonhen.commitTemplate` に名前。Amon Hen の
+/// コミット欄だけが使う）／このリポジトリ専用（`<git dir>/amonhen/commit-template` に置き、git の `commit.template` を
+/// 向ける。端末の git も使う）／ファイル…（`commit.template`）。コミット欄はどれでも置換文字列を埋める。
 private struct TemplateRow: View {
     let model: RepositorySettingsModel
     static let libraryKey = "amonhen.commitTemplate", fileKey = "commit.template"
-    private static let pickFile = "\u{1}file"
+    private static let pickFile = "\u{1}file", own = "\u{1}own"
+
+    /// 今の選び。
+    enum Choice: Equatable { case none, shared(String), own, file(String) }
+
+    static func choice(_ model: RepositorySettingsModel) -> Choice {
+        let templates = Settings.commitTemplates
+        if let n = model.effective(libraryKey)?.value.nonEmpty, templates.contains(where: { $0.name == n }) { return .shared(n) }
+        guard let file = model.effective(fileKey)?.value.nonEmpty else { return .none }
+        return isOwn(file, model) ? .own : .file(file)
+    }
+
+    /// `path` がこのリポジトリ専用のテンプレートのファイルか。
+    private static func isOwn(_ path: String, _ model: RepositorySettingsModel) -> Bool {
+        path == model.commitTemplate?.path || path.hasSuffix("/amonhen/commit-template")
+    }
 
     private var templates: [CommitTemplate] { Settings.commitTemplates }
-    /// 一覧から選んでいる名前（一覧にまだあるものだけ）。
-    private var libraryName: String? {
-        model.effective(Self.libraryKey)?.value.nonEmpty.flatMap { n in templates.contains { $0.name == n } ? n : nil }
-    }
-    private var file: String? { model.effective(Self.fileKey)?.value.nonEmpty }
+    private var choice: Choice { Self.choice(model) }
     private var current: String {
-        if let libraryName { return "lib:" + libraryName }
-        if let file { return "file:" + file }
-        return ""
+        switch choice {
+        case .none: ""
+        case .shared(let n): "lib:" + n
+        case .own: Self.own
+        case .file(let f): "file:" + f
+        }
     }
-    private var decidingKey: String { libraryName != nil ? Self.libraryKey : Self.fileKey }
+    private var decidingKey: String { if case .shared = choice { Self.libraryKey } else { Self.fileKey } }
 
     private func label(_ value: String) -> String {
         if value.hasPrefix("lib:") { return String(value.dropFirst(4)) }
-        if value.hasPrefix("file:") { return L("File: %@", (String(value.dropFirst(5)) as NSString).abbreviatingWithTildeInPath) }
+        if value == Self.own { return L("This repository’s own") }
+        if value.hasPrefix("file:") {
+            let path = String(value.dropFirst(5))
+            return Self.isOwn(path, model) ? L("This repository’s own") : L("File: %@", (path as NSString).abbreviatingWithTildeInPath)
+        }
         return L("None")
     }
 
     var body: some View {
         SettingRow(model: model, question: L("Message template"),
-                   help: L("Templates from Settings > Git are Amon Hen’s: the commit box fills {branch}, {issue} and {date}. A file is git’s commit.template, which git in a terminal uses too."),
+                   help: L("Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too. The commit box fills {branch}, {issue} and {date} in any template."),
                    keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: label) {
             Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
                 Text(L("None")).tag("")
                 if !templates.isEmpty {
-                    Section(L("Settings > Git")) { ForEach(templates) { Text($0.name).tag("lib:" + $0.name) } }
+                    Section(L("Shared")) { ForEach(templates) { Text($0.name).tag("lib:" + $0.name) } }
                 }
-                if let file { Text(label("file:" + file)).tag("file:" + file) }
+                Text(L("This repository’s own")).tag(Self.own)
+                if case .file(let f) = choice { Text(label("file:" + f)).tag("file:" + f) }
                 Divider()
                 Text(L("A file…")).tag(Self.pickFile)
             }
@@ -1305,7 +1370,17 @@ private struct TemplateRow: View {
     }
 
     private func choose(_ value: String) {
-        if value == Self.pickFile {
+        // 今と同じ値なら何もしない（選び直しでなく、表示の都合で呼ばれることがある）。
+        if value == current { return }
+        if value == Self.own {
+            // 専用のファイルがまだなければ空で作る（commit.template もそれを向く）。あれば向け直すだけ。
+            if let t = model.commitTemplate, t.text != nil {
+                model.set(Self.fileKey, t.path)
+            } else {
+                model.saveCommitTemplate("")
+            }
+            if model.local(Self.libraryKey) != nil { model.set(Self.libraryKey, nil) }
+        } else if value == Self.pickFile {
             let panel = NSOpenPanel()
             panel.canChooseDirectories = false
             panel.allowsMultipleSelection = false

@@ -1036,9 +1036,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         draftBeforeRecall = nil
     }
 
-    /// 下書きがあればそれを、なければテンプレートを入れる: リポジトリが Settings > Git の一覧から選んだもの
-    /// （`amonhen.commitTemplate`。`{branch}`・`{issue}`・`{date}` を埋める）、なければ `commit.template` の
-    /// ファイルの中身（手元のリポジトリだけ）。どちらも # の行は除く。
+    /// 下書きがあればそれを、なければテンプレートを入れる: リポジトリが Settings > Git の共有の一覧から選んだもの
+    /// （`amonhen.commitTemplate`）、なければ `commit.template` のファイル（このリポジトリ専用のものはコアから読むので
+    /// SSH 先でも入る。ほかのファイルは手元のリポジトリだけ）。どれも `{branch}`・`{issue}`・`{date}` を埋め、# の
+    /// 行は除く。
     private func restoreDraftOrTemplate() {
         if let draft = UserDefaults.standard.stringArray(forKey: draftKey), draft.count == 2 {
             summary.stringValue = draft[0]
@@ -1055,17 +1056,26 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             }
             let entries = try? await Task.detached { try repository.info(["op": "configList"], as: Entries.self) }.value
             let value = { (key: String) in entries?.entries.last { $0.key.lowercased() == key }?.value }
-            let text: String
+            var text: String
             if let name = value("amonhen.committemplate"), let t = Settings.commitTemplates.first(where: { $0.name == name }) {
-                let branch = await Task.detached { try? repository.loadRefs().headBranch }.value
-                text = Settings.fillCommitTemplate(t.text, branch: branch)
+                text = t.text
             } else {
-                guard let workdir, let path = value("commit.template") else { return }
-                let expanded = (path as NSString).expandingTildeInPath
-                let file = expanded.hasPrefix("/") ? expanded : (workdir as NSString).appendingPathComponent(expanded)
-                guard let read = try? String(contentsOfFile: file, encoding: .utf8) else { return }
-                text = read
+                guard let path = value("commit.template") else { return }
+                if path.hasSuffix("/amonhen/commit-template") {
+                    struct Template: Decodable { let text: String? }
+                    guard let own = try? await Task.detached { try repository.info(["op": "commitTemplate"], as: Template.self) }.value,
+                          let read = own.text else { return }
+                    text = read
+                } else {
+                    guard let workdir else { return }
+                    let expanded = (path as NSString).expandingTildeInPath
+                    let file = expanded.hasPrefix("/") ? expanded : (workdir as NSString).appendingPathComponent(expanded)
+                    guard let read = try? String(contentsOfFile: file, encoding: .utf8) else { return }
+                    text = read
+                }
             }
+            let branch = await Task.detached { try? repository.loadRefs().headBranch }.value
+            text = Settings.fillCommitTemplate(text, branch: branch)
             guard summary.stringValue.isEmpty, message.string.isEmpty else { return }
             let lines = text.components(separatedBy: "\n").filter { !$0.hasPrefix("#") }
             let body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
