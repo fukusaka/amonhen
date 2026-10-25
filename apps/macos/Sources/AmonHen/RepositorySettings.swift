@@ -1508,7 +1508,7 @@ private struct WorkingCopyPage: View {
 private struct HooksLFSPage: View {
     let model: RepositorySettingsModel
     @State private var hookSelection: String?
-    @State private var hookText: String?
+    @State private var hookText: AttributedString?
     @State private var editors = ExternalEditor.installed
     @State private var patternSelection: String?
 
@@ -1602,7 +1602,7 @@ private struct HooksLFSPage: View {
                 }
                 .padding(.top, 8)
                 ScrollView {
-                    Text(hookText ?? "")
+                    Text(hookText ?? AttributedString())
                         .font(.system(.body, design: .monospaced))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -1610,8 +1610,8 @@ private struct HooksLFSPage: View {
                 }
                 .frame(height: 220)
                 .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.5)))
-                .task(id: name) { hookText = await model.hookText(name) }
-                .onChange(of: model.hooks) { Task { hookText = await model.hookText(name) } }
+                .task(id: name) { hookText = await loadScript(name) }
+                .onChange(of: model.hooks) { Task { hookText = await loadScript(name) } }
             }
 
             Text("LFS").font(.headline).padding(.top, 12)
@@ -1640,6 +1640,23 @@ private struct HooksLFSPage: View {
     }
 
     private struct PatternRow: Identifiable { let pattern: String; var id: String { pattern } }
+
+    /// フックのスクリプトを読み、構文の色を付ける（言語は 1 行目の `#!` から。差分と同じ色）。
+    private func loadScript(_ name: String) async -> AttributedString? {
+        guard let text = await model.hookText(name) else { return nil }
+        let palette = SyntaxColors.palette
+        let spans = await Task.detached(priority: .utility) {
+            SyntaxSpans.highlight(path: name, text: text)?.withSpans { Array($0) } ?? []
+        }.value
+        let result = NSMutableAttributedString(string: text)
+        let length = result.length
+        for span in spans where Int(span.end) <= length {
+            result.addAttribute(
+                .foregroundColor, value: palette[Int(span.kind) & 15],
+                range: NSRange(location: Int(span.start), length: Int(span.end - span.start)))
+        }
+        return AttributedString(result)
+    }
 
     private func path(of name: String) -> URL? {
         hooksDirectory.map { URL(fileURLWithPath: ($0 as NSString).appendingPathComponent(name)) }

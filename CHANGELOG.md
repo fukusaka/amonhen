@@ -54,7 +54,7 @@ becomes the GitHub Release notes.
 - Settings has a General tab with the external editor: Automatic (the first code editor installed, such as VS Code,
   Cursor or Zed, else the default text editor) or any application. Used wherever Amon Hen opens a file in an editor.
 - Hooks · LFS in Repository Settings is two tables with actions: each hook with when git runs it, an Enabled switch
-  (the executable bit), the selected hook's script under the table with Edit in the external editor (a menu offers
+  (the executable bit), the selected hook's script under the table with syntax colors and Edit in the external editor (a menu offers
   the other installed editors), Create Hook… to put a skeleton in place; the LFS patterns from `.gitattributes` with
   Track Pattern… (`git lfs track`) and Remove, and how many files are in LFS.
 - In Working Copy, an untracked file's context menu offers Add to .gitignore for the file and for its extension. The
