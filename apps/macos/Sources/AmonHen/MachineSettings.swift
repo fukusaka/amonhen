@@ -13,7 +13,7 @@ struct GitSettings: View {
     var body: some View {
         VStack(spacing: 0) {
             if let settings {
-                RepositorySettingsView(model: settings, page: .machine)
+                RepositorySettingsView(model: settings, page: AppDelegate.option("--settings-page").flatMap(SettingsPage.init) ?? .machine)
             } else if let error {
                 Text(error).foregroundStyle(.red).padding()
             } else {
