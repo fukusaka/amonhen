@@ -21,6 +21,10 @@ cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 
 scripts/package-gtk4.sh          # GTK4 app into dist/amonhen-gtk-<version>-linux-<arch>.tar.gz (on Linux; includes dist/engine's Linux engines if built)
 ```
 
+A development build (the app run from `apps/macos/.build`, or `target/*/amonhen`) looks for the engines only inside its
+own checkout: `dist/engine` for the engines to send to SSH hosts, and `target/release/amonhen` for the shared daemon. In
+a worktree, build them there; it never picks up the main checkout's, which may be another build.
+
 ## Launch options for checking
 
 `AmonHen <repo> --snapshot out.png [--select-first | --select-row N] [--working-copy] [--find TEXT] [--search TEXT] [--merge-editor PATH]`, `--blame PATH`, `--file-history PATH` (open that window) (write the screen to a PNG and exit), `--measure-scroll [--scroll-rows N]` (auto-scroll History for 600 frames and show the speed and a per-stage breakdown), `--measure-select N` (select N commits and show the time per stage until the details appear), `--log-scroll` (record trackpad scroll deceleration), `--show-latency` (show the time from input to display below the title). `--select-first` and `--select-row N` also work
