@@ -21,7 +21,7 @@ use serde::de::DeserializeOwned;
 
 use crate::frame::{self, Kind};
 use crate::wire::{
-    Bytes, CommitTextWire, GraphWire, Hello, Notification, Op, PROTOCOL_VERSION, Request,
+    BUILD_ID, Bytes, CommitTextWire, GraphWire, HELLO_VERSION, Hello, Notification, Op, Request,
 };
 
 type Reply = std::result::Result<Vec<u8>, String>;
@@ -301,10 +301,14 @@ pub struct RemoteBackend {
 impl RemoteBackend {
     /// つないで通信の形を確かめ、リポジトリの場所を受け取る。
     pub fn connect(conn: Arc<Connection>) -> Result<Self> {
-        let _: Hello = conn.call(&Request::Hello {
-            version: PROTOCOL_VERSION,
+        let hello: Hello = conn.call(&Request::Hello {
+            version: HELLO_VERSION,
             language: amonhen_model::i18n::current().code().to_owned(),
+            build: BUILD_ID.to_owned(),
         })?;
+        if hello.build != BUILD_ID {
+            return Err(crate::server::other_build(BUILD_ID, &hello.build).into());
+        }
         let paths: RepoPaths = conn.call(&Request::Paths)?;
         Ok(Self {
             ops: RemoteOperations { conn: conn.clone() },

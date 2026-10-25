@@ -219,5 +219,5 @@ test('installs the bundled engine and picks it for the daemon', { skip }, async 
   } else {
     assert.equal(path, join(dir, '.local/share/amonhen/current/amonhen'));
   }
-  assert.match(execFileSync(path!, ['--version'], { encoding: 'utf8' }), /\(protocol \d+\)/);
+  assert.match(execFileSync(path!, ['--version'], { encoding: 'utf8' }), /\(build [0-9a-f]{16}\)/);
 });

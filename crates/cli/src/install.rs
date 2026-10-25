@@ -71,14 +71,12 @@ fn set_current(root: &Path, hash: &str) -> Result<()> {
     Ok(())
 }
 
-/// `amonhen 0.1.1-snapshot.72+abc (protocol 16)` を（版, 通信の形の版）に。
-fn parse_version(line: &str) -> Option<(String, u32)> {
+/// `amonhen 0.1.1-snapshot.72+abc (build 0123456789abcdef)` を（版, ビルドの指紋）に。前の版の形
+/// （`(protocol 16)`）は読まない（ビルドの指紋がないので、どのビルドとも違う）。
+fn parse_version(line: &str) -> Option<(String, String)> {
     let rest = line.trim().strip_prefix("amonhen ")?;
-    let (version, protocol) = rest.split_once(" (protocol ")?;
-    Some((
-        version.to_owned(),
-        protocol.strip_suffix(')')?.parse().ok()?,
-    ))
+    let (version, build) = rest.split_once(" (build ")?;
+    Some((version.to_owned(), build.strip_suffix(')')?.to_owned()))
 }
 
 /// 版の大小。`0.1.0` < `0.1.1-snapshot.3` < `0.1.1-snapshot.12` < `0.1.1`（`+` の後ろは見ない）。
@@ -103,7 +101,7 @@ fn version_key(version: &str) -> (Vec<u64>, u8, u64) {
 }
 
 /// `path` のエンジンの版（動かして聞く）。
-fn version_of(path: &Path) -> Option<(String, u32)> {
+fn version_of(path: &Path) -> Option<(String, String)> {
     let out = amonhen_model::process::command(path)
         .arg("--version")
         .output()
@@ -111,11 +109,11 @@ fn version_of(path: &Path) -> Option<(String, u32)> {
     parse_version(&String::from_utf8_lossy(&out.stdout))
 }
 
-fn own_version() -> (String, u32) {
+fn own_version() -> (String, String) {
     parse_version(&amonhen_daemon::version()).expect("自分の版")
 }
 
-/// 共有の daemon として起動するエンジン: `current` の通信の形の版が自分と同じならそれ、なければ自分。
+/// 共有の daemon として起動するエンジン: `current` が自分と同じビルドならそれ、なければ自分。
 pub fn engine_for_daemon() -> Result<PathBuf> {
     let me = std::env::current_exe()?.canonicalize()?;
     // Unix は current のリンクを通したパスにする（リンクを向け直せば、次に起動する daemon も新しい版になる）。
@@ -128,8 +126,8 @@ pub fn engine_for_daemon() -> Result<PathBuf> {
         root.join("current").join(exe_name())
     };
     if current.is_file()
-        && let Some((_, protocol)) = version_of(&current)
-        && protocol == own_version().1
+        && let Some((_, build)) = version_of(&current)
+        && build == own_version().1
     {
         return Ok(current);
     }
@@ -331,9 +329,13 @@ mod tests {
     #[test]
     fn orders_versions() {
         assert_eq!(
-            parse_version("amonhen 0.1.1-snapshot.72+5de3fb4 (protocol 16)\n"),
-            Some(("0.1.1-snapshot.72+5de3fb4".into(), 16))
+            parse_version("amonhen 0.1.1-snapshot.72+5de3fb4 (build 0123456789abcdef)\n"),
+            Some((
+                "0.1.1-snapshot.72+5de3fb4".into(),
+                "0123456789abcdef".into()
+            ))
         );
+        assert_eq!(parse_version("amonhen 0.1.0 (protocol 16)\n"), None);
         let k = version_key;
         assert!(k("0.1.0") < k("0.1.1-snapshot.3"));
         assert!(k("0.1.1-snapshot.3") < k("0.1.1-snapshot.12"));

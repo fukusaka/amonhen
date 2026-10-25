@@ -531,7 +531,7 @@
 "%ld min %ld s" = "%ld 分 %ld 秒";
 "%ld h %ld min" = "%ld 時間 %ld 分";
 "The shared daemon is running" = "共有の daemon は動いています";
-"pid %@ · version %@ (protocol %@) · up %@ · connections %ld" = "pid %@ · 版 %@（通信の形 %@） · 動いて %@ · つながり %ld";
+"pid %@ · version %@ (build %@) · up %@ · connections %ld" = "pid %@ · 版 %@（ビルド %@） · 動いて %@ · つながり %ld";
 "The shared daemon isn’t running" = "共有の daemon は動いていません";
 "Checking…" = "調べています…";
 "It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Advanced)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > Advanced）、自動で起動します。";
