@@ -732,10 +732,16 @@ impl Repository {
             return Ok(diff::StackedDiff { files });
         }
         let chunk = changes.len().div_ceil(threads);
+        // 分けたスレッドでも、共有の daemon なら要求した FE の環境と言語で動かす。
+        let carried = &amonhen_model::process::carry();
         let parts: Vec<Result<Vec<_>>> = std::thread::scope(|scope| {
             let handles: Vec<_> = changes
                 .chunks(chunk)
-                .map(|part| scope.spawn(move || part.iter().map(one).collect::<Result<Vec<_>>>()))
+                .map(|part| {
+                    scope.spawn(move || {
+                        carried.run(|| part.iter().map(one).collect::<Result<Vec<_>>>())
+                    })
+                })
                 .collect();
             handles
                 .into_iter()
@@ -1226,7 +1232,9 @@ impl Repository {
             .filter(|&i| terms[i].field.is_textual())
             .collect();
         let ops = self.backend.operations()?;
-        // パス・内容の問い合わせ（git）は、件名・作者を読む走査と同時に進める。
+        // パス・内容の問い合わせ（git）は、件名・作者を読む走査と同時に進める。分けたスレッドでも、共有の daemon
+        // なら要求した FE の環境と言語で git を動かす。
+        let carried = &amonhen_model::process::carry();
         let (scanned, queried) = std::thread::scope(|scope| {
             let queries: Vec<_> = terms
                 .iter()
@@ -1238,8 +1246,9 @@ impl Repository {
                         _ => (None, Some(term.value.as_str())),
                     };
                     let cancelled = &cancelled;
-                    let handle = scope
-                        .spawn(move || ops.log_matching(&snapshot.tips, path, contents, cancelled));
+                    let handle = scope.spawn(move || {
+                        carried.run(|| ops.log_matching(&snapshot.tips, path, contents, cancelled))
+                    });
                     (i, handle)
                 })
                 .collect();

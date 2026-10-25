@@ -1008,19 +1008,23 @@ impl Operations for Git {
             .filter(|&i| fresh || counts.is_due(paths[i], generations[i]))
             .collect();
         drop(counts);
-        // 1 つずつ git status を動かす。数が多いので 8 つまで並べる。
+        // 1 つずつ git status を動かす。数が多いので 8 つまで並べる。分けたスレッドでも、共有の daemon なら要求した
+        // FE の環境で動かす。
+        let carried = &amonhen_model::process::carry();
         let next = std::sync::atomic::AtomicUsize::new(0);
         let results: std::sync::Mutex<Vec<Option<(u32, u64)>>> =
             std::sync::Mutex::new(vec![None; due.len()]);
         std::thread::scope(|scope| {
             for _ in 0..due.len().min(8) {
                 scope.spawn(|| {
-                    loop {
-                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(&index) = due.get(i) else { break };
-                        let changes = Git::new(paths[index].as_str()).count_changes();
-                        results.lock().unwrap()[i] = changes.ok();
-                    }
+                    carried.run(|| {
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some(&index) = due.get(i) else { break };
+                            let changes = Git::new(paths[index].as_str()).count_changes();
+                            results.lock().unwrap()[i] = changes.ok();
+                        }
+                    })
                 });
             }
         });

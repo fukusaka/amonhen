@@ -103,6 +103,33 @@ impl ClientEnv {
     }
 }
 
+/// このスレッドの、つないだ FE の事情（`with_client_env` の環境と、`i18n::with` の言語）を写したもの。要求の中で
+/// `thread::scope` などに分けた処理で `run` すると、そこで起動する git・ssh にもその FE の環境を渡し、エラーの文も
+/// その FE の言語で作る（分けたスレッドは、どちらも引き継がない）。
+#[derive(Clone, Debug)]
+pub struct Carried {
+    env: Option<ClientEnv>,
+    lang: crate::i18n::Lang,
+}
+
+/// 今のスレッドの FE の事情を写す（分けるスレッドに渡して `Carried::run`）。
+pub fn carry() -> Carried {
+    Carried {
+        env: client::CURRENT.with(|c| c.borrow().clone()),
+        lang: crate::i18n::current(),
+    }
+}
+
+impl Carried {
+    /// `f` を、写したときの FE の環境と言語で動かす。
+    pub fn run<R>(&self, f: impl FnOnce() -> R) -> R {
+        crate::i18n::with(self.lang, || match &self.env {
+            Some(env) => with_client_env(env, f),
+            None => f(),
+        })
+    }
+}
+
 /// `f` の間、このスレッドで起動する子に `env` を渡す（共有の daemon が、つないだ FE の要求を動かすとき）。`env` が
 /// 空なら（前の版の FE・SSH 越し）、daemon の環境のまま。
 pub fn with_client_env<R>(env: &ClientEnv, f: impl FnOnce() -> R) -> R {
@@ -420,6 +447,33 @@ mod tests {
         );
         assert_eq!(ClientEnv::decode(&env.encode()), env);
         assert!(ClientEnv::decode("").is_empty());
+    }
+
+    /// 分けたスレッドでも、`carry` で写した FE の環境と言語を使う（分けただけでは引き継がない）。
+    #[test]
+    fn carries_the_client_environment_to_other_threads() {
+        let env =
+            ClientEnv::from_vars([("GIT_AMONHEN_TEST".to_owned(), "from the client".to_owned())]);
+        let (plain, carried) = crate::i18n::with(crate::i18n::Lang::Ja, || {
+            with_client_env(&env, || {
+                let carried = carry();
+                let read = || (var_os("GIT_AMONHEN_TEST"), crate::i18n::current());
+                (
+                    std::thread::spawn(read).join().unwrap(),
+                    std::thread::spawn(move || carried.run(read))
+                        .join()
+                        .unwrap(),
+                )
+            })
+        });
+        assert_ne!(
+            plain,
+            (Some("from the client".into()), crate::i18n::Lang::Ja)
+        );
+        assert_eq!(
+            carried,
+            (Some("from the client".into()), crate::i18n::Lang::Ja)
+        );
     }
 
     /// `with_client_env` の中で起動した子は、FE の環境で動く（`PATH` で探し、FE の値を受け取る）。外では daemon の
