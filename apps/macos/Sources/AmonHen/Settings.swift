@@ -813,10 +813,10 @@ final class SettingsWindowController: NSWindowController {
     private init() {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
-        // 幅 720。画面に収まる高さまで（長いタブは中でスクロールする）。
+        // 幅 800。画面に収まる高さまで（長いタブは中でスクロールする）。
         let maxHeight = (NSScreen.main?.visibleFrame.height ?? 900) - 120
         func add(_ title: String, _ symbol: String, _ view: some View) {
-            let host = NSHostingController(rootView: view.frame(width: 720).frame(maxHeight: maxHeight).fixedSize())
+            let host = NSHostingController(rootView: view.frame(width: 800).frame(maxHeight: maxHeight).fixedSize())
             host.sizingOptions = .preferredContentSize
             // タブを選ぶと、ウィンドウのタイトルがタブの名前になる（macOS 標準の設定画面と同じ）。
             host.title = title

@@ -31,9 +31,16 @@ struct RemoteEntry: Decodable, Hashable, Identifiable {
 /// リポジトリの設定（サイドバーの Workspace の Settings、⌘;）の中身。読み書きはコアの命令を裏で呼ぶ。
 @Observable
 final class RepositorySettingsModel {
+    /// どの段の設定か: このリポジトリ（`--local` に書く）か、機械のすべてのリポジトリ（`--global` に書く。Settings > Git。
+    /// リポジトリは空のものを握り、local の値は見ない）。
+    enum Level { case repository, allRepositories }
+
     let repository: Repository
     /// リポジトリの場所。
     let location: String
+    let level: Level
+    /// この段で書く scope。
+    var ownScope: String { level == .repository ? "local" : "global" }
     private(set) var hooksPath: String?
     private(set) var hooks: [HookEntry] = []
     private(set) var lfs = false
@@ -90,9 +97,18 @@ final class RepositorySettingsModel {
     /// SSH 先のリポジトリなら、その SSH 先の名前。
     var host: String? { RepositoryLocation.isRemote(location) ? RepositoryLocation.host(location) : nil }
 
-    init(repository: Repository, location: String) {
+    init(repository: Repository, location: String, level: Level = .repository) {
         self.repository = repository
         self.location = location
+        self.level = level
+    }
+
+    /// すべてのリポジトリの段での、無視するパターンのファイル（`core.excludesFile`。なければ git の既定
+    /// `$XDG_CONFIG_HOME/git/ignore`、`~/.config/git/ignore`）。
+    var excludesPath: String {
+        if let p = effective("core.excludesFile")?.value, !p.isEmpty { return (p as NSString).expandingTildeInPath }
+        let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 }
+        return (((xdg ?? "~/.config") as NSString).expandingTildeInPath as NSString).appendingPathComponent("git/ignore")
     }
 
     func load() {
@@ -134,13 +150,19 @@ final class RepositorySettingsModel {
                 entries = e.entries.filter { $0.scope != "command" }.map {
                     $0.scope == "unknown" ? ConfigEntry(scope: "system", origin: $0.origin, key: $0.key, value: $0.value) : $0
                 }
+                // すべてのリポジトリの段では、握っている空のリポジトリの local は見ない。
+                if level == .allRepositories { entries.removeAll { $0.scope == "local" || $0.scope == "worktree" } }
                 knownKeys = k?.keys ?? []
                 remotes = r.remotes
+                // すべてのリポジトリの段の「無視するパターン」は global excludes のファイル。
+                let ignore = level == .repository
+                    ? (i.gitignore, i.exclude)
+                    : ("", (try? String(contentsOfFile: excludesPath, encoding: .utf8)) ?? "")
                 if (gitignore, exclude) == savedIgnore {
-                    gitignore = i.gitignore
-                    exclude = i.exclude
+                    gitignore = ignore.0
+                    exclude = ignore.1
                 }
-                savedIgnore = (i.gitignore, i.exclude)
+                savedIgnore = ignore
             } catch {
                 self.error = "\(error)"
             }
@@ -152,14 +174,14 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() }
     }
 
-    /// このリポジトリ（local）での値。
+    /// この段（このリポジトリなら local、すべてのリポジトリなら global）での値。
     func local(_ key: String) -> String? {
-        entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == "local" }?.value
+        entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == ownScope }?.value
     }
 
-    /// local 以外で決まっている値（local を消したときに効く値）。
+    /// この段以外で決まっている値（この段の値を消したときに効く値）。
     func inherited(_ key: String) -> ConfigEntry? {
-        entries.last { $0.key.lowercased() == key.lowercased() && $0.scope != "local" }
+        entries.last { $0.key.lowercased() == key.lowercased() && $0.scope != ownScope }
     }
 
     /// ユーザー全体（global）での値。
@@ -167,10 +189,12 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == "global" }?.value
     }
 
-    /// local の値を変える。nil か空なら消す。
+    /// この段の値を変える。nil か空なら消す。
     func set(_ key: String, _ value: String?) {
         let value = value?.trimmingCharacters(in: .whitespaces)
-        run(["op": "configSet", "key": key, "value": (value?.isEmpty ?? true) ? NSNull() : value!])
+        var command: [String: Any] = ["op": "configSet", "key": key, "value": (value?.isEmpty ?? true) ? NSNull() : value!]
+        if level == .allRepositories { command["scope"] = "global" }
+        run(command)
     }
 
     /// ユーザー全体（global。SSH 先のリポジトリなら SSH 先のユーザー）の値を変える。nil か空なら消す。
@@ -226,6 +250,18 @@ final class RepositorySettingsModel {
     }
 
     func saveIgnore() {
+        if level == .allRepositories {
+            let path = excludesPath
+            do {
+                try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+                try exclude.write(toFile: path, atomically: true, encoding: .utf8)
+                savedIgnore = ("", exclude)
+                error = nil
+            } catch {
+                self.error = "\(error)"
+            }
+            return
+        }
         run(["op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": exclude])
     }
 
@@ -464,7 +500,7 @@ private struct AllSettingsTab: View {
         case .all:
             let set = Set(all.map { $0.key.lowercased() })
             all += model.knownKeys.filter { !set.contains($0.lowercased()) }.map(blank)
-        case .customized: all = all.filter { $0.values["local"] != nil || $0.values["worktree"] != nil }
+        case .customized: all = all.filter { $0.values[model.ownScope] != nil || (model.level == .repository && $0.values["worktree"] != nil) }
         case .basic:
             let byKey = Dictionary(all.map { ($0.key.lowercased(), $0) }, uniquingKeysWith: { a, _ in a })
             let canonical = model.canonicalKeys
@@ -532,7 +568,7 @@ private struct AllSettingsTab: View {
                 Spacer()
                 TextField(L("Search by key or value"), text: $filter)
                     .textFieldStyle(.roundedBorder)
-                    .frame(width: 240)
+                    .frame(minWidth: 120, maxWidth: 240)
             }
             Table(of: ConfigRow.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
                 TableColumn(L("Key"), value: \.key) { row in
@@ -579,18 +615,23 @@ private struct AllSettingsTab: View {
                     TableColumn(header("system"), value: \.system) { row in cell(row, scope: "system") }
                         .width(min: 80, ideal: 120)
                         .customizationID("system")
-                    TableColumn(header("global"), value: \.global) { row in cell(row, scope: "global") }
-                        .width(min: 80, ideal: 140)
-                        .customizationID("global")
-                    TableColumn(header("local"), value: \.local) { row in
-                        if isEditing(row) { valueField(row) } else { cell(row, scope: "local") }
+                    TableColumn(header("global"), value: \.global) { row in
+                        if model.level == .allRepositories, isEditing(row) { valueField(row) } else { cell(row, scope: "global") }
                     }
                     .width(min: 80, ideal: 140)
-                    .customizationID("local")
-                    .disabledCustomizationBehavior(.all)
-                    TableColumn(header("worktree"), value: \.worktree) { row in cell(row, scope: "worktree") }
-                        .width(min: 80, ideal: 120)
-                        .customizationID("worktree")
+                    .customizationID("global")
+                    .disabledCustomizationBehavior(model.level == .allRepositories ? .all : [])
+                    if model.level == .repository {
+                        TableColumn(header("local"), value: \.local) { row in
+                            if isEditing(row) { valueField(row) } else { cell(row, scope: "local") }
+                        }
+                        .width(min: 80, ideal: 140)
+                        .customizationID("local")
+                        .disabledCustomizationBehavior(.all)
+                        TableColumn(header("worktree"), value: \.worktree) { row in cell(row, scope: "worktree") }
+                            .width(min: 80, ideal: 120)
+                            .customizationID("worktree")
+                    }
                 }
             } rows: {
                 ForEach(groups) { section in
@@ -831,7 +872,7 @@ func scopeLabel(_ scope: String, host: String?) -> String {
 }
 
 /// 行の右に出す、値の設定元。
-private struct SourceLabel: View {
+struct SourceLabel: View {
     let model: RepositorySettingsModel
     let key: String
     var body: some View {
@@ -846,7 +887,7 @@ private struct SourceLabel: View {
 
 /// 行の共通の形: 左に質問とその下に 1 文の説明、右に効いている値の欄、このリポジトリが上書きしている間だけ ↩︎、
 /// 最後に設定元。その横の ⓘ で、キーと値とファイル、上書きしなければ効く値が吹き出しに出る。
-private struct SettingRow<Control: View>: View {
+struct SettingRow<Control: View>: View {
     let model: RepositorySettingsModel
     let question: String
     let help: String
@@ -864,7 +905,7 @@ private struct SettingRow<Control: View>: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Text(question)
+                Text(question).frame(minWidth: 72, alignment: .leading)
                 Spacer()
                 control().disabled(disabledReason != nil)
                 if overriding {
@@ -976,7 +1017,7 @@ private struct SwitchRow: View {
 }
 
 /// 文字の設定。欄から離れたときか Return で書く。空にすると上書きを消す。
-private struct TextRow: View {
+struct TextRow: View {
     let model: RepositorySettingsModel
     let question: String
     let help: String
@@ -1060,11 +1101,20 @@ private struct PullMethodRow: View {
 
 /// 左の一覧の項目。組はなく、よく変えるものを先に、たまに見る 2 つを最後に。
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case author, commits, operations, branches, workingCopy, remotes, hooks, config
+    case machine, author, commits, operations, branches, workingCopy, remotes, hooks, config
     var id: String { rawValue }
+
+    /// その段にあるページ。機械のページはすべてのリポジトリの段（Settings > Git）だけ、リポジトリにしかないものはこのリポジトリの段だけ。
+    static func cases(for level: RepositorySettingsModel.Level) -> [SettingsPage] {
+        switch level {
+        case .repository: [.author, .commits, .operations, .branches, .workingCopy, .remotes, .hooks, .config]
+        case .allRepositories: [.machine, .author, .commits, .operations, .workingCopy, .config]
+        }
+    }
 
     var title: String {
         switch self {
+        case .machine: L("This Mac")
         case .author: L("Author and Signing")
         case .commits: L("Commits")
         case .operations: L("Operations")
@@ -1342,7 +1392,7 @@ private struct CommitsPage: View {
     }
 }
 
-/// メッセージのテンプレート: なし／Settings > Git の共有のテンプレート（`amonhen.commitTemplate` に名前。Amon Hen の
+/// メッセージのテンプレート: なし／Settings > Commit の共有のテンプレート（`amonhen.commitTemplate` に名前。Amon Hen の
 /// コミット欄だけが使う）／このリポジトリ専用（`<git dir>/amonhen/commit-template` に置き、git の `commit.template` を
 /// 向ける。端末の git も使う）／ファイル…（`commit.template`）。
 private struct TemplateRow: View {
@@ -1389,14 +1439,16 @@ private struct TemplateRow: View {
 
     var body: some View {
         SettingRow(model: model, question: L("Message template"),
-                   help: L("Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too."),
+                   help: model.level == .repository
+                       ? L("Shared templates live in Settings > Commit and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too.")
+                       : L("Shared templates live in Settings > Commit and are Amon Hen’s. A file is git’s commit.template, which git in a terminal uses too."),
                    keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: label) {
             Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
                 Text(L("None")).tag("")
                 if !templates.isEmpty {
                     Section(L("Shared")) { ForEach(templates) { Text($0.name).tag("lib:" + $0.name) } }
                 }
-                Text(L("This repository’s own")).tag(Self.own)
+                if model.level == .repository { Text(L("This repository’s own")).tag(Self.own) }
                 if case .file(let f) = choice { Text(label("file:" + f)).tag("file:" + f) }
                 Divider()
                 Text(L("A file…")).tag(Self.pickFile)
@@ -1481,7 +1533,9 @@ private struct WorkingCopyPage: View {
             }
             Section {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(L(".git/info/exclude, one pattern per line. Shared patterns go in .gitignore."))
+                    Text(model.level == .repository
+                         ? L(".git/info/exclude, one pattern per line. Shared patterns go in .gitignore.")
+                         : L("%@, one pattern per line, like .gitignore (core.excludesFile; git’s default is ~/.config/git/ignore).", (model.excludesPath as NSString).abbreviatingWithTildeInPath))
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.horizontal, 8)
                     TextEditor(text: $model.exclude)
                         .font(.system(.body, design: .monospaced))
@@ -1495,7 +1549,7 @@ private struct WorkingCopyPage: View {
                 }
                 .padding(.vertical, 6)
             } header: {
-                Text(L("Ignore in this repository only"))
+                Text(model.level == .repository ? L("Ignore in this repository only") : L("Ignore everywhere"))
             }
         }
         .formStyle(.grouped)
@@ -1715,7 +1769,7 @@ private struct HooksLFSPage: View {
     }
 }
 
-private struct RepositorySettingsView: View {
+struct RepositorySettingsView: View {
     let model: RepositorySettingsModel
     @State var page: SettingsPage
 
@@ -1723,22 +1777,24 @@ private struct RepositorySettingsView: View {
         HStack(spacing: 0) {
             VStack(spacing: 0) {
                 List(selection: Binding(get: { Optional(page) }, set: { if let p = $0 { page = p } })) {
-                    ForEach(SettingsPage.allCases) { Text($0.title).tag($0) }
+                    ForEach(SettingsPage.cases(for: model.level)) { Text($0.title).tag($0) }
                 }
                 .listStyle(.sidebar)
-                // このリポジトリを動かしている git。機械（この Mac か SSH 先）のものなので、変えるのはその機械の設定で。
-                Button {
-                    if model.host == nil { SettingsWindowController.shared.show(tab: "Git") }
-                } label: {
-                    Text("git \(model.gitVersion ?? "?") · \(model.host ?? L("This Mac"))")
-                        .font(.caption).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
+                if model.level == .repository {
+                    // このリポジトリを動かしている git。機械（この Mac か SSH 先）のものなので、変えるのはその機械の設定で。
+                    Button {
+                        if model.host == nil { SettingsWindowController.shared.show(tab: "Git") }
+                    } label: {
+                        Text("git \(model.gitVersion ?? "?") · \(model.host ?? L("This Mac"))")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help(model.host.map { L("The git on %@ runs this repository. Every repository on that host uses it.", $0) }
+                        ?? L("This Mac’s git runs this repository. Choose it in Settings > Git."))
+                    .padding(.horizontal, 14).padding(.vertical, 8)
                 }
-                .buttonStyle(.plain)
-                .help(model.host.map { L("The git on %@ runs this repository. Every repository on that host uses it.", $0) }
-                    ?? L("This Mac’s git runs this repository. Choose it in Settings > Git."))
-                .padding(.horizontal, 14).padding(.vertical, 8)
             }
             .frame(width: 200)
             Divider()
@@ -1759,6 +1815,7 @@ private struct RepositorySettingsView: View {
 
     @ViewBuilder private var content: some View {
         switch page {
+        case .machine: MachinePage(model: model)
         case .author: AuthorSigningPage(model: model)
         case .commits: CommitsPage(model: model)
         case .operations: OperationsPage(model: model)

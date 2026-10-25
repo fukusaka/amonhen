@@ -1297,3 +1297,10 @@
 "One pattern per line, like .gitignore." = "1 行 1 パターン。.gitignore と同じ書き方。";
 "Choose a git executable" = "git の実行ファイルを選ぶ";
 "Choose the global excludes file" = "global excludes のファイルを選ぶ";
+"%@, one pattern per line, like .gitignore (core.excludesFile; git’s default is ~/.config/git/ignore)." = "%@。1 行 1 パターン、.gitignore と同じ書き方（core.excludesFile。git の既定は ~/.config/git/ignore）。";
+"Back to the git on the PATH." = "PATH の git に戻します。";
+"(not set)" = "（未設定）";
+"On the PATH: %@" = "PATH では: %@";
+"Couldn’t prepare the settings repository" = "設定のためのリポジトリを用意できませんでした";
+"Shared templates live in Settings > Commit and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは Settings > コミットにあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";
+"Shared templates live in Settings > Commit and are Amon Hen’s. A file is git’s commit.template, which git in a terminal uses too." = "共有のテンプレートは Settings > コミットにあり、Amon Hen のものです。ファイルは git の commit.template で、端末の git も使います。";
