@@ -1,6 +1,7 @@
 import AmonhenKit
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// git の設定の 1 項目と、どこで決まっているか。
 struct ConfigEntry: Decodable, Hashable, Identifiable {
@@ -37,6 +38,8 @@ final class RepositorySettingsModel {
     private(set) var hooks: [HookEntry] = []
     private(set) var lfs = false
     private(set) var lfsPatterns: [String] = []
+    /// LFS にあるファイルの数（git-lfs がなければ nil）。
+    private(set) var lfsFiles: Int?
     private(set) var entries: [ConfigEntry] = []
     /// git が知っている設定の変数の名前（設定の有無は問わない。読めなければ空）。
     private(set) var knownKeys: [String] = []
@@ -99,7 +102,7 @@ final class RepositorySettingsModel {
             struct Keys: Decodable { let keys: [String] }
             struct Remotes: Decodable { let remotes: [RemoteEntry] }
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
-            struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String] }
+            struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String]; let lfsFiles: Int? }
             struct Version: Decodable { let version: String?; let updateRefs: Bool }
             struct Template: Decodable { let text: String?; let path: String }
             struct Groups: Decodable { struct Branch: Decodable { let name: String }; let base: String?; let branches: [Branch] }
@@ -125,6 +128,7 @@ final class RepositorySettingsModel {
                 hooks = h.hooks
                 lfs = h.lfs
                 lfsPatterns = h.lfsPatterns
+                lfsFiles = h.lfsFiles
                 // `command` は Amon Hen が git を起動するときの `-c`（色を切るなど）で、リポジトリの設定ではない。
                 // `unknown` は git が組み込みで読むファイル（Apple の git の Xcode の gitconfig）で、機械全体のもの。
                 entries = e.entries.filter { $0.scope != "command" }.map {
@@ -195,6 +199,16 @@ final class RepositorySettingsModel {
             load()
             onRepositoryChange?()
         }
+    }
+
+    /// フックの実行の許可を付ける・外す。
+    func setHookEnabled(_ name: String, _ enabled: Bool) {
+        run(["op": "setHookEnabled", "name": name, "enabled": enabled])
+    }
+
+    /// `git lfs track`（`track` が false なら `untrack`）。
+    func lfsTrack(_ pattern: String, _ track: Bool) {
+        run(["op": "lfsTrack", "pattern": pattern, "track": track])
     }
 
     func saveIgnore() {
@@ -1462,46 +1476,126 @@ private struct WorkingCopyPage: View {
     }
 }
 
-/// hooks と LFS。
+/// hooks と LFS（docs/ux.md の 4.5）: フックは名前・いつ動くか・有効（実行の許可）・エディタで開く、の表。LFS は
+/// git-lfs の有無、`.gitattributes` の追跡パターン（Track Pattern… と Remove）、LFS にあるファイルの数。
 private struct HooksLFSPage: View {
     let model: RepositorySettingsModel
+    @State private var hookSelection: String?
+    @State private var patternSelection: String?
+
+    /// フックが動くとき（git の説明の要約）。
+    private static func when(_ hook: String) -> String {
+        switch hook {
+        case "pre-commit": L("Before a commit")
+        case "pre-merge-commit": L("Before a merge commit")
+        case "prepare-commit-msg": L("Before the message is edited")
+        case "commit-msg": L("On the commit message")
+        case "post-commit": L("After a commit")
+        case "pre-rebase": L("Before a rebase")
+        case "post-checkout": L("After a checkout")
+        case "post-merge": L("After a merge")
+        case "pre-push": L("Before a push")
+        case "pre-auto-gc": L("Before an automatic gc")
+        case "post-rewrite": L("After commits are rewritten")
+        case "applypatch-msg", "pre-applypatch", "post-applypatch": L("Around git am")
+        case "post-index-change": L("After the index changes")
+        case "fsmonitor-watchman": L("For fsmonitor")
+        case "reference-transaction": L("When refs change")
+        case "push-to-checkout", "pre-receive", "update", "post-receive", "post-update", "proc-receive", "sendemail-validate": L("On the receiving side")
+        default: ""
+        }
+    }
+
+    private var hooksDirectory: String? {
+        guard model.host == nil else { return nil }
+        let root = RepositoryLocation.path(model.location)
+        guard let p = model.hooksPath else { return (root as NSString).appendingPathComponent(".git/hooks") }
+        if p.hasPrefix("/") { return p }
+        if p.hasPrefix("~") { return (p as NSString).expandingTildeInPath }
+        return (root as NSString).appendingPathComponent(p)
+    }
+
     var body: some View {
-        Form {
-            Section {
-                if model.hooks.isEmpty {
-                    Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? L("core.hooksPath (%@) is outside the working tree, so its contents can’t be shown.", $0) : L("None") } ?? L("None"))
-                        .foregroundStyle(.secondary)
-                }
-                ForEach(model.hooks) { hook in
-                    HStack {
-                        Text(hook.name).font(.system(.body, design: .monospaced))
-                        Spacer()
-                        Text(hook.enabled ? L("Enabled") : L("Not executable (no chmod +x)"))
-                            .foregroundStyle(hook.enabled ? Color.green : Color.secondary)
-                    }
-                }
-            } header: {
-                Text("Hooks")
-            } footer: {
-                Text(L("Location: %@. .sample files aren’t counted. git runs these on commit, push and so on.", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
+        GroupedPage {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Hooks").font(.headline)
+            if model.hooks.isEmpty {
+                Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? L("core.hooksPath (%@) is outside the working tree, so its contents can’t be shown.", $0) : L("No hooks. .sample files aren’t counted.") } ?? L("No hooks. .sample files aren’t counted."))
                     .foregroundStyle(.secondary)
+            } else {
+                Table(model.hooks, selection: $hookSelection) {
+                    TableColumn(L("Name")) { h in Text(h.name).font(.system(.body, design: .monospaced)) }.width(min: 140, ideal: 170)
+                    TableColumn(L("Runs")) { h in Text(Self.when(h.name)).foregroundStyle(.secondary) }
+                    TableColumn(L("Enabled")) { h in
+                        Toggle("", isOn: Binding(get: { h.enabled }, set: { model.setHookEnabled(h.name, $0) }))
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            .help(L("The executable bit. git runs only executable hooks."))
+                    }
+                    .width(60)
+                    TableColumn("") { h in
+                        if let dir = hooksDirectory {
+                            Button(L("Open in Editor")) { open((dir as NSString).appendingPathComponent(h.name)) }
+                                .buttonStyle(.link)
+                        }
+                    }
+                    .width(120)
+                }
+                .frame(minHeight: 120, idealHeight: CGFloat(28 * (model.hooks.count + 1)), maxHeight: 320)
             }
-            Section {
-                LabeledContent("Git LFS", value: model.lfs ? L("Installed (filter.lfs is set)") : L("Not installed"))
-                if model.lfsPatterns.isEmpty {
-                    Text(L("No LFS patterns in .gitattributes.")).foregroundStyle(.secondary)
+            Text(L("Location: %@", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
+                .font(.caption).foregroundStyle(.secondary)
+
+            Text("LFS").font(.headline).padding(.top, 12)
+            if model.lfs {
+                Text(model.lfsFiles.map { L("Installed. %ld files are in LFS.", $0) } ?? L("Installed (filter.lfs is set)"))
+            } else {
+                Text(L("Not installed. Install it with brew install git-lfs and git lfs install."))
+                    .foregroundStyle(model.lfsPatterns.isEmpty ? Color.secondary : Color.orange)
+            }
+            if model.lfsPatterns.isEmpty {
+                Text(L("No LFS patterns in .gitattributes.")).foregroundStyle(.secondary)
+            } else {
+                Table(model.lfsPatterns.map { PatternRow(pattern: $0) }, selection: $patternSelection) {
+                    TableColumn(L("Pattern")) { r in Text(r.pattern).font(.system(.body, design: .monospaced)) }
                 }
-                ForEach(model.lfsPatterns, id: \.self) { Text($0).font(.system(.body, design: .monospaced)) }
-            } header: {
-                Text("LFS")
-            } footer: {
-                if !model.lfs && !model.lfsPatterns.isEmpty {
-                    Text(L("There are LFS patterns, but git lfs isn’t installed. Install it with brew install git-lfs and git lfs install."))
-                        .foregroundStyle(.orange)
-                }
+                .frame(minHeight: 80, idealHeight: CGFloat(28 * (model.lfsPatterns.count + 1)), maxHeight: 240)
+            }
+            HStack {
+                Button(L("Track Pattern…")) { track() }.disabled(!model.lfs)
+                Button(L("Remove")) { patternSelection.map { model.lfsTrack($0, false) }; patternSelection = nil }
+                    .disabled(patternSelection == nil || !model.lfs)
+                Spacer()
             }
         }
-        .formStyle(.grouped)
+        }
+    }
+
+    private struct PatternRow: Identifiable { let pattern: String; var id: String { pattern } }
+
+    /// 既定のテキストエディタで開く（手元のリポジトリだけ）。
+    private func open(_ path: String) {
+        let url = URL(fileURLWithPath: path)
+        if let app = NSWorkspace.shared.urlForApplication(toOpen: .plainText) {
+            NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    private func track() {
+        let alert = NSAlert()
+        alert.messageText = L("Track Pattern")
+        alert.informativeText = L("Files matching the pattern are stored in LFS from now on (git lfs track).")
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: L("Cancel"))
+        let field = NSTextField(string: "")
+        field.placeholderString = "*.psd"
+        field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let pattern = field.stringValue.trimmingCharacters(in: .whitespaces)
+        if !pattern.isEmpty { model.lfsTrack(pattern, true) }
     }
 }
 
