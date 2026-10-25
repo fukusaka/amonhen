@@ -394,6 +394,24 @@ public final class HistoryChunk: @unchecked Sendable {
 }
 
 /// 手元の共有の daemon（`amonhend --serve`）。
+/// 手元のエンジンの在りか（コアと同じ探し方。開発中は、このビルドのチェックアウトの中だけを探す）。
+public enum Engines {
+    /// SSH 先へ送るエンジン（`amonhen-<os>-<arch>`）の置き場所（`.app` なら Contents/Resources/engines、開発中は
+    /// チェックアウトの dist/engine）。
+    public static var bundledDirectory: String {
+        guard let out = amonhen_engines_dir() else { return "" }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
+
+    /// 開発中に共有の daemon にするエンジン（チェックアウトの target/release/amonhen）。なければ nil。
+    public static var development: String? {
+        guard let out = amonhen_development_engine() else { return nil }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
+}
+
 public enum SharedDaemon {
     /// 様子（`amonhen daemon status --json` と同じ）。
     public struct Status: Decodable, Sendable {
