@@ -45,6 +45,8 @@ becomes the GitHub Release notes.
   agent, `GIT_*`, the app's password dialog), not with that of whichever started the daemon first.
 - `AMONHEN_PASS_ENV=NAME1,NAME2` adds environment variables that git and ssh get, through the shared daemon too; the app
   no longer takes `HOMEBREW_*` from the login shell.
+- Settings > Advanced > Terminal Environment shows the git and SSH agent in use and the variables passed, lets you leave
+  out or add names, and applies a change at once, to the shared daemon too.
 - Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
   from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
   where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
