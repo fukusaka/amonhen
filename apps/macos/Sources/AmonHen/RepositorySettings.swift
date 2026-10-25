@@ -253,7 +253,7 @@ private struct GroupedPage<Content: View>: View {
     var body: some View {
         ZStack {
             Form { EmptyView() }.formStyle(.grouped)
-            content.padding()
+            content.padding().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }
@@ -1540,7 +1540,7 @@ private struct HooksLFSPage: View {
                     }
                     .width(120)
                 }
-                .frame(minHeight: 120, idealHeight: CGFloat(28 * (model.hooks.count + 1)), maxHeight: 320)
+                .frame(height: CGFloat(28 * model.hooks.count + 36))
             }
             Text(L("Location: %@", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
                 .font(.caption).foregroundStyle(.secondary)
@@ -1558,7 +1558,7 @@ private struct HooksLFSPage: View {
                 Table(model.lfsPatterns.map { PatternRow(pattern: $0) }, selection: $patternSelection) {
                     TableColumn(L("Pattern")) { r in Text(r.pattern).font(.system(.body, design: .monospaced)) }
                 }
-                .frame(minHeight: 80, idealHeight: CGFloat(28 * (model.lfsPatterns.count + 1)), maxHeight: 240)
+                .frame(height: CGFloat(28 * min(model.lfsPatterns.count, 8) + 36))
             }
             HStack {
                 Button(L("Track Pattern…")) { track() }.disabled(!model.lfs)
