@@ -159,6 +159,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(item("New Worktree…", #selector(RepositoryWindow.newWorktree(_:)), ""))
         menu.addItem(item(L("Prune Worktrees"), #selector(RepositoryWindow.pruneWorktrees(_:)), ""))
         menu.addItem(item("New Tag…", #selector(RepositoryWindow.newTag(_:)), "t", [.command, .option]))
+        menu.addItem(item(L("Add Remote…"), #selector(RepositoryWindow.addRemote(_:)), ""))
         menu.addItem(item("Merge…", #selector(RepositoryWindow.mergeIntoCurrent(_:)), "m", [.command, .option]))
         menu.addItem(item("Rebase…", #selector(RepositoryWindow.rebaseCurrent(_:)), "r", [.command, .option]))
         menu.addItem(.separator())

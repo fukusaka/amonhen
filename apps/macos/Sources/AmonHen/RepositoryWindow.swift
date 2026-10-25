@@ -242,6 +242,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
         sidebar.onSelectWorktree = { [weak self] path in self?.edit(worktree: path) }
         sidebar.onWorktreeAction = { [weak self] path, action in self?.worktreeAction(path, action) }
+        sidebar.onRemoteAction = { [weak self] name, action in self?.remoteAction(name, action) }
         // ブランチ・タグを選ぶと、その履歴に絞り込む。
         sidebar.onSelect = { [weak self, weak history, weak detail] item in
             guard let history, let target = item.target else { return }
@@ -576,6 +577,32 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// サイドバーの worktree の右クリック。
+    /// サイドバーのリモートの操作。追加と編集はリポジトリの設定と同じシート、削除は確かめてから。
+    private func remoteAction(_ name: String?, _ action: SidebarViewController.RemoteAction) {
+        let window = self.window
+        switch action {
+        case .add:
+            RemoteSheet.present(in: window, repository: repository, remote: nil) { [weak self] in self?.actions.perform(sequence: $0) }
+        case .edit:
+            guard let name else { return }
+            let repository = self.repository
+            Task {
+                nonisolated struct Remotes: Decodable { let remotes: [RemoteEntry] }
+                let remotes = (try? await Task.detached { try repository.info(["op": "remotes"], as: Remotes.self) }.value)?.remotes ?? []
+                guard let remote = remotes.first(where: { $0.name == name }) else { return }
+                RemoteSheet.present(in: window, repository: repository, remote: remote) { [weak self] in self?.actions.perform(sequence: $0) }
+            }
+        case .remove:
+            guard let name, RemoteSheet.confirmRemove(name) else { return }
+            actions.perform(["op": "changeRemote", "change": ["kind": "remove", "name": name]])
+        }
+    }
+
+    /// Repository > Add Remote…（サイドバーと設定のページと同じシート）。
+    @objc func addRemote(_ sender: Any?) {
+        remoteAction(nil, .add)
+    }
+
     private func worktreeAction(_ path: String, _ action: SidebarViewController.WorktreeAction) {
         guard let info = worktrees.first(where: { $0.isSame(path) }) else { return }
         switch action {
@@ -1031,6 +1058,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // --working-copy で、Working Copy を開く（見た目の確認用）。
         if CommandLine.arguments.contains("--working-copy") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .workingCopy) }
+        }
+        // --remote-sheet [NAME] で、リモートの追加（名前を付ければ編集）のシートを開く（見た目の確認用）。
+        if CommandLine.arguments.contains("--remote-sheet") {
+            let name = AppDelegate.option("--remote-sheet").flatMap { $0.hasPrefix("-") ? nil : $0 }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in remoteAction(name, name == nil ? .add : .edit) }
         }
         // --app-settings で、アプリの Settings ウィンドウ（Git のタブ）を開く（見た目の確認用）。
         if CommandLine.arguments.contains("--app-settings") {

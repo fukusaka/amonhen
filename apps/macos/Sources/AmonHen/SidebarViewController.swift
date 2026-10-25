@@ -232,6 +232,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onSelectWorktree: ((String) -> Void)?
     enum WorktreeAction { case reveal, terminal, remove, prune }
     var onWorktreeAction: ((String, WorktreeAction) -> Void)?
+    /// Remotes の組の文脈メニューの「リモートを追加…」（name は nil）と、リモートの「名前を変更…」「URL を編集…」「削除…」。
+    enum RemoteAction { case add, edit, remove }
+    var onRemoteAction: ((String?, RemoteAction) -> Void)?
 
     /// リポジトリの worktree（2 つ以上あるときだけ Worktrees に出す）。
     func show(worktrees: [WorktreeInfo], editing: String) {
@@ -1057,6 +1060,21 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 NSPasteboard.general.setString(pr.url, forType: .string)
             })
             return
+        }
+        // Remotes の組とその下のリモート（docs/ux.md の 4.5 のリモート: 設定のページと同じ操作をここにも）。
+        if let actions, let node = outline.item(atRow: outline.clickedRow) as? Node, node.item == nil, node.worktree == nil {
+            if let remote = node.remote {
+                menu.addItem(ClosureMenuItem(title: L("Rename…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
+                menu.addItem(ClosureMenuItem(title: L("Edit URL…")) { [weak self] in self?.onRemoteAction?(remote, .edit) })
+                menu.addItem(ClosureMenuItem(title: "Prune") { actions.perform(["op": "changeRemote", "change": ["kind": "prune", "name": remote]]) })
+                menu.addItem(.separator())
+                menu.addItem(ClosureMenuItem(title: L("Remove…")) { [weak self] in self?.onRemoteAction?(remote, .remove) })
+                return
+            }
+            if node.title == "Remotes" {
+                menu.addItem(ClosureMenuItem(title: L("Add Remote…")) { [weak self] in self?.onRemoteAction?(nil, .add) })
+                return
+            }
         }
         guard let actions, let node = outline.item(atRow: outline.clickedRow) as? Node, let item = node.item else { return }
         let name = item.name

@@ -326,6 +326,11 @@ pub enum Command {
     ChangeRemote {
         change: amonhen_model::RemoteChange,
     },
+    /// `url` につないで、ブランチとタグの数と HEAD のブランチを読む（`info.branches`・`info.tags`・`info.head`。
+    /// `git ls-remote`。SSH 先のリポジトリなら SSH 先から）。
+    CheckRemote {
+        url: String,
+    },
     /// worktree の一覧（`info.worktrees`: path・head・branch・detached・bare・locked・prunable・main・current）。
     Worktrees,
     /// `paths` の worktree の変更の数（`info.worktrees`: path・count・stamp）。開いたリポジトリから読むので、
@@ -2119,6 +2124,11 @@ impl Repository {
                 ops.change_remote(&change)?;
                 ok()
             }
+            Command::CheckRemote { url } => Ok(Response {
+                ok: true,
+                info: Some(serde_json::to_value(ops.check_remote(&url)?)?),
+                ..Default::default()
+            }),
             Command::Worktrees => {
                 let paths = self.backend().paths();
                 let list = crate::worktree::parse(&ops.worktree_list()?, paths.workdir.as_deref());
@@ -3593,6 +3603,21 @@ mod tests {
             !keys
                 .iter()
                 .any(|e| e["key"] == "pull.rebase" && e["scope"] == "local")
+        );
+
+        // リモートにつないで確かめる: 自分自身を URL にすると、ブランチ 1 つと HEAD が読める。
+        let check = run(
+            &repo,
+            &format!(
+                r#"{{"op":"checkRemote","url":{}}}"#,
+                serde_json::json!(dir.to_str().unwrap())
+            ),
+        );
+        assert_eq!(check["info"]["branches"], 1, "{check}");
+        assert_eq!(check["info"]["head"], "main", "{check}");
+        assert_eq!(
+            run(&repo, r#"{"op":"checkRemote","url":"/nonexistent/repo"}"#)["ok"],
+            false
         );
 
         // リポジトリ専用のコミットのテンプレート: 書くと commit.template がそれを指す。
