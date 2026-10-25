@@ -120,10 +120,13 @@ while [ $# -gt 0 ]; do
     esac
 done
 shift
+# 手元の daemon が ssh に渡した環境（つないだ FE のもの）を残す。
+echo "${{GIT_AMONHEN_TEST:-}}" >> '{1}/ssh-env.log'
 # SSH 先の環境は手元から引き継がない（手元に入れた amonhen を SSH 先のものと見なさない）。
 exec env -i HOME='{0}' PATH='{0}/bin:/usr/bin:/bin' sh -c "$*"
 "#,
-            home.display()
+            home.display(),
+            dir.display()
         ),
     )
     .unwrap();
@@ -526,7 +529,16 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
             }
         };
         let mut writer = stream.try_clone().unwrap();
-        amonhen_remote::local::write_preamble(&mut writer, location).unwrap();
+        // FE の環境も送る（daemon は、このつながりのために動かす ssh・git にそれを渡す）。
+        let env = amonhen_model::process::ClientEnv::from_vars([(
+            "GIT_AMONHEN_TEST".to_owned(),
+            "from the client".to_owned(),
+        )]);
+        amonhen_remote::local::write_preamble(
+            &mut writer,
+            &amonhen_remote::local::opening(location, &env),
+        )
+        .unwrap();
         let conn = Connection::new(stream, std::io::BufWriter::new(writer));
         conn.mark_local();
         conn
@@ -538,6 +550,12 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     assert_eq!(b.load_history().unwrap().graph.len(), 1);
     // SSH 先にはエンジンを 1 つだけ送った（2 つ目の相手は同じつながりを使う）。
     assert_eq!(engines(&remote_home).len(), 1);
+    // daemon は、つないだ FE の環境で ssh を動かした（daemon 自身は GIT_AMONHEN_TEST を持たない）。
+    let seen = std::fs::read_to_string(tmp.path().join("ssh-env.log")).unwrap();
+    assert!(
+        !seen.is_empty() && seen.lines().all(|l| l == "from the client"),
+        "{seen}"
+    );
 
     // 命令は手元の daemon のコアから SSH 先の git に届き、History にも出る。
     let reply =

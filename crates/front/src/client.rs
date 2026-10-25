@@ -117,7 +117,10 @@ impl Remote {
         let mut writer = std::io::BufWriter::new(stream.writer);
         amonhen_remote::local::write_preamble(
             &mut writer,
-            &format!("{}{location}", crate::PREAMBLE),
+            &amonhen_remote::local::opening(
+                &format!("{}{location}", crate::PREAMBLE),
+                &amonhen_model::process::ClientEnv::current(),
+            ),
         )?;
         let shared = Arc::new(Shared::default());
         let reading = shared.clone();

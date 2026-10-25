@@ -133,13 +133,27 @@ type Writer = BufWriter<Box<dyn std::io::Write + Send>>;
 
 fn serve_connection(state: &State, stream: amonhen_remote::endpoint::Duplex) -> Result<()> {
     let mut reader = BufReader::new(stream.reader);
-    let path = match local::read_preamble(&mut reader) {
+    let opening = match local::read_preamble(&mut reader) {
         Ok(p) => p,
         // 動いているかを確かめるだけでつないで閉じた（別の daemon の起動など）。
         Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(()),
         Err(e) => return Err(e.into()),
     };
-    let mut writer = BufWriter::new(stream.writer);
+    // つないだ FE の環境。このつながりで動かす git・ssh（開くときの ssh も）に渡す。
+    let (path, env) = local::split_opening(&opening);
+    amonhen_model::process::with_client_env(&env.clone(), || {
+        serve_opened(state, path, env, reader, BufWriter::new(stream.writer))
+    })
+}
+
+/// 最初の文を読んだあとのつながり（`path` は開く場所か、daemon への指示）。
+fn serve_opened(
+    state: &State,
+    path: &str,
+    env: amonhen_model::process::ClientEnv,
+    mut reader: Reader,
+    mut writer: Writer,
+) -> Result<()> {
     // リポジトリではなく、daemon への指示。
     if let Some(command) = path.strip_prefix(local::CONTROL) {
         use amonhen_remote::frame::{self, Kind};
@@ -160,9 +174,9 @@ fn serve_connection(state: &State, stream: amonhen_remote::endpoint::Duplex) -> 
     }
     // FE 向けの窓口（`amonhen-front`）: コアはこの daemon で動き、相手は JSON とレコードを受け取る。
     if let Some(location) = path.strip_prefix(amonhen_front::PREAMBLE) {
-        return serve_front(state, location, reader, writer);
+        return serve_front(state, location, env, reader, writer);
     }
-    let shared = match open(state, &path) {
+    let shared = match open(state, path) {
         Ok(s) => s,
         Err(e) => {
             // 開けなければ、最初の要求（Hello）に理由を返して閉じる。
@@ -177,6 +191,7 @@ fn serve_connection(state: &State, stream: amonhen_remote::endpoint::Duplex) -> 
     let host: Arc<dyn amonhen_remote::Host> = Arc::new(CoreHost(shared.clone()));
     let server = Server::new(shared.backend.clone(), writer)
         .without_compression()
+        .with_client_env(env)
         .with_host(host)
         .with_search_cache(shared.search.clone());
     let id = state.next.fetch_add(1, Ordering::Relaxed);
@@ -191,7 +206,13 @@ fn serve_connection(state: &State, stream: amonhen_remote::endpoint::Duplex) -> 
 }
 
 /// FE 向けの窓口のやりとり。要求ごとにスレッドで実行し、答えは番号つきで返す（順不同）。
-fn serve_front(state: &State, location: &str, mut reader: Reader, writer: Writer) -> Result<()> {
+fn serve_front(
+    state: &State,
+    location: &str,
+    env: amonhen_model::process::ClientEnv,
+    mut reader: Reader,
+    writer: Writer,
+) -> Result<()> {
     use amonhen_remote::frame::{self, Kind};
     use std::sync::atomic::AtomicBool;
     let opened = open(state, location).and_then(|shared| Ok((core(&shared)?.clone(), shared)));
@@ -231,13 +252,19 @@ fn serve_front(state: &State, location: &str, mut reader: Reader, writer: Writer
                 Kind::Request => {
                     let cancel = Arc::new(AtomicBool::new(false));
                     cancels.lock().unwrap().insert(f.id, cancel.clone());
-                    let (session, writer, cancels) =
-                        (session.clone(), writer.clone(), cancels.clone());
+                    let (session, writer, cancels, env) = (
+                        session.clone(),
+                        writer.clone(),
+                        cancels.clone(),
+                        env.clone(),
+                    );
                     std::thread::spawn(move || {
                         let result = serde_json::from_slice::<serde_json::Value>(&f.payload)
                             .map_err(|e| tr!("Can’t read the command: {e}", e = e).into())
                             .and_then(|request| {
-                                session.handle(&request, &|| cancel.load(Ordering::Relaxed))
+                                amonhen_model::process::with_client_env(&env, || {
+                                    session.handle(&request, &|| cancel.load(Ordering::Relaxed))
+                                })
                             });
                         cancels.lock().unwrap().remove(&f.id);
                         let mut out = writer.lock().unwrap();

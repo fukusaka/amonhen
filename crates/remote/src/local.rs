@@ -12,6 +12,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use amonhen_model::Result;
+use amonhen_model::process::ClientEnv;
 
 use crate::Connection;
 
@@ -107,7 +108,28 @@ pub fn start(daemon: &str) -> Result<()> {
     wait_for(&endpoint, Duration::from_secs(5)).map(drop)
 }
 
-/// つないで最初に送る、開くリポジトリのパス。
+/// つないで最初に送る文: 開く場所と、この FE の環境（`amonhen_model::process::ClientEnv`）を NUL でつないだもの。
+/// 共有の daemon は、このつながりで動かす git・ssh（開くときの ssh も）を、この環境で動かす。
+pub fn opening(location: &str, env: &ClientEnv) -> String {
+    if env.is_empty() {
+        location.to_owned()
+    } else {
+        format!("{location}\0{}", env.encode())
+    }
+}
+
+/// 受け取った最初の文を（開く場所, FE の環境）に分ける。daemon への指示（`CONTROL` で始まる）はそのまま。
+pub fn split_opening(text: &str) -> (&str, ClientEnv) {
+    if text.starts_with(CONTROL) {
+        return (text, ClientEnv::default());
+    }
+    match text.split_once('\0') {
+        Some((location, env)) => (location, ClientEnv::decode(env)),
+        None => (text, ClientEnv::default()),
+    }
+}
+
+/// つないで最初に送る、開くリポジトリのパス（`opening`）。
 pub fn write_preamble(out: &mut impl Write, repo: &str) -> std::io::Result<()> {
     out.write_all(&(repo.len() as u32).to_le_bytes())?;
     out.write_all(repo.as_bytes())?;
@@ -131,7 +153,7 @@ pub fn read_preamble(input: &mut impl Read) -> std::io::Result<String> {
 /// 共有の daemon で `repo` を開いてつなぐ。daemon がいなければ `daemon`（エンジンのパス）を起動してから。
 pub fn connect(repo: &str, daemon: &str) -> Result<Arc<Connection>> {
     let mut duplex = stream(daemon)?;
-    write_preamble(&mut duplex.writer, repo)?;
+    write_preamble(&mut duplex.writer, &opening(repo, &ClientEnv::current()))?;
     let conn = Connection::new(duplex.reader, std::io::BufWriter::new(duplex.writer));
     conn.mark_local();
     Ok(conn)
