@@ -356,6 +356,28 @@ pub enum Command {
         gitignore: String,
         exclude: String,
     },
+    /// このリポジトリ専用のコミットのメッセージのテンプレート（`<git dir>/amonhen/commit-template`）の中身
+    /// （`info.text`。なければ null）と、git の `commit.template` に書くそのパス（`info.path`）。
+    CommitTemplate,
+    /// 専用のテンプレートを書き、`commit.template`（local）をそれに向ける。
+    SaveCommitTemplate {
+        text: String,
+    },
+}
+
+/// リポジトリ専用のコミットのテンプレートの置き場所（`<git dir>` から）。
+const COMMIT_TEMPLATE: &str = "amonhen/commit-template";
+
+impl Repository {
+    /// 専用のテンプレートのファイルのパス（git の `commit.template` に書く。絶対パス）。
+    fn commit_template_path(&self) -> String {
+        self.backend()
+            .paths()
+            .git_dir
+            .join(COMMIT_TEMPLATE)
+            .to_string_lossy()
+            .into_owned()
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -2156,6 +2178,27 @@ impl Repository {
                 files.write(Root::GitDir, "info/exclude", exclude.as_bytes())?;
                 ok()
             }
+            Command::CommitTemplate => {
+                let text = self
+                    .backend()
+                    .files()
+                    .read(Root::GitDir, COMMIT_TEMPLATE)?
+                    .map(|b| String::from_utf8_lossy(&b).into_owned());
+                Ok(Response {
+                    ok: true,
+                    info: Some(
+                        serde_json::json!({ "text": text, "path": self.commit_template_path() }),
+                    ),
+                    ..Default::default()
+                })
+            }
+            Command::SaveCommitTemplate { text } => {
+                self.backend()
+                    .files()
+                    .write(Root::GitDir, COMMIT_TEMPLATE, text.as_bytes())?;
+                ops.config_set("commit.template", Some(&self.commit_template_path()))?;
+                ok()
+            }
             Command::SaveMerge { path, text, stage } => {
                 let files = self.backend().files();
                 undo.record_files(ops, &format!("Merge {path}"), &[&path], || {
@@ -3551,6 +3594,28 @@ mod tests {
                 .iter()
                 .any(|e| e["key"] == "pull.rebase" && e["scope"] == "local")
         );
+
+        // リポジトリ専用のコミットのテンプレート: 書くと commit.template がそれを指す。
+        assert_eq!(
+            run(&repo, r#"{"op":"commitTemplate"}"#)["info"]["text"],
+            serde_json::Value::Null
+        );
+        assert_eq!(
+            run(&repo, r#"{"op":"saveCommitTemplate","text":"{issue}: \n"}"#)["ok"],
+            true
+        );
+        let t = run(&repo, r#"{"op":"commitTemplate"}"#);
+        assert_eq!(t["info"]["text"], "{issue}: \n");
+        let path = t["info"]["path"].as_str().unwrap().to_owned();
+        assert!(path.ends_with("commit-template"), "{path}");
+        let list = run(&repo, r#"{"op":"configList"}"#);
+        let set = list["info"]["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["key"] == "commit.template" && e["scope"] == "local")
+            .unwrap();
+        assert_eq!(set["value"], path);
 
         // 署名の鍵: 知らない形式は断る（形式ごとの一覧は環境次第なので、ここでは読まない）。
         let r = run(&repo, r#"{"op":"signingKeys","format":"smime"}"#);
