@@ -2,6 +2,13 @@ import AmonhenKit
 import AppKit
 import SwiftUI
 
+/// コミットのメッセージのテンプレート（Settings > Git の一覧の 1 つ）。
+struct CommitTemplate: Codable, Hashable, Identifiable {
+    var id = UUID()
+    var name: String
+    var text: String
+}
+
 /// 利用者の設定。
 enum Settings {
     /// commit-graph がないリポジトリで `git commit-graph write --reachable` を実行するか。
@@ -108,6 +115,16 @@ enum Settings {
             UserDefaults.standard.set(newValue, forKey: "autoFetchMinutes")
             NotificationCenter.default.post(name: .autoFetchChanged, object: nil)
         }
+    }
+
+    /// コミットのメッセージのテンプレートの一覧（この Mac。Settings > Git）。リポジトリは `amonhen.commitTemplate` に
+    /// 名前を書いて選ぶ（docs/ux.md の 4.5）。
+    static var commitTemplates: [CommitTemplate] {
+        get {
+            UserDefaults.standard.data(forKey: "commitTemplates")
+                .flatMap { try? JSONDecoder().decode([CommitTemplate].self, from: $0) } ?? []
+        }
+        set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "commitTemplates") }
     }
 
     /// Pull（ツールバーのボタン・⌃⌘L）で上流を取り込む既定の方法。`pullMode` の命令に渡す値。
@@ -301,6 +318,7 @@ enum PullMode: String, CaseIterable {
 @Observable
 final class SettingsModel {
     var pullMode = Settings.pullMode { didSet { Settings.pullMode = pullMode } }
+    var commitTemplates = Settings.commitTemplates { didSet { Settings.commitTemplates = commitTemplates } }
     var autoFetchMinutes = Settings.autoFetchMinutes { didSet { Settings.autoFetchMinutes = autoFetchMinutes } }
     var compactHistoryRows = Settings.compactHistoryRows { didSet { Settings.compactHistoryRows = compactHistoryRows } }
     var historyOrder = Settings.historyOrder { didSet { Settings.historyOrder = historyOrder } }
@@ -343,6 +361,7 @@ final class SettingsModel {
     /// メニューで変えた分を拾う（同じ値なら書き戻さない）。
     func reload() {
         if pullMode != Settings.pullMode { pullMode = Settings.pullMode }
+        if commitTemplates != Settings.commitTemplates { commitTemplates = Settings.commitTemplates }
         if autoFetchMinutes != Settings.autoFetchMinutes { autoFetchMinutes = Settings.autoFetchMinutes }
         if compactHistoryRows != Settings.compactHistoryRows { compactHistoryRows = Settings.compactHistoryRows }
         if highlightAncestors != Settings.highlightAncestors { highlightAncestors = Settings.highlightAncestors }
@@ -418,9 +437,63 @@ private struct GitSettings: View {
                 Toggle(L("Resolve unambiguous conflicts when the merge editor opens"), isOn: $model.autoMagicMerge)
                 Note(L("Conflicts where both sides are the same, or only one side changed. ⌘Z undoes it. Use ✨ Magic Merge for the rest."))
             }
+            CommitTemplatesSettings(model: model)
             StackedBranchesSettings()
         }
         .formStyle(.grouped)
+    }
+}
+
+/// コミットのメッセージのテンプレートの一覧（この Mac）。左に名前の一覧と +／−、右に名前と中身。リポジトリは
+/// その Settings > Commits で 1 つを選ぶ。
+private struct CommitTemplatesSettings: View {
+    @Bindable var model: SettingsModel
+    @State private var selected: UUID?
+
+    var body: some View {
+        Section(L("Message Templates")) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(spacing: 4) {
+                    List(selection: $selected) {
+                        ForEach(model.commitTemplates) { t in
+                            Text(t.name.isEmpty ? L("Untitled") : t.name).tag(t.id)
+                        }
+                    }
+                    .frame(height: 140)
+                    HStack(spacing: 8) {
+                        Button { add() } label: { Image(systemName: "plus") }
+                        Button { remove() } label: { Image(systemName: "minus") }.disabled(selected == nil)
+                        Spacer()
+                    }
+                    .buttonStyle(.borderless)
+                }
+                .frame(width: 170)
+                if let i = model.commitTemplates.firstIndex(where: { $0.id == selected }) {
+                    VStack(spacing: 6) {
+                        TextField(L("Name"), text: $model.commitTemplates[i].name)
+                        TextEditor(text: $model.commitTemplates[i].text)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(height: 136)
+                    }
+                } else {
+                    Text(model.commitTemplates.isEmpty ? L("No templates yet. + adds one.") : L("Select a template to edit it."))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            }
+            Note(L("A repository chooses one in its Settings > Commits, or copies it for itself. git in a terminal uses only commit.template, a file."))
+        }
+    }
+
+    private func add() {
+        let t = CommitTemplate(name: L("Untitled"), text: "")
+        model.commitTemplates.append(t)
+        selected = t.id
+    }
+
+    private func remove() {
+        model.commitTemplates.removeAll { $0.id == selected }
+        selected = nil
     }
 }
 

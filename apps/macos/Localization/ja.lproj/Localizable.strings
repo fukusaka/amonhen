@@ -179,6 +179,16 @@
 "Couldn’t clone" = "clone できませんでした";
 
 /* RepositorySettings.swift */
+"Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは Settings > Git にあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";
+"Shared" = "共有";
+"This repository’s own" = "このリポジトリ専用";
+"Edit in Settings > Git…" = "Settings > Git で編集…";
+"Copy to This Repository" = "このリポジトリ専用に写す";
+"Makes a copy of this template for this repository alone, which git in a terminal uses too." = "このテンプレートの写しをこのリポジトリ専用に作ります。端末の git も使います。";
+"Revert" = "元に戻す";
+"File: %@" = "ファイル: %@";
+"A file…" = "ファイル…";
+"Choose a commit message template file" = "コミットメッセージのテンプレートのファイルを選ぶ";
 "Display name" = "表示名";
 "Color label" = "色ラベル";
 "Fetch automatically" = "自動で fetch";
@@ -257,6 +267,11 @@
 "Done" = "完了";
 
 /* Settings.swift */
+"Message Templates" = "メッセージのテンプレート";
+"Untitled" = "名前なし";
+"No templates yet. + adds one." = "テンプレートはまだありません。+ で足します。";
+"Select a template to edit it." = "テンプレートを選ぶと編集できます。";
+"A repository chooses one in its Settings > Commits, or copies it for itself. git in a terminal uses only commit.template, a file." = "リポジトリはその Settings > コミットで 1 つを選ぶか、専用に写します。端末の git が使うのはファイルの commit.template だけです。";
 "Default Pull" = "Pull の既定";
 "The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With." = "Pull の確認のシートで最初に選ばれている取り込み方（ツールバーと ⌃⌘L）。シートでその都度変えられ、Repository > Pull With でも選べる。";
 "Repository List" = "リポジトリの一覧";
