@@ -2076,6 +2076,12 @@ impl Repository {
                 if !HOOK_NAMES.contains(&name.as_str()) {
                     return Err(tr!("Unknown hook: {name}", name = name).into());
                 }
+                if cfg!(not(unix)) && !enabled {
+                    return Err(tr!(
+                        "Hooks can’t be disabled on Windows (git runs them whatever their permissions)"
+                    )
+                    .into());
+                }
                 let (root, dir) = hooks_location(ops.config_list()?.as_slice());
                 let files = self.backend().files();
                 let path = format!("{dir}/{name}");
@@ -3666,43 +3672,46 @@ mod tests {
             false
         );
 
-        // フックの実行の許可: .git/hooks に置いたフックを有効・無効にできる。
-        std::fs::write(dir.join(".git/hooks/pre-commit"), "#!/bin/sh\nexit 0\n").unwrap();
-        let hooks = |on: bool| {
-            let r = run(&repo, r#"{"op":"hooksAndLfs"}"#);
-            let h = r["info"]["hooks"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .find(|h| h["name"] == "pre-commit")
-                .cloned()
-                .unwrap();
-            assert_eq!(h["enabled"], on, "{r}");
-        };
-        hooks(false);
-        assert_eq!(
-            run(
-                &repo,
-                r#"{"op":"setHookEnabled","name":"pre-commit","enabled":true}"#
-            )["ok"],
-            true
-        );
-        hooks(true);
-        assert_eq!(
-            run(
-                &repo,
-                r#"{"op":"setHookEnabled","name":"pre-commit","enabled":false}"#
-            )["ok"],
-            true
-        );
-        hooks(false);
-        assert_eq!(
-            run(
-                &repo,
-                r#"{"op":"setHookEnabled","name":"pre-push","enabled":true}"#
-            )["ok"],
-            false
-        );
+        // フックの実行の許可: .git/hooks に置いたフックを有効・無効にできる（Windows には実行権限がない）。
+        #[cfg(unix)]
+        {
+            std::fs::write(dir.join(".git/hooks/pre-commit"), "#!/bin/sh\nexit 0\n").unwrap();
+            let hooks = |on: bool| {
+                let r = run(&repo, r#"{"op":"hooksAndLfs"}"#);
+                let h = r["info"]["hooks"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .find(|h| h["name"] == "pre-commit")
+                    .cloned()
+                    .unwrap();
+                assert_eq!(h["enabled"], on, "{r}");
+            };
+            hooks(false);
+            assert_eq!(
+                run(
+                    &repo,
+                    r#"{"op":"setHookEnabled","name":"pre-commit","enabled":true}"#
+                )["ok"],
+                true
+            );
+            hooks(true);
+            assert_eq!(
+                run(
+                    &repo,
+                    r#"{"op":"setHookEnabled","name":"pre-commit","enabled":false}"#
+                )["ok"],
+                true
+            );
+            hooks(false);
+            assert_eq!(
+                run(
+                    &repo,
+                    r#"{"op":"setHookEnabled","name":"pre-push","enabled":true}"#
+                )["ok"],
+                false
+            );
+        }
 
         // リポジトリ専用のコミットのテンプレート: 書くと commit.template がそれを指す。
         assert_eq!(
