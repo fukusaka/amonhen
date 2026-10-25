@@ -54,6 +54,34 @@ pub fn set_agent_finder(find: impl Fn() -> Option<OsString> + Send + Sync + 'sta
     let _ = find;
 }
 
+/// 公開鍵で断られた失敗の文に、agent がいないことを添える（agent の鍵が使えなかったのが原因かもしれない。ssh は
+/// パスフレーズを尋ねられない）。agent がいる・ほかの失敗なら、そのまま返す。文の頭は git・ssh の英語のままにする
+/// （`amonhen_core::failure` が見分ける）。
+pub fn explain_agent(message: String) -> String {
+    if !message.contains("Permission denied (publickey") {
+        return message;
+    }
+    #[cfg(unix)]
+    let note = match std::env::var_os("SSH_AUTH_SOCK") {
+        None => Some(crate::tr!(
+            "No SSH agent is set (SSH_AUTH_SOCK), so keys that need a passphrase can’t be used"
+        )),
+        Some(path) if !agent::is_socket(&path) && agent::replacement().is_none() => {
+            Some(crate::tr!(
+                "The SSH agent ({path}) isn’t running, so keys that need a passphrase can’t be used",
+                path = std::path::Path::new(&path).display()
+            ))
+        }
+        Some(_) => None,
+    };
+    #[cfg(not(unix))]
+    let note: Option<String> = None;
+    match note {
+        Some(note) => format!("{message}\n{note}"),
+        None => message,
+    }
+}
+
 /// 子に渡す SSH の agent。
 ///
 /// 環境の `SSH_AUTH_SOCK` は古くなっていることがある。agent のソケットはログインのたびに変わるのに、アプリは前回の
@@ -210,5 +238,14 @@ mod tests {
             agent::resolve(dead.as_os_str(), &|| Some(other.clone()), &nothing),
             None
         );
+    }
+
+    /// 公開鍵で断られた失敗だけに添え、元の文は頭にそのまま残す（失敗の見分けが元の英語で効くように）。
+    #[test]
+    fn explains_only_public_key_refusals() {
+        let other = "fatal: Could not resolve hostname x".to_owned();
+        assert_eq!(explain_agent(other.clone()), other);
+        let refused = "git@example.com: Permission denied (publickey).".to_owned();
+        assert!(explain_agent(refused.clone()).starts_with(&refused));
     }
 }

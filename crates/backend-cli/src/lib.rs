@@ -408,7 +408,7 @@ fn spawn_streaming(mut cmd: Command, seq: u64, progress: bool) -> Result<Vec<u8>
         return Err(if message.is_empty() {
             tr!("git failed: {status}", status = format!("{status:?}"))
         } else {
-            message
+            amonhen_model::process::explain_agent(message)
         }
         .into());
     }
@@ -436,7 +436,7 @@ fn spawn_with_stderr(mut cmd: Command, input: Option<&[u8]>) -> Result<(Vec<u8>,
         return Err(if message.is_empty() {
             tr!("git failed: {status}", status = format!("{:?}", out.status))
         } else {
-            message
+            amonhen_model::process::explain_agent(message)
         }
         .into());
     }

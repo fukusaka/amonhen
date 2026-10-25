@@ -271,3 +271,5 @@
 "Hooks can’t be disabled on Windows (git runs them whatever their permissions)" = "Windows ではフックを無効にできない（git は権限にかかわらず実行する）";
 "core.hooksPath is outside the working tree" = "core.hooksPath が作業ツリーの外にある";
 "There is already a hook named {name}" = "{name} というフックはすでにある";
+"No SSH agent is set (SSH_AUTH_SOCK), so keys that need a passphrase can’t be used" = "SSH の agent が決まっていない（SSH_AUTH_SOCK）ので、パスフレーズのある鍵を使えません";
+"The SSH agent ({path}) isn’t running, so keys that need a passphrase can’t be used" = "SSH の agent（{path}）がいないので、パスフレーズのある鍵を使えません";

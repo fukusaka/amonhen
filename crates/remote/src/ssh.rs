@@ -273,7 +273,7 @@ fn run_on(
         return Err(tr!(
             "Error on the SSH host ({host}): {message}",
             host = target.destination,
-            message = message
+            message = amonhen_model::process::explain_agent(message)
         )
         .into());
     }
