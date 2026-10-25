@@ -361,6 +361,10 @@ pub enum Command {
         name: String,
         enabled: bool,
     },
+    /// フックを作る: `#!/bin/sh` だけの雛形を置いて実行の許可を付ける。すでにあればエラー。
+    CreateHook {
+        name: String,
+    },
     /// `git lfs track <pattern>`（`track` が false なら `untrack`）。
     LfsTrack {
         pattern: String,
@@ -2099,6 +2103,23 @@ impl Repository {
                 )?;
                 ok()
             }
+            Command::CreateHook { name } => {
+                if !HOOK_NAMES.contains(&name.as_str()) {
+                    return Err(tr!("Unknown hook: {name}", name = name).into());
+                }
+                let (root, dir) = hooks_location(ops.config_list()?.as_slice());
+                if dir.is_empty() {
+                    return Err(tr!("core.hooksPath is outside the working tree").into());
+                }
+                let files = self.backend().files();
+                let path = format!("{dir}/{name}");
+                if files.mode(root, &path)?.is_some() {
+                    return Err(tr!("There is already a hook named {name}", name = name).into());
+                }
+                files.write(root, &path, b"#!/bin/sh\n\n")?;
+                files.set_mode(root, &path, 0o755)?;
+                ok()
+            }
             Command::LfsTrack { pattern, track } => {
                 ops.lfs_track(&pattern, track)?;
                 ok()
@@ -3712,6 +3733,33 @@ mod tests {
                 false
             );
         }
+
+        // フックの作成: 雛形を置き、一覧に実行可で出る。二度目はエラー。
+        assert_eq!(
+            run(&repo, r#"{"op":"createHook","name":"commit-msg"}"#)["ok"],
+            true
+        );
+        let r = run(&repo, r#"{"op":"hooksAndLfs"}"#);
+        let created = r["info"]["hooks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|h| h["name"] == "commit-msg")
+            .cloned()
+            .unwrap();
+        assert_eq!(created["enabled"], true, "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(".git/hooks/commit-msg")).unwrap(),
+            "#!/bin/sh\n\n"
+        );
+        assert_eq!(
+            run(&repo, r#"{"op":"createHook","name":"commit-msg"}"#)["ok"],
+            false
+        );
+        assert_eq!(
+            run(&repo, r#"{"op":"createHook","name":"nope"}"#)["ok"],
+            false
+        );
 
         // リポジトリ専用のコミットのテンプレート: 書くと commit.template がそれを指す。
         assert_eq!(

@@ -206,6 +206,11 @@ final class RepositorySettingsModel {
         run(["op": "setHookEnabled", "name": name, "enabled": enabled])
     }
 
+    /// フックの雛形を置く。できたら `then`。
+    func createHook(_ name: String, then: @escaping () -> Void) {
+        run(["op": "createHook", "name": name], then: then)
+    }
+
     /// `git lfs track`（`track` が false なら `untrack`）。
     func lfsTrack(_ pattern: String, _ track: Bool) {
         run(["op": "lfsTrack", "pattern": pattern, "track": track])
@@ -217,18 +222,21 @@ final class RepositorySettingsModel {
 
     var ignoreChanged: Bool { (gitignore, exclude) != savedIgnore }
 
-    private func run(_ command: [String: Any]) {
+    private func run(_ command: [String: Any], then: (() -> Void)? = nil) {
         let repository = self.repository
         guard let json = try? Repository.json(command) else { return }
         Task {
+            var ok = false
             do {
                 try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
                 error = nil
+                ok = true
             } catch {
                 self.error = "\(error)"
             }
             load()
             onRepositoryChange?()
+            if ok { then?() }
         }
     }
 }
@@ -237,6 +245,16 @@ struct HookEntry: Decodable, Hashable, Identifiable {
     let name: String
     let enabled: Bool
     var id: String { name }
+
+    /// git が呼ぶフックの名前（`git help hooks` の順。コアの一覧と同じ）。
+    static let allNames = [
+        "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit",
+        "prepare-commit-msg", "commit-msg", "post-commit", "pre-rebase", "post-checkout", "post-merge",
+        "pre-push", "pre-receive", "update", "proc-receive", "post-receive", "post-update",
+        "reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite", "sendemail-validate",
+        "fsmonitor-watchman", "p4-changelist", "p4-prepare-changelist", "p4-post-changelist",
+        "p4-pre-submit", "post-index-change",
+    ]
 }
 
 /// 設定が書かれているファイル（`file:` を取り、ホームは ~ にする）。
@@ -1534,16 +1552,22 @@ private struct HooksLFSPage: View {
                     .width(60)
                     TableColumn("") { h in
                         if let dir = hooksDirectory {
-                            Button(L("Open in Editor")) { open((dir as NSString).appendingPathComponent(h.name)) }
-                                .buttonStyle(.link)
+                            Button(L("Open in %@", editor.name)) { open((dir as NSString).appendingPathComponent(h.name)) }
+                                .buttonStyle(.link).lineLimit(1)
                         }
                     }
-                    .width(120)
+                    .width(150)
                 }
                 .frame(height: CGFloat(28 * model.hooks.count + 36))
             }
-            Text(L("Location: %@", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
-                .font(.caption).foregroundStyle(.secondary)
+            HStack {
+                Button(L("Create Hook…")) { create() }
+                    .disabled(model.hooks.count == HookEntry.allNames.count)
+                    .help(L("Puts a #!/bin/sh skeleton in place and makes it executable."))
+                Text(L("Location: %@", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
 
             Text("LFS").font(.headline).padding(.top, 12)
             if model.lfs {
@@ -1572,13 +1596,55 @@ private struct HooksLFSPage: View {
 
     private struct PatternRow: Identifiable { let pattern: String; var id: String { pattern } }
 
-    /// 既定のテキストエディタで開く（手元のリポジトリだけ）。
+    /// スクリプト向けのエディタ: 入っているコードエディタのうち最初のもの。なければ既定のテキストエディタ。
+    private var editor: (name: String, url: URL?) {
+        let known: [(id: String, name: String)] = [
+            ("com.microsoft.VSCode", "VS Code"), ("com.microsoft.VSCodeInsiders", "VS Code"),
+            ("com.todesktop.230313mzl4w4u2", "Cursor"), ("dev.zed.Zed", "Zed"),
+            ("com.sublimetext.4", "Sublime Text"), ("com.sublimetext.3", "Sublime Text"),
+            ("com.barebones.bbedit", "BBEdit"), ("com.panic.Nova", "Nova"),
+            ("com.macromates.TextMate", "TextMate"), ("com.jetbrains.fleet", "Fleet"),
+        ]
+        for app in known {
+            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.id) { return (app.name, url) }
+        }
+        guard let url = NSWorkspace.shared.urlForApplication(toOpen: .plainText) else { return (L("Editor"), nil) }
+        let name = (FileManager.default.displayName(atPath: url.path) as NSString).deletingPathExtension
+        return (name, url)
+    }
+
+    /// エディタで開く（手元のリポジトリだけ）。
     private func open(_ path: String) {
-        let url = URL(fileURLWithPath: path)
-        if let app = NSWorkspace.shared.urlForApplication(toOpen: .plainText) {
-            NSWorkspace.shared.open([url], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
+        let file = URL(fileURLWithPath: path)
+        if let app = editor.url {
+            NSWorkspace.shared.open([file], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
         } else {
-            NSWorkspace.shared.open(url)
+            NSWorkspace.shared.open(file)
+        }
+    }
+
+    /// まだないフックから 1 つ選んで雛形を置き、エディタで開く。
+    private func create() {
+        let present = Set(model.hooks.map(\.name))
+        let names = HookEntry.allNames.filter { !present.contains($0) }
+        guard !names.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = L("Create Hook")
+        alert.informativeText = L("Puts a #!/bin/sh skeleton in place and makes it executable.")
+        alert.addButton(withTitle: L("Create"))
+        alert.addButton(withTitle: L("Cancel"))
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
+        for name in names {
+            let when = Self.when(name)
+            popup.addItem(withTitle: when.isEmpty ? name : "\(name) — \(when)")
+            popup.lastItem?.representedObject = name
+        }
+        alert.accessoryView = popup
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let name = popup.selectedItem?.representedObject as? String else { return }
+        let dir = hooksDirectory
+        model.createHook(name) {
+            if let dir { open((dir as NSString).appendingPathComponent(name)) }
         }
     }
 
