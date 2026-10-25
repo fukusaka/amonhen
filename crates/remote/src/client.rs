@@ -88,7 +88,9 @@ impl Connection {
                         _ => {
                             // 標準エラーの最後の行を読み終えるのを少し待ってから、理由に添える。
                             std::thread::sleep(Duration::from_millis(100));
-                            let detail = conn.stderr.lock().unwrap().trim().to_owned();
+                            let detail = amonhen_model::process::explain_agent(
+                                conn.stderr.lock().unwrap().trim().to_owned(),
+                            );
                             let reason = if detail.is_empty() {
                                 tr!("Lost connection to the daemon")
                             } else {

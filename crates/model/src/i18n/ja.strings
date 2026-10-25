@@ -266,3 +266,5 @@
 "{rev} merges into {ours} without conflicts" = "{rev} は {ours} にコンフリクトなしでマージできる";
 "Can’t change the user’s git settings here" = "この環境では、ユーザー全体の git の設定を変えられません";
 "Unknown scope: {scope}" = "知らない scope: {scope}";
+"No SSH agent is set (SSH_AUTH_SOCK), so keys that need a passphrase can’t be used" = "SSH の agent が決まっていない（SSH_AUTH_SOCK）ので、パスフレーズのある鍵を使えません";
+"The SSH agent ({path}) isn’t running, so keys that need a passphrase can’t be used" = "SSH の agent（{path}）がいないので、パスフレーズのある鍵を使えません";
