@@ -347,7 +347,16 @@ final class SettingsModel {
     var gitHubAvatarsOnce = Settings.gitHubAvatarsOnce { didSet { Settings.gitHubAvatarsOnce = gitHubAvatarsOnce } }
     var autoBookmark = Settings.autoBookmark { didSet { Settings.autoBookmark = autoBookmark } }
     var openThroughDaemon = Settings.openThroughDaemon { didSet { Settings.openThroughDaemon = openThroughDaemon } }
-    var importShellEnvironment = Settings.importShellEnvironment { didSet { Settings.importShellEnvironment = importShellEnvironment } }
+    // 端末の環境: 変えたらすぐ効かせる（このアプリの git にも、共有の daemon にも）。
+    var importShellEnvironment = Settings.importShellEnvironment {
+        didSet { Settings.importShellEnvironment = importShellEnvironment; ShellEnvironment.refresh() }
+    }
+    var addedEnvironmentNames = Settings.addedEnvironmentNames {
+        didSet { Settings.addedEnvironmentNames = addedEnvironmentNames; ShellEnvironment.refresh() }
+    }
+    var excludedEnvironmentNames = Settings.excludedEnvironmentNames {
+        didSet { Settings.excludedEnvironmentNames = excludedEnvironmentNames; ShellEnvironment.refresh() }
+    }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var historyFileTree = Settings.historyFileTree { didSet { Settings.historyFileTree = historyFileTree } }
     var fileHistoryMerges = Settings.fileHistoryMerges { didSet { Settings.fileHistoryMerges = fileHistoryMerges } }
@@ -731,60 +740,92 @@ private struct AdvancedSettings: View {
                 Note(L("Verifies with this Mac’s gpg, allowed_signers and trust levels. When off, verifies with the git and keys on the SSH host. Repositories on this Mac are always verified on this Mac."))
             }
             Section(L("Terminal Environment")) {
-                Toggle(L("Take the login shell’s environment at launch"), isOn: $model.importShellEnvironment)
-                Note(L("Launched from the Finder, the app does not get the terminal’s PATH, SSH agent or GIT_* settings, so git could miss Homebrew’s git, credential helpers and agents such as 1Password. The app runs your login shell once at launch and gives git, the shared daemon and gh what it found. Changes apply at the next launch."))
+                Picker(L("Values for git and ssh"), selection: $model.importShellEnvironment) {
+                    Text(L("From the login shell")).tag(true)
+                    Text(L("As the app was launched")).tag(false)
+                }
+                Note(L("Launched from the Finder, the app lacks the terminal’s PATH, SSH agent and GIT_* settings. From the login shell, the app reads them from your shell for git, ssh and the shared daemon. Changes apply at once."))
                 ShellEnvironmentView()
+            }
+            Section(L("Variables Passed to git and ssh")) {
+                PassedNamesView(model: model)
             }
         }
         .formStyle(.grouped)
     }
 }
 
-/// 取り込んだ変数とその値。読み直すボタン付き（シェルの設定を変えたあとに）。
+/// 端末の環境の結果: どこから読んだか（読み直すボタン付き）、使う git、SSH の agent、git・ssh に渡している変数。
 private struct ShellEnvironmentView: View {
-    @State private var values = ShellEnvironment.values
+    @State private var passed = ShellEnvironment.passed
     @State private var shell = ShellEnvironment.shell
     @State private var lastRead = ShellEnvironment.lastRead
     @State private var reloading = false
+    @State private var git: (path: String, version: String)?
+    /// 環境が変わるたびに増やす（git を探し直す）。
+    @State private var generation = 0
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(status).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button(L("Read Again")) {
-                    reloading = true
-                    ShellEnvironment.reload()
-                }
-                .disabled(reloading || !ShellEnvironment.isEnabled)
+        HStack {
+            Text(status).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Button(L("Read Again")) {
+                reloading = true
+                ShellEnvironment.reload()
             }
-            if values.isEmpty {
-                Text(L("Nothing taken from the shell.")).font(.caption).foregroundStyle(.secondary)
+            .disabled(reloading || !ShellEnvironment.isEnabled)
+        }
+        LabeledContent("git") {
+            if let git {
+                VStack(alignment: .trailing, spacing: 1) {
+                    Text(git.path).font(.caption.monospaced()).textSelection(.enabled)
+                    Text(git.version).font(.caption).foregroundStyle(.secondary)
+                }
             } else {
-                ForEach(values.keys.sorted(), id: \.self) { key in
+                Text(L("Not found on PATH")).font(.caption).foregroundStyle(.orange)
+            }
+        }
+        LabeledContent(L("SSH agent")) {
+            VStack(alignment: .trailing, spacing: 1) {
+                if let agent = passed["SSH_AUTH_SOCK"] {
+                    Text(agent).font(.caption.monospaced()).textSelection(.enabled).lineLimit(1).truncationMode(.middle)
+                }
+                agentStatus(passed["SSH_AUTH_SOCK"])
+            }
+        }
+        DisclosureGroup(L("Variables (%ld)", passed.count)) {
+            ForEach(passed.keys.sorted(), id: \.self) { key in
+                if key == "PATH" {
+                    // PATH は 1 行に 1 か所（どの git が選ばれるかは、この順で決まる）。長いので畳んでおく。
+                    let places = passed[key, default: ""].split(separator: ":").map(String.init)
+                    DisclosureGroup(L("PATH (%ld places)", places.count)) {
+                        Text(places.joined(separator: "\n")).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.caption.weight(.medium))
+                } else {
                     VStack(alignment: .leading, spacing: 1) {
                         Text(key).font(.caption.weight(.medium))
-                        // PATH は 1 行に 1 つ（どの git が選ばれるかは、この順で決まる）。
-                        Text(key == "PATH" ? values[key, default: ""].replacingOccurrences(of: ":", with: "\n") : values[key, default: ""])
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if key == "SSH_AUTH_SOCK" { agentStatus(values[key, default: ""]) }
+                        Text(passed[key, default: ""]).font(.caption.monospaced()).foregroundStyle(.secondary)
+                            .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
         }
+        .task(id: generation) {
+            git = await Task.detached(priority: .utility) { ShellEnvironment.git() }.value
+        }
         .onReceive(NotificationCenter.default.publisher(for: ShellEnvironment.didChange)) { _ in
-            values = ShellEnvironment.values
+            passed = ShellEnvironment.passed
             shell = ShellEnvironment.shell
             lastRead = ShellEnvironment.lastRead
             reloading = false
+            generation += 1
         }
     }
 
     /// SSH の agent のソケットがあるか。なければ、ssh・git に代わりに渡すもの（起動したときの agent）。
-    @ViewBuilder private func agentStatus(_ path: String) -> some View {
+    @ViewBuilder private func agentStatus(_ path: String?) -> some View {
         if ShellEnvironment.isSocket(path) {
             Text(L("SSH agent found")).font(.caption).foregroundStyle(.secondary)
         } else if let launch = ShellEnvironment.launchAgent, launch != path, ShellEnvironment.isSocket(launch) {
@@ -795,9 +836,73 @@ private struct ShellEnvironmentView: View {
     }
 
     private var status: String {
-        if !ShellEnvironment.isEnabled { return L("Off") }
+        if !ShellEnvironment.isEnabled { return L("As the app was launched") }
         guard let lastRead else { return shell.isEmpty ? L("Not read yet") : L("Couldn’t read %@", shell) }
         return L("Read from %@ at %@", shell, lastRead.formatted(date: .omitted, time: .shortened))
+    }
+}
+
+/// git・ssh に渡す名前: いつも渡すもの、既定で渡すもの（外せる）、利用者が足したもの。断る名前は理由を出す。
+private struct PassedNamesView: View {
+    @Bindable var model: SettingsModel
+    @State private var newName = ""
+
+    var body: some View {
+        LabeledContent(L("Always")) {
+            Text(PassedEnvironment.always.joined(separator: ", ")).font(.caption.monospaced()).foregroundStyle(.secondary)
+        }
+        ForEach(PassedEnvironment.defaults, id: \.self) { name in
+            Toggle(isOn: Binding(
+                get: { !model.excludedEnvironmentNames.contains(name) },
+                set: { on in
+                    if on {
+                        model.excludedEnvironmentNames.removeAll { $0 == name }
+                    } else {
+                        model.excludedEnvironmentNames.append(name)
+                    }
+                }
+            )) {
+                Text(name).font(.body.monospaced())
+            }
+        }
+        ForEach(model.addedEnvironmentNames, id: \.self) { name in
+            HStack {
+                Text(name).font(.body.monospaced())
+                Spacer()
+                Button(L("Remove")) { model.addedEnvironmentNames.removeAll { $0 == name } }
+                    .buttonStyle(.borderless)
+            }
+        }
+        HStack {
+            TextField(L("Name to add"), text: $newName, prompt: Text("HTTPS_PROXY"))
+                .font(.body.monospaced())
+                .onSubmit(add)
+            Button(L("Add"), action: add).disabled(!canAdd)
+        }
+        if let refusal {
+            Text(refusal).font(.caption).foregroundStyle(.orange)
+        } else if !trimmed.isEmpty && PassedEnvironment.passes(trimmed) {
+            Text(L("Already passed")).font(.caption).foregroundStyle(.secondary)
+        }
+        Note(L("Names left out are neither taken from the shell nor passed. Names added are passed too, through the shared daemon as well (AMONHEN_PASS_ENV, which the CLI and the VSCode extension can also use)."))
+    }
+
+    private var trimmed: String { newName.trimmingCharacters(in: .whitespaces) }
+
+    /// 足そうとしている名前を断る理由。
+    private var refusal: String? {
+        trimmed.isEmpty ? nil : PassedEnvironment.refusal(trimmed)
+    }
+
+    private var canAdd: Bool {
+        !trimmed.isEmpty && refusal == nil && !PassedEnvironment.passes(trimmed)
+            && !model.addedEnvironmentNames.contains(trimmed)
+    }
+
+    private func add() {
+        guard canAdd else { return }
+        model.addedEnvironmentNames.append(trimmed)
+        newName = ""
     }
 }
 
