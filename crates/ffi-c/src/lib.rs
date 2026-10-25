@@ -187,6 +187,27 @@ pub extern "C" fn amonhen_git_version() -> *mut c_char {
         .unwrap_or(std::ptr::null_mut())
 }
 
+/// この機械で署名に使える鍵（`format` は `openpgp`・`ssh`・`x509`）。JSON の配列（`id`・`label`・`emails`）。
+/// 読めなければ NULL（`amonhen_last_error` に理由）。`amonhen_string_free` で解放する。gpg などを起動するので、
+/// 裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `format` は NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_signing_keys(format: *const c_char) -> *mut c_char {
+    let result = str_arg(format)
+        .map_err(|e| e.to_string())
+        .and_then(|f| amonhen_backend_cli::signing_keys(f).map_err(|e| e.to_string()))
+        .and_then(|keys| serde_json::to_string(&keys).map_err(|e| e.to_string()));
+    match result {
+        Ok(json) => CString::new(json).unwrap_or_default().into_raw(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// この機械のユーザー全体（`git config --global`）の `key` の値。なければ、または読めなければ NULL（読めなければ
 /// `amonhen_last_error` に理由）。`amonhen_string_free` で解放する。git を起動するので、裏のスレッドで呼ぶ。
 ///

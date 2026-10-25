@@ -229,16 +229,29 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
 /// Amon Hen が使う git の最低の版（`git switch` が 2.23 から）。それより新しい機能は、版を見て古いやり方に戻す。
 pub const MIN_GIT_VERSION: (u32, u32) = (2, 23);
 
-/// `git` の版（`git version` の数の 3 つ）。読めなければ `None`。プロセスで 1 回だけ調べる。
+/// `git` の版（`git version` の数の 3 つ）。読めなければ `None`。使う git（`AMONHEN_GIT`）ごとに 1 回だけ調べる。
 pub fn git_version() -> Option<(u32, u32, u32)> {
-    static VERSION: std::sync::OnceLock<Option<(u32, u32, u32)>> = std::sync::OnceLock::new();
-    *VERSION.get_or_init(|| {
-        let out = amonhen_model::process::command("git")
-            .arg("version")
-            .output()
-            .ok()?;
-        parse_git_version(&String::from_utf8_lossy(&out.stdout))
-    })
+    type Cached = Option<(std::ffi::OsString, Option<(u32, u32, u32)>)>;
+    static VERSION: std::sync::Mutex<Cached> = std::sync::Mutex::new(None);
+    let program = amonhen_model::process::git_program();
+    let mut cached = VERSION.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((p, v)) = cached.as_ref()
+        && *p == program
+    {
+        return *v;
+    }
+    let version = amonhen_model::process::command("git")
+        .arg("version")
+        .output()
+        .ok()
+        .and_then(|out| parse_git_version(&String::from_utf8_lossy(&out.stdout)));
+    *cached = Some((program, version));
+    version
+}
+
+/// この機械で署名に使える鍵（`format` は openpgp・ssh・x509。アプリの Settings > Git の鍵の一覧）。
+pub fn signing_keys(format: &str) -> Result<Vec<amonhen_model::SigningKey>> {
+    Git::new(std::env::temp_dir()).signing_keys_for(format)
 }
 
 /// この機械のユーザー全体（`git config --global`）の `key` の値。なければ `None`。
