@@ -39,6 +39,11 @@ becomes the GitHub Release notes.
   branch, which Branches measures the others against: detected, or chosen for repositories without one), Working Copy
   (line endings, the executable bit, ignoring in this repository only), Remotes, Hooks · LFS and git config, with the
   git that runs the repository shown under the list. Settings that only a terminal honors stay in git config.
+- Settings > Git has this Mac's settings: the git Amon Hen runs (Automatic, one of the gits found with its version,
+  or any executable; `AMONHEN_GIT` for the engine), global `user.name`, `user.email`, signing and key (chosen from
+  this Mac's keys), the gpg, ssh-keygen and gpgsm programs (what is found, overridable) and the global excludes with
+  an editor. The git line under a repository's Settings list opens it. Long Settings tabs scroll instead of growing
+  past the screen.
 - Signing in Repository Settings is one choice, No signing / OpenPGP / SSH / X.509, and the key is chosen from the
   ones found (gpg's secret keys with the ones for your email first, `~/.ssh/*.pub` and ssh-agent's keys, gpgsm's
   certificates; on an SSH host, those on the host), with Other… for a key that is not listed.

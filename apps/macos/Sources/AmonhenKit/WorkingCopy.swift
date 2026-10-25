@@ -250,6 +250,14 @@ public enum LocalGit {
         return String(cString: out)
     }
 
+    /// この機械で署名に使える鍵（`format` は openpgp・ssh・x509）。JSON の配列（id・label・emails）。読めなければ nil。
+    /// gpg などを起動するので、裏のスレッドで呼ぶ。
+    public static func signingKeysJSON(format: String) -> String? {
+        guard let out = amonhen_signing_keys(format) else { return nil }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
+
     /// ユーザー全体（`git config --global`）の `key` を変える。nil なら消す。
     public static func setGlobalConfig(_ key: String, _ value: String?) throws {
         let ok = value.map { amonhen_set_global_config(key, $0) } ?? amonhen_set_global_config(key, nil)

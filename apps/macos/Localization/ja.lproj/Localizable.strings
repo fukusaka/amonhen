@@ -1275,3 +1275,14 @@
 "With the base (diff3, zdiff3) the merge editor resolves one-sided conflicts by itself. Amon Hen recommends zdiff3." = "元がある形式（diff3・zdiff3）なら、マージエディタが片側だけの変更を自分で解けます。Amon Hen のおすすめは zdiff3 です。";
 "Branches whose tips are among the rewritten commits. Undo puts them back." = "先頭が書き換えるコミットにあるブランチです。Undo で戻ります。";
 "History edits always stash, whatever this says." = "History の編集は、この設定に関わらずいつも退避します。";
+"The git Amon Hen runs for repositories on this Mac. Automatic takes the first git on the PATH. Repositories opened from now on use the choice; the shared daemon uses it once restarted (Window > Activity). git in a terminal isn’t affected. Needs git 2.23 or later." = "この Mac のリポジトリに Amon Hen が使う git。自動は PATH で最初に見つかる git です。これから開くリポジトリに効き、共有の daemon は起動し直すと使います（ウィンドウ > Activity）。端末の git は変わりません。git 2.23 以降が必要です。";
+"Author and Signing" = "作成者と署名";
+"For every repository on this Mac (git config --global user.name, user.email, commit.gpgsign, gpg.format and user.signingkey; git in a terminal follows them too). A repository can choose differently in its own Settings." = "この Mac のすべてのリポジトリに（git config --global の user.name・user.email・commit.gpgsign・gpg.format・user.signingkey。端末の git も従います）。リポジトリごとの設定で変えられます。";
+"Signing Programs" = "署名のプログラム";
+"The programs git signs and verifies with (gpg.program, gpg.ssh.program and gpg.x509.program). Empty uses the one found on the PATH." = "git が署名と検証に使うプログラム（gpg.program・gpg.ssh.program・gpg.x509.program）。空なら PATH で見つかったものを使います。";
+"Found: %@" = "見つかった: %@";
+"Global Excludes" = "global excludes";
+"Use git’s Default" = "git の既定にする";
+"Patterns ignored in every repository on this Mac (core.excludesFile; git’s default is ~/.config/git/ignore). One pattern per line, like .gitignore." = "この Mac のすべてのリポジトリで無視するパターン（core.excludesFile。git の既定は ~/.config/git/ignore）。.gitignore と同じく 1 行 1 パターン。";
+"Choose a git executable" = "git の実行ファイルを選ぶ";
+"Choose the global excludes file" = "global excludes のファイルを選ぶ";

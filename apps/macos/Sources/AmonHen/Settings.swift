@@ -190,6 +190,25 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "autoBookmark") }
     }
 
+    /// 使う git（実行ファイルのパス）。nil・空なら PATH の git。コアには `AMONHEN_GIT` で伝える。
+    static var gitExecutable: String? {
+        get { UserDefaults.standard.string(forKey: "gitExecutable") }
+        set { UserDefaults.standard.set(newValue, forKey: "gitExecutable") }
+    }
+
+    /// 選んだ git を `AMONHEN_GIT` に置く（起動時と、変えたとき）。環境で先に決めてあれば触らない。
+    static func applyGitExecutable() {
+        if ProcessInfo.processInfo.environment["AMONHEN_GIT"] != nil, !appliedGit { return }
+        appliedGit = true
+        if let git = gitExecutable, !git.isEmpty, FileManager.default.isExecutableFile(atPath: git) {
+            setenv("AMONHEN_GIT", git, 1)
+        } else {
+            unsetenv("AMONHEN_GIT")
+        }
+    }
+
+    nonisolated(unsafe) private static var appliedGit = false
+
     /// 外部のエディタ（.app のパス）。nil・空なら自動（`ExternalEditor.automatic`）。
     static var externalEditor: String? {
         get { UserDefaults.standard.string(forKey: "externalEditor") }
@@ -394,7 +413,7 @@ final class SettingsModel {
 }
 
 /// 項目の下に添える説明。
-private struct Note: View {
+struct Note: View {
     let text: String
     init(_ text: String) { self.text = text }
     var body: some View {
@@ -446,8 +465,10 @@ private struct GeneralSettings: View {
 
 private struct GitSettings: View {
     @Bindable var model: SettingsModel
+    @State private var machine = MachineGit()
     var body: some View {
         Form {
+            MachineGitSettings(model: machine)
             Section {
                 Picker(L("Default Pull"), selection: $model.pullMode) {
                     ForEach(PullMode.allCases, id: \.self) { Text($0.title).tag($0) }
@@ -490,6 +511,7 @@ private struct GitSettings: View {
             StackedBranchesSettings()
         }
         .formStyle(.grouped)
+        .onAppear { if !machine.loaded { machine.load() } }
     }
 }
 
@@ -834,8 +856,10 @@ final class SettingsWindowController: NSWindowController {
     private init() {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
+        // 画面に収まる高さまで（長いタブは中でスクロールする）。
+        let maxHeight = (NSScreen.main?.visibleFrame.height ?? 900) - 120
         func add(_ title: String, _ symbol: String, _ view: some View) {
-            let host = NSHostingController(rootView: view.frame(width: 520).fixedSize())
+            let host = NSHostingController(rootView: view.frame(width: 520).frame(maxHeight: maxHeight).fixedSize())
             host.sizingOptions = .preferredContentSize
             // タブを選ぶと、ウィンドウのタイトルがタブの名前になる（macOS 標準の設定画面と同じ）。
             host.title = title
@@ -859,10 +883,14 @@ final class SettingsWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show() {
+    func show(tab: String? = nil) {
         model.reload()
         if window?.isVisible != true { window?.center() }
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
+        if let tab, let tabs = window?.contentViewController as? NSTabViewController,
+           let index = tabs.tabViewItems.firstIndex(where: { $0.label == tab }) {
+            tabs.selectedTabViewItemIndex = index
+        }
     }
 }
