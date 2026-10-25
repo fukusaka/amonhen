@@ -29,13 +29,15 @@ becomes the GitHub Release notes.
   one along (git's `rebase.updateRefs`; git 2.38 or newer).
 - Pull follows git's own settings (`pull.rebase`, `pull.ff`), as `git pull` in a terminal does: the Pull sheet starts
   from "Follow git's settings" and says what those settings choose; Repository > Pull With picks another way once.
-- Settings is reorganized around what Amon Hen itself decides, 720 points wide with every tab on one screen: General
-  (bookmarking, automatic fetch, the external editor), Git (each machine's git: the git to run, chosen among those
-  found with their versions or by path; name, email, signing and the key chosen from this Mac's keys; the global
-  excludes with an editor; the gpg, ssh-keygen and gpgsm programs under Details; `git config --global`, which git in a
-  terminal follows too), Accounts (GitHub), Commit (the template library, edited in a sheet), Appearance, Diff &
-  Merge, AI and Performance (commit-graph, fsmonitor, the shared daemon, the shell environment). There is no Advanced
-  tab. The git line under a repository's Settings list opens the Git tab.
+- Settings is reorganized around what Amon Hen itself decides, 800 points wide with every tab on one screen: General
+  (bookmarking, automatic fetch, the external editor), Git, Accounts (GitHub), Commit (the template library, edited in
+  a sheet), Appearance, Diff & Merge, AI and Performance (commit-graph, fsmonitor, the shared daemon, the shell
+  environment). There is no Advanced tab.
+- Settings > Git is the Repository Settings screen for all repositories on this Mac: the same pages and rows (Author
+  and Signing, Commits, Operations, Working Copy with Ignore everywhere for `core.excludesFile`, git config with the
+  all-repositories column editable), writing `git config --global`, plus a This Mac page with the git to run (chosen
+  among those found with their versions, or by path) and the gpg, ssh-keygen and gpgsm programs under Details. The git
+  line under a repository's Settings list opens it.
 
 #### Changed
 
