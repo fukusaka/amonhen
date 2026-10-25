@@ -202,9 +202,11 @@
 "Email" = "メール";
 "Used only for commits in this repository (for example, to separate work and personal). Leave empty to use the inherited value (global and so on)." = "このリポジトリのコミットにだけ使う（仕事用と個人用を分けるなど）。空にすると上の段（global など）の値を使う。";
 "Signing" = "署名";
+"No signing" = "署名しない";
+"The keys gpg, ~/.ssh, ssh-agent and gpgsm know, the ones for your email first. Choosing a key chooses its format too. Empty picks gpg’s key for your email." = "gpg・~/.ssh・ssh-agent・gpgsm が知っている鍵で、メールアドレスの鍵が先です。鍵を選ぶと形式も決まります。空なら gpg のメールアドレスの鍵を使います。";
+"Fingerprint or key ID" = "指紋か鍵の ID";
+"This is an %1$@ key, but the format is %2$@." = "これは %1$@ の鍵ですが、形式は %2$@ です。";
 "Signing key" = "署名の鍵";
-"Sign commits" = "コミットに署名する";
-"Signature format" = "署名の形式";
 "Rebase on pull" = "pull で rebase する";
 "Fast-forward only" = "fast-forward だけ";
 "Stash before rebase" = "rebase の前に退避する";
@@ -1189,8 +1191,6 @@
 "This Mac’s git runs this repository. Choose it in Settings > Git." = "この Mac の git がこのリポジトリを動かしています。Settings > Git で選びます。";
 "detected" = "自動で判定";
 "Branches measures the others against it. Detected from origin/HEAD, main or master; choose one when there is none." = "Branches がほかのブランチの基準にします。origin/HEAD・main・master から判定し、どれもなければここで選びます。";
-"The SSH public key’s path, or the key itself." = "SSH の公開鍵のパスか、鍵そのものです。";
-"The key’s fingerprint or ID; empty picks the key for your email." = "鍵の指紋か ID です。空ならメールアドレスの鍵を使います。";
 "With the base (diff3, zdiff3) the merge editor resolves one-sided conflicts by itself. Amon Hen recommends zdiff3." = "元がある形式（diff3・zdiff3）なら、マージエディタが片側だけの変更を自分で解けます。Amon Hen のおすすめは zdiff3 です。";
 ".git/info/exclude, one pattern per line. Shared patterns go in .gitignore." = ".git/info/exclude。1 行に 1 つ。共有するパターンは .gitignore に書きます。";
 "Branches whose tips are among the rewritten commits. Undo puts them back." = "先頭が書き換えるコミットにあるブランチです。Undo で戻ります。";

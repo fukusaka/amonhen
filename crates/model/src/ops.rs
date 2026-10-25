@@ -60,6 +60,18 @@ pub struct RemoteEntry {
     pub push_url: String,
 }
 
+/// 署名に使える鍵（リポジトリの設定の「鍵」の一覧の 1 つ）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SigningKey {
+    /// `user.signingkey` に書く値（OpenPGP・X.509 は指紋、SSH は公開鍵のパスか `key::…`）。
+    pub id: String,
+    /// 人に見せる名前（ユーザー ID、公開鍵のコメントとファイル名）。
+    pub label: String,
+    /// 鍵のメールアドレス（`user.email` のものを先に出すため）。
+    pub emails: Vec<String>,
+}
+
 /// worktree の作成・削除・片付け（`git worktree add`・`remove`・`prune`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -304,6 +316,11 @@ pub trait Operations: Send + Sync {
         Ok(None)
     }
     fn remotes(&self) -> Result<Vec<RemoteEntry>>;
+    /// `format`（`openpgp`・`ssh`・`x509`）で署名に使える鍵。集められなければ空。
+    fn signing_keys(&self, format: &str) -> Result<Vec<SigningKey>> {
+        let _ = format;
+        Ok(Vec::new())
+    }
     fn change_remote(&self, change: &RemoteChange) -> Result<()>;
     /// worktree の一覧。`git worktree list --porcelain -z` の出力。
     fn worktree_list(&self) -> Result<Vec<u8>> {

@@ -3,6 +3,7 @@
 
 mod extras;
 mod ops;
+mod signing;
 mod status;
 mod verify;
 

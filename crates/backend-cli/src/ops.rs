@@ -1,7 +1,7 @@
 use amonhen_model::tr;
 use amonhen_model::{
     ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RefUpdate, RemoteChange,
-    RemoteEntry, ResetMode, Result, Sequence, WorktreeChange, WorktreeChanges,
+    RemoteEntry, ResetMode, Result, Sequence, SigningKey, WorktreeChange, WorktreeChanges,
 };
 
 use crate::Git;
@@ -804,6 +804,10 @@ impl Operations for Git {
 
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
         Ok(crate::git_version())
+    }
+
+    fn signing_keys(&self, format: &str) -> Result<Vec<SigningKey>> {
+        self.signing_keys_for(format)
     }
 
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {
