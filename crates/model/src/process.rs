@@ -190,7 +190,24 @@ mod client {
     ];
 
     pub(super) fn passes(name: &str) -> bool {
+        // Windows の環境変数の名前は大文字と小文字を区別しない（PATH は `Path` で届く）。
+        let upper;
+        let name = if cfg!(windows) {
+            upper = name.to_ascii_uppercase();
+            upper.as_str()
+        } else {
+            name
+        };
         NAMES.contains(&name) || (name.starts_with("GIT_") && !NOT_GIT.contains(&name))
+    }
+
+    /// 同じ環境変数の名前か（Windows では大文字と小文字を区別しない）。
+    pub(super) fn same(a: &str, b: &str) -> bool {
+        if cfg!(windows) {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
     }
 
     /// `with_client_env` の中なら、FE の値を渡し、daemon だけが持つ（FE が送っていない）ものは渡さない。PATH は、
@@ -217,26 +234,9 @@ mod client {
 /// 環境の `SSH_AUTH_SOCK` が死んでいたときに、そのログインの SSH の agent のソケットを探す手を登録する（FE・daemon が
 /// 起動したときに 1 回。macOS なら launchd が用意する agent）。探し方は OS ごとなので、ここは確かめるところまで。
 pub fn set_agent_finder(find: impl Fn() -> Option<OsString> + Send + Sync + 'static) {
-        // Windows の環境変数の名前は大文字と小文字を区別しない（PATH は `Path` で届く）。
-        let upper;
-        let name = if cfg!(windows) {
-            upper = name.to_ascii_uppercase();
-            upper.as_str()
-        } else {
-            name
-        };
     #[cfg(unix)]
     let _ = agent::FINDER.set(Box::new(find));
     #[cfg(not(unix))]
-    /// 同じ環境変数の名前か（Windows では大文字と小文字を区別しない）。
-    pub(super) fn same(a: &str, b: &str) -> bool {
-        if cfg!(windows) {
-            a.eq_ignore_ascii_case(b)
-        } else {
-            a == b
-        }
-    }
-
     let _ = find;
 }
 

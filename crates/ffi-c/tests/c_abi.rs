@@ -18,12 +18,15 @@ fn git(dir: &std::path::Path, args: &[&str]) {
         .unwrap()
         .success();
     assert!(ok, "git {args:?}");
-    // テスト用のリポジトリは、CI の環境（利用者名がない・Windows の autocrlf）に左右されないようにする。
+    // テスト用のリポジトリは、CI の環境（利用者名がない・Windows の autocrlf）や、利用者の global の設定（コミットの
+    // 署名。テストするコードの git は global を読むので、並べて走らせると gpg が失敗することがある）に左右されないようにする。
     if args.first() == Some(&"init") {
         for (key, value) in [
             ("user.name", "a"),
             ("user.email", "a@example.com"),
             ("core.autocrlf", "false"),
+            ("commit.gpgsign", "false"),
+            ("tag.gpgsign", "false"),
         ] {
             git(dir, &["config", key, value]);
         }

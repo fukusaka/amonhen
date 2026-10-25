@@ -35,6 +35,9 @@ fn init(dir: &Path) {
         ("user.name", "a"),
         ("user.email", "a@example.com"),
         ("core.autocrlf", "false"),
+        // 利用者の global の設定でコミットに署名すると、並べて走らせたときに gpg が失敗することがある。
+        ("commit.gpgsign", "false"),
+        ("tag.gpgsign", "false"),
     ] {
         git(dir, &["config", k, v]);
     }
