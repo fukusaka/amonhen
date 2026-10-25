@@ -7,7 +7,7 @@
 
 use amonhen_model::tr;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -153,6 +153,16 @@ pub fn stream(daemon: &str) -> Result<crate::endpoint::Duplex> {
 // 窓を出さない・切り離すフラグを自分で付けるので、process::command は使わない
 #[allow(clippy::disallowed_methods)]
 fn launch(daemon: &str, endpoint: &str) -> Result<()> {
+    // 別のビルドのエンジンは、このソケットで待っても挨拶で断るだけなので、起動する前に断る（開発中に古い
+    // target/release/amonhen を起動していた）。`PATH` から探す名前（`amonhen`）のときは確かめない。
+    let path = Path::new(daemon);
+    if path.is_absolute() && !crate::engines::is_this_build(path) {
+        return Err(tr!(
+            "The engine to start as the shared daemon ({path}) is a different build of Amon Hen",
+            path = daemon
+        )
+        .into());
+    }
     let mut command = std::process::Command::new(daemon);
     command
         .arg("--serve")
@@ -246,5 +256,15 @@ mod tests {
             super::read_preamble(&mut buf.as_slice()).unwrap(),
             "/work/リポジトリ"
         );
+    }
+
+    /// 別のビルドのエンジンは、共有の daemon として起動しない（挨拶で断られるだけなので）。
+    #[test]
+    fn refuses_to_start_another_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = dir.path().join("amonhen");
+        std::fs::write(&other, b"amonhen-build=0000000000000000;").unwrap();
+        let err = super::launch(other.to_str().unwrap(), "unused").unwrap_err();
+        assert!(err.to_string().contains("different build"), "{err}");
     }
 }

@@ -15,7 +15,7 @@
 use amonhen_model::tr;
 use std::collections::HashMap;
 use std::io::{BufReader, BufWriter};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -348,32 +348,12 @@ fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
 fn connect_ssh(location: &str) -> Result<Arc<amonhen_remote::Connection>> {
     use amonhen_remote::ssh;
     let exe = std::env::current_exe()?;
-    let daemons = ssh::Daemons::new(daemons_dir(&exe), Some((ssh::local_platform(), exe)));
+    let daemons = ssh::Daemons::new(
+        amonhen_remote::engines::bundled_dir(&exe),
+        Some((ssh::local_platform(), exe)),
+    );
     let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
     ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)
-}
-
-/// SSH 先に送るエンジン（`amonhen-<os>-<arch>`）の置き場所: `AMONHEN_ENGINES`、`.app` なら
-/// `Contents/Resources/engines`、エンジンの置き場所なら隣の `engines`、開発中ならリポジトリの `dist/engine`
-/// （`scripts/build-engine.sh` が作る）。
-fn daemons_dir(exe: &Path) -> PathBuf {
-    if let Some(dir) = std::env::var_os("AMONHEN_ENGINES") {
-        return PathBuf::from(dir);
-    }
-    let resolved = exe.canonicalize().unwrap_or_else(|_| exe.to_path_buf());
-    // `.app` の中か、エンジンの置き場所（`amonhen install` が隣に `engines` を置く）。
-    let beside = ["../Resources/engines", "engines"].into_iter();
-    if let Some(bundled) = beside
-        .filter_map(|p| resolved.parent().map(|d| d.join(p)))
-        .find(|d| d.is_dir())
-    {
-        return bundled;
-    }
-    resolved
-        .ancestors()
-        .map(|d| d.join("dist/engine"))
-        .find(|d| d.is_dir())
-        .unwrap_or_else(|| PathBuf::from("dist/engine"))
 }
 
 /// daemon のコアで、つないだ側を手伝う。
