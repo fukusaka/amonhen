@@ -19,7 +19,7 @@ and for the VSCode extension see [apps/vscode](../apps/vscode).
 
 ## Repositories on SSH hosts
 
-Use Add Remote Repository… in the repository list and enter the host and path, or `AmonHen ssh://[user@]host[:port]/path/to/repo` (`/~/src/repo` for a path from home). You must be able to connect without a password, using a key or ssh-agent. On the SSH host, only git processing is done, by `amonhen --stdio`. If an `amonhen` with a matching protocol version is on the SSH host's `PATH`, it is used; otherwise the bundled engine (Linux x86_64 and aarch64, macOS arm64) is pushed to `~/.local/share/amonhen/engine/<content hash>/` (its contents are verified after pushing; `AMONHEN_PUSH=0` disables pushing, `AMONHEN_REMOTE_ENGINE` specifies the location).
+Use Add Remote Repository… in the repository list and enter the host and path, or `AmonHen ssh://[user@]host[:port]/path/to/repo` (`/~/src/repo` for a path from home). You must be able to connect without a password, using a key or ssh-agent. On the SSH host, only git processing is done, by `amonhen --stdio`. If an `amonhen` of the same build is on the SSH host's `PATH`, it is used; otherwise the bundled engine (Linux x86_64 and aarch64, macOS arm64) is pushed to `~/.local/share/amonhen/engine/<content hash>/` (its contents are verified after pushing; `AMONHEN_PUSH=0` disables pushing, `AMONHEN_REMOTE_ENGINE` specifies the location).
 
 ## Shared daemon
 
