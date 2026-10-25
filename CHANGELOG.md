@@ -44,6 +44,8 @@ becomes the GitHub Release notes.
   certificates; on an SSH host, those on the host), with Other… for a key that is not listed.
 - In Working Copy, an untracked file's context menu offers Add to .gitignore for the file and for its extension. The
   exclude editor in Repository Settings > Working Copy fills the window's height.
+- Working Copy's commit message box can be made taller: a divider between the commit input and the file list is
+  dragged, and its position is remembered; resizing the window changes the file list, not the message box.
 - Settings > Git keeps a library of commit message templates shared by every repository. Repository Settings >
   Commits chooses a shared one (kept as `amonhen.commitTemplate` in the repository's git config; shown under the row
   with Edit in Settings > Git… and Copy to This Repository), the repository's own (`.git/amonhen/commit-template`,
