@@ -110,7 +110,7 @@ export class DaemonClient {
   static async open(daemon: string, location: string): Promise<DaemonClient> {
     const path = await socketPath(daemon);
     const socket = await connectOrLaunch(daemon, path);
-    const name = Buffer.from(`\u0001${location}`, 'utf8');
+    const name = Buffer.from(`\u0001${location}\u0000${clientEnv()}`, 'utf8');
     const head = Buffer.alloc(4);
     head.writeUInt32LE(name.length, 0);
     socket.write(Buffer.concat([head, name]));
@@ -280,6 +280,19 @@ async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
     }
   }
   throw new DaemonError(`daemon（${path}）につなげません`);
+}
+
+/**
+ * daemon に送る、この拡張の環境（`NAME=value` を NUL で区切ったもの）。共有の daemon は、このつながりで動かす
+ * git・ssh をこの環境で動かす（先に起動したアプリの PATH・SSH の agent・`GIT_*` で動かさない）。受け取る名前は
+ * daemon が決める（`amonhen_model::process::ClientEnv`）。ここでは git・ssh に関わるものだけに絞って送る
+ */
+export function clientEnv(env: NodeJS.ProcessEnv = process.env): string {
+  const names = new Set(['PATH', 'AMONHEN_ASKPASS', 'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'XDG_CONFIG_HOME']);
+  return Object.entries(env)
+    .filter(([k, v]) => v !== undefined && !v.includes('\0') && (names.has(k) || k.startsWith('GIT_')))
+    .map(([k, v]) => `${k}=${v ?? ''}`)
+    .join('\0');
 }
 
 /** daemon への指示（`status` なら様子の JSON、`stop` で止める）。動いていなければ undefined */
