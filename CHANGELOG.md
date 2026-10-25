@@ -29,16 +29,14 @@ becomes the GitHub Release notes.
   one along (git's `rebase.updateRefs`; git 2.38 or newer).
 - Pull follows git's own settings (`pull.rebase`, `pull.ff`), as `git pull` in a terminal does: the Pull sheet starts
   from "Follow git's settings" and says what those settings choose; Repository > Pull With picks another way once.
-- Settings is reorganized around what Amon Hen itself decides, in a resizable window (960 wide by default) with every
-  tab on one screen: General
-  (bookmarking, automatic fetch, the external editor), Git, Accounts (GitHub), Commit (the template library, edited in
-  a sheet), Appearance, Diff & Merge, AI and Performance (commit-graph, fsmonitor, the shared daemon, the shell
-  environment). There is no Advanced tab.
-- Settings > Git is the Repository Settings screen for all repositories on this Mac: the same pages and rows (Author
-  and Signing, Commits, Operations, Working Copy with Ignore everywhere for `core.excludesFile`, git config with the
-  all-repositories column editable), writing `git config --global`, plus a This Mac page with the git to run (chosen
-  among those found with their versions, or by path) and the gpg, ssh-keygen and gpgsm programs under Details. The git
-  line under a repository's Settings list opens it.
+- Settings is reorganized around what Amon Hen itself decides, in a resizable window (960 wide by default): General
+  (bookmarking, automatic fetch, the external editor), Git, Accounts (GitHub), Appearance, Diff & Merge, AI and
+  Performance (commit-graph, fsmonitor, the shared daemon, the shell environment). Nothing folds away, and help is a
+  few words where a row needs it. There is no Advanced tab.
+- Settings > Git is the Repository Settings screen for all repositories on this Mac: the same pages and rows, writing
+  `git config --global`. Commits holds the shared template library; Working Copy has Ignore everywhere
+  (`core.excludesFile`); Programs chooses git, gpg, ssh-keygen and gpgsm the same way (Automatic, the ones found with
+  where they come from and their version, or a path). The git line under a repository's Settings list opens it.
 
 #### Changed
 
@@ -47,8 +45,8 @@ becomes the GitHub Release notes.
   where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
   file. Its pages are Author and Signing, Commits, Operations (pull, fetch, rebase, merge), Branches (the default
   branch, which Branches measures the others against: detected, or chosen for repositories without one), Working Copy
-  (line endings, the executable bit, ignoring in this repository only), Remotes, Hooks · LFS and git config, with the
-  git that runs the repository shown under the list. Settings that only a terminal honors stay in git config.
+  (line endings, the executable bit, ignoring in this repository only), Remotes, Hooks · LFS and Keys and Values, with
+  the git that runs the repository shown under the list. Settings that only a terminal honors stay in Keys and Values.
 - Signing in Repository Settings is one choice, No signing / OpenPGP / SSH / X.509, and the key is chosen from the
   ones found (gpg's secret keys with the ones for your email first, `~/.ssh/*.pub` and ssh-agent's keys, gpgsm's
   certificates; on an SSH host, those on the host), with Other… for a key that is not listed.
@@ -72,14 +70,14 @@ becomes the GitHub Release notes.
   Repository Settings > Commits, fill the window's height.
 - Working Copy's commit message box can be made taller: a divider between the commit input and the file list is
   dragged, and its position is remembered; resizing the window changes the file list, not the message box.
-- Settings > Commit keeps a library of commit message templates shared by every repository. Repository Settings >
-  Commits chooses a shared one (kept as `amonhen.commitTemplate` in the repository's git config; shown under the row
-  with Edit in Settings > Commit… and Copy to This Repository), the repository's own (`.git/amonhen/commit-template`,
+- Settings > Git > Commits keeps a library of commit message templates shared by every repository. Repository
+  Settings > Commits chooses a shared one (kept as `amonhen.commitTemplate` in the repository's git config; shown under
+  the row with Edit Shared Template… and Edit for This Repository), the repository's own (`.git/amonhen/commit-template`,
   which `commit.template` points to so git in a terminal uses it too; edited under the row), or a file with a file
   chooser.
-- git config in Repository Settings is a table like Xcode's Build Settings: one row per key, grouped by the key's dots, with the value in effect
+- Keys and Values in Repository Settings is git config as a table like Xcode's Build Settings: one row per key, grouped by the key's dots, with the value in effect
   and a column per source (system-wide, all repositories, this repository, this worktree), the source in effect in
-  bold. Double-click a row to set the key in this repository (empty removes it), + adds a key, − and ⌫ remove the
+  bold. The column you can write looks like a field; one click edits it (empty removes the key), + adds a key, − and ⌫ remove the
   selected keys, ⌘Z / ⇧⌘Z undo and redo every change made from the table, ⌘C copies the selected rows as `key = value`; search matches keys and values, and every column sorts. Above it, Xcode's switches: Basic
   (the keys the settings pages ask about, set or not), Customized (keys set in this repository, the default) or All (every variable
   git knows, blank when set nowhere), and Combined (the value in effect and its source) or Levels (a column per source).

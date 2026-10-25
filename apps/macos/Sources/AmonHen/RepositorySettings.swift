@@ -558,7 +558,9 @@ private struct AllSettingsTab: View {
                     Text("All").tag(RowsMode.all)
                 }
                 .pickerStyle(.segmented).labelsHidden().fixedSize()
-                .help(L("Basic: the settings the pages here ask about, set or not. Customized: the keys set in this repository or this worktree. All: every key git reads."))
+                .help(model.level == .repository
+                      ? L("Basic: the settings the pages here ask about, set or not. Customized: the keys set in this repository or this worktree. All: every key git reads.")
+                      : L("Basic: the settings the pages here ask about, set or not. Customized: the keys set for all repositories. All: every key git reads."))
                 Picker("", selection: $columnsMode) {
                     Text("Combined").tag(ColumnsMode.combined)
                     Text("Levels").tag(ColumnsMode.levels)
@@ -588,9 +590,10 @@ private struct AllSettingsTab: View {
                 .customizationID("key")
                 .disabledCustomizationBehavior(.all)
                 TableColumn(L("Value in effect"), value: \.effective) { row in
-                    // まとめての表では、ここが「このリポジトリ」の値の欄にもなる。
-                    if columnsMode == .combined && isEditing(row) {
-                        valueField(row)
+                    // まとめての表では、ここがこの段の値の欄にもなる（欄の見た目で、1 回のクリックで編集）。
+                    if columnsMode == .combined {
+                        editableCell(row, shown: row.effectiveScope.isEmpty ? nil : row.effective)
+                            .help(row.effectiveScope.isEmpty ? "" : "\(scopeLabel(row.effectiveScope, host: model.host)) · \(row.files[row.effectiveScope] ?? "")")
                     } else if row.effectiveScope.isEmpty {
                         // どこにも設定がない（「基本」の未設定のキー）: 空の値とは違うので、何も出さない。
                         Text("")
@@ -616,15 +619,13 @@ private struct AllSettingsTab: View {
                         .width(min: 60, ideal: 90)
                         .customizationID("system")
                     TableColumn(header("global"), value: \.global) { row in
-                        if model.level == .allRepositories, isEditing(row) { valueField(row) } else { cell(row, scope: "global") }
+                        if model.level == .allRepositories { editableCell(row) } else { cell(row, scope: "global") }
                     }
                     .width(min: 60, ideal: 110)
                     .customizationID("global")
                     .disabledCustomizationBehavior(model.level == .allRepositories ? .all : [])
                     if model.level == .repository {
-                        TableColumn(header("local"), value: \.local) { row in
-                            if isEditing(row) { valueField(row) } else { cell(row, scope: "local") }
-                        }
+                        TableColumn(header("local"), value: \.local) { row in editableCell(row) }
                         .width(min: 80, ideal: 140)
                         .customizationID("local")
                         .disabledCustomizationBehavior(.all)
@@ -651,8 +652,8 @@ private struct AllSettingsTab: View {
             .contextMenu(forSelectionType: String.self) { keys in
                 let groupIDs = self.groupIDs
                 let keys = keys.filter { $0 != Self.newRowID && !groupIDs.contains($0) }
-                Button(L("Edit in This Repository")) { keys.first.map(beginEditing) }.disabled(keys.count != 1)
-                Button(L("Remove from This Repository")) { remove(keys) }
+                Button(model.level == .repository ? L("Edit in This Repository") : L("Edit for All Repositories")) { keys.first.map(beginEditing) }.disabled(keys.count != 1)
+                Button(model.level == .repository ? L("Remove from This Repository") : L("Remove from All Repositories")) { remove(keys) }
                     .disabled(!keys.contains { model.local($0) != nil })
                 Divider()
                 Button(L("Copy")) { copy(keys) }.disabled(keys.isEmpty)
@@ -669,14 +670,16 @@ private struct AllSettingsTab: View {
             }
             HStack {
                 Button { beginAdding() } label: { Image(systemName: "plus") }
-                    .help(L("Add a key to this repository"))
+                    .help(model.level == .repository ? L("Add a key to this repository") : L("Add a key for all repositories"))
                     .disabled(adding)
                 Button { remove(selection) } label: { Image(systemName: "minus") }
-                    .help(L("Remove the selected keys from this repository (⌫)"))
+                    .help(model.level == .repository ? L("Remove the selected keys from this repository (⌫)") : L("Remove the selected keys from all repositories (⌫)"))
                     .disabled(!selection.contains { model.local($0) != nil })
                 if !model.removedConfig.isEmpty {
                     let r = model.removedConfig
-                    Text(r.count == 1 ? L("Removed %@ from this repository", "\(r[0].key) = \(r[0].value)") : L("Removed %ld keys from this repository", r.count))
+                    Text(model.level == .repository
+                         ? (r.count == 1 ? L("Removed %@ from this repository", "\(r[0].key) = \(r[0].value)") : L("Removed %ld keys from this repository", r.count))
+                         : (r.count == 1 ? L("Removed %@ from all repositories", "\(r[0].key) = \(r[0].value)") : L("Removed %ld keys from all repositories", r.count)))
                         .foregroundStyle(.secondary).lineLimit(1).padding(.leading, 8)
                     Button(L("Restore")) { restore() }
                 }
@@ -700,6 +703,37 @@ private struct AllSettingsTab: View {
                 .help("\(scope) · \(row.files[scope] ?? "")")
         } else {
             Text("")
+        }
+    }
+
+    /// 書ける段の列のセル: 欄の見た目で、1 回のクリックで編集する。見出しの行は空。`shown` は欄に出す値
+    /// （段ごとの表ではこの段の値、まとめての表では効いている値）。
+    @ViewBuilder private func editableCell(_ row: ConfigRow, shown: String?? = .none) -> some View {
+        if isEditing(row) {
+            valueField(row).modifier(FieldLook())
+        } else if row.isGroup {
+            Text("")
+        } else {
+            let value: String? = shown ?? row.values[model.ownScope]
+            HStack(spacing: 0) {
+                (value.map(valueText) ?? Text(""))
+                    .fontWeight(shown == nil && row.effectiveScope == model.ownScope ? .bold : .regular)
+                Spacer(minLength: 0)
+            }
+            .modifier(FieldLook())
+            .contentShape(Rectangle())
+            .onTapGesture { beginEditing(row.key) }
+            .help(model.level == .repository ? L("Click to edit in this repository") : L("Click to edit for all repositories"))
+        }
+    }
+
+    /// 編集できるセルの見た目（入力欄の枠）。
+    private struct FieldLook: ViewModifier {
+        func body(content: Content) -> some View {
+            content
+                .padding(.horizontal, 4).padding(.vertical, 1)
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .textBackgroundColor).opacity(0.6)))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.35)))
         }
     }
 
@@ -911,6 +945,7 @@ struct SettingRow<Control: View>: View {
                 if overriding {
                     Button { model.revert(keys) } label: { Image(systemName: "arrow.uturn.backward") }
                         .buttonStyle(.borderless)
+                        .frame(width: 20)
                         .help(L("Stop overriding here. The value above takes over."))
                 } else {
                     Color.clear.frame(width: 20, height: 1)
@@ -1101,20 +1136,20 @@ private struct PullMethodRow: View {
 
 /// 左の一覧の項目。組はなく、よく変えるものを先に、たまに見る 2 つを最後に。
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case machine, author, commits, operations, branches, workingCopy, remotes, hooks, config
+    case author, commits, operations, branches, workingCopy, remotes, hooks, programs, config
     var id: String { rawValue }
 
-    /// その段にあるページ。機械のページはすべてのリポジトリの段（Settings > Git）だけ、リポジトリにしかないものはこのリポジトリの段だけ。
+    /// その段にあるページ。プログラムはすべてのリポジトリの段（Settings > Git）だけ、リポジトリにしかないものはこのリポジトリの段だけ。
     static func cases(for level: RepositorySettingsModel.Level) -> [SettingsPage] {
         switch level {
         case .repository: [.author, .commits, .operations, .branches, .workingCopy, .remotes, .hooks, .config]
-        case .allRepositories: [.machine, .author, .commits, .operations, .workingCopy, .config]
+        case .allRepositories: [.author, .commits, .operations, .workingCopy, .programs, .config]
         }
     }
 
     var title: String {
         switch self {
-        case .machine: L("This Mac")
+        case .programs: L("Programs")
         case .author: L("Author and Signing")
         case .commits: L("Commits")
         case .operations: L("Operations")
@@ -1122,7 +1157,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .workingCopy: "Working Copy"
         case .remotes: L("Remotes")
         case .hooks: "Hooks · LFS"
-        case .config: "git config"
+        case .config: L("Keys and Values")
         }
     }
 }
@@ -1267,7 +1302,7 @@ private struct SigningKeyRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            SettingRow(model: model, question: L("Key"), help: L("The keys gpg, ~/.ssh, ssh-agent and gpgsm know, the ones for your email first. Choosing a key chooses its format too. Empty picks gpg’s key for your email."),
+            SettingRow(model: model, question: L("Key"), help: "",
                        keys: [key], describe: label) {
                 Picker("", selection: Binding(get: { typing ? Self.other : current }, set: { choose($0) })) {
                     Text(label("")).tag("")
@@ -1352,21 +1387,22 @@ private struct CommitsPage: View {
                     .onAppear { draft = saved }
                     .onChange(of: saved) { _, new in draft = new }
                 case .shared(let name):
-                    let text = Settings.commitTemplates.first { $0.name == name }?.text ?? ""
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
-                            .font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(12).textSelection(.enabled)
-                        HStack {
-                            Spacer()
-                            Button(L("Edit in Settings > Commit…")) { SettingsWindowController.shared.show(tab: L("Commit")) }
-                            Button(L("Copy to This Repository")) {
-                                model.saveCommitTemplate(text)
-                                model.set(TemplateRow.libraryKey, nil)
+                    if model.level == .repository {
+                        let text = TemplateLibrary.shared.templates.first { $0.name == name }?.text ?? ""
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text(text.trimmingCharacters(in: .whitespacesAndNewlines))
+                                .font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(12).textSelection(.enabled)
+                            HStack {
+                                Spacer()
+                                Button(L("Edit Shared Template…")) { SettingsWindowController.shared.show(tab: "Git", page: .commits) }
+                                Button(L("Edit for This Repository")) {
+                                    model.saveCommitTemplate(text)
+                                    model.set(TemplateRow.libraryKey, nil)
+                                }
                             }
-                            .help(L("Makes a copy of this template for this repository alone, which git in a terminal uses too."))
                         }
+                        .padding(.vertical, 6)
                     }
-                    .padding(.vertical, 6)
                 case .file:
                     if let preview, !preview.isEmpty {
                         Text(preview).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(12).textSelection(.enabled)
@@ -1376,6 +1412,9 @@ private struct CommitsPage: View {
                 }
             } header: {
                 Text(L("Message"))
+            }
+            if model.level == .allRepositories {
+                TemplateLibrarySection()
             }
         }
         .formStyle(.grouped)
@@ -1392,7 +1431,7 @@ private struct CommitsPage: View {
     }
 }
 
-/// メッセージのテンプレート: なし／Settings > Commit の共有のテンプレート（`amonhen.commitTemplate` に名前。Amon Hen の
+/// メッセージのテンプレート: なし／Settings > Git > コミットの共有のテンプレート（`amonhen.commitTemplate` に名前。Amon Hen の
 /// コミット欄だけが使う）／このリポジトリ専用（`<git dir>/amonhen/commit-template` に置き、git の `commit.template` を
 /// 向ける。端末の git も使う）／ファイル…（`commit.template`）。
 private struct TemplateRow: View {
@@ -1404,7 +1443,7 @@ private struct TemplateRow: View {
     enum Choice: Equatable { case none, shared(String), own, file(String) }
 
     static func choice(_ model: RepositorySettingsModel) -> Choice {
-        let templates = Settings.commitTemplates
+        let templates = TemplateLibrary.shared.templates
         if let n = model.effective(libraryKey)?.value.nonEmpty, templates.contains(where: { $0.name == n }) { return .shared(n) }
         guard let file = model.effective(fileKey)?.value.nonEmpty else { return .none }
         return isOwn(file, model) ? .own : .file(file)
@@ -1415,7 +1454,7 @@ private struct TemplateRow: View {
         path == model.commitTemplate?.path || path.hasSuffix("/amonhen/commit-template")
     }
 
-    private var templates: [CommitTemplate] { Settings.commitTemplates }
+    private var templates: [CommitTemplate] { TemplateLibrary.shared.templates }
     private var choice: Choice { Self.choice(model) }
     private var current: String {
         switch choice {
@@ -1438,10 +1477,7 @@ private struct TemplateRow: View {
     }
 
     var body: some View {
-        SettingRow(model: model, question: L("Message template"),
-                   help: model.level == .repository
-                       ? L("Shared templates live in Settings > Commit and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too.")
-                       : L("Shared templates live in Settings > Commit and are Amon Hen’s. A file is git’s commit.template, which git in a terminal uses too."),
+        SettingRow(model: model, question: L("Message template"), help: "",
                    keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: label) {
             Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
                 Text(L("None")).tag("")
@@ -1511,7 +1547,7 @@ private struct OperationsPage: View {
                           key: "rebase.updateRefs", options: [("false", L("Leave them")), ("true", L("Move them along"))], defaultValue: "false", isBool: true, disabledReason: tooOld)
             }
             Section("Merge") {
-                ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("With the base (diff3, zdiff3) the merge editor resolves one-sided conflicts by itself. Amon Hen recommends zdiff3."), key: "merge.conflictStyle",
+                ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("With the base (diff3, zdiff3), the merge editor resolves one-sided conflicts by itself."), key: "merge.conflictStyle",
                           options: [("merge", L("Both sides")), ("diff3", L("Both sides and the common base")), ("zdiff3", L("Both sides and the base, shortened"))], defaultValue: "merge")
             }
         }
@@ -1535,7 +1571,7 @@ private struct WorkingCopyPage: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text(model.level == .repository
                          ? L(".git/info/exclude, one pattern per line. Shared patterns go in .gitignore.")
-                         : L("%@, one pattern per line, like .gitignore (core.excludesFile; git’s default is ~/.config/git/ignore).", (model.excludesPath as NSString).abbreviatingWithTildeInPath))
+                         : (model.excludesPath as NSString).abbreviatingWithTildeInPath)
                         .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.horizontal, 8)
                     TextEditor(text: $model.exclude)
                         .font(.system(.body, design: .monospaced))
@@ -1783,7 +1819,7 @@ struct RepositorySettingsView: View {
                 if model.level == .repository {
                     // このリポジトリを動かしている git。機械（この Mac か SSH 先）のものなので、変えるのはその機械の設定で。
                     Button {
-                        if model.host == nil { SettingsWindowController.shared.show(tab: "Git") }
+                        if model.host == nil { SettingsWindowController.shared.show(tab: "Git", page: .programs) }
                     } label: {
                         Text("git \(model.gitVersion ?? "?") · \(model.host ?? L("This Mac"))")
                             .font(.caption).foregroundStyle(.secondary)
@@ -1811,11 +1847,14 @@ struct RepositorySettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .onReceive(NotificationCenter.default.publisher(for: GitSettings.showPage)) { note in
+            if model.level == .allRepositories, let p = note.object as? SettingsPage { page = p }
+        }
     }
 
     @ViewBuilder private var content: some View {
         switch page {
-        case .machine: MachinePage(model: model)
+        case .programs: ProgramsPage(model: model)
         case .author: AuthorSigningPage(model: model)
         case .commits: CommitsPage(model: model)
         case .operations: OperationsPage(model: model)

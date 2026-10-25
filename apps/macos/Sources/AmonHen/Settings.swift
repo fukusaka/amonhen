@@ -336,7 +336,6 @@ enum PullMode: String, CaseIterable {
 /// Settings ウィンドウ（⌘,）の中身。開くたびに `Settings` から読み直し、変えたらすぐ書き戻す。
 @Observable
 final class SettingsModel {
-    var commitTemplates = Settings.commitTemplates { didSet { Settings.commitTemplates = commitTemplates } }
     var autoFetchMinutes = Settings.autoFetchMinutes { didSet { Settings.autoFetchMinutes = autoFetchMinutes } }
     var compactHistoryRows = Settings.compactHistoryRows { didSet { Settings.compactHistoryRows = compactHistoryRows } }
     var historyOrder = Settings.historyOrder { didSet { Settings.historyOrder = historyOrder } }
@@ -379,7 +378,6 @@ final class SettingsModel {
 
     /// メニューで変えた分を拾う（同じ値なら書き戻さない）。
     func reload() {
-        if commitTemplates != Settings.commitTemplates { commitTemplates = Settings.commitTemplates }
         if autoFetchMinutes != Settings.autoFetchMinutes { autoFetchMinutes = Settings.autoFetchMinutes }
         if compactHistoryRows != Settings.compactHistoryRows { compactHistoryRows = Settings.compactHistoryRows }
         if highlightAncestors != Settings.highlightAncestors { highlightAncestors = Settings.highlightAncestors }
@@ -422,12 +420,10 @@ private struct GeneralSettings: View {
         Form {
             Section {
                 Toggle(L("Bookmark repositories you open"), isOn: $model.autoBookmark)
-                Note(L("Repositories already found in folders to scan aren’t added."))
                 Picker(L("Fetch automatically"), selection: $model.autoFetchMinutes) {
                     Text(L("Never")).tag(0)
                     ForEach([5, 15, 30, 60], id: \.self) { Text(L("Every %ld minutes", $0)).tag($0) }
                 }
-                Note(L("Every open repository is fetched at this interval while its window is open."))
             }
             Section {
                 Picker(L("External Editor"), selection: $model.externalEditor) {
@@ -443,7 +439,6 @@ private struct GeneralSettings: View {
                 .onChange(of: model.externalEditor) { previous, value in
                     if value == "other" { chooseOther(previous: previous) }
                 }
-                Note(L("Used wherever Amon Hen opens a file in an editor. Automatic picks the first code editor installed (VS Code, Cursor, Zed, Sublime Text, BBEdit, Nova, TextMate, Fleet, Xcode), or else the default text editor."))
             }
         }
         .formStyle(.grouped)
@@ -467,39 +462,23 @@ private struct GeneralSettings: View {
 /// Accounts: 外部サービス。今は GitHub の表示だけ（アカウントとトークンは後）。
 private struct AccountsSettings: View {
     @Bindable var model: SettingsModel
-    @State private var details = false
     var body: some View {
         Form {
             Section("GitHub") {
                 Toggle(L("Show each commit’s CI status in History"), isOn: $model.gitHubCIStatus)
                 Toggle(L("Use commit authors’ GitHub avatars"), isOn: $model.gitHubAvatars)
-                Note(L("Read with gh when a repository opens, on Refresh, and after a fetch or push."))
-                DisclosureGroup(L("Details"), isExpanded: $details) {
-                    Picker(L("Branches to read CI for"), selection: $model.gitHubCIDefaultBranch) {
-                        Text(L("Current and default branch")).tag(true)
-                        Text(L("Current branch only")).tag(false)
-                    }
-                    .disabled(!model.gitHubCIStatus && !model.gitHubAvatars)
-                    Picker(L("Commits to read per branch"), selection: $model.gitHubCICommits) {
-                        ForEach([100, 50, 30], id: \.self) { Text(L("Last %ld", $0)).tag($0) }
-                    }
-                    .disabled(!model.gitHubCIStatus && !model.gitHubAvatars)
-                    Toggle(L("Read avatar URLs only once per window"), isOn: $model.gitHubAvatarsOnce)
-                        .disabled(!model.gitHubAvatars)
-                    Note(L("About 40 KB per read with 2 branches × 100 commits; 17 KB for CI only; 3 KB for the current branch with 30 commits."))
+                Picker(L("Branches to read CI for"), selection: $model.gitHubCIDefaultBranch) {
+                    Text(L("Current and default branch")).tag(true)
+                    Text(L("Current branch only")).tag(false)
                 }
+                .disabled(!model.gitHubCIStatus && !model.gitHubAvatars)
+                Picker(L("Commits to read per branch"), selection: $model.gitHubCICommits) {
+                    ForEach([100, 50, 30], id: \.self) { Text(L("Last %ld", $0)).tag($0) }
+                }
+                .disabled(!model.gitHubCIStatus && !model.gitHubAvatars)
+                Toggle(L("Read avatar URLs only once per window"), isOn: $model.gitHubAvatarsOnce)
+                    .disabled(!model.gitHubAvatars)
             }
-        }
-        .formStyle(.grouped)
-    }
-}
-
-/// Commit: メッセージのテンプレートの一覧。
-private struct CommitSettings: View {
-    @Bindable var model: SettingsModel
-    var body: some View {
-        Form {
-            CommitTemplatesSettings(model: model)
         }
         .formStyle(.grouped)
     }
@@ -512,29 +491,34 @@ private struct DiffMergeSettings: View {
         Form {
             Section(L("Merge Editor")) {
                 Toggle(L("Resolve unambiguous conflicts when the merge editor opens"), isOn: $model.autoMagicMerge)
-                Note(L("Conflicts where both sides are the same, or only one side changed. ⌘Z undoes it. Use ✨ Magic Merge for the rest."))
             }
         }
         .formStyle(.grouped)
     }
 }
 
-/// コミットのメッセージのテンプレートの一覧（この Mac）。名前の一覧と ＋／−／編集…。本文はシートで書く。
-/// リポジトリはその Settings > Commits で 1 つを選ぶ。
-private struct CommitTemplatesSettings: View {
-    @Bindable var model: SettingsModel
+/// 共有のテンプレートの一覧（この Mac。`Settings.commitTemplates` に置く）。Settings > Git > コミットで編集し、
+/// リポジトリはその Settings > コミットで 1 つを選ぶ。
+@Observable
+final class TemplateLibrary {
+    static let shared = TemplateLibrary()
+    var templates = Settings.commitTemplates { didSet { Settings.commitTemplates = templates } }
+}
+
+/// Settings > Git > コミットの、共有のテンプレートの一覧。名前の一覧と ＋／−／編集…。本文はシートで書く。
+struct TemplateLibrarySection: View {
+    @State private var library = TemplateLibrary.shared
     @State private var selected: UUID?
     @State private var editing: UUID?
 
     var body: some View {
-        Section(L("Message Templates")) {
+        Section(L("Shared Templates")) {
             List(selection: $selected) {
-                ForEach(model.commitTemplates) { t in
+                ForEach(library.templates) { t in
                     Text(t.name.isEmpty ? L("Untitled") : t.name).tag(t.id)
-                        .contextMenu { Button(L("Edit…")) { editing = t.id } }
                 }
             }
-            .frame(height: 160)
+            .frame(height: 140)
             .contextMenu(forSelectionType: UUID.self) { ids in
                 if let id = ids.first { Button(L("Edit…")) { editing = id } }
             } primaryAction: { ids in
@@ -547,37 +531,36 @@ private struct CommitTemplatesSettings: View {
                 Button(L("Edit…")) { editing = selected }.disabled(selected == nil)
             }
             .buttonStyle(.borderless)
-            Note(L("A repository chooses one in its Settings > Commits, or copies it for itself."))
         }
-        .sheet(item: Binding(get: { editing.flatMap { id in model.commitTemplates.first { $0.id == id } } }, set: { editing = $0?.id })) { t in
-            TemplateSheet(model: model, id: t.id)
+        .sheet(item: Binding(get: { editing.flatMap { id in library.templates.first { $0.id == id } } }, set: { editing = $0?.id })) { t in
+            TemplateSheet(library: library, id: t.id)
         }
     }
 
     private func add() {
         let t = CommitTemplate(name: L("Untitled"), text: "")
-        model.commitTemplates.append(t)
+        library.templates.append(t)
         selected = t.id
         editing = t.id
     }
 
     private func remove() {
-        model.commitTemplates.removeAll { $0.id == selected }
+        library.templates.removeAll { $0.id == selected }
         selected = nil
     }
 }
 
 /// テンプレートの名前と本文を書くシート。
 private struct TemplateSheet: View {
-    @Bindable var model: SettingsModel
+    @Bindable var library: TemplateLibrary
     let id: UUID
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let i = model.commitTemplates.firstIndex(where: { $0.id == id }) {
-                TextField(L("Name"), text: $model.commitTemplates[i].name)
-                TextEditor(text: $model.commitTemplates[i].text)
+            if let i = library.templates.firstIndex(where: { $0.id == id }) {
+                TextField(L("Name"), text: $library.templates[i].name)
+                TextEditor(text: $library.templates[i].text)
                     .font(.system(.body, design: .monospaced))
                     .frame(width: 480, height: 240)
             }
@@ -601,7 +584,6 @@ private struct AppearanceSettings: View {
                 Note(L("Topological order keeps a branch’s commits together under the merge that brought them in."))
                 Toggle(L("Show each commit on one line"), isOn: $model.compactHistoryRows)
                 Toggle(L("Highlight the selected commit’s ancestors"), isOn: $model.highlightAncestors)
-                Note(L("Draws only the selected commit’s ancestors and the lines between them at full strength, and dims the rest."))
             }
             Section(L("Items")) {
                 ForEach(HistoryDisplayMenu.entries, id: \.0.rawValue) { item, title in
@@ -609,7 +591,7 @@ private struct AppearanceSettings: View {
                         get: { model.historyItems.contains(item) },
                         set: { on in if on { model.historyItems.insert(item) } else { model.historyItems.remove(item) } }))
                 }
-                Note(L("What each commit’s row shows besides the subject. With none of author, date and ID, rows are one line."))
+                Note(L("What each commit’s row shows besides the subject."))
             }
             Section(L("Commit Details")) {
                 Toggle(L("Show the message in a monospaced font"), isOn: $model.monospacedCommitMessage)
@@ -617,11 +599,9 @@ private struct AppearanceSettings: View {
                 Note(L("Fetched from Gravatar (sends a hash of the email address to gravatar.com)."))
                 Toggle(L("Stack the diffs of all files"), isOn: $model.stackedCommitDiff)
                 Toggle(L("Show changed files as a tree left of the diff"), isOn: $model.historyFileTree)
-                Note(L("Shows the diffs of the changed files one after another, like a GitHub pull request. Click a file header to collapse it; Viewed collapses files you’ve seen. Commits with more than 200 changed files show one file at a time."))
             }
             Section("File History") {
                 Toggle(L("Show merge commits"), isOn: $model.fileHistoryMerges)
-                Note(L("Also lists the merges that changed the file, such as one that resolved a conflict or brought in changes made under an earlier name. Also from the list’s context menu."))
             }
         }
         .formStyle(.grouped)
@@ -634,17 +614,16 @@ private struct PerformanceSettings: View {
         Form {
             Section {
                 Toggle(L("Write commit-graph automatically"), isOn: $model.writeCommitGraph)
-                Note(L("Keeps the commit-graph up to date in the background (writes to .git): runs git commit-graph write --reachable --changed-paths when you open a repository without one, and adds just the new commits to it (--split) when you open a repository or fetch. Loading history and searching with path: get faster."))
+                Note(L("Writes to .git."))
                 Toggle(L("Speed up status with fsmonitor"), isOn: $model.useFSMonitor)
-                Note(L("Uses git’s fsmonitor for the status of repositories on this Mac (a git fsmonitor--daemon runs for each repository and creates a socket in .git)."))
+                Note(L("A git fsmonitor--daemon runs for each repository."))
             }
             Section(L("Shared daemon")) {
                 Toggle(L("Open repositories through the shared daemon (SSH hosts too)"), isOn: $model.openThroughDaemon)
-                Note(L("Shares History, the search index, the operation log and SSH connections among the app, the CLI and the VSCode extension; applies to repositories opened from now on. See Daemon in Window > Activity."))
             }
             Section(L("Terminal Environment")) {
                 Toggle(L("Take the login shell’s environment at launch"), isOn: $model.importShellEnvironment)
-                Note(L("Gives git, the shared daemon and gh the terminal’s PATH, SSH agent and GIT_* settings, which an app launched from the Finder doesn’t get. Changes apply at the next launch."))
+                Note(L("Applies at the next launch."))
                 ShellEnvironmentView()
             }
         }
@@ -668,7 +647,7 @@ private struct AISettings: View {
                     if let reason = AppleModel.unavailableReason {
                         Note(reason).foregroundStyle(.red)
                     } else {
-                        Note(L("Runs on this Mac and sends nothing out. It reads about 4,000 tokens at a time, so long diffs are cut short; for large commits or resolving conflicts, Claude Code or Codex does better."))
+                        Note(L("Runs on this Mac and sends nothing out."))
                     }
                     TextField(L("Language for translations and explanations"), text: $model.assistantLanguage)
                 } else if model.assistant != .none {
@@ -701,7 +680,7 @@ private struct AISettings: View {
                 }
             } footer: {
                 if model.assistant.sendsOut {
-                    Note(L("Runs the local CLI with tools disabled (the app holds no keys; it uses the CLI’s sign-in). For each repository, asks before sending anything the first time."))
+                    Note(L("Asks before sending anything from a repository the first time."))
                 }
             }
             Section(L("Prompts by Purpose")) {
@@ -733,11 +712,10 @@ private struct AISettings: View {
                         .help(L("Send the current prompt with a sample diff and message, and see the reply."))
                     }
                 }
-                Note(L("Stored in ~/Library/Application Support/Amon Hen/prompts/<purpose>.md. A repository’s .amonhen/prompts/<purpose>.md takes precedence (you’re asked to check it the first time). The app appends the reply format (the JSON for resolving conflicts)."))
+                Note(L("Stored in ~/Library/Application Support/Amon Hen/prompts."))
             }
             Section {
                 Button(L("Forget Per-Repository Permissions")) { Assistant.forgetRepositoryDecisions() }
-                Note(L("Forgets the answers to “Use AI in this repository?” and asks again next time."))
             }
         }
         .formStyle(.grouped)
@@ -755,43 +733,21 @@ private struct AISettings: View {
 
 /// 取り込んだ変数とその値。読み直すボタン付き（シェルの設定を変えたあとに）。
 private struct ShellEnvironmentView: View {
-    @State private var values = ShellEnvironment.values
     @State private var shell = ShellEnvironment.shell
     @State private var lastRead = ShellEnvironment.lastRead
     @State private var reloading = false
-    @State private var showingValues = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(status).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button(L("Read Again")) {
-                    reloading = true
-                    ShellEnvironment.reload()
-                }
-                .disabled(reloading || !ShellEnvironment.isEnabled)
+        HStack {
+            Text(status).font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Button(L("Read Again")) {
+                reloading = true
+                ShellEnvironment.reload()
             }
-            if values.isEmpty {
-                Text(L("Nothing taken from the shell.")).font(.caption).foregroundStyle(.secondary)
-            } else {
-                DisclosureGroup(L("Details"), isExpanded: $showingValues) {
-                ForEach(values.keys.sorted(), id: \.self) { key in
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(key).font(.caption.weight(.medium))
-                        // PATH は 1 行に 1 つ（どの git が選ばれるかは、この順で決まる）。
-                        Text(key == "PATH" ? values[key, default: ""].replacingOccurrences(of: ":", with: "\n") : values[key, default: ""])
-                            .font(.caption.monospaced())
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
-                }
-            }
+            .disabled(reloading || !ShellEnvironment.isEnabled)
         }
         .onReceive(NotificationCenter.default.publisher(for: ShellEnvironment.didChange)) { _ in
-            values = ShellEnvironment.values
             shell = ShellEnvironment.shell
             lastRead = ShellEnvironment.lastRead
             reloading = false
@@ -827,14 +783,14 @@ final class SettingsWindowController: NSWindowController {
         add(L("General"), "gearshape", GeneralSettings(model: model))
         add("Git", "arrow.triangle.branch", GitSettings(model: model))
         add(L("Accounts"), "person.crop.circle", AccountsSettings(model: model))
-        add(L("Commit"), "checkmark.circle", CommitSettings(model: model))
         add(L("Appearance"), "paintbrush", AppearanceSettings(model: model))
         add(L("Diff & Merge"), "arrow.triangle.merge", DiffMergeSettings(model: model))
         add("AI", "sparkles", AISettings(model: model))
         add(L("Performance"), "speedometer", PerformanceSettings(model: model))
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable, .resizable]
-        window.title = L("Settings")
+        // タイトルは選んでいるタブの名前（初めは先頭のタブ）。
+        window.title = tabs.tabViewItems.first?.label ?? L("Settings")
         window.contentMinSize = NSSize(width: 960, height: 400)
         window.setContentSize(NSSize(width: 960, height: 720))
         window.setFrameAutosaveName("Settings")
@@ -843,7 +799,11 @@ final class SettingsWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(tab: String? = nil) {
+    func show(tab: String? = nil, page: SettingsPage? = nil) {
+        if let page {
+            GitSettings.pendingPage = page
+            NotificationCenter.default.post(name: GitSettings.showPage, object: page)
+        }
         model.reload()
         if window?.isVisible != true { window?.center() }
         showWindow(nil)
