@@ -282,7 +282,7 @@ fn link_cli(root: &Path, say: &dyn Fn(String)) -> Result<()> {
 }
 
 /// 自分と一緒に配られた、SSH 先に送るエンジンの置き場所（`.app` の `Contents/Resources/engines`、VSCode 拡張の
-/// `bin`（自分も `amonhen-<os>-<arch>` の名前で並んでいる）、開発中はリポジトリの `dist/engine`）。
+/// `bin`（自分も `amonhen-<os>-<arch>` の名前で並んでいる）、開発中はこのビルドのチェックアウトの `dist/engine`）。
 fn bundled_engines(me: &Path) -> Option<PathBuf> {
     let dir = me.parent()?;
     if me
@@ -294,9 +294,10 @@ fn bundled_engines(me: &Path) -> Option<PathBuf> {
     if let Some(bundled) = Some(dir.join("../Resources/engines")).filter(|d| d.is_dir()) {
         return Some(bundled);
     }
-    dir.ancestors()
-        .map(|d| d.join("dist/engine"))
-        .find(|d| d.is_dir())
+    // 開発中は、このビルドのチェックアウトの中だけ（ほかのチェックアウトのものは別のビルド）。
+    amonhen_remote::engines::checkout_root(dir)
+        .map(|root| root.join("dist/engine"))
+        .filter(|d| d.is_dir())
 }
 
 #[cfg(unix)]
