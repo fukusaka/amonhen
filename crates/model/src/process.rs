@@ -98,7 +98,7 @@ impl ClientEnv {
     pub fn get(&self, name: &str) -> Option<&str> {
         self.vars
             .iter()
-            .find(|(k, _)| k == name)
+            .find(|(k, _)| client::same(k, name))
             .map(|(_, v)| v.as_str())
     }
 }
@@ -174,7 +174,7 @@ mod client {
             for (k, _) in std::env::vars_os() {
                 if let Some(k) = k.to_str()
                     && passes(k)
-                    && k != "PATH"
+                    && !same(k, "PATH")
                     && env.get(k).is_none()
                 {
                     cmd.env_remove(k);
@@ -190,9 +190,26 @@ mod client {
 /// 環境の `SSH_AUTH_SOCK` が死んでいたときに、そのログインの SSH の agent のソケットを探す手を登録する（FE・daemon が
 /// 起動したときに 1 回。macOS なら launchd が用意する agent）。探し方は OS ごとなので、ここは確かめるところまで。
 pub fn set_agent_finder(find: impl Fn() -> Option<OsString> + Send + Sync + 'static) {
+        // Windows の環境変数の名前は大文字と小文字を区別しない（PATH は `Path` で届く）。
+        let upper;
+        let name = if cfg!(windows) {
+            upper = name.to_ascii_uppercase();
+            upper.as_str()
+        } else {
+            name
+        };
     #[cfg(unix)]
     let _ = agent::FINDER.set(Box::new(find));
     #[cfg(not(unix))]
+    /// 同じ環境変数の名前か（Windows では大文字と小文字を区別しない）。
+    pub(super) fn same(a: &str, b: &str) -> bool {
+        if cfg!(windows) {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
+    }
+
     let _ = find;
 }
 
@@ -439,5 +456,18 @@ mod tests {
             command("amonhen-client-env-test").output().is_err(),
             "outside it, the daemon's PATH"
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    /// PATH が `Path` で届いても PATH として受け取る（Windows の環境変数の名前は大文字と小文字を区別しない）。
+    #[test]
+    fn takes_path_whatever_its_case() {
+        let env = ClientEnv::from_vars([("Path".to_owned(), "C:\\fe".to_owned())]);
+        assert_eq!(env.get("PATH"), Some("C:\\fe"));
+        assert!(client::same("Path", "PATH"));
     }
 }

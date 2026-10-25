@@ -225,4 +225,7 @@ test('installs the bundled engine and picks it for the daemon', { skip }, async 
 test('sends the daemon only the environment git and ssh use', () => {
   const env = clientEnv({ PATH: '/bin', HOME: '/home/x', GIT_SSH_COMMAND: 'ssh -v', SECRET_TOKEN: 'x', SSH_AUTH_SOCK: '/a.sock' });
   assert.deepEqual(env.split('\0').sort(), ['GIT_SSH_COMMAND=ssh -v', 'PATH=/bin', 'SSH_AUTH_SOCK=/a.sock']);
+  // Windows では PATH が `Path` で入っている
+  assert.equal(clientEnv({ Path: 'C:\\fe', HOME: 'x' }, true), 'Path=C:\\fe');
+  assert.equal(clientEnv({ Path: 'C:\\fe' }, false), '');
 });
