@@ -113,7 +113,7 @@ SSH 先のホストの設定は Settings… > Git にある（3 章）。そこ�
 
 ## 3. 設定画面（Settings…、⌘,）
 
-macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewController` の `.toolbar` スタイル、中身は SwiftUI の `Form`）。幅は 800 ほど。今アプリメニューにあるトグルはここへ移す。
+macOS 標準の、上にアイコン付きのタブが並ぶ形（`NSTabViewController` の `.toolbar` スタイル、中身は SwiftUI の `Form`）。大きさを変えられ、既定の幅は 960。大きさはタブを切り替えても起動し直しても保ち、タブの中身は窓いっぱいに広がる（長ければ中でスクロール）。今アプリメニューにあるトグルはここへ移す。
 
 Settings… に置くのは、Amon Hen 自身が決めることと、機械ごとの git の設定（Git タブ）。1 つのリポジトリの git の設定はそのリポジトリの画面（4 章）にあり、Git タブはその行の「すべてのリポジトリ」の段で、この Mac と SSH 先のホストごとにある。どのタブにも共通の決まり: スクロールなしで 1 画面に収まる。説明は節に一文まで、残りは ⓘ に。一覧やエディタは埋め込まない（テンプレート、プロンプト、excludes のファイルはシートで開く）。見つけるだけのもの（版、プログラム）は入力欄ではなく、文字とボタン。
 
@@ -701,7 +701,7 @@ git の考え方と、アプリが守ること:
 - [x] U19. History で、各 worktree の HEAD に札（名前と変更のあるファイルの数、書き込む先は ✎）。worktree が
   コミットしたり、ファイルを書き換えたりしたら付け直す。
 - [ ] U20. リポジトリの設定を、使う人から作り直す（4 章）。済み: サイドバーの Workspace の画面とページの一覧（作者と署名、コミット、操作、ブランチ、Working Copy、リモート、Hooks・LFS、git config）とその下の git の 1 行、効いている値を出す行、その設定元、↩︎ と ⓘ、既定のブランチの上書き（`amonhen.defaultBranch`）、Pull と Fetch が git の設定に従うこと、端末にしか効かない行を画面から外したこと、git config を Xcode の形の表にしたこと（キーごとに 1 行、設定元ごとの列、local の列は編集できる、Basic / Customized / All と Combined / Levels の切り替え）、署名を 1 つの選択（署名しない／OpenPGP／SSH／X.509）にしてコアが集めた鍵から選ぶこと、Settings… のテンプレートの一覧（U21 の後は Commit）とコミットのページでの選択（`amonhen.commitTemplate`。このリポジトリ専用のテンプレート `.git/amonhen/commit-template`（`commit.template` が指し、行の下で編集）とファイルと並ぶ）、Working Copy の未追跡ファイルの文脈メニューの「.gitignore に追加」、リモートのシート（名前、fetch と push の URL、接続先の種類、接続の確認）とサイドバーの Remotes の同じ操作、Hooks・LFS を操作つきの表にしたこと（フックごとに有効のスイッチ、選んだフックのスクリプトを表の下に「<エディタ> で編集」つきで、「フックを作成…」、LFS は「パターンを追跡…」と「削除」と LFS にあるファイルの数）。予定（U21 の後）: 4.8 の段階 7（Settings… > Git の機械の設定、行の「すべてのリポジトリに設定」、git config の「すべてのリポジトリ」の列）。
-- [x] U21. Settings の画面を 3 章の形に: 幅 720 ほどで、どのタブも 1 画面。タブは General・Git（機械）・Accounts・Commit・Appearance・Diff & Merge・AI・Performance で、「詳細」はなし。メッセージのテンプレートの一覧は Git から Commit へ、自動 fetch とブックマークは General へ、GitHub は Accounts へ、マージエディタの自動解消は Diff & Merge へ、daemon とシェルの環境は Performance へ。pull の既定とユーザー全体の `rebase.updateRefs` の行はなくす（3 章）。済み。Git タブはリポジトリの設定の画面を「すべてのリポジトリ」の段で開いたもの（この Mac、作者と署名、コミット、操作、Working Copy の「どこでも無視する」、git config の「すべてのリポジトリ」の列の編集）。一覧の SSH 先と「すべてのリポジトリに設定」は 4.8 の段階 7。
+- [x] U21. Settings の画面を 3 章の形に: 大きさを変えられ、既定の幅は 960、どのタブも 1 画面。タブは General・Git（機械）・Accounts・Commit・Appearance・Diff & Merge・AI・Performance で、「詳細」はなし。メッセージのテンプレートの一覧は Git から Commit へ、自動 fetch とブックマークは General へ、GitHub は Accounts へ、マージエディタの自動解消は Diff & Merge へ、daemon とシェルの環境は Performance へ。pull の既定とユーザー全体の `rebase.updateRefs` の行はなくす（3 章）。済み。Git タブはリポジトリの設定の画面を「すべてのリポジトリ」の段で開いたもの（この Mac、作者と署名、コミット、操作、Working Copy の「どこでも無視する」、git config の「すべてのリポジトリ」の列の編集）。一覧の SSH 先と「すべてのリポジトリに設定」は 4.8 の段階 7。
 
 ## 決めたこと
 

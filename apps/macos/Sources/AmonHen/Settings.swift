@@ -813,11 +813,10 @@ final class SettingsWindowController: NSWindowController {
     private init() {
         let tabs = NSTabViewController()
         tabs.tabStyle = .toolbar
-        // 幅 800。画面に収まる高さまで（長いタブは中でスクロールする）。
-        let maxHeight = (NSScreen.main?.visibleFrame.height ?? 900) - 120
+        // 窓は大きさを変えられ、タブを切り替えても保つ（中身は窓いっぱいに広がり、長ければ中でスクロールする）。
         func add(_ title: String, _ symbol: String, _ view: some View) {
-            let host = NSHostingController(rootView: view.frame(width: 800).frame(maxHeight: maxHeight).fixedSize())
-            host.sizingOptions = .preferredContentSize
+            let host = NSHostingController(rootView: view.frame(minWidth: 960, maxWidth: .infinity, minHeight: 400, maxHeight: .infinity))
+            host.sizingOptions = []
             // タブを選ぶと、ウィンドウのタイトルがタブの名前になる（macOS 標準の設定画面と同じ）。
             host.title = title
             let item = NSTabViewItem(viewController: host)
@@ -834,8 +833,10 @@ final class SettingsWindowController: NSWindowController {
         add("AI", "sparkles", AISettings(model: model))
         add(L("Performance"), "speedometer", PerformanceSettings(model: model))
         let window = NSWindow(contentViewController: tabs)
-        window.styleMask = [.titled, .closable]
+        window.styleMask = [.titled, .closable, .resizable]
         window.title = L("Settings")
+        window.contentMinSize = NSSize(width: 960, height: 400)
+        window.setContentSize(NSSize(width: 960, height: 720))
         window.setFrameAutosaveName("Settings")
         super.init(window: window)
     }

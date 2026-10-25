@@ -29,7 +29,8 @@ becomes the GitHub Release notes.
   one along (git's `rebase.updateRefs`; git 2.38 or newer).
 - Pull follows git's own settings (`pull.rebase`, `pull.ff`), as `git pull` in a terminal does: the Pull sheet starts
   from "Follow git's settings" and says what those settings choose; Repository > Pull With picks another way once.
-- Settings is reorganized around what Amon Hen itself decides, 800 points wide with every tab on one screen: General
+- Settings is reorganized around what Amon Hen itself decides, in a resizable window (960 wide by default) with every
+  tab on one screen: General
   (bookmarking, automatic fetch, the external editor), Git, Accounts (GitHub), Commit (the template library, edited in
   a sheet), Appearance, Diff & Merge, AI and Performance (commit-graph, fsmonitor, the shared daemon, the shell
   environment). There is no Advanced tab.
