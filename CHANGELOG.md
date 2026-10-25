@@ -41,6 +41,8 @@ becomes the GitHub Release notes.
   `amonhen install`) without sending one, and still opens when the engine here is of another build.
 - The History cache is kept per format, so builds that run side by side (and share the shared daemon's cache folder)
   don't rewrite each other's file; the first launch of this version builds History once more.
+- The shared daemon runs git and ssh for each app, CLI or VSCode window with that one's environment (`PATH`, the SSH
+  agent, `GIT_*`, the app's password dialog), not with that of whichever started the daemon first.
 - Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
   from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
   where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
@@ -476,6 +478,13 @@ First release.
 - Repositories on SSH hosts through a daemon on the host.
 
 ## VSCode extension
+
+### Unreleased
+
+#### Changed
+
+- The shared daemon runs the extension's git and ssh with the extension's environment (`PATH`, the SSH agent,
+  `GIT_*`), even when the app started the daemon.
 
 ### [0.2.3] - 2026-10-21
 
