@@ -99,7 +99,7 @@ impl Git {
             .args(args);
         // 端末がないので、資格情報は FE が渡した askpass（ダイアログ）で尋ねる。git は GIT_ASKPASS を、git が動かす
         // ssh は SSH_ASKPASS を使う（ssh は端末がなくても使うよう SSH_ASKPASS_REQUIRE）。
-        if let Some(askpass) = std::env::var_os("AMONHEN_ASKPASS") {
+        if let Some(askpass) = amonhen_model::process::var_os("AMONHEN_ASKPASS") {
             cmd.env("GIT_ASKPASS", &askpass)
                 .env("SSH_ASKPASS", &askpass)
                 .env("SSH_ASKPASS_REQUIRE", "prefer");
@@ -303,7 +303,7 @@ const NETWORK_SILENCE: Duration = Duration::from_secs(120);
 const NETWORK_SILENCE_WITH_ASKPASS: Duration = Duration::from_secs(600);
 
 fn network_silence() -> Duration {
-    if std::env::var_os("AMONHEN_ASKPASS").is_some() {
+    if amonhen_model::process::var_os("AMONHEN_ASKPASS").is_some() {
         NETWORK_SILENCE_WITH_ASKPASS
     } else {
         NETWORK_SILENCE
