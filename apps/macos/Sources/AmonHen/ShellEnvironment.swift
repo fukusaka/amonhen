@@ -1,3 +1,4 @@
+import AmonhenKit
 import Foundation
 
 /// Finder や Dock から起動したアプリは、ターミナルの環境を引き継がない（launchd の素の環境: PATH は
@@ -106,6 +107,8 @@ enum ShellEnvironment {
         imported = names.sorted()
         Self.values = values
         DispatchQueue.main.async { NotificationCenter.default.post(name: didChange, object: nil) }
+        // 共有の daemon への今のつながりにも送る（daemon が動かす git・ssh も、つなぎ直さずに新しい環境になる）。
+        DispatchQueue.global(qos: .utility).async { SharedDaemon.updateEnvironment() }
     }
 
     /// `path` がソケットか（リンクの先を見る。1Password の agent は `~/.1password/agent.sock` のリンク）。

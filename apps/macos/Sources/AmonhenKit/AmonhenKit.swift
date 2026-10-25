@@ -413,6 +413,12 @@ public enum Engines {
 }
 
 public enum SharedDaemon {
+    /// このプロセスの環境が変わったとき（設定・シェルの読み直し）に、今のつながりに送り直す。daemon は、この先の
+    /// git・ssh をその環境で動かす（つなぎ直さない）。通信するので裏のスレッドで呼ぶ。
+    public static func updateEnvironment() {
+        amonhen_update_environment()
+    }
+
     /// 様子（`amonhen daemon status --json` と同じ）。
     public struct Status: Decodable, Sendable {
         public struct Repo: Decodable, Sendable, Identifiable, Hashable {
