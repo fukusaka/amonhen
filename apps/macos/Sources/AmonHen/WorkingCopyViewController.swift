@@ -1286,12 +1286,33 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         menu.removeAllItems()
         guard let entry = files.item(atRow: files.clickedRow) as? Entry else { return }
         let path = entry.item.path
-        // untracked のファイルにはまだ履歴がない。
-        guard entry.item.kind != .untracked else { return }
+        // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
+        guard entry.item.kind != .untracked else {
+            menu.addItem(ClosureMenuItem(title: L("Add “%@” to .gitignore", path)) { [weak self] in self?.addToGitignore(path) })
+            let ext = (path as NSString).pathExtension
+            if !ext.isEmpty {
+                menu.addItem(ClosureMenuItem(title: L("Add “%@” to .gitignore", "*." + ext)) { [weak self] in self?.addToGitignore("*." + ext) })
+            }
+            return
+        }
         if entry.item.worktreeState != "D" {
             menu.addItem(ClosureMenuItem(title: "Blame") { [weak self] in self?.onBlame?(path) })
         }
         menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
+    }
+
+    /// `pattern` を作業ツリーの直下の .gitignore の最後に足す（コアで読み書きするので、SSH 先でも同じ）。
+    private func addToGitignore(_ pattern: String) {
+        let repository = self.repository
+        actions?.perform {
+            nonisolated struct Ignore: Decodable { let gitignore: String; let exclude: String }
+            let files = try repository.info(["op": "ignoreFiles"], as: Ignore.self)
+            var gitignore = files.gitignore
+            if gitignore.split(separator: "\n").contains(where: { $0.trimmingCharacters(in: .whitespaces) == pattern }) { return }
+            if !gitignore.isEmpty, !gitignore.hasSuffix("\n") { gitignore += "\n" }
+            gitignore += pattern + "\n"
+            try repository.run(json: Repository.json(["op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": files.exclude]))
+        }
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
