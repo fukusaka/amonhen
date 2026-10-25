@@ -190,6 +190,12 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "autoBookmark") }
     }
 
+    /// 外部のエディタ（.app のパス）。nil・空なら自動（`ExternalEditor.automatic`）。
+    static var externalEditor: String? {
+        get { UserDefaults.standard.string(forKey: "externalEditor") }
+        set { UserDefaults.standard.set(newValue, forKey: "externalEditor") }
+    }
+
     /// マージエディタを開いたときに、間違えようのないコンフリクトを Magic Merge で解くか（既定は解く）。
     static var autoMagicMerge: Bool {
         get { UserDefaults.standard.object(forKey: "autoMagicMerge") as? Bool ?? true }
@@ -334,6 +340,7 @@ final class SettingsModel {
     var gitHubCICommits = Settings.gitHubCICommits { didSet { Settings.gitHubCICommits = gitHubCICommits } }
     var gitHubAvatarsOnce = Settings.gitHubAvatarsOnce { didSet { Settings.gitHubAvatarsOnce = gitHubAvatarsOnce } }
     var autoBookmark = Settings.autoBookmark { didSet { Settings.autoBookmark = autoBookmark } }
+    var externalEditor = Settings.externalEditor ?? "" { didSet { Settings.externalEditor = externalEditor } }
     var openThroughDaemon = Settings.openThroughDaemon { didSet { Settings.openThroughDaemon = openThroughDaemon } }
     var importShellEnvironment = Settings.importShellEnvironment { didSet { Settings.importShellEnvironment = importShellEnvironment } }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
@@ -392,6 +399,48 @@ private struct Note: View {
     init(_ text: String) { self.text = text }
     var body: some View {
         Text(text).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// General: アプリ全体の外部ツール。エディタは、アプリのどこから「エディタで開く」ときも同じものを使う。
+private struct GeneralSettings: View {
+    @Bindable var model: SettingsModel
+    @State private var installed = ExternalEditor.installed
+
+    var body: some View {
+        Form {
+            Section {
+                Picker(L("External Editor"), selection: $model.externalEditor) {
+                    Text(ExternalEditor.automatic.map { L("Automatic (%@)", $0.name) } ?? L("Automatic")).tag("")
+                    Divider()
+                    ForEach(installed) { app in Text(app.name).tag(app.url.path) }
+                    if !model.externalEditor.isEmpty, !installed.contains(where: { $0.url.path == model.externalEditor }) {
+                        Text(ExternalEditor.displayName(URL(fileURLWithPath: model.externalEditor))).tag(model.externalEditor)
+                    }
+                    Divider()
+                    Text(L("Other…")).tag("other")
+                }
+                .onChange(of: model.externalEditor) { previous, value in
+                    if value == "other" { chooseOther(previous: previous) }
+                }
+                Note(L("Used wherever Amon Hen opens a file in an editor, such as hooks in Repository Settings. Automatic picks the first code editor installed (VS Code, Cursor, Zed, Sublime Text, BBEdit, Nova, TextMate, Fleet, Xcode), or else the default text editor."))
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { installed = ExternalEditor.installed }
+    }
+
+    private func chooseOther(previous: String) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.application]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications")
+        panel.canChooseDirectories = false
+        panel.prompt = L("Choose")
+        if panel.runModal() == .OK, let url = panel.url {
+            model.externalEditor = url.path
+        } else {
+            model.externalEditor = previous == "other" ? "" : previous
+        }
     }
 }
 
@@ -795,6 +844,7 @@ final class SettingsWindowController: NSWindowController {
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
             tabs.addTabViewItem(item)
         }
+        add(L("General"), "gearshape", GeneralSettings(model: model))
         add("Git", "arrow.triangle.branch", GitSettings(model: model))
         add(L("Appearance"), "paintbrush", AppearanceSettings(model: model))
         add(L("Performance"), "speedometer", PerformanceSettings(model: model))

@@ -929,6 +929,21 @@ impl Operations for Git {
         Ok(check)
     }
 
+    fn lfs_track(&self, pattern: &str, track: bool) -> Result<()> {
+        self.write(&["lfs", if track { "track" } else { "untrack" }, pattern])
+            .map(drop)
+    }
+
+    fn lfs_file_count(&self) -> Result<Option<usize>> {
+        // git-lfs がないと `git: 'lfs' is not a git command` で失敗する。それは「ない」として返す。
+        match self.read(&["lfs", "ls-files", "--name-only"]) {
+            Ok(out) => Ok(Some(
+                out.split(|&b| b == b'\n').filter(|l| !l.is_empty()).count(),
+            )),
+            Err(_) => Ok(None),
+        }
+    }
+
     fn worktree_list(&self) -> Result<Vec<u8>> {
         if crate::git_at_least(2, 36) {
             return self.read(&["worktree", "list", "--porcelain", "-z"]);

@@ -342,6 +342,15 @@ pub trait Operations: Send + Sync {
         let _ = url;
         Err(crate::tr!("Can’t reach remotes from here").into())
     }
+    /// `git lfs track <pattern>`（`track` が false なら `untrack`）。`.gitattributes` を書き換える。
+    fn lfs_track(&self, pattern: &str, track: bool) -> Result<()> {
+        let _ = (pattern, track);
+        Err(crate::tr!("Can’t change LFS tracking here").into())
+    }
+    /// LFS にあるファイルの数（`git lfs ls-files`）。git-lfs がなければ `None`。
+    fn lfs_file_count(&self) -> Result<Option<usize>> {
+        Ok(None)
+    }
     /// worktree の一覧。`git worktree list --porcelain -z` の出力。
     fn worktree_list(&self) -> Result<Vec<u8>> {
         Err(crate::tr!("Can’t list worktrees here").into())

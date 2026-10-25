@@ -913,6 +913,14 @@ impl Operations for RemoteOperations {
         self.op(Op::CheckRemote(url.to_owned()))
     }
 
+    fn lfs_track(&self, pattern: &str, track: bool) -> Result<()> {
+        self.op(Op::LfsTrack(pattern.to_owned(), track))
+    }
+
+    fn lfs_file_count(&self) -> Result<Option<usize>> {
+        self.op(Op::LfsFileCount)
+    }
+
     fn change_remote(&self, change: &RemoteChange) -> Result<()> {
         self.op(Op::ChangeRemote(change.clone()))
     }

@@ -1,6 +1,7 @@
 import AmonhenKit
 import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// git の設定の 1 項目と、どこで決まっているか。
 struct ConfigEntry: Decodable, Hashable, Identifiable {
@@ -37,6 +38,8 @@ final class RepositorySettingsModel {
     private(set) var hooks: [HookEntry] = []
     private(set) var lfs = false
     private(set) var lfsPatterns: [String] = []
+    /// LFS にあるファイルの数（git-lfs がなければ nil）。
+    private(set) var lfsFiles: Int?
     private(set) var entries: [ConfigEntry] = []
     /// git が知っている設定の変数の名前（設定の有無は問わない。読めなければ空）。
     private(set) var knownKeys: [String] = []
@@ -99,7 +102,7 @@ final class RepositorySettingsModel {
             struct Keys: Decodable { let keys: [String] }
             struct Remotes: Decodable { let remotes: [RemoteEntry] }
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
-            struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String] }
+            struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String]; let lfsFiles: Int? }
             struct Version: Decodable { let version: String?; let updateRefs: Bool }
             struct Template: Decodable { let text: String?; let path: String }
             struct Groups: Decodable { struct Branch: Decodable { let name: String }; let base: String?; let branches: [Branch] }
@@ -125,6 +128,7 @@ final class RepositorySettingsModel {
                 hooks = h.hooks
                 lfs = h.lfs
                 lfsPatterns = h.lfsPatterns
+                lfsFiles = h.lfsFiles
                 // `command` は Amon Hen が git を起動するときの `-c`（色を切るなど）で、リポジトリの設定ではない。
                 // `unknown` は git が組み込みで読むファイル（Apple の git の Xcode の gitconfig）で、機械全体のもの。
                 entries = e.entries.filter { $0.scope != "command" }.map {
@@ -197,24 +201,51 @@ final class RepositorySettingsModel {
         }
     }
 
+    /// フックの実行の許可を付ける・外す。
+    func setHookEnabled(_ name: String, _ enabled: Bool) {
+        run(["op": "setHookEnabled", "name": name, "enabled": enabled])
+    }
+
+    /// フックの中身（なければ nil）。
+    func hookText(_ name: String) async -> String? {
+        let repository = self.repository
+        nonisolated struct Hook: Decodable, Sendable { let text: String? }
+        return try? await Task.detached(priority: .userInitiated) {
+            try repository.info(["op": "hook", "name": name], as: Hook.self)
+        }.value.text
+    }
+
+    /// フックの雛形を置く。できたら `then`。
+    func createHook(_ name: String, then: @escaping () -> Void) {
+        run(["op": "createHook", "name": name], then: then)
+    }
+
+    /// `git lfs track`（`track` が false なら `untrack`）。
+    func lfsTrack(_ pattern: String, _ track: Bool) {
+        run(["op": "lfsTrack", "pattern": pattern, "track": track])
+    }
+
     func saveIgnore() {
         run(["op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": exclude])
     }
 
     var ignoreChanged: Bool { (gitignore, exclude) != savedIgnore }
 
-    private func run(_ command: [String: Any]) {
+    private func run(_ command: [String: Any], then: (() -> Void)? = nil) {
         let repository = self.repository
         guard let json = try? Repository.json(command) else { return }
         Task {
+            var ok = false
             do {
                 try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
                 error = nil
+                ok = true
             } catch {
                 self.error = "\(error)"
             }
             load()
             onRepositoryChange?()
+            if ok { then?() }
         }
     }
 }
@@ -223,6 +254,16 @@ struct HookEntry: Decodable, Hashable, Identifiable {
     let name: String
     let enabled: Bool
     var id: String { name }
+
+    /// git が呼ぶフックの名前（`git help hooks` の順。コアの一覧と同じ）。
+    static let allNames = [
+        "applypatch-msg", "pre-applypatch", "post-applypatch", "pre-commit", "pre-merge-commit",
+        "prepare-commit-msg", "commit-msg", "post-commit", "pre-rebase", "post-checkout", "post-merge",
+        "pre-push", "pre-receive", "update", "proc-receive", "post-receive", "post-update",
+        "reference-transaction", "push-to-checkout", "pre-auto-gc", "post-rewrite", "sendemail-validate",
+        "fsmonitor-watchman", "p4-changelist", "p4-prepare-changelist", "p4-post-changelist",
+        "p4-pre-submit", "post-index-change",
+    ]
 }
 
 /// 設定が書かれているファイル（`file:` を取り、ホームは ~ にする）。
@@ -239,7 +280,7 @@ private struct GroupedPage<Content: View>: View {
     var body: some View {
         ZStack {
             Form { EmptyView() }.formStyle(.grouped)
-            content.padding()
+            content.padding().frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
     }
 }
@@ -1462,46 +1503,215 @@ private struct WorkingCopyPage: View {
     }
 }
 
-/// hooks と LFS。
+/// hooks と LFS（docs/ux.md の 4.5）: フックは名前・いつ動くか・有効（実行の許可）・エディタで開く、の表。LFS は
+/// git-lfs の有無、`.gitattributes` の追跡パターン（Track Pattern… と Remove）、LFS にあるファイルの数。
 private struct HooksLFSPage: View {
     let model: RepositorySettingsModel
+    @State private var hookSelection: String?
+    @State private var hookText: AttributedString?
+    @State private var editors = ExternalEditor.installed
+    @State private var patternSelection: String?
+
+    private var editorName: String { ExternalEditor.chosen?.name ?? L("Editor") }
+
+    /// フックが動くとき（git の説明の要約）。
+    private static func when(_ hook: String) -> String {
+        switch hook {
+        case "pre-commit": L("Before a commit")
+        case "pre-merge-commit": L("Before a merge commit")
+        case "prepare-commit-msg": L("Before the message is edited")
+        case "commit-msg": L("On the commit message")
+        case "post-commit": L("After a commit")
+        case "pre-rebase": L("Before a rebase")
+        case "post-checkout": L("After a checkout")
+        case "post-merge": L("After a merge")
+        case "pre-push": L("Before a push")
+        case "pre-auto-gc": L("Before an automatic gc")
+        case "post-rewrite": L("After commits are rewritten")
+        case "applypatch-msg", "pre-applypatch", "post-applypatch": L("Around git am")
+        case "post-index-change": L("After the index changes")
+        case "fsmonitor-watchman": L("For fsmonitor")
+        case "reference-transaction": L("When refs change")
+        case "push-to-checkout", "pre-receive", "update", "post-receive", "post-update", "proc-receive", "sendemail-validate": L("On the receiving side")
+        default: ""
+        }
+    }
+
+    private var hooksDirectory: String? {
+        guard model.host == nil else { return nil }
+        let root = RepositoryLocation.path(model.location)
+        guard let p = model.hooksPath else { return (root as NSString).appendingPathComponent(".git/hooks") }
+        if p.hasPrefix("/") { return p }
+        if p.hasPrefix("~") { return (p as NSString).expandingTildeInPath }
+        return (root as NSString).appendingPathComponent(p)
+    }
+
     var body: some View {
-        Form {
-            Section {
-                if model.hooks.isEmpty {
-                    Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? L("core.hooksPath (%@) is outside the working tree, so its contents can’t be shown.", $0) : L("None") } ?? L("None"))
-                        .foregroundStyle(.secondary)
+        GroupedPage {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Hooks").font(.headline)
+            if model.hooks.isEmpty {
+                Text(model.hooksPath.map { $0.hasPrefix("/") || $0.hasPrefix("~") ? L("core.hooksPath (%@) is outside the working tree, so its contents can’t be shown.", $0) : L("No hooks. .sample files aren’t counted.") } ?? L("No hooks. .sample files aren’t counted."))
+                    .foregroundStyle(.secondary)
+            } else {
+                Table(model.hooks, selection: $hookSelection) {
+                    TableColumn(L("Name")) { h in Text(h.name).font(.system(.body, design: .monospaced)) }.width(min: 140, ideal: 170)
+                    TableColumn(L("Runs")) { h in Text(Self.when(h.name)).foregroundStyle(.secondary) }
+                    TableColumn(L("Enabled")) { h in
+                        Toggle("", isOn: Binding(get: { h.enabled }, set: { model.setHookEnabled(h.name, $0) }))
+                            .labelsHidden().toggleStyle(.switch).controlSize(.small)
+                            .help(L("The executable bit. git runs only executable hooks."))
+                    }
+                    .width(60)
                 }
-                ForEach(model.hooks) { hook in
-                    HStack {
-                        Text(hook.name).font(.system(.body, design: .monospaced))
-                        Spacer()
-                        Text(hook.enabled ? L("Enabled") : L("Not executable (no chmod +x)"))
-                            .foregroundStyle(hook.enabled ? Color.green : Color.secondary)
+                .contextMenu(forSelectionType: String.self) { names in
+                    if let name = names.first, hooksDirectory != nil {
+                        Button(L("Edit in %@", editorName)) { edit(name) }
+                        Menu(L("Edit With")) {
+                            ForEach(editors) { app in Button(app.name) { edit(name, with: app) } }
+                        }
+                        Button(L("Reveal in Finder")) { reveal(name) }
+                        Divider()
+                    }
+                    Button(L("Create Hook…")) { create() }
+                }
+                .frame(height: CGFloat(28 * model.hooks.count + 36))
+            }
+            HStack {
+                Button(L("Create Hook…")) { create() }
+                    .disabled(model.hooks.count == HookEntry.allNames.count)
+                    .help(L("Puts a #!/bin/sh skeleton in place and makes it executable."))
+                Text(L("Location: %@", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+            if let name = hookSelection, model.hooks.contains(where: { $0.name == name }) {
+                HStack {
+                    Text(name).font(.system(.body, design: .monospaced)).bold()
+                    Spacer()
+                    if hooksDirectory != nil {
+                        Menu {
+                            ForEach(editors) { app in Button(L("Edit in %@", app.name)) { edit(name, with: app) } }
+                        } label: {
+                            Text(L("Edit in %@", editorName))
+                        } primaryAction: {
+                            edit(name)
+                        }
+                        .fixedSize()
                     }
                 }
-            } header: {
-                Text("Hooks")
-            } footer: {
-                Text(L("Location: %@. .sample files aren’t counted. git runs these on commit, push and so on.", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
-                    .foregroundStyle(.secondary)
+                .padding(.top, 8)
+                ScrollView {
+                    Text(hookText ?? AttributedString())
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(8)
+                }
+                .frame(height: 220)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.5)))
+                .task(id: name) { hookText = await loadScript(name) }
+                .onChange(of: model.hooks) { Task { hookText = await loadScript(name) } }
             }
-            Section {
-                LabeledContent("Git LFS", value: model.lfs ? L("Installed (filter.lfs is set)") : L("Not installed"))
-                if model.lfsPatterns.isEmpty {
-                    Text(L("No LFS patterns in .gitattributes.")).foregroundStyle(.secondary)
+
+            Text("LFS").font(.headline).padding(.top, 12)
+            if model.lfs {
+                Text(model.lfsFiles.map { L("Installed. %ld files are in LFS.", $0) } ?? L("Installed (filter.lfs is set)"))
+            } else {
+                Text(L("Not installed. Install it with brew install git-lfs and git lfs install."))
+                    .foregroundStyle(model.lfsPatterns.isEmpty ? Color.secondary : Color.orange)
+            }
+            if model.lfsPatterns.isEmpty {
+                Text(L("No LFS patterns in .gitattributes.")).foregroundStyle(.secondary)
+            } else {
+                Table(model.lfsPatterns.map { PatternRow(pattern: $0) }, selection: $patternSelection) {
+                    TableColumn(L("Pattern")) { r in Text(r.pattern).font(.system(.body, design: .monospaced)) }
                 }
-                ForEach(model.lfsPatterns, id: \.self) { Text($0).font(.system(.body, design: .monospaced)) }
-            } header: {
-                Text("LFS")
-            } footer: {
-                if !model.lfs && !model.lfsPatterns.isEmpty {
-                    Text(L("There are LFS patterns, but git lfs isn’t installed. Install it with brew install git-lfs and git lfs install."))
-                        .foregroundStyle(.orange)
-                }
+                .frame(height: CGFloat(28 * min(model.lfsPatterns.count, 8) + 36))
+            }
+            HStack {
+                Button(L("Track Pattern…")) { track() }.disabled(!model.lfs)
+                Button(L("Remove")) { patternSelection.map { model.lfsTrack($0, false) }; patternSelection = nil }
+                    .disabled(patternSelection == nil || !model.lfs)
+                Spacer()
             }
         }
-        .formStyle(.grouped)
+        }
+    }
+
+    private struct PatternRow: Identifiable { let pattern: String; var id: String { pattern } }
+
+    /// フックのスクリプトを読み、構文の色を付ける（言語は 1 行目の `#!` から。差分と同じ色）。
+    private func loadScript(_ name: String) async -> AttributedString? {
+        guard let text = await model.hookText(name) else { return nil }
+        let palette = SyntaxColors.palette
+        let spans = await Task.detached(priority: .utility) {
+            SyntaxSpans.highlight(path: name, text: text)?.withSpans { Array($0) } ?? []
+        }.value
+        let result = NSMutableAttributedString(string: text)
+        let length = result.length
+        for span in spans where Int(span.end) <= length {
+            result.addAttribute(
+                .foregroundColor, value: palette[Int(span.kind) & 15],
+                range: NSRange(location: Int(span.start), length: Int(span.end - span.start)))
+        }
+        return AttributedString(result)
+    }
+
+    private func path(of name: String) -> URL? {
+        hooksDirectory.map { URL(fileURLWithPath: ($0 as NSString).appendingPathComponent(name)) }
+    }
+
+    /// エディタで開く（手元のリポジトリだけ。`app` がなければ Settings > General で選んだもの）。
+    private func edit(_ name: String, with app: ExternalEditor.App? = nil) {
+        guard let file = path(of: name) else { return }
+        ExternalEditor.open([file], with: app)
+    }
+
+    private func reveal(_ name: String) {
+        guard let file = path(of: name) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([file])
+    }
+
+    /// まだないフックから 1 つ選んで雛形を置き、エディタで開く。
+    private func create() {
+        let present = Set(model.hooks.map(\.name))
+        let names = HookEntry.allNames.filter { !present.contains($0) }
+        guard !names.isEmpty else { return }
+        let alert = NSAlert()
+        alert.messageText = L("Create Hook")
+        alert.informativeText = L("Puts a #!/bin/sh skeleton in place and makes it executable.")
+        alert.addButton(withTitle: L("Create"))
+        alert.addButton(withTitle: L("Cancel"))
+        let popup = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 320, height: 26), pullsDown: false)
+        for name in names {
+            let when = Self.when(name)
+            popup.addItem(withTitle: when.isEmpty ? name : "\(name) — \(when)")
+            popup.lastItem?.representedObject = name
+        }
+        alert.accessoryView = popup
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let name = popup.selectedItem?.representedObject as? String else { return }
+        model.createHook(name) {
+            hookSelection = name
+            edit(name)
+        }
+    }
+
+    private func track() {
+        let alert = NSAlert()
+        alert.messageText = L("Track Pattern")
+        alert.informativeText = L("Files matching the pattern are stored in LFS from now on (git lfs track).")
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: L("Cancel"))
+        let field = NSTextField(string: "")
+        field.placeholderString = "*.psd"
+        field.frame = NSRect(x: 0, y: 0, width: 300, height: 24)
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let pattern = field.stringValue.trimmingCharacters(in: .whitespaces)
+        if !pattern.isEmpty { model.lfsTrack(pattern, true) }
     }
 }
 
