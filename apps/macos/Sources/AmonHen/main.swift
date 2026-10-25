@@ -479,6 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 // ターミナルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込み、git が資格情報を尋ねる先（askpass）を決める
 // （git・daemon を動かす前に）。
+Settings.applyGitExecutable()
 ShellEnvironment.import()
 Askpass.install()
 // --print-environment: 取り込んだあとの環境（git に渡るもの）を出して終わる（Finder からの起動を確かめる用）。

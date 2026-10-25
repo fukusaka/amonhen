@@ -795,7 +795,7 @@ private struct AllSettingsTab: View {
 // MARK: - 行の部品（docs/ux.md の 4 章）
 
 /// git の真偽値を `true`・`false` にそろえる（`yes`・`on`・`1` も true）。
-private func normalizedBool(_ value: String) -> String? {
+func normalizedBool(_ value: String) -> String? {
     switch value.lowercased() {
     case "true", "yes", "on", "1", "": "true"
     case "false", "no", "off", "0": "false"
@@ -1150,7 +1150,7 @@ private struct AuthorSigningPage: View {
 }
 
 /// 署名: 1 つの選択（署名しない／OpenPGP／SSH／X.509）で、`commit.gpgsign` と `gpg.format` を一緒に書く。
-private struct SigningRow: View {
+struct SigningRow: View {
     let model: RepositorySettingsModel
     static let formats = ["openpgp", "ssh", "x509"]
 
@@ -1308,7 +1308,7 @@ private struct CommitsPage: View {
                             .font(.system(.body, design: .monospaced)).foregroundStyle(.secondary).lineLimit(12).textSelection(.enabled)
                         HStack {
                             Spacer()
-                            Button(L("Edit in Settings > Git…")) { SettingsWindowController.shared.show() }
+                            Button(L("Edit in Settings > Commit…")) { SettingsWindowController.shared.show(tab: L("Commit")) }
                             Button(L("Copy to This Repository")) {
                                 model.saveCommitTemplate(text)
                                 model.set(TemplateRow.libraryKey, nil)
@@ -1728,7 +1728,7 @@ private struct RepositorySettingsView: View {
                 .listStyle(.sidebar)
                 // このリポジトリを動かしている git。機械（この Mac か SSH 先）のものなので、変えるのはその機械の設定で。
                 Button {
-                    if model.host == nil { SettingsWindowController.shared.show() }
+                    if model.host == nil { SettingsWindowController.shared.show(tab: "Git") }
                 } label: {
                     Text("git \(model.gitVersion ?? "?") · \(model.host ?? L("This Mac"))")
                         .font(.caption).foregroundStyle(.secondary)
