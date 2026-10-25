@@ -1,6 +1,6 @@
 //! 子プロセスの起動。
 
-use std::ffi::OsStr;
+use std::ffi::{OsStr, OsString};
 use std::process::Command;
 
 /// `program` を起動する `Command`。Windows では窓を出さない（`CREATE_NO_WINDOW`）。Unix では、子のシグナルマスクを
@@ -38,7 +38,97 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
             });
         }
     }
+    #[cfg(unix)]
+    if let Some(agent) = agent::replacement() {
+        cmd.env("SSH_AUTH_SOCK", agent);
+    }
     cmd
+}
+
+/// 環境の `SSH_AUTH_SOCK` が死んでいたときに、そのログインの SSH の agent のソケットを探す手を登録する（FE・daemon が
+/// 起動したときに 1 回。macOS なら launchd が用意する agent）。探し方は OS ごとなので、ここは確かめるところまで。
+pub fn set_agent_finder(find: impl Fn() -> Option<OsString> + Send + Sync + 'static) {
+    #[cfg(unix)]
+    let _ = agent::FINDER.set(Box::new(find));
+    #[cfg(not(unix))]
+    let _ = find;
+}
+
+/// 子に渡す SSH の agent。
+///
+/// 環境の `SSH_AUTH_SOCK` は古くなっていることがある。agent のソケットはログインのたびに変わるのに、アプリは前回の
+/// 起動で読んだログインシェルの環境を使い、共有の daemon は起動した FE の環境を終わるまで持ち続ける。死んだ
+/// ソケットを渡すと、ssh は agent の鍵を使えず（パスフレーズは尋ねられない）、端末では通る接続が公開鍵で断られる。
+/// そこで子を起動するたびに確かめ、死んでいれば登録された手で探した生きているものを渡す（再起動しなくても直る）。
+#[cfg(unix)]
+mod agent {
+    use std::cell::Cell;
+    use std::ffi::{OsStr, OsString};
+    use std::os::unix::fs::FileTypeExt;
+    use std::sync::{Mutex, OnceLock};
+
+    pub(super) type Finder = Box<dyn Fn() -> Option<OsString> + Send + Sync>;
+
+    pub(super) static FINDER: OnceLock<Finder> = OnceLock::new();
+
+    /// 前に見つけた（死んでいた値, 代わりの生きている値）。死んだ値のままの間は、探し直さずにこれを使う。
+    static FOUND: Mutex<Option<(OsString, OsString)>> = Mutex::new(None);
+
+    thread_local! {
+        /// 探している途中（探す手が子を起動する launchctl で、また探し始めないように）。
+        static FINDING: Cell<bool> = const { Cell::new(false) };
+    }
+
+    /// 環境の値が死んでいれば、代わりに渡すもの。生きている・値がない・代わりがなければ None（環境のまま）。
+    pub(super) fn replacement() -> Option<OsString> {
+        let current = std::env::var_os("SSH_AUTH_SOCK")?;
+        if is_socket(&current) || FINDING.with(Cell::get) {
+            return None;
+        }
+        let find = FINDER.get()?;
+        let _finding = Finding::start();
+        resolve(&current, find, &FOUND)
+    }
+
+    /// `current`（死んでいる）の代わり。`found` に前の結果を覚える。
+    pub(super) fn resolve(
+        current: &OsStr,
+        find: &dyn Fn() -> Option<OsString>,
+        found: &Mutex<Option<(OsString, OsString)>>,
+    ) -> Option<OsString> {
+        let mut found = found.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((dead, live)) = &*found
+            && dead == current
+            && is_socket(live)
+        {
+            return Some(live.clone());
+        }
+        let live = find().filter(|live| live != current && is_socket(live))?;
+        *found = Some((current.to_owned(), live.clone()));
+        Some(live)
+    }
+
+    /// ソケットのファイルがあるか（つないで確かめると、launchd が agent を起こしてしまう）。ログインの間だけの
+    /// agent（launchd の `/var/run/com.apple.launchd.*`）は、ログインが終わるとフォルダごと消える。
+    pub(super) fn is_socket(path: &OsStr) -> bool {
+        std::fs::metadata(path).is_ok_and(|m| m.file_type().is_socket())
+    }
+
+    /// 探している印。抜けるとき（探す手が panic しても）外す。
+    struct Finding;
+
+    impl Finding {
+        fn start() -> Self {
+            FINDING.with(|f| f.set(true));
+            Self
+        }
+    }
+
+    impl Drop for Finding {
+        fn drop(&mut self) {
+            FINDING.with(|f| f.set(false));
+        }
+    }
 }
 
 /// このスレッドのシグナルマスクに、塞がれたシグナルがあるか。
@@ -83,6 +173,42 @@ mod tests {
             Some(libc::SIGTERM),
             "the child inherited the blocked SIGTERM: {}",
             String::from_utf8_lossy(&output.stdout)
+        );
+    }
+
+    /// 環境の agent が死んでいれば、探す手が見つけた生きているものを渡す。死んだ値のままの間は探し直さない。
+    #[test]
+    fn replaces_a_dead_agent_with_a_live_one() {
+        use std::cell::Cell;
+        use std::os::unix::net::UnixListener;
+        use std::sync::Mutex;
+        let dir = tempfile::tempdir().unwrap();
+        let live = dir.path().join("live.sock");
+        let _listener = UnixListener::bind(&live).unwrap();
+        let dead = dir.path().join("gone/Listeners");
+        assert!(agent::is_socket(live.as_os_str()));
+        assert!(!agent::is_socket(dead.as_os_str()));
+
+        let calls = Cell::new(0);
+        let find = || {
+            calls.set(calls.get() + 1);
+            Some(live.clone().into_os_string())
+        };
+        let found = Mutex::new(None);
+        for _ in 0..2 {
+            assert_eq!(
+                agent::resolve(dead.as_os_str(), &find, &found),
+                Some(live.clone().into_os_string())
+            );
+        }
+        assert_eq!(calls.get(), 1);
+
+        // 探す手の答えも死んでいれば、差し替えない。
+        let nothing = Mutex::new(None);
+        let other = dir.path().join("other.sock").into_os_string();
+        assert_eq!(
+            agent::resolve(dead.as_os_str(), &|| Some(other.clone()), &nothing),
+            None
         );
     }
 }

@@ -1288,6 +1288,15 @@ bool amonhen_daemon_stop(void);
 void amonhen_set_language(const char *language);
 
 /**
+ * このログインの SSH の agent のソケット（アプリが起動したときの `SSH_AUTH_SOCK`）。コアが起動する ssh・git に渡す
+ * `SSH_AUTH_SOCK` が死んでいれば（前回の起動で読んだシェルの環境が古いなど）、代わりにこれを渡す。起動したときに 1 回。
+ *
+ * # Safety
+ * `path` は NUL 終端の UTF-8 であること。
+ */
+void amonhen_set_ssh_agent(const char *path);
+
+/**
  * `message`（`amonhen_last_error` や操作の記録の文）が、取り消したことを表すか（どの言語の文でも）。
  *
  * # Safety
