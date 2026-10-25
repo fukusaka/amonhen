@@ -121,7 +121,7 @@
 "Not an ssh:// location" = "ssh:// で始まる場所ではありません";
 "Write it as ssh://host/path" = "ssh://host/path の形で書いてください";
 "No SSH destination" = "SSH の接続先がありません";
-"No engine (amonhen) for the SSH host ({platform}) in {dir}" = "{dir} に、SSH 先（{platform}）に合うエンジン（amonhen）がありません";
+"No engine (amonhen) for the SSH host ({platform}) in {dir}, and the SSH host has none of this build" = "{dir} に SSH 先（{platform}）に合うエンジン（amonhen）がなく、SSH 先にもこのビルドのものがありません";
 "Error on the SSH host ({host}): {message}" = "SSH 先（{host}）でエラー: {message}";
 "specified" = "指定したもの";
 "installed on the SSH host" = "SSH 先に入っているもの";
@@ -243,7 +243,7 @@
 "Submodules" = "サブモジュール";
 " (upstream gone)" = "（上流がない）";
 " ({ahead} ahead, {behind} behind)" = "（{ahead} 先・{behind} 遅れ）";
-"The engine for the SSH host ({path}) is a different build of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app" = "SSH 先に送るエンジン（{path}）は、Amon Hen の別のビルドのものです。作り直す（scripts/build-engine.sh）か、同じ版のアプリを入れてください";
+"The engine for the SSH host ({path}) is a different build of Amon Hen, and the SSH host has none of this build. Rebuild it (scripts/build-engine.sh) or install the matching app" = "SSH 先に送るエンジン（{path}）は Amon Hen の別のビルドのもので、SSH 先にもこのビルドのものがありません。作り直す（scripts/build-engine.sh）か、同じ版のアプリを入れてください";
 
 /* amonhen-cli: worktree */
 "(detached)" = "（detached）";

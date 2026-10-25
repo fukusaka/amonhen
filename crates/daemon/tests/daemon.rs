@@ -201,6 +201,11 @@ fn provisions_the_engine_on_ssh_hosts() {
         .join(&sent[0])
         .join("amonhen");
     let first = std::fs::metadata(&binary).unwrap().modified().unwrap();
+    // 送ったエンジンのビルドの指紋も置く。
+    assert_eq!(
+        std::fs::read_to_string(binary.with_file_name("build")).unwrap(),
+        amonhen_remote::BUILD_ID
+    );
 
     // ほかのマシンが最近送った版・30 日使われていない版・前の置き場所の古い daemon・書きかけを置いておく。
     let root = home.join(".local/share/amonhen/engine");
@@ -231,7 +236,37 @@ fn provisions_the_engine_on_ssh_hosts() {
     );
     assert!(!stale_tmp.exists() && !legacy.exists());
 
-    // SSH 先の PATH に通信の形が合う amonhen があれば、それを使う。
+    // 手元に送れるエンジンがなくても（別のビルドのものだけ）、SSH 先にこのビルドのものがあれば、それを使う。
+    let elsewhere = tmp.path().join("other-engines");
+    std::fs::create_dir(&elsewhere).unwrap();
+    std::fs::write(
+        elsewhere.join(format!("amonhen-{}", ssh::local_platform())),
+        b"amonhen-build=0000000000000000;",
+    )
+    .unwrap();
+    let other_build = ssh::Daemons {
+        dir: elsewhere,
+        local: None,
+        remote_engine: None,
+        push: true,
+    };
+    let engine = open(&other_build).unwrap();
+    assert!(
+        engine.contains("sent earlier") && engine.contains(&sent[0]),
+        "{engine}"
+    );
+    // SSH 先にもなければ、別のビルドだと断る（送らない）。
+    std::fs::remove_file(binary.with_file_name("build")).unwrap();
+    let err = open(&other_build).unwrap_err().to_string();
+    assert!(err.contains("different build"), "{err}");
+    // 前の版が置いた（指紋の記録がない）このビルドのものは、中身のハッシュで見つけて、指紋を記録し直す。
+    open(&daemons).unwrap();
+    assert_eq!(
+        std::fs::read_to_string(binary.with_file_name("build")).unwrap(),
+        amonhen_remote::BUILD_ID
+    );
+
+    // SSH 先の PATH に同じビルドの amonhen があれば、それを使う。
     let bin = home.join("bin");
     std::fs::create_dir(&bin).unwrap();
     std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), bin.join("amonhen")).unwrap();
