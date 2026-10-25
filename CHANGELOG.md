@@ -32,6 +32,9 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- The app, the shared daemon and an SSH host's engine work together only when they are the same build (a hash of the
+  sources), not when a hand-raised protocol number matches; `amonhen --version`, `amonhen daemon status` and Activity
+  show it.
 - Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
   from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
   where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
