@@ -944,4 +944,22 @@ final class SettingsWindowController: NSWindowController {
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
     }
+
+    /// タブを選んで出す（`--app-settings-tab NAME`。git・appearance・performance・ai・advanced。見た目の確認用）。
+    func show(tab name: String) {
+        show()
+        let names = ["git", "appearance", "performance", "ai", "advanced"]
+        if let index = names.firstIndex(of: name.lowercased()),
+           let tabs = window?.contentViewController as? NSTabViewController, index < tabs.tabViewItems.count {
+            tabs.selectedTabViewItemIndex = index
+        }
+    }
+
+    /// 出している画面を撮る（`--app-settings` と `--snapshot`）。
+    func snapshot() -> NSBitmapImageRep? {
+        guard let view = window?.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
+    }
 }
