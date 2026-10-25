@@ -568,7 +568,7 @@ private struct AllSettingsTab: View {
                 Spacer()
                 TextField(L("Search by key or value"), text: $filter)
                     .textFieldStyle(.roundedBorder)
-                    .frame(minWidth: 120, maxWidth: 240)
+                    .frame(minWidth: 60, maxWidth: 240)
             }
             Table(of: ConfigRow.self, selection: $selection, sortOrder: $sortOrder, columnCustomization: $columns) {
                 TableColumn(L("Key"), value: \.key) { row in
@@ -584,7 +584,7 @@ private struct AllSettingsTab: View {
                         Text(row.label ?? row.key).help(row.key)
                     }
                 }
-                .width(min: 140, ideal: 220)
+                .width(min: 120, ideal: 200)
                 .customizationID("key")
                 .disabledCustomizationBehavior(.all)
                 TableColumn(L("Value in effect"), value: \.effective) { row in
@@ -599,7 +599,7 @@ private struct AllSettingsTab: View {
                             .help(row.effectiveScope.isEmpty ? "" : "\(scopeLabel(row.effectiveScope, host: model.host)) · \(row.files[row.effectiveScope] ?? "")")
                     }
                 }
-                .width(min: 90, ideal: 160)
+                .width(min: 90, ideal: 140)
                 .customizationID("effective")
                 .disabledCustomizationBehavior(.all)
                 if columnsMode == .combined {
@@ -613,12 +613,12 @@ private struct AllSettingsTab: View {
                     .disabledCustomizationBehavior(.all)
                 } else {
                     TableColumn(header("system"), value: \.system) { row in cell(row, scope: "system") }
-                        .width(min: 60, ideal: 120)
+                        .width(min: 60, ideal: 90)
                         .customizationID("system")
                     TableColumn(header("global"), value: \.global) { row in
                         if model.level == .allRepositories, isEditing(row) { valueField(row) } else { cell(row, scope: "global") }
                     }
-                    .width(min: 60, ideal: 140)
+                    .width(min: 60, ideal: 110)
                     .customizationID("global")
                     .disabledCustomizationBehavior(model.level == .allRepositories ? .all : [])
                     if model.level == .repository {
