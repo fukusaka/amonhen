@@ -16,8 +16,18 @@ use memmap2::Mmap;
 use crate::graph::{Checkpoint, GraphLayout, State, Track};
 
 const MAGIC: [u8; 8] = *b"AMONHIST";
-/// 形式を変えたら上げる。違うバージョンのキャッシュは読まずに作り直す。
-const VERSION: u32 = 3;
+/// 形式の指紋（キャッシュに書くものを決めるソースのハッシュ。`build.rs`）。ファイルの名前と見出しに入れ、違う
+/// 形式のファイルは読まない（作り直す）。並んで動く別の形式のビルドとは、別のファイルを使う。
+const FORMAT: &str = env!("AMONHEN_CACHE_FORMAT");
+
+/// ほかの形式の同じリポジトリのファイルを、使われなくなってから消すまでの日数（並んで動く別のビルドが、まだ
+/// 使っているかもしれない）。
+const KEEP_OTHER_FORMATS_DAYS: u64 = 7;
+
+/// 見出しの `version`（形式の指紋の頭 8 文字）。
+fn version() -> u32 {
+    u32::from_str_radix(&FORMAT[..8], 16).unwrap()
+}
 const ALIGN: usize = 16;
 
 #[repr(usize)]
@@ -85,7 +95,41 @@ pub fn path_for(dir: &Path, key: &str) -> PathBuf {
         hash ^= u64::from(b);
         hash = hash.wrapping_mul(0x0100_0000_01b3);
     }
-    dir.join(format!("history-{hash:016x}.bin"))
+    dir.join(format!("history-{hash:016x}-{}.bin", &FORMAT[..8]))
+}
+
+/// `path` と同じリポジトリの、ほかの形式（と前の名前 `history-<ハッシュ>.bin`）のファイルのうち、
+/// `KEEP_OTHER_FORMATS_DAYS` 日書かれていないものを消す。
+fn prune_other_formats(path: &Path) {
+    let (Some(dir), Some(name)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else {
+        return;
+    };
+    // `history-<リポジトリのハッシュ>-<形式>.bin` の `history-<リポジトリのハッシュ>`。
+    let Some(repo) = name.rsplit_once('-').map(|(repo, _)| repo) else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let keep = std::time::Duration::from_secs(KEEP_OTHER_FORMATS_DAYS * 24 * 60 * 60);
+    for entry in entries.flatten() {
+        let other = entry.file_name();
+        let Some(other) = other.to_str() else {
+            continue;
+        };
+        let same_repo = other == format!("{repo}.bin")
+            || other
+                .strip_prefix(repo)
+                .and_then(|rest| rest.strip_prefix('-'))
+                .is_some_and(|rest| rest.ends_with(".bin") && !rest.contains('-'));
+        let unused = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .is_ok_and(|t| t.elapsed().is_ok_and(|age| age > keep));
+        if same_repo && other != name && unused {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
 }
 
 fn bytes_of<T: Pod>(values: &[T]) -> &[u8] {
@@ -101,6 +145,8 @@ pub fn write(path: &Path, history: &CachedHistory) -> Result<()> {
     let result = write_to(&tmp, history).and_then(|()| Ok(std::fs::rename(&tmp, path)?));
     if result.is_err() {
         let _ = std::fs::remove_file(&tmp);
+    } else {
+        prune_other_formats(path);
     }
     result
 }
@@ -127,7 +173,7 @@ fn write_to(path: &Path, h: &CachedHistory) -> Result<()> {
 
     let mut header = Header {
         magic: MAGIC,
-        version: VERSION,
+        version: version(),
         has_head: u32::from(h.head.is_some()),
         head: h.head.map_or([0; 20], |o| o.0),
         lane_count: u32::from(h.layout.lane_count),
@@ -164,7 +210,7 @@ pub fn read(path: &Path) -> Option<CachedHistory> {
     let file = File::open(path).ok()?;
     let map = Arc::new(unsafe { Mmap::map(&file) }.ok()?);
     let header = *Slab::<Header>::mapped(map.clone(), 0, 1)?.first()?;
-    if header.magic != MAGIC || header.version != VERSION {
+    if header.magic != MAGIC || header.version != version() {
         return None;
     }
     fn slab<T: Pod>(map: &Arc<Mmap>, header: &Header, s: Section) -> Option<Slab<T>> {
@@ -341,8 +387,54 @@ mod tests {
         assert!(read(&path).is_none(), "途中で切れている");
 
         let mut old = bytes.clone();
-        old[8] = VERSION as u8 + 1;
+        old[8] ^= 0xff;
         std::fs::write(&path, &old).unwrap();
         assert!(read(&path).is_none(), "形式が違う");
+    }
+
+    /// 同じリポジトリのほかの形式（と前の名前）のファイルは、7 日書かれていなければ消す。最近のもの（並んで動く
+    /// 別のビルドが使っている）・ほかのリポジトリのものは残す。
+    #[test]
+    fn prunes_unused_files_of_other_formats() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = path_for(dir.path(), "/repo");
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        let repo = name.rsplit_once('-').unwrap().0.to_owned();
+        let old_format = dir.path().join(format!("{repo}-00000000.bin"));
+        let recent_format = dir.path().join(format!("{repo}-11111111.bin"));
+        let legacy = dir.path().join(format!("{repo}.bin"));
+        let other_repo =
+            path_for(dir.path(), "/other").with_file_name("history-0000000000000000-00000000.bin");
+        let week_ago =
+            std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 24 * 60 * 60);
+        for (file, old) in [
+            (&old_format, true),
+            (&recent_format, false),
+            (&legacy, true),
+            (&other_repo, true),
+        ] {
+            std::fs::write(file, b"").unwrap();
+            if old {
+                File::options()
+                    .write(true)
+                    .open(file)
+                    .unwrap()
+                    .set_modified(week_ago)
+                    .unwrap();
+            }
+        }
+        write(
+            &path,
+            &CachedHistory {
+                tips: vec![],
+                head: None,
+                order: HistoryOrder::Date,
+                graph: CommitGraph::default(),
+                layout: layout(&CommitGraph::default(), None),
+            },
+        )
+        .unwrap();
+        assert!(path.exists() && recent_format.exists() && other_repo.exists());
+        assert!(!old_format.exists() && !legacy.exists());
     }
 }
