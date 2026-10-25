@@ -144,6 +144,7 @@ To add later: `backend-git2/` (for mobile), bindings for Swift / Kotlin.
 - At connection time, the FE declares a `FrontendProfile` (string encoding, required columns, GPU vertex format, alignment). The projection layer converts to that shape chunk by chunk.
 - Only the visible range and the prefetch range are converted. Results are cached by "generation + chunk + format", and unchanged chunks are shared with the previous generation. Multiple FEs with the same format share them.
 - Conversion results are also written to the persistent cache per format, so the next launch only needs to mmap them. The internal persistent cache (things closed inside Rust, such as checkpoints and the ref index) may use rkyv, but the shape handed to FEs is defined by us (rkyv's layout is not documented across languages, and its strings are fixed to UTF-8).
+- The History cache file (`crates/core/src/cache.rs`) is named by the repository and by a fingerprint of its format: a hash of the sources that decide what it holds (`cache.rs`, `graph.rs`, `CommitGraph` and the `amonhen-layout` records), made by `crates/core/build.rs`. Builds of different formats that run side by side (a development build's daemon next to a release's) use different files instead of rewriting one another's, and a file of another format is never read. Files of the same repository in other formats are removed once they have not been written for 7 days.
 
 ### Zero-copy rules
 
