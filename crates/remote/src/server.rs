@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::frame::{self, Kind};
 use crate::wire::{
-    Bytes, CommitTextWire, GraphWire, Hello, Notification, Op, PROTOCOL_VERSION, Request,
+    BUILD_ID, Bytes, CommitTextWire, GraphWire, HELLO_VERSION, Hello, Notification, Op, Request,
 };
 
 type Writer = Arc<Mutex<Box<dyn Write + Send>>>;
@@ -55,6 +55,8 @@ pub struct Server {
     host: Option<Arc<dyn Host>>,
     /// 相手が挨拶で伝えた言語（`Lang` の値）。答えのエラーの文に使う。
     language: Arc<AtomicU8>,
+    /// 相手（共有の daemon につないだ FE）の環境。要求で動かす git・ssh に渡す。
+    client_env: Arc<amonhen_model::process::ClientEnv>,
 }
 
 impl Server {
@@ -67,6 +69,7 @@ impl Server {
             compress: true,
             host: None,
             language: Arc::new(AtomicU8::new(i18n::current() as u8)),
+            client_env: Arc::default(),
         }
     }
 
@@ -85,6 +88,12 @@ impl Server {
     /// 大きな応答も圧縮しない（手元のソケットで使う）。
     pub fn without_compression(mut self) -> Self {
         self.compress = false;
+        self
+    }
+
+    /// 要求で動かす git・ssh に、つないだ FE の環境を渡す（`amonhen_model::process::with_client_env`）。
+    pub fn with_client_env(mut self, env: amonhen_model::process::ClientEnv) -> Self {
+        self.client_env = Arc::new(env);
         self
     }
 
@@ -134,18 +143,21 @@ impl Server {
                     let search = self.search.clone();
                     let compress = self.compress;
                     let host = self.host.clone();
+                    let client_env = self.client_env.clone();
                     std::thread::spawn(move || {
-                        let result = i18n::with(lang, || match (request, &host) {
-                            (Request::PreparedHistory, Some(h)) => {
-                                h.prepared_history().and_then(|p| encode(&Some(p)))
-                            }
-                            (Request::Delegate(bytes), Some(h)) => {
-                                h.delegate(&bytes.0).and_then(|d| encode(&share(d)))
-                            }
-                            (Request::Delegate(_), None) => {
-                                Err(tr!("This daemon doesn’t take delegated work").into())
-                            }
-                            (request, _) => handle(&*backend, &search, request, &cancel),
+                        let result = amonhen_model::process::with_client_env(&client_env, || {
+                            i18n::with(lang, || match (request, &host) {
+                                (Request::PreparedHistory, Some(h)) => {
+                                    h.prepared_history().and_then(|p| encode(&Some(p)))
+                                }
+                                (Request::Delegate(bytes), Some(h)) => {
+                                    h.delegate(&bytes.0).and_then(|d| encode(&share(d)))
+                                }
+                                (Request::Delegate(_), None) => {
+                                    Err(tr!("This daemon doesn’t take delegated work").into())
+                                }
+                                (request, _) => handle(&*backend, &search, request, &cancel),
+                            })
                         });
                         cancels.lock().unwrap().remove(&f.id);
                         write_reply(&writer, f.id, result, compress);
@@ -224,6 +236,15 @@ fn commits_from(
     Ok(ids)
 }
 
+/// 相手のエンジンが別のビルドだった（つなぐ側は、自分と同じビルドのエンジンを選ぶので、ふつうは起きない）。
+pub(crate) fn other_build(local: &str, daemon: &str) -> String {
+    tr!(
+        "The engine is a different build of Amon Hen (here {local}, engine {daemon})",
+        local = local,
+        daemon = daemon
+    )
+}
+
 fn handle(
     backend: &dyn GitBackend,
     search: &SearchCache,
@@ -232,17 +253,13 @@ fn handle(
 ) -> Result<Vec<u8>> {
     let files = || backend.files();
     match request {
-        Request::Hello { version, .. } => {
-            if version != PROTOCOL_VERSION {
-                return Err(tr!(
-                    "The daemon speaks a different protocol (local {local}, daemon {daemon}). Install the same version of amonhend",
-                    local = version,
-                    daemon = PROTOCOL_VERSION
-                )
-                .into());
+        Request::Hello { build, .. } => {
+            if build != BUILD_ID {
+                return Err(other_build(&build, BUILD_ID).into());
             }
             encode(&Hello {
-                version: PROTOCOL_VERSION,
+                version: HELLO_VERSION,
+                build: BUILD_ID.to_owned(),
             })
         }
         Request::PreparedHistory => encode(&Option::<String>::None),

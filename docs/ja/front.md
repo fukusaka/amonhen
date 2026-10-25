@@ -8,8 +8,8 @@ macOS のアプリは、同じプロセスのコアを C ABI（`crates/ffi-c`）
 
 ## つなぐ
 
-1. Unix ドメインソケット（Windows は名前付きパイプ `\\.\pipe\amonhen-<利用者の SID のハッシュ>-<通信の形の版>`。Node は `net.connect` でそのままつなげる）につなぐ。場所は `amonhen --socket` が出す（macOS は `$TMPDIR/amonhend-<通信の形の版>.sock`、ほかは `$XDG_RUNTIME_DIR` か `/tmp/amonhen-<uid>`。`AMONHEN_DAEMON_DIR` で変えられる）。つながらなければ `amonhen --serve <socket>` を、親から切り離して起動し、つながるまで待つ。
-2. 最初に、開く場所を送る: 長さ（u32、LE）と UTF-8 の文字列 `"\u0001" + 場所`。場所は手元のリポジトリの絶対パスか `ssh://host/path`。
+1. Unix ドメインソケット（Windows は名前付きパイプ `\\.\pipe\amonhen-<利用者の SID のハッシュ>-<ビルドの指紋>`。Node は `net.connect` でそのままつなげる）につなぐ。場所は `amonhen --socket` が出す（macOS は `$TMPDIR/amonhend-<ビルドの指紋の頭 8 文字>.sock`、ほかは `$XDG_RUNTIME_DIR` か `/tmp/amonhen-<uid>`。`AMONHEN_DAEMON_DIR` で変えられる）。つながらなければ `amonhen --serve <socket>` を、親から切り離して起動し、つながるまで待つ。
+2. 最初に、開く場所を送る: 長さ（u32、LE）と UTF-8 の文字列 `"\u0001" + 場所`。続けて `"\u0000"` と、FE の環境（`NAME=value` を `"\u0000"` で区切ったもの）を送ってもよい。場所は手元のリポジトリの絶対パスか `ssh://host/path`。daemon は、このつながりで動かす git・ssh（`ssh://` を開くときも）を、自分の環境ではなくこの環境で動かす。受け取るのは `PATH`・`AMONHEN_ASKPASS`・`SSH_AUTH_SOCK`・`SSH_AGENT_PID`・`XDG_CONFIG_HOME`・`GIT_*`（`GIT_DIR` などリポジトリを指すものと `GIT_ASKPASS` は除く）で、ほかは捨てる（`amonhen_model::process::ClientEnv`）。
 3. その後はフレームでやりとりする。最初の要求は `{"op":"hello","language":"ja"}` にする（開けなければ、その答えが理由つきの失敗になる）。`language` は FE の表示の言語（`en`・`ja`・`ja-JP` など）で、daemon はこの接続のエラーの文をその言語で作る（訳がないとき・渡さないときは英語）。
 
 ## フレーム
@@ -76,6 +76,6 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 
 ## 版
 
-窓口の形を変えたら `amonhen_front::VERSION` を上げる（`hello` の答えの version で確かめる）。ソケットの名前には daemon との通信の形の版（`amonhen_remote::PROTOCOL_VERSION`）が入るので、版の違う daemon にはつながらない。
+窓口の形を変えたら `amonhen_front::VERSION` を上げる（`hello` の答えの version で確かめる）。ソケットの名前にはビルドの指紋（`amonhen_remote::BUILD_ID`。ワークスペースのソースのハッシュ）が入るので、ビルドの違う daemon にはつながらない。
 
 FE が共有の daemon を自分で起動するときは、言語を `AMONHEN_LANG` で渡す（daemon が自分で行うこと、たとえば SSH 先へつなぐときに使う）。

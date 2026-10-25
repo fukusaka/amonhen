@@ -5,13 +5,14 @@ import os
 /// daemon 越しに開くときに起動するエンジン（`amonhen`。CLI と daemon を兼ねる）。アプリの中（Contents/Helpers）の
 /// エンジンを起動時に置き場所（`~/.local/share/amonhen`）へ置き（`amonhen install`）、daemon はそのエンジンが選ぶもの
 /// （`amonhen engine`。置き場所の current が同じ通信の形ならそれ）で起動する。どの FE が先に起動しても同じ daemon に
-/// なる。開発中はリポジトリの target/release のものを使い、置き場所には置かない。`AMONHEN_DAEMON` で差し替えられる。
+/// なる。開発中はこのビルドのチェックアウトの target/release のものを使い、置き場所には置かない。`AMONHEN_DAEMON` で
+/// 差し替えられる。
 enum Daemon {
     static var path: String {
         if let override = ProcessInfo.processInfo.environment["AMONHEN_DAEMON"] { return override }
         if let resolved = resolved.withLock({ $0 }) { return resolved }
         if let helper { return helper }
-        return developmentFile("target/release/amonhen") ?? "amonhen"
+        return Engines.development ?? "amonhen"
     }
 
     /// アプリの中のエンジン（.app でなければ nil）。
@@ -47,14 +48,9 @@ enum Daemon {
         return process.terminationStatus == 0 ? String(decoding: data, as: UTF8.self) : nil
     }
 
-    /// SSH 先に送り込むエンジン（`amonhen-<os>-<arch>`）の置き場所（アプリの Resources/engines、開発中は dist/engine）。
-    static var bundledDirectory: String {
-        if let resources = Bundle.main.resourceURL?.appendingPathComponent("engines"),
-           FileManager.default.fileExists(atPath: resources.path) {
-            return resources.path
-        }
-        return developmentFile("dist/engine") ?? ""
-    }
+    /// SSH 先に送り込むエンジン（`amonhen-<os>-<arch>`）の置き場所（アプリの Resources/engines、開発中はこのビルドの
+    /// チェックアウトの dist/engine）。
+    static var bundledDirectory: String { Engines.bundledDirectory }
 
     /// 開発中のリポジトリの中のファイル（`.app` でないとき）。
     static func developmentFile(_ relative: String) -> String? {
@@ -480,6 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 // ターミナルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込み、git が資格情報を尋ねる先（askpass）を決める
 // （git・daemon を動かす前に）。
 ShellEnvironment.import()
+if let agent = ShellEnvironment.launchAgent { Repository.setSSHAgent(agent) }
 Askpass.install()
 // --print-environment: 取り込んだあとの環境（git に渡るもの）を出して終わる（Finder からの起動を確かめる用）。
 if CommandLine.arguments.contains("--print-environment") {

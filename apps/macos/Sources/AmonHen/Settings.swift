@@ -807,6 +807,7 @@ private struct ShellEnvironmentView: View {
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                             .fixedSize(horizontal: false, vertical: true)
+                        if key == "SSH_AUTH_SOCK" { agentStatus(values[key, default: ""]) }
                     }
                 }
             }
@@ -816,6 +817,17 @@ private struct ShellEnvironmentView: View {
             shell = ShellEnvironment.shell
             lastRead = ShellEnvironment.lastRead
             reloading = false
+        }
+    }
+
+    /// SSH の agent のソケットがあるか。なければ、ssh・git に代わりに渡すもの（起動したときの agent）。
+    @ViewBuilder private func agentStatus(_ path: String) -> some View {
+        if ShellEnvironment.isSocket(path) {
+            Text(L("SSH agent found")).font(.caption).foregroundStyle(.secondary)
+        } else if let launch = ShellEnvironment.launchAgent, launch != path, ShellEnvironment.isSocket(launch) {
+            Text(L("No SSH agent here; ssh and git use %@", launch)).font(.caption).foregroundStyle(.orange)
+        } else {
+            Text(L("No SSH agent here, so keys that need a passphrase can’t be used")).font(.caption).foregroundStyle(.orange)
         }
     }
 

@@ -531,7 +531,7 @@
 "%ld min %ld s" = "%ld 分 %ld 秒";
 "%ld h %ld min" = "%ld 時間 %ld 分";
 "The shared daemon is running" = "共有の daemon は動いています";
-"pid %@ · version %@ (protocol %@) · up %@ · connections %ld" = "pid %@ · 版 %@（通信の形 %@） · 動いて %@ · つながり %ld";
+"pid %@ · version %@ (build %@) · up %@ · connections %ld" = "pid %@ · 版 %@（ビルド %@） · 動いて %@ · つながり %ld";
 "The shared daemon isn’t running" = "共有の daemon は動いていません";
 "Checking…" = "調べています…";
 "It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Advanced)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > Advanced）、自動で起動します。";
@@ -1019,6 +1019,9 @@
 "Take the login shell’s environment at launch" = "起動時にログインシェルの環境を取り込む";
 "Launched from the Finder, the app does not get the terminal’s PATH, SSH agent or GIT_* settings, so git could miss Homebrew’s git, credential helpers and agents such as 1Password. The app runs your login shell once at launch and gives git, the shared daemon and gh what it found. Changes apply at the next launch." = "Finder から起動したアプリには、ターミナルの PATH・SSH agent・GIT_* の設定が渡りません。そのため git が Homebrew の git・credential helper・1Password などの agent を見つけられないことがあります。起動時にログインシェルを一度動かし、見つけたものを git・共有の daemon・gh に渡します。変更は次の起動から効きます。";
 "Read Again" = "読み直す";
+"SSH agent found" = "SSH の agent があります";
+"No SSH agent here; ssh and git use %@" = "ここに SSH の agent はありません。ssh・git には %@ を使います";
+"No SSH agent here, so keys that need a passphrase can’t be used" = "ここに SSH の agent はないので、パスフレーズのある鍵を使えません";
 "Nothing taken from the shell." = "シェルから取り込んだものはありません。";
 "Off" = "オフ";
 "Not read yet" = "まだ読んでいません";

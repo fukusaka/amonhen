@@ -112,7 +112,7 @@ mod imp {
 
     const PIPE_PREFIX: &str = r"\\.\pipe\";
 
-    /// パイプの名前（`\\.\pipe\` を除いた部分）: `amonhen-<SID のハッシュ>-<通信の形の版>`。`AMONHEN_DAEMON_DIR` が
+    /// パイプの名前（`\\.\pipe\` を除いた部分）: `amonhen-<SID のハッシュ>-<ビルドの指紋>`。`AMONHEN_DAEMON_DIR` が
     /// あれば、それも混ぜる（試験で手元の daemon と分ける）。
     fn pipe_name() -> String {
         let mut key =
@@ -122,7 +122,7 @@ mod imp {
             key.push_str(&dir.to_string_lossy());
         }
         let hash = sha1_smol::Sha1::from(key.as_bytes()).digest().to_string();
-        format!("amonhen-{}-{}", &hash[..16], crate::PROTOCOL_VERSION)
+        format!("amonhen-{}-{}", &hash[..16], crate::BUILD_ID)
     }
 
     pub fn endpoint() -> String {

@@ -9,6 +9,17 @@ enum ShellEnvironment {
     /// 取り込む変数。PATH はシェルのものを前に足し、残りはシェルのものがあれば置き換える。
     nonisolated private static let names: Set<String> = ["PATH", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
     nonisolated private static let prefixes = ["GIT_", "HOMEBREW_"]
+    /// ログインの間だけ使える変数（agent のソケットはログインのたびに変わる）。前回の結果からは、ソケットが今も
+    /// あるときだけ使う。
+    nonisolated private static let session = ["SSH_AUTH_SOCK", "SSH_AGENT_PID"]
+
+    /// 起動したときの環境（取り込む前）。シェルはこれで動かす。取り込んだあとの環境で動かすと、シェルが設定しない
+    /// 変数（launchd の `SSH_AUTH_SOCK` など）は取り込んだ値をそのまま返すので、前回の値が古くても読み直すたびに
+    /// 書き戻され、再起動しても直らなかった。
+    nonisolated(unsafe) private static var launch: [String: String] = [:]
+    /// このログインの SSH の agent（起動したときの `SSH_AUTH_SOCK`）。コアが起動する ssh・git の `SSH_AUTH_SOCK` が
+    /// 死んでいたときに、代わりに渡す。
+    static var launchAgent: String? { launch["SSH_AUTH_SOCK"] }
 
     /// 取り込んだ変数の名前（`--print-environment` に出す）。取り込まなかったときは空。
     nonisolated(unsafe) private(set) static var imported: [String] = []
@@ -30,9 +41,10 @@ enum ShellEnvironment {
     /// 隔離されるので、`read`・`apply` は `nonisolated` にしてある。`DispatchQueue.async` のクロージャから呼ぶと、
     /// 隔離の確認（`dispatch_assert_queue`）に落ちて、キャッシュのある 2 回目以降の起動で必ずクラッシュしていた。
     static func `import`() {
+        launch = ProcessInfo.processInfo.environment
         guard isEnabled else { return }
         if let cached = UserDefaults.standard.dictionary(forKey: cacheKey) as? [String: String], !cached.isEmpty {
-            apply(cached)
+            apply(cached.filter { !session.contains($0.key) || isSocket(cached["SSH_AUTH_SOCK"]) })
             Task.detached(priority: .utility) { if let fresh = read() { apply(fresh) } }
         } else if let fresh = read() {
             apply(fresh)
@@ -96,10 +108,18 @@ enum ShellEnvironment {
         DispatchQueue.main.async { NotificationCenter.default.post(name: didChange, object: nil) }
     }
 
+    /// `path` がソケットか（リンクの先を見る。1Password の agent は `~/.1password/agent.sock` のリンク）。
+    nonisolated static func isSocket(_ path: String?) -> Bool {
+        guard let path else { return false }
+        var info = stat()
+        return stat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFSOCK
+    }
+
     nonisolated private static func run(_ shell: String, _ arguments: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = arguments
+        if !launch.isEmpty { process.environment = launch }
         process.standardInput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         let out = Pipe()

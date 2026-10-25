@@ -94,8 +94,10 @@ impl Daemons {
 }
 
 impl Daemons {
-    /// `uname -sm` の結果に合う daemon。
-    fn for_platform(&self, uname: &str) -> Result<PathBuf> {
+    /// `uname -sm` の結果に合う、このビルドのエンジン（パスと中身）。置き場所の `amonhen-<os>-<arch>` と、SSH 先が
+    /// 手元と同じ OS と CPU なら手元のエンジンのうち、このビルドのもの（置き場所のものが古くても、手元のものが
+    /// このビルドなら送れる）。
+    fn for_platform(&self, uname: &str) -> Result<(PathBuf, Vec<u8>)> {
         let mut words = uname.split_whitespace();
         let os = words.next().unwrap_or_default().to_ascii_lowercase();
         let arch = match words.next().unwrap_or_default() {
@@ -104,19 +106,32 @@ impl Daemons {
             other => other,
         };
         let name = format!("{os}-{arch}");
-        let file = self.dir.join(format!("amonhen-{name}"));
-        if file.exists() {
-            return Ok(file);
-        }
+        let mut candidates = vec![self.dir.join(format!("amonhen-{name}"))];
         if let Some((local_name, path)) = &self.local
             && *local_name == name
         {
-            return Ok(path.clone());
+            candidates.push(path.clone());
         }
-        Err(tr!(
-            "No engine (amonhen) bundled for the SSH host ({platform})",
-            platform = uname.trim()
-        )
+        let mut other_build = None;
+        for path in candidates.into_iter().filter(|p| p.is_file()) {
+            let data = std::fs::read(&path)
+                .map_err(|e| tr!("Can’t read {path}: {e}", path = path.display(), e = e))?;
+            if crate::engines::has_build_mark(&data) {
+                return Ok((path, data));
+            }
+            other_build.get_or_insert(path);
+        }
+        Err(match other_build {
+            Some(path) => tr!(
+                "The engine for the SSH host ({path}) is a different build of Amon Hen, and the SSH host has none of this build. Rebuild it (scripts/build-engine.sh) or install the matching app",
+                path = path.display()
+            ),
+            None => tr!(
+                "No engine (amonhen) for the SSH host ({platform}) in {dir}, and the SSH host has none of this build",
+                platform = uname.trim(),
+                dir = self.dir.display()
+            ),
+        }
         .into())
     }
 }
@@ -273,7 +288,7 @@ fn run_on(
         return Err(tr!(
             "Error on the SSH host ({host}): {message}",
             host = target.destination,
-            message = message
+            message = amonhen_model::process::explain_agent(message)
         )
         .into());
     }
@@ -282,6 +297,9 @@ fn run_on(
 
 /// SSH 先のエンジンの置き場所（手元の置き場所と同じ形）。
 const ENGINE_DIR: &str = "${XDG_DATA_HOME:-$HOME/.local/share}/amonhen/engine";
+
+/// エンジンのフォルダに置く、そのエンジンのビルドの指紋（`amonhen install` も置く）。
+pub const BUILD_FILE: &str = "build";
 
 /// 使わなくなったエンジンを片付けるまでの日数。
 const KEEP_DAYS: u32 = 30;
@@ -387,12 +405,13 @@ pub fn find_repositories(
 fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine> {
     let configured = daemons.remote_engine.clone();
     let push = daemons.push;
-    // OS と CPU、置き場所、PATH の amonhen の版、置いてあるエンジン（ハッシュの名前）を 1 回で調べる。
+    // OS と CPU、置き場所、PATH の amonhen の版、置いてあるエンジン（ハッシュの名前と、記録したビルドの指紋）を
+    // 1 回で調べる。
     let probe = run(
         ssh,
         target,
         &format!(
-            r#"uname -sm; D="{ENGINE_DIR}"; echo "$D"; a=$(command -v amonhen 2>/dev/null); if [ -n "$a" ]; then echo "$a"; "$a" --version 2>/dev/null | head -1; else echo; echo; fi; ls "$D" 2>/dev/null || true"#
+            r#"uname -sm; D="{ENGINE_DIR}"; echo "$D"; a=$(command -v amonhen 2>/dev/null); if [ -n "$a" ]; then echo "$a"; "$a" --version 2>/dev/null | head -1; else echo; echo; fi; for e in "$D"/*/; do [ -x "${{e}}amonhen" ] || continue; e=${{e%/}}; echo "${{e##*/}} $(cat "$e/{BUILD_FILE}" 2>/dev/null)"; done; true"#
         ),
         None,
     )?;
@@ -401,8 +420,12 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
     let dir = lines.next().unwrap_or_default().to_owned();
     let installed = lines.next().unwrap_or_default().to_owned();
     let installed_version = lines.next().unwrap_or_default().to_owned();
-    let present: Vec<&str> = lines.collect();
-    let wanted = format!("(protocol {})", crate::PROTOCOL_VERSION);
+    // （ハッシュの名前, ビルドの指紋。前の版が置いたものは記録がなく空）
+    let present: Vec<(&str, &str)> = lines
+        .filter_map(|line| line.split_once(' '))
+        .map(|(hash, build)| (hash, build.trim()))
+        .collect();
+    let wanted = format!("(build {})", crate::BUILD_ID);
 
     let engine = if let Some(path) = configured {
         RemoteEngine {
@@ -416,24 +439,19 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
             source: "installed",
             pushed_bytes: None,
         }
-    } else {
-        let binary = daemons.for_platform(&uname)?;
-        let data = std::fs::read(&binary)
-            .map_err(|e| tr!("Can’t read {path}: {e}", path = binary.display(), e = e))?;
-        if !data
-            .windows(crate::PROTOCOL_MARK.len())
-            .any(|w| w == crate::PROTOCOL_MARK.as_bytes())
-        {
-            return Err(tr!(
-                "The engine for the SSH host ({path}) was built for another version of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app",
-                path = binary.display()
-            )
-            .into());
+    } else if let Some((hash, _)) = present.iter().find(|(_, b)| *b == crate::BUILD_ID) {
+        // このビルドのものがもう置いてある（ほかの機械・VSCode 拡張が置いた）。手元のエンジンは読まなくてよい。
+        RemoteEngine {
+            path: format!("{dir}/{hash}/amonhen"),
+            source: "present",
+            pushed_bytes: None,
         }
+    } else {
+        let (_, data) = daemons.for_platform(&uname)?;
         let digest = sha1_smol::Sha1::from(&data).digest().to_string();
         let hash = &digest[..16];
         let path = format!("{dir}/{hash}/amonhen");
-        if present.contains(&hash) {
+        if present.iter().any(|(h, _)| *h == hash) {
             RemoteEngine {
                 path,
                 source: "present",
@@ -448,8 +466,10 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
         } else {
             // 書きかけを使わないよう、一時的な名前で書いてから置き換える。置いたら中身のハッシュを確かめる。
             let d = format!("{}/{hash}", shell_quote(&dir));
+            // ビルドの指紋も置く（次から、手元のエンジンを読まずにこれを選べる）。
             let script = format!(
-                r#"mkdir -p {d} && cat > {d}/amonhen.tmp.$$ && chmod 755 {d}/amonhen.tmp.$$ && mv {d}/amonhen.tmp.$$ {d}/amonhen && (sha1sum {d}/amonhen 2>/dev/null || shasum {d}/amonhen) | cut -d' ' -f1"#
+                r#"mkdir -p {d} && printf '%s' {build} > {d}/{BUILD_FILE} && cat > {d}/amonhen.tmp.$$ && chmod 755 {d}/amonhen.tmp.$$ && mv {d}/amonhen.tmp.$$ {d}/amonhen && (sha1sum {d}/amonhen 2>/dev/null || shasum {d}/amonhen) | cut -d' ' -f1"#,
+                build = crate::BUILD_ID
             );
             let got = run(ssh, target, &script, Some(&data))?;
             if got.trim() != digest {
@@ -477,8 +497,12 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
 /// 書きかけの一時ファイルも、1 日たったものだけ消す。
 fn cleanup_script(engine: &RemoteEngine) -> String {
     let mark = if matches!(engine.source, "present" | "pushed") {
-        let dir = engine.path.trim_end_matches("/amonhen");
-        format!("touch {}/used 2>/dev/null; ", shell_quote(dir))
+        // 前の版が置いた（指紋の記録がない）このビルドのものにも、指紋を記録する。
+        let dir = shell_quote(engine.path.trim_end_matches("/amonhen"));
+        format!(
+            "touch {dir}/used 2>/dev/null; [ -f {dir}/{BUILD_FILE} ] || printf '%s' {} > {dir}/{BUILD_FILE} 2>/dev/null; ",
+            crate::BUILD_ID
+        )
     } else {
         String::new()
     };
@@ -499,7 +523,6 @@ pub fn local_platform() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
 
     #[test]
     fn control_path_fits_a_unix_socket() {
@@ -533,22 +556,31 @@ mod tests {
     fn picks_the_daemon_for_the_host() {
         let dir = std::env::temp_dir().join(format!("amonhen-daemons-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("amonhen-linux-x86_64"), b"x").unwrap();
-        let daemons = Daemons {
+        let mut daemons = Daemons {
             dir: dir.clone(),
             local: Some(("darwin-aarch64".into(), PathBuf::from("/local"))),
             remote_engine: None,
             push: true,
         };
+        let this = crate::BUILD_MARK.as_bytes();
+        std::fs::write(dir.join("amonhen-linux-x86_64"), this).unwrap();
+        // 置き場所の macOS 向けは別のビルドで、手元のエンジンがこのビルド。
+        std::fs::write(dir.join("amonhen-darwin-aarch64"), b"amonhen-build=0;").unwrap();
+        let local = dir.join("local");
+        std::fs::write(&local, this).unwrap();
+        daemons.local = Some(("darwin-aarch64".into(), local.clone()));
         assert_eq!(
-            daemons.for_platform("Linux x86_64\n").unwrap(),
+            daemons.for_platform("Linux x86_64\n").unwrap().0,
             dir.join("amonhen-linux-x86_64")
         );
-        assert_eq!(
-            daemons.for_platform("Darwin arm64").unwrap(),
-            Path::new("/local")
-        );
+        assert_eq!(daemons.for_platform("Darwin arm64").unwrap().0, local);
         assert!(daemons.for_platform("Linux riscv64").is_err());
+        std::fs::write(dir.join("amonhen-linux-x86_64"), b"amonhen-build=0;").unwrap();
+        let err = daemons
+            .for_platform("Linux x86_64")
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("different build"), "{err}");
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

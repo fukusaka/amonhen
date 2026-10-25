@@ -4,7 +4,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpat
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
-import { Changes, controlDaemon, DaemonClient } from '../src/daemon/client.ts';
+import { Changes, clientEnv, controlDaemon, DaemonClient } from '../src/daemon/client.ts';
 import { readWorkingDiff, selectedRows } from '../src/daemon/diff.ts';
 import { platformName, prepareEngine } from '../src/daemon/engine.ts';
 import { readRows } from '../src/daemon/history.ts';
@@ -219,5 +219,10 @@ test('installs the bundled engine and picks it for the daemon', { skip }, async 
   } else {
     assert.equal(path, join(dir, '.local/share/amonhen/current/amonhen'));
   }
-  assert.match(execFileSync(path!, ['--version'], { encoding: 'utf8' }), /\(protocol \d+\)/);
+  assert.match(execFileSync(path!, ['--version'], { encoding: 'utf8' }), /\(build [0-9a-f]{16}\)/);
+});
+
+test('sends the daemon only the environment git and ssh use', () => {
+  const env = clientEnv({ PATH: '/bin', HOME: '/home/x', GIT_SSH_COMMAND: 'ssh -v', SECRET_TOKEN: 'x', SSH_AUTH_SOCK: '/a.sock' });
+  assert.deepEqual(env.split('\0').sort(), ['GIT_SSH_COMMAND=ssh -v', 'PATH=/bin', 'SSH_AUTH_SOCK=/a.sock']);
 });

@@ -7,11 +7,12 @@
 
 use amonhen_model::tr;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use amonhen_model::Result;
+use amonhen_model::process::ClientEnv;
 
 use crate::Connection;
 
@@ -36,7 +37,8 @@ pub fn socket_path() -> PathBuf {
             let uid = 0;
             PathBuf::from(format!("/tmp/amonhen-{uid}"))
         });
-    dir.join(format!("amonhend-{}.sock", crate::PROTOCOL_VERSION))
+    // Unix ソケットのパスは 104 バイトまでなので、名前には指紋の頭 8 文字だけを使う（重なっても挨拶で断る）。
+    dir.join(format!("amonhend-{}.sock", &crate::BUILD_ID[..8]))
 }
 
 /// History の永続キャッシュの置き場所（アプリと同じ）: macOS は `~/Library/Caches/io.github.fukusaka.amonhen`、Windows は
@@ -106,7 +108,28 @@ pub fn start(daemon: &str) -> Result<()> {
     wait_for(&endpoint, Duration::from_secs(5)).map(drop)
 }
 
-/// つないで最初に送る、開くリポジトリのパス。
+/// つないで最初に送る文: 開く場所と、この FE の環境（`amonhen_model::process::ClientEnv`）を NUL でつないだもの。
+/// 共有の daemon は、このつながりで動かす git・ssh（開くときの ssh も）を、この環境で動かす。
+pub fn opening(location: &str, env: &ClientEnv) -> String {
+    if env.is_empty() {
+        location.to_owned()
+    } else {
+        format!("{location}\0{}", env.encode())
+    }
+}
+
+/// 受け取った最初の文を（開く場所, FE の環境）に分ける。daemon への指示（`CONTROL` で始まる）はそのまま。
+pub fn split_opening(text: &str) -> (&str, ClientEnv) {
+    if text.starts_with(CONTROL) {
+        return (text, ClientEnv::default());
+    }
+    match text.split_once('\0') {
+        Some((location, env)) => (location, ClientEnv::decode(env)),
+        None => (text, ClientEnv::default()),
+    }
+}
+
+/// つないで最初に送る、開くリポジトリのパス（`opening`）。
 pub fn write_preamble(out: &mut impl Write, repo: &str) -> std::io::Result<()> {
     out.write_all(&(repo.len() as u32).to_le_bytes())?;
     out.write_all(repo.as_bytes())?;
@@ -130,7 +153,7 @@ pub fn read_preamble(input: &mut impl Read) -> std::io::Result<String> {
 /// 共有の daemon で `repo` を開いてつなぐ。daemon がいなければ `daemon`（エンジンのパス）を起動してから。
 pub fn connect(repo: &str, daemon: &str) -> Result<Arc<Connection>> {
     let mut duplex = stream(daemon)?;
-    write_preamble(&mut duplex.writer, repo)?;
+    write_preamble(&mut duplex.writer, &opening(repo, &ClientEnv::current()))?;
     let conn = Connection::new(duplex.reader, std::io::BufWriter::new(duplex.writer));
     conn.mark_local();
     Ok(conn)
@@ -152,6 +175,16 @@ pub fn stream(daemon: &str) -> Result<crate::endpoint::Duplex> {
 // 窓を出さない・切り離すフラグを自分で付けるので、process::command は使わない
 #[allow(clippy::disallowed_methods)]
 fn launch(daemon: &str, endpoint: &str) -> Result<()> {
+    // 別のビルドのエンジンは、このソケットで待っても挨拶で断るだけなので、起動する前に断る（開発中に古い
+    // target/release/amonhen を起動していた）。`PATH` から探す名前（`amonhen`）のときは確かめない。
+    let path = Path::new(daemon);
+    if path.is_absolute() && !crate::engines::is_this_build(path) {
+        return Err(tr!(
+            "The engine to start as the shared daemon ({path}) is a different build of Amon Hen",
+            path = daemon
+        )
+        .into());
+    }
     let mut command = std::process::Command::new(daemon);
     command
         .arg("--serve")
@@ -245,5 +278,15 @@ mod tests {
             super::read_preamble(&mut buf.as_slice()).unwrap(),
             "/work/リポジトリ"
         );
+    }
+
+    /// 別のビルドのエンジンは、共有の daemon として起動しない（挨拶で断られるだけなので）。
+    #[test]
+    fn refuses_to_start_another_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let other = dir.path().join("amonhen");
+        std::fs::write(&other, b"amonhen-build=0000000000000000;").unwrap();
+        let err = super::launch(other.to_str().unwrap(), "unused").unwrap_err();
+        assert!(err.to_string().contains("different build"), "{err}");
     }
 }

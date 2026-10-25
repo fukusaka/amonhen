@@ -386,7 +386,7 @@ private struct DaemonTab: View {
                 if let d = model.daemon {
                     VStack(alignment: .leading, spacing: 2) {
                         Label(L("The shared daemon is running"), systemImage: "circle.fill").foregroundStyle(.green).font(.headline)
-                        Text(L("pid %@ · version %@ (protocol %@) · up %@ · connections %ld", String(d.pid), "\(d.version)", "\(d.protocol)", duration(d.uptimeMs), d.connections))
+                        Text(L("pid %@ · version %@ (build %@) · up %@ · connections %ld", String(d.pid), "\(d.version)", d.build, duration(d.uptimeMs), d.connections))
                             .font(.caption).monospacedDigit()
                         Text(d.socket).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                     }
