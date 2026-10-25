@@ -118,49 +118,13 @@ enum Settings {
     }
 
     /// コミットのメッセージのテンプレートの一覧（この Mac。Settings > Git）。リポジトリは `amonhen.commitTemplate` に
-    /// 名前を書いて選ぶ。コミット欄が開くときに `{branch}`・`{issue}`・`{date}` を埋める（docs/ux.md の 4.5）。
+    /// 名前を書いて選ぶ（docs/ux.md の 4.5）。
     static var commitTemplates: [CommitTemplate] {
         get {
             UserDefaults.standard.data(forKey: "commitTemplates")
                 .flatMap { try? JSONDecoder().decode([CommitTemplate].self, from: $0) } ?? []
         }
         set { UserDefaults.standard.set(try? JSONEncoder().encode(newValue), forKey: "commitTemplates") }
-    }
-
-    /// テンプレートの置換文字列に入れる値（コミット欄が開くときに集める）。
-    struct TemplateValues {
-        var branch: String?
-        var base: String?
-        var name: String?
-        var email: String?
-        var repo: String?
-    }
-
-    /// テンプレートの置換文字列を埋める。`{branch}` はブランチ名、`{branch-name}` はその最後の区切り以降、`{issue}` は
-    /// ブランチ名の最初の数、`{ticket}` は `ABC-123` の形の課題キー、`{base}` は既定のブランチ、`{name}`・`{email}` は
-    /// 作者、`{repo}` はリポジトリの名前、`{date}`・`{time}`・`{datetime}` は今。知らない `{…}` はそのまま。
-    static func fillCommitTemplate(_ text: String, _ v: TemplateValues) -> String {
-        let branch = v.branch ?? ""
-        let issue = branch.split { !$0.isNumber }.first.map(String.init) ?? ""
-        let ticket = branch.firstMatch(of: /[A-Z][A-Z0-9]+-[0-9]+/).map { String($0.output) } ?? ""
-        let now = Date()
-        let stamp = { (format: String) in
-            let f = DateFormatter()
-            f.dateFormat = format
-            return f.string(from: now)
-        }
-        return text
-            .replacingOccurrences(of: "{branch-name}", with: branch.split(separator: "/").last.map(String.init) ?? "")
-            .replacingOccurrences(of: "{branch}", with: branch)
-            .replacingOccurrences(of: "{issue}", with: issue)
-            .replacingOccurrences(of: "{ticket}", with: ticket)
-            .replacingOccurrences(of: "{base}", with: v.base ?? "")
-            .replacingOccurrences(of: "{name}", with: v.name ?? "")
-            .replacingOccurrences(of: "{email}", with: v.email ?? "")
-            .replacingOccurrences(of: "{repo}", with: v.repo ?? "")
-            .replacingOccurrences(of: "{datetime}", with: stamp("yyyy-MM-dd HH:mm"))
-            .replacingOccurrences(of: "{date}", with: stamp("yyyy-MM-dd"))
-            .replacingOccurrences(of: "{time}", with: stamp("HH:mm"))
     }
 
     /// Pull（ツールバーのボタン・⌃⌘L）で上流を取り込む既定の方法。`pullMode` の命令に渡す値。
@@ -517,7 +481,7 @@ private struct CommitTemplatesSettings: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             }
-            Note(L("A repository chooses one in its Settings > Commits. The commit box fills {branch}, {branch-name} (its last part), {issue} (the first number in it), {ticket} (ABC-123 in it), {base} (the default branch), {name}, {email}, {repo}, {date}, {time} and {datetime}. git in a terminal leaves them as written."))
+            Note(L("A repository chooses one in its Settings > Commits, or copies it for itself. git in a terminal uses only commit.template, a file."))
         }
     }
 

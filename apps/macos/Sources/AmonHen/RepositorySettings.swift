@@ -1307,7 +1307,7 @@ private struct CommitsPage: View {
 
 /// メッセージのテンプレート: なし／Settings > Git の共有のテンプレート（`amonhen.commitTemplate` に名前。Amon Hen の
 /// コミット欄だけが使う）／このリポジトリ専用（`<git dir>/amonhen/commit-template` に置き、git の `commit.template` を
-/// 向ける。端末の git も使う）／ファイル…（`commit.template`）。コミット欄はどれでも置換文字列を埋める。
+/// 向ける。端末の git も使う）／ファイル…（`commit.template`）。
 private struct TemplateRow: View {
     let model: RepositorySettingsModel
     static let libraryKey = "amonhen.commitTemplate", fileKey = "commit.template"
@@ -1352,7 +1352,7 @@ private struct TemplateRow: View {
 
     var body: some View {
         SettingRow(model: model, question: L("Message template"),
-                   help: L("Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too. The commit box fills {branch}, {issue}, {date} and the others listed in Settings > Git in any template."),
+                   help: L("Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too."),
                    keys: [decidingKey, decidingKey == Self.libraryKey ? Self.fileKey : Self.libraryKey], describe: label) {
             Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
                 Text(L("None")).tag("")
