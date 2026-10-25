@@ -1300,6 +1300,29 @@ char *amonhen_engines_dir(void);
 char *amonhen_development_engine(void);
 
 /**
+ * 環境変数 `name` を git・ssh に渡すか（`amonhen_model::process::env_passes`。このプロセスの `AMONHEN_PASS_ENV` で
+ * 足した名前も）。アプリがログインシェルの環境から取り込むものを選ぶ。
+ *
+ * # Safety
+ * `name` は NUL 終端の UTF-8 であること。
+ */
+bool amonhen_env_passes(const char *name);
+
+/**
+ * 環境変数 `name` を渡さない理由（利用者が足しても断る）。渡してよければ NULL。`amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `name` は NUL 終端の UTF-8 であること。
+ */
+char *amonhen_env_refusal(const char *name);
+
+/**
+ * 渡す名前の一覧を改行で区切って（`always` ならいつも渡すもの、でなければ既定で渡すもの。`GIT_*` は
+ * `GIT_*` と書く）。`amonhen_string_free` で解放する。
+ */
+char *amonhen_env_names(bool always);
+
+/**
  * このプロセスの環境が変わったとき（設定・シェルの読み直し）に、共有の daemon への今のつながりに送り直す
  * （`amonhen_remote::local::update_environment`。つなぎ直さずに、この先の git・ssh に効く）。通信するので裏の
  * スレッドで呼ぶ。
