@@ -184,6 +184,18 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "importShellEnvironment") }
     }
 
+    /// git・ssh に渡す環境変数として、利用者が足した名前（`AMONHEN_PASS_ENV` にして、共有の daemon にも伝える）。
+    static var addedEnvironmentNames: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "addedEnvironmentNames") ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: "addedEnvironmentNames") }
+    }
+
+    /// 既定で渡す名前のうち、利用者が外したもの（`GIT_*` なら `GIT_` で始まるものすべて）。取り込まず、渡さない。
+    static var excludedEnvironmentNames: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "excludedEnvironmentNames") ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: "excludedEnvironmentNames") }
+    }
+
     /// 開いたリポジトリを、まだ一覧のどこにもなければブックマークに入れるか（既定は入れる）。
     static var autoBookmark: Bool {
         get { UserDefaults.standard.object(forKey: "autoBookmark") as? Bool ?? true }

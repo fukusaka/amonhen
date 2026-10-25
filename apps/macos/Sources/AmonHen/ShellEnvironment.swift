@@ -7,9 +7,8 @@ import Foundation
 /// fetch・pull・push がアプリからは通らない。起動時にログインシェルを一度動かして環境を読み、git・daemon・gh に
 /// 渡す（VSCode などと同じやり方）。
 enum ShellEnvironment {
-    /// 取り込む変数。PATH はシェルのものを前に足し、残りはシェルのものがあれば置き換える。
-    nonisolated private static let names: Set<String> = ["PATH", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
-    nonisolated private static let prefixes = ["GIT_", "HOMEBREW_"]
+    /// 利用者が外した名前（`Settings.excludedEnvironmentNames`。`GIT_*` は `GIT_` で始まるものすべて）。
+    nonisolated(unsafe) private static var excluded: Set<String> = []
     /// ログインの間だけ使える変数（agent のソケットはログインのたびに変わる）。前回の結果からは、ソケットが今も
     /// あるときだけ使う。
     nonisolated private static let session = ["SSH_AUTH_SOCK", "SSH_AGENT_PID"]
@@ -43,13 +42,35 @@ enum ShellEnvironment {
     /// 隔離の確認（`dispatch_assert_queue`）に落ちて、キャッシュのある 2 回目以降の起動で必ずクラッシュしていた。
     static func `import`() {
         launch = ProcessInfo.processInfo.environment
+        useSettings()
         guard isEnabled else { return }
         if let cached = UserDefaults.standard.dictionary(forKey: cacheKey) as? [String: String], !cached.isEmpty {
-            apply(cached.filter { !session.contains($0.key) || isSocket(cached["SSH_AUTH_SOCK"]) })
+            apply(cached.filter { takes($0.key) && (!session.contains($0.key) || isSocket(cached["SSH_AUTH_SOCK"])) })
             Task.detached(priority: .utility) { if let fresh = read() { apply(fresh) } }
         } else if let fresh = read() {
             apply(fresh)
         }
+    }
+
+    /// 設定の、足した名前と外した名前を使う。足した名前は `AMONHEN_PASS_ENV` にして（コアが渡す名前を決め、共有の
+    /// daemon にも伝わる）、外した名前はこのプロセスの環境から除く（このアプリが動かす git にも渡さない）。
+    private static func useSettings() {
+        let added = Settings.addedEnvironmentNames.filter { PassedEnvironment.refusal($0) == nil }
+        if added.isEmpty { unsetenv("AMONHEN_PASS_ENV") } else { setenv("AMONHEN_PASS_ENV", added.joined(separator: ","), 1) }
+        excluded = Set(Settings.excludedEnvironmentNames).subtracting(PassedEnvironment.always)
+        for name in ProcessInfo.processInfo.environment.keys where isExcluded(name) {
+            unsetenv(name)
+        }
+    }
+
+    /// シェルの環境から取り込むか: git・ssh に渡す名前（コアの決まり）で、外していないもの。`AMONHEN_*` はこの
+    /// アプリの設定で決めるので取り込まない。
+    nonisolated private static func takes(_ name: String) -> Bool {
+        !name.hasPrefix("AMONHEN_") && !isExcluded(name) && PassedEnvironment.passes(name)
+    }
+
+    nonisolated private static func isExcluded(_ name: String) -> Bool {
+        excluded.contains(name) || (name.hasPrefix("GIT_") && excluded.contains("GIT_*"))
     }
 
     /// 設定で切れる（既定は取り込む）。
@@ -81,7 +102,7 @@ enum ShellEnvironment {
             // rc が何か印字していれば、最初の項目の頭に混ざる。最後の行だけを名前にする。
             let key = String(chunk[..<eq]).split(separator: "\n").last.map(String.init) ?? ""
             let value = String(chunk[chunk.index(after: eq)...])
-            guard Self.names.contains(key) || prefixes.contains(where: { key.hasPrefix($0) }), !value.isEmpty else { continue }
+            guard takes(key), !value.isEmpty else { continue }
             values[key] = value
         }
         UserDefaults.standard.set(values, forKey: cacheKey)
