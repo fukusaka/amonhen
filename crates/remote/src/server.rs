@@ -13,7 +13,7 @@ use serde::Serialize;
 
 use crate::frame::{self, Kind};
 use crate::wire::{
-    Bytes, CommitTextWire, GraphWire, Hello, Notification, Op, PROTOCOL_VERSION, Request,
+    BUILD_ID, Bytes, CommitTextWire, GraphWire, HELLO_VERSION, Hello, Notification, Op, Request,
 };
 
 type Writer = Arc<Mutex<Box<dyn Write + Send>>>;
@@ -224,6 +224,15 @@ fn commits_from(
     Ok(ids)
 }
 
+/// 相手のエンジンが別のビルドだった（つなぐ側は、自分と同じビルドのエンジンを選ぶので、ふつうは起きない）。
+pub(crate) fn other_build(local: &str, daemon: &str) -> String {
+    tr!(
+        "The engine is a different build of Amon Hen (here {local}, engine {daemon})",
+        local = local,
+        daemon = daemon
+    )
+}
+
 fn handle(
     backend: &dyn GitBackend,
     search: &SearchCache,
@@ -232,17 +241,13 @@ fn handle(
 ) -> Result<Vec<u8>> {
     let files = || backend.files();
     match request {
-        Request::Hello { version, .. } => {
-            if version != PROTOCOL_VERSION {
-                return Err(tr!(
-                    "The daemon speaks a different protocol (local {local}, daemon {daemon}). Install the same version of amonhend",
-                    local = version,
-                    daemon = PROTOCOL_VERSION
-                )
-                .into());
+        Request::Hello { build, .. } => {
+            if build != BUILD_ID {
+                return Err(other_build(&build, BUILD_ID).into());
             }
             encode(&Hello {
-                version: PROTOCOL_VERSION,
+                version: HELLO_VERSION,
+                build: BUILD_ID.to_owned(),
             })
         }
         Request::PreparedHistory => encode(&Option::<String>::None),

@@ -36,7 +36,8 @@ pub fn socket_path() -> PathBuf {
             let uid = 0;
             PathBuf::from(format!("/tmp/amonhen-{uid}"))
         });
-    dir.join(format!("amonhend-{}.sock", crate::PROTOCOL_VERSION))
+    // Unix ソケットのパスは 104 バイトまでなので、名前には指紋の頭 8 文字だけを使う（重なっても挨拶で断る）。
+    dir.join(format!("amonhend-{}.sock", &crate::BUILD_ID[..8]))
 }
 
 /// History の永続キャッシュの置き場所（アプリと同じ）: macOS は `~/Library/Caches/io.github.fukusaka.amonhen`、Windows は

@@ -94,7 +94,7 @@ if ($zip) {
 # 3. Version
 Test-Step 'version' {
     $out = Invoke-Amonhen @('--version')
-    if ($ExpectVersion -and $out -notlike "amonhen $ExpectVersion (protocol *") { throw "$out (expected $ExpectVersion)" }
+    if ($ExpectVersion -and $out -notlike "amonhen $ExpectVersion (build *") { throw "$out (expected $ExpectVersion)" }
     $out
 }
 

@@ -221,9 +221,9 @@ fn daemon(args: &[String]) -> Result<ExitCode> {
             println!(
                 "{}",
                 tr!(
-                    "  version      {version} (protocol {protocol})",
+                    "  version      {version} (build {build})",
                     version = s["version"].as_str().unwrap_or(""),
-                    protocol = s["protocol"]
+                    build = s["build"].as_str().unwrap_or("")
                 )
             );
             println!(

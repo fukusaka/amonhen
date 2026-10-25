@@ -416,7 +416,8 @@ public enum SharedDaemon {
         }
         public let pid: Int
         public let version: String
-        public let `protocol`: Int
+        /// ビルドの指紋（同じビルドの FE とエンジンだけがこの daemon を使う）。
+        public let build: String
         public let socket: String
         public let uptimeMs: UInt64
         public let connections: Int

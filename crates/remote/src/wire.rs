@@ -12,20 +12,28 @@ use amonhen_model::{
 };
 use serde::{Deserialize, Serialize};
 
-/// 形を変えたら上げる。daemon と手元で違えば、つないだところで断る。
-pub const PROTOCOL_VERSION: u32 = 35;
+/// このビルドの指紋（ワークスペースのソースのハッシュ。`build.rs`）。daemon・SSH 先のエンジンとは、これが同じとき
+/// だけつなぐ。手元の共有の daemon のソケットの名前・`--version` にも入れる。
+pub const BUILD_ID: &str = env!("AMONHEN_BUILD_ID");
 
-/// エンジンの実行ファイルに埋め込む印（`PROTOCOL_VERSION` と同じ数）。SSH 先へ送る前に、同梱のエンジンが
-/// この版で作られたものかを中身で確かめる（古いまま送って、つないでから版の違いで断られないように）。
-pub const PROTOCOL_MARK: &str = "amonhen-protocol=35;";
+/// エンジンの実行ファイルに埋め込む印（`BUILD_ID`）。SSH 先へ送る前に、送るエンジンがこのビルドのものかを中身で
+/// 確かめる（違うものを送って、つないでから断られないように）。
+pub const BUILD_MARK: &str = concat!("amonhen-build=", env!("AMONHEN_BUILD_ID"), ";");
+
+/// 挨拶の `version`。照合は `build` でするので変えない。前の版（通信の形の版を数で比べていた）は、自分の数と
+/// 違うので断る（どの版の数とも重ならない）。
+pub const HELLO_VERSION: u32 = 1000;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum Request {
     /// → `Hello`
     Hello {
+        /// `HELLO_VERSION`（前の版に断らせるため）。
         version: u32,
         /// 手元の利用者の言語（`amonhen_model::i18n::Lang::code`）。この接続のエラーの文をその言語で作る。
         language: String,
+        /// 手元の `BUILD_ID`。違えば断る。
+        build: String,
     },
     // GitBackend
     /// → `Option<Oid>`
@@ -291,6 +299,7 @@ pub enum Op {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Hello {
     pub version: u32,
+    pub build: String,
 }
 
 /// daemon からの知らせ。
@@ -426,10 +435,11 @@ impl GraphWire {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn protocol_mark_matches_the_version() {
+    fn build_mark_holds_the_build_id() {
+        assert_eq!(super::BUILD_ID.len(), 16);
         assert_eq!(
-            super::PROTOCOL_MARK,
-            format!("amonhen-protocol={};", super::PROTOCOL_VERSION)
+            super::BUILD_MARK,
+            format!("amonhen-build={};", super::BUILD_ID)
         );
     }
 }

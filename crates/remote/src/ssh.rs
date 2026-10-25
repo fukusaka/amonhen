@@ -402,7 +402,7 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
     let installed = lines.next().unwrap_or_default().to_owned();
     let installed_version = lines.next().unwrap_or_default().to_owned();
     let present: Vec<&str> = lines.collect();
-    let wanted = format!("(protocol {})", crate::PROTOCOL_VERSION);
+    let wanted = format!("(build {})", crate::BUILD_ID);
 
     let engine = if let Some(path) = configured {
         RemoteEngine {
@@ -421,8 +421,8 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
         let data = std::fs::read(&binary)
             .map_err(|e| tr!("Can’t read {path}: {e}", path = binary.display(), e = e))?;
         if !data
-            .windows(crate::PROTOCOL_MARK.len())
-            .any(|w| w == crate::PROTOCOL_MARK.as_bytes())
+            .windows(crate::BUILD_MARK.len())
+            .any(|w| w == crate::BUILD_MARK.as_bytes())
         {
             return Err(tr!(
                 "The engine for the SSH host ({path}) was built for another version of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app",

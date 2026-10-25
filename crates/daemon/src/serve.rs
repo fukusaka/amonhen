@@ -464,7 +464,7 @@ fn status(state: &State) -> serde_json::Value {
     serde_json::json!({
         "pid": std::process::id(),
         "version": crate::VERSION,
-        "protocol": amonhen_remote::PROTOCOL_VERSION,
+        "build": amonhen_remote::BUILD_ID,
         "socket": state.socket,
         "uptimeMs": state.started.elapsed().as_millis() as u64,
         // この問い合わせのつながりは数えない。
