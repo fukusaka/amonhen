@@ -10,13 +10,15 @@ use crate::Git;
 impl Git {
     pub(crate) fn signing_keys_for(&self, format: &str) -> Result<Vec<SigningKey>> {
         match format {
+            // OpenPGP は gpg（`gpg.openpgp.program`、なければ `gpg.program`）。X.509 は gpgsm（`gpg.x509.program`）で、
+            // `gpg.program` は OpenPGP だけのものなので見ない（見ると gpg が動いて、同じ鍵が X.509 にも並ぶ）。
             "openpgp" => Ok(parse_gpg_keys(&self.list_keys(
-                &self.program("gpg.openpgp.program", "gpg"),
+                &self.program(&["gpg.openpgp.program", "gpg.program"], "gpg"),
                 "--list-secret-keys",
             ))),
             "ssh" => Ok(ssh_keys()),
             "x509" => Ok(parse_gpg_keys(&self.list_keys(
-                &self.program("gpg.x509.program", "gpgsm"),
+                &self.program(&["gpg.x509.program"], "gpgsm"),
                 "--list-secret-keys",
             ))),
             other => {
@@ -25,9 +27,9 @@ impl Git {
         }
     }
 
-    /// `key`（`gpg.openpgp.program` など）で設定されたプログラム。なければ `gpg.program`、それもなければ `fallback`。
-    fn program(&self, key: &str, fallback: &str) -> String {
-        for k in [key, "gpg.program"] {
+    /// `keys` の順に設定されたプログラムを探し、どれもなければ `fallback`。
+    fn program(&self, keys: &[&str], fallback: &str) -> String {
+        for k in keys {
             if let Some(p) = self
                 .read(&["config", "--get", k])
                 .ok()
