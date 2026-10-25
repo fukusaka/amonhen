@@ -43,6 +43,8 @@ becomes the GitHub Release notes.
   don't rewrite each other's file; the first launch of this version builds History once more.
 - The shared daemon runs git and ssh for each app, CLI or VSCode window with that one's environment (`PATH`, the SSH
   agent, `GIT_*`, the app's password dialog), not with that of whichever started the daemon first.
+- `AMONHEN_PASS_ENV=NAME1,NAME2` adds environment variables that git and ssh get, through the shared daemon too; the app
+  no longer takes `HOMEBREW_*` from the login shell.
 - Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
   from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
   where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
