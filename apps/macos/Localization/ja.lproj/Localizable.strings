@@ -179,6 +179,7 @@
 "Couldn’t clone" = "clone できませんでした";
 
 /* RepositorySettings.swift */
+".git/info/exclude, one pattern per line. Shared patterns go in .gitignore." = ".git/info/exclude。1 行に 1 つ。共有するパターンは .gitignore に書きます。";
 "Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは Settings > Git にあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";
 "Shared" = "共有";
 "This repository’s own" = "このリポジトリ専用";
@@ -241,7 +242,6 @@
 "One pattern per line (`*.log`, `build/` and so on). Text after # is a comment." = "1 行に 1 つのパターン（`*.log`、`build/` など）。# から後は説明。";
 "Searching…" = "探しています…";
 "Show Matching Files" = "合うファイルを見る";
-"Show how many files (tracked ones included) match each line of the unsaved text, with examples." = "保存する前の中身で、各行に合うファイル（追跡しているものも含む）の例と数を出す";
 "Save" = "保存";
 "Key" = "キー";
 "Value" = "値";
@@ -579,6 +579,7 @@
 "Create branch %@ and switch to it" = "新しいブランチ %@ を作って切り替える";
 
 /* WorkingCopyViewController.swift */
+"Add “%@” to .gitignore" = "“%@” を .gitignore に追加";
 "Changes" = "変更";
 "Description (optional)" = "Description（任意）";
 "Commit the checked files (⌘↩)" = "チェックしたファイルをコミット（⌘↩）";
@@ -1207,6 +1208,5 @@
 "detected" = "自動で判定";
 "Branches measures the others against it. Detected from origin/HEAD, main or master; choose one when there is none." = "Branches がほかのブランチの基準にします。origin/HEAD・main・master から判定し、どれもなければここで選びます。";
 "With the base (diff3, zdiff3) the merge editor resolves one-sided conflicts by itself. Amon Hen recommends zdiff3." = "元がある形式（diff3・zdiff3）なら、マージエディタが片側だけの変更を自分で解けます。Amon Hen のおすすめは zdiff3 です。";
-".git/info/exclude, one pattern per line. Shared patterns go in .gitignore." = ".git/info/exclude。1 行に 1 つ。共有するパターンは .gitignore に書きます。";
 "Branches whose tips are among the rewritten commits. Undo puts them back." = "先頭が書き換えるコミットにあるブランチです。Undo で戻ります。";
 "History edits always stash, whatever this says." = "History の編集は、この設定に関わらずいつも退避します。";

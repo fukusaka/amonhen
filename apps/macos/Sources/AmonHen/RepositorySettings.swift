@@ -1246,6 +1246,8 @@ private struct CommitsPage: View {
     private var saved: String { model.commitTemplate?.text ?? "" }
 
     var body: some View {
+        // 専用のテンプレートの編集欄は窓の高さいっぱいに（行と説明、ボタンの分を引いた残り）。
+        GeometryReader { geometry in
         Form {
             Section {
                 TemplateRow(model: model)
@@ -1255,7 +1257,7 @@ private struct CommitsPage: View {
                         TextEditor(text: $draft)
                             .font(.system(.body, design: .monospaced))
                             .scrollContentBackground(.hidden)
-                            .frame(minHeight: 160)
+                            .frame(height: max(160, geometry.size.height - 250))
                         HStack {
                             Spacer()
                             Button(L("Revert")) { draft = saved }.disabled(draft == saved)
@@ -1294,6 +1296,7 @@ private struct CommitsPage: View {
         }
         .formStyle(.grouped)
         .task(id: model.effective(TemplateRow.fileKey)?.value ?? "") { preview = await filePreview() }
+        }
     }
 
     /// ファイルのテンプレートの中身（手元のリポジトリだけ。SSH 先は読まない）。
@@ -1433,6 +1436,8 @@ private struct OperationsPage: View {
 private struct WorkingCopyPage: View {
     @Bindable var model: RepositorySettingsModel
     var body: some View {
+        // exclude の欄は窓の高さいっぱいに（上の 2 行と見出し・ボタンの分を引いた残り）。
+        GeometryReader { geometry in
         Form {
             Section {
                 ChoiceRow(model: model, question: L("Line endings"), help: "", key: "core.autocrlf",
@@ -1447,10 +1452,10 @@ private struct WorkingCopyPage: View {
                     TextEditor(text: $model.exclude)
                         .font(.system(.body, design: .monospaced))
                         .scrollContentBackground(.hidden)
-                        .frame(minHeight: 320)
+                        .frame(height: max(160, geometry.size.height - 330))
                     HStack {
                         Spacer()
-                        Button("Revert") { model.load() }.disabled(!model.ignoreChanged)
+                        Button(L("Revert")) { model.load() }.disabled(!model.ignoreChanged)
                         Button(L("Save")) { model.saveIgnore() }.disabled(!model.ignoreChanged).keyboardShortcut("s")
                     }
                 }
@@ -1460,6 +1465,7 @@ private struct WorkingCopyPage: View {
             }
         }
         .formStyle(.grouped)
+        }
     }
 }
 

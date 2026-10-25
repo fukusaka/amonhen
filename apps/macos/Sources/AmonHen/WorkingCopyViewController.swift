@@ -61,6 +61,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     private let lineEndingsLabel = NSTextField(labelWithString: "")
     /// merge・rebase などの途中のときに出す帯。
     private let sequenceBar = NSStackView()
+    /// 左の列の上下の仕切り（コミットの入力と、ファイルの一覧）。NSSplitViewController 自身を delegate にすると
+    /// 自分の分割項目と照合して崩れるので、専用の delegate を持つ。
+    private let messageSplit = NSSplitView()
+    private let messageSplitDelegate = MessageSplitDelegate()
     private let sequenceLabel = NSTextField(labelWithString: "")
 
     /// 一覧の 1 ファイル。
@@ -185,12 +189,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let commitRow = NSStackView(views: [
             amend, historyButton, insertButton, NSView(), summaryCount, suggestButton, commitButton, commitMenuButton,
         ])
-        commitRow.spacing = 4
+        commitRow.spacing = 3
         summaryCount.setContentHuggingPriority(.required, for: .horizontal)
+        summaryCount.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // 狭くても Amend の文字は削らない（足りなければ余白が縮む）。
+        amend.setContentCompressionResistancePriority(.required, for: .horizontal)
         summaryCount.toolTip = L("Length of the summary (yellow over 50, orange over 72)")
         let summaryRow = summary
-        let separator = NSBox()
-        separator.boxType = .separator
 
         sequenceLabel.textColor = .systemOrange
         sequenceLabel.lineBreakMode = .byTruncatingTail
@@ -249,21 +254,35 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         emptyLabel.centerXAnchor.constraint(equalTo: filesScroll.centerXAnchor).isActive = true
         emptyLabel.centerYAnchor.constraint(equalTo: filesScroll.centerYAnchor).isActive = true
 
-        let views = [sequenceBar, summaryRow, messageScroll, commitRow, separator, filesHeader, filterField, filesScroll]
-        let left = NSStackView(views: views)
-        left.orientation = .vertical
-        left.alignment = .leading
-        left.spacing = 6
-        left.edgeInsets = NSEdgeInsets(top: 8, left: 8, bottom: 8, right: 8)
-        for v in views {
-            v.widthAnchor.constraint(equalTo: left.widthAnchor, constant: -16).isActive = true
+        // 左の列は上下 2 段: 上にコミットの入力、下にファイルの一覧。間の仕切りをドラッグするとメッセージの欄の
+        // 高さが変わり、位置は覚えておく。窓の高さが変わったときは、ファイルの一覧の側が伸び縮みする。
+        let stackOf = { (views: [NSView], top: CGFloat, bottom: CGFloat) -> NSStackView in
+            let stack = NSStackView(views: views)
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 6
+            stack.edgeInsets = NSEdgeInsets(top: top, left: 8, bottom: bottom, right: 8)
+            for v in views {
+                v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -16).isActive = true
+            }
+            return stack
         }
-        left.setCustomSpacing(10, after: commitRow)
-        left.setCustomSpacing(10, after: separator)
-        messageScroll.heightAnchor.constraint(equalToConstant: 72).isActive = true
-        left.frame = NSRect(x: 0, y: 0, width: 280, height: 500)
+        let top = stackOf([sequenceBar, summaryRow, messageScroll, commitRow], 8, 6)
+        top.setCustomSpacing(10, after: commitRow)
+        messageScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
+        messageScroll.setContentHuggingPriority(.init(1), for: .vertical)
+        let bottom = stackOf([filesHeader, filterField, filesScroll], 6, 8)
+        filesScroll.setContentHuggingPriority(.init(1), for: .vertical)
+        messageSplit.isVertical = false
+        messageSplit.dividerStyle = .thin
+        messageSplit.addArrangedSubview(top)
+        messageSplit.addArrangedSubview(bottom)
+        messageSplitDelegate.minimum = { [weak self] in self?.messageMinimum ?? 170 }
+        messageSplit.delegate = messageSplitDelegate
+        messageSplit.frame = NSRect(x: 0, y: 0, width: 280, height: 500)
+        messageSplit.autosaveName = "WorkingCopyMessage"
         let leftController = NSViewController()
-        leftController.view = left
+        leftController.view = messageSplit
         let leftItem = NSSplitViewItem(viewController: leftController)
         leftItem.minimumThickness = 220
         leftItem.holdingPriority = .init(260)
@@ -803,6 +822,20 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         run { try current.setStaged(rows: rows, staged: staged) }
     }
 
+    // MARK: - コミットの入力とファイルの一覧の間の仕切り
+
+    /// 上の段の最小の高さ: Summary、72 pt のメッセージ、ボタンの行（操作の途中ならその帯も）。
+    private var messageMinimum: CGFloat { 170 + (sequenceBar.isHidden ? 0 : 34) }
+
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        // 覚えた位置がなければ、メッセージの欄を少し広めに。
+        if messageSplit.arrangedSubviews.first.map({ $0.frame.height < messageMinimum }) ?? false {
+            messageSplit.setPosition(messageMinimum + 60, ofDividerAt: 0)
+        }
+    }
+
+
     @objc private func discard() {
         guard let key = selectedKey, !key.staged, let actions else { return }
         let rows = diffView.selectedChangeRows
@@ -1286,12 +1319,33 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         menu.removeAllItems()
         guard let entry = files.item(atRow: files.clickedRow) as? Entry else { return }
         let path = entry.item.path
-        // untracked のファイルにはまだ履歴がない。
-        guard entry.item.kind != .untracked else { return }
+        // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
+        guard entry.item.kind != .untracked else {
+            menu.addItem(ClosureMenuItem(title: L("Add “%@” to .gitignore", path)) { [weak self] in self?.addToGitignore(path) })
+            let ext = (path as NSString).pathExtension
+            if !ext.isEmpty {
+                menu.addItem(ClosureMenuItem(title: L("Add “%@” to .gitignore", "*." + ext)) { [weak self] in self?.addToGitignore("*." + ext) })
+            }
+            return
+        }
         if entry.item.worktreeState != "D" {
             menu.addItem(ClosureMenuItem(title: "Blame") { [weak self] in self?.onBlame?(path) })
         }
         menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
+    }
+
+    /// `pattern` を作業ツリーの直下の .gitignore の最後に足す（コアで読み書きするので、SSH 先でも同じ）。
+    private func addToGitignore(_ pattern: String) {
+        let repository = self.repository
+        actions?.perform {
+            nonisolated struct Ignore: Decodable { let gitignore: String; let exclude: String }
+            let files = try repository.info(["op": "ignoreFiles"], as: Ignore.self)
+            var gitignore = files.gitignore
+            if gitignore.split(separator: "\n").contains(where: { $0.trimmingCharacters(in: .whitespaces) == pattern }) { return }
+            if !gitignore.isEmpty, !gitignore.hasSuffix("\n") { gitignore += "\n" }
+            gitignore += pattern + "\n"
+            try repository.run(json: Repository.json(["op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": files.exclude]))
+        }
     }
 
     func outlineViewSelectionDidChange(_ notification: Notification) {
@@ -1553,5 +1607,23 @@ enum HookOutputSheet {
         scroll.documentView = view
         alert.accessoryView = scroll
         alert.beginSheetModal(for: window)
+    }
+}
+
+/// コミットの入力とファイルの一覧の間の仕切りの決まり: 上は最低限の高さを保ち、下にも一覧の分を残し、窓の高さが
+/// 変わったら下だけが伸び縮みする。
+final class MessageSplitDelegate: NSObject, NSSplitViewDelegate {
+    var minimum: () -> CGFloat = { 170 }
+
+    func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        max(proposedMinimumPosition, minimum())
+    }
+
+    func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat, ofSubviewAt dividerIndex: Int) -> CGFloat {
+        min(proposedMaximumPosition, splitView.bounds.height - 140)
+    }
+
+    func splitView(_ splitView: NSSplitView, shouldAdjustSizeOfSubview view: NSView) -> Bool {
+        view !== splitView.arrangedSubviews.first
     }
 }

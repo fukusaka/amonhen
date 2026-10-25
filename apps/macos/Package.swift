@@ -25,7 +25,13 @@ let package = Package(
         .executableTarget(
             name: "AmonHen",
             dependencies: ["AmonhenKit"],
-            swiftSettings: [.defaultIsolation(MainActor.self)]
+            swiftSettings: [.defaultIsolation(MainActor.self)],
+            linkerSettings: [
+                // 実行ファイルに「macOS 26 の SDK でリンクした」と記録する（動く最低の macOS は 14.4 のまま）。macOS 26
+                // 以降はこの記録で新しい見た目（ツールバー・タブ・アイコン）を使うかを決める。SwiftPM は手元の Xcode だと
+                // デプロイ対象の 14.4 を記録してしまい、配布版（CI）と見た目が変わるので、明示する。
+                .unsafeFlags(["-Xlinker", "-platform_version", "-Xlinker", "macos", "-Xlinker", "14.4", "-Xlinker", "26.0"]),
+            ]
         ),
         .testTarget(name: "AmonhenKitTests", dependencies: ["AmonhenKit"]),
     ]
