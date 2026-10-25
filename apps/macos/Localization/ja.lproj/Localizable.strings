@@ -202,8 +202,13 @@
 "When refs change" = "ref が変わるとき";
 "On the receiving side" = "受け取る側で";
 "The executable bit. git runs only executable hooks." = "実行の許可です。git は実行できるフックだけを動かします。";
-"Open in %@" = "%@ で開く";
 "Editor" = "エディタ";
+"Edit With" = "編集";
+"General" = "一般";
+"External Editor" = "外部エディタ";
+"Automatic" = "自動";
+"Automatic (%@)" = "自動（%@）";
+"Used wherever Amon Hen opens a file in an editor, such as hooks in Repository Settings. Automatic picks the first code editor installed (VS Code, Cursor, Zed, Sublime Text, BBEdit, Nova, TextMate, Fleet, Xcode), or else the default text editor." = "Amon Hen がファイルをエディタで開くところすべて（リポジトリの設定のフックなど）で使います。自動は、入っているコードエディタ（VS Code・Cursor・Zed・Sublime Text・BBEdit・Nova・TextMate・Fleet・Xcode）の最初のもの、なければ既定のテキストエディタです。";
 "Create Hook…" = "フックを作成…";
 "Create Hook" = "フックを作成";
 "Puts a #!/bin/sh skeleton in place and makes it executable." = "#!/bin/sh だけの雛形を置いて、実行できるようにします。";

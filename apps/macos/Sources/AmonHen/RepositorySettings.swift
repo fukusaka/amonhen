@@ -206,6 +206,15 @@ final class RepositorySettingsModel {
         run(["op": "setHookEnabled", "name": name, "enabled": enabled])
     }
 
+    /// フックの中身（なければ nil）。
+    func hookText(_ name: String) async -> String? {
+        let repository = self.repository
+        nonisolated struct Hook: Decodable, Sendable { let text: String? }
+        return try? await Task.detached(priority: .userInitiated) {
+            try repository.info(["op": "hook", "name": name], as: Hook.self)
+        }.value.text
+    }
+
     /// フックの雛形を置く。できたら `then`。
     func createHook(_ name: String, then: @escaping () -> Void) {
         run(["op": "createHook", "name": name], then: then)
@@ -1499,7 +1508,11 @@ private struct WorkingCopyPage: View {
 private struct HooksLFSPage: View {
     let model: RepositorySettingsModel
     @State private var hookSelection: String?
+    @State private var hookText: String?
+    @State private var editors = ExternalEditor.installed
     @State private var patternSelection: String?
+
+    private var editorName: String { ExternalEditor.chosen?.name ?? L("Editor") }
 
     /// フックが動くとき（git の説明の要約）。
     private static func when(_ hook: String) -> String {
@@ -1550,13 +1563,17 @@ private struct HooksLFSPage: View {
                             .help(L("The executable bit. git runs only executable hooks."))
                     }
                     .width(60)
-                    TableColumn("") { h in
-                        if let dir = hooksDirectory {
-                            Button(L("Open in %@", editor.name)) { open((dir as NSString).appendingPathComponent(h.name)) }
-                                .buttonStyle(.link).lineLimit(1)
+                }
+                .contextMenu(forSelectionType: String.self) { names in
+                    if let name = names.first, hooksDirectory != nil {
+                        Button(L("Edit in %@", editorName)) { edit(name) }
+                        Menu(L("Edit With")) {
+                            ForEach(editors) { app in Button(app.name) { edit(name, with: app) } }
                         }
+                        Button(L("Reveal in Finder")) { reveal(name) }
+                        Divider()
                     }
-                    .width(150)
+                    Button(L("Create Hook…")) { create() }
                 }
                 .frame(height: CGFloat(28 * model.hooks.count + 36))
             }
@@ -1567,6 +1584,34 @@ private struct HooksLFSPage: View {
                 Text(L("Location: %@", model.hooksPath.map { "core.hooksPath = \($0)" } ?? ".git/hooks"))
                     .font(.caption).foregroundStyle(.secondary)
                 Spacer()
+            }
+            if let name = hookSelection, model.hooks.contains(where: { $0.name == name }) {
+                HStack {
+                    Text(name).font(.system(.body, design: .monospaced)).bold()
+                    Spacer()
+                    if hooksDirectory != nil {
+                        Menu {
+                            ForEach(editors) { app in Button(L("Edit in %@", app.name)) { edit(name, with: app) } }
+                        } label: {
+                            Text(L("Edit in %@", editorName))
+                        } primaryAction: {
+                            edit(name)
+                        }
+                        .fixedSize()
+                    }
+                }
+                .padding(.top, 8)
+                ScrollView {
+                    Text(hookText ?? "")
+                        .font(.system(.body, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .padding(8)
+                }
+                .frame(height: 220)
+                .background(RoundedRectangle(cornerRadius: 6).fill(.quaternary.opacity(0.5)))
+                .task(id: name) { hookText = await model.hookText(name) }
+                .onChange(of: model.hooks) { Task { hookText = await model.hookText(name) } }
             }
 
             Text("LFS").font(.headline).padding(.top, 12)
@@ -1596,31 +1641,19 @@ private struct HooksLFSPage: View {
 
     private struct PatternRow: Identifiable { let pattern: String; var id: String { pattern } }
 
-    /// スクリプト向けのエディタ: 入っているコードエディタのうち最初のもの。なければ既定のテキストエディタ。
-    private var editor: (name: String, url: URL?) {
-        let known: [(id: String, name: String)] = [
-            ("com.microsoft.VSCode", "VS Code"), ("com.microsoft.VSCodeInsiders", "VS Code"),
-            ("com.todesktop.230313mzl4w4u2", "Cursor"), ("dev.zed.Zed", "Zed"),
-            ("com.sublimetext.4", "Sublime Text"), ("com.sublimetext.3", "Sublime Text"),
-            ("com.barebones.bbedit", "BBEdit"), ("com.panic.Nova", "Nova"),
-            ("com.macromates.TextMate", "TextMate"), ("com.jetbrains.fleet", "Fleet"),
-        ]
-        for app in known {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: app.id) { return (app.name, url) }
-        }
-        guard let url = NSWorkspace.shared.urlForApplication(toOpen: .plainText) else { return (L("Editor"), nil) }
-        let name = (FileManager.default.displayName(atPath: url.path) as NSString).deletingPathExtension
-        return (name, url)
+    private func path(of name: String) -> URL? {
+        hooksDirectory.map { URL(fileURLWithPath: ($0 as NSString).appendingPathComponent(name)) }
     }
 
-    /// エディタで開く（手元のリポジトリだけ）。
-    private func open(_ path: String) {
-        let file = URL(fileURLWithPath: path)
-        if let app = editor.url {
-            NSWorkspace.shared.open([file], withApplicationAt: app, configuration: NSWorkspace.OpenConfiguration())
-        } else {
-            NSWorkspace.shared.open(file)
-        }
+    /// エディタで開く（手元のリポジトリだけ。`app` がなければ Settings > General で選んだもの）。
+    private func edit(_ name: String, with app: ExternalEditor.App? = nil) {
+        guard let file = path(of: name) else { return }
+        ExternalEditor.open([file], with: app)
+    }
+
+    private func reveal(_ name: String) {
+        guard let file = path(of: name) else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([file])
     }
 
     /// まだないフックから 1 つ選んで雛形を置き、エディタで開く。
@@ -1642,9 +1675,9 @@ private struct HooksLFSPage: View {
         alert.accessoryView = popup
         guard alert.runModal() == .alertFirstButtonReturn,
               let name = popup.selectedItem?.representedObject as? String else { return }
-        let dir = hooksDirectory
         model.createHook(name) {
-            if let dir { open((dir as NSString).appendingPathComponent(name)) }
+            hookSelection = name
+            edit(name)
         }
     }
 

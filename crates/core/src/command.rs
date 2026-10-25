@@ -361,6 +361,10 @@ pub enum Command {
         name: String,
         enabled: bool,
     },
+    /// フックの中身（`info`: text。なければ null）。置き場所は `hooksAndLfs` と同じ。
+    Hook {
+        name: String,
+    },
     /// フックを作る: `#!/bin/sh` だけの雛形を置いて実行の許可を付ける。すでにあればエラー。
     CreateHook {
         name: String,
@@ -2103,6 +2107,22 @@ impl Repository {
                 )?;
                 ok()
             }
+            Command::Hook { name } => {
+                if !HOOK_NAMES.contains(&name.as_str()) {
+                    return Err(tr!("Unknown hook: {name}", name = name).into());
+                }
+                let (root, dir) = hooks_location(ops.config_list()?.as_slice());
+                let text = (!dir.is_empty())
+                    .then(|| self.backend().files().read(root, &format!("{dir}/{name}")))
+                    .transpose()?
+                    .flatten()
+                    .map(|b| String::from_utf8_lossy(&b).into_owned());
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "text": text })),
+                    ..Default::default()
+                })
+            }
             Command::CreateHook { name } => {
                 if !HOOK_NAMES.contains(&name.as_str()) {
                     return Err(tr!("Unknown hook: {name}", name = name).into());
@@ -3751,6 +3771,14 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(dir.join(".git/hooks/commit-msg")).unwrap(),
             "#!/bin/sh\n\n"
+        );
+        assert_eq!(
+            run(&repo, r#"{"op":"hook","name":"commit-msg"}"#)["info"]["text"],
+            "#!/bin/sh\n\n"
+        );
+        assert_eq!(
+            run(&repo, r#"{"op":"hook","name":"pre-rebase"}"#)["info"]["text"],
+            serde_json::Value::Null
         );
         assert_eq!(
             run(&repo, r#"{"op":"createHook","name":"commit-msg"}"#)["ok"],

@@ -51,10 +51,12 @@ becomes the GitHub Release notes.
   the hosts in `~/.ssh/config` to pick from), the repository's path (Choose… browses the host), Check Connection (git's
   version and whether the engine is on the host) and Add and Open. A host's context menu offers Remove … from List…,
   which takes its repositories and folders to scan off the list after the same kind of confirmation.
+- Settings has a General tab with the external editor: Automatic (the first code editor installed, such as VS Code,
+  Cursor or Zed, else the default text editor) or any application. Used wherever Amon Hen opens a file in an editor.
 - Hooks · LFS in Repository Settings is two tables with actions: each hook with when git runs it, an Enabled switch
-  (the executable bit) and Open in VS Code (or another code editor that is installed), Create Hook… to put a
-  skeleton in place; the LFS patterns from `.gitattributes` with Track Pattern… (`git lfs track`)
-  and Remove, and how many files are in LFS.
+  (the executable bit), the selected hook's script under the table with Edit in the external editor (a menu offers
+  the other installed editors), Create Hook… to put a skeleton in place; the LFS patterns from `.gitattributes` with
+  Track Pattern… (`git lfs track`) and Remove, and how many files are in LFS.
 - In Working Copy, an untracked file's context menu offers Add to .gitignore for the file and for its extension. The
   exclude editor in Repository Settings > Working Copy, and the editor of the repository's own commit template in
   Repository Settings > Commits, fill the window's height.
