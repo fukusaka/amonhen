@@ -4,6 +4,7 @@
 
 mod client;
 pub mod endpoint;
+pub mod engines;
 pub mod frame;
 pub mod local;
 pub mod location;

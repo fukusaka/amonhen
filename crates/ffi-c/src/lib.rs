@@ -2054,6 +2054,29 @@ pub unsafe extern "C" fn amonhen_set_language(language: *const c_char) {
     }
 }
 
+/// SSH 先へ送るエンジン（`amonhen-<os>-<arch>`）の置き場所（`.app` なら `Contents/Resources/engines`、開発中は
+/// このビルドのチェックアウトの `dist/engine`。`amonhen_remote::engines::bundled_dir`）。`amonhen_string_free` で解放する。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_engines_dir() -> *mut c_char {
+    let dir = std::env::current_exe()
+        .map(|exe| amonhen_remote::engines::bundled_dir(&exe))
+        .unwrap_or_default();
+    CString::new(dir.display().to_string())
+        .unwrap_or_default()
+        .into_raw()
+}
+
+/// 開発中に共有の daemon にするエンジン（このビルドのチェックアウトの `target/release/amonhen`）。`.app` の中・
+/// まだ作っていなければ NULL。`amonhen_string_free` で解放する。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_development_engine() -> *mut c_char {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| amonhen_remote::engines::development_engine(&exe))
+        .and_then(|path| CString::new(path.display().to_string()).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
 /// このログインの SSH の agent のソケット（アプリが起動したときの `SSH_AUTH_SOCK`）。コアが起動する ssh・git に渡す
 /// `SSH_AUTH_SOCK` が死んでいれば（前回の起動で読んだシェルの環境が古いなど）、代わりにこれを渡す。起動したときに 1 回。
 ///

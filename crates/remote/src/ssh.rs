@@ -114,8 +114,9 @@ impl Daemons {
             return Ok(path.clone());
         }
         Err(tr!(
-            "No engine (amonhen) bundled for the SSH host ({platform})",
-            platform = uname.trim()
+            "No engine (amonhen) for the SSH host ({platform}) in {dir}",
+            platform = uname.trim(),
+            dir = self.dir.display()
         )
         .into())
     }
@@ -420,12 +421,9 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
         let binary = daemons.for_platform(&uname)?;
         let data = std::fs::read(&binary)
             .map_err(|e| tr!("Can’t read {path}: {e}", path = binary.display(), e = e))?;
-        if !data
-            .windows(crate::BUILD_MARK.len())
-            .any(|w| w == crate::BUILD_MARK.as_bytes())
-        {
+        if !crate::engines::has_build_mark(&data) {
             return Err(tr!(
-                "The engine for the SSH host ({path}) was built for another version of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app",
+                "The engine for the SSH host ({path}) is a different build of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app",
                 path = binary.display()
             )
             .into());

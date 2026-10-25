@@ -121,7 +121,7 @@
 "Not an ssh:// location" = "ssh:// で始まる場所ではありません";
 "Write it as ssh://host/path" = "ssh://host/path の形で書いてください";
 "No SSH destination" = "SSH の接続先がありません";
-"No engine (amonhen) bundled for the SSH host ({platform})" = "SSH 先（{platform}）に合うエンジン（amonhen）を同梱していません";
+"No engine (amonhen) for the SSH host ({platform}) in {dir}" = "{dir} に、SSH 先（{platform}）に合うエンジン（amonhen）がありません";
 "Error on the SSH host ({host}): {message}" = "SSH 先（{host}）でエラー: {message}";
 "specified" = "指定したもの";
 "installed on the SSH host" = "SSH 先に入っているもの";
@@ -243,7 +243,7 @@
 "Submodules" = "サブモジュール";
 " (upstream gone)" = "（上流がない）";
 " ({ahead} ahead, {behind} behind)" = "（{ahead} 先・{behind} 遅れ）";
-"The engine for the SSH host ({path}) was built for another version of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app" = "SSH 先に送るエンジン（{path}）は、Amon Hen のほかの版のものです。作り直す（scripts/build-engine.sh）か、同じ版のアプリを入れてください";
+"The engine for the SSH host ({path}) is a different build of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app" = "SSH 先に送るエンジン（{path}）は、Amon Hen の別のビルドのものです。作り直す（scripts/build-engine.sh）か、同じ版のアプリを入れてください";
 
 /* amonhen-cli: worktree */
 "(detached)" = "（detached）";
@@ -273,3 +273,4 @@
 "There is already a hook named {name}" = "{name} というフックはすでにある";
 "No SSH agent is set (SSH_AUTH_SOCK), so keys that need a passphrase can’t be used" = "SSH の agent が決まっていない（SSH_AUTH_SOCK）ので、パスフレーズのある鍵を使えません";
 "The SSH agent ({path}) isn’t running, so keys that need a passphrase can’t be used" = "SSH の agent（{path}）がいないので、パスフレーズのある鍵を使えません";
+"The engine to start as the shared daemon ({path}) is a different build of Amon Hen" = "共有の daemon として起動するエンジン（{path}）は、Amon Hen の別のビルドのものです";
