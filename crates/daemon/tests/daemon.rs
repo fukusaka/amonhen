@@ -302,6 +302,87 @@ fn provisions_the_engine_on_ssh_hosts() {
 
 /// 共有の daemon（`--serve`）: 2 つの相手が同じリポジトリを開くと、どちらにも変化の知らせが来る。開けない
 /// パスは理由を返す。
+/// 共有の daemon は、つないだ FE の環境で git を動かし、つないだまま送り直した環境にも替える（コミットのフックで
+/// 確かめる。daemon 自身は GIT_AMONHEN_TEST を持たない）。
+#[cfg(unix)]
+#[test]
+fn runs_git_with_the_client_environment_and_its_updates() {
+    use amonhen_model::process::ClientEnv;
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("repo");
+    std::fs::create_dir(&dir).unwrap();
+    git(&dir, &["init", "-q"]);
+    git(&dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(&dir, &["config", "user.name", "a"]);
+    git(&dir, &["config", "user.email", "a@example.com"]);
+    git(&dir, &["config", "commit.gpgsign", "false"]);
+    git(&dir, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    let log = tmp.path().join("hook.log");
+    let hook = dir.join(".git/hooks/pre-commit");
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\necho \"$GIT_AMONHEN_TEST\" >> '{}'\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let socket = tmp.path().join("d.sock");
+    let home = tmp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
+        .env("AMONHEN_LANG", "en")
+        .env_remove("GIT_AMONHEN_TEST")
+        .arg("--serve")
+        .arg(&socket)
+        .env("HOME", &home)
+        .spawn()
+        .unwrap();
+    let env = |value: &str| {
+        ClientEnv::from_vars([
+            ("PATH".to_owned(), std::env::var("PATH").unwrap_or_default()),
+            ("GIT_AMONHEN_TEST".to_owned(), value.to_owned()),
+        ])
+    };
+    let started = std::time::Instant::now();
+    let stream = loop {
+        match std::os::unix::net::UnixStream::connect(&socket) {
+            Ok(s) => break s,
+            Err(_) if started.elapsed() < Duration::from_secs(5) => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            Err(e) => panic!("つなげない: {e}"),
+        }
+    };
+    let mut writer = stream.try_clone().unwrap();
+    let path = dir.display().to_string();
+    amonhen_remote::local::write_preamble(
+        &mut writer,
+        &amonhen_remote::local::opening(&path, &env("first")),
+    )
+    .unwrap();
+    let conn = Connection::new(stream, std::io::BufWriter::new(writer));
+    conn.mark_local();
+    let repo = Repository::new(RemoteBackend::connect(conn.clone()).unwrap());
+    let commit = |name: &str| {
+        std::fs::write(dir.join(name), "x\n").unwrap();
+        repo.stage(&[name]).unwrap();
+        repo.commit(name, false).unwrap();
+    };
+    commit("one.txt");
+    let _: () = conn
+        .call(&amonhen_remote::wire::Request::Environment(
+            env("second").encode(),
+        ))
+        .unwrap();
+    commit("two.txt");
+    assert_eq!(std::fs::read_to_string(&log).unwrap(), "first\nsecond\n");
+    daemon.kill().unwrap();
+    let _ = daemon.wait();
+}
+
 #[test]
 fn shares_one_daemon_between_clients() {
     let tmp = tempfile::tempdir().unwrap();

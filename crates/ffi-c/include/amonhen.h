@@ -1310,6 +1310,13 @@ char *amonhen_engines_dir(void);
 char *amonhen_development_engine(void);
 
 /**
+ * このプロセスの環境が変わったとき（設定・シェルの読み直し）に、共有の daemon への今のつながりに送り直す
+ * （`amonhen_remote::local::update_environment`。つなぎ直さずに、この先の git・ssh に効く）。通信するので裏の
+ * スレッドで呼ぶ。
+ */
+void amonhen_update_environment(void);
+
+/**
  * このログインの SSH の agent のソケット（アプリが起動したときの `SSH_AUTH_SOCK`）。コアが起動する ssh・git に渡す
  * `SSH_AUTH_SOCK` が死んでいれば（前回の起動で読んだシェルの環境が古いなど）、代わりにこれを渡す。起動したときに 1 回。
  *
