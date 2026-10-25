@@ -285,10 +285,21 @@ async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
 /**
  * daemon に送る、この拡張の環境（`NAME=value` を NUL で区切ったもの）。共有の daemon は、このつながりで動かす
  * git・ssh をこの環境で動かす（先に起動したアプリの PATH・SSH の agent・`GIT_*` で動かさない）。受け取る名前は
- * daemon が決める（`amonhen_model::process::ClientEnv`）。ここでは git・ssh に関わるものだけに絞って送る
+ * daemon が決める（`amonhen_model::process::ClientEnv`）。ここでは git・ssh に関わるものと、`AMONHEN_PASS_ENV` で
+ * 足したものだけに絞って送る
  */
 export function clientEnv(env: NodeJS.ProcessEnv = process.env): string {
-  const names = new Set(['PATH', 'AMONHEN_ASKPASS', 'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'XDG_CONFIG_HOME']);
+  const added = (env['AMONHEN_PASS_ENV'] ?? '').split(/[\s,]+/).filter((n) => n !== '');
+  const names = new Set([
+    'PATH',
+    'AMONHEN_ASKPASS',
+    'AMONHEN_PASS_ENV',
+    'SSH_AUTH_SOCK',
+    'SSH_AGENT_PID',
+    'XDG_CONFIG_HOME',
+    'XDG_DATA_HOME',
+    ...added,
+  ]);
   return Object.entries(env)
     .filter(([k, v]) => v !== undefined && !v.includes('\0') && (names.has(k) || k.startsWith('GIT_')))
     .map(([k, v]) => `${k}=${v ?? ''}`)

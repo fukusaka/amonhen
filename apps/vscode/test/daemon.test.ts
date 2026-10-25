@@ -225,4 +225,7 @@ test('installs the bundled engine and picks it for the daemon', { skip }, async 
 test('sends the daemon only the environment git and ssh use', () => {
   const env = clientEnv({ PATH: '/bin', HOME: '/home/x', GIT_SSH_COMMAND: 'ssh -v', SECRET_TOKEN: 'x', SSH_AUTH_SOCK: '/a.sock' });
   assert.deepEqual(env.split('\0').sort(), ['GIT_SSH_COMMAND=ssh -v', 'PATH=/bin', 'SSH_AUTH_SOCK=/a.sock']);
+  // AMONHEN_PASS_ENV で足した名前も送る
+  const added = clientEnv({ PATH: '/bin', AMONHEN_PASS_ENV: 'GH_HOST, HTTPS_PROXY', GH_HOST: 'example.com', NO_PROXY: 'x' });
+  assert.deepEqual(added.split('\0').sort(), ['AMONHEN_PASS_ENV=GH_HOST, HTTPS_PROXY', 'GH_HOST=example.com', 'PATH=/bin']);
 });
