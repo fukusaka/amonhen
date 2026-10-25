@@ -20,7 +20,8 @@ struct GitSettings: View {
                 ProgressView().padding()
             }
         }
-        .frame(height: 560)
+        // 幅を決めておく（fixedSize は表の理想の幅で測り、窓からはみ出す）。
+        .frame(width: 800, height: 560)
         .onAppear(perform: open)
     }
 

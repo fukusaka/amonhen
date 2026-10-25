@@ -599,7 +599,7 @@ private struct AllSettingsTab: View {
                             .help(row.effectiveScope.isEmpty ? "" : "\(scopeLabel(row.effectiveScope, host: model.host)) · \(row.files[row.effectiveScope] ?? "")")
                     }
                 }
-                .width(min: 100, ideal: 160)
+                .width(min: 90, ideal: 160)
                 .customizationID("effective")
                 .disabledCustomizationBehavior(.all)
                 if columnsMode == .combined {
@@ -613,12 +613,12 @@ private struct AllSettingsTab: View {
                     .disabledCustomizationBehavior(.all)
                 } else {
                     TableColumn(header("system"), value: \.system) { row in cell(row, scope: "system") }
-                        .width(min: 80, ideal: 120)
+                        .width(min: 60, ideal: 120)
                         .customizationID("system")
                     TableColumn(header("global"), value: \.global) { row in
                         if model.level == .allRepositories, isEditing(row) { valueField(row) } else { cell(row, scope: "global") }
                     }
-                    .width(min: 80, ideal: 140)
+                    .width(min: 60, ideal: 140)
                     .customizationID("global")
                     .disabledCustomizationBehavior(model.level == .allRepositories ? .all : [])
                     if model.level == .repository {
