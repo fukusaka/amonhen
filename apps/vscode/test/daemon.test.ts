@@ -26,7 +26,9 @@ function git(...args: string[]): string {
 }
 
 before(() => {
-  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-daemon-')));
+  // ソケットのパス（このフォルダ/s/amonhend-<指紋の頭 8 文字>.sock）は macOS では 103 バイトまで。macOS の一時フォルダ
+  // （/private/var/folders/…/T/）は長いので、名前は短くする
+  dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'ah-')));
   // daemon のソケットと History のキャッシュは試験の中に置く（手元の daemon とアプリに混ぜない）
   process.env['AMONHEN_DAEMON_DIR'] = join(dir, 's');
   process.env['HOME'] = dir;

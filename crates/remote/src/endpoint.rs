@@ -54,7 +54,30 @@ mod imp {
         crate::local::socket_path().display().to_string()
     }
 
+    /// Unix ソケットのパスは `sun_path`（macOS は 104 バイト、Linux は 108 バイト。最後の NUL を除く）に収まらないと
+    /// 使えない。標準の「path must be shorter than SUN_LEN」では直し方が分からないので、長さと直し方を出す。
+    fn fits(endpoint: &str) -> io::Result<()> {
+        // SAFETY: ゼロ埋めの sockaddr_un（数と配列だけの構造体）を作って、`sun_path` の大きさを見るだけ。
+        let max = unsafe { std::mem::zeroed::<libc::sockaddr_un>() }
+            .sun_path
+            .len()
+            - 1;
+        if endpoint.len() <= max {
+            return Ok(());
+        }
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            amonhen_model::tr!(
+                "The shared daemon’s socket path is too long ({length} bytes, at most {max}): {path}. Set AMONHEN_DAEMON_DIR to a shorter folder",
+                length = endpoint.len(),
+                max = max,
+                path = endpoint
+            ),
+        ))
+    }
+
     pub fn connect(endpoint: &str) -> io::Result<Duplex> {
+        fits(endpoint)?;
         let stream = UnixStream::connect(endpoint)?;
         Ok(Duplex {
             reader: Box::new(stream.try_clone()?),
@@ -66,6 +89,7 @@ mod imp {
 
     impl Listener {
         pub fn bind(endpoint: &str) -> io::Result<Option<Self>> {
+            fits(endpoint)?;
             let path = std::path::Path::new(endpoint);
             if let Some(dir) = path.parent() {
                 std::fs::create_dir_all(dir)?;
