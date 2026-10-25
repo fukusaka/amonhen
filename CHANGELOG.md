@@ -37,6 +37,8 @@ becomes the GitHub Release notes.
   show it.
 - A development build looks for the engines to send to SSH hosts and to run as the shared daemon only inside its own
   checkout, and the shared daemon is not started from an engine of another build.
+- Opening an SSH host uses an engine of the same build already placed there (by another Mac, the VSCode extension or
+  `amonhen install`) without sending one, and still opens when the engine here is of another build.
 - Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
   from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
   where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
