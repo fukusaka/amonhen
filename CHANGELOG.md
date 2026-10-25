@@ -45,7 +45,8 @@ becomes the GitHub Release notes.
 - Remotes in Repository Settings are added, edited and removed in one sheet: name, fetch URL, push URL (empty means
   the same), what the URL points to (GitHub, GitLab, a path, an SSH host) and Check Connection (`git ls-remote`, on
   the SSH host for a repository there) before saving. The table shows what each remote points to. The same actions are
-  on the sidebar: Add Remote… on the Remotes group, and Rename…, Edit URL…, Prune and Remove… on a remote.
+  on the sidebar: Add Remote… on the Remotes group, and Rename…, Edit URL…, Prune and Remove… on a remote, and
+  Repository > Add Remote… in the menu bar; removing a remote asks the same question wherever it starts.
 - In Working Copy, an untracked file's context menu offers Add to .gitignore for the file and for its extension. The
   exclude editor in Repository Settings > Working Copy, and the editor of the repository's own commit template in
   Repository Settings > Commits, fill the window's height.

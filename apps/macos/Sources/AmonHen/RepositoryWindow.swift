@@ -593,12 +593,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 RemoteSheet.present(in: window, repository: repository, remote: remote) { [weak self] in self?.actions.perform(sequence: $0) }
             }
         case .remove:
-            guard let name, actions.confirm(
-                L("Remove %@?", name),
-                message: L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name),
-                ok: L("Delete")) else { return }
+            guard let name, RemoteSheet.confirmRemove(name) else { return }
             actions.perform(["op": "changeRemote", "change": ["kind": "remove", "name": name]])
         }
+    }
+
+    /// Repository > Add Remote…（サイドバーと設定のページと同じシート）。
+    @objc func addRemote(_ sender: Any?) {
+        remoteAction(nil, .add)
     }
 
     private func worktreeAction(_ path: String, _ action: SidebarViewController.WorktreeAction) {

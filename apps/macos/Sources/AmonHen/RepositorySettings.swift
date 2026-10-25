@@ -295,12 +295,7 @@ private struct RemotesTab: View {
     }
 
     private func remove(_ name: String) {
-        let alert = NSAlert()
-        alert.messageText = L("Remove %@?", name)
-        alert.informativeText = L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name)
-        alert.addButton(withTitle: L("Delete"))
-        alert.addButton(withTitle: L("Cancel"))
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard RemoteSheet.confirmRemove(name) else { return }
         model.changeRemote(["kind": "remove", "name": name])
         selection = nil
     }

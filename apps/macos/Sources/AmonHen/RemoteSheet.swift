@@ -19,6 +19,16 @@ enum RemoteSheet {
         window.beginSheet(sheet)
     }
 
+    /// リモートを消す前の確認。設定のページ、サイドバー、シートのどこから消しても同じ文言と同じボタン。
+    static func confirmRemove(_ name: String) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = L("Remove %@?", name)
+        alert.informativeText = L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name)
+        alert.addButton(withTitle: L("Delete"))
+        alert.addButton(withTitle: L("Cancel"))
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     /// URL の先が何か: GitHub・GitLab などのサービス、パス、SSH 先、それ以外はホスト名。
     static func kind(of url: String) -> String {
         let lower = url.lowercased()
@@ -114,7 +124,7 @@ final class RemoteSheetModel {
     }
 
     func remove() {
-        guard let remote else { return }
+        guard let remote, RemoteSheet.confirmRemove(remote.name) else { return }
         perform([["op": "changeRemote", "change": ["kind": "remove", "name": remote.name]]])
         close()
     }
@@ -122,7 +132,6 @@ final class RemoteSheetModel {
 
 private struct RemoteSheetView: View {
     @Bindable var model: RemoteSheetModel
-    @State private var confirmingRemove = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -161,12 +170,7 @@ private struct RemoteSheetView: View {
             }
             HStack {
                 if model.remote != nil {
-                    Button(L("Remove…"), role: .destructive) { confirmingRemove = true }
-                        .confirmationDialog(L("Remove %@?", model.remote?.name ?? ""), isPresented: $confirmingRemove) {
-                            Button(L("Delete"), role: .destructive) { model.remove() }
-                        } message: {
-                            Text(L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", model.remote?.name ?? ""))
-                        }
+                    Button(L("Remove…"), role: .destructive) { model.remove() }
                 }
                 Spacer()
                 Button(L("Cancel")) { model.close() }.keyboardShortcut(.cancelAction)
