@@ -39,6 +39,8 @@ becomes the GitHub Release notes.
   checkout, and the shared daemon is not started from an engine of another build.
 - Opening an SSH host uses an engine of the same build already placed there (by another Mac, the VSCode extension or
   `amonhen install`) without sending one, and still opens when the engine here is of another build.
+- The History cache is kept per format, so builds that run side by side (and share the shared daemon's cache folder)
+  don't rewrite each other's file; the first launch of this version builds History once more.
 - Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
   from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
   where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
