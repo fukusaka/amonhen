@@ -44,12 +44,42 @@ enum ShellEnvironment {
         launch = ProcessInfo.processInfo.environment
         useSettings()
         guard isEnabled else { return }
-        if let cached = UserDefaults.standard.dictionary(forKey: cacheKey) as? [String: String], !cached.isEmpty {
-            apply(cached.filter { takes($0.key) && (!session.contains($0.key) || isSocket(cached["SSH_AUTH_SOCK"])) })
+        if let cached = remembered() {
+            apply(cached)
             Task.detached(priority: .utility) { if let fresh = read() { apply(fresh) } }
         } else if let fresh = read() {
             apply(fresh)
         }
+    }
+
+    /// 前回読んだシェルの環境のうち、今の設定で取り込むもの（agent は、ソケットが今もあるときだけ）。
+    private static func remembered() -> [String: String]? {
+        guard let cached = UserDefaults.standard.dictionary(forKey: cacheKey) as? [String: String], !cached.isEmpty else {
+            return nil
+        }
+        return cached.filter { takes($0.key) && (!session.contains($0.key) || isSocket(cached["SSH_AUTH_SOCK"])) }
+    }
+
+    /// 設定（値の出どころ・足した名前・外した名前）を変えたときに、再起動せずに効かせる。git・ssh に渡す変数を
+    /// 起動したときの値に戻し、設定に従って取り込み直す（前回の結果をすぐ使い、シェルは裏で読み直す）。共有の
+    /// daemon への今のつながりにも送る。
+    static func refresh() {
+        let current = ProcessInfo.processInfo.environment
+        // 今の設定で扱っていた名前（渡すもの・外したもの）。`AMONHEN_*` はこのアプリが決めるので戻さない。
+        for name in Set(current.keys).union(launch.keys)
+        where !name.hasPrefix("AMONHEN_") && (PassedEnvironment.passes(name) || isExcluded(name)) {
+            if let value = launch[name] { setenv(name, value, 1) } else { unsetenv(name) }
+        }
+        useSettings()
+        guard isEnabled else {
+            imported = []
+            values = [:]
+            DispatchQueue.main.async { NotificationCenter.default.post(name: didChange, object: nil) }
+            DispatchQueue.global(qos: .utility).async { SharedDaemon.updateEnvironment() }
+            return
+        }
+        if let cached = remembered() { apply(cached) }
+        reload()
     }
 
     /// 設定の、足した名前と外した名前を使う。足した名前は `AMONHEN_PASS_ENV` にして（コアが渡す名前を決め、共有の
@@ -130,6 +160,29 @@ enum ShellEnvironment {
         DispatchQueue.main.async { NotificationCenter.default.post(name: didChange, object: nil) }
         // 共有の daemon への今のつながりにも送る（daemon が動かす git・ssh も、つなぎ直さずに新しい環境になる）。
         DispatchQueue.global(qos: .utility).async { SharedDaemon.updateEnvironment() }
+    }
+
+    /// git・ssh に渡している変数（今のこのプロセスの環境のうち、コアの決まりで渡すもの）。設定画面に出す。
+    static var passed: [String: String] {
+        ProcessInfo.processInfo.environment.filter { PassedEnvironment.passes($0.key) && !isExcluded($0.key) }
+    }
+
+    /// 今の `PATH` で見つかる git と、その版（`git version 2.47.1`）。見つからなければ nil。git を動かすので裏で呼ぶ。
+    nonisolated static func git() -> (path: String, version: String)? {
+        let path = (ProcessInfo.processInfo.environment["PATH"] ?? "").split(separator: ":")
+            .map { "\($0)/git" }
+            .first { FileManager.default.isExecutableFile(atPath: $0) }
+        guard let path else { return nil }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: path)
+        process.arguments = ["--version"]
+        let out = Pipe()
+        process.standardOutput = out
+        process.standardError = FileHandle.nullDevice
+        guard (try? process.run()) != nil else { return (path, "") }
+        let data = out.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+        return (path, String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     /// `path` がソケットか（リンクの先を見る。1Password の agent は `~/.1password/agent.sock` のリンク）。
