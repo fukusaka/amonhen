@@ -81,6 +81,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Opening an SSH host and git over SSH no longer fail with "Permission denied (publickey)" after the Mac restarts:
+  the app kept the SSH agent from an earlier login, and now checks the agent each time it starts ssh or git.
 - Blame of uncommitted contents and File History read the worktree chosen in Working Copy, not the repository's main
   checkout.
 - Writing commit-graph in the background also works with git older than 2.27, without the changed-path Bloom filters.

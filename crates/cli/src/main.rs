@@ -78,6 +78,8 @@ worktree. The exit code is 1 if there are conflicts, and 2 if it can't tell (git
 
 fn main() -> ExitCode {
     amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
+    #[cfg(target_os = "macos")]
+    amonhen_model::process::set_agent_finder(session_agent);
     let argv0 = std::env::args().next().unwrap_or_default();
     let args: Vec<String> = std::env::args().skip(1).collect();
     // エンジンは 1 つの実行ファイルで、daemon としての起動（`--serve`・`--stdio`・`--socket`、または `amonhend` と
@@ -126,6 +128,20 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// このログインの SSH の agent（launchd が用意するもの）。環境の `SSH_AUTH_SOCK` が死んでいたときに使う（共有の
+/// daemon は、起動した FE の環境を終わるまで持ち続ける）。
+#[cfg(target_os = "macos")]
+fn session_agent() -> Option<std::ffi::OsString> {
+    let out = amonhen_model::process::command("launchctl")
+        .args(["getenv", "SSH_AUTH_SOCK"])
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()?;
+    let path = String::from_utf8(out.stdout).ok()?;
+    let path = path.trim();
+    (out.status.success() && !path.is_empty()).then(|| path.into())
 }
 
 pub(crate) type Result<T> = amonhen_model::Result<T>;

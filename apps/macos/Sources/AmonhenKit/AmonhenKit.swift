@@ -45,6 +45,12 @@ public final class Repository: @unchecked Sendable {
         amonhen_set_fsmonitor(enabled)
     }
 
+    /// このログインの SSH の agent のソケット。コアが起動する ssh・git の `SSH_AUTH_SOCK` が死んでいれば、代わりに
+    /// これを渡す（リポジトリを開く前に 1 回）。
+    public static func setSSHAgent(_ path: String) {
+        amonhen_set_ssh_agent(path)
+    }
+
     /// `cacheDirectory` を渡すと、History をそこに永続化し、次に開いたときすぐ表示できる。
     public init(path: String, cacheDirectory: URL? = nil) throws {
         let raw = if let cacheDirectory {

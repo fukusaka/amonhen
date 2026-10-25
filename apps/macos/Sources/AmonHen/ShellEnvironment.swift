@@ -17,6 +17,9 @@ enum ShellEnvironment {
     /// 変数（launchd の `SSH_AUTH_SOCK` など）は取り込んだ値をそのまま返すので、前回の値が古くても読み直すたびに
     /// 書き戻され、再起動しても直らなかった。
     nonisolated(unsafe) private static var launch: [String: String] = [:]
+    /// このログインの SSH の agent（起動したときの `SSH_AUTH_SOCK`）。コアが起動する ssh・git の `SSH_AUTH_SOCK` が
+    /// 死んでいたときに、代わりに渡す。
+    static var launchAgent: String? { launch["SSH_AUTH_SOCK"] }
 
     /// 取り込んだ変数の名前（`--print-environment` に出す）。取り込まなかったときは空。
     nonisolated(unsafe) private(set) static var imported: [String] = []
