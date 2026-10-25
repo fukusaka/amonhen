@@ -356,6 +356,16 @@ pub enum Command {
     WorktreePrune,
     /// `.gitignore`（作業ツリーの直下）と `.git/info/exclude` の中身（`info.gitignore`・`info.exclude`）。
     IgnoreFiles,
+    /// フックの実行の許可を付ける・外す（`enabled`）。フックの置き場所は `hooksAndLfs` と同じ。
+    SetHookEnabled {
+        name: String,
+        enabled: bool,
+    },
+    /// `git lfs track <pattern>`（`track` が false なら `untrack`）。
+    LfsTrack {
+        pattern: String,
+        track: bool,
+    },
     /// `.gitignore` と `.git/info/exclude` を書く。
     SaveIgnoreFiles {
         gitignore: String,
@@ -2062,6 +2072,31 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::SetHookEnabled { name, enabled } => {
+                if !HOOK_NAMES.contains(&name.as_str()) {
+                    return Err(tr!("Unknown hook: {name}", name = name).into());
+                }
+                let (root, dir) = hooks_location(ops.config_list()?.as_slice());
+                let files = self.backend().files();
+                let path = format!("{dir}/{name}");
+                let Some(mode) = (!dir.is_empty())
+                    .then(|| files.mode(root, &path))
+                    .transpose()?
+                    .flatten()
+                else {
+                    return Err(tr!("There is no hook named {name}", name = name).into());
+                };
+                files.set_mode(
+                    root,
+                    &path,
+                    if enabled { mode | 0o111 } else { mode & !0o111 },
+                )?;
+                ok()
+            }
+            Command::LfsTrack { pattern, track } => {
+                ops.lfs_track(&pattern, track)?;
+                ok()
+            }
             Command::HooksAndLfs => {
                 let config = ops.config_list()?;
                 let value = |key: &str| {
@@ -2072,14 +2107,7 @@ impl Repository {
                         .map(|e| e.value.clone())
                 };
                 let hooks_path = value("core.hooksPath");
-                // hooksPath が作業ツリーの中（相対）なら作業ツリーから、なければ .git/hooks から読む。
-                let (root, dir) = match &hooks_path {
-                    Some(p) if !p.starts_with('/') && !p.starts_with('~') => {
-                        (Root::Workdir, p.trim_end_matches('/').to_owned())
-                    }
-                    Some(_) => (Root::GitDir, String::new()),
-                    None => (Root::GitDir, "hooks".to_owned()),
-                };
+                let (root, dir) = hooks_location(&config);
                 let files = self.backend().files();
                 let mut hooks = Vec::new();
                 if !dir.is_empty() {
@@ -2106,6 +2134,7 @@ impl Repository {
                         "hooks": hooks,
                         "lfs": value("filter.lfs.process").or(value("filter.lfs.smudge")).is_some(),
                         "lfsPatterns": lfs_patterns,
+                        "lfsFiles": ops.lfs_file_count()?,
                     })),
                     ..Default::default()
                 })
@@ -2374,6 +2403,23 @@ fn trailer(line: &str) -> Option<(&str, &str)> {
 }
 
 /// git が呼ぶ hook の名前（`git help hooks` の順）。
+/// フックの置き場所: `core.hooksPath` が作業ツリーの中（相対）ならそこ、絶対パスなら読めない（空）、なければ
+/// `.git/hooks`。
+fn hooks_location(config: &[amonhen_model::ConfigEntry]) -> (Root, String) {
+    let hooks_path = config
+        .iter()
+        .rev()
+        .find(|e| e.key.eq_ignore_ascii_case("core.hooksPath"))
+        .map(|e| e.value.clone());
+    match &hooks_path {
+        Some(p) if !p.starts_with('/') && !p.starts_with('~') => {
+            (Root::Workdir, p.trim_end_matches('/').to_owned())
+        }
+        Some(_) => (Root::GitDir, String::new()),
+        None => (Root::GitDir, "hooks".to_owned()),
+    }
+}
+
 const HOOK_NAMES: &[&str] = &[
     "applypatch-msg",
     "pre-applypatch",
@@ -3617,6 +3663,44 @@ mod tests {
         assert_eq!(check["info"]["head"], "main", "{check}");
         assert_eq!(
             run(&repo, r#"{"op":"checkRemote","url":"/nonexistent/repo"}"#)["ok"],
+            false
+        );
+
+        // フックの実行の許可: .git/hooks に置いたフックを有効・無効にできる。
+        std::fs::write(dir.join(".git/hooks/pre-commit"), "#!/bin/sh\nexit 0\n").unwrap();
+        let hooks = |on: bool| {
+            let r = run(&repo, r#"{"op":"hooksAndLfs"}"#);
+            let h = r["info"]["hooks"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|h| h["name"] == "pre-commit")
+                .cloned()
+                .unwrap();
+            assert_eq!(h["enabled"], on, "{r}");
+        };
+        hooks(false);
+        assert_eq!(
+            run(
+                &repo,
+                r#"{"op":"setHookEnabled","name":"pre-commit","enabled":true}"#
+            )["ok"],
+            true
+        );
+        hooks(true);
+        assert_eq!(
+            run(
+                &repo,
+                r#"{"op":"setHookEnabled","name":"pre-commit","enabled":false}"#
+            )["ok"],
+            true
+        );
+        hooks(false);
+        assert_eq!(
+            run(
+                &repo,
+                r#"{"op":"setHookEnabled","name":"pre-push","enabled":true}"#
+            )["ok"],
             false
         );
 
