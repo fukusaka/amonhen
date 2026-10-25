@@ -179,6 +179,11 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
         say(tr!("Installed: {path}", path = target.display()));
     }
     let _ = std::fs::write(dir.join("used"), b"");
+    // ビルドの指紋も置く（SSH 先なら、つなぎに来たアプリが、自分と同じビルドのこれを送らずに使える）。
+    let _ = std::fs::write(
+        dir.join(amonhen_remote::ssh::BUILD_FILE),
+        amonhen_remote::BUILD_ID,
+    );
     // SSH 先に送るほかの OS と CPU のエンジン（.app の Resources/engines、開発中は dist/engine）も一緒に置く。ここから
     // 起動した daemon が、SSH 先に送れるように。
     if let Some(source) = bundled_engines(&me) {
