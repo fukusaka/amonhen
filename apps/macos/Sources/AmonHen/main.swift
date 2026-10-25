@@ -193,6 +193,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // どれもなければリポジトリのページを出す。
         if let path = repositoryPath() {
             open(path: path, debug: true)
+        } else if CommandLine.arguments.contains("--ssh-sheet") {
+            // 見た目の確認用: 前回のリポジトリを開かず、Repositories の画面だけを出す。
+            showHome()
         } else {
             // 1 つ前に開いたタブの隣に入れていく（つなぐのを待たずにタブを置くので、並びが崩れない）。
             isRestoring = true
@@ -469,7 +472,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search", "--blame", "--file-history", "--measure-select"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
-        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--stashes", "--reflog", "--log-scroll", "--show-latency"].contains($0) }
+        args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--stashes", "--reflog", "--log-scroll", "--show-latency", "--ssh-sheet"].contains($0) }
         return args.first
     }
 }

@@ -270,6 +270,23 @@
 "File" = "ファイル";
 "Done" = "完了";
 
+/* SSHConnectionSheet.swift */
+"This removes its %ld repositories and %ld folders to scan from the list. Nothing on the host is touched." = "そのホストのリポジトリ %ld 個とスキャンするフォルダ %ld 個を一覧から外します。ホストの中には触れません。";
+"Couldn’t run ssh" = "ssh を動かせませんでした";
+"Couldn’t connect (exit %ld)" = "つながりませんでした（終了コード %ld）";
+"Reachable: git %@" = "つながりました: git %@";
+"Reachable, but git wasn’t found on the host" = "つながりましたが、ホストに git がありません";
+", engine found" = "、エンジンあり";
+", engine not installed (Amon Hen sends one)" = "、エンジンなし（Amon Hen が送ります）";
+"Choose a Repository on %@" = "%@ のリポジトリを選ぶ";
+"Double-click a folder to go into it, and choose a repository (green)." = "フォルダをダブルクリックで中へ。リポジトリ（緑）を選びます。";
+"Choose" = "選ぶ";
+"Hosts in ~/.ssh/config and ones already in the list" = "~/.ssh/config のホストと、一覧にあるホスト";
+"Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent)." = "SSH でつなぎます。鍵か ssh-agent でパスワードなしに入れるホストを使ってください。";
+"Path" = "パス";
+"Folder of the repository on the host" = "ホストにあるリポジトリのフォルダ";
+"Remove %@ from List…" = "%@ を一覧から外す…";
+
 /* RemoteSheet.swift */
 "Edit Remote" = "リモートを編集";
 "Fetch URL" = "fetch の URL";

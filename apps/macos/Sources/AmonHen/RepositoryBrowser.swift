@@ -957,25 +957,44 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         if case let .host(name) = category { addRemote(host: name) } else { addRemote(host: nil) }
     }
 
-    /// SSH 先のリポジトリを加えて開く。`host` を渡すと、接続先を入れた状態で聞く（ホストの行の右クリック）。
-    private func addRemote(host initialHost: String?) {
-        guard let chosen = SSHFolderChooser.run(
-            title: initialHost.map { L("Add a Repository on %@", $0) } ?? L("Add SSH Connection"),
-            message: L("Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent). Double-click a folder to go into it, and choose a repository (green)."),
-            button: L("Add and Open"), fixedHost: nil, hosts: Self.sshHostCandidates(),
-            initialHost: initialHost ?? UserDefaults.standard.string(forKey: Self.lastHostKey), initialPath: "~")
-        else { return }
-        guard let location = RepositoryLocation.ssh(host: chosen.host, path: chosen.path) else {
-            let error = NSAlert()
-            error.messageText = L("Enter a host and a path")
-            error.informativeText = L("The host can’t contain spaces or “/”.")
-            if let window = view.window { error.beginSheetModal(for: window) } else { error.runModal() }
-            return
+    /// --ssh-sheet で、SSH 接続を加えるシートを開く（見た目の確認用）。
+    private static var openedSheetForCheck = false
+    override func viewDidAppear() {
+        super.viewDidAppear()
+        if CommandLine.arguments.contains("--ssh-sheet"), !Self.openedSheetForCheck {
+            Self.openedSheetForCheck = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in self?.addRemote(host: nil) }
         }
-        UserDefaults.standard.set(chosen.host, forKey: Self.lastHostKey)
-        Bookmarks.shared.add(location, group: selectedGroup)
-        RepositoryList.touch(location)
-        onOpen?(location, .here)
+    }
+
+    /// SSH 先のリポジトリを加えて開く（リモートのシートと同じ形のシート。接続の確認つき）。`host` を渡すと、
+    /// 接続先が決まった状態で開く（ホストの行の右クリック）。
+    private func addRemote(host fixedHost: String?) {
+        guard let window = view.window else { return }
+        SSHConnectionSheet.present(
+            in: window, host: fixedHost, hosts: Self.sshHostCandidates(),
+            initialHost: UserDefaults.standard.string(forKey: Self.lastHostKey), initialPath: "~"
+        ) { [weak self] host, path in
+            guard let self, let location = RepositoryLocation.ssh(host: host, path: path) else { return }
+            UserDefaults.standard.set(host, forKey: Self.lastHostKey)
+            Bookmarks.shared.add(location, group: selectedGroup)
+            RepositoryList.touch(location)
+            onOpen?(location, .here)
+        }
+    }
+
+    /// 接続先ごと一覧から外す（そのホストのリポジトリと、スキャンするフォルダ）。確認はリモートの削除と同じ形。
+    private func removeHost(_ name: String) {
+        let paths = paths(in: .host(name))
+        let roots = Bookmarks.shared.data.scanRoots.map(\.path).filter { Self.sshHost($0) == name }
+        guard SSHConnectionSheet.confirmRemove(host: name, repositories: paths.count, folders: roots.count) else { return }
+        for path in paths {
+            RepositoryList.remove(path)
+            Bookmarks.shared.remove(path)
+        }
+        for root in roots { Bookmarks.shared.removeScanRoot(root) }
+        category = .all
+        reload()
     }
 
     // MARK: - 外す
@@ -1110,6 +1129,8 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         case let .host(name):
             add(L("Add Repository on This Host…")) { [weak self] in self?.addRemote(host: name) }
             add(L("Add Folder to Scan on This Host…")) { [weak self] in self?.addRemoteScanFolder(host: name) }
+            menu.addItem(.separator())
+            add(L("Remove %@ from List…", name)) { [weak self] in self?.removeHost(name) }
         case .local:
             add(L("Add Local Repository…")) { [weak self] in self?.addRepository() }
             add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }

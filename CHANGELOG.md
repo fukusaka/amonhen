@@ -47,6 +47,10 @@ becomes the GitHub Release notes.
   the SSH host for a repository there) before saving. The table shows what each remote points to. The same actions are
   on the sidebar: Add Remote… on the Remotes group, and Rename…, Edit URL…, Prune and Remove… on a remote, and
   Repository > Add Remote… in the menu bar; removing a remote asks the same question wherever it starts.
+- Adding an SSH connection on the Repositories screen is a sheet of the same shape as the remotes sheet: host (with
+  the hosts in `~/.ssh/config` to pick from), the repository's path (Choose… browses the host), Check Connection (git's
+  version and whether the engine is on the host) and Add and Open. A host's context menu offers Remove … from List…,
+  which takes its repositories and folders to scan off the list after the same kind of confirmation.
 - In Working Copy, an untracked file's context menu offers Add to .gitignore for the file and for its extension. The
   exclude editor in Repository Settings > Working Copy, and the editor of the repository's own commit template in
   Repository Settings > Commits, fill the window's height.
