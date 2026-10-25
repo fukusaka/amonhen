@@ -26,8 +26,8 @@ pub use files::{LocalFiles, RepoFiles, Root};
 pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use oid::{Oid, OidMap, OidSet};
 pub use ops::{
-    ConfigEntry, HeadState, Operations, Outcome, PullMode, RefUpdate, RemoteChange, RemoteEntry,
-    ResetMode, Sequence, SigningKey, WorktreeChange, WorktreeChanges,
+    ConfigEntry, HeadState, Operations, Outcome, PullMode, RefUpdate, RemoteChange, RemoteCheck,
+    RemoteEntry, ResetMode, Sequence, SigningKey, WorktreeChange, WorktreeChanges,
 };
 pub use refs::{RefEntry, RefKind, ReflogEntry, Refs, RepoPaths};
 pub use status::{Status, StatusEntry, StatusKind};

@@ -1,7 +1,8 @@
 use amonhen_model::tr;
 use amonhen_model::{
     ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RefUpdate, RemoteChange,
-    RemoteEntry, ResetMode, Result, Sequence, SigningKey, WorktreeChange, WorktreeChanges,
+    RemoteCheck, RemoteEntry, ResetMode, Result, Sequence, SigningKey, WorktreeChange,
+    WorktreeChanges,
 };
 
 use crate::Git;
@@ -884,8 +885,48 @@ impl Operations for Git {
             RemoteChange::SetUrl { name, url } => vec!["remote", "set-url", name, url],
             RemoteChange::Remove { name } => vec!["remote", "remove", name],
             RemoteChange::Prune { name } => vec!["remote", "prune", name],
+            RemoteChange::SetPushUrl {
+                name,
+                url: Some(url),
+            } => vec!["remote", "set-url", "--push", name, url],
+            // push の URL を消すと fetch と同じに戻る。
+            RemoteChange::SetPushUrl { name, url: None } => {
+                return self.config_set(&format!("remote.{name}.pushurl"), None);
+            }
         };
         self.write(&args).map(drop)
+    }
+
+    fn check_remote(&self, url: &str) -> Result<RemoteCheck> {
+        // `--symref` で HEAD が指すブランチも読める（`ref: refs/heads/main\tHEAD` の行）。
+        let out = text(self.read(&[
+            "ls-remote",
+            "--symref",
+            url,
+            "HEAD",
+            "refs/heads/*",
+            "refs/tags/*",
+        ])?)?;
+        let mut check = RemoteCheck {
+            branches: 0,
+            tags: 0,
+            head: None,
+        };
+        for line in out.lines() {
+            let Some((left, name)) = line.split_once('\t') else {
+                continue;
+            };
+            if let Some(target) = left.strip_prefix("ref: ")
+                && name == "HEAD"
+            {
+                check.head = target.strip_prefix("refs/heads/").map(str::to_owned);
+            } else if name.starts_with("refs/heads/") {
+                check.branches += 1;
+            } else if name.starts_with("refs/tags/") && !name.ends_with("^{}") {
+                check.tags += 1;
+            }
+        }
+        Ok(check)
     }
 
     fn worktree_list(&self) -> Result<Vec<u8>> {

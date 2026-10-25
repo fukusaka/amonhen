@@ -132,6 +132,21 @@ pub enum RemoteChange {
     Prune {
         name: String,
     },
+    /// push の URL を fetch と別にする（`url` が None なら同じに戻す）。
+    SetPushUrl {
+        name: String,
+        url: Option<String>,
+    },
+}
+
+/// リモートの URL につないで分かったこと（`git ls-remote`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RemoteCheck {
+    pub branches: usize,
+    pub tags: usize,
+    /// 向こうの HEAD が指すブランチ（分かれば）。
+    pub head: Option<String>,
 }
 
 /// 途中で止まりうる操作。
@@ -322,6 +337,11 @@ pub trait Operations: Send + Sync {
         Ok(Vec::new())
     }
     fn change_remote(&self, change: &RemoteChange) -> Result<()>;
+    /// `url` につないで、ブランチとタグの数と HEAD のブランチを読む（`git ls-remote`。保存する前の確かめ）。
+    fn check_remote(&self, url: &str) -> Result<RemoteCheck> {
+        let _ = url;
+        Err(crate::tr!("Can’t reach remotes from here").into())
+    }
     /// worktree の一覧。`git worktree list --porcelain -z` の出力。
     fn worktree_list(&self) -> Result<Vec<u8>> {
         Err(crate::tr!("Can’t list worktrees here").into())
