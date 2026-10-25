@@ -520,6 +520,16 @@ void amonhen_set_fsmonitor(bool enabled);
 char *amonhen_git_version(void);
 
 /**
+ * この機械で署名に使える鍵（`format` は `openpgp`・`ssh`・`x509`）。JSON の配列（`id`・`label`・`emails`）。
+ * 読めなければ NULL（`amonhen_last_error` に理由）。`amonhen_string_free` で解放する。gpg などを起動するので、
+ * 裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `format` は NUL 終端の UTF-8 文字列であること。
+ */
+char *amonhen_signing_keys(const char *format);
+
+/**
  * この機械のユーザー全体（`git config --global`）の `key` の値。なければ、または読めなければ NULL（読めなければ
  * `amonhen_last_error` に理由）。`amonhen_string_free` で解放する。git を起動するので、裏のスレッドで呼ぶ。
  *
