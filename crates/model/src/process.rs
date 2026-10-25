@@ -38,11 +38,153 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
             });
         }
     }
+    client::apply(&mut cmd);
     #[cfg(unix)]
     if let Some(agent) = agent::replacement() {
         cmd.env("SSH_AUTH_SOCK", agent);
     }
     cmd
+}
+
+/// 共有の daemon につないだ FE の環境のうち、その FE のために動かす git・ssh に渡すもの。
+///
+/// 共有の daemon は、最初に起動した FE（アプリか VSCode 拡張か CLI）の環境を終わるまで持つ。そのままでは、資格情報を
+/// 尋ねるダイアログ（`AMONHEN_ASKPASS`。アプリだけが持つ）・使う git（`PATH`）・SSH の agent・`GIT_*` の設定が、
+/// どの FE が先に起動したかで変わる。FE はつなぐときにこれを送り（`amonhen_remote::local::opening`）、daemon はその
+/// FE の要求を `with_client_env` の中で動かす。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ClientEnv {
+    vars: Vec<(String, String)>,
+}
+
+impl ClientEnv {
+    /// このプロセスの環境から、渡すもの。
+    pub fn current() -> Self {
+        Self::from_vars(std::env::vars())
+    }
+
+    /// `vars` のうち、渡すもの（名前の順）。
+    pub fn from_vars(vars: impl IntoIterator<Item = (String, String)>) -> Self {
+        let mut vars: Vec<_> = vars
+            .into_iter()
+            .filter(|(k, _)| client::passes(k))
+            .collect();
+        vars.sort();
+        vars.dedup_by(|a, b| a.0 == b.0);
+        Self { vars }
+    }
+
+    /// `NAME=value` を NUL で区切ったもの。
+    pub fn encode(&self) -> String {
+        self.vars
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("\0")
+    }
+
+    /// `encode` の形（VSCode 拡張は環境をすべて送る）から、渡すものだけを読む。
+    pub fn decode(text: &str) -> Self {
+        Self::from_vars(text.split('\0').filter_map(|pair| {
+            let (k, v) = pair.split_once('=')?;
+            Some((k.to_owned(), v.to_owned()))
+        }))
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.vars.is_empty()
+    }
+
+    pub fn get(&self, name: &str) -> Option<&str> {
+        self.vars
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
+    }
+}
+
+/// `f` の間、このスレッドで起動する子に `env` を渡す（共有の daemon が、つないだ FE の要求を動かすとき）。`env` が
+/// 空なら（前の版の FE・SSH 越し）、daemon の環境のまま。
+pub fn with_client_env<R>(env: &ClientEnv, f: impl FnOnce() -> R) -> R {
+    if env.is_empty() {
+        return f();
+    }
+    let previous = client::CURRENT.with(|c| c.replace(Some(env.clone())));
+    struct Restore(Option<ClientEnv>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            client::CURRENT.with(|c| *c.borrow_mut() = self.0.take());
+        }
+    }
+    let _restore = Restore(previous);
+    f()
+}
+
+/// 環境変数 `name`。`with_client_env` の中で、FE が送る名前なら、その FE の値（送っていなければ None）。
+pub fn var_os(name: &str) -> Option<OsString> {
+    client::CURRENT.with(|c| match &*c.borrow() {
+        Some(env) if client::passes(name) => env.get(name).map(OsString::from),
+        _ => std::env::var_os(name),
+    })
+}
+
+mod client {
+    use super::ClientEnv;
+    use std::cell::RefCell;
+    use std::process::Command;
+
+    thread_local! {
+        pub(super) static CURRENT: RefCell<Option<ClientEnv>> = const { RefCell::new(None) };
+    }
+
+    /// FE から受け取る名前。
+    const NAMES: [&str; 5] = [
+        "PATH",
+        "AMONHEN_ASKPASS",
+        "SSH_AUTH_SOCK",
+        "SSH_AGENT_PID",
+        "XDG_CONFIG_HOME",
+    ];
+
+    /// `GIT_` で始まるもののうち、受け取らないもの: リポジトリを指すもの（git のフックから起動した CLI などは持って
+    /// いる。渡すと別のリポジトリを操作してしまう）と、askpass（FE の askpass は `AMONHEN_ASKPASS` で決める。
+    /// VSCode の askpass はその窓口の変数がないと動かない）。
+    const NOT_GIT: [&str; 10] = [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_INDEX_FILE",
+        "GIT_OBJECT_DIRECTORY",
+        "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+        "GIT_COMMON_DIR",
+        "GIT_NAMESPACE",
+        "GIT_PREFIX",
+        "GIT_QUARANTINE_PATH",
+        "GIT_ASKPASS",
+    ];
+
+    pub(super) fn passes(name: &str) -> bool {
+        NAMES.contains(&name) || (name.starts_with("GIT_") && !NOT_GIT.contains(&name))
+    }
+
+    /// `with_client_env` の中なら、FE の値を渡し、daemon だけが持つ（FE が送っていない）ものは渡さない。PATH は、
+    /// 送っていなければ daemon のまま（なければ git を見つけられない）。
+    pub(super) fn apply(cmd: &mut Command) {
+        CURRENT.with(|c| {
+            let Some(env) = &*c.borrow() else { return };
+            for (k, _) in std::env::vars_os() {
+                if let Some(k) = k.to_str()
+                    && passes(k)
+                    && k != "PATH"
+                    && env.get(k).is_none()
+                {
+                    cmd.env_remove(k);
+                }
+            }
+            for (k, v) in &env.vars {
+                cmd.env(k, v);
+            }
+        });
+    }
 }
 
 /// 環境の `SSH_AUTH_SOCK` が死んでいたときに、そのログインの SSH の agent のソケットを探す手を登録する（FE・daemon が
@@ -62,7 +204,7 @@ pub fn explain_agent(message: String) -> String {
         return message;
     }
     #[cfg(unix)]
-    let note = match std::env::var_os("SSH_AUTH_SOCK") {
+    let note = match var_os("SSH_AUTH_SOCK") {
         None => Some(crate::tr!(
             "No SSH agent is set (SSH_AUTH_SOCK), so keys that need a passphrase can’t be used"
         )),
@@ -109,7 +251,7 @@ mod agent {
 
     /// 環境の値が死んでいれば、代わりに渡すもの。生きている・値がない・代わりがなければ None（環境のまま）。
     pub(super) fn replacement() -> Option<OsString> {
-        let current = std::env::var_os("SSH_AUTH_SOCK")?;
+        let current = super::var_os("SSH_AUTH_SOCK")?;
         if is_socket(&current) || FINDING.with(Cell::get) {
             return None;
         }
@@ -247,5 +389,55 @@ mod tests {
         assert_eq!(explain_agent(other.clone()), other);
         let refused = "git@example.com: Permission denied (publickey).".to_owned();
         assert!(explain_agent(refused.clone()).starts_with(&refused));
+    }
+
+    /// FE から受け取るのは git・ssh に関わる名前だけ。リポジトリを指す `GIT_*` と `GIT_ASKPASS` は受け取らない。
+    #[test]
+    fn passes_only_what_git_and_ssh_use() {
+        let env = ClientEnv::decode(
+            "PATH=/fe/bin\0HOME=/home/x\0GIT_SSH_COMMAND=ssh -v\0GIT_DIR=/elsewhere/.git\0GIT_ASKPASS=/vscode/askpass.sh\0AMONHEN_ASKPASS=/app/askpass\0SECRET_TOKEN=x\0broken",
+        );
+        assert_eq!(
+            env.encode(),
+            "AMONHEN_ASKPASS=/app/askpass\0GIT_SSH_COMMAND=ssh -v\0PATH=/fe/bin"
+        );
+        assert_eq!(ClientEnv::decode(&env.encode()), env);
+        assert!(ClientEnv::decode("").is_empty());
+    }
+
+    /// `with_client_env` の中で起動した子は、FE の環境で動く（`PATH` で探し、FE の値を受け取る）。外では daemon の
+    /// 環境のまま。
+    #[test]
+    fn children_get_the_client_environment() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let program = dir.path().join("amonhen-client-env-test");
+        std::fs::write(
+            &program,
+            "#!/bin/sh\necho \"$GIT_AMONHEN_TEST|$XDG_CONFIG_HOME\"\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let env = ClientEnv::from_vars([
+            (
+                "PATH".to_owned(),
+                format!("{}:/usr/bin:/bin", dir.path().display()),
+            ),
+            ("GIT_AMONHEN_TEST".to_owned(), "from the client".to_owned()),
+        ]);
+        let out = with_client_env(&env, || {
+            assert_eq!(
+                var_os("GIT_AMONHEN_TEST").as_deref(),
+                Some(std::ffi::OsStr::new("from the client"))
+            );
+            // FE が送っていない名前は、daemon が持っていても渡さない。
+            assert_eq!(var_os("XDG_CONFIG_HOME"), None);
+            command("amonhen-client-env-test").output().unwrap()
+        });
+        assert_eq!(String::from_utf8_lossy(&out.stdout), "from the client|\n");
+        assert!(
+            command("amonhen-client-env-test").output().is_err(),
+            "outside it, the daemon's PATH"
+        );
     }
 }
