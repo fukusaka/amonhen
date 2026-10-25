@@ -85,7 +85,7 @@ extension Actions {
                 alert.addButton(withTitle: L("Cancel"))
                 if outgoing.count > 0 { alert.addButton(withTitle: "Force Push…") }
                 switch await present(alert) {
-                case .alertFirstButtonReturn: pullWithConfirmation(mode: Settings.pullMode)
+                case .alertFirstButtonReturn: pullWithConfirmation(mode: .git)
                 case .alertThirdButtonReturn: pushWithConfirmation(branch: branch, force: true)
                 default: break
                 }
@@ -114,7 +114,7 @@ extension Actions {
     // MARK: - Pull
 
     /// Pull の前に、取り込むコミットと取り込み方を見せる。取り込み方はシートの中で変えられる（既定は `mode`）。
-    /// 選んで Pull した取り込み方は、次の Pull の既定になる（`Settings.pullMode`）。
+    /// ツールバーと ⌃⌘L は「git の設定に従う」で開く（Repository > Pull With は選んだ方法で）。
     func pullWithConfirmation(mode: PullMode) {
         Task { @MainActor in
             guard let state = await syncState() else { return }
@@ -241,7 +241,6 @@ extension Actions {
             withExtendedLifetime(target) {}
             guard response == .alertFirstButtonReturn else { return }
             let chosen = PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? mode
-            Settings.pullMode = chosen
             perform(["op": "pull", "mode": chosen.rawValue])
         }
     }
