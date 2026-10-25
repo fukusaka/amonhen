@@ -179,6 +179,10 @@
 "Couldn’t clone" = "clone できませんでした";
 
 /* RepositorySettings.swift */
+"Points to" = "接続先";
+"Edit…" = "編集…";
+"Remove…" = "削除…";
+"Add Remote…" = "リモートを追加…";
 ".git/info/exclude, one pattern per line. Shared patterns go in .gitignore." = ".git/info/exclude。1 行に 1 つ。共有するパターンは .gitignore に書きます。";
 "Shared templates live in Settings > Git and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは Settings > Git にあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";
 "Shared" = "共有";
@@ -265,6 +269,18 @@
 "Location" = "場所";
 "File" = "ファイル";
 "Done" = "完了";
+
+/* RemoteSheet.swift */
+"Edit Remote" = "リモートを編集";
+"Fetch URL" = "fetch の URL";
+"Same as the fetch URL" = "fetch と同じ";
+"A path" = "パス";
+"SSH host %@" = "SSH 先 %@";
+"Other" = "その他";
+"Check Connection" = "接続を確かめる";
+"Connecting…" = "つないでいます…";
+"Reachable: %ld branches, %ld tags" = "つながりました: ブランチ %ld、タグ %ld";
+", HEAD at %@" = "、HEAD は %@";
 
 /* Settings.swift */
 "Message Templates" = "メッセージのテンプレート";

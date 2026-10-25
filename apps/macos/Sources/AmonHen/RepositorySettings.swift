@@ -179,6 +179,24 @@ final class RepositorySettingsModel {
         run(["op": "changeRemote", "change": change])
     }
 
+    /// いくつかの命令を順に実行する（リモートのシートが組んだもの）。失敗したらそこで止めて、エラーを出す。
+    func perform(_ commands: [[String: Any]]) {
+        let repository = self.repository
+        Task {
+            do {
+                for command in commands {
+                    let json = try Repository.json(command)
+                    try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
+                }
+                error = nil
+            } catch {
+                self.error = "\(error)"
+            }
+            load()
+            onRepositoryChange?()
+        }
+    }
+
     func saveIgnore() {
         run(["op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": exclude])
     }
@@ -230,6 +248,8 @@ private struct RemotesTab: View {
     let model: RepositorySettingsModel
     @State private var selection: String?
 
+    private var selected: RemoteEntry? { model.remotes.first { $0.name == selection } }
+
     var body: some View {
         GroupedPage {
         VStack(alignment: .leading) {
@@ -239,39 +259,42 @@ private struct RemotesTab: View {
                 TableColumn(L("Push URL")) { r in
                     Text(r.pushUrl == r.fetchUrl ? L("(same)") : r.pushUrl).foregroundStyle(r.pushUrl == r.fetchUrl ? .secondary : .primary)
                 }
+                TableColumn(L("Points to")) { r in Text(RemoteSheet.kind(of: r.fetchUrl)).foregroundStyle(.secondary) }
+                    .width(min: 90, ideal: 130)
+            }
+            .contextMenu(forSelectionType: String.self) { names in
+                Button(L("Edit…")) { names.first.map(edit) }.disabled(names.count != 1)
+                Button("Prune") { for n in names { model.changeRemote(["kind": "prune", "name": n]) } }.disabled(names.isEmpty)
+                Divider()
+                Button(L("Remove…")) { names.first.map(remove) }.disabled(names.count != 1)
+            } primaryAction: { names in
+                if names.count == 1, let name = names.first { edit(name) }
             }
             HStack {
-                Button(L("Add…")) { add() }
-                Button(L("Rename…")) { rename() }.disabled(selection == nil)
-                Button(L("Edit URL…")) { editURL() }.disabled(selection == nil)
+                Button(L("Add…")) { present(nil) }
+                Button(L("Edit…")) { selection.map(edit) }.disabled(selection == nil)
                 Button("Prune") { selection.map { model.changeRemote(["kind": "prune", "name": $0]) } }
                     .disabled(selection == nil)
                     .help(L("Remove remote-tracking branches that no longer exist on the remote."))
                 Spacer()
-                Button(L("Delete"), role: .destructive) { remove() }.disabled(selection == nil)
+                Button(L("Remove…"), role: .destructive) { selection.map(remove) }.disabled(selection == nil)
             }
         }
         }
     }
 
-    private func add() {
-        guard let (name, url) = askPair(L("Add Remote"), first: (L("Name"), "origin"), second: ("URL", "")) else { return }
-        model.changeRemote(["kind": "add", "name": name, "url": url])
+    private func edit(_ name: String) {
+        guard let remote = model.remotes.first(where: { $0.name == name }) else { return }
+        present(remote)
     }
 
-    private func rename() {
-        guard let from = selection, let to = ask(L("Rename Remote"), label: L("New name"), initial: from) else { return }
-        model.changeRemote(["kind": "rename", "from": from, "to": to])
+    /// 追加・編集・削除は 1 つのシートで（docs/ux.md の 4.5）。
+    private func present(_ remote: RemoteEntry?) {
+        guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }
+        RemoteSheet.present(in: window, repository: model.repository, remote: remote) { model.perform($0) }
     }
 
-    private func editURL() {
-        guard let name = selection, let remote = model.remotes.first(where: { $0.name == name }),
-              let url = ask(L("Edit URL"), label: L("URL for %@", name), initial: remote.fetchUrl) else { return }
-        model.changeRemote(["kind": "setUrl", "name": name, "url": url])
-    }
-
-    private func remove() {
-        guard let name = selection else { return }
+    private func remove(_ name: String) {
         let alert = NSAlert()
         alert.messageText = L("Remove %@?", name)
         alert.informativeText = L("This removes the remote’s settings and its remote-tracking branches (%@/…). The remote repository isn’t touched.", name)
@@ -280,31 +303,6 @@ private struct RemotesTab: View {
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         model.changeRemote(["kind": "remove", "name": name])
         selection = nil
-    }
-
-    private func ask(_ title: String, label: String, initial: String) -> String? {
-        askPair(title, first: (label, initial), second: nil).map(\.0)
-    }
-
-    /// 1 つか 2 つの欄に入れてもらう。キャンセルか空なら nil。
-    private func askPair(_ title: String, first: (String, String), second: (String, String)?) -> (String, String)? {
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: L("Cancel"))
-        let a = NSTextField(string: first.1), b = NSTextField(string: second?.1 ?? "")
-        var rows: [[NSView]] = [[NSTextField(labelWithString: first.0 + ":"), a]]
-        if let second { rows.append([NSTextField(labelWithString: second.0 + ":"), b]) }
-        let grid = NSGridView(views: rows)
-        grid.column(at: 1).width = 320
-        grid.rowSpacing = 8
-        grid.frame = NSRect(x: 0, y: 0, width: 380, height: CGFloat(rows.count) * 30)
-        alert.accessoryView = grid
-        alert.window.initialFirstResponder = a
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let x = a.stringValue.trimmingCharacters(in: .whitespaces), y = b.stringValue.trimmingCharacters(in: .whitespaces)
-        guard !x.isEmpty, second == nil || !y.isEmpty else { return nil }
-        return (x, y)
     }
 }
 
