@@ -148,6 +148,9 @@ pub enum Request {
     },
     /// Operations（応答は `Op` のコメント）
     Op(Op),
+    /// → `()`。この先の要求で動かす git・ssh に渡す FE の環境を差し替える（`ClientEnv::encode` の形）。FE の環境が
+    /// 変わったとき（アプリの設定・シェルの読み直し）に、つなぎ直さずに送る。
+    Environment(String),
 }
 
 /// 書き込み系の操作。応答の型はそれぞれの `Operations` のメソッドの戻り値。

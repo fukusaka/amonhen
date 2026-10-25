@@ -56,7 +56,7 @@ pub struct Server {
     /// 相手が挨拶で伝えた言語（`Lang` の値）。答えのエラーの文に使う。
     language: Arc<AtomicU8>,
     /// 相手（共有の daemon につないだ FE）の環境。要求で動かす git・ssh に渡す。
-    client_env: Arc<amonhen_model::process::ClientEnv>,
+    client_env: Arc<std::sync::RwLock<Arc<amonhen_model::process::ClientEnv>>>,
 }
 
 impl Server {
@@ -93,7 +93,7 @@ impl Server {
 
     /// 要求で動かす git・ssh に、つないだ FE の環境を渡す（`amonhen_model::process::with_client_env`）。
     pub fn with_client_env(mut self, env: amonhen_model::process::ClientEnv) -> Self {
-        self.client_env = Arc::new(env);
+        self.client_env = Arc::new(std::sync::RwLock::new(Arc::new(env)));
         self
     }
 
@@ -143,7 +143,14 @@ impl Server {
                     let search = self.search.clone();
                     let compress = self.compress;
                     let host = self.host.clone();
-                    let client_env = self.client_env.clone();
+                    // 環境の差し替えは、この先の要求から（走っている要求は、始めたときの環境のまま）。
+                    if let Request::Environment(text) = &request {
+                        *self.client_env.write().unwrap() =
+                            Arc::new(amonhen_model::process::ClientEnv::decode(text));
+                        self.reply(f.id, encode(&()));
+                        continue;
+                    }
+                    let client_env = self.client_env.read().unwrap().clone();
                     std::thread::spawn(move || {
                         let result = amonhen_model::process::with_client_env(&client_env, || {
                             i18n::with(lang, || match (request, &host) {
@@ -263,6 +270,8 @@ fn handle(
             })
         }
         Request::PreparedHistory => encode(&Option::<String>::None),
+        // `Server::run` が受け取る（ここには来ない）。
+        Request::Environment(_) => encode(&()),
         Request::Delegate(_) => Err(tr!("This daemon doesn’t take delegated work").into()),
         Request::Head => encode(&backend.head()?),
         Request::Tips => encode(&backend.tips()?),
