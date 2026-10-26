@@ -1104,7 +1104,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             if let mergePath {
                 MergeEditorWindowController.show(path: mergePath, repository: repository, actions: actions)
             }
-            let delay = query != nil ? 3.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5
+            // --snapshot-after SECONDS で待ちを決める（SSH 先につながるのを待つなど）。
+            let delay = AppDelegate.option("--snapshot-after").flatMap(Double.init)
+                ?? (query != nil ? 3.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
                 let rep = appSettings ? SettingsWindowController.shared.snapshot()
                     : mergePath != nil

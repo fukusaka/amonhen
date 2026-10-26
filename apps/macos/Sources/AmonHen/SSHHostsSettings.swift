@@ -11,6 +11,7 @@ struct SSHHostsSettings: View {
     @State private var selected: String?
     @State private var page: HostPage = .connection
     @State private var sessions: [String: HostSession] = [:]
+    @State private var appliedOption = false
     /// Places やリポジトリの設定から開くときに選ぶ SSH 先と、あればページ。
     static var pendingHost: (host: String, page: SettingsPage?)?
     static let showHost = Notification.Name("SSHHostsSettings.showHost")
@@ -45,6 +46,11 @@ struct SSHHostsSettings: View {
 
     private func reload() {
         hosts = Self.knownHosts()
+        // --settings-page NAME で、最初に出すページ（見た目の確認用。Settings > Git と同じ名前）。
+        if !appliedOption, let p = AppDelegate.option("--settings-page").flatMap(SettingsPage.init) {
+            appliedOption = true
+            page = .git(p)
+        }
         if let pending = Self.pendingHost {
             Self.pendingHost = nil
             if !hosts.contains(pending.host) {

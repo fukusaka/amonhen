@@ -27,7 +27,7 @@ scripts/package-gtk4.sh          # GTK4 のアプリを dist/amonhen-gtk-<版>-l
 
 ## 確認用の起動オプション
 
-`AmonHen <repo> --snapshot out.png [--select-first | --select-row N] [--working-copy] [--find TEXT] [--search TEXT] [--merge-editor PATH]`、`--blame PATH`・`--file-history PATH`（そのウィンドウを開く）（画面を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 600 フレーム自動でスクロールして速さと処理ごとの内訳を表示）、`--measure-select N`（コミットを N 個選び、詳細が出るまでの段階ごとの時間を表示）、`--log-scroll`（トラックパッドでのスクロールの減速を記録）、`--show-latency`（入力から表示までの時間をタイトルの下に出す）。`--select-first`・`--select-row N` は `--snapshot` なしでも効く。
+`AmonHen <repo> --snapshot out.png [--select-first | --select-row N] [--working-copy] [--find TEXT] [--search TEXT] [--merge-editor PATH] [--app-settings [--app-settings-tab NAME] [--settings-page NAME]] [--snapshot-after SECONDS]`（`--app-settings` は Settings ウィンドウを英語の名前のタブで撮る。`--settings-page` は Git か SSH Hosts のページ、`--snapshot-after` はその秒数だけ待つ。SSH 先につながるのを待つときなど）、`--blame PATH`・`--file-history PATH`（そのウィンドウを開く）（画面を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 600 フレーム自動でスクロールして速さと処理ごとの内訳を表示）、`--measure-select N`（コミットを N 個選び、詳細が出るまでの段階ごとの時間を表示）、`--log-scroll`（トラックパッドでのスクロールの減速を記録）、`--show-latency`（入力から表示までの時間をタイトルの下に出す）。`--select-first`・`--select-row N` は `--snapshot` なしでも効く。
 
 README の画面は、`--snapshot`（ツールバーが空のまま写る）ではなく本物のウィンドウを撮る: デバッグ版をリポジトリと
 `--select-row N` で起動し、`screencapture -o -l<ウィンドウの ID>` でウィンドウを撮る。アバターを出さないときは、先に
