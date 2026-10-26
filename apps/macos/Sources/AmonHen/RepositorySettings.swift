@@ -691,9 +691,10 @@ private struct AllSettingsTab: View {
         }
     }
 
-    /// 段の列の見出し: 4.3 の設定元の言葉を、文の頭だけ大文字に。
+    /// 段の列の見出し: 4.3 の設定元の言葉を、文の頭だけ大文字に（SSH 先の名前で始まるときはそのまま）。
     private func header(_ scope: String) -> String {
         let label = scopeLabel(scope, host: model.host)
+        if let host = model.host, label.hasPrefix(host) { return label }
         return label.prefix(1).uppercased() + label.dropFirst()
     }
 

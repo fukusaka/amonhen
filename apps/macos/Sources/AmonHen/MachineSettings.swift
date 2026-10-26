@@ -105,7 +105,7 @@ struct ProgramsPage: View {
                     struct Found: Decodable { struct Program: Decodable { let path: String; let version: String? }; let programs: [Program] }
                     return Dictionary(uniqueKeysWithValues: names.map { name in
                         let programs = (try? repository.info(["op": "programs", "name": name], as: Found.self))?.programs ?? []
-                        return (name, programs.map { Programs.Candidate(path: $0.path, version: $0.version) })
+                        return (name, programs.map { Programs.Candidate(path: $0.path, version: $0.version, onHost: true) })
                     })
                 }.value
             }
@@ -217,13 +217,17 @@ nonisolated enum Programs {
     struct Candidate: Identifiable, Hashable, Sendable {
         let path: String
         let version: String?
+        /// SSH 先のもの（出どころはフォルダで言う。この Mac の Homebrew・Apple の見分けは当てはまらない）。
+        var onHost = false
         var id: String { path }
-        /// 出どころと版（Homebrew 2.56.0、Apple 2.54.0、MacGPG2 2.2.41）。
+        /// 出どころと版（Homebrew 2.56.0、Apple 2.54.0、MacGPG2 2.2.41。SSH 先では /usr/bin 2.43.0）。
         var label: String {
             // 出どころはリンクの先で見る（/usr/local/bin/gpg が MacGPG2 のものなど）。Apple の git は
             // 「2.54.0 (Apple Git-157)」と出すので、版は最初の語だけ。
-            [Candidate.source(of: URL(fileURLWithPath: path).resolvingSymlinksInPath().path),
-             version.flatMap { $0.split(separator: " ").first.map(String.init) }]
+            let source = onHost
+                ? (path as NSString).deletingLastPathComponent
+                : Candidate.source(of: URL(fileURLWithPath: path).resolvingSymlinksInPath().path)
+            return [source, version.flatMap { $0.split(separator: " ").first.map(String.init) }]
                 .compactMap { $0 }.joined(separator: " ")
         }
 
