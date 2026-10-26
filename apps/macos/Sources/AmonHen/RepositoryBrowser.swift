@@ -1134,6 +1134,9 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
             menu.addItem(.separator())
             add(L("Remove %@ from List…", name)) { [weak self] in self?.removeHost(name) }
         case .local:
+            // この Mac の git の設定（Settings > Git）。SSH 先の「設定…」と同じ入口。
+            add(L("Settings…")) { SettingsWindowController.shared.show(tab: "Git") }
+            menu.addItem(.separator())
             add(L("Add Local Repository…")) { [weak self] in self?.addRepository() }
             add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }
         case let .group(name):
