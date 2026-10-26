@@ -223,6 +223,8 @@ final class HostSession {
     private(set) var state: State = .connecting
     /// SSH 先で使っているエンジンと、その用意のしかた（つながったとき。共有の daemon 越しなら nil）。
     private(set) var engine: String?
+    /// 共有の daemon 越しにつないだか（エンジンは daemon が起動し、ほかの相手と共有する）。
+    private(set) var throughDaemon = false
     /// 何回目のつなぎか（古いつなぎの結果は捨てる）。
     private var attempt = 0
 
@@ -254,7 +256,8 @@ final class HostSession {
         let attempt = attempt
         state = .connecting
         engine = nil
-        let location = (Settings.openThroughDaemon ? "daemon:" : "") + "ssh://\(host)"
+        throughDaemon = Settings.openThroughDaemon
+        let location = (throughDaemon ? "daemon:" : "") + "ssh://\(host)"
         let daemon = Daemon.path, daemons = Daemon.bundledDirectory
         Task {
             let result: Result<Repository, Error> = await Task.detached(priority: .userInitiated) {
@@ -295,9 +298,15 @@ private struct ConnectionPage: View {
             Section(L("Engine")) {
                 EngineChoice(host: session.host)
                 LabeledContent(L("In use")) {
-                    Text(session.engine ?? (session.model != nil ? L("Through the shared daemon") : L("Not connected")))
-                        .foregroundStyle(.secondary).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(session.engine ?? (session.model != nil ? L("Through the shared daemon") : L("Not connected")))
+                            .foregroundStyle(.secondary).textSelection(.enabled)
+                        // daemon 越しなら、エンジンは daemon が起動したもの（同じ SSH 先を開いたほかの相手と共有する）。
+                        if session.engine != nil, session.throughDaemon {
+                            Text(L("Started by the shared daemon")).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 if let overridden = EngineChoice.overriddenBy {
                     Note(L("%@ is set in the environment, so it decides instead.", overridden))

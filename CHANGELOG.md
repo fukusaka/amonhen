@@ -27,6 +27,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Through the shared daemon, Settings > SSH Hosts and the Activity window show the engine running on the SSH host,
+  as they do for a direct connection.
 - Whether commit signatures in an SSH host's repositories are verified with this Mac's keys or the host's is chosen
   per host, in Settings > SSH Hosts (hosts without a choice keep the previous setting).
 - Settings > Git > Environment Variables (it was Performance > Terminal Environment) shows the login shell's variables

@@ -1405,3 +1405,4 @@
 "Passed to the engine on %@ when it starts. Repositories already open there keep the git they started with until they are opened again." = "%@ のエンジンを起動するときに渡します。もう開いているそこのリポジトリは、開き直すまで前の git のままです。";
 "The git chosen in Programs is %@." = "プログラムで選んだ git は %@ です。";
 "Use the git on the PATH" = "PATH の git に戻す";
+"Started by the shared daemon" = "共有の daemon が起動したもの";
