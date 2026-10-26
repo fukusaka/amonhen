@@ -194,6 +194,9 @@ impl Operations for Git {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        if let Some(reason) = amonhen_model::process::missing_git() {
+            return Err(reason.into());
+        }
         let mut child = cmd.spawn()?;
         let mut stderr = child.stderr.take().unwrap();
         let errors = std::thread::spawn(move || {

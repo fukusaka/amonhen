@@ -14,6 +14,7 @@ pub mod process;
 mod refs;
 pub mod scan;
 pub mod search;
+pub mod settings;
 mod status;
 mod text;
 pub mod topo;

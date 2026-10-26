@@ -152,6 +152,7 @@ dependencies = [
  "amonhen-layout",
  "libc",
  "serde",
+ "serde_json",
  "tempfile",
 ]
 
