@@ -20,6 +20,8 @@ becomes the GitHub Release notes.
   Connection, which engine to run there and whether to send one, which keys verify commit signatures, the folders to
   scan) and the pages of Settings > Git for every repository on that host, including the git the engine runs there.
   Settings… on a host in Places opens it, and on This Mac opens Settings > Git.
+- Settings > SSH Hosts has an Environment Variables page for each host: the engine's environment there, and a switch to
+  start the engine through the host's login shell, for the PATH and `GIT_*` set in `~/.profile` and the like.
 - The engine runs on an SSH host without a repository (`amonhen --stdio` with no path) to read and write that
   machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
   the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /

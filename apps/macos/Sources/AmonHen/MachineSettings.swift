@@ -413,7 +413,7 @@ private struct ShellEnvironmentView: View {
 
 /// 環境変数の表: シェル（使わないときは起動したときの環境）の変数を値と一緒に並べ、渡すものをチェックで選ぶ。
 /// いつも渡すもの（git と ssh が使う）は外せず、渡せないものは選べない（理由はヘルプ）。案: 決まりはコアのものにする。
-private struct EnvironmentTable: View {
+struct EnvironmentTable: View {
     /// ログインシェルの環境変数を使うか（使わないときは、起動したときの環境を並べる）。
     let useShell: Bool
     /// 足した名前（コンマ区切り。`Settings.addedEnvironmentNames`）。
@@ -531,7 +531,10 @@ private struct EnvironmentTable: View {
         isSecret(row.name) ? "••••••••" : row.value
     }
 
-    private func isSecret(_ name: String) -> Bool {
+    private func isSecret(_ name: String) -> Bool { Self.isSecret(name) }
+
+    /// トークン・パスワード・鍵らしい名前か（値を伏せる）。
+    static func isSecret(_ name: String) -> Bool {
         ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "_KEY", "CREDENTIAL"].contains(where: name.uppercased().contains)
     }
 
@@ -544,12 +547,15 @@ private struct EnvironmentTable: View {
 
 /// 表で選んだ変数の値の全体。PATH のように場所を並べたもの（名前が PATH・_DIRS で終わる）は 1 行に 1 か所に分け、
 /// その場所があるか、前に同じ場所があるか、PATH ならどこの git が使われるかを添える。伏せた値は「表示」で見せる。
-private struct EnvironmentValueView: View {
+struct EnvironmentValueView: View {
     let name: String
     let value: String?
     let masked: Bool
     let reveal: () -> Void
     var height: CGFloat = 96
+    /// SSH 先の変数なら、その git（プログラムで選んだもの、なければ SSH 先の PATH で見つかったものの場所）。SSH 先の
+    /// 場所はこの Mac では調べられないので、「ない」は出さない。
+    var onHost: (chosenGit: String?, gitDirectory: String?)? = nil
 
     var body: some View {
         Group {
@@ -585,15 +591,21 @@ private struct EnvironmentValueView: View {
     /// PATH ではなくそれを使うと書く。
     private func placeList(_ value: String) -> some View {
         let places = Self.places(value)
-        let chosenGit = Settings.gitExecutable.flatMap { $0.isEmpty ? nil : $0 }
-        let git = name == "PATH" && chosenGit == nil
-            ? places.firstIndex { FileManager.default.isExecutableFile(atPath: ($0 as NSString).appendingPathComponent("git")) } : nil
+        let chosenGit = onHost.map { $0.chosenGit } ?? Settings.gitExecutable.flatMap { $0.isEmpty ? nil : $0 }
+        let git: Int? = if name != "PATH" || chosenGit != nil {
+            nil
+        } else if let onHost {
+            onHost.gitDirectory.flatMap { places.firstIndex(of: $0) }
+        } else {
+            places.firstIndex { FileManager.default.isExecutableFile(atPath: ($0 as NSString).appendingPathComponent("git")) }
+        }
         return VStack(alignment: .leading, spacing: 2) {
             if name == "PATH", let chosenGit {
-                Text(L("git is the one chosen in Settings > Git: %@", chosenGit)).font(.caption).foregroundStyle(.tint)
+                Text(onHost == nil ? L("git is the one chosen in Settings > Git: %@", chosenGit) : L("git is the one chosen in Programs: %@", chosenGit))
+                    .font(.caption).foregroundStyle(.tint)
             }
             ForEach(Array(places.enumerated()), id: \.offset) { i, place in
-                let missing = !FileManager.default.fileExists(atPath: place)
+                let missing = onHost == nil && !FileManager.default.fileExists(atPath: place)
                 let repeated = places[..<i].contains(place)
                 HStack(spacing: 8) {
                     Text("\(i + 1)").font(.caption.monospacedDigit()).foregroundStyle(.tertiary).frame(width: 22, alignment: .trailing)

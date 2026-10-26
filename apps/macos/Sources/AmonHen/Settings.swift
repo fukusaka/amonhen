@@ -388,8 +388,11 @@ nonisolated struct HostOptions: Codable, Equatable, Sendable {
     var engine: String?
     /// 合うものがなければ送り込むか。nil なら送る。
     var push: Bool?
+    /// エンジンを SSH 先のログインシェル経由で起動するか（`~/.profile` などの PATH・`GIT_*` を受け取る）。nil なら
+    /// 起動しない。
+    var loginShell: Bool?
 
-    var isEmpty: Bool { git == nil && engine == nil && push == nil }
+    var isEmpty: Bool { git == nil && engine == nil && push == nil && loginShell == nil }
 
     /// コアに渡す JSON（何も選んでいなければ nil）。
     var json: String? {
