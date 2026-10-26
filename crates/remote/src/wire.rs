@@ -151,6 +151,9 @@ pub enum Request {
     /// → `()`。この先の要求で動かす git・ssh に渡す FE の環境を差し替える（`ClientEnv::encode` の形）。FE の環境が
     /// 変わったとき（アプリの設定・シェルの読み直し）に、つなぎ直さずに送る。
     Environment(String),
+    /// → `Option<String>`: 共有の daemon がこのリポジトリのためにつないでいる SSH 先のエンジンと、その用意のしかた
+    /// （`ssh::RemoteEngine::describe`）。SSH 先でなければ・daemon でなければ `None`。手元の共有の daemon でだけ使う。
+    RemoteEngine,
 }
 
 /// 書き込み系の操作。応答の型はそれぞれの `Operations` のメソッドの戻り値。

@@ -24,6 +24,10 @@ pub trait Host: Send + Sync {
     fn prepared_history(&self) -> Result<String>;
     /// つないだ側のコアから任された処理を実行する。
     fn delegate(&self, request: &[u8]) -> Result<amonhen_model::Delegated>;
+    /// このリポジトリのためにつないでいる SSH 先のエンジン（`ssh::RemoteEngine::describe`）。SSH 先でなければ None。
+    fn remote_engine(&self) -> Option<String> {
+        None
+    }
 }
 
 /// 検索のために数えたコミット（同じ起点で何度も探すときに読み直さない）。
@@ -163,6 +167,7 @@ impl Server {
                                 (Request::Delegate(_), None) => {
                                     Err(tr!("This daemon doesn’t take delegated work").into())
                                 }
+                                (Request::RemoteEngine, Some(h)) => encode(&h.remote_engine()),
                                 (request, _) => handle(&*backend, &search, request, &cancel),
                             })
                         });
@@ -270,6 +275,7 @@ fn handle(
             })
         }
         Request::PreparedHistory => encode(&Option::<String>::None),
+        Request::RemoteEngine => encode(&Option::<String>::None),
         // `Server::run` が受け取る（ここには来ない）。
         Request::Environment(_) => encode(&()),
         Request::Delegate(_) => Err(tr!("This daemon doesn’t take delegated work").into()),

@@ -310,6 +310,13 @@ impl RemoteBackend {
             return Err(crate::server::other_build(BUILD_ID, &hello.build).into());
         }
         let paths: RepoPaths = conn.call(&Request::Paths)?;
+        // 手元の共有の daemon 越しの SSH 先なら、daemon がつないでいるエンジンを覚えておく（画面に出す）。
+        if conn.is_local()
+            && conn.remote_engine().is_none()
+            && let Ok(Some(engine)) = conn.call::<Option<String>>(&Request::RemoteEngine)
+        {
+            conn.set_remote_engine(engine);
+        }
         Ok(Self {
             ops: RemoteOperations { conn: conn.clone() },
             files: Arc::new(RemoteFiles { conn: conn.clone() }),

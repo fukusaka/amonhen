@@ -914,6 +914,14 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     assert_eq!(b.load_history().unwrap().graph.len(), 1);
     // SSH 先にはエンジンを 1 つだけ送った（2 つ目の相手は同じつながりを使う）。
     assert_eq!(engines(&remote_home).len(), 1);
+    // daemon 越しの相手も、daemon が SSH 先で使っているエンジンを知っている（画面に出す）。
+    for repo in [&a, &b] {
+        let engine = repo
+            .connection_state()
+            .and_then(|s| s.engine)
+            .unwrap_or_default();
+        assert!(engine.contains(&engines(&remote_home)[0]), "{engine}");
+    }
     // daemon は、つないだ FE の環境で ssh を動かした（daemon 自身は GIT_AMONHEN_TEST を持たない）。
     let seen = std::fs::read_to_string(tmp.path().join("ssh-env.log")).unwrap();
     assert!(
