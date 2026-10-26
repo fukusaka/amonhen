@@ -1045,7 +1045,7 @@
 "Conflicts resolved. Continue to finish, or Abort to go back to where you started." = "コンフリクトは解決しました。Continue で仕上げるか、Abort で始める前に戻せます。";
 "Merge in progress" = "merge の途中";
 "Merging %@ into %@" = "%1$@ を %2$@ に merge している途中";
-"Open the Worktree of %@ to Rebase It" = "%@ の worktree を開いて rebase する";
+"Open the Worktree of %@ to Merge or Rebase" = "%@ の worktree を開いて merge か rebase をする";
 "Open Worktree %@" = "worktree %@ を開く";
 "Rebase in progress" = "rebase の途中";
 "Rebasing %@ onto %@" = "%1$@ を %2$@ の上に rebase している途中";
