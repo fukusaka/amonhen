@@ -551,6 +551,94 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
     out
 }
 
+/// 共有の daemon が、パスなしの `ssh://host` で SSH 先のリポジトリではなくその機械の設定を開く（Settings > SSH Hosts）。
+/// SSH 先ではエンジンがパスなしの `--stdio` で動き、global の設定を読み書きする。
+#[test]
+fn shared_daemon_opens_an_ssh_host_without_a_repository() {
+    use amonhen_remote::ssh;
+    let tmp = tempfile::tempdir().unwrap();
+    let remote_home = tmp.path().join("remote-home");
+    let local_home = tmp.path().join("local-home");
+    std::fs::create_dir(&remote_home).unwrap();
+    std::fs::create_dir(&local_home).unwrap();
+    let ssh_program = fake_ssh(tmp.path(), &remote_home);
+    let bundled = tmp.path().join("daemons");
+    std::fs::create_dir(&bundled).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_amonhend"),
+        bundled.join(format!("amonhen-{}", ssh::local_platform())),
+    )
+    .unwrap();
+    let socket = tmp.path().join("d.sock");
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
+        .env("AMONHEN_LANG", "en")
+        .arg("--serve")
+        .arg(&socket)
+        .env("HOME", &local_home)
+        .env("AMONHEN_SSH", &ssh_program)
+        .env("AMONHEN_ENGINES", &bundled)
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    let stream = loop {
+        match std::os::unix::net::UnixStream::connect(&socket) {
+            Ok(s) => break s,
+            Err(_) if started.elapsed() < Duration::from_secs(5) => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            Err(e) => panic!("つなげない: {e}"),
+        }
+    };
+    let mut writer = stream.try_clone().unwrap();
+    let env = amonhen_model::process::ClientEnv::from_vars([(
+        "GIT_AMONHEN_TEST".to_owned(),
+        "from the client".to_owned(),
+    )]);
+    amonhen_remote::local::write_preamble(
+        &mut writer,
+        &amonhen_remote::local::opening("ssh://dev", &env),
+    )
+    .unwrap();
+    let conn = Connection::new(stream, std::io::BufWriter::new(writer));
+    conn.mark_local();
+    let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
+
+    // SSH 先（偽の ssh の HOME）の global の設定に書かれ、設定のリポジトリはそのデータの置き場所にできる。
+    let set = repo
+        .run(amonhen_core::command::Command::ConfigSet {
+            key: "user.name".to_owned(),
+            value: Some("Ada".to_owned()),
+            scope: Some("global".to_owned()),
+        })
+        .unwrap();
+    assert!(set.ok, "{set:?}");
+    assert!(
+        std::fs::read_to_string(remote_home.join(".gitconfig"))
+            .unwrap()
+            .contains("name = Ada")
+    );
+    assert!(
+        remote_home
+            .join(".local/share/amonhen/settings-repo/.git")
+            .is_dir()
+    );
+    assert_eq!(engines(&remote_home).len(), 1);
+    let programs = repo
+        .run(amonhen_core::command::Command::Programs {
+            name: "git".to_owned(),
+        })
+        .unwrap();
+    assert!(
+        !programs.info.unwrap()["programs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    daemon.kill().unwrap();
+    daemon.wait().unwrap();
+}
+
 /// 共有の daemon が SSH 先を開く: 2 つの相手が同じ SSH 先を開いても、SSH 先の daemon は 1 つだけ送り込み、
 /// History は手元の daemon が作ってファイルで渡す。命令も手元の daemon のコアから SSH 先に届く。
 #[test]
