@@ -16,12 +16,19 @@ becomes the GitHub Release notes.
 - A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last
   Fetch, undoably), and its menu also offers Push when it is only ahead and Publish when it has no upstream. The core
   and CLI get the same as `fastForward`.
+- Settings > SSH Hosts: the SSH hosts Amon Hen knows, with + and −, and for each its connection (state, Check
+  Connection, the engine in use, which keys verify commit signatures, the folders to scan) and the pages of Settings >
+  Git for every repository on that host, read from and written to the host's `--global`. Settings… on a host in Places
+  and the git line under a repository's Settings list open it.
 - The engine runs on an SSH host without a repository (`amonhen --stdio` with no path) to read and write that
   machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
-  the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions.
+  the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /
+  `saveExcludesFile` for the user's global excludes file.
 
 #### Changed
 
+- Whether commit signatures in an SSH host's repositories are verified with this Mac's keys or the host's is chosen
+  per host, in Settings > SSH Hosts (hosts without a choice keep the previous setting).
 - In Keys and Values, the column you can write shows plain text, with a field outline only on hover or for the one
   selected row.
 - Push reads Publish for a branch without an upstream, and asks which remote to create it on (following

@@ -107,12 +107,8 @@ final class RepositorySettingsModel {
     }
 
     /// すべてのリポジトリの段での、無視するパターンのファイル（`core.excludesFile`。なければ git の既定
-    /// `$XDG_CONFIG_HOME/git/ignore`、`~/.config/git/ignore`）。
-    var excludesPath: String {
-        if let p = effective("core.excludesFile")?.value, !p.isEmpty { return (p as NSString).expandingTildeInPath }
-        let xdg = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"].flatMap { $0.isEmpty ? nil : $0 }
-        return (((xdg ?? "~/.config") as NSString).expandingTildeInPath as NSString).appendingPathComponent("git/ignore")
-    }
+    /// `$XDG_CONFIG_HOME/git/ignore`、`~/.config/git/ignore`）。コアが決める（SSH 先ならその機械で）。
+    private(set) var excludesPath = ""
 
     func load() {
         let repository = self.repository
@@ -121,17 +117,21 @@ final class RepositorySettingsModel {
             struct Keys: Decodable { let keys: [String] }
             struct Remotes: Decodable { let remotes: [RemoteEntry] }
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
+            struct Excludes: Decodable { let path: String; let text: String? }
             struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String]; let lfsFiles: Int? }
             struct Version: Decodable { let version: String?; let updateRefs: Bool }
             struct Template: Decodable { let text: String?; let path: String }
             struct Groups: Decodable { struct Branch: Decodable { let name: String }; let base: String?; let branches: [Branch] }
             do {
-                let (e, k, r, i, h, v, g, t) = try await Task.detached(priority: .userInitiated) {
+                let global = level == .allRepositories
+                let (e, k, r, i, x, h, v, g, t) = try await Task.detached(priority: .userInitiated) {
                     (
                         try repository.info(["op": "configList"], as: Entries.self),
                         try? repository.info(["op": "configKeys"], as: Keys.self),
                         try repository.info(["op": "remotes"], as: Remotes.self),
                         try repository.info(["op": "ignoreFiles"], as: Ignore.self),
+                        // すべてのリポジトリの段の「無視するパターン」は global excludes のファイル。
+                        try global ? repository.info(["op": "excludesFile"], as: Excludes.self) : nil,
                         try repository.info(["op": "hooksAndLfs"], as: Hooks.self),
                         try repository.info(["op": "gitVersion"], as: Version.self),
                         try? repository.info(["op": "branchGroups"], as: Groups.self),
@@ -157,10 +157,8 @@ final class RepositorySettingsModel {
                 if level == .allRepositories { entries.removeAll { $0.scope == "local" || $0.scope == "worktree" } }
                 knownKeys = k?.keys ?? []
                 remotes = r.remotes
-                // すべてのリポジトリの段の「無視するパターン」は global excludes のファイル。
-                let ignore = level == .repository
-                    ? (i.gitignore, i.exclude)
-                    : ("", (try? String(contentsOfFile: excludesPath, encoding: .utf8)) ?? "")
+                excludesPath = x?.path ?? ""
+                let ignore = level == .repository ? (i.gitignore, i.exclude) : ("", x?.text ?? "")
                 if (gitignore, exclude) == savedIgnore {
                     gitignore = ignore.0
                     exclude = ignore.1
@@ -263,15 +261,8 @@ final class RepositorySettingsModel {
 
     func saveIgnore() {
         if level == .allRepositories {
-            let path = excludesPath
-            do {
-                try FileManager.default.createDirectory(atPath: (path as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-                try exclude.write(toFile: path, atomically: true, encoding: .utf8)
-                savedIgnore = ("", exclude)
-                error = nil
-            } catch {
-                self.error = "\(error)"
-            }
+            let text = exclude
+            run(["op": "saveExcludesFile", "text": text]) { [self] in savedIgnore = ("", text) }
             return
         }
         run(["op": "saveIgnoreFiles", "gitignore": gitignore, "exclude": exclude])
@@ -1849,9 +1840,14 @@ struct RepositorySettingsView: View {
                 }
                 .listStyle(.sidebar)
                 if model.level == .repository {
-                    // このリポジトリを動かしている git。機械（この Mac か SSH 先）のものなので、変えるのはその機械の設定で。
+                    // このリポジトリを動かしている git。機械（この Mac か SSH 先）のものなので、変えるのはその機械の設定で
+                    // （Settings > Git か、Settings > SSH Hosts のその SSH 先）。
                     Button {
-                        if model.host == nil { SettingsWindowController.shared.show(tab: "Git", page: .programs) }
+                        if let host = Settings.sshHost(of: model.location) {
+                            SettingsWindowController.shared.show(tab: L("SSH Hosts"), page: .programs, host: host)
+                        } else {
+                            SettingsWindowController.shared.show(tab: "Git", page: .programs)
+                        }
                     } label: {
                         Text("git \(model.gitVersion ?? "?") · \(model.host ?? L("This Mac"))")
                             .font(.caption).foregroundStyle(.secondary)
@@ -1859,7 +1855,7 @@ struct RepositorySettingsView: View {
                             .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .help(model.host.map { L("The git on %@ runs this repository. Every repository on that host uses it.", $0) }
+                    .help(model.host.map { L("The git on %@ runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts.", $0) }
                         ?? L("This Mac’s git runs this repository. Choose it in Settings > Git."))
                     .padding(.horizontal, 14).padding(.vertical, 8)
                 }
@@ -1867,7 +1863,7 @@ struct RepositorySettingsView: View {
             .frame(width: 200)
             Divider()
             VStack(spacing: 0) {
-                content
+                SettingsPageContent(model: model, page: page)
                 if let error = model.error {
                     HStack {
                         Text(error).foregroundStyle(.red).lineLimit(2)
@@ -1886,7 +1882,14 @@ struct RepositorySettingsView: View {
         }
     }
 
-    @ViewBuilder private var content: some View {
+}
+
+/// 設定の 1 ページの中身（リポジトリの設定・Settings > Git・Settings > SSH Hosts で同じ）。
+struct SettingsPageContent: View {
+    let model: RepositorySettingsModel
+    let page: SettingsPage
+
+    var body: some View {
         switch page {
         case .programs: ProgramsPage(model: model)
         case .author: AuthorSigningPage(model: model)

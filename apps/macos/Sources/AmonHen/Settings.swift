@@ -29,13 +29,41 @@ enum Settings {
     }
 
     /// SSH 先のリポジトリのコミットの署名を、手元の鍵で検証するか（既定は手元）。false なら SSH 先の git と鍵で
-    /// 検証する。変えたら `signatureCheckChanged` を知らせる。
+    /// 検証する。SSH 先ごとに決める（Settings > SSH Hosts の「接続」）。決めていない SSH 先は、前からの 1 つの値。
+    /// 変えたら `signatureCheckChanged` を知らせる。
     static var checkRemoteSignaturesLocally: Bool {
         get { UserDefaults.standard.object(forKey: "checkRemoteSignaturesLocally") as? Bool ?? true }
         set {
             UserDefaults.standard.set(newValue, forKey: "checkRemoteSignaturesLocally")
             NotificationCenter.default.post(name: .signatureCheckChanged, object: nil)
         }
+    }
+
+    private static let signatureCheckByHostKey = "checkRemoteSignaturesLocallyByHost"
+
+    /// `host` のリポジトリの署名を手元の鍵で検証するか。
+    static func checkSignaturesLocally(on host: String) -> Bool {
+        (UserDefaults.standard.dictionary(forKey: signatureCheckByHostKey) as? [String: Bool])?[host] ?? checkRemoteSignaturesLocally
+    }
+
+    static func setCheckSignaturesLocally(_ value: Bool, on host: String) {
+        var byHost = UserDefaults.standard.dictionary(forKey: signatureCheckByHostKey) as? [String: Bool] ?? [:]
+        byHost[host] = value
+        UserDefaults.standard.set(byHost, forKey: signatureCheckByHostKey)
+        NotificationCenter.default.post(name: .signatureCheckChanged, object: nil)
+    }
+
+    /// 場所の SSH 先（`ssh://host/path`・`daemon:ssh://host/path` の host）。手元なら nil。
+    static func sshHost(of location: String) -> String? {
+        let rest = location.hasPrefix("daemon:") ? String(location.dropFirst("daemon:".count)) : location
+        guard rest.hasPrefix("ssh://") else { return nil }
+        return String(rest.dropFirst("ssh://".count).prefix { $0 != "/" })
+    }
+
+    /// Settings > SSH Hosts で ＋ で加えた SSH 先（リポジトリやスキャンするフォルダがなくても一覧に残すもの）。
+    static var sshHosts: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "sshHosts") ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: "sshHosts") }
     }
 
     /// コミットの詳細に作者・コミッターの Gravatar のアバターを出すか（既定は出す。メールアドレスの MD5 を
@@ -798,6 +826,7 @@ final class SettingsWindowController: NSWindowController {
         }
         add(L("General"), "gearshape", GeneralSettings(model: model))
         add("Git", "arrow.triangle.branch", GitSettings(model: model))
+        add(L("SSH Hosts"), "network", SSHHostsSettings(model: model))
         add(L("Accounts"), "person.crop.circle", AccountsSettings(model: model))
         add(L("Appearance"), "paintbrush", AppearanceSettings(model: model))
         add(L("Diff & Merge"), "arrow.triangle.merge", DiffMergeSettings(model: model))
@@ -815,8 +844,12 @@ final class SettingsWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(tab: String? = nil, page: SettingsPage? = nil) {
-        if let page {
+    /// `host` を渡すと、SSH Hosts のタブでその SSH 先を（`page` があればそのページを）選ぶ。
+    func show(tab: String? = nil, page: SettingsPage? = nil, host: String? = nil) {
+        if let host {
+            SSHHostsSettings.pendingHost = (host, page)
+            NotificationCenter.default.post(name: SSHHostsSettings.showHost, object: nil)
+        } else if let page {
             GitSettings.pendingPage = page
             NotificationCenter.default.post(name: GitSettings.showPage, object: page)
         }

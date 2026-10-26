@@ -75,7 +75,8 @@ struct GitSettings: View {
 }
 
 /// プログラムのページ: git・gpg・ssh-keygen・gpgsm を同じ形で選ぶ（自動＝PATH の先頭／見つかったもの／その他…）。
-/// git は Amon Hen の設定（`AMONHEN_GIT`）、ほかは git の設定（`gpg.program` など）。
+/// git は Amon Hen の設定（`AMONHEN_GIT`）、ほかは git の設定（`gpg.program` など）。SSH 先（Settings > SSH Hosts）
+/// なら候補はコアが SSH 先で探し（`programs`）、git はその PATH のもの（エンジンがそれを使う。ここでは選べない）。
 struct ProgramsPage: View {
     let model: RepositorySettingsModel
     @State private var found: [String: [Programs.Candidate]] = [:]
@@ -93,21 +94,36 @@ struct ProgramsPage: View {
         }
         .formStyle(.grouped)
         .task {
-            found = await Task.detached(priority: .userInitiated) {
-                Dictionary(uniqueKeysWithValues: ["git", "gpg", "ssh-keygen", "gpgsm"].map { ($0, Programs.candidates($0)) })
-            }.value
+            let names = ["git", "gpg", "ssh-keygen", "gpgsm"]
+            if model.host == nil {
+                found = await Task.detached(priority: .userInitiated) {
+                    Dictionary(uniqueKeysWithValues: names.map { ($0, Programs.candidates($0)) })
+                }.value
+            } else {
+                let repository = model.repository
+                found = await Task.detached(priority: .userInitiated) {
+                    struct Found: Decodable { struct Program: Decodable { let path: String; let version: String? }; let programs: [Program] }
+                    return Dictionary(uniqueKeysWithValues: names.map { name in
+                        let programs = (try? repository.info(["op": "programs", "name": name], as: Found.self))?.programs ?? []
+                        return (name, programs.map { Programs.Candidate(path: $0.path, version: $0.version) })
+                    })
+                }.value
+            }
         }
     }
 
-    /// git の行: 値は Amon Hen が持つ。行の形はほかと同じ。
+    /// git の行: 値は Amon Hen が持つ。行の形はほかと同じ。SSH 先では、エンジンがその PATH の git を使う（選べない）。
     private var gitRow: some View {
         HStack(spacing: 8) {
             Text("git").frame(minWidth: 72, alignment: .leading)
             Spacer()
-            ProgramPicker(candidates: found["git"] ?? [], value: gitExecutable) { value in
+            ProgramPicker(candidates: found["git"] ?? [], value: model.host == nil ? gitExecutable : "") { value in
                 setGit(value)
             }
-            if !gitExecutable.isEmpty {
+            .disabled(model.host != nil)
+            if model.host != nil {
+                Color.clear.frame(width: 20, height: 1)
+            } else if !gitExecutable.isEmpty {
                 Button { setGit("") } label: { Image(systemName: "arrow.uturn.backward") }
                     .buttonStyle(.borderless)
                     .frame(width: 20)
@@ -115,13 +131,17 @@ struct ProgramsPage: View {
             } else {
                 Color.clear.frame(width: 20, height: 1)
             }
-            Text(gitExecutable.isEmpty ? "PATH" : "Amon Hen")
+            Text(gitExecutable.isEmpty || model.host != nil ? "PATH" : "Amon Hen")
                 .font(.caption).foregroundStyle(.secondary).frame(width: 118, alignment: .trailing)
             Button { showingGit.toggle() } label: { Image(systemName: "info.circle") }
                 .buttonStyle(.borderless)
                 .popover(isPresented: $showingGit, arrowEdge: .trailing) {
-                    Text("AMONHEN_GIT = \(gitExecutable.isEmpty ? L("(not set)") : gitExecutable)")
-                        .font(.system(.body, design: .monospaced)).textSelection(.enabled).padding(12)
+                    if let host = model.host {
+                        Text(L("The engine on %@ runs the git on its PATH.", host)).padding(12)
+                    } else {
+                        Text("AMONHEN_GIT = \(gitExecutable.isEmpty ? L("(not set)") : gitExecutable)")
+                            .font(.system(.body, design: .monospaced)).textSelection(.enabled).padding(12)
+                    }
                 }
         }
         .padding(.vertical, 6)

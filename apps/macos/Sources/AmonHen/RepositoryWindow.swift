@@ -758,7 +758,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// daemon 越しなら、初めての読み込みの進み具合と、接続が切れたことを出す。
     private func watchConnection() {
         guard RepositoryLocation.isRemote(location) else { return }
-        repository.setLocalSignatureCheck(Settings.checkRemoteSignaturesLocally)
+        repository.setLocalSignatureCheck(Settings.sshHost(of: location).map(Settings.checkSignaturesLocally(on:)) ?? Settings.checkRemoteSignaturesLocally)
         NotificationCenter.default.addObserver(
             self, selector: #selector(signatureCheckChanged), name: .signatureCheckChanged, object: nil)
         updateConnection()
@@ -787,7 +787,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// 署名を検証する側が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す。
     @objc private func signatureCheckChanged() {
-        repository.setLocalSignatureCheck(Settings.checkRemoteSignaturesLocally)
+        repository.setLocalSignatureCheck(Settings.sshHost(of: location).map(Settings.checkSignaturesLocally(on:)) ?? Settings.checkRemoteSignaturesLocally)
         updateSignaturePlace()
         history.forgetSignatures()
         detail.reloadSignature()
@@ -800,9 +800,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             detail.signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
             return
         }
-        detail.signaturePlace = Settings.checkRemoteSignaturesLocally
-            ? SignaturePlace(local: true, detail: L("chosen in Settings"))
-            : SignaturePlace(local: false, host: host, detail: L("chosen in Settings"))
+        detail.signaturePlace = Settings.checkSignaturesLocally(on: Settings.sshHost(of: location) ?? host)
+            ? SignaturePlace(local: true, detail: L("chosen in Settings > SSH Hosts"))
+            : SignaturePlace(local: false, host: host, detail: L("chosen in Settings > SSH Hosts"))
     }
 
     // MARK: - タブの名前
