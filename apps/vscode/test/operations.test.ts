@@ -2,11 +2,11 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
-import { mergeInto, rebaseOnto } from '../src/state/operations.ts';
+import { fastForwardBranch, mergeInto, publishChoices, pushCurrent, rebaseOnto } from '../src/state/operations.ts';
 import { UndoLog } from '../src/state/undo.ts';
 
 Object.assign(process.env, {
@@ -105,4 +105,69 @@ test('a conflict is reported and not recorded', async () => {
   assert.equal(await mergeInto(backend, undo, H('feature'), H('main')), 'conflict');
   assert.equal(await undo.peek(), undefined);
   await backend.abort('merge');
+});
+
+/** dir の origin になる bare リポジトリを作り、main を送って upstream にする */
+function addOrigin(): string {
+  const remote = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-origin-')));
+  execFileSync('git', ['init', '-q', '--bare', remote]);
+  git('remote', 'add', 'origin', remote);
+  git('push', '-q', '-u', 'origin', 'main');
+  return remote;
+}
+
+test('fast-forward a branch that is not checked out to its upstream, and refuse when it can not', async () => {
+  const remote = addOrigin();
+  try {
+    git('branch', '-q', 'feature');
+    git('push', '-q', '-u', 'origin', 'feature');
+    // origin の feature だけを進める（手元の feature は置いていく）
+    git('checkout', '-q', 'feature');
+    commitFile('f.txt', 'f\n', 'feature');
+    git('push', '-q', 'origin', 'feature');
+    git('reset', '-q', '--hard', 'HEAD~1');
+    git('checkout', '-q', 'main');
+    assert.equal(await fastForwardBranch(backend, undo, H('feature')), 'done');
+    assert.equal(git('rev-parse', 'feature'), git('rev-parse', 'origin/feature'));
+    assert.equal(git('branch', '--show-current'), 'main');
+    assert.equal(await fastForwardBranch(backend, undo, H('feature')), 'up-to-date');
+    assert.equal(await fastForwardBranch(backend, undo, H('main')), 'up-to-date');
+    git('branch', '-q', 'solo');
+    assert.equal(await fastForwardBranch(backend, undo, H('solo')), 'no-upstream');
+    // ほかの worktree でチェックアウトしているブランチは動かさない
+    git('branch', '-q', '-f', 'feature', 'main');
+    const wt = join(remote, '..', `${basename(remote)}-wt`);
+    git('worktree', 'add', '-q', wt, 'feature');
+    try {
+      await assert.rejects(fastForwardBranch(backend, undo, H('feature')), /worktree/);
+      assert.equal(git('rev-parse', 'feature'), git('rev-parse', 'main'));
+    } finally {
+      git('worktree', 'remove', '--force', wt);
+    }
+    // 分かれていれば断る
+    git('checkout', '-q', 'feature');
+    commitFile('g.txt', 'g\n', 'local');
+    git('checkout', '-q', 'main');
+    assert.equal(await fastForwardBranch(backend, undo, H('feature')), 'diverged');
+  } finally {
+    rmSync(remote, { recursive: true, force: true });
+  }
+});
+
+test('push without an upstream asks to publish, and publish prefers pushRemote and pushDefault', async () => {
+  const remote = addOrigin();
+  try {
+    git('checkout', '-q', '-b', 'topic');
+    assert.equal(await pushCurrent(backend), 'unpublished');
+    git('remote', 'add', 'other', remote);
+    assert.deepEqual(await publishChoices(backend, H('topic')), { remotes: ['origin', 'other'], preferred: 'origin' });
+    git('config', 'remote.pushDefault', 'other');
+    assert.equal((await publishChoices(backend, H('topic'))).preferred, 'other');
+    git('config', 'branch.topic.pushRemote', 'origin');
+    assert.equal((await publishChoices(backend, H('topic'))).preferred, 'origin');
+    git('checkout', '-q', 'main');
+    assert.deepEqual(await pushCurrent(backend), { remote: 'origin', branch: 'main' });
+  } finally {
+    rmSync(remote, { recursive: true, force: true });
+  }
 });

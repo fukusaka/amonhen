@@ -16,7 +16,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 | 項目 | 内容 |
 | --- | --- |
-| タイトルのボタン | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。無ければ origin へ送って upstream に設定）、Undo。`…` の中に New Branch、Stash Changes、Open Amon Hen、Refresh、Force Push |
+| タイトルのボタン | Fetch（すべてのリモートから取得）、Pull（現在のブランチに upstream を取り込む）、Push（upstream へ。現在のブランチに upstream が無ければ、ボタンは Publish Branch になり、リモートとそこでの名前を選んで送り、upstream にする）、Undo。`…` の中に New Branch、Stash Changes、Open Amon Hen、Refresh、Force Push |
 | Working Copy | 変更の数。選ぶとメインビューに Working Copy を出す |
 | History | 現在のブランチ。選ぶとメインビューに History を出す |
 | merge / rebase の途中 | 「Rebase in progress (2/5)」のような行。Continue / Skip / Abort |
@@ -24,7 +24,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 | Remotes / Tags / Stashes / Submodules | 開いたときに取得する |
 
 - ブランチ・リモートブランチ・タグを選ぶと、メインビューの History にその履歴が出る。
-- ブランチ・タグの右クリックで Checkout（リモートブランチなら追跡するローカルブランチを作って切り替える）、Merge into Current Branch、Rebase Current Branch onto This、Rename Branch、Delete Branch、New Branch（そこから作って切り替える）、New Tag（メッセージを入れれば annotated tag）。作成と削除は Undo で戻せる。
+- ブランチ・タグの右クリックで Checkout（リモートブランチなら追跡するローカルブランチを作って切り替える）、チェックアウトしていないローカルブランチなら Fast-Forward to Upstream（upstream より後ろにだけあるとき。最後の Fetch の時点。ほかの worktree でチェックアウト中のものは除く）か Push to Upstream（先にだけあるとき）、upstream の無いローカルブランチなら Publish Branch、Merge into Current Branch、Rebase Current Branch onto This、Rename Branch、Delete Branch、New Branch（そこから作って切り替える）、New Tag（メッセージを入れれば annotated tag）。作成と削除は Undo で戻せる。
 - Stashes の見出しの `+` で、作業中の変更を stash する（untracked のファイルを含めるかを選べる）。stash を選ぶと中身を複数ファイル diff で開き、右クリックで Apply / Pop / Drop（Undo で戻せる）。Apply と Pop は stage していた状態も戻す。
 - Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。
 - 複数のリポジトリを開いているときは、タイトルのボタンで切り替える。
@@ -39,7 +39,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 | ローカルブランチ | リモート、リモートブランチ | Push、Force Push（`--force-with-lease`） |
 
 - ドロップ先が checkout されていないとき、fast-forward で済むなら checkout せずにブランチだけ進める。そうでなければ checkout してから実行する。
-- upstream が無いブランチを push すると、push 先を upstream に設定する。
+- upstream が無いブランチをドロップで push すると、push 先を upstream に設定する。
 
 ### Working Copy
 

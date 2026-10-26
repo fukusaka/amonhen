@@ -104,6 +104,11 @@ pub enum Command {
         #[serde(default)]
         mode: PullMode,
     },
+    /// チェックアウトしていないブランチを上流まで fast-forward する（`git fetch . <上流>:<branch>` と同じ。Undo
+    /// できる）。上流は最後の Fetch の時点のもの。分かれている・どこかの worktree でチェックアウト中なら断る。
+    FastForward {
+        branch: String,
+    },
     Push {
         remote: String,
         branch: String,
@@ -1095,6 +1100,76 @@ impl Repository {
         Ok(chain)
     }
 
+    /// `FastForward` で動かす ref の完全な名前と、今の先頭・動かす先（上流の先頭）。動かせなければその理由のエラー。
+    fn fast_forward_target(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        branch: &str,
+    ) -> Result<(String, Oid, Oid)> {
+        let refs = self.load_refs()?;
+        let entries = &refs.refs.entries;
+        let local = entries
+            .iter()
+            .find(|e| e.kind == RefKind::Local && e.name == branch)
+            .ok_or_else(|| tr!("{name} not found", name = branch))?;
+        let upstream = local
+            .detail
+            .as_deref()
+            .ok_or_else(|| tr!("{branch} has no upstream", branch = branch))?;
+        if refs.refs.head_branch.as_deref() == Some(branch) {
+            return Err(tr!(
+                "{branch} is checked out here; Pull it instead",
+                branch = branch
+            )
+            .into());
+        }
+        if let Ok(list) = ops.worktree_list() {
+            let paths = self.paths();
+            if let Some(w) = crate::worktree::parse(&list, paths.workdir.as_deref())
+                .into_iter()
+                .find(|w| w.branch.as_deref() == Some(branch))
+            {
+                return Err(tr!(
+                    "{branch} is checked out in the worktree {path}; update it there",
+                    branch = branch,
+                    path = w.path
+                )
+                .into());
+            }
+        }
+        // 上流はふつうリモートブランチ。`branch.<name>.remote` が `.` なら手元のブランチ。
+        let target = entries
+            .iter()
+            .find(|e| e.kind == RefKind::Remote && e.name == upstream)
+            .or_else(|| {
+                entries
+                    .iter()
+                    .find(|e| e.kind == RefKind::Local && e.name == upstream)
+            })
+            .and_then(|e| e.target)
+            .ok_or_else(|| tr!("{upstream} not found (Fetch first)", upstream = upstream))?;
+        let tip = local
+            .target
+            .ok_or_else(|| tr!("{name} not found", name = branch))?;
+        if tip == target {
+            return Err(tr!(
+                "{branch} is already the same as {upstream}",
+                branch = branch,
+                upstream = upstream
+            )
+            .into());
+        }
+        if !ops.is_ancestor(&tip.to_string(), &target.to_string())? {
+            return Err(tr!(
+                "{branch} and {upstream} have diverged; check out {branch} to merge or rebase",
+                branch = branch,
+                upstream = upstream
+            )
+            .into());
+        }
+        Ok((format!("refs/heads/{branch}"), tip, target))
+    }
+
     /// 先頭が `ids` のどれかにあるローカルブランチ（先頭と完全な名前）。rebase で一緒に動きうる。チェックアウト中の
     /// ブランチと、ほかの worktree でチェックアウト中のもの（git が動かさない）は除く。
     fn stacked_branches(
@@ -1496,6 +1571,18 @@ impl Repository {
             }
             Command::Pull { mode } => {
                 done(undo.record(ops, "Pull", &[], false, || ops.pull(mode), not_done)?)
+            }
+            Command::FastForward { branch } => {
+                let (name, from, to) = self.fast_forward_target(ops, &branch)?;
+                undo.record(
+                    ops,
+                    &format!("Fast-forward {branch}"),
+                    std::slice::from_ref(&name),
+                    false,
+                    || ops.update_ref(&name, Some(&to), Some(&from)),
+                    |_| false,
+                )?;
+                ok()
             }
             Command::Push {
                 remote,
@@ -3869,6 +3956,76 @@ mod tests {
         );
         let files = run(&repo, r#"{"op":"ignoreFiles"}"#);
         assert_eq!(files["info"]["exclude"], "*.local\n");
+    }
+
+    #[test]
+    fn fast_forwards_a_branch_that_is_not_checked_out() {
+        let (upstream, _) = setup();
+        git(upstream.path(), &["branch", "feat"]);
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("clone");
+        git(
+            tmp.path(),
+            &["clone", "-q", upstream.path().to_str().unwrap(), "clone"],
+        );
+        for (key, value) in [("user.name", "a"), ("user.email", "a@example.com")] {
+            git(&dir, &["config", key, value]);
+        }
+        git(&dir, &["branch", "-q", "feat", "origin/feat"]);
+        git(&dir, &["branch", "-q", "solo"]);
+        // 上流の feat と main を進めて取ってくる。
+        git(upstream.path(), &["checkout", "-q", "feat"]);
+        git(
+            upstream.path(),
+            &["commit", "-q", "--allow-empty", "-m", "feat"],
+        );
+        git(upstream.path(), &["checkout", "-q", "main"]);
+        git(
+            upstream.path(),
+            &["commit", "-q", "--allow-empty", "-m", "main"],
+        );
+        git(&dir, &["fetch", "-q"]);
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+        let head = git(&dir, &["rev-parse", "HEAD"]);
+
+        let r = run(&repo, r#"{"op":"fastForward","branch":"feat"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(
+            git(&dir, &["rev-parse", "feat"]),
+            git(&dir, &["rev-parse", "origin/feat"])
+        );
+        // チェックアウト中のブランチは動かさない。
+        assert_eq!(git(&dir, &["rev-parse", "HEAD"]), head);
+        assert_eq!(run(&repo, r#"{"op":"undo"}"#)["ok"], true);
+        assert_eq!(git(&dir, &["rev-parse", "feat"]), head);
+
+        // チェックアウト中（Pull を使う）、上流がない、分かれているものは断る。
+        for json in [
+            r#"{"op":"fastForward","branch":"main"}"#,
+            r#"{"op":"fastForward","branch":"solo"}"#,
+        ] {
+            assert_eq!(run(&repo, json)["ok"], false, "{json}");
+        }
+        git(&dir, &["checkout", "-q", "feat"]);
+        git(&dir, &["commit", "-q", "--allow-empty", "-m", "local"]);
+        git(&dir, &["checkout", "-q", "main"]);
+        let r = run(&repo, r#"{"op":"fastForward","branch":"feat"}"#);
+        assert_eq!(r["ok"], false, "{r}");
+        // ほかの worktree でチェックアウト中のものも断る（その worktree の作業ツリーとずれるため）。
+        git(&dir, &["branch", "-q", "-f", "feat", &head]);
+        git(
+            &dir,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                tmp.path().join("wt").to_str().unwrap(),
+                "feat",
+            ],
+        );
+        let r = run(&repo, r#"{"op":"fastForward","branch":"feat"}"#);
+        assert_eq!(r["ok"], false, "{r}");
+        assert_eq!(git(&dir, &["rev-parse", "feat"]), head);
     }
 
     #[test]

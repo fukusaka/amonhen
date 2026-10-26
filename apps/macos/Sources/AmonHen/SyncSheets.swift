@@ -45,14 +45,7 @@ extension Actions {
             guard let branch = state.branch else {
                 return await inform(L("Can’t Push"), L("No branch is checked out (detached HEAD)."))
             }
-            guard let upstream = state.upstream else {
-                let alert = makeAlert(L("Push %@ to origin?", branch),
-                                      L("origin has no %@ yet. This creates origin/%@ and makes it the upstream.", branch, branch))
-                alert.addButton(withTitle: "Push")
-                alert.addButton(withTitle: L("Cancel"))
-                if await present(alert) == .alertFirstButtonReturn { push(branch: branch, force: false) }
-                return
-            }
+            guard let upstream = state.upstream else { return publishWithConfirmation(branch: branch) }
             let (outgoing, incoming) = (state.outgoing, state.incoming)
             if force {
                 let title = L("Force push %@?", branch)
@@ -307,6 +300,80 @@ extension Actions {
     static func show(_ forecast: MergeForecast?, estimate: Bool, in label: NSTextField) {
         label.stringValue = forecast?.text(estimate: estimate) ?? ""
         label.textColor = forecast?.hasConflicts == true ? .systemOrange : .secondaryLabelColor
+    }
+
+    // MARK: - Publish
+
+    /// 上流のないブランチを初めて送る（Publish）。送り先のリモートとそこでの名前を選ばせ、送ったらそれを上流にする。
+    /// リモートの初期値は、git の push と同じく branch.<name>.pushRemote・remote.pushDefault の順で、なければ
+    /// リモートが 1 つならそれ、いくつもあれば origin。
+    func publishWithConfirmation(branch: String) {
+        let repository = self.repository
+        Task { @MainActor in
+            nonisolated struct Remotes: Decodable { struct Remote: Decodable { let name: String }; let remotes: [Remote] }
+            nonisolated struct Entries: Decodable { struct Entry: Decodable { let key: String; let value: String }; let entries: [Entry] }
+            let (remotes, entries, refs) = await Task.detached {
+                ((try? repository.info(["op": "remotes"], as: Remotes.self))?.remotes.map(\.name) ?? [],
+                 (try? repository.info(["op": "configList"], as: Entries.self))?.entries ?? [],
+                 try? repository.loadRefs())
+            }.value
+            guard !remotes.isEmpty else {
+                return await inform(L("Can’t Publish"), L("This repository has no remotes. Add one in Repository > Add Remote…."))
+            }
+            let value = { (key: String) in entries.last { $0.key.lowercased() == key.lowercased() }?.value }
+            let preferred = [value("branch.\(branch).pushRemote"), value("remote.pushDefault"),
+                             remotes.count == 1 ? remotes[0] : "origin"].compactMap { $0 }.first { remotes.contains($0) }
+            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+            popup.addItems(withTitles: remotes)
+            popup.selectItem(withTitle: preferred ?? remotes[0])
+            let field = NSTextField(string: branch)
+            field.widthAnchor.constraint(equalToConstant: 240).isActive = true
+            let grid = NSGridView(views: [[NSTextField(labelWithString: L("Remote")), popup],
+                                          [NSTextField(labelWithString: L("Name there")), field]])
+            grid.rowSpacing = 8
+            grid.column(at: 0).xPlacement = .trailing
+            grid.frame.size = grid.fittingSize
+            let alert = makeAlert(L("Publish %@?", branch),
+                                  L("This creates the branch on the remote and makes it the upstream (where Pull and Push go from now on)."))
+            alert.accessoryView = grid
+            alert.addButton(withTitle: "Publish")
+            alert.addButton(withTitle: L("Cancel"))
+            alert.window.initialFirstResponder = popup
+            guard await present(alert) == .alertFirstButtonReturn, let remote = popup.titleOfSelectedItem else { return }
+            let remoteBranch = field.stringValue.trimmingCharacters(in: .whitespaces)
+            guard !remoteBranch.isEmpty else { return }
+            let target = "\(remote)/\(remoteBranch)"
+            // その名前のブランチがもうリモートにある（最後の Fetch の時点）。作るのではなく、それを上流にして送る。
+            if refs?.items.contains(where: { $0.kind == .remote && $0.name == target }) == true {
+                let (outgoing, incoming) = await Task.detached {
+                    func range(_ base: String, _ tip: String) -> Int {
+                        (try? repository.info(["op": "between", "base": base, "tip": tip, "limit": 1], as: CommitRange.self))?.count ?? 0
+                    }
+                    return (range(target, branch), range(branch, target))
+                }.value
+                if incoming > 0 {
+                    let alert = makeAlert(L("%@ already exists", target),
+                                          L("It has %ld commits that %@ doesn’t (as of the last Fetch), so pushing would be refused. Make it the upstream and Pull first.", incoming, branch))
+                    alert.addButton(withTitle: L("Set Upstream"))
+                    alert.addButton(withTitle: L("Cancel"))
+                    if await present(alert) == .alertFirstButtonReturn {
+                        perform(sequence: [
+                            ["op": "configSet", "key": "branch.\(branch).remote", "value": remote],
+                            ["op": "configSet", "key": "branch.\(branch).merge", "value": "refs/heads/\(remoteBranch)"],
+                        ])
+                    }
+                    return
+                }
+                let alert = makeAlert(L("%@ already exists", target),
+                                      outgoing > 0 ? L("This pushes %ld commits to it and makes it the upstream.", outgoing)
+                                                   : L("It is the same as %@. This makes it the upstream.", branch))
+                alert.addButton(withTitle: outgoing > 0 ? "Push" : L("Set Upstream"))
+                alert.addButton(withTitle: L("Cancel"))
+                guard await present(alert) == .alertFirstButtonReturn else { return }
+            }
+            perform(["op": "push", "remote": remote, "branch": branch, "remoteBranch": remoteBranch,
+                     "force": false, "setUpstream": true])
+        }
     }
 
     private struct SyncState {

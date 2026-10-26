@@ -39,6 +39,7 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         for (mine, theirs) in [(pushItem, other.pushItem), (pullItem, other.pullItem)] {
             theirs.label = mine.label
             theirs.toolTip = mine.toolTip
+            if let image = mine.image { theirs.image = image }
             if #available(macOS 26.0, *) { theirs.badge = mine.badge }
         }
         other.searchItem.searchField.stringValue = searchItem.searchField.stringValue
@@ -197,18 +198,23 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     /// 今のブランチが上流より先（push できる）・後ろ（pull できる）にあるコミットの数を、ボタンのバッジに出す。
-    func setTracking(ahead: Int, behind: Int) {
+    /// 上流がなければ（`published` が false）、Push は送り先を選んで初めて送る Publish になる。
+    func setTracking(ahead: Int, behind: Int, published: Bool = true) {
+        let push = published ? "Push" : "Publish"
         if #available(macOS 26.0, *) {
+            pushItem.label = push
             pushItem.badge = ahead > 0 ? .count(ahead) : nil
             pullItem.badge = behind > 0 ? .count(behind) : nil
         } else {
             // バッジのない macOS では、ラベルに数を添える。
-            pushItem.label = ahead > 0 ? "Push ↑\(ahead)" : "Push"
+            pushItem.label = ahead > 0 ? "\(push) ↑\(ahead)" : push
             pullItem.label = behind > 0 ? "Pull ↓\(behind)" : "Pull"
         }
-        pushItem.toolTip = ahead > 0 ? L("%ld commits ahead of upstream (⌃⌘P)", ahead) : L("Push (⌃⌘P)")
+        pushItem.image = NSImage(systemSymbolName: published ? "arrow.up.circle" : "icloud.and.arrow.up", accessibilityDescription: push)
+        pushItem.toolTip = !published ? L("Publish — choose the remote to create this branch on first (⌃⌘P)")
+            : ahead > 0 ? L("%ld commits ahead of upstream (⌃⌘P)", ahead) : L("Push (⌃⌘P)")
         pullItem.toolTip = behind > 0 ? L("%ld commits behind upstream (⌃⌘L)", behind) : L("Pull (⌃⌘L)")
-        for m in mirrors.allObjects { m.setTracking(ahead: ahead, behind: behind) }
+        for m in mirrors.allObjects { m.setTracking(ahead: ahead, behind: behind, published: published) }
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {

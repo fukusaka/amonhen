@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
-import { pullCurrent, pushCurrent } from '../src/state/operations.ts';
+import { publishBranch, pullCurrent, pushCurrent } from '../src/state/operations.ts';
 import { UndoLog } from '../src/state/undo.ts';
 
 Object.assign(process.env, {
@@ -119,9 +119,12 @@ test('push, force push and fetch', async () => {
   assert.equal(git('rev-parse', 'origin/main'), git('rev-parse', 'main'));
 });
 
-test('pushCurrent sets the upstream, and pullCurrent fast-forwards from it', async () => {
-  assert.deepEqual(await pushCurrent(backend), { remote: 'origin', branch: 'main' });
+test('publishBranch sets the upstream, and pullCurrent fast-forwards from it', async () => {
+  // upstream が無ければ pushCurrent は送らず、送り先を選ぶ Publish に回す
+  assert.equal(await pushCurrent(backend), 'unpublished');
+  await publishBranch(backend, 'refs/heads/main', 'origin', 'main');
   assert.equal(git('rev-parse', '--abbrev-ref', 'main@{upstream}'), 'origin/main');
+  assert.deepEqual(await pushCurrent(backend), { remote: 'origin', branch: 'main' });
 
   // 別の clone から 1 つ進めておく
   const other = join(tmp, 'other');

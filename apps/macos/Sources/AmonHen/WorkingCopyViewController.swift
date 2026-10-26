@@ -1005,7 +1005,17 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     @objc private func commitClicked() { commit(thenPush: false) }
 
-    /// Commit ▾ > Commit and Push（⌘⇧↩）: コミットできたら push する。
+    /// 今のブランチに上流がない。Commit ▾ の Commit and Push を Commit and Publish（送り先を選ぶ）と見せる。
+    var publishesBranch = false {
+        didSet {
+            guard publishesBranch != oldValue else { return }
+            let title = publishesBranch ? "Commit and Publish…" : "Commit and Push"
+            commitMenuButton.menu?.items.first { $0.action == #selector(commitAndPush) }?.title = title
+            commitMenuButton.toolTip = publishesBranch ? L("Commit and Publish (⌘⇧↩), Amend") : L("Commit and Push (⌘⇧↩), Amend")
+        }
+    }
+
+    /// Commit ▾ > Commit and Push（⌘⇧↩）: コミットできたら push する（上流がなければ Publish のシートを出す）。
     @objc private func commitAndPush() { commit(thenPush: true) }
 
     func commitAndPushFromMenu() { if canCommit { commitAndPush() } }

@@ -110,29 +110,92 @@ export async function pullCurrent(backend: RepositoryBackend, undo: UndoLog): Pr
 }
 
 /**
- * 現在のブランチを push する。upstream があればそこへ、無ければ remote（1 つだけなら、それか origin）へ同じ名前で push し、
- * upstream に設定する。送り先を決められなければ no-remote
+ * 現在のブランチを upstream へ push する。upstream が無い（リモートで消えたものも）なら unpublished を返す。
+ * 初めて送るときは送り先を選んでから publishBranch で送る
  */
 export async function pushCurrent(
   backend: RepositoryBackend,
   opts: { force?: boolean } = {},
-): Promise<{ remote: string; branch: string } | 'no-remote' | 'detached'> {
+): Promise<{ remote: string; branch: string } | 'unpublished' | 'detached'> {
   const branch = (await backend.head()).branch;
   if (!branch) {
     return 'detached';
   }
+  const target = await pushTarget(backend, branch);
+  if (!target) {
+    return 'unpublished';
+  }
+  await backend.push(target.remote, shortName(branch), target.branch, { force: opts.force });
+  return target;
+}
+
+/** ローカルブランチ（`refs/heads/...`）の upstream のリモートとそこでの名前。upstream が無いか消えていれば undefined */
+export async function pushTarget(
+  backend: RepositoryBackend,
+  branch: string,
+): Promise<{ remote: string; branch: string } | undefined> {
+  const [ref] = (await backend.refs([branch])).filter((r) => r.name === branch);
+  if (!ref?.upstream || ref.gone) {
+    return undefined;
+  }
+  return splitRemoteRef(ref.upstream, (await backend.remotes()).map((r) => r.name));
+}
+
+/**
+ * 初めて送るブランチ（`refs/heads/...`）の送り先の候補。git の push と同じく branch.<name>.pushRemote・remote.pushDefault
+ * の順で、無ければリモートが 1 つならそれ、いくつもあれば origin。preferred は候補に無ければ undefined
+ */
+export async function publishChoices(
+  backend: RepositoryBackend,
+  branch: string,
+): Promise<{ remotes: string[]; preferred: string | undefined }> {
   const name = shortName(branch);
-  const remotes = (await backend.remotes()).map((r) => r.name);
+  const [remotes, pushRemote, pushDefault] = await Promise.all([
+    backend.remotes().then((rs) => rs.map((r) => r.name)),
+    backend.config(`branch.${name}.pushRemote`),
+    backend.config('remote.pushDefault'),
+  ]);
+  const preferred = [pushRemote, pushDefault, remotes.length === 1 ? remotes[0] : 'origin'].find(
+    (r) => r !== undefined && remotes.includes(r),
+  );
+  return { remotes, preferred };
+}
+
+/** ブランチ（`refs/heads/...`）を remote の remoteBranch へ push し、それを upstream にする */
+export async function publishBranch(
+  backend: RepositoryBackend,
+  branch: string,
+  remote: string,
+  remoteBranch: string,
+): Promise<void> {
+  await backend.push(remote, shortName(branch), remoteBranch, { setUpstream: true });
+}
+
+/**
+ * チェックアウトしていないブランチ（`refs/heads/...`）を upstream まで fast-forward する（最後の Fetch の時点）。
+ * チェックアウト中なら checked-out（Pull を使う）、分かれていれば diverged
+ */
+export async function fastForwardBranch(
+  backend: RepositoryBackend,
+  undo: UndoLog,
+  branch: string,
+): Promise<OperationResult | 'no-upstream' | 'checked-out' | 'diverged'> {
   const upstream = await upstreamOf(backend, branch);
-  const split = upstream ? splitRemoteRef(upstream, remotes) : undefined;
-  if (split) {
-    await backend.push(split.remote, name, split.branch, { force: opts.force });
-    return { remote: split.remote, branch: split.branch };
+  if (!upstream) {
+    return 'no-upstream';
   }
-  const remote = remotes.length === 1 ? remotes[0] : remotes.find((r) => r === 'origin');
-  if (!remote) {
-    return 'no-remote';
+  const plan = await planUpdate(backend, upstream, branch);
+  if (plan.kind === 'up-to-date') {
+    return 'up-to-date';
   }
-  await backend.push(remote, name, name, { force: opts.force, setUpstream: true });
-  return { remote, branch: name };
+  if (plan.checkedOut) {
+    return 'checked-out';
+  }
+  if (plan.kind === 'diverged') {
+    return 'diverged';
+  }
+  return undo.record(`Fast-forward ${shortName(branch)}`, [branch], 'keep', async () => {
+    await backend.fastForward(branch, plan.sourceOid, plan.targetOid);
+    return 'done' as const;
+  });
 }

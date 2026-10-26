@@ -285,7 +285,7 @@ final class Actions {
         perform(command)
     }
 
-    /// ブランチ（nil なら今のブランチ）を上流に push する。上流がなければ origin に同じ名前で作る。
+    /// ブランチ（nil なら今のブランチ）を上流に push する。上流がなければ、送り先を選ぶ Publish のシートを出す。
     func push(branch: String? = nil, force: Bool = false) {
         let repository = self.repository
         Task {
@@ -307,8 +307,7 @@ final class Actions {
                 perform(["op": "push", "remote": remote, "branch": branch, "remoteBranch": remoteBranch,
                          "force": force, "setUpstream": false])
             } else {
-                perform(["op": "push", "remote": "origin", "branch": branch, "remoteBranch": branch,
-                         "force": force, "setUpstream": true])
+                publishWithConfirmation(branch: branch)
             }
         }
     }

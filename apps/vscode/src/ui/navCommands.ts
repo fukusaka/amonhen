@@ -2,11 +2,12 @@
 import * as vscode from 'vscode';
 import { GitError } from '../git/exec.ts';
 import type { RepositoryManager } from '../state/manager.ts';
-import { mergeInto, rebaseOnto, shortName } from '../state/operations.ts';
+import { fastForwardBranch, mergeInto, pushTarget, rebaseOnto, shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
 import { runAction } from './dragDrop.ts';
 import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
+import { publish } from './syncCommands.ts';
 
 /** ブランチ・リモートブランチ・タグのノードから ref を取り出す */
 function refOf(node: Node | undefined): string | undefined {
@@ -40,6 +41,32 @@ export function registerNavCommands(manager: RepositoryManager): vscode.Disposab
       });
     }),
     command('amonhen.nav.delete', (repo, ref) => deleteBranch(repo, ref)),
+    // チェックアウトしていないブランチを upstream と合わせる（最後の Fetch の時点）
+    command('amonhen.nav.fastForward', async (repo, ref) => {
+      await runAction(repo, {
+        label: `$(arrow-down) Fast-Forward ${shortName(ref)}`,
+        run: async () => {
+          const result = await fastForwardBranch(repo.backend, repo.undo, ref);
+          if (result === 'no-upstream') throw new Error(`${shortName(ref)} に upstream がありません`);
+          if (result === 'checked-out') throw new Error(`${shortName(ref)} はチェックアウト中です。Pull で取り込んでください`);
+          if (result === 'diverged')
+            throw new Error(`${shortName(ref)} は upstream と分かれています。チェックアウトして merge か rebase をしてください`);
+          return result;
+        },
+      });
+    }),
+    command('amonhen.nav.push', async (repo, ref) => {
+      await runAction(repo, {
+        label: `$(repo-push) Push ${shortName(ref)}`,
+        run: async () => {
+          const target = await pushTarget(repo.backend, ref);
+          if (!target) throw new Error(`${shortName(ref)} に upstream がありません。Publish で送ってください`);
+          await repo.backend.push(target.remote, shortName(ref), target.branch);
+          return 'pushed';
+        },
+      });
+    }),
+    command('amonhen.nav.publish', (repo, ref) => publish(repo, ref)),
   );
 }
 

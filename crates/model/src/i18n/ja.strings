@@ -34,6 +34,12 @@
 "A merge or rebase is in progress. Finish or abort it first" = "merge や rebase の途中です。先に終わらせるか中止してください";
 "Can’t read the command: {e}" = "命令を読めない: {e}";
 "No operation in progress" = "途中の操作がない";
+"{branch} has no upstream" = "{branch} には上流がありません";
+"{branch} is checked out here; Pull it instead" = "{branch} はここでチェックアウトしています。Pull で取り込んでください";
+"{branch} is checked out in the worktree {path}; update it there" = "{branch} は worktree {path} でチェックアウトしています。そちらで取り込んでください";
+"{upstream} not found (Fetch first)" = "{upstream} が見つかりません（先に Fetch してください）";
+"{branch} is already the same as {upstream}" = "{branch} はもう {upstream} と同じです";
+"{branch} and {upstream} have diverged; check out {branch} to merge or rebase" = "{branch} と {upstream} は分かれています。{branch} をチェックアウトして merge か rebase をしてください";
 "{name} not found" = "{name} がない";
 "The stash has no commit" = "stash のコミットがない";
 "Some commits are outside the editable range (not reachable from HEAD, or before a merge)" = "編集できる範囲の外のコミットがあります（HEAD から辿れないか、merge より前）";
