@@ -38,6 +38,9 @@ becomes the GitHub Release notes.
   with their values, PATH-like ones place by place, and lets you check more to pass to git and ssh. A change applies at
   once, to the shared daemon too, and `HOMEBREW_*` is no longer taken unless checked. `AMONHEN_PASS_ENV` does the same
   for the CLI and the extension.
+- The git chosen in Settings > Git > Programs is kept in `~/.config/amonhen/settings.json`, so the CLI, the shared
+  daemon and the VSCode extension on the Mac use it too. If it isn't there, operations stop with an error instead of
+  running the PATH's git.
 - In Keys and Values, the column you can write shows plain text, with a field outline only on hover or for the one
   selected row.
 - Push reads Publish for a branch without an upstream, and asks which remote to create it on (following
@@ -549,6 +552,8 @@ First release.
 
 - The shared daemon runs the extension's git and ssh with the extension's environment (`PATH`, the SSH agent,
   `GIT_*`), even when the app started the daemon.
+- The extension runs the git chosen for the machine in Amon Hen's settings (`~/.config/amonhen/settings.json`), and
+  VSCode's `git.path` only when none is chosen; a chosen git that isn't there stops commands with an error.
 - Push no longer sends a branch without an upstream to origin by itself: the nav shows Publish Branch, which asks
   for the remote (following `branch.<name>.pushRemote` and `remote.pushDefault`) and the name there.
 
