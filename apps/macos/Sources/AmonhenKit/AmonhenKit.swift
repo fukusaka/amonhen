@@ -412,7 +412,35 @@ public enum Engines {
     }
 }
 
+/// git と ssh に渡す環境変数の決まり（コアと共通。`amonhen_model::process::ClientEnv`）。
+public enum PassedEnvironment {
+    /// git と ssh がいつも使うので、いつも渡すか（PATH・SSH の agent・`GIT_*` など）。
+    public static func always(_ name: String) -> Bool {
+        amonhen_env_always(name)
+    }
+
+    /// いつも渡す名前（`GIT_*` は `GIT_*` と書く。設定画面に出す）。
+    public static var alwaysNames: [String] {
+        guard let out = amonhen_env_always_names() else { return [] }
+        defer { amonhen_string_free(out) }
+        return String(cString: out).split(separator: "\n").map(String.init)
+    }
+
+    /// 渡さない理由（足しても断る）。渡してよければ nil。
+    public static func refusal(_ name: String) -> String? {
+        guard let out = amonhen_env_refusal(name) else { return nil }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
+}
+
 public enum SharedDaemon {
+    /// このプロセスの環境が変わったとき（設定・シェルの読み直し）に、今のつながりに送り直す。daemon は、この先の
+    /// git と ssh をその環境で動かす（つなぎ直さない）。通信するので裏のスレッドで呼ぶ。
+    public static func updateEnvironment() {
+        amonhen_update_environment()
+    }
+
     /// 様子（`amonhen daemon status --json` と同じ）。
     public struct Status: Decodable, Sendable {
         public struct Repo: Decodable, Sendable, Identifiable, Hashable {

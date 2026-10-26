@@ -1,3 +1,4 @@
+import AmonhenKit
 import Foundation
 
 /// Finder や Dock から起動したアプリは、ターミナルの環境を引き継がない（launchd の素の環境: PATH は
@@ -6,9 +7,13 @@ import Foundation
 /// fetch・pull・push がアプリからは通らない。起動時にログインシェルを一度動かして環境を読み、git・daemon・gh に
 /// 渡す（VSCode などと同じやり方）。
 enum ShellEnvironment {
-    /// 取り込む変数。PATH はシェルのものを前に足し、残りはシェルのものがあれば置き換える。
-    nonisolated private static let names: Set<String> = ["PATH", "SSH_AUTH_SOCK", "SSH_AGENT_PID", "XDG_CONFIG_HOME", "XDG_DATA_HOME"]
-    nonisolated private static let prefixes = ["GIT_", "HOMEBREW_"]
+    /// 取り込む変数は、git と ssh がいつも使うもの（コアの決まり。PATH・SSH の agent・`GIT_*` など）と、設定で
+    /// 足したもの。PATH はシェルのものを前に足し、残りはシェルのものがあれば置き換える。
+    /// 設定で足した名前（`Settings.addedEnvironmentNames`。渡せないものは除く）。
+    nonisolated(unsafe) private static var added: Set<String> = []
+    /// シェルにないので、このプロセスの環境から外した「いつも渡す」変数（起動したときに親から引き継いだもの）。
+    /// ログインシェルを使わなくなったら、起動したときの値に戻す。
+    nonisolated(unsafe) private static var removed: [String] = []
     /// ログインの間だけ使える変数（agent のソケットはログインのたびに変わる）。前回の結果からは、ソケットが今も
     /// あるときだけ使う。
     nonisolated private static let session = ["SSH_AUTH_SOCK", "SSH_AGENT_PID"]
@@ -20,6 +25,10 @@ enum ShellEnvironment {
     /// このログインの SSH の agent（起動したときの `SSH_AUTH_SOCK`）。コアが起動する ssh・git の `SSH_AUTH_SOCK` が
     /// 死んでいたときに、代わりに渡す。
     static var launchAgent: String? { launch["SSH_AUTH_SOCK"] }
+    /// 起動したときの環境（設定画面の表に出す。ログインシェルを使わないとき）。
+    static var launchEnvironment: [String: String] { launch }
+    /// ログインシェルから最後に読んだ変数すべて（設定画面の表で、渡すものを選ぶ）。保存はしない。
+    nonisolated(unsafe) private(set) static var shellValues: [String: String] = [:]
 
     /// 取り込んだ変数の名前（`--print-environment` に出す）。取り込まなかったときは空。
     nonisolated(unsafe) private(set) static var imported: [String] = []
@@ -42,13 +51,58 @@ enum ShellEnvironment {
     /// 隔離の確認（`dispatch_assert_queue`）に落ちて、キャッシュのある 2 回目以降の起動で必ずクラッシュしていた。
     static func `import`() {
         launch = ProcessInfo.processInfo.environment
+        useSettings()
         guard isEnabled else { return }
-        if let cached = UserDefaults.standard.dictionary(forKey: cacheKey) as? [String: String], !cached.isEmpty {
-            apply(cached.filter { !session.contains($0.key) || isSocket(cached["SSH_AUTH_SOCK"]) })
+        if let cached = remembered() {
+            apply(cached)
             Task.detached(priority: .utility) { if let fresh = read() { apply(fresh) } }
         } else if let fresh = read() {
             apply(fresh)
         }
+    }
+
+    /// 前回読んだシェルの環境のうち、今の設定で取り込むもの（agent は、ソケットが今もあるときだけ）。
+    private static func remembered() -> [String: String]? {
+        guard let cached = UserDefaults.standard.dictionary(forKey: cacheKey) as? [String: String], !cached.isEmpty else {
+            return nil
+        }
+        return cached.filter { takes($0.key) && (!session.contains($0.key) || isSocket(cached["SSH_AUTH_SOCK"])) }
+    }
+
+    /// 設定で足した名前を `AMONHEN_PASS_ENV` に置く（コアが渡す名前を決め、共有の daemon にも伝わる）。
+    private static func useSettings() {
+        added = Set(Settings.addedEnvironmentNameList.filter { PassedEnvironment.refusal($0) == nil })
+        if added.isEmpty {
+            unsetenv("AMONHEN_PASS_ENV")
+        } else {
+            setenv("AMONHEN_PASS_ENV", added.sorted().joined(separator: ","), 1)
+        }
+    }
+
+    /// 設定（ログインシェルを使うか・足した名前）を変えたときに、再起動せずに効かせる。取り込んだ変数を起動した
+    /// ときの値に戻し、設定に従って取り込み直す（前回の結果をすぐ使い、シェルは裏で読み直す）。共有の daemon への
+    /// 今のつながりにも送る。
+    static func refresh() {
+        for name in imported + removed where !name.hasPrefix("AMONHEN_") {
+            if let value = launch[name] { setenv(name, value, 1) } else { unsetenv(name) }
+        }
+        removed = []
+        useSettings()
+        guard isEnabled else {
+            imported = []
+            values = [:]
+            DispatchQueue.main.async { NotificationCenter.default.post(name: didChange, object: nil) }
+            DispatchQueue.global(qos: .utility).async { SharedDaemon.updateEnvironment() }
+            return
+        }
+        if let cached = remembered() { apply(cached) }
+        reload()
+    }
+
+    /// シェルの環境から取り込むか: git と ssh がいつも使うものと、設定で足したもの。`AMONHEN_*` はこのアプリが
+    /// 決めるので取り込まない。
+    nonisolated private static func takes(_ name: String) -> Bool {
+        !name.hasPrefix("AMONHEN_") && (PassedEnvironment.always(name) || added.contains(name))
     }
 
     /// 設定で切れる（既定は取り込む）。
@@ -75,14 +129,17 @@ enum ShellEnvironment {
         }
         lastRead = Date()
         var values: [String: String] = [:]
+        var all: [String: String] = [:]
         for chunk in output.split(separator: "\0", omittingEmptySubsequences: true) {
             guard let eq = chunk.firstIndex(of: "=") else { continue }
             // rc が何か印字していれば、最初の項目の頭に混ざる。最後の行だけを名前にする。
             let key = String(chunk[..<eq]).split(separator: "\n").last.map(String.init) ?? ""
             let value = String(chunk[chunk.index(after: eq)...])
-            guard Self.names.contains(key) || prefixes.contains(where: { key.hasPrefix($0) }), !value.isEmpty else { continue }
+            all[key] = value
+            guard takes(key), !value.isEmpty else { continue }
             values[key] = value
         }
+        shellValues = all
         UserDefaults.standard.set(values, forKey: cacheKey)
         return values
     }
@@ -103,9 +160,20 @@ enum ShellEnvironment {
             }
             names.append(key)
         }
+        // シェルにない「いつも渡す」変数は、起動したときに親（端末・ほかのアプリ）から引き継いだもの。渡すと、表に
+        // 出ないものが git に渡る（Claude Code から起動すると `GIT_EDITOR=true` など）ので外す。PATH と agent は残す
+        // （PATH はシェルのものを前に足してあり、agent はログインのもの）。`AMONHEN_*` はこのアプリが決める。
+        for key in current.keys
+        where values[key] == nil && key != "PATH" && key != "SSH_AUTH_SOCK" && !key.hasPrefix("AMONHEN_")
+            && PassedEnvironment.always(key) {
+            unsetenv(key)
+            if !removed.contains(key) { removed.append(key) }
+        }
         imported = names.sorted()
         Self.values = values
         DispatchQueue.main.async { NotificationCenter.default.post(name: didChange, object: nil) }
+        // 共有の daemon への今のつながりにも送る（daemon が動かす git と ssh も、つなぎ直さずに新しい環境になる）。
+        DispatchQueue.global(qos: .utility).async { SharedDaemon.updateEnvironment() }
     }
 
     /// `path` がソケットか（リンクの先を見る。1Password の agent は `~/.1password/agent.sock` のリンク）。
@@ -115,11 +183,25 @@ enum ShellEnvironment {
         return stat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFSOCK
     }
 
+    /// ログインシェルを動かす環境: 端末で新しいウィンドウを開くときと同じく、利用者とログインのもの（`HOME`・`USER`・
+    /// 言語・`TMPDIR`・launchd の `SSH_AUTH_SOCK` など）だけを渡し、PATH は素にする。読みたいのは利用者のシェルが決める
+    /// 変数で、アプリを何から起動したかで変わってはいけない。起動したときの環境をそのまま渡すと、端末や別のアプリから
+    /// 起動したときに、その親の変数（Claude Code の `AI_AGENT` など）がシェルの変数として混ざり、`SHLVL` も引き継いで
+    /// `SHLVL` が 1 のときだけ PATH を組み立てる rc では PATH が組み立てられず、端末と違う git（/usr/bin の Apple の git）
+    /// になっていた。
+    nonisolated static func shellEnvironment(_ launch: [String: String]) -> [String: String] {
+        let kept = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "__CF_USER_TEXT_ENCODING",
+                    "SSH_AUTH_SOCK"]
+        var environment = launch.filter { kept.contains($0.key) }
+        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        return environment
+    }
+
     nonisolated private static func run(_ shell: String, _ arguments: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = arguments
-        if !launch.isEmpty { process.environment = launch }
+        if !launch.isEmpty { process.environment = shellEnvironment(launch) }
         process.standardInput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         let out = Pipe()

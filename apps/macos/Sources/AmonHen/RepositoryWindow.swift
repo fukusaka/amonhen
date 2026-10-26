@@ -1065,9 +1065,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             let name = AppDelegate.option("--remote-sheet").flatMap { $0.hasPrefix("-") ? nil : $0 }
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in remoteAction(name, name == nil ? .add : .edit) }
         }
-        // --app-settings で、アプリの Settings ウィンドウ（Git のタブ）を開く（見た目の確認用）。
-        if CommandLine.arguments.contains("--app-settings") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { SettingsWindowController.shared.show() }
+        // --app-settings で、アプリの Settings ウィンドウ（--app-settings-tab NAME でそのタブ。名前は英語の見出し）を開く
+        // （見た目の確認用。--snapshot なら、そのウィンドウを撮る）。
+        let appSettings = CommandLine.arguments.contains("--app-settings")
+        if appSettings {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                SettingsWindowController.shared.show(tab: AppDelegate.option("--app-settings-tab").map { L($0) })
+            }
         }
         // --blame PATH・--file-history PATH で、そのファイルの blame・履歴を開く（見た目の確認用）。
         if let path = AppDelegate.option("--blame") { openBlame(path: path, rev: nil) }
@@ -1100,9 +1104,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             if let mergePath {
                 MergeEditorWindowController.show(path: mergePath, repository: repository, actions: actions)
             }
-            let delay = query != nil ? 3.5 : wait || mergePath != nil ? 1.5 : 0.5
+            let delay = query != nil ? 3.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
-                let rep = mergePath != nil
+                let rep = appSettings ? SettingsWindowController.shared.snapshot()
+                    : mergePath != nil
                     ? MergeEditorWindowController.snapshot()
                     : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays() + stashes.detail.overlays() + reflog.detail.overlays())
                 try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))

@@ -1310,6 +1310,36 @@ char *amonhen_engines_dir(void);
 char *amonhen_development_engine(void);
 
 /**
+ * 環境変数 `name` を、git と ssh がいつも使うものとして、いつも渡すか（`amonhen_model::process::always_passed`）。
+ * 設定の「環境変数」の表で、外せない行にする。
+ *
+ * # Safety
+ * `name` は NUL 終端の UTF-8 であること。
+ */
+bool amonhen_env_always(const char *name);
+
+/**
+ * git と ssh にいつも渡す名前を改行で区切って（設定の「環境変数」に出す。`GIT_*` は `GIT_*` と書き、このアプリが
+ * 決める `AMONHEN_*` は除く）。`amonhen_string_free` で解放する。
+ */
+char *amonhen_env_always_names(void);
+
+/**
+ * 環境変数 `name` を渡さない理由（足しても断る）。渡してよければ NULL。`amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `name` は NUL 終端の UTF-8 であること。
+ */
+char *amonhen_env_refusal(const char *name);
+
+/**
+ * このプロセスの環境が変わったとき（設定・シェルの読み直し）に、共有の daemon への今のつながりに送り直す
+ * （`amonhen_remote::local::update_environment`。つなぎ直さずに、この先の git・ssh に効く）。通信するので裏の
+ * スレッドで呼ぶ。
+ */
+void amonhen_update_environment(void);
+
+/**
  * このログインの SSH の agent のソケット（アプリが起動したときの `SSH_AUTH_SOCK`）。コアが起動する ssh・git に渡す
  * `SSH_AUTH_SOCK` が死んでいれば（前回の起動で読んだシェルの環境が古いなど）、代わりにこれを渡す。起動したときに 1 回。
  *

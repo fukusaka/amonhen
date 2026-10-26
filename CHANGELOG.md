@@ -29,6 +29,10 @@ becomes the GitHub Release notes.
 
 - Whether commit signatures in an SSH host's repositories are verified with this Mac's keys or the host's is chosen
   per host, in Settings > SSH Hosts (hosts without a choice keep the previous setting).
+- Settings > Git > Environment Variables (it was Performance > Terminal Environment) shows the login shell's variables
+  with their values, PATH-like ones place by place, and lets you check more to pass to git and ssh. A change applies at
+  once, to the shared daemon too, and `HOMEBREW_*` is no longer taken unless checked. `AMONHEN_PASS_ENV` does the same
+  for the CLI and the extension.
 - In Keys and Values, the column you can write shows plain text, with a field outline only on hover or for the one
   selected row.
 - Push reads Publish for a branch without an upstream, and asks which remote to create it on (following
@@ -36,6 +40,9 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Launched from a terminal or another app, the app read the login shell's PATH as a nested shell, so a shell set up
+  to build PATH only at the top level gave the system's git instead of the one a terminal uses. Variables git uses that
+  the app inherited from what launched it (`GIT_EDITOR`, for one) no longer reach git unless the shell sets them.
 - Dropping a branch on one checked out in another worktree no longer fast-forwards it behind that worktree's back;
   the menu offers to open the worktree instead.
 

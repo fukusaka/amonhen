@@ -314,7 +314,7 @@ private func configFile(_ entry: ConfigEntry) -> String {
 
 /// 表のページ（リモート・git config）に、ほかのページのグループ化した Form と同じ地を敷く。Form の地は素材
 /// （単色では同じにならない）なので、空の Form を後ろに置く。
-private struct GroupedPage<Content: View>: View {
+struct GroupedPage<Content: View>: View {
     @ViewBuilder let content: Content
     var body: some View {
         ZStack {
@@ -1158,20 +1158,22 @@ private struct PullMethodRow: View {
 
 /// 左の一覧の項目。組はなく、よく変えるものを先に、たまに見る 2 つを最後に。
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case author, commits, operations, branches, workingCopy, remotes, hooks, programs, config
+    case author, commits, operations, branches, workingCopy, remotes, hooks, programs, environment, config
     var id: String { rawValue }
 
-    /// その段にあるページ。プログラムはすべてのリポジトリの段（Settings > Git）だけ、リポジトリにしかないものはこのリポジトリの段だけ。
+    /// その段にあるページ。プログラムと環境変数はすべてのリポジトリの段（Settings > Git。この Mac のもの）だけ、リポジトリに
+    /// しかないものはこのリポジトリの段だけ。
     static func cases(for level: RepositorySettingsModel.Level) -> [SettingsPage] {
         switch level {
         case .repository: [.author, .commits, .operations, .branches, .workingCopy, .remotes, .hooks, .config]
-        case .allRepositories: [.author, .commits, .operations, .workingCopy, .programs, .config]
+        case .allRepositories: [.author, .commits, .operations, .workingCopy, .programs, .environment, .config]
         }
     }
 
     var title: String {
         switch self {
         case .programs: L("Programs")
+        case .environment: L("Environment Variables")
         case .author: L("Author and Signing")
         case .commits: L("Commits")
         case .operations: L("Operations")
@@ -1892,6 +1894,7 @@ struct SettingsPageContent: View {
     var body: some View {
         switch page {
         case .programs: ProgramsPage(model: model)
+        case .environment: EnvironmentPage(model: model)
         case .author: AuthorSigningPage(model: model)
         case .commits: CommitsPage(model: model)
         case .operations: OperationsPage(model: model)
