@@ -11,6 +11,9 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Repository Settings rows have Set for All Repositories (context menu and the ⓘ popover): the value goes to
+  `git config --global` and the repository's override is removed. In git config's Levels view, the all-repositories
+  column can be edited from a repository's page too; ⌘Z undoes both.
 - Every change in Repository Settings and Settings > Git can be undone and redone with ⌘Z / ⇧⌘Z while the page is
   shown, apart from the repository's Undo (⌥⌘Z).
 - A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last
