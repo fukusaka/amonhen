@@ -1149,6 +1149,20 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 add("Rebase \(current) onto \(name)") { actions.perform(["op": "rebase", "onto": name]) }
                 menu.addItem(.separator())
             }
+            // 上流と合わせる（最後の Fetch の時点）。チェックアウト中のブランチはツールバーの Pull・Push で。分かれていれば
+            // チェックアウトして merge か rebase をする（上の Checkout）。
+            if !RepositoryWindow.isPublished(item) {
+                add("Publish \(name)…") { actions.publishWithConfirmation(branch: name) }
+                menu.addItem(.separator())
+            } else if name != headBranch, let upstream = item.detail, (item.ahead == 0) != (item.behind == 0) {
+                if item.ahead > 0 {
+                    add("Push \(name) to \(upstream)…") { actions.pushWithConfirmation(branch: name) }
+                } else if otherWorktree(using: name) == nil {
+                    // ほかの worktree でチェックアウト中なら動かせない（その作業ツリーとずれる）。上の Open Worktree から。
+                    add("Fast-Forward \(name) to \(upstream)") { actions.perform(["op": "fastForward", "branch": name]) }
+                }
+                menu.addItem(.separator())
+            }
             // お気に入りとアーカイブは git の設定に書く（ブランチを消せば一緒に消え、名前を変えればついていく）。
             let pinned = pinnedOrder.contains(name)
             add(pinned ? L("Remove from Favorites") : L("Add to Favorites")) { [weak self] in
