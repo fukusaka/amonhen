@@ -129,7 +129,7 @@ Settings… holds what Amon Hen itself decides, and the git settings of each mac
 | --- | --- |
 | General | Open the previous repositories at launch, add opened repositories to bookmarks, default for opening repositories (tab / window), fetch automatically (one interval for every open repository), choice of external editor (done: Automatic picks the first code editor installed, or the default text editor; or any application), terminal and diff tool |
 | Git | The machines' git settings: the Repository Settings screen (chapter 4) opened at the "all repositories" level, so it has the same list of pages and the same rows, and writes `--global` on that machine. Pages: Author and Signing; Commits (the template choice, and under it the shared template library: the names with + / − and Edit… for the text in a sheet); Operations; Working Copy (Ignore everywhere, `core.excludesFile`, in place of the repository's exclude); Programs (git, gpg, ssh-keygen and gpgsm, each chosen the same way: Automatic, the first on the PATH, shown with where it comes from and its version; the ones found, as Homebrew 2.56.0 or Apple 2.54.0; Other… for a path. git goes to the engine as `AMONHEN_GIT`, the others to `gpg.program`, `gpg.ssh.program` and `gpg.x509.program`); Keys and Values. Pages that only a repository has (Branches, Remotes, Hooks · LFS) are not listed. Each row's source reads git's default or all repositories, with ↩︎ and ⓘ as on a repository's page. Under the hood the level holds an empty repository of the app's own and ignores its local values |
-| SSH Hosts | The SSH hosts Amon Hen knows, with + / − to add one (from `~/.ssh/config` and known_hosts, or typed) or forget one, and for the selected host: Connection (the host, its state, Check Connection), Engine, Signature verification, Folders to scan, and the host's git settings for all repositories there (the same pages as Git, writing the host's `--global`). See "SSH Hosts" below |
+| SSH Hosts | The SSH hosts Amon Hen knows, with + / − to add one (from `~/.ssh/config` and known_hosts, or typed) or forget one, and for the selected host its pages in a second list: Connection (the host, its state and Check Connection, the engine, signature verification, folders to scan) and the pages of Git for all repositories there (writing the host's `--global`). Three columns; see "SSH Hosts" below |
 | Accounts | GitHub: CI status and avatars in History, the branches and commits to read, and reading avatar URLs once. Later, accounts for GitHub, GitLab and others (see below), tokens in the keychain |
 | Appearance | Theme (system / light / dark), font and size for diffs and messages, History order, one-line display, row items, avatars and ancestor highlighting, graph colors |
 | Diff & Merge | Default unified / split, ignore whitespace, context lines, wrapping, tab width, default layout of the merge editor (see below), diff3, resolving unambiguous conflicts when the merge editor opens (done) |
@@ -139,49 +139,37 @@ Settings… holds what Amon Hen itself decides, and the git settings of each mac
 
 ### SSH Hosts
 
-One place for everything about an SSH host. A host is a machine, so what is decided here applies to every repository on it; nothing of this is on a repository's page (chapter 4). The tab is a list of hosts on the left and the selected host on the right:
+One place for everything about an SSH host. A host is a machine, so what is decided here applies to every repository on it; nothing of this is on a repository's page (chapter 4). Three columns: the hosts, the selected host's pages, and the selected page, so that each page holds as much as a page of Settings… > Git and nothing is cramped:
 
 ```
-Settings… > SSH Hosts
+Settings… > SSH Hosts                          (960 wide: 150 / 170 / 640)
 
-┌──────────────┬──────────────────────────────────────────────────────────────┐
-│ build-1      │ Connection                                                   │
-│ dev-2        │   Host           build-1  (from ~/.ssh/config)               │
-│              │   State          connected · amonhen 0.2.7 · git 2.34        │
-│              │                  [Check Connection]                          │
-│              │                                                              │
-│              │ Engine                                                       │
-│              │   Use            ( The one Amon Hen sent (0.2.7)        ⌄ )  │
-│              │                    ├ amonhen on the host's PATH (0.2.7)      │
-│              │                    ├ The one Amon Hen sent (0.2.7)           │
-│              │                    └ Other…                                  │
-│              │   Send the engine when the host has none that fits   (●)    │
-│              │                                                              │
-│              │ Signature verification                                       │
-│              │   Verify with    ( This Mac’s keys                      ⌄ )  │
-│              │                    └ The host’s keys                         │
-│              │                                                              │
-│              │ Folders to scan                                              │
-│              │   ~/src          3 levels                                    │
-│              │   ~/work         3 levels                          [+] [−]  │
-│              │                                                              │
-│              │ git on build-1 — all repositories there                      │
-│              │   Author and Signing · Commits · Operations · Working Copy · │
-│              │   Programs · Keys and Values                                 │
-│  [+]  [−]    │                                                              │
-└──────────────┴──────────────────────────────────────────────────────────────┘
+┌───────────┬──────────────┬──────────────────────────────────────────────┐
+│ build-1   │ Connection   │ Connection                                   │
+│ dev-2     │ Author and   │   Host     build-1   from ~/.ssh/config      │
+│ old-box · │   Signing    │   State    ● connected                       │
+│   unreach.│ Commits      │            amonhen 0.2.7 (sent) · git 2.34   │
+│           │ Operations   │            [Check Connection]                │
+│           │ Working Copy │                                              │
+│           │ Programs     │ Engine                                       │
+│           │ Keys and     │   Use      ( The one Amon Hen sent (0.2.7) ⌄)│
+│           │   Values     │   Send one when none fits            (●)     │
+│           │              │                                              │
+│           │              │ Signature verification                       │
+│           │              │   Verify with  ( This Mac’s keys          ⌄) │
+│           │              │                                              │
+│           │              │ Folders to scan                              │
+│           │              │   ~/src    3 levels                          │
+│ [+] [−]   │ git 2.34 ·   │   ~/work   3 levels                 [+] [−]  │
+│           │   build-1    │                                              │
+└───────────┴──────────────┴──────────────────────────────────────────────┘
 ```
 
-- **The list.** Every host Amon Hen knows: those in Places on the Repositories screen (a repository or a folder to scan there) and those a repository was opened on. + adds a host, choosing from `~/.ssh/config` and known_hosts or typing a name; − forgets one, which also removes its folders to scan and the bookmarks of its repositories, after a confirmation. A host that cannot be reached stays in the list with its state saying so.
-- **Connection.** The host as ssh knows it, whether Amon Hen can reach it, and what it found there (the engine and the git). Check Connection tries again and reports what failed (ssh, the engine, git).
-- **Engine.** Which `amonhen` runs there: the one on the host's PATH, the one Amon Hen sent, or a path; and whether to send one when none fits. `AMONHEN_REMOTE_ENGINE` and `AMONHEN_PUSH` keep overriding these.
-- **Signature verification.** With this Mac's keys (the default; this replaces the one switch for every host that Settings… had) or with the host's git and keys.
-- **Folders to scan.** The same list as under the host in Places; the two are one setting.
-- **git on the host.** The pages of Settings… > Git, opened for this host: they read and write the host's `--global` (the user's name, email, signing and key, with the keys collected on the host; the template file; pull, fetch, rebase and merge; line endings, the executable bit and the global excludes; the programs on the host; Keys and Values). This needs the engine to run on the host without a repository, so that Settings… reaches the host as soon as it opens, with no repository of the host open; until then the pages say which repository they are reading through.
+- **The hosts** (left). Every host Amon Hen knows: those in Places on the Repositories screen (a repository or a folder to scan there) and those a repository was opened on. + adds a host, choosing from `~/.ssh/config` and known_hosts or typing a name; − forgets one, which also removes its folders to scan and the bookmarks of its repositories, after a confirmation. A host that cannot be reached stays in the list, dimmed, with "unreachable" after its name.
+- **The pages** (middle). Connection first, then the same pages as Settings… > Git: Author and Signing, Commits, Operations, Working Copy, Programs, Keys and Values. Under the list, the git of this host (`git 2.34 · build-1`), as under a repository's Settings list.
+- **Connection.** The host as ssh knows it, whether Amon Hen can reach it, and what it found there (the engine and the git). Check Connection tries again and reports what failed (ssh, the engine, git). Engine: which `amonhen` runs there (the one on the host's PATH, the one Amon Hen sent, or a path) and whether to send one when none fits; `AMONHEN_REMOTE_ENGINE` and `AMONHEN_PUSH` keep overriding these. Signature verification: with this Mac's keys (the default; this replaces the one switch for every host that Settings… had) or with the host's git and keys. Folders to scan: the same list as under the host in Places; the two are one setting.
+- **The git pages.** The pages of Settings… > Git, opened for this host: the same rows, reading and writing the host's `--global`; a line at the top says so ("Applies to every repository on build-1 (its ~/.gitconfig). git in a terminal there follows these too."). The user's name, email, signing and key, with the keys collected on the host; the template file; pull, fetch, rebase and merge; line endings, the executable bit and the global excludes; the programs on the host; Keys and Values. This needs the engine to run on the host without a repository, so that Settings… reaches the host as soon as it opens, with no repository of the host open; until then the pages say which repository they are reading through.
 - **From elsewhere.** The host's entry in Places (Settings… on its context menu) and the line under a repository's Settings list (`git 2.34 · build-1`) open this tab with the host selected; they are shortcuts, not other screens.
-
-
-There is no Advanced tab: its items are in Performance (the daemon, the shell environment) and SSH Hosts (signature verification, per host). Two rows of the first Git tab go rather than move: the pull default (the Pull sheet always preselects Follow git's settings; how to pull is git's setting on the repository's Operations page, for this repository or for all) and the user-wide `rebase.updateRefs` (the same row on Operations, set for all repositories).
 
 ## 4. Repository settings (Settings in the sidebar's Workspace, ⌘;)
 
@@ -773,7 +761,7 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
   to date when a worktree commits or changes files.
 - [x] U20. Repository settings redone from the person using it (chapter 4). Done: the page in the sidebar's Workspace with its list of pages (Author and Signing, Commits, Operations, Branches, Working Copy, Remotes, Hooks · LFS, git config) and the git line under it, the rows with the value in effect, its source, ↩︎ and ⓘ, the default branch override (`amonhen.defaultBranch`), Pull and Fetch following git's settings, rows that only a terminal honors taken off the page, and Keys and Values, git config as the Xcode-style table (one row per key, a column per source, the local column editable, the Basic / Customized / All and Combined / Levels switches), and signing as one choice (No signing / OpenPGP / SSH / X.509) with the key chosen from those the core collects, and the template library in Settings… (on Git > Commits after U21), chosen on the Commits page (`amonhen.commitTemplate`) next to the repository's own template (`.git/amonhen/commit-template`, pointed to by `commit.template`, edited under the row) and a file, and Add to .gitignore on an untracked file's context menu in Working Copy, and the remotes sheet (name, fetch and push URLs, what the URL points to, a connection check) with the same actions on the sidebar's Remotes, and Hooks · LFS as tables with actions (an Enabled switch per hook, the selected hook's script under the table with Edit in <editor>, Create Hook…; Track Pattern… and Remove for LFS, with the count of files in LFS). This Mac's settings for all repositories are Settings… > Git (U21). What stage 7 still had, the SSH hosts' settings, is U22; Set for All Repositories on a row and editing the all-repositories column from a repository's page were dropped (4.4).
 - [x] U21. The Settings window in the shape of chapter 3: resizable, 960 points wide by default, every tab on one screen; the tabs General, Git (the machines), Accounts, Appearance, Diff & Merge, AI and Performance, no Advanced tab (Commit comes when it has rows). The message template library moves from Git to Commit, auto-fetch and bookmarking to General, GitHub to Accounts, the merge editor's auto-resolve to Diff & Merge, the daemon and the shell environment to Performance; the pull default and the user-wide `rebase.updateRefs` rows go (chapter 3). Done, with the Git tab as the Repository Settings screen at the all-repositories level (Author and Signing, Commits with the template library, Operations, Working Copy with Ignore everywhere, Programs, Keys and Values with its all-repositories column editable); the SSH hosts are U22.
-- [ ] U22. Settings… > SSH Hosts (chapter 3): the hosts with + / −, and for each its Connection (state and Check Connection), Engine, Signature verification (the one switch for every host moves here), Folders to scan (one setting with Places) and the host's git settings for all repositories there (the pages of Settings… > Git against the host's `--global`). Needs the engine to run on a host without a repository (`amonhen --stdio` with no path, serving config, version, programs and keys) and the shared daemon to connect with `ssh://host` alone.
+- [ ] U22. Settings… > SSH Hosts (chapter 3), three columns: the hosts with + / −; the selected host's pages, Connection (state and Check Connection, the engine, signature verification, which moves here from the one switch for every host, and the folders to scan, one setting with Places) and the pages of Settings… > Git for all repositories there (against the host's `--global`); the selected page. Needs the engine to run on a host without a repository (`amonhen --stdio` with no path, serving config, version, programs and keys) and the shared daemon to connect with `ssh://host` alone.
 
 ## Decisions
 
