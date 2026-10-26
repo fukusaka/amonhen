@@ -171,8 +171,19 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "openThroughDaemon") }
     }
 
-    /// 起動時にログインシェルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込むか（既定は取り込む。
-    /// `ShellEnvironment`）。
+    /// git と ssh にほかに渡す環境変数の名前（コンマ区切り。設定の「環境変数」の表で選ぶ。`AMONHEN_PASS_ENV`）。
+    static var addedEnvironmentNames: String {
+        get { UserDefaults.standard.string(forKey: "addedEnvironmentNames") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "addedEnvironmentNames") }
+    }
+
+    /// `addedEnvironmentNames` の名前の一覧。
+    nonisolated static var addedEnvironmentNameList: [String] {
+        (UserDefaults.standard.string(forKey: "addedEnvironmentNames") ?? "")
+            .split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+    }
+
+    /// ログインシェルの環境変数（PATH・SSH_AUTH_SOCK・GIT_* など）を使うか（既定は使う。`ShellEnvironment`）。
     static var importShellEnvironment: Bool {
         get { UserDefaults.standard.object(forKey: "importShellEnvironment") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "importShellEnvironment") }
@@ -199,6 +210,8 @@ enum Settings {
         } else {
             unsetenv("AMONHEN_GIT")
         }
+        // 共有の daemon への今のつながりにも送る（daemon が動かす git も、つなぎ直さずに替わる）。
+        DispatchQueue.global(qos: .utility).async { SharedDaemon.updateEnvironment() }
     }
 
     nonisolated(unsafe) private static var appliedGit = false
@@ -353,7 +366,6 @@ final class SettingsModel {
     var autoBookmark = Settings.autoBookmark { didSet { Settings.autoBookmark = autoBookmark } }
     var externalEditor = Settings.externalEditor ?? "" { didSet { Settings.externalEditor = externalEditor } }
     var openThroughDaemon = Settings.openThroughDaemon { didSet { Settings.openThroughDaemon = openThroughDaemon } }
-    var importShellEnvironment = Settings.importShellEnvironment { didSet { Settings.importShellEnvironment = importShellEnvironment } }
     var stackedCommitDiff = Settings.stackedCommitDiff { didSet { Settings.stackedCommitDiff = stackedCommitDiff } }
     var historyFileTree = Settings.historyFileTree { didSet { Settings.historyFileTree = historyFileTree } }
     var fileHistoryMerges = Settings.fileHistoryMerges { didSet { Settings.fileHistoryMerges = fileHistoryMerges } }
@@ -621,11 +633,6 @@ private struct PerformanceSettings: View {
             Section(L("Shared daemon")) {
                 Toggle(L("Open repositories through the shared daemon (SSH hosts too)"), isOn: $model.openThroughDaemon)
             }
-            Section(L("Terminal Environment")) {
-                Toggle(L("Take the login shell’s environment at launch"), isOn: $model.importShellEnvironment)
-                Note(L("Applies at the next launch."))
-                ShellEnvironmentView()
-            }
         }
         .formStyle(.grouped)
     }
@@ -731,52 +738,6 @@ private struct AISettings: View {
     }
 }
 
-/// 取り込んだ変数とその値。読み直すボタン付き（シェルの設定を変えたあとに）。
-private struct ShellEnvironmentView: View {
-    @State private var values = ShellEnvironment.values
-    @State private var shell = ShellEnvironment.shell
-    @State private var lastRead = ShellEnvironment.lastRead
-    @State private var reloading = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(status).font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                Button(L("Read Again")) {
-                    reloading = true
-                    ShellEnvironment.reload()
-                }
-                .disabled(reloading || !ShellEnvironment.isEnabled)
-            }
-            if let socket = values["SSH_AUTH_SOCK"] { agentStatus(socket) }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: ShellEnvironment.didChange)) { _ in
-            values = ShellEnvironment.values
-            shell = ShellEnvironment.shell
-            lastRead = ShellEnvironment.lastRead
-            reloading = false
-        }
-    }
-
-    /// SSH の agent のソケットがあるか。なければ、ssh・git に代わりに渡すもの（起動したときの agent）。
-    @ViewBuilder private func agentStatus(_ path: String) -> some View {
-        if ShellEnvironment.isSocket(path) {
-            Text(L("SSH agent found")).font(.caption).foregroundStyle(.secondary)
-        } else if let launch = ShellEnvironment.launchAgent, launch != path, ShellEnvironment.isSocket(launch) {
-            Text(L("No SSH agent here; ssh and git use %@", launch)).font(.caption).foregroundStyle(.orange)
-        } else {
-            Text(L("No SSH agent here, so keys that need a passphrase can’t be used")).font(.caption).foregroundStyle(.orange)
-        }
-    }
-
-    private var status: String {
-        if !ShellEnvironment.isEnabled { return L("Off") }
-        guard let lastRead else { return shell.isEmpty ? L("Not read yet") : L("Couldn’t read %@", shell) }
-        return L("Read from %@ at %@", shell, lastRead.formatted(date: .omitted, time: .shortened))
-    }
-}
-
 /// Settings ウィンドウ。上に項目の分類のタブを並べる（macOS 標準の形）。
 final class SettingsWindowController: NSWindowController {
     static let shared = SettingsWindowController()
@@ -828,5 +789,13 @@ final class SettingsWindowController: NSWindowController {
            let index = tabs.tabViewItems.firstIndex(where: { $0.label == tab }) {
             tabs.selectedTabViewItemIndex = index
         }
+    }
+
+    /// 出している画面を撮る（`--app-settings` と `--snapshot`。見た目の確認用）。
+    func snapshot() -> NSBitmapImageRep? {
+        guard let view = (window?.attachedSheet ?? window)?.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
     }
 }

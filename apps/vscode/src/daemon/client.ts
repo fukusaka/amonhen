@@ -285,12 +285,24 @@ async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
 /**
  * daemon に送る、この拡張の環境（`NAME=value` を NUL で区切ったもの）。共有の daemon は、このつながりで動かす
  * git・ssh をこの環境で動かす（先に起動したアプリの PATH・SSH の agent・`GIT_*` で動かさない）。受け取る名前は
- * daemon が決める（`amonhen_model::process::ClientEnv`）。ここでは git・ssh に関わるものだけに絞って送る
+ * daemon が決める（`amonhen_model::process::ClientEnv`）。ここでは git・ssh がいつも使うものと、`AMONHEN_PASS_ENV`
+ * で足したものだけに絞って送る
  */
 export function clientEnv(env: NodeJS.ProcessEnv = process.env, windows = process.platform === 'win32'): string {
-  const names = new Set(['PATH', 'AMONHEN_ASKPASS', 'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'XDG_CONFIG_HOME']);
   // Windows の環境変数の名前は大文字と小文字を区別しない（PATH は `Path` で入っている）
   const key = (k: string): string => (windows ? k.toUpperCase() : k);
+  const passEnv = Object.entries(env).find(([k]) => key(k) === 'AMONHEN_PASS_ENV')?.[1] ?? '';
+  const names = new Set([
+    'PATH',
+    'SSH_AUTH_SOCK',
+    'SSH_AGENT_PID',
+    'XDG_CONFIG_HOME',
+    'XDG_DATA_HOME',
+    'AMONHEN_ASKPASS',
+    'AMONHEN_GIT',
+    'AMONHEN_PASS_ENV',
+    ...passEnv.split(/[\s,]+/).filter((n) => n !== '').map(key),
+  ]);
   return Object.entries(env)
     .filter(([k, v]) => v !== undefined && !v.includes('\0') && (names.has(key(k)) || key(k).startsWith('GIT_')))
     .map(([k, v]) => `${k}=${v ?? ''}`)

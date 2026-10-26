@@ -2098,6 +2098,52 @@ pub extern "C" fn amonhen_development_engine() -> *mut c_char {
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// 環境変数 `name` を、git と ssh がいつも使うものとして、いつも渡すか（`amonhen_model::process::always_passed`）。
+/// 設定の「環境変数」の表で、外せない行にする。
+///
+/// # Safety
+/// `name` は NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_env_always(name: *const c_char) -> bool {
+    str_arg(name).is_ok_and(amonhen_model::process::always_passed)
+}
+
+/// git と ssh にいつも渡す名前を改行で区切って（設定の「環境変数」に出す。`GIT_*` は `GIT_*` と書き、このアプリが
+/// 決める `AMONHEN_*` は除く）。`amonhen_string_free` で解放する。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_env_always_names() -> *mut c_char {
+    let names: Vec<&str> = amonhen_model::process::ALWAYS_PASSED
+        .iter()
+        .copied()
+        .filter(|n| !n.starts_with("AMONHEN_"))
+        .chain(["GIT_*"])
+        .collect();
+    CString::new(names.join("\n"))
+        .unwrap_or_default()
+        .into_raw()
+}
+
+/// 環境変数 `name` を渡さない理由（足しても断る）。渡してよければ NULL。`amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `name` は NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_env_refusal(name: *const c_char) -> *mut c_char {
+    str_arg(name)
+        .ok()
+        .and_then(amonhen_model::process::env_refusal)
+        .and_then(|reason| CString::new(reason).ok())
+        .map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+/// このプロセスの環境が変わったとき（設定・シェルの読み直し）に、共有の daemon への今のつながりに送り直す
+/// （`amonhen_remote::local::update_environment`。つなぎ直さずに、この先の git・ssh に効く）。通信するので裏の
+/// スレッドで呼ぶ。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_update_environment() {
+    amonhen_remote::local::update_environment();
+}
+
 /// このログインの SSH の agent のソケット（アプリが起動したときの `SSH_AUTH_SOCK`）。コアが起動する ssh・git に渡す
 /// `SSH_AUTH_SOCK` が死んでいれば（前回の起動で読んだシェルの環境が古いなど）、代わりにこれを渡す。起動したときに 1 回。
 ///

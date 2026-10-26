@@ -156,7 +156,28 @@ pub fn connect(repo: &str, daemon: &str) -> Result<Arc<Connection>> {
     write_preamble(&mut duplex.writer, &opening(repo, &ClientEnv::current()))?;
     let conn = Connection::new(duplex.reader, std::io::BufWriter::new(duplex.writer));
     conn.mark_local();
+    let mut open = OPEN.lock().unwrap();
+    open.retain(|c| c.strong_count() > 0);
+    open.push(Arc::downgrade(&conn));
     Ok(conn)
+}
+
+/// このプロセスが共有の daemon に張っているつながり（`update_environment` で環境を送り直す）。
+static OPEN: std::sync::Mutex<Vec<std::sync::Weak<Connection>>> = std::sync::Mutex::new(Vec::new());
+
+/// このプロセスの環境が変わったとき（アプリの設定・シェルの読み直し）に、共有の daemon への今のつながりに送り直す。
+/// daemon は、この先の要求で動かす git・ssh をその環境で動かす（つなぎ直さなくてよい）。切れたつながりは飛ばす。
+pub fn update_environment() {
+    let env = ClientEnv::current().encode();
+    let open: Vec<Arc<Connection>> = OPEN
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(std::sync::Weak::upgrade)
+        .collect();
+    for conn in open.iter().filter(|c| c.closed().is_none()) {
+        let _: Result<()> = conn.call(&crate::wire::Request::Environment(env.clone()));
+    }
 }
 
 /// 共有の daemon につないだ通り道（最初に送るものはまだ送っていない）。daemon がいなければ `daemon` を起動してから。

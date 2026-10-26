@@ -465,7 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 引数で渡されたリポジトリ。
     private func repositoryPath() -> String? {
         var args = Array(CommandLine.arguments.dropFirst())
-        for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search", "--blame", "--file-history", "--measure-select"] {
+        for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search", "--blame", "--file-history", "--measure-select", "--app-settings-tab"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
         args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--stashes", "--reflog", "--log-scroll", "--show-latency", "--ssh-sheet"].contains($0) }
@@ -483,7 +483,7 @@ Askpass.install()
 if CommandLine.arguments.contains("--print-environment") {
     let env = ProcessInfo.processInfo.environment
     print("imported: \(ShellEnvironment.imported.joined(separator: " "))")
-    for key in ["PATH", "SSH_AUTH_SOCK", "AMONHEN_ASKPASS"] + env.keys.filter({ $0.hasPrefix("GIT_") }).sorted() {
+    for key in ["PATH", "SSH_AUTH_SOCK", "AMONHEN_ASKPASS", "AMONHEN_GIT", "AMONHEN_PASS_ENV"] + env.keys.filter({ $0.hasPrefix("GIT_") }).sorted() {
         print("\(key)=\(env[key] ?? "")")
     }
     exit(0)

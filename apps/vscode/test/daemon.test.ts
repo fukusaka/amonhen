@@ -230,4 +230,7 @@ test('sends the daemon only the environment git and ssh use', () => {
   // Windows では PATH が `Path` で入っている
   assert.equal(clientEnv({ Path: 'C:\\fe', HOME: 'x' }, true), 'Path=C:\\fe');
   assert.equal(clientEnv({ Path: 'C:\\fe' }, false), '');
+  // AMONHEN_PASS_ENV で足した名前も送る
+  const added = clientEnv({ PATH: '/bin', AMONHEN_PASS_ENV: 'GH_HOST, HTTPS_PROXY', GH_HOST: 'example.com', NO_PROXY: 'x' }, false);
+  assert.deepEqual(added.split('\0').sort(), ['AMONHEN_PASS_ENV=GH_HOST, HTTPS_PROXY', 'GH_HOST=example.com', 'PATH=/bin']);
 });
