@@ -483,7 +483,7 @@ Askpass.install()
 if CommandLine.arguments.contains("--print-environment") {
     let env = ProcessInfo.processInfo.environment
     print("imported: \(ShellEnvironment.imported.joined(separator: " "))")
-    for key in ["PATH", "SSH_AUTH_SOCK", "AMONHEN_ASKPASS"] + env.keys.filter({ $0.hasPrefix("GIT_") }).sorted() {
+    for key in ["PATH", "SSH_AUTH_SOCK", "AMONHEN_ASKPASS", "AMONHEN_GIT", "AMONHEN_PASS_ENV"] + env.keys.filter({ $0.hasPrefix("GIT_") }).sorted() {
         print("\(key)=\(env[key] ?? "")")
     }
     exit(0)

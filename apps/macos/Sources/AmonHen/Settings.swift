@@ -171,8 +171,19 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "openThroughDaemon") }
     }
 
-    /// 起動時にログインシェルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込むか（既定は取り込む。
-    /// `ShellEnvironment`）。
+    /// git と ssh にほかに渡す環境変数の名前（コンマ区切り。設定の「環境変数」の表で選ぶ。`AMONHEN_PASS_ENV`）。
+    static var addedEnvironmentNames: String {
+        get { UserDefaults.standard.string(forKey: "addedEnvironmentNames") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "addedEnvironmentNames") }
+    }
+
+    /// `addedEnvironmentNames` の名前の一覧。
+    nonisolated static var addedEnvironmentNameList: [String] {
+        (UserDefaults.standard.string(forKey: "addedEnvironmentNames") ?? "")
+            .split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+    }
+
+    /// ログインシェルの環境変数（PATH・SSH_AUTH_SOCK・GIT_* など）を使うか（既定は使う。`ShellEnvironment`）。
     static var importShellEnvironment: Bool {
         get { UserDefaults.standard.object(forKey: "importShellEnvironment") as? Bool ?? true }
         set { UserDefaults.standard.set(newValue, forKey: "importShellEnvironment") }
@@ -199,6 +210,8 @@ enum Settings {
         } else {
             unsetenv("AMONHEN_GIT")
         }
+        // 共有の daemon への今のつながりにも送る（daemon が動かす git も、つなぎ直さずに替わる）。
+        DispatchQueue.global(qos: .utility).async { SharedDaemon.updateEnvironment() }
     }
 
     nonisolated(unsafe) private static var appliedGit = false
