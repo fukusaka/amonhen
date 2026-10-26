@@ -98,8 +98,35 @@ impl ClientEnv {
     pub fn get(&self, name: &str) -> Option<&str> {
         self.vars
             .iter()
-            .find(|(k, _)| k == name)
+            .find(|(k, _)| client::same(k, name))
             .map(|(_, v)| v.as_str())
+    }
+}
+
+/// このスレッドの、つないだ FE の事情（`with_client_env` の環境と、`i18n::with` の言語）を写したもの。要求の中で
+/// `thread::scope` などに分けた処理で `run` すると、そこで起動する git・ssh にもその FE の環境を渡し、エラーの文も
+/// その FE の言語で作る（分けたスレッドは、どちらも引き継がない）。
+#[derive(Clone, Debug)]
+pub struct Carried {
+    env: Option<ClientEnv>,
+    lang: crate::i18n::Lang,
+}
+
+/// 今のスレッドの FE の事情を写す（分けるスレッドに渡して `Carried::run`）。
+pub fn carry() -> Carried {
+    Carried {
+        env: client::CURRENT.with(|c| c.borrow().clone()),
+        lang: crate::i18n::current(),
+    }
+}
+
+impl Carried {
+    /// `f` を、写したときの FE の環境と言語で動かす。
+    pub fn run<R>(&self, f: impl FnOnce() -> R) -> R {
+        crate::i18n::with(self.lang, || match &self.env {
+            Some(env) => with_client_env(env, f),
+            None => f(),
+        })
     }
 }
 
@@ -163,7 +190,24 @@ mod client {
     ];
 
     pub(super) fn passes(name: &str) -> bool {
+        // Windows の環境変数の名前は大文字と小文字を区別しない（PATH は `Path` で届く）。
+        let upper;
+        let name = if cfg!(windows) {
+            upper = name.to_ascii_uppercase();
+            upper.as_str()
+        } else {
+            name
+        };
         NAMES.contains(&name) || (name.starts_with("GIT_") && !NOT_GIT.contains(&name))
+    }
+
+    /// 同じ環境変数の名前か（Windows では大文字と小文字を区別しない）。
+    pub(super) fn same(a: &str, b: &str) -> bool {
+        if cfg!(windows) {
+            a.eq_ignore_ascii_case(b)
+        } else {
+            a == b
+        }
     }
 
     /// `with_client_env` の中なら、FE の値を渡し、daemon だけが持つ（FE が送っていない）ものは渡さない。PATH は、
@@ -174,7 +218,7 @@ mod client {
             for (k, _) in std::env::vars_os() {
                 if let Some(k) = k.to_str()
                     && passes(k)
-                    && k != "PATH"
+                    && !same(k, "PATH")
                     && env.get(k).is_none()
                 {
                     cmd.env_remove(k);
@@ -405,6 +449,33 @@ mod tests {
         assert!(ClientEnv::decode("").is_empty());
     }
 
+    /// 分けたスレッドでも、`carry` で写した FE の環境と言語を使う（分けただけでは引き継がない）。
+    #[test]
+    fn carries_the_client_environment_to_other_threads() {
+        let env =
+            ClientEnv::from_vars([("GIT_AMONHEN_TEST".to_owned(), "from the client".to_owned())]);
+        let (plain, carried) = crate::i18n::with(crate::i18n::Lang::Ja, || {
+            with_client_env(&env, || {
+                let carried = carry();
+                let read = || (var_os("GIT_AMONHEN_TEST"), crate::i18n::current());
+                (
+                    std::thread::spawn(read).join().unwrap(),
+                    std::thread::spawn(move || carried.run(read))
+                        .join()
+                        .unwrap(),
+                )
+            })
+        });
+        assert_ne!(
+            plain,
+            (Some("from the client".into()), crate::i18n::Lang::Ja)
+        );
+        assert_eq!(
+            carried,
+            (Some("from the client".into()), crate::i18n::Lang::Ja)
+        );
+    }
+
     /// `with_client_env` の中で起動した子は、FE の環境で動く（`PATH` で探し、FE の値を受け取る）。外では daemon の
     /// 環境のまま。
     #[test]
@@ -439,5 +510,18 @@ mod tests {
             command("amonhen-client-env-test").output().is_err(),
             "outside it, the daemon's PATH"
         );
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    /// PATH が `Path` で届いても PATH として受け取る（Windows の環境変数の名前は大文字と小文字を区別しない）。
+    #[test]
+    fn takes_path_whatever_its_case() {
+        let env = ClientEnv::from_vars([("Path".to_owned(), "C:\\fe".to_owned())]);
+        assert_eq!(env.get("PATH"), Some("C:\\fe"));
+        assert!(client::same("Path", "PATH"));
     }
 }

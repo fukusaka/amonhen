@@ -606,6 +606,9 @@ mod tests {
             &["config", "user.email", "a@example.com"],
             // Windows の CI では autocrlf が有効で、取り出したファイルの改行が変わる。
             &["config", "core.autocrlf", "false"],
+            // 利用者の global の設定でコミットに署名すると、並べて走らせたときに gpg が失敗することがある。
+            &["config", "commit.gpgsign", "false"],
+            &["config", "tag.gpgsign", "false"],
         ] {
             git.write(args).unwrap();
         }
@@ -703,6 +706,9 @@ mod ops_tests {
             &["config", "user.email", "a@example.com"],
             // Windows の CI では autocrlf が有効で、取り出したファイルの改行が変わる。
             &["config", "core.autocrlf", "false"],
+            // 利用者の global の設定でコミットに署名すると、並べて走らせたときに gpg が失敗することがある。
+            &["config", "commit.gpgsign", "false"],
+            &["config", "tag.gpgsign", "false"],
         ] {
             git.write(args).unwrap();
         }

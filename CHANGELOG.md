@@ -107,6 +107,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- The shared daemon also runs with the front end's environment the git it starts from threads a request splits into
+  (diffs of many files, path and content searches, other worktrees' changes), and takes PATH from Windows front ends.
 - Opening an SSH host and git over SSH no longer fail with "Permission denied (publickey)" after the Mac restarts:
   the app kept the SSH agent from an earlier login, and now checks the agent each time it starts ssh or git.
 - When an SSH host refuses the public key and no SSH agent can be reached, the error says so, and Settings > Advanced >

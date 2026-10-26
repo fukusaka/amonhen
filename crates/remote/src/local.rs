@@ -289,4 +289,19 @@ mod tests {
         let err = super::launch(other.to_str().unwrap(), "unused").unwrap_err();
         assert!(err.to_string().contains("different build"), "{err}");
     }
+
+    /// ソケットのパスが長すぎるときは、長さと直し方を出して断る。
+    #[cfg(unix)]
+    #[test]
+    fn says_when_the_socket_path_is_too_long() {
+        let long = format!("/tmp/{}/amonhend.sock", "x".repeat(200));
+        let Err(err) = crate::endpoint::connect(&long) else {
+            panic!("connected to {long}");
+        };
+        let err = err.to_string();
+        assert!(
+            err.contains("too long") && err.contains("AMONHEN_DAEMON_DIR"),
+            "{err}"
+        );
+    }
 }

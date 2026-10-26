@@ -25,6 +25,13 @@ fn git(dir: &Path, args: &[&str]) {
         .unwrap()
         .success();
     assert!(ok, "git {args:?}");
+    // daemon が動かす git は利用者の global の設定を読む。そこでコミットに署名すると、並べて走らせたときに gpg が
+    // 失敗することがある。
+    if args.first() == Some(&"init") {
+        for key in ["commit.gpgsign", "tag.gpgsign"] {
+            git(dir, &["config", key, "false"]);
+        }
+    }
 }
 
 #[test]
