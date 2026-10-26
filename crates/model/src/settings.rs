@@ -82,6 +82,24 @@ pub fn set_git(git: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+/// この機械（このプロセスが git を動かすところ）で使う git と、それをどこで決めたか。
+pub fn machine_git() -> crate::MachineGit {
+    use crate::process::GitChoice;
+    let (program, source) = match crate::process::git_choice() {
+        GitChoice::Environment(p) => (p, "environment"),
+        GitChoice::Settings(p) => (p, "settings"),
+        GitChoice::Fallback(p) => (p, "fallback"),
+        GitChoice::Path => ("git".to_owned(), "path"),
+    };
+    crate::MachineGit {
+        chosen: git().ok().flatten(),
+        file: path().map(|p| p.display().to_string()),
+        program,
+        source: source.to_owned(),
+        problem: crate::process::missing_git(),
+    }
+}
+
 struct Cached {
     path: PathBuf,
     /// 読んだときの更新時刻と大きさ（ファイルがなければ None）。
