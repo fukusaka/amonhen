@@ -216,6 +216,16 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.nav.fastForward",
+        "title": "Fast-Forward to Upstream",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.nav.push",
+        "title": "Push to Upstream",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.nav.publish",
         "title": "Publish Branch…",
         "category": "Amon Hen"
@@ -378,6 +388,16 @@
           "group": "1_ref@1"
         },
         {
+          "command": "amonhen.nav.fastForward",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch;behind$/",
+          "group": "1_ref@2"
+        },
+        {
+          "command": "amonhen.nav.push",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch;ahead$/",
+          "group": "1_ref@2"
+        },
+        {
           "command": "amonhen.nav.publish",
           "when": "view == amonhen.sidebar && viewItem =~ /^branch(\\.current)?;unpublished$/",
           "group": "1_ref@2"
@@ -496,6 +516,14 @@
         {
           "command": "amonhen.skipSequence",
           "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.nav.fastForward",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.nav.push",
+          "when": "false"
         },
         {
           "command": "amonhen.nav.publish",

@@ -137,6 +137,11 @@ export interface RepositoryBackend {
   rebaseTodo(base: string | null, todoPath: string): Promise<RebaseResult>;
   /** ローカルブランチ branch を remote の remoteBranch へ push する */
   push(remote: string, branch: string, remoteBranch: string, opts?: PushOptions): Promise<void>;
+  /**
+   * チェックアウトしていないローカルブランチ branch（`refs/heads/...`）を、現在の値が expected のときだけ value へ進める。
+   * ほかの worktree でチェックアウトしていれば断る（その作業ツリーとずれる）
+   */
+  fastForward(branch: string, value: string, expected: string): Promise<void>;
   /** git の設定の値（`git config --get`）。無ければ undefined */
   config(key: string): Promise<string | undefined>;
   /** ローカルブランチ branch（短い名前）の upstream を upstream（`refs/remotes/...`）にする */
@@ -535,6 +540,16 @@ export class CliBackend implements RepositoryBackend {
     if (opts.setUpstream) args.push('--set-upstream');
     args.push(remote, `refs/heads/${branch}:refs/heads/${remoteBranch}`);
     await this.git.exec(args, { cwd: this.root });
+  }
+
+  async fastForward(branch: string, value: string, expected: string): Promise<void> {
+    const list = await this.read(['worktree', 'list', '--porcelain']);
+    const elsewhere = list.split('\n\n').find((w) => w.split('\n').includes(`branch ${branch}`));
+    if (elsewhere) {
+      const path = (elsewhere.split('\n')[0] ?? '').replace(/^worktree /, '');
+      throw new Error(`${branch.replace(/^refs\/heads\//, '')} は worktree ${path} でチェックアウトしています。そちらで取り込んでください`);
+    }
+    await this.updateRef(branch, value, expected);
   }
 
   async config(key: string): Promise<string | undefined> {

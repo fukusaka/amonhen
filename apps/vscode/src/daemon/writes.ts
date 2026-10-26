@@ -73,6 +73,10 @@ export function withDaemonWrites(
     continueSequence: via('continueSequence', async (c, _sequence: Sequence) => outcome(await run(c, { op: 'continue' }, false))),
     skipSequence: via('skipSequence', async (c, _sequence: Sequence) => outcome(await run(c, { op: 'skip' }, false))),
     fetch: via('fetch', async (c) => void (await run(c, { op: 'fetch' }, false))),
+    // コアは最後の Fetch の上流まで進める（ほかの worktree でのチェックアウトや分岐も、コアが確かめて断る）
+    fastForward: via('fastForward', async (c, branch: string) =>
+      void (await run(c, { op: 'fastForward', branch: branch.replace(/^refs\/heads\//, '') }, true)),
+    ),
     push: via('push', async (c, remote: string, branch: string, remoteBranch: string, opts?: PushOptions) =>
       void (await run(c, { op: 'push', remote, branch, remoteBranch, force: !!opts?.force, setUpstream: !!opts?.setUpstream }, false)),
     ),

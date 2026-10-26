@@ -278,9 +278,15 @@ function branchItem(node: Extract<Node, { kind: 'branch' }>): vscode.TreeItem {
   return item;
 }
 
-/** ローカルブランチの upstream との関係（右クリックの Publish の出し分け）。`;unpublished` は upstream が無いか消えている */
+/**
+ * ローカルブランチの upstream との関係（右クリックの Publish・Push・Fast-Forward の出し分け）。`;unpublished` は upstream が
+ * 無いか消えている、`;ahead`・`;behind` は片側にだけ進んでいる。分かれているか同じなら空
+ */
 function syncState(ref: Ref): string {
-  return !ref.upstream || ref.gone ? ';unpublished' : '';
+  if (!ref.upstream || ref.gone) return ';unpublished';
+  if ((ref.ahead ?? 0) > 0 && !ref.behind) return ';ahead';
+  if ((ref.behind ?? 0) > 0 && !ref.ahead) return ';behind';
+  return '';
 }
 
 function buildFolder(refs: readonly Ref[], path: (r: Ref) => string): Folder {

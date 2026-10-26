@@ -170,3 +170,32 @@ export async function publishBranch(
 ): Promise<void> {
   await backend.push(remote, shortName(branch), remoteBranch, { setUpstream: true });
 }
+
+/**
+ * チェックアウトしていないブランチ（`refs/heads/...`）を upstream まで fast-forward する（最後の Fetch の時点）。
+ * チェックアウト中なら checked-out（Pull を使う）、分かれていれば diverged
+ */
+export async function fastForwardBranch(
+  backend: RepositoryBackend,
+  undo: UndoLog,
+  branch: string,
+): Promise<OperationResult | 'no-upstream' | 'checked-out' | 'diverged'> {
+  const upstream = await upstreamOf(backend, branch);
+  if (!upstream) {
+    return 'no-upstream';
+  }
+  const plan = await planUpdate(backend, upstream, branch);
+  if (plan.kind === 'up-to-date') {
+    return 'up-to-date';
+  }
+  if (plan.checkedOut) {
+    return 'checked-out';
+  }
+  if (plan.kind === 'diverged') {
+    return 'diverged';
+  }
+  return undo.record(`Fast-forward ${shortName(branch)}`, [branch], 'keep', async () => {
+    await backend.fastForward(branch, plan.sourceOid, plan.targetOid);
+    return 'done' as const;
+  });
+}
