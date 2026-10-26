@@ -196,6 +196,7 @@ struct SSHHostsSettings: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(L("Couldn’t connect to %@", selected))
                         Text(reason).foregroundStyle(.red).textSelection(.enabled)
+                        ChosenGitWarning(host: selected)
                         Button(L("Check Connection")) { session.connect() }
                     }
                     .padding()
@@ -227,6 +228,20 @@ final class HostSession {
 
     init(host: String) {
         self.host = host
+        // エンジンや git の選択を変えたら、つなぎ直す（新しい選択で SSH 先のエンジンを起動する）。
+        observer = NotificationCenter.default.addObserver(forName: .hostOptionsChanged, object: nil, queue: .main) { [weak self] note in
+            guard let host = note.object as? String else { return }
+            MainActor.assumeIsolated {
+                guard let self, host == self.host else { return }
+                self.connect()
+            }
+        }
+    }
+
+    @ObservationIgnored nonisolated(unsafe) private var observer: NSObjectProtocol?
+
+    deinit {
+        if let observer { NotificationCenter.default.removeObserver(observer) }
     }
 
     var model: RepositorySettingsModel? {
@@ -278,12 +293,15 @@ private struct ConnectionPage: View {
                 }
             }
             Section(L("Engine")) {
+                EngineChoice(host: session.host)
                 LabeledContent(L("In use")) {
                     Text(session.engine ?? (session.model != nil ? L("Through the shared daemon") : L("Not connected")))
                         .foregroundStyle(.secondary).textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .trailing)
                 }
-                Note(L("AMONHEN_REMOTE_ENGINE names the engine to use and AMONHEN_PUSH=0 stops sending one. Otherwise the amonhen on the host’s PATH, one sent earlier, or the bundled one is used."))
+                if let overridden = EngineChoice.overriddenBy {
+                    Note(L("%@ is set in the environment, so it decides instead.", overridden))
+                }
             }
             Section(L("Signature Verification")) {
                 Picker(L("Verify with"), selection: Binding(
@@ -329,11 +347,13 @@ private struct ConnectionPage: View {
                 Text("● " + L("Connected")).foregroundStyle(.green)
                 Text(model.gitVersion.map { "git \($0)" } ?? L("git wasn’t found on the host"))
                     .font(.caption).foregroundStyle(.secondary)
+                if model.gitVersion == nil { ChosenGitWarning(host: session.host) }
             }
         case let .failed(reason):
             VStack(alignment: .leading, spacing: 2) {
                 Text("● " + L("unreachable")).foregroundStyle(.red)
                 Text(reason).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+                ChosenGitWarning(host: session.host)
             }
         }
     }
@@ -357,5 +377,103 @@ private struct ConnectionPage: View {
         else { return }
         Bookmarks.shared.addScanRoot(location)
         refresh()
+    }
+}
+
+/// エンジンの選択: 自動（PATH のこのビルドのもの → 前に送ったもの → 送り込む）・SSH 先の PATH のもの・Amon Hen が
+/// 送り込むもの・その他…（SSH 先のパス）と、合うものがなければ送り込むか。変えると、次につなぐときから効く。
+private struct EngineChoice: View {
+    let host: String
+    @State private var options = HostOptions()
+    private static let other = "\u{1}other"
+
+    /// 環境変数で決めてあれば、その名前（そちらが優先される）。
+    static var overriddenBy: String? {
+        let env = ProcessInfo.processInfo.environment
+        return ["AMONHEN_REMOTE_ENGINE", "AMONHEN_PUSH"].filter { !(env[$0] ?? "").isEmpty }.first
+    }
+
+    var body: some View {
+        Group {
+            Picker(L("Engine to use"), selection: Binding(get: { options.engine ?? "" }, set: { choose($0) })) {
+                Text(L("Automatic")).tag("")
+                Divider()
+                Text(L("The amonhen on the host’s PATH")).tag("installed")
+                Text(L("The one Amon Hen sends")).tag("sent")
+                if let path = options.engine, path.hasPrefix("/") { Text(path).tag(path) }
+                Divider()
+                Text(L("Other…")).tag(Self.other)
+            }
+            Note(help)
+            Toggle(L("Send one when none fits"), isOn: Binding(get: { options.push ?? true }, set: { setPush($0) }))
+                .disabled(options.engine == "installed" || options.engine?.hasPrefix("/") == true)
+        }
+        .onAppear { options = Settings.hostOptions(for: host) }
+        .onChange(of: host) { _, now in options = Settings.hostOptions(for: now) }
+    }
+
+    private var help: String {
+        switch options.engine {
+        case "installed": L("Uses the amonhen installed on the host. It must be this build.")
+        case "sent": L("Uses the one Amon Hen sent to the host, sending it first when there is none.")
+        case let path? where path.hasPrefix("/"): L("Uses this path on the host.")
+        default: L("The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one.")
+        }
+    }
+
+    private func choose(_ value: String) {
+        var new = options
+        if value == Self.other {
+            let alert = NSAlert()
+            alert.messageText = L("Engine on %@", host)
+            alert.informativeText = L("The path of amonhen on the host. It must be this build.")
+            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+            field.placeholderString = "/usr/local/bin/amonhen"
+            field.stringValue = options.engine?.hasPrefix("/") == true ? options.engine! : ""
+            alert.accessoryView = field
+            alert.window.initialFirstResponder = field
+            alert.addButton(withTitle: L("Choose"))
+            alert.addButton(withTitle: L("Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let chosen = field.stringValue.trimmingCharacters(in: .whitespaces)
+            guard chosen.hasPrefix("/") else { return }
+            new.engine = chosen
+        } else {
+            new.engine = value.isEmpty ? nil : value
+        }
+        save(new)
+    }
+
+    private func setPush(_ on: Bool) {
+        var new = options
+        new.push = on ? nil : false
+        save(new)
+    }
+
+    private func save(_ new: HostOptions) {
+        guard new != options else { return }
+        options = new
+        Settings.setHostOptions(new, for: host)
+    }
+}
+
+/// 選んだ git（プログラムのページ）が SSH 先で動かないかもしれないときに、それを言い、PATH の git に戻せるようにする
+/// （つながらなければプログラムのページを開けないので、ここで戻す）。git を選んでいなければ何も出さない。
+private struct ChosenGitWarning: View {
+    let host: String
+
+    var body: some View {
+        if let git = Settings.hostOptions(for: host).git {
+            HStack(spacing: 8) {
+                Text(L("The git chosen in Programs is %@.", git))
+                    .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                Button(L("Use the git on the PATH")) {
+                    var options = Settings.hostOptions(for: host)
+                    options.git = nil
+                    Settings.setHostOptions(options, for: host)
+                }
+                .controlSize(.small)
+            }
+        }
     }
 }

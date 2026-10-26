@@ -1387,3 +1387,21 @@
 "already above" = "上と同じ";
 "git is the one chosen in Settings > Git: %@" = "git は 設定 > Git で選んだものを使います: %@";
 "Checked variables go to the git and ssh this app runs, through the shared daemon too, but not to SSH hosts. Always passed, when the shell sets them: %@." = "チェックした変数を、このアプリが動かす git と ssh に渡します（共有の daemon 越しも。SSH 先には渡りません）。シェルにあればいつも渡すもの（外せません）: %@。";
+
+/* Settings > SSH Hosts: エンジンと git の選択 */
+"Engine to use" = "使うエンジン";
+"The amonhen on the host’s PATH" = "SSH 先の PATH の amonhen";
+"The one Amon Hen sends" = "Amon Hen が送り込むもの";
+"Send one when none fits" = "合うものがなければ送り込む";
+"Uses the amonhen installed on the host. It must be this build." = "SSH 先に入っている amonhen を使います。このビルドのものである必要があります。";
+"Uses the one Amon Hen sent to the host, sending it first when there is none." = "Amon Hen が SSH 先に送ったものを使います。なければ先に送ります。";
+"Uses this path on the host." = "SSH 先のこのパスのものを使います。";
+"The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one." = "SSH 先の PATH の amonhen がこのビルドならそれ、なければ前に送ったもの、それもなければ送り込みます。";
+"Engine on %@" = "%@ のエンジン";
+"The path of amonhen on the host. It must be this build." = "SSH 先の amonhen のパス。このビルドのものである必要があります。";
+"%@ is set in the environment, so it decides instead." = "環境変数 %@ があるので、そちらが優先されます。";
+"Program on %@" = "%@ のプログラム";
+"The path of the program on the host." = "SSH 先のプログラムのパス。";
+"Passed to the engine on %@ when it starts. Repositories already open there keep the git they started with until they are opened again." = "%@ のエンジンを起動するときに渡します。もう開いているそこのリポジトリは、開き直すまで前の git のままです。";
+"The git chosen in Programs is %@." = "プログラムで選んだ git は %@ です。";
+"Use the git on the PATH" = "PATH の git に戻す";

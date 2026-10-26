@@ -117,13 +117,10 @@ struct ProgramsPage: View {
         HStack(spacing: 8) {
             Text("git").frame(minWidth: 72, alignment: .leading)
             Spacer()
-            ProgramPicker(candidates: found["git"] ?? [], value: model.host == nil ? gitExecutable : "") { value in
+            ProgramPicker(candidates: found["git"] ?? [], value: gitExecutable, otherOnHost: model.host) { value in
                 setGit(value)
             }
-            .disabled(model.host != nil)
-            if model.host != nil {
-                Color.clear.frame(width: 20, height: 1)
-            } else if !gitExecutable.isEmpty {
+            if !gitExecutable.isEmpty {
                 Button { setGit("") } label: { Image(systemName: "arrow.uturn.backward") }
                     .buttonStyle(.borderless)
                     .frame(width: 20)
@@ -131,29 +128,42 @@ struct ProgramsPage: View {
             } else {
                 Color.clear.frame(width: 20, height: 1)
             }
-            Text(gitExecutable.isEmpty || model.host != nil ? "PATH" : "Amon Hen")
+            Text(gitExecutable.isEmpty ? "PATH" : "Amon Hen")
                 .font(.caption).foregroundStyle(.secondary).frame(width: 118, alignment: .trailing)
             Button { showingGit.toggle() } label: { Image(systemName: "info.circle") }
                 .buttonStyle(.borderless)
                 .popover(isPresented: $showingGit, arrowEdge: .trailing) {
-                    if let host = model.host {
-                        Text(L("The engine on %@ runs the git on its PATH.", host)).padding(12)
-                    } else {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("AMONHEN_GIT = \(gitExecutable.isEmpty ? L("(not set)") : gitExecutable)")
-                            .font(.system(.body, design: .monospaced)).textSelection(.enabled).padding(12)
+                            .font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                        if let host = model.host {
+                            Text(L("Passed to the engine on %@ when it starts. Repositories already open there keep the git they started with until they are opened again.", host))
+                                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
+                    .frame(width: 320, alignment: .leading)
+                    .padding(12)
                 }
         }
         .padding(.vertical, 6)
+        .onAppear {
+            if let host = model.host { gitExecutable = Settings.hostOptions(for: host).git ?? "" }
+        }
     }
 
-    /// 使う git を変える（Undo に前の値を積む。⇧⌘Z でやり直せる）。
+    /// 使う git を変える（Undo に前の値を積む。⇧⌘Z でやり直せる）。SSH 先なら、その SSH 先の選択（エンジンに渡す）。
     private func setGit(_ value: String) {
         let old = gitExecutable
         guard value != old else { return }
         model.undo?.registerUndo(withTarget: model) { _ in setGit(old) }
         model.undo?.setActionName(L("Change %@", "git"))
         gitExecutable = value
+        if let host = model.host {
+            var options = Settings.hostOptions(for: host)
+            options.git = value.isEmpty ? nil : value
+            Settings.setHostOptions(options, for: host)
+            return
+        }
         Settings.gitExecutable = value.isEmpty ? nil : value
         Settings.applyGitExecutable()
     }
@@ -163,7 +173,7 @@ struct ProgramsPage: View {
         // 決めてあるキーを先に（設定元はその値のもの）。どれもなければ最後のキーに書く。
         let key = keys.first { model.effective($0) != nil } ?? keys[keys.count - 1]
         return SettingRow(model: model, question: name, help: "", keys: [key]) {
-            ProgramPicker(candidates: found[name] ?? [], value: model.local(key) ?? "") { value in
+            ProgramPicker(candidates: found[name] ?? [], value: model.local(key) ?? "", otherOnHost: model.host) { value in
                 model.set(key, value.isEmpty ? nil : value)
             }
         }
@@ -175,6 +185,8 @@ private struct ProgramPicker: View {
     let candidates: [Programs.Candidate]
     /// 今の値（空なら自動）。
     let value: String
+    /// SSH 先のプログラムなら、その名前（「その他…」はファイルを選ぶのではなく、SSH 先のパスを書いてもらう）。
+    var otherOnHost: String? = nil
     let choose: (String) -> Void
     private static let other = "\u{1}other"
 
@@ -199,6 +211,22 @@ private struct ProgramPicker: View {
     private func picked(_ new: String) {
         guard new == Self.other else {
             if new != value { choose(new) }
+            return
+        }
+        if let host = otherOnHost {
+            let alert = NSAlert()
+            alert.messageText = L("Program on %@", host)
+            alert.informativeText = L("The path of the program on the host.")
+            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+            field.placeholderString = "/usr/local/bin/git"
+            field.stringValue = value
+            alert.accessoryView = field
+            alert.window.initialFirstResponder = field
+            alert.addButton(withTitle: L("Choose"))
+            alert.addButton(withTitle: L("Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let path = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if path.hasPrefix("/"), path != value { choose(path) }
             return
         }
         let panel = NSOpenPanel()

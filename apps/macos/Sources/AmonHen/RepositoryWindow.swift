@@ -60,7 +60,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "io.github.fukusaka.amonhen")
         return if RepositoryLocation.isRemote(location) {
-            try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory)
+            // SSH 先ごとの選択（エンジンと git）も渡す。
+            try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory,
+                           hostOptions: Settings.hostOptionsJSON(for: location))
         } else {
             try Repository(path: location, cacheDirectory: cacheDirectory)
         }

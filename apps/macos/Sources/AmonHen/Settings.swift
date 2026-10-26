@@ -54,7 +54,7 @@ enum Settings {
     }
 
     /// 場所の SSH 先（`ssh://host/path`・`daemon:ssh://host/path` の host）。手元なら nil。
-    static func sshHost(of location: String) -> String? {
+    nonisolated static func sshHost(of location: String) -> String? {
         let rest = location.hasPrefix("daemon:") ? String(location.dropFirst("daemon:".count)) : location
         guard rest.hasPrefix("ssh://") else { return nil }
         return String(rest.dropFirst("ssh://".count).prefix { $0 != "/" })
@@ -64,6 +64,28 @@ enum Settings {
     static var sshHosts: [String] {
         get { UserDefaults.standard.stringArray(forKey: "sshHosts") ?? [] }
         set { UserDefaults.standard.set(newValue, forKey: "sshHosts") }
+    }
+
+    nonisolated private static let hostOptionsKey = "sshHostOptions"
+
+    /// SSH 先ごとの選択（エンジンと git。Settings > SSH Hosts）。つなぐたびにコアに渡す。
+    nonisolated static func hostOptions(for host: String) -> HostOptions {
+        guard let json = (UserDefaults.standard.dictionary(forKey: hostOptionsKey) as? [String: String])?[host],
+              let options = try? JSONDecoder().decode(HostOptions.self, from: Data(json.utf8)) else { return HostOptions() }
+        return options
+    }
+
+    /// `location` の SSH 先の選択を、コアに渡す JSON で（手元の場所や、何も選んでいなければ nil）。
+    nonisolated static func hostOptionsJSON(for location: String) -> String? {
+        sshHost(of: location).flatMap { hostOptions(for: $0).json }
+    }
+
+    /// 変えたら `hostOptionsChanged`（object は SSH 先の名前）を知らせる。次につなぐときから効く。
+    static func setHostOptions(_ options: HostOptions, for host: String) {
+        var all = UserDefaults.standard.dictionary(forKey: hostOptionsKey) as? [String: String] ?? [:]
+        all[host] = options.json
+        UserDefaults.standard.set(all, forKey: hostOptionsKey)
+        NotificationCenter.default.post(name: .hostOptionsChanged, object: host)
     }
 
     /// コミットの詳細に作者・コミッターの Gravatar のアバターを出すか（既定は出す。メールアドレスの MD5 を
@@ -352,8 +374,29 @@ extension Notification.Name {
     static let autoFetchChanged = Notification.Name("autoFetchChanged")
     /// AI の CLI の選択が変わった（AI のボタンを出す・隠す）。
     static let assistantChanged = Notification.Name("assistantChanged")
+    /// SSH 先ごとの選択（エンジン・git）が変わった（object は SSH 先の名前）。
+    static let hostOptionsChanged = Notification.Name("hostOptionsChanged")
 }
 
+
+/// SSH 先ごとの選択（Settings > SSH Hosts の「接続」のエンジンと、「プログラム」の git）。コアの `HostOptions`
+/// （`crates/remote/src/ssh.rs`）と同じ形で、JSON にして渡す。
+nonisolated struct HostOptions: Codable, Equatable, Sendable {
+    /// SSH 先で使う git のパス。nil なら SSH 先の PATH のもの。
+    var git: String?
+    /// `installed`（PATH の amonhen）・`sent`（Amon Hen が送り込むもの）・`/` で始まるパス。nil なら自動。
+    var engine: String?
+    /// 合うものがなければ送り込むか。nil なら送る。
+    var push: Bool?
+
+    var isEmpty: Bool { git == nil && engine == nil && push == nil }
+
+    /// コアに渡す JSON（何も選んでいなければ nil）。
+    var json: String? {
+        guard !isEmpty, let data = try? JSONEncoder().encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
 
 /// pull での上流の取り込み方（`crates/model` の `PullMode`）。
 enum PullMode: String, CaseIterable {

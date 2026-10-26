@@ -225,9 +225,9 @@ public enum RemoteScan {
     /// `location`（`ssh://host/path`）の下を `depth` 段まで探し、見つけたリポジトリの場所を返す。SSH 先のエンジンを
     /// 用意する（なければ送り込む）ので時間がかかる。裏のスレッドで呼ぶ。
     public static func findRepositories(
-        location: String, depth: Int, excludes: [String], daemon: String, daemons: String
+        location: String, depth: Int, excludes: [String], daemon: String, daemons: String, hostOptions: String? = nil
     ) throws -> [String] {
-        guard let out = amonhen_find_remote_repositories(location, UInt32(max(0, depth)), excludes.joined(separator: "\n"), daemon, daemons)
+        guard let out = amonhen_find_remote_repositories(location, UInt32(max(0, depth)), excludes.joined(separator: "\n"), daemon, daemons, hostOptions)
         else { throw AmonhenError.last() }
         defer { amonhen_string_free(out) }
         return String(cString: out).split(separator: "\n").map(String.init)

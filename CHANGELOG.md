@@ -17,9 +17,9 @@ becomes the GitHub Release notes.
   Fetch, undoably), and its menu also offers Push when it is only ahead and Publish when it has no upstream. The core
   and CLI get the same as `fastForward`.
 - Settings > SSH Hosts: the SSH hosts Amon Hen knows, with + and −, and for each its connection (state, Check
-  Connection, the engine in use, which keys verify commit signatures, the folders to scan) and the pages of Settings >
-  Git for every repository on that host, read from and written to the host's `--global`. Settings… on a host in Places
-  and the git line under a repository's Settings list open it.
+  Connection, which engine to run there and whether to send one, which keys verify commit signatures, the folders to
+  scan) and the pages of Settings > Git for every repository on that host, including the git the engine runs there.
+  Settings… on a host in Places opens it, and on This Mac opens Settings > Git.
 - The engine runs on an SSH host without a repository (`amonhen --stdio` with no path) to read and write that
   machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
   the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /
