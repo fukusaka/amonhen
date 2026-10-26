@@ -2,6 +2,8 @@
 //!
 //! - `daemon:/path/to/repo` … 手元の共有の daemon（`crate::local`）で開く
 //! - `ssh://[user@]host[:port]/path/to/repo` … SSH 先に daemon を送り込んで起動する（`crate::ssh`）
+//! - `ssh://[user@]host[:port]` … パスなし。SSH 先のリポジトリではなく、その機械の設定（`git config --global`
+//!   など）を扱うエンジン
 
 use amonhen_model::tr;
 

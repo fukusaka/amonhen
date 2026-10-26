@@ -26,7 +26,8 @@ pub struct Target {
     /// `user@host` か `host`。
     pub destination: String,
     pub port: Option<String>,
-    /// SSH 先のリポジトリのパス。`/~/` で始まればホームからの相対。
+    /// SSH 先のリポジトリのパス。`/~/` で始まればホームからの相対。空なら（`ssh://host` だけ）リポジトリではなく、
+    /// その機械の設定（`git config --global` など）を扱うエンジン（`amonhen --stdio` にパスを渡さない）。
     pub path: String,
 }
 
@@ -35,10 +36,11 @@ impl Target {
         let rest = location
             .strip_prefix("ssh://")
             .ok_or_else(|| tr!("Not an ssh:// location"))?;
-        let slash = rest
-            .find('/')
-            .ok_or_else(|| tr!("Write it as ssh://host/path"))?;
-        let (authority, path) = (&rest[..slash], &rest[slash..]);
+        // `/` がなければ、ホストだけ（その機械の設定を扱う）。
+        let (authority, path) = match rest.find('/') {
+            Some(slash) => (&rest[..slash], &rest[slash..]),
+            None => (rest, ""),
+        };
         let (destination, port) = match authority.rsplit_once(':') {
             Some((d, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
                 (d, Some(p.to_owned()))
@@ -55,8 +57,11 @@ impl Target {
         })
     }
 
-    /// SSH 先のシェルに渡すパス（`/~/x` は `"$HOME"/'x'`、それ以外は引用符で囲む）。
+    /// SSH 先のシェルに渡すパス（`/~/x` は `"$HOME"/'x'`、それ以外は引用符で囲む。空なら空）。
     fn shell_path(&self) -> String {
+        if self.path.is_empty() {
+            return String::new();
+        }
         match self.path.strip_prefix("/~/") {
             Some(rest) => format!("\"$HOME\"/{}", shell_quote(rest)),
             None => shell_quote(&self.path),
@@ -347,12 +352,16 @@ pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Conn
     );
     let slot = SharedSlot::take(&key);
     let mut args = base_args(target, slot.is_some());
-    args.push(format!(
-        "{}; exec {} --stdio {}",
-        cleanup_script(&engine),
-        shell_quote(&engine.path),
-        target.shell_path()
-    ));
+    args.push(
+        format!(
+            "{}; exec {} --stdio {}",
+            cleanup_script(&engine),
+            shell_quote(&engine.path),
+            target.shell_path()
+        )
+        .trim_end()
+        .to_owned(),
+    );
     let conn = Connection::spawn(ssh, &args)?;
     if let Some(slot) = slot {
         conn.hold(Box::new(slot));
@@ -548,8 +557,19 @@ mod tests {
             Target::parse("ssh://dev/srv/r").unwrap().shell_path(),
             "'/srv/r'"
         );
-        assert!(Target::parse("ssh://dev").is_err());
+        // ホストだけなら、その機械の設定を扱う（パスは空）。
+        let host = Target::parse("ssh://me@dev:22").unwrap();
+        assert_eq!(
+            (
+                host.destination.as_str(),
+                host.port.as_deref(),
+                host.path.as_str()
+            ),
+            ("me@dev", Some("22"), "")
+        );
+        assert_eq!(host.shell_path(), "");
         assert!(Target::parse("ssh:///x").is_err());
+        assert!(Target::parse("ssh://").is_err());
     }
 
     #[test]
