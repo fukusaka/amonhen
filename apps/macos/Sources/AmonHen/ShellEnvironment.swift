@@ -115,11 +115,25 @@ enum ShellEnvironment {
         return stat(path, &info) == 0 && (info.st_mode & S_IFMT) == S_IFSOCK
     }
 
+    /// ログインシェルを動かす環境: 端末で新しいウィンドウを開くときと同じく、利用者とログインのもの（`HOME`・`USER`・
+    /// 言語・`TMPDIR`・launchd の `SSH_AUTH_SOCK` など）だけを渡し、PATH は素にする。読みたいのは利用者のシェルが決める
+    /// 変数で、アプリを何から起動したかで変わってはいけない。起動したときの環境をそのまま渡すと、端末や別のアプリから
+    /// 起動したときに、その親の変数（Claude Code の `AI_AGENT` など）がシェルの変数として混ざり、`SHLVL` も引き継いで
+    /// `SHLVL` が 1 のときだけ PATH を組み立てる rc では PATH が組み立てられず、端末と違う git（/usr/bin の Apple の git）
+    /// になっていた。
+    nonisolated static func shellEnvironment(_ launch: [String: String]) -> [String: String] {
+        let kept = ["HOME", "USER", "LOGNAME", "SHELL", "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "__CF_USER_TEXT_ENCODING",
+                    "SSH_AUTH_SOCK"]
+        var environment = launch.filter { kept.contains($0.key) }
+        environment["PATH"] = "/usr/bin:/bin:/usr/sbin:/sbin"
+        return environment
+    }
+
     nonisolated private static func run(_ shell: String, _ arguments: [String]) -> String? {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = arguments
-        if !launch.isEmpty { process.environment = launch }
+        if !launch.isEmpty { process.environment = shellEnvironment(launch) }
         process.standardInput = FileHandle.nullDevice
         process.standardError = FileHandle.nullDevice
         let out = Pipe()
