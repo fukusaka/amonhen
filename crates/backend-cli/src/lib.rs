@@ -64,7 +64,14 @@ pub fn settings_repository() -> Result<PathBuf> {
         let out = amonhen_model::process::command("git")
             .args(["init", "-q"])
             .current_dir(&dir)
-            .output()?;
+            .output()
+            .map_err(|e| {
+                tr!(
+                    "Couldn’t run git ({git}): {error}",
+                    git = amonhen_model::process::git_program().to_string_lossy(),
+                    error = e
+                )
+            })?;
         if !out.status.success() {
             return Err(tr!(
                 "Couldn’t prepare the settings repository at {path}: {error}",
