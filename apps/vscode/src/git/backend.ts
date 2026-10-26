@@ -137,6 +137,10 @@ export interface RepositoryBackend {
   rebaseTodo(base: string | null, todoPath: string): Promise<RebaseResult>;
   /** ローカルブランチ branch を remote の remoteBranch へ push する */
   push(remote: string, branch: string, remoteBranch: string, opts?: PushOptions): Promise<void>;
+  /** git の設定の値（`git config --get`）。無ければ undefined */
+  config(key: string): Promise<string | undefined>;
+  /** ローカルブランチ branch（短い名前）の upstream を upstream（`refs/remotes/...`）にする */
+  setUpstream(branch: string, upstream: string): Promise<void>;
   fetch(): Promise<void>;
   /** revs から辿れるコミットを、トポロジカル順で skip 件飛ばして max 件 */
   log(revs: readonly string[], skip: number, max: number): Promise<Commit[]>;
@@ -531,6 +535,14 @@ export class CliBackend implements RepositoryBackend {
     if (opts.setUpstream) args.push('--set-upstream');
     args.push(remote, `refs/heads/${branch}:refs/heads/${remoteBranch}`);
     await this.git.exec(args, { cwd: this.root });
+  }
+
+  async config(key: string): Promise<string | undefined> {
+    return (await this.read(['config', '--get', key], [0, 1])).trim() || undefined;
+  }
+
+  async setUpstream(branch: string, upstream: string): Promise<void> {
+    await this.git.exec(['branch', `--set-upstream-to=${upstream}`, branch], { cwd: this.root });
   }
 
   async fetch(): Promise<void> {

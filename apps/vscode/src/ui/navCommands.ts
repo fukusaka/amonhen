@@ -7,6 +7,7 @@ import type { Repository } from '../state/repository.ts';
 import { runAction } from './dragDrop.ts';
 import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
+import { publish } from './syncCommands.ts';
 
 /** ブランチ・リモートブランチ・タグのノードから ref を取り出す */
 function refOf(node: Node | undefined): string | undefined {
@@ -40,6 +41,7 @@ export function registerNavCommands(manager: RepositoryManager): vscode.Disposab
       });
     }),
     command('amonhen.nav.delete', (repo, ref) => deleteBranch(repo, ref)),
+    command('amonhen.nav.publish', (repo, ref) => publish(repo, ref)),
   );
 }
 

@@ -64,7 +64,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
 
   private watch(repository: Repository | undefined): void {
     this.repoListener?.dispose();
+    this.updateContext(repository);
     this.repoListener = repository?.onDidChange((changed) => {
+      if (changed.has('branches')) this.updateContext(repository);
       // Working Copy の変化は、入口の数と途中の merge / rebase に出る
       if (changed.has('workingCopy')) {
         this._onDidChangeTreeData.fire(undefined);
@@ -76,6 +78,12 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       }
     });
     this._onDidChangeTreeData.fire(undefined);
+  }
+
+  /** 今のブランチに upstream が無ければ、ナビの上の Push を Publish にする */
+  private updateContext(repository: Repository | undefined): void {
+    const head = repository?.current.branches?.find((b) => b.isHead);
+    void vscode.commands.executeCommand('setContext', 'amonhen.unpublished', !!head && (!head.upstream || !!head.gone));
   }
 
   /** 遅延セクションが展開されたら取得を始める */
@@ -264,10 +272,15 @@ function branchItem(node: Extract<Node, { kind: 'branch' }>): vscode.TreeItem {
   if (ref.upstream) lines.push(`upstream: ${ref.upstream.replace(/^refs\/remotes\//, '')}`);
   lines.push(`${ref.oid.slice(0, 8)}  ${ref.subject}`);
   item.tooltip = lines.join('\n');
-  item.contextValue = node.remote ? 'remoteBranch' : ref.isHead ? 'branch.current' : 'branch';
+  item.contextValue = node.remote ? 'remoteBranch' : (ref.isHead ? 'branch.current' : 'branch') + syncState(ref);
   // 選ぶと、そのブランチの履歴をメインビューに出す
   item.command = { command: 'amonhen.showRef', title: 'Show History', arguments: [ref.name] };
   return item;
+}
+
+/** ローカルブランチの upstream との関係（右クリックの Publish の出し分け）。`;unpublished` は upstream が無いか消えている */
+function syncState(ref: Ref): string {
+  return !ref.upstream || ref.gone ? ';unpublished' : '';
 }
 
 function buildFolder(refs: readonly Ref[], path: (r: Ref) => string): Folder {

@@ -183,6 +183,13 @@
         "enablement": "amonhen.hasRepository"
       },
       {
+        "command": "amonhen.publish",
+        "title": "Publish Branch",
+        "category": "Amon Hen",
+        "icon": "$(cloud-upload)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.forcePush",
         "title": "Force Push",
         "category": "Amon Hen",
@@ -206,6 +213,11 @@
       {
         "command": "amonhen.nav.delete",
         "title": "Delete Branch…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.nav.publish",
+        "title": "Publish Branch…",
         "category": "Amon Hen"
       },
       {
@@ -300,7 +312,12 @@
         },
         {
           "command": "amonhen.push",
-          "when": "view == amonhen.sidebar",
+          "when": "view == amonhen.sidebar && !amonhen.unpublished",
+          "group": "navigation@3"
+        },
+        {
+          "command": "amonhen.publish",
+          "when": "view == amonhen.sidebar && amonhen.unpublished",
           "group": "navigation@3"
         },
         {
@@ -357,37 +374,42 @@
         },
         {
           "command": "amonhen.nav.checkout",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|remoteBranch)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)?|remoteBranch)$/",
           "group": "1_ref@1"
         },
         {
+          "command": "amonhen.nav.publish",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch(\\.current)?;unpublished$/",
+          "group": "1_ref@2"
+        },
+        {
           "command": "amonhen.nav.merge",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|remoteBranch|tag)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)?|remoteBranch|tag)$/",
           "group": "2_ref@1"
         },
         {
           "command": "amonhen.nav.rebase",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|remoteBranch|tag)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(;\\w+)?|remoteBranch|tag)$/",
           "group": "2_ref@2"
         },
         {
           "command": "amonhen.nav.delete",
-          "when": "view == amonhen.sidebar && viewItem == branch",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch(;\\w+)?$/",
           "group": "3_ref@1"
         },
         {
           "command": "amonhen.newBranch",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current|remoteBranch|tag)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)?|remoteBranch|tag)$/",
           "group": "4_create@1"
         },
         {
           "command": "amonhen.newTag",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current|remoteBranch|tag)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^(branch(\\.current)?(;\\w+)?|remoteBranch|tag)$/",
           "group": "4_create@2"
         },
         {
           "command": "amonhen.renameBranch",
-          "when": "view == amonhen.sidebar && viewItem =~ /^(branch|branch\\.current)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch(\\.current)?(;\\w+)?$/",
           "group": "3_ref@0"
         },
         {
@@ -474,6 +496,14 @@
         {
           "command": "amonhen.skipSequence",
           "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.nav.publish",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.publish",
+          "when": "amonhen.hasRepository && amonhen.unpublished"
         },
         {
           "command": "amonhen.nav.checkout",

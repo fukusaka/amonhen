@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
-import { mergeInto, rebaseOnto } from '../src/state/operations.ts';
+import { mergeInto, publishChoices, pushCurrent, rebaseOnto } from '../src/state/operations.ts';
 import { UndoLog } from '../src/state/undo.ts';
 
 Object.assign(process.env, {
@@ -105,4 +105,31 @@ test('a conflict is reported and not recorded', async () => {
   assert.equal(await mergeInto(backend, undo, H('feature'), H('main')), 'conflict');
   assert.equal(await undo.peek(), undefined);
   await backend.abort('merge');
+});
+
+/** dir の origin になる bare リポジトリを作り、main を送って upstream にする */
+function addOrigin(): string {
+  const remote = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-origin-')));
+  execFileSync('git', ['init', '-q', '--bare', remote]);
+  git('remote', 'add', 'origin', remote);
+  git('push', '-q', '-u', 'origin', 'main');
+  return remote;
+}
+
+test('push without an upstream asks to publish, and publish prefers pushRemote and pushDefault', async () => {
+  const remote = addOrigin();
+  try {
+    git('checkout', '-q', '-b', 'topic');
+    assert.equal(await pushCurrent(backend), 'unpublished');
+    git('remote', 'add', 'other', remote);
+    assert.deepEqual(await publishChoices(backend, H('topic')), { remotes: ['origin', 'other'], preferred: 'origin' });
+    git('config', 'remote.pushDefault', 'other');
+    assert.equal((await publishChoices(backend, H('topic'))).preferred, 'other');
+    git('config', 'branch.topic.pushRemote', 'origin');
+    assert.equal((await publishChoices(backend, H('topic'))).preferred, 'origin');
+    git('checkout', '-q', 'main');
+    assert.deepEqual(await pushCurrent(backend), { remote: 'origin', branch: 'main' });
+  } finally {
+    rmSync(remote, { recursive: true, force: true });
+  }
 });

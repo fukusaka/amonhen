@@ -60,7 +60,8 @@ function toDropTarget(node: Node): DropTarget | undefined {
 export interface Action {
   label: string;
   detail?: string;
-  run: () => Promise<OperationResult | 'pushed'>;
+  /** undefined なら何も知らせない（続きを別に行うとき） */
+  run: () => Promise<OperationResult | 'pushed' | undefined>;
 }
 
 /** ドロップしたときの操作を選ばせて実行する */
