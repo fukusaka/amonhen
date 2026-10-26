@@ -446,6 +446,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::LfsTrack(pattern, track) => encode(&ops.lfs_track(&pattern, track)?),
         Op::LfsFileCount => encode(&ops.lfs_file_count()?),
         Op::SigningKeys(format) => encode(&ops.signing_keys(&format)?),
+        Op::Programs(name) => encode(&ops.programs(&name)?),
         Op::ChangeRemote(change) => encode(&ops.change_remote(&change)?),
         Op::WorktreeList => encode(&Bytes(ops.worktree_list()?)),
         Op::WorktreeChanges(paths, fresh) => encode(&ops.worktree_changes(&paths, fresh)?),

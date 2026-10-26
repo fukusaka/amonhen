@@ -284,6 +284,8 @@ pub enum Op {
     Remotes,
     CheckRemote(String),
     SigningKeys(String),
+    /// → `Vec<Program>`（daemon の機械にある `git`・`gpg` などの候補）
+    Programs(String),
     LfsTrack(String, bool),
     LfsFileCount,
     ChangeRemote(RemoteChange),

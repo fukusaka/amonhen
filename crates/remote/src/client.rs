@@ -915,6 +915,10 @@ impl Operations for RemoteOperations {
         self.op(Op::SigningKeys(format.to_owned()))
     }
 
+    fn programs(&self, name: &str) -> Result<Vec<amonhen_model::Program>> {
+        self.op(Op::Programs(name.to_owned()))
+    }
+
     fn check_remote(&self, url: &str) -> Result<RemoteCheck> {
         self.op(Op::CheckRemote(url.to_owned()))
     }

@@ -811,6 +811,10 @@ impl Operations for Git {
         self.signing_keys_for(format)
     }
 
+    fn programs(&self, name: &str) -> Result<Vec<amonhen_model::Program>> {
+        Ok(crate::programs::programs(name))
+    }
+
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {
         let out = text(self.read(&["remote", "-v"])?)?;
         let mut remotes: Vec<RemoteEntry> = Vec::new();

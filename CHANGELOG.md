@@ -16,6 +16,9 @@ becomes the GitHub Release notes.
 - A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last
   Fetch, undoably), and its menu also offers Push when it is only ahead and Publish when it has no upstream. The core
   and CLI get the same as `fastForward`.
+- The engine runs on an SSH host without a repository (`amonhen --stdio` with no path) to read and write that
+  machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
+  the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions.
 
 #### Changed
 

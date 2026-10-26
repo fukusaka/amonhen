@@ -72,6 +72,16 @@ pub struct SigningKey {
     pub emails: Vec<String>,
 }
 
+/// この機械にあるプログラム（git・gpg・gpgsm・ssh-keygen）の 1 つ（設定の「プログラム」の候補）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Program {
+    /// 実行ファイルのパス。
+    pub path: String,
+    /// 版（`2.45.1`・`2.4.5`・`9.9p2`）。読めなければ `None`。
+    pub version: Option<String>,
+}
+
 /// worktree の作成・削除・片付け（`git worktree add`・`remove`・`prune`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -334,6 +344,12 @@ pub trait Operations: Send + Sync {
     /// `format`（`openpgp`・`ssh`・`x509`）で署名に使える鍵。集められなければ空。
     fn signing_keys(&self, format: &str) -> Result<Vec<SigningKey>> {
         let _ = format;
+        Ok(Vec::new())
+    }
+    /// git を動かしている機械にある `name`（`git`・`gpg`・`gpgsm`・`ssh-keygen`）の候補。先頭は PATH で最初に
+    /// 見つかるもの（何も設定しなければ使われるもの）。集められなければ空。
+    fn programs(&self, name: &str) -> Result<Vec<Program>> {
+        let _ = name;
         Ok(Vec::new())
     }
     fn change_remote(&self, change: &RemoteChange) -> Result<()>;

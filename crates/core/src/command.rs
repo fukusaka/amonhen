@@ -294,6 +294,11 @@ pub enum Command {
     SigningKeys {
         format: String,
     },
+    /// git を動かしている機械にある `name`（`git`・`gpg`・`gpgsm`・`ssh-keygen`）の候補（`info.programs`:
+    /// `path`・`version`。先頭は PATH で最初に見つかるもの）。SSH 先のリポジトリなら SSH 先で探す。
+    Programs {
+        name: String,
+    },
     /// 設定を変える。`value` がなければ消す。`scope` が `"global"` なら、git を動かしているユーザー全体の
     /// 設定（SSH 先のリポジトリなら SSH 先のユーザーのもの）、なければこのリポジトリ（local）。
     ConfigSet {
@@ -2088,6 +2093,11 @@ impl Repository {
             Command::SigningKeys { format } => Ok(Response {
                 ok: true,
                 info: Some(serde_json::json!({ "keys": ops.signing_keys(&format)? })),
+                ..Default::default()
+            }),
+            Command::Programs { name } => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "programs": ops.programs(&name)? })),
                 ..Default::default()
             }),
             Command::ConfigSet { key, value, scope } => {
