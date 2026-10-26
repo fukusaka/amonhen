@@ -74,8 +74,8 @@ struct OperationFailure {
             what you typed (GitHub needs a token, not the account password). To stop being asked, store the \
             credentials with a credential helper (for example `gh auth setup-git` or \
             `git config --global credential.helper osxkeychain`), or add the SSH key to the agent \
-            (`ssh-add --apple-use-keychain`). Settings > Advanced > Terminal Environment shows which git, agent and \
-            helpers the app uses.
+            (`ssh-add --apple-use-keychain`). Settings > Git > Programs shows which git the app uses, and Settings > \
+            Performance > Terminal Environment whether the SSH agent is there.
             """)
         case "hostKey":
             L("Connect once in Terminal (for example `ssh -T git@github.com`) and confirm the host key, then try again.")

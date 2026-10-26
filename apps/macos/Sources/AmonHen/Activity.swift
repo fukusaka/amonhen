@@ -394,7 +394,7 @@ private struct DaemonTab: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Label(model.daemonChecked ? L("The shared daemon isn’t running") : L("Checking…"), systemImage: "circle")
                             .foregroundStyle(.secondary).font(.headline)
-                        Text(L("It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Advanced)."))
+                        Text(L("It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)."))
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }

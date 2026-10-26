@@ -117,7 +117,7 @@ becomes the GitHub Release notes.
 
 - Opening an SSH host and git over SSH no longer fail with "Permission denied (publickey)" after the Mac restarts:
   the app kept the SSH agent from an earlier login, and now checks the agent each time it starts ssh or git.
-- When an SSH host refuses the public key and no SSH agent can be reached, the error says so, and Settings > Advanced >
+- When an SSH host refuses the public key and no SSH agent can be reached, the error says so, and Settings > Performance >
   Terminal Environment shows whether the SSH agent is there.
 - Blame of uncommitted contents and File History read the worktree chosen in Working Copy, not the repository's main
   checkout.

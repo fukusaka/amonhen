@@ -534,7 +534,7 @@
 "pid %@ · version %@ (build %@) · up %@ · connections %ld" = "pid %@ · 版 %@（ビルド %@） · 動いて %@ · つながり %ld";
 "The shared daemon isn’t running" = "共有の daemon は動いていません";
 "Checking…" = "調べています…";
-"It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Advanced)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > Advanced）、自動で起動します。";
+"It starts automatically when you open a repository through the daemon (right-click in the repository list, or Settings > Performance)." = "daemon 越しにリポジトリを開くと（リポジトリの一覧の右クリック、または Settings > パフォーマンス）、自動で起動します。";
 "Start" = "起動";
 "Stop" = "止める";
 "Repositories opened through the daemon get disconnected (Reconnect starts it again)." = "daemon 越しに開いているリポジトリは、つながりが切れる（「つなぎ直す」でまた起動する）";
@@ -1069,7 +1069,7 @@
 "This branch has no upstream to pull from or push to." = "このブランチには、Pull・Push する上流がありません。";
 "Try Again" = "もう一度";
 "Uncommitted changes would be overwritten. Commit or stash them first." = "コミットしていない変更を上書きしてしまいます。先にコミットするか stash してください。";
-"The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper osxkeychain`), or add the SSH key to the agent (`ssh-add --apple-use-keychain`). Settings > Advanced > Terminal Environment shows which git, agent and helpers the app uses." = "リモートがパスワード・トークン・SSH の鍵を受け付けませんでした。ダイアログでパスワードやパスフレーズを入れたなら、入力を確かめてください（GitHub はアカウントのパスワードではなくトークンです）。毎回聞かれないようにするには、credential helper に資格情報を保存する（例: `gh auth setup-git`、`git config --global credential.helper osxkeychain`）か、SSH の鍵を agent に入れてください（`ssh-add --apple-use-keychain`）。アプリが使う git・agent・helper は、設定 > Advanced > ターミナルの環境で分かります。";
+"The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper osxkeychain`), or add the SSH key to the agent (`ssh-add --apple-use-keychain`). Settings > Git > Programs shows which git the app uses, and Settings > Performance > Terminal Environment whether the SSH agent is there." = "リモートがパスワード・トークン・SSH の鍵を受け付けませんでした。ダイアログでパスワードやパスフレーズを入れたなら、入力を確かめてください（GitHub はアカウントのパスワードではなくトークンです）。毎回聞かれないようにするには、credential helper に資格情報を保存する（例: `gh auth setup-git`、`git config --global credential.helper osxkeychain`）か、SSH の鍵を agent に入れてください（`ssh-add --apple-use-keychain`）。アプリが使う git は設定 > Git > プログラムで、SSH の agent があるかは設定 > パフォーマンス > ターミナルの環境で分かります。";
 
 // サイドバーの絞り込みと複数選択
 "Filter branches" = "ブランチを絞り込む";

@@ -23,7 +23,7 @@
 
 ## 共有の daemon
 
-Settings > Advanced の「リポジトリを共有の daemon 越しに開く」か、一覧の右クリックの Open via Daemon で、手元の共有の daemon 越しに開く（`daemon:/path`・`daemon:ssh://host/path`）。CLI・VSCode 拡張と History・検索の索引・SSH のつながりを共有する。様子は Window > Activity の Daemon のタブか `amonhen daemon status`。
+Settings > パフォーマンスの「リポジトリを共有の daemon 越しに開く」か、一覧の右クリックの Open via Daemon で、手元の共有の daemon 越しに開く（`daemon:/path`・`daemon:ssh://host/path`）。CLI・VSCode 拡張と History・検索の索引・SSH のつながりを共有する。様子は Window > Activity の Daemon のタブか `amonhen daemon status`。
 
 ## CLI
 
