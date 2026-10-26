@@ -832,6 +832,36 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
         .unwrap();
     assert!(version.info.unwrap()["version"].is_null());
 
+    // ログインシェル経由なら、SSH 先のログインシェルが読むファイル（sh・bash は ~/.profile、zsh は ~/.zprofile。
+    // SHELL がなければ、シェルが利用者のログインシェルを入れる）の変数がエンジンに届く。そこで何かを表示しても、
+    // 通信は壊れない。
+    for profile in [".profile", ".zprofile"] {
+        std::fs::write(
+            remote_home.join(profile),
+            "echo 'hello from the profile'\nexport PROFILE_ONLY_VAR=from-profile\n",
+        )
+        .unwrap();
+    }
+    let has_profile_var = |options: &HostOptions| {
+        let repo = Repository::new(connect("ssh://dev", options).unwrap());
+        let env = repo
+            .run(amonhen_core::command::Command::ProcessEnvironment)
+            .unwrap();
+        env.info.unwrap()["vars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v["name"] == "PROFILE_ONLY_VAR" && v["value"] == "from-profile")
+    };
+    assert!(has_profile_var(&HostOptions {
+        login_shell: Some(true),
+        ..Default::default()
+    }));
+    assert!(!has_profile_var(&HostOptions {
+        push: Some(true),
+        ..Default::default()
+    }));
+
     // 「PATH の amonhen」を選ぶと、偽の SSH 先の PATH にはないので、送らずに断る。
     let err = connect(
         "ssh://other",

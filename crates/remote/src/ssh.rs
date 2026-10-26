@@ -77,7 +77,7 @@ fn shell_quote(s: &str) -> String {
 /// （`crate::local::opening`。共有の daemon は、そのつながりでエンジンを起動するときに使う）。環境変数
 /// （`AMONHEN_REMOTE_ENGINE`・`AMONHEN_PUSH`）があれば、そちらが優先。
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-#[serde(default)]
+#[serde(default, rename_all = "camelCase")]
 pub struct HostOptions {
     /// SSH 先で使う git（エンジンに `AMONHEN_GIT` として渡す）。なければ SSH 先の PATH のもの。
     pub git: Option<String>,
@@ -86,6 +86,9 @@ pub struct HostOptions {
     pub engine: Option<String>,
     /// 合うものがなければ送り込むか。なければ送る。
     pub push: Option<bool>,
+    /// エンジンを SSH 先のログインシェル経由で起動するか（`~/.profile` などで足した PATH・`GIT_*` を、エンジンと
+    /// git が受け取る）。なければ起動しない（ssh がそのまま動かす、ログインでないシェルの環境）。
+    pub login_shell: Option<bool>,
 }
 
 impl HostOptions {
@@ -388,17 +391,17 @@ pub fn connect(
     );
     let slot = SharedSlot::take(&key);
     let mut args = base_args(target, slot.is_some());
-    args.push(
-        format!(
-            "{}; {}exec {} --stdio {}",
-            cleanup_script(&engine),
-            git_env(options),
-            shell_quote(&engine.path),
-            target.shell_path()
-        )
-        .trim_end()
-        .to_owned(),
+    let start = format!(
+        "{}exec {} --stdio {}",
+        git_env(options),
+        shell_quote(&engine.path),
+        target.shell_path()
     );
+    args.push(format!(
+        "{}; {}",
+        cleanup_script(&engine),
+        through_login_shell(options, start.trim_end())
+    ));
     let conn = Connection::spawn(ssh, &args)?;
     if let Some(slot) = slot {
         conn.hold(Box::new(slot));
@@ -423,15 +426,19 @@ pub fn find_repositories(
         .iter()
         .map(|e| format!(" --exclude {}", shell_quote(e)))
         .collect();
+    let start = format!(
+        "{}exec {} find-repositories --depth {depth}{excludes} {}",
+        git_env(options),
+        shell_quote(&engine.path),
+        target.shell_path()
+    );
     let out = run(
         ssh,
         target,
         &format!(
-            "{}; {}exec {} find-repositories --depth {depth}{excludes} {}",
+            "{}; {}",
             cleanup_script(&engine),
-            git_env(options),
-            shell_quote(&engine.path),
-            target.shell_path()
+            through_login_shell(options, &start)
         ),
         None,
     )?;
@@ -455,6 +462,19 @@ fn git_env(options: &HostOptions) -> String {
         Some(git) => format!("AMONHEN_GIT={} ", shell_quote(git)),
         None => String::new(),
     }
+}
+
+/// エンジンを起動するシェルの文（`command`）を、選んでいればログインシェル経由に（`HostOptions::login_shell`）。
+/// ログインシェルが読む `~/.profile` などが何かを表示しても通信に混ざらないよう、そのあいだの標準出力は標準
+/// エラーに向け、エンジンを起動する直前に戻す。
+fn through_login_shell(options: &HostOptions, command: &str) -> String {
+    if options.login_shell != Some(true) {
+        return command.to_owned();
+    }
+    format!(
+        r#"exec 3>&1 1>&2; exec "${{SHELL:-/bin/sh}}" -lc {}"#,
+        shell_quote(&format!("exec 1>&3 3>&-; {command}"))
+    )
 }
 
 /// SSH 先で使うエンジンを決め、なければ送り込む。
@@ -617,7 +637,17 @@ mod host_options_tests {
             git: Some("/usr/local/bin/git".into()),
             engine: Some("sent".into()),
             push: Some(false),
+            login_shell: Some(true),
         };
+        assert!(options.to_json().contains("\"loginShell\":true"));
+        assert_eq!(
+            super::through_login_shell(&options, "exec x"),
+            r#"exec 3>&1 1>&2; exec "${SHELL:-/bin/sh}" -lc 'exec 1>&3 3>&-; exec x'"#
+        );
+        assert_eq!(
+            super::through_login_shell(&HostOptions::default(), "exec x"),
+            "exec x"
+        );
         assert_eq!(HostOptions::from_json(&options.to_json()), options);
         assert!(HostOptions::from_json("").is_empty());
         assert!(HostOptions::from_json("{}").is_empty());

@@ -934,6 +934,10 @@ impl Operations for RemoteOperations {
         self.op(Op::SaveExcludesFile(text.to_owned()))
     }
 
+    fn process_environment(&self) -> Result<Vec<(String, String)>> {
+        self.op(Op::ProcessEnvironment)
+    }
+
     fn check_remote(&self, url: &str) -> Result<RemoteCheck> {
         self.op(Op::CheckRemote(url.to_owned()))
     }

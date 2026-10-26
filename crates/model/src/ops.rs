@@ -357,6 +357,10 @@ pub trait Operations: Send + Sync {
     fn excludes_file(&self) -> Result<(String, Option<String>)> {
         Err(crate::tr!("Can’t read the excludes file here").into())
     }
+    /// git を動かしているプロセスの環境変数（名前の順）。SSH 先ならエンジンのもので、そのまま git に渡る。
+    fn process_environment(&self) -> Result<Vec<(String, String)>> {
+        Ok(Vec::new())
+    }
     /// そのファイルを書く（途中のフォルダがなければ作る）。
     fn save_excludes_file(&self, text: &str) -> Result<()> {
         let _ = text;

@@ -296,6 +296,8 @@ pub enum Op {
     ExcludesFile,
     /// → `()`
     SaveExcludesFile(String),
+    /// → `Vec<(String, String)>`（エンジンのプロセスの環境変数）
+    ProcessEnvironment,
     LfsTrack(String, bool),
     LfsFileCount,
     ChangeRemote(RemoteChange),

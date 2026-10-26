@@ -815,6 +815,19 @@ impl Operations for Git {
         Ok(crate::programs::programs(name))
     }
 
+    fn process_environment(&self) -> Result<Vec<(String, String)>> {
+        let mut vars: Vec<(String, String)> = std::env::vars_os()
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.to_string_lossy().into_owned(),
+                )
+            })
+            .collect();
+        vars.sort();
+        Ok(vars)
+    }
+
     fn excludes_file(&self) -> Result<(String, Option<String>)> {
         let path = self.excludes_path()?;
         let text = match std::fs::read(&path) {
