@@ -63,6 +63,67 @@ fn talks_to_the_daemon_process_and_hears_about_changes() {
     assert_eq!(repo.load_history().unwrap().graph.len(), 2);
 }
 
+/// パスなしの `--stdio` は、その機械の設定（`git config --global`）・git の版・プログラムを扱う。
+#[test]
+fn serves_the_machine_settings_without_a_repository() {
+    use amonhen_core::command::Command;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let global = tmp.path().join("gitconfig");
+    // 設定のリポジトリはデータの置き場所（XDG_DATA_HOME）に作られ、global の設定はこのテストのファイルに書く。
+    let conn = Connection::spawn(
+        "sh",
+        &[
+            "-c".to_owned(),
+            r#"XDG_DATA_HOME="$1" GIT_CONFIG_GLOBAL="$2" GIT_CONFIG_NOSYSTEM=1 exec "$0" --stdio"#
+                .to_owned(),
+            env!("CARGO_BIN_EXE_amonhend").to_owned(),
+            data.display().to_string(),
+            global.display().to_string(),
+        ],
+    )
+    .unwrap();
+    let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
+
+    let set = repo
+        .run(Command::ConfigSet {
+            key: "user.name".to_owned(),
+            value: Some("Ada".to_owned()),
+            scope: Some("global".to_owned()),
+        })
+        .unwrap();
+    assert!(set.ok, "{set:?}");
+    assert!(data.join("amonhen/settings-repo/.git").is_dir());
+    assert!(
+        std::fs::read_to_string(&global)
+            .unwrap()
+            .contains("name = Ada")
+    );
+
+    let list = repo.run(Command::ConfigList).unwrap();
+    let entries = list.info.unwrap()["entries"].to_string();
+    assert!(
+        entries.contains("\"user.name\"") && entries.contains("\"Ada\""),
+        "{entries}"
+    );
+
+    let version = repo.run(Command::GitVersion).unwrap();
+    assert!(version.info.unwrap()["version"].is_string());
+
+    let programs = repo
+        .run(Command::Programs {
+            name: "git".to_owned(),
+        })
+        .unwrap();
+    assert!(
+        !programs.info.unwrap()["programs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[test]
 fn reports_progress_and_the_reason_when_the_daemon_goes_away() {
     let tmp = tempfile::tempdir().unwrap();

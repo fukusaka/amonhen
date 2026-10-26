@@ -91,6 +91,7 @@ dependencies = [
 name = "amonhen-daemon"
 version = "0.2.7"
 dependencies = [
+ "amonhen-backend-cli",
  "amonhen-backend-gix",
  "amonhen-core",
  "amonhen-front",

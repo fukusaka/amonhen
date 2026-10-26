@@ -3,6 +3,7 @@
 
 mod extras;
 mod ops;
+mod programs;
 mod signing;
 mod status;
 mod verify;
@@ -17,6 +18,7 @@ use std::time::{Duration, Instant};
 
 use amonhen_model::Result;
 
+pub use programs::programs;
 pub use status::parse_status;
 pub use verify::LocalVerifier;
 
@@ -36,6 +38,44 @@ fn fsmonitor_enabled() -> bool {
 /// status の結果（untracked cache・fsmonitor の状態）を index に書き残す間隔。ふだんの status は
 /// 利用者の git とロックを奪い合わないよう index に書かないので、ときどきだけ書いてキャッシュを新しくする。
 const SAVE_STATUS_EVERY: Duration = Duration::from_secs(60);
+
+/// Amon Hen のデータの置き場所（`${XDG_DATA_HOME:-~/.local/share}/amonhen`、Windows は `%LOCALAPPDATA%\amonhen`）。
+/// エンジンの置き場所もここ（`amonhen install`）。
+pub fn data_dir() -> Result<PathBuf> {
+    if cfg!(windows) {
+        let local =
+            std::env::var_os("LOCALAPPDATA").ok_or_else(|| tr!("LOCALAPPDATA isn’t set"))?;
+        return Ok(PathBuf::from(local).join("amonhen"));
+    }
+    if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
+        return Ok(PathBuf::from(d).join("amonhen"));
+    }
+    let home = std::env::var_os("HOME").ok_or_else(|| tr!("HOME isn’t set"))?;
+    Ok(PathBuf::from(home).join(".local/share/amonhen"))
+}
+
+/// この機械の「すべてのリポジトリ」の設定（`git config --global`）を読み書きするための、空のリポジトリ
+/// （`<データの置き場所>/settings-repo`）。なければ `git init` で作る。エンジンがリポジトリなしで起動したとき
+/// （`amonhen --stdio` だけ）と、アプリの Settings > Git がこれを開き、local の値は見ずに global だけを扱う。
+pub fn settings_repository() -> Result<PathBuf> {
+    let dir = data_dir()?.join("settings-repo");
+    if !dir.join(".git").is_dir() {
+        std::fs::create_dir_all(&dir)?;
+        let out = amonhen_model::process::command("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .output()?;
+        if !out.status.success() {
+            return Err(tr!(
+                "Couldn’t prepare the settings repository at {path}: {error}",
+                path = dir.display(),
+                error = String::from_utf8_lossy(&out.stderr).trim()
+            )
+            .into());
+        }
+    }
+    Ok(dir)
+}
 
 /// `url` を `dest`（まだないフォルダ）に clone する。`dest` の親で git を起動する（Activity に残る）。
 pub fn clone(url: &str, dest: &std::path::Path) -> Result<()> {
