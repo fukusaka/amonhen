@@ -110,7 +110,8 @@ export class DaemonClient {
   static async open(daemon: string, location: string): Promise<DaemonClient> {
     const path = await socketPath(daemon);
     const socket = await connectOrLaunch(daemon, path);
-    const name = Buffer.from(`\u0001${location}\u0000${clientEnv()}`, 'utf8');
+    const env = fallbackGit ? { ...process.env, AMONHEN_FALLBACK_GIT: fallbackGit } : process.env;
+    const name = Buffer.from(`\u0001${location}\u0000${clientEnv(env)}`, 'utf8');
     const head = Buffer.alloc(4);
     head.writeUInt32LE(name.length, 0);
     socket.write(Buffer.concat([head, name]));
@@ -282,6 +283,16 @@ async function connectOrLaunch(daemon: string, path: string): Promise<Socket> {
   throw new DaemonError(`daemon（${path}）につなげません`);
 }
 
+let fallbackGit: string | undefined;
+
+/**
+ * Amon Hen の設定（`settings.json`）で git を決めていないときに、daemon に使ってほしい git（`git.path`）。これから
+ * 開くつながりに `AMONHEN_FALLBACK_GIT` で送る
+ */
+export function setFallbackGit(path: string | undefined): void {
+  fallbackGit = path || undefined;
+}
+
 /**
  * daemon に送る、この拡張の環境（`NAME=value` を NUL で区切ったもの）。共有の daemon は、このつながりで動かす
  * git・ssh をこの環境で動かす（先に起動したアプリの PATH・SSH の agent・`GIT_*` で動かさない）。受け取る名前は
@@ -300,6 +311,7 @@ export function clientEnv(env: NodeJS.ProcessEnv = process.env, windows = proces
     'XDG_DATA_HOME',
     'AMONHEN_ASKPASS',
     'AMONHEN_GIT',
+    'AMONHEN_FALLBACK_GIT',
     'AMONHEN_PASS_ENV',
     ...passEnv.split(/[\s,]+/).filter((n) => n !== '').map(key),
   ]);

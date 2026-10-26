@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { chooseGit, type GitChoice } from './choice.ts';
 
 export interface ExecOptions {
   cwd: string;
@@ -37,19 +38,38 @@ const BASE_ENV = {
 };
 
 export class GitExecutor {
-  readonly path: string;
+  private readonly choose: () => GitChoice;
   private readonly onLog: ((log: ExecLog) => void) | undefined;
 
-  constructor(path: string, onLog?: (log: ExecLog) => void) {
-    this.path = path;
+  /** `path` の git を使う。関数なら、起動のたびにそれで決める（`GitExecutor.chosen`） */
+  constructor(path: string | (() => GitChoice), onLog?: (log: ExecLog) => void) {
+    this.choose = typeof path === 'string' ? () => ({ path, source: 'vscode' }) : path;
     this.onLog = onLog;
+  }
+
+  /**
+   * Amon Hen の設定に従う git（`chooseGit`。アプリで選び直せば、次の起動から替わる）。`vscodeGit` は、設定で
+   * 決めていないときの VSCode の git
+   */
+  static chosen(vscodeGit: string, onLog?: (log: ExecLog) => void): GitExecutor {
+    return new GitExecutor(() => chooseGit(vscodeGit), onLog);
+  }
+
+  /** 今使う git */
+  get path(): string {
+    return this.choose().path;
   }
 
   exec(args: readonly string[], opts: ExecOptions): Promise<Buffer> {
     const fullArgs = opts.readOnly ? ['--no-optional-locks', ...args] : [...args];
     const start = performance.now();
+    const git = this.choose();
+    if (git.problem) {
+      // 選んだ git がなければ、ほかの git に黙って戻さずに止める
+      return Promise.reject(new GitError(fullArgs, null, git.problem));
+    }
     return new Promise((resolve, reject) => {
-      const child = spawn(this.path, fullArgs, {
+      const child = spawn(git.path, fullArgs, {
         cwd: opts.cwd,
         env: { ...process.env, ...BASE_ENV, ...opts.env },
         // Windows でコンソールの窓を出さない

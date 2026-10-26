@@ -108,6 +108,10 @@ log. On a Remote-SSH host, the engine for that host is used there.
 Without an engine for the host's OS and CPU, or with `amonhen.daemon.enabled` off, the extension runs on its own git
 execution layer (the features above work the same, but without sharing with the app and CLI).
 
+Either way the extension runs the git chosen for the machine in Amon Hen's settings
+(`~/.config/amonhen/settings.json`, set in the app's Settings > Git > Programs), and VSCode's `git.path` only when none
+is chosen; if the chosen git isn't there, commands that run git stop with an error.
+
 | Setting | Default | Description |
 | --- | --- | --- |
 | `amonhen.daemon.enabled` | `true` | Use the engine's shared daemon. Off: the git execution layer only |

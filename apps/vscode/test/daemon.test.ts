@@ -233,4 +233,6 @@ test('sends the daemon only the environment git and ssh use', () => {
   // AMONHEN_PASS_ENV で足した名前も送る
   const added = clientEnv({ PATH: '/bin', AMONHEN_PASS_ENV: 'GH_HOST, HTTPS_PROXY', GH_HOST: 'example.com', NO_PROXY: 'x' }, false);
   assert.deepEqual(added.split('\0').sort(), ['AMONHEN_PASS_ENV=GH_HOST, HTTPS_PROXY', 'GH_HOST=example.com', 'PATH=/bin']);
+  // git.path は、Amon Hen の設定で git を決めていないときの git として送る
+  assert.equal(clientEnv({ AMONHEN_FALLBACK_GIT: '/vscode/git' }, false), 'AMONHEN_FALLBACK_GIT=/vscode/git');
 });

@@ -7,11 +7,12 @@
  */
 import assert from 'node:assert/strict';
 import childProcess from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import * as vscode from 'vscode';
 import { DaemonClient } from '../src/daemon/client.ts';
 import type { SelectedLine } from '../src/diff/fileDiff.ts';
+import { settingsFile } from '../src/git/choice.ts';
 import type { activate } from '../src/extension.ts';
 import type { HostMessage } from '../src/view/protocol.ts';
 
@@ -277,6 +278,37 @@ suite('Amon Hen in VSCode', () => {
       spawned.slice(mark).some((s) => s.args.includes('update-index')),
       '行の stage は拡張が git の update-index でする',
     );
+  });
+
+  test('runs the git chosen in Amon Hen’s settings, and stops when it isn’t there', async () => {
+    const repo = api.manager.current!;
+    const settings = settingsFile();
+    const choose = (git: string) => {
+      mkdirSync(dirname(settings), { recursive: true });
+      writeFileSync(settings, JSON.stringify({ git }));
+    };
+    const pathGit =
+      process.platform === 'win32'
+        ? childProcess.execFileSync('where', ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0]!
+        : childProcess.execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const missing = join(dirname(settings), 'no-such-git');
+    try {
+      for (const daemon of [false, true]) {
+        await vscode.workspace.getConfiguration('amonhen').update('daemon.enabled', daemon, vscode.ConfigurationTarget.Global);
+        const via = daemon ? 'daemon' : 'git';
+        // 選んだ git がなければ、ほかの git で動かさずに止まる
+        choose(missing);
+        await assert.rejects(repo.backend.createBranch(`missing-${via}`, 'HEAD', false), (e: Error) => e.message.includes(missing));
+        assert.equal(git('branch', '--list', `missing-${via}`), '');
+        // 選び直せば、再起動もつなぎ直しもなく、その git で動く
+        choose(pathGit);
+        await repo.backend.createBranch(`chosen-${via}`, 'HEAD', false);
+        assert.notEqual(git('branch', '--list', `chosen-${via}`), '');
+      }
+    } finally {
+      rmSync(settings, { force: true });
+      await vscode.workspace.getConfiguration('amonhen').update('daemon.enabled', false, vscode.ConfigurationTarget.Global);
+    }
   });
 
   test('starts every process without a console window', () => {
