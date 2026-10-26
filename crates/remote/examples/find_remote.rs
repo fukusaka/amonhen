@@ -11,7 +11,14 @@ fn main() -> amonhen_model::Result<()> {
         .collect();
     let target = amonhen_remote::ssh::Target::parse(location)?;
     let started = std::time::Instant::now();
-    let found = amonhen_remote::ssh::find_repositories("ssh", &target, &daemons, depth, &excludes)?;
+    let found = amonhen_remote::ssh::find_repositories(
+        "ssh",
+        &target,
+        &daemons,
+        &Default::default(),
+        depth,
+        &excludes,
+    )?;
     for path in &found {
         println!("{path}");
     }

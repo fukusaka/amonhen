@@ -200,7 +200,13 @@ fn open_remote(location: &str) -> amonhen_model::Result<Repository> {
             .unwrap_or_default();
         let daemons = ssh::Daemons::new(engines, Some((ssh::local_platform(), daemon.clone())));
         let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
-        ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)?
+        // SSH 先ごとの選択（macOS の Settings > SSH Hosts）は、GTK4 のアプリにはまだない。
+        ssh::connect(
+            &program,
+            &ssh::Target::parse(location)?,
+            &daemons,
+            &ssh::HostOptions::default(),
+        )?
     } else {
         let path = amonhen_remote::location::local_path(location)?;
         amonhen_remote::local::connect(path, &daemon.to_string_lossy())?

@@ -267,7 +267,8 @@ final class Bookmarks {
                             if RepositoryLocation.isRemote(root.path) {
                                 return (root.path, Result {
                                     try RemoteScan.findRepositories(
-                                        location: root.path, depth: root.depth, excludes: root.excludes, daemon: daemon, daemons: daemons)
+                                        location: root.path, depth: root.depth, excludes: root.excludes, daemon: daemon, daemons: daemons,
+                                        hostOptions: Settings.hostOptionsJSON(for: root.path))
                                 })
                             }
                             return (root.path, .success(Self.scan(root)))

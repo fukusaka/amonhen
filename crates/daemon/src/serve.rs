@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use amonhen_backend_gix::GixBackend;
 use amonhen_model::{GitBackend, Result};
+use amonhen_remote::ssh::HostOptions;
 use amonhen_remote::{Notification, Server, local};
 
 /// だれもつないでいない状態がこれだけ続いたら終わる。
@@ -140,9 +141,16 @@ fn serve_connection(state: &State, stream: amonhen_remote::endpoint::Duplex) -> 
         Err(e) => return Err(e.into()),
     };
     // つないだ FE の環境。このつながりで動かす git・ssh（開くときの ssh も）に渡す。
-    let (path, env) = local::split_opening(&opening);
+    let (path, env, options) = local::split_opening(&opening);
     amonhen_model::process::with_client_env(&env.clone(), || {
-        serve_opened(state, path, env, reader, BufWriter::new(stream.writer))
+        serve_opened(
+            state,
+            path,
+            env,
+            &options,
+            reader,
+            BufWriter::new(stream.writer),
+        )
     })
 }
 
@@ -151,6 +159,7 @@ fn serve_opened(
     state: &State,
     path: &str,
     env: amonhen_model::process::ClientEnv,
+    options: &HostOptions,
     mut reader: Reader,
     mut writer: Writer,
 ) -> Result<()> {
@@ -174,9 +183,9 @@ fn serve_opened(
     }
     // FE 向けの窓口（`amonhen-front`）: コアはこの daemon で動き、相手は JSON とレコードを受け取る。
     if let Some(location) = path.strip_prefix(amonhen_front::PREAMBLE) {
-        return serve_front(state, location, env, reader, writer);
+        return serve_front(state, location, env, options, reader, writer);
     }
-    let shared = match open(state, path) {
+    let shared = match open(state, path, options) {
         Ok(s) => s,
         Err(e) => {
             // 開けなければ、最初の要求（Hello）に理由を返して閉じる。
@@ -210,12 +219,14 @@ fn serve_front(
     state: &State,
     location: &str,
     env: amonhen_model::process::ClientEnv,
+    options: &HostOptions,
     mut reader: Reader,
     writer: Writer,
 ) -> Result<()> {
     use amonhen_remote::frame::{self, Kind};
     use std::sync::atomic::AtomicBool;
-    let opened = open(state, location).and_then(|shared| Ok((core(&shared)?.clone(), shared)));
+    let opened =
+        open(state, location, options).and_then(|shared| Ok((core(&shared)?.clone(), shared)));
     let (repo, shared) = match opened {
         Ok(r) => r,
         Err(e) => {
@@ -304,21 +315,29 @@ fn reply_error(reader: &mut Reader, mut writer: Writer, message: &str) {
 }
 
 /// `location`（手元のパスか `ssh://host/path`）のリポジトリを、だれかがもう開いていればそれを、なければ新しく
-/// 開く。SSH のつながりが切れていれば、つなぎ直す。
-fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
+/// 開く。SSH のつながりが切れていれば、つなぎ直す。`options` は、つなぐときのエンジンと git の選択（最初に開いた
+/// 相手のものでエンジンが起動し、同じ場所を開くほかの相手もそれを使う）。
+fn open(state: &State, location: &str, options: &HostOptions) -> Result<Arc<Shared>> {
     let key = if location.starts_with("ssh://") {
         location.to_owned()
     } else {
         local::canonical_path(location)?
     };
+    // 同じ SSH 先でも、エンジンや git の選択が違えば別のつながり（選択を変えたら、次に開くときから効く）。History の
+    // キャッシュは場所ごとのまま（`Shared::key`）。
+    let slot = if key.starts_with("ssh://") && !options.is_empty() {
+        format!("{key}\0{}", options.to_json())
+    } else {
+        key.clone()
+    };
     {
         let mut repos = state.repos.lock().unwrap();
-        if let Some((shared, used)) = repos.get_mut(&key) {
+        if let Some((shared, used)) = repos.get_mut(&slot) {
             if shared.closed().is_none() {
                 *used = Instant::now();
                 return Ok(shared.clone());
             }
-            repos.remove(&key);
+            repos.remove(&slot);
         }
     }
     // SSH はつなぐのに数秒かかるので、一覧のロックの外で開く。
@@ -330,7 +349,7 @@ fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
         }
     };
     let (backend, ssh, watcher): (Arc<dyn GitBackend>, _, _) = if key.starts_with("ssh://") {
-        let conn = connect_ssh(&key)?;
+        let conn = connect_ssh(&key, options)?;
         conn.on_notification(move |n| {
             let Notification::Changed(changes) = n;
             notify_all(changes);
@@ -365,14 +384,14 @@ fn open(state: &State, location: &str) -> Result<Arc<Shared>> {
     });
     let mut repos = state.repos.lock().unwrap();
     // 同時に開いた相手がいれば、先に入った方を使う。
-    let entry = repos.entry(key).or_insert((shared, Instant::now()));
+    let entry = repos.entry(slot).or_insert((shared, Instant::now()));
     entry.1 = Instant::now();
     Ok(entry.0.clone())
 }
 
 /// SSH 先のエンジンを用意してつなぐ（アプリが SSH 先を開くときと同じ）。ssh のコマンドは `AMONHEN_SSH` で、
 /// 送るエンジンの置き場所は `AMONHEN_ENGINES` で差し替えられる。
-fn connect_ssh(location: &str) -> Result<Arc<amonhen_remote::Connection>> {
+fn connect_ssh(location: &str, options: &HostOptions) -> Result<Arc<amonhen_remote::Connection>> {
     use amonhen_remote::ssh;
     let exe = std::env::current_exe()?;
     let daemons = ssh::Daemons::new(
@@ -380,7 +399,7 @@ fn connect_ssh(location: &str) -> Result<Arc<amonhen_remote::Connection>> {
         Some((ssh::local_platform(), exe)),
     );
     let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
-    ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)
+    ssh::connect(&program, &ssh::Target::parse(location)?, &daemons, options)
 }
 
 /// daemon のコアで、つないだ側を手伝う。
@@ -449,11 +468,12 @@ fn status(state: &State) -> serde_json::Value {
         .lock()
         .unwrap()
         .iter()
-        .map(|(path, (shared, used))| {
+        .map(|(_, (shared, used))| {
             let index = shared.search.text_index_stats();
             let traffic = shared.ssh.as_ref().map(|c| c.traffic());
             serde_json::json!({
-                "path": path,
+                // 場所（同じ SSH 先を違う選択で開いていれば、同じ場所が 2 つ並ぶ。エンジンで見分けられる）。
+                "path": shared.key,
                 "ssh": shared.ssh.is_some(),
                 "sent": traffic.map(|t| t.0),
                 "received": traffic.map(|t| t.1),

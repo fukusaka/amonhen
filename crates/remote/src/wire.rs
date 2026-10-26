@@ -287,6 +287,12 @@ pub enum Op {
     Remotes,
     CheckRemote(String),
     SigningKeys(String),
+    /// → `Vec<Program>`（daemon の機械にある `git`・`gpg` などの候補）
+    Programs(String),
+    /// → `(String, Option<String>)`（ユーザー全体の無視するパターンのファイルのパスと中身）
+    ExcludesFile,
+    /// → `()`
+    SaveExcludesFile(String),
     LfsTrack(String, bool),
     LfsFileCount,
     ChangeRemote(RemoteChange),

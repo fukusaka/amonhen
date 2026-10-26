@@ -1127,11 +1127,16 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         }
         switch target {
         case let .host(name):
+            add(L("Settings…")) { SettingsWindowController.shared.show(tab: L("SSH Hosts"), host: name) }
+            menu.addItem(.separator())
             add(L("Add Repository on This Host…")) { [weak self] in self?.addRemote(host: name) }
             add(L("Add Folder to Scan on This Host…")) { [weak self] in self?.addRemoteScanFolder(host: name) }
             menu.addItem(.separator())
             add(L("Remove %@ from List…", name)) { [weak self] in self?.removeHost(name) }
         case .local:
+            // この Mac の git の設定（Settings > Git）。SSH 先の「設定…」と同じ入口。
+            add(L("Settings…")) { SettingsWindowController.shared.show(tab: "Git") }
+            menu.addItem(.separator())
             add(L("Add Local Repository…")) { [weak self] in self?.addRepository() }
             add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }
         case let .group(name):

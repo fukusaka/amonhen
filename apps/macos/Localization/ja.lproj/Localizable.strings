@@ -1340,6 +1340,38 @@
 "Asks before sending anything from a repository the first time." = "リポジトリから初めて送るときに確かめます。";
 "Stored in ~/Library/Application Support/Amon Hen/prompts." = "~/Library/Application Support/Amon Hen/prompts に置きます。";
 "With the base (diff3, zdiff3), the merge editor resolves one-sided conflicts by itself." = "元がある形式（diff3・zdiff3）なら、マージエディタが片側だけの変更を自分で解けます。";
+
+/* Settings > SSH Hosts */
+"SSH Hosts" = "SSH ホスト";
+"Connection" = "接続";
+"State" = "状態";
+"Check Connection" = "接続を確認";
+"Connecting…" = "つないでいます…";
+"Connecting to %@…" = "%@ につないでいます…";
+"Couldn’t connect to %@" = "%@ につなげませんでした";
+"unreachable" = "つながらない";
+"git wasn’t found on the host" = "SSH 先に git が見つかりません";
+"Engine" = "エンジン";
+"In use" = "使っているもの";
+"Not connected" = "つながっていない";
+"Through the shared daemon" = "共有の daemon 越し";
+"AMONHEN_REMOTE_ENGINE names the engine to use and AMONHEN_PUSH=0 stops sending one. Otherwise the amonhen on the host’s PATH, one sent earlier, or the bundled one is used." = "AMONHEN_REMOTE_ENGINE で使うエンジンを指定でき、AMONHEN_PUSH=0 で送り込みを止められます。なければ、SSH 先の PATH の amonhen、前に送ったもの、同梱のものの順に使います。";
+"Signature Verification" = "署名の検証";
+"Verify with" = "検証に使う鍵";
+"This Mac’s keys" = "この Mac の鍵";
+"The host’s git and keys" = "SSH 先の git と鍵";
+"Signatures of commits in repositories on this host are checked with these." = "この SSH 先のリポジトリのコミットの署名を、これで検証します。";
+"Folders to Scan" = "探すフォルダ";
+"%ld levels" = "%ld 段まで";
+"The same list as under the host in Places." = "Repositories の Places の、この SSH 先の下と同じ一覧です。";
+"Add an SSH host" = "SSH 先を加える";
+"Forget this host" = "この SSH 先を忘れる";
+"Write it as ssh knows it: user@host:port, or a name in ~/.ssh/config." = "ssh が知っている名前で書きます: user@host:port か、~/.ssh/config の名前。";
+"Add an SSH host with +, or open one from Places." = "＋ で SSH 先を加えるか、Places から開きます。";
+"Applies to every repository on %@ (its ~/.gitconfig). git in a terminal there follows these too." = "%@ のすべてのリポジトリに効きます（そこの ~/.gitconfig）。そこの端末の git も同じ設定に従います。";
+"The engine on %@ runs the git on its PATH." = "%@ のエンジンは、その PATH の git を使います。";
+"The git on %@ runs this repository. Every repository on that host uses it. See it in Settings > SSH Hosts." = "%@ の git がこのリポジトリを動かしています。その SSH 先のすべてのリポジトリが同じものを使います。Settings > SSH ホストで見られます。";
+"chosen in Settings > SSH Hosts" = "Settings > SSH ホストで選択";
 "Environment Variables" = "環境変数";
 "Use the login shell’s environment variables" = "ログインシェルの環境変数を使う";
 "Reads the PATH, SSH agent and GIT_* that an app opened from the Finder lacks, for git and ssh." = "Finder から開いたアプリにない PATH・SSH の agent・GIT_* をシェルから読み、git と ssh に渡します。";
@@ -1355,3 +1387,21 @@
 "already above" = "上と同じ";
 "git is the one chosen in Settings > Git: %@" = "git は 設定 > Git で選んだものを使います: %@";
 "Checked variables go to the git and ssh this app runs, through the shared daemon too, but not to SSH hosts. Always passed, when the shell sets them: %@." = "チェックした変数を、このアプリが動かす git と ssh に渡します（共有の daemon 越しも。SSH 先には渡りません）。シェルにあればいつも渡すもの（外せません）: %@。";
+
+/* Settings > SSH Hosts: エンジンと git の選択 */
+"Engine to use" = "使うエンジン";
+"The amonhen on the host’s PATH" = "SSH 先の PATH の amonhen";
+"The one Amon Hen sends" = "Amon Hen が送り込むもの";
+"Send one when none fits" = "合うものがなければ送り込む";
+"Uses the amonhen installed on the host. It must be this build." = "SSH 先に入っている amonhen を使います。このビルドのものである必要があります。";
+"Uses the one Amon Hen sent to the host, sending it first when there is none." = "Amon Hen が SSH 先に送ったものを使います。なければ先に送ります。";
+"Uses this path on the host." = "SSH 先のこのパスのものを使います。";
+"The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one." = "SSH 先の PATH の amonhen がこのビルドならそれ、なければ前に送ったもの、それもなければ送り込みます。";
+"Engine on %@" = "%@ のエンジン";
+"The path of amonhen on the host. It must be this build." = "SSH 先の amonhen のパス。このビルドのものである必要があります。";
+"%@ is set in the environment, so it decides instead." = "環境変数 %@ があるので、そちらが優先されます。";
+"Program on %@" = "%@ のプログラム";
+"The path of the program on the host." = "SSH 先のプログラムのパス。";
+"Passed to the engine on %@ when it starts. Repositories already open there keep the git they started with until they are opened again." = "%@ のエンジンを起動するときに渡します。もう開いているそこのリポジトリは、開き直すまで前の git のままです。";
+"The git chosen in Programs is %@." = "プログラムで選んだ git は %@ です。";
+"Use the git on the PATH" = "PATH の git に戻す";

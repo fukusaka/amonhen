@@ -60,7 +60,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "io.github.fukusaka.amonhen")
         return if RepositoryLocation.isRemote(location) {
-            try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory)
+            // SSH 先ごとの選択（エンジンと git）も渡す。
+            try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory,
+                           hostOptions: Settings.hostOptionsJSON(for: location))
         } else {
             try Repository(path: location, cacheDirectory: cacheDirectory)
         }
@@ -758,7 +760,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// daemon 越しなら、初めての読み込みの進み具合と、接続が切れたことを出す。
     private func watchConnection() {
         guard RepositoryLocation.isRemote(location) else { return }
-        repository.setLocalSignatureCheck(Settings.checkRemoteSignaturesLocally)
+        repository.setLocalSignatureCheck(Settings.sshHost(of: location).map(Settings.checkSignaturesLocally(on:)) ?? Settings.checkRemoteSignaturesLocally)
         NotificationCenter.default.addObserver(
             self, selector: #selector(signatureCheckChanged), name: .signatureCheckChanged, object: nil)
         updateConnection()
@@ -787,7 +789,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// 署名を検証する側が変わった。コアと画面が覚えていた結果を捨て、見えているものを検証し直す。
     @objc private func signatureCheckChanged() {
-        repository.setLocalSignatureCheck(Settings.checkRemoteSignaturesLocally)
+        repository.setLocalSignatureCheck(Settings.sshHost(of: location).map(Settings.checkSignaturesLocally(on:)) ?? Settings.checkRemoteSignaturesLocally)
         updateSignaturePlace()
         history.forgetSignatures()
         detail.reloadSignature()
@@ -800,9 +802,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             detail.signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
             return
         }
-        detail.signaturePlace = Settings.checkRemoteSignaturesLocally
-            ? SignaturePlace(local: true, detail: L("chosen in Settings"))
-            : SignaturePlace(local: false, host: host, detail: L("chosen in Settings"))
+        detail.signaturePlace = Settings.checkSignaturesLocally(on: Settings.sshHost(of: location) ?? host)
+            ? SignaturePlace(local: true, detail: L("chosen in Settings > SSH Hosts"))
+            : SignaturePlace(local: false, host: host, detail: L("chosen in Settings > SSH Hosts"))
     }
 
     // MARK: - タブの名前
@@ -1104,7 +1106,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             if let mergePath {
                 MergeEditorWindowController.show(path: mergePath, repository: repository, actions: actions)
             }
-            let delay = query != nil ? 3.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5
+            // --snapshot-after SECONDS で待ちを決める（SSH 先につながるのを待つなど）。
+            let delay = AppDelegate.option("--snapshot-after").flatMap(Double.init)
+                ?? (query != nil ? 3.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
                 let rep = appSettings ? SettingsWindowController.shared.snapshot()
                     : mergePath != nil

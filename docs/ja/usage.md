@@ -21,6 +21,8 @@
 
 リポジトリの一覧の Add Remote Repository… で接続先とパスを入れるか、`AmonHen ssh://[user@]host[:port]/path/to/repo`（ホームからなら `/~/src/repo`）。鍵か ssh-agent でパスワードなしにつながること。SSH 先では git の処理だけを `amonhen --stdio` が行う。SSH 先の `PATH` に同じビルドの `amonhen` があるか、同じビルドのものが前に置かれていればそれを使い、なければ同梱のエンジン（Linux x86_64・aarch64、macOS arm64）を `~/.local/share/amonhen/engine/<中身のハッシュ>/` に送り込む（送ったら中身を確かめる。`AMONHEN_PUSH=0` で送らない、`AMONHEN_REMOTE_ENGINE` で場所を指定）。
 
+Settings > SSH ホストに、SSH 先についてのすべてをまとめている。Amon Hen が知っている SSH 先（Places にあるものと、＋ で加えたもの）と、選んだ SSH 先の接続（状態、接続を確認、そこで動かすエンジンと合うものがなければ送り込むか、使っているエンジン、コミットの署名をこの Mac の鍵で検証するか SSH 先の鍵でか、探すフォルダ。Places と同じ一覧）、そしてその SSH 先のすべてのリポジトリに効く Settings > Git のページ（SSH 先の `--global` を、リポジトリなしで起動したエンジンを通して読み書きする）。プログラムのページで、そこでエンジンが使う git を選べる。Places の SSH 先の「設定…」と、リポジトリの Settings の一覧の下の git の行からも開ける。Places の「この Mac」の「設定…」は Settings > Git を開く。
+
 ## 共有の daemon
 
 Settings > パフォーマンスの「リポジトリを共有の daemon 越しに開く」か、一覧の右クリックの Open via Daemon で、手元の共有の daemon 越しに開く（`daemon:/path`・`daemon:ssh://host/path`）。CLI・VSCode 拡張と History・検索の索引・SSH のつながりを共有する。様子は Window > Activity の Daemon のタブか `amonhen daemon status`。

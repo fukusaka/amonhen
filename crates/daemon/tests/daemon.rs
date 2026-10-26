@@ -63,6 +63,69 @@ fn talks_to_the_daemon_process_and_hears_about_changes() {
     assert_eq!(repo.load_history().unwrap().graph.len(), 2);
 }
 
+/// パスなしの `--stdio` は、その機械の設定（`git config --global`）・git の版・プログラムを扱う。
+#[test]
+fn serves_the_machine_settings_without_a_repository() {
+    use amonhen_core::command::Command;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let data = tmp.path().join("data");
+    let home = tmp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let global = home.join(".gitconfig");
+    // 設定のリポジトリはデータの置き場所（XDG_DATA_HOME）に作られ、global の設定はこのテストの HOME に書く
+    // （GIT_CONFIG_GLOBAL は git 2.32 からなので使わない）。
+    let conn = Connection::spawn(
+        "sh",
+        &[
+            "-c".to_owned(),
+            r#"HOME="$1" XDG_DATA_HOME="$2" GIT_CONFIG_NOSYSTEM=1 exec "$0" --stdio"#.to_owned(),
+            env!("CARGO_BIN_EXE_amonhend").to_owned(),
+            home.display().to_string(),
+            data.display().to_string(),
+        ],
+    )
+    .unwrap();
+    let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
+
+    let set = repo
+        .run(Command::ConfigSet {
+            key: "user.name".to_owned(),
+            value: Some("Ada".to_owned()),
+            scope: Some("global".to_owned()),
+        })
+        .unwrap();
+    assert!(set.ok, "{set:?}");
+    assert!(data.join("amonhen/settings-repo/.git").is_dir());
+    assert!(
+        std::fs::read_to_string(&global)
+            .unwrap()
+            .contains("name = Ada")
+    );
+
+    let list = repo.run(Command::ConfigList).unwrap();
+    let entries = list.info.unwrap()["entries"].to_string();
+    assert!(
+        entries.contains("\"user.name\"") && entries.contains("\"Ada\""),
+        "{entries}"
+    );
+
+    let version = repo.run(Command::GitVersion).unwrap();
+    assert!(version.info.unwrap()["version"].is_string());
+
+    let programs = repo
+        .run(Command::Programs {
+            name: "git".to_owned(),
+        })
+        .unwrap();
+    assert!(
+        !programs.info.unwrap()["programs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
 #[test]
 fn reports_progress_and_the_reason_when_the_daemon_goes_away() {
     let tmp = tempfile::tempdir().unwrap();
@@ -190,11 +253,11 @@ fn provisions_the_engine_on_ssh_hosts() {
         dir: bundled.clone(),
         local: None,
         remote_engine: None,
-        push: true,
+        push: None,
     };
     let target = ssh::Target::parse(&format!("ssh://dev{}", repo_dir.display())).unwrap();
     let open = |daemons: &ssh::Daemons| -> amonhen_model::Result<String> {
-        let conn = ssh::connect(ssh_program, &target, daemons)?;
+        let conn = ssh::connect(ssh_program, &target, daemons, &Default::default())?;
         let engine = conn.remote_engine().unwrap_or_default();
         let repo = Repository::new(RemoteBackend::connect(conn)?);
         assert_eq!(repo.load_history()?.graph.len(), 1);
@@ -258,7 +321,7 @@ fn provisions_the_engine_on_ssh_hosts() {
         dir: elsewhere,
         local: None,
         remote_engine: None,
-        push: true,
+        push: None,
     };
     let engine = open(&other_build).unwrap();
     assert!(
@@ -293,7 +356,7 @@ fn provisions_the_engine_on_ssh_hosts() {
         dir: bundled,
         local: None,
         remote_engine: None,
-        push: false,
+        push: Some(false),
     };
     let err = open(&no_push).unwrap_err().to_string();
     assert!(err.contains("No usable engine"), "{err}");
@@ -569,6 +632,219 @@ fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
         }
     }
     out
+}
+
+/// 共有の daemon が、パスなしの `ssh://host` で SSH 先のリポジトリではなくその機械の設定を開く（Settings > SSH Hosts）。
+/// SSH 先ではエンジンがパスなしの `--stdio` で動き、global の設定を読み書きする。
+#[test]
+fn shared_daemon_opens_an_ssh_host_without_a_repository() {
+    use amonhen_remote::ssh;
+    let tmp = tempfile::tempdir().unwrap();
+    let remote_home = tmp.path().join("remote-home");
+    let local_home = tmp.path().join("local-home");
+    std::fs::create_dir(&remote_home).unwrap();
+    std::fs::create_dir(&local_home).unwrap();
+    let ssh_program = fake_ssh(tmp.path(), &remote_home);
+    let bundled = tmp.path().join("daemons");
+    std::fs::create_dir(&bundled).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_amonhend"),
+        bundled.join(format!("amonhen-{}", ssh::local_platform())),
+    )
+    .unwrap();
+    let socket = tmp.path().join("d.sock");
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
+        .env("AMONHEN_LANG", "en")
+        .arg("--serve")
+        .arg(&socket)
+        .env("HOME", &local_home)
+        .env("AMONHEN_SSH", &ssh_program)
+        .env("AMONHEN_ENGINES", &bundled)
+        .spawn()
+        .unwrap();
+    let started = std::time::Instant::now();
+    let stream = loop {
+        match std::os::unix::net::UnixStream::connect(&socket) {
+            Ok(s) => break s,
+            Err(_) if started.elapsed() < Duration::from_secs(5) => {
+                std::thread::sleep(Duration::from_millis(20))
+            }
+            Err(e) => panic!("つなげない: {e}"),
+        }
+    };
+    let mut writer = stream.try_clone().unwrap();
+    let env = amonhen_model::process::ClientEnv::from_vars([(
+        "GIT_AMONHEN_TEST".to_owned(),
+        "from the client".to_owned(),
+    )]);
+    amonhen_remote::local::write_preamble(
+        &mut writer,
+        &amonhen_remote::local::opening("ssh://dev", &env),
+    )
+    .unwrap();
+    let conn = Connection::new(stream, std::io::BufWriter::new(writer));
+    conn.mark_local();
+    let repo = Repository::new(RemoteBackend::connect(conn).unwrap());
+
+    // SSH 先（偽の ssh の HOME）の global の設定に書かれ、設定のリポジトリはそのデータの置き場所にできる。
+    let set = repo
+        .run(amonhen_core::command::Command::ConfigSet {
+            key: "user.name".to_owned(),
+            value: Some("Ada".to_owned()),
+            scope: Some("global".to_owned()),
+        })
+        .unwrap();
+    assert!(set.ok, "{set:?}");
+    assert!(
+        std::fs::read_to_string(remote_home.join(".gitconfig"))
+            .unwrap()
+            .contains("name = Ada")
+    );
+    assert!(
+        remote_home
+            .join(".local/share/amonhen/settings-repo/.git")
+            .is_dir()
+    );
+    assert_eq!(engines(&remote_home).len(), 1);
+    let programs = repo
+        .run(amonhen_core::command::Command::Programs {
+            name: "git".to_owned(),
+        })
+        .unwrap();
+    assert!(
+        !programs.info.unwrap()["programs"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    daemon.kill().unwrap();
+    daemon.wait().unwrap();
+}
+
+/// SSH 先ごとの選択（git とエンジン）は、開くときの最初の文に乗って daemon に届き、エンジンの起動に使われる。
+#[test]
+fn shared_daemon_uses_the_host_options_it_is_given() {
+    use amonhen_remote::ssh::{self, HostOptions};
+    let tmp = tempfile::tempdir().unwrap();
+    let remote_home = tmp.path().join("remote-home");
+    let local_home = tmp.path().join("local-home");
+    std::fs::create_dir(&remote_home).unwrap();
+    std::fs::create_dir(&local_home).unwrap();
+    let ssh_program = fake_ssh(tmp.path(), &remote_home);
+    let bundled = tmp.path().join("daemons");
+    std::fs::create_dir(&bundled).unwrap();
+    std::fs::copy(
+        env!("CARGO_BIN_EXE_amonhend"),
+        bundled.join(format!("amonhen-{}", ssh::local_platform())),
+    )
+    .unwrap();
+    let socket = tmp.path().join("d.sock");
+    // 失敗しても daemon を残さない（残ると cargo test の出力が閉じず、止まって見える）。
+    struct StopOnDrop(std::process::Child);
+    impl Drop for StopOnDrop {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let _daemon = StopOnDrop(
+        Command::new(env!("CARGO_BIN_EXE_amonhend"))
+            .env("AMONHEN_LANG", "en")
+            .arg("--serve")
+            .arg(&socket)
+            .env("HOME", &local_home)
+            .env("AMONHEN_SSH", &ssh_program)
+            .env("AMONHEN_ENGINES", &bundled)
+            .spawn()
+            .unwrap(),
+    );
+    let connect = |location: &str, options: &HostOptions| {
+        let started = std::time::Instant::now();
+        let stream = loop {
+            match std::os::unix::net::UnixStream::connect(&socket) {
+                Ok(s) => break s,
+                Err(_) if started.elapsed() < Duration::from_secs(5) => {
+                    std::thread::sleep(Duration::from_millis(20))
+                }
+                Err(e) => panic!("つなげない: {e}"),
+            }
+        };
+        let mut writer = stream.try_clone().unwrap();
+        amonhen_remote::local::write_preamble(
+            &mut writer,
+            &amonhen_remote::local::opening_with(
+                location,
+                &amonhen_model::process::ClientEnv::default(),
+                options,
+            ),
+        )
+        .unwrap();
+        let conn = Connection::new(stream, std::io::BufWriter::new(writer));
+        conn.mark_local();
+        RemoteBackend::connect(conn)
+    };
+
+    // git の選択は、エンジンに AMONHEN_GIT として渡る（選んだ git が動いた印を残す）。
+    let used = tmp.path().join("git-used");
+    let wrapper = tmp.path().join("my-git");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\necho used >> '{}'\nexec git \"$@\"\n",
+            used.display()
+        ),
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let repo = Repository::new(
+        connect(
+            "ssh://dev",
+            &HostOptions {
+                git: Some(wrapper.display().to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let version = repo
+        .run(amonhen_core::command::Command::GitVersion)
+        .unwrap();
+    assert!(version.info.unwrap()["version"].is_string());
+    assert!(used.exists(), "選んだ git が使われていない");
+
+    // 動かない git を選んでも、エンジンはつながり（設定のリポジトリはもうある）、git の版は読めない。
+    let broken = Repository::new(
+        connect(
+            "ssh://dev",
+            &HostOptions {
+                git: Some("/nonexistent/git".to_owned()),
+                ..Default::default()
+            },
+        )
+        .unwrap(),
+    );
+    let version = broken
+        .run(amonhen_core::command::Command::GitVersion)
+        .unwrap();
+    assert!(version.info.unwrap()["version"].is_null());
+
+    // 「PATH の amonhen」を選ぶと、偽の SSH 先の PATH にはないので、送らずに断る。
+    let err = connect(
+        "ssh://other",
+        &HostOptions {
+            engine: Some("installed".to_owned()),
+            ..Default::default()
+        },
+    )
+    .err()
+    .map(|e| e.to_string())
+    .unwrap_or_default();
+    assert!(err.contains("PATH"), "{err}");
+    assert_eq!(engines(&remote_home).len(), 1);
 }
 
 /// 共有の daemon が SSH 先を開く: 2 つの相手が同じ SSH 先を開いても、SSH 先の daemon は 1 つだけ送り込み、

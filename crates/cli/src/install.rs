@@ -25,22 +25,11 @@ fn exe_name() -> String {
     format!("amonhen{}", std::env::consts::EXE_SUFFIX)
 }
 
-fn data_dir() -> Result<PathBuf> {
-    if cfg!(windows) {
-        let local =
-            std::env::var_os("LOCALAPPDATA").ok_or_else(|| tr!("LOCALAPPDATA isn’t set"))?;
-        return Ok(PathBuf::from(local).join("amonhen"));
-    }
-    if let Some(d) = std::env::var_os("XDG_DATA_HOME").filter(|d| !d.is_empty()) {
-        return Ok(PathBuf::from(d).join("amonhen"));
-    }
-    let home = std::env::var_os("HOME").ok_or_else(|| tr!("HOME isn’t set"))?;
-    Ok(PathBuf::from(home).join(".local/share/amonhen"))
-}
-
 fn bin_link() -> Result<PathBuf> {
     if cfg!(windows) {
-        return Ok(data_dir()?.join("bin").join(exe_name()));
+        return Ok(amonhen_backend_cli::data_dir()?
+            .join("bin")
+            .join(exe_name()));
     }
     let home = std::env::var_os("HOME").ok_or_else(|| tr!("HOME isn’t set"))?;
     Ok(PathBuf::from(home).join(".local/bin/amonhen"))
@@ -117,7 +106,7 @@ fn own_version() -> (String, String) {
 pub fn engine_for_daemon() -> Result<PathBuf> {
     let me = std::env::current_exe()?.canonicalize()?;
     // Unix は current のリンクを通したパスにする（リンクを向け直せば、次に起動する daemon も新しい版になる）。
-    let root = data_dir()?;
+    let root = amonhen_backend_cli::data_dir()?;
     let current = if cfg!(windows) {
         current_dir(&root)
             .map(|d| d.join(exe_name()))
@@ -167,7 +156,7 @@ pub fn install(args: &[String]) -> Result<ExitCode> {
     let me = std::env::current_exe()?.canonicalize()?;
     let data = std::fs::read(&me)?;
     let hash = sha1_smol::Sha1::from(&data).digest().to_string()[..16].to_owned();
-    let root = data_dir()?;
+    let root = amonhen_backend_cli::data_dir()?;
     let dir = root.join("engine").join(&hash);
     let target = dir.join(exe_name());
     if !target.is_file() {

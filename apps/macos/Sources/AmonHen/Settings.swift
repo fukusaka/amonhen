@@ -29,13 +29,63 @@ enum Settings {
     }
 
     /// SSH 先のリポジトリのコミットの署名を、手元の鍵で検証するか（既定は手元）。false なら SSH 先の git と鍵で
-    /// 検証する。変えたら `signatureCheckChanged` を知らせる。
+    /// 検証する。SSH 先ごとに決める（Settings > SSH Hosts の「接続」）。決めていない SSH 先は、前からの 1 つの値。
+    /// 変えたら `signatureCheckChanged` を知らせる。
     static var checkRemoteSignaturesLocally: Bool {
         get { UserDefaults.standard.object(forKey: "checkRemoteSignaturesLocally") as? Bool ?? true }
         set {
             UserDefaults.standard.set(newValue, forKey: "checkRemoteSignaturesLocally")
             NotificationCenter.default.post(name: .signatureCheckChanged, object: nil)
         }
+    }
+
+    private static let signatureCheckByHostKey = "checkRemoteSignaturesLocallyByHost"
+
+    /// `host` のリポジトリの署名を手元の鍵で検証するか。
+    static func checkSignaturesLocally(on host: String) -> Bool {
+        (UserDefaults.standard.dictionary(forKey: signatureCheckByHostKey) as? [String: Bool])?[host] ?? checkRemoteSignaturesLocally
+    }
+
+    static func setCheckSignaturesLocally(_ value: Bool, on host: String) {
+        var byHost = UserDefaults.standard.dictionary(forKey: signatureCheckByHostKey) as? [String: Bool] ?? [:]
+        byHost[host] = value
+        UserDefaults.standard.set(byHost, forKey: signatureCheckByHostKey)
+        NotificationCenter.default.post(name: .signatureCheckChanged, object: nil)
+    }
+
+    /// 場所の SSH 先（`ssh://host/path`・`daemon:ssh://host/path` の host）。手元なら nil。
+    nonisolated static func sshHost(of location: String) -> String? {
+        let rest = location.hasPrefix("daemon:") ? String(location.dropFirst("daemon:".count)) : location
+        guard rest.hasPrefix("ssh://") else { return nil }
+        return String(rest.dropFirst("ssh://".count).prefix { $0 != "/" })
+    }
+
+    /// Settings > SSH Hosts で ＋ で加えた SSH 先（リポジトリやスキャンするフォルダがなくても一覧に残すもの）。
+    static var sshHosts: [String] {
+        get { UserDefaults.standard.stringArray(forKey: "sshHosts") ?? [] }
+        set { UserDefaults.standard.set(newValue, forKey: "sshHosts") }
+    }
+
+    nonisolated private static let hostOptionsKey = "sshHostOptions"
+
+    /// SSH 先ごとの選択（エンジンと git。Settings > SSH Hosts）。つなぐたびにコアに渡す。
+    nonisolated static func hostOptions(for host: String) -> HostOptions {
+        guard let json = (UserDefaults.standard.dictionary(forKey: hostOptionsKey) as? [String: String])?[host],
+              let options = try? JSONDecoder().decode(HostOptions.self, from: Data(json.utf8)) else { return HostOptions() }
+        return options
+    }
+
+    /// `location` の SSH 先の選択を、コアに渡す JSON で（手元の場所や、何も選んでいなければ nil）。
+    nonisolated static func hostOptionsJSON(for location: String) -> String? {
+        sshHost(of: location).flatMap { hostOptions(for: $0).json }
+    }
+
+    /// 変えたら `hostOptionsChanged`（object は SSH 先の名前）を知らせる。次につなぐときから効く。
+    static func setHostOptions(_ options: HostOptions, for host: String) {
+        var all = UserDefaults.standard.dictionary(forKey: hostOptionsKey) as? [String: String] ?? [:]
+        all[host] = options.json
+        UserDefaults.standard.set(all, forKey: hostOptionsKey)
+        NotificationCenter.default.post(name: .hostOptionsChanged, object: host)
     }
 
     /// コミットの詳細に作者・コミッターの Gravatar のアバターを出すか（既定は出す。メールアドレスの MD5 を
@@ -324,8 +374,29 @@ extension Notification.Name {
     static let autoFetchChanged = Notification.Name("autoFetchChanged")
     /// AI の CLI の選択が変わった（AI のボタンを出す・隠す）。
     static let assistantChanged = Notification.Name("assistantChanged")
+    /// SSH 先ごとの選択（エンジン・git）が変わった（object は SSH 先の名前）。
+    static let hostOptionsChanged = Notification.Name("hostOptionsChanged")
 }
 
+
+/// SSH 先ごとの選択（Settings > SSH Hosts の「接続」のエンジンと、「プログラム」の git）。コアの `HostOptions`
+/// （`crates/remote/src/ssh.rs`）と同じ形で、JSON にして渡す。
+nonisolated struct HostOptions: Codable, Equatable, Sendable {
+    /// SSH 先で使う git のパス。nil なら SSH 先の PATH のもの。
+    var git: String?
+    /// `installed`（PATH の amonhen）・`sent`（Amon Hen が送り込むもの）・`/` で始まるパス。nil なら自動。
+    var engine: String?
+    /// 合うものがなければ送り込むか。nil なら送る。
+    var push: Bool?
+
+    var isEmpty: Bool { git == nil && engine == nil && push == nil }
+
+    /// コアに渡す JSON（何も選んでいなければ nil）。
+    var json: String? {
+        guard !isEmpty, let data = try? JSONEncoder().encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+}
 
 /// pull での上流の取り込み方（`crates/model` の `PullMode`）。
 enum PullMode: String, CaseIterable {
@@ -759,6 +830,7 @@ final class SettingsWindowController: NSWindowController {
         }
         add(L("General"), "gearshape", GeneralSettings(model: model))
         add("Git", "arrow.triangle.branch", GitSettings(model: model))
+        add(L("SSH Hosts"), "network", SSHHostsSettings(model: model))
         add(L("Accounts"), "person.crop.circle", AccountsSettings(model: model))
         add(L("Appearance"), "paintbrush", AppearanceSettings(model: model))
         add(L("Diff & Merge"), "arrow.triangle.merge", DiffMergeSettings(model: model))
@@ -776,8 +848,12 @@ final class SettingsWindowController: NSWindowController {
 
     required init?(coder: NSCoder) { fatalError() }
 
-    func show(tab: String? = nil, page: SettingsPage? = nil) {
-        if let page {
+    /// `host` を渡すと、SSH Hosts のタブでその SSH 先を（`page` があればそのページを）選ぶ。
+    func show(tab: String? = nil, page: SettingsPage? = nil, host: String? = nil) {
+        if let host {
+            SSHHostsSettings.pendingHost = (host, page)
+            NotificationCenter.default.post(name: SSHHostsSettings.showHost, object: nil)
+        } else if let page {
             GitSettings.pendingPage = page
             NotificationCenter.default.post(name: GitSettings.showPage, object: page)
         }

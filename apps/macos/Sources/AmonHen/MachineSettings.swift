@@ -75,7 +75,8 @@ struct GitSettings: View {
 }
 
 /// プログラムのページ: git・gpg・ssh-keygen・gpgsm を同じ形で選ぶ（自動＝PATH の先頭／見つかったもの／その他…）。
-/// git は Amon Hen の設定（`AMONHEN_GIT`）、ほかは git の設定（`gpg.program` など）。
+/// git は Amon Hen の設定（`AMONHEN_GIT`）、ほかは git の設定（`gpg.program` など）。SSH 先（Settings > SSH Hosts）
+/// なら候補はコアが SSH 先で探し（`programs`）、git はその PATH のもの（エンジンがそれを使う。ここでは選べない）。
 struct ProgramsPage: View {
     let model: RepositorySettingsModel
     @State private var found: [String: [Programs.Candidate]] = [:]
@@ -93,18 +94,30 @@ struct ProgramsPage: View {
         }
         .formStyle(.grouped)
         .task {
-            found = await Task.detached(priority: .userInitiated) {
-                Dictionary(uniqueKeysWithValues: ["git", "gpg", "ssh-keygen", "gpgsm"].map { ($0, Programs.candidates($0)) })
-            }.value
+            let names = ["git", "gpg", "ssh-keygen", "gpgsm"]
+            if model.host == nil {
+                found = await Task.detached(priority: .userInitiated) {
+                    Dictionary(uniqueKeysWithValues: names.map { ($0, Programs.candidates($0)) })
+                }.value
+            } else {
+                let repository = model.repository
+                found = await Task.detached(priority: .userInitiated) {
+                    struct Found: Decodable { struct Program: Decodable { let path: String; let version: String? }; let programs: [Program] }
+                    return Dictionary(uniqueKeysWithValues: names.map { name in
+                        let programs = (try? repository.info(["op": "programs", "name": name], as: Found.self))?.programs ?? []
+                        return (name, programs.map { Programs.Candidate(path: $0.path, version: $0.version, onHost: true) })
+                    })
+                }.value
+            }
         }
     }
 
-    /// git の行: 値は Amon Hen が持つ。行の形はほかと同じ。
+    /// git の行: 値は Amon Hen が持つ。行の形はほかと同じ。SSH 先では、エンジンがその PATH の git を使う（選べない）。
     private var gitRow: some View {
         HStack(spacing: 8) {
             Text("git").frame(minWidth: 72, alignment: .leading)
             Spacer()
-            ProgramPicker(candidates: found["git"] ?? [], value: gitExecutable) { value in
+            ProgramPicker(candidates: found["git"] ?? [], value: gitExecutable, otherOnHost: model.host) { value in
                 setGit(value)
             }
             if !gitExecutable.isEmpty {
@@ -120,20 +133,37 @@ struct ProgramsPage: View {
             Button { showingGit.toggle() } label: { Image(systemName: "info.circle") }
                 .buttonStyle(.borderless)
                 .popover(isPresented: $showingGit, arrowEdge: .trailing) {
-                    Text("AMONHEN_GIT = \(gitExecutable.isEmpty ? L("(not set)") : gitExecutable)")
-                        .font(.system(.body, design: .monospaced)).textSelection(.enabled).padding(12)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("AMONHEN_GIT = \(gitExecutable.isEmpty ? L("(not set)") : gitExecutable)")
+                            .font(.system(.body, design: .monospaced)).textSelection(.enabled)
+                        if let host = model.host {
+                            Text(L("Passed to the engine on %@ when it starts. Repositories already open there keep the git they started with until they are opened again.", host))
+                                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(width: 320, alignment: .leading)
+                    .padding(12)
                 }
         }
         .padding(.vertical, 6)
+        .onAppear {
+            if let host = model.host { gitExecutable = Settings.hostOptions(for: host).git ?? "" }
+        }
     }
 
-    /// 使う git を変える（Undo に前の値を積む。⇧⌘Z でやり直せる）。
+    /// 使う git を変える（Undo に前の値を積む。⇧⌘Z でやり直せる）。SSH 先なら、その SSH 先の選択（エンジンに渡す）。
     private func setGit(_ value: String) {
         let old = gitExecutable
         guard value != old else { return }
         model.undo?.registerUndo(withTarget: model) { _ in setGit(old) }
         model.undo?.setActionName(L("Change %@", "git"))
         gitExecutable = value
+        if let host = model.host {
+            var options = Settings.hostOptions(for: host)
+            options.git = value.isEmpty ? nil : value
+            Settings.setHostOptions(options, for: host)
+            return
+        }
         Settings.gitExecutable = value.isEmpty ? nil : value
         Settings.applyGitExecutable()
     }
@@ -143,7 +173,7 @@ struct ProgramsPage: View {
         // 決めてあるキーを先に（設定元はその値のもの）。どれもなければ最後のキーに書く。
         let key = keys.first { model.effective($0) != nil } ?? keys[keys.count - 1]
         return SettingRow(model: model, question: name, help: "", keys: [key]) {
-            ProgramPicker(candidates: found[name] ?? [], value: model.local(key) ?? "") { value in
+            ProgramPicker(candidates: found[name] ?? [], value: model.local(key) ?? "", otherOnHost: model.host) { value in
                 model.set(key, value.isEmpty ? nil : value)
             }
         }
@@ -155,6 +185,8 @@ private struct ProgramPicker: View {
     let candidates: [Programs.Candidate]
     /// 今の値（空なら自動）。
     let value: String
+    /// SSH 先のプログラムなら、その名前（「その他…」はファイルを選ぶのではなく、SSH 先のパスを書いてもらう）。
+    var otherOnHost: String? = nil
     let choose: (String) -> Void
     private static let other = "\u{1}other"
 
@@ -181,6 +213,22 @@ private struct ProgramPicker: View {
             if new != value { choose(new) }
             return
         }
+        if let host = otherOnHost {
+            let alert = NSAlert()
+            alert.messageText = L("Program on %@", host)
+            alert.informativeText = L("The path of the program on the host.")
+            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+            field.placeholderString = "/usr/local/bin/git"
+            field.stringValue = value
+            alert.accessoryView = field
+            alert.window.initialFirstResponder = field
+            alert.addButton(withTitle: L("Choose"))
+            alert.addButton(withTitle: L("Cancel"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+            let path = field.stringValue.trimmingCharacters(in: .whitespaces)
+            if path.hasPrefix("/"), path != value { choose(path) }
+            return
+        }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.showsHiddenFiles = true
@@ -197,13 +245,17 @@ nonisolated enum Programs {
     struct Candidate: Identifiable, Hashable, Sendable {
         let path: String
         let version: String?
+        /// SSH 先のもの（出どころはフォルダで言う。この Mac の Homebrew・Apple の見分けは当てはまらない）。
+        var onHost = false
         var id: String { path }
-        /// 出どころと版（Homebrew 2.56.0、Apple 2.54.0、MacGPG2 2.2.41）。
+        /// 出どころと版（Homebrew 2.56.0、Apple 2.54.0、MacGPG2 2.2.41。SSH 先では /usr/bin 2.43.0）。
         var label: String {
             // 出どころはリンクの先で見る（/usr/local/bin/gpg が MacGPG2 のものなど）。Apple の git は
             // 「2.54.0 (Apple Git-157)」と出すので、版は最初の語だけ。
-            [Candidate.source(of: URL(fileURLWithPath: path).resolvingSymlinksInPath().path),
-             version.flatMap { $0.split(separator: " ").first.map(String.init) }]
+            let source = onHost
+                ? (path as NSString).deletingLastPathComponent
+                : Candidate.source(of: URL(fileURLWithPath: path).resolvingSymlinksInPath().path)
+            return [source, version.flatMap { $0.split(separator: " ").first.map(String.init) }]
                 .compactMap { $0 }.joined(separator: " ")
         }
 

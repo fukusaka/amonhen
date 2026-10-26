@@ -15,6 +15,7 @@ path = "src/main.rs"
 
 [dependencies]
 serde_json = "1.0.154"
+amonhen-backend-cli.workspace = true
 amonhen-backend-gix.workspace = true
 amonhen-core.workspace = true
 amonhen-front.workspace = true

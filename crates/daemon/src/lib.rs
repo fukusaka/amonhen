@@ -3,6 +3,8 @@
 //!
 //! `--stdio <repo>`: リポジトリの git の操作を、標準入出力の要求に応じて行う daemon。
 //! SSH 先では `ssh host amonhend --stdio <repo>` で起動し、手元の Amon Hen がつなぐ。
+//! `--stdio` だけなら、リポジトリではなくこの機械の設定（`git config --global`・git の版・プログラム・署名の鍵）を
+//! 扱う。中身は、データの置き場所の空のリポジトリ（`amonhen_backend_cli::settings_repository`）を開いたもの。
 //! `amonhend --serve [<socket>]`: 手元に常駐し、アプリ・CLI・VSCode 拡張がソケットでつなぐ共有の daemon（`serve`）。
 //! `amonhend --socket`: そのソケットの場所を出す。
 
@@ -48,7 +50,8 @@ pub fn run(args: &[String]) -> i32 {
         libc::pthread_sigmask(libc::SIG_UNBLOCK, &set, std::ptr::null_mut());
     }
     let repo = match args {
-        [flag, repo] if flag == "--stdio" => repo.clone(),
+        [flag, repo] if flag == "--stdio" => Some(repo.clone()),
+        [flag] if flag == "--stdio" => None,
         [flag, rest @ ..] if flag == "--serve" && rest.len() <= 1 => {
             if let Err(e) = serve::run(rest.first().cloned()) {
                 eprintln!("amonhen: {e}");
@@ -69,13 +72,13 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!(
                 "{}",
                 tr!(
-                    "Usage: amonhen --stdio <repository path> | amonhen --serve [<socket>] | amonhen --socket"
+                    "Usage: amonhen --stdio [<repository path>] | amonhen --serve [<socket>] | amonhen --socket"
                 )
             );
             return 2;
         }
     };
-    match stdio(&repo) {
+    match stdio(repo.as_deref()) {
         Ok(()) => 0,
         Err(e) => {
             eprintln!("amonhen: {e}");
@@ -96,7 +99,21 @@ pub fn version() -> String {
     format!("amonhen {VERSION} (build {})", amonhen_remote::BUILD_ID)
 }
 
-fn stdio(repo: &str) -> amonhen_model::Result<()> {
+fn stdio(repo: Option<&str>) -> amonhen_model::Result<()> {
+    // パスがなければ、この機械の設定のための空のリポジトリ（global だけを扱う）。
+    let settings;
+    let repo = match repo {
+        Some(r) => r,
+        None => {
+            settings = amonhen_backend_cli::settings_repository()?;
+            settings.to_str().ok_or_else(|| {
+                tr!(
+                    "The settings repository’s path isn’t UTF-8: {path}",
+                    path = settings.display()
+                )
+            })?
+        }
+    };
     let backend: Arc<dyn GitBackend> = Arc::new(GixBackend::open(repo)?);
     // 標準出力は応答だけに使う（ログは標準エラーへ）。
     let server = Server::new(backend.clone(), std::io::stdout());

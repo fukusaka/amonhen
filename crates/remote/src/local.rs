@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::ssh::HostOptions;
 use amonhen_model::Result;
 use amonhen_model::process::ClientEnv;
 
@@ -111,22 +112,55 @@ pub fn start(daemon: &str) -> Result<()> {
 /// つないで最初に送る文: 開く場所と、この FE の環境（`amonhen_model::process::ClientEnv`）を NUL でつないだもの。
 /// 共有の daemon は、このつながりで動かす git・ssh（開くときの ssh も）を、この環境で動かす。
 pub fn opening(location: &str, env: &ClientEnv) -> String {
-    if env.is_empty() {
+    opening_with(location, env, &HostOptions::default())
+}
+
+/// 環境の対の形で、SSH 先ごとの選択を運ぶ名前（`AMONHEN_*` は FE の環境としては渡さない名前なので、環境と
+/// 混ざらない）。
+const HOST_OPTIONS: &str = "AMONHEN_HOST_OPTIONS";
+
+/// `opening` に、SSH 先ごとの選択（`ssh://` の場所を開くときのエンジンと git）を添えたもの。
+pub fn opening_with(location: &str, env: &ClientEnv, options: &HostOptions) -> String {
+    let mut parts = Vec::new();
+    if !env.is_empty() {
+        parts.push(env.encode());
+    }
+    if !options.is_empty() {
+        parts.push(format!("{HOST_OPTIONS}={}", options.to_json()));
+    }
+    if parts.is_empty() {
         location.to_owned()
     } else {
-        format!("{location}\0{}", env.encode())
+        format!("{location}\0{}", parts.join("\0"))
     }
 }
 
-/// 受け取った最初の文を（開く場所, FE の環境）に分ける。daemon への指示（`CONTROL` で始まる）はそのまま。
-pub fn split_opening(text: &str) -> (&str, ClientEnv) {
+/// 受け取った最初の文を（開く場所, FE の環境, SSH 先ごとの選択）に分ける。daemon への指示（`CONTROL` で始まる）は
+/// そのまま。
+pub fn split_opening(text: &str) -> (&str, ClientEnv, HostOptions) {
     if text.starts_with(CONTROL) {
-        return (text, ClientEnv::default());
+        return (text, ClientEnv::default(), HostOptions::default());
     }
-    match text.split_once('\0') {
-        Some((location, env)) => (location, ClientEnv::decode(env)),
-        None => (text, ClientEnv::default()),
-    }
+    let Some((location, rest)) = text.split_once('\0') else {
+        return (text, ClientEnv::default(), HostOptions::default());
+    };
+    let mut options = HostOptions::default();
+    let env: Vec<&str> = rest
+        .split('\0')
+        .filter(|pair| {
+            match pair
+                .strip_prefix(HOST_OPTIONS)
+                .and_then(|p| p.strip_prefix('='))
+            {
+                Some(json) => {
+                    options = HostOptions::from_json(json);
+                    false
+                }
+                None => true,
+            }
+        })
+        .collect();
+    (location, ClientEnv::decode(&env.join("\0")), options)
 }
 
 /// つないで最初に送る、開くリポジトリのパス（`opening`）。
@@ -152,8 +186,16 @@ pub fn read_preamble(input: &mut impl Read) -> std::io::Result<String> {
 
 /// 共有の daemon で `repo` を開いてつなぐ。daemon がいなければ `daemon`（エンジンのパス）を起動してから。
 pub fn connect(repo: &str, daemon: &str) -> Result<Arc<Connection>> {
+    connect_with(repo, daemon, &HostOptions::default())
+}
+
+/// `connect` に、SSH 先ごとの選択（`daemon:ssh://…` のとき daemon がエンジンを起動するのに使う）を添えて。
+pub fn connect_with(repo: &str, daemon: &str, options: &HostOptions) -> Result<Arc<Connection>> {
     let mut duplex = stream(daemon)?;
-    write_preamble(&mut duplex.writer, &opening(repo, &ClientEnv::current()))?;
+    write_preamble(
+        &mut duplex.writer,
+        &opening_with(repo, &ClientEnv::current(), options),
+    )?;
     let conn = Connection::new(duplex.reader, std::io::BufWriter::new(duplex.writer));
     conn.mark_local();
     let mut open = OPEN.lock().unwrap();

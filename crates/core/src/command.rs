@@ -294,6 +294,11 @@ pub enum Command {
     SigningKeys {
         format: String,
     },
+    /// git を動かしている機械にある `name`（`git`・`gpg`・`gpgsm`・`ssh-keygen`）の候補（`info.programs`:
+    /// `path`・`version`。先頭は PATH で最初に見つかるもの）。SSH 先のリポジトリなら SSH 先で探す。
+    Programs {
+        name: String,
+    },
     /// 設定を変える。`value` がなければ消す。`scope` が `"global"` なら、git を動かしているユーザー全体の
     /// 設定（SSH 先のリポジトリなら SSH 先のユーザーのもの）、なければこのリポジトリ（local）。
     ConfigSet {
@@ -378,6 +383,14 @@ pub enum Command {
     LfsTrack {
         pattern: String,
         track: bool,
+    },
+    /// git を動かしているユーザー全体の、無視するパターンのファイル（`core.excludesFile`。なければ git の既定
+    /// `$XDG_CONFIG_HOME/git/ignore`・`~/.config/git/ignore`）のパスと中身（`info.path`・`info.text`。ファイルが
+    /// なければ null）。SSH 先のリポジトリなら SSH 先のもの。
+    ExcludesFile,
+    /// そのファイルを書く（途中のフォルダがなければ作る）。
+    SaveExcludesFile {
+        text: String,
     },
     /// `.gitignore` と `.git/info/exclude` を書く。
     SaveIgnoreFiles {
@@ -2090,6 +2103,11 @@ impl Repository {
                 info: Some(serde_json::json!({ "keys": ops.signing_keys(&format)? })),
                 ..Default::default()
             }),
+            Command::Programs { name } => Ok(Response {
+                ok: true,
+                info: Some(serde_json::json!({ "programs": ops.programs(&name)? })),
+                ..Default::default()
+            }),
             Command::ConfigSet { key, value, scope } => {
                 match scope.as_deref() {
                     None | Some("local") => ops.config_set(&key, value.as_deref())?,
@@ -2361,6 +2379,18 @@ impl Repository {
                     })),
                     ..Default::default()
                 })
+            }
+            Command::ExcludesFile => {
+                let (path, text) = ops.excludes_file()?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "path": path, "text": text })),
+                    ..Default::default()
+                })
+            }
+            Command::SaveExcludesFile { text } => {
+                ops.save_excludes_file(&text)?;
+                ok()
             }
             Command::SaveIgnoreFiles { gitignore, exclude } => {
                 let files = self.backend().files();
@@ -3973,6 +4003,23 @@ mod tests {
         );
         let files = run(&repo, r#"{"op":"ignoreFiles"}"#);
         assert_eq!(files["info"]["exclude"], "*.local\n");
+
+        // ユーザー全体の無視するパターンのファイル（ここでは `core.excludesFile` で場所を決める）。
+        let excludes = dir.join("global-ignore");
+        git(
+            dir,
+            &["config", "core.excludesFile", excludes.to_str().unwrap()],
+        );
+        let before = run(&repo, r#"{"op":"excludesFile"}"#);
+        assert_eq!(before["info"]["path"], excludes.to_str().unwrap());
+        assert!(before["info"]["text"].is_null());
+        let r = run(&repo, r#"{"op":"saveExcludesFile","text":"*.swp\n"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(std::fs::read_to_string(&excludes).unwrap(), "*.swp\n");
+        assert_eq!(
+            run(&repo, r#"{"op":"excludesFile"}"#)["info"]["text"],
+            "*.swp\n"
+        );
     }
 
     #[test]

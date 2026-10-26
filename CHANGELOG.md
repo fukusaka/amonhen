@@ -16,9 +16,19 @@ becomes the GitHub Release notes.
 - A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last
   Fetch, undoably), and its menu also offers Push when it is only ahead and Publish when it has no upstream. The core
   and CLI get the same as `fastForward`.
+- Settings > SSH Hosts: the SSH hosts Amon Hen knows, with + and −, and for each its connection (state, Check
+  Connection, which engine to run there and whether to send one, which keys verify commit signatures, the folders to
+  scan) and the pages of Settings > Git for every repository on that host, including the git the engine runs there.
+  Settings… on a host in Places opens it, and on This Mac opens Settings > Git.
+- The engine runs on an SSH host without a repository (`amonhen --stdio` with no path) to read and write that
+  machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
+  the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /
+  `saveExcludesFile` for the user's global excludes file.
 
 #### Changed
 
+- Whether commit signatures in an SSH host's repositories are verified with this Mac's keys or the host's is chosen
+  per host, in Settings > SSH Hosts (hosts without a choice keep the previous setting).
 - Settings > Git > Environment Variables (it was Performance > Terminal Environment) shows the login shell's variables
   with their values, PATH-like ones place by place, and lets you check more to pass to git and ssh. A change applies at
   once, to the shared daemon too, and `HOMEBREW_*` is no longer taken unless checked. `AMONHEN_PASS_ENV` does the same

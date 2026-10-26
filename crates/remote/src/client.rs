@@ -915,6 +915,18 @@ impl Operations for RemoteOperations {
         self.op(Op::SigningKeys(format.to_owned()))
     }
 
+    fn programs(&self, name: &str) -> Result<Vec<amonhen_model::Program>> {
+        self.op(Op::Programs(name.to_owned()))
+    }
+
+    fn excludes_file(&self) -> Result<(String, Option<String>)> {
+        self.op(Op::ExcludesFile)
+    }
+
+    fn save_excludes_file(&self, text: &str) -> Result<()> {
+        self.op(Op::SaveExcludesFile(text.to_owned()))
+    }
+
     fn check_remote(&self, url: &str) -> Result<RemoteCheck> {
         self.op(Op::CheckRemote(url.to_owned()))
     }

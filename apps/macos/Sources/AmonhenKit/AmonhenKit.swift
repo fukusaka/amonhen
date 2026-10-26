@@ -64,9 +64,10 @@ public final class Repository: @unchecked Sendable {
 
     /// daemon 越しのリポジトリを開く。`location` は `daemon:/path` か `ssh://[user@]host[:port]/path`、
     /// `daemon` は手元の `amonhend` のパス（`daemon:` のときに起動する）、`daemons` は SSH 先に送り込む
-    /// `amonhend-<os>-<arch>` を置いたディレクトリ。
-    public init(location: String, daemon: String, daemons: String, cacheDirectory: URL? = nil) throws {
-        guard let raw = amonhen_repo_open_location(location, daemon, daemons, cacheDirectory?.path) else {
+    /// `amonhend-<os>-<arch>` を置いたディレクトリ。`hostOptions` は SSH 先ごとの選択（エンジンと git。コアの
+    /// `HostOptions` の JSON）。
+    public init(location: String, daemon: String, daemons: String, cacheDirectory: URL? = nil, hostOptions: String? = nil) throws {
+        guard let raw = amonhen_repo_open_location(location, daemon, daemons, cacheDirectory?.path, hostOptions) else {
             throw AmonhenError.last()
         }
         self.raw = raw

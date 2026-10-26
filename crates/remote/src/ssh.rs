@@ -26,7 +26,8 @@ pub struct Target {
     /// `user@host` か `host`。
     pub destination: String,
     pub port: Option<String>,
-    /// SSH 先のリポジトリのパス。`/~/` で始まればホームからの相対。
+    /// SSH 先のリポジトリのパス。`/~/` で始まればホームからの相対。空なら（`ssh://host` だけ）リポジトリではなく、
+    /// その機械の設定（`git config --global` など）を扱うエンジン（`amonhen --stdio` にパスを渡さない）。
     pub path: String,
 }
 
@@ -35,10 +36,11 @@ impl Target {
         let rest = location
             .strip_prefix("ssh://")
             .ok_or_else(|| tr!("Not an ssh:// location"))?;
-        let slash = rest
-            .find('/')
-            .ok_or_else(|| tr!("Write it as ssh://host/path"))?;
-        let (authority, path) = (&rest[..slash], &rest[slash..]);
+        // `/` がなければ、ホストだけ（その機械の設定を扱う）。
+        let (authority, path) = match rest.find('/') {
+            Some(slash) => (&rest[..slash], &rest[slash..]),
+            None => (rest, ""),
+        };
         let (destination, port) = match authority.rsplit_once(':') {
             Some((d, p)) if !p.is_empty() && p.bytes().all(|b| b.is_ascii_digit()) => {
                 (d, Some(p.to_owned()))
@@ -55,8 +57,11 @@ impl Target {
         })
     }
 
-    /// SSH 先のシェルに渡すパス（`/~/x` は `"$HOME"/'x'`、それ以外は引用符で囲む）。
+    /// SSH 先のシェルに渡すパス（`/~/x` は `"$HOME"/'x'`、それ以外は引用符で囲む。空なら空）。
     fn shell_path(&self) -> String {
+        if self.path.is_empty() {
+            return String::new();
+        }
         match self.path.strip_prefix("/~/") {
             Some(rest) => format!("\"$HOME\"/{}", shell_quote(rest)),
             None => shell_quote(&self.path),
@@ -68,6 +73,36 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// SSH 先ごとの選択（アプリの Settings > SSH Hosts の「接続」と「プログラム」）。FE がつなぐときに送る
+/// （`crate::local::opening`。共有の daemon は、そのつながりでエンジンを起動するときに使う）。環境変数
+/// （`AMONHEN_REMOTE_ENGINE`・`AMONHEN_PUSH`）があれば、そちらが優先。
+#[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
+pub struct HostOptions {
+    /// SSH 先で使う git（エンジンに `AMONHEN_GIT` として渡す）。なければ SSH 先の PATH のもの。
+    pub git: Option<String>,
+    /// SSH 先で動かすエンジン: `installed`（PATH の amonhen。このビルドでなければつながない）、`sent`（Amon Hen が
+    /// 置いたもの。なければ送る）、`/` で始まればそのパス。なければ自動（PATH のもの → 置いたもの → 送る）。
+    pub engine: Option<String>,
+    /// 合うものがなければ送り込むか。なければ送る。
+    pub push: Option<bool>,
+}
+
+impl HostOptions {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_default()
+    }
+
+    /// JSON から。読めなければ何も選んでいないものとする。
+    pub fn from_json(text: &str) -> Self {
+        serde_json::from_str(text).unwrap_or_default()
+    }
+}
+
 /// 送り込むエンジンの置き場所。手元の `dir` に `amonhen-<os>-<arch>` を置いておく。
 pub struct Daemons {
     pub dir: PathBuf,
@@ -75,8 +110,9 @@ pub struct Daemons {
     pub local: Option<(String, PathBuf)>,
     /// SSH 先で使うエンジンの場所（`AMONHEN_REMOTE_ENGINE`）。あれば、調べずにこれを使う。
     pub remote_engine: Option<String>,
-    /// 使えるエンジンがなければ送り込む（`AMONHEN_PUSH=0` で止める）。
-    pub push: bool,
+    /// 使えるエンジンがなければ送り込むか（`AMONHEN_PUSH`。`0` で止める）。環境になければ None（SSH 先ごとの
+    /// 選択、それもなければ送る）。
+    pub push: Option<bool>,
 }
 
 impl Daemons {
@@ -88,7 +124,7 @@ impl Daemons {
             remote_engine: std::env::var("AMONHEN_REMOTE_ENGINE")
                 .ok()
                 .filter(|s| !s.is_empty()),
-            push: std::env::var("AMONHEN_PUSH").map_or(true, |v| v != "0"),
+            push: std::env::var("AMONHEN_PUSH").ok().map(|v| v != "0"),
         }
     }
 }
@@ -337,8 +373,13 @@ impl RemoteEngine {
 }
 
 /// SSH 先にエンジンを用意して起動し、つなぐ。`ssh` は ssh のコマンド（テストでは偽物を渡す）。
-pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Connection>> {
-    let engine = prepare(ssh, target, daemons)?;
+pub fn connect(
+    ssh: &str,
+    target: &Target,
+    daemons: &Daemons,
+    options: &HostOptions,
+) -> Result<Arc<Connection>> {
+    let engine = prepare(ssh, target, daemons, options)?;
     // 使い回しの接続に載せられるのは、接続先ごとに `SHARED_ENGINES` 個まで。
     let key = format!(
         "{}:{}",
@@ -347,12 +388,17 @@ pub fn connect(ssh: &str, target: &Target, daemons: &Daemons) -> Result<Arc<Conn
     );
     let slot = SharedSlot::take(&key);
     let mut args = base_args(target, slot.is_some());
-    args.push(format!(
-        "{}; exec {} --stdio {}",
-        cleanup_script(&engine),
-        shell_quote(&engine.path),
-        target.shell_path()
-    ));
+    args.push(
+        format!(
+            "{}; {}exec {} --stdio {}",
+            cleanup_script(&engine),
+            git_env(options),
+            shell_quote(&engine.path),
+            target.shell_path()
+        )
+        .trim_end()
+        .to_owned(),
+    );
     let conn = Connection::spawn(ssh, &args)?;
     if let Some(slot) = slot {
         conn.hold(Box::new(slot));
@@ -368,10 +414,11 @@ pub fn find_repositories(
     ssh: &str,
     target: &Target,
     daemons: &Daemons,
+    options: &HostOptions,
     depth: u32,
     excludes: &[String],
 ) -> Result<Vec<String>> {
-    let engine = prepare(ssh, target, daemons)?;
+    let engine = prepare(ssh, target, daemons, options)?;
     let excludes: String = excludes
         .iter()
         .map(|e| format!(" --exclude {}", shell_quote(e)))
@@ -380,8 +427,9 @@ pub fn find_repositories(
         ssh,
         target,
         &format!(
-            "{}; exec {} find-repositories --depth {depth}{excludes} {}",
+            "{}; {}exec {} find-repositories --depth {depth}{excludes} {}",
             cleanup_script(&engine),
+            git_env(options),
             shell_quote(&engine.path),
             target.shell_path()
         ),
@@ -401,10 +449,34 @@ pub fn find_repositories(
         .collect())
 }
 
+/// SSH 先の git の選択（`HostOptions::git`）を、エンジンに渡す `AMONHEN_GIT=… ` の形で（なければ空）。
+fn git_env(options: &HostOptions) -> String {
+    match options.git.as_deref().filter(|g| !g.is_empty()) {
+        Some(git) => format!("AMONHEN_GIT={} ", shell_quote(git)),
+        None => String::new(),
+    }
+}
+
 /// SSH 先で使うエンジンを決め、なければ送り込む。
-fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine> {
-    let configured = daemons.remote_engine.clone();
-    let push = daemons.push;
+fn prepare(
+    ssh: &str,
+    target: &Target,
+    daemons: &Daemons,
+    options: &HostOptions,
+) -> Result<RemoteEngine> {
+    // 環境変数が先、次に SSH 先ごとの選択。
+    let chosen = options.engine.as_deref().filter(|e| !e.is_empty());
+    let configured = daemons
+        .remote_engine
+        .clone()
+        .or_else(|| chosen.filter(|e| e.starts_with('/')).map(str::to_owned));
+    let (only_installed, skip_installed) = match chosen {
+        _ if configured.is_some() => (false, false),
+        Some("installed") => (true, false),
+        Some("sent") => (false, true),
+        _ => (false, false),
+    };
+    let push = daemons.push.or(options.push).unwrap_or(true);
     // OS と CPU、置き場所、PATH の amonhen の版、置いてあるエンジン（ハッシュの名前と、記録したビルドの指紋）を
     // 1 回で調べる。
     let probe = run(
@@ -433,12 +505,27 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
             source: "configured",
             pushed_bytes: None,
         }
-    } else if !installed.is_empty() && installed_version.ends_with(&wanted) {
+    } else if !skip_installed && !installed.is_empty() && installed_version.ends_with(&wanted) {
         RemoteEngine {
             path: installed,
             source: "installed",
             pushed_bytes: None,
         }
+    } else if only_installed {
+        // PATH のものを使うと決めたのに、ないか、このビルドではない。
+        return Err(if installed.is_empty() {
+            tr!(
+                "No amonhen on the PATH of the SSH host ({host}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host",
+                host = target.destination
+            )
+        } else {
+            tr!(
+                "The amonhen on the PATH of the SSH host ({host}) is another build ({version}). Settings > SSH Hosts chooses the one on the PATH; choose another engine there, or install this build on the host",
+                host = target.destination,
+                version = installed_version.trim()
+            )
+        }
+        .into());
     } else if let Some((hash, _)) = present.iter().find(|(_, b)| *b == crate::BUILD_ID) {
         // このビルドのものがもう置いてある（ほかの機械・VSCode 拡張が置いた）。手元のエンジンは読まなくてよい。
         RemoteEngine {
@@ -459,7 +546,7 @@ fn prepare(ssh: &str, target: &Target, daemons: &Daemons) -> Result<RemoteEngine
             }
         } else if !push {
             return Err(tr!(
-                "No usable engine on the SSH host ({host}). Install amonhen (on PATH) or set its location with AMONHEN_REMOTE_ENGINE (sending it is turned off by AMONHEN_PUSH=0)",
+                "No usable engine on the SSH host ({host}), and sending one is turned off (Settings > SSH Hosts, or AMONHEN_PUSH=0). Install amonhen on the host’s PATH, or set its location with AMONHEN_REMOTE_ENGINE",
                 host = target.destination
             )
             .into());
@@ -521,6 +608,28 @@ pub fn local_platform() -> String {
 }
 
 #[cfg(test)]
+mod host_options_tests {
+    use super::HostOptions;
+
+    #[test]
+    fn host_options_round_trip_through_json() {
+        let options = HostOptions {
+            git: Some("/usr/local/bin/git".into()),
+            engine: Some("sent".into()),
+            push: Some(false),
+        };
+        assert_eq!(HostOptions::from_json(&options.to_json()), options);
+        assert!(HostOptions::from_json("").is_empty());
+        assert!(HostOptions::from_json("{}").is_empty());
+        assert_eq!(
+            super::git_env(&options),
+            "AMONHEN_GIT='/usr/local/bin/git' "
+        );
+        assert_eq!(super::git_env(&HostOptions::default()), "");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -548,8 +657,19 @@ mod tests {
             Target::parse("ssh://dev/srv/r").unwrap().shell_path(),
             "'/srv/r'"
         );
-        assert!(Target::parse("ssh://dev").is_err());
+        // ホストだけなら、その機械の設定を扱う（パスは空）。
+        let host = Target::parse("ssh://me@dev:22").unwrap();
+        assert_eq!(
+            (
+                host.destination.as_str(),
+                host.port.as_deref(),
+                host.path.as_str()
+            ),
+            ("me@dev", Some("22"), "")
+        );
+        assert_eq!(host.shell_path(), "");
         assert!(Target::parse("ssh:///x").is_err());
+        assert!(Target::parse("ssh://").is_err());
     }
 
     #[test]
@@ -560,7 +680,7 @@ mod tests {
             dir: dir.clone(),
             local: Some(("darwin-aarch64".into(), PathBuf::from("/local"))),
             remote_engine: None,
-            push: true,
+            push: None,
         };
         let this = crate::BUILD_MARK.as_bytes();
         std::fs::write(dir.join("amonhen-linux-x86_64"), this).unwrap();
