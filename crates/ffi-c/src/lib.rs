@@ -2108,6 +2108,21 @@ pub unsafe extern "C" fn amonhen_env_always(name: *const c_char) -> bool {
     str_arg(name).is_ok_and(amonhen_model::process::always_passed)
 }
 
+/// git と ssh にいつも渡す名前を改行で区切って（設定の「環境変数」に出す。`GIT_*` は `GIT_*` と書き、このアプリが
+/// 決める `AMONHEN_*` は除く）。`amonhen_string_free` で解放する。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_env_always_names() -> *mut c_char {
+    let names: Vec<&str> = amonhen_model::process::ALWAYS_PASSED
+        .iter()
+        .copied()
+        .filter(|n| !n.starts_with("AMONHEN_"))
+        .chain(["GIT_*"])
+        .collect();
+    CString::new(names.join("\n"))
+        .unwrap_or_default()
+        .into_raw()
+}
+
 /// 環境変数 `name` を渡さない理由（足しても断る）。渡してよければ NULL。`amonhen_string_free` で解放する。
 ///
 /// # Safety

@@ -419,6 +419,13 @@ public enum PassedEnvironment {
         amonhen_env_always(name)
     }
 
+    /// いつも渡す名前（`GIT_*` は `GIT_*` と書く。設定画面に出す）。
+    public static var alwaysNames: [String] {
+        guard let out = amonhen_env_always_names() else { return [] }
+        defer { amonhen_string_free(out) }
+        return String(cString: out).split(separator: "\n").map(String.init)
+    }
+
     /// 渡さない理由（足しても断る）。渡してよければ nil。
     public static func refusal(_ name: String) -> String? {
         guard let out = amonhen_env_refusal(name) else { return nil }

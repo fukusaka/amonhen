@@ -1319,6 +1319,12 @@ char *amonhen_development_engine(void);
 bool amonhen_env_always(const char *name);
 
 /**
+ * git と ssh にいつも渡す名前を改行で区切って（設定の「環境変数」に出す。`GIT_*` は `GIT_*` と書き、このアプリが
+ * 決める `AMONHEN_*` は除く）。`amonhen_string_free` で解放する。
+ */
+char *amonhen_env_always_names(void);
+
+/**
  * 環境変数 `name` を渡さない理由（足しても断る）。渡してよければ NULL。`amonhen_string_free` で解放する。
  *
  * # Safety

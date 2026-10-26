@@ -268,3 +268,301 @@ nonisolated enum Programs {
         return String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+// MARK: - 環境変数
+
+/// Settings > Git > 環境変数: この Mac で git と ssh に渡す環境変数。ログインシェルのものを使うかと、表で見て足すものを
+/// 選ぶ。値はアプリの設定（`Settings`）に置き、変えたらすぐ効かせる（`ShellEnvironment.refresh`。共有の daemon への
+/// 今のつながりにも）。ほかのページと同じく ⌘Z で戻せる。
+struct EnvironmentPage: View {
+    let model: RepositorySettingsModel
+    @State private var useShell = Settings.importShellEnvironment
+    @State private var added = Settings.addedEnvironmentNames
+
+    var body: some View {
+        GroupedPage {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(L("Use the login shell’s environment variables"), isOn: Binding(get: { useShell }, set: { setUseShell($0) }))
+                Note(L("Reads the PATH, SSH agent and GIT_* that an app opened from the Finder lacks, for git and ssh."))
+                ShellEnvironmentView()
+                Divider()
+                EnvironmentTable(useShell: useShell, addedNames: Binding(get: { added }, set: { setAdded($0) }),
+                                 tableHeight: nil, detailHeight: 120)
+            }
+        }
+    }
+
+    private func setUseShell(_ value: Bool) {
+        let old = useShell
+        guard value != old else { return }
+        model.undo?.registerUndo(withTarget: model) { _ in setUseShell(old) }
+        model.undo?.setActionName(L("Change %@", L("Environment Variables")))
+        useShell = value
+        Settings.importShellEnvironment = value
+        ShellEnvironment.refresh()
+    }
+
+    private func setAdded(_ value: String) {
+        let old = added
+        guard value != old else { return }
+        model.undo?.registerUndo(withTarget: model) { _ in setAdded(old) }
+        model.undo?.setActionName(L("Change %@", L("Environment Variables")))
+        added = value
+        Settings.addedEnvironmentNames = value
+        ShellEnvironment.refresh()
+    }
+}
+
+/// 取り込んだ変数とその値。読み直すボタン付き（シェルの設定を変えたあとに）。
+private struct ShellEnvironmentView: View {
+    @State private var values = ShellEnvironment.values
+    @State private var shell = ShellEnvironment.shell
+    @State private var lastRead = ShellEnvironment.lastRead
+    @State private var reloading = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(status).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(L("Read Again")) {
+                    reloading = true
+                    ShellEnvironment.reload()
+                }
+                .disabled(reloading || !ShellEnvironment.isEnabled)
+            }
+            if let socket = values["SSH_AUTH_SOCK"] { agentStatus(socket) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ShellEnvironment.didChange)) { _ in
+            values = ShellEnvironment.values
+            shell = ShellEnvironment.shell
+            lastRead = ShellEnvironment.lastRead
+            reloading = false
+        }
+    }
+
+    /// SSH の agent のソケットがあるか。なければ、ssh・git に代わりに渡すもの（起動したときの agent）。
+    @ViewBuilder private func agentStatus(_ path: String) -> some View {
+        if ShellEnvironment.isSocket(path) {
+            Text(L("SSH agent found")).font(.caption).foregroundStyle(.secondary)
+        } else if let launch = ShellEnvironment.launchAgent, launch != path, ShellEnvironment.isSocket(launch) {
+            Text(L("No SSH agent here; ssh and git use %@", launch)).font(.caption).foregroundStyle(.orange)
+        } else {
+            Text(L("No SSH agent here, so keys that need a passphrase can’t be used")).font(.caption).foregroundStyle(.orange)
+        }
+    }
+
+    private var status: String {
+        if !ShellEnvironment.isEnabled { return L("Off") }
+        guard let lastRead else { return shell.isEmpty ? L("Not read yet") : L("Couldn’t read %@", shell) }
+        return L("Read from %@ at %@", shell, lastRead.formatted(date: .omitted, time: .shortened))
+    }
+}
+
+/// 環境変数の表: シェル（使わないときは起動したときの環境）の変数を値と一緒に並べ、渡すものをチェックで選ぶ。
+/// いつも渡すもの（git と ssh が使う）は外せず、渡せないものは選べない（理由はヘルプ）。案: 決まりはコアのものにする。
+private struct EnvironmentTable: View {
+    /// ログインシェルの環境変数を使うか（使わないときは、起動したときの環境を並べる）。
+    let useShell: Bool
+    /// 足した名前（コンマ区切り。`Settings.addedEnvironmentNames`）。
+    @Binding var addedNames: String
+    /// 表の高さ（nil なら置き場所に合わせて伸びる）と、詳しい欄の高さ。
+    var tableHeight: CGFloat? = 150
+    var detailHeight: CGFloat = 96
+    @State private var source = ShellEnvironment.shellValues
+    @State private var showAll = true
+    @State private var filter = ""
+    /// 選んだ行（表の下に値の全体を出す）。前に選んだものを覚えておく。
+    @AppStorage("environmentTableSelection") private var selection: String = ""
+    @State private var revealed = false
+
+    enum Kind { case always, chosen, other, refused(String) }
+
+    struct Row: Identifiable {
+        let name: String
+        let value: String
+        let kind: Kind
+        var id: String { name }
+        var passed: Bool { if case .always = kind { true } else if case .chosen = kind { true } else { false } }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+        HStack {
+            Picker("", selection: $showAll) {
+                Text(L("Passed")).tag(false)
+                Text(L("All")).tag(true)
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            Spacer()
+            TextField("", text: $filter, prompt: Text(L("Search by name or value")))
+                .textFieldStyle(.roundedBorder)
+                .frame(minWidth: 60, maxWidth: 240)
+        }
+        Table(rows, selection: Binding(get: { selection.isEmpty ? nil : selection }, set: { selection = $0 ?? ""; revealed = false })) {
+            TableColumn(L("Pass")) { row in
+                Toggle("", isOn: Binding(get: { row.passed }, set: { set(row.name, $0) }))
+                    .labelsHidden()
+                    .disabled({ if case .other = row.kind { false } else if case .chosen = row.kind { false } else { true } }())
+                    .help(help(row))
+            }
+            .width(40)
+            TableColumn(L("Name")) { row in
+                HStack(spacing: 6) {
+                    Text(row.name).font(.body.monospaced())
+                        .foregroundStyle({ if case .refused = row.kind { Color.secondary } else { Color.primary } }())
+                    // いつも渡すもの（外せない）は、名前の横に印を付ける。
+                    if case .always = row.kind {
+                        Text(verbatim: "Always").font(.caption2).foregroundStyle(.secondary).fixedSize()
+                            .padding(.horizontal, 5).padding(.vertical, 1)
+                            .overlay(RoundedRectangle(cornerRadius: 4).stroke(.secondary.opacity(0.5)))
+                    }
+                }
+                .help(help(row))
+            }
+            .width(min: 120, ideal: 180)
+            TableColumn(L("Value")) { row in
+                Text(display(row)).font(.callout.monospaced()).foregroundStyle(.secondary)
+                    .lineLimit(1).truncationMode(.middle).help(display(row))
+            }
+        }
+        .frame(minHeight: 100, idealHeight: tableHeight, maxHeight: tableHeight ?? .infinity)
+        EnvironmentValueView(name: selection, value: values[selection], masked: isSecret(selection) && !revealed,
+                             reveal: { revealed = true }, height: detailHeight)
+        Note(L("Checked variables go to the git and ssh this app runs, through the shared daemon too, but not to SSH hosts. Always passed, when the shell sets them: %@.", PassedEnvironment.alwaysNames.joined(separator: ", ")))
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ShellEnvironment.didChange)) { _ in
+            source = ShellEnvironment.shellValues
+        }
+    }
+
+    private var values: [String: String] {
+        useShell && !source.isEmpty ? source : ShellEnvironment.launchEnvironment
+    }
+
+    private var added: Set<String> {
+        Set(addedNames.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init))
+    }
+
+    private var rows: [Row] {
+        let f = filter.trimmingCharacters(in: .whitespaces)
+        // 渡すものを先に、そのあとにほかの変数（どちらも名前の順）。
+        let names = values.keys.sorted()
+        let ordered = names.filter { Row(name: $0, value: "", kind: kind(of: $0)).passed }
+            + names.filter { !Row(name: $0, value: "", kind: kind(of: $0)).passed }
+        return ordered.compactMap { name in
+            let value = values[name, default: ""]
+            let row = Row(name: name, value: value, kind: kind(of: name))
+            guard showAll || row.passed else { return nil }
+            guard f.isEmpty || name.localizedCaseInsensitiveContains(f) || value.localizedCaseInsensitiveContains(f) else { return nil }
+            return row
+        }
+    }
+
+    /// 行の扱い（決まりはコアのもの）。
+    private func kind(of name: String) -> Kind {
+        if let reason = PassedEnvironment.refusal(name) { return .refused(reason) }
+        if PassedEnvironment.always(name) { return .always }
+        return added.contains(name) ? .chosen : .other
+    }
+
+    private func help(_ row: Row) -> String {
+        switch row.kind {
+        case .always: L("git and ssh always get this")
+        case .refused(let reason): reason
+        case .chosen, .other: ""
+        }
+    }
+
+    /// 値。トークン・パスワード・鍵らしい名前のものは伏せる（画面に出したまま共有しないように）。
+    private func display(_ row: Row) -> String {
+        isSecret(row.name) ? "••••••••" : row.value
+    }
+
+    private func isSecret(_ name: String) -> Bool {
+        ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "_KEY", "CREDENTIAL"].contains(where: name.uppercased().contains)
+    }
+
+    private func set(_ name: String, _ on: Bool) {
+        var names = added
+        if on { names.insert(name) } else { names.remove(name) }
+        addedNames = names.sorted().joined(separator: ", ")
+    }
+}
+
+/// 表で選んだ変数の値の全体。PATH のように場所を並べたもの（名前が PATH・_DIRS で終わる）は 1 行に 1 か所に分け、
+/// その場所があるか、前に同じ場所があるか、PATH ならどこの git が使われるかを添える。伏せた値は「表示」で見せる。
+private struct EnvironmentValueView: View {
+    let name: String
+    let value: String?
+    let masked: Bool
+    let reveal: () -> Void
+    var height: CGFloat = 96
+
+    var body: some View {
+        Group {
+            if let value, !name.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(Self.isList(name) ? L("%@ (%ld places)", name, Self.places(value).count) : name)
+                            .font(.callout.monospaced().weight(.medium))
+                        Spacer()
+                        if masked { Button(L("Show"), action: reveal).controlSize(.small) }
+                    }
+                    ScrollView {
+                        if masked {
+                            Text("••••••••").font(.callout.monospaced()).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else if Self.isList(name) {
+                            placeList(value)
+                        } else {
+                            Text(value).font(.callout.monospaced()).textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .frame(height: height)
+                }
+            } else {
+                Text(L("Select a variable to see its whole value.")).font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, minHeight: 40, alignment: .leading)
+            }
+        }
+    }
+
+    /// 1 行に 1 か所。番号、場所、添え書き（ない・前と同じ・ここの git を使う）。設定 > Git で git を選んでいれば、
+    /// PATH ではなくそれを使うと書く。
+    private func placeList(_ value: String) -> some View {
+        let places = Self.places(value)
+        let chosenGit = Settings.gitExecutable.flatMap { $0.isEmpty ? nil : $0 }
+        let git = name == "PATH" && chosenGit == nil
+            ? places.firstIndex { FileManager.default.isExecutableFile(atPath: ($0 as NSString).appendingPathComponent("git")) } : nil
+        return VStack(alignment: .leading, spacing: 2) {
+            if name == "PATH", let chosenGit {
+                Text(L("git is the one chosen in Settings > Git: %@", chosenGit)).font(.caption).foregroundStyle(.tint)
+            }
+            ForEach(Array(places.enumerated()), id: \.offset) { i, place in
+                let missing = !FileManager.default.fileExists(atPath: place)
+                let repeated = places[..<i].contains(place)
+                HStack(spacing: 8) {
+                    Text("\(i + 1)").font(.caption.monospacedDigit()).foregroundStyle(.tertiary).frame(width: 22, alignment: .trailing)
+                    Text(place).font(.callout.monospaced())
+                        .foregroundStyle(missing || repeated ? Color.secondary : Color.primary)
+                        .strikethrough(repeated)
+                        .textSelection(.enabled)
+                    if i == git { Text(L("git used from here")).font(.caption).foregroundStyle(.tint) }
+                    if missing { Text(L("doesn’t exist")).font(.caption).foregroundStyle(.secondary) }
+                    if repeated { Text(L("already above")).font(.caption).foregroundStyle(.secondary) }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    static func isList(_ name: String) -> Bool {
+        name.hasSuffix("PATH") || name.hasSuffix("_DIRS") || name.hasSuffix("PATHS")
+    }
+
+    static func places(_ value: String) -> [String] {
+        value.split(separator: ":", omittingEmptySubsequences: true).map(String.init)
+    }
+}
