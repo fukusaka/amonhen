@@ -352,6 +352,16 @@ pub trait Operations: Send + Sync {
         let _ = name;
         Ok(Vec::new())
     }
+    /// git を動かしているユーザー全体の、無視するパターンのファイル（`core.excludesFile`。なければ git の既定
+    /// `$XDG_CONFIG_HOME/git/ignore`・`~/.config/git/ignore`）: そのパスと中身（ファイルがなければ `None`）。
+    fn excludes_file(&self) -> Result<(String, Option<String>)> {
+        Err(crate::tr!("Can’t read the excludes file here").into())
+    }
+    /// そのファイルを書く（途中のフォルダがなければ作る）。
+    fn save_excludes_file(&self, text: &str) -> Result<()> {
+        let _ = text;
+        Err(crate::tr!("Can’t write the excludes file here").into())
+    }
     fn change_remote(&self, change: &RemoteChange) -> Result<()>;
     /// `url` につないで、ブランチとタグの数と HEAD のブランチを読む（`git ls-remote`。保存する前の確かめ）。
     fn check_remote(&self, url: &str) -> Result<RemoteCheck> {

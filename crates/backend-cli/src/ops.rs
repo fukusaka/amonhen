@@ -815,6 +815,25 @@ impl Operations for Git {
         Ok(crate::programs::programs(name))
     }
 
+    fn excludes_file(&self) -> Result<(String, Option<String>)> {
+        let path = self.excludes_path()?;
+        let text = match std::fs::read(&path) {
+            Ok(bytes) => Some(String::from_utf8_lossy(&bytes).into_owned()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => return Err(e.into()),
+        };
+        Ok((path.to_string_lossy().into_owned(), text))
+    }
+
+    fn save_excludes_file(&self, text: &str) -> Result<()> {
+        let path = self.excludes_path()?;
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, text)?;
+        Ok(())
+    }
+
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {
         let out = text(self.read(&["remote", "-v"])?)?;
         let mut remotes: Vec<RemoteEntry> = Vec::new();
@@ -1180,5 +1199,27 @@ impl Git {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         out.hash(&mut hasher);
         Ok((count, hasher.finish()))
+    }
+}
+
+impl Git {
+    /// ユーザー全体の、無視するパターンのファイル: `core.excludesFile`（`--path` で `~` を展開）、なければ git の既定
+    /// `$XDG_CONFIG_HOME/git/ignore`・`~/.config/git/ignore`。
+    fn excludes_path(&self) -> Result<std::path::PathBuf> {
+        if let Some(p) = self
+            .read(&["config", "--path", "--get", "core.excludesFile"])
+            .ok()
+            .map(|b| String::from_utf8_lossy(&b).trim().to_owned())
+            .filter(|p| !p.is_empty())
+        {
+            return Ok(std::path::PathBuf::from(p));
+        }
+        if let Some(d) = std::env::var_os("XDG_CONFIG_HOME").filter(|d| !d.is_empty()) {
+            return Ok(std::path::PathBuf::from(d).join("git/ignore"));
+        }
+        let home = std::env::var_os("HOME")
+            .or_else(|| std::env::var_os("USERPROFILE"))
+            .ok_or_else(|| amonhen_model::tr!("HOME isn’t set"))?;
+        Ok(std::path::PathBuf::from(home).join(".config/git/ignore"))
     }
 }
