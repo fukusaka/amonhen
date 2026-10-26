@@ -45,6 +45,12 @@ public final class Repository: @unchecked Sendable {
         amonhen_set_fsmonitor(enabled)
     }
 
+    /// このログインの SSH の agent のソケット。コアが起動する ssh・git の `SSH_AUTH_SOCK` が死んでいれば、代わりに
+    /// これを渡す（リポジトリを開く前に 1 回）。
+    public static func setSSHAgent(_ path: String) {
+        amonhen_set_ssh_agent(path)
+    }
+
     /// `cacheDirectory` を渡すと、History をそこに永続化し、次に開いたときすぐ表示できる。
     public init(path: String, cacheDirectory: URL? = nil) throws {
         let raw = if let cacheDirectory {
@@ -388,6 +394,24 @@ public final class HistoryChunk: @unchecked Sendable {
 }
 
 /// 手元の共有の daemon（`amonhend --serve`）。
+/// 手元のエンジンの在りか（コアと同じ探し方。開発中は、このビルドのチェックアウトの中だけを探す）。
+public enum Engines {
+    /// SSH 先へ送るエンジン（`amonhen-<os>-<arch>`）の置き場所（`.app` なら Contents/Resources/engines、開発中は
+    /// チェックアウトの dist/engine）。
+    public static var bundledDirectory: String {
+        guard let out = amonhen_engines_dir() else { return "" }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
+
+    /// 開発中に共有の daemon にするエンジン（チェックアウトの target/release/amonhen）。なければ nil。
+    public static var development: String? {
+        guard let out = amonhen_development_engine() else { return nil }
+        defer { amonhen_string_free(out) }
+        return String(cString: out)
+    }
+}
+
 public enum SharedDaemon {
     /// 様子（`amonhen daemon status --json` と同じ）。
     public struct Status: Decodable, Sendable {
@@ -410,7 +434,8 @@ public enum SharedDaemon {
         }
         public let pid: Int
         public let version: String
-        public let `protocol`: Int
+        /// ビルドの指紋（同じビルドの FE とエンジンだけがこの daemon を使う）。
+        public let build: String
         public let socket: String
         public let uptimeMs: UInt64
         public let connections: Int

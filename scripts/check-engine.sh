@@ -10,7 +10,7 @@ out=$("$engine" --version)
 echo "$out"
 if [ -n "$expected" ]; then
     case "$out" in
-    "amonhen $expected (protocol "*) ;;
+    "amonhen $expected (build "*) ;;
     *)
         echo "版が違う: $out（期待した版: $expected）" >&2
         exit 1

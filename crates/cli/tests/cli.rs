@@ -502,7 +502,7 @@ fn installs_the_engine_and_picks_it_for_the_daemon() {
         .arg("--version")
         .output()
         .unwrap();
-    assert!(String::from_utf8_lossy(&version.stdout).contains("(protocol "));
+    assert!(String::from_utf8_lossy(&version.stdout).contains("(build "));
 }
 
 /// 共有の daemon 越し（`-C daemon:<path>`）で、status・stage・commit・log・undo が動く。偽の ssh を使わないので、

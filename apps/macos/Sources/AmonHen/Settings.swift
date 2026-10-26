@@ -733,24 +733,40 @@ private struct AISettings: View {
 
 /// 取り込んだ変数とその値。読み直すボタン付き（シェルの設定を変えたあとに）。
 private struct ShellEnvironmentView: View {
+    @State private var values = ShellEnvironment.values
     @State private var shell = ShellEnvironment.shell
     @State private var lastRead = ShellEnvironment.lastRead
     @State private var reloading = false
 
     var body: some View {
-        HStack {
-            Text(status).font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            Button(L("Read Again")) {
-                reloading = true
-                ShellEnvironment.reload()
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(status).font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button(L("Read Again")) {
+                    reloading = true
+                    ShellEnvironment.reload()
+                }
+                .disabled(reloading || !ShellEnvironment.isEnabled)
             }
-            .disabled(reloading || !ShellEnvironment.isEnabled)
+            if let socket = values["SSH_AUTH_SOCK"] { agentStatus(socket) }
         }
         .onReceive(NotificationCenter.default.publisher(for: ShellEnvironment.didChange)) { _ in
+            values = ShellEnvironment.values
             shell = ShellEnvironment.shell
             lastRead = ShellEnvironment.lastRead
             reloading = false
+        }
+    }
+
+    /// SSH の agent のソケットがあるか。なければ、ssh・git に代わりに渡すもの（起動したときの agent）。
+    @ViewBuilder private func agentStatus(_ path: String) -> some View {
+        if ShellEnvironment.isSocket(path) {
+            Text(L("SSH agent found")).font(.caption).foregroundStyle(.secondary)
+        } else if let launch = ShellEnvironment.launchAgent, launch != path, ShellEnvironment.isSocket(launch) {
+            Text(L("No SSH agent here; ssh and git use %@", launch)).font(.caption).foregroundStyle(.orange)
+        } else {
+            Text(L("No SSH agent here, so keys that need a passphrase can’t be used")).font(.caption).foregroundStyle(.orange)
         }
     }
 

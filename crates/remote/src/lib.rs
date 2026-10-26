@@ -4,6 +4,7 @@
 
 mod client;
 pub mod endpoint;
+pub mod engines;
 pub mod frame;
 pub mod local;
 pub mod location;
@@ -16,4 +17,4 @@ pub mod wire;
 
 pub use client::{Connection, RemoteBackend};
 pub use server::{Host, SearchCache, Server};
-pub use wire::{Notification, PROTOCOL_MARK, PROTOCOL_VERSION};
+pub use wire::{BUILD_ID, BUILD_MARK, Notification};

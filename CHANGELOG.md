@@ -40,6 +40,17 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- The app, the shared daemon and an SSH host's engine work together only when they are the same build (a hash of the
+  sources), not when a hand-raised protocol number matches; `amonhen --version`, `amonhen daemon status` and Activity
+  show it.
+- A development build looks for the engines to send to SSH hosts and to run as the shared daemon only inside its own
+  checkout, and the shared daemon is not started from an engine of another build.
+- Opening an SSH host uses an engine of the same build already placed there (by another Mac, the VSCode extension or
+  `amonhen install`) without sending one, and still opens when the engine here is of another build.
+- The History cache is kept per format, so builds that run side by side (and share the shared daemon's cache folder)
+  don't rewrite each other's file; the first launch of this version builds History once more.
+- The shared daemon runs git and ssh for each app, CLI or VSCode window with that one's environment (`PATH`, the SSH
+  agent, `GIT_*`, the app's password dialog), not with that of whichever started the daemon first.
 - Repository Settings is a page at the end of the sidebar's Workspace instead of a sheet (⌘; still opens it), redone
   from the person using it: rows ask in plain words with a sentence of help under each, show the value in effect with
   where it comes from (git's default, your settings, this repository) and ↩︎ to stop overriding, and ⓘ for the key and
@@ -104,6 +115,10 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- Opening an SSH host and git over SSH no longer fail with "Permission denied (publickey)" after the Mac restarts:
+  the app kept the SSH agent from an earlier login, and now checks the agent each time it starts ssh or git.
+- When an SSH host refuses the public key and no SSH agent can be reached, the error says so, and Settings > Advanced >
+  Terminal Environment shows whether the SSH agent is there.
 - Blame of uncommitted contents and File History read the worktree chosen in Working Copy, not the repository's main
   checkout.
 - Writing commit-graph in the background also works with git older than 2.27, without the changed-path Bloom filters.
@@ -471,6 +486,13 @@ First release.
 - Repositories on SSH hosts through a daemon on the host.
 
 ## VSCode extension
+
+### Unreleased
+
+#### Changed
+
+- The shared daemon runs the extension's git and ssh with the extension's environment (`PATH`, the SSH agent,
+  `GIT_*`), even when the app started the daemon.
 
 ### [0.2.3] - 2026-10-21
 

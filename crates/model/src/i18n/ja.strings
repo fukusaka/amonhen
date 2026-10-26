@@ -110,7 +110,7 @@
 "Shared memory range is outside the region" = "共有メモリの範囲が領域の外";
 "Can’t read the request: {e}" = "要求を読めない: {e}";
 "This daemon doesn’t take delegated work" = "この daemon は処理を任されない";
-"The daemon speaks a different protocol (local {local}, daemon {daemon}). Install the same version of amonhend" = "daemon と通信の形が違います（手元 {local}、daemon {daemon}）。同じ版の amonhend を入れてください";
+"The engine is a different build of Amon Hen (here {local}, engine {daemon})" = "エンジンが Amon Hen の別のビルドです（こちら {local}、エンジン {daemon}）";
 "The daemon didn’t answer" = "daemon が答えない";
 "The daemon closed without answering" = "daemon が答えずに閉じた";
 "The repository path is too long" = "リポジトリのパスが長すぎる";
@@ -121,7 +121,7 @@
 "Not an ssh:// location" = "ssh:// で始まる場所ではありません";
 "Write it as ssh://host/path" = "ssh://host/path の形で書いてください";
 "No SSH destination" = "SSH の接続先がありません";
-"No engine (amonhen) bundled for the SSH host ({platform})" = "SSH 先（{platform}）に合うエンジン（amonhen）を同梱していません";
+"No engine (amonhen) for the SSH host ({platform}) in {dir}, and the SSH host has none of this build" = "{dir} に SSH 先（{platform}）に合うエンジン（amonhen）がなく、SSH 先にもこのビルドのものがありません";
 "Error on the SSH host ({host}): {message}" = "SSH 先（{host}）でエラー: {message}";
 "specified" = "指定したもの";
 "installed on the SSH host" = "SSH 先に入っているもの";
@@ -164,7 +164,7 @@
 "{path} isn’t a Git repository" = "{path} は Git のリポジトリではありません";
 "The shared daemon isn’t running ({endpoint})" = "共有の daemon は動いていません（{endpoint}）";
 "Shared daemon: running" = "共有の daemon: 動いています";
-"  version      {version} (protocol {protocol})" = "  版           {version}（通信の形 {protocol}）";
+"  version      {version} (build {build})" = "  版           {version}（ビルド {build}）";
 "  socket       {socket}" = "  ソケット     {socket}";
 "  uptime       {duration}" = "  動いている   {duration}";
 "  connections  {count}" = "  つながり     {count}";
@@ -243,7 +243,7 @@
 "Submodules" = "サブモジュール";
 " (upstream gone)" = "（上流がない）";
 " ({ahead} ahead, {behind} behind)" = "（{ahead} 先・{behind} 遅れ）";
-"The engine for the SSH host ({path}) was built for another version of Amon Hen. Rebuild it (scripts/build-engine.sh) or install the matching app" = "SSH 先に送るエンジン（{path}）は、Amon Hen のほかの版のものです。作り直す（scripts/build-engine.sh）か、同じ版のアプリを入れてください";
+"The engine for the SSH host ({path}) is a different build of Amon Hen, and the SSH host has none of this build. Rebuild it (scripts/build-engine.sh) or install the matching app" = "SSH 先に送るエンジン（{path}）は Amon Hen の別のビルドのもので、SSH 先にもこのビルドのものがありません。作り直す（scripts/build-engine.sh）か、同じ版のアプリを入れてください";
 
 /* amonhen-cli: worktree */
 "(detached)" = "（detached）";
@@ -271,3 +271,6 @@
 "Hooks can’t be disabled on Windows (git runs them whatever their permissions)" = "Windows ではフックを無効にできない（git は権限にかかわらず実行する）";
 "core.hooksPath is outside the working tree" = "core.hooksPath が作業ツリーの外にある";
 "There is already a hook named {name}" = "{name} というフックはすでにある";
+"No SSH agent is set (SSH_AUTH_SOCK), so keys that need a passphrase can’t be used" = "SSH の agent が決まっていない（SSH_AUTH_SOCK）ので、パスフレーズのある鍵を使えません";
+"The SSH agent ({path}) isn’t running, so keys that need a passphrase can’t be used" = "SSH の agent（{path}）がいないので、パスフレーズのある鍵を使えません";
+"The engine to start as the shared daemon ({path}) is a different build of Amon Hen" = "共有の daemon として起動するエンジン（{path}）は、Amon Hen の別のビルドのものです";
