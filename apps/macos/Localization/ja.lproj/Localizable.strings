@@ -8,8 +8,17 @@
 "Can’t Push" = "Push できません";
 "Can’t Pull" = "Pull できません";
 "No branch is checked out (detached HEAD)." = "ブランチをチェックアウトしていません（detached HEAD）。";
-"Push %@ to origin?" = "%@ を origin に push しますか？";
-"origin has no %@ yet. This creates origin/%@ and makes it the upstream." = "origin にはまだ %1$@ がありません。origin/%2$@ を作り、上流にします。";
+"Can’t Publish" = "Publish できません";
+"This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > Add Remote… で足してください。";
+"Remote" = "リモート";
+"Name there" = "そこでの名前";
+"Publish %@?" = "%@ を Publish しますか？";
+"This creates the branch on the remote and makes it the upstream (where Pull and Push go from now on)." = "リモートにブランチを作り、それを上流（これからの Pull と Push の相手）にします。";
+"%@ already exists" = "%@ はもうあります";
+"It has %ld commits that %@ doesn’t (as of the last Fetch), so pushing would be refused. Make it the upstream and Pull first." = "%2$@ にないコミットが %1$ld 個あるので（最後の Fetch の時点）、push は断られます。上流にして、先に Pull してください。";
+"Set Upstream" = "上流にする";
+"This pushes %ld commits to it and makes it the upstream." = "そこに %ld コミットを push し、上流にします。";
+"It is the same as %@. This makes it the upstream." = "%@ と同じです。上流にします。";
 "Force push %@?" = "%@ を force push しますか？";
 "This replaces %@ with your %@ (--force-with-lease: it fails if someone pushed in the meantime)." = "%1$@ を手元の %2$@ で置き換えます（--force-with-lease。ほかの人が後から push していたら失敗します）。";
 "Commits to send" = "送るコミット";
@@ -653,6 +662,7 @@
 "Insert the message of a recent commit (⌥↑ and ⌥↓ in the Summary field also work)" = "最近のコミットのメッセージを入れる（件名の欄で ⌥↑・⌥↓ でも呼び出せる）";
 "Insert a Conventional Commits type, Co-authored-by or Signed-off-by" = "Conventional Commits の型、Co-authored-by、Signed-off-by を入れる";
 "Commit and Push (⌘⇧↩), Amend" = "Commit and Push（⌘⇧↩）、Amend";
+"Commit and Publish (⌘⇧↩), Amend" = "Commit and Publish（⌘⇧↩）、Amend";
 "Length of the summary (yellow over 50, orange over 72)" = "件名の文字数（50 を超えると黄、72 を超えると橙）";
 "Include or exclude all listed files in the next commit" = "一覧のファイルをすべて次のコミットに含める・外す";
 "List" = "リスト";
@@ -752,6 +762,7 @@
 "Undo: %@ (⌥⌘Z)" = "Undo: %@（⌥⌘Z）";
 "%ld commits ahead of upstream (⌃⌘P)" = "上流より %ld コミット先にあります（⌃⌘P）";
 "Push (⌃⌘P)" = "Push（⌃⌘P）";
+"Publish — choose the remote to create this branch on first (⌃⌘P)" = "Publish — ブランチを作るリモートを先に選びます（⌃⌘P）";
 "%ld commits behind upstream (⌃⌘L)" = "上流より %ld コミット後ろにあります（⌃⌘L）";
 "Pull (⌃⌘L)" = "Pull（⌃⌘L）";
 "Show the Repositories page (⌘⇧R)" = "リポジトリのページに切り替える（⌘⇧R）";

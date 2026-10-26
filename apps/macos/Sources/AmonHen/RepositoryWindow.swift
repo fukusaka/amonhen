@@ -572,7 +572,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         stashes.currentBranch = branch
         editing.actions.currentBranch = branch
         let current = latestRefs?.items.first { $0.kind == .local && $0.name == branch }
-        toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0)
+        toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0, published: current.map(Self.isPublished) ?? true)
+        workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
         if editing === opened, let head = latestRefs?.head { history.head = head }
     }
 
@@ -1215,7 +1216,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 history.head = refs.head
                 history.show(refs: refs)
                 let current = refs.items.first { $0.kind == .local && $0.name == refs.headBranch }
-                toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0)
+                toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0,
+                                    published: current.map(Self.isPublished) ?? true)
+                workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
                 toolbar.setBranch(refs.headBranch)
                 if let branch = refs.headBranch { rememberBranch(branch) }
                 tracking = (current?.ahead ?? 0, current?.behind ?? 0)
@@ -1902,10 +1905,24 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 }
 
 extension RepositoryWindow {
+    /// 上流があって、そのリモートブランチもある（Push で送れる）。なければ Push は Publish（送り先を選ぶ）になる。
+    nonisolated static func isPublished(_ branch: RefItem) -> Bool { branch.detail != nil && !branch.gone }
+
+    /// 今のブランチを送るのが Publish か（ブランチがなければ Push のまま）。
+    private var publishesCurrent: Bool {
+        let branch = editing.actions.currentBranch
+        guard let item = latestRefs?.items.first(where: { $0.kind == .local && $0.name == branch }) else { return false }
+        return !Self.isPublished(item)
+    }
+
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
         case #selector(undoOperation(_:)):
             item.title = undoLabel.map { "Undo \($0)" } ?? "Undo"
+        case #selector(push(_:)):
+            item.title = publishesCurrent ? "Publish…" : "Push"
+        case #selector(commitAndPush(_:)):
+            item.title = publishesCurrent ? "Commit and Publish…" : "Commit and Push"
         case #selector(showWorkingCopy(_:)):
             item.state = pages?.page == .workingCopy ? .on : .off
         case #selector(showHistory(_:)):
