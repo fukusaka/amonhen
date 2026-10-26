@@ -39,6 +39,9 @@ final class RepositorySettingsModel {
     /// リポジトリの場所。
     let location: String
     let level: Level
+    /// 設定の書き換えを積む Undo の記録（編集 > 取り消す ⌘Z・やり直す ⇧⌘Z。画面の SwiftUI が使うもの）。リポジトリの
+    /// 操作の Undo（⌥⌘Z、コアの操作ログ）とは別。画面が出たときに入れる。
+    var undo: UndoManager?
     /// この段で書く scope。
     var ownScope: String { level == .repository ? "local" : "global" }
     private(set) var hooksPath: String?
@@ -189,10 +192,19 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == "global" }?.value
     }
 
-    /// この段の値を変える。nil か空なら消す。
-    func set(_ key: String, _ value: String?) {
+    /// この段の値を変える。nil か空なら消す。`recordUndo` なら、前の値に戻す書き換えを Undo に積む（同じ操作で
+    /// 変えたキーはまとめて 1 段。⌘Z の中でまた逆を積むので、⇧⌘Z でやり直せる）。
+    func set(_ key: String, _ value: String?, recordUndo: Bool = true) {
         let value = value?.trimmingCharacters(in: .whitespaces)
-        var command: [String: Any] = ["op": "configSet", "key": key, "value": (value?.isEmpty ?? true) ? NSNull() : value!]
+        let new = (value?.isEmpty ?? true) ? nil : value
+        if recordUndo, let undo {
+            let old = local(key)
+            if old != new {
+                undo.registerUndo(withTarget: self) { m in m.set(key, old) }
+                undo.setActionName(L("Change %@", key))
+            }
+        }
+        var command: [String: Any] = ["op": "configSet", "key": key, "value": new.map { $0 as Any } ?? NSNull()]
         if level == .allRepositories { command["scope"] = "global" }
         run(command)
     }
@@ -467,7 +479,6 @@ private struct AllSettingsTab: View {
     @State private var newKey = ""
     /// 閉じた section（初めはすべて開いている）。
     @State private var collapsed = Set<String>()
-    @Environment(\.undoManager) private var undoManager
     @FocusState private var focus: Field?
 
     private enum Field: Hashable { case value, newKey, newValue }
@@ -715,25 +726,45 @@ private struct AllSettingsTab: View {
             Text("")
         } else {
             let value: String? = shown ?? row.values[model.ownScope]
-            HStack(spacing: 0) {
-                (value.map(valueText) ?? Text(""))
-                    .fontWeight(shown == nil && row.effectiveScope == model.ownScope ? .bold : .regular)
-                Spacer(minLength: 0)
-            }
-            .modifier(FieldLook())
-            .contentShape(Rectangle())
-            .onTapGesture { beginEditing(row.key) }
-            .help(model.level == .repository ? L("Click to edit in this repository") : L("Click to edit for all repositories"))
+            EditableValue(text: value.map(valueText) ?? Text(""),
+                          bold: shown == nil && row.effectiveScope == model.ownScope,
+                          selected: selection == [row.key]) { beginEditing(row.key) }
+                .help(model.level == .repository ? L("Click to edit in this repository") : L("Click to edit for all repositories"))
         }
     }
 
-    /// 編集できるセルの見た目（入力欄の枠）。
+    /// 書けるセルの、編集していないときの見た目: 普段はほかの列と同じ文字だけ。マウスが載っているときと、その行
+    /// だけを選んでいるときに枠を出す（マウスはテキストのカーソル）。1 回のクリックで編集する。
+    private struct EditableValue: View {
+        let text: Text
+        let bold: Bool
+        let selected: Bool
+        let edit: () -> Void
+        @State private var hovering = false
+
+        var body: some View {
+            HStack(spacing: 0) {
+                text.fontWeight(bold ? .bold : .regular)
+                Spacer(minLength: 0)
+            }
+            .modifier(FieldLook(visible: hovering || selected))
+            .contentShape(Rectangle())
+            .onHover { inside in
+                hovering = inside
+                if inside { NSCursor.iBeam.push() } else { NSCursor.pop() }
+            }
+            .onTapGesture(perform: edit)
+        }
+    }
+
+    /// 編集できるセルの見た目（入力欄の枠）。出していないときも同じ余白を取り、文字の位置は動かさない。
     private struct FieldLook: ViewModifier {
+        var visible = true
         func body(content: Content) -> some View {
             content
                 .padding(.horizontal, 4).padding(.vertical, 1)
-                .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .textBackgroundColor).opacity(0.6)))
-                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(0.35)))
+                .background(RoundedRectangle(cornerRadius: 4).fill(Color(nsColor: .textBackgroundColor).opacity(visible ? 0.6 : 0)))
+                .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(Color.secondary.opacity(visible ? 0.35 : 0)))
         }
     }
 
@@ -816,8 +847,8 @@ private struct AllSettingsTab: View {
 
     /// 下の 1 行の「戻す」: 最後の削除を 1 段戻す（⌘Z と同じ）。
     private func restore() {
-        if let undoManager, undoManager.canUndo {
-            undoManager.undo()
+        if let undo = model.undo, undo.canUndo {
+            undo.undo()
         } else {
             let back = model.removedConfig.map { ConfigChange(key: $0.key, old: nil, new: $0.value) }
             write(back, name: L("Restore"))
@@ -836,16 +867,16 @@ private struct AllSettingsTab: View {
     /// 登録するので、⌘Z のあと ⇧⌘Z でやり直せる。`showRemoved` なら消したものを下の 1 行に出す（それ以外の
     /// 書き換えとやり直しでは消す）。
     private func write(_ changes: [ConfigChange], name: String, showRemoved: Bool = false) {
-        Self.apply(changes, to: model, undoManager: undoManager, name: name, showRemoved: showRemoved)
+        Self.apply(changes, to: model, name: name, showRemoved: showRemoved)
     }
 
-    private static func apply(_ changes: [ConfigChange], to model: RepositorySettingsModel, undoManager: UndoManager?, name: String, showRemoved: Bool) {
-        for c in changes { model.set(c.key, c.new) }
+    private static func apply(_ changes: [ConfigChange], to model: RepositorySettingsModel, name: String, showRemoved: Bool) {
+        for c in changes { model.set(c.key, c.new, recordUndo: false) }
         model.removedConfig = showRemoved ? changes.compactMap { c in c.old.map { (key: c.key, value: $0) } } : []
-        undoManager?.registerUndo(withTarget: model) { m in
-            apply(changes.map(\.inverse), to: m, undoManager: undoManager, name: name, showRemoved: false)
+        model.undo?.registerUndo(withTarget: model) { m in
+            apply(changes.map(\.inverse), to: m, name: name, showRemoved: false)
         }
-        undoManager?.setActionName(name)
+        model.undo?.setActionName(name)
     }
 
     private func cancelAdding() {
@@ -1808,6 +1839,7 @@ private struct HooksLFSPage: View {
 struct RepositorySettingsView: View {
     let model: RepositorySettingsModel
     @State var page: SettingsPage
+    @Environment(\.undoManager) private var undoManager
 
     var body: some View {
         HStack(spacing: 0) {
@@ -1847,6 +1879,8 @@ struct RepositorySettingsView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .onAppear { model.undo = undoManager }
+        .onChange(of: undoManager) { _, now in model.undo = now }
         .onReceive(NotificationCenter.default.publisher(for: GitSettings.showPage)) { note in
             if model.level == .allRepositories, let p = note.object as? SettingsPage { page = p }
         }

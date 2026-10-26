@@ -7,6 +7,18 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- Every change in Repository Settings and Settings > Git can be undone and redone with ⌘Z / ⇧⌘Z while the page is
+  shown, apart from the repository's Undo (⌥⌘Z).
+
+#### Changed
+
+- In Keys and Values, the column you can write shows plain text, with a field outline only on hover or for the one
+  selected row.
+
 ### [0.2.7] - 2026-10-26
 
 Settings is reorganized around what Amon Hen decides, and Repository Settings is redone as a page in the sidebar, with
