@@ -16,7 +16,7 @@ Clicking the Amon Hen icon in the activity bar opens the nav in the sidebar and 
 
 | Item | Description |
 | --- | --- |
-| Title buttons | Fetch (fetch from all remotes), Pull (bring the upstream into the current branch), Push (to the upstream; if there is none, push to origin and set it as the upstream), Undo. Under `…`: New Branch, Stash Changes, Open Amon Hen, Refresh, Force Push |
+| Title buttons | Fetch (fetch from all remotes), Pull (bring the upstream into the current branch), Push (to the upstream; when the current branch has none, the button is Publish Branch instead: choose the remote and the name there, and it becomes the upstream), Undo. Under `…`: New Branch, Stash Changes, Open Amon Hen, Refresh, Force Push |
 | Working Copy | The number of changes. Selecting it shows the Working Copy in the main view |
 | History | The current branch. Selecting it shows the History in the main view |
 | Merge / rebase in progress | A row like "Rebase in progress (2/5)". Continue / Skip / Abort |
@@ -24,7 +24,7 @@ Clicking the Amon Hen icon in the activity bar opens the nav in the sidebar and 
 | Remotes / Tags / Stashes / Submodules | Fetched when expanded |
 
 - Selecting a branch, remote branch or tag shows its history in the History of the main view.
-- Right-clicking a branch or tag offers Checkout (for a remote branch, creates a local branch that tracks it and switches to it), Merge into Current Branch, Rebase Current Branch onto This, Rename Branch, Delete Branch, New Branch (create one from there and switch to it), and New Tag (an annotated tag if you enter a message). Creation and deletion can be reverted with Undo.
+- Right-clicking a branch or tag offers Checkout (for a remote branch, creates a local branch that tracks it and switches to it), for a local branch that is not checked out Fast-Forward to Upstream (only behind it, as of the last Fetch; not for one checked out in another worktree) or Push to Upstream (only ahead), Publish Branch for a local branch without an upstream, Merge into Current Branch, Rebase Current Branch onto This, Rename Branch, Delete Branch, New Branch (create one from there and switch to it), and New Tag (an annotated tag if you enter a message). Creation and deletion can be reverted with Undo.
 - The `+` on the Stashes header stashes your working changes (you can choose whether to include untracked files). Selecting a stash opens its contents as a multi-file diff; right-click for Apply / Pop / Drop (revertible with Undo). Apply and Pop also restore what was staged.
 - Right-clicking a submodule offers Update (initialize it and match it to the recorded commit) and opening it in another window.
 - When multiple repositories are open, switch between them with a title button.
@@ -39,7 +39,7 @@ Dropping a branch, remote branch or tag from the nav onto another item in the na
 | Local branch | Remote, remote branch | Push, Force Push (`--force-with-lease`) |
 
 - When the drop target is not checked out and a fast-forward is enough, the branch is just moved forward without a checkout. Otherwise it is checked out before the operation runs.
-- Pushing a branch with no upstream sets the push destination as its upstream.
+- Pushing a branch with no upstream by dropping it sets the push destination as its upstream.
 
 ### Working Copy
 

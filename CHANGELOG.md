@@ -7,6 +7,19 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last
+  Fetch, undoably), and its menu also offers Push when it is only ahead and Publish when it has no upstream. The core
+  and CLI get the same as `fastForward`.
+
+#### Changed
+
+- Push reads Publish for a branch without an upstream, and asks which remote to create it on (following
+  `branch.<name>.pushRemote` and `remote.pushDefault`) and its name there, instead of always pushing to origin.
+
 ### [0.2.7] - 2026-10-26
 
 Settings is reorganized around what Amon Hen decides, and Repository Settings is redone as a page in the sidebar, with
@@ -495,10 +508,17 @@ First release.
 
 ### Unreleased
 
+#### Added
+
+- A local branch that isn't checked out can be fast-forwarded to its upstream (Fast-Forward to Upstream) or pushed
+  (Push to Upstream) from its menu in the nav.
+
 #### Changed
 
 - The shared daemon runs the extension's git and ssh with the extension's environment (`PATH`, the SSH agent,
   `GIT_*`), even when the app started the daemon.
+- Push no longer sends a branch without an upstream to origin by itself: the nav shows Publish Branch, which asks
+  for the remote (following `branch.<name>.pushRemote` and `remote.pushDefault`) and the name there.
 
 ### [0.2.3] - 2026-10-21
 
