@@ -1026,8 +1026,6 @@
 "%ld commits on the upstream are not here yet. Pull brings them in." = "上流の %ld コミットは、まだここにありません。Pull で取り込みます。";
 "Current branch, being edited" = "今のブランチ（編集中）";
 "Working Copy shows and commits to this branch’s worktree. Other worktrees are listed under Working Copy." = "Working Copy は、このブランチの worktree を見せ、そこにコミットします。ほかの worktree は Working Copy の下に並びます。";
-"Terminal Environment" = "ターミナルの環境";
-"Take the login shell’s environment at launch" = "起動時にログインシェルの環境を取り込む";
 "Launched from the Finder, the app does not get the terminal’s PATH, SSH agent or GIT_* settings, so git could miss Homebrew’s git, credential helpers and agents such as 1Password. The app runs your login shell once at launch and gives git, the shared daemon and gh what it found. Changes apply at the next launch." = "Finder から起動したアプリには、ターミナルの PATH・SSH agent・GIT_* の設定が渡りません。そのため git が Homebrew の git・credential helper・1Password などの agent を見つけられないことがあります。起動時にログインシェルを一度動かし、見つけたものを git・共有の daemon・gh に渡します。変更は次の起動から効きます。";
 "Read Again" = "読み直す";
 "SSH agent found" = "SSH の agent があります";
@@ -1080,7 +1078,7 @@
 "This branch has no upstream to pull from or push to." = "このブランチには、Pull・Push する上流がありません。";
 "Try Again" = "もう一度";
 "Uncommitted changes would be overwritten. Commit or stash them first." = "コミットしていない変更を上書きしてしまいます。先にコミットするか stash してください。";
-"The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper osxkeychain`), or add the SSH key to the agent (`ssh-add --apple-use-keychain`). Settings > Git > Programs shows which git the app uses, and Settings > Performance > Terminal Environment whether the SSH agent is there." = "リモートがパスワード・トークン・SSH の鍵を受け付けませんでした。ダイアログでパスワードやパスフレーズを入れたなら、入力を確かめてください（GitHub はアカウントのパスワードではなくトークンです）。毎回聞かれないようにするには、credential helper に資格情報を保存する（例: `gh auth setup-git`、`git config --global credential.helper osxkeychain`）か、SSH の鍵を agent に入れてください（`ssh-add --apple-use-keychain`）。アプリが使う git は設定 > Git > プログラムで、SSH の agent があるかは設定 > パフォーマンス > ターミナルの環境で分かります。";
+"The remote refused the password, token or SSH key. If a dialog asked for a password or passphrase, check what you typed (GitHub needs a token, not the account password). To stop being asked, store the credentials with a credential helper (for example `gh auth setup-git` or `git config --global credential.helper osxkeychain`), or add the SSH key to the agent (`ssh-add --apple-use-keychain`). Settings > Git > Programs shows which git the app uses, and Settings > Git > Environment Variables whether the SSH agent is there." = "リモートがパスワード・トークン・SSH の鍵を受け付けませんでした。ダイアログでパスワードやパスフレーズを入れたなら、入力を確かめてください（GitHub はアカウントのパスワードではなくトークンです）。毎回聞かれないようにするには、credential helper に資格情報を保存する（例: `gh auth setup-git`、`git config --global credential.helper osxkeychain`）か、SSH の鍵を agent に入れてください（`ssh-add --apple-use-keychain`）。アプリが使う git は設定 > Git > プログラムで、SSH の agent があるかは設定 > Git > 環境変数で分かります。";
 
 // サイドバーの絞り込みと複数選択
 "Filter branches" = "ブランチを絞り込む";
@@ -1335,7 +1333,6 @@
 "What each commit’s row shows besides the subject." = "コミットの行に、件名のほかに出すもの。";
 "Writes to .git." = ".git に書きます。";
 "A git fsmonitor--daemon runs for each repository." = "リポジトリごとに git fsmonitor--daemon が常駐します。";
-"Applies at the next launch." = "次の起動から効きます。";
 "Runs on this Mac and sends nothing out." = "この Mac の中で動き、外には何も送りません。";
 "Asks before sending anything from a repository the first time." = "リポジトリから初めて送るときに確かめます。";
 "Stored in ~/Library/Application Support/Amon Hen/prompts." = "~/Library/Application Support/Amon Hen/prompts に置きます。";
