@@ -11,12 +11,16 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Every change in Repository Settings and Settings > Git can be undone and redone with ⌘Z / ⇧⌘Z while the page is
+  shown, apart from the repository's Undo (⌥⌘Z).
 - A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last
   Fetch, undoably), and its menu also offers Push when it is only ahead and Publish when it has no upstream. The core
   and CLI get the same as `fastForward`.
 
 #### Changed
 
+- In Keys and Values, the column you can write shows plain text, with a field outline only on hover or for the one
+  selected row.
 - Push reads Publish for a branch without an upstream, and asks which remote to create it on (following
   `branch.<name>.pushRemote` and `remote.pushDefault`) and its name there, instead of always pushing to origin.
 

@@ -127,7 +127,12 @@ struct ProgramsPage: View {
         .padding(.vertical, 6)
     }
 
+    /// 使う git を変える（Undo に前の値を積む。⇧⌘Z でやり直せる）。
     private func setGit(_ value: String) {
+        let old = gitExecutable
+        guard value != old else { return }
+        model.undo?.registerUndo(withTarget: model) { _ in setGit(old) }
+        model.undo?.setActionName(L("Change %@", "git"))
         gitExecutable = value
         Settings.gitExecutable = value.isEmpty ? nil : value
         Settings.applyGitExecutable()
