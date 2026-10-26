@@ -790,4 +790,12 @@ final class SettingsWindowController: NSWindowController {
             tabs.selectedTabViewItemIndex = index
         }
     }
+
+    /// 出している画面を撮る（`--app-settings` と `--snapshot`。見た目の確認用）。
+    func snapshot() -> NSBitmapImageRep? {
+        guard let view = (window?.attachedSheet ?? window)?.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
+    }
 }
