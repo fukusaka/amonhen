@@ -1,0 +1,40 @@
+# apt でパッケージを入れる。取ってきた .deb はキャッシュに残し、次からはそれを使う（x86_64 のランナーのミラー
+# azure.archive.ubuntu.com はときどき数十 kB/s まで落ち、GTK の 30 MB ほどに 10 分を超えることがある）。
+# 推奨パッケージは入れない（ビルドに要るのは依存だけ）。
+name: apt-install
+description: Install apt packages, caching the downloaded .deb files
+inputs:
+  packages:
+    description: Packages to install (separated by spaces)
+    required: true
+runs:
+  using: composite
+  steps:
+    - id: restore
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/apt-archives
+        key: apt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.packages }}-
+        restore-keys: apt-${{ runner.os }}-${{ runner.arch }}-${{ inputs.packages }}-
+    - id: install
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        mkdir -p ~/apt-archives
+        sudo cp ~/apt-archives/*.deb /var/cache/apt/archives/ 2>/dev/null || true
+        sudo apt-get update -q
+        # shellcheck disable=SC2086
+        sudo apt-get install -y -q --no-install-recommends $PACKAGES
+        # 索引にもうない版（更新で古くなったもの）は捨て、残りをキャッシュに置き直す。
+        sudo apt-get autoclean -q
+        rm -rf ~/apt-archives
+        mkdir -p ~/apt-archives
+        cp /var/cache/apt/archives/*.deb ~/apt-archives/ 2>/dev/null || true
+        echo "key=apt-${{ runner.os }}-${{ runner.arch }}-$PACKAGES-$(ls ~/apt-archives | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+    # 中身が変わったときだけ置く（同じキーは置き直せない）。
+    - if: steps.restore.outputs.cache-matched-key != steps.install.outputs.key
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ~/apt-archives
+        key: ${{ steps.install.outputs.key }}
