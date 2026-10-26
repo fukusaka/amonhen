@@ -146,7 +146,8 @@ struct SSHHostsSettings: View {
         VStack(spacing: 0) {
             List(selection: Binding(get: { Optional(page) }, set: { if let p = $0 { page = p } })) {
                 Text(L("Connection")).tag(HostPage.connection)
-                ForEach(SettingsPage.cases(for: .allRepositories)) { Text($0.title).tag(HostPage.git($0)) }
+                // 環境変数のページはこの Mac のもの（SSH 先の git には渡らない）なので、SSH 先には出さない。
+                ForEach(SettingsPage.cases(for: .allRepositories).filter { $0 != .environment }) { Text($0.title).tag(HostPage.git($0)) }
             }
             .listStyle(.sidebar)
             .disabled(selected == nil)
