@@ -68,9 +68,74 @@ fn resolve_git(chosen: Option<std::ffi::OsString>) -> std::ffi::OsString {
 /// 尋ねるダイアログ（`AMONHEN_ASKPASS`。アプリだけが持つ）・使う git（`PATH`）・SSH の agent・`GIT_*` の設定が、
 /// どの FE が先に起動したかで変わる。FE はつなぐときにこれを送り（`amonhen_remote::local::opening`）、daemon はその
 /// FE の要求を `with_client_env` の中で動かす。
+///
+/// 渡す名前は、git と ssh がいつも使うもの（`ALWAYS_PASSED` と `GIT_*`）と、利用者が `AMONHEN_PASS_ENV` に並べて
+/// 足したもの。アプリの設定（「環境変数」の表）とログインシェルからの取り込みも、この決まりを使う。断る名前
+/// （`env_refusal`）は、足しても渡さない。
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ClientEnv {
     vars: Vec<(String, String)>,
+    /// `AMONHEN_PASS_ENV` で足した名前。
+    extra: Vec<String>,
+}
+
+/// 利用者が渡す名前を足す環境変数（`NAME1,NAME2`。空白で区切ってもよい）。アプリは、設定の「環境変数」の表で
+/// 選んだものをここに入れる。CLI・VSCode 拡張は、それを動かす環境で決める。
+pub const PASS_ENV: &str = "AMONHEN_PASS_ENV";
+
+/// git と ssh がいつも使うので、いつも渡す名前（ほかに `GIT_*`）。`AMONHEN_*` の 3 つは、この仕組みとアプリの設定の
+/// もの（資格情報を尋ねるダイアログ、使う git、足した名前）。
+pub const ALWAYS_PASSED: [&str; 8] = [
+    "PATH",
+    "SSH_AUTH_SOCK",
+    "SSH_AGENT_PID",
+    "XDG_CONFIG_HOME",
+    "XDG_DATA_HOME",
+    "AMONHEN_ASKPASS",
+    "AMONHEN_GIT",
+    PASS_ENV,
+];
+
+/// `name` を渡さない理由（利用者が足しても断る）。渡してよければ None。
+pub fn env_refusal(name: &str) -> Option<String> {
+    let name = client::canonical(name);
+    if name.is_empty() || name.contains(['=', '\0']) || name.chars().any(char::is_whitespace) {
+        Some(crate::tr!("Not a name of an environment variable"))
+    } else if client::POINTS_TO_A_REPOSITORY.contains(&&*name) {
+        Some(crate::tr!(
+            "It points git to a repository, so the shared daemon would work on another one"
+        ))
+    } else if name == "GIT_ASKPASS" {
+        Some(crate::tr!(
+            "Amon Hen chooses the password dialog itself (AMONHEN_ASKPASS)"
+        ))
+    } else if name.starts_with("AMONHEN_") && !ALWAYS_PASSED.contains(&&*name) {
+        Some(crate::tr!("It changes how Amon Hen itself works"))
+    } else {
+        None
+    }
+}
+
+/// `name` を、git と ssh がいつも使うものとして、いつも渡すか（`ALWAYS_PASSED` と `GIT_*`。断る名前は渡さない）。
+pub fn always_passed(name: &str) -> bool {
+    let canonical = client::canonical(name);
+    env_refusal(name).is_none()
+        && (ALWAYS_PASSED.contains(&&*canonical) || canonical.starts_with("GIT_"))
+}
+
+/// `AMONHEN_PASS_ENV` の値から、足した名前を読む（断る名前は除く）。
+pub fn extra_env_names(value: &str) -> Vec<String> {
+    value
+        .split(|c: char| c == ',' || c.is_whitespace())
+        .filter(|n| !n.is_empty() && env_refusal(n).is_none())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// `name` を渡すか（このプロセスの `AMONHEN_PASS_ENV` で足したものも）。アプリがシェルから取り込むものを選ぶ。
+pub fn env_passes(name: &str) -> bool {
+    let extra = extra_env_names(&std::env::var(PASS_ENV).unwrap_or_default());
+    client::passes(name, &extra)
 }
 
 impl ClientEnv {
@@ -79,15 +144,21 @@ impl ClientEnv {
         Self::from_vars(std::env::vars())
     }
 
-    /// `vars` のうち、渡すもの（名前の順）。
+    /// `vars` のうち、渡すもの（名前の順）。`vars` の `AMONHEN_PASS_ENV` で足した名前も渡す。
     pub fn from_vars(vars: impl IntoIterator<Item = (String, String)>) -> Self {
+        let vars: Vec<(String, String)> = vars.into_iter().collect();
+        let extra = vars
+            .iter()
+            .find(|(k, _)| client::same(k, PASS_ENV))
+            .map(|(_, v)| extra_env_names(v))
+            .unwrap_or_default();
         let mut vars: Vec<_> = vars
             .into_iter()
-            .filter(|(k, _)| client::passes(k))
+            .filter(|(k, _)| client::passes(k, &extra))
             .collect();
         vars.sort();
         vars.dedup_by(|a, b| a.0 == b.0);
-        Self { vars }
+        Self { vars, extra }
     }
 
     /// `NAME=value` を NUL で区切ったもの。
@@ -166,7 +237,7 @@ pub fn with_client_env<R>(env: &ClientEnv, f: impl FnOnce() -> R) -> R {
 /// 環境変数 `name`。`with_client_env` の中で、FE が送る名前なら、その FE の値（送っていなければ None）。
 pub fn var_os(name: &str) -> Option<OsString> {
     client::CURRENT.with(|c| match &*c.borrow() {
-        Some(env) if client::passes(name) => env.get(name).map(OsString::from),
+        Some(env) if client::passes(name, &env.extra) => env.get(name).map(OsString::from),
         _ => std::env::var_os(name),
     })
 }
@@ -180,20 +251,10 @@ mod client {
         pub(super) static CURRENT: RefCell<Option<ClientEnv>> = const { RefCell::new(None) };
     }
 
-    /// FE から受け取る名前。
-    const NAMES: [&str; 6] = [
-        "PATH",
-        "AMONHEN_ASKPASS",
-        "AMONHEN_GIT",
-        "SSH_AUTH_SOCK",
-        "SSH_AGENT_PID",
-        "XDG_CONFIG_HOME",
-    ];
-
-    /// `GIT_` で始まるもののうち、受け取らないもの: リポジトリを指すもの（git のフックから起動した CLI などは持って
-    /// いる。渡すと別のリポジトリを操作してしまう）と、askpass（FE の askpass は `AMONHEN_ASKPASS` で決める。
-    /// VSCode の askpass はその窓口の変数がないと動かない）。
-    const NOT_GIT: [&str; 10] = [
+    /// リポジトリを指す `GIT_*`（git のフックから起動した CLI などは持っている。渡すと別のリポジトリを操作して
+    /// しまう）。askpass（`GIT_ASKPASS`）も渡さない（`env_refusal`）: FE の askpass は `AMONHEN_ASKPASS` で決め、
+    /// VSCode の askpass はその窓口の変数がないと動かない。
+    pub(super) const POINTS_TO_A_REPOSITORY: [&str; 9] = [
         "GIT_DIR",
         "GIT_WORK_TREE",
         "GIT_INDEX_FILE",
@@ -203,19 +264,20 @@ mod client {
         "GIT_NAMESPACE",
         "GIT_PREFIX",
         "GIT_QUARANTINE_PATH",
-        "GIT_ASKPASS",
     ];
 
-    pub(super) fn passes(name: &str) -> bool {
-        // Windows の環境変数の名前は大文字と小文字を区別しない（PATH は `Path` で届く）。
-        let upper;
-        let name = if cfg!(windows) {
-            upper = name.to_ascii_uppercase();
-            upper.as_str()
+    /// 比べるための名前。Windows の環境変数の名前は大文字と小文字を区別しない（PATH は `Path` で届く）。
+    pub(super) fn canonical(name: &str) -> std::borrow::Cow<'_, str> {
+        if cfg!(windows) {
+            name.to_ascii_uppercase().into()
         } else {
-            name
-        };
-        NAMES.contains(&name) || (name.starts_with("GIT_") && !NOT_GIT.contains(&name))
+            name.into()
+        }
+    }
+
+    /// `name` を渡すか（`extra` は `AMONHEN_PASS_ENV` で足した名前）。
+    pub(super) fn passes(name: &str, extra: &[String]) -> bool {
+        super::always_passed(name) || extra.iter().any(|e| same(e, name))
     }
 
     /// 同じ環境変数の名前か（Windows では大文字と小文字を区別しない）。
@@ -234,7 +296,7 @@ mod client {
             let Some(env) = &*c.borrow() else { return };
             for (k, _) in std::env::vars_os() {
                 if let Some(k) = k.to_str()
-                    && passes(k)
+                    && passes(k, &env.extra)
                     && !same(k, "PATH")
                     && env.get(k).is_none()
                 {
@@ -474,6 +536,30 @@ mod tests {
         );
         assert_eq!(ClientEnv::decode(&env.encode()), env);
         assert!(ClientEnv::decode("").is_empty());
+    }
+
+    /// `AMONHEN_PASS_ENV` で名前を足せる。断る名前は、足しても渡さない。git と ssh がいつも使うものは足さなくても渡す。
+    #[test]
+    fn passes_names_added_by_the_user() {
+        let env = ClientEnv::decode(
+            "AMONHEN_PASS_ENV=GH_HOST, HTTPS_PROXY GIT_DIR AMONHEN_SSH\0GH_HOST=example.com\0HTTPS_PROXY=http://proxy\0GIT_DIR=/x\0AMONHEN_SSH=/x\0NO_PROXY=x\0XDG_DATA_HOME=/d\0HOMEBREW_PREFIX=/opt/homebrew",
+        );
+        assert_eq!(
+            env.encode(),
+            "AMONHEN_PASS_ENV=GH_HOST, HTTPS_PROXY GIT_DIR AMONHEN_SSH\0GH_HOST=example.com\0HTTPS_PROXY=http://proxy\0XDG_DATA_HOME=/d"
+        );
+        assert_eq!(ClientEnv::decode(&env.encode()), env);
+        for refused in [
+            "GIT_WORK_TREE",
+            "GIT_ASKPASS",
+            "AMONHEN_DAEMON_DIR",
+            "A=B",
+            "",
+        ] {
+            assert!(env_refusal(refused).is_some(), "{refused}");
+        }
+        assert!(env_refusal("GH_HOST").is_none() && env_refusal("AMONHEN_GIT").is_none());
+        assert!(always_passed("GIT_SSH_COMMAND") && !always_passed("HOMEBREW_PREFIX"));
     }
 
     /// 分けたスレッドでも、`carry` で写した FE の環境と言語を使う（分けただけでは引き継がない）。

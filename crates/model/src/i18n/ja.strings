@@ -282,3 +282,7 @@
 "The SSH agent ({path}) isn’t running, so keys that need a passphrase can’t be used" = "SSH の agent（{path}）がいないので、パスフレーズのある鍵を使えません";
 "The engine to start as the shared daemon ({path}) is a different build of Amon Hen" = "共有の daemon として起動するエンジン（{path}）は、Amon Hen の別のビルドのものです";
 "The shared daemon’s socket path is too long ({length} bytes, at most {max}): {path}. Set AMONHEN_DAEMON_DIR to a shorter folder" = "共有の daemon のソケットのパスが長すぎます（{length} バイト、{max} まで）: {path}。AMONHEN_DAEMON_DIR を短いフォルダにしてください";
+"Not a name of an environment variable" = "環境変数の名前ではありません";
+"It points git to a repository, so the shared daemon would work on another one" = "git にリポジトリを指すので、共有の daemon が別のリポジトリを操作してしまいます";
+"Amon Hen chooses the password dialog itself (AMONHEN_ASKPASS)" = "パスワードのダイアログは Amon Hen が決めます（AMONHEN_ASKPASS）";
+"It changes how Amon Hen itself works" = "Amon Hen 自身の動きを変えます";
