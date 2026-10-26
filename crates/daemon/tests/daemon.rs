@@ -70,17 +70,19 @@ fn serves_the_machine_settings_without_a_repository() {
 
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path().join("data");
-    let global = tmp.path().join("gitconfig");
-    // 設定のリポジトリはデータの置き場所（XDG_DATA_HOME）に作られ、global の設定はこのテストのファイルに書く。
+    let home = tmp.path().join("home");
+    std::fs::create_dir(&home).unwrap();
+    let global = home.join(".gitconfig");
+    // 設定のリポジトリはデータの置き場所（XDG_DATA_HOME）に作られ、global の設定はこのテストの HOME に書く
+    // （GIT_CONFIG_GLOBAL は git 2.32 からなので使わない）。
     let conn = Connection::spawn(
         "sh",
         &[
             "-c".to_owned(),
-            r#"XDG_DATA_HOME="$1" GIT_CONFIG_GLOBAL="$2" GIT_CONFIG_NOSYSTEM=1 exec "$0" --stdio"#
-                .to_owned(),
+            r#"HOME="$1" XDG_DATA_HOME="$2" GIT_CONFIG_NOSYSTEM=1 exec "$0" --stdio"#.to_owned(),
             env!("CARGO_BIN_EXE_amonhend").to_owned(),
+            home.display().to_string(),
             data.display().to_string(),
-            global.display().to_string(),
         ],
     )
     .unwrap();
