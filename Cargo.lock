@@ -117,6 +117,7 @@ dependencies = [
  "amonhen-remote",
  "amonhen-watch",
  "cbindgen",
+ "serde_json",
  "tempfile",
 ]
 

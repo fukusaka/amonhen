@@ -23,7 +23,7 @@ Use Add Remote Repository… in the repository list and enter the host and path,
 
 ## Shared daemon
 
-With "Open repositories through the shared daemon" in Settings > Advanced, or Open via Daemon in the list's context menu, a repository is opened through the local shared daemon (`daemon:/path`, `daemon:ssh://host/path`). History, the search index and SSH connections are shared with the CLI and the VSCode extension. Check its state in the Daemon tab of Window > Activity or with `amonhen daemon status`.
+With "Open repositories through the shared daemon" in Settings > Performance, or Open via Daemon in the list's context menu, a repository is opened through the local shared daemon (`daemon:/path`, `daemon:ssh://host/path`). History, the search index and SSH connections are shared with the CLI and the VSCode extension. Check its state in the Daemon tab of Window > Activity or with `amonhen daemon status`.
 
 ## CLI
 

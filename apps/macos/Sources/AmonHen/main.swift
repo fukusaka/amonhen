@@ -475,6 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 // ターミナルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込み、git が資格情報を尋ねる先（askpass）を決める
 // （git・daemon を動かす前に）。
+Settings.applyGitExecutable()
 ShellEnvironment.import()
 if let agent = ShellEnvironment.launchAgent { Repository.setSSHAgent(agent) }
 Askpass.install()

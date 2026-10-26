@@ -18,7 +18,11 @@ use std::process::Command;
 pub fn command(program: impl AsRef<OsStr>) -> Command {
     // ここだけが Command::new を直接呼ぶ（clippy.toml の disallowed-methods）
     #[allow(unused_mut, clippy::disallowed_methods)]
-    let mut cmd = Command::new(program);
+    let mut cmd = Command::new(if program.as_ref() == "git" {
+        git_program()
+    } else {
+        program.as_ref().to_owned()
+    });
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -44,6 +48,18 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
         cmd.env("SSH_AUTH_SOCK", agent);
     }
     cmd
+}
+
+/// 使う git。`AMONHEN_GIT`（実行ファイルのパス。アプリの Settings > Git で選んだもの）があればそれ、なければ
+/// `PATH` の `git`。共有の daemon では、要求した FE の値（`with_client_env`）。
+pub fn git_program() -> std::ffi::OsString {
+    resolve_git(var_os("AMONHEN_GIT"))
+}
+
+fn resolve_git(chosen: Option<std::ffi::OsString>) -> std::ffi::OsString {
+    chosen
+        .filter(|p| !p.is_empty())
+        .unwrap_or_else(|| "git".into())
 }
 
 /// 共有の daemon につないだ FE の環境のうち、その FE のために動かす git・ssh に渡すもの。
@@ -165,9 +181,10 @@ mod client {
     }
 
     /// FE から受け取る名前。
-    const NAMES: [&str; 5] = [
+    const NAMES: [&str; 6] = [
         "PATH",
         "AMONHEN_ASKPASS",
+        "AMONHEN_GIT",
         "SSH_AUTH_SOCK",
         "SSH_AGENT_PID",
         "XDG_CONFIG_HOME",
@@ -356,6 +373,16 @@ fn any_signal_blocked() -> bool {
         }
         (1..libc::SIGXFSZ + 1).any(|signal| libc::sigismember(&current, signal) == 1)
     }
+}
+
+#[test]
+fn chooses_the_git_from_the_environment() {
+    assert_eq!(resolve_git(None), "git");
+    assert_eq!(resolve_git(Some("".into())), "git");
+    assert_eq!(
+        resolve_git(Some("/opt/homebrew/bin/git".into())),
+        "/opt/homebrew/bin/git"
+    );
 }
 
 #[cfg(all(test, unix))]
