@@ -1340,3 +1340,6 @@
 "Asks before sending anything from a repository the first time." = "リポジトリから初めて送るときに確かめます。";
 "Stored in ~/Library/Application Support/Amon Hen/prompts." = "~/Library/Application Support/Amon Hen/prompts に置きます。";
 "With the base (diff3, zdiff3), the merge editor resolves one-sided conflicts by itself." = "元がある形式（diff3・zdiff3）なら、マージエディタが片側だけの変更を自分で解けます。";
+"Set for All Repositories" = "すべてのリポジトリに設定";
+"Set for All Repositories on %@" = "%@ のすべてのリポジトリに設定";
+"Writes this value with git config --global (git in a terminal follows it too) and stops overriding it here." = "この値を git config --global に書き（端末の git も従います）、ここでの上書きをやめます。";

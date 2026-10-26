@@ -187,6 +187,11 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope != ownScope }
     }
 
+    /// `scope` の段での値。
+    func value(_ key: String, in scope: String) -> String? {
+        entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == scope }?.value
+    }
+
     /// ユーザー全体（global）での値。
     func global(_ key: String) -> String? {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == "global" }?.value
@@ -213,6 +218,44 @@ final class RepositorySettingsModel {
     func setGlobal(_ key: String, _ value: String?) {
         let value = value?.trimmingCharacters(in: .whitespaces)
         run(["op": "configSet", "key": key, "value": (value?.isEmpty ?? true) ? NSNull() : value!, "scope": "global"])
+    }
+
+    /// 行の今の値を「すべてのリポジトリ」に書き、このリポジトリの上書きを消す（docs/ux.md の 4.4）。設定元は
+    /// すぐ「すべてのリポジトリ」になる。⌘Z で両方とも元に戻る。
+    func setForAllRepositories(_ keys: [String]) {
+        guard level == .repository else { return }
+        let before = keys.compactMap { key -> (key: String, value: String, local: String?, global: String?)? in
+            guard let value = effective(key)?.value else { return nil }
+            return (key, value, local(key), global(key))
+        }
+        guard !before.isEmpty else { return }
+        for b in before {
+            setGlobal(b.key, b.value)
+            if b.local != nil { set(b.key, nil, recordUndo: false) }
+        }
+        undo?.registerUndo(withTarget: self) { m in m.restoreScopes(before) }
+        undo?.setActionName(L("Set for All Repositories"))
+    }
+
+    /// `setForAllRepositories` の取り消し: global と local を前の値に戻す。やり直しはもう一度書く。
+    private func restoreScopes(_ before: [(key: String, value: String, local: String?, global: String?)]) {
+        for b in before {
+            setGlobal(b.key, b.global)
+            set(b.key, b.local, recordUndo: false)
+        }
+        undo?.registerUndo(withTarget: self) { m in m.setForAllRepositories(before.map(\.key)) }
+        undo?.setActionName(L("Set for All Repositories"))
+    }
+
+    /// 「すべてのリポジトリに設定する」の名前（SSH 先ならホスト名つき）。
+    var setForAllTitle: String { host.map { L("Set for All Repositories on %@", $0) } ?? L("Set for All Repositories") }
+
+    /// 行をすべてのリポジトリに書けるか: このリポジトリの段で、値がどこかに書かれていて、まだ global そのものではない。
+    func canSetForAll(_ keys: [String]) -> Bool {
+        level == .repository && keys.contains { key in
+            guard let e = effective(key) else { return false }
+            return e.scope != "global" || local(key) != nil
+        }
     }
 
     func changeRemote(_ change: [String: Any]) {
@@ -473,6 +516,8 @@ private struct AllSettingsTab: View {
     @AppStorage("configTableColumns") private var columnsMode = ColumnsMode.levels
     /// 「このリポジトリ」の列を編集しているキーと、欄の中身。
     @State private var editing: String?
+    /// 編集中のセルの段（local か global）。
+    @State private var editingScope = ""
     @State private var draft = ""
     /// 「+」で足している途中（表の最後に、キーと値の欄だけの行が出る）。
     @State private var adding = false
@@ -629,12 +674,11 @@ private struct AllSettingsTab: View {
                     TableColumn(header("system"), value: \.system) { row in cell(row, scope: "system") }
                         .width(min: 60, ideal: 90)
                         .customizationID("system")
-                    TableColumn(header("global"), value: \.global) { row in
-                        if model.level == .allRepositories { editableCell(row) } else { cell(row, scope: "global") }
-                    }
+                    // すべてのリポジトリの列は、どちらの段からも書ける（docs/ux.md の 4.4）。
+                    TableColumn(header("global"), value: \.global) { row in editableCell(row, scope: "global") }
                     .width(min: 60, ideal: 110)
                     .customizationID("global")
-                    .disabledCustomizationBehavior(model.level == .allRepositories ? .all : [])
+                    .disabledCustomizationBehavior(.all)
                     if model.level == .repository {
                         TableColumn(header("local"), value: \.local) { row in editableCell(row) }
                         .width(min: 80, ideal: 140)
@@ -663,7 +707,10 @@ private struct AllSettingsTab: View {
             .contextMenu(forSelectionType: String.self) { keys in
                 let groupIDs = self.groupIDs
                 let keys = keys.filter { $0 != Self.newRowID && !groupIDs.contains($0) }
-                Button(model.level == .repository ? L("Edit in This Repository") : L("Edit for All Repositories")) { keys.first.map(beginEditing) }.disabled(keys.count != 1)
+                Button(model.level == .repository ? L("Edit in This Repository") : L("Edit for All Repositories")) { keys.first.map { beginEditing($0) } }.disabled(keys.count != 1)
+                if model.level == .repository {
+                    Button(L("Edit for All Repositories")) { keys.first.map { beginEditing($0, scope: "global") } }.disabled(keys.count != 1)
+                }
                 Button(model.level == .repository ? L("Remove from This Repository") : L("Remove from All Repositories")) { remove(keys) }
                     .disabled(!keys.contains { model.local($0) != nil })
                 Divider()
@@ -717,19 +764,20 @@ private struct AllSettingsTab: View {
         }
     }
 
-    /// 書ける段の列のセル: 欄の見た目で、1 回のクリックで編集する。見出しの行は空。`shown` は欄に出す値
-    /// （段ごとの表ではこの段の値、まとめての表では効いている値）。
-    @ViewBuilder private func editableCell(_ row: ConfigRow, shown: String?? = .none) -> some View {
-        if isEditing(row) {
+    /// 書ける段の列のセル: 欄の見た目で、1 回のクリックで編集する。見出しの行は空。`scope` はこの列の段（省けば
+    /// この画面の段）。`shown` は欄に出す値（段ごとの表ではこの段の値、まとめての表では効いている値）。
+    @ViewBuilder private func editableCell(_ row: ConfigRow, scope: String? = nil, shown: String?? = .none) -> some View {
+        let scope = scope ?? model.ownScope
+        if isEditing(row), editingScope == scope {
             valueField(row).modifier(FieldLook())
         } else if row.isGroup {
             Text("")
         } else {
-            let value: String? = shown ?? row.values[model.ownScope]
+            let value: String? = shown ?? row.values[scope]
             EditableValue(text: value.map(valueText) ?? Text(""),
-                          bold: shown == nil && row.effectiveScope == model.ownScope,
-                          selected: selection == [row.key]) { beginEditing(row.key) }
-                .help(model.level == .repository ? L("Click to edit in this repository") : L("Click to edit for all repositories"))
+                          bold: shown == nil && row.effectiveScope == scope,
+                          selected: selection == [row.key]) { beginEditing(row.key, scope: scope) }
+                .help(scope == "local" ? L("Click to edit in this repository") : L("Click to edit for all repositories"))
         }
     }
 
@@ -800,11 +848,14 @@ private struct AllSettingsTab: View {
         }
     }
 
-    private func beginEditing(_ key: String) {
+    /// `scope` の段の値を編集する（省けばこの画面の段）。
+    private func beginEditing(_ key: String, scope: String? = nil) {
+        let scope = scope ?? model.ownScope
         cancelAdding()
-        if editing != nil, editing != key { commitEditing() }
-        draft = model.local(key) ?? ""
+        if editing != nil, (editing != key || editingScope != scope) { commitEditing() }
+        draft = model.value(key, in: scope) ?? ""
         editing = key
+        editingScope = scope
         selection = [key]
         DispatchQueue.main.async { focus = .value }
     }
@@ -812,10 +863,11 @@ private struct AllSettingsTab: View {
     private func commitEditing() {
         guard let key = editing else { return }
         editing = nil
+        let scope = editingScope
         let value = draft.trimmingCharacters(in: .whitespaces)
-        let old = model.local(key)
+        let old = model.value(key, in: scope)
         if value != (old ?? "") {
-            write([ConfigChange(key: key, old: old, new: value.isEmpty ? nil : value)],
+            write([ConfigChange(key: key, scope: scope, old: old, new: value.isEmpty ? nil : value)],
                   name: value.isEmpty ? L("Remove %@", key) : L("Change %@", key))
         }
     }
@@ -834,13 +886,13 @@ private struct AllSettingsTab: View {
         let key = newKey.trimmingCharacters(in: .whitespaces), value = draft.trimmingCharacters(in: .whitespaces)
         cancelAdding()
         guard !key.isEmpty, !value.isEmpty else { return }
-        write([ConfigChange(key: key, old: model.local(key), new: value)], name: L("Add %@", key))
+        write([ConfigChange(key: key, scope: model.ownScope, old: model.local(key), new: value)], name: L("Add %@", key))
         selection = [key]
     }
 
     /// 選んだ行のこのリポジトリの値を消す。最後に消したものは下の 1 行に出す。
     private func remove(_ keys: Set<String>) {
-        let gone = keys.sorted().compactMap { k in model.local(k).map { ConfigChange(key: k, old: $0, new: nil) } }
+        let gone = keys.sorted().compactMap { k in model.local(k).map { ConfigChange(key: k, scope: model.ownScope, old: $0, new: nil) } }
         guard !gone.isEmpty else { return }
         write(gone, name: gone.count == 1 ? L("Remove %@", gone[0].key) : L("Remove %ld keys", gone.count), showRemoved: true)
     }
@@ -850,17 +902,18 @@ private struct AllSettingsTab: View {
         if let undo = model.undo, undo.canUndo {
             undo.undo()
         } else {
-            let back = model.removedConfig.map { ConfigChange(key: $0.key, old: nil, new: $0.value) }
+            let back = model.removedConfig.map { ConfigChange(key: $0.key, scope: model.ownScope, old: nil, new: $0.value) }
             write(back, name: L("Restore"))
         }
     }
 
-    /// このリポジトリの値の書き換え 1 つ（`new` が nil なら消す）。
+    /// 1 つの段（`scope`）の値の書き換え 1 つ（`new` が nil なら消す）。
     private struct ConfigChange {
         let key: String
+        let scope: String
         let old: String?
         let new: String?
-        var inverse: ConfigChange { ConfigChange(key: key, old: new, new: old) }
+        var inverse: ConfigChange { ConfigChange(key: key, scope: scope, old: new, new: old) }
     }
 
     /// 表からの書き換えはすべてここを通す: 書いて、UndoManager に逆の書き換えを登録する。逆の中でまたその逆を
@@ -871,7 +924,9 @@ private struct AllSettingsTab: View {
     }
 
     private static func apply(_ changes: [ConfigChange], to model: RepositorySettingsModel, name: String, showRemoved: Bool) {
-        for c in changes { model.set(c.key, c.new, recordUndo: false) }
+        for c in changes {
+            if c.scope == model.ownScope { model.set(c.key, c.new, recordUndo: false) } else { model.setGlobal(c.key, c.new) }
+        }
         model.removedConfig = showRemoved ? changes.compactMap { c in c.old.map { (key: c.key, value: $0) } } : []
         model.undo?.registerUndo(withTarget: model) { m in
             apply(changes.map(\.inverse), to: m, name: name, showRemoved: false)
@@ -987,6 +1042,11 @@ struct SettingRow<Control: View>: View {
                     .help(L("Where the value comes from"))
                     .popover(isPresented: $showingDetails, arrowEdge: .trailing) { details }
             }
+            .contextMenu {
+                if model.level == .repository {
+                    Button(model.setForAllTitle) { model.setForAllRepositories(keys) }.disabled(!model.canSetForAll(keys))
+                }
+            }
             if !help.isEmpty {
                 Text(help).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true).padding(.horizontal, 8)
             }
@@ -1013,6 +1073,14 @@ struct SettingRow<Control: View>: View {
                         Text(L("Without the override here: %@", describe(above.value))).foregroundStyle(.secondary)
                     }
                 }
+            }
+            if model.canSetForAll(keys) {
+                Button(model.setForAllTitle) {
+                    showingDetails = false
+                    model.setForAllRepositories(keys)
+                }
+                .help(L("Writes this value with git config --global (git in a terminal follows it too) and stops overriding it here."))
+                .padding(.top, 4)
             }
         }
         .font(.callout)
