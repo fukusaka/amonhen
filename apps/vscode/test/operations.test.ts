@@ -57,6 +57,21 @@ test('fast-forward a branch that is not checked out without switching', async ()
   assert.equal((await undo.peek())?.label, 'Fast-forward feature to main');
 });
 
+test('merge does not fast-forward a branch checked out in another worktree', async () => {
+  git('branch', 'feature');
+  commitFile('m.txt', 'm\n', 'main');
+  const before = git('rev-parse', 'feature');
+  const wt = `${dir}-wt`;
+  git('worktree', 'add', '-q', wt, 'feature');
+  try {
+    await assert.rejects(mergeInto(backend, undo, H('main'), H('feature')), /worktree/);
+    assert.equal(git('rev-parse', 'feature'), before);
+    assert.equal(await undo.peek(), undefined);
+  } finally {
+    git('worktree', 'remove', '--force', wt);
+  }
+});
+
 test('merge into a branch that is not checked out switches to it, and undo switches back', async () => {
   git('switch', '-q', '-c', 'feature');
   commitFile('f.txt', 'f\n', 'feature');

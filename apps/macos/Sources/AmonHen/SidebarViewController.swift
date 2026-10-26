@@ -992,14 +992,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             let target = ref.name
             // 落とした先が今のブランチでなければ、先にチェックアウトする。
             let checkout: [[String: Any]] = target == headBranch ? [] : [["op": "checkout", "branch": target]]
-            // checkout していなくても、fast-forward で済むならブランチだけ進める。
-            add("Merge \(dragged) into \(target)") {
-                actions.perform(["op": "mergeInto", "target": target, "rev": dragged])
-            }
             if let other = otherWorktree(using: target) {
-                // ほかの worktree が checkout しているブランチは、ここでは checkout できない。その worktree で行う。
-                add(L("Open the Worktree of %@ to Rebase It", target)) { [weak self] in self?.onSelectWorktree?(other.path) }
+                // ほかの worktree が checkout しているブランチは、ここでは checkout できず、fast-forward でも動かせない
+                // （その作業ツリーとずれる）。その worktree で行う。
+                add(L("Open the Worktree of %@ to Merge or Rebase", target)) { [weak self] in self?.onSelectWorktree?(other.path) }
             } else {
+                // checkout していなくても、fast-forward で済むならブランチだけ進める。
+                add("Merge \(dragged) into \(target)") {
+                    actions.perform(["op": "mergeInto", "target": target, "rev": dragged])
+                }
                 add("Rebase \(target) onto \(dragged)") {
                     actions.perform(sequence: checkout + [["op": "rebase", "onto": dragged]])
                 }

@@ -37,6 +37,7 @@
 "{branch} has no upstream" = "{branch} には上流がありません";
 "{branch} is checked out here; Pull it instead" = "{branch} はここでチェックアウトしています。Pull で取り込んでください";
 "{branch} is checked out in the worktree {path}; update it there" = "{branch} は worktree {path} でチェックアウトしています。そちらで取り込んでください";
+"{branch} is checked out in the worktree {path}; merge there" = "{branch} は worktree {path} でチェックアウトしています。そちらで merge してください";
 "{upstream} not found (Fetch first)" = "{upstream} が見つかりません（先に Fetch してください）";
 "{branch} is already the same as {upstream}" = "{branch} はもう {upstream} と同じです";
 "{branch} and {upstream} have diverged; check out {branch} to merge or rebase" = "{branch} と {upstream} は分かれています。{branch} をチェックアウトして merge か rebase をしてください";

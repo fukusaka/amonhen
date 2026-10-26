@@ -24,6 +24,11 @@ becomes the GitHub Release notes.
 - Push reads Publish for a branch without an upstream, and asks which remote to create it on (following
   `branch.<name>.pushRemote` and `remote.pushDefault`) and its name there, instead of always pushing to origin.
 
+#### Fixed
+
+- Dropping a branch on one checked out in another worktree no longer fast-forwards it behind that worktree's back;
+  the menu offers to open the worktree instead.
+
 ### [0.2.7] - 2026-10-26
 
 Settings is reorganized around what Amon Hen decides, and Repository Settings is redone as a page in the sidebar, with
@@ -523,6 +528,10 @@ First release.
   `GIT_*`), even when the app started the daemon.
 - Push no longer sends a branch without an upstream to origin by itself: the nav shows Publish Branch, which asks
   for the remote (following `branch.<name>.pushRemote` and `remote.pushDefault`) and the name there.
+
+#### Fixed
+
+- Merge (and Rebase that amounts to a fast-forward) no longer moves a branch checked out in another worktree.
 
 ### [0.2.3] - 2026-10-21
 

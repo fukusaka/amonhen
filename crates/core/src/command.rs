@@ -1100,6 +1100,17 @@ impl Repository {
         Ok(chain)
     }
 
+    /// ローカルブランチ `branch`（短い名前）をチェックアウトしている worktree のパス。ブランチだけを動かすと、その
+    /// worktree の作業ツリーとずれる。worktree を読めなければ None。
+    fn worktree_using(&self, ops: &dyn amonhen_model::Operations, branch: &str) -> Option<String> {
+        let list = ops.worktree_list().ok()?;
+        let paths = self.paths();
+        crate::worktree::parse(&list, paths.workdir.as_deref())
+            .into_iter()
+            .find(|w| w.branch.as_deref() == Some(branch))
+            .map(|w| w.path)
+    }
+
     /// `FastForward` で動かす ref の完全な名前と、今の先頭・動かす先（上流の先頭）。動かせなければその理由のエラー。
     fn fast_forward_target(
         &self,
@@ -1123,19 +1134,13 @@ impl Repository {
             )
             .into());
         }
-        if let Ok(list) = ops.worktree_list() {
-            let paths = self.paths();
-            if let Some(w) = crate::worktree::parse(&list, paths.workdir.as_deref())
-                .into_iter()
-                .find(|w| w.branch.as_deref() == Some(branch))
-            {
-                return Err(tr!(
-                    "{branch} is checked out in the worktree {path}; update it there",
-                    branch = branch,
-                    path = w.path
-                )
-                .into());
-            }
+        if let Some(path) = self.worktree_using(ops, branch) {
+            return Err(tr!(
+                "{branch} is checked out in the worktree {path}; update it there",
+                branch = branch,
+                path = path
+            )
+            .into());
         }
         // 上流はふつうリモートブランチ。`branch.<name>.remote` が `.` なら手元のブランチ。
         let target = entries
@@ -1458,6 +1463,18 @@ impl Repository {
             Command::MergeInto { target, rev } => {
                 let current = ops.head_state()?.branch;
                 let full = heads(&target);
+                // ほかの worktree でチェックアウト中なら、fast-forward でも動かさない（その作業ツリーとずれる。merge なら
+                // git が checkout を断る）。
+                if current.as_deref() != Some(full.as_str())
+                    && let Some(path) = self.worktree_using(ops, &target)
+                {
+                    return Err(tr!(
+                        "{branch} is checked out in the worktree {path}; merge there",
+                        branch = target,
+                        path = path
+                    )
+                    .into());
+                }
                 if current.as_deref() != Some(full.as_str()) && ops.is_ancestor(&full, &rev)? {
                     let from = ops.resolve(&full)?;
                     let to = ops.resolve(&rev)?;
@@ -4366,6 +4383,24 @@ mod tests {
         );
         run(&repo, r#"{"op":"undo"}"#);
         assert_ne!(git(dir, &["rev-parse", "old"]), head);
+    }
+
+    #[test]
+    fn does_not_fast_forward_a_branch_checked_out_in_another_worktree() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["branch", "old"]);
+        commit_file(dir, "b.txt", "b");
+        let old = git(dir, &["rev-parse", "old"]);
+        let wt = tempfile::tempdir().unwrap();
+        let path = wt.path().join("wt");
+        git(
+            dir,
+            &["worktree", "add", "-q", path.to_str().unwrap(), "old"],
+        );
+        let r = run(&repo, r#"{"op":"mergeInto","target":"old","rev":"main"}"#);
+        assert_eq!(r["ok"], false, "{r}");
+        assert_eq!(git(dir, &["rev-parse", "old"]), old);
     }
 
     #[test]

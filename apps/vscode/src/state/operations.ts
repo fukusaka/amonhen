@@ -34,7 +34,8 @@ export async function mergeInto(
     'keep',
     async () => {
       if (plan.kind === 'fast-forward' && !plan.checkedOut) {
-        await backend.updateRef(target, plan.sourceOid, plan.targetOid);
+        // ほかの worktree でチェックアウト中なら断る（ref だけ動かすと、その作業ツリーとずれる）
+        await backend.fastForward(target, plan.sourceOid, plan.targetOid);
         return 'done';
       }
       if (!plan.checkedOut) {
