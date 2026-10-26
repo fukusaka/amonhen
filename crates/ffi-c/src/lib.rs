@@ -167,6 +167,19 @@ fn str_arg<'a>(s: *const c_char) -> Result<&'a str, std::str::Utf8Error> {
     unsafe { CStr::from_ptr(s) }.to_str()
 }
 
+/// SSH 先ごとの選択（`HostOptions` の JSON）。NULL か空なら何も選んでいない。
+///
+/// # Safety
+/// `text` は NULL か NUL 終端の UTF-8 であること。
+unsafe fn host_options_arg(
+    text: *const c_char,
+) -> amonhen_model::Result<amonhen_remote::ssh::HostOptions> {
+    if text.is_null() {
+        return Ok(Default::default());
+    }
+    Ok(amonhen_remote::ssh::HostOptions::from_json(str_arg(text)?))
+}
+
 /// 手元のリポジトリの status で、git の fsmonitor（`git fsmonitor--daemon`）を使うか（macOS と Windows）。
 /// リポジトリごとに daemon が常駐し、`.git` にソケットを作る。
 #[unsafe(no_mangle)]
@@ -254,8 +267,11 @@ pub unsafe extern "C" fn amonhen_set_global_config(
 /// `excludes` は入らないフォルダの名前を改行でつないだもの。見つけたリポジトリの場所（`ssh://host/path`）を改行で
 /// つないで返す（`amonhen_string_free` で解放）。失敗したら NULL（`amonhen_last_error`）。
 ///
+/// `host_options` は、SSH 先ごとの選択（エンジンと git。`HostOptions` の JSON）。NULL か空なら何も選んでいない。
+///
 /// # Safety
-/// `location`・`daemon`・`daemons_dir`・`excludes` は NUL 終端の UTF-8 であること。
+/// `location`・`daemon`・`daemons_dir`・`excludes` は NUL 終端の UTF-8、`host_options` は NULL か NUL 終端の UTF-8
+/// であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_find_remote_repositories(
     location: *const c_char,
@@ -263,10 +279,12 @@ pub unsafe extern "C" fn amonhen_find_remote_repositories(
     excludes: *const c_char,
     daemon: *const c_char,
     daemons_dir: *const c_char,
+    host_options: *const c_char,
 ) -> *mut c_char {
     let result = (|| -> amonhen_model::Result<String> {
         use amonhen_remote::ssh;
         let location = str_arg(location)?;
+        let options = unsafe { host_options_arg(host_options) }?;
         let target = ssh::Target::parse(location)?;
         let daemons = ssh::Daemons::new(
             str_arg(daemons_dir)?.into(),
@@ -278,7 +296,8 @@ pub unsafe extern "C" fn amonhen_find_remote_repositories(
             .map(str::to_owned)
             .collect();
         let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
-        let found = ssh::find_repositories(&program, &target, &daemons, depth, &excludes)?;
+        let found =
+            ssh::find_repositories(&program, &target, &daemons, &options, depth, &excludes)?;
         // 場所の形に戻す（`ssh://` と接続先はそのまま、パスだけ見つけたものに）。
         let prefix = &location[..location.len() - target.path.len()];
         Ok(found
@@ -301,18 +320,24 @@ pub unsafe extern "C" fn amonhen_find_remote_repositories(
 /// `daemons_dir` の `amonhend-<os>-<arch>`（SSH 先が手元と同じ OS と CPU なら `daemon`）。ssh のコマンドは
 /// 環境変数 `AMONHEN_SSH` で差し替えられる。`cache_dir` を渡すと History を永続化する。
 ///
+/// `host_options` は、SSH 先ごとの選択（エンジンと git。`HostOptions` の JSON）。NULL か空なら何も選んでいない。
+/// `daemon:ssh://…` なら共有の daemon に送り、daemon がエンジンを起動するときに使う。
+///
 /// # Safety
-/// `location`・`daemon`・`daemons_dir` は NUL 終端の UTF-8、`cache_dir` は NULL か NUL 終端の UTF-8 であること。
+/// `location`・`daemon`・`daemons_dir` は NUL 終端の UTF-8、`cache_dir`・`host_options` は NULL か NUL 終端の UTF-8
+/// であること。
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn amonhen_repo_open_location(
     location: *const c_char,
     daemon: *const c_char,
     daemons_dir: *const c_char,
     cache_dir: *const c_char,
+    host_options: *const c_char,
 ) -> *mut AmonhenRepo {
     let result = (|| -> amonhen_model::Result<Repository> {
         let location = str_arg(location)?;
         let daemon = str_arg(daemon)?;
+        let options = unsafe { host_options_arg(host_options) }?;
         let conn = if location.starts_with("ssh://") {
             use amonhen_remote::ssh;
             let daemons = ssh::Daemons::new(
@@ -320,11 +345,11 @@ pub unsafe extern "C" fn amonhen_repo_open_location(
                 Some((ssh::local_platform(), daemon.into())),
             );
             let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
-            ssh::connect(&program, &ssh::Target::parse(location)?, &daemons)?
+            ssh::connect(&program, &ssh::Target::parse(location)?, &daemons, &options)?
         } else {
             // 手元の共有の daemon（いなければ `daemon` を起動する）につなぐ。
             let path = amonhen_remote::location::local_path(location)?;
-            amonhen_remote::local::connect(path, daemon)?
+            amonhen_remote::local::connect_with(path, daemon, &options)?
         };
         let backend = amonhen_remote::RemoteBackend::connect(conn)?;
         // 永続キャッシュは場所の文字列ごとに手元に持つ（つなぎ直したら新しいコミットだけを受け取る）。手元の共有の
