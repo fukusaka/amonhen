@@ -245,26 +245,15 @@ enum Settings {
         set { UserDefaults.standard.set(newValue, forKey: "autoBookmark") }
     }
 
-    /// 使う git（実行ファイルのパス）。nil・空なら PATH の git。コアには `AMONHEN_GIT` で伝える。
-    static var gitExecutable: String? {
-        get { UserDefaults.standard.string(forKey: "gitExecutable") }
-        set { UserDefaults.standard.set(newValue, forKey: "gitExecutable") }
-    }
-
-    /// 選んだ git を `AMONHEN_GIT` に置く（起動時と、変えたとき）。環境で先に決めてあれば触らない。
-    static func applyGitExecutable() {
-        if ProcessInfo.processInfo.environment["AMONHEN_GIT"] != nil, !appliedGit { return }
-        appliedGit = true
-        if let git = gitExecutable, !git.isEmpty, FileManager.default.isExecutableFile(atPath: git) {
-            setenv("AMONHEN_GIT", git, 1)
-        } else {
-            unsetenv("AMONHEN_GIT")
+    /// 前の版がアプリの defaults に持っていた git（`gitExecutable`）を、この Mac の Amon Hen の設定
+    /// （`settings.json`。CLI・daemon・VSCode 拡張も従う）に移す（起動時）。設定にもう git があれば、そちらを残す。
+    static func moveGitExecutable() {
+        guard let old = UserDefaults.standard.string(forKey: "gitExecutable") else { return }
+        if !old.isEmpty, MachineGit.thisMac?.chosen == nil {
+            guard (try? MachineGit.setThisMac(old)) != nil else { return }
         }
-        // 共有の daemon への今のつながりにも送る（daemon が動かす git も、つなぎ直さずに替わる）。
-        DispatchQueue.global(qos: .utility).async { SharedDaemon.updateEnvironment() }
+        UserDefaults.standard.removeObject(forKey: "gitExecutable")
     }
-
-    nonisolated(unsafe) private static var appliedGit = false
 
     /// 外部のエディタ（.app のパス）。nil・空なら自動（`ExternalEditor.automatic`）。
     static var externalEditor: String? {

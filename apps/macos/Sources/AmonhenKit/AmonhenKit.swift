@@ -413,6 +413,36 @@ public enum Engines {
     }
 }
 
+/// git を動かす機械で使う git と、それをどこで決めたか（コアの `machineGit`。`amonhen_model::settings`）。
+/// 選んだ git は、その機械の Amon Hen の設定（`~/.config/amonhen/settings.json`）にあり、CLI・共有の daemon・
+/// VSCode 拡張も従う。
+public struct MachineGit: Decodable, Sendable, Equatable {
+    /// 設定で選んだ git。nil なら自動。
+    public var chosen: String?
+    /// 設定のファイル。
+    public var file: String?
+    /// 今使う git（パス、または PATH で探す `git`）。
+    public var program: String
+    /// どこで決めたか: `environment`（`AMONHEN_GIT`）・`settings`・`fallback`・`path`。
+    public var source: String
+    /// 使えないときの理由（git を動かす操作はこれでエラーになる）。
+    public var problem: String?
+
+    /// この Mac のもの（設定のファイルを読むだけで、git は起動しない）。
+    public static var thisMac: MachineGit? {
+        guard let out = amonhen_machine_git() else { return nil }
+        defer { amonhen_string_free(out) }
+        return try? JSONDecoder().decode(MachineGit.self, from: Data(String(cString: out).utf8))
+    }
+
+    /// この Mac の設定に、使う git を書く（nil・空なら消して自動）。
+    public static func setThisMac(_ git: String?) throws {
+        guard let out = amonhen_set_machine_git(git) else { return }
+        defer { amonhen_string_free(out) }
+        throw AmonhenError(description: String(cString: out))
+    }
+}
+
 /// git と ssh に渡す環境変数の決まり（コアと共通。`amonhen_model::process::ClientEnv`）。
 public enum PassedEnvironment {
     /// git と ssh がいつも使うので、いつも渡すか（PATH・SSH の agent・`GIT_*` など）。
