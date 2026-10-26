@@ -7,7 +7,12 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.7] - 2026-10-26
+
+Settings is reorganized around what Amon Hen decides, and Repository Settings is redone as a page in the sidebar, with
+Settings > Git as the same screen for all repositories; tags can be pushed to and deleted from remotes. Merges, pulls
+and rebases show which files would conflict beforehand, File History opens in a tab and is much faster in large
+repositories, and SSH hosts no longer fail with "Permission denied (publickey)" after the Mac restarts.
 
 #### Added
 
@@ -98,7 +103,6 @@ becomes the GitHub Release notes.
   under Working Copy.
 - Fetch removes remote-tracking branches deleted on the remote only when `fetch.prune` is on, as `git fetch` does;
   it used to always remove them.
-
 - File History and Blame open in a tab next to the repository's tab instead of a separate window, with the same
   toolbar, so switching tabs keeps the toolbar and the size (drag the tab out for a window).
 - File History opens at once with the newest 100 commits and adds the rest as they are read.
