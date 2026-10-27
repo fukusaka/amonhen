@@ -21,7 +21,8 @@ becomes the GitHub Release notes.
   scan) and the pages of Settings > Git for every repository on that host, including the git the engine runs there.
   Settings… on a host in Places opens it, and on This Mac opens Settings > Git.
 - Settings > SSH Hosts has an Environment Variables page for each host: the engine's environment there, and a switch to
-  start the engine through the host's login shell, for the PATH and `GIT_*` set in `~/.profile` and the like.
+  start the engine with the host's login shell's environment, for the PATH and `GIT_*` set in `~/.profile` and the
+  like (the amonhen on the PATH is looked for in that PATH too).
 - The engine runs on an SSH host without a repository (`amonhen --stdio` with no path) to read and write that
   machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
   the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /
@@ -44,6 +45,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- SSH hosts whose login shell is tcsh or csh connect: the commands sent there now run in sh.
 - Launched from a terminal or another app, the app read the login shell's PATH as a nested shell, so a shell set up
   to build PATH only at the top level gave the system's git instead of the one a terminal uses. Variables git uses that
   the app inherited from what launched it (`GIT_EDITOR`, for one) no longer reach git unless the shell sets them.

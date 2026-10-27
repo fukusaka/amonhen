@@ -73,6 +73,12 @@ fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
 
+/// SSH 先で実行する sh の文を、利用者のログインシェルが何でも sh で動くように。sshd は送った文を利用者の
+/// ログインシェル（tcsh・csh・fish もある）に渡すので、sh を起動して渡し直す。
+fn in_sh(script: &str) -> String {
+    format!("exec /bin/sh -c {}", shell_quote(script))
+}
+
 /// SSH 先ごとの選択（アプリの Settings > SSH Hosts の「接続」と「プログラム」）。FE がつなぐときに送る
 /// （`crate::local::opening`。共有の daemon は、そのつながりでエンジンを起動するときに使う）。環境変数
 /// （`AMONHEN_REMOTE_ENGINE`・`AMONHEN_PUSH`）があれば、そちらが優先。
@@ -303,7 +309,7 @@ fn run_on(
 ) -> std::result::Result<String, RunError> {
     let mut child = amonhen_model::process::command(ssh)
         .args(base_args(target, share))
-        .arg(script)
+        .arg(in_sh(script))
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -397,11 +403,11 @@ pub fn connect(
         shell_quote(&engine.path),
         target.shell_path()
     );
-    args.push(format!(
+    args.push(in_sh(&format!(
         "{}; {}",
         cleanup_script(&engine),
         through_login_shell(options, start.trim_end())
-    ));
+    )));
     let conn = Connection::spawn(ssh, &args)?;
     if let Some(slot) = slot {
         conn.hold(Box::new(slot));
@@ -464,16 +470,32 @@ fn git_env(options: &HostOptions) -> String {
     }
 }
 
-/// エンジンを起動するシェルの文（`command`）を、選んでいればログインシェル経由に（`HostOptions::login_shell`）。
-/// ログインシェルが読む `~/.profile` などが何かを表示しても通信に混ざらないよう、そのあいだの標準出力は標準
-/// エラーに向け、エンジンを起動する直前に戻す。
+/// シェルの文（`command`。エンジンの起動と、PATH の amonhen を探す文）を、選んでいれば SSH 先のログインシェルの
+/// 環境で（`HostOptions::login_shell`）。ログインシェルの中で sh を起動して環境を書き出し（`export -p`）、それを
+/// 取り込んでから `command` を実行する。ログインシェルの起動ファイルが何かを表示しても、印より前は捨てるので通信に
+/// 混ざらない。起動ファイルが標準入力を読んでも、通信を食わないよう `/dev/null` を渡す。csh・tcsh は `-l` と `-c`
+/// を一緒に使えないので、起動ファイルを読まずに始め（`-f`）、ログインシェルが読むものを同じ順に読む（そこでの表示は
+/// 標準エラーへ）。
 fn through_login_shell(options: &HostOptions, command: &str) -> String {
     if options.login_shell != Some(true) {
         return command.to_owned();
     }
+    const MARK: &str = "--amonhen-login-environment--";
+    let dump = format!(
+        "exec /bin/sh -c {}",
+        shell_quote(&format!("echo {MARK}; export -p"))
+    );
+    let csh = format!(
+        "if ( -r /etc/csh.cshrc ) source /etc/csh.cshrc > /dev/stderr; \
+         if ( -r /etc/csh.login ) source /etc/csh.login > /dev/stderr; \
+         if ( -r ~/$AMONHEN_RC ) source ~/$AMONHEN_RC > /dev/stderr; \
+         if ( -r ~/.login ) source ~/.login > /dev/stderr; \
+         unsetenv AMONHEN_RC; {dump}"
+    );
     format!(
-        r#"exec 3>&1 1>&2; exec "${{SHELL:-/bin/sh}}" -lc {}"#,
-        shell_quote(&format!("exec 1>&3 3>&-; {command}"))
+        r#"case "${{SHELL##*/}}" in csh|tcsh) r=.cshrc; [ "${{SHELL##*/}}" = tcsh ] && [ -r ~/.tcshrc ] && r=.tcshrc; e=$(AMONHEN_RC=$r "$SHELL" -f -c {csh} </dev/null);; *) e=$("${{SHELL:-/bin/sh}}" -l -c {dump} </dev/null);; esac; case "$e" in *{MARK}*) eval "${{e#*{MARK}}}";; esac; {command}"#,
+        csh = shell_quote(&csh),
+        dump = shell_quote(&dump),
     )
 }
 
@@ -499,11 +521,15 @@ fn prepare(
     let push = daemons.push.or(options.push).unwrap_or(true);
     // OS と CPU、置き場所、PATH の amonhen の版、置いてあるエンジン（ハッシュの名前と、記録したビルドの指紋）を
     // 1 回で調べる。
+    // ログインシェル経由なら、PATH の amonhen もログインシェルの PATH で探す。
     let probe = run(
         ssh,
         target,
-        &format!(
-            r#"uname -sm; D="{ENGINE_DIR}"; echo "$D"; a=$(command -v amonhen 2>/dev/null); if [ -n "$a" ]; then echo "$a"; "$a" --version 2>/dev/null | head -1; else echo; echo; fi; for e in "$D"/*/; do [ -x "${{e}}amonhen" ] || continue; e=${{e%/}}; echo "${{e##*/}} $(cat "$e/{BUILD_FILE}" 2>/dev/null)"; done; true"#
+        &through_login_shell(
+            options,
+            &format!(
+                r#"uname -sm; D="{ENGINE_DIR}"; echo "$D"; a=$(command -v amonhen 2>/dev/null); if [ -n "$a" ]; then echo "$a"; "$a" --version 2>/dev/null | head -1; else echo; echo; fi; for e in "$D"/*/; do [ -x "${{e}}amonhen" ] || continue; e=${{e%/}}; echo "${{e##*/}} $(cat "$e/{BUILD_FILE}" 2>/dev/null)"; done; true"#
+            ),
         ),
         None,
     )?;
@@ -640,10 +666,12 @@ mod host_options_tests {
             login_shell: Some(true),
         };
         assert!(options.to_json().contains("\"loginShell\":true"));
-        assert_eq!(
-            super::through_login_shell(&options, "exec x"),
-            r#"exec 3>&1 1>&2; exec "${SHELL:-/bin/sh}" -lc 'exec 1>&3 3>&-; exec x'"#
+        let login = super::through_login_shell(&options, "exec x");
+        assert!(
+            login.starts_with(r#"case "${SHELL##*/}" in csh|tcsh)"#),
+            "{login}"
         );
+        assert!(login.ends_with("; exec x"), "{login}");
         assert_eq!(
             super::through_login_shell(&HostOptions::default(), "exec x"),
             "exec x"

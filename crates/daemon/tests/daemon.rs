@@ -192,8 +192,10 @@ done
 shift
 # 手元の daemon が ssh に渡した環境（つないだ FE のもの）を残す。
 echo "${{GIT_AMONHEN_TEST:-}}" >> '{1}/ssh-env.log'
-# SSH 先の環境は手元から引き継がない（手元に入れた amonhen を SSH 先のものと見なさない）。
-exec env -i HOME='{0}' PATH='{0}/bin:/usr/bin:/bin' sh -c "$*"
+# SSH 先の環境は手元から引き継がない（手元に入れた amonhen を SSH 先のものと見なさない）。sshd と同じく、
+# 利用者のログインシェル（`login-shell` に書いたもの。なければ sh）で実行する。
+shell=$(cat '{1}/login-shell' 2>/dev/null || echo /bin/sh)
+exec env -i HOME='{0}' SHELL="$shell" PATH='{0}/bin:/usr/bin:/bin' "$shell" -c "$*"
 "#,
             home.display(),
             dir.display()
@@ -832,18 +834,15 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
         .unwrap();
     assert!(version.info.unwrap()["version"].is_null());
 
-    // ログインシェル経由なら、SSH 先のログインシェルが読むファイル（sh・bash は ~/.profile、zsh は ~/.zprofile。
-    // SHELL がなければ、シェルが利用者のログインシェルを入れる）の変数がエンジンに届く。そこで何かを表示しても、
-    // 通信は壊れない。
-    for profile in [".profile", ".zprofile"] {
-        std::fs::write(
-            remote_home.join(profile),
-            "echo 'hello from the profile'\nexport PROFILE_ONLY_VAR=from-profile\n",
-        )
-        .unwrap();
-    }
-    let has_profile_var = |options: &HostOptions| {
-        let repo = Repository::new(connect("ssh://dev", options).unwrap());
+    // ログインシェル経由なら、SSH 先のログインシェルが読むファイル（sh は ~/.profile）の変数がエンジンに届く。
+    // そこで何かを表示しても、通信は壊れない。
+    std::fs::write(
+        remote_home.join(".profile"),
+        "echo 'hello from the profile'\nexport PROFILE_ONLY_VAR=from-profile\n",
+    )
+    .unwrap();
+    let has_profile_var_on = |url: &str, options: &HostOptions| {
+        let repo = Repository::new(connect(url, options).unwrap());
         let env = repo
             .run(amonhen_core::command::Command::ProcessEnvironment)
             .unwrap();
@@ -853,6 +852,7 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
             .iter()
             .any(|v| v["name"] == "PROFILE_ONLY_VAR" && v["value"] == "from-profile")
     };
+    let has_profile_var = |options: &HostOptions| has_profile_var_on("ssh://dev", options);
     assert!(has_profile_var(&HostOptions {
         login_shell: Some(true),
         ..Default::default()
@@ -861,6 +861,52 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
         push: Some(true),
         ..Default::default()
     }));
+
+    // 利用者のログインシェルが sh でなくても（sshd は送った文をそれに渡す）つながる。ログインシェル経由なら、
+    // そのシェルがログインのときに読むファイルの変数が届き、そこでの表示は通信に混ざらない。
+    std::fs::write(
+        remote_home.join(".zprofile"),
+        "echo 'hello from zsh'\nexport PROFILE_ONLY_VAR=from-profile\n",
+    )
+    .unwrap();
+    // ~/.tcshrc・~/.cshrc は ssh で実行するたびに読む（そこで表示すると scp も壊れる）ので、表示しない。
+    for rc in [".tcshrc", ".cshrc"] {
+        std::fs::write(remote_home.join(rc), "set from_the_rc = 1\n").unwrap();
+    }
+    std::fs::write(
+        remote_home.join(".login"),
+        "echo 'hello from the login'\nsetenv PROFILE_ONLY_VAR from-profile\n",
+    )
+    .unwrap();
+    for shell in ["/bin/zsh", "/bin/bash", "/bin/tcsh", "/bin/csh"] {
+        if !Path::new(shell).exists() {
+            continue;
+        }
+        std::fs::write(tmp.path().join("login-shell"), shell).unwrap();
+        // 共有の daemon は SSH 先と選択ごとのつながりを使い回すので、シェルごとに別の SSH 先として開く。
+        let url = format!("ssh://{}", shell.rsplit('/').next().unwrap());
+        assert!(
+            has_profile_var_on(
+                &url,
+                &HostOptions {
+                    login_shell: Some(true),
+                    ..Default::default()
+                }
+            ),
+            "{shell}"
+        );
+        assert!(
+            !has_profile_var_on(
+                &url,
+                &HostOptions {
+                    push: Some(true),
+                    ..Default::default()
+                }
+            ),
+            "{shell}"
+        );
+    }
+    std::fs::remove_file(tmp.path().join("login-shell")).unwrap();
 
     // 「PATH の amonhen」を選ぶと、偽の SSH 先の PATH にはないので、送らずに断る。
     let err = connect(
@@ -875,6 +921,39 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
     .unwrap_or_default();
     assert!(err.contains("PATH"), "{err}");
     assert_eq!(engines(&remote_home).len(), 1);
+
+    // ログインシェル経由なら、PATH の amonhen もログインシェルの PATH（~/.profile で足したもの）で探す。
+    let login_bin = remote_home.join("login-bin");
+    std::fs::create_dir(&login_bin).unwrap();
+    std::fs::copy(env!("CARGO_BIN_EXE_amonhend"), login_bin.join("amonhen")).unwrap();
+    std::fs::write(
+        remote_home.join(".profile"),
+        "echo 'hello from the profile'\nexport PATH=\"$HOME/login-bin:$PATH\"\n",
+    )
+    .unwrap();
+    let installed = HostOptions {
+        engine: Some("installed".to_owned()),
+        login_shell: Some(true),
+        ..Default::default()
+    };
+    let engine = Repository::new(connect("ssh://other", &installed).unwrap())
+        .connection_state()
+        .and_then(|s| s.engine)
+        .unwrap_or_default();
+    assert!(
+        engine.contains(login_bin.join("amonhen").to_str().unwrap()),
+        "{engine}"
+    );
+    assert!(
+        connect(
+            "ssh://other",
+            &HostOptions {
+                login_shell: None,
+                ..installed
+            }
+        )
+        .is_err()
+    );
 }
 
 /// 共有の daemon が SSH 先を開く: 2 つの相手が同じ SSH 先を開いても、SSH 先の daemon は 1 つだけ送り込み、
