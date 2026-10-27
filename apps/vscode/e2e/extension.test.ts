@@ -192,6 +192,37 @@ async function workingCopyFlow(label: string): Promise<void> {
   assert.equal(readFileSync(path, 'latin1'), changed, '作業中のファイルは CRLF のまま');
 }
 
+/**
+ * `.mailmap` を置くと、History の行と詳細が mailmap の名前になり（詳細には記録されたものも付く）、`log.mailmap` を
+ * false にすると記録のままに戻る。どちらも開いたまま、知らせ（ここでは amonhen.refresh）で読み直す
+ */
+async function mailmapFlow(): Promise<void> {
+  const panel = await showView('amonhen.showHistory');
+  const mailmap = join(root, '.mailmap');
+  const show = async (author: string) => {
+    const mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const rows = await waitPosted('rows', mark, (m) => m.rows.some((r) => r.subject === 'first' && r.author === author));
+    const first = rows.rows.find((r) => r.subject === 'first')!;
+    await panel.history.handle({ type: 'select', oid: first.oid });
+    return (await waitPosted('details', mark, (m) => m.details.oid === first.oid)).details;
+  };
+  writeFileSync(mailmap, 'Ann Example <ann@example.com> <a@example.com>\n');
+  try {
+    const mapped = await show('Ann Example');
+    assert.deepEqual([mapped.author.name, mapped.author.email], ['Ann Example', 'ann@example.com']);
+    assert.deepEqual(mapped.recordedAuthor, { name: 'a', email: 'a@example.com' });
+    git('config', 'log.mailmap', 'false');
+    const recorded = await show('a');
+    assert.deepEqual([recorded.author.name, recorded.author.email], ['a', 'a@example.com']);
+    assert.equal(recorded.recordedAuthor, undefined);
+  } finally {
+    git('config', '--unset', 'log.mailmap');
+    rmSync(mailmap, { force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 suite('Amon Hen in VSCode', () => {
   suiteSetup(async () => {
     recordSpawns();
@@ -238,6 +269,10 @@ suite('Amon Hen in VSCode', () => {
     );
   });
 
+  test('shows names from the mailmap through the daemon and reloads them when it changes', async () => {
+    await mailmapFlow();
+  });
+
   test('stages, undoes, discards lines and commits on a CRLF file through the daemon', async () => {
     const mark = spawned.length;
     await workingCopyFlow('daemon');
@@ -278,6 +313,10 @@ suite('Amon Hen in VSCode', () => {
       spawned.slice(mark).some((s) => s.args.includes('update-index')),
       '行の stage は拡張が git の update-index でする',
     );
+  });
+
+  test('shows names from the mailmap on the git execution layer', async () => {
+    await mailmapFlow();
   });
 
   test('runs the git chosen in Amon Hen’s settings, and stops when it isn’t there', async () => {
