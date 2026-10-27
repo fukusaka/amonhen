@@ -6,6 +6,7 @@ use amonhen_backend_gix::GixBackend;
 use amonhen_model::GitBackend;
 
 fn git(dir: &Path, args: &[&str]) -> String {
+    amonhen_model::testing::isolate_from_user_settings();
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)

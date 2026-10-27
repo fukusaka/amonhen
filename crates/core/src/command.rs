@@ -2689,6 +2689,7 @@ mod tests {
     use std::process::Command as Process;
 
     fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        amonhen_model::testing::isolate_from_user_settings();
         let out = Process::new("git")
             .args(args)
             .current_dir(dir)
