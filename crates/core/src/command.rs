@@ -299,6 +299,13 @@ pub enum Command {
     Programs {
         name: String,
     },
+    /// git を動かしている機械のフォルダ `path` の中身（`info`: `path`（`~` を展開した絶対パス）・`home`・
+    /// `entries`（`name`・`kind`（`folder`・`file`・`other`。シンボリックリンクならその先の種類）・`link`・
+    /// `executable`・`repository`（`.git` のあるフォルダか）））。`~` で始まるパス・相対パスはその機械の
+    /// ホームから。SSH 先のリポジトリなら SSH 先のもの。
+    ListDirectory {
+        path: String,
+    },
     /// 設定を変える。`value` がなければ消す。`scope` が `"global"` なら、git を動かしているユーザー全体の
     /// 設定（SSH 先のリポジトリなら SSH 先のユーザーのもの）、なければこのリポジトリ（local）。
     ConfigSet {
@@ -2120,6 +2127,11 @@ impl Repository {
                 info: Some(serde_json::json!({ "programs": ops.programs(&name)? })),
                 ..Default::default()
             }),
+            Command::ListDirectory { path } => Ok(Response {
+                ok: true,
+                info: Some(serde_json::to_value(ops.list_directory(&path)?)?),
+                ..Default::default()
+            }),
             Command::ConfigSet { key, value, scope } => {
                 match scope.as_deref() {
                     None | Some("local") => ops.config_set(&key, value.as_deref())?,
@@ -3846,6 +3858,58 @@ mod tests {
             let r = run(&repo, r#"{"op":"machineGit"}"#);
             assert_eq!(r["info"]["source"], "path", "{r}");
         });
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn lists_a_folder_of_the_machine_running_git() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
+        let (_tmp, repo) = setup();
+        let dir = tempfile::tempdir().unwrap();
+        let d = dir.path();
+        std::fs::create_dir(d.join("bin")).unwrap();
+        std::fs::create_dir_all(d.join("repo").join(".git")).unwrap();
+        std::fs::write(d.join("tool"), "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(d.join("tool"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::write(d.join(".hidden"), "").unwrap();
+        symlink(d.join("bin"), d.join("to-bin")).unwrap();
+        symlink(d.join("gone"), d.join("broken")).unwrap();
+
+        let path = d.join("bin").join("..");
+        let r = run(
+            &repo,
+            &serde_json::json!({ "op": "listDirectory", "path": path }).to_string(),
+        );
+        let info = &r["info"];
+        assert_eq!(info["path"], d.display().to_string(), "{r}");
+        let entries = info["entries"].as_array().unwrap();
+        let names: Vec<&str> = entries
+            .iter()
+            .map(|e| e["name"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            names,
+            [".hidden", "bin", "broken", "repo", "to-bin", "tool"]
+        );
+        let get = |name: &str| entries.iter().find(|e| e["name"] == name).unwrap();
+        assert_eq!(get("bin")["kind"], "folder");
+        assert_eq!(get("bin")["repository"], false);
+        assert_eq!(get("repo")["repository"], true);
+        assert_eq!(get("tool")["executable"], true);
+        assert_eq!(get(".hidden")["executable"], false);
+        assert_eq!(get("to-bin")["kind"], "folder");
+        assert_eq!(get("to-bin")["link"], true);
+        assert_eq!(get("broken")["kind"], "other");
+
+        // `~` はホーム。
+        let r = run(&repo, r#"{"op":"listDirectory","path":"~"}"#);
+        assert_eq!(r["info"]["path"], r["info"]["home"], "{r}");
+
+        let r = run(
+            &repo,
+            &serde_json::json!({ "op": "listDirectory", "path": d.join("tool") }).to_string(),
+        );
+        assert_eq!(r["ok"], false, "{r}");
     }
 
     #[test]

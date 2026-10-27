@@ -306,7 +306,7 @@ private struct ConnectionPage: View {
                 }
             }
             Section(L("Engine")) {
-                EngineChoice(host: session.host)
+                EngineChoice(host: session.host, repository: session.model?.repository)
                 LabeledContent(L("In use")) {
                     VStack(alignment: .trailing, spacing: 2) {
                         Text(session.engine ?? (session.model != nil ? L("Through the shared daemon") : L("Not connected")))
@@ -387,14 +387,13 @@ private struct ConnectionPage: View {
     }
 
     private func add() {
-        guard let chosen = SSHFolderChooser.run(
-            title: L("Add a Folder to Scan on %@", session.host),
-            message: L("The engine on the host searches up to 3 levels below the folder. Double-click a folder to go into it."),
-            button: L("Add"), fixedHost: session.host, hosts: [session.host], initialHost: session.host, initialPath: "~/prj"),
-            let location = RepositoryLocation.ssh(host: chosen.host, path: chosen.path)
-        else { return }
-        Bookmarks.shared.addScanRoot(location)
-        refresh()
+        RemoteFilePicker.present(title: L("Add a Folder to Scan on %@", session.host),
+                                 message: L("The engine on the host searches up to 3 levels below the folder."), kind: .folder,
+                                 host: session.host, repository: session.model?.repository, initial: "~/prj") { chosen in
+            guard let chosen, let location = RepositoryLocation.ssh(host: chosen.host, path: chosen.shown) else { return }
+            Bookmarks.shared.addScanRoot(location)
+            refresh()
+        }
     }
 }
 
@@ -402,6 +401,8 @@ private struct ConnectionPage: View {
 /// 送り込むもの・その他…（SSH 先のパス）と、合うものがなければ送り込むか。変えると、次につなぐときから効く。
 private struct EngineChoice: View {
     let host: String
+    /// SSH 先のエンジンにつないだリポジトリ（「その他…」で SSH 先の中を見る。なければつなぎに行く）。
+    let repository: Repository?
     @State private var options = HostOptions()
     private static let other = "\u{1}other"
 
@@ -440,26 +441,20 @@ private struct EngineChoice: View {
     }
 
     private func choose(_ value: String) {
-        var new = options
-        if value == Self.other {
-            let alert = NSAlert()
-            alert.messageText = L("Engine on %@", host)
-            alert.informativeText = L("The path of amonhen on the host. It must be this build.")
-            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-            field.placeholderString = "/usr/local/bin/amonhen"
-            field.stringValue = options.engine?.hasPrefix("/") == true ? options.engine! : ""
-            alert.accessoryView = field
-            alert.window.initialFirstResponder = field
-            alert.addButton(withTitle: L("Choose"))
-            alert.addButton(withTitle: L("Cancel"))
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-            let chosen = field.stringValue.trimmingCharacters(in: .whitespaces)
-            guard chosen.hasPrefix("/") else { return }
-            new.engine = chosen
-        } else {
+        guard value == Self.other else {
+            var new = options
             new.engine = value.isEmpty ? nil : value
+            save(new)
+            return
         }
-        save(new)
+        let current = options.engine?.hasPrefix("/") == true ? options.engine! : "~/.local/share/amonhen"
+        RemoteFilePicker.present(title: L("Engine on %@", host), message: L("Choose amonhen on the host. It must be this build."),
+                                 kind: .executable, host: host, repository: repository, initial: current) { chosen in
+            guard let path = chosen?.path, path.hasPrefix("/") else { return }
+            var new = options
+            new.engine = path
+            save(new)
+        }
     }
 
     private func setPush(_ on: Bool) {

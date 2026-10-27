@@ -294,6 +294,9 @@
 "The settings repository’s path isn’t UTF-8: {path}" = "設定のリポジトリのパスが UTF-8 ではありません: {path}";
 "Can’t read the excludes file here" = "ここでは無視するパターンのファイルを読めません";
 "Can’t write the excludes file here" = "ここでは無視するパターンのファイルに書けません";
+"Can’t look at folders of the machine running git here" = "ここでは、git を動かす機械のフォルダを見られません";
+"There’s no folder at {path}" = "{path} にフォルダがありません";
+"{path} isn’t a folder" = "{path} はフォルダではありません";
 "Couldn’t run git ({git}): {error}" = "git（{git}）を動かせませんでした: {error}";
 
 /* この機械の Amon Hen の設定（settings.json） */

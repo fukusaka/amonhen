@@ -915,17 +915,17 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
     /// SSH のホストでスキャンするフォルダを加える（そのホストの上で、エンジンが探す）。`host` を渡すとホストは決まり。
     private func addRemoteScanFolder(host: String?) {
-        guard let chosen = SSHFolderChooser.run(
+        RemoteFilePicker.present(
             title: host.map { L("Add a Folder to Scan on %@", $0) } ?? L("Add a Folder to Scan over SSH"),
-            message: L("The engine on the host searches up to 3 levels below the folder. Double-click a folder to go into it."),
-            button: L("Add"), fixedHost: host, hosts: Self.sshHostCandidates(),
-            initialHost: UserDefaults.standard.string(forKey: Self.lastHostKey), initialPath: "~/prj"),
-            let location = RepositoryLocation.ssh(host: chosen.host, path: chosen.path)
-        else { return }
-        UserDefaults.standard.set(chosen.host, forKey: Self.lastHostKey)
-        Bookmarks.shared.addScanRoot(location)
-        category = .host(chosen.host)
-        reload()
+            message: L("The engine on the host searches up to 3 levels below the folder."), kind: .folder,
+            host: host ?? UserDefaults.standard.string(forKey: Self.lastHostKey) ?? "",
+            hosts: host == nil ? Self.sshHostCandidates() : nil, initial: "~/prj", in: view.window) { [weak self] chosen in
+            guard let self, let chosen, let location = RepositoryLocation.ssh(host: chosen.host, path: chosen.shown) else { return }
+            UserDefaults.standard.set(chosen.host, forKey: Self.lastHostKey)
+            Bookmarks.shared.addScanRoot(location)
+            category = .host(chosen.host)
+            reload()
+        }
     }
 
     @objc private func newGroup() {

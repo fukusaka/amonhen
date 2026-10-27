@@ -99,6 +99,33 @@ pub struct Program {
     pub version: Option<String>,
 }
 
+/// git を動かす機械のフォルダの中身（`Operations::list_directory`。SSH 先のパスを選ぶシートが使う）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct Directory {
+    /// 開いたフォルダの絶対パス（`~` を展開したもの）。
+    pub path: String,
+    /// その機械のホーム。決められなければ `None`。
+    pub home: Option<String>,
+    /// 中身（名前の順。`.` で始まるものも含む）。
+    pub entries: Vec<DirectoryEntry>,
+}
+
+/// フォルダの中の 1 つ。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct DirectoryEntry {
+    pub name: String,
+    /// `folder`・`file`・`other`（シンボリックリンクなら、その先の種類。先がなければ `other`）。
+    pub kind: String,
+    /// シンボリックリンクか。
+    pub link: bool,
+    /// 実行できるファイルか（Unix は実行の権限、Windows は拡張子）。
+    pub executable: bool,
+    /// git のリポジトリ（`.git` のあるフォルダ）か。
+    pub repository: bool,
+}
+
 /// worktree の作成・削除・片付け（`git worktree add`・`remove`・`prune`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -377,6 +404,11 @@ pub trait Operations: Send + Sync {
     fn programs(&self, name: &str) -> Result<Vec<Program>> {
         let _ = name;
         Ok(Vec::new())
+    }
+    /// git を動かしている機械の `path` のフォルダの中身。`~` で始まればその機械のホームから、相対パスもホームから。
+    fn list_directory(&self, path: &str) -> Result<Directory> {
+        let _ = path;
+        Err(crate::tr!("Can’t look at folders of the machine running git here").into())
     }
     /// git を動かしているユーザー全体の、無視するパターンのファイル（`core.excludesFile`。なければ git の既定
     /// `$XDG_CONFIG_HOME/git/ignore`・`~/.config/git/ignore`）: そのパスと中身（ファイルがなければ `None`）。

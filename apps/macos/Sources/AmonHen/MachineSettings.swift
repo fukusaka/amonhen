@@ -111,8 +111,28 @@ struct ProgramsPage: View {
                         return (name, programs.map { Programs.Candidate(path: $0.path, version: $0.version, onHost: true) })
                     })
                 }.value
+                // --host-file-picker [folder | connect] で、git の「その他…」のシートを開く（見た目の確認用）。folder なら
+                // フォルダを選ぶ形、connect ならそれを SSH 先を選べる形で、つなぎ直して開く。
+                if CommandLine.arguments.contains("--host-file-picker"), let onHost {
+                    let window = SettingsWindowController.shared.window
+                    let option = AppDelegate.option("--host-file-picker")
+                    if option == "folder" || option == "connect" {
+                        let connect = option == "connect"
+                        RemoteFilePicker.present(title: L("Add a Folder to Scan over SSH"),
+                                                 message: L("The engine on the host searches up to 3 levels below the folder."),
+                                                 kind: .folder, host: onHost.name, repository: connect ? nil : onHost.repository,
+                                                 hosts: connect ? SSHHosts.candidates() : nil, initial: "~/prj", in: window) { _ in }
+                    } else {
+                        ProgramPicker.chooseOnHost(onHost, value: git?.chosen ?? found["git"]?.first?.path ?? "", in: window) { _ in }
+                    }
+                }
             }
         }
+    }
+
+    /// SSH 先なら、その名前と、SSH 先のエンジンにつないだリポジトリ（「その他…」で SSH 先の中を見て選ぶ）。
+    private var onHost: ProgramPicker.Host? {
+        model.host.map { ProgramPicker.Host(name: $0, repository: model.repository) }
     }
 
     /// git の行: 値はその機械の Amon Hen の設定。行の形はほかと同じ。選んだ git がなければ、その下に理由
@@ -123,7 +143,7 @@ struct ProgramsPage: View {
             HStack(spacing: 8) {
                 Text("git").frame(minWidth: 72, alignment: .leading)
                 Spacer()
-                ProgramPicker(candidates: found["git"] ?? [], value: chosen, otherOnHost: model.host) { value in
+                ProgramPicker(candidates: found["git"] ?? [], value: chosen, onHost: onHost) { value in
                     setGit(value)
                 }
                 if !chosen.isEmpty {
@@ -212,7 +232,7 @@ struct ProgramsPage: View {
         // 決めてあるキーを先に（設定元はその値のもの）。どれもなければ最後のキーに書く。
         let key = keys.first { model.effective($0) != nil } ?? keys[keys.count - 1]
         return SettingRow(model: model, question: name, help: "", keys: [key]) {
-            ProgramPicker(candidates: found[name] ?? [], value: model.local(key) ?? "", otherOnHost: model.host) { value in
+            ProgramPicker(candidates: found[name] ?? [], value: model.local(key) ?? "", onHost: onHost) { value in
                 model.set(key, value.isEmpty ? nil : value)
             }
         }
@@ -220,12 +240,18 @@ struct ProgramsPage: View {
 }
 
 /// プログラムを選ぶ: 自動（PATH の先頭）、見つかったもの（出どころと版）、その他…。
-private struct ProgramPicker: View {
+struct ProgramPicker: View {
+    /// SSH 先: その名前と、SSH 先のエンジンにつないだリポジトリ。
+    struct Host {
+        let name: String
+        let repository: Repository
+    }
+
     let candidates: [Programs.Candidate]
     /// 今の値（空なら自動）。
     let value: String
-    /// SSH 先のプログラムなら、その名前（「その他…」はファイルを選ぶのではなく、SSH 先のパスを書いてもらう）。
-    var otherOnHost: String? = nil
+    /// SSH 先のプログラムなら、その SSH 先（「その他…」はこの Mac ではなく、SSH 先の中を見て選ぶ）。
+    var onHost: Host? = nil
     let choose: (String) -> Void
     private static let other = "\u{1}other"
 
@@ -252,20 +278,11 @@ private struct ProgramPicker: View {
             if new != value { choose(new) }
             return
         }
-        if let host = otherOnHost {
-            let alert = NSAlert()
-            alert.messageText = L("Program on %@", host)
-            alert.informativeText = L("The path of the program on the host.")
-            let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-            field.placeholderString = "/usr/local/bin/git"
-            field.stringValue = value
-            alert.accessoryView = field
-            alert.window.initialFirstResponder = field
-            alert.addButton(withTitle: L("Choose"))
-            alert.addButton(withTitle: L("Cancel"))
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-            let path = field.stringValue.trimmingCharacters(in: .whitespaces)
-            if path.hasPrefix("/"), path != value { choose(path) }
+        if let onHost {
+            let value = value
+            Self.chooseOnHost(onHost, value: value.isEmpty ? candidates.first?.path ?? "" : value, in: nil) { path in
+                if let path, path != value { choose(path) }
+            }
             return
         }
         let panel = NSOpenPanel()
@@ -275,6 +292,14 @@ private struct ProgramPicker: View {
         panel.prompt = L("Choose")
         if panel.runModal() == .OK, let url = panel.url, FileManager.default.isExecutableFile(atPath: url.path) {
             choose(url.path)
+        }
+    }
+
+    /// SSH 先の実行ファイルを選ぶシート。最初は `value` を選んだところ。
+    static func chooseOnHost(_ host: Host, value: String, in window: NSWindow?, done: @escaping (String?) -> Void) {
+        RemoteFilePicker.present(title: L("Program on %@", host.name), message: L("Choose the program on the host."),
+                                 kind: .executable, host: host.name, repository: host.repository, initial: value, in: window) {
+            done($0?.path)
         }
     }
 }

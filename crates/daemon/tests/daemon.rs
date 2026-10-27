@@ -719,6 +719,27 @@ fn shared_daemon_opens_an_ssh_host_without_a_repository() {
             .unwrap()
             .is_empty()
     );
+    // フォルダの中身も SSH 先のもの（`~` は SSH 先のホーム）。
+    let listed = repo
+        .run(amonhen_core::command::Command::ListDirectory {
+            path: "~/.local/share".to_owned(),
+        })
+        .unwrap()
+        .info
+        .unwrap();
+    assert_eq!(
+        listed["path"],
+        remote_home.join(".local/share").display().to_string(),
+        "{listed}"
+    );
+    assert!(
+        listed["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["name"] == "amonhen" && e["kind"] == "folder"),
+        "{listed}"
+    );
 
     daemon.kill().unwrap();
     daemon.wait().unwrap();
