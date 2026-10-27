@@ -94,7 +94,7 @@ final class SSHConnectionModel {
     /// ホストの中を見て選ぶ（SSH 先のエンジンにつないで読む）。
     func choose() {
         guard !trimmedHost.isEmpty else { return }
-        RemoteFilePicker.present(title: L("Choose a Repository on %@", trimmedHost), message: L("Click a folder to open it, and choose a repository (green)."),
+        FilePicker.present(title: L("Choose a Repository on %@", trimmedHost), message: L("Click a folder to open it, and choose a repository (green)."),
                                  kind: .folder, host: trimmedHost, initial: trimmedPath) { [weak self] chosen in
             guard let self, let chosen else { return }
             host = chosen.host

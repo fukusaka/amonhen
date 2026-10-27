@@ -2,14 +2,23 @@ import AmonhenKit
 import AppKit
 import SwiftUI
 
-/// git を動かす機械（SSH 先）のファイルやフォルダを選ぶシート。Finder のカラム表示に近い形: 上にパスの欄（打ち込める。
-/// `~` はその機械のホーム）、下に `/` から選んだところまでの列。中身はその機械のエンジンが読む（コアの `listDirectory`）。
-/// 呼ぶ所が、実行できるファイルを選ぶか、フォルダを選ぶかを決める（選べないものは薄く出す）。パスは機械の形のまま
-/// （Windows なら `C:\…`。`HostPath`）。列は Finder と同じくキーボードでも動かせる。
-enum RemoteFilePicker {
+/// ファイルやフォルダを選ぶシート。この Mac のものも、git を動かす機械（SSH 先）のものも同じ形で選ぶ。Finder のカラム表示に
+/// 近い形: 上にパスの欄（打ち込める。`~` はその機械のホーム）、下に `/` から選んだところまでの列。中身はコアが読む（この Mac は
+/// `LocalFolders`、SSH 先はそのエンジンの `listDirectory`）。リポジトリは緑の印で出す。呼ぶ所が、何を選ぶかを決める
+/// （選べないものは薄く出す）。パスは機械の形のまま（Windows なら `C:\…`。`HostPath`）。列は Finder と同じくキーボードでも
+/// 動かせる。
+enum FilePicker {
     enum Kind {
+        /// 実行できるファイル。
         case executable
+        /// フォルダ（開いているフォルダを選ぶ）。
         case folder
+        /// ファイル。
+        case file
+        /// リポジトリ（`.git` のあるフォルダ。開かずに選ぶ）。
+        case repository
+        /// アプリ（`.app`。開かずに選ぶ）。
+        case application
     }
 
     /// 選んだもの: SSH 先と、そこでの絶対パス。
@@ -23,14 +32,35 @@ enum RemoteFilePicker {
     /// `window`（なければ前のウィンドウ）にシートとして出し、選んだものを `done` に渡す。取り消したら nil。
     /// 最初は `initial`（`~` 可）のフォルダ、ファイルならそれを選んだところ（空ならホーム）。`repository` がなければ
     /// `host` のエンジンにつなぐ（数秒かかる）。`hosts` を渡すと、SSH 先も選べる（空の `host` から始めてよい）。
+    /// `places` は、すぐ行けるフォルダ（`/usr/local/bin` など、ふだん見えない所）。
     static func present(title: String, message: String, kind: Kind, host: String, repository: Repository? = nil,
-                        hosts: [String]? = nil, initial: String, in window: NSWindow? = nil,
+                        hosts: [String]? = nil, initial: String, places: [String] = [], in window: NSWindow? = nil,
                         done: @escaping (Chosen?) -> Void) {
-        let model = RemoteFilePickerModel(kind: kind, hosts: hosts, initial: initial)
-        let view = RemoteFilePickerView(model: model, title: title, message: message)
+        let model = FilePickerModel(kind: kind, hosts: hosts, initial: initial, places: places)
+        show(model, title: title, message: message, height: hosts == nil ? 460 : 490, in: window) { paths in
+            done(paths?.first.map { Chosen(host: model.host, path: $0, shown: model.shown($0)) })
+        }
+        if let repository {
+            model.use(repository, host: host)
+        } else {
+            model.connect(host)
+        }
+    }
+
+    /// この Mac のものを選ぶ。選んだものの絶対パスを `done` に渡す（`multiple` なら ⌘ クリックでいくつでも）。取り消したら nil。
+    static func presentLocal(title: String, message: String, kind: Kind, initial: String, places: [String] = [],
+                             multiple: Bool = false, in window: NSWindow? = nil, done: @escaping ([String]?) -> Void) {
+        let model = FilePickerModel(kind: kind, hosts: nil, initial: initial, places: places, multiple: multiple)
+        show(model, title: title, message: message, height: 460, in: window, done: done)
+        model.useLocal()
+    }
+
+    private static func show(_ model: FilePickerModel, title: String, message: String, height: CGFloat,
+                             in window: NSWindow?, done: @escaping ([String]?) -> Void) {
+        let view = FilePickerView(model: model, title: title, message: message)
         let sheet = NSWindow(contentViewController: NSHostingController(rootView: view))
         sheet.styleMask = [.titled, .resizable]
-        sheet.setContentSize(NSSize(width: 760, height: hosts == nil ? 460 : 490))
+        sheet.setContentSize(NSSize(width: 760, height: height))
         sheet.contentMinSize = NSSize(width: 520, height: 320)
         sheet.title = title
         // アプリが前にいないとき（キーのウィンドウがないとき）も、いちばん前のウィンドウに付ける。
@@ -46,16 +76,11 @@ enum RemoteFilePicker {
             sheet.center()
             sheet.makeKeyAndOrderFront(nil)
         }
-        if let repository {
-            model.use(repository, host: host)
-        } else {
-            model.connect(host)
-        }
     }
 }
 
-/// フォルダの中身（コアの `listDirectory` の `info`）。
-nonisolated struct RemoteDirectory: Decodable, Sendable {
+/// フォルダの中身（コアの `listDirectory` の `info`、この Mac なら `LocalFolders`）。
+nonisolated struct FolderContents: Decodable, Sendable {
     nonisolated struct Entry: Decodable, Sendable, Hashable {
         let name: String
         /// `folder`・`file`・`other`（シンボリックリンクなら、その先の種類）。
@@ -73,24 +98,38 @@ nonisolated struct RemoteDirectory: Decodable, Sendable {
 }
 
 @Observable @MainActor
-final class RemoteFilePickerModel {
+final class FilePickerModel {
     /// 1 つの列: フォルダと、その中で選んでいるもの。
     struct Column: Identifiable {
         let path: String
-        var entries: [RemoteDirectory.Entry]?
+        var entries: [FolderContents.Entry]?
         var error: String?
         var selected: String?
+        /// ⌘ クリックで足したもの（いくつも選べるとき。`selected` は含まない）。
+        var marked: Set<String> = []
         var id: String { path }
+        func isSelected(_ name: String) -> Bool { selected == name || marked.contains(name) }
     }
 
-    let kind: RemoteFilePicker.Kind
+    /// 中身を読む所: SSH 先のエンジン（つないだリポジトリ）か、この Mac。
+    nonisolated enum Reader: @unchecked Sendable {
+        case engine(Repository)
+        case local
+    }
+
+    let kind: FilePicker.Kind
     /// 選べる SSH 先（SSH 先を変えられないなら nil）。
     let hosts: [String]?
+    /// すぐ行けるフォルダ。
+    let places: [String]
+    /// ⌘ クリックでいくつも選べるか（開かずに選ぶもの）。
+    let multiple: Bool
     /// 最初に出すところ（つながったら行く）。
     private let initial: String
-    /// 今の SSH 先と、そのエンジンにつないだリポジトリ。
+    /// 今の SSH 先（この Mac なら空）と、中身を読む所。
     var host = ""
-    private var repository: Repository?
+    private(set) var reader: Reader?
+    var isLocal: Bool { if case .local = reader { true } else { false } }
     var connecting = false
     /// つながらなかったときの理由（パスを打ち込んで決められる）。
     var connectionError: String?
@@ -104,7 +143,7 @@ final class RemoteFilePickerModel {
     var loading = false
     /// 打ち込んだパスへ行ったたびに増える（列を、選んだものが見えるところまで送る）。
     var reveal = 0
-    var close: (RemoteFilePicker.Chosen?) -> Void = { _ in }
+    var close: ([String]?) -> Void = { _ in }
     /// 今の移動（古い移動の答えは捨てる）。
     private var generation = 0
     /// 今のつなぎ（古いつなぎの答えは捨てる）。
@@ -115,9 +154,11 @@ final class RemoteFilePickerModel {
     private var typed = ""
     private var typedAt = Date.distantPast
 
-    init(kind: RemoteFilePicker.Kind, hosts: [String]?, initial: String) {
+    init(kind: FilePicker.Kind, hosts: [String]?, initial: String, places: [String] = [], multiple: Bool = false) {
         self.kind = kind
         self.hosts = hosts
+        self.places = places
+        self.multiple = multiple
         let initial = initial.trimmingCharacters(in: .whitespaces)
         self.initial = initial.isEmpty ? "~" : initial
         field = self.initial
@@ -126,7 +167,14 @@ final class RemoteFilePickerModel {
     /// つないであるリポジトリで読む。
     func use(_ repository: Repository, host: String) {
         self.host = host
-        self.repository = repository
+        reader = .engine(repository)
+        go(initial, orHome: true)
+    }
+
+    /// この Mac のものを読む。
+    func useLocal() {
+        host = ""
+        reader = .local
         go(initial, orHome: true)
     }
 
@@ -136,7 +184,7 @@ final class RemoteFilePickerModel {
         attempt += 1
         let attempt = attempt
         self.host = host
-        repository = nil
+        reader = nil
         columns = []
         connectionError = nil
         problem = nil
@@ -156,7 +204,7 @@ final class RemoteFilePickerModel {
             connecting = false
             switch result {
             case let .success(repository):
-                self.repository = repository
+                reader = .engine(repository)
                 go(field, orHome: true)
             case let .failure(error):
                 connectionError = "\(error)"
@@ -164,16 +212,21 @@ final class RemoteFilePickerModel {
         }
     }
 
-    /// フォルダの中身を、つないだエンジンで読む（裏のスレッドで呼ぶ）。
-    nonisolated private static func list(_ repository: Repository, _ path: String) throws -> RemoteDirectory {
-        try repository.info(["op": "listDirectory", "path": path], as: RemoteDirectory.self)
+    /// フォルダの中身を読む（裏のスレッドで呼ぶ）。
+    nonisolated private static func list(_ reader: Reader, _ path: String) throws -> FolderContents {
+        switch reader {
+        case let .engine(repository):
+            try repository.info(["op": "listDirectory", "path": path], as: FolderContents.self)
+        case .local:
+            try JSONDecoder().decode(FolderContents.self, from: LocalFolders.listJSON(path))
+        }
     }
 
     /// 打ち込んだパスへ行く: フォルダならその中、ファイルならそれのあるフォルダでそれを選ぶ。`orHome` なら、
     /// 読めないときはホームへ（最初に出すところがもうないとき）。
     func go(_ typed: String, orHome: Bool = false) {
         let typed = typed.trimmingCharacters(in: .whitespaces).isEmpty ? "~" : typed.trimmingCharacters(in: .whitespaces)
-        guard let repository else { return }
+        guard let reader else { return }
         generation += 1
         let generation = generation
         loading = true
@@ -181,15 +234,31 @@ final class RemoteFilePickerModel {
         entering = nil
         // Windows の機械なら `\` も区切り（`~\bin\git.exe` は形で見分けられない）。
         let windows = HostPath.isWindows(home ?? columns.first?.path ?? "")
+        let kind = kind
         Task {
-            let result = await Task.detached(priority: .userInitiated) { () -> Result<(RemoteDirectory, String?), Error> in
-                let list = { (path: String) throws -> RemoteDirectory in try Self.list(repository, path) }
-                do { return .success((try list(typed), nil)) } catch {
-                    // フォルダとして読めなければ、上のフォルダでそれを選ぶ。
-                    guard let split = HostPath.split(typed, windows: windows), split.name != "~",
+            let result = await Task.detached(priority: .userInitiated) { () -> Result<(FolderContents, String?), Error> in
+                let list = { (path: String) throws -> FolderContents in try Self.list(reader, path) }
+                // 上のフォルダで、それを選ぶ。
+                let inParent = { (path: String) -> (FolderContents, String?)? in
+                    guard let split = HostPath.split(path, windows: windows), split.name != "~",
                           let dir = try? list(split.parent), dir.entries.contains(where: { $0.name == split.name })
-                    else { return .failure(error) }
-                    return .success((dir, split.name))
+                    else { return nil }
+                    return (dir, split.name)
+                }
+                do {
+                    let dir = try list(typed)
+                    // リポジトリやアプリを選ぶなら、それは開かずに選ぶ。
+                    let leaf = switch kind {
+                    case .repository: dir.entries.contains { $0.name == ".git" }
+                    case .application: dir.path.hasSuffix(".app")
+                    case .folder, .executable, .file: false
+                    }
+                    if leaf, let found = inParent(dir.path) { return .success(found) }
+                    return .success((dir, nil))
+                } catch {
+                    // フォルダとして読めなければ、上のフォルダでそれを選ぶ。
+                    guard let found = inParent(typed) else { return .failure(error) }
+                    return .success(found)
                 }
             }.value
             guard generation == self.generation else { return }
@@ -206,7 +275,7 @@ final class RemoteFilePickerModel {
     }
 
     /// `dir` を最後の列にし、その上のフォルダを根（`/`・`C:\`）から並べる（中身はあとで読む）。
-    private func show(_ dir: RemoteDirectory, selecting name: String?) {
+    private func show(_ dir: FolderContents, selecting name: String?) {
         home = dir.home ?? home
         let parts = HostPath.ancestors(of: dir.path)
         var columns: [Column] = []
@@ -221,16 +290,33 @@ final class RemoteFilePickerModel {
         for column in columns where column.entries == nil { load(column.path) }
     }
 
-    /// 列の中のものを選ぶ。フォルダなら、その中を次の列に出す。
-    func select(_ entry: RemoteDirectory.Entry, in index: Int) {
-        guard columns.indices.contains(index), selectable(entry) || entry.isFolder else { return }
+    /// 列の中のものを選ぶ。開くフォルダなら、その中を次の列に出す。`extend`（⌘ クリック）なら、いくつも選べるとき、
+    /// 選んだものに足す（選んであれば外す）。
+    func select(_ entry: FolderContents.Entry, in index: Int, extend: Bool = false) {
+        guard columns.indices.contains(index), selectable(entry) || opens(entry) else { return }
         generation += 1
         problem = nil
         loading = false
         entering = nil
+        if extend, multiple, selectable(entry), !opens(entry), index == columns.count - 1 {
+            var column = columns[index]
+            if column.isSelected(entry.name) {
+                column.marked.remove(entry.name)
+                if column.selected == entry.name { column.selected = column.marked.popFirst() }
+            } else {
+                if let selected = column.selected, column.entries?.first(where: { $0.name == selected }).map(selectable) == true {
+                    column.marked.insert(selected)
+                }
+                column.selected = entry.name
+            }
+            columns[index] = column
+            updateField()
+            return
+        }
         columns.removeSubrange((index + 1)...)
         columns[index].selected = entry.name
-        if entry.isFolder {
+        columns[index].marked = []
+        if opens(entry) {
             let path = HostPath.join(columns[index].path, entry.name)
             columns.append(Column(path: path))
             load(path)
@@ -240,9 +326,9 @@ final class RemoteFilePickerModel {
 
     /// 列の中身を読む。
     private func load(_ path: String) {
-        guard let repository else { return }
+        guard let reader else { return }
         Task {
-            let result = await Task.detached(priority: .userInitiated) { Result { try Self.list(repository, path) } }.value
+            let result = await Task.detached(priority: .userInitiated) { Result { try Self.list(reader, path) } }.value
             guard let index = columns.firstIndex(where: { $0.path == path }) else { return }
             switch result {
             case let .success(dir):
@@ -267,8 +353,8 @@ final class RemoteFilePickerModel {
     }
 
     /// 列の中で選べるもの（キーボードで動く先）。
-    private func candidates(_ index: Int) -> [RemoteDirectory.Entry] {
-        visible(columns[index]).filter { selectable($0) || $0.isFolder }
+    private func candidates(_ index: Int) -> [FolderContents.Entry] {
+        visible(columns[index]).filter { selectable($0) || opens($0) }
     }
 
     /// ↑↓: 列の中で前後のものを選ぶ。何も選んでいなければ、端のもの。
@@ -305,7 +391,7 @@ final class RemoteFilePickerModel {
 
     /// ⏎: 選べるものなら選ぶ。選べなければ、選んでいるフォルダに入る。
     func activate() {
-        if chosen != nil { choose() } else { enter() }
+        if !chosen.isEmpty { choose() } else { enter() }
     }
 
     /// 名前を打つと、その名前の行を選ぶ（続けて打てば続きで。なければ、並びでその後にあるもの）。
@@ -326,42 +412,58 @@ final class RemoteFilePickerModel {
         if let first = candidates(index).first { select(first, in: index) }
     }
 
-    /// 選べるものか（フォルダを選ぶならフォルダ、実行ファイルを選ぶなら実行できるファイル）。
-    func selectable(_ entry: RemoteDirectory.Entry) -> Bool {
+    /// 選べるものか（フォルダを選ぶならフォルダ、実行ファイルを選ぶなら実行できるファイルなど）。
+    func selectable(_ entry: FolderContents.Entry) -> Bool {
         switch kind {
         case .folder: entry.isFolder
         case .executable: entry.kind == "file" && entry.executable
+        case .file: entry.kind == "file"
+        case .repository: entry.repository
+        case .application: Self.isApplication(entry)
         }
+    }
+
+    /// クリックで中を次の列に出すか（フォルダ。リポジトリやアプリを選ぶときは、それは開かずに選ぶ）。
+    func opens(_ entry: FolderContents.Entry) -> Bool {
+        guard entry.isFolder else { return false }
+        switch kind {
+        case .repository: return !entry.repository
+        case .application: return !Self.isApplication(entry)
+        case .folder, .executable, .file: return true
+        }
+    }
+
+    private static func isApplication(_ entry: FolderContents.Entry) -> Bool {
+        entry.isFolder && entry.name.hasSuffix(".app")
     }
 
     /// 出すもの: 隠しファイル（`.` で始まるもの）は切り替えで。選んでいるものはいつも出す。
-    func visible(_ column: Column) -> [RemoteDirectory.Entry] {
-        (column.entries ?? []).filter { showHidden || !$0.name.hasPrefix(".") || $0.name == column.selected }
+    func visible(_ column: Column) -> [FolderContents.Entry] {
+        (column.entries ?? []).filter { showHidden || !$0.name.hasPrefix(".") || column.isSelected($0.name) }
     }
 
-    /// 選んだもの（決めるボタンで返すパス）。選べなければ nil。つながらなければ、打ち込んだパス。
-    var chosen: String? {
+    /// 選んだもの（決めるボタンで返すパス。並びは列の順）。選べなければ空。つながらなければ、打ち込んだパス。
+    var chosen: [String] {
         if connectionError != nil {
             let typed = field.trimmingCharacters(in: .whitespaces)
             switch kind {
-            case .folder: return typed.isEmpty ? nil : typed
-            case .executable: return HostPath.isAbsolute(typed) ? typed : nil
+            case .folder: return typed.isEmpty ? [] : [typed]
+            case .executable, .file, .repository, .application: return HostPath.isAbsolute(typed) ? [typed] : []
             }
         }
-        guard let last = columns.last else { return nil }
+        guard let last = columns.last else { return [] }
         switch kind {
         case .folder:
-            return last.error == nil ? last.path : nil
-        case .executable:
-            guard let name = last.selected, let entry = last.entries?.first(where: { $0.name == name }),
-                  selectable(entry) else { return nil }
-            return HostPath.join(last.path, name)
+            return last.error == nil ? [last.path] : []
+        case .executable, .file, .repository, .application:
+            return (last.entries ?? []).filter { last.isSelected($0.name) && selectable($0) }.map { HostPath.join(last.path, $0.name) }
         }
     }
 
     func choose() {
-        guard let chosen else { return }
-        close(RemoteFilePicker.Chosen(host: host, path: chosen, shown: shown(chosen)))
+        let chosen = chosen
+        guard !chosen.isEmpty else { return }
+        close(chosen)
     }
 
     /// 欄に、選んだもの（なければ最後のフォルダ）を出す。
@@ -377,8 +479,8 @@ final class RemoteFilePickerModel {
     }
 }
 
-struct RemoteFilePickerView: View {
-    @Bindable var model: RemoteFilePickerModel
+struct FilePickerView: View {
+    @Bindable var model: FilePickerModel
     let title: String
     let message: String
     private let columnWidth: CGFloat = 210
@@ -409,7 +511,7 @@ struct RemoteFilePickerView: View {
                     // 欄は同じ値も書き戻すので、変わったときだけ。
                     if $0 != model.field { typing = true }
                     model.field = $0
-                }), prompt: Text(model.kind == .folder ? "~/prj" : "/usr/local/bin/git"))
+                }), prompt: Text(model.kind == .executable ? "/usr/local/bin/git" : "~/prj"))
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                     .focused($focus, equals: .field)
@@ -417,6 +519,11 @@ struct RemoteFilePickerView: View {
                 Button { model.go("~") } label: { Image(systemName: "house") }
                     .help(L("Home folder"))
                     .disabled(model.connecting || model.connectionError != nil)
+                if !model.places.isEmpty {
+                    PlacesButton(places: model.places) { model.go($0) }
+                        .fixedSize()
+                        .disabled(model.connecting || model.connectionError != nil)
+                }
                 if model.loading { ProgressView().controlSize(.small) }
             }
             if model.connecting {
@@ -431,7 +538,7 @@ struct RemoteFilePickerView: View {
                     Button(L("Check Connection")) { model.connect(model.host) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else if model.host.isEmpty {
+            } else if model.host.isEmpty, !model.isLocal {
                 Text(L("Choose a host to see its folders."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -449,7 +556,7 @@ struct RemoteFilePickerView: View {
                     .keyboardShortcut(.cancelAction)
                 Button(L("Choose")) { model.choose() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(model.chosen == nil)
+                    .disabled(model.chosen.isEmpty)
             }
         }
         .padding(16)
@@ -508,7 +615,7 @@ struct RemoteFilePickerView: View {
         return .handled
     }
 
-    @ViewBuilder private func columnView(_ column: RemoteFilePickerModel.Column, index: Int) -> some View {
+    @ViewBuilder private func columnView(_ column: FilePickerModel.Column, index: Int) -> some View {
         // 最後に選んだ列だけ強い色で（Finder と同じ）。パスの欄で打っているときは薄い色で。
         let active = index == model.activeIndex && focus != .field
         if column.entries == nil {
@@ -521,10 +628,10 @@ struct RemoteFilePickerView: View {
                 ScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
                         ForEach(model.visible(column), id: \.name) { entry in
-                            row(entry, selected: column.selected == entry.name, active: active)
+                            row(entry, selected: column.isSelected(entry.name), active: active)
                                 .id(entry.name)
                                 .onTapGesture {
-                                    model.select(entry, in: index)
+                                    model.select(entry, in: index, extend: NSEvent.modifierFlags.contains(.command))
                                     focus = .columns
                                 }
                                 .simultaneousGesture(TapGesture(count: 2).onEnded {
@@ -533,7 +640,7 @@ struct RemoteFilePickerView: View {
                                 // VoiceOver などからは、1 行を 1 つのボタンとして（押すと選ぶ）。
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityLabel(accessibilityLabel(entry))
-                                .accessibilityAddTraits(column.selected == entry.name ? [.isButton, .isSelected] : .isButton)
+                                .accessibilityAddTraits(column.isSelected(entry.name) ? [.isButton, .isSelected] : .isButton)
                                 .accessibilityAction { model.select(entry, in: index) }
                         }
                     }
@@ -554,8 +661,8 @@ struct RemoteFilePickerView: View {
         }
     }
 
-    private func row(_ entry: RemoteDirectory.Entry, selected: Bool, active: Bool) -> some View {
-        let enabled = model.selectable(entry) || entry.isFolder
+    private func row(_ entry: FolderContents.Entry, selected: Bool, active: Bool) -> some View {
+        let enabled = model.selectable(entry) || model.opens(entry)
         return HStack(spacing: 6) {
             Image(systemName: icon(entry))
                 .foregroundStyle(selected && active ? Color.white
@@ -568,7 +675,7 @@ struct RemoteFilePickerView: View {
                     .help(L("Symbolic link"))
             }
             Spacer(minLength: 4)
-            if entry.isFolder {
+            if model.opens(entry) {
                 Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.secondary)
             }
         }
@@ -584,18 +691,62 @@ struct RemoteFilePickerView: View {
     }
 
     /// 名前と種類（リポジトリ、フォルダ、実行ファイル、シンボリックリンク）。
-    private func accessibilityLabel(_ entry: RemoteDirectory.Entry) -> String {
+    private func accessibilityLabel(_ entry: FolderContents.Entry) -> String {
         var kinds: [String] = []
         if entry.repository { kinds.append(L("Git repository")) }
         if entry.link { kinds.append(L("Symbolic link")) }
         return ([entry.name] + kinds).joined(separator: ", ")
     }
 
-    private func icon(_ entry: RemoteDirectory.Entry) -> String {
+    private func icon(_ entry: FolderContents.Entry) -> String {
         if entry.repository { return "arrow.triangle.branch" }
+        if model.kind == .application, !model.opens(entry), entry.isFolder { return "app.dashed" }
         if entry.isFolder { return "folder.fill" }
         if entry.kind == "file" { return entry.executable ? "apple.terminal" : "doc" }
         return "questionmark.square.dashed"
+    }
+}
+
+/// すぐ行けるフォルダのメニュー（AppKit のプルダウン。SwiftUI の Menu はシートの中だとアクセシビリティに出ない）。
+private struct PlacesButton: NSViewRepresentable {
+    let places: [String]
+    let go: (String) -> Void
+
+    func makeNSView(context: Context) -> NSPopUpButton {
+        let button = NSPopUpButton(frame: .zero, pullsDown: true)
+        button.bezelStyle = .push
+        (button.cell as? NSPopUpButtonCell)?.arrowPosition = .noArrow
+        button.toolTip = L("Go to a folder")
+        button.setAccessibilityLabel(L("Go to a folder"))
+        update(button, context: context)
+        return button
+    }
+
+    func updateNSView(_ button: NSPopUpButton, context: Context) {
+        update(button, context: context)
+    }
+
+    private func update(_ button: NSPopUpButton, context: Context) {
+        context.coordinator.go = go
+        guard context.coordinator.places != places else { return }
+        context.coordinator.places = places
+        button.removeAllItems()
+        // プルダウンの最初の項目はボタンの顔。
+        button.addItem(withTitle: "")
+        button.item(at: 0)?.image = NSImage(systemSymbolName: "folder.badge.gearshape", accessibilityDescription: L("Go to a folder"))
+        for place in places {
+            let item = NSMenuItem(title: place, action: #selector(Coordinator.picked(_:)), keyEquivalent: "")
+            item.target = context.coordinator
+            button.menu?.addItem(item)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator: NSObject {
+        var places: [String] = []
+        var go: (String) -> Void = { _ in }
+        @objc func picked(_ item: NSMenuItem) { go(item.title) }
     }
 }
 
