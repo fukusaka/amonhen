@@ -939,13 +939,15 @@ impl Loader {
             glib::spawn_future_local(async move {
                 let texts = gio::spawn_blocking(move || {
                     let texts = repo_t.commit_texts(&ids).unwrap_or_default();
+                    let mailmap = repo_t.mailmap();
                     ids.iter()
                         .zip(&texts)
                         .map(|(id, t)| {
                             (
                                 id.to_string()[..8].to_owned(),
                                 String::from_utf8_lossy(t.subject()).into_owned(),
-                                String::from_utf8_lossy(t.author_name()).into_owned(),
+                                String::from_utf8_lossy(&t.author(mailmap.as_deref()).name)
+                                    .into_owned(),
                             )
                         })
                         .collect::<Vec<_>>()
