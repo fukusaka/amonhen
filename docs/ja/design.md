@@ -182,6 +182,7 @@ apps/
 
 - 署名があるか・どの種類か（GPG・SSH・X.509）は、コミットのヘッダーの `gpgsig` で分かるので、History の行を読むときに一緒に取る（`CommitText::signature`、チャンクの `signatures` の列）。gpg は使わない。
 - 検証の結果（`git log --format=%G?` の 1 文字）は git に頼む。gpg を 1 件ずつ起動するので 1 件 15 ms ほどかかる。
+  - SSH の署名は git 2.34 から。それより前の git に SSH で署名したコミットの `%G?` を頼むと `BUG:` で止まる（一緒に頼んだほかのコミットの結果も返らない）ので、git 2.34 より前ではコミットを先に読み（`git cat-file --batch`）、SSH の署名のコミットは git に渡さず、結果を V（git にない Amon Hen の独自の 1 文字）にする。
 - 検証で gpg に鍵を取りに行かせない。gpg の `auto-key-retrieve` が有効だと、知らない鍵の署名を検証するたびに鍵サーバーや WKD に問い合わせて鍵束に鍵を加えてしまう（裏で何百も検証するので、ネットワークに出て、利用者の鍵束を勝手に増やす）。git は gpg に引数を足す設定を持たないので、`--no-auto-key-retrieve` を付けて設定どおりの gpg を呼ぶスクリプトを一時フォルダに置き、検証のときだけ `-c gpg.program=` でそれを指す。知らない鍵の署名は「No key」になる。
   - History: 見えている署名つきの行だけを、スクロールが止まって 0.15 秒たってから、8 件ずつ 1 回の git でまとめて検証する（`git log --no-walk=unsorted --format=%H%x00%G?%x00%GS%x00%GK%x00%GF%x00%GT --stdin`。正しい署名にはコミッターのメールを添えて返す）。終わった分からアイコンを替える。描画は覚えた結果を読むだけで、gpg を待たない。アイコンは SF Symbols を Metal の文字のアトラスに入れて描く。
   - 詳細の欄: 署名者・鍵・信用度を、ヘッダーを出した後に裏で読む（`commitExtras`）。
@@ -203,6 +204,7 @@ apps/
   | R | exclamationmark.shield.fill | 赤 | Revoked key | — |
   | B | xmark.seal.fill | 赤 | Bad signature | — |
   | E | questionmark.circle | 灰 | No key | — |
+  | V（git 2.34 より前、SSH の署名） | exclamationmark.circle | 灰 | Can’t verify | — |
   | 検証中 | seal | 薄い灰 | Checking… | — |
 
   署名者がコミッターと一致するかは、git の `%GS`（鍵の主なユーザー ID だけ）ではなく、署名した鍵に登録されたすべてのメールアドレスで決める。GPG は主鍵の指紋（`%GP`）で `gpg --list-keys --with-colons` を引き（鍵がいくつあっても gpg は 1 回）、ユーザー ID ごとの有効性も読む。SSH は git が allowed signers から見つけたプリンシパル（`%GS`）を使う。吹き出しの「コミッターのメール」の行に、コミッターのメールアドレスが鍵に登録されているかを出す。有効なユーザー ID（u・f・m）にあれば「鍵に登録されている」、有効性が不明なものにだけあれば「鍵に登録されている。ただし、そのユーザー ID は確認されていない」（誰でも他人のアドレスをユーザー ID に書けるため）、失効・期限切れのものにだけある、またはどこにもなければ「鍵に登録されていない」、鍵のメールアドレスを読めなければ「確かめられない」。

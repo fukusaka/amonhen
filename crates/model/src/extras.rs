@@ -8,7 +8,8 @@ use crate::{Oid, Result};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignatureCheck {
     /// `%G?` の 1 文字。G（正しい）、B（不正）、U（正しいが信用の度合いが不明）、X（期限切れの署名）、
-    /// Y（期限切れの鍵）、R（失効した鍵）、E（検証できない。鍵がないなど）、N（署名なし）。
+    /// Y（期限切れの鍵）、R（失効した鍵）、E（検証できない。鍵がないなど）、N（署名なし）。git にない
+    /// `UNSUPPORTED`（V）は、使っている git がその種類の署名を確かめられない（SSH の署名は git 2.34 から）。
     pub status: char,
     /// 署名した人（`%GS`）。
     pub signer: String,
@@ -20,6 +21,11 @@ pub struct SignatureCheck {
     /// 署名した鍵に登録されたメールアドレス（GPG はすべてのユーザー ID、SSH は allowed signers のプリンシパル）。
     /// 読めなければ空（そのときはコミッターと一致するかを言い切れない）。
     pub emails: Vec<SignerEmail>,
+}
+
+impl SignatureCheck {
+    /// 使っている git がその種類の署名を確かめられない（`%G?` にはない、Amon Hen の独自の 1 文字）。
+    pub const UNSUPPORTED: char = 'V';
 }
 
 /// 署名した鍵のメールアドレスと、その有効性（gpg の uid 行の 2 番目の欄。u・f・m は有効、r は失効、e は期限切れ、

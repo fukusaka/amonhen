@@ -891,6 +891,7 @@
 "The signing key has been revoked. This signature can’t be trusted." = "署名した鍵は失効しています。この署名は信用できません。";
 "The signature is invalid. The commit was changed after it was signed, or the signature is corrupt." = "署名が正しくありません。コミットが署名の後に書き換えられたか、署名が壊れています。";
 "There’s no public key to verify the signature (it isn’t in the GPG keyring or the SSH allowed signers)." = "署名を検証する公開鍵がありません（GPG の鍵束、SSH の allowed signers に入っていない）。";
+"This git can’t verify SSH signatures. It needs git 2.34 or later." = "この git では SSH の署名を検証できません。git 2.34 以降が要ります。";
 "Verifying the signature." = "署名を検証しています。";
 "%@ — %@ (Click for details.)" = "%@ — %@（押すと詳細）";
 

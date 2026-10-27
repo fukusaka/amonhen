@@ -58,6 +58,8 @@ becomes the GitHub Release notes.
   the app inherited from what launched it (`GIT_EDITOR`, for one) no longer reach git unless the shell sets them.
 - Dropping a branch on one checked out in another worktree no longer fast-forwards it behind that worktree's back;
   the menu offers to open the worktree instead.
+- With git older than 2.34, an SSH-signed commit no longer makes git crash during signature checks, which lost the
+  marks of the commits checked with it and the commit's notes and line counts; its signature shows Can’t verify.
 
 ### [0.2.7] - 2026-10-26
 

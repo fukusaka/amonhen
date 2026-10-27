@@ -1,6 +1,8 @@
 //! コミットの詳細のうち git に頼む分（署名の検証・notes・変更の行数）。
 
-use amonhen_model::{CommitExtras, FileStat, Oid, Result, SignatureCheck, SignerEmail};
+use std::collections::HashSet;
+
+use amonhen_model::{CommitExtras, CommitText, FileStat, Oid, Result, SignatureCheck, SignerEmail};
 
 use crate::Git;
 
@@ -8,6 +10,8 @@ impl Git {
     pub fn commit_extras(&self, commit: &Oid) -> Result<CommitExtras> {
         let hex = commit.to_string();
         let gpg = self.gpg_without_key_fetch();
+        // この git が確かめられない署名は、git に検証を頼まずに notes だけ読む。
+        let unsupported = !self.unverifiable(&[*commit])?.is_empty();
         // log.showSignature が有効だと、検証の出力が書式の前に混ざるので切る。
         let log = self.read(&[
             "-c",
@@ -16,11 +20,19 @@ impl Git {
             &gpg,
             "log",
             "-1",
-            "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00%N",
+            if unsupported {
+                "--format=%x00%x00%x00%x00%x00%x00%N"
+            } else {
+                "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00%N"
+            },
             &hex,
         ])?;
         let (signature, primary, notes) = parse_signature_and_notes(&String::from_utf8_lossy(&log));
-        let signature = signature.map(|s| self.with_emails(vec![(s, primary)]).remove(0));
+        let signature = if unsupported {
+            Some(unsupported_check())
+        } else {
+            signature.map(|s| self.with_emails(vec![(s, primary)]).remove(0))
+        };
         // 最初の親と比べる（merge でも、変わったファイルの一覧と同じ比べ方にする）。`--diff-merges` は git 2.31
         // から。それより前は `-m --first-parent` が同じ意味になる（新しい git では両方の親と比べてしまう）。
         let mut args = vec![
@@ -53,7 +65,15 @@ impl Git {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
-        let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
+        let unsupported = self.unverifiable(ids)?;
+        let input: String = ids
+            .iter()
+            .filter(|id| !unsupported.contains(id))
+            .map(|id| format!("{id}\n"))
+            .collect();
+        if input.is_empty() {
+            return Ok(vec![unsupported_check(); ids.len()]);
+        }
         let gpg = self.gpg_without_key_fetch();
         let out = self.read_with_input(
             &[
@@ -90,6 +110,9 @@ impl Git {
         let checks = ids
             .iter()
             .map(|id| {
+                if unsupported.contains(id) {
+                    return (unsupported_check(), String::new());
+                }
                 found.get(&id.to_string()).cloned().unwrap_or_else(|| {
                     let check = SignatureCheck {
                         status: 'E',
@@ -189,6 +212,9 @@ impl Git {
 
     /// 1 つのコミットの署名の検証の詳細（署名者・鍵・信用度）。
     pub fn signature_details(&self, commit: &Oid) -> Result<Option<SignatureCheck>> {
+        if !self.unverifiable(&[*commit])?.is_empty() {
+            return Ok(Some(unsupported_check()));
+        }
         let gpg = self.gpg_without_key_fetch();
         let out = self.read(&[
             "-c",
@@ -203,6 +229,68 @@ impl Git {
         let (signature, primary, _) = parse_signature_and_notes(&String::from_utf8_lossy(&out));
         Ok(signature.map(|s| self.with_emails(vec![(s, primary)]).remove(0)))
     }
+}
+
+impl Git {
+    /// `ids` のうち、この git では確かめられない署名のコミット。SSH の署名は git 2.34 からで、それより前の git に
+    /// `%G?` で頼むと、署名を読めずに git が止まる（`BUG: gpg-interface.c: bad signature`。まとめて頼んだほかの
+    /// コミットの結果も返らない）。新しい git では何も読まない。
+    fn unverifiable(&self, ids: &[Oid]) -> Result<HashSet<Oid>> {
+        if ids.is_empty() || crate::git_at_least(2, 34) {
+            return Ok(HashSet::new());
+        }
+        let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
+        let out = self.read_with_input(&["cat-file", "--batch"], input.as_bytes())?;
+        Ok(ids
+            .iter()
+            .zip(signature_kinds(&out))
+            .filter(|(_, kind)| *kind == CommitText::SIGNED_SSH)
+            .map(|(id, _)| *id)
+            .collect())
+    }
+}
+
+/// この git では確かめられない署名の結果。
+fn unsupported_check() -> SignatureCheck {
+    SignatureCheck {
+        status: SignatureCheck::UNSUPPORTED,
+        ..Default::default()
+    }
+}
+
+/// `git cat-file --batch` の出力を読み、オブジェクトごとに署名の種類（`CommitText::SIGNED_*`、なければ 0）を
+/// 同じ順に返す。署名はヘッダーの `gpgsig`（SHA-256 のリポジトリでは `gpgsig-sha256`）。
+fn signature_kinds(out: &[u8]) -> Vec<u8> {
+    let mut kinds = Vec::new();
+    let mut rest = out;
+    while let Some(end) = rest.iter().position(|&b| b == b'\n') {
+        let line = String::from_utf8_lossy(&rest[..end]);
+        rest = &rest[end + 1..];
+        // `<id> <type> <size>`。ないオブジェクトは `<id> missing`。
+        let Some(size) = line
+            .rsplit(' ')
+            .next()
+            .and_then(|s| s.parse::<usize>().ok())
+        else {
+            kinds.push(0);
+            continue;
+        };
+        let body = &rest[..size.min(rest.len())];
+        rest = rest.get(size + 1..).unwrap_or_default();
+        let header_end = body
+            .windows(2)
+            .position(|w| w == b"\n\n")
+            .unwrap_or(body.len());
+        let kind = body[..header_end]
+            .split(|&b| b == b'\n')
+            .find_map(|l| {
+                l.strip_prefix(b"gpgsig ")
+                    .or_else(|| l.strip_prefix(b"gpgsig-sha256 "))
+            })
+            .map_or(0, CommitText::signature_kind);
+        kinds.push(kind);
+    }
+    kinds
 }
 
 /// `program` を `--no-auto-key-retrieve` 付きで呼ぶスクリプト（gpg ごとに 1 つ、一時フォルダに置く）。
@@ -471,5 +559,53 @@ mod tests {
                 removed: Some(0)
             }]
         );
+    }
+
+    /// SSH で署名したコミットは、git 2.34 より前の git では確かめずに V にする（頼むと git が止まり、まとめて
+    /// 頼んだほかのコミットの結果も notes も返らない）。新しい git では git の結果のまま。
+    #[test]
+    fn leaves_ssh_signatures_to_git_that_can_check_them() {
+        let tmp = tempfile::tempdir().unwrap();
+        let git = Git::new(tmp.path());
+        git.write(&["init", "-q"]).unwrap();
+        let tree = String::from_utf8(git.write_with_input(&["mktree"], b"").unwrap()).unwrap();
+        let commit = |message: &str, signature: &str| {
+            let raw = format!(
+                "tree {}\nauthor a <a@example.com> 1 +0000\ncommitter a <a@example.com> 1 +0000\n{signature}\n{message}\n",
+                tree.trim()
+            );
+            let id = git
+                .write_with_input(
+                    &["hash-object", "-t", "commit", "-w", "--stdin"],
+                    raw.as_bytes(),
+                )
+                .unwrap();
+            Oid::from_hex(String::from_utf8(id).unwrap().trim()).unwrap()
+        };
+        let plain = commit("plain", "");
+        let ssh = commit(
+            "ssh",
+            "gpgsig -----BEGIN SSH SIGNATURE-----\n U1NIU0lH\n -----END SSH SIGNATURE-----\n",
+        );
+        git.write(&["notes", "add", "-m", "a note", &ssh.to_string()])
+            .unwrap();
+        let old = !crate::git_at_least(2, 34);
+
+        let checks = git.verify_signatures(&[plain, ssh, plain]).unwrap();
+        assert_eq!(checks[0].status, 'N');
+        assert_eq!(checks[2].status, 'N');
+        assert_eq!(checks[1].status == SignatureCheck::UNSUPPORTED, old);
+        let extras = git.commit_extras(&ssh).unwrap();
+        assert_eq!(extras.notes, "a note");
+        let status = extras.signature.map(|s| s.status);
+        assert_eq!(status == Some(SignatureCheck::UNSUPPORTED), old);
+        let details = git.signature_details(&ssh).unwrap().map(|s| s.status);
+        assert_eq!(details == Some(SignatureCheck::UNSUPPORTED), old);
+    }
+
+    #[test]
+    fn reads_signature_kinds_from_cat_file() {
+        let out = b"a commit 59\ntree t\ngpgsig -----BEGIN SSH SIGNATURE-----\n x\n\nmsg gpgsig\n\nb missing\nc commit 21\ntree t\n\ngpgsig SSH x\n\n";
+        assert_eq!(signature_kinds(out), [CommitText::SIGNED_SSH, 0, 0]);
     }
 }

@@ -18,6 +18,8 @@ enum SignatureStatus: Equatable {
     case bad
     /// 鍵がないなどで検証できない（E）。
     case noKey
+    /// 使っている git がその種類の署名を確かめられない（V。SSH の署名は git 2.34 から）。
+    case unsupported
     /// 署名はあるが、まだ検証していない。
     case pending
 
@@ -41,6 +43,7 @@ enum SignatureStatus: Equatable {
         case "X", "Y": self = .expired
         case "R": self = .revoked
         case "B": self = .bad
+        case "V": self = .unsupported
         default: self = .noKey
         }
     }
@@ -68,6 +71,7 @@ enum SignatureStatus: Equatable {
         case .bad: "xmark.seal.fill"
         // 縦長の鍵は、ほかのアイコンと大きさが揃わないので丸に「?」にする。
         case .noKey: "questionmark.circle"
+        case .unsupported: "exclamationmark.circle"
         case .pending: "seal"
         }
     }
@@ -78,7 +82,7 @@ enum SignatureStatus: Equatable {
         case .untrusted, .signerMismatch: .systemYellow
         case .expired: .systemOrange
         case .revoked, .bad: .systemRed
-        case .noKey: .secondaryLabelColor
+        case .noKey, .unsupported: .secondaryLabelColor
         case .pending: .tertiaryLabelColor
         }
     }
@@ -93,6 +97,7 @@ enum SignatureStatus: Equatable {
         case .revoked: "Revoked key"
         case .bad: "Bad signature"
         case .noKey: "No key"
+        case .unsupported: "Can’t verify"
         case .pending: "Checking…"
         }
     }
@@ -109,6 +114,7 @@ enum SignatureStatus: Equatable {
         case .revoked: L("The signing key has been revoked. This signature can’t be trusted.")
         case .bad: L("The signature is invalid. The commit was changed after it was signed, or the signature is corrupt.")
         case .noKey: L("There’s no public key to verify the signature (it isn’t in the GPG keyring or the SSH allowed signers).")
+        case .unsupported: L("This git can’t verify SSH signatures. It needs git 2.34 or later.")
         case .pending: L("Verifying the signature.")
         }
     }
