@@ -363,7 +363,8 @@ impl Session {
     }
 
     /// History の行: `start` から `count` 行（その範囲に重なる線も）か、`rows` で指した行（検索の結果など。線は
-    /// なし）。点・ID・日時・件名と作者（UTF-8 の置き場の位置）・署名・折りたたんだ数・親の行。
+    /// なし）。点・ID・日時・件名と作者（UTF-8 の置き場の位置。作者は mailmap で置き換えたもの）・署名・折りたたんだ
+    /// 数・親の行。`recorded` なら、置き換えて記録と違う行の記録された作者も（JSON の `recorded`）。
     fn history_rows(&self, request: &Value) -> Result<Reply> {
         let h = self.history(request)?;
         let total = h.graph.len() as u32;
@@ -395,6 +396,7 @@ impl Session {
             spans.push(part.len() as u32);
             text.extend_from_slice(part);
         };
+        let mailmap = self.repo.mailmap();
         let (times, signatures) = if contiguous && !rows.is_empty() {
             let chunk = self
                 .repo
@@ -409,7 +411,7 @@ impl Session {
             let texts = self.repo.commit_texts(&ids)?;
             for t in &texts {
                 push(String::from_utf8_lossy(t.subject()).as_bytes());
-                push(String::from_utf8_lossy(t.author_name()).as_bytes());
+                push(String::from_utf8_lossy(&t.author(mailmap.as_deref()).name).as_bytes());
             }
             (
                 texts.iter().map(|t| t.author_time).collect(),
@@ -435,6 +437,28 @@ impl Session {
         let parent_ids: Vec<Oid> = parents.iter().map(|&p| h.graph.ids()[p as usize]).collect();
         let all = h.layout.edges();
         let edges: Vec<amonhen_layout::Edge> = edge_ids.iter().map(|&i| all[i as usize]).collect();
+        // 記録された作者（頼まれたときだけ。置き換えて違うものだけ、行の何番目か・名前・メール）。
+        let recorded: Vec<Value> = match &mailmap {
+            Some(m) if request["recorded"] == true => self
+                .repo
+                .commit_texts(&ids)?
+                .iter()
+                .enumerate()
+                .filter_map(|(i, t)| {
+                    let mapped = m.map(t.author_name(), t.author_email());
+                    (mapped.name != t.author_name() || mapped.email != t.author_email()).then(
+                        || {
+                            json!({
+                                "index": i,
+                                "name": String::from_utf8_lossy(t.author_name()),
+                                "email": String::from_utf8_lossy(t.author_email()),
+                            })
+                        },
+                    )
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         let mut r = Records::new();
         r.put_slice("rowNumbers", &rows)
             .put_slice("nodes", &nodes)
@@ -449,7 +473,7 @@ impl Session {
             .put_slice("parentIds", &parent_ids)
             .put_slice("edges", &edges)
             .put_slice("edgeIds", &edge_ids);
-        Ok(r.finish(json!({"count": rows.len(), "edges": edges.len()})))
+        Ok(r.finish(json!({"count": rows.len(), "edges": edges.len(), "recorded": recorded})))
     }
 
     fn commit_diff(&self, request: &Value) -> Result<Reply> {

@@ -492,7 +492,7 @@ fn log(args: &[String]) -> Result<ExitCode> {
     let rows = if query.is_empty() {
         call(
             &*front,
-            serde_json::json!({"op": "historyRows", "history": id, "start": 0, "count": count.min(total as usize)}),
+            serde_json::json!({"op": "historyRows", "history": id, "start": 0, "count": count.min(total as usize), "recorded": as_json}),
         )?
     } else {
         // 検索の結果は、グラフなしで並べる（行がとびとびなので線をつなげない）。
@@ -504,7 +504,7 @@ fn log(args: &[String]) -> Result<ExitCode> {
         let found: Vec<u32> = found.u32s("rows").into_iter().take(count).collect();
         call(
             &*front,
-            serde_json::json!({"op": "historyRows", "history": id, "rows": found}),
+            serde_json::json!({"op": "historyRows", "history": id, "rows": found, "recorded": as_json}),
         )?
     };
     let rows = graph::Rows::from(&rows);
