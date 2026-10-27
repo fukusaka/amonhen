@@ -234,6 +234,16 @@ public enum RemoteScan {
     }
 }
 
+/// この Mac のフォルダ（パスを選ぶシートが読む）。
+public enum LocalFolders {
+    /// `path`（`~` 可）のフォルダの中身。JSON（`path`・`home`・`entries`。SSH 先のエンジンの `listDirectory` と同じ形）。
+    public static func listJSON(_ path: String) throws -> Data {
+        guard let out = amonhen_list_directory(path) else { throw AmonhenError.last() }
+        defer { amonhen_string_free(out) }
+        return Data(String(cString: out).utf8)
+    }
+}
+
 /// この Mac の git（リポジトリに依らないもの）。どれも git を起動することがあるので、裏のスレッドで呼ぶ。
 public enum LocalGit {
     /// git の版（`2.39.5`）。読めなければ nil。

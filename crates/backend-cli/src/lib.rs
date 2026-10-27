@@ -357,6 +357,11 @@ pub fn git_version() -> Option<(u32, u32, u32)> {
     version
 }
 
+/// この機械の `path` のフォルダの中身（`~` 可。アプリがこの Mac のパスを選ぶシートで読む）。
+pub fn list_directory(path: &str) -> Result<amonhen_model::Directory> {
+    directory::list(path)
+}
+
 /// この機械で署名に使える鍵（`format` は openpgp・ssh・x509。アプリの Settings > Git の鍵の一覧）。
 pub fn signing_keys(format: &str) -> Result<Vec<amonhen_model::SigningKey>> {
     Git::new(std::env::temp_dir()).signing_keys_for(format)
