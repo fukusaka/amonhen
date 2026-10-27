@@ -1397,7 +1397,10 @@
 "The path of amonhen on the host. It must be this build." = "SSH 先の amonhen のパス。このビルドのものである必要があります。";
 "%@ is set in the environment, so it decides instead." = "環境変数 %@ があるので、そちらが優先されます。";
 "Program on %@" = "%@ のプログラム";
-"The path of the program on the host." = "SSH 先のプログラムのパス。";
+"Choose the program on the host." = "SSH 先のプログラムを選びます。";
+"Home folder" = "ホームフォルダ";
+"Show hidden files" = "隠しファイルを表示";
+"Symbolic link" = "シンボリックリンク";
 "The git chosen in Programs is %@." = "プログラムで選んだ git は %@ です。";
 "Use the git on the PATH" = "PATH の git に戻す";
 "Started by the shared daemon" = "共有の daemon が起動したもの";
