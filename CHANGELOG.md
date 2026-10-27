@@ -45,7 +45,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
-- SSH hosts whose login shell is tcsh or csh connect: the commands sent there now run in sh.
+- SSH hosts whose login shell is tcsh, csh or fish connect: the commands sent there now run in sh.
 - Launched from a terminal or another app, the app read the login shell's PATH as a nested shell, so a shell set up
   to build PATH only at the top level gave the system's git instead of the one a terminal uses. Variables git uses that
   the app inherited from what launched it (`GIT_EDITOR`, for one) no longer reach git unless the shell sets them.

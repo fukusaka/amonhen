@@ -74,9 +74,19 @@ fn shell_quote(s: &str) -> String {
 }
 
 /// SSH 先で実行する sh の文を、利用者のログインシェルが何でも sh で動くように。sshd は送った文を利用者の
-/// ログインシェル（tcsh・csh・fish もある）に渡すので、sh を起動して渡し直す。
+/// ログインシェル（tcsh・csh・fish もある）に渡すので、sh を起動して渡し直す。fish は一重引用符の中でも
+/// `\'` と `\\` を読むので、`\` は `'` と同じく引用符の外に出す（sh・csh も同じに読む）。
 fn in_sh(script: &str) -> String {
-    format!("exec /bin/sh -c {}", shell_quote(script))
+    let mut quoted = String::from("exec /bin/sh -c '");
+    for c in script.chars() {
+        match c {
+            '\'' => quoted.push_str(r"'\''"),
+            '\\' => quoted.push_str(r"'\\'"),
+            c => quoted.push(c),
+        }
+    }
+    quoted.push('\'');
+    quoted
 }
 
 /// SSH 先ごとの選択（アプリの Settings > SSH Hosts の「接続」と「プログラム」）。FE がつなぐときに送る
@@ -672,6 +682,8 @@ mod host_options_tests {
             "{login}"
         );
         assert!(login.ends_with("; exec x"), "{login}");
+        // 包んだ文の `\` は引用符の外に出す（fish は一重引用符の中の `\'` を引用符と読む）。
+        assert_eq!(super::in_sh(r"a'b\c"), r"exec /bin/sh -c 'a'\''b'\\'c'");
         assert_eq!(
             super::through_login_shell(&HostOptions::default(), "exec x"),
             "exec x"
