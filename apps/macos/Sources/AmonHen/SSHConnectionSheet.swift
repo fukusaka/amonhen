@@ -91,15 +91,15 @@ final class SSHConnectionModel {
         }
     }
 
-    /// ホストの中を見て選ぶ（今までのフォルダの一覧。パスワードを聞くホストでは読めない）。
+    /// ホストの中を見て選ぶ（SSH 先のエンジンにつないで読む）。
     func choose() {
-        guard let chosen = SSHFolderChooser.run(
-            title: L("Choose a Repository on %@", trimmedHost), message: L("Double-click a folder to go into it, and choose a repository (green)."),
-            button: L("Choose"), fixedHost: trimmedHost.isEmpty ? nil : trimmedHost, hosts: hosts,
-            initialHost: trimmedHost.isEmpty ? nil : trimmedHost, initialPath: trimmedPath.isEmpty ? "~" : trimmedPath)
-        else { return }
-        host = chosen.host
-        path = chosen.path
+        guard !trimmedHost.isEmpty else { return }
+        RemoteFilePicker.present(title: L("Choose a Repository on %@", trimmedHost), message: L("Click a folder to open it, and choose a repository (green)."),
+                                 kind: .folder, host: trimmedHost, initial: trimmedPath) { [weak self] chosen in
+            guard let self, let chosen else { return }
+            host = chosen.host
+            path = chosen.shown
+        }
     }
 
     func add() {
