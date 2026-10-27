@@ -59,29 +59,49 @@ pub fn data_dir() -> Result<PathBuf> {
 /// （`amonhen --stdio` だけ）と、アプリの Settings > Git がこれを開き、local の値は見ずに global だけを扱う。
 pub fn settings_repository() -> Result<PathBuf> {
     let dir = data_dir()?.join("settings-repo");
-    if !dir.join(".git").is_dir() {
-        std::fs::create_dir_all(&dir)?;
-        let out = amonhen_model::process::command("git")
-            .args(["init", "-q"])
-            .current_dir(&dir)
-            .output()
-            .map_err(|e| {
-                tr!(
-                    "Couldn’t run git ({git}): {error}",
-                    git = amonhen_model::process::git_program().to_string_lossy(),
-                    error = e
-                )
-            })?;
-        if !out.status.success() {
-            return Err(tr!(
-                "Couldn’t prepare the settings repository at {path}: {error}",
-                path = dir.display(),
-                error = String::from_utf8_lossy(&out.stderr).trim()
-            )
-            .into());
-        }
-    }
+    prepare_settings_repository(&dir)?;
     Ok(dir)
+}
+
+/// `dir` に設定のための空のリポジトリを用意する。選んだ git がなくても（`process::missing_git`）、自分で
+/// 最小の形を置く。そうしないとエンジンが起動できず、SSH 先の Settings > Git > Programs で選び直せない。
+fn prepare_settings_repository(dir: &std::path::Path) -> Result<()> {
+    if dir.join(".git").is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(dir)?;
+    if amonhen_model::process::missing_git().is_some() {
+        let git = dir.join(".git");
+        for sub in ["objects", "refs/heads", "refs/tags"] {
+            std::fs::create_dir_all(git.join(sub))?;
+        }
+        std::fs::write(git.join("HEAD"), "ref: refs/heads/main\n")?;
+        std::fs::write(
+            git.join("config"),
+            "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+        )?;
+        return Ok(());
+    }
+    let out = amonhen_model::process::command("git")
+        .args(["init", "-q"])
+        .current_dir(dir)
+        .output()
+        .map_err(|e| {
+            tr!(
+                "Couldn’t run git ({git}): {error}",
+                git = amonhen_model::process::git_program().to_string_lossy(),
+                error = e
+            )
+        })?;
+    if !out.status.success() {
+        return Err(tr!(
+            "Couldn’t prepare the settings repository at {path}: {error}",
+            path = dir.display(),
+            error = String::from_utf8_lossy(&out.stderr).trim()
+        )
+        .into());
+    }
+    Ok(())
 }
 
 /// `url` を `dest`（まだないフォルダ）に clone する。`dest` の親で git を起動する（Activity に残る）。
@@ -658,6 +678,26 @@ mod tests {
         assert_eq!(parse_git_version("git version 2.50"), Some((2, 50, 0)));
         assert_eq!(parse_git_version("usage: git"), None);
         assert!(git_version().is_some_and(|(major, minor, _)| (major, minor) >= MIN_GIT_VERSION));
+    }
+
+    /// 選んだ git がなくても、設定のための空のリポジトリはでき、git が読める形になっている。
+    #[test]
+    fn prepares_the_settings_repository_without_the_chosen_git() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("settings-repo");
+        let env = amonhen_model::process::ClientEnv::from_vars([(
+            "AMONHEN_GIT".to_owned(),
+            tmp.path().join("no-git").display().to_string(),
+        )]);
+        amonhen_model::process::with_client_env(&env, || {
+            prepare_settings_repository(&dir).unwrap();
+        });
+        let out = std::process::Command::new("git")
+            .args(["rev-parse", "--is-inside-work-tree"])
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&out.stdout).trim(), "true");
     }
 
     fn repo() -> (tempfile::TempDir, Git) {
