@@ -5,7 +5,7 @@ import SwiftUI
 /// git を動かす機械（SSH 先）のファイルやフォルダを選ぶシート。Finder のカラム表示に近い形: 上にパスの欄（打ち込める。
 /// `~` はその機械のホーム）、下に `/` から選んだところまでの列。中身はその機械のエンジンが読む（コアの `listDirectory`）。
 /// 呼ぶ所が、実行できるファイルを選ぶか、フォルダを選ぶかを決める（選べないものは薄く出す）。パスは機械の形のまま
-/// （Windows なら `C:\…`。`HostPath`）。
+/// （Windows なら `C:\…`。`HostPath`）。列は Finder と同じくキーボードでも動かせる。
 enum RemoteFilePicker {
     enum Kind {
         case executable
@@ -109,6 +109,11 @@ final class RemoteFilePickerModel {
     private var generation = 0
     /// 今のつなぎ（古いつなぎの答えは捨てる）。
     private var attempt = 0
+    /// → で入ったが、まだ読んでいるフォルダ（読めたら最初のものを選ぶ）。
+    private var entering: String?
+    /// 打った名前（type-select）と、最後に打った時刻。
+    private var typed = ""
+    private var typedAt = Date.distantPast
 
     init(kind: RemoteFilePicker.Kind, hosts: [String]?, initial: String) {
         self.kind = kind
@@ -173,6 +178,7 @@ final class RemoteFilePickerModel {
         let generation = generation
         loading = true
         problem = nil
+        entering = nil
         // Windows の機械なら `\` も区切り（`~\bin\git.exe` は形で見分けられない）。
         let windows = HostPath.isWindows(home ?? columns.first?.path ?? "")
         Task {
@@ -221,6 +227,7 @@ final class RemoteFilePickerModel {
         generation += 1
         problem = nil
         loading = false
+        entering = nil
         columns.removeSubrange((index + 1)...)
         columns[index].selected = entry.name
         if entry.isFolder {
@@ -241,11 +248,82 @@ final class RemoteFilePickerModel {
             case let .success(dir):
                 home = dir.home ?? home
                 columns[index].entries = dir.entries
+                if entering == path {
+                    entering = nil
+                    selectFirst(in: index)
+                }
             case let .failure(error):
                 columns[index].entries = []
                 columns[index].error = "\(error)"
             }
         }
+    }
+
+    /// キーボードで動かす列: いちばん奥で選んでいるものの列（フォルダを選んで、その中でまだ何も選んでいなければ、
+    /// そのフォルダの列）。
+    var activeIndex: Int? {
+        guard let last = columns.indices.last else { return nil }
+        return columns[last].selected == nil && last > 0 ? last - 1 : last
+    }
+
+    /// 列の中で選べるもの（キーボードで動く先）。
+    private func candidates(_ index: Int) -> [RemoteDirectory.Entry] {
+        visible(columns[index]).filter { selectable($0) || $0.isFolder }
+    }
+
+    /// ↑↓: 列の中で前後のものを選ぶ。何も選んでいなければ、端のもの。
+    func move(_ step: Int) {
+        guard let index = activeIndex else { return }
+        let entries = candidates(index)
+        guard !entries.isEmpty else { return }
+        let current = columns[index].selected.flatMap { name in entries.firstIndex { $0.name == name } }
+        let next = current.map { min(max($0 + step, 0), entries.count - 1) } ?? (step > 0 ? 0 : entries.count - 1)
+        if next != current { select(entries[next], in: index) }
+    }
+
+    /// →: 選んでいるフォルダに入り、その最初のものを選ぶ（まだ読んでいれば、読めたら）。
+    func enter() {
+        guard let index = activeIndex, index + 1 < columns.count else { return }
+        if columns[index + 1].entries == nil {
+            entering = columns[index + 1].path
+        } else {
+            selectFirst(in: index + 1)
+        }
+    }
+
+    /// ←: 上の列へ戻る（今の列の選びを外す。上の列では、このフォルダを選んだまま）。
+    func back() {
+        guard let index = activeIndex, index > 0 else { return }
+        generation += 1
+        problem = nil
+        loading = false
+        entering = nil
+        columns.removeSubrange((index + 1)...)
+        columns[index].selected = nil
+        updateField()
+    }
+
+    /// ⏎: 選べるものなら選ぶ。選べなければ、選んでいるフォルダに入る。
+    func activate() {
+        if chosen != nil { choose() } else { enter() }
+    }
+
+    /// 名前を打つと、その名前の行を選ぶ（続けて打てば続きで。なければ、並びでその後にあるもの）。
+    func typeSelect(_ characters: String) {
+        let now = Date()
+        typed = now.timeIntervalSince(typedAt) > 1 ? characters : typed + characters
+        typedAt = now
+        guard let index = activeIndex else { return }
+        let entries = candidates(index)
+        // エンジンは小文字にした名前で並べる。
+        let key = typed.lowercased()
+        guard let entry = entries.first(where: { $0.name.lowercased() >= key }) ?? entries.last,
+              entry.name != columns[index].selected else { return }
+        select(entry, in: index)
+    }
+
+    private func selectFirst(in index: Int) {
+        if let first = candidates(index).first { select(first, in: index) }
     }
 
     /// 選べるものか（フォルダを選ぶならフォルダ、実行ファイルを選ぶなら実行できるファイル）。
@@ -305,6 +383,15 @@ struct RemoteFilePickerView: View {
     let message: String
     private let columnWidth: CGFloat = 210
 
+    private enum Focus: Hashable {
+        case field
+        case columns
+    }
+
+    @FocusState private var focus: Focus?
+    /// パスの欄に打ち込んだか（打ち込んでいれば、列が出ても欄に残す）。
+    @State private var typing = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).font(.headline)
@@ -318,9 +405,10 @@ struct RemoteFilePickerView: View {
                 }
             }
             HStack(spacing: 6) {
-                TextField("", text: $model.field, prompt: Text(model.kind == .folder ? "~/prj" : "/usr/local/bin/git"))
+                TextField("", text: Binding(get: { model.field }, set: { model.field = $0; typing = true }), prompt: Text(model.kind == .folder ? "~/prj" : "/usr/local/bin/git"))
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
+                    .focused($focus, equals: .field)
                     .onSubmit { model.go(model.field) }
                 Button { model.go("~") } label: { Image(systemName: "house") }
                     .help(L("Home folder"))
@@ -381,18 +469,44 @@ struct RemoteFilePickerView: View {
             .background(Color(nsColor: .textBackgroundColor))
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color(nsColor: .separatorColor)))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // キーボードでは、列をまとめて 1 つとして（Finder のカラム表示と同じキー）。パスの欄で打っているときは届かない。
+            .focusable()
+            .focusEffectDisabled()
+            .focused($focus, equals: .columns)
+            .onKeyPress(phases: .down) { key($0) }
             .onChange(of: model.columns.map(\.id)) { _, ids in
                 if let last = ids.last { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(last, anchor: .trailing) } }
             }
             .onAppear {
                 if let last = model.columns.last { proxy.scrollTo(last.id, anchor: .trailing) }
+                // パスの欄に打ち込んでいなければ、列で始める（すぐ矢印で動ける。シートを出すと欄に入るので、そのあとで）。
+                if !typing { Task { focus = .columns } }
             }
         }
     }
 
+    /// 列でのキー: ↑↓ で列の中、→ でフォルダの中、← で上の列、⏎ で選ぶ、名前を打つとその行へ。
+    private func key(_ press: KeyPress) -> KeyPress.Result {
+        guard press.modifiers.isDisjoint(with: [.command, .control, .option]) else { return .ignored }
+        switch press.key {
+        case .upArrow: model.move(-1)
+        case .downArrow: model.move(1)
+        case .rightArrow: model.enter()
+        case .leftArrow: model.back()
+        case .return: model.activate()
+        default:
+            let characters = press.characters
+            guard !characters.isEmpty, !characters.unicodeScalars.contains(where: {
+                CharacterSet.controlCharacters.contains($0) || (0xF700...0xF8FF).contains($0.value)
+            }), !(characters == " ") else { return .ignored }
+            model.typeSelect(characters)
+        }
+        return .handled
+    }
+
     @ViewBuilder private func columnView(_ column: RemoteFilePickerModel.Column, index: Int) -> some View {
-        // 最後に選んだ列だけ強い色で（Finder と同じ）。
-        let active = index == model.columns.count - 1 || (index == model.columns.count - 2 && model.columns.last?.selected == nil)
+        // 最後に選んだ列だけ強い色で（Finder と同じ）。パスの欄で打っているときは薄い色で。
+        let active = index == model.activeIndex && focus != .field
         if column.entries == nil {
             ProgressView().controlSize(.small).frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if let error = column.error {
@@ -405,7 +519,10 @@ struct RemoteFilePickerView: View {
                         ForEach(model.visible(column), id: \.name) { entry in
                             row(entry, selected: column.selected == entry.name, active: active)
                                 .id(entry.name)
-                                .onTapGesture { model.select(entry, in: index) }
+                                .onTapGesture {
+                                    model.select(entry, in: index)
+                                    focus = .columns
+                                }
                                 .simultaneousGesture(TapGesture(count: 2).onEnded {
                                     if model.selectable(entry) { model.select(entry, in: index); model.choose() }
                                 })
@@ -424,6 +541,10 @@ struct RemoteFilePickerView: View {
                 // 前から出ていた列でも（クリックで選んだときは動かさない）。
                 .onChange(of: model.reveal) {
                     if let selected = column.selected { proxy.scrollTo(selected, anchor: .center) }
+                }
+                // キーボードで選んだものが見えるように（見えていれば動かさない）。
+                .onChange(of: column.selected) { _, selected in
+                    if let selected { proxy.scrollTo(selected) }
                 }
             }
         }
