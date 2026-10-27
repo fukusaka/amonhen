@@ -334,6 +334,11 @@ pub const MIN_GIT_VERSION: (u32, u32) = (2, 23);
 
 /// `git` の版（`git version` の数の 3 つ）。読めなければ `None`。使う git（`AMONHEN_GIT`）ごとに 1 回だけ調べる。
 pub fn git_version() -> Option<(u32, u32, u32)> {
+    // 使えない git は動かさない（macOS の /usr/bin/git なら、インストールのダイアログが出る）。覚えもしないので、
+    // 入れたり選び直したりすれば、次に調べるときから読める。
+    if amonhen_model::process::missing_git().is_some() {
+        return None;
+    }
     type Cached = Option<(std::ffi::OsString, Option<(u32, u32, u32)>)>;
     static VERSION: std::sync::Mutex<Cached> = std::sync::Mutex::new(None);
     let program = amonhen_model::process::git_program();
