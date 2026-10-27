@@ -89,14 +89,13 @@ fn in_sh(script: &str) -> String {
     quoted
 }
 
-/// SSH 先ごとの選択（アプリの Settings > SSH Hosts の「接続」と「プログラム」）。FE がつなぐときに送る
+/// SSH 先ごとの選択（アプリの Settings > SSH Hosts の「接続」と「環境変数」）。FE がつなぐときに送る
 /// （`crate::local::opening`。共有の daemon は、そのつながりでエンジンを起動するときに使う）。環境変数
-/// （`AMONHEN_REMOTE_ENGINE`・`AMONHEN_PUSH`）があれば、そちらが優先。
+/// （`AMONHEN_REMOTE_ENGINE`・`AMONHEN_PUSH`）があれば、そちらが優先。SSH 先で使う git はここにはなく、SSH 先の
+/// Amon Hen の設定（`amonhen_model::settings`）にある。
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct HostOptions {
-    /// SSH 先で使う git（エンジンに `AMONHEN_GIT` として渡す）。なければ SSH 先の PATH のもの。
-    pub git: Option<String>,
     /// SSH 先で動かすエンジン: `installed`（PATH の amonhen。このビルドでなければつながない）、`sent`（Amon Hen が
     /// 置いたもの。なければ送る）、`/` で始まればそのパス。なければ自動（PATH のもの → 置いたもの → 送る）。
     pub engine: Option<String>,
@@ -408,8 +407,7 @@ pub fn connect(
     let slot = SharedSlot::take(&key);
     let mut args = base_args(target, slot.is_some());
     let start = format!(
-        "{}exec {} --stdio {}",
-        git_env(options),
+        "exec {} --stdio {}",
         shell_quote(&engine.path),
         target.shell_path()
     );
@@ -443,8 +441,7 @@ pub fn find_repositories(
         .map(|e| format!(" --exclude {}", shell_quote(e)))
         .collect();
     let start = format!(
-        "{}exec {} find-repositories --depth {depth}{excludes} {}",
-        git_env(options),
+        "exec {} find-repositories --depth {depth}{excludes} {}",
         shell_quote(&engine.path),
         target.shell_path()
     );
@@ -470,14 +467,6 @@ pub fn find_repositories(
             }
         })
         .collect())
-}
-
-/// SSH 先の git の選択（`HostOptions::git`）を、エンジンに渡す `AMONHEN_GIT=… ` の形で（なければ空）。
-fn git_env(options: &HostOptions) -> String {
-    match options.git.as_deref().filter(|g| !g.is_empty()) {
-        Some(git) => format!("AMONHEN_GIT={} ", shell_quote(git)),
-        None => String::new(),
-    }
 }
 
 /// シェルの文（`command`。エンジンの起動と、PATH の amonhen を探す文）を、選んでいれば SSH 先のログインシェルの
@@ -670,7 +659,6 @@ mod host_options_tests {
     #[test]
     fn host_options_round_trip_through_json() {
         let options = HostOptions {
-            git: Some("/usr/local/bin/git".into()),
             engine: Some("sent".into()),
             push: Some(false),
             login_shell: Some(true),
@@ -691,11 +679,8 @@ mod host_options_tests {
         assert_eq!(HostOptions::from_json(&options.to_json()), options);
         assert!(HostOptions::from_json("").is_empty());
         assert!(HostOptions::from_json("{}").is_empty());
-        assert_eq!(
-            super::git_env(&options),
-            "AMONHEN_GIT='/usr/local/bin/git' "
-        );
-        assert_eq!(super::git_env(&HostOptions::default()), "");
+        // 前の版の git の選択（今は SSH 先の設定にある）は読み捨てる。
+        assert!(HostOptions::from_json(r#"{"git":"/usr/local/bin/git"}"#).is_empty());
     }
 }
 

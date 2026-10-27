@@ -119,7 +119,7 @@ pub fn opening(location: &str, env: &ClientEnv) -> String {
 /// 混ざらない）。
 const HOST_OPTIONS: &str = "AMONHEN_HOST_OPTIONS";
 
-/// `opening` に、SSH 先ごとの選択（`ssh://` の場所を開くときのエンジンと git）を添えたもの。
+/// `opening` に、SSH 先ごとの選択（`ssh://` の場所を開くときのエンジンと、その起動のしかた）を添えたもの。
 pub fn opening_with(location: &str, env: &ClientEnv, options: &HostOptions) -> String {
     let mut parts = Vec::new();
     if !env.is_empty() {
