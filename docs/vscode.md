@@ -65,7 +65,8 @@ is in [front.md](front.md), and the design in item 18 of
 - People are shown by their mailmap names on both paths. The engine maps them in the core (the details also carry the
   recorded name and email, shown under the name when they differ). The git execution layer reads `log.mailmap` and
   takes `%aN`/`%aE` for History rows (`%aN` maps even when `log.mailmap` is false), and maps the details with
-  `git check-mailmap`.
+  `git check-mailmap`. When `.mailmap` or a config file changes (their modification times, read on each refresh),
+  History and the details it keeps are read again.
 
 ## Implementation approach for the required features
 

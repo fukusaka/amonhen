@@ -3,11 +3,12 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { RepositoryBackend, Sequence } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
-import { configStamp, gitmodulesStamp, indexStamp, refsStamp, stashStamp } from '../git/stamp.ts';
+import { configStamp, gitmodulesStamp, indexStamp, mailmapStamp, refsStamp, stashStamp } from '../git/stamp.ts';
 import type { StatusEntry, StatusResult } from '../git/status.ts';
 import { UndoLog } from './undo.ts';
 
-export type Section = 'workingCopy' | 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules';
+/** `mailmap` は、人の名前の置き換え（`.mailmap`・`log.mailmap`）が変わったかもしれないとき */
+export type Section = 'workingCopy' | 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules' | 'mailmap';
 
 /** 展開されるまで取得しないセクション */
 export type LazySection = 'tags' | 'stashes' | 'submodules';
@@ -42,6 +43,7 @@ interface Stamps {
   config?: string;
   stash?: string;
   gitmodules?: string;
+  mailmap?: string;
 }
 
 /**
@@ -127,7 +129,16 @@ export class Repository implements vscode.Disposable {
     const start = performance.now();
     const changed = new Set<Section>();
     const d = this.backend.dirs;
-    const [refs, config, index] = await Promise.all([refsStamp(d), configStamp(d), indexStamp(d)]);
+    const [refs, config, index, mailmap] = await Promise.all([
+      refsStamp(d),
+      configStamp(d),
+      indexStamp(d),
+      mailmapStamp(this.backend.root, d),
+    ]);
+    if (this.stamps.mailmap !== undefined && mailmap !== this.stamps.mailmap) {
+      changed.add('mailmap');
+    }
+    this.stamps.mailmap = mailmap;
     const contents = `${refs}|${index}`;
     const contentsChanged = this.stamps.contents !== undefined && contents !== this.stamps.contents;
     this.stamps.contents = contents;

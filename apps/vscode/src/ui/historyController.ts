@@ -117,11 +117,17 @@ export class HistoryController implements vscode.Disposable {
     return this.chain.get(oid);
   }
 
-  /** ブランチやタグ、HEAD が動いたときだけ読み直す。stage などでは読み直さない */
+  /**
+   * ブランチやタグ、HEAD が動いたときと、mailmap が変わったかもしれないとき（覚えた詳細も捨てる）だけ読み直す。
+   * stage などでは読み直さない
+   */
   private onRepositoryChange(changed: ReadonlySet<Section>): void {
     const headOid = this.repo?.current.status?.branch.oid;
     const refsChanged = changed.has('branches') || changed.has('remotes') || changed.has('tags');
-    if (refsChanged || headOid !== this.headOid) {
+    if (changed.has('mailmap')) {
+      this.details.clear();
+    }
+    if (refsChanged || changed.has('mailmap') || headOid !== this.headOid) {
       clearTimeout(this.resetTimer);
       this.resetTimer = setTimeout(() => void this.reset(), 100);
     }
