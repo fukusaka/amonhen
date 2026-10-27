@@ -1402,6 +1402,14 @@
 "Choose a host to see its folders." = "SSH 先を選ぶと、そのフォルダが出ます。";
 "Home folder" = "ホームフォルダ";
 "Go to a folder" = "フォルダへ移動";
+"New Folder…" = "新規フォルダ…";
+"New Folder" = "新規フォルダ";
+"Folder name" = "フォルダの名前";
+"In %@" = "%@ の中";
+"A folder name can’t contain “/”." = "フォルダの名前に「/」は使えません。";
+"Clone Location" = "Clone する場所";
+"Choose the folder to clone into." = "Clone するフォルダを置く場所を選びます。";
+"Choose the app to open files in." = "ファイルを開くアプリを選びます。";
 "Show hidden files" = "隠しファイルを表示";
 "Symbolic link" = "シンボリックリンク";
 "The git chosen in Programs is %@." = "プログラムで選んだ git は %@ です。";

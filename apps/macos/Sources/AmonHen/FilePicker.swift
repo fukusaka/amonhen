@@ -48,9 +48,12 @@ enum FilePicker {
     }
 
     /// この Mac のものを選ぶ。選んだものの絶対パスを `done` に渡す（`multiple` なら ⌘ クリックでいくつでも）。取り消したら nil。
+    /// `canCreateFolders` なら、開いているフォルダの中にフォルダを作れる。
     static func presentLocal(title: String, message: String, kind: Kind, initial: String, places: [String] = [],
-                             multiple: Bool = false, in window: NSWindow? = nil, done: @escaping ([String]?) -> Void) {
-        let model = FilePickerModel(kind: kind, hosts: nil, initial: initial, places: places, multiple: multiple)
+                             multiple: Bool = false, canCreateFolders: Bool = false, in window: NSWindow? = nil,
+                             done: @escaping ([String]?) -> Void) {
+        let model = FilePickerModel(kind: kind, hosts: nil, initial: initial, places: places, multiple: multiple,
+                                    canCreateFolders: canCreateFolders)
         show(model, title: title, message: message, height: 460, in: window, done: done)
         model.useLocal()
     }
@@ -124,6 +127,8 @@ final class FilePickerModel {
     let places: [String]
     /// ⌘ クリックでいくつも選べるか（開かずに選ぶもの）。
     let multiple: Bool
+    /// 開いているフォルダの中にフォルダを作れるか（この Mac だけ）。
+    let canCreateFolders: Bool
     /// 最初に出すところ（つながったら行く）。
     private let initial: String
     /// 今の SSH 先（この Mac なら空）と、中身を読む所。
@@ -154,11 +159,13 @@ final class FilePickerModel {
     private var typed = ""
     private var typedAt = Date.distantPast
 
-    init(kind: FilePicker.Kind, hosts: [String]?, initial: String, places: [String] = [], multiple: Bool = false) {
+    init(kind: FilePicker.Kind, hosts: [String]?, initial: String, places: [String] = [], multiple: Bool = false,
+         canCreateFolders: Bool = false) {
         self.kind = kind
         self.hosts = hosts
         self.places = places
         self.multiple = multiple
+        self.canCreateFolders = canCreateFolders
         let initial = initial.trimmingCharacters(in: .whitespaces)
         self.initial = initial.isEmpty ? "~" : initial
         field = self.initial
@@ -460,6 +467,26 @@ final class FilePickerModel {
         }
     }
 
+    /// 開いているフォルダ（最後の列）。
+    var openFolder: String? { columns.last.flatMap { $0.error == nil && $0.entries != nil ? $0.path : nil } }
+
+    /// 開いているフォルダの中に `name` のフォルダを作り、そこへ行く（この Mac だけ）。
+    func createFolder(_ name: String) {
+        let name = name.trimmingCharacters(in: .whitespaces)
+        guard isLocal, let folder = openFolder, !name.isEmpty else { return }
+        guard !name.contains("/"), name != ".", name != ".." else {
+            problem = L("A folder name can’t contain “/”.")
+            return
+        }
+        let path = HostPath.join(folder, name)
+        do {
+            try FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: false)
+            go(path)
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
     func choose() {
         let chosen = chosen
         guard !chosen.isEmpty else { return }
@@ -484,6 +511,8 @@ struct FilePickerView: View {
     let title: String
     let message: String
     private let columnWidth: CGFloat = 210
+    @State private var naming = false
+    @State private var newName = ""
 
     private enum Focus: Hashable {
         case field
@@ -551,6 +580,11 @@ struct FilePickerView: View {
             HStack {
                 Toggle(L("Show hidden files"), isOn: $model.showHidden)
                     .keyboardShortcut(".", modifiers: [.command, .shift])
+                if model.canCreateFolders {
+                    Button(L("New Folder…")) { newName = ""; naming = true }
+                        .keyboardShortcut("n", modifiers: [.command, .shift])
+                        .disabled(model.openFolder == nil)
+                }
                 Spacer()
                 Button(L("Cancel")) { model.close(nil) }
                     .keyboardShortcut(.cancelAction)
@@ -562,6 +596,13 @@ struct FilePickerView: View {
         .padding(16)
         .frame(minWidth: 520, minHeight: 320)
         .background(Color(nsColor: .windowBackgroundColor))
+        .alert(L("New Folder"), isPresented: $naming) {
+            TextField(L("Folder name"), text: $newName)
+            Button(L("Create")) { model.createFolder(newName) }
+            Button(L("Cancel"), role: .cancel) {}
+        } message: {
+            Text(L("In %@", model.openFolder.map(model.shown) ?? ""))
+        }
     }
 
     /// `/` から選んだところまでの列（右端が見えるように送る）。
@@ -628,7 +669,7 @@ struct FilePickerView: View {
                 ScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
                         ForEach(model.visible(column), id: \.name) { entry in
-                            row(entry, selected: column.isSelected(entry.name), active: active)
+                            row(entry, in: column.path, selected: column.isSelected(entry.name), active: active)
                                 .id(entry.name)
                                 .onTapGesture {
                                     model.select(entry, in: index, extend: NSEvent.modifierFlags.contains(.command))
@@ -661,14 +702,21 @@ struct FilePickerView: View {
         }
     }
 
-    private func row(_ entry: FolderContents.Entry, selected: Bool, active: Bool) -> some View {
+    private func row(_ entry: FolderContents.Entry, in folder: String, selected: Bool, active: Bool) -> some View {
         let enabled = model.selectable(entry) || model.opens(entry)
         return HStack(spacing: 6) {
-            Image(systemName: icon(entry))
-                .foregroundStyle(selected && active ? Color.white
-                                 : entry.repository ? Color.green : entry.isFolder ? Color.accentColor : .secondary)
-                .frame(width: 16)
-                .help(entry.repository ? L("Git repository") : "")
+            // この Mac のアプリは、そのアイコンで。
+            if model.isLocal, model.kind == .application, entry.isFolder, !model.opens(entry) {
+                Image(nsImage: NSWorkspace.shared.icon(forFile: HostPath.join(folder, entry.name)))
+                    .resizable()
+                    .frame(width: 16, height: 16)
+            } else {
+                Image(systemName: icon(entry))
+                    .foregroundStyle(selected && active ? Color.white
+                                     : entry.repository ? Color.green : entry.isFolder ? Color.accentColor : .secondary)
+                    .frame(width: 16)
+                    .help(entry.repository ? L("Git repository") : "")
+            }
             Text(entry.name).lineLimit(1).truncationMode(.middle)
             if entry.link {
                 Image(systemName: "arrow.turn.up.right").font(.caption2).foregroundStyle(.secondary)

@@ -518,7 +518,7 @@ struct Note: View {
 }
 
 /// General: アプリの挙動。エディタは、アプリのどこから「エディタで開く」ときも同じものを使う。
-private struct GeneralSettings: View {
+struct GeneralSettings: View {
     @Bindable var model: SettingsModel
     @State private var installed = ExternalEditor.installed
 
@@ -543,7 +543,11 @@ private struct GeneralSettings: View {
                     Text(L("Other…")).tag("other")
                 }
                 .onChange(of: model.externalEditor) { previous, value in
-                    if value == "other" { chooseOther(previous: previous) }
+                    // 選んでいる間も、今の値を出しておく（選んだら変える）。
+                    if value == "other" {
+                        model.externalEditor = previous == "other" ? "" : previous
+                        chooseOther()
+                    }
                 }
             }
         }
@@ -551,17 +555,20 @@ private struct GeneralSettings: View {
         .onAppear { installed = ExternalEditor.installed }
     }
 
-    private func chooseOther(previous: String) {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.application]
-        panel.directoryURL = URL(fileURLWithPath: "/Applications")
-        panel.canChooseDirectories = false
-        panel.prompt = L("Choose")
-        if panel.runModal() == .OK, let url = panel.url {
-            model.externalEditor = url.path
-        } else {
-            model.externalEditor = previous == "other" ? "" : previous
+    private func chooseOther() {
+        let model = model
+        Self.chooseEditor(in: nil) { path in
+            if let path { model.externalEditor = path }
         }
+    }
+
+    /// この Mac のアプリを選ぶシート。
+    static func chooseEditor(in window: NSWindow?, done: @escaping (String?) -> Void) {
+        let places: [String] = ["/Applications", "~/Applications", "/System/Applications"].filter {
+            FileManager.default.fileExists(atPath: ($0 as NSString).expandingTildeInPath)
+        }
+        FilePicker.presentLocal(title: L("External Editor"), message: L("Choose the app to open files in."),
+                                kind: .application, initial: "/Applications", places: places, in: window) { done($0?.first) }
     }
 }
 

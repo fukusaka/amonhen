@@ -102,13 +102,16 @@ struct ProgramsPage: View {
                 found = await Task.detached(priority: .userInitiated) {
                     Dictionary(uniqueKeysWithValues: names.map { ($0, Programs.candidates($0)) })
                 }.value
-                // --file-picker [program | repository | folder] で、この Mac のものを選ぶシートを開く（見た目の確認用）:
-                // git の「その他…」、Repositories の「手元のリポジトリ…」「スキャンするフォルダ…」。
+                // --file-picker [program | repository | folder | clone | editor] で、この Mac のものを選ぶシートを開く
+                // （見た目の確認用）: git の「その他…」、Repositories の「手元のリポジトリ…」「スキャンするフォルダ…」、
+                // Clone の場所、外部エディタの「その他…」。
                 if let option = AppDelegate.option("--file-picker") {
                     let window = SettingsWindowController.shared.window
                     switch option {
                     case "repository": RepositoryBrowser.chooseRepositories(in: window) { _ in }
                     case "folder": RepositoryBrowser.chooseScanFolder(in: window) { _ in }
+                    case "clone": CloneSheet.chooseLocation(initial: "~", in: window) { _ in }
+                    case "editor": GeneralSettings.chooseEditor(in: window) { _ in }
                     default: ProgramPicker.chooseLocal(value: git?.chosen ?? found["git"]?.first?.path ?? "", in: window) { _ in }
                     }
                 }
