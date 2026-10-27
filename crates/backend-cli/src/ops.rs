@@ -826,6 +826,10 @@ impl Operations for Git {
         Ok(crate::programs::programs(name))
     }
 
+    fn list_directory(&self, path: &str) -> Result<amonhen_model::Directory> {
+        crate::directory::list(path)
+    }
+
     fn process_environment(&self) -> Result<Vec<(String, String)>> {
         let mut vars: Vec<(String, String)> = std::env::vars_os()
             .map(|(k, v)| {

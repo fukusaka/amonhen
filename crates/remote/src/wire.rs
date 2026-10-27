@@ -292,6 +292,8 @@ pub enum Op {
     SigningKeys(String),
     /// → `Vec<Program>`（daemon の機械にある `git`・`gpg` などの候補）
     Programs(String),
+    /// → `Directory`（daemon の機械のフォルダの中身。`~` はその機械のホーム）
+    ListDirectory(String),
     /// → `(String, Option<String>)`（ユーザー全体の無視するパターンのファイルのパスと中身）
     ExcludesFile,
     /// → `()`

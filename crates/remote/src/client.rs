@@ -926,6 +926,10 @@ impl Operations for RemoteOperations {
         self.op(Op::Programs(name.to_owned()))
     }
 
+    fn list_directory(&self, path: &str) -> Result<amonhen_model::Directory> {
+        self.op(Op::ListDirectory(path.to_owned()))
+    }
+
     fn excludes_file(&self) -> Result<(String, Option<String>)> {
         self.op(Op::ExcludesFile)
     }
