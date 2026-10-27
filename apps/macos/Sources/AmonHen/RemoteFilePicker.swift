@@ -31,7 +31,9 @@ enum RemoteFilePicker {
         sheet.styleMask = [.titled, .resizable]
         sheet.setContentSize(NSSize(width: 760, height: hosts == nil ? 460 : 490))
         sheet.contentMinSize = NSSize(width: 520, height: 320)
-        let parent = window ?? NSApp.keyWindow
+        sheet.title = title
+        // アプリが前にいないとき（キーのウィンドウがないとき）も、いちばん前のウィンドウに付ける。
+        let parent = window ?? NSApp.keyWindow ?? NSApp.orderedWindows.first { $0.isVisible && !($0 is NSPanel) }
         model.close = { [weak parent, weak sheet] chosen in
             guard let sheet else { return }
             if let parent { parent.endSheet(sheet) } else { sheet.close() }
@@ -99,6 +101,8 @@ final class RemoteFilePickerModel {
     /// 読めなかったときの理由（打ち込んだパスがないなど）。
     var problem: String?
     var loading = false
+    /// 打ち込んだパスへ行ったたびに増える（列を、選んだものが見えるところまで送る）。
+    var reveal = 0
     var close: (RemoteFilePicker.Chosen?) -> Void = { _ in }
     /// 今の移動（古い移動の答えは捨てる）。
     private var generation = 0
@@ -205,6 +209,7 @@ final class RemoteFilePickerModel {
         }
         columns.append(Column(path: dir.path, entries: dir.entries, selected: name))
         self.columns = columns
+        reveal += 1
         updateField()
         for column in columns where column.entries == nil { load(column.path) }
     }
@@ -422,11 +427,20 @@ struct RemoteFilePickerView: View {
                                 .simultaneousGesture(TapGesture(count: 2).onEnded {
                                     if model.selectable(entry) { model.select(entry, in: index); model.choose() }
                                 })
+                                // VoiceOver などからは、1 行を 1 つのボタンとして（押すと選ぶ）。
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel(accessibilityLabel(entry))
+                                .accessibilityAddTraits(column.selected == entry.name ? [.isButton, .isSelected] : .isButton)
+                                .accessibilityAction { model.select(entry, in: index) }
                         }
                     }
                     .padding(.vertical, 2)
                 }
                 .onAppear {
+                    if let selected = column.selected { proxy.scrollTo(selected, anchor: .center) }
+                }
+                // 前から出ていた列でも（クリックで選んだときは動かさない）。
+                .onChange(of: model.reveal) {
                     if let selected = column.selected { proxy.scrollTo(selected, anchor: .center) }
                 }
             }
@@ -460,6 +474,14 @@ struct RemoteFilePickerView: View {
         )
         .padding(.horizontal, 4)
         .contentShape(Rectangle())
+    }
+
+    /// 名前と種類（リポジトリ、フォルダ、実行ファイル、シンボリックリンク）。
+    private func accessibilityLabel(_ entry: RemoteDirectory.Entry) -> String {
+        var kinds: [String] = []
+        if entry.repository { kinds.append(L("Git repository")) }
+        if entry.link { kinds.append(L("Symbolic link")) }
+        return ([entry.name] + kinds).joined(separator: ", ")
     }
 
     private func icon(_ entry: RemoteDirectory.Entry) -> String {
