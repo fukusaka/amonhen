@@ -1261,9 +1261,65 @@ private struct AuthorSigningPage: View {
             } header: {
                 Text(L("Signing"))
             }
+            Section {
+                SwitchRow(model: model, question: L("Use the mailmap"),
+                          help: L("Shows the names and emails from the mailmap instead of the recorded ones, like git log (Blame always does)."),
+                          key: "log.mailmap", defaultOn: true)
+                MailmapFileRow(model: model)
+            } header: {
+                Text("mailmap")
+            }
         }
         .formStyle(.grouped)
         .task { for f in SigningRow.formats { model.loadSigningKeys(f) } }
+    }
+}
+
+/// mailmap のファイル（`mailmap.file`）。リポジトリの `.mailmap` の後に読む。git が読むファイルなので、SSH 先の
+/// リポジトリなら SSH 先のものを選ぶ。
+private struct MailmapFileRow: View {
+    let model: RepositorySettingsModel
+    private static let key = "mailmap.file", pickFile = "\u{1}file"
+    private let help = L("Read after the repository’s .mailmap.")
+
+    private var current: String { model.effective(Self.key)?.value ?? "" }
+
+    private func label(_ path: String) -> String {
+        path.isEmpty ? L("None") : L("File: %@", (path as NSString).abbreviatingWithTildeInPath)
+    }
+
+    var body: some View {
+        SettingRow(model: model, question: L("Mailmap file"), help: help, keys: [Self.key], describe: label) {
+            Picker("", selection: Binding(get: { current }, set: { choose($0) })) {
+                Text(L("None")).tag("")
+                if !current.isEmpty { Text(label(current)).tag(current) }
+                Divider()
+                Text(L("A file…")).tag(Self.pickFile)
+            }
+            .labelsHidden()
+            .frame(maxWidth: 320)
+        }
+    }
+
+    private func choose(_ value: String) {
+        if value == current { return }
+        if value == Self.pickFile {
+            let initial = current.isEmpty ? "~" : current
+            if let host = model.host {
+                FilePicker.present(title: L("Mailmap file"), message: L("Choose a mailmap file"),
+                                   kind: .file, host: host, repository: model.repository, initial: initial) {
+                    if let chosen = $0 { model.set(Self.key, chosen.path) }
+                }
+            } else {
+                FilePicker.presentLocal(title: L("Mailmap file"), message: L("Choose a mailmap file"),
+                                        kind: .file, initial: initial) {
+                    if let path = $0?.first { model.set(Self.key, path) }
+                }
+            }
+        } else if value.isEmpty {
+            // 上の段で決めたものを消すことはできないので、ここでは上書きを消す（上の段にあればそれが効く）。
+            model.set(Self.key, nil)
+        }
     }
 }
 
