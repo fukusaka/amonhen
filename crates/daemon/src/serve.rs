@@ -315,7 +315,7 @@ fn reply_error(reader: &mut Reader, mut writer: Writer, message: &str) {
 }
 
 /// `location`（手元のパスか `ssh://host/path`）のリポジトリを、だれかがもう開いていればそれを、なければ新しく
-/// 開く。SSH のつながりが切れていれば、つなぎ直す。`options` は、つなぐときのエンジンと git の選択（最初に開いた
+/// 開く。SSH のつながりが切れていれば、つなぎ直す。`options` は、つなぐときのエンジンの選択と起動のしかた（最初に開いた
 /// 相手のものでエンジンが起動し、同じ場所を開くほかの相手もそれを使う）。
 fn open(state: &State, location: &str, options: &HostOptions) -> Result<Arc<Shared>> {
     let key = if location.starts_with("ssh://") {
@@ -323,7 +323,7 @@ fn open(state: &State, location: &str, options: &HostOptions) -> Result<Arc<Shar
     } else {
         local::canonical_path(location)?
     };
-    // 同じ SSH 先でも、エンジンや git の選択が違えば別のつながり（選択を変えたら、次に開くときから効く）。History の
+    // 同じ SSH 先でも、エンジンの選択や起動のしかたが違えば別のつながり（選択を変えたら、次に開くときから効く）。History の
     // キャッシュは場所ごとのまま（`Shared::key`）。
     let slot = if key.starts_with("ssh://") && !options.is_empty() {
         format!("{key}\0{}", options.to_json())

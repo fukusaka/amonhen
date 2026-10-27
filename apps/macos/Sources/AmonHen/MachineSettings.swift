@@ -75,16 +75,14 @@ struct GitSettings: View {
 }
 
 /// プログラムのページ: git・gpg・ssh-keygen・gpgsm を同じ形で選ぶ（自動＝PATH の先頭／見つかったもの／その他…）。
-/// git はこの Mac の Amon Hen の設定（`settings.json`。CLI・daemon・VSCode 拡張も従う）、ほかは git の設定
-/// （`gpg.program` など）。SSH 先（Settings > SSH Hosts）なら候補はコアが SSH 先で探し（`programs`）、git は
-/// その SSH 先の選択（アプリが持ち、エンジンを起動するときに `AMONHEN_GIT` で渡す）。
+/// git は git を動かす機械（この Mac か SSH 先）の Amon Hen の設定（`settings.json`。そこの CLI・daemon・VSCode 拡張も
+/// 従う）、ほかは git の設定（`gpg.program` など）。SSH 先（Settings > SSH Hosts）なら候補も設定もコアが SSH 先で
+/// 読み書きする（`programs`・`machineGit`）。
 struct ProgramsPage: View {
     let model: RepositorySettingsModel
     @State private var found: [String: [Programs.Candidate]] = [:]
-    /// この Mac で使う git と、それをどこで決めたか（読めるまで nil）。
+    /// 使う git と、それをどこで決めたか（読めるまで nil）。
     @State private var git: MachineGit?
-    /// SSH 先で選んだ git（空なら選んでいない）。
-    @State private var hostGit = ""
     @State private var showingGit = false
 
     var body: some View {
@@ -98,9 +96,9 @@ struct ProgramsPage: View {
         }
         .formStyle(.grouped)
         .task {
+            await readGit()
             let names = ["git", "gpg", "ssh-keygen", "gpgsm"]
             if model.host == nil {
-                await readGit()
                 found = await Task.detached(priority: .userInitiated) {
                     Dictionary(uniqueKeysWithValues: names.map { ($0, Programs.candidates($0)) })
                 }.value
@@ -117,13 +115,10 @@ struct ProgramsPage: View {
         }
     }
 
-    /// 選んだ git（空なら選んでいない）。
-    private var chosen: String { model.host == nil ? git?.chosen ?? "" : hostGit }
-
-    /// git の行: 値はこの Mac の Amon Hen の設定か、SSH 先の選択。行の形はほかと同じ。この Mac で選んだ git が
-    /// なければ、その下に理由（git を動かす操作はエラーになる）。
+    /// git の行: 値はその機械の Amon Hen の設定。行の形はほかと同じ。選んだ git がなければ、その下に理由
+    /// （git を動かす操作はエラーになる）。
     private var gitRow: some View {
-        let chosen = chosen
+        let chosen = git?.chosen ?? ""
         return VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 8) {
                 Text("git").frame(minWidth: 72, alignment: .leading)
@@ -143,25 +138,19 @@ struct ProgramsPage: View {
                     .font(.caption).foregroundStyle(.secondary).frame(width: 118, alignment: .trailing)
                 Button { showingGit.toggle() } label: { Image(systemName: "info.circle") }
                     .buttonStyle(.borderless)
-                    .popover(isPresented: $showingGit, arrowEdge: .trailing) {
-                        if model.host == nil { gitDetail } else { hostGitDetail }
-                    }
+                    .popover(isPresented: $showingGit, arrowEdge: .trailing) { gitDetail }
             }
-            if model.host == nil, let problem = git?.problem {
+            if let problem = git?.problem {
                 Label(problem, systemImage: "exclamationmark.triangle.fill")
                     .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
             }
         }
         .padding(.vertical, 6)
-        .onAppear {
-            if let host = model.host { hostGit = Settings.hostOptions(for: host).git ?? "" }
-        }
     }
 
     /// 設定元の欄: 決めたところ。
     private var source: String {
-        if model.host != nil { return hostGit.isEmpty ? "PATH" : "Amon Hen" }
-        return switch git?.source {
+        switch git?.source {
         case "settings": "Amon Hen"
         case "environment": "AMONHEN_GIT"
         case "fallback": "AMONHEN_FALLBACK_GIT"
@@ -173,35 +162,24 @@ struct ProgramsPage: View {
     private var gitDetail: some View {
         VStack(alignment: .leading, spacing: 6) {
             if let file = git?.file {
-                Text((file as NSString).abbreviatingWithTildeInPath).font(.system(.body, design: .monospaced))
+                Text(model.host == nil ? (file as NSString).abbreviatingWithTildeInPath : file)
+                    .font(.system(.body, design: .monospaced))
             }
             Text(git?.chosen.map { "\"git\": \"\($0)\"" } ?? L("No git chosen: the first git on the PATH"))
                 .font(.system(.body, design: .monospaced))
-            Text(L("The CLI, the shared daemon and the VSCode extension on this machine use it too."))
+            Text(model.host.map { L("The engine, the CLI and the VSCode extension on %@ use it too.", $0) }
+                ?? L("The CLI, the shared daemon and the VSCode extension on this machine use it too."))
                 .font(.caption).foregroundStyle(.secondary)
             if git?.source == "environment", let program = git?.program {
-                Text(L("AMONHEN_GIT in the app’s environment overrides it: %@", program))
+                Text(model.host == nil ? L("AMONHEN_GIT in the app’s environment overrides it: %@", program)
+                    : L("AMONHEN_GIT in the engine’s environment overrides it: %@", program))
                     .font(.caption).foregroundStyle(.orange)
             }
         }
         .textSelection(.enabled).padding(12).frame(width: 380, alignment: .leading)
     }
 
-    /// SSH 先の ⓘ: エンジンに渡す値。
-    private var hostGitDetail: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("AMONHEN_GIT = \(hostGit.isEmpty ? L("(not set)") : hostGit)")
-                .font(.system(.body, design: .monospaced)).textSelection(.enabled)
-            if let host = model.host {
-                Text(L("Passed to the engine on %@ when it starts. Repositories already open there keep the git they started with until they are opened again.", host))
-                    .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(width: 320, alignment: .leading)
-        .padding(12)
-    }
-
-    /// 使う git を、この Mac の Amon Hen の設定から読み直す。
+    /// 使う git を、その機械の Amon Hen の設定から読み直す。
     private func readGit() async {
         let repository = model.repository
         git = await Task.detached(priority: .userInitiated) {
@@ -209,19 +187,13 @@ struct ProgramsPage: View {
         }.value
     }
 
-    /// 使う git を変える（Undo に前の値を積む。⇧⌘Z でやり直せる）。SSH 先なら、その SSH 先の選択（エンジンに渡す）。
+    /// 使う git を変える（Undo に前の値を積む。⇧⌘Z でやり直せる）。SSH 先なら、SSH 先の設定に書き、つながりは
+    /// そのままで次の操作から効く。
     private func setGit(_ value: String) {
-        let old = chosen
+        let old = git?.chosen ?? ""
         guard value != old else { return }
         model.undo?.registerUndo(withTarget: model) { _ in setGit(old) }
         model.undo?.setActionName(L("Change %@", "git"))
-        if let host = model.host {
-            hostGit = value
-            var options = Settings.hostOptions(for: host)
-            options.git = value.isEmpty ? nil : value
-            Settings.setHostOptions(options, for: host)
-            return
-        }
         git?.chosen = value.isEmpty ? nil : value
         let repository = model.repository
         Task {

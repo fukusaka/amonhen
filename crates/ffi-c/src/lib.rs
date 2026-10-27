@@ -267,7 +267,7 @@ pub unsafe extern "C" fn amonhen_set_global_config(
 /// `excludes` は入らないフォルダの名前を改行でつないだもの。見つけたリポジトリの場所（`ssh://host/path`）を改行で
 /// つないで返す（`amonhen_string_free` で解放）。失敗したら NULL（`amonhen_last_error`）。
 ///
-/// `host_options` は、SSH 先ごとの選択（エンジンと git。`HostOptions` の JSON）。NULL か空なら何も選んでいない。
+/// `host_options` は、SSH 先ごとの選択（エンジンと、その起動のしかた。`HostOptions` の JSON）。NULL か空なら何も選んでいない。
 ///
 /// # Safety
 /// `location`・`daemon`・`daemons_dir`・`excludes` は NUL 終端の UTF-8、`host_options` は NULL か NUL 終端の UTF-8
@@ -320,7 +320,7 @@ pub unsafe extern "C" fn amonhen_find_remote_repositories(
 /// `daemons_dir` の `amonhend-<os>-<arch>`（SSH 先が手元と同じ OS と CPU なら `daemon`）。ssh のコマンドは
 /// 環境変数 `AMONHEN_SSH` で差し替えられる。`cache_dir` を渡すと History を永続化する。
 ///
-/// `host_options` は、SSH 先ごとの選択（エンジンと git。`HostOptions` の JSON）。NULL か空なら何も選んでいない。
+/// `host_options` は、SSH 先ごとの選択（エンジンと、その起動のしかた。`HostOptions` の JSON）。NULL か空なら何も選んでいない。
 /// `daemon:ssh://…` なら共有の daemon に送り、daemon がエンジンを起動するときに使う。
 ///
 /// # Safety

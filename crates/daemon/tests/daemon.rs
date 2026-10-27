@@ -724,7 +724,8 @@ fn shared_daemon_opens_an_ssh_host_without_a_repository() {
     daemon.wait().unwrap();
 }
 
-/// SSH 先ごとの選択（git とエンジン）は、開くときの最初の文に乗って daemon に届き、エンジンの起動に使われる。
+/// SSH 先ごとの選択（エンジンと起動のしかた）は、開くときの最初の文に乗って daemon に届き、エンジンの起動に使われる。
+/// SSH 先で使う git は、SSH 先の Amon Hen の設定にある。
 #[test]
 fn shared_daemon_uses_the_host_options_it_is_given() {
     use amonhen_remote::ssh::{self, HostOptions};
@@ -787,7 +788,8 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
         RemoteBackend::connect(conn)
     };
 
-    // git の選択は、エンジンに AMONHEN_GIT として渡る（選んだ git が動いた印を残す）。
+    // SSH 先で使う git は、SSH 先の Amon Hen の設定に書き、同じつながりの次の操作から使われる（選んだ git が
+    // 動いた印を残す）。
     let used = tmp.path().join("git-used");
     let wrapper = tmp.path().join("my-git");
     std::fs::write(
@@ -802,37 +804,75 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
-    let repo = Repository::new(
-        connect(
-            "ssh://dev",
-            &HostOptions {
-                git: Some(wrapper.display().to_string()),
-                ..Default::default()
-            },
-        )
-        .unwrap(),
-    );
-    let version = repo
-        .run(amonhen_core::command::Command::GitVersion)
+    let repo = Repository::new(connect("ssh://dev", &HostOptions::default()).unwrap());
+    let set = |git: Option<&std::path::Path>| {
+        repo.run(amonhen_core::command::Command::SetMachineGit {
+            git: git.map(|g| g.display().to_string()),
+        })
         .unwrap();
-    assert!(version.info.unwrap()["version"].is_string());
+    };
+    let machine_git = || {
+        repo.run(amonhen_core::command::Command::MachineGit)
+            .unwrap()
+            .info
+            .unwrap()
+    };
+    let git_version = || {
+        repo.run(amonhen_core::command::Command::GitVersion)
+            .unwrap()
+            .info
+            .unwrap()["version"]
+            .clone()
+    };
+    set(Some(&wrapper));
+    let settings = remote_home.join(".config/amonhen/settings.json");
+    assert!(
+        std::fs::read_to_string(&settings)
+            .unwrap()
+            .contains(&*wrapper.display().to_string()),
+        "SSH 先の設定に書かれていない"
+    );
+    assert_eq!(machine_git()["source"], "settings");
+    assert!(git_version().is_string());
     assert!(used.exists(), "選んだ git が使われていない");
 
-    // 動かない git を選んでも、エンジンはつながり（設定のリポジトリはもうある）、git の版は読めない。
-    let broken = Repository::new(
+    // 動かない git を選んでも、つながりはそのままで、理由が読め、git の版は読めない。PATH の git に戻せる。
+    set(Some(std::path::Path::new("/nonexistent/git")));
+    let info = machine_git();
+    assert!(
+        info["problem"]
+            .as_str()
+            .unwrap()
+            .contains("/nonexistent/git"),
+        "{info}"
+    );
+    assert!(git_version().is_null());
+    set(None);
+    assert_eq!(machine_git()["source"], "path");
+    assert!(git_version().is_string());
+
+    // 選んだ git がなく、設定のリポジトリもまだないときも、エンジンは起動する（選び直せる）。
+    std::fs::write(&settings, r#"{"git": "/nonexistent/git"}"#).unwrap();
+    std::fs::remove_dir_all(remote_home.join(".local/share/amonhen/settings-repo")).unwrap();
+    let fresh = Repository::new(
         connect(
             "ssh://dev",
             &HostOptions {
-                git: Some("/nonexistent/git".to_owned()),
+                engine: Some("sent".into()),
                 ..Default::default()
             },
         )
         .unwrap(),
     );
-    let version = broken
-        .run(amonhen_core::command::Command::GitVersion)
+    let info = fresh
+        .run(amonhen_core::command::Command::MachineGit)
+        .unwrap()
+        .info
         .unwrap();
-    assert!(version.info.unwrap()["version"].is_null());
+    assert_eq!(info["chosen"], "/nonexistent/git", "{info}");
+    fresh
+        .run(amonhen_core::command::Command::SetMachineGit { git: None })
+        .unwrap();
 
     // ログインシェル経由なら、SSH 先のログインシェルが読むファイル（sh は ~/.profile）の変数がエンジンに届く。
     // そこで何かを表示しても、通信は壊れない。

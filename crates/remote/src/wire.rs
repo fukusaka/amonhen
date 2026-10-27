@@ -298,6 +298,10 @@ pub enum Op {
     SaveExcludesFile(String),
     /// → `Vec<(String, String)>`（エンジンのプロセスの環境変数）
     ProcessEnvironment,
+    /// → `MachineGit`（エンジンの機械で使う git と、その Amon Hen の設定で選んだもの）
+    MachineGit,
+    /// → `()`（エンジンの機械の Amon Hen の設定に、使う git を書く。None なら消す）
+    SetMachineGit(Option<String>),
     LfsTrack(String, bool),
     LfsFileCount,
     ChangeRemote(RemoteChange),

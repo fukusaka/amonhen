@@ -80,12 +80,33 @@ enum Settings {
         sshHost(of: location).flatMap { hostOptions(for: $0).json }
     }
 
+    /// 前の版が SSH 先ごとの選択に持っていた git を、SSH 先の Amon Hen の設定（`repository` はその SSH 先に
+    /// リポジトリなしでつないだもの）へ移す。SSH 先の設定にもう git があれば、そちらを残す。移せたら（または
+    /// 残すなら）アプリの側からは消す。つなぎ直さないよう、`hostOptionsChanged` は知らせない。
+    static func moveHostGit(_ host: String, to repository: Repository) async {
+        guard let old = hostOptions(for: host).git else { return }
+        let moved = await Task.detached(priority: .utility) { () -> Bool in
+            guard let current = try? repository.info(["op": "machineGit"], as: MachineGit.self) else { return false }
+            if current.chosen != nil { return true }
+            return (try? repository.run(["op": "setMachineGit", "git": old])) != nil
+        }.value
+        guard moved else { return }
+        var options = hostOptions(for: host)
+        options.git = nil
+        storeHostOptions(options, for: host)
+    }
+
     /// 変えたら `hostOptionsChanged`（object は SSH 先の名前）を知らせる。次につなぐときから効く。
     static func setHostOptions(_ options: HostOptions, for host: String) {
-        var all = UserDefaults.standard.dictionary(forKey: hostOptionsKey) as? [String: String] ?? [:]
-        all[host] = options.json
-        UserDefaults.standard.set(all, forKey: hostOptionsKey)
+        storeHostOptions(options, for: host)
         NotificationCenter.default.post(name: .hostOptionsChanged, object: host)
+    }
+
+    /// 選択をそのまま（まだ移していない git も）残す。
+    nonisolated private static func storeHostOptions(_ options: HostOptions, for host: String) {
+        var all = UserDefaults.standard.dictionary(forKey: hostOptionsKey) as? [String: String] ?? [:]
+        all[host] = options.isEmpty ? nil : (try? JSONEncoder().encode(options)).flatMap { String(data: $0, encoding: .utf8) }
+        UserDefaults.standard.set(all, forKey: hostOptionsKey)
     }
 
     /// コミットの詳細に作者・コミッターの Gravatar のアバターを出すか（既定は出す。メールアドレスの MD5 を
@@ -368,10 +389,10 @@ extension Notification.Name {
 }
 
 
-/// SSH 先ごとの選択（Settings > SSH Hosts の「接続」のエンジンと、「プログラム」の git）。コアの `HostOptions`
-/// （`crates/remote/src/ssh.rs`）と同じ形で、JSON にして渡す。
+/// SSH 先ごとの選択（Settings > SSH Hosts の「接続」のエンジンと、「環境変数」のログインシェル）。コアの `HostOptions`
+/// （`crates/remote/src/ssh.rs`）と同じ形で、JSON にして渡す。SSH 先で使う git は SSH 先の Amon Hen の設定にある。
 nonisolated struct HostOptions: Codable, Equatable, Sendable {
-    /// SSH 先で使う git のパス。nil なら SSH 先の PATH のもの。
+    /// 前の版がここに持っていた、SSH 先で使う git（つないだときに SSH 先の設定へ移す。`Settings.moveHostGit`）。
     var git: String?
     /// `installed`（PATH の amonhen）・`sent`（Amon Hen が送り込むもの）・`/` で始まるパス。nil なら自動。
     var engine: String?
@@ -383,9 +404,11 @@ nonisolated struct HostOptions: Codable, Equatable, Sendable {
 
     var isEmpty: Bool { git == nil && engine == nil && push == nil && loginShell == nil }
 
-    /// コアに渡す JSON（何も選んでいなければ nil）。
+    /// コアに渡す JSON（エンジンの起動に使うものを何も選んでいなければ nil。git は渡さない）。
     var json: String? {
-        guard !isEmpty, let data = try? JSONEncoder().encode(self) else { return nil }
+        var sent = self
+        sent.git = nil
+        guard !sent.isEmpty, let data = try? JSONEncoder().encode(sent) else { return nil }
         return String(data: data, encoding: .utf8)
     }
 }

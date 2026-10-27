@@ -1311,7 +1311,6 @@
 "Choose the global excludes file" = "global excludes のファイルを選ぶ";
 "%@, one pattern per line, like .gitignore (core.excludesFile; git’s default is ~/.config/git/ignore)." = "%@。1 行 1 パターン、.gitignore と同じ書き方（core.excludesFile。git の既定は ~/.config/git/ignore）。";
 "Back to the git on the PATH." = "PATH の git に戻します。";
-"(not set)" = "（未設定）";
 "On the PATH: %@" = "PATH では: %@";
 "Couldn’t prepare the settings repository" = "設定のためのリポジトリを用意できませんでした";
 "Shared templates live in Settings > Commit and are Amon Hen’s. This repository’s own is a file under .git/amonhen that commit.template points to, so git in a terminal uses it too." = "共有のテンプレートは Settings > コミットにあり、Amon Hen のものです。このリポジトリ専用のものは .git/amonhen の下のファイルで、commit.template がそれを指すので、端末の git も使います。";
@@ -1399,7 +1398,6 @@
 "%@ is set in the environment, so it decides instead." = "環境変数 %@ があるので、そちらが優先されます。";
 "Program on %@" = "%@ のプログラム";
 "The path of the program on the host." = "SSH 先のプログラムのパス。";
-"Passed to the engine on %@ when it starts. Repositories already open there keep the git they started with until they are opened again." = "%@ のエンジンを起動するときに渡します。もう開いているそこのリポジトリは、開き直すまで前の git のままです。";
 "The git chosen in Programs is %@." = "プログラムで選んだ git は %@ です。";
 "Use the git on the PATH" = "PATH の git に戻す";
 "Started by the shared daemon" = "共有の daemon が起動したもの";
@@ -1411,3 +1409,5 @@
 "No git chosen: the first git on the PATH" = "git を選んでいません: PATH で最初に見つかる git";
 "The CLI, the shared daemon and the VSCode extension on this machine use it too." = "この機械の CLI・共有の daemon・VSCode 拡張も、これに従います。";
 "AMONHEN_GIT in the app’s environment overrides it: %@" = "アプリの環境の AMONHEN_GIT が優先されています: %@";
+"The engine, the CLI and the VSCode extension on %@ use it too." = "%@ のエンジン・CLI・VSCode 拡張も、これに従います。";
+"AMONHEN_GIT in the engine’s environment overrides it: %@" = "エンジンの環境の AMONHEN_GIT が優先されています: %@";
