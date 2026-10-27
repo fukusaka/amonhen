@@ -82,7 +82,6 @@ private final class PersonView: NSView {
         recorded.textColor = .tertiaryLabelColor
         recorded.isSelectable = true
         recorded.lineBreakMode = .byTruncatingTail
-        recorded.toolTip = L("The name and email recorded in the commit. The mailmap shows them as above.")
         for v in [avatar, name, self.role, detail, recorded] as [NSView] { addSubview(v) }
     }
 
@@ -108,6 +107,10 @@ private final class PersonView: NSView {
         self.name.title = name
         detail.stringValue = "\(email)\n\(date)"
         recorded.stringValue = identity.map { L("Recorded: %@", "\($0.name) <\($0.email)>") } ?? ""
+        // 幅で切れることがあるので、吹き出しには全文を出す。
+        recorded.toolTip = identity.map { _ in
+            "\(recorded.stringValue)\n" + L("The name and email recorded in the commit. The mailmap shows them as above.")
+        }
         recorded.isHidden = identity == nil
         updateAvatar()
         needsLayout = true
