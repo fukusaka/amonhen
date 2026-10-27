@@ -596,6 +596,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
     }
 
+    /// 行の文字を読み直す（mailmap が変わって作者名が変わるときなど。History はそのまま）。
+    func reloadRows() {
+        guard let history else { return }
+        present(history, resetScroll: false)
+    }
+
     /// 並び順が変わった。コアに並べ直させて（git は読み直さない）、表示し直す。選んでいたコミットは `show` が探し直す。
     @objc private func historyOrderChanged() {
         let repository = self.repository, order = Settings.historyOrder

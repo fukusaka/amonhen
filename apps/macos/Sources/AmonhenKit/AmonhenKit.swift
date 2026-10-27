@@ -107,6 +107,10 @@ public final class Repository: @unchecked Sendable {
         amonhen_history_load_cached(raw).map { History(raw: $0, repository: self) }
     }
 
+    /// mailmap と `log.mailmap` の指紋。リポジトリが変わったあとでこれが変わっていたら、作者名を出し直す（History は
+    /// 作り直さず、行を読み直すだけ）。裏のスレッドから呼ぶ（daemon 越しなら問い合わせることがある）。
+    public var mailmapFingerprint: UInt64 { amonhen_repo_mailmap_fingerprint(raw) }
+
     /// commit-graph を最新にする。なければ全体を書き出して true を、あれば後から増えたコミットだけを
     /// 書き足して false を返す。リポジトリの `.git` に書き込むので、設定で選ばれたときだけ、裏のスレッドから呼ぶこと。
     public func updateCommitGraph() throws -> Bool {

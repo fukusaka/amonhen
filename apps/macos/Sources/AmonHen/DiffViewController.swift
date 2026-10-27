@@ -1359,7 +1359,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         guard let status = CommitHeaderRenderer(info: info, extras: extras, style: style).signatureStatus else { return }
         showSignaturePopover(SignaturePopover(
             status: status, signature: extras?.signature, kind: info.signed ?? "gpg",
-            committerEmail: info.committerEmail, place: signaturePlace), at: charIndex)
+            committerEmail: info.recordedCommitterEmail, place: signaturePlace), at: charIndex)
     }
 
     /// タグの署名の印の吹き出し。`pointing` はこのコミットを指すタグの、`merged` は merge したタグの何番目か。
@@ -1830,10 +1830,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         renderer.highlight = CommitHeaderRenderer.highlightTerms(of: searchQuery)
         let text = NSMutableAttributedString(attributedString: renderer.render())
         let showPeople = style != .compact
+        // 帯の高さは人によるので、人を入れてから並べる。
+        if showPeople { peopleStrip.show(info, date: CommitHeaderRenderer.date) }
         layoutPeopleStrip(visible: showPeople)
-        if showPeople {
-            peopleStrip.show(info, date: CommitHeaderRenderer.date)
-        } else {
+        if !showPeople {
             // 右上の切り替えに文字が重ならないよう、最初の行の右端を空ける。
             let first = NSMutableParagraphStyle()
             first.tailIndent = -(styleControl.frame.width + 12)
@@ -1901,7 +1901,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private func layoutPeopleStrip(visible: Bool) {
         guard let container = headerContainer, let scroll = headerScroll else { return }
         peopleStrip.isHidden = !visible
-        let height = visible ? PeopleStrip.height : 0
+        let height = visible ? peopleStrip.preferredHeight : 0
         let bounds = container.bounds
         peopleStrip.frame = NSRect(
             x: 0, y: bounds.height - height, width: max(0, styleControl.frame.minX - 8), height: height)
@@ -1991,7 +1991,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         guard splitViewItems.count > 1, !isExpanded, rewordEditor == nil,
               let layout = header.layoutManager, let container = header.textContainer else { return }
         layout.ensureLayout(for: container)
-        let strip = peopleStrip.isHidden ? 0 : PeopleStrip.height
+        let strip = peopleStrip.isHidden ? 0 : peopleStrip.preferredHeight
         let content = ceil(strip + layout.usedRect(for: container).height + header.textContainerInset.height * 2 + 4)
         let cap = max(splitViewItems[0].minimumThickness, floor(splitView.bounds.height * 0.5))
         let target = max(splitViewItems[0].minimumThickness, min(cap, content))

@@ -648,6 +648,15 @@ const AmonhenHistory *amonhen_history_rebuild(const AmonhenRepo *repo_ptr);
 const AmonhenHistory *amonhen_history_load_cached(const AmonhenRepo *repo_ptr);
 
 /**
+ * mailmap と `log.mailmap` の指紋。リポジトリが変わったときにこれが変わっていたら、作者名を出し直す（History の
+ * 行を読み直す。History を作り直す必要はない）。daemon 越しなら、その側で読んだもの。
+ *
+ * # Safety
+ * `repo` は有効なリポジトリであること。
+ */
+uint64_t amonhen_repo_mailmap_fingerprint(const AmonhenRepo *repo_ptr);
+
+/**
  * commit-graph を最新にする（`git commit-graph write --reachable`）。なければ全体を書き出して 1、
  * あれば後から増えたコミットだけを書き足して（`--split`）0、失敗したら -1 を返す。利用者が設定で
  * 選んだときだけ、裏のスレッドから呼ぶこと。
