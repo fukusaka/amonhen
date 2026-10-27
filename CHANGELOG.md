@@ -18,7 +18,8 @@ becomes the GitHub Release notes.
   and CLI get the same as `fastForward`.
 - Settings > SSH Hosts: the SSH hosts Amon Hen knows, with + and −, and for each its connection (state, Check
   Connection, which engine to run there and whether to send one, which keys verify commit signatures, the folders to
-  scan) and the pages of Settings > Git for every repository on that host, including the git the engine runs there.
+  scan) and the pages of Settings > Git for every repository on that host, including the git that runs there, kept in
+  the host's `~/.config/amonhen/settings.json` so the host's CLI and VSCode extension use it too.
   Settings… on a host in Places opens it, and on This Mac opens Settings > Git.
 - Settings > SSH Hosts has an Environment Variables page for each host: the engine's environment there, and a switch to
   start the engine with the host's login shell's environment, for the PATH and `GIT_*` set in `~/.profile` and the
