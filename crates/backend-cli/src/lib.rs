@@ -230,6 +230,10 @@ impl Git {
 
 /// git を実行し、Activity に記録する（どのリポジトリで、何を、どれだけかかったか）。
 fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
+    // 選んだ git がなければ、PATH の git に戻さずに止める。
+    if let Some(reason) = amonhen_model::process::missing_git() {
+        return Err(reason.into());
+    }
     let repo = cmd
         .get_current_dir()
         .map(|d| d.to_string_lossy().into_owned())

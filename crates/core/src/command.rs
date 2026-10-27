@@ -307,6 +307,15 @@ pub enum Command {
         #[serde(default)]
         scope: Option<String>,
     },
+    /// git を動かす機械で使う git と、それをどこで決めたか（`info`: `chosen`（その機械の Amon Hen の設定
+    /// `settings.json` で選んだもの。なければ null で自動）・`file`・`program`・`source`（`environment`・`settings`・
+    /// `fallback`・`path`）・`problem`（使えないときの理由））。SSH 先のリポジトリなら SSH 先のもの。
+    MachineGit,
+    /// git を動かす機械の Amon Hen の設定に、使う git（`git`: 実行ファイルのパス）を書く。なければ消す（自動）。
+    SetMachineGit {
+        #[serde(default)]
+        git: Option<String>,
+    },
     /// このリポジトリを扱う git の版（`info.version`、読めなければ null）と、rebase で積み重ねたブランチを
     /// 一緒に動かせるか（`info.updateRefs`。git 2.38 から。版が読めなければ true）。
     GitVersion,
@@ -2149,6 +2158,18 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::MachineGit => Ok(Response {
+                ok: true,
+                info: Some(serde_json::to_value(ops.machine_git()?)?),
+                ..Default::default()
+            }),
+            Command::SetMachineGit { git } => {
+                ops.set_machine_git(git.as_deref())?;
+                Ok(Response {
+                    ok: true,
+                    ..Default::default()
+                })
+            }
             Command::GitVersion => {
                 let version = ops.git_version()?;
                 Ok(Response {
@@ -3790,6 +3811,41 @@ mod tests {
         // pull.ff=only は pull.rebase より強い。
         git(dir, &["config", "pull.ff", "only"]);
         assert_eq!(defaults()["pull"], "fastForwardOnly");
+    }
+
+    #[test]
+    fn reads_and_writes_the_git_in_the_machines_settings() {
+        let (_tmp, repo) = setup();
+        let config = tempfile::tempdir().unwrap();
+        let env = amonhen_model::process::ClientEnv::from_vars(
+            amonhen_model::settings::config_vars(config.path().to_str().unwrap()),
+        );
+        amonhen_model::process::with_client_env(&env, || {
+            let r = run(&repo, r#"{"op":"machineGit"}"#);
+            assert_eq!(r["info"]["chosen"], serde_json::Value::Null, "{r}");
+            assert_eq!(r["info"]["source"], "path");
+            let file = config.path().join("amonhen").join("settings.json");
+            assert_eq!(r["info"]["file"], file.display().to_string());
+
+            let r = run(&repo, r#"{"op":"setMachineGit","git":"/no/such/git"}"#);
+            assert_eq!(r["ok"], true, "{r}");
+            let r = run(&repo, r#"{"op":"machineGit"}"#);
+            assert_eq!(r["info"]["chosen"], "/no/such/git");
+            assert_eq!(r["info"]["source"], "settings");
+            assert!(
+                r["info"]["problem"]
+                    .as_str()
+                    .unwrap()
+                    .contains("/no/such/git")
+            );
+            // 選んだ git がなければ、git を動かす操作はエラーになる（PATH の git では動かさない）。
+            let r = run(&repo, r#"{"op":"configSet","key":"user.name","value":"x"}"#);
+            assert_eq!(r["ok"], false, "{r}");
+
+            run(&repo, r#"{"op":"setMachineGit"}"#);
+            let r = run(&repo, r#"{"op":"machineGit"}"#);
+            assert_eq!(r["info"]["source"], "path", "{r}");
+        });
     }
 
     #[test]

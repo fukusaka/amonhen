@@ -166,6 +166,9 @@ impl<'a> Args<'a> {
 
 /// `path` を含むリポジトリの作業ツリーの一番上（`git rev-parse --show-toplevel`）。
 pub(crate) fn repository_root(path: &Path) -> Result<PathBuf> {
+    if let Some(reason) = amonhen_model::process::missing_git() {
+        return Err(reason.into());
+    }
     let out = amonhen_model::process::command("git")
         .arg("-C")
         .arg(path)

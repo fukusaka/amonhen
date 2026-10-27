@@ -1,5 +1,6 @@
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
+import { setFallbackGit } from '../daemon/client.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import { withDaemonWrites } from '../daemon/writes.ts';
 import { CliBackend } from '../git/backend.ts';
@@ -49,7 +50,9 @@ export class RepositoryManager implements vscode.Disposable {
 
   async initialize(): Promise<void> {
     const api = await getGitApi();
-    this.git = new GitExecutor(api?.git.path ?? 'git', (l) =>
+    // daemon を使うときも、Amon Hen の設定で git を決めていなければ git.path の git を使ってもらう
+    setFallbackGit(vscode.workspace.getConfiguration('git').get('path') ? api?.git.path : undefined);
+    this.git = GitExecutor.chosen(api?.git.path ?? 'git', (l) =>
       this.log.trace(`${Math.round(l.ms)}ms git ${l.args.join(' ')}${l.exitCode ? ` (exit ${l.exitCode})` : ''}`),
     );
     if (api) {

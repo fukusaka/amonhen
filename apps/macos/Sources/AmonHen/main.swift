@@ -475,7 +475,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 // ターミナルの環境（PATH・SSH_AUTH_SOCK・GIT_* など）を取り込み、git が資格情報を尋ねる先（askpass）を決める
 // （git・daemon を動かす前に）。
-Settings.applyGitExecutable()
+Settings.moveGitExecutable()
 ShellEnvironment.import()
 if let agent = ShellEnvironment.launchAgent { Repository.setSSHAgent(agent) }
 Askpass.install()
@@ -483,6 +483,7 @@ Askpass.install()
 if CommandLine.arguments.contains("--print-environment") {
     let env = ProcessInfo.processInfo.environment
     print("imported: \(ShellEnvironment.imported.joined(separator: " "))")
+    if let git = MachineGit.thisMac { print("git: \(git.program) (\(git.source)\(git.problem.map { ": \($0)" } ?? ""))") }
     for key in ["PATH", "SSH_AUTH_SOCK", "AMONHEN_ASKPASS", "AMONHEN_GIT", "AMONHEN_PASS_ENV"] + env.keys.filter({ $0.hasPrefix("GIT_") }).sorted() {
         print("\(key)=\(env[key] ?? "")")
     }

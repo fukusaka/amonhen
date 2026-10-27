@@ -23,6 +23,10 @@
 
 Settings > SSH ホストに、SSH 先についてのすべてをまとめている。Amon Hen が知っている SSH 先（Places にあるものと、＋ で加えたもの）と、選んだ SSH 先の接続（状態、接続を確認、そこで動かすエンジンと合うものがなければ送り込むか、使っているエンジン、コミットの署名をこの Mac の鍵で検証するか SSH 先の鍵でか、探すフォルダ。Places と同じ一覧）、そしてその SSH 先のすべてのリポジトリに効く Settings > Git のページ（SSH 先の `--global` を、リポジトリなしで起動したエンジンを通して読み書きする）。プログラムのページで、そこでエンジンが使う git を選べる。環境変数のページは、エンジンの環境を見せ、エンジンを SSH 先のログインシェルの環境で起動するかを選べる。Places の SSH 先の「設定…」と、リポジトリの Settings の一覧の下の git の行からも開ける。Places の「この Mac」の「設定…」は Settings > Git を開く。
 
+## 使う git
+
+Amon Hen は、設定 > Git > プログラムで選んだ git を動かす。選んだものは機械の設定で、その機械の Amon Hen の設定 `~/.config/amonhen/settings.json`（`$XDG_CONFIG_HOME` があれば `$XDG_CONFIG_HOME/amonhen/`、Windows は `%APPDATA%\amonhen\`）に `{"git": "/opt/homebrew/bin/git"}` の形で置く。その機械の CLI・共有の daemon・VSCode 拡張も従い、SSH 先では、Settings > SSH ホストでその SSH 先に選んだ git をそこのエンジンに `AMONHEN_GIT` で渡す（選んでいなければ SSH 先のファイルに従う）。選んでいなければ PATH で最初に見つかる `git`（VSCode 拡張は、その前に VSCode の `git.path`）。環境変数 `AMONHEN_GIT` は、そのプロセスだけファイルより優先する。選んだ git がなければ、git を動かす操作は、別の git で動かさずにそう書いたエラーで止まる。
+
 ## 共有の daemon
 
 Settings > パフォーマンスの「リポジトリを共有の daemon 越しに開く」か、一覧の右クリックの Open via Daemon で、手元の共有の daemon 越しに開く（`daemon:/path`・`daemon:ssh://host/path`）。CLI・VSCode 拡張と History・検索の索引・SSH のつながりを共有する。様子は Window > Activity の Daemon のタブか `amonhen daemon status`。

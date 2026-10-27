@@ -50,16 +50,95 @@ pub fn command(program: impl AsRef<OsStr>) -> Command {
     cmd
 }
 
-/// 使う git。`AMONHEN_GIT`（実行ファイルのパス。アプリの Settings > Git で選んだもの）があればそれ、なければ
-/// `PATH` の `git`。共有の daemon では、要求した FE の値（`with_client_env`）。
+/// 使う git（実行ファイルのパス、または PATH で探す `git`）。`git_choice` の順で決める。
 pub fn git_program() -> std::ffi::OsString {
-    resolve_git(var_os("AMONHEN_GIT"))
+    match git_choice() {
+        GitChoice::Environment(p) | GitChoice::Settings(p) | GitChoice::Fallback(p) => p.into(),
+        GitChoice::Path => "git".into(),
+    }
 }
 
-fn resolve_git(chosen: Option<std::ffi::OsString>) -> std::ffi::OsString {
-    chosen
-        .filter(|p| !p.is_empty())
-        .unwrap_or_else(|| "git".into())
+/// 使う git をどこで決めたか。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GitChoice {
+    /// 環境変数 `AMONHEN_GIT`（そのプロセスだけの上書き。テストやスクリプト）。
+    Environment(String),
+    /// この機械の Amon Hen の設定（`settings.json` の `"git"`。アプリの Settings > Git > Programs）。
+    Settings(String),
+    /// FE が、設定で決めていないときに使ってほしいもの（`AMONHEN_FALLBACK_GIT`。VSCode 拡張の `git.path`）。
+    Fallback(String),
+    /// `PATH` の `git`。
+    Path,
+}
+
+/// 使う git を決める: `AMONHEN_GIT` → この機械の設定 → `AMONHEN_FALLBACK_GIT` → `PATH`。共有の daemon では、
+/// 環境変数は要求した FE の値（`with_client_env`）。設定のファイルが読めなければ、次へ進む（`missing_git` が
+/// 操作のエラーにする）。
+pub fn git_choice() -> GitChoice {
+    let set = |name| {
+        var_os(name)
+            .map(|p| p.to_string_lossy().into_owned())
+            .filter(|p| !p.is_empty())
+    };
+    if let Some(p) = set("AMONHEN_GIT") {
+        GitChoice::Environment(p)
+    } else if let Ok(Some(p)) = crate::settings::git() {
+        GitChoice::Settings(p)
+    } else if let Some(p) = set(FALLBACK_GIT) {
+        GitChoice::Fallback(p)
+    } else {
+        GitChoice::Path
+    }
+}
+
+/// FE が、設定で git を決めていないときに使ってほしい git（VSCode 拡張は `git.path`）。
+pub const FALLBACK_GIT: &str = "AMONHEN_FALLBACK_GIT";
+
+/// 選んだ git が使えないとき、その理由（git を動かす操作のエラー）。PATH の git に黙って戻すと、利用者が選んだ
+/// ものと違う git で書き込むことになるので、止めて選び直してもらう。PATH で探すときは確かめない（なければ
+/// 起動の失敗）。
+pub fn missing_git() -> Option<String> {
+    let usable = |p: &str| {
+        let path = std::path::Path::new(p);
+        // パスでない名前（`git2` など）は PATH で探すので、ここでは確かめない。
+        path.components().count() < 2 || is_executable(path)
+    };
+    if let Err(reason) = crate::settings::git()
+        && var_os("AMONHEN_GIT").is_none_or(|p| p.is_empty())
+    {
+        return Some(reason);
+    }
+    match git_choice() {
+        GitChoice::Environment(p) if !usable(&p) => Some(crate::tr!(
+            "The git in AMONHEN_GIT ({path}) isn’t there",
+            path = p
+        )),
+        GitChoice::Settings(p) if !usable(&p) => Some(crate::tr!(
+            "The git chosen for this machine ({path}) isn’t there. Choose another in Settings > Git > Programs (it’s kept in {file})",
+            path = p,
+            file = crate::settings::path()
+                .map(|f| crate::settings::shown(&f))
+                .unwrap_or_default()
+        )),
+        GitChoice::Fallback(p) if !usable(&p) => Some(crate::tr!(
+            "The git in git.path ({path}) isn’t there",
+            path = p
+        )),
+        _ => None,
+    }
+}
+
+fn is_executable(path: &std::path::Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.is_file() && meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    meta.is_file()
 }
 
 /// 共有の daemon につないだ FE の環境のうち、その FE のために動かす git・ssh に渡すもの。
@@ -83,9 +162,9 @@ pub struct ClientEnv {
 /// 選んだものをここに入れる。CLI・VSCode 拡張は、それを動かす環境で決める。
 pub const PASS_ENV: &str = "AMONHEN_PASS_ENV";
 
-/// git と ssh がいつも使うので、いつも渡す名前（ほかに `GIT_*`）。`AMONHEN_*` の 3 つは、この仕組みとアプリの設定の
-/// もの（資格情報を尋ねるダイアログ、使う git、足した名前）。
-pub const ALWAYS_PASSED: [&str; 8] = [
+/// git と ssh がいつも使うので、いつも渡す名前（ほかに `GIT_*`）。`AMONHEN_*` の 4 つは、この仕組みと FE のもの
+/// （資格情報を尋ねるダイアログ、使う git の上書きと、設定で決めていないときの git、足した名前）。
+pub const ALWAYS_PASSED: [&str; 9] = [
     "PATH",
     "SSH_AUTH_SOCK",
     "SSH_AGENT_PID",
@@ -93,6 +172,7 @@ pub const ALWAYS_PASSED: [&str; 8] = [
     "XDG_DATA_HOME",
     "AMONHEN_ASKPASS",
     "AMONHEN_GIT",
+    FALLBACK_GIT,
     PASS_ENV,
 ];
 
@@ -438,13 +518,61 @@ fn any_signal_blocked() -> bool {
 }
 
 #[test]
-fn chooses_the_git_from_the_environment() {
-    assert_eq!(resolve_git(None), "git");
-    assert_eq!(resolve_git(Some("".into())), "git");
-    assert_eq!(
-        resolve_git(Some("/opt/homebrew/bin/git".into())),
-        "/opt/homebrew/bin/git"
-    );
+fn chooses_the_git_in_order() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = dir.path().to_str().unwrap().to_owned();
+    let env = |vars: &[(&str, &str)]| {
+        ClientEnv::from_vars(
+            crate::settings::config_vars(&config)
+                .into_iter()
+                .chain(vars.iter().map(|(k, v)| (k.to_string(), v.to_string()))),
+        )
+    };
+    let git = std::env::current_exe().unwrap().display().to_string();
+    with_client_env(&env(&[]), || {
+        assert_eq!(git_choice(), GitChoice::Path);
+        assert_eq!(git_program(), "git");
+        assert_eq!(missing_git(), None);
+    });
+    with_client_env(&env(&[(FALLBACK_GIT, "/vscode/git")]), || {
+        assert_eq!(git_choice(), GitChoice::Fallback("/vscode/git".into()));
+        assert!(missing_git().unwrap().contains("/vscode/git"));
+    });
+    with_client_env(&env(&[(FALLBACK_GIT, "/vscode/git")]), || {
+        crate::settings::set_git(Some(&git)).unwrap();
+        assert_eq!(
+            git_choice(),
+            GitChoice::Settings(git.clone()),
+            "the settings come before git.path"
+        );
+        assert_eq!(missing_git(), None);
+        crate::settings::set_git(Some("/no/such/git")).unwrap();
+        let missing = missing_git().unwrap();
+        assert!(
+            missing.contains("/no/such/git") && missing.contains("settings.json"),
+            "{missing}"
+        );
+        assert_eq!(
+            git_program(),
+            "/no/such/git",
+            "not the PATH's git, which the user didn't choose"
+        );
+    });
+    with_client_env(&env(&[("AMONHEN_GIT", "git")]), || {
+        assert_eq!(
+            git_choice(),
+            GitChoice::Environment("git".into()),
+            "AMONHEN_GIT comes first"
+        );
+        assert_eq!(missing_git(), None, "a name is looked up on PATH");
+    });
+    std::fs::write(dir.path().join("amonhen").join("settings.json"), "[]").unwrap();
+    with_client_env(&env(&[]), || {
+        assert!(
+            missing_git().unwrap().contains("settings.json"),
+            "a broken file stops git"
+        );
+    });
 }
 
 #[cfg(all(test, unix))]

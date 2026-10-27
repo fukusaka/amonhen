@@ -2161,6 +2161,32 @@ pub unsafe extern "C" fn amonhen_env_refusal(name: *const c_char) -> *mut c_char
         .map_or(std::ptr::null_mut(), CString::into_raw)
 }
 
+/// この機械で使う git と、それをどこで決めたか（JSON。コアの `machineGit` の `info` と同じ形）。この機械の
+/// Amon Hen の設定（`settings.json`）を読むだけで、git は起動しない。`amonhen_string_free` で解放する。
+#[unsafe(no_mangle)]
+pub extern "C" fn amonhen_machine_git() -> *mut c_char {
+    let json = serde_json::to_string(&amonhen_model::settings::machine_git()).unwrap_or_default();
+    CString::new(json).unwrap_or_default().into_raw()
+}
+
+/// この機械の Amon Hen の設定（`settings.json`）に、使う git を書く。NULL・空なら消す（自動）。書けなければ理由、
+/// 書けたら NULL。`amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `git` は NULL か、NUL 終端の UTF-8 であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_set_machine_git(git: *const c_char) -> *mut c_char {
+    let git = if git.is_null() {
+        None
+    } else {
+        str_arg(git).ok()
+    };
+    match amonhen_model::settings::set_git(git) {
+        Ok(()) => std::ptr::null_mut(),
+        Err(e) => CString::new(e.to_string()).unwrap_or_default().into_raw(),
+    }
+}
+
 /// このプロセスの環境が変わったとき（設定・シェルの読み直し）に、共有の daemon への今のつながりに送り直す
 /// （`amonhen_remote::local::update_environment`。つなぎ直さずに、この先の git・ssh に効く）。通信するので裏の
 /// スレッドで呼ぶ。

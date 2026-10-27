@@ -107,6 +107,10 @@ History・検索の索引・Undo の記録を分け合う。Remote-SSH では、
 ホストの OS と CPU に合うエンジンがないとき、または `amonhen.daemon.enabled` を切ったときは、拡張の git 実行層で動く
 （上の機能は同じように使えるが、アプリ・CLI とは分け合わない）。
 
+どちらでも、拡張はその機械の Amon Hen の設定（`~/.config/amonhen/settings.json`。アプリの設定 > Git > プログラムで
+選ぶ）の git を動かし、選んでいないときだけ VSCode の `git.path` を使う。選んだ git がなければ、git を動かすコマンドは
+エラーで止まる。
+
 | 設定 | 既定 | 内容 |
 | --- | --- | --- |
 | `amonhen.daemon.enabled` | `true` | エンジンの共有の daemon を使う。切ると git 実行層だけで動く |

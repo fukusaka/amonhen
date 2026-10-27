@@ -9,6 +9,7 @@ license.workspace = true
 [dependencies]
 amonhen-layout.workspace = true
 serde = { version = "1.0.229", features = ["derive"], optional = true }
+serde_json = "1.0.154"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

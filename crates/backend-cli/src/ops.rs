@@ -194,6 +194,9 @@ impl Operations for Git {
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
+        if let Some(reason) = amonhen_model::process::missing_git() {
+            return Err(reason.into());
+        }
         let mut child = cmd.spawn()?;
         let mut stderr = child.stderr.take().unwrap();
         let errors = std::thread::spawn(move || {
@@ -805,6 +808,14 @@ impl Operations for Git {
 
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
         Ok(crate::git_version())
+    }
+
+    fn machine_git(&self) -> Result<amonhen_model::MachineGit> {
+        Ok(amonhen_model::settings::machine_git())
+    }
+
+    fn set_machine_git(&self, git: Option<&str>) -> Result<()> {
+        amonhen_model::settings::set_git(git)
     }
 
     fn signing_keys(&self, format: &str) -> Result<Vec<SigningKey>> {

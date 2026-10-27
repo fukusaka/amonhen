@@ -60,6 +60,23 @@ pub struct RemoteEntry {
     pub push_url: String,
 }
 
+/// git を動かす機械で使う git と、それをどこで決めたか（Settings > Git > Programs の git の行）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(rename_all = "camelCase"))]
+pub struct MachineGit {
+    /// この機械の Amon Hen の設定で選んだ git（`settings.json` の `"git"`）。なければ自動。
+    pub chosen: Option<String>,
+    /// 設定のファイル。
+    pub file: Option<String>,
+    /// 今使う git（パス、または PATH で探す `git`）。
+    pub program: String,
+    /// どこで決めたか: `environment`（`AMONHEN_GIT`）・`settings`・`fallback`（`AMONHEN_FALLBACK_GIT`）・`path`。
+    pub source: String,
+    /// 使えないときの理由（git を動かす操作はこれでエラーになる）。
+    pub problem: Option<String>,
+}
+
 /// 署名に使える鍵（リポジトリの設定の「鍵」の一覧の 1 つ）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -335,6 +352,15 @@ pub trait Operations: Send + Sync {
     fn config_set_global(&self, key: &str, value: Option<&str>) -> Result<()> {
         let _ = (key, value);
         Err(crate::tr!("Can’t change the user’s git settings here").into())
+    }
+    /// git を動かす機械で使う git（その機械の Amon Hen の設定と環境から決まる。`crate::settings`）。
+    fn machine_git(&self) -> Result<MachineGit> {
+        Err(crate::tr!("Can’t read Amon Hen’s settings of the machine running git here").into())
+    }
+    /// git を動かす機械の Amon Hen の設定に、使う git を書く。None なら消す（自動）。
+    fn set_machine_git(&self, git: Option<&str>) -> Result<()> {
+        let _ = git;
+        Err(crate::tr!("Can’t change Amon Hen’s settings of the machine running git here").into())
     }
     /// このリポジトリを扱う git の版（major, minor, patch）。読めなければ `None`。
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {

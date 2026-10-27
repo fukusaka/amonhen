@@ -1342,6 +1342,21 @@ char *amonhen_env_always_names(void);
 char *amonhen_env_refusal(const char *name);
 
 /**
+ * この機械で使う git と、それをどこで決めたか（JSON。コアの `machineGit` の `info` と同じ形）。この機械の
+ * Amon Hen の設定（`settings.json`）を読むだけで、git は起動しない。`amonhen_string_free` で解放する。
+ */
+char *amonhen_machine_git(void);
+
+/**
+ * この機械の Amon Hen の設定（`settings.json`）に、使う git を書く。NULL・空なら消す（自動）。書けなければ理由、
+ * 書けたら NULL。`amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `git` は NULL か、NUL 終端の UTF-8 であること。
+ */
+char *amonhen_set_machine_git(const char *git);
+
+/**
  * このプロセスの環境が変わったとき（設定・シェルの読み直し）に、共有の daemon への今のつながりに送り直す
  * （`amonhen_remote::local::update_environment`。つなぎ直さずに、この先の git・ssh に効く）。通信するので裏の
  * スレッドで呼ぶ。

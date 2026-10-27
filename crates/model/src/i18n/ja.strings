@@ -295,3 +295,13 @@
 "Can’t read the excludes file here" = "ここでは無視するパターンのファイルを読めません";
 "Can’t write the excludes file here" = "ここでは無視するパターンのファイルに書けません";
 "Couldn’t run git ({git}): {error}" = "git（{git}）を動かせませんでした: {error}";
+
+/* この機械の Amon Hen の設定（settings.json） */
+"Can’t tell where Amon Hen’s settings go (HOME isn’t set)" = "Amon Hen の設定の置き場所が分かりません（HOME がありません）";
+"Amon Hen’s settings ({path}) can’t be read: {reason}" = "Amon Hen の設定（{path}）を読めません: {reason}";
+"Can’t read Amon Hen’s settings of the machine running git here" = "ここでは、git を動かす機械の Amon Hen の設定を読めません";
+"Can’t change Amon Hen’s settings of the machine running git here" = "ここでは、git を動かす機械の Amon Hen の設定を変えられません";
+"not a JSON object" = "JSON のオブジェクトではありません";
+"The git in AMONHEN_GIT ({path}) isn’t there" = "AMONHEN_GIT の git（{path}）が見つかりません";
+"The git chosen for this machine ({path}) isn’t there. Choose another in Settings > Git > Programs (it’s kept in {file})" = "この機械で選んだ git（{path}）が見つかりません。設定 > Git > プログラムで選び直してください（{file} にあります）";
+"The git in git.path ({path}) isn’t there" = "git.path の git（{path}）が見つかりません";
