@@ -1,6 +1,7 @@
 //! daemon 越しのリポジトリのコミットの署名を、手元の鍵で検証する。受け取ったコミットのオブジェクトを手元の
 //! 作業用のリポジトリに書き、手元の git に `%G?` で検証させる（手元のリポジトリと同じ規則・設定になる。
 //! gpg.program・gpg.ssh.allowedSignersFile・gpg.minTrustLevel など）。木やほかのオブジェクトは要らない。
+//! タグも同じく、受け取ったタグのオブジェクトを手元の git の `verify-tag` で検証する。
 
 use amonhen_model::tr;
 use std::path::PathBuf;
@@ -92,6 +93,11 @@ impl SignatureVerifier for LocalVerifier {
         let git = self.git()?;
         self.store(&git, &[(*id, raw)])?;
         git.signature_details(id)
+    }
+
+    /// タグは作業用のリポジトリに残さない（検証のあいだだけ一時的な置き場に書く）。
+    fn verify_tags(&self, tags: &[(Oid, &[u8])]) -> Result<Vec<SignatureCheck>> {
+        self.git()?.verify_tags(tags)
     }
 }
 

@@ -1,21 +1,30 @@
 import AmonhenKit
 import AppKit
 
-/// 署名の詳細の吹き出し（GitHub の Verified の吹き出しに倣う）。状態・説明・署名者・コミッターとの一致・方式・
-/// 鍵 ID・指紋・信用度・検証した場所。値は選んでコピーできる。
+/// 署名の詳細の吹き出し（GitHub の Verified の吹き出しに倣う）。状態・説明・署名者・コミッター（タグはタガー）との
+/// 一致・方式・鍵 ID・指紋・信用度・検証した場所。値は選んでコピーできる。
 final class SignaturePopover: NSViewController {
+    /// タグの署名なら、タグの名前とメッセージ（見出しとメッセージの行に出す）。
+    struct Tag {
+        var name: String
+        var message: String
+    }
+
     private let status: SignatureStatus
     private let signature: CommitExtras.Signature?
     private let kind: String
+    /// 署名した鍵と比べるメールアドレス（コミッター、タグならタガー）。
     private let committerEmail: String
     private let place: SignaturePlace
+    private let tag: Tag?
 
-    init(status: SignatureStatus, signature: CommitExtras.Signature?, kind: String, committerEmail: String, place: SignaturePlace) {
+    init(status: SignatureStatus, signature: CommitExtras.Signature?, kind: String, committerEmail: String, place: SignaturePlace, tag: Tag? = nil) {
         self.status = status
         self.signature = signature
         self.kind = kind
         self.committerEmail = committerEmail
         self.place = place
+        self.tag = tag
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -34,10 +43,18 @@ final class SignaturePopover: NSViewController {
         badge.layer?.cornerRadius = 4
         let spacer = NSView()
         spacer.setContentHuggingPriority(.init(1), for: .horizontal)
-        let header = NSStackView(views: [icon, title, spacer, badge])
+        var titles: [NSView] = [icon, title]
+        if let tag {
+            let name = NSTextField(labelWithString: L("Tag %@", tag.name))
+            name.font = .systemFont(ofSize: 12)
+            name.textColor = .secondaryLabelColor
+            name.lineBreakMode = .byTruncatingMiddle
+            titles.append(name)
+        }
+        let header = NSStackView(views: titles + [spacer, badge])
         header.spacing = 6
 
-        let explanation = NSTextField(wrappingLabelWithString: status.explanation)
+        let explanation = NSTextField(wrappingLabelWithString: status.explanation(tag: tag != nil))
         explanation.font = .systemFont(ofSize: 12)
         explanation.textColor = .secondaryLabelColor
         explanation.preferredMaxLayoutWidth = 380
@@ -53,17 +70,18 @@ final class SignaturePopover: NSViewController {
         }
         if let s = signature {
             if !s.signer.isEmpty { rows.append((L("Signer"), value(s.signer))) }
-            // 署名した鍵のすべてのメールアドレスとコミッターを、状態に関係なく比べて出す。
+            // 署名した鍵のすべてのメールアドレスとコミッター（タグはタガー）を、状態に関係なく比べて出す。
+            let label = tag == nil ? L("Committer email") : L("Tagger email")
             switch CommitterMatch(emails: s.emails, committerEmail: committerEmail) {
             case let .matched(email):
-                rows.append((L("Committer email"), value(L("Listed on the key (%@)", email), color: .systemGreen)))
+                rows.append((label, value(L("Listed on the key (%@)", email), color: .systemGreen)))
             case let .unconfirmed(email):
-                rows.append((L("Committer email"), value(L("Listed on the key (%@), but that user ID isn’t confirmed", email), color: .systemYellow)))
+                rows.append((label, value(L("Listed on the key (%@), but that user ID isn’t confirmed", email), color: .systemYellow)))
             case .mismatched:
-                rows.append((L("Committer email"), value(L("Not listed on the key (%@)", committerEmail), color: .systemOrange)))
+                rows.append((label, value(L("Not listed on the key (%@)", committerEmail), color: .systemOrange)))
             case .unknown:
                 if !committerEmail.isEmpty {
-                    rows.append((L("Committer email"), value(L("Can’t check: the key’s email addresses can’t be read"), color: .secondaryLabelColor)))
+                    rows.append((label, value(L("Can’t check: the key’s email addresses can’t be read"), color: .secondaryLabelColor)))
                 }
             }
             let others = s.emails.filter { $0.email.lowercased() != committerEmail.lowercased() }
@@ -84,6 +102,7 @@ final class SignaturePopover: NSViewController {
         }
         let keys = kind == "ssh" ? "allowed signers" : "~/.gnupg"
         rows.append((L("Checked on"), value(L("%@ on %@ (%@)", keys, place.name, place.detail))))
+        if let tag, !tag.message.isEmpty { rows.append((L("Message"), value(tag.message))) }
 
         let grid = NSGridView(views: rows.map { label, view in
             let l = NSTextField(labelWithString: label)

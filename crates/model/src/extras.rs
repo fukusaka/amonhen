@@ -64,4 +64,14 @@ pub trait SignatureVerifier: Send + Sync {
     fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<SignatureCheck>>;
     /// 1 つのコミットの検証の詳細（署名者・鍵・信用度）。署名がなければ `None`。
     fn details(&self, id: &Oid, raw: &[u8]) -> Result<Option<SignatureCheck>>;
+    /// `tags`（タグのオブジェクトの ID と中身）を検証し、同じ順に結果を返す（署名がなければ N）。
+    fn verify_tags(&self, tags: &[(Oid, &[u8])]) -> Result<Vec<SignatureCheck>> {
+        Ok(vec![
+            SignatureCheck {
+                status: 'E',
+                ..Default::default()
+            };
+            tags.len()
+        ])
+    }
 }

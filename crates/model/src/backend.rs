@@ -159,6 +159,25 @@ pub trait GitBackend: Send + Sync {
         ])
     }
 
+    /// タグのオブジェクトの中身（`ids` と同じ順。タグのオブジェクトでなければ `None`）。対応しない実装はすべて
+    /// `None` を返す。
+    fn tag_objects(&self, ids: &[Oid]) -> Result<Vec<Option<Vec<u8>>>> {
+        Ok(vec![None; ids.len()])
+    }
+
+    /// `tags`（タグのオブジェクトの ID と中身）の署名を検証し、結果（`status` は `%G?` と同じ 1 文字、署名が
+    /// なければ N）を同じ順に返す。中身を渡すのは、merge したタグがマージコミットの mergetag にしか残って
+    /// いないことがあるため。対応しない実装はすべて E（検証できない）を返す。
+    fn verify_tags(&self, tags: &[(Oid, Vec<u8>)]) -> Result<Vec<crate::SignatureCheck>> {
+        Ok(vec![
+            crate::SignatureCheck {
+                status: 'E',
+                ..Default::default()
+            };
+            tags.len()
+        ])
+    }
+
     /// daemon とのつながりの様子。手元の実装は `None`。
     fn connection_state(&self) -> Option<ConnectionState> {
         None

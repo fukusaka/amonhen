@@ -1,8 +1,8 @@
 import AmonhenKit
 import AppKit
 
-/// コミットの署名の見せ方。git の検証結果（`%G?`）に、信用度と「署名者がコミッターと一致するか」を加えて決める。
-/// ヘッダー・吹き出し・History の一覧で同じアイコンと言葉を使う。
+/// コミットとタグの署名の見せ方。git の検証結果（`%G?`）に、信用度と「署名者がコミッター（タグはタガー）と
+/// 一致するか」を加えて決める。ヘッダー・吹き出し・History の一覧・サイドバーで同じアイコンと言葉を使う。
 enum SignatureStatus: Equatable {
     /// 正しい署名で、鍵を信用している。`trust` は 3（ultimate・full、SSH の allowed signers）か 2（marginal）。
     case verified(trust: Int)
@@ -102,17 +102,22 @@ enum SignatureStatus: Equatable {
         }
     }
 
-    /// 吹き出しの説明（日本語）。
-    var explanation: String {
+    /// 吹き出しの説明（日本語）。`tag` ならタグの署名の言い方（コミッターでなくタガー）。
+    func explanation(tag: Bool = false) -> String {
         switch self {
         case let .verified(trust):
-            trust >= 3 ? L("This commit has a valid signature from a trusted key.")
+            trust >= 3 ? (tag ? L("This tag has a valid signature from a trusted key.") : L("This commit has a valid signature from a trusted key."))
+                : tag ? L("This tag has a valid signature. The key’s trust is marginal (partly trusted).")
                 : L("This commit has a valid signature. The key’s trust is marginal (partly trusted).")
         case .untrusted: L("The signature is valid, but the key’s trust isn’t set. Check who owns the key and set its trust to make it Verified.")
-        case .signerMismatch: L("The signature is valid, but the committer’s email address isn’t listed on the signing key. Someone other than the committer may have signed it.")
+        case .signerMismatch:
+            tag ? L("The signature is valid, but the tagger’s email address isn’t listed on the signing key. Someone other than the tagger may have signed it.")
+                : L("The signature is valid, but the committer’s email address isn’t listed on the signing key. Someone other than the committer may have signed it.")
         case .expired: L("The signature or the key has expired. It may have been valid when it was signed.")
         case .revoked: L("The signing key has been revoked. This signature can’t be trusted.")
-        case .bad: L("The signature is invalid. The commit was changed after it was signed, or the signature is corrupt.")
+        case .bad:
+            tag ? L("The signature is invalid. The tag was changed after it was signed, or the signature is corrupt.")
+                : L("The signature is invalid. The commit was changed after it was signed, or the signature is corrupt.")
         case .noKey: L("There’s no public key to verify the signature (it isn’t in the GPG keyring or the SSH allowed signers).")
         case .unsupported: L("This git can’t verify SSH signatures. It needs git 2.34 or later.")
         case .pending: L("Verifying the signature.")
@@ -120,7 +125,7 @@ enum SignatureStatus: Equatable {
     }
 
     /// かざしたときの短い説明。
-    var toolTip: String { L("%@ — %@ (Click for details.)", label, explanation) }
+    func toolTip(tag: Bool = false) -> String { L("%@ — %@ (Click for details.)", label, explanation(tag: tag)) }
 
     /// 信用度の目盛りの段数（0〜3）。信用度に意味がない状態は nil。
     var trustBars: Int? {

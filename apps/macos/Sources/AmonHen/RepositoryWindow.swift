@@ -277,6 +277,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             self, selector: #selector(autoFetchSettingChanged), name: .autoFetchChanged, object: nil)
         wire(editing)
         sidebar.actions = actions
+        sidebar.repository = repository
         history.actions = actions
         stashes.actions = actions
         reflog.actions = actions
@@ -792,6 +793,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         repository.setLocalSignatureCheck(Settings.sshHost(of: location).map(Settings.checkSignaturesLocally(on:)) ?? Settings.checkRemoteSignaturesLocally)
         updateSignaturePlace()
         history.forgetSignatures()
+        sidebar.forgetSignatures()
         detail.reloadSignature()
     }
 
@@ -1081,6 +1083,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         // --measure-select N で、History の行を N 個順に選び、詳細が出るまでの各段階の時間を測る。
         if let count = AppDelegate.option("--measure-select").flatMap(Int.init) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [self] in measureSelection(count: count) }
+        }
+        // --filter-sidebar WORDS で、サイドバーを絞り込んだ状態にする（見出しが開くので、タグの行も見える）。
+        if let words = AppDelegate.option("--filter-sidebar") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [self] in sidebar.filter(words) }
         }
         // --select-first・--select-row N で、その行を選んで表の中ほどに出す（履歴の途中の見た目を確かめる）。--snapshot
         // がなくても効く（本物のウィンドウを画面キャプチャで撮るとき）。

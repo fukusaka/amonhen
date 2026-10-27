@@ -327,6 +327,18 @@ fn handle(
         }
         Request::CommitExtras(id) => encode(&backend.commit_extras(&id)?),
         Request::VerifySignatures(ids) => encode(&backend.verify_signatures(&ids)?),
+        Request::TagObjects(ids) => {
+            let objects: Vec<Option<Bytes>> = backend
+                .tag_objects(&ids)?
+                .into_iter()
+                .map(|o| o.map(Bytes))
+                .collect();
+            encode(&objects)
+        }
+        Request::VerifyTags(tags) => {
+            let tags: Vec<(Oid, Vec<u8>)> = tags.into_iter().map(|(id, b)| (id, b.0)).collect();
+            encode(&backend.verify_tags(&tags)?)
+        }
         Request::BranchCreatedAt(names) => {
             let names: Vec<&str> = names.iter().map(String::as_str).collect();
             encode(&backend.branch_created_at(&names)?)

@@ -110,6 +110,90 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// タグの push・削除の送り先（すべてのリモート）。
     private var remoteNames: [String] { tagRemotes?.remotes.map(\.name) ?? branchRemotes }
 
+    /// タグの署名を確かめるのに使う（RepositoryWindow が渡す）。
+    var repository: Repository?
+    /// タグの署名の検証の結果（名前 → 状態。署名のないタグ・軽量タグは nil）と、それを確かめたときの refs の番号。
+    /// refs が変わったら（タグを付け直したかもしれない）、見えている行から確かめ直す（コアが ID で覚えているので速い）。
+    private var tagSignatures: [String: (status: SignatureStatus?, epoch: Int)] = [:]
+    private var tagSignatureEpoch = 0
+    /// 検証する側を変えたら進める（前の結果は捨て、変える前に始めた検証の結果は使わない）。
+    private var tagSignatureGeneration = 0
+    private var tagsToVerify: Set<String> = []
+    private var verifyingTags: Set<String> = []
+    private var verifyTagsWork: DispatchWorkItem?
+
+    /// 検証する側が変わったので、タグの署名の結果を捨てて確かめ直す。
+    func forgetSignatures() {
+        tagSignatureGeneration += 1
+        verifyTagsWork?.cancel()
+        tagSignatures.removeAll()
+        tagsToVerify.removeAll()
+        verifyingTags.removeAll()
+        reloadTagRows { _ in true }
+    }
+
+    /// タグの行の右端の署名の印（SF Symbols の名前, ツールチップ, 色）。署名がなければ nil。結果がない（古い）
+    /// ときは、確かめる予定に入れる（見えている行だけが呼ぶので、見えているタグだけを確かめる）。
+    private func tagSignatureMark(_ name: String) -> (String, String, NSColor)? {
+        let known = tagSignatures[name]
+        if known?.epoch != tagSignatureEpoch { verifyTagsSoon(name) }
+        guard let status = known?.status else { return nil }
+        return (status.symbol, "\(status.label) — \(status.explanation(tag: true))", status.color)
+    }
+
+    /// スクロールが落ち着いてから、見えているタグの署名を 8 件ずつ裏で確かめ、終わった分から印を出す
+    /// （タグごとに git と gpg を起動するので 1 件 25 ms ほど。History の署名の印と同じ）。
+    private func verifyTagsSoon(_ name: String) {
+        guard !verifyingTags.contains(name) else { return }
+        tagsToVerify.insert(name)
+        verifyTagsWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, let repository else { return }
+            // まだ見えている行のタグだけ（スクロールで外れたものは、また見えたときに確かめる）。
+            let rows = outline.rows(in: outline.visibleRect)
+            let visible = Set((rows.location..<rows.location + rows.length)
+                .compactMap { (self.outline.item(atRow: $0) as? Node)?.item }
+                .filter { $0.kind == .tag }.map(\.name))
+            let pending = tagsToVerify.intersection(visible).sorted()
+            tagsToVerify.removeAll()
+            guard !pending.isEmpty else { return }
+            verifyingTags.formUnion(pending)
+            let generation = tagSignatureGeneration, epoch = tagSignatureEpoch
+            Task {
+                for start in stride(from: 0, to: pending.count, by: 8) {
+                    let batch = Array(pending[start..<min(pending.count, start + 8)])
+                    let found = await Task.detached(priority: .utility) {
+                        (try? repository.tagSignatures(batch)) ?? []
+                    }.value
+                    guard generation == tagSignatureGeneration else { return }
+                    for tag in found {
+                        let status = tag.signed.map { kind in
+                            tag.signature.map {
+                                SignatureStatus(status: $0.status, trust: $0.trust, emails: $0.emails,
+                                                committerEmail: tag.taggerEmail ?? "", kind: kind)
+                            } ?? .noKey
+                        }
+                        tagSignatures[tag.name] = (status, epoch)
+                    }
+                    verifyingTags.subtract(batch)
+                    let names = Set(batch)
+                    reloadTagRows { names.contains($0) }
+                }
+            }
+        }
+        verifyTagsWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: work)
+    }
+
+    /// タグの行のうち `matches` に合うものを描き直す（作り直さない）。
+    private func reloadTagRows(_ matches: (String) -> Bool) {
+        let rows = IndexSet((0..<outline.numberOfRows).filter {
+            guard let item = (outline.item(atRow: $0) as? Node)?.item else { return false }
+            return item.kind == .tag && matches(item.name)
+        })
+        if !rows.isEmpty { outline.reloadData(forRowIndexes: rows, columnIndexes: [0]) }
+    }
+
     func show(tagRemotes: TagRemotes) {
         guard tagRemotes != self.tagRemotes else { return }
         self.tagRemotes = tagRemotes
@@ -181,6 +265,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         guard words != filterWords else { return }
         filterWords = words
         rebuild(first: false)
+    }
+
+    /// 絞り込みの語を入れる（`--filter-sidebar` の確認用。見出しが開くので、タグの印も見える）。
+    func filter(_ text: String) {
+        filterField.stringValue = text
+        filterChanged()
     }
 
     /// Navigate > Filter Branches…: 絞り込みの欄にカーソルを移す。
@@ -336,6 +426,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let first = generation == nil
         generation = refs.generation
         self.refs = refs
+        tagSignatureEpoch += 1
         rebuild(first: first)
     }
 
@@ -828,8 +919,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 badge = badge.isEmpty ? "↳" : "↳ " + badge
             }
         }
-        if let item = node.item, item.kind == .tag, let mark = tagMark(item.name) {
-            marks = [mark]
+        // タグは、署名の印と、リモートにない・違うタグがあるの印。
+        let tagRemoteMark = node.item.flatMap { $0.kind == .tag ? tagMark($0.name) : nil }
+        if let item = node.item, item.kind == .tag {
+            marks = [tagSignatureMark(item.name), tagRemoteMark].compactMap { $0 }
         }
         if node === cleanWorktreesNode { badge = "\(node.children.count)" }
         if let w = node.worktree {
@@ -876,9 +969,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         }
         // タグは、どのリモートにあるかをツールチップに（手元の ref からは分からないので、fetch のときに読んだもの）。
         if let item = node.item, item.kind == .tag {
-            cell.toolTip = ([marks.first?.1] + remoteNames.map { tagStateText(item.name, on: $0) })
-                .compactMap { $0 }.joined(separator: "\n")
-            if !marks.isEmpty {
+            cell.toolTip = (marks.map(\.1) + remoteNames.map { tagStateText(item.name, on: $0) })
+                .joined(separator: "\n")
+            if tagRemoteMark != nil {
                 cell.onBadgeClick = { [weak self, weak cell] in
                     guard let self, let cell else { return }
                     showTagStatus(item, from: cell.badge)

@@ -217,8 +217,8 @@ pub struct Repository {
     search_generation: AtomicU64,
     cache_path: Option<PathBuf>,
     undo: OnceLock<UndoLog>,
-    /// 署名の検証の結果（`%G?`）。コミットは変わらないので、一度検証したら覚えておく。検証する側を変えたら
-    /// 捨てる（番号を進め、変える前に始めた検証の結果は覚えない）。
+    /// 署名の検証の結果（`%G?`）。コミットもタグのオブジェクトも変わらないので、一度検証したら ID で覚えて
+    /// おく。検証する側を変えたら捨てる（番号を進め、変える前に始めた検証の結果は覚えない）。
     signatures: std::sync::Mutex<(
         u64,
         std::collections::HashMap<Oid, amonhen_model::SignatureCheck>,
@@ -372,6 +372,53 @@ impl Repository {
         Ok(ids
             .iter()
             .map(|id| {
+                fresh
+                    .get(id)
+                    .or_else(|| known.1.get(id))
+                    .cloned()
+                    .unwrap_or(amonhen_model::SignatureCheck {
+                        status: 'E',
+                        ..Default::default()
+                    })
+            })
+            .collect())
+    }
+
+    /// タグ（タグのオブジェクトの ID と中身）の署名の検証の結果を同じ順に返す。結果はコミットと同じところに
+    /// タグのオブジェクトの ID で覚える（同じタグを merge したマージコミットの mergetag とも分け合う）。
+    pub fn verify_tags(
+        &self,
+        tags: &[(Oid, Vec<u8>)],
+    ) -> Result<Vec<amonhen_model::SignatureCheck>> {
+        let unknown: Vec<&(Oid, Vec<u8>)> = {
+            let known = self.signatures.lock().unwrap();
+            let mut seen = std::collections::HashSet::new();
+            tags.iter()
+                .filter(|(id, _)| !known.1.contains_key(id) && seen.insert(*id))
+                .collect()
+        };
+        let mut fresh = std::collections::HashMap::new();
+        if !unknown.is_empty() {
+            let (generation, verifier) = self.signature_checker();
+            let found = match verifier {
+                // 手元の鍵で検証する（daemon 越しなら、タグのオブジェクトは受け取ってある）。
+                Some(verifier) => {
+                    let tags: Vec<(Oid, &[u8])> =
+                        unknown.iter().map(|(id, raw)| (*id, &raw[..])).collect();
+                    verifier.verify_tags(&tags)?
+                }
+                None => {
+                    let tags: Vec<(Oid, Vec<u8>)> = unknown.iter().map(|t| (*t).clone()).collect();
+                    self.backend.verify_tags(&tags)?
+                }
+            };
+            fresh.extend(unknown.iter().map(|(id, _)| *id).zip(found));
+            self.remember_signatures(generation, fresh.clone());
+        }
+        let known = self.signatures.lock().unwrap();
+        Ok(tags
+            .iter()
+            .map(|(id, _)| {
                 fresh
                     .get(id)
                     .or_else(|| known.1.get(id))

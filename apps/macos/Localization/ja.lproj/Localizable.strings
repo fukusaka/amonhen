@@ -881,6 +881,7 @@
 "Not pushed (not on any remote branch)" = "未 push（どのリモートブランチにも含まれない）";
 " (%@, signed)" = "（%@、署名付き）";
 " (%@, unsigned)" = "（%@、署名なし）";
+" (lightweight tag)" = "（軽量タグ）";
 
 /* SignatureStatus.swift */
 "This commit has a valid signature from a trusted key." = "このコミットは、信用している鍵による正しい署名を持っています。";
@@ -890,6 +891,10 @@
 "The signature or the key has expired. It may have been valid when it was signed." = "署名か鍵の期限が切れています。署名した時点では正しかった可能性があります。";
 "The signing key has been revoked. This signature can’t be trusted." = "署名した鍵は失効しています。この署名は信用できません。";
 "The signature is invalid. The commit was changed after it was signed, or the signature is corrupt." = "署名が正しくありません。コミットが署名の後に書き換えられたか、署名が壊れています。";
+"This tag has a valid signature from a trusted key." = "このタグは、信用している鍵による正しい署名を持っています。";
+"This tag has a valid signature. The key’s trust is marginal (partly trusted)." = "このタグは正しい署名を持っています。鍵の信用度は marginal（部分的に信用）です。";
+"The signature is valid, but the tagger’s email address isn’t listed on the signing key. Someone other than the tagger may have signed it." = "署名は正しいですが、タガーのメールアドレスが署名した鍵に登録されていません。タガーとは別の人の鍵で署名された可能性があります。";
+"The signature is invalid. The tag was changed after it was signed, or the signature is corrupt." = "署名が正しくありません。タグが署名の後に書き換えられたか、署名が壊れています。";
 "There’s no public key to verify the signature (it isn’t in the GPG keyring or the SSH allowed signers)." = "署名を検証する公開鍵がありません（GPG の鍵束、SSH の allowed signers に入っていない）。";
 "This git can’t verify SSH signatures. It needs git 2.34 or later." = "この git では SSH の署名を検証できません。git 2.34 以降が要ります。";
 "Verifying the signature." = "署名を検証しています。";
@@ -899,6 +904,8 @@
 "Checked on %@" = "%@で検証";
 "Signer" = "署名者";
 "Committer email" = "コミッターのメール";
+"Tagger email" = "タガーのメール";
+"Tag %@" = "タグ %@";
 "Listed on the key (%@)" = "鍵に登録されている（%@）";
 "Listed on the key (%@), but that user ID isn’t confirmed" = "鍵に登録されている（%@）。ただし、そのユーザー ID は確認されていない";
 "Not listed on the key (%@)" = "鍵に登録されていない（%@）";

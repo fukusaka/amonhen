@@ -205,6 +205,12 @@ pub enum Command {
     VerifySignatures {
         oids: Vec<String>,
     },
+    /// タグの署名（`info`: `tags` に `names` と同じ順で name・id（注釈付きのタグのオブジェクト。軽量タグは
+    /// null）・signed（gpg・ssh・x509、署名がなければ null）・taggerEmail・signature（検証の結果。署名が
+    /// なければ null））。署名のあるものだけを検証し、一度検証したものは覚えている。
+    TagSignatures {
+        names: Vec<String>,
+    },
     /// 名前や短い ID が指すコミット（`text`: 40 桁の ID）。メッセージの中の ID のリンクに使う。
     ResolveCommit {
         rev: String,
@@ -855,12 +861,15 @@ impl Repository {
                 mergetag = true;
             }
         }
-        let merged_tags: Vec<serde_json::Value> = merged_tags(header)
-            .into_iter()
-            .map(|t| {
+        let merged_tags: Vec<serde_json::Value> = merged_tags(&text.raw)
+            .iter()
+            .map(|raw| {
+                let t = TagObject::read(raw);
                 serde_json::json!({
+                    "id": t.id.to_string(),
                     "name": t.name,
                     "tagger": t.tagger,
+                    "taggerEmail": t.tagger_email,
                     "subject": t.subject,
                     "signed": t.signed,
                 })
@@ -1028,6 +1037,57 @@ impl Repository {
                 )
             })
             .collect();
+        // このコミットを指すタグ（注釈付きならタガーとメッセージ）と、merge したタグ。署名のあるものを検証する。
+        let pointing: Vec<String> = self
+            .refs()?
+            .refs
+            .entries
+            .iter()
+            .filter(|e| e.kind == amonhen_model::RefKind::Tag && e.target.as_ref() == Some(commit))
+            .map(|e| e.name.clone())
+            .collect();
+        let pointing: Vec<&str> = pointing.iter().map(String::as_str).collect();
+        let pointing = self.annotated_tags(self.backend().operations()?, &pointing)?;
+        let text = self
+            .backend()
+            .commit_texts(std::slice::from_ref(commit))?
+            .remove(0);
+        let merged_tags: Vec<TagObject> = merged_tags(&text.raw)
+            .iter()
+            .map(|r| TagObject::read(r))
+            .collect();
+        let tag_signatures = self.verify_signed_tags(
+            pointing
+                .iter()
+                .filter_map(|(_, t)| t.as_ref())
+                .chain(&merged_tags),
+        );
+        let tag_objects: Vec<serde_json::Value> = pointing
+            .iter()
+            .map(|(name, tag)| match tag {
+                None => serde_json::json!({ "name": name, "id": null }),
+                Some(t) => serde_json::json!({
+                    "name": name,
+                    "id": t.id.to_string(),
+                    "tagger": t.tagger,
+                    "taggerEmail": t.tagger_email,
+                    "time": t.time,
+                    "tz": t.tz,
+                    "subject": t.subject,
+                    "message": t.message,
+                    "signed": t.signed,
+                    "signature": tag_signatures.get(&t.id).map(signature_json),
+                }),
+            })
+            .collect();
+        let merged_tag_signatures: Vec<serde_json::Value> = merged_tags
+            .iter()
+            .map(|t| {
+                tag_signatures
+                    .get(&t.id)
+                    .map_or(serde_json::Value::Null, signature_json)
+            })
+            .collect();
         let signature = extras.signature.as_ref().map(signature_json);
         let stats: Vec<serde_json::Value> = extras
             .stats
@@ -1054,7 +1114,51 @@ impl Repository {
             "mergedCount": merged_rows.len(),
             "merged": merged,
             "references": references,
+            "tagObjects": tag_objects,
+            "mergedTagSignatures": merged_tag_signatures,
         }))
+    }
+
+    /// タグの名前から、注釈付きのタグのオブジェクトを読む（`names` と同じ順。軽量タグやないタグは `None`）。
+    fn annotated_tags<'a>(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        names: &[&'a str],
+    ) -> Result<Vec<(&'a str, Option<TagObject>)>> {
+        let objects = tag_objects(ops, names)?;
+        let ids: Vec<Oid> = objects.iter().filter_map(|(_, id)| *id).collect();
+        let mut raws = if ids.is_empty() {
+            Vec::new()
+        } else {
+            self.backend().tag_objects(&ids)?
+        }
+        .into_iter();
+        Ok(objects
+            .into_iter()
+            .map(|(name, id)| {
+                let raw = id.and_then(|_| raws.next().flatten());
+                (name, raw.map(|raw| TagObject::read(&raw)))
+            })
+            .collect())
+    }
+
+    /// 署名のあるタグを検証し、タグのオブジェクトの ID ごとの結果を返す。検証できなければ（git が動かないなど）
+    /// 空のまま返す（タグの情報は出せるので、詳細全体を失敗にしない）。
+    fn verify_signed_tags<'a>(
+        &self,
+        tags: impl Iterator<Item = &'a TagObject>,
+    ) -> std::collections::HashMap<Oid, amonhen_model::SignatureCheck> {
+        let signed: Vec<(Oid, Vec<u8>)> = tags
+            .filter(|t| t.signed.is_some())
+            .map(|t| (t.id, t.raw.clone()))
+            .collect();
+        if signed.is_empty() {
+            return Default::default();
+        }
+        match self.verify_tags(&signed) {
+            Ok(checks) => signed.iter().map(|(id, _)| *id).zip(checks).collect(),
+            Err(_) => Default::default(),
+        }
     }
 
     /// メッセージに出てくるコミット ID（7〜40 桁の 16 進）のうち、引けたもの（書かれていた文字列と ID）。
@@ -1903,6 +2007,33 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::TagSignatures { names } => {
+                let names: Vec<&str> = names.iter().map(String::as_str).collect();
+                let tags = self.annotated_tags(ops, &names)?;
+                let signatures =
+                    self.verify_signed_tags(tags.iter().filter_map(|(_, t)| t.as_ref()));
+                let tags: Vec<serde_json::Value> = names
+                    .iter()
+                    .zip(&tags)
+                    .map(|(name, (_, tag))| {
+                        let Some(tag) = tag else {
+                            return serde_json::json!({ "name": name, "id": null, "signed": null });
+                        };
+                        serde_json::json!({
+                            "name": name,
+                            "id": tag.id.to_string(),
+                            "signed": tag.signed,
+                            "taggerEmail": tag.tagger_email,
+                            "signature": signatures.get(&tag.id).map(signature_json),
+                        })
+                    })
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "tags": tags })),
+                    ..Default::default()
+                })
+            }
             Command::ResolveCommit { rev } => Ok(Response {
                 ok: true,
                 text: Some(ops.resolve(&format!("{rev}^{{commit}}"))?.to_string()),
@@ -2529,56 +2660,105 @@ fn signature_json(s: &amonhen_model::SignatureCheck) -> serde_json::Value {
     })
 }
 
-/// merge したタグ（ヘッダーの `mergetag`）。
-struct MergedTag {
+/// 注釈付きのタグのオブジェクト（`git cat-file tag` の中身）を読んだもの。
+struct TagObject {
+    /// オブジェクトの ID（中身から求める。merge したタグはリポジトリにないことがある）。
+    id: Oid,
+    raw: Vec<u8>,
     name: String,
     tagger: String,
+    tagger_email: String,
+    time: i64,
+    tz: String,
+    /// メッセージの 1 行目と、署名を除いたメッセージ。
     subject: String,
-    signed: bool,
+    message: String,
+    /// 署名の種類（gpg・ssh・x509）。署名がなければ `None`。
+    signed: Option<&'static str>,
 }
 
-/// ヘッダーの `mergetag` を読む。値は複数行で、続きの行は空白 1 つで始まる（タグのオブジェクトそのもの）。
-fn merged_tags(header: &str) -> Vec<MergedTag> {
-    let mut blocks: Vec<Vec<&str>> = Vec::new();
+impl TagObject {
+    fn read(raw: &[u8]) -> Self {
+        let mut hasher = sha1_smol::Sha1::new();
+        hasher.update(format!("tag {}\0", raw.len()).as_bytes());
+        hasher.update(raw);
+        let id = Oid(hasher.digest().bytes());
+        let text = String::from_utf8_lossy(raw);
+        let (header, body) = text.split_once("\n\n").unwrap_or((&text, ""));
+        let field = |key: &str| {
+            header
+                .lines()
+                .find_map(|l| l.strip_prefix(key))
+                .unwrap_or_default()
+                .to_owned()
+        };
+        // "Name <email> 1700000000 +0900"
+        let tagger = field("tagger ");
+        let (name, rest) = tagger.split_once(" <").unwrap_or((&tagger, ""));
+        let (email, rest) = rest.split_once("> ").unwrap_or((rest, ""));
+        let mut parts = rest.split(' ');
+        let time = parts.next().and_then(|t| t.parse().ok()).unwrap_or(0);
+        let tz = parts.next().unwrap_or_default().to_owned();
+        let signed = match amonhen_model::CommitText::tag_signature_kind(raw) {
+            amonhen_model::CommitText::SIGNED_GPG => Some("gpg"),
+            amonhen_model::CommitText::SIGNED_SSH => Some("ssh"),
+            amonhen_model::CommitText::SIGNED_X509 => Some("x509"),
+            _ => None,
+        };
+        // 署名はメッセージの後ろ（最後の `-----BEGIN ` の行から）。
+        let message = match signed {
+            Some(_) => body
+                .rfind("-----BEGIN ")
+                .filter(|&i| i == 0 || body.as_bytes()[i - 1] == b'\n')
+                .map_or(body, |i| &body[..i]),
+            None => body,
+        };
+        let subject = message
+            .lines()
+            .find(|l| !l.trim().is_empty())
+            .unwrap_or_default()
+            .trim()
+            .to_owned();
+        TagObject {
+            id,
+            raw: raw.to_vec(),
+            name: field("tag "),
+            tagger: name.to_owned(),
+            tagger_email: email.to_owned(),
+            time,
+            tz,
+            subject,
+            message: message.trim_end().to_owned(),
+            signed,
+        }
+    }
+}
+
+/// コミットのヘッダーの `mergetag`（merge したタグのオブジェクトそのもの）を取り出す。値は複数行で、続きの
+/// 行は空白 1 つで始まる。
+fn merged_tags(raw: &[u8]) -> Vec<Vec<u8>> {
+    let header_end = raw
+        .windows(2)
+        .position(|w| w == b"\n\n")
+        .unwrap_or(raw.len());
+    let mut tags: Vec<Vec<u8>> = Vec::new();
     let mut in_tag = false;
-    for line in header.lines() {
-        if let Some(first) = line.strip_prefix("mergetag ") {
-            blocks.push(vec![first]);
+    for line in raw[..header_end].split(|&b| b == b'\n') {
+        if let Some(first) = line.strip_prefix(b"mergetag ") {
+            tags.push(first.to_vec());
+            tags.last_mut().unwrap().push(b'\n');
             in_tag = true;
-        } else if let Some(rest) = line.strip_prefix(' ')
+        } else if let Some(rest) = line.strip_prefix(b" ")
             && in_tag
         {
-            blocks.last_mut().unwrap().push(rest);
+            let tag = tags.last_mut().unwrap();
+            tag.extend_from_slice(rest);
+            tag.push(b'\n');
         } else {
             in_tag = false;
         }
     }
-    blocks
-        .into_iter()
-        .map(|lines| {
-            let field = |key: &str| {
-                lines
-                    .iter()
-                    .find_map(|l| l.strip_prefix(key))
-                    .unwrap_or_default()
-                    .to_owned()
-            };
-            let tagger = field("tagger ");
-            let tagger = tagger.split(" <").next().unwrap_or_default().to_owned();
-            // ヘッダーの後の空行の次がタグのメッセージ。
-            let subject = lines
-                .iter()
-                .skip_while(|l| !l.is_empty())
-                .find(|l| !l.is_empty())
-                .map_or_else(String::new, |l| (*l).to_owned());
-            MergedTag {
-                name: field("tag "),
-                tagger,
-                subject,
-                signed: lines.iter().any(|l| l.starts_with("-----BEGIN ")),
-            }
-        })
-        .collect()
+    tags
 }
 
 /// git の config の `[remote "origin"]` の `url`。
@@ -2718,6 +2898,29 @@ mod tests {
         out
     }
 
+    /// 標準入力を渡して git を実行し、標準出力を返す（前後の空白を除く）。
+    fn git_with_input(dir: &std::path::Path, args: &[&str], input: &str) -> String {
+        use std::io::Write;
+        let mut child = Process::new("git")
+            .args(args)
+            .current_dir(dir)
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        let out = child.wait_with_output().unwrap();
+        assert!(out.status.success(), "git {args:?}");
+        String::from_utf8(out.stdout).unwrap().trim().to_owned()
+    }
+
     fn setup() -> (tempfile::TempDir, Repository) {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
@@ -2756,6 +2959,75 @@ mod tests {
                 ..Default::default()
             }))
         }
+        fn verify_tags(&self, tags: &[(Oid, &[u8])]) -> Result<Vec<amonhen_model::SignatureCheck>> {
+            self.verify(tags)
+        }
+    }
+
+    /// タグの署名: 署名のあるタグだけを検証し、結果はタグのオブジェクトの ID で覚える（同じタグを merge した
+    /// マージコミットの mergetag とも分け合う）。軽量タグと署名のないタグには結果がない。
+    #[test]
+    fn verifies_signed_tags_and_merged_tags_once() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        git(dir, &["tag", "light"]);
+        git(dir, &["tag", "-a", "-m", "Plain release", "plain"]);
+        let signed = format!(
+            "object {head}\ntype commit\ntag signed\ntagger T <t@example.com> 5 +0900\n\nSigned release\n\nMore words\n-----BEGIN PGP SIGNATURE-----\nabc\n-----END PGP SIGNATURE-----\n"
+        );
+        let tag = git_with_input(dir, &["hash-object", "-t", "tag", "-w", "--stdin"], &signed);
+        git(dir, &["update-ref", "refs/tags/signed", &tag]);
+        let indented = signed.trim_end().replace('\n', "\n ");
+        let merge = format!(
+            "tree {}\nparent {head}\nparent {head}\nauthor a <a@example.com> 6 +0000\ncommitter a <a@example.com> 6 +0000\nmergetag {indented}\n\nMerge tag 'signed'\n",
+            git(dir, &["rev-parse", "HEAD^{tree}"])
+        );
+        let merge = git_with_input(
+            dir,
+            &["hash-object", "-t", "commit", "-w", "--stdin"],
+            &merge,
+        );
+        repo.load_refs().unwrap();
+        let local = std::sync::Arc::new(AlwaysGood(Default::default()));
+        repo.set_signature_verifier(Some(local.clone()));
+
+        let reply = run(
+            &repo,
+            r#"{"op":"tagSignatures","names":["signed","plain","light","missing"]}"#,
+        );
+        let tags = &reply["info"]["tags"];
+        assert_eq!(tags[0]["id"], tag.as_str());
+        assert_eq!(tags[0]["signed"], "gpg");
+        assert_eq!(tags[0]["taggerEmail"], "t@example.com");
+        assert_eq!(tags[0]["signature"]["status"], "G");
+        assert!(tags[1]["id"].is_string());
+        assert!(tags[1]["signed"].is_null() && tags[1]["signature"].is_null());
+        assert!(tags[2]["id"].is_null());
+        assert!(tags[3]["id"].is_null());
+        assert_eq!(local.0.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        let extras = run(&repo, &format!(r#"{{"op":"commitExtras","oid":"{head}"}}"#));
+        let objects = extras["info"]["tagObjects"].as_array().unwrap();
+        let by_name = |n: &str| objects.iter().find(|t| t["name"] == n).unwrap();
+        assert_eq!(by_name("signed")["subject"], "Signed release");
+        assert_eq!(by_name("signed")["message"], "Signed release\n\nMore words");
+        assert_eq!(by_name("signed")["time"], 5);
+        assert_eq!(by_name("signed")["signature"]["status"], "G");
+        assert_eq!(by_name("plain")["tagger"], "a");
+        assert!(by_name("plain")["signature"].is_null());
+        assert!(by_name("light")["id"].is_null());
+
+        let info = run(&repo, &format!(r#"{{"op":"commitInfo","oid":"{merge}"}}"#));
+        assert_eq!(info["info"]["mergedTags"][0]["id"], tag.as_str());
+        assert_eq!(info["info"]["mergedTags"][0]["signed"], "gpg");
+        let extras = run(
+            &repo,
+            &format!(r#"{{"op":"commitExtras","oid":"{merge}"}}"#),
+        );
+        assert_eq!(extras["info"]["mergedTagSignatures"][0]["status"], "G");
+        // 同じタグなので、検証し直さない。
+        assert_eq!(local.0.load(std::sync::atomic::Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -2975,16 +3247,43 @@ mod tests {
 
     #[test]
     fn reads_merged_tags_from_the_header() {
-        let header = "tree t\nparent a\nparent b\nauthor x <x@y> 1 +0000\nmergetag object b\n type commit\n tag v6.5-fixes\n tagger Greg <g@k> 2 +0200\n \n USB fixes for 6.5\n \n -----BEGIN PGP SIGNATURE-----\n abc\n -----END PGP SIGNATURE-----\ncommitter x <x@y> 3 +0000";
-        let tags = merged_tags(header);
+        let raw = b"tree t\nparent a\nparent b\nauthor x <x@y> 1 +0000\nmergetag object b\n type commit\n tag v6.5-fixes\n tagger Greg <g@k> 2 +0200\n \n USB fixes for 6.5\n \n -----BEGIN PGP SIGNATURE-----\n abc\n -----END PGP SIGNATURE-----\ncommitter x <x@y> 3 +0000\n\nMerge tag\n";
+        let tags = merged_tags(raw);
         assert_eq!(tags.len(), 1);
+        // mergetag の値はタグのオブジェクトそのもの（ID も元のタグと同じになる）。
         assert_eq!(
-            (tags[0].name.as_str(), tags[0].tagger.as_str()),
-            ("v6.5-fixes", "Greg")
+            tags[0],
+            b"object b\ntype commit\ntag v6.5-fixes\ntagger Greg <g@k> 2 +0200\n\nUSB fixes for 6.5\n\n-----BEGIN PGP SIGNATURE-----\nabc\n-----END PGP SIGNATURE-----\n"
         );
-        assert_eq!(tags[0].subject, "USB fixes for 6.5");
-        assert!(tags[0].signed);
-        assert!(merged_tags("tree t\nauthor x <x@y> 1 +0000").is_empty());
+        let tag = TagObject::read(&tags[0]);
+        assert_eq!(
+            (
+                tag.name.as_str(),
+                tag.tagger.as_str(),
+                tag.tagger_email.as_str()
+            ),
+            ("v6.5-fixes", "Greg", "g@k")
+        );
+        assert_eq!((tag.time, tag.tz.as_str()), (2, "+0200"));
+        assert_eq!(tag.subject, "USB fixes for 6.5");
+        assert_eq!(tag.message, "USB fixes for 6.5");
+        assert_eq!(tag.signed, Some("gpg"));
+        assert!(merged_tags(b"tree t\nauthor x <x@y> 1 +0000\n\nmergetag x\n").is_empty());
+    }
+
+    /// タグの ID は中身から求める（`git hash-object -t tag` と同じ）。
+    #[test]
+    fn computes_the_id_of_a_tag_object() {
+        let raw = b"object 26e76af3ea3bc42b40e826a4619f1bb69b865cdd\ntype commit\ntag v0\ntagger T <t@example.com> 1 +0000\n\nplain\n";
+        let tag = TagObject::read(raw);
+        let tmp = tempfile::tempdir().unwrap();
+        let git = amonhen_backend_cli::Git::new(tmp.path());
+        git.write(&["init", "-q"]).unwrap();
+        let id = git
+            .write_with_input(&["hash-object", "-t", "tag", "--stdin"], raw)
+            .unwrap();
+        assert_eq!(tag.id.to_string(), String::from_utf8(id).unwrap().trim());
+        assert_eq!((tag.signed, tag.message.as_str()), (None, "plain"));
     }
 
     #[test]
