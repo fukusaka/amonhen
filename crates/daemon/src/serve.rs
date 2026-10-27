@@ -214,6 +214,13 @@ fn serve_opened(
     result.map_err(Into::into)
 }
 
+/// FE 向けの窓口の要求が `environment`（FE の環境の差し替え）なら、その環境。
+fn environment_request(payload: &[u8]) -> Option<amonhen_model::process::ClientEnv> {
+    let request: serde_json::Value = serde_json::from_slice(payload).ok()?;
+    (request["op"] == "environment")
+        .then(|| amonhen_model::process::ClientEnv::decode(request["env"].as_str().unwrap_or("")))
+}
+
 /// FE 向けの窓口のやりとり。要求ごとにスレッドで実行し、答えは番号つきで返す（順不同）。
 fn serve_front(
     state: &State,
@@ -257,10 +264,21 @@ fn serve_front(
         }),
     ));
     let cancels: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> = Arc::default();
+    let mut env = env;
     let result = (|| -> Result<()> {
         while let Some(f) = frame::read(&mut reader)? {
             match f.kind {
                 Kind::Request => {
+                    // FE の環境の差し替え（`{"op":"environment","env":"NAME=value\0…"}`）。この先の要求から効くよう、
+                    // スレッドに分けずにここで受ける。
+                    if let Some(new) = environment_request(&f.payload) {
+                        env = new;
+                        let reply = amonhen_front::Reply::json(serde_json::json!({}));
+                        let mut out = writer.lock().unwrap();
+                        let _ =
+                            frame::write_with(&mut *out, Kind::Ok, f.id, &reply.encode(), false);
+                        continue;
+                    }
                     let cancel = Arc::new(AtomicBool::new(false));
                     cancels.lock().unwrap().insert(f.id, cancel.clone());
                     let (session, writer, cancels, env) = (
