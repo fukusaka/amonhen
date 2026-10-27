@@ -180,3 +180,43 @@ fn commands_and_undo_run_against_the_remote_repository() {
         "Undo の記録も daemon の側に残る"
     );
 }
+
+#[test]
+fn the_mailmap_comes_from_the_remote_side() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init(dir);
+    commit(dir, "a.txt", "1\n", "first");
+    std::fs::write(
+        dir.join(".mailmap"),
+        "Ann Example <ann@example.com> <a@example.com>\n",
+    )
+    .unwrap();
+    let remote = remote(dir);
+    let history = remote.load_history().unwrap();
+
+    let chunk = remote
+        .history_chunk(&history, 0, 1, &FrontendProfile::MACOS)
+        .unwrap();
+    let author = chunk.bytes(chunk.author_names[0]);
+    assert_eq!(
+        author, b"Ann Example",
+        "History の行は daemon の側の mailmap で"
+    );
+    for query in ["author:ann", "author:a"] {
+        assert_eq!(
+            remote.search_history(&history, query).unwrap(),
+            [0],
+            "{query}"
+        );
+    }
+    let oid = history.graph.ids()[0].to_string();
+    let info: serde_json::Value =
+        serde_json::from_str(&remote.run_json(&format!(r#"{{"op":"commitInfo","oid":"{oid}"}}"#)))
+            .unwrap();
+    assert_eq!(info["info"]["authorEmail"], "ann@example.com");
+    assert_eq!(info["info"]["recordedAuthor"]["name"], "a");
+    let log: serde_json::Value =
+        serde_json::from_str(&remote.run_json(r#"{"op":"fileHistory","path":"a.txt"}"#)).unwrap();
+    assert_eq!(log["info"]["entries"][0]["author"], "Ann Example");
+}
