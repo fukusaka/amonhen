@@ -202,15 +202,23 @@ pub trait GitBackend: Send + Sync {
     }
 
     /// `tips` から辿れるコミットを、本文の条件で探す（条件ごとに合ったコミット）。daemon 越しの実装は
-    /// daemon の側で探して ID だけを返す。`None` なら呼び出し側が `commit_texts` を読んで探す。
+    /// daemon の側で探して ID だけを返す。`None` なら呼び出し側が `commit_texts` を読んで探す。`mailmap` が
+    /// あれば、作者は置き換えた名前でも探す（daemon の側は、自分の側で読んだ mailmap を使う）。
     fn search_texts(
         &self,
         tips: &[Oid],
         terms: &[crate::search::TextTerm],
+        mailmap: Option<&crate::Mailmap>,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Option<Vec<Vec<Oid>>>> {
-        let _ = (tips, terms, cancelled);
+        let _ = (tips, terms, mailmap, cancelled);
         Ok(None)
+    }
+
+    /// リポジトリの mailmap（`.mailmap`・`mailmap.blob`・`mailmap.file`）と `log.mailmap`。読むのはリポジトリの
+    /// ある側。何度も呼ばれる（History の行を読むたび）ので、変わっていなければ覚えているものを安く返すこと。
+    fn mailmap(&self) -> Result<std::sync::Arc<crate::Mailmap>> {
+        Ok(Default::default())
     }
 
     /// コミットの本文。History で見えている行の分だけ呼ぶ。

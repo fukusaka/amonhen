@@ -10,6 +10,8 @@ pub struct CommitText {
     /// メッセージの 1 行目（前後の空白を除く）。
     pub subject: Range<u32>,
     pub author_name: Range<u32>,
+    /// 記録された作者のメール（`<` と `>` の間）。mailmap で名前を置き換えるのに使う。
+    pub author_email: Range<u32>,
     pub author_time: i64,
     /// 署名の種類（`SIGNED_*`）。署名がなければ 0。検証の結果ではない（`GitBackend::verify_signatures`）。
     pub signature: u8,
@@ -55,5 +57,23 @@ impl CommitText {
 
     pub fn author_name(&self) -> &[u8] {
         &self.raw[self.author_name.start as usize..self.author_name.end as usize]
+    }
+
+    pub fn author_email(&self) -> &[u8] {
+        &self.raw[self.author_email.start as usize..self.author_email.end as usize]
+    }
+
+    /// 作者の名前とメール。mailmap があれば置き換えたもの（`Mailmap::map`）。
+    pub fn author<'a>(
+        &'a self,
+        mailmap: Option<&'a crate::Mailmap>,
+    ) -> crate::mailmap::Identity<'a> {
+        match mailmap {
+            Some(m) => m.map(self.author_name(), self.author_email()),
+            None => crate::mailmap::Identity {
+                name: self.author_name().into(),
+                email: self.author_email().into(),
+            },
+        }
     }
 }

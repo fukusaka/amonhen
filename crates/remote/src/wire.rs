@@ -100,7 +100,7 @@ pub enum Request {
     },
     /// → `Vec<CommitTextWire>`
     CommitTexts(Vec<Oid>),
-    /// → `Vec<CommitTextWire>`（`raw` は件名と作者名だけ）
+    /// → `Vec<CommitTextWire>`（`raw` は件名と作者の名前・メールだけ）
     CommitSummaries(Vec<Oid>),
     /// → `CommitExtras`
     CommitExtras(Oid),
@@ -117,10 +117,16 @@ pub enum Request {
         name: String,
         limit: usize,
     },
-    /// → `Vec<Vec<Oid>>`（条件ごとに合ったコミット。取り消せる）
+    /// → `Vec<Vec<Oid>>`（条件ごとに合ったコミット。取り消せる）。`mailmap` なら、作者は daemon の側の mailmap で
+    /// 置き換えた名前でも探す。
     SearchTexts {
         tips: Vec<Oid>,
         terms: Vec<TextTerm>,
+        mailmap: bool,
+    },
+    /// → `Option<Mailmap>`: mailmap と `log.mailmap`。指紋（`Mailmap::fingerprint`）が `known` と同じなら `None`。
+    Mailmap {
+        known: Option<u64>,
     },
     // RepoFiles
     /// → `Option<Bytes>`
@@ -356,6 +362,7 @@ pub struct CommitTextWire {
     pub raw: Bytes,
     pub subject: (u32, u32),
     pub author_name: (u32, u32),
+    pub author_email: (u32, u32),
     pub author_time: i64,
     pub signature: u8,
 }
@@ -366,6 +373,7 @@ impl From<&CommitText> for CommitTextWire {
             raw: Bytes(t.raw.to_vec()),
             subject: (t.subject.start, t.subject.end),
             author_name: (t.author_name.start, t.author_name.end),
+            author_email: (t.author_email.start, t.author_email.end),
             author_time: t.author_time,
             signature: t.signature,
         }
@@ -373,15 +381,18 @@ impl From<&CommitText> for CommitTextWire {
 }
 
 impl CommitTextWire {
-    /// 件名と作者名だけを残した本文（History の行に出す分）。
+    /// 件名と作者の名前・メールだけを残した本文（History の行に出す分。メールは手元で mailmap を当てるため）。
     pub fn summary(t: &CommitText) -> Self {
         let mut raw = t.subject().to_vec();
         let subject = (0, raw.len() as u32);
         raw.extend_from_slice(t.author_name());
+        let author_name = (subject.1, raw.len() as u32);
+        raw.extend_from_slice(t.author_email());
         Self {
             raw: Bytes(raw.clone()),
             subject,
-            author_name: (subject.1, raw.len() as u32),
+            author_name,
+            author_email: (author_name.1, raw.len() as u32),
             author_time: t.author_time,
             signature: t.signature,
         }
@@ -394,6 +405,7 @@ impl From<CommitTextWire> for CommitText {
             raw: Arc::new(w.raw.0),
             subject: w.subject.0..w.subject.1,
             author_name: w.author_name.0..w.author_name.1,
+            author_email: w.author_email.0..w.author_email.1,
             author_time: w.author_time,
             signature: w.signature,
         }

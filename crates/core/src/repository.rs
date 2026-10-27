@@ -1238,7 +1238,25 @@ impl Repository {
         let start = (start as usize).min(ids.len());
         let end = start.saturating_add(count as usize).min(ids.len());
         let texts = self.backend.commit_summaries(&ids[start..end])?;
-        Ok(HistoryChunk::new(start as u32, &texts, profile))
+        let mailmap = self.mailmap();
+        Ok(HistoryChunk::new(
+            start as u32,
+            &texts,
+            profile,
+            mailmap.as_deref(),
+        ))
+    }
+
+    /// 名前とメールを置き換える mailmap。`log.mailmap` が false か、mailmap がなければ `None`。読むのはリポジトリの
+    /// ある側（daemon 越しなら daemon・SSH 先の `.mailmap` と設定）。
+    pub fn mailmap(&self) -> Option<Arc<amonhen_model::Mailmap>> {
+        self.backend.mailmap().ok().filter(|m| m.is_active())
+    }
+
+    /// mailmap と `log.mailmap` の指紋。FE は、リポジトリが変わったときにこれが変わっていたら、作者名を出し直す
+    /// （History のキャッシュは作り直さない）。
+    pub fn mailmap_fingerprint(&self) -> u64 {
+        self.backend.mailmap().map_or(0, |m| m.fingerprint())
     }
 
     /// コミットの件名・作者・日時（CLI の log など、FE 向けの形にしないで使うとき）。
@@ -1358,10 +1376,11 @@ impl Repository {
             })
             .collect();
         let rows = snapshot.graph.len();
+        let mailmap = self.mailmap();
         // daemon 越しなら daemon の側で探してもらい、合ったコミットの ID を行に直す。
-        if let Some(found) = self
-            .backend
-            .search_texts(&snapshot.tips, &terms, cancelled)?
+        if let Some(found) =
+            self.backend
+                .search_texts(&snapshot.tips, &terms, mailmap.as_deref(), cancelled)?
         {
             return Ok(found
                 .iter()
@@ -1379,6 +1398,7 @@ impl Repository {
         let words = self.texts.search(
             snapshot.graph.ids(),
             &terms,
+            mailmap.as_deref(),
             &|batch| self.backend.commit_texts(batch),
             cancelled,
         )?;
