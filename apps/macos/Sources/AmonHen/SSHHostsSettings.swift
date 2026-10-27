@@ -176,10 +176,13 @@ struct SSHHostsSettings: View {
                 switch session.state {
                 case let .connected(model):
                     VStack(spacing: 0) {
-                        Text(L("Applies to every repository on %@ (its ~/.gitconfig). git in a terminal there follows these too.", selected))
-                            .font(.caption).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 20).padding(.top, 10)
+                        // 環境変数は ~/.gitconfig の設定ではない（ページの中で、何の環境かを書く）。
+                        if gitPage != .environment {
+                            Text(L("Applies to every repository on %@ (its ~/.gitconfig). git in a terminal there follows these too.", selected))
+                                .font(.caption).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 20).padding(.top, 10)
+                        }
                         // 環境変数は、この Mac のものではなく SSH 先のエンジンのもの。
                         if gitPage == .environment {
                             HostEnvironmentPage(host: selected, model: model)
