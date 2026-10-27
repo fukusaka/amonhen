@@ -4,7 +4,8 @@ import SwiftUI
 
 /// git を動かす機械（SSH 先）のファイルやフォルダを選ぶシート。Finder のカラム表示に近い形: 上にパスの欄（打ち込める。
 /// `~` はその機械のホーム）、下に `/` から選んだところまでの列。中身はその機械のエンジンが読む（コアの `listDirectory`）。
-/// 呼ぶ所が、実行できるファイルを選ぶか、フォルダを選ぶかを決める（選べないものは薄く出す）。
+/// 呼ぶ所が、実行できるファイルを選ぶか、フォルダを選ぶかを決める（選べないものは薄く出す）。パスは機械の形のまま
+/// （Windows なら `C:\…`。`HostPath`）。
 enum RemoteFilePicker {
     enum Kind {
         case executable
@@ -172,17 +173,17 @@ final class RemoteFilePickerModel {
         let generation = generation
         loading = true
         problem = nil
+        // Windows の機械なら `\` も区切り（`~\bin\git.exe` は形で見分けられない）。
+        let windows = HostPath.isWindows(home ?? columns.first?.path ?? "")
         Task {
             let result = await Task.detached(priority: .userInitiated) { () -> Result<(RemoteDirectory, String?), Error> in
                 let list = { (path: String) throws -> RemoteDirectory in try Self.list(repository, path) }
                 do { return .success((try list(typed), nil)) } catch {
                     // フォルダとして読めなければ、上のフォルダでそれを選ぶ。
-                    let parent = (typed as NSString).deletingLastPathComponent
-                    let name = (typed as NSString).lastPathComponent
-                    guard !parent.isEmpty, !name.isEmpty, name != "~",
-                          let dir = try? list(parent), dir.entries.contains(where: { $0.name == name })
+                    guard let split = HostPath.split(typed, windows: windows), split.name != "~",
+                          let dir = try? list(split.parent), dir.entries.contains(where: { $0.name == split.name })
                     else { return .failure(error) }
-                    return .success((dir, name))
+                    return .success((dir, split.name))
                 }
             }.value
             guard generation == self.generation else { return }
@@ -198,14 +199,14 @@ final class RemoteFilePickerModel {
         }
     }
 
-    /// `dir` を最後の列にし、その上のフォルダを `/` から並べる（中身はあとで読む）。
+    /// `dir` を最後の列にし、その上のフォルダを根（`/`・`C:\`）から並べる（中身はあとで読む）。
     private func show(_ dir: RemoteDirectory, selecting name: String?) {
         home = dir.home ?? home
-        let parts = Self.ancestors(of: dir.path)
+        let parts = HostPath.ancestors(of: dir.path)
         var columns: [Column] = []
         for (i, path) in parts.enumerated() {
             let next = i + 1 < parts.count ? parts[i + 1] : dir.path
-            columns.append(Column(path: path, selected: (next as NSString).lastPathComponent))
+            columns.append(Column(path: path, selected: HostPath.name(next)))
         }
         columns.append(Column(path: dir.path, entries: dir.entries, selected: name))
         self.columns = columns
@@ -223,7 +224,7 @@ final class RemoteFilePickerModel {
         columns.removeSubrange((index + 1)...)
         columns[index].selected = entry.name
         if entry.isFolder {
-            let path = Self.join(columns[index].path, entry.name)
+            let path = HostPath.join(columns[index].path, entry.name)
             columns.append(Column(path: path))
             load(path)
         }
@@ -266,7 +267,7 @@ final class RemoteFilePickerModel {
             let typed = field.trimmingCharacters(in: .whitespaces)
             switch kind {
             case .folder: return typed.isEmpty ? nil : typed
-            case .executable: return typed.hasPrefix("/") ? typed : nil
+            case .executable: return HostPath.isAbsolute(typed) ? typed : nil
             }
         }
         guard let last = columns.last else { return nil }
@@ -276,7 +277,7 @@ final class RemoteFilePickerModel {
         case .executable:
             guard let name = last.selected, let entry = last.entries?.first(where: { $0.name == name }),
                   selectable(entry) else { return nil }
-            return Self.join(last.path, name)
+            return HostPath.join(last.path, name)
         }
     }
 
@@ -288,32 +289,13 @@ final class RemoteFilePickerModel {
     /// 欄に、選んだもの（なければ最後のフォルダ）を出す。
     private func updateField() {
         guard let last = columns.last else { return }
-        let path = last.selected.map { Self.join(last.path, $0) } ?? last.path
+        let path = last.selected.map { HostPath.join(last.path, $0) } ?? last.path
         field = shown(path)
     }
 
     /// ホームの下なら `~/…`。
     func shown(_ path: String) -> String {
-        guard let home, !home.isEmpty, home != "/" else { return path }
-        if path == home { return "~" }
-        if path.hasPrefix(home + "/") { return "~" + path.dropFirst(home.count) }
-        return path
-    }
-
-    /// `/a/b/c` の上のフォルダ: `/`・`/a`・`/a/b`。
-    static func ancestors(of path: String) -> [String] {
-        guard path.hasPrefix("/"), path != "/" else { return [] }
-        var out = ["/"]
-        var current = ""
-        for part in path.split(separator: "/").dropLast() {
-            current += "/" + part
-            out.append(current)
-        }
-        return out
-    }
-
-    static func join(_ folder: String, _ name: String) -> String {
-        folder.hasSuffix("/") ? folder + name : folder + "/" + name
+        HostPath.shown(path, home: home)
     }
 }
 
