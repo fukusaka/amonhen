@@ -111,13 +111,17 @@ struct ProgramsPage: View {
                         return (name, programs.map { Programs.Candidate(path: $0.path, version: $0.version, onHost: true) })
                     })
                 }.value
-                // --host-file-picker [folder] で、git の「その他…」（folder ならフォルダを選ぶ形）のシートを開く
-                // （見た目の確認用）。
+                // --host-file-picker [folder | connect] で、git の「その他…」のシートを開く（見た目の確認用）。folder なら
+                // フォルダを選ぶ形、connect ならそれを SSH 先を選べる形で、つなぎ直して開く。
                 if CommandLine.arguments.contains("--host-file-picker"), let onHost {
                     let window = SettingsWindowController.shared.window
-                    if AppDelegate.option("--host-file-picker") == "folder" {
-                        RemoteFilePicker.present(title: L("Add a Folder to Scan on %@", onHost.name), message: "", kind: .folder,
-                                                 initial: "~/prj", repository: onHost.repository, in: window) { _ in }
+                    let option = AppDelegate.option("--host-file-picker")
+                    if option == "folder" || option == "connect" {
+                        let connect = option == "connect"
+                        RemoteFilePicker.present(title: L("Add a Folder to Scan over SSH"),
+                                                 message: L("The engine on the host searches up to 3 levels below the folder."),
+                                                 kind: .folder, host: onHost.name, repository: connect ? nil : onHost.repository,
+                                                 hosts: connect ? SSHHosts.candidates() : nil, initial: "~/prj", in: window) { _ in }
                     } else {
                         ProgramPicker.chooseOnHost(onHost, value: git?.chosen ?? found["git"]?.first?.path ?? "", in: window) { _ in }
                     }
@@ -294,7 +298,9 @@ struct ProgramPicker: View {
     /// SSH 先の実行ファイルを選ぶシート。最初は `value` を選んだところ。
     static func chooseOnHost(_ host: Host, value: String, in window: NSWindow?, done: @escaping (String?) -> Void) {
         RemoteFilePicker.present(title: L("Program on %@", host.name), message: L("Choose the program on the host."),
-                                 kind: .executable, initial: value, repository: host.repository, in: window, done: done)
+                                 kind: .executable, host: host.name, repository: host.repository, initial: value, in: window) {
+            done($0?.path)
+        }
     }
 }
 

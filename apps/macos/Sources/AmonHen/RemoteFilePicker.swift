@@ -11,17 +11,25 @@ enum RemoteFilePicker {
         case folder
     }
 
-    /// `window` にシートとして出し（なければ単独のウィンドウ）、選んだもののパス（絶対パス）を `done` に渡す。
-    /// 取り消したら nil。最初は `initial`（`~` 可）のフォルダ、ファイルならそれを選んだところ（なければホーム）。
-    static func present(title: String, message: String, kind: Kind, initial: String, repository: Repository,
-                        in window: NSWindow?, done: @escaping (String?) -> Void) {
-        let model = RemoteFilePickerModel(kind: kind) { path in
-            try repository.info(["op": "listDirectory", "path": path], as: RemoteDirectory.self)
-        }
+    /// 選んだもの: SSH 先と、そこでの絶対パス。
+    struct Chosen {
+        let host: String
+        let path: String
+        /// ホームの下なら `~/…`（Places と同じ書き方）。
+        let shown: String
+    }
+
+    /// `window`（なければ前のウィンドウ）にシートとして出し、選んだものを `done` に渡す。取り消したら nil。
+    /// 最初は `initial`（`~` 可）のフォルダ、ファイルならそれを選んだところ（空ならホーム）。`repository` がなければ
+    /// `host` のエンジンにつなぐ（数秒かかる）。`hosts` を渡すと、SSH 先も選べる（空の `host` から始めてよい）。
+    static func present(title: String, message: String, kind: Kind, host: String, repository: Repository? = nil,
+                        hosts: [String]? = nil, initial: String, in window: NSWindow? = nil,
+                        done: @escaping (Chosen?) -> Void) {
+        let model = RemoteFilePickerModel(kind: kind, hosts: hosts, initial: initial)
         let view = RemoteFilePickerView(model: model, title: title, message: message)
         let sheet = NSWindow(contentViewController: NSHostingController(rootView: view))
         sheet.styleMask = [.titled, .resizable]
-        sheet.setContentSize(NSSize(width: 760, height: 460))
+        sheet.setContentSize(NSSize(width: 760, height: hosts == nil ? 460 : 490))
         sheet.contentMinSize = NSSize(width: 520, height: 320)
         let parent = window ?? NSApp.keyWindow
         model.close = { [weak parent, weak sheet] chosen in
@@ -35,7 +43,11 @@ enum RemoteFilePicker {
             sheet.center()
             sheet.makeKeyAndOrderFront(nil)
         }
-        model.start(initial)
+        if let repository {
+            model.use(repository, host: host)
+        } else {
+            model.connect(host)
+        }
     }
 }
 
@@ -47,6 +59,8 @@ nonisolated struct RemoteDirectory: Decodable, Sendable {
         let kind: String
         let link: Bool
         let executable: Bool
+        /// `.git` のあるフォルダか。
+        let repository: Bool
         var isFolder: Bool { kind == "folder" }
     }
 
@@ -67,7 +81,16 @@ final class RemoteFilePickerModel {
     }
 
     let kind: RemoteFilePicker.Kind
-    private let list: @Sendable (String) throws -> RemoteDirectory
+    /// 選べる SSH 先（SSH 先を変えられないなら nil）。
+    let hosts: [String]?
+    /// 最初に出すところ（つながったら行く）。
+    private let initial: String
+    /// 今の SSH 先と、そのエンジンにつないだリポジトリ。
+    var host = ""
+    private var repository: Repository?
+    var connecting = false
+    /// つながらなかったときの理由（パスを打ち込んで決められる）。
+    var connectionError: String?
     var columns: [Column] = []
     var home: String?
     /// パスの欄（選んだもののパス。ホームの下なら `~/…`）。打ち込んで ⏎ でそこへ行く。
@@ -76,31 +99,78 @@ final class RemoteFilePickerModel {
     /// 読めなかったときの理由（打ち込んだパスがないなど）。
     var problem: String?
     var loading = false
-    var close: (String?) -> Void = { _ in }
+    var close: (RemoteFilePicker.Chosen?) -> Void = { _ in }
     /// 今の移動（古い移動の答えは捨てる）。
     private var generation = 0
+    /// 今のつなぎ（古いつなぎの答えは捨てる）。
+    private var attempt = 0
 
-    init(kind: RemoteFilePicker.Kind, list: @escaping @Sendable (String) throws -> RemoteDirectory) {
+    init(kind: RemoteFilePicker.Kind, hosts: [String]?, initial: String) {
         self.kind = kind
-        self.list = list
-    }
-
-    /// 最初に出すところ。値がなければホーム。
-    func start(_ initial: String) {
+        self.hosts = hosts
         let initial = initial.trimmingCharacters(in: .whitespaces)
-        go(initial.isEmpty ? "~" : initial)
+        self.initial = initial.isEmpty ? "~" : initial
+        field = self.initial
     }
 
-    /// 打ち込んだパスへ行く: フォルダならその中、ファイルならそれのあるフォルダでそれを選ぶ。
-    func go(_ typed: String) {
+    /// つないであるリポジトリで読む。
+    func use(_ repository: Repository, host: String) {
+        self.host = host
+        self.repository = repository
+        go(initial, orHome: true)
+    }
+
+    /// `host` のエンジンにつなぐ（リポジトリなしで動かす。共有の daemon を使う設定なら daemon 越し）。
+    func connect(_ host: String) {
+        let host = host.trimmingCharacters(in: .whitespaces)
+        attempt += 1
+        let attempt = attempt
+        self.host = host
+        repository = nil
+        columns = []
+        connectionError = nil
+        problem = nil
+        guard !host.isEmpty, !host.contains(where: { $0 == "/" || $0.isWhitespace }) else {
+            connecting = false
+            return
+        }
+        connecting = true
+        let location = (Settings.openThroughDaemon ? "daemon:" : "") + "ssh://\(host)"
+        let daemon = Daemon.path, daemons = Daemon.bundledDirectory
+        // 欄に打ち込んであれば、そこへ行く（つないでいる間に打ち込み直したもの）。
+        Task {
+            let result = await Task.detached(priority: .userInitiated) {
+                Result { try RepositoryWindow.openRepository(location: location, daemon: daemon, daemons: daemons) }
+            }.value
+            guard attempt == self.attempt else { return }
+            connecting = false
+            switch result {
+            case let .success(repository):
+                self.repository = repository
+                go(field, orHome: true)
+            case let .failure(error):
+                connectionError = "\(error)"
+            }
+        }
+    }
+
+    /// フォルダの中身を、つないだエンジンで読む（裏のスレッドで呼ぶ）。
+    nonisolated private static func list(_ repository: Repository, _ path: String) throws -> RemoteDirectory {
+        try repository.info(["op": "listDirectory", "path": path], as: RemoteDirectory.self)
+    }
+
+    /// 打ち込んだパスへ行く: フォルダならその中、ファイルならそれのあるフォルダでそれを選ぶ。`orHome` なら、
+    /// 読めないときはホームへ（最初に出すところがもうないとき）。
+    func go(_ typed: String, orHome: Bool = false) {
         let typed = typed.trimmingCharacters(in: .whitespaces).isEmpty ? "~" : typed.trimmingCharacters(in: .whitespaces)
+        guard let repository else { return }
         generation += 1
         let generation = generation
         loading = true
         problem = nil
-        let list = list
         Task {
             let result = await Task.detached(priority: .userInitiated) { () -> Result<(RemoteDirectory, String?), Error> in
+                let list = { (path: String) throws -> RemoteDirectory in try Self.list(repository, path) }
                 do { return .success((try list(typed), nil)) } catch {
                     // フォルダとして読めなければ、上のフォルダでそれを選ぶ。
                     let parent = (typed as NSString).deletingLastPathComponent
@@ -116,6 +186,8 @@ final class RemoteFilePickerModel {
             switch result {
             case let .success((dir, name)):
                 show(dir, selecting: name)
+            case .failure where orHome && typed != "~":
+                go("~")
             case let .failure(error):
                 problem = "\(error)"
             }
@@ -155,9 +227,9 @@ final class RemoteFilePickerModel {
 
     /// 列の中身を読む。
     private func load(_ path: String) {
-        let list = list
+        guard let repository else { return }
         Task {
-            let result = await Task.detached(priority: .userInitiated) { Result { try list(path) } }.value
+            let result = await Task.detached(priority: .userInitiated) { Result { try Self.list(repository, path) } }.value
             guard let index = columns.firstIndex(where: { $0.path == path }) else { return }
             switch result {
             case let .success(dir):
@@ -183,8 +255,15 @@ final class RemoteFilePickerModel {
         (column.entries ?? []).filter { showHidden || !$0.name.hasPrefix(".") || $0.name == column.selected }
     }
 
-    /// 選んだもの（決めるボタンで返すパス）。選べなければ nil。
+    /// 選んだもの（決めるボタンで返すパス）。選べなければ nil。つながらなければ、打ち込んだパス。
     var chosen: String? {
+        if connectionError != nil {
+            let typed = field.trimmingCharacters(in: .whitespaces)
+            switch kind {
+            case .folder: return typed.isEmpty ? nil : typed
+            case .executable: return typed.hasPrefix("/") ? typed : nil
+            }
+        }
         guard let last = columns.last else { return nil }
         switch kind {
         case .folder:
@@ -198,7 +277,7 @@ final class RemoteFilePickerModel {
 
     func choose() {
         guard let chosen else { return }
-        close(chosen)
+        close(RemoteFilePicker.Chosen(host: host, path: chosen, shown: shown(chosen)))
     }
 
     /// 欄に、選んだもの（なければ最後のフォルダ）を出す。
@@ -245,6 +324,12 @@ struct RemoteFilePickerView: View {
             if !message.isEmpty {
                 Text(message).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             }
+            if let hosts = model.hosts {
+                HStack(spacing: 6) {
+                    Text(L("Host:"))
+                    HostComboBox(hosts: hosts, host: model.host) { model.connect($0) }
+                }
+            }
             HStack(spacing: 6) {
                 TextField("", text: $model.field, prompt: Text(model.kind == .folder ? "~/prj" : "/usr/local/bin/git"))
                     .textFieldStyle(.roundedBorder)
@@ -252,9 +337,28 @@ struct RemoteFilePickerView: View {
                     .onSubmit { model.go(model.field) }
                 Button { model.go("~") } label: { Image(systemName: "house") }
                     .help(L("Home folder"))
+                    .disabled(model.connecting || model.connectionError != nil)
                 if model.loading { ProgressView().controlSize(.small) }
             }
-            columns
+            if model.connecting {
+                ProgressView(L("Connecting to %@…", model.host))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let error = model.connectionError {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(L("Couldn’t connect to %@", model.host))
+                    Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                    Text(L("You can still type the path above and choose it."))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button(L("Check Connection")) { model.connect(model.host) }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else if model.host.isEmpty {
+                Text(L("Choose a host to see its folders."))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                columns
+            }
             if let problem = model.problem {
                 Text(problem).font(.caption).foregroundStyle(.red).lineLimit(2).textSelection(.enabled)
             }
@@ -333,8 +437,10 @@ struct RemoteFilePickerView: View {
         let enabled = model.selectable(entry) || entry.isFolder
         return HStack(spacing: 6) {
             Image(systemName: icon(entry))
-                .foregroundStyle(selected && active ? Color.white : entry.isFolder ? Color.accentColor : .secondary)
+                .foregroundStyle(selected && active ? Color.white
+                                 : entry.repository ? Color.green : entry.isFolder ? Color.accentColor : .secondary)
                 .frame(width: 16)
+                .help(entry.repository ? L("Git repository") : "")
             Text(entry.name).lineLimit(1).truncationMode(.middle)
             if entry.link {
                 Image(systemName: "arrow.turn.up.right").font(.caption2).foregroundStyle(.secondary)
@@ -357,8 +463,65 @@ struct RemoteFilePickerView: View {
     }
 
     private func icon(_ entry: RemoteDirectory.Entry) -> String {
+        if entry.repository { return "arrow.triangle.branch" }
         if entry.isFolder { return "folder.fill" }
         if entry.kind == "file" { return entry.executable ? "apple.terminal" : "doc" }
         return "questionmark.square.dashed"
+    }
+}
+
+/// SSH 先の欄（候補は ~/.ssh/config などの名前）。選ぶか ⏎ でつなぐ。
+private struct HostComboBox: NSViewRepresentable {
+    let hosts: [String]
+    let host: String
+    let commit: (String) -> Void
+
+    func makeNSView(context: Context) -> NSComboBox {
+        let box = NSComboBox()
+        box.addItems(withObjectValues: hosts)
+        box.numberOfVisibleItems = 12
+        box.completes = true
+        box.placeholderString = L("user@host:port (or a name in ~/.ssh/config)")
+        box.stringValue = host
+        box.target = context.coordinator
+        box.action = #selector(Coordinator.committed(_:))
+        box.delegate = context.coordinator
+        return box
+    }
+
+    func updateNSView(_ box: NSComboBox, context: Context) {
+        context.coordinator.commit = commit
+        // つなぐ SSH 先が変わったときだけ書く（打ち込んでいるものは消さない）。
+        if context.coordinator.shown != host {
+            context.coordinator.shown = host
+            box.stringValue = host
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(commit: commit) }
+
+    final class Coordinator: NSObject, NSComboBoxDelegate {
+        var commit: (String) -> Void
+        /// 欄に書いた SSH 先。
+        var shown: String?
+        /// 最後につないだ名前（同じ名前で何度もつながない）。
+        private var last: String?
+
+        init(commit: @escaping (String) -> Void) { self.commit = commit }
+
+        @objc func committed(_ box: NSComboBox) { send(box.stringValue) }
+
+        func comboBoxSelectionDidChange(_ notification: Notification) {
+            guard let box = notification.object as? NSComboBox, box.indexOfSelectedItem >= 0,
+                  let value = box.objectValueOfSelectedItem as? String else { return }
+            send(value)
+        }
+
+        private func send(_ value: String) {
+            let value = value.trimmingCharacters(in: .whitespaces)
+            guard value != last else { return }
+            last = value
+            commit(value)
+        }
     }
 }
