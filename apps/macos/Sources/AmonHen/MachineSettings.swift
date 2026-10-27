@@ -506,7 +506,7 @@ struct EnvironmentTable: View {
             let value = values[name, default: ""]
             let row = Row(name: name, value: value, kind: kind(of: name))
             guard showAll || row.passed else { return nil }
-            guard f.isEmpty || name.localizedCaseInsensitiveContains(f) || value.localizedCaseInsensitiveContains(f) else { return nil }
+            guard f.isEmpty || Self.matches(name: name, value: value, filter: f) else { return nil }
             return row
         }
     }
@@ -534,6 +534,12 @@ struct EnvironmentTable: View {
     private func isSecret(_ name: String) -> Bool { Self.isSecret(name) }
 
     /// トークン・パスワード・鍵らしい名前か（値を伏せる）。
+    /// 検索に合うか。伏せた値は探さない（一部を入れて当たるかで、値を当てられてしまう）。名前では探せる。
+    static func matches(name: String, value: String, filter: String) -> Bool {
+        name.localizedCaseInsensitiveContains(filter)
+            || (!isSecret(name) && value.localizedCaseInsensitiveContains(filter))
+    }
+
     static func isSecret(_ name: String) -> Bool {
         ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "_KEY", "CREDENTIAL"].contains(where: name.uppercased().contains)
     }

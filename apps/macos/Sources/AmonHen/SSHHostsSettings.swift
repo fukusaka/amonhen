@@ -556,7 +556,7 @@ private struct HostEnvironmentPage: View {
     private var rows: [Variable] {
         let f = filter.trimmingCharacters(in: .whitespaces)
         guard !f.isEmpty else { return vars }
-        return vars.filter { $0.name.localizedCaseInsensitiveContains(f) || $0.value.localizedCaseInsensitiveContains(f) }
+        return vars.filter { EnvironmentTable.matches(name: $0.name, value: $0.value, filter: f) }
     }
 
     /// エンジンの環境と、PATH で見つかる git の場所を SSH 先から読む。
