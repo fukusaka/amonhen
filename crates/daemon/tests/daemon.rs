@@ -878,7 +878,22 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
         "echo 'hello from the login'\nsetenv PROFILE_ONLY_VAR from-profile\n",
     )
     .unwrap();
-    for shell in ["/bin/zsh", "/bin/bash", "/bin/tcsh", "/bin/csh"] {
+    let fish_config = remote_home.join(".config/fish");
+    std::fs::create_dir_all(&fish_config).unwrap();
+    std::fs::write(
+        fish_config.join("config.fish"),
+        "if status is-login\n    echo 'hello from fish'\n    set -gx PROFILE_ONLY_VAR from-profile\nend\n",
+    )
+    .unwrap();
+    for shell in [
+        "/bin/zsh",
+        "/bin/bash",
+        "/bin/tcsh",
+        "/bin/csh",
+        "/usr/bin/fish",
+        "/opt/homebrew/bin/fish",
+        "/usr/local/bin/fish",
+    ] {
         if !Path::new(shell).exists() {
             continue;
         }
