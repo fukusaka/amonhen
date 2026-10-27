@@ -465,6 +465,8 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ExcludesFile => encode(&ops.excludes_file()?),
         Op::SaveExcludesFile(text) => encode(&ops.save_excludes_file(&text)?),
         Op::ProcessEnvironment => encode(&ops.process_environment()?),
+        Op::MachineGit => encode(&ops.machine_git()?),
+        Op::SetMachineGit(git) => encode(&ops.set_machine_git(git.as_deref())?),
         Op::ChangeRemote(change) => encode(&ops.change_remote(&change)?),
         Op::WorktreeList => encode(&Bytes(ops.worktree_list()?)),
         Op::WorktreeChanges(paths, fresh) => encode(&ops.worktree_changes(&paths, fresh)?),

@@ -938,6 +938,14 @@ impl Operations for RemoteOperations {
         self.op(Op::ProcessEnvironment)
     }
 
+    fn machine_git(&self) -> Result<amonhen_model::MachineGit> {
+        self.op(Op::MachineGit)
+    }
+
+    fn set_machine_git(&self, git: Option<&str>) -> Result<()> {
+        self.op(Op::SetMachineGit(git.map(str::to_owned)))
+    }
+
     fn check_remote(&self, url: &str) -> Result<RemoteCheck> {
         self.op(Op::CheckRemote(url.to_owned()))
     }
