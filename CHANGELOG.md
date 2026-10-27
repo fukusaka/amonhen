@@ -569,6 +569,8 @@ First release.
   `GIT_*`), even when the app started the daemon.
 - The extension runs the git chosen for the machine in Amon Hen's settings (`~/.config/amonhen/settings.json`), and
   VSCode's `git.path` only when none is chosen; a chosen git that isn't there stops commands with an error.
+- A change to VSCode's `git.path` applies to open repositories at once, through the shared daemon too, without
+  reopening them.
 - Push no longer sends a branch without an upstream to origin by itself: the nav shows Publish Branch, which asks
   for the remote (following `branch.<name>.pushRemote` and `remote.pushDefault`) and the name there.
 

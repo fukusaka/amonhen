@@ -49,10 +49,11 @@ export class GitExecutor {
 
   /**
    * Amon Hen の設定に従う git（`chooseGit`。アプリで選び直せば、次の起動から替わる）。`vscodeGit` は、設定で
-   * 決めていないときの VSCode の git
+   * 決めていないときの VSCode の git（関数なら、起動のたびに読む。`git.path` を変えればすぐ替わる）
    */
-  static chosen(vscodeGit: string, onLog?: (log: ExecLog) => void): GitExecutor {
-    return new GitExecutor(() => chooseGit(vscodeGit), onLog);
+  static chosen(vscodeGit: string | (() => string), onLog?: (log: ExecLog) => void): GitExecutor {
+    const current = typeof vscodeGit === 'string' ? () => vscodeGit : vscodeGit;
+    return new GitExecutor(() => chooseGit(current()), onLog);
   }
 
   /** 今使う git */
