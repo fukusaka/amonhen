@@ -36,3 +36,7 @@ tempfile = "3.27.0"
 [[bench]]
 name = "graph"
 harness = false
+
+[[bench]]
+name = "authors"
+harness = false
