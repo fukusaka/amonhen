@@ -540,9 +540,8 @@ struct EnvironmentTable: View {
             || (!isSecret(name) && value.localizedCaseInsensitiveContains(filter))
     }
 
-    static func isSecret(_ name: String) -> Bool {
-        ["TOKEN", "SECRET", "PASSWORD", "PASSWD", "_KEY", "CREDENTIAL"].contains(where: name.uppercased().contains)
-    }
+    /// 値を伏せるか（決まりは `SecretNames`）。
+    static func isSecret(_ name: String) -> Bool { SecretNames.isSecret(name) }
 
     private func set(_ name: String, _ on: Bool) {
         var names = added
