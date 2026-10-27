@@ -12,6 +12,7 @@ import type {
   CommitDetails,
   HistoryHostMessage,
   HistoryWebviewMessage,
+  Person,
   RefLabel,
   RowData,
   Scope,
@@ -23,6 +24,19 @@ import { showError } from './stageCommands.ts';
 
 /** 1 回に読み込むコミットの数 */
 const PAGE = 200;
+
+/** mailmap で置き換えて記録と違えば、記録されたもの */
+function recordedIfMapped(recorded: Person, mapped: Person): Person | undefined {
+  return recorded.name !== mapped.name || recorded.email !== mapped.email
+    ? { name: recorded.name, email: recorded.email }
+    : undefined;
+}
+
+/** daemon の答えの `{name, email}`（なければ undefined） */
+function person(value: unknown): Person | undefined {
+  const v = value as { name?: unknown; email?: unknown } | null | undefined;
+  return v && typeof v.name === 'string' ? { name: v.name, email: String(v.email ?? '') } : undefined;
+}
 /** 編集できるかを調べる範囲 */
 const EDITABLE_LIMIT = 500;
 /** 詳細を覚えておくコミットの数 */
@@ -166,12 +180,17 @@ export class HistoryController implements vscode.Disposable {
         return;
       }
       const commit = parseCommitObject(obj.data.toString('utf8'));
-      const files = await repo.backend.commitFiles(oid, commit.parents[0]);
+      const [files, [author, committer]] = await Promise.all([
+        repo.backend.commitFiles(oid, commit.parents[0]),
+        repo.backend.mapPeople([commit.author, commit.committer]),
+      ]);
       details = {
         oid,
         parents: commit.parents,
-        author: commit.author,
-        committer: commit.committer,
+        author: { ...commit.author, ...author },
+        committer: { ...commit.committer, ...committer },
+        recordedAuthor: recordedIfMapped(commit.author, author!),
+        recordedCommitter: recordedIfMapped(commit.committer, committer!),
         message: commit.message,
         files,
       };
@@ -204,6 +223,8 @@ export class HistoryController implements vscode.Disposable {
       parents: i['parents'] as string[],
       author: { name: String(i['author']), email: String(i['authorEmail']), date: Number(i['authorTime']) },
       committer: { name: String(i['committer']), email: String(i['committerEmail']), date: Number(i['committerTime']) },
+      recordedAuthor: person(i['recordedAuthor']),
+      recordedCommitter: person(i['recordedCommitter']),
       message: String(i['message']),
       files: commitFiles(diff),
     };

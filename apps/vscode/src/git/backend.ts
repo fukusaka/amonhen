@@ -151,6 +151,8 @@ export interface RepositoryBackend {
   log(revs: readonly string[], skip: number, max: number): Promise<Commit[]>;
   /** コミットで変わったファイル。parent が無ければ root コミットとして扱う */
   commitFiles(oid: string, parent: string | undefined): Promise<FileChange[]>;
+  /** 名前とメールを mailmap で置き換えたもの（log.mailmap が false なら記録のまま）。同じ順 */
+  mapPeople(people: readonly { name: string; email: string }[]): Promise<{ name: string; email: string }[]>;
   dispose(): void;
 }
 
@@ -565,7 +567,30 @@ export class CliBackend implements RepositoryBackend {
   }
 
   async log(revs: readonly string[], skip: number, max: number): Promise<Commit[]> {
-    return parseLog(await this.read(logArgs(revs, skip, max)));
+    const [out, mailmap] = await Promise.all([this.read(logArgs(revs, skip, max)), this.usesMailmap()]);
+    return parseLog(out, mailmap);
+  }
+
+  /** 作者とコミッターを mailmap で置き換えるか（git の log.mailmap。既定は true） */
+  async usesMailmap(): Promise<boolean> {
+    const value = (await this.read(['config', '--type=bool', '--get', 'log.mailmap'], [0, 1])).trim();
+    return value !== 'false';
+  }
+
+  /**
+   * 名前とメールを mailmap で置き換える（`git check-mailmap`。log.mailmap が false なら置き換えない）。
+   * 置き換えたものを同じ順に返す
+   */
+  async mapPeople(people: readonly { name: string; email: string }[]): Promise<{ name: string; email: string }[]> {
+    if (people.length === 0 || !(await this.usesMailmap())) {
+      return people.map(({ name, email }) => ({ name, email }));
+    }
+    const out = await this.read(['check-mailmap', ...people.map((p) => `${p.name} <${p.email}>`)]);
+    const lines = out.split('\n');
+    return people.map((p, i) => {
+      const m = /^(.*) <(.*)>$/.exec(lines[i] ?? '');
+      return m ? { name: m[1]!, email: m[2]! } : { name: p.name, email: p.email };
+    });
   }
 
   async commitFiles(oid: string, parent: string | undefined): Promise<FileChange[]> {

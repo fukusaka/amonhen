@@ -245,3 +245,22 @@ test('commit with amend replaces the last commit', async () => {
   assert.equal(git('log', '-1', '--format=%s').trim(), 'amended message');
   assert.match(git('show', '--format=', '--name-only', 'HEAD'), /amend\.txt/);
 });
+
+test('log and people follow the mailmap and log.mailmap', async () => {
+  writeFileSync(join(dir, '.mailmap'), 'Ann Example <ann@example.com> <a@example.com>\n');
+  try {
+    const [top] = await backend.log(['HEAD'], 0, 1);
+    assert.deepEqual([top!.author, top!.email], ['Ann Example', 'ann@example.com']);
+    assert.deepEqual(await backend.mapPeople([{ name: 'a', email: 'a@example.com' }, { name: 'z', email: 'z@x' }]), [
+      { name: 'Ann Example', email: 'ann@example.com' },
+      { name: 'z', email: 'z@x' },
+    ]);
+    git('config', 'log.mailmap', 'false');
+    const [recorded] = await backend.log(['HEAD'], 0, 1);
+    assert.equal(recorded!.author, 'a');
+    assert.deepEqual(await backend.mapPeople([{ name: 'a', email: 'a@example.com' }]), [{ name: 'a', email: 'a@example.com' }]);
+  } finally {
+    git('config', '--unset', 'log.mailmap');
+    rmSync(join(dir, '.mailmap'));
+  }
+});

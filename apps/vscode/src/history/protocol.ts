@@ -34,13 +34,22 @@ export interface RowData {
 export interface CommitDetails {
   oid: string;
   parents: string[];
+  /** 作者とコミッター。mailmap を使うなら置き換えたもの */
   author: Signature;
   committer: Signature;
+  /** mailmap で置き換えて記録と違えば、コミットに記録されたもの */
+  recordedAuthor?: Person;
+  recordedCommitter?: Person;
   /** subject と本文 */
   message: string;
   refs: RefLabel[];
   /** 最初の親との差分 */
   files: FileChange[];
+}
+
+export interface Person {
+  name: string;
+  email: string;
 }
 
 /** メッセージを編集してから行う操作 */

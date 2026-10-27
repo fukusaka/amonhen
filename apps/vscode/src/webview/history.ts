@@ -4,7 +4,7 @@
  * 末尾に近づいたら次のページを要求する。
  */
 import type { FileDiff } from '../diff/fileDiff.ts';
-import type { CommitDetails, MessageEdit, RowData, Scope } from '../history/protocol.ts';
+import type { CommitDetails, MessageEdit, Person, RowData, Scope } from '../history/protocol.ts';
 import type { HostMessage } from '../view/protocol.ts';
 import { el, formatDate, getState, post, updateState, type View } from './api.ts';
 import { renderDiffBody } from './diffView.ts';
@@ -25,6 +25,18 @@ const PALETTE = [
   '--vscode-terminal-ansiCyan',
   '--vscode-terminal-ansiMagenta',
 ];
+
+/** mailmap で置き換えた人。記録と違えば、記録されたものを下に小さく添える */
+function withRecorded(text: string, recorded: Person | undefined): Node | string {
+  if (!recorded) {
+    return text;
+  }
+  const span = el('span', '', text);
+  const note = el('span', 'recorded', `Recorded: ${recorded.name} <${recorded.email}>`);
+  note.title = 'The name and email recorded in the commit. The mailmap shows them as above.';
+  span.append(note);
+  return span;
+}
 
 export function createHistoryView(): View {
   const root = el('div', 'view history');
@@ -297,10 +309,10 @@ export function createHistoryView(): View {
       dd.append(value);
       meta.append(el('dt', '', label), dd);
     };
-    add('Author', `${d.author.name} <${d.author.email}>`);
+    add('Author', withRecorded(`${d.author.name} <${d.author.email}>`, d.recordedAuthor));
     add('Date', formatDate(d.author.date));
     if (d.committer.name !== d.author.name || d.committer.date !== d.author.date) {
-      add('Committer', `${d.committer.name}  ${formatDate(d.committer.date)}`);
+      add('Committer', withRecorded(`${d.committer.name}  ${formatDate(d.committer.date)}`, d.recordedCommitter));
     }
     add('Commit', el('code', '', d.oid));
     if (d.parents.length > 0) {
