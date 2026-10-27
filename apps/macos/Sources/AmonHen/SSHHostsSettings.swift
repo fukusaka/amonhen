@@ -189,7 +189,7 @@ struct SSHHostsSettings: View {
                         } else {
                             SettingsPageContent(model: model, page: gitPage)
                         }
-                        if let error = model.error {
+                        if let error = model.error, gitPage != .programs || error != model.gitProblem {
                             HStack {
                                 Text(error).foregroundStyle(.red).lineLimit(2)
                                 Spacer()

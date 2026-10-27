@@ -58,6 +58,8 @@ final class RepositorySettingsModel {
     var exclude = ""
     private(set) var savedIgnore = ("", "")
     var error: String?
+    /// 使う git が使えない理由（プログラムのページが読み、git の行の下に出す）。同じ文を下のエラーに重ねて出さない。
+    var gitProblem: String?
     /// このリポジトリを扱う git の版（SSH 先なら SSH 先の git）。読めなければ nil。
     private(set) var gitVersion: String?
     /// rebase で積み重ねたブランチを一緒に動かせるか（git 2.38 から）。
@@ -1867,7 +1869,7 @@ struct RepositorySettingsView: View {
             Divider()
             VStack(spacing: 0) {
                 SettingsPageContent(model: model, page: page)
-                if let error = model.error {
+                if let error = model.error, page != .programs || error != model.gitProblem {
                     HStack {
                         Text(error).foregroundStyle(.red).lineLimit(2)
                         Spacer()
