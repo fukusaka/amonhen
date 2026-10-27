@@ -756,10 +756,50 @@ fn done(c: &Common) -> Result<ExitCode> {
 
 // MARK: - refs
 
+/// 署名の検証の結果の短い言葉（アプリと同じく GitHub に合わせた英語）。署名者とタガーの一致は見ない。
+fn signature_label(signature: &Value) -> &'static str {
+    match signature["status"].as_str().unwrap_or("") {
+        "G" if signature["trust"] != "undefined" && signature["trust"] != "never" => "Verified",
+        "G" | "U" => "Untrusted key",
+        "X" | "Y" => "Expired",
+        "R" => "Revoked key",
+        "B" => "Bad signature",
+        "V" => "Can’t verify",
+        _ => "No key",
+    }
+}
+
 pub fn refs(args: &[String]) -> Result<ExitCode> {
-    let (c, _) = common(args, &[], &[])?;
+    let (c, seen) = common(args, &["--verify"], &[])?;
     let front = open_repository(&c.dir)?;
-    let refs = call(&*front, json!({"op": "refs"}))?.json;
+    let mut refs = call(&*front, json!({"op": "refs"}))?.json;
+    // --verify: タグの署名を確かめ、タグの行に添える（タグごとに git と gpg を起動するので、多いと数秒かかる）。
+    if flag(&seen, "--verify") {
+        let names: Vec<String> = refs["entries"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|e| e["kind"] == "tag")
+            .filter_map(|e| e["name"].as_str().map(str::to_owned))
+            .collect();
+        let tags =
+            command(&*front, json!({"op": "tagSignatures", "names": names}))?["info"]["tags"]
+                .clone();
+        let by_name: std::collections::HashMap<&str, &Value> = tags
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|t| Some((t["name"].as_str()?, t)))
+            .collect();
+        for e in refs["entries"].as_array_mut().into_iter().flatten() {
+            if e["kind"] != "tag" {
+                continue;
+            }
+            let tag = e["name"].as_str().and_then(|n| by_name.get(n));
+            e["signed"] = tag.map_or(Value::Null, |t| t["signed"].clone());
+            e["signature"] = tag.map_or(Value::Null, |t| t["signature"].clone());
+        }
+    }
     if c.json {
         print_json(&refs);
         return Ok(ExitCode::SUCCESS);
@@ -793,6 +833,15 @@ pub fn refs(args: &[String]) -> Result<ExitCode> {
             e["ahead"].as_u64().unwrap_or(0),
             e["behind"].as_u64().unwrap_or(0),
         );
+        if let Some(signature) = e.get("signature").filter(|s| !s.is_null()) {
+            let kind = e["signed"].as_str().unwrap_or("gpg").to_uppercase();
+            let signer = signature["signer"].as_str().unwrap_or("");
+            line.push_str(&format!("  {} ({kind}", signature_label(signature)));
+            if !signer.is_empty() {
+                line.push_str(&format!(" · {signer}"));
+            }
+            line.push(')');
+        }
         if e["gone"] == true {
             line.push_str(&tr!(" (upstream gone)"));
         } else if ahead > 0 || behind > 0 {
