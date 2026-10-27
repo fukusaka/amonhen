@@ -203,7 +203,6 @@ struct SSHHostsSettings: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text(L("Couldn’t connect to %@", selected))
                         Text(reason).foregroundStyle(.red).textSelection(.enabled)
-                        ChosenGitWarning(host: selected)
                         Button(L("Check Connection")) { session.connect() }
                     }
                     .padding()
@@ -237,7 +236,7 @@ final class HostSession {
 
     init(host: String) {
         self.host = host
-        // エンジンや git の選択を変えたら、つなぎ直す（新しい選択で SSH 先のエンジンを起動する）。
+        // エンジンの選択や起動のしかたを変えたら、つなぎ直す（新しい選択で SSH 先のエンジンを起動する）。
         observer = NotificationCenter.default.addObserver(forName: .hostOptionsChanged, object: nil, queue: .main) { [weak self] note in
             guard let host = note.object as? String else { return }
             MainActor.assumeIsolated {
@@ -276,7 +275,11 @@ final class HostSession {
                 engine = repository.remoteEngine
                 let model = RepositorySettingsModel(repository: repository, location: "ssh://\(host)", level: .allRepositories)
                 state = .connected(model)
-                model.load()
+                let host = host
+                Task {
+                    await Settings.moveHostGit(host, to: repository)
+                    model.load()
+                }
             case let .failure(error):
                 state = .failed("\(error)")
             }
@@ -363,13 +366,12 @@ private struct ConnectionPage: View {
                 Text("● " + L("Connected")).foregroundStyle(.green)
                 Text(model.gitVersion.map { "git \($0)" } ?? L("git wasn’t found on the host"))
                     .font(.caption).foregroundStyle(.secondary)
-                if model.gitVersion == nil { ChosenGitWarning(host: session.host) }
+                if model.gitVersion == nil { ChosenGitWarning(model: model) }
             }
         case let .failed(reason):
             VStack(alignment: .leading, spacing: 2) {
                 Text("● " + L("unreachable")).foregroundStyle(.red)
                 Text(reason).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                ChosenGitWarning(host: session.host)
             }
         }
     }
@@ -473,23 +475,38 @@ private struct EngineChoice: View {
     }
 }
 
-/// 選んだ git（プログラムのページ）が SSH 先で動かないかもしれないときに、それを言い、PATH の git に戻せるようにする
-/// （つながらなければプログラムのページを開けないので、ここで戻す）。git を選んでいなければ何も出さない。
+/// SSH 先で git が動かないときに、SSH 先の設定で選んだ git が理由ならそれを言い、PATH の git に戻せるようにする。
+/// git を選んでいなければ何も出さない。
 private struct ChosenGitWarning: View {
-    let host: String
+    let model: RepositorySettingsModel
+    @State private var git: MachineGit?
 
     var body: some View {
-        if let git = Settings.hostOptions(for: host).git {
-            HStack(spacing: 8) {
-                Text(L("The git chosen in Programs is %@.", git))
-                    .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
-                Button(L("Use the git on the PATH")) {
-                    var options = Settings.hostOptions(for: host)
-                    options.git = nil
-                    Settings.setHostOptions(options, for: host)
+        // 空の Group には .task が走らないので、何も出さないときも VStack を置く。
+        VStack(alignment: .leading, spacing: 0) {
+            if let git, let chosen = git.chosen {
+                HStack(spacing: 8) {
+                    Text(L("The git chosen in Programs is %@.", chosen))
+                        .font(.caption).foregroundStyle(.orange).textSelection(.enabled)
+                    Button(L("Use the git on the PATH")) {
+                        let repository = model.repository
+                        Task {
+                            let failed = await Task.detached(priority: .userInitiated) { () -> String? in
+                                do { try repository.run(["op": "setMachineGit"]); return nil } catch { return "\(error)" }
+                            }.value
+                            if let failed { model.error = failed }
+                            model.load()
+                        }
+                    }
+                    .controlSize(.small)
                 }
-                .controlSize(.small)
             }
+        }
+        .task(id: ObjectIdentifier(model)) {
+            let repository = model.repository
+            git = await Task.detached(priority: .userInitiated) {
+                try? repository.info(["op": "machineGit"], as: MachineGit.self)
+            }.value
         }
     }
 }
@@ -506,6 +523,8 @@ private struct HostEnvironmentPage: View {
     @State private var selection: String?
     @State private var revealed = false
     @State private var gitDirectory: String?
+    /// SSH 先の設定で選んだ git（PATH のものなら nil）。
+    @State private var chosenGit: String?
 
     nonisolated struct Variable: Decodable, Identifiable, Sendable {
         let name: String
@@ -547,7 +566,7 @@ private struct HostEnvironmentPage: View {
                     name: selection ?? "", value: selection.flatMap { name in vars.first { $0.name == name }?.value },
                     masked: selection.map(EnvironmentTable.isSecret) == true && !revealed,
                     reveal: { revealed = true }, height: 120,
-                    onHost: (chosenGit: Settings.hostOptions(for: host).git, gitDirectory: gitDirectory))
+                    onHost: (chosenGit: chosenGit, gitDirectory: gitDirectory))
             }
         }
         .task(id: ObjectIdentifier(model)) { await load() }
@@ -559,18 +578,21 @@ private struct HostEnvironmentPage: View {
         return vars.filter { EnvironmentTable.matches(name: $0.name, value: $0.value, filter: f) }
     }
 
-    /// エンジンの環境と、PATH で見つかる git の場所を SSH 先から読む。
+    /// エンジンの環境と、PATH で見つかる git の場所、SSH 先の設定で選んだ git を SSH 先から読む。
     private func load() async {
         loaded = false
         let repository = model.repository
-        let (v, g) = await Task.detached(priority: .userInitiated) {
+        let (v, g, chosen) = await Task.detached(priority: .userInitiated) {
             struct Vars: Decodable { let vars: [Variable] }
             struct Found: Decodable { struct Program: Decodable { let path: String }; let programs: [Program] }
+            let git = try? repository.info(["op": "machineGit"], as: MachineGit.self)
             return ((try? repository.info(["op": "processEnvironment"], as: Vars.self))?.vars ?? [],
-                    (try? repository.info(["op": "programs", "name": "git"], as: Found.self))?.programs.first?.path)
+                    (try? repository.info(["op": "programs", "name": "git"], as: Found.self))?.programs.first?.path,
+                    git.flatMap { $0.source == "path" ? nil : $0.program })
         }.value
         vars = v
         gitDirectory = g.map { ($0 as NSString).deletingLastPathComponent }
+        chosenGit = chosen
         loaded = true
     }
 }
