@@ -1405,3 +1405,7 @@
 "Passed to the engine on %@ when it starts. Repositories already open there keep the git they started with until they are opened again." = "%@ のエンジンを起動するときに渡します。もう開いているそこのリポジトリは、開き直すまで前の git のままです。";
 "The git chosen in Programs is %@." = "プログラムで選んだ git は %@ です。";
 "Use the git on the PATH" = "PATH の git に戻す";
+"Started by the shared daemon" = "共有の daemon が起動したもの";
+"Starts the engine on %@ through its login shell, so it and git get the PATH and GIT_* set in ~/.profile and the like, which a command run over ssh lacks. Changing it reconnects." = "%@ のエンジンをログインシェル経由で起動し、ssh で動かすコマンドにはない、~/.profile などで設定した PATH や GIT_* をエンジンと git に渡します。変えるとつなぎ直します。";
+"The engine’s environment, which git on %@ gets" = "エンジンの環境（%@ の git にそのまま渡ります）";
+"git is the one chosen in Programs: %@" = "git はプログラムで選んだものを使います: %@";

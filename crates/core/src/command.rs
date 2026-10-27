@@ -392,6 +392,9 @@ pub enum Command {
     SaveExcludesFile {
         text: String,
     },
+    /// git を動かしているプロセスの環境変数（`info.vars`: `name`・`value`。名前の順）。SSH 先のリポジトリなら
+    /// SSH 先のエンジンのもので、そのまま git に渡る（Settings > SSH Hosts の「環境変数」）。
+    ProcessEnvironment,
     /// `.gitignore` と `.git/info/exclude` を書く。
     SaveIgnoreFiles {
         gitignore: String,
@@ -2391,6 +2394,18 @@ impl Repository {
             Command::SaveExcludesFile { text } => {
                 ops.save_excludes_file(&text)?;
                 ok()
+            }
+            Command::ProcessEnvironment => {
+                let vars: Vec<_> = ops
+                    .process_environment()?
+                    .into_iter()
+                    .map(|(name, value)| serde_json::json!({ "name": name, "value": value }))
+                    .collect();
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "vars": vars })),
+                    ..Default::default()
+                })
             }
             Command::SaveIgnoreFiles { gitignore, exclude } => {
                 let files = self.backend().files();

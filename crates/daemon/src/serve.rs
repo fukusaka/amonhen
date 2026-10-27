@@ -413,6 +413,10 @@ impl amonhen_remote::Host for CoreHost {
     fn delegate(&self, request: &[u8]) -> Result<amonhen_model::Delegated> {
         core(&self.0)?.serve_delegated(request)
     }
+
+    fn remote_engine(&self) -> Option<String> {
+        self.0.ssh.as_ref().and_then(|c| c.remote_engine())
+    }
 }
 
 /// リポジトリのコア（初めて使うときに、前回の History のキャッシュから作る）。

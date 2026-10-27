@@ -20,6 +20,9 @@ becomes the GitHub Release notes.
   Connection, which engine to run there and whether to send one, which keys verify commit signatures, the folders to
   scan) and the pages of Settings > Git for every repository on that host, including the git the engine runs there.
   Settings… on a host in Places opens it, and on This Mac opens Settings > Git.
+- Settings > SSH Hosts has an Environment Variables page for each host: the engine's environment there, and a switch to
+  start the engine with the host's login shell's environment, for the PATH and `GIT_*` set in `~/.profile` and the
+  like (the amonhen on the PATH is looked for in that PATH too).
 - The engine runs on an SSH host without a repository (`amonhen --stdio` with no path) to read and write that
   machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
   the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /
@@ -27,6 +30,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Through the shared daemon, Settings > SSH Hosts and the Activity window show the engine running on the SSH host,
+  as they do for a direct connection.
 - Whether commit signatures in an SSH host's repositories are verified with this Mac's keys or the host's is chosen
   per host, in Settings > SSH Hosts (hosts without a choice keep the previous setting).
 - Settings > Git > Environment Variables (it was Performance > Terminal Environment) shows the login shell's variables
@@ -40,6 +45,7 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- SSH hosts whose login shell is tcsh or csh connect: the commands sent there now run in sh.
 - Launched from a terminal or another app, the app read the login shell's PATH as a nested shell, so a shell set up
   to build PATH only at the top level gave the system's git instead of the one a terminal uses. Variables git uses that
   the app inherited from what launched it (`GIT_EDITOR`, for one) no longer reach git unless the shell sets them.

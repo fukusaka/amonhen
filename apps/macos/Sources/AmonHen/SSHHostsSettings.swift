@@ -152,8 +152,7 @@ struct SSHHostsSettings: View {
         VStack(spacing: 0) {
             List(selection: Binding(get: { Optional(page) }, set: { if let p = $0 { page = p } })) {
                 Text(L("Connection")).tag(HostPage.connection)
-                // 環境変数のページはこの Mac のもの（SSH 先の git には渡らない）なので、SSH 先には出さない。
-                ForEach(SettingsPage.cases(for: .allRepositories).filter { $0 != .environment }) { Text($0.title).tag(HostPage.git($0)) }
+                ForEach(SettingsPage.cases(for: .allRepositories)) { Text($0.title).tag(HostPage.git($0)) }
             }
             .listStyle(.sidebar)
             .disabled(selected == nil)
@@ -177,11 +176,19 @@ struct SSHHostsSettings: View {
                 switch session.state {
                 case let .connected(model):
                     VStack(spacing: 0) {
-                        Text(L("Applies to every repository on %@ (its ~/.gitconfig). git in a terminal there follows these too.", selected))
-                            .font(.caption).foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal, 20).padding(.top, 10)
-                        SettingsPageContent(model: model, page: gitPage)
+                        // 環境変数は ~/.gitconfig の設定ではない（ページの中で、何の環境かを書く）。
+                        if gitPage != .environment {
+                            Text(L("Applies to every repository on %@ (its ~/.gitconfig). git in a terminal there follows these too.", selected))
+                                .font(.caption).foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.horizontal, 20).padding(.top, 10)
+                        }
+                        // 環境変数は、この Mac のものではなく SSH 先のエンジンのもの。
+                        if gitPage == .environment {
+                            HostEnvironmentPage(host: selected, model: model)
+                        } else {
+                            SettingsPageContent(model: model, page: gitPage)
+                        }
                         if let error = model.error {
                             HStack {
                                 Text(error).foregroundStyle(.red).lineLimit(2)
@@ -223,6 +230,8 @@ final class HostSession {
     private(set) var state: State = .connecting
     /// SSH 先で使っているエンジンと、その用意のしかた（つながったとき。共有の daemon 越しなら nil）。
     private(set) var engine: String?
+    /// 共有の daemon 越しにつないだか（エンジンは daemon が起動し、ほかの相手と共有する）。
+    private(set) var throughDaemon = false
     /// 何回目のつなぎか（古いつなぎの結果は捨てる）。
     private var attempt = 0
 
@@ -254,7 +263,8 @@ final class HostSession {
         let attempt = attempt
         state = .connecting
         engine = nil
-        let location = (Settings.openThroughDaemon ? "daemon:" : "") + "ssh://\(host)"
+        throughDaemon = Settings.openThroughDaemon
+        let location = (throughDaemon ? "daemon:" : "") + "ssh://\(host)"
         let daemon = Daemon.path, daemons = Daemon.bundledDirectory
         Task {
             let result: Result<Repository, Error> = await Task.detached(priority: .userInitiated) {
@@ -295,9 +305,15 @@ private struct ConnectionPage: View {
             Section(L("Engine")) {
                 EngineChoice(host: session.host)
                 LabeledContent(L("In use")) {
-                    Text(session.engine ?? (session.model != nil ? L("Through the shared daemon") : L("Not connected")))
-                        .foregroundStyle(.secondary).textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(session.engine ?? (session.model != nil ? L("Through the shared daemon") : L("Not connected")))
+                            .foregroundStyle(.secondary).textSelection(.enabled)
+                        // daemon 越しなら、エンジンは daemon が起動したもの（同じ SSH 先を開いたほかの相手と共有する）。
+                        if session.engine != nil, session.throughDaemon {
+                            Text(L("Started by the shared daemon")).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
                 }
                 if let overridden = EngineChoice.overriddenBy {
                     Note(L("%@ is set in the environment, so it decides instead.", overridden))
@@ -475,5 +491,86 @@ private struct ChosenGitWarning: View {
                 .controlSize(.small)
             }
         }
+    }
+}
+
+/// SSH 先の「環境変数」: エンジンを SSH 先のログインシェル経由で起動するか（SSH 先ごと）と、エンジンが実際に持っている
+/// 環境（そのまま git に渡る）。この Mac の「環境変数」と同じ形で、渡すかどうかを選ぶ列はない（SSH 先では、エンジンの
+/// 環境がすべて git に渡る）。
+private struct HostEnvironmentPage: View {
+    let host: String
+    let model: RepositorySettingsModel
+    @State private var vars: [Variable] = []
+    @State private var loaded = false
+    @State private var filter = ""
+    @State private var selection: String?
+    @State private var revealed = false
+    @State private var gitDirectory: String?
+
+    nonisolated struct Variable: Decodable, Identifiable, Sendable {
+        let name: String
+        let value: String
+        var id: String { name }
+    }
+
+    var body: some View {
+        GroupedPage {
+            VStack(alignment: .leading, spacing: 10) {
+                Toggle(L("Use the login shell’s environment variables"), isOn: Binding(
+                    get: { Settings.hostOptions(for: host).loginShell == true },
+                    set: { on in
+                        var options = Settings.hostOptions(for: host)
+                        options.loginShell = on ? true : nil
+                        Settings.setHostOptions(options, for: host)
+                    }))
+                Note(L("Starts the engine on %@ through its login shell, so it and git get the PATH and GIT_* set in ~/.profile and the like, which a command run over ssh lacks. Changing it reconnects.", host))
+                Divider()
+                HStack {
+                    Text(L("The engine’s environment, which git on %@ gets", host)).font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    TextField("", text: $filter, prompt: Text(L("Search by name or value")))
+                        .textFieldStyle(.roundedBorder)
+                        .frame(minWidth: 60, maxWidth: 240)
+                }
+                Table(rows, selection: Binding(get: { selection }, set: { selection = $0; revealed = false })) {
+                    TableColumn(L("Name")) { v in Text(v.name).font(.body.monospaced()) }
+                        .width(min: 120, ideal: 180)
+                    TableColumn(L("Value")) { v in
+                        let shown = EnvironmentTable.isSecret(v.name) ? "••••••••" : v.value
+                        Text(shown).font(.callout.monospaced()).foregroundStyle(.secondary)
+                            .lineLimit(1).truncationMode(.middle).help(shown)
+                    }
+                }
+                .frame(minHeight: 100, maxHeight: .infinity)
+                .overlay { if !loaded { ProgressView() } }
+                EnvironmentValueView(
+                    name: selection ?? "", value: selection.flatMap { name in vars.first { $0.name == name }?.value },
+                    masked: selection.map(EnvironmentTable.isSecret) == true && !revealed,
+                    reveal: { revealed = true }, height: 120,
+                    onHost: (chosenGit: Settings.hostOptions(for: host).git, gitDirectory: gitDirectory))
+            }
+        }
+        .task(id: ObjectIdentifier(model)) { await load() }
+    }
+
+    private var rows: [Variable] {
+        let f = filter.trimmingCharacters(in: .whitespaces)
+        guard !f.isEmpty else { return vars }
+        return vars.filter { EnvironmentTable.matches(name: $0.name, value: $0.value, filter: f) }
+    }
+
+    /// エンジンの環境と、PATH で見つかる git の場所を SSH 先から読む。
+    private func load() async {
+        loaded = false
+        let repository = model.repository
+        let (v, g) = await Task.detached(priority: .userInitiated) {
+            struct Vars: Decodable { let vars: [Variable] }
+            struct Found: Decodable { struct Program: Decodable { let path: String }; let programs: [Program] }
+            return ((try? repository.info(["op": "processEnvironment"], as: Vars.self))?.vars ?? [],
+                    (try? repository.info(["op": "programs", "name": "git"], as: Found.self))?.programs.first?.path)
+        }.value
+        vars = v
+        gitDirectory = g.map { ($0 as NSString).deletingLastPathComponent }
+        loaded = true
     }
 }

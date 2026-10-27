@@ -243,3 +243,15 @@ private func makeRepo() throws -> URL {
     #expect(RepositoryLocation.host(location) == "me@dev")
     #expect(RepositoryLocation.path(location) == "/~/repo")
 }
+
+@Test func masksVariablesWhoseNamesLookSecret() {
+    for name in ["GH_TOKEN", "CLIENT_SECRET", "DB_PASSWORD", "MYSQL_PASSWD", "AWS_SECRET_ACCESS_KEY", "SSH_KEY",
+                 "OPENAI_APIKEY", "ACCESSKEY", "GOOGLE_APPLICATION_CREDENTIALS", "NPM_AUTH", "DB_PASS",
+                 "SIGNING_PRIVATE", "api_key", "Npm-Auth"] {
+        #expect(SecretNames.isSecret(name), "\(name)")
+    }
+    for name in ["PATH", "HOME", "SSH_AUTH_SOCK", "AMONHEN_PASS_ENV", "GIT_ASKPASS", "SSH_ASKPASS", "GIT_AUTHOR_NAME",
+                 "GPG_KEYID", "XKB_KEYMAP", "KEYCHAIN_PATH", "PASSAGE_DIR", "LANG"] {
+        #expect(!SecretNames.isSecret(name), "\(name)")
+    }
+}
