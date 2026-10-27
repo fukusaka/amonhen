@@ -192,7 +192,8 @@ pub enum Command {
         choice: crate::conflict::Choice,
     },
     /// コミットの詳細（`info`: message・author・authorEmail・authorTime・authorTz・committer・committerEmail・
-    /// committerTime・committerTz・parents・refs・signed・mergetag・trailers）。すぐ返せる分だけ。
+    /// committerTime・committerTz・parents・refs・signed・mergetag・trailers）。すぐ返せる分だけ。名前とメールは
+    /// mailmap で置き換えたもので、記録と違えば recordedAuthor・recordedCommitter（name・email）に記録のものを添える。
     CommitInfo {
         oid: String,
     },
@@ -614,8 +615,13 @@ impl Repository {
             rows.sort_unstable();
             rows.dedup();
             let ids: Vec<Oid> = rows.iter().map(|&r| graph.ids()[r as usize]).collect();
+            // mailmap で置き換えたメールでもよい（前のメールで書いたコミットも自分のもの）。
+            let mailmap = self.mailmap();
             for (row, text) in rows.iter().zip(self.backend().commit_texts(&ids)?) {
-                if branches::author_email(&text.raw).as_deref() == Some(me.as_str()) {
+                let mapped = text.author(mailmap.as_deref()).email;
+                if branches::author_email(&text.raw).as_deref() == Some(me.as_str())
+                    || mapped.eq_ignore_ascii_case(me.as_bytes())
+                {
                     mine_rows.insert(*row);
                 }
             }
@@ -876,9 +882,23 @@ impl Repository {
                 })
             })
             .collect();
-        let (author, email, author_time, author_tz) = author.unwrap_or_default();
-        let (committer, committer_email, committer_time, committer_tz) =
+        let (recorded_author, recorded_email, author_time, author_tz) = author.unwrap_or_default();
+        let (recorded_committer, recorded_committer_email, committer_time, committer_tz) =
             committer.unwrap_or_default();
+        // mailmap で置き換えた名前とメール。記録と違えば、記録のものも添える（署名は記録のものに関わる）。
+        let mailmap = self.mailmap();
+        let identity = |name: &str, email: &str| {
+            let mapped = mailmap.as_ref().map_or_else(
+                || (name.to_owned(), email.to_owned()),
+                |m| m.map_str(name, email),
+            );
+            let recorded = (mapped.0 != name || mapped.1 != email)
+                .then(|| serde_json::json!({ "name": name, "email": email }));
+            (mapped.0, mapped.1, recorded)
+        };
+        let (author, email, recorded_author) = identity(&recorded_author, &recorded_email);
+        let (committer, committer_email, recorded_committer) =
+            identity(&recorded_committer, &recorded_committer_email);
         let trailers: Vec<serde_json::Value> = trailers(message)
             .into_iter()
             .map(|(key, value)| serde_json::json!({ "key": key, "value": value }))
@@ -905,6 +925,8 @@ impl Repository {
             "committerEmail": committer_email,
             "committerTime": committer_time,
             "committerTz": committer_tz,
+            "recordedAuthor": recorded_author,
+            "recordedCommitter": recorded_committer,
             "parents": parents,
             "refs": refs,
             "signed": signed,
@@ -1013,11 +1035,12 @@ impl Repository {
         } else {
             self.backend().commit_summaries(&summaries)?
         };
+        let mailmap = self.mailmap();
         let summary = |i: usize| {
             let t = &texts[i];
             (
                 String::from_utf8_lossy(t.subject()).into_owned(),
-                String::from_utf8_lossy(t.author_name()).into_owned(),
+                String::from_utf8_lossy(&t.author(mailmap.as_deref()).name).into_owned(),
             )
         };
         let shown_merged = summaries.len() - references.len();
@@ -2154,6 +2177,11 @@ impl Repository {
                 if let Some(n) = limit {
                     entries.truncate(n);
                 }
+                if let Some(mailmap) = self.mailmap() {
+                    for e in &mut entries {
+                        e.apply_mailmap(&mailmap);
+                    }
+                }
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "entries": entries, "more": more })),
@@ -2203,6 +2231,7 @@ impl Repository {
                     .map(|&r| graph.ids()[r])
                     .collect();
                 let texts = self.commit_texts(&ids)?;
+                let mailmap = self.mailmap();
                 let commits: Vec<_> = ids
                     .iter()
                     .zip(&texts)
@@ -2210,7 +2239,7 @@ impl Repository {
                         serde_json::json!({
                             "oid": id.to_string(),
                             "subject": String::from_utf8_lossy(t.subject()),
-                            "author": String::from_utf8_lossy(t.author_name()),
+                            "author": String::from_utf8_lossy(&t.author(mailmap.as_deref()).name),
                             "time": t.author_time,
                         })
                     })

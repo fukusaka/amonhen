@@ -58,10 +58,10 @@ fn with_merge_paths(part: &[u8], path: &str) -> Vec<u8> {
     for record in part.split(|&b| b == 1).filter(|r| !r.is_empty()) {
         out.push(1);
         out.extend_from_slice(record);
-        // ID・件名・作者・時刻の 4 つの後に、パスがあるか。
+        // ID・件名・作者・メール・時刻の 5 つの後に、パスがあるか。
         let has_path = record
             .split(|&b| b == 0)
-            .nth(4)
+            .nth(5)
             .is_some_and(|p| p.iter().any(|&b| b != b'\n'));
         if !has_path {
             if record.last() != Some(&0) {
@@ -131,7 +131,13 @@ impl Operations for Git {
                 args.push("--no-merges");
             }
             args.extend(max_count.as_deref());
-            args.extend(["--format=%x01%H%x00%s%x00%an%x00%at", &start, "--", &path]);
+            // 名前とメールは記録のまま（mailmap はコアが当てる）。
+            args.extend([
+                "--format=%x01%H%x00%s%x00%an%x00%ae%x00%at",
+                &start,
+                "--",
+                &path,
+            ]);
             let mut part = self.read(&args)?;
             if merges {
                 part = with_merge_paths(&part, &path);
