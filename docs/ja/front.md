@@ -51,7 +51,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | `history` | rebuild?・fold?・expanded?（ID の配列）・tips?（ID の配列。そこから辿れるものだけ） | history・generation・rows・head・headRow・folded | |
 | `historyMatching` | history・rows | `history` と同じ（一致した行だけの History） | |
 | `historyRelease` | history | | |
-| `historyRows` | history と、start・count か rows（行の配列） | count・edges | rowNumbers u32・nodes・ids・times i64・spans（件名と作者の `text` の中の始めと長さ、u32 × 4）・text（UTF-8）・signatures u8・folded u32（折りたたんだ History のとき）・parentStarts u32（行の数 + 1）・parents u32（親の行）・parentIds（親の ID）・edges・edgeIds u32（start・count のときだけ。その範囲に重なる線） |
+| `historyRows` | history と、start・count か rows（行の配列）、recorded?（true なら mailmap で作者を変えた行を挙げる） | count・edges・recorded（行の何番目か、記録された名前とメール。頼まなければ空） | rowNumbers u32・nodes・ids・times i64・spans（件名と作者の `text` の中の始めと長さ、u32 × 4。作者は mailmap で置き換えたもの）・text（UTF-8）・signatures u8・folded u32（折りたたんだ History のとき）・parentStarts u32（行の数 + 1）・parents u32（親の行）・parentIds（親の ID）・edges・edgeIds u32（start・count のときだけ。その範囲に重なる線） |
 | `historyGraph` | history | rows・edges | nodes・edges・ids・folded（全行） |
 | `historySearch` | history・query（`crates/core/src/query.rs` の書き方） | count | rows u32（昇順） |
 | `historyDensity` | history・buckets | buckets | density（f32 × 2: 頻度・活動量、0〜1） |

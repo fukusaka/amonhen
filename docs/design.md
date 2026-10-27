@@ -225,6 +225,15 @@ In the same process, the number of writes is 0 for numeric columns, the graph an
   - History's ref labels stay as they are. CLI: `amonhen refs --verify` adds the result to each tag (`signed` and `signature` with `--json`), and `amonhen show` prints the commit's signature and the lines of its tags and merged tags with theirs (`signature`, `tags` and `mergedTagSignatures` with `--json`).
 - Measured on linux (all 949 annotated tags signed): one tag takes 25–30 ms (git and gpg), so all of them would be about 25 s one at a time and 4 s with 8 at a time; the 8 newest take 0.07 s with the CLI. Reading every tag object to tell whether it is signed takes 0.38 s.
 
+### Mailmap
+
+- People are shown by the names and emails in the mailmap (`.mailmap` in the working tree, `HEAD:.mailmap` in a bare repository, `mailmap.blob`, `mailmap.file`, read in git's order with gix), as `git log` does. git's `log.mailmap` turns it off (on by default); Amon Hen has no setting of its own, and the Author and Signing page has a switch for it and a row for `mailmap.file` at both levels. Blame always maps, as git does (it reads `git blame --porcelain`).
+- Commits keep the recorded names (`CommitText` points into the commit, now with the author's email too); the core maps them when it shows them (`Repository::mailmap`, `amonhen_model::Mailmap`). So changing the mailmap rereads only the rows, and the History cache is not rebuilt.
+- It is read where the repository is (`GitBackend::mailmap`): locally by gix, which keeps it and checks with a few `stat`s whether its sources (the files and the config files, and the blob's object) changed; through the daemon or on an SSH host, from that side (`Request::Mailmap`, asked again after a change notice or 5 seconds, with the fingerprint so an unchanged mailmap comes back empty). The FE compares `mailmap_fingerprint` when the repository changes, and reloads the rows and details if it changed.
+- History rows: the author column points into the commit unless the mailmap changes the name, and then into one buffer of mapped names per chunk. Details (`commitInfo`): the mapped author and committer, plus `recordedAuthor` / `recordedCommitter` when they differ; the details pane shows the recorded one under the name ("Recorded: …"), and signatures are checked against the recorded committer email. File History maps in the core too (`%an`/`%ae` from git, since `%aN` ignores `log.mailmap`).
+- Search: `author:` (and words without a field) match the mapped name or the recorded one, wider than git's `--author`, which matches only the mapped name. The search index keeps each recorded person (name and email) once, rows point to them, and a term is matched per person, so the mailmap costs one lookup per person, not per row.
+- Measured on linux (1.48M commits, a mailmap of 1008 lines; `crates/core/benches/authors.rs`), before → after: 60 History rows 365 → 382 µs, `author:torvalds` 6.6 → 6.7 ms, `author:"tejun heo"` 5.6 → 6.4 ms, `fix memory leak` 63 → 64 ms, commit details 17 → 24 µs, building the search index 1.37–1.49 → 1.46–1.50 s.
+
 ## Multi-platform
 
 ### GitBackend
