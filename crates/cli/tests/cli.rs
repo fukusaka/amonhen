@@ -425,8 +425,17 @@ impl Drop for Env {
     }
 }
 
+/// 起動した `amonhen watch`。試験が途中で失敗しても止める（残ると試験の出力を握ったままになる）。
 #[cfg(unix)]
 struct Watch(std::process::Child);
+
+#[cfg(unix)]
+impl Drop for Watch {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 #[cfg(unix)]
 impl Watch {
@@ -459,9 +468,8 @@ impl Watch {
         panic!("{at}: {change} の知らせが来ない");
     }
 
-    fn stop(mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+    fn stop(self) {
+        drop(self);
     }
 }
 
