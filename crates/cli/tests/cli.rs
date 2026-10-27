@@ -368,6 +368,90 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
     }
 }
 
+/// mailmap はリポジトリのある側で読み、3 つの開き方のどれでも、History・検索・詳細・File History の人を置き換える。
+/// 変えたら、History を作り直さずに次から新しい名前になる（SSH 先は変化の知らせか、しばらく経って聞き直す）。
+#[cfg(unix)]
+#[test]
+fn shows_mailmap_names_directly_through_the_daemon_and_over_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(&repo, &["config", "user.name", "a"]);
+    git(&repo, &["config", "user.email", "a@example.com"]);
+    std::fs::write(repo.join("f.txt"), "a\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "first"]);
+    let env = Env::new(tmp.path());
+    let repo = repo.canonicalize().unwrap();
+    let path = repo.to_str().unwrap().to_owned();
+    for at in [
+        path.clone(),
+        format!("daemon:{path}"),
+        format!("ssh://dev{path}"),
+    ] {
+        let at = at.as_str();
+        std::fs::write(
+            repo.join(".mailmap"),
+            "Ann Example <ann@example.com> <a@example.com>\n",
+        )
+        .unwrap();
+        let author = || env.json(&["log", "-C", at, "--json"])[0].clone();
+        // 前の開き方で変えた mailmap を、SSH 先ではしばらく覚えていることがある。
+        let wait_for = |name: &str| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                let row = author();
+                if row["author"] == name || std::time::Instant::now() > deadline {
+                    return row;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(200));
+            }
+        };
+        let row = wait_for("Ann Example");
+        assert_eq!(row["author"], "Ann Example", "{at}: {row}");
+        assert_eq!(
+            row["recordedAuthor"]["email"], "a@example.com",
+            "{at}: {row}"
+        );
+        for query in ["author:ann", "author:a"] {
+            let found = env.json(&["log", "-C", at, "--json", query]);
+            assert_eq!(
+                found.as_array().map(Vec::len),
+                Some(1),
+                "{at} {query}: {found}"
+            );
+        }
+        let info = env.json(&["show", "-C", at, "HEAD", "--json"]);
+        let info = if info["info"].is_object() {
+            &info["info"]
+        } else {
+            &info
+        };
+        assert_eq!(info["authorEmail"], "ann@example.com", "{at}: {info}");
+        assert_eq!(info["recordedAuthor"]["name"], "a", "{at}: {info}");
+        let log = env.stdin(
+            &["run", "-C", at],
+            "{\"op\":\"fileHistory\",\"path\":\"f.txt\"}\n",
+        );
+        let log: serde_json::Value = serde_json::from_str(log.trim()).unwrap();
+        assert_eq!(
+            log["info"]["entries"][0]["author"], "Ann Example",
+            "{at}: {log}"
+        );
+
+        // 変えたら、次から新しい名前。
+        std::fs::write(
+            repo.join(".mailmap"),
+            "Bobby <bobby@example.com> <a@example.com>\n",
+        )
+        .unwrap();
+        let row = wait_for("Bobby");
+        assert_eq!(row["author"], "Bobby", "{at}: {row}");
+    }
+}
+
 #[cfg(unix)]
 /// 試験の中だけで動く環境（ホーム・共有の daemon のソケット・偽の ssh）。
 struct Env {
