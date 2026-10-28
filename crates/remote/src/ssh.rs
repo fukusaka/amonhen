@@ -9,6 +9,9 @@
 //!    SSH 先で中身のハッシュを確かめ、合わなければ消してやめる。
 //! 5. ほかの版は消さない（違う版の Amon Hen が同じ SSH 先を使っても、取り合いにならない）。30 日使われていない
 //!    ものだけを片付ける（使うたびに `used` の印を更新する）。
+//!
+//! Windows の SSH 先は sh がないので、調べる・送る・起動するのしかたが違う（`crate::windows_host`）。sh での調べが
+//! 失敗したら PowerShell で調べ、Windows だった接続先は覚えておく。
 
 use amonhen_model::tr;
 use std::io::Write;
@@ -17,6 +20,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 
 use amonhen_model::Result;
+
+use crate::windows_host::{self, Shell};
 
 use crate::Connection;
 
@@ -69,6 +74,40 @@ impl Target {
     }
 }
 
+/// `user@host:port`（Windows だったかを覚えるときの名前）。
+fn destination_key(target: &Target) -> String {
+    format!(
+        "{}:{}",
+        target.destination,
+        target.port.as_deref().unwrap_or("")
+    )
+}
+
+/// Windows だった接続先（このプロセスの間、覚えておく。次からは PowerShell で先に調べる）。
+static WINDOWS_HOSTS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+fn known_windows(key: &str) -> bool {
+    WINDOWS_HOSTS.lock().unwrap().iter().any(|k| k == key)
+}
+
+fn remember_windows(key: &str) {
+    let mut hosts = WINDOWS_HOSTS.lock().unwrap();
+    if !hosts.iter().any(|k| k == key) {
+        hosts.push(key.to_owned());
+    }
+}
+
+/// `HostOptions::engine` の、パスで指定したもの（`/…`、Windows の `C:\…`・`\\server\…`）。
+fn is_engine_path(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    value.starts_with('/')
+        || value.starts_with("\\\\")
+        || (bytes.len() >= 3
+            && bytes[0].is_ascii_alphabetic()
+            && bytes[1] == b':'
+            && matches!(bytes[2], b'\\' | b'/'))
+}
+
 fn shell_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', r"'\''"))
 }
@@ -97,7 +136,8 @@ fn in_sh(script: &str) -> String {
 #[serde(default, rename_all = "camelCase")]
 pub struct HostOptions {
     /// SSH 先で動かすエンジン: `installed`（PATH の amonhen。このビルドでなければつながない）、`sent`（Amon Hen が
-    /// 置いたもの。なければ送る）、`/` で始まればそのパス。なければ自動（PATH のもの → 置いたもの → 送る）。
+    /// 置いたもの。なければ送る）、パス（`/…`、Windows なら `C:\…`）ならそれ。なければ自動（PATH のもの →
+    /// 置いたもの → 送る）。
     pub engine: Option<String>,
     /// 合うものがなければ送り込むか。なければ送る。
     pub push: Option<bool>,
@@ -154,13 +194,15 @@ impl Daemons {
     fn for_platform(&self, uname: &str) -> Result<(PathBuf, Vec<u8>)> {
         let mut words = uname.split_whitespace();
         let os = words.next().unwrap_or_default().to_ascii_lowercase();
-        let arch = match words.next().unwrap_or_default() {
+        let arch = words.next().unwrap_or_default().to_ascii_lowercase();
+        let arch = match arch.as_str() {
             "arm64" | "aarch64" => "aarch64",
             "x86_64" | "amd64" => "x86_64",
             other => other,
         };
         let name = format!("{os}-{arch}");
-        let mut candidates = vec![self.dir.join(format!("amonhen-{name}"))];
+        let exe = if os == "windows" { ".exe" } else { "" };
+        let mut candidates = vec![self.dir.join(format!("amonhen-{name}{exe}"))];
         if let Some((local_name, path)) = &self.local
             && *local_name == name
         {
@@ -278,26 +320,41 @@ fn session_refused(stderr: &str) -> bool {
     stderr.contains("Session open refused") || stderr.contains("mux_client_request_session")
 }
 
-/// SSH 先で `script` を実行し、標準出力を返す。`input` は標準入力に流す。使い回しの接続がセッションを断ったら、
-/// この ssh だけの接続でやり直す。
+/// SSH 先で sh の `script` を実行し、標準出力を返す。`input` は標準入力に流す。
 fn run(ssh: &str, target: &Target, script: &str, input: Option<&[u8]>) -> Result<String> {
-    match run_on(ssh, target, script, input, true) {
-        Err(RunError::Refused) => {
-            run_on(ssh, target, script, input, false).map_err(RunError::into_error)
-        }
-        result => result.map_err(RunError::into_error),
+    run_command(ssh, target, &in_sh(script), input)
+}
+
+/// SSH 先で `command` を（既定のシェルが）実行し、標準出力を返す。
+fn run_command(ssh: &str, target: &Target, command: &str, input: Option<&[u8]>) -> Result<String> {
+    run_detailed(ssh, target, command, input).map_err(RunError::into_error)
+}
+
+/// `run_command` の、失敗したのが SSH 先のコマンドか（ssh はつながったか）がわかる形。使い回しの接続がセッションを
+/// 断ったら、この ssh だけの接続でやり直す。
+fn run_detailed(
+    ssh: &str,
+    target: &Target,
+    command: &str,
+    input: Option<&[u8]>,
+) -> std::result::Result<String, RunError> {
+    match run_on(ssh, target, command, input, true) {
+        Err(RunError::Refused) => run_on(ssh, target, command, input, false),
+        result => result,
     }
 }
 
 enum RunError {
     Refused,
+    /// SSH 先のコマンドが失敗した（ssh はつながった）。
+    Command(amonhen_model::Error),
     Other(amonhen_model::Error),
 }
 
 impl RunError {
     fn into_error(self) -> amonhen_model::Error {
         match self {
-            RunError::Other(e) => e,
+            RunError::Command(e) | RunError::Other(e) => e,
             RunError::Refused => tr!("The SSH host refused another session").into(),
         }
     }
@@ -312,13 +369,13 @@ impl<E: Into<amonhen_model::Error>> From<E> for RunError {
 fn run_on(
     ssh: &str,
     target: &Target,
-    script: &str,
+    command: &str,
     input: Option<&[u8]>,
     share: bool,
 ) -> std::result::Result<String, RunError> {
     let mut child = amonhen_model::process::command(ssh)
         .args(base_args(target, share))
-        .arg(in_sh(script))
+        .arg(command)
         .stdin(if input.is_some() {
             Stdio::piped()
         } else {
@@ -339,12 +396,18 @@ fn run_on(
         if share && session_refused(&message) {
             return Err(RunError::Refused);
         }
-        return Err(tr!(
+        let error = tr!(
             "Error on the SSH host ({host}): {message}",
             host = target.destination,
             message = amonhen_model::process::explain_agent(message)
         )
-        .into());
+        .into();
+        // ssh そのものの失敗（つながらないなど）は 255。
+        return Err(if out.status.code() == Some(255) {
+            RunError::Other(error)
+        } else {
+            RunError::Command(error)
+        });
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -368,6 +431,8 @@ pub struct RemoteEngine {
     pub source: &'static str,
     /// 送ったときの大きさ（バイト）。
     pub pushed_bytes: Option<u64>,
+    /// Windows の SSH 先なら、その既定のシェル（エンジンを起動するコマンドの書き方）。
+    pub(crate) windows: Option<Shell>,
 }
 
 impl RemoteEngine {
@@ -399,23 +464,31 @@ pub fn connect(
 ) -> Result<Arc<Connection>> {
     let engine = prepare(ssh, target, daemons, options)?;
     // 使い回しの接続に載せられるのは、接続先ごとに `SHARED_ENGINES` 個まで。
-    let key = format!(
-        "{}:{}",
-        target.destination,
-        target.port.as_deref().unwrap_or("")
-    );
-    let slot = SharedSlot::take(&key);
+    let slot = SharedSlot::take(&destination_key(target));
     let mut args = base_args(target, slot.is_some());
-    let start = format!(
-        "exec {} --stdio {}",
-        shell_quote(&engine.path),
-        target.shell_path()
-    );
-    args.push(in_sh(&format!(
-        "{}; {}",
-        cleanup_script(&engine),
-        through_login_shell(options, start.trim_end())
-    )));
+    args.push(match engine.windows {
+        // 片付けは調べるときに済んでいる。既定のシェルが直接起動する（標準入出力をそのまま渡す）。
+        Some(shell) => {
+            let mut words = vec!["--stdio".to_owned()];
+            if !target.path.is_empty() {
+                words.push(windows_host::engine_path(&target.path));
+            }
+            let words: Vec<&str> = words.iter().map(String::as_str).collect();
+            shell.command(&engine.path, &words)?
+        }
+        None => {
+            let start = format!(
+                "exec {} --stdio {}",
+                shell_quote(&engine.path),
+                target.shell_path()
+            );
+            in_sh(&format!(
+                "{}; {}",
+                cleanup_script(&engine),
+                through_login_shell(options, start.trim_end())
+            ))
+        }
+    });
     let conn = Connection::spawn(ssh, &args)?;
     if let Some(slot) = slot {
         conn.hold(Box::new(slot));
@@ -436,25 +509,39 @@ pub fn find_repositories(
     excludes: &[String],
 ) -> Result<Vec<String>> {
     let engine = prepare(ssh, target, daemons, options)?;
-    let excludes: String = excludes
-        .iter()
-        .map(|e| format!(" --exclude {}", shell_quote(e)))
-        .collect();
-    let start = format!(
-        "exec {} find-repositories --depth {depth}{excludes} {}",
-        shell_quote(&engine.path),
-        target.shell_path()
-    );
-    let out = run(
-        ssh,
-        target,
-        &format!(
-            "{}; {}",
-            cleanup_script(&engine),
-            through_login_shell(options, &start)
-        ),
-        None,
-    )?;
+    let out = match engine.windows {
+        Some(shell) => {
+            let depth = depth.to_string();
+            let mut words = vec!["find-repositories", "--depth", &depth];
+            for e in excludes {
+                words.extend(["--exclude", e.as_str()]);
+            }
+            let path = windows_host::engine_path(&target.path);
+            words.push(&path);
+            run_command(ssh, target, &shell.command(&engine.path, &words)?, None)?
+        }
+        None => {
+            let excludes: String = excludes
+                .iter()
+                .map(|e| format!(" --exclude {}", shell_quote(e)))
+                .collect();
+            let start = format!(
+                "exec {} find-repositories --depth {depth}{excludes} {}",
+                shell_quote(&engine.path),
+                target.shell_path()
+            );
+            run(
+                ssh,
+                target,
+                &format!(
+                    "{}; {}",
+                    cleanup_script(&engine),
+                    through_login_shell(options, &start)
+                ),
+                None,
+            )?
+        }
+    };
     let base = target.path.trim_end_matches('/');
     Ok(out
         .lines()
@@ -510,7 +597,7 @@ fn prepare(
     let configured = daemons
         .remote_engine
         .clone()
-        .or_else(|| chosen.filter(|e| e.starts_with('/')).map(str::to_owned));
+        .or_else(|| chosen.filter(|e| is_engine_path(e)).map(str::to_owned));
     let (only_installed, skip_installed) = match chosen {
         _ if configured.is_some() => (false, false),
         Some("installed") => (true, false),
@@ -521,40 +608,77 @@ fn prepare(
     // OS と CPU、置き場所、PATH の amonhen の版、置いてあるエンジン（ハッシュの名前と、記録したビルドの指紋）を
     // 1 回で調べる。
     // ログインシェル経由なら、PATH の amonhen もログインシェルの PATH で探す。
-    let probe = run(
-        ssh,
-        target,
-        &through_login_shell(
-            options,
-            &format!(
-                r#"uname -sm; D="{ENGINE_DIR}"; echo "$D"; a=$(command -v amonhen 2>/dev/null); if [ -n "$a" ]; then echo "$a"; "$a" --version 2>/dev/null | head -1; else echo; echo; fi; for e in "$D"/*/; do [ -x "${{e}}amonhen" ] || continue; e=${{e%/}}; echo "${{e##*/}} $(cat "$e/{BUILD_FILE}" 2>/dev/null)"; done; true"#
-            ),
-        ),
-        None,
-    )?;
+    // sh で調べられなければ Windows かもしれない（PowerShell で調べる）。Windows だった接続先は、先に PowerShell で。
+    let key = destination_key(target);
+    let windows_probe = || {
+        run_command(
+            ssh,
+            target,
+            &windows_host::encoded(&windows_host::probe_script(
+                crate::BUILD_ID,
+                BUILD_FILE,
+                KEEP_DAYS,
+            )),
+            None,
+        )
+    };
+    let (probe, windows) = if known_windows(&key) {
+        (windows_probe()?, true)
+    } else {
+        match run_detailed(
+            ssh,
+            target,
+            &in_sh(&through_login_shell(
+                options,
+                &format!(
+                    r#"uname -sm; D="{ENGINE_DIR}"; echo "$D"; a=$(command -v amonhen 2>/dev/null); if [ -n "$a" ]; then echo "$a"; "$a" --version 2>/dev/null | head -1; else echo; echo; fi; for e in "$D"/*/; do [ -x "${{e}}amonhen" ] || continue; e=${{e%/}}; echo "${{e##*/}} $(cat "$e/{BUILD_FILE}" 2>/dev/null)"; done; true"#
+                ),
+            )),
+            None,
+        ) {
+            Ok(probe) => (probe, false),
+            // つながったのに sh が動かなければ、Windows かもしれない。Windows でもなければ、sh での失敗を伝える。
+            Err(RunError::Command(e)) => match windows_probe() {
+                Ok(probe) if probe.starts_with("windows ") => {
+                    remember_windows(&key);
+                    (probe, true)
+                }
+                _ => return Err(e),
+            },
+            Err(e) => return Err(e.into_error()),
+        }
+    };
     let mut lines = probe.lines();
     let uname = lines.next().unwrap_or_default().to_owned();
     let dir = lines.next().unwrap_or_default().to_owned();
     let installed = lines.next().unwrap_or_default().to_owned();
     let installed_version = lines.next().unwrap_or_default().to_owned();
+    let shell = windows.then(|| Shell::from_default_shell(lines.next().unwrap_or_default()));
     // （ハッシュの名前, ビルドの指紋。前の版が置いたものは記録がなく空）
     let present: Vec<(&str, &str)> = lines
         .filter_map(|line| line.split_once(' '))
         .map(|(hash, build)| (hash, build.trim()))
         .collect();
     let wanted = format!("(build {})", crate::BUILD_ID);
+    // 置いたエンジンのパス。
+    let engine_at = |hash: &str| match shell {
+        Some(_) => format!("{}\\amonhen.exe", windows_host::engine_dir(&dir, hash)),
+        None => format!("{dir}/{hash}/amonhen"),
+    };
 
     let engine = if let Some(path) = configured {
         RemoteEngine {
             path,
             source: "configured",
             pushed_bytes: None,
+            windows: shell,
         }
     } else if !skip_installed && !installed.is_empty() && installed_version.ends_with(&wanted) {
         RemoteEngine {
             path: installed,
             source: "installed",
             pushed_bytes: None,
+            windows: shell,
         }
     } else if only_installed {
         // PATH のものを使うと決めたのに、ないか、このビルドではない。
@@ -574,20 +698,22 @@ fn prepare(
     } else if let Some((hash, _)) = present.iter().find(|(_, b)| *b == crate::BUILD_ID) {
         // このビルドのものがもう置いてある（ほかの機械・VSCode 拡張が置いた）。手元のエンジンは読まなくてよい。
         RemoteEngine {
-            path: format!("{dir}/{hash}/amonhen"),
+            path: engine_at(hash),
             source: "present",
             pushed_bytes: None,
+            windows: shell,
         }
     } else {
-        let (_, data) = daemons.for_platform(&uname)?;
+        let (local, data) = daemons.for_platform(&uname)?;
         let digest = sha1_smol::Sha1::from(&data).digest().to_string();
         let hash = &digest[..16];
-        let path = format!("{dir}/{hash}/amonhen");
+        let path = engine_at(hash);
         if present.iter().any(|(h, _)| *h == hash) {
             RemoteEngine {
                 path,
                 source: "present",
                 pushed_bytes: None,
+                windows: shell,
             }
         } else if !push {
             return Err(tr!(
@@ -595,6 +721,20 @@ fn prepare(
                 host = target.destination
             )
             .into());
+        } else if shell.is_some() {
+            push_windows(
+                ssh,
+                target,
+                &local,
+                &windows_host::engine_dir(&dir, hash),
+                &digest,
+            )?;
+            RemoteEngine {
+                path,
+                source: "pushed",
+                pushed_bytes: Some(data.len() as u64),
+                windows: shell,
+            }
         } else {
             // 書きかけを使わないよう、一時的な名前で書いてから置き換える。置いたら中身のハッシュを確かめる。
             let d = format!("{}/{hash}", shell_quote(&dir));
@@ -618,10 +758,101 @@ fn prepare(
                 path,
                 source: "pushed",
                 pushed_bytes: Some(data.len() as u64),
+                windows: None,
             }
         }
     };
     Ok(engine)
+}
+
+/// Windows の SSH 先の `dir` に、手元の `local` を送る。scp で一時的な名前で送ってから置き換え、中身のハッシュ
+/// （`digest`）を確かめる。合わなければ消してやめる。scp は使っている ssh で（`-S`）、同じ使い回しの接続の上で。
+fn push_windows(
+    ssh: &str,
+    target: &Target,
+    local: &std::path::Path,
+    dir: &str,
+    digest: &str,
+) -> Result<()> {
+    run_command(
+        ssh,
+        target,
+        &windows_host::encoded(&windows_host::mkdir_script(dir)),
+        None,
+    )?;
+    let tmp = format!("amonhen.tmp.{}", std::process::id());
+    let mut args = vec!["-q".to_owned(), "-S".into(), ssh.to_owned()];
+    // ssh の引数（`-T` と接続先を除く）は、scp にもそのまま渡せる。
+    let ssh_args = base_args(target, true);
+    args.extend(ssh_args[1..ssh_args.len() - 1].iter().map(|a| {
+        if a == "-p" {
+            "-P".to_owned()
+        } else {
+            a.clone()
+        }
+    }));
+    args.push(local.display().to_string());
+    args.push(format!(
+        "{}:{}/{tmp}",
+        target.destination,
+        dir.replace('\\', "/")
+    ));
+    let out = amonhen_model::process::command(scp_program(ssh))
+        .args(&args)
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| {
+            tr!(
+                "Can’t start {program}: {e}",
+                program = scp_program(ssh),
+                e = e
+            )
+        })?;
+    if !out.status.success() {
+        return Err(tr!(
+            "Error on the SSH host ({host}): {message}",
+            host = target.destination,
+            message = String::from_utf8_lossy(&out.stderr).trim()
+        )
+        .into());
+    }
+    let got = run_command(
+        ssh,
+        target,
+        &windows_host::encoded(&windows_host::finish_script(
+            dir,
+            &tmp,
+            crate::BUILD_ID,
+            BUILD_FILE,
+        )),
+        None,
+    )?;
+    if got.trim() != digest {
+        let _ = run_command(
+            ssh,
+            target,
+            &windows_host::encoded(&windows_host::remove_script(dir)),
+            None,
+        );
+        return Err(tr!(
+            "The engine sent to the SSH host ({host}) doesn’t match (sent {sent}, SSH host {got})",
+            host = target.destination,
+            sent = digest,
+            got = got.trim()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+/// `ssh` の隣の scp（`ssh` だけなら PATH の scp）。
+fn scp_program(ssh: &str) -> String {
+    let path = std::path::Path::new(ssh);
+    let name = match path.file_name().and_then(|n| n.to_str()) {
+        Some(n) if n.eq_ignore_ascii_case("ssh.exe") => "scp.exe",
+        _ => "scp",
+    };
+    path.with_file_name(name).display().to_string()
 }
 
 /// 使う印を更新し、`KEEP_DAYS` 日使われていないエンジン（と前の置き場所 `~/.cache/amonhen` の古い daemon）を
@@ -728,6 +959,19 @@ mod tests {
     }
 
     #[test]
+    fn tells_engine_paths_apart() {
+        assert!(is_engine_path("/opt/amonhen/bin/amonhen"));
+        assert!(is_engine_path(r"C:\Tools\amonhen.exe"));
+        assert!(is_engine_path("c:/tools/amonhen.exe"));
+        assert!(is_engine_path(r"\\nas\tools\amonhen.exe"));
+        assert!(!is_engine_path("installed"));
+        assert!(!is_engine_path("sent"));
+        assert!(!is_engine_path("C:amonhen.exe"));
+        assert_eq!(scp_program("ssh"), "scp");
+        assert_eq!(scp_program("/usr/bin/ssh"), "/usr/bin/scp");
+    }
+
+    #[test]
     fn picks_the_daemon_for_the_host() {
         let dir = std::env::temp_dir().join(format!("amonhen-daemons-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -750,6 +994,12 @@ mod tests {
         );
         assert_eq!(daemons.for_platform("Darwin arm64").unwrap().0, local);
         assert!(daemons.for_platform("Linux riscv64").is_err());
+        // Windows の SSH 先（PowerShell の調べは `windows AMD64` を返す）には `.exe`。
+        std::fs::write(dir.join("amonhen-windows-x86_64.exe"), this).unwrap();
+        assert_eq!(
+            daemons.for_platform("windows AMD64").unwrap().0,
+            dir.join("amonhen-windows-x86_64.exe")
+        );
         std::fs::write(dir.join("amonhen-linux-x86_64"), b"amonhen-build=0;").unwrap();
         let err = daemons
             .for_platform("Linux x86_64")
