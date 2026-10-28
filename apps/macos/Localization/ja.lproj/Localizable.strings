@@ -605,7 +605,7 @@
 "Body:" = "本文:";
 
 /* People.swift */
-"Author" = "作成者";
+"Author" = "作者";
 "Committer" = "コミッター";
 "Filter to this person’s commits" = "この人のコミットで絞り込む";
 
@@ -1292,7 +1292,6 @@
 "Gives git, the shared daemon and gh the terminal’s PATH, SSH agent and GIT_* settings, which an app launched from the Finder doesn’t get. Changes apply at the next launch." = "Finder から起動したアプリには届かない端末の PATH・SSH agent・GIT_* を、git・共有の daemon・gh に渡します。変更は次の起動から。";
 "Used wherever Amon Hen opens a file in an editor. Automatic picks the first code editor installed (VS Code, Cursor, Zed, Sublime Text, BBEdit, Nova, TextMate, Fleet, Xcode), or else the default text editor." = "Amon Hen がファイルをエディタで開くところすべてで使います。自動は、入っているコードエディタ（VS Code・Cursor・Zed・Sublime Text・BBEdit・Nova・TextMate・Fleet・Xcode）の最初のもの、なければ既定のテキストエディタです。";
 "A repository chooses one in its Settings > Commits, or copies it for itself." = "リポジトリはその Settings > コミットで 1 つを選ぶか、専用に写します。";
-"Author and Signing" = "作成者と署名";
 "The git Amon Hen runs for repositories on this Mac. Repositories opened from now on use it; git in a terminal isn’t affected." = "この Mac のリポジトリに Amon Hen が使う git。これから開くリポジトリに効きます。端末の git は変わりません。";
 "Signs every commit on this Mac unless a repository chooses otherwise." = "この Mac のすべてのコミットに署名します（リポジトリで別に決めていなければ）。";
 "Ignore everywhere" = "どこでも無視する";
