@@ -7,6 +7,7 @@ import { join, resolve } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
 import { ATTRIBUTES, lineEndingsOf, parseCheckAttr, parseEolConfig, toGitForm, type LineEndings } from './eol.ts';
 import { GitError, shellQuote, type GitExecutor } from './exec.ts';
+import { findPreviousVersion, parseRangeDiff, type PreviousVersion, type RangePair } from './rangeDiff.ts';
 import { diffTreeArgs, logArgs, parseLog, parseNameStatus, type Commit, type FileChange } from './log.ts';
 import {
   forEachRefArgs,
@@ -116,6 +117,10 @@ export interface RepositoryBackend {
   /** branch に切り替える。branch が無ければ oid で detached HEAD にする */
   switchTo(target: HeadState & { oid: string }): Promise<void>;
   isAncestor(ancestor: string, descendant: string): Promise<boolean>;
+  /** 同じ一連のコミットの 2 つの版を比べる（git range-diff。ranges は git と同じ形） */
+  rangeDiff(ranges: readonly string[]): Promise<RangePair[]>;
+  /** ローカルブランチ branch（完全な名前。省略時は今のブランチ）の、最後に書き換える前の版（reflog から） */
+  previousVersion(branch?: string): Promise<PreviousVersion | undefined>;
   /** 現在のブランチに rev を merge する */
   merge(rev: string): Promise<MergeResult>;
   /** branch（省略時は現在のブランチ）を onto の上に rebase する。branch を指定すると checkout される */
@@ -426,6 +431,42 @@ export class CliBackend implements RepositoryBackend {
       ? ['switch', target.branch.replace(/^refs\/heads\//, '')]
       : ['switch', '--detach', target.oid];
     await this.git.exec(args, { cwd: this.root });
+  }
+
+  async rangeDiff(ranges: readonly string[]): Promise<RangePair[]> {
+    // 範囲を options と取り違えないように（`--end-of-options` は git 2.24 から）
+    const bad = ranges.find((r) => !r || r.startsWith('-'));
+    if (bad !== undefined) throw new Error(`Not a range: ${bad}`);
+    const pairs = parseRangeDiff(await this.read(['range-diff', '--no-color', '--abbrev=40', ...ranges]));
+    // `--abbrev=40` を見出しの ID に使わない古い git もあるので、短いものは完全な形に直す
+    const short = [...new Set(pairs.flatMap((p) => [p.old, p.new]).flatMap((c) => (c && c.oid.length < 40 ? [c.oid] : [])))];
+    if (short.length > 0) {
+      const full = (await this.read(['rev-parse', ...short.map((s) => `${s}^{commit}`)])).trim().split('\n');
+      const map = new Map(short.map((s, i) => [s, full[i] ?? s]));
+      for (const c of pairs.flatMap((p) => [p.old, p.new])) {
+        if (c) c.oid = map.get(c.oid) ?? c.oid;
+      }
+    }
+    return pairs;
+  }
+
+  async previousVersion(branch?: string): Promise<PreviousVersion | undefined> {
+    const ref = branch ?? (await this.head()).branch;
+    if (!ref) throw new Error('HEAD isn’t on a branch');
+    let out: string;
+    try {
+      out = await this.read(['log', '-g', '-n', '500', '--format=%H%x00%gs', ref, '--']);
+    } catch {
+      return undefined;
+    }
+    const rows = out.split('\n').filter(Boolean).map((l) => l.split('\0'));
+    const entries = rows.map(([oid = '', message = ''], i) => ({ new: oid, old: rows[i + 1]?.[0] ?? null, message }));
+    return findPreviousVersion(
+      ref.replace(/^refs\/heads\//, ''),
+      entries,
+      (a, d) => this.isAncestor(a, d),
+      async (rev) => (await this.read(['rev-parse', '--verify', '--quiet', `${rev}^{commit}`], [0, 1])).trim() || undefined,
+    );
   }
 
   async isAncestor(ancestor: string, descendant: string): Promise<boolean> {

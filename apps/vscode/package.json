@@ -260,6 +260,16 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.compareWithPrevious",
+        "title": "Compare with Previous Version",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.rangeDiff",
+        "title": "Range Diff…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.stash",
         "title": "Stash Changes…",
         "category": "Amon Hen",
@@ -433,6 +443,11 @@
           "group": "3_ref@0"
         },
         {
+          "command": "amonhen.compareWithPrevious",
+          "when": "view == amonhen.sidebar && viewItem =~ /^branch(\\.current)?(;\\w+)?$/",
+          "group": "4_create@3"
+        },
+        {
           "command": "amonhen.stash",
           "when": "view == amonhen.sidebar && viewItem == section.stashes",
           "group": "inline"
@@ -588,6 +603,14 @@
         {
           "command": "amonhen.submodule.open",
           "when": "false"
+        },
+        {
+          "command": "amonhen.compareWithPrevious",
+          "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.rangeDiff",
+          "when": "amonhen.hasRepository"
         }
       ],
       "webview/context": [
