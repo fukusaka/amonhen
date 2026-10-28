@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 
 use amonhen_model::Result;
 
+pub use directory::expand_home;
 pub use programs::programs;
 pub use status::parse_status;
 pub use verify::LocalVerifier;

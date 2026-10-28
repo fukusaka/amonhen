@@ -114,7 +114,9 @@ fn stdio(repo: Option<&str>) -> amonhen_model::Result<()> {
             })?
         }
     };
-    let backend: Arc<dyn GitBackend> = Arc::new(GixBackend::open(repo)?);
+    // `~/…` は、このエンジンがホームから読む（Windows のシェルは展開しない）。
+    let backend: Arc<dyn GitBackend> =
+        Arc::new(GixBackend::open(amonhen_backend_cli::expand_home(repo))?);
     // 標準出力は応答だけに使う（ログは標準エラーへ）。
     let server = Server::new(backend.clone(), std::io::stdout());
     let notify = server.notifier();

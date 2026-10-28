@@ -718,7 +718,8 @@ fn worktree(args: &[String]) -> Result<ExitCode> {
 // MARK: - merge-file
 
 /// `amonhen find-repositories <dir> [--depth <n>] [--exclude <name>]…`: `dir` の下のリポジトリを、`dir` からの相対
-/// パスで 1 行ずつ出す（アプリのリポジトリの一覧の「スキャンするフォルダ」と同じ規則。SSH 先のスキャンで使う）。
+/// パスで 1 行ずつ出す（アプリのリポジトリの一覧の「スキャンするフォルダ」と同じ規則。SSH 先のスキャンで使う）。`dir` の
+/// `~` はホーム。
 /// `--exclude` を 1 つでも渡すと、既定の除外（node_modules など）の代わりにそれを使う。
 fn find_repositories(args: &[String]) -> Result<ExitCode> {
     let mut dir: Option<&str> = None;
@@ -761,8 +762,18 @@ fn find_repositories(args: &[String]) -> Result<ExitCode> {
             .map(|s| (*s).to_owned())
             .collect();
     }
-    for path in amonhen_model::scan::find_repositories(Path::new(dir), depth, &excludes) {
-        println!("{}", path.display());
+    // `~/…` はホームから（Windows のシェルは展開しない）。区切りは `/` で出す（SSH 先の場所 `ssh://host/C:/…` に足す）。
+    let dir = amonhen_backend_cli::expand_home(dir);
+    for path in amonhen_model::scan::find_repositories(&dir, depth, &excludes) {
+        let path = path.display().to_string();
+        println!(
+            "{}",
+            if cfg!(windows) {
+                path.replace('\\', "/")
+            } else {
+                path
+            }
+        );
     }
     Ok(ExitCode::SUCCESS)
 }
