@@ -259,8 +259,18 @@ test('log and people follow the mailmap and log.mailmap', async () => {
     const [recorded] = await backend.log(['HEAD'], 0, 1);
     assert.equal(recorded!.author, 'a');
     assert.deepEqual(await backend.mapPeople([{ name: 'a', email: 'a@example.com' }]), [{ name: 'a', email: 'a@example.com' }]);
+    assert.equal(await backend.mailmapFile(), undefined);
+    git('config', 'mailmap.file', 'people/mailmap');
+    assert.equal(await backend.mailmapFile(), join(dir, 'people', 'mailmap'), '相対パスは作業ツリーから');
   } finally {
-    git('config', '--unset', 'log.mailmap');
+    // 途中で消したものもあるので、あれば消す（ない設定を消すと git は失敗する）
+    for (const key of ['log.mailmap', 'mailmap.file']) {
+      try {
+        git('config', '--unset', key);
+      } catch {
+        // なかった
+      }
+    }
     rmSync(join(dir, '.mailmap'));
   }
 });

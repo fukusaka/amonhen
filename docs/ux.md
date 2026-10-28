@@ -671,7 +671,7 @@ Make every operation available from the menus. Shortcuts do not follow other cli
   "Stage Lines") is not translated.
 - Everything else is translated: standard macOS menus and items (with Apple's wording), explanations, confirmations,
   placeholders and tool tips. In Japanese prose ブランチ, タグ, リモート, 上流, コミット, 作業ツリー and コンフリクト are
-  used as nouns.
+  used as nouns, and a commit's author and committer are 作者 and コミッター (as in Pro Git's Japanese edition).
 - The core (Rust) is localized the same way (`tr!` in `amonhen_model::i18n`, Japanese in
   `crates/model/src/i18n/ja.strings`). The language comes from the side that shows the text: the app passes its UI
   language over FFI, the CLI reads `LC_ALL` / `LC_MESSAGES` / `LANG`, and the shared daemon and SSH hosts answer

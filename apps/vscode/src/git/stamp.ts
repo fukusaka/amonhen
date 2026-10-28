@@ -69,7 +69,7 @@ export async function stashStamp(dirs: GitDirs): Promise<string> {
 
 /**
  * mailmap の変化。作業ツリーの `.mailmap` と、`log.mailmap`・`mailmap.file` を書く設定ファイル（リポジトリ・
- * worktree・利用者のもの）。`mailmap.file` の中身の変化は見ない
+ * worktree・利用者のもの）。`mailmap.file` の中身は、その場所を設定から読んだうえで `mailmapFileStamp` で見る
  */
 export async function mailmapStamp(root: string, dirs: GitDirs): Promise<string> {
   const home = homedir();
@@ -81,6 +81,11 @@ export async function mailmapStamp(root: string, dirs: GitDirs): Promise<string>
     fileStamp(join(xdg, 'git', 'config')),
   ]);
   return parts.join('|');
+}
+
+/** `mailmap.file` の中身の変化（なければ `-`） */
+export async function mailmapFileStamp(path: string | undefined): Promise<string> {
+  return path ? fileStamp(path) : '-';
 }
 
 /** `.gitmodules` の変化 */

@@ -64,6 +64,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- In Japanese, "author" is 作者 everywhere, as in the docs: the Author and Signing page and its Author section, and
+  the author in the commit details, showed 作成者.
 - The CLI finds the repository without running git, so when the chosen git isn't there it can still read and
   choose another (`setMachineGit`); only what runs git stops.
 - Check Connection when adding an SSH connection no longer reports a failure when the host has no `amonhen` on its

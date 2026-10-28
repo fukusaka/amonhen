@@ -194,11 +194,13 @@ async function workingCopyFlow(label: string): Promise<void> {
 
 /**
  * `.mailmap` を置くと、History の行と詳細が mailmap の名前になり（詳細には記録されたものも付く）、`log.mailmap` を
- * false にすると記録のままに戻る。どちらも開いたまま、知らせ（ここでは amonhen.refresh）で読み直す
+ * false にすると記録のままに戻る。`mailmap.file` も、その中身を書き換えたときも同じ。どれも開いたまま、知らせ
+ * （ここでは amonhen.refresh）で読み直す
  */
 async function mailmapFlow(): Promise<void> {
   const panel = await showView('amonhen.showHistory');
   const mailmap = join(root, '.mailmap');
+  const shared = join(dirname(root), 'shared-mailmap');
   const show = async (author: string) => {
     const mark = posted.length;
     await vscode.commands.executeCommand('amonhen.refresh');
@@ -216,9 +218,25 @@ async function mailmapFlow(): Promise<void> {
     const recorded = await show('a');
     assert.deepEqual([recorded.author.name, recorded.author.email], ['a', 'a@example.com']);
     assert.equal(recorded.recordedAuthor, undefined);
-  } finally {
     git('config', '--unset', 'log.mailmap');
+    rmSync(mailmap);
+    writeFileSync(shared, 'Carol Example <a@example.com>\n');
+    git('config', 'mailmap.file', shared);
+    assert.equal((await show('Carol Example')).author.name, 'Carol Example');
+    // 設定はそのままで、ファイルの中身だけを変える
+    writeFileSync(shared, 'Dave Example <a@example.com>\n');
+    assert.equal((await show('Dave Example')).author.name, 'Dave Example');
+  } finally {
+    // 途中で消したものもあるので、あれば消す（ない設定を消すと git は失敗する）
+    for (const key of ['log.mailmap', 'mailmap.file']) {
+      try {
+        git('config', '--unset', key);
+      } catch {
+        // なかった
+      }
+    }
     rmSync(mailmap, { force: true });
+    rmSync(shared, { force: true });
     await vscode.commands.executeCommand('amonhen.refresh');
   }
 }

@@ -655,7 +655,8 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
   Squash・Fixup・Reword・Stage・Unstage・Discard・Clone・Undo・Continue・Skip・Abort・Force Push・Fast-Forward・HEAD。
   そういう語だけのボタンやメニューの項目（「New Branch…」「Stage Lines」）は訳さない。
 - それ以外は訳す: macOS の標準のメニューと項目（Apple の訳語）、説明・確認・プレースホルダ・ツールチップ。日本語の文では
-  ブランチ・タグ・リモート・上流・コミット・作業ツリー・コンフリクトを名詞として使う。
+  ブランチ・タグ・リモート・上流・コミット・作業ツリー・コンフリクトを名詞として使い、コミットの author と committer は
+  作者・コミッター（Pro Git の日本語版と同じ）。
 - コア（Rust）も同じやり方で訳す（`amonhen_model::i18n` の `tr!`、日本語は `crates/model/src/i18n/ja.strings`）。
   言語は文を見せる側が決める: アプリは画面の言語を FFI で渡し、CLI は `LC_ALL`・`LC_MESSAGES`・`LANG` を見て、
   共有の daemon と SSH 先は、接続ごとに挨拶で伝えられた言語で答える（daemon が自分で行うことには、起動した側が

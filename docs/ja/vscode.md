@@ -60,8 +60,9 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   rebase の組み立て・行単位の stage の節は、この経路の話。エンジンは同じことを Rust で行う。
 - 人はどちらの経路でも mailmap の名前で出す。エンジンはコアで置き換える（詳細には記録された名前とメールも付き、違えば
   名前の下に出す）。git 実行層は `log.mailmap` を読み、History の行は `%aN`・`%aE` を使い（`%aN` は `log.mailmap` が
-  false でも置き換える）、詳細は `git check-mailmap` で置き換える。`.mailmap` か設定ファイルが変わったら（読み直す
-  たびに更新時刻を見る）、History と覚えている詳細を読み直す。
+  false でも置き換える）、詳細は `git check-mailmap` で置き換える。`.mailmap`・設定ファイル・`mailmap.file` の指す
+  ファイルが変わったら（読み直すたびに更新時刻を見る。`mailmap.file` の場所は設定ファイルが変わったときだけ git に聞く）、
+  History と覚えている詳細を読み直す。
 
 ## 必須要素の実装方針
 

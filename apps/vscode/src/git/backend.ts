@@ -151,6 +151,8 @@ export interface RepositoryBackend {
   log(revs: readonly string[], skip: number, max: number): Promise<Commit[]>;
   /** コミットで変わったファイル。parent が無ければ root コミットとして扱う */
   commitFiles(oid: string, parent: string | undefined): Promise<FileChange[]>;
+  /** git の `mailmap.file`（絶対パス。なければ undefined） */
+  mailmapFile(): Promise<string | undefined>;
   /** 名前とメールを mailmap で置き換えたもの（log.mailmap が false なら記録のまま）。同じ順 */
   mapPeople(people: readonly { name: string; email: string }[]): Promise<{ name: string; email: string }[]>;
   dispose(): void;
@@ -569,6 +571,12 @@ export class CliBackend implements RepositoryBackend {
   async log(revs: readonly string[], skip: number, max: number): Promise<Commit[]> {
     const [out, mailmap] = await Promise.all([this.read(logArgs(revs, skip, max)), this.usesMailmap()]);
     return parseLog(out, mailmap);
+  }
+
+  async mailmapFile(): Promise<string | undefined> {
+    // `--path` で `~` を展開してもらう。相対パスは git と同じく作業ツリーから
+    const path = (await this.read(['config', '--path', '--get', 'mailmap.file'], [0, 1])).trim();
+    return path ? resolve(this.root, path) : undefined;
   }
 
   /** 作者とコミッターを mailmap で置き換えるか（git の log.mailmap。既定は true） */
