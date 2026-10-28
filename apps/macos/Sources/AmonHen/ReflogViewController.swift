@@ -14,6 +14,8 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
     }
     /// 辿れるコミットを History で選ぶ。
     var onShowInHistory: ((Data) -> Void)?
+    /// Range Diff で比べる（git range-diff と同じ形の範囲）。
+    var onRangeDiff: (([String]) -> Void)?
 
     let detail: CommitDetailViewController
     private let table = NSTableView()
@@ -170,6 +172,11 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
         add("New Tag at \(short)…") { actions.newTag(at: hex) }
         add("Checkout \(short) (Detached)") { actions.perform(["op": "detach", "oid": hex]) }
         menu.addItem(actions.resetMenuItem(to: hex))
+        // この時点の HEAD と今の HEAD を、同じ一連のコミットの 2 つの版として比べる。
+        if row > 0 {
+            menu.addItem(.separator())
+            add(L("Compare with Current HEAD (Range Diff)")) { [weak self] in self?.onRangeDiff?(["\(hex)...HEAD"]) }
+        }
         if entry.reachable, let id = Data(hex: hex) {
             menu.addItem(.separator())
             add(L("Show in History")) { [weak self] in self?.onShowInHistory?(id) }

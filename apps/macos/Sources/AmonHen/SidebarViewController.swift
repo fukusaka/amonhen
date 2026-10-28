@@ -28,8 +28,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     var onClickPullRequestCI: ((PullRequest, NSView) -> Void)?
 
     enum Page {
-        case workingCopy, history, stashes, reflog, settings
+        case workingCopy, history, stashes, rangeDiff, reflog, settings
     }
+
+    /// ローカルブランチの右クリックの「Compare with Previous Version」（最後に書き換える前の版と比べる）。
+    var onCompareWithPrevious: ((String) -> Void)?
 
     private final class Node {
         var title: String
@@ -69,6 +72,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private let conflictsNode = Node(title: L("Conflicts"), page: .workingCopy)
     /// stash があるときだけ、数を添えて出す。選ぶと Stashes の画面を開く。
     private let stashesNode = Node(title: "Stashes", page: .stashes)
+    /// Range Diff を開いている間だけ出す。
+    private let rangeDiffNode = Node(title: "Range Diff", page: .rangeDiff)
+    /// Range Diff を開いている（Workspace に行を出す）。
+    private var showsRangeDiff = false
     /// いつも Workspace の最後に出す。選ぶと Reflog の画面を開く。
     private let reflogNode = Node(title: "Reflog", page: .reflog)
     /// いつも Workspace の一番最後に出す。選ぶとリポジトリの設定の画面を開く。
@@ -77,12 +84,25 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     /// Conflicts を選んだ（最初のコンフリクトのファイルを開く）。
     var onSelectConflicts: (() -> Void)?
 
-    /// Workspace の中身: Working Copy・History と、あるときだけ Conflicts・Stashes、最後に Reflog と Settings。
+    /// Workspace の中身: Working Copy・History と、あるときだけ Conflicts・Stashes・Range Diff、最後に Reflog と Settings。
     private func workspaceChildren() -> [Node] {
         [workingCopyNode, historyNode]
             + (conflictsNode.badge != nil ? [conflictsNode] : [])
             + (stashesNode.badge != nil ? [stashesNode] : [])
+            + (showsRangeDiff ? [rangeDiffNode] : [])
             + [reflogNode, settingsNode]
+    }
+
+    /// Range Diff の行を出す・消す。
+    func setRangeDiffShown(_ shown: Bool) {
+        guard shown != showsRangeDiff else { return }
+        showsRangeDiff = shown
+        let workingCopyOpen = isWorkingCopyOpen
+        let cleanOpen = outline.isItemExpanded(cleanWorktreesNode)
+        workspace.children = workspaceChildren()
+        outline.reloadItem(workspace, reloadChildren: true)
+        if workingCopyOpen { outline.expandItem(workingCopyNode) }
+        if cleanOpen { outline.expandItem(cleanWorktreesNode) }
     }
 
     /// コンフリクトのファイルの数（0 なら Conflicts を出さない）。
@@ -844,6 +864,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         case .workingCopy: workingCopyNode
         case .history: historyNode
         case .stashes: stashesNode
+        case .rangeDiff: rangeDiffNode
         case .reflog: reflogNode
         case .settings: settingsNode
         }
@@ -1032,6 +1053,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             case .workingCopy: return "square.and.pencil"
             case .history: return "clock"
             case .stashes: return "tray.2"
+            case .rangeDiff: return "arrow.left.arrow.right"
             case .reflog: return "clock.arrow.circlepath"
             case .settings: return "gearshape"
             }
@@ -1284,6 +1306,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
             add("New Branch from \(name)…") { actions.newBranch(at: name) }
             add("New Tag at \(name)…") { actions.newTag(at: name) }
+            add(L("Compare with Previous Version")) { [weak self] in self?.onCompareWithPrevious?(name) }
             add(L("Rename %@…", name)) {
                 guard let to = actions.ask(L("Rename Branch"), initial: name, ok: L("Change")) else { return }
                 actions.perform(["op": "renameBranch", "from": name, "to": to])

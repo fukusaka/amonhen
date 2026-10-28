@@ -42,6 +42,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private let stashes: StashesViewController
     /// Reflog の画面（書き込む先の worktree の HEAD の reflog と、選んだ行のコミットの中身）。
     private let reflog: ReflogViewController
+    /// Range Diff の画面（同じ一連のコミットの 2 つの版の比べ合わせ）。開いている間だけサイドバーに出す。
+    private let rangeDiff: RangeDiffViewController
     /// リポジトリの設定の画面（サイドバーの Workspace の Settings）。
     private let settings: RepositorySettingsPage
     private var actions: Actions { editing.actions }
@@ -95,6 +97,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail = CommitDetailViewController(repository: repository, renderer: text)
         stashes = StashesViewController(repository: repository, renderer: text)
         reflog = ReflogViewController(repository: repository, renderer: text)
+        rangeDiff = RangeDiffViewController(repository: repository, renderer: text)
         settings = RepositorySettingsPage(repository: repository, location: location)
         let slot = WorktreeSlot(path: repository.workdir ?? RepositoryLocation.path(location), repository: repository, renderer: text)
         opened = slot
@@ -149,7 +152,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let detailItem = NSSplitViewItem(viewController: detail)
         detailItem.minimumThickness = 420
         content.addSplitViewItem(detailItem)
-        let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes, .reflog: reflog, .settings: settings])
+        let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes, .reflog: reflog, .rangeDiff: rangeDiff, .settings: settings])
         self.pages = pages
         split.addSplitViewItem(NSSplitViewItem(viewController: pages))
         window.contentViewController = split
@@ -232,6 +235,18 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             }
         }
         reflog.onShowInHistory = showInHistory
+        reflog.onRangeDiff = { [weak self] ranges in self?.openRangeDiff(ranges: ranges) }
+        rangeDiff.onShowInHistory = showInHistory
+        rangeDiff.detail.onSelectCommit = { hex in Data(hex: hex).map(showInHistory) }
+        rangeDiff.detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
+        rangeDiff.detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
+        rangeDiff.onClose = { [weak self] in
+            guard let self else { return }
+            sidebar.select(page: .history)
+            sidebar.setRangeDiffShown(false)
+        }
+        history.onRangeDiff = { [weak self] ranges in self?.openRangeDiff(ranges: ranges) }
+        sidebar.onCompareWithPrevious = { [weak self] branch in self?.openRangeDiff(previousOf: branch) }
         reflog.detail.onSelectCommit = { hex in Data(hex: hex).map(showInHistory) }
         reflog.detail.onBlame = { [weak self] path, commit in self?.openBlame(path: path, rev: commit) }
         reflog.detail.onFileHistory = { [weak self] path in self?.openFileHistory(path: path) }
@@ -1056,6 +1071,14 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if CommandLine.arguments.contains("--stashes") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .stashes) }
         }
+        // --range-diff で、今のブランチを書き換える前の版と比べる（--range-diff=<ranges> なら、その範囲。空白で区切る）。
+        if let arg = CommandLine.arguments.first(where: { $0 == "--range-diff" || $0.hasPrefix("--range-diff=") }) {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+                let ranges = arg.split(separator: "=", maxSplits: 1).dropFirst().first
+                    .map { $0.split(separator: " ").map(String.init) }
+                if let ranges { openRangeDiff(ranges: ranges) } else { openRangeDiff(previousOf: nil) }
+            }
+        }
         // --reflog で、Reflog の画面を開く。
         if CommandLine.arguments.contains("--reflog") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in sidebar.select(page: .reflog) }
@@ -1102,6 +1125,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if let output = AppDelegate.option("--snapshot") {
             let wait = selectRow != nil || CommandLine.arguments.contains("--working-copy") || CommandLine.arguments.contains("--stashes")
                 || CommandLine.arguments.contains("--reflog") || CommandLine.arguments.contains("--settings")
+                || CommandLine.arguments.contains { $0.hasPrefix("--range-diff") }
             if let query = AppDelegate.option("--find") {
                 // 選んだコミットの差分を検索した状態（検索欄と強調）を確かめる。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [self] in detail.find(query) }
@@ -1123,7 +1147,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 let rep = appSettings ? SettingsWindowController.shared.snapshot()
                     : mergePath != nil
                     ? MergeEditorWindowController.snapshot()
-                    : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays() + stashes.detail.overlays() + reflog.detail.overlays())
+                    : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays() + stashes.detail.overlays() + reflog.detail.overlays() + rangeDiff.overlays())
                 try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
                 // シートが付いていると終われないので、先に閉じる（Settings に付けたパスを選ぶシートなど）。
                 for window in NSApp.windows { if let sheet = window.attachedSheet { window.endSheet(sheet) } }
@@ -1458,6 +1482,23 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func showHistory(_ sender: Any?) { sidebar.select(page: .history) }
     @objc func showStashes(_ sender: Any?) { sidebar.select(page: .stashes) }
     @objc func showReflog(_ sender: Any?) { sidebar.select(page: .reflog) }
+
+    /// Repository > Compare with Previous Version: 今のブランチを、最後に書き換える前の版と比べる。
+    @objc func compareWithPreviousVersion(_ sender: Any?) { openRangeDiff(previousOf: latestRefs?.headBranch) }
+
+    /// Range Diff を開き、`branch`（nil なら今のブランチ）を最後に書き換える前の版と比べる。
+    func openRangeDiff(previousOf branch: String?) {
+        sidebar.setRangeDiffShown(true)
+        sidebar.select(page: .rangeDiff)
+        rangeDiff.open(previousOf: branch)
+    }
+
+    /// Range Diff を開き、`ranges`（git range-diff と同じ形）で比べる。
+    func openRangeDiff(ranges: [String]) {
+        sidebar.setRangeDiffShown(true)
+        sidebar.select(page: .rangeDiff)
+        rangeDiff.open(ranges: ranges)
+    }
 
     /// Navigate > Filter Branches…: サイドバーの絞り込みの欄にカーソルを移す（サイドバーが畳んであれば開く）。
     @objc func filterBranches(_ sender: Any?) {
@@ -1924,7 +1965,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(undoOperation(_:)): return undoLabel != nil
         case #selector(goToHead(_:)): return latestRefs?.head != nil
         case #selector(switchBranch(_:)): return latestRefs != nil
-        case #selector(renameBranch(_:)), #selector(setUpstream(_:)): return latestRefs?.headBranch != nil
+        case #selector(renameBranch(_:)), #selector(setUpstream(_:)), #selector(compareWithPreviousVersion(_:)):
+            return latestRefs?.headBranch != nil
         case #selector(commitChanges(_:)), #selector(commitAndPush(_:)): return showsWorkingCopy && workingCopy.canCommit
         case #selector(stageAllChanges(_:)): return showsWorkingCopy && workingCopy.canStageAll
         case #selector(openInTerminal(_:)), #selector(revealInFinder(_:)): return isLocal

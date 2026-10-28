@@ -645,6 +645,94 @@ impl StackedDiff {
     }
 }
 
+/// `git range-diff` の差分の差分（`RangePair::diff` の行）を、ほかの差分と同じ形にする。外側の記号で行の種類を
+/// 決め、残り（それぞれの版のパッチの行。内側の記号を含む）を文字列にする。行番号はそれぞれの版のパッチの中の
+/// 番号。変わった単語の強調も、ふつうの差分と同じにかかる。
+pub fn range_diff_file<S: AsRef<str>>(lines: &[S]) -> FileDiff {
+    let (mut old, mut new, mut headers) = (Vec::new(), Vec::new(), String::new());
+    let (mut old_no, mut new_no) = (0, 0);
+    let mut out = Vec::with_capacity(lines.len());
+    let (mut added, mut removed) = (0, 0);
+    let push = |buf: &mut Vec<u8>, text: &str| {
+        let start = buf.len() as u32;
+        buf.extend_from_slice(text.as_bytes());
+        let range = start..buf.len() as u32;
+        buf.push(b'\n');
+        range
+    };
+    for line in lines {
+        let line = line.as_ref();
+        let (kind, text) = match line.as_bytes().first() {
+            Some(b'@') => (DiffRow::HUNK, line),
+            Some(b'-') => (DiffRow::REMOVED, &line[1..]),
+            Some(b'+') => (DiffRow::ADDED, &line[1..]),
+            Some(_) => (DiffRow::CONTEXT, &line[1..]),
+            None => (DiffRow::CONTEXT, ""),
+        };
+        let l = match kind {
+            DiffRow::HUNK => {
+                let start = headers.len() as u32;
+                headers.push_str(text);
+                let range = start..headers.len() as u32;
+                headers.push('\n');
+                Line {
+                    kind,
+                    old_no: 0,
+                    new_no: 0,
+                    source: Source::Header,
+                    range,
+                }
+            }
+            DiffRow::REMOVED => {
+                old_no += 1;
+                removed += 1;
+                let range = push(&mut old, text);
+                Line {
+                    kind,
+                    old_no,
+                    new_no: 0,
+                    source: Source::Old,
+                    range,
+                }
+            }
+            DiffRow::ADDED => {
+                new_no += 1;
+                added += 1;
+                let range = push(&mut new, text);
+                Line {
+                    kind,
+                    old_no: 0,
+                    new_no,
+                    source: Source::New,
+                    range,
+                }
+            }
+            _ => {
+                old_no += 1;
+                new_no += 1;
+                let range = push(&mut old, text);
+                Line {
+                    kind,
+                    old_no,
+                    new_no,
+                    source: Source::Old,
+                    range,
+                }
+            }
+        };
+        out.push(l);
+    }
+    FileDiff {
+        old: Arc::new(old).into(),
+        new: Arc::new(new).into(),
+        headers,
+        lines: out,
+        binary: false,
+        added,
+        removed,
+    }
+}
+
 /// テキスト全体の構文の色付け（マージエディタなど、行に分けずに表示するもの）。`start..end` はテキストの
 /// 先頭からの UTF-16 の位置で、`row` は 0。言語がわからなければ空。
 #[cfg(feature = "syntax")]
@@ -685,6 +773,47 @@ pub fn text_syntax(_path: &str, _text: &[u8]) -> Vec<SyntaxSpan> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shows_a_range_diff_like_a_diff() {
+        let diff = range_diff_file(&[
+            "@@ f: one",
+            "  2",
+            "-+let x = 1;",
+            "++let x = 2;",
+            "     msg",
+            "",
+        ]);
+        let kinds: Vec<u8> = diff.lines.iter().map(|l| l.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                DiffRow::HUNK,
+                DiffRow::CONTEXT,
+                DiffRow::REMOVED,
+                DiffRow::ADDED,
+                DiffRow::CONTEXT,
+                DiffRow::CONTEXT
+            ]
+        );
+        let texts: Vec<&[u8]> = diff.lines.iter().map(|l| diff.text(l)).collect();
+        assert_eq!(
+            texts,
+            [
+                &b"@@ f: one"[..],
+                b" 2",
+                b"+let x = 1;",
+                b"+let x = 2;",
+                b"    msg",
+                b""
+            ]
+        );
+        assert_eq!((diff.lines[2].old_no, diff.lines[3].new_no), (2, 2));
+        assert_eq!((diff.added, diff.removed), (1, 1));
+        let view = DiffView::new(&diff, &FrontendProfile::MACOS);
+        assert_eq!(view.rows.len(), 6);
+        assert!(!view.highlights.is_empty(), "変わった単語を強調する");
+    }
 
     #[test]
     fn stacks_files_under_headers_and_collapses_them() {
