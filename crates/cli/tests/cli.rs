@@ -617,3 +617,36 @@ fn works_through_the_shared_daemon_on_every_platform() {
     assert!(status.contains("\"repos\""), "{status}");
     run(&["daemon", "stop"]);
 }
+
+/// 選んだ git がなくても、リポジトリは見つかり、git を選び直せる（git を動かす命令だけが、理由つきで止まる）。
+#[test]
+fn chooses_the_git_again_when_the_chosen_one_is_missing() {
+    let repo = repository();
+    let home = tempfile::tempdir().unwrap();
+    let path = repo.path().to_str().unwrap();
+    let missing = home.path().join("no-such-git").display().to_string();
+    // 設定のファイルは、このテストのフォルダに置く（ほかのテストと分ける）。
+    let run = |json: &str| {
+        let out = Command::new(env!("CARGO_BIN_EXE_amonhen"))
+            .env("AMONHEN_LANG", "en")
+            .env("HOME", home.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .env("APPDATA", home.path())
+            .args(["run", "-C", path, json])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr)
+    };
+    let choose = serde_json::json!({ "op": "setMachineGit", "git": missing }).to_string();
+    assert!(run(&choose).contains(r#""ok":true"#));
+    let info = run(r#"{"op":"machineGit"}"#);
+    assert!(info.contains("isn’t there"), "{info}");
+    let set = run(r#"{"op":"configSet","key":"amonhen.check","value":"1"}"#);
+    assert!(
+        set.contains("isn’t there") && set.contains(r#""ok":false"#),
+        "{set}"
+    );
+    assert!(run(r#"{"op":"setMachineGit"}"#).contains(r#""ok":true"#));
+    let set = run(r#"{"op":"configSet","key":"amonhen.check","value":"1"}"#);
+    assert!(set.contains(r#""ok":true"#), "{set}");
+}

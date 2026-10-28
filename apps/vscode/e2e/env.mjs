@@ -18,8 +18,8 @@ export function layout(dir) {
 }
 
 /**
- * VSCode（とそこから起動する daemon・git）の環境変数。エンジンの置き場所・daemon のソケットとキャッシュを一時
- * ディレクトリに置き、手元の daemon・アプリ・`~/.local/bin/amonhen` に触らない
+ * VSCode（とそこから起動する daemon・git）の環境変数。エンジンの置き場所・daemon のソケットとキャッシュ・Amon Hen の
+ * 設定（`settings.json`）を一時ディレクトリに置き、手元の daemon・アプリ・`~/.local/bin/amonhen`・設定に触らない
  */
 export function testEnv(dir, engine) {
   const { home } = layout(dir);
@@ -31,8 +31,10 @@ export function testEnv(dir, engine) {
   };
   if (process.platform === 'win32') {
     env.LOCALAPPDATA = join(dir, 'local');
+    env.APPDATA = join(dir, 'roaming');
   } else {
     env.XDG_DATA_HOME = join(home, '.local', 'share');
+    env.XDG_CONFIG_HOME = join(home, '.config');
   }
   return env;
 }

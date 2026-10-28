@@ -52,6 +52,7 @@ name = "amonhen-cli"
 version = "0.2.7"
 dependencies = [
  "amonhen-backend-cli",
+ "amonhen-backend-gix",
  "amonhen-core",
  "amonhen-daemon",
  "amonhen-front",
