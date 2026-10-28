@@ -352,6 +352,8 @@ private struct ConnectionPage: View {
         }
         .formStyle(.grouped)
         .onAppear(perform: refresh)
+        // ほかの SSH 先を選んでも、このページは作り直されない。
+        .onChange(of: session.host) { refresh() }
     }
 
     @ViewBuilder private var stateText: some View {
@@ -380,10 +382,9 @@ private struct ConnectionPage: View {
         roots = Bookmarks.shared.data.scanRoots.filter { Settings.sshHost(of: $0.path) == session.host }
     }
 
-    /// `/~/x` は `~/x`（Places と同じ見せ方）。
+    /// `/~/x` は `~/x`、`/C:/x` は `C:/x`（Places と同じ見せ方）。
     private func title(_ location: String) -> String {
-        let path = RepositoryBrowser.pathPart(location)
-        return path.hasPrefix("/~") ? String(path.dropFirst()) : path
+        RepositoryBrowser.remoteTitle(RepositoryBrowser.pathPart(location))
     }
 
     private func add() {
