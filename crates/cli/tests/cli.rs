@@ -352,6 +352,27 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
         assert_eq!(log[0]["subject"], message.as_str(), "{at}: {log}");
         assert_eq!(log[0]["refs"][0], "main", "{at}: {log}");
         shown.push(env.json(&["show", "-C", at, "--json", "HEAD~1"]));
+        // range-diff: amend で書き換えると、前の版（reflog）と比べられる（SSH 越しでは SSH 先の git が比べる）。
+        let amended = Command::new("git")
+            .current_dir(&repo)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let amended = String::from_utf8_lossy(&amended.stdout).trim().to_owned();
+        git(
+            &repo,
+            &["commit", "-q", "--amend", "-m", &format!("{message}!")],
+        );
+        let range = env.json(&["range-diff", "-C", at, "--previous", "--json"]);
+        assert_eq!(range["previous"]["old"], amended.as_str(), "{at}: {range}");
+        assert!(
+            range["pairs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["old"]["oid"] == amended.as_str()),
+            "{at}: {range}"
+        );
         let refs = env.json(&["refs", "-C", at, "--json"]);
         assert_eq!(refs["headBranch"], "main", "{at}: {refs}");
         // タグの署名（daemon・SSH 越しでは、タグのオブジェクトを受け取って確かめる）。
