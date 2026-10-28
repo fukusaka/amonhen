@@ -419,13 +419,13 @@ private struct EngineChoice: View {
                 Divider()
                 Text(L("The amonhen on the host’s PATH")).tag("installed")
                 Text(L("The one Amon Hen sends")).tag("sent")
-                if let path = options.engine, path.hasPrefix("/") { Text(path).tag(path) }
+                if let path = options.engine, HostPath.isAbsolute(path) { Text(path).tag(path) }
                 Divider()
                 Text(L("Other…")).tag(Self.other)
             }
             Note(help)
             Toggle(L("Send one when none fits"), isOn: Binding(get: { options.push ?? true }, set: { setPush($0) }))
-                .disabled(options.engine == "installed" || options.engine?.hasPrefix("/") == true)
+                .disabled(options.engine == "installed" || options.engine.map(HostPath.isAbsolute) == true)
         }
         .onAppear { options = Settings.hostOptions(for: host) }
         .onChange(of: host) { _, now in options = Settings.hostOptions(for: now) }
@@ -435,7 +435,7 @@ private struct EngineChoice: View {
         switch options.engine {
         case "installed": L("Uses the amonhen installed on the host. It must be this build.")
         case "sent": L("Uses the one Amon Hen sent to the host, sending it first when there is none.")
-        case let path? where path.hasPrefix("/"): L("Uses this path on the host.")
+        case let path? where HostPath.isAbsolute(path): L("Uses this path on the host.")
         default: L("The amonhen on the host’s PATH if it is this build, else one sent earlier, else Amon Hen sends one.")
         }
     }
@@ -447,10 +447,10 @@ private struct EngineChoice: View {
             save(new)
             return
         }
-        let current = options.engine?.hasPrefix("/") == true ? options.engine! : "~/.local/share/amonhen"
+        let current = options.engine.map(HostPath.isAbsolute) == true ? options.engine! : "~/.local/share/amonhen"
         FilePicker.present(title: L("Engine on %@", host), message: L("Choose amonhen on the host. It must be this build."),
                                  kind: .executable, host: host, repository: repository, initial: current) { chosen in
-            guard let path = chosen?.path, path.hasPrefix("/") else { return }
+            guard let path = chosen?.path, HostPath.isAbsolute(path) else { return }
             var new = options
             new.engine = path
             save(new)
@@ -521,6 +521,11 @@ private struct HostEnvironmentPage: View {
     /// SSH 先の設定で選んだ git（PATH のものなら nil）。
     @State private var chosenGit: String?
 
+    /// Windows の SSH 先か（エンジンの環境変数の `OS` で見る）。
+    private var onWindows: Bool {
+        vars.contains { $0.name == "OS" && $0.value == "Windows_NT" }
+    }
+
     nonisolated struct Variable: Decodable, Identifiable, Sendable {
         let name: String
         let value: String
@@ -530,15 +535,18 @@ private struct HostEnvironmentPage: View {
     var body: some View {
         GroupedPage {
             VStack(alignment: .leading, spacing: 10) {
-                Toggle(L("Use the login shell’s environment variables"), isOn: Binding(
-                    get: { Settings.hostOptions(for: host).loginShell == true },
-                    set: { on in
-                        var options = Settings.hostOptions(for: host)
-                        options.loginShell = on ? true : nil
-                        Settings.setHostOptions(options, for: host)
-                    }))
-                Note(L("Starts the engine on %@ through its login shell, so it and git get the PATH and GIT_* set in ~/.profile and the like, which a command run over ssh lacks. Changing it reconnects.", host))
-                Divider()
+                // Windows の SSH 先には、ログインシェルがない（エンジンは既定のシェルが起動する）。
+                if !onWindows {
+                    Toggle(L("Use the login shell’s environment variables"), isOn: Binding(
+                        get: { Settings.hostOptions(for: host).loginShell == true },
+                        set: { on in
+                            var options = Settings.hostOptions(for: host)
+                            options.loginShell = on ? true : nil
+                            Settings.setHostOptions(options, for: host)
+                        }))
+                    Note(L("Starts the engine on %@ through its login shell, so it and git get the PATH and GIT_* set in ~/.profile and the like, which a command run over ssh lacks. Changing it reconnects.", host))
+                    Divider()
+                }
                 HStack {
                     Text(L("The engine’s environment, which git on %@ gets", host)).font(.caption).foregroundStyle(.secondary)
                     Spacer()
