@@ -990,7 +990,6 @@
 "Host" = "ホスト";
 "Worktrees with no changes (click to show)" = "変更のない worktree（クリックで表示）";
 "Git repository" = "git のリポジトリ";
-"Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent). Double-click a folder to go into it, and choose a repository (green)." = "SSH でつなぎます。パスワードなしでログインできる（鍵か ssh-agent の）ホストを使ってください。フォルダはダブルクリックで中に入れます。リポジトリ（緑）を選んでください。";
 "Archive" = "アーカイブ";
 "Unarchive" = "アーカイブから戻す";
 "Branches with no new commit for 90 days. Folded." = "90 日以上新しいコミットがないブランチ。畳んでおきます。";
