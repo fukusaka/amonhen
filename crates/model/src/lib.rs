@@ -16,6 +16,7 @@ pub mod scan;
 pub mod search;
 pub mod settings;
 mod status;
+pub mod testing;
 mod text;
 pub mod topo;
 

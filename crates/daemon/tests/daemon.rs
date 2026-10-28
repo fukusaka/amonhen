@@ -12,6 +12,7 @@ use amonhen_core::Repository;
 use amonhen_remote::{Connection, Notification, RemoteBackend};
 
 fn git(dir: &Path, args: &[&str]) {
+    amonhen_model::testing::isolate_from_user_settings();
     let ok = Command::new("git")
         .args(args)
         .current_dir(dir)
@@ -68,6 +69,7 @@ fn talks_to_the_daemon_process_and_hears_about_changes() {
 fn serves_the_machine_settings_without_a_repository() {
     use amonhen_core::command::Command;
 
+    amonhen_model::testing::isolate_from_user_settings();
     let tmp = tempfile::tempdir().unwrap();
     let data = tmp.path().join("data");
     let home = tmp.path().join("home");
@@ -177,6 +179,7 @@ fn refuses_a_missing_repository() {
 
 /// SSH の代わりに、送られたコマンドを手元で（偽の HOME で）実行するスクリプト。
 fn fake_ssh(dir: &Path, home: &Path) -> std::path::PathBuf {
+    amonhen_model::testing::isolate_from_user_settings();
     let script = dir.join("fake-ssh");
     std::fs::write(
         &script,

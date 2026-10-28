@@ -715,6 +715,7 @@ mod tests {
     /// 選んだ git がなくても、設定のための空のリポジトリはでき、git が読める形になっている。
     #[test]
     fn prepares_the_settings_repository_without_the_chosen_git() {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("settings-repo");
         let env = amonhen_model::process::ClientEnv::from_vars([(
@@ -733,6 +734,7 @@ mod tests {
     }
 
     fn repo() -> (tempfile::TempDir, Git) {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         let git = Git::new(tmp.path());
         for args in [
@@ -833,6 +835,7 @@ mod ops_tests {
     use amonhen_model::{HeadState, Oid, Operations, Outcome, ResetMode, Sequence};
 
     fn repo() -> (tempfile::TempDir, Git) {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         let git = Git::new(tmp.path());
         for args in [
@@ -985,6 +988,7 @@ mod streaming_tests {
 
     #[test]
     fn cancels_a_running_fetch() {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         assert!(

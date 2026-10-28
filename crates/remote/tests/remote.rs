@@ -13,6 +13,7 @@ use amonhen_projection::FrontendProfile;
 use amonhen_remote::{Connection, RemoteBackend, Server};
 
 fn git(dir: &Path, args: &[&str]) {
+    amonhen_model::testing::isolate_from_user_settings();
     let ok = Command::new("git")
         .args(args)
         .current_dir(dir)

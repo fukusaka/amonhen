@@ -7,6 +7,7 @@ use std::process::Command;
 use std::process::Stdio;
 
 fn git(dir: &Path, args: &[&str]) {
+    amonhen_model::testing::isolate_from_user_settings();
     let ok = Command::new("git")
         .current_dir(dir)
         .args(args)
