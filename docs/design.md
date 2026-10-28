@@ -396,6 +396,27 @@ or split history in ways that are hard to see afterwards.
   does with the same setting, and a History edit keeps the `update-ref` lines in its todo only when the setting is on
   and git is 2.38 or later.
 
+## Patches
+
+- Saving commits as patches is `git format-patch`; applying them is `git am` for mail (format-patch's files, an mbox,
+  an .eml) and `git apply` for a plain diff. The core reads a patch only to show what it changes and which files it
+  touches (`crates/core/src/patch.rs`); git applies it.
+- The patch files stay on the machine that runs the core (the Mac for the app, the extension host for VSCode). The
+  backend gets their contents on stdin, and for format-patch writes into a temporary folder in the git dir and hands
+  back the files, so git still names them (`format.filenameMaxLength` and the like). The same works through the
+  daemon and over SSH.
+- Defaults follow git: one file per commit (one mbox is a choice), `am.threeWay` for am, the working tree only for
+  apply. The rest of format-patch (numbering, recipients, sign-offs) is left to `format.*`.
+- A `git am` in progress is its own sequence (`rebase-apply/applying`; it used to be taken for a rebase). When a patch
+  doesn't apply without 3-way, Retry with 3-Way Merge applies `rebase-apply/patch` with `git apply --3way`, as
+  `git am -3` does, and continues if it is clean. The core notes the retried patch in `rebase-apply/amonhen-retried`
+  (git removes it with the folder when am ends) rather than in git's `rebase-apply/threeway`, which would switch the
+  later patches to 3-way too.
+- Undo: am is one entry, held while it is stopped and recorded when it finishes (Abort leaves none). An applied diff
+  is recorded by the files it touches; the index is not put back.
+- format-patch is given the commits with `--no-walk=unsorted` and `--max-count` (in reverse, since it writes them in
+  reverse; without a count, one commit would mean `<rev>..HEAD`), all in git 2.23.
+
 ## Speed targets and measurement
 
 | Item | Target |

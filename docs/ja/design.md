@@ -380,6 +380,25 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 - **リポジトリの設定。** シート（⌘;）をやめ、サイドバーの Workspace に、Working Copy・History・Stashes・Reflog と並ぶ Settings の画面として置く。⌘; はその画面を開く。
 - **独自の既定を持たない。** Amon Hen は自分で `rebase.updateRefs` を有効にしない。rebase は、同じ設定の `git rebase` と同じにふるまう。History の編集は、設定がオンで git が 2.38 以降のときだけ、todo の `update-ref` の行を残す。
 
+## パッチ
+
+- コミットをパッチにするのは `git format-patch`、当てるのはメールの形（format-patch のファイル・mbox・.eml）なら
+  `git am`、ただの diff なら `git apply`。コアがパッチを読むのは、何を変えるかと触るファイルを見せるためだけ
+  （`crates/core/src/patch.rs`）で、当てるのは git。
+- パッチのファイルは、コアが動く機械に置いたまま（アプリなら Mac、VSCode なら拡張ホスト）。バックエンドには中身を
+  標準入力で渡し、format-patch は git dir の中の一時フォルダに書かせてファイルを返す（名前は git が付ける。
+  `format.filenameMaxLength` なども効く）。daemon 越しでも SSH 先でも同じに動く。
+- 既定は git に合わせる: 1 コミット 1 ファイル（1 つの mbox は選べる）、am は `am.threeWay`、apply は作業ツリーだけ。
+  format-patch のほかのこと（番号の付け方・宛先・Signed-off-by）は `format.*` に任せる。
+- `git am` の途中は、それだけの種類にする（`rebase-apply/applying`。前は rebase と見なしていた）。3-way なしで
+  当たらなかったパッチは、Retry with 3-Way Merge で `rebase-apply/patch` を `git apply --3way` で当て直し
+  （`git am -3` と同じ）、きれいに当たれば続ける。当て直したパッチはコアが `rebase-apply/amonhen-retried` に書く
+  （am が終わると git がフォルダごと消す）。git の `rebase-apply/threeway` を書き換えると、後のパッチまで 3-way になるので使わない。
+- Undo: am は全体で 1 つ。止まっている間は保留し、終わったときに記録する（Abort なら残らない）。当てた diff は
+  触ったファイルで記録する。index は戻らない。
+- format-patch にはコミットを `--no-walk=unsorted` と `--max-count` で渡す（format-patch は逆の順に書き出すので逆に
+  して渡す。数を渡さないと、コミットが 1 つのときに `<rev>..HEAD` の意味になる）。どれも git 2.23 にある。
+
 ## 速度目標と計測
 
 | 項目 | 目標 |

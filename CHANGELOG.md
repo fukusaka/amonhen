@@ -49,6 +49,10 @@ becomes the GitHub Release notes.
   machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
   the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /
   `saveExcludesFile` for the user's global excludes file.
+- Commits can be saved as patches (one file per commit as `git format-patch` does, or one mbox) from History's
+  context menu and Commit > Save as Patch…, and patches applied with Repository > Apply Patch… or by dropping them on
+  the window, after showing what they change: mail with `git am`, plain diffs with `git apply`. A stopped am says why
+  in the banner, with Retry with 3-Way Merge. Both can be undone; the CLI gets `format-patch`, `am` and `apply`.
 
 #### Changed
 
@@ -72,6 +76,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- A `git am` in progress was shown as a rebase.
+- Undo of a branch-moving operation no longer fails with "not uptodate" right after undoing an applied patch.
 - In Japanese, "author" is 作者 everywhere, as in the docs: the Author and Signing page and its Author section, and
   the author in the commit details, showed 作成者.
 - The CLI finds the repository without running git, so when the chosen git isn't there it can still read and
@@ -597,6 +603,10 @@ First release.
   (Push to Upstream) from its menu in the nav.
 - History and the commit details show people by their mailmap names (following `log.mailmap`), with the recorded
   name and email under them in the details when they differ, with or without the engine.
+- A commit's menu in History saves it, or the commits from it up to HEAD, as patches (one file per commit or one
+  mbox), and Apply Patch… (Command Palette, or a patch file's menu in the Explorer) shows what patches change and
+  applies mail with `git am` or a diff with `git apply`. A stopped am says why in the nav, with Retry with 3-Way
+  Merge. Both can be undone.
 
 #### Changed
 
@@ -614,6 +624,9 @@ First release.
 - Merge (and Rebase that amounts to a fast-forward) no longer moves a branch checked out in another worktree.
 - Without the engine, the extension works with git 2.23, the supported minimum: it no longer opens repositories with
   `rev-parse --path-format` (git 2.31) or reads objects with `cat-file --batch-command` (git 2.36).
+- A `git am` in progress was shown as a rebase.
+- Undo of a branch-moving operation no longer fails with "not uptodate" right after undoing another one that put
+  files back.
 
 ### [0.2.3] - 2026-10-21
 
