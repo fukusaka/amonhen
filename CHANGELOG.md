@@ -11,6 +11,8 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Repositories on an SSH host running Windows open in the app and the CLI (`ssh://host/C:/src/repo`), whichever
+  default shell its OpenSSH server uses; the app bundles the Windows engines and sends them by scp.
 - Tag signatures are verified and shown like commit signatures: a Tag line per tag in the commit details, the
   signature on each Merged Tag line, and a mark on signed tags in the sidebar. `amonhen refs --verify` adds them too,
   and `amonhen show` prints the commit's signature and its tags' and merged tags'.
@@ -60,6 +62,8 @@ becomes the GitHub Release notes.
 
 - The CLI finds the repository without running git, so when the chosen git isn't there it can still read and
   choose another (`setMachineGit`); only what runs git stops.
+- Check Connection when adding an SSH connection no longer reports a failure when the host has no `amonhen` on its
+  PATH.
 - On a Mac without the Command Line Tools, Amon Hen no longer runs `/usr/bin/git`, which only brings up the install
   dialog; it says git isn't installed instead.
 - SSH hosts whose login shell is tcsh, csh or fish connect: the commands sent there now run in sh.

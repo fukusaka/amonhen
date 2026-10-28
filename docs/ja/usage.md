@@ -19,7 +19,9 @@
 
 ## SSH 先のリポジトリ
 
-リポジトリの一覧の Add Remote Repository… で接続先とパスを入れるか、`AmonHen ssh://[user@]host[:port]/path/to/repo`（ホームからなら `/~/src/repo`）。鍵か ssh-agent でパスワードなしにつながること。SSH 先では git の処理だけを `amonhen --stdio` が行う。SSH 先の `PATH` に同じビルドの `amonhen` があるか、同じビルドのものが前に置かれていればそれを使い、なければ同梱のエンジン（Linux x86_64・aarch64、macOS arm64）を `~/.local/share/amonhen/engine/<中身のハッシュ>/` に送り込む（送ったら中身を確かめる。`AMONHEN_PUSH=0` で送らない、`AMONHEN_REMOTE_ENGINE` で場所を指定）。
+リポジトリの一覧の Add Remote Repository… で接続先とパスを入れるか、`AmonHen ssh://[user@]host[:port]/path/to/repo`（ホームからなら `/~/src/repo`）。鍵か ssh-agent でパスワードなしにつながること。SSH 先では git の処理だけを `amonhen --stdio` が行う。SSH 先の `PATH` に同じビルドの `amonhen` があるか、同じビルドのものが前に置かれていればそれを使い、なければ同梱のエンジン（Linux x86_64・aarch64、macOS arm64、Windows x86_64・arm64）を `~/.local/share/amonhen/engine/<中身のハッシュ>/` に送り込む（送ったら中身を確かめる。`AMONHEN_PUSH=0` で送らない、`AMONHEN_REMOTE_ENGINE` で場所を指定）。
+
+Windows の SSH 先（その OpenSSH サーバ）にもつながり、既定のシェルは cmd.exe・PowerShell・pwsh のどれでもよい。ドライブの上のパスは `ssh://host/C:/src/repo`、ホームからなら `/~/src/repo`。エンジンは scp で `%LOCALAPPDATA%\amonhen\engine\<中身のハッシュ>\` に送り、既定のシェルが起動する。SSH 先のことは Windows PowerShell（Windows 10・11 にはいつもある）で読む。SSH 先の環境変数のページのログインシェルのスイッチは、Windows の SSH 先には当てはまらない。
 
 Settings > SSH ホストに、SSH 先についてのすべてをまとめている。Amon Hen が知っている SSH 先（Places にあるものと、＋ で加えたもの）と、選んだ SSH 先の接続（状態、接続を確認、そこで動かすエンジンと合うものがなければ送り込むか、使っているエンジン、コミットの署名をこの Mac の鍵で検証するか SSH 先の鍵でか、探すフォルダ。Places と同じ一覧）、そしてその SSH 先のすべてのリポジトリに効く Settings > Git のページ（SSH 先の `--global` を、リポジトリなしで起動したエンジンを通して読み書きする）。プログラムのページで、そこで動かす git を選べる（SSH 先の Amon Hen の設定に置く。下を見ること）。環境変数のページは、エンジンの環境を見せ、エンジンを SSH 先のログインシェルの環境で起動するかを選べる。Places の SSH 先の「設定…」と、リポジトリの Settings の一覧の下の git の行からも開ける。Places の「この Mac」の「設定…」は Settings > Git を開く。
 

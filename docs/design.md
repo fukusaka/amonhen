@@ -178,7 +178,7 @@ In the same process, the number of writes is 0 for numeric columns, the graph an
 - ③ SSH: the daemon (`amonhen --stdio <repo>`, `crates/daemon`; with no path it opens an empty repository under the host's data directory and serves only that machine's settings, for Settings > SSH Hosts) only executes `GitBackend`, `Operations` and `RepoFiles` on request on the SSH host, while layout, persistent cache, diffs and highlighting are done in the local core (`RemoteBackend` in `crates/remote`). The C ABI and FE can be used as is. The UI reads only local memory, and only the parts that touch git go over the wire. History keeps its persistent cache locally, and after reconnecting it receives only the new commits since the previous starting points (the daemon finds them with `git rev-list`). Requests are numbered and sent concurrently, and path and content searches can be cancelled.
 - In every mode, the UI reads only local memory. Communication is used only for background synchronization.
 
-### SSH hosts running Windows (planned)
+### SSH hosts running Windows
 
 Windows' OpenSSH server runs the command it is sent with the shell in `HKLM\SOFTWARE\OpenSSH\DefaultShell`. That is cmd.exe when unset, and often PowerShell. So nothing `crates/remote/src/ssh.rs` sends today (`exec /bin/sh -c '…'`) runs there. The engine itself already runs on Windows (the VSCode extension uses it), so only the way it is reached changes. The VSCode extension's Remote-SSH is not affected.
 
@@ -213,7 +213,8 @@ Windows' OpenSSH server runs the command it is sent with the shell in `HKLM\SOFT
   - Through the raw `cmd.exe /c` command line, `""C:\Program Files\…\x.exe" "a b" "C:\x y\z""` runs with those arguments, and `"C:\…\x.exe" "a b"` fails.
   - The PowerShell probe takes 1.3–1.9 s on a new connection; the failed sh probe before it, about as long on a new connection and little on a shared one.
   - A shared connection (ControlMaster) left behind by a hung session stops working; later sessions over it hang.
-  - Not tried: cmd.exe as the default shell end to end, and Windows on ARM (`PROCESSOR_ARCHITECTURE` is `ARM64`).
+  - The app and the CLI open a repository there (`ssh://host/C:/src/repo`): the engine is sent, started by pwsh, and reached again through the remembered PowerShell probe in about 1.4 s.
+  - Not tried: cmd.exe as the default shell end to end (only the engine started through the raw `cmd.exe /c` command line), and Windows on ARM (`PROCESSOR_ARCHITECTURE` is `ARM64`).
 
 ### Commit signature verification
 

@@ -178,7 +178,7 @@ apps/
 - ③ SSH: daemon（`amonhen --stdio <repo>`、`crates/daemon`。パスなしなら SSH 先のデータの置き場所の空のリポジトリを開き、その機械の設定だけを扱う。Settings > SSH Hosts のため）は SSH 先で `GitBackend`・`Operations`・`RepoFiles` を要求に応じて実行するだけにし、レイアウト・永続キャッシュ・差分・色付けは手元のコアで行う（`crates/remote` の `RemoteBackend`）。C ABI と FE はそのまま使える。UI が読むのは手元のメモリだけで、通信に乗るのは git に触れる所だけ。History は永続キャッシュを手元に持ち、つなぎ直したら前回の起点からの新しいコミットだけを受け取る（daemon は `git rev-list` で求める）。要求には番号を振って並行に送り、パス・内容の検索は取り消せる。
 - どの動かし方でも、UI が読むのは手元のメモリだけ。通信は裏の同期にしか使わない。
 
-### Windows の SSH 先（予定）
+### Windows の SSH 先
 
 Windows の OpenSSH サーバは、送られたコマンドを `HKLM\SOFTWARE\OpenSSH\DefaultShell` のシェルで実行する。設定がなければ cmd.exe で、PowerShell にしていることも多い。そのため、いま `crates/remote/src/ssh.rs` が送るもの（`exec /bin/sh -c '…'`）は、どれもそこでは動かない。エンジンそのものは Windows でも動く（VSCode 拡張が使っている）ので、変わるのは届け方だけ。VSCode 拡張の Remote-SSH には関わらない。
 
@@ -213,7 +213,8 @@ Windows の OpenSSH サーバは、送られたコマンドを `HKLM\SOFTWARE\Op
   - 生の `cmd.exe /c` のコマンドで、`""C:\Program Files\…\x.exe" "a b" "C:\x y\z""` はその引数で動き、`"C:\…\x.exe" "a b"` は失敗する。
   - PowerShell の調べは、新しい接続で 1.3〜1.9 秒。その前の失敗する sh の調べも、新しい接続ならほぼ同じだけかかり、使い回しの接続ならわずか。
   - 止まったセッションが残った使い回しの接続（ControlMaster）は動かなくなり、その上の次のセッションも止まる。
-  - 試していないこと: 既定のシェルが cmd.exe のときの通し、Windows on ARM（`PROCESSOR_ARCHITECTURE` が `ARM64`）。
+  - アプリと CLI でそこのリポジトリ（`ssh://host/C:/src/repo`）を開ける。エンジンを送り、pwsh が起動し、2 回目からは覚えた PowerShell の調べで 1.4 秒ほどでつながる。
+  - 試していないこと: 既定のシェルが cmd.exe のときの通し（生の `cmd.exe /c` のコマンドでエンジンを起動したところまで）、Windows on ARM（`PROCESSOR_ARCHITECTURE` が `ARM64`）。
 
 ### コミットの署名の検証
 
