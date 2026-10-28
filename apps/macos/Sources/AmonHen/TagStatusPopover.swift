@@ -80,6 +80,9 @@ final class TagStatusPopover: NSViewController {
             return [l, view]
         })
         gridView.column(at: 0).xPlacement = .trailing
+        // 表を中身の幅にする（縦のスタックが横いっぱいに引き伸ばすと、値が短いときに余りが列の間に回り、表が
+        // 中ほどに寄って見える）。
+        gridView.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         gridView.rowSpacing = 5
         gridView.columnSpacing = 10
         for i in 0..<gridView.numberOfRows { gridView.row(at: i).rowAlignment = .firstBaseline }

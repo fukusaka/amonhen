@@ -136,6 +136,9 @@ final class BranchStatusPopover: NSViewController {
             return [l, view]
         })
         grid.column(at: 0).xPlacement = .trailing
+        // 表を中身の幅にする（縦のスタックが横いっぱいに引き伸ばすと、値が短いときに余りが列の間に回り、表が
+        // 中ほどに寄って見える）。
+        grid.setContentHuggingPriority(.defaultHigh, for: .horizontal)
         grid.rowSpacing = 5
         grid.columnSpacing = 10
         for i in 0..<grid.numberOfRows { grid.row(at: i).rowAlignment = .firstBaseline }
