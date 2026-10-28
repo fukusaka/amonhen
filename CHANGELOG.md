@@ -56,6 +56,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- The CLI finds the repository without running git, so when the chosen git isn't there it can still read and
+  choose another (`setMachineGit`); only what runs git stops.
 - On a Mac without the Command Line Tools, Amon Hen no longer runs `/usr/bin/git`, which only brings up the install
   dialog; it says git isn't installed instead.
 - SSH hosts whose login shell is tcsh, csh or fish connect: the commands sent there now run in sh.

@@ -164,20 +164,15 @@ impl<'a> Args<'a> {
     }
 }
 
-/// `path` を含むリポジトリの作業ツリーの一番上（`git rev-parse --show-toplevel`）。
+/// `path` を含むリポジトリの作業ツリーの一番上。gix で探し、git は動かさない（選んだ git がなくても、読むだけの
+/// 命令や、git を選び直す `setMachineGit` は使える。git を動かす命令は、そのときに理由つきで止まる）。
 pub(crate) fn repository_root(path: &Path) -> Result<PathBuf> {
-    if let Some(reason) = amonhen_model::process::missing_git() {
-        return Err(reason.into());
-    }
-    let out = amonhen_model::process::command("git")
-        .arg("-C")
-        .arg(path)
-        .args(["rev-parse", "--show-toplevel"])
-        .output()?;
-    if !out.status.success() {
-        return Err(tr!("{path} isn’t a Git repository", path = path.display()).into());
-    }
-    Ok(PathBuf::from(String::from_utf8(out.stdout)?.trim()))
+    use amonhen_model::GitBackend;
+    let absolute = std::path::absolute(path)?;
+    amonhen_backend_gix::GixBackend::open(&absolute)
+        .ok()
+        .and_then(|repo| repo.paths().workdir)
+        .ok_or_else(|| tr!("{path} isn’t a Git repository", path = path.display()).into())
 }
 
 /// リポジトリを開く（コアへの窓口）。手元のパスなら、このプロセスのコアで（History はアプリと同じ永続キャッシュを
