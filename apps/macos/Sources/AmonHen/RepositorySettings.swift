@@ -197,15 +197,16 @@ final class RepositorySettingsModel {
         entries.last { $0.key.lowercased() == key.lowercased() && $0.scope == "global" }?.value
     }
 
-    /// この段の値を変える。nil か空なら消す。`recordUndo` なら、前の値に戻す書き換えを Undo に積む（同じ操作で
-    /// 変えたキーはまとめて 1 段。⌘Z の中でまた逆を積むので、⇧⌘Z でやり直せる）。
-    func set(_ key: String, _ value: String?, recordUndo: Bool = true) {
+    /// この段の値を変える。nil か空なら消す（`keepEmpty` なら空の値を書く。広い段の値を打ち消すとき）。`recordUndo`
+    /// なら、前の値に戻す書き換えを Undo に積む（同じ操作で変えたキーはまとめて 1 段。⌘Z の中でまた逆を積むので、
+    /// ⇧⌘Z でやり直せる）。
+    func set(_ key: String, _ value: String?, keepEmpty: Bool = false, recordUndo: Bool = true) {
         let value = value?.trimmingCharacters(in: .whitespaces)
-        let new = (value?.isEmpty ?? true) ? nil : value
+        let new = (value?.isEmpty ?? true) && !(keepEmpty && value != nil) ? nil : value
         if recordUndo, let undo {
             let old = local(key)
             if old != new {
-                undo.registerUndo(withTarget: self) { m in m.set(key, old) }
+                undo.registerUndo(withTarget: self) { m in m.set(key, old, keepEmpty: old?.isEmpty == true) }
                 undo.setActionName(L("Change %@", key))
             }
         }
@@ -1511,7 +1512,14 @@ private struct TemplateRow: View {
         case .file(let f): "file:" + f
         }
     }
-    private var decidingKey: String { if case .shared = choice { Self.libraryKey } else { Self.fileKey } }
+    /// 設定元を出すキー: 共有のテンプレートか、それを空にして打ち消した「なし」なら `amonhen.commitTemplate`。
+    private var decidingKey: String {
+        switch choice {
+        case .shared: Self.libraryKey
+        case .none where model.local(Self.libraryKey) == "": Self.libraryKey
+        default: Self.fileKey
+        }
+    }
 
     private func label(_ value: String) -> String {
         if value.hasPrefix("lib:") { return String(value.dropFirst(4)) }
@@ -1576,7 +1584,15 @@ private struct TemplateRow: View {
         } else if value.hasPrefix("file:") {
             if model.local(Self.libraryKey) != nil { model.set(Self.libraryKey, nil) }
         } else {
-            for key in [Self.libraryKey, Self.fileKey] where model.local(key) != nil { model.set(key, nil) }
+            if model.local(Self.fileKey) != nil { model.set(Self.fileKey, nil) }
+            // 広い段（すべてのリポジトリ）で共有のテンプレートを選んでいれば、この段では空にして打ち消す（git は
+            // amonhen.* を読まないので、端末の git には関わらない）。広い段の commit.template のファイルは打ち消せない
+            // （空にすると git commit が止まる）ので、そのまま効く。
+            if let shared = model.inherited(Self.libraryKey)?.value, !shared.isEmpty {
+                if model.local(Self.libraryKey) != "" { model.set(Self.libraryKey, "", keepEmpty: true) }
+            } else if model.local(Self.libraryKey) != nil {
+                model.set(Self.libraryKey, nil)
+            }
         }
     }
 }
