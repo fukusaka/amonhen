@@ -112,7 +112,9 @@ static CACHE: Mutex<Option<Cached>> = Mutex::new(None);
 /// 人に見せるパス（ホームの下なら `~/…`）。
 pub fn shown(path: &std::path::Path) -> String {
     match std::env::var_os("HOME").and_then(|h| path.strip_prefix(h).ok().map(Path::to_path_buf)) {
-        Some(rest) if !rest.as_os_str().is_empty() => format!("~/{}", rest.display()),
+        Some(rest) if !rest.as_os_str().is_empty() => {
+            format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display())
+        }
         _ => path.display().to_string(),
     }
 }
