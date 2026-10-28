@@ -28,12 +28,11 @@ enum CloneSheet {
         let name = NSTextField(string: "")
         name.placeholderString = L("Taken from the URL")
         let choose = NSButton(title: L("Choose…"), target: nil, action: nil)
-        let chooser = ClosureTarget {
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = true
-            panel.canChooseFiles = false
-            panel.canCreateDirectories = true
-            if panel.runModal() == .OK, let picked = panel.url { folder.stringValue = (picked.path as NSString).abbreviatingWithTildeInPath }
+        let alert = NSAlert()
+        let chooser = ClosureTarget { [weak alert] in
+            chooseLocation(initial: folder.stringValue, in: alert?.window) { picked in
+                if let picked { folder.stringValue = (picked as NSString).abbreviatingWithTildeInPath }
+            }
         }
         choose.target = chooser
         choose.action = #selector(ClosureTarget.fire)
@@ -72,7 +71,6 @@ enum CloneSheet {
         grid.column(at: 1).width = 380
         grid.rowSpacing = 8
         grid.frame = NSRect(x: 0, y: 0, width: 500, height: CGFloat(rows.count) * 32)
-        let alert = NSAlert()
         alert.messageText = "Clone Repository"
         alert.addButton(withTitle: "Clone")
         alert.addButton(withTitle: L("Cancel"))
@@ -95,6 +93,12 @@ enum CloneSheet {
         }
         UserDefaults.standard.set(parent, forKey: folderKey)
         run(url: source, dest: dest, onCloned: onCloned)
+    }
+
+    /// 置き場所を選ぶシート（フォルダを作れる）。
+    static func chooseLocation(initial: String, in window: NSWindow?, done: @escaping (String?) -> Void) {
+        FilePicker.presentLocal(title: L("Clone Location"), message: L("Choose the folder to clone into."),
+                                kind: .folder, initial: initial, canCreateFolders: true, in: window) { done($0?.first) }
     }
 
     /// clone している間は、進み具合の小さなウィンドウを出す。

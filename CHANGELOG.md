@@ -53,6 +53,8 @@ becomes the GitHub Release notes.
   selected row.
 - Push reads Publish for a branch without an upstream, and asks which remote to create it on (following
   `branch.<name>.pushRemote` and `remote.pushDefault`) and its name there, instead of always pushing to origin.
+- Files and folders on this Mac are chosen in the same column sheet as on an SSH host instead of the Open panel:
+  repositories are marked, a path can be typed, and folders like `/opt/homebrew/bin` are one menu item away.
 
 #### Fixed
 
@@ -70,6 +72,7 @@ becomes the GitHub Release notes.
   now comes from the signing key's validity.
 - In a repository on an SSH host checked with this Mac's keys, a commit's details again get their notes, line counts
   and signature, and the commit selected on opening is no longer verified with the SSH host's keys.
+- A message template file for a repository on an SSH host is chosen on the host, not on this Mac.
 
 ### [0.2.7] - 2026-10-26
 

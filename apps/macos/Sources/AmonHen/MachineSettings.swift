@@ -102,6 +102,19 @@ struct ProgramsPage: View {
                 found = await Task.detached(priority: .userInitiated) {
                     Dictionary(uniqueKeysWithValues: names.map { ($0, Programs.candidates($0)) })
                 }.value
+                // --file-picker [program | repository | folder | clone | editor] で、この Mac のものを選ぶシートを開く
+                // （見た目の確認用）: git の「その他…」、Repositories の「手元のリポジトリ…」「スキャンするフォルダ…」、
+                // Clone の場所、外部エディタの「その他…」。
+                if let option = AppDelegate.option("--file-picker") {
+                    let window = SettingsWindowController.shared.window
+                    switch option {
+                    case "repository": RepositoryBrowser.chooseRepositories(in: window) { _ in }
+                    case "folder": RepositoryBrowser.chooseScanFolder(in: window) { _ in }
+                    case "clone": CloneSheet.chooseLocation(initial: "~", in: window) { _ in }
+                    case "editor": GeneralSettings.chooseEditor(in: window) { _ in }
+                    default: ProgramPicker.chooseLocal(value: git?.chosen ?? found["git"]?.first?.path ?? "", in: window) { _ in }
+                    }
+                }
             } else {
                 let repository = model.repository
                 found = await Task.detached(priority: .userInitiated) {
@@ -118,7 +131,7 @@ struct ProgramsPage: View {
                     let option = AppDelegate.option("--host-file-picker")
                     if option == "folder" || option == "connect" {
                         let connect = option == "connect"
-                        RemoteFilePicker.present(title: L("Add a Folder to Scan over SSH"),
+                        FilePicker.present(title: L("Add a Folder to Scan over SSH"),
                                                  message: L("The engine on the host searches up to 3 levels below the folder."),
                                                  kind: .folder, host: onHost.name, repository: connect ? nil : onHost.repository,
                                                  hosts: connect ? SSHHosts.candidates() : nil, initial: "~/prj", in: window) { _ in }
@@ -286,20 +299,26 @@ struct ProgramPicker: View {
             }
             return
         }
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = false
-        panel.showsHiddenFiles = true
-        panel.directoryURL = URL(fileURLWithPath: ((candidates.first?.path ?? "/usr/local/bin") as NSString).deletingLastPathComponent)
-        panel.prompt = L("Choose")
-        if panel.runModal() == .OK, let url = panel.url, FileManager.default.isExecutableFile(atPath: url.path) {
-            choose(url.path)
+        let value = value
+        Self.chooseLocal(value: value.isEmpty ? candidates.first?.path ?? "/usr/local/bin" : value, in: nil) { path in
+            if let path, path != value { choose(path) }
         }
+    }
+
+    /// この Mac の実行ファイルを選ぶシート。最初は `value` を選んだところ。
+    static func chooseLocal(value: String, in window: NSWindow?, done: @escaping (String?) -> Void) {
+        let places: [String] = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "~/.local/bin"].filter {
+            FileManager.default.fileExists(atPath: ($0 as NSString).expandingTildeInPath)
+        }
+        FilePicker.presentLocal(title: L("Program"), message: L("Choose the program on this Mac."), kind: .executable,
+                                initial: value, places: places, in: window) { done($0?.first) }
     }
 
     /// SSH 先の実行ファイルを選ぶシート。最初は `value` を選んだところ。
     static func chooseOnHost(_ host: Host, value: String, in window: NSWindow?, done: @escaping (String?) -> Void) {
-        RemoteFilePicker.present(title: L("Program on %@", host.name), message: L("Choose the program on the host."),
-                                 kind: .executable, host: host.name, repository: host.repository, initial: value, in: window) {
+        FilePicker.present(title: L("Program on %@", host.name), message: L("Choose the program on the host."),
+                           kind: .executable, host: host.name, repository: host.repository, initial: value,
+                           places: ["/usr/local/bin", "/usr/bin", "~/.local/bin", "~/bin"], in: window) {
             done($0?.path)
         }
     }

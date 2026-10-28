@@ -1533,13 +1533,23 @@ private struct TemplateRow: View {
             }
             if model.local(Self.libraryKey) != nil { model.set(Self.libraryKey, nil) }
         } else if value == Self.pickFile {
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = false
-            panel.allowsMultipleSelection = false
-            panel.message = L("Choose a commit message template file")
-            guard panel.runModal() == .OK, let url = panel.url else { return }
-            model.set(Self.fileKey, url.path)
-            if model.local(Self.libraryKey) != nil { model.set(Self.libraryKey, nil) }
+            // git が読むファイルなので、SSH 先のリポジトリなら SSH 先のものを選ぶ。
+            let initial = if case .file(let f) = choice { f } else { "~" }
+            let picked = { (path: String) in
+                model.set(Self.fileKey, path)
+                if model.local(Self.libraryKey) != nil { model.set(Self.libraryKey, nil) }
+            }
+            if let host = model.host {
+                FilePicker.present(title: L("Message template"), message: L("Choose a commit message template file"),
+                                   kind: .file, host: host, repository: model.repository, initial: initial) {
+                    if let chosen = $0 { picked(chosen.path) }
+                }
+            } else {
+                FilePicker.presentLocal(title: L("Message template"), message: L("Choose a commit message template file"),
+                                        kind: .file, initial: initial) {
+                    if let path = $0?.first { picked(path) }
+                }
+            }
         } else if value.hasPrefix("lib:") {
             model.set(Self.libraryKey, String(value.dropFirst(4)))
             if model.local(Self.fileKey) != nil { model.set(Self.fileKey, nil) }

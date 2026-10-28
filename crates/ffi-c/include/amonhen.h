@@ -530,6 +530,15 @@ char *amonhen_git_version(void);
 char *amonhen_signing_keys(const char *format);
 
 /**
+ * この機械の `path` のフォルダの中身（`~` 可）。JSON（`path`・`home`・`entries`。コアの `listDirectory` と同じ形）。
+ * 読めなければ NULL（`amonhen_last_error` に理由）。`amonhen_string_free` で解放する。
+ *
+ * # Safety
+ * `path` は NUL 終端の UTF-8 文字列であること。
+ */
+char *amonhen_list_directory(const char *path);
+
+/**
  * この機械のユーザー全体（`git config --global`）の `key` の値。なければ、または読めなければ NULL（読めなければ
  * `amonhen_last_error` に理由）。`amonhen_string_free` で解放する。git を起動するので、裏のスレッドで呼ぶ。
  *
