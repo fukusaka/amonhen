@@ -845,14 +845,19 @@ fn push_windows(
     Ok(())
 }
 
-/// `ssh` の隣の scp（`ssh` だけなら PATH の scp）。
+/// `ssh` の隣の scp。隣になければ（`ssh` だけ、`AMONHEN_SSH` で差し替えたもの）PATH の scp。
 fn scp_program(ssh: &str) -> String {
     let path = std::path::Path::new(ssh);
     let name = match path.file_name().and_then(|n| n.to_str()) {
         Some(n) if n.eq_ignore_ascii_case("ssh.exe") => "scp.exe",
         _ => "scp",
     };
-    path.with_file_name(name).display().to_string()
+    let beside = path.with_file_name(name);
+    if path.parent().is_some_and(|p| !p.as_os_str().is_empty()) && beside.is_file() {
+        beside.display().to_string()
+    } else {
+        name.to_owned()
+    }
 }
 
 /// 使う印を更新し、`KEEP_DAYS` 日使われていないエンジン（と前の置き場所 `~/.cache/amonhen` の古い daemon）を
@@ -968,7 +973,13 @@ mod tests {
         assert!(!is_engine_path("sent"));
         assert!(!is_engine_path("C:amonhen.exe"));
         assert_eq!(scp_program("ssh"), "scp");
-        assert_eq!(scp_program("/usr/bin/ssh"), "/usr/bin/scp");
+        let dir = std::env::temp_dir().join(format!("amonhen-scp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ssh = dir.join("ssh").display().to_string();
+        assert_eq!(scp_program(&ssh), "scp");
+        std::fs::write(dir.join("scp"), b"").unwrap();
+        assert_eq!(scp_program(&ssh), dir.join("scp").display().to_string());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
