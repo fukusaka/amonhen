@@ -118,7 +118,11 @@ export class UndoLog {
         return { path, data, mode, blob: data ? await this.backend.writeBlob(data) : null };
       }),
     );
-    const result = await fn();
+    const { result, recorded } = await recordedElsewhere(fn);
+    // 共有の daemon のコアが同じ記録に書いた
+    if (recorded) {
+      return result;
+    }
     const files: FileBackup[] = [];
     for (const b of before) {
       const after = await contentHash(join(root, b.path));

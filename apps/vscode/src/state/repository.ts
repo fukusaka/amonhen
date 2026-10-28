@@ -1,7 +1,7 @@
 import { access } from 'node:fs/promises';
 import { join } from 'node:path';
 import * as vscode from 'vscode';
-import type { RepositoryBackend, Sequence } from '../git/backend.ts';
+import type { AmState, RepositoryBackend, Sequence } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
 import {
   configStamp,
@@ -39,8 +39,10 @@ export interface RepositoryState {
   submodules?: Submodule[];
   /** 途中で止まっている merge や rebase */
   sequence?: Sequence;
-  /** rebase の進み具合 */
+  /** rebase・am の進み具合 */
   progress?: { current: number; total: number };
+  /** am の途中なら、止まっているパッチのこと */
+  am?: AmState;
 }
 
 interface Stamps {
@@ -162,7 +164,11 @@ export class Repository implements vscode.Disposable {
 
     const tasks: Promise<void>[] = [
       this.backend.sequenceInProgress().then(async (sequence) => {
-        const progress = sequence === 'rebase' ? await this.backend.rebaseProgress() : undefined;
+        const progress = sequence === 'rebase' || sequence === 'am' ? await this.backend.rebaseProgress() : undefined;
+        const am = sequence === 'am' ? await this.backend.amState() : undefined;
+        if (this.replace('am', am)) {
+          changed.add('workingCopy');
+        }
         if (this.state.sequence !== sequence) {
           this.state.sequence = sequence;
           changed.add('workingCopy');

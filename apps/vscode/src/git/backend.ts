@@ -2,7 +2,7 @@
  * git 実行層のインターフェース。状態管理層と UI 層はこれだけに依存する。
  * 計測して足りない箇所が出たら、その部分だけ別実装（WASM やネイティブ）に差し替える。
  */
-import { access, readFile, realpath } from 'node:fs/promises';
+import { access, readFile, realpath, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
 import { ATTRIBUTES, lineEndingsOf, parseCheckAttr, parseEolConfig, toGitForm, type LineEndings } from './eol.ts';
@@ -33,8 +33,39 @@ export interface HeadState {
   oid?: string;
 }
 
-/** 途中で止まっている操作 */
-export type Sequence = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
+/** 途中で止まっている操作（am はメールのパッチを当てている途中） */
+export type Sequence = 'merge' | 'rebase' | 'cherry-pick' | 'revert' | 'am';
+
+/** `git am` が止まっているパッチ */
+export interface AmState {
+  subject?: string;
+  /** 3-way で当てようとしたか（していなければ、当て直せる） */
+  threeWay: boolean;
+  /** diff のないパッチ（送り状など）で止まった */
+  empty: boolean;
+  /** このパッチを 3-way で当て直したところ（残っているのはコンフリクトか、その解決） */
+  retried: boolean;
+}
+
+/** `git format-patch` の選び方。ほかのこと（番号の付け方・宛先・署名など）は git の `format.*` に任せる */
+export interface FormatPatchOptions {
+  coverLetter?: boolean;
+  reroll?: number;
+}
+
+/** `git apply` の当て方。既定は git と同じく作業ツリーだけ */
+export interface ApplyPatchOptions {
+  /** index にも当てる（`--index`） */
+  index?: boolean;
+  /** 当たらなければ 3-way merge にしてコンフリクトを残す（`--3way`） */
+  threeWay?: boolean;
+}
+
+/**
+ * `git am` が止まったパッチを 3-way で当て直したときに、その番号（`rebase-apply/next`）を書いておく（コアと同じ）。
+ * am が終わるか中止されると git が rebase-apply ごと消すので、次の am に残らない
+ */
+const AM_RETRIED = join('rebase-apply', 'amonhen-retried');
 
 /** merge や rebase がコンフリクトで止まったら conflict */
 export type MergeResult = 'done' | 'conflict';
@@ -131,8 +162,25 @@ export interface RepositoryBackend {
   continueSequence(sequence: Sequence): Promise<RebaseResult>;
   /** rebase などで、今のコミットを飛ばして続ける */
   skipSequence(sequence: Sequence): Promise<RebaseResult>;
-  /** rebase の進み具合。rebase 中でなければ undefined */
+  /** rebase・am の進み具合。どちらの途中でもなければ undefined */
   rebaseProgress(): Promise<{ current: number; total: number } | undefined>;
+  /** am の途中なら、止まっているパッチのこと */
+  amState(): Promise<AmState | undefined>;
+  /**
+   * コミット oids（古い順）をパッチにする（`git format-patch`。マージは git と同じく飛ばす）。dir があればそのフォルダに
+   * 1 コミット 1 ファイル（git が付けた名前）、file があればそのファイルに 1 つの mbox。書いたファイルのパスを返す
+   */
+  formatPatch(oids: readonly string[], options: FormatPatchOptions, out: { dir?: string; file?: string }): Promise<string[]>;
+  /** メールの形のパッチを今のブランチにコミットとして当てる（`git am`）。threeWay が undefined なら am.threeWay に任せる */
+  am(paths: readonly string[], threeWay: boolean | undefined): Promise<RebaseResult>;
+  /** `git am` が当てられずに止まったパッチを 3-way merge で当て直す。きれいに当たれば続ける */
+  amThreeWay(): Promise<RebaseResult>;
+  /** diff を当てる（`git apply`）。3-way でコンフリクトが残れば conflict */
+  applyPatch(paths: readonly string[], options: ApplyPatchOptions): Promise<MergeResult>;
+  /** oid から HEAD までを first-parent で辿ったコミット（古い順、oid を含む）。oid が HEAD の祖先でなければ undefined */
+  firstParentsToHead(oid: string): Promise<string[] | undefined>;
+  /** パッチがそのまま当たるか（`git apply --check`。index なら index にも）。当たらなければ git の答え */
+  checkPatch(paths: readonly string[], index: boolean): Promise<string | undefined>;
   /**
    * コンフリクトしたファイルを、現在の側（HEAD）か取り込む側の内容で解決して stage する。
    * 選んだ側で削除されていれば、削除として解決する。conflict は status の XY
@@ -514,6 +562,8 @@ export class CliBackend implements RepositoryBackend {
 
   async sequenceInProgress(): Promise<Sequence | undefined> {
     const d = this.dirs.gitDir;
+    // `git am` も rebase-apply を使う。am のときだけ applying がある
+    if (await exists(join(d, 'rebase-apply', 'applying'))) return 'am';
     if ((await exists(join(d, 'rebase-merge'))) || (await exists(join(d, 'rebase-apply')))) return 'rebase';
     if (await exists(join(d, 'MERGE_HEAD'))) return 'merge';
     if (await exists(join(d, 'CHERRY_PICK_HEAD'))) return 'cherry-pick';
@@ -567,6 +617,96 @@ export class CliBackend implements RepositoryBackend {
     if (remove.length > 0) {
       await this.write(['rm', '--quiet', '--', ...remove]);
     }
+  }
+
+  async amState(): Promise<AmState | undefined> {
+    const dir = join(this.dirs.gitDir, 'rebase-apply');
+    if (!(await exists(join(dir, 'applying')))) return undefined;
+    const read = (path: string): Promise<string> => readFile(path, 'utf8').then((t) => t.trim(), () => '');
+    const [info, message, threeWay, patch, next, retried] = await Promise.all([
+      read(join(dir, 'info')),
+      read(join(dir, 'final-commit')),
+      read(join(dir, 'threeway')),
+      read(join(dir, 'patch')),
+      read(join(dir, 'next')),
+      read(join(this.dirs.gitDir, AM_RETRIED)),
+    ]);
+    const subject = /^Subject: (.*)$/m.exec(info)?.[1] ?? (message.split('\n')[0] || undefined);
+    return { subject, threeWay: threeWay === 't', empty: patch === '', retried: retried !== '' && retried === next };
+  }
+
+  async formatPatch(
+    oids: readonly string[],
+    options: FormatPatchOptions,
+    out: { dir?: string; file?: string },
+  ): Promise<string[]> {
+    if (oids.length === 0) return [];
+    // format-patch は受け取った並びの逆の順に書き出す。日付で並べ替えさせず（--no-walk=unsorted）、逆にして渡す。数を
+    // 渡さないと、コミットが 1 つのときに `<rev>..HEAD` の意味になる
+    const args = ['format-patch', '--no-walk=unsorted', `--max-count=${oids.length}`];
+    if (options.coverLetter) args.push('--cover-letter');
+    if (options.reroll) args.push(`--reroll-count=${options.reroll}`);
+    const revs = [...oids].reverse();
+    if (out.file) {
+      const content = await this.git.exec([...args, '--stdout', ...revs], { cwd: this.root, readOnly: true });
+      await writeFile(out.file, content);
+      return [out.file];
+    }
+    if (!out.dir) throw new Error('パッチを書き出すフォルダかファイルを選んでください');
+    const written = await this.read([...args, '--output-directory', out.dir, ...revs]);
+    return written.split('\n').filter(Boolean).map((p) => resolve(this.root, p));
+  }
+
+  am(paths: readonly string[], threeWay: boolean | undefined): Promise<RebaseResult> {
+    const args = ['am'];
+    if (threeWay !== undefined) args.push(threeWay ? '--3way' : '--no-3way');
+    return this.stoppable([...args, '--', ...paths]);
+  }
+
+  async amThreeWay(): Promise<RebaseResult> {
+    // `git am -3` と同じく、止まったパッチ（rebase-apply/patch）を index の blob を使って 3-way で当てる
+    try {
+      await this.git.exec(['apply', '--3way', join(this.dirs.gitDir, 'rebase-apply', 'patch')], { cwd: this.root });
+    } catch (err) {
+      if (!(await this.hasUnmerged())) throw err;
+      const next = await readFile(join(this.dirs.gitDir, 'rebase-apply', 'next'), 'utf8').catch(() => '');
+      await writeFile(join(this.dirs.gitDir, AM_RETRIED), next);
+      return 'conflict';
+    }
+    return this.continueSequence('am');
+  }
+
+  async applyPatch(paths: readonly string[], options: ApplyPatchOptions): Promise<MergeResult> {
+    const args = ['apply'];
+    if (options.threeWay) args.push('--3way');
+    else if (options.index) args.push('--index');
+    try {
+      await this.git.exec([...args, '--', ...paths], { cwd: this.root });
+    } catch (err) {
+      // 3-way でコンフリクトを残して当てた（終了コードは 1）
+      if (options.threeWay && (await this.hasUnmerged())) return 'conflict';
+      throw err;
+    }
+    return 'done';
+  }
+
+  async firstParentsToHead(oid: string): Promise<string[] | undefined> {
+    if (!(await this.isAncestor(oid, 'HEAD'))) return undefined;
+    const later = (await this.read(['rev-list', '--first-parent', '--reverse', `${oid}..HEAD`])).split('\n').filter(Boolean);
+    return [oid, ...later];
+  }
+
+  async checkPatch(paths: readonly string[], index: boolean): Promise<string | undefined> {
+    try {
+      await this.read(['apply', '--check', ...(index ? ['--index'] : []), '--', ...paths]);
+      return undefined;
+    } catch (err) {
+      return err instanceof Error ? err.message : String(err);
+    }
+  }
+
+  private async hasUnmerged(): Promise<boolean> {
+    return (await this.read(['ls-files', '--unmerged', '-z'])) !== '';
   }
 
   rebaseTodo(base: string | null, todoPath: string): Promise<RebaseResult> {

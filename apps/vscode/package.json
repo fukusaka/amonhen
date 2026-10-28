@@ -162,6 +162,18 @@
         "icon": "$(debug-step-over)"
       },
       {
+        "command": "amonhen.applyPatch",
+        "title": "Apply Patch…",
+        "category": "Amon Hen",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
+        "command": "amonhen.amRetryThreeWay",
+        "title": "Retry with 3-Way Merge",
+        "category": "Amon Hen",
+        "icon": "$(git-merge)"
+      },
+      {
         "command": "amonhen.open",
         "title": "Open Amon Hen",
         "category": "Amon Hen",
@@ -307,6 +319,16 @@
         "category": "Amon Hen"
       },
       {
+        "command": "amonhen.history.savePatch",
+        "title": "Save as Patch…",
+        "category": "Amon Hen"
+      },
+      {
+        "command": "amonhen.history.savePatches",
+        "title": "Save Patches from Here to HEAD…",
+        "category": "Amon Hen"
+      },
+      {
         "command": "amonhen.submodule.update",
         "title": "Update Submodule",
         "category": "Amon Hen",
@@ -378,6 +400,11 @@
       ],
       "view/item/context": [
         {
+          "command": "amonhen.amRetryThreeWay",
+          "when": "view == amonhen.sidebar && viewItem == sequence.am.retry",
+          "group": "inline@0"
+        },
+        {
           "command": "amonhen.continueSequence",
           "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\./",
           "group": "inline@1"
@@ -389,7 +416,7 @@
         },
         {
           "command": "amonhen.skipSequence",
-          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\.(rebase|cherry-pick|revert)$/",
+          "when": "view == amonhen.sidebar && viewItem =~ /^sequence\\.(rebase|cherry-pick|revert|am)/",
           "group": "inline@2"
         },
         {
@@ -611,6 +638,18 @@
         {
           "command": "amonhen.rangeDiff",
           "when": "amonhen.hasRepository"
+        },
+        {
+          "command": "amonhen.history.savePatch",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.history.savePatches",
+          "when": "false"
+        },
+        {
+          "command": "amonhen.amRetryThreeWay",
+          "when": "false"
         }
       ],
       "webview/context": [
@@ -678,6 +717,23 @@
           "command": "amonhen.history.revert",
           "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
           "group": "5_apply@2"
+        },
+        {
+          "command": "amonhen.history.savePatch",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "group": "6_patch@1"
+        },
+        {
+          "command": "amonhen.history.savePatches",
+          "when": "webviewId == 'amonhen.main' && webviewSection == 'commit'",
+          "group": "6_patch@2"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "amonhen.applyPatch",
+          "when": "amonhen.hasRepository && resourceExtname =~ /^\\.(patch|diff|mbox|eml)$/",
+          "group": "7_modification@9"
         }
       ]
     }
