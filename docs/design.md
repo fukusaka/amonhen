@@ -384,6 +384,10 @@ or split history in ways that are hard to see afterwards.
   (`--update-refs` / `--no-update-refs`, or the `update-ref` lines in a History edit's todo). It is disabled when git
   is too old, and the drawing follows it as it is switched.
 - **Afterwards.** The result says which branches moved and which stayed, and one Undo puts them all back.
+- **Checking the result.** Range Diff (ux.md section 5d) compares a branch with its version before the rewrite, as
+  `git range-diff` does, so a rebuilt stack can be checked commit by commit. The core's `previousVersion` finds that
+  version in the branch's reflog (rebases done in a terminal too), and `rangeDiff` runs `git range-diff` (2.19 or
+  later, below the minimum of 2.23) and reads its output into pairs with full commit IDs.
 - **Repository Settings.** It moves from a sheet (⌘;) to a Settings page in the sidebar's Workspace, beside Working
   Copy, History, Stashes and Reflog. ⌘; opens that page.
 - **No default of its own.** Amon Hen does not turn `rebase.updateRefs` on by itself: a rebase runs as `git rebase`

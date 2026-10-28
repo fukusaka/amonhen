@@ -64,6 +64,10 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   ファイルが変わったら（読み直すたびに更新時刻を見る。`mailmap.file` の場所は設定ファイルが変わったときだけ git に聞く）、
   History と覚えている詳細を読み直す。
 
+- Range Diff（ローカルブランチの Compare with Previous Version と、パレットの Range Diff…）は、`git range-diff` の形の
+  読み取り専用の `amonhen:` の文書を出す。エンジンではコアの `previousVersion`・`rangeDiff` を使い、git 実行層では
+  ブランチの reflog（`git log -g`）を読んで `git range-diff` を自分で動かす。
+
 ## 必須要素の実装方針
 
 ### サイドバー

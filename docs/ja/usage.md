@@ -12,6 +12,7 @@
 - ツールバー: Fetch・Pull・Push・Stash・Undo。履歴の書き換え・変更の破棄・stash の削除などは Undo で戻せる（CLI・VSCode 拡張と記録を共有する）。
 - Working Copy: ファイルはパスの一覧かディレクトリの木で表示（一覧の上で切り替え）。差分の行をクリックで選び（hunk の見出しで hunk 全体、Shift で範囲、⌘ で追加）、Stage Lines / Discard Lines。Space・Enter で stage / unstage。Summary と Description を書いて ⌘↩ でコミット。コンフリクトはコンフリクトごとに Use Current / Use Incoming / Use Both、または Merge Editor…（3 ペインのマージエディタ）。
 - History: グラフ付きの一覧（件名とブランチ・タグのラベル、その下に作者・日時・ID）。右クリックでコミットの編集（Edit Message・Squash・Fixup・Edit・Split・Drop）、cherry-pick・revert、ブランチ・タグの作成。ドラッグで並べ替え。上部で All Branches / Current Branch / 選んだ ref を切り替える。⌘F でコミットを検索（Enter・⌘G で次へ、⇧Enter・⇧⌘G で前へ。一致したコミットだけを出すこともできる）。
+- Range Diff: ローカルブランチの右クリックの「前の版と比べる」（または Repository > 前の版と比べる）で、最後の rebase・コミットの編集・amend の前の版と比べる（`git range-diff` と同じ）: = 同じ、! 変わった（2 つのパッチの差分つき）、< 消えた、> 足された。History で選んだ 2 つのコミットや Reflog の行とも比べられる。
 - 差分: ドラッグで文字を選んで ⌘C、⌘F で検索。構文の色付けは表示の後に裏で付く。
 - History の検索の構文: 語は件名・作者・ID から探す。空白で区切ると AND、`or` で OR、括弧でまとめる。`author:` `subject:` `commit:` `path:` `contents:"..."`（例: `path:fs/ (author:linus or author:greg)`）。作者は、mailmap で置き換えた名前とコミットに記録された名前のどちらでも合う。
 - 人はリポジトリの mailmap（`.mailmap`・`mailmap.file`）の名前とメールで出す（`git log` と同じ）。記録と違えば、詳細では記録された名前とメールを下に添える。切るのは git の `log.mailmap` で、リポジトリの設定の「作者と署名」（すべてのリポジトリなら Settings > Git）に mailmap のファイルと一緒にある。どちらを変えても、History を作り直さずに名前を出し直す。Blame は git と同じく、いつも mailmap で置き換える。
@@ -44,6 +45,7 @@ amonhen log -n 20 fix          # グラフ付きの履歴（検索の構文も�
 amonhen status / diff / show   # Working Copy とコミットの中身（--json で FE が読む形）
 amonhen stage --rows 3,5-9 f   # 差分の行ごとに stage（amonhen diff --combined --rows で番号を見る）
 amonhen undo [--list]          # 操作を戻す（アプリ・VSCode 拡張と記録を共有）
+amonhen range-diff --previous  # ブランチを、最後の rebase・amend の前の版と比べる（git range-diff）
 amonhen log -C ssh://host/path # SSH 先（共有の daemon が SSH のつながりを持ち続ける）
 amonhen daemon status          # 共有の daemon の様子
 ```

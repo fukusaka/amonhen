@@ -12,6 +12,7 @@ and for the VSCode extension see [apps/vscode](../apps/vscode).
 - Toolbar: Fetch, Pull, Push, Stash, Undo. Rewriting history, discarding changes, dropping stashes and the like can be reverted with Undo (the record is shared with the CLI and the VSCode extension).
 - Working Copy: files are shown as a list of paths or a directory tree (switch above the list). Click diff lines to select them (a hunk header selects the whole hunk, Shift selects a range, ⌘ adds to the selection), then Stage Lines / Discard Lines. Space / Enter stages / unstages. Write a Summary and Description and commit with ⌘↩. For conflicts, choose Use Current / Use Incoming / Use Both per conflict, or Merge Editor… (the 3-pane merge editor).
 - History: a list with a graph (subject and branch / tag labels, with author, date and ID below). Right-click to edit a commit (Edit Message, Squash, Fixup, Edit, Split, Drop), cherry-pick, revert, or create a branch or tag. Drag to reorder. At the top, switch between All Branches / Current Branch / a chosen ref. ⌘F searches commits (Enter / ⌘G for next, ⇧Enter / ⇧⌘G for previous; you can also show only the matching commits).
+- Range Diff: right-click a local branch and choose Compare with Previous Version (or Repository > Compare with Previous Version) to compare it with its version before the last rebase, History edit or amend, as `git range-diff` does: = same, ! changed (with the diff of the two patches), < dropped, > added. Two commits selected in History or a Reflog row can be compared too.
 - Diffs: drag to select text and ⌘C, ⌘F to search. Syntax highlighting is applied in the background after display.
 - History search syntax: words are searched in the subject, author and ID. Separate with spaces for AND, `or` for OR, and group with parentheses. `author:` `subject:` `commit:` `path:` `contents:"..."` (e.g. `path:fs/ (author:linus or author:greg)`). An author matches by the name the mailmap gives or the one recorded in the commit.
 - People are shown by the names and emails in the repository's mailmap (`.mailmap`, `mailmap.file`), as `git log` does; the details show the recorded name and email under them when they differ. git's `log.mailmap` turns this off; it is on Repository Settings > Author and Signing (and Settings > Git for all repositories), with the mailmap file. Changing either shows the names again without rebuilding History. Blame always uses the mailmap, as git does.
@@ -44,6 +45,7 @@ amonhen log -n 20 fix          # history with a graph (search syntax works too; 
 amonhen status / diff / show   # Working Copy and commit contents (--json for the form FEs read)
 amonhen stage --rows 3,5-9 f   # stage diff lines (see the numbers with amonhen diff --combined --rows)
 amonhen undo [--list]          # undo operations (record shared with the app and the VSCode extension)
+amonhen range-diff --previous  # compare the branch with its version before the last rebase or amend (git range-diff)
 amonhen log -C ssh://host/path # SSH host (the shared daemon keeps the SSH connection alive)
 amonhen daemon status          # state of the shared daemon
 ```

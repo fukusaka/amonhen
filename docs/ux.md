@@ -60,7 +60,7 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
   says it was not checked. Deleting and replacing ask first, naming the tags.
 - Workspace holds the rows that switch the main view. Stashes, after History (and Conflicts), appears only when there
   are stashes, with a count, and opens the Stashes view (section 5a); the stashes themselves are listed there, not in
-  the sidebar. Reflog, always last, opens the Reflog view (section 5b).
+  the sidebar. Range Diff appears after it only while a range diff is open (section 5d). Reflog, always last, opens the Reflog view (section 5b).
 - Pull Requests and Worktrees appear only when there is something to show.
 
 ## 1. Multiple repositories: tabs and separate windows
@@ -391,6 +391,28 @@ current branch (HEAD when detached) to that commit, like `git reset`. It asks fi
   to …"), so nothing is lost.
 - All three can be undone (⌥⌘Z): Soft and Mixed with the same kind of reset, Hard with `--keep`. Commits taken off
   stay reachable from Reflog. Not during a merge, rebase, cherry-pick or revert.
+
+## 5d. Range Diff
+
+Two versions of the same series of commits side by side, as `git range-diff` compares them: a branch before and after
+a rebase, a History edit or an amend. Its main use is checking a rebuilt stacked branch.
+
+- It opens from a local branch's Compare with Previous Version (sidebar), Repository > Compare with Previous Version
+  (the current branch), a Reflog row's Compare with Current HEAD, and History's Compare as Two Versions when two
+  commits are selected. While it is open, Range Diff appears in the sidebar's Workspace (after Stashes); × closes it.
+- The previous version comes from the branch's reflog: the last move after which the old tip is no longer an ancestor
+  of the new one (a rebase, History edit, amend, reset, or `branch -f`), wherever it was done. A rebase's reflog line
+  names its base, so the ranges are `<base> <old> <new>`; otherwise `<old>...<new>`. The ranges are shown at the top
+  and can be edited and compared again, written as for `git range-diff`.
+- On the left, the pairs in git's order, with git's marks: = the same, ! changed (orange), < only in the old version
+  (red, struck through), > only in the new one (green), each with old → new numbers and short IDs. Changes Only
+  hides the same ones; it is off by default, as git shows them all. Merge commits are left out, as in git.
+- On the right, a changed pair's diff of diffs in the usual diff view: the row's color is what changed between the
+  versions (outer − / +), the text is each version's patch line with its own − / +, and changed words are
+  highlighted. For the other pairs, the commit itself (the old one for < and the new one otherwise), in the same
+  column as History's detail. A pair's context menu shows either commit in History or copies its ID.
+- The core runs `git range-diff` (`rangeDiff`) and finds the previous version (`previousVersion`); the CLI's
+  `amonhen range-diff` and the VSCode extension use the same.
 
 ## 6. Working Copy
 
@@ -770,6 +792,9 @@ Starting with what has the biggest felt effect and fewest dependencies. At each 
 - [x] U20. Repository settings redone from the person using it (chapter 4). Done: the page in the sidebar's Workspace with its list of pages (Author and Signing, Commits, Operations, Branches, Working Copy, Remotes, Hooks · LFS, git config) and the git line under it, the rows with the value in effect, its source, ↩︎ and ⓘ, the default branch override (`amonhen.defaultBranch`), Pull and Fetch following git's settings, rows that only a terminal honors taken off the page, and Keys and Values, git config as the Xcode-style table (one row per key, a column per source, the local column editable, the Basic / Customized / All and Combined / Levels switches), and signing as one choice (No signing / OpenPGP / SSH / X.509) with the key chosen from those the core collects, and the template library in Settings… (on Git > Commits after U21), chosen on the Commits page (`amonhen.commitTemplate`) next to the repository's own template (`.git/amonhen/commit-template`, pointed to by `commit.template`, edited under the row) and a file, and Add to .gitignore on an untracked file's context menu in Working Copy, and the remotes sheet (name, fetch and push URLs, what the URL points to, a connection check) with the same actions on the sidebar's Remotes, and Hooks · LFS as tables with actions (an Enabled switch per hook, the selected hook's script under the table with Edit in <editor>, Create Hook…; Track Pattern… and Remove for LFS, with the count of files in LFS). This Mac's settings for all repositories are Settings… > Git (U21). What stage 7 still had, the SSH hosts' settings, is U22; Set for All Repositories on a row and editing the all-repositories column from a repository's page were dropped (4.4).
 - [x] U21. The Settings window in the shape of chapter 3: resizable, 960 points wide by default, every tab on one screen; the tabs General, Git (the machines), Accounts, Appearance, Diff & Merge, AI and Performance, no Advanced tab (Commit comes when it has rows). The message template library moves from Git to Commit, auto-fetch and bookmarking to General, GitHub to Accounts, the merge editor's auto-resolve to Diff & Merge, the daemon and the shell environment to Performance; the pull default and the user-wide `rebase.updateRefs` rows go (chapter 3). Done, with the Git tab as the Repository Settings screen at the all-repositories level (Author and Signing, Commits with the template library, Operations, Working Copy with Ignore everywhere, Programs, Keys and Values with its all-repositories column editable); the SSH hosts are U22.
 - [x] U22. Settings… > SSH Hosts (chapter 3), three columns: the hosts with + / −; the selected host's pages, Connection (state and Check Connection, the engine, signature verification, which moves here from the one switch for every host, and the folders to scan, one setting with Places) and the pages of Settings… > Git for all repositories there (against the host's `--global`); the selected page. Needs the engine to run on a host without a repository (`amonhen --stdio` with no path, serving config, version, programs and keys) and the shared daemon to connect with `ssh://host` alone. The host's choices (git, the engine, sending one) go to the core when it connects, directly or through the shared daemon, which keeps a separate connection per choice.
+- [x] U23. Range Diff (section 5d): the core's `rangeDiff` and `previousVersion` (over SSH too), `amonhen range-diff`
+  (`--previous`, `--json`), the Range Diff page with its entries (a branch's menu, the Repository menu, Reflog,
+  two commits in History), and the VSCode extension's Compare with Previous Version and Range Diff….
 
 ## Decisions
 

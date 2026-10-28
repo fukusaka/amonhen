@@ -371,6 +371,10 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
 
   チェックボックス「積み重ねたブランチも一緒に動かす」は、設定の値から始まり、この操作にだけ効く（`--update-refs`／`--no-update-refs`、History の編集では todo の `update-ref` の行）。git が古ければ使えない。切り替えると、図もそれに合わせて描き直す。
 - **操作の後。** どのブランチが動き、どれが残ったかを出す。Undo 1 回で、すべて戻る。
+- **結果を確かめる。** Range Diff（ux.md の 5d 節）は、ブランチを書き換える前の版と比べる（`git range-diff` と同じ）。
+  作り直したスタックを、コミットごとに確かめられる。前の版は、コアの `previousVersion` がブランチの reflog から探す
+  （端末でした rebase も）。`rangeDiff` は `git range-diff`（2.19 から。最低の 2.23 より前）を動かし、出力を完全な
+  コミット ID つきの組に読む。
 - **リポジトリの設定。** シート（⌘;）をやめ、サイドバーの Workspace に、Working Copy・History・Stashes・Reflog と並ぶ Settings の画面として置く。⌘; はその画面を開く。
 - **独自の既定を持たない。** Amon Hen は自分で `rebase.updateRefs` を有効にしない。rebase は、同じ設定の `git rebase` と同じにふるまう。History の編集は、設定がオンで git が 2.38 以降のときだけ、todo の `update-ref` の行を残す。
 

@@ -58,7 +58,7 @@
   には Push と削除を出し、シートで確かめていないと断る。削除と置き換えは、タグの名前を並べて先に確かめる。
 - Workspace には、メインの画面を切り替える行を置く。Stashes は History（と Conflicts）の下に、stash があるときだけ
   件数付きで出し、選ぶと Stashes の画面（5a 節）を開く。stash そのものはサイドバーではなく、その画面に並べる。
-  Reflog はいつも最後に出し、選ぶと Reflog の画面（5b 節）を開く。
+  Range Diff は、開いている間だけその下に出す（5d 節）。Reflog はいつも最後に出し、選ぶと Reflog の画面（5b 節）を開く。
 - Pull Requests・Worktrees は該当するものがあるときだけ出す。
 
 ## 1. 複数のリポジトリ: タブと別ウィンドウ
@@ -378,6 +378,28 @@ History の行と Reflog の行の右クリックの「Reset <ブランチ> to <
   同じく触らない）ので、なにも失わない。
 - どれも Undo（⌥⌘Z）できる: Soft と Mixed は同じ種類の reset で、Hard は `--keep` で戻す。外したコミットは Reflog
   から辿れる。merge・rebase・cherry-pick・revert の途中はできない。
+
+## 5d. Range Diff
+
+同じ一連のコミットの 2 つの版を、`git range-diff` と同じに比べる: rebase・コミットの編集・amend の前と後の
+ブランチなど。主な使い道は、作り直した stacked branch を確かめること。
+
+- 開くのは、サイドバーのローカルブランチの「前の版と比べる」、Repository > 前の版と比べる（今のブランチ）、Reflog
+  の行の「今の HEAD と比べる」、History で 2 つのコミットを選んだときの「2 つの版として比べる」。開いている間は
+  サイドバーの Workspace に Range Diff の行が出る（Stashes の下）。× で閉じる。
+- 前の版はブランチの reflog から探す: 前の先端が新しい先端の祖先でなくなった最後の動き（rebase・コミットの編集・
+  amend・reset・`branch -f`）。どこでした操作でもよい。rebase の reflog の行には土台があるので、範囲は
+  `<土台> <古い> <新しい>`。なければ `<古い>...<新しい>`。範囲は上に出し、`git range-diff` と同じ書き方で書き換えて
+  比べ直せる。
+- 左には組を git の順に、git の印で並べる: = 同じ、! 変わった（オレンジ）、< 古い版にだけある（赤、取り消し線）、
+  > 新しい版にだけある（緑）。それぞれに古い → 新しい番号と短い ID。「変わったものだけ」は同じ組を隠す。git は
+  すべてを出すので、既定は切っておく。merge コミットは git と同じく比べない。
+- 右には、変わった組の差分の差分を、いつもの差分の表示で出す: 行の色が 2 つの版の間で変わったところ（外側の − と
+  ＋）、文字はそれぞれの版のパッチの行（その − と ＋ を含む）で、変わった単語を強調する。ほかの組は、そのコミット
+  そのもの（< は古いほう、ほかは新しいほう）を History の詳細と同じ欄に出す。組の右クリックで、どちらかのコミットを
+  History で見る、ID をコピーする。
+- コアが `git range-diff` を動かし（`rangeDiff`）、前の版を探す（`previousVersion`）。CLI の `amonhen range-diff` と
+  VSCode 拡張も同じものを使う。
 
 ## 6. Working Copy
 
@@ -748,6 +770,9 @@ git の考え方と、アプリが守ること:
 - [x] U20. リポジトリの設定を、使う人から作り直す（4 章）。済み: サイドバーの Workspace の画面とページの一覧（作者と署名、コミット、操作、ブランチ、Working Copy、リモート、Hooks・LFS、git config）とその下の git の 1 行、効いている値を出す行、その設定元、↩︎ と ⓘ、既定のブランチの上書き（`amonhen.defaultBranch`）、Pull と Fetch が git の設定に従うこと、端末にしか効かない行を画面から外したこと、キーと値（git config を Xcode の形の表にしたこと。キーごとに 1 行、設定元ごとの列、local の列は編集できる、Basic / Customized / All と Combined / Levels の切り替え）、署名を 1 つの選択（署名しない／OpenPGP／SSH／X.509）にしてコアが集めた鍵から選ぶこと、Settings… のテンプレートの一覧（U21 の後は Git > コミット）とコミットのページでの選択（`amonhen.commitTemplate`。このリポジトリ専用のテンプレート `.git/amonhen/commit-template`（`commit.template` が指し、行の下で編集）とファイルと並ぶ）、Working Copy の未追跡ファイルの文脈メニューの「.gitignore に追加」、リモートのシート（名前、fetch と push の URL、接続先の種類、接続の確認）とサイドバーの Remotes の同じ操作、Hooks・LFS を操作つきの表にしたこと（フックごとに有効のスイッチ、選んだフックのスクリプトを表の下に「<エディタ> で編集」つきで、「フックを作成…」、LFS は「パターンを追跡…」と「削除」と LFS にあるファイルの数）。この Mac のすべてのリポジトリの設定は Settings… > Git（U21）。段階 7 に残っていた SSH 先の設定は U22。行の「すべてのリポジトリに設定」と、リポジトリの画面での「すべてのリポジトリ」の列の編集はやめた（4.4）。
 - [x] U21. Settings の画面を 3 章の形に: 大きさを変えられ、既定の幅は 960、どのタブも 1 画面。タブは General・Git（機械）・Accounts・Appearance・Diff & Merge・AI・Performance で、「詳細」はなし（Commit は行ができてから）。メッセージのテンプレートの一覧は Git > コミットへ、自動 fetch とブックマークは General へ、GitHub は Accounts へ、マージエディタの自動解消は Diff & Merge へ、daemon とシェルの環境は Performance へ。pull の既定とユーザー全体の `rebase.updateRefs` の行はなくす（3 章）。済み。Git タブはリポジトリの設定の画面を「すべてのリポジトリ」の段で開いたもの（作者と署名、テンプレートの一覧つきのコミット、操作、Working Copy の「どこでも無視する」、プログラム、「すべてのリポジトリ」の列を編集できるキーと値）。SSH 先は U22。
 - [x] U22. Settings… > SSH Hosts（3 章）、3 列: SSH 先の一覧と ＋／−。選んだ SSH 先のページの一覧: 接続（状態と「接続を確認」、エンジン、署名の検証（全 SSH 先共通の 1 つのスイッチをここへ）、探すフォルダ（Places と 1 つの設定））と、そこにあるすべてのリポジトリに効く Settings… > Git のページ（SSH 先の `--global` に対して）。選んだページ。エンジンをリポジトリなしで SSH 先で動かせること（パスなしの `amonhen --stdio` で、設定・版・プログラム・鍵だけを受ける）と、共有の daemon が `ssh://host` だけでつなげることが要る。SSH 先ごとの選択（git、エンジン、送り込むか）は、つなぐときにコアに渡す（直接でも共有の daemon 越しでも。daemon は選択ごとに別のつながりにする）。
+- [x] U23. Range Diff（5d 節）: コアの `rangeDiff` と `previousVersion`（SSH 先でも）、`amonhen range-diff`
+  （`--previous`、`--json`）、Range Diff の画面と開く所（ブランチのメニュー、Repository のメニュー、Reflog、History
+  の 2 つのコミット）、VSCode 拡張の Compare with Previous Version と Range Diff…。
 
 ## 決めたこと
 
