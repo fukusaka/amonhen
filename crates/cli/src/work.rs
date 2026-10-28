@@ -798,6 +798,142 @@ pub fn merge_check(args: &[String]) -> Result<ExitCode> {
     })
 }
 
+// MARK: - range-diff
+
+/// 同じ一連のコミットの 2 つの版を比べる（`git range-diff` と同じ範囲の書き方）。`--previous` ならブランチ
+/// （既定は今のブランチ）の、最後に書き換える前の版と今の版を比べる。
+pub fn range_diff(args: &[String]) -> Result<ExitCode> {
+    let (c, seen) = common(
+        args,
+        &["--previous", "--creation-factor"],
+        &["--creation-factor"],
+    )?;
+    let factor = match value(&seen, "--creation-factor") {
+        Some(v) => Some(
+            v.parse::<u32>()
+                .map_err(|_| tr!("--creation-factor takes a percentage: {value}", value = v))?,
+        ),
+        None => None,
+    };
+    let front = open_repository(&c.dir)?;
+    let mut previous = Value::Null;
+    let ranges: Vec<String> = if flag(&seen, "--previous") {
+        let branch = match c.rest.as_slice() {
+            [] => None,
+            [branch] => Some(branch.clone()),
+            _ => return Err(format!("{}\n\n{}", tr!("Give one branch"), usage()).into()),
+        };
+        previous = command(&*front, json!({"op": "previousVersion", "branch": branch}))?["info"]
+            ["previous"]
+            .clone();
+        if previous.is_null() {
+            if c.json {
+                print_json(&json!({"previous": null, "pairs": []}));
+            } else {
+                println!(
+                    "{}",
+                    tr!("The branch hasn’t been rewritten (nothing in its reflog)")
+                );
+            }
+            return Ok(ExitCode::SUCCESS);
+        }
+        previous["ranges"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|r| r.as_str().map(str::to_owned))
+            .collect()
+    } else {
+        if !(1..=3).contains(&c.rest.len()) {
+            return Err(format!("{}\n\n{}", tr!("Give the two ranges to compare"), usage()).into());
+        }
+        c.rest.clone()
+    };
+    let info = command(
+        &*front,
+        json!({"op": "rangeDiff", "ranges": ranges, "creationFactor": factor}),
+    )?["info"]
+        .clone();
+    if c.json {
+        print_json(&json!({"previous": previous, "pairs": info["pairs"]}));
+        return Ok(ExitCode::SUCCESS);
+    }
+    let mut out = String::new();
+    if !previous.is_null() {
+        let text = |key: &str| previous[key].as_str().unwrap_or("").to_owned();
+        out.push_str(&paint(
+            &tr!(
+                "{old} → {branch}: {message}",
+                old = text("selector"),
+                branch = text("branch"),
+                message = text("message")
+            ),
+            "1",
+            c.color,
+        ));
+        out.push_str(&format!("\n  git range-diff {}\n\n", ranges.join(" ")));
+    }
+    out.push_str(&range_diff_text(&info["pairs"], c.color));
+    term::write(&out);
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `git range-diff` に近い形の文字列（ID は短く。色は git の dual-color に近く、外側の記号で行の色を決め、
+/// 内側の記号は薄く色を付ける）。
+fn range_diff_text(pairs: &Value, color: bool) -> String {
+    let pairs = pairs.as_array().map(Vec::as_slice).unwrap_or_default();
+    let width = pairs
+        .iter()
+        .flat_map(|p| [&p["old"]["index"], &p["new"]["index"]])
+        .filter_map(Value::as_u64)
+        .max()
+        .unwrap_or(1)
+        .to_string()
+        .len();
+    let side = |c: &Value| match (c["index"].as_u64(), c["oid"].as_str()) {
+        (Some(i), Some(oid)) => format!("{i:>width$}:  {}", &oid[..oid.len().min(7)]),
+        _ => format!("{:>width$}:  -------", "-"),
+    };
+    let mut out = String::new();
+    for p in pairs {
+        let (mark, code) = match p["status"].as_str().unwrap_or("") {
+            "same" => ("=", "2"),
+            "changed" => ("!", "33"),
+            "removed" => ("<", "31"),
+            _ => (">", "32"),
+        };
+        let header = format!(
+            "{} {mark} {} {}",
+            side(&p["old"]),
+            side(&p["new"]),
+            p["subject"].as_str().unwrap_or("")
+        );
+        out.push_str(&paint(&header, code, color));
+        out.push('\n');
+        for line in p["diff"].as_array().into_iter().flatten() {
+            let line = line.as_str().unwrap_or("");
+            let code = match line.as_bytes().first() {
+                Some(b'-') => "31",
+                Some(b'+') => "32",
+                Some(b'@') => "36",
+                _ => match line.as_bytes().get(1) {
+                    Some(b'-') => "2;31",
+                    Some(b'+') => "2;32",
+                    _ => "",
+                },
+            };
+            out.push_str("    ");
+            out.push_str(&if code.is_empty() {
+                line.to_owned()
+            } else {
+                paint(line, code, color)
+            });
+            out.push('\n');
+        }
+    }
+    out
+}
+
 fn done(c: &Common) -> Result<ExitCode> {
     if c.json {
         print_json(&json!({"ok": true}));
