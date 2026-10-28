@@ -11,6 +11,17 @@ use std::time::Duration;
 use amonhen_core::Repository;
 use amonhen_remote::{Connection, Notification, RemoteBackend};
 
+/// 起動した daemon。試験が途中で失敗しても止める（残ると試験の出力を握ったままになり、`cargo test` の出力を
+/// 読むものが終わらない）。
+struct Daemon(std::process::Child);
+
+impl Drop for Daemon {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 fn git(dir: &Path, args: &[&str]) {
     amonhen_model::testing::isolate_from_user_settings();
     let ok = Command::new("git")
@@ -400,14 +411,16 @@ fn runs_git_with_the_client_environment_and_its_updates() {
     let socket = tmp.path().join("d.sock");
     let home = tmp.path().join("home");
     std::fs::create_dir(&home).unwrap();
-    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
-        .env("AMONHEN_LANG", "en")
-        .env_remove("GIT_AMONHEN_TEST")
-        .arg("--serve")
-        .arg(&socket)
-        .env("HOME", &home)
-        .spawn()
-        .unwrap();
+    let _daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_amonhend"))
+            .env("AMONHEN_LANG", "en")
+            .env_remove("GIT_AMONHEN_TEST")
+            .arg("--serve")
+            .arg(&socket)
+            .env("HOME", &home)
+            .spawn()
+            .unwrap(),
+    );
     let env = |value: &str| {
         ClientEnv::from_vars([
             ("PATH".to_owned(), std::env::var("PATH").unwrap_or_default()),
@@ -447,8 +460,6 @@ fn runs_git_with_the_client_environment_and_its_updates() {
         .unwrap();
     commit("two.txt");
     assert_eq!(std::fs::read_to_string(&log).unwrap(), "first\nsecond\n");
-    daemon.kill().unwrap();
-    let _ = daemon.wait();
 }
 
 #[test]
@@ -467,13 +478,15 @@ fn shares_one_daemon_between_clients() {
     // History のキャッシュは試験の中に書かせる（手元のアプリのキャッシュに混ぜない）。
     let home = tmp.path().join("home");
     std::fs::create_dir(&home).unwrap();
-    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
-        .env("AMONHEN_LANG", "en")
-        .arg("--serve")
-        .arg(&socket)
-        .env("HOME", &home)
-        .spawn()
-        .unwrap();
+    let _daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_amonhend"))
+            .env("AMONHEN_LANG", "en")
+            .arg("--serve")
+            .arg(&socket)
+            .env("HOME", &home)
+            .spawn()
+            .unwrap(),
+    );
     let connect = |path: &str| {
         let started = std::time::Instant::now();
         let stream = loop {
@@ -622,8 +635,6 @@ fn shares_one_daemon_between_clients() {
         .status()
         .unwrap();
     assert!(second.success());
-    let _ = daemon.kill();
-    let _ = daemon.wait();
 }
 
 fn walk(dir: &Path) -> Vec<std::path::PathBuf> {
@@ -658,15 +669,17 @@ fn shared_daemon_opens_an_ssh_host_without_a_repository() {
     )
     .unwrap();
     let socket = tmp.path().join("d.sock");
-    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
-        .env("AMONHEN_LANG", "en")
-        .arg("--serve")
-        .arg(&socket)
-        .env("HOME", &local_home)
-        .env("AMONHEN_SSH", &ssh_program)
-        .env("AMONHEN_ENGINES", &bundled)
-        .spawn()
-        .unwrap();
+    let _daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_amonhend"))
+            .env("AMONHEN_LANG", "en")
+            .arg("--serve")
+            .arg(&socket)
+            .env("HOME", &local_home)
+            .env("AMONHEN_SSH", &ssh_program)
+            .env("AMONHEN_ENGINES", &bundled)
+            .spawn()
+            .unwrap(),
+    );
     let started = std::time::Instant::now();
     let stream = loop {
         match std::os::unix::net::UnixStream::connect(&socket) {
@@ -743,9 +756,6 @@ fn shared_daemon_opens_an_ssh_host_without_a_repository() {
             .any(|e| e["name"] == "amonhen" && e["kind"] == "folder"),
         "{listed}"
     );
-
-    daemon.kill().unwrap();
-    daemon.wait().unwrap();
 }
 
 /// SSH 先ごとの選択（エンジンと起動のしかた）は、開くときの最初の文に乗って daemon に届き、エンジンの起動に使われる。
@@ -767,15 +777,7 @@ fn shared_daemon_uses_the_host_options_it_is_given() {
     )
     .unwrap();
     let socket = tmp.path().join("d.sock");
-    // 失敗しても daemon を残さない（残ると cargo test の出力が閉じず、止まって見える）。
-    struct StopOnDrop(std::process::Child);
-    impl Drop for StopOnDrop {
-        fn drop(&mut self) {
-            let _ = self.0.kill();
-            let _ = self.0.wait();
-        }
-    }
-    let _daemon = StopOnDrop(
+    let _daemon = Daemon(
         Command::new(env!("CARGO_BIN_EXE_amonhend"))
             .env("AMONHEN_LANG", "en")
             .arg("--serve")
@@ -1060,15 +1062,17 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
     )
     .unwrap();
     let socket = tmp.path().join("d.sock");
-    let mut daemon = Command::new(env!("CARGO_BIN_EXE_amonhend"))
-        .env("AMONHEN_LANG", "en")
-        .arg("--serve")
-        .arg(&socket)
-        .env("HOME", &local_home)
-        .env("AMONHEN_SSH", &ssh_program)
-        .env("AMONHEN_ENGINES", &bundled)
-        .spawn()
-        .unwrap();
+    let _daemon = Daemon(
+        Command::new(env!("CARGO_BIN_EXE_amonhend"))
+            .env("AMONHEN_LANG", "en")
+            .arg("--serve")
+            .arg(&socket)
+            .env("HOME", &local_home)
+            .env("AMONHEN_SSH", &ssh_program)
+            .env("AMONHEN_ENGINES", &bundled)
+            .spawn()
+            .unwrap(),
+    );
     let connect = |location: &str| {
         let started = std::time::Instant::now();
         let stream = loop {
@@ -1140,6 +1144,4 @@ fn shared_daemon_opens_an_ssh_repository_for_everyone() {
         text.contains("sent now") || text.contains("sent earlier"),
         "SSH 先のエンジンが出る: {text}"
     );
-    let _ = daemon.kill();
-    let _ = daemon.wait();
 }
