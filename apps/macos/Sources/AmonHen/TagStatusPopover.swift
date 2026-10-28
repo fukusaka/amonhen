@@ -56,6 +56,7 @@ final class TagStatusPopover: NSViewController {
             f.font = mono ? .monospacedSystemFont(ofSize: 11, weight: .regular) : .systemFont(ofSize: 12)
             f.textColor = color
             f.preferredMaxLayoutWidth = 290
+            f.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             return f
         }
         var grid: [(String, NSView)] = [(L("Tag"), value(item.name))]
@@ -81,8 +82,9 @@ final class TagStatusPopover: NSViewController {
         })
         gridView.column(at: 0).xPlacement = .trailing
         // 表を中身の幅にする（縦のスタックが横いっぱいに引き伸ばすと、値が短いときに余りが列の間に回り、表が
-        // 中ほどに寄って見える）。
-        gridView.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+        // 中ほどに寄って見える）。値の欄の縮みにくさ（750）より弱くして、折り返す値を縮めない（縮めると、290 で
+        // 求めた高さより行が増え、下が切れる。折り返すラベルはもとは 250 で縮みやすい）。
+        gridView.setContentHuggingPriority(.init(749), for: .horizontal)
         gridView.rowSpacing = 5
         gridView.columnSpacing = 10
         for i in 0..<gridView.numberOfRows { gridView.row(at: i).rowAlignment = .firstBaseline }
