@@ -73,6 +73,8 @@ becomes the GitHub Release notes.
 - In a repository on an SSH host checked with this Mac's keys, a commit's details again get their notes, line counts
   and signature, and the commit selected on opening is no longer verified with the SSH host's keys.
 - A message template file for a repository on an SSH host is chosen on the host, not on this Mac.
+- A commit's details grow to fit a long message in SSH hosts' repositories too: they could stop short, by up to
+  the height of the changed files list, and leave the rest to scroll.
 
 ### [0.2.7] - 2026-10-26
 
