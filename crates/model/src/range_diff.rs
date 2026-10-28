@@ -121,7 +121,7 @@ pub fn reflog_keeps_history(message: &str) -> bool {
         "commit:",
         "commit (initial):",
         "commit (merge):",
-        "branch:",
+        "branch: Created from",
         "merge ",
         "pull: Fast-forward",
         "cherry-pick:",
@@ -139,7 +139,7 @@ mod tests {
 1:  ef98ed8 ! 1:  040a1df five
     @@ Commit message
          five
-
+\x20\x20\x20\x20\x20
       ## f ##
     -@@
     +@@ f: one
@@ -215,5 +215,7 @@ mod tests {
         assert!(reflog_keeps_history("commit: x"));
         assert!(!reflog_keeps_history("commit (amend): x"));
         assert!(!reflog_keeps_history("reset: moving to HEAD~1"));
+        assert!(reflog_keeps_history("branch: Created from main"));
+        assert!(!reflog_keeps_history("branch: Reset to main"));
     }
 }
