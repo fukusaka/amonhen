@@ -649,6 +649,10 @@ fn oid(hex: &str) -> Result<Oid> {
     Oid::from_hex(hex).ok_or_else(|| tr!("Can’t read the commit ID: {hex}", hex = hex).into())
 }
 
+/// `git am` が止まったパッチを 3-way で当て直したときに、その番号（`rebase-apply/next`）を書いておくファイル。
+/// am が終わるか中止されると git が rebase-apply ごと消すので、次の am に残らない。
+const AM_RETRIED: &str = "rebase-apply/amonhen-retried";
+
 /// パッチのファイルを並べた順につなぐ。メールの区切りの行（`From `）がないもの（.eml など）には、
 /// `git format-patch` と同じ形の区切りを足す（`git am` が 1 通ずつに分けられるように）。
 fn read_patches(paths: &[String]) -> Result<Vec<u8>> {
@@ -973,6 +977,10 @@ impl Repository {
                 info["threeWay"] = (read("rebase-apply/threeway").as_deref() == Some("t")).into();
                 // diff のないパッチ（送り状など）で止まった。
                 info["empty"] = read("rebase-apply/patch").is_none().into();
+                // このパッチを 3-way で当て直したところ（残っているのはコンフリクトか、その解決）。
+                info["retried"] = (read(AM_RETRIED).is_some()
+                    && read(AM_RETRIED) == read("rebase-apply/next"))
+                .into();
             }
         }
         if let Some(branch) = self.refs().ok().and_then(|r| r.refs.head_branch.clone())
@@ -2026,6 +2034,12 @@ impl Repository {
             }
             Command::AmThreeWay => {
                 let outcome = ops.am_three_way()?;
+                if outcome != Outcome::Done {
+                    let files = self.backend().files();
+                    if let Some(next) = files.read(Root::GitDir, "rebase-apply/next")? {
+                        files.write(Root::GitDir, AM_RETRIED, &next)?;
+                    }
+                }
                 undo.settle_pending(ops)?;
                 done(outcome)
             }
@@ -4724,11 +4738,13 @@ mod tests {
         assert_eq!(r["info"]["kind"], "am");
         assert_eq!(r["info"]["step"]["subject"], "change");
         assert_eq!(r["info"]["threeWay"], false);
+        assert_eq!(r["info"]["retried"], false);
         // 止まっている間は記録しない（保留）。
         assert!(run(&repo, r#"{"op":"undoPeek"}"#)["label"].is_null());
 
         let r = run(&repo, r#"{"op":"amThreeWay"}"#);
         assert_eq!(r["outcome"], "conflict", "{r}");
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["info"]["retried"], true);
         let text = std::fs::read_to_string(dir.join("a.txt")).unwrap();
         assert!(text.contains("<<<<<<<"), "{text}");
         std::fs::write(dir.join("a.txt"), "1\nx\n3\n").unwrap();
@@ -4738,6 +4754,13 @@ mod tests {
         assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "Apply 1 patch");
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["other", "first"]);
+        // 当て直した印は、am が終わると rebase-apply ごと消え、次の am に残らない。
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "am", "paths": [patch], "threeWay": false}).to_string(),
+        );
+        assert_eq!(r["outcome"], "conflict", "{r}");
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["info"]["retried"], false);
     }
 
     #[test]

@@ -237,7 +237,7 @@ pub fn am(args: &[String]) -> Result<ExitCode> {
         }
         return Ok(ExitCode::SUCCESS);
     }
-    report(&*front, &r, step == Some("amThreeWay"), json_out)
+    report(&*front, &r, json_out)
 }
 
 /// `amonhen apply`。
@@ -337,8 +337,7 @@ fn check_patches(front: &dyn Front, files: &[String], json_out: bool) -> Result<
 }
 
 /// am の結果。止まったら、どのパッチでなぜ止まったかと、次にできること。
-/// `retried` は 3-way で当て直したところ（止まっていればコンフリクト）。
-fn report(front: &dyn Front, r: &Value, retried: bool, json_out: bool) -> Result<ExitCode> {
+fn report(front: &dyn Front, r: &Value, json_out: bool) -> Result<ExitCode> {
     let stopped = r["outcome"] != "done" && r["outcome"].is_string();
     let sequence = if stopped {
         Some(command(front, json!({"op": "sequence"}))?)
@@ -358,7 +357,8 @@ fn report(front: &dyn Front, r: &Value, retried: bool, json_out: bool) -> Result
         let total = info["total"].as_u64().unwrap_or(0);
         let why = if info["empty"] == true {
             tr!("The patch is empty. Skip it with amonhen am --skip")
-        } else if r["outcome"] == "conflict" && info["threeWay"] != true && !retried {
+        } else if r["outcome"] == "conflict" && info["threeWay"] != true && info["retried"] != true
+        {
             tr!(
                 "It doesn’t apply. amonhen am --retry-3way merges it with conflicts to resolve; or apply it by hand, then amonhen am --continue (or --skip, --abort)"
             )
