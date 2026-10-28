@@ -59,13 +59,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     nonisolated static func openRepository(location: String, daemon: String, daemons: String) throws -> Repository {
         let cacheDirectory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "io.github.fukusaka.amonhen")
-        return if RepositoryLocation.isRemote(location) {
-            // SSH 先ごとの選択（エンジンと git）も渡す。
-            try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory,
-                           hostOptions: Settings.hostOptionsJSON(for: location))
-        } else {
-            try Repository(path: location, cacheDirectory: cacheDirectory)
+        guard RepositoryLocation.isRemote(location) else {
+            return try Repository(path: location, cacheDirectory: cacheDirectory)
         }
+        // SSH 先ごとの選択（エンジンと git）も渡す。
+        let repository = try Repository(location: location, daemon: daemon, daemons: daemons, cacheDirectory: cacheDirectory,
+                                        hostOptions: Settings.hostOptionsJSON(for: location))
+        // 署名をどこで検証するかは、何かを読む前に渡す（後で渡すと、開いてすぐ読んだ詳細だけ SSH 先の鍵で検証される）。
+        repository.setLocalSignatureCheck(Settings.checksSignaturesLocally(at: location))
+        return repository
     }
 
     /// `debug` なら、起動時の引数（`--snapshot` など）の確認用の動きをする。
@@ -761,7 +763,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// daemon 越しなら、初めての読み込みの進み具合と、接続が切れたことを出す。
     private func watchConnection() {
         guard RepositoryLocation.isRemote(location) else { return }
-        repository.setLocalSignatureCheck(Settings.sshHost(of: location).map(Settings.checkSignaturesLocally(on:)) ?? Settings.checkRemoteSignaturesLocally)
         NotificationCenter.default.addObserver(
             self, selector: #selector(signatureCheckChanged), name: .signatureCheckChanged, object: nil)
         updateConnection()

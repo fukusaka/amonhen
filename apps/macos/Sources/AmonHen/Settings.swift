@@ -39,11 +39,19 @@ enum Settings {
         }
     }
 
-    private static let signatureCheckByHostKey = "checkRemoteSignaturesLocallyByHost"
+    nonisolated private static let signatureCheckByHostKey = "checkRemoteSignaturesLocallyByHost"
 
     /// `host` のリポジトリの署名を手元の鍵で検証するか。
     static func checkSignaturesLocally(on host: String) -> Bool {
         (UserDefaults.standard.dictionary(forKey: signatureCheckByHostKey) as? [String: Bool])?[host] ?? checkRemoteSignaturesLocally
+    }
+
+    /// `location`（SSH 先のリポジトリ）の署名を手元の鍵で検証するか。リポジトリを開くとき（裏のスレッド）に読む。
+    nonisolated static func checksSignaturesLocally(at location: String) -> Bool {
+        let defaults = UserDefaults.standard
+        let fallback = defaults.object(forKey: "checkRemoteSignaturesLocally") as? Bool ?? true
+        guard let host = sshHost(of: location) else { return fallback }
+        return (defaults.dictionary(forKey: signatureCheckByHostKey) as? [String: Bool])?[host] ?? fallback
     }
 
     static func setCheckSignaturesLocally(_ value: Bool, on host: String) {
