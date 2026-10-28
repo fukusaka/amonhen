@@ -228,7 +228,8 @@ impl Git {
             "-c",
             &gpg,
             "log",
-            "-1",
+            // 親を辿らない（手元で検証するときの作業用のリポジトリには、そのコミットしかない）。
+            "--no-walk",
             "--format=%G?%x00%GS%x00%GK%x00%GF%x00%GT%x00%GP%x00",
             &commit.to_string(),
         ])?;
