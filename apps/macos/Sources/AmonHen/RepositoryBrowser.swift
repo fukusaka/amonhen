@@ -545,9 +545,9 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
         return path
     }
 
-    /// SSH 先のパスの見せ方（`/~/prj` は `~/prj`）。
-    private static func remoteTitle(_ path: String) -> String {
-        path.hasPrefix("/~") ? String(path.dropFirst()) : path
+    /// SSH 先のパスの見せ方（`/~/prj` は `~/prj`、Windows の SSH 先の `/C:/src` は `C:/src`）。
+    static func remoteTitle(_ path: String) -> String {
+        path.hasPrefix("/~") || HostPath.isWindows(String(path.dropFirst())) ? String(path.dropFirst()) : path
     }
 
     /// リポジトリのあるフォルダの階層。`repositories` はリポジトリのパス（`base` の下）。リポジトリの入っている
