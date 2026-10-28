@@ -1081,7 +1081,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
 
     /// 下書きがあればそれを、なければテンプレートを入れる: リポジトリが Settings > Git の共有の一覧から選んだもの
     /// （`amonhen.commitTemplate`）、なければ `commit.template` のファイル（このリポジトリ専用のものはコアから読むので
-    /// SSH 先でも入る。ほかのファイルは手元のリポジトリだけ）。どれも # の行は除く。
+    /// SSH 先でも入る。ほかのファイルは手元のリポジトリだけ）。ファイルのほうがリポジトリに近い段で決まっていれば
+    /// ファイル（設定のページと同じ決め方。`MessageTemplate`）。どれも # の行は除く。
     private func restoreDraftOrTemplate() {
         if let draft = UserDefaults.standard.stringArray(forKey: draftKey), draft.count == 2 {
             summary.stringValue = draft[0]
@@ -1093,13 +1094,15 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         let workdir = repository.workdir
         Task {
             struct Entries: Decodable {
-                struct Entry: Decodable { let key: String; let value: String }
+                struct Entry: Decodable { let scope: String; let key: String; let value: String }
                 let entries: [Entry]
             }
             let entries = try? await Task.detached { try repository.info(["op": "configList"], as: Entries.self) }.value
-            let value = { (key: String) in entries?.entries.last { $0.key.lowercased() == key }?.value }
+            let entry = { (key: String) in entries?.entries.last { $0.key.lowercased() == key } }
+            let value = { (key: String) in entry(key)?.value }
             let text: String
-            if let name = value("amonhen.committemplate"), let t = Settings.commitTemplates.first(where: { $0.name == name }) {
+            if let shared = entry("amonhen.committemplate"), let t = Settings.commitTemplates.first(where: { $0.name == shared.value }),
+               !MessageTemplate.sharedYields(shared: shared.scope, file: entry("commit.template").flatMap { $0.value.isEmpty ? nil : $0.scope }) {
                 text = t.text
             } else {
                 guard let path = value("commit.template") else { return }

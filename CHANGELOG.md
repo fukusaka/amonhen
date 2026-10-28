@@ -77,6 +77,8 @@ becomes the GitHub Release notes.
 - A message template file for a repository on an SSH host is chosen on the host, not on this Mac.
 - A commit's details grow to fit a long message in SSH hosts' repositories too: they could stop short, by up to
   the height of the changed files list, and leave the rest to scroll.
+- A message template file chosen for a repository now wins over a shared template chosen for all repositories, in
+  Repository Settings and the commit box.
 
 ### [0.2.7] - 2026-10-26
 

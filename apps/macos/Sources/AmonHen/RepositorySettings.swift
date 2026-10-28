@@ -10,6 +10,11 @@ struct ConfigEntry: Decodable, Hashable, Identifiable {
     let key: String
     let value: String
     var id: String { "\(scope)|\(origin)|\(key)|\(value)" }
+
+    /// 設定元の段の強さ（git が後で読む段ほど強い。system < global < local < worktree）。
+    nonisolated static func rank(_ scope: String) -> Int {
+        ["system": 0, "global": 1, "local": 2, "worktree": 3][scope] ?? 0
+    }
 }
 
 /// 署名に使える鍵（コアの `signingKeys`）。
@@ -1458,6 +1463,16 @@ private struct CommitsPage: View {
     }
 }
 
+/// メッセージのテンプレートの決め方（設定のページとコミット欄で同じ）。
+nonisolated enum MessageTemplate {
+    /// 共有のテンプレート（`amonhen.commitTemplate`）が `commit.template` のファイルに譲るか: ファイルのほうが
+    /// リポジトリに近い段で決まっていれば（すべてのリポジトリで共有のものを選び、このリポジトリでファイルを選んだなど）。
+    /// 同じ段なら共有のもの。`shared`・`file` はそれぞれが決まっている段（`file` はなければ nil）。
+    static func sharedYields(shared: String, file: String?) -> Bool {
+        file.map { ConfigEntry.rank($0) > ConfigEntry.rank(shared) } ?? false
+    }
+}
+
 /// メッセージのテンプレート: なし／Settings > Git > コミットの共有のテンプレート（`amonhen.commitTemplate` に名前。Amon Hen の
 /// コミット欄だけが使う）／このリポジトリ専用（`<git dir>/amonhen/commit-template` に置き、git の `commit.template` を
 /// 向ける。端末の git も使う）／ファイル…（`commit.template`）。
@@ -1471,10 +1486,15 @@ private struct TemplateRow: View {
 
     static func choice(_ model: RepositorySettingsModel) -> Choice {
         let templates = TemplateLibrary.shared.templates
-        if let n = model.effective(libraryKey)?.value.nonEmpty, templates.contains(where: { $0.name == n }) { return .shared(n) }
-        guard let file = model.effective(fileKey)?.value.nonEmpty else { return .none }
-        return isOwn(file, model) ? .own : .file(file)
+        let file = model.effective(fileKey).flatMap { $0.value.isEmpty ? nil : $0 }
+        if let shared = model.effective(libraryKey), templates.contains(where: { $0.name == shared.value }),
+           !MessageTemplate.sharedYields(shared: shared.scope, file: file?.scope) {
+            return .shared(shared.value)
+        }
+        guard let file else { return .none }
+        return isOwn(file.value, model) ? .own : .file(file.value)
     }
+
 
     /// `path` がこのリポジトリ専用のテンプレートのファイルか。
     private static func isOwn(_ path: String, _ model: RepositorySettingsModel) -> Bool {
