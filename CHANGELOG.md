@@ -64,6 +64,8 @@ becomes the GitHub Release notes.
   marks of the commits checked with it and the commit's notes and line counts; its signature shows Can’t verify.
 - With git older than 2.26, which doesn't report the trust level, a good GPG signature showed Untrusted key; the trust
   now comes from the signing key's validity.
+- In a repository on an SSH host checked with this Mac's keys, a commit's details again get their notes, line counts
+  and signature, and the commit selected on opening is no longer verified with the SSH host's keys.
 
 ### [0.2.7] - 2026-10-26
 
