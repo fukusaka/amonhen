@@ -255,3 +255,32 @@ private func makeRepo() throws -> URL {
         #expect(!SecretNames.isSecret(name), "\(name)")
     }
 }
+
+@Test func splitsPathsOnAHost() {
+    #expect(HostPath.ancestors(of: "/a/b/c") == ["/", "/a", "/a/b"])
+    #expect(HostPath.ancestors(of: "/") == [])
+    #expect(HostPath.ancestors(of: #"C:\Users\ada\prj"#) == [#"C:\"#, #"C:\Users"#, #"C:\Users\ada"#])
+    #expect(HostPath.ancestors(of: #"C:\"#) == [])
+    #expect(HostPath.ancestors(of: #"\\nas\share\x\y"#) == [#"\\nas\share\"#, #"\\nas\share\x"#])
+    #expect(HostPath.join("/", "a") == "/a")
+    #expect(HostPath.join("/a", "b") == "/a/b")
+    #expect(HostPath.join(#"C:\"#, "a") == #"C:\a"#)
+    #expect(HostPath.join(#"C:\a"#, "b") == #"C:\a\b"#)
+    #expect(HostPath.name(#"C:\a\b.exe"#) == "b.exe")
+    #expect(HostPath.name("/usr/bin") == "bin")
+    #expect(HostPath.isAbsolute(#"C:\x"#) && HostPath.isAbsolute("C:/x") && HostPath.isAbsolute("/x"))
+    #expect(!HostPath.isAbsolute("~/x") && !HostPath.isAbsolute("C:x"))
+    #expect(HostPath.split("~/bin/git", windows: false)! == ("~/bin", "git"))
+    #expect(HostPath.split("/git", windows: false)! == ("/", "git"))
+    #expect(HostPath.split(#"~\bin\git.exe"#, windows: true)! == (#"~\bin"#, "git.exe"))
+    #expect(HostPath.split(#"~\bin"#, windows: false) == nil)
+    #expect(HostPath.split(#"C:\git.exe"#, windows: false)! == (#"C:\"#, "git.exe"))
+    #expect(HostPath.split("~", windows: false) == nil)
+    #expect(HostPath.shown("/home/ada/prj/x", home: "/home/ada") == "~/prj/x")
+    #expect(HostPath.shown("/home/ada", home: "/home/ada") == "~")
+    #expect(HostPath.shown("/home/adam", home: "/home/ada") == "/home/adam")
+    #expect(HostPath.shown(#"C:\Users\Ada\prj\x"#, home: #"C:\Users\Ada"#) == "~/prj/x")
+    #expect(HostPath.shown(#"c:\users\ada"#, home: #"C:\Users\Ada"#) == "~")
+    #expect(HostPath.shown(#"D:\src"#, home: #"C:\Users\Ada"#) == #"D:\src"#)
+    #expect(HostPath.shown("/x", home: "/") == "/x")
+}

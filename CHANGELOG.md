@@ -28,8 +28,9 @@ becomes the GitHub Release notes.
   start the engine with the host's login shell's environment, for the PATH and `GIT_*` set in `~/.profile` and the
   like (the amonhen on the PATH is looked for in that PATH too).
 - Paths on an SSH host (Other… for a program or the engine, + for a folder to scan, Choose… when adding a repository)
-  are chosen in a sheet that shows the host's folders in columns, like the Finder, with git repositories marked. The
-  core and CLI get `listDirectory`, which lists a folder on the machine that runs git.
+  are chosen in a sheet that shows the host's folders in columns, like the Finder (arrow keys, typing a name, ⏎), with
+  git repositories marked; Windows hosts' drives and `\` paths work too. The core and CLI get `listDirectory`, which
+  lists a folder on the machine that runs git.
 - The engine runs on an SSH host without a repository (`amonhen --stdio` with no path) to read and write that
   machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
   the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /
