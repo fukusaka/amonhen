@@ -309,3 +309,4 @@
 "The git in AMONHEN_GIT ({path}) isn’t there" = "AMONHEN_GIT の git（{path}）が見つかりません";
 "The git chosen for this machine ({path}) isn’t there. Choose another in Settings > Git > Programs (it’s kept in {file})" = "この機械で選んだ git（{path}）が見つかりません。設定 > Git > プログラムで選び直してください（{file} にあります）";
 "The git in git.path ({path}) isn’t there" = "git.path の git（{path}）が見つかりません";
+"git isn’t installed: /usr/bin/git needs the Command Line Tools. Install them with xcode-select --install, or choose another git in Settings > Git > Programs" = "git が入っていません: /usr/bin/git を使うには Command Line Tools が要ります。xcode-select --install で入れるか、設定 > Git > プログラムでほかの git を選んでください";

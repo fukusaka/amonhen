@@ -7,7 +7,7 @@ import { execFile, spawn } from 'node:child_process';
 import { connect, type Socket } from 'node:net';
 
 /** 窓口の取り決めの版（`amonhen_front::VERSION`） */
-export const FRONT_VERSION = 2;
+export const FRONT_VERSION = 3;
 
 const REQUEST = 1;
 const OK = 2;
@@ -110,8 +110,7 @@ export class DaemonClient {
   static async open(daemon: string, location: string): Promise<DaemonClient> {
     const path = await socketPath(daemon);
     const socket = await connectOrLaunch(daemon, path);
-    const env = fallbackGit ? { ...process.env, AMONHEN_FALLBACK_GIT: fallbackGit } : process.env;
-    const name = Buffer.from(`\u0001${location}\u0000${clientEnv(env)}`, 'utf8');
+    const name = Buffer.from(`\u0001${location}\u0000${frontEnv()}`, 'utf8');
     const head = Buffer.alloc(4);
     head.writeUInt32LE(name.length, 0);
     socket.write(Buffer.concat([head, name]));
@@ -148,6 +147,11 @@ export class DaemonClient {
         { once: true },
       );
     });
+  }
+
+  /** この拡張の環境を送り直す（`git.path` を変えたときなど）。この先の命令から、その環境で git を動かす */
+  async sendEnvironment(): Promise<void> {
+    await this.call({ op: 'environment', env: frontEnv() });
   }
 
   /** リポジトリの変化（`Changes` のビット）を受け取る */
@@ -287,10 +291,15 @@ let fallbackGit: string | undefined;
 
 /**
  * Amon Hen の設定（`settings.json`）で git を決めていないときに、daemon に使ってほしい git（`git.path`）。これから
- * 開くつながりに `AMONHEN_FALLBACK_GIT` で送る
+ * 開くつながりに `AMONHEN_FALLBACK_GIT` で送る（開いているつながりには `sendEnvironment`）
  */
 export function setFallbackGit(path: string | undefined): void {
   fallbackGit = path || undefined;
+}
+
+/** daemon に送る、この拡張の環境（`git.path` を `AMONHEN_FALLBACK_GIT` に入れて） */
+function frontEnv(): string {
+  return clientEnv(fallbackGit ? { ...process.env, AMONHEN_FALLBACK_GIT: fallbackGit } : process.env);
 }
 
 /**

@@ -205,6 +205,7 @@ struct ProgramsPage: View {
         git = await Task.detached(priority: .userInitiated) {
             try? repository.info(["op": "machineGit"], as: MachineGit.self)
         }.value
+        model.gitProblem = git?.problem
     }
 
     /// 使う git を変える（Undo に前の値を積む。⇧⌘Z でやり直せる）。SSH 先なら、SSH 先の設定に書き、つながりは

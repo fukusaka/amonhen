@@ -201,6 +201,26 @@ test('writes through the daemon record one undo entry each', { skip }, async () 
   }
 });
 
+test('takes a new environment on an open connection from the next command', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  const missing = process.platform === 'win32' ? 'C:\\no\\such\\git.exe' : '/no/such/git';
+  const setName = { op: 'run', command: { op: 'configSet', key: 'amonhen.test', value: 'x' } };
+  // `run` は失敗を `{ ok: false, error }` で返す
+  const result = async (): Promise<unknown> => (await client.call(setName)).json['error'] ?? 'ok';
+  try {
+    assert.equal(await result(), 'ok');
+    process.env['AMONHEN_GIT'] = missing;
+    await client.sendEnvironment();
+    assert.ok(String(await result()).includes(missing));
+    delete process.env['AMONHEN_GIT'];
+    await client.sendEnvironment();
+    assert.equal(await result(), 'ok');
+  } finally {
+    delete process.env['AMONHEN_GIT'];
+    client.dispose();
+  }
+});
+
 test('names the host platform like the engine files', () => {
   assert.equal(platformName('darwin', 'arm64'), 'darwin-aarch64');
   assert.equal(platformName('linux', 'x64'), 'linux-x86_64');

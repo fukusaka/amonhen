@@ -9,7 +9,7 @@ macOS のアプリは、同じプロセスのコアを C ABI（`crates/ffi-c`）
 ## つなぐ
 
 1. Unix ドメインソケット（Windows は名前付きパイプ `\\.\pipe\amonhen-<利用者の SID のハッシュ>-<ビルドの指紋>`。Node は `net.connect` でそのままつなげる）につなぐ。場所は `amonhen --socket` が出す（macOS は `$TMPDIR/amonhend-<ビルドの指紋の頭 8 文字>.sock`、ほかは `$XDG_RUNTIME_DIR` か `/tmp/amonhen-<uid>`。`AMONHEN_DAEMON_DIR` で変えられる）。つながらなければ `amonhen --serve <socket>` を、親から切り離して起動し、つながるまで待つ。
-2. 最初に、開く場所を送る: 長さ（u32、LE）と UTF-8 の文字列 `"\u0001" + 場所`。続けて `"\u0000"` と、FE の環境（`NAME=value` を `"\u0000"` で区切ったもの）を送ってもよい。場所は手元のリポジトリの絶対パスか `ssh://host/path`。daemon は、このつながりで動かす git・ssh（`ssh://` を開くときも）を、自分の環境ではなくこの環境で動かす。受け取るのは、git と ssh がいつも使うもの（`PATH`・`SSH_AUTH_SOCK`・`SSH_AGENT_PID`・`XDG_CONFIG_HOME`・`XDG_DATA_HOME`・`GIT_*` と、`AMONHEN_ASKPASS`・`AMONHEN_GIT`・`AMONHEN_FALLBACK_GIT`・`AMONHEN_PASS_ENV`）と、`AMONHEN_PASS_ENV`（`NAME1,NAME2`）に並べた名前で、リポジトリを指すもの（`GIT_DIR` など）・`GIT_ASKPASS`・ほかの `AMONHEN_*` は受け取らない。ほかは捨てる（`amonhen_model::process::ClientEnv`）。FE の環境が変わったら、同じつながりで送り直せる（アプリは `Request::Environment` で送る）。
+2. 最初に、開く場所を送る: 長さ（u32、LE）と UTF-8 の文字列 `"\u0001" + 場所`。続けて `"\u0000"` と、FE の環境（`NAME=value` を `"\u0000"` で区切ったもの）を送ってもよい。場所は手元のリポジトリの絶対パスか `ssh://host/path`。daemon は、このつながりで動かす git・ssh（`ssh://` を開くときも）を、自分の環境ではなくこの環境で動かす。受け取るのは、git と ssh がいつも使うもの（`PATH`・`SSH_AUTH_SOCK`・`SSH_AGENT_PID`・`XDG_CONFIG_HOME`・`XDG_DATA_HOME`・`GIT_*` と、`AMONHEN_ASKPASS`・`AMONHEN_GIT`・`AMONHEN_FALLBACK_GIT`・`AMONHEN_PASS_ENV`）と、`AMONHEN_PASS_ENV`（`NAME1,NAME2`）に並べた名前で、リポジトリを指すもの（`GIT_DIR` など）・`GIT_ASKPASS`・ほかの `AMONHEN_*` は受け取らない。ほかは捨てる（`amonhen_model::process::ClientEnv`）。FE の環境が変わったら、同じつながりで送り直せ、次の要求から効く（アプリは `Request::Environment`、この窓口の FE は `environment`。VSCode 拡張は `git.path` を変えたときに送る）。
 3. その後はフレームでやりとりする。最初の要求は `{"op":"hello","language":"ja"}` にする（開けなければ、その答えが理由つきの失敗になる）。`language` は FE の表示の言語（`en`・`ja`・`ja-JP` など）で、daemon はこの接続のエラーの文をその言語で作る（訳がないとき・渡さないときは英語）。
 
 ## フレーム
@@ -47,6 +47,7 @@ History と差分は番号（`history`・`diff`）で持つ。FE がスクロー
 | 命令 | 引数 | 答え（JSON） | レコード |
 |---|---|---|---|
 | `hello` | language | version・workdir・gitDir | |
+| `environment` | env（FE の環境。開くときと同じく `NAME=value` を `"\u0000"` で区切ったもの） | | |
 | `history` | rebuild?・fold?・expanded?（ID の配列）・tips?（ID の配列。そこから辿れるものだけ） | history・generation・rows・head・headRow・folded | |
 | `historyMatching` | history・rows | `history` と同じ（一致した行だけの History） | |
 | `historyRelease` | history | | |

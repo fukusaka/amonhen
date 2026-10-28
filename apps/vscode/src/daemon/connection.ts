@@ -54,6 +54,13 @@ export async function daemonFor(root: string): Promise<DaemonClient | undefined>
   return client;
 }
 
+/** 開いているつながりに、この拡張の環境を送り直す（`git.path` を変えたとき）。送れないつながりは、次に開くときに送る */
+export async function resendDaemonEnvironment(): Promise<void> {
+  await Promise.all(
+    [...clients.values()].map((c) => c.then((client) => (client.closed ? undefined : client.sendEnvironment())).catch(() => undefined)),
+  );
+}
+
 export function disposeDaemonClients(): void {
   for (const c of clients.values()) {
     void c.then((client) => client.dispose()).catch(() => undefined);

@@ -1,12 +1,31 @@
 import { basename } from 'node:path';
 import * as vscode from 'vscode';
+import { accessSync, constants } from 'node:fs';
 import { setFallbackGit } from '../daemon/client.ts';
-import { daemonFor } from '../daemon/connection.ts';
+import { daemonFor, resendDaemonEnvironment } from '../daemon/connection.ts';
 import { withDaemonWrites } from '../daemon/writes.ts';
 import { CliBackend } from '../git/backend.ts';
 import { GitExecutor } from '../git/exec.ts';
 import type { GitApi, GitApiRepository, GitExtension } from './gitApi.ts';
 import { Repository } from './repository.ts';
+
+/**
+ * 設定 `git.path` の git（文字列か、その並び。並びなら最初に実行できるもの）。決めていなければ undefined
+ */
+function configuredGitPath(): string | undefined {
+  const value = vscode.workspace.getConfiguration('git').get<string | string[]>('path');
+  const paths = (Array.isArray(value) ? value : [value]).filter((p): p is string => typeof p === 'string' && p !== '');
+  return (
+    paths.find((p) => {
+      try {
+        accessSync(p, process.platform === 'win32' ? constants.F_OK : constants.X_OK);
+        return true;
+      } catch {
+        return false;
+      }
+    }) ?? paths[0]
+  );
+}
 
 /** `vscode.git` の変更通知はまとめて来るので、少し待ってから 1 回だけ取り直す */
 const DEBOUNCE_MS = 50;
@@ -25,6 +44,8 @@ interface Entry {
 export class RepositoryManager implements vscode.Disposable {
   private readonly log: vscode.LogOutputChannel;
   private git: GitExecutor | undefined;
+  /** VSCode の git（`git.path`、なければ vscode.git が見つけたもの）。Amon Hen の設定で決めていないときに使う */
+  private vscodeGit = 'git';
   private readonly entries = new Map<string, Entry>();
   private _current: Repository | undefined;
   private readonly disposables: vscode.Disposable[] = [];
@@ -50,9 +71,23 @@ export class RepositoryManager implements vscode.Disposable {
 
   async initialize(): Promise<void> {
     const api = await getGitApi();
-    // daemon を使うときも、Amon Hen の設定で git を決めていなければ git.path の git を使ってもらう
-    setFallbackGit(vscode.workspace.getConfiguration('git').get('path') ? api?.git.path : undefined);
-    this.git = GitExecutor.chosen(api?.git.path ?? 'git', (l) =>
+    // daemon を使うときも、Amon Hen の設定で git を決めていなければ git.path の git を使ってもらう。git.path を
+    // 変えたら、開いているつながりにも送り直す（開き直さずに効く）
+    const configured = configuredGitPath();
+    this.vscodeGit = configured ?? api?.git.path ?? 'git';
+    setFallbackGit(configured ? api?.git.path ?? configured : undefined);
+    this.disposables.push(
+      vscode.workspace.onDidChangeConfiguration((e) => {
+        if (!e.affectsConfiguration('git.path')) {
+          return;
+        }
+        const changed = configuredGitPath();
+        this.vscodeGit = changed ?? api?.git.path ?? 'git';
+        setFallbackGit(changed);
+        void resendDaemonEnvironment();
+      }),
+    );
+    this.git = GitExecutor.chosen(() => this.vscodeGit, (l) =>
       this.log.trace(`${Math.round(l.ms)}ms git ${l.args.join(' ')}${l.exitCode ? ` (exit ${l.exitCode})` : ''}`),
     );
     if (api) {

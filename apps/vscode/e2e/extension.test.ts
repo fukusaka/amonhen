@@ -311,6 +311,35 @@ suite('Amon Hen in VSCode', () => {
     }
   });
 
+  test('follows a change to git.path at once, through the daemon too', async () => {
+    const repo = api.manager.current!;
+    const gitConfig = vscode.workspace.getConfiguration('git');
+    const pathGit =
+      process.platform === 'win32'
+        ? childProcess.execFileSync('where', ['git'], { encoding: 'utf8' }).split(/\r?\n/)[0]!
+        : childProcess.execFileSync('sh', ['-c', 'command -v git'], { encoding: 'utf8' }).trim();
+    const missing = join(dirname(settingsFile()), 'no-such-git');
+    // 設定を変えたあと、拡張が読み直して daemon に送るまでを待つ
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
+    try {
+      for (const daemon of [false, true]) {
+        await vscode.workspace.getConfiguration('amonhen').update('daemon.enabled', daemon, vscode.ConfigurationTarget.Global);
+        const via = daemon ? 'daemon' : 'git';
+        // Amon Hen の設定で選んでいなければ git.path の git。変えれば、開き直さずに次の操作から使う
+        await gitConfig.update('path', missing, vscode.ConfigurationTarget.Global);
+        await settle();
+        await assert.rejects(repo.backend.createBranch(`path-missing-${via}`, 'HEAD', false), (e: Error) => e.message.includes(missing));
+        await gitConfig.update('path', pathGit, vscode.ConfigurationTarget.Global);
+        await settle();
+        await repo.backend.createBranch(`path-chosen-${via}`, 'HEAD', false);
+        assert.notEqual(git('branch', '--list', `path-chosen-${via}`), '');
+      }
+    } finally {
+      await gitConfig.update('path', undefined, vscode.ConfigurationTarget.Global);
+      await vscode.workspace.getConfiguration('amonhen').update('daemon.enabled', false, vscode.ConfigurationTarget.Global);
+    }
+  });
+
   test('starts every process without a console window', () => {
     assert.ok(spawned.length > 0);
     const shown = spawned.filter((s) => s.options.windowsHide !== true);

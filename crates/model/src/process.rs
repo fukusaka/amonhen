@@ -95,8 +95,9 @@ pub fn git_choice() -> GitChoice {
 pub const FALLBACK_GIT: &str = "AMONHEN_FALLBACK_GIT";
 
 /// 選んだ git が使えないとき、その理由（git を動かす操作のエラー）。PATH の git に黙って戻すと、利用者が選んだ
-/// ものと違う git で書き込むことになるので、止めて選び直してもらう。PATH で探すときは確かめない（なければ
-/// 起動の失敗）。
+/// ものと違う git で書き込むことになるので、止めて選び直してもらう。PATH で探すときは、ないかは確かめない（なければ
+/// 起動の失敗）が、macOS の `/usr/bin/git` が Command Line Tools なしの代わりのものなら止める（動かすとインストールの
+/// ダイアログが出る）。
 pub fn missing_git() -> Option<String> {
     let usable = |p: &str| {
         let path = std::path::Path::new(p);
@@ -124,8 +125,62 @@ pub fn missing_git() -> Option<String> {
             "The git in git.path ({path}) isn’t there",
             path = p
         )),
-        _ => None,
+        GitChoice::Path => apple_git_without_tools(),
+        GitChoice::Environment(p) | GitChoice::Settings(p) | GitChoice::Fallback(p) => {
+            (p == APPLE_GIT).then(apple_git_without_tools).flatten()
+        }
     }
+}
+
+/// macOS の `/usr/bin/git`。Command Line Tools（か Xcode）の git を動かす代わりのもので、それがなければ動かすたびに
+/// インストールのダイアログを出す。
+const APPLE_GIT: &str = "/usr/bin/git";
+
+/// PATH で最初に見つかる `git`（PATH は FE の値）。
+fn git_on_path() -> Option<std::path::PathBuf> {
+    let name = if cfg!(windows) { "git.exe" } else { "git" };
+    std::env::split_paths(&var_os("PATH")?)
+        .map(|dir| dir.join(name))
+        .find(|p| is_executable(p))
+}
+
+/// 使う git が macOS の `/usr/bin/git` で、その先の Command Line Tools も Xcode もないときの理由。確かめるのは
+/// ファイルだけで、何も起動しない（`xcode-select -p` も、ない状態では尋ねてくることがある）。入れればすぐ効く。
+fn apple_git_without_tools() -> Option<String> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    let git = match git_choice() {
+        GitChoice::Path => git_on_path()?,
+        _ => std::path::PathBuf::from(APPLE_GIT),
+    };
+    is_stub_without_tools(&git, &developer_dirs()).then(|| {
+        crate::tr!(
+            "git isn’t installed: /usr/bin/git needs the Command Line Tools. Install them with xcode-select --install, or choose another git in Settings > Git > Programs"
+        )
+    })
+}
+
+/// `/usr/bin/git` が動かす git を探すフォルダ。`DEVELOPER_DIR` → `xcode-select` で選んだもの
+/// （`/var/db/xcode_select_link`）→ Command Line Tools（xcrun と同じ順）。
+fn developer_dirs() -> Vec<std::path::PathBuf> {
+    let selected = std::env::var_os("DEVELOPER_DIR")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::fs::read_link("/var/db/xcode_select_link").ok());
+    selected
+        .into_iter()
+        .chain([std::path::PathBuf::from(
+            "/Library/Developer/CommandLineTools",
+        )])
+        .collect()
+}
+
+/// `git` が `/usr/bin/git` で、`developer_dirs` のどれにも動かす先の git がないか。
+fn is_stub_without_tools(git: &std::path::Path, developer_dirs: &[std::path::PathBuf]) -> bool {
+    git == std::path::Path::new(APPLE_GIT)
+        && !developer_dirs
+            .iter()
+            .any(|dir| is_executable(&dir.join("usr/bin/git")))
 }
 
 fn is_executable(path: &std::path::Path) -> bool {
@@ -515,6 +570,28 @@ fn any_signal_blocked() -> bool {
         }
         (1..libc::SIGXFSZ + 1).any(|signal| libc::sigismember(&current, signal) == 1)
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn tells_apples_git_stub_without_the_tools() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let tools = dir.path().join("CommandLineTools");
+    let apple = std::path::Path::new(APPLE_GIT);
+    assert!(is_stub_without_tools(apple, std::slice::from_ref(&tools)));
+    assert!(!is_stub_without_tools(
+        std::path::Path::new("/opt/homebrew/bin/git"),
+        std::slice::from_ref(&tools)
+    ));
+    let git = tools.join("usr/bin/git");
+    std::fs::create_dir_all(git.parent().unwrap()).unwrap();
+    std::fs::write(&git, "").unwrap();
+    std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(
+        !is_stub_without_tools(apple, &[tools]),
+        "installed later, it runs"
+    );
 }
 
 #[test]
