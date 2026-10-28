@@ -192,7 +192,7 @@ In the same process, the number of writes is 0 for numeric columns, the graph an
     - Local (default): receive the commit object (a few KB), write it to a local scratch bare repository (`$TMPDIR/amonhen-verify.git`), and have the local git verify it with `%G?`. Trees and other objects are not needed. The rules, keys and trust levels are the same as for local repositories. If the written object's ID differs from the original ID, it is rejected.
     - SSH host: send a request to the daemon and verify with the SSH host's git and keys. If the SSH host has no public key, the result is "cannot verify".
   - The trust level is "how much I trust that key", so judging by the local keyring is the default.
-- The presentation (`SignatureStatus`) is decided from `%G?` plus the trust level (`%GT`) and "whether the signer's email address matches the committer". Wording is English, matching GitHub.
+- The presentation (`SignatureStatus`) is decided from `%G?` plus the trust level (`%GT`) and "whether the signer's email address matches the committer". `%GT` is from git 2.26; with older git the trust level is the signing key's validity, read with gpg along with its email addresses. Wording is English, matching GitHub.
 
   | State | Icon (SF Symbols) | Color | Wording | Trust scale |
   | --- | --- | --- | --- | --- |

@@ -60,6 +60,8 @@ becomes the GitHub Release notes.
   the menu offers to open the worktree instead.
 - With git older than 2.34, an SSH-signed commit no longer makes git crash during signature checks, which lost the
   marks of the commits checked with it and the commit's notes and line counts; its signature shows Can’t verify.
+- With git older than 2.26, which doesn't report the trust level, a good GPG signature showed Untrusted key; the trust
+  now comes from the signing key's validity.
 
 ### [0.2.7] - 2026-10-26
 

@@ -129,7 +129,8 @@ impl Git {
 impl Git {
     /// 検証の結果に、署名した鍵のメールアドレスを足す（`primary` は主鍵の指紋 `%GP`）。GPG は gpg で鍵の
     /// ユーザー ID をすべて読み（鍵が何個あっても gpg は 1 回）、SSH は git が allowed signers から見つけた
-    /// プリンシパル（`%GS`）を使う。読めなければ空のまま。
+    /// プリンシパル（`%GS`）を使う。読めなければ空のまま。信用度が読めなかった（git 2.26 より前）ら、GPG は
+    /// 鍵の有効性から足す。
     fn with_emails(&self, checks: Vec<(SignatureCheck, String)>) -> Vec<SignatureCheck> {
         let signed = |c: &SignatureCheck| matches!(c.status, 'G' | 'U' | 'X' | 'Y' | 'R');
         let primaries: Vec<&str> = checks
@@ -160,8 +161,13 @@ impl Git {
                             })
                             .collect();
                     }
-                } else if let Some(emails) = uids.get(&primary) {
-                    c.emails = emails.clone();
+                } else if let Some(key) = uids.get(&primary) {
+                    c.emails = key.emails.clone();
+                    // 信用度（`%GT`）は git 2.26 から。それより前の git では読めないので、鍵の有効性から決める
+                    // （gpg が検証で返す信用度は、署名した鍵の有効性そのもの）。
+                    if c.trust.is_empty() {
+                        c.trust = trust_from_validity(key.validity).to_owned();
+                    }
                 }
                 c
             })
@@ -190,7 +196,7 @@ impl Git {
     }
 
     /// `primaries`（主鍵の指紋）の鍵のユーザー ID のメールアドレスと有効性。gpg を 1 回だけ起動する。
-    fn key_uids(&self, primaries: &[&str]) -> std::collections::HashMap<String, Vec<SignerEmail>> {
+    fn key_uids(&self, primaries: &[&str]) -> std::collections::HashMap<String, KeyInfo> {
         let program = self.gpg_program();
         let out = amonhen_model::process::command(&program)
             .args([
@@ -349,10 +355,31 @@ fn parse_signature_and_notes(out: &str) -> (Option<SignatureCheck>, String, Stri
     (signature, primary, notes.trim().to_owned())
 }
 
-/// `gpg --list-keys --with-colons --fixed-list-mode` を読み、主鍵の指紋ごとにユーザー ID のメールアドレスと
-/// 有効性を返す。ユーザー ID の `:` は `\x3a` と書かれる。
-fn parse_key_uids(out: &str) -> std::collections::HashMap<String, Vec<SignerEmail>> {
-    let mut keys: std::collections::HashMap<String, Vec<SignerEmail>> = Default::default();
+/// 鍵の有効性（gpg の `--with-colons` の 1 文字）を、`%GT` と同じ言葉の信用度にする。
+fn trust_from_validity(validity: char) -> &'static str {
+    match validity {
+        'u' => "ultimate",
+        'f' => "fully",
+        'm' => "marginal",
+        'n' => "never",
+        _ => "undefined",
+    }
+}
+
+/// 署名した鍵（主鍵）について gpg から読んだこと。
+#[derive(Debug, Default)]
+struct KeyInfo {
+    /// 鍵の有効性（`pub` の行の 2 番目の欄。u・f・m・n・`-`・q など）。
+    validity: char,
+    /// ユーザー ID のメールアドレスと、その有効性。
+    emails: Vec<SignerEmail>,
+}
+
+/// `gpg --list-keys --with-colons --fixed-list-mode` を読み、主鍵の指紋ごとに鍵の有効性と、ユーザー ID の
+/// メールアドレスと有効性を返す。ユーザー ID の `:` は `\x3a` と書かれる。
+fn parse_key_uids(out: &str) -> std::collections::HashMap<String, KeyInfo> {
+    let mut keys: std::collections::HashMap<String, KeyInfo> = Default::default();
+    let mut validity = '-';
     let mut current: Option<String> = None;
     let mut want_fpr = false;
     for line in out.lines() {
@@ -361,11 +388,12 @@ fn parse_key_uids(out: &str) -> std::collections::HashMap<String, Vec<SignerEmai
             Some("pub") => {
                 current = None;
                 want_fpr = true;
+                validity = fields.get(1).and_then(|v| v.chars().next()).unwrap_or('-');
             }
             Some("sub") | Some("ssb") => want_fpr = false,
             Some("fpr") if want_fpr => {
                 let fpr = fields.get(9).copied().unwrap_or_default().to_owned();
-                keys.entry(fpr.clone()).or_default();
+                keys.entry(fpr.clone()).or_default().validity = validity;
                 current = Some(fpr);
                 want_fpr = false;
             }
@@ -382,6 +410,7 @@ fn parse_key_uids(out: &str) -> std::collections::HashMap<String, Vec<SignerEmai
                 let validity = fields.get(1).and_then(|v| v.chars().next()).unwrap_or('-');
                 keys.get_mut(fpr)
                     .unwrap()
+                    .emails
                     .push(SignerEmail { email, validity });
             }
             _ => {}
@@ -495,7 +524,9 @@ mod tests {
     fn reads_every_user_id_of_a_key() {
         let out = "tru::1:1:0:3:1:5\npub:-:4096:1:7B3C391EFEA93624:1:::-:::scESC::::::23::0:\nfpr:::::::::4880B8C9BD0E5106FC070F4F7B3C391EFEA93624:\nuid:-::::1::A::Christian Brauner <christian@brauner.io>::::::::::0:\nuid:f::::1::B::Christian Brauner <brauner@kernel.org>::::::::::0:\nuid:r::::1::C::Old <old@x.org>::::::::::0:\nsub:-:4096:1:91C61BC06578DCA2:1::::::s::::::23:\nfpr:::::::::408734571EA70C78B332692891C61BC06578DCA2:\n";
         let keys = parse_key_uids(out);
-        let emails = &keys["4880B8C9BD0E5106FC070F4F7B3C391EFEA93624"];
+        let key = &keys["4880B8C9BD0E5106FC070F4F7B3C391EFEA93624"];
+        assert_eq!(trust_from_validity(key.validity), "undefined");
+        let emails = &key.emails;
         assert_eq!(emails.len(), 3, "副鍵の指紋は主鍵にしない");
         assert_eq!(
             (emails[1].email.as_str(), emails[1].validity),
@@ -503,6 +534,12 @@ mod tests {
         );
         assert_eq!(emails[2].validity, 'r');
         assert!(!keys.contains_key("408734571EA70C78B332692891C61BC06578DCA2"));
+        let full = out.replace("pub:-:4096", "pub:f:4096");
+        let keys = parse_key_uids(&full);
+        assert_eq!(
+            trust_from_validity(keys["4880B8C9BD0E5106FC070F4F7B3C391EFEA93624"].validity),
+            "fully"
+        );
     }
 
     #[test]
