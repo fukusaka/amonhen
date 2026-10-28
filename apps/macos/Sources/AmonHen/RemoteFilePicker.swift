@@ -405,7 +405,11 @@ struct RemoteFilePickerView: View {
                 }
             }
             HStack(spacing: 6) {
-                TextField("", text: Binding(get: { model.field }, set: { model.field = $0; typing = true }), prompt: Text(model.kind == .folder ? "~/prj" : "/usr/local/bin/git"))
+                TextField("", text: Binding(get: { model.field }, set: {
+                    // 欄は同じ値も書き戻すので、変わったときだけ。
+                    if $0 != model.field { typing = true }
+                    model.field = $0
+                }), prompt: Text(model.kind == .folder ? "~/prj" : "/usr/local/bin/git"))
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                     .focused($focus, equals: .field)
