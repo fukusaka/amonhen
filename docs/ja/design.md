@@ -265,6 +265,15 @@ Windows の OpenSSH サーバは、送られたコマンドを `HKLM\SOFTWARE\Op
   - History の ref の札はそのまま。CLI: `amonhen refs --verify` でタグごとに結果を添える（`--json` では `signed` と `signature`）。`amonhen show` は、コミットの署名と、指すタグ・merge したタグの行をそれぞれの署名と一緒に出す（`--json` では `signature`・`tags`・`mergedTagSignatures`）。
 - linux（注釈付きのタグ 949 個がすべて署名付き）で計ると、1 つのタグに 25〜30 ms（git と gpg）。全部なら 1 つずつで約 25 秒、8 つずつ並べて 4 秒ほど。CLI で新しい 8 つは 0.07 秒。署名があるかを全部のタグのオブジェクトから読むのは 0.38 秒。
 
+### mailmap
+
+- 人は mailmap（作業ツリーの `.mailmap`、bare なら `HEAD:.mailmap`、`mailmap.blob`、`mailmap.file`。git と同じ順に gix で読む）の名前とメールで見せる（`git log` と同じ）。切るのは git の `log.mailmap`（既定は true）で、Amon Hen に独自の設定はない。「作者と署名」のページに、その切り替えと `mailmap.file` の行を両方の段に置く。Blame は git と同じくいつも置き換える（`git blame --porcelain` を読む）。
+- コミットには記録された名前を持ったまま（`CommitText` はコミットの中を指す。作者のメールも指すようにした）、見せるときにコアが置き換える（`Repository::mailmap`、`amonhen_model::Mailmap`）。だから mailmap を変えても行を読み直すだけで、History のキャッシュは作り直さない。
+- 読むのはリポジトリのある側（`GitBackend::mailmap`）。手元は gix で読んで覚えておき、もと（ファイルと設定ファイル、blob のオブジェクト）が変わったかを `stat` 数回で調べる。daemon 越し・SSH 先はその側から受け取る（`Request::Mailmap`。変化の知らせか 5 秒で聞き直し、指紋を送って変わっていなければ答えは空）。FE はリポジトリが変わったときに `mailmap_fingerprint` を比べ、変わっていれば行と詳細を読み直す。
+- History の行: 作者の列はコミットの中を指し、mailmap で名前が変わる行だけ、チャンクごとに 1 つの置き換えた名前の置き場を指す。詳細（`commitInfo`）: 置き換えた作者とコミッター、違えば `recordedAuthor`・`recordedCommitter`。詳細の欄は名前の下に記録のもの（「記録: …」）を添え、署名は記録されたコミッターのメールと比べる。File History もコアで置き換える（git からは `%an`・`%ae`。`%aN` は `log.mailmap` を見ないため）。
+- 検索: `author:`（と欄を決めない語）は、置き換えた名前と記録された名前のどちらかに合えばよい（git の `--author` は置き換えた名前にだけ合うので、それより広い）。検索の索引は記録された人（名前とメール）を 1 つずつ持ち、行はそれを指し、条件は人ごとに調べるので、mailmap の分は行ごとではなく人ごとに 1 回引くだけ。
+- linux（148 万コミット、mailmap 1008 行。`crates/core/benches/authors.rs`）で入れる前 → 後: History の 60 行 365 → 382 µs、`author:torvalds` 6.6 → 6.7 ms、`author:"tejun heo"` 5.6 → 6.4 ms、`fix memory leak` 63 → 64 ms、コミットの詳細 17 → 24 µs、検索の索引を作る 1.37〜1.49 → 1.46〜1.50 秒。
+
 ## マルチプラットフォーム
 
 ### GitBackend

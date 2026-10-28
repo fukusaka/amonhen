@@ -296,7 +296,19 @@ pub struct RemoteBackend {
     paths: RepoPaths,
     ops: RemoteOperations,
     files: Arc<RemoteFiles>,
+    mailmap: Arc<Mutex<MailmapCache>>,
 }
+
+/// 受け取った mailmap。リポジトリの変化を知らされたか、しばらく経ったら、変わったかを daemon に聞き直す（変わって
+/// いなければ答えは空）。
+#[derive(Default)]
+struct MailmapCache {
+    mailmap: Option<Arc<amonhen_model::Mailmap>>,
+    checked: Option<std::time::Instant>,
+}
+
+/// 変化の知らせがなくても、mailmap を聞き直すまでの間（`mailmap.file` は監視の外にありうる）。
+const MAILMAP_RECHECK: std::time::Duration = std::time::Duration::from_secs(5);
 
 impl RemoteBackend {
     /// つないで通信の形を確かめ、リポジトリの場所を受け取る。
@@ -317,11 +329,21 @@ impl RemoteBackend {
         {
             conn.set_remote_engine(engine);
         }
+        let mailmap = Arc::new(Mutex::new(MailmapCache::default()));
+        let stale = Arc::downgrade(&mailmap);
+        conn.on_notification(move |n| match n {
+            Notification::Changed(_) => {
+                if let Some(cache) = stale.upgrade() {
+                    cache.lock().unwrap().checked = None;
+                }
+            }
+        });
         Ok(Self {
             ops: RemoteOperations { conn: conn.clone() },
             files: Arc::new(RemoteFiles { conn: conn.clone() }),
             conn,
             paths,
+            mailmap,
         })
     }
 
@@ -551,13 +573,31 @@ impl GitBackend for RemoteBackend {
         &self,
         tips: &[Oid],
         terms: &[amonhen_model::search::TextTerm],
+        mailmap: Option<&amonhen_model::Mailmap>,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Option<Vec<Vec<Oid>>>> {
         let request = Request::SearchTexts {
             tips: tips.to_vec(),
             terms: terms.to_vec(),
+            mailmap: mailmap.is_some(),
         };
         Ok(Some(self.conn.call_cancellable(&request, cancelled)?))
+    }
+
+    fn mailmap(&self) -> Result<Arc<amonhen_model::Mailmap>> {
+        let mut cache = self.mailmap.lock().unwrap();
+        if let (Some(mailmap), Some(checked)) = (&cache.mailmap, cache.checked)
+            && checked.elapsed() < MAILMAP_RECHECK
+        {
+            return Ok(mailmap.clone());
+        }
+        let known = cache.mailmap.as_ref().map(|m| m.fingerprint());
+        let fresh: Option<amonhen_model::Mailmap> = self.conn.call(&Request::Mailmap { known })?;
+        if let Some(fresh) = fresh {
+            cache.mailmap = Some(Arc::new(fresh));
+        }
+        cache.checked = Some(std::time::Instant::now());
+        Ok(cache.mailmap.clone().unwrap_or_default())
     }
 
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {

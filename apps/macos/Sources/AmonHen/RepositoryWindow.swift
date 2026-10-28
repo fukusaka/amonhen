@@ -745,6 +745,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         reloadRefs()
         reloadWorktrees()
         loadGitHub(force: true)
+        checkMailmap()
         do {
             watch = try RepositoryWatch(repository: repository) { [weak self] changes in
                 Task { @MainActor in self?.repositoryDidChange(changes) }
@@ -1204,6 +1205,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard rest.rawValue != 0 else { return }
             return repositoryDidChange(rest)
         }
+        // .mailmap（作業ツリー・HEAD の）や log.mailmap・mailmap.file が変わったかもしれない。
+        checkMailmap()
         if !changes.intersection([.refs, .config]).isEmpty {
             refsChanged()
             // push・fetch の後はプルリクエストも変わりうる（読みすぎないよう、間を空ける）。
@@ -1212,6 +1215,22 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if !changes.intersection([.refs, .index, .worktree]).isEmpty {
             // 開いたリポジトリの変化。書き込む先がほかの worktree なら、一覧の見出しの分だけ読み直す。
             if editing === opened { workingCopy.refresh() } else { reloadOtherWorktrees(after: 1) }
+        }
+    }
+
+    /// 最後に見た mailmap の指紋。
+    private var mailmapFingerprint: UInt64?
+
+    /// mailmap が変わっていたら、作者名を出し直す（History は作り直さず、行と詳細を読み直す）。
+    private func checkMailmap() {
+        let repository = self.repository
+        Task {
+            let now = await Task.detached(priority: .utility) { repository.mailmapFingerprint }.value
+            defer { mailmapFingerprint = now }
+            guard let before = mailmapFingerprint, before != now else { return }
+            EventLog.add(repo: window.title, L("The mailmap changed. Showing the names again."))
+            history.reloadRows()
+            detail.reloadInfo()
         }
     }
 

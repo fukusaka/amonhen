@@ -3,6 +3,7 @@
 export interface Commit {
   oid: string;
   parents: string[];
+  /** 作者。mailmap を使うなら置き換えたもの（`parseLog` の `mailmap`） */
   author: string;
   email: string;
   /** author date。unix 秒 */
@@ -11,7 +12,10 @@ export interface Commit {
 }
 
 const RS = '\x1e';
-const LOG_FIELDS = ['%H', '%P', '%an', '%ae', '%at', '%s'];
+// 記録された作者（%an・%ae）と mailmap で置き換えた作者（%aN・%aE）。%aN は log.mailmap に関係なく置き換えるので、
+// どちらを出すかは log.mailmap を読んで決める。
+const LOG_FIELDS = ['%H', '%P', '%an', '%ae', '%aN', '%aE', '%at', '%s'];
+type LogRecord = [string, string, string, string, string, string, string, string];
 
 /**
  * revs から辿れるコミットを、トポロジカル順で skip 件飛ばして max 件。
@@ -29,7 +33,8 @@ export function logArgs(revs: readonly string[], skip: number, max: number): str
   ];
 }
 
-export function parseLog(output: string): Commit[] {
+/** `mailmap` なら作者は mailmap で置き換えたもの（git の log.mailmap、既定は true） */
+export function parseLog(output: string, mailmap = true): Commit[] {
   const commits: Commit[] = [];
   for (const record of output.split(RS)) {
     if (record === '') {
@@ -39,12 +44,12 @@ export function parseLog(output: string): Commit[] {
     if (parts.length !== LOG_FIELDS.length) {
       throw new Error(`malformed log record: ${JSON.stringify(record)}`);
     }
-    const [oid, parents, author, email, date, subject] = parts as [string, string, string, string, string, string];
+    const [oid, parents, author, email, mappedAuthor, mappedEmail, date, subject] = parts as LogRecord;
     commits.push({
       oid,
       parents: parents ? parents.split(' ') : [],
-      author,
-      email,
+      author: mailmap ? mappedAuthor : author,
+      email: mailmap ? mappedEmail : email,
       date: Number(date) || 0,
       subject,
     });

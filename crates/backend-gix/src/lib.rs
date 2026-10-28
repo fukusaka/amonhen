@@ -14,12 +14,17 @@ use amonhen_model::{
 use gix::objs::Find;
 use rayon::prelude::*;
 
+mod mailmap;
+
 /// 読み取りは gix で同じプロセスの中で行い、書き込みと status は git に任せる（`amonhen_backend_cli`）。
 pub struct GixBackend {
     repo: gix::ThreadSafeRepository,
     /// bare リポジトリでは `None`。
     git: Option<amonhen_backend_cli::Git>,
     filters: Mutex<Option<Filters>>,
+    /// 開いた場所（mailmap の設定を読み直すため、開き直す）。
+    opened_from: std::path::PathBuf,
+    mailmap: mailmap::MailmapCache,
 }
 
 /// 改行の変換などの pipeline と属性の引き方。作るのに大きなリポジトリでは数 ms かかる（`.gitattributes` の対応表を
@@ -39,6 +44,8 @@ impl GixBackend {
             repo,
             git,
             filters: Mutex::new(None),
+            opened_from: path.as_ref().to_path_buf(),
+            mailmap: Default::default(),
         })
     }
 }
@@ -788,6 +795,11 @@ impl GitBackend for GixBackend {
         write(&[split, &["--changed-paths", "--no-progress"]].concat()).or_else(|_| write(split))
     }
 
+    fn mailmap(&self) -> Result<Arc<amonhen_model::Mailmap>> {
+        self.mailmap
+            .get(&self.repo.to_thread_local(), &self.opened_from)
+    }
+
     fn commit_texts(&self, ids: &[Oid]) -> Result<Vec<CommitText>> {
         let mut repo = self.repo.to_thread_local();
         repo.object_cache_size_if_unset(64 * 1024 * 1024);
@@ -804,7 +816,7 @@ impl GitBackend for GixBackend {
                     .data
                     .len();
                 buf.truncate(len);
-                let (subject, author_name, author_time, signature) = {
+                let (subject, author_name, author_email, author_time, signature) = {
                     let commit = gix::objs::CommitRef::from_bytes(&buf, hash)?;
                     let signature = commit
                         .extra_headers
@@ -820,6 +832,7 @@ impl GitBackend for GixBackend {
                     (
                         range_in(&buf, trim(first_line)),
                         range_in(&buf, trim(author.name)),
+                        range_in(&buf, trim(author.email)),
                         author.time()?.seconds,
                         signature,
                     )
@@ -828,6 +841,7 @@ impl GitBackend for GixBackend {
                     raw: Arc::new(buf),
                     subject,
                     author_name,
+                    author_email,
                     author_time,
                     signature,
                 })

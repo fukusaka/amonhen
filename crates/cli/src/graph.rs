@@ -95,6 +95,8 @@ pub struct Rows {
     pub times: Vec<i64>,
     pub subjects: Vec<String>,
     pub authors: Vec<String>,
+    /// mailmap で置き換えて記録と違う行の、記録された作者（`{name, email}`。頼んだときだけ）。
+    pub recorded: Vec<Option<Value>>,
     pub folded: Vec<u32>,
     pub parents: Vec<Vec<u32>>,
     pub edges: Vec<Edge>,
@@ -109,11 +111,21 @@ impl Rows {
             String::from_utf8_lossy(&text[off..off + len]).into_owned()
         };
         let numbers = reply.u32s("rowNumbers");
+        let mut recorded = vec![None; numbers.len()];
+        for r in reply.json["recorded"].as_array().into_iter().flatten() {
+            if let Some(slot) = r["index"]
+                .as_u64()
+                .and_then(|i| recorded.get_mut(i as usize))
+            {
+                *slot = Some(serde_json::json!({ "name": r["name"], "email": r["email"] }));
+            }
+        }
         let starts = reply.u32s("parentStarts");
         let all_parents = reply.u32s("parents");
         Self {
             subjects: (0..numbers.len()).map(|r| string(r * 4)).collect(),
             authors: (0..numbers.len()).map(|r| string(r * 4 + 2)).collect(),
+            recorded,
             parents: starts
                 .windows(2)
                 .map(|w| all_parents[w[0] as usize..w[1] as usize].to_vec())
@@ -242,7 +254,7 @@ pub fn json_rows(rows: &Rows, refs: &Value) -> Value {
             .enumerate()
             .map(|(i, &row)| {
                 let id = rows.ids[i].to_string();
-                serde_json::json!({
+                let mut item = serde_json::json!({
                     "row": row,
                     "id": id,
                     "parentRows": rows.parents[i],
@@ -253,7 +265,11 @@ pub fn json_rows(rows: &Rows, refs: &Value) -> Value {
                     "lane": rows.nodes[i].lane,
                     "color": rows.nodes[i].color,
                     "folded": rows.folded.get(i).copied().unwrap_or(0),
-                })
+                });
+                if let Some(recorded) = &rows.recorded[i] {
+                    item["recordedAuthor"] = recorded.clone();
+                }
+                item
             })
             .collect(),
     )

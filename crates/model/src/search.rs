@@ -3,13 +3,14 @@
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use crate::{CommitText, Oid, Result};
+use crate::{CommitText, Mailmap, Oid, Result};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum TextField {
     /// 件名・作者名・コミット ID の先頭のどれか。
     Any,
+    /// 作者名。mailmap があれば、置き換えた名前と記録された名前のどちらかに合えばよい。
     Author,
     Subject,
     /// コミット ID の先頭（16 進数 4 文字以上）。
@@ -56,18 +57,36 @@ fn id_matches(id: &Oid, needle: &str) -> bool {
     })
 }
 
-/// `text`（ID は `id`）が `term` に合うか。
-pub fn matches(term: &TextTerm, text: &CommitText, id: &Oid) -> bool {
-    matches_parts(term, text.subject(), text.author_name(), id)
+/// 作者（記録された `name`・`email`）が `needle` に合うか。mailmap があれば、置き換えた名前にも合わせる。
+fn author_matches(needle: &str, name: &[u8], email: &[u8], mailmap: Option<&Mailmap>) -> bool {
+    contains(name, needle)
+        || mailmap
+            .and_then(|m| m.lookup(name, email))
+            .and_then(|e| e.new_name.as_deref())
+            .is_some_and(|mapped| contains(mapped.as_bytes(), needle))
 }
 
-fn matches_parts(term: &TextTerm, subject: &[u8], author: &[u8], id: &Oid) -> bool {
+/// `text`（ID は `id`）が `term` に合うか。
+pub fn matches(term: &TextTerm, text: &CommitText, id: &Oid, mailmap: Option<&Mailmap>) -> bool {
+    let author = || {
+        author_matches(
+            &term.needle,
+            text.author_name(),
+            text.author_email(),
+            mailmap,
+        )
+    };
+    matches_parts(term, text.subject(), &author, id)
+}
+
+/// `author` は、作者が `term` の文字を含むか（作者を見る条件のときだけ呼ぶ）。
+fn matches_parts(term: &TextTerm, subject: &[u8], author: &dyn Fn() -> bool, id: &Oid) -> bool {
     let n = term.needle.as_str();
     match term.field {
-        TextField::Author => contains(author, n),
+        TextField::Author => author(),
         TextField::Subject => contains(subject, n),
         TextField::Commit => id_matches(id, n),
-        TextField::Any => contains(subject, n) || contains(author, n) || id_matches(id, n),
+        TextField::Any => contains(subject, n) || author() || id_matches(id, n),
     }
 }
 
@@ -80,14 +99,48 @@ fn threads() -> usize {
         .min(16)
 }
 
-/// コミットの件名と作者名を、`ids` の順に並べて置いたもの。初めて探すときに全部読み、次からはこれを探すだけに
+/// コミットの件名と作者を、`ids` の順に並べて置いたもの。初めて探すときに全部読み、次からはこれを探すだけに
 /// する（毎回 git から読み直さない）。linux（148 万コミット）で、1 回の検索が 1.1 秒から 3〜20 ms になる。
 pub struct TextIndex {
     ids: Vec<Oid>,
-    /// 件名と作者名をつなげたもの。
+    /// 件名をつなげたもの。
     text: Vec<u8>,
-    /// 行ごとに、件名の始め・作者名の始め（= 件名の終わり）。最後に全体の終わりを足す。
+    /// 行ごとの件名の始め。最後に全体の終わりを足す。
     bounds: Vec<u32>,
+    /// 行ごとの作者（`people` の添字）。
+    authors: Vec<u32>,
+    /// 記録された作者の名前とメール（重ねずに 1 つずつ）。作者の条件は人ごとに 1 回だけ調べる（mailmap で
+    /// 置き換えた名前も、人ごとに 1 回引けば済む）。
+    people: Vec<(Vec<u8>, Vec<u8>)>,
+}
+
+/// 読んだ行: 行・件名・作者名・作者のメール。
+type ReadRow = (usize, Vec<u8>, Vec<u8>, Vec<u8>);
+
+/// 作者の名前とメールに番号を振る。
+#[derive(Default)]
+struct People {
+    list: Vec<(Vec<u8>, Vec<u8>)>,
+    /// 名前・0・メールをつなげたものから番号。
+    index: std::collections::HashMap<Vec<u8>, u32>,
+    key: Vec<u8>,
+}
+
+impl People {
+    fn intern(&mut self, name: &[u8], email: &[u8]) -> u32 {
+        self.key.clear();
+        self.key.extend_from_slice(name);
+        self.key.push(0);
+        self.key.extend_from_slice(email);
+        // ほとんどはもう見た人なので、引くだけで済ませる（行ごとに作らない）。
+        if let Some(&i) = self.index.get(self.key.as_slice()) {
+            return i;
+        }
+        let i = self.list.len() as u32;
+        self.list.push((name.to_vec(), email.to_vec()));
+        self.index.insert(self.key.clone(), i);
+        i
+    }
 }
 
 impl TextIndex {
@@ -124,11 +177,16 @@ impl TextIndex {
                         let batch: Vec<Oid> = rows.iter().map(|&r| ids[r]).collect();
                         match read(&batch) {
                             Ok(texts) => {
-                                let part: Vec<(usize, Vec<u8>, Vec<u8>)> = rows
+                                let part: Vec<ReadRow> = rows
                                     .iter()
                                     .zip(texts)
                                     .map(|(&r, t)| {
-                                        (r, t.subject().to_vec(), t.author_name().to_vec())
+                                        (
+                                            r,
+                                            t.subject().to_vec(),
+                                            t.author_name().to_vec(),
+                                            t.author_email().to_vec(),
+                                        )
                                     })
                                     .collect();
                                 read_parts.lock().unwrap().push(part);
@@ -148,50 +206,66 @@ impl TextIndex {
         if cancelled() {
             return Err(crate::i18n::cancelled().into());
         }
-        let mut fresh: Vec<Option<(Vec<u8>, Vec<u8>)>> = vec![None; ids.len()];
+        type Fresh = Option<(Vec<u8>, Vec<u8>, Vec<u8>)>;
+        let mut fresh: Vec<Fresh> = vec![None; ids.len()];
         for part in read_parts.into_inner().unwrap() {
-            for (r, subject, author) in part {
-                fresh[r] = Some((subject, author));
+            for (r, subject, name, email) in part {
+                fresh[r] = Some((subject, name, email));
             }
         }
         let mut text = Vec::with_capacity(previous.map_or(0, |p| p.text.len()));
-        let mut bounds = Vec::with_capacity(ids.len() * 2 + 1);
+        let mut bounds = Vec::with_capacity(ids.len() + 1);
+        let mut authors = Vec::with_capacity(ids.len());
+        let mut people = People::default();
         for (r, id) in ids.iter().enumerate() {
-            let (subject, author): (&[u8], &[u8]) = match (&fresh[r], previous, &old) {
-                (Some((s, a)), _, _) => (s, a),
+            let (subject, name, email): (&[u8], &[u8], &[u8]) = match (&fresh[r], previous, &old) {
+                (Some((s, n, e)), _, _) => (s, n, e),
                 (None, Some(p), Some(m)) => {
                     let i = m[id] as usize;
-                    (p.subject(i), p.author(i))
+                    let (n, e) = &p.people[p.authors[i] as usize];
+                    (p.subject(i), n, e)
                 }
                 _ => return Err(crate::tr!("Can’t build the search index").into()),
             };
             bounds.push(text.len() as u32);
             text.extend_from_slice(subject);
-            bounds.push(text.len() as u32);
-            text.extend_from_slice(author);
+            authors.push(people.intern(name, email));
         }
         bounds.push(text.len() as u32);
         Ok(Self {
             ids: ids.to_vec(),
             text,
             bounds,
+            authors,
+            people: people.list,
         })
     }
 
     fn subject(&self, row: usize) -> &[u8] {
-        &self.text[self.bounds[row * 2] as usize..self.bounds[row * 2 + 1] as usize]
+        &self.text[self.bounds[row] as usize..self.bounds[row + 1] as usize]
     }
 
-    fn author(&self, row: usize) -> &[u8] {
-        &self.text[self.bounds[row * 2 + 1] as usize..self.bounds[row * 2 + 2] as usize]
-    }
-
-    /// 条件ごとに、合った行（`ids` の中の位置）のビット列（`scan` と同じ形）。行を分けて並列に調べる。
+    /// 条件ごとに、合った行（`ids` の中の位置）のビット列（`scan` と同じ形）。行を分けて並列に調べる。作者の条件は、
+    /// `mailmap` があれば置き換えた名前と記録された名前のどちらかに合う行。
     pub fn search(
         &self,
         terms: &[TextTerm],
+        mailmap: Option<&Mailmap>,
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Vec<Vec<u64>>> {
+        // 条件ごとに、作者を見る条件なら人ごとに合うかを先に決めておく。
+        let people: Vec<Vec<bool>> = terms
+            .iter()
+            .map(|term| match term.field {
+                TextField::Author | TextField::Any => self
+                    .people
+                    .iter()
+                    .map(|(name, email)| author_matches(&term.needle, name, email, mailmap))
+                    .collect(),
+                _ => Vec::new(),
+            })
+            .collect();
+        let people = &people;
         let n = self.ids.len();
         let words = n.div_ceil(64);
         // スレッドごとの範囲も 64 の倍数にする（ビット列の語を分け合わない）。
@@ -207,9 +281,10 @@ impl TextIndex {
                             if (r - start) % BATCH == 0 && cancelled() {
                                 break;
                             }
-                            let (subject, author) = (self.subject(r), self.author(r));
+                            let (subject, person) = (self.subject(r), self.authors[r] as usize);
                             for (k, term) in terms.iter().enumerate() {
-                                if matches_parts(term, subject, author, &self.ids[r]) {
+                                let author = || people[k][person];
+                                if matches_parts(term, subject, &author, &self.ids[r]) {
                                     out[k][(r - start) / 64] |= 1 << ((r - start) % 64);
                                 }
                             }
@@ -243,6 +318,7 @@ impl TextIndexCache {
         &self,
         ids: &[Oid],
         terms: &[TextTerm],
+        mailmap: Option<&Mailmap>,
         read: &(dyn Fn(&[Oid]) -> Result<Vec<CommitText>> + Sync),
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> Result<Vec<Vec<u64>>> {
@@ -255,10 +331,10 @@ impl TextIndexCache {
                 index
             }
         };
-        index.search(terms, cancelled)
+        index.search(terms, mailmap, cancelled)
     }
 
-    /// 覚えている索引の行の数と、件名・作者名のバイト数（なければ None）。
+    /// 覚えている索引の行の数と、件名のバイト数（なければ None）。
     pub fn stats(&self) -> Option<(usize, usize)> {
         self.0
             .lock()
@@ -273,6 +349,7 @@ impl TextIndexCache {
 pub fn scan(
     ids: &[Oid],
     terms: &[TextTerm],
+    mailmap: Option<&Mailmap>,
     read: &(dyn Fn(&[Oid]) -> Result<Vec<CommitText>> + Sync),
     cancelled: &(dyn Fn() -> bool + Sync),
 ) -> Result<Vec<Vec<u64>>> {
@@ -299,7 +376,7 @@ pub fn scan(
                     let mut words = vec![vec![0u64; (end - start).div_ceil(64)]; terms.len()];
                     for (i, t) in texts.iter().enumerate() {
                         for (k, term) in terms.iter().enumerate() {
-                            if matches(term, t, &ids[start + i]) {
+                            if matches(term, t, &ids[start + i], mailmap) {
                                 words[k][i / 64] |= 1 << (i % 64);
                             }
                         }
@@ -342,10 +419,13 @@ mod tests {
         let i = id.0[1];
         let subject = format!("Fix Subject {i}");
         let author = if i.is_multiple_of(2) { "Alice" } else { "Bob" };
-        let raw = format!("{subject}{author}").into_bytes();
+        let email = format!("{}@example.com", author.to_lowercase());
+        let raw = format!("{subject}{author}{email}").into_bytes();
+        let name_end = (subject.len() + author.len()) as u32;
         CommitText {
             subject: 0..subject.len() as u32,
-            author_name: subject.len() as u32..raw.len() as u32,
+            author_name: subject.len() as u32..name_end,
+            author_email: name_end..raw.len() as u32,
             raw: Arc::new(raw),
             author_time: 0,
             signature: 0,
@@ -373,7 +453,7 @@ mod tests {
             TextTerm::new(TextField::Subject, "SUBJECT 7"),
             TextTerm::new(TextField::Any, "ab05"),
         ];
-        let found = cache.search(&ids, &terms, &read, &never).unwrap();
+        let found = cache.search(&ids, &terms, None, &read, &never).unwrap();
         assert_eq!(rows(&found[0], 100).len(), 50);
         assert_eq!(
             rows(&found[1], 100),
@@ -383,7 +463,7 @@ mod tests {
         assert_eq!(reads.load(Ordering::Relaxed), 100);
 
         // 同じコミットなら読み直さない。
-        cache.search(&ids, &terms, &read, &never).unwrap();
+        cache.search(&ids, &terms, None, &read, &never).unwrap();
         assert_eq!(reads.load(Ordering::Relaxed), 100);
 
         // 新しいコミットが上に 2 つ増えたら、その 2 つだけ読む。
@@ -391,7 +471,7 @@ mod tests {
             .into_iter()
             .chain(ids.iter().copied())
             .collect();
-        let found = cache.search(&grown, &terms, &read, &never).unwrap();
+        let found = cache.search(&grown, &terms, None, &read, &never).unwrap();
         assert_eq!(reads.load(Ordering::Relaxed), 102);
         assert_eq!(
             rows(&found[1], 102)[0],
@@ -402,5 +482,51 @@ mod tests {
             rows(&found[0], 102).contains(&0),
             "新しいコミット（200、Alice）も探せる"
         );
+    }
+
+    #[test]
+    fn an_author_matches_by_the_mapped_or_the_recorded_name() {
+        let read = |ids: &[Oid]| -> Result<Vec<CommitText>> { Ok(ids.iter().map(text).collect()) };
+        let never = || false;
+        let ids: Vec<Oid> = (0..10).map(oid).collect();
+        let mailmap = Mailmap::new(
+            true,
+            vec![crate::MailmapEntry {
+                old_email: "bob@example.com".into(),
+                old_name: None,
+                new_name: Some("Robert".into()),
+                new_email: None,
+            }],
+        );
+        let terms = [
+            TextTerm::new(TextField::Author, "robert"),
+            TextTerm::new(TextField::Author, "bob"),
+            TextTerm::new(TextField::Any, "rober"),
+        ];
+        let cache = TextIndexCache::default();
+        let found = cache
+            .search(&ids, &terms, Some(&mailmap), &read, &never)
+            .unwrap();
+        let odd = vec![1, 3, 5, 7, 9];
+        assert_eq!(rows(&found[0], 10), odd, "置き換えた名前");
+        assert_eq!(rows(&found[1], 10), odd, "記録された名前");
+        assert_eq!(rows(&found[2], 10), odd);
+        let found = cache.search(&ids, &terms, None, &read, &never).unwrap();
+        assert!(
+            rows(&found[0], 10).is_empty(),
+            "mailmap がなければ置き換えた名前では合わない"
+        );
+        assert_eq!(
+            scan(&ids, &terms[..1], Some(&mailmap), &read, &never).unwrap()[0],
+            found_words(&odd),
+        );
+    }
+
+    fn found_words(rows: &[usize]) -> Vec<u64> {
+        let mut w = vec![0u64; 1];
+        for &r in rows {
+            w[0] |= 1 << r;
+        }
+        w
     }
 }

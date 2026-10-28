@@ -51,7 +51,7 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 | `history` | rebuild?, fold?, expanded? (array of IDs), tips? (array of IDs; only what is reachable from them) | history, generation, rows, head, headRow, folded | |
 | `historyMatching` | history, rows | same as `history` (a History of only the matching rows) | |
 | `historyRelease` | history | | |
-| `historyRows` | history, and start and count or rows (array of rows) | count, edges | rowNumbers u32, nodes, ids, times i64, spans (start and length of the subject and author in `text`, u32 × 4), text (UTF-8), signatures u8, folded u32 (for a folded History), parentStarts u32 (number of rows + 1), parents u32 (parent rows), parentIds (parent IDs), edges, edgeIds u32 (only with start and count; edges overlapping that range) |
+| `historyRows` | history, and start and count or rows (array of rows), recorded? (true to list the rows whose author the mailmap changed) | count, edges, recorded (index into the rows, name and email as recorded; empty unless asked) | rowNumbers u32, nodes, ids, times i64, spans (start and length of the subject and author in `text`, u32 × 4; the author by the mailmap), text (UTF-8), signatures u8, folded u32 (for a folded History), parentStarts u32 (number of rows + 1), parents u32 (parent rows), parentIds (parent IDs), edges, edgeIds u32 (only with start and count; edges overlapping that range) |
 | `historyGraph` | history | rows, edges | nodes, edges, ids, folded (all rows) |
 | `historySearch` | history, query (syntax of `crates/core/src/query.rs`) | count | rows u32 (ascending) |
 | `historyDensity` | history, buckets | buckets | density (f32 × 2: frequency, activity, 0 to 1) |

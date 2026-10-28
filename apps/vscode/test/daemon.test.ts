@@ -85,6 +85,28 @@ test('reads History rows and the graph through the daemon', { skip }, async () =
   }
 });
 
+test('shows names from the mailmap through the daemon', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  writeFileSync(join(repo, '.mailmap'), 'Ann Example <ann@example.com> <a@example.com>\n');
+  try {
+    // History は作り直さずに、行の作者名・検索・詳細が置き換わる
+    const history = await client.call({ op: 'history' });
+    const reply = await client.call({ op: 'historyRows', history: history.json['history'], start: 0, count: 1 });
+    assert.equal(readRows(reply)[0]!.author, 'Ann Example');
+    for (const query of ['author:ann', 'author:a']) {
+      const found = await client.call({ op: 'historySearch', history: history.json['history'], query });
+      assert.equal(found.u32('rows').length, 4, query);
+    }
+    const oid = git('rev-parse', 'HEAD').trim();
+    const info = (await client.call({ op: 'run', command: { op: 'commitInfo', oid } })).json['info'] as Record<string, unknown>;
+    assert.deepEqual([info['author'], info['authorEmail']], ['Ann Example', 'ann@example.com']);
+    assert.deepEqual(info['recordedAuthor'], { name: 'a', email: 'a@example.com' });
+  } finally {
+    rmSync(join(repo, '.mailmap'));
+    client.dispose();
+  }
+});
+
 test('stages lines, commits and hears changes through the daemon', { skip }, async () => {
   const client = await DaemonClient.open(daemon, repo);
   try {

@@ -4,6 +4,7 @@
  * どれも親ディレクトリの更新時刻に現れる。
  */
 import { readdir, stat } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 
 export interface GitDirs {
@@ -64,6 +65,22 @@ export async function configStamp(dirs: GitDirs): Promise<string> {
 /** stash の変化。stash の一覧は `refs/stash` の reflog */
 export async function stashStamp(dirs: GitDirs): Promise<string> {
   return fileStamp(join(dirs.commonDir, 'logs', 'refs', 'stash'));
+}
+
+/**
+ * mailmap の変化。作業ツリーの `.mailmap` と、`log.mailmap`・`mailmap.file` を書く設定ファイル（リポジトリ・
+ * worktree・利用者のもの）。`mailmap.file` の中身の変化は見ない
+ */
+export async function mailmapStamp(root: string, dirs: GitDirs): Promise<string> {
+  const home = homedir();
+  const xdg = process.env['XDG_CONFIG_HOME'] || join(home, '.config');
+  const parts = await Promise.all([
+    fileStamp(join(root, '.mailmap')),
+    configStamp(dirs),
+    fileStamp(process.env['GIT_CONFIG_GLOBAL'] || join(home, '.gitconfig')),
+    fileStamp(join(xdg, 'git', 'config')),
+  ]);
+  return parts.join('|');
 }
 
 /** `.gitmodules` の変化 */

@@ -4,11 +4,15 @@ import { parseLog, parseNameStatus } from '../src/git/log.ts';
 
 test('parseLog', () => {
   const rec = (...f: string[]) => `\x1e${f.join('\0')}\n`;
-  const out = rec('c2', 'p1 p2', 'Ann', 'a@x', '200', 'merge: x y') + rec('p1', '', 'Bob', 'b@x', '100', '');
+  const out =
+    rec('c2', 'p1 p2', 'Ann', 'a@x', 'Ann', 'a@x', '200', 'merge: x y') +
+    rec('p1', '', 'Bob', 'b@x', 'Robert', 'robert@x', '100', '');
   assert.deepEqual(parseLog(out), [
     { oid: 'c2', parents: ['p1', 'p2'], author: 'Ann', email: 'a@x', date: 200, subject: 'merge: x y' },
-    { oid: 'p1', parents: [], author: 'Bob', email: 'b@x', date: 100, subject: '' },
+    { oid: 'p1', parents: [], author: 'Robert', email: 'robert@x', date: 100, subject: '' },
   ]);
+  // log.mailmap が false なら記録のまま
+  assert.equal(parseLog(out, false)[1]!.author, 'Bob');
 });
 
 test('parseNameStatus with renames', () => {

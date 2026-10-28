@@ -287,3 +287,25 @@ private func makeRepo() throws -> URL {
     #expect(HostPath.shown(#"D:\src"#, home: #"C:\Users\Ada"#) == #"D:\src"#)
     #expect(HostPath.shown("/x", home: "/") == "/x")
 }
+
+@Test func showsNamesFromTheMailmap() throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let repo = try Repository(path: dir.path)
+    let history = try repo.loadHistory()
+    let before = repo.mailmapFingerprint
+    try "Alice Liddell <alice@example.com> <a@example.com>\n"
+        .write(to: dir.appendingPathComponent(".mailmap"), atomically: true, encoding: .utf8)
+    // History を作り直さずに、行の作者名と詳細が置き換わる。
+    #expect(repo.mailmapFingerprint != before)
+    #expect(try history.chunk(rows: 0..<1).authorName(row: 0) == "Alice Liddell")
+    let id = try #require(history.commitID(row: 0)).map { String(format: "%02x", $0) }.joined()
+    let info = try repo.commitInfo(oid: id)
+    #expect((info.author, info.authorEmail) == ("Alice Liddell", "alice@example.com"))
+    #expect((info.recordedAuthor?.name, info.recordedAuthor?.email) == ("Alice", "a@example.com"))
+    #expect(info.recordedCommitterEmail == "a@example.com")
+    // log.mailmap が false なら記録のまま。
+    try git(dir, "config", "log.mailmap", "false")
+    #expect(try history.chunk(rows: 0..<1).authorName(row: 0) == "Alice")
+    #expect(try repo.commitInfo(oid: id).recordedAuthor == nil)
+}

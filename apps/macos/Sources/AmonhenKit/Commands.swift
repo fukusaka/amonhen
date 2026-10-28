@@ -96,7 +96,7 @@ extension WorkingFileDiff {
     }
 }
 
-/// コミットの詳細（すぐ返せる分）。
+/// コミットの詳細（すぐ返せる分）。名前とメールは mailmap で置き換えたもの。
 public struct CommitInfo: Decodable, Equatable, Sendable {
     public let oid: String
     public let message: String
@@ -109,6 +109,9 @@ public struct CommitInfo: Decodable, Equatable, Sendable {
     public let committerEmail: String
     public let committerTime: Int64
     public let committerTz: String
+    /// mailmap で置き換えて記録と違えば、コミットに記録された作者とコミッター。
+    public let recordedAuthor: Identity?
+    public let recordedCommitter: Identity?
     public let parents: [String]
     public let refs: [String]
     /// 署名の種類（`gpg`・`ssh`・`x509`）。署名がなければ nil。検証の結果は `CommitExtras.signature`。
@@ -118,6 +121,14 @@ public struct CommitInfo: Decodable, Equatable, Sendable {
     /// merge したタグ（ヘッダーの mergetag）。
     public let mergedTags: [MergedTag]
     public let trailers: [Trailer]
+
+    public struct Identity: Decodable, Equatable, Sendable {
+        public let name: String
+        public let email: String
+    }
+
+    /// コミットに記録されたコミッターのメール（署名の鍵と比べるのはこちら）。
+    public var recordedCommitterEmail: String { recordedCommitter?.email ?? committerEmail }
 
     public struct MergedTag: Decodable, Equatable, Sendable {
         /// タグのオブジェクトの ID。

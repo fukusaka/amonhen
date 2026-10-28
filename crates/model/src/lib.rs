@@ -8,6 +8,7 @@ mod extras;
 mod files;
 mod graph;
 pub mod i18n;
+pub mod mailmap;
 mod oid;
 mod ops;
 pub mod process;
@@ -26,6 +27,7 @@ pub use eol::{Eol, LineEndings};
 pub use extras::{CommitExtras, FileStat, SignatureCheck, SignatureVerifier, SignerEmail};
 pub use files::{LocalFiles, RepoFiles, Root};
 pub use graph::{CommitGraph, CommitGraphBuilder};
+pub use mailmap::{Mailmap, MailmapEntry};
 pub use oid::{Oid, OidMap, OidSet};
 pub use ops::{
     ConfigEntry, Directory, DirectoryEntry, HeadState, MachineGit, Operations, Outcome, Program,

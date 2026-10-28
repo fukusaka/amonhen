@@ -344,14 +344,28 @@ fn handle(
             encode(&backend.branch_created_at(&names)?)
         }
         Request::Reflog { name, limit } => encode(&backend.reflog(&name, limit)?),
-        Request::SearchTexts { tips, terms } => {
+        Request::Mailmap { known } => {
+            let mailmap = backend.mailmap()?;
+            encode(&(known != Some(mailmap.fingerprint())).then_some(&*mailmap))
+        }
+        Request::SearchTexts {
+            tips,
+            terms,
+            mailmap,
+        } => {
             let ids = commits_from(backend, &search.commits, &tips)?;
-            let words =
-                search
-                    .texts
-                    .search(&ids, &terms, &|batch| backend.commit_texts(batch), &|| {
-                        cancel.load(Ordering::Relaxed)
-                    })?;
+            let mailmap = if mailmap {
+                Some(backend.mailmap()?).filter(|m| m.is_active())
+            } else {
+                None
+            };
+            let words = search.texts.search(
+                &ids,
+                &terms,
+                mailmap.as_deref(),
+                &|batch| backend.commit_texts(batch),
+                &|| cancel.load(Ordering::Relaxed),
+            )?;
             let found: Vec<Vec<Oid>> = words
                 .iter()
                 .map(|w| {

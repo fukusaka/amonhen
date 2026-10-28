@@ -62,6 +62,11 @@ is in [front.md](front.md), and the design in item 18 of
 - Without a matching engine, or with `amonhen.daemon.enabled` off, everything runs on the extension's own git execution
   layer. The sections below on spawning git, `cat-file`, rebase plans and line-level staging describe that path; the
   engine does the same work in Rust.
+- People are shown by their mailmap names on both paths. The engine maps them in the core (the details also carry the
+  recorded name and email, shown under the name when they differ). The git execution layer reads `log.mailmap` and
+  takes `%aN`/`%aE` for History rows (`%aN` maps even when `log.mailmap` is false), and maps the details with
+  `git check-mailmap`. When `.mailmap` or a config file changes (their modification times, read on each refresh),
+  History and the details it keeps are read again.
 
 ## Implementation approach for the required features
 

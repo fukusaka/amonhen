@@ -13,7 +13,8 @@
 - Working Copy: ファイルはパスの一覧かディレクトリの木で表示（一覧の上で切り替え）。差分の行をクリックで選び（hunk の見出しで hunk 全体、Shift で範囲、⌘ で追加）、Stage Lines / Discard Lines。Space・Enter で stage / unstage。Summary と Description を書いて ⌘↩ でコミット。コンフリクトはコンフリクトごとに Use Current / Use Incoming / Use Both、または Merge Editor…（3 ペインのマージエディタ）。
 - History: グラフ付きの一覧（件名とブランチ・タグのラベル、その下に作者・日時・ID）。右クリックでコミットの編集（Edit Message・Squash・Fixup・Edit・Split・Drop）、cherry-pick・revert、ブランチ・タグの作成。ドラッグで並べ替え。上部で All Branches / Current Branch / 選んだ ref を切り替える。⌘F でコミットを検索（Enter・⌘G で次へ、⇧Enter・⇧⌘G で前へ。一致したコミットだけを出すこともできる）。
 - 差分: ドラッグで文字を選んで ⌘C、⌘F で検索。構文の色付けは表示の後に裏で付く。
-- History の検索の構文: 語は件名・作者・ID から探す。空白で区切ると AND、`or` で OR、括弧でまとめる。`author:` `subject:` `commit:` `path:` `contents:"..."`（例: `path:fs/ (author:linus or author:greg)`）。
+- History の検索の構文: 語は件名・作者・ID から探す。空白で区切ると AND、`or` で OR、括弧でまとめる。`author:` `subject:` `commit:` `path:` `contents:"..."`（例: `path:fs/ (author:linus or author:greg)`）。作者は、mailmap で置き換えた名前とコミットに記録された名前のどちらでも合う。
+- 人はリポジトリの mailmap（`.mailmap`・`mailmap.file`）の名前とメールで出す（`git log` と同じ）。記録と違えば、詳細では記録された名前とメールを下に添える。切るのは git の `log.mailmap` で、リポジトリの設定の「作者と署名」（すべてのリポジトリなら Settings > Git）に mailmap のファイルと一緒にある。どちらを変えても、History を作り直さずに名前を出し直す。Blame は git と同じく、いつも mailmap で置き換える。
 - ファイルの右クリック（Working Copy・History の変更ファイル）で Blame と File History（名前の変更も追う）。どちらもリポジトリの隣のタブで開き、同じツールバーが付く（ボタンを押すと、リポジトリのタブに戻ってそこで操作する）。タブを引き出せば別のウィンドウになり、Window > Move Tab to Window ▸ でリポジトリのタブに戻せる（前のタブを選んだ窓のタブに移す。リポジトリの窓が先頭に出る。タブをタブバーに落としてもよい。タブが 1 つのウィンドウでは View > Show Tab Bar、⇧⌘T でタブバーを出す）。同じものを開き直すと、そのタブを読み直したものに入れ替える。マージのコミットは、Show Merge Commits（一覧の右クリック、または Settings > 表示 > File History）を入れたときだけ出す。行やコミットをダブルクリックすると History で選ぶ。File History はすぐに開いて新しい方の 100 コミットを出し、残りは読めたら足す。名前を変えていれば、名前ごとにその時点の名前の見出しをコミットの上に出す。コミットの右クリックで History で見る・そのコミットでの Blame・ID やパスのコピー（Return で History に出し、⌘C で ID をコピーする）。
 - View > One Line per Commit で History の行を 1 行にする。終了したときに開いていたリポジトリは、次の起動で開き直す。
 
@@ -39,7 +40,7 @@ Settings > パフォーマンスの「リポジトリを共有の daemon 越し�
 
 ```sh
 amonhen .                      # アプリで開く
-amonhen log -n 20 fix          # グラフ付きの履歴（検索の構文も使える）
+amonhen log -n 20 fix          # グラフ付きの履歴（検索の構文も使える。--json は mailmap で変えた行に recordedAuthor を足す）
 amonhen status / diff / show   # Working Copy とコミットの中身（--json で FE が読む形）
 amonhen stage --rows 3,5-9 f   # 差分の行ごとに stage（amonhen diff --combined --rows で番号を見る）
 amonhen undo [--list]          # 操作を戻す（アプリ・VSCode 拡張と記録を共有）

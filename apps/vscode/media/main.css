@@ -137,6 +137,13 @@ aside.details dd {
   overflow-wrap: anywhere;
 }
 
+/* mailmap で置き換える前の、コミットに記録された名前とメール */
+aside.details dd .recorded {
+  display: block;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+
 aside.details code,
 aside.details .parent {
   font-family: var(--vscode-editor-font-family);

@@ -1,9 +1,10 @@
 use amonhen_layout::StrRef;
-use amonhen_model::CommitText;
+use amonhen_model::{CommitText, Mailmap};
 
 use crate::{ColumnSet, FrontendProfile, StringTable, StringTableBuilder};
 
-/// History の連続した行の、FE 向けの列。文字列置き場の 1 番以降は各コミットの本文。
+/// History の連続した行の、FE 向けの列。文字列置き場の 1 番以降は各コミットの本文で、mailmap で置き換えた
+/// 作者名があれば、その後ろに置き換えた名前をつなげたものを 1 つ置く。
 pub struct HistoryChunk {
     pub start_row: u32,
     pub subjects: Vec<StrRef>,
@@ -15,11 +16,34 @@ pub struct HistoryChunk {
 }
 
 impl HistoryChunk {
-    pub fn new(start_row: u32, texts: &[CommitText], profile: &FrontendProfile) -> Self {
+    /// `mailmap` があれば、作者名は置き換えたもの。
+    pub fn new(
+        start_row: u32,
+        texts: &[CommitText],
+        profile: &FrontendProfile,
+        mailmap: Option<&Mailmap>,
+    ) -> Self {
         let mut strings = StringTableBuilder::new(profile.string);
         for text in texts {
             strings.share(text.raw.clone());
         }
+        // 置き換える作者名（行ごとに、つなげたものの中の範囲）。置き換えない行は本文を指す。
+        let mut mapped = Vec::new();
+        let mapped_names: Vec<Option<std::ops::Range<usize>>> = match mailmap {
+            Some(m) if profile.columns.contains(ColumnSet::AUTHOR) => texts
+                .iter()
+                .map(|t| {
+                    let name = m
+                        .lookup(t.author_name(), t.author_email())?
+                        .new_name
+                        .as_deref()?;
+                    let start = mapped.len();
+                    mapped.extend_from_slice(name.as_bytes());
+                    Some(start..mapped.len())
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
         let mut column = |wanted: ColumnSet, part: fn(&CommitText) -> &[u8]| -> Vec<StrRef> {
             if !profile.columns.contains(wanted) {
                 return Vec::new();
@@ -31,7 +55,16 @@ impl HistoryChunk {
                 .collect()
         };
         let subjects = column(ColumnSet::SUBJECT, CommitText::subject);
-        let author_names = column(ColumnSet::AUTHOR, CommitText::author_name);
+        let mut author_names = column(ColumnSet::AUTHOR, CommitText::author_name);
+        if !mapped.is_empty() {
+            let mapped = std::sync::Arc::new(mapped);
+            let buf = strings.share(mapped.clone());
+            for (name, range) in author_names.iter_mut().zip(&mapped_names) {
+                if let Some(r) = range {
+                    *name = strings.add(buf, &mapped[r.clone()]);
+                }
+            }
+        }
         let author_times = if profile.columns.contains(ColumnSet::COMMIT_TIME) {
             texts.iter().map(|t| t.author_time).collect()
         } else {
@@ -48,7 +81,7 @@ impl HistoryChunk {
     }
 
     pub fn len(&self) -> usize {
-        self.strings.bases().len() - 1
+        self.signatures.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -75,6 +108,7 @@ mod tests {
             signature: 0,
             raw: Arc::new(raw.to_vec()),
             subject,
+            author_email: author.end..author.end,
             author_name: author,
             author_time: 42,
         }
@@ -105,7 +139,7 @@ mod tests {
         );
         let texts = [a, b];
 
-        let chunk = HistoryChunk::new(100, &texts, &FrontendProfile::MACOS);
+        let chunk = HistoryChunk::new(100, &texts, &FrontendProfile::MACOS, None);
         assert_eq!(chunk.len(), 2);
         assert_eq!(chunk.author_times, [42, 42]);
 
@@ -131,7 +165,7 @@ mod tests {
             string: StringEncoding::Utf8,
             ..FrontendProfile::MACOS
         };
-        let chunk = HistoryChunk::new(0, std::slice::from_ref(&t), &profile);
+        let chunk = HistoryChunk::new(0, std::slice::from_ref(&t), &profile, None);
         let s = chunk.subjects[0];
         assert_eq!(s.buf, 1);
         assert_eq!(chunk.bytes(s).as_ptr(), t.subject().as_ptr());
@@ -144,7 +178,7 @@ mod tests {
             columns: ColumnSet::SUBJECT,
             ..FrontendProfile::MACOS
         };
-        let chunk = HistoryChunk::new(0, std::slice::from_ref(&t), &profile);
+        let chunk = HistoryChunk::new(0, std::slice::from_ref(&t), &profile, None);
         assert_eq!(chunk.subjects.len(), 1);
         assert!(chunk.author_names.is_empty() && chunk.author_times.is_empty());
     }

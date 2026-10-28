@@ -16,6 +16,10 @@ becomes the GitHub Release notes.
 - Tag signatures are verified and shown like commit signatures: a Tag line per tag in the commit details, the
   signature on each Merged Tag line, and a mark on signed tags in the sidebar. `amonhen refs --verify` adds them too,
   and `amonhen show` prints the commit's signature and its tags' and merged tags'.
+- People are shown by their names in the repository's mailmap (`.mailmap`, `mailmap.file`), as `git log` does, in
+  History, the details, File History and the CLI, with the recorded name and email under them in the details when
+  they differ. `author:` matches the mapped and the recorded name. git's `log.mailmap` turns it off, on the Author and
+  Signing page with the mailmap file; changing either shows the names again without rebuilding History.
 - Every change in Repository Settings and Settings > Git can be undone and redone with ⌘Z / ⇧⌘Z while the page is
   shown, apart from the repository's Undo (⌥⌘Z).
 - A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last
@@ -577,6 +581,8 @@ First release.
 
 - A local branch that isn't checked out can be fast-forwarded to its upstream (Fast-Forward to Upstream) or pushed
   (Push to Upstream) from its menu in the nav.
+- History and the commit details show people by their mailmap names (following `log.mailmap`), with the recorded
+  name and email under them in the details when they differ, with or without the engine.
 
 #### Changed
 

@@ -1425,3 +1425,13 @@
 "AMONHEN_GIT in the app’s environment overrides it: %@" = "アプリの環境の AMONHEN_GIT が優先されています: %@";
 "The engine, the CLI and the VSCode extension on %@ use it too." = "%@ のエンジン・CLI・VSCode 拡張も、これに従います。";
 "AMONHEN_GIT in the engine’s environment overrides it: %@" = "エンジンの環境の AMONHEN_GIT が優先されています: %@";
+
+/* mailmap（People.swift・RepositorySettings.swift・RepositoryWindow.swift） */
+"Recorded: %@" = "記録: %@";
+"The name and email recorded in the commit. The mailmap shows them as above." = "コミットに記録された名前とメール。mailmap で上のように見せています。";
+"Use the mailmap" = "mailmap で名前を置き換える";
+"Shows the names and emails from the mailmap instead of the recorded ones, like git log (Blame always does)." = "記録された名前とメールの代わりに mailmap のものを出します（git log と同じ。Blame はいつも置き換えます）。";
+"Mailmap file" = "mailmap のファイル";
+"Read after the repository’s .mailmap." = "リポジトリの .mailmap の後に読みます。";
+"Choose a mailmap file" = "mailmap のファイルを選ぶ";
+"The mailmap changed. Showing the names again." = "mailmap が変わったので、名前を出し直しました。";
