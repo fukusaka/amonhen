@@ -859,27 +859,31 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     // MARK: - 加える
 
     @objc private func addRepository() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.allowsMultipleSelection = true
-        panel.message = L("Choose the repository folders to add to the list.")
-        guard panel.runModal() == .OK else { return }
-        var rejected: [String] = []
-        for url in panel.urls {
-            if RepositoryList.isRepository(url.path) {
-                Bookmarks.shared.add(url.standardizedFileURL.path, group: selectedGroup)
-            } else {
-                rejected.append(url.lastPathComponent)
+        Self.chooseRepositories(in: view.window) { [weak self] paths in
+            guard let self, let paths else { return }
+            for path in paths where RepositoryList.isRepository(path) {
+                Bookmarks.shared.add(URL(fileURLWithPath: path).standardizedFileURL.path, group: selectedGroup)
             }
         }
-        if !rejected.isEmpty {
-            let alert = NSAlert()
-            alert.messageText = L("Not a Git repository")
-            alert.informativeText = rejected.joined(separator: L(", "))
-            alert.runModal()
+    }
+
+    /// 手元のリポジトリを選ぶシート（⌘ クリックでいくつでも）。最初は前に選んだところ。
+    static func chooseRepositories(in window: NSWindow?, done: @escaping ([String]?) -> Void) {
+        let places = Bookmarks.shared.data.scanRoots.map(\.path).filter { sshHost($0) == nil }
+            .map { ($0 as NSString).abbreviatingWithTildeInPath }
+        FilePicker.presentLocal(title: L("Add Repositories"),
+                                message: L("Choose the repositories to add to the list (green). ⌘-click to choose more than one."),
+                                kind: .repository, initial: UserDefaults.standard.string(forKey: lastLocalFolderKey) ?? "~",
+                                places: places, multiple: true, in: window) { paths in
+            if let first = paths?.first {
+                UserDefaults.standard.set((first as NSString).deletingLastPathComponent, forKey: lastLocalFolderKey)
+            }
+            done(paths)
         }
     }
+
+    /// 手元のリポジトリを選んだ、前のフォルダ。
+    private static let lastLocalFolderKey = "lastLocalRepositoryFolder"
 
     @objc private func clone() {
         NSApp.sendAction(#selector(AppDelegate.cloneRepository(_:)), to: nil, from: self)
@@ -892,12 +896,16 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
     }
 
     @objc private func addScanFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.message = L("Choose a folder to search for repositories (up to 3 levels deep).")
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        Bookmarks.shared.addScanRoot(url.standardizedFileURL.path)
+        Self.chooseScanFolder(in: view.window) { path in
+            if let path { Bookmarks.shared.addScanRoot(URL(fileURLWithPath: path).standardizedFileURL.path) }
+        }
+    }
+
+    /// 手元のスキャンするフォルダを選ぶシート。
+    static func chooseScanFolder(in window: NSWindow?, done: @escaping (String?) -> Void) {
+        FilePicker.presentLocal(title: L("Add a Folder to Scan"),
+                                message: L("Choose a folder to search for repositories (up to 3 levels deep)."),
+                                kind: .folder, initial: "~", in: window) { done($0?.first) }
     }
 
     /// 使ったことのあるホスト（先に）と、~/.ssh/config・known_hosts のホスト。
@@ -915,7 +923,7 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
 
     /// SSH のホストでスキャンするフォルダを加える（そのホストの上で、エンジンが探す）。`host` を渡すとホストは決まり。
     private func addRemoteScanFolder(host: String?) {
-        RemoteFilePicker.present(
+        FilePicker.present(
             title: host.map { L("Add a Folder to Scan on %@", $0) } ?? L("Add a Folder to Scan over SSH"),
             message: L("The engine on the host searches up to 3 levels below the folder."), kind: .folder,
             host: host ?? UserDefaults.standard.string(forKey: Self.lastHostKey) ?? "",

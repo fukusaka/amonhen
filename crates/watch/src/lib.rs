@@ -335,6 +335,7 @@ mod tests {
 
     #[test]
     fn counts_changes_per_worktree() {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         // git には普通のパスを渡し、番号は実パス（macOS の /private/var、Windows の \\?\C:\…）で引く。
         let root = tmp.path().to_owned();

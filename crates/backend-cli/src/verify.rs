@@ -107,6 +107,7 @@ mod tests {
 
     #[test]
     fn checks_a_commit_copied_from_another_repository() {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         let source = Git::new(tmp.path().join("source"));
         std::fs::create_dir(tmp.path().join("source")).unwrap();

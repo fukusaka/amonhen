@@ -334,6 +334,11 @@ pub const MIN_GIT_VERSION: (u32, u32) = (2, 23);
 
 /// `git` の版（`git version` の数の 3 つ）。読めなければ `None`。使う git（`AMONHEN_GIT`）ごとに 1 回だけ調べる。
 pub fn git_version() -> Option<(u32, u32, u32)> {
+    // 使えない git は動かさない（macOS の /usr/bin/git なら、インストールのダイアログが出る）。覚えもしないので、
+    // 入れたり選び直したりすれば、次に調べるときから読める。
+    if amonhen_model::process::missing_git().is_some() {
+        return None;
+    }
     type Cached = Option<(std::ffi::OsString, Option<(u32, u32, u32)>)>;
     static VERSION: std::sync::Mutex<Cached> = std::sync::Mutex::new(None);
     let program = amonhen_model::process::git_program();
@@ -350,6 +355,11 @@ pub fn git_version() -> Option<(u32, u32, u32)> {
         .and_then(|out| parse_git_version(&String::from_utf8_lossy(&out.stdout)));
     *cached = Some((program, version));
     version
+}
+
+/// この機械の `path` のフォルダの中身（`~` 可。アプリがこの Mac のパスを選ぶシートで読む）。
+pub fn list_directory(path: &str) -> Result<amonhen_model::Directory> {
+    directory::list(path)
 }
 
 /// この機械で署名に使える鍵（`format` は openpgp・ssh・x509。アプリの Settings > Git の鍵の一覧）。
@@ -715,6 +725,7 @@ mod tests {
     /// 選んだ git がなくても、設定のための空のリポジトリはでき、git が読める形になっている。
     #[test]
     fn prepares_the_settings_repository_without_the_chosen_git() {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path().join("settings-repo");
         let env = amonhen_model::process::ClientEnv::from_vars([(
@@ -733,6 +744,7 @@ mod tests {
     }
 
     fn repo() -> (tempfile::TempDir, Git) {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         let git = Git::new(tmp.path());
         for args in [
@@ -833,6 +845,7 @@ mod ops_tests {
     use amonhen_model::{HeadState, Oid, Operations, Outcome, ResetMode, Sequence};
 
     fn repo() -> (tempfile::TempDir, Git) {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         let git = Git::new(tmp.path());
         for args in [
@@ -985,6 +998,7 @@ mod streaming_tests {
 
     #[test]
     fn cancels_a_running_fetch() {
+        amonhen_model::testing::isolate_from_user_settings();
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
         assert!(

@@ -18,7 +18,7 @@ use amonhen_model::tr;
 use serde_json::Value;
 
 /// 取り決めの版。変えたら上げる（`hello` の答えで確かめる）。
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// 共有の daemon につないで最初に送る場所が、この文字で始まれば FE 向けの窓口。
 pub const PREAMBLE: char = '\u{1}';

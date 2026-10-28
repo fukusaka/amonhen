@@ -9,6 +9,7 @@ use amonhen_backend_gix::GixBackend;
 use amonhen_model::{CommitText, GitBackend, Oid};
 
 fn git(dir: &Path, args: &[&str], input: Option<&str>) -> String {
+    amonhen_model::testing::isolate_from_user_settings();
     let mut child = Command::new("git")
         .args(args)
         .current_dir(dir)

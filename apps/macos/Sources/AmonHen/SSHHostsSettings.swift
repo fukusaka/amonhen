@@ -189,7 +189,7 @@ struct SSHHostsSettings: View {
                         } else {
                             SettingsPageContent(model: model, page: gitPage)
                         }
-                        if let error = model.error {
+                        if let error = model.error, gitPage != .programs || error != model.gitProblem {
                             HStack {
                                 Text(error).foregroundStyle(.red).lineLimit(2)
                                 Spacer()
@@ -387,7 +387,7 @@ private struct ConnectionPage: View {
     }
 
     private func add() {
-        RemoteFilePicker.present(title: L("Add a Folder to Scan on %@", session.host),
+        FilePicker.present(title: L("Add a Folder to Scan on %@", session.host),
                                  message: L("The engine on the host searches up to 3 levels below the folder."), kind: .folder,
                                  host: session.host, repository: session.model?.repository, initial: "~/prj") { chosen in
             guard let chosen, let location = RepositoryLocation.ssh(host: chosen.host, path: chosen.shown) else { return }
@@ -448,7 +448,7 @@ private struct EngineChoice: View {
             return
         }
         let current = options.engine?.hasPrefix("/") == true ? options.engine! : "~/.local/share/amonhen"
-        RemoteFilePicker.present(title: L("Engine on %@", host), message: L("Choose amonhen on the host. It must be this build."),
+        FilePicker.present(title: L("Engine on %@", host), message: L("Choose amonhen on the host. It must be this build."),
                                  kind: .executable, host: host, repository: repository, initial: current) { chosen in
             guard let path = chosen?.path, path.hasPrefix("/") else { return }
             var new = options

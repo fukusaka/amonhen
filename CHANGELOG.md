@@ -28,8 +28,9 @@ becomes the GitHub Release notes.
   start the engine with the host's login shell's environment, for the PATH and `GIT_*` set in `~/.profile` and the
   like (the amonhen on the PATH is looked for in that PATH too).
 - Paths on an SSH host (Other… for a program or the engine, + for a folder to scan, Choose… when adding a repository)
-  are chosen in a sheet that shows the host's folders in columns, like the Finder, with git repositories marked. The
-  core and CLI get `listDirectory`, which lists a folder on the machine that runs git.
+  are chosen in a sheet that shows the host's folders in columns, like the Finder (arrow keys, typing a name, ⏎), with
+  git repositories marked; Windows hosts' drives and `\` paths work too. The core and CLI get `listDirectory`, which
+  lists a folder on the machine that runs git.
 - The engine runs on an SSH host without a repository (`amonhen --stdio` with no path) to read and write that
   machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
   the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /
@@ -52,9 +53,13 @@ becomes the GitHub Release notes.
   selected row.
 - Push reads Publish for a branch without an upstream, and asks which remote to create it on (following
   `branch.<name>.pushRemote` and `remote.pushDefault`) and its name there, instead of always pushing to origin.
+- Files and folders on this Mac are chosen in the same column sheet as on an SSH host instead of the Open panel:
+  repositories are marked, a path can be typed, and folders like `/opt/homebrew/bin` are one menu item away.
 
 #### Fixed
 
+- On a Mac without the Command Line Tools, Amon Hen no longer runs `/usr/bin/git`, which only brings up the install
+  dialog; it says git isn't installed instead.
 - SSH hosts whose login shell is tcsh, csh or fish connect: the commands sent there now run in sh.
 - Launched from a terminal or another app, the app read the login shell's PATH as a nested shell, so a shell set up
   to build PATH only at the top level gave the system's git instead of the one a terminal uses. Variables git uses that
@@ -67,6 +72,7 @@ becomes the GitHub Release notes.
   now comes from the signing key's validity.
 - In a repository on an SSH host checked with this Mac's keys, a commit's details again get their notes, line counts
   and signature, and the commit selected on opening is no longer verified with the SSH host's keys.
+- A message template file for a repository on an SSH host is chosen on the host, not on this Mac.
 - A commit's details grow to fit a long message in SSH hosts' repositories too: they could stop short, by up to
   the height of the changed files list, and leave the rest to scroll.
 
@@ -569,6 +575,8 @@ First release.
   `GIT_*`), even when the app started the daemon.
 - The extension runs the git chosen for the machine in Amon Hen's settings (`~/.config/amonhen/settings.json`), and
   VSCode's `git.path` only when none is chosen; a chosen git that isn't there stops commands with an error.
+- A change to VSCode's `git.path` applies to open repositories at once, through the shared daemon too, without
+  reopening them.
 - Push no longer sends a branch without an upstream to origin by itself: the nav shows Publish Branch, which asks
   for the remote (following `branch.<name>.pushRemote` and `remote.pushDefault`) and the name there.
 

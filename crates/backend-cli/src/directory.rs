@@ -61,6 +61,13 @@ fn resolve(path: &str, home: Option<&Path>) -> PathBuf {
             other => out.push(other),
         }
     }
+    // Windows の `C:` だけ（そのドライブの今のフォルダ）は、ドライブの根に。
+    if matches!(
+        out.components().collect::<Vec<_>>()[..],
+        [Component::Prefix(_)]
+    ) {
+        out.push(std::path::MAIN_SEPARATOR_STR);
+    }
     out
 }
 
@@ -124,5 +131,20 @@ mod tests {
         );
         assert_eq!(resolve("/usr/./bin/..", Some(home)), PathBuf::from("/usr"));
         assert_eq!(resolve("~/x", None), PathBuf::from("/x"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_drives_on_windows() {
+        let home = Path::new(r"C:\Users\ada");
+        let shown = |path| resolve(path, Some(home)).display().to_string();
+        assert_eq!(shown("~"), r"C:\Users\ada");
+        assert_eq!(shown("~/prj/x"), r"C:\Users\ada\prj\x");
+        assert_eq!(shown(r"~\prj"), r"C:\Users\ada\prj");
+        assert_eq!(shown("C:"), r"C:\");
+        assert_eq!(shown("D:/src/../bin"), r"D:\bin");
+        assert_eq!(shown(r"C:\.."), r"C:\");
+        // `/` は、ホームのあるドライブの根。
+        assert_eq!(shown("/"), r"C:\");
     }
 }

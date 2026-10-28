@@ -1124,6 +1124,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                     ? MergeEditorWindowController.snapshot()
                     : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays() + stashes.detail.overlays() + reflog.detail.overlays())
                 try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
+                // シートが付いていると終われないので、先に閉じる（Settings に付けたパスを選ぶシートなど）。
+                for window in NSApp.windows { if let sheet = window.attachedSheet { window.endSheet(sheet) } }
                 NSApp.terminate(nil)
             }
         }

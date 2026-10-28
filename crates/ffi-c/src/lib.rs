@@ -221,6 +221,26 @@ pub unsafe extern "C" fn amonhen_signing_keys(format: *const c_char) -> *mut c_c
     }
 }
 
+/// この機械の `path` のフォルダの中身（`~` 可）。JSON（`path`・`home`・`entries`。コアの `listDirectory` と同じ形）。
+/// 読めなければ NULL（`amonhen_last_error` に理由）。`amonhen_string_free` で解放する。
+///
+/// # Safety
+/// `path` は NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_list_directory(path: *const c_char) -> *mut c_char {
+    let result = str_arg(path)
+        .map_err(|e| e.to_string())
+        .and_then(|p| amonhen_backend_cli::list_directory(p).map_err(|e| e.to_string()))
+        .and_then(|dir| serde_json::to_string(&dir).map_err(|e| e.to_string()));
+    match result {
+        Ok(json) => CString::new(json).unwrap_or_default().into_raw(),
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// この機械のユーザー全体（`git config --global`）の `key` の値。なければ、または読めなければ NULL（読めなければ
 /// `amonhen_last_error` に理由）。`amonhen_string_free` で解放する。git を起動するので、裏のスレッドで呼ぶ。
 ///
