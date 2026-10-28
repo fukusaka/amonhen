@@ -7,8 +7,8 @@ use std::sync::Arc;
 use amonhen_layout::{Pod, Slab};
 use amonhen_model::search::TextTerm;
 use amonhen_model::{
-    CommitGraph, CommitText, HeadState, Oid, PullMode, RefUpdate, RemoteChange, ResetMode, Result,
-    Root, Sequence, WorktreeChange,
+    ApplyPatch, CommitGraph, CommitText, FormatPatch, HeadState, Oid, PullMode, RefUpdate,
+    RemoteChange, ResetMode, Result, Root, Sequence, WorktreeChange,
 };
 use serde::{Deserialize, Serialize};
 
@@ -255,6 +255,19 @@ pub enum Op {
     Abort(Sequence),
     ContinueSequence(Sequence),
     SkipSequence(Sequence),
+    FormatPatch {
+        commits: Vec<Oid>,
+        options: FormatPatch,
+    },
+    Am {
+        mbox: Bytes,
+        three_way: Option<bool>,
+    },
+    AmThreeWay,
+    ApplyPatch {
+        patch: Bytes,
+        options: ApplyPatch,
+    },
     TakeSide {
         path: String,
         ours: bool,

@@ -35,6 +35,9 @@
 "A merge or rebase is in progress. Finish or abort it first" = "merge や rebase の途中です。先に終わらせるか中止してください";
 "Can’t read the command: {e}" = "命令を読めない: {e}";
 "No operation in progress" = "途中の操作がない";
+"Choose a folder or a file for the patches" = "パッチを書き出すフォルダかファイルを選んでいない";
+"There are no changes in the patch" = "パッチに変更がない";
+"No patch files" = "パッチのファイルがない";
 "{branch} has no upstream" = "{branch} には上流がありません";
 "{branch} is checked out here; Pull it instead" = "{branch} はここでチェックアウトしています。Pull で取り込んでください";
 "{branch} is checked out in the worktree {path}; update it there" = "{branch} は worktree {path} でチェックアウトしています。そちらで取り込んでください";
