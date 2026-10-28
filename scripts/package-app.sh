@@ -45,9 +45,9 @@ cp dist/bin/AmonHen "$app/Contents/MacOS/AmonHen"
 # （AmonHen を上書きする）。
 mkdir -p "$app/Contents/Helpers"
 cp dist/engine/amonhen-darwin-aarch64 "$app/Contents/Helpers/amonhen"
-# SSH 先に送り込むエンジン（SSH 先の OS と CPU に合うもの。Windows のものは SSH 先には送らない）。
+# SSH 先に送り込むエンジン（SSH 先の OS と CPU に合うもの。Windows の SSH 先には scp で送る）。
 mkdir -p "$app/Contents/Resources/engines"
-for f in dist/engine/amonhen-darwin-* dist/engine/amonhen-linux-*; do
+for f in dist/engine/amonhen-darwin-* dist/engine/amonhen-linux-* dist/engine/amonhen-windows-*.exe; do
     [ -e "$f" ] && cp "$f" "$app/Contents/Resources/engines/"
 done
 # ライセンスと、中に入っている依存のライセンスの一覧（scripts/third-party-notices.sh）。
