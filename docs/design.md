@@ -222,7 +222,7 @@ In the same process, the number of writes is 0 for numeric columns, the graph an
 - Where they are shown:
   - Details pane: a Tag line for each tag pointing at the commit (an annotated tag's name, tagger, date and subject with the signature; a lightweight tag is named as one) and the signature on each Merged Tag line, both read in the background with the rest of `commitExtras`. Clicking the signature shows the same popover as a commit's, with the tag's name, "Tagger email" and the tag's message.
   - Sidebar: a mark at the right of a signed tag (before the mark for remotes). Only visible tags are checked, 0.15 seconds after scrolling stops, 8 at a time (`tagSignatures`), and they are checked again when refs change (a tag may have been made again; the core's remembered results make this quick). The tooltip gives the wording and explanation.
-  - History's ref labels stay as they are. CLI: `amonhen refs --verify` adds the result to each tag (`signed` and `signature` with `--json`).
+  - History's ref labels stay as they are. CLI: `amonhen refs --verify` adds the result to each tag (`signed` and `signature` with `--json`), and `amonhen show` prints the commit's signature and the lines of its tags and merged tags with theirs (`signature`, `tags` and `mergedTagSignatures` with `--json`).
 - Measured on linux (all 949 annotated tags signed): one tag takes 25–30 ms (git and gpg), so all of them would be about 25 s one at a time and 4 s with 8 at a time; the 8 newest take 0.07 s with the CLI. Reading every tag object to tell whether it is signed takes 0.38 s.
 
 ## Multi-platform

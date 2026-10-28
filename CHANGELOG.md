@@ -12,7 +12,8 @@ becomes the GitHub Release notes.
 #### Added
 
 - Tag signatures are verified and shown like commit signatures: a Tag line per tag in the commit details, the
-  signature on each Merged Tag line, and a mark on signed tags in the sidebar. `amonhen refs --verify` adds them too.
+  signature on each Merged Tag line, and a mark on signed tags in the sidebar. `amonhen refs --verify` adds them too,
+  and `amonhen show` prints the commit's signature and its tags' and merged tags'.
 - Every change in Repository Settings and Settings > Git can be undone and redone with ⌘Z / ⇧⌘Z while the page is
   shown, apart from the repository's Undo (⌥⌘Z).
 - A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last

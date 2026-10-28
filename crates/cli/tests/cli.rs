@@ -318,6 +318,13 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
         assert!(tag("plain")["signature"].is_null(), "{at}: {refs}");
         assert_eq!(tag("signed")["signed"], "gpg", "{at}: {refs}");
         assert_eq!(tag("signed")["signature"]["status"], "E", "{at}: {refs}");
+        // show: コミットを指すタグと、その署名。
+        let show = env.json(&["show", "-C", at, "--json", "--no-patch", "signed"]);
+        let tags = show["tags"].as_array().unwrap();
+        assert_eq!(tags.len(), 2, "{at}: {show}");
+        let signed = tags.iter().find(|t| t["name"] == "signed").unwrap();
+        assert_eq!(signed["signature"]["status"], "E", "{at}: {show}");
+        assert!(show["signature"].is_null(), "{at}: {show}");
 
         // 命令の窓口: 1 行 1 命令で、1 行ずつ答える。
         let branch = format!("b{i}");

@@ -382,11 +382,24 @@ pub fn show(args: &[String]) -> Result<ExitCode> {
     let rev = c.rest.first().map_or("HEAD", String::as_str);
     let id = resolve(&*front, rev)?;
     let info = command(&*front, json!({"op": "commitInfo", "oid": id}))?["info"].clone();
+    // 署名とタグ（コミットの署名、指すタグ、merge したタグ）。検証に gpg を使うので、どれかがあるときだけ読む。
+    let has = |key: &str| info[key].as_array().is_some_and(|a| !a.is_empty());
+    let extras = if !info["signed"].is_null() || has("refs") || has("mergedTags") {
+        command(&*front, json!({"op": "commitExtras", "oid": id}))?["info"].clone()
+    } else {
+        Value::Null
+    };
     let no_patch = flag(&seen, "--no-patch");
     let diff = call(&*front, json!({"op": "commitDiff", "id": id}))?;
     if c.json {
-        let mut out =
-            json!({"info": info, "changes": diff.json["changes"], "files": diff.json["files"]});
+        let mut out = json!({
+            "info": info,
+            "signature": extras["signature"],
+            "tags": extras.get("tagObjects").cloned().unwrap_or_else(|| json!([])),
+            "mergedTagSignatures": extras.get("mergedTagSignatures").cloned().unwrap_or_else(|| json!([])),
+            "changes": diff.json["changes"],
+            "files": diff.json["files"],
+        });
         if !no_patch {
             out["rows"] = json!(DiffRows::from(&diff).json(false));
         }
@@ -411,6 +424,44 @@ pub fn show(args: &[String]) -> Result<ExitCode> {
     ));
     if let Some(t) = info["authorTime"].as_i64() {
         out.push_str(&format!("Date:   {}\n", term::local_time(t, true)));
+    }
+    if let Some(kind) = info["signed"].as_str() {
+        let line = match extras.get("signature").filter(|s| !s.is_null()) {
+            Some(signature) => signature_text(signature, kind),
+            None => format!("No key ({})", kind.to_uppercase()),
+        };
+        out.push_str(&format!("Signature: {line}\n"));
+    }
+    for tag in extras["tagObjects"].as_array().into_iter().flatten() {
+        let name = tag["name"].as_str().unwrap_or("");
+        let mut line = format!("Tag: {name}");
+        if tag["id"].is_null() {
+            line.push_str(&tr!(" (lightweight)"));
+        } else {
+            line.push_str(&tag_text(
+                tag["subject"].as_str(),
+                tag["signed"].as_str(),
+                &tag["signature"],
+            ));
+        }
+        out.push_str(&format!("{line}\n"));
+    }
+    let merged_signatures = extras["mergedTagSignatures"].as_array();
+    for (i, tag) in info["mergedTags"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .enumerate()
+    {
+        let signature = merged_signatures
+            .and_then(|s| s.get(i))
+            .unwrap_or(&Value::Null);
+        out.push_str(&format!(
+            "Merged tag: {} ({}){}\n",
+            tag["name"].as_str().unwrap_or(""),
+            tag["tagger"].as_str().unwrap_or(""),
+            tag_text(tag["subject"].as_str(), tag["signed"].as_str(), signature)
+        ));
     }
     out.push('\n');
     for line in info["message"].as_str().unwrap_or("").trim_end().lines() {
@@ -756,6 +807,34 @@ fn done(c: &Common) -> Result<ExitCode> {
 
 // MARK: - refs
 
+/// 署名の行: 短い言葉と、方式と署名者（`Verified (GPG · Alice <a@example.com>)`）。
+fn signature_text(signature: &Value, kind: &str) -> String {
+    let signer = signature["signer"].as_str().unwrap_or("");
+    let mut text = format!("{} ({}", signature_label(signature), kind.to_uppercase());
+    if !signer.is_empty() {
+        text.push_str(&format!(" · {signer}"));
+    }
+    text.push(')');
+    text
+}
+
+/// タグの行の続き: 件名と、署名があればその結果。
+fn tag_text(subject: Option<&str>, kind: Option<&str>, signature: &Value) -> String {
+    let mut text = String::new();
+    if let Some(subject) = subject.filter(|s| !s.is_empty()) {
+        text.push_str(&format!(" — {subject}"));
+    }
+    if let Some(kind) = kind {
+        let result = if signature.is_null() {
+            format!("No key ({})", kind.to_uppercase())
+        } else {
+            signature_text(signature, kind)
+        };
+        text.push_str(&format!("  {result}"));
+    }
+    text
+}
+
 /// 署名の検証の結果の短い言葉（アプリと同じく GitHub に合わせた英語）。署名者とタガーの一致は見ない。
 fn signature_label(signature: &Value) -> &'static str {
     match signature["status"].as_str().unwrap_or("") {
@@ -834,13 +913,8 @@ pub fn refs(args: &[String]) -> Result<ExitCode> {
             e["behind"].as_u64().unwrap_or(0),
         );
         if let Some(signature) = e.get("signature").filter(|s| !s.is_null()) {
-            let kind = e["signed"].as_str().unwrap_or("gpg").to_uppercase();
-            let signer = signature["signer"].as_str().unwrap_or("");
-            line.push_str(&format!("  {} ({kind}", signature_label(signature)));
-            if !signer.is_empty() {
-                line.push_str(&format!(" · {signer}"));
-            }
-            line.push(')');
+            let kind = e["signed"].as_str().unwrap_or("gpg");
+            line.push_str(&format!("  {}", signature_text(signature, kind)));
         }
         if e["gone"] == true {
             line.push_str(&tr!(" (upstream gone)"));
