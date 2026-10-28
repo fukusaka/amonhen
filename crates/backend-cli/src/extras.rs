@@ -567,7 +567,14 @@ mod tests {
     fn leaves_ssh_signatures_to_git_that_can_check_them() {
         let tmp = tempfile::tempdir().unwrap();
         let git = Git::new(tmp.path());
-        git.write(&["init", "-q"]).unwrap();
+        // notes を足すのに作者が要る（CI には利用者名がない）。
+        for args in [
+            &["init", "-q"][..],
+            &["config", "user.name", "a"],
+            &["config", "user.email", "a@example.com"],
+        ] {
+            git.write(args).unwrap();
+        }
         let tree = String::from_utf8(git.write_with_input(&["mktree"], b"").unwrap()).unwrap();
         let commit = |message: &str, signature: &str| {
             let raw = format!(
