@@ -79,6 +79,7 @@ becomes the GitHub Release notes.
   the height of the changed files list, and leave the rest to scroll.
 - A message template file chosen for a repository now wins over a shared template chosen for all repositories, in
   Repository Settings and the commit box.
+- None for a repository's message template now cancels a shared template chosen for all repositories.
 
 ### [0.2.7] - 2026-10-26
 
