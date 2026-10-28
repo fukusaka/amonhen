@@ -3,7 +3,15 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import type { RepositoryBackend, Sequence } from '../git/backend.ts';
 import type { Ref, Remote, Stash } from '../git/refs.ts';
-import { configStamp, gitmodulesStamp, indexStamp, mailmapStamp, refsStamp, stashStamp } from '../git/stamp.ts';
+import {
+  configStamp,
+  gitmodulesStamp,
+  indexStamp,
+  mailmapFileStamp,
+  mailmapStamp,
+  refsStamp,
+  stashStamp,
+} from '../git/stamp.ts';
 import type { StatusEntry, StatusResult } from '../git/status.ts';
 import { UndoLog } from './undo.ts';
 
@@ -44,6 +52,8 @@ interface Stamps {
   stash?: string;
   gitmodules?: string;
   mailmap?: string;
+  /** `.mailmap` と設定ファイル（`mailmap.file` の場所を読み直すかを決める） */
+  mailmapSources?: string;
 }
 
 /**
@@ -57,6 +67,8 @@ export class Repository implements vscode.Disposable {
   private readonly state: RepositoryState = {};
   /** 最後に取得した時点の更新時刻 */
   private readonly stamps: Stamps = {};
+  /** `mailmap.file` の場所（設定が変わったときだけ git に聞き直す） */
+  private mailmapFile: string | undefined;
   private readonly wanted = new Set<LazySection>();
   private running: Promise<void> | undefined;
   /** patchStatus のたびに増やす。それより前に始めた status の取得結果は古いので捨てる */
@@ -129,12 +141,17 @@ export class Repository implements vscode.Disposable {
     const start = performance.now();
     const changed = new Set<Section>();
     const d = this.backend.dirs;
-    const [refs, config, index, mailmap] = await Promise.all([
+    const [refs, config, index, mailmapSources] = await Promise.all([
       refsStamp(d),
       configStamp(d),
       indexStamp(d),
       mailmapStamp(this.backend.root, d),
     ]);
+    if (mailmapSources !== this.stamps.mailmapSources) {
+      this.mailmapFile = await this.backend.mailmapFile().catch(() => undefined);
+      this.stamps.mailmapSources = mailmapSources;
+    }
+    const mailmap = `${mailmapSources}|${await mailmapFileStamp(this.mailmapFile)}`;
     if (this.stamps.mailmap !== undefined && mailmap !== this.stamps.mailmap) {
       changed.add('mailmap');
     }
