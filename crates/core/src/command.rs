@@ -206,8 +206,8 @@ pub enum Command {
         oids: Vec<String>,
     },
     /// タグの署名（`info`: `tags` に `names` と同じ順で name・id（注釈付きのタグのオブジェクト。軽量タグは
-    /// null）・signed（gpg・ssh・x509、署名がなければ null）・taggerEmail・signature（検証の結果。署名が
-    /// なければ null））。署名のあるものだけを検証し、一度検証したものは覚えている。
+    /// null）・signed（gpg・ssh・x509、署名がなければ null）・taggerEmail・message（署名を除いたメッセージ）・
+    /// signature（検証の結果。署名がなければ null））。署名のあるものだけを検証し、一度検証したものは覚えている。
     TagSignatures {
         names: Vec<String>,
     },
@@ -2024,6 +2024,7 @@ impl Repository {
                             "id": tag.id.to_string(),
                             "signed": tag.signed,
                             "taggerEmail": tag.tagger_email,
+                            "message": tag.message,
                             "signature": signatures.get(&tag.id).map(signature_json),
                         })
                     })
@@ -3000,6 +3001,7 @@ mod tests {
         assert_eq!(tags[0]["id"], tag.as_str());
         assert_eq!(tags[0]["signed"], "gpg");
         assert_eq!(tags[0]["taggerEmail"], "t@example.com");
+        assert_eq!(tags[0]["message"], "Signed release\n\nMore words");
         assert_eq!(tags[0]["signature"]["status"], "G");
         assert!(tags[1]["id"].is_string());
         assert!(tags[1]["signed"].is_null() && tags[1]["signature"].is_null());

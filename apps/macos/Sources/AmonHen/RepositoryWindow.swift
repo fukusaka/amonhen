@@ -800,13 +800,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// 署名をどこで検証しているか（詳細の吹き出しに出す）。設定が効くのは SSH 先のリポジトリだけなので、
     /// 理由も添える。
     private func updateSignaturePlace() {
-        guard let host = RepositoryLocation.host(location) else {
-            detail.signaturePlace = SignaturePlace(local: true, detail: L("the repository is on this Mac"))
-            return
+        let place = if let host = RepositoryLocation.host(location) {
+            Settings.checkSignaturesLocally(on: Settings.sshHost(of: location) ?? host)
+                ? SignaturePlace(local: true, detail: L("chosen in Settings > SSH Hosts"))
+                : SignaturePlace(local: false, host: host, detail: L("chosen in Settings > SSH Hosts"))
+        } else {
+            SignaturePlace(local: true, detail: L("the repository is on this Mac"))
         }
-        detail.signaturePlace = Settings.checkSignaturesLocally(on: Settings.sshHost(of: location) ?? host)
-            ? SignaturePlace(local: true, detail: L("chosen in Settings > SSH Hosts"))
-            : SignaturePlace(local: false, host: host, detail: L("chosen in Settings > SSH Hosts"))
+        detail.signaturePlace = place
+        sidebar.signaturePlace = place
     }
 
     // MARK: - タブの名前

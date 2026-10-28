@@ -112,9 +112,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
 
     /// タグの署名を確かめるのに使う（RepositoryWindow が渡す）。
     var repository: Repository?
-    /// タグの署名の検証の結果（名前 → 状態。署名のないタグ・軽量タグは nil）と、それを確かめたときの refs の番号。
-    /// refs が変わったら（タグを付け直したかもしれない）、見えている行から確かめ直す（コアが ID で覚えているので速い）。
-    private var tagSignatures: [String: (status: SignatureStatus?, epoch: Int)] = [:]
+    /// タグの署名の検証の結果（名前 → 状態と、吹き出しに出す中身。署名のないタグ・軽量タグは状態が nil）と、それを
+    /// 確かめたときの refs の番号。refs が変わったら（タグを付け直したかもしれない）、見えている行から確かめ直す
+    /// （コアが ID で覚えているので速い）。
+    private var tagSignatures: [String: (status: SignatureStatus?, tag: TagSignature, epoch: Int)] = [:]
+    /// 署名を検証した場所（吹き出しに出す。RepositoryWindow が渡す）。
+    var signaturePlace = SignaturePlace(local: true, detail: L("The repository is on this Mac"))
     private var tagSignatureEpoch = 0
     /// 検証する側を変えたら進める（前の結果は捨て、変える前に始めた検証の結果は使わない）。
     private var tagSignatureGeneration = 0
@@ -173,7 +176,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                                                 committerEmail: tag.taggerEmail ?? "", kind: kind)
                             } ?? .noKey
                         }
-                        tagSignatures[tag.name] = (status, epoch)
+                        tagSignatures[tag.name] = (status, tag, epoch)
                     }
                     verifyingTags.subtract(batch)
                     let names = Set(batch)
@@ -881,6 +884,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         cell.textField?.textColor = node === cleanWorktreesNode ? .secondaryLabelColor : .labelColor
         cell.imageView?.image = NSImage(systemSymbolName: Self.symbol(for: node), accessibilityDescription: nil)
         cell.imageView?.contentTintColor = node.isHead ? .controlAccentColor : .secondaryLabelColor
+        cell.onLeadingMarkClick = nil
         var badge = node.badge ?? ""
         /// 右端のアイコン（SF Symbols の名前, ツールチップ）。
         var marks: [(String, String, NSColor)] = []
@@ -971,6 +975,15 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if let item = node.item, item.kind == .tag {
             cell.toolTip = (marks.map(\.1) + remoteNames.map { tagStateText(item.name, on: $0) })
                 .joined(separator: "\n")
+            // 署名の印（左）を押すとコミットの署名と同じ吹き出し、リモートの印（右）を押すとリモートの様子。
+            if tagSignatures[item.name]?.status != nil {
+                let icon = cell.badge.attributedStringValue.attributedSubstring(from: NSRange(location: 0, length: 2))
+                cell.leadingMarkWidth = icon.size().width
+                cell.onLeadingMarkClick = { [weak self, weak cell] in
+                    guard let self, let cell else { return }
+                    showTagSignature(item, from: cell.badge)
+                }
+            }
             if tagRemoteMark != nil {
                 cell.onBadgeClick = { [weak self, weak cell] in
                     guard let self, let cell else { return }
@@ -1401,6 +1414,30 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     }
 
     /// タグの行の右端の印を押したときの吹き出し（リモートごとの様子と、push・置き換え）。
+    /// タグの署名の吹き出し（詳細の欄の署名の印と同じもの）。
+    private func showTagSignature(_ item: RefItem, from view: NSView) {
+        let key = "signature:" + item.name
+        if let shown = statusPopover, shown.isShown, statusShown == key {
+            shown.close()
+            return
+        }
+        if let closed = statusClosed, closed.name == key, CACurrentMediaTime() - closed.at < 0.3 {
+            statusClosed = nil
+            return
+        }
+        guard let known = tagSignatures[item.name], let status = known.status else { return }
+        let tag = known.tag
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.delegate = self
+        popover.contentViewController = SignaturePopover(
+            status: status, signature: tag.signature, kind: tag.signed ?? "gpg", committerEmail: tag.taggerEmail ?? "",
+            place: signaturePlace, tag: .init(name: item.name, message: tag.message ?? ""))
+        popover.show(relativeTo: view.bounds, of: view, preferredEdge: .maxY)
+        statusPopover = popover
+        statusShown = key
+    }
+
     private func showTagStatus(_ item: RefItem, from view: NSView) {
         let key = "tag:" + item.name
         if let shown = statusPopover, shown.isShown, statusShown == key {
@@ -1506,6 +1543,9 @@ final class SidebarCell: NSTableCellView {
     let badge: NSTextField = BadgeLabel(labelWithString: "")
     /// 右端のアイコンを押した（取り込み済み・gone の詳細の吹き出し）。なければ押しても何も起きない。
     var onBadgeClick: (() -> Void)?
+    /// 右端の先頭のアイコン（幅 `leadingMarkWidth`）だけ別の吹き出しを出すとき（タグの署名の印）。
+    var onLeadingMarkClick: (() -> Void)?
+    var leadingMarkWidth: CGFloat = 0
 
     init(identifier: NSUserInterfaceItemIdentifier, hasIcon: Bool) {
         super.init(frame: .zero)
@@ -1548,7 +1588,16 @@ final class SidebarCell: NSTableCellView {
 
     /// `point`（セルの座標）が右端のアイコンの上か。小さなアイコンなので、少し広めに当てる。
     func hitsBadge(_ point: NSPoint) -> Bool {
-        onBadgeClick != nil && badge.frame.insetBy(dx: -6, dy: -6).contains(point)
+        (onBadgeClick != nil || onLeadingMarkClick != nil) && badge.frame.insetBy(dx: -6, dy: -6).contains(point)
+    }
+
+    /// 右端のアイコンを押した: 先頭のアイコンの上（とその左）なら `onLeadingMarkClick`、ほかは `onBadgeClick`。
+    func clickBadge(at point: NSPoint) {
+        if let leading = onLeadingMarkClick, onBadgeClick == nil || point.x < badge.frame.minX + leadingMarkWidth + 2 {
+            leading()
+        } else {
+            onBadgeClick?()
+        }
     }
 }
 
@@ -1560,7 +1609,7 @@ final class SidebarOutlineView: NSOutlineView {
         let row = self.row(at: point)
         if row >= 0, let cell = view(atColumn: 0, row: row, makeIfNecessary: false) as? SidebarCell,
            cell.hitsBadge(cell.convert(event.locationInWindow, from: nil)) {
-            cell.onBadgeClick?()
+            cell.clickBadge(at: cell.convert(event.locationInWindow, from: nil))
             return
         }
         super.mouseDown(with: event)

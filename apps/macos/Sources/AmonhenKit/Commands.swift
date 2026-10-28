@@ -159,6 +159,8 @@ public struct TagSignature: Decodable, Sendable {
     /// 署名の種類（`gpg`・`ssh`・`x509`）。署名がなければ nil。
     public let signed: String?
     public let taggerEmail: String?
+    /// 署名を除いたメッセージ。
+    public let message: String?
     public let signature: CommitExtras.Signature?
 }
 
