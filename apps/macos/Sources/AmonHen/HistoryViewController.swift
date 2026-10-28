@@ -1531,6 +1531,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         add(L("Revert %ld Commits (Newest First)", commits.count)) {
             actions.perform(sequence: commits.map { ["op": "revert", "oid": $0.hex, "isMerge": $0.isMerge] })
         }
+        // マージはパッチにできない（git format-patch は飛ばす）。
+        if commits.contains(where: \.isMerge) {
+            menu.addItem(NSMenuItem(title: L("Save %ld Commits as Patches…", commits.count), action: nil, keyEquivalent: ""))
+        } else {
+            add(L("Save %ld Commits as Patches…", commits.count)) { actions.savePatches(commits.reversed().map(\.hex)) }
+        }
         // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる。
         let sorted = rows.sorted()
         if sorted.count >= 2, zip(sorted, sorted.dropFirst()).allSatisfy({ $1 == $0 + 1 }),
@@ -1552,6 +1558,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(commits.map { String($0.hex.prefix(10)) }.joined(separator: " "), forType: .string)
         }
+    }
+
+    /// 選んだコミットを古い順に（Commit › Save as Patch…）。マージを含む・選んでいなければ nil。
+    var selectedCommitsForPatch: [String]? {
+        guard let history else { return nil }
+        let rows = tableView.selectedRowIndexes.sorted()
+        guard !rows.isEmpty else { return nil }
+        var oids: [String] = []
+        for row in rows.reversed() {
+            guard let id = history.commitID(row: row),
+                  history.withNodes({ $0[row].flags & UInt16(AmonhenNode_MERGE) == 0 }) else { return nil }
+            oids.append(id.map { String(format: "%02x", $0) }.joined())
+        }
+        return oids
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -1595,6 +1615,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         add("Cherry-pick \(short)") { actions.perform(["op": "cherryPick", "oid": hex, "isMerge": isMerge]) }
         add("Revert \(short)") { actions.perform(["op": "revert", "oid": hex, "isMerge": isMerge]) }
+        if isMerge {
+            menu.addItem(NSMenuItem(title: L("Save as Patch…"), action: nil, keyEquivalent: ""))
+        } else {
+            add(L("Save as Patch…")) { actions.savePatches([hex]) }
+        }
         menu.addItem(.separator())
         add(L("Copy Commit ID")) {
             NSPasteboard.general.clearContents()

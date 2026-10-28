@@ -43,7 +43,7 @@ extension Repository {
     }
 }
 
-/// 途中の操作（rebase・merge・cherry-pick・revert）。`{"op":"sequence"}` の `info`。
+/// 途中の操作（rebase・merge・cherry-pick・revert・am）。`{"op":"sequence"}` の `info`。
 public struct SequenceInfo: Decodable, Equatable, Sendable {
     /// 止まっている手順（`pick`・`edit`・`exec`・`merge`・`cherry-pick` など）と、そのコミット。
     public struct Step: Decodable, Equatable, Sendable {
@@ -52,9 +52,9 @@ public struct SequenceInfo: Decodable, Equatable, Sendable {
         public let subject: String?
     }
 
-    /// `rebase`・`merge`・`cherry-pick`・`revert`。
+    /// `rebase`・`merge`・`cherry-pick`・`revert`・`am`。
     public let kind: String
-    /// rebase の何番目か・全部でいくつか。
+    /// rebase・am の何番目か・全部でいくつか。
     public var current: Int?
     public var total: Int?
     /// 操作しているブランチ。
@@ -65,6 +65,12 @@ public struct SequenceInfo: Decodable, Equatable, Sendable {
     public var step: Step?
     /// edit・break で止めた（コンフリクトではない）。
     public var editing: Bool?
+    /// am: 3-way で当てようとしたか（していなければ、当て直せる）。
+    public var threeWay: Bool?
+    /// am: diff のないパッチ（送り状など）で止まった。
+    public var empty: Bool?
+    /// am: 止まったパッチを 3-way で当て直したところ（残っているのはコンフリクトか、その解決）。
+    public var retried: Bool?
 
     public init(kind: String) {
         self.kind = kind
@@ -83,6 +89,38 @@ extension Repository {
         let response = try JSONDecoder().decode(Response.self, from: Data(String(cString: out).utf8))
         // 詳しいことを返さない古いエンジン（SSH 先）なら、種類だけ（"rebase (2/5)" の頭）。
         return response.info ?? response.text.map { SequenceInfo(kind: String($0.prefix { $0 != " " })) }
+    }
+}
+
+/// パッチのファイルの中身と、そのまま当たるか。`{"op":"readPatch"}` の `info`。
+public struct PatchSummary: Decodable, Sendable {
+    /// `mailbox`（`git am` でコミットとして当てる）か `diff`（`git apply` で作業ツリーに当てる）。
+    public let kind: String
+    public let patches: [Patch]
+    public let applies: Bool
+    /// 当たらないときの git の答え。
+    public let error: String?
+    /// git の `am.threeWay`。
+    public let threeWay: Bool
+
+    public var isMailbox: Bool { kind == "mailbox" }
+
+    public struct Patch: Decodable, Sendable {
+        public let subject: String
+        public let author: String?
+        public let authorEmail: String?
+        public let date: String?
+        public let files: [File]
+    }
+
+    public struct File: Decodable, Sendable {
+        public let path: String
+        public let oldPath: String?
+        public let added: Int
+        public let removed: Int
+        public let binary: Bool
+        /// `modified`・`added`・`deleted`・`renamed`・`copied`。
+        public let status: String
     }
 }
 

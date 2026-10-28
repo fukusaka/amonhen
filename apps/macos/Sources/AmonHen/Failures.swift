@@ -37,6 +37,8 @@ struct OperationFailure {
         case "rebase": L("Rebase Failed")
         case "cherryPick": L("Cherry-Pick Failed")
         case "revert": L("Revert Failed")
+        case "formatPatch": L("Couldn’t Save the Patches")
+        case "am", "amThreeWay", "applyPatch": L("Couldn’t Apply the Patch")
         case "commit": L("Commit Failed")
         case "continue": L("Couldn’t Continue")
         default: L("Operation Failed")
