@@ -178,6 +178,43 @@ apps/
 - ③ SSH: daemon（`amonhen --stdio <repo>`、`crates/daemon`。パスなしなら SSH 先のデータの置き場所の空のリポジトリを開き、その機械の設定だけを扱う。Settings > SSH Hosts のため）は SSH 先で `GitBackend`・`Operations`・`RepoFiles` を要求に応じて実行するだけにし、レイアウト・永続キャッシュ・差分・色付けは手元のコアで行う（`crates/remote` の `RemoteBackend`）。C ABI と FE はそのまま使える。UI が読むのは手元のメモリだけで、通信に乗るのは git に触れる所だけ。History は永続キャッシュを手元に持ち、つなぎ直したら前回の起点からの新しいコミットだけを受け取る（daemon は `git rev-list` で求める）。要求には番号を振って並行に送り、パス・内容の検索は取り消せる。
 - どの動かし方でも、UI が読むのは手元のメモリだけ。通信は裏の同期にしか使わない。
 
+### Windows の SSH 先（予定）
+
+Windows の OpenSSH サーバは、送られたコマンドを `HKLM\SOFTWARE\OpenSSH\DefaultShell` のシェルで実行する。設定がなければ cmd.exe で、PowerShell にしていることも多い。そのため、いま `crates/remote/src/ssh.rs` が送るもの（`exec /bin/sh -c '…'`）は、どれもそこでは動かない。エンジンそのものは Windows でも動く（VSCode 拡張が使っている）ので、変わるのは届け方だけ。VSCode 拡張の Remote-SSH には関わらない。
+
+- **Windows の SSH 先の見分け方。** 今と同じく、まず sh で調べる。それが失敗したら、`powershell -NoProfile -NonInteractive -EncodedCommand <base64>` でもう一度調べる。このコマンドは cmd.exe・Windows PowerShell・pwsh のどれでも同じ意味で、`powershell.exe` は Windows 10・11 のどれにもある。
+  - 2 回目の調べは、sh のときと同じものを返す。
+    - OS と CPU（`windows` と `PROCESSOR_ARCHITECTURE`）
+    - エンジンの置き場所 `%LOCALAPPDATA%\amonhen\engine`（`amonhen install` が Windows で置くところ）
+    - PATH の `amonhen` とその版
+    - もう置いてあるエンジンとそのビルド
+  - あわせて `DefaultShell` も返し、sh の側がエンジンの起動の前にする片付けも行う（このビルドのエンジンに使った印を付け、30 日使っていないエンジンを消す。動いているものは Windows では消せないので飛ばす）。
+  - `$ProgressPreference` は切る。切らないと、モジュールを読み込むときの進捗（CLIXML）が出力に混ざる。
+  - つなぐ側のプロセスは、接続先（ホストとポート）が Windows だったことを覚え、次からは PowerShell の調べを先に送る。
+- **エンジンを送る。** 送るのはエンジンの置き場所の `amonhen-windows-x86_64.exe` か `-aarch64.exe`。.app には Linux のものと同じく同梱する。
+  - scp（`scp -S <使っている ssh>`。同じ使い回しの接続の上で）で、一時的な名前で送る。Windows の OpenSSH は既定で sftp を持っていて、scp には `C:/…` の形で渡せる。
+  - 標準入力では送れない。Windows PowerShell 5.1 は 1 MB ほどで読むのが止まる。pwsh 7 なら最後まで読めるが、どの機械にもあるわけではない。
+  - そのあと PowerShell のスクリプトで名前を変え、ビルドの指紋と使った印を書き、SHA-1（`Get-FileHash`）を返す。
+- **エンジンを起動する。** エンジンは ssh のセッションの標準入出力でやりとりするので、既定のシェルが直接起動する。間に PowerShell のスクリプトを挟むと、出力を取り込まれるおそれがある。コマンドは、調べで返ったシェルに合わせて書く。
+  - cmd.exe: `""C:\…\amonhen.exe" --stdio "C:\src\repo""`。外側の引用符は `cmd /c` が外す。ここでは `%` を逃がせないので、`%` を含むパスは断る。
+  - PowerShell: `& 'C:\…\amonhen.exe' --stdio 'C:\src\repo'`。
+
+- **パス。**
+  - `ssh://host/C:/src/repo`（ホストのすぐ後ろにドライブ）は、SSH 先では `C:/src/repo`。
+  - `ssh://host/~/src/repo` は、展開する `$HOME` がないので、エンジンに `~/src/repo` のまま渡す。エンジンは `--stdio` と `find-repositories` でも、`listDirectory` と同じく `~` をホームとして読む。
+  - `find-repositories` は区切りを `/` で返す。そのため、返す場所は `ssh://host/C:/…` の形のまま。
+  - `RepositoryLocation.ssh` は、選んだ `C:\src\repo` を `ssh://host/C:/src/repo` にする。
+- **Settings > SSH ホスト。**
+  - エンジンのパスに Windows のパス（`C:\…\amonhen.exe`）も入れられる。
+  - ログインシェルのスイッチは Windows の SSH 先には当てはまらないので、出さない。
+  - 「接続を確認」は、sh で `git --version; command -v amonhen` を動かすのをやめ、エンジンに聞く。
+- **Windows 11 の機械（OpenSSH、既定のシェルは pwsh 7.6）で試したこと。**
+  - 既定のシェルが起動したプログラムは、セッションの標準入出力をそのまま受け取る。小さく書いたものは入力の終わりを待たずに返り、2 MB のでたらめなバイトもそのまま返り、入力の終わりで終わった。
+  - 生の `cmd.exe /c` のコマンドで、`""C:\Program Files\…\x.exe" "a b" "C:\x y\z""` はその引数で動き、`"C:\…\x.exe" "a b"` は失敗する。
+  - PowerShell の調べは、新しい接続で 1.3〜1.9 秒。その前の失敗する sh の調べも、新しい接続ならほぼ同じだけかかり、使い回しの接続ならわずか。
+  - 止まったセッションが残った使い回しの接続（ControlMaster）は動かなくなり、その上の次のセッションも止まる。
+  - 試していないこと: 既定のシェルが cmd.exe のときの通し、Windows on ARM（`PROCESSOR_ARCHITECTURE` が `ARM64`）。
+
 ### コミットの署名の検証
 
 - 署名があるか・どの種類か（GPG・SSH・X.509）は、コミットのヘッダーの `gpgsig` で分かるので、History の行を読むときに一緒に取る（`CommitText::signature`、チャンクの `signatures` の列）。gpg は使わない。
