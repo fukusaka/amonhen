@@ -352,6 +352,8 @@ private struct ConnectionPage: View {
         }
         .formStyle(.grouped)
         .onAppear(perform: refresh)
+        // ほかの SSH 先を選んでも、このページは作り直されない。
+        .onChange(of: session.host) { refresh() }
     }
 
     @ViewBuilder private var stateText: some View {
