@@ -423,6 +423,11 @@ export class CliBackend implements RepositoryBackend {
   }
 
   async reset(mode: 'soft' | 'mixed' | 'keep', oid: string): Promise<void> {
+    // keep は index の stat を見て、中身が同じでも書き直しただけのファイル（Undo で戻したものなど）を「変更あり」として
+    // 断る。先に index を作業ツリーに合わせておく（変わったファイルが残っていれば 1 を返すが、それは構わない）
+    if (mode === 'keep') {
+      await this.git.exec(['update-index', '-q', '--refresh'], { cwd: this.root, okCodes: [1] });
+    }
     await this.git.exec(['reset', `--${mode}`, oid], { cwd: this.root });
   }
 

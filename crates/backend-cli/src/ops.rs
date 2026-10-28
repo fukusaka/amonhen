@@ -329,6 +329,11 @@ impl Operations for Git {
             ResetMode::Hard => "--hard",
             ResetMode::Keep => "--keep",
         };
+        // keep は index の stat を見て、中身が同じでも書き直しただけのファイル（Undo で戻したものなど）を「変更あり」と
+        // して断る。先に index を作業ツリーに合わせておく（変わったファイルが残っていれば 1 を返すが、それは構わない）。
+        if mode == "--keep" {
+            let _ = self.write(&["update-index", "-q", "--refresh"]);
+        }
         self.write(&["reset", mode, &hex(oid)]).map(drop)
     }
 

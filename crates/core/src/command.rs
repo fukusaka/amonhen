@@ -4697,7 +4697,23 @@ mod tests {
             run(&repo, r#"{"op":"undoPeek"}"#)["label"],
             "Apply 2 patches"
         );
+        // diff を当てて Undo で戻すと、ファイルは同じ中身のまま書き直される。その後でも am を Undo できる（reset
+        // --keep が index の古い stat で断らない）。
+        let diff = out.path().join("c.diff");
+        std::fs::write(
+            &diff,
+            "diff --git a/c.txt b/c.txt\n--- a/c.txt\n+++ b/c.txt\n@@ -1 +1 @@\n-third\n\\ No newline at end of file\n+THIRD\n",
+        )
+        .unwrap();
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "applyPatch", "paths": [diff]}).to_string(),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
         run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "third");
+        let r = run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(r["ok"], true, "{r}");
         assert_eq!(log(dir), ["first"]);
     }
 
