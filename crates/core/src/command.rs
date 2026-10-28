@@ -3324,7 +3324,10 @@ mod tests {
         let dir = tmp.path();
         // push 済み（幹）の base の上に stacked を積み、そのあと base が進む。コミットの日時を決めて、作った点が
         // 分からないときの「先端の古いほうが土台」が stacked を base の土台にしてしまう形にする。
-        let remote = dir.join("remote.git");
+        // push 先は作業ツリーの外に置く（中にあると、push のあとに git が裏で始める maintenance のロックの
+        // ファイルを `git add .` が読みに行き、消えていて失敗することがある）。
+        let remotes = tempfile::tempdir().unwrap();
+        let remote = remotes.path().join("remote.git");
         git(dir, &["init", "-q", "--bare", remote.to_str().unwrap()]);
         git(dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
         let now = std::time::SystemTime::now()
@@ -3547,7 +3550,10 @@ mod tests {
         assert_eq!(git(dir, &["rev-parse", "refs/tags/v1"]), object);
         assert_eq!(git(dir, &["cat-file", "-t", "refs/tags/v1"]), "tag");
 
-        let remote = dir.join("remote.git");
+        // push 先は作業ツリーの外に置く（中にあると、push のあとに git が裏で始める maintenance のロックの
+        // ファイルを `git add .` が読みに行き、消えていて失敗することがある）。
+        let remotes = tempfile::tempdir().unwrap();
+        let remote = remotes.path().join("remote.git");
         git(dir, &["init", "-q", "--bare", remote.to_str().unwrap()]);
         git(dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
         let tags = |dir: &std::path::Path| git(dir, &["tag", "--list"]);
@@ -3577,8 +3583,11 @@ mod tests {
         commit_file(dir, "b.txt", "second");
         git(dir, &["tag", "-a", "v1", "-m", "first release"]);
         git(dir, &["tag", "light", "HEAD~1"]);
+        // push 先は作業ツリーの外に置く（中にあると、push のあとに git が裏で始める maintenance のロックの
+        // ファイルを `git add .` が読みに行き、消えていて失敗することがある）。
+        let remotes = tempfile::tempdir().unwrap();
         for name in ["origin", "backup"] {
-            let remote = dir.join(format!("{name}.git"));
+            let remote = remotes.path().join(format!("{name}.git"));
             git(dir, &["init", "-q", "--bare", remote.to_str().unwrap()]);
             git(dir, &["remote", "add", name, remote.to_str().unwrap()]);
             git(dir, &["push", "-q", name, "main"]);
@@ -3643,7 +3652,7 @@ mod tests {
                 "remote",
                 "add",
                 "later",
-                dir.join("origin.git").to_str().unwrap(),
+                remotes.path().join("origin.git").to_str().unwrap(),
             ],
         );
         let linked = Repository::new(GixBackend::open(&wt).unwrap());
