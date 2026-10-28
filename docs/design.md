@@ -215,7 +215,8 @@ Windows' OpenSSH server runs the command it is sent with the shell in `HKLM\SOFT
   - The PowerShell probe takes 1.3–1.9 s on a new connection; the failed sh probe before it, about as long on a new connection and little on a shared one.
   - A shared connection (ControlMaster) left behind by a hung session stops working; later sessions over it hang.
   - The app and the CLI open a repository there (`ssh://host/C:/src/repo`): the engine is sent, started by pwsh, and reached again through the remembered PowerShell probe in about 1.4 s.
-  - Not tried: cmd.exe as the default shell end to end (only the engine started through the raw `cmd.exe /c` command line), and Windows on ARM (`PROCESSOR_ARCHITECTURE` is `ARM64`).
+  - cmd.exe as the default shell, imitated without changing the host's setting. An `AMONHEN_SSH` wrapper hands every command to cmd.exe verbatim (`cmd --% /c <command>`) and makes the probe report cmd.exe. Through it the engine was sent, checked and started, and `status` and `log` worked. This found that Windows PowerShell started under cmd.exe from pwsh inherits pwsh's `PSModulePath` (see Sending the engine).
+  - Not tried: Windows on ARM (`PROCESSOR_ARCHITECTURE` is `ARM64`).
 
 ### Commit signature verification
 

@@ -215,7 +215,8 @@ Windows の OpenSSH サーバは、送られたコマンドを `HKLM\SOFTWARE\Op
   - PowerShell の調べは、新しい接続で 1.3〜1.9 秒。その前の失敗する sh の調べも、新しい接続ならほぼ同じだけかかり、使い回しの接続ならわずか。
   - 止まったセッションが残った使い回しの接続（ControlMaster）は動かなくなり、その上の次のセッションも止まる。
   - アプリと CLI でそこのリポジトリ（`ssh://host/C:/src/repo`）を開ける。エンジンを送り、pwsh が起動し、2 回目からは覚えた PowerShell の調べで 1.4 秒ほどでつながる。
-  - 試していないこと: 既定のシェルが cmd.exe のときの通し（生の `cmd.exe /c` のコマンドでエンジンを起動したところまで）、Windows on ARM（`PROCESSOR_ARCHITECTURE` が `ARM64`）。
+  - 既定のシェルが cmd.exe の場合は、SSH 先の設定を変えずにまねた。`AMONHEN_SSH` の包みが、どのコマンドもそのまま cmd.exe に渡し（`cmd --% /c <コマンド>`）、調べでは cmd.exe と答える。これでエンジンを送り、確かめ、起動して、`status` と `log` が動いた。pwsh から cmd.exe を挟んで起動した Windows PowerShell が pwsh の `PSModulePath` を引き継ぐことも、これでわかった（「エンジンを送る」）。
+  - 試していないこと: Windows on ARM（`PROCESSOR_ARCHITECTURE` が `ARM64`）。
 
 ### コミットの署名の検証
 
