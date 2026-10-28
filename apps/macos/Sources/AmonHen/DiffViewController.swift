@@ -1376,7 +1376,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     func beginReword() {
         guard rewordEditor == nil, let info, let container = headerContainer else { return }
         // 低い（簡潔の）ときは、書き直す間だけ広げる。
-        if container.frame.height < 160 { splitView.setPosition(220, ofDividerAt: 0) }
+        if container.frame.height < 160 { setHeaderHeight(220) }
         let editor = NSView(frame: container.bounds)
         editor.autoresizingMask = [.width, .height]
         editor.wantsLayer = true
@@ -1969,7 +1969,20 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let cap = max(splitViewItems[0].minimumThickness, floor(splitView.bounds.height * 0.5))
         let target = max(splitViewItems[0].minimumThickness, min(cap, content))
         guard abs(splitViewItems[0].viewController.view.frame.height - target) > 1 else { return }
-        splitView.setPosition(target, ofDividerAt: 0)
+        setHeaderHeight(target)
+    }
+
+    /// 詳細の欄の高さを変える。仕切りは一度に隣の仕切りの今の位置までしか動かない（変更したファイルの欄が下に
+    /// 並ぶときは、その高さは保たれ、差分の欄が縮む）ので、1 回では伸ばせるのがファイルの欄の高さまでになる。
+    /// 届くか動かなくなるまで繰り返す。
+    private func setHeaderHeight(_ height: CGFloat) {
+        var last = splitViewItems[0].viewController.view.frame.height
+        for _ in 0..<8 {
+            splitView.setPosition(height, ofDividerAt: 0)
+            let now = splitViewItems[0].viewController.view.frame.height
+            if abs(now - height) <= 1 || abs(now - last) < 1 { break }
+            last = now
+        }
     }
 
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {

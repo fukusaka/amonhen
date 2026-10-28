@@ -58,6 +58,8 @@ becomes the GitHub Release notes.
   the app inherited from what launched it (`GIT_EDITOR`, for one) no longer reach git unless the shell sets them.
 - Dropping a branch on one checked out in another worktree no longer fast-forwards it behind that worktree's back;
   the menu offers to open the worktree instead.
+- A commit's details grow to fit a long message in SSH hosts' repositories too: they could stop short, by up to
+  the height of the changed files list, and leave the rest to scroll.
 
 ### [0.2.7] - 2026-10-26
 
