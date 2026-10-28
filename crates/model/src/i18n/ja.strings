@@ -5,6 +5,7 @@
 "Cancelled" = "取り消しました";
 
 /* amonhen-core */
+"HEAD isn’t on a branch" = "HEAD がブランチの上にありません";
 "Unclosed quotation mark" = "引用符が閉じていません";
 "Unclosed parenthesis" = "括弧が閉じていません";
 "No search condition" = "条件がありません";
@@ -87,6 +88,7 @@
 "paths must be an array of strings" = "paths は文字列の配列です";
 
 /* backend-cli */
+"Not a range: {range}" = "範囲ではありません: {range}";
 "{message}\n(git {version} is older than {minimum}, which Amon Hen needs. Update git.)" = "{message}\n（git {version} は、Amon Hen に要る {minimum} より古い版です。git を新しくしてください）";
 "status line is too short: {text}" = "status の行が短い: {text}";
 "Missing the original path of a rename" = "名前の変更の元のパスがない";

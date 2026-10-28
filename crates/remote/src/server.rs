@@ -444,6 +444,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             descendant,
         } => encode(&ops.is_ancestor(&ancestor, &descendant)?),
         Op::PredictMerge { ours, theirs } => encode(&ops.predict_merge(&ours, &theirs)?),
+        Op::RangeDiff(ranges, factor) => encode(&ops.range_diff(&ranges, factor)?),
         Op::Resolve(rev) => encode(&ops.resolve(&rev)?),
         Op::Merge(rev) => encode(&ops.merge(&rev)?),
         Op::Rebase(onto) => encode(&ops.rebase(&onto)?),

@@ -1,6 +1,6 @@
 use amonhen_model::tr;
 use amonhen_model::{
-    ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RefUpdate, RemoteChange,
+    ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RangePair, RefUpdate, RemoteChange,
     RemoteCheck, RemoteEntry, ResetMode, Result, Sequence, SigningKey, WorktreeChange,
     WorktreeChanges,
 };
@@ -476,6 +476,51 @@ impl Operations for Git {
             )
             .into()),
         }
+    }
+
+    fn range_diff(
+        &self,
+        ranges: &[String],
+        creation_factor: Option<u32>,
+    ) -> Result<Vec<RangePair>> {
+        // 範囲を options と取り違えないように（`--end-of-options` は git 2.24 から）。
+        if let Some(bad) = ranges.iter().find(|r| r.is_empty() || r.starts_with('-')) {
+            return Err(tr!("Not a range: {range}", range = bad).into());
+        }
+        let factor = creation_factor.map(|f| format!("--creation-factor={f}"));
+        // `--abbrev=40` を見出しの ID に使わない古い git もあるので、短いものは後で直す。
+        let mut args = vec!["range-diff", "--no-color", "--abbrev=40"];
+        args.extend(factor.as_deref());
+        args.extend(ranges.iter().map(String::as_str));
+        let out = self.read(&args)?;
+        let mut pairs = amonhen_model::parse_range_diff(&String::from_utf8_lossy(&out));
+        let mut short: Vec<String> = pairs
+            .iter()
+            .flat_map(|p| [&p.old, &p.new])
+            .flatten()
+            .filter(|c| c.oid.len() < 40)
+            .map(|c| c.oid.clone())
+            .collect();
+        short.sort();
+        short.dedup();
+        if !short.is_empty() {
+            let specs: Vec<String> = short.iter().map(|s| format!("{s}^{{commit}}")).collect();
+            let mut args = vec!["rev-parse"];
+            args.extend(specs.iter().map(String::as_str));
+            let out = text(self.read(&args)?)?;
+            let full: std::collections::HashMap<&str, &str> =
+                short.iter().map(String::as_str).zip(out.lines()).collect();
+            for c in pairs
+                .iter_mut()
+                .flat_map(|p| [&mut p.old, &mut p.new])
+                .flatten()
+            {
+                if let Some(f) = full.get(c.oid.as_str()) {
+                    c.oid = (*f).to_owned();
+                }
+            }
+        }
+        Ok(pairs)
     }
 
     fn resolve(&self, rev: &str) -> Result<Oid> {

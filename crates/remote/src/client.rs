@@ -807,6 +807,14 @@ impl Operations for RemoteOperations {
         })
     }
 
+    fn range_diff(
+        &self,
+        ranges: &[String],
+        creation_factor: Option<u32>,
+    ) -> Result<Vec<amonhen_model::RangePair>> {
+        self.op(Op::RangeDiff(ranges.to_vec(), creation_factor))
+    }
+
     fn resolve(&self, rev: &str) -> Result<Oid> {
         self.op(Op::Resolve(rev.to_owned()))
     }

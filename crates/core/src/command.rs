@@ -148,6 +148,23 @@ pub enum Command {
         name: Option<String>,
         limit: Option<usize>,
     },
+    /// 同じ一連のコミットの 2 つの版を比べる（`git range-diff`）。`ranges` は git と同じ形（`["A...B"]`、
+    /// `["<base>", "A", "B"]`、`["<base>..A", "<base>..B"]`）。`info.pairs`: git の出力の順に `status`（same・
+    /// changed・removed・added）・`old`・`new`（`index`（範囲の中の 1 始まりの番号）・`oid`。その側になければ
+    /// null）・`subject`・`diff`（changed のときの差分の差分。行ごとに、先頭の 1 文字が外側の記号（` `・`-`・`+`、
+    /// 見出しは `@`）、残りがそれぞれの版のパッチの行）。merge コミットは比べない（git と同じ）。
+    RangeDiff {
+        ranges: Vec<String>,
+        creation_factor: Option<u32>,
+    },
+    /// ブランチ（既定は今のブランチ）の、最後に書き換える前の版（reflog から。rebase・コミットの編集・amend・
+    /// reset など、前の先端が新しい先端の祖先でなくなった動き）。`info.previous`: `branch`・`selector`（前の版の
+    /// `<branch>@{n}`）・`message`（その動きの reflog の行）・`time`・`old`（前の版の先端）・`new`（今の先端）・
+    /// `onto`（rebase の載せ先。わからなければ null）・`ranges`（`rangeDiff` に渡す範囲。載せ先があれば
+    /// `[onto, old, new]`、なければ `["old...new"]`）。見つからなければ `previous` は null。
+    PreviousVersion {
+        branch: Option<String>,
+    },
     UpdateSubmodules {
         paths: Vec<String>,
     },
@@ -444,6 +461,61 @@ impl Repository {
             .join(COMMIT_TEMPLATE)
             .to_string_lossy()
             .into_owned()
+    }
+}
+
+impl Repository {
+    /// `Command::PreviousVersion` の答え（なければ `None`）。
+    fn previous_version(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        branch: Option<&str>,
+    ) -> Result<Option<serde_json::Value>> {
+        let full = match branch {
+            Some(name) if name.starts_with("refs/") => name.to_owned(),
+            Some(name) => heads(name),
+            None => ops
+                .head_state()?
+                .branch
+                .ok_or_else(|| tr!("HEAD isn’t on a branch"))?,
+        };
+        let short = full.strip_prefix("refs/heads/").unwrap_or(&full).to_owned();
+        let entries = self.backend().reflog(&full, 500)?;
+        let Some(tip) = entries.first().map(|e| e.new) else {
+            return Ok(None);
+        };
+        for (i, e) in entries.iter().enumerate() {
+            let Some(old) = e.old else { continue };
+            if old == e.new || amonhen_model::reflog_keeps_history(&e.message) {
+                continue;
+            }
+            // 消えた（gc 済みの）コミットは比べられないので、そこで探すのをやめる。
+            let Ok(kept) = ops.is_ancestor(&old.to_string(), &e.new.to_string()) else {
+                break;
+            };
+            if kept {
+                continue;
+            }
+            let onto = amonhen_model::rebase_onto(&e.message)
+                .and_then(|o| ops.resolve(o).ok())
+                .map(|o| o.to_string());
+            let (old, tip) = (old.to_string(), tip.to_string());
+            let ranges = match &onto {
+                Some(onto) => vec![onto.clone(), old.clone(), tip.clone()],
+                None => vec![format!("{old}...{tip}")],
+            };
+            return Ok(Some(serde_json::json!({
+                "branch": short,
+                "selector": format!("{short}@{{{}}}", i + 1),
+                "message": e.message,
+                "time": e.time,
+                "old": old,
+                "new": tip,
+                "onto": onto,
+                "ranges": ranges,
+            })));
+        }
+        Ok(None)
     }
 }
 
@@ -1827,6 +1899,25 @@ impl Repository {
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "entries": entries })),
+                    ..Default::default()
+                })
+            }
+            Command::RangeDiff {
+                ranges,
+                creation_factor,
+            } => {
+                let pairs = ops.range_diff(&ranges, creation_factor)?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "pairs": pairs })),
+                    ..Default::default()
+                })
+            }
+            Command::PreviousVersion { branch } => {
+                let previous = self.previous_version(ops, branch.as_deref())?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "previous": previous })),
                     ..Default::default()
                 })
             }
@@ -3753,6 +3844,135 @@ mod tests {
         // 変更がなければ stash は作らない。
         assert_eq!(reset("hard")["info"]["stashed"], false);
         assert_eq!(git(dir, &["stash", "list"]).lines().count(), 1);
+    }
+
+    /// ブランチの reflog から rebase の前の版と載せ先を見つけ、その範囲で 2 つの版を比べる。
+    #[test]
+    fn compares_a_branch_with_its_version_before_a_rebase() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["checkout", "-q", "-b", "topic"]);
+        commit_file(dir, "a.txt", "a");
+        commit_file(dir, "b.txt", "b");
+        let lines: String = (1..=20).map(|n| format!("{n}\n")).collect();
+        std::fs::write(dir.join("c.txt"), &lines).unwrap();
+        git(dir, &["add", "c.txt"]);
+        git(dir, &["commit", "-q", "-m", "c"]);
+        let before = git(dir, &["rev-parse", "HEAD"]);
+        // 作る・コミットするだけでは書き換えていない。
+        let none = run(&repo, r#"{"op":"previousVersion"}"#);
+        assert_eq!(none["info"]["previous"], serde_json::Value::Null, "{none}");
+
+        git(dir, &["checkout", "-q", "main"]);
+        let onto = commit_file(dir, "m.txt", "main");
+        git(dir, &["checkout", "-q", "topic"]);
+        // b を落とし、c を書き換えて rebase する。
+        git(
+            dir,
+            &[
+                "-c",
+                "sequence.editor=sed -i.bak -e '/ b$/d'",
+                "rebase",
+                "-q",
+                "-i",
+                "main",
+            ],
+        );
+        std::fs::write(dir.join("c.txt"), lines.replace("5\n", "five\n")).unwrap();
+        git(dir, &["commit", "-q", "-a", "--amend", "--no-edit"]);
+        commit_file(dir, "d.txt", "d");
+        let after = git(dir, &["rev-parse", "HEAD"]);
+
+        let r = run(&repo, r#"{"op":"previousVersion","branch":"topic"}"#);
+        let previous = &r["info"]["previous"];
+        // 一番新しい書き換えは amend（載せ先なし）。
+        assert!(
+            previous["message"]
+                .as_str()
+                .unwrap()
+                .starts_with("commit (amend)"),
+            "{r}"
+        );
+        assert_eq!(previous["new"], after);
+        assert_eq!(previous["onto"], serde_json::Value::Null);
+        assert_eq!(previous["selector"], "topic@{2}");
+
+        // amend の前の rebase と比べる。
+        git(dir, &["reset", "-q", "--hard", "HEAD@{2}"]);
+        let r = run(&repo, r#"{"op":"previousVersion"}"#);
+        let previous = &r["info"]["previous"];
+        assert!(
+            previous["message"].as_str().unwrap().starts_with("reset"),
+            "{r}"
+        );
+        git(dir, &["update-ref", "-d", "--no-deref", "refs/heads/topic"]);
+        git(dir, &["update-ref", "refs/heads/topic", &before]);
+        git(dir, &["checkout", "-q", "-f", "topic"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "sequence.editor=sed -i.bak -e '/ b$/d'",
+                "rebase",
+                "-q",
+                "-i",
+                "main",
+            ],
+        );
+        let r = run(&repo, r#"{"op":"previousVersion"}"#);
+        let previous = &r["info"]["previous"];
+        assert!(
+            previous["message"].as_str().unwrap().starts_with("rebase"),
+            "{r}"
+        );
+        assert_eq!(previous["old"], before);
+        assert_eq!(previous["onto"], onto);
+        let ranges = previous["ranges"].clone();
+        assert_eq!(ranges.as_array().unwrap().len(), 3);
+
+        let r = run(
+            &repo,
+            &serde_json::json!({ "op": "rangeDiff", "ranges": ranges }).to_string(),
+        );
+        assert_eq!(r["ok"], true, "{r}");
+        let pairs = r["info"]["pairs"].as_array().unwrap();
+        let statuses: Vec<&str> = pairs
+            .iter()
+            .map(|p| p["status"].as_str().unwrap())
+            .collect();
+        assert_eq!(statuses, ["same", "removed", "same"], "{r}");
+        assert_eq!(pairs[1]["subject"], "b");
+        assert_eq!(pairs[1]["old"]["index"], 2);
+        assert_eq!(pairs[1]["new"], serde_json::Value::Null);
+        assert_eq!(pairs[2]["old"]["oid"].as_str().unwrap().len(), 40);
+        assert_eq!(pairs[2]["new"]["index"], 2);
+
+        // 中身を変えた組は、差分の差分を持つ。足したコミットは added。
+        std::fs::write(dir.join("c.txt"), lines.replace("5\n", "five\n")).unwrap();
+        git(dir, &["commit", "-q", "-a", "--amend", "--no-edit"]);
+        commit_file(dir, "d.txt", "d");
+        let r = run(
+            &repo,
+            &serde_json::json!({ "op": "rangeDiff", "ranges": [onto, before, "HEAD"] }).to_string(),
+        );
+        let pairs = r["info"]["pairs"].as_array().unwrap();
+        let statuses: Vec<&str> = pairs
+            .iter()
+            .map(|p| p["status"].as_str().unwrap())
+            .collect();
+        assert_eq!(statuses, ["same", "removed", "changed", "added"], "{r}");
+        let diff: Vec<&str> = pairs[2]["diff"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l.as_str().unwrap())
+            .collect();
+        assert!(
+            diff.contains(&"-+5") && diff.contains(&"++five"),
+            "{diff:?}"
+        );
+        let bad = run(&repo, r#"{"op":"rangeDiff","ranges":["--output=x"]}"#);
+        assert_eq!(bad["ok"], false);
     }
 
     /// HEAD の reflog は新しい順で、reset で外れたコミットは辿れない（History にない）と分かる。linked worktree で
