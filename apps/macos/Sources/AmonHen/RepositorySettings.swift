@@ -69,6 +69,8 @@ final class RepositorySettingsModel {
     private(set) var gitVersion: String?
     /// rebase で積み重ねたブランチを一緒に動かせるか（git 2.38 から）。
     private(set) var updateRefsSupported = true
+    /// `rr-cache` があるか（`rerere.enabled` が書かれていなければ、git はこれがあるとき rerere を使う）。
+    private(set) var rerereCache = false
     /// ローカルブランチの名前と、判定した既定のブランチ（`branchGroups` の `base`。`amonhen.defaultBranch` も効いた後）。
     private(set) var localBranches: [String] = []
     private(set) var detectedBase: String?
@@ -126,7 +128,7 @@ final class RepositorySettingsModel {
             struct Ignore: Decodable { let gitignore: String; let exclude: String }
             struct Excludes: Decodable { let path: String; let text: String? }
             struct Hooks: Decodable { let hooksPath: String?; let hooks: [HookEntry]; let lfs: Bool; let lfsPatterns: [String]; let lfsFiles: Int? }
-            struct Version: Decodable { let version: String?; let updateRefs: Bool }
+            struct Version: Decodable { let version: String?; let updateRefs: Bool; let rerereCache: Bool? }
             struct Template: Decodable { let text: String?; let path: String }
             struct Groups: Decodable { struct Branch: Decodable { let name: String }; let base: String?; let branches: [Branch] }
             do {
@@ -148,6 +150,7 @@ final class RepositorySettingsModel {
                 commitTemplate = t.map { ($0.text, $0.path) }
                 gitVersion = v.version
                 updateRefsSupported = v.updateRefs
+                rerereCache = level == .repository && v.rerereCache == true
                 localBranches = g?.branches.map(\.name).sorted() ?? []
                 detectedBase = g?.base
                 hooksPath = h.hooksPath
@@ -489,7 +492,7 @@ private struct AllSettingsTab: View {
     private static let basicKeys = [
         "user.name", "user.email", "commit.gpgsign", "gpg.format", "user.signingkey", "commit.template",
         "amonhen.defaultbranch", "pull.rebase", "pull.ff", "fetch.prune", "rebase.autostash", "rebase.updaterefs",
-        "merge.conflictstyle", "core.autocrlf", "core.filemode",
+        "merge.conflictstyle", "rerere.enabled", "rerere.autoupdate", "core.autocrlf", "core.filemode",
     ]
 
     /// 組（section か subsection）: 見出しの行と、その中の行と組。
@@ -1678,6 +1681,11 @@ private struct OperationsPage: View {
             Section("Merge") {
                 ChoiceRow(model: model, question: L("How conflicts are written in files"), help: L("With the base (diff3, zdiff3), the merge editor resolves one-sided conflicts by itself."), key: "merge.conflictStyle",
                           options: [("merge", L("Both sides")), ("diff3", L("Both sides and the common base")), ("zdiff3", L("Both sides and the base, shortened"))], defaultValue: "merge")
+                SwitchRow(model: model, question: L("Reuse how conflicts were resolved before"),
+                          help: L("When the same conflict comes back, git puts the earlier resolution in the file (rerere)."),
+                          key: "rerere.enabled", defaultOn: model.rerereCache)
+                SwitchRow(model: model, question: L("Stage files resolved that way"), help: L("Only while the switch above is on."),
+                          key: "rerere.autoUpdate", defaultOn: false)
             }
         }
         .formStyle(.grouped)

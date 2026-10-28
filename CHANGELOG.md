@@ -20,6 +20,8 @@ becomes the GitHub Release notes.
   History, the details, File History and the CLI, with the recorded name and email under them in the details when
   they differ. `author:` matches the mapped and the recorded name. git's `log.mailmap` turns it off, on the Author and
   Signing page with the mailmap file; changing either shows the names again without rebuilding History.
+- The Merge section of Repository Settings and Settings > Git has git's rerere switches: reuse how conflicts were
+  resolved before (`rerere.enabled`) and stage the files it resolves (`rerere.autoUpdate`).
 - Every change in Repository Settings and Settings > Git can be undone and redone with ⌘Z / ⇧⌘Z while the page is
   shown, apart from the repository's Undo (⌥⌘Z).
 - A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last

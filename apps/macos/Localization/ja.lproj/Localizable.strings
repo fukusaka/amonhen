@@ -1254,6 +1254,8 @@
 "Remotes" = "リモート";
 "Remove remote-tracking branches deleted on the remote" = "リモートで消えたブランチを片づける";
 "Stash changes before rebasing" = "rebase の前に変更を退避する";
+"Reuse how conflicts were resolved before" = "前に解いたコンフリクトの解き方を使い回す";
+"Stage files resolved that way" = "そうして解けたファイルを stage する";
 "Stop overriding here. The value above takes over." = "ここでの上書きをやめます。上の値が効くようになります。";
 "The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With. “Follow git’s settings” uses the repository’s pull.rebase and pull.ff, as git pull in a terminal does." = "Pull のシート（ツールバーと ⌃⌘L）で最初に選ばれている取り込み方です。シートでそのたびに変えられ、Repository > Pull With でも選べます。「git の設定に従う」は、端末の git pull と同じく、リポジトリの pull.rebase と pull.ff で決めます。";
 "This repository’s git settings (pull.rebase, pull.ff) choose %@, as git pull in a terminal would." = "このリポジトリの git の設定（pull.rebase・pull.ff）では「%@」になります。端末の git pull と同じです。";
@@ -1283,6 +1285,8 @@
 "With the base (diff3, zdiff3) the merge editor resolves one-sided conflicts by itself. Amon Hen recommends zdiff3." = "元がある形式（diff3・zdiff3）なら、マージエディタが片側だけの変更を自分で解けます。Amon Hen のおすすめは zdiff3 です。";
 "Branches whose tips are among the rewritten commits. Undo puts them back." = "先頭が書き換えるコミットにあるブランチです。Undo で戻ります。";
 "History edits always stash, whatever this says." = "History の編集は、この設定に関わらずいつも退避します。";
+"When the same conflict comes back, git puts the earlier resolution in the file (rerere)." = "同じコンフリクトがまた出たら、git が前の解き方をファイルに書きます（rerere）。";
+"Only while the switch above is on." = "上のスイッチがオンのときだけ効きます。";
 "Accounts" = "アカウント";
 "Diff & Merge" = "差分とマージ";
 "Merge Editor" = "マージエディタ";

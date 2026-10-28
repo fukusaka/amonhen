@@ -331,7 +331,8 @@ pub enum Command {
         git: Option<String>,
     },
     /// このリポジトリを扱う git の版（`info.version`、読めなければ null）と、rebase で積み重ねたブランチを
-    /// 一緒に動かせるか（`info.updateRefs`。git 2.38 から。版が読めなければ true）。
+    /// 一緒に動かせるか（`info.updateRefs`。git 2.38 から。版が読めなければ true）、`rr-cache` があるか
+    /// （`info.rerereCache`。git は `rerere.enabled` が書かれていなければ、これがあるとき rerere を使う）。
     GitVersion,
     /// git の設定から決まる、pull と fetch のふるまい（`info.pull`: `merge`・`rebase`・`fastForwardOnly`、
     /// `info.prune`）。Pull のシートが「git の設定に従う」の中身を見せるのに使う。
@@ -2346,11 +2347,17 @@ impl Repository {
             }
             Command::GitVersion => {
                 let version = ops.git_version()?;
+                let rerere_cache = self
+                    .backend()
+                    .files()
+                    .mode(Root::CommonDir, "rr-cache")?
+                    .is_some();
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({
                         "version": version.map(|(a, b, c)| format!("{a}.{b}.{c}")),
                         "updateRefs": version.is_none_or(|(a, b, _)| (a, b) >= (2, 38)),
+                        "rerereCache": rerere_cache,
                     })),
                     ..Default::default()
                 })
@@ -4259,12 +4266,16 @@ mod tests {
 
     #[test]
     fn reports_the_git_version_and_whether_rebase_can_move_stacked_branches() {
-        let (_tmp, repo) = setup();
+        let (tmp, repo) = setup();
         let r = run(&repo, r#"{"op":"gitVersion"}"#);
         let version = r["info"]["version"].as_str().unwrap();
         let mut parts = version.split('.').map(|p| p.parse::<u32>().unwrap());
         let (major, minor) = (parts.next().unwrap(), parts.next().unwrap());
         assert_eq!(r["info"]["updateRefs"], (major, minor) >= (2, 38), "{r}");
+        assert_eq!(r["info"]["rerereCache"], false, "{r}");
+        std::fs::create_dir(tmp.path().join(".git/rr-cache")).unwrap();
+        let r = run(&repo, r#"{"op":"gitVersion"}"#);
+        assert_eq!(r["info"]["rerereCache"], true, "{r}");
 
         // 段は local・global だけ。
         let r = run(
