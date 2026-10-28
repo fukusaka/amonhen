@@ -8,7 +8,8 @@ use crate::{Oid, Result};
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct SignatureCheck {
     /// `%G?` の 1 文字。G（正しい）、B（不正）、U（正しいが信用の度合いが不明）、X（期限切れの署名）、
-    /// Y（期限切れの鍵）、R（失効した鍵）、E（検証できない。鍵がないなど）、N（署名なし）。
+    /// Y（期限切れの鍵）、R（失効した鍵）、E（検証できない。鍵がないなど）、N（署名なし）。git にない
+    /// `UNSUPPORTED`（V）は、使っている git がその種類の署名を確かめられない（SSH の署名は git 2.34 から）。
     pub status: char,
     /// 署名した人（`%GS`）。
     pub signer: String,
@@ -20,6 +21,11 @@ pub struct SignatureCheck {
     /// 署名した鍵に登録されたメールアドレス（GPG はすべてのユーザー ID、SSH は allowed signers のプリンシパル）。
     /// 読めなければ空（そのときはコミッターと一致するかを言い切れない）。
     pub emails: Vec<SignerEmail>,
+}
+
+impl SignatureCheck {
+    /// 使っている git がその種類の署名を確かめられない（`%G?` にはない、Amon Hen の独自の 1 文字）。
+    pub const UNSUPPORTED: char = 'V';
 }
 
 /// 署名した鍵のメールアドレスと、その有効性（gpg の uid 行の 2 番目の欄。u・f・m は有効、r は失効、e は期限切れ、
@@ -58,4 +64,14 @@ pub trait SignatureVerifier: Send + Sync {
     fn verify(&self, commits: &[(Oid, &[u8])]) -> Result<Vec<SignatureCheck>>;
     /// 1 つのコミットの検証の詳細（署名者・鍵・信用度）。署名がなければ `None`。
     fn details(&self, id: &Oid, raw: &[u8]) -> Result<Option<SignatureCheck>>;
+    /// `tags`（タグのオブジェクトの ID と中身）を検証し、同じ順に結果を返す（署名がなければ N）。
+    fn verify_tags(&self, tags: &[(Oid, &[u8])]) -> Result<Vec<SignatureCheck>> {
+        Ok(vec![
+            SignatureCheck {
+                status: 'E',
+                ..Default::default()
+            };
+            tags.len()
+        ])
+    }
 }

@@ -298,6 +298,37 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
     .map_err(explain_old_git)
 }
 
+/// git を実行し、終わり方（成功したか）と標準出力・標準エラーを返す。失敗しても出力を読みたいとき（`verify-tag`
+/// は検証できない署名で失敗し、そのわけを標準エラーに書く）。Activity には記録する。
+fn run_lenient(mut cmd: Command) -> Result<(bool, Vec<u8>, Vec<u8>)> {
+    if let Some(reason) = amonhen_model::process::missing_git() {
+        return Err(reason.into());
+    }
+    let repo = cmd
+        .get_current_dir()
+        .map(|d| d.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut label = String::from("git");
+    let mut args = cmd.get_args();
+    while let Some(arg) = args.next() {
+        if arg == "-c" {
+            args.next();
+            continue;
+        }
+        label.push(' ');
+        label.push_str(&arg.to_string_lossy());
+    }
+    amonhen_model::activity::track_with("git", &repo, label, |seq| {
+        cmd.stdin(Stdio::null());
+        let out = cmd.output()?;
+        let err = String::from_utf8_lossy(&out.stderr);
+        if !err.trim().is_empty() {
+            amonhen_model::activity::set_output(seq, err.trim());
+        }
+        Ok::<_, amonhen_model::Error>((out.status.success(), out.stdout, out.stderr))
+    })
+}
+
 /// Amon Hen が使う git の最低の版（`git switch` が 2.23 から）。それより新しい機能は、版を見て古いやり方に戻す。
 pub const MIN_GIT_VERSION: (u32, u32) = (2, 23);
 

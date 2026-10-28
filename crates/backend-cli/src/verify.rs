@@ -1,6 +1,7 @@
 //! daemon 越しのリポジトリのコミットの署名を、手元の鍵で検証する。受け取ったコミットのオブジェクトを手元の
 //! 作業用のリポジトリに書き、手元の git に `%G?` で検証させる（手元のリポジトリと同じ規則・設定になる。
 //! gpg.program・gpg.ssh.allowedSignersFile・gpg.minTrustLevel など）。木やほかのオブジェクトは要らない。
+//! タグも同じく、受け取ったタグのオブジェクトを手元の git の `verify-tag` で検証する。
 
 use amonhen_model::tr;
 use std::path::PathBuf;
@@ -93,6 +94,11 @@ impl SignatureVerifier for LocalVerifier {
         self.store(&git, &[(*id, raw)])?;
         git.signature_details(id)
     }
+
+    /// タグは作業用のリポジトリに残さない（検証のあいだだけ一時的な置き場に書く）。
+    fn verify_tags(&self, tags: &[(Oid, &[u8])]) -> Result<Vec<SignatureCheck>> {
+        self.git()?.verify_tags(tags)
+    }
 }
 
 #[cfg(test)]
@@ -125,5 +131,16 @@ mod tests {
         assert_eq!(verifier.details(&id, &raw).unwrap(), None);
         // 中身が ID と合わなければ断る。
         assert!(verifier.verify(&[(id, b"tree 0\n\nbroken\n")]).is_err());
+
+        // 親（とその前）のないコミットも検証できる（作業用のリポジトリには、渡したコミットしかない）。
+        source
+            .write(&["commit", "-q", "--allow-empty", "-m", "second"])
+            .unwrap();
+        let hex = String::from_utf8(source.read(&["rev-parse", "HEAD"]).unwrap()).unwrap();
+        let second = Oid::from_hex(hex.trim()).unwrap();
+        let raw = source.read(&["cat-file", "commit", "HEAD"]).unwrap();
+        let verifier = LocalVerifier::new(tmp.path().join("verify-second.git"));
+        assert_eq!(verifier.details(&second, &raw).unwrap(), None);
+        assert_eq!(verifier.verify(&[(second, &raw)]).unwrap()[0].status, 'N');
     }
 }

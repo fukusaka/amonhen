@@ -212,6 +212,32 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
     std::fs::write(repo.join("f.txt"), "a\nb\nc\nd\ne\n").unwrap();
     git(&repo, &["add", "."]);
     git(&repo, &["commit", "-q", "-m", "first"]);
+    // 署名のない注釈付きのタグと、（中身の壊れた）署名の付いたタグ。
+    git(&repo, &["tag", "-a", "-m", "plain", "plain"]);
+    let head = Command::new("git")
+        .current_dir(&repo)
+        .args(["rev-parse", "HEAD"])
+        .output()
+        .unwrap();
+    let signed = format!(
+        "object {}\ntype commit\ntag signed\ntagger a <a@example.com> 1 +0000\n\nsigned\n-----BEGIN PGP SIGNATURE-----\nabc\n-----END PGP SIGNATURE-----\n",
+        String::from_utf8_lossy(&head.stdout).trim()
+    );
+    std::fs::write(tmp.path().join("signed.tag"), signed).unwrap();
+    let id = Command::new("git")
+        .current_dir(&repo)
+        .args(["hash-object", "-t", "tag", "-w"])
+        .arg(tmp.path().join("signed.tag"))
+        .output()
+        .unwrap();
+    git(
+        &repo,
+        &[
+            "update-ref",
+            "refs/tags/signed",
+            String::from_utf8_lossy(&id.stdout).trim(),
+        ],
+    );
     let env = Env::new(tmp.path());
     let repo = repo.canonicalize().unwrap();
     let path = repo.to_str().unwrap().to_owned();
@@ -278,6 +304,27 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
         shown.push(env.json(&["show", "-C", at, "--json", "HEAD~1"]));
         let refs = env.json(&["refs", "-C", at, "--json"]);
         assert_eq!(refs["headBranch"], "main", "{at}: {refs}");
+        // タグの署名（daemon・SSH 越しでは、タグのオブジェクトを受け取って確かめる）。
+        let refs = env.json(&["refs", "-C", at, "--verify", "--json"]);
+        let tag = |name: &str| {
+            refs["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|e| e["name"] == name)
+                .unwrap()
+                .clone()
+        };
+        assert!(tag("plain")["signature"].is_null(), "{at}: {refs}");
+        assert_eq!(tag("signed")["signed"], "gpg", "{at}: {refs}");
+        assert_eq!(tag("signed")["signature"]["status"], "E", "{at}: {refs}");
+        // show: コミットを指すタグと、その署名。
+        let show = env.json(&["show", "-C", at, "--json", "--no-patch", "signed"]);
+        let tags = show["tags"].as_array().unwrap();
+        assert_eq!(tags.len(), 2, "{at}: {show}");
+        let signed = tags.iter().find(|t| t["name"] == "signed").unwrap();
+        assert_eq!(signed["signature"]["status"], "E", "{at}: {show}");
+        assert!(show["signature"].is_null(), "{at}: {show}");
 
         // 命令の窓口: 1 行 1 命令で、1 行ずつ答える。
         let branch = format!("b{i}");

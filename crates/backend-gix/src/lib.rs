@@ -538,6 +538,27 @@ impl GitBackend for GixBackend {
         self.git()?.verify_signatures(ids)
     }
 
+    fn tag_objects(&self, ids: &[Oid]) -> Result<Vec<Option<Vec<u8>>>> {
+        let repo = self.repo.to_thread_local();
+        ids.iter()
+            .map(|id| {
+                let oid = gix::ObjectId::from_bytes_or_panic(&id.0);
+                let mut buf = Vec::new();
+                Ok(match repo.objects.try_find(&oid, &mut buf)? {
+                    Some(object) if object.kind == gix::object::Kind::Tag => {
+                        Some(object.data.to_vec())
+                    }
+                    _ => None,
+                })
+            })
+            .collect()
+    }
+
+    fn verify_tags(&self, tags: &[(Oid, Vec<u8>)]) -> Result<Vec<amonhen_model::SignatureCheck>> {
+        let tags: Vec<(Oid, &[u8])> = tags.iter().map(|(id, raw)| (*id, &raw[..])).collect();
+        self.git()?.verify_tags(&tags)
+    }
+
     /// gix が reflog の置き場所を決める（`refs/heads/*` のものは linked worktree からでも共通の git dir）。
     fn branch_created_at(&self, names: &[&str]) -> Result<Vec<Option<Oid>>> {
         let repo = self.repo.to_thread_local();

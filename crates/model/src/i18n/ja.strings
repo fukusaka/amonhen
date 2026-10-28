@@ -249,6 +249,7 @@
 "Tags" = "タグ";
 "Submodules" = "サブモジュール";
 " (upstream gone)" = "（上流がない）";
+" (lightweight)" = "（軽量タグ）";
 " ({ahead} ahead, {behind} behind)" = "（{ahead} 先・{behind} 遅れ）";
 "The engine for the SSH host ({path}) is a different build of Amon Hen, and the SSH host has none of this build. Rebuild it (scripts/build-engine.sh) or install the matching app" = "SSH 先に送るエンジン（{path}）は Amon Hen の別のビルドのもので、SSH 先にもこのビルドのものがありません。作り直す（scripts/build-engine.sh）か、同じ版のアプリを入れてください";
 

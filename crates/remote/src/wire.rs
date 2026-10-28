@@ -106,6 +106,10 @@ pub enum Request {
     CommitExtras(Oid),
     /// → `Vec<SignatureCheck>`（`ids` と同じ順）
     VerifySignatures(Vec<Oid>),
+    /// → `Vec<Option<Bytes>>`: タグのオブジェクトの中身（`ids` と同じ順。タグでなければ `None`）
+    TagObjects(Vec<Oid>),
+    /// → `Vec<SignatureCheck>`: タグの署名の検証（ID と中身。同じ順）
+    VerifyTags(Vec<(Oid, Bytes)>),
     /// → `Vec<Option<Oid>>`: ローカルブランチを作った点（`names` と同じ順）
     BranchCreatedAt(Vec<String>),
     /// → `Vec<ReflogEntry>`: ref の reflog（新しい順に `limit` 行まで）

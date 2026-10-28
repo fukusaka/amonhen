@@ -42,7 +42,7 @@ usage: amonhen [<path>]
        amonhen unstage [--rows <rows>] <path>… | --all
        amonhen discard [--rows <rows>] <path>…
        amonhen commit -m <message> [--amend]
-       amonhen refs [--json]
+       amonhen refs [--verify] [--json]
        amonhen run [<json>…]
        amonhen watch [--json]
        amonhen undo [--list | --peek]

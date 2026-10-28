@@ -11,6 +11,9 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Tag signatures are verified and shown like commit signatures: a Tag line per tag in the commit details, the
+  signature on each Merged Tag line, and a mark on signed tags in the sidebar. `amonhen refs --verify` adds them too,
+  and `amonhen show` prints the commit's signature and its tags' and merged tags'.
 - Every change in Repository Settings and Settings > Git can be undone and redone with ⌘Z / ⇧⌘Z while the page is
   shown, apart from the repository's Undo (⌥⌘Z).
 - A local branch that isn't checked out can be fast-forwarded to its upstream from its sidebar menu (as of the last
@@ -58,6 +61,12 @@ becomes the GitHub Release notes.
   the app inherited from what launched it (`GIT_EDITOR`, for one) no longer reach git unless the shell sets them.
 - Dropping a branch on one checked out in another worktree no longer fast-forwards it behind that worktree's back;
   the menu offers to open the worktree instead.
+- With git older than 2.34, an SSH-signed commit no longer makes git crash during signature checks, which lost the
+  marks of the commits checked with it and the commit's notes and line counts; its signature shows Can’t verify.
+- With git older than 2.26, which doesn't report the trust level, a good GPG signature showed Untrusted key; the trust
+  now comes from the signing key's validity.
+- In a repository on an SSH host checked with this Mac's keys, a commit's details again get their notes, line counts
+  and signature, and the commit selected on opening is no longer verified with the SSH host's keys.
 - A commit's details grow to fit a long message in SSH hosts' repositories too: they could stop short, by up to
   the height of the changed files list, and leave the rest to scroll.
 

@@ -32,6 +32,23 @@ impl CommitText {
         }
     }
 
+    /// タグのオブジェクトの署名の種類（`SIGNED_*`）。署名がなければ 0。タグの署名はメッセージの後ろに付く
+    /// （git と同じく、行の頭の `-----BEGIN … SIGNATURE-----` などを探す）。
+    pub fn tag_signature_kind(raw: &[u8]) -> u8 {
+        let mut kind = 0;
+        for line in raw.split(|&b| b == b'\n') {
+            kind = match line {
+                b"-----BEGIN PGP SIGNATURE-----" | b"-----BEGIN PGP MESSAGE-----" => {
+                    Self::SIGNED_GPG
+                }
+                b"-----BEGIN SSH SIGNATURE-----" => Self::SIGNED_SSH,
+                b"-----BEGIN SIGNED MESSAGE-----" => Self::SIGNED_X509,
+                _ => continue,
+            };
+        }
+        kind
+    }
+
     pub fn subject(&self) -> &[u8] {
         &self.raw[self.subject.start as usize..self.subject.end as usize]
     }
