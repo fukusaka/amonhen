@@ -194,7 +194,8 @@ Windows の OpenSSH サーバは、送られたコマンドを `HKLM\SOFTWARE\Op
 - **エンジンを送る。** 送るのはエンジンの置き場所の `amonhen-windows-x86_64.exe` か `-aarch64.exe`。.app には Linux のものと同じく同梱する。
   - scp（`scp -S <使っている ssh>`。同じ使い回しの接続の上で）で、一時的な名前で送る。Windows の OpenSSH は既定で sftp を持っていて、scp には `C:/…` の形で渡せる。
   - 標準入力では送れない。Windows PowerShell 5.1 は 1 MB ほどで読むのが止まる。pwsh 7 なら最後まで読めるが、どの機械にもあるわけではない。
-  - そのあと PowerShell のスクリプトで名前を変え、ビルドの指紋と使った印を書き、SHA-1（`Get-FileHash`）を返す。
+  - そのあと PowerShell のスクリプトで名前を変え、ビルドの指紋と使った印を書き、SHA-1 を .NET で計算して返す。
+  - どのスクリプトも、まず `PSModulePath` を Windows PowerShell 本来のものに戻す。pwsh から cmd.exe を挟んで起動されると pwsh のものを引き継ぎ、`Get-FileHash` などのコマンドが見つからない。
 - **エンジンを起動する。** エンジンは ssh のセッションの標準入出力でやりとりするので、既定のシェルが直接起動する。間に PowerShell のスクリプトを挟むと、出力を取り込まれるおそれがある。コマンドは、調べで返ったシェルに合わせて書く。
   - cmd.exe: `""C:\…\amonhen.exe" --stdio "C:\src\repo""`。外側の引用符は `cmd /c` が外す。ここでは `%` を逃がせないので、`%` を含むパスは断る。
   - PowerShell: `& 'C:\…\amonhen.exe' --stdio 'C:\src\repo'`。

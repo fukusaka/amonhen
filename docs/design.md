@@ -194,7 +194,8 @@ Windows' OpenSSH server runs the command it is sent with the shell in `HKLM\SOFT
 - **Sending the engine.** It is `amonhen-windows-x86_64.exe` or `-aarch64.exe` from the engines folder; the .app bundles them as it does the Linux ones.
   - It goes by scp (`scp -S <the ssh in use>`, over the same shared connection) to a temporary name. Windows' OpenSSH serves sftp by default, and scp takes `C:/…` there.
   - Standard input can't carry it: Windows PowerShell 5.1 stops reading it after about 1 MB. pwsh 7 reads it whole, but isn't on every machine.
-  - A PowerShell script then renames it, writes the build file and the used mark, and prints the SHA-1 (`Get-FileHash`).
+  - A PowerShell script then renames it, writes the build file and the used mark, and prints the SHA-1, computed with .NET.
+  - Every script first sets `PSModulePath` back to Windows PowerShell's own. Started from pwsh with cmd.exe in between, Windows PowerShell inherits pwsh's, and commands such as `Get-FileHash` aren't found.
 - **Starting the engine.** The engine talks over the ssh session's standard input and output, so the default shell starts it directly. A PowerShell script in between might capture its output. The command line is written for the shell the probe reported:
   - cmd.exe: `""C:\…\amonhen.exe" --stdio "C:\src\repo""`. `cmd /c` strips the outer pair of quotes; `%` can't be escaped there, so a path with `%` is refused.
   - PowerShell: `& 'C:\…\amonhen.exe' --stdio 'C:\src\repo'`.

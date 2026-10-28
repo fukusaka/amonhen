@@ -59,10 +59,14 @@ impl Shell {
     }
 }
 
-/// `script` を、どのシェルからでも同じ意味になる形で（`-EncodedCommand` は UTF-16LE の base64）。進捗の表示
-/// （モジュールを読み込むときの CLIXML）は出さない。
+/// どのスクリプトにも先に付ける。進捗の表示（モジュールを読み込むときの CLIXML）は出さない。モジュールの場所は
+/// Windows PowerShell のものに戻す（pwsh から cmd.exe などを挟んで起動されると pwsh のものを引き継ぎ、
+/// `Get-FileHash` などのコマンドが見つからない）。
+const PREAMBLE: &str = "$ProgressPreference = 'SilentlyContinue'\n$env:PSModulePath = \"$PSHOME\\Modules;\" + [Environment]::GetEnvironmentVariable('PSModulePath', 'Machine')\n";
+
+/// `script` を、どのシェルからでも同じ意味になる形で（`-EncodedCommand` は UTF-16LE の base64）。
 pub fn encoded(script: &str) -> String {
-    let script = format!("$ProgressPreference = 'SilentlyContinue'\n{script}");
+    let script = format!("{PREAMBLE}{script}");
     let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     format!(
         "powershell -NoProfile -NonInteractive -EncodedCommand {}",
@@ -120,7 +124,8 @@ $d = {dir}
 Move-Item -Force (Join-Path $d {tmp}) (Join-Path $d 'amonhen.exe')
 Set-Content (Join-Path $d '{build_file}') {build} -NoNewline
 Set-Content (Join-Path $d 'used') ''
-(Get-FileHash -Algorithm SHA1 (Join-Path $d 'amonhen.exe')).Hash.ToLower()"#,
+$sha = [Security.Cryptography.SHA1]::Create()
+[BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes((Join-Path $d 'amonhen.exe')))).Replace('-', '').ToLower()"#,
         dir = ps_quote(dir),
         tmp = ps_quote(tmp),
         build = ps_quote(build),
@@ -215,10 +220,10 @@ mod tests {
         assert_eq!(base64(b"fo"), "Zm8=");
         assert_eq!(base64(b"foo"), "Zm9v");
         assert_eq!(base64(b"foobar"), "Zm9vYmFy");
-        // UTF-16LE の "a"。
+        // UTF-16LE の base64。
         assert!(
             encoded("").ends_with(&base64(
-                &"$ProgressPreference = 'SilentlyContinue'\n"
+                &PREAMBLE
                     .encode_utf16()
                     .flat_map(u16::to_le_bytes)
                     .collect::<Vec<_>>()
