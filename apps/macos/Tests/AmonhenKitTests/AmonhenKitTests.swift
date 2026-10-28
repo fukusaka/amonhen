@@ -309,3 +309,30 @@ private func makeRepo() throws -> URL {
     #expect(try history.chunk(rows: 0..<1).authorName(row: 0) == "Alice")
     #expect(try repo.commitInfo(oid: id).recordedAuthor == nil)
 }
+
+/// amend で書き換えたブランチの前の版を見つけ、2 つの版を比べ、変わった組の差分の差分を差分の行にする。
+@Test func comparesABranchWithItsPreviousVersion() throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let file = dir.appendingPathComponent("f.txt")
+    let lines = (1...20).map(String.init).joined(separator: "\n") + "\n"
+    try lines.write(to: file, atomically: true, encoding: .utf8)
+    try git(dir, "add", "f.txt")
+    try git(dir, "commit", "-q", "-m", "add f")
+    let repo = try Repository(path: dir.path)
+    #expect(try repo.previousVersion(branch: nil) == nil)
+    try lines.replacingOccurrences(of: "\n5\n", with: "\nfive\n").write(to: file, atomically: true, encoding: .utf8)
+    try git(dir, "commit", "-q", "-a", "--amend", "--no-edit")
+
+    let previous = try #require(try repo.previousVersion(branch: nil))
+    #expect(previous.branch == "main")
+    #expect(previous.message.hasPrefix("commit (amend)"))
+    #expect(previous.onto == nil)
+    let pairs = try repo.rangeDiff(previous.ranges)
+    #expect(pairs.map(\.status) == [.changed])
+    #expect(pairs[0].subject == "add f")
+    let view = try #require(repo.rangeDiffView(pairs[0]))
+    let kinds = view.withRows { $0.map(\.kind) }
+    #expect(kinds.contains(UInt8(AmonhenDiffRow_REMOVED)) && kinds.contains(UInt8(AmonhenDiffRow_ADDED)))
+    #expect((0..<view.rowCount).map { view.text(row: $0) }.contains("+five"))
+}
