@@ -94,6 +94,7 @@ final class BranchStatusPopover: NSViewController {
             f.font = mono ? .monospacedSystemFont(ofSize: 11, weight: .regular) : .systemFont(ofSize: 12)
             f.textColor = color
             f.preferredMaxLayoutWidth = 290
+            f.setContentCompressionResistancePriority(.defaultHigh, for: .horizontal)
             return f
         }
         var rows: [(String, NSView)] = [(L("Branch"), value(item.name))]
@@ -136,6 +137,10 @@ final class BranchStatusPopover: NSViewController {
             return [l, view]
         })
         grid.column(at: 0).xPlacement = .trailing
+        // 表を中身の幅にする（縦のスタックが横いっぱいに引き伸ばすと、値が短いときに余りが列の間に回り、表が
+        // 中ほどに寄って見える）。値の欄の縮みにくさ（750）より弱くして、折り返す値を縮めない（縮めると、290 で
+        // 求めた高さより行が増え、下が切れる。折り返すラベルはもとは 250 で縮みやすい）。
+        grid.setContentHuggingPriority(.init(749), for: .horizontal)
         grid.rowSpacing = 5
         grid.columnSpacing = 10
         for i in 0..<grid.numberOfRows { grid.row(at: i).rowAlignment = .firstBaseline }

@@ -1354,18 +1354,44 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
 
     /// 署名の行の、押した文字のところに詳細の吹き出しを出す。
     private func showSignaturePopover(at charIndex: Int) {
-        guard let info, let layout = header.layoutManager, let container = header.textContainer else { return }
+        guard let info else { return }
         let style = CommitHeaderStyle(rawValue: styleControl.selectedSegment) ?? .standard
         guard let status = CommitHeaderRenderer(info: info, extras: extras, style: style).signatureStatus else { return }
+        showSignaturePopover(SignaturePopover(
+            status: status, signature: extras?.signature, kind: info.signed ?? "gpg",
+            committerEmail: info.committerEmail, place: signaturePlace), at: charIndex)
+    }
+
+    /// タグの署名の印の吹き出し。`pointing` はこのコミットを指すタグの、`merged` は merge したタグの何番目か。
+    private func showTagSignaturePopover(at charIndex: Int, pointing: Int? = nil, merged: Int? = nil) {
+        guard let info, let extras else { return }
+        let tag: (name: String, signed: String?, email: String, message: String, signature: CommitExtras.Signature?)
+        if let pointing, extras.tagObjects.indices.contains(pointing) {
+            let t = extras.tagObjects[pointing]
+            tag = (t.name, t.signed, t.taggerEmail ?? "", t.message ?? "", t.signature)
+        } else if let merged, info.mergedTags.indices.contains(merged), extras.mergedTagSignatures.indices.contains(merged) {
+            let t = info.mergedTags[merged]
+            tag = (t.name, t.signed, t.taggerEmail, t.message, extras.mergedTagSignatures[merged])
+        } else {
+            return
+        }
+        guard let status = CommitHeaderRenderer.tagSignatureStatus(
+            signed: tag.signed, signature: tag.signature, loaded: true, taggerEmail: tag.email) else { return }
+        showSignaturePopover(SignaturePopover(
+            status: status, signature: tag.signature, kind: tag.signed ?? "gpg", committerEmail: tag.email,
+            place: signaturePlace, tag: .init(name: tag.name, message: tag.message)), at: charIndex)
+    }
+
+    /// 署名の吹き出しを、押した文字のところに出す。
+    private func showSignaturePopover(_ content: SignaturePopover, at charIndex: Int) {
+        guard let layout = header.layoutManager, let container = header.textContainer else { return }
         let glyphs = layout.glyphRange(forCharacterRange: NSRange(location: charIndex, length: 1), actualCharacterRange: nil)
         var rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
         rect.origin.x += header.textContainerOrigin.x
         rect.origin.y += header.textContainerOrigin.y
         let popover = NSPopover()
         popover.behavior = .transient
-        popover.contentViewController = SignaturePopover(
-            status: status, signature: extras?.signature, kind: info.signed ?? "gpg",
-            committerEmail: info.committerEmail, place: signaturePlace)
+        popover.contentViewController = content
         popover.show(relativeTo: rect, of: header, preferredEdge: .maxY)
         signaturePopover = popover
     }
@@ -1851,7 +1877,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     func reloadSignature() {
         signatureGeneration += 1
         guard let info else { return }
-        if info.signed != nil {
+        if info.signed != nil || info.mergedTags.contains(where: { $0.signed != nil })
+            || extras?.tagObjects.contains(where: { $0.signed != nil }) == true {
             extras = nil
             renderHeader()
         }
@@ -1990,6 +2017,16 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         }
         if s == CommitHeaderRenderer.signatureLink {
             showSignaturePopover(at: charIndex)
+            return true
+        }
+        if s.hasPrefix(CommitHeaderRenderer.tagSignatureLink),
+           let i = Int(s.dropFirst(CommitHeaderRenderer.tagSignatureLink.count)) {
+            showTagSignaturePopover(at: charIndex, pointing: i)
+            return true
+        }
+        if s.hasPrefix(CommitHeaderRenderer.mergedTagSignatureLink),
+           let i = Int(s.dropFirst(CommitHeaderRenderer.mergedTagSignatureLink.count)) {
+            showTagSignaturePopover(at: charIndex, merged: i)
             return true
         }
         if s.hasPrefix(CommitHeaderRenderer.commitScheme) {

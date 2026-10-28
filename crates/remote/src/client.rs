@@ -468,6 +468,19 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::VerifySignatures(ids.to_vec()))
     }
 
+    fn tag_objects(&self, ids: &[Oid]) -> Result<Vec<Option<Vec<u8>>>> {
+        let objects: Vec<Option<Bytes>> = self.conn.call(&Request::TagObjects(ids.to_vec()))?;
+        Ok(objects.into_iter().map(|o| o.map(|b| b.0)).collect())
+    }
+
+    fn verify_tags(&self, tags: &[(Oid, Vec<u8>)]) -> Result<Vec<amonhen_model::SignatureCheck>> {
+        let tags = tags
+            .iter()
+            .map(|(id, raw)| (*id, Bytes(raw.clone())))
+            .collect();
+        self.conn.call(&Request::VerifyTags(tags))
+    }
+
     fn branch_created_at(&self, names: &[&str]) -> Result<Vec<Option<Oid>>> {
         self.conn.call(&Request::BranchCreatedAt(owned(names)))
     }

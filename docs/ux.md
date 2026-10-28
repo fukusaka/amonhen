@@ -51,6 +51,8 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
   a slash) or when a remote has a different tag with the name (orange). Its tooltip lists every remote (has it, a
   different tag, doesn't have it, not checked yet), and clicking the mark opens a popover with the same, when each
   remote was read, and Push to / Replace on.
+- A signed tag's row also shows its signature's mark (the icons and colors of commit signatures, before the mark for
+  remotes, with the wording in the tooltip). Only visible tags are checked, after scrolling stops.
 - A tag's context menu follows what is known: Push <tag> to <remote> for remotes that lack it, Replace <tag> on
   <remote>… (a forced push) where the remote has a different tag with the name, Delete…, which deletes your own copy only and can
   be undone (an annotated tag comes back with its message), and Delete <tag> from <remote>… for remotes that have it,

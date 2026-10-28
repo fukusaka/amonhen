@@ -115,16 +115,21 @@ public struct CommitInfo: Decodable, Equatable, Sendable {
     public let signed: String?
     /// 署名付きのタグを merge したコミットか。
     public let mergetag: Bool
-    /// merge した署名付きのタグ（ヘッダーの mergetag）。
+    /// merge したタグ（ヘッダーの mergetag）。
     public let mergedTags: [MergedTag]
     public let trailers: [Trailer]
 
     public struct MergedTag: Decodable, Equatable, Sendable {
+        /// タグのオブジェクトの ID。
+        public let id: String
         public let name: String
         public let tagger: String
-        /// タグのメッセージの 1 行目。
+        public let taggerEmail: String
+        /// タグのメッセージの 1 行目と、署名を除いたメッセージ。
         public let subject: String
-        public let signed: Bool
+        public let message: String
+        /// 署名の種類（`gpg`・`ssh`・`x509`）。署名がなければ nil。検証の結果は `CommitExtras.mergedTagSignatures`。
+        public let signed: String?
     }
 
     public struct Trailer: Decodable, Equatable, Sendable {
@@ -145,6 +150,19 @@ public struct SignatureCheck: Decodable, Sendable {
     public let committerEmail: String
     /// 署名した鍵に登録されたメールアドレス（GPG はすべてのユーザー ID、SSH はプリンシパル）。
     public let emails: [SignerEmail]
+}
+
+/// タグの署名（サイドバーの印用）。
+public struct TagSignature: Decodable, Sendable {
+    public let name: String
+    /// 注釈付きのタグのオブジェクトの ID。軽量タグは nil。
+    public let id: String?
+    /// 署名の種類（`gpg`・`ssh`・`x509`）。署名がなければ nil。
+    public let signed: String?
+    public let taggerEmail: String?
+    /// 署名を除いたメッセージ。
+    public let message: String?
+    public let signature: CommitExtras.Signature?
 }
 
 /// 署名した鍵のメールアドレスと、その有効性（gpg の uid の欄。u・f・m は有効、r は失効、e は期限切れ、`-` は不明）。
@@ -214,6 +232,26 @@ public struct CommitExtras: Decodable, Sendable {
     public let merged: [CommitSummary]
     /// メッセージに書かれた ID（書かれたままの文字列）から、引けたコミット。
     public let references: [String: CommitSummary]
+    /// このコミットを指すタグ（注釈付きなら、タガー・メッセージ・署名の検証の結果）。
+    public let tagObjects: [TagObject]
+    /// merge したタグ（`CommitInfo.mergedTags` と同じ順）の署名の検証の結果。署名がなければ nil。
+    public let mergedTagSignatures: [Signature?]
+
+    /// コミットを指すタグ。軽量タグは `id` が nil で、名前だけ。
+    public struct TagObject: Decodable, Sendable {
+        public let name: String
+        public let id: String?
+        public let tagger: String?
+        public let taggerEmail: String?
+        public let time: Int64?
+        public let tz: String?
+        /// メッセージの 1 行目と、署名を除いたメッセージ。
+        public let subject: String?
+        public let message: String?
+        /// 署名の種類（`gpg`・`ssh`・`x509`）。署名がなければ nil。
+        public let signed: String?
+        public let signature: Signature?
+    }
 
     public struct CommitSummary: Decodable, Sendable {
         public let oid: String
@@ -222,7 +260,7 @@ public struct CommitExtras: Decodable, Sendable {
     }
 
     public struct Signature: Decodable, Sendable {
-        /// `git log --format=%G?` の 1 文字（G・B・U・X・Y・R・E）。
+        /// `git log --format=%G?` の 1 文字（G・B・U・X・Y・R・E）。この git で確かめられない種類なら V。
         public let status: String
         public let signer: String
         public let key: String
@@ -288,6 +326,13 @@ extension Repository {
     public func verifySignatures(_ oids: [String]) throws -> [SignatureCheck] {
         struct Checks: Decodable { let checks: [SignatureCheck] }
         return try info(["op": "verifySignatures", "oids": oids], as: Checks.self).checks
+    }
+
+    /// タグの署名を `names` と同じ順に返す（軽量タグ・署名のないタグは `signature` が nil）。一度検証したものは
+    /// コアが覚えているので速い。覚えていないものは 1 件 25 ms ほどかかるので、裏のスレッドで少しずつ呼ぶ。
+    public func tagSignatures(_ names: [String]) throws -> [TagSignature] {
+        struct Tags: Decodable { let tags: [TagSignature] }
+        return try info(["op": "tagSignatures", "names": names], as: Tags.self).tags
     }
 
     /// 名前や短い ID が指すコミット（40 桁）。裏のスレッドで呼ぶ。

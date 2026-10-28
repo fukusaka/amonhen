@@ -378,6 +378,7 @@ fn signature_text(info: &Value, extras: Option<&Value>) -> Option<String> {
             "X" | "Y" => "Expired",
             "R" => "Revoked key",
             "B" => "Bad signature",
+            "V" => "Can’t verify",
             _ => "No key",
         },
     };

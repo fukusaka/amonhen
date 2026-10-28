@@ -370,6 +370,7 @@ struct CommitHeaderRenderer {
         if !info.parents.isEmpty { table.row(info.parents.count > 1 ? "Parents" : "Parent") { fullCommitLinks(info.parents) } }
         signatureRow(table)
         if !info.refs.isEmpty { table.row("Refs") { refLinks(info.refs, refAttrs) } }
+        tagRows(table)
         mergedTagRows(table)
         if let extras, extras.mergedCount > 0 {
             table.row("Merged") { add(L("%ld commits", extras.mergedCount), value) }
@@ -389,6 +390,7 @@ struct CommitHeaderRenderer {
         if let rev = extras?.headRev, !rev.isEmpty { table.row("Rev") { add(rev, mono) } }
         signatureRow(table)
         if !info.refs.isEmpty { table.row("Refs") { refLinks(info.refs, refAttrs) } }
+        tagRows(table)
         if let extras {
             if !extras.branches.isEmpty { table.row("Branches") { refLinks(extras.branches, value) } }
             if extras.tagCount > 0 {
@@ -486,28 +488,66 @@ struct CommitHeaderRenderer {
     private func signatureRow(_ table: Rows) {
         guard let status = signatureStatus else { return }
         table.row("Signature") {
-            let start = text.length
-            if let image = Self.symbolImage(status.symbol, color: status.color, size: 13) {
-                let attachment = NSTextAttachment()
-                attachment.image = image
-                attachment.bounds = NSRect(x: 0, y: -2.5, width: image.size.width, height: image.size.height)
-                text.append(NSAttributedString(attachment: attachment))
+            signatureMark(status, link: Self.signatureLink, kind: info.signed, signer: extras?.signature?.signer ?? "", tag: false)
+        }
+    }
+
+    /// 署名の印（アイコン・短い言葉・信用度の目盛り・方式と署名者）。アイコンと言葉は `link` で、押すと詳細の吹き出し。
+    private func signatureMark(_ status: SignatureStatus, link: String, kind: String?, signer: String, tag: Bool) {
+        let start = text.length
+        if let image = Self.symbolImage(status.symbol, color: status.color, size: 13) {
+            let attachment = NSTextAttachment()
+            attachment.image = image
+            attachment.bounds = NSRect(x: 0, y: -2.5, width: image.size.width, height: image.size.height)
+            text.append(NSAttributedString(attachment: attachment))
+        }
+        add(" \(status.label)", [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: status.color])
+        text.addAttributes(
+            [.link: link, .toolTip: status.toolTip(tag: tag), .cursor: NSCursor.pointingHand],
+            range: NSRange(location: start, length: text.length - start))
+        if let bars = status.trustBars {
+            add(" ", value)
+            let attachment = NSTextAttachment()
+            let meter = Self.trustMeter(bars, color: status.color)
+            attachment.image = meter
+            attachment.bounds = NSRect(x: 0, y: -1, width: meter.size.width, height: meter.size.height)
+            text.append(NSAttributedString(attachment: attachment))
+        }
+        let kind = (kind ?? "gpg").uppercased()
+        add("  \(kind)" + (signer.isEmpty ? "" : " · \(signer)"), dim)
+    }
+
+    /// タグの署名の状態。署名がなければ nil。詳細の時間のかかる分（検証の結果）が届くまでは `.pending`。
+    static func tagSignatureStatus(signed: String?, signature: CommitExtras.Signature?, loaded: Bool, taggerEmail: String) -> SignatureStatus? {
+        guard let signed else { return nil }
+        guard loaded else { return .pending }
+        guard let s = signature else { return .noKey }
+        return SignatureStatus(status: s.status, trust: s.trust, emails: s.emails, committerEmail: taggerEmail, kind: signed)
+    }
+
+    /// タグの署名の印を押すと、詳細の吹き出し（`<n>` はこのコミットを指すタグ、merge したタグの何番目か）。
+    static let tagSignatureLink = "amonhen-tag-signature:"
+    static let mergedTagSignatureLink = "amonhen-merged-tag-signature:"
+
+    /// このコミットを指すタグを 1 つずつ: 名前・タガーと日時・件名と署名の印。軽量タグは名前だけ。
+    /// 詳細の時間のかかる分（`tagObjects`）が届いてから出す（それまでは Refs の行に名前がある）。
+    private func tagRows(_ table: Rows) {
+        guard let extras else { return }
+        for (i, tag) in extras.tagObjects.enumerated() {
+            table.row("Tag") {
+                add(tag.name, [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: NSColor.labelColor])
+                guard tag.id != nil else {
+                    add(L(" (lightweight tag)"), dim)
+                    return
+                }
+                let who = [tag.tagger, tag.time.map(date)].compactMap { $0 }.filter { !$0.isEmpty }
+                if !who.isEmpty { add(" (\(who.joined(separator: " · ")))", dim) }
+                if let subject = tag.subject, !subject.isEmpty { add(" — \(subject)", dim) }
+                if let status = Self.tagSignatureStatus(signed: tag.signed, signature: tag.signature, loaded: true, taggerEmail: tag.taggerEmail ?? "") {
+                    add("  ", value)
+                    signatureMark(status, link: Self.tagSignatureLink + "\(i)", kind: tag.signed, signer: tag.signature?.signer ?? "", tag: true)
+                }
             }
-            add(" \(status.label)", [.font: NSFont.systemFont(ofSize: 11, weight: .semibold), .foregroundColor: status.color])
-            text.addAttributes(
-                [.link: Self.signatureLink, .toolTip: status.toolTip, .cursor: NSCursor.pointingHand],
-                range: NSRange(location: start, length: text.length - start))
-            if let bars = status.trustBars {
-                add(" ", value)
-                let attachment = NSTextAttachment()
-                let meter = Self.trustMeter(bars, color: status.color)
-                attachment.image = meter
-                attachment.bounds = NSRect(x: 0, y: -1, width: meter.size.width, height: meter.size.height)
-                text.append(NSAttributedString(attachment: attachment))
-            }
-            let kind = (info.signed ?? "gpg").uppercased()
-            let signer = extras?.signature?.signer ?? ""
-            add("  \(kind)" + (signer.isEmpty ? "" : " · \(signer)"), dim)
         }
     }
 
@@ -539,11 +579,16 @@ struct CommitHeaderRenderer {
     }
 
     private func mergedTagRows(_ table: Rows) {
-        for tag in info.mergedTags {
+        for (i, tag) in info.mergedTags.enumerated() {
             table.row("Merged Tag") {
                 add("\(tag.name)", value)
-                add(tag.signed ? L(" (%@, signed)", tag.tagger) : L(" (%@, unsigned)", tag.tagger), dim)
+                if !tag.tagger.isEmpty { add(" (\(tag.tagger))", dim) }
                 if !tag.subject.isEmpty { add(" — \(tag.subject)", dim) }
+                let signature = extras?.mergedTagSignatures.indices.contains(i) == true ? extras?.mergedTagSignatures[i] : nil
+                if let status = Self.tagSignatureStatus(signed: tag.signed, signature: signature, loaded: extras != nil, taggerEmail: tag.taggerEmail) {
+                    add("  ", value)
+                    signatureMark(status, link: Self.mergedTagSignatureLink + "\(i)", kind: tag.signed, signer: signature?.signer ?? "", tag: true)
+                }
             }
         }
     }
