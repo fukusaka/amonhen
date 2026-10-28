@@ -1371,7 +1371,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
             tag = (t.name, t.signed, t.taggerEmail ?? "", t.message ?? "", t.signature)
         } else if let merged, info.mergedTags.indices.contains(merged), extras.mergedTagSignatures.indices.contains(merged) {
             let t = info.mergedTags[merged]
-            tag = (t.name, t.signed, t.taggerEmail, t.subject, extras.mergedTagSignatures[merged])
+            tag = (t.name, t.signed, t.taggerEmail, t.message, extras.mergedTagSignatures[merged])
         } else {
             return
         }

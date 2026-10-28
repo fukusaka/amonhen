@@ -125,8 +125,9 @@ public struct CommitInfo: Decodable, Equatable, Sendable {
         public let name: String
         public let tagger: String
         public let taggerEmail: String
-        /// タグのメッセージの 1 行目。
+        /// タグのメッセージの 1 行目と、署名を除いたメッセージ。
         public let subject: String
+        public let message: String
         /// 署名の種類（`gpg`・`ssh`・`x509`）。署名がなければ nil。検証の結果は `CommitExtras.mergedTagSignatures`。
         public let signed: String?
     }

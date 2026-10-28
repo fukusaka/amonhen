@@ -871,6 +871,7 @@ impl Repository {
                     "tagger": t.tagger,
                     "taggerEmail": t.tagger_email,
                     "subject": t.subject,
+                    "message": t.message,
                     "signed": t.signed,
                 })
             })
@@ -3023,6 +3024,10 @@ mod tests {
         let info = run(&repo, &format!(r#"{{"op":"commitInfo","oid":"{merge}"}}"#));
         assert_eq!(info["info"]["mergedTags"][0]["id"], tag.as_str());
         assert_eq!(info["info"]["mergedTags"][0]["signed"], "gpg");
+        assert_eq!(
+            info["info"]["mergedTags"][0]["message"],
+            "Signed release\n\nMore words"
+        );
         let extras = run(
             &repo,
             &format!(r#"{{"op":"commitExtras","oid":"{merge}"}}"#),
