@@ -13,6 +13,7 @@ mod server;
 #[cfg(all(unix, not(target_os = "android")))]
 pub mod shm;
 pub mod ssh;
+mod windows_host;
 pub mod wire;
 
 pub use client::{Connection, RemoteBackend};

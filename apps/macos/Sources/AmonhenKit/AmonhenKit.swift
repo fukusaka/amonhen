@@ -192,18 +192,23 @@ public enum RepositoryLocation {
         return location
     }
 
-    /// SSH の場所を組み立てる。`host` は `[user@]host[:port]`、`path` は向こうの絶対パスか `~/` から始まるパス
-    /// （`/` で始まらなければホームからの相対とみなす）。書き方がおかしければ nil。
+    /// SSH の場所を組み立てる。`host` は `[user@]host[:port]`、`path` は向こうの絶対パス（Windows の `C:\…` は
+    /// `/C:/…` にする）か `~/` から始まるパス（どちらでもなければホームからの相対とみなす）。書き方がおかしければ nil。
     public static func ssh(host: String, path: String) -> String? {
         let host = host.trimmingCharacters(in: .whitespaces)
         var path = path.trimmingCharacters(in: .whitespaces)
         guard !host.isEmpty, !path.isEmpty, !host.contains(where: { $0 == "/" || $0.isWhitespace }) else { return nil }
         if path == "~" || path.hasPrefix("~/") {
             path = "/" + path
+        } else if HostPath.isWindows(path) {
+            path = "/" + path.replacingOccurrences(of: "\\", with: "/")
         } else if !path.hasPrefix("/") {
             path = "/~/" + path
         }
-        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        // ドライブの根（`/C:/`）の `/` は残す（`C:` だけはそのドライブの今のフォルダ）。
+        while path.count > 1, path.hasSuffix("/"), !(path.count == 4 && HostPath.isWindows(String(path.dropFirst()))) {
+            path.removeLast()
+        }
         return "ssh://\(host)\(path)"
     }
 

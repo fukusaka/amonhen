@@ -32,6 +32,26 @@ pub fn list(path: &str) -> Result<Directory> {
     })
 }
 
+/// `~`・`~/…`（Windows は `~\…` も）をホームから読む。ほかはそのまま。SSH 先のエンジンに渡すパス（`--stdio`・
+/// `find-repositories`）で使う。Windows のシェルは `~` を展開しないので、エンジンが読む。
+pub fn expand_home(path: &str) -> PathBuf {
+    let home = std::env::home_dir().filter(|h| !h.as_os_str().is_empty());
+    match (home, home_relative(path)) {
+        (Some(home), Some("")) => home,
+        (Some(home), Some(rest)) => home.join(rest),
+        _ => PathBuf::from(path),
+    }
+}
+
+/// `~` なら空、`~/x` なら `x`（Windows は `~\x` も）。ホームからでなければ None。
+fn home_relative(path: &str) -> Option<&str> {
+    if path == "~" {
+        return Some("");
+    }
+    path.strip_prefix("~/")
+        .or_else(|| cfg!(windows).then(|| path.strip_prefix("~\\")).flatten())
+}
+
 /// `~`・相対パスをホームから読み、`.`・`..` を除いた絶対パス。
 fn resolve(path: &str, home: Option<&Path>) -> PathBuf {
     let path = path.trim();
@@ -39,12 +59,9 @@ fn resolve(path: &str, home: Option<&Path>) -> PathBuf {
         home.map(Path::to_path_buf)
             .unwrap_or_else(|| PathBuf::from("/"))
     };
-    let full = if path.is_empty() || path == "~" {
+    let full = if path.is_empty() {
         root()
-    } else if let Some(rest) = path
-        .strip_prefix("~/")
-        .or_else(|| cfg!(windows).then(|| path.strip_prefix("~\\")).flatten())
-    {
+    } else if let Some(rest) = home_relative(path) {
         root().join(rest)
     } else if Path::new(path).is_absolute() {
         PathBuf::from(path)
@@ -131,6 +148,15 @@ mod tests {
         );
         assert_eq!(resolve("/usr/./bin/..", Some(home)), PathBuf::from("/usr"));
         assert_eq!(resolve("~/x", None), PathBuf::from("/x"));
+    }
+
+    #[test]
+    fn expands_only_the_home_folder() {
+        let home = std::env::home_dir().unwrap();
+        assert_eq!(expand_home("~"), home);
+        assert_eq!(expand_home("~/src/repo"), home.join("src/repo"));
+        assert_eq!(expand_home("/srv/repo"), PathBuf::from("/srv/repo"));
+        assert_eq!(expand_home("~other/repo"), PathBuf::from("~other/repo"));
     }
 
     #[cfg(windows)]

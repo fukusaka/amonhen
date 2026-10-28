@@ -178,6 +178,46 @@ In the same process, the number of writes is 0 for numeric columns, the graph an
 - ③ SSH: the daemon (`amonhen --stdio <repo>`, `crates/daemon`; with no path it opens an empty repository under the host's data directory and serves only that machine's settings, for Settings > SSH Hosts) only executes `GitBackend`, `Operations` and `RepoFiles` on request on the SSH host, while layout, persistent cache, diffs and highlighting are done in the local core (`RemoteBackend` in `crates/remote`). The C ABI and FE can be used as is. The UI reads only local memory, and only the parts that touch git go over the wire. History keeps its persistent cache locally, and after reconnecting it receives only the new commits since the previous starting points (the daemon finds them with `git rev-list`). Requests are numbered and sent concurrently, and path and content searches can be cancelled.
 - In every mode, the UI reads only local memory. Communication is used only for background synchronization.
 
+### SSH hosts running Windows
+
+Windows' OpenSSH server runs the command it is sent with the shell in `HKLM\SOFTWARE\OpenSSH\DefaultShell`. That is cmd.exe when unset, and often PowerShell. So nothing `crates/remote/src/ssh.rs` sends today (`exec /bin/sh -c '…'`) runs there. The engine itself already runs on Windows (the VSCode extension uses it), so only the way it is reached changes. The VSCode extension's Remote-SSH is not affected.
+
+- **Telling a Windows host apart.** The sh probe goes first, as now. When it fails, a second probe goes as `powershell -NoProfile -NonInteractive -EncodedCommand <base64>`. That command line means the same to cmd.exe, Windows PowerShell and pwsh, and `powershell.exe` is on every Windows 10 and 11.
+  - The second probe prints the same lines as the sh probe:
+    - the OS and CPU (`windows` and `PROCESSOR_ARCHITECTURE`)
+    - the engine folder, `%LOCALAPPDATA%\amonhen\engine` (where `amonhen install` puts it on Windows)
+    - the `amonhen` on the PATH and its version
+    - the engines already there, with their builds
+  - It also prints `DefaultShell`, and does the cleanup the sh side does before starting the engine (an engine of this build is marked as used; engines unused for 30 days are removed, skipping a running one, which Windows can't delete).
+  - It sets `$ProgressPreference` off: otherwise loading a module writes progress records (CLIXML) to the output.
+  - The process that connects remembers that a destination (host and port) is Windows, so later connections send the PowerShell probe first.
+- **Sending the engine.** It is `amonhen-windows-x86_64.exe` or `-aarch64.exe` from the engines folder; the .app bundles them as it does the Linux ones.
+  - It goes by scp (`scp -S <the ssh in use>`, over the same shared connection) to a temporary name. Windows' OpenSSH serves sftp by default, and scp takes `C:/…` there.
+  - Standard input can't carry it: Windows PowerShell 5.1 stops reading it after about 1 MB. pwsh 7 reads it whole, but isn't on every machine.
+  - A PowerShell script then renames it, writes the build file and the used mark, and prints the SHA-1, computed with .NET.
+  - Every script first sets `PSModulePath` back to Windows PowerShell's own. Started from pwsh with cmd.exe in between, Windows PowerShell inherits pwsh's, and commands such as `Get-FileHash` aren't found.
+- **Starting the engine.** The engine talks over the ssh session's standard input and output, so the default shell starts it directly. A PowerShell script in between might capture its output. The command line is written for the shell the probe reported:
+  - cmd.exe: `""C:\…\amonhen.exe" --stdio "C:\src\repo""`. `cmd /c` strips the outer pair of quotes; `%` can't be escaped there, so a path with `%` is refused.
+  - PowerShell: `& 'C:\…\amonhen.exe' --stdio 'C:\src\repo'`.
+
+- **Paths.**
+  - `ssh://host/C:/src/repo`, a drive right after the host, is `C:/src/repo` on the host.
+  - `ssh://host/~/src/repo` is passed to the engine as `~/src/repo`, since there is no `$HOME` to expand. The engine reads `~` as the home folder in `--stdio` and `find-repositories`, as `listDirectory` already does.
+  - `find-repositories` prints `/` separators, so the locations it returns stay `ssh://host/C:/…`.
+  - `RepositoryLocation.ssh` turns a chosen `C:\src\repo` into `ssh://host/C:/src/repo`.
+- **Settings > SSH Hosts.**
+  - An engine path may be a Windows path (`C:\…\amonhen.exe`).
+  - The login shell switch does not apply to a Windows host, so it is hidden there.
+  - Check Connection asks the engine, instead of running `git --version; command -v amonhen` in sh.
+- **Tried on a Windows 11 machine (OpenSSH, pwsh 7.6 as the default shell).**
+  - A program the default shell starts gets the session's standard input and output untouched: a small write came back before end of input, 2 MB of random bytes came back unchanged, and it ended at end of input.
+  - Through the raw `cmd.exe /c` command line, `""C:\Program Files\…\x.exe" "a b" "C:\x y\z""` runs with those arguments, and `"C:\…\x.exe" "a b"` fails.
+  - The PowerShell probe takes 1.3–1.9 s on a new connection; the failed sh probe before it, about as long on a new connection and little on a shared one.
+  - A shared connection (ControlMaster) left behind by a hung session stops working; later sessions over it hang.
+  - The app and the CLI open a repository there (`ssh://host/C:/src/repo`): the engine is sent, started by pwsh, and reached again through the remembered PowerShell probe in about 1.4 s.
+  - cmd.exe as the default shell, imitated without changing the host's setting. An `AMONHEN_SSH` wrapper hands every command to cmd.exe verbatim (`cmd --% /c <command>`) and makes the probe report cmd.exe. Through it the engine was sent, checked and started, and `status` and `log` worked. This found that Windows PowerShell started under cmd.exe from pwsh inherits pwsh's `PSModulePath` (see Sending the engine).
+  - Not tried: Windows on ARM (`PROCESSOR_ARCHITECTURE` is `ARM64`).
+
 ### Commit signature verification
 
 - Whether there is a signature and which kind (GPG, SSH, X.509) can be told from `gpgsig` in the commit header, so it is taken together when reading History rows (`CommitText::signature`, the chunk's `signatures` column). gpg is not used.

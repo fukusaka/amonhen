@@ -29,24 +29,36 @@ enum SSHConnectionSheet {
     }
 
     /// `host` につないで、git の版とエンジン（`amonhen`）の有無を読む。パスワードを聞くホストにはつながない（BatchMode）。
+    /// sh で読めなければ（つながったのに sh が動かなければ）、Windows とみて PowerShell で読む。
     static func check(_ host: String) async -> (text: String, ok: Bool) {
         await Task.detached(priority: .userInitiated) { () -> (String, Bool) in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
-            process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host,
-                                 "git --version 2>/dev/null; command -v amonhen >/dev/null 2>&1 && echo engine"]
-            let out = Pipe(), err = Pipe()
-            process.standardOutput = out
-            process.standardError = err
-            process.standardInput = FileHandle.nullDevice
-            guard (try? process.run()) != nil else { return (L("Couldn’t run ssh"), false) }
-            let data = out.fileHandleForReading.readDataToEndOfFile()
-            let errorData = err.fileHandleForReading.readDataToEndOfFile()
-            process.waitUntilExit()
-            let lines = String(decoding: data, as: UTF8.self).split(separator: "\n").map(String.init)
-            guard process.terminationStatus == 0 else {
-                let message = String(decoding: errorData, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
-                return (message.isEmpty ? L("Couldn’t connect (exit %ld)", Int(process.terminationStatus)) : message, false)
+            func run(_ command: String) -> (status: Int32, out: String, err: String)? {
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: "/usr/bin/ssh")
+                process.arguments = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, command]
+                let out = Pipe(), err = Pipe()
+                process.standardOutput = out
+                process.standardError = err
+                process.standardInput = FileHandle.nullDevice
+                guard (try? process.run()) != nil else { return nil }
+                let data = out.fileHandleForReading.readDataToEndOfFile()
+                let errorData = err.fileHandleForReading.readDataToEndOfFile()
+                process.waitUntilExit()
+                return (process.terminationStatus, String(decoding: data, as: UTF8.self), String(decoding: errorData, as: UTF8.self))
+            }
+            guard var result = run("git --version 2>/dev/null; command -v amonhen >/dev/null 2>&1 && echo engine; true") else {
+                return (L("Couldn’t run ssh"), false)
+            }
+            // ssh そのものの失敗は 255。
+            if result.status != 0, result.status != 255,
+               let windows = run(powerShell("git --version; if (Get-Command amonhen -CommandType Application -ErrorAction SilentlyContinue) { 'engine' }")),
+               windows.status == 0 {
+                result = windows
+            }
+            let lines = result.out.split(whereSeparator: \.isNewline).map(String.init)
+            guard result.status == 0 else {
+                let message = result.err.trimmingCharacters(in: .whitespacesAndNewlines)
+                return (message.isEmpty ? L("Couldn’t connect (exit %ld)", Int(result.status)) : message, false)
             }
             let git = lines.first { $0.hasPrefix("git version") }.map { String($0.dropFirst("git version ".count)) }
             let engine = lines.contains("engine")
@@ -54,6 +66,13 @@ enum SSHConnectionSheet {
             text += engine ? L(", engine found") : L(", engine not installed (Amon Hen sends one)")
             return (text, git != nil)
         }.value
+    }
+
+    /// PowerShell の `script` を、Windows の SSH 先のどの既定のシェル（cmd.exe・pwsh・Windows PowerShell）でも同じ意味に
+    /// なるコマンドに（`-EncodedCommand` は UTF-16LE の base64）。
+    nonisolated private static func powerShell(_ script: String) -> String {
+        let bytes = script.utf16.flatMap { [UInt8($0 & 0xff), UInt8($0 >> 8)] }
+        return "powershell -NoProfile -NonInteractive -EncodedCommand \(Data(bytes).base64EncodedString())"
     }
 }
 

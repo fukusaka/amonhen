@@ -336,8 +336,9 @@ nonisolated enum Programs {
         var label: String {
             // 出どころはリンクの先で見る（/usr/local/bin/gpg が MacGPG2 のものなど）。Apple の git は
             // 「2.54.0 (Apple Git-157)」と出すので、版は最初の語だけ。
+            // SSH 先ではフォルダ（Windows の SSH 先なら `C:\Program Files\Git\cmd`）。
             let source = onHost
-                ? (path as NSString).deletingLastPathComponent
+                ? HostPath.split(path, windows: HostPath.isWindows(path))?.parent ?? path
                 : Candidate.source(of: URL(fileURLWithPath: path).resolvingSymlinksInPath().path)
             return [source, version.flatMap { $0.split(separator: " ").first.map(String.init) }]
                 .compactMap { $0 }.joined(separator: " ")

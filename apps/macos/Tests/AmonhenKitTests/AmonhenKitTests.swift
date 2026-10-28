@@ -239,6 +239,9 @@ private func makeRepo() throws -> URL {
     #expect(RepositoryLocation.ssh(host: "", path: "/r") == nil)
     #expect(RepositoryLocation.ssh(host: "dev/x", path: "/r") == nil)
     #expect(RepositoryLocation.ssh(host: "dev", path: " ") == nil)
+    #expect(RepositoryLocation.ssh(host: "win", path: #"C:\Users\ada\src\"#) == "ssh://win/C:/Users/ada/src")
+    #expect(RepositoryLocation.ssh(host: "win", path: "C:/src") == "ssh://win/C:/src")
+    #expect(RepositoryLocation.ssh(host: "win", path: #"D:\"#) == "ssh://win/D:/")
     let location = RepositoryLocation.ssh(host: "me@dev", path: "~/repo")!
     #expect(RepositoryLocation.host(location) == "me@dev")
     #expect(RepositoryLocation.path(location) == "/~/repo")
