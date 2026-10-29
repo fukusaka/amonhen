@@ -7,6 +7,14 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Added
+
+- Several branches, tags or commits selected in the sidebar or History merge in one commit, as `git merge a b c` does,
+  from a sheet showing their order and the conflicts expected for each; it offers to merge them one by one when git
+  couldn't. `amonhen merge-check a b c` checks the same.
+
 ### [0.2.8] - 2026-10-30
 
 Commits can be saved as patches and patches applied, a branch compared with its version before a rebase (Range Diff),
