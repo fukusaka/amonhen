@@ -124,7 +124,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 git 実行層では、小さな git コマンドの所要時間は、ほぼプロセス起動のコスト（macOS で 1 回 約 6 ms）。常駐 `cat-file` への問い合わせは 約 0.08 ms。言語より「spawn の回数」と「更新範囲」が効くので、以下を徹底する。
 
-- `git cat-file --batch-command` を常駐させ、オブジェクト取得のたびに spawn しない。cat-file は index を最初の 1 回しか読まないので、`:path` を問い合わせる前に index の更新時刻を確かめ、変わっていれば起動し直す。
+- `git cat-file --batch` を常駐させ、オブジェクト取得のたびに spawn しない（`--batch-command` は git 2.36 からで、サポートする最低の版より新しい）。cat-file は index を最初の 1 回しか読まないので、`:path` を問い合わせる前に index の更新時刻を確かめ、変わっていれば起動し直す。
 - ref・config・stash の変化は `.git` 内のファイル（`HEAD`、`refs/` 以下のディレクトリ、`packed-refs`、`reftable/tables.list`、`config`、`logs/refs/stash`）の更新時刻で検知し、spawn しない。git は ref を lock ファイルの rename で更新するので、ディレクトリの更新時刻で足りる。
 - 変化があった部分だけ取り直す。ref は ahead/behind も含めて `for-each-ref` 1 回で取る。worktree の変化は検知できないので status は毎回取る。独立したコマンドは並列で実行する。
 - Tags / Stashes / Submodules は展開されるまで取得しない。TreeView は前回との差分を取り、変わったノードだけ更新する。

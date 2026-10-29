@@ -12,14 +12,14 @@ export interface GitObject extends ObjectInfo {
 }
 
 interface Request {
-  kind: 'info' | 'contents';
-  resolve: (value: GitObject | ObjectInfo | undefined) => void;
+  resolve: (value: GitObject | undefined) => void;
   reject: (err: Error) => void;
 }
 
 /**
- * 常駐させた `git cat-file --batch-command`。
+ * 常駐させた `git cat-file --batch`。
  * オブジェクトを取得するたびに spawn しないためのもの。
+ * （`--batch-command` は git 2.36 からなので使わない。サポートする最低の git は 2.23）
  *
  * cat-file は index を最初の 1 回しか読まない（ref は毎回読み直す）。
  * そのため `:path` の問い合わせの前に index の更新時刻を確かめ、変わっていれば起動し直す。
@@ -36,25 +36,7 @@ export class CatFileBatch {
     this.indexPath = indexPath;
   }
 
-  async info(rev: string): Promise<ObjectInfo | undefined> {
-    return (await this.send('info', rev)) as ObjectInfo | undefined;
-  }
-
   async contents(rev: string): Promise<GitObject | undefined> {
-    return (await this.send('contents', rev)) as GitObject | undefined;
-  }
-
-  /**
-   * 終了させる。返す Promise は git が終わったら解決する。
-   * Windows では、終わるまで git が作業ディレクトリを掴んでいて消せない（kill の直後に消すと EPERM）。
-   */
-  dispose(): Promise<void> {
-    const proc = this.process;
-    this.process = undefined;
-    return proc ? proc.stop() : Promise.resolve();
-  }
-
-  private async send(kind: Request['kind'], rev: string): Promise<GitObject | ObjectInfo | undefined> {
     if (/[\n\0]/.test(rev)) {
       throw new Error(`invalid revision: ${JSON.stringify(rev)}`);
     }
@@ -72,7 +54,17 @@ export class CatFileBatch {
         proc = this.start(stamp);
       }
     }
-    return proc!.send(kind, rev);
+    return proc!.send(rev);
+  }
+
+  /**
+   * 終了させる。返す Promise は git が終わったら解決する。
+   * Windows では、終わるまで git が作業ディレクトリを掴んでいて消せない（kill の直後に消すと EPERM）。
+   */
+  dispose(): Promise<void> {
+    const proc = this.process;
+    this.process = undefined;
+    return proc ? proc.stop() : Promise.resolve();
   }
 
   private start(stamp: string): CatFileProcess {
@@ -106,7 +98,7 @@ class CatFileProcess {
 
   constructor(gitPath: string, cwd: string, indexStamp: string) {
     this.indexStamp = indexStamp;
-    this.child = spawn(gitPath, ['--no-optional-locks', 'cat-file', '--batch-command'], {
+    this.child = spawn(gitPath, ['--no-optional-locks', 'cat-file', '--batch'], {
       cwd,
       env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
       windowsHide: true,
@@ -126,13 +118,13 @@ class CatFileProcess {
     });
   }
 
-  send(kind: Request['kind'], rev: string): Promise<GitObject | ObjectInfo | undefined> {
+  send(rev: string): Promise<GitObject | undefined> {
     if (!this.alive) {
       return Promise.reject(new Error('git cat-file is not running'));
     }
     return new Promise((resolve, reject) => {
-      this.queue.push({ kind, resolve, reject });
-      this.child.stdin.write(`${kind} ${rev}\n`);
+      this.queue.push({ resolve, reject });
+      this.child.stdin.write(`${rev}\n`);
     });
   }
 
@@ -180,13 +172,7 @@ class CatFileProcess {
       }
       const [oid = '', type = '', sizeText = ''] = header.split(' ');
       const size = Number(sizeText);
-      if (req.kind === 'info') {
-        this.queue.shift();
-        pos = nl + 1;
-        req.resolve({ oid, type, size });
-        continue;
-      }
-      // contents: ヘッダー、本体、末尾の LF
+      // ヘッダー、本体、末尾の LF
       const end = nl + 1 + size + 1;
       if (buf.length < end) {
         this.need = end - pos;
