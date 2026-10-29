@@ -81,6 +81,7 @@ becomes the GitHub Release notes.
 - The Undo confirmation says what it puts back: undoing Discard or an applied diff restores the files and no longer
   claims to move HEAD and the branches.
 - The toolbar's Undo follows operations recorded outside the app (the CLI, the VSCode extension) without a Refresh.
+- Split and Edit in History are recorded for Undo once after Continue; they could be recorded twice.
 - In Japanese, "author" is 作者 everywhere, as in the docs: the Author and Signing page and its Author section, and
   the author in the commit details, showed 作成者.
 - The CLI finds the repository without running git, so when the chosen git isn't there it can still read and
