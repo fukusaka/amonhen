@@ -93,6 +93,42 @@ fn reads_branches_and_merges_in_topological_order() {
 }
 
 #[test]
+fn tips_are_head_branches_remotes_and_tags_only() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    git(dir, &["init", "-q"]);
+    git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    commit(dir, "root");
+    let root = git(dir, &["rev-parse", "HEAD"]);
+    git(dir, &["tag", "v1"]);
+    commit(dir, "main");
+    let main = git(dir, &["rev-parse", "HEAD"]);
+    git(dir, &["update-ref", "refs/remotes/origin/main", &root]);
+    // notes・stash・ブランチでない ref（git maintenance の prefetch など）のコミットは History に出さない。
+    git(dir, &["notes", "add", "-m", "note"]);
+    std::fs::write(dir.join("f.txt"), "f").unwrap();
+    git(dir, &["add", "f.txt"]);
+    git(dir, &["stash", "-q"]);
+    let prefetched = git(dir, &["commit-tree", "-m", "prefetched", "HEAD^{tree}"]);
+    git(
+        dir,
+        &["update-ref", "refs/prefetch/remotes/origin/x", &prefetched],
+    );
+
+    let backend = GixBackend::open(dir).unwrap();
+    let tips: Vec<String> = backend
+        .tips()
+        .unwrap()
+        .iter()
+        .map(|t| t.to_string())
+        .collect();
+    // HEAD（main）・タグ（v1）とリモート（どちらも root）。
+    assert_eq!(tips, [main, root]);
+    let graph = backend.commit_graph(&backend.tips().unwrap()).unwrap();
+    assert_eq!(graph.len(), 2);
+}
+
+#[test]
 fn unborn_head_has_no_commit() {
     let tmp = tempfile::tempdir().unwrap();
     git(tmp.path(), &["init", "-q"]);

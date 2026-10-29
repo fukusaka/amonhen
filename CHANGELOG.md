@@ -95,6 +95,8 @@ becomes the GitHub Release notes.
 - A message template file chosen for a repository now wins over a shared template chosen for all repositories, in
   Repository Settings and the commit box.
 - None for a repository's message template now cancels a shared template chosen for all repositories.
+- History starts from HEAD, branches, remote branches and tags, as the sidebar does (`git log --branches --remotes
+  --tags HEAD`): commits kept by other refs, such as git notes' or `git maintenance`'s `refs/prefetch`, no longer show.
 
 ### [0.2.7] - 2026-10-26
 

@@ -186,15 +186,21 @@ impl GitBackend for GixBackend {
         if let Some(head) = self.head()? {
             add(head);
         }
-        for reference in repo.references()?.all()? {
-            let mut reference = reference?;
-            // stash はサイドバーで扱い、History には出さない。
-            if reference.name().as_bstr() == "refs/stash" {
-                continue;
-            }
-            // コミット以外（ツリーや blob）を指すタグは History に出さない。
-            if let Ok(commit) = reference.peel_to_commit() {
-                add(to_oid(commit.id().as_ref())?);
+        // サイドバーと同じ ref（ブランチ・リモート・タグ）だけ。stash（サイドバーで扱う）や notes・refs/prefetch・
+        // refs/original など、ブランチでない ref のコミットは History に出さない（`git log --branches --remotes
+        // --tags HEAD` と同じ）。
+        let platform = repo.references()?;
+        for iter in [
+            platform.local_branches()?,
+            platform.remote_branches()?,
+            platform.tags()?,
+        ] {
+            for reference in iter {
+                let mut reference = reference?;
+                // コミット以外（ツリーや blob）を指すタグは History に出さない。
+                if let Ok(commit) = reference.peel_to_commit() {
+                    add(to_oid(commit.id().as_ref())?);
+                }
             }
         }
         Ok(tips)
