@@ -350,7 +350,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func overlays() -> [(CGImage, NSView)] {
-        view.window == nil ? [] : diffView.overlay().map { [$0] } ?? []
+        // マージエディタを埋め込んでいる間は、差分の欄が外れている。
+        diffView.view.window == nil ? [] : diffView.overlay().map { [$0] } ?? []
     }
 
     // MARK: - 読み直し
