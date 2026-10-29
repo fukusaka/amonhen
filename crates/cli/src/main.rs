@@ -11,7 +11,7 @@
 //!   amonhen undo [--list|--peek]        Amon Hen の操作ログで、直前の操作を戻す
 //!   amonhen worktree [list|add|remove|prune]  worktree（`git worktree` と同じ並び）
 //!   amonhen merge-file [--all] <file>…  コンフリクトのあるファイルに Magic Merge をかける
-//!   amonhen merge-check <rev>           マージしたらコンフリクトするファイル（作業ツリーには触らない）
+//!   amonhen merge-check <rev>…          マージしたらコンフリクトするファイル（作業ツリーには触らない）
 //!   amonhen clone <url> [<dir>]
 //!   amonhen install / engine           エンジンの置き場所（`install.rs`）
 //!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon
@@ -49,7 +49,7 @@ usage: amonhen [<path>]
        amonhen undo [--list | --peek]
        amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune]
        amonhen merge-file [--all] [--check] <file>…
-       amonhen merge-check [--into <branch>] [--json] <rev>
+       amonhen merge-check [--into <branch>] [--json] <rev>…
        amonhen range-diff [--creation-factor <n>] [--json] (<old>...<new> | <base> <old> <new> | <old-range> <new-range> | --previous [<branch>])
        amonhen format-patch [-o <dir> | --mbox <file> | --stdout] [--cover-letter] [-v <n>] [-<n>] [<rev> | <from>..<to>]
        amonhen am [--3way | --no-3way] [--check] <file>… | --continue | --skip | --abort | --retry-3way
@@ -78,7 +78,8 @@ code is 1, so it also works as git's mergetool:
   git config mergetool.amonhen.cmd 'amonhen merge-file \"$MERGED\"'
   git config mergetool.amonhen.trustExitCode true
 merge-check lists the files that merging <rev> into HEAD (or --into <branch>) would conflict in, without touching the
-worktree. The exit code is 1 if there are conflicts, and 2 if it can't tell (git older than 2.38).
+worktree. With several revs it checks merging them all in one commit (an octopus merge), each on top of the ones before.
+The exit code is 1 if there are conflicts, and 2 if it can't tell (git older than 2.38).
 range-diff compares two versions of a series of commits with git range-diff (merge commits are left out, as in git).
 --previous compares a branch (the current one by default) with its version before it was last rewritten (a rebase,
 History edit, amend or reset), found in its reflog.

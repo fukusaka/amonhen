@@ -144,7 +144,10 @@ fn merge_check_lists_the_files_that_would_conflict() {
             conflicts.contains("Merging other into HEAD would conflict in 1 files:\n  m.txt"),
             "{conflicts}"
         );
-        assert_eq!(json.trim(), r#"{"conflicts":["m.txt"]}"#);
+        assert_eq!(
+            json.trim(),
+            r#"{"conflicts":["m.txt"],"steps":[{"conflicts":["m.txt"],"rev":"other"}]}"#
+        );
         assert_eq!(clean_code, 0, "{clean}");
         assert!(
             clean.contains("main merges into topic without conflicts"),
@@ -154,7 +157,7 @@ fn merge_check_lists_the_files_that_would_conflict() {
         // 古い git ではわからない。
         assert_eq!(conflicts_code, 2, "{conflicts}");
         assert!(conflicts.contains("git 2.38 or newer"), "{conflicts}");
-        assert_eq!(json.trim(), r#"{"conflicts":null}"#);
+        assert_eq!(json.trim(), r#"{"conflicts":null,"steps":null}"#);
         assert_eq!(clean_code, 2, "{clean}");
     }
     let (status, _) = amonhen(home.path(), &["status", "-C", path, "--json"]);
@@ -162,6 +165,33 @@ fn merge_check_lists_the_files_that_would_conflict() {
         !status.contains("m.txt"),
         "作業ツリーには触らない: {status}"
     );
+}
+
+#[test]
+fn merge_check_follows_each_branch_of_an_octopus() {
+    let repo = repository();
+    let dir = repo.path();
+    let home = tempfile::tempdir().unwrap();
+    let path = dir.to_str().unwrap();
+    for (name, file) in [("a", "a.txt"), ("b", "b.txt"), ("x", "m.txt")] {
+        git(dir, &["switch", "-q", "-c", name, "main~2"]);
+        commit(dir, file, name);
+    }
+    git(dir, &["switch", "-q", "main"]);
+    let (out, code) = amonhen(home.path(), &["merge-check", "-C", path, "a", "x", "b"]);
+    if amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 38)) {
+        assert_eq!(code, 1, "{out}");
+        assert!(
+            out.contains("Merging a, x, b into HEAD would conflict in 1 files:\n  x:\n    m.txt"),
+            "{out}"
+        );
+        assert!(out.contains("put the one that conflicts last"), "{out}");
+        let (out, code) = amonhen(home.path(), &["merge-check", "-C", path, "a", "b", "x"]);
+        assert_eq!(code, 1, "{out}");
+        assert!(!out.contains("put the one that conflicts last"), "{out}");
+    } else {
+        assert_eq!(code, 2, "{out}");
+    }
 }
 
 #[test]
