@@ -1627,7 +1627,15 @@ impl Repository {
             ops,
             label,
             &names,
-            || ops.rebase_todo(plan.base.as_ref(), &todo),
+            || {
+                let outcome = ops.rebase_todo(plan.base.as_ref(), &todo)?;
+                // split: `edit` で止めたコミットを取り消し、変更を作業ツリーに戻す。
+                if plan.reset_on_stop && outcome == Outcome::Stopped {
+                    let parent = ops.resolve("HEAD^")?;
+                    ops.reset(amonhen_model::ResetMode::Mixed, &parent)?;
+                }
+                Ok(outcome)
+            },
             |o| *o == Outcome::Conflict,
             |o| *o == Outcome::Stopped,
         )
@@ -4697,13 +4705,17 @@ mod tests {
         std::fs::write(dir.join("y.txt"), "y").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "x and y"]);
+        git(dir, &["notes", "add", "-m", "note x and y"]);
+        git(dir, &["config", "notes.rewriteRef", "refs/notes/commits"]);
         let xy = git(dir, &["rev-parse", "HEAD"]);
         commit_file(dir, "z.txt", "z");
 
         let r = rewrite(&repo, serde_json::json!({"kind": "split", "oid": xy}));
         assert_eq!(r["outcome"], "stopped", "{r}");
-        // todo は pick・exec・break・pick の 4 行で、break まで進んだところで止まる。
-        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase (3/4)");
+        // todo は edit・pick の 2 行で、edit で止まり、変更が作業ツリーに戻っている。
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase (1/2)");
+        assert_eq!(log(dir), ["first"]);
+        assert_eq!(git(dir, &["status", "--porcelain"]), "?? x.txt\n?? y.txt");
         // 止まっている間は記録しない（保留）。
         assert!(run(&repo, r#"{"op":"undoPeek"}"#)["label"].is_null());
         git(dir, &["add", "x.txt"]);
@@ -4712,6 +4724,9 @@ mod tests {
         git(dir, &["commit", "-q", "-m", "y"]);
         assert_eq!(run(&repo, r#"{"op":"continue"}"#)["outcome"], "done");
         assert_eq!(log(dir), ["z", "y", "x", "first"]);
+        // git の split の手順と同じく、notes は最後に分けたコミットへ写る（notes.rewriteRef があるとき）。
+        assert_eq!(note(dir, "HEAD~1"), "note x and y");
+        assert_eq!(note(dir, "HEAD~2"), "");
         assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "edit");
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["z", "x and y", "first"]);

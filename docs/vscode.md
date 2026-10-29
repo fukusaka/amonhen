@@ -92,7 +92,7 @@ is in [front.md](front.md), and the design in item 18 of
   - squash is `pick` of the parent + amending the message + `fixup`, fixup is just `fixup`, and edit is `pick` + `break`. The message goes on the parent before the `fixup`: amended after it, the commit the rebase copies notes to (`notes.rewriteRef`) would be the one before the amend, and the notes of the commit folded in would be lost.
   - Only commits reachable from HEAD by first-parent, up to just before the first merge commit, can be edited. Rebases that cross merges are not handled.
   - `--autostash` stashes working changes, and `--no-autosquash` keeps the user's settings from reordering the todo.
-- split stops with "`pick` → `exec git reset HEAD^` → `break`"; the flow is to split and commit in the Working Copy, then Continue.
+- split follows git's own steps: it stops at `edit`, then `git reset HEAD^` puts the changes back into the working tree; the flow is to split and commit in the Working Copy, then Continue. Continuing from `edit` lets git copy the commit's notes to the last of the new commits (`notes.rewriteRef`).
 - While a merge or rebase is stopped, Continue / Abort are shown at the top of the Working Copy. The Undo record of an operation stopped by edit or split is held pending (`undo-pending.json`) and finalized when it finishes.
 - Record `HEAD` and the related refs before an operation, so that each operation can be undone as a unit.
   - Records are taken both before and after the operation, and up to 50 are kept in `<gitDir>/amonhen/undo.json`. On Undo, check that the current state matches "after the operation", and do nothing if it differs.

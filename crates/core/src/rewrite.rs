@@ -86,6 +86,8 @@ pub struct RebasePlan {
     pub todo: String,
     /// 書き出しておくメッセージ（ファイル名, 内容）。
     pub messages: Vec<(String, String)>,
+    /// `edit` で止まったら、`HEAD^` へ `reset --mixed` する（split）。
+    pub reset_on_stop: bool,
 }
 
 /// sh に渡すパス。git は exec や `GIT_SEQUENCE_EDITOR` を sh で実行するので、Windows でも `/` 区切りにする
@@ -206,11 +208,9 @@ pub fn plan_rebase(
             HistoryEdit::SquashRange { .. } => unreachable!(),
             HistoryEdit::Drop { .. } => lines.push(format!("drop {}", c.oid)),
             HistoryEdit::Edit { .. } => lines.extend([format!("pick {}", c.oid), "break".into()]),
-            HistoryEdit::Split { .. } => lines.extend([
-                format!("pick {}", c.oid),
-                "exec git reset --quiet HEAD^".into(),
-                "break".into(),
-            ]),
+            // git の split の手順（`edit` で止め、`reset HEAD^` してから分けてコミットし、続ける）と同じにする。
+            // 続けたときに git が、元のコミットの notes を最後のコミットへ写す。reset は止まってから行う。
+            HistoryEdit::Split { .. } => lines.push(format!("edit {}", c.oid)),
             HistoryEdit::Move { .. } => lines.push(format!("pick {}", c.oid)),
         }
     }
@@ -221,21 +221,22 @@ pub fn plan_rebase(
         base,
         todo,
         messages,
+        reset_on_stop: matches!(edit, HistoryEdit::Split { .. }),
     })
 }
 
-/// 先頭が `pick`・`fixup`・`drop` したコミットのブランチの `update-ref` を、そのコミットのまとまり（続く fixup・
-/// exec・break）の後、次の `pick`・`drop` の前に入れる。
+/// 先頭が `pick`・`edit`・`fixup`・`drop` したコミットのブランチの `update-ref` を、そのコミットのまとまり（続く
+/// fixup・exec・break）の後、次の `pick`・`edit`・`drop` の前に入れる。
 fn with_update_refs(lines: Vec<String>, branches: &[(Oid, String)]) -> Vec<String> {
     let mut out = Vec::with_capacity(lines.len() + branches.len());
     let mut pending: Vec<&str> = Vec::new();
     for line in lines {
         let mut words = line.split(' ');
         let command = words.next().unwrap_or_default();
-        if matches!(command, "pick" | "drop") {
+        if matches!(command, "pick" | "edit" | "drop") {
             out.extend(pending.drain(..).map(|r| format!("update-ref {r}")));
         }
-        if matches!(command, "pick" | "fixup" | "drop")
+        if matches!(command, "pick" | "edit" | "fixup" | "drop")
             && let Some(oid) = words.next().and_then(Oid::from_hex)
         {
             pending.extend(
@@ -306,6 +307,11 @@ mod tests {
         assert_eq!(
             short(&plan(HistoryEdit::Drop { oid: hex('b') }).todo),
             "drop b\nupdate-ref refs/heads/one\npick c\nupdate-ref refs/heads/two\npick d\n"
+        );
+        // 分けたコミットのブランチは、分けた最後のコミットへ。
+        assert_eq!(
+            short(&plan(HistoryEdit::Split { oid: hex('c') }).todo),
+            "edit c\nupdate-ref refs/heads/two\npick d\n"
         );
         // まとめたコミットのブランチは、まとめた後のコミットへ。
         let todo = short(
@@ -393,10 +399,9 @@ mod tests {
             short(&plan(HistoryEdit::Edit { oid: hex('c') }).unwrap().todo),
             "pick c\nbreak\npick d\n"
         );
-        assert_eq!(
-            short(&plan(HistoryEdit::Split { oid: hex('c') }).unwrap().todo),
-            "pick c\nexec git reset --quiet HEAD^\nbreak\npick d\n"
-        );
+        let split = plan(HistoryEdit::Split { oid: hex('c') }).unwrap();
+        assert_eq!(short(&split.todo), "edit c\npick d\n");
+        assert!(split.reset_on_stop);
     }
 
     #[test]

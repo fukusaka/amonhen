@@ -28,6 +28,8 @@ export interface RebasePlan {
   todo: string;
   /** 書き出しておくメッセージ。キーはファイル名 */
   messages: Map<string, string>;
+  /** edit で止まったら、HEAD^ へ reset --mixed する（split） */
+  resetOnStop: boolean;
 }
 
 /**
@@ -102,13 +104,15 @@ export function planRebase(chain: readonly Commit[], edit: HistoryEdit, messageP
       case 'edit':
         lines.push(`pick ${c.oid}`, 'break');
         break;
+      // git の split の手順（edit で止め、reset HEAD^ してから分けてコミットし、続ける）と同じにする。続けたときに
+      // git が、元のコミットの notes を最後のコミットへ写す。reset は止まってから行う
       case 'split':
-        lines.push(`pick ${c.oid}`, 'exec git reset --quiet HEAD^', 'break');
+        lines.push(`edit ${c.oid}`);
         break;
       case 'move':
         lines.push(`pick ${c.oid}`);
         break;
     }
   }
-  return { base, todo: `${lines.join('\n')}\n`, messages };
+  return { base, todo: `${lines.join('\n')}\n`, messages, resetOnStop: edit.kind === 'split' };
 }

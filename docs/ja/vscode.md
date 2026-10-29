@@ -88,7 +88,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   - squash は親の `pick` ＋ メッセージの amend ＋ `fixup`、fixup は `fixup` だけ、edit は `pick` ＋ `break`。メッセージは `fixup` の前に親に付ける。後で amend すると、rebase が notes を写す先（`notes.rewriteRef`）が amend の前のコミットになり、まとめた側の notes が落ちる。
   - 編集できるのは HEAD から first-parent で辿り、最初の merge コミットの手前まで。merge をまたぐ rebase は扱わない。
   - `--autostash` で作業中の変更を退避し、`--no-autosquash` でユーザーの設定に todo を並べ替えさせない。
-- split は「`pick` → `exec git reset HEAD^` → `break`」で止め、Working Copy で分割してコミット → Continue の流れ。
+- split は git の手順と同じく `edit` で止め、`git reset HEAD^` で変更を作業ツリーに戻す。Working Copy で分割してコミット → Continue の流れ。`edit` から続けるので、git がコミットの notes を新しいコミットの最後に写す（`notes.rewriteRef`）。
 - merge や rebase が止まっている間は、Working Copy の先頭に Continue / Abort を出す。edit や split で止まった操作の Undo の記録は保留しておき（`undo-pending.json`）、終わった時点で確定する。
 - 操作前に `HEAD` と関係する ref を記録し、1 操作単位で Undo できるようにする。
   - 記録は操作の前後の両方を取り、`<gitDir>/amonhen/undo.json` に最大 50 件残す。Undo するときは今の状態が「操作後」と一致することを確かめ、違えば何もしない。

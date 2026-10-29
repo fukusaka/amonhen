@@ -143,6 +143,8 @@ test('split puts the changes back into the working tree', async () => {
   writeFileSync(join(dir, 'c2.txt'), 'c2\n');
   git('add', 'c2.txt');
   git('commit', '-q', '--amend', '--no-edit');
+  git('notes', 'add', '-m', 'note D');
+  git('config', 'notes.rewriteRef', 'refs/notes/commits');
   const head = git('rev-parse', 'HEAD');
   assert.equal(await rewriteHistory(backend, undo, 'Split D', { kind: 'split', oid: head }), 'stopped');
   assert.equal(git('log', '-1', '--format=%s'), 'C');
@@ -152,6 +154,9 @@ test('split puts the changes back into the working tree', async () => {
   commitFile('c2.txt', 'c2\n', 'D2');
   assert.equal(await backend.continueSequence('rebase'), 'done');
   assert.deepEqual(subjects(), ['D2', 'D1', 'C', 'B', 'A']);
+  // git の split の手順と同じく、notes は最後に分けたコミットへ写る（notes.rewriteRef があるとき）
+  assert.equal(git('log', '-1', '--format=%N', 'HEAD'), 'note D');
+  assert.equal(git('log', '-1', '--format=%N', 'HEAD~1'), '');
 });
 
 test('a conflict is reported and not recorded; abort restores everything', async () => {
