@@ -36,7 +36,8 @@ pub use ops::{
     WorktreeChange, WorktreeChanges,
 };
 pub use range_diff::{
-    RangeCommit, RangePair, RangeStatus, parse_range_diff, rebase_onto, reflog_keeps_history,
+    RangeCommit, RangePair, RangeStatus, parse_range_diff, rebase_onto, rebase_onto_from_head,
+    reflog_keeps_history,
 };
 pub use refs::{RefEntry, RefKind, ReflogEntry, Refs, RepoPaths};
 pub use status::{Status, StatusEntry, StatusKind};

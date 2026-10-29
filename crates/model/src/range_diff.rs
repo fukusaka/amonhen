@@ -1,5 +1,7 @@
 //! `git range-diff` の結果（同じ一連のコミットの、2 つの版の比べ合わせ）。
 
+use crate::{Oid, ReflogEntry};
+
 /// 組の種類（`git range-diff` の見出しの記号）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -114,6 +116,24 @@ pub fn rebase_onto(message: &str) -> Option<&str> {
     (onto.len() >= 7 && onto.bytes().all(|b| b.is_ascii_hexdigit())).then_some(onto)
 }
 
+/// 古い git（2.23 など）のふつうの rebase は、ブランチの reflog に HEAD 用の行（`rebase finished: returning to …`）を
+/// 書き、載せ先を残さない。そのときは HEAD の reflog（新しい順）で同じ行を探し、それより前の
+/// `rebase…: checkout <載せ先>` の行の移り先を載せ先とする。
+pub fn rebase_onto_from_head(head: &[ReflogEntry], finished: &ReflogEntry) -> Option<Oid> {
+    let at = head
+        .iter()
+        .position(|e| e.new == finished.new && e.message == finished.message)?;
+    for e in &head[at + 1..] {
+        if !e.message.starts_with("rebase") {
+            return None;
+        }
+        if e.message.contains(": checkout ") {
+            return Some(e.new);
+        }
+    }
+    None
+}
+
 /// 先を書き換えない reflog の行（コミット・作成・fast-forward など）。これ以外の行は、前のコミットが
 /// 新しいコミットの祖先かどうかで書き換えたかを決める。
 pub fn reflog_keeps_history(message: &str) -> bool {
@@ -217,5 +237,29 @@ mod tests {
         assert!(!reflog_keeps_history("reset: moving to HEAD~1"));
         assert!(reflog_keeps_history("branch: Created from main"));
         assert!(!reflog_keeps_history("branch: Reset to main"));
+    }
+
+    #[test]
+    fn finds_the_rebase_base_in_the_head_reflog() {
+        let oid = |n: u8| Oid::from_hex(&format!("{n:02x}").repeat(20)).unwrap();
+        let entry = |new: u8, message: &str| ReflogEntry {
+            old: None,
+            new: oid(new),
+            time: 0,
+            message: message.into(),
+        };
+        let finished = entry(3, "rebase finished: returning to refs/heads/topic");
+        let head = [
+            entry(4, "checkout: moving from topic to main"),
+            entry(3, "rebase finished: returning to refs/heads/topic"),
+            entry(3, "rebase: two"),
+            entry(2, "rebase: checkout main"),
+            entry(1, "commit: two"),
+        ];
+        assert_eq!(rebase_onto_from_head(&head, &finished), Some(oid(2)));
+        // rebase の行が途切れたら探すのをやめる。
+        let head = [head[1].clone(), entry(1, "commit: two")];
+        assert_eq!(rebase_onto_from_head(&head, &finished), None);
+        assert_eq!(rebase_onto_from_head(&[], &finished), None);
     }
 }

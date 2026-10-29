@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
-import { formatRangeDiff, parseRangeDiff, rebaseOnto, reflogKeepsHistory } from '../src/git/rangeDiff.ts';
+import { formatRangeDiff, parseRangeDiff, rebaseOnto, rebaseOntoFromHead, reflogKeepsHistory } from '../src/git/rangeDiff.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -49,6 +49,21 @@ test('rebaseOnto and reflogKeepsHistory read reflog messages', () => {
   assert.equal(rebaseOnto('rebase (finish): returning to refs/heads/t'), undefined);
   assert.equal(reflogKeepsHistory('commit: x'), true);
   assert.equal(reflogKeepsHistory('commit (amend): x'), false);
+});
+
+test('rebaseOntoFromHead finds the base of an old git rebase in the HEAD reflog', () => {
+  const line = (n: string, message: string) => ({ old: null, new: n, message });
+  const finished = line('c', 'rebase finished: returning to refs/heads/t');
+  const head = [
+    line('d', 'checkout: moving from t to main'),
+    finished,
+    line('c', 'rebase: two'),
+    line('b', 'rebase: checkout main'),
+    line('a', 'commit: two'),
+  ];
+  assert.equal(rebaseOntoFromHead(head, finished), 'b');
+  assert.equal(rebaseOntoFromHead([finished, line('a', 'commit: two')], finished), undefined);
+  assert.equal(rebaseOntoFromHead([], finished), undefined);
 });
 
 let dir: string;

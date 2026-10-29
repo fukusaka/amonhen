@@ -80,12 +80,35 @@ export function reflogKeepsHistory(message: string): boolean {
   );
 }
 
+/** reflog の 1 行 */
+export interface ReflogLine {
+  old: string | null;
+  new: string;
+  message: string;
+}
+
+/**
+ * 古い git（2.23 など）のふつうの rebase は、ブランチの reflog に HEAD 用の行（`rebase finished: returning to …`）を
+ * 書き、載せ先を残さない。そのときは HEAD の reflog（新しい順）で同じ行を探し、それより前の
+ * `rebase…: checkout <載せ先>` の行の移り先を載せ先とする
+ */
+export function rebaseOntoFromHead(head: readonly ReflogLine[], finished: ReflogLine): string | undefined {
+  const at = head.findIndex((e) => e.new === finished.new && e.message === finished.message);
+  if (at < 0) return undefined;
+  for (const e of head.slice(at + 1)) {
+    if (!e.message.startsWith('rebase')) return undefined;
+    if (e.message.includes(': checkout ')) return e.new;
+  }
+  return undefined;
+}
+
 /** reflog の行（新しい順。`old` は前の行の `new`）から、最後に書き換える前の版を探す */
 export async function findPreviousVersion(
   branch: string,
-  entries: readonly { old: string | null; new: string; message: string }[],
+  entries: readonly ReflogLine[],
   isAncestor: (ancestor: string, descendant: string) => Promise<boolean>,
   resolve: (rev: string) => Promise<string | undefined>,
+  headReflog?: () => Promise<readonly ReflogLine[]>,
 ): Promise<PreviousVersion | undefined> {
   const tip = entries[0]?.new;
   if (!tip) return undefined;
@@ -100,7 +123,10 @@ export async function findPreviousVersion(
     }
     if (kept) continue;
     const short = rebaseOnto(e.message);
-    const onto = short ? ((await resolve(short)) ?? null) : null;
+    let onto = short ? ((await resolve(short)) ?? null) : null;
+    if (!short && e.message.startsWith('rebase') && headReflog) {
+      onto = rebaseOntoFromHead(await headReflog(), e) ?? null;
+    }
     return {
       branch,
       selector: `${branch}@{${i + 1}}`,

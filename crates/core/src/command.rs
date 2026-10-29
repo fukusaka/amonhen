@@ -496,9 +496,16 @@ impl Repository {
             if kept {
                 continue;
             }
-            let onto = amonhen_model::rebase_onto(&e.message)
-                .and_then(|o| ops.resolve(o).ok())
-                .map(|o| o.to_string());
+            let onto = match amonhen_model::rebase_onto(&e.message) {
+                Some(o) => ops.resolve(o).ok(),
+                None if e.message.starts_with("rebase") => self
+                    .backend()
+                    .reflog("HEAD", 500)
+                    .ok()
+                    .and_then(|head| amonhen_model::rebase_onto_from_head(&head, e)),
+                None => None,
+            }
+            .map(|o| o.to_string());
             let (old, tip) = (old.to_string(), tip.to_string());
             let ranges = match &onto {
                 Some(onto) => vec![onto.clone(), old.clone(), tip.clone()],

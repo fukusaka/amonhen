@@ -7,7 +7,7 @@ import { join, resolve } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
 import { ATTRIBUTES, lineEndingsOf, parseCheckAttr, parseEolConfig, toGitForm, type LineEndings } from './eol.ts';
 import { GitError, shellQuote, type GitExecutor } from './exec.ts';
-import { findPreviousVersion, parseRangeDiff, type PreviousVersion, type RangePair } from './rangeDiff.ts';
+import { findPreviousVersion, parseRangeDiff, type PreviousVersion, type RangePair, type ReflogLine } from './rangeDiff.ts';
 import { diffTreeArgs, logArgs, parseLog, parseNameStatus, type Commit, type FileChange } from './log.ts';
 import {
   forEachRefArgs,
@@ -453,20 +453,25 @@ export class CliBackend implements RepositoryBackend {
   async previousVersion(branch?: string): Promise<PreviousVersion | undefined> {
     const ref = branch ?? (await this.head()).branch;
     if (!ref) throw new Error('HEAD isn’t on a branch');
-    let out: string;
+    let entries: ReflogLine[];
     try {
-      out = await this.read(['log', '-g', '-n', '500', '--format=%H%x00%gs', ref, '--']);
+      entries = await this.reflogLines(ref);
     } catch {
       return undefined;
     }
-    const rows = out.split('\n').filter(Boolean).map((l) => l.split('\0'));
-    const entries = rows.map(([oid = '', message = ''], i) => ({ new: oid, old: rows[i + 1]?.[0] ?? null, message }));
     return findPreviousVersion(
       ref.replace(/^refs\/heads\//, ''),
       entries,
       (a, d) => this.isAncestor(a, d),
       async (rev) => (await this.read(['rev-parse', '--verify', '--quiet', `${rev}^{commit}`], [0, 1])).trim() || undefined,
+      () => this.reflogLines('HEAD').catch(() => []),
     );
+  }
+
+  private async reflogLines(ref: string): Promise<ReflogLine[]> {
+    const out = await this.read(['log', '-g', '-n', '500', '--format=%H%x00%gs', ref, '--']);
+    const rows = out.split('\n').filter(Boolean).map((l) => l.split('\0'));
+    return rows.map(([oid = '', message = ''], i) => ({ new: oid, old: rows[i + 1]?.[0] ?? null, message }));
   }
 
   async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
