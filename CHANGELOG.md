@@ -73,6 +73,8 @@ becomes the GitHub Release notes.
   `branch.<name>.pushRemote` and `remote.pushDefault`) and its name there, instead of always pushing to origin.
 - Files and folders on this Mac are chosen in the same column sheet as on an SSH host instead of the Open panel:
   repositories are marked, a path can be typed, and folders like `/opt/homebrew/bin` are one menu item away.
+- History's Edit (Stop Here) stops as git's `edit` does: changes staged while stopped are amended into the commit on
+  Continue, and with `notes.rewriteRef` its notes also go to the commits added while stopped.
 
 #### Fixed
 
@@ -628,6 +630,8 @@ First release.
   reopening them.
 - Push no longer sends a branch without an upstream to origin by itself: the nav shows Publish Branch, which asks
   for the remote (following `branch.<name>.pushRemote` and `remote.pushDefault`) and the name there.
+- Edit in History stops as git's `edit` does: changes staged while stopped are amended into the commit on Continue,
+  and with `notes.rewriteRef` its notes also go to the commits added while stopped.
 
 #### Fixed
 

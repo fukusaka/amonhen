@@ -4733,6 +4733,40 @@ mod tests {
     }
 
     #[test]
+    fn edit_stops_and_continues_like_git() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["config", "notes.rewriteRef", "refs/notes/commits"]);
+        let b = commit_file(dir, "b.txt", "b");
+        git(dir, &["notes", "add", "-m", "note b"]);
+        commit_file(dir, "c.txt", "c");
+
+        // git の edit で止まる。止まっている間に足したコミットにも、git と同じく b の notes が写る。
+        let r = rewrite(&repo, serde_json::json!({"kind": "edit", "oid": b}));
+        assert_eq!(r["outcome"], "stopped", "{r}");
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase (1/2)");
+        assert_eq!(log(dir), ["b", "first"]);
+        commit_file(dir, "x.txt", "x");
+        assert_eq!(run(&repo, r#"{"op":"continue"}"#)["outcome"], "done");
+        assert_eq!(log(dir), ["c", "x", "b", "first"]);
+        assert_eq!(note(dir, "HEAD~1"), "note b");
+        assert_eq!(note(dir, "HEAD~2"), "note b");
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(log(dir), ["c", "b", "first"]);
+
+        // stage した変更は、続けるときに止めたコミットへ amend される（メッセージはそのまま）。
+        let r = rewrite(&repo, serde_json::json!({"kind": "edit", "oid": b}));
+        assert_eq!(r["outcome"], "stopped", "{r}");
+        std::fs::write(dir.join("b.txt"), "b2").unwrap();
+        git(dir, &["add", "b.txt"]);
+        assert_eq!(run(&repo, r#"{"op":"continue"}"#)["outcome"], "done");
+        assert_eq!(log(dir), ["c", "b", "first"]);
+        assert_eq!(git(dir, &["show", "HEAD~1:b.txt"]), "b2");
+        assert_eq!(note(dir, "HEAD~1"), "note b");
+        assert_eq!(git(dir, &["status", "--porcelain"]), "");
+    }
+
+    #[test]
     fn saves_commits_as_patches_and_applies_them_with_am_undoably() {
         let (tmp, repo) = setup();
         let dir = tmp.path();

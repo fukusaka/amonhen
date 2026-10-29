@@ -14,7 +14,7 @@ export type HistoryEdit =
   /** oid を親にまとめ、親のメッセージを残す */
   | { kind: 'fixup'; oid: string }
   | { kind: 'drop'; oid: string }
-  /** oid を当てたところで止まる */
+  /** oid を当てたところで止まる（git の edit）。続けるとき、stage した変更は oid に amend される */
   | { kind: 'edit'; oid: string }
   /** oid を取り消して変更を作業ツリーに戻したところで止まる。分けてコミットしてから続ける */
   | { kind: 'split'; oid: string }
@@ -101,8 +101,9 @@ export function planRebase(chain: readonly Commit[], edit: HistoryEdit, messageP
       case 'drop':
         lines.push(`drop ${c.oid}`);
         break;
+      // git の edit。続けたときに git が、止めたコミットを最後のコミットに対応づけて notes を写す
       case 'edit':
-        lines.push(`pick ${c.oid}`, 'break');
+        lines.push(`edit ${c.oid}`);
         break;
       // git の split の手順（edit で止め、reset HEAD^ してから分けてコミットし、続ける）と同じにする。続けたときに
       // git が、元のコミットの notes を最後のコミットへ写す。reset は止まってから行う
