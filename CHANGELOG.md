@@ -627,6 +627,8 @@ First release.
 - A `git am` in progress was shown as a rebase.
 - Undo of a branch-moving operation no longer fails with "not uptodate" right after undoing another one that put
   files back.
+- Selecting a file in Working Copy just as its changes went away clears the diff instead of failing silently, and other
+  failures of the main view's requests are now reported.
 
 ### [0.2.3] - 2026-10-21
 

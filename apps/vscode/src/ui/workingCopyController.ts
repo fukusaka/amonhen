@@ -94,7 +94,22 @@ export class WorkingCopyController implements vscode.Disposable {
       return;
     }
     this.selected = { group: change.group, path: change.path };
-    const daemon = await this.daemonDiff(change);
+    let daemon: DaemonDiff | undefined;
+    try {
+      daemon = await this.daemonDiff(change);
+    } catch (err) {
+      // daemon は拡張より新しい status を読むので、その間に変更がなくなったファイルは断られる。読み直して、もう変更が
+      // なければ選びを外す（エラーにしない）
+      await this.repo?.refresh();
+      if (this.repo?.current.status?.entries.some((e) => e.path === change.path)) {
+        throw err;
+      }
+      if (this.selected?.path === change.path) {
+        this.selected = undefined;
+        this.post({ type: 'wcDiff', diff: undefined });
+      }
+      return;
+    }
     const diff = daemon ? daemon.diff : (await this.loadDiff(change)).diff;
     this.post({ type: 'wcDiff', group: change.group, diff });
   }

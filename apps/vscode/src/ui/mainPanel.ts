@@ -5,6 +5,7 @@ import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { HostMessage, ViewName, WebviewMessage } from '../view/protocol.ts';
 import { HistoryController } from './historyController.ts';
+import { showError } from './stageCommands.ts';
 import { WorkingCopyController } from './workingCopyController.ts';
 
 /**
@@ -66,7 +67,7 @@ export class MainPanel implements vscode.Disposable {
       this.history,
       this.workingCopy,
       panel.onDidDispose(() => this.dispose()),
-      panel.webview.onDidReceiveMessage((m: WebviewMessage) => void this.onMessage(m)),
+      panel.webview.onDidReceiveMessage((m: WebviewMessage) => void this.onMessage(m).catch(showError)),
       manager.onDidChangeCurrent((r) => this.watch(r)),
     );
     this.watch(manager.current);
