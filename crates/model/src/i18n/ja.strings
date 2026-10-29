@@ -230,6 +230,8 @@
 " ({items})" = "（{items}）";
 ", " = "・";
 "No changes" = "変更はありません";
+"rerere applied the earlier resolution" = "rerere が前の解決を適用";
+"no conflict markers" = "マーカーなし";
 "Commit not in History: {id}" = "History にないコミット: {id}";
 "Give one or two commits" = "コミットは 1 つか 2 つです";
 "Binary file" = "バイナリのファイル";

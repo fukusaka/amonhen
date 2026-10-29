@@ -165,6 +165,47 @@ fn merge_check_lists_the_files_that_would_conflict() {
 }
 
 #[test]
+fn status_notes_conflicts_without_markers() {
+    let repo = repository();
+    let dir = repo.path();
+    let home = tempfile::tempdir().unwrap();
+    let path = dir.to_str().unwrap();
+    git(dir, &["switch", "-q", "-c", "other", "main~1"]);
+    commit(dir, "c.txt", "other");
+    commit(dir, "d.txt", "other");
+    git(dir, &["switch", "-q", "main"]);
+    commit(dir, "c.txt", "main");
+    commit(dir, "d.txt", "main");
+    let ok = Command::new("git")
+        .current_dir(dir)
+        .args(["merge", "-q", "other"])
+        .status()
+        .unwrap()
+        .success();
+    assert!(!ok, "コンフリクトする");
+    // c.txt はほかのエディタで直した（stage していない）。d.txt はマーカーが残っている。
+    std::fs::write(dir.join("c.txt"), "both").unwrap();
+    let (out, code) = amonhen(home.path(), &["status", "-C", path, "--color=never"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("AA c.txt  (no conflict markers)\n"), "{out}");
+    assert!(out.contains("AA d.txt\n"), "{out}");
+    let (json, _) = amonhen(home.path(), &["status", "-C", path, "--json"]);
+    let status: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let entry = |p: &str| {
+        status["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["path"] == p)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(entry("c.txt")["markers"], 0, "{json}");
+    assert_eq!(entry("c.txt")["rerere"], false, "{json}");
+    assert_eq!(entry("d.txt")["markers"], 1, "{json}");
+}
+
+#[test]
 fn range_diff_compares_a_branch_with_its_previous_version() {
     let repo = repository();
     let dir = repo.path();
