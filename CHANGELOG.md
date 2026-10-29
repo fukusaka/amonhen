@@ -107,6 +107,8 @@ becomes the GitHub Release notes.
 - A message template file chosen for a repository now wins over a shared template chosen for all repositories, in
   Repository Settings and the commit box.
 - None for a repository's message template now cancels a shared template chosen for all repositories.
+- Squash into Parent and Squash N Commits keep the notes of the commits folded in, as `git rebase -i` does when
+  `notes.rewriteRef` is set: they used to keep only the oldest commit's.
 
 ### [0.2.7] - 2026-10-26
 
@@ -632,6 +634,7 @@ First release.
   files back.
 - Selecting a file in Working Copy just as its changes went away clears the diff instead of failing silently, and other
   failures of the main view's requests are now reported.
+- Squash into Parent keeps the notes of the commit folded in, as `git rebase -i` does when `notes.rewriteRef` is set.
 
 ### [0.2.3] - 2026-10-21
 

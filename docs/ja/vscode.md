@@ -85,7 +85,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 - reword / squash / fixup / drop / reorder / edit / split はすべて非対話の rebase で実現する。todo はこちらで丸ごと作り（`src/history/rebasePlan.ts`）、`GIT_SEQUENCE_EDITOR="cp <todo>"` で git の todo に上書きする。
   - メッセージの書き換えは、対象のコミットの直後に `exec git commit --amend -F <file>` を挟んで行う。どのコミットのメッセージかを `GIT_EDITOR` 側で判別しなくて済む。
-  - squash は `fixup` ＋ メッセージの amend、fixup は `fixup` だけ、edit は `pick` ＋ `break`。
+  - squash は親の `pick` ＋ メッセージの amend ＋ `fixup`、fixup は `fixup` だけ、edit は `pick` ＋ `break`。メッセージは `fixup` の前に親に付ける。後で amend すると、rebase が notes を写す先（`notes.rewriteRef`）が amend の前のコミットになり、まとめた側の notes が落ちる。
   - 編集できるのは HEAD から first-parent で辿り、最初の merge コミットの手前まで。merge をまたぐ rebase は扱わない。
   - `--autostash` で作業中の変更を退避し、`--no-autosquash` でユーザーの設定に todo を並べ替えさせない。
 - split は「`pick` → `exec git reset HEAD^` → `break`」で止め、Working Copy で分割してコミット → Continue の流れ。

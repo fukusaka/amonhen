@@ -89,7 +89,7 @@ is in [front.md](front.md), and the design in item 18 of
 
 - reword / squash / fixup / drop / reorder / edit / split are all done with a non-interactive rebase. We build the whole todo ourselves (`src/history/rebasePlan.ts`) and overwrite git's todo with it via `GIT_SEQUENCE_EDITOR="cp <todo>"`.
   - Messages are rewritten by inserting `exec git commit --amend -F <file>` right after the target commit. This avoids having to tell on the `GIT_EDITOR` side which commit's message is being edited.
-  - squash is `fixup` + amending the message, fixup is just `fixup`, and edit is `pick` + `break`.
+  - squash is `pick` of the parent + amending the message + `fixup`, fixup is just `fixup`, and edit is `pick` + `break`. The message goes on the parent before the `fixup`: amended after it, the commit the rebase copies notes to (`notes.rewriteRef`) would be the one before the amend, and the notes of the commit folded in would be lost.
   - Only commits reachable from HEAD by first-parent, up to just before the first merge commit, can be edited. Rebases that cross merges are not handled.
   - `--autostash` stashes working changes, and `--no-autosquash` keeps the user's settings from reordering the todo.
 - split stops with "`pick` → `exec git reset HEAD^` → `break`"; the flow is to split and commit in the Working Copy, then Continue.
