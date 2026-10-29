@@ -889,7 +889,7 @@ mod ops_tests {
         git.switch_branch("main").unwrap();
         commit_file(&tmp, &git, "a.txt", "main\n");
 
-        assert_eq!(git.merge("topic").unwrap(), Outcome::Conflict);
+        assert_eq!(git.merge(&revs(&["topic"])).unwrap(), Outcome::Conflict);
         assert_eq!(git.sequence_in_progress().unwrap(), Some(Sequence::Merge));
         git.abort(Sequence::Merge).unwrap();
         assert_eq!(git.sequence_in_progress().unwrap(), None);
@@ -915,12 +915,12 @@ mod ops_tests {
         commit_file(&tmp, &git, "b c.txt", "main\n");
         let head = git.head_state().unwrap();
 
-        let predicted = git.predict_merge("main", "topic").unwrap();
-        let clean = git.predict_merge("topic", "topic~1").unwrap();
+        let predicted = git.predict_merge("main", &revs(&["topic"])).unwrap();
+        let clean = git.predict_merge("topic", &revs(&["topic~1"])).unwrap();
         if git_at_least(2, 38) {
-            assert_eq!(predicted, Some(vec!["a.txt".into(), "b c.txt".into()]));
-            assert_eq!(clean, Some(vec![]));
-            assert!(git.predict_merge("main", "nothing").is_err());
+            assert_eq!(predicted, Some(vec![revs(&["a.txt", "b c.txt"])]));
+            assert_eq!(clean, Some(vec![vec![]]));
+            assert!(git.predict_merge("main", &revs(&["nothing"])).is_err());
         } else {
             assert_eq!(
                 predicted, None,
@@ -932,6 +932,83 @@ mod ops_tests {
         assert_eq!(git.head_state().unwrap(), head);
         assert!(git.status().unwrap().entries.is_empty());
         assert_eq!(git.sequence_in_progress().unwrap(), None);
+    }
+
+    fn revs(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| n.to_string()).collect()
+    }
+
+    /// main から分かれた a・b・c（それぞれ自分のファイルを変える）と、main と同じファイルを変える x。
+    fn octopus_repo() -> (tempfile::TempDir, Git) {
+        let (tmp, git) = repo();
+        commit_file(&tmp, &git, "f.txt", "base\n");
+        for name in ["a", "b", "c", "x"] {
+            git.create_branch(name, "main", true).unwrap();
+            let file = if name == "x" { "f.txt" } else { name };
+            commit_file(&tmp, &git, file, name);
+            git.switch_branch("main").unwrap();
+        }
+        commit_file(&tmp, &git, "f.txt", "main\n");
+        (tmp, git)
+    }
+
+    #[test]
+    fn merges_several_branches_in_one_commit() {
+        let (_tmp, git) = octopus_repo();
+        assert_eq!(git.merge(&revs(&["a", "b", "c"])).unwrap(), Outcome::Done);
+        let parents = text(git.read(&["log", "-1", "--format=%P"]).unwrap()).unwrap();
+        assert_eq!(parents.split(' ').count(), 4);
+    }
+
+    #[test]
+    fn stops_at_a_conflict_in_the_last_branch_of_an_octopus() {
+        let (_tmp, git) = octopus_repo();
+        assert_eq!(
+            git.merge(&revs(&["a", "b", "x"])).unwrap(),
+            Outcome::Conflict
+        );
+        assert_eq!(git.sequence_in_progress().unwrap(), Some(Sequence::Merge));
+        git.abort(Sequence::Merge).unwrap();
+        assert!(git.status().unwrap().entries.is_empty());
+    }
+
+    #[test]
+    fn puts_things_back_when_an_octopus_gives_up() {
+        let (tmp, git) = octopus_repo();
+        // 作業中の変更（関係ないファイル）は残る。
+        std::fs::write(tmp.path().join("c"), "edited").unwrap();
+        let head = git.head_state().unwrap();
+        assert!(git.merge(&revs(&["a", "x", "b"])).is_err());
+        assert_eq!(git.head_state().unwrap(), head);
+        assert_eq!(git.sequence_in_progress().unwrap(), None);
+        let status = git.status().unwrap();
+        let paths: Vec<&str> = status.entries.iter().map(|e| e.path.as_str()).collect();
+        assert_eq!(paths, ["c"]);
+        assert!(git.read(&["ls-files", "--unmerged"]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn leaves_staged_changes_alone_when_an_octopus_refuses() {
+        let (tmp, git) = octopus_repo();
+        std::fs::write(tmp.path().join("c"), "staged").unwrap();
+        git.stage(&["c"]).unwrap();
+        assert!(git.merge(&revs(&["a", "b"])).is_err());
+        let staged = git.read(&["diff", "--cached", "--name-only"]).unwrap();
+        assert_eq!(text(staged).unwrap(), "c", "staged の変更はそのまま");
+    }
+
+    #[test]
+    fn predicts_each_branch_of_an_octopus_on_top_of_the_ones_before() {
+        let (_tmp, git) = octopus_repo();
+        let head = git.head_state().unwrap();
+        let steps = git.predict_merge("HEAD", &revs(&["a", "x", "b"])).unwrap();
+        if git_at_least(2, 38) {
+            assert_eq!(steps, Some(vec![vec![], revs(&["f.txt"]), vec![]]));
+        } else {
+            assert_eq!(steps, None);
+        }
+        assert_eq!(git.head_state().unwrap(), head);
+        assert!(git.status().unwrap().entries.is_empty());
     }
 
     #[test]

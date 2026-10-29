@@ -19,6 +19,23 @@ pub enum ResetKind {
     Hard,
 }
 
+/// 名前 1 つか、いくつもの名前（JSON の文字列か配列）。
+#[derive(Clone, Debug, Deserialize)]
+#[serde(untagged)]
+pub enum Revs {
+    One(String),
+    Many(Vec<String>),
+}
+
+impl Revs {
+    pub fn into_vec(self) -> Vec<String> {
+        match self {
+            Revs::One(rev) => vec![rev],
+            Revs::Many(revs) => revs,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 #[serde(tag = "op", rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub enum Command {
@@ -73,15 +90,21 @@ pub enum Command {
     },
     /// 手元のタグごとの、リモートでの様子（fetch のときに読んで覚えたもの。`crate::remote_tags::status`）。
     TagRemotes,
-    /// 今のブランチに `rev` を merge する。
+    /// 今のブランチに `rev` を merge する。`rev` が配列なら、すべてを 1 つのコミットにまとめる（octopus、
+    /// `git merge a b c`）。`oneByOne` なら 1 つずつ merge する（merge コミットがいくつもできる。コンフリクトで
+    /// 止まったら、まだのものを `info.remaining` に返す）。どちらも Undo 1 回で戻る。
     Merge {
-        rev: String,
+        rev: Revs,
+        #[serde(default)]
+        one_by_one: bool,
     },
     /// ブランチ `target` に `rev` を merge する。`target` を checkout していなくても、fast-forward で
-    /// 済むならブランチだけ進める。そうでなければ checkout してから merge する。
+    /// 済むならブランチだけ進める（`rev` が 1 つのとき）。そうでなければ checkout してから merge する。
     MergeInto {
         target: String,
-        rev: String,
+        rev: Revs,
+        #[serde(default)]
+        one_by_one: bool,
     },
     /// 今のブランチを `onto` の上に rebase する。
     Rebase {
@@ -326,10 +349,11 @@ pub enum Command {
     },
     /// `theirs` を `ours`（既定は HEAD）にマージしたらコンフリクトするファイル（`info.conflicts`。なければ空、
     /// git が古くて調べられなければ null）。作業ツリーと index には触らない（`git merge-tree --write-tree`）。
-    /// Merge・Pull の前に見せる。rebase は最後の結果が同じになるので、目安に使える。
+    /// Merge・Pull の前に見せる。rebase は最後の結果が同じになるので、目安に使える。`theirs` が配列なら、
+    /// octopus と同じ順に重ねて調べ、`info.steps` に 1 つずつ（`rev`・`conflicts`）、`info.conflicts` に全部を返す。
     PredictMerge {
         ours: Option<String>,
-        theirs: String,
+        theirs: Revs,
     },
     /// untracked のファイルを消す（git の記録にないので Undo では戻せない）。
     DeleteUntracked {
@@ -684,7 +708,73 @@ fn heads(name: &str) -> String {
     format!("refs/heads/{name}")
 }
 
+/// Undo の記録に出す、いくつかの名前（`a`、`a and b`、`a, b and c`。git の merge のメッセージと同じ形）。
+fn names_label(names: &[String]) -> String {
+    match names {
+        [] => String::new(),
+        [one] => one.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
+}
+
 impl Repository {
+    /// `revs` を今のブランチに merge する（`Command::Merge`）。コンフリクトや途中で止まったときは記録しない
+    /// （戻すのは Abort の役目）。1 つずつのときは、止まる前に済んだ分を 1 つの記録にする。
+    fn merge_revs(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        undo: &crate::undo::UndoLog,
+        label: &str,
+        revs: &[String],
+        one_by_one: bool,
+    ) -> Result<Response> {
+        if revs.is_empty() {
+            return Err(tr!("Nothing to merge").into());
+        }
+        if !one_by_one || revs.len() == 1 {
+            let outcome = undo.record(
+                ops,
+                label,
+                &[],
+                false,
+                || ops.merge(revs),
+                |o| *o != Outcome::Done,
+            )?;
+            return Ok(Response {
+                ok: true,
+                outcome: Some(outcome_name(outcome)),
+                ..Default::default()
+            });
+        }
+        // 途中で失敗しても、済んだ分は記録してからエラーを返す。
+        let (outcome, remaining, error) = undo.record(
+            ops,
+            label,
+            &[],
+            false,
+            || {
+                for (i, rev) in revs.iter().enumerate() {
+                    match ops.merge(std::slice::from_ref(rev)) {
+                        Ok(Outcome::Done) => {}
+                        Ok(outcome) => return Ok((outcome, revs[i + 1..].to_vec(), None)),
+                        Err(e) => return Ok((Outcome::Stopped, revs[i..].to_vec(), Some(e))),
+                    }
+                }
+                Ok((Outcome::Done, Vec::new(), None))
+            },
+            |_| false,
+        )?;
+        if let Some(e) = error {
+            return Err(e);
+        }
+        Ok(Response {
+            ok: true,
+            outcome: Some(outcome_name(outcome)),
+            info: (!remaining.is_empty()).then(|| serde_json::json!({ "remaining": remaining })),
+            ..Default::default()
+        })
+    }
+
     /// `Command::BranchGroups` の答え。
     fn branch_groups(&self) -> Result<serde_json::Value> {
         use crate::branches;
@@ -857,6 +947,7 @@ impl Repository {
     /// どこで止まっているかを出す。git dir の中の git の作業ファイルから読む（読めないものは付けない）。
     ///
     /// `{"kind", "current", "total", "branch", "onto"（rebase の先）, "from"（merge で取り込む側）,
+    /// "merging"（octopus で取り込むものすべて）,
     /// "step": {"action", "oid", "subject"}, "editing"}`
     fn sequence_info(
         &self,
@@ -935,10 +1026,20 @@ impl Repository {
                 info["editing"] = read("rebase-merge/amend").is_some().into();
             }
             Sequence::Merge => {
-                if let Some(head) =
-                    read("MERGE_HEAD").and_then(|h| h.lines().next().and_then(Oid::from_hex))
-                {
-                    info["from"] = name_of(&head).into();
+                // octopus なら MERGE_HEAD に取り込むものが 1 行ずつ並ぶ（`merging` に全部）。
+                let heads: Vec<String> = read("MERGE_HEAD")
+                    .map(|h| {
+                        h.lines()
+                            .filter_map(Oid::from_hex)
+                            .map(|o| name_of(&o))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if let Some(first) = heads.first() {
+                    info["from"] = first.clone().into();
+                }
+                if heads.len() > 1 {
+                    info["merging"] = heads.into();
                 }
                 if let Some(message) = read("MERGE_MSG") {
                     info["step"] = serde_json::json!({
@@ -1842,16 +1943,17 @@ impl Repository {
                 )?;
                 ok()
             }
-            // コンフリクトや途中で止まったときは記録しない（戻すのは Abort の役目）。
-            Command::Merge { rev } => done(undo.record(
-                ops,
-                &format!("Merge {rev}"),
-                &[],
-                false,
-                || ops.merge(&rev),
-                not_done,
-            )?),
-            Command::MergeInto { target, rev } => {
+            Command::Merge { rev, one_by_one } => {
+                let revs = rev.into_vec();
+                let label = format!("Merge {}", names_label(&revs));
+                self.merge_revs(ops, undo, &label, &revs, one_by_one)
+            }
+            Command::MergeInto {
+                target,
+                rev,
+                one_by_one,
+            } => {
+                let revs = rev.into_vec();
                 let current = ops.head_state()?.branch;
                 let full = heads(&target);
                 // ほかの worktree でチェックアウト中なら、fast-forward でも動かさない（その作業ツリーとずれる。merge なら
@@ -1866,9 +1968,12 @@ impl Repository {
                     )
                     .into());
                 }
-                if current.as_deref() != Some(full.as_str()) && ops.is_ancestor(&full, &rev)? {
+                if let [rev] = revs.as_slice()
+                    && current.as_deref() != Some(full.as_str())
+                    && ops.is_ancestor(&full, rev)?
+                {
                     let from = ops.resolve(&full)?;
-                    let to = ops.resolve(&rev)?;
+                    let to = ops.resolve(rev)?;
                     undo.record(
                         ops,
                         &format!("Fast-forward {target} to {rev}"),
@@ -1882,14 +1987,8 @@ impl Repository {
                 if current.as_deref() != Some(full.as_str()) {
                     ops.switch_branch(&target)?;
                 }
-                done(undo.record(
-                    ops,
-                    &format!("Merge {rev} into {target}"),
-                    &[],
-                    false,
-                    || ops.merge(&rev),
-                    not_done,
-                )?)
+                let label = format!("Merge {} into {target}", names_label(&revs));
+                self.merge_revs(ops, undo, &label, &revs, one_by_one)
             }
             Command::Rebase { onto } => {
                 // 載せ直すコミット（onto..HEAD）に先頭があるブランチは、`rebase.updateRefs` が true なら git が
@@ -2598,10 +2697,23 @@ impl Repository {
                 })
             }
             Command::PredictMerge { ours, theirs } => {
-                let conflicts = ops.predict_merge(ours.as_deref().unwrap_or("HEAD"), &theirs)?;
+                let theirs = theirs.into_vec();
+                let steps = ops.predict_merge(ours.as_deref().unwrap_or("HEAD"), &theirs)?;
+                let mut info = serde_json::json!({ "conflicts": null, "steps": null });
+                if let Some(steps) = steps {
+                    let mut all: Vec<&String> = steps.iter().flatten().collect();
+                    all.sort();
+                    all.dedup();
+                    info["conflicts"] = serde_json::json!(all);
+                    info["steps"] = theirs
+                        .iter()
+                        .zip(&steps)
+                        .map(|(rev, conflicts)| serde_json::json!({ "rev": rev, "conflicts": conflicts }))
+                        .collect();
+                }
                 Ok(Response {
                     ok: true,
-                    info: Some(serde_json::json!({ "conflicts": conflicts })),
+                    info: Some(info),
                     ..Default::default()
                 })
             }
@@ -5843,6 +5955,94 @@ mod tests {
         );
         run(&repo, r#"{"op":"undo"}"#);
         assert_ne!(git(dir, &["rev-parse", "old"]), head);
+    }
+
+    /// main から分かれた a・b（それぞれ自分のファイルを変える）と、main と同じ行を変える x。
+    fn octopus_setup() -> (tempfile::TempDir, Repository) {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        for (name, file) in [("a", "a-file"), ("b", "b-file"), ("x", "a.txt")] {
+            git(dir, &["switch", "-q", "-c", name, "main"]);
+            commit_file(dir, file, name);
+        }
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "a.txt", "main\n");
+        (tmp, repo)
+    }
+
+    #[test]
+    fn merges_several_branches_in_one_commit_and_undoes_it() {
+        let (tmp, repo) = octopus_setup();
+        let dir = tmp.path();
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        let r = run(&repo, r#"{"op":"merge","rev":["a","b"]}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(
+            git(dir, &["log", "-1", "--format=%P"]).split(' ').count(),
+            3
+        );
+        // git の既定のメッセージ（古い git は main にも " into main" を付ける）。
+        assert!(git(dir, &["log", "-1", "--format=%s"]).starts_with("Merge branches 'a' and 'b'"));
+        let r = run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), head);
+    }
+
+    #[test]
+    fn names_every_branch_of_an_octopus_stopped_at_a_conflict() {
+        let (tmp, repo) = octopus_setup();
+        let r = run(&repo, r#"{"op":"merge","rev":["a","b","x"]}"#);
+        assert_eq!(r["outcome"], "conflict", "{r}");
+        let r = run(&repo, r#"{"op":"sequence"}"#);
+        assert_eq!(r["info"]["from"], "a", "{r}");
+        assert_eq!(
+            r["info"]["merging"],
+            serde_json::json!(["a", "b", "x"]),
+            "{r}"
+        );
+        run(&repo, r#"{"op":"abort"}"#);
+        assert!(git(tmp.path(), &["status", "--porcelain"]).is_empty());
+    }
+
+    #[test]
+    fn merges_one_by_one_until_a_conflict() {
+        let (tmp, repo) = octopus_setup();
+        let dir = tmp.path();
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        let r = run(
+            &repo,
+            r#"{"op":"merge","rev":["a","x","b"],"oneByOne":true}"#,
+        );
+        assert_eq!(r["outcome"], "conflict", "{r}");
+        assert_eq!(r["info"]["remaining"], serde_json::json!(["b"]), "{r}");
+        // a は merge コミットになり、x で止まっている。
+        assert!(git(dir, &["log", "-1", "--format=%s"]).starts_with("Merge branch 'a'"));
+        run(&repo, r#"{"op":"abort"}"#);
+        // 済んだ分は 1 回の Undo で戻る。
+        let r = run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), head);
+
+        let r = run(&repo, r#"{"op":"merge","rev":["a","b"],"oneByOne":true}"#);
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(git(dir, &["rev-list", "--count", "--merges", "HEAD"]), "2");
+    }
+
+    #[test]
+    fn predicts_each_branch_of_an_octopus() {
+        let (_tmp, repo) = octopus_setup();
+        let r = run(&repo, r#"{"op":"predictMerge","theirs":["a","x","b"]}"#);
+        if amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 38)) {
+            assert_eq!(r["info"]["conflicts"], serde_json::json!(["a.txt"]), "{r}");
+            assert_eq!(r["info"]["steps"][1]["rev"], "x", "{r}");
+            assert_eq!(
+                r["info"]["steps"][1]["conflicts"],
+                serde_json::json!(["a.txt"])
+            );
+            assert_eq!(r["info"]["steps"][2]["conflicts"], serde_json::json!([]));
+        } else {
+            assert!(r["info"]["steps"].is_null(), "{r}");
+        }
     }
 
     #[test]

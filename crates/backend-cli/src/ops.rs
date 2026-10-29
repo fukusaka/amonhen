@@ -39,6 +39,75 @@ impl Git {
         }
     }
 
+    /// `theirs` を `ours` にマージした木と、コンフリクトするファイル（`merge-tree --write-tree`、git 2.38 から）。
+    /// `label` はエラーに出す `ours` の名前。
+    fn merge_tree(&self, ours: &str, theirs: &str, label: &str) -> Result<(String, Vec<String>)> {
+        let args = [
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--no-messages",
+            "-z",
+            ours,
+            theirs,
+        ];
+        let mut cmd = self.command(&args);
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
+        let repo = self.workdir.to_string_lossy().into_owned();
+        let name = format!("git {}", args.join(" "));
+        let out = amonhen_model::activity::track("git", &repo, name, || cmd.output())?;
+        // 終了コードは、きれいにマージできれば 0、コンフリクトすれば 1。1 は名前が読めないときにも返るので、
+        // 先頭の木の ID で見分ける。出力は 木の ID、コンフリクトするファイル（-z で NUL 区切り）。
+        let mut fields = out.stdout.split(|&b| b == 0);
+        let tree = fields.next().and_then(|f| std::str::from_utf8(f).ok());
+        match (out.status.code(), tree) {
+            (Some(0 | 1), Some(tree)) if Oid::from_hex(tree).is_some() => Ok((
+                tree.to_owned(),
+                fields
+                    .filter(|f| !f.is_empty())
+                    .map(|f| String::from_utf8_lossy(f).into_owned())
+                    .collect(),
+            )),
+            _ => Err(tr!(
+                "Can’t merge {theirs} into {ours}: {error}",
+                theirs = theirs,
+                ours = label,
+                error = String::from_utf8_lossy(&out.stderr).trim()
+            )
+            .into()),
+        }
+    }
+
+    /// 予測の途中の結果（`tree`）を、`first`・`second` を親とする仮のコミットにする。利用者の名前や署名の設定に
+    /// よらないよう、名前を決めて署名しない。
+    fn forecast_commit(&self, tree: &str, first: &str, second: &str) -> Result<String> {
+        let mut cmd = self.command(&[
+            "commit-tree",
+            "--no-gpg-sign",
+            "-p",
+            first,
+            "-p",
+            second,
+            "-m",
+            "Amon Hen merge forecast",
+            tree,
+        ]);
+        cmd.env("GIT_OPTIONAL_LOCKS", "0");
+        for key in ["GIT_AUTHOR", "GIT_COMMITTER"] {
+            cmd.env(format!("{key}_NAME"), "Amon Hen")
+                .env(format!("{key}_EMAIL"), "amonhen@localhost");
+        }
+        text(crate::run(cmd, None)?)
+    }
+
+    /// index が HEAD と違う（staged の変更かコンフリクトがある）。まだコミットがなければ真。
+    fn index_differs_from_head(&self) -> Result<bool> {
+        Ok(self.has_unmerged()?
+            || self
+                .read(&["diff-index", "--cached", "--quiet", "HEAD", "--"])
+                .is_err())
+    }
+
     fn git_dir(&self) -> Result<std::path::PathBuf> {
         let dir = text(self.read(&["rev-parse", "--absolute-git-dir"])?)?;
         Ok(dir.into())
@@ -457,44 +526,23 @@ impl Operations for Git {
         }
     }
 
-    fn predict_merge(&self, ours: &str, theirs: &str) -> Result<Option<Vec<String>>> {
+    fn predict_merge(&self, ours: &str, theirs: &[String]) -> Result<Option<Vec<Vec<String>>>> {
         // `merge-tree --write-tree` は git 2.38 から。それより古い git では調べない（マージを試すと作業ツリーに触る）。
         if !crate::git_at_least(2, 38) {
             return Ok(None);
         }
-        let args = [
-            "merge-tree",
-            "--write-tree",
-            "--name-only",
-            "--no-messages",
-            "-z",
-            ours,
-            theirs,
-        ];
-        let mut cmd = self.command(&args);
-        cmd.env("GIT_OPTIONAL_LOCKS", "0");
-        let repo = self.workdir.to_string_lossy().into_owned();
-        let label = format!("git {}", args.join(" "));
-        let out = amonhen_model::activity::track("git", &repo, label, || cmd.output())?;
-        // 終了コードは、きれいにマージできれば 0、コンフリクトすれば 1。1 は名前が読めないときにも返るので、
-        // 先頭の木の ID で見分ける。出力は 木の ID、コンフリクトするファイル（-z で NUL 区切り）。
-        let mut fields = out.stdout.split(|&b| b == 0);
-        let tree = fields.next().and_then(|f| std::str::from_utf8(f).ok());
-        match out.status.code() {
-            Some(0 | 1) if tree.and_then(Oid::from_hex).is_some() => Ok(Some(
-                fields
-                    .filter(|f| !f.is_empty())
-                    .map(|f| String::from_utf8_lossy(f).into_owned())
-                    .collect(),
-            )),
-            _ => Err(tr!(
-                "Can’t merge {theirs} into {ours}: {error}",
-                theirs = theirs,
-                ours = ours,
-                error = String::from_utf8_lossy(&out.stderr).trim()
-            )
-            .into()),
+        // いくつも取り込むときは、git の octopus と同じ順に、ここまでを合わせた結果へ次のものを重ねる。結果は仮の
+        // コミットにする（ref は作らない。merge-tree が書く木と同じく、参照されないオブジェクトとして残る）。
+        let mut base = ours.to_owned();
+        let mut steps = Vec::with_capacity(theirs.len());
+        for (i, rev) in theirs.iter().enumerate() {
+            let (tree, conflicts) = self.merge_tree(&base, rev, ours)?;
+            steps.push(conflicts);
+            if i + 1 < theirs.len() {
+                base = self.forecast_commit(&tree, &base, rev)?;
+            }
         }
+        Ok(Some(steps))
     }
 
     fn range_diff(
@@ -548,8 +596,23 @@ impl Operations for Git {
         Oid::from_hex(&out).ok_or_else(|| tr!("{rev} not found", rev = rev).into())
     }
 
-    fn merge(&self, rev: &str) -> Result<Outcome> {
-        self.stoppable(&["merge", "--no-edit", rev], &[])
+    fn merge(&self, revs: &[String]) -> Result<Outcome> {
+        let mut args = vec!["merge", "--no-edit"];
+        args.extend(revs.iter().map(String::as_str));
+        if revs.len() < 2 {
+            return self.stoppable(&args, &[]);
+        }
+        // octopus は、最後のもの以外でコンフリクトすると MERGE_HEAD を残さずに断る。git 2.37 より前は、そこまでに
+        // 合わせた変更とコンフリクトを作業ツリーと index に残す（`merge --abort` も効かない）ので、新しい git と
+        // 同じく元に戻す（作業中の変更は残る）。始める前に staged の変更があれば git は何もせずに断るので触らない。
+        let staged = self.index_differs_from_head()?;
+        match self.stoppable(&args, &[]) {
+            Err(e) if !staged && self.index_differs_from_head()? => {
+                self.write(&["reset", "--merge"])?;
+                Err(e)
+            }
+            result => result,
+        }
     }
 
     fn rebase(&self, onto: &str) -> Result<Outcome> {
