@@ -1627,7 +1627,15 @@ impl Repository {
             ops,
             label,
             &names,
-            || ops.rebase_todo(plan.base.as_ref(), &todo),
+            || {
+                let outcome = ops.rebase_todo(plan.base.as_ref(), &todo)?;
+                // split: `edit` で止めたコミットを取り消し、変更を作業ツリーに戻す。
+                if plan.reset_on_stop && outcome == Outcome::Stopped {
+                    let parent = ops.resolve("HEAD^")?;
+                    ops.reset(amonhen_model::ResetMode::Mixed, &parent)?;
+                }
+                Ok(outcome)
+            },
             |o| *o == Outcome::Conflict,
             |o| *o == Outcome::Stopped,
         )
@@ -4634,6 +4642,61 @@ mod tests {
         assert_eq!(log(dir), ["e", "d", "c", "b", "first"]);
     }
 
+    /// コミットの notes（`git log` の `%N`）。
+    fn note(dir: &std::path::Path, rev: &str) -> String {
+        git(dir, &["log", "-1", "--format=%N", rev])
+    }
+
+    #[test]
+    fn squash_carries_the_notes_like_git() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let mut oids = Vec::new();
+        for name in ["b", "c", "d", "e"] {
+            oids.push(commit_file(dir, &format!("{name}.txt"), name));
+            git(dir, &["notes", "add", "-m", &format!("note {name}")]);
+        }
+        let [b, c, d, _] = &oids[..] else {
+            unreachable!()
+        };
+
+        // notes.rewriteRef がなければ、git と同じく写さない。
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squash", "oid": c, "message": "b+c"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["e", "d", "b+c", "first"]);
+        assert_eq!(note(dir, "HEAD~2"), "");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        // あれば、git の squash と同じく、まとめた側の notes もつなげて写す（notes.rewriteMode の既定）。
+        git(dir, &["config", "notes.rewriteRef", "refs/notes/commits"]);
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squash", "oid": c, "message": "b+c"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["e", "d", "b+c", "first"]);
+        assert_eq!(note(dir, "HEAD~2"), "note b\n\nnote c");
+        assert_eq!(note(dir, "HEAD~1"), "note d");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squashRange", "oid": b, "last": d, "message": "b to d"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["e", "b to d", "first"]);
+        assert_eq!(note(dir, "HEAD~1"), "note b\n\nnote c\n\nnote d");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        // fixup は git の todo そのもの。
+        rewrite(&repo, serde_json::json!({"kind": "fixup", "oid": c}));
+        assert_eq!(log(dir), ["e", "d", "b", "first"]);
+        assert_eq!(note(dir, "HEAD~2"), "note b\n\nnote c");
+    }
+
     #[test]
     fn splits_a_commit_and_records_undo_after_continuing() {
         let (tmp, repo) = setup();
@@ -4642,13 +4705,17 @@ mod tests {
         std::fs::write(dir.join("y.txt"), "y").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "x and y"]);
+        git(dir, &["notes", "add", "-m", "note x and y"]);
+        git(dir, &["config", "notes.rewriteRef", "refs/notes/commits"]);
         let xy = git(dir, &["rev-parse", "HEAD"]);
         commit_file(dir, "z.txt", "z");
 
         let r = rewrite(&repo, serde_json::json!({"kind": "split", "oid": xy}));
         assert_eq!(r["outcome"], "stopped", "{r}");
-        // todo は pick・exec・break・pick の 4 行で、break まで進んだところで止まる。
-        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase (3/4)");
+        // todo は edit・pick の 2 行で、edit で止まり、変更が作業ツリーに戻っている。
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase (1/2)");
+        assert_eq!(log(dir), ["first"]);
+        assert_eq!(git(dir, &["status", "--porcelain"]), "?? x.txt\n?? y.txt");
         // 止まっている間は記録しない（保留）。
         assert!(run(&repo, r#"{"op":"undoPeek"}"#)["label"].is_null());
         git(dir, &["add", "x.txt"]);
@@ -4657,6 +4724,9 @@ mod tests {
         git(dir, &["commit", "-q", "-m", "y"]);
         assert_eq!(run(&repo, r#"{"op":"continue"}"#)["outcome"], "done");
         assert_eq!(log(dir), ["z", "y", "x", "first"]);
+        // git の split の手順と同じく、notes は最後に分けたコミットへ写る（notes.rewriteRef があるとき）。
+        assert_eq!(note(dir, "HEAD~1"), "note x and y");
+        assert_eq!(note(dir, "HEAD~2"), "");
         assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "edit");
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["z", "x and y", "first"]);

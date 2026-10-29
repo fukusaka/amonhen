@@ -33,7 +33,15 @@ export async function rewriteHistory(
   const todo = join(dir, 'rebase-todo');
   await writeFile(todo, plan.todo);
 
-  return undo.record(label, head.branch ? [head.branch] : [], 'keep', () => backend.rebaseTodo(plan.base, todo), {
+  const run = async () => {
+    const result = await backend.rebaseTodo(plan.base, todo);
+    // split: edit で止めたコミットを取り消し、変更を作業ツリーに戻す
+    if (plan.resetOnStop && result === 'stopped') {
+      await backend.reset('mixed', 'HEAD^');
+    }
+    return result;
+  };
+  return undo.record(label, head.branch ? [head.branch] : [], 'keep', run, {
     skip: (r) => r === 'conflict',
     pending: (r) => r === 'stopped',
   });
