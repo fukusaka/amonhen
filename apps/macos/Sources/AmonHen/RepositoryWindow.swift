@@ -925,7 +925,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// 帯の 1 行目: 何をどこへしている途中か。
     private static func sequenceTitle(_ s: SequenceInfo) -> String {
-        let title = switch (s.kind, s.branch, s.onto ?? s.from) {
+        let from = s.merging.map { ListFormatter.localizedString(byJoining: $0) } ?? s.from
+        let title = switch (s.kind, s.branch, s.onto ?? from) {
         case let ("rebase", branch?, onto?): L("Rebasing %@ onto %@", branch, onto)
         case let ("merge", branch?, from?): L("Merging %@ into %@", from, branch)
         case let ("cherry-pick", branch?, _): L("Cherry-picking into %@", branch)
@@ -1176,14 +1177,35 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             if let mergePath {
                 MergeEditorWindowController.show(path: mergePath, repository: repository, actions: actions)
             }
+            // --merge-sheet A,B,… で、いくつものブランチを merge するシートを開いて撮る。
+            let mergeSheet = AppDelegate.option("--merge-sheet")?.split(separator: ",").map(String.init)
+            if let mergeSheet {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+                    let kinds = Dictionary((latestRefs?.items ?? []).map { ($0.name, $0.kind) }, uniquingKeysWith: { a, _ in a })
+                    let sources = mergeSheet.map { rev in
+                        let kind: MergeSource.Kind = switch kinds[rev] {
+                        case .local?: .branch
+                        case .remote?: .remoteBranch
+                        case .tag?: .tag
+                        default: .commit
+                        }
+                        return MergeSource(rev: rev, kind: kind)
+                    }
+                    actions.mergeSeveralWithConfirmation(sources, into: latestRefs?.headBranch)
+                }
+            }
             // --snapshot-after SECONDS で待ちを決める（SSH 先につながるのを待つなど）。
             let delay = AppDelegate.option("--snapshot-after").flatMap(Double.init)
-                ?? (query != nil ? 3.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5)
+                ?? (query != nil ? 3.5 : mergeSheet != nil ? 2.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
+                let sheetView = mergeSheet != nil ? window.attachedSheet?.contentView : nil
                 let rep = appSettings ? SettingsWindowController.shared.snapshot()
                     : mergePath != nil
                     ? MergeEditorWindowController.snapshot()
-                    : history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays() + stashes.detail.overlays() + reflog.detail.overlays() + rangeDiff.overlays())
+                    : sheetView.flatMap { view in
+                        view.bitmapImageRepForCachingDisplay(in: view.bounds).map { view.cacheDisplay(in: view.bounds, to: $0); return $0 }
+                    }
+                    ?? history.snapshot(of: window.contentView!, extra: detail.overlays() + workingCopy.overlays() + stashes.detail.overlays() + reflog.detail.overlays() + rangeDiff.overlays())
                 try? rep?.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: output))
                 // シートが付いていると終われないので、先に閉じる（Settings に付けたパスを選ぶシートなど）。
                 for window in NSApp.windows { if let sheet = window.attachedSheet { window.endSheet(sheet) } }

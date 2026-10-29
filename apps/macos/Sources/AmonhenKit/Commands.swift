@@ -12,6 +12,8 @@ public struct CommandResult: Sendable {
     public let label: String?
     /// コミットのメッセージなど、命令ごとの結果。
     public let text: String?
+    /// 1 つずつの merge がコンフリクトで止まったときの、まだ merge していないもの（`info.remaining`）。
+    public var remaining: [String] = []
 }
 
 extension Repository {
@@ -39,7 +41,8 @@ extension Repository {
         }
         return CommandResult(
             outcome: (response["outcome"] as? String).flatMap(Outcome.init), label: response["label"] as? String,
-            text: response["text"] as? String)
+            text: response["text"] as? String,
+            remaining: (response["info"] as? [String: Any])?["remaining"] as? [String] ?? [])
     }
 }
 
@@ -84,6 +87,8 @@ public struct SequenceInfo: Decodable, Equatable, Sendable {
     /// rebase の先・merge で取り込む側（ref の名前、なければ短い ID）。
     public var onto: String?
     public var from: String?
+    /// octopus の merge で取り込むものすべて（2 つ以上のとき）。
+    public var merging: [String]?
     public var step: Step?
     /// edit・break で止めた（コンフリクトではない）。
     public var editing: Bool?

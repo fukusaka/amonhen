@@ -1520,3 +1520,16 @@
 "%@ has no changes (a cover letter?). Skip it." = "%@ には変更がありません（送り状？）。Skip してください。";
 "%@ doesn’t apply. Apply it by hand and Continue, or Skip it." = "%@ が当たりません。手で当てて Continue するか、Skip してください。";
 "%@ doesn’t apply. Retry it with a 3-way merge to resolve conflicts, apply it by hand and Continue, or Skip it." = "%@ が当たりません。3-way merge で当て直してコンフリクトを解決するか、手で当てて Continue するか、Skip してください。";
+
+/* MergeSeveralSheet.swift */
+"Merge %ld into %@?" = "%1$ld 個を %2$@ に merge しますか？";
+"This makes one merge commit with all of them as parents, as git merge does with several branches. Drag to change the order. Undo puts it back." = "すべてを親とする merge のコミットを 1 つ作ります（git merge にいくつものブランチを渡したときと同じ）。順はドラッグで変えられます。Undo で戻せます。";
+"Merge One by One" = "1 つずつ merge";
+"⚠︎ %@ conflicts, and git stops when one before the last conflicts. Put it last to resolve the conflicts in this merge, or merge them one by one." = "⚠︎ %@ がコンフリクトします。最後より前のものがコンフリクトすると git は止まります。最後に回せば、この merge でコンフリクトを解けます。1 つずつ merge することもできます。";
+"⚠︎ %@ conflict, and git stops when one before the last conflicts. Merge them one by one instead." = "⚠︎ %@ がコンフリクトします。最後より前のものがコンフリクトすると git は止まるので、1 つずつ merge してください。";
+"Put %@ Last" = "%@ を最後に回す";
+"Message: %@" = "メッセージ: %@";
+"Can’t Merge Them in One Commit" = "1 つのコミットにまとめられません";
+"git stopped because one of them conflicts before the last, and nothing was changed. Merge them one by one instead? Each makes its own merge commit, and you resolve conflicts as they come. Undo puts them all back." = "最後より前のものがコンフリクトしたので git は止まりました。何も変わっていません。代わりに 1 つずつ merge しますか？ それぞれが merge のコミットになり、コンフリクトはその都度解きます。Undo ですべて戻せます。";
+"Resolve them in Working Copy, then Continue or Abort. Not merged yet: %@." = "Working Copy で解決してから Continue するか、Abort してください。まだ merge していないもの: %@。";
+"Merge %ld into %@…" = "%1$ld 個を %2$@ に merge…";

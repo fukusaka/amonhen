@@ -24,8 +24,10 @@ final class Actions {
         self.repository = repository
     }
 
-    /// `command` を実行する（`crates/core/src/command.rs` の `Command`）。
-    func perform(_ command: [String: Any], completion: ((CommandResult) -> Void)? = nil) {
+    /// `command` を実行する（`crates/core/src/command.rs` の `Command`）。失敗したら、`recover` が引き受けなければ
+    /// （false を返したら）知らせる。
+    func perform(_ command: [String: Any], completion: ((CommandResult) -> Void)? = nil,
+                 recover: ((OperationFailure) async -> Bool)? = nil) {
         let repository = self.repository
         RunningOperations.begin()
         Task {
@@ -37,6 +39,10 @@ final class Actions {
                 case .conflict where (command["op"] as? String) == "am":
                     // 当たらずに止まったのか、3-way でコンフリクトを残したのかは、帯に出す。
                     await alert(L("Stopped at a Patch"), L("The bar under the toolbar says why and what you can do next."))
+                case .conflict where !result.remaining.isEmpty:
+                    // 1 つずつの merge が途中で止まった。残りは、解決してから改めて merge する。
+                    await alert(L("There are conflicts"), L("Resolve them in Working Copy, then Continue or Abort. Not merged yet: %@.",
+                                                            ListFormatter.localizedString(byJoining: result.remaining)))
                 case .conflict:
                     await alert(L("There are conflicts"), L("Resolve them in Working Copy, then Continue or Abort."))
                 case .stopped:
@@ -47,7 +53,8 @@ final class Actions {
                 completion?(result)
                 if let op = command["op"] as? String, op == "fetch" || op == "pull" { onFetch?() }
             } catch {
-                await fail(OperationFailure(error, command: command))
+                let failure = OperationFailure(error, command: command)
+                if await recover?(failure) != true { await fail(failure) }
             }
             onChange?()
             refreshUndo()
