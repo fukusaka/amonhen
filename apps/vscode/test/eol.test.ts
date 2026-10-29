@@ -10,6 +10,7 @@ import { eolOf, lineEndingRule, lineEndingsOf, parseCheckAttr, parseEolConfig, t
 import { GitExecutor } from '../src/git/exec.ts';
 import { discardLines } from '../src/state/discard.ts';
 import { UndoLog } from '../src/state/undo.ts';
+import { initMain } from './git.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -94,7 +95,7 @@ function git(...args: string[]): Buffer {
 
 beforeEach(async () => {
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-eol-')));
-  git('init', '-q', '-b', 'main');
+  initMain(dir);
   git('config', 'core.autocrlf', 'false');
   writeFileSync(join(dir, 'a.txt'), '1\n2\n3\n4\n');
   git('add', '.');

@@ -9,6 +9,7 @@ import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { publishBranch, pullCurrent, pushCurrent } from '../src/state/operations.ts';
 import { UndoLog } from '../src/state/undo.ts';
+import { initMain } from './git.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -36,8 +37,8 @@ function commitFile(name: string, content: string, message: string): void {
 beforeEach(async () => {
   tmp = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-seq-')));
   dir = join(tmp, 'work');
-  execFileSync('git', ['init', '-q', '--bare', '-b', 'main', join(tmp, 'remote.git')]);
-  execFileSync('git', ['init', '-q', '-b', 'main', dir]);
+  initMain(join(tmp, 'remote.git'), '--bare');
+  initMain(dir);
   commitFile('a.txt', 'base\n', 'base');
   git('remote', 'add', 'origin', join(tmp, 'remote.git'));
   backend = await CliBackend.open(new GitExecutor('git'), dir);
@@ -238,7 +239,7 @@ test('cherry-pick conflict stops as a sequence', async () => {
 
 test('updateSubmodules initializes a submodule', async () => {
   const lib = join(tmp, 'lib');
-  execFileSync('git', ['init', '-q', '-b', 'main', lib]);
+  initMain(lib);
   writeFileSync(join(lib, 'l.txt'), 'l\n');
   execFileSync('git', ['add', '.'], { cwd: lib });
   execFileSync('git', ['commit', '-q', '-m', 'lib'], { cwd: lib });

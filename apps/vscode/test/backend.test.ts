@@ -8,6 +8,7 @@ import { after, before, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { configStamp, refsStamp, stashStamp } from '../src/git/stamp.ts';
+import { initMain } from './git.ts';
 
 let dir: string;
 let backend: CliBackend;
@@ -28,7 +29,7 @@ function git(...args: string[]): string {
 
 before(async () => {
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-test-')));
-  git('init', '-q', '-b', 'main');
+  initMain(dir);
   writeFileSync(join(dir, 'a.txt'), 'one\n');
   git('add', '.');
   git('commit', '-q', '-m', 'first commit');
@@ -171,7 +172,7 @@ test('stage, unstage and writeIndex', async () => {
 test('unstage works before the first commit', async () => {
   const fresh = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-test-')));
   try {
-    execFileSync('git', ['init', '-q', '-b', 'main'], { cwd: fresh });
+    initMain(fresh);
     writeFileSync(join(fresh, 'x'), 'x\n');
     const b = await CliBackend.open(new GitExecutor('git'), fresh);
     await b.stage(['x']);

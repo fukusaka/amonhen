@@ -7,6 +7,7 @@ import { afterEach, beforeEach, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { UndoConflictError, UndoLog } from '../src/state/undo.ts';
+import { initMain } from './git.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -33,7 +34,7 @@ function commitFile(name: string, content: string, message: string): void {
 
 beforeEach(async () => {
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-undo-')));
-  git('init', '-q', '-b', 'main');
+  initMain(dir);
   commitFile('a.txt', 'base\n', 'base');
   backend = await CliBackend.open(new GitExecutor('git'), dir);
   log = new UndoLog(backend);

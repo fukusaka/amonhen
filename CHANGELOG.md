@@ -607,6 +607,8 @@ First release.
 #### Fixed
 
 - Merge (and Rebase that amounts to a fast-forward) no longer moves a branch checked out in another worktree.
+- Without the engine, the extension works with git 2.23, the supported minimum: it no longer opens repositories with
+  `rev-parse --path-format` (git 2.31) or reads objects with `cat-file --batch-command` (git 2.36).
 
 ### [0.2.3] - 2026-10-21
 

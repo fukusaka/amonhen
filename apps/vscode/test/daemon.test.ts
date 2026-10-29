@@ -12,6 +12,7 @@ import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { UndoLog } from '../src/state/undo.ts';
 import { withDaemonWrites } from '../src/daemon/writes.ts';
+import { initMain } from './git.ts';
 
 // このリポジトリのエンジン（ルートで `cargo build -p amonhen-cli`。CLI と daemon を兼ねる）。なければ飛ばす
 const exe = process.platform === 'win32' ? '.exe' : '';
@@ -35,7 +36,7 @@ before(() => {
   process.env['LOCALAPPDATA'] = dir;
   delete process.env['XDG_DATA_HOME'];
   repo = join(dir, 'repo');
-  execFileSync('git', ['init', '-q', '-b', 'main', repo]);
+  initMain(repo);
   git('config', 'user.name', 'a');
   git('config', 'user.email', 'a@example.com');
   writeFileSync(join(repo, 'a.txt'), 'first\n');

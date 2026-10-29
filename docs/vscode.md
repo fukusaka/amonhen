@@ -133,7 +133,7 @@ In steps 1–5, the Working Copy was built with a sidebar TreeView and the stand
 
 On the git execution layer, the time taken by a small git command is almost entirely the process spawn cost (about 6 ms each on macOS). A query to the resident `cat-file` takes about 0.08 ms. "The number of spawns" and "the scope of updates" matter more than the language, so the following are applied thoroughly.
 
-- Keep `git cat-file --batch-command` resident, rather than spawning for each object fetch. cat-file reads the index only once, at the start, so before querying `:path`, check the index's modification time and restart it if it has changed.
+- Keep `git cat-file --batch` resident, rather than spawning for each object fetch (`--batch-command` needs git 2.36, newer than the supported minimum). cat-file reads the index only once, at the start, so before querying `:path`, check the index's modification time and restart it if it has changed.
 - Detect changes to refs, config and stashes by the modification times of files in `.git` (`HEAD`, the directories under `refs/`, `packed-refs`, `reftable/tables.list`, `config`, `logs/refs/stash`), without spawning. git updates refs by renaming lock files, so directory modification times are enough.
 - Re-fetch only what changed. Refs, including ahead/behind, are fetched with a single `for-each-ref`. Worktree changes cannot be detected, so status is fetched every time. Independent commands run in parallel.
 - Tags / Stashes / Submodules are not fetched until expanded. The TreeView diffs against the previous result and updates only the nodes that changed.
