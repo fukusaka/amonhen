@@ -1987,6 +1987,33 @@ pub unsafe extern "C" fn amonhen_conflict_view(
     }
 }
 
+/// `git range-diff` の差分の差分（`rangeDiff` の答えの `diff` の行を `\n` でつないだもの）を、差分と同じ形の行に
+/// する（`amonhen_diff_free` で解放する）。外側の記号で行の種類を決め、文字列はそれぞれの版のパッチの行。
+///
+/// # Safety
+/// `text` は NUL 終端の UTF-8 文字列であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_range_diff_view(
+    text: *const c_char,
+    encoding: AmonhenEncoding,
+) -> *mut AmonhenDiff {
+    match str_arg(text) {
+        Ok(text) => {
+            let lines: Vec<&str> = if text.is_empty() {
+                Vec::new()
+            } else {
+                text.split('\n').collect()
+            };
+            let file = amonhen_core::diff::range_diff_file(&lines);
+            Box::into_raw(Box::new(DiffView::new(&file, &profile(encoding)))).cast()
+        }
+        Err(e) => {
+            set_error(e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
 /// `tips`（20 バイトの ID が `count` 個）から辿れるコミットだけの History（ブランチで絞り込む）。
 /// `amonhen_history_release` で手放す。
 ///

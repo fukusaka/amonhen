@@ -327,6 +327,8 @@ pub enum Op {
     ChangeWorktree(WorktreeChange),
     /// → `Vec<WorktreeChanges>`
     WorktreeChanges(Vec<String>, bool),
+    /// → `Vec<RangePair>`
+    RangeDiff(Vec<String>, Option<u32>),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

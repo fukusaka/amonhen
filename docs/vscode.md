@@ -68,6 +68,9 @@ is in [front.md](front.md), and the design in item 18 of
   `git check-mailmap`. When `.mailmap`, a config file or the file `mailmap.file` names changes (their modification
   times, read on each refresh; where `mailmap.file` points is asked of git only after a config file changes), History
   and the details it keeps are read again.
+- Range Diff (Compare with Previous Version on a local branch, and Range Diff… in the palette) shows a read-only
+  `amonhen:` document in `git range-diff`'s form. The engine runs the core's `previousVersion` and `rangeDiff`; the
+  git execution layer reads the branch's reflog (`git log -g`) and runs `git range-diff` itself.
 
 ## Implementation approach for the required features
 

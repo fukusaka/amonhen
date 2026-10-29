@@ -274,6 +274,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     var onSelectCommit: ((Data?) -> Void)?
     /// 複数の行を選んだ（⇧・⌘ クリック）。まとめた差分を見せる。
     var onSelectRows: (([Int], History) -> Void)?
+    /// Range Diff で比べる（git range-diff と同じ形の範囲）。
+    var onRangeDiff: (([String]) -> Void)?
 
     init(repository: Repository, renderer: GraphRenderer, text: TextRenderer) {
         self.repository = repository
@@ -1534,6 +1536,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         if sorted.count >= 2, zip(sorted, sorted.dropFirst()).allSatisfy({ $1 == $0 + 1 }),
            !commits.contains(where: \.isMerge) {
             add("Squash \(commits.count) Commits…") { actions.squash(range: commits.map(\.hex)) }
+        }
+        // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
+        if commits.count == 2 {
+            add(L("Compare as Two Versions (Range Diff)")) { [weak self] in
+                self?.onRangeDiff?(["\(commits[1].hex)...\(commits[0].hex)"])
+            }
         }
         menu.addItem(.separator())
         add(L("Copy Commit IDs")) {

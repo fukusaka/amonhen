@@ -1247,6 +1247,16 @@ AmonhenDiff *amonhen_conflict_view(const AmonhenRepo *repo_ptr,
                                    AmonhenEncoding encoding);
 
 /**
+ * `git range-diff` の差分の差分（`rangeDiff` の答えの `diff` の行を `\n` でつないだもの）を、差分と同じ形の行に
+ * する（`amonhen_diff_free` で解放する）。外側の記号で行の種類を決め、文字列はそれぞれの版のパッチの行。
+ *
+ * # Safety
+ * `text` は NUL 終端の UTF-8 文字列であること。
+ */
+AmonhenDiff *amonhen_range_diff_view(const char *text,
+                                     AmonhenEncoding encoding);
+
+/**
  * `tips`（20 バイトの ID が `count` 個）から辿れるコミットだけの History（ブランチで絞り込む）。
  * `amonhen_history_release` で手放す。
  *

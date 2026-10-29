@@ -318,6 +318,14 @@ pub trait Operations: Send + Sync {
     /// `theirs` を `ours` にマージしたらコンフリクトするファイル（なければ空）。作業ツリーと index には触らない。
     /// git が古くて調べられなければ `None`。
     fn predict_merge(&self, ours: &str, theirs: &str) -> Result<Option<Vec<String>>>;
+    /// 同じ一連のコミットの 2 つの版を比べる（`git range-diff`）。`ranges` は git と同じ形（`A...B`、
+    /// `<base> <A> <B>`、`<base>..<A> <base>..<B>`）。`creation_factor` は git の `--creation-factor`
+    /// （`None` なら git の既定）。コミット ID は完全な形で返す。
+    fn range_diff(
+        &self,
+        ranges: &[String],
+        creation_factor: Option<u32>,
+    ) -> Result<Vec<crate::RangePair>>;
     /// 名前（`main`・`origin/main`・コミット ID など）が指すコミット。
     fn resolve(&self, rev: &str) -> Result<Oid>;
     fn merge(&self, rev: &str) -> Result<Outcome>;

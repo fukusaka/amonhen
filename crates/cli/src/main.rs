@@ -49,6 +49,7 @@ usage: amonhen [<path>]
        amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune]
        amonhen merge-file [--all] [--check] <file>…
        amonhen merge-check [--into <branch>] [--json] <rev>
+       amonhen range-diff [--creation-factor <n>] [--json] (<old>...<new> | <base> <old> <new> | <old-range> <new-range> | --previous [<branch>])
        amonhen clone <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)
@@ -73,7 +74,10 @@ code is 1, so it also works as git's mergetool:
   git config mergetool.amonhen.cmd 'amonhen merge-file \"$MERGED\"'
   git config mergetool.amonhen.trustExitCode true
 merge-check lists the files that merging <rev> into HEAD (or --into <branch>) would conflict in, without touching the
-worktree. The exit code is 1 if there are conflicts, and 2 if it can't tell (git older than 2.38).")
+worktree. The exit code is 1 if there are conflicts, and 2 if it can't tell (git older than 2.38).
+range-diff compares two versions of a series of commits with git range-diff (merge commits are left out, as in git).
+--previous compares a branch (the current one by default) with its version before it was last rewritten (a rebase,
+History edit, amend or reset), found in its reflog.")
 }
 
 fn main() -> ExitCode {
@@ -103,6 +107,7 @@ fn main() -> ExitCode {
         Some("worktree") => worktree(&args[1..]),
         Some("merge-file") => merge_file(&args[1..]),
         Some("merge-check") => work::merge_check(&args[1..]),
+        Some("range-diff") => work::range_diff(&args[1..]),
         Some("find-repositories") => find_repositories(&args[1..]),
         Some("daemon") => daemon(&args[1..]),
         Some("install") => install::install(&args[1..]),

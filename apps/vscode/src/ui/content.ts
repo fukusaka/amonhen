@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import type { RepositoryManager } from '../state/manager.ts';
+import { rangeDiffDocument } from './rangeDiff.ts';
 import { parseGitUri, SCHEME } from './uri.ts';
 
 /**
@@ -19,6 +20,10 @@ export class GitContentProvider implements vscode.TextDocumentContentProvider {
       return '';
     }
     const repo = this.manager.get(parsed.root);
+    if (parsed.side === 'rangeDiff') {
+      if (!repo) return '';
+      return rangeDiffDocument(repo, parsed.ranges ?? [], parsed.note).catch((err: unknown) => `# ${String(err)}\n`);
+    }
     const obj = await repo?.backend.object(`${parsed.rev}:${parsed.path}`);
     return obj?.data.toString('utf8') ?? '';
   }

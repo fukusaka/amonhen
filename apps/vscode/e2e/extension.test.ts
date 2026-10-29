@@ -241,6 +241,39 @@ async function mailmapFlow(): Promise<void> {
   }
 }
 
+/**
+ * ブランチを書き換えると（ここでは update-ref で）、そのブランチの右クリックの Compare with Previous Version が、
+ * 書き換える前の版と比べた文書を開く。range-diff を動かすのは、daemon を使うならコア、使わなければ拡張の git
+ */
+async function rangeDiffFlow(path: 'daemon' | 'git'): Promise<void> {
+  const branch = `range-diff-${path}`;
+  const tree = git('rev-parse', 'HEAD^{tree}').trim();
+  const make = (parent: string, message: string) => git('commit-tree', tree, '-p', parent, '-m', message).trim();
+  const head = git('rev-parse', 'HEAD').trim();
+  const one = make(head, 'one');
+  git('branch', branch, make(one, 'two'));
+  git('update-ref', '-m', 'rewrite', `refs/heads/${branch}`, make(head, 'one, reworded'));
+  const mark = spawned.length;
+  try {
+    const target = { kind: 'branch', remote: false, ref: { name: `refs/heads/${branch}` } };
+    await vscode.commands.executeCommand('amonhen.compareWithPrevious', target);
+    const doc = await until('Range Diff の文書', () =>
+      vscode.workspace.textDocuments.find((d) => d.uri.scheme === 'amonhen' && d.uri.path.endsWith(`${branch}.range-diff.diff`)),
+    );
+    const text = doc.getText();
+    assert.match(text, new RegExp(`^# ${branch}@\\{1\\} → ${branch}: rewrite\n# git range-diff `), text);
+    assert.match(text, /^\s*\d+:\s+[0-9a-f]{7} < +-:\s+-+ two$/m, text);
+    assert.equal(
+      spawned.slice(mark).some((s) => s.args.includes('range-diff')),
+      path === 'git',
+      path === 'git' ? '拡張が git range-diff を動かす' : 'range-diff はコアがする',
+    );
+  } finally {
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    git('branch', '-D', branch);
+  }
+}
+
 suite('Amon Hen in VSCode', () => {
   suiteSetup(async () => {
     recordSpawns();
@@ -291,6 +324,10 @@ suite('Amon Hen in VSCode', () => {
     await mailmapFlow();
   });
 
+  test('compares a branch with its previous version through the daemon', async () => {
+    await rangeDiffFlow('daemon');
+  });
+
   test('stages, undoes, discards lines and commits on a CRLF file through the daemon', async () => {
     const mark = spawned.length;
     await workingCopyFlow('daemon');
@@ -335,6 +372,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('shows names from the mailmap on the git execution layer', async () => {
     await mailmapFlow();
+  });
+
+  test('compares a branch with its previous version on the git execution layer', async () => {
+    await rangeDiffFlow('git');
   });
 
   test('runs the git chosen in Amon Hen’s settings, and stops when it isn’t there', async () => {

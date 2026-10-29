@@ -11,6 +11,9 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Range Diff compares a branch with its version before the last rebase, History edit or amend (found in its reflog),
+  or any two ranges, as `git range-diff` does: from a branch's menu, Repository, Reflog or two commits in History.
+  `amonhen range-diff` does the same (`--previous`, `--json`).
 - Repositories on an SSH host running Windows open in the app and the CLI (`ssh://host/C:/src/repo`), whichever
   default shell its OpenSSH server uses; the app bundles the Windows engines and sends them by scp.
 - Tag signatures are verified and shown like commit signatures: a Tag line per tag in the commit details, the
@@ -583,6 +586,8 @@ First release.
 
 #### Added
 
+- Compare with Previous Version on a local branch and Range Diff… show `git range-diff` of two versions of a
+  branch in a read-only document, with or without the engine.
 - A local branch that isn't checked out can be fast-forwarded to its upstream (Fast-Forward to Upstream) or pushed
   (Push to Upstream) from its menu in the nav.
 - History and the commit details show people by their mailmap names (following `log.mailmap`), with the recorded

@@ -12,6 +12,7 @@ pub mod mailmap;
 mod oid;
 mod ops;
 pub mod process;
+mod range_diff;
 mod refs;
 pub mod scan;
 pub mod search;
@@ -33,6 +34,10 @@ pub use ops::{
     ConfigEntry, Directory, DirectoryEntry, HeadState, MachineGit, Operations, Outcome, Program,
     PullMode, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry, ResetMode, Sequence, SigningKey,
     WorktreeChange, WorktreeChanges,
+};
+pub use range_diff::{
+    RangeCommit, RangePair, RangeStatus, parse_range_diff, rebase_onto, rebase_onto_from_head,
+    reflog_keeps_history,
 };
 pub use refs::{RefEntry, RefKind, ReflogEntry, Refs, RepoPaths};
 pub use status::{Status, StatusEntry, StatusKind};

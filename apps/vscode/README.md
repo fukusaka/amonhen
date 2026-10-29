@@ -25,6 +25,7 @@ Clicking the Amon Hen icon in the activity bar opens the nav in the sidebar and 
 
 - Selecting a branch, remote branch or tag shows its history in the History of the main view.
 - Right-clicking a branch or tag offers Checkout (for a remote branch, creates a local branch that tracks it and switches to it), for a local branch that is not checked out Fast-Forward to Upstream (only behind it, as of the last Fetch; not for one checked out in another worktree) or Push to Upstream (only ahead), Publish Branch for a local branch without an upstream, Merge into Current Branch, Rebase Current Branch onto This, Rename Branch, Delete Branch, New Branch (create one from there and switch to it), and New Tag (an annotated tag if you enter a message). Creation and deletion can be reverted with Undo.
+- Right-click a local branch and choose Compare with Previous Version to compare it with its version before the last rebase or amend (from its reflog), as `git range-diff` does, in a read-only document. "Amon Hen: Range Diff…" in the command palette compares any two ranges.
 - The `+` on the Stashes header stashes your working changes (you can choose whether to include untracked files). Selecting a stash opens its contents as a multi-file diff; right-click for Apply / Pop / Drop (revertible with Undo). Apply and Pop also restore what was staged.
 - Right-clicking a submodule offers Update (initialize it and match it to the recorded commit) and opening it in another window.
 - When multiple repositories are open, switch between them with a title button.

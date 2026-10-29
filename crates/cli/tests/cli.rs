@@ -165,6 +165,55 @@ fn merge_check_lists_the_files_that_would_conflict() {
 }
 
 #[test]
+fn range_diff_compares_a_branch_with_its_previous_version() {
+    let repo = repository();
+    let dir = repo.path();
+    let home = tempfile::tempdir().unwrap();
+    let path = dir.to_str().unwrap();
+    git(dir, &["switch", "-q", "-c", "series", "main~1"]);
+    commit(dir, "s1.txt", "one");
+    commit(dir, "s2.txt", "two");
+    let (out, code) = amonhen(home.path(), &["range-diff", "-C", path, "--previous"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("hasn’t been rewritten"), "{out}");
+
+    // 2 つ目を落として main に載せ直す。
+    git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+    git(dir, &["rebase", "-q", "main"]);
+    let (out, code) = amonhen(
+        home.path(),
+        &["range-diff", "-C", path, "--previous", "--color=never"],
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(out.starts_with("series@{1} → series: rebase"), "{out}");
+    assert!(out.contains("1:  ") && out.contains(" = 1:  "), "{out}");
+    let (json, _) = amonhen(
+        home.path(),
+        &[
+            "range-diff",
+            "-C",
+            path,
+            "--json",
+            "main",
+            "series@{2}",
+            "series",
+        ],
+    );
+    let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let statuses: Vec<&str> = v["pairs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["status"].as_str().unwrap())
+        .collect();
+    assert_eq!(statuses, ["same", "removed"], "{json}");
+    assert_eq!(v["previous"], serde_json::Value::Null);
+
+    let (out, code) = amonhen(home.path(), &["range-diff", "-C", path]);
+    assert_ne!(code, 0, "{out}");
+}
+
+#[test]
 fn worktree_lists_adds_and_removes() {
     let repo = repository();
     let home = tempfile::tempdir().unwrap();
@@ -303,6 +352,27 @@ fn works_the_same_directly_through_the_daemon_and_over_ssh() {
         assert_eq!(log[0]["subject"], message.as_str(), "{at}: {log}");
         assert_eq!(log[0]["refs"][0], "main", "{at}: {log}");
         shown.push(env.json(&["show", "-C", at, "--json", "HEAD~1"]));
+        // range-diff: amend で書き換えると、前の版（reflog）と比べられる（SSH 越しでは SSH 先の git が比べる）。
+        let amended = Command::new("git")
+            .current_dir(&repo)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap();
+        let amended = String::from_utf8_lossy(&amended.stdout).trim().to_owned();
+        git(
+            &repo,
+            &["commit", "-q", "--amend", "-m", &format!("{message}!")],
+        );
+        let range = env.json(&["range-diff", "-C", at, "--previous", "--json"]);
+        assert_eq!(range["previous"]["old"], amended.as_str(), "{at}: {range}");
+        assert!(
+            range["pairs"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|p| p["old"]["oid"] == amended.as_str()),
+            "{at}: {range}"
+        );
         let refs = env.json(&["refs", "-C", at, "--json"]);
         assert_eq!(refs["headBranch"], "main", "{at}: {refs}");
         // タグの署名（daemon・SSH 越しでは、タグのオブジェクトを受け取って確かめる）。

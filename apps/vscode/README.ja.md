@@ -25,6 +25,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 
 - ブランチ・リモートブランチ・タグを選ぶと、メインビューの History にその履歴が出る。
 - ブランチ・タグの右クリックで Checkout（リモートブランチなら追跡するローカルブランチを作って切り替える）、チェックアウトしていないローカルブランチなら Fast-Forward to Upstream（upstream より後ろにだけあるとき。最後の Fetch の時点。ほかの worktree でチェックアウト中のものは除く）か Push to Upstream（先にだけあるとき）、upstream の無いローカルブランチなら Publish Branch、Merge into Current Branch、Rebase Current Branch onto This、Rename Branch、Delete Branch、New Branch（そこから作って切り替える）、New Tag（メッセージを入れれば annotated tag）。作成と削除は Undo で戻せる。
+- ローカルブランチの右クリックの Compare with Previous Version で、最後の rebase・amend の前の版（reflog から）と比べ、`git range-diff` と同じ形の読み取り専用の文書に出す。パレットの「Amon Hen: Range Diff…」では、好きな 2 つの範囲を比べる。
 - Stashes の見出しの `+` で、作業中の変更を stash する（untracked のファイルを含めるかを選べる）。stash を選ぶと中身を複数ファイル diff で開き、右クリックで Apply / Pop / Drop（Undo で戻せる）。Apply と Pop は stage していた状態も戻す。
 - Submodules は右クリックで Update（初期化して記録されているコミットに合わせる）と、別のウィンドウで開く。
 - 複数のリポジトリを開いているときは、タイトルのボタンで切り替える。

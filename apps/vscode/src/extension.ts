@@ -4,6 +4,7 @@ import { disposeDaemonClients, initDaemon } from './daemon/connection.ts';
 import { RepositoryManager } from './state/manager.ts';
 import { registerBranchCommands } from './ui/branchCommands.ts';
 import { registerContentProvider } from './ui/content.ts';
+import { registerRangeDiffCommands } from './ui/rangeDiff.ts';
 import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
@@ -71,6 +72,7 @@ export async function activate(
     registerBranchCommands(manager),
     registerStashCommands(manager),
     registerSubmoduleCommands(manager),
+    registerRangeDiffCommands(manager),
   );
 
   await manager.initialize();
