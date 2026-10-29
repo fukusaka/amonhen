@@ -436,6 +436,22 @@ suite('Amon Hen in VSCode', () => {
     await patchFlow('daemon');
   });
 
+  test('drops the selection of a file whose changes went away before its diff is read', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const path = join(root, FILE);
+    const before = readFileSync(path);
+    writeFileSync(path, Buffer.concat([before, Buffer.from('more\r\n')]));
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
+    // 拡張が知る前に元に戻す。daemon は新しい status を読むので、このファイルの差分を断る
+    writeFileSync(path, before);
+    mark = posted.length;
+    await panel.workingCopy.handle({ type: 'wcSelect', group: 'unstaged', path: FILE });
+    await waitPosted('wcDiff', mark, (m) => m.diff === undefined);
+    await waitPosted('wcFiles', mark, (m) => !m.files.some((f) => f.path === FILE));
+  });
+
   test('shares one daemon with another window and the CLI', async () => {
     const engine = process.env['AMONHEN_E2E_ENGINE']!;
     const before = await until('daemon', () => daemonStatus());
