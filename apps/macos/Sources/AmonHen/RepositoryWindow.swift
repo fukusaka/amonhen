@@ -307,9 +307,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// worktree の組の、Working Copy と操作の知らせをこのウィンドウにつなぐ。書き込む先でないものの知らせは、
     /// 帯やタブの名前には出さない。
     private func wire(_ slot: WorktreeSlot) {
-        slot.workingCopy.onSequenceChange = { [weak self, weak slot] sequence, conflicts in
+        slot.workingCopy.onSequenceChange = { [weak self, weak slot] sequence, conflicts, withoutMarkers in
             guard let self, slot === editing else { return }
-            showSequenceBanner(sequence, conflicts: conflicts)
+            showSequenceBanner(sequence, conflicts: conflicts, withoutMarkers: withoutMarkers)
             sidebar.setConflictCount(conflicts)
         }
         slot.workingCopy.onChangeCount = { [weak self, weak slot] count in
@@ -854,11 +854,13 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     private let sequenceDetail = NSTextField(labelWithString: "")
     private let skipButton = NSButton(title: "Skip", target: nil, action: nil)
     private let continueButton = NSButton(title: "Continue", target: nil, action: nil)
+    /// マーカーの残っていないコンフリクトのファイルを、まとめて解決済みにする。
+    private let markResolvedButton = NSButton(title: "", target: nil, action: nil)
 
     /// merge・rebase・cherry-pick・revert の途中なら、ツールバーの下に色の付いた帯を出す。1 行目に何をどこへして
     /// いる途中か（何番目か）、2 行目にどこで・なぜ止まっていて次に何をすればよいか。コンフリクトが残っていれば数と
     /// Working Copy へのリンク、なければ Continue を強調する。
-    private func showSequenceBanner(_ sequence: SequenceInfo?, conflicts: Int) {
+    private func showSequenceBanner(_ sequence: SequenceInfo?, conflicts: Int, withoutMarkers: Int = 0) {
         guard let sequence else {
             if let banner = sequenceBanner,
                let index = window.titlebarAccessoryViewControllers.firstIndex(of: banner) {
@@ -868,8 +870,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             return
         }
         sequenceLabel.stringValue = Self.sequenceTitle(sequence)
-        sequenceDetail.stringValue = Self.sequenceDetail(sequence, conflicts: conflicts)
+        sequenceDetail.stringValue = Self.sequenceDetail(sequence, conflicts: conflicts, withoutMarkers: withoutMarkers)
         sequenceDetail.toolTip = sequenceDetail.stringValue
+        markResolvedButton.title = L("Mark %ld Without Markers Resolved", withoutMarkers)
+        markResolvedButton.isHidden = withoutMarkers == 0
         skipButton.isHidden = !["rebase", "cherry-pick"].contains(sequence.kind)
         continueButton.keyEquivalent = conflicts == 0 ? "\r" : ""
         guard sequenceBanner == nil else { return }
@@ -893,7 +897,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         skipButton.target = self
         skipButton.action = #selector(skipSequence(_:))
         let abort = NSButton(title: "Abort", target: self, action: #selector(abortSequence(_:)))
-        let stack = NSStackView(views: [icon, texts, NSView(), show, continueButton, skipButton, abort])
+        markResolvedButton.target = self
+        markResolvedButton.action = #selector(markResolvedWithoutMarkers(_:))
+        markResolvedButton.toolTip = L("Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them).")
+        let stack = NSStackView(views: [icon, texts, NSView(), markResolvedButton, show, continueButton, skipButton, abort])
         stack.spacing = 8
         stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
         stack.frame = NSRect(x: 0, y: 0, width: 600, height: 46)
@@ -924,10 +931,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// 帯の 2 行目: どこで・なぜ止まっていて、次に何をすればよいか。
-    private static func sequenceDetail(_ s: SequenceInfo, conflicts: Int) -> String {
+    private static func sequenceDetail(_ s: SequenceInfo, conflicts: Int, withoutMarkers: Int) -> String {
         let subject = s.step?.subject.map { "“\($0)”" }
         if s.step?.action == "exec", conflicts == 0 {
             return L("The command %@ failed. Fix the problem, then Continue.", subject ?? "")
+        }
+        if conflicts > 0, withoutMarkers > 0 {
+            return subject.map {
+                L("%ld files have conflicts at %@ (%ld without markers). Resolve them in Working Copy, then Continue.", conflicts, $0, withoutMarkers)
+            } ?? L("%ld files have conflicts (%ld without markers). Resolve them in Working Copy, then Continue.", conflicts, withoutMarkers)
         }
         if conflicts > 0 {
             return subject.map { L("%ld files have conflicts at %@. Resolve them in Working Copy, then Continue.", conflicts, $0) }
@@ -1472,6 +1484,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     @objc func newTag(_ sender: Any?) { actions.newTag(at: startPoint) }
 
     @objc func continueSequence(_ sender: Any?) { actions.perform(["op": "continue"]) }
+    @objc func markResolvedWithoutMarkers(_ sender: Any?) { workingCopy.markResolvedWithoutMarkers() }
     @objc func skipSequence(_ sender: Any?) { actions.perform(["op": "skip"]) }
     @objc func abortSequence(_ sender: Any?) { actions.perform(["op": "abort"]) }
 

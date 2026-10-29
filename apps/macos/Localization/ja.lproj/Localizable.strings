@@ -1469,3 +1469,12 @@
 "Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff" = "今のブランチを、最後に書き換える（rebase・コミットの編集・amend・reset）前の版と比べます（git range-diff と同じ）";
 "Compare with Current HEAD (Range Diff)" = "今の HEAD と比べる（Range Diff）";
 "Compare as Two Versions (Range Diff)" = "2 つの版として比べる（Range Diff）";
+"no markers" = "マーカーなし";
+"git rerere applied the earlier resolution. Check the result, then Mark Resolved." = "git の rerere が前の解決を適用しました。結果を確かめて「解決済みにする」を押してください。";
+"No conflict markers are left. Check the result, then Mark Resolved." = "コンフリクトのマーカーは残っていません。結果を確かめて「解決済みにする」を押してください。";
+"Replace the resolved content of %@?" = "%@ の解決した内容を置き換えますか？";
+"No conflict markers are left in it, so it may already be resolved. This replaces it with one side’s whole file." = "マーカーが残っていないので、もう解決済みかもしれません。片側のファイルの内容で丸ごと置き換えます。";
+"Mark %ld Without Markers Resolved" = "マーカーのない %ld ファイルを解決済みにする";
+"Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them)." = "マーカーの残っていないコンフリクトのファイルを解決済みにします（rerere やほかのエディタで解決したもの）。";
+"%ld files have conflicts at %@ (%ld without markers). Resolve them in Working Copy, then Continue." = "%2$@ で %1$ld ファイルがコンフリクトしています（うち %3$ld ファイルはマーカーなし）。Working Copy で解決してから Continue してください。";
+"%ld files have conflicts (%ld without markers). Resolve them in Working Copy, then Continue." = "%ld ファイルがコンフリクトしています（うち %ld ファイルはマーカーなし）。Working Copy で解決してから Continue してください。";
