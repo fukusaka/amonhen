@@ -170,6 +170,11 @@ impl UndoLog {
 
     fn push(&self, entry: Entry) -> Result<()> {
         let _guard = self.lock.lock().unwrap();
+        self.append(entry)
+    }
+
+    /// `push` の中身。呼ぶ側が `lock` を取っておく。
+    fn append(&self, entry: Entry) -> Result<()> {
         let mut entries = self.load();
         entries.push(entry);
         let excess = entries.len().saturating_sub(MAX_ENTRIES);
@@ -346,6 +351,8 @@ impl UndoLog {
             mode: Mode,
             before: RefSnapshot,
         }
+        // 読んでから消すまでを 1 つずつに（Continue と画面の更新が同時に来ると、両方が記録を積む）。
+        let _guard = self.lock.lock().unwrap();
         let Some(pending) = self
             .files
             .read(Root::GitDir, PENDING_FILE)?
@@ -360,7 +367,7 @@ impl UndoLog {
         let after = Self::snapshot(ops, &refs)?;
         let changed = !pending.before.same(&after);
         if changed {
-            self.push(Entry {
+            self.append(Entry {
                 label: pending.label,
                 time: pending.time,
                 mode: pending.mode,
@@ -804,5 +811,39 @@ mod tests {
             git.read(&["rev-parse", "-q", "--verify", "refs/stash"])
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn settles_a_stopped_operation_once_when_asked_at_the_same_time() {
+        // Continue と画面の更新（UndoPeek）が同時に確定しようとしても、記録は 1 つだけ。
+        let (tmp, git, log) = repo();
+        commit(&tmp, &git, "a.txt", "1\n");
+        for i in 0..10 {
+            log.record_stoppable(
+                &git,
+                &format!("Split {i}"),
+                &[],
+                || Ok(commit(&tmp, &git, "a.txt", &format!("{i}\n"))),
+                |_| false,
+                |_| true,
+            )
+            .unwrap();
+            let barrier = std::sync::Barrier::new(2);
+            let settled = std::thread::scope(|s| {
+                let settle = || {
+                    barrier.wait();
+                    log.settle_pending(&git).unwrap()
+                };
+                let a = s.spawn(settle);
+                let b = s.spawn(settle);
+                [a.join().unwrap(), b.join().unwrap()]
+            });
+            assert_eq!(
+                settled.iter().filter(|&&x| x).count(),
+                1,
+                "{i}: {settled:?}"
+            );
+        }
+        assert_eq!(log.entries().len(), 10);
     }
 }
