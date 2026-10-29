@@ -368,6 +368,79 @@ async function patchFlow(label: string): Promise<void> {
   });
 }
 
+/**
+ * rerere が前の解決を当てたファイルと、ほかのエディタで直したファイルは、マーカーが残っていないコンフリクトとして
+ * Webview に送られる（マーカーが残っているファイルとは分ける）。そうしたファイルで Accept を選ぶと、解決した内容が
+ * 失われると確かめ、まとめて解決済みにできる
+ */
+async function conflictsWithoutMarkersFlow(): Promise<void> {
+  const panel = await showView('amonhen.showWorkingCopy');
+  const wc = panel.workingCopy;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const write = (file: string, text: string) => writeFileSync(join(root, file), text);
+  const files = ['rerere.txt', 'hand.txt', 'open.txt'];
+  const commitSide = (side: string) => {
+    for (const f of files) write(f, `1\n${f} ${side}\n3\n`);
+    git('add', ...files);
+    git('commit', '-q', '-m', `conflict ${side}`);
+  };
+  git('config', 'rerere.enabled', 'true');
+  git('switch', '-q', '-c', 'conflict-ours');
+  commitSide('ours');
+  git('switch', '-q', '-c', 'conflict-theirs', 'HEAD~');
+  commitSide('theirs');
+  git('switch', '-q', 'conflict-ours');
+  const merge = () => assert.throws(() => childProcess.execFileSync('git', ['merge', '-q', 'conflict-theirs'], { cwd: root, stdio: 'ignore' }));
+  try {
+    // 1 回目: rerere.txt だけ解決し、rerere に覚えさせてやめる。2 回目は rerere が rerere.txt を解く
+    merge();
+    write('rerere.txt', '1\nrerere.txt both\n3\n');
+    git('rerere');
+    git('merge', '--abort');
+    merge();
+    assert.equal(readFileSync(join(root, 'rerere.txt'), 'utf8'), '1\nrerere.txt both\n3\n');
+    write('hand.txt', '1\nhand.txt both\n3\n');
+    const mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const sent = await waitPosted('wcFiles', mark, (m) => m.files.filter((f) => f.group === 'conflicts').length === 3);
+    const state = (path: string) => {
+      const f = sent.files.find((x) => x.group === 'conflicts' && x.path === path)!;
+      return { markers: f.markers, rerere: f.rerere };
+    };
+    assert.deepEqual(state('rerere.txt'), { markers: 0, rerere: true });
+    assert.deepEqual(state('hand.txt'), { markers: 0, rerere: false });
+    assert.deepEqual(state('open.txt'), { markers: 1, rerere: false });
+
+    // Accept は、解決した内容が失われると確かめる（ここでは断る）
+    let detail: string | undefined;
+    const showWarningMessage = async (_: string, options: { detail?: string }) => {
+      detail = options.detail;
+      return undefined;
+    };
+    await withWindow({ showWarningMessage }, () => wc.handle({ type: 'wcResolve', path: 'hand.txt', action: 'current' }));
+    assert.match(detail ?? '', /もう解決済みかもしれません/);
+    assert.equal(readFileSync(join(root, 'hand.txt'), 'utf8'), '1\nhand.txt both\n3\n', '断れば変わらない');
+
+    // Conflicts の見出しの Mark N as Resolved と同じく、マーカーのないものだけを解決済みにする
+    await wc.handle({
+      type: 'wcStageFiles',
+      op: 'stage',
+      files: ['rerere.txt', 'hand.txt'].map((path) => ({ group: 'conflicts' as const, path })),
+    });
+    await until('解決済み', () => git('diff', '--name-only', '--diff-filter=U').trim() === 'open.txt');
+  } finally {
+    try {
+      git('merge', '--abort');
+    } catch {
+      // もうやめている
+    }
+    git('switch', '-q', branch);
+    git('branch', '-q', '-D', 'conflict-ours', 'conflict-theirs');
+    git('config', '--unset', 'rerere.enabled');
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 suite('Amon Hen in VSCode', () => {
   suiteSetup(async () => {
     recordSpawns();
@@ -554,6 +627,10 @@ suite('Amon Hen in VSCode', () => {
       await gitConfig.update('path', undefined, vscode.ConfigurationTarget.Global);
       await vscode.workspace.getConfiguration('amonhen').update('daemon.enabled', false, vscode.ConfigurationTarget.Global);
     }
+  });
+
+  test('tells conflicts without markers and marks them resolved', async () => {
+    await conflictsWithoutMarkersFlow();
   });
 
   test('starts every process without a console window', () => {
