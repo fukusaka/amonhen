@@ -112,6 +112,8 @@ becomes the GitHub Release notes.
   `notes.rewriteRef` is set: they used to keep only the oldest commit's.
 - Split moves the commit's notes to the last of the new commits, as git's own steps for splitting a commit do (`edit`,
   then `reset HEAD^`); they were lost.
+- History starts from HEAD, branches, remote branches and tags, as the sidebar does (`git log --branches --remotes
+  --tags HEAD`): commits kept by other refs, such as git notes' or `git maintenance`'s `refs/prefetch`, no longer show.
 
 ### [0.2.7] - 2026-10-26
 
