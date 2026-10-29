@@ -2,7 +2,7 @@
  * git 実行層のインターフェース。状態管理層と UI 層はこれだけに依存する。
  * 計測して足りない箇所が出たら、その部分だけ別実装（WASM やネイティブ）に差し替える。
  */
-import { access, readFile } from 'node:fs/promises';
+import { access, readFile, realpath } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { CatFileBatch, type GitObject } from './catFile.ts';
 import { ATTRIBUTES, lineEndingsOf, parseCheckAttr, parseEolConfig, toGitForm, type LineEndings } from './eol.ts';
@@ -182,12 +182,12 @@ export class CliBackend implements RepositoryBackend {
   }
 
   static async open(git: GitExecutor, cwd: string): Promise<CliBackend> {
-    const out = await git.text(
-      ['rev-parse', '--path-format=absolute', '--show-toplevel', '--git-dir', '--git-common-dir'],
-      { cwd, readOnly: true },
-    );
+    // `--git-dir`・`--git-common-dir` は cwd からの相対で返ることがあるので、cwd の実際の場所から解決する
+    // （`--path-format=absolute` は git 2.31 から）
+    const out = await git.text(['rev-parse', '--show-toplevel', '--git-dir', '--git-common-dir'], { cwd, readOnly: true });
+    const base = await realpath(cwd);
     // Windows の git は `C:/…` と / で区切って返すので、その OS の形にそろえる（VSCode のパスと比べられるように）。
-    const [root = '', gitDir = '', commonDir = ''] = out.split('\n').map((p) => (p ? resolve(p) : p));
+    const [root = '', gitDir = '', commonDir = ''] = out.split('\n').map((p) => (p ? resolve(base, p) : p));
     return new CliBackend(git, root, { gitDir, commonDir });
   }
 
