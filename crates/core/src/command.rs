@@ -302,6 +302,9 @@ pub enum Command {
     ConflictCount {
         path: String,
     },
+    /// 直前に読んだ status の内容のコンフリクトそれぞれの、残っているマーカーの数と、rerere が前の解決を
+    /// 当てたか（`info.files`: `{path, markers, rerere}`。`Repository::conflict_files`）。
+    ConflictFiles,
     /// マージエディタの結果を `path` に書く（Undo できる）。`stage` なら解決済みにする（index に入れる）。
     SaveMerge {
         path: String,
@@ -549,6 +552,16 @@ pub struct Response {
     /// 失敗に関わるパス（ほかの worktree の場所、ロックファイル）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_path: Option<String>,
+}
+
+/// 内容のコンフリクトのファイル 1 つの状態（`Repository::conflict_files`）。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ConflictFile {
+    pub path: String,
+    /// 作業ツリーに残っているコンフリクトのマーカーの数。0 なら、中身はもう解決されているかもしれない。
+    pub markers: usize,
+    /// git の rerere が前の解決を当てた。
+    pub rerere: bool,
 }
 
 impl Response {
@@ -1014,6 +1027,47 @@ impl Repository {
             "mergedTags": merged_tags,
             "trailers": trailers,
         }))
+    }
+
+    /// `status` の内容のコンフリクト（両側にファイルがある UU・AA）それぞれの、作業ツリーに残っているマーカーの
+    /// 数と、git の rerere が前の解決を当てたか。作業ツリーのファイルと `.git/MERGE_RR` を読むだけ（git は呼ばない）。
+    /// 片側で消えたコンフリクトなど、マーカーで表せないものは入れない。
+    pub fn conflict_files(&self, status: &amonhen_model::Status) -> Result<Vec<ConflictFile>> {
+        let files = self.backend().files();
+        let mut tracked = None;
+        let mut out = Vec::new();
+        for e in &status.entries {
+            if e.kind != amonhen_model::StatusKind::Unmerged
+                || !matches!((e.index, e.worktree), (b'U', b'U') | (b'A', b'A'))
+            {
+                continue;
+            }
+            let markers = files
+                .read(Root::Workdir, &e.path)?
+                .map_or(0, |d| crate::conflict::parse(&d).len());
+            let rerere = markers == 0
+                && match &tracked {
+                    Some(t) => Self::rerere_applied(t, &e.path),
+                    None => Self::rerere_applied(tracked.insert(self.rerere_tracked()?), &e.path),
+                };
+            out.push(ConflictFile {
+                path: e.path.clone(),
+                markers,
+                rerere,
+            });
+        }
+        Ok(out)
+    }
+
+    /// rerere が見張っている（まだ解決を当てていない）パス。rerere が使われていなければ `None`。
+    fn rerere_tracked(&self) -> Result<Option<std::collections::HashSet<String>>> {
+        let data = self.backend().files().read(Root::GitDir, "MERGE_RR")?;
+        Ok(data.map(|d| crate::conflict::rerere_paths(&d)))
+    }
+
+    /// rerere が `path` に前の解決を当てた（rerere が使われていて、見張りのパスから消えている）か。
+    fn rerere_applied(tracked: &Option<std::collections::HashSet<String>>, path: &str) -> bool {
+        tracked.as_ref().is_some_and(|t| !t.contains(path))
     }
 
     /// コミットの詳細のうち時間のかかる分。署名の検証・notes・行数は git に頼み、子コミット・含むブランチと
@@ -2178,6 +2232,27 @@ impl Repository {
                     .files()
                     .read(Root::Workdir, &path)?
                     .ok_or_else(|| tr!("File not found"))?;
+                let markers = crate::conflict::parse(&data).len();
+                // マーカーが残っていない（rerere が解決を当てた、ほかのエディタで直した）なら、左右には index に
+                // 残っている両側の内容を出す（3 欄が同じにならないように）。
+                let stages = if markers == 0 {
+                    let backend = self.backend();
+                    let [base, ours, theirs] = ops.conflict_stages(&path)?;
+                    let text = |id: Option<Oid>| -> Result<Option<serde_json::Value>> {
+                        id.map(|id| {
+                            let blob = backend.blob(&id)?;
+                            let text = backend.to_worktree_form(&path, &blob)?;
+                            Ok(serde_json::json!({ "text": String::from_utf8_lossy(&text), "regions": [] }))
+                        })
+                        .transpose()
+                    };
+                    match (ours, theirs) {
+                        (Some(_), Some(_)) => Some((text(ours)?, text(theirs)?, text(base)?)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 let side = |choice| {
                     crate::conflict::side(&data, choice).map(|s| {
                         serde_json::json!({
@@ -2187,13 +2262,19 @@ impl Repository {
                     })
                 };
                 use crate::conflict::Choice;
+                let (current, incoming, base) = stages.unwrap_or_else(|| {
+                    (side(Choice::Ours), side(Choice::Theirs), side(Choice::Base))
+                });
+                let rerere = markers == 0 && Self::rerere_applied(&self.rerere_tracked()?, &path);
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({
-                        "current": side(Choice::Ours),
-                        "incoming": side(Choice::Theirs),
-                        "base": side(Choice::Base),
+                        "current": current,
+                        "incoming": incoming,
+                        "base": base,
                         "result": String::from_utf8_lossy(&data),
+                        "markers": markers,
+                        "rerere": rerere,
                     })),
                     ..Default::default()
                 })
@@ -2365,6 +2446,16 @@ impl Repository {
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "count": crate::conflict::parse(&data).len() })),
+                    ..Default::default()
+                })
+            }
+            Command::ConflictFiles => {
+                let status = self.last_status()?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(
+                        serde_json::json!({ "files": self.conflict_files(&status.status)? }),
+                    ),
                     ..Default::default()
                 })
             }
@@ -4901,6 +4992,87 @@ mod tests {
             run(&repo, r#"{"op":"sequence"}"#)["text"],
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn tells_conflicts_without_markers_and_rerere_resolutions() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["config", "rerere.enabled", "true"]);
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "a.txt", "1\nTOPIC A\n3\n");
+        commit_file(dir, "b.txt", "1\nTOPIC B\n3\n");
+        commit_file(dir, "c.txt", "1\nTOPIC C\n3\n");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "a.txt", "1\nMAIN A\n3\n");
+        commit_file(dir, "b.txt", "1\nMAIN B\n3\n");
+        commit_file(dir, "c.txt", "1\nMAIN C\n3\n");
+        // 1 回目: a.txt だけ解決し、rerere に覚えさせてやめる。
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+        std::fs::write(dir.join("a.txt"), "1\nBOTH A\n3\n").unwrap();
+        git(dir, &["rerere"]);
+        git(dir, &["merge", "--abort"]);
+        // 2 回目: rerere が a.txt を解く。b.txt はほかのエディタで直した。c.txt はそのまま。
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\nBOTH A\n3\n"
+        );
+        std::fs::write(dir.join("b.txt"), "1\nBOTH B\n3\n").unwrap();
+        repo.load_status().unwrap();
+        let files = run(&repo, r#"{"op":"conflictFiles"}"#);
+        assert_eq!(
+            files["info"]["files"],
+            serde_json::json!([
+                {"path": "a.txt", "markers": 0, "rerere": true},
+                {"path": "b.txt", "markers": 0, "rerere": false},
+                {"path": "c.txt", "markers": 1, "rerere": false},
+            ]),
+            "{files}"
+        );
+        // マーカーのないファイルのマージエディタは、左右に index の両側を出す。
+        let sides = run(&repo, r#"{"op":"mergeSides","path":"a.txt"}"#);
+        assert_eq!(
+            sides["info"]["current"]["text"], "1\nMAIN A\n3\n",
+            "{sides}"
+        );
+        assert_eq!(sides["info"]["incoming"]["text"], "1\nTOPIC A\n3\n");
+        assert_eq!(sides["info"]["result"], "1\nBOTH A\n3\n");
+        assert_eq!(sides["info"]["markers"], 0);
+        assert_eq!(sides["info"]["rerere"], true);
+        let sides = run(&repo, r#"{"op":"mergeSides","path":"c.txt"}"#);
+        assert_eq!(
+            sides["info"]["current"]["text"], "1\nMAIN C\n3\n",
+            "{sides}"
+        );
+        assert_eq!(sides["info"]["markers"], 1);
+        assert_eq!(sides["info"]["rerere"], false);
+    }
+
+    #[test]
+    fn leaves_out_conflicts_that_markers_cannot_show() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        commit_file(dir, "a.txt", "1\n");
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "a.txt", "TOPIC\n");
+        git(dir, &["switch", "-q", "main"]);
+        git(dir, &["rm", "-q", "a.txt"]);
+        git(dir, &["commit", "-q", "-m", "remove"]);
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+        repo.load_status().unwrap();
+        // 片側で消したコンフリクト（DU）にはマーカーがないが、解決済みではない。
+        let files = run(&repo, r#"{"op":"conflictFiles"}"#);
+        assert_eq!(files["info"]["files"], serde_json::json!([]), "{files}");
     }
 
     #[test]

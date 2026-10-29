@@ -375,6 +375,10 @@ public struct MergeSides: Decodable, Sendable {
     public let base: Side?
     /// 今の作業ツリーの内容（マーカーつき）。
     public let result: String
+    /// `result` に残っているコンフリクトのマーカーの数。0 なら、左右は index に残っている両側の内容。
+    public let markers: Int
+    /// git の rerere が前の解決を当てた。
+    public let rerere: Bool
 }
 
 /// 結果の文章に残っているコンフリクト（`conflictRegions`）。

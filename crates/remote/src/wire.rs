@@ -259,6 +259,8 @@ pub enum Op {
         path: String,
         ours: bool,
     },
+    /// → `[Option<Oid>; 3]`
+    ConflictStages(String),
     Fetch,
     Pull(PullMode),
     BranchTracking,

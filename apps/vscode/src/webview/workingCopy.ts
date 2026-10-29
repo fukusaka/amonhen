@@ -68,6 +68,14 @@ export function createWorkingCopyView(): View {
         all.addEventListener('click', () => stageFiles(op, items));
         head.append(all);
       }
+      // マーカーの残っていないコンフリクトは、まとめて解決済みにできる
+      const resolved = items.filter((f) => f.markers === 0);
+      if (group === 'conflicts' && resolved.length > 0) {
+        const all = el('button', 'link', `Mark ${resolved.length} as Resolved`);
+        all.title = 'マーカーの残っていないファイル（rerere やほかのエディタで解決したもの）を解決済みにする';
+        all.addEventListener('click', () => stageFiles('stage', resolved));
+        head.append(all);
+      }
       parts.push(head);
       for (const f of items) parts.push(renderFile(f));
     }
@@ -83,9 +91,17 @@ export function createWorkingCopyView(): View {
     if (selected?.group === f.group && selected.path === f.path) row.classList.add('selected');
     row.title = f.origPath ? `${f.origPath} → ${f.path}` : f.path;
     const slash = f.path.lastIndexOf('/');
-    row.append(el('span', `status s-${f.letter === '!' ? 'U' : f.letter}`, f.letter));
-    row.append(el('span', 'name', f.path.slice(slash + 1)));
-    row.append(el('span', 'dir', slash >= 0 ? f.path.slice(0, slash) : ''));
+    if (f.markers === 0) {
+      // マーカーが残っていない。解決できていそうなことを印と短い注記で示す
+      row.title += `\n${withoutMarkersMessage(f)}`;
+      row.append(el('span', 'status s-resolved', '✓'));
+      row.append(el('span', 'name', f.path.slice(slash + 1)));
+      row.append(el('span', 'dir', f.rerere ? 'rerere' : 'マーカーなし'));
+    } else {
+      row.append(el('span', `status s-${f.letter === '!' ? 'U' : f.letter}`, f.letter));
+      row.append(el('span', 'name', f.path.slice(slash + 1)));
+      row.append(el('span', 'dir', slash >= 0 ? f.path.slice(0, slash) : ''));
+    }
     if (f.group !== 'conflicts') {
       const op = f.group === 'staged' ? 'unstage' : 'stage';
       const button = el('button', 'icon-button', f.group === 'staged' ? '−' : '+');
@@ -222,31 +238,43 @@ export function createWorkingCopyView(): View {
 
   function renderConflict(d: FileDiff): HTMLElement {
     const box = el('div', 'conflict');
+    const f = files.find((x) => x.group === 'conflicts' && x.path === d.path);
+    // マーカーが残っていなければ、解決済みにするのを先に勧める
+    const clean = f?.markers === 0;
     box.append(
       el(
         'p',
         undefined,
-        'このファイルはコンフリクトしています。マージエディタで解決するか、どちらかの内容を採用してください。',
+        clean && f
+          ? withoutMarkersMessage(f)
+          : 'このファイルはコンフリクトしています。マージエディタで解決するか、どちらかの内容を採用してください。',
       ),
     );
     const buttons = el('div', 'buttons');
+    const resolved = el('button', clean ? undefined : 'secondary', 'Mark as Resolved');
+    resolved.addEventListener('click', () => {
+      if (f) stageFiles('stage', [f]);
+    });
+    if (clean) buttons.append(resolved);
     for (const [action, label] of [
       ['merge', 'Open in Merge Editor'],
       ['current', 'Accept Current'],
       ['incoming', 'Accept Incoming'],
     ] as const) {
-      const b = el('button', action === 'merge' ? undefined : 'secondary', label);
+      const b = el('button', action === 'merge' && !clean ? undefined : 'secondary', label);
       b.addEventListener('click', () => post({ type: 'wcResolve', path: d.path, action }));
       buttons.append(b);
     }
-    const resolved = el('button', 'secondary', 'Mark as Resolved');
-    resolved.addEventListener('click', () => {
-      const f = files.find((x) => x.group === 'conflicts' && x.path === d.path);
-      if (f) stageFiles('stage', [f]);
-    });
-    buttons.append(resolved);
+    if (!clean) buttons.append(resolved);
     box.append(buttons);
     return box;
+  }
+
+  /** マーカーの残っていないコンフリクトの説明 */
+  function withoutMarkersMessage(f: Change): string {
+    return f.rerere
+      ? 'git の rerere が前の解決を適用しました。結果を確かめて「Mark as Resolved」を押してください。'
+      : 'コンフリクトのマーカーは残っていません。結果を確かめて「Mark as Resolved」を押してください。';
   }
 
   function toLines(keys: string[]): SelectedLine[] {

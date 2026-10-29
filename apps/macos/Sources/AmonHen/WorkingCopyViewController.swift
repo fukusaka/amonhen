@@ -350,7 +350,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     func overlays() -> [(CGImage, NSView)] {
-        view.window == nil ? [] : diffView.overlay().map { [$0] } ?? []
+        // マージエディタを埋め込んでいる間は、差分の欄が外れている。
+        diffView.view.window == nil ? [] : diffView.overlay().map { [$0] } ?? []
     }
 
     // MARK: - 読み直し
@@ -379,6 +380,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 show(w)
                 loadStats()
             }
+            loadConflictStates()
             isRefreshing = false
             if needsRefresh {
                 needsRefresh = false
@@ -435,6 +437,41 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
         notifySequence()
         rebuildList()
+    }
+
+    /// 内容のコンフリクトのファイルに残っているマーカーの数と、rerere が解決を当てたか（パスごと）。
+    private var conflictStates: [String: ConflictState] = [:]
+
+    private struct ConflictState: Decodable, Equatable {
+        let path: String
+        let markers: Int
+        let rerere: Bool
+    }
+
+    /// マーカーの残っていないコンフリクトのファイル（rerere が解決を当てた、ほかのエディタで直した）。
+    private var conflictsWithoutMarkers: [String] {
+        allEntries.filter { $0.isConflict && conflictStates[$0.item.path]?.markers == 0 }.map(\.item.path)
+    }
+
+    /// コンフリクトのファイルの中身を読み直す（index が変わらなくても、ほかのエディタでマーカーを消せば変わる）。
+    private func loadConflictStates() {
+        guard allEntries.contains(where: \.isConflict) else {
+            conflictStates = [:]
+            return
+        }
+        let repository = self.repository
+        Task {
+            struct Files: Decodable { let files: [ConflictState] }
+            let read = try? await Task.detached(priority: .userInitiated) {
+                try repository.info(["op": "conflictFiles"], as: Files.self)
+            }.value
+            guard let read else { return }
+            let states = Dictionary(read.files.map { ($0.path, $0) }, uniquingKeysWith: { a, _ in a })
+            guard states != conflictStates else { return }
+            conflictStates = states
+            files.reloadData(forRowIndexes: IndexSet(integersIn: 0..<files.numberOfRows), columnIndexes: [0])
+            notifySequence()
+        }
     }
 
     /// 絞り込みと見せ方（一覧・木）に合わせて並べ直し、選んでいたファイルを選び直す。
@@ -869,7 +906,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     func stageAllFromMenu() { stageAll() }
 
     /// merge・rebase などの途中かどうかと、コンフリクトのファイルの数が変わった（ウィンドウの帯に出す）。
-    var onSequenceChange: ((_ sequence: SequenceInfo?, _ conflicts: Int) -> Void)?
+    var onSequenceChange: ((_ sequence: SequenceInfo?, _ conflicts: Int, _ withoutMarkers: Int) -> Void)?
 
     private func showSequence(_ sequence: SequenceInfo?) {
         sequenceInfo = sequence
@@ -891,7 +928,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     var onChangeCount: ((Int) -> Void)?
 
     private func notifySequence() {
-        onSequenceChange?(sequenceInfo, allEntries.filter(\.isConflict).count)
+        onSequenceChange?(sequenceInfo, allEntries.filter(\.isConflict).count, conflictsWithoutMarkers.count)
         onChangeCount?(allEntries.count)
     }
 
@@ -900,14 +937,29 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         actions?.perform(["op": op])
     }
 
-    @objc private func takeOursFile() {
-        guard let key = selectedKey else { return }
-        actions?.perform(["op": "takeSide", "path": key.path, "ours": true])
+    @objc private func takeOursFile() { takeSide(ours: true) }
+
+    @objc private func takeTheirsFile() { takeSide(ours: false) }
+
+    private func takeSide(ours: Bool) {
+        guard let key = selectedKey, let actions else { return }
+        // マーカーが残っていなければ、解決した内容（rerere・ほかのエディタ）を片側で上書きしてしまう。
+        if conflictStates[key.path]?.markers == 0 {
+            let title = ours ? L("Take Current File") : L("Take Incoming File")
+            guard actions.confirm(
+                L("Replace the resolved content of %@?", key.path),
+                message: L("No conflict markers are left in it, so it may already be resolved. This replaces it with one side’s whole file."),
+                ok: title) else { return }
+        }
+        actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
     }
 
-    @objc private func takeTheirsFile() {
-        guard let key = selectedKey else { return }
-        actions?.perform(["op": "takeSide", "path": key.path, "ours": false])
+    /// マーカーの残っていないコンフリクトのファイルを、まとめて解決済みにする（ウィンドウの帯から）。
+    func markResolvedWithoutMarkers() {
+        let paths = conflictsWithoutMarkers
+        guard !paths.isEmpty else { return }
+        let repository = self.repository
+        actions?.perform { try repository.stage(paths: paths) }
     }
 
     @objc private func markResolved() {
@@ -1300,9 +1352,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             let parent = (path as NSString).deletingLastPathComponent
             let name = layout == .list ? path : fileName
             let tip = entry.item.origPath.map { "\($0) → \(path)" } ?? path
+            // マーカーの残っていないコンフリクトは、解決できていそうなことを印と短い注記で示す。
+            let state = entry.isConflict ? conflictStates[path].flatMap { $0.markers == 0 ? $0 : nil } : nil
             cell.show(
-                check: entry.isConflict ? nil : entry.check, mark: Self.mark(of: entry), name: name, dimmed: false, tip: tip,
-                detail: layout == .flat && !parent.isEmpty ? parent : nil, stat: stats[path])
+                check: entry.isConflict ? nil : entry.check, mark: state != nil ? ("✓", .systemOrange) : Self.mark(of: entry),
+                name: name, dimmed: false, tip: state.map { "\(tip)\n" + Self.withoutMarkersMessage(rerere: $0.rerere) } ?? tip,
+                detail: state.map { $0.rerere ? "rerere" : L("no markers") } ?? (layout == .flat && !parent.isEmpty ? parent : nil),
+                stat: stats[path])
             cell.onDiscard = entry.isConflict || !entry.item.isUnstaged ? nil : { [weak self] in self?.discardFile(entry) }
         default:
             break
@@ -1312,6 +1368,13 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             toggle(files(under: item))
         }
         return cell
+    }
+
+    /// マーカーの残っていないコンフリクトの説明（一覧のヒントとマージエディタの案内）。
+    static func withoutMarkersMessage(rerere: Bool) -> String {
+        rerere
+            ? L("git rerere applied the earlier resolution. Check the result, then Mark Resolved.")
+            : L("No conflict markers are left. Check the result, then Mark Resolved.")
     }
 
     /// 状態の印と色。作業ツリーの側を優先する（index にだけ変更があれば index の側）。

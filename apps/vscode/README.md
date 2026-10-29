@@ -50,7 +50,7 @@ The Conflicts / Staged / Changes files are on the left, the commit form below th
 - You can also use Stage Hunk per hunk, Stage File, `+` / `−` in the list, and Stage All. In the list, select with the up and down keys and stage / unstage with Space or Enter.
 - For files in Changes, you can discard changes with ↺ in the list, Discard File, Discard Hunk, and Discard N Lines. Untracked files are deleted. Discarded content can be restored with Undo.
 - The commit form has a Summary and a Description (multiple lines). Turning on Amend fills in the message of the previous commit. You can also commit with `⌘Enter` / `Ctrl+Enter`.
-- For a conflicted file, you can choose Open in Merge Editor (the standard 3-way merge editor), Accept Current, Accept Incoming, and Mark as Resolved. A file deleted on one side can also be resolved with Accept. When marking as resolved, you are asked to confirm if markers remain.
+- For a conflicted file, you can choose Open in Merge Editor (the standard 3-way merge editor), Accept Current, Accept Incoming, and Mark as Resolved. A file deleted on one side can also be resolved with Accept. When marking as resolved, you are asked to confirm if markers remain. A conflicted file with no markers left (git's rerere applied an earlier resolution, or another editor resolved it) shows ✓ with "no markers" or "rerere", leads with Mark as Resolved, and the Conflicts heading can mark all of them resolved at once; Accept asks before replacing such a resolution.
 
 ### History
 

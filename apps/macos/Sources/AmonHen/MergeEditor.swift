@@ -194,7 +194,7 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
         bar.spacing = 6
         bar.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
 
-        let root = MergeLayoutView(bar: bar)
+        let root = MergeLayoutView(bar: bar, banner: sides.markers == 0 ? withoutMarkersBanner() : nil)
         root.onLayout = { [weak self] in self?.layoutColumns() }
         root.frame = NSRect(x: 0, y: 0, width: 1200, height: 700)
         for v in [basePane].compactMap({ $0 }) + panes + [leftBand, rightBand] { root.addSubview(v) }
@@ -662,6 +662,27 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
 
     @objc private func saveOnly() { save(stage: false) }
 
+    /// マーカーの残っていないファイル（rerere が解決を当てた、ほかのエディタで直した）の案内。左右には index の
+    /// 両側が出るので、Result と見比べて解決済みにする。
+    private func withoutMarkersBanner() -> NSView {
+        let icon = NSImageView(image: NSImage(systemSymbolName: "checkmark.circle", accessibilityDescription: nil) ?? NSImage())
+        icon.contentTintColor = .systemOrange
+        let text = NSTextField(labelWithString: WorkingCopyViewController.withoutMarkersMessage(rerere: sides.rerere))
+        text.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        text.lineBreakMode = .byTruncatingTail
+        text.toolTip = text.stringValue
+        text.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let resolve = NSButton(title: L("Mark Resolved"), target: self, action: #selector(saveAndResolve))
+        resolve.bezelStyle = .push
+        resolve.controlSize = .small
+        let stack = NSStackView(views: [icon, text, NSView(), resolve])
+        stack.spacing = 6
+        stack.edgeInsets = NSEdgeInsets(top: 0, left: 10, bottom: 0, right: 10)
+        stack.wantsLayer = true
+        stack.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.14).cgColor
+        return stack
+    }
+
     @objc private func saveAndResolve() {
         if !conflicts.isEmpty, !actions.confirm(
             L("%ld conflicts remain", conflicts.count), message: L("Mark as resolved with the markers left in?"), ok: L("Mark Resolved")) {
@@ -680,30 +701,39 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     }
 }
 
-/// 上に操作の帯、残りに欄を並べる。
+/// 上に操作の帯（と、あれば案内の帯）、残りに欄を並べる。
 private final class MergeLayoutView: NSView {
     private let bar: NSView
     private let barHeight: CGFloat = 36
+    private let bannerHeight: CGFloat
     var onLayout: (() -> Void)?
 
-    init(bar: NSView) {
+    init(bar: NSView, banner: NSView? = nil) {
         self.bar = bar
+        bannerHeight = banner == nil ? 0 : 30
         super.init(frame: .zero)
-        addSubview(bar)
         // 幅を制約で決める（frame だと、中身が入りきらないときにスタックがはみ出す）。
-        bar.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            bar.topAnchor.constraint(equalTo: topAnchor),
-            bar.leadingAnchor.constraint(equalTo: leadingAnchor),
-            bar.trailingAnchor.constraint(equalTo: trailingAnchor),
-            bar.heightAnchor.constraint(equalToConstant: barHeight),
-        ])
+        var top = topAnchor
+        for (view, height) in [(bar, barHeight), (banner, bannerHeight)] {
+            guard let view else { continue }
+            addSubview(view)
+            view.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                view.topAnchor.constraint(equalTo: top),
+                view.leadingAnchor.constraint(equalTo: leadingAnchor),
+                view.trailingAnchor.constraint(equalTo: trailingAnchor),
+                view.heightAnchor.constraint(equalToConstant: height),
+            ])
+            top = view.bottomAnchor
+        }
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     /// 欄を並べる領域。
-    var contentArea: NSRect { NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - barHeight)) }
+    var contentArea: NSRect {
+        NSRect(x: 0, y: 0, width: bounds.width, height: max(0, bounds.height - barHeight - bannerHeight))
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)

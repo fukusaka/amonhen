@@ -344,6 +344,8 @@ pub trait Operations: Send + Sync {
     /// コンフリクトしたファイルを片側（`ours` なら Current、そうでなければ Incoming）にして解決済みにする。
     /// その側でファイルが消えていれば、消して解決済みにする。
     fn take_side(&self, path: &str, ours: bool) -> Result<()>;
+    /// コンフリクトしたファイルの index の blob（共通の祖先・Current・Incoming の順。その側になければ `None`）。
+    fn conflict_stages(&self, path: &str) -> Result<[Option<Oid>; 3]>;
 
     fn fetch(&self) -> Result<()>;
     /// 今のブランチに上流を取り込む（`git pull`）。
