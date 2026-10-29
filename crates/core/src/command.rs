@@ -6005,6 +6005,22 @@ mod tests {
     }
 
     #[test]
+    fn says_when_an_octopus_gives_up_and_changes_nothing() {
+        let (tmp, repo) = octopus_setup();
+        let dir = tmp.path();
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        let r = run(&repo, r#"{"op":"merge","rev":["a","x","b"]}"#);
+        assert_eq!(r["ok"], false, "{r}");
+        assert_eq!(r["errorKind"], "octopus", "{r}");
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), head);
+        assert!(git(dir, &["status", "--porcelain"]).is_empty());
+        assert_eq!(
+            run(&repo, r#"{"op":"undoPeek"}"#)["label"],
+            serde_json::Value::Null
+        );
+    }
+
+    #[test]
     fn merges_one_by_one_until_a_conflict() {
         let (tmp, repo) = octopus_setup();
         let dir = tmp.path();

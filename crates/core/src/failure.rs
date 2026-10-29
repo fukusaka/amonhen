@@ -34,6 +34,8 @@ pub const LOCAL_CHANGES: &str = "localChanges";
 pub const LOCKED: &str = "locked";
 /// 上流が決まっていない。
 pub const NO_UPSTREAM: &str = "noUpstream";
+/// いくつものブランチを 1 つのコミットにまとめる merge（octopus）が、最後のもの以外でコンフリクトして断った。
+pub const OCTOPUS: &str = "octopus";
 
 /// `message` の失敗の種類。
 pub fn classify(message: &str) -> Option<Failure> {
@@ -84,8 +86,14 @@ pub fn classify(message: &str) -> Option<Failure> {
     }
     if has("Your local changes to the following files would be overwritten")
         || has("untracked working tree files would be overwritten")
+        // octopus が、作業中の変更のあるファイルに触れるところで断った。
+        || has("not uptodate. Cannot merge")
     {
         return Some(Failure::new(LOCAL_CHANGES));
+    }
+    // 作業中の変更で断ったとき（上）にも出るので、その後で見る。
+    if has("Merge with strategy octopus failed") {
+        return Some(Failure::new(OCTOPUS));
     }
     if has("There is no tracking information for the current branch")
         || has("has no upstream branch")
@@ -175,6 +183,22 @@ mod tests {
             ),
             Some(LOCAL_CHANGES)
         );
+        assert_eq!(
+            kind(
+                "Trying simple merge with b\nerror: Entry 'b' not uptodate. Cannot merge.\nMerge with strategy octopus failed."
+            ),
+            Some(LOCAL_CHANGES)
+        );
         assert_eq!(kind("fatal: something else"), None);
+    }
+
+    #[test]
+    fn finds_an_octopus_that_gave_up() {
+        assert_eq!(
+            kind(
+                "Automated merge did not work.\nShould not be doing an octopus.\nMerge with strategy octopus failed."
+            ),
+            Some(OCTOPUS)
+        );
     }
 }
