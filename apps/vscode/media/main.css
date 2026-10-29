@@ -491,6 +491,10 @@ button.secondary {
   color: var(--vscode-gitDecoration-untrackedResourceForeground, var(--vscode-gitDecoration-addedResourceForeground));
 }
 
+.s-resolved {
+  color: var(--vscode-gitDecoration-modifiedResourceForeground);
+}
+
 .icon-button {
   visibility: hidden;
   width: 20px;

@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
+import { conflictStates, countMarkers } from '../src/state/conflicts.ts';
 import { initMain } from './git.ts';
 
 Object.assign(process.env, {
@@ -96,4 +97,30 @@ test('rebase progress and skip', async () => {
   assert.equal(await backend.skipSequence('rebase'), 'done');
   assert.equal(await backend.rebaseProgress(), undefined);
   assert.equal(git('log', '--format=%s', '-2'), 'extra\nmain');
+});
+
+test('tells conflicts without markers and rerere resolutions', async () => {
+  git('config', 'rerere.enabled', 'true');
+  // 1 回目: both.txt を解決し、rerere に覚えさせてやめる
+  assert.equal(await backend.merge('feature'), 'conflict');
+  writeFileSync(join(dir, 'both.txt'), 'main and feature\n');
+  git('rerere');
+  await backend.abort('merge');
+  // 2 回目: rerere が both.txt を解く。片側で消えたコンフリクトにはマーカーがないが、解決済みではない
+  assert.equal(await backend.merge('feature'), 'conflict');
+  assert.equal(readFileSync(join(dir, 'both.txt'), 'utf8'), 'main and feature\n');
+  const states = await conflictStates(dir, backend.dirs.gitDir, (await backend.status()).entries);
+  assert.deepEqual([...states], [['both.txt', { markers: 0, rerere: true }]]);
+  // rerere を使っていなければ、ほかのエディタで直したのと見分けない
+  rmSync(join(dir, '.git', 'MERGE_RR'));
+  const plain = await conflictStates(dir, backend.dirs.gitDir, (await backend.status()).entries);
+  assert.deepEqual([...plain], [['both.txt', { markers: 0, rerere: false }]]);
+});
+
+test('counts closed conflict markers only', () => {
+  assert.equal(countMarkers('a\n<<<<<<< HEAD\nx\n=======\ny\n>>>>>>> topic\nb\n'), 1);
+  assert.equal(countMarkers('<<<<<<<\nx\n|||||||\nb\n=======\ny\n>>>>>>>\n'), 1);
+  assert.equal(countMarkers('<<<<<<< HEAD\nx\n=======\ny\n'), 0);
+  assert.equal(countMarkers('<<<<<<<< not a marker\n=======\n>>>>>>>\n'), 0);
+  assert.equal(countMarkers('<<<<<<< a\r\nx\r\n=======\r\ny\r\n>>>>>>> b\r\n'), 1);
 });

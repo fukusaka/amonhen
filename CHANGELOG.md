@@ -589,6 +589,8 @@ First release.
 
 #### Added
 
+- Conflicted files with no conflict markers left (git's rerere, another editor) are marked in the Working Copy list,
+  lead with Mark as Resolved, and can all be marked resolved from the Conflicts heading.
 - Compare with Previous Version on a local branch and Range Diff… show `git range-diff` of two versions of a
   branch in a read-only document, with or without the engine.
 - A local branch that isn't checked out can be fast-forwarded to its upstream (Fast-Forward to Upstream) or pushed

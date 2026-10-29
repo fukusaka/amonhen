@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import * as vscode from 'vscode';
 import { parseCommitObject } from '../git/commitObject.ts';
 import { groupChanges, type Change, type ChangeGroup } from '../state/changes.ts';
+import { conflictStates } from '../state/conflicts.ts';
 import type { Repository } from '../state/repository.ts';
 import { daemonFor } from '../daemon/connection.ts';
 import { changedRows, readWorkingDiff, selectedRows, type DaemonDiff } from '../daemon/diff.ts';
@@ -58,6 +59,14 @@ export class WorkingCopyController implements vscode.Disposable {
     const repo = this.repo;
     const status = repo?.current.status;
     this.files = groupChanges(status?.entries ?? []).flatMap(([, changes]) => changes);
+    // マーカーの残っていないコンフリクト（rerere が解決を当てた、ほかのエディタで直した）を見分ける
+    if (repo && status && this.files.some((f) => f.group === 'conflicts')) {
+      const states = await conflictStates(repo.root, repo.backend.dirs.gitDir, status.entries);
+      for (const f of this.files) {
+        const state = f.group === 'conflicts' ? states.get(f.path) : undefined;
+        if (state) Object.assign(f, state);
+      }
+    }
     let lastMessage: string | undefined;
     const oid = status?.branch.oid;
     if (repo && oid) {
