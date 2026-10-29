@@ -60,6 +60,21 @@ jobs:
           export PATH="$HOME/git-minimum/bin:$PATH"
           git --version | grep -qx "git version $GIT_VERSION"
           HOME="$(mktemp -d)" cargo test --workspace --no-fail-fast
+      # VSCode 拡張の git 実行層も同じ git で試す（daemon の試験が使う amonhen もここで作る）。コアの試験が落ちても流す。
+      - if: ${{ !cancelled() }}
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: apps/vscode/package-lock.json
+      - if: ${{ !cancelled() }}
+        working-directory: apps/vscode
+        run: |
+          cargo build -p amonhen-cli
+          npm ci
+          export PATH="$HOME/git-minimum/bin:$PATH"
+          git --version | grep -qx "git version $GIT_VERSION"
+          HOME="$(mktemp -d)" npm test
 
   swift:
     runs-on: macos-latest

@@ -8,6 +8,7 @@ import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { fastForwardBranch, mergeInto, publishChoices, pushCurrent, rebaseOnto } from '../src/state/operations.ts';
 import { UndoLog } from '../src/state/undo.ts';
+import { initMain } from './git.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -34,7 +35,7 @@ function commitFile(name: string, content: string, message: string): void {
 
 beforeEach(async () => {
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-ops-')));
-  git('init', '-q', '-b', 'main');
+  initMain(dir);
   commitFile('a.txt', 'base\n', 'base');
   backend = await CliBackend.open(new GitExecutor('git'), dir);
   undo = new UndoLog(backend);
@@ -83,7 +84,8 @@ test('merge into a branch that is not checked out switches to it, and undo switc
   assert.equal(await mergeInto(backend, undo, H('feature'), H('main')), 'done');
   assert.equal(git('branch', '--show-current'), 'main');
   assert.equal(git('rev-list', '--count', '--merges', 'main'), '1');
-  assert.equal(git('log', '-1', '--format=%s', 'main'), "Merge branch 'feature'");
+  // git 2.28 より前は、master 以外に merge すると「into main」を付ける
+  assert.match(git('log', '-1', '--format=%s', 'main'), /^Merge branch 'feature'( into main)?$/);
 
   assert.equal((await undo.undo())?.label, 'Merge feature into main');
   assert.equal(git('rev-parse', 'main'), main);

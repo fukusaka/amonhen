@@ -8,6 +8,7 @@ import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { rewriteHistory } from '../src/state/rewrite.ts';
 import { UndoLog } from '../src/state/undo.ts';
+import { initMain } from './git.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -42,7 +43,7 @@ function subjects(): string[] {
 
 beforeEach(async () => {
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-rewrite-')));
-  git('init', '-q', '-b', 'main');
+  initMain(dir);
   commitFile('a.txt', 'a\n', 'A');
   commitFile('b.txt', 'b\n', 'B');
   commitFile('c.txt', 'c\n', 'C');

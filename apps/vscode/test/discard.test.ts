@@ -18,6 +18,7 @@ import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { discardFiles, discardLines } from '../src/state/discard.ts';
 import { UndoConflictError, UndoLog } from '../src/state/undo.ts';
+import { initMain } from './git.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -39,7 +40,7 @@ const read = (p: string) => readFileSync(join(dir, p), 'utf8');
 
 beforeEach(async () => {
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-discard-')));
-  git('init', '-q', '-b', 'main');
+  initMain(dir);
   writeFileSync(join(dir, 'a.txt'), 'one\ntwo\nthree\n');
   writeFileSync(join(dir, 'run.sh'), '#!/bin/sh\n');
   chmodSync(join(dir, 'run.sh'), 0o755);

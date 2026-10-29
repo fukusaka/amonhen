@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
+import { initMain } from './git.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -31,7 +32,7 @@ function commitAll(message: string): void {
 
 beforeEach(async () => {
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-conflict-')));
-  git('init', '-q', '-b', 'main');
+  initMain(dir);
   for (const f of ['both.txt', 'gone-there.txt', 'gone-here.txt']) writeFileSync(join(dir, f), 'base\n');
   commitAll('base');
   // feature: both.txt を変更、gone-there.txt を削除、gone-here.txt を変更
