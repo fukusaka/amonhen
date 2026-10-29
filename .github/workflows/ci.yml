@@ -75,6 +75,17 @@ jobs:
           export PATH="$HOME/git-minimum/bin:$PATH"
           git --version | grep -qx "git version $GIT_VERSION"
           HOME="$(mktemp -d)" npm test
+      # VSCode を起動する結合テストも同じ git で。VSCode は PATH ではなく自分で git を探すので、AMONHEN_E2E_GIT で渡す。
+      - if: ${{ !cancelled() }}
+        uses: actions/cache@v4
+        with:
+          path: apps/vscode/.vscode-test
+          key: vscode-test-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('apps/vscode/.vscode-test.mjs') }}
+      - if: ${{ !cancelled() }}
+        working-directory: apps/vscode
+        run: |
+          export PATH="$HOME/git-minimum/bin:$PATH"
+          AMONHEN_E2E_GIT="$HOME/git-minimum/bin/git" xvfb-run -a npm run test:e2e
 
   swift:
     runs-on: macos-latest

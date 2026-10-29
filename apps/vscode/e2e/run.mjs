@@ -2,7 +2,9 @@
  * VSCode を起動して拡張を動かす結合テスト（`npm run test:e2e`）。
  * 拡張とテストをビルドして一時ディレクトリに .vsix と同じ形で並べ（bin にこのリポジトリのエンジン）、リポジトリを
  * 作って VSCode（@vscode/test-cli）で開き、終わったら daemon を止めて一時ディレクトリを消す。
- * エンジンはルートで `cargo build -p amonhen-cli` したもの（`AMONHEN_DAEMON` で差し替えられる）
+ * エンジンはルートで `cargo build -p amonhen-cli` したもの（`AMONHEN_DAEMON` で差し替えられる）。
+ * `AMONHEN_E2E_GIT` に git を渡すと、リポジトリを作るのにも拡張（VSCode の `git.path`）にもその git を使う
+ * （VSCode は PATH ではなく自分で git を探すので、サポートする最低の git で試すときに要る）
  */
 import { execFileSync, spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -50,9 +52,15 @@ await esbuild.build({
 });
 
 // 開くリポジトリ。LF で入れたファイルを core.autocrlf=true で clone し、作業中のファイルを CRLF にする
-const git = (cwd, ...args) => execFileSync('git', args, { cwd, encoding: 'utf8' });
+const gitPath = process.env.AMONHEN_E2E_GIT;
+const git = (cwd, ...args) => execFileSync(gitPath ?? 'git', args, { cwd, encoding: 'utf8' });
+if (gitPath) {
+  console.log(`git: ${gitPath} (${git(root, '--version').trim()})`);
+}
 mkdirSync(paths.home);
-git(dir, 'init', '-q', '-b', 'main', paths.origin);
+// `init -b` は git 2.28 から
+git(dir, 'init', '-q', paths.origin);
+git(paths.origin, 'symbolic-ref', 'HEAD', 'refs/heads/main');
 git(paths.origin, 'config', 'user.name', 'a');
 git(paths.origin, 'config', 'user.email', 'a@example.com');
 writeFileSync(join(paths.origin, 'a.txt'), 'first\n');
@@ -80,6 +88,7 @@ writeFileSync(
     'telemetry.telemetryLevel': 'off',
     'chat.disableAIFeatures': true,
     'workbench.startupEditor': 'none',
+    ...(gitPath ? { 'git.path': gitPath } : {}),
   }),
 );
 
