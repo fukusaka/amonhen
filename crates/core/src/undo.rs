@@ -88,6 +88,22 @@ struct Entry {
     rename: Option<RenameBackup>,
 }
 
+impl Entry {
+    /// Undo が何を戻すか。`refs` は HEAD とブランチ（reset --mixed なら index も）、`files` は作業ツリーのファイルの
+    /// 中身（HEAD と index はそのまま）、`stash` は消した stash、`rename` はブランチの名前。
+    fn kind(&self) -> &'static str {
+        if self.stash.is_some() {
+            "stash"
+        } else if self.files.is_some() {
+            "files"
+        } else if self.rename.is_some() {
+            "rename"
+        } else {
+            "refs"
+        }
+    }
+}
+
 /// 記録した後に、ほかの操作でブランチや HEAD が動いている。
 #[derive(Debug)]
 pub struct UndoConflict(pub String);
@@ -161,18 +177,23 @@ impl UndoLog {
         self.save(&entries)
     }
 
-    /// 記録した操作の名前と時刻（UNIX 時刻のミリ秒）。新しい順。
+    /// 記録した操作の名前・時刻（UNIX 時刻のミリ秒）・何を戻すか（`kind`）。新しい順。
     pub fn entries(&self) -> Vec<serde_json::Value> {
         self.load()
             .iter()
             .rev()
-            .map(|e| serde_json::json!({ "label": e.label, "time": e.time }))
+            .map(|e| serde_json::json!({ "label": e.label, "time": e.time, "kind": e.kind() }))
             .collect()
     }
 
     /// 次に Undo される操作の名前。
     pub fn peek(&self) -> Option<String> {
         self.load().last().map(|e| e.label.clone())
+    }
+
+    /// 次に Undo される操作の名前と、何を戻すか（`Entry::kind`）。
+    pub fn peek_kind(&self) -> Option<(String, &'static str)> {
+        self.load().last().map(|e| (e.label.clone(), e.kind()))
     }
 
     fn snapshot(ops: &dyn Operations, refs: &[String]) -> Result<RefSnapshot> {
@@ -663,6 +684,10 @@ mod tests {
         log.record_rename(&git, "Rename main to trunk", "main", "trunk")
             .unwrap();
         assert_eq!(
+            log.peek_kind(),
+            Some(("Rename main to trunk".to_owned(), "rename"))
+        );
+        assert_eq!(
             log.undo(&git).unwrap().as_deref(),
             Some("Rename main to trunk")
         );
@@ -773,6 +798,7 @@ mod tests {
         .unwrap();
         log.record_stash_drop(&git, "stash@{0}", &oid, "wip")
             .unwrap();
+        assert_eq!(log.peek_kind().map(|(_, kind)| kind), Some("stash"));
         log.undo(&git).unwrap();
         assert!(
             git.read(&["rev-parse", "-q", "--verify", "refs/stash"])

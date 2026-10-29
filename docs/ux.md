@@ -331,7 +331,7 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 | | Pop | Confirm, naming the stash and its message, then pop the latest | — (apply or pop a chosen one in Stashes) |
 | Status | Activity | Number of running operations and a spinner. Click to open Activity | — |
 | | Refresh | Reload status, refs and History (⌘R) | Reload the whole working tree (without the fsmonitor and status caches), discard the persistent cache and rebuild History |
-| | Undo | Confirm, naming the operation, then revert it | — (the operation log in Activity) |
+| | Undo | Confirm, naming the operation and what it puts back (HEAD and branches, files, a stash or a branch name), then revert it | — (the operation log in Activity) |
 | Search | Search field (`NSSearchToolbarItem`) | ⌘F searches History, ⌘⇧F with a scope | Switch between subject and body / author / ID / path / contents (pickaxe) |
 
 - When the current branch has no upstream (or its remote branch is gone), Push reads Publish (in the toolbar, the Repository menu and Commit and Publish) and asks for the remote, starting from `branch.<name>.pushRemote`, `remote.pushDefault`, the only remote, then origin, and the name there; what it sends becomes the upstream. If that remote branch already exists, it says so and makes it the upstream instead, asking to Pull first when it has commits the branch lacks.

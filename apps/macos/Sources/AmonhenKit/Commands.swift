@@ -43,6 +43,28 @@ extension Repository {
     }
 }
 
+/// 次に Undo される操作（`{"op":"undoPeek"}`）。
+public struct UndoPeek: Sendable {
+    public let label: String
+    /// 何を戻すか: `refs`（HEAD とブランチ）・`files`（作業ツリーのファイル）・`stash`（消した stash）・`rename`（ブランチの名前）。
+    public let kind: String
+}
+
+extension Repository {
+    /// 次に Undo される操作。なければ nil。裏のスレッドで呼ぶ。
+    public func undoPeek() throws -> UndoPeek? {
+        guard let out = amonhen_command(raw, #"{"op":"undoPeek"}"#) else { throw AmonhenError(description: "結果がない") }
+        defer { amonhen_string_free(out) }
+        let response = try JSONSerialization.jsonObject(with: Data(String(cString: out).utf8)) as? [String: Any] ?? [:]
+        guard response["ok"] as? Bool == true else {
+            throw AmonhenError(description: response["error"] as? String ?? "失敗した")
+        }
+        guard let label = response["label"] as? String else { return nil }
+        let kind = (response["info"] as? [String: Any])?["kind"] as? String ?? "refs"
+        return UndoPeek(label: label, kind: kind)
+    }
+}
+
 /// 途中の操作（rebase・merge・cherry-pick・revert・am）。`{"op":"sequence"}` の `info`。
 public struct SequenceInfo: Decodable, Equatable, Sendable {
     /// 止まっている手順（`pick`・`edit`・`exec`・`merge`・`cherry-pick` など）と、そのコミット。

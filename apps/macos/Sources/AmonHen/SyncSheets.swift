@@ -258,11 +258,18 @@ extension Actions {
     func undoWithConfirmation() {
         let repository = self.repository
         Task { @MainActor in
-            let label = (try? await Task.detached { try repository.run(["op": "undoPeek"]).label }.value) ?? nil
-            guard let label else {
+            let peek = (try? await Task.detached { try repository.undoPeek() }.value) ?? nil
+            guard let peek else {
                 return await inform(L("Nothing to Undo"), "")
             }
-            let alert = makeAlert(L("Undo “%@”?", label), L("This returns HEAD and the branches to where they were before. The operation log in Activity can undo it too."))
+            // 何を戻すかは記録による（ファイルだけを戻す記録は、HEAD とブランチに触らない）。
+            let what = switch peek.kind {
+            case "files": L("This puts the files back as they were before; HEAD and the index stay as they are. The operation log in Activity can undo it too.")
+            case "stash": L("This brings back the stash that was dropped. The operation log in Activity can undo it too.")
+            case "rename": L("This gives the branch its earlier name back. The operation log in Activity can undo it too.")
+            default: L("This returns HEAD and the branches to where they were before. The operation log in Activity can undo it too.")
+            }
+            let alert = makeAlert(L("Undo “%@”?", peek.label), what)
             alert.addButton(withTitle: "Undo")
             alert.addButton(withTitle: L("Cancel"))
             if await present(alert) == .alertFirstButtonReturn { undo() }

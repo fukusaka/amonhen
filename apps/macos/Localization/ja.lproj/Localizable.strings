@@ -59,6 +59,9 @@
 "Nothing to Undo" = "Undo できる操作はありません";
 "Undo “%@”?" = "「%@」を戻しますか？";
 "This returns HEAD and the branches to where they were before. The operation log in Activity can undo it too." = "操作の前の HEAD とブランチに戻します。Activity の操作ログからも戻せます。";
+"This puts the files back as they were before; HEAD and the index stay as they are. The operation log in Activity can undo it too." = "ファイルを操作の前の内容に戻します（HEAD と index はそのまま）。Activity の操作ログからも戻せます。";
+"This brings back the stash that was dropped. The operation log in Activity can undo it too." = "消した stash を戻します。Activity の操作ログからも戻せます。";
+"This gives the branch its earlier name back. The operation log in Activity can undo it too." = "ブランチを前の名前に戻します。Activity の操作ログからも戻せます。";
 "Can’t read the status" = "状態を読めません";
 "and %ld more" = "ほか %ld コミット";
 

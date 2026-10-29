@@ -323,7 +323,7 @@ SSH 先のリポジトリでは、「すべてのリポジトリ」は SSH 先�
 | | Pop | stash の名前とメッセージを見せて確かめてから、最新を pop | —（選んで apply・pop するのは Stashes） |
 | 状態 | Activity | 実行中の操作の数とスピナー。押すと Activity | — |
 | | Refresh | status・ref・History を読み直す（⌘R） | 作業ツリーを全部読み直す（fsmonitor と status のキャッシュを使わない）、永続キャッシュを捨てて History を作り直す |
-| | Undo | 操作の名前を見せて確かめてから戻す | —（操作ログは Activity） |
+| | Undo | 操作の名前と何を戻すか（HEAD とブランチ・ファイル・stash・ブランチの名前）を見せて確かめてから戻す | —（操作ログは Activity） |
 | 検索 | 検索欄（`NSSearchToolbarItem`） | ⌘F で History の検索、⌘⇧F で範囲つき | 件名・本文 / 作者 / ID / パス / 内容（pickaxe）の切り替え |
 
 - 今のブランチに上流がない（そのリモートブランチが消えた）ときは、Push を Publish と見せ（ツールバー・Repository メニュー・Commit and Publish）、送り先のリモートを `branch.<name>.pushRemote`・`remote.pushDefault`・リモートが 1 つならそれ・origin の順で選んだ状態から選ばせ、そこでの名前も決めさせる。送ったものが上流になる。そのリモートブランチがもうあれば、そう伝えて代わりにそれを上流にする（ブランチにないコミットがあれば、先に Pull するよう伝える）。

@@ -206,9 +206,9 @@ pub enum Command {
         paths: Vec<String>,
     },
     Undo,
-    /// 次に Undo される操作の名前。
+    /// 次に Undo される操作の名前（`label`）と、何を戻すか（`info.kind`: `refs`・`files`・`stash`・`rename`）。
     UndoPeek,
-    /// 操作ログ（`info.entries`: 新しい順の `label`・`time`（UNIX 時刻のミリ秒））。
+    /// 操作ログ（`info.entries`: 新しい順の `label`・`time`（UNIX 時刻のミリ秒）・`kind`（UndoPeek と同じ））。
     UndoLog,
     /// コミットの編集（reword・squash・fixup・drop・edit・split・move）。
     Rewrite {
@@ -2247,9 +2247,13 @@ impl Repository {
             Command::UndoPeek => {
                 // 外で rebase を終わらせた場合も、ここで確定させる。
                 undo.settle_pending(ops)?;
+                let peek = undo.peek_kind();
                 Ok(Response {
                     ok: true,
-                    label: undo.peek(),
+                    info: peek
+                        .as_ref()
+                        .map(|(_, kind)| serde_json::json!({ "kind": kind })),
+                    label: peek.map(|(label, _)| label),
                     ..Default::default()
                 })
             }
@@ -3923,15 +3927,29 @@ mod tests {
             r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#,
         );
         assert_eq!(r["ok"], true);
-        assert_eq!(
-            run(&repo, r#"{"op":"undoPeek"}"#)["label"],
-            "Create branch topic"
-        );
+        let peek = run(&repo, r#"{"op":"undoPeek"}"#);
+        assert_eq!(peek["label"], "Create branch topic");
+        assert_eq!(peek["info"]["kind"], "refs", "{peek}");
         assert_eq!(
             run(&repo, r#"{"op":"undo"}"#)["label"],
             "Create branch topic"
         );
         assert!(git(dir, &["branch", "--list", "topic"]).is_empty());
+
+        // ファイルの中身を戻す記録は files（HEAD とブランチには触らない）。
+        std::fs::write(dir.join("a.txt"), "changed\n").unwrap();
+        let r = run(&repo, r#"{"op":"discard","paths":["a.txt"]}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        let peek = run(&repo, r#"{"op":"undoPeek"}"#);
+        assert_eq!(peek["label"], "Discard a.txt");
+        assert_eq!(peek["info"]["kind"], "files", "{peek}");
+        let log = run(&repo, r#"{"op":"undoLog"}"#);
+        assert_eq!(log["info"]["entries"][0]["kind"], "files", "{log}");
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "changed\n"
+        );
 
         let bad = run(&repo, r#"{"op":"merge","rev":"no-such-branch"}"#);
         assert_eq!(bad["ok"], false);
