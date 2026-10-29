@@ -344,6 +344,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard let self, slot === editing else { return }
             undoLabel = label
             toolbar.setUndo(label)
+            // ボタンを押せるかは自動の確かめで決まり、アプリが裏にいると次のイベントまで走らない。外の操作
+            // （CLI・VSCode 拡張）で変わったときも、すぐ映す。
+            window.toolbar?.validateVisibleItems()
         }
     }
 
@@ -1272,6 +1275,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if !changes.intersection([.refs, .index, .worktree]).isEmpty {
             // 開いたリポジトリの変化。書き込む先がほかの worktree なら、一覧の見出しの分だけ読み直す。
             if editing === opened { workingCopy.refresh() } else { reloadOtherWorktrees(after: 1) }
+            // Undo の記録は CLI や VSCode 拡張も書く（同じ <git dir>/amonhen/undo.json）。外の操作でも
+            // ツールバーの Undo が次に戻すものを映すよう、読み直す。
+            actions.refreshUndo()
         }
     }
 
