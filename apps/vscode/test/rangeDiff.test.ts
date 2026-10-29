@@ -8,6 +8,7 @@ import { after, before, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { formatRangeDiff, parseRangeDiff, rebaseOnto, rebaseOntoFromHead, reflogKeepsHistory } from '../src/git/rangeDiff.ts';
+import { initMain } from './git.ts';
 
 Object.assign(process.env, {
   GIT_CONFIG_GLOBAL: '/dev/null',
@@ -81,7 +82,7 @@ function commit(file: string, content: string, message: string): void {
 
 before(async () => {
   dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'amonhen-test-')));
-  git('init', '-q', '-b', 'main');
+  initMain(dir);
   commit('a.txt', 'a\n', 'base');
   git('switch', '-q', '-c', 'topic');
   commit('b.txt', 'b\n', 'add b');
