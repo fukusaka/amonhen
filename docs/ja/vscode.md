@@ -85,10 +85,10 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 
 - reword / squash / fixup / drop / reorder / edit / split はすべて非対話の rebase で実現する。todo はこちらで丸ごと作り（`src/history/rebasePlan.ts`）、`GIT_SEQUENCE_EDITOR="cp <todo>"` で git の todo に上書きする。
   - メッセージの書き換えは、対象のコミットの直後に `exec git commit --amend -F <file>` を挟んで行う。どのコミットのメッセージかを `GIT_EDITOR` 側で判別しなくて済む。
-  - squash は `fixup` ＋ メッセージの amend、fixup は `fixup` だけ、edit は `pick` ＋ `break`。
+  - squash は親の `pick` ＋ メッセージの amend ＋ `fixup`、fixup は `fixup` だけ、edit は `pick` ＋ `break`。メッセージは `fixup` の前に親に付ける。後で amend すると、rebase が notes を写す先（`notes.rewriteRef`）が amend の前のコミットになり、まとめた側の notes が落ちる。
   - 編集できるのは HEAD から first-parent で辿り、最初の merge コミットの手前まで。merge をまたぐ rebase は扱わない。
   - `--autostash` で作業中の変更を退避し、`--no-autosquash` でユーザーの設定に todo を並べ替えさせない。
-- split は「`pick` → `exec git reset HEAD^` → `break`」で止め、Working Copy で分割してコミット → Continue の流れ。
+- split は git の手順と同じく `edit` で止め、`git reset HEAD^` で変更を作業ツリーに戻す。Working Copy で分割してコミット → Continue の流れ。`edit` から続けるので、git がコミットの notes を新しいコミットの最後に写す（`notes.rewriteRef`）。
 - merge や rebase が止まっている間は、Working Copy の先頭に Continue / Abort を出す。edit や split で止まった操作の Undo の記録は保留しておき（`undo-pending.json`）、終わった時点で確定する。
 - 操作前に `HEAD` と関係する ref を記録し、1 操作単位で Undo できるようにする。
   - 記録は操作の前後の両方を取り、`<gitDir>/amonhen/undo.json` に最大 50 件残す。Undo するときは今の状態が「操作後」と一致することを確かめ、違えば何もしない。
@@ -103,6 +103,18 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - git 実行層では、index と working tree の行差分を自前で計算し（Myers 法、`src/diff/lineDiff.ts`）、選択範囲の変更だけを
   当てた新しい index の内容を作って `hash-object -w` → `update-index --cacheinfo` で書き込む。unstage は HEAD との差分で
   同じことをする。部分パッチを `git apply` に渡す方式より、文脈行や改行の扱いでつまずかない。
+
+### パッチ
+
+- History のコミットのメニューに Save as Patch… と Save Patches from Here to HEAD…（Webview は 1 つずつしか選べない
+  ので、ひと続きはそのコミットから HEAD まで first-parent で辿ったもの）。クイックピックで、1 コミット 1 ファイル・
+  送り状つきの 1 コミット 1 ファイル・1 つの mbox から選ぶ。
+- Apply Patch…（コマンドパレットと、エクスプローラーの .patch・.diff・.mbox・.eml のメニュー）は、パッチの中身と
+  当たるかをモーダルのダイアログで見せる。最初のボタンは git の既定のまま（メールの形は `am.threeWay`、diff は作業
+  ツリー）で、ほかは 3-way merge と、diff なら Apply and Stage。
+- `git am` の途中は、ナビに「Applying patches (1/3)」と止まった理由、Skip、Retry with 3-Way Merge を出す。共有の
+  daemon があればコアの命令を使い、git 実行層では拡張がパッチを読んで（`src/git/patch.ts`。読み方はコアと同じ）
+  git を動かす。
 
 ### コンフリクト解決
 

@@ -92,6 +92,8 @@ Inherit all of the extension's requirements ("Overview" in vscode-amonhen's `doc
 
 Selecting a conflicted file in Working Copy shows a merge editor on the right (it can also be moved to a separate window). Current is on the left, Result (starting from the working tree contents) in the middle, and Incoming on the right (left and right are the contents with every conflict taken from that side; with diff3, Base can be shown too), and bands between the columns connect the conflicts. Each conflict is accepted with the ≫ / ≪ on the bands or with buttons, or edited by hand, then saved and marked resolved. ✨ Magic Merge resolves in one go the conflicts that fall into one of these: both sides are the same, only one side changed, only whitespace differs, or different words on the same line were changed. The resolution is computed by the core (`mergeSides`, `resolveText`, `conflictRegions`, `magicMerge`, `saveMerge`). During a merge, rebase etc., a band is shown under the window's toolbar (the number of conflicts and Continue, Skip, Abort).
 
+A conflicted file may have no conflict markers left: git's rerere applied an earlier resolution (with `rerere.autoUpdate` off), or it was resolved in another editor without staging. The core tells these apart by reading only the working tree file and `.git/MERGE_RR`, where rerere keeps the paths it has not resolved (`conflictFiles`; the shared daemon's `status` adds `markers` and `rerere` to content conflicts, UU and AA). Conflicts that markers cannot show, such as a file deleted on one side, are left out. It costs nothing when there are no conflicts and about 0.5 ms per MB of conflicted file. Working Copy marks such files with an orange ✓ and "no markers" or "rerere", the band counts them and offers to mark them all resolved, and Take Current File / Take Incoming File asks before replacing the resolution. Their merge editor shows the two sides kept in the index (stages 2 and 3, and 1 as Base) instead of sides built from markers, with a line saying what happened and Mark Resolved. `amonhen status` notes them, and the VSCode extension does the same in its list and conflict panel.
+
 The top pane of History's right column (commit details) lists the metadata, the subject, then the rest of the body. There are three presentations to choose from (top right of the pane; the choice is remembered).
 
 - Compact: one line with a small avatar, author, author date, refs and parents, plus the subject. The pane shrinks to the height of the text.
@@ -393,6 +395,27 @@ or split history in ways that are hard to see afterwards.
 - **No default of its own.** Amon Hen does not turn `rebase.updateRefs` on by itself: a rebase runs as `git rebase`
   does with the same setting, and a History edit keeps the `update-ref` lines in its todo only when the setting is on
   and git is 2.38 or later.
+
+## Patches
+
+- Saving commits as patches is `git format-patch`; applying them is `git am` for mail (format-patch's files, an mbox,
+  an .eml) and `git apply` for a plain diff. The core reads a patch only to show what it changes and which files it
+  touches (`crates/core/src/patch.rs`); git applies it.
+- The patch files stay on the machine that runs the core (the Mac for the app, the extension host for VSCode). The
+  backend gets their contents on stdin, and for format-patch writes into a temporary folder in the git dir and hands
+  back the files, so git still names them (`format.filenameMaxLength` and the like). The same works through the
+  daemon and over SSH.
+- Defaults follow git: one file per commit (one mbox is a choice), `am.threeWay` for am, the working tree only for
+  apply. The rest of format-patch (numbering, recipients, sign-offs) is left to `format.*`.
+- A `git am` in progress is its own sequence (`rebase-apply/applying`; it used to be taken for a rebase). When a patch
+  doesn't apply without 3-way, Retry with 3-Way Merge applies `rebase-apply/patch` with `git apply --3way`, as
+  `git am -3` does, and continues if it is clean. The core notes the retried patch in `rebase-apply/amonhen-retried`
+  (git removes it with the folder when am ends) rather than in git's `rebase-apply/threeway`, which would switch the
+  later patches to 3-way too.
+- Undo: am is one entry, held while it is stopped and recorded when it finishes (Abort leaves none). An applied diff
+  is recorded by the files it touches; the index is not put back.
+- format-patch is given the commits with `--no-walk=unsorted` and `--max-count` (in reverse, since it writes them in
+  reverse; without a count, one commit would mean `<rev>..HEAD`), all in git 2.23.
 
 ## Speed targets and measurement
 

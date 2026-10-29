@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { Changes, clientEnv, controlDaemon, DaemonClient } from '../src/daemon/client.ts';
 import { readWorkingDiff, selectedRows } from '../src/daemon/diff.ts';
@@ -181,6 +181,54 @@ test('shows working diffs as hunks and discards lines that the extension can und
   } finally {
     client.dispose();
     git('checkout', '--', 'm.txt');
+  }
+});
+
+test('saves and applies patches through the daemon, recording one undo entry each', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  const inner = await CliBackend.open(new GitExecutor('git'), repo);
+  const backend = withDaemonWrites(inner, async () => client);
+  const undo = new UndoLog(backend);
+  const count = () => {
+    try {
+      return (JSON.parse(readFileSync(join(repo, '.git/amonhen/undo.json'), 'utf8')) as unknown[]).length;
+    } catch {
+      return 0;
+    }
+  };
+  // Windows の runner は core.autocrlf=true なので、checkout したファイルは CRLF になる
+  const text = (path: string) => readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
+  // 途中で止まっても、あとの試験のために元の HEAD に戻す
+  const start = git('rev-parse', 'HEAD').trim();
+  try {
+    writeFileSync(join(repo, 'p.txt'), 'p\n');
+    git('add', 'p.txt');
+    git('commit', '-q', '-m', 'patch me');
+    const oid = git('rev-parse', 'HEAD').trim();
+    const files = await backend.formatPatch([oid], {}, { dir: join(dir, 'patches') });
+    assert.deepEqual(files.map((f) => basename(f)), ['0001-patch-me.patch']);
+    git('reset', '-q', '--hard', 'HEAD~1');
+    const before = count();
+    // am（コアが記録する）→ 拡張の記録は増やさない
+    const result = await undo.record('Apply 1 patch', ['refs/heads/main'], 'keep', () => backend.am(files, false), {
+      pending: (r) => r !== 'done',
+    });
+    assert.equal(result, 'done');
+    assert.equal(git('log', '-1', '--format=%s').trim(), 'patch me');
+    // diff を作業ツリーに（コアがファイルの前の内容を記録する）
+    const diff = join(dir, 'p.diff');
+    writeFileSync(diff, 'diff --git a/p.txt b/p.txt\n--- a/p.txt\n+++ b/p.txt\n@@ -1 +1 @@\n-p\n+P\n');
+    assert.equal(await undo.recordFiles('Apply p.diff', ['p.txt'], () => backend.applyPatch([diff], {})), 'done');
+    assert.equal(text(join(repo, 'p.txt')), 'P\n');
+    assert.equal(count(), before + 2, 'am と apply の 2 つだけ（二重に記録しない）');
+    await undo.undo();
+    assert.equal(text(join(repo, 'p.txt')), 'p\n');
+    await undo.undo();
+    assert.equal(git('log', '-1', '--format=%s').trim(), 'merge topic');
+  } finally {
+    await inner.dispose();
+    client.dispose();
+    git('reset', '-q', '--hard', start);
   }
 });
 

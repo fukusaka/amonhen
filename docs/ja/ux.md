@@ -323,7 +323,7 @@ SSH 先のリポジトリでは、「すべてのリポジトリ」は SSH 先�
 | | Pop | stash の名前とメッセージを見せて確かめてから、最新を pop | —（選んで apply・pop するのは Stashes） |
 | 状態 | Activity | 実行中の操作の数とスピナー。押すと Activity | — |
 | | Refresh | status・ref・History を読み直す（⌘R） | 作業ツリーを全部読み直す（fsmonitor と status のキャッシュを使わない）、永続キャッシュを捨てて History を作り直す |
-| | Undo | 操作の名前を見せて確かめてから戻す | —（操作ログは Activity） |
+| | Undo | 操作の名前と何を戻すか（HEAD とブランチ・ファイル・stash・ブランチの名前）を見せて確かめてから戻す | —（操作ログは Activity） |
 | 検索 | 検索欄（`NSSearchToolbarItem`） | ⌘F で History の検索、⌘⇧F で範囲つき | 件名・本文 / 作者 / ID / パス / 内容（pickaxe）の切り替え |
 
 - 今のブランチに上流がない（そのリモートブランチが消えた）ときは、Push を Publish と見せ（ツールバー・Repository メニュー・Commit and Publish）、送り先のリモートを `branch.<name>.pushRemote`・`remote.pushDefault`・リモートが 1 つならそれ・origin の順で選んだ状態から選ばせ、そこでの名前も決めさせる。送ったものが上流になる。そのリモートブランチがもうあれば、そう伝えて代わりにそれを上流にする（ブランチにないコミットがあれば、先に Pull するよう伝える）。
@@ -522,6 +522,21 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
 - 範囲の端が merge をまたぐときは first-parent の範囲として扱い、そう書いて出す。
 - 仕組み: コアの `Selection::of` が History のグラフで first-parent のつながりを調べ、`selection_diff` がバックエンドの `changes_between`（2 つのコミットの木の差分）で全ファイルの差分を作る。とびとびのときは、各コミットの差分を「パス — 短い ID」の見出しでパス順・古い順に並べる。
 
+## 7a. パッチ
+
+- 書き出し: History の右クリック（1 つのコミット、または選んだコミットを古い順に）と Commit > Save as Patch…。シートで
+  形（1 コミット 1 ファイル（`0001-件名.patch`、git の既定）か 1 つの mbox ファイル）・送り状・版（`-v`）を選ぶ。
+  ほかは git の `format.*` に従う。1 コミット 1 ファイルならフォルダを（同じ名前のファイルは置き換える）、1 つの mbox
+  ならファイル名を選ぶ。書いたら Finder で見せる。マージはパッチにできない（git が飛ばす）ので、項目は使えない。
+- 取り込み: Repository > Apply Patch…、または .patch・.diff・.mbox・.eml のファイルをウィンドウにドロップする。シート
+  で、パッチごとの件名・作者・ファイルと増減、そのまま当たるか、当て方の選び方を見せる。メールの形なら 3-way merge
+  （初期値は `am.threeWay`。git と同じくオフ）、ただの diff なら stage もする（`--index`）と 3-way merge。メールの形は
+  今のブランチのコミットに（`git am`）、diff は作業ツリーに（`git apply`）当てる。
+- am が止まったら、ツールバーの下の帯に「main にパッチを当てている途中 · 3 個中 1 個目」と、そのパッチの件名と理由を
+  出す: 当たらない（3-way を試していなければ「3-way merge で当て直す」）、変更がない（送り状。Skip する）、
+  コンフリクトがある（Working Copy で解決して Continue）。Skip と Abort は rebase と同じ。
+- Undo: メールの形のパッチは、終わったときに 1 つの操作として記録する。diff は変えたファイルを戻す。
+
 ## 8. コンフリクトの解決（埋め込みのマージエディタ）
 
 ### 流れ
@@ -644,8 +659,8 @@ Window > Activity（⌥⌘A）。ツールバーのスピナーからも開く�
 | Edit | 標準（Undo・Redo はテキストの取り消し）、Find ⌘F、Find in History ⌘⇧F、Find Next / Previous ⌘G / ⌘⇧G |
 | View | Working Copy ⌘1、History ⌘2、Conflicts ⌘3、Stashes ⌘4、Reflog ⌘5、Refresh ⌘R、Show Sidebar ⌃⌘S、Diff: Unified / Split ⌥⌘D、Ignore Whitespace、Wrap Lines、Font Size ⌘+ / ⌘−、History の表示（1 行、History Items ▸ でブランチとタグ・作者・日時・コミット ID・署名・CI の状態を出すか選ぶ、History Order ▸ 日付順 / トポロジー順（どちらも History の上のバーの右端のボタンと、ヘッダーの右クリックでも。そのメニューには 1 行表示・Fold Merged Branches・Highlight Ancestors もある。Settings > Appearance でも）、アバター、祖先の強調）、Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H、Go to Ref… ⌘⇧J、Go to Parent / Child ⌥⌘↓ / ⌥⌘↑、Next / Previous Hunk、Next / Previous File、Next Conflict |
-| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
-| Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Create Patch… |
+| Repository | Fetch ⌃⌘F、Pull ⌃⌘L、Push ⌃⌘P、Stash ⌥⌘S、Pop ⌥⌘⇧S、New Branch… ⌥⌘B、New Tag… ⌥⌘T、Merge… ⌥⌘M、Rebase… ⌥⌘R、Interactive Rebase…、Apply Patch…、Continue / Skip / Abort、Undo（操作名） ⌥⌘Z、Repository Settings ⌘;、Open in Terminal、Reveal in Finder、Open in Editor、Open on GitHub |
+| Commit | Commit ⌘↩、Commit and Push ⌘⇧↩、Amend ⌥⌘↩、Include All、Exclude All、Toggle Selection（Space）、Discard…、Cherry-pick、Revert、Reword…、Save as Patch… |
 | Window | 標準（最小化・タブ・すべてのウィンドウを結合）、Repositories ⌘⇧R、Activity ⌥⌘A |
 | Help | ショートカットの一覧、ログの場所を開く |
 

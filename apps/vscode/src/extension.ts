@@ -10,6 +10,7 @@ import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
 import { registerNavCommands } from './ui/navCommands.ts';
+import { registerPatchCommands } from './ui/patchCommands.ts';
 import { registerSequenceCommands } from './ui/sequenceCommands.ts';
 import { SidebarProvider } from './ui/sidebar.ts';
 import { registerStashCommands } from './ui/stashCommands.ts';
@@ -68,6 +69,7 @@ export async function activate(
     registerSyncCommands(manager),
     registerSequenceCommands(manager),
     registerHistoryCommands(),
+    registerPatchCommands(manager),
     registerNavCommands(manager),
     registerBranchCommands(manager),
     registerStashCommands(manager),

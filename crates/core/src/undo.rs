@@ -88,6 +88,22 @@ struct Entry {
     rename: Option<RenameBackup>,
 }
 
+impl Entry {
+    /// Undo が何を戻すか。`refs` は HEAD とブランチ（reset --mixed なら index も）、`files` は作業ツリーのファイルの
+    /// 中身（HEAD と index はそのまま）、`stash` は消した stash、`rename` はブランチの名前。
+    fn kind(&self) -> &'static str {
+        if self.stash.is_some() {
+            "stash"
+        } else if self.files.is_some() {
+            "files"
+        } else if self.rename.is_some() {
+            "rename"
+        } else {
+            "refs"
+        }
+    }
+}
+
 /// 記録した後に、ほかの操作でブランチや HEAD が動いている。
 #[derive(Debug)]
 pub struct UndoConflict(pub String);
@@ -154,6 +170,11 @@ impl UndoLog {
 
     fn push(&self, entry: Entry) -> Result<()> {
         let _guard = self.lock.lock().unwrap();
+        self.append(entry)
+    }
+
+    /// `push` の中身。呼ぶ側が `lock` を取っておく。
+    fn append(&self, entry: Entry) -> Result<()> {
         let mut entries = self.load();
         entries.push(entry);
         let excess = entries.len().saturating_sub(MAX_ENTRIES);
@@ -161,18 +182,23 @@ impl UndoLog {
         self.save(&entries)
     }
 
-    /// 記録した操作の名前と時刻（UNIX 時刻のミリ秒）。新しい順。
+    /// 記録した操作の名前・時刻（UNIX 時刻のミリ秒）・何を戻すか（`kind`）。新しい順。
     pub fn entries(&self) -> Vec<serde_json::Value> {
         self.load()
             .iter()
             .rev()
-            .map(|e| serde_json::json!({ "label": e.label, "time": e.time }))
+            .map(|e| serde_json::json!({ "label": e.label, "time": e.time, "kind": e.kind() }))
             .collect()
     }
 
     /// 次に Undo される操作の名前。
     pub fn peek(&self) -> Option<String> {
         self.load().last().map(|e| e.label.clone())
+    }
+
+    /// 次に Undo される操作の名前と、何を戻すか（`Entry::kind`）。
+    pub fn peek_kind(&self) -> Option<(String, &'static str)> {
+        self.load().last().map(|e| (e.label.clone(), e.kind()))
     }
 
     fn snapshot(ops: &dyn Operations, refs: &[String]) -> Result<RefSnapshot> {
@@ -325,6 +351,8 @@ impl UndoLog {
             mode: Mode,
             before: RefSnapshot,
         }
+        // 読んでから消すまでを 1 つずつに（Continue と画面の更新が同時に来ると、両方が記録を積む）。
+        let _guard = self.lock.lock().unwrap();
         let Some(pending) = self
             .files
             .read(Root::GitDir, PENDING_FILE)?
@@ -339,7 +367,7 @@ impl UndoLog {
         let after = Self::snapshot(ops, &refs)?;
         let changed = !pending.before.same(&after);
         if changed {
-            self.push(Entry {
+            self.append(Entry {
                 label: pending.label,
                 time: pending.time,
                 mode: pending.mode,
@@ -663,6 +691,10 @@ mod tests {
         log.record_rename(&git, "Rename main to trunk", "main", "trunk")
             .unwrap();
         assert_eq!(
+            log.peek_kind(),
+            Some(("Rename main to trunk".to_owned(), "rename"))
+        );
+        assert_eq!(
             log.undo(&git).unwrap().as_deref(),
             Some("Rename main to trunk")
         );
@@ -773,10 +805,45 @@ mod tests {
         .unwrap();
         log.record_stash_drop(&git, "stash@{0}", &oid, "wip")
             .unwrap();
+        assert_eq!(log.peek_kind().map(|(_, kind)| kind), Some("stash"));
         log.undo(&git).unwrap();
         assert!(
             git.read(&["rev-parse", "-q", "--verify", "refs/stash"])
                 .is_ok()
         );
+    }
+
+    #[test]
+    fn settles_a_stopped_operation_once_when_asked_at_the_same_time() {
+        // Continue と画面の更新（UndoPeek）が同時に確定しようとしても、記録は 1 つだけ。
+        let (tmp, git, log) = repo();
+        commit(&tmp, &git, "a.txt", "1\n");
+        for i in 0..10 {
+            log.record_stoppable(
+                &git,
+                &format!("Split {i}"),
+                &[],
+                || Ok(commit(&tmp, &git, "a.txt", &format!("{i}\n"))),
+                |_| false,
+                |_| true,
+            )
+            .unwrap();
+            let barrier = std::sync::Barrier::new(2);
+            let settled = std::thread::scope(|s| {
+                let settle = || {
+                    barrier.wait();
+                    log.settle_pending(&git).unwrap()
+                };
+                let a = s.spawn(settle);
+                let b = s.spawn(settle);
+                [a.join().unwrap(), b.join().unwrap()]
+            });
+            assert_eq!(
+                settled.iter().filter(|&&x| x).count(),
+                1,
+                "{i}: {settled:?}"
+            );
+        }
+        assert_eq!(log.entries().len(), 10);
     }
 }

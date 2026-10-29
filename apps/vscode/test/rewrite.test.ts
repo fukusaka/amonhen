@@ -92,6 +92,25 @@ test('squash, fixup and drop', async () => {
   assert.equal(existsSync(join(dir, 'c.txt')), false);
 });
 
+test('squash carries the notes like git', async () => {
+  for (const name of ['B', 'C', 'D']) {
+    git('notes', 'add', '-m', `note ${name}`, oids[name]!);
+  }
+  const note = (rev: string) => git('log', '-1', '--format=%N', rev);
+  // notes.rewriteRef がなければ、git と同じく写さない
+  await rewriteHistory(backend, undo, 'Squash', { kind: 'squash', oid: oids.C!, message: 'B and C' });
+  assert.deepEqual(subjects(), ['D', 'B and C', 'A']);
+  assert.equal(note('HEAD~1'), '');
+  await undo.undo();
+
+  // あれば、git の squash と同じく、まとめた側の notes もつなげて写す（notes.rewriteMode の既定）
+  git('config', 'notes.rewriteRef', 'refs/notes/commits');
+  await rewriteHistory(backend, undo, 'Squash', { kind: 'squash', oid: oids.C!, message: 'B and C' });
+  assert.deepEqual(subjects(), ['D', 'B and C', 'A']);
+  assert.equal(note('HEAD~1'), 'note B\n\nnote C');
+  assert.equal(note('HEAD'), 'note D');
+});
+
 test('move reorders commits', async () => {
   await rewriteHistory(backend, undo, 'Move', { kind: 'move', oid: oids.D!, to: 2 });
   assert.deepEqual(subjects(), ['C', 'B', 'D', 'A']);
@@ -124,6 +143,8 @@ test('split puts the changes back into the working tree', async () => {
   writeFileSync(join(dir, 'c2.txt'), 'c2\n');
   git('add', 'c2.txt');
   git('commit', '-q', '--amend', '--no-edit');
+  git('notes', 'add', '-m', 'note D');
+  git('config', 'notes.rewriteRef', 'refs/notes/commits');
   const head = git('rev-parse', 'HEAD');
   assert.equal(await rewriteHistory(backend, undo, 'Split D', { kind: 'split', oid: head }), 'stopped');
   assert.equal(git('log', '-1', '--format=%s'), 'C');
@@ -133,6 +154,9 @@ test('split puts the changes back into the working tree', async () => {
   commitFile('c2.txt', 'c2\n', 'D2');
   assert.equal(await backend.continueSequence('rebase'), 'done');
   assert.deepEqual(subjects(), ['D2', 'D1', 'C', 'B', 'A']);
+  // git の split の手順と同じく、notes は最後に分けたコミットへ写る（notes.rewriteRef があるとき）
+  assert.equal(git('log', '-1', '--format=%N', 'HEAD'), 'note D');
+  assert.equal(git('log', '-1', '--format=%N', 'HEAD~1'), '');
 });
 
 test('a conflict is reported and not recorded; abort restores everything', async () => {

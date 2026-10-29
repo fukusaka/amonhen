@@ -274,6 +274,173 @@ async function rangeDiffFlow(path: 'daemon' | 'git'): Promise<void> {
   }
 }
 
+/** vscode.window の関数を fn のあいだだけ差し替える（ダイアログに答える） */
+async function withWindow<T>(stubs: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
+  const window = vscode.window as unknown as Record<string, unknown>;
+  const originals = Object.fromEntries(Object.keys(stubs).map((k) => [k, window[k]]));
+  Object.assign(window, stubs);
+  try {
+    return await fn();
+  } finally {
+    Object.assign(window, originals);
+  }
+}
+
+/**
+ * コミットをパッチに保存して git am で当て、Undo で戻す。当たらずに止まった am を 3-way merge で当て直し、
+ * 解決して Continue し、Undo で戻す。ただの diff を git apply で作業ツリーに当て、Undo で戻す
+ */
+async function patchFlow(label: string): Promise<void> {
+  await showView('amonhen.showHistory');
+  const repo = api.manager.current!;
+  const name = `patch-${label}.txt`;
+  const path = join(root, name);
+  const out = join(dirname(root), `patches-${label}`);
+  const diff = join(dirname(root), `change-${label}.diff`);
+  // 作業中のファイルは CRLF になる（core.autocrlf=true）
+  const text = () => readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
+  const head = () => git('rev-parse', 'HEAD').trim();
+  const subject = () => git('log', '-1', '--format=%s').trim();
+  const commitFile = (content: string, message: string) => {
+    writeFileSync(path, content);
+    git('add', name);
+    git('commit', '-q', '-m', message);
+    return head();
+  };
+  // 当てる前の確かめ（modal）には answer と答え、ほかの知らせは閉じる
+  let answer = 'Apply';
+  const stubs = {
+    showQuickPick: async (items: unknown) => ((await items) as unknown[])[0],
+    showOpenDialog: async () => [vscode.Uri.file(out)],
+    showInformationMessage: async (_message: string, ...rest: unknown[]) =>
+      (rest[0] as { modal?: boolean } | undefined)?.modal ? answer : undefined,
+    showWarningMessage: async () => undefined,
+    showErrorMessage: async (message: string) => void errors.push(message),
+  };
+  const errors: string[] = [];
+  await withWindow(stubs, async () => {
+    try {
+      // 保存して、そのコミットを消してから am で当て直す
+      commitFile('1\n2\n3\n', `base ${label}`);
+      const change = commitFile('1\nx\n3\n', `change ${label}`);
+      await vscode.commands.executeCommand('amonhen.history.savePatch', { oid: change });
+      const patch = join(out, `0001-change-${label}.patch`);
+      assert.ok(existsSync(patch), `${patch} がある`);
+      git('reset', '-q', '--hard', 'HEAD~1');
+      const base = head();
+      await vscode.commands.executeCommand('amonhen.applyPatch', vscode.Uri.file(patch));
+      await until('am', () => subject() === `change ${label}` && git('rev-parse', 'HEAD~').trim() === base);
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('am の Undo', () => head() === base);
+
+      // 当たらずに止まる → 3-way merge で当て直す → 解決して Continue → Undo で全体が戻る
+      const other = commitFile('1\ny\n3\n', `other ${label}`);
+      await vscode.commands.executeCommand('amonhen.applyPatch', vscode.Uri.file(patch));
+      await until('am で止まる', () => repo.current.sequence === 'am' && repo.current.am?.retried === false);
+      assert.equal(head(), other);
+      await vscode.commands.executeCommand('amonhen.amRetryThreeWay');
+      await until('3-way merge で当て直す', () => text().includes('<<<<<<<') && repo.current.am?.retried === true);
+      writeFileSync(path, '1\nx\n3\n');
+      git('add', name);
+      await vscode.commands.executeCommand('amonhen.continueSequence');
+      await until('Continue', () => !repo.current.sequence && subject() === `change ${label}`);
+      assert.equal(git('rev-parse', 'HEAD~').trim(), other);
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('止まった am の Undo', () => head() === other && text() === '1\ny\n3\n');
+
+      // ただの diff は作業ツリーだけに当てる（git apply の既定）
+      writeFileSync(diff, `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1,3 +1,3 @@\n 1\n y\n-3\n+z\n`);
+      await vscode.commands.executeCommand('amonhen.applyPatch', vscode.Uri.file(diff));
+      await until('apply', () => text() === '1\ny\nz\n');
+      assert.equal(git('diff', '--cached', '--name-only').trim(), '', 'index には触らない');
+      assert.equal(head(), other);
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('apply の Undo', () => text() === '1\ny\n3\n' && git('status', '--porcelain').trim() === '');
+      assert.deepEqual(errors, [], 'エラーは出ない');
+    } finally {
+      if (repo.current.sequence === 'am') {
+        git('am', '--abort');
+      }
+      rmSync(out, { recursive: true, force: true });
+      rmSync(diff, { force: true });
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+}
+
+/**
+ * rerere が前の解決を当てたファイルと、ほかのエディタで直したファイルは、マーカーが残っていないコンフリクトとして
+ * Webview に送られる（マーカーが残っているファイルとは分ける）。そうしたファイルで Accept を選ぶと、解決した内容が
+ * 失われると確かめ、まとめて解決済みにできる
+ */
+async function conflictsWithoutMarkersFlow(): Promise<void> {
+  const panel = await showView('amonhen.showWorkingCopy');
+  const wc = panel.workingCopy;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const write = (file: string, text: string) => writeFileSync(join(root, file), text);
+  const files = ['rerere.txt', 'hand.txt', 'open.txt'];
+  const commitSide = (side: string) => {
+    for (const f of files) write(f, `1\n${f} ${side}\n3\n`);
+    git('add', ...files);
+    git('commit', '-q', '-m', `conflict ${side}`);
+  };
+  git('config', 'rerere.enabled', 'true');
+  git('switch', '-q', '-c', 'conflict-ours');
+  commitSide('ours');
+  git('switch', '-q', '-c', 'conflict-theirs', 'HEAD~');
+  commitSide('theirs');
+  git('switch', '-q', 'conflict-ours');
+  const merge = () => assert.throws(() => childProcess.execFileSync('git', ['merge', '-q', 'conflict-theirs'], { cwd: root, stdio: 'ignore' }));
+  try {
+    // 1 回目: rerere.txt だけ解決し、rerere に覚えさせてやめる。2 回目は rerere が rerere.txt を解く
+    merge();
+    write('rerere.txt', '1\nrerere.txt both\n3\n');
+    git('rerere');
+    git('merge', '--abort');
+    merge();
+    assert.equal(readFileSync(join(root, 'rerere.txt'), 'utf8'), '1\nrerere.txt both\n3\n');
+    write('hand.txt', '1\nhand.txt both\n3\n');
+    const mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    const sent = await waitPosted('wcFiles', mark, (m) => m.files.filter((f) => f.group === 'conflicts').length === 3);
+    const state = (path: string) => {
+      const f = sent.files.find((x) => x.group === 'conflicts' && x.path === path)!;
+      return { markers: f.markers, rerere: f.rerere };
+    };
+    assert.deepEqual(state('rerere.txt'), { markers: 0, rerere: true });
+    assert.deepEqual(state('hand.txt'), { markers: 0, rerere: false });
+    assert.deepEqual(state('open.txt'), { markers: 1, rerere: false });
+
+    // Accept は、解決した内容が失われると確かめる（ここでは断る）
+    let detail: string | undefined;
+    const showWarningMessage = async (_: string, options: { detail?: string }) => {
+      detail = options.detail;
+      return undefined;
+    };
+    await withWindow({ showWarningMessage }, () => wc.handle({ type: 'wcResolve', path: 'hand.txt', action: 'current' }));
+    assert.match(detail ?? '', /もう解決済みかもしれません/);
+    assert.equal(readFileSync(join(root, 'hand.txt'), 'utf8'), '1\nhand.txt both\n3\n', '断れば変わらない');
+
+    // Conflicts の見出しの Mark N as Resolved と同じく、マーカーのないものだけを解決済みにする
+    await wc.handle({
+      type: 'wcStageFiles',
+      op: 'stage',
+      files: ['rerere.txt', 'hand.txt'].map((path) => ({ group: 'conflicts' as const, path })),
+    });
+    await until('解決済み', () => git('diff', '--name-only', '--diff-filter=U').trim() === 'open.txt');
+  } finally {
+    try {
+      git('merge', '--abort');
+    } catch {
+      // もうやめている
+    }
+    git('switch', '-q', branch);
+    git('branch', '-q', '-D', 'conflict-ours', 'conflict-theirs');
+    git('config', '--unset', 'rerere.enabled');
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 suite('Amon Hen in VSCode', () => {
   suiteSetup(async () => {
     recordSpawns();
@@ -338,6 +505,26 @@ suite('Amon Hen in VSCode', () => {
     );
   });
 
+  test('saves commits as patches and applies them through the daemon', async () => {
+    await patchFlow('daemon');
+  });
+
+  test('drops the selection of a file whose changes went away before its diff is read', async () => {
+    const panel = await showView('amonhen.showWorkingCopy');
+    const path = join(root, FILE);
+    const before = readFileSync(path);
+    writeFileSync(path, Buffer.concat([before, Buffer.from('more\r\n')]));
+    let mark = posted.length;
+    await vscode.commands.executeCommand('amonhen.refresh');
+    await waitPosted('wcFiles', mark, (m) => m.files.some((f) => f.group === 'unstaged' && f.path === FILE));
+    // 拡張が知る前に元に戻す。daemon は新しい status を読むので、このファイルの差分を断る
+    writeFileSync(path, before);
+    mark = posted.length;
+    await panel.workingCopy.handle({ type: 'wcSelect', group: 'unstaged', path: FILE });
+    await waitPosted('wcDiff', mark, (m) => m.diff === undefined);
+    await waitPosted('wcFiles', mark, (m) => !m.files.some((f) => f.path === FILE));
+  });
+
   test('shares one daemon with another window and the CLI', async () => {
     const engine = process.env['AMONHEN_E2E_ENGINE']!;
     const before = await until('daemon', () => daemonStatus());
@@ -368,6 +555,10 @@ suite('Amon Hen in VSCode', () => {
       spawned.slice(mark).some((s) => s.args.includes('update-index')),
       '行の stage は拡張が git の update-index でする',
     );
+  });
+
+  test('saves commits as patches and applies them on the git execution layer', async () => {
+    await patchFlow('git');
   });
 
   test('shows names from the mailmap on the git execution layer', async () => {
@@ -436,6 +627,10 @@ suite('Amon Hen in VSCode', () => {
       await gitConfig.update('path', undefined, vscode.ConfigurationTarget.Global);
       await vscode.workspace.getConfiguration('amonhen').update('daemon.enabled', false, vscode.ConfigurationTarget.Global);
     }
+  });
+
+  test('tells conflicts without markers and marks them resolved', async () => {
+    await conflictsWithoutMarkersFlow();
   });
 
   test('starts every process without a console window', () => {

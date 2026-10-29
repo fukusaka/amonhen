@@ -1,8 +1,8 @@
 use amonhen_model::tr;
 use amonhen_model::{
-    ConfigEntry, HeadState, Oid, Operations, Outcome, PullMode, RangePair, RefUpdate, RemoteChange,
-    RemoteCheck, RemoteEntry, ResetMode, Result, Sequence, SigningKey, WorktreeChange,
-    WorktreeChanges,
+    ApplyPatch, ConfigEntry, FormatPatch, HeadState, Oid, Operations, Outcome, PatchFile, PullMode,
+    RangePair, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry, ResetMode, Result, Sequence,
+    SigningKey, WorktreeChange, WorktreeChanges,
 };
 
 use crate::Git;
@@ -18,11 +18,20 @@ fn text(out: Vec<u8>) -> Result<String> {
 impl Git {
     /// 失敗しても、途中で止まっていればコンフリクトとして扱う。成功しても止まっていれば Stopped。
     fn stoppable(&self, args: &[&str], env: &[(&str, &str)]) -> Result<Outcome> {
+        self.stoppable_with_input(args, env, None)
+    }
+
+    fn stoppable_with_input(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+        input: Option<&[u8]>,
+    ) -> Result<Outcome> {
         let mut cmd = self.command(args);
         for (k, v) in env {
             cmd.env(k, v);
         }
-        match crate::run(cmd, None) {
+        match crate::run(cmd, input) {
             Ok(_) if self.sequence_in_progress()?.is_some() => Ok(Outcome::Stopped),
             Ok(_) => Ok(Outcome::Done),
             Err(_) if self.sequence_in_progress()?.is_some() => Ok(Outcome::Conflict),
@@ -33,6 +42,11 @@ impl Git {
     fn git_dir(&self) -> Result<std::path::PathBuf> {
         let dir = text(self.read(&["rev-parse", "--absolute-git-dir"])?)?;
         Ok(dir.into())
+    }
+
+    /// index にコンフリクトしたファイルがあるか。
+    fn has_unmerged(&self) -> Result<bool> {
+        Ok(!self.read(&["ls-files", "--unmerged", "-z"])?.is_empty())
     }
 }
 
@@ -315,6 +329,11 @@ impl Operations for Git {
             ResetMode::Hard => "--hard",
             ResetMode::Keep => "--keep",
         };
+        // keep は index の stat を見て、中身が同じでも書き直しただけのファイル（Undo で戻したものなど）を「変更あり」と
+        // して断る。先に index を作業ツリーに合わせておく（変わったファイルが残っていれば 1 を返すが、それは構わない）。
+        if mode == "--keep" {
+            let _ = self.write(&["update-index", "-q", "--refresh"]);
+        }
         self.write(&["reset", mode, &hex(oid)]).map(drop)
     }
 
@@ -583,7 +602,10 @@ impl Operations for Git {
     fn sequence_in_progress(&self) -> Result<Option<Sequence>> {
         let dir = self.git_dir()?;
         let has = |name: &str| dir.join(name).exists();
-        Ok(if has("rebase-merge") || has("rebase-apply") {
+        // `git am` も `rebase-apply` を使う。am のときだけ `applying` がある。
+        Ok(if has("rebase-apply/applying") {
+            Some(Sequence::Am)
+        } else if has("rebase-merge") || has("rebase-apply") {
             Some(Sequence::Rebase)
         } else if has("MERGE_HEAD") {
             Some(Sequence::Merge)
@@ -629,6 +651,99 @@ impl Operations for Git {
         self.stoppable(&[sequence.command(), "--skip"], &[])
     }
 
+    fn format_patch(&self, commits: &[Oid], options: &FormatPatch) -> Result<Vec<PatchFile>> {
+        if commits.is_empty() {
+            return Ok(Vec::new());
+        }
+        // format-patch は受け取った並びの逆の順に書き出す。日付で並べ替えさせず（`--no-walk=unsorted`）、逆にして
+        // 渡す。
+        let ids: Vec<String> = commits.iter().rev().map(hex).collect();
+        let reroll = options.reroll.map(|n| format!("--reroll-count={n}"));
+        // 数を渡さないと、コミットが 1 つのときに `<rev>..HEAD` の意味になる。
+        let count = format!("--max-count={}", ids.len());
+        let mut args = vec!["format-patch", "--no-walk=unsorted", &count];
+        if options.cover_letter {
+            args.push("--cover-letter");
+        }
+        args.extend(reroll.as_deref());
+        if options.single {
+            args.push("--stdout");
+            args.extend(ids.iter().map(String::as_str));
+            let content = self.read(&args)?;
+            return Ok(vec![PatchFile {
+                name: String::new(),
+                content,
+            }]);
+        }
+        // ファイル名は git に付けさせる（`format.filenameMaxLength` なども効く）。SSH 先でも同じように動くよう、
+        // git dir の中の一時フォルダに書かせて、中身を読んで返す。
+        let dir = self
+            .git_dir()?
+            .join("amonhen")
+            .join(format!("format-patch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)?;
+        let out_dir = dir.to_string_lossy().into_owned();
+        args.extend(["--output-directory", &out_dir]);
+        args.extend(ids.iter().map(String::as_str));
+        let result = self.read(&args).and_then(|out| {
+            // 書いたファイルのパスが 1 行に 1 つ、書いた順に出る。
+            String::from_utf8_lossy(&out)
+                .lines()
+                .filter_map(|line| std::path::Path::new(line.trim()).file_name())
+                .map(|name| {
+                    Ok(PatchFile {
+                        name: name.to_string_lossy().into_owned(),
+                        content: std::fs::read(dir.join(name))?,
+                    })
+                })
+                .collect()
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+        result
+    }
+
+    fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome> {
+        let mut args = vec!["am"];
+        match three_way {
+            Some(true) => args.push("--3way"),
+            Some(false) => args.push("--no-3way"),
+            None => {}
+        }
+        // パッチは標準入力で渡す（SSH 先でもパッチのファイルは手元に置いたまま）。
+        self.stoppable_with_input(&args, &[], Some(mbox))
+    }
+
+    fn am_three_way(&self) -> Result<Outcome> {
+        // `git am -3` と同じく、止まったパッチ（`rebase-apply/patch`）を index の blob を使って 3-way で当てる。
+        let patch = self.git_dir()?.join("rebase-apply").join("patch");
+        let patch = patch.to_string_lossy().replace('\\', "/");
+        match self.write(&["apply", "--3way", &patch]) {
+            Ok(_) => self.continue_sequence(Sequence::Am),
+            Err(_) if self.has_unmerged()? => Ok(Outcome::Conflict),
+            Err(e) => Err(e),
+        }
+    }
+
+    fn apply_patch(&self, patch: &[u8], options: &ApplyPatch) -> Result<Outcome> {
+        let mut args = vec!["apply"];
+        if options.three_way {
+            args.push("--3way");
+        } else if options.index {
+            args.push("--index");
+        }
+        if options.check {
+            args.push("--check");
+            return self.read_with_input(&args, patch).map(|_| Outcome::Done);
+        }
+        match self.write_with_input(&args, patch) {
+            Ok(_) => Ok(Outcome::Done),
+            // 3-way でコンフリクトを残して当てた（終了コードは 1）。
+            Err(_) if options.three_way && self.has_unmerged()? => Ok(Outcome::Conflict),
+            Err(e) => Err(e),
+        }
+    }
+
     fn take_side(&self, path: &str, ours: bool) -> Result<()> {
         let side = if ours { "--ours" } else { "--theirs" };
         match self.write(&["checkout", side, "--", path]) {
@@ -636,6 +751,29 @@ impl Operations for Git {
             // その側にファイルがない（片方で消されていた）。
             Err(_) => self.write(&["rm", "--quiet", "--", path]).map(drop),
         }
+    }
+
+    fn conflict_stages(&self, path: &str) -> Result<[Option<Oid>; 3]> {
+        // <mode> SP <oid> SP <stage> TAB <path> NUL
+        let out = self.read(&["ls-files", "-u", "-z", "--", path])?;
+        let mut stages = [None; 3];
+        for entry in out.split(|&b| b == 0) {
+            let Some(meta) = entry.split(|&b| b == b'\t').next() else {
+                continue;
+            };
+            let fields: Vec<&[u8]> = meta.split(|&b| b == b' ').collect();
+            if let [_, oid, stage] = fields[..]
+                && let (Some(oid), Some(i @ 1..=3)) = (
+                    std::str::from_utf8(oid).ok().and_then(Oid::from_hex),
+                    std::str::from_utf8(stage)
+                        .ok()
+                        .and_then(|s| s.parse::<usize>().ok()),
+                )
+            {
+                stages[i - 1] = Some(oid);
+            }
+        }
+        Ok(stages)
     }
 
     fn fetch(&self) -> Result<()> {

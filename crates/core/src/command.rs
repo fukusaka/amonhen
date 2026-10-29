@@ -95,6 +95,43 @@ pub enum Command {
         oid: String,
         is_merge: bool,
     },
+    /// コミット `oids` を、渡した順（古い順に渡す）にパッチにする（`git format-patch`。マージは git と同じく
+    /// 飛ばす）。`dir` があればそのフォルダに 1 コミット 1 ファイル（git が付けた名前。同じ名前のファイルは
+    /// 上書き）、`file` があればそのファイルに 1 つの mbox。`info.files` に書いたパス。番号の付け方・宛先・署名
+    /// などは git の `format.*` の設定に任せる。
+    FormatPatch {
+        oids: Vec<String>,
+        dir: Option<String>,
+        file: Option<String>,
+        #[serde(default)]
+        cover_letter: bool,
+        reroll: Option<u32>,
+    },
+    /// パッチのファイル `paths`（並べた順につなぐ）の中身（`info`: `kind`（`mailbox` なら Am、`diff` なら
+    /// ApplyPatch で当てる）・`patches`（subject・author・authorEmail・date・files（path・oldPath・added・removed・
+    /// binary・status））・`applies`（今のリポジトリにそのまま当たるか。当たらなければ `error` に git の答え）・
+    /// `threeWay`（git の `am.threeWay`））。
+    ReadPatch {
+        paths: Vec<String>,
+    },
+    /// メールの形のパッチ `paths` を、並べた順に今のブランチにコミットとして当てる（`git am`。Undo できる）。
+    /// `threeWay` がなければ git の `am.threeWay` に任せる。当たらなければ止まる（Continue・Skip・Abort）。
+    Am {
+        paths: Vec<String>,
+        three_way: Option<bool>,
+    },
+    /// `git am` が当てられずに止まったパッチを 3-way merge で当て直す。きれいに当たれば続け、当たらなければ
+    /// コンフリクトをマーカーつきで残す。
+    AmThreeWay,
+    /// diff `paths` を作業ツリーに当てる（`git apply`。Undo でファイルの中身は戻る。index は戻らない）。
+    /// `index` なら index にも、`threeWay` なら当たらないところを 3-way merge にしてコンフリクトを残す。
+    ApplyPatch {
+        paths: Vec<String>,
+        #[serde(default)]
+        index: bool,
+        #[serde(default)]
+        three_way: bool,
+    },
     Abort,
     Continue,
     Skip,
@@ -169,9 +206,9 @@ pub enum Command {
         paths: Vec<String>,
     },
     Undo,
-    /// 次に Undo される操作の名前。
+    /// 次に Undo される操作の名前（`label`）と、何を戻すか（`info.kind`: `refs`・`files`・`stash`・`rename`）。
     UndoPeek,
-    /// 操作ログ（`info.entries`: 新しい順の `label`・`time`（UNIX 時刻のミリ秒））。
+    /// 操作ログ（`info.entries`: 新しい順の `label`・`time`（UNIX 時刻のミリ秒）・`kind`（UndoPeek と同じ））。
     UndoLog,
     /// コミットの編集（reword・squash・fixup・drop・edit・split・move）。
     Rewrite {
@@ -302,6 +339,9 @@ pub enum Command {
     ConflictCount {
         path: String,
     },
+    /// 直前に読んだ status の内容のコンフリクトそれぞれの、残っているマーカーの数と、rerere が前の解決を
+    /// 当てたか（`info.files`: `{path, markers, rerere}`。`Repository::conflict_files`）。
+    ConflictFiles,
     /// マージエディタの結果を `path` に書く（Undo できる）。`stage` なら解決済みにする（index に入れる）。
     SaveMerge {
         path: String,
@@ -551,6 +591,16 @@ pub struct Response {
     pub error_path: Option<String>,
 }
 
+/// 内容のコンフリクトのファイル 1 つの状態（`Repository::conflict_files`）。
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct ConflictFile {
+    pub path: String,
+    /// 作業ツリーに残っているコンフリクトのマーカーの数。0 なら、中身はもう解決されているかもしれない。
+    pub markers: usize,
+    /// git の rerere が前の解決を当てた。
+    pub rerere: bool,
+}
+
 impl Response {
     /// 失敗の答え。種類を見分けられれば添える。
     pub fn failed(message: String) -> Self {
@@ -597,6 +647,37 @@ fn tag_objects<'a>(
 
 fn oid(hex: &str) -> Result<Oid> {
     Oid::from_hex(hex).ok_or_else(|| tr!("Can’t read the commit ID: {hex}", hex = hex).into())
+}
+
+/// `git am` が止まったパッチを 3-way で当て直したときに、その番号（`rebase-apply/next`）を書いておくファイル。
+/// am が終わるか中止されると git が rebase-apply ごと消すので、次の am に残らない。
+const AM_RETRIED: &str = "rebase-apply/amonhen-retried";
+
+/// パッチのファイルを並べた順につなぐ。メールの区切りの行（`From `）がないもの（.eml など）には、
+/// `git format-patch` と同じ形の区切りを足す（`git am` が 1 通ずつに分けられるように）。
+fn read_patches(paths: &[String]) -> Result<Vec<u8>> {
+    if paths.is_empty() {
+        return Err(tr!("No patch files").into());
+    }
+    let mut out = Vec::new();
+    for path in paths {
+        let data = std::fs::read(path)
+            .map_err(|e| tr!("Can’t read {path}: {e}", path = path, e = e.to_string()))?;
+        if !String::from_utf8_lossy(&data)
+            .trim_start()
+            .starts_with("From ")
+            && crate::patch::parse(&data).kind == crate::patch::Kind::Mailbox
+        {
+            out.extend_from_slice(
+                b"From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001\n",
+            );
+        }
+        out.extend_from_slice(&data);
+        if !out.ends_with(b"\n") {
+            out.push(b'\n');
+        }
+    }
+    Ok(out)
 }
 
 fn heads(name: &str) -> String {
@@ -880,6 +961,27 @@ impl Repository {
                     });
                 }
             }
+            Sequence::Am => {
+                // 止まっているパッチの件名（`info` は git mailinfo が書いたもの。なければメッセージの 1 行目）。
+                let subject = read("rebase-apply/info")
+                    .and_then(|info| {
+                        info.lines()
+                            .find_map(|l| l.strip_prefix("Subject: ").map(str::to_owned))
+                    })
+                    .or_else(|| {
+                        read("rebase-apply/final-commit")
+                            .and_then(|m| m.lines().next().map(str::to_owned))
+                    });
+                info["step"] = serde_json::json!({ "action": "am", "subject": subject });
+                // 3-way で当てようとしたか（していなければ、当て直せる）。
+                info["threeWay"] = (read("rebase-apply/threeway").as_deref() == Some("t")).into();
+                // diff のないパッチ（送り状など）で止まった。
+                info["empty"] = read("rebase-apply/patch").is_none().into();
+                // このパッチを 3-way で当て直したところ（残っているのはコンフリクトか、その解決）。
+                info["retried"] = (read(AM_RETRIED).is_some()
+                    && read(AM_RETRIED) == read("rebase-apply/next"))
+                .into();
+            }
         }
         if let Some(branch) = self.refs().ok().and_then(|r| r.refs.head_branch.clone())
             && info.get("branch").is_none()
@@ -1014,6 +1116,47 @@ impl Repository {
             "mergedTags": merged_tags,
             "trailers": trailers,
         }))
+    }
+
+    /// `status` の内容のコンフリクト（両側にファイルがある UU・AA）それぞれの、作業ツリーに残っているマーカーの
+    /// 数と、git の rerere が前の解決を当てたか。作業ツリーのファイルと `.git/MERGE_RR` を読むだけ（git は呼ばない）。
+    /// 片側で消えたコンフリクトなど、マーカーで表せないものは入れない。
+    pub fn conflict_files(&self, status: &amonhen_model::Status) -> Result<Vec<ConflictFile>> {
+        let files = self.backend().files();
+        let mut tracked = None;
+        let mut out = Vec::new();
+        for e in &status.entries {
+            if e.kind != amonhen_model::StatusKind::Unmerged
+                || !matches!((e.index, e.worktree), (b'U', b'U') | (b'A', b'A'))
+            {
+                continue;
+            }
+            let markers = files
+                .read(Root::Workdir, &e.path)?
+                .map_or(0, |d| crate::conflict::parse(&d).len());
+            let rerere = markers == 0
+                && match &tracked {
+                    Some(t) => Self::rerere_applied(t, &e.path),
+                    None => Self::rerere_applied(tracked.insert(self.rerere_tracked()?), &e.path),
+                };
+            out.push(ConflictFile {
+                path: e.path.clone(),
+                markers,
+                rerere,
+            });
+        }
+        Ok(out)
+    }
+
+    /// rerere が見張っている（まだ解決を当てていない）パス。rerere が使われていなければ `None`。
+    fn rerere_tracked(&self) -> Result<Option<std::collections::HashSet<String>>> {
+        let data = self.backend().files().read(Root::GitDir, "MERGE_RR")?;
+        Ok(data.map(|d| crate::conflict::rerere_paths(&d)))
+    }
+
+    /// rerere が `path` に前の解決を当てた（rerere が使われていて、見張りのパスから消えている）か。
+    fn rerere_applied(tracked: &Option<std::collections::HashSet<String>>, path: &str) -> bool {
+        tracked.as_ref().is_some_and(|t| !t.contains(path))
     }
 
     /// コミットの詳細のうち時間のかかる分。署名の検証・notes・行数は git に頼み、子コミット・含むブランチと
@@ -1484,7 +1627,15 @@ impl Repository {
             ops,
             label,
             &names,
-            || ops.rebase_todo(plan.base.as_ref(), &todo),
+            || {
+                let outcome = ops.rebase_todo(plan.base.as_ref(), &todo)?;
+                // split: `edit` で止めたコミットを取り消し、変更を作業ツリーに戻す。
+                if plan.reset_on_stop && outcome == Outcome::Stopped {
+                    let parent = ops.resolve("HEAD^")?;
+                    ops.reset(amonhen_model::ResetMode::Mixed, &parent)?;
+                }
+                Ok(outcome)
+            },
             |o| *o == Outcome::Conflict,
             |o| *o == Outcome::Stopped,
         )
@@ -1796,6 +1947,134 @@ impl Repository {
                     not_done,
                 )?)
             }
+            Command::FormatPatch {
+                oids,
+                dir,
+                file,
+                cover_letter,
+                reroll,
+            } => {
+                let commits = oids.iter().map(|o| oid(o)).collect::<Result<Vec<_>>>()?;
+                let options = amonhen_model::FormatPatch {
+                    cover_letter,
+                    reroll,
+                    single: file.is_some(),
+                };
+                let patches = ops.format_patch(&commits, &options)?;
+                let mut written = Vec::new();
+                match (dir, file) {
+                    (_, Some(file)) => {
+                        let content: Vec<u8> =
+                            patches.into_iter().flat_map(|p| p.content).collect();
+                        std::fs::write(&file, content)?;
+                        written.push(file);
+                    }
+                    (Some(dir), None) => {
+                        let dir = std::path::Path::new(&dir);
+                        std::fs::create_dir_all(dir)?;
+                        for patch in patches {
+                            let path = dir.join(&patch.name);
+                            std::fs::write(&path, &patch.content)?;
+                            written.push(path.to_string_lossy().into_owned());
+                        }
+                    }
+                    (None, None) => {
+                        return Err(tr!("Choose a folder or a file for the patches").into());
+                    }
+                }
+                Ok(Response {
+                    ok: true,
+                    info: Some(serde_json::json!({ "files": written })),
+                    ..Default::default()
+                })
+            }
+            Command::ReadPatch { paths } => {
+                let data = read_patches(&paths)?;
+                let summary = crate::patch::parse(&data);
+                let mailbox = summary.kind == crate::patch::Kind::Mailbox;
+                // am は index にも当てるので、index と作業ツリーの両方に当たるかを調べる。
+                let check = amonhen_model::ApplyPatch {
+                    index: mailbox,
+                    check: true,
+                    ..Default::default()
+                };
+                let error = match summary.patches.iter().all(|p| p.files.is_empty()) {
+                    true => Some(tr!("There are no changes in the patch").to_string()),
+                    false => ops.apply_patch(&data, &check).err().map(|e| e.to_string()),
+                };
+                let config = ops.config_list()?;
+                let three_way = config
+                    .iter()
+                    .rev()
+                    .find(|e| e.key.eq_ignore_ascii_case("am.threeway"))
+                    .is_some_and(|e| {
+                        matches!(
+                            e.value.to_ascii_lowercase().as_str(),
+                            "" | "true" | "yes" | "on" | "1"
+                        )
+                    });
+                let mut info = serde_json::to_value(&summary)?;
+                info["applies"] = error.is_none().into();
+                info["error"] = error.into();
+                info["threeWay"] = three_way.into();
+                Ok(Response {
+                    ok: true,
+                    info: Some(info),
+                    ..Default::default()
+                })
+            }
+            Command::Am { paths, three_way } => {
+                let data = read_patches(&paths)?;
+                let count = crate::patch::parse(&data).patches.len();
+                let label = match count {
+                    1 => "Apply 1 patch".to_owned(),
+                    n => format!("Apply {n} patches"),
+                };
+                // 止まったら、終わったとき（Continue・Skip）にまとめて 1 つ記録する。Abort なら残らない。
+                done(undo.record_stoppable(
+                    ops,
+                    &label,
+                    &[],
+                    || ops.am(&data, three_way),
+                    |_| false,
+                    not_done,
+                )?)
+            }
+            Command::AmThreeWay => {
+                let outcome = ops.am_three_way()?;
+                if outcome != Outcome::Done {
+                    let files = self.backend().files();
+                    if let Some(next) = files.read(Root::GitDir, "rebase-apply/next")? {
+                        files.write(Root::GitDir, AM_RETRIED, &next)?;
+                    }
+                }
+                undo.settle_pending(ops)?;
+                done(outcome)
+            }
+            Command::ApplyPatch {
+                paths,
+                index,
+                three_way,
+            } => {
+                let data = read_patches(&paths)?;
+                let touched = crate::patch::parse(&data).paths();
+                let touched: Vec<&str> = touched.iter().map(String::as_str).collect();
+                let label = match paths.as_slice() {
+                    [one] => format!(
+                        "Apply {}",
+                        std::path::Path::new(one)
+                            .file_name()
+                            .map_or_else(|| one.clone(), |n| n.to_string_lossy().into_owned())
+                    ),
+                    many => format!("Apply {} patches", many.len()),
+                };
+                let options = amonhen_model::ApplyPatch {
+                    index,
+                    three_way,
+                    check: false,
+                };
+                done(undo.record_files(ops, &label, &touched, || ops.apply_patch(&data, &options))?)
+            }
             Command::Abort => {
                 let sequence = ops
                     .sequence_in_progress()?
@@ -1976,9 +2255,13 @@ impl Repository {
             Command::UndoPeek => {
                 // 外で rebase を終わらせた場合も、ここで確定させる。
                 undo.settle_pending(ops)?;
+                let peek = undo.peek_kind();
                 Ok(Response {
                     ok: true,
-                    label: undo.peek(),
+                    info: peek
+                        .as_ref()
+                        .map(|(_, kind)| serde_json::json!({ "kind": kind })),
+                    label: peek.map(|(label, _)| label),
                     ..Default::default()
                 })
             }
@@ -2178,6 +2461,27 @@ impl Repository {
                     .files()
                     .read(Root::Workdir, &path)?
                     .ok_or_else(|| tr!("File not found"))?;
+                let markers = crate::conflict::parse(&data).len();
+                // マーカーが残っていない（rerere が解決を当てた、ほかのエディタで直した）なら、左右には index に
+                // 残っている両側の内容を出す（3 欄が同じにならないように）。
+                let stages = if markers == 0 {
+                    let backend = self.backend();
+                    let [base, ours, theirs] = ops.conflict_stages(&path)?;
+                    let text = |id: Option<Oid>| -> Result<Option<serde_json::Value>> {
+                        id.map(|id| {
+                            let blob = backend.blob(&id)?;
+                            let text = backend.to_worktree_form(&path, &blob)?;
+                            Ok(serde_json::json!({ "text": String::from_utf8_lossy(&text), "regions": [] }))
+                        })
+                        .transpose()
+                    };
+                    match (ours, theirs) {
+                        (Some(_), Some(_)) => Some((text(ours)?, text(theirs)?, text(base)?)),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
                 let side = |choice| {
                     crate::conflict::side(&data, choice).map(|s| {
                         serde_json::json!({
@@ -2187,13 +2491,19 @@ impl Repository {
                     })
                 };
                 use crate::conflict::Choice;
+                let (current, incoming, base) = stages.unwrap_or_else(|| {
+                    (side(Choice::Ours), side(Choice::Theirs), side(Choice::Base))
+                });
+                let rerere = markers == 0 && Self::rerere_applied(&self.rerere_tracked()?, &path);
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({
-                        "current": side(Choice::Ours),
-                        "incoming": side(Choice::Theirs),
-                        "base": side(Choice::Base),
+                        "current": current,
+                        "incoming": incoming,
+                        "base": base,
                         "result": String::from_utf8_lossy(&data),
+                        "markers": markers,
+                        "rerere": rerere,
                     })),
                     ..Default::default()
                 })
@@ -2365,6 +2675,16 @@ impl Repository {
                 Ok(Response {
                     ok: true,
                     info: Some(serde_json::json!({ "count": crate::conflict::parse(&data).len() })),
+                    ..Default::default()
+                })
+            }
+            Command::ConflictFiles => {
+                let status = self.last_status()?;
+                Ok(Response {
+                    ok: true,
+                    info: Some(
+                        serde_json::json!({ "files": self.conflict_files(&status.status)? }),
+                    ),
                     ..Default::default()
                 })
             }
@@ -2748,11 +3068,15 @@ impl Repository {
                 // rebase なら何番目かも添える（"rebase (2/5)"）。
                 let sequence = ops.sequence_in_progress()?;
                 let progress = match sequence {
-                    Some(amonhen_model::Sequence::Rebase) => ops.rebase_progress()?,
+                    Some(amonhen_model::Sequence::Rebase | amonhen_model::Sequence::Am) => {
+                        ops.rebase_progress()?
+                    }
                     _ => None,
                 };
                 let text = sequence.map(|s| match (s, progress) {
-                    (_, Some((current, total))) => format!("rebase ({current}/{total})"),
+                    (s, Some((current, total))) => {
+                        format!("{} ({current}/{total})", s.command())
+                    }
                     (s, None) => s.command().to_owned(),
                 });
                 let info = match sequence {
@@ -3611,15 +3935,29 @@ mod tests {
             r#"{"op":"createBranch","name":"topic","start":"main","checkout":false}"#,
         );
         assert_eq!(r["ok"], true);
-        assert_eq!(
-            run(&repo, r#"{"op":"undoPeek"}"#)["label"],
-            "Create branch topic"
-        );
+        let peek = run(&repo, r#"{"op":"undoPeek"}"#);
+        assert_eq!(peek["label"], "Create branch topic");
+        assert_eq!(peek["info"]["kind"], "refs", "{peek}");
         assert_eq!(
             run(&repo, r#"{"op":"undo"}"#)["label"],
             "Create branch topic"
         );
         assert!(git(dir, &["branch", "--list", "topic"]).is_empty());
+
+        // ファイルの中身を戻す記録は files（HEAD とブランチには触らない）。
+        std::fs::write(dir.join("a.txt"), "changed\n").unwrap();
+        let r = run(&repo, r#"{"op":"discard","paths":["a.txt"]}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        let peek = run(&repo, r#"{"op":"undoPeek"}"#);
+        assert_eq!(peek["label"], "Discard a.txt");
+        assert_eq!(peek["info"]["kind"], "files", "{peek}");
+        let log = run(&repo, r#"{"op":"undoLog"}"#);
+        assert_eq!(log["info"]["entries"][0]["kind"], "files", "{log}");
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "changed\n"
+        );
 
         let bad = run(&repo, r#"{"op":"merge","rev":"no-such-branch"}"#);
         assert_eq!(bad["ok"], false);
@@ -4304,6 +4642,61 @@ mod tests {
         assert_eq!(log(dir), ["e", "d", "c", "b", "first"]);
     }
 
+    /// コミットの notes（`git log` の `%N`）。
+    fn note(dir: &std::path::Path, rev: &str) -> String {
+        git(dir, &["log", "-1", "--format=%N", rev])
+    }
+
+    #[test]
+    fn squash_carries_the_notes_like_git() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let mut oids = Vec::new();
+        for name in ["b", "c", "d", "e"] {
+            oids.push(commit_file(dir, &format!("{name}.txt"), name));
+            git(dir, &["notes", "add", "-m", &format!("note {name}")]);
+        }
+        let [b, c, d, _] = &oids[..] else {
+            unreachable!()
+        };
+
+        // notes.rewriteRef がなければ、git と同じく写さない。
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squash", "oid": c, "message": "b+c"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["e", "d", "b+c", "first"]);
+        assert_eq!(note(dir, "HEAD~2"), "");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        // あれば、git の squash と同じく、まとめた側の notes もつなげて写す（notes.rewriteMode の既定）。
+        git(dir, &["config", "notes.rewriteRef", "refs/notes/commits"]);
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squash", "oid": c, "message": "b+c"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["e", "d", "b+c", "first"]);
+        assert_eq!(note(dir, "HEAD~2"), "note b\n\nnote c");
+        assert_eq!(note(dir, "HEAD~1"), "note d");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squashRange", "oid": b, "last": d, "message": "b to d"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["e", "b to d", "first"]);
+        assert_eq!(note(dir, "HEAD~1"), "note b\n\nnote c\n\nnote d");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        // fixup は git の todo そのもの。
+        rewrite(&repo, serde_json::json!({"kind": "fixup", "oid": c}));
+        assert_eq!(log(dir), ["e", "d", "b", "first"]);
+        assert_eq!(note(dir, "HEAD~2"), "note b\n\nnote c");
+    }
+
     #[test]
     fn splits_a_commit_and_records_undo_after_continuing() {
         let (tmp, repo) = setup();
@@ -4312,13 +4705,17 @@ mod tests {
         std::fs::write(dir.join("y.txt"), "y").unwrap();
         git(dir, &["add", "."]);
         git(dir, &["commit", "-q", "-m", "x and y"]);
+        git(dir, &["notes", "add", "-m", "note x and y"]);
+        git(dir, &["config", "notes.rewriteRef", "refs/notes/commits"]);
         let xy = git(dir, &["rev-parse", "HEAD"]);
         commit_file(dir, "z.txt", "z");
 
         let r = rewrite(&repo, serde_json::json!({"kind": "split", "oid": xy}));
         assert_eq!(r["outcome"], "stopped", "{r}");
-        // todo は pick・exec・break・pick の 4 行で、break まで進んだところで止まる。
-        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase (3/4)");
+        // todo は edit・pick の 2 行で、edit で止まり、変更が作業ツリーに戻っている。
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["text"], "rebase (1/2)");
+        assert_eq!(log(dir), ["first"]);
+        assert_eq!(git(dir, &["status", "--porcelain"]), "?? x.txt\n?? y.txt");
         // 止まっている間は記録しない（保留）。
         assert!(run(&repo, r#"{"op":"undoPeek"}"#)["label"].is_null());
         git(dir, &["add", "x.txt"]);
@@ -4327,9 +4724,192 @@ mod tests {
         git(dir, &["commit", "-q", "-m", "y"]);
         assert_eq!(run(&repo, r#"{"op":"continue"}"#)["outcome"], "done");
         assert_eq!(log(dir), ["z", "y", "x", "first"]);
+        // git の split の手順と同じく、notes は最後に分けたコミットへ写る（notes.rewriteRef があるとき）。
+        assert_eq!(note(dir, "HEAD~1"), "note x and y");
+        assert_eq!(note(dir, "HEAD~2"), "");
         assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "edit");
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(log(dir), ["z", "x and y", "first"]);
+    }
+
+    #[test]
+    fn saves_commits_as_patches_and_applies_them_with_am_undoably() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let second = commit_file(dir, "b.txt", "second");
+        let third = commit_file(dir, "c.txt", "third");
+        let out = tempfile::tempdir().unwrap();
+        let folder = out.path().join("patches");
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "formatPatch", "oids": [second, third], "dir": folder})
+                .to_string(),
+        );
+        let files: Vec<String> = serde_json::from_value(r["info"]["files"].clone()).unwrap();
+        let names: Vec<_> = files
+            .iter()
+            .map(|f| {
+                std::path::Path::new(f)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+            })
+            .collect();
+        assert_eq!(names, ["0001-second.patch", "0002-third.patch"], "{r}");
+        // 1 つの mbox にもできる。
+        let mbox = out.path().join("all.mbox");
+        run(
+            &repo,
+            &serde_json::json!({"op": "formatPatch", "oids": [second, third], "file": mbox})
+                .to_string(),
+        );
+        let text = std::fs::read_to_string(&mbox).unwrap();
+        assert_eq!(text.matches("\nSubject: [PATCH ").count(), 2, "{text}");
+
+        git(dir, &["reset", "-q", "--hard", "HEAD~2"]);
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "readPatch", "paths": files}).to_string(),
+        );
+        assert_eq!(r["info"]["kind"], "mailbox", "{r}");
+        assert_eq!(r["info"]["patches"][1]["subject"], "third");
+        assert_eq!(r["info"]["patches"][1]["files"][0]["path"], "c.txt");
+        assert_eq!(r["info"]["applies"], true, "{r}");
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "am", "paths": files, "threeWay": false}).to_string(),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["third", "second", "first"]);
+        assert_eq!(
+            run(&repo, r#"{"op":"undoPeek"}"#)["label"],
+            "Apply 2 patches"
+        );
+        // diff を当てて Undo で戻すと、ファイルは同じ中身のまま書き直される。その後でも am を Undo できる（reset
+        // --keep が index の古い stat で断らない）。
+        let diff = out.path().join("c.diff");
+        std::fs::write(
+            &diff,
+            "diff --git a/c.txt b/c.txt\n--- a/c.txt\n+++ b/c.txt\n@@ -1 +1 @@\n-third\n\\ No newline at end of file\n+THIRD\n",
+        )
+        .unwrap();
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "applyPatch", "paths": [diff]}).to_string(),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(std::fs::read_to_string(dir.join("c.txt")).unwrap(), "third");
+        let r = run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(log(dir), ["first"]);
+    }
+
+    #[test]
+    fn stops_am_where_a_patch_does_not_apply_and_retries_it_with_a_three_way_merge() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.txt"), "1\nx\n3\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "change"]);
+        let out = tempfile::tempdir().unwrap();
+        git(
+            dir,
+            &[
+                "format-patch",
+                "-q",
+                "-1",
+                "-o",
+                &out.path().to_string_lossy(),
+            ],
+        );
+        let patch = out.path().join("0001-change.patch");
+        git(dir, &["reset", "-q", "--hard", "HEAD~1"]);
+        std::fs::write(dir.join("a.txt"), "1\ny\n3\n").unwrap();
+        git(dir, &["commit", "-q", "-am", "other"]);
+
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "readPatch", "paths": [patch]}).to_string(),
+        );
+        assert_eq!(r["info"]["applies"], false, "{r}");
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "am", "paths": [patch], "threeWay": false}).to_string(),
+        );
+        assert_eq!(r["outcome"], "conflict", "{r}");
+        let r = run(&repo, r#"{"op":"sequence"}"#);
+        assert_eq!(r["text"], "am (1/1)", "{r}");
+        assert_eq!(r["info"]["kind"], "am");
+        assert_eq!(r["info"]["step"]["subject"], "change");
+        assert_eq!(r["info"]["threeWay"], false);
+        assert_eq!(r["info"]["retried"], false);
+        // 止まっている間は記録しない（保留）。
+        assert!(run(&repo, r#"{"op":"undoPeek"}"#)["label"].is_null());
+
+        let r = run(&repo, r#"{"op":"amThreeWay"}"#);
+        assert_eq!(r["outcome"], "conflict", "{r}");
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["info"]["retried"], true);
+        let text = std::fs::read_to_string(dir.join("a.txt")).unwrap();
+        assert!(text.contains("<<<<<<<"), "{text}");
+        std::fs::write(dir.join("a.txt"), "1\nx\n3\n").unwrap();
+        git(dir, &["add", "a.txt"]);
+        assert_eq!(run(&repo, r#"{"op":"continue"}"#)["outcome"], "done");
+        assert_eq!(log(dir), ["change", "other", "first"]);
+        assert_eq!(run(&repo, r#"{"op":"undoPeek"}"#)["label"], "Apply 1 patch");
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(log(dir), ["other", "first"]);
+        // 当て直した印は、am が終わると rebase-apply ごと消え、次の am に残らない。
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "am", "paths": [patch], "threeWay": false}).to_string(),
+        );
+        assert_eq!(r["outcome"], "conflict", "{r}");
+        assert_eq!(run(&repo, r#"{"op":"sequence"}"#)["info"]["retried"], false);
+    }
+
+    #[test]
+    fn applies_a_diff_to_the_working_tree_undoably() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        std::fs::write(dir.join("a.txt"), "1\nchanged\n3\n").unwrap();
+        std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+        git(dir, &["add", "-N", "new.txt"]);
+        let diff = git(dir, &["diff"]) + "\n";
+        // intent-to-add のファイルは reset --hard で消える。
+        git(dir, &["reset", "-q", "--hard"]);
+        let out = tempfile::tempdir().unwrap();
+        let patch = out.path().join("change.diff");
+        std::fs::write(&patch, diff).unwrap();
+
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "readPatch", "paths": [patch]}).to_string(),
+        );
+        assert_eq!(r["info"]["kind"], "diff", "{r}");
+        assert_eq!(r["info"]["patches"][0]["files"][1]["status"], "added");
+        assert_eq!(r["info"]["applies"], true, "{r}");
+        let r = run(
+            &repo,
+            &serde_json::json!({"op": "applyPatch", "paths": [patch]}).to_string(),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\nchanged\n3\n"
+        );
+        assert!(dir.join("new.txt").exists());
+        // 既定では index に触らない（git apply と同じ）。
+        assert_eq!(git(dir, &["diff", "--cached", "--name-only"]), "");
+        assert_eq!(
+            run(&repo, r#"{"op":"undoPeek"}"#)["label"],
+            "Apply change.diff"
+        );
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\n2\n3\n"
+        );
+        assert!(!dir.join("new.txt").exists());
     }
 
     #[test]
@@ -4901,6 +5481,87 @@ mod tests {
             run(&repo, r#"{"op":"sequence"}"#)["text"],
             serde_json::Value::Null
         );
+    }
+
+    #[test]
+    fn tells_conflicts_without_markers_and_rerere_resolutions() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["config", "rerere.enabled", "true"]);
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "a.txt", "1\nTOPIC A\n3\n");
+        commit_file(dir, "b.txt", "1\nTOPIC B\n3\n");
+        commit_file(dir, "c.txt", "1\nTOPIC C\n3\n");
+        git(dir, &["switch", "-q", "main"]);
+        commit_file(dir, "a.txt", "1\nMAIN A\n3\n");
+        commit_file(dir, "b.txt", "1\nMAIN B\n3\n");
+        commit_file(dir, "c.txt", "1\nMAIN C\n3\n");
+        // 1 回目: a.txt だけ解決し、rerere に覚えさせてやめる。
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+        std::fs::write(dir.join("a.txt"), "1\nBOTH A\n3\n").unwrap();
+        git(dir, &["rerere"]);
+        git(dir, &["merge", "--abort"]);
+        // 2 回目: rerere が a.txt を解く。b.txt はほかのエディタで直した。c.txt はそのまま。
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.join("a.txt")).unwrap(),
+            "1\nBOTH A\n3\n"
+        );
+        std::fs::write(dir.join("b.txt"), "1\nBOTH B\n3\n").unwrap();
+        repo.load_status().unwrap();
+        let files = run(&repo, r#"{"op":"conflictFiles"}"#);
+        assert_eq!(
+            files["info"]["files"],
+            serde_json::json!([
+                {"path": "a.txt", "markers": 0, "rerere": true},
+                {"path": "b.txt", "markers": 0, "rerere": false},
+                {"path": "c.txt", "markers": 1, "rerere": false},
+            ]),
+            "{files}"
+        );
+        // マーカーのないファイルのマージエディタは、左右に index の両側を出す。
+        let sides = run(&repo, r#"{"op":"mergeSides","path":"a.txt"}"#);
+        assert_eq!(
+            sides["info"]["current"]["text"], "1\nMAIN A\n3\n",
+            "{sides}"
+        );
+        assert_eq!(sides["info"]["incoming"]["text"], "1\nTOPIC A\n3\n");
+        assert_eq!(sides["info"]["result"], "1\nBOTH A\n3\n");
+        assert_eq!(sides["info"]["markers"], 0);
+        assert_eq!(sides["info"]["rerere"], true);
+        let sides = run(&repo, r#"{"op":"mergeSides","path":"c.txt"}"#);
+        assert_eq!(
+            sides["info"]["current"]["text"], "1\nMAIN C\n3\n",
+            "{sides}"
+        );
+        assert_eq!(sides["info"]["markers"], 1);
+        assert_eq!(sides["info"]["rerere"], false);
+    }
+
+    #[test]
+    fn leaves_out_conflicts_that_markers_cannot_show() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        commit_file(dir, "a.txt", "1\n");
+        git(dir, &["switch", "-q", "-c", "topic"]);
+        commit_file(dir, "a.txt", "TOPIC\n");
+        git(dir, &["switch", "-q", "main"]);
+        git(dir, &["rm", "-q", "a.txt"]);
+        git(dir, &["commit", "-q", "-m", "remove"]);
+        assert_eq!(
+            run(&repo, r#"{"op":"merge","rev":"topic"}"#)["outcome"],
+            "conflict"
+        );
+        repo.load_status().unwrap();
+        // 片側で消したコンフリクト（DU）にはマーカーがないが、解決済みではない。
+        let files = run(&repo, r#"{"op":"conflictFiles"}"#);
+        assert_eq!(files["info"]["files"], serde_json::json!([]), "{files}");
     }
 
     #[test]

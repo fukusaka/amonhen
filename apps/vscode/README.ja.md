@@ -50,7 +50,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 - hunk ごとの Stage Hunk、Stage File、一覧の `+` / `−`、Stage All でもできる。一覧では上下キーで選び、Space か Enter で stage / unstage する。
 - Changes のファイルは、一覧の ↺、Discard File、Discard Hunk、Discard N Lines で変更を破棄できる。untracked のファイルは消す。破棄した内容は Undo で戻せる。
 - コミット欄は Summary と Description（複数行）。Amend にすると直前のコミットのメッセージが入る。`⌘Enter` / `Ctrl+Enter` でもコミットできる。
-- コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Accept Current、Accept Incoming、Mark as Resolved を選べる。片側で削除されたファイルも Accept で解決できる。解決済みにするとき、マーカーが残っていれば確認する。
+- コンフリクトしたファイルでは、Open in Merge Editor（標準の 3-way マージエディタ）、Accept Current、Accept Incoming、Mark as Resolved を選べる。片側で削除されたファイルも Accept で解決できる。解決済みにするとき、マーカーが残っていれば確認する。マーカーの残っていないファイル（git の rerere が前の解決を当てた、ほかのエディタで直した）は ✓ と「マーカーなし」か「rerere」を出して Mark as Resolved を先に勧め、Conflicts の見出しからまとめて解決済みにできる。そうしたファイルで Accept を選ぶと、解決した内容を置き換える前に確認する。
 
 ### History
 
@@ -75,13 +75,22 @@ HEAD から first-parent で辿れるコミット（最初の merge コミット
 
 どのコミットでも、右クリックで New Branch / New Tag（そのコミットから作る）、Revert（打ち消すコミットを作る）ができる。現在のブランチに無いコミットは Cherry-pick で現在のブランチに当てられる。どれも Undo で戻せる。
 
+### パッチ
+
+History のコミットを右クリックして Save as Patch…（そのコミット）か Save Patches from Here to HEAD…（HEAD までの
+ひと続き）で、1 コミット 1 ファイル（`git format-patch`）か 1 つの mbox に書き出せる。コマンドパレットの
+Apply Patch…、またはエクスプローラーで .patch・.diff・.mbox・.eml のファイルから、パッチが何を変えるかとそのまま
+当たるかを見てから、メールの形のパッチはコミットとして（`git am`）、diff は作業ツリーに（`git apply`）当てる。当たら
+ないパッチがあると、ナビに「Applying patches (1/3)」と、Retry with 3-Way Merge・Continue・Skip・Abort が出る。
+どちらも Undo で戻せる。
+
 ### 途中で止まった merge / rebase
 
 コンフリクトや Edit・Split で止まると、ナビに「Rebase in progress (2/5)」のような行が出る。解決して stage したら Continue で続ける。rebase では Skip で今のコミットを飛ばせる。Abort で始める前の状態に戻る。
 
 ### Undo
 
-ナビの Undo で、直前の操作を戻す。対象はコミット（amend を含む）、Merge、Rebase、fast-forward、Pull、ブランチ・タグの作成と削除、Cherry-pick、Revert、変更の破棄、stash の削除、History でのコミットの編集。
+ナビの Undo で、直前の操作を戻す。対象はコミット（amend を含む）、Merge、Rebase、fast-forward、Pull、ブランチ・タグの作成と削除、Cherry-pick、Revert、パッチを当てる操作、変更の破棄、stash の削除、History でのコミットの編集。
 
 - コミットを戻すと、その変更は stage された状態に戻る。
 - Merge や Rebase を戻すと、作業中の変更は残したまま、ブランチと checkout していたブランチを操作の前に戻す。

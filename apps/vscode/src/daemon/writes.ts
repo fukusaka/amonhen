@@ -3,7 +3,15 @@
  * 読み取りと、拡張に固有の手順（untracked を消す破棄・index の書き込み・rebase の todo）は git 実行層のまま。
  * コアが Undo を記録する操作は、拡張の側では記録しない（`delegation.ts`）。vscode に依存しない
  */
-import type { MergeResult, PushOptions, RebaseResult, RepositoryBackend, Sequence } from '../git/backend.ts';
+import type {
+  ApplyPatchOptions,
+  FormatPatchOptions,
+  MergeResult,
+  PushOptions,
+  RebaseResult,
+  RepositoryBackend,
+  Sequence,
+} from '../git/backend.ts';
 import type { DaemonClient, Json } from './client.ts';
 import { markRecorded } from './delegation.ts';
 
@@ -72,6 +80,33 @@ export function withDaemonWrites(
     abort: via('abort', async (c, _sequence: Sequence) => void (await run(c, { op: 'abort' }, false))),
     continueSequence: via('continueSequence', async (c, _sequence: Sequence) => outcome(await run(c, { op: 'continue' }, false))),
     skipSequence: via('skipSequence', async (c, _sequence: Sequence) => outcome(await run(c, { op: 'skip' }, false))),
+    formatPatch: via(
+      'formatPatch',
+      async (c, oids: readonly string[], options: FormatPatchOptions, out: { dir?: string; file?: string }) => {
+        const reply = await run(
+          c,
+          {
+            op: 'formatPatch',
+            oids: [...oids],
+            dir: out.dir ?? null,
+            file: out.file ?? null,
+            coverLetter: !!options.coverLetter,
+            reroll: options.reroll ?? null,
+          },
+          false,
+        );
+        return ((reply['info'] as Json | undefined)?.['files'] as string[] | undefined) ?? [];
+      },
+    ),
+    am: via('am', async (c, paths: readonly string[], threeWay: boolean | undefined) =>
+      outcome(await run(c, { op: 'am', paths: [...paths], threeWay: threeWay ?? null }, true)),
+    ),
+    amThreeWay: via('amThreeWay', async (c) => outcome(await run(c, { op: 'amThreeWay' }, false))),
+    applyPatch: via('applyPatch', async (c, paths: readonly string[], options: ApplyPatchOptions) =>
+      outcome(
+        await run(c, { op: 'applyPatch', paths: [...paths], index: !!options.index, threeWay: !!options.threeWay }, true),
+      ) as MergeResult,
+    ),
     fetch: via('fetch', async (c) => void (await run(c, { op: 'fetch' }, false))),
     push: via('push', async (c, remote: string, branch: string, remoteBranch: string, opts?: PushOptions) =>
       void (await run(c, { op: 'push', remote, branch, remoteBranch, force: !!opts?.force, setUpstream: !!opts?.setUpstream }, false)),

@@ -92,6 +92,8 @@ VSCode 拡張の Amon Hen と同じ操作感を、VSCode の UI 部品の制約�
 
 コンフリクトのあるファイルは、Working Copy で選ぶと右にマージエディタが出る（別ウィンドウにも移せる）。左に Current、真ん中に Result（作業ツリーの内容から始める）、右に Incoming を並べ（左右は、すべてのコンフリクトをその側にした内容。diff3 なら Base も出せる）、列の間の帯がコンフリクトをつなぐ。帯の ≫・≪ やボタンでコンフリクトごとに採用するか、手で編集して、保存・解決済みにする。✨ Magic Merge は、両側が同じ・片側だけが変えた・空白だけが違う・同じ行の別々の単語を変えた、のどれかに当たるコンフリクトをまとめて解く。解決の計算はコア（`mergeSides`・`resolveText`・`conflictRegions`・`magicMerge`・`saveMerge`）が行う。merge・rebase などの途中は、ウィンドウのツールバーの下に帯を出す（コンフリクトの数と Continue・Skip・Abort）。
 
+コンフリクトしたファイルに、マーカーがもう残っていないことがある。git の rerere が前の解決を当てた（`rerere.autoUpdate` が切れているとき）か、ほかのエディタで直して stage していないときである。コアは作業ツリーのファイルと、rerere がまだ解いていないパスを入れる `.git/MERGE_RR` を読むだけでこれを見分ける（`conflictFiles`。共有の daemon の `status` は、内容のコンフリクト（UU・AA）に `markers` と `rerere` を添える）。片側で消したファイルなど、マーカーで表せないコンフリクトは入れない。コンフリクトがなければ費用はなく、コンフリクトのファイル 1 MB あたり約 0.5 ms。Working Copy はそうしたファイルに橙の ✓ と「マーカーなし」か「rerere」を出し、帯はその数を数えてまとめて解決済みにでき、「手元のファイルを使う」「取り込む側のファイルを使う」は解決した内容を置き換える前に確かめる。マージエディタは、マーカーから作った左右の代わりに index に残っている両側（stage 2・3、Base は 1）を出し、何が起きたかの一文と「解決済みにする」を添える。`amonhen status` にも注記を出し、VSCode 拡張も一覧とコンフリクトの欄で同じようにする。
+
 History の右の列の上の欄（コミットの詳細）は、メタ情報、件名、本文の残りの順に並べる。見せ方は 3 つから選ぶ（欄の右上、選んだものを覚える）。
 
 - 簡潔: 小さなアバター・作者・作者の日時・ref・親の 1 行と件名。欄は文字の高さまで縮める。
@@ -377,6 +379,25 @@ rebase と History の編集（reword・squash・fixup・drop・edit・split・m
   コミット ID つきの組に読む。
 - **リポジトリの設定。** シート（⌘;）をやめ、サイドバーの Workspace に、Working Copy・History・Stashes・Reflog と並ぶ Settings の画面として置く。⌘; はその画面を開く。
 - **独自の既定を持たない。** Amon Hen は自分で `rebase.updateRefs` を有効にしない。rebase は、同じ設定の `git rebase` と同じにふるまう。History の編集は、設定がオンで git が 2.38 以降のときだけ、todo の `update-ref` の行を残す。
+
+## パッチ
+
+- コミットをパッチにするのは `git format-patch`、当てるのはメールの形（format-patch のファイル・mbox・.eml）なら
+  `git am`、ただの diff なら `git apply`。コアがパッチを読むのは、何を変えるかと触るファイルを見せるためだけ
+  （`crates/core/src/patch.rs`）で、当てるのは git。
+- パッチのファイルは、コアが動く機械に置いたまま（アプリなら Mac、VSCode なら拡張ホスト）。バックエンドには中身を
+  標準入力で渡し、format-patch は git dir の中の一時フォルダに書かせてファイルを返す（名前は git が付ける。
+  `format.filenameMaxLength` なども効く）。daemon 越しでも SSH 先でも同じに動く。
+- 既定は git に合わせる: 1 コミット 1 ファイル（1 つの mbox は選べる）、am は `am.threeWay`、apply は作業ツリーだけ。
+  format-patch のほかのこと（番号の付け方・宛先・Signed-off-by）は `format.*` に任せる。
+- `git am` の途中は、それだけの種類にする（`rebase-apply/applying`。前は rebase と見なしていた）。3-way なしで
+  当たらなかったパッチは、Retry with 3-Way Merge で `rebase-apply/patch` を `git apply --3way` で当て直し
+  （`git am -3` と同じ）、きれいに当たれば続ける。当て直したパッチはコアが `rebase-apply/amonhen-retried` に書く
+  （am が終わると git がフォルダごと消す）。git の `rebase-apply/threeway` を書き換えると、後のパッチまで 3-way になるので使わない。
+- Undo: am は全体で 1 つ。止まっている間は保留し、終わったときに記録する（Abort なら残らない）。当てた diff は
+  触ったファイルで記録する。index は戻らない。
+- format-patch にはコミットを `--no-walk=unsorted` と `--max-count` で渡す（format-patch は逆の順に書き出すので逆に
+  して渡す。数を渡さないと、コミットが 1 つのときに `<rev>..HEAD` の意味になる）。どれも git 2.23 にある。
 
 ## 速度目標と計測
 

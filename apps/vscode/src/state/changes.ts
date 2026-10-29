@@ -11,6 +11,10 @@ export interface Change {
   letter: string;
   /** コンフリクトしているときの XY（UU、DU など） */
   conflict?: string;
+  /** 内容のコンフリクトに残っているマーカーの数（UU・AA だけ。`state/conflicts.ts`） */
+  markers?: number;
+  /** git の rerere が前の解決を当てた */
+  rerere?: boolean;
 }
 
 /** status のエントリを Conflicts / Staged / Changes に振り分ける。1 つのファイルが Staged と Changes の両方に出ることもある */

@@ -34,6 +34,9 @@ final class Actions {
                 let json = try Repository.json(command)
                 let result = try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
                 switch result.outcome {
+                case .conflict where (command["op"] as? String) == "am":
+                    // 当たらずに止まったのか、3-way でコンフリクトを残したのかは、帯に出す。
+                    await alert(L("Stopped at a Patch"), L("The bar under the toolbar says why and what you can do next."))
                 case .conflict:
                     await alert(L("There are conflicts"), L("Resolve them in Working Copy, then Continue or Abort."))
                 case .stopped:
@@ -89,7 +92,7 @@ final class Actions {
     }
 
     @MainActor
-    private func fail(_ failure: OperationFailure) async {
+    func fail(_ failure: OperationFailure) async {
         if let onFailure {
             onFailure(failure)
         } else {
@@ -99,7 +102,7 @@ final class Actions {
     }
 
     @MainActor
-    private func alert(_ title: String, _ message: String) async {
+    func alert(_ title: String, _ message: String) async {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message

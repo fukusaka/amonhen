@@ -1,7 +1,8 @@
 /**
  * コミットの編集を、非対話の rebase の todo に組み立てる。vscode に依存しない。
  * todo はこちらで丸ごと書き、GIT_SEQUENCE_EDITOR で git の todo に上書きする。
- * メッセージの書き換えは、対象のコミットの直後に `exec git commit --amend -F <file>` を挟んで行う。
+ * メッセージの書き換えは、対象のコミット（squash では、まとめた先）の直後に `exec git commit --amend -F <file>` を
+ * 挟んで行う。
  */
 import { shellQuote } from '../git/exec.ts';
 import type { Commit } from '../git/log.ts';
@@ -27,6 +28,8 @@ export interface RebasePlan {
   todo: string;
   /** 書き出しておくメッセージ。キーはファイル名 */
   messages: Map<string, string>;
+  /** edit で止まったら、HEAD^ へ reset --mixed する（split） */
+  resetOnStop: boolean;
 }
 
 /**
@@ -74,7 +77,14 @@ export function planRebase(chain: readonly Commit[], edit: HistoryEdit, messageP
     lines.push(`exec git commit --amend --allow-empty --no-verify --file=${shellQuote(messagePath(name))}`);
   };
 
-  for (const c of seq) {
+  for (const [i, c] of seq.entries()) {
+    // squash は、まとめた先（親）を pick した直後にメッセージを付け、まとめる側を fixup にする。メッセージを最後に
+    // 付けると、rebase が notes を写す先（notes.rewriteRef）が付ける前のコミットになり、まとめた側の notes が落ちる
+    if (edit.kind === 'squash' && i === 0) {
+      lines.push(`pick ${c.oid}`);
+      amend(c.oid, edit.message);
+      continue;
+    }
     if (c.oid !== edit.oid) {
       lines.push(`pick ${c.oid}`);
       continue;
@@ -85,9 +95,6 @@ export function planRebase(chain: readonly Commit[], edit: HistoryEdit, messageP
         amend(c.oid, edit.message);
         break;
       case 'squash':
-        lines.push(`fixup ${c.oid}`);
-        amend(c.oid, edit.message);
-        break;
       case 'fixup':
         lines.push(`fixup ${c.oid}`);
         break;
@@ -97,13 +104,15 @@ export function planRebase(chain: readonly Commit[], edit: HistoryEdit, messageP
       case 'edit':
         lines.push(`pick ${c.oid}`, 'break');
         break;
+      // git の split の手順（edit で止め、reset HEAD^ してから分けてコミットし、続ける）と同じにする。続けたときに
+      // git が、元のコミットの notes を最後のコミットへ写す。reset は止まってから行う
       case 'split':
-        lines.push(`pick ${c.oid}`, 'exec git reset --quiet HEAD^', 'break');
+        lines.push(`edit ${c.oid}`);
         break;
       case 'move':
         lines.push(`pick ${c.oid}`);
         break;
     }
   }
-  return { base, todo: `${lines.join('\n')}\n`, messages };
+  return { base, todo: `${lines.join('\n')}\n`, messages, resetOnStop: edit.kind === 'split' };
 }

@@ -165,6 +165,47 @@ fn merge_check_lists_the_files_that_would_conflict() {
 }
 
 #[test]
+fn status_notes_conflicts_without_markers() {
+    let repo = repository();
+    let dir = repo.path();
+    let home = tempfile::tempdir().unwrap();
+    let path = dir.to_str().unwrap();
+    git(dir, &["switch", "-q", "-c", "other", "main~1"]);
+    commit(dir, "c.txt", "other");
+    commit(dir, "d.txt", "other");
+    git(dir, &["switch", "-q", "main"]);
+    commit(dir, "c.txt", "main");
+    commit(dir, "d.txt", "main");
+    let ok = Command::new("git")
+        .current_dir(dir)
+        .args(["merge", "-q", "other"])
+        .status()
+        .unwrap()
+        .success();
+    assert!(!ok, "コンフリクトする");
+    // c.txt はほかのエディタで直した（stage していない）。d.txt はマーカーが残っている。
+    std::fs::write(dir.join("c.txt"), "both").unwrap();
+    let (out, code) = amonhen(home.path(), &["status", "-C", path, "--color=never"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("AA c.txt  (no conflict markers)\n"), "{out}");
+    assert!(out.contains("AA d.txt\n"), "{out}");
+    let (json, _) = amonhen(home.path(), &["status", "-C", path, "--json"]);
+    let status: serde_json::Value = serde_json::from_str(&json).unwrap();
+    let entry = |p: &str| {
+        status["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["path"] == p)
+            .unwrap()
+            .clone()
+    };
+    assert_eq!(entry("c.txt")["markers"], 0, "{json}");
+    assert_eq!(entry("c.txt")["rerere"], false, "{json}");
+    assert_eq!(entry("d.txt")["markers"], 1, "{json}");
+}
+
+#[test]
 fn range_diff_compares_a_branch_with_its_previous_version() {
     let repo = repository();
     let dir = repo.path();
@@ -519,6 +560,126 @@ fn shows_mailmap_names_directly_through_the_daemon_and_over_ssh() {
         .unwrap();
         let row = wait_for("Bobby");
         assert_eq!(row["author"], "Bobby", "{at}: {row}");
+    }
+}
+
+/// パッチを書き出し（format-patch）、mbox を am で、diff を apply で当て、undo で戻す。3 つの開き方のどれでも、
+/// パッチのファイルは手元に置いたまま（SSH 先には中身を送る）。
+#[cfg(unix)]
+#[test]
+fn saves_and_applies_patches_directly_through_the_daemon_and_over_ssh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    git(&repo, &["init", "-q"]);
+    git(&repo, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    git(&repo, &["config", "user.name", "a"]);
+    git(&repo, &["config", "user.email", "a@example.com"]);
+    std::fs::write(repo.join("f.txt"), "a\nb\nc\n").unwrap();
+    git(&repo, &["add", "."]);
+    git(&repo, &["commit", "-q", "-m", "first"]);
+    let env = Env::new(tmp.path());
+    let repo = repo.canonicalize().unwrap();
+    let path = repo.to_str().unwrap().to_owned();
+    let subjects = |n: &str| {
+        let out = Command::new("git")
+            .current_dir(&repo)
+            .args(["log", "--format=%s", "-n", n])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).trim().to_owned()
+    };
+    let locations = [
+        path.clone(),
+        format!("daemon:{path}"),
+        format!("ssh://dev{path}"),
+    ];
+    for (i, at) in locations.iter().enumerate() {
+        let at = at.as_str();
+        let before = subjects("1");
+        commit(&repo, "g.txt", &format!("one {i}"));
+        commit(&repo, "h.txt", &format!("two {i}"));
+        let out = tmp.path().join(format!("patches-{i}"));
+        let out = out.to_str().unwrap();
+        let written = env.json(&["format-patch", "-C", at, "--json", "-2", "-o", out]);
+        let files: Vec<String> = written["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|f| f.as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(files.len(), 2, "{at}: {written}");
+        assert!(
+            files[0].ends_with(&format!("0001-one-{i}.patch")),
+            "{at}: {written}"
+        );
+        let stdout = env.ok(&["format-patch", "-C", at, "-1", "--stdout"]);
+        assert!(
+            stdout.contains(&format!("Subject: [PATCH] two {i}")),
+            "{at}: {stdout}"
+        );
+
+        git(&repo, &["reset", "-q", "--hard", "HEAD~2"]);
+        let mut args = vec!["am", "-C", at, "--check", "--json"];
+        args.extend(files.iter().map(String::as_str));
+        let check = env.json(&args);
+        assert_eq!(check["kind"], "mailbox", "{at}: {check}");
+        assert_eq!(check["patches"][1]["subject"], format!("two {i}"), "{at}");
+        assert_eq!(check["applies"], true, "{at}: {check}");
+        let mut args = vec!["am", "-C", at];
+        args.extend(files.iter().map(String::as_str));
+        env.ok(&args);
+        assert_eq!(subjects("2"), format!("two {i}\none {i}"), "{at}");
+        let peek = env.ok(&["undo", "-C", at, "--peek"]);
+        assert!(peek.contains("Apply 2 patches"), "{at}: {peek}");
+        env.ok(&["undo", "-C", at]);
+        assert_eq!(subjects("1"), before, "{at}");
+
+        // diff を作業ツリーに当てて、undo で戻す。
+        let diff = tmp.path().join(format!("change-{i}.diff"));
+        std::fs::write(
+            &diff,
+            "diff --git a/f.txt b/f.txt\n--- a/f.txt\n+++ b/f.txt\n@@ -1,3 +1,3 @@\n a\n-b\n+B\n c\n",
+        )
+        .unwrap();
+        env.ok(&["apply", "-C", at, diff.to_str().unwrap()]);
+        let f = || std::fs::read_to_string(repo.join("f.txt")).unwrap();
+        assert_eq!(f(), "a\nB\nc\n", "{at}");
+        env.ok(&["undo", "-C", at]);
+        assert_eq!(f(), "a\nb\nc\n", "{at}");
+
+        // 枝分かれしたブランチの範囲は、分かれたところまで（git の main..topic と同じ）。<rev> だけなら <rev>..HEAD。
+        let topic = format!("topic-{i}");
+        git(&repo, &["switch", "-q", "-c", &topic]);
+        commit(&repo, "t.txt", &format!("topic {i}"));
+        git(&repo, &["switch", "-q", "main"]);
+        commit(&repo, "m.txt", &format!("main {i}"));
+        for (range, subject) in [
+            (format!("main..{topic}"), format!("topic-{i}")),
+            (topic.clone(), format!("main-{i}")),
+        ] {
+            let out = tmp.path().join(format!("range-{i}-{subject}"));
+            let args = [
+                "format-patch",
+                "-C",
+                at,
+                "--json",
+                "-o",
+                out.to_str().unwrap(),
+                &range,
+            ];
+            let written = env.json(&args);
+            let files = written["files"].as_array().unwrap();
+            assert_eq!(files.len(), 1, "{at} {range}: {written}");
+            assert!(
+                files[0]
+                    .as_str()
+                    .unwrap()
+                    .ends_with(&format!("0001-{subject}.patch")),
+                "{at} {range}: {written}"
+            );
+        }
+        commit(&repo, "d.txt", &format!("diff {i}"));
     }
 }
 

@@ -30,16 +30,19 @@ test('squash and fixup start at the parent', () => {
   assert.equal(planRebase(chain, { kind: 'fixup', oid: 'c' }, path).todo, 'pick b\nfixup c\npick d\n');
   const squash = planRebase(chain, { kind: 'squash', oid: 'c', message: 'b+c' }, path);
   assert.equal(squash.base, 'a');
-  assert.match(squash.todo, /^pick b\nfixup c\nexec git commit --amend .*message-c\.txt'\npick d\n$/);
+  // メッセージは、まとめた先を pick した直後に付ける（rebase が notes を写す先を、最後のコミットにする）
+  assert.equal(
+    squash.todo,
+    "pick b\nexec git commit --amend --allow-empty --no-verify --file='/g/message-b.txt'\nfixup c\npick d\n",
+  );
 });
 
 test('drop, edit and split', () => {
   assert.equal(planRebase(chain, { kind: 'drop', oid: 'd' }, path).todo, 'drop d\n');
   assert.equal(planRebase(chain, { kind: 'edit', oid: 'c' }, path).todo, 'pick c\nbreak\npick d\n');
-  assert.equal(
-    planRebase(chain, { kind: 'split', oid: 'c' }, path).todo,
-    'pick c\nexec git reset --quiet HEAD^\nbreak\npick d\n',
-  );
+  const split = planRebase(chain, { kind: 'split', oid: 'c' }, path);
+  assert.equal(split.todo, 'edit c\npick d\n');
+  assert.equal(split.resetOnStop, true);
 });
 
 test('editing the root commit uses --root', () => {

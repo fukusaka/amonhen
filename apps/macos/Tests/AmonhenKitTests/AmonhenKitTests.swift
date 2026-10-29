@@ -209,6 +209,25 @@ private func makeRepo() throws -> URL {
     let refs = try repo.loadRefs()
     #expect(refs.headBranch == "main")
     #expect(refs.items.map(\.name) == ["main"])
+    #expect(try repo.undoPeek() == nil)
+}
+
+@Test func tellsWhatTheNextUndoPutsBack() throws {
+    let dir = try makeRepo()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let file = dir.appendingPathComponent("a.txt")
+    try "a\n".write(to: file, atomically: true, encoding: .utf8)
+    try git(dir, "add", "a.txt")
+    try git(dir, "commit", "-q", "-m", "add a")
+    let repo = try Repository(path: dir.path)
+    try repo.run(["op": "createBranch", "name": "topic", "start": "main", "checkout": false])
+    #expect(try repo.undoPeek()?.kind == "refs")
+    // ファイルの中身だけを戻す記録（HEAD とブランチには触らない）。
+    try "changed\n".write(to: file, atomically: true, encoding: .utf8)
+    try repo.run(["op": "discard", "paths": ["a.txt"]])
+    let peek = try repo.undoPeek()
+    #expect(peek?.label == "Discard a.txt")
+    #expect(peek?.kind == "files")
 }
 
 @Test func readsTheReflog() throws {

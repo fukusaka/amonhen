@@ -331,7 +331,7 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 | | Pop | Confirm, naming the stash and its message, then pop the latest | — (apply or pop a chosen one in Stashes) |
 | Status | Activity | Number of running operations and a spinner. Click to open Activity | — |
 | | Refresh | Reload status, refs and History (⌘R) | Reload the whole working tree (without the fsmonitor and status caches), discard the persistent cache and rebuild History |
-| | Undo | Confirm, naming the operation, then revert it | — (the operation log in Activity) |
+| | Undo | Confirm, naming the operation and what it puts back (HEAD and branches, files, a stash or a branch name), then revert it | — (the operation log in Activity) |
 | Search | Search field (`NSSearchToolbarItem`) | ⌘F searches History, ⌘⇧F with a scope | Switch between subject and body / author / ID / path / contents (pickaxe) |
 
 - When the current branch has no upstream (or its remote branch is gone), Push reads Publish (in the toolbar, the Repository menu and Commit and Publish) and asks for the remote, starting from `branch.<name>.pushRemote`, `remote.pushDefault`, the only remote, then origin, and the name there; what it sends becomes the upstream. If that remote branch already exists, it says so and makes it the upstream instead, asking to Pull first when it has commits the branch lacks.
@@ -535,6 +535,23 @@ In addition to today's "choose a file to show only its diff", offer a view that 
 - When the ends of the range span a merge, treat it as a first-parent range and say so.
 - How it works: the core's `Selection::of` follows the first-parent chain in the History graph, and `selection_diff` builds the diffs of all files with the backend's `changes_between` (the tree diff between two commits). When scattered, each commit's diff is laid out under a "path — short ID" header, ordered by path and then oldest first.
 
+## 7a. Patches
+
+- Saving: History's context menu (one commit, or the selected commits, oldest first) and Commit > Save as Patch….
+  A sheet chooses the format, one file per commit (`0001-subject.patch`, git's default) or one mbox file, a cover
+  letter and the version (`-v`); the rest follows git's `format.*`. One file per commit asks for a folder (files with
+  the same names are replaced), one mbox for a file name. Finder then shows the files. Merges can't be saved (git
+  skips them), so the item is disabled for them.
+- Applying: Repository > Apply Patch…, or dropping .patch, .diff, .mbox or .eml files on the window. A sheet shows
+  each patch's subject, author and files with their line counts, whether it applies as is, and the options: for mail,
+  3-way merge (starting from `am.threeWay`, off as in git); for a plain diff, staging (`--index`) and 3-way merge.
+  Mail becomes commits on the current branch (`git am`); a diff goes into the working tree (`git apply`).
+- When am stops, the bar under the toolbar shows "Applying patches to main · step 1 of 3", the patch's subject and
+  why: it doesn't apply (with Retry with 3-Way Merge when 3-way wasn't tried), it has no changes (a cover letter:
+  Skip it), or it has conflicts (resolve them in Working Copy, then Continue). Skip and Abort work as in a rebase.
+- Undo: applying mail is one operation, recorded once it finishes; a diff is undone by putting back the files it
+  changed.
+
 ## 8. Resolving conflicts (the embedded merge editor)
 
 ### Flow
@@ -657,8 +674,8 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 | Edit | Standard (Undo and Redo undo text edits), Find ⌘F, Find in History ⌘⇧F, Find Next / Previous ⌘G / ⌘⇧G |
 | View | Working Copy ⌘1, History ⌘2, Conflicts ⌘3, Stashes ⌘4, Reflog ⌘5, Refresh ⌘R, Show Sidebar ⌃⌘S, Diff: Unified / Split ⌥⌘D, Ignore Whitespace, Wrap Lines, Font Size ⌘+ / ⌘−, History display (one line, History Items ▸ to choose branches and tags, author, date, commit ID, signature and CI status, History Order ▸ Date Order / Topological Order (both also from the button at the right of History's bar and the header's context menu, whose menu also has One Line per Commit, Fold Merged Branches and Highlight Ancestors, and from Settings > Appearance), avatars, ancestor highlighting), Commit Details: Compact / Standard / Detailed |
 | Navigate | Go to HEAD ⌘⇧H, Go to Ref… ⌘⇧J, Go to Parent / Child ⌥⌘↓ / ⌥⌘↑, Next / Previous Hunk, Next / Previous File, Next Conflict |
-| Repository | Fetch ⌃⌘F, Pull ⌃⌘L, Push ⌃⌘P, Stash ⌥⌘S, Pop ⌥⌘⇧S, New Branch… ⌥⌘B, New Tag… ⌥⌘T, Merge… ⌥⌘M, Rebase… ⌥⌘R, Interactive Rebase…, Continue / Skip / Abort, Undo (operation name) ⌥⌘Z, Repository Settings ⌘;, Open in Terminal, Reveal in Finder, Open in Editor, Open on GitHub |
-| Commit | Commit ⌘↩, Commit and Push ⌘⇧↩, Amend ⌥⌘↩, Include All, Exclude All, Toggle Selection (Space), Discard…, Cherry-pick, Revert, Reword…, Create Patch… |
+| Repository | Fetch ⌃⌘F, Pull ⌃⌘L, Push ⌃⌘P, Stash ⌥⌘S, Pop ⌥⌘⇧S, New Branch… ⌥⌘B, New Tag… ⌥⌘T, Merge… ⌥⌘M, Rebase… ⌥⌘R, Interactive Rebase…, Apply Patch…, Continue / Skip / Abort, Undo (operation name) ⌥⌘Z, Repository Settings ⌘;, Open in Terminal, Reveal in Finder, Open in Editor, Open on GitHub |
+| Commit | Commit ⌘↩, Commit and Push ⌘⇧↩, Amend ⌥⌘↩, Include All, Exclude All, Toggle Selection (Space), Discard…, Cherry-pick, Revert, Reword…, Save as Patch… |
 | Window | Standard (minimize, tabs, merge all windows), Repositories ⌘⇧R, Activity ⌥⌘A |
 | Help | List of shortcuts, open the log location |
 

@@ -11,6 +11,9 @@ becomes the GitHub Release notes.
 
 #### Added
 
+- Conflicted files with no conflict markers left (git's rerere applied an earlier resolution, or another editor
+  resolved them) are marked in Working Copy, counted in the band with a button to mark them all resolved, and open in
+  the merge editor with both sides from the index. `amonhen status` notes them too.
 - Range Diff compares a branch with its version before the last rebase, History edit or amend (found in its reflog),
   or any two ranges, as `git range-diff` does: from a branch's menu, Repository, Reflog or two commits in History.
   `amonhen range-diff` does the same (`--previous`, `--json`).
@@ -46,6 +49,10 @@ becomes the GitHub Release notes.
   machine's git settings, and `ssh://host` without a path connects to it. The core and CLI get `programs`, which lists
   the git, gpg, gpgsm or ssh-keygen found on the machine that runs git, with versions, and `excludesFile` /
   `saveExcludesFile` for the user's global excludes file.
+- Commits can be saved as patches (one file per commit as `git format-patch` does, or one mbox) from History's
+  context menu and Commit > Save as Patch…, and patches applied with Repository > Apply Patch… or by dropping them on
+  the window, after showing what they change: mail with `git am`, plain diffs with `git apply`. A stopped am says why
+  in the banner, with Retry with 3-Way Merge. Both can be undone; the CLI gets `format-patch`, `am` and `apply`.
 
 #### Changed
 
@@ -69,6 +76,12 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- A `git am` in progress was shown as a rebase.
+- Undo of a branch-moving operation no longer fails with "not uptodate" right after undoing an applied patch.
+- The Undo confirmation says what it puts back: undoing Discard or an applied diff restores the files and no longer
+  claims to move HEAD and the branches.
+- The toolbar's Undo follows operations recorded outside the app (the CLI, the VSCode extension) without a Refresh.
+- Split and Edit in History are recorded for Undo once after Continue; they could be recorded twice.
 - In Japanese, "author" is 作者 everywhere, as in the docs: the Author and Signing page and its Author section, and
   the author in the commit details, showed 作成者.
 - The CLI finds the repository without running git, so when the chosen git isn't there it can still read and
@@ -95,6 +108,10 @@ becomes the GitHub Release notes.
 - A message template file chosen for a repository now wins over a shared template chosen for all repositories, in
   Repository Settings and the commit box.
 - None for a repository's message template now cancels a shared template chosen for all repositories.
+- Squash into Parent and Squash N Commits keep the notes of the commits folded in, as `git rebase -i` does when
+  `notes.rewriteRef` is set: they used to keep only the oldest commit's.
+- Split moves the commit's notes to the last of the new commits, as git's own steps for splitting a commit do (`edit`,
+  then `reset HEAD^`); they were lost.
 - History starts from HEAD, branches, remote branches and tags, as the sidebar does (`git log --branches --remotes
   --tags HEAD`): commits kept by other refs, such as git notes' or `git maintenance`'s `refs/prefetch`, no longer show.
 
@@ -588,12 +605,18 @@ First release.
 
 #### Added
 
+- Conflicted files with no conflict markers left (git's rerere, another editor) are marked in the Working Copy list,
+  lead with Mark as Resolved, and can all be marked resolved from the Conflicts heading.
 - Compare with Previous Version on a local branch and Range Diff… show `git range-diff` of two versions of a
   branch in a read-only document, with or without the engine.
 - A local branch that isn't checked out can be fast-forwarded to its upstream (Fast-Forward to Upstream) or pushed
   (Push to Upstream) from its menu in the nav.
 - History and the commit details show people by their mailmap names (following `log.mailmap`), with the recorded
   name and email under them in the details when they differ, with or without the engine.
+- A commit's menu in History saves it, or the commits from it up to HEAD, as patches (one file per commit or one
+  mbox), and Apply Patch… (Command Palette, or a patch file's menu in the Explorer) shows what patches change and
+  applies mail with `git am` or a diff with `git apply`. A stopped am says why in the nav, with Retry with 3-Way
+  Merge. Both can be undone.
 
 #### Changed
 
@@ -611,6 +634,13 @@ First release.
 - Merge (and Rebase that amounts to a fast-forward) no longer moves a branch checked out in another worktree.
 - Without the engine, the extension works with git 2.23, the supported minimum: it no longer opens repositories with
   `rev-parse --path-format` (git 2.31) or reads objects with `cat-file --batch-command` (git 2.36).
+- A `git am` in progress was shown as a rebase.
+- Undo of a branch-moving operation no longer fails with "not uptodate" right after undoing another one that put
+  files back.
+- Selecting a file in Working Copy just as its changes went away clears the diff instead of failing silently, and other
+  failures of the main view's requests are now reported.
+- Squash into Parent keeps the notes of the commit folded in, and Split moves them to the last of the new commits, as
+  git does when `notes.rewriteRef` is set.
 
 ### [0.2.3] - 2026-10-21
 

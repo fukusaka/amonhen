@@ -50,7 +50,7 @@ The Conflicts / Staged / Changes files are on the left, the commit form below th
 - You can also use Stage Hunk per hunk, Stage File, `+` / `−` in the list, and Stage All. In the list, select with the up and down keys and stage / unstage with Space or Enter.
 - For files in Changes, you can discard changes with ↺ in the list, Discard File, Discard Hunk, and Discard N Lines. Untracked files are deleted. Discarded content can be restored with Undo.
 - The commit form has a Summary and a Description (multiple lines). Turning on Amend fills in the message of the previous commit. You can also commit with `⌘Enter` / `Ctrl+Enter`.
-- For a conflicted file, you can choose Open in Merge Editor (the standard 3-way merge editor), Accept Current, Accept Incoming, and Mark as Resolved. A file deleted on one side can also be resolved with Accept. When marking as resolved, you are asked to confirm if markers remain.
+- For a conflicted file, you can choose Open in Merge Editor (the standard 3-way merge editor), Accept Current, Accept Incoming, and Mark as Resolved. A file deleted on one side can also be resolved with Accept. When marking as resolved, you are asked to confirm if markers remain. A conflicted file with no markers left (git's rerere applied an earlier resolution, or another editor resolved it) shows ✓ with "no markers" or "rerere", leads with Mark as Resolved, and the Conflicts heading can mark all of them resolved at once; Accept asks before replacing such a resolution.
 
 ### History
 
@@ -75,13 +75,21 @@ Commits reachable from HEAD by first-parent (up to just before the first merge c
 
 On any commit, right-click for New Branch / New Tag (create from that commit) and Revert (create a commit that cancels it). A commit not on the current branch can be applied to the current branch with Cherry-pick. All of these can be reverted with Undo.
 
+### Patches
+
+Right-click a commit in History for Save as Patch… (that commit) or Save Patches from Here to HEAD… (the series up to
+HEAD), as one file per commit (`git format-patch`) or one mbox. Apply Patch… in the Command Palette, or on a .patch /
+.diff / .mbox / .eml file in the Explorer, shows what the patches change and whether they apply, then applies mail
+patches as commits (`git am`) or a diff to the working tree (`git apply`). If a patch doesn't apply, the nav shows
+"Applying patches (1/3)" with Retry with 3-Way Merge, Continue, Skip and Abort. Both can be undone.
+
 ### Stopped merge / rebase
 
 When stopped by a conflict or by Edit / Split, a row like "Rebase in progress (2/5)" appears in the nav. After resolving and staging, continue with Continue. In a rebase, Skip skips the current commit. Abort returns to the state before it started.
 
 ### Undo
 
-Undo in the nav reverts the last operation. It covers commits (including amend), Merge, Rebase, fast-forward, Pull, creating and deleting branches and tags, Cherry-pick, Revert, discarding changes, dropping stashes, and editing commits in the History.
+Undo in the nav reverts the last operation. It covers commits (including amend), Merge, Rebase, fast-forward, Pull, creating and deleting branches and tags, Cherry-pick, Revert, applying patches, discarding changes, dropping stashes, and editing commits in the History.
 
 - Undoing a commit puts its changes back as staged.
 - Undoing a Merge or Rebase returns the branch and the checked-out branch to their state before the operation, keeping your working changes.

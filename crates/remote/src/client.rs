@@ -12,10 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use amonhen_model::{
-    CommitGraph, CommitText, ConfigEntry, ConnectionState, FileChange, GitBackend, HeadState, Oid,
-    Operations, Outcome, PullMode, RawCommit, RefUpdate, Refs, RemoteChange, RemoteCheck,
-    RemoteEntry, RepoFiles, RepoPaths, ResetMode, Result, Root, Sequence, SigningKey, Status,
-    WorktreeChange,
+    ApplyPatch, CommitGraph, CommitText, ConfigEntry, ConnectionState, FileChange, FormatPatch,
+    GitBackend, HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RawCommit, RefUpdate,
+    Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode, Result, Root,
+    Sequence, SigningKey, Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -869,11 +869,40 @@ impl Operations for RemoteOperations {
         self.op(Op::SkipSequence(sequence))
     }
 
+    fn format_patch(&self, commits: &[Oid], options: &FormatPatch) -> Result<Vec<PatchFile>> {
+        self.op(Op::FormatPatch {
+            commits: commits.to_vec(),
+            options: options.clone(),
+        })
+    }
+
+    fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome> {
+        self.op(Op::Am {
+            mbox: Bytes(mbox.to_vec()),
+            three_way,
+        })
+    }
+
+    fn am_three_way(&self) -> Result<Outcome> {
+        self.op(Op::AmThreeWay)
+    }
+
+    fn apply_patch(&self, patch: &[u8], options: &ApplyPatch) -> Result<Outcome> {
+        self.op(Op::ApplyPatch {
+            patch: Bytes(patch.to_vec()),
+            options: *options,
+        })
+    }
+
     fn take_side(&self, path: &str, ours: bool) -> Result<()> {
         self.op(Op::TakeSide {
             path: path.to_owned(),
             ours,
         })
+    }
+
+    fn conflict_stages(&self, path: &str) -> Result<[Option<Oid>; 3]> {
+        self.op(Op::ConflictStages(path.to_owned()))
     }
 
     fn fetch(&self) -> Result<()> {

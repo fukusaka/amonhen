@@ -165,6 +165,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         let compare = item(L("Compare with Previous Version"), #selector(RepositoryWindow.compareWithPreviousVersion(_:)), "")
         compare.toolTip = L("Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff")
         menu.addItem(compare)
+        menu.addItem(item(L("Apply Patch…"), #selector(RepositoryWindow.applyPatch(_:)), ""))
         menu.addItem(.separator())
         menu.addItem(item("Continue", #selector(RepositoryWindow.continueSequence(_:)), ""))
         menu.addItem(item("Skip", #selector(RepositoryWindow.skipSequence(_:)), ""))
@@ -193,6 +194,8 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         menu.addItem(item("Commit", #selector(RepositoryWindow.commitChanges(_:)), "\r"))
         menu.addItem(item("Commit and Push", #selector(RepositoryWindow.commitAndPush(_:)), "\r", [.command, .shift]))
         menu.addItem(item("Stage All", #selector(RepositoryWindow.stageAllChanges(_:)), ""))
+        menu.addItem(.separator())
+        menu.addItem(item(L("Save as Patch…"), #selector(RepositoryWindow.savePatch(_:)), ""))
         return menu
     }
 

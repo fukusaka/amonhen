@@ -128,9 +128,19 @@ pub fn status(args: &[String]) -> Result<ExitCode> {
         };
         let path = e["path"].as_str().unwrap_or("");
         match e["origPath"].as_str() {
-            Some(from) => out.push_str(&format!("{xy} {from} → {path}\n")),
-            None => out.push_str(&format!("{xy} {path}\n")),
+            Some(from) => out.push_str(&format!("{xy} {from} → {path}")),
+            None => out.push_str(&format!("{xy} {path}")),
         }
+        // マーカーの残っていないコンフリクト（rerere が解決を当てた、ほかのエディタで直した）。
+        if e["markers"] == 0 {
+            let note = if e["rerere"] == true {
+                tr!("rerere applied the earlier resolution")
+            } else {
+                tr!("no conflict markers")
+            };
+            out.push_str(&paint(&format!("  ({note})"), "90", c.color));
+        }
+        out.push('\n');
     }
     term::write(&out);
     Ok(ExitCode::SUCCESS)
