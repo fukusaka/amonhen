@@ -39,7 +39,7 @@ test('squash and fixup start at the parent', () => {
 
 test('drop, edit and split', () => {
   assert.equal(planRebase(chain, { kind: 'drop', oid: 'd' }, path).todo, 'drop d\n');
-  assert.equal(planRebase(chain, { kind: 'edit', oid: 'c' }, path).todo, 'pick c\nbreak\npick d\n');
+  assert.equal(planRebase(chain, { kind: 'edit', oid: 'c' }, path).todo, 'edit c\npick d\n');
   const split = planRebase(chain, { kind: 'split', oid: 'c' }, path);
   assert.equal(split.todo, 'edit c\npick d\n');
   assert.equal(split.resetOnStop, true);

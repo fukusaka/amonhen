@@ -36,7 +36,7 @@ pub enum HistoryEdit {
     Drop {
         oid: String,
     },
-    /// `oid` を当てたところで止まる。
+    /// `oid` を当てたところで止まる（git の `edit`）。続けるとき、stage した変更は `oid` に amend される。
     Edit {
         oid: String,
     },
@@ -207,7 +207,8 @@ pub fn plan_rebase(
             }
             HistoryEdit::SquashRange { .. } => unreachable!(),
             HistoryEdit::Drop { .. } => lines.push(format!("drop {}", c.oid)),
-            HistoryEdit::Edit { .. } => lines.extend([format!("pick {}", c.oid), "break".into()]),
+            // git の `edit`。続けたときに git が、止めたコミットを最後のコミットに対応づけて notes を写す。
+            HistoryEdit::Edit { .. } => lines.push(format!("edit {}", c.oid)),
             // git の split の手順（`edit` で止め、`reset HEAD^` してから分けてコミットし、続ける）と同じにする。
             // 続けたときに git が、元のコミットの notes を最後のコミットへ写す。reset は止まってから行う。
             HistoryEdit::Split { .. } => lines.push(format!("edit {}", c.oid)),
@@ -397,7 +398,7 @@ mod tests {
         );
         assert_eq!(
             short(&plan(HistoryEdit::Edit { oid: hex('c') }).unwrap().todo),
-            "pick c\nbreak\npick d\n"
+            "edit c\npick d\n"
         );
         let split = plan(HistoryEdit::Split { oid: hex('c') }).unwrap();
         assert_eq!(short(&split.todo), "edit c\npick d\n");

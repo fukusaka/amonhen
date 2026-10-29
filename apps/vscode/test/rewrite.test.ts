@@ -139,6 +139,29 @@ test('edit stops, and undo is recorded once the rebase finishes', async () => {
   assert.equal(git('rev-parse', 'HEAD'), head);
 });
 
+test('edit is git edit: notes reach added commits, and staged changes are amended on continue', async () => {
+  git('notes', 'add', '-m', 'note B', oids.B!);
+  git('config', 'notes.rewriteRef', 'refs/notes/commits');
+  assert.equal(await rewriteHistory(backend, undo, 'Edit B', { kind: 'edit', oid: oids.B! }), 'stopped');
+  commitFile('extra.txt', 'x\n', 'Extra');
+  assert.equal(await backend.continueSequence('rebase'), 'done');
+  assert.deepEqual(subjects(), ['D', 'C', 'Extra', 'B', 'A']);
+  // git の edit と同じく、止めたコミットの notes が最後のコミットにも写る
+  assert.equal(git('log', '-1', '--format=%N', 'HEAD~2'), 'note B');
+  assert.equal(git('log', '-1', '--format=%N', 'HEAD~3'), 'note B');
+  await undo.settlePending();
+  await undo.undo();
+
+  assert.equal(await rewriteHistory(backend, undo, 'Edit B', { kind: 'edit', oid: oids.B! }), 'stopped');
+  writeFileSync(join(dir, 'b.txt'), 'b2\n');
+  git('add', 'b.txt');
+  assert.equal(await backend.continueSequence('rebase'), 'done');
+  assert.deepEqual(subjects(), ['D', 'C', 'B', 'A']);
+  assert.equal(git('show', 'HEAD~2:b.txt'), 'b2');
+  assert.equal(git('log', '-1', '--format=%N', 'HEAD~2'), 'note B');
+  assert.equal(git('status', '--porcelain'), '');
+});
+
 test('split puts the changes back into the working tree', async () => {
   writeFileSync(join(dir, 'c2.txt'), 'c2\n');
   git('add', 'c2.txt');
