@@ -12,6 +12,7 @@ pub mod fold;
 pub mod graph;
 pub mod lanes;
 pub mod lineage;
+pub mod patch;
 pub mod query;
 pub mod remote_tags;
 mod repository;

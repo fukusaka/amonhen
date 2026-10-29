@@ -109,6 +109,18 @@ is in [front.md](front.md), and the design in item 18 of
   writes it with `hash-object -w` → `update-index --cacheinfo`. Unstaging does the same with the diff against HEAD.
   Compared with passing a partial patch to `git apply`, this does not stumble over context lines or line endings.
 
+### Patches
+
+- History's commit menu has Save as Patch… and Save Patches from Here to HEAD… (the webview selects one commit at a
+  time, so a series is the commits from that one up to HEAD along first parents). A quick pick chooses one file per
+  commit, the same with a cover letter, or one mbox.
+- Apply Patch… (Command Palette, and the Explorer's menu on .patch, .diff, .mbox and .eml files) shows the patches and
+  whether they apply in a modal dialog. Its first button keeps git's defaults (`am.threeWay` for mail, the working
+  tree for a diff); the others are 3-way merge and, for a diff, Apply and Stage.
+- A `git am` in progress shows "Applying patches (1/3)" in the nav with why it stopped, Skip, and Retry with 3-Way
+  Merge. Through the shared daemon these are the core's commands; on the git execution layer the extension reads the
+  patch itself (`src/git/patch.ts`, the same reading as the core's) and runs git.
+
 ### Conflict resolution
 
 - Reuse the standard 3-way merge editor. The extension is responsible for the list of conflicted files, taking ours / theirs per file (`checkout --ours/--theirs`), and the in-progress display and continue / abort / skip buttons during a merge / rebase.

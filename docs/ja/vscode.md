@@ -104,6 +104,18 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
   当てた新しい index の内容を作って `hash-object -w` → `update-index --cacheinfo` で書き込む。unstage は HEAD との差分で
   同じことをする。部分パッチを `git apply` に渡す方式より、文脈行や改行の扱いでつまずかない。
 
+### パッチ
+
+- History のコミットのメニューに Save as Patch… と Save Patches from Here to HEAD…（Webview は 1 つずつしか選べない
+  ので、ひと続きはそのコミットから HEAD まで first-parent で辿ったもの）。クイックピックで、1 コミット 1 ファイル・
+  送り状つきの 1 コミット 1 ファイル・1 つの mbox から選ぶ。
+- Apply Patch…（コマンドパレットと、エクスプローラーの .patch・.diff・.mbox・.eml のメニュー）は、パッチの中身と
+  当たるかをモーダルのダイアログで見せる。最初のボタンは git の既定のまま（メールの形は `am.threeWay`、diff は作業
+  ツリー）で、ほかは 3-way merge と、diff なら Apply and Stage。
+- `git am` の途中は、ナビに「Applying patches (1/3)」と止まった理由、Skip、Retry with 3-Way Merge を出す。共有の
+  daemon があればコアの命令を使い、git 実行層では拡張がパッチを読んで（`src/git/patch.ts`。読み方はコアと同じ）
+  git を動かす。
+
 ### コンフリクト解決
 
 - 標準の 3-way マージエディタを流用する。拡張側は、コンフリクト中のファイル一覧、ファイル単位の ours / theirs 採用（`checkout --ours/--theirs`）、merge / rebase 中の表示と continue / abort / skip ボタンを担当する。

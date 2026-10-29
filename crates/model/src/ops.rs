@@ -211,6 +211,8 @@ pub enum Sequence {
     Merge,
     CherryPick,
     Revert,
+    /// `git am`（メールのパッチを当てている途中）。
+    Am,
 }
 
 impl Sequence {
@@ -220,8 +222,41 @@ impl Sequence {
             Sequence::Merge => "merge",
             Sequence::CherryPick => "cherry-pick",
             Sequence::Revert => "revert",
+            Sequence::Am => "am",
         }
     }
+}
+
+/// `git format-patch` の選び方。ほかのこと（番号の付け方・宛先・署名など）は git の `format.*` の設定に任せる。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct FormatPatch {
+    /// 送り状（`0000-cover-letter.patch`）も作る（`--cover-letter`）。
+    pub cover_letter: bool,
+    /// 出し直しの版（`-v <n>`。`[PATCH v2 1/3]`、`v2-0001-….patch`）。
+    pub reroll: Option<u32>,
+    /// 1 つの mbox にまとめる（`--stdout`）。`PatchFile::name` は空になる。
+    pub single: bool,
+}
+
+/// 書き出したパッチ 1 つ（git が付けたファイル名と中身）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PatchFile {
+    pub name: String,
+    pub content: Vec<u8>,
+}
+
+/// `git apply` の当て方。既定は git と同じく作業ツリーだけ。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct ApplyPatch {
+    /// index にも当てる（`--index`）。
+    pub index: bool,
+    /// 当たらなければ 3-way merge にしてコンフリクトを残す（`--3way`。index にも当たる）。
+    pub three_way: bool,
+    /// 当てずに、当たるかだけ調べる（`--check`）。
+    pub check: bool,
 }
 
 /// merge・rebase などの結果。
@@ -335,11 +370,21 @@ pub trait Operations: Send + Sync {
     /// 用意した todo で非対話の rebase を行う（コミットの編集）。`base` が `None` なら `--root`。
     fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome>;
     fn sequence_in_progress(&self) -> Result<Option<Sequence>>;
-    /// rebase の途中なら、何番目か（今, 全体）。
+    /// rebase・am の途中なら、何番目か（今, 全体）。
     fn rebase_progress(&self) -> Result<Option<(u32, u32)>>;
     fn abort(&self, sequence: Sequence) -> Result<()>;
     fn continue_sequence(&self, sequence: Sequence) -> Result<Outcome>;
     fn skip_sequence(&self, sequence: Sequence) -> Result<Outcome>;
+
+    /// `commits` を、渡した順にパッチにする（`git format-patch`。マージは git と同じく飛ばす）。
+    fn format_patch(&self, commits: &[Oid], options: &FormatPatch) -> Result<Vec<PatchFile>>;
+    /// mbox のパッチを今のブランチにコミットとして当てる（`git am`）。`three_way` が `None` なら git の
+    /// `am.threeWay` に任せる。当たらないパッチがあれば、そこで止まる（`Outcome::Conflict`）。
+    fn am(&self, mbox: &[u8], three_way: Option<bool>) -> Result<Outcome>;
+    /// `git am` が当てられずに止まったパッチを 3-way merge で当て直す。きれいに当たれば続ける。
+    fn am_three_way(&self) -> Result<Outcome>;
+    /// diff を当てる（`git apply`）。3-way でコンフリクトが残れば `Outcome::Conflict`。
+    fn apply_patch(&self, patch: &[u8], options: &ApplyPatch) -> Result<Outcome>;
 
     /// コンフリクトしたファイルを片側（`ours` なら Current、そうでなければ Incoming）にして解決済みにする。
     /// その側でファイルが消えていれば、消して解決済みにする。

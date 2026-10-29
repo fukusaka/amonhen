@@ -274,6 +274,100 @@ async function rangeDiffFlow(path: 'daemon' | 'git'): Promise<void> {
   }
 }
 
+/** vscode.window の関数を fn のあいだだけ差し替える（ダイアログに答える） */
+async function withWindow<T>(stubs: Record<string, unknown>, fn: () => Promise<T>): Promise<T> {
+  const window = vscode.window as unknown as Record<string, unknown>;
+  const originals = Object.fromEntries(Object.keys(stubs).map((k) => [k, window[k]]));
+  Object.assign(window, stubs);
+  try {
+    return await fn();
+  } finally {
+    Object.assign(window, originals);
+  }
+}
+
+/**
+ * コミットをパッチに保存して git am で当て、Undo で戻す。当たらずに止まった am を 3-way merge で当て直し、
+ * 解決して Continue し、Undo で戻す。ただの diff を git apply で作業ツリーに当て、Undo で戻す
+ */
+async function patchFlow(label: string): Promise<void> {
+  await showView('amonhen.showHistory');
+  const repo = api.manager.current!;
+  const name = `patch-${label}.txt`;
+  const path = join(root, name);
+  const out = join(dirname(root), `patches-${label}`);
+  const diff = join(dirname(root), `change-${label}.diff`);
+  // 作業中のファイルは CRLF になる（core.autocrlf=true）
+  const text = () => readFileSync(path, 'utf8').replaceAll('\r\n', '\n');
+  const head = () => git('rev-parse', 'HEAD').trim();
+  const subject = () => git('log', '-1', '--format=%s').trim();
+  const commitFile = (content: string, message: string) => {
+    writeFileSync(path, content);
+    git('add', name);
+    git('commit', '-q', '-m', message);
+    return head();
+  };
+  // 当てる前の確かめ（modal）には answer と答え、ほかの知らせは閉じる
+  let answer = 'Apply';
+  const stubs = {
+    showQuickPick: async (items: unknown) => ((await items) as unknown[])[0],
+    showOpenDialog: async () => [vscode.Uri.file(out)],
+    showInformationMessage: async (_message: string, ...rest: unknown[]) =>
+      (rest[0] as { modal?: boolean } | undefined)?.modal ? answer : undefined,
+    showWarningMessage: async () => undefined,
+    showErrorMessage: async (message: string) => void errors.push(message),
+  };
+  const errors: string[] = [];
+  await withWindow(stubs, async () => {
+    try {
+      // 保存して、そのコミットを消してから am で当て直す
+      commitFile('1\n2\n3\n', `base ${label}`);
+      const change = commitFile('1\nx\n3\n', `change ${label}`);
+      await vscode.commands.executeCommand('amonhen.history.savePatch', { oid: change });
+      const patch = join(out, `0001-change-${label}.patch`);
+      assert.ok(existsSync(patch), `${patch} がある`);
+      git('reset', '-q', '--hard', 'HEAD~1');
+      const base = head();
+      await vscode.commands.executeCommand('amonhen.applyPatch', vscode.Uri.file(patch));
+      await until('am', () => subject() === `change ${label}` && git('rev-parse', 'HEAD~').trim() === base);
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('am の Undo', () => head() === base);
+
+      // 当たらずに止まる → 3-way merge で当て直す → 解決して Continue → Undo で全体が戻る
+      const other = commitFile('1\ny\n3\n', `other ${label}`);
+      await vscode.commands.executeCommand('amonhen.applyPatch', vscode.Uri.file(patch));
+      await until('am で止まる', () => repo.current.sequence === 'am' && repo.current.am?.retried === false);
+      assert.equal(head(), other);
+      await vscode.commands.executeCommand('amonhen.amRetryThreeWay');
+      await until('3-way merge で当て直す', () => text().includes('<<<<<<<') && repo.current.am?.retried === true);
+      writeFileSync(path, '1\nx\n3\n');
+      git('add', name);
+      await vscode.commands.executeCommand('amonhen.continueSequence');
+      await until('Continue', () => !repo.current.sequence && subject() === `change ${label}`);
+      assert.equal(git('rev-parse', 'HEAD~').trim(), other);
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('止まった am の Undo', () => head() === other && text() === '1\ny\n3\n');
+
+      // ただの diff は作業ツリーだけに当てる（git apply の既定）
+      writeFileSync(diff, `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n@@ -1,3 +1,3 @@\n 1\n y\n-3\n+z\n`);
+      await vscode.commands.executeCommand('amonhen.applyPatch', vscode.Uri.file(diff));
+      await until('apply', () => text() === '1\ny\nz\n');
+      assert.equal(git('diff', '--cached', '--name-only').trim(), '', 'index には触らない');
+      assert.equal(head(), other);
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('apply の Undo', () => text() === '1\ny\n3\n' && git('status', '--porcelain').trim() === '');
+      assert.deepEqual(errors, [], 'エラーは出ない');
+    } finally {
+      if (repo.current.sequence === 'am') {
+        git('am', '--abort');
+      }
+      rmSync(out, { recursive: true, force: true });
+      rmSync(diff, { force: true });
+      await vscode.commands.executeCommand('amonhen.refresh');
+    }
+  });
+}
+
 suite('Amon Hen in VSCode', () => {
   suiteSetup(async () => {
     recordSpawns();
@@ -338,6 +432,10 @@ suite('Amon Hen in VSCode', () => {
     );
   });
 
+  test('saves commits as patches and applies them through the daemon', async () => {
+    await patchFlow('daemon');
+  });
+
   test('shares one daemon with another window and the CLI', async () => {
     const engine = process.env['AMONHEN_E2E_ENGINE']!;
     const before = await until('daemon', () => daemonStatus());
@@ -368,6 +466,10 @@ suite('Amon Hen in VSCode', () => {
       spawned.slice(mark).some((s) => s.args.includes('update-index')),
       '行の stage は拡張が git の update-index でする',
     );
+  });
+
+  test('saves commits as patches and applies them on the git execution layer', async () => {
+    await patchFlow('git');
   });
 
   test('shows names from the mailmap on the git execution layer', async () => {

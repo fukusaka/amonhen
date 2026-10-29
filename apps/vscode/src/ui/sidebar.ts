@@ -181,11 +181,28 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
       case 'sequence': {
         const name = node.sequence[0]!.toUpperCase() + node.sequence.slice(1);
         const step = node.progress ? ` (${node.progress.current}/${node.progress.total})` : '';
-        const item = new vscode.TreeItem(`${name} in progress${step}`);
+        const am = node.sequence === 'am' ? state?.am : undefined;
+        const item = new vscode.TreeItem(node.sequence === 'am' ? `Applying patches${step}` : `${name} in progress${step}`);
         item.id = 'sequence';
         item.description = '解決・コミットしてから Continue';
         item.iconPath = new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('notificationsWarningIcon.foreground'));
         item.contextValue = `sequence.${node.sequence}`;
+        if (am) {
+          // 止まったパッチと、なぜ止まったか（当たらない・空・コンフリクト）
+          const conflicts = state?.status?.entries.some((e) => e.kind === 'unmerged') ?? false;
+          const subject = am.subject ? `「${am.subject}」` : 'パッチ';
+          item.tooltip = am.subject;
+          if (am.empty) {
+            item.description = `${subject}に変更がありません。Skip してください`;
+          } else if (conflicts || am.retried) {
+            item.description = `${subject}のコンフリクトを解決して stage してから Continue`;
+          } else if (am.threeWay) {
+            item.description = `${subject}が当たりません。手で当てて Continue するか Skip`;
+          } else {
+            item.description = `${subject}が当たりません。3-way merge で当て直すか、手で当てて Continue するか Skip`;
+            item.contextValue = 'sequence.am.retry';
+          }
+        }
         item.command = { command: 'amonhen.showWorkingCopy', title: 'Show Working Copy' };
         return item;
       }

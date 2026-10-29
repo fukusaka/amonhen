@@ -12,7 +12,7 @@ A quick, responsive Git GUI. What I want, built by hand.
 
 ## Features
 
-- **History** — Browse commits with a branch graph. Search them. Reword, squash, reorder, cherry-pick or revert them.
+- **History** — Browse commits with a branch graph. Search them. Reword, squash, reorder, cherry-pick or revert them. Save them as patches, and apply patches from mail or a diff.
 - **Line-by-line commits** — Pick exactly which lines go into a commit, and throw away the ones you don't want.
 - **Undo** — Most operations can be undone, including rewriting history and dropping a stash.
 - **Merge editor** — Resolve conflicts with both sides and the result in view.
