@@ -290,13 +290,23 @@ impl Session {
             "refs" => Reply::json(refs_json(&repo.load_refs()?.refs)),
             "status" => {
                 let s = repo.load_status()?;
+                // 内容のコンフリクトには、残っているマーカーの数と rerere が解決を当てたかを添える。
+                let conflicts = repo.conflict_files(&s.status)?;
+                let entries = s.status.entries.iter().map(|e| {
+                    let mut v = entry_json(e);
+                    if let Some(c) = conflicts.iter().find(|c| c.path == e.path) {
+                        v["markers"] = json!(c.markers);
+                        v["rerere"] = json!(c.rerere);
+                    }
+                    v
+                });
                 Reply::json(json!({
                     "generation": s.generation,
                     "branch": s.status.branch,
                     "upstream": s.status.upstream,
                     "ahead": s.status.ahead,
                     "behind": s.status.behind,
-                    "entries": s.status.entries.iter().map(entry_json).collect::<Vec<_>>(),
+                    "entries": entries.collect::<Vec<_>>(),
                 }))
             }
             "connection" => Reply::json(match repo.connection_state() {

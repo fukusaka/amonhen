@@ -958,6 +958,14 @@ impl Repository {
         ))
     }
 
+    /// 最後に読んだ作業ツリーと index の状態（まだ読んでいなければ読む）。
+    pub fn last_status(&self) -> Result<Arc<StatusSnapshot>> {
+        match self.status.load_full() {
+            Some(s) => Ok(s),
+            None => self.load_status(),
+        }
+    }
+
     /// 作業ツリーと index の状態を読み直す。前回と同じなら前回のものを返す。
     pub fn load_status(&self) -> Result<Arc<StatusSnapshot>> {
         let status = self.backend.status()?;

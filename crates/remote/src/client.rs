@@ -876,6 +876,10 @@ impl Operations for RemoteOperations {
         })
     }
 
+    fn conflict_stages(&self, path: &str) -> Result<[Option<Oid>; 3]> {
+        self.op(Op::ConflictStages(path.to_owned()))
+    }
+
     fn fetch(&self) -> Result<()> {
         self.op(Op::Fetch)
     }

@@ -315,6 +315,15 @@ pub fn side(data: &[u8], choice: Choice) -> Option<Side> {
     Some(Side { text, regions })
 }
 
+/// git の rerere が見張っているパス（`.git/MERGE_RR`。`<id>\t<path>` を NUL で区切ったもの）。rerere が
+/// 前の解決を当てたパスは、ここに入らない。
+pub fn rerere_paths(data: &[u8]) -> std::collections::HashSet<String> {
+    data.split(|&b| b == 0)
+        .filter_map(|e| e.iter().position(|&b| b == b'\t').map(|i| &e[i + 1..]))
+        .map(|p| String::from_utf8_lossy(p).into_owned())
+        .collect()
+}
+
 /// コンフリクトのあるファイルを、FE 向けの行にする。コンフリクトの行の `old_no` は、
 /// そのコンフリクトの番号 + 1（クリックしたコンフリクトを知るため）。`new_no` はファイルの行番号。
 pub fn view(data: Arc<Vec<u8>>, profile: &FrontendProfile) -> DiffView {

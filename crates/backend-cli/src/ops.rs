@@ -638,6 +638,29 @@ impl Operations for Git {
         }
     }
 
+    fn conflict_stages(&self, path: &str) -> Result<[Option<Oid>; 3]> {
+        // <mode> SP <oid> SP <stage> TAB <path> NUL
+        let out = self.read(&["ls-files", "-u", "-z", "--", path])?;
+        let mut stages = [None; 3];
+        for entry in out.split(|&b| b == 0) {
+            let Some(meta) = entry.split(|&b| b == b'\t').next() else {
+                continue;
+            };
+            let fields: Vec<&[u8]> = meta.split(|&b| b == b' ').collect();
+            if let [_, oid, stage] = fields[..]
+                && let (Some(oid), Some(i @ 1..=3)) = (
+                    std::str::from_utf8(oid).ok().and_then(Oid::from_hex),
+                    std::str::from_utf8(stage)
+                        .ok()
+                        .and_then(|s| s.parse::<usize>().ok()),
+                )
+            {
+                stages[i - 1] = Some(oid);
+            }
+        }
+        Ok(stages)
+    }
+
     fn fetch(&self) -> Result<()> {
         // リモートで消えたブランチを片づけるかは、端末の `git fetch` と同じく `fetch.prune` に任せる。
         self.write(&["fetch", "--all"]).map(drop)

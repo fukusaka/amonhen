@@ -457,6 +457,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ContinueSequence(s) => encode(&ops.continue_sequence(s)?),
         Op::SkipSequence(s) => encode(&ops.skip_sequence(s)?),
         Op::TakeSide { path, ours } => encode(&ops.take_side(&path, ours)?),
+        Op::ConflictStages(path) => encode(&ops.conflict_stages(&path)?),
         Op::Fetch => encode(&ops.fetch()?),
         Op::Pull(mode) => encode(&ops.pull(mode)?),
         Op::BranchTracking => encode(&ops.branch_tracking()?),
