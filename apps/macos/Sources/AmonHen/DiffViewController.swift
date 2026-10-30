@@ -1103,6 +1103,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     /// 標準・詳細のとき、上に作者とコミッターを並べる帯。
     private let peopleStrip = PeopleStrip(frame: .zero)
 
+    /// sparse checkout なら、その様子（取り出していないフォルダのファイルは、ディスクにないので開けない）。
+    var sparse: RepositoryForm.Sparse?
+
     /// 表示中のコミットの親と子（キーボードで移るため）。子は詳細を読み終えるまで空。shallow clone の境界の
     /// コミットの親は取得していないので、移れない（空）。
     var currentParents: [String] { info?.parentsNotFetched == true ? [] : info?.parents ?? [] }
@@ -1809,6 +1812,13 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
                     NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: full)])
                 })
                 menu.addItem(ClosureMenuItem(title: L("Open with Default App")) { NSWorkspace.shared.open(URL(fileURLWithPath: full)) })
+            } else if let sparse, !sparse.contains(path) {
+                // sparse checkout で取り出していないフォルダのファイル。項目は出すが、押せないわけを添える。
+                for title in [L("Show in Finder"), L("Open with Default App")] {
+                    let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                    item.toolTip = L("This folder isn’t checked out")
+                    menu.addItem(item)
+                }
             }
         }
         return menu

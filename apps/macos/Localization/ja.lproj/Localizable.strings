@@ -1669,4 +1669,8 @@
 "Check Out All" = "すべて取り出す";
 "Shallow clone: older history isn’t fetched" = "shallow clone: 古い履歴は取得していません";
 "Partial clone: file contents are fetched when needed (%@)" = "partial clone: ファイルの中身は必要なときに取得します（%@）";
+"Only some folders are checked out (%ld)" = "一部のフォルダだけ取り出し中（%ld）";
+"Only some files are checked out" = "一部のファイルだけ取り出し中";
+"Click to change them in Settings > Fetching and Folders." = "押すと、Settings の「取得とフォルダ」で変えられます。";
+"This folder isn’t checked out" = "取り出していないフォルダです";
 "Couldn’t Change the Folders" = "取り出すフォルダを変えられませんでした";
