@@ -609,7 +609,11 @@ First release.
 
 ## VSCode extension
 
-### Unreleased
+### [0.2.4] - 2026-10-30
+
+The bundled engines are the 0.2.8 ones, the same build as the 0.2.8 app and CLI, so all three share one daemon. Commits
+can be saved as patches and patches applied, branches compared with Range Diff, and conflicts with no markers left
+are marked; people are shown by their mailmap names, and without the engine the extension works with git 2.23.
 
 #### Added
 
