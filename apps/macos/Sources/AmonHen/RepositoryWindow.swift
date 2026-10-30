@@ -1800,16 +1800,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// `branch` からプルリクエストを作る（メニュー、サイドバーの右クリック、ブランチの印の吹き出しから）。まだ push して
-    /// いない（上流がない・先行コミットがある）なら、まず push の確認の窓を出してそこで終わる。CI を見てから、
-    /// 吹き出しなどからもう一度作ってもらう。
-    func createPullRequest(from branch: String) {
+    /// いない（上流がない・先行コミットがある）なら、まず push の確認のシートを出し、送り終えたらそのまま作る。
+    func createPullRequest(from branch: String, pushed: Bool = false) {
         guard let gitHub, let dir = repository.workdir else { return NSSound.beep() }
         let repository = self.repository
         Task {
             let refs = (try? await Task.detached { try repository.loadRefs() }.value) ?? latestRefs
             let item = refs?.items.first { $0.kind == .local && $0.name == branch }
-            if item?.detail == nil || item?.gone == true || (item?.ahead ?? 0) > 0 {
-                actions.pushWithConfirmation(branch: branch)
+            if !pushed, item?.detail == nil || item?.gone == true || (item?.ahead ?? 0) > 0 {
+                actions.pushWithConfirmation(branch: branch) { self.createPullRequest(from: branch, pushed: true) }
                 return
             }
             // タイトルと本文は、ブランチの先頭のコミットのメッセージから（命令はコミット ID を取る）。
