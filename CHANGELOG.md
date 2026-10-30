@@ -23,6 +23,11 @@ becomes the GitHub Release notes.
   background are not lost unseen.
 - Push is disabled when there is nothing to send, and a conflict opens Working Copy at the first conflicted file
   instead of an alert.
+- Every confirmation is a sheet on the window, and an operation asks the same way from the toolbar, a context menu
+  or a drag. Fetch, Checkout, Cherry-pick, Revert, Apply and a sidebar Merge or Rebase now ask first; Reset picks
+  Soft, Mixed or Hard in its sheet.
+- Deleting several branches offers Delete Anyway for those with commits nowhere else. Only what can't be undone has a
+  red button, and failures read "Couldn't …".
 - Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
   Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 

@@ -340,9 +340,10 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 - Set `allowsUserCustomization = true` so that Branch, Merge, Rebase, Cherry-pick, Terminal, Finder, Open on GitHub and so on can be added and removed.
 - Show ahead/behind both as badges on Push and Pull (macOS 26 and later) and next to the branch name.
 - When unavailable, disable the item and give the reason in the tooltip ("No upstream", "Resolving conflicts").
-- Deleting a branch and dropping a stash ask first (both can be undone). A branch with commits that are in
-  neither the current branch nor its upstream lists them in the sheet and needs Delete Anyway (git's `-D`).
-- No ▾ menus on Pull, Push and Branch: one click on an icon must never send or rewrite anything. Operations that leave the machine or move branches (Pull, Push, Pop, Undo) open a sheet that says what will happen; ↩ runs it, so the keyboard costs one extra key. Fetch and Refresh run at once (they change nothing of ours). The menu shortcuts (⌃⌘L, ⌃⌘P) open the same sheets; Commit and Push does not ask again, unless there is no upstream or the upstream has moved on. One operation shows one sheet: what used to be a second dialog (Pull from a diverged Push, the upstream for a Pull, the pull request after its push) happens in or right after that sheet.
+- Deleting branches and dropping a stash ask first (both can be undone). Branches with commits that are in
+  neither the current branch nor their upstream list them in the sheet and need Delete Anyway (git's `-D`), one
+  branch or several.
+- No ▾ menus on Pull, Push and Branch: one click on an icon must never send or rewrite anything. Operations that talk to a remote or move HEAD, a branch or the working tree (Fetch, Pull, Push, Checkout, Merge, Rebase, Cherry-pick, Revert, Pop, Undo) open a sheet that says what will happen; ↩ runs it, so the keyboard costs one extra key. Refresh and automatic fetching run at once. The menu shortcuts (⌃⌘L, ⌃⌘P) open the same sheets; Commit and Push does not ask again, unless there is no upstream or the upstream has moved on. One operation shows one sheet: what used to be a second dialog (Pull from a diverged Push, the upstream for a Pull, the pull request after its push) happens in or right after that sheet.
 - One name in one place: while the toolbar shows the search field, History hides its own (the match count, previous,
   next and "matching only" stay in History); while it shows Branch, the window subtitle leaves the branch out.
 - Network git that prints nothing for 120 seconds (usually a credential prompt nobody sees) is stopped with an error saying so. It can also be cancelled from Activity.
@@ -682,6 +683,25 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 - Context menus show the same operations under the same names as the menu bar (one name to remember).
 - Unavailable items are disabled, not removed (so their place can be remembered).
 - Undo for git operations lives in Repository > Undo (⌥⌘Z), separate from Edit's ⌘Z (undoing text). So that ⌘Z never unexpectedly reverts a git operation.
+
+### Confirmations and wording
+
+- **What asks first** is a judgement of experience, not of whether it can be undone: anything that talks to a remote
+  (Fetch, Push, tags on a remote), moves HEAD, a branch or the working tree (Checkout, Pull, Merge, Rebase, Reset,
+  Cherry-pick, Revert, Apply, Pop, Undo, Fast-Forward), or deletes (branches, tags, stashes, commits, file changes, a
+  worktree). Staying inside the window (Refresh, Stage, Unstage, discarding selected lines, Favorites, Archive) does
+  not ask.
+- **The same operation asks the same way** from the toolbar, the menu bar, a context menu, a drag or a page's own
+  button. A sidebar Merge or Rebase shows the same sheet as the toolbar's, without the choice of what to merge.
+- **One sheet per operation**, attached to the window; never an app-modal alert. Anything to choose before running
+  (the upstream, Soft / Mixed / Hard, the message) is in that sheet. "Nothing to push" and "No branch is checked
+  out" are not dialogs: the control is disabled and its tooltip says why.
+- **Words.** The title is one question starting with the verb and naming the target ("Delete feature?"). The
+  message is at most two sentences and ends with either "You can Undo this (⌥⌘Z)." or "This can't be undone.". The
+  button repeats the title's verb, never "OK". A failure is titled "Couldn't <operation>".
+- **Red** is only for what can't be undone (Force Push, deleting or replacing tags on a remote, deleting an
+  untracked file, removing a worktree with uncommitted changes, closing the merge editor without saving); Return
+  doesn't press it. "…" is only on items that open a sheet.
 
 ## 12. Integration with GitHub and others
 
