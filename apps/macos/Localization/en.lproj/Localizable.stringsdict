@@ -34,22 +34,6 @@
 			<string>%ld files</string>
 		</dict>
 	</dict>
-	<key>%@ still has %ld conflicts</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%@ still has %#@n0@</string>
-		<key>n0</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>ld</string>
-			<key>one</key>
-			<string>%ld conflict</string>
-			<key>other</key>
-			<string>%ld conflicts</string>
-		</dict>
-	</dict>
 	<key>%ld changed files</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -160,22 +144,6 @@
 			<string>%ld commit</string>
 			<key>other</key>
 			<string>%ld commits</string>
-		</dict>
-	</dict>
-	<key>%ld conflicts remain</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n0@</string>
-		<key>n0</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>ld</string>
-			<key>one</key>
-			<string>%ld conflict remains</string>
-			<key>other</key>
-			<string>%ld conflicts remain</string>
 		</dict>
 	</dict>
 	<key>⚠︎ Conflicts expected in %ld files: %@</key>

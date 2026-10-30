@@ -1400,7 +1400,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         add(names.count == 1 ? L("Delete %@…", names[0]) : L("Delete %ld Tags…", names.count)) { [weak self] in
             self?.confirmDestructive(
                 names.count == 1 ? L("Delete tag %@?", names[0]) : L("Delete %ld tags?", names.count),
-                message: list(names) + L("Only your own copy is deleted; the remotes keep theirs.") + " " + L("You can Undo it afterwards (⌥⌘Z).")
+                message: list(names) + L("The remotes keep theirs.") + " " + Actions.canUndo, destructive: false
             ) {
                 actions.perform(sequence: names.map { ["op": "deleteTag", "name": $0] })
             }
@@ -1410,8 +1410,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add(tags.count == 1 ? L("Delete %@ from %@…", tags[0], remote) : L("Delete %ld Tags from %@…", tags.count, remote)) { [weak self] in
                 self?.confirmDestructive(
                     tags.count == 1 ? L("Delete %@ from %@?", tags[0], remote) : L("Delete %ld tags from %@?", tags.count, remote),
-                    message: list(tags)
-                        + L("Everyone who fetches from %@ loses them. This can’t be undone; push them again to bring them back. Your own tags are kept.", remote)
+                    message: list(tags) + L("Everyone who fetches from %@ loses them; yours stay.", remote) + " " + Actions.cantUndo
                         + (unchecked ? " " + L("Whether %@ has them hasn’t been checked yet (Fetch reads it).", remote) : "")
                 ) {
                     actions.perform(["op": "pushTags", "remote": remote, "names": tags, "delete": true])
@@ -1424,8 +1423,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func confirmReplace(_ tags: [String], on remote: String, actions: Actions) {
         confirmDestructive(
             tags.count == 1 ? L("Replace %@ on %@?", tags[0], remote) : L("Replace %ld tags on %@?", tags.count, remote),
-            message: tags.joined(separator: "\n") + "\n\n"
-                + L("On %@, a tag with this name is a different tag (another commit, or another annotated tag). Replacing it puts yours there for everyone who fetches from %@ (their own copies stay until they fetch with --force). This can’t be undone.", remote, remote),
+            message: tags.joined(separator: "\n") + "\n"
+                + L("%@ has a different tag with this name; yours replaces it for everyone who fetches.", remote) + " " + Actions.cantUndo,
             ok: L("Replace")
         ) {
             actions.perform(["op": "pushTags", "remote": remote, "names": tags, "force": true])
@@ -1510,17 +1509,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         statusShown = key
     }
 
-    /// 消す・置き換える操作の前に、シートで確かめる（ボタンは赤）。
-    private func confirmDestructive(_ title: String, message: String, ok: String = L("Delete"), then perform: @escaping () -> Void) {
-        guard let window = view.window else { return }
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        let button = alert.addButton(withTitle: ok)
-        button.hasDestructiveAction = true
-        alert.addButton(withTitle: L("Cancel"))
-        alert.beginSheetModal(for: window) { response in
-            if response == .alertFirstButtonReturn { perform() }
+    /// 消す・置き換える操作の前に、シートで確かめる（元に戻せないものはボタンが赤く、↩ では押せない）。
+    private func confirmDestructive(_ title: String, message: String, ok: String = L("Delete"), destructive: Bool = true,
+                                    then perform: @escaping () -> Void) {
+        guard let actions else { return }
+        Task { @MainActor in
+            if await actions.confirm(title, message: message, ok: ok, destructive: destructive) { perform() }
         }
     }
 

@@ -299,8 +299,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         titleLabel.lineBreakMode = .byTruncatingMiddle
         discardButton.target = self
         discardButton.action = #selector(discard)
-        // 捨てる操作は目立たせず、消える操作だと分かる色にする。
-        discardButton.hasDestructiveAction = true
+        // 行を捨てるのは Undo で戻せるので、赤くしない（赤は元に戻せないものだけ）。
         // コンフリクトのファイルは、下にマージエディタを出す。帯にはファイル全体の操作を置く。
         let conflictActions: [(String, Selector)] = [
             (L("Take Current File"), #selector(takeOursFile)), (L("Take Incoming File"), #selector(takeTheirsFile)),

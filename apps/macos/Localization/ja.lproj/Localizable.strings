@@ -29,7 +29,6 @@
 "You have %ld local commits, so this makes a merge commit." = "手元に %ld コミットあるので、マージコミットを 1 つ作ります。";
 "Your %ld local commits are replayed on top (their IDs change)." = "手元の %ld コミットを、取り込んだコミットの上に載せ直します（ID が変わります）。";
 "%ld files have uncommitted changes. Pull stops if the incoming changes touch them." = "作業中の変更が %ld ファイルあります。取り込む変更と重なると止まります。";
-"You can Undo it afterwards (⌥⌘Z)." = "あとから Undo（⌥⌘Z）で戻せます。";
 "Integrate with:" = "取り込み方:";
 "%@ has %ld commits you don’t have" = "%1$@ に、手元にないコミットが %2$ld あります";
 "Pull them first, or force push to replace them. Force Push can’t be undone." = "先に Pull するか、Force Push で置き換えます。Force Push は元に戻せません。";
@@ -50,6 +49,26 @@
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
+"Couldn’t Checkout" = "Checkout できませんでした";
+"Couldn’t Pull" = "Pull できませんでした";
+"Couldn’t Push" = "Push できませんでした";
+"Couldn’t Fetch" = "Fetch できませんでした";
+"Couldn’t Merge" = "Merge できませんでした";
+"Couldn’t Rebase" = "Rebase できませんでした";
+"Couldn’t Cherry-pick" = "Cherry-pick できませんでした";
+"Couldn’t Revert" = "Revert できませんでした";
+"Couldn’t Delete the Branch" = "ブランチを消せませんでした";
+"Couldn’t Stash" = "Stash できませんでした";
+"Couldn’t Apply the Stash" = "stash を戻せませんでした";
+"Couldn’t Discard" = "変更を捨てられませんでした";
+"Couldn’t Undo" = "Undo できませんでした";
+"Couldn’t Finish" = "操作を終えられませんでした";
+"Each patch becomes a commit on %@ (git am)." = "パッチごとに %@ のコミットになります（git am）。";
+"The changes go into the working tree (git apply)." = "変更を作業ツリーに入れます（git apply）。";
+"Couldn’t Fetch Automatically" = "自動の Fetch ができませんでした";
+"The remotes keep theirs." = "リモートのタグは残ります。";
+"Everyone who fetches from %@ loses them; yours stay." = "%@ から Fetch する全員から消えます。手元のタグは残ります。";
+"%@ has a different tag with this name; yours replaces it for everyone who fetches." = "%@ には同じ名前の別のタグがあります。Fetch する全員にとって、手元のタグに置き換わります。";
 "Undo the last %ld operations?" = "直近の %ld 個の操作を Undo しますか？";
 "Returns HEAD and the branches to where they were." = "HEAD とブランチを元の場所に戻します。";
 "Cherry-pick %ld Commits…" = "%ld コミットを Cherry-pick…";
@@ -108,7 +127,6 @@
 "Couldn’t check for conflicts." = "コンフリクトを調べられませんでした。";
 "Merging into %@" = "%@ への merge";
 "Pop %@?" = "%@ を戻して消しますか？";
-"This applies it to the working tree and removes it from the stash list (it is kept if it conflicts)." = "作業ツリーに戻し、stash の一覧から消します（重なってコンフリクトしたときは消しません）。";
 "Nothing to Undo" = "Undo できる操作はありません";
 "Undo “%@”?" = "「%@」を戻しますか？";
 "This returns HEAD and the branches to where they were before. The operation log in Activity can undo it too." = "操作の前の HEAD とブランチに戻します。Activity の操作ログからも戻せます。";
@@ -481,8 +499,6 @@
 "Copy git show Command" = "git show コマンドをコピー";
 "Edit Message…" = "メッセージを編集…";
 "⌘↩ to save, esc to cancel. You can Undo it." = "⌘↩ で保存、esc でやめる。Undo で戻せる";
-"Edit a commit that has been pushed?" = "push 済みのコミットを書き直しますか？";
-"This commit is in %@. Editing it makes your branch differ from the remote, and pushing then needs force." = "このコミットは %@ に含まれています。書き直すとリモートと食い違い、push には force が要ります。";
 "Edit" = "編集";
 "Select a commit to see its changes." = "コミットを選ぶと、変更が表示されます";
 "Loading the diff…" = "差分を読んでいます…";
@@ -550,11 +566,7 @@
 "(none)" = "（なし）";
 "── Suggestion ──" = "── 提案 ──";
 "Put in the AI’s suggestion (⌘Z to undo)." = "AI の提案を入れました（⌘Z で戻せる）";
-"%ld conflicts remain" = "コンフリクトが %ld 個残っています";
-"Mark as resolved with the markers left in?" = "マーカーを残したまま解決済みにしますか？";
 "Mark Resolved" = "解決済みにする";
-"You have unsaved changes" = "保存していない変更があります";
-"Closing discards the changes to Result." = "閉じると Result の変更は失われます。";
 "Close Without Saving" = "保存せずに閉じる";
 
 /* FileTools.swift */
@@ -678,9 +690,6 @@
 "Edit Message" = "メッセージを編集";
 "Change" = "変更";
 "Can’t Squash" = "まとめられません";
-"Name of the branch to create from %@" = "%@ から作るブランチの名前";
-"Create and Switch" = "作成して切り替え";
-"Name of the tag for %@" = "%@ に付けるタグの名前";
 "Message (optional)" = "メッセージ（空でもよい）";
 "Include untracked files" = "untracked のファイルも含める";
 
@@ -695,8 +704,6 @@
 "Review required" = "レビュー待ち";
 "Open in Browser" = "ブラウザで開く";
 "Copy URL" = "URL をコピー";
-"Rename %@…" = "%@ の名前を変更…";
-"Rename Branch" = "ブランチの名前を変更";
 "Delete %@" = "%@ を削除";
 "Open %@ in New Window" = "%@ を新しいウインドウで開く";
 
@@ -732,10 +739,7 @@
 "Take Current File" = "手元のファイルを使う";
 "Take Incoming File" = "取り込む側のファイルを使う";
 "Delete %@?" = "%@ を削除しますか？";
-"It’s an untracked file, so Undo can’t bring it back." = "untracked のファイルなので、Undo では戻せません。";
 "Delete" = "削除";
-"Discard the changes to %@?" = "%@ の変更を捨てますか？";
-"This discards the working tree changes and returns to the content of the next commit (the index). You can Undo it." = "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻します。Undo で戻せます。";
 "No matching files" = "一致するファイルはありません";
 "Files in the next commit / changed files" = "次のコミットに含めるファイル / 変更のあるファイル";
 "Commit as a fixup! of the chosen commit (combine later with rebase -i --autosquash)" = "選んだコミットへの fixup! としてコミットする（後で rebase -i --autosquash でまとめる）";
@@ -745,8 +749,6 @@
 "Include or exclude the selected lines in the next commit (Space)" = "選んだ行を次のコミットに含める・外す（Space）";
 "Discard the working tree changes and return to the content of the next commit (the index)" = "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻す";
 "Discard the selected lines’ changes from the working tree (included lines are excluded first)" = "選んだ行の変更を作業ツリーから捨てる（含めている行は先に外す）";
-"%@ still has %ld conflicts" = "%1$@ にコンフリクトが %2$ld 個残っています";
-"Mark it as resolved anyway?" = "このまま解決済みにしますか？";
 "The diff of %ld staged files" = "stage 済みの %ld ファイルの差分";
 "Suggested Commit Message" = "コミットメッセージの提案";
 "Use Message" = "メッセージに入れる";
@@ -774,7 +776,6 @@
 "%@ in progress · %ld files with conflicts" = "%@ の途中です · コンフリクトのファイルが %ld 個";
 "%@ in progress · conflicts resolved" = "%@ の途中です · コンフリクトは解決済み";
 "Open Working Copy" = "Working Copy を開く";
-"Operation Failed" = "操作に失敗しました";
 "Operation Cancelled" = "操作を取り消しました";
 "Close" = "閉じる";
 "Lost connection to %@" = "%@ との接続が切れました";
@@ -789,7 +790,6 @@
 "The branch, tag or commit to merge in" = "取り込むブランチ・タグ・コミット";
 "Rebase %@" = "%@ を rebase する";
 "The branch, tag or commit to rebase onto" = "上に載せる先のブランチ・タグ・コミット";
-"New name for %@" = "%@ の新しい名前";
 "Upstream of %@" = "%@ の上流";
 "The remote branch that Pull brings in from and Push sends to." = "pull で取り込み、push で送るリモートのブランチ";
 "Set" = "設定";
@@ -798,7 +798,6 @@
 "Pull Request Created" = "プルリクエストを作りました";
 "Automatic fetch" = "自動の fetch";
 "Automatic fetch failed: %@" = "自動の fetch に失敗: %@";
-"Automatic Fetch Failed" = "自動の fetch に失敗しました";
 "Selected Commit %@" = "選んでいるコミット %@";
 
 /* Toolbar.swift */
@@ -905,19 +904,13 @@
 "All Branches" = "すべてのブランチ";
 "Current Branch" = "現在のブランチ";
 "No Matches" = "見つかりません";
-"Cherry-pick %ld Commits (Oldest First)" = "Cherry-pick %ld Commits（古い順）";
-"Revert %ld Commits (Newest First)" = "Revert %ld Commits（新しい順）";
 "Copy Commit IDs" = "コミット ID をコピー";
 "Copy Short IDs" = "短い ID をコピー";
 "Copy Commit ID" = "コミット ID をコピー";
 "Show %ld Merged Commits" = "取り込んだ %ld コミットを表示";
 "Fold Merged Commits" = "取り込んだコミットをたたむ";
 "Edit (Stop Here)" = "ここで止めて編集";
-"Split…" = "分割…";
 "Drop %@?" = "%@ を取り除きますか？";
-"You can Undo this." = "Undo で戻せます。";
-"Can’t Move Here" = "ここには動かせません";
-"Commits can only be reordered between HEAD and the first merge." = "HEAD から最初の merge までのコミットの間でだけ並べ替えられます。";
 "%ld folded" = "%ld 件を折りたたみ";
 
 /* CommitHeader.swift */
@@ -983,7 +976,6 @@
 "%@ (SSH host)" = "%@（SSH 先）";
 "Public Key" = "鍵";
 "Format" = "方式";
-"Rewrite" = "書き直す";
 "Content" = "内容";
 
 /* Assistant.swift（Apple Intelligence） */
@@ -1105,21 +1097,12 @@
 "Another git command is running in this repository, or one stopped and left a lock file." = "このリポジトリでほかの git が動いているか、止まった git がロックファイルを残しています。";
 "Both your branch and its upstream have new commits, so it can’t just move forward." = "手元と上流の両方に新しいコミットがあるので、進めるだけでは取り込めません。";
 "Can’t reach the remote. Check the network and the remote’s address." = "リモートにつながりません。ネットワークとリモートのアドレスを確かめてください。";
-"Cherry-Pick Failed" = "cherry-pick に失敗しました";
-"Commit Failed" = "コミットに失敗しました";
 "Connect once in Terminal (for example `ssh -T git@github.com`) and confirm the host key, then try again." = "ターミナルで一度つないで（例: `ssh -T git@github.com`）ホスト鍵を確かめてから、もう一度試してください。";
 "Couldn’t Continue" = "続けられませんでした";
-"Couldn’t Switch" = "切り替えられませんでした";
-"Fetch Failed" = "Fetch に失敗しました";
 "If no other git command is running, delete the lock file and try again:\n%@" = "ほかの git が動いていなければ、ロックファイルを消してからもう一度試してください:\n%@";
-"Merge Failed" = "merge に失敗しました";
 "Open Worktree" = "worktree を開く";
-"Pull Failed" = "Pull に失敗しました";
 "Pull with Merge or Rebase instead of Fast-Forward Only." = "Fast-Forward Only ではなく、Merge か Rebase で Pull してください。";
 "Pull…" = "Pull…";
-"Push Failed" = "Push に失敗しました";
-"Rebase Failed" = "rebase に失敗しました";
-"Revert Failed" = "revert に失敗しました";
 "The branch is checked out in the worktree %@. A branch can be checked out in only one worktree." = "このブランチは worktree %@ でチェックアウトされています。ブランチは 1 つの worktree でしかチェックアウトできません。";
 "The remote didn’t accept the sign-in (password, token or SSH key)." = "リモートがサインイン（パスワード・トークン・SSH の鍵）を受け付けませんでした。";
 "The remote has commits you don’t have yet. Pull them first, then Push." = "リモートに手元にないコミットがあります。先に Pull してから Push してください。";
@@ -1140,13 +1123,10 @@
 "Unarchive %ld Branches" = "%ld 本のブランチをアーカイブから戻す";
 "Delete %ld Branches…" = "%ld 本のブランチを削除…";
 "Delete %ld branches?" = "%ld 本のブランチを削除しますか？";
-"A branch with commits that are merged nowhere is kept (git refuses)." = "どこにも取り込まれていないコミットを持つブランチは残ります（git が断ります）。";
 
 // ブランチの削除と stash の drop の確認
 "Delete %@…" = "%@ を削除…";
 "Delete Anyway" = "それでも削除";
-"Can’t check %@" = "%@ を調べられません";
-"These commits are on no other branch (not in the current branch, nor in its upstream), so git refuses a plain delete. Delete Anyway removes them with the branch." = "これらのコミットはほかのどのブランチにもありません（今のブランチにも上流にも取り込まれていません）。ふつうの削除は git が断るので、「それでも削除」でブランチごと消します。";
 "Commits only on %@" = "%@ にしかないコミット";
 "Drop %@…" = "%@ を drop…";
 
@@ -1219,7 +1199,6 @@
 "Create a branch at the commit the stash was made on, switch to it and apply the stash there (git stash branch)" = "stash を作ったときのコミットにブランチを作って切り替え、そこに stash を戻す（git stash branch）";
 "New Branch from %@" = "%@ から新しいブランチ";
 "New Branch from %@…" = "%@ から新しいブランチ…";
-"Creates the branch at the commit %@ was made on, switches to it and applies the stash there. The stash is removed once it applies." = "%@ を作ったときのコミットにブランチを作って切り替え、そこに戻します。戻せたら stash は消えます。";
 "not in HEAD’s history" = "HEAD の履歴にない";
 "at HEAD" = "HEAD と同じ";
 "%ld behind HEAD" = "HEAD から %ld 個後ろ";
@@ -1232,26 +1211,17 @@
 "Show in History" = "History で見る";
 
 // Reset（History と Reflog の右クリック）
-"Soft (Keep Changes Staged)…" = "Soft（変更を stage したまま残す）…";
-"Mixed (Keep Changes Unstaged)…" = "Mixed（変更を stage せずに残す）…";
-"Hard (Match the Commit)…" = "Hard（作業ツリーもコミットに合わせる）…";
 "Reset %@ to %@?" = "%@ を %@ に reset しますか？";
-"Moves %@ to %@. The changes of the commits taken off stay staged." = "%@ を %@ に動かします。外したコミットの変更は stage したまま残ります。";
-"Moves %@ to %@. The changes of the commits taken off stay in the working tree, unstaged." = "%@ を %@ に動かします。外したコミットの変更は、stage せずに作業ツリーに残ります。";
-"Moves %@ to %@ and makes the working tree match it. Uncommitted changes, if any, are kept as a stash first." = "%@ を %@ に動かし、作業ツリーもそのコミットに合わせます。コミットしていない変更があれば、先に stash に残します。";
-"Commits taken off can still be found in Reflog. You can Undo it afterwards (⌥⌘Z)." = "外したコミットは Reflog から辿れます。あとから Undo（⌥⌘Z）で戻せます。";
 
 // タグの push と削除（サイドバーの Tags の右クリック）
 "Push %ld Tags to %@" = "%ld 個のタグを %@ に Push";
 "Delete %ld Tags…" = "%ld 個のタグを削除…";
 "Delete tag %@?" = "タグ %@ を削除しますか？";
 "Delete %ld tags?" = "%ld 個のタグを削除しますか？";
-"Only your own copy is deleted; the remotes keep theirs." = "消すのは手元のタグだけで、リモートのものは残ります。";
 "Delete %@ from %@…" = "%@ を %@ から削除…";
 "Delete %ld Tags from %@…" = "%ld 個のタグを %@ から削除…";
 "Delete %@ from %@?" = "%@ を %@ から削除しますか？";
 "Delete %ld tags from %@?" = "%ld 個のタグを %@ から削除しますか？";
-"Everyone who fetches from %@ loses them. This can’t be undone; push them again to bring them back. Your own tags are kept." = "%@ から fetch する人みんなから消えます。Undo できません（戻すには、もう一度 push します）。手元のタグは残ります。";
 
 // タグがどのリモートにあるか（タグの行の印・ツールチップ・吹き出し・メニュー）
 "A different tag with this name is on %@" = "%@ に同じ名前の別のタグがある";
@@ -1266,7 +1236,6 @@
 "Replace %ld tags on %@?" = "%2$@ の %1$ld 個のタグを置き換えますか？";
 "Replace" = "置き換える";
 "Replace on %@…" = "%@ で置き換える…";
-"On %@, a tag with this name is a different tag (another commit, or another annotated tag). Replacing it puts yours there for everyone who fetches from %@ (their own copies stay until they fetch with --force). This can’t be undone." = "%1$@ では、この名前で別のタグになっています（違うコミット、または別の注釈付きのタグ）。置き換えると、%2$@ から fetch する人みんなにとって、手元のタグになります（それぞれの手元のタグは、--force で fetch するまで残ります）。Undo できません。";
 "Whether %@ has them hasn’t been checked yet (Fetch reads it)." = "%@ にあるかは、まだ確かめていません（Fetch で読みます）。";
 "Tag" = "タグ";
 "Commit" = "コミット";
@@ -1525,7 +1494,6 @@
 "git rerere applied the earlier resolution. Check the result, then Mark Resolved." = "git の rerere が前の解決を適用しました。結果を確かめて「解決済みにする」を押してください。";
 "No conflict markers are left. Check the result, then Mark Resolved." = "コンフリクトのマーカーは残っていません。結果を確かめて「解決済みにする」を押してください。";
 "Replace the resolved content of %@?" = "%@ の解決した内容を置き換えますか？";
-"No conflict markers are left in it, so it may already be resolved. This replaces it with one side’s whole file." = "マーカーが残っていないので、もう解決済みかもしれません。片側のファイルの内容で丸ごと置き換えます。";
 "Mark %ld Without Markers Resolved" = "マーカーのない %ld ファイルを解決済みにする";
 "Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them)." = "マーカーの残っていないコンフリクトのファイルを解決済みにします（rerere やほかのエディタで解決したもの）。";
 "%ld files have conflicts at %@ (%ld without markers). Resolve them in Working Copy, then Continue." = "%2$@ で %1$ld ファイルがコンフリクトしています（うち %3$ld ファイルはマーカーなし）。Working Copy で解決してから Continue してください。";
@@ -1551,8 +1519,6 @@
 "Apply “%@”?" = "「%@」を当てますか？";
 "Apply %ld Patches?" = "%ld 個のパッチを当てますか？";
 "Apply %@?" = "%@ を当てますか？";
-"Each patch becomes a commit on %@ (git am). You can Undo it." = "パッチごとに %@ のコミットになります（git am）。Undo で戻せます。";
-"The changes go into the working tree (git apply). You can Undo it." = "変更を作業ツリーに当てます（git apply）。Undo で戻せます。";
 "Apply" = "当てる";
 "Applies cleanly." = "そのまま当たります。";
 "Doesn’t apply cleanly: %@" = "そのままでは当たりません: %@";

@@ -150,10 +150,10 @@ extension Actions {
             alert.messageText = summary.patches.count == 1
                 ? L("Apply “%@”?", summary.patches[0].subject)
                 : L("Apply %ld Patches?", summary.patches.count)
-            alert.informativeText = L("Each patch becomes a commit on %@ (git am). You can Undo it.", branch)
+            alert.informativeText = L("Each patch becomes a commit on %@ (git am).", branch) + " " + Self.canUndo
         } else {
             alert.messageText = names.count == 1 ? L("Apply %@?", names[0]) : L("Apply %ld Patches?", names.count)
-            alert.informativeText = L("The changes go into the working tree (git apply). You can Undo it.")
+            alert.informativeText = L("The changes go into the working tree (git apply).") + " " + Self.canUndo
         }
         alert.addButton(withTitle: L("Apply"))
         alert.addButton(withTitle: L("Cancel"))
