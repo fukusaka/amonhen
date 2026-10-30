@@ -264,6 +264,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let scopePopup = NSPopUpButton()
     /// 折りたたんだ History で開いた merge（コミット ID）。
     private var expandedMerges: Set<Data> = []
+    /// partial clone か（中身の検索は、取っていない中身をすべて取るので、先に確かめる）。
+    var isPartialClone = false
     /// shallow clone の History の最後の行の下に置く帯（取得していない古い履歴を取り足す）。
     private lazy var shallowBand: ShallowHistoryBand = {
         let band = ShallowHistoryBand(frame: NSRect(x: 0, y: 0, width: 400, height: ShallowHistoryBand.height))
@@ -1297,7 +1299,24 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             moveSearch(by: 1)
             return
         }
-        runSearch(query, in: base)
+        guard isPartialClone, Self.searchesContents(query), let window = view.window else {
+            return runSearch(query, in: base)
+        }
+        // partial clone では、中身の検索（git log -S）が取っていない中身をすべて取る。
+        let alert = NSAlert()
+        alert.messageText = L("Search the Contents?")
+        alert.informativeText = L("This search fetches all contents not fetched yet. In a large repository this can take long and use a lot of disk.")
+        alert.addButton(withTitle: L("Search"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn, (baseHistory ?? history) === base else { return }
+            runSearch(query, in: base)
+        }
+    }
+
+    /// 問い合わせに `contents:`（`content:`）があるか（引用の中の語も数えるが、尋ねすぎるだけ）。
+    static func searchesContents(_ query: String) -> Bool {
+        query.range(of: #"(^|[\s(])contents?:\S"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     /// `base` で探す。一致だけを出す切り替えが入っていれば、一致したコミットだけの History にして出す。
