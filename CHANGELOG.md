@@ -7,7 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
-### Unreleased
+### [0.2.8] - 2026-10-30
+
+Commits can be saved as patches and patches applied, a branch compared with its version before a rebase (Range Diff),
+and conflicts that git's rerere already resolved are told apart, with rerere's switches in Settings. Settings > SSH
+Hosts gathers each host's connection, engine, environment and git settings, and repositories on Windows SSH hosts
+open too. People are shown by their mailmap names, tag signatures are verified, notes survive Squash and Split, and the
+git chosen in Settings is used by the CLI and the VSCode extension as well.
 
 #### Added
 
