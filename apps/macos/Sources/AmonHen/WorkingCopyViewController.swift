@@ -1417,19 +1417,41 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         menu.removeAllItems()
         guard let entry = files.item(atRow: files.clickedRow) as? Entry else { return }
         let path = entry.item.path
+        func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
+        // 含める・外す・捨てる（チェックとホバーのボタンと同じ操作を、右クリックからも）。
+        if !entry.isConflict {
+            add(entry.check == .on ? "Unstage" : "Stage") { [weak self] in self?.toggle([entry]) }
+            if entry.item.kind == .untracked {
+                add(L("Delete %@…", (path as NSString).lastPathComponent)) { [weak self] in self?.discardFile(entry) }
+            } else if entry.item.isUnstaged {
+                add("Discard…") { [weak self] in self?.discardFile(entry) }
+            }
+            menu.addItem(.separator())
+        }
         // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
-        guard entry.item.kind != .untracked else {
-            menu.addItem(ClosureMenuItem(title: L("Add “%@” to .gitignore", path)) { [weak self] in self?.addToGitignore(path) })
+        if entry.item.kind == .untracked {
+            add(L("Add “%@” to .gitignore", path)) { [weak self] in self?.addToGitignore(path) }
             let ext = (path as NSString).pathExtension
             if !ext.isEmpty {
-                menu.addItem(ClosureMenuItem(title: L("Add “%@” to .gitignore", "*." + ext)) { [weak self] in self?.addToGitignore("*." + ext) })
+                add(L("Add “%@” to .gitignore", "*." + ext)) { [weak self] in self?.addToGitignore("*." + ext) }
             }
-            return
+        } else {
+            if entry.item.worktreeState != "D" {
+                add(Titles.blame(at: nil)) { [weak self] in self?.onBlame?(path) }
+            }
+            add(Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) }
         }
-        if entry.item.worktreeState != "D" {
-            menu.addItem(ClosureMenuItem(title: Titles.blame(at: nil)) { [weak self] in self?.onBlame?(path) })
+        menu.addItem(.separator())
+        add(Titles.copyPath) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(path, forType: .string)
         }
-        menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
+        // 手元のリポジトリなら、Finder とほかのアプリで開ける（SSH 先のファイルは開けない）。
+        if let workdir = repository.workdir, entry.item.worktreeState != "D" {
+            let url = URL(fileURLWithPath: workdir).appendingPathComponent(path)
+            add(Titles.showInFinder) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            add(L("Open with Default App")) { NSWorkspace.shared.open(url) }
+        }
     }
 
     /// `pattern` を作業ツリーの直下の .gitignore の最後に足す（コアで読み書きするので、SSH 先でも同じ）。
