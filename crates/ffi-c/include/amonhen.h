@@ -1153,14 +1153,18 @@ char *amonhen_activity(void);
 bool amonhen_activity_cancel(uint64_t seq);
 
 /**
- * `url` を `dest`（まだないフォルダ）に clone する。失敗したら false（理由は `amonhen_last_error`）。時間が
- * かかるので裏のスレッドで呼ぶ。
+ * `url` を `dest`（まだないフォルダ）に clone する。`filter`（NULL・空でなければ `--filter`。`blob:none` など）、
+ * `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.25 から）で取得する
+ * 範囲と取り出すものを決める。失敗したら false（理由は `amonhen_last_error`）。時間がかかるので裏のスレッドで呼ぶ。
  *
  * # Safety
- * `url` と `dest` は NUL 終端の UTF-8 文字列であること。
+ * `url` と `dest` は NUL 終端の UTF-8 文字列、`filter` は NULL か NUL 終端の UTF-8 文字列であること。
  */
 bool amonhen_clone(const char *url,
-                   const char *dest);
+                   const char *dest,
+                   const char *filter,
+                   uint32_t depth,
+                   bool sparse);
 
 /**
  * `path` のリポジトリの軽い状態（リポジトリの一覧に出す）。行に分けた文字列で、順にブランチ（detached なら
