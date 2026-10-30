@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
+  Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
+
 ### [0.2.8] - 2026-10-30
 
 Commits can be saved as patches and patches applied, a branch compared with its version before a rebase (Range Diff),
@@ -608,6 +615,13 @@ First release.
 - Repositories on SSH hosts through a daemon on the host.
 
 ## VSCode extension
+
+### Unreleased
+
+#### Changed
+
+- Reword and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and Reword runs
+  the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 
 ### [0.2.4] - 2026-10-30
 

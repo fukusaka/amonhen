@@ -84,8 +84,8 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 ### コミットの柔軟な編集
 
 - reword / squash / fixup / drop / reorder / edit / split はすべて非対話の rebase で実現する。todo はこちらで丸ごと作り（`src/history/rebasePlan.ts`）、`GIT_SEQUENCE_EDITOR="cp <todo>"` で git の todo に上書きする。
-  - メッセージの書き換えは、対象のコミットの直後に `exec git commit --amend -F <file>` を挟んで行う。どのコミットのメッセージかを `GIT_EDITOR` 側で判別しなくて済む。
-  - squash は親の `pick` ＋ メッセージの amend ＋ `fixup`、fixup は `fixup` だけ、edit は git の `edit`（Continue のとき、stage した変更はそのコミットに amend され、git がそのコミットの notes を最後のコミットへ写す。`notes.rewriteRef`）。メッセージは `fixup` の前に親に付ける。後で amend すると、rebase が notes を写す先（`notes.rewriteRef`）が amend の前のコミットになり、まとめた側の notes が落ちる。
+  - メッセージの書き換えは git の `reword`・`squash` そのもので行い、git が開くエディタに `GIT_EDITOR="cp <file>"` でメッセージを書かせる。todo に入るのは 1 つだけで、git がエディタを開くのも 1 回（`squash` では最後の 1 つ）なので、どのコミットのメッセージかをエディタの側で判別しなくて済む。notes は git が設定のとおりに写し（`notes.rewriteRef`・`notes.rewrite.*`）、フックも git と同じく走る（`reword` では pre-commit と commit-msg）。`commit.cleanup` を設定していなければ `commit.cleanup=whitespace` で rebase し、`git commit -F` と同じく `#` で始まる行を残す。
+  - squash は親の `pick` ＋ `squash`、fixup は `fixup` だけ、edit は git の `edit`（Continue のとき、stage した変更はそのコミットに amend され、git がそのコミットの notes を最後のコミットへ写す。`notes.rewriteRef`）。
   - 編集できるのは HEAD から first-parent で辿り、最初の merge コミットの手前まで。merge をまたぐ rebase は扱わない。
   - `--autostash` で作業中の変更を退避し、`--no-autosquash` でユーザーの設定に todo を並べ替えさせない。
 - split は git の手順と同じく `edit` で止め、`git reset HEAD^` で変更を作業ツリーに戻す。Working Copy で分割してコミット → Continue の流れ。`edit` から続けるので、git がコミットの notes を新しいコミットの最後に写す（`notes.rewriteRef`）。

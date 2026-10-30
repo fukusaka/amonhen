@@ -249,6 +249,7 @@ pub enum Op {
     RebaseTodo {
         base: Option<Oid>,
         todo: PathBuf,
+        message: Option<PathBuf>,
     },
     SequenceInProgress,
     RebaseProgress,

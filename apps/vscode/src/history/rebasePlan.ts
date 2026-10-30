@@ -1,10 +1,8 @@
 /**
  * コミットの編集を、非対話の rebase の todo に組み立てる。vscode に依存しない。
  * todo はこちらで丸ごと書き、GIT_SEQUENCE_EDITOR で git の todo に上書きする。
- * メッセージの書き換えは、対象のコミット（squash では、まとめた先）の直後に `exec git commit --amend -F <file>` を
- * 挟んで行う。
+ * メッセージの書き換えは git の reword・squash で行い、git が開くエディタ（GIT_EDITOR）にメッセージを書かせる。
  */
-import { shellQuote } from '../git/exec.ts';
 import type { Commit } from '../git/log.ts';
 
 export type HistoryEdit =
@@ -26,17 +24,14 @@ export interface RebasePlan {
   base: string | null;
   /** todo の内容 */
   todo: string;
-  /** 書き出しておくメッセージ。キーはファイル名 */
-  messages: Map<string, string>;
+  /** git が開くエディタに書かせるメッセージ（reword か squash のとき） */
+  message: string | null;
   /** edit で止まったら、HEAD^ へ reset --mixed する（split） */
   resetOnStop: boolean;
 }
 
-/**
- * chain は HEAD から first-parent で辿ったコミット（新しい順）。間に merge が無いこと。
- * messagePath はメッセージのファイル名から、exec で渡す絶対パスを作る。
- */
-export function planRebase(chain: readonly Commit[], edit: HistoryEdit, messagePath: (name: string) => string): RebasePlan {
+/** chain は HEAD から first-parent で辿ったコミット（新しい順）。間に merge が無いこと */
+export function planRebase(chain: readonly Commit[], edit: HistoryEdit): RebasePlan {
   // 古い順にする
   let seq = [...chain].reverse();
   const index = seq.findIndex((c) => c.oid === edit.oid);
@@ -69,32 +64,20 @@ export function planRebase(chain: readonly Commit[], edit: HistoryEdit, messageP
   const base = start > 0 ? original[start - 1]!.oid : (original[0]!.parents[0] ?? null);
   seq = seq.slice(start);
 
-  const messages = new Map<string, string>();
   const lines: string[] = [];
-  const amend = (oid: string, message: string) => {
-    const name = `message-${oid}.txt`;
-    messages.set(name, message);
-    lines.push(`exec git commit --amend --allow-empty --no-verify --file=${shellQuote(messagePath(name))}`);
-  };
-
-  for (const [i, c] of seq.entries()) {
-    // squash は、まとめた先（親）を pick した直後にメッセージを付け、まとめる側を fixup にする。メッセージを最後に
-    // 付けると、rebase が notes を写す先（notes.rewriteRef）が付ける前のコミットになり、まとめた側の notes が落ちる
-    if (edit.kind === 'squash' && i === 0) {
-      lines.push(`pick ${c.oid}`);
-      amend(c.oid, edit.message);
-      continue;
-    }
+  for (const c of seq) {
     if (c.oid !== edit.oid) {
       lines.push(`pick ${c.oid}`);
       continue;
     }
     switch (edit.kind) {
+      // git の reword・squash。git がエディタを開き、notes（notes.rewriteRef）を git の設定のとおりに写す
       case 'reword':
-        lines.push(`pick ${c.oid}`);
-        amend(c.oid, edit.message);
+        lines.push(`reword ${c.oid}`);
         break;
       case 'squash':
+        lines.push(`squash ${c.oid}`);
+        break;
       case 'fixup':
         lines.push(`fixup ${c.oid}`);
         break;
@@ -115,5 +98,6 @@ export function planRebase(chain: readonly Commit[], edit: HistoryEdit, messageP
         break;
     }
   }
-  return { base, todo: `${lines.join('\n')}\n`, messages, resetOnStop: edit.kind === 'split' };
+  const message = edit.kind === 'reword' || edit.kind === 'squash' ? edit.message : null;
+  return { base, todo: `${lines.join('\n')}\n`, message, resetOnStop: edit.kind === 'split' };
 }

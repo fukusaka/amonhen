@@ -1615,12 +1615,22 @@ impl Repository {
         let dir = self.backend().paths().git_dir.join("amonhen");
         let ids = chain.iter().map(|c| c.oid).collect();
         let stacked = self.stacked_branches(ops, &ids)?;
-        let plan = rewrite::plan_rebase(&chain, edit, &dir, &stacked)?;
+        let plan = rewrite::plan_rebase(&chain, edit, &stacked)?;
         let names: Vec<String> = stacked.into_iter().map(|(_, name)| name).collect();
         let files = self.backend().files();
-        for (name, message) in &plan.messages {
-            files.write(Root::GitDir, &format!("amonhen/{name}"), message.as_bytes())?;
-        }
+        let message = match &plan.message {
+            Some(message) => {
+                // エディタで保存したファイルと同じく、改行で終える（commit-msg のフックが行を足しても、最後の行に
+                // つながらない）。
+                let mut message = message.clone();
+                if !message.ends_with('\n') {
+                    message.push('\n');
+                }
+                files.write(Root::GitDir, "amonhen/rebase-message", message.as_bytes())?;
+                Some(dir.join("rebase-message"))
+            }
+            None => None,
+        };
         files.write(Root::GitDir, "amonhen/rebase-todo", plan.todo.as_bytes())?;
         let todo = dir.join("rebase-todo");
         self.undo_log()?.record_stoppable(
@@ -1628,7 +1638,7 @@ impl Repository {
             label,
             &names,
             || {
-                let outcome = ops.rebase_todo(plan.base.as_ref(), &todo)?;
+                let outcome = ops.rebase_todo(plan.base.as_ref(), &todo, message.as_deref())?;
                 // split: `edit` で止めたコミットを取り消し、変更を作業ツリーに戻す。
                 if plan.reset_on_stop && outcome == Outcome::Stopped {
                     let parent = ops.resolve("HEAD^")?;
@@ -4695,6 +4705,93 @@ mod tests {
         rewrite(&repo, serde_json::json!({"kind": "fixup", "oid": c}));
         assert_eq!(log(dir), ["e", "d", "b", "first"]);
         assert_eq!(note(dir, "HEAD~2"), "note b\n\nnote c");
+    }
+
+    #[test]
+    fn reword_and_squash_follow_the_notes_settings_like_git() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        git(dir, &["config", "notes.rewriteRef", "refs/notes/commits"]);
+        let b = commit_file(dir, "b.txt", "b");
+        git(dir, &["notes", "add", "-m", "note b"]);
+        let c = commit_file(dir, "c.txt", "c");
+        git(dir, &["notes", "add", "-m", "note c"]);
+
+        // amend で写さない設定でも、git の reword・squash は rebase として写す。
+        git(dir, &["config", "notes.rewrite.amend", "false"]);
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "reword", "oid": c, "message": "c2"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["c2", "b", "first"]);
+        assert_eq!(note(dir, "HEAD"), "note c");
+        run(&repo, r#"{"op":"undo"}"#);
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squash", "oid": c, "message": "b+c"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["b+c", "first"]);
+        assert_eq!(note(dir, "HEAD"), "note b\n\nnote c");
+        run(&repo, r#"{"op":"undo"}"#);
+
+        // rebase で写さない設定なら、git と同じく、書き換えたコミット（まとめた先）の notes だけが amend で残る。
+        git(dir, &["config", "--unset", "notes.rewrite.amend"]);
+        git(dir, &["config", "notes.rewrite.rebase", "false"]);
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "reword", "oid": b, "message": "b2"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(log(dir), ["c", "b2", "first"]);
+        assert_eq!(note(dir, "HEAD~1"), "note b");
+        assert_eq!(note(dir, "HEAD"), "");
+        run(&repo, r#"{"op":"undo"}"#);
+        // 前と同じメッセージだと、同じ秒のうちなら前にまとめたコミットと同じ ID になり、その notes が残っている。
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "squash", "oid": c, "message": "b and c"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(note(dir, "HEAD"), "note b");
+    }
+
+    #[test]
+    fn reword_keeps_the_message_as_written_and_runs_commit_msg_like_git() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let c = commit_file(dir, "c.txt", "c");
+        // git の reword と同じく、commit-msg のフックが走る。
+        let hook = dir.join(".git/hooks/commit-msg");
+        std::fs::write(&hook, "#!/bin/sh\necho 'Change-Id: I1' >> \"$1\"\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        // `#` で始まる行は、コミットの画面と同じく書いたとおりに残す。
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "reword", "oid": c, "message": "c2\n\n# kept"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(
+            git(dir, &["log", "-1", "--format=%B"]),
+            "c2\n\n# kept\nChange-Id: I1"
+        );
+        run(&repo, r#"{"op":"undo"}"#);
+        // commit.cleanup を設定していれば、それに従う。
+        git(dir, &["config", "commit.cleanup", "strip"]);
+        let r = rewrite(
+            &repo,
+            serde_json::json!({"kind": "reword", "oid": c, "message": "c2\n\n# dropped\n"}),
+        );
+        assert_eq!(r["outcome"], "done", "{r}");
+        assert_eq!(
+            git(dir, &["log", "-1", "--format=%B"]),
+            "c2\n\nChange-Id: I1"
+        );
     }
 
     #[test]

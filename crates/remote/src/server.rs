@@ -450,7 +450,11 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::Rebase(onto) => encode(&ops.rebase(&onto)?),
         Op::CherryPick { oid, is_merge } => encode(&ops.cherry_pick(&oid, is_merge)?),
         Op::Revert { oid, is_merge } => encode(&ops.revert(&oid, is_merge)?),
-        Op::RebaseTodo { base, todo } => encode(&ops.rebase_todo(base.as_ref(), &todo)?),
+        Op::RebaseTodo {
+            base,
+            todo,
+            message,
+        } => encode(&ops.rebase_todo(base.as_ref(), &todo, message.as_deref())?),
         Op::SequenceInProgress => encode(&ops.sequence_in_progress()?),
         Op::RebaseProgress => encode(&ops.rebase_progress()?),
         Op::Abort(s) => encode(&ops.abort(s)?),
