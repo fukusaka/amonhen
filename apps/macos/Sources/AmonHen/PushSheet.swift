@@ -3,7 +3,8 @@ import AppKit
 
 /// Push の確認のシート（ウィンドウに付く。大きさは変えられる）。上に送り先と注意、左に送るコミット（一番上は
 /// 「送る変更すべて」。Force Push と分岐では上流から消えるコミットも）、右に選んだものの詳細（右の欄と同じ表示:
-/// メッセージ・変更ファイル・差分。読み取り専用）、下にキャンセルと実行（と、分岐なら Pull…）。↩ で実行、Esc でキャンセル。
+/// メッセージ・変更ファイル・差分。読み取り専用）、下にキャンセルと実行（と、分岐なら Pull…）。↩ で実行（Force Push は
+/// ↩ では押せない）、Esc でキャンセル。
 final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate {
     /// 押されたボタン。
     enum Choice { case cancel, ok, other }
@@ -100,9 +101,11 @@ final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate {
         let cancel = NSButton(title: L("Cancel"), target: self, action: #selector(cancelClicked))
         cancel.keyEquivalent = "\u{1b}"
         let okButton = NSButton(title: ok, target: self, action: #selector(okClicked))
-        okButton.keyEquivalent = "\r"
+        // 消えるものがある実行（Force Push）は ↩ では押せない。分岐のときは ↩ が Pull…。
+        okButton.keyEquivalent = destructive ? "" : "\r"
         okButton.hasDestructiveAction = destructive
         let otherButton = other.map { NSButton(title: $0, target: self, action: #selector(otherClicked)) }
+        if destructive { otherButton?.keyEquivalent = "\r" }
         let buttons = NSStackView(views: [NSView(), cancel] + (otherButton.map { [$0] } ?? []) + [okButton])
         buttons.orientation = .horizontal
         buttons.distribution = .fill
