@@ -189,9 +189,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // どれもなければリポジトリのページを出す。
         if let path = repositoryPath() {
             open(path: path, debug: true)
-        } else if CommandLine.arguments.contains("--ssh-sheet") {
-            // 見た目の確認用: 前回のリポジトリを開かず、Repositories の画面だけを出す。
+        } else if CommandLine.arguments.contains("--ssh-sheet") || Self.option("--clone-sheet") != nil {
+            // 見た目の確認用: 前回のリポジトリを開かず、Repositories の画面だけを出す。--clone-sheet CHOICES なら、
+            // その上に Clone のシートを出す（`history,sparse` のように、取得する範囲と一部のフォルダを選んだ形）。
+            // シートはモーダルの NSAlert で、cacheDisplay では中身が撮れないので、--snapshot は使えない（画面で見る）。
             showHome()
+            if Self.option("--clone-sheet") != nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) { [weak self] in self?.cloneRepository(nil) }
+            }
         } else {
             // 1 つ前に開いたタブの隣に入れていく（つなぐのを待たずにタブを置くので、並びが崩れない）。
             isRestoring = true
@@ -465,7 +470,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 引数で渡されたリポジトリ。
     private func repositoryPath() -> String? {
         var args = Array(CommandLine.arguments.dropFirst())
-        for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search", "--blame", "--file-history", "--measure-select", "--app-settings-tab", "--filter-sidebar", "--merge-sheet", "--sync-sheet"] {
+        for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search", "--blame", "--file-history", "--measure-select", "--app-settings-tab", "--filter-sidebar", "--merge-sheet", "--sync-sheet", "--clone-sheet"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
         args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--stashes", "--reflog", "--log-scroll", "--show-latency", "--ssh-sheet"].contains($0) }

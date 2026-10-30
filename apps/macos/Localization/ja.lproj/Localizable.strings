@@ -337,6 +337,19 @@
 "%@ already exists" = "%@ はもうあります";
 "Choose a different name or location." = "別の名前か置き場所にしてください。";
 "Cloning %@…" = "%@ を clone しています…";
+"Download:" = "取得する範囲:";
+"Everything" = "すべて";
+"File contents when needed" = "ファイルの中身は必要なときに取る";
+"Recent history only" = "最近の履歴だけ";
+"The whole history and the contents of every file, as git does by default." = "すべての履歴と、すべてのファイルの中身を取得します（git の既定）。";
+"Good for large repositories: file contents are fetched when a diff or file needs them." = "大きなリポジトリ向けです。ファイルの中身は、差分やファイルを見るときに取得します。";
+"Older history can be fetched later from the end of History." = "古い履歴は、あとで History の終わりから取得できます。";
+"Check out only some folders" = "一部のフォルダだけ取り出す";
+"Only the files at the top are checked out; right after the clone, choose a folder to check out." = "最上位のファイルだけを取り出し、clone の後で取り出すフォルダを選びます。";
+"Needs git 2.25 or later. This Mac’s git is %@." = "git 2.25 以降が必要です。この Mac の git は %@ です。";
+"Only the files at the top are checked out. Choose a folder to check out too; add more later in Settings > Fetching and Folders." = "最上位のファイルだけを取り出しました。ほかに取り出すフォルダを選んでください。後から Settings の「取得とフォルダ」で足せます。";
+"Checking out %@…" = "%@ を取り出しています…";
+"Couldn’t check out %@" = "%@ を取り出せませんでした";
 "Couldn’t clone" = "clone できませんでした";
 
 /* RepositorySettings.swift */
