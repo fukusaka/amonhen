@@ -136,6 +136,11 @@ struct FetchingPage: View {
                     ForEach(ShallowHistoryBand.moreChoices, id: \.commits) { choice in
                         Button(choice.title) { model.runOperation(["op": "deepen", "commits": choice.commits]) }
                     }
+                    Button(L("Other…")) {
+                        ShallowHistoryBand.askDeepen(in: NSApp.keyWindow) { commits in
+                            model.runOperation(["op": "deepen", "commits": commits])
+                        }
+                    }
                     Divider()
                     Button(L("Up to a Date…")) {
                         ShallowHistoryBand.askDate(in: NSApp.keyWindow, boundary: nil) { since in
