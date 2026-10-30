@@ -2085,6 +2085,33 @@ pub unsafe extern "C" fn amonhen_history_hidden(
         .unwrap_or(0)
 }
 
+/// shallow clone の History か（境界より古いコミットを取得していない）。
+///
+/// # Safety
+/// `history` は有効な History であること。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_is_shallow(history_ptr: *const AmonhenHistory) -> bool {
+    !history(history_ptr).shallow.is_empty()
+}
+
+/// shallow clone の境界のコミット（親を取得していない）の行を、昇順に `out` へ最大 `capacity` 個書き、全体の
+/// 個数を返す。全行を見るので、大きな History では裏のスレッドで呼ぶ。
+///
+/// # Safety
+/// `history` は有効な History、`out` は `capacity` 個の `u32` を書ける領域であること（0 個なら NULL でよい）。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn amonhen_history_boundary_rows(
+    history_ptr: *const AmonhenHistory,
+    out: *mut u32,
+    capacity: u32,
+) -> u32 {
+    let rows = history(history_ptr).boundary_rows();
+    for (i, row) in rows.iter().take(capacity as usize).enumerate() {
+        unsafe { out.add(i).write(*row) };
+    }
+    rows.len() as u32
+}
+
 /// スクロールバーに描く密度。`out` に区間ごとの [頻度, 活動量]（0〜1）を `buckets * 2` 個書き、書いた区間の数を
 /// 返す（行が区間より少なければ行の数）。
 ///

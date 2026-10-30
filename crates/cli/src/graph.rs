@@ -45,7 +45,7 @@ fn line_char(dirs: u8) -> char {
 /// 線の色（アプリの色の番号を、端末の 256 色に寄せる）。
 const PALETTE: [u8; 8] = [75, 114, 179, 176, 80, 209, 141, 150];
 
-fn paint(out: &mut String, text: &str, color: Option<u8>, enabled: bool) {
+pub fn paint(out: &mut String, text: &str, color: Option<u8>, enabled: bool) {
     match (color, enabled) {
         (Some(c), true) => {
             let _ = write!(out, "\x1b[38;5;{c}m{text}\x1b[0m");

@@ -178,6 +178,8 @@ public struct CommitInfo: Decodable, Equatable, Sendable {
     public let recordedAuthor: Identity?
     public let recordedCommitter: Identity?
     public let parents: [String]
+    /// shallow clone の境界のコミットで、`parents` を取得していない。
+    public let parentsNotFetched: Bool
     public let refs: [String]
     /// 署名の種類（`gpg`・`ssh`・`x509`）。署名がなければ nil。検証の結果は `CommitExtras.signature`。
     public let signed: String?

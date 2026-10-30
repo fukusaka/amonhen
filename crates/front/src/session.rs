@@ -150,6 +150,8 @@ impl Session {
             "head": h.head.map(|o| o.to_string()),
             "headRow": head,
             "folded": !h.folded.is_empty(),
+            "shallow": !h.shallow.is_empty(),
+            "boundaryRows": h.boundary_rows(),
         });
         self.histories.lock().unwrap().insert(id, h);
         reply

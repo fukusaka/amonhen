@@ -542,7 +542,16 @@ fn log(args: &[String]) -> Result<ExitCode> {
         color,
         width: term::width(),
     };
-    term::write(&graph::render(&rows, &refs, show_graph, &style));
+    let mut out = graph::render(&rows, &refs, show_graph, &style);
+    // shallow clone で最後の行まで出したら、その先を取得していないことを添える（git log は黙って終わる）。
+    if history["shallow"] == true && query.is_empty() && count >= total as usize {
+        let note = tr!(
+            "Older history isn’t fetched (shallow clone): git fetch --deepen=<n> or --unshallow"
+        );
+        graph::paint(&mut out, &note, Some(244), color);
+        out.push('\n');
+    }
+    term::write(&out);
     Ok(ExitCode::SUCCESS)
 }
 

@@ -1293,6 +1293,25 @@ uint32_t amonhen_history_hidden(const AmonhenHistory *history_ptr,
                                 uint32_t row);
 
 /**
+ * shallow clone の History か（境界より古いコミットを取得していない）。
+ *
+ * # Safety
+ * `history` は有効な History であること。
+ */
+bool amonhen_history_is_shallow(const AmonhenHistory *history_ptr);
+
+/**
+ * shallow clone の境界のコミット（親を取得していない）の行を、昇順に `out` へ最大 `capacity` 個書き、全体の
+ * 個数を返す。全行を見るので、大きな History では裏のスレッドで呼ぶ。
+ *
+ * # Safety
+ * `history` は有効な History、`out` は `capacity` 個の `u32` を書ける領域であること（0 個なら NULL でよい）。
+ */
+uint32_t amonhen_history_boundary_rows(const AmonhenHistory *history_ptr,
+                                       uint32_t *out,
+                                       uint32_t capacity);
+
+/**
  * スクロールバーに描く密度。`out` に区間ごとの [頻度, 活動量]（0〜1）を `buckets * 2` 個書き、書いた区間の数を
  * 返す（行が区間より少なければ行の数）。
  *
