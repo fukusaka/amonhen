@@ -28,7 +28,7 @@ final class ShallowHistoryBand: NSView {
         let menu = moreButton.menu!
         // 引き下げ式なので、最初の項目がボタンの文字。
         menu.addItem(withTitle: L("Fetch More"), action: nil, keyEquivalent: "")
-        for (title, commits) in [(L("100 Commits"), 100), (L("1,000 Commits"), 1_000), (L("10,000 Commits"), 10_000)] {
+        for (title, commits) in Self.moreChoices {
             menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.fetch(["op": "deepen", "commits": commits]) })
         }
         menu.addItem(.separator())
@@ -80,8 +80,19 @@ final class ShallowHistoryBand: NSView {
         fetch(["op": "unshallow"])
     }
 
+    /// 「さらに取る」の数（項目の名前と、コミットの数）。Repository Settings の「取得とフォルダ」も同じものを出す。
+    static var moreChoices: [(title: String, commits: Int)] {
+        [(L("100 Commits"), 100), (L("1,000 Commits"), 1_000), (L("10,000 Commits"), 10_000)]
+    }
+
     /// 日付を尋ね、その日付より新しいコミットをすべて取る。
     private func fetchSinceDate() {
+        Self.askDate(in: window, boundary: boundaryDate?()) { [weak self] since in self?.fetch(["op": "deepen", "since": since]) }
+    }
+
+    /// 取り足す日付を尋ねる（初めは `boundary`（境界のコミットの日時。分からなければ今）の 1 年前）。決めたら、git が
+    /// 読む形（`YYYY-MM-DD`）で `done` に渡す。
+    static func askDate(in window: NSWindow?, boundary: Date?, done: @escaping (String) -> Void) {
         let alert = NSAlert()
         alert.messageText = L("Fetch History Up to a Date")
         alert.informativeText = L("Fetches the commits made after this date (git fetch --shallow-since).")
@@ -90,18 +101,18 @@ final class ShallowHistoryBand: NSView {
         let picker = NSDatePicker()
         picker.datePickerStyle = .textFieldAndStepper
         picker.datePickerElements = .yearMonthDay
-        picker.dateValue = Calendar.current.date(byAdding: .year, value: -1, to: boundaryDate?() ?? Date()) ?? Date()
+        picker.dateValue = Calendar.current.date(byAdding: .year, value: -1, to: boundary ?? Date()) ?? Date()
         picker.maxDate = Date()
         picker.sizeToFit()
         alert.accessoryView = picker
         alert.window.initialFirstResponder = picker
-        let run: (NSApplication.ModalResponse) -> Void = { [weak self] response in
+        let run: (NSApplication.ModalResponse) -> Void = { response in
             guard response == .alertFirstButtonReturn else { return }
             let f = DateFormatter()
             f.calendar = Calendar(identifier: .gregorian)
             f.locale = Locale(identifier: "en_US_POSIX")
             f.dateFormat = "yyyy-MM-dd"
-            self?.fetch(["op": "deepen", "since": f.string(from: picker.dateValue)])
+            done(f.string(from: picker.dateValue))
         }
         if let window { alert.beginSheetModal(for: window, completionHandler: run) } else { run(alert.runModal()) }
     }
