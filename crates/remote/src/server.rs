@@ -475,8 +475,16 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
             branch,
             remote_branch,
             force,
+            expect,
             set_upstream,
-        } => encode(&ops.push(&remote, &branch, &remote_branch, force, set_upstream)?),
+        } => encode(&ops.push(
+            &remote,
+            &branch,
+            &remote_branch,
+            force,
+            expect.as_ref(),
+            set_upstream,
+        )?),
         Op::RestoreWorktree(paths) => encode(&ops.restore_worktree(&strs(&paths))?),
         Op::StashPush {
             message,

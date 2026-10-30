@@ -933,6 +933,7 @@ impl Operations for RemoteOperations {
         branch: &str,
         remote_branch: &str,
         force: bool,
+        expect: Option<&Oid>,
         set_upstream: bool,
     ) -> Result<()> {
         self.op(Op::Push {
@@ -940,6 +941,7 @@ impl Operations for RemoteOperations {
             branch: branch.to_owned(),
             remote_branch: remote_branch.to_owned(),
             force,
+            expect: expect.copied(),
             set_upstream,
         })
     }

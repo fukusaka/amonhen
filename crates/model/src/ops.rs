@@ -406,12 +406,15 @@ pub trait Operations: Send + Sync {
     fn pull(&self, mode: PullMode) -> Result<Outcome>;
     /// ローカルブランチごとの、上流との差（名前, ahead, behind, gone）。
     fn branch_tracking(&self) -> Result<Vec<(String, u32, u32, bool)>>;
+    /// `force` なら `--force-with-lease`。`expect` があれば、リモートのブランチがそのコミットのときだけ置き換える
+    /// （確認で見せた上流。自動の Fetch で追跡ブランチが進んでいても、見ていないコミットは消さない）。
     fn push(
         &self,
         remote: &str,
         branch: &str,
         remote_branch: &str,
         force: bool,
+        expect: Option<&Oid>,
         set_upstream: bool,
     ) -> Result<()>;
 

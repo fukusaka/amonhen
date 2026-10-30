@@ -285,6 +285,7 @@ pub enum Op {
         branch: String,
         remote_branch: String,
         force: bool,
+        expect: Option<Oid>,
         set_upstream: bool,
     },
     RestoreWorktree(Vec<String>),

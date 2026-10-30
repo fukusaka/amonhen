@@ -934,12 +934,15 @@ impl Operations for Git {
         branch: &str,
         remote_branch: &str,
         force: bool,
+        expect: Option<&Oid>,
         set_upstream: bool,
     ) -> Result<()> {
         let refspec = format!("refs/heads/{branch}:refs/heads/{remote_branch}");
+        let lease =
+            expect.map(|oid| format!("--force-with-lease=refs/heads/{remote_branch}:{}", hex(oid)));
         let mut args = vec!["push"];
         if force {
-            args.push("--force-with-lease");
+            args.push(lease.as_deref().unwrap_or("--force-with-lease"));
         }
         if set_upstream {
             args.push("--set-upstream");

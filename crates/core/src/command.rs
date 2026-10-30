@@ -174,6 +174,9 @@ pub enum Command {
         branch: String,
         remote_branch: String,
         force: bool,
+        /// `force` のとき、リモートのブランチがこのコミット（16 進）のときだけ置き換える。なければ追跡ブランチと比べる。
+        #[serde(default)]
+        expect: Option<String>,
         set_upstream: bool,
     },
     /// 作業ツリーのファイルを index の内容に戻す（Undo できる）。
@@ -2234,9 +2237,18 @@ impl Repository {
                 branch,
                 remote_branch,
                 force,
+                expect,
                 set_upstream,
             } => {
-                ops.push(&remote, &branch, &remote_branch, force, set_upstream)?;
+                let expect = expect.as_deref().map(oid).transpose()?;
+                ops.push(
+                    &remote,
+                    &branch,
+                    &remote_branch,
+                    force,
+                    expect.as_ref(),
+                    set_upstream,
+                )?;
                 ok()
             }
             Command::Discard { paths } => {
@@ -4046,6 +4058,67 @@ mod tests {
         );
         assert_eq!(verified["info"]["checks"][1]["status"], "N");
         assert_eq!(extras["stats"][0]["added"], 1);
+    }
+
+    #[test]
+    fn force_push_replaces_only_the_commit_it_was_shown() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let remote = dir.join("remote.git");
+        git(dir, &["init", "-q", "--bare", remote.to_str().unwrap()]);
+        git(dir, &["remote", "add", "origin", remote.to_str().unwrap()]);
+        git(dir, &["push", "-q", "-u", "origin", "main"]);
+        let shown = git(dir, &["rev-parse", "origin/main"]);
+        // 別の人が push し、手元は追跡ブランチだけを進める（自動の Fetch と同じ）。
+        let other = dir.join("other");
+        git(
+            dir,
+            &[
+                "clone",
+                "-q",
+                "-b",
+                "main",
+                remote.to_str().unwrap(),
+                other.to_str().unwrap(),
+            ],
+        );
+        git(
+            &other,
+            &[
+                "-c",
+                "user.name=b",
+                "-c",
+                "user.email=b@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "theirs",
+            ],
+        );
+        git(&other, &["push", "-q", "origin", "main"]);
+        git(dir, &["fetch", "-q", "origin"]);
+        git(dir, &["commit", "-q", "--amend", "-m", "rewritten"]);
+        let push = |expect: &str| {
+            repo.run_json(&format!(
+                r#"{{"op":"push","remote":"origin","branch":"main","remoteBranch":"main","force":true,"expect":"{expect}","setUpstream":false}}"#
+            ))
+        };
+        // 確認で見せたのは他人の push の前のコミット。リモートはもう違うので断る（他人のコミットは消えない）。
+        let refused: serde_json::Value = serde_json::from_str(&push(&shown)).unwrap();
+        assert!(refused["error"].is_string(), "{refused}");
+        assert_ne!(
+            git(&remote, &["rev-parse", "main"]),
+            git(dir, &["rev-parse", "HEAD"])
+        );
+        // 今のリモートのコミットを渡せば置き換わる。
+        let now = git(&remote, &["rev-parse", "main"]);
+        let done: serde_json::Value = serde_json::from_str(&push(&now)).unwrap();
+        assert!(done["error"].is_null(), "{done}");
+        assert_eq!(
+            git(&remote, &["rev-parse", "main"]),
+            git(dir, &["rev-parse", "HEAD"])
+        );
     }
 
     #[test]
