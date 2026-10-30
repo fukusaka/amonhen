@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
-import { fastForwardBranch, mergeInto, publishChoices, pushCurrent, rebaseOnto } from '../src/state/operations.ts';
+import { fastForwardBranch, mergeInto, mergeSeveral, publishChoices, pushCurrent, rebaseOnto } from '../src/state/operations.ts';
 import { UndoLog } from '../src/state/undo.ts';
 import { initMain } from './git.ts';
 
@@ -122,6 +122,73 @@ test('a conflict is reported and not recorded', async () => {
   assert.equal(await mergeInto(backend, undo, H('feature'), H('main')), 'conflict');
   assert.equal(await undo.peek(), undefined);
   await backend.abort('merge');
+});
+
+/** main から分かれた a・b（それぞれ自分のファイルを変える）と、main と同じ行を変える x */
+function octopusBranches(): void {
+  for (const [name, file] of [['a', 'a-file'], ['b', 'b-file'], ['x', 'a.txt']] as const) {
+    git('switch', '-q', '-c', name, 'main');
+    commitFile(file, `${name}\n`, name);
+  }
+  git('switch', '-q', 'main');
+  commitFile('a.txt', 'main\n', 'main');
+}
+
+const parents = () => git('log', '-1', '--format=%P').split(' ').length;
+
+test('several branches merge in one commit, and one undo puts it back', async () => {
+  octopusBranches();
+  const head = git('rev-parse', 'HEAD');
+  assert.deepEqual(await mergeSeveral(backend, undo, [H('a'), H('b')], false), { result: 'done', remaining: [] });
+  assert.equal(parents(), 3);
+  // git 2.28 より前は、master 以外に merge すると「into main」を付ける
+  assert.match(git('log', '-1', '--format=%s'), /^Merge branches 'a' and 'b'/);
+  assert.equal((await undo.peek())?.label, 'Merge a and b');
+  await undo.undo();
+  assert.equal(git('rev-parse', 'HEAD'), head);
+});
+
+test('an octopus that gives up leaves the worktree as it was', async () => {
+  octopusBranches();
+  const head = git('rev-parse', 'HEAD');
+  writeFileSync(join(dir, 'b-file'), 'edited\n');
+  await assert.rejects(mergeSeveral(backend, undo, [H('a'), H('x'), H('b')], false), /octopus/);
+  assert.equal(git('rev-parse', 'HEAD'), head);
+  assert.equal(await backend.sequenceInProgress(), undefined);
+  // 作業中の変更は残り、途中まで合わせたものは残らない
+  assert.equal(git('status', '--porcelain'), '?? b-file');
+  assert.equal(await undo.peek(), undefined);
+});
+
+test('a conflict in the last branch of an octopus stops with all of them', async () => {
+  octopusBranches();
+  assert.equal((await mergeSeveral(backend, undo, [H('a'), H('b'), H('x')], false)).result, 'conflict');
+  assert.equal(readFileSync(join(dir, '.git', 'MERGE_HEAD'), 'utf8').trim().split('\n').length, 3);
+  assert.equal(await undo.peek(), undefined);
+  await backend.abort('merge');
+});
+
+test('one by one stops at a conflict, and one undo puts back what was merged', async () => {
+  octopusBranches();
+  const head = git('rev-parse', 'HEAD');
+  const result = await mergeSeveral(backend, undo, [H('a'), H('x'), H('b')], true);
+  assert.deepEqual(result, { result: 'conflict', remaining: ['b'] });
+  assert.match(git('log', '-1', '--format=%s'), /^Merge branch 'a'/);
+  await backend.abort('merge');
+  await undo.undo();
+  assert.equal(git('rev-parse', 'HEAD'), head);
+});
+
+test('the forecast checks each branch on top of the ones before', async () => {
+  octopusBranches();
+  const steps = await backend.predictMerge(['a', 'x', 'b']);
+  const version = git('version').match(/(\d+)\.(\d+)/);
+  if (Number(version?.[1]) * 100 + Number(version?.[2]) >= 238) {
+    assert.deepEqual(steps, [[], ['a.txt'], []]);
+  } else {
+    assert.equal(steps, undefined);
+  }
+  assert.equal(git('status', '--porcelain'), '');
 });
 
 /** dir の origin になる bare リポジトリを作り、main を送って upstream にする */

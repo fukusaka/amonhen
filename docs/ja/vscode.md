@@ -80,6 +80,7 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - `TreeDragAndDropController` で実装する。ブランチをブランチにドロップしたら「Merge A into B」「Rebase B onto A」を QuickPick で選ばせる。リモートにドロップしたら push。
 - ドロップ先が現在のブランチでなければ checkout してから実行する。fast-forward で済む場合は checkout せず `update-ref` だけで処理する。
 - 制約: TreeView と Webview の間ではドラッグ＆ドロップできない。History 内の並べ替えは Webview の中で完結させる。
+- コマンドパレットの Merge Branches… で、いくつものブランチ・リモートブランチ・タグを `git merge a b c` と同じく 1 つのコミットで今のブランチに merge する（octopus）。1 つ目の QuickPick で一覧の順に選び、2 つ目の QuickPick に、前のものまでの結果に重ねて調べたそれぞれのコンフリクトの見込み（`predictMerge`。git 2.38 以降）を出して、1 つのコミットにまとめる・最後より前でぶつかるものを最後に回す・1 つずつ merge する、から選ばせる。最後より前のものがコンフリクトすると git はコンフリクトを残さずに止まるので、git が断ったら改めて 1 つずつを勧める。1 つずつはコンフリクトで止まり、残りを知らせる。どちらも Undo 1 回で全部戻る。共有の daemon ではコアが記録し（配列を渡す `merge`、`oneByOne`）、git 実行層では拡張が記録する。git 2.37 より前が途中まで合わせた変更を残したときは、`reset --merge` で戻す。
 
 ### コミットの柔軟な編集
 

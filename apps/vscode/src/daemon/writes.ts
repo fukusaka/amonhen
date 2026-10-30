@@ -7,6 +7,7 @@ import type {
   ApplyPatchOptions,
   FormatPatchOptions,
   MergeResult,
+  OneByOneResult,
   PushOptions,
   RebaseResult,
   RepositoryBackend,
@@ -60,7 +61,20 @@ export function withDaemonWrites(
     ),
     cherryPick: via('cherryPick', async (c, oid: string, isMerge: boolean) => outcome(await run(c, { op: 'cherryPick', oid, isMerge }, true))),
     revert: via('revert', async (c, oid: string, isMerge: boolean) => outcome(await run(c, { op: 'revert', oid, isMerge }, true))),
-    merge: via('merge', async (c, rev: string) => outcome(await run(c, { op: 'merge', rev }, true)) as MergeResult),
+    merge: via('merge', async (c, rev: string | readonly string[]) =>
+      outcome(await run(c, { op: 'merge', rev: typeof rev === 'string' ? rev : [...rev] }, true)) as MergeResult,
+    ),
+    // コアが 1 回の Undo で全部戻るように記録する
+    mergeOneByOne: via('mergeOneByOne', async (c, revs: readonly string[]): Promise<OneByOneResult> => {
+      const reply = await run(c, { op: 'merge', rev: [...revs], oneByOne: true }, true);
+      const remaining = ((reply['info'] as Json | undefined)?.['remaining'] as string[] | undefined) ?? [];
+      return { result: outcome(reply) as MergeResult, remaining };
+    }),
+    predictMerge: via('predictMerge', async (c, revs: readonly string[]) => {
+      const reply = await run(c, { op: 'predictMerge', theirs: [...revs] }, false);
+      const steps = (reply['info'] as Json | undefined)?.['steps'] as { conflicts: string[] }[] | null | undefined;
+      return steps ? steps.map((s) => s.conflicts) : undefined;
+    }),
     rebase: async (onto: string, branch?: string): Promise<MergeResult> => {
       const c = await client();
       // ほかのブランチの rebase（checkout してから）は git 実行層で

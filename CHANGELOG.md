@@ -624,6 +624,11 @@ First release.
 
 ### Unreleased
 
+#### Added
+
+- Merge Branches… in the Command Palette merges several branches or tags in one commit, as `git merge a b c` does,
+  showing the conflicts expected for each first; it offers to merge them one by one when git couldn't.
+
 #### Changed
 
 - Reword and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and Reword runs

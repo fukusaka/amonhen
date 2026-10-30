@@ -40,6 +40,7 @@ VSCode 上で快適に Git を操作するための自分用の拡張。Marketpl
 | ローカルブランチ | リモート、リモートブランチ | Push、Force Push（`--force-with-lease`） |
 
 - ドロップ先が checkout されていないとき、fast-forward で済むなら checkout せずにブランチだけ進める。そうでなければ checkout してから実行する。
+- コマンドパレットの Merge Branches… で、いくつものブランチ・タグを `git merge a b c` と同じく 1 つのコミットで今のブランチに merge する。先にそれぞれのコンフリクトの見込みを出し、git が 1 つのコミットにまとめられないときは 1 つずつ merge することを勧める。Undo 1 回で戻せる。
 - upstream が無いブランチをドロップで push すると、push 先を upstream に設定する。
 
 ### Working Copy

@@ -12,6 +12,7 @@ import { CliBackend } from '../src/git/backend.ts';
 import { GitExecutor } from '../src/git/exec.ts';
 import { UndoLog } from '../src/state/undo.ts';
 import { withDaemonWrites } from '../src/daemon/writes.ts';
+import { mergeSeveral } from '../src/state/operations.ts';
 import { initMain } from './git.ts';
 
 // このリポジトリのエンジン（ルートで `cargo build -p amonhen-cli`。CLI と daemon を兼ねる）。なければ飛ばす
@@ -269,6 +270,64 @@ test('writes through the daemon record one undo entry each', { skip }, async () 
     client.dispose();
     git('reset', '-q');
     rmSync(join(repo, 'w.txt'), { force: true });
+  }
+});
+
+test('merges several branches in one commit through the daemon, with one undo entry', { skip }, async () => {
+  const client = await DaemonClient.open(daemon, repo);
+  const inner = await CliBackend.open(new GitExecutor('git'), repo);
+  const backend = withDaemonWrites(inner, async () => client);
+  const undo = new UndoLog(backend);
+  const count = () => {
+    try {
+      return (JSON.parse(readFileSync(join(repo, '.git/amonhen/undo.json'), 'utf8')) as unknown[]).length;
+    } catch {
+      return 0;
+    }
+  };
+  const head = git('rev-parse', 'HEAD').trim();
+  // o-a は自分のファイル、o-x と o-y は同じファイルの同じ行を変える（後のほうがぶつかる）
+  for (const [name, file] of [['o-a', 'oa.txt'], ['o-x', 'c.txt'], ['o-y', 'c.txt']] as const) {
+    git('switch', '-q', '-c', name, 'main');
+    writeFileSync(join(repo, file), `${name}\n`);
+    git('add', file);
+    git('commit', '-q', '-m', name);
+  }
+  git('switch', '-q', 'main');
+  try {
+    const steps = await backend.predictMerge(['o-a', 'o-x', 'o-y']);
+    const version = git('version').match(/(\d+)\.(\d+)/);
+    if (Number(version?.[1]) * 100 + Number(version?.[2]) >= 238) {
+      assert.deepEqual(steps, [[], [], ['c.txt']]);
+    } else {
+      assert.equal(steps, undefined);
+    }
+
+    const before = count();
+    assert.equal((await mergeSeveral(backend, undo, ['refs/heads/o-a', 'refs/heads/o-x'], false)).result, 'done');
+    // main は両方の祖先なので、git の既定どおり main を親から外して先へ進む
+    assert.match(git('log', '-1', '--format=%s'), /^Merge branches 'o-a' and 'o-x'/);
+    assert.equal(count(), before + 1, '二重に記録しない');
+    await undo.undo();
+    assert.equal(git('rev-parse', 'HEAD').trim(), head);
+
+    // 最後より前でぶつかると git は断り、何も変わらない
+    await assert.rejects(mergeSeveral(backend, undo, ['o-x', 'o-y', 'o-a'], false), /octopus/);
+    assert.equal(git('status', '--porcelain').trim(), '');
+    assert.equal(count(), before);
+
+    // 1 つずつなら o-x まで済んで o-y で止まり、Undo 1 回で戻る
+    const result = await mergeSeveral(backend, undo, ['o-x', 'o-y', 'o-a'], true);
+    assert.deepEqual(result, { result: 'conflict', remaining: ['o-a'] });
+    await backend.abort('merge');
+    assert.equal(count(), before + 1);
+    await undo.undo();
+    assert.equal(git('rev-parse', 'HEAD').trim(), head);
+  } finally {
+    await inner.dispose();
+    client.dispose();
+    git('reset', '-q', '--hard', head);
+    git('branch', '-q', '-D', 'o-a', 'o-x', 'o-y');
   }
 });
 
