@@ -1484,14 +1484,9 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     @objc func fetch(_ sender: Any?) { actions.fetch() }
-    @objc func pull(_ sender: Any?) { pull(mode: .git) }
-    @objc func pullGit(_ sender: Any?) { pull(mode: .git) }
-    @objc func pullMerge(_ sender: Any?) { pull(mode: .merge) }
-    @objc func pullRebase(_ sender: Any?) { pull(mode: .rebase) }
-    @objc func pullFastForward(_ sender: Any?) { pull(mode: .fastForwardOnly) }
-
-    /// Pull・Push・Pop は、すぐには実行しないで何が起きるかをシートで見せる（`SyncSheets.swift`）。
-    private func pull(mode: PullMode) { actions.pullWithConfirmation(mode: mode) }
+    /// Pull・Push・Pop は、すぐには実行しないで何が起きるかをシートで見せる（`SyncSheets.swift`）。取り込み方はシートで
+    /// 選ぶ（最初は git の設定に従う）。
+    @objc func pull(_ sender: Any?) { actions.pullWithConfirmation(mode: .git) }
 
     @objc func push(_ sender: Any?) { actions.pushWithConfirmation() }
     @objc func forcePush(_ sender: Any?) { actions.pushWithConfirmation(force: true) }
