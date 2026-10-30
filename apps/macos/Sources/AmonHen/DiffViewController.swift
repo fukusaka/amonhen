@@ -1461,17 +1461,22 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let message = text.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return NSSound.beep() }
         guard message != info.message.trimmingCharacters(in: .whitespacesAndNewlines) else { return endReword() }
-        if extras.map({ !$0.remoteBranches.isEmpty }) ?? false {
-            let alert = NSAlert()
-            alert.messageText = L("Edit a commit that has been pushed?")
-            alert.informativeText = L("This commit is in %@. Editing it makes your branch differ from the remote, and pushing then needs force.", extras?.remoteBranches.joined(separator: ", ") ?? "")
-            alert.addButton(withTitle: L("Rewrite"))
-            alert.addButton(withTitle: L("Cancel"))
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
         let oid = info.oid
-        endReword()
-        onReword?(oid, message)
+        guard let remotes = extras?.remoteBranches, !remotes.isEmpty, let window = view.window else {
+            endReword()
+            onReword?(oid, message)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = L("Edit a pushed commit?")
+        alert.informativeText = L("It is in %@, so pushing afterwards needs Force Push.", remotes.joined(separator: ", "))
+        alert.addButton(withTitle: L("Edit Message"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.endReword()
+            self?.onReword?(oid, message)
+        }
     }
 
     @objc private func cancelReword() { endReword() }

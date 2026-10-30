@@ -1625,10 +1625,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             add("Squash into Parent…") { actions.squash(hex) }
             add("Fixup into Parent") { actions.rewrite("Fixup \(short)", ["kind": "fixup", "oid": hex]) }
             add(L("Edit (Stop Here)")) { actions.rewrite("Edit \(short)", ["kind": "edit", "oid": hex]) }
-            add(L("Split…")) { actions.rewrite("Split \(short)", ["kind": "split", "oid": hex]) }
-            add("Drop") {
-                guard actions.confirm(L("Drop %@?", short), message: L("You can Undo this."), ok: "Drop") else { return }
-                actions.rewrite("Drop \(short)", ["kind": "drop", "oid": hex])
+            add("Split") { actions.rewrite("Split \(short)", ["kind": "split", "oid": hex]) }
+            add("Drop…") {
+                Task { @MainActor in
+                    guard await actions.confirm(L("Drop %@?", short), message: Actions.canUndo, ok: "Drop") else { return }
+                    actions.rewrite("Drop \(short)", ["kind": "drop", "oid": hex])
+                }
             }
             menu.addItem(.separator())
         }
@@ -1677,6 +1679,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     // MARK: - ドラッグで並べ替え
 
+    /// ドラッグの間だけ覚えておく、編集できるコミット（HEAD から最初の merge まで、新しい順の 16 進）。落とせる所を
+    /// その場で決める（落としてから「ここには動かせない」と言わない）。
+    private var dragChain: [String]?
+
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forRowIndexes rowIndexes: IndexSet) {
+        dragChain = nil
+        guard let actions else { return }
+        Task { @MainActor in dragChain = await actions.editableCommits() }
+    }
+
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        dragChain = nil
+    }
+
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
         guard let id = history?.commitID(row: row) else { return nil }
         let item = NSPasteboardItem()
@@ -1688,7 +1704,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         _ tableView: NSTableView, validateDrop info: any NSDraggingInfo, proposedRow row: Int,
         proposedDropOperation op: NSTableView.DropOperation
     ) -> NSDragOperation {
-        guard info.draggingSource as? NSTableView === tableView else { return [] }
+        guard info.draggingSource as? NSTableView === tableView, let history else { return [] }
+        // 編集できる並びの外（最初の merge より下、HEAD でない枝）には落とせない。並びを読み終えるまでは許す。
+        if let chain = dragChain {
+            let hex = { (r: Int) in history.commitID(row: r).map { $0.map { String(format: "%02x", $0) }.joined() } }
+            let dragged = info.draggingPasteboard.string(forType: .commitID)
+            let below = hex(min(row, history.rowCount - 1))
+            let above = row > 0 ? hex(row - 1) : nil
+            guard let dragged, chain.contains(dragged),
+                  below.map(chain.contains) == true || above.map(chain.contains) == true else { return [] }
+        }
         tableView.setDropRow(row, dropOperation: .above)
         return .move
     }
@@ -1701,15 +1726,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let below = history.commitID(row: min(row, history.rowCount - 1)).map { $0.map { String(format: "%02x", $0) }.joined() }
         Task {
             let chain = await actions.editableCommits()
-            guard let from = chain.firstIndex(of: oid), let below, var to = chain.firstIndex(of: below) else {
-                await MainActor.run {
-                    let alert = NSAlert()
-                    alert.messageText = L("Can’t Move Here")
-                    alert.informativeText = L("Commits can only be reordered between HEAD and the first merge.")
-                    alert.runModal()
-                }
-                return
-            }
+            guard let from = chain.firstIndex(of: oid), let below, var to = chain.firstIndex(of: below) else { return NSSound.beep() }
             if row >= history.rowCount { to = chain.count - 1 } else if from < to { to -= 1 }
             if from == to { return }
             actions.rewrite("Move \(oid.prefix(8))", ["kind": "move", "oid": oid, "to": to])

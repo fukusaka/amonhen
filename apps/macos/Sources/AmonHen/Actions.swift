@@ -130,8 +130,13 @@ final class Actions {
         }
     }
 
-    /// 名前を入れてもらう。キャンセルなら nil。
-    func ask(_ title: String, message: String = "", initial: String = "", ok: String = "OK") -> String? {
+    /// 確認の文の終わりに置く定型（docs/ux.md の「Confirmations and wording」）。この 2 つ以外の言い方はしない。
+    static let canUndo = L("You can Undo this (⌥⌘Z).")
+    static let cantUndo = L("This can’t be undone.")
+
+    /// 名前を入れてもらう（ウィンドウのシートで）。キャンセルなら nil。
+    @MainActor
+    func ask(_ title: String, message: String = "", initial: String = "", ok: String) async -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
@@ -141,23 +146,31 @@ final class Actions {
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         return value.isEmpty ? nil : value
     }
 
-    /// 取り消せない操作の前に確かめる。
-    func confirm(_ title: String, message: String, ok: String) -> Bool {
+    /// 実行の前に確かめる（ウィンドウのシートで）。`destructive` は元に戻せないもの（ボタンを赤く、↩ では押せない）。
+    @MainActor
+    func confirm(_ title: String, message: String, ok: String, destructive: Bool = false, in host: NSWindow? = nil) async -> Bool {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: ok)
+        let button = alert.addButton(withTitle: ok)
+        button.hasDestructiveAction = destructive
         alert.addButton(withTitle: L("Cancel"))
-        return alert.runModal() == .alertFirstButtonReturn
+        if destructive {
+            button.keyEquivalent = ""
+            alert.buttons[1].keyEquivalent = "\r"
+        }
+        if let host { return await alert.beginSheetModal(for: host) == .alertFirstButtonReturn }
+        return await present(alert) == .alertFirstButtonReturn
     }
 
-    /// 複数行のメッセージを編集してもらう。キャンセルなら nil。
-    func editMessage(_ title: String, initial: String, ok: String) -> String? {
+    /// 複数行のメッセージを編集してもらう（ウィンドウのシートで）。キャンセルなら nil。
+    @MainActor
+    func editMessage(_ title: String, initial: String, ok: String) async -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.addButton(withTitle: ok)
@@ -174,7 +187,7 @@ final class Actions {
         scroll.documentView = text
         alert.accessoryView = scroll
         alert.window.initialFirstResponder = text
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let value = text.string.trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
     }
@@ -198,7 +211,7 @@ final class Actions {
     func reword(_ oid: String) {
         Task {
             guard let message = await text(["op": "commitMessage", "oid": oid]),
-                  let edited = editMessage(L("Edit Message"), initial: message, ok: L("Change")) else { return }
+                  let edited = await editMessage(L("Edit Message"), initial: message, ok: L("Change")) else { return }
             rewrite("Reword \(oid.prefix(8))", ["kind": "reword", "oid": oid, "message": edited])
         }
     }
@@ -206,7 +219,7 @@ final class Actions {
     func squash(_ oid: String) {
         Task {
             guard let message = await text(["op": "squashMessage", "oid": oid]),
-                  let edited = editMessage("Squash into Parent", initial: message, ok: "Squash") else { return }
+                  let edited = await editMessage("Squash into Parent", initial: message, ok: "Squash") else { return }
             rewrite("Squash \(oid.prefix(8))", ["kind": "squash", "oid": oid, "message": edited])
         }
     }
@@ -227,7 +240,7 @@ final class Actions {
                 await alert(L("Can’t Squash"), "\(error)")
             case let .success(info):
                 let title = "Squash \(oids.count) Commits"
-                guard let edited = editMessage(title, initial: info.message, ok: "Squash") else { return }
+                guard let edited = await editMessage(title, initial: info.message, ok: "Squash") else { return }
                 rewrite(title, ["kind": "squashRange", "oid": info.oldest, "last": info.newest, "message": edited])
             }
         }
@@ -241,50 +254,76 @@ final class Actions {
     // MARK: - よく使う操作
 
     func newBranch(at start: String) {
-        guard let name = ask("New Branch", message: L("Name of the branch to create from %@", start), ok: L("Create and Switch")) else { return }
-        perform(["op": "createBranch", "name": name, "start": start, "checkout": true])
+        Task { @MainActor in
+            guard let name = await ask(L("New Branch from %@", start), message: L("Name of the branch. It is checked out."),
+                                       ok: L("Create")) else { return }
+            perform(["op": "createBranch", "name": name, "start": start, "checkout": true])
+        }
+    }
+
+    func renameBranch(_ name: String) {
+        Task { @MainActor in
+            guard let to = await ask(L("Rename %@", name), message: L("New name of the branch."), initial: name, ok: "Rename"),
+                  to != name else { return }
+            perform(["op": "renameBranch", "from": name, "to": to])
+        }
     }
 
     func newTag(at target: String) {
-        guard let name = ask("New Tag", message: L("Name of the tag for %@", target), ok: L("Create")) else { return }
-        perform(["op": "createTag", "name": name, "target": target])
+        Task { @MainActor in
+            guard let name = await ask(L("New Tag at %@", target), message: L("Name of the tag."), ok: L("Create")) else { return }
+            perform(["op": "createTag", "name": name, "target": target])
+        }
     }
 
     func fetch() {
         perform(["op": "fetch"])
     }
 
-    /// 今のブランチ（detached HEAD なら HEAD）を `target` に動かす（`mode`: soft・mixed・hard）。先に確かめる。
-    func reset(to target: String, mode: String) {
-        let short = String(target.prefix(8))
-        let name = currentBranch ?? "HEAD"
-        let what = switch mode {
-        case "soft": L("Moves %@ to %@. The changes of the commits taken off stay staged.", name, short)
-        case "mixed": L("Moves %@ to %@. The changes of the commits taken off stay in the working tree, unstaged.", name, short)
-        default: L("Moves %@ to %@ and makes the working tree match it. Uncommitted changes, if any, are kept as a stash first.", name, short)
+    /// 今のブランチ（detached HEAD なら HEAD）を `target` に動かす。動かし方（soft・mixed・hard）は確認のシートで選ぶ。
+    func reset(to target: String) {
+        Task { @MainActor in
+            let short = String(target.prefix(8))
+            let name = currentBranch ?? "HEAD"
+            let alert = NSAlert()
+            alert.messageText = L("Reset %@ to %@?", name, short)
+            alert.informativeText = L("Commits taken off stay in Reflog.") + " " + Self.canUndo
+            alert.addButton(withTitle: "Reset")
+            alert.addButton(withTitle: L("Cancel"))
+            let modes: [(String, String)] = [
+                ("soft", L("Soft: keep the changes staged")),
+                ("mixed", L("Mixed: keep the changes in the working tree")),
+                ("hard", L("Hard: match the commit (uncommitted changes are stashed first)")),
+            ]
+            let target_ = ClosureTarget {}
+            let radios = modes.map { NSButton(radioButtonWithTitle: $0.1, target: target_, action: #selector(ClosureTarget.fire)) }
+            radios[1].state = .on
+            let stack = NSStackView(views: radios)
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 4
+            stack.frame.size = stack.fittingSize
+            alert.accessoryView = stack
+            let response = await present(alert)
+            withExtendedLifetime(target_) {}
+            guard response == .alertFirstButtonReturn,
+                  let mode = zip(radios, modes).first(where: { $0.0.state == .on })?.1.0 else { return }
+            perform(["op": "reset", "oid": target, "mode": mode])
         }
-        let message = what + "\n" + L("Commits taken off can still be found in Reflog. You can Undo it afterwards (⌥⌘Z).")
-        guard confirm(L("Reset %@ to %@?", name, short), message: message, ok: "Reset") else { return }
-        perform(["op": "reset", "oid": target, "mode": mode])
     }
 
-    /// 右クリックの「Reset … to …」（Soft・Mixed・Hard を選ぶ小メニュー）。History と Reflog で使う。
+    /// 右クリックの「Reset … to …」。History と Reflog で使う。
     func resetMenuItem(to target: String) -> NSMenuItem {
-        let item = NSMenuItem(title: "Reset \(currentBranch ?? "HEAD") to \(target.prefix(8))", action: nil, keyEquivalent: "")
-        let menu = NSMenu()
-        for (title, mode) in [
-            (L("Soft (Keep Changes Staged)…"), "soft"),
-            (L("Mixed (Keep Changes Unstaged)…"), "mixed"),
-            (L("Hard (Match the Commit)…"), "hard"),
-        ] {
-            menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.reset(to: target, mode: mode) })
-        }
-        item.submenu = menu
-        return item
+        ClosureMenuItem(title: "Reset \(currentBranch ?? "HEAD") to \(target.prefix(8))…") { [weak self] in self?.reset(to: target) }
     }
 
     /// 作業中の変更を stash する。untracked のファイルを含めるかを選べる。
     func stash() {
+        Task { @MainActor in await stashSheet() }
+    }
+
+    @MainActor
+    private func stashSheet() async {
         let alert = NSAlert()
         alert.messageText = "Stash Changes"
         alert.informativeText = L("Message (optional)")
@@ -298,7 +337,7 @@ final class Actions {
         box.addSubview(untracked)
         alert.accessoryView = box
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard await present(alert) == .alertFirstButtonReturn else { return }
         var command: [String: Any] = ["op": "stashPush", "includeUntracked": untracked.state == .on]
         let message = field.stringValue.trimmingCharacters(in: .whitespaces)
         if !message.isEmpty { command["message"] = message }

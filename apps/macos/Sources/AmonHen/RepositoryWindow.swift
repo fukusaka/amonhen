@@ -1653,10 +1653,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Repository > Rename Branch…: 今のブランチの名前を変える。
     @objc func renameBranch(_ sender: Any?) {
-        guard let branch = latestRefs?.headBranch,
-              let to = actions.ask("Rename Branch", message: L("New name for %@", branch), initial: branch, ok: L("Rename")),
-              to != branch else { return }
-        actions.perform(["op": "renameBranch", "from": branch, "to": to])
+        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        actions.renameBranch(branch)
     }
 
     /// Repository > Set Upstream…: 今のブランチの上流（pull・push の相手）を、リモートのブランチから選ぶ。
@@ -1673,13 +1671,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         alert.addButton(withTitle: L("Set"))
         alert.addButton(withTitle: L("Cancel"))
         alert.accessoryView = popup
-        guard alert.runModal() == .alertFirstButtonReturn, let upstream = popup.titleOfSelectedItem,
-              let slash = upstream.firstIndex(of: "/") else { return }
-        let remote = String(upstream[..<slash]), remoteBranch = String(upstream[upstream.index(after: slash)...])
-        actions.perform(sequence: [
-            ["op": "configSet", "key": "branch.\(branch).remote", "value": remote],
-            ["op": "configSet", "key": "branch.\(branch).merge", "value": "refs/heads/\(remoteBranch)"],
-        ])
+        Task { @MainActor in
+            guard await actions.present(alert) == .alertFirstButtonReturn, let upstream = popup.titleOfSelectedItem,
+                  let slash = upstream.firstIndex(of: "/") else { return }
+            let remote = String(upstream[..<slash]), remoteBranch = String(upstream[upstream.index(after: slash)...])
+            actions.perform(sequence: [
+                ["op": "configSet", "key": "branch.\(branch).remote", "value": remote],
+                ["op": "configSet", "key": "branch.\(branch).merge", "value": "refs/heads/\(remoteBranch)"],
+            ])
+        }
     }
 
     @objc func goToHead(_ sender: Any?) {

@@ -1322,10 +1322,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add("New Branch from \(name)…") { actions.newBranch(at: name) }
             add("New Tag at \(name)…") { actions.newTag(at: name) }
             add(L("Compare with Previous Version")) { [weak self] in self?.onCompareWithPrevious?(name) }
-            add(L("Rename %@…", name)) {
-                guard let to = actions.ask(L("Rename Branch"), initial: name, ok: L("Change")) else { return }
-                actions.perform(["op": "renameBranch", "from": name, "to": to])
-            }
+            add("Rename…") { actions.renameBranch(name) }
             if name != headBranch {
                 add(L("Delete %@…", name)) { actions.deleteBranchWithConfirmation(item) }
             }

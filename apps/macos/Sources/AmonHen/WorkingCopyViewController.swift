@@ -407,19 +407,32 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     /// 1 ファイルの変更を捨てる（行のホバーのボタン）。作業ツリーを index の内容に戻すので、含めている分は残る。
+    /// untracked のファイルを消す前に確かめる（Undo では戻せない）。
+    private func confirmDeleteUntracked(_ path: String, actions: Actions) {
+        Task { @MainActor in
+            guard await actions.confirm(L("Delete %@?", path), message: L("It’s untracked.") + " " + Actions.cantUndo,
+                                        ok: L("Delete"), destructive: true) else { return }
+            // ファイルの操作はコアに任せる（SSH 越しのリポジトリでも同じに動く）。
+            actions.perform(["op": "deleteUntracked", "paths": [path]])
+        }
+    }
+
+    /// ファイルの変更を捨てる前に確かめる（Undo で戻せる）。
+    private func confirmDiscard(_ path: String, actions: Actions) {
+        Task { @MainActor in
+            guard await actions.confirm(L("Discard changes to %@?", path), message: Actions.canUndo, ok: "Discard") else { return }
+            actions.perform(["op": "discard", "paths": [path]])
+        }
+    }
+
     /// untracked のファイルは消す（Undo では戻せないので確かめる）。
     private func discardFile(_ entry: Entry) {
         guard let actions, !entry.isConflict else { return }
         let path = entry.item.path
         if entry.item.kind == .untracked {
-            guard actions.confirm(L("Delete %@?", path), message: L("It’s an untracked file, so Undo can’t bring it back."), ok: L("Delete"))
-            else { return }
-            actions.perform(["op": "deleteUntracked", "paths": [path]])
+            confirmDeleteUntracked(path, actions: actions)
         } else if entry.item.isUnstaged {
-            guard actions.confirm(
-                L("Discard the changes to %@?", path), message: L("This discards the working tree changes and returns to the content of the next commit (the index). You can Undo it."),
-                ok: "Discard") else { return }
-            actions.perform(["op": "discard", "paths": [path]])
+            confirmDiscard(path, actions: actions)
         } else {
             NSSound.beep()
         }
@@ -890,16 +903,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         if let current, !rows.isEmpty {
             actions.perform { try current.discard(rows: rows) }
         } else if current?.item.kind == .untracked {
-            guard actions.confirm(
-                L("Delete %@?", key.path), message: L("It’s an untracked file, so Undo can’t bring it back."), ok: L("Delete")) else { return }
-            // ファイルの操作はコアに任せる（SSH 越しのリポジトリでも同じに動く）。
-            actions.perform(["op": "deleteUntracked", "paths": [key.path]])
+            confirmDeleteUntracked(key.path, actions: actions)
         } else {
             // ファイル全体を一度に捨てるときは確かめる（行の単位は選んで押すので、そのまま）。
-            guard actions.confirm(
-                L("Discard the changes to %@?", key.path), message: L("This discards the working tree changes and returns to the content of the next commit (the index). You can Undo it."),
-                ok: "Discard") else { return }
-            actions.perform(["op": "discard", "paths": [key.path]])
+            confirmDiscard(key.path, actions: actions)
         }
     }
 
@@ -957,10 +964,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         // マーカーが残っていなければ、解決した内容（rerere・ほかのエディタ）を片側で上書きしてしまう。
         if conflictStates[key.path]?.markers == 0 {
             let title = ours ? L("Take Current File") : L("Take Incoming File")
-            guard actions.confirm(
-                L("Replace the resolved content of %@?", key.path),
-                message: L("No conflict markers are left in it, so it may already be resolved. This replaces it with one side’s whole file."),
-                ok: title) else { return }
+            Task { @MainActor in
+                guard await actions.confirm(
+                    L("Replace the resolved content of %@?", key.path),
+                    message: L("No conflict markers are left, so it may already be resolved. It becomes one side’s whole file."),
+                    ok: title) else { return }
+                actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
+            }
+            return
         }
         actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
     }
@@ -977,13 +988,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard let key = selectedKey else { return }
         struct Count: Decodable { let count: Int }
         let remaining = (try? repository.info(["op": "conflictCount", "path": key.path], as: Count.self))?.count ?? 0
-        if remaining > 0,
-           actions?.confirm(L("%@ still has %ld conflicts", key.path, remaining), message: L("Mark it as resolved anyway?"), ok: L("Mark Resolved")) != true {
-            return
-        }
         let repository = self.repository
         let path = key.path
-        actions?.perform { try repository.stage(paths: [path]) }
+        guard remaining > 0, let actions else { return self.actions?.perform { try repository.stage(paths: [path]) } ?? () }
+        Task { @MainActor in
+            guard await actions.confirm(L("Mark %@ as resolved with %ld conflicts left?", path, remaining),
+                                        message: L("The conflict markers stay in the file."), ok: L("Mark Resolved")) else { return }
+            actions.perform { try repository.stage(paths: [path]) }
+        }
     }
 
     @objc private func toggleAmend() {

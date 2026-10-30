@@ -610,5 +610,37 @@
 			<string>%ld local commits</string>
 		</dict>
 	</dict>
+	<key>Mark as resolved with %ld conflicts left?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Mark as resolved with %#@n0@ left?</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld conflict</string>
+			<key>other</key>
+			<string>%ld conflicts</string>
+		</dict>
+	</dict>
+	<key>Mark %@ as resolved with %ld conflicts left?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Mark %@ as resolved with %#@n0@ left?</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld conflict</string>
+			<key>other</key>
+			<string>%ld conflicts</string>
+		</dict>
+	</dict>
 </dict>
 </plist>
