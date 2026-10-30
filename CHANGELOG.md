@@ -9,6 +9,12 @@ becomes the GitHub Release notes.
 
 ### Unreleased
 
+#### Added
+
+- Several branches, tags or commits selected in the sidebar or History merge in one commit, as `git merge a b c` does,
+  from a sheet showing their order and the conflicts expected for each; it offers to merge them one by one when git
+  couldn't. `amonhen merge-check a b c` checks the same.
+
 #### Changed
 
 - Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and

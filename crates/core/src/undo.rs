@@ -666,7 +666,7 @@ mod tests {
                 "Merge topic",
                 &[],
                 false,
-                || git.merge("topic"),
+                || git.merge(&["topic".to_owned()]),
                 |o| *o != Outcome::Done,
             )
             .unwrap();

@@ -350,9 +350,10 @@ pub trait Operations: Send + Sync {
 
     /// `ancestor` が `descendant` の祖先か（fast-forward できるか）。
     fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool>;
-    /// `theirs` を `ours` にマージしたらコンフリクトするファイル（なければ空）。作業ツリーと index には触らない。
-    /// git が古くて調べられなければ `None`。
-    fn predict_merge(&self, ours: &str, theirs: &str) -> Result<Option<Vec<String>>>;
+    /// `theirs` を `ours` にマージしたらコンフリクトするファイル（なければ空）を、`theirs` の順に 1 つずつ。
+    /// いくつもあれば octopus と同じく、前のものまでを合わせた結果に重ねて調べる。作業ツリーと index には
+    /// 触らない。git が古くて調べられなければ `None`。
+    fn predict_merge(&self, ours: &str, theirs: &[String]) -> Result<Option<Vec<Vec<String>>>>;
     /// 同じ一連のコミットの 2 つの版を比べる（`git range-diff`）。`ranges` は git と同じ形（`A...B`、
     /// `<base> <A> <B>`、`<base>..<A> <base>..<B>`）。`creation_factor` は git の `--creation-factor`
     /// （`None` なら git の既定）。コミット ID は完全な形で返す。
@@ -363,7 +364,9 @@ pub trait Operations: Send + Sync {
     ) -> Result<Vec<crate::RangePair>>;
     /// 名前（`main`・`origin/main`・コミット ID など）が指すコミット。
     fn resolve(&self, rev: &str) -> Result<Oid>;
-    fn merge(&self, rev: &str) -> Result<Outcome>;
+    /// `revs` を今のブランチに merge する（2 つ以上なら 1 つのコミットにまとめる octopus）。octopus が途中で
+    /// 断ったら、作業ツリーと index を始める前に戻してからエラーを返す。
+    fn merge(&self, revs: &[String]) -> Result<Outcome>;
     fn rebase(&self, onto: &str) -> Result<Outcome>;
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;
     fn revert(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;

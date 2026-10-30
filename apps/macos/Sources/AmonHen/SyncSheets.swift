@@ -18,7 +18,14 @@ nonisolated struct CommitRange: Decodable, Sendable {
 
 /// `predictMerge` の答え: マージしたらコンフリクトするファイル。git が古くて調べられなければ nil。
 nonisolated struct MergeForecast: Decodable, Sendable {
+    /// 取り込むもの 1 つずつの見込み（いくつも取り込むときは、前のものまでを合わせた結果に重ねたもの）。
+    struct Step: Decodable, Sendable {
+        let rev: String
+        let conflicts: [String]
+    }
+
     let conflicts: [String]?
+    let steps: [Step]?
 
     var hasConflicts: Bool { conflicts?.isEmpty == false }
 
@@ -281,9 +288,16 @@ extension Actions {
     /// `theirs` を `ours` にマージしたらコンフリクトするか（裏で `predictMerge`。作業ツリーと index には触らない）。
     /// 調べられなければ nil。
     func predictMerge(ours: String = "HEAD", theirs: String) async -> MergeForecast? {
+        await predictMerge(ours: ours, theirs: [theirs])
+    }
+
+    /// `theirs` を順に `ours` へ 1 つのコミットでマージしたら（octopus）、それぞれがコンフリクトするか。
+    func predictMerge(ours: String = "HEAD", theirs: [String]) async -> MergeForecast? {
         let repository = self.repository
+        let theirs: Any = theirs.count == 1 ? theirs[0] : theirs
+        guard let json = try? Repository.json(["op": "predictMerge", "ours": ours, "theirs": theirs]) else { return nil }
         return await Task.detached {
-            try? repository.info(["op": "predictMerge", "ours": ours, "theirs": theirs], as: MergeForecast.self)
+            try? repository.info(json: json, as: MergeForecast.self)
         }.value
     }
 
@@ -521,7 +535,7 @@ extension Actions {
     }
 
     @MainActor
-    private func makeAlert(_ title: String, _ message: String) -> NSAlert {
+    func makeAlert(_ title: String, _ message: String) -> NSAlert {
         let alert = NSAlert()
         alert.messageText = title
         // worktree が 2 つ以上あれば、どの worktree に対する操作かを書く（docs/ux.md の「Worktrees」）。
@@ -530,7 +544,7 @@ extension Actions {
     }
 
     @MainActor
-    private func present(_ alert: NSAlert) async -> NSApplication.ModalResponse {
+    func present(_ alert: NSAlert) async -> NSApplication.ModalResponse {
         if let window { return await alert.beginSheetModal(for: window) }
         return alert.runModal()
     }

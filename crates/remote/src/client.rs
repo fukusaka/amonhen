@@ -800,10 +800,10 @@ impl Operations for RemoteOperations {
         })
     }
 
-    fn predict_merge(&self, ours: &str, theirs: &str) -> Result<Option<Vec<String>>> {
+    fn predict_merge(&self, ours: &str, theirs: &[String]) -> Result<Option<Vec<Vec<String>>>> {
         self.op(Op::PredictMerge {
             ours: ours.to_owned(),
-            theirs: theirs.to_owned(),
+            theirs: theirs.to_vec(),
         })
     }
 
@@ -819,8 +819,8 @@ impl Operations for RemoteOperations {
         self.op(Op::Resolve(rev.to_owned()))
     }
 
-    fn merge(&self, rev: &str) -> Result<Outcome> {
-        self.op(Op::Merge(rev.to_owned()))
+    fn merge(&self, revs: &[String]) -> Result<Outcome> {
+        self.op(Op::Merge(revs.to_vec()))
     }
 
     fn rebase(&self, onto: &str) -> Result<Outcome> {

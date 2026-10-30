@@ -1543,6 +1543,25 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
            !commits.contains(where: \.isMerge) {
             add("Squash \(commits.count) Commits…") { actions.squash(range: commits.map(\.hex)) }
         }
+        // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus）。ブランチ・タグがあればその名前で
+        // （merge のメッセージが git と同じになる）。
+        let current = editingBranch ?? lastRefs?.headBranch
+        let sources: [MergeSource] = rows.compactMap { row in
+            guard let id = history.commitID(row: row), id != head else { return nil }
+            let commit = MergeSource(rev: id.map { String(format: "%02x", $0) }.joined(), kind: .commit)
+            guard let label = (refLabels[id] ?? []).first(where: { !$0.isHead }) else { return commit }
+            return switch label.kind {
+            case .local: MergeSource(rev: label.name, kind: .branch)
+            case .remote: MergeSource(rev: label.name, kind: .remoteBranch)
+            case .tag: MergeSource(rev: label.name, kind: .tag)
+            default: commit
+            }
+        }
+        if sources.count > 1 {
+            add(L("Merge %ld into %@…", sources.count, current ?? "HEAD")) {
+                actions.mergeSeveralWithConfirmation(sources, into: current)
+            }
+        }
         // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
         if commits.count == 2 {
             add(L("Compare as Two Versions (Range Diff)")) { [weak self] in

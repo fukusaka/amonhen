@@ -1219,6 +1219,21 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(names.joined(separator: "\n"), forType: .string)
             }
+            // 今のブランチ以外を、選んだ順（上から）に 1 つのコミットで merge する（octopus）。
+            let sources: [MergeSource] = selected.compactMap { item in
+                switch item.kind {
+                case .local where item.name != headBranch: MergeSource(rev: item.name, kind: .branch)
+                case .remote: MergeSource(rev: item.name, kind: .remoteBranch)
+                case .tag: MergeSource(rev: item.name, kind: .tag)
+                default: nil
+                }
+            }
+            if sources.count > 1 {
+                let current = headBranch
+                add(L("Merge %ld into %@…", sources.count, current ?? "HEAD")) {
+                    actions.mergeSeveralWithConfirmation(sources, into: current)
+                }
+            }
             let locals = selected.filter { $0.kind == .local }.map(\.name)
             if locals.count == selected.count {
                 menu.addItem(.separator())

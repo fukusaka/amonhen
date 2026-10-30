@@ -761,18 +761,26 @@ pub fn commit(args: &[String]) -> Result<ExitCode> {
 
 // MARK: - merge-check
 
-/// `rev` を HEAD（`--into` ならそのブランチ）にマージしたらコンフリクトするファイル。終了コードは、なければ 0、
-/// あれば 1、git が古くてわからなければ 2。
+/// `rev` を HEAD（`--into` ならそのブランチ）にマージしたらコンフリクトするファイル。いくつも渡せば、1 つの
+/// コミットにまとめる merge（octopus）を、その順に重ねて調べる。終了コードは、なければ 0、あれば 1、git が古くて
+/// わからなければ 2。
 pub fn merge_check(args: &[String]) -> Result<ExitCode> {
     let (c, seen) = common(args, &["--into"], &["--into"])?;
-    let [rev] = c.rest.as_slice() else {
+    if c.rest.is_empty() {
         return Err(format!("{}\n\n{}", tr!("Give the commit to merge"), usage()).into());
-    };
+    }
+    let revs = &c.rest;
+    let rev = revs.join(", ");
     let ours = value(&seen, "--into").unwrap_or("HEAD");
     let front = open_repository(&c.dir)?;
+    let theirs = if let [one] = revs.as_slice() {
+        json!(one)
+    } else {
+        json!(revs)
+    };
     let response = command(
         &*front,
-        json!({"op": "predictMerge", "ours": ours, "theirs": rev}),
+        json!({"op": "predictMerge", "ours": ours, "theirs": theirs}),
     )?;
     let conflicts = &response["info"]["conflicts"];
     if c.json {
@@ -787,8 +795,35 @@ pub fn merge_check(args: &[String]) -> Result<ExitCode> {
             count = paths.len()
         );
         out.push('\n');
-        for path in paths {
-            out.push_str(&format!("  {}\n", path.as_str().unwrap_or("")));
+        let steps = response["info"]["steps"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        if revs.len() == 1 {
+            for path in paths {
+                out.push_str(&format!("  {}\n", path.as_str().unwrap_or("")));
+            }
+        } else {
+            // どれを取り込むところでぶつかるか。最後のもの以外でぶつかると、git は 1 つのコミットにまとめられない。
+            for step in &steps {
+                let Some(files) = step["conflicts"].as_array().filter(|f| !f.is_empty()) else {
+                    continue;
+                };
+                out.push_str(&format!("  {}:\n", step["rev"].as_str().unwrap_or("")));
+                for path in files {
+                    out.push_str(&format!("    {}\n", path.as_str().unwrap_or("")));
+                }
+            }
+            let blocked = steps.split_last().is_some_and(|(_, init)| {
+                init.iter()
+                    .any(|s| s["conflicts"].as_array().is_some_and(|f| !f.is_empty()))
+            });
+            if blocked {
+                out.push_str(&tr!(
+                    "git stops before the last one when a conflict comes earlier: put the one that conflicts last, or merge them one at a time."
+                ));
+                out.push('\n');
+            }
         }
         term::write(&out);
     } else {

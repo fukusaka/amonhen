@@ -446,7 +446,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::PredictMerge { ours, theirs } => encode(&ops.predict_merge(&ours, &theirs)?),
         Op::RangeDiff(ranges, factor) => encode(&ops.range_diff(&ranges, factor)?),
         Op::Resolve(rev) => encode(&ops.resolve(&rev)?),
-        Op::Merge(rev) => encode(&ops.merge(&rev)?),
+        Op::Merge(revs) => encode(&ops.merge(&revs)?),
         Op::Rebase(onto) => encode(&ops.rebase(&onto)?),
         Op::CherryPick { oid, is_merge } => encode(&ops.cherry_pick(&oid, is_merge)?),
         Op::Revert { oid, is_merge } => encode(&ops.revert(&oid, is_merge)?),

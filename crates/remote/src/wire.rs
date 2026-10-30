@@ -233,10 +233,10 @@ pub enum Op {
     },
     PredictMerge {
         ours: String,
-        theirs: String,
+        theirs: Vec<String>,
     },
     Resolve(String),
-    Merge(String),
+    Merge(Vec<String>),
     Rebase(String),
     CherryPick {
         oid: Oid,
