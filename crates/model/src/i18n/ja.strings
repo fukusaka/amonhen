@@ -283,6 +283,8 @@
 "Give the commit to merge" = "マージするコミットを渡してください";
 "Can’t tell without git 2.38 or newer" = "git 2.38 以降でないとわからない";
 "Merging {rev} into {ours} would conflict in {count} files:" = "{rev} を {ours} にマージすると、{count} 個のファイルでコンフリクトする:";
+"git stops before the last one when a conflict comes earlier: put the one that conflicts last, or merge them one at a time." = "最後より前のものでコンフリクトすると git は止まる。コンフリクトするものを最後に回すか、1 つずつマージする。";
+"Nothing to merge" = "マージするものがありません";
 "{rev} merges into {ours} without conflicts" = "{rev} は {ours} にコンフリクトなしでマージできる";
 "Can’t change the user’s git settings here" = "この環境では、ユーザー全体の git の設定を変えられません";
 "Unknown scope: {scope}" = "知らない scope: {scope}";
