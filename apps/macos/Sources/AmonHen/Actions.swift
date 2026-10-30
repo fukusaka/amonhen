@@ -211,44 +211,6 @@ final class Actions {
         perform(["op": "rewrite", "label": label, "edit": edit])
     }
 
-    func reword(_ oid: String) {
-        Task {
-            guard let message = await text(["op": "commitMessage", "oid": oid]),
-                  let edited = await editMessage(L("Edit Message"), initial: message, ok: L("Change")) else { return }
-            rewrite("Reword \(oid.prefix(8))", ["kind": "reword", "oid": oid, "message": edited])
-        }
-    }
-
-    func squash(_ oid: String) {
-        Task {
-            guard let message = await text(["op": "squashMessage", "oid": oid]),
-                  let edited = await editMessage("Squash into Parent", initial: message, ok: "Squash") else { return }
-            rewrite("Squash \(oid.prefix(8))", ["kind": "squash", "oid": oid, "message": edited])
-        }
-    }
-
-    /// 選んだ連続したコミットを 1 つにまとめる。メッセージは古い順に並べたものを初期値に編集してもらう。
-    func squash(range oids: [String]) {
-        let repository = self.repository
-        Task {
-            let result: Result<SquashRangeInfo, Error>
-            do {
-                let json = try Repository.json(["op": "squashRangeMessage", "oids": oids])
-                result = await Task.detached { Result { try repository.info(json: json, as: SquashRangeInfo.self) } }.value
-            } catch {
-                result = .failure(error)
-            }
-            switch result {
-            case let .failure(error):
-                await alert(L("Can’t Squash"), "\(error)")
-            case let .success(info):
-                let title = "Squash \(oids.count) Commits"
-                guard let edited = await editMessage(title, initial: info.message, ok: "Squash") else { return }
-                rewrite(title, ["kind": "squashRange", "oid": info.oldest, "last": info.newest, "message": edited])
-            }
-        }
-    }
-
     /// 編集できるコミット（新しい順）。
     func editableCommits() async -> [String] {
         await text(["op": "editableCommits"])?.split(separator: "\n").map(String.init) ?? []
@@ -387,9 +349,3 @@ final class Actions {
     }
 }
 
-/// `squashRangeMessage` の結果: まとめる範囲の両端と、メッセージの初期値。
-nonisolated struct SquashRangeInfo: Decodable, Sendable {
-    let oldest: String
-    let newest: String
-    let message: String
-}

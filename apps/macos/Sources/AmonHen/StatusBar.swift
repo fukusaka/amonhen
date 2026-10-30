@@ -5,7 +5,7 @@ import AppKit
 /// 行は上から重要な順に積み、何もなければ高さ 0 で隠れる。GTK4 の FE では `GtkActionBar` が同じ役。
 final class StatusBarController: NSViewController {
     /// 行の種類（上から並ぶ順）。同じ種類は 1 つだけ（出し直せば置き換える）。
-    enum Row: Int, CaseIterable { case sequence, failure, connection, message }
+    enum Row: Int, CaseIterable { case editing, sequence, failure, connection, message }
 
     private let content: NSViewController
     private let stack = NSStackView()

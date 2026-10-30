@@ -49,6 +49,34 @@
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
+"Keep" = "そのまま";
+"Combine with Older" = "古い方とまとめる";
+"Combine with Older, Keep Its Message" = "古い方とまとめる（古い方のメッセージ）";
+"Stop to Change Files" = "止めてファイルを直す";
+"Leave the commit as it is (git: pick)." = "コミットをそのまま残します（git: pick）。";
+"Give the commit a new message (git: reword)." = "コミットのメッセージを直します（git: reword）。";
+"Make this and the older commit below one commit, with a message you can edit (git: squash)." = "このコミットと下の古いコミットを 1 つにし、メッセージを書き直せます（git: squash）。";
+"Make this and the older commit below one commit, keeping the older one’s message (git: fixup)." = "このコミットと下の古いコミットを 1 つにし、古い方のメッセージを残します（git: fixup）。";
+"Remove the commit and its changes (git: drop)." = "コミットとその変更を取り除きます（git: drop）。";
+"Stop after this commit to change its files and amend it, then Continue (git: edit)." = "このコミットのあとで止め、ファイルを直して amend してから Continue します（git: edit）。";
+"Edit Commits" = "コミットの編集";
+"Choose what to do with each commit and drag rows to reorder them. Nothing changes until Apply Changes." = "コミットごとにすることを選び、行をドラッグして並べ替えます。「変更を実行」を押すまで何も変わりません。";
+"Message of the Combined Commit" = "まとめたコミットのメッセージ";
+"Apply Changes" = "変更を実行";
+"reordered" = "並べ替え";
+"%ld messages" = "メッセージ %ld";
+"%ld combined" = "まとめる %ld";
+"%ld dropped" = "Drop %ld";
+"%ld to change files" = "ファイルを直す %ld";
+"No changes yet." = "まだ変更はありません。";
+"Changes: %@." = "変更: %@。";
+"Edit %ld Commits" = "%ld コミットを編集";
+"Combine %ld Commits…" = "%ld コミットをまとめる…";
+"Combine with Older Commit…" = "1 つ古いコミットとまとめる…";
+"Edit Commits from Here…" = "ここからコミットを編集…";
+"Split %@?" = "%@ を分けますか？";
+"Its changes go back to the working tree; commit them in parts, then Continue." = "変更を作業ツリーに戻します。分けてコミットしてから Continue してください。";
+"Only commits from HEAD down to the first merge can be edited." = "編集できるのは、HEAD から最初の merge までのコミットです。";
 "Fetched" = "Fetch しました";
 "Pulled into %@" = "%@ に Pull しました";
 "Pushed %@ to %@" = "%1$@ を %2$@ に Push しました";
@@ -716,7 +744,6 @@
 "Can’t Read" = "読み込めません";
 "Edit Message" = "メッセージを編集";
 "Change" = "変更";
-"Can’t Squash" = "まとめられません";
 "Message (optional)" = "メッセージ（空でもよい）";
 "Include untracked files" = "untracked のファイルも含める";
 
@@ -935,7 +962,6 @@
 "Copy Commit ID" = "コミット ID をコピー";
 "Show %ld Merged Commits" = "取り込んだ %ld コミットを表示";
 "Fold Merged Commits" = "取り込んだコミットをたたむ";
-"Edit (Stop Here)" = "ここで止めて編集";
 "Drop %@?" = "%@ を取り除きますか？";
 "%ld folded" = "%ld 件を折りたたみ";
 

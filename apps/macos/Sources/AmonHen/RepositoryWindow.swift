@@ -154,6 +154,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let detailItem = NSSplitViewItem(viewController: detail)
         detailItem.minimumThickness = 420
         content.addSplitViewItem(detailItem)
+        historyPage = content
         let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes, .reflog: reflog, .rangeDiff: rangeDiff, .settings: settings])
         self.pages = pages
         // 右側（ページ）の下にステータスバー。サイドバーの切り替えが効くよう、分割ビューはウィンドウの中身のまま。
@@ -162,6 +163,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         split.addSplitViewItem(NSSplitViewItem(viewController: status))
         window.contentViewController = split
 
+        history.onEditCommits = { [weak self] start, preset in self?.editCommits(from: start, preset: preset) }
         history.onSelectCommit = { [weak self] commit in
             self?.selectedCommit = commit
             self?.detail.show(commit: commit)
@@ -870,6 +872,35 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     // MARK: - merge・rebase の途中の帯
+
+    /// History の画面（編集モードの間は差し替える）と、編集モード。
+    private var historyPage: NSViewController?
+    private var commitEditor: HistoryEditController?
+
+    /// History の編集モードに入る（`start` から HEAD まで）。`preset` は最初の変更（右クリックの近道・ドラッグから）。
+    func editCommits(from start: String, preset: HistoryEditController.Preset? = nil) {
+        guard workingCopy.sequence == nil, commitEditor == nil else { return NSSound.beep() }
+        var includingOlder = false
+        if case let .combine(oids) = preset, oids.count == 1 { includingOlder = true }
+        Task { @MainActor in
+            guard let editor = await HistoryEditController.load(actions: actions, from: start, includingOlder: includingOlder) else {
+                statusBar?.flash(L("Only commits from HEAD down to the first merge can be edited."), symbol: "exclamationmark.triangle")
+                return
+            }
+            commitEditor = editor
+            editor.onFinish = { [weak self] _ in self?.endEditingCommits() }
+            pages?.replace(.history, with: editor)
+            sidebar.select(page: .history)
+            statusBar?.show(.editing, editor.barRow)
+            if let preset { editor.apply(preset) }
+        }
+    }
+
+    private func endEditingCommits() {
+        if let historyPage { pages?.replace(.history, with: historyPage) }
+        statusBar?.hide(.editing)
+        commitEditor = nil
+    }
 
     /// ウィンドウの下のステータスバー（途中の操作・失敗・接続・終わった操作の一言）。
     private var statusBar: StatusBarController!

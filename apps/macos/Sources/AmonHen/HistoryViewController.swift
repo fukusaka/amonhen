@@ -273,6 +273,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         didSet { if head != oldValue, scope == .current, history != nil { scheduleReloadScope() } }
     }
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
+    /// History の編集モードに入る（そのコミットから HEAD まで、最初の変更つき）。
+    var onEditCommits: ((String, HistoryEditController.Preset?) -> Void)?
     var onSelectCommit: ((Data?) -> Void)?
     /// 複数の行を選んだ（⇧・⌘ クリック）。まとめた差分を見せる。
     var onSelectRows: (([Int], History) -> Void)?
@@ -1543,7 +1545,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let sorted = rows.sorted()
         if sorted.count >= 2, zip(sorted, sorted.dropFirst()).allSatisfy({ $1 == $0 + 1 }),
            !commits.contains(where: \.isMerge) {
-            add("Squash \(commits.count) Commits…") { actions.squash(range: commits.map(\.hex)) }
+            add(L("Combine %ld Commits…", commits.count)) { [weak self] in
+                self?.onEditCommits?(commits.last!.hex, .combine(commits.map(\.hex)))
+            }
         }
         // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus）。ブランチ・タグがあればその名前で
         // （merge のメッセージが git と同じになる）。
@@ -1623,15 +1627,19 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         menu.addItem(actions.resetMenuItem(to: hex))
         menu.addItem(.separator())
         if !isMerge {
-            add(L("Edit Message…")) { actions.reword(hex) }
-            add("Squash into Parent…") { actions.squash(hex) }
-            add("Fixup into Parent") { actions.rewrite("Fixup \(short)", ["kind": "fixup", "oid": hex]) }
-            add(L("Edit (Stop Here)")) { actions.rewrite("Edit \(short)", ["kind": "edit", "oid": hex]) }
-            add("Split") { actions.rewrite("Split \(short)", ["kind": "split", "oid": hex]) }
-            add("Drop…") {
+            // コミットの編集は、History の編集モードで（変更を積んで Apply）。ここにあるのは、最初の変更を入れて
+            // 編集モードを開く近道。
+            add(L("Edit Message…")) { [weak self] in self?.onEditCommits?(hex, .reword(hex)) }
+            add(L("Combine with Older Commit…")) { [weak self] in self?.onEditCommits?(hex, .combine([hex])) }
+            add("Drop…") { [weak self] in self?.onEditCommits?(hex, .drop(hex)) }
+            add(L("Edit Commits from Here…")) { [weak self] in self?.onEditCommits?(hex, nil) }
+            // 分ける（止めてから Working Copy で分けてコミットする）は、編集モードの外の操作。
+            add("Split…") {
                 Task { @MainActor in
-                    guard await actions.confirm(L("Drop %@?", short), message: Actions.canUndo, ok: "Drop") else { return }
-                    actions.rewrite("Drop \(short)", ["kind": "drop", "oid": hex])
+                    guard await actions.confirm(L("Split %@?", short),
+                                                message: L("Its changes go back to the working tree; commit them in parts, then Continue.") + " "
+                                                    + Actions.canUndo, ok: "Split") else { return }
+                    actions.rewrite("Split \(short)", ["kind": "split", "oid": hex])
                 }
             }
             menu.addItem(.separator())
@@ -1731,7 +1739,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             guard let from = chain.firstIndex(of: oid), let below, var to = chain.firstIndex(of: below) else { return NSSound.beep() }
             if row >= history.rowCount { to = chain.count - 1 } else if from < to { to -= 1 }
             if from == to { return }
-            actions.rewrite("Move \(oid.prefix(8))", ["kind": "move", "oid": oid, "to": to])
+            // 並べ替えも編集モードで（並びを見て Apply）。範囲は、動かす 2 か所の古い方から HEAD まで。
+            await MainActor.run { self.onEditCommits?(chain[max(from, to)], .move(oid, to)) }
         }
         return true
     }

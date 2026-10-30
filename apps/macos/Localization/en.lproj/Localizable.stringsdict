@@ -674,5 +674,53 @@
 			<string>%ld files with uncommitted changes come</string>
 		</dict>
 	</dict>
+	<key>%ld messages</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld message</string>
+			<key>other</key>
+			<string>%ld messages</string>
+		</dict>
+	</dict>
+	<key>Edit %ld Commits</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Edit %#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld Commit</string>
+			<key>other</key>
+			<string>%ld Commits</string>
+		</dict>
+	</dict>
+	<key>Combine %ld Commits…</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Combine %#@n0@…</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld Commit</string>
+			<key>other</key>
+			<string>%ld Commits</string>
+		</dict>
+	</dict>
 </dict>
 </plist>
