@@ -375,6 +375,7 @@
 "partial clone ({filter})" = "partial clone（{filter}）";
 "partial clone" = "partial clone";
 "sparse checkout ({count} folders)" = "sparse checkout（{count} フォルダ）";
+"sparse checkout (1 folder)" = "sparse checkout（1 フォルダ）";
 "sparse checkout" = "sparse checkout";
 "Can’t change git maintenance here" = "ここでは、git maintenance の登録を変えられません";
 "git maintenance" = "git maintenance";
