@@ -285,6 +285,7 @@
 "Merging {rev} into {ours} would conflict in {count} files:" = "{rev} を {ours} にマージすると、{count} 個のファイルでコンフリクトする:";
 "git stops before the last one when a conflict comes earlier: put the one that conflicts last, or merge them one at a time." = "最後より前のものでコンフリクトすると git は止まる。コンフリクトするものを最後に回すか、1 つずつマージする。";
 "Nothing to merge" = "マージするものがありません";
+"{operation} in progress: continue or abort it first, then try again" = "{operation} の途中です。Continue か Abort で終えてから、もう一度してください";
 "{rev} merges into {ours} without conflicts" = "{rev} は {ours} にコンフリクトなしでマージできる";
 "Can’t change the user’s git settings here" = "この環境では、ユーザー全体の git の設定を変えられません";
 "Unknown scope: {scope}" = "知らない scope: {scope}";
