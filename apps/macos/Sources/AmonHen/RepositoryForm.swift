@@ -38,6 +38,8 @@ nonisolated struct RepositoryForm: Decodable, Equatable, Sendable {
     let canFetchAllContents: Bool
     /// `git sparse-checkout` が使える（git 2.25 から）。
     let canSparseCheckout: Bool
+    /// `git maintenance start` が使える（git 2.31 から）。
+    let canMaintain: Bool
 
     /// 短い言い方と、その説明（Repository Settings の git の行に並べる）。ふつうの clone なら空。
     var items: [(title: String, help: String)] {
@@ -99,7 +101,7 @@ private struct ActionRow<Controls: View>: View {
 }
 
 /// 取得とフォルダ（docs/ux.md の 4.5）: shallow clone の履歴、partial clone の中身、sparse checkout のフォルダ。
-/// そのリポジトリにあるものだけを出す（フォルダは作業ツリーがあればいつも）。maintenance はこの後に足す。
+/// そのリポジトリにあるものだけを出す（フォルダは作業ツリーがあればいつも）。最後に、git maintenance への登録。
 struct FetchingPage: View {
     let model: RepositorySettingsModel
 
@@ -112,6 +114,7 @@ struct FetchingPage: View {
                 if !form.shallow, form.partial == nil, !form.workingTree {
                     Text(L("This repository has all of its history and contents.")).foregroundStyle(.secondary)
                 }
+                maintenanceSection(form)
             } else {
                 ProgressView().controlSize(.small).frame(maxWidth: .infinity)
             }
@@ -170,6 +173,25 @@ struct FetchingPage: View {
             if response == .alertFirstButtonReturn { model.runOperation(["op": "fetchAllContents"]) }
         }
         if let window = NSApp.keyWindow { alert.beginSheetModal(for: window, completionHandler: run) } else { run(alert.runModal()) }
+    }
+
+    // MARK: - Maintenance
+
+    /// git maintenance への登録（コアの `maintenance`）。入れると `git maintenance start`、切ると `unregister`
+    /// （予定はほかのリポジトリも使うので残る）。登録してあれば、アプリは commit-graph を書かない（毎時 git が書く）。
+    private func maintenanceSection(_ form: RepositoryForm) -> some View {
+        Section(L("Maintenance")) {
+            ActionRow(title: L("Keep this repository maintained in the background"),
+                      help: model.host.map { L("Every hour git prefetches and writes the commit-graph; it’s set in the global git config and the scheduler on %@ (git maintenance).", $0) }
+                          ?? L("Every hour git prefetches and writes the commit-graph; it’s set in your global git config and launchd (git maintenance)."),
+                      disabledReason: form.canMaintain ? nil : RepositoryForm.tooOld("2.31", model: model)) {
+                Toggle("", isOn: Binding(get: { form.maintenance },
+                                         set: { model.runOperation(["op": "maintenance", "on": $0]) }))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+            }
+        }
     }
 
     // MARK: - Folders（sparse checkout）
