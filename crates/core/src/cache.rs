@@ -55,7 +55,8 @@ struct Header {
     lane_count: u32,
     /// 並び順（`HistoryOrder`。0 が日付順、1 がトポロジー順）。
     order: u32,
-    reserved: u32,
+    /// `Tips` の区画のうち、起点の数（残りは shallow clone の境界）。
+    tip_count: u32,
     /// 区画ごとの（ファイル先頭からのバイト位置, 要素数）。
     sections: [[u64; 2]; SECTIONS],
 }
@@ -65,6 +66,8 @@ unsafe impl Pod for Header {}
 /// キャッシュに入れる History 一式。
 pub struct CachedHistory {
     pub tips: Vec<Oid>,
+    /// shallow clone の境界（`GitBackend::shallow`）。変わっていれば History を作り直す。
+    pub shallow: Vec<Oid>,
     pub head: Option<Oid>,
     /// `graph` の並び順。
     pub order: HistoryOrder,
@@ -153,6 +156,7 @@ pub fn write(path: &Path, history: &CachedHistory) -> Result<()> {
 
 fn write_to(path: &Path, h: &CachedHistory) -> Result<()> {
     let checkpoints = encode_checkpoints(&h.layout.checkpoints);
+    let tips = [h.tips.as_slice(), &h.shallow].concat();
     let sections: [(&[u8], usize); SECTIONS] = [
         (h.graph.ids_slab().as_bytes(), h.graph.len()),
         (h.graph.commit_times_slab().as_bytes(), h.graph.len()),
@@ -167,7 +171,7 @@ fn write_to(path: &Path, h: &CachedHistory) -> Result<()> {
         (h.layout.nodes.as_bytes(), h.layout.nodes.len()),
         (h.layout.edges.as_bytes(), h.layout.edges.len()),
         (h.layout.mainline.as_bytes(), h.layout.mainline.len()),
-        (bytes_of(&h.tips), h.tips.len()),
+        (bytes_of(&tips), tips.len()),
         (&checkpoints, checkpoints.len()),
     ];
 
@@ -178,7 +182,7 @@ fn write_to(path: &Path, h: &CachedHistory) -> Result<()> {
         head: h.head.map_or([0; 20], |o| o.0),
         lane_count: u32::from(h.layout.lane_count),
         order: order_code(h.order),
-        reserved: 0,
+        tip_count: h.tips.len() as u32,
         sections: [[0; 2]; SECTIONS],
     };
     let mut offset = size_of::<Header>().next_multiple_of(ALIGN);
@@ -239,8 +243,15 @@ pub fn read(path: &Path) -> Option<CachedHistory> {
     if layout.nodes.len() != graph.len() {
         return None;
     }
+    let mut tips = slab::<Oid>(&map, &header, Section::Tips)?.to_vec();
+    let shallow = tips.split_off(
+        usize::try_from(header.tip_count)
+            .ok()
+            .filter(|&n| n <= tips.len())?,
+    );
     Some(CachedHistory {
-        tips: slab::<Oid>(&map, &header, Section::Tips)?.to_vec(),
+        tips,
+        shallow,
         head: (header.has_head != 0).then_some(Oid(header.head)),
         order: order_from_code(header.order)?,
         graph,
@@ -333,6 +344,7 @@ mod tests {
         let layout = layout(&graph, head_row);
         let head = head_row.map(|r| graph.ids()[r as usize]);
         let tips = vec![graph.ids()[0], graph.ids()[1]];
+        let shallow = vec![graph.ids()[9_999]];
         let dir = tempfile::tempdir().unwrap();
         let path = path_for(dir.path(), "/some/repo");
 
@@ -340,6 +352,7 @@ mod tests {
             &path,
             &CachedHistory {
                 tips: tips.clone(),
+                shallow: shallow.clone(),
                 head,
                 order: HistoryOrder::Topo,
                 graph: graph.clone(),
@@ -349,6 +362,7 @@ mod tests {
         .unwrap();
         let read = read(&path).unwrap();
         assert_eq!(read.tips, tips);
+        assert_eq!(read.shallow, shallow);
         assert_eq!(read.head, head);
         assert_eq!(read.order, HistoryOrder::Topo);
         assert_eq!(read.graph, graph);
@@ -374,6 +388,7 @@ mod tests {
             &path,
             &CachedHistory {
                 tips: vec![],
+                shallow: vec![],
                 head: None,
                 order: HistoryOrder::Date,
                 graph,
@@ -427,6 +442,7 @@ mod tests {
             &path,
             &CachedHistory {
                 tips: vec![],
+                shallow: vec![],
                 head: None,
                 order: HistoryOrder::Date,
                 graph: CommitGraph::default(),

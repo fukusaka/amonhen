@@ -32,6 +32,7 @@ fn bench(c: &mut Criterion) {
     let path = dir.path().join("history.bin");
     let history = CachedHistory {
         tips: vec![old_g.ids()[0]],
+        shallow: vec![],
         head: None,
         order: amonhen_model::HistoryOrder::Date,
         graph: old_g.clone(),

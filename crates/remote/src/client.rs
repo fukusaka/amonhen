@@ -361,6 +361,10 @@ impl GitBackend for RemoteBackend {
         self.conn.call(&Request::Tips)
     }
 
+    fn shallow(&self) -> Result<Vec<Oid>> {
+        self.conn.call(&Request::Shallow)
+    }
+
     /// 関数は送れないので、`known` は使わずにすべて読む（コアは `read_new_commits` を使う）。
     fn read_commits(
         &self,

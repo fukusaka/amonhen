@@ -40,6 +40,8 @@ pub enum Request {
     Head,
     /// → `Vec<Oid>`
     Tips,
+    /// → `Vec<Oid>`（shallow clone の境界）
+    Shallow,
     /// → `Vec<RawCommit>`（`tips` から辿れ、`known_tips` から辿れないもの）
     NewCommits {
         tips: Vec<Oid>,
