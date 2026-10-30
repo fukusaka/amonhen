@@ -7,6 +7,13 @@ becomes the GitHub Release notes.
 
 ## App and engine
 
+### Unreleased
+
+#### Changed
+
+- Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
+  Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
+
 ### [0.2.8] - 2026-10-30
 
 Commits can be saved as patches and patches applied, a branch compared with its version before a rebase (Range Diff),
@@ -81,8 +88,6 @@ git chosen in Settings is used by the CLI and the VSCode extension as well.
   repositories are marked, a path can be typed, and folders like `/opt/homebrew/bin` are one menu item away.
 - History's Edit (Stop Here) stops as git's `edit` does: changes staged while stopped are amended into the commit on
   Continue, and with `notes.rewriteRef` its notes also go to the commits added while stopped.
-- Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
-  Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 
 #### Fixed
 
@@ -611,6 +616,13 @@ First release.
 
 ## VSCode extension
 
+### Unreleased
+
+#### Changed
+
+- Reword and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and Reword runs
+  the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
+
 ### [0.2.4] - 2026-10-30
 
 The bundled engines are the 0.2.8 ones, the same build as the 0.2.8 app and CLI, so all three share one daemon. Commits
@@ -644,8 +656,6 @@ are marked; people are shown by their mailmap names, and without the engine the 
   for the remote (following `branch.<name>.pushRemote` and `remote.pushDefault`) and the name there.
 - Edit in History stops as git's `edit` does: changes staged while stopped are amended into the commit on Continue,
   and with `notes.rewriteRef` its notes also go to the commits added while stopped.
-- Reword and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and Reword runs
-  the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 
 #### Fixed
 
