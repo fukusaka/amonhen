@@ -11,6 +11,8 @@ final class Actions {
     var onFetch: (() -> Void)?
     /// 次に Undo される操作の名前が変わった。
     var onUndoChange: ((String?) -> Void)?
+    /// 操作がコンフリクトか途中で止まった（Working Copy を開いて最初のコンフリクトを選ぶ）。なければ警告のシートを出す。
+    var onStop: (() -> Void)?
     /// 操作が失敗した（ウィンドウの帯で知らせる）。なければ警告のシートを出す。
     var onFailure: ((OperationFailure) -> Void)?
     /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。確認のシートに出す。
@@ -36,6 +38,14 @@ final class Actions {
                 let json = try Repository.json(command)
                 let result = try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
                 switch result.outcome {
+                case .conflict where onStop != nil && !result.remaining.isEmpty:
+                    // 1 つずつの merge が途中で止まった。まだ merge していないものは、ここでしか言えない。
+                    onStop?()
+                    await alert(L("Not merged yet: %@", ListFormatter.localizedString(byJoining: result.remaining)),
+                                L("Merge them again after resolving these conflicts."))
+                case .conflict where onStop != nil, .stopped where onStop != nil:
+                    // どこで止まったか・次に何をするかはウィンドウの帯に出る。Working Copy でコンフリクトを開く。
+                    onStop?()
                 case .conflict where (command["op"] as? String) == "am":
                     // 当たらずに止まったのか、3-way でコンフリクトを残したのかは、帯に出す。
                     await alert(L("Stopped at a Patch"), L("The bar under the toolbar says why and what you can do next."))

@@ -437,6 +437,17 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
         notifySequence()
         rebuildList()
+        if wantsFirstConflict {
+            wantsFirstConflict = false
+            selectFirstConflict()
+        }
+    }
+
+    /// 操作がコンフリクトで止まった。読み直したら最初のコンフリクトのファイルを選ぶ（右にマージエディタが出る）。
+    private var wantsFirstConflict = false
+
+    func openFirstConflict() {
+        wantsFirstConflict = true
     }
 
     /// 内容のコンフリクトのファイルに残っているマーカーの数と、rerere が解決を当てたか（パスごと）。
