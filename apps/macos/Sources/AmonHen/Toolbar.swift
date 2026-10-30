@@ -5,7 +5,7 @@ import AppKit
 /// 使えるかどうかも `RepositoryWindow.validateToolbarItem` で決める。
 final class MainToolbar: NSObject, NSToolbarDelegate {
     /// 並びを変えたら名前を変える（保存した並びに新しい項目が出てこないため）。
-    let toolbar = NSToolbar(identifier: "main.v4")
+    let toolbar = NSToolbar(identifier: "main.v5")
     private let repositoryItem = NSToolbarItem(itemIdentifier: .repository)
     private let repositoryButton = NSButton()
     private let branchItem = NSToolbarItem(itemIdentifier: .branch)
@@ -219,12 +219,12 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.repositories, .repository, .branch, .fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop, .flexibleSpace,
-         .activity, .refresh, .undo, .search]
+        [.toggleSidebar, .repositories, .repository, .branch, .fetch, .pull, .push, .space, .merge, .rebase, .space, .stash, .pop,
+         .flexibleSpace, .activity, .refresh, .undo, .search, .more]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.repositories, .repository, .branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
+        [.toggleSidebar, .more, .repositories, .repository, .branch, .search, .fetch, .pull, .push, .merge, .rebase, .stash, .pop, .newBranch, .activity, .refresh, .undo, .terminal, .finder,
          .space, .flexibleSpace]
     }
 
@@ -235,6 +235,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         if id == .branch { return branchItem }
         if id == .repository { return repositoryItem }
         if id == .search { return searchItem }
+        if id == .more { return moreItem() }
+        if id == .refresh { return refreshItem() }
         let item: NSToolbarItem, label: String, symbol: String, action: Selector, tip: String
         switch id {
         case .repositories:
@@ -266,10 +268,6 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         case .newBranch:
             (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), "Branch", "plus.square.on.square",
                                                   #selector(RepositoryWindow.newBranch(_:)), L("New branch from HEAD (⌥⌘B)"))
-        case .refresh:
-            (item, label, symbol, action, tip) = (NSToolbarItem(itemIdentifier: id), L("Refresh"), "arrow.clockwise",
-                                                  #selector(RepositoryWindow.refreshRepository(_:)),
-                                                  L("Reload History, branches and Working Copy (⌘R)"))
         case .undo:
             (item, label, symbol, action, tip) = (undoItem, "Undo", "arrow.uturn.backward.circle",
                                                   #selector(RepositoryWindow.undoOperation(_:)), undoItem.toolTip ?? "")
@@ -291,7 +289,51 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
     }
 }
 
+extension MainToolbar {
+    /// ≡: メニューバーにしかなかった、たまに使う操作の置き場所（GTK4 のヘッダーバーの ≡ と同じ中身）。ウィンドウの
+    /// 中だけで、すべての操作に届くように。
+    static let moreCommands: [Command?] = [
+        Commands.quickOpen, nil,
+        Commands.newWorktree, Commands.pruneWorktrees, nil,
+        Commands.createPullRequest, Commands.openOnGitHub, nil,
+        Commands.openInTerminal, Commands.revealInFinder, nil,
+        Commands.rebuildHistory, nil,
+        Commands.repositorySettings, Commands.activity, Commands.settings,
+    ]
+
+    private func moreItem() -> NSToolbarItem {
+        let item = NSMenuToolbarItem(itemIdentifier: .more)
+        let menu = NSMenu(title: L("More"))
+        for command in Self.moreCommands {
+            menu.addItem(command.map { $0.menuItem(appTarget: NSApp.delegate) } ?? .separator())
+        }
+        item.menu = menu
+        item.showsIndicator = false
+        item.image = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: L("More"))
+        item.label = L("More")
+        item.paletteLabel = L("More")
+        item.toolTip = L("Worktrees, pull requests, Terminal and Finder, History, settings")
+        return item
+    }
+
+    /// Refresh。押せば読み直し、▾ で History を作り直す。
+    private func refreshItem() -> NSToolbarItem {
+        let item = NSMenuToolbarItem(itemIdentifier: .refresh)
+        let menu = NSMenu(title: L("Refresh"))
+        menu.addItem(Commands.rebuildHistory.menuItem())
+        item.menu = menu
+        item.showsIndicator = true
+        item.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: L("Refresh"))
+        item.label = L("Refresh")
+        item.paletteLabel = L("Refresh")
+        item.action = #selector(RepositoryWindow.refreshRepository(_:))
+        item.toolTip = L("Reload History, branches and Working Copy (⌘R)")
+        return item
+    }
+}
+
 extension NSToolbarItem.Identifier {
+    static let more = Self("more")
     static let fetch = Self("fetch")
     static let pull = Self("pull")
     static let push = Self("push")

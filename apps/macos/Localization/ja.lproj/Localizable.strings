@@ -49,6 +49,10 @@
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
+"Find in the diff (⌘F)" = "差分の中を探す（⌘F）";
+"Go to HEAD (⌘⇧H)" = "HEAD へ移動（⌘⇧H）";
+"More" = "その他";
+"Worktrees, pull requests, Terminal and Finder, History, settings" = "worktree・プルリクエスト・ターミナルと Finder・History・設定";
 "Rename Branch…" = "ブランチの名前を変える…";
 "Checkout %@…" = "%@ を Checkout…";
 "Checkout %@ as Local Branch…" = "%@ をローカルブランチとして Checkout…";

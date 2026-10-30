@@ -1111,6 +1111,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private let repository: Repository
     private let files = NSTableView()
     private let diffView: DiffViewController
+    /// 差分の中を探す（⌘F の検索の帯を開く。メニューバーを使わずに届くように）。
+    private let findButton = NSButton()
+
+    @objc private func findInDiff() { diffView.showFindBar() }
     private var changes: CommitChanges?
     private var request = 0
     private var headerRequest = 0
@@ -1249,6 +1253,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         headerContainer.addSubview(expandButton)
         var right = expandButton.frame.minX
         for (button, symbol, tip, action) in [
+            (findButton, "magnifyingglass", L("Find in the diff (⌘F)"), #selector(findInDiff)),
             (explainButton, "sparkles", L("AI: Explain this commit (or the combined diff of the selected commits)."), #selector(explainCommit)),
             (translateButton, "character.bubble", L("AI: Translate the message."), #selector(translateMessage)),
         ] {
