@@ -31,6 +31,9 @@ final class ShallowHistoryBand: NSView {
         for (title, commits) in Self.moreChoices {
             menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.fetch(["op": "deepen", "commits": commits]) })
         }
+        menu.addItem(ClosureMenuItem(title: L("Other…")) { [weak self] in
+            Self.askDeepen(in: self?.window) { commits in self?.fetch(["op": "deepen", "commits": commits]) }
+        })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem(title: L("Up to a Date…")) { [weak self] in self?.fetchSinceDate() })
         moreButton.toolTip = L("Fetch older commits from the remote (git fetch --deepen)")
@@ -83,6 +86,38 @@ final class ShallowHistoryBand: NSView {
     /// 「さらに取る」の数（項目の名前と、コミットの数）。Repository Settings の「取得とフォルダ」も同じものを出す。
     static var moreChoices: [(title: String, commits: Int)] {
         [(L("100 Commits"), 100), (L("1,000 Commits"), 1_000), (L("10,000 Commits"), 10_000)]
+    }
+
+    /// 「さらに取る」の「その他…」。何コミット取り足すかを尋ねる。
+    static func askDeepen(in window: NSWindow?, done: @escaping (Int) -> Void) {
+        askCount(in: window, title: L("Fetch More History"),
+                 message: L("How many older commits to fetch (git fetch --deepen)."), button: L("Fetch"),
+                 initial: 100, done: done)
+    }
+
+    /// コミットの数（1 以上）を尋ねる。決めたら `done` に渡す。
+    static func askCount(in window: NSWindow?, title: String, message: String, button: String, initial: Int,
+                         done: @escaping (Int) -> Void) {
+        let alert = NSAlert()
+        alert.messageText = title
+        alert.informativeText = message
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: L("Cancel"))
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 120, height: 22))
+        let format = NumberFormatter()
+        format.numberStyle = .decimal
+        format.minimum = 1
+        format.maximumFractionDigits = 0
+        format.allowsFloats = false
+        field.formatter = format
+        field.integerValue = initial
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        let run: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .alertFirstButtonReturn, field.integerValue >= 1 else { return }
+            done(field.integerValue)
+        }
+        if let window { alert.beginSheetModal(for: window, completionHandler: run) } else { run(alert.runModal()) }
     }
 
     /// 日付を尋ね、その日付より新しいコミットをすべて取る。

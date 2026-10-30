@@ -100,11 +100,42 @@ enum CloneSheet {
         // 取得する範囲と、最近の履歴だけなら何コミットか（既定は 100）。下に選んだものの説明。
         let download = NSPopUpButton(frame: .zero, pullsDown: false)
         download.addItems(withTitles: Download.allCases.map(\.title))
+        // 1（いちばん新しいコミットだけ）・決まった数・「その他…」（好きな数を尋ねる。決めた数は項目にして選ぶ）。
         let depth = NSPopUpButton(frame: .zero, pullsDown: false)
+        depth.addItem(withTitle: L("1 Commit"))
+        depth.lastItem?.tag = 1
         for choice in ShallowHistoryBand.moreChoices {
             depth.addItem(withTitle: choice.title)
             depth.lastItem?.tag = choice.commits
         }
+        depth.menu?.addItem(.separator())
+        depth.addItem(withTitle: L("Other…"))
+        depth.lastItem?.tag = -1
+        depth.selectItem(withTag: 100)
+        var depthChosen = 100
+        let depthTarget = ClosureTarget { [weak depth] in
+            guard let depth else { return }
+            guard depth.selectedTag() == -1 else {
+                depthChosen = depth.selectedTag()
+                return
+            }
+            depth.selectItem(withTag: depthChosen)
+            ShallowHistoryBand.askCount(in: nil, title: L("Recent History"),
+                                        message: L("How many recent commits to fetch (git clone --depth)."),
+                                        button: L("Choose"), initial: depthChosen) { commits in
+                if depth.indexOfItem(withTag: commits) < 0 {
+                    let title = commits == 1 ? L("1 Commit")
+                        : L("%@ Commits", NumberFormatter.localizedString(from: NSNumber(value: commits), number: .decimal))
+                    depth.menu?.insertItem(withTitle: title, action: nil, keyEquivalent: "",
+                                           at: depth.indexOfItem(withTag: -1) - 1)
+                    depth.item(at: depth.indexOfItem(withTag: -1) - 2)?.tag = commits
+                }
+                depth.selectItem(withTag: commits)
+                depthChosen = commits
+            }
+        }
+        depth.target = depthTarget
+        depth.action = #selector(ClosureTarget.fire)
         let downloadHelp = helpLabel()
         // 一部のフォルダだけ取り出す（git 2.25 から）。下に説明か、使えなければ ⚠ と理由。
         let sparse = NSButton(checkboxWithTitle: L("Check out only some folders"), target: nil, action: nil)
@@ -159,7 +190,7 @@ enum CloneSheet {
         alert.accessoryView = grid
         alert.window.initialFirstResponder = url
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        _ = (chooser, changed)
+        _ = (chooser, changed, depthTarget)
         let source = url.stringValue.trimmingCharacters(in: .whitespaces)
         let folderName = name.stringValue.trimmingCharacters(in: .whitespaces).isEmpty
             ? Self.name(fromURL: source) : name.stringValue.trimmingCharacters(in: .whitespaces)

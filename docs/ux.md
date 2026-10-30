@@ -588,7 +588,7 @@ A clone made with `--depth` or `--shallow-since` (in the Clone sheet, Recent his
 part of the history. Only shallow clones show any of the following.
 
 - After History's last row, a band says "Older history isn’t fetched (shallow clone)" with Fetch More, a pull-down
-  of 100, 1,000 or 10,000 more commits (`git fetch --deepen=<n>`) and Up to a Date…, which asks for a date and fetches
+  of 100, 1,000 or 10,000 more commits and Other…, which asks for any number (`git fetch --deepen=<n>`), and Up to a Date…, which asks for a date and fetches
   the commits made after it (`--shallow-since`), and Fetch All (`--unshallow`). They run like Fetch: progress in the
   toolbar and Activity, a spinner in the band, failures in the status bar. History then reads the older
   commits. Nothing is recorded for Undo: they only add history. The band is hidden while only the commits matching a
@@ -612,7 +612,7 @@ the sidebar is wider.
 
 - Clone: File > Clone… has Download: Everything (the default, a plain `git clone`), File contents when needed
   (`--filter=blob:none`; good for large repositories, contents are fetched when a diff or file needs them) or Recent
-  history only (`--depth`, with 100, 1,000 or 10,000 commits beside it; older history can be fetched later, 7b), each
+  history only (`--depth`, with 1, 100, 1,000 or 10,000 commits beside it, or Other… for any number; older history can be fetched later, 7b), each
   with one sentence of help. Treeless clones (`--filter=tree:0`) aren't offered. Check out only some folders clones
   with `--sparse` (only the top-level files) and right after the clone asks for a folder from HEAD's tree with the
   picker of Fetching and Folders; canceling leaves only the top-level files, and folders can be added there later. It

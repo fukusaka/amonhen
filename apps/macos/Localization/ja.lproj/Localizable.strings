@@ -1637,6 +1637,12 @@
 "Fetch All" = "すべて取る";
 "100 Commits" = "100 コミット";
 "1,000 Commits" = "1,000 コミット";
+"1 Commit" = "1 コミット";
+"%@ Commits" = "%@ コミット";
+"Fetch More History" = "さらに履歴を取る";
+"How many older commits to fetch (git fetch --deepen)." = "いくつ古いコミットを取り足すか（git fetch --deepen）。";
+"Recent History" = "最近の履歴";
+"How many recent commits to fetch (git clone --depth)." = "新しいほうからいくつのコミットを取るか（git clone --depth）。";
 "10,000 Commits" = "10,000 コミット";
 "Up to a Date…" = "この日付まで…";
 "Fetch older commits from the remote (git fetch --deepen)" = "リモートから、より古いコミットを取ります（git fetch --deepen）";
