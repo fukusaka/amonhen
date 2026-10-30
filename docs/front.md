@@ -48,7 +48,7 @@ History and diffs are held by number (`history`, `diff`). Even if History is ref
 |---|---|---|---|
 | `hello` | language | version, workdir, gitDir | |
 | `environment` | env (the front-end's environment, `NAME=value` pairs separated by `"\u0000"`, as at opening) | | |
-| `history` | rebuild?, fold?, expanded? (array of IDs), tips? (array of IDs; only what is reachable from them) | history, generation, rows, head, headRow, folded | |
+| `history` | rebuild?, fold?, expanded? (array of IDs), tips? (array of IDs; only what is reachable from them) | history, generation, rows, head, headRow, folded, shallow (a shallow clone's History), boundaryRows (rows of the commits at the shallow boundary, whose parents aren't fetched) | |
 | `historyMatching` | history, rows | same as `history` (a History of only the matching rows) | |
 | `historyRelease` | history | | |
 | `historyRows` | history, and start and count or rows (array of rows), recorded? (true to list the rows whose author the mailmap changed) | count, edges, recorded (index into the rows, name and email as recorded; empty unless asked) | rowNumbers u32, nodes, ids, times i64, spans (start and length of the subject and author in `text`, u32 × 4; the author by the mailmap), text (UTF-8), signatures u8, folded u32 (for a folded History), parentStarts u32 (number of rows + 1), parents u32 (parent rows), parentIds (parent IDs), edges, edgeIds u32 (only with start and count; edges overlapping that range) |

@@ -96,6 +96,37 @@ fn log_draws_the_branch_and_the_merge() {
     assert_eq!(out.lines().count(), 2, "{out}");
 }
 
+/// shallow clone の log は、最後に古い履歴を取得していないと添える。`run` で取り足せる。
+#[test]
+fn log_notes_where_a_shallow_clone_stops() {
+    let src = repository();
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    // --depth はパスの clone では効かないので file:// にする（Windows は file:///C:/…）。
+    let path = src.path().to_str().unwrap().replace('\\', "/");
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    git(
+        tmp.path(),
+        &["clone", "-q", "--depth", "1", &url, "shallow"],
+    );
+    let dir = tmp.path().join("shallow");
+    let dir = dir.to_str().unwrap();
+    let (out, code) = amonhen(home.path(), &["log", "-C", dir, "--color=never"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("merge topic"), "{out}");
+    assert!(out.contains("Older history isn’t fetched"), "{out}");
+
+    let (out, code) = amonhen(home.path(), &["run", "-C", dir, r#"{"op":"unshallow"}"#]);
+    assert_eq!(code, 0, "{out}");
+    let (out, _) = amonhen(home.path(), &["log", "-C", dir, "--color=never"]);
+    assert!(out.contains("first"), "{out}");
+    assert!(!out.contains("Older history"), "{out}");
+}
+
 #[test]
 fn undo_and_merge_file() {
     let repo = repository();

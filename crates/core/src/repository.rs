@@ -196,6 +196,30 @@ impl HistorySnapshot {
         self.rows().get(id).copied()
     }
 
+    /// shallow clone の境界のコミット（親を取得していない）の行（昇順）。shallow clone でなければ空。索引は
+    /// 作らずに全行を見る（境界はたいてい数個なので、150 万コミットでも数 ms）。
+    pub fn boundary_rows(&self) -> Vec<u32> {
+        if self.shallow.is_empty() {
+            return Vec::new();
+        }
+        if let Some(rows) = self.rows.get() {
+            let mut found: Vec<u32> = self
+                .shallow
+                .iter()
+                .filter_map(|id| rows.get(id).copied())
+                .collect();
+            found.sort_unstable();
+            return found;
+        }
+        self.graph
+            .ids()
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| self.shallow.contains(id))
+            .map(|(r, _)| r as u32)
+            .collect()
+    }
+
     fn rows(&self) -> &OidMap<u32> {
         self.rows.get_or_init(|| {
             self.graph
@@ -1709,7 +1733,9 @@ mod tests {
         let cache = tmp.path().join("cache/history.bin");
 
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache.clone());
-        assert_eq!(repo.load_history().unwrap().graph.len(), 1);
+        let history = repo.load_history().unwrap();
+        assert_eq!(history.graph.len(), 1);
+        assert_eq!(history.boundary_rows(), [0]);
         // 起点（ブランチ）は変わらないが、境界のコミットに親ができる。
         git(&dir, &["fetch", "-q", "--deepen", "1"]);
         assert_eq!(repo.load_history().unwrap().graph.len(), 2);
@@ -1721,6 +1747,7 @@ mod tests {
         let history = repo.load_history().unwrap();
         assert_eq!(history.graph.len(), 3);
         assert!(history.shallow.is_empty());
+        assert!(history.boundary_rows().is_empty());
     }
 
     #[test]
