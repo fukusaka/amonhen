@@ -546,7 +546,7 @@ History の行の文字（件名・作者・日時）のメモリ:
 | 同上（キャッシュなし、裏で読んで表示） | 約 400 ms |
 
 - 起点と HEAD が前回と同じなら、走査もレイアウトもしない（コミットは不変なので History も同じ）。
-- shallow clone では、境界のコミット（`.git/shallow`）を git と同じく親のないコミットとして読む。境界は History とそのキャッシュに持ち、変われば（`git fetch --deepen`・`--unshallow`）History を最初から読む。起点は動かなくても、前回の境界のコミットに親ができているため。
+- shallow clone では、境界のコミット（`.git/shallow`）を git と同じく親のないコミットとして読む。境界は History とそのキャッシュに持ち、変われば（`git fetch --deepen`・`--unshallow`）History を最初から読む。起点は動かなくても、前回の境界のコミットに親ができているため。根のコミットが `.git/shallow` に残っていても（`--deepen` で根に届くと git は残す）、取得していない親はないので境界に数えない。取り足すのはコアの `deepen`（`commits` なら `git fetch --deepen=<n>`、`since` なら `--shallow-since`）・`unshallow` の命令で、既定のリモートから Fetch と同じく動かす。shallow clone でなければ断り、Undo には記録しない。FE には `HistorySnapshot::boundary_rows`（FFI の `amonhen_history_boundary_rows`、FE 向けの窓口の `boundaryRows`）と、`commitInfo` の `parentsNotFetched` で伝える。
 - 読み込み時間の大半は検査と索引の組み立て。mmap 自体はほぼ 0。必要なら索引もキャッシュに入れる。
 
 Working Copy の status（`crates/core/examples/status.rs`、2 回目以降）:

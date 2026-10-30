@@ -564,7 +564,7 @@ Persistent cache (`crates/core/src/cache.rs`):
 | Same (without cache, read and shown in the background) | About 400 ms |
 
 - If the starting points and HEAD are the same as last time, neither the walk nor the layout runs (commits are immutable, so History is the same too).
-- In a shallow clone, the boundary commits (`.git/shallow`) are read as having no parents, as git does. The boundary is kept with History and in its cache, and when it changes (`git fetch --deepen`, `--unshallow`), History is read from scratch: the old boundary commits now have parents, though no starting point moved.
+- In a shallow clone, the boundary commits (`.git/shallow`) are read as having no parents, as git does. The boundary is kept with History and in its cache, and when it changes (`git fetch --deepen`, `--unshallow`), History is read from scratch: the old boundary commits now have parents, though no starting point moved. A root commit left in `.git/shallow` (git keeps it there once `--deepen` reaches the root) has no parents to fetch, so it is not counted as a boundary. The core's `deepen` (`commits`: `git fetch --deepen=<n>`; `since`: `--shallow-since`) and `unshallow` commands fetch more from the default remote and run like Fetch; they refuse a repository that is not shallow and are not recorded for Undo. Front-ends get `HistorySnapshot::boundary_rows` (FFI `amonhen_history_boundary_rows`, the front API's `boundaryRows`) and `commitInfo`'s `parentsNotFetched`.
 - Most of the load time is the check and building the index. mmap itself is nearly 0. If needed, the index can go into the cache too.
 
 Working Copy status (`crates/core/examples/status.rs`, second run onward):

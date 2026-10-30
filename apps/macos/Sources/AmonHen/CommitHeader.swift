@@ -355,7 +355,7 @@ struct CommitHeaderRenderer {
         }
         if !info.parents.isEmpty {
             add(info.parents.count > 1 ? "  Parents " : "  Parent ", dim)
-            commitLinks(info.parents)
+            parentLinks(length: 12, separator: ", ")
         }
         add("\n", dim)
         let start = text.length
@@ -367,7 +367,7 @@ struct CommitHeaderRenderer {
     private func renderStandard() {
         let table = rows()
         table.row("Commit") { add(info.oid, mono) }
-        if !info.parents.isEmpty { table.row(info.parents.count > 1 ? "Parents" : "Parent") { fullCommitLinks(info.parents) } }
+        if !info.parents.isEmpty { table.row(info.parents.count > 1 ? "Parents" : "Parent") { parentLinks(length: 40, separator: "\u{2028}") } }
         signatureRow(table)
         if !info.refs.isEmpty { table.row("Refs") { refLinks(info.refs, refAttrs) } }
         tagRows(table)
@@ -383,7 +383,7 @@ struct CommitHeaderRenderer {
     private func renderDetailed() {
         let table = rows()
         table.row("Commit") { add(info.oid, mono) }
-        if !info.parents.isEmpty { table.row(info.parents.count > 1 ? "Parents" : "Parent") { fullCommitLinks(info.parents) } }
+        if !info.parents.isEmpty { table.row(info.parents.count > 1 ? "Parents" : "Parent") { parentLinks(length: 40, separator: "\u{2028}") } }
         if let children = extras?.children, !children.isEmpty {
             table.row(children.count > 1 ? "Children" : "Child") { fullCommitLinks(children) }
         }
@@ -477,6 +477,21 @@ struct CommitHeaderRenderer {
     }
 
     /// 40 桁の ID を 1 行ずつ（選んでコピーでき、押すとそのコミットへ移る）。
+    /// 親の ID。shallow clone の境界のコミットは親を取得していない（History で選べない）ので、リンクにせずに薄く出し、
+    /// そう添える。
+    private func parentLinks(length: Int, separator: String) {
+        guard info.parentsNotFetched else {
+            return length == 40 ? fullCommitLinks(info.parents) : commitLinks(info.parents)
+        }
+        var faint = mono
+        faint[.foregroundColor] = NSColor.tertiaryLabelColor
+        for (i, id) in info.parents.enumerated() {
+            if i > 0 { add(separator, faint) }
+            add(String(id.prefix(length)), faint)
+        }
+        add(" " + L("(not fetched)"), dim)
+    }
+
     private func fullCommitLinks(_ ids: [String]) {
         for (i, id) in ids.enumerated() {
             if i > 0 { add("\u{2028}", mono) }

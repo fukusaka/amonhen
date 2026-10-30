@@ -14,6 +14,8 @@ becomes the GitHub Release notes.
 - Several branches, tags or commits selected in the sidebar or History merge in one commit, as `git merge a b c` does,
   from a sheet showing their order and the conflicts expected for each; it offers to merge them one by one when git
   couldn't. `amonhen merge-check a b c` checks the same.
+- In a shallow clone, History ends with a band to fetch 100 to 10,000 more commits, up to a date, or all of it, and
+  boundary commits are marked as having parents not fetched. `amonhen log` notes where the history stops.
 
 #### Changed
 

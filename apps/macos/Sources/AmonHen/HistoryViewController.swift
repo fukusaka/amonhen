@@ -107,6 +107,36 @@ final class FocusTableView: NSTableView {
     }
 
     @objc private func keyChanged() { onFocusChange?() }
+
+    /// 最後の行の下に置くビュー（shallow clone の帯）。表をその高さの分だけ伸ばし、スクロールで一緒に動かす。
+    var footer: NSView? {
+        didSet {
+            guard footer !== oldValue else { return }
+            oldValue?.removeFromSuperview()
+            if let footer { addSubview(footer) }
+            tile()
+        }
+    }
+
+    private var rowsHeight: CGFloat { CGFloat(numberOfRows) * (rowHeight + intercellSpacing.height) }
+
+    // 表は行の分の高さに自分で合わせるので、そのたびに帯の分を足す（足した高さから求め直さないよう、行から求める）。
+    override func setFrameSize(_ newSize: NSSize) {
+        var size = newSize
+        if let footer { size.height = max(size.height, rowsHeight + footer.frame.height) }
+        super.setFrameSize(size)
+        placeFooter()
+    }
+
+    override func tile() {
+        super.tile()
+        placeFooter()
+    }
+
+    private func placeFooter() {
+        guard let footer else { return }
+        footer.frame = NSRect(x: 0, y: rowsHeight, width: bounds.width, height: footer.frame.height)
+    }
 }
 
 final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate,
@@ -234,6 +264,19 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let scopePopup = NSPopUpButton()
     /// 折りたたんだ History で開いた merge（コミット ID）。
     private var expandedMerges: Set<Data> = []
+    /// shallow clone の History の最後の行の下に置く帯（取得していない古い履歴を取り足す）。
+    private lazy var shallowBand: ShallowHistoryBand = {
+        let band = ShallowHistoryBand(frame: NSRect(x: 0, y: 0, width: 400, height: ShallowHistoryBand.height))
+        band.onFetch = { [weak self] command, done in
+            guard let actions = self?.actions else { return done() }
+            actions.perform(command, completion: { _ in done() }, recover: { _ in
+                done()
+                return false
+            })
+        }
+        band.boundaryDate = { [weak self] in self?.oldestBoundaryDate() }
+        return band
+    }()
     /// 右端の密度の帯（コミットの頻度とブランチの活動量。押すとそこへ飛ぶ）。
     private let densityView = DensityStripView()
     private var densityRequest = 0
@@ -748,9 +791,22 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             tableView.selectRowIndexes([0], byExtendingSelection: false)
         }
         updateLineage()
+        updateShallowBand()
         // History が替わるとレーンの数も替わる。列の幅を合わせてから描く。
         layoutGraphView()
         updateDensity()
+    }
+
+    /// shallow clone の History なら、最後の行の下に帯を出す（一致したコミットだけを出しているときは出さない。
+    /// その終わりは History の終わりではない）。
+    private func updateShallowBand() {
+        tableView.footer = history?.isShallow == true && baseHistory == nil ? shallowBand : nil
+    }
+
+    /// 境界のコミットのうち、いちばん古いものの作者の日時（読み込んであるチャンクにあれば）。
+    private func oldestBoundaryDate() -> Date? {
+        guard let history else { return nil }
+        return history.boundaryRows().compactMap { row in chunks[row / Self.chunkRows]?.authorTime(row: row) }.min()
     }
 
     /// 密度の帯を、今の History で描き直す（裏で求める。linux で数 ms）。

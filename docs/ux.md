@@ -581,6 +581,24 @@ anything does.
   dragged across a merge, and the commit right above a merge can't be combined with it. Split stays a separate item
   on the context menu (it stops so the changes can be committed in parts).
 
+## 7b. Shallow clones
+
+A clone made with `--depth` or `--shallow-since` has only the newest part of the history. Only shallow clones show
+any of the following.
+
+- After History's last row, a band says "Older history isn’t fetched (shallow clone)" with Fetch More, a pull-down
+  of 100, 1,000 or 10,000 more commits (`git fetch --deepen=<n>`) and Up to a Date…, which asks for a date and fetches
+  the commits made after it (`--shallow-since`), and Fetch All (`--unshallow`). They run like Fetch: progress in the
+  toolbar and Activity, a spinner in the band, failures in the status bar. History then reads the older
+  commits. Nothing is recorded for Undo: they only add history. The band is hidden while only the commits matching a
+  search are shown.
+- In the graph, a commit at the boundary ends with a short dotted line going down: it has parents that aren't
+  fetched.
+- In the right column, such a commit's Parent row shows the parents' IDs dimmed (they can't be selected) with "(not
+  fetched)", and Go to Parent has nowhere to go.
+- `amonhen log` ends with a line saying older history isn't fetched, and the core's `deepen` (`commits` or `since`)
+  and `unshallow` commands are there for `amonhen run`.
+
 ## 8. Resolving conflicts (the embedded merge editor)
 
 ### Flow

@@ -32,7 +32,7 @@ struct OperationFailure {
         case "checkout", "track", "detach": L("Couldn’t Checkout")
         case "pull": L("Couldn’t Pull")
         case "push", "pushTags": L("Couldn’t Push")
-        case "fetch": L("Couldn’t Fetch")
+        case "fetch", "deepen", "unshallow": L("Couldn’t Fetch")
         case "merge", "mergeInto": L("Couldn’t Merge")
         case "rebase": L("Couldn’t Rebase")
         case "cherryPick": L("Couldn’t Cherry-pick")
