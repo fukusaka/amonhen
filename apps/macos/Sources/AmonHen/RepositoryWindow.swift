@@ -340,6 +340,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.workingCopy.onBlame = { [weak self, weak slot] path in self?.openBlame(path: path, rev: nil, in: slot?.repository) }
         slot.workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
         slot.workingCopy.onFileHistory = { [weak self, weak slot] path in self?.openFileHistory(path: path, in: slot?.repository) }
+        slot.workingCopy.onShowFolders = { [weak self] in self?.showFetchingSettings() }
         slot.actions.window = window
         slot.actions.onFailure = { [weak self] failure in self?.showFailure(failure) }
         slot.actions.onSuccess = { [weak self] command in self?.operationSucceeded(command) }
@@ -1392,7 +1393,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             guard request == formRequest, let form else { return }
             self.form = form
             sidebar.setRepositoryForm(form)
+            slot.workingCopy.setSparse(form.sparse)
+            detail.sparse = form.sparse
         }
+    }
+
+    /// Repository Settings の取得とフォルダのページを開く。
+    private func showFetchingSettings() {
+        settings.model.show(.fetching)
+        sidebar.select(page: .settings)
     }
 
     private var mailmapFingerprint: UInt64?

@@ -10,6 +10,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// ファイルの右クリック: 作業ツリーの内容の blame（パス）とファイルの履歴（パス）。
     var onBlame: ((String) -> Void)?
     var onFileHistory: ((String) -> Void)?
+    /// 「一部のフォルダだけ取り出し中」を押した（Repository Settings の取得とフォルダを開く）。
+    var onShowFolders: (() -> Void)?
     private let repository: Repository
     private let diffView: DiffViewController
     private let files = KeyOutlineView()
@@ -34,6 +36,8 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     /// 一覧の見出し: すべてを含める・外すチェックボックスと、含める数。
     private let allCheckbox = NSButton(checkboxWithTitle: L("Changes"), target: nil, action: nil)
     private let countLabel = NSTextField(labelWithString: "")
+    /// sparse checkout のとき、一覧の上に薄く出す「一部のフォルダだけ取り出し中」（押すと取得とフォルダのページ）。
+    private let sparseNote = NSButton(title: "", target: nil, action: nil)
     /// パスで一覧を絞り込む。
     private let filterField = NSSearchField()
     private let emptyLabel = NSTextField(labelWithString: L("No changes"))
@@ -227,6 +231,17 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         layoutControl.target = self
         layoutControl.action = #selector(layoutChanged)
         let filesHeader = NSStackView(views: [allCheckbox, countLabel, NSView(), layoutControl])
+        sparseNote.isBordered = false
+        sparseNote.controlSize = .small
+        sparseNote.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        sparseNote.contentTintColor = .secondaryLabelColor
+        sparseNote.image = NSImage(systemSymbolName: "folder.badge.minus", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: NSFont.smallSystemFontSize, weight: .regular))
+        sparseNote.imagePosition = .imageLeading
+        sparseNote.alignment = .left
+        sparseNote.target = self
+        sparseNote.action = #selector(showFolders)
+        sparseNote.isHidden = true
         filterField.placeholderString = L("Filter by path")
         filterField.controlSize = .small
         filterField.delegate = self
@@ -271,7 +286,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         top.setCustomSpacing(10, after: commitRow)
         messageScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
         messageScroll.setContentHuggingPriority(.init(1), for: .vertical)
-        let bottom = stackOf([filesHeader, filterField, filesScroll], 6, 8)
+        let bottom = stackOf([filesHeader, sparseNote, filterField, filesScroll], 6, 8)
         filesScroll.setContentHuggingPriority(.init(1), for: .vertical)
         messageSplit.isVertical = false
         messageSplit.dividerStyle = .thin
@@ -532,6 +547,21 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         if !item.isStaged { return false }
         return selectedKey?.path == item.path ? selectedKey?.staged ?? false : false
     }
+
+    /// sparse checkout なら、一覧の上にそう出す（取り出していないフォルダのファイルは変更に出ない）。
+    func setSparse(_ sparse: RepositoryForm.Sparse?) {
+        sparseNote.isHidden = sparse == nil
+        guard let sparse else { return }
+        let title = sparse.cone ? L("Only some folders are checked out (%ld)", sparse.folders.count)
+            : L("Only some files are checked out")
+        sparseNote.attributedTitle = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ])
+        sparseNote.toolTip = RepositoryForm.sparseHelp(sparse) + "\n" + L("Click to change them in Settings > Fetching and Folders.")
+    }
+
+    @objc private func showFolders() { onShowFolders?() }
 
     /// 一覧の見出し: すべてのチェックの状態と、含める数 / 全体の数。
     private func updateHeader() {
