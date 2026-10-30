@@ -132,6 +132,46 @@ fn log_notes_where_a_shallow_clone_stops() {
     assert!(!out.contains("shallow clone"), "{out}");
 }
 
+/// clone の --depth・--filter を git に渡す。おかしな引数は使い方を出して断る。
+#[test]
+fn clones_with_depth_and_filter() {
+    let src = repository();
+    git(src.path(), &["config", "uploadpack.allowFilter", "true"]);
+    // 古い git は、取り出しに要る blob を ID で取りにくる。
+    git(
+        src.path(),
+        &["config", "uploadpack.allowAnySHA1InWant", "true"],
+    );
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let path = src.path().to_str().unwrap().replace('\\', "/");
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    let dest = tmp.path().join("both");
+    let dest = dest.to_str().unwrap();
+    let (out, code) = amonhen(
+        home.path(),
+        &["clone", "--depth=1", "--filter", "blob:none", &url, dest],
+    );
+    assert_eq!(code, 0, "{out}");
+    assert!(tmp.path().join("both/.git/shallow").exists());
+    let (out, _) = amonhen(home.path(), &["status", "-C", dest, "--color=never"]);
+    assert!(out.contains("shallow clone"), "{out}");
+    assert!(out.contains("partial clone (blob:none)"), "{out}");
+
+    for args in [
+        &["clone", "--depth", "x", &url][..],
+        &["clone", "--shallow", &url],
+    ] {
+        let (out, code) = amonhen(home.path(), args);
+        assert_ne!(code, 0, "{out}");
+        assert!(out.contains("usage:"), "{out}");
+    }
+}
+
 #[test]
 fn undo_and_merge_file() {
     let repo = repository();

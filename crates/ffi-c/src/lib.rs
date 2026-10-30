@@ -1794,16 +1794,39 @@ pub extern "C" fn amonhen_activity_cancel(seq: u64) -> bool {
     amonhen_core::cancel_activity(seq)
 }
 
-/// `url` を `dest`（まだないフォルダ）に clone する。失敗したら false（理由は `amonhen_last_error`）。時間が
-/// かかるので裏のスレッドで呼ぶ。
+/// `url` を `dest`（まだないフォルダ）に clone する。`filter`（NULL・空でなければ `--filter`。`blob:none` など）、
+/// `depth`（0 でなければ `--depth`）、`sparse`（`--sparse`。根のファイルだけを取り出す。git 2.25 から）で取得する
+/// 範囲と取り出すものを決める。失敗したら false（理由は `amonhen_last_error`）。時間がかかるので裏のスレッドで呼ぶ。
 ///
 /// # Safety
-/// `url` と `dest` は NUL 終端の UTF-8 文字列であること。
+/// `url` と `dest` は NUL 終端の UTF-8 文字列、`filter` は NULL か NUL 終端の UTF-8 文字列であること。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn amonhen_clone(url: *const c_char, dest: *const c_char) -> bool {
-    match (str_arg(url), str_arg(dest)) {
-        (Ok(url), Ok(dest)) => done(amonhen_backend_cli::clone(url, std::path::Path::new(dest))),
-        (Err(e), _) | (_, Err(e)) => done(Err(e.into())),
+pub unsafe extern "C" fn amonhen_clone(
+    url: *const c_char,
+    dest: *const c_char,
+    filter: *const c_char,
+    depth: u32,
+    sparse: bool,
+) -> bool {
+    let filter = if filter.is_null() {
+        Ok(None)
+    } else {
+        str_arg(filter).map(|f| Some(f.to_owned()).filter(|f| !f.is_empty()))
+    };
+    match (str_arg(url), str_arg(dest), filter) {
+        (Ok(url), Ok(dest), Ok(filter)) => {
+            let options = amonhen_backend_cli::CloneOptions {
+                filter,
+                depth: (depth > 0).then_some(depth),
+                sparse,
+            };
+            done(amonhen_backend_cli::clone(
+                url,
+                std::path::Path::new(dest),
+                &options,
+            ))
+        }
+        (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => done(Err(e.into())),
     }
 }
 

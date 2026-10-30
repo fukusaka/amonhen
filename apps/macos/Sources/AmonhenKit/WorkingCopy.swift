@@ -214,9 +214,12 @@ public struct RepositoryPeek: Sendable, Equatable {
 }
 
 extension Repository {
-    /// `url` を `dest`（まだないフォルダ）に clone する。時間がかかるので裏のスレッドで呼ぶ。
-    public static func clone(url: String, to dest: String) throws {
-        if !amonhen_clone(url, dest) { throw AmonhenError.last() }
+    /// `url` を `dest`（まだないフォルダ）に clone する。`filter`（`blob:none` など）があれば partial clone、`depth`
+    /// があれば最近のその数のコミットだけ、`sparse` なら根のファイルだけを取り出す（git 2.25 から）。時間がかかるので
+    /// 裏のスレッドで呼ぶ。
+    public static func clone(url: String, to dest: String, filter: String? = nil, depth: Int? = nil,
+                             sparse: Bool = false) throws {
+        if !amonhen_clone(url, dest, filter, UInt32(clamping: max(0, depth ?? 0)), sparse) { throw AmonhenError.last() }
     }
 }
 
