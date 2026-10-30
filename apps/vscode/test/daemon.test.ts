@@ -319,6 +319,9 @@ test('merges several branches in one commit through the daemon, with one undo en
     // 1 つずつなら o-x まで済んで o-y で止まり、Undo 1 回で戻る
     const result = await mergeSeveral(backend, undo, ['o-x', 'o-y', 'o-a'], true);
     assert.deepEqual(result, { result: 'conflict', remaining: ['o-a'] });
+    // 止まっている間に始めた merge は、コンフリクトではなく、何の途中かを言って失敗する
+    await assert.rejects(backend.merge('o-a'), /merge (in progress|の途中)/);
+    assert.equal(await backend.sequenceInProgress(), 'merge');
     await backend.abort('merge');
     assert.equal(count(), before + 1);
     await undo.undo();

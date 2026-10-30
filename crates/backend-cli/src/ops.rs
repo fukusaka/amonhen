@@ -16,7 +16,8 @@ fn text(out: Vec<u8>) -> Result<String> {
 }
 
 impl Git {
-    /// 失敗しても、途中で止まっていればコンフリクトとして扱う。成功しても止まっていれば Stopped。
+    /// merge・rebase などを始める。失敗しても、途中で止まっていればコンフリクトとして扱う。成功しても止まって
+    /// いれば Stopped。
     fn stoppable(&self, args: &[&str], env: &[(&str, &str)]) -> Result<Outcome> {
         self.stoppable_with_input(args, env, None)
     }
@@ -27,6 +28,25 @@ impl Git {
         env: &[(&str, &str)],
         input: Option<&[u8]>,
     ) -> Result<Outcome> {
+        // ほかの操作の途中なら git は始めずに断る（文は操作と git の版でまちまち）。止まったのではないので、途中の
+        // 操作をコンフリクトと取り違えず、何の途中かを言って失敗する。
+        let busy = self.sequence_in_progress()?;
+        self.run_stoppable(args, env, input, busy)
+    }
+
+    /// 止まっている操作を続ける（continue・skip）。失敗して、まだ途中ならコンフリクトとして扱う。
+    fn resume(&self, args: &[&str], env: &[(&str, &str)]) -> Result<Outcome> {
+        self.run_stoppable(args, env, None, None)
+    }
+
+    /// `busy` は始める前から途中だった操作。あれば、失敗をコンフリクトとして扱わない。
+    fn run_stoppable(
+        &self,
+        args: &[&str],
+        env: &[(&str, &str)],
+        input: Option<&[u8]>,
+        busy: Option<Sequence>,
+    ) -> Result<Outcome> {
         let mut cmd = self.command(args);
         for (k, v) in env {
             cmd.env(k, v);
@@ -34,6 +54,11 @@ impl Git {
         match crate::run(cmd, input) {
             Ok(_) if self.sequence_in_progress()?.is_some() => Ok(Outcome::Stopped),
             Ok(_) => Ok(Outcome::Done),
+            Err(_) if let Some(sequence) = busy => Err(tr!(
+                "{operation} in progress: continue or abort it first, then try again",
+                operation = sequence.command()
+            )
+            .into()),
             Err(_) if self.sequence_in_progress()?.is_some() => Ok(Outcome::Conflict),
             Err(e) => Err(e),
         }
@@ -727,14 +752,14 @@ impl Operations for Git {
 
     fn continue_sequence(&self, sequence: Sequence) -> Result<Outcome> {
         // 続けるときにメッセージの編集画面を開かせない。
-        self.stoppable(
+        self.resume(
             &[sequence.command(), "--continue"],
             &[("GIT_EDITOR", "true")],
         )
     }
 
     fn skip_sequence(&self, sequence: Sequence) -> Result<Outcome> {
-        self.stoppable(&[sequence.command(), "--skip"], &[])
+        self.resume(&[sequence.command(), "--skip"], &[])
     }
 
     fn format_patch(&self, commits: &[Oid], options: &FormatPatch) -> Result<Vec<PatchFile>> {

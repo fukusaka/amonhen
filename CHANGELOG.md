@@ -24,6 +24,8 @@ becomes the GitHub Release notes.
 
 - History opens in a shallow clone: it stopped with "Commit … not found" at the boundary, and now ends there as
   `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
+- Starting a merge, rebase, cherry-pick, revert, pull or patch while another one is stopped no longer reports a
+  conflict; it says which one is in progress, to continue or abort first.
 
 ### [0.2.8] - 2026-10-30
 
@@ -638,6 +640,13 @@ First release.
 
 - Reword and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and Reword runs
   the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
+- The conflict notice names the sidebar row whose Continue and Abort to use, since VSCode moves the notice to the
+  notification center after a few seconds.
+
+#### Fixed
+
+- Starting a merge, rebase, cherry-pick or revert while another one is stopped no longer reports a conflict; it says
+  which one is in progress, to continue or abort first.
 
 #### Fixed
 

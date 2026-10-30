@@ -891,6 +891,12 @@ mod ops_tests {
 
         assert_eq!(git.merge(&revs(&["topic"])).unwrap(), Outcome::Conflict);
         assert_eq!(git.sequence_in_progress().unwrap(), Some(Sequence::Merge));
+        // merge の途中に始めた merge・rebase は git が断る。コンフリクトではなく失敗で、途中の merge はそのまま。
+        for result in [git.merge(&revs(&["topic"])), git.rebase("topic")] {
+            let message = result.unwrap_err().to_string();
+            assert!(message.contains("merge in progress"), "{message}");
+        }
+        assert_eq!(git.sequence_in_progress().unwrap(), Some(Sequence::Merge));
         git.abort(Sequence::Merge).unwrap();
         assert_eq!(git.sequence_in_progress().unwrap(), None);
 

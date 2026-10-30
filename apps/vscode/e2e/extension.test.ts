@@ -465,6 +465,7 @@ async function mergeBranchesFlow(label: string): Promise<void> {
   let choose: (label: string) => boolean = () => false;
   const placeHolders: string[] = [];
   const warned: string[] = [];
+  const failed: string[] = [];
   const stubs = {
     showQuickPick: async (items: unknown, options?: { canPickMany?: boolean; placeHolder?: string }) => {
       const list = (await items) as ({ label: string; ref?: string } & Record<string, unknown>)[];
@@ -481,7 +482,7 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       warned.push(message);
       return 'Abort';
     },
-    showErrorMessage: async (message: string) => assert.fail(message),
+    showErrorMessage: async (message: string) => void failed.push(message),
   };
   try {
     await withWindow(stubs, async () => {
@@ -506,7 +507,26 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       assert.equal(head(), git('rev-parse', name('x')).trim());
       await vscode.commands.executeCommand('amonhen.undo');
       await until('1 つずつの Undo', () => head() === start);
+
+      // merge が止まっている間に始めた merge は、コンフリクトではなく、何の途中かを言って失敗する
+      git('merge', '-q', name('x'));
+      assert.throws(() => childProcess.execFileSync('git', ['merge', '-q', name('y')], { cwd: root, stdio: 'ignore' }));
+      await vscode.commands.executeCommand('amonhen.refresh');
+      const warnings = warned.length;
+      order = [name('a')];
+      await vscode.commands.executeCommand('amonhen.mergeBranches');
+      // 文は daemon ならコアの訳（VSCode の表示言語）、git 実行層なら拡張の日本語
+      const busy = /merge (in progress|の途中です)/;
+      await until('途中なので断る', () => failed.some((m) => busy.test(m)));
+      assert.equal(warned.length, warnings, 'コンフリクトとは知らせない');
+      assert.equal(await repo.backend.sequenceInProgress(), 'merge');
+      git('merge', '--abort');
+      git('reset', '-q', '--hard', start);
     });
+    assert.deepEqual(
+      failed.filter((m) => !/merge (in progress|の途中です)/.test(m)),
+      [],
+    );
   } finally {
     git('reset', '-q', '--hard', start);
     git('branch', '-q', '-D', name('a'), name('x'), name('y'));

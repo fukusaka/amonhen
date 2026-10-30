@@ -121,6 +121,12 @@ test('a conflict is reported and not recorded', async () => {
   commitFile('a.txt', 'main\n', 'main');
   assert.equal(await mergeInto(backend, undo, H('feature'), H('main')), 'conflict');
   assert.equal(await undo.peek(), undefined);
+  // merge の途中に始めた merge・rebase・cherry-pick は git が断る。コンフリクトではなく、何の途中かを言って失敗する
+  const busy = /merge の途中です/;
+  await assert.rejects(mergeInto(backend, undo, H('feature'), H('main')), busy);
+  await assert.rejects(backend.rebase('feature'), busy);
+  await assert.rejects(backend.cherryPick(git('rev-parse', 'feature'), false), busy);
+  assert.equal(await backend.sequenceInProgress(), 'merge');
   await backend.abort('merge');
 });
 
