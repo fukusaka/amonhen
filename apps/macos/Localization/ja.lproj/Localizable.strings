@@ -1673,4 +1673,6 @@
 "Only some files are checked out" = "一部のファイルだけ取り出し中";
 "Click to change them in Settings > Fetching and Folders." = "押すと、Settings の「取得とフォルダ」で変えられます。";
 "This folder isn’t checked out" = "取り出していないフォルダです";
+"Search the Contents?" = "中身を検索しますか？";
+"This search fetches all contents not fetched yet. In a large repository this can take long and use a lot of disk." = "この検索は、まだ取っていない中身をすべて取ります。大きなリポジトリでは時間がかかり、ディスクも多く使います。";
 "Couldn’t Change the Folders" = "取り出すフォルダを変えられませんでした";
