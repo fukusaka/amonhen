@@ -1722,18 +1722,37 @@ impl Repository {
         let plan = rewrite::plan_rebase(&chain, edit, &stacked)?;
         let names: Vec<String> = stacked.into_iter().map(|(_, name)| name).collect();
         let files = self.backend().files();
-        let message = match &plan.message {
-            Some(message) => {
-                // エディタで保存したファイルと同じく、改行で終える（commit-msg のフックが行を足しても、最後の行に
-                // つながらない）。
-                let mut message = message.clone();
-                if !message.ends_with('\n') {
-                    message.push('\n');
-                }
-                files.write(Root::GitDir, "amonhen/rebase-message", message.as_bytes())?;
+        // エディタで保存したファイルと同じく、改行で終える（commit-msg のフックが行を足しても、最後の行に
+        // つながらない）。
+        let ended = |m: &String| {
+            if m.ends_with('\n') {
+                m.clone()
+            } else {
+                format!("{m}\n")
+            }
+        };
+        let message = match plan.messages.as_slice() {
+            [] => None,
+            [one] => {
+                files.write(
+                    Root::GitDir,
+                    "amonhen/rebase-message",
+                    ended(one).as_bytes(),
+                )?;
                 Some(dir.join("rebase-message"))
             }
-            None => None,
+            // いくつもあれば、git がエディタを開く順に番号を付けて置く（バックエンドが 1 つずつ写す）。
+            many => {
+                for (i, m) in many.iter().enumerate() {
+                    files.write(
+                        Root::GitDir,
+                        &format!("amonhen/rebase-messages/{}", i + 1),
+                        ended(m).as_bytes(),
+                    )?;
+                }
+                files.write(Root::GitDir, "amonhen/rebase-messages/next", b"1\n")?;
+                Some(dir.join("rebase-messages"))
+            }
         };
         files.write(Root::GitDir, "amonhen/rebase-todo", plan.todo.as_bytes())?;
         let todo = dir.join("rebase-todo");
@@ -4058,6 +4077,44 @@ mod tests {
         );
         assert_eq!(verified["info"]["checks"][1]["status"], "N");
         assert_eq!(extras["stats"][0]["added"], 1);
+    }
+
+    #[test]
+    fn a_plan_reorders_squashes_rewords_and_drops_in_one_rebase() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let mut ids = Vec::new();
+        for name in ["b", "c", "d", "e"] {
+            std::fs::write(dir.join(format!("{name}.txt")), name).unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", name]);
+            ids.push(git(dir, &["rev-parse", "HEAD"]));
+        }
+        let [b, c, d, e] = [&ids[0], &ids[1], &ids[2], &ids[3]];
+        // 古い順に: c を b にまとめて新しいメッセージ、e を d より前へ動かして書き換え、d を消す。
+        let json = serde_json::json!({"op": "rewrite", "label": "edit", "edit": {"kind": "plan", "steps": [
+            {"oid": b, "action": "pick"},
+            {"oid": c, "action": "squash", "message": "b and c"},
+            {"oid": e, "action": "reword", "message": "e reworded"},
+            {"oid": d, "action": "drop"},
+        ]}});
+        let out = run(&repo, &json.to_string());
+        assert!(out["error"].is_null(), "{out}");
+        assert_eq!(
+            git(dir, &["log", "--format=%s", "-3"]),
+            "e reworded\nb and c\nfirst"
+        );
+        assert!(!dir.join("d.txt").exists());
+        // 範囲のコミットが抜けていれば断る。
+        let head = git(dir, &["rev-parse", "HEAD"]);
+        let partial = serde_json::json!({"op": "rewrite", "label": "edit", "edit": {"kind": "plan", "steps": [
+            {"oid": head, "action": "drop"},
+            {"oid": head, "action": "pick"},
+        ]}});
+        assert!(run(&repo, &partial.to_string())["error"].is_string());
+        // Undo で元に戻る。
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), *e);
     }
 
     #[test]

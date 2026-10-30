@@ -693,7 +693,21 @@ impl Operations for Git {
         let mut args = Vec::new();
         let mut env = vec![("GIT_SEQUENCE_EDITOR", copy(todo))];
         if let Some(message) = message {
-            env.push(("GIT_EDITOR", copy(message)));
+            // ディレクトリなら、メッセージがいくつもある（編集モードでまとめて決めたもの）。git がエディタを開くたびに、
+            // `next` の番号のファイルを写して番号を進める。
+            let editor = if message.is_dir() {
+                let dir = message
+                    .display()
+                    .to_string()
+                    .replace('\\', "/")
+                    .replace('\'', r"'\''");
+                format!(
+                    "sh -c 'n=$(cat \"$0/next\"); cp \"$0/$n\" \"$1\"; echo $((n + 1)) > \"$0/next\"' '{dir}'"
+                )
+            } else {
+                copy(message)
+            };
+            env.push(("GIT_EDITOR", editor));
             // エディタで書いたメッセージは、git の既定では `#` で始まる行を除く。コミットの画面（`commit --file`）と
             // 同じく、書いたとおりに残す。`commit.cleanup` を設定していれば、それに従う。
             let cleanup = self

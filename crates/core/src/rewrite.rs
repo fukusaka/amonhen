@@ -47,6 +47,21 @@ pub enum HistoryEdit {
         oid: String,
         to: usize,
     },
+    /// History の編集モードでまとめて決めた並びと操作（git の対話的な rebase の todo と同じ）。`steps` は古い順で、
+    /// 範囲のいちばん古いコミットから HEAD までを、並べ替えたものすべて。
+    Plan {
+        steps: Vec<PlanStep>,
+    },
+}
+
+/// 編集モードの 1 行。`action` は pick・reword・squash・fixup・drop・edit。`message` は reword の新しい
+/// メッセージ、または squash（続く squash・fixup のまとまりの最後のもの）でまとめたコミットのメッセージ。
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct PlanStep {
+    pub oid: String,
+    pub action: String,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 impl HistoryEdit {
@@ -60,12 +75,16 @@ impl HistoryEdit {
             | Self::Edit { oid }
             | Self::Split { oid }
             | Self::Move { oid, .. } => oid,
+            Self::Plan { steps } => steps.first().map(|s| s.oid.as_str()).unwrap_or_default(),
         }
     }
 
     /// 途中で止まる編集か（Undo の記録を rebase が終わるまで保留する）。
     pub fn stops(&self) -> bool {
-        matches!(self, Self::Edit { .. } | Self::Split { .. })
+        match self {
+            Self::Plan { steps } => steps.iter().any(|s| s.action == "edit"),
+            _ => matches!(self, Self::Edit { .. } | Self::Split { .. }),
+        }
     }
 }
 
@@ -82,8 +101,8 @@ pub struct RebasePlan {
     /// rebase の起点。`None` なら `--root`。
     pub base: Option<Oid>,
     pub todo: String,
-    /// git が開くエディタに書かせるメッセージ（`reword` か、まとめる最後の `squash` のとき）。
-    pub message: Option<String>,
+    /// git が開くエディタに書かせるメッセージを、git が開く順に（`reword` ごと、squash を含むまとまりの終わりごと）。
+    pub messages: Vec<String>,
     /// `edit` で止まったら、`HEAD^` へ `reset --mixed` する（split）。
     pub reset_on_stop: bool,
 }
@@ -99,6 +118,9 @@ pub fn plan_rebase(
 ) -> Result<RebasePlan> {
     // 古い順にする。
     let original: Vec<ChainCommit> = chain.iter().rev().copied().collect();
+    if let HistoryEdit::Plan { steps } = edit {
+        return plan_steps(&original, steps, branches);
+    }
     let mut seq = original.clone();
     let target = Oid::from_hex(edit.oid()).ok_or_else(|| tr!("Can’t read the commit ID"))?;
     let index = seq.iter().position(|c| c.oid == target).ok_or_else(|| {
@@ -177,6 +199,7 @@ pub fn plan_rebase(
             // 続けたときに git が、元のコミットの notes を最後のコミットへ写す。reset は止まってから行う。
             HistoryEdit::Split { .. } => lines.push(format!("edit {}", c.oid)),
             HistoryEdit::Move { .. } => lines.push(format!("pick {}", c.oid)),
+            HistoryEdit::Plan { .. } => unreachable!(),
         }
     }
     let lines = with_update_refs(lines, branches);
@@ -185,13 +208,102 @@ pub fn plan_rebase(
     Ok(RebasePlan {
         base,
         todo,
-        message: match edit {
+        messages: match edit {
             HistoryEdit::Reword { message, .. }
             | HistoryEdit::Squash { message, .. }
-            | HistoryEdit::SquashRange { message, .. } => Some(message.clone()),
-            _ => None,
+            | HistoryEdit::SquashRange { message, .. } => vec![message.clone()],
+            _ => Vec::new(),
         },
         reset_on_stop: matches!(edit, HistoryEdit::Split { .. }),
+    })
+}
+
+/// 編集モードの並び（古い順）を todo にする。範囲は、並びの中で元の位置がいちばん古いコミットから HEAD まで。
+fn plan_steps(
+    original: &[ChainCommit],
+    steps: &[PlanStep],
+    branches: &[(Oid, String)],
+) -> Result<RebasePlan> {
+    let not_editable = || {
+        tr!("This commit can’t be edited (it isn’t reachable from HEAD, or it’s before a merge)")
+    };
+    let oids = steps
+        .iter()
+        .map(|s| Oid::from_hex(&s.oid).ok_or_else(|| tr!("Can’t read the commit ID")))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let positions = oids
+        .iter()
+        .map(|o| {
+            original
+                .iter()
+                .position(|c| c.oid == *o)
+                .ok_or_else(not_editable)
+        })
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let start = *positions
+        .iter()
+        .min()
+        .ok_or_else(|| tr!("Nothing to edit"))?;
+    // 範囲のコミットを 1 つずつ、ちょうど 1 回並べていること（並べ替えはよいが、抜けや重なりは断る）。
+    let mut sorted = positions.clone();
+    sorted.sort_unstable();
+    if sorted != (start..original.len()).collect::<Vec<_>>() {
+        return Err(tr!(
+            "The edit must list every commit from the first one edited up to HEAD, once each"
+        )
+        .into());
+    }
+    if let Some(first) = steps.iter().find(|s| s.action != "drop")
+        && matches!(first.action.as_str(), "squash" | "fixup")
+    {
+        return Err(tr!("Can’t squash: the parent isn’t in the editable range").into());
+    }
+    let mut lines = Vec::with_capacity(steps.len());
+    let mut messages = Vec::new();
+    let message = |s: &PlanStep| {
+        s.message
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+            .ok_or_else(|| tr!("A message is missing"))
+    };
+    for (i, (step, oid)) in steps.iter().zip(&oids).enumerate() {
+        match step.action.as_str() {
+            "pick" | "drop" | "edit" | "fixup" => {}
+            "reword" => messages.push(message(step)?),
+            "squash" => {}
+            other => return Err(tr!("Unknown action: {action}", action = other).into()),
+        }
+        lines.push(format!("{} {oid}", step.action));
+        // squash・fixup のまとまりの終わり。squash を含んでいれば、git はそこでエディタを開く。メッセージは
+        // まとまりの最後の squash のもの。
+        let in_run = |s: &PlanStep| matches!(s.action.as_str(), "squash" | "fixup");
+        let next_in_run = steps.get(i + 1).is_some_and(in_run);
+        if in_run(step) && !next_in_run {
+            let run_start = steps[..=i]
+                .iter()
+                .rposition(|s| !in_run(s))
+                .map_or(0, |p| p + 1);
+            if let Some(last) = steps[run_start..=i]
+                .iter()
+                .rev()
+                .find(|s| s.action == "squash")
+            {
+                messages.push(message(last)?);
+            }
+        }
+    }
+    let base = if start > 0 {
+        Some(original[start - 1].oid)
+    } else {
+        original[0].parent
+    };
+    let mut todo = with_update_refs(lines, branches).join("\n");
+    todo.push('\n');
+    Ok(RebasePlan {
+        base,
+        todo,
+        messages,
+        reset_on_stop: false,
     })
 }
 
@@ -306,6 +418,51 @@ mod tests {
     }
 
     #[test]
+    fn a_plan_starts_at_its_oldest_commit_and_queues_messages_in_order() {
+        let step = |o: char, action: &str, message: Option<&str>| PlanStep {
+            oid: hex(o),
+            action: action.into(),
+            message: message.map(str::to_owned),
+        };
+        let p = plan(HistoryEdit::Plan {
+            steps: vec![
+                step('c', "reword", Some("c2")),
+                step('b', "pick", None),
+                step('d', "squash", Some("b+d")),
+            ],
+        })
+        .unwrap();
+        assert_eq!(p.base, Some(oid('a')));
+        assert_eq!(short(&p.todo), "reword c\npick b\nsquash d\n");
+        assert_eq!(p.messages, vec!["c2".to_owned(), "b+d".to_owned()]);
+        // fixup だけのまとまりはエディタを開かない。
+        let fixup = plan(HistoryEdit::Plan {
+            steps: vec![step('c', "pick", None), step('d', "fixup", None)],
+        })
+        .unwrap();
+        assert!(fixup.messages.is_empty());
+        // 抜けがある・先頭をまとめる・メッセージがない、は断る。
+        assert!(
+            plan(HistoryEdit::Plan {
+                steps: vec![step('b', "pick", None), step('d', "pick", None)]
+            })
+            .is_err()
+        );
+        assert!(
+            plan(HistoryEdit::Plan {
+                steps: vec![step('d', "squash", Some("x"))]
+            })
+            .is_err()
+        );
+        assert!(
+            plan(HistoryEdit::Plan {
+                steps: vec![step('d', "reword", None)]
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
     fn reword_starts_at_the_commit() {
         let p = plan(HistoryEdit::Reword {
             oid: hex('c'),
@@ -314,14 +471,14 @@ mod tests {
         .unwrap();
         assert_eq!(p.base, Some(oid('b')));
         assert_eq!(short(&p.todo), "reword c\npick d\n");
-        assert_eq!(p.message.as_deref(), Some("new"));
+        assert_eq!(p.messages, vec!["new".to_owned()]);
     }
 
     #[test]
     fn squash_and_fixup_start_at_the_parent() {
         let fixup = plan(HistoryEdit::Fixup { oid: hex('c') }).unwrap();
         assert_eq!(short(&fixup.todo), "pick b\nfixup c\npick d\n");
-        assert_eq!(fixup.message, None);
+        assert!(fixup.messages.is_empty());
         let squash = plan(HistoryEdit::Squash {
             oid: hex('c'),
             message: "b+c".into(),
@@ -329,7 +486,7 @@ mod tests {
         .unwrap();
         assert_eq!(squash.base, Some(oid('a')));
         assert_eq!(short(&squash.todo), "pick b\nsquash c\npick d\n");
-        assert_eq!(squash.message.as_deref(), Some("b+c"));
+        assert_eq!(squash.messages, vec!["b+c".to_owned()]);
     }
 
     #[test]
@@ -342,7 +499,7 @@ mod tests {
         .unwrap();
         assert_eq!(p.base, Some(oid('a')));
         assert_eq!(short(&p.todo), "pick b\nsquash c\npick d\n");
-        assert_eq!(p.message.as_deref(), Some("b..c"));
+        assert_eq!(p.messages, vec!["b..c".to_owned()]);
         // 新しい側を先に渡したら断る。
         assert!(
             plan(HistoryEdit::SquashRange {
