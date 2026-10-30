@@ -2119,9 +2119,9 @@ extension RepositoryWindow {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
         case #selector(undoOperation(_:)):
-            item.title = undoLabel.map { "Undo \($0)" } ?? "Undo"
+            item.title = undoLabel.map { "Undo \($0)…" } ?? Commands.undo.title
         case #selector(push(_:)):
-            item.title = publishesCurrent ? "Publish…" : "Push"
+            item.title = publishesCurrent ? "Publish…" : Commands.push.title
         case #selector(commitAndPush(_:)):
             item.title = publishesCurrent ? "Commit and Publish…" : "Commit and Push"
         case #selector(showWorkingCopy(_:)):
