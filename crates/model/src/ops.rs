@@ -483,6 +483,12 @@ pub trait Operations: Send + Sync {
     fn fetch(&self, remote: Option<&str>) -> Result<()>;
     /// shallow clone の履歴を取り足す（既定のリモートから）。
     fn deepen(&self, how: &Deepen) -> Result<()>;
+    /// partial clone で取らずにおいた中身をすべて取る: `remote` の filter の設定を消してから
+    /// `git fetch --refetch <remote>`（git 2.36 から）。取れなければ filter の設定を戻す。
+    fn fetch_all_contents(&self, remote: &str) -> Result<()> {
+        let _ = remote;
+        Err(crate::tr!("Can’t fetch contents here").into())
+    }
     /// 今のブランチに上流を取り込む（`git pull`）。
     fn pull(&self, mode: PullMode) -> Result<Outcome>;
     /// ローカルブランチごとの、上流との差（名前, ahead, behind, gone）。

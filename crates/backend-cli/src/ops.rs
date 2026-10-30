@@ -1001,6 +1001,10 @@ impl Operations for Git {
         self.write(&["fetch", &arg]).map(drop)
     }
 
+    fn fetch_all_contents(&self, remote: &str) -> Result<()> {
+        Git::fetch_all_contents(self, remote)
+    }
+
     fn pull(&self, mode: PullMode) -> Result<Outcome> {
         let how = match mode {
             // git の設定（pull.rebase・pull.ff）に任せる。

@@ -479,6 +479,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ConflictStages(path) => encode(&ops.conflict_stages(&path)?),
         Op::Fetch(remote) => encode(&ops.fetch(remote.as_deref())?),
         Op::Deepen(how) => encode(&ops.deepen(&how)?),
+        Op::FetchAllContents(remote) => encode(&ops.fetch_all_contents(&remote)?),
         Op::Pull(mode) => encode(&ops.pull(mode)?),
         Op::BranchTracking => encode(&ops.branch_tracking()?),
         Op::Push {

@@ -941,6 +941,10 @@ impl Operations for RemoteOperations {
         self.op(Op::Deepen(how.clone()))
     }
 
+    fn fetch_all_contents(&self, remote: &str) -> Result<()> {
+        self.op(Op::FetchAllContents(remote.to_owned()))
+    }
+
     fn pull(&self, mode: PullMode) -> Result<Outcome> {
         self.op(Op::Pull(mode))
     }

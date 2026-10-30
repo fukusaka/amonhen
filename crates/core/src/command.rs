@@ -175,6 +175,10 @@ pub enum Command {
     },
     /// shallow clone の履歴をすべて取る（`git fetch --unshallow`）。
     Unshallow,
+    /// partial clone で取らずにおいた中身をすべて取る（promisor の remote の filter の設定を消して
+    /// `git fetch --refetch <remote>`。git 2.36 から）。Fetch と同じく動かし、Undo には記録しない。取れなければ
+    /// filter の設定を戻す。partial clone でなければ断る。
+    FetchAllContents,
     /// 今のブランチに上流を取り込む（Undo できる）。
     Pull {
         #[serde(default)]
@@ -2681,6 +2685,10 @@ impl Repository {
             }
             Command::Unshallow => {
                 self.deepen(ops, &amonhen_model::Deepen::All)?;
+                ok()
+            }
+            Command::FetchAllContents => {
+                self.fetch_all_contents(ops)?;
                 ok()
             }
             Command::Pull { mode } => {

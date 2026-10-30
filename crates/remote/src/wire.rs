@@ -291,6 +291,7 @@ pub enum Op {
     ConflictStages(String),
     Fetch(Option<String>),
     Deepen(Deepen),
+    FetchAllContents(String),
     Pull(PullMode),
     BranchTracking,
     Push {
