@@ -34,6 +34,7 @@ struct OperationFailure {
         case "push", "pushTags": L("Couldn’t Push")
         case "fetch", "deepen", "unshallow", "fetchAllContents": L("Couldn’t Fetch")
         case "sparseCheckout", "disableSparseCheckout": L("Couldn’t Change the Folders")
+        case "maintenance": L("Couldn’t Change git maintenance")
         case "merge", "mergeInto": L("Couldn’t Merge")
         case "rebase": L("Couldn’t Rebase")
         case "cherryPick": L("Couldn’t Cherry-pick")

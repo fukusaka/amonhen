@@ -1421,7 +1421,7 @@
 "Click to edit in this repository" = "クリックで、このリポジトリの値を編集";
 "Click to edit for all repositories" = "クリックで、すべてのリポジトリの値を編集";
 "What each commit’s row shows besides the subject." = "コミットの行に、件名のほかに出すもの。";
-"Writes to .git." = ".git に書きます。";
+"Writes to .git, except in repositories git maintenance looks after." = ".git に書きます（git maintenance が手入れするリポジトリには書きません）。";
 "A git fsmonitor--daemon runs for each repository." = "リポジトリごとに git fsmonitor--daemon が常駐します。";
 "Runs on this Mac and sends nothing out." = "この Mac の中で動き、外には何も送りません。";
 "Asks before sending anything from a repository the first time." = "リポジトリから初めて送るときに確かめます。";
@@ -1676,3 +1676,8 @@
 "Search the Contents?" = "中身を検索しますか？";
 "This search fetches all contents not fetched yet. In a large repository this can take long and use a lot of disk." = "この検索は、まだ取っていない中身をすべて取ります。大きなリポジトリでは時間がかかり、ディスクも多く使います。";
 "Couldn’t Change the Folders" = "取り出すフォルダを変えられませんでした";
+"Maintenance" = "手入れ";
+"Keep this repository maintained in the background" = "このリポジトリをバックグラウンドで手入れする";
+"Every hour git prefetches and writes the commit-graph; it’s set in your global git config and launchd (git maintenance)." = "git が毎時 prefetch と commit-graph の書き出しをします。git のユーザー全体の設定と launchd に書きます（git maintenance）。";
+"Every hour git prefetches and writes the commit-graph; it’s set in the global git config and the scheduler on %@ (git maintenance)." = "git が毎時 prefetch と commit-graph の書き出しをします。%@ の git のユーザー全体の設定と予定に書きます（git maintenance）。";
+"Couldn’t Change git maintenance" = "git maintenance を変えられませんでした";
