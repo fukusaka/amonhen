@@ -687,6 +687,11 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 - The View menu is History's display menu (order, items, one line, fold, ancestors, and the commit details: monospaced
   message, avatars, all files in one diff, files as a tree); History's bar button and header show the same menu.
 - Unavailable items are disabled, not removed (so their place can be remembered).
+- Everything the menu bar has can also be reached inside the window, so the GTK4 front end can have the same
+  window without a menu bar: the toolbar's sidebar toggle, ≡ (More: Quick Open, New Worktree, Prune Worktrees,
+  Create Pull Request, Open on GitHub, Open in Terminal, Show in Finder, Rebuild History, Repository Settings,
+  Activity, Settings; the same list as GTK4's primary menu), Refresh ▾ (Rebuild History), History's bar (Go to
+  HEAD, the display menu) and the find button above a commit's diff.
 - Undo for git operations lives in Repository > Undo (⌥⌘Z), separate from Edit's ⌘Z (undoing text). So that ⌘Z never unexpectedly reverts a git operation.
 
 ### Confirmations and wording
