@@ -4748,9 +4748,10 @@ mod tests {
         assert_eq!(note(dir, "HEAD~1"), "note b");
         assert_eq!(note(dir, "HEAD"), "");
         run(&repo, r#"{"op":"undo"}"#);
+        // 前と同じメッセージだと、同じ秒のうちなら前にまとめたコミットと同じ ID になり、その notes が残っている。
         let r = rewrite(
             &repo,
-            serde_json::json!({"kind": "squash", "oid": c, "message": "b+c"}),
+            serde_json::json!({"kind": "squash", "oid": c, "message": "b and c"}),
         );
         assert_eq!(r["outcome"], "done", "{r}");
         assert_eq!(note(dir, "HEAD"), "note b");
