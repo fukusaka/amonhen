@@ -248,7 +248,12 @@ pub enum Command {
     /// 途中の操作（`text` に "rebase"・"merge"・"cherry-pick"・"revert"、なければなし）。
     Sequence,
     /// 編集できるコミット（HEAD から first-parent で最初の merge の手前まで、新しい順）。`text` に改行区切り。
-    EditableCommits,
+    /// `through_merges` なら merge を越えて first-parent で辿り、merge の行には ` merge` を添える（History の編集
+    /// モード。merge は作り直す）。
+    EditableCommits {
+        #[serde(default)]
+        through_merges: bool,
+    },
     /// ローカルブランチの分け方（`info`）。`base` は既定のブランチ（`origin/HEAD` の先、なければ main・master）、
     /// `branches` はブランチごとの `name`・`time`（先端のコミットの日時）・`merged`（既定のブランチに取り込み済み）・
     /// `atBase`（既定のブランチの先端と同じ）・
@@ -1554,6 +1559,40 @@ impl Repository {
     }
 
     /// HEAD から first-parent で辿り、最初の merge の手前まで（新しい順）。
+    /// HEAD から first-parent で辿ったコミット（新しい順、merge を越えて。merge なら true）。
+    fn first_parent_chain(&self) -> Result<Vec<(ChainCommit, bool)>> {
+        let history = match self.history() {
+            Some(h) => h,
+            None => self.load_history()?,
+        };
+        let head = self
+            .backend()
+            .head()?
+            .ok_or_else(|| tr!("No commits yet"))?;
+        let mut row = history
+            .row_of(&head)
+            .ok_or_else(|| tr!("HEAD isn’t in the History (reload it)"))?
+            as usize;
+        let graph = &history.graph;
+        let mut chain = Vec::new();
+        while chain.len() < CHAIN_LIMIT {
+            let parents = graph.parents(row);
+            let parent = parents.first().map(|&p| graph.ids()[p as usize]);
+            chain.push((
+                ChainCommit {
+                    oid: graph.ids()[row],
+                    parent,
+                },
+                parents.len() > 1,
+            ));
+            match parents.first() {
+                Some(&p) => row = p as usize,
+                None => break,
+            }
+        }
+        Ok(chain)
+    }
+
     fn editable_chain(&self) -> Result<Vec<ChainCommit>> {
         let history = match self.history() {
             Some(h) => h,
@@ -1706,21 +1745,10 @@ impl Repository {
             .collect())
     }
 
-    /// コミットを編集する。非対話の rebase で行い、Undo できるように記録する。
-    pub fn rewrite(&self, label: &str, edit: &HistoryEdit) -> Result<Outcome> {
-        let ops = self.backend().operations()?;
-        if ops.sequence_in_progress()?.is_some() {
-            return Err(tr!("A merge or rebase is in progress. Finish or abort it first").into());
-        }
-        // 書き換える前に、最新の History で範囲を決める。
-        self.load_history()?;
-        let chain = self.editable_chain()?;
-        // メッセージと todo は `.git/amonhen` に書く。git に渡すのはリポジトリ側の絶対パス。
+    /// rebase で git のエディタに渡すメッセージを `.git/amonhen` に書く。1 つならファイル、いくつもあれば git が
+    /// エディタを開く順に番号を付けたディレクトリ（バックエンドが 1 つずつ写す）。なければ None。
+    fn write_rebase_messages(&self, messages: &[String]) -> Result<Option<std::path::PathBuf>> {
         let dir = self.backend().paths().git_dir.join("amonhen");
-        let ids = chain.iter().map(|c| c.oid).collect();
-        let stacked = self.stacked_branches(ops, &ids)?;
-        let plan = rewrite::plan_rebase(&chain, edit, &stacked)?;
-        let names: Vec<String> = stacked.into_iter().map(|(_, name)| name).collect();
         let files = self.backend().files();
         // エディタで保存したファイルと同じく、改行で終える（commit-msg のフックが行を足しても、最後の行に
         // つながらない）。
@@ -1731,7 +1759,7 @@ impl Repository {
                 format!("{m}\n")
             }
         };
-        let message = match plan.messages.as_slice() {
+        let message = match messages {
             [] => None,
             [one] => {
                 files.write(
@@ -1754,6 +1782,101 @@ impl Repository {
                 Some(dir.join("rebase-messages"))
             }
         };
+        Ok(message)
+    }
+
+    /// merge を越える編集（History の編集モード）。git の `--rebase-merges` で merge を作り直し、git が作った todo の
+    /// うち、変えるコミットの命令だけを替える。並べ替えはしない（merge をまたぐと、何をどこへ動かすかが一意でない）。
+    fn rewrite_through_merges(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        label: &str,
+        steps: &[rewrite::PlanStep],
+    ) -> Result<Outcome> {
+        let not_editable = || {
+            tr!(
+                "This commit can’t be edited (it isn’t reachable from HEAD on the first-parent line)"
+            )
+        };
+        // 古い順。
+        let original: Vec<(ChainCommit, bool)> =
+            self.first_parent_chain()?.into_iter().rev().collect();
+        let first = Oid::from_hex(&steps.first().ok_or_else(|| tr!("Nothing to edit"))?.oid)
+            .ok_or_else(not_editable)?;
+        let start = original
+            .iter()
+            .position(|(c, _)| c.oid == first)
+            .ok_or_else(not_editable)?;
+        let range = &original[start..];
+        if range.len() != steps.len()
+            || range
+                .iter()
+                .zip(steps)
+                .any(|((c, _), s)| Oid::from_hex(&s.oid) != Some(c.oid))
+        {
+            return Err(tr!("Commits can’t be reordered across a merge").into());
+        }
+        for (i, ((_, merge), step)) in range.iter().zip(steps).enumerate() {
+            if *merge && step.action != "pick" {
+                return Err(tr!(
+                    "A merge is recreated as it is; only the commits around it can change"
+                )
+                .into());
+            }
+            let older_is_merge = if i == 0 {
+                start == 0 || original[start - 1].1
+            } else {
+                range[i - 1].1
+            };
+            if matches!(step.action.as_str(), "squash" | "fixup") && older_is_merge {
+                return Err(tr!("A commit can’t be combined with a merge").into());
+            }
+        }
+        let messages = rewrite::plan_messages(steps)?;
+        let message = self.write_rebase_messages(&messages)?;
+        let dir = self.backend().paths().git_dir.join("amonhen");
+        self.backend().files().write(
+            Root::GitDir,
+            "amonhen/rebase-merges.awk",
+            rewrite::rebase_merges_program(steps).as_bytes(),
+        )?;
+        let program = dir.join("rebase-merges.awk");
+        let base = range[0].0.parent;
+        self.undo_log()?.record_stoppable(
+            ops,
+            label,
+            &[],
+            || ops.rebase_todo(base.as_ref(), &program, message.as_deref(), true),
+            |o| *o == Outcome::Conflict,
+            |o| *o == Outcome::Stopped,
+        )
+    }
+
+    /// コミットを編集する。非対話の rebase で行い、Undo できるように記録する。
+    pub fn rewrite(&self, label: &str, edit: &HistoryEdit) -> Result<Outcome> {
+        let ops = self.backend().operations()?;
+        if ops.sequence_in_progress()?.is_some() {
+            return Err(tr!("A merge or rebase is in progress. Finish or abort it first").into());
+        }
+        // 書き換える前に、最新の History で範囲を決める。
+        self.load_history()?;
+        let chain = self.editable_chain()?;
+        // 編集モードの並びが最初の merge より先まであれば、merge を作り直しながら書き換える。
+        if let HistoryEdit::Plan { steps } = edit
+            && steps
+                .iter()
+                .any(|s| Oid::from_hex(&s.oid).is_none_or(|o| !chain.iter().any(|c| c.oid == o)))
+        {
+            return self.rewrite_through_merges(ops, label, steps);
+        }
+        // メッセージと todo は `.git/amonhen` に書く。git に渡すのはリポジトリ側の絶対パス。
+        let dir = self.backend().paths().git_dir.join("amonhen");
+        let ids = chain.iter().map(|c| c.oid).collect();
+        let stacked = self.stacked_branches(ops, &ids)?;
+        let plan = rewrite::plan_rebase(&chain, edit, &stacked)?;
+        let names: Vec<String> = stacked.into_iter().map(|(_, name)| name).collect();
+        let files = self.backend().files();
+        let message = self.write_rebase_messages(&plan.messages)?;
         files.write(Root::GitDir, "amonhen/rebase-todo", plan.todo.as_bytes())?;
         let todo = dir.join("rebase-todo");
         self.undo_log()?.record_stoppable(
@@ -1761,7 +1884,8 @@ impl Repository {
             label,
             &names,
             || {
-                let outcome = ops.rebase_todo(plan.base.as_ref(), &todo, message.as_deref())?;
+                let outcome =
+                    ops.rebase_todo(plan.base.as_ref(), &todo, message.as_deref(), false)?;
                 // split: `edit` で止めたコミットを取り消し、変更を作業ツリーに戻す。
                 if plan.reset_on_stop && outcome == Outcome::Stopped {
                     let parent = ops.resolve("HEAD^")?;
@@ -2426,13 +2550,26 @@ impl Repository {
                 info: Some(self.branch_groups()?),
                 ..Default::default()
             }),
-            Command::EditableCommits => {
-                let chain = self.editable_chain()?;
-                let text = chain
-                    .iter()
-                    .map(|c| c.oid.to_string())
-                    .collect::<Vec<_>>()
-                    .join("\n");
+            Command::EditableCommits { through_merges } => {
+                let text = if through_merges {
+                    self.first_parent_chain()?
+                        .iter()
+                        .map(|(c, merge)| {
+                            if *merge {
+                                format!("{} merge", c.oid)
+                            } else {
+                                c.oid.to_string()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                } else {
+                    self.editable_chain()?
+                        .iter()
+                        .map(|c| c.oid.to_string())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                };
                 Ok(Response {
                     ok: true,
                     text: Some(text),
@@ -4077,6 +4214,54 @@ mod tests {
         );
         assert_eq!(verified["info"]["checks"][1]["status"], "N");
         assert_eq!(extras["stats"][0]["added"], 1);
+    }
+
+    #[test]
+    fn a_plan_past_a_merge_recreates_the_merge() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let commit = |name: &str| {
+            std::fs::write(dir.join(format!("{name}.txt")), name).unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", name]);
+            git(dir, &["rev-parse", "HEAD"])
+        };
+        let two = commit("two");
+        git(dir, &["switch", "-q", "-c", "side"]);
+        commit("side");
+        git(dir, &["switch", "-q", "main"]);
+        let three = commit("three");
+        git(dir, &["merge", "-q", "--no-ff", "-m", "Merge side", "side"]);
+        let merge = git(dir, &["rev-parse", "HEAD"]);
+        let four = commit("four");
+        let plan = |steps: serde_json::Value| {
+            run(&repo, &serde_json::json!({"op": "rewrite", "label": "edit", "edit": {"kind": "plan", "steps": steps}}).to_string())
+        };
+        // 並べ替えと、merge を変えることは断る。
+        assert!(
+            plan(serde_json::json!([
+            {"oid": two, "action": "pick"}, {"oid": merge, "action": "pick"},
+            {"oid": three, "action": "pick"}, {"oid": four, "action": "pick"}]))["error"]
+                .is_string()
+        );
+        assert!(
+            plan(serde_json::json!([
+            {"oid": two, "action": "pick"}, {"oid": three, "action": "pick"},
+            {"oid": merge, "action": "drop"}, {"oid": four, "action": "pick"}]))["error"]
+                .is_string()
+        );
+        // merge より古いコミットを書き換え、新しいものを消す。merge は作り直されて残る。
+        let out = plan(serde_json::json!([
+            {"oid": two, "action": "reword", "message": "two, reworded"},
+            {"oid": three, "action": "pick"},
+            {"oid": merge, "action": "pick"},
+            {"oid": four, "action": "drop"}]));
+        assert!(out["error"].is_null(), "{out}");
+        assert_eq!(git(dir, &["log", "--merges", "--format=%s"]), "Merge side");
+        assert!(git(dir, &["log", "--format=%s"]).contains("two, reworded"));
+        assert!(!dir.join("four.txt").exists() && dir.join("side.txt").exists());
+        run(&repo, r#"{"op":"undo"}"#);
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), four);
     }
 
     #[test]

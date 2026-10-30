@@ -218,6 +218,54 @@ pub fn plan_rebase(
     })
 }
 
+/// 編集モードの並び（古い順）で、git がエディタを開く順のメッセージ（reword ごと、squash を含むまとまりの終わり
+/// ごと。メッセージはまとまりの最後の squash のもの）。知らない操作は断る。
+pub fn plan_messages(steps: &[PlanStep]) -> Result<Vec<String>> {
+    let mut messages = Vec::new();
+    let message = |s: &PlanStep| {
+        s.message
+            .clone()
+            .filter(|m| !m.trim().is_empty())
+            .ok_or_else(|| tr!("A message is missing"))
+    };
+    let in_run = |s: &PlanStep| matches!(s.action.as_str(), "squash" | "fixup");
+    for (i, step) in steps.iter().enumerate() {
+        match step.action.as_str() {
+            "pick" | "drop" | "edit" | "fixup" | "squash" => {}
+            "reword" => messages.push(message(step)?),
+            other => return Err(tr!("Unknown action: {action}", action = other).into()),
+        }
+        if in_run(step) && !steps.get(i + 1).is_some_and(in_run) {
+            let run_start = steps[..=i]
+                .iter()
+                .rposition(|s| !in_run(s))
+                .map_or(0, |p| p + 1);
+            if let Some(last) = steps[run_start..=i]
+                .iter()
+                .rev()
+                .find(|s| s.action == "squash")
+            {
+                messages.push(message(last)?);
+            }
+        }
+    }
+    Ok(messages)
+}
+
+/// merge を越える編集（`--rebase-merges`）で、git が作った todo を書き換える awk のプログラム。`pick` の行のうち、
+/// 変えるコミット（短い ID がそのコミットの ID の先頭）の命令だけを替える。merge と、取り込んだ側のコミットは
+/// git の作ったまま。
+pub fn rebase_merges_program(steps: &[PlanStep]) -> String {
+    let mut program = String::from("BEGIN {\n");
+    for step in steps.iter().filter(|s| s.action != "pick") {
+        program.push_str(&format!("  a[\"{}\"] = \"{}\"\n", step.oid, step.action));
+    }
+    program.push_str(
+        "}\n/^pick / { for (k in a) if (index(k, $2) == 1) { $1 = a[k]; break } }\n{ print }\n",
+    );
+    program
+}
+
 /// 編集モードの並び（古い順）を todo にする。範囲は、並びの中で元の位置がいちばん古いコミットから HEAD まで。
 fn plan_steps(
     original: &[ChainCommit],
@@ -258,40 +306,12 @@ fn plan_steps(
     {
         return Err(tr!("Can’t squash: the parent isn’t in the editable range").into());
     }
-    let mut lines = Vec::with_capacity(steps.len());
-    let mut messages = Vec::new();
-    let message = |s: &PlanStep| {
-        s.message
-            .clone()
-            .filter(|m| !m.trim().is_empty())
-            .ok_or_else(|| tr!("A message is missing"))
-    };
-    for (i, (step, oid)) in steps.iter().zip(&oids).enumerate() {
-        match step.action.as_str() {
-            "pick" | "drop" | "edit" | "fixup" => {}
-            "reword" => messages.push(message(step)?),
-            "squash" => {}
-            other => return Err(tr!("Unknown action: {action}", action = other).into()),
-        }
-        lines.push(format!("{} {oid}", step.action));
-        // squash・fixup のまとまりの終わり。squash を含んでいれば、git はそこでエディタを開く。メッセージは
-        // まとまりの最後の squash のもの。
-        let in_run = |s: &PlanStep| matches!(s.action.as_str(), "squash" | "fixup");
-        let next_in_run = steps.get(i + 1).is_some_and(in_run);
-        if in_run(step) && !next_in_run {
-            let run_start = steps[..=i]
-                .iter()
-                .rposition(|s| !in_run(s))
-                .map_or(0, |p| p + 1);
-            if let Some(last) = steps[run_start..=i]
-                .iter()
-                .rev()
-                .find(|s| s.action == "squash")
-            {
-                messages.push(message(last)?);
-            }
-        }
-    }
+    let messages = plan_messages(steps)?;
+    let lines: Vec<String> = steps
+        .iter()
+        .zip(&oids)
+        .map(|(step, oid)| format!("{} {oid}", step.action))
+        .collect();
     let base = if start > 0 {
         Some(original[start - 1].oid)
     } else {

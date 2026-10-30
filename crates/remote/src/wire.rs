@@ -252,6 +252,7 @@ pub enum Op {
         base: Option<Oid>,
         todo: PathBuf,
         message: Option<PathBuf>,
+        rebase_merges: bool,
     },
     SequenceInProgress,
     RebaseProgress,

@@ -851,11 +851,13 @@ impl Operations for RemoteOperations {
         base: Option<&Oid>,
         todo: &Path,
         message: Option<&Path>,
+        rebase_merges: bool,
     ) -> Result<Outcome> {
         self.op(Op::RebaseTodo {
             base: base.copied(),
             todo: todo.to_owned(),
             message: message.map(Path::to_owned),
+            rebase_merges,
         })
     }
 

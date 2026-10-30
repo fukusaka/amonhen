@@ -668,10 +668,11 @@ impl Operations for Git {
         base: Option<&Oid>,
         todo: &std::path::Path,
         message: Option<&std::path::Path>,
+        rebase_merges: bool,
     ) -> Result<Outcome> {
         // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は、`rebase.updateRefs` が true で、git が
-        // 2.38 以降のときだけ残す（git の rebase と同じ条件）。
-        if !self.updates_refs_in_rebase() {
+        // 2.38 以降のときだけ残す（git の rebase と同じ条件）。merge を作り直すときは git が todo を作る。
+        if !rebase_merges && !self.updates_refs_in_rebase() {
             let text = std::fs::read_to_string(todo)?;
             if text.lines().any(|l| l.starts_with("update-ref ")) {
                 let kept: String = text
@@ -691,7 +692,20 @@ impl Operations for Git {
             format!("cp '{}'", path.replace('\'', r"'\''"))
         };
         let mut args = Vec::new();
-        let mut env = vec![("GIT_SEQUENCE_EDITOR", copy(todo))];
+        let sequence_editor = if rebase_merges {
+            // git が作った todo を、awk のプログラムで書き換える（変える行の命令だけを替える）。
+            let program = todo
+                .display()
+                .to_string()
+                .replace('\\', "/")
+                .replace('\'', r"'\''");
+            format!(
+                "sh -c 'awk -f \"$0\" \"$1\" > \"$1.amonhen\" && mv \"$1.amonhen\" \"$1\"' '{program}'"
+            )
+        } else {
+            copy(todo)
+        };
+        let mut env = vec![("GIT_SEQUENCE_EDITOR", sequence_editor)];
         if let Some(message) = message {
             // ディレクトリなら、メッセージがいくつもある（編集モードでまとめて決めたもの）。git がエディタを開くたびに、
             // `next` の番号のファイルを写して番号を進める。
@@ -719,6 +733,9 @@ impl Operations for Git {
             }
         }
         args.extend(["rebase", "--interactive", "--autostash", "--no-autosquash"]);
+        if rebase_merges {
+            args.push("--rebase-merges");
+        }
         args.push(base.as_deref().unwrap_or("--root"));
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
         self.stoppable(&args, &env)
