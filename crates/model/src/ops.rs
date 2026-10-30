@@ -37,6 +37,18 @@ pub enum PullMode {
     FastForwardOnly,
 }
 
+/// shallow clone の履歴をどこまで取り足すか（`Operations::deepen`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Deepen {
+    /// 今の境界からさらにこれだけ古いコミットまで（`git fetch --deepen=<n>`）。
+    Commits(u32),
+    /// この日時より新しいコミットをすべて（`git fetch --shallow-since=<date>`。日付は git が読む形）。
+    Since(String),
+    /// すべて（`git fetch --unshallow`）。
+    All,
+}
+
 /// git の設定の 1 項目（`git config --list --show-origin --show-scope`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -414,6 +426,8 @@ pub trait Operations: Send + Sync {
     /// `remote` から取ってくる（`None` ならすべてのリモート、`git fetch --all`）。消えたブランチを片づけるかは
     /// git の `fetch.prune` のとおり。
     fn fetch(&self, remote: Option<&str>) -> Result<()>;
+    /// shallow clone の履歴を取り足す（既定のリモートから）。
+    fn deepen(&self, how: &Deepen) -> Result<()>;
     /// 今のブランチに上流を取り込む（`git pull`）。
     fn pull(&self, mode: PullMode) -> Result<Outcome>;
     /// ローカルブランチごとの、上流との差（名前, ahead, behind, gone）。

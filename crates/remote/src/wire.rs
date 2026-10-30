@@ -7,7 +7,7 @@ use std::sync::Arc;
 use amonhen_layout::{Pod, Slab};
 use amonhen_model::search::TextTerm;
 use amonhen_model::{
-    ApplyPatch, CommitGraph, CommitText, FormatPatch, HeadState, Oid, PullMode, RefUpdate,
+    ApplyPatch, CommitGraph, CommitText, Deepen, FormatPatch, HeadState, Oid, PullMode, RefUpdate,
     RemoteChange, ResetMode, Result, Root, Sequence, WorktreeChange,
 };
 use serde::{Deserialize, Serialize};
@@ -290,6 +290,7 @@ pub enum Op {
     /// → `[Option<Oid>; 3]`
     ConflictStages(String),
     Fetch(Option<String>),
+    Deepen(Deepen),
     Pull(PullMode),
     BranchTracking,
     Push {

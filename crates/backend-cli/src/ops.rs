@@ -1,8 +1,8 @@
 use amonhen_model::tr;
 use amonhen_model::{
-    ApplyPatch, ConfigEntry, FormatPatch, HeadState, Oid, Operations, Outcome, PatchFile, PullMode,
-    RangePair, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry, ResetMode, Result, Sequence,
-    SigningKey, WorktreeChange, WorktreeChanges,
+    ApplyPatch, ConfigEntry, Deepen, FormatPatch, HeadState, Oid, Operations, Outcome, PatchFile,
+    PullMode, RangePair, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry, ResetMode, Result,
+    Sequence, SigningKey, WorktreeChange, WorktreeChanges,
 };
 
 use crate::Git;
@@ -989,6 +989,16 @@ impl Operations for Git {
             Some(r) => self.write(&["fetch", r]).map(drop),
             None => self.write(&["fetch", "--all"]).map(drop),
         }
+    }
+
+    fn deepen(&self, how: &Deepen) -> Result<()> {
+        // 端末の `git fetch --deepen` と同じく、既定のリモート（今のブランチの上流のリモート、なければ origin）から。
+        let arg = match how {
+            Deepen::Commits(n) => format!("--deepen={n}"),
+            Deepen::Since(date) => format!("--shallow-since={date}"),
+            Deepen::All => "--unshallow".to_owned(),
+        };
+        self.write(&["fetch", &arg]).map(drop)
     }
 
     fn pull(&self, mode: PullMode) -> Result<Outcome> {

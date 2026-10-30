@@ -12,10 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use amonhen_model::{
-    ApplyPatch, CommitGraph, CommitText, ConfigEntry, ConnectionState, FileChange, FormatPatch,
-    GitBackend, HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RawCommit, RefUpdate,
-    Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode, Result, Root,
-    Sequence, SigningKey, Status, WorktreeChange,
+    ApplyPatch, CommitGraph, CommitText, ConfigEntry, ConnectionState, Deepen, FileChange,
+    FormatPatch, GitBackend, HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RawCommit,
+    RefUpdate, Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode,
+    Result, Root, Sequence, SigningKey, Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -935,6 +935,10 @@ impl Operations for RemoteOperations {
 
     fn fetch(&self, remote: Option<&str>) -> Result<()> {
         self.op(Op::Fetch(remote.map(str::to_owned)))
+    }
+
+    fn deepen(&self, how: &Deepen) -> Result<()> {
+        self.op(Op::Deepen(how.clone()))
     }
 
     fn pull(&self, mode: PullMode) -> Result<Outcome> {

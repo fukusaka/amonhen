@@ -356,3 +356,5 @@
 "Conflicts expected at {count} commits:" = "{count} コミットでコンフリクトする見込みです:";
 "Nothing to preview" = "見通す操作がありません";
 "Not a remote: {remote}" = "リモートの名前ではありません: {remote}";
+"Give either commits (1 or more) or since" = "commits（1 以上）か since のどちらかを渡してください";
+"This repository has all of its history (not a shallow clone)" = "このリポジトリは履歴をすべて持っています（shallow clone ではありません）";
