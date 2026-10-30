@@ -1494,7 +1494,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
-    @objc func fetch(_ sender: Any?) { actions.fetch() }
+    @objc func fetch(_ sender: Any?) { actions.fetchWithConfirmation() }
     /// Pull・Push・Pop は、すぐには実行しないで何が起きるかをシートで見せる（`SyncSheets.swift`）。取り込み方はシートで
     /// 選ぶ（最初は git の設定に従う）。
     @objc func pull(_ sender: Any?) { actions.pullWithConfirmation(mode: .git) }
@@ -1784,8 +1784,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// プルリクエストのブランチをチェックアウトする（gh pr checkout）。手元のリポジトリだけ。
     private func checkout(_ pr: PullRequest) {
         guard let gitHub, isLocal, let dir = repository.workdir else { return NSSound.beep() }
-        RunningOperations.begin()
-        Task {
+        Task { @MainActor in
+            guard await actions.confirm(L("Checkout #%ld?", pr.number), message: L("“%@” is checked out as a local branch.", pr.title),
+                                        ok: "Checkout") else { return }
+            RunningOperations.begin()
             defer { RunningOperations.end() }
             do {
                 try await GitHub.checkout(pr.number, in: dir, repo: gitHub)

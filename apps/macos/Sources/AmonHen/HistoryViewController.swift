@@ -1525,12 +1525,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             return (id.map { String(format: "%02x", $0) }.joined(), isMerge)
         }
         func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
-        add(L("Cherry-pick %ld Commits (Oldest First)", commits.count)) {
-            actions.perform(sequence: commits.reversed().map { ["op": "cherryPick", "oid": $0.hex, "isMerge": $0.isMerge] })
-        }
-        add(L("Revert %ld Commits (Newest First)", commits.count)) {
-            actions.perform(sequence: commits.map { ["op": "revert", "oid": $0.hex, "isMerge": $0.isMerge] })
-        }
+        add(L("Cherry-pick %ld Commits…", commits.count)) { actions.pickWithConfirmation(revert: false, commits.reversed()) }
+        add(L("Revert %ld Commits…", commits.count)) { actions.pickWithConfirmation(revert: true, commits) }
         // マージはパッチにできない（git format-patch は飛ばす）。
         if commits.contains(where: \.isMerge) {
             menu.addItem(NSMenuItem(title: L("Save %ld Commits as Patches…", commits.count), action: nil, keyEquivalent: ""))
@@ -1617,7 +1613,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         add("New Branch at \(short)…") { actions.newBranch(at: hex) }
         add("New Tag at \(short)…") { actions.newTag(at: hex) }
-        add("Checkout \(short) (Detached)") { actions.perform(["op": "detach", "oid": hex]) }
+        add("Checkout \(short) (Detached)…") { actions.checkoutWithConfirmation(.detach(hex)) }
         menu.addItem(actions.resetMenuItem(to: hex))
         menu.addItem(.separator())
         if !isMerge {
@@ -1634,8 +1630,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             }
             menu.addItem(.separator())
         }
-        add("Cherry-pick \(short)") { actions.perform(["op": "cherryPick", "oid": hex, "isMerge": isMerge]) }
-        add("Revert \(short)") { actions.perform(["op": "revert", "oid": hex, "isMerge": isMerge]) }
+        add("Cherry-pick \(short)…") { actions.pickWithConfirmation(revert: false, [(hex, isMerge)]) }
+        add("Revert \(short)…") { actions.pickWithConfirmation(revert: true, [(hex, isMerge)]) }
         if isMerge {
             menu.addItem(NSMenuItem(title: L("Save as Patch…"), action: nil, keyEquivalent: ""))
         } else {

@@ -156,7 +156,7 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
     // MARK: - 操作
 
     @objc private func newBranch() { selected.map { actions?.newBranch(at: $0.new) } }
-    @objc private func checkout() { selected.map { actions?.perform(["op": "detach", "oid": $0.new]) } }
+    @objc private func checkout() { selected.map { actions?.checkoutWithConfirmation(.detach($0.new)) } }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
@@ -170,7 +170,7 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
         }
         add("New Branch at \(short)…") { actions.newBranch(at: hex) }
         add("New Tag at \(short)…") { actions.newTag(at: hex) }
-        add("Checkout \(short) (Detached)") { actions.perform(["op": "detach", "oid": hex]) }
+        add("Checkout \(short) (Detached)…") { actions.checkoutWithConfirmation(.detach(hex)) }
         menu.addItem(actions.resetMenuItem(to: hex))
         // この時点の HEAD と今の HEAD を、同じ一連のコミットの 2 つの版として比べる。
         if row > 0 {
