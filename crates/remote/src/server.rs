@@ -281,6 +281,7 @@ fn handle(
         Request::Delegate(_) => Err(tr!("This daemon doesn’t take delegated work").into()),
         Request::Head => encode(&backend.head()?),
         Request::Tips => encode(&backend.tips()?),
+        Request::Shallow => encode(&backend.shallow()?),
         Request::NewCommits { tips, known_tips } => {
             let commits = if known_tips.is_empty() {
                 backend.read_commits(&tips, &|_| false)?

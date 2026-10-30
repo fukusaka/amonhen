@@ -26,6 +26,12 @@ pub trait GitBackend: Send + Sync {
     /// History の起点（HEAD・ローカルとリモートのブランチ・タグが指すコミット）。
     fn tips(&self) -> Result<Vec<Oid>>;
 
+    /// shallow clone の境界のコミット（親が手元にない。`read_commits` は親のないコミットとして返す）。shallow
+    /// clone でなければ空。`git fetch --deepen` などで変わると、前回の History の境界のコミットに親ができる。
+    fn shallow(&self) -> Result<Vec<Oid>> {
+        Ok(Vec::new())
+    }
+
     /// `tips` から辿れるコミットを順不同で読む。`known` が真を返すコミットとその先は辿らない
     /// （前回読んだ History に当たったら止めるため）。各コミットは 1 回だけ読む。
     fn read_commits(

@@ -22,6 +22,8 @@ becomes the GitHub Release notes.
 
 #### Fixed
 
+- History opens in a shallow clone: it stopped with "Commit … not found" at the boundary, and now ends there as
+  `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
 - Starting a merge, rebase, cherry-pick, revert, pull or patch while another one is stopped no longer reports a
   conflict; it says which one is in progress, to continue or abort first.
 
@@ -645,6 +647,11 @@ First release.
 
 - Starting a merge, rebase, cherry-pick or revert while another one is stopped no longer reports a conflict; it says
   which one is in progress, to continue or abort first.
+
+#### Fixed
+
+- With the engine, History opens in a shallow clone and follows `git fetch --deepen` and `--unshallow`; it stopped
+  with "Commit … not found".
 
 ### [0.2.4] - 2026-10-30
 
