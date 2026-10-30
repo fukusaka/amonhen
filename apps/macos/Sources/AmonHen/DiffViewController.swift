@@ -1103,8 +1103,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     /// 標準・詳細のとき、上に作者とコミッターを並べる帯。
     private let peopleStrip = PeopleStrip(frame: .zero)
 
-    /// 表示中のコミットの親と子（キーボードで移るため）。子は詳細を読み終えるまで空。
-    var currentParents: [String] { info?.parents ?? [] }
+    /// 表示中のコミットの親と子（キーボードで移るため）。子は詳細を読み終えるまで空。shallow clone の境界の
+    /// コミットの親は取得していないので、移れない（空）。
+    var currentParents: [String] { info?.parentsNotFetched == true ? [] : info?.parents ?? [] }
     var currentChildren: [String] { extras?.children ?? [] }
     /// メッセージ・作者・ID・親コミット。
     private let header = FindableTextView(frame: NSRect(x: 0, y: 0, width: 600, height: 170))
