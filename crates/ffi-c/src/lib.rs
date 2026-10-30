@@ -527,8 +527,8 @@ pub unsafe extern "C" fn amonhen_repo_mailmap_fingerprint(repo_ptr: *const Amonh
 }
 
 /// commit-graph を最新にする（`git commit-graph write --reachable`）。なければ全体を書き出して 1、
-/// あれば後から増えたコミットだけを書き足して（`--split`）0、失敗したら -1 を返す。利用者が設定で
-/// 選んだときだけ、裏のスレッドから呼ぶこと。
+/// あれば後から増えたコミットだけを書き足して（`--split`）0、失敗したら -1 を返す。git maintenance に
+/// 登録してあれば（そちらが毎時書く）何もせずに 0。利用者が設定で選んだときだけ、裏のスレッドから呼ぶこと。
 ///
 /// # Safety
 /// `repo` は有効なリポジトリであること。

@@ -608,6 +608,12 @@ pub trait Operations: Send + Sync {
         let _ = path;
         Err(crate::tr!("Can’t read the tree here").into())
     }
+    /// `on` なら `git maintenance start`（ユーザー全体の `maintenance.repo` に登録し、OS の予定がなければ作る）、
+    /// でなければ `git maintenance unregister`（予定はほかのリポジトリも使うので残す）。git 2.31 から。
+    fn maintenance(&self, on: bool) -> Result<()> {
+        let _ = on;
+        Err(crate::tr!("Can’t change git maintenance here").into())
+    }
     /// worktree の一覧。`git worktree list --porcelain -z` の出力。
     fn worktree_list(&self) -> Result<Vec<u8>> {
         Err(crate::tr!("Can’t list worktrees here").into())

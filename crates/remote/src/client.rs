@@ -1054,6 +1054,10 @@ impl Operations for RemoteOperations {
         self.op(Op::TreeFolders(path.to_owned()))
     }
 
+    fn maintenance(&self, on: bool) -> Result<()> {
+        self.op(Op::Maintenance(on))
+    }
+
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {
         self.op(Op::Remotes)
     }

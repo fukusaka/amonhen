@@ -1238,6 +1238,10 @@ impl Operations for Git {
         Git::tree_folders(self, path)
     }
 
+    fn maintenance(&self, on: bool) -> Result<()> {
+        Git::maintenance(self, on)
+    }
+
     fn machine_git(&self) -> Result<amonhen_model::MachineGit> {
         Ok(amonhen_model::settings::machine_git())
     }
