@@ -1102,7 +1102,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 amend.state = .off
                 clearDraft()
                 loadRecentCommits()
-                if thenPush { actions?.push() }
+                if thenPush { actions?.pushWithoutAsking() }
             } catch {
                 // hooks で止まったときは出力が長いので、読めるシートで出す。
                 if let window = view.window {

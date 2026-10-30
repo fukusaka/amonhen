@@ -1,10 +1,13 @@
 import AmonhenKit
 import AppKit
 
-/// Push の確認の窓（モーダル。動かせて大きさも変えられる）。上に送り先と注意、左に送るコミット（一番上は
-/// 「送る変更すべて」。Force Push では上流から消えるコミットも）、右に選んだものの詳細（右の欄と同じ表示:
-/// メッセージ・変更ファイル・差分。読み取り専用）、下にキャンセルと Push。↩ で Push、Esc か閉じるでキャンセル。
-final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
+/// Push の確認のシート（ウィンドウに付く。大きさは変えられる）。上に送り先と注意、左に送るコミット（一番上は
+/// 「送る変更すべて」。Force Push と分岐では上流から消えるコミットも）、右に選んだものの詳細（右の欄と同じ表示:
+/// メッセージ・変更ファイル・差分。読み取り専用）、下にキャンセルと実行（と、分岐なら Pull…）。↩ で実行、Esc でキャンセル。
+final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate {
+    /// 押されたボタン。
+    enum Choice { case cancel, ok, other }
+
     /// 左の一覧の 1 行。`commit` が nil なら「送る変更すべて」、`heading` なら選べない見出し。
     private struct Row {
         let title: String
@@ -23,9 +26,11 @@ final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSW
     private let rangeLines: [String]
 
     /// `commits` は送るもの、`lost` は Force Push で上流から消えるもの（赤）。`warnings` は上に黄色で出す注意。
+    /// `other` は Cancel と実行の間に置く 3 つ目のボタン（分岐のときの Pull…）。
     init(
         title: String, message: String, warnings: [String], commits: CommitRange, lost: CommitRange?,
-        range: (base: Data, tip: Data), detail: CommitDetailViewController, ok: String, destructive: Bool
+        range: (base: Data, tip: Data), detail: CommitDetailViewController, ok: String, destructive: Bool,
+        other: String? = nil
     ) {
         self.detail = detail
         detail.isPreview = true
@@ -52,7 +57,6 @@ final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSW
         window.title = title
         window.isReleasedWhenClosed = false
         super.init()
-        window.delegate = self
 
         // 上: 題と説明、注意。
         let titleLabel = NSTextField(labelWithString: title)
@@ -98,7 +102,8 @@ final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSW
         let okButton = NSButton(title: ok, target: self, action: #selector(okClicked))
         okButton.keyEquivalent = "\r"
         okButton.hasDestructiveAction = destructive
-        let buttons = NSStackView(views: [NSView(), cancel, okButton])
+        let otherButton = other.map { NSButton(title: $0, target: self, action: #selector(otherClicked)) }
+        let buttons = NSStackView(views: [NSView(), cancel] + (otherButton.map { [$0] } ?? []) + [okButton])
         buttons.orientation = .horizontal
         buttons.distribution = .fill
         buttons.spacing = 12
@@ -127,36 +132,28 @@ final class PushSheet: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSW
         window.initialFirstResponder = table
     }
 
-    /// `parent` の上にモーダルで出し、Push なら true。窓は親の 85% の大きさで真ん中に（動かせる）。
+    /// `parent` にシートで付け、押されたボタンを返す。大きさは親の 85%（シートなので、ほかの窓は止めない）。
     @MainActor
-    func present(in parent: NSWindow) async -> Bool {
+    func present(in parent: NSWindow) async -> Choice {
         table.reloadData()
         table.selectRowIndexes([0], byExtendingSelection: false)
         let size = NSSize(width: max(820, parent.frame.width * 0.85), height: max(480, parent.frame.height * 0.85))
         window.setContentSize(size)
-        window.setFrameOrigin(NSPoint(x: parent.frame.midX - size.width / 2, y: parent.frame.midY - size.height / 2))
-        // モーダルのループは、メインアクターの仕事（この Task）の中からではなく実行ループから始める。仕事の中で
-        // 回すと、裏の読み込み（差分）の続きがメインアクターに届かず、読み込み中のまま止まる。
-        let window = self.window
-        return await withCheckedContinuation { continuation in
-            RunLoop.main.perform {
-                continuation.resume(returning: NSApp.runModal(for: window) == .OK)
-            }
+        let response = await parent.beginSheet(window)
+        return switch response {
+        case .OK: .ok
+        case .continue: .other
+        default: .cancel
         }
     }
 
-    private func finish(_ pushed: Bool) {
-        NSApp.stopModal(withCode: pushed ? .OK : .cancel)
-        window.orderOut(nil)
+    private func finish(_ response: NSApplication.ModalResponse) {
+        window.sheetParent?.endSheet(window, returnCode: response)
     }
 
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        finish(false)
-        return false
-    }
-
-    @objc private func okClicked() { finish(true) }
-    @objc private func cancelClicked() { finish(false) }
+    @objc private func okClicked() { finish(.OK) }
+    @objc private func otherClicked() { finish(.continue) }
+    @objc private func cancelClicked() { finish(.cancel) }
 
     // MARK: - 一覧
 

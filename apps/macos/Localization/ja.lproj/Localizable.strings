@@ -5,9 +5,6 @@
 "Cancel" = "キャンセル";
 
 /* SyncSheets.swift */
-"Can’t Push" = "Push できません";
-"Can’t Pull" = "Pull できません";
-"No branch is checked out (detached HEAD)." = "ブランチをチェックアウトしていません（detached HEAD）。";
 "Can’t Publish" = "Publish できません";
 "This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > Add Remote… で足してください。";
 "Remote" = "リモート";
@@ -20,31 +17,39 @@
 "This pushes %ld commits to it and makes it the upstream." = "そこに %ld コミットを push し、上流にします。";
 "It is the same as %@. This makes it the upstream." = "%@ と同じです。上流にします。";
 "Force push %@?" = "%@ を force push しますか？";
-"This replaces %@ with your %@ (--force-with-lease: it fails if someone pushed in the meantime)." = "%1$@ を手元の %2$@ で置き換えます（--force-with-lease。ほかの人が後から push していたら失敗します）。";
 "Commits to send" = "送るコミット";
 "Commits %@ will lose" = "%@ から消えるコミット";
-"%@ and %@ have diverged" = "%1$@ は %2$@ と分かれています";
 "Nothing to push" = "送るコミットはありません";
-"%@ has %ld commits you don’t have (as of the last Fetch). Pull them first, then push." = "%1$@ に、手元にないコミットが %2$ld 個あります（最後の Fetch の時点）。先に Pull で取り込んでから push してください。";
 "Commits only on %@" = "%@ にだけあるコミット";
-"%@ is the same as %@ (as of the last Fetch)." = "%1$@ は %2$@ と同じです（最後の Fetch の時点）。";
 "Push %ld commits to %@?" = "%1$ld コミットを %2$@ に push しますか？";
-"%@ has no upstream" = "%@ に上流がありません";
-"Choose the remote branch to pull from first." = "Pull で取り込むリモートのブランチを先に決めてください。";
 "Set Upstream…" = "上流を設定…";
 "Pull %ld commits from %@?" = "%2$@ から %1$ld コミット取り込みますか？";
 "Pull from %@?" = "%@ から Pull しますか？";
-"Merge brings the upstream commits into %@. When both sides have new commits, a merge commit joins them." = "Merge は、上流のコミットを %@ に取り込みます。両方に新しいコミットがあれば、マージコミットでつなぎます。";
-"Rebase puts your local commits on top of the upstream commits, keeping the History in one line." = "Rebase は、手元のコミットを上流のコミットの上に載せ直し、History を一本にします。";
-"Fast-Forward Only just moves %@ forward. If you have local commits too, it stops without changing anything." = "Fast-Forward Only は、%@ を進めるだけです。手元にもコミットがあれば、何も変えずに止まります。";
 "Nothing new as of the last Fetch (Pull fetches first)." = "最後の Fetch の時点では、取り込むコミットはありません（Pull は先に Fetch します）。";
-"This just moves %@ forward (fast-forward)." = "%@ を進めるだけです（fast-forward）。";
 "You have %ld local commits, so this makes a merge commit." = "手元に %ld コミットあるので、マージコミットを 1 つ作ります。";
 "Your %ld local commits are replayed on top (their IDs change)." = "手元の %ld コミットを、取り込んだコミットの上に載せ直します（ID が変わります）。";
-"⚠︎ You have %ld local commits too, so Fast-Forward Only can’t pull these." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。";
 "%ld files have uncommitted changes. Pull stops if the incoming changes touch them." = "作業中の変更が %ld ファイルあります。取り込む変更と重なると止まります。";
 "You can Undo it afterwards (⌥⌘Z)." = "あとから Undo（⌥⌘Z）で戻せます。";
 "Integrate with:" = "取り込み方:";
+"%@ has %ld commits you don’t have" = "%1$@ に、手元にないコミットが %2$ld あります";
+"Pull them first, or force push to replace them. Force Push can’t be undone." = "先に Pull するか、Force Push で置き換えます。Force Push は元に戻せません。";
+"%@ loses %ld commits. This can’t be undone." = "%1$@ から %2$ld コミットが消えます。元に戻せません。";
+"It fails if %@ has moved since you last fetched." = "最後の Fetch のあとに %@ が動いていれば、失敗します。";
+"Not merged yet: %@" = "まだ merge していないもの: %@";
+"Merge them again after resolving these conflicts." = "このコンフリクトを解決してから、もう一度 merge してください。";
+"Nothing to push. Pull the %ld new commits first." = "送るコミットはありません。先に新しい %ld コミットを Pull してください。";
+"No remote branch to pull from" = "取り込み元のリモートのブランチがありません";
+"Fetch, or add a remote in Repository Settings." = "Fetch するか、リポジトリの設定でリモートを足してください。";
+"Pull into %@?" = "%@ に Pull しますか？";
+"From:" = "取り込み元:";
+"Brings the upstream commits in. When both sides have new commits, a merge commit joins them." = "上流のコミットを取り込みます。両方に新しいコミットがあれば、マージコミットでつなぎます。";
+"Puts your local commits on top of the upstream commits, keeping the History in one line." = "手元のコミットを上流のコミットの上に載せ直し、History を 1 本に保ちます。";
+"Only moves the branch forward. Stops without changing anything if you have local commits too." = "ブランチを進めるだけです。手元にもコミットがあれば、何も変えずに止まります。";
+"Uses this repository’s pull.rebase and pull.ff, as git pull in a terminal does." = "端末の git pull と同じく、このリポジトリの pull.rebase・pull.ff に従います。";
+"Sets %@ as the upstream, then pulls." = "%@ を上流にしてから取り込みます。";
+"Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
+"⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
+"You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
 "Commits to pull" = "取り込むコミット";
 "Commits only here" = "手元にだけあるコミット";
 "Checking for conflicts…" = "コンフリクトするかを調べています…";
@@ -630,7 +635,6 @@
 "Name of the tag for %@" = "%@ に付けるタグの名前";
 "Message (optional)" = "メッセージ（空でもよい）";
 "Include untracked files" = "untracked のファイルも含める";
-"No branch is checked out." = "ブランチをチェックアウトしていません。";
 
 /* SidebarViewController.swift */
 "Conflicts" = "コンフリクト";
@@ -764,7 +768,6 @@
 "%ld operations running (click for Activity)" = "実行中の操作 %ld 個（押すと Activity）";
 "Undo: %@ (⌥⌘Z)" = "Undo: %@（⌥⌘Z）";
 "%ld commits ahead of upstream (⌃⌘P)" = "上流より %ld コミット先にあります（⌃⌘P）";
-"Push (⌃⌘P)" = "Push（⌃⌘P）";
 "Publish — choose the remote to create this branch on first (⌃⌘P)" = "Publish — ブランチを作るリモートを先に選びます（⌃⌘P）";
 "%ld commits behind upstream (⌃⌘L)" = "上流より %ld コミット後ろにあります（⌃⌘L）";
 "Pull (⌃⌘L)" = "Pull（⌃⌘L）";
@@ -827,7 +830,6 @@
 "Go to HEAD" = "HEAD へ移動";
 "Go to Parent" = "親へ移動";
 "Go to Child" = "子へ移動";
-"Pull With" = "Pull の取り込み方";
 "Repository Settings" = "リポジトリの設定";
 "Rebuild History" = "History を作り直す";
 "Discard the History cache and rebuild it from scratch (over the shared daemon, the daemon’s too)" = "History のキャッシュを捨てて最初から作り直す（共有の daemon 越しなら daemon の分も）";
@@ -1261,7 +1263,6 @@
 "Stage files resolved that way" = "そうして解けたファイルを stage する";
 "Stop overriding here. The value above takes over." = "ここでの上書きをやめます。上の値が効くようになります。";
 "The choice preselected in the Pull sheet (toolbar and ⌃⌘L). You can change it there each time, or use Repository > Pull With. “Follow git’s settings” uses the repository’s pull.rebase and pull.ff, as git pull in a terminal does." = "Pull のシート（ツールバーと ⌃⌘L）で最初に選ばれている取り込み方です。シートでそのたびに変えられ、Repository > Pull With でも選べます。「git の設定に従う」は、端末の git pull と同じく、リポジトリの pull.rebase と pull.ff で決めます。";
-"This repository’s git settings (pull.rebase, pull.ff) choose %@, as git pull in a terminal would." = "このリポジトリの git の設定（pull.rebase・pull.ff）では「%@」になります。端末の git pull と同じです。";
 "Track changes to the executable bit" = "実行の権限の変化を追う";
 "When pulling, how are the changes brought in?" = "pull のとき、どう取り込むか";
 "git’s default" = "git の既定";

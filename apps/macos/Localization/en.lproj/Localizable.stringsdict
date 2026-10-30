@@ -2,22 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>%@ has %ld commits you don’t have (as of the last Fetch). Pull them first, then push.</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%@ has %#@n0@, then push.</string>
-		<key>n0</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>ld</string>
-			<key>one</key>
-			<string>%ld commit you don’t have (as of the last Fetch). Pull it first</string>
-			<key>other</key>
-			<string>%ld commits you don’t have (as of the last Fetch). Pull them first</string>
-		</dict>
-	</dict>
 	<key>%@ has uncommitted changes in %ld files. They are lost with the folder. The branch stays.</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -530,22 +514,6 @@
 			<string>%ld more tags</string>
 		</dict>
 	</dict>
-	<key>⚠︎ You have %ld local commits too, so Fast-Forward Only can’t pull these.</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>⚠︎ You have %#@n0@.</string>
-		<key>n0</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>ld</string>
-			<key>one</key>
-			<string>%ld local commit too, so Fast-Forward Only can’t pull it</string>
-			<key>other</key>
-			<string>%ld local commits too, so Fast-Forward Only can’t pull these</string>
-		</dict>
-	</dict>
 	<key>%ld files have conflicts at %@. Resolve them in Working Copy, then Continue.</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -576,6 +544,70 @@
 			<string>%ld file has conflicts</string>
 			<key>other</key>
 			<string>%ld files have conflicts</string>
+		</dict>
+	</dict>
+	<key>%@ has %ld commits you don’t have</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%@ has %#@n0@ you don’t have</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld commit</string>
+			<key>other</key>
+			<string>%ld commits</string>
+		</dict>
+	</dict>
+	<key>%@ loses %ld commits. This can’t be undone.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%@ loses %#@n0@. This can’t be undone.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld commit</string>
+			<key>other</key>
+			<string>%ld commits</string>
+		</dict>
+	</dict>
+	<key>Nothing to push. Pull the %ld new commits first.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Nothing to push. Pull the %#@n0@ first.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>new commit</string>
+			<key>other</key>
+			<string>%ld new commits</string>
+		</dict>
+	</dict>
+	<key>⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>⚠︎ Fast-Forward Only can’t pull these: you have %#@n0@. Choose Merge or Rebase.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>a local commit</string>
+			<key>other</key>
+			<string>%ld local commits</string>
 		</dict>
 	</dict>
 </dict>

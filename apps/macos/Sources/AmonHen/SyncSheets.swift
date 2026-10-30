@@ -44,161 +44,167 @@ nonisolated struct MergeForecast: Decodable, Sendable {
 extension Actions {
     // MARK: - Push
 
-    /// Push の前に、送るコミットを見せる。上流が先に進んでいれば Pull を勧め、`force` なら上流から消えるコミットを見せる。
-    /// `branch` を渡せば今のブランチ以外も送れる（Create Pull Request の前など）。
-    func pushWithConfirmation(branch: String? = nil, force: Bool = false) {
+    /// Push の前に、送るコミットを見せる（1 つのシート）。上流が先に進んでいれば、同じシートで消えるコミットを見せて
+    /// Pull… か Force Push を選ばせる。`force` なら上流から消えるコミットを見せる。Force Push は、シートで見せた上流の
+    /// コミットのときだけ置き換える。`branch` を渡せば今のブランチ以外も送れる。送り終えたら `then`（Create Pull
+    /// Request の続きなど）。
+    func pushWithConfirmation(branch: String? = nil, force: Bool = false, then: (() -> Void)? = nil) {
         Task { @MainActor in
             guard let state = await syncState(branch: branch) else { return }
-            guard let branch = state.branch else {
-                return await inform(L("Can’t Push"), L("No branch is checked out (detached HEAD)."))
-            }
-            guard let upstream = state.upstream else { return publishWithConfirmation(branch: branch) }
+            // detached HEAD・送るものがないときは、ボタンとメニューを無効にしてある（理由はツールチップ）。
+            guard let branch = state.branch else { return NSSound.beep() }
+            guard let upstream = state.upstream else { return publishWithConfirmation(branch: branch, then: then) }
             let (outgoing, incoming) = (state.outgoing, state.incoming)
-            if force {
-                let title = L("Force push %@?", branch)
-                let message = L("This replaces %@ with your %@ (--force-with-lease: it fails if someone pushed in the meantime).", upstream, branch)
-                if let range = state.range, let detail = makeDetailView?(), let window {
-                    let sheet = PushSheet(
-                        title: title, message: sheetMessage(message), warnings: state.warnings, commits: outgoing,
-                        lost: incoming, range: range, detail: detail, ok: "Force Push", destructive: true)
-                    if await sheet.present(in: window) { push(branch: branch, force: true) }
-                    return
-                }
-                let alert = makeAlert(title, message)
-                alert.accessoryView = Self.commitLists([
-                    (L("Commits to send"), outgoing, false), (L("Commits %@ will lose", upstream), incoming, true),
-                ])
-                let button = alert.addButton(withTitle: "Force Push")
-                button.hasDestructiveAction = true
-                alert.addButton(withTitle: L("Cancel"))
-                if await present(alert) == .alertFirstButtonReturn { push(branch: branch, force: true) }
-                return
+            let diverged = !force && incoming.count > 0
+            guard force || diverged || outgoing.count > 0 else { return NSSound.beep() }
+            if diverged && outgoing.count == 0 { return NSSound.beep() }
+            let title: String
+            let message: String
+            if diverged {
+                title = L("%@ has %ld commits you don’t have", upstream, incoming.count)
+                message = L("Pull them first, or force push to replace them. Force Push can’t be undone.")
+            } else if force {
+                title = L("Force push %@?", branch)
+                message = incoming.count > 0
+                    ? L("%@ loses %ld commits. This can’t be undone.", upstream, incoming.count)
+                    : L("It fails if %@ has moved since you last fetched.", upstream)
+            } else {
+                title = L("Push %ld commits to %@?", outgoing.count, upstream)
+                message = ""
             }
-            if incoming.count > 0 {
-                let alert = makeAlert(
-                    outgoing.count > 0 ? L("%@ and %@ have diverged", branch, upstream) : L("Nothing to push"),
-                    L("%@ has %ld commits you don’t have (as of the last Fetch). Pull them first, then push.", upstream, incoming.count))
-                alert.accessoryView = Self.commitLists([
-                    (L("Commits to send"), outgoing, false), (L("Commits only on %@", upstream), incoming, false),
-                ])
-                alert.addButton(withTitle: "Pull…")
-                alert.addButton(withTitle: L("Cancel"))
-                if outgoing.count > 0 { alert.addButton(withTitle: "Force Push…") }
-                switch await present(alert) {
-                case .alertFirstButtonReturn: pullWithConfirmation(mode: .git)
-                case .alertThirdButtonReturn: pushWithConfirmation(branch: branch, force: true)
-                default: break
-                }
-                return
-            }
-            if outgoing.count == 0 {
-                return await inform(L("Nothing to push"), L("%@ is the same as %@ (as of the last Fetch).", branch, upstream))
-            }
-            let title = L("Push %ld commits to %@?", outgoing.count, upstream)
+            let ok = force || diverged ? "Force Push" : "Push"
+            let choice: PushSheet.Choice
             // 送るコミットとその中身を、右の欄と同じ表示で読んでから押す（Metal がなければ一覧だけのシート）。
             if let range = state.range, let detail = makeDetailView?(), let window {
                 let sheet = PushSheet(
-                    title: title, message: sheetMessage(""), warnings: state.warnings, commits: outgoing, lost: nil,
-                    range: range, detail: detail, ok: "Push", destructive: false)
-                if await sheet.present(in: window) { push(branch: branch, force: false) }
-                return
+                    title: title, message: sheetMessage(message), warnings: state.warnings, commits: outgoing,
+                    lost: force || diverged ? incoming : nil, range: range, detail: detail, ok: ok,
+                    destructive: force || diverged, other: diverged ? "Pull…" : nil)
+                choice = await sheet.present(in: window)
+            } else {
+                let alert = makeAlert(title, message)
+                alert.accessoryView = Self.commitLists([
+                    (L("Commits to send"), outgoing, false),
+                    (L("Commits %@ will lose", upstream), force || diverged ? incoming : .empty, true),
+                ])
+                alert.addButton(withTitle: ok).hasDestructiveAction = force || diverged
+                alert.addButton(withTitle: L("Cancel"))
+                if diverged { alert.addButton(withTitle: "Pull…") }
+                choice = switch await present(alert) {
+                case .alertFirstButtonReturn: .ok
+                case .alertThirdButtonReturn: .other
+                default: .cancel
+                }
             }
-            let alert = makeAlert(title, "")
-            alert.accessoryView = Self.commitLists([(L("Commits to send"), outgoing, false)])
-            alert.addButton(withTitle: "Push")
-            alert.addButton(withTitle: L("Cancel"))
-            if await present(alert) == .alertFirstButtonReturn { push(branch: branch, force: false) }
+            switch choice {
+            case .ok: push(branch: branch, force: force || diverged, expect: state.upstreamTarget, then: then)
+            case .other: pullWithConfirmation(mode: .git)
+            case .cancel: break
+            }
         }
     }
 
     // MARK: - Pull
 
-    /// Pull の前に、取り込むコミットと取り込み方を見せる。取り込み方はシートの中で変えられる（既定は `mode`）。
-    /// ツールバーと ⌃⌘L は「git の設定に従う」で開く（Repository > Pull With は選んだ方法で）。
+    /// Pull の前に、取り込むコミットと取り込み方を見せる（1 つのシート）。取り込み方はシートの中で選ぶ（既定は
+    /// `mode`）。上流がなければ、同じシートで取り込み元のリモートのブランチを選び、それを上流にして取り込む。
     func pullWithConfirmation(mode: PullMode) {
         Task { @MainActor in
             guard let state = await syncState() else { return }
-            guard let branch = state.status.branch else {
-                return await inform(L("Can’t Pull"), L("No branch is checked out (detached HEAD)."))
-            }
-            guard let upstream = state.status.upstream else {
-                let alert = makeAlert(L("%@ has no upstream", branch), L("Choose the remote branch to pull from first."))
-                alert.addButton(withTitle: L("Set Upstream…"))
-                alert.addButton(withTitle: L("Cancel"))
-                if await present(alert) == .alertFirstButtonReturn {
-                    NSApp.sendAction(#selector(RepositoryWindow.setUpstream(_:)), to: nil, from: nil)
+            // detached HEAD では、ボタンとメニューを無効にしてある。
+            guard let branch = state.status.branch else { return NSSound.beep() }
+            let repository = self.repository
+            // 上流がなければ、取り込み元を選ぶ（同じ名前のリモートのブランチを先に）。
+            var sources: [String] = []
+            if state.status.upstream == nil {
+                let refs = await Task.detached { try? repository.loadRefs() }.value
+                let remotes = refs?.items.filter { $0.kind == .remote && !$0.name.hasSuffix("/HEAD") }.map(\.name) ?? []
+                sources = remotes.filter { $0.split(separator: "/", maxSplits: 1).last.map(String.init) == branch }
+                    + remotes.filter { $0.split(separator: "/", maxSplits: 1).last.map(String.init) != branch }
+                guard !sources.isEmpty else {
+                    return await inform(L("No remote branch to pull from"), L("Fetch, or add a remote in Repository Settings."))
                 }
-                return
             }
+            let upstream = state.status.upstream
             let (outgoing, incoming) = (state.outgoing, state.incoming)
             let changed = state.status.items.filter { $0.kind != .untracked }.count
             // git の設定（pull.rebase・pull.ff）が決める取り込み方。「git の設定に従う」の中身として見せる。
             struct Defaults: Decodable { let pull: String }
-            let repository = self.repository
             let byGit = await Task.detached { try? repository.info(["op": "syncDefaults"], as: Defaults.self) }.value
                 .flatMap { PullMode(rawValue: $0.pull) } ?? .merge
             // 選んだ取り込み方が実際に行うこと（.git なら git の設定が決める方）。
             let method = { (m: PullMode) -> PullMode in m == .git ? byGit : m }
-            let alert = makeAlert(
-                incoming.count > 0 ? L("Pull %ld commits from %@?", incoming.count, upstream) : L("Pull from %@?", upstream),
-                "")
+            let title = upstream.map {
+                incoming.count > 0 ? L("Pull %ld commits from %@?", incoming.count, $0) : L("Pull from %@?", $0)
+            } ?? L("Pull into %@?", branch)
+            let alert = makeAlert(title, "")
+            alert.addButton(withTitle: "Pull")
+            alert.addButton(withTitle: L("Cancel"))
+            let pullButton = alert.buttons[0]
+
+            let source = NSPopUpButton(frame: .zero, pullsDown: false)
+            source.addItems(withTitles: sources)
             let popup = NSPopUpButton(frame: .zero, pullsDown: false)
             for m in PullMode.allCases {
                 popup.addItem(withTitle: m == .git ? L("%@ (%@)", m.title, byGit.title) : m.title)
                 popup.lastItem?.representedObject = m.rawValue
+                popup.lastItem?.toolTip = switch m {
+                case .merge: L("Brings the upstream commits in. When both sides have new commits, a merge commit joins them.")
+                case .rebase: L("Puts your local commits on top of the upstream commits, keeping the History in one line.")
+                case .fastForwardOnly: L("Only moves the branch forward. Stops without changing anything if you have local commits too.")
+                case .git: L("Uses this repository’s pull.rebase and pull.ff, as git pull in a terminal does.")
+                }
             }
             popup.selectItem(at: PullMode.allCases.firstIndex(of: mode) ?? 0)
+            let chosen = { PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? mode }
             let note = NSTextField(wrappingLabelWithString: "")
             note.preferredMaxLayoutWidth = 440
             note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
             note.textColor = .secondaryLabelColor
-            let describe = { (chosen: PullMode) -> String in
-                // 取り込み方そのものの説明（選び直すと必ず変わる）と、今の状態でそれが何をするか。
-                let m = method(chosen)
-                var lines: [String] = switch m {
-                case .merge: [L("Merge brings the upstream commits into %@. When both sides have new commits, a merge commit joins them.", branch)]
-                case .rebase: [L("Rebase puts your local commits on top of the upstream commits, keeping the History in one line.")]
-                case .fastForwardOnly: [L("Fast-Forward Only just moves %@ forward. If you have local commits too, it stops without changing anything.", branch)]
-                case .git: []
-                }
-                if chosen == .git {
-                    lines.insert(L("This repository’s git settings (pull.rebase, pull.ff) choose %@, as git pull in a terminal would.", m.title), at: 0)
-                }
-                if incoming.count == 0 {
+            // 今の状態で、選んだ取り込み方が何をするか（1 行）と、作業中の変更、Undo。
+            let describe = { (m: PullMode) -> (String, Bool) in
+                var lines: [String] = []
+                var blocked = false
+                if upstream == nil {
+                    lines.append(L("Sets %@ as the upstream, then pulls.", source.titleOfSelectedItem ?? ""))
+                } else if incoming.count == 0 {
                     lines.append(L("Nothing new as of the last Fetch (Pull fetches first)."))
                 } else if outgoing.count == 0 {
-                    lines.append(L("This just moves %@ forward (fast-forward).", branch))
+                    lines.append(L("Moves %@ forward (fast-forward).", branch))
                 } else {
-                    switch m {
+                    switch method(m) {
                     case .merge: lines.append(L("You have %ld local commits, so this makes a merge commit.", outgoing.count))
                     case .rebase: lines.append(L("Your %ld local commits are replayed on top (their IDs change).", outgoing.count))
-                    case .fastForwardOnly: lines.append(L("⚠︎ You have %ld local commits too, so Fast-Forward Only can’t pull these.", outgoing.count))
+                    case .fastForwardOnly:
+                        lines.append(L("⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase.", outgoing.count))
+                        blocked = true
                     case .git: break
                     }
                 }
                 if changed > 0 { lines.append(L("%ld files have uncommitted changes. Pull stops if the incoming changes touch them.", changed)) }
-                lines.append(L("You can Undo it afterwards (⌥⌘Z)."))
-                return lines.joined(separator: "\n")
+                lines.append(L("You can Undo this (⌥⌘Z)."))
+                return (lines.joined(separator: "\n"), blocked)
             }
-            // 説明の高さは、いちばん長い取り込み方に合わせて決めておく（選び直してもシートの大きさを変えず、
-            // 文が切れない）。
+            // 説明の高さは、いちばん長い取り込み方に合わせて決めておく（選び直してもシートの大きさを変えない）。
             let height = PullMode.allCases.map { m -> CGFloat in
-                note.stringValue = describe(m)
+                note.stringValue = describe(m).0
                 return note.fittingSize.height
             }.max() ?? 0
             note.heightAnchor.constraint(equalToConstant: height).isActive = true
             let update = {
-                note.stringValue = describe(PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? .merge)
+                let (text, blocked) = describe(chosen())
+                note.stringValue = text
+                pullButton.isEnabled = !blocked
             }
             update()
             // 両方に新しいコミットがあるときだけ、取り込むとコンフリクトするかを裏で調べる（fast-forward なら重ならない）。
             // Fast-Forward Only はマージしないので出さない。rebase は最後の結果での目安。
-            let forecastLabel = incoming.count > 0 && outgoing.count > 0 ? Self.forecastLabel() : nil
+            let forecastLabel = upstream != nil && incoming.count > 0 && outgoing.count > 0 ? Self.forecastLabel() : nil
             final class Answer { var forecast: MergeForecast?; var done = false }
             let answer = Answer()
             let showForecast = {
                 guard let forecastLabel else { return }
-                let m = method(PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? .merge)
+                let m = method(chosen())
                 if m == .fastForwardOnly {
                     forecastLabel.stringValue = ""
                 } else if answer.done {
@@ -212,18 +218,22 @@ extension Actions {
                 update()
                 showForecast()
             }
-            popup.target = target
-            popup.action = #selector(ClosureTarget.fire)
-            if forecastLabel != nil {
+            for p in [popup, source] {
+                p.target = target
+                p.action = #selector(ClosureTarget.fire)
+            }
+            if forecastLabel != nil, let upstream {
                 Task { @MainActor in
                     answer.forecast = await predictMerge(theirs: upstream)
                     answer.done = true
                     showForecast()
                 }
             }
-            let modeRow = NSStackView(views: [NSTextField(labelWithString: L("Integrate with:")), popup])
-            modeRow.spacing = 6
-            let stack = NSStackView(views: [modeRow, note] + (forecastLabel.map { [$0] } ?? []))
+            let grid = NSGridView(views: (sources.isEmpty ? [] : [[NSTextField(labelWithString: L("From:")), source]])
+                + [[NSTextField(labelWithString: L("Integrate with:")), popup]])
+            grid.rowSpacing = 6
+            grid.column(at: 0).xPlacement = .trailing
+            let stack = NSStackView(views: [grid, note] + (forecastLabel.map { [$0] } ?? []))
             stack.orientation = .vertical
             stack.alignment = .leading
             stack.spacing = 8
@@ -235,13 +245,19 @@ extension Actions {
             stack.layoutSubtreeIfNeeded()
             stack.frame.size = stack.fittingSize
             alert.accessoryView = stack
-            alert.addButton(withTitle: "Pull")
-            alert.addButton(withTitle: L("Cancel"))
             let response = await present(alert)
             withExtendedLifetime(target) {}
             guard response == .alertFirstButtonReturn else { return }
-            let chosen = PullMode(rawValue: popup.selectedItem?.representedObject as? String ?? "") ?? mode
-            perform(["op": "pull", "mode": chosen.rawValue])
+            let pull: [String: Any] = ["op": "pull", "mode": chosen().rawValue]
+            guard let picked = source.titleOfSelectedItem, upstream == nil, let slash = picked.firstIndex(of: "/") else {
+                return perform(pull)
+            }
+            perform(sequence: [
+                ["op": "configSet", "key": "branch.\(branch).remote", "value": String(picked[..<slash])],
+                ["op": "configSet", "key": "branch.\(branch).merge",
+                 "value": "refs/heads/" + String(picked[picked.index(after: slash)...])],
+                pull,
+            ])
         }
     }
 
@@ -328,7 +344,7 @@ extension Actions {
     /// 上流のないブランチを初めて送る（Publish）。送り先のリモートとそこでの名前を選ばせ、送ったらそれを上流にする。
     /// リモートの初期値は、git の push と同じく branch.<name>.pushRemote・remote.pushDefault の順で、なければ
     /// リモートが 1 つならそれ、いくつもあれば origin。
-    func publishWithConfirmation(branch: String) {
+    func publishWithConfirmation(branch: String, then: (() -> Void)? = nil) {
         let repository = self.repository
         Task { @MainActor in
             nonisolated struct Remotes: Decodable { struct Remote: Decodable { let name: String }; let remotes: [Remote] }
@@ -393,7 +409,7 @@ extension Actions {
                 guard await present(alert) == .alertFirstButtonReturn else { return }
             }
             perform(["op": "push", "remote": remote, "branch": branch, "remoteBranch": remoteBranch,
-                     "force": false, "setUpstream": true])
+                     "force": false, "setUpstream": true]) { _ in then?() }
         }
     }
 
@@ -408,6 +424,8 @@ extension Actions {
         let incoming: CommitRange
         /// 送る範囲の両端（上流のコミットと HEAD）。送るものがなければ nil。
         var range: (base: Data, tip: Data)? = nil
+        /// 上流のコミット（16 進、最後の Fetch の時点）。Force Push はリモートがこれのときだけ置き換える。
+        var upstreamTarget: String? = nil
         /// Push の前に目を向けてほしいこと（既定のブランチへ直接、整理し忘れのコミット、秘密らしきファイルの追加など）。
         var warnings: [String] = []
     }
@@ -471,6 +489,8 @@ extension Actions {
                 var state = SyncState(
                     status: status, branch: name, upstream: upstream, outgoing: try range(upstream, tipRef),
                     incoming: try range(tipRef, upstream))
+                state.upstreamTarget = refs.items.first { $0.kind == .remote && $0.name == upstream }?.target
+                    .map { $0.map { String(format: "%02x", $0) }.joined() }
                 // 送るものがあれば、その範囲の両端（シートの「送る変更すべて」の差分）と、注意を求める。
                 if state.outgoing.count > 0, let tip = local?.target ?? refs.head,
                    let base = refs.items.first(where: { $0.kind == .remote && $0.name == upstream })?.target {

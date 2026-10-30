@@ -305,30 +305,42 @@ final class Actions {
         perform(command)
     }
 
-    /// ブランチ（nil なら今のブランチ）を上流に push する。上流がなければ、送り先を選ぶ Publish のシートを出す。
-    func push(branch: String? = nil, force: Bool = false) {
+    /// ブランチ（nil なら今のブランチ）を上流に push する（確認は済んでいる）。`expect` は Force Push で置き換えてよい
+    /// リモートのコミット。送り終えたら `then`。
+    func push(branch: String, force: Bool, expect: String?, then: (() -> Void)? = nil) {
         let repository = self.repository
         Task {
-            let (branch, upstream): (String?, String?) = await Task.detached {
-                if let branch {
-                    let item = (try? repository.loadRefs())?.items.first { $0.kind == .local && $0.name == branch }
-                    return (branch, item.flatMap { $0.gone ? nil : $0.detail })
+            let upstream: String? = await Task.detached {
+                if let item = (try? repository.loadRefs())?.items.first(where: { $0.kind == .local && $0.name == branch }) {
+                    return item.gone ? nil : item.detail
                 }
-                let status = try? repository.loadStatus()
-                return (status?.branch, status?.upstream)
+                return nil
             }.value
-            guard let branch else {
-                await alert(L("Can’t Push"), L("No branch is checked out."))
-                return
+            guard let upstream, let slash = upstream.firstIndex(of: "/") else {
+                return publishWithConfirmation(branch: branch, then: then)
             }
-            if let upstream, let slash = upstream.firstIndex(of: "/") {
-                let remote = String(upstream[..<slash])
-                let remoteBranch = String(upstream[upstream.index(after: slash)...])
-                perform(["op": "push", "remote": remote, "branch": branch, "remoteBranch": remoteBranch,
-                         "force": force, "setUpstream": false])
-            } else {
-                publishWithConfirmation(branch: branch)
-            }
+            var command: [String: Any] = [
+                "op": "push", "remote": String(upstream[..<slash]), "branch": branch,
+                "remoteBranch": String(upstream[upstream.index(after: slash)...]), "force": force, "setUpstream": false,
+            ]
+            if force, let expect { command["expect"] = expect }
+            perform(command) { _ in then?() }
+        }
+    }
+
+    /// Commit and Push の push。聞かずに送るが、上流がない・上流が先に進んでいるときは、Push のシートを出す（失敗の帯で
+    /// 知らせるより、そこで選べるほうがよい）。
+    func pushWithoutAsking() {
+        let repository = self.repository
+        Task {
+            let status = try? await Task.detached { try repository.loadStatus() }.value
+            guard let branch = status?.branch else { return NSSound.beep() }
+            guard let upstream = status?.upstream else { return publishWithConfirmation(branch: branch) }
+            let behind = await Task.detached {
+                (try? repository.info(["op": "between", "base": "HEAD", "tip": upstream, "limit": 1], as: CommitRange.self))?.count ?? 0
+            }.value
+            if behind > 0 { return pushWithConfirmation() }
+            push(branch: branch, force: false, expect: nil)
         }
     }
 }
