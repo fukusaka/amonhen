@@ -602,6 +602,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         editing.actions.currentBranch = branch
         let current = latestRefs?.items.first { $0.kind == .local && $0.name == branch }
         toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0, published: current.map(Self.isPublished) ?? true)
+        pushState = current.map { (Self.isPublished($0), $0.ahead) }
         workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
         if editing === opened, let head = latestRefs?.head { history.head = head }
     }
@@ -841,6 +842,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     private var changeCount = 0
     private var tracking = (ahead: 0, behind: 0)
+    /// 書き込む先のブランチが上流を持つか（Publish でないか）と、送るコミットの数。ブランチがなければ nil。
+    private var pushState: (published: Bool, ahead: Int)?
 
     /// タブの名前に、未コミットの変更（●）と上流との差（↑↓）を添える。ウィンドウのタイトルは変えない。
     private func updateTabTitle() {
@@ -2035,9 +2038,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(skipSequence(_:)): return sequence.map { $0.hasPrefix("rebase") || $0 == "cherry-pick" || $0 == "am" } ?? false
         case #selector(savePatch(_:)): return pages?.page == .history && history.selectedCommitsForPatch != nil
         case #selector(applyPatch(_:)): return sequence == nil
-        case #selector(push(_:)), #selector(forcePush(_:)): return latestRefs?.headBranch != nil
-        case #selector(pull(_:)), #selector(pullMerge(_:)), #selector(pullRebase(_:)), #selector(pullFastForward(_:)):
-            return latestRefs?.headBranch != nil && sequence == nil
+        // 送るものがなければ押せない（理由はツールバーのツールチップ）。上流のないブランチは Publish。
+        case #selector(push(_:)): return pushState.map { !$0.published || $0.ahead > 0 } ?? false
+        case #selector(forcePush(_:)): return pushState?.published ?? false
+        case #selector(pull(_:)): return latestRefs?.headBranch != nil && sequence == nil
         case #selector(mergeIntoCurrent(_:)), #selector(rebaseCurrent(_:)): return latestRefs != nil && sequence == nil
         case #selector(popStash(_:)), #selector(showStashes(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil

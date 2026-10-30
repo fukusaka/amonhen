@@ -212,7 +212,8 @@ final class MainToolbar: NSObject, NSToolbarDelegate {
         }
         pushItem.image = NSImage(systemSymbolName: published ? "arrow.up.circle" : "icloud.and.arrow.up", accessibilityDescription: push)
         pushItem.toolTip = !published ? L("Publish — choose the remote to create this branch on first (⌃⌘P)")
-            : ahead > 0 ? L("%ld commits ahead of upstream (⌃⌘P)", ahead) : L("Push (⌃⌘P)")
+            : ahead > 0 ? L("%ld commits ahead of upstream (⌃⌘P)", ahead)
+            : behind > 0 ? L("Nothing to push. Pull the %ld new commits first.", behind) : L("Nothing to push")
         pullItem.toolTip = behind > 0 ? L("%ld commits behind upstream (⌃⌘L)", behind) : L("Pull (⌃⌘L)")
         for m in mirrors.allObjects { m.setTracking(ahead: ahead, behind: behind, published: published) }
     }
