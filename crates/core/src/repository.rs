@@ -802,6 +802,14 @@ impl Repository {
             let files = changes.iter().map(|c| c.path.clone()).zip(diffs).collect();
             return Ok(diff::StackedDiff { files });
         }
+        // partial clone では、足りない blob を先にまとめて取ってくる（1 つずつ取りに行かない）。
+        let ids: Vec<Oid> = changes
+            .iter()
+            .filter(|c| !c.submodule)
+            .flat_map(|c| [c.old_id, c.new_id])
+            .flatten()
+            .collect();
+        self.backend.prefetch_blobs(&ids)?;
         let one = |c: &FileChange| Ok((c.path.clone(), self.change_diff(c)?));
         // ファイルごとの差分は独立しているので、多ければ分けて並列に取る（コミットを選んでから表示までの時間）。
         let threads = std::thread::available_parallelism()

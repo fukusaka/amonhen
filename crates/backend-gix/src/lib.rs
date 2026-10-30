@@ -123,6 +123,19 @@ fn read_commit_object(
     })
 }
 
+/// partial clone なら、足りないオブジェクトを取ってくる remote（git 2.24 からの `remote.<name>.promisor`、
+/// それより古い git が書く `extensions.partialClone`）。
+fn promisor_remote(repo: &gix::Repository) -> Option<String> {
+    let config = repo.config_snapshot();
+    if let Some(name) = config.string("extensions.partialClone") {
+        return Some(name.to_string());
+    }
+    repo.remote_names()
+        .into_iter()
+        .map(|name| name.to_string())
+        .find(|name| config.boolean(&format!("remote.{name}.promisor")) == Some(true))
+}
+
 fn to_oid(id: &gix::oid) -> Result<Oid> {
     let bytes: [u8; 20] = id
         .as_bytes()
@@ -546,14 +559,56 @@ impl GitBackend for GixBackend {
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
         let repo = self.repo.to_thread_local();
         let mut buf = Vec::new();
-        let len = repo
+        let Some(data) = repo
             .objects
             .try_find(&gix::ObjectId::from_bytes_or_panic(&id.0), &mut buf)?
-            .ok_or_else(|| tr!("Blob {id} not found", id = id))?
-            .data
-            .len();
+        else {
+            // partial clone で手元にない blob は、git に読ませる（git が promisor の remote から取ってくる）。
+            if promisor_remote(&repo).is_some()
+                && let Ok(git) = self.git()
+            {
+                return Ok(Arc::new(git.write(&[
+                    "cat-file",
+                    "blob",
+                    &id.to_string(),
+                ])?));
+            }
+            return Err(tr!("Blob {id} not found", id = id).into());
+        };
+        let len = data.data.len();
         buf.truncate(len);
         Ok(Arc::new(buf))
+    }
+
+    fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
+        let repo = self.repo.to_thread_local();
+        let Some(remote) = promisor_remote(&repo) else {
+            return Ok(());
+        };
+        let missing: Vec<String> = ids
+            .iter()
+            .filter(|id| !repo.has_object(gix::ObjectId::from_bytes_or_panic(&id.0)))
+            .map(Oid::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        // git の差分が足りない blob を取るときと同じく、ID を並べて 1 回の fetch で取る（`cat-file` は 1 つずつ取る）。
+        // FETCH_HEAD は書き換えない（git 2.29 から。それより古い git は書き換える）。
+        let mut args = vec!["fetch", "--quiet", "--no-tags", "--recurse-submodules=no"];
+        if amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 29)) {
+            args.push("--no-write-fetch-head");
+        }
+        args.extend(["--filter=blob:none", &remote]);
+        let git = self.git()?;
+        for chunk in missing.chunks(500) {
+            let mut args = args.clone();
+            args.extend(chunk.iter().map(String::as_str));
+            git.write(&args)?;
+        }
+        Ok(())
     }
 
     fn operations(&self) -> Result<&dyn amonhen_model::Operations> {

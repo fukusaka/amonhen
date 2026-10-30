@@ -68,6 +68,8 @@ pub enum Request {
     ChangesBetween(Option<Oid>, Oid),
     /// → `Bytes`
     Blob(Oid),
+    /// → `()`（手元にない blob をまとめて取ってくる）
+    PrefetchBlobs(Vec<Oid>),
     /// → `Status`
     Status,
     /// → `Bytes`
