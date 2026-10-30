@@ -17,6 +17,12 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Push and Pull each confirm in one sheet: a diverged Push offers Pull… or Force Push there, and Pull with no upstream
+  picks the remote branch there. Repository > Pull With is gone, and Create Pull Request goes on after its push.
+- Force Push replaces the remote branch only if it is still at the commit the sheet showed, so commits fetched in the
+  background are not lost unseen.
+- Push is disabled when there is nothing to send, and a conflict opens Working Copy at the first conflicted file
+  instead of an alert.
 - Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
   Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 

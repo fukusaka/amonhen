@@ -323,8 +323,8 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 | --- | --- | --- | --- |
 | Location | Branch (in the title position) | Branch switcher panel (fuzzy search, recent branches on top) | — (rename and upstream are in the Repository menu) |
 | Sync | Fetch | Fetch the default remote | All remotes, with prune, tags too |
-| | Pull | Confirmation sheet: the commits to bring in and the local-only ones, how to integrate (merge / rebase / ff-only, the default from settings) with what that does (a merge commit, rewritten IDs, ff-only fails), a warning about uncommitted changes | — |
-| | Push | Confirmation window (modal, movable and resizable): where it goes, warnings worth a look (straight to the default branch, fixup!/WIP commits, files that may hold secrets, binaries added), the commits to send on the left and, on the right, the same message, files and diff as the detail column for the selected commit or for all changes together (read-only). ↩ pushes. If upstream has commits we lack, suggest Pull (Force Push… only from there, listing the commits upstream would lose); if there is no upstream, the button is Publish instead (see below) | — |
+| | Pull | Confirmation sheet: the commits to bring in and the local-only ones, how to integrate (merge / rebase / ff-only, starting from git's settings; what each way does is its tooltip) with one line on what it does here (a merge commit, rewritten IDs), a warning about uncommitted changes. Pull is disabled when ff-only can't bring the commits in. With no upstream, the same sheet asks for the remote branch to pull from and makes it the upstream | — |
+| | Push | Confirmation sheet (attached to the window, resizable): where it goes, warnings worth a look (straight to the default branch, fixup!/WIP commits, files that may hold secrets, binaries added), the commits to send on the left and, on the right, the same message, files and diff as the detail column for the selected commit or for all changes together (read-only). ↩ pushes. If upstream has commits we lack, the same sheet lists the commits it would lose and offers Pull… or Force Push. Force Push replaces the remote branch only if it is still at the commit the sheet showed (`--force-with-lease=<ref>:<commit>`). Disabled, with the reason in its tooltip, when there is nothing to send; if there is no upstream, the button is Publish instead (see below) | — |
 | Integrate | Merge | Merge the selected commit or branch into the current branch (choose no-ff or squash in the confirmation sheet). Several selected in the sidebar or History merge in one commit (octopus), from a sheet with their order and the conflicts expected for each | List of recent branches |
 | | Rebase | Rebase the current branch onto the selection | interactive (enters History's edit mode), onto |
 | Stash | Stash | Stash (with a message field; ⌥-click stashes immediately) | Include untracked, staged only, selected files only |
@@ -342,7 +342,7 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 - When unavailable, disable the item and give the reason in the tooltip ("No upstream", "Resolving conflicts").
 - Deleting a branch and dropping a stash ask first (both can be undone). A branch with commits that are in
   neither the current branch nor its upstream lists them in the sheet and needs Delete Anyway (git's `-D`).
-- No ▾ menus on Pull, Push and Branch: one click on an icon must never send or rewrite anything. Operations that leave the machine or move branches (Pull, Push, Pop, Undo) open a sheet that says what will happen; ↩ runs it, so the keyboard costs one extra key. Fetch and Refresh run at once (they change nothing of ours). The menu shortcuts (⌃⌘L, ⌃⌘P) open the same sheets; Commit and Push does not ask again.
+- No ▾ menus on Pull, Push and Branch: one click on an icon must never send or rewrite anything. Operations that leave the machine or move branches (Pull, Push, Pop, Undo) open a sheet that says what will happen; ↩ runs it, so the keyboard costs one extra key. Fetch and Refresh run at once (they change nothing of ours). The menu shortcuts (⌃⌘L, ⌃⌘P) open the same sheets; Commit and Push does not ask again, unless there is no upstream or the upstream has moved on. One operation shows one sheet: what used to be a second dialog (Pull from a diverged Push, the upstream for a Pull, the pull request after its push) happens in or right after that sheet.
 - One name in one place: while the toolbar shows the search field, History hides its own (the match count, previous,
   next and "matching only" stay in History); while it shows Branch, the window subtitle leaves the branch out.
 - Network git that prints nothing for 120 seconds (usually a credential prompt nobody sees) is stopped with an error saying so. It can also be cancelled from Activity.
@@ -556,7 +556,7 @@ In addition to today's "choose a file to show only its diff", offer a view that 
 
 ### Flow
 
-1. When a merge, rebase, cherry-pick or stash pop produces conflicts, show a bar under the toolbar and select Conflicts in the sidebar.
+1. When a merge, rebase, cherry-pick or stash pop produces conflicts, show a bar under the toolbar, switch to Working Copy and select the first conflicted file, which opens the merge editor. No alert.
 2. The Conflicts screen is "left: the list of conflicted files (unresolved / resolved)" and "right: the merge editor". Not a separate window; it can only be popped out with ⤢.
 3. When everything is resolved, Continue on the bar is highlighted. For a rebase, Continue moves on to the next commit, and if there are new conflicts it goes straight on to open the next file.
 4. Abort from the bar at any time (it stays in the oplog, so Undo can also revert it).
