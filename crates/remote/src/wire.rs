@@ -336,6 +336,8 @@ pub enum Op {
     SparseCheckout(Option<Vec<String>>),
     /// → `Vec<String>`（HEAD の木のそのパスにあるフォルダ）
     TreeFolders(String),
+    /// → `()`（true なら `git maintenance start`、false なら `unregister`）
+    Maintenance(bool),
     Remotes,
     CheckRemote(String),
     SigningKeys(String),

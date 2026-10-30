@@ -238,6 +238,15 @@ impl Git {
             .map(drop)
     }
 
+    /// `git maintenance start` は、登録（ユーザー全体の `maintenance.repo`）に加えて、このリポジトリの
+    /// `maintenance.auto=false`・`maintenance.strategy=incremental` を書き、OS の予定（macOS は launchd、Linux は
+    /// systemd か cron、Windows はタスク スケジューラ）を作る。予定は登録したすべてのリポジトリを回るので、
+    /// やめるときは登録だけを外す（`unregister`）。
+    pub(crate) fn maintenance(&self, on: bool) -> Result<()> {
+        self.write(&["maintenance", if on { "start" } else { "unregister" }])
+            .map(drop)
+    }
+
     pub(crate) fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
         let out = self.read(&["ls-tree", "-z", &format!("HEAD:{path}")])?;
         let mut names: Vec<String> = String::from_utf8_lossy(&out)

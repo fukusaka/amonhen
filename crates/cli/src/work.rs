@@ -111,8 +111,8 @@ pub fn status(args: &[String]) -> Result<ExitCode> {
         out.push_str(&tr!(" ({items})", items = items.join(&tr!(", "))));
     }
     out.push('\n');
-    // リポジトリの形（shallow・partial clone・sparse checkout）。git status は言わないが、ないファイルや履歴の
-    // わけになる。読めなければ出さない。
+    // リポジトリの形（shallow・partial clone・sparse checkout・maintenance の登録）。git status は言わないが、
+    // ないファイルや履歴のわけになる。読めなければ出さない。
     if let Ok(form) = command(&*front, json!({"op": "repositoryForm"})) {
         let form = &form["info"];
         let mut items = Vec::new();
@@ -132,6 +132,9 @@ pub fn status(args: &[String]) -> Result<ExitCode> {
                 }
                 _ => tr!("sparse checkout"),
             });
+        }
+        if form["maintenance"] == true {
+            items.push(tr!("git maintenance"));
         }
         if !items.is_empty() {
             out.push_str(&paint(&items.join(" · "), "90", c.color));

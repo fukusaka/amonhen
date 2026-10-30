@@ -1,5 +1,5 @@
 //! リポジトリの形（shallow clone・partial clone・sparse checkout・maintenance の登録）を読み、partial clone の
-//! 中身と sparse checkout のフォルダを変える（`Command::RepositoryForm` など）。
+//! 中身・sparse checkout のフォルダ・maintenance の登録を変える（`Command::RepositoryForm` など）。
 
 use amonhen_model::{Operations, Result, SparseCheckout, StatusKind, tr};
 
@@ -9,6 +9,8 @@ use crate::Repository;
 const REFETCH: (u32, u32) = (2, 36);
 /// `git sparse-checkout`（cone mode）が使える git の版。
 const SPARSE_CHECKOUT: (u32, u32) = (2, 25);
+/// `git maintenance start`（OS の予定まで作る。macOS の launchd は 2.31 から）が使える git の版。
+const MAINTENANCE: (u32, u32) = (2, 31);
 
 /// git が `needed` より古ければ、そう言うエラー（版が読めなければ使えるとみなす）。
 fn require(ops: &dyn Operations, needed: (u32, u32)) -> Result<()> {
@@ -52,6 +54,7 @@ impl Repository {
             "gitVersion": version.map(|(a, b, c)| format!("{a}.{b}.{c}")),
             "canFetchAllContents": at_least(REFETCH),
             "canSparseCheckout": at_least(SPARSE_CHECKOUT),
+            "canMaintain": at_least(MAINTENANCE),
         }))
     }
 
@@ -119,6 +122,15 @@ impl Repository {
             return Err(tr!("All folders are checked out (not a sparse checkout)").into());
         }
         ops.sparse_checkout(None)
+    }
+
+    /// `Command::Maintenance`。登録していないものを外すのは、何もしない（新しい git は断る）。
+    pub(crate) fn set_maintenance(&self, ops: &dyn Operations, on: bool) -> Result<()> {
+        require(ops, MAINTENANCE)?;
+        if !on && !ops.repository_form()?.maintenance {
+            return Ok(());
+        }
+        ops.maintenance(on)
     }
 
     /// `Command::TreeFolders` の答え（`listDirectory` と同じ形。パスは `/` から）。
@@ -415,6 +427,125 @@ mod tests {
             true,
         );
         assert_eq!(form["info"]["maintenance"], true, "{form}");
+    }
+
+    /// `git maintenance start` で登録し（このリポジトリの設定と OS の予定も書く）、`unregister` で登録だけを外す。
+    /// git 2.31 より古ければ、版を言って断る。
+    ///
+    /// ユーザー全体の設定と予定は、このテストだけのホームに書く（ほかのテストのホームの `.gitconfig` と書き合わない
+    /// よう、`AMONHEN_PASS_ENV` で HOME も渡す）。OS の予定に登録するプログラム（launchctl・crontab・systemctl・
+    /// schtasks）は、git のテスト用の差し替え（`GIT_TEST_MAINT_SCHEDULER`）で echo にし、動かさない。
+    #[test]
+    #[cfg_attr(windows, ignore = "the schtasks path isn't tried on Windows yet")]
+    fn registers_for_maintenance() {
+        use amonhen_model::process::{ClientEnv, with_client_env};
+        amonhen_model::testing::isolate_from_user_settings();
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let dir = tmp.path().join("repo");
+        std::fs::create_dir_all(home.join(".config")).unwrap();
+        std::fs::create_dir(&dir).unwrap();
+        git(&dir, &["init", "-q"]);
+        write(&dir, "a.txt", "a");
+        git(&dir, &["add", "."]);
+        git(&dir, &["commit", "-q", "-m", "first"]);
+        let graph = || {
+            let info = dir.join(".git/objects/info");
+            info.join("commit-graph").exists() || info.join("commit-graphs").exists()
+        };
+        let ours = [
+            ("AMONHEN_PASS_ENV", "HOME".to_owned()),
+            ("HOME", home.to_str().unwrap().to_owned()),
+            (
+                "XDG_CONFIG_HOME",
+                home.join(".config").to_str().unwrap().to_owned(),
+            ),
+            (
+                "GIT_TEST_MAINT_SCHEDULER",
+                "launchctl:echo LAUNCHCTL,crontab:echo CRONTAB,systemctl:echo SYSTEMCTL,schtasks:echo SCHTASKS"
+                    .to_owned(),
+            ),
+        ];
+        let env = ClientEnv::from_vars(
+            std::env::vars()
+                .filter(|(k, _)| !ours.iter().any(|(o, _)| o == k))
+                .chain(ours.iter().map(|(k, v)| ((*k).to_owned(), v.clone()))),
+        );
+        assert_eq!(env.get("HOME"), home.to_str());
+        with_client_env(&env, || {
+            let repo = Repository::new(GixBackend::open(&dir).unwrap());
+            let form = run(&repo, r#"{"op":"repositoryForm"}"#);
+            assert_eq!(form["info"]["maintenance"], false, "{form}");
+            if version().is_some_and(|(a, b, _)| (a, b) < (2, 31)) {
+                assert_eq!(form["info"]["canMaintain"], false);
+                let r = run(&repo, r#"{"op":"maintenance","on":true}"#);
+                assert!(r["error"].as_str().unwrap().contains("2.31"), "{r}");
+                assert!(!home.join(".gitconfig").exists());
+                return;
+            }
+            assert_eq!(form["info"]["canMaintain"], true);
+            let agents = || -> Vec<String> {
+                let mut names: Vec<String> = std::fs::read_dir(home.join("Library/LaunchAgents"))
+                    .map(|d| {
+                        d.flatten()
+                            .map(|e| e.file_name().to_string_lossy().into_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                names.sort();
+                names
+            };
+
+            let r = run(&repo, r#"{"op":"maintenance","on":true}"#);
+            assert_eq!(r["ok"], true, "{r}");
+            let global = std::fs::read_to_string(home.join(".gitconfig")).unwrap();
+            assert!(global.contains("[maintenance]"), "{global}");
+            assert_eq!(
+                run(&repo, r#"{"op":"repositoryForm"}"#)["info"]["maintenance"],
+                true
+            );
+            assert_eq!(
+                git(&dir, &["config", "--local", "maintenance.auto"]),
+                "false"
+            );
+            assert_eq!(
+                git(&dir, &["config", "--local", "maintenance.strategy"]),
+                "incremental"
+            );
+            // commit-graph は maintenance が毎時書くので、アプリは書かない。
+            assert!(!repo.update_commit_graph().unwrap());
+            assert!(!graph());
+            if cfg!(target_os = "macos") {
+                assert_eq!(
+                    agents(),
+                    [
+                        "org.git-scm.git.daily.plist",
+                        "org.git-scm.git.hourly.plist",
+                        "org.git-scm.git.weekly.plist"
+                    ]
+                );
+            }
+
+            let r = run(&repo, r#"{"op":"maintenance","on":false}"#);
+            assert_eq!(r["ok"], true, "{r}");
+            assert_eq!(
+                run(&repo, r#"{"op":"repositoryForm"}"#)["info"]["maintenance"],
+                false
+            );
+            // 予定とこのリポジトリの設定は残す（予定はほかのリポジトリも回る）。
+            assert_eq!(
+                git(&dir, &["config", "--local", "maintenance.auto"]),
+                "false"
+            );
+            if cfg!(target_os = "macos") {
+                assert_eq!(agents().len(), 3);
+            }
+            assert!(repo.update_commit_graph().unwrap());
+            assert!(graph());
+            // 登録していないものを外すのは、何もしない。
+            let r = run(&repo, r#"{"op":"maintenance","on":false}"#);
+            assert_eq!(r["ok"], true, "{r}");
+        });
     }
 
     fn regex_escape(s: &str) -> String {

@@ -1292,8 +1292,13 @@ impl Repository {
     /// commit-graph を最新にする。なければ全体を書き出して true を、あれば後から増えたコミットだけを
     /// 書き足して false を返す（増えていなければ git は何も書かない）。開いたときと fetch の後に呼ぶ。
     /// リポジトリの `.git` に書き込むので、利用者が設定で選んだときだけ呼ぶ。大きなリポジトリでは
-    /// 全体の書き出しに数十秒〜数分かかるので、裏のスレッドで呼ぶこと。
+    /// 全体の書き出しに数十秒〜数分かかるので、裏のスレッドで呼ぶこと。git maintenance に登録してあれば、
+    /// 毎時そちらが書くので、何もせずに false を返す。
     pub fn update_commit_graph(&self) -> Result<bool> {
+        let registered = self.backend.operations()?.repository_form();
+        if registered.is_ok_and(|form| form.maintenance) {
+            return Ok(false);
+        }
         let missing = !self.backend.has_commit_graph()?;
         self.backend.write_commit_graph(!missing)?;
         Ok(missing)

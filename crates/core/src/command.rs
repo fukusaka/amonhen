@@ -466,7 +466,7 @@ pub enum Command {
     /// リポジトリの形（`info`: shallow・partial（remote・filter。なければ null）・sparse（cone・folders。cone mode
     /// なら取り出しているフォルダ、そうでなければパターン。なければ null）・maintenance（`git maintenance register`
     /// で登録してある）・workingTree・gitVersion・canFetchAllContents（git 2.36 から）・canSparseCheckout（git 2.25
-    /// から））。
+    /// から）・canMaintain（git 2.31 から））。
     RepositoryForm,
     /// cone mode の sparse checkout で、取り出すフォルダを `folders`（根からの相対パス）にする。sparse checkout で
     /// なければ始める（git 2.25 から）。外れるフォルダに commit していない変更があれば断る。
@@ -479,6 +479,13 @@ pub enum Command {
     /// 形。path・home（null）・entries（kind は folder））。sparse checkout で取り出すフォルダを選ぶのに使う。
     TreeFolders {
         path: String,
+    },
+    /// `on` なら、このリポジトリを git maintenance に登録して裏で手入れさせる（`git maintenance start`: ユーザー全体の
+    /// `maintenance.repo` に足し、OS の予定がなければ作る）。でなければ登録を外す（`git maintenance unregister`。
+    /// 予定はほかのリポジトリも使うので残す）。git を動かす機械（SSH 先ならそこ）の設定に書く。git 2.31 から。
+    /// Undo には記録しない。
+    Maintenance {
+        on: bool,
     },
     /// git の設定から決まる、pull と fetch のふるまい（`info.pull`: `merge`・`rebase`・`fastForwardOnly`、
     /// `info.prune`）。Pull のシートが「git の設定に従う」の中身を見せるのに使う。
@@ -3449,6 +3456,10 @@ impl Repository {
                 info: Some(self.tree_folders(ops, &path)?),
                 ..Default::default()
             }),
+            Command::Maintenance { on } => {
+                self.set_maintenance(ops, on)?;
+                ok()
+            }
             Command::IgnoreMatches { text } => {
                 let lines: Vec<(usize, String)> = text
                     .lines()
