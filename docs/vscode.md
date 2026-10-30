@@ -84,6 +84,7 @@ is in [front.md](front.md), and the design in item 18 of
 - Implemented with `TreeDragAndDropController`. When a branch is dropped onto a branch, the user picks "Merge A into B" or "Rebase B onto A" in a QuickPick. Dropping onto a remote pushes.
 - If the drop target is not the current branch, check it out before running. If a fast-forward is enough, handle it with just `update-ref`, without a checkout.
 - Constraint: drag and drop does not work between a TreeView and a Webview. Reordering within the History is done entirely inside the Webview.
+- Merge Branches… in the Command Palette merges several branches, remote branches or tags into the current branch in one commit, as `git merge a b c` does (an octopus merge). They are picked in one QuickPick, in list order; a second QuickPick shows the conflicts expected for each, checked on top of the ones before (`predictMerge`; git 2.38 or newer), and offers to merge them in one commit, to put the one that conflicts before the last last, or to merge them one by one. git stops without recording conflicts when one before the last conflicts, so when it gives up the extension offers one by one again. One by one stops at a conflict and names the rest. Either way one Undo puts everything back: through the shared daemon the core records it (`merge` with an array, `oneByOne`); on the git execution layer the extension does, and puts the worktree back with `reset --merge` when git older than 2.37 leaves the part merged so far.
 
 ### Flexible commit editing
 
