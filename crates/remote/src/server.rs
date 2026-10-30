@@ -297,6 +297,7 @@ fn handle(
         Request::StashChanges(id) => encode(&backend.stash_changes(&id)?),
         Request::ChangesBetween(old, new) => encode(&backend.changes_between(old.as_ref(), &new)?),
         Request::Blob(id) => encode(&Bytes(backend.blob(&id)?.to_vec())),
+        Request::PrefetchBlobs(ids) => encode(&backend.prefetch_blobs(&ids)?),
         Request::Status => encode(&backend.status()?),
         Request::WorktreeFile(path) => encode(&Bytes(backend.worktree_file(&path)?.to_vec())),
         Request::LineEndingRule(path) => encode(&backend.line_ending_rule(&path)?),

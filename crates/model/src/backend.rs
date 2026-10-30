@@ -91,6 +91,13 @@ pub trait GitBackend: Send + Sync {
     /// blob の中身。展開したバッファをそのまま返し、差分の各行はここを直接指す。
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>>;
 
+    /// これから読む blob のうち手元にないものを、まとめて取ってくる（partial clone。`blob` は 1 つずつ取るので、
+    /// 差分のようにいくつも読む前に呼ぶ）。partial clone でなければ何もしない。
+    fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
+        let _ = ids;
+        Ok(())
+    }
+
     /// 書き込み系の操作。対応しない実装（作業ツリーがない・モバイル）はエラー。
     fn operations(&self) -> Result<&dyn Operations>;
 

@@ -430,6 +430,10 @@ impl GitBackend for RemoteBackend {
         Ok(Arc::new(bytes.0))
     }
 
+    fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
+        self.conn.call(&Request::PrefetchBlobs(ids.to_vec()))
+    }
+
     fn operations(&self) -> Result<&dyn Operations> {
         Ok(&self.ops)
     }
