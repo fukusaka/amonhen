@@ -1046,6 +1046,14 @@ impl Operations for RemoteOperations {
         self.op(Op::RepositoryForm)
     }
 
+    fn sparse_checkout(&self, folders: Option<&[String]>) -> Result<()> {
+        self.op(Op::SparseCheckout(folders.map(<[String]>::to_vec)))
+    }
+
+    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
+        self.op(Op::TreeFolders(path.to_owned()))
+    }
+
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {
         self.op(Op::Remotes)
     }

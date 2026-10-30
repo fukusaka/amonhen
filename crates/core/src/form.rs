@@ -1,7 +1,7 @@
 //! リポジトリの形（shallow clone・partial clone・sparse checkout・maintenance の登録）を読み、partial clone の
 //! 中身と sparse checkout のフォルダを変える（`Command::RepositoryForm` など）。
 
-use amonhen_model::{Operations, Result, tr};
+use amonhen_model::{Operations, Result, SparseCheckout, StatusKind, tr};
 
 use crate::Repository;
 
@@ -21,6 +21,16 @@ fn require(ops: &dyn Operations, needed: (u32, u32)) -> Result<()> {
         .into()),
         _ => Ok(()),
     }
+}
+
+/// 根からの相対パスにする（`/crates/`・`crates` → `crates`。`~` と空は根）。
+fn tree_path(path: &str) -> String {
+    let p = path.trim().replace('\\', "/");
+    let p = p.trim_start_matches('~').trim_matches('/');
+    p.split('/')
+        .filter(|s| !s.is_empty() && *s != ".")
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 impl Repository {
@@ -54,6 +64,86 @@ impl Repository {
         };
         require(ops, REFETCH)?;
         ops.fetch_all_contents(&partial.remote)
+    }
+
+    /// `Command::SparseCheckout`。外れるフォルダに commit していない変更があれば、git はそのファイルを残したまま
+    /// 進めてしまうので、先に断る。
+    pub(crate) fn set_sparse_folders(
+        &self,
+        ops: &dyn Operations,
+        folders: &[String],
+    ) -> Result<()> {
+        require(ops, SPARSE_CHECKOUT)?;
+        if self.paths().workdir.is_none() {
+            return Err(tr!("This repository has no working tree").into());
+        }
+        let mut folders: Vec<String> = folders.iter().map(|f| tree_path(f)).collect();
+        folders.retain(|f| !f.is_empty());
+        folders.sort();
+        folders.dedup();
+        let cone = SparseCheckout {
+            cone: true,
+            folders: folders.clone(),
+        };
+        let outside: Vec<String> = self
+            .backend()
+            .status()?
+            .entries
+            .into_iter()
+            .filter(|e| e.kind != StatusKind::Untracked && !cone.contains(&e.path))
+            .map(|e| e.path)
+            .collect();
+        if !outside.is_empty() {
+            let mut list = outside
+                .iter()
+                .take(5)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ");
+            if outside.len() > 5 {
+                list.push_str(&tr!(" and {count} more", count = outside.len() - 5));
+            }
+            return Err(tr!(
+                "Commit or stash the changes in folders that won’t be checked out first: {list}",
+                list = list
+            )
+            .into());
+        }
+        ops.sparse_checkout(Some(&folders))
+    }
+
+    /// `Command::DisableSparseCheckout`。
+    pub(crate) fn disable_sparse_checkout(&self, ops: &dyn Operations) -> Result<()> {
+        require(ops, SPARSE_CHECKOUT)?;
+        if ops.repository_form()?.sparse.is_none() {
+            return Err(tr!("All folders are checked out (not a sparse checkout)").into());
+        }
+        ops.sparse_checkout(None)
+    }
+
+    /// `Command::TreeFolders` の答え（`listDirectory` と同じ形。パスは `/` から）。
+    pub(crate) fn tree_folders(
+        &self,
+        ops: &dyn Operations,
+        path: &str,
+    ) -> Result<serde_json::Value> {
+        let path = tree_path(path);
+        let names = ops.tree_folders(&path)?;
+        let entries: Vec<_> = names
+            .into_iter()
+            .map(|name| amonhen_model::DirectoryEntry {
+                name,
+                kind: "folder".to_owned(),
+                link: false,
+                executable: false,
+                repository: false,
+            })
+            .collect();
+        Ok(serde_json::to_value(amonhen_model::Directory {
+            path: format!("/{path}"),
+            home: None,
+            entries,
+        })?)
     }
 }
 
@@ -124,6 +214,103 @@ mod tests {
         let file = dir.join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, text).unwrap();
+    }
+
+    /// HEAD の木のフォルダを読み、sparse checkout で取り出すフォルダを変え、やめる。外れるフォルダに変更が
+    /// あれば断る。git 2.25 より古ければ、版を言って断る。
+    #[test]
+    fn checks_out_only_some_folders() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path();
+        git(dir, &["init", "-q"]);
+        for path in [
+            "top.txt",
+            "a/a.txt",
+            "a/x/x.txt",
+            "a/y/y.txt",
+            "b/b.txt",
+            "c/c.txt",
+        ] {
+            write(dir, path, path);
+        }
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-q", "-m", "first"]);
+        let repo = Repository::new(GixBackend::open(dir).unwrap());
+
+        let form = run(&repo, r#"{"op":"repositoryForm"}"#);
+        assert_eq!(form["ok"], true, "{form}");
+        assert_eq!(form["info"]["shallow"], false);
+        assert!(form["info"]["partial"].is_null());
+        assert!(form["info"]["sparse"].is_null());
+        assert_eq!(form["info"]["maintenance"], false);
+        assert_eq!(form["info"]["workingTree"], true);
+
+        let names = |r: &serde_json::Value| -> Vec<String> {
+            r["info"]["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| e["name"].as_str().unwrap().to_owned())
+                .collect()
+        };
+        let root = run(&repo, r#"{"op":"treeFolders","path":"/"}"#);
+        assert_eq!(root["info"]["path"], "/");
+        assert_eq!(names(&root), ["a", "b", "c"]);
+        let a = run(&repo, r#"{"op":"treeFolders","path":"/a"}"#);
+        assert_eq!(a["info"]["path"], "/a");
+        assert_eq!(names(&a), ["x", "y"]);
+        assert_eq!(a["info"]["entries"][0]["kind"], "folder");
+        assert_eq!(
+            run(&repo, r#"{"op":"treeFolders","path":"/nothing"}"#)["ok"],
+            false
+        );
+
+        if version().is_some_and(|(a, b, _)| (a, b) < (2, 25)) {
+            assert_eq!(form["info"]["canSparseCheckout"], false);
+            let r = run(&repo, r#"{"op":"sparseCheckout","folders":["a/x"]}"#);
+            assert!(r["error"].as_str().unwrap().contains("2.25"), "{r}");
+            return;
+        }
+        assert_eq!(form["info"]["canSparseCheckout"], true);
+        let r = run(&repo, r#"{"op":"sparseCheckout","folders":["/a/x/"]}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        for (path, there) in [
+            ("top.txt", true),
+            ("a/a.txt", true),
+            ("a/x/x.txt", true),
+            ("a/y/y.txt", false),
+            ("b/b.txt", false),
+        ] {
+            assert_eq!(dir.join(path).exists(), there, "{path}");
+        }
+        let form = run(&repo, r#"{"op":"repositoryForm"}"#);
+        assert_eq!(form["info"]["sparse"]["cone"], true, "{form}");
+        assert_eq!(
+            form["info"]["sparse"]["folders"],
+            serde_json::json!(["a/x"])
+        );
+
+        // 外れるフォルダの変更。
+        write(dir, "a/x/x.txt", "changed");
+        let r = run(&repo, r#"{"op":"sparseCheckout","folders":["b"]}"#);
+        assert_eq!(r["ok"], false, "{r}");
+        assert!(r["error"].as_str().unwrap().contains("a/x/x.txt"), "{r}");
+        git(dir, &["checkout", "--", "a/x/x.txt"]);
+
+        let r = run(&repo, r#"{"op":"sparseCheckout","folders":["a/x","b"]}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(dir.join("b/b.txt").exists());
+        let form = run(&repo, r#"{"op":"repositoryForm"}"#);
+        assert_eq!(
+            form["info"]["sparse"]["folders"],
+            serde_json::json!(["a/x", "b"])
+        );
+
+        let r = run(&repo, r#"{"op":"disableSparseCheckout"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert!(dir.join("a/y/y.txt").exists() && dir.join("c/c.txt").exists());
+        assert!(run(&repo, r#"{"op":"repositoryForm"}"#)["info"]["sparse"].is_null());
+        assert_eq!(run(&repo, r#"{"op":"disableSparseCheckout"}"#)["ok"], false);
     }
 
     /// partial clone の filter を読み、取らずにおいた中身をすべて取る。git 2.36 より古ければ、版を言って断る。
@@ -237,5 +424,32 @@ mod tests {
                 special.then_some('\\').into_iter().chain([c])
             })
             .collect()
+    }
+
+    #[test]
+    fn makes_tree_paths() {
+        assert_eq!(tree_path("/crates/core/"), "crates/core");
+        assert_eq!(tree_path("~"), "");
+        assert_eq!(tree_path("/"), "");
+        assert_eq!(tree_path("a//./b"), "a/b");
+    }
+
+    #[test]
+    fn knows_which_files_a_cone_checks_out() {
+        let cone = SparseCheckout {
+            cone: true,
+            folders: vec!["crates/core".to_owned(), "docs".to_owned()],
+        };
+        for path in [
+            "README.md",
+            "crates/Cargo.toml",
+            "crates/core/src/lib.rs",
+            "docs/ja/ux.md",
+        ] {
+            assert!(cone.contains(path), "{path}");
+        }
+        for path in ["crates/cli/src/main.rs", "apps/macos/x.swift", "docsx/a"] {
+            assert!(!cone.contains(path), "{path}");
+        }
     }
 }

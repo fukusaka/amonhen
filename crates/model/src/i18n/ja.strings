@@ -360,8 +360,15 @@
 "This repository has all of its history (not a shallow clone)" = "このリポジトリは履歴をすべて持っています（shallow clone ではありません）";
 "Older history isn’t fetched (shallow clone): git fetch --deepen=<n> or --unshallow" = "これより古い履歴は取得していません（shallow clone）: git fetch --deepen=<n> か --unshallow で取れます";
 "Can’t fetch contents here" = "ここでは、中身を取れません";
+"Can’t change the sparse checkout here" = "ここでは、取り出すフォルダを変えられません";
+"Can’t read the tree here" = "ここでは、ツリーを読めません";
+"A folder name can’t contain a line break" = "フォルダの名前に改行は使えません";
 "Needs git {needed} or later. This repository’s git is {version}." = "git {needed} 以降が必要です。このリポジトリの git は {version} です。";
 "This repository has all of its contents (not a partial clone)" = "このリポジトリは中身をすべて持っています（partial clone ではありません）";
+"This repository has no working tree" = "このリポジトリには作業ツリーがありません";
+" and {count} more" = " ほか {count} 個";
+"Commit or stash the changes in folders that won’t be checked out first: {list}" = "取り出さなくなるフォルダの変更を、先に commit か stash してください: {list}";
+"All folders are checked out (not a sparse checkout)" = "すべてのフォルダを取り出しています（sparse checkout ではありません）";
 "shallow clone" = "shallow clone";
 "partial clone ({filter})" = "partial clone（{filter}）";
 "partial clone" = "partial clone";

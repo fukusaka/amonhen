@@ -332,6 +332,10 @@ pub enum Op {
     GitVersion,
     /// → `RepositoryForm`
     RepositoryForm,
+    /// → `()`（None なら sparse checkout をやめる）
+    SparseCheckout(Option<Vec<String>>),
+    /// → `Vec<String>`（HEAD の木のそのパスにあるフォルダ）
+    TreeFolders(String),
     Remotes,
     CheckRemote(String),
     SigningKeys(String),

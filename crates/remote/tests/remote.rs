@@ -253,3 +253,38 @@ fn a_shallow_clone_gets_deeper_through_the_daemon() {
     assert_eq!(history.graph.len(), 3);
     assert!(history.shallow.is_empty());
 }
+
+/// リポジトリの形を読み、HEAD の木のフォルダを読み、sparse checkout を daemon 越しに変える（git は daemon の側で
+/// 動く）。
+#[test]
+fn sparse_checkout_through_the_daemon() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    init(dir);
+    for folder in ["a", "b"] {
+        std::fs::create_dir(dir.join(folder)).unwrap();
+        commit(dir, &format!("{folder}/f.txt"), folder, folder);
+    }
+    let remote = remote(dir);
+    let run =
+        |json: &str| -> serde_json::Value { serde_json::from_str(&remote.run_json(json)).unwrap() };
+    let folders = run(r#"{"op":"treeFolders","path":"/"}"#);
+    assert_eq!(folders["info"]["entries"][1]["name"], "b", "{folders}");
+    assert!(run(r#"{"op":"repositoryForm"}"#)["info"]["sparse"].is_null());
+    if amonhen_backend_cli::git_version().is_some_and(|(a, b, _)| (a, b) < (2, 25)) {
+        return;
+    }
+    assert_eq!(
+        run(r#"{"op":"sparseCheckout","folders":["a"]}"#)["ok"],
+        true
+    );
+    assert!(!dir.join("b/f.txt").exists());
+    let form = run(r#"{"op":"repositoryForm"}"#);
+    assert_eq!(
+        form["info"]["sparse"]["folders"],
+        serde_json::json!(["a"]),
+        "{form}"
+    );
+    assert_eq!(run(r#"{"op":"disableSparseCheckout"}"#)["ok"], true);
+    assert!(dir.join("b/f.txt").exists());
+}

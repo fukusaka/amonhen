@@ -468,6 +468,18 @@ pub enum Command {
     /// で登録してある）・workingTree・gitVersion・canFetchAllContents（git 2.36 から）・canSparseCheckout（git 2.25
     /// から））。
     RepositoryForm,
+    /// cone mode の sparse checkout で、取り出すフォルダを `folders`（根からの相対パス）にする。sparse checkout で
+    /// なければ始める（git 2.25 から）。外れるフォルダに commit していない変更があれば断る。
+    SparseCheckout {
+        folders: Vec<String>,
+    },
+    /// sparse checkout をやめて、すべてのフォルダを取り出す（`git sparse-checkout disable`）。
+    DisableSparseCheckout,
+    /// HEAD の木の `path`（`/crates` のように `/` から。`/` は根）にあるフォルダ（`info`: `listDirectory` と同じ
+    /// 形。path・home（null）・entries（kind は folder））。sparse checkout で取り出すフォルダを選ぶのに使う。
+    TreeFolders {
+        path: String,
+    },
     /// git の設定から決まる、pull と fetch のふるまい（`info.pull`: `merge`・`rebase`・`fastForwardOnly`、
     /// `info.prune`）。Pull のシートが「git の設定に従う」の中身を見せるのに使う。
     SyncDefaults,
@@ -3422,6 +3434,19 @@ impl Repository {
             Command::RepositoryForm => Ok(Response {
                 ok: true,
                 info: Some(self.repository_form(ops)?),
+                ..Default::default()
+            }),
+            Command::SparseCheckout { folders } => {
+                self.set_sparse_folders(ops, &folders)?;
+                ok()
+            }
+            Command::DisableSparseCheckout => {
+                self.disable_sparse_checkout(ops)?;
+                ok()
+            }
+            Command::TreeFolders { path } => Ok(Response {
+                ok: true,
+                info: Some(self.tree_folders(ops, &path)?),
                 ..Default::default()
             }),
             Command::IgnoreMatches { text } => {

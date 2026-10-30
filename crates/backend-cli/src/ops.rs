@@ -1230,6 +1230,14 @@ impl Operations for Git {
         Git::repository_form(self)
     }
 
+    fn sparse_checkout(&self, folders: Option<&[String]>) -> Result<()> {
+        Git::sparse_checkout(self, folders)
+    }
+
+    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
+        Git::tree_folders(self, path)
+    }
+
     fn machine_git(&self) -> Result<amonhen_model::MachineGit> {
         Ok(amonhen_model::settings::machine_git())
     }

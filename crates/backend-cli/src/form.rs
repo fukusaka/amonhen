@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use amonhen_model::{PartialClone, RepositoryForm, Result, SparseCheckout};
+use amonhen_model::{PartialClone, RepositoryForm, Result, SparseCheckout, tr};
 
 use crate::Git;
 
@@ -210,6 +210,45 @@ impl Git {
             self.write(&["config", "--unset-all", "extensions.partialclone"])?;
         }
         Ok(())
+    }
+
+    pub(crate) fn sparse_checkout(&self, folders: Option<&[String]>) -> Result<()> {
+        let Some(folders) = folders else {
+            return self.write(&["sparse-checkout", "disable"]).map(drop);
+        };
+        if folders.iter().any(|f| f.contains('\n')) {
+            return Err(tr!("A folder name can’t contain a line break").into());
+        }
+        let mut input = folders.join("\n");
+        input.push('\n');
+        if crate::git_at_least(2, 35) {
+            return self
+                .write_with_input(
+                    &["sparse-checkout", "set", "--cone", "--stdin"],
+                    input.as_bytes(),
+                )
+                .map(drop);
+        }
+        // git 2.34 までは、set は cone mode を始められない。先に init --cone で始める。
+        let form = self.repository_form()?;
+        if !form.sparse.is_some_and(|s| s.cone) {
+            self.write(&["sparse-checkout", "init", "--cone"])?;
+        }
+        self.write_with_input(&["sparse-checkout", "set", "--stdin"], input.as_bytes())
+            .map(drop)
+    }
+
+    pub(crate) fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
+        let out = self.read(&["ls-tree", "-z", &format!("HEAD:{path}")])?;
+        let mut names: Vec<String> = String::from_utf8_lossy(&out)
+            .split('\0')
+            .filter_map(|line| {
+                let (info, name) = line.split_once('\t')?;
+                (info.split(' ').nth(1) == Some("tree")).then(|| name.to_owned())
+            })
+            .collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        Ok(names)
     }
 }
 

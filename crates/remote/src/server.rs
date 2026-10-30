@@ -514,6 +514,8 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ConfigSetGlobal(key, value) => encode(&ops.config_set_global(&key, value.as_deref())?),
         Op::GitVersion => encode(&ops.git_version()?),
         Op::RepositoryForm => encode(&ops.repository_form()?),
+        Op::SparseCheckout(folders) => encode(&ops.sparse_checkout(folders.as_deref())?),
+        Op::TreeFolders(path) => encode(&ops.tree_folders(&path)?),
         Op::Remotes => encode(&ops.remotes()?),
         Op::CheckRemote(url) => encode(&ops.check_remote(&url)?),
         Op::LfsTrack(pattern, track) => encode(&ops.lfs_track(&pattern, track)?),

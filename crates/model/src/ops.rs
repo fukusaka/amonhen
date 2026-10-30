@@ -597,6 +597,17 @@ pub trait Operations: Send + Sync {
     fn repository_form(&self) -> Result<RepositoryForm> {
         Ok(RepositoryForm::default())
     }
+    /// cone mode の sparse checkout で、取り出すフォルダを `folders` にする（`git sparse-checkout set`。sparse
+    /// checkout でなければ始める）。`None` ならやめて、すべてを取り出す（`git sparse-checkout disable`）。
+    fn sparse_checkout(&self, folders: Option<&[String]>) -> Result<()> {
+        let _ = folders;
+        Err(crate::tr!("Can’t change the sparse checkout here").into())
+    }
+    /// HEAD の木の `path`（根からの相対パス。空なら根）にあるフォルダの名前（名前の順）。
+    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
+        let _ = path;
+        Err(crate::tr!("Can’t read the tree here").into())
+    }
     /// worktree の一覧。`git worktree list --porcelain -z` の出力。
     fn worktree_list(&self) -> Result<Vec<u8>> {
         Err(crate::tr!("Can’t list worktrees here").into())
