@@ -549,7 +549,8 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
 
 ## 7b. shallow clone
 
-`--depth` や `--shallow-since` で作った clone は、履歴の新しい部分だけを持つ。以下は shallow clone のときだけ出す。
+`--depth` や `--shallow-since` で作った clone（Clone のシートでは「最近の履歴だけ」、7c）は、履歴の新しい部分だけを
+持つ。以下は shallow clone のときだけ出す。
 
 - History の最後の行の下に、「これより古い履歴は取得していません」という帯と、「さらに取る」（100・1,000・10,000
   コミット（`git fetch --deepen=<n>`）と、日付を尋ねてその後のコミットを取る「この日付まで…」（`--shallow-since`）を
@@ -567,9 +568,18 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
 ## 7c. partial clone と sparse checkout
 
 大きなリポジトリは、ファイルの中身を取らずに clone したり（partial clone、`--filter=blob:none`）、一部のフォルダだけを
-取り出したり（sparse checkout）する。以下はそのリポジトリのときだけ出す。変えるのは Repository Settings の「取得と
-フォルダ」（4.5）。サイドバーのその印は、行の名前が切れるなら出さず（ツールチップには残す）、サイドバーを広げると出す。
+取り出したり（sparse checkout）する。どちらも File > Clone… で作れる（下の Clone）。ほかの項目は、そのリポジトリの
+ときだけ出す。変えるのは Repository Settings の「取得とフォルダ」（4.5）。サイドバーのその印は、行の名前が切れるなら
+出さず（ツールチップには残す）、サイドバーを広げると出す。
 
+- Clone: File > Clone… の「取得する範囲」で、「すべて」（既定。ふつうの `git clone`）・「ファイルの中身は必要なときに
+  取る」（`--filter=blob:none`。大きなリポジトリ向けで、中身は差分やファイルを見るときに取る）・「最近の履歴だけ」
+  （`--depth`。横で 100・1,000・10,000 コミットを選ぶ。古い履歴は後から取れる、7b）を選ぶ。それぞれに 1 文の説明を
+  添える。treeless clone（`--filter=tree:0`）は出さない。「一部のフォルダだけ取り出す」は `--sparse` で clone し
+  （最上位のファイルだけ）、clone の直後に「取得とフォルダ」と同じシートで HEAD の木からフォルダを選んでもらう。
+  取り消せば最上位のファイルだけのままで、フォルダは後から「取得とフォルダ」で足せる。git 2.25 より古ければ、⚠ と
+  見つけた版を添えて選べなくする。filter に対応していないサーバーなら、ふつうの clone になる（git の警告は Activity の
+  出力に残る）。`amonhen clone` は `--filter=<spec>`・`--depth <n>`・`--sparse` を受け付ける。
 - partial clone: サイドバーの History の行に小さな雲の印を出す（ツールチップに filter）。差分は要る中身をまとめて
   取る。History の `contents:` の検索は、git がまだ取っていない中身をすべて取るので、先にシートで確かめる（「この
   検索は、まだ取っていない中身をすべて取ります」、検索／キャンセル）。

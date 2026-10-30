@@ -584,8 +584,8 @@ anything does.
 
 ## 7b. Shallow clones
 
-A clone made with `--depth` or `--shallow-since` has only the newest part of the history. Only shallow clones show
-any of the following.
+A clone made with `--depth` or `--shallow-since` (in the Clone sheet, Recent history only, 7c) has only the newest
+part of the history. Only shallow clones show any of the following.
 
 - After History's last row, a band says "Older history isn’t fetched (shallow clone)" with Fetch More, a pull-down
   of 100, 1,000 or 10,000 more commits (`git fetch --deepen=<n>`) and Up to a Date…, which asks for a date and fetches
@@ -605,10 +605,20 @@ any of the following.
 ## 7c. Partial clones and sparse checkouts
 
 A large repository may be cloned without file contents (a partial clone, `--filter=blob:none`) or have only some
-folders checked out (a sparse checkout). Only such repositories show any of the following; changing them is on
-Repository Settings > Fetching and Folders (4.5). The sidebar's marks for them are left out of a row whose title
-they would truncate (they stay in its tooltip), and come back when the sidebar is wider.
+folders checked out (a sparse checkout); File > Clone… can make both (the Clone item below). Only such repositories
+show the rest of the following; changing them is on Repository Settings > Fetching and Folders (4.5). The sidebar's
+marks for them are left out of a row whose title they would truncate (they stay in its tooltip), and come back when
+the sidebar is wider.
 
+- Clone: File > Clone… has Download: Everything (the default, a plain `git clone`), File contents when needed
+  (`--filter=blob:none`; good for large repositories, contents are fetched when a diff or file needs them) or Recent
+  history only (`--depth`, with 100, 1,000 or 10,000 commits beside it; older history can be fetched later, 7b), each
+  with one sentence of help. Treeless clones (`--filter=tree:0`) aren't offered. Check out only some folders clones
+  with `--sparse` (only the top-level files) and right after the clone asks for a folder from HEAD's tree with the
+  picker of Fetching and Folders; canceling leaves only the top-level files, and folders can be added there later. It
+  is disabled with ⚠ and the version found below git 2.25. A server that doesn't support filters makes an ordinary
+  clone (git's warning stays in Activity's output). `amonhen clone` takes `--filter=<spec>`, `--depth <n>` and
+  `--sparse`.
 - Partial clone: the sidebar's History row has a small cloud mark with the filter in its tooltip. Diffs fetch the
   contents they need in one go. A History search with `contents:` makes git fetch every content not fetched yet, so a
   sheet asks first ("This search fetches all contents not fetched yet", Search / Cancel).
