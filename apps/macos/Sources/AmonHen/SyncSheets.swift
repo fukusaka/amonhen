@@ -492,8 +492,14 @@ extension Actions {
                 state.upstreamTarget = refs.items.first { $0.kind == .remote && $0.name == upstream }?.target
                     .map { $0.map { String(format: "%02x", $0) }.joined() }
                 // 送るものがあれば、その範囲の両端（シートの「送る変更すべて」の差分）と、注意を求める。
+                // 上流が先に進んでいれば、起点は分かれたところ（いちばん古い送るコミットの親）。上流の先から比べると、
+                // 上流にしかない変更まで「送る変更」に見えてしまう。
+                let forked = state.incoming.count > 0 && state.outgoing.count == state.outgoing.commits.count
+                let forkPoint = forked ? state.outgoing.commits.last.flatMap { oldest in
+                    (try? repository.run(["op": "resolveCommit", "rev": "\(oldest.oid)^"]))?.text.flatMap { Data(hex: $0) }
+                } : nil
                 if state.outgoing.count > 0, let tip = local?.target ?? refs.head,
-                   let base = refs.items.first(where: { $0.kind == .remote && $0.name == upstream })?.target {
+                   let base = forkPoint ?? refs.items.first(where: { $0.kind == .remote && $0.name == upstream })?.target {
                     state.range = (base, tip)
                     let changes = try repository.changes(from: base, to: tip)
                     state.warnings = Self.pushWarnings(upstream: upstream, outgoing: state.outgoing, changes: changes)
