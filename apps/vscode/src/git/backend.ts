@@ -246,6 +246,14 @@ async function exists(path: string): Promise<boolean> {
 }
 
 /** `git` を spawn する実装 */
+/**
+ * ほかの操作の途中で始めた操作を git が断ったとき（断りの文は操作と git の版でまちまち）。止まったのではないので、
+ * 何の途中かを言って失敗する（コアと同じ文）
+ */
+function inProgress(sequence: Sequence): Error {
+  return new Error(`${sequence} の途中です。Continue か Abort で終えてから、もう一度してください`);
+}
+
 export class CliBackend implements RepositoryBackend {
   readonly root: string;
   readonly dirs: GitDirs;
@@ -645,10 +653,14 @@ export class CliBackend implements RepositoryBackend {
 
   /** 失敗したとき、途中で止まっていればコンフリクトとして扱う */
   private async sequence(args: readonly string[]): Promise<MergeResult> {
+    const busy = await this.sequenceInProgress();
     try {
       await this.git.exec(args, { cwd: this.root });
       return 'done';
     } catch (err) {
+      if (busy) {
+        throw inProgress(busy);
+      }
       if (await this.sequenceInProgress()) {
         return 'conflict';
       }
@@ -672,11 +684,11 @@ export class CliBackend implements RepositoryBackend {
   }
 
   continueSequence(sequence: Sequence): Promise<RebaseResult> {
-    return this.stoppable([sequence, '--continue']);
+    return this.stoppable([sequence, '--continue'], undefined, true);
   }
 
   skipSequence(sequence: Sequence): Promise<RebaseResult> {
-    return this.stoppable([sequence, '--skip']);
+    return this.stoppable([sequence, '--skip'], undefined, true);
   }
 
   async rebaseProgress(): Promise<{ current: number; total: number } | undefined> {
@@ -822,11 +834,18 @@ export class CliBackend implements RepositoryBackend {
     return this.stoppable([...config, 'rebase', '--interactive', '--autostash', '--no-autosquash', base ?? '--root'], env);
   }
 
-  /** 成功しても途中で止まっていれば stopped、失敗して止まっていれば conflict */
-  private async stoppable(args: readonly string[], env?: Record<string, string>): Promise<RebaseResult> {
+  /**
+   * 成功しても途中で止まっていれば stopped、失敗して止まっていれば conflict。resuming でなければ（始める操作なら）、
+   * 始める前から途中だった操作を、新しい操作のコンフリクトと取り違えない
+   */
+  private async stoppable(args: readonly string[], env?: Record<string, string>, resuming = false): Promise<RebaseResult> {
+    const busy = resuming ? undefined : await this.sequenceInProgress();
     try {
       await this.git.exec(args, { cwd: this.root, env });
     } catch (err) {
+      if (busy) {
+        throw inProgress(busy);
+      }
       if (await this.sequenceInProgress()) {
         return 'conflict';
       }
