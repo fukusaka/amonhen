@@ -58,6 +58,19 @@ enum FilePicker {
         model.useLocal()
     }
 
+    /// リポジトリの HEAD の木のフォルダを選ぶ（まだ取り出していないフォルダも。sparse checkout で取り出すフォルダ）。
+    /// パスは `/` を根にした形（`/crates/core`）で、選んだものを根からの相対パスにして `done` に渡す。根は選べない。
+    /// 取り消したら nil。
+    static func presentTree(title: String, message: String, repository: Repository, initial: String = "/",
+                            in window: NSWindow? = nil, done: @escaping (String?) -> Void) {
+        let model = FilePickerModel(kind: .folder, hosts: nil, initial: initial)
+        show(model, title: title, message: message, height: 460, in: window) { paths in
+            let path = paths?.first.map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+            done(path?.isEmpty == false ? path : nil)
+        }
+        model.useTree(repository)
+    }
+
     private static func show(_ model: FilePickerModel, title: String, message: String, height: CGFloat,
                              in window: NSWindow?, done: @escaping ([String]?) -> Void) {
         let view = FilePickerView(model: model, title: title, message: message)
@@ -118,6 +131,8 @@ final class FilePickerModel {
     nonisolated enum Reader: @unchecked Sendable {
         case engine(Repository)
         case local
+        /// リポジトリの HEAD の木（フォルダだけ。パスは `/` を根にした形）。
+        case tree(Repository)
     }
 
     let kind: FilePicker.Kind
@@ -135,6 +150,8 @@ final class FilePickerModel {
     var host = ""
     private(set) var reader: Reader?
     var isLocal: Bool { if case .local = reader { true } else { false } }
+    /// リポジトリの木を見ている（ホームも SSH 先もない）。
+    var isTree: Bool { if case .tree = reader { true } else { false } }
     var connecting = false
     /// つながらなかったときの理由（パスを打ち込んで決められる）。
     var connectionError: String?
@@ -175,6 +192,13 @@ final class FilePickerModel {
     func use(_ repository: Repository, host: String) {
         self.host = host
         reader = .engine(repository)
+        go(initial, orHome: true)
+    }
+
+    /// リポジトリの HEAD の木を読む。
+    func useTree(_ repository: Repository) {
+        host = ""
+        reader = .tree(repository)
         go(initial, orHome: true)
     }
 
@@ -226,6 +250,8 @@ final class FilePickerModel {
             try repository.info(["op": "listDirectory", "path": path], as: FolderContents.self)
         case .local:
             try JSONDecoder().decode(FolderContents.self, from: LocalFolders.listJSON(path))
+        case let .tree(repository):
+            try repository.info(["op": "treeFolders", "path": path], as: FolderContents.self)
         }
     }
 
@@ -461,7 +487,8 @@ final class FilePickerModel {
         guard let last = columns.last else { return [] }
         switch kind {
         case .folder:
-            return last.error == nil ? [last.path] : []
+            // 木の根は選べない（すべてのフォルダになる）。
+            return last.error == nil && !(isTree && last.path == "/") ? [last.path] : []
         case .executable, .file, .repository, .application:
             return (last.entries ?? []).filter { last.isSelected($0.name) && selectable($0) }.map { HostPath.join(last.path, $0.name) }
         }
@@ -540,14 +567,16 @@ struct FilePickerView: View {
                     // 欄は同じ値も書き戻すので、変わったときだけ。
                     if $0 != model.field { typing = true }
                     model.field = $0
-                }), prompt: Text(model.kind == .executable ? "/usr/local/bin/git" : "~/prj"))
+                }), prompt: Text(model.isTree ? "/src" : model.kind == .executable ? "/usr/local/bin/git" : "~/prj"))
                     .textFieldStyle(.roundedBorder)
                     .font(.system(.body, design: .monospaced))
                     .focused($focus, equals: .field)
                     .onSubmit { model.go(model.field) }
-                Button { model.go("~") } label: { Image(systemName: "house") }
-                    .help(L("Home folder"))
-                    .disabled(model.connecting || model.connectionError != nil)
+                if !model.isTree {
+                    Button { model.go("~") } label: { Image(systemName: "house") }
+                        .help(L("Home folder"))
+                        .disabled(model.connecting || model.connectionError != nil)
+                }
                 if !model.places.isEmpty {
                     PlacesButton(places: model.places) { model.go($0) }
                         .fixedSize()
@@ -567,7 +596,7 @@ struct FilePickerView: View {
                     Button(L("Check Connection")) { model.connect(model.host) }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else if model.host.isEmpty, !model.isLocal {
+            } else if model.host.isEmpty, !model.isLocal, !model.isTree {
                 Text(L("Choose a host to see its folders."))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

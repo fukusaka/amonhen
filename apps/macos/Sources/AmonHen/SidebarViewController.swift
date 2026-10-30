@@ -853,6 +853,30 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if outline.isItemExpanded(node) { outline.animator().collapseItem(node) } else { outline.animator().expandItem(node) }
     }
 
+    /// リポジトリの形（History の行に shallow clone・partial clone、Working Copy の行に sparse checkout の印）。
+    private var form: RepositoryForm?
+
+    func setRepositoryForm(_ form: RepositoryForm) {
+        guard form != self.form else { return }
+        self.form = form
+        outline.reloadItem(historyNode)
+        outline.reloadItem(workingCopyNode)
+    }
+
+    /// 行の右端に出す、リポジトリの形の印（SF Symbols の名前, ツールチップ, 色）。
+    private func formMarks(_ node: Node) -> [(String, String, NSColor)] {
+        guard let form else { return [] }
+        if node === historyNode {
+            return [form.shallow ? ("scissors", L("Shallow clone: older history isn’t fetched"), .tertiaryLabelColor) : nil,
+                    form.partial.map { ("icloud.and.arrow.down", L("Partial clone: file contents are fetched when needed (%@)", $0.filter ?? "?"), .tertiaryLabelColor) }]
+                .compactMap { $0 }
+        }
+        if node === workingCopyNode, let sparse = form.sparse {
+            return [("folder.badge.minus", RepositoryForm.sparseHelp(sparse), .tertiaryLabelColor)]
+        }
+        return []
+    }
+
     /// Working Copy の変更の数を表示する。
     func setWorkingCopyCount(_ count: Int) {
         workingCopyNode.badge = count > 0 ? "\(count)" : nil
@@ -949,6 +973,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if let item = node.item, item.kind == .tag {
             marks = [tagSignatureMark(item.name), tagRemoteMark].compactMap { $0 }
         }
+        marks += formMarks(node)
         if node === cleanWorktreesNode { badge = "\(node.children.count)" }
         if let w = node.worktree {
             badge = w.prunable != nil ? L("missing") : w.locked != nil ? L("locked")
