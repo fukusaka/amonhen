@@ -16,6 +16,11 @@ becomes the GitHub Release notes.
   couldn't. `amonhen merge-check a b c` checks the same.
 - In a shallow clone, History ends with a band to fetch 100 to 10,000 more commits, up to a date, or all of it, and
   boundary commits are marked as having parents not fetched. `amonhen log` notes where the history stops.
+- Repository Settings has a Fetching and Folders page: fetch more of a shallow clone, fetch all contents of a partial
+  clone (git 2.36), and choose the folders of a sparse checkout from HEAD's tree (git 2.25). The git line, the
+  sidebar and Working Copy show when a repository is shallow, partial, sparse or registered for maintenance.
+- In a partial clone, a History search with `contents:` asks first, since it fetches every content not fetched yet.
+  `amonhen status` notes shallow, partial and sparse repositories.
 
 #### Changed
 
