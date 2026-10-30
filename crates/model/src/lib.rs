@@ -32,8 +32,9 @@ pub use mailmap::{Mailmap, MailmapEntry};
 pub use oid::{Oid, OidMap, OidSet};
 pub use ops::{
     ApplyPatch, ConfigEntry, Deepen, Directory, DirectoryEntry, FormatPatch, HeadState, MachineGit,
-    Operations, Outcome, PatchFile, Program, PullMode, RefUpdate, RemoteChange, RemoteCheck,
-    RemoteEntry, ResetMode, Sequence, SigningKey, WorktreeChange, WorktreeChanges,
+    Operations, Outcome, PartialClone, PatchFile, Program, PullMode, RefUpdate, RemoteChange,
+    RemoteCheck, RemoteEntry, RepositoryForm, ResetMode, Sequence, SigningKey, SparseCheckout,
+    WorktreeChange, WorktreeChanges,
 };
 pub use range_diff::{
     RangeCommit, RangePair, RangeStatus, parse_range_diff, rebase_onto, rebase_onto_from_head,

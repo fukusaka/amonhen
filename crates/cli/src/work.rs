@@ -111,6 +111,33 @@ pub fn status(args: &[String]) -> Result<ExitCode> {
         out.push_str(&tr!(" ({items})", items = items.join(&tr!(", "))));
     }
     out.push('\n');
+    // リポジトリの形（shallow・partial clone・sparse checkout）。git status は言わないが、ないファイルや履歴の
+    // わけになる。読めなければ出さない。
+    if let Ok(form) = command(&*front, json!({"op": "repositoryForm"})) {
+        let form = &form["info"];
+        let mut items = Vec::new();
+        if form["shallow"] == true {
+            items.push(tr!("shallow clone"));
+        }
+        if let Some(partial) = form["partial"].as_object() {
+            items.push(match partial["filter"].as_str() {
+                Some(filter) => tr!("partial clone ({filter})", filter = filter),
+                None => tr!("partial clone"),
+            });
+        }
+        if let Some(sparse) = form["sparse"].as_object() {
+            items.push(match sparse["folders"].as_array() {
+                Some(folders) if sparse["cone"] == true => {
+                    tr!("sparse checkout ({count} folders)", count = folders.len())
+                }
+                _ => tr!("sparse checkout"),
+            });
+        }
+        if !items.is_empty() {
+            out.push_str(&paint(&items.join(" · "), "90", c.color));
+            out.push('\n');
+        }
+    }
     let entries = status["entries"].as_array().cloned().unwrap_or_default();
     if entries.is_empty() {
         out.push_str(&tr!("No changes"));

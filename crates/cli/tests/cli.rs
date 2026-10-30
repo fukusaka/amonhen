@@ -119,12 +119,17 @@ fn log_notes_where_a_shallow_clone_stops() {
     assert_eq!(code, 0, "{out}");
     assert!(out.contains("merge topic"), "{out}");
     assert!(out.contains("Older history isn’t fetched"), "{out}");
+    let (out, code) = amonhen(home.path(), &["status", "-C", dir, "--color=never"]);
+    assert_eq!(code, 0, "{out}");
+    assert!(out.contains("shallow clone"), "{out}");
 
     let (out, code) = amonhen(home.path(), &["run", "-C", dir, r#"{"op":"unshallow"}"#]);
     assert_eq!(code, 0, "{out}");
     let (out, _) = amonhen(home.path(), &["log", "-C", dir, "--color=never"]);
     assert!(out.contains("first"), "{out}");
     assert!(!out.contains("Older history"), "{out}");
+    let (out, _) = amonhen(home.path(), &["status", "-C", dir, "--color=never"]);
+    assert!(!out.contains("shallow clone"), "{out}");
 }
 
 #[test]

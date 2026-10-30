@@ -459,6 +459,11 @@ pub enum Command {
     /// 一緒に動かせるか（`info.updateRefs`。git 2.38 から。版が読めなければ true）、`rr-cache` があるか
     /// （`info.rerereCache`。git は `rerere.enabled` が書かれていなければ、これがあるとき rerere を使う）。
     GitVersion,
+    /// リポジトリの形（`info`: shallow・partial（remote・filter。なければ null）・sparse（cone・folders。cone mode
+    /// なら取り出しているフォルダ、そうでなければパターン。なければ null）・maintenance（`git maintenance register`
+    /// で登録してある）・workingTree・gitVersion・canFetchAllContents（git 2.36 から）・canSparseCheckout（git 2.25
+    /// から））。
+    RepositoryForm,
     /// git の設定から決まる、pull と fetch のふるまい（`info.pull`: `merge`・`rebase`・`fastForwardOnly`、
     /// `info.prune`）。Pull のシートが「git の設定に従う」の中身を見せるのに使う。
     SyncDefaults,
@@ -3406,6 +3411,11 @@ impl Repository {
                     ..Default::default()
                 })
             }
+            Command::RepositoryForm => Ok(Response {
+                ok: true,
+                info: Some(self.repository_form(ops)?),
+                ..Default::default()
+            }),
             Command::IgnoreMatches { text } => {
                 let lines: Vec<(usize, String)> = text
                     .lines()
