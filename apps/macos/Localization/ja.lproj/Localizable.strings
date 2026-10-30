@@ -49,6 +49,16 @@
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
+"Fetched" = "Fetch しました";
+"Pulled into %@" = "%@ に Pull しました";
+"Pushed %@ to %@" = "%1$@ を %2$@ に Push しました";
+"Merged %@ into %@" = "%1$@ を %2$@ に Merge しました";
+"Rebased onto %@" = "%@ の上に Rebase しました";
+"Checked out %@" = "%@ を Checkout しました";
+"Stashed the changes" = "変更を Stash しました";
+"Applied %@" = "%@ を Apply しました";
+"Deleted %@" = "%@ を削除しました";
+"Undone" = "Undo しました";
 "Find in the diff (⌘F)" = "差分の中を探す（⌘F）";
 "Go to HEAD (⌘⇧H)" = "HEAD へ移動（⌘⇧H）";
 "More" = "その他";

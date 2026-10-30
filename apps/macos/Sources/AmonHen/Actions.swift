@@ -11,6 +11,8 @@ final class Actions {
     var onFetch: (() -> Void)?
     /// 次に Undo される操作の名前が変わった。
     var onUndoChange: ((String?) -> Void)?
+    /// 操作が最後まで終わった（ステータスバーに一言出し、前の失敗の行を消す）。
+    var onSuccess: (([String: Any]) -> Void)?
     /// 操作がコンフリクトか途中で止まった（Working Copy を開いて最初のコンフリクトを選ぶ）。なければ警告のシートを出す。
     var onStop: (() -> Void)?
     /// 操作が失敗した（ウィンドウの帯で知らせる）。なければ警告のシートを出す。
@@ -60,6 +62,7 @@ final class Actions {
                 default:
                     break
                 }
+                if result.outcome == nil || result.outcome == .done { onSuccess?(command) }
                 completion?(result)
                 if let op = command["op"] as? String, op == "fetch" || op == "pull" { onFetch?() }
             } catch {

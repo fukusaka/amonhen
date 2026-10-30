@@ -156,7 +156,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         content.addSplitViewItem(detailItem)
         let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes, .reflog: reflog, .rangeDiff: rangeDiff, .settings: settings])
         self.pages = pages
-        split.addSplitViewItem(NSSplitViewItem(viewController: pages))
+        // 右側（ページ）の下にステータスバー。サイドバーの切り替えが効くよう、分割ビューはウィンドウの中身のまま。
+        let status = StatusBarController(content: pages)
+        statusBar = status
+        split.addSplitViewItem(NSSplitViewItem(viewController: status))
         window.contentViewController = split
 
         history.onSelectCommit = { [weak self] commit in
@@ -328,6 +331,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.workingCopy.onFileHistory = { [weak self, weak slot] path in self?.openFileHistory(path: path, in: slot?.repository) }
         slot.actions.window = window
         slot.actions.onFailure = { [weak self] failure in self?.showFailure(failure) }
+        slot.actions.onSuccess = { [weak self] command in self?.operationSucceeded(command) }
         slot.actions.onStop = { [weak self, weak slot] in
             self?.showWorkingCopy(nil)
             slot?.workingCopy.openFirstConflict()
@@ -867,7 +871,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     // MARK: - merge・rebase の途中の帯
 
-    private var sequenceBanner: NSTitlebarAccessoryViewController?
+    /// ウィンドウの下のステータスバー（途中の操作・失敗・接続・終わった操作の一言）。
+    private var statusBar: StatusBarController!
+    /// 途中の操作の行を作ったか（ボタンとラベルは作り直さず、中身だけ書き換える）。
+    private var sequenceRowShown = false
     private let sequenceLabel = NSTextField(labelWithString: "")
     private let sequenceDetail = NSTextField(labelWithString: "")
     private let skipButton = NSButton(title: "Skip", target: nil, action: nil)
@@ -881,11 +888,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// Working Copy へのリンク、なければ Continue を強調する。
     private func showSequenceBanner(_ sequence: SequenceInfo?, conflicts: Int, withoutMarkers: Int = 0) {
         guard let sequence else {
-            if let banner = sequenceBanner,
-               let index = window.titlebarAccessoryViewControllers.firstIndex(of: banner) {
-                window.removeTitlebarAccessoryViewController(at: index)
-            }
-            sequenceBanner = nil
+            statusBar?.hide(.sequence)
+            sequenceRowShown = false
             return
         }
         sequenceLabel.stringValue = Self.sequenceTitle(sequence)
@@ -896,7 +900,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         skipButton.isHidden = !["rebase", "cherry-pick", "am"].contains(sequence.kind)
         retryButton.isHidden = !Self.canRetryThreeWay(sequence, conflicts: conflicts)
         continueButton.keyEquivalent = conflicts == 0 && retryButton.isHidden ? "\r" : ""
-        guard sequenceBanner == nil else { return }
+        guard !sequenceRowShown, let statusBar else { return }
         let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.triangle.merge", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemOrange
         icon.symbolConfiguration = .init(pointSize: 18, weight: .regular)
@@ -922,18 +926,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         markResolvedButton.target = self
         markResolvedButton.action = #selector(markResolvedWithoutMarkers(_:))
         markResolvedButton.toolTip = L("Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them).")
-        let stack = NSStackView(views: [icon, texts, NSView(), markResolvedButton, show, retryButton, continueButton, skipButton, abort])
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 46)
-        // 細い帯だと気づきにくいので、色を敷く（作業の途中であることを、どの画面でも見落とさないように）。
-        stack.wantsLayer = true
-        stack.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.14).cgColor
-        let bar = NSTitlebarAccessoryViewController()
-        bar.view = stack
-        bar.layoutAttribute = .bottom
-        window.addTitlebarAccessoryViewController(bar)
-        sequenceBanner = bar
+        // 色を敷く（作業の途中であることを、どの画面でも見落とさないように）。
+        statusBar.show(.sequence, StatusBarController.row(
+            [icon, texts, NSView(), markResolvedButton, show, retryButton, continueButton, skipButton, abort],
+            height: 46, tint: NSColor.systemOrange.withAlphaComponent(0.14)))
+        sequenceRowShown = true
     }
 
     /// 帯の 1 行目: 何をどこへしている途中か。
@@ -991,7 +988,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     // MARK: - 失敗の帯
 
-    private var failureBanner: NSTitlebarAccessoryViewController?
     private var failure: OperationFailure?
 
     /// 操作の失敗を、ツールバーの下の帯で知らせる（作業を止めない）。閉じるか、次の失敗で置き換えるまで出す。
@@ -1028,27 +1024,41 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let close = NSButton(title: L("Close"), target: self, action: #selector(hideFailure))
         more.isHidden = cancelled
         for b in remedies + [more, activity, close] { b.controlSize = .small }
-        let stack = NSStackView(views: [icon, label, detail, NSView()] + remedies + [more, activity, close])
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
-        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
-        let bar = NSTitlebarAccessoryViewController()
-        bar.view = stack
-        bar.layoutAttribute = .bottom
-        window.addTitlebarAccessoryViewController(bar)
-        failureBanner = bar
+        let row = StatusBarController.row([icon, label, detail, NSView()] + remedies + [more, activity, close], height: 30,
+                                          tint: cancelled ? nil : NSColor.systemRed.withAlphaComponent(0.08))
+        statusBar?.show(.failure, row)
         // 取り消したことは、しばらくしたら消す。
         if cancelled {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak bar] in
-                if let bar, self?.failureBanner === bar { self?.hideFailure() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak row] in
+                if row?.window != nil { self?.hideFailure() }
             }
         }
     }
 
+    /// 操作が終わった: 前の失敗はもう古いので消し、何をしたかを一言出す（知らせる値打ちのある操作だけ）。
+    private func operationSucceeded(_ command: [String: Any]) {
+        hideFailure()
+        let s = { (key: String) in command[key] as? String ?? "" }
+        let text: String? = switch s("op") {
+        case "fetch": L("Fetched")
+        case "pull": L("Pulled into %@", latestRefs?.headBranch ?? "HEAD")
+        case "push": L("Pushed %@ to %@", s("branch"), "\(s("remote"))/\(s("remoteBranch"))")
+        case "merge": L("Merged into %@", latestRefs?.headBranch ?? "HEAD")
+        case "mergeInto": L("Merged %@ into %@", s("rev"), s("target"))
+        case "rebase": L("Rebased onto %@", s("onto"))
+        case "checkout": L("Checked out %@", s("branch"))
+        case "track": L("Checked out %@", s("remoteBranch"))
+        case "stashPush": L("Stashed the changes")
+        case "stashApply": L("Applied %@", s("name"))
+        case "deleteBranch": L("Deleted %@", s("name"))
+        case "undo": L("Undone")
+        default: nil
+        }
+        if let text { statusBar?.flash(text) }
+    }
+
     @objc private func hideFailure() {
-        guard let banner = failureBanner, let index = window.titlebarAccessoryViewControllers.firstIndex(of: banner) else { return }
-        window.removeTitlebarAccessoryViewController(at: index)
-        failureBanner = nil
+        statusBar?.hide(.failure)
     }
 
     @objc private func runRemedy(_ sender: NSButton) {
@@ -1089,14 +1099,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let button = NSButton(title: L("Reconnect"), target: self, action: #selector(reconnect))
         button.controlSize = .small
-        let stack = NSStackView(views: [icon, label, detail, NSView(), button])
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
-        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
-        let bar = NSTitlebarAccessoryViewController()
-        bar.view = stack
-        bar.layoutAttribute = .bottom
-        window.addTitlebarAccessoryViewController(bar)
+        statusBar?.show(.connection, StatusBarController.row([icon, label, detail, NSView(), button], height: 30,
+                                                          tint: NSColor.systemOrange.withAlphaComponent(0.10)))
     }
 
     @objc private func reconnect() {
