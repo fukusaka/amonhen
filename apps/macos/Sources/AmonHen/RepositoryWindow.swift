@@ -884,7 +884,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         if case let .combine(oids) = preset, oids.count == 1 { includingOlder = true }
         Task { @MainActor in
             guard let editor = await HistoryEditController.load(actions: actions, from: start, includingOlder: includingOlder) else {
-                statusBar?.flash(L("Only commits from HEAD down to the first merge can be edited."), symbol: "exclamationmark.triangle")
+                statusBar?.flash(L("Only commits on HEAD’s first-parent line can be edited."), symbol: "exclamationmark.triangle")
                 return
             }
             commitEditor = editor
