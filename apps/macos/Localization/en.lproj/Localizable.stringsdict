@@ -642,5 +642,69 @@
 			<string>%ld conflicts</string>
 		</dict>
 	</dict>
+	<key>Undo the last %ld operations?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Undo the last %#@n0@?</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>operation</string>
+			<key>other</key>
+			<string>%ld operations</string>
+		</dict>
+	</dict>
+	<key>Cherry-pick %ld Commits…</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Cherry-pick %#@n0@…</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld Commit</string>
+			<key>other</key>
+			<string>%ld Commits</string>
+		</dict>
+	</dict>
+	<key>Revert %ld Commits…</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Revert %#@n0@…</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld Commit</string>
+			<key>other</key>
+			<string>%ld Commits</string>
+		</dict>
+	</dict>
+	<key>%ld files with uncommitted changes come along.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@ along.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file with uncommitted changes comes</string>
+			<key>other</key>
+			<string>%ld files with uncommitted changes come</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

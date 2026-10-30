@@ -185,9 +185,14 @@ final class ActivityModel {
 
     /// 操作ログの `index` 番目（0 が一番新しい）まで戻す（新しいものから順に Undo する）。
     func undo(through index: Int) {
-        guard let actions = selectedRepository?.actions else { return }
-        actions.perform(sequence: Array(repeating: ["op": "undo"], count: index + 1))
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.loadUndoLog() }
+        guard let actions = selectedRepository?.actions, index < undoEntries.count else { return }
+        let title = index == 0 ? L("Undo “%@”?", undoEntries[0].0) : L("Undo the last %ld operations?", index + 1)
+        Task { @MainActor in
+            guard await actions.confirm(title, message: L("Returns HEAD and the branches to where they were."), ok: "Undo",
+                                        in: ActivityWindowController.shared.window) else { return }
+            actions.perform(sequence: Array(repeating: ["op": "undo"], count: index + 1))
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in self?.loadUndoLog() }
+        }
     }
 }
 

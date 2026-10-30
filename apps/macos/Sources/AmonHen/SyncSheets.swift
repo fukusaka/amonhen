@@ -261,18 +261,142 @@ extension Actions {
         }
     }
 
+    // MARK: - 相手の決まった取り込み（右クリック・ドラッグ）
+
+    /// 相手の決まった Merge・Rebase・Cherry-pick・Revert の前に確かめる。`ours` に `theirs` を取り込んだらコンフリクト
+    /// するかを裏で調べて見せる（`estimate` なら rebase のように 1 つずつ載せるので目安）。`commands` を順に実行する。
+    func integrateWithConfirmation(_ title: String, ok: String, ours: String = "HEAD", theirs: [String], estimate: Bool = false,
+                                   commands: [[String: Any]]) {
+        Task { @MainActor in
+            let alert = makeAlert(title, Self.canUndo)
+            alert.addButton(withTitle: ok)
+            alert.addButton(withTitle: L("Cancel"))
+            let label = Self.forecastLabel()
+            label.frame.size = label.fittingSize
+            alert.accessoryView = label
+            Task { @MainActor in
+                Self.show(await predictMerge(ours: ours, theirs: theirs), estimate: estimate || theirs.count > 1, in: label)
+            }
+            guard await present(alert) == .alertFirstButtonReturn else { return }
+            perform(sequence: commands)
+        }
+    }
+
+    func mergeWithConfirmation(_ rev: String, into current: String) {
+        integrateWithConfirmation(L("Merge %@ into %@?", rev, current), ok: "Merge", theirs: [rev],
+                                  commands: [["op": "merge", "rev": rev]])
+    }
+
+    func rebaseWithConfirmation(_ current: String, onto rev: String) {
+        integrateWithConfirmation(L("Rebase %@ onto %@?", current, rev), ok: "Rebase", theirs: [rev], estimate: true,
+                                  commands: [["op": "rebase", "onto": rev]])
+    }
+
+    /// サイドバーにドラッグしたブランチを、上流でないリモートのブランチに送る前に確かめる。上流なら Push のシート。
+    /// `force` なら、そのリモートのブランチが最後の Fetch の時点のコミットのときだけ置き換える。
+    func pushWithConfirmation(branch: String, remote: String, remoteBranch: String, force: Bool, setUpstream: Bool) {
+        let repository = self.repository
+        Task { @MainActor in
+            let refs = await Task.detached { try? repository.loadRefs() }.value
+            let target = "\(remote)/\(remoteBranch)"
+            let local = refs?.items.first { $0.kind == .local && $0.name == branch }
+            if local?.detail == target, local?.gone == false {
+                return pushWithConfirmation(branch: branch, force: force)
+            }
+            let there = refs?.items.first { $0.kind == .remote && $0.name == target }?.target
+                .map { $0.map { String(format: "%02x", $0) }.joined() }
+            let title = force ? L("Force push %@ to %@?", branch, target) : L("Push %@ to %@?", branch, target)
+            let message = force ? L("%@ loses the commits %@ doesn’t have.", target, branch) + " " + Self.cantUndo
+                : there == nil ? L("Creates %@.", target) : ""
+            guard await confirm(title, message: message, ok: force ? "Force Push" : "Push", destructive: force) else { return }
+            var command: [String: Any] = ["op": "push", "remote": remote, "branch": branch, "remoteBranch": remoteBranch,
+                                          "force": force, "setUpstream": setUpstream]
+            if force, let there { command["expect"] = there }
+            perform(command)
+        }
+    }
+
+    // MARK: - Fetch・Checkout・Cherry-pick・Revert
+
+    /// Fetch の前に、どこから取るかを見せる（↩ で実行）。自動の Fetch は聞かない。
+    func fetchWithConfirmation() {
+        let repository = self.repository
+        Task { @MainActor in
+            nonisolated struct Remotes: Decodable { struct Remote: Decodable { let name: String }; let remotes: [Remote] }
+            nonisolated struct Entries: Decodable { struct Entry: Decodable { let key: String; let value: String }; let entries: [Entry] }
+            let (remotes, entries) = await Task.detached {
+                ((try? repository.info(["op": "remotes"], as: Remotes.self))?.remotes.map(\.name) ?? [],
+                 (try? repository.info(["op": "configList"], as: Entries.self))?.entries ?? [])
+            }.value
+            guard !remotes.isEmpty else { return NSSound.beep() }
+            let prune = entries.last { $0.key.lowercased() == "fetch.prune" }?.value.lowercased() == "true"
+            let alert = makeAlert(L("Fetch from %@?", ListFormatter.localizedString(byJoining: remotes)),
+                                  prune ? L("Remote branches deleted there are removed here too (fetch.prune).") : "")
+            alert.addButton(withTitle: "Fetch")
+            alert.addButton(withTitle: L("Cancel"))
+            if await present(alert) == .alertFirstButtonReturn { fetch() }
+        }
+    }
+
+    /// 切り替える先。
+    enum CheckoutTarget {
+        case branch(String)
+        /// リモートのブランチを追跡するローカルブランチを作って切り替える。
+        case track(String)
+        /// コミットを detached HEAD で。
+        case detach(String)
+    }
+
+    /// Checkout の前に、何が起きるか（作業中の変更はそのまま持って行く、追跡ブランチを作る、detached になる）を見せる。
+    func checkoutWithConfirmation(_ target: CheckoutTarget) {
+        let repository = self.repository
+        Task { @MainActor in
+            let changed = await Task.detached {
+                (try? repository.loadStatus())?.items.filter { $0.kind != .untracked }.count ?? 0
+            }.value
+            let (title, command, line): (String, [String: Any], String) = switch target {
+            case let .branch(name): (L("Checkout %@?", name), ["op": "checkout", "branch": name], "")
+            case let .track(remote):
+                (L("Checkout %@?", remote), ["op": "track", "remoteBranch": remote],
+                 L("Creates %@ tracking %@.", String(remote.split(separator: "/", maxSplits: 1).last ?? ""), remote))
+            case let .detach(oid):
+                (L("Checkout %@?", String(oid.prefix(8))), ["op": "detach", "oid": oid], L("HEAD is detached (on no branch)."))
+            }
+            let lines = [line, changed > 0 ? L("%ld files with uncommitted changes come along.", changed) : ""]
+                .filter { !$0.isEmpty }
+            let alert = makeAlert(title, lines.joined(separator: " "))
+            alert.addButton(withTitle: "Checkout")
+            alert.addButton(withTitle: L("Cancel"))
+            if await present(alert) == .alertFirstButtonReturn { perform(command) }
+        }
+    }
+
+    /// Cherry-pick・Revert の前に確かめる。`commits` は（16 進, merge か）を、実行する順に。
+    func pickWithConfirmation(revert: Bool, _ commits: [(hex: String, isMerge: Bool)]) {
+        Task { @MainActor in
+            let what = commits.count == 1 ? String(commits[0].hex.prefix(8)) : L("%ld commits", commits.count)
+            let onto = currentBranch ?? "HEAD"
+            let title = revert ? L("Revert %@ on %@?", what, onto) : L("Cherry-pick %@ onto %@?", what, onto)
+            let message = (revert ? L("Adds commits that undo them.") : L("Adds copies of them.")) + " " + Self.canUndo
+            guard await confirm(title, message: message, ok: revert ? "Revert" : "Cherry-pick") else { return }
+            perform(sequence: commits.map { ["op": revert ? "revert" : "cherryPick", "oid": $0.hex, "isMerge": $0.isMerge] })
+        }
+    }
+
     // MARK: - Stash・Undo
 
     /// stash を戻して消す前に、どの stash かを見せる。
-    func popWithConfirmation(name: String, message: String?) {
+    /// stash を作業ツリーに戻す前に、どの stash かを見せる。`pop` なら一覧から消す（コンフリクトしたら残す）。
+    func popWithConfirmation(name: String, message: String?, pop: Bool = true) {
         Task { @MainActor in
-            let alert = makeAlert(
-                L("Pop %@?", name),
-                (message.map { "“\($0)”\n\n" } ?? "") + L("This applies it to the working tree and removes it from the stash list (it is kept if it conflicts)."))
-            alert.addButton(withTitle: "Pop")
+            let what = pop ? L("Applies it to the working tree and removes it from the list.")
+                : L("Applies it to the working tree. It stays in the list.")
+            let alert = makeAlert(pop ? L("Pop %@?", name) : L("Apply %@?", name),
+                                  (message.map { "“\($0)”\n" } ?? "") + what + " " + Self.canUndo)
+            alert.addButton(withTitle: pop ? "Pop" : "Apply")
             alert.addButton(withTitle: L("Cancel"))
             if await present(alert) == .alertFirstButtonReturn {
-                perform(["op": "stashApply", "name": name, "pop": true])
+                perform(["op": "stashApply", "name": name, "pop": pop])
             }
         }
     }
@@ -520,43 +644,48 @@ extension Actions {
     /// ブランチを消す前に確かめる。今のブランチにも上流にも取り込まれていないコミットがあれば（git は `-d` を断る）、
     /// それを並べて見せ、Delete Anyway（`-D`）で消す。どちらも Undo で戻せる。
     func deleteBranchWithConfirmation(_ item: RefItem) {
+        deleteBranchesWithConfirmation([item.name])
+    }
+
+    /// いくつかのブランチをまとめて消す前に確かめる。どこにも取り込まれていないコミットのあるものは、それを並べて
+    /// Delete Anyway で消す（1 本だけ断られて途中で止まることがない）。
+    func deleteBranchesWithConfirmation(_ names: [String]) {
         let repository = self.repository
-        let name = item.name
-        let upstream = item.gone ? nil : item.detail
         Task { @MainActor in
-            // このブランチにしかないコミット。git と同じく、今のブランチか上流のどちらかに取り込まれていれば消せる。
-            let result = await Task.detached { () -> Result<CommitRange, Error> in
+            // それぞれのブランチにしかないコミット。git と同じく、今のブランチか上流のどちらかに取り込まれていれば消せる。
+            let result = await Task.detached { () -> Result<[(String, CommitRange)], Error> in
                 Result {
-                    func only(_ base: String) throws -> CommitRange {
-                        try repository.info(["op": "between", "base": base, "tip": name, "limit": 30], as: CommitRange.self)
+                    let refs = try repository.loadRefs()
+                    return try names.map { name in
+                        func only(_ base: String) throws -> CommitRange {
+                            try repository.info(["op": "between", "base": base, "tip": name, "limit": 30], as: CommitRange.self)
+                        }
+                        let item = refs.items.first { $0.kind == .local && $0.name == name }
+                        let upstream = item.flatMap { $0.gone ? nil : $0.detail }
+                        let fromHead = try only("HEAD")
+                        guard fromHead.count > 0, let upstream else { return (name, fromHead) }
+                        let fromUpstream = try only(upstream)
+                        return (name, fromUpstream.count < fromHead.count ? fromUpstream : fromHead)
                     }
-                    let fromHead = try only("HEAD")
-                    guard fromHead.count > 0, let upstream else { return fromHead }
-                    let fromUpstream = try only(upstream)
-                    return fromUpstream.count < fromHead.count ? fromUpstream : fromHead
                 }
             }.value
-            let unique: CommitRange
+            let unique: [(String, CommitRange)]
             switch result {
-            case let .failure(error): return await inform(L("Can’t check %@", name), "\(error)")
-            case let .success(range): unique = range
+            case let .failure(error): return await inform(L("Couldn’t check the branches"), "\(error)")
+            case let .success(ranges): unique = ranges
             }
-            let alert: NSAlert
-            if unique.count == 0 {
-                alert = makeAlert(L("Delete %@?", name), L("You can Undo it afterwards (⌥⌘Z)."))
-                alert.addButton(withTitle: L("Delete")).hasDestructiveAction = true
-            } else {
-                alert = makeAlert(
-                    L("Delete %@?", name),
-                    L("These commits are on no other branch (not in the current branch, nor in its upstream), so git refuses a plain delete. Delete Anyway removes them with the branch.")
-                        + " " + L("You can Undo it afterwards (⌥⌘Z)."))
-                alert.accessoryView = Self.commitLists([(L("Commits only on %@", name), unique, true)])
-                alert.addButton(withTitle: L("Delete Anyway")).hasDestructiveAction = true
+            let unmerged = unique.filter { $0.1.count > 0 }
+            let title = names.count == 1 ? L("Delete %@?", names[0]) : L("Delete %ld branches?", names.count)
+            let list = names.count == 1 ? "" : names.joined(separator: ", ") + "\n"
+            let message = list + (unmerged.isEmpty ? "" : L("Some commits are on no other branch; they go with the branch.") + " ") + Self.canUndo
+            let alert = makeAlert(title, message)
+            if !unmerged.isEmpty {
+                alert.accessoryView = Self.commitLists(unmerged.map { (L("Commits only on %@", $0.0), $0.1, true) })
             }
+            alert.addButton(withTitle: unmerged.isEmpty ? L("Delete") : L("Delete Anyway"))
             alert.addButton(withTitle: L("Cancel"))
-            if await present(alert) == .alertFirstButtonReturn {
-                perform(["op": "deleteBranch", "name": name, "force": unique.count > 0])
-            }
+            guard await present(alert) == .alertFirstButtonReturn else { return }
+            perform(sequence: unique.map { ["op": "deleteBranch", "name": $0.0, "force": $0.1.count > 0] })
         }
     }
 
