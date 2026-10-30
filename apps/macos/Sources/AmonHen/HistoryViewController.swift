@@ -1565,13 +1565,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             }
         }
         menu.addItem(.separator())
-        add(L("Copy Commit IDs")) {
+        add(Titles.copyCommitIDs) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(commits.map(\.hex).joined(separator: "\n"), forType: .string)
         }
-        add(L("Copy Short IDs")) {
+        add(Titles.copyShortIDs) {
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(commits.map { String($0.hex.prefix(10)) }.joined(separator: " "), forType: .string)
+            NSPasteboard.general.setString(commits.map { String($0.hex.prefix(Titles.shortIDLength)) }.joined(separator: " "), forType: .string)
         }
     }
 
@@ -1611,9 +1611,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             add(hidden > 0 ? L("Show %ld Merged Commits", hidden) : L("Fold Merged Commits")) { [weak self] in self?.toggleMerge(id) }
             menu.addItem(.separator())
         }
-        add("New Branch at \(short)…") { actions.newBranch(at: hex) }
-        add("New Tag at \(short)…") { actions.newTag(at: hex) }
-        add("Checkout \(short) (Detached)…") { actions.checkoutWithConfirmation(.detach(hex)) }
+        add(Titles.newBranch(from: short)) { actions.newBranch(at: hex) }
+        add(Titles.newTag(at: short)) { actions.newTag(at: hex) }
+        add(Titles.checkoutDetached(short)) { actions.checkoutWithConfirmation(.detach(hex)) }
         menu.addItem(actions.resetMenuItem(to: hex))
         menu.addItem(.separator())
         if !isMerge {
@@ -1630,15 +1630,15 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             }
             menu.addItem(.separator())
         }
-        add("Cherry-pick \(short)…") { actions.pickWithConfirmation(revert: false, [(hex, isMerge)]) }
-        add("Revert \(short)…") { actions.pickWithConfirmation(revert: true, [(hex, isMerge)]) }
+        add(Titles.cherryPick(short)) { actions.pickWithConfirmation(revert: false, [(hex, isMerge)]) }
+        add(Titles.revert(short)) { actions.pickWithConfirmation(revert: true, [(hex, isMerge)]) }
         if isMerge {
             menu.addItem(NSMenuItem(title: L("Save as Patch…"), action: nil, keyEquivalent: ""))
         } else {
             add(L("Save as Patch…")) { actions.savePatches([hex]) }
         }
         menu.addItem(.separator())
-        add(L("Copy Commit ID")) {
+        add(Titles.copyCommitID) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(hex, forType: .string)
         }

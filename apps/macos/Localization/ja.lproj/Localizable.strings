@@ -49,6 +49,22 @@
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
+"Rename Branch…" = "ブランチの名前を変える…";
+"Checkout %@…" = "%@ を Checkout…";
+"Checkout %@ as Local Branch…" = "%@ をローカルブランチとして Checkout…";
+"Checkout %@ (Detached)…" = "%@ を Checkout（detached）…";
+"Merge %@ into %@…" = "%1$@ を %2$@ に Merge…";
+"Rebase %@ onto %@…" = "%1$@ を %2$@ の上に Rebase…";
+"New Tag at %@…" = "%@ にタグを付ける…";
+"Reset %@ to %@…" = "%1$@ を %2$@ に Reset…";
+"Cherry-pick %@…" = "%@ を Cherry-pick…";
+"Revert %@…" = "%@ を Revert…";
+"Push %@ to %@…" = "%1$@ を %2$@ に Push…";
+"Force Push %@ to %@…" = "%1$@ を %2$@ に Force Push…";
+"Apply %@…" = "%@ を Apply…";
+"Pop %@…" = "%@ を Pop…";
+"Blame at %@" = "%@ の時点で Blame";
+"Add Folder to Scan over SSH…" = "SSH で探すフォルダを足す…";
 "Puts the files back as they were. HEAD and the index stay." = "ファイルを元に戻します。HEAD と index はそのままです。";
 "Brings back the dropped stash." = "Drop した stash を戻します。";
 "Gives the branch its earlier name back." = "ブランチの名前を元に戻します。";
@@ -184,7 +200,6 @@
 "Remove" = "外す";
 "Add Local Repository…" = "手元のリポジトリを加える…";
 "Add SSH Connection…" = "SSH 接続を加える…";
-"Create Group…" = "グループを作る…";
 "Fetch All (%ld)" = "すべて Fetch（%ld）";
 "Add Repository on This Host…" = "このホストのリポジトリを加える…";
 "Add Folder to Scan on This Host…" = "このホストでスキャンするフォルダを加える…";
@@ -491,7 +506,6 @@
 "Expand the commit details to fill the right column (click again to restore)." = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）";
 "AI: Explain this commit (or the combined diff of the selected commits)." = "AI: このコミット（複数選んでいればまとめた差分）を解説する";
 "AI: Translate the message." = "AI: メッセージを翻訳する";
-"Copy ID" = "ID をコピー";
 "Copy Short ID" = "短い ID をコピー";
 "Copy Subject" = "件名をコピー";
 "Copy Message" = "メッセージをコピー";
@@ -704,7 +718,6 @@
 "Open in Browser" = "ブラウザで開く";
 "Copy URL" = "URL をコピー";
 "Delete %@" = "%@ を削除";
-"Open %@ in New Window" = "%@ を新しいウインドウで開く";
 
 /* BranchSwitcher.swift */
 "Find a branch or type a new name" = "ブランチを探す・新しい名前を打つ";
@@ -1159,7 +1172,6 @@
 
 // History の行に出す項目
 "History Items" = "History の表示項目";
-"Choose what each commit's row in History shows besides the subject (also from the button at the right of History’s bar and the header’s context menu)" = "History の各コミットの行に、件名のほかに何を出すかを選ぶ（History の上のバーの右端のボタンと、ヘッダーの右クリックでも選べる）";
 "Branches and Tags" = "ブランチとタグ";
 "Date" = "日時";
 "Commit ID" = "コミット ID";
@@ -1168,7 +1180,6 @@
 
 // History の並び順
 "History Order" = "History の並び順";
-"How History orders commits (also for the fold and the branch filter)" = "History のコミットの並べ方（折りたたみ・ブランチの絞り込みにも効く）";
 "Date Order" = "日付順";
 "Topological Order" = "トポロジー順";
 "Newest first wherever the graph allows (like git log --date-order)" = "グラフが許す限り新しいものから（git log --date-order と同じ）";
@@ -1546,4 +1557,4 @@
 "Can’t Merge Them in One Commit" = "1 つのコミットにまとめられません";
 "git stopped because one of them conflicts before the last, and nothing was changed. Merge them one by one instead? Each makes its own merge commit, and you resolve conflicts as they come. Undo puts them all back." = "最後より前のものがコンフリクトしたので git は止まりました。何も変わっていません。代わりに 1 つずつ merge しますか？ それぞれが merge のコミットになり、コンフリクトはその都度解きます。Undo ですべて戻せます。";
 "Resolve them in Working Copy, then Continue or Abort. Not merged yet: %@." = "Working Copy で解決してから Continue するか、Abort してください。まだ merge していないもの: %@。";
-"Merge %ld into %@…" = "%1$ld 個を %2$@ に merge…";
+"Merge %ld into %@…" = "%1$ld 個を %2$@ に Merge…";

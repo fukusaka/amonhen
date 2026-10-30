@@ -1122,9 +1122,9 @@ final class RepositoryBrowser: NSViewController, NSTableViewDataSource, NSTableV
                 add(L("Add Local Repository…")) { [weak self] in self?.addRepository() }
                 add(L("Add SSH Connection…")) { [weak self] in self?.addRemote(host: nil) }
                 add(L("Add Folder to Scan…")) { [weak self] in self?.addScanFolder() }
-                add(L("Folder to Scan over SSH…")) { [weak self] in self?.addSSHScanFolder() }
+                add(L("Add Folder to Scan over SSH…")) { [weak self] in self?.addSSHScanFolder() }
             } else if node.header == "グループ" {
-                add(L("Create Group…")) { [weak self] in self?.newGroup() }
+                add(L("New Group…")) { [weak self] in self?.newGroup() }
             }
             return
         }

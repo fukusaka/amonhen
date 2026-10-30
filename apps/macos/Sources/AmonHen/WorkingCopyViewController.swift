@@ -1427,9 +1427,9 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             return
         }
         if entry.item.worktreeState != "D" {
-            menu.addItem(ClosureMenuItem(title: "Blame") { [weak self] in self?.onBlame?(path) })
+            menu.addItem(ClosureMenuItem(title: Titles.blame(at: nil)) { [weak self] in self?.onBlame?(path) })
         }
-        menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
+        menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
     }
 
     /// `pattern` を作業ツリーの直下の .gitignore の最後に足す（コアで読み書きするので、SSH 先でも同じ）。

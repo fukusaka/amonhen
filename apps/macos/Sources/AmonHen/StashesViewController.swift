@@ -242,10 +242,10 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
         func add(_ title: String, _ handler: @escaping () -> Void) {
             menu.addItem(ClosureMenuItem(title: title, action: handler))
         }
-        add("Apply \(name)…") { [weak self] in self?.apply(stash, pop: false) }
-        add("Pop \(name)…") { [weak self] in self?.apply(stash, pop: true) }
+        add(Titles.apply(name)) { [weak self] in self?.apply(stash, pop: false) }
+        add(Titles.pop(name)) { [weak self] in self?.apply(stash, pop: true) }
         add(L("Drop %@…", name)) { [weak self] in self?.drop(stash) }
-        add(L("New Branch from %@…", name)) { [weak self] in self?.branch(from: stash) }
+        add(Titles.newBranch(from: name)) { [weak self] in self?.branch(from: stash) }
         menu.addItem(.separator())
         add(L("Copy Name")) {
             NSPasteboard.general.clearContents()

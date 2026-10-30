@@ -314,7 +314,7 @@ final class Actions {
 
     /// 右クリックの「Reset … to …」。History と Reflog で使う。
     func resetMenuItem(to target: String) -> NSMenuItem {
-        ClosureMenuItem(title: "Reset \(currentBranch ?? "HEAD") to \(target.prefix(8))…") { [weak self] in self?.reset(to: target) }
+        ClosureMenuItem(title: Titles.reset(currentBranch ?? "HEAD", to: String(target.prefix(Titles.shortIDLength)))) { [weak self] in self?.reset(to: target) }
     }
 
     /// 作業中の変更を stash する。untracked のファイルを含めるかを選べる。

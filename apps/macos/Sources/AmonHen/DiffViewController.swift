@@ -1330,8 +1330,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let message = info.message.trimmingCharacters(in: .whitespacesAndNewlines)
         let subject = message.components(separatedBy: "\n").first ?? message
         let items: [(String, String)] = [
-            (L("Copy ID"), info.oid),
-            (L("Copy Short ID"), String(info.oid.prefix(10))),
+            (Titles.copyCommitID, info.oid),
+            (Titles.copyShortID, String(info.oid.prefix(Titles.shortIDLength))),
             (L("Copy Subject"), subject),
             (L("Copy Message"), message),
             (L("Copy git show Command"), "git show \(info.oid)"),
@@ -1788,9 +1788,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         menu.addItem(ClosureMenuItem(title: L("Toggle Viewed")) { [weak self] in self?.toggleViewed(file) })
         menu.addItem(.separator())
         if let commit = commitHex {
-            menu.addItem(ClosureMenuItem(title: "Blame at \(commit.prefix(8))") { [weak self] in self?.onBlame?(path, commit) })
+            menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
-        menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
+        menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem(title: L("Copy Path")) {
             NSPasteboard.general.clearContents()
@@ -2191,9 +2191,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         guard let index = fileIndex(row: files.clickedRow), let item = changes?.items[index] else { return }
         let path = item.path
         if let commit = commitHex, item.kind != .deleted {
-            menu.addItem(ClosureMenuItem(title: "Blame at \(commit.prefix(8))") { [weak self] in self?.onBlame?(path, commit) })
+            menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
-        menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
+        menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

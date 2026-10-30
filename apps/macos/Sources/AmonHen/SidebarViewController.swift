@@ -1126,11 +1126,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 add(L("Open the Worktree of %@ to Merge or Rebase", target)) { [weak self] in self?.onSelectWorktree?(other.path) }
             } else {
                 // checkout していなくても、fast-forward で済むならブランチだけ進める。
-                add("Merge \(dragged) into \(target)…") {
+                add(Titles.merge(dragged, into: target)) {
                     actions.integrateWithConfirmation(L("Merge %@ into %@?", dragged, target), ok: "Merge", ours: target,
                                                       theirs: [dragged], commands: [["op": "mergeInto", "target": target, "rev": dragged]])
                 }
-                add("Rebase \(target) onto \(dragged)…") {
+                add(Titles.rebase(target, onto: dragged)) {
                     actions.integrateWithConfirmation(L("Rebase %@ onto %@?", target, dragged), ok: "Rebase", ours: target,
                                                       theirs: [dragged], estimate: true,
                                                       commands: checkout + [["op": "rebase", "onto": dragged]])
@@ -1138,11 +1138,11 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             }
         } else if isLocal, let remote = node.remote ?? node.item.map({ String($0.name.split(separator: "/")[0]) }) {
             let remoteBranch = node.item.map { String($0.name.dropFirst(remote.count + 1)) } ?? dragged
-            add("Push \(dragged) to \(remote)/\(remoteBranch)…") {
+            add(Titles.push(dragged, to: "\(remote)/\(remoteBranch)")) {
                 actions.pushWithConfirmation(branch: dragged, remote: remote, remoteBranch: remoteBranch, force: false,
                                              setUpstream: node.item == nil)
             }
-            add("Force Push \(dragged) to \(remote)/\(remoteBranch)…") {
+            add(Titles.forcePush(dragged, to: "\(remote)/\(remoteBranch)")) {
                 actions.pushWithConfirmation(branch: dragged, remote: remote, remoteBranch: remoteBranch, force: true,
                                              setUpstream: false)
             }
@@ -1274,8 +1274,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let current = headBranch ?? "HEAD"
         // 名前をコピー（ターミナルや PR に貼るため。リモートブランチは origin/ を付けたまま）。
         let copyTitle = switch item.kind {
-        case .local, .remote: L("Copy Branch Name")
-        case .tag: L("Copy Tag Name")
+        case .local, .remote: Titles.copyBranchName
+        case .tag: Titles.copyTagName
         default: L("Copy Name")
         }
         add(copyTitle) {
@@ -1290,10 +1290,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                     // ほかの worktree が checkout しているブランチは checkout できない（git が断る）。その worktree を開く。
                     add(L("Open Worktree %@", other.name)) { [weak self] in self?.onSelectWorktree?(other.path) }
                 } else {
-                    add("Checkout \(name)…") { actions.checkoutWithConfirmation(.branch(name)) }
+                    add(Titles.checkout(name)) { actions.checkoutWithConfirmation(.branch(name)) }
                 }
-                add("Merge \(name) into \(current)…") { actions.mergeWithConfirmation(name, into: current) }
-                add("Rebase \(current) onto \(name)…") { actions.rebaseWithConfirmation(current, onto: name) }
+                add(Titles.merge(name, into: current)) { actions.mergeWithConfirmation(name, into: current) }
+                add(Titles.rebase(current, onto: name)) { actions.rebaseWithConfirmation(current, onto: name) }
                 menu.addItem(.separator())
             }
             // 上流と合わせる（最後の Fetch の時点）。チェックアウト中のブランチはツールバーの Pull・Push で。分かれていれば
@@ -1303,7 +1303,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(.separator())
             } else if name != headBranch, let upstream = item.detail, (item.ahead == 0) != (item.behind == 0) {
                 if item.ahead > 0 {
-                    add("Push \(name) to \(upstream)…") { actions.pushWithConfirmation(branch: name) }
+                    add(Titles.push(name, to: upstream)) { actions.pushWithConfirmation(branch: name) }
                 } else if otherWorktree(using: name) == nil {
                     // ほかの worktree でチェックアウト中なら動かせない（その作業ツリーとずれる）。上の Open Worktree から。
                     add("Fast-Forward \(name) to \(upstream)…") {
@@ -1328,8 +1328,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 actions.perform(["op": "configSet", "key": "branch.\(name).amonhenArchived",
                                  "value": archived ? NSNull() : "true"])
             }
-            add("New Branch from \(name)…") { actions.newBranch(at: name) }
-            add("New Tag at \(name)…") { actions.newTag(at: name) }
+            add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
+            add(Titles.newTag(at: name)) { actions.newTag(at: name) }
             add(L("Compare with Previous Version")) { [weak self] in self?.onCompareWithPrevious?(name) }
             add(L("Rename…")) { actions.renameBranch(name) }
             if name != headBranch {
@@ -1345,14 +1345,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 }
             }
         case .remote:
-            add("Checkout \(name) as Local Branch…") { actions.checkoutWithConfirmation(.track(name)) }
-            add("Merge \(name) into \(current)…") { actions.mergeWithConfirmation(name, into: current) }
-            add("Rebase \(current) onto \(name)…") { actions.rebaseWithConfirmation(current, onto: name) }
+            add(Titles.checkoutAsLocal(name)) { actions.checkoutWithConfirmation(.track(name)) }
+            add(Titles.merge(name, into: current)) { actions.mergeWithConfirmation(name, into: current) }
+            add(Titles.rebase(current, onto: name)) { actions.rebaseWithConfirmation(current, onto: name) }
             menu.addItem(.separator())
-            add("New Branch from \(name)…") { actions.newBranch(at: name) }
+            add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
         case .tag:
-            add("Merge \(name) into \(current)…") { actions.mergeWithConfirmation(name, into: current) }
-            add("New Branch from \(name)…") { actions.newBranch(at: name) }
+            add(Titles.merge(name, into: current)) { actions.mergeWithConfirmation(name, into: current) }
+            add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
             menu.addItem(.separator())
             addTagItems([name], to: menu, actions: actions)
         case .stash:
@@ -1360,7 +1360,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             break
         case .submodule:
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
-            add(L("Open %@ in New Window", name)) { [weak self] in self?.onOpenSubmodule?(name) }
+            add(L("Open in New Window")) { [weak self] in self?.onOpenSubmodule?(name) }
         }
     }
 

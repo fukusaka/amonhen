@@ -168,9 +168,9 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
         func add(_ title: String, _ handler: @escaping () -> Void) {
             menu.addItem(ClosureMenuItem(title: title, action: handler))
         }
-        add("New Branch at \(short)…") { actions.newBranch(at: hex) }
-        add("New Tag at \(short)…") { actions.newTag(at: hex) }
-        add("Checkout \(short) (Detached)…") { actions.checkoutWithConfirmation(.detach(hex)) }
+        add(Titles.newBranch(from: short)) { actions.newBranch(at: hex) }
+        add(Titles.newTag(at: short)) { actions.newTag(at: hex) }
+        add(Titles.checkoutDetached(short)) { actions.checkoutWithConfirmation(.detach(hex)) }
         menu.addItem(actions.resetMenuItem(to: hex))
         // この時点の HEAD と今の HEAD を、同じ一連のコミットの 2 つの版として比べる。
         if row > 0 {
@@ -182,7 +182,7 @@ final class ReflogViewController: NSSplitViewController, NSTableViewDataSource, 
             add(L("Show in History")) { [weak self] in self?.onShowInHistory?(id) }
         }
         menu.addItem(.separator())
-        add(L("Copy Commit ID")) {
+        add(Titles.copyCommitID) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(hex, forType: .string)
         }
