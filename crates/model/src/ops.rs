@@ -49,6 +49,61 @@ pub enum Deepen {
     All,
 }
 
+/// リポジトリの形のうち、git の設定とファイルから読むもの（`Operations::repository_form`）。shallow clone かは
+/// `GitBackend::shallow` で分かるので入れない。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RepositoryForm {
+    /// partial clone なら、その様子。
+    pub partial: Option<PartialClone>,
+    /// sparse checkout（`core.sparseCheckout`）なら、その様子。
+    pub sparse: Option<SparseCheckout>,
+    /// `git maintenance register` で登録してある（ユーザー全体の `maintenance.repo` にこのリポジトリがある）。
+    pub maintenance: bool,
+}
+
+/// partial clone の様子。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PartialClone {
+    /// 足りないオブジェクトを取ってくる remote（`extensions.partialClone`、なければ `remote.<name>.promisor` か
+    /// `partialclonefilter` のある remote）。
+    pub remote: String,
+    /// 取らずにおいたもの（`blob:none` など）。`remote.<name>.partialclonefilter`（git 2.23 は
+    /// `core.partialclonefilter`）。書いていなければ `None`。
+    pub filter: Option<String>,
+}
+
+/// sparse checkout の様子。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SparseCheckout {
+    /// cone mode（`core.sparseCheckoutCone`。フォルダで選ぶ）。
+    pub cone: bool,
+    /// cone mode なら取り出しているフォルダ（根からの相対パス。最上位のファイルはいつも取り出す）、そうでなければ
+    /// `info/sparse-checkout` のパターン。
+    pub folders: Vec<String>,
+}
+
+impl SparseCheckout {
+    /// `path`（ファイルの、根からの相対パス）を取り出しているか。cone mode は、取り出すフォルダの下すべてと、
+    /// 根とその途中のフォルダの直下のファイル。cone mode でなければパターンを読まないので、取り出しているとみなす。
+    pub fn contains(&self, path: &str) -> bool {
+        if !self.cone {
+            return true;
+        }
+        let Some((parent, _)) = path.rsplit_once('/') else {
+            return true;
+        };
+        self.folders.iter().any(|f| {
+            let f = f.trim_matches('/');
+            parent == f
+                || parent.strip_prefix(f).is_some_and(|r| r.starts_with('/'))
+                || f.strip_prefix(parent).is_some_and(|r| r.starts_with('/'))
+        })
+    }
+}
+
 /// git の設定の 1 項目（`git config --list --show-origin --show-scope`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -531,6 +586,10 @@ pub trait Operations: Send + Sync {
     /// LFS にあるファイルの数（`git lfs ls-files`）。git-lfs がなければ `None`。
     fn lfs_file_count(&self) -> Result<Option<usize>> {
         Ok(None)
+    }
+    /// partial clone・sparse checkout・maintenance の登録（`RepositoryForm`）。
+    fn repository_form(&self) -> Result<RepositoryForm> {
+        Ok(RepositoryForm::default())
     }
     /// worktree の一覧。`git worktree list --porcelain -z` の出力。
     fn worktree_list(&self) -> Result<Vec<u8>> {

@@ -1038,6 +1038,10 @@ impl Operations for RemoteOperations {
         self.op(Op::GitVersion)
     }
 
+    fn repository_form(&self) -> Result<amonhen_model::RepositoryForm> {
+        self.op(Op::RepositoryForm)
+    }
+
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {
         self.op(Op::Remotes)
     }

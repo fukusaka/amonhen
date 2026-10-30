@@ -1222,6 +1222,10 @@ impl Operations for Git {
         Ok(crate::git_version())
     }
 
+    fn repository_form(&self) -> Result<amonhen_model::RepositoryForm> {
+        Git::repository_form(self)
+    }
+
     fn machine_git(&self) -> Result<amonhen_model::MachineGit> {
         Ok(amonhen_model::settings::machine_git())
     }

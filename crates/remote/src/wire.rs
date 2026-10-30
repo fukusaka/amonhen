@@ -329,6 +329,8 @@ pub enum Op {
     ConfigSet(String, Option<String>),
     ConfigSetGlobal(String, Option<String>),
     GitVersion,
+    /// → `RepositoryForm`
+    RepositoryForm,
     Remotes,
     CheckRemote(String),
     SigningKeys(String),

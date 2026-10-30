@@ -3,6 +3,7 @@
 
 mod directory;
 mod extras;
+mod form;
 mod ops;
 mod programs;
 mod signing;

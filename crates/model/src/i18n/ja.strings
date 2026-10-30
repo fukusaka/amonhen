@@ -359,3 +359,8 @@
 "Give either commits (1 or more) or since" = "commits（1 以上）か since のどちらかを渡してください";
 "This repository has all of its history (not a shallow clone)" = "このリポジトリは履歴をすべて持っています（shallow clone ではありません）";
 "Older history isn’t fetched (shallow clone): git fetch --deepen=<n> or --unshallow" = "これより古い履歴は取得していません（shallow clone）: git fetch --deepen=<n> か --unshallow で取れます";
+"shallow clone" = "shallow clone";
+"partial clone ({filter})" = "partial clone（{filter}）";
+"partial clone" = "partial clone";
+"sparse checkout ({count} folders)" = "sparse checkout（{count} フォルダ）";
+"sparse checkout" = "sparse checkout";

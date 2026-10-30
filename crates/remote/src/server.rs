@@ -512,6 +512,7 @@ fn handle_op(backend: &dyn GitBackend, op: Op, cancel: &AtomicBool) -> Result<Ve
         Op::ConfigSet(key, value) => encode(&ops.config_set(&key, value.as_deref())?),
         Op::ConfigSetGlobal(key, value) => encode(&ops.config_set_global(&key, value.as_deref())?),
         Op::GitVersion => encode(&ops.git_version()?),
+        Op::RepositoryForm => encode(&ops.repository_form()?),
         Op::Remotes => encode(&ops.remotes()?),
         Op::CheckRemote(url) => encode(&ops.check_remote(&url)?),
         Op::LfsTrack(pattern, track) => encode(&ops.lfs_track(&pattern, track)?),
