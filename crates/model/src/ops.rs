@@ -370,8 +370,14 @@ pub trait Operations: Send + Sync {
     fn rebase(&self, onto: &str) -> Result<Outcome>;
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;
     fn revert(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;
-    /// 用意した todo で非対話の rebase を行う（コミットの編集）。`base` が `None` なら `--root`。
-    fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome>;
+    /// 用意した todo で非対話の rebase を行う（コミットの編集）。`base` が `None` なら `--root`。`message` は、
+    /// todo の `reword`・`squash` で git が開くエディタに書かせるメッセージのファイル。
+    fn rebase_todo(
+        &self,
+        base: Option<&Oid>,
+        todo: &std::path::Path,
+        message: Option<&std::path::Path>,
+    ) -> Result<Outcome>;
     fn sequence_in_progress(&self) -> Result<Option<Sequence>>;
     /// rebase・am の途中なら、何番目か（今, 全体）。
     fn rebase_progress(&self) -> Result<Option<(u32, u32)>>;

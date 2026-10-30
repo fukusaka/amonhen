@@ -111,6 +111,46 @@ test('squash carries the notes like git', async () => {
   assert.equal(note('HEAD'), 'note D');
 });
 
+test('reword and squash follow the notes settings like git', async () => {
+  for (const name of ['B', 'C']) {
+    git('notes', 'add', '-m', `note ${name}`, oids[name]!);
+  }
+  const note = (rev: string) => git('log', '-1', '--format=%N', rev);
+  git('config', 'notes.rewriteRef', 'refs/notes/commits');
+  // amend で写さない設定でも、git の reword・squash は rebase として写す
+  git('config', 'notes.rewrite.amend', 'false');
+  await rewriteHistory(backend, undo, 'Reword', { kind: 'reword', oid: oids.C!, message: 'C2' });
+  assert.deepEqual(subjects(), ['D', 'C2', 'B', 'A']);
+  assert.equal(note('HEAD~1'), 'note C');
+  await undo.undo();
+  await rewriteHistory(backend, undo, 'Squash', { kind: 'squash', oid: oids.C!, message: 'B and C' });
+  assert.deepEqual(subjects(), ['D', 'B and C', 'A']);
+  assert.equal(note('HEAD~1'), 'note B\n\nnote C');
+  await undo.undo();
+
+  // rebase で写さない設定なら、git と同じく、書き換えたコミット（まとめた先）の notes だけが amend で残る
+  git('config', '--unset', 'notes.rewrite.amend');
+  git('config', 'notes.rewrite.rebase', 'false');
+  await rewriteHistory(backend, undo, 'Reword', { kind: 'reword', oid: oids.B!, message: 'B2' });
+  assert.deepEqual(subjects(), ['D', 'C', 'B2', 'A']);
+  assert.equal(note('HEAD~2'), 'note B');
+  assert.equal(note('HEAD~1'), '');
+});
+
+test('reword keeps the message as written and runs commit-msg like git', async () => {
+  // git の reword と同じく、commit-msg のフックが走る
+  const hook = join(dir, '.git', 'hooks', 'commit-msg');
+  writeFileSync(hook, '#!/bin/sh\necho "Change-Id: I1" >> "$1"\n', { mode: 0o755 });
+  // # で始まる行は、コミットと同じく書いたとおりに残す
+  await rewriteHistory(backend, undo, 'Reword', { kind: 'reword', oid: oids.D!, message: 'D2\n\n# kept' });
+  assert.equal(git('log', '-1', '--format=%B'), 'D2\n\n# kept\nChange-Id: I1');
+  await undo.undo();
+  // commit.cleanup を設定していれば、それに従う
+  git('config', 'commit.cleanup', 'strip');
+  await rewriteHistory(backend, undo, 'Reword', { kind: 'reword', oid: oids.D!, message: 'D2\n\n# dropped\n' });
+  assert.equal(git('log', '-1', '--format=%B'), 'D2\n\nChange-Id: I1');
+});
+
 test('move reorders commits', async () => {
   await rewriteHistory(backend, undo, 'Move', { kind: 'move', oid: oids.D!, to: 2 });
   assert.deepEqual(subjects(), ['C', 'B', 'D', 'A']);

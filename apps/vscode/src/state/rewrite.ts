@@ -27,14 +27,18 @@ export async function rewriteHistory(
   const chain = end < 0 ? log : log.slice(0, end);
 
   const dir = join(backend.dirs.gitDir, 'amonhen');
-  const plan = planRebase(chain, edit, (name) => join(dir, name));
+  const plan = planRebase(chain, edit);
   await mkdir(dir, { recursive: true });
-  await Promise.all([...plan.messages].map(([name, message]) => writeFile(join(dir, name), message)));
+  const message = plan.message === null ? null : join(dir, 'rebase-message');
+  if (message !== null) {
+    // エディタで保存したファイルと同じく、改行で終える（commit-msg のフックが行を足しても、最後の行につながらない）
+    await writeFile(message, plan.message!.endsWith('\n') ? plan.message! : `${plan.message!}\n`);
+  }
   const todo = join(dir, 'rebase-todo');
   await writeFile(todo, plan.todo);
 
   const run = async () => {
-    const result = await backend.rebaseTodo(plan.base, todo);
+    const result = await backend.rebaseTodo(plan.base, todo, message);
     // split: edit で止めたコミットを取り消し、変更を作業ツリーに戻す
     if (plan.resetOnStop && result === 'stopped') {
       await backend.reset('mixed', 'HEAD^');

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { Commit } from '../src/git/log.ts';
 import { shellQuote } from '../src/git/exec.ts';
+import type { Commit } from '../src/git/log.ts';
 import { planRebase } from '../src/history/rebasePlan.ts';
 
 const c = (oid: string, parent?: string): Commit => ({
@@ -14,59 +14,54 @@ const c = (oid: string, parent?: string): Commit => ({
 });
 // 新しい順: d → c → b → a（a は root）
 const chain = [c('d', 'c'), c('c', 'b'), c('b', 'a'), c('a')];
-const path = (name: string) => `/g/${name}`;
 
-test('reword starts at the commit and amends right after it', () => {
-  const plan = planRebase(chain, { kind: 'reword', oid: 'c', message: 'new' }, path);
+test('reword starts at the commit', () => {
+  const plan = planRebase(chain, { kind: 'reword', oid: 'c', message: 'new' });
   assert.equal(plan.base, 'b');
-  assert.equal(
-    plan.todo,
-    "pick c\nexec git commit --amend --allow-empty --no-verify --file='/g/message-c.txt'\npick d\n",
-  );
-  assert.deepEqual([...plan.messages], [['message-c.txt', 'new']]);
+  assert.equal(plan.todo, 'reword c\npick d\n');
+  assert.equal(plan.message, 'new');
 });
 
 test('squash and fixup start at the parent', () => {
-  assert.equal(planRebase(chain, { kind: 'fixup', oid: 'c' }, path).todo, 'pick b\nfixup c\npick d\n');
-  const squash = planRebase(chain, { kind: 'squash', oid: 'c', message: 'b+c' }, path);
+  const fixup = planRebase(chain, { kind: 'fixup', oid: 'c' });
+  assert.equal(fixup.todo, 'pick b\nfixup c\npick d\n');
+  assert.equal(fixup.message, null);
+  const squash = planRebase(chain, { kind: 'squash', oid: 'c', message: 'b+c' });
   assert.equal(squash.base, 'a');
-  // メッセージは、まとめた先を pick した直後に付ける（rebase が notes を写す先を、最後のコミットにする）
-  assert.equal(
-    squash.todo,
-    "pick b\nexec git commit --amend --allow-empty --no-verify --file='/g/message-b.txt'\nfixup c\npick d\n",
-  );
+  assert.equal(squash.todo, 'pick b\nsquash c\npick d\n');
+  assert.equal(squash.message, 'b+c');
 });
 
 test('drop, edit and split', () => {
-  assert.equal(planRebase(chain, { kind: 'drop', oid: 'd' }, path).todo, 'drop d\n');
-  assert.equal(planRebase(chain, { kind: 'edit', oid: 'c' }, path).todo, 'edit c\npick d\n');
-  const split = planRebase(chain, { kind: 'split', oid: 'c' }, path);
+  assert.equal(planRebase(chain, { kind: 'drop', oid: 'd' }).todo, 'drop d\n');
+  assert.equal(planRebase(chain, { kind: 'edit', oid: 'c' }).todo, 'edit c\npick d\n');
+  const split = planRebase(chain, { kind: 'split', oid: 'c' });
   assert.equal(split.todo, 'edit c\npick d\n');
   assert.equal(split.resetOnStop, true);
 });
 
 test('editing the root commit uses --root', () => {
-  assert.equal(planRebase(chain, { kind: 'reword', oid: 'a', message: 'x' }, path).base, null);
-  assert.throws(() => planRebase(chain, { kind: 'split', oid: 'a' }, path));
-  assert.throws(() => planRebase(chain, { kind: 'fixup', oid: 'a' }, path));
+  assert.equal(planRebase(chain, { kind: 'reword', oid: 'a', message: 'x' }).base, null);
+  assert.throws(() => planRebase(chain, { kind: 'split', oid: 'a' }));
+  assert.throws(() => planRebase(chain, { kind: 'fixup', oid: 'a' }));
 });
 
 test('the chain may end at a merge, whose parent becomes the base', () => {
   const partial = [c('d', 'c'), c('c', 'm')];
-  assert.equal(planRebase(partial, { kind: 'drop', oid: 'c' }, path).base, 'm');
+  assert.equal(planRebase(partial, { kind: 'drop', oid: 'c' }).base, 'm');
 });
 
 test('move reorders from the earlier of the two positions', () => {
   // d を、新しい順で 2 番目（b の位置）へ
-  const plan = planRebase(chain, { kind: 'move', oid: 'd', to: 2 }, path);
+  const plan = planRebase(chain, { kind: 'move', oid: 'd', to: 2 });
   assert.equal(plan.base, 'a');
   assert.equal(plan.todo, 'pick d\npick b\npick c\n');
   // b を一番上へ
-  assert.equal(planRebase(chain, { kind: 'move', oid: 'b', to: 0 }, path).todo, 'pick c\npick d\npick b\n');
+  assert.equal(planRebase(chain, { kind: 'move', oid: 'b', to: 0 }).todo, 'pick c\npick d\npick b\n');
 });
 
 test('commits outside the chain are rejected', () => {
-  assert.throws(() => planRebase(chain, { kind: 'drop', oid: 'zzz' }, path));
+  assert.throws(() => planRebase(chain, { kind: 'drop', oid: 'zzz' }));
 });
 
 test('shellQuote', () => {

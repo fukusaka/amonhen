@@ -1,11 +1,9 @@
 //! History でのコミットの編集を、非対話の rebase の todo に組み立てる。
 //!
 //! todo はこちらで丸ごと書き、`GIT_SEQUENCE_EDITOR` で git の todo に上書きする。メッセージの
-//! 書き換えは、対象のコミット（まとめるときは、まとめた先）の直後に `exec git commit --amend --file=<file>` を
-//! 挟んで行う。
+//! 書き換えは git の `reword`・`squash` で行い、git が開くエディタ（`GIT_EDITOR`）にメッセージを書かせる。
 
 use amonhen_model::tr;
-use std::path::{Path, PathBuf};
 
 use amonhen_model::{Oid, Result};
 use serde::Deserialize;
@@ -84,31 +82,19 @@ pub struct RebasePlan {
     /// rebase の起点。`None` なら `--root`。
     pub base: Option<Oid>,
     pub todo: String,
-    /// 書き出しておくメッセージ（ファイル名, 内容）。
-    pub messages: Vec<(String, String)>,
+    /// git が開くエディタに書かせるメッセージ（`reword` か、まとめる最後の `squash` のとき）。
+    pub message: Option<String>,
     /// `edit` で止まったら、`HEAD^` へ `reset --mixed` する（split）。
     pub reset_on_stop: bool,
 }
 
-/// sh に渡すパス。git は exec や `GIT_SEQUENCE_EDITOR` を sh で実行するので、Windows でも `/` 区切りにする
-/// （Git for Windows の sh は `C:/...` を受け付ける）。
-pub fn shell_path(path: &Path) -> String {
-    path.display().to_string().replace('\\', "/")
-}
-
-pub fn shell_quote(s: &str) -> String {
-    format!("'{}'", s.replace('\'', r"'\''"))
-}
-
 /// `chain` は HEAD から first-parent で辿ったコミット（新しい順）で、間に merge がないこと。
-/// `message_dir` はメッセージのファイルを置くディレクトリ（exec に絶対パスで渡す）。
 /// `branches` は、編集の範囲にあるかもしれない、積み重ねたブランチの先頭と完全な名前。範囲にあるものは
 /// todo に `update-ref` を入れる（先頭のコミットについて行く。消したコミットなら、その前のコミットへ）。
 /// `rebase.updateRefs` が true でなければ、実行するときに除く（`Operations::rebase_todo`）。
 pub fn plan_rebase(
     chain: &[ChainCommit],
     edit: &HistoryEdit,
-    message_dir: &Path,
     branches: &[(Oid, String)],
 ) -> Result<RebasePlan> {
     // 古い順にする。
@@ -160,35 +146,17 @@ pub fn plan_rebase(
         original[0].parent
     };
 
-    let mut messages = Vec::new();
     let mut lines = Vec::new();
-    let mut amend = |lines: &mut Vec<String>, oid: &Oid, message: &str| {
-        let name = format!("message-{oid}.txt");
-        let path: PathBuf = message_dir.join(&name);
-        messages.push((name, message.to_owned()));
-        lines.push(format!(
-            "exec git commit --amend --allow-empty --no-verify --file={}",
-            shell_quote(&shell_path(&path))
-        ));
-    };
     for (i, c) in seq.iter().enumerate().skip(start) {
-        // まとめるときは、まとめた先（いちばん古いコミット）を pick した直後にメッセージを付け、残りを fixup で
-        // まとめる。メッセージを最後に付けると、rebase が notes を写す先（`notes.rewriteRef`）や post-rewrite
-        // フックに渡すコミットが、付ける前のものになってしまう。fixup の続きなら、git の squash と同じく、
-        // まとめた側も最後のコミットへ写る。
+        // まとめるときは、まとめた先（いちばん古いコミット）を pick し、残りを git の squash でまとめる。git は
+        // 最後の squash でエディタを開き、まとめたコミットの notes（`notes.rewriteRef`）を git の設定のとおりに写す。
         match edit {
-            HistoryEdit::SquashRange { message, .. } if i == index => {
+            HistoryEdit::SquashRange { .. } if i == index => {
                 lines.push(format!("pick {}", c.oid));
-                amend(&mut lines, &c.oid, message);
                 continue;
             }
             HistoryEdit::SquashRange { .. } if i <= range_end => {
-                lines.push(format!("fixup {}", c.oid));
-                continue;
-            }
-            HistoryEdit::Squash { message, .. } if i == start => {
-                lines.push(format!("pick {}", c.oid));
-                amend(&mut lines, &c.oid, message);
+                lines.push(format!("squash {}", c.oid));
                 continue;
             }
             _ => {}
@@ -198,13 +166,9 @@ pub fn plan_rebase(
             continue;
         }
         match edit {
-            HistoryEdit::Reword { message, .. } => {
-                lines.push(format!("pick {}", c.oid));
-                amend(&mut lines, &c.oid, message);
-            }
-            HistoryEdit::Squash { .. } | HistoryEdit::Fixup { .. } => {
-                lines.push(format!("fixup {}", c.oid))
-            }
+            HistoryEdit::Reword { .. } => lines.push(format!("reword {}", c.oid)),
+            HistoryEdit::Squash { .. } => lines.push(format!("squash {}", c.oid)),
+            HistoryEdit::Fixup { .. } => lines.push(format!("fixup {}", c.oid)),
             HistoryEdit::SquashRange { .. } => unreachable!(),
             HistoryEdit::Drop { .. } => lines.push(format!("drop {}", c.oid)),
             // git の `edit`。続けたときに git が、止めたコミットを最後のコミットに対応づけて notes を写す。
@@ -221,24 +185,31 @@ pub fn plan_rebase(
     Ok(RebasePlan {
         base,
         todo,
-        messages,
+        message: match edit {
+            HistoryEdit::Reword { message, .. }
+            | HistoryEdit::Squash { message, .. }
+            | HistoryEdit::SquashRange { message, .. } => Some(message.clone()),
+            _ => None,
+        },
         reset_on_stop: matches!(edit, HistoryEdit::Split { .. }),
     })
 }
 
-/// 先頭が `pick`・`edit`・`fixup`・`drop` したコミットのブランチの `update-ref` を、そのコミットのまとまり（続く
-/// fixup・exec・break）の後、次の `pick`・`edit`・`drop` の前に入れる。
+/// 先頭が `pick`・`reword`・`edit`・`fixup`・`squash`・`drop` したコミットのブランチの `update-ref` を、そのコミットの
+/// まとまり（続く fixup・squash）の後、次の `pick`・`reword`・`edit`・`drop` の前に入れる。
 fn with_update_refs(lines: Vec<String>, branches: &[(Oid, String)]) -> Vec<String> {
     let mut out = Vec::with_capacity(lines.len() + branches.len());
     let mut pending: Vec<&str> = Vec::new();
     for line in lines {
         let mut words = line.split(' ');
         let command = words.next().unwrap_or_default();
-        if matches!(command, "pick" | "edit" | "drop") {
+        if matches!(command, "pick" | "reword" | "edit" | "drop") {
             out.extend(pending.drain(..).map(|r| format!("update-ref {r}")));
         }
-        if matches!(command, "pick" | "edit" | "fixup" | "drop")
-            && let Some(oid) = words.next().and_then(Oid::from_hex)
+        if matches!(
+            command,
+            "pick" | "reword" | "edit" | "fixup" | "squash" | "drop"
+        ) && let Some(oid) = words.next().and_then(Oid::from_hex)
         {
             pending.extend(
                 branches
@@ -283,7 +254,7 @@ mod tests {
     }
 
     fn plan(edit: HistoryEdit) -> Result<RebasePlan> {
-        plan_rebase(&chain(), &edit, Path::new("/g"), &[])
+        plan_rebase(&chain(), &edit, &[])
     }
 
     /// todo の中の 40 桁の ID を 1 文字に縮めて読みやすくする。
@@ -303,7 +274,7 @@ mod tests {
             // 編集の範囲より前は動かないので、todo に入れない。
             (oid('a'), "refs/heads/zero".to_owned()),
         ];
-        let plan = |edit| plan_rebase(&chain(), &edit, Path::new("/g"), &branches).unwrap();
+        let plan = |edit| plan_rebase(&chain(), &edit, &branches).unwrap();
         // 消したコミットのブランチは、その前のコミットへ。
         assert_eq!(
             short(&plan(HistoryEdit::Drop { oid: hex('b') }).todo),
@@ -315,58 +286,54 @@ mod tests {
             "edit c\nupdate-ref refs/heads/two\npick d\n"
         );
         // まとめたコミットのブランチは、まとめた後のコミットへ。
-        let todo = short(
-            &plan(HistoryEdit::Squash {
-                oid: hex('c'),
-                message: "b+c".into(),
-            })
-            .todo,
+        let squash = plan(HistoryEdit::Squash {
+            oid: hex('c'),
+            message: "b+c".into(),
+        });
+        assert_eq!(
+            short(&squash.todo),
+            "pick b\nsquash c\nupdate-ref refs/heads/one\nupdate-ref refs/heads/two\npick d\n"
         );
-        assert!(
-            todo.ends_with(
-                "message-b.txt'\nfixup c\nupdate-ref refs/heads/one\nupdate-ref refs/heads/two\npick d\n"
-            ),
-            "{todo}"
+        // 書き換えたコミットのブランチは、書き換えた後のコミットへ。
+        let reword = plan(HistoryEdit::Reword {
+            oid: hex('b'),
+            message: "b2".into(),
+        });
+        assert_eq!(
+            short(&reword.todo),
+            "reword b\nupdate-ref refs/heads/one\npick c\nupdate-ref refs/heads/two\npick d\n"
         );
     }
 
     #[test]
-    fn reword_starts_at_the_commit_and_amends_right_after_it() {
+    fn reword_starts_at_the_commit() {
         let p = plan(HistoryEdit::Reword {
             oid: hex('c'),
             message: "new".into(),
         })
         .unwrap();
         assert_eq!(p.base, Some(oid('b')));
-        assert_eq!(
-            short(&p.todo),
-            "pick c\nexec git commit --amend --allow-empty --no-verify --file='/g/message-c.txt'\npick d\n"
-        );
-        assert_eq!(short(&p.messages[0].0), "message-c.txt");
-        assert_eq!(p.messages[0].1, "new");
+        assert_eq!(short(&p.todo), "reword c\npick d\n");
+        assert_eq!(p.message.as_deref(), Some("new"));
     }
 
     #[test]
     fn squash_and_fixup_start_at_the_parent() {
-        assert_eq!(
-            short(&plan(HistoryEdit::Fixup { oid: hex('c') }).unwrap().todo),
-            "pick b\nfixup c\npick d\n"
-        );
+        let fixup = plan(HistoryEdit::Fixup { oid: hex('c') }).unwrap();
+        assert_eq!(short(&fixup.todo), "pick b\nfixup c\npick d\n");
+        assert_eq!(fixup.message, None);
         let squash = plan(HistoryEdit::Squash {
             oid: hex('c'),
             message: "b+c".into(),
         })
         .unwrap();
         assert_eq!(squash.base, Some(oid('a')));
-        // メッセージは、まとめた先を pick した直後に付ける（rebase が notes を写す先を、最後のコミットにする）。
-        assert_eq!(
-            short(&squash.todo),
-            "pick b\nexec git commit --amend --allow-empty --no-verify --file='/g/message-b.txt'\nfixup c\npick d\n"
-        );
+        assert_eq!(short(&squash.todo), "pick b\nsquash c\npick d\n");
+        assert_eq!(squash.message.as_deref(), Some("b+c"));
     }
 
     #[test]
-    fn squash_range_picks_the_oldest_and_fixes_up_the_rest() {
+    fn squash_range_picks_the_oldest_and_squashes_the_rest() {
         let p = plan(HistoryEdit::SquashRange {
             oid: hex('b'),
             last: hex('c'),
@@ -374,11 +341,8 @@ mod tests {
         })
         .unwrap();
         assert_eq!(p.base, Some(oid('a')));
-        assert_eq!(
-            short(&p.todo),
-            "pick b\nexec git commit --amend --allow-empty --no-verify --file='/g/message-b.txt'\nfixup c\npick d\n"
-        );
-        assert_eq!(p.messages[0].1, "b..c");
+        assert_eq!(short(&p.todo), "pick b\nsquash c\npick d\n");
+        assert_eq!(p.message.as_deref(), Some("b..c"));
         // 新しい側を先に渡したら断る。
         assert!(
             plan(HistoryEdit::SquashRange {
@@ -423,13 +387,7 @@ mod tests {
     #[test]
     fn the_chain_may_end_at_a_merge_whose_parent_becomes_the_base() {
         let partial = [c('d', Some('c')), c('c', Some('e'))];
-        let p = plan_rebase(
-            &partial,
-            &HistoryEdit::Drop { oid: hex('c') },
-            Path::new("/g"),
-            &[],
-        )
-        .unwrap();
+        let p = plan_rebase(&partial, &HistoryEdit::Drop { oid: hex('c') }, &[]).unwrap();
         assert_eq!(p.base, Some(oid('e')));
     }
 
@@ -467,10 +425,5 @@ mod tests {
     #[test]
     fn commits_outside_the_chain_are_rejected() {
         assert!(plan(HistoryEdit::Drop { oid: hex('f') }).is_err());
-    }
-
-    #[test]
-    fn quotes_for_the_shell() {
-        assert_eq!(shell_quote("it's"), r"'it'\''s'");
     }
 }

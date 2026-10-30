@@ -638,7 +638,12 @@ impl Operations for Git {
         }
     }
 
-    fn rebase_todo(&self, base: Option<&Oid>, todo: &std::path::Path) -> Result<Outcome> {
+    fn rebase_todo(
+        &self,
+        base: Option<&Oid>,
+        todo: &std::path::Path,
+        message: Option<&std::path::Path>,
+    ) -> Result<Outcome> {
         // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は、`rebase.updateRefs` が true で、git が
         // 2.38 以降のときだけ残す（git の rebase と同じ条件）。
         if !self.updates_refs_in_rebase() {
@@ -653,13 +658,31 @@ impl Operations for Git {
             }
         }
         // git は `$GIT_SEQUENCE_EDITOR <todo>` を sh で実行するので、用意した todo を上書きコピーさせる。
+        // `reword`・`squash` のメッセージも同じく、`$GIT_EDITOR <file>` でファイルを上書きコピーさせる。
         let base = base.map(hex);
         // sh で実行されるので、Windows でも / 区切りにして引用符で囲む。
-        let path = todo.display().to_string().replace('\\', "/");
-        let editor = format!("cp '{}'", path.replace('\'', r"'\''"));
-        let mut args = vec!["rebase", "--interactive", "--autostash", "--no-autosquash"];
+        let copy = |path: &std::path::Path| {
+            let path = path.display().to_string().replace('\\', "/");
+            format!("cp '{}'", path.replace('\'', r"'\''"))
+        };
+        let mut args = Vec::new();
+        let mut env = vec![("GIT_SEQUENCE_EDITOR", copy(todo))];
+        if let Some(message) = message {
+            env.push(("GIT_EDITOR", copy(message)));
+            // エディタで書いたメッセージは、git の既定では `#` で始まる行を除く。コミットの画面（`commit --file`）と
+            // 同じく、書いたとおりに残す。`commit.cleanup` を設定していれば、それに従う。
+            let cleanup = self
+                .read(&["config", "--get", "commit.cleanup"])
+                .ok()
+                .and_then(|out| text(out).ok());
+            if matches!(cleanup.as_deref(), None | Some("default")) {
+                args.extend(["-c", "commit.cleanup=whitespace"]);
+            }
+        }
+        args.extend(["rebase", "--interactive", "--autostash", "--no-autosquash"]);
         args.push(base.as_deref().unwrap_or("--root"));
-        self.stoppable(&args, &[("GIT_SEQUENCE_EDITOR", &editor)])
+        let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();
+        self.stoppable(&args, &env)
     }
 
     fn sequence_in_progress(&self) -> Result<Option<Sequence>> {
