@@ -28,7 +28,7 @@ checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
 name = "amonhen-backend-cli"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-model",
  "amonhen-watch",
@@ -38,7 +38,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-backend-gix"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-model",
@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-cli"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-backend-gix",
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-core"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-backend-gix",
@@ -90,7 +90,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-daemon"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-backend-gix",
@@ -108,7 +108,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-ffi-c"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-backend-cli",
  "amonhen-backend-gix",
@@ -125,7 +125,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-front"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-backend-gix",
  "amonhen-core",
@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-layout"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "memmap2",
  "tempfile",
@@ -148,7 +148,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-model"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-layout",
  "libc",
@@ -159,11 +159,11 @@ dependencies = [
 
 [[package]]
 name = "amonhen-platform"
-version = "0.2.7"
+version = "0.2.8"
 
 [[package]]
 name = "amonhen-projection"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-layout",
  "amonhen-model",
@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-remote"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-backend-gix",
  "amonhen-core",
@@ -193,7 +193,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-syntax"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-layout",
  "tree-sitter",
@@ -223,7 +223,7 @@ dependencies = [
 
 [[package]]
 name = "amonhen-watch"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "amonhen-model",
  "notify",
