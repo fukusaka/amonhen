@@ -569,8 +569,11 @@ anything does.
 - **Apply.** The status bar shows a summary ("Changes: reordered, 1 combined, 1 dropped") with Cancel and Apply
   Changes. Nothing changes until Apply Changes, which runs one rebase from the core's `plan` (every commit in its new
   order with its action, the messages fed to git's editor in the order git opens it). One Undo puts it all back.
-- **Range.** Only commits from HEAD down to the first merge can be edited; a commit beyond it says so in the status
-  bar. Split stays a separate item on the context menu (it stops so the changes can be committed in parts).
+- **Merges.** The mode lists the first-parent line past merges too. When the range has a merge, the rebase uses git's
+  `--rebase-merges`: git writes the todo with its merges, and only the commands of the edited commits are changed, so
+  merges and the commits they brought in are recreated as they were. A merge's row can only be kept, rows can't be
+  dragged across a merge, and the commit right above a merge can't be combined with it. Split stays a separate item
+  on the context menu (it stops so the changes can be committed in parts).
 
 ## 8. Resolving conflicts (the embedded merge editor)
 
