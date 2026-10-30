@@ -40,6 +40,7 @@ Dropping a branch, remote branch or tag from the nav onto another item in the na
 | Local branch | Remote, remote branch | Push, Force Push (`--force-with-lease`) |
 
 - When the drop target is not checked out and a fast-forward is enough, the branch is just moved forward without a checkout. Otherwise it is checked out before the operation runs.
+- Merge Branches… in the Command Palette merges several branches or tags into the current branch in one commit, as `git merge a b c` does. It shows the conflicts expected for each first, and offers to merge them one by one when git can't put them in one commit. One Undo puts it back.
 - Pushing a branch with no upstream by dropping it sets the push destination as its upstream.
 
 ### Working Copy

@@ -3,7 +3,7 @@
  * 対象のブランチが checkout されていなければ、fast-forward で済むときは update-ref だけで処理し、
  * それ以外は checkout してから実行する。
  */
-import type { MergeResult, RepositoryBackend } from '../git/backend.ts';
+import type { MergeResult, OneByOneResult, RepositoryBackend } from '../git/backend.ts';
 import { splitRemoteRef } from '../git/refs.ts';
 import type { UndoLog } from './undo.ts';
 
@@ -46,6 +46,39 @@ export async function mergeInto(
     },
     { skip: (r) => r === 'conflict' },
   );
+}
+
+/** いくつかの名前（`a`、`a and b`、`a, b and c`。git の merge のメッセージと同じ形） */
+export function namesLabel(names: readonly string[]): string {
+  return names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+/**
+ * revs（任意の ref）を今のブランチに merge する。oneByOne でなければ 1 つのコミットにまとめる（octopus）。
+ * 1 つずつなら、コンフリクトで止まったところまでを 1 つの記録にする。どちらも Undo 1 回で戻る
+ */
+export async function mergeSeveral(
+  backend: RepositoryBackend,
+  undo: UndoLog,
+  revs: readonly string[],
+  oneByOne: boolean,
+): Promise<OneByOneResult> {
+  const head = (await backend.head()).branch;
+  const refs = head ? [head] : [];
+  // 短い名前で渡すと、merge コミットのメッセージが git の通常どおりになる
+  const names = revs.map(shortName);
+  const label = `Merge ${namesLabel(names)}`;
+  if (!oneByOne) {
+    const result = await undo.record(label, refs, 'keep', () => backend.merge(names), {
+      skip: (r) => r === 'conflict',
+    });
+    return { result, remaining: [] };
+  }
+  const result = await undo.record(label, refs, 'keep', () => backend.mergeOneByOne(names));
+  if (result.error) {
+    throw result.error;
+  }
+  return result;
 }
 
 /** target（`refs/heads/...`）を onto（任意の ref）の上に rebase する */

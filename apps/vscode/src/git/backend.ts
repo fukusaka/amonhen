@@ -70,6 +70,14 @@ const AM_RETRIED = join('rebase-apply', 'amonhen-retried');
 /** merge や rebase がコンフリクトで止まったら conflict */
 export type MergeResult = 'done' | 'conflict';
 
+/** 1 つずつの merge の結果。コンフリクトで止まったら、まだ merge していないもの */
+export interface OneByOneResult {
+  result: MergeResult;
+  remaining: string[];
+  /** 途中で失敗した（済んだ分は Undo に記録してから知らせる） */
+  error?: unknown;
+}
+
 /** todo の break で止まったら stopped */
 export type RebaseResult = MergeResult | 'stopped';
 
@@ -152,8 +160,22 @@ export interface RepositoryBackend {
   rangeDiff(ranges: readonly string[]): Promise<RangePair[]>;
   /** ローカルブランチ branch（完全な名前。省略時は今のブランチ）の、最後に書き換える前の版（reflog から） */
   previousVersion(branch?: string): Promise<PreviousVersion | undefined>;
-  /** 現在のブランチに rev を merge する */
-  merge(rev: string): Promise<MergeResult>;
+  /**
+   * 現在のブランチに rev を merge する。いくつも渡せば 1 つのコミットにまとめる（octopus。`git merge a b c`）。
+   * octopus が途中で断ったら、作業ツリーと index を始める前に戻してから失敗する
+   */
+  merge(rev: string | readonly string[]): Promise<MergeResult>;
+  /**
+   * revs を 1 つずつ現在のブランチに merge する（それぞれが merge コミットになる）。コンフリクトで止まったら、
+   * まだのものを返す
+   */
+  mergeOneByOne(revs: readonly string[]): Promise<OneByOneResult>;
+  /**
+   * revs を現在のブランチに merge したらコンフリクトするファイルを、revs の順に。いくつもあれば octopus と同じく、
+   * 前のものまでを合わせた結果に重ねて調べる。作業ツリーと index には触らない（`git merge-tree --write-tree`）。
+   * git が古くて調べられなければ undefined
+   */
+  predictMerge(revs: readonly string[]): Promise<string[][] | undefined>;
   /** branch（省略時は現在のブランチ）を onto の上に rebase する。branch を指定すると checkout される */
   rebase(onto: string, branch?: string): Promise<MergeResult>;
   sequenceInProgress(): Promise<Sequence | undefined>;
@@ -542,8 +564,79 @@ export class CliBackend implements RepositoryBackend {
     }
   }
 
-  merge(rev: string): Promise<MergeResult> {
-    return this.sequence(['merge', '--no-edit', rev]);
+  async merge(rev: string | readonly string[]): Promise<MergeResult> {
+    const revs = typeof rev === 'string' ? [rev] : rev;
+    if (revs.length < 2) {
+      return this.sequence(['merge', '--no-edit', ...revs]);
+    }
+    // octopus は、最後のもの以外でコンフリクトすると MERGE_HEAD を残さずに断る。git 2.37 より前は、そこまでに
+    // 合わせた変更とコンフリクトを作業ツリーと index に残す（merge --abort も効かない）ので、新しい git と同じく
+    // 元に戻す（作業中の変更は残る）。始める前に staged の変更があれば git は何もせずに断るので触らない
+    const staged = await this.indexDiffersFromHead();
+    try {
+      return await this.sequence(['merge', '--no-edit', ...revs]);
+    } catch (err) {
+      if (!staged && (await this.indexDiffersFromHead())) {
+        await this.git.exec(['reset', '--merge'], { cwd: this.root });
+      }
+      throw err;
+    }
+  }
+
+  async mergeOneByOne(revs: readonly string[]): Promise<OneByOneResult> {
+    for (const [i, rev] of revs.entries()) {
+      try {
+        if ((await this.merge(rev)) === 'conflict') {
+          return { result: 'conflict', remaining: revs.slice(i + 1) };
+        }
+      } catch (error) {
+        return { result: 'done', remaining: revs.slice(i), error };
+      }
+    }
+    return { result: 'done', remaining: [] };
+  }
+
+  async predictMerge(revs: readonly string[]): Promise<string[][] | undefined> {
+    const steps: string[][] = [];
+    let base = 'HEAD';
+    for (const [i, rev] of revs.entries()) {
+      let out: string;
+      try {
+        out = await this.read(['merge-tree', '--write-tree', '--name-only', '--no-messages', '-z', base, rev], [0, 1]);
+      } catch (err) {
+        // `--write-tree` は git 2.38 から。古い git は使い方を出して 129 で終わる
+        if (err instanceof GitError && err.exitCode === 129) return undefined;
+        throw err;
+      }
+      // 出力は 木の ID、コンフリクトするファイル（NUL 区切り）
+      const [tree = '', ...files] = out.split('\0');
+      steps.push(files.filter(Boolean));
+      if (i + 1 < revs.length) {
+        // 次のものは、ここまでを合わせた結果に重ねる（octopus と同じ順）。結果は仮のコミットにする（ref は作らない）。
+        // 利用者の名前や署名の設定によらないよう、名前を決めて署名しない
+        const ident = { NAME: 'Amon Hen', EMAIL: 'amonhen@localhost' };
+        const env = Object.fromEntries(
+          ['AUTHOR', 'COMMITTER'].flatMap((who) => Object.entries(ident).map(([k, v]) => [`GIT_${who}_${k}`, v])),
+        );
+        const commit = await this.git.text(
+          ['commit-tree', '--no-gpg-sign', '-p', base, '-p', rev, '-m', 'Amon Hen merge forecast', tree],
+          { cwd: this.root, readOnly: true, env },
+        );
+        base = commit.trim();
+      }
+    }
+    return steps;
+  }
+
+  /** index が HEAD と違う（staged の変更かコンフリクトがある）。まだコミットがなければ true */
+  private async indexDiffersFromHead(): Promise<boolean> {
+    if (await this.hasUnmerged()) return true;
+    try {
+      await this.read(['diff-index', '--cached', '--quiet', 'HEAD', '--']);
+      return false;
+    } catch {
+      return true;
+    }
   }
 
   rebase(onto: string, branch?: string): Promise<MergeResult> {

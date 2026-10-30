@@ -441,6 +441,76 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
   }
 }
 
+/**
+ * Merge Branches… でいくつものブランチを 1 つのコミットにまとめて merge し、Undo で戻す。最後より前のものが
+ * コンフリクトして git が断ったら、勧めに従って 1 つずつ merge し、止まったところで中止して Undo で戻す
+ */
+async function mergeBranchesFlow(label: string): Promise<void> {
+  const repo = api.manager.current!;
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const head = () => git('rev-parse', 'HEAD').trim();
+  const name = (b: string) => `mb-${b}-${label}`;
+  // a は自分のファイル、x と y は同じファイルの同じ行を変える（後のほうがぶつかる）
+  for (const [b, file] of [['a', `mb-a-${label}.txt`], ['x', `mb-${label}.txt`], ['y', `mb-${label}.txt`]] as const) {
+    git('switch', '-q', '-c', name(b), branch);
+    writeFileSync(join(root, file), `${b}\n`);
+    git('add', file);
+    git('commit', '-q', '-m', name(b));
+  }
+  git('switch', '-q', branch);
+  await vscode.commands.executeCommand('amonhen.refresh');
+  const start = head();
+  // 1 つ目の QuickPick（いくつも選ぶ）では order の順に選び、2 つ目（どう merge するか）では choose で選ぶ
+  let order: string[] = [];
+  let choose: (label: string) => boolean = () => false;
+  const placeHolders: string[] = [];
+  const informed: string[] = [];
+  const stubs = {
+    showQuickPick: async (items: unknown, options?: { canPickMany?: boolean; placeHolder?: string }) => {
+      const list = (await items) as ({ label: string; ref?: string } & Record<string, unknown>)[];
+      if (options?.canPickMany) {
+        return order.map((b) => list.find((i) => i.ref === `refs/heads/${b}`)!);
+      }
+      placeHolders.push(options?.placeHolder ?? '');
+      return list.find((i) => choose(i.label));
+    },
+    showInformationMessage: async (message: string) => void informed.push(message),
+    // git が断ったら 1 つずつを選び、コンフリクトしたら中止する
+    showWarningMessage: async (_: string, ...rest: unknown[]) =>
+      (rest[0] as { modal?: boolean } | undefined)?.modal ? 'Merge One by One' : 'Abort',
+    showErrorMessage: async (message: string) => assert.fail(message),
+  };
+  try {
+    await withWindow(stubs, async () => {
+      order = [name('a'), name('x')];
+      choose = (l) => l.startsWith('$(git-merge)');
+      await vscode.commands.executeCommand('amonhen.mergeBranches');
+      await until('merge', () => git('log', '-1', '--format=%s').startsWith(`Merge branches '${name('a')}' and '${name('x')}'`));
+      assert.equal(placeHolders.at(-1), `2 個を ${branch} に 1 つのコミットで merge する`);
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('merge の Undo', () => head() === start);
+
+      // x の後の y はぶつかる。見込みが分かれば（git 2.38 以降）そう伝える。それでも 1 つにまとめると git は断る
+      order = [name('x'), name('y'), name('a')];
+      await vscode.commands.executeCommand('amonhen.mergeBranches');
+      if (!placeHolders.at(-1)!.includes('個を')) {
+        assert.match(placeHolders.at(-1)!, new RegExp(`${name('y')} がコンフリクトします`));
+      }
+      // 1 つずつなら x は merge され、y で止まって中止する。残りの a を知らせる
+      await until('1 つずつ', () => informed.some((m) => m.startsWith('まだ merge していないもの') && m.includes(name('a'))));
+      await until('中止', async () => (await repo.backend.sequenceInProgress()) === undefined);
+      // x は今のブランチの先にあるので、git の既定どおり fast-forward になる
+      assert.equal(head(), git('rev-parse', name('x')).trim());
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('1 つずつの Undo', () => head() === start);
+    });
+  } finally {
+    git('reset', '-q', '--hard', start);
+    git('branch', '-q', '-D', name('a'), name('x'), name('y'));
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
 suite('Amon Hen in VSCode', () => {
   suiteSetup(async () => {
     recordSpawns();
@@ -509,6 +579,10 @@ suite('Amon Hen in VSCode', () => {
     await patchFlow('daemon');
   });
 
+  test('merges several branches in one commit through the daemon', async () => {
+    await mergeBranchesFlow('daemon');
+  });
+
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const path = join(root, FILE);
@@ -559,6 +633,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('saves commits as patches and applies them on the git execution layer', async () => {
     await patchFlow('git');
+  });
+
+  test('merges several branches in one commit on the git execution layer', async () => {
+    await mergeBranchesFlow('git');
   });
 
   test('shows names from the mailmap on the git execution layer', async () => {

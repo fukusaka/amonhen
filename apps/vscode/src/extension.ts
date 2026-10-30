@@ -9,6 +9,7 @@ import { SidebarDragAndDrop } from './ui/dragDrop.ts';
 import { registerFetchCommand } from './ui/fetchCommand.ts';
 import { registerHistoryCommands } from './ui/historyCommands.ts';
 import { MainPanel } from './ui/mainPanel.ts';
+import { registerMergeBranchesCommand } from './ui/mergeBranches.ts';
 import { registerNavCommands } from './ui/navCommands.ts';
 import { registerPatchCommands } from './ui/patchCommands.ts';
 import { registerSequenceCommands } from './ui/sequenceCommands.ts';
@@ -71,6 +72,7 @@ export async function activate(
     registerHistoryCommands(),
     registerPatchCommands(manager),
     registerNavCommands(manager),
+    registerMergeBranchesCommand(manager),
     registerBranchCommands(manager),
     registerStashCommands(manager),
     registerSubmoduleCommands(manager),

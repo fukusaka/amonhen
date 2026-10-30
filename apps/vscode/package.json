@@ -168,6 +168,13 @@
         "enablement": "amonhen.hasRepository"
       },
       {
+        "command": "amonhen.mergeBranches",
+        "title": "Merge Branches…",
+        "category": "Amon Hen",
+        "icon": "$(git-merge)",
+        "enablement": "amonhen.hasRepository"
+      },
+      {
         "command": "amonhen.amRetryThreeWay",
         "title": "Retry with 3-Way Merge",
         "category": "Amon Hen",
