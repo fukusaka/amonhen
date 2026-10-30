@@ -176,6 +176,41 @@ impl Git {
             maintenance,
         })
     }
+
+    pub(crate) fn fetch_all_contents(&self, remote: &str) -> Result<()> {
+        let remote_key = format!("remote.{remote}.partialclonefilter");
+        let read = |key: &str| {
+            self.read(&["config", "--get", key])
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o).trim().to_owned())
+        };
+        let old = [
+            (remote_key.as_str(), read(&remote_key)),
+            ("core.partialclonefilter", read("core.partialclonefilter")),
+        ];
+        // filter が残っていると、--refetch はその filter で取り直す。
+        for (key, value) in &old {
+            if value.is_some() {
+                self.write(&["config", "--unset-all", key])?;
+            }
+        }
+        if let Err(e) = self.write(&["fetch", "--refetch", remote]) {
+            // 取れなかった（取り消しも）なら、partial clone のまま戻す。
+            for (key, value) in &old {
+                if let Some(value) = value {
+                    let _ = self.write(&["config", key, value]);
+                }
+            }
+            return Err(e);
+        }
+        // git 2.23 までの形（`extensions.partialClone`）は、2.24 からの形（`remote.<name>.promisor`）に移す。
+        // 残せば、filter がなくても partial clone と読まれる。足りないものがまだあれば、git はこの remote から取る。
+        if read("extensions.partialclone").as_deref() == Some(remote) {
+            self.write(&["config", &format!("remote.{remote}.promisor"), "true"])?;
+            self.write(&["config", "--unset-all", "extensions.partialclone"])?;
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
