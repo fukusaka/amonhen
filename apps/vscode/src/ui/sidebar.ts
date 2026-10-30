@@ -12,6 +12,14 @@ import { shortName } from '../state/operations.ts';
 import type { LazySection, Repository, Submodule } from '../state/repository.ts';
 import type { ViewName } from '../view/protocol.ts';
 
+/**
+ * 途中の操作の行の名前（進み具合を除く）。知らせからこの行を指す（知らせは VSCode が 12 秒ほどで通知センターに
+ * 移すが、この行にはいつでも Continue・Abort がある）
+ */
+export function sequenceRowName(sequence: Sequence): string {
+  return sequence === 'am' ? 'Applying patches' : `${sequence[0]!.toUpperCase()}${sequence.slice(1)} in progress`;
+}
+
 type RefSection = 'branches' | 'remotes' | 'tags' | 'stashes' | 'submodules';
 
 interface Folder {
@@ -179,10 +187,9 @@ export class SidebarProvider implements vscode.TreeDataProvider<Node>, vscode.Di
         return item;
       }
       case 'sequence': {
-        const name = node.sequence[0]!.toUpperCase() + node.sequence.slice(1);
         const step = node.progress ? ` (${node.progress.current}/${node.progress.total})` : '';
         const am = node.sequence === 'am' ? state?.am : undefined;
-        const item = new vscode.TreeItem(node.sequence === 'am' ? `Applying patches${step}` : `${name} in progress${step}`);
+        const item = new vscode.TreeItem(`${sequenceRowName(node.sequence)}${step}`);
         item.id = 'sequence';
         item.description = '解決・コミットしてから Continue';
         item.iconPath = new vscode.ThemeIcon('debug-pause', new vscode.ThemeColor('notificationsWarningIcon.foreground'));

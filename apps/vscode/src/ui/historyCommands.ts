@@ -8,6 +8,7 @@ import type { Repository } from '../state/repository.ts';
 import { HistoryController } from './historyController.ts';
 import { MainPanel } from './mainPanel.ts';
 import { runAction } from './dragDrop.ts';
+import { sequenceRowName } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 
 /** Webview の右クリックメニューから渡される情報（data-vscode-context） */
@@ -149,7 +150,7 @@ async function run(panel: HistoryController, repo: Repository, label: string, ed
       break;
     case 'conflict':
       void vscode.window.showWarningMessage(
-        `${label}: コンフリクトが発生しました。解決して stage してから Continue するか、Abort してください`,
+        `${label}: コンフリクトが発生しました。解決して stage してから、サイドバーの「${sequenceRowName('rebase')}」の行の Continue で続けるか、Abort で中止してください`,
       );
       break;
   }

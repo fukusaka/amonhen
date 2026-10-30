@@ -9,7 +9,7 @@ import { mergeInto, rebaseOnto, shortName, type OperationResult } from '../state
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { DragSource, DropTarget } from '../view/protocol.ts';
-import type { Node } from './sidebar.ts';
+import { sequenceRowName, type Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 
 const MIME = 'application/vnd.code.tree.amonhen.sidebar';
@@ -156,11 +156,15 @@ export async function runAction(repo: Repository, action: Action): Promise<void>
   }
 }
 
-/** コンフリクトしたら、ここで中止するか、解決して Continue するかを選ばせる */
+/**
+ * コンフリクトしたら、ここで中止するか、解決して Continue するかを選ばせる。知らせは VSCode が 12 秒ほどで
+ * 通知センターに移すので、いつでも Continue・Abort できるサイドバーの行を指す
+ */
 async function handleConflict(repo: Repository, title: string, note?: string): Promise<void> {
   const sequence = await repo.backend.sequenceInProgress();
+  const row = sequence ? `「${sequenceRowName(sequence)}」の行` : '';
   const choice = await vscode.window.showWarningMessage(
-    `${title}: コンフリクトが発生しました。解決して stage してから、サイドバーの Continue で続けるか、中止してください` +
+    `${title}: コンフリクトが発生しました。解決して stage してから、サイドバーの${row}の Continue で続けるか、Abort で中止してください` +
       (note ? `。${note}` : ''),
     'Abort',
   );
