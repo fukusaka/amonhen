@@ -49,6 +49,7 @@
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
+"Choose what to do with each commit. Merges are recreated as they are, so rows can’t be reordered across them. Nothing changes until Apply Changes." = "コミットごとにすることを選びます。merge はそのまま作り直すので、merge をまたいで並べ替えることはできません。「変更を実行」を押すまで何も変わりません。";
 "Keep" = "そのまま";
 "Combine with Older" = "古い方とまとめる";
 "Combine with Older, Keep Its Message" = "古い方とまとめる（古い方のメッセージ）";

@@ -38,6 +38,8 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         let oid: String
         let message: String
         let author: String
+        /// merge のコミット（作り直すだけで、することは選べない）。
+        var merge = false
         var action: Action = .pick
         /// 直したメッセージ（reword のとき）、またはまとめたコミットのメッセージ（squash のとき）。
         var newMessage: String?
@@ -79,7 +81,10 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
     /// まで）になければ nil。
     @MainActor
     static func load(actions: Actions, from start: String, includingOlder: Bool = false) async -> HistoryEditController? {
-        let chain = await actions.editableCommits()
+        // merge を越えて first-parent で辿る（merge は git の --rebase-merges で作り直す）。
+        let line = await actions.firstParentCommits()
+        let chain = line.map(\.oid)
+        let merges = Set(line.filter(\.merge).map(\.oid))
         guard var end = chain.firstIndex(where: { $0.hasPrefix(start) || start.hasPrefix($0) }) else { return nil }
         if includingOlder {
             guard end + 1 < chain.count else { return nil }
@@ -91,7 +96,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
             oids.map { oid in
                 let message = (try? repository.run(["op": "commitMessage", "oid": oid]).text) ?? nil
                 let author = (try? repository.commitInfo(oid: oid))?.author ?? ""
-                return Row(oid: oid, message: message ?? "", author: author)
+                return Row(oid: oid, message: message ?? "", author: author, merge: merges.contains(oid))
             }
         }.value
         return HistoryEditController(actions: actions, rows: rows)
@@ -114,7 +119,9 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         scroll.hasVerticalScroller = true
         let heading = NSTextField(labelWithString: L("Edit Commits"))
         heading.font = .boldSystemFont(ofSize: 15)
-        let hint = NSTextField(wrappingLabelWithString: L("Choose what to do with each commit and drag rows to reorder them. Nothing changes until Apply Changes."))
+        let hint = NSTextField(wrappingLabelWithString: canReorder
+            ? L("Choose what to do with each commit and drag rows to reorder them. Nothing changes until Apply Changes.")
+            : L("Choose what to do with each commit. Merges are recreated as they are, so rows can’t be reordered across them. Nothing changes until Apply Changes."))
         hint.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         hint.textColor = .secondaryLabelColor
         let top = NSStackView(views: [heading, hint])
@@ -168,14 +175,16 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         let popup = NSPopUpButton(frame: .zero, pullsDown: false)
         popup.controlSize = .small
         popup.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        // いちばん古い行は、まとめる相手がない。
-        let oldest = row == rows.count - 1
-        for action in Action.allCases where !(oldest && [.squash, .fixup].contains(action)) {
+        // いちばん古い行と merge のすぐ上の行は、まとめる相手がない。merge の行は作り直すだけ。
+        let noOlder = row == rows.count - 1 || rows[row + 1].merge
+        let choices: [Action] = r.merge ? [.pick] : Action.allCases.filter { !(noOlder && [.squash, .fixup].contains($0)) }
+        for action in choices {
             popup.addItem(withTitle: action.title)
             popup.lastItem?.representedObject = action.rawValue
             popup.lastItem?.toolTip = action.toolTip
         }
         popup.selectItem(withTitle: r.action.title)
+        popup.isEnabled = !r.merge
         popup.tag = row
         popup.target = self
         popup.action = #selector(actionChanged(_:))
@@ -201,7 +210,7 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         texts.spacing = 1
         // まとめる行は、まとめる先（下の行）へ向かう印を付ける。
         let mark = NSImageView(image: NSImage(
-            systemSymbolName: r.action == .squash || r.action == .fixup ? "arrow.turn.right.down" : "circle.fill",
+            systemSymbolName: r.merge ? "arrow.triangle.merge" : r.action == .squash || r.action == .fixup ? "arrow.turn.right.down" : "circle.fill",
             accessibilityDescription: nil) ?? NSImage())
         mark.symbolConfiguration = .init(pointSize: r.action == .squash || r.action == .fixup ? 11 : 6, weight: .regular)
         mark.contentTintColor = r.action == .drop ? .tertiaryLabelColor : .controlAccentColor
@@ -262,7 +271,11 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
 
     // MARK: - ドラッグで並べ替え
 
+    /// merge をまたいで並べ替えはできない（何をどこへ動かすかが一意でない）。
+    private var canReorder: Bool { !rows.contains(where: \.merge) }
+
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
+        guard canReorder else { return nil }
         let item = NSPasteboardItem()
         item.setString(String(row), forType: .editRow)
         return item

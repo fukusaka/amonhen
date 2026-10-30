@@ -216,6 +216,14 @@ final class Actions {
         await text(["op": "editableCommits"])?.split(separator: "\n").map(String.init) ?? []
     }
 
+    /// HEAD から first-parent で辿ったコミット（新しい順、merge を越えて）と、merge かどうか（History の編集モード）。
+    func firstParentCommits() async -> [(oid: String, merge: Bool)] {
+        (await text(["op": "editableCommits", "throughMerges": true])?.split(separator: "\n") ?? []).map { line in
+            let parts = line.split(separator: " ")
+            return (String(parts[0]), parts.count > 1)
+        }
+    }
+
     // MARK: - よく使う操作
 
     func newBranch(at start: String) {
