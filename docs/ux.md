@@ -34,7 +34,7 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 │ SUBMODULES │                                                                              │
 │ WORKTREES  │                                                                              │
 └────────────┴──────────────────────────────────────────────────────────────────────────────┘
- During a merge, rebase or cherry-pick, a bar under the toolbar: "Rebase 3/7 · 2 conflicts  [Continue] [Skip] [Abort]"
+ During a merge, rebase or cherry-pick, a row in the status bar at the bottom of the window: "Rebase 3/7 · 2 conflicts  [Continue] [Skip] [Abort]"
 ```
 
 - Conflicts appears in the sidebar only when there are conflicts, with a count.
@@ -547,7 +547,7 @@ In addition to today's "choose a file to show only its diff", offer a view that 
   each patch's subject, author and files with their line counts, whether it applies as is, and the options: for mail,
   3-way merge (starting from `am.threeWay`, off as in git); for a plain diff, staging (`--index`) and 3-way merge.
   Mail becomes commits on the current branch (`git am`); a diff goes into the working tree (`git apply`).
-- When am stops, the bar under the toolbar shows "Applying patches to main · step 1 of 3", the patch's subject and
+- When am stops, the status bar shows "Applying patches to main · step 1 of 3", the patch's subject and
   why: it doesn't apply (with Retry with 3-Way Merge when 3-way wasn't tried), it has no changes (a cover letter:
   Skip it), or it has conflicts (resolve them in Working Copy, then Continue). Skip and Abort work as in a rebase.
 - Undo: applying mail is one operation, recorded once it finishes; a diff is undone by putting back the files it
@@ -557,7 +557,7 @@ In addition to today's "choose a file to show only its diff", offer a view that 
 
 ### Flow
 
-1. When a merge, rebase, cherry-pick or stash pop produces conflicts, show a bar under the toolbar, switch to Working Copy and select the first conflicted file, which opens the merge editor. No alert.
+1. When a merge, rebase, cherry-pick or stash pop produces conflicts, show the row in the status bar, switch to Working Copy and select the first conflicted file, which opens the merge editor. No alert.
 2. The Conflicts screen is "left: the list of conflicted files (unresolved / resolved)" and "right: the merge editor". Not a separate window; it can only be popped out with ⤢.
 3. When everything is resolved, Continue on the bar is highlighted. For a rebase, Continue moves on to the next commit, and if there are new conflicts it goes straight on to open the next file.
 4. Abort from the bar at any time (it stays in the oplog, so Undo can also revert it).
@@ -687,6 +687,10 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 - The View menu is History's display menu (order, items, one line, fold, ancestors, and the commit details: monospaced
   message, avatars, all files in one diff, files as a tree); History's bar button and header show the same menu.
 - Unavailable items are disabled, not removed (so their place can be remembered).
+- **Status bar.** One bar at the bottom of the window, under the page, holds what is going on: a merge, rebase or
+  cherry-pick in progress (Continue, Skip, Abort), a failure (the cause, the next step, Details), a lost connection,
+  and for a few seconds what a finished operation did ("Pushed main to origin/main"). A failure goes away once a later
+  operation succeeds. GTK4 uses an action bar for the same.
 - Everything the menu bar has can also be reached inside the window, so the GTK4 front end can have the same
   window without a menu bar: the toolbar's sidebar toggle, ≡ (More: Quick Open, New Worktree, Prune Worktrees,
   Create Pull Request, Open on GitHub, Open in Terminal, Show in Finder, Rebuild History, Repository Settings,
