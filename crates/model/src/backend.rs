@@ -28,6 +28,7 @@ pub trait GitBackend: Send + Sync {
 
     /// shallow clone の境界のコミット（親が手元にない。`read_commits` は親のないコミットとして返す）。shallow
     /// clone でなければ空。`git fetch --deepen` などで変わると、前回の History の境界のコミットに親ができる。
+    /// 根まで取ると git は根のコミットを境界に残すが、取得していない親はないので含めない。
     fn shallow(&self) -> Result<Vec<Oid>> {
         Ok(Vec::new())
     }

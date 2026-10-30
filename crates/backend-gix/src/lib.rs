@@ -236,10 +236,20 @@ impl GitBackend for GixBackend {
     }
 
     fn shallow(&self) -> Result<Vec<Oid>> {
-        match self.repo.to_thread_local().shallow_commits()? {
-            Some(commits) => commits.iter().map(|id| to_oid(id)).collect(),
-            None => Ok(Vec::new()),
-        }
+        let repo = self.repo.to_thread_local();
+        let Some(commits) = repo.shallow_commits()? else {
+            return Ok(Vec::new());
+        };
+        // `git fetch --deepen` で根に届くと、git は根のコミットを境界として `shallow` に残す。親のないコミットは
+        // 取得していないものがないので、境界に数えない（読めなければ境界のままにする）。
+        commits
+            .iter()
+            .filter(|id| {
+                repo.find_commit(**id)
+                    .map_or(true, |c| c.parent_ids().next().is_some())
+            })
+            .map(|id| to_oid(id))
+            .collect()
     }
 
     fn read_commits(
