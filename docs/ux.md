@@ -553,6 +553,25 @@ In addition to today's "choose a file to show only its diff", offer a view that 
 - Undo: applying mail is one operation, recorded once it finishes; a diff is undone by putting back the files it
   changed.
 
+### History's edit mode
+
+Editing commits happens in one mode instead of one menu item per git command, so what will change is visible before
+anything does.
+
+- **Entry.** "Edit Commits from Here…" on a commit's context menu opens the mode in place of History, listing every
+  commit from that one up to HEAD (newest on top, as in History). The shortcuts Edit Message…, Combine with Older
+  Commit…, Drop… and Combine N Commits… (several selected) open it with that change already made, and dragging a
+  commit in History opens it with the commit moved.
+- **Rows.** Each row has what to do with the commit: Keep, Edit Message, Combine with Older (squash: the message can
+  be edited, starting from both messages), Combine with Older, Keep Its Message (fixup), Drop (struck through), Stop
+  to Change Files (edit). git's own names are in the tooltips. Rows are dragged into a new order; double-click edits
+  a message.
+- **Apply.** The status bar shows a summary ("Changes: reordered, 1 combined, 1 dropped") with Cancel and Apply
+  Changes. Nothing changes until Apply Changes, which runs one rebase from the core's `plan` (every commit in its new
+  order with its action, the messages fed to git's editor in the order git opens it). One Undo puts it all back.
+- **Range.** Only commits from HEAD down to the first merge can be edited; a commit beyond it says so in the status
+  bar. Split stays a separate item on the context menu (it stops so the changes can be committed in parts).
+
 ## 8. Resolving conflicts (the embedded merge editor)
 
 ### Flow

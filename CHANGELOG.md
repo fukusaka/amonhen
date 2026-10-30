@@ -30,6 +30,8 @@ becomes the GitHub Release notes.
   Checkout, Merge and Push items). The View menu is History's display menu, now with the commit detail toggles.
 - Everything in the menu bar is also in the window: a sidebar toggle and a More menu (≡) in the toolbar, Rebuild
   History under Refresh, Go to HEAD in History's bar and a find button above the diff.
+- Commits are edited in History's edit mode: choose Keep, Edit Message, Combine with Older, Drop or Stop to Change
+  Files for each commit and drag them into order, then Apply Changes runs it all as one rebase with one Undo.
 - The in-progress, failure and connection bars moved to a status bar at the bottom of the window, which also says what
   a finished operation did. A failure clears once a later operation succeeds.
 - Working Copy's file context menu stages, discards, copies the path and opens the file.
