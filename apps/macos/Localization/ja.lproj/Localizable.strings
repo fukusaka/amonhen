@@ -49,6 +49,9 @@
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
+"Puts the files back as they were. HEAD and the index stay." = "ファイルを元に戻します。HEAD と index はそのままです。";
+"Brings back the dropped stash." = "Drop した stash を戻します。";
+"Gives the branch its earlier name back." = "ブランチの名前を元に戻します。";
 "Couldn’t Checkout" = "Checkout できませんでした";
 "Couldn’t Pull" = "Pull できませんでした";
 "Couldn’t Push" = "Push できませんでした";
@@ -129,10 +132,6 @@
 "Pop %@?" = "%@ を戻して消しますか？";
 "Nothing to Undo" = "Undo できる操作はありません";
 "Undo “%@”?" = "「%@」を戻しますか？";
-"This returns HEAD and the branches to where they were before. The operation log in Activity can undo it too." = "操作の前の HEAD とブランチに戻します。Activity の操作ログからも戻せます。";
-"This puts the files back as they were before; HEAD and the index stay as they are. The operation log in Activity can undo it too." = "ファイルを操作の前の内容に戻します（HEAD と index はそのまま）。Activity の操作ログからも戻せます。";
-"This brings back the stash that was dropped. The operation log in Activity can undo it too." = "消した stash を戻します。Activity の操作ログからも戻せます。";
-"This gives the branch its earlier name back. The operation log in Activity can undo it too." = "ブランチを前の名前に戻します。Activity の操作ログからも戻せます。";
 "Can’t read the status" = "状態を読めません";
 "and %ld more" = "ほか %ld コミット";
 

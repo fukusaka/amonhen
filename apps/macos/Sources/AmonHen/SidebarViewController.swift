@@ -1331,7 +1331,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add("New Branch from \(name)…") { actions.newBranch(at: name) }
             add("New Tag at \(name)…") { actions.newTag(at: name) }
             add(L("Compare with Previous Version")) { [weak self] in self?.onCompareWithPrevious?(name) }
-            add("Rename…") { actions.renameBranch(name) }
+            add(L("Rename…")) { actions.renameBranch(name) }
             if name != headBranch {
                 add(L("Delete %@…", name)) { actions.deleteBranchWithConfirmation(item) }
             }

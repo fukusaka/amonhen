@@ -406,15 +406,14 @@ extension Actions {
         let repository = self.repository
         Task { @MainActor in
             let peek = (try? await Task.detached { try repository.undoPeek() }.value) ?? nil
-            guard let peek else {
-                return await inform(L("Nothing to Undo"), "")
-            }
+            // 戻すものがなければ、ボタンとメニューを無効にしてある。
+            guard let peek else { return NSSound.beep() }
             // 何を戻すかは記録による（ファイルだけを戻す記録は、HEAD とブランチに触らない）。
             let what = switch peek.kind {
-            case "files": L("This puts the files back as they were before; HEAD and the index stay as they are. The operation log in Activity can undo it too.")
-            case "stash": L("This brings back the stash that was dropped. The operation log in Activity can undo it too.")
-            case "rename": L("This gives the branch its earlier name back. The operation log in Activity can undo it too.")
-            default: L("This returns HEAD and the branches to where they were before. The operation log in Activity can undo it too.")
+            case "files": L("Puts the files back as they were. HEAD and the index stay.")
+            case "stash": L("Brings back the dropped stash.")
+            case "rename": L("Gives the branch its earlier name back.")
+            default: L("Returns HEAD and the branches to where they were.")
             }
             let alert = makeAlert(L("Undo “%@”?", peek.label), what)
             alert.addButton(withTitle: "Undo")
