@@ -171,11 +171,13 @@ final class MergeOrderList: NSObject, NSTableViewDataSource, NSTableViewDelegate
     init(sources: [MergeSource]) {
         self.sources = sources
         super.init()
-        for (id, width) in [("name", 260.0), ("forecast", 150.0)] {
+        for (id, width) in [("name", 250.0), ("forecast", 150.0)] {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
             column.width = width
             table.addTableColumn(column)
         }
+        // 見込みの列を一覧の幅に合わせる（はみ出して横にずれ、名前の頭が切れないように）。
+        table.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         table.headerView = nil
         table.rowHeight = 20
         table.style = .plain
@@ -185,7 +187,9 @@ final class MergeOrderList: NSObject, NSTableViewDataSource, NSTableViewDelegate
         table.registerForDraggedTypes([Self.rowType])
         table.setDraggingSourceOperationMask(.move, forLocal: true)
         view.documentView = table
-        view.hasVerticalScroller = true
+        // 6 行を超えるときだけスクロールする（収まるのに縦のスクロールバーが出ると、その分だけ幅が減る）。
+        view.hasVerticalScroller = sources.count > 6
+        view.autohidesScrollers = true
         view.borderType = .bezelBorder
         let rows = CGFloat(min(sources.count, 6))
         view.heightAnchor.constraint(equalToConstant: rows * (table.rowHeight + table.intercellSpacing.height) + 4).isActive = true
