@@ -62,6 +62,8 @@ export interface Action {
   detail?: string;
   /** undefined なら何も知らせない（続きを別に行うとき） */
   run: () => Promise<OperationResult | 'pushed' | undefined>;
+  /** コンフリクトで止まったときの知らせに書き添えること（実行の後に読む） */
+  conflictNote?: () => string | undefined;
 }
 
 /** ドロップしたときの操作を選ばせて実行する */
@@ -139,7 +141,7 @@ export async function runAction(repo: Repository, action: Action): Promise<void>
       void vscode.window.showInformationMessage(`${title}: すでに最新です`);
       break;
     case 'conflict':
-      await handleConflict(repo, title);
+      await handleConflict(repo, title, action.conflictNote?.());
       break;
     case 'done': {
       const choice = await vscode.window.showInformationMessage(`${title}: 完了しました`, 'Undo');
@@ -155,10 +157,11 @@ export async function runAction(repo: Repository, action: Action): Promise<void>
 }
 
 /** コンフリクトしたら、ここで中止するか、解決して Continue するかを選ばせる */
-async function handleConflict(repo: Repository, title: string): Promise<void> {
+async function handleConflict(repo: Repository, title: string, note?: string): Promise<void> {
   const sequence = await repo.backend.sequenceInProgress();
   const choice = await vscode.window.showWarningMessage(
-    `${title}: コンフリクトが発生しました。解決して stage してから、サイドバーの Continue で続けるか、中止してください`,
+    `${title}: コンフリクトが発生しました。解決して stage してから、サイドバーの Continue で続けるか、中止してください` +
+      (note ? `。${note}` : ''),
     'Abort',
   );
   if (choice === 'Abort' && sequence) {

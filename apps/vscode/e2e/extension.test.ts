@@ -464,7 +464,7 @@ async function mergeBranchesFlow(label: string): Promise<void> {
   let order: string[] = [];
   let choose: (label: string) => boolean = () => false;
   const placeHolders: string[] = [];
-  const informed: string[] = [];
+  const warned: string[] = [];
   const stubs = {
     showQuickPick: async (items: unknown, options?: { canPickMany?: boolean; placeHolder?: string }) => {
       const list = (await items) as ({ label: string; ref?: string } & Record<string, unknown>)[];
@@ -474,10 +474,13 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       placeHolders.push(options?.placeHolder ?? '');
       return list.find((i) => choose(i.label));
     },
-    showInformationMessage: async (message: string) => void informed.push(message),
+    showInformationMessage: async () => undefined,
     // git が断ったら 1 つずつを選び、コンフリクトしたら中止する
-    showWarningMessage: async (_: string, ...rest: unknown[]) =>
-      (rest[0] as { modal?: boolean } | undefined)?.modal ? 'Merge One by One' : 'Abort',
+    showWarningMessage: async (message: string, ...rest: unknown[]) => {
+      if ((rest[0] as { modal?: boolean } | undefined)?.modal) return 'Merge One by One';
+      warned.push(message);
+      return 'Abort';
+    },
     showErrorMessage: async (message: string) => assert.fail(message),
   };
   try {
@@ -494,10 +497,10 @@ async function mergeBranchesFlow(label: string): Promise<void> {
       order = [name('x'), name('y'), name('a')];
       await vscode.commands.executeCommand('amonhen.mergeBranches');
       if (!placeHolders.at(-1)!.includes('個を')) {
-        assert.match(placeHolders.at(-1)!, new RegExp(`${name('y')} がコンフリクトします`));
+        assert.match(placeHolders.at(-1)!, new RegExp(`${name('y')} がコンフリクトするので`));
       }
       // 1 つずつなら x は merge され、y で止まって中止する。残りの a を知らせる
-      await until('1 つずつ', () => informed.some((m) => m.startsWith('まだ merge していないもの') && m.includes(name('a'))));
+      await until('1 つずつ', () => warned.some((m) => m.includes(`まだ merge していないもの: ${name('a')}`)));
       await until('中止', async () => (await repo.backend.sequenceInProgress()) === undefined);
       // x は今のブランチの先にあるので、git の既定どおり fast-forward になる
       assert.equal(head(), git('rev-parse', name('x')).trim());

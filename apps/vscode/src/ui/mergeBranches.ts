@@ -98,7 +98,7 @@ function choices(revs: string[], target: string, steps: string[][] | undefined):
     const order = [...revs.slice(0, only), ...revs.slice(only + 1), revs[only] ?? ''];
     const putLast: Choice = {
       label: `$(arrow-down) Put ${names[only]} Last and Merge`,
-      detail: `${order.map(shortName).join(', ')} の順に。この merge でコンフリクトを解ける`,
+      detail: `${order.map(shortName).join(', ')} の順に（最後のものなら、この merge でコンフリクトを解ける）`,
       revs: order,
       oneByOne: false,
     };
@@ -115,10 +115,9 @@ function advice(revs: string[], target: string, steps: string[][] | undefined): 
   if (early.length === 0) {
     return `${revs.length} 個を ${target} に 1 つのコミットで merge する`;
   }
+  // 長いと切れるので短く。理由と手は、勧める項目の説明に書く
   const which = early.map((i) => names[i]).join('、');
-  return conflicting.length === 1
-    ? `${which} がコンフリクトします。最後より前のものがコンフリクトすると git は止まるので、最後に回すか、1 つずつ merge してください`
-    : `${which} がコンフリクトします。最後より前のものがコンフリクトすると git は止まるので、1 つずつ merge してください`;
+  return `${which} がコンフリクトするので、この順では git が止まります`;
 }
 
 function conflictingIndexes(steps: string[][] | undefined): number[] {
@@ -147,12 +146,11 @@ async function run(repo: Repository, revs: string[], oneByOne: boolean, target: 
         throw err;
       }
     },
+    conflictNote: () =>
+      remaining.length > 0
+        ? `まだ merge していないもの: ${remaining.join('、')}（Continue の後で改めて merge してください）`
+        : undefined,
   });
-  if (remaining.length > 0) {
-    void vscode.window.showInformationMessage(
-      `まだ merge していないもの: ${remaining.join('、')}。コンフリクトを解いて Continue してから、改めて merge してください`,
-    );
-  }
   if (gaveUp) {
     const answer = await vscode.window.showWarningMessage(
       '1 つのコミットにまとめられません',
