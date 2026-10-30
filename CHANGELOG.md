@@ -20,6 +20,11 @@ becomes the GitHub Release notes.
 - Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
   Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 
+#### Fixed
+
+- History opens in a shallow clone: it stopped with "Commit … not found" at the boundary, and now ends there as
+  `git log` does. After `git fetch --deepen` or `--unshallow`, History is read again with the older commits.
+
 ### [0.2.8] - 2026-10-30
 
 Commits can be saved as patches and patches applied, a branch compared with its version before a rebase (Range Diff),
@@ -633,6 +638,11 @@ First release.
 
 - Reword and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and Reword runs
   the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
+
+#### Fixed
+
+- With the engine, History opens in a shallow clone and follows `git fetch --deepen` and `--unshallow`; it stopped
+  with "Commit … not found".
 
 ### [0.2.4] - 2026-10-30
 

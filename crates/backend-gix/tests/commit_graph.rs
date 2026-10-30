@@ -403,3 +403,59 @@ fn shows_stash_contents_including_untracked_files_but_keeps_them_out_of_history(
         .collect();
     assert_eq!(paths, ["a.txt", "new.txt"]);
 }
+
+#[test]
+fn stops_at_the_boundary_of_a_shallow_clone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    git(&src, &["init", "-q"]);
+    git(&src, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    for (file, message) in [("a.txt", "root"), ("b.txt", "second"), ("c.txt", "third")] {
+        std::fs::write(src.join(file), message).unwrap();
+        git(&src, &["add", file]);
+        git(&src, &["commit", "-q", "-m", message]);
+    }
+    let second = git(&src, &["rev-parse", "HEAD^"]);
+    let third = git(&src, &["rev-parse", "HEAD"]);
+    // --depth はパスの clone では効かないので file:// にする（Windows は file:///C:/…）。
+    let path = src.to_str().unwrap().replace('\\', "/");
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    git(
+        tmp.path(),
+        &["clone", "-q", "--depth", "2", &url, "shallow"],
+    );
+    let dir = tmp.path().join("shallow");
+
+    // 境界のコミット（second）の親（root）は手元にない。git と同じく親のないコミットとして扱う。
+    let backend = GixBackend::open(&dir).unwrap();
+    let mut commits = backend
+        .read_commits(&backend.tips().unwrap(), &|_| false)
+        .unwrap();
+    commits.sort_by_key(|c| c.id.to_string() != third);
+    let ids: Vec<String> = commits.iter().map(|c| c.id.to_string()).collect();
+    assert_eq!(ids, [third.clone(), second.clone()]);
+    assert_eq!(commits[0].parents.len(), 1);
+    assert!(commits[1].parents.is_empty());
+    assert_eq!(
+        backend
+            .commit_graph(&backend.tips().unwrap())
+            .unwrap()
+            .len(),
+        2
+    );
+
+    // 境界のコミットの差分は、そのときのファイルをすべて足したもの。
+    let mut paths: Vec<String> = backend
+        .commit_changes(&amonhen_model::Oid::from_hex(&second).unwrap())
+        .unwrap()
+        .into_iter()
+        .map(|c| c.path)
+        .collect();
+    paths.sort();
+    assert_eq!(paths, ["a.txt", "b.txt"]);
+}

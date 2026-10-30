@@ -68,7 +68,23 @@ const PARALLEL_READ_MIN: usize = 64;
 type Reader = Mutex<Option<(gix::Repository, Vec<u8>)>>;
 
 /// コミット 1 つの親と日時。commit-graph にあればオブジェクトを展開せずに済ませる。
+/// shallow clone の境界のコミット（`shallow` にある）は、git と同じく親のないコミットとして扱う（親は手元にない）。
 fn read_commit(
+    repo: &gix::Repository,
+    graph: Option<&gix::commitgraph::Graph>,
+    hash: gix::hash::Kind,
+    buf: &mut Vec<u8>,
+    shallow: &OidSet,
+    id: &Oid,
+) -> Result<RawCommit> {
+    let mut commit = read_commit_object(repo, graph, hash, buf, id)?;
+    if shallow.contains(id) {
+        commit.parents.clear();
+    }
+    Ok(commit)
+}
+
+fn read_commit_object(
     repo: &gix::Repository,
     graph: Option<&gix::commitgraph::Graph>,
     hash: gix::hash::Kind,
@@ -206,6 +222,13 @@ impl GitBackend for GixBackend {
         Ok(tips)
     }
 
+    fn shallow(&self) -> Result<Vec<Oid>> {
+        match self.repo.to_thread_local().shallow_commits()? {
+            Some(commits) => commits.iter().map(|id| to_oid(id)).collect(),
+            None => Ok(Vec::new()),
+        }
+    }
+
     fn read_commits(
         &self,
         tips: &[Oid],
@@ -214,6 +237,7 @@ impl GitBackend for GixBackend {
         let repo = self.repo.to_thread_local();
         let graph = repo.commit_graph_if_enabled()?;
         let hash = repo.object_hash();
+        let shallow: OidSet = self.shallow()?.into_iter().collect();
         let mut seen = OidSet::default();
         let mut frontier: Vec<Oid> = tips
             .iter()
@@ -234,7 +258,7 @@ impl GitBackend for GixBackend {
             let read: Vec<RawCommit> = if frontier.len() < PARALLEL_READ_MIN {
                 frontier
                     .iter()
-                    .map(|id| read_commit(&repo, graph.as_ref(), hash, &mut buf, id))
+                    .map(|id| read_commit(&repo, graph.as_ref(), hash, &mut buf, &shallow, id))
                     .collect::<Result<_>>()?
             } else {
                 frontier
@@ -246,7 +270,7 @@ impl GitBackend for GixBackend {
                         let mut reader = readers[slot].lock().unwrap_or_else(|e| e.into_inner());
                         let (repo, buf) =
                             reader.get_or_insert_with(|| (self.repo.to_thread_local(), Vec::new()));
-                        read_commit(repo, graph.as_ref(), hash, buf, id)
+                        read_commit(repo, graph.as_ref(), hash, buf, &shallow, id)
                     })
                     .collect::<Result<_>>()?
             };
@@ -386,9 +410,14 @@ impl GitBackend for GixBackend {
     fn commit_changes(&self, commit: &Oid) -> Result<Vec<FileChange>> {
         let repo = self.repo.to_thread_local();
         let commit = repo.find_commit(gix::ObjectId::from_bytes_or_panic(&commit.0))?;
+        // shallow clone の境界のコミットは、git と同じく親のないコミットとして全体を足した差分にする。
+        let boundary = repo
+            .shallow_commits()?
+            .is_some_and(|c| c.binary_search(&commit.id).is_ok());
         let parent = commit
             .parent_ids()
             .next()
+            .filter(|_| !boundary)
             .map(|p| to_oid(p.as_ref()))
             .transpose()?;
         self.changes_between(parent.as_ref(), &to_oid(commit.id.as_ref())?)

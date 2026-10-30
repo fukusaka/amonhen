@@ -22,6 +22,8 @@ pub struct HistorySnapshot {
     /// 起点と HEAD。どちらも変わっていなければ History も変わらない（コミットは不変）。
     pub tips: Vec<Oid>,
     pub head: Option<Oid>,
+    /// shallow clone の境界。変われば（`git fetch --deepen` など）前回の History から引き継がずに作り直す。
+    pub shallow: Vec<Oid>,
     pub graph: CommitGraph,
     pub layout: GraphLayout,
     /// マージ済みブランチを折りたたんだ History なら、行ごとの隠したコミットの数（そうでなければ空）。
@@ -270,6 +272,7 @@ impl Repository {
             let layout = graph::layout(&graph, head_row);
             let cached = CachedHistory {
                 tips: current.tips.clone(),
+                shallow: current.shallow.clone(),
                 head: current.head,
                 order,
                 graph,
@@ -278,7 +281,13 @@ impl Repository {
             if let Some(path) = &self.cache_path {
                 let _ = cache::write(path, &cached);
             }
-            self.publish(cached.tips, cached.head, cached.graph, cached.layout);
+            self.publish(
+                cached.tips,
+                cached.shallow,
+                cached.head,
+                cached.graph,
+                cached.layout,
+            );
         }
         Ok(())
     }
@@ -292,12 +301,18 @@ impl Repository {
     fn publish_cached(&self, cached: CachedHistory) -> Arc<HistorySnapshot> {
         let order = self.history_order();
         if cached.order == order {
-            return self.publish(cached.tips, cached.head, cached.graph, cached.layout);
+            return self.publish(
+                cached.tips,
+                cached.shallow,
+                cached.head,
+                cached.graph,
+                cached.layout,
+            );
         }
         let graph = topo::reorder(&cached.graph, order);
         let head_row = Self::head_row(&graph, cached.head);
         let layout = graph::layout(&graph, head_row);
-        self.publish(cached.tips, cached.head, graph, layout)
+        self.publish(cached.tips, cached.shallow, cached.head, graph, layout)
     }
 
     /// 署名を手元で検証するもの（`None` ならリポジトリのある側の git で検証する）。変えると、覚えていた
@@ -473,6 +488,7 @@ impl Repository {
     fn publish(
         &self,
         tips: Vec<Oid>,
+        shallow: Vec<Oid>,
         head: Option<Oid>,
         graph: CommitGraph,
         layout: GraphLayout,
@@ -481,6 +497,7 @@ impl Repository {
             generation: self.generation.fetch_add(1, Ordering::Relaxed) + 1,
             tips,
             head,
+            shallow,
             graph,
             layout,
             folded: Vec::new(),
@@ -511,6 +528,7 @@ impl Repository {
             if let Some(current) = self.history.load_full()
                 && current.tips == cached.tips
                 && current.head == cached.head
+                && current.shallow == cached.shallow
             {
                 return Ok(current);
             }
@@ -518,7 +536,13 @@ impl Repository {
         }
         let tips = self.backend.tips()?;
         let head = self.backend.head()?;
-        let current = self.history.load_full();
+        let shallow = self.backend.shallow()?;
+        // shallow clone の境界が変わっていれば、前回の境界のコミットに親ができている（前回の History には、その先が
+        // ない）ので、引き継がずに最初から読む。
+        let current = self
+            .history
+            .load_full()
+            .filter(|current| current.shallow == shallow);
         if let Some(current) = &current
             && current.tips == tips
             && current.head == head
@@ -551,6 +575,7 @@ impl Repository {
         if let Some(path) = &self.cache_path {
             let cached = CachedHistory {
                 tips,
+                shallow,
                 head,
                 order,
                 graph,
@@ -558,9 +583,15 @@ impl Repository {
             };
             // キャッシュを書けなくても History は使える。次の起動が遅くなるだけ。
             let _ = cache::write(path, &cached);
-            return Ok(self.publish(cached.tips, cached.head, cached.graph, cached.layout));
+            return Ok(self.publish(
+                cached.tips,
+                cached.shallow,
+                cached.head,
+                cached.graph,
+                cached.layout,
+            ));
         }
-        Ok(self.publish(tips, head, graph, layout))
+        Ok(self.publish(tips, shallow, head, graph, layout))
     }
 
     /// History を最初から作り直して公開する（永続キャッシュを捨て、前回の History から引き継がない）。手元の共有の
@@ -662,6 +693,7 @@ impl Repository {
             generation: self.generation.fetch_add(1, Ordering::Relaxed) + 1,
             tips: tips.map_or_else(|| full.tips.clone(), <[Oid]>::to_vec),
             head: full.head,
+            shallow: full.shallow.clone(),
             graph,
             layout,
             folded,
@@ -697,6 +729,7 @@ impl Repository {
             generation: self.generation.fetch_add(1, Ordering::Relaxed) + 1,
             tips: snapshot.tips.clone(),
             head: snapshot.head,
+            shallow: snapshot.shallow.clone(),
             graph,
             layout,
             folded: Vec::new(),
@@ -1641,6 +1674,45 @@ mod tests {
                 .unwrap(),
             [1, 2]
         );
+    }
+
+    #[test]
+    fn rebuilds_history_when_a_shallow_clone_gets_deeper() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        git(&src, &["init", "-q"]);
+        git(&src, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        for message in ["root", "second", "third"] {
+            git(&src, &["commit", "--allow-empty", "-q", "-m", message]);
+        }
+        // --depth はパスの clone では効かないので file:// にする（Windows は file:///C:/…）。
+        let path = src.to_str().unwrap().replace('\\', "/");
+        let url = if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        };
+        git(
+            tmp.path(),
+            &["clone", "-q", "--depth", "1", &url, "shallow"],
+        );
+        let dir = tmp.path().join("shallow");
+        let cache = tmp.path().join("cache/history.bin");
+
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache.clone());
+        assert_eq!(repo.load_history().unwrap().graph.len(), 1);
+        // 起点（ブランチ）は変わらないが、境界のコミットに親ができる。
+        git(&dir, &["fetch", "-q", "--deepen", "1"]);
+        assert_eq!(repo.load_history().unwrap().graph.len(), 2);
+
+        // アプリを閉じているあいだに深くしても、次の起動で作り直す（キャッシュは先に見せてよい）。
+        git(&dir, &["fetch", "-q", "--unshallow"]);
+        let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache);
+        assert_eq!(repo.load_cached_history().unwrap().graph.len(), 2);
+        let history = repo.load_history().unwrap();
+        assert_eq!(history.graph.len(), 3);
+        assert!(history.shallow.is_empty());
     }
 
     #[test]
