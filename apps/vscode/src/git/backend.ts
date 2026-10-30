@@ -186,8 +186,11 @@ export interface RepositoryBackend {
    * 選んだ側で削除されていれば、削除として解決する。conflict は status の XY
    */
   resolveConflicts(files: readonly { path: string; conflict: string }[], side: 'current' | 'incoming'): Promise<void>;
-  /** todo ファイルの内容で非対話の rebase をする。base が null なら --root */
-  rebaseTodo(base: string | null, todoPath: string): Promise<RebaseResult>;
+  /**
+   * todo ファイルの内容で非対話の rebase をする。base が null なら --root。messagePath は、todo の reword・squash で
+   * git が開くエディタに書かせるメッセージのファイル
+   */
+  rebaseTodo(base: string | null, todoPath: string, messagePath?: string | null): Promise<RebaseResult>;
   /** ローカルブランチ branch を remote の remoteBranch へ push する */
   push(remote: string, branch: string, remoteBranch: string, opts?: PushOptions): Promise<void>;
   /**
@@ -709,11 +712,21 @@ export class CliBackend implements RepositoryBackend {
     return (await this.read(['ls-files', '--unmerged', '-z'])) !== '';
   }
 
-  rebaseTodo(base: string | null, todoPath: string): Promise<RebaseResult> {
-    // git は `$GIT_SEQUENCE_EDITOR <todo>` を sh で実行するので、用意した todo を上書きコピーさせる
-    return this.stoppable(['rebase', '--interactive', '--autostash', '--no-autosquash', base ?? '--root'], {
-      GIT_SEQUENCE_EDITOR: `cp ${shellQuote(todoPath)}`,
-    });
+  async rebaseTodo(base: string | null, todoPath: string, messagePath?: string | null): Promise<RebaseResult> {
+    // git は `$GIT_SEQUENCE_EDITOR <todo>` を sh で実行するので、用意した todo を上書きコピーさせる。reword・squash の
+    // メッセージも同じく、`$GIT_EDITOR <file>` でファイルを上書きコピーさせる
+    const env: Record<string, string> = { GIT_SEQUENCE_EDITOR: `cp ${shellQuote(todoPath)}` };
+    const config: string[] = [];
+    if (messagePath) {
+      env.GIT_EDITOR = `cp ${shellQuote(messagePath)}`;
+      // エディタで書いたメッセージは、git の既定では # で始まる行を除く。コミット（-F）と同じく、書いたとおりに
+      // 残す。commit.cleanup を設定していれば、それに従う
+      const cleanup = await this.config('commit.cleanup');
+      if (cleanup === undefined || cleanup === 'default') {
+        config.push('-c', 'commit.cleanup=whitespace');
+      }
+    }
+    return this.stoppable([...config, 'rebase', '--interactive', '--autostash', '--no-autosquash', base ?? '--root'], env);
   }
 
   /** 成功しても途中で止まっていれば stopped、失敗して止まっていれば conflict */

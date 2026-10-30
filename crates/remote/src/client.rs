@@ -842,10 +842,16 @@ impl Operations for RemoteOperations {
     }
 
     /// `todo` は daemon の側のパス（コアは daemon から受け取った `.git` の場所で組み立てる）。
-    fn rebase_todo(&self, base: Option<&Oid>, todo: &Path) -> Result<Outcome> {
+    fn rebase_todo(
+        &self,
+        base: Option<&Oid>,
+        todo: &Path,
+        message: Option<&Path>,
+    ) -> Result<Outcome> {
         self.op(Op::RebaseTodo {
             base: base.copied(),
             todo: todo.to_owned(),
+            message: message.map(Path::to_owned),
         })
     }
 

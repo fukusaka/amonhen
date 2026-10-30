@@ -75,6 +75,8 @@ becomes the GitHub Release notes.
   repositories are marked, a path can be typed, and folders like `/opt/homebrew/bin` are one menu item away.
 - History's Edit (Stop Here) stops as git's `edit` does: changes staged while stopped are amended into the commit on
   Continue, and with `notes.rewriteRef` its notes also go to the commits added while stopped.
+- Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
+  Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 
 #### Fixed
 
@@ -632,6 +634,8 @@ First release.
   for the remote (following `branch.<name>.pushRemote` and `remote.pushDefault`) and the name there.
 - Edit in History stops as git's `edit` does: changes staged while stopped are amended into the commit on Continue,
   and with `notes.rewriteRef` its notes also go to the commits added while stopped.
+- Reword and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and Reword runs
+  the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 
 #### Fixed
 
