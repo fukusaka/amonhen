@@ -31,7 +31,7 @@ pub use graph::{CommitGraph, CommitGraphBuilder};
 pub use mailmap::{Mailmap, MailmapEntry};
 pub use oid::{Oid, OidMap, OidSet};
 pub use ops::{
-    ApplyPatch, ConfigEntry, Directory, DirectoryEntry, FormatPatch, HeadState, MachineGit,
+    ApplyPatch, ConfigEntry, Deepen, Directory, DirectoryEntry, FormatPatch, HeadState, MachineGit,
     Operations, Outcome, PatchFile, Program, PullMode, RefUpdate, RemoteChange, RemoteCheck,
     RemoteEntry, ResetMode, Sequence, SigningKey, WorktreeChange, WorktreeChanges,
 };

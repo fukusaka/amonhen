@@ -1864,3 +1864,5 @@
 
 /* GTK4 の FE: リポジトリのページの左の見出し（macOS の NSOutlineView の Show・Hide） */
 "Hide" = "非表示";
+"Give either commits (1 or more) or since" = "commits（1 以上）か since のどちらかを渡してください";
+"This repository has all of its history (not a shallow clone)" = "このリポジトリは履歴をすべて持っています（shallow clone ではありません）";
