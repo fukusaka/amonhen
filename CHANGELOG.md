@@ -26,6 +26,8 @@ becomes the GitHub Release notes.
 - Every confirmation is a sheet on the window, and an operation asks the same way from the toolbar, a context menu
   or a drag. Fetch, Checkout, Cherry-pick, Revert, Apply and a sidebar Merge or Rebase now ask first; Reset picks
   Soft, Mixed or Hard in its sheet.
+- The menu bar and context menus use one name per operation (New Branch from, 8-character short IDs, translated
+  Checkout, Merge and Push items). The View menu is History's display menu, now with the commit detail toggles.
 - Deleting several branches offers Delete Anyway for those with commits nowhere else. Only what can't be undone has a
   red button, and failures read "Couldn't …".
 - Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and

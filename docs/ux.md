@@ -680,7 +680,12 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 | Window | Standard (minimize, tabs, merge all windows), Repositories ⌘⇧R, Activity ⌥⌘A |
 | Help | List of shortcuts, open the log location |
 
-- Context menus show the same operations under the same names as the menu bar (one name to remember).
+- Context menus show the same operations under the same names as the menu bar (one name to remember). Every
+  command is defined once (`apps/macos/Sources/AmonHen/Commands.swift`: title, shortcut, tooltip) with an id that is
+  also the GTK4 front end's action name (`win.<id>`); the menu bar is built from that table, and context menus take
+  their titles with a target from the same file ("New Branch from …", "Copy Short ID" with 8 characters everywhere).
+- The View menu is History's display menu (order, items, one line, fold, ancestors, and the commit details: monospaced
+  message, avatars, all files in one diff, files as a tree); History's bar button and header show the same menu.
 - Unavailable items are disabled, not removed (so their place can be remembered).
 - Undo for git operations lives in Repository > Undo (⌥⌘Z), separate from Edit's ⌘Z (undoing text). So that ⌘Z never unexpectedly reverts a git operation.
 
