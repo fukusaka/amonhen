@@ -15,6 +15,7 @@ use gtk::prelude::*;
 use gtk::{gio, glib};
 
 use crate::bookmarks;
+use crate::filepicker::{self, Kind, Request, Source};
 use crate::menu::{self, Item};
 use crate::sheets::{Response, Sheet};
 
@@ -86,6 +87,10 @@ impl Category {
 }
 
 const CATEGORY_KEY: &str = "repositoryPageCategory";
+/// 手元のリポジトリを選んだ、前のフォルダ。
+const LAST_LOCAL_FOLDER_KEY: &str = "lastLocalRepositoryFolder";
+/// SSH 先でスキャンするフォルダを加えた、前のホスト。
+const LAST_HOST_KEY: &str = "lastScanHost";
 /// 開いている左の節（鍵を改行で区切る）。
 const EXPANDED_KEY: &str = "repositoryPageExpanded";
 
@@ -226,7 +231,7 @@ fn root_base(root: &str) -> String {
 }
 
 /// SSH 先のパスの見せ方（`/~/prj` は `~/prj`、Windows の SSH 先の `/C:/src` は `C:/src`）。
-fn remote_title(path: &str) -> String {
+pub(crate) fn remote_title(path: &str) -> String {
     let rest = &path[path.len().min(1)..];
     let b = rest.as_bytes();
     if path.starts_with("/~") || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':') {
@@ -1664,29 +1669,34 @@ impl Browser {
         }
     }
 
+    /// 手元のリポジトリを選んで加える（列で選ぶシート。すぐ行ける所はスキャンするフォルダ）。
     fn add_repository(self: &Rc<Self>) {
-        let dialog = gtk::FileDialog::builder()
-            .title(tr!("Add Repositories"))
-            .modal(true)
-            .build();
+        let places = bookmarks::data()
+            .scan_roots
+            .iter()
+            .filter(|r| bookmarks::ssh_host(&r.path).is_none())
+            .map(|r| bookmarks::tilde(&r.path))
+            .collect();
+        let request = Request {
+            title: tr!("Add Repositories"),
+            message: tr!("Choose a repository to add to the list (green)."),
+            kind: Kind::Repository,
+            initial: crate::settings::string(LAST_LOCAL_FOLDER_KEY).unwrap_or_else(|| "~".into()),
+            places,
+        };
         let b = self.clone();
         glib::spawn_future_local(async move {
-            let Ok(files) = dialog
-                .select_multiple_folders_future(Some(&b.window()))
-                .await
+            let Some(chosen) = filepicker::choose(Some(&b.window()), request, Source::Local).await
             else {
                 return;
             };
-            let group = b.selected_group();
-            for file in files.iter::<gio::File>().flatten() {
-                if let Some(path) = file.path() {
-                    let text = path.to_string_lossy().into_owned();
-                    if bookmarks::is_repository(&text) {
-                        bookmarks::add(&text, group.as_deref());
-                    } else {
-                        b.root.error_bell();
-                    }
-                }
+            if let Some(parent) = std::path::Path::new(&chosen.path).parent() {
+                crate::settings::set_string(LAST_LOCAL_FOLDER_KEY, &parent.to_string_lossy());
+            }
+            if bookmarks::is_repository(&chosen.path) {
+                bookmarks::add(&chosen.path, b.selected_group().as_deref());
+            } else {
+                b.root.error_bell();
             }
         });
     }
@@ -1702,72 +1712,108 @@ impl Browser {
     }
 
     fn add_scan_folder(self: &Rc<Self>) {
-        let dialog = gtk::FileDialog::builder()
-            .title(tr!("Add a Folder to Scan"))
-            .modal(true)
-            .build();
-        dialog.set_initial_folder(Some(&gio::File::for_path(glib::home_dir())));
-        let b = self.clone();
-        glib::spawn_future_local(async move {
-            if let Ok(folder) = dialog.select_folder_future(Some(&b.window())).await
-                && let Some(path) = folder.path()
-            {
-                bookmarks::add_scan_root(&path.to_string_lossy());
-            }
-        });
-    }
-
-    /// SSH 先のリポジトリを加えて開く。`host` があれば、そのホストの場所を最初に入れておく。
-    fn add_remote(self: &Rc<Self>, host: Option<&str>) {
-        let initial = host.map_or_else(|| "ssh://".to_owned(), |h| format!("ssh://{h}/"));
-        let b = self.clone();
-        glib::spawn_future_local(async move {
-            let Some(location) = b
-                .ask(
-                    &tr!("Add SSH Connection"),
-                    &tr!("ssh://[user@]host[:port]/path (a daemon on an SSH host) or daemon:/path (the local shared daemon)"),
-                    &initial,
-                )
-                .await
-            else {
-                return;
-            };
-            if !amonhen_remote::location::is_remote(&location) {
-                b.root.error_bell();
-                return;
-            }
-            bookmarks::add(&location, b.selected_group().as_deref());
-            b.open_location(&location, true);
-        });
-    }
-
-    /// SSH 先でスキャンするフォルダを加える（そのホストの上で、エンジンが探す）。
-    fn add_remote_scan_folder(self: &Rc<Self>, host: Option<&str>) {
-        let title = match host {
-            Some(h) => tr!("Add a Folder to Scan on {host}", host = h),
-            None => tr!("Add a Folder to Scan over SSH"),
+        let request = Request {
+            title: tr!("Add a Folder to Scan"),
+            message: tr!("Choose a folder to search for repositories (up to 3 levels deep)."),
+            kind: Kind::Folder,
+            initial: "~".into(),
+            places: Vec::new(),
         };
-        let initial = format!("ssh://{}/", host.unwrap_or_default());
         let b = self.clone();
         glib::spawn_future_local(async move {
-            let Some(location) = b
-                .ask(
-                    &title,
-                    &tr!("The engine on the host searches up to 3 levels below the folder."),
-                    &initial,
-                )
-                .await
-            else {
-                return;
-            };
-            if !location.starts_with("ssh://") || bookmarks::path_part(&location).len() < 2 {
-                b.root.error_bell();
-                return;
+            if let Some(chosen) =
+                filepicker::choose(Some(&b.window()), request, Source::Local).await
+            {
+                bookmarks::add_scan_root(&chosen.path);
             }
-            bookmarks::add_scan_root(&location);
-            if let Some(h) = bookmarks::ssh_host(&location) {
-                *b.category.borrow_mut() = Category::Host(h);
-                b.reload();
+        });
+    }
+
+    /// SSH 先のリポジトリを加えて開く。`host` があれば、そのホストの場所を最初に入れておく。Choose… で、
+    /// そのホストのフォルダを列で見て選べる。
+    fn add_remote(self: &Rc<Self>, host: Option<&str>) {
+        let mut initial = host.map_or_else(|| "ssh://".to_owned(), |h| format!("ssh://{h}/"));
+        let b = self.clone();
+        glib::spawn_future_local(async move {
+            loop {
+                let sheet = Sheet::new(
+                    Some(&b.window()),
+                    &tr!("Add SSH Connection"),
+                    &tr!(
+                        "ssh://[user@]host[:port]/path (a daemon on an SSH host) or daemon:/path (the local shared daemon)"
+                    ),
+                );
+                let entry = gtk::Entry::builder()
+                    .text(&initial)
+                    .activates_default(true)
+                    .hexpand(true)
+                    .build();
+                sheet.add(&entry);
+                sheet.buttons("OK", false, Some(&tr!("Choose…")));
+                entry.grab_focus();
+                let response = sheet.run().await;
+                let location = entry.text().trim().to_owned();
+                match response {
+                    Response::Cancel => return,
+                    Response::Other => {
+                        // ホストのフォルダを見て選ぶ（選んだら、欄に入れて聞き直す）。
+                        let Some(host) = bookmarks::ssh_host(&location).filter(|h| !h.is_empty())
+                        else {
+                            b.root.error_bell();
+                            initial = location;
+                            continue;
+                        };
+                        let path = bookmarks::path_part(&location);
+                        let path = path
+                            .strip_prefix('/')
+                            .filter(|p| p.starts_with('~'))
+                            .map_or(path.clone(), str::to_owned);
+                        let request = Request {
+                            title: tr!("Choose a Repository on {host}", host = host),
+                            message: tr!(
+                                "Click a folder to open it, and choose a repository (green)."
+                            ),
+                            kind: Kind::Folder,
+                            initial: if path.is_empty() { "~".into() } else { path },
+                            places: Vec::new(),
+                        };
+                        initial = match filepicker::choose(
+                            Some(&b.window()),
+                            request,
+                            Source::Host(host),
+                        )
+                        .await
+                        {
+                            Some(chosen) => chosen.ssh_location(),
+                            None => location,
+                        };
+                    }
+                    Response::Ok => {
+                        if !amonhen_remote::location::is_remote(&location) {
+                            b.root.error_bell();
+                            return;
+                        }
+                        bookmarks::add(&location, b.selected_group().as_deref());
+                        b.open_location(&location, true);
+                        return;
+                    }
+                }
+            }
+        });
+    }
+
+    /// SSH 先でスキャンするフォルダを加える（そのホストの上で、エンジンが探す）。`host` がなければ、シートで
+    /// ホストも選ぶ。
+    fn add_remote_scan_folder(self: &Rc<Self>, host: Option<&str>) {
+        let b = self.clone();
+        let host = host.map(str::to_owned);
+        glib::spawn_future_local(async move {
+            if let Some(location) = choose_remote_scan_folder(&b.window(), host, None).await {
+                bookmarks::add_scan_root(&location);
+                if let Some(h) = bookmarks::ssh_host(&location) {
+                    *b.category.borrow_mut() = Category::Host(h);
+                    b.reload();
+                }
             }
         });
     }
@@ -1844,6 +1890,36 @@ impl Browser {
         entry.grab_focus();
         (sheet.run().await == Response::Ok).then(|| entry.text().trim().to_owned())
     }
+}
+
+/// SSH 先でスキャンするフォルダを列で選んでもらい、その場所（`ssh://host/~/src`）を返す。`host` がなければ、
+/// シートでホストも選ぶ（最後に選んだホストから）。Settings > SSH Hosts の Connection と共通。
+pub async fn choose_remote_scan_folder(
+    parent: &gtk::Window,
+    host: Option<String>,
+    repo: Option<std::sync::Arc<amonhen_core::Repository>>,
+) -> Option<String> {
+    let request = Request {
+        title: match &host {
+            Some(h) => tr!("Add a Folder to Scan on {host}", host = h),
+            None => tr!("Add a Folder to Scan over SSH"),
+        },
+        message: tr!("The engine on the host searches up to 3 levels below the folder."),
+        kind: Kind::Folder,
+        initial: "~/prj".into(),
+        places: Vec::new(),
+    };
+    let source = match (host, repo) {
+        (Some(h), Some(repo)) => Source::Connected(h, repo),
+        (Some(h), None) => Source::Host(h),
+        (None, _) => Source::AnyHost(crate::settings::string(LAST_HOST_KEY).unwrap_or_default()),
+    };
+    let chosen = filepicker::choose(Some(parent), request, source).await?;
+    if chosen.host.is_empty() {
+        return None;
+    }
+    crate::settings::set_string(LAST_HOST_KEY, &chosen.host);
+    Some(chosen.ssh_location())
 }
 
 /// 列の並べ替え（同じ値なら名前の順。並びが毎回変わらないように）。

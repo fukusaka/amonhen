@@ -1083,7 +1083,8 @@ fn engine_choice(session: &Rc<HostSession>) -> Vec<gtk::Widget> {
             return;
         };
         let sv = sv.clone();
-        settings.choose_file(
+        settings.choose_path(
+            crate::filepicker::Kind::Executable,
             &tr!("Engine on {host}", host = h),
             &tr!("Choose amonhen on the host. It must be this build."),
             current,

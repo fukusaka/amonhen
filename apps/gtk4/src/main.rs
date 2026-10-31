@@ -22,6 +22,7 @@ mod details;
 mod diff;
 mod editor;
 mod environment;
+mod filepicker;
 mod filetools;
 mod github;
 mod graph;

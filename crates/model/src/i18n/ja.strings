@@ -1744,3 +1744,17 @@
 "All Repositories…" = "すべてのリポジトリ…";
 "Open the repository page (Ctrl+Shift+R)" = "リポジトリのページを開く（Ctrl+Shift+R）";
 "{name} — click to switch repository" = "{name} — 押すとリポジトリを切り替える";
+/* GTK4: パスを列で選ぶシート */
+"Host:" = "接続先:";
+"You can still type the path above and choose it." = "上の欄にパスを打ち込んで選ぶこともできます。";
+"Show hidden files" = "隠しファイルを表示";
+"Home folder" = "ホームフォルダ";
+"Go to a folder" = "フォルダへ移動";
+"Git repository" = "git のリポジトリ";
+"Symbolic link" = "シンボリックリンク";
+"Choose a host to see its folders." = "SSH 先を選ぶと、そのフォルダが出ます。";
+"user@host:port (or a name in ~/.ssh/config)" = "user@host:port（~/.ssh/config の名前でもよい）";
+"Choose a Repository on {host}" = "{host} のリポジトリを選ぶ";
+"Click a folder to open it, and choose a repository (green)." = "フォルダをクリックして開き、リポジトリ（緑）を選びます。";
+"Choose a repository to add to the list (green)." = "一覧に加えるリポジトリ（緑）を選びます。";
+"Choose a folder to search for repositories (up to 3 levels deep)." = "リポジトリを探すフォルダを選んでください（3 段下まで探します）";

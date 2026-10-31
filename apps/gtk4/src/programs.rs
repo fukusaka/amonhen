@@ -178,7 +178,13 @@ fn choose_other(
         ),
         None => (tr!("Program"), tr!("Choose the program on this computer.")),
     };
-    s.choose_file(&title, &message, initial, done);
+    s.choose_path(
+        crate::filepicker::Kind::Executable,
+        &title,
+        &message,
+        initial,
+        done,
+    );
 }
 
 /// Programs のページ。

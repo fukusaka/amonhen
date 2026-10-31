@@ -2049,8 +2049,7 @@ impl RepoSettings {
         row.widget.upcast()
     }
 
-    /// ファイルを選んでもらう。手元のリポジトリならファイルの選択の窓、SSH 先のリポジトリなら SSH 先のパスを
-    /// 入れてもらう（git が読むファイルなので、その機械のもの）。
+    /// ファイルを選んでもらう（git が読むファイルなので、その機械のもの。SSH 先なら、そのエンジンで中を読む）。
     pub(crate) fn choose_file(
         &self,
         title: &str,
@@ -2058,51 +2057,40 @@ impl RepoSettings {
         initial: String,
         done: impl FnOnce(String) + 'static,
     ) {
+        self.choose_path(crate::filepicker::Kind::File, title, message, initial, done);
+    }
+
+    /// パスを選んでもらう（列で選ぶシート。この機械か、SSH 先ならそのエンジンで中を読む）。プログラムなら、
+    /// ふだんある所へすぐ行ける。
+    pub(crate) fn choose_path(
+        &self,
+        kind: crate::filepicker::Kind,
+        title: &str,
+        message: &str,
+        initial: String,
+        done: impl FnOnce(String) + 'static,
+    ) {
+        use crate::filepicker::{self, Kind, Request, Source};
         let parent = self.window();
-        if let Some(host) = self.host.clone() {
-            let (title, message) = (title.to_owned(), message.to_owned());
-            glib::spawn_future_local(async move {
-                let entry = gtk::Entry::builder()
-                    .text(&initial)
-                    .activates_default(true)
-                    .hexpand(true)
-                    .build();
-                let sheet = crate::sheets::Sheet::new(
-                    parent.as_ref(),
-                    &title,
-                    &tr!(
-                        "{message} (a path on {host})",
-                        message = message,
-                        host = host
-                    ),
-                );
-                sheet.add(&entry);
-                sheet.buttons(&tr!("Choose"), false, None);
-                if sheet.run().await == crate::sheets::Response::Ok {
-                    let path = entry.text().trim().to_owned();
-                    if !path.is_empty() {
-                        done(path);
-                    }
-                }
-            });
-            return;
-        }
-        let dialog = gtk::FileDialog::builder().title(title).modal(true).build();
-        let start = if initial == "~" || initial.is_empty() {
-            glib::home_dir()
-        } else {
-            std::path::PathBuf::from(initial.replacen('~', &glib::home_dir().to_string_lossy(), 1))
+        let places = match (kind, &self.host) {
+            (Kind::Executable, Some(_)) => filepicker::host_program_places(),
+            (Kind::Executable, None) => filepicker::local_program_places(),
+            _ => Vec::new(),
         };
-        if start.is_dir() {
-            dialog.set_initial_folder(Some(&gio::File::for_path(&start)));
-        } else if start.is_file() {
-            dialog.set_initial_file(Some(&gio::File::for_path(&start)));
-        }
+        let request = Request {
+            title: title.to_owned(),
+            message: message.to_owned(),
+            kind,
+            initial,
+            places,
+        };
+        let source = match &self.host {
+            Some(host) => Source::Connected(host.clone(), self.repo.clone()),
+            None => Source::Local,
+        };
         glib::spawn_future_local(async move {
-            if let Ok(file) = dialog.open_future(parent.as_ref()).await
-                && let Some(path) = file.path()
-            {
-                done(path.to_string_lossy().into_owned());
+            if let Some(chosen) = filepicker::choose(parent.as_ref(), request, source).await {
+                done(chosen.path);
             }
         });
     }
