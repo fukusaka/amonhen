@@ -139,6 +139,61 @@ fn fetches_missing_contents_at_once_before_searching_them() {
     assert_eq!(packs(&dir), before + 1);
 }
 
+#[test]
+fn lists_submodules_of_a_partial_clone_not_checked_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let src = tmp.path().join("src");
+    std::fs::create_dir(&src).unwrap();
+    git(&src, &["init", "-q"]);
+    git(&src, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+    std::fs::write(
+        src.join(".gitmodules"),
+        "[submodule \"lib\"]\n\tpath = lib\n\turl = ../lib\n",
+    )
+    .unwrap();
+    git(&src, &["add", ".gitmodules"]);
+    let commit = "1111111111111111111111111111111111111111";
+    git(
+        &src,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{commit},lib"),
+        ],
+    );
+    git(&src, &["commit", "-q", "-m", "add a submodule"]);
+    git(&src, &["config", "uploadpack.allowFilter", "true"]);
+    git(&src, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
+    let path = src.to_str().unwrap().replace('\\', "/");
+    let url = if path.starts_with('/') {
+        format!("file://{path}")
+    } else {
+        format!("file:///{path}")
+    };
+    // 取り出さないので、.gitmodules の中身は手元にない。
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--no-checkout",
+            "--filter=blob:none",
+            &url,
+            "partial",
+        ],
+    );
+    let backend = GixBackend::open(tmp.path().join("partial")).unwrap();
+    let refs = backend.refs().unwrap();
+    let subs: Vec<_> = refs
+        .entries
+        .iter()
+        .filter(|e| e.kind == amonhen_model::RefKind::Submodule)
+        .map(|e| e.name.as_str())
+        .collect();
+    assert_eq!(subs, ["lib"]);
+}
+
 fn git_older_than_2_29() -> bool {
     amonhen_backend_cli::git_version().is_some_and(|(a, b, _)| (a, b) < (2, 29))
 }

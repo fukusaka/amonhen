@@ -145,6 +145,48 @@ fn to_oid(id: &gix::oid) -> Result<Oid> {
 }
 
 impl GixBackend {
+    /// `.gitmodules` のサブモジュールの行（パスの順）。gix は作業ツリーになければ index か HEAD のツリーの blob を
+    /// 読むので、partial clone で取り出していない（`--no-checkout` など）と中身が手元になく、ref の一覧ごと失敗する。
+    /// そのときはその blob だけを取ってから読み直す。
+    fn submodule_entries(&self, repo: &gix::Repository) -> Result<Vec<RefEntry>> {
+        let read = |repo: &gix::Repository| -> Result<Vec<RefEntry>> {
+            let mut subs = Vec::new();
+            for sm in repo.submodules()?.into_iter().flatten() {
+                let target = sm
+                    .index_id()
+                    .ok()
+                    .flatten()
+                    .map(|id| to_oid(id.as_ref()))
+                    .transpose()?;
+                subs.push(RefEntry {
+                    kind: RefKind::Submodule,
+                    name: sm.path()?.to_string(),
+                    target,
+                    detail: None,
+                    ahead: 0,
+                    behind: 0,
+                    gone: false,
+                });
+            }
+            subs.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(subs)
+        };
+        let error = match read(repo) {
+            Ok(subs) => return Ok(subs),
+            Err(e) => e,
+        };
+        let blob = promisor_remote(repo).and_then(|_| {
+            let tree = repo.head_tree().ok()?;
+            let entry = tree.lookup_entry_by_path(".gitmodules").ok()??;
+            to_oid(entry.oid()).ok()
+        });
+        let Some(blob) = blob else {
+            return Err(error);
+        };
+        self.prefetch_blobs(&[blob])?;
+        read(&self.repo.to_thread_local())
+    }
+
     /// 改行の変換などの pipeline を使う（index が変わっていれば作り直す）。
     fn with_filters<T>(
         &self,
@@ -386,28 +428,7 @@ impl GitBackend for GixBackend {
             }
         }
 
-        if let Some(submodules) = repo.submodules()? {
-            let mut subs = Vec::new();
-            for sm in submodules {
-                let target = sm
-                    .index_id()
-                    .ok()
-                    .flatten()
-                    .map(|id| to_oid(id.as_ref()))
-                    .transpose()?;
-                subs.push(RefEntry {
-                    kind: RefKind::Submodule,
-                    name: sm.path()?.to_string(),
-                    target,
-                    detail: None,
-                    ahead: 0,
-                    behind: 0,
-                    gone: false,
-                });
-            }
-            subs.sort_by(|a, b| a.name.cmp(&b.name));
-            entries.extend(subs);
-        }
+        entries.extend(self.submodule_entries(&repo)?);
 
         // 上流との差は git に数えさせる（gix で数えるより速く、git と同じ結果になる）。
         if let Some(git) = &self.git
