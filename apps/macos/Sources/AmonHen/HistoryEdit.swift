@@ -63,6 +63,28 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
     private let originalOrder: [String]
     private let table = NSTableView()
     private let summary = NSTextField(labelWithString: "")
+    /// 一緒に動くブランチ・残るブランチ・コンフリクトの見込み（`rewritePreview`）。
+    private let preview = NSTextField(wrappingLabelWithString: "")
+    /// 読みかけの見通し（変えるたびに読み直し、古い答えは捨てる）。
+    private var previewTask: Task<Void, Never>?
+    /// コンフリクトしそうなコミット（行に印を付ける）。
+    private var conflicting: [String: [String]] = [:]
+    /// 積み重ねたブランチも一緒に動かすか（この編集だけ。最初は git の rebase.updateRefs のとおり）。
+    private let moveStacked = NSButton(checkboxWithTitle: L("Also move the stacked branches"), target: nil, action: nil)
+    private var configuredUpdateRefs: Bool?
+    private var touchedUpdateRefs = false
+
+    /// この編集の指定（git の設定と同じなら nil）。
+    private var updateRefs: Bool? {
+        guard touchedUpdateRefs, let configuredUpdateRefs else { return nil }
+        let on = moveStacked.state == .on
+        return on == configuredUpdateRefs ? nil : on
+    }
+
+    @objc private func moveStackedToggled() {
+        touchedUpdateRefs = true
+        updatePreview()
+    }
     /// 編集モードを終える（Apply したら true）。
     var onFinish: ((Bool) -> Void)?
     /// 下のステータスバーに出す行（要約・Cancel・Apply）。
@@ -214,6 +236,13 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
             accessibilityDescription: nil) ?? NSImage())
         mark.symbolConfiguration = .init(pointSize: r.action == .squash || r.action == .fixup ? 11 : 6, weight: .regular)
         mark.contentTintColor = r.action == .drop ? .tertiaryLabelColor : .controlAccentColor
+        // コンフリクトしそうな行は、印を警告にしてファイルをツールチップに。
+        if let files = conflicting[r.oid] {
+            mark.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: L("Conflicts expected"))
+            mark.symbolConfiguration = .init(pointSize: 11, weight: .regular)
+            mark.contentTintColor = .systemOrange
+            mark.toolTip = L("Conflicts expected in %@", files.joined(separator: ", "))
+        }
         mark.widthAnchor.constraint(equalToConstant: 16).isActive = true
         let stack = NSStackView(views: [mark, texts, NSView(), popup])
         stack.spacing = 8
@@ -309,11 +338,26 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         summary.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         summary.lineBreakMode = .byTruncatingTail
         summary.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        preview.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        preview.textColor = .secondaryLabelColor
+        preview.maximumNumberOfLines = 3
+        preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let texts = NSStackView(views: [summary, preview])
+        texts.orientation = .vertical
+        texts.alignment = .leading
+        texts.spacing = 2
+        texts.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        moveStacked.target = self
+        moveStacked.action = #selector(moveStackedToggled)
+        moveStacked.controlSize = .small
+        moveStacked.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        moveStacked.isHidden = true
+        moveStacked.toolTip = L("For this edit only (git’s update-ref). Starts from rebase.updateRefs.")
         let cancel = NSButton(title: L("Cancel"), target: self, action: #selector(cancel))
         cancel.keyEquivalent = "\u{1b}"
         let apply = NSButton(title: L("Apply Changes"), target: self, action: #selector(applyClicked))
         apply.keyEquivalent = "\r"
-        return StatusBarController.row([icon, summary, NSView(), cancel, apply], height: 34,
+        return StatusBarController.row([icon, texts, NSView(), moveStacked, cancel, apply], height: 34,
                                        tint: NSColor.controlAccentColor.withAlphaComponent(0.08))
     }
 
@@ -331,16 +375,50 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
         if count(.edit) > 0 { parts.append(L("%ld to change files", count(.edit))) }
         summary.stringValue = parts.isEmpty ? L("No changes yet.")
             : L("Changes: %@.", ListFormatter.localizedString(byJoining: parts)) + " " + Actions.canUndo
+        updatePreview()
+    }
+
+    /// 変えるたびに、一緒に動くブランチとコンフリクトの見込みを読み直す（少し待ってから。続けて変えたら前のものは
+    /// 捨てる）。
+    private func updatePreview() {
+        previewTask?.cancel()
+        guard hasChanges else {
+            preview.stringValue = ""
+            preview.isHidden = true
+            return
+        }
+        let edit: [String: Any] = ["kind": "plan", "steps": planSteps()]
+        let actions = self.actions
+        let choice: Bool? = touchedUpdateRefs ? moveStacked.state == .on : nil
+        previewTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled else { return }
+            let answer = await actions.rewritePreview(edit: edit, updateRefs: choice)
+            guard !Task.isCancelled, let self else { return }
+            if let state = answer?.updateRefs, !touchedUpdateRefs {
+                configuredUpdateRefs = state.configured
+                moveStacked.state = state.configured ? .on : .off
+                moveStacked.isEnabled = state.available
+            }
+            // 積み重ねたブランチがあるときだけ選ばせる。
+            moveStacked.isHidden = answer.map { $0.moving.isEmpty && !$0.staying.contains { $0.reason == "setting" || $0.reason == "off" } } ?? true
+            let lines = answer?.lines() ?? []
+            preview.stringValue = lines.joined(separator: " ")
+            preview.textColor = answer?.hasConflicts == true ? .systemOrange : .secondaryLabelColor
+            preview.isHidden = lines.isEmpty
+            let marks = Dictionary((answer?.conflicts ?? []).map { ($0.oid, $0.files) }, uniquingKeysWith: { a, _ in a })
+            if marks.keys.sorted() != conflicting.keys.sorted() {
+                conflicting = marks
+                table.reloadData()
+            }
+            NotificationCenter.default.post(name: .statusBarContentChanged, object: nil)
+        }
     }
 
     @objc private func cancel() { onFinish?(false) }
 
-    @objc private func applyClicked() {
-        guard hasChanges else {
-            onFinish?(false)
-            return
-        }
-        // 古い順にし、まとまり（squash を含む）の最後の squash に、まとめたメッセージを付ける。
+    /// コアに渡す並び（古い順）。まとまり（squash を含む）の最後の squash に、まとめたメッセージを付ける。
+    private func planSteps() -> [[String: Any]] {
         var steps: [[String: Any]] = []
         let ordered = Array(rows.reversed())
         for (i, row) in ordered.enumerated() {
@@ -358,7 +436,16 @@ final class HistoryEditController: NSViewController, NSTableViewDataSource, NSTa
             }
             steps.append(step)
         }
-        actions.rewrite(L("Edit %ld Commits", rows.count), ["kind": "plan", "steps": steps])
+        return steps
+    }
+
+    @objc private func applyClicked() {
+        guard hasChanges else {
+            onFinish?(false)
+            return
+        }
+        let steps = planSteps()
+        actions.rewrite(L("Edit %ld Commits", rows.count), ["kind": "plan", "steps": steps], updateRefs: updateRefs)
         onFinish?(true)
     }
 }

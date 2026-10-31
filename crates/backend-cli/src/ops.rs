@@ -7,6 +7,15 @@ use amonhen_model::{
 
 use crate::Git;
 
+/// 積み重ねたブランチを一緒に動かすかのこの操作だけの指定（git 2.38 から。古い git には渡さない）。
+fn update_refs_flag(update_refs: Option<bool>) -> Option<&'static str> {
+    match update_refs {
+        Some(true) if crate::git_at_least(2, 38) => Some("--update-refs"),
+        Some(false) if crate::git_at_least(2, 38) => Some("--no-update-refs"),
+        _ => None,
+    }
+}
+
 fn hex(oid: &Oid) -> String {
     oid.to_string()
 }
@@ -67,15 +76,28 @@ impl Git {
     /// `theirs` を `ours` にマージした木と、コンフリクトするファイル（`merge-tree --write-tree`、git 2.38 から）。
     /// `label` はエラーに出す `ours` の名前。
     fn merge_tree(&self, ours: &str, theirs: &str, label: &str) -> Result<(String, Vec<String>)> {
-        let args = [
+        self.merge_tree_with_base(ours, theirs, None, label)
+    }
+
+    /// `merge_tree` の、共通の祖先を決めて渡す形（`--merge-base`、git 2.40 から）。cherry-pick と同じく、
+    /// `theirs` の親を祖先にすれば、`theirs` の変更だけを `ours` に当てた結果になる。
+    fn merge_tree_with_base(
+        &self,
+        ours: &str,
+        theirs: &str,
+        base: Option<&str>,
+        label: &str,
+    ) -> Result<(String, Vec<String>)> {
+        let base = base.map(|b| format!("--merge-base={b}"));
+        let mut args = vec![
             "merge-tree",
             "--write-tree",
             "--name-only",
             "--no-messages",
             "-z",
-            ours,
-            theirs,
         ];
+        args.extend(base.as_deref());
+        args.extend([ours, theirs]);
         let mut cmd = self.command(&args);
         cmd.env("GIT_OPTIONAL_LOCKS", "0");
         let repo = self.workdir.to_string_lossy().into_owned();
@@ -570,6 +592,35 @@ impl Operations for Git {
         Ok(Some(steps))
     }
 
+    fn predict_replay(&self, onto: &str, picks: &[String]) -> Result<Option<Vec<Vec<String>>>> {
+        if !crate::git_at_least(2, 40) {
+            return Ok(None);
+        }
+        // 1 つずつ、そのコミットの親との差分を、ここまでの結果に当てる。結果は仮のコミットにして次の土台にする。
+        let mut base = onto.to_owned();
+        let mut steps = Vec::with_capacity(picks.len());
+        for pick in picks {
+            let parent = format!("{pick}^");
+            let (tree, conflicts) =
+                match self.merge_tree_with_base(&base, pick, Some(&parent), onto) {
+                    Ok(result) => result,
+                    // root のコミット（親がない）は調べない。
+                    Err(_)
+                        if self
+                            .read(&["rev-parse", "--verify", "--quiet", &parent])
+                            .is_err() =>
+                    {
+                        steps.push(Vec::new());
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                };
+            steps.push(conflicts);
+            base = self.forecast_commit(&tree, &base, pick)?;
+        }
+        Ok(Some(steps))
+    }
+
     fn range_diff(
         &self,
         ranges: &[String],
@@ -640,9 +691,12 @@ impl Operations for Git {
         }
     }
 
-    fn rebase(&self, onto: &str) -> Result<Outcome> {
-        // 積み重ねたブランチも一緒に動かすかは、git の `rebase.updateRefs` に任せる（git の既定はオフ）。
-        self.stoppable(&["rebase", onto], &[])
+    fn rebase(&self, onto: &str, update_refs: Option<bool>) -> Result<Outcome> {
+        // 積み重ねたブランチも一緒に動かすかは、指定がなければ git の `rebase.updateRefs` に任せる（git の既定はオフ）。
+        let mut args = vec!["rebase"];
+        args.extend(update_refs_flag(update_refs));
+        args.push(onto);
+        self.stoppable(&args, &[])
     }
 
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
@@ -669,10 +723,16 @@ impl Operations for Git {
         todo: &std::path::Path,
         message: Option<&std::path::Path>,
         rebase_merges: bool,
+        update_refs: Option<bool>,
     ) -> Result<Outcome> {
-        // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は、`rebase.updateRefs` が true で、git が
-        // 2.38 以降のときだけ残す（git の rebase と同じ条件）。merge を作り直すときは git が todo を作る。
-        if !rebase_merges && !self.updates_refs_in_rebase() {
+        // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は、この操作の指定か、なければ
+        // `rebase.updateRefs` が true で、git が 2.38 以降のときだけ残す（git の rebase と同じ条件）。merge を
+        // 作り直すときは git が todo を作るので、git にそのまま伝える。
+        let keep = match update_refs {
+            Some(on) => on && crate::git_at_least(2, 38),
+            None => self.updates_refs_in_rebase(),
+        };
+        if !rebase_merges && !keep {
             let text = std::fs::read_to_string(todo)?;
             if text.lines().any(|l| l.starts_with("update-ref ")) {
                 let kept: String = text
@@ -735,6 +795,7 @@ impl Operations for Git {
         args.extend(["rebase", "--interactive", "--autostash", "--no-autosquash"]);
         if rebase_merges {
             args.push("--rebase-merges");
+            args.extend(update_refs_flag(update_refs));
         }
         args.push(base.as_deref().unwrap_or("--root"));
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();

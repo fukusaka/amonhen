@@ -354,6 +354,10 @@ pub trait Operations: Send + Sync {
     /// いくつもあれば octopus と同じく、前のものまでを合わせた結果に重ねて調べる。作業ツリーと index には
     /// 触らない。git が古くて調べられなければ `None`。
     fn predict_merge(&self, ours: &str, theirs: &[String]) -> Result<Option<Vec<Vec<String>>>>;
+    /// `picks` を順に `onto` へ載せ直したら（rebase・History の編集）、それぞれでコンフリクトするファイル（なければ
+    /// 空）。各コミットは、その親との差分を、ここまで載せた結果に当てて調べる。作業ツリーと index には触らない。
+    /// git が古くて（`merge-tree --merge-base` は 2.40 から）調べられなければ `None`。
+    fn predict_replay(&self, onto: &str, picks: &[String]) -> Result<Option<Vec<Vec<String>>>>;
     /// 同じ一連のコミットの 2 つの版を比べる（`git range-diff`）。`ranges` は git と同じ形（`A...B`、
     /// `<base> <A> <B>`、`<base>..<A> <base>..<B>`）。`creation_factor` は git の `--creation-factor`
     /// （`None` なら git の既定）。コミット ID は完全な形で返す。
@@ -367,7 +371,9 @@ pub trait Operations: Send + Sync {
     /// `revs` を今のブランチに merge する（2 つ以上なら 1 つのコミットにまとめる octopus）。octopus が途中で
     /// 断ったら、作業ツリーと index を始める前に戻してからエラーを返す。
     fn merge(&self, revs: &[String]) -> Result<Outcome>;
-    fn rebase(&self, onto: &str) -> Result<Outcome>;
+    /// 今のブランチを `onto` へ載せ直す。`update_refs` は、積み重ねたブランチを一緒に動かすかのこの操作だけの指定
+    /// （`--update-refs`・`--no-update-refs`、git 2.38 から）。`None` なら git の `rebase.updateRefs` のとおり。
+    fn rebase(&self, onto: &str, update_refs: Option<bool>) -> Result<Outcome>;
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;
     fn revert(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;
     /// 用意した todo で非対話の rebase を行う（コミットの編集）。`base` が `None` なら `--root`。`message` は、
@@ -380,6 +386,7 @@ pub trait Operations: Send + Sync {
         todo: &std::path::Path,
         message: Option<&std::path::Path>,
         rebase_merges: bool,
+        update_refs: Option<bool>,
     ) -> Result<Outcome>;
     fn sequence_in_progress(&self) -> Result<Option<Sequence>>;
     /// rebase・am の途中なら、何番目か（今, 全体）。

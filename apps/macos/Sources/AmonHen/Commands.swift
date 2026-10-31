@@ -158,5 +158,5 @@ enum Titles {
     static let showInFinder = L("Show in Finder")
 
     /// 短いコミット ID の桁（どこでも同じ）。
-    static let shortIDLength = 8
+    nonisolated static let shortIDLength = 8
 }

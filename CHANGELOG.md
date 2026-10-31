@@ -17,6 +17,11 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- History's edit mode and the Rebase sheets say which stacked branches move with the rewrite or stay and why, which
+  are pushed and will need Force Push, and which commits are expected to conflict (git 2.40 for the forecast). The
+  Rebase sheets draw the branch before and after, and "Also move the stacked branches" decides for that rebase or
+  edit only. `amonhen rewrite-preview` prints the same.
+
 - Push and Pull each confirm in one sheet: a diverged Push offers Pull… or Force Push there, and Pull with no upstream
   picks the remote branch there. Repository > Pull With is gone, and Create Pull Request goes on after its push.
 - Force Push replaces the remote branch only if it is still at the commit the sheet showed, so commits fetched in the
