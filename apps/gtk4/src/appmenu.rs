@@ -44,6 +44,8 @@ pub struct Parts {
     pub range_diff: crate::rangediff::Opener,
     /// リポジトリの場所（手元のパス、`daemon:…`、`ssh://…`）。
     pub location: String,
+    /// リポジトリの worktree。
+    pub worktrees: Rc<crate::worktrees::Worktrees>,
 }
 
 /// 見出しのメニューとツールバーのボタン（`--open-menu` で開く、ref を読んだら数を出す）。
@@ -168,7 +170,7 @@ const FE_ACCELS: &[(&str, &str)] = &[
 ];
 
 /// 表にあって、この FE にまだ機能のない操作（メニューに出さない）。
-pub const PENDING: &[&str] = &["new-worktree", "prune-worktrees"];
+pub const PENDING: &[&str] = &[];
 
 /// 状態を持つので [`handlers`] とは別に登録する操作。
 #[cfg(test)]
@@ -257,6 +259,11 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             Box::new(|p| refops::ask_new_branch(&p.actions, &start_point(p))),
         ),
         ("rename-branch", Box::new(rename_branch)),
+        (
+            "new-worktree",
+            Box::new(|p| crate::worktrees::new_worktree(&p.actions, &p.worktrees, start_point(p))),
+        ),
+        ("prune-worktrees", run(json!({ "op": "worktreePrune" }))),
         ("set-upstream", Box::new(set_upstream)),
         (
             "new-tag",

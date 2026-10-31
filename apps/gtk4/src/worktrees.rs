@@ -510,6 +510,19 @@ impl Worktrees {
             .collect()
     }
 
+    /// `key` の worktree の変更の数。
+    pub fn count(&self, key: &str) -> usize {
+        self.counts.borrow().get(key).copied().unwrap_or(0)
+    }
+
+    /// `key` の worktree を閉じる（消す前に）。書き込む先なら開いたリポジトリに戻す。
+    pub fn forget(&self, key: &str) {
+        if self.editing.borrow().as_ref().is_some_and(|s| s.key == key) {
+            self.activate(None);
+        }
+        self.slots.borrow_mut().retain(|s| s.key != key);
+    }
+
     /// `key` の worktree。
     pub fn info(&self, key: &str) -> Option<Info> {
         self.list.borrow().iter().find(|w| w.key == key).cloned()
@@ -784,6 +797,206 @@ impl Worktrees {
             });
         });
     }
+}
+
+/// サイドバーの worktree の右クリック: Edit This Worktree・Show in Files・Open in Terminal（フォルダがあるときだけ。
+/// 手元のものだけ）、メインでなければ Remove Worktree…（フォルダがなければ Prune Worktrees）。
+pub fn menu(
+    actions: &Rc<crate::actions::Actions>,
+    worktrees: &Rc<Worktrees>,
+    info: &Info,
+) -> Vec<crate::menu::Item> {
+    use crate::menu::{self, Item};
+    let mut items = Vec::new();
+    let path = info.path.clone();
+    if info.prunable.is_none() {
+        let (a, p) = (actions.clone(), path.clone());
+        items.push(menu::action(tr!("Edit This Worktree"), move || {
+            a.edit_worktree(&p)
+        }));
+        if !worktrees.remote {
+            let (a, p) = (actions.clone(), path.clone());
+            items.push(menu::action(tr!("Show in Files"), move || {
+                if let Some(window) = a.window() {
+                    crate::appmenu::reveal(window.upcast_ref(), std::path::Path::new(&p));
+                }
+            }));
+            let (a, p) = (actions.clone(), path.clone());
+            items.push(menu::action(tr!("Open in Terminal"), move || {
+                if !crate::appmenu::terminal_at(std::path::Path::new(&p))
+                    && let Some(window) = a.window()
+                {
+                    window.error_bell();
+                }
+            }));
+        }
+    }
+    // メインの worktree と、開いたリポジトリの worktree は消せない。
+    if !info.main && !info.current {
+        items.push(Item::Separator);
+        if info.prunable.is_some() {
+            let a = actions.clone();
+            items.push(menu::action(tr!("Prune Worktrees"), move || {
+                a.perform(json!({ "op": "worktreePrune" }))
+            }));
+        } else {
+            let (a, w, info) = (actions.clone(), worktrees.clone(), info.clone());
+            items.push(menu::action(tr!("Remove Worktree…"), move || {
+                remove(&a, &w, &info)
+            }));
+        }
+    }
+    items
+}
+
+/// worktree を消す（`git worktree remove`）。変更が残っていれば、それもフォルダと一緒に消えると確かめてから
+/// --force（ロックしたものも）。ブランチは残る。Undo では戻せない。
+pub fn remove(actions: &Rc<crate::actions::Actions>, worktrees: &Rc<Worktrees>, info: &Info) {
+    if info.main || info.key == worktrees.opened_key() {
+        if let Some(window) = actions.window() {
+            window.error_bell();
+        }
+        return;
+    }
+    let (actions, worktrees, info) = (actions.clone(), worktrees.clone(), info.clone());
+    glib::spawn_future_local(async move {
+        // 消すと戻せないので、覚えている数（5 分前のこともある）ではなく、今の数を数えて確かめる。
+        let mut changes = worktrees.count(&info.key);
+        if let Some(repo) = worktrees.opened() {
+            let command = json!({ "op": "worktreeChanges", "paths": [info.path], "fresh": true });
+            let reply = crate::sheets::run(&repo, command).await;
+            if let Some(count) = reply["info"]["worktrees"][0]["count"].as_u64() {
+                changes = count as usize;
+            }
+        }
+        confirm_remove(&actions, &worktrees, &info, changes).await;
+    });
+}
+
+async fn confirm_remove(
+    actions: &Rc<crate::actions::Actions>,
+    worktrees: &Rc<Worktrees>,
+    info: &Info,
+    changes: usize,
+) {
+    use crate::sheets::{Response, Sheet};
+    let message = if changes > 0 {
+        format!(
+            "{} {}",
+            tr!(
+                "{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays.",
+                path = &info.path,
+                count = changes
+            ),
+            crate::sheets::cant_undo()
+        )
+    } else {
+        tr!(
+            "Removes the folder {path}. The branch stays.",
+            path = &info.path
+        )
+    };
+    let sheet = Sheet::unnamed(
+        crate::sheets::parent(actions).as_ref(),
+        &tr!("Remove the worktree “{name}”?", name = &info.name),
+        &message,
+    );
+    // 作業中の変更があれば、消えたら戻せない（赤く、Return では押さない）。
+    sheet.buttons(&tr!("Remove Worktree"), changes > 0, None);
+    if sheet.run().await != Response::Ok {
+        return;
+    }
+    worktrees.forget(&info.key);
+    actions.perform(json!({
+        "op": "worktreeRemove",
+        "path": info.path,
+        "force": changes > 0 || info.locked.is_some(),
+    }));
+}
+
+/// Repository > New Worktree…: `start` からブランチを作り、それを checkout した worktree を新しいフォルダに作って、
+/// 書き込む先にする。フォルダの既定は、リポジトリの隣の「<名前>-<ブランチ>」（git の worktree でよくある置き方）。
+pub fn new_worktree(
+    actions: &Rc<crate::actions::Actions>,
+    worktrees: &Rc<Worktrees>,
+    start: String,
+) {
+    use crate::sheets::{Response, Sheet};
+    let base = worktrees
+        .opened()
+        .and_then(|r| r.paths().workdir)
+        .map(|p| p.to_string_lossy().trim_end_matches('/').to_owned())
+        .unwrap_or_default();
+    let (parent, repo_name) = base.rsplit_once('/').unwrap_or(("", base.as_str()));
+    let (parent, repo_name) = (parent.to_owned(), repo_name.to_owned());
+    let remote = worktrees.remote;
+    let actions = actions.clone();
+    glib::spawn_future_local(async move {
+        let sheet = Sheet::unnamed(
+            crate::sheets::parent(&actions).as_ref(),
+            &tr!("New Worktree"),
+            &tr!(
+                "Creates a branch from {start} and checks it out in a new folder.",
+                start = &start
+            ),
+        );
+        let branch = gtk::Entry::new();
+        branch.set_placeholder_text(Some(&tr!("Branch name")));
+        branch.set_activates_default(true);
+        let folder = gtk::Entry::new();
+        folder.set_placeholder_text(Some(&tr!("Folder")));
+        folder.set_activates_default(true);
+        let fields = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        fields.append(&branch);
+        fields.append(&folder);
+        sheet.add(&fields);
+        let f = folder.downgrade();
+        branch.connect_changed(move |branch| {
+            let Some(folder) = f.upgrade() else { return };
+            let name = branch.text().trim().replace('/', "-");
+            let hint = if name.is_empty() {
+                tr!("Folder")
+            } else {
+                format!("{parent}/{repo_name}-{name}")
+            };
+            folder.set_placeholder_text(Some(&hint));
+        });
+        sheet.buttons(&tr!("Create"), false, None);
+        branch.grab_focus();
+        if sheet.run().await != Response::Ok {
+            return;
+        }
+        let name = branch.text().trim().to_owned();
+        if name.is_empty() {
+            if let Some(window) = actions.window() {
+                window.error_bell();
+            }
+            return;
+        }
+        let mut path = folder.text().trim().to_owned();
+        if path.is_empty() {
+            path = folder
+                .placeholder_text()
+                .map(|t| t.to_string())
+                .unwrap_or_default();
+        }
+        // ~ は手元のホーム（SSH 先のパスはそのまま）。
+        if !remote
+            && let Some(rest) = path.strip_prefix("~/")
+            && let Some(home) = std::env::var_os("HOME")
+        {
+            path = format!("{}/{rest}", home.to_string_lossy());
+        }
+        let a = actions.clone();
+        actions.perform_with(
+            vec![json!({ "op": "worktreeAdd", "path": path, "newBranch": name, "start": start })],
+            move |reply| {
+                if reply["ok"].as_bool() == Some(true) {
+                    a.edit_worktree(&path);
+                }
+            },
+        );
+    });
 }
 
 #[cfg(test)]

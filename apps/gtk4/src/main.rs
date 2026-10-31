@@ -939,9 +939,14 @@ fn build_window(app: &gtk::Application, args: Args) {
     };
     let (a, h, o) = (actions.clone(), head.clone(), open_submodule.clone());
     let (rd, rdo) = (Rc::downgrade(&range_diff), range_diff_opener.clone());
+    let w = Rc::downgrade(&worktrees);
     sidebar.set_actions(actions.clone());
     sidebar.connect_menu(move |data, known| match (&data.item, rd.upgrade()) {
         (sidebar::Item::Page(Page::RangeDiff), Some(range_diff)) => range_diff.sidebar_menu(),
+        (sidebar::Item::Worktree(info), _) => match w.upgrade() {
+            Some(worktrees) => worktrees::menu(&a, &worktrees, info),
+            None => Vec::new(),
+        },
         _ => refops::menu(&a, data, known, h().as_deref(), &o, &rdo),
     });
     let (a, h) = (actions.clone(), head.clone());
@@ -973,6 +978,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         go_to,
         range_diff: range_diff_opener.clone(),
         location: text.clone(),
+        worktrees: worktrees.clone(),
     });
     let latest_refs = refs;
     // `--edit-worktree` の worktree を書き込む先にし終えたか（`--perform`・`--action` はそれから）。

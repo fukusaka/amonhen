@@ -1451,3 +1451,15 @@
 "Checked out in the worktree “{name}” ({path})" = "worktree「{name}」（{path}）で checkout されています";
 "Open Worktree {name}" = "worktree {name} を開く";
 "  · in the worktree {name}" = "　· worktree {name} で使用中";
+
+/* GTK4: Worktrees（New Worktree…・Remove Worktree…・右クリック） */
+"New Worktree" = "New Worktree";
+"Creates a branch from {start} and checks it out in a new folder." = "{start} からブランチを作り、新しいフォルダに checkout します。";
+"Branch name" = "ブランチの名前";
+"Folder" = "フォルダ";
+"Edit This Worktree" = "この worktree を編集";
+"Remove Worktree" = "Remove Worktree";
+"Remove Worktree…" = "Remove Worktree…";
+"Remove the worktree “{name}”?" = "worktree「{name}」を消しますか？";
+"{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays." = "{path} には、コミットしていない変更が {count} ファイルあります。フォルダと一緒に失われます。ブランチは残ります。";
+"Removes the folder {path}. The branch stays." = "フォルダ {path} を消します。ブランチは残ります。";

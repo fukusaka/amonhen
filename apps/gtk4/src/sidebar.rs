@@ -539,6 +539,11 @@ impl Sidebar {
         if before == view {
             return;
         }
+        if before.list.is_empty() && self.inner.debug.borrow().is_some() {
+            self.inner.rebuild(false);
+            self.inner.run_debug();
+            return;
+        }
         let keys =
             |l: &[crate::worktrees::Info]| l.iter().map(|w| w.key.clone()).collect::<Vec<_>>();
         let (a, b) = (before.layout(), view.layout());
@@ -951,6 +956,18 @@ impl Inner {
         let Some(debug) = self.debug.take() else {
             return;
         };
+        // worktree の行は、一覧を読んでから（まだなら [`Sidebar::set_worktrees`] がもう一度呼ぶ）。
+        let spec = debug
+            .menu
+            .as_deref()
+            .or(debug.mark.as_deref())
+            .unwrap_or_default();
+        if self.worktrees.borrow().list.is_empty()
+            && spec.split(',').any(|s| self.find(s).is_none())
+        {
+            self.debug.replace(Some(debug));
+            return;
+        }
         let anchor = self
             .root_widget()
             .unwrap_or_else(|| gtk::Label::new(None).upcast());
