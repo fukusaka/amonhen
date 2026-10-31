@@ -811,6 +811,13 @@ impl Operations for RemoteOperations {
         })
     }
 
+    fn predict_replay(&self, onto: &str, picks: &[String]) -> Result<Option<Vec<Vec<String>>>> {
+        self.op(Op::PredictReplay {
+            onto: onto.to_owned(),
+            picks: picks.to_vec(),
+        })
+    }
+
     fn range_diff(
         &self,
         ranges: &[String],

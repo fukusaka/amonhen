@@ -237,6 +237,11 @@ pub enum Op {
         ours: String,
         theirs: Vec<String>,
     },
+    /// → `Option<Vec<Vec<String>>>`
+    PredictReplay {
+        onto: String,
+        picks: Vec<String>,
+    },
     Resolve(String),
     Merge(Vec<String>),
     Rebase(String),

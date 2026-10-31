@@ -67,15 +67,28 @@ impl Git {
     /// `theirs` を `ours` にマージした木と、コンフリクトするファイル（`merge-tree --write-tree`、git 2.38 から）。
     /// `label` はエラーに出す `ours` の名前。
     fn merge_tree(&self, ours: &str, theirs: &str, label: &str) -> Result<(String, Vec<String>)> {
-        let args = [
+        self.merge_tree_with_base(ours, theirs, None, label)
+    }
+
+    /// `merge_tree` の、共通の祖先を決めて渡す形（`--merge-base`、git 2.40 から）。cherry-pick と同じく、
+    /// `theirs` の親を祖先にすれば、`theirs` の変更だけを `ours` に当てた結果になる。
+    fn merge_tree_with_base(
+        &self,
+        ours: &str,
+        theirs: &str,
+        base: Option<&str>,
+        label: &str,
+    ) -> Result<(String, Vec<String>)> {
+        let base = base.map(|b| format!("--merge-base={b}"));
+        let mut args = vec![
             "merge-tree",
             "--write-tree",
             "--name-only",
             "--no-messages",
             "-z",
-            ours,
-            theirs,
         ];
+        args.extend(base.as_deref());
+        args.extend([ours, theirs]);
         let mut cmd = self.command(&args);
         cmd.env("GIT_OPTIONAL_LOCKS", "0");
         let repo = self.workdir.to_string_lossy().into_owned();
@@ -566,6 +579,35 @@ impl Operations for Git {
             if i + 1 < theirs.len() {
                 base = self.forecast_commit(&tree, &base, rev)?;
             }
+        }
+        Ok(Some(steps))
+    }
+
+    fn predict_replay(&self, onto: &str, picks: &[String]) -> Result<Option<Vec<Vec<String>>>> {
+        if !crate::git_at_least(2, 40) {
+            return Ok(None);
+        }
+        // 1 つずつ、そのコミットの親との差分を、ここまでの結果に当てる。結果は仮のコミットにして次の土台にする。
+        let mut base = onto.to_owned();
+        let mut steps = Vec::with_capacity(picks.len());
+        for pick in picks {
+            let parent = format!("{pick}^");
+            let (tree, conflicts) =
+                match self.merge_tree_with_base(&base, pick, Some(&parent), onto) {
+                    Ok(result) => result,
+                    // root のコミット（親がない）は調べない。
+                    Err(_)
+                        if self
+                            .read(&["rev-parse", "--verify", "--quiet", &parent])
+                            .is_err() =>
+                    {
+                        steps.push(Vec::new());
+                        continue;
+                    }
+                    Err(e) => return Err(e),
+                };
+            steps.push(conflicts);
+            base = self.forecast_commit(&tree, &base, pick)?;
         }
         Ok(Some(steps))
     }

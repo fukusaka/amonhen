@@ -354,6 +354,10 @@ pub trait Operations: Send + Sync {
     /// いくつもあれば octopus と同じく、前のものまでを合わせた結果に重ねて調べる。作業ツリーと index には
     /// 触らない。git が古くて調べられなければ `None`。
     fn predict_merge(&self, ours: &str, theirs: &[String]) -> Result<Option<Vec<Vec<String>>>>;
+    /// `picks` を順に `onto` へ載せ直したら（rebase・History の編集）、それぞれでコンフリクトするファイル（なければ
+    /// 空）。各コミットは、その親との差分を、ここまで載せた結果に当てて調べる。作業ツリーと index には触らない。
+    /// git が古くて（`merge-tree --merge-base` は 2.40 から）調べられなければ `None`。
+    fn predict_replay(&self, onto: &str, picks: &[String]) -> Result<Option<Vec<Vec<String>>>>;
     /// 同じ一連のコミットの 2 つの版を比べる（`git range-diff`）。`ranges` は git と同じ形（`A...B`、
     /// `<base> <A> <B>`、`<base>..<A> <base>..<B>`）。`creation_factor` は git の `--creation-factor`
     /// （`None` なら git の既定）。コミット ID は完全な形で返す。

@@ -241,6 +241,19 @@ pub enum Command {
         label: String,
         edit: HistoryEdit,
     },
+    /// 書き換える前の見通し（docs/design.md の「Rewriting operations and stacked branches」）。`edit` は History の
+    /// 編集、`onto` は今のブランチをそこへ rebase すること（どちらか一方）。作業ツリー・index・ref には触らない。
+    /// `info`: `moving`（一緒に動くブランチ: name・upstream）、`staying`（書き換えるコミットに先頭があるのに残る
+    /// ブランチ: name・upstream・reason（`setting`: rebase.updateRefs がオフ、`git`: git が 2.38 より古い、
+    /// `checkedOut`: ほかの worktree で checkout 中）・worktree）、`current`・`currentUpstream`（今のブランチと
+    /// 上流。上流があれば、書き換えた後の push には Force Push が要る）、`conflicts`（コンフリクトしそうな
+    /// コミットとファイル: oid・files。調べられなければ null）。
+    RewritePreview {
+        #[serde(default)]
+        edit: Option<HistoryEdit>,
+        #[serde(default)]
+        onto: Option<String>,
+    },
     /// コミットのメッセージ全文（`text`）。
     CommitMessage {
         oid: String,
@@ -1785,6 +1798,169 @@ impl Repository {
         Ok(message)
     }
 
+    /// `RewritePreview` の中身。
+    fn rewrite_preview(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        edit: Option<&HistoryEdit>,
+        onto: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let head = ops.head_state()?.oid.ok_or_else(|| tr!("No commits yet"))?;
+        // 載せ直す土台、載せ直す順のコミット（予測に使う）、書き換わるコミット（ブランチを見る）。
+        let base: Option<Oid>;
+        let mut picks: Vec<Oid> = Vec::new();
+        let mut rewritten: std::collections::HashSet<Oid> = Default::default();
+        let mut forecast = true;
+        match (edit, onto) {
+            (Some(edit), _) => {
+                self.load_history()?;
+                let chain = self.editable_chain()?;
+                let past_merge = match edit {
+                    HistoryEdit::Plan { steps } => steps.iter().any(|s| {
+                        Oid::from_hex(&s.oid).is_none_or(|o| !chain.iter().any(|c| c.oid == o))
+                    }),
+                    _ => false,
+                };
+                if past_merge {
+                    // merge を越えるとき: 最初の親の並びの、いちばん古い編集から HEAD まで（取り込んだ側も作り直す）。
+                    // merge を作り直す見込みは調べない。
+                    let line = self.first_parent_chain()?;
+                    let HistoryEdit::Plan { steps } = edit else {
+                        unreachable!()
+                    };
+                    let oldest = steps.first().and_then(|s| Oid::from_hex(&s.oid));
+                    let start = line
+                        .iter()
+                        .position(|(c, _)| Some(c.oid) == oldest)
+                        .ok_or_else(|| tr!("Nothing to edit"))?;
+                    base = line[start].0.parent;
+                    if let Some(b) = base {
+                        rewritten.extend(
+                            self.backend()
+                                .commits_since(&[head], &[b])?
+                                .into_iter()
+                                .map(|c| c.id),
+                        );
+                    }
+                    forecast = false;
+                } else {
+                    let plan = rewrite::plan_rebase(&chain, edit, &[])?;
+                    base = plan.base;
+                    for line in plan.todo.lines() {
+                        let mut words = line.split(' ');
+                        let (Some(command), Some(oid)) =
+                            (words.next(), words.next().and_then(Oid::from_hex))
+                        else {
+                            continue;
+                        };
+                        rewritten.insert(oid);
+                        if command != "drop" {
+                            picks.push(oid);
+                        }
+                    }
+                }
+            }
+            (None, Some(onto)) => {
+                let b = ops.resolve(onto)?;
+                base = Some(b);
+                // rebase は merge を載せない。古い順にする。
+                let commits = self.backend().commits_since(&[head], &[b])?;
+                rewritten.extend(commits.iter().map(|c| c.id));
+                let mut linear: Vec<_> = commits
+                    .iter()
+                    .filter(|c| c.parents.len() <= 1)
+                    .map(|c| c.id)
+                    .collect();
+                linear.reverse();
+                picks = linear;
+            }
+            (None, None) => return Err(tr!("Nothing to preview").into()),
+        }
+        // コンフリクトの見込み（土台がない、root からの書き換えは調べない）。
+        let conflicts = match base.filter(|_| forecast && !picks.is_empty()) {
+            Some(b) => {
+                let hexes: Vec<String> = picks.iter().map(|o| o.to_string()).collect();
+                ops.predict_replay(&b.to_string(), &hexes)?.map(|steps| {
+                    hexes
+                        .iter()
+                        .zip(steps)
+                        .filter(|(_, files)| !files.is_empty())
+                        .map(|(oid, files)| serde_json::json!({ "oid": oid, "files": files }))
+                        .collect::<Vec<_>>()
+                })
+            }
+            None => None,
+        };
+        // 書き換えるコミットに先頭があるブランチ。動くのは git と同じ条件（rebase.updateRefs と git 2.38 以降）で、
+        // ほかの worktree で checkout 中のものは動かない。
+        let refs = self.load_refs()?;
+        let current = refs.refs.head_branch.clone();
+        let upstream_of = |name: &str| {
+            refs.refs
+                .entries
+                .iter()
+                .find(|e| e.kind == RefKind::Local && e.name == name)
+                .and_then(|e| e.detail.clone().filter(|_| !e.gone))
+        };
+        let worktrees: Vec<(String, String)> = ops
+            .worktree_list()
+            .map(|list| {
+                crate::worktree::parse(&list, self.paths().workdir.as_deref())
+                    .into_iter()
+                    .filter_map(|w| Some((w.branch?, w.path)))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let git_ok = ops.git_version()?.is_none_or(|(a, b, _)| (a, b) >= (2, 38));
+        let setting = ops
+            .config_list()?
+            .iter()
+            .rev()
+            .find(|e| e.key.eq_ignore_ascii_case("rebase.updateRefs"))
+            .is_some_and(|e| e.value.eq_ignore_ascii_case("true"));
+        let mut moving = Vec::new();
+        let mut staying = Vec::new();
+        for entry in refs
+            .refs
+            .entries
+            .iter()
+            .filter(|e| e.kind == RefKind::Local)
+        {
+            if Some(&entry.name) == current.as_ref()
+                || !entry.target.is_some_and(|t| rewritten.contains(&t))
+            {
+                continue;
+            }
+            let upstream = upstream_of(&entry.name);
+            let elsewhere = worktrees
+                .iter()
+                .find(|(branch, _)| *branch == entry.name)
+                .map(|(_, path)| path.clone());
+            let reason = if elsewhere.is_some() {
+                Some("checkedOut")
+            } else if !git_ok {
+                Some("git")
+            } else if !setting {
+                Some("setting")
+            } else {
+                None
+            };
+            match reason {
+                None => moving.push(serde_json::json!({ "name": entry.name, "upstream": upstream })),
+                Some(reason) => staying.push(serde_json::json!({
+                    "name": entry.name, "upstream": upstream, "reason": reason, "worktree": elsewhere,
+                })),
+            }
+        }
+        Ok(serde_json::json!({
+            "moving": moving,
+            "staying": staying,
+            "current": current,
+            "currentUpstream": current.as_deref().and_then(upstream_of),
+            "conflicts": conflicts,
+        }))
+    }
+
     /// merge を越える編集（History の編集モード）。git の `--rebase-merges` で merge を作り直し、git が作った todo の
     /// うち、変えるコミットの命令だけを替える。並べ替えはしない（merge をまたぐと、何をどこへ動かすかが一意でない）。
     fn rewrite_through_merges(
@@ -2548,6 +2724,11 @@ impl Repository {
             Command::BranchGroups => Ok(Response {
                 ok: true,
                 info: Some(self.branch_groups()?),
+                ..Default::default()
+            }),
+            Command::RewritePreview { edit, onto } => Ok(Response {
+                ok: true,
+                info: Some(self.rewrite_preview(ops, edit.as_ref(), onto.as_deref())?),
                 ..Default::default()
             }),
             Command::EditableCommits { through_merges } => {
@@ -4214,6 +4395,75 @@ mod tests {
         );
         assert_eq!(verified["info"]["checks"][1]["status"], "N");
         assert_eq!(extras["stats"][0]["added"], 1);
+    }
+
+    #[test]
+    fn a_preview_tells_which_branches_move_and_what_conflicts() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        // first → b（one）→ c（今のブランチ two）。c は b が足した行を書き換える。
+        std::fs::write(dir.join("a.txt"), "1\n2\n3\nb\n").unwrap();
+        git(dir, &["commit", "-qam", "b"]);
+        let b = git(dir, &["rev-parse", "HEAD"]);
+        git(dir, &["branch", "one"]);
+        git(dir, &["switch", "-q", "-c", "two"]);
+        std::fs::write(dir.join("a.txt"), "1\n2\n3\nc\n").unwrap();
+        git(dir, &["commit", "-qam", "c"]);
+        let c = git(dir, &["rev-parse", "HEAD"]);
+        let preview = |updates: &str| {
+            git(dir, &["config", "rebase.updateRefs", updates]);
+            let json = serde_json::json!({"op": "rewritePreview", "edit": {"kind": "plan", "steps": [
+                {"oid": b, "action": "drop"}, {"oid": c, "action": "pick"}]}});
+            run(&repo, &json.to_string())["info"].clone()
+        };
+        let off = preview("false");
+        assert_eq!(off["current"], "two");
+        let find = |v: &serde_json::Value, list: &str, name: &str| {
+            v[list]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|b| b["name"] == name)
+                .cloned()
+        };
+        assert_eq!(find(&off, "staying", "one").unwrap()["reason"], "setting");
+        assert!(off["moving"].as_array().unwrap().is_empty());
+        let on = preview("true");
+        let (major, minor) = git_version();
+        if (major, minor) >= (2, 38) {
+            assert!(find(&on, "moving", "one").is_some(), "{on}");
+        }
+        // b を消すと、c は b の足した行を書き換えるので当たらない（git 2.40 から調べられる）。
+        if (major, minor) >= (2, 40) {
+            assert_eq!(on["conflicts"][0]["oid"], c.as_str(), "{on}");
+            assert_eq!(on["conflicts"][0]["files"][0], "a.txt");
+        } else {
+            assert!(on["conflicts"].is_null());
+        }
+        // ほかの worktree で checkout しているブランチは動かない。
+        let wt = tmp.path().join("wt");
+        git(dir, &["worktree", "add", "-q", wt.to_str().unwrap(), "one"]);
+        let busy = preview("true");
+        assert_eq!(
+            find(&busy, "staying", "one").unwrap()["reason"],
+            "checkedOut",
+            "{busy}"
+        );
+        // 何も触っていない。
+        assert_eq!(git(dir, &["rev-parse", "HEAD"]), c);
+    }
+
+    /// テストを動かしている git の版（major, minor）。
+    fn git_version() -> (u32, u32) {
+        let out = Process::new("git").arg("--version").output().unwrap();
+        let text = String::from_utf8_lossy(&out.stdout);
+        let mut parts = text
+            .split_whitespace()
+            .nth(2)
+            .unwrap_or("0.0")
+            .split('.')
+            .map(|p| p.parse().unwrap_or(0));
+        (parts.next().unwrap_or(0), parts.next().unwrap_or(0))
     }
 
     #[test]
