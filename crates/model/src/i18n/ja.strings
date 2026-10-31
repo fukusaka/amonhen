@@ -773,3 +773,7 @@
 "Checks out {branch} first." = "先に {branch} を Checkout します。";
 "Cherry-pick {count} Commits…" = "{count} コミットを Cherry-pick…";
 "Revert {count} Commits…" = "{count} コミットを Revert…";
+
+/* GTK4 の FE: 詳細のタグと mailmap */
+" (lightweight tag)" = "（軽量タグ）";
+"Recorded: {identity}" = "記録: {identity}";

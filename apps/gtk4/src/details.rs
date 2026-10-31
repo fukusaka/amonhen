@@ -217,6 +217,19 @@ impl Details {
 
         // 上の帯: 作者と（違えば）コミッター。
         let who = |name: &str, email: &str, time: i64| format!("{name} <{email}>  {}", date(time));
+        // mailmap で置き換えたなら、記録の名前とメールを下に添える。
+        let recorded = |key: &str| {
+            info[key].is_object().then(|| {
+                tr!(
+                    "Recorded: {identity}",
+                    identity = format!(
+                        "{} <{}>",
+                        str_of(&info[key], "name"),
+                        str_of(&info[key], "email")
+                    )
+                )
+            })
+        };
         let mut people = format!(
             "Author  {}",
             who(
@@ -225,6 +238,9 @@ impl Details {
                 info["authorTime"].as_i64().unwrap_or_default(),
             )
         );
+        if let Some(r) = recorded("recordedAuthor") {
+            people.push_str(&format!("\n        {r}"));
+        }
         if info["committer"] != info["author"] || info["committerTime"] != info["authorTime"] {
             people.push_str(&format!(
                 "\nCommitter  {}",
@@ -234,6 +250,11 @@ impl Details {
                     info["committerTime"].as_i64().unwrap_or_default(),
                 )
             ));
+            if info["recordedCommitter"] != info["recordedAuthor"]
+                && let Some(r) = recorded("recordedCommitter")
+            {
+                people.push_str(&format!("\n        {r}"));
+            }
         }
         self.people.set_text(&people);
         let extras = self.extras.borrow().clone();
@@ -289,6 +310,54 @@ impl Details {
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
             rows.push(("Refs".into(), refs.join(", ")));
+        }
+        // このコミットを指すタグ: 名前・タガーと日時・件名と署名（軽量タグは名前だけ）。時間のかかる分で届く。
+        if let Some(extras) = extras {
+            for tag in extras["tagObjects"].as_array().into_iter().flatten() {
+                let mut text = str_of(tag, "name").to_owned();
+                if tag["id"].is_null() {
+                    text.push_str(&tr!(" (lightweight tag)"));
+                } else {
+                    let mut who = vec![str_of(tag, "tagger").to_owned()];
+                    if let Some(t) = tag["time"].as_i64() {
+                        who.push(date(t));
+                    }
+                    let who: Vec<String> = who.into_iter().filter(|w| !w.is_empty()).collect();
+                    if !who.is_empty() {
+                        text.push_str(&format!(" ({})", who.join(" · ")));
+                    }
+                    if !str_of(tag, "subject").is_empty() {
+                        text.push_str(&format!(" — {}", str_of(tag, "subject")));
+                    }
+                    let check = (!tag["signature"].is_null()).then_some(&tag["signature"]);
+                    if let Some(sig) = signature_label(tag["signed"].as_str(), check, true) {
+                        text.push_str(&format!("  {sig}"));
+                    }
+                }
+                rows.push(("Tag".into(), text));
+            }
+        }
+        // merge したタグ（merge コミットに埋め込まれたタグ）と、その署名。
+        for (i, tag) in info["mergedTags"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .enumerate()
+        {
+            let mut text = str_of(tag, "name").to_owned();
+            if !str_of(tag, "tagger").is_empty() {
+                text.push_str(&format!(" ({})", str_of(tag, "tagger")));
+            }
+            if !str_of(tag, "subject").is_empty() {
+                text.push_str(&format!(" — {}", str_of(tag, "subject")));
+            }
+            let check = extras
+                .map(|e| &e["mergedTagSignatures"][i])
+                .filter(|s| !s.is_null());
+            if let Some(sig) = signature_label(tag["signed"].as_str(), check, extras.is_some()) {
+                text.push_str(&format!("  {sig}"));
+            }
+            rows.push(("Merged Tag".into(), text));
         }
         if let Some(extras) = extras {
             let branches = strings(&extras["branches"]);
@@ -366,13 +435,18 @@ impl Details {
 
 /// 署名の行（macOS 版と同じ短い言葉と、種類・署名者）。署名がなければ None。
 fn signature_text(info: &Value, extras: Option<&Value>) -> Option<String> {
-    let kind = info["signed"].as_str();
     let check = extras.map(|e| &e["signature"]).filter(|s| !s.is_null());
+    signature_label(info["signed"].as_str(), check, extras.is_some())
+}
+
+/// 署名の状態の文（署名の種類 `kind`、検証の結果 `check`、時間のかかる分を読んだか `loaded`）。署名がなければ
+/// None。
+fn signature_label(kind: Option<&str>, check: Option<&Value>, loaded: bool) -> Option<String> {
     if kind.is_none() && check.is_none() {
         return None;
     }
     let label = match check {
-        None if extras.is_none() => "Checking…",
+        None if !loaded => "Checking…",
         None => "No key",
         Some(s) => match str_of(s, "status") {
             "G" if matches!(str_of(s, "trust"), "ultimate" | "full" | "") => "Verified",
