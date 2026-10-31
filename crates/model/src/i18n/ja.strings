@@ -1353,3 +1353,7 @@
 "Blue" = "青";
 "Purple" = "紫";
 "Gray" = "グレー";
+
+/* GTK4: Quick Open */
+"Open a repository (fuzzy search by name or path)" = "リポジトリを開く（名前・パスであいまいに探す）";
+"Enter Open in New Window   Esc Close" = "Enter 新しいウィンドウで開く　Esc 閉じる";

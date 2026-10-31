@@ -701,8 +701,16 @@ impl Browser {
         });
     }
 
-    /// この窓のアクション（閉じる・Clone）。リポジトリの窓のメニューから来るショートカットは、この窓にも効く。
+    /// この窓のアクション（Quick Open と閉じる）。リポジトリの窓のメニューから来るショートカットは、この窓にも効く。
     fn install_actions(self: &Rc<Self>, app: &gtk::Application) {
+        let quick = gio::SimpleAction::new("quick-open", None);
+        let weak = Rc::downgrade(self);
+        quick.connect_activate(move |_, _| {
+            if let Some(b) = weak.upgrade() {
+                crate::quickopen::show(Some(b.window.upcast_ref()), b.open.clone());
+            }
+        });
+        self.window.add_action(&quick);
         let close = gio::SimpleAction::new("close", None);
         let w = self.window.downgrade();
         close.connect_activate(move |_, _| {
@@ -721,6 +729,7 @@ impl Browser {
         self.window.add_action(&clone);
         // 起動したときにこの窓しかなければ、ショートカットはまだ登録されていない。
         for (action, accel) in [
+            ("win.quick-open", "<Control><Shift>o"),
             ("win.close", "<Control>w"),
             ("win.clone", "<Control><Alt>c"),
         ] {

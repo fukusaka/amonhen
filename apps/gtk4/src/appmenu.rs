@@ -162,7 +162,6 @@ pub const PENDING: &[&str] = &[
     "new-worktree",
     "prune-worktrees",
     "find-in-history",
-    "quick-open",
 ];
 
 /// 状態を持つので [`handlers`] とは別に登録する操作。
@@ -321,6 +320,12 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "repositories",
             Box::new(|p| {
                 crate::repobrowser::show(&p.app, p.open.clone());
+            }),
+        ),
+        (
+            "quick-open",
+            Box::new(|p| {
+                crate::quickopen::show(Some(p.window.upcast_ref()), p.open.clone());
             }),
         ),
         ("shortcuts", Box::new(show_shortcuts)),

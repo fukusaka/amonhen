@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>]`
 
 mod actions;
 mod activity;
@@ -24,6 +24,7 @@ mod menu;
 mod merge;
 mod mergeseveral;
 mod patches;
+mod quickopen;
 mod rangediff;
 mod reffacts;
 mod reflog;
@@ -147,6 +148,8 @@ struct Args {
     filter_sidebar: Option<String>,
     /// リポジトリの窓の代わりに Repositories の窓を出す（確認用。`--snapshot` はその窓を撮る）。
     repositories: bool,
+    /// Quick Open を、この問い合わせを入れて出す（確認用。`--snapshot` はその窓を撮る）。
+    quick_open: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -203,6 +206,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--reflog" => args.reflog = true,
             "--repositories" => args.repositories = true,
+            "--quick-open" => args.quick_open = Some(it.next().ok_or("--quick-open <query>")?),
             "--apply-patch" => {
                 let paths = it.next().ok_or("--apply-patch <path,...>")?;
                 args.apply_patch = paths.split(',').map(PathBuf::from).collect();
@@ -380,6 +384,10 @@ fn opener(app: &gtk::Application) -> Rc<dyn Fn(PathBuf)> {
 fn launch(app: &gtk::Application, args: &Args) {
     let window = if args.repositories {
         Some(repobrowser::show(app, opener(app)).upcast::<gtk::Window>())
+    } else if let Some(query) = &args.quick_open {
+        let window = quickopen::show_with(None, opener(app), query);
+        window.set_application(Some(app));
+        Some(window)
     } else {
         build_window(app, args.clone());
         None

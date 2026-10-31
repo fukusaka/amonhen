@@ -516,6 +516,10 @@ pub fn scanned(root: &str) -> Vec<String> {
     STATE.with(|s| s.borrow().scanned.get(root).cloned().unwrap_or_default())
 }
 
+pub fn has_scanned() -> bool {
+    STATE.with(|s| !s.borrow().scanned.is_empty())
+}
+
 pub fn is_scanning() -> bool {
     STATE.with(|s| s.borrow().scanning)
 }
