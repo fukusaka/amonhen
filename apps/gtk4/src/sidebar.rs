@@ -1,4 +1,4 @@
-//! サイドバー: Workspace（Working Copy・History）/ Branches / Remotes / Tags / Stashes / Submodules。
+//! サイドバー: Workspace（Working Copy・History・あるときだけ Stashes）/ Branches / Remotes / Tags / Stashes / Submodules。
 //!
 //! `GtkListView` と `GtkTreeListModel` の木（項目が多くても、見えている行の部品しか作らない）。
 //! `feature/x` のような名前はフォルダにまとめる。ref を選ぶと、指すコミットを History で選ぶ。
@@ -22,6 +22,8 @@ pub enum Page {
     #[default]
     History,
     WorkingCopy,
+    /// stash の画面（stash があるときだけ出す）。
+    Stashes,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -409,6 +411,7 @@ impl Sidebar {
         let key = match page {
             Page::WorkingCopy => "page/working",
             Page::History => "page/history",
+            Page::Stashes => "page/stashes",
         };
         self.inner.rebuilding.set(true);
         self.inner.select_key(key);
@@ -449,6 +452,27 @@ impl Inner {
         let workspace = gio::ListStore::new::<Node>();
         workspace.append(&self.working);
         workspace.append(&history);
+        // stash があるときだけ、数を添えて出す（macOS 版と同じ）。
+        let stashes = refs.map_or(0, |r| {
+            r.refs
+                .entries
+                .iter()
+                .filter(|e| e.kind == RefKind::Stash)
+                .count()
+        });
+        if stashes > 0 {
+            workspace.append(&Node::new(
+                Data {
+                    title: "Stashes".into(),
+                    key: "page/stashes".into(),
+                    item: Item::Page(Page::Stashes),
+                    icon: icon::Kind::Stash,
+                    badge: stashes.to_string(),
+                    ..Data::default()
+                },
+                None,
+            ));
+        }
         let mut groups = vec![("Workspace", workspace)];
         if let Some(refs) = refs {
             groups.extend(groups_of(refs));

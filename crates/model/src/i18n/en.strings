@@ -35,3 +35,4 @@
 "Conflicts expected at {count} commits:" = "Conflicts expected at {count} commit:";
 "{count} files have conflicts ({without} without markers). Resolve them in Working Copy, then Continue." = "{count} file has conflicts ({without} without markers). Resolve it in Working Copy, then Continue.";
 "{count} files have conflicts at {subject} ({without} without markers). Resolve them in Working Copy, then Continue." = "{count} file has conflicts at {subject} ({without} without markers). Resolve it in Working Copy, then Continue.";
+"{count} days ago" = "{count} day ago";

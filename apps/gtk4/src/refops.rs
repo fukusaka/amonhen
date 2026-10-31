@@ -88,34 +88,12 @@ pub fn menu(
             merge(&mut items);
             items.push(new_branch(actions, &name));
         }
-        RefKind::Stash => {
-            let message = entry.detail.clone();
-            for pop in [false, true] {
-                let (a, n, m) = (actions.clone(), name.clone(), message.clone());
-                let title = if pop {
-                    titles::pop(&name)
-                } else {
-                    titles::apply(&name)
-                };
-                items.push(menu::action(title, move || {
-                    sheets::pop(&a, &n, m.as_deref(), pop)
-                }));
-            }
-            let (a, n) = (actions.clone(), name.clone());
-            items.push(menu::action(
-                tr!("Drop {name}…", name = name),
-                move || {
-                    sheets::confirm_then(
-                        &a,
-                        tr!("Drop {name}?", name = n),
-                        sheets::can_undo(),
-                        tr!("Drop"),
-                        false,
-                        vec![json!({ "op": "stashDrop", "name": n })],
-                    )
-                },
-            ));
-        }
+        // Stashes の画面の一覧の行と同じメニュー。
+        RefKind::Stash => items.extend(crate::stashes::menu(
+            actions,
+            &name,
+            entry.detail.as_deref(),
+        )),
         RefKind::Submodule => {
             items.push(menu::action(
                 format!("Update {name}"),

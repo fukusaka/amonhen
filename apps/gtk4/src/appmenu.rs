@@ -93,12 +93,14 @@ impl Buttons {
             tr!("Push (Ctrl+Alt+P)")
         }));
         let has_stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
-        if let Some(action) = self
-            .window
-            .lookup_action("pop-stash")
-            .and_downcast::<gio::SimpleAction>()
-        {
-            action.set_enabled(has_stash);
+        for name in ["pop-stash", "show-stashes"] {
+            if let Some(action) = self
+                .window
+                .lookup_action(name)
+                .and_downcast::<gio::SimpleAction>()
+            {
+                action.set_enabled(has_stash);
+            }
         }
     }
 }
@@ -159,7 +161,6 @@ pub const PENDING: &[&str] = &[
     "compare-with-previous",
     "apply-patch",
     "save-patch",
-    "show-stashes",
     "show-reflog",
     "filter-branches",
     "find-in-history",
@@ -218,6 +219,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             Box::new(|p| show_page(p, Page::WorkingCopy)),
         ),
         ("show-history", Box::new(|p| show_page(p, Page::History))),
+        ("show-stashes", Box::new(show_stashes)),
         ("refresh", Box::new(|p| (p.reload)())),
         // Navigate
         ("switch-branch", Box::new(switch_branch)),
@@ -510,6 +512,7 @@ fn show_page(p: &Parts, page: Page) {
     p.pages.set_visible_child_name(match page {
         Page::WorkingCopy => "working",
         Page::History => "history",
+        Page::Stashes => "stashes",
     });
     p.sidebar.select_page(page);
 }
@@ -713,6 +716,20 @@ fn go_to_relative(p: &Rc<Parts>, parent: bool) {
     match target {
         Some(r) => p.view.select(r),
         None => p.window.error_bell(),
+    }
+}
+
+/// Stashes の画面を開く（stash があるときだけ）。
+fn show_stashes(p: &Rc<Parts>) {
+    let has_stash = p
+        .refs
+        .borrow()
+        .as_ref()
+        .is_some_and(|r| r.refs.entries.iter().any(|e| e.kind == RefKind::Stash));
+    if has_stash {
+        show_page(p, Page::Stashes);
+    } else {
+        p.window.error_bell();
     }
 }
 

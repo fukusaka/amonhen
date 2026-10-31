@@ -50,6 +50,14 @@ pub fn pop(stash: &str) -> String {
     tr!("Pop {name}…", name = stash)
 }
 
+pub fn drop(stash: &str) -> String {
+    tr!("Drop {name}…", name = stash)
+}
+
+pub fn new_branch_from(start: &str) -> String {
+    tr!("New Branch from {name}…", name = start)
+}
+
 pub fn cherry_pick(oid: &str) -> String {
     tr!("Cherry-pick {id}…", id = short(oid))
 }

@@ -809,3 +809,24 @@
 "Automatic fetch" = "自動の fetch";
 "Automatic fetch failed: {error}" = "自動の fetch に失敗: {error}";
 "Couldn’t Fetch Automatically" = "自動の Fetch ができませんでした";
+/* GTK4 の FE: Stashes の画面 */
+"Apply the stash to the working tree and keep it in the list" = "stash を作業ツリーに戻し、一覧に残す";
+"Apply the stash to the working tree and remove it from the list" = "stash を作業ツリーに戻し、一覧から消す";
+"Drop…" = "Drop…";
+"Remove the stash without applying it (you can Undo it)" = "戻さずに stash を消す（Undo で戻せる）";
+"Branch…" = "Branch…";
+"Create a branch at the commit the stash was made on, switch to it and apply the stash there (git stash branch)" = "stash を作ったときのコミットにブランチを作って切り替え、そこに stash を戻す（git stash branch）";
+"not in HEAD’s history" = "HEAD の履歴にない";
+"at HEAD" = "HEAD と同じ";
+"{count} behind HEAD" = "HEAD から {count} 個後ろ";
+"with untracked files" = "untracked のファイルを含む";
+"now" = "今";
+"{count} min. ago" = "{count} 分前";
+"{count} hr. ago" = "{count} 時間前";
+"{count} days ago" = "{count} 日前";
+"{count} wk. ago" = "{count} 週間前";
+"{count} mo. ago" = "{count} か月前";
+"{count} yr. ago" = "{count} 年前";
+"Copy Name" = "名前をコピー";
+"New Branch from {name}" = "{name} から新しいブランチ";
+"Created where the stash was made, checked out, and the stash applied there (then dropped)." = "stash を作ったコミットにブランチを作って切り替え、そこに stash を戻します（戻せたら stash は消します）。";

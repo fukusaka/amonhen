@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
 
 mod actions;
 mod activity;
@@ -21,6 +21,7 @@ mod search;
 mod settings;
 mod sheets;
 mod sidebar;
+mod stashes;
 mod statusbar;
 mod titles;
 mod workcopy;
@@ -41,6 +42,7 @@ use crate::details::Details;
 use crate::diff::DiffWidget;
 use crate::history::HistoryView;
 use crate::sidebar::{Page, Sidebar};
+use crate::stashes::Stashes;
 use crate::workcopy::WorkingCopy;
 
 const APP_ID: &str = "io.github.fukusaka.amonhen";
@@ -93,6 +95,11 @@ struct Args {
     /// Working Copy の差分で、この行の印を一度クリックしたことにする（確認用）。
     toggle_row: Option<u32>,
     scroll_to: Option<u32>,
+    /// 最初に ref を読んだら、Stashes の画面を開く（確認用）。
+    stashes: bool,
+    /// `--stashes` で、選んだ stash の帯のボタン（`apply`・`pop`・`drop`・`branch`）を一度押す（確認用。
+    /// `--snapshot` は開いたシートを撮る）。
+    stash_button: Option<usize>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -107,6 +114,17 @@ fn parse_args() -> Result<Args, String> {
                 args.scroll_rows = Some(rows.parse().map_err(|_| "--scroll-rows <n>")?);
             }
             "--working-copy" => args.working_copy = true,
+            "--stashes" => args.stashes = true,
+            "--stash-button" => {
+                let usage = "--stash-button apply|pop|drop|branch";
+                let name = it.next().ok_or(usage)?;
+                args.stash_button = Some(
+                    ["apply", "pop", "drop", "branch"]
+                        .iter()
+                        .position(|b| *b == name)
+                        .ok_or(usage)?,
+                );
+            }
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
             "--menu-ref" => args.menu_ref = Some(it.next().ok_or("--menu-ref <name>")?),
             "--select-rows" => {
@@ -338,6 +356,9 @@ fn build_window(app: &gtk::Application, args: Args) {
     pages.set_transition_type(gtk::StackTransitionType::None);
     pages.add_named(&columns, Some("history"));
     pages.add_named(&working.root, Some("working"));
+    // Stashes の画面（stash の一覧と、選んだ stash の中身）。
+    let stashes = Rc::new(Stashes::new(pending.clone()));
+    pages.add_named(&stashes.root, Some("stashes"));
     let sidebar = Rc::new(Sidebar::new());
     let weak_sidebar = Rc::downgrade(&sidebar);
     working.connect_count(move |count| {
@@ -345,7 +366,7 @@ fn build_window(app: &gtk::Application, args: Args) {
             sidebar.set_working_count(count);
         }
     });
-    connect_sidebar(&sidebar, &pages, &view);
+    connect_sidebar(&sidebar, &pages, &view, &stashes);
     if args.working_copy {
         pages.set_visible_child_name("working");
         sidebar.select_page(Page::WorkingCopy);
@@ -374,6 +395,10 @@ fn build_window(app: &gtk::Application, args: Args) {
     if select_ref.is_some() {
         pending.set(pending.get() + 1);
     }
+    let mut open_stashes = args.stashes;
+    if open_stashes {
+        pending.set(pending.get() + 1);
+    }
 
     let window = gtk::ApplicationWindow::builder()
         .application(app)
@@ -391,6 +416,7 @@ fn build_window(app: &gtk::Application, args: Args) {
     // 待たずに出す）。
     let actions = Actions::new(&window);
     working.set_actions(actions.clone());
+    stashes.set_actions(actions.clone());
     let reload_tx = tx.clone();
     let weak_view = view.downgrade();
     let reload: Rc<dyn Fn()> = Rc::new(move || {
@@ -618,6 +644,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                     Event::History(repo, history) => {
                         status.set_visible(false);
                         working.set_repo(repo.clone());
+                        stashes.set_repo(repo.clone());
                         actions.set_repo(repo.clone());
                         search.show_history(repo, history);
                         if let Some(command) = perform.take() {
@@ -765,6 +792,32 @@ fn build_window(app: &gtk::Application, args: Args) {
                         subtitle.set_visible(true);
                         view.show_refs(&refs);
                         sidebar.show(&refs);
+                        stashes.show(&refs);
+                        // 最後の stash を戻した・消したら、空の Stashes の画面から History に移る。
+                        if stashes.is_empty()
+                            && pages.visible_child_name().as_deref() == Some("stashes")
+                        {
+                            pages.set_visible_child_name("history");
+                            sidebar.select_page(Page::History);
+                        }
+                        if open_stashes && view.current().is_some() {
+                            open_stashes = false;
+                            if !stashes.is_empty() {
+                                pages.set_visible_child_name("stashes");
+                                sidebar.select_page(Page::Stashes);
+                                if let Some(button) = args.stash_button {
+                                    stashes.click(button);
+                                    // シートが出るまで待つ。
+                                    pending.set(pending.get() + 1);
+                                    let p = pending.clone();
+                                    glib::timeout_add_local_once(
+                                        std::time::Duration::from_millis(2000),
+                                        move || p.set(p.get() - 1),
+                                    );
+                                }
+                            }
+                            pending.set(pending.get() - 1);
+                        }
                         latest_refs.replace(Some(refs.clone()));
                         buttons.show_refs(&refs);
                         if let Some(name) = menu_ref.take()
@@ -787,6 +840,13 @@ fn build_window(app: &gtk::Application, args: Args) {
                         actions.refresh_undo();
                         if let Some(name) = select_ref.take() {
                             pending.set(pending.get() - 1);
+                            // stash は Stashes の画面で選ぶ。
+                            if name.starts_with("stash@{") {
+                                stashes.select(&name);
+                                pages.set_visible_child_name("stashes");
+                                sidebar.select_page(Page::Stashes);
+                                continue;
+                            }
                             let target = refs
                                 .refs
                                 .entries
@@ -875,15 +935,29 @@ fn fit_details(right: &gtk::Paned, details: Rc<Details>) {
 }
 
 /// サイドバーで選んだ項目: ページなら切り替え、ref なら History でそのコミットを選ぶ。
-fn connect_sidebar(sidebar: &Sidebar, pages: &gtk::Stack, view: &HistoryView) {
-    let (pages, view) = (pages.downgrade(), view.downgrade());
+fn connect_sidebar(
+    sidebar: &Sidebar,
+    pages: &gtk::Stack,
+    view: &HistoryView,
+    stashes: &Rc<Stashes>,
+) {
+    let (pages, view, stashes) = (pages.downgrade(), view.downgrade(), Rc::downgrade(stashes));
     sidebar.connect_select(move |data| {
         let (Some(pages), Some(view)) = (pages.upgrade(), view.upgrade()) else {
             return;
         };
-        match data.item {
+        match &data.item {
             sidebar::Item::Page(Page::WorkingCopy) => pages.set_visible_child_name("working"),
             sidebar::Item::Page(Page::History) => pages.set_visible_child_name("history"),
+            sidebar::Item::Page(Page::Stashes) => pages.set_visible_child_name("stashes"),
+            // Stashes の項目の stash は、Stashes の画面で選ぶ（stash のコミットは History にない）。
+            sidebar::Item::Ref(e) if e.kind == amonhen_model::RefKind::Stash => {
+                if let Some(stashes) = stashes.upgrade() {
+                    stashes.select(&e.name);
+                    pages.set_visible_child_name("stashes");
+                }
+                return;
+            }
             _ => {}
         }
         if let Some(target) = sidebar::target(data) {
