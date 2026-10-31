@@ -16,6 +16,7 @@ mod github;
 mod graph;
 mod history;
 mod historydisplay;
+mod historyedit;
 mod icon;
 mod measure;
 mod menu;
@@ -127,6 +128,12 @@ struct Args {
     menu_pair: Option<u32>,
     /// これらのパッチのファイル（`,` で区切る）を当てる前の確認を出す（確認用）。
     apply_patch: Vec<PathBuf>,
+    /// History の編集モードをこのコミットから開いておく（確認用）。`edit_plan` は行ですること（新しい順に
+    /// `pick,squash,drop` など）、`edit_move` は `from:above` で行を動かし、`edit_apply` なら Apply Changes を押す。
+    edit_commits: Option<String>,
+    edit_plan: Option<String>,
+    edit_move: Option<(usize, usize)>,
+    edit_apply: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -181,6 +188,19 @@ fn parse_args() -> Result<Args, String> {
                 let paths = it.next().ok_or("--apply-patch <path,...>")?;
                 args.apply_patch = paths.split(',').map(PathBuf::from).collect();
             }
+            "--edit-commits" => {
+                args.edit_commits = Some(it.next().ok_or("--edit-commits <commit>")?)
+            }
+            "--edit-plan" => args.edit_plan = Some(it.next().ok_or("--edit-plan <actions>")?),
+            "--edit-move" => {
+                let spec = it.next().ok_or("--edit-move <from>:<above>")?;
+                let (a, b) = spec.split_once(':').ok_or("--edit-move <from>:<above>")?;
+                args.edit_move = Some((
+                    a.parse().map_err(|_| "--edit-move <from>:<above>")?,
+                    b.parse().map_err(|_| "--edit-move <from>:<above>")?,
+                ));
+            }
+            "--edit-apply" => args.edit_apply = true,
             "--menu-item" => args.menu_item = Some(it.next().ok_or("--menu-item <title>")?),
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
@@ -576,19 +596,28 @@ fn build_window(app: &gtk::Application, args: Args) {
         let on_commit = on_commit.clone();
         move |id| on_commit(id)
     });
+    // History の編集モード（History の画面と入れ替える）。
+    let edit_opener = historyedit::Opener::new(
+        actions.clone(),
+        &pages,
+        &columns,
+        sidebar.clone(),
+        statusbar.clone(),
+        pending.clone(),
+    );
     // History のコミットの右クリック。
     let (a, v, rd) = (actions.clone(), view.downgrade(), range_diff_opener.clone());
-    let sh = shaper.clone();
+    let (sh, eo) = (shaper.clone(), edit_opener.clone());
     view.connect_menu(move |row, x, y| {
         let Some(view) = v.upgrade() else { return };
         if let Some((_, history)) = view.current() {
             let rows = view.selection();
             let items = if rows.len() > 1 && rows.contains(&row) {
-                commitops::menu_many(&a, &history, &rows, view.upcast_ref(), &rd)
+                commitops::menu_many(&a, &history, &rows, view.upcast_ref(), &rd, &eo)
             } else {
                 // 折りたたんだ merge なら、取り込んだ側を開く・たたむ項目を先に。
                 let mut items = sh.merge_items(&history, row);
-                items.extend(commitops::menu(&a, &history, row, view.upcast_ref()));
+                items.extend(commitops::menu(&a, &history, row, view.upcast_ref(), &eo));
                 items
             };
             menu::popup(&view, x, y, items);
@@ -971,7 +1000,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 let rd = range_diff_opener.clone();
                                 pending.set(pending.get() + 1);
                                 let (p, v, a) = (pending.clone(), view.clone(), actions.clone());
-                                let sh = shaper.clone();
+                                let (sh, eo) = (shaper.clone(), edit_opener.clone());
                                 let item = args.menu_item.clone();
                                 glib::timeout_add_local_once(
                                     std::time::Duration::from_millis(300),
@@ -987,9 +1016,16 @@ fn build_window(app: &gtk::Application, args: Args) {
                                                     &rows,
                                                     v.upcast_ref(),
                                                     &rd,
+                                                    &eo,
                                                 )
                                             } else {
-                                                commitops::menu(&a, &history, row, v.upcast_ref())
+                                                commitops::menu(
+                                                    &a,
+                                                    &history,
+                                                    row,
+                                                    v.upcast_ref(),
+                                                    &eo,
+                                                )
                                             });
                                             eprintln!("{}", menu::titles(&items).join("\n"));
                                             match &item {
@@ -1005,6 +1041,32 @@ fn build_window(app: &gtk::Application, args: Args) {
                                         let wait = if item.is_some() { 1500 } else { 0 };
                                         glib::timeout_add_local_once(
                                             std::time::Duration::from_millis(wait),
+                                            move || p.set(p.get() - 1),
+                                        );
+                                    },
+                                );
+                            }
+                            if let Some(start) = &args.edit_commits {
+                                edit_opener.open(start, None);
+                                pending.set(pending.get() + 1);
+                                let (p, eo) = (pending.clone(), edit_opener.clone());
+                                let (plan, moved, apply) =
+                                    (args.edit_plan.clone(), args.edit_move, args.edit_apply);
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(800),
+                                    move || {
+                                        if let Some(plan) = &plan {
+                                            eo.set_plan(plan);
+                                        }
+                                        if let Some((from, above)) = moved {
+                                            eo.move_row(from, above);
+                                        }
+                                        if apply {
+                                            eo.apply();
+                                        }
+                                        // 見通し（rewritePreview）が届くのを待ってから撮る。
+                                        glib::timeout_add_local_once(
+                                            std::time::Duration::from_millis(1500),
                                             move || p.set(p.get() - 1),
                                         );
                                     },

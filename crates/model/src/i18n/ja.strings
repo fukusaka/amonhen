@@ -1142,3 +1142,37 @@
 "History Display: order, items, one line per commit" = "History の表示: 並び順・表示項目・1 行表示";
 "Show {count} Merged Commits" = "取り込んだ {count} コミットを表示";
 "Fold Merged Commits" = "取り込んだコミットをたたむ";
+
+/* GTK4: History の編集モード */
+"Keep" = "そのまま";
+"Combine with Older" = "古い方とまとめる";
+"Combine with Older, Keep Its Message" = "古い方とまとめる（古い方のメッセージ）";
+"Stop to Change Files" = "止めてファイルを直す";
+"Leave the commit as it is (git: pick)." = "コミットをそのまま残します（git: pick）。";
+"Give the commit a new message (git: reword)." = "コミットのメッセージを直します（git: reword）。";
+"Make this and the older commit below one commit, with a message you can edit (git: squash)." = "このコミットと下の古いコミットを 1 つにし、メッセージを書き直せます（git: squash）。";
+"Make this and the older commit below one commit, keeping the older one’s message (git: fixup)." = "このコミットと下の古いコミットを 1 つにし、古い方のメッセージを残します（git: fixup）。";
+"Remove the commit and its changes (git: drop)." = "コミットとその変更を取り除きます（git: drop）。";
+"Stop after this commit to change its files and amend it, then Continue (git: edit)." = "このコミットのあとで止め、ファイルを直して amend してから Continue します（git: edit）。";
+"Edit Commits" = "コミットの編集";
+"Choose what to do with each commit and drag rows to reorder them. Nothing changes until Apply Changes." = "コミットごとにすることを選び、行をドラッグして並べ替えます。「変更を実行」を押すまで何も変わりません。";
+"Choose what to do with each commit. Merges are recreated as they are, so rows can’t be reordered across them. Nothing changes until Apply Changes." = "コミットごとにすることを選びます。merge はそのまま作り直すので、merge をまたいで並べ替えることはできません。「変更を実行」を押すまで何も変わりません。";
+"Also move the stacked branches" = "積み重ねたブランチも一緒に動かす";
+"For this edit only (git’s update-ref). Starts from rebase.updateRefs." = "この編集だけの指定です（git の update-ref）。最初は rebase.updateRefs のとおり。";
+"Apply Changes" = "変更を実行";
+"Conflicts expected in {files}" = "{files} でコンフリクトする見込みです";
+"Message of the Combined Commit" = "まとめたコミットのメッセージ";
+"reordered" = "並べ替え";
+"{count} messages" = "メッセージ {count}";
+"{count} combined" = "まとめる {count}";
+"{count} dropped" = "Drop {count}";
+"{count} to change files" = "ファイルを直す {count}";
+"No changes yet." = "まだ変更はありません。";
+"Changes: {list}." = "変更: {list}。";
+"Edit {count} Commits" = "{count} コミットを編集";
+"Only commits on HEAD’s first-parent line can be edited." = "編集できるのは、HEAD から最初の親をたどったコミットです。";
+"Combine with Older Commit…" = "1 つ古いコミットとまとめる…";
+"Edit Commits from Here…" = "ここからコミットを編集…";
+"Its changes go back to the working tree; commit them in parts, then Continue." = "変更を作業ツリーに戻します。分けてコミットしてから Continue してください。";
+"Split {commit}?" = "{commit} を分けますか？";
+"Combine {count} Commits…" = "{count} コミットをまとめる…";

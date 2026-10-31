@@ -13,6 +13,8 @@ use serde_json::Value;
 /// 行の種類（上から並ぶ順）。同じ種類は 1 つだけ（出し直せば置き換える）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Row {
+    /// History の編集モード（要約・Cancel・Apply Changes）。
+    Editing,
     Sequence,
     Failure,
     Connection,
@@ -450,6 +452,8 @@ fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         ".status-sequence { background-color: alpha(@warning_color, 0.14); } \
+         .status-editing { background-color: alpha(@theme_selected_bg_color, 0.10); } \
+         label.accent { color: @theme_selected_bg_color; } \
          .status-failure { background-color: alpha(@error_color, 0.08); } \
          .status-connection { background-color: alpha(@warning_color, 0.10); } \
          label.warning { color: @warning_color; } \

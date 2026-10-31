@@ -40,3 +40,5 @@
 "Installed. {count} files are in LFS." = "Installed. {count} file is in LFS.";
 "File History — {path} ({count} commits)" = "File History — {path} ({count} commit)";
 "Show {count} Merged Commits" = "Show {count} Merged Commit";
+"{count} messages" = "{count} message";
+"Edit {count} Commits" = "Edit {count} Commit";

@@ -10,15 +10,17 @@ use gtk::prelude::*;
 use serde_json::json;
 
 use crate::actions::Actions;
+use crate::historyedit::{Opener, Preset};
 use crate::menu::{self, Item};
 use crate::refops;
 
-/// `row` 行目のコミットのメニュー。`widget` はコピーに使う（クリップボード）。
+/// `row` 行目のコミットのメニュー。`widget` はコピーに使う（クリップボード）。`edit` は History の編集モード。
 pub fn menu(
     actions: &Rc<Actions>,
     history: &HistorySnapshot,
     row: u32,
     widget: &gtk::Widget,
+    edit: &Opener,
 ) -> Vec<Item> {
     let Some(id) = history.graph.ids().get(row as usize) else {
         return Vec::new();
@@ -55,32 +57,34 @@ pub fn menu(
     items.extend(reset(actions, &hex));
     items.push(Item::Separator);
     if !is_merge {
-        let (a, h) = (actions.clone(), hex.clone());
-        items.push(menu::action(tr!("Edit Message…"), move || a.reword(&h)));
-        let (a, h) = (actions.clone(), hex.clone());
-        items.push(menu::action("Squash into Parent…", move || a.squash(&h)));
-        for (title, kind, label) in [
-            ("Fixup into Parent", "fixup", "Fixup"),
-            ("Edit (Stop Here)", "edit", "Edit"),
-            ("Split…", "split", "Split"),
+        // コミットの編集は、History の編集モードで（変更を積んで Apply）。ここにあるのは、最初の変更を入れて
+        // 編集モードを開く近道。
+        for (title, preset) in [
+            (tr!("Edit Message…"), Some(Preset::Reword(hex.clone()))),
+            (
+                tr!("Combine with Older Commit…"),
+                Some(Preset::Combine(vec![hex.clone()])),
+            ),
+            ("Drop…".to_owned(), Some(Preset::Drop(hex.clone()))),
+            (tr!("Edit Commits from Here…"), None),
         ] {
-            let (a, h, label) = (actions.clone(), hex.clone(), format!("{label} {short}"));
-            items.push(menu::action(title, move || {
-                a.rewrite(&label, json!({ "kind": kind, "oid": h }));
-            }));
+            let (e, h) = (edit.clone(), hex.clone());
+            items.push(menu::action(title, move || e.open(&h, preset.clone())));
         }
+        // 分ける（止めてから Working Copy で分けてコミットする）は、編集モードの外の操作。
         let (a, h, s) = (actions.clone(), hex.clone(), short.clone());
-        items.push(menu::action("Drop", move || {
+        items.push(menu::action("Split…", move || {
             let (a, h, s) = (a.clone(), h.clone(), s.clone());
             glib::spawn_future_local(async move {
-                if a.confirm(
-                    &tr!("Drop {commit}?", commit = s),
-                    &tr!("You can Undo this."),
-                    &tr!("Drop"),
-                )
-                .await
+                let message = format!(
+                    "{} {}",
+                    tr!("Its changes go back to the working tree; commit them in parts, then Continue."),
+                    crate::sheets::can_undo()
+                );
+                if a.confirm(&tr!("Split {commit}?", commit = s), &message, "Split")
+                    .await
                 {
-                    a.rewrite(&format!("Drop {s}"), json!({ "kind": "drop", "oid": h }));
+                    a.rewrite(&format!("Split {s}"), json!({ "kind": "split", "oid": h }));
                 }
             });
         }));
@@ -165,6 +169,7 @@ pub fn menu_many(
     rows: &[u32],
     widget: &gtk::Widget,
     range_diff: &crate::rangediff::Opener,
+    edit: &Opener,
 ) -> Vec<Item> {
     let commits: Vec<(String, bool)> = rows
         .iter()
@@ -208,13 +213,15 @@ pub fn menu_many(
     // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる。
     let consecutive = rows.windows(2).all(|w| w[1] == w[0] + 1);
     if n >= 2 && consecutive && !commits.iter().any(|(_, merge)| *merge) {
-        let (a, oids) = (
-            actions.clone(),
+        let (e, oids) = (
+            edit.clone(),
             commits.iter().map(|(o, _)| o.clone()).collect::<Vec<_>>(),
         );
-        items.push(menu::action(format!("Squash {n} Commits…"), move || {
-            a.squash_range(oids.clone());
-        }));
+        let oldest = oids.last().cloned().unwrap_or_default();
+        items.push(menu::action(
+            tr!("Combine {count} Commits…", count = n),
+            move || e.open(&oldest, Some(Preset::Combine(oids.clone()))),
+        ));
     }
     // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus）。
     let sources = crate::mergeseveral::sources(actions, history, rows);
