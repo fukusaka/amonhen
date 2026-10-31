@@ -472,6 +472,27 @@ impl CommitDiff {
         self.inner.file_items.replace(Some(Rc::new(f)));
     }
 
+    /// 詳細の欄だけを右の列いっぱいに広げるボタン（⤢。変更ファイルと差分を隠す。もう一度押すと戻す）。
+    pub fn expand_button(&self) -> gtk::ToggleButton {
+        let label = gtk::Label::new(None);
+        label.set_markup("<span size=\"large\">⤢</span>");
+        let button = gtk::ToggleButton::new();
+        button.set_child(Some(&label));
+        button.add_css_class("flat");
+        button.add_css_class("image-button");
+        button.set_valign(gtk::Align::Start);
+        button.set_tooltip_text(Some(&tr!(
+            "Expand the commit details to fill the right column (click again to restore)."
+        )));
+        let root = self.root.downgrade();
+        button.connect_toggled(move |b| {
+            if let Some(root) = root.upgrade() {
+                root.set_visible(!b.is_active());
+            }
+        });
+        button
+    }
+
     /// 差分の中を探す帯を開くボタン（詳細の右上に置く。メニューバーを使わずに届くように）。
     pub fn find_button(&self) -> gtk::Button {
         let icon = crate::icon::Icon::default();

@@ -1706,3 +1706,4 @@
 "marginal (partly trusted)" = "marginal（部分的に信用）";
 "never (not trusted)" = "never（信用しない）";
 "{trust} (trust not set)" = "{trust}（信用度が決まっていない）";
+"Expand the commit details to fill the right column (click again to restore)." = "コミットの詳細だけを右の列いっぱいに広げる（もう一度押すと戻す）";

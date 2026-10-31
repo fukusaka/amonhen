@@ -618,6 +618,7 @@ fn build_tab(
     };
     aiactions::details(&details, &diff, current_repo.clone(), fit);
     details.tools.append(&commit_diff.find_button());
+    details.tools.append(&commit_diff.expand_button());
     aiactions::auto_history_hunk(&diff, &details, current_repo);
     // 並び順・折りたたみ（View の History の表示）に合わせて History を作る。
     let shaper = historydisplay::Shaper::new(&view, search.clone(), pending.clone());

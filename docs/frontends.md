@@ -234,7 +234,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Full message, draggable panes, ⤢ to expand | ✓ | △ | △ | n/a | GTK4: No ⤢.<br>VSCode: No ⤢. |
+| Full message, draggable panes, ⤢ to expand | ✓ | ✓ | △ | n/a | VSCode: No ⤢. |
 | Find inside the details | ✓ | △ | — | n/a | GTK4: In the diff only, not the message. |
 | All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | △ | ✓ | VSCode: Stacked, loaded as they scroll; no collapse or Viewed.<br>CLI: `show`. |
 | Changed files as a tree beside the diff | ✓ | ✓ | △ | n/a | VSCode: A flat list above the diffs. |
