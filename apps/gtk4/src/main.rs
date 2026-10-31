@@ -42,6 +42,7 @@ mod search;
 mod settings;
 mod sheets;
 mod sidebar;
+mod sshhosts;
 mod stashes;
 mod statusbar;
 mod titles;
@@ -274,6 +275,8 @@ fn main() -> glib::ExitCode {
     askpass::install();
     // Settings > Git > Environment Variables で足した名前を、git・ssh・共有の daemon に渡す。
     environment::apply_added_names();
+    // SSH 先ごとの選択（Settings > SSH Hosts）を、裏の糸でリポジトリを開くときに読めるようにする。
+    sshhosts::load();
     // コアが作る文（エラーなど）の言語。Linux の慣習どおり LC_ALL・LC_MESSAGES・LANG から。
     amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
     let args = match parse_args() {
@@ -321,6 +324,8 @@ fn open(location: &Path) -> Result<Repository, String> {
 fn open_remote(location: &str) -> amonhen_model::Result<Repository> {
     use amonhen_remote::ssh;
     let daemon = engine();
+    // SSH 先ごとの選択（Settings > SSH Hosts のエンジンとログインシェル。macOS 版の `hostOptions`）。
+    let options = sshhosts::options_for(location);
     let conn = if location.starts_with("ssh://") {
         // SSH 先に送るエンジン（`amonhen-<os>-<arch>`）の置き場所: `AMONHEN_ENGINES`、なければ実行ファイルの隣の
         // `engines`（配るときに同梱する。macOS 版の Resources/engines と同じ）。SSH 先が手元と同じ OS と CPU なら
@@ -334,26 +339,24 @@ fn open_remote(location: &str) -> amonhen_model::Result<Repository> {
             .unwrap_or_default();
         let daemons = ssh::Daemons::new(engines, Some((ssh::local_platform(), daemon.clone())));
         let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
-        // SSH 先ごとの選択（macOS の Settings > SSH Hosts）は、GTK4 のアプリにはまだない。
-        ssh::connect(
-            &program,
-            &ssh::Target::parse(location)?,
-            &daemons,
-            &ssh::HostOptions::default(),
-        )?
+        ssh::connect(&program, &ssh::Target::parse(location)?, &daemons, &options)?
     } else {
+        // `daemon:ssh://…` なら、共有の daemon がエンジンを起動するときに SSH 先ごとの選択を使う。
         let path = amonhen_remote::location::local_path(location)?;
-        amonhen_remote::local::connect(path, &daemon.to_string_lossy())?
+        amonhen_remote::local::connect_with(path, &daemon.to_string_lossy(), &options)?
     };
     let backend = amonhen_remote::RemoteBackend::connect(conn)?;
     // SSH 先の History は手元にキャッシュする（つなぎ直したら新しいコミットだけを受け取る）。手元の共有の daemon
     // なら、daemon が用意したファイルを直接読むので持たない。
-    Ok(match amonhen_remote::local::cache_dir() {
+    let repo = match amonhen_remote::local::cache_dir() {
         Some(dir) if location.starts_with("ssh://") => {
             Repository::with_cache(backend, cache::path_for(&dir, location))
         }
         _ => Repository::new(backend),
-    })
+    };
+    // 署名を、手元の鍵と SSH 先の git と鍵のどちらで検証するか（Settings > SSH Hosts の「接続」）。
+    sshhosts::apply_signature_check(&repo, location);
+    Ok(repo)
 }
 
 /// 共有の daemon として起動するエンジン: 置き場所の `current`（`amonhen install` が置く）か、PATH の `amonhen`。

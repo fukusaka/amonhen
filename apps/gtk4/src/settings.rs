@@ -383,6 +383,21 @@ pub fn show(parent: &gtk::ApplicationWindow) {
         }
     });
 
+    // SSH Hosts: 開いたときに作る（選んだ SSH 先につなぎに行くので、タブを出すまではつながない）。
+    let hosts = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    stack.add_titled(&hosts, Some("ssh-hosts"), &tr!("SSH Hosts"));
+    stack.connect_visible_child_name_notify(move |stack| {
+        if stack.visible_child_name().as_deref() == Some("ssh-hosts")
+            && hosts.first_child().is_none()
+        {
+            let tab = crate::sshhosts::SshHosts::new();
+            tab.widget.set_vexpand(true);
+            hosts.append(&tab.widget);
+            // 窓を閉じるまで持っておく。
+            unsafe { hosts.set_data("tab", tab) };
+        }
+    });
+
     // Appearance
     stack.add_titled(
         &page(&[
@@ -475,11 +490,16 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     window.present();
 }
 
-/// 開いている設定の窓のタブ（`git` など）を選ぶ（確認用）。`git/programs` なら Git のタブのそのページ。
+/// 開いている設定の窓のタブ（`git` など）を選ぶ（確認用）。`git/programs` なら Git のタブのそのページ、
+/// `ssh-hosts/<SSH 先>/<ページ>` なら SSH Hosts のタブでその SSH 先（なければ加える）のページ。
 pub fn select(tab: &str) {
     let (tab, page) = tab.split_once('/').unwrap_or((tab, ""));
     if tab == "git" && !page.is_empty() {
         GIT_PAGE.with(|p| p.replace(Some(page.to_owned())));
+    }
+    if tab == "ssh-hosts" && !page.is_empty() {
+        let (host, page) = page.split_once('/').unwrap_or((page, ""));
+        crate::sshhosts::select_pending(host, page);
     }
     if let Some(stack) = WINDOW
         .with(|w| w.borrow().upgrade())
