@@ -105,7 +105,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Appearance: theme, fonts, graph colors | — | — | n/a | n/a |  |
 | Diff & Merge: resolve unambiguous conflicts on open | ✓ | ✓ | n/a | n/a |  |
 | Diff & Merge: unified/split, whitespace, context, wrap, tab width | — | — | — | n/a |  |
-| AI: backend, CLI location and version, model, language, per-repository permission | ✓ | △ | — | n/a | GTK4: No login state shown. |
+| AI: backend, CLI location and version, model, language, per-repository permission | ✓ | ✓ | — | n/a | Neither app reads the CLI's login state; a missing CLI says to install it and sign in. |
 | AI prompts per purpose (edit, Restore Default, Try) | ✓ | ✓ | — | n/a |  |
 | Performance: commit-graph, shared daemon | ✓ | ✓ | △ | n/a | VSCode: `amonhen.daemon.enabled` and `amonhen.daemon.path` as VSCode settings. |
 | Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: Disabled on Linux and the BSDs, where git has no fsmonitor--daemon. |
@@ -286,7 +286,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Suggest a commit message | ✓ | ✓ | — | — |  |
 | Explain a diff hunk | ✓ | ✓ | — | — |  |
 | Resolve a conflict with AI | ✓ | △ | — | — | GTK4: One conflict at a time, shown as a band. |
-| Resolve every file with AI | ✓ | — | — | — |  |
+| Resolve every file with AI | — | — | — | — | Designed in docs/ux.md (chapter 9), not built: the merge editor resolves one conflict at a time. |
 | Explain a conflict | ✓ | ✓ | — | — |  |
 | First-time confirmation per repository and for repository prompts | ✓ | ✓ | — | — |  |
 | Streamed and cached results | ✓ | ✓ | — | — |  |
