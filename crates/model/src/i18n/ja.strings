@@ -784,3 +784,10 @@
 "Open with Default App" = "既定のアプリで開く";
 "git rerere applied the earlier resolution. Check the result, then Mark Resolved." = "git の rerere が前の解決を適用しました。結果を確かめて「解決済みにする」を押してください。";
 "No conflict markers are left. Check the result, then Mark Resolved." = "コンフリクトのマーカーは残っていません。結果を確かめて「解決済みにする」を押してください。";
+
+/* GTK4 の FE: Working Copy の改行の印 */
+"Mixed" = "混在";
+"None" = "なし";
+"Line endings: working tree {worktree}, git {git}, checkout {checkout}" = "改行: 作業ツリー {worktree}、git {git}、checkout {checkout}";
+"Conversion: {rule}" = "変換: {rule}";
+"The next commit or checkout may change the line endings of the whole file" = "次の commit や checkout で、ファイル全体の改行が変わることがあります";

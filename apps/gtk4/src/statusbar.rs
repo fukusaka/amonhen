@@ -334,7 +334,7 @@ pub fn sequence_detail(s: &Value, conflicts: usize, without_markers: usize) -> S
     tr!("Conflicts resolved. Continue to finish, or Abort to go back to where you started.")
 }
 
-/// 窓の下のステータスバー。
+/// 窓の下のステータスバー。作るときに、文字の色（`label.warning` など）も決める。
 pub struct StatusBar {
     pub root: gtk::Box,
     rows: RefCell<Vec<(Row, gtk::Widget)>>,
@@ -443,7 +443,10 @@ fn install_css() {
     let provider = gtk::CssProvider::new();
     provider.load_from_string(
         ".status-sequence { background-color: alpha(@warning_color, 0.14); } \
-         .status-failure { background-color: alpha(@error_color, 0.08); }",
+         .status-failure { background-color: alpha(@error_color, 0.08); } \
+         label.warning { color: @warning_color; } \
+         label.error { color: @error_color; } \
+         label.success { color: @success_color; }",
     );
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(

@@ -101,6 +101,8 @@ struct Inner {
     conflict_buttons: gtk::Box,
     /// コンフリクトのファイルにマーカーが残っていないときの案内（rerere やほかのエディタが解いた）。
     conflict_note: gtk::Label,
+    /// 改行を変換している・改行が混ざっているファイルの印（普段のファイルでは出さない）。
+    line_endings: gtk::Label,
     /// 選んでいるファイル。
     selected: RefCell<Option<String>>,
     /// 出している差分。
@@ -268,6 +270,10 @@ impl WorkingCopy {
         bar.set_margin_start(10);
         bar.set_margin_end(10);
         bar.append(&path);
+        let line_endings = gtk::Label::new(None);
+        line_endings.add_css_class("caption");
+        line_endings.set_visible(false);
+        bar.append(&line_endings);
         bar.append(&sides);
         bar.append(&conflict_buttons);
         bar.append(&lines);
@@ -325,6 +331,7 @@ impl WorkingCopy {
             staged_side,
             conflict_buttons,
             conflict_note,
+            line_endings,
             selected: RefCell::default(),
             current: RefCell::default(),
             generation: Cell::new(0),
@@ -1011,6 +1018,7 @@ impl Inner {
                         .set_text(note.as_deref().unwrap_or_default());
                     this.conflict_note.set_visible(note.is_some());
                     let w = working.0.as_ref();
+                    this.show_line_endings(w.and_then(|w| w.line_endings.as_ref()));
                     this.sides.set_visible(w.is_some_and(|w| {
                         w.combined.is_none() && w.entry.is_staged() && w.entry.is_unstaged()
                     }));
@@ -1400,6 +1408,49 @@ impl Inner {
             this.body.buffer().set_text(body.trim());
             this.update_buttons();
         });
+    }
+
+    /// 改行の印: 作業ツリーの形 → git に入る形。説明に、作業ツリー・git・checkout の形と変換を出す。
+    fn show_line_endings(&self, le: Option<&amonhen_model::LineEndings>) {
+        use amonhen_model::Eol;
+        let Some(le) = le.filter(|le| le.notable()) else {
+            self.line_endings.set_visible(false);
+            return;
+        };
+        let name = |e: Eol| match e {
+            Eol::Lf => "LF".to_owned(),
+            Eol::Crlf => "CRLF".to_owned(),
+            Eol::Mixed => tr!("Mixed"),
+            Eol::None => tr!("None"),
+        };
+        let mut text = if le.worktree != le.index && le.index != Eol::None {
+            format!("{} → {}", name(le.worktree), name(le.index))
+        } else {
+            name(le.worktree)
+        };
+        if le.warning() {
+            text = format!("⚠︎ {text}");
+            self.line_endings.add_css_class("warning");
+        } else {
+            self.line_endings.remove_css_class("warning");
+        }
+        self.line_endings.set_text(&text);
+        let mut tip = vec![tr!(
+            "Line endings: working tree {worktree}, git {git}, checkout {checkout}",
+            worktree = name(le.worktree),
+            git = name(le.index),
+            checkout = name(le.checkout)
+        )];
+        if !le.rule.is_empty() {
+            tip.push(tr!("Conversion: {rule}", rule = le.rule));
+        }
+        if le.warning() {
+            tip.push(tr!(
+                "The next commit or checkout may change the line endings of the whole file"
+            ));
+        }
+        self.line_endings.set_tooltip_text(Some(&tip.join("\n")));
+        self.line_endings.set_visible(true);
     }
 
     fn show_error(&self, e: &str) {
