@@ -44,8 +44,52 @@ pub struct Sheet {
     rx: async_channel::Receiver<Response>,
 }
 
+thread_local! {
+    /// 窓ごとの、書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。
+    static WORKTREE_NAMES: std::cell::RefCell<Vec<(glib::WeakRef<gtk::Window>, String)>> =
+        std::cell::RefCell::default();
+}
+
+/// `window` の確認のシートに出す、書き込む先の worktree の名前（None なら出さない）。
+pub fn set_worktree_name(window: &gtk::Window, name: Option<String>) {
+    WORKTREE_NAMES.with(|names| {
+        let mut names = names.borrow_mut();
+        names.retain(|(w, _)| w.upgrade().is_some_and(|w| &w != window));
+        if let Some(name) = name {
+            names.push((window.downgrade(), name));
+        }
+    });
+}
+
+fn worktree_name(window: &gtk::Window) -> Option<String> {
+    WORKTREE_NAMES.with(|names| {
+        names
+            .borrow()
+            .iter()
+            .find(|(w, _)| w.upgrade().as_ref() == Some(window))
+            .map(|(_, n)| n.clone())
+    })
+}
+
 impl Sheet {
+    /// 確認のシート。worktree が 2 つ以上あれば、どの worktree に対する操作かを説明の先頭に書く
+    /// （docs/ux.md の「Worktrees」）。
     pub fn new(parent: Option<&gtk::Window>, title: &str, message: &str) -> Self {
+        match parent.and_then(worktree_name) {
+            Some(name) => {
+                let mut text = tr!("In the worktree “{name}”.", name = name);
+                if !message.is_empty() {
+                    text.push('\n');
+                    text.push_str(message);
+                }
+                Self::unnamed(parent, title, &text)
+            }
+            None => Self::unnamed(parent, title, message),
+        }
+    }
+
+    /// worktree の名前を書かないシート（worktree そのものの操作など）。
+    pub fn unnamed(parent: Option<&gtk::Window>, title: &str, message: &str) -> Self {
         let heading = gtk::Label::new(Some(title));
         heading.add_css_class("title-3");
         heading.set_wrap(true);

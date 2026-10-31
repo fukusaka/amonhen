@@ -472,13 +472,8 @@ fn install_css() {
 impl StatusBar {
     /// 操作の失敗を、ステータスバーで知らせる（作業を止めない）。閉じるか、次の失敗・成功で消えるまで出す。
     /// 帯には、何が失敗したか（見出し）、なぜか（要点）、次にできること（ボタン）を出す。git の全文は「詳細」と
-    /// ツールチップ。`open` は worktree を開く。
-    pub fn show_failure(
-        self: &Rc<Self>,
-        failure: Failure,
-        actions: &Rc<crate::actions::Actions>,
-        open: Rc<dyn Fn(std::path::PathBuf)>,
-    ) {
+    /// ツールチップ。
+    pub fn show_failure(self: &Rc<Self>, failure: Failure, actions: &Rc<crate::actions::Actions>) {
         let cancelled = failure.cancelled();
         let icon = gtk::Label::new(Some(if cancelled { "■" } else { "✕" }));
         if !cancelled {
@@ -504,10 +499,9 @@ impl StatusBar {
         if !cancelled {
             for (i, remedy) in failure.remedies().into_iter().enumerate() {
                 let b = button(&remedy.title(), i == 0);
-                let (this, actions, open, command) = (
+                let (this, actions, command) = (
                     Rc::downgrade(self),
                     actions.clone(),
-                    open.clone(),
                     failure.command.clone(),
                 );
                 b.connect_clicked(move |b| {
@@ -518,7 +512,11 @@ impl StatusBar {
                         let _ = b.activate_action(name, None);
                     };
                     match &remedy {
-                        Remedy::OpenWorktree(path) => open(path.into()),
+                        // その worktree を書き込む先にする（別の窓では開かない）。
+                        Remedy::OpenWorktree(path) => {
+                            let _ =
+                                b.activate_action("win.edit-worktree", Some(&path.to_variant()));
+                        }
                         Remedy::OpenTerminal => activate("win.open-in-terminal"),
                         Remedy::Retry => {
                             if let Some(c) = &command {

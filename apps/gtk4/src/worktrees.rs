@@ -3,17 +3,23 @@
 //! 一覧は開いたリポジトリの `worktrees` で読み、変更の数は `worktreeChanges` で 1 回に頼む（worktree ごとには
 //! 開かない。SSH 先でも 1 本のつながりで済む）。窓が前にある間は 10 秒ごとに頼み（変わっていなければエンジンは
 //! git を動かさない）、5 分ごとに全部を数え直す（stage せずに書き換えた、変更のない worktree を見つけるため）。
+//!
+//! 窓は書き込む先の worktree（git の「今いる worktree」）を 1 つ持つ。HEAD・index・作業ツリーに触れる操作と
+//! Working Copy はそこに向け、History・ref は開いたリポジトリのものを全部の worktree で共通に使う。ほかの
+//! worktree を書き込む先にしたら、その worktree をリポジトリとして開いて見張る（開いたままにするのは開いた
+//! リポジトリと、最近書き込む先にした 3 つまで。SSH 先では 1 つごとにつながりを使う）。
 
 use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use amonhen_core::Repository;
-use gtk::glib;
+use amonhen_core::{RefsSnapshot, Repository, StatusSnapshot};
+use amonhen_model::tr;
 use gtk::prelude::*;
+use gtk::{gio, glib};
 use serde_json::{Value, json};
 
 /// コアの `worktrees` の 1 つ（`crates/core/src/worktree.rs`）。
@@ -232,14 +238,123 @@ impl View {
     pub fn layout(&self) -> (Vec<Info>, Vec<Info>) {
         layout(&self.list, &self.counts, &self.editing)
     }
+
+    /// 書き込む先の worktree（worktree が 2 つ以上あるときだけ）。
+    pub fn editing_info(&self) -> Option<&Info> {
+        (self.list.len() > 1)
+            .then(|| self.list.iter().find(|w| w.key == self.editing))
+            .flatten()
+    }
 }
 
 type Listener = Rc<dyn Fn()>;
+type EditListener = Rc<dyn Fn(Arc<Repository>)>;
+
+/// 開いた worktree の見張りからの知らせ（裏のスレッドから）。
+pub enum Note {
+    /// その worktree の status を読み直した。
+    Status(Arc<Repository>, Arc<StatusSnapshot>),
+    /// ref（全部の worktree で共通）か、その worktree の HEAD が動いた。
+    Refs,
+}
+
+pub type Notify = Arc<dyn Fn(Note) + Send + Sync>;
+
+/// 見張りのスレッドに止まれと伝える値（変化の知らせのビットとは重ならない）。
+const STOP: u32 = u32::MAX;
+
+/// 書き込む先にした、開いたリポジトリでない worktree: そのリポジトリと、変化の見張り。
+struct Slot {
+    key: String,
+    repo: Arc<Repository>,
+    stop: std::sync::mpsc::Sender<u32>,
+}
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        let _ = self.stop.send(STOP);
+    }
+}
+
+/// `repo` の index・作業ツリー・ref を見張り、変わったら status を読み直して知らせる（裏のスレッドで呼ぶ）。
+fn watch(
+    repo: Arc<Repository>,
+    notify: Notify,
+    tx: std::sync::mpsc::Sender<u32>,
+    rx: std::sync::mpsc::Receiver<u32>,
+) {
+    let status = |repo: &Arc<Repository>| {
+        if let Ok(snapshot) = repo.load_status() {
+            notify(Note::Status(repo.clone(), snapshot));
+        }
+    };
+    status(&repo);
+    let remote_tx = tx.clone();
+    let remote = repo.subscribe_changes(Box::new(move |bits| {
+        let _ = remote_tx.send(bits);
+    }));
+    let _watcher = if remote {
+        None
+    } else {
+        amonhen_watch::Watcher::new(repo.paths(), move |changes| {
+            let _ = tx.send(changes.0);
+        })
+        .ok()
+    };
+    use amonhen_watch::Changes;
+    while let Ok(mut bits) = rx.recv() {
+        if bits == STOP {
+            return;
+        }
+        // まとめて来た知らせは 1 回の読み直しにする。
+        while let Ok(more) = rx.try_recv() {
+            if more == STOP {
+                return;
+            }
+            bits |= more;
+        }
+        let changes = Changes(bits);
+        if changes.contains(Changes::REFS) {
+            notify(Note::Refs);
+        }
+        if changes.contains(Changes::REFS)
+            || changes.contains(Changes::INDEX)
+            || changes.contains(Changes::WORKTREE)
+        {
+            status(&repo);
+        }
+    }
+}
+
+/// 窓の場所（手元のパス、`daemon:…`、`ssh://…`）の、パスを `path` に替えたもの。
+fn location_for(location: &str, path: &str) -> String {
+    if let Some(rest) = location.strip_prefix("ssh://") {
+        let host = rest.split('/').next().unwrap_or(rest);
+        let sep = if path.starts_with('/') { "" } else { "/" };
+        return format!("ssh://{host}{sep}{path}");
+    }
+    if location.starts_with("daemon:") {
+        return format!("daemon:{path}");
+    }
+    path.to_owned()
+}
 
 /// 窓の worktree: 一覧と変更の数。
 pub struct Worktrees {
     opened: RefCell<Option<Arc<Repository>>>,
+    /// 窓の場所（ほかの worktree を同じつなぎ方で開く）。
+    location: String,
     remote: bool,
+    /// 書き込む先（None なら開いたリポジトリ）。
+    editing: RefCell<Option<Rc<Slot>>>,
+    /// 開いたままにしている worktree（古い順。書き込む先は最後）。
+    slots: RefCell<Vec<Rc<Slot>>>,
+    /// 開いている途中の worktree（重ねて開かない）。
+    opening: RefCell<HashSet<String>>,
+    /// 書き込む先を変えた（そのリポジトリ）。
+    on_edit: RefCell<Option<EditListener>>,
+    /// 見張りの知らせ。
+    notify: RefCell<Option<Notify>>,
     list: RefCell<Vec<Info>>,
     counts: RefCell<HashMap<String, usize>>,
     /// ほかの worktree の status の指紋（変わっていなければ画面を変えない）。
@@ -261,12 +376,20 @@ pub struct Worktrees {
 /// 窓が前にある間に数を頼む間隔と、全部を数え直す間隔。
 const POLL: Duration = Duration::from_secs(10);
 const FRESH: Duration = Duration::from_secs(300);
+/// 開いたままにする worktree の数（開いたリポジトリのほか）。
+const KEPT: usize = 3;
 
 impl Worktrees {
-    pub fn new(remote: bool, pending: Rc<Cell<u32>>) -> Rc<Self> {
+    pub fn new(location: &str, pending: Rc<Cell<u32>>) -> Rc<Self> {
         Rc::new(Self {
             opened: RefCell::default(),
-            remote,
+            location: location.to_owned(),
+            remote: amonhen_remote::location::is_remote(location),
+            editing: RefCell::default(),
+            slots: RefCell::default(),
+            opening: RefCell::default(),
+            on_edit: RefCell::default(),
+            notify: RefCell::default(),
             list: RefCell::default(),
             counts: RefCell::default(),
             stamps: RefCell::default(),
@@ -310,7 +433,149 @@ impl Worktrees {
 
     /// 書き込む先の worktree の鍵。
     pub fn editing_key(&self) -> String {
-        self.opened_key()
+        match self.editing.borrow().as_ref() {
+            Some(slot) => slot.key.clone(),
+            None => self.opened_key(),
+        }
+    }
+
+    /// 書き込む先の worktree のリポジトリ（まだ開いていなければ None）。
+    pub fn editing_repo(&self) -> Option<Arc<Repository>> {
+        match self.editing.borrow().as_ref() {
+            Some(slot) => Some(slot.repo.clone()),
+            None => self.opened(),
+        }
+    }
+
+    /// `repo` が書き込む先の worktree のものか。
+    pub fn is_editing(&self, repo: &Arc<Repository>) -> bool {
+        self.editing_repo().is_none_or(|e| Arc::ptr_eq(&e, repo))
+    }
+
+    /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。確認のシートに出す。
+    pub fn editing_name(&self) -> Option<String> {
+        self.view().editing_info().map(|w| w.name.clone())
+    }
+
+    /// ツールバーのブランチの横に出す、書き込む先の worktree の名前（開いたものでないか、開いたものが
+    /// メインの作業ツリーでないときだけ）。
+    pub fn toolbar_name(&self) -> Option<String> {
+        let view = self.view();
+        let info = view.editing_info()?;
+        (self.editing.borrow().is_some() || !info.main).then(|| info.name.clone())
+    }
+
+    /// `key` の worktree。
+    pub fn info(&self, key: &str) -> Option<Info> {
+        self.list.borrow().iter().find(|w| w.key == key).cloned()
+    }
+
+    /// 開いたリポジトリの ref を、書き込む先の worktree から見たものにする（今のブランチと HEAD をその
+    /// worktree のものに）。サイドバー・History・ツールバーの「今のブランチ」がそれに従う。
+    pub fn adjust(&self, refs: &Arc<RefsSnapshot>) -> Arc<RefsSnapshot> {
+        if self.editing.borrow().is_none() {
+            return refs.clone();
+        }
+        let Some(info) = self.info(&self.editing_key()) else {
+            return refs.clone();
+        };
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        (&info.key, &info.branch, &info.head).hash(&mut hasher);
+        let mut adjusted = refs.refs.clone();
+        adjusted.head_branch = info.branch.clone();
+        adjusted.head = info.head.as_deref().and_then(amonhen_model::Oid::from_hex);
+        Arc::new(RefsSnapshot {
+            // 書き込む先が替われば別の ref として出し直す（サイドバーは同じ世代なら作り直さない）。
+            generation: refs.generation ^ (hasher.finish() | 1 << 63),
+            refs: adjusted,
+        })
+    }
+
+    /// 書き込む先を変えたら `f(そのリポジトリ)` を呼ぶ。
+    pub fn connect_edit(&self, f: impl Fn(Arc<Repository>) + 'static) {
+        self.on_edit.replace(Some(Rc::new(f)));
+    }
+
+    /// 開いた worktree の見張りの知らせを `notify` で送る。
+    pub fn set_notify(&self, notify: Notify) {
+        self.notify.replace(Some(notify));
+    }
+
+    /// `path` の worktree を書き込む先にする。まだ開いていなければ裏で開く（SSH 先なら同じ接続先の上のパス）。
+    pub fn edit(self: &Rc<Self>, path: &str) {
+        let key = canonical(path, self.remote);
+        if key == self.editing_key() {
+            return;
+        }
+        if key == self.opened_key() {
+            return self.activate(None);
+        }
+        let known = self.slots.borrow().iter().find(|s| s.key == key).cloned();
+        if let Some(slot) = known {
+            return self.activate(Some(slot));
+        }
+        if !self.opening.borrow_mut().insert(key.clone()) {
+            return;
+        }
+        let location = location_for(&self.location, path);
+        let this = Rc::downgrade(self);
+        let pending = self.pending.clone();
+        pending.set(pending.get() + 1);
+        glib::spawn_future_local(async move {
+            let started = Instant::now();
+            let opened = gio::spawn_blocking(move || {
+                crate::open(std::path::Path::new(&location)).map(Arc::new)
+            })
+            .await
+            .unwrap_or_else(|_| Err(String::new()));
+            pending.set(pending.get() - 1);
+            let Some(this) = this.upgrade() else { return };
+            this.opening.borrow_mut().remove(&key);
+            crate::activity::record(
+                "Worktrees: open one",
+                started.elapsed().as_secs_f64() * 1000.0,
+            );
+            let repo = match opened {
+                Ok(repo) => repo,
+                Err(e) => {
+                    let window = gtk::Window::list_toplevels()
+                        .into_iter()
+                        .filter_map(|w| w.downcast::<gtk::Window>().ok())
+                        .find(|w| w.is_active());
+                    crate::sheets::inform(window.as_ref(), &tr!("Can’t open the worktree"), &e)
+                        .await;
+                    return;
+                }
+            };
+            let (tx, rx) = std::sync::mpsc::channel();
+            if let Some(notify) = this.notify.borrow().clone() {
+                let (r, t) = (repo.clone(), tx.clone());
+                std::thread::spawn(move || watch(r, notify, t, rx));
+            }
+            let slot = Rc::new(Slot {
+                key,
+                repo,
+                stop: tx,
+            });
+            this.activate(Some(slot));
+        });
+    }
+
+    /// 書き込む先を `slot`（None なら開いたリポジトリ）にする。開いたままにするのは最近の 3 つまで。
+    fn activate(&self, slot: Option<Rc<Slot>>) {
+        if let Some(slot) = &slot {
+            let mut slots = self.slots.borrow_mut();
+            slots.retain(|s| s.key != slot.key);
+            slots.push(slot.clone());
+            let extra = slots.len().saturating_sub(KEPT);
+            slots.drain(..extra);
+        }
+        self.editing.replace(slot);
+        if let (Some(f), Some(repo)) = (self.on_edit.borrow().clone(), self.editing_repo()) {
+            f(repo);
+        }
+        self.list_changed();
     }
 
     /// サイドバーに出す様子。

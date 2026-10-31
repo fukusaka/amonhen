@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>]`
 
 mod actions;
 mod activity;
@@ -154,6 +154,8 @@ struct Args {
     repositories: bool,
     /// Quick Open を、この問い合わせを入れて出す（確認用。`--snapshot` はその窓を撮る）。
     quick_open: Option<String>,
+    /// 最初に History を出したら、この worktree を書き込む先にする（確認用）。
+    edit_worktree: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -211,6 +213,9 @@ fn parse_args() -> Result<Args, String> {
             "--reflog" => args.reflog = true,
             "--repositories" => args.repositories = true,
             "--quick-open" => args.quick_open = Some(it.next().ok_or("--quick-open <query>")?),
+            "--edit-worktree" => {
+                args.edit_worktree = Some(it.next().ok_or("--edit-worktree <path>")?)
+            }
             "--apply-patch" => {
                 let paths = it.next().ok_or("--apply-patch <path,...>")?;
                 args.apply_patch = paths.split(',').map(PathBuf::from).collect();
@@ -544,8 +549,7 @@ fn build_window(app: &gtk::Application, args: Args) {
     let o = range_diff_opener.clone();
     range_diff.connect_close(move || o.close());
     // リポジトリの worktree（サイドバーの Working Copy の下に、変更の数と並べる）。
-    let worktrees =
-        worktrees::Worktrees::new(amonhen_remote::location::is_remote(&text), pending.clone());
+    let worktrees = worktrees::Worktrees::new(&text, pending.clone());
     let (weak_sidebar, w) = (Rc::downgrade(&sidebar), Rc::downgrade(&worktrees));
     working.connect_count(move |count| {
         if let Some(sidebar) = weak_sidebar.upgrade() {
@@ -568,7 +572,7 @@ fn build_window(app: &gtk::Application, args: Args) {
             worktrees.connect_counts(show);
         }
     }
-    connect_sidebar(&sidebar, &pages, &view, &stashes);
+    connect_sidebar(&sidebar, &pages, &view, &stashes, &worktrees);
     if let Some(words) = &args.filter_sidebar {
         sidebar.filter(words);
     }
@@ -632,24 +636,60 @@ fn build_window(app: &gtk::Application, args: Args) {
     // 操作は裏で実行し、終わったら History・ref・status を読み直す（ファイルの変化の知らせも来るが、
     // 待たずに出す）。
     let actions = Actions::new(&window);
+    // Reflog の画面（後で作る。書き込む先を変えたらその worktree の HEAD の reflog にする）。
+    let reflog_slot: Rc<std::cell::RefCell<Option<Rc<reflog::ReflogView>>>> = Rc::default();
     // パッチのファイルを窓に落としたら当てる。
     patches::install_drop(&window, &actions);
     working.set_actions(actions.clone());
     stashes.set_actions(actions.clone());
     let reload_tx = tx.clone();
     let weak_view = view.downgrade();
+    let w = Rc::downgrade(&worktrees);
     let reload: Rc<dyn Fn()> = Rc::new(move || {
         let Some((repo, _)) = weak_view.upgrade().and_then(|v| v.current()) else {
             return;
         };
+        // status は書き込む先の worktree のもの。
+        let editing = w
+            .upgrade()
+            .and_then(|w| w.editing_repo())
+            .unwrap_or_else(|| repo.clone());
         let tx = reload_tx.clone();
         std::thread::spawn(move || {
             reload_history(&repo, &tx);
-            reload_status(&repo, &tx);
+            reload_status(&editing, &tx);
         });
     });
     let r = reload.clone();
     actions.connect_change(move || r());
+    // 書き込む先にした worktree の見張りの知らせ（裏のスレッドから）。
+    let note_tx = tx.clone();
+    worktrees.set_notify(Arc::new(move |note| {
+        let _ = note_tx.send_blocking(match note {
+            worktrees::Note::Status(repo, snapshot) => Event::Status(repo, snapshot),
+            worktrees::Note::Refs => Event::Reload,
+        });
+    }));
+    // 書き込む先を変えた: Working Copy・操作・Reflog をその worktree に向ける。
+    let (wc, st, rf, a, edit_tx) = (
+        working.clone(),
+        stashes.clone(),
+        reflog_slot.clone(),
+        actions.clone(),
+        tx.clone(),
+    );
+    worktrees.connect_edit(move |repo| {
+        wc.set_repo(repo.clone());
+        st.set_repo(repo.clone());
+        a.set_repo(repo.clone());
+        if let Some(reflog) = rf.borrow().as_ref() {
+            reflog.set_repo(repo.clone());
+            reflog.reload();
+        }
+        a.refresh_undo();
+        let tx = edit_tx.clone();
+        std::thread::spawn(move || reload_status(&repo, &tx));
+    });
     // Blame・File History（History の差分のファイルの見出しと、Working Copy のファイルの右クリック）。
     let on_commit: filetools::OnCommit = {
         let (pages, view, sidebar) = (pages.clone(), view.clone(), sidebar.clone());
@@ -665,6 +705,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         on_commit.clone(),
     ));
     pages.add_named(&reflog.root, Some("reflog"));
+    reflog_slot.replace(Some(reflog.clone()));
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), window.downgrade(), on_commit.clone());
     diff.connect_file_menu(move |path, x, y| {
@@ -695,12 +736,17 @@ fn build_window(app: &gtk::Application, args: Args) {
         }));
         menu::popup(&view, x, y, items);
     });
-    let (v, w, oc) = (view.downgrade(), window.downgrade(), on_commit.clone());
+    let (a, w, oc) = (
+        Rc::downgrade(&actions),
+        window.downgrade(),
+        on_commit.clone(),
+    );
     working.connect_file_menu(move |path, can_blame, can_history| {
-        let (Some(view), Some(window)) = (v.upgrade(), w.upgrade()) else {
+        let (Some(actions), Some(window)) = (a.upgrade(), w.upgrade()) else {
             return Vec::new();
         };
-        let Some((repo, _)) = view.current() else {
+        // 作業ツリーのファイルは、書き込む先の worktree のもの。
+        let Some(repo) = actions.repo() else {
             return Vec::new();
         };
         let mut items = Vec::new();
@@ -772,8 +818,8 @@ fn build_window(app: &gtk::Application, args: Args) {
         );
     });
     // 失敗はステータスバーに、終わった操作の一言も（前の失敗は消す）。
-    let (bar, a, o) = (statusbar.clone(), actions.clone(), open.clone());
-    actions.connect_failure(move |failure| bar.show_failure(failure, &a, o.clone()));
+    let (bar, a) = (statusbar.clone(), actions.clone());
+    actions.connect_failure(move |failure| bar.show_failure(failure, &a));
     let (bar, h) = (statusbar.clone(), head.clone());
     actions.connect_done(move |command| {
         bar.hide(statusbar::Row::Failure);
@@ -824,11 +870,10 @@ fn build_window(app: &gtk::Application, args: Args) {
     }
     // 自動の fetch（Settings > General で決めた間隔。聞かずにすべてのリモートから。失敗はステータスバーに）。
     let elapsed = Rc::new(Cell::new(0u32));
-    let (v, bar, a, o, r) = (
+    let (v, bar, a, r) = (
         view.downgrade(),
         statusbar.clone(),
         actions.clone(),
-        open.clone(),
         reload.clone(),
     );
     glib::timeout_add_seconds_local(60, move || {
@@ -844,7 +889,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         let Some((repo, _)) = view.current() else {
             return glib::ControlFlow::Continue;
         };
-        let (bar, a, o, r) = (bar.clone(), a.clone(), o.clone(), r.clone());
+        let (bar, a, r) = (bar.clone(), a.clone(), r.clone());
         let name = repo_name(&repo);
         glib::spawn_future_local(async move {
             let command = serde_json::json!({ "op": "fetch" });
@@ -856,7 +901,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                     &name,
                     amonhen_model::tr!("Automatic fetch failed: {error}", error = failure.message),
                 );
-                bar.show_failure(failure, &a, o);
+                bar.show_failure(failure, &a);
             } else {
                 activity::event(&name, amonhen_model::tr!("Automatic fetch"));
             }
@@ -908,13 +953,62 @@ fn build_window(app: &gtk::Application, args: Args) {
         working: working.clone(),
         view: view.clone(),
         refs: refs.clone(),
-        reload,
+        reload: reload.clone(),
         open,
         go_to,
         range_diff: range_diff_opener.clone(),
         location: text.clone(),
     });
     let latest_refs = refs;
+    // `--edit-worktree` の worktree を書き込む先にし終えたか（`--perform`・`--action` はそれから）。
+    let edited: Rc<dyn Fn() -> bool> = {
+        let (w, path) = (worktrees.clone(), args.edit_worktree.clone());
+        Rc::new(move || {
+            // 一覧も読み終えてから（確認のシートに worktree の名前を出す）。
+            path.as_ref().is_none_or(|p| {
+                w.editing_key() == worktrees::canonical(p, false) && w.editing_name().is_some()
+            })
+        })
+    };
+    // 最後に読んだ、開いたリポジトリの ref（書き込む先を変えたら、その worktree から見たものに出し直す）。
+    let raw_refs: Rc<std::cell::RefCell<Option<Arc<amonhen_core::RefsSnapshot>>>> = Rc::default();
+    let (w, b, win, r, refs_tx) = (
+        Rc::downgrade(&worktrees),
+        buttons.clone(),
+        window.downgrade(),
+        raw_refs.clone(),
+        tx.clone(),
+    );
+    worktrees.connect_list(move || {
+        let (Some(worktrees), Some(window)) = (w.upgrade(), win.upgrade()) else {
+            return;
+        };
+        b.set_worktree(worktrees.toolbar_name().as_deref());
+        sheets::set_worktree_name(window.upcast_ref(), worktrees.editing_name());
+        if let Some(refs) = r.borrow().clone() {
+            let _ = refs_tx.try_send(Event::Refs(refs));
+        }
+    });
+    // ほかの場所（ブランチのメニュー、ステータスバー）から worktree を書き込む先にする。
+    let edit_action = gio::SimpleAction::new("edit-worktree", Some(glib::VariantTy::STRING));
+    let (w, p, s) = (
+        Rc::downgrade(&worktrees),
+        pages.downgrade(),
+        sidebar.clone(),
+    );
+    edit_action.connect_activate(move |_, value| {
+        let (Some(worktrees), Some(pages), Some(path)) = (
+            w.upgrade(),
+            p.upgrade(),
+            value.and_then(|v| v.get::<String>()),
+        ) else {
+            return;
+        };
+        worktrees.edit(&path);
+        pages.set_visible_child_name("working");
+        s.select_page(Page::WorkingCopy);
+    });
+    window.add_action(&edit_action);
     search.install(&window, app);
     header.pack_end(&search.toggle);
     let order = settings::history_order();
@@ -934,23 +1028,40 @@ fn build_window(app: &gtk::Application, args: Args) {
                 match event {
                     Event::History(repo, history) => {
                         status.set_visible(false);
-                        working.set_repo(repo.clone());
-                        stashes.set_repo(repo.clone());
-                        reflog.set_repo(repo.clone());
-                        actions.set_repo(repo.clone());
                         worktrees.set_opened(repo.clone());
+                        // Working Copy・操作・Reflog は書き込む先の worktree のもの。
+                        let editing = worktrees.editing_repo().unwrap_or_else(|| repo.clone());
+                        working.set_repo(editing.clone());
+                        stashes.set_repo(editing.clone());
+                        reflog.set_repo(editing.clone());
+                        actions.set_repo(editing);
                         shaper.present(repo, history);
+                        if first && let Some(path) = &args.edit_worktree {
+                            worktrees.edit(path);
+                        }
                         if let Some(command) = perform.take() {
-                            match serde_json::from_str(&command) {
+                            match serde_json::from_str::<serde_json::Value>(&command) {
                                 Ok(command) => {
-                                    let p = pending.clone();
-                                    actions.perform_then(vec![command], move || {
-                                        // 読み直しの知らせが届くまで、少し待ってから撮る。
-                                        glib::timeout_add_local_once(
-                                            std::time::Duration::from_millis(500),
-                                            move || p.set(p.get() - 1),
-                                        );
-                                    });
+                                    let (p, a, ready) =
+                                        (pending.clone(), actions.clone(), edited.clone());
+                                    // `--edit-worktree` なら、その worktree を開いてから。
+                                    glib::timeout_add_local(
+                                        std::time::Duration::from_millis(50),
+                                        move || {
+                                            if !ready() {
+                                                return glib::ControlFlow::Continue;
+                                            }
+                                            let p = p.clone();
+                                            a.perform_then(vec![command.clone()], move || {
+                                                // 読み直しの知らせが届くまで、少し待ってから撮る。
+                                                glib::timeout_add_local_once(
+                                                    std::time::Duration::from_millis(500),
+                                                    move || p.set(p.get() - 1),
+                                                );
+                                            });
+                                            glib::ControlFlow::Break
+                                        },
+                                    );
                                 }
                                 Err(e) => {
                                     eprintln!("--perform の JSON を読めない: {e}");
@@ -1022,15 +1133,19 @@ fn build_window(app: &gtk::Application, args: Args) {
                             if let Some(id) = args.action.clone() {
                                 // ref を読むまで待ってから（Merge・Rebase・Pop などは ref から候補を作る）。
                                 pending.set(pending.get() + 1);
-                                let (p, w, r) =
-                                    (pending.clone(), window.downgrade(), latest_refs.clone());
+                                let (p, w, r, ready) = (
+                                    pending.clone(),
+                                    window.downgrade(),
+                                    latest_refs.clone(),
+                                    edited.clone(),
+                                );
                                 glib::timeout_add_local(
                                     std::time::Duration::from_millis(100),
                                     move || {
                                         let Some(window) = w.upgrade() else {
                                             return glib::ControlFlow::Break;
                                         };
-                                        if r.borrow().is_none() {
+                                        if r.borrow().is_none() || !ready() {
                                             return glib::ControlFlow::Continue;
                                         }
                                         let _ = WidgetExt::activate_action(
@@ -1226,6 +1341,9 @@ fn build_window(app: &gtk::Application, args: Args) {
                         }
                     }
                     Event::Refs(refs) => {
+                        // 今のブランチと HEAD は、書き込む先の worktree のもの。
+                        raw_refs.replace(Some(refs.clone()));
+                        let refs = worktrees.adjust(&refs);
                         match &refs.refs.head_branch {
                             Some(branch) => subtitle.set_text(branch),
                             None => subtitle.set_text("detached HEAD"),
@@ -1307,7 +1425,11 @@ fn build_window(app: &gtk::Application, args: Args) {
                             }
                         }
                     }
-                    Event::Status(snapshot) => {
+                    Event::Status(source, snapshot) => {
+                        // 書き込む先でなくなった worktree の status は出さない。
+                        if !worktrees.is_editing(&source) {
+                            continue;
+                        }
                         // merge・rebase などの途中なら、ステータスバーに行を出す。
                         let conflicts = snapshot
                             .status
@@ -1315,8 +1437,8 @@ fn build_window(app: &gtk::Application, args: Args) {
                             .iter()
                             .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
                             .count();
-                        if let Some((repo, _)) = view.current() {
-                            let (bar, a) = (statusbar.clone(), actions.clone());
+                        {
+                            let (repo, bar, a) = (source, statusbar.clone(), actions.clone());
                             glib::spawn_future_local(async move {
                                 let sequence =
                                     sheets::run(&repo, serde_json::json!({ "op": "sequence" }))
@@ -1356,6 +1478,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                     Event::Timing(metric, ms) => {
                         activity::record(&amonhen_model::i18n::translate(metric), ms)
                     }
+                    Event::Reload => reload(),
                     Event::Failed(e) => {
                         status.set_text(&e);
                         status.set_visible(true);
@@ -1389,8 +1512,10 @@ fn connect_sidebar(
     pages: &gtk::Stack,
     view: &HistoryView,
     stashes: &Rc<Stashes>,
+    worktrees: &Rc<worktrees::Worktrees>,
 ) {
     let (pages, view, stashes) = (pages.downgrade(), view.downgrade(), Rc::downgrade(stashes));
+    let worktrees = Rc::downgrade(worktrees);
     sidebar.connect_select(move |data| {
         let (Some(pages), Some(view)) = (pages.upgrade(), view.upgrade()) else {
             return;
@@ -1409,6 +1534,13 @@ fn connect_sidebar(
             }
             sidebar::Item::Page(Page::RangeDiff) => pages.set_visible_child_name(rangediff::PAGE),
             sidebar::Item::Page(Page::Reflog) => pages.set_visible_child_name("reflog"),
+            // 選んだ worktree を書き込む先にして、その変更を見せる（フォルダがなければ何もしない）。
+            sidebar::Item::Worktree(w) if w.prunable.is_none() => {
+                pages.set_visible_child_name("working");
+                if let Some(worktrees) = worktrees.upgrade() {
+                    worktrees.edit(&w.path);
+                }
+            }
             _ => {}
         }
         if let Some(target) = sidebar::target(data) {
@@ -1665,7 +1797,10 @@ impl Loader {
 enum Event {
     History(Arc<Repository>, Arc<amonhen_core::HistorySnapshot>),
     Refs(Arc<amonhen_core::RefsSnapshot>),
-    Status(Arc<amonhen_core::StatusSnapshot>),
+    /// status を読み直した（どの worktree のものか、中身）。
+    Status(Arc<Repository>, Arc<amonhen_core::StatusSnapshot>),
+    /// 書き込む先の worktree で ref か HEAD が動いた（History・ref・status を読み直す）。
+    Reload,
     /// Activity の Events に出す出来事（リポジトリの名前、内容）。
     Note(String, String),
     /// Activity の Performance に出す時間（項目、ms）。
@@ -1713,7 +1848,7 @@ fn reload_status(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
     ));
     match loaded {
         Ok(snapshot) => {
-            let _ = tx.send_blocking(Event::Status(snapshot));
+            let _ = tx.send_blocking(Event::Status(repo.clone(), snapshot));
         }
         Err(e) => eprintln!("status を読めない: {e}"),
     }

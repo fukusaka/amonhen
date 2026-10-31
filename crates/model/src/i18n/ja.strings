@@ -1442,3 +1442,7 @@
 "Locked: {reason}" = "ロック中: {reason}";
 "Its folder is gone (Prune removes it): {reason}" = "フォルダがありません（Prune で片付けられます）: {reason}";
 "Worktrees with no changes (click to show)" = "変更のない worktree（クリックで表示）";
+
+/* GTK4: Worktrees（書き込む先の worktree） */
+"In the worktree “{name}”." = "worktree「{name}」で行います。";
+"Can’t open the worktree" = "worktree を開けません";
