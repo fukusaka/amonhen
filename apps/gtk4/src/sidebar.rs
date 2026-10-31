@@ -849,7 +849,7 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
         String::static_type(),
         gtk::gdk::DragAction::COPY | gtk::gdk::DragAction::MOVE,
     );
-    let (weak, cb) = (expander.downgrade(), drop_cb.clone());
+    let (weak, cb, owner) = (expander.downgrade(), drop_cb.clone(), inner.clone());
     target.connect_drop(move |_, value, x, y| {
         let (Some(expander), Ok(dragged)) = (weak.upgrade(), value.get::<String>()) else {
             return false;
@@ -857,6 +857,12 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
         // History から運んだコミットは受けない（History の中で並べ替えるもの）。
         if dragged.starts_with(crate::history::DRAG_PREFIX) {
             return false;
+        }
+        // お気に入りのブランチを、お気に入りの行の上端・下端に落とす: 並べ替える（真ん中は merge・rebase）。
+        if let (Some(node), Some(inner)) = (node_of(&expander), owner.borrow().upgrade())
+            && inner.reorder_favorite(&dragged, &node.data(), y, expander.height() as f64)
+        {
+            return true;
         }
         match (node_of(&expander), cb.borrow().as_ref()) {
             (Some(node), Some(f)) => {
@@ -1063,6 +1069,32 @@ impl Inner {
         }
         self.filter.replace(words);
         self.rebuild(false);
+    }
+
+    /// お気に入りのブランチ `dragged`（`local:<名前>`）を、お気に入りの行 `target` の上端（`y` が高さの 1/3 より上）なら
+    /// その上へ、下端なら下へ動かす（macOS 版の、お気に入りの間に落とす並べ替え）。並べ替えたら true。
+    fn reorder_favorite(&self, dragged: &str, target: &Data, y: f64, height: f64) -> bool {
+        let Some(name) = dragged.strip_prefix("local:") else {
+            return false;
+        };
+        let Item::Ref(e) = &target.item else {
+            return false;
+        };
+        if !target.pinned
+            || e.kind != RefKind::Local
+            || (y > height / 3.0 && y < height * 2.0 / 3.0)
+        {
+            return false;
+        }
+        let Some(order) = reordered(&self.pinned.borrow(), name, &e.name, y <= height / 3.0) else {
+            return false;
+        };
+        if order != *self.pinned.borrow()
+            && let Some(actions) = self.actions.borrow().as_ref()
+        {
+            actions.perform_sequence(crate::refops::pinned_order(&order));
+        }
+        true
     }
 
     /// タグの行の署名の印を入れる。結果がない（古い）ときは、確かめる予定に入れる。
@@ -2204,6 +2236,17 @@ fn filtered_groups(
     groups
 }
 
+/// お気に入りの順 `order` で、`name` を `target` の上（`above`）か下へ動かした順。どちらかがなければ None。
+fn reordered(order: &[String], name: &str, target: &str, above: bool) -> Option<Vec<String>> {
+    let from = order.iter().position(|n| n == name)?;
+    let at = order.iter().position(|n| n == target)?;
+    let index = if above { at } else { at + 1 };
+    let mut order = order.to_vec();
+    let moved = order.remove(from);
+    order.insert(if index > from { index - 1 } else { index }, moved);
+    Some(order)
+}
+
 /// リモートブランチのあるリモートの名前（名前順）。
 fn branch_remotes(refs: &Refs) -> Vec<String> {
     let mut names: Vec<String> = refs
@@ -2288,4 +2331,21 @@ fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStor
         store.append(&Node::new(data, None));
     }
     store
+}
+
+#[cfg(test)]
+mod tests {
+    use super::reordered;
+
+    #[test]
+    fn reorders_favorites() {
+        let order: Vec<String> = ["a", "b", "c"].map(String::from).to_vec();
+        let names = |v: Option<Vec<String>>| v.unwrap().join(",");
+        assert_eq!(names(reordered(&order, "a", "c", false)), "b,c,a");
+        assert_eq!(names(reordered(&order, "a", "c", true)), "b,a,c");
+        assert_eq!(names(reordered(&order, "c", "a", true)), "c,a,b");
+        assert_eq!(names(reordered(&order, "c", "a", false)), "a,c,b");
+        assert_eq!(names(reordered(&order, "b", "b", true)), "a,b,c");
+        assert!(reordered(&order, "x", "a", true).is_none());
+    }
 }

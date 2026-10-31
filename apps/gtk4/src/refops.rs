@@ -521,7 +521,7 @@ pub fn confirm_replace(actions: &Rc<Actions>, tags: &[String], remote: &str) {
 }
 
 /// お気に入りの順を書く（`branch.<name>.amonhenPinned` に 1 から順に）命令。
-fn pinned_order(names: &[String]) -> Vec<serde_json::Value> {
+pub fn pinned_order(names: &[String]) -> Vec<serde_json::Value> {
     names
         .iter()
         .enumerate()
