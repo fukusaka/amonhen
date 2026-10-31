@@ -29,6 +29,8 @@ pub struct Failure {
     pub path: Option<String>,
     /// 失敗した命令（`op` で何の操作か分かる。「もう一度」で同じものを実行する）。
     pub command: Option<Value>,
+    /// 見出し（なければ命令から決める）。
+    pub heading: Option<String>,
 }
 
 /// 帯に出す次の一手。
@@ -63,6 +65,7 @@ impl Failure {
             kind: reply["errorKind"].as_str().map(str::to_owned),
             path: reply["errorPath"].as_str().map(str::to_owned),
             command,
+            heading: None,
         }
     }
 
@@ -72,6 +75,9 @@ impl Failure {
 
     /// 帯の見出し。何の操作が失敗したか。
     pub fn title(&self) -> String {
+        if let Some(h) = &self.heading {
+            return h.clone();
+        }
         match self.op() {
             Some("checkout" | "track" | "detach") => tr!("Couldn’t Checkout"),
             Some("pull") => tr!("Couldn’t Pull"),

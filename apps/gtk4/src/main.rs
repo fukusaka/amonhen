@@ -511,6 +511,48 @@ fn build_window(app: &gtk::Application, args: Args) {
             bar.flash(&text);
         }
     });
+    // 自動の fetch（Settings > General で決めた間隔。聞かずにすべてのリモートから。失敗はステータスバーに）。
+    let elapsed = Rc::new(Cell::new(0u32));
+    let (v, bar, a, o, r) = (
+        view.downgrade(),
+        statusbar.clone(),
+        actions.clone(),
+        open.clone(),
+        reload.clone(),
+    );
+    glib::timeout_add_seconds_local(60, move || {
+        let Some(view) = v.upgrade() else {
+            return glib::ControlFlow::Break;
+        };
+        let minutes = settings::auto_fetch_minutes();
+        elapsed.set(elapsed.get() + 1);
+        if minutes == 0 || elapsed.get() < minutes {
+            return glib::ControlFlow::Continue;
+        }
+        elapsed.set(0);
+        let Some((repo, _)) = view.current() else {
+            return glib::ControlFlow::Continue;
+        };
+        let (bar, a, o, r) = (bar.clone(), a.clone(), o.clone(), r.clone());
+        let name = repo_name(&repo);
+        glib::spawn_future_local(async move {
+            let command = serde_json::json!({ "op": "fetch" });
+            let reply = sheets::run(&repo, command.clone()).await;
+            if reply["error"].is_string() {
+                let mut failure = statusbar::Failure::from_reply(&reply, Some(command));
+                failure.heading = Some(amonhen_model::tr!("Couldn’t Fetch Automatically"));
+                activity::event(
+                    &name,
+                    amonhen_model::tr!("Automatic fetch failed: {error}", error = failure.message),
+                );
+                bar.show_failure(failure, &a, o);
+            } else {
+                activity::event(&name, amonhen_model::tr!("Automatic fetch"));
+            }
+            r();
+        });
+        glib::ControlFlow::Continue
+    });
     // サブモジュールは、作業ツリーからのパスで開く。
     let open_submodule: refops::OpenSubmodule = {
         let (open, view) = (open.clone(), view.downgrade());

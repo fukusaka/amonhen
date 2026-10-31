@@ -797,3 +797,15 @@
 "Insert a Conventional Commits type, Co-authored-by or Signed-off-by" = "Conventional Commits の型、Co-authored-by、Signed-off-by を入れる";
 "Not loaded yet" = "まだ読めていません";
 "Signed-off-by (Me)" = "Signed-off-by（自分）";
+
+/* GTK4 の FE: Settings */
+"General" = "一般";
+"Fetch automatically" = "自動で fetch";
+"Never" = "しない";
+"Every {count} minutes" = "{count} 分ごと";
+"Fetches all remotes of each open repository without asking." = "開いているリポジトリごとに、聞かずにすべてのリモートから fetch します。";
+"Diff & Merge" = "差分とマージ";
+"Merge Editor" = "マージエディタ";
+"Automatic fetch" = "自動の fetch";
+"Automatic fetch failed: {error}" = "自動の fetch に失敗: {error}";
+"Couldn’t Fetch Automatically" = "自動の Fetch ができませんでした";

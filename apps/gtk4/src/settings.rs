@@ -1,6 +1,6 @@
 //! 利用者の設定（macOS 版の `Settings.swift` のうち、GTK4 版に機能のあるもの）。`~/.config/amonhen/gtk.ini`
 //! （GLib の KeyFile）に置く。GSettings はスキーマを入れる必要があり、展開しただけの実行ファイルでは使えないため。
-//! 設定の窓は macOS 版と同じタブ（Git・Appearance・Performance・Advanced）。
+//! 設定の窓は macOS 版と同じタブのうち、中身のあるもの（General・Appearance・Diff & Merge・Performance）。
 
 use std::cell::RefCell;
 use std::path::PathBuf;
@@ -27,6 +27,15 @@ pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
 pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
+/// 開いている間、何分ごとに fetch するか（0 はしない）。
+pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
+
+/// 自動の fetch の間隔（分。0 はしない）。
+pub fn auto_fetch_minutes() -> u32 {
+    string(AUTO_FETCH_MINUTES)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0)
+}
 
 fn path() -> PathBuf {
     glib::user_config_dir().join("amonhen").join("gtk.ini")
@@ -140,20 +149,51 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     }
     let stack = gtk::Stack::new();
 
-    // Git
+    // General
+    let choices: [u32; 5] = [0, 5, 15, 30, 60];
+    let titles: Vec<String> = choices
+        .iter()
+        .map(|&m| {
+            if m == 0 {
+                tr!("Never")
+            } else {
+                tr!("Every {count} minutes", count = m)
+            }
+        })
+        .collect();
+    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let fetch = gtk::DropDown::from_strings(&refs);
+    fetch.set_selected(
+        choices
+            .iter()
+            .position(|&m| m == auto_fetch_minutes())
+            .unwrap_or(0) as u32,
+    );
+    fetch.connect_selected_notify(move |d| {
+        set_string(
+            AUTO_FETCH_MINUTES,
+            &choices[d.selected() as usize].to_string(),
+        )
+    });
+    let fetch_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let l = gtk::Label::new(Some(&tr!("Fetch automatically")));
+    l.set_hexpand(true);
+    l.set_xalign(0.0);
+    fetch_row.append(&l);
+    fetch_row.append(&fetch);
     stack.add_titled(
-        &page(&[
-            section(
-                Some(&tr!("Merging")),
-                &[
-                    check(AUTO_MAGIC_MERGE, &tr!("Resolve unambiguous conflicts when the merge editor opens")).upcast(),
-                    note(&tr!("Conflicts where both sides are the same, or only one side changed. Ctrl+Z undoes it. Use ✨ Magic Merge for the rest."))
-                        .upcast(),
-                ],
-            ),
-        ]),
-        Some("git"),
-        "Git",
+        &page(&[section(
+            None,
+            &[
+                fetch_row.upcast(),
+                note(&tr!(
+                    "Fetches all remotes of each open repository without asking."
+                ))
+                .upcast(),
+            ],
+        )]),
+        Some("general"),
+        &tr!("General"),
     );
 
     // Appearance
@@ -170,32 +210,42 @@ pub fn show(parent: &gtk::ApplicationWindow) {
         &tr!("Appearance"),
     );
 
-    // Performance
+    // Diff & Merge
     stack.add_titled(
         &page(&[section(
-            None,
+            Some(&tr!("Merge Editor")),
             &[
-                check(WRITE_COMMIT_GRAPH, &tr!("Write commit-graph automatically")).upcast(),
-                note(&tr!("When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster."))
+                check(AUTO_MAGIC_MERGE, &tr!("Resolve unambiguous conflicts when the merge editor opens")).upcast(),
+                note(&tr!("Conflicts where both sides are the same, or only one side changed. Ctrl+Z undoes it. Use ✨ Magic Merge for the rest."))
                     .upcast(),
             ],
         )]),
-        Some("performance"),
-        &tr!("Performance"),
+        Some("diff-merge"),
+        &tr!("Diff & Merge"),
     );
 
-    // Advanced
+    // Performance
     stack.add_titled(
-        &page(&[section(
-            Some(&tr!("Shared daemon")),
-            &[
-                check(OPEN_THROUGH_DAEMON, &tr!("Open repositories through the shared daemon (SSH hosts too)")).upcast(),
-                note(&tr!("Shares History, the search index, the operation log and SSH connections among the app, the CLI (amonhen -C daemon:… or -C ssh://…) and the VSCode extension. Applies to repositories opened from now on. See Daemon in Activity for its status."))
-                    .upcast(),
-            ],
-        )]),
-        Some("advanced"),
-        &tr!("Advanced"),
+        &page(&[
+            section(
+                None,
+                &[
+                    check(WRITE_COMMIT_GRAPH, &tr!("Write commit-graph automatically")).upcast(),
+                    note(&tr!("When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster."))
+                        .upcast(),
+                ],
+            ),
+            section(
+                Some(&tr!("Shared daemon")),
+                &[
+                    check(OPEN_THROUGH_DAEMON, &tr!("Open repositories through the shared daemon (SSH hosts too)")).upcast(),
+                    note(&tr!("Shares History, the search index, the operation log and SSH connections among the app, the CLI (amonhen -C daemon:… or -C ssh://…) and the VSCode extension. Applies to repositories opened from now on. See Daemon in Activity for its status."))
+                        .upcast(),
+                ],
+            ),
+        ]),
+        Some("performance"),
+        &tr!("Performance"),
     );
 
     let switcher = gtk::StackSwitcher::builder().stack(&stack).build();
