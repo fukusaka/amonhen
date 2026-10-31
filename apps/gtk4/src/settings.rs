@@ -27,6 +27,8 @@ thread_local! {
 pub const MONOSPACED_COMMIT_MESSAGE: &str = "monospacedCommitMessage";
 pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
 pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
+/// 手元のリポジトリの status で git の fsmonitor を使うか（既定は使う。macOS と Windows でだけ効く）。
+pub const USE_FSMONITOR: &str = "useFSMonitor";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
 /// File History に merge のコミットも出すか。
@@ -147,8 +149,22 @@ pub fn bool(key: &str) -> bool {
             | GITHUB_AVATARS
             | GITHUB_CI_DEFAULT_BRANCH
             | GITHUB_AVATARS_ONCE
+            | USE_FSMONITOR
     ))
 }
+
+/// status で git の fsmonitor を使うかを設定から決め、設定を変えたら合わせる（起動したときに一度呼ぶ）。
+pub fn apply_fsmonitor() {
+    amonhen_backend_cli::set_fsmonitor(bool(USE_FSMONITOR));
+    connect_changed(|key| {
+        if key == USE_FSMONITOR {
+            amonhen_backend_cli::set_fsmonitor(bool(USE_FSMONITOR));
+        }
+    });
+}
+
+/// git の `fsmonitor--daemon` を使える OS か（macOS と Windows だけ）。
+const FSMONITOR_AVAILABLE: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 
 pub fn set_bool(key: &str, value: bool) {
     FILE.with(|f| {
@@ -594,6 +610,14 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     stack.add_titled(&crate::aisettings::page(), Some("ai"), "AI");
 
     // Performance
+    // fsmonitor: git の fsmonitor--daemon のない OS（Linux など）では押せなくし、理由を出す。
+    let fsmonitor = check(USE_FSMONITOR, &tr!("Speed up status with fsmonitor"));
+    if !FSMONITOR_AVAILABLE {
+        fsmonitor.set_sensitive(false);
+        fsmonitor.set_tooltip_text(Some(&tr!(
+            "git’s fsmonitor--daemon runs only on macOS and Windows."
+        )));
+    }
     stack.add_titled(
         &page(&[
             section(
@@ -602,6 +626,8 @@ pub fn show(parent: &gtk::ApplicationWindow) {
                     check(WRITE_COMMIT_GRAPH, &tr!("Write commit-graph automatically")).upcast(),
                     note(&tr!("When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster."))
                         .upcast(),
+                    fsmonitor.upcast(),
+                    note(&tr!("A git fsmonitor--daemon runs for each repository.")).upcast(),
                 ],
             ),
             section(

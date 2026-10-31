@@ -108,7 +108,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | AI: 使う AI・CLI の場所と版・モデル・言語・リポジトリごとの許可 | ✓ | △ | — | n/a | GTK4: ログインの状態は出ない。 |
 | 目的ごとの AI のプロンプト（編集・既定に戻す・試す） | ✓ | ✓ | — | n/a |  |
 | Performance: commit-graph・共有の daemon | ✓ | ✓ | △ | n/a | VSCode: VSCode の設定の `amonhen.daemon.enabled`・`amonhen.daemon.path`。 |
-| Performance: fsmonitor | ✓ | — | — | n/a |  |
+| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: git に fsmonitor--daemon のない Linux・BSD では押せない。 |
 | Performance: 永続キャッシュの場所・大きさ・消す | — | — | — | △ | CLI: `log --rebuild`・`daemon rebuild`。 |
 | 設定の変更の Undo・Redo | △ | △ | n/a | n/a | macOS: Git のページとリポジトリの設定だけ。<br>GTK4: Git のページと Keys and Values だけ。 |
 

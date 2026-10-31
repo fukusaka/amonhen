@@ -1718,3 +1718,8 @@
 "Open in a Separate Window" = "別ウィンドウで開く";
 "The merge editor is open in a separate window" = "マージエディタを別ウィンドウで開いています";
 "Can’t read: {error}" = "読めません: {error}";
+
+/* GTK4: Settings > Performance の fsmonitor */
+"Speed up status with fsmonitor" = "fsmonitor で status を速くする";
+"A git fsmonitor--daemon runs for each repository." = "リポジトリごとに git fsmonitor--daemon が常駐します。";
+"git’s fsmonitor--daemon runs only on macOS and Windows." = "git の fsmonitor--daemon は macOS と Windows でだけ動きます。";

@@ -347,6 +347,8 @@ fn main() -> glib::ExitCode {
     environment::apply_added_names();
     // SSH 先ごとの選択（Settings > SSH Hosts）を、裏の糸でリポジトリを開くときに読めるようにする。
     sshhosts::load();
+    // Settings > Performance の fsmonitor を status に効かせる。
+    settings::apply_fsmonitor();
     // コアが作る文（エラーなど）の言語。Linux の慣習どおり LC_ALL・LC_MESSAGES・LANG から。
     amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
     let args = match parse_args() {

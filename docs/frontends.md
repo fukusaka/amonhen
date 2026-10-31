@@ -108,7 +108,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | AI: backend, CLI location and version, model, language, per-repository permission | ✓ | △ | — | n/a | GTK4: No login state shown. |
 | AI prompts per purpose (edit, Restore Default, Try) | ✓ | ✓ | — | n/a |  |
 | Performance: commit-graph, shared daemon | ✓ | ✓ | △ | n/a | VSCode: `amonhen.daemon.enabled` and `amonhen.daemon.path` as VSCode settings. |
-| Performance: fsmonitor | ✓ | — | — | n/a |  |
+| Performance: fsmonitor | ✓ | ✓ | — | n/a | GTK4: Disabled on Linux and the BSDs, where git has no fsmonitor--daemon. |
 | Performance: persistent cache location, size, clearing | — | — | — | △ | CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo / Redo of settings changes | △ | △ | n/a | n/a | macOS: Git pages and repository settings only.<br>GTK4: Git pages and Keys and Values only. |
 
