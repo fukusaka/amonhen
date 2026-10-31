@@ -134,6 +134,14 @@ impl Details {
         }
     }
 
+    /// コミットではないもの（Push のシートの「送る変更すべて」など）: 件名と本文だけを出す。
+    pub fn show_text(&self, subject: &str, body: &str) {
+        self.clear();
+        self.subject.set_text(subject);
+        self.body.set_text(body);
+        self.body.set_visible(!body.is_empty());
+    }
+
     fn clear_table(&self) {
         while let Some(child) = self.table.first_child() {
             self.table.remove(&child);

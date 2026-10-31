@@ -830,3 +830,13 @@
 "Copy Name" = "名前をコピー";
 "New Branch from {name}" = "{name} から新しいブランチ";
 "Created where the stash was made, checked out, and the stash applied there (then dropped)." = "stash を作ったコミットにブランチを作って切り替え、そこに stash を戻します（戻せたら stash は消します）。";
+
+/* GTK4 の FE: Push のシートの中身 */
+"This pushes straight to {upstream}." = "{upstream} に直接 push します。";
+"{count} commits look unfinished (fixup!, squash! or WIP)." = "整理し忘れらしいコミットが {count} 件あります（fixup!・squash!・WIP）。";
+"Adds files that may hold secrets: {files}" = "秘密を含みそうなファイルを追加しています: {files}";
+"All changes to send ({count})" = "送る変更すべて（{count}）";
+"From upstream to HEAD, all files" = "上流から HEAD まで、全ファイル";
+"Commits upstream will lose ({count})" = "上流から消えるコミット（{count}）";
+"All changes to send" = "送る変更すべて";
+"You can Undo this (Ctrl+Alt+Z)." = "Undo（Ctrl+Alt+Z）で戻せます。";

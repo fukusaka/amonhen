@@ -35,7 +35,7 @@ pub enum Style {
 
 /// 窓に付いた確認（題・説明・中身・ボタン）。
 pub struct Sheet {
-    window: gtk::Window,
+    pub window: gtk::Window,
     pub heading: gtk::Label,
     pub message: gtk::Label,
     body: gtk::Box,
@@ -105,6 +105,13 @@ impl Sheet {
             tx,
             rx,
         }
+    }
+
+    /// 大きさを変えられる、広いシートにする（中身を見せるもの。Push のシートなど）。
+    pub fn wide(&self, width: i32, height: i32) {
+        self.window.set_resizable(true);
+        self.window.set_default_size(width, height);
+        self.body.set_vexpand(true);
     }
 
     /// 説明の下に部品を足す。
@@ -182,11 +189,9 @@ pub fn row(name: &str, widget: &impl IsA<gtk::Widget>) -> gtk::Box {
     b
 }
 
-pub const CAN_UNDO_KEY: &str = "You can Undo this (Ctrl+Alt+Z).";
-
 /// 「Undo で戻せます」の文。
 pub fn can_undo() -> String {
-    amonhen_model::i18n::translate(CAN_UNDO_KEY).into_owned()
+    tr!("You can Undo this (Ctrl+Alt+Z).")
 }
 
 /// 「取り消せません」の文。
@@ -507,6 +512,8 @@ pub struct SyncState {
     pub upstream_target: Option<String>,
     /// コミットしていない変更のあるファイルの数（untracked を除く）。
     pub changed: usize,
+    /// 送るブランチの先端（16 進）。
+    pub tip: Option<String>,
 }
 
 /// `branch`（なければ今のブランチ）の同期の状態。
@@ -550,6 +557,7 @@ pub async fn sync_state(repo: &Arc<Repository>, branch: Option<String>) -> Optio
             incoming: CommitRange::default(),
             upstream_target: None,
             changed,
+            tip: None,
         });
     };
     let upstream_target = refs
@@ -560,6 +568,10 @@ pub async fn sync_state(repo: &Arc<Repository>, branch: Option<String>) -> Optio
         .and_then(|i| i.target.map(|t| t.to_string()));
     let outgoing = between(repo, &upstream, &tip, 500).await;
     let incoming = between(repo, &tip, &upstream, 500).await;
+    let tip_oid = local
+        .and_then(|l| l.target)
+        .or(refs.refs.head)
+        .map(|o| o.to_string());
     Some(SyncState {
         branch: name,
         upstream: Some(upstream),
@@ -567,7 +579,225 @@ pub async fn sync_state(repo: &Arc<Repository>, branch: Option<String>) -> Optio
         incoming,
         upstream_target,
         changed,
+        tip: tip_oid,
     })
+}
+
+/// Push の前の注意（送るコミットの件名と、送る範囲で足すファイルから）。
+fn push_warnings(upstream: &str, outgoing: &CommitRange, added: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    let remote_branch = upstream.split_once('/').map_or(upstream, |(_, b)| b);
+    if ["main", "master", "trunk", "develop"].contains(&remote_branch) {
+        out.push(tr!(
+            "This pushes straight to {upstream}.",
+            upstream = upstream
+        ));
+    }
+    let unfinished = outgoing
+        .commits
+        .iter()
+        .filter(|(_, subject, _, _)| {
+            let s = subject.to_lowercase();
+            s.starts_with("fixup!")
+                || s.starts_with("squash!")
+                || s.starts_with("amend!")
+                || s.starts_with("wip")
+                || s.contains(" wip ")
+                || s.ends_with(" wip")
+        })
+        .count();
+    if unfinished > 0 {
+        out.push(tr!(
+            "{count} commits look unfinished (fixup!, squash! or WIP).",
+            count = unfinished
+        ));
+    }
+    let secret_like: Vec<&str> = added
+        .iter()
+        .map(String::as_str)
+        .filter(|path| {
+            let name = path.rsplit('/').next().unwrap_or(path).to_lowercase();
+            name == ".env"
+                || name.starts_with(".env.")
+                || [".pem", ".key", ".p12", ".pfx"]
+                    .iter()
+                    .any(|e| name.ends_with(e))
+                || name.starts_with("id_rsa")
+                || name.starts_with("id_ed25519")
+                || name.contains("credential")
+                || name.contains("secret")
+        })
+        .take(3)
+        .collect();
+    if !secret_like.is_empty() {
+        out.push(tr!(
+            "Adds files that may hold secrets: {files}",
+            files = secret_like.join(", ")
+        ));
+    }
+    out
+}
+
+/// Push のシートの中身: 左に送るコミット（一番上は「送る変更すべて」。Force Push と分岐では上流から消える
+/// コミットも）、右に選んだものの詳細と差分（History の右の欄と同じ表示。読み取り専用）。
+fn push_preview(
+    repo: &Arc<Repository>,
+    outgoing: &CommitRange,
+    lost: &CommitRange,
+    range: Option<(String, String)>,
+) -> gtk::Paned {
+    use amonhen_model::Oid;
+    // 行: (見出し, 下の行, コミット（なければ送る変更すべて）, 選べない見出しか, 消えるものか)。
+    let mut rows: Vec<(String, String, Option<String>, bool, bool)> = vec![(
+        tr!("All changes to send ({count})", count = outgoing.count),
+        tr!("From upstream to HEAD, all files"),
+        None,
+        false,
+        false,
+    )];
+    let line = |c: &(String, String, String, i64)| {
+        format!("{} · {} · {}", crate::titles::short(&c.0), c.2, time(c.3))
+    };
+    for c in &outgoing.commits {
+        rows.push((c.1.clone(), line(c), Some(c.0.clone()), false, false));
+    }
+    if lost.count > 0 {
+        rows.push((
+            tr!("Commits upstream will lose ({count})", count = lost.count),
+            String::new(),
+            None,
+            true,
+            true,
+        ));
+        for c in &lost.commits {
+            rows.push((c.1.clone(), line(c), Some(c.0.clone()), false, true));
+        }
+    }
+    let list = gtk::ListBox::new();
+    list.add_css_class("navigation-sidebar");
+    for (title, detail, _, heading, lost) in &rows {
+        let b = gtk::Box::new(gtk::Orientation::Vertical, 1);
+        let t = gtk::Label::new(Some(title));
+        t.set_xalign(0.0);
+        t.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        if *heading {
+            t.add_css_class("heading");
+        }
+        if *lost {
+            t.add_css_class("error");
+        }
+        b.append(&t);
+        if !detail.is_empty() {
+            let d = gtk::Label::new(Some(detail));
+            d.set_xalign(0.0);
+            d.add_css_class("caption");
+            d.add_css_class("dim-label");
+            d.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            b.append(&d);
+        }
+        let row = gtk::ListBoxRow::new();
+        row.set_child(Some(&b));
+        row.set_selectable(!heading);
+        row.set_activatable(!heading);
+        list.append(&row);
+    }
+    let left = gtk::ScrolledWindow::builder()
+        .child(&list)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .min_content_width(260)
+        .build();
+    let details = Rc::new(crate::details::Details::new());
+    let diff = crate::diff::DiffWidget::default();
+    let diff_scrolled = gtk::ScrolledWindow::builder()
+        .child(&diff)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .vexpand(true)
+        .build();
+    let right = gtk::Paned::new(gtk::Orientation::Vertical);
+    right.set_start_child(Some(&details.root));
+    right.set_end_child(Some(&diff_scrolled));
+    right.set_resize_start_child(false);
+    right.set_position(150);
+    let paned = gtk::Paned::new(gtk::Orientation::Horizontal);
+    paned.set_start_child(Some(&left));
+    paned.set_end_child(Some(&right));
+    paned.set_resize_start_child(false);
+    paned.set_shrink_start_child(false);
+    paned.set_position(320);
+    paned.set_vexpand(true);
+    paned.add_css_class("frame");
+    let generation = Rc::new(std::cell::Cell::new(0u32));
+    let (repo, rows) = (repo.clone(), Rc::new(rows));
+    let range_lines: String = outgoing
+        .commits
+        .iter()
+        .map(|c| format!("{}  {}  — {}", crate::titles::short(&c.0), c.1, c.2))
+        .collect::<Vec<_>>()
+        .join("\n");
+    list.connect_row_selected(move |_, row| {
+        let Some(row) = row else { return };
+        let Some((_, _, commit, _, _)) = rows.get(row.index() as usize).cloned() else {
+            return;
+        };
+        let g = generation.get() + 1;
+        generation.set(g);
+        details.clear();
+        diff.clear();
+        let repo = repo.clone();
+        let (details, diff, generation, right, range, range_lines) = (
+            details.clone(),
+            diff.clone(),
+            generation.clone(),
+            right.clone(),
+            range.clone(),
+            range_lines.clone(),
+        );
+        glib::spawn_future_local(async move {
+            let id = commit.as_deref().and_then(Oid::from_hex);
+            let r = repo.clone();
+            match id {
+                Some(id) => {
+                    let info = gio::spawn_blocking(move || r.commit_info(&id).ok())
+                        .await
+                        .ok()
+                        .flatten();
+                    if generation.get() != g {
+                        return;
+                    }
+                    if let Some(info) = info {
+                        details.show(&info);
+                    }
+                }
+                // 送る変更すべて: 送るコミットの一覧を本文に。
+                None => details.show_text(&tr!("All changes to send"), &range_lines),
+            }
+            crate::fit_details(&right, details.clone());
+            let result = gio::spawn_blocking(move || {
+                let changes = match (id, &range) {
+                    (Some(id), _) => repo.commit_changes(&id).ok()?,
+                    (None, Some((base, tip))) => repo
+                        .changes_between(Oid::from_hex(base).as_ref(), &Oid::from_hex(tip)?)
+                        .ok()?,
+                    (None, None) => return None,
+                };
+                let stacked = repo.stacked_diff(&changes).ok()?;
+                let view = crate::diff::View::build(&stacked, &[]);
+                Some((Arc::new(crate::diff::Source(stacked)), view))
+            })
+            .await
+            .ok()
+            .flatten();
+            if generation.get() == g
+                && let Some((source, view)) = result
+            {
+                diff.show(source, view);
+            }
+        });
+    });
+    if let Some(first) = list.row_at_index(0) {
+        list.select_row(Some(&first));
+    }
+    paned
 }
 
 /// 知らせる（ボタンは閉じるだけ）。
@@ -988,14 +1218,61 @@ pub fn push(
         } else {
             CommitRange::default()
         };
-        sheet.add(&commit_lists(&[
-            (tr!("Commits to send"), &state.outgoing, false),
-            (
-                tr!("Commits {upstream} will lose", upstream = upstream),
-                &lost,
-                true,
-            ),
-        ]));
+        // 送る範囲の両端: 上流のコミットから先端まで。上流が先に進んでいれば、分かれたところ（一番古い送る
+        // コミットの親）から（上流にしかない変更まで「送る変更」に見えないように）。
+        let forked =
+            state.incoming.count > 0 && state.outgoing.count == state.outgoing.commits.len() as u64;
+        let base = if forked {
+            match state.outgoing.commits.last() {
+                Some(oldest) => run(
+                    &repo,
+                    json!({ "op": "resolveCommit", "rev": format!("{}^", oldest.0) }),
+                )
+                .await["text"]
+                    .as_str()
+                    .map(str::to_owned),
+                None => None,
+            }
+        } else {
+            state.upstream_target.clone()
+        };
+        let range = match (&base, &state.tip) {
+            (Some(b), Some(t)) if state.outgoing.count > 0 => Some((b.clone(), t.clone())),
+            _ => None,
+        };
+        // 注意（既定のブランチへ直接、整理し忘れのコミット、秘密らしきファイルの追加）。
+        let added: Vec<String> = match &range {
+            Some((b, t)) => {
+                let (r, b, t) = (repo.clone(), b.clone(), t.clone());
+                gio::spawn_blocking(move || {
+                    use amonhen_model::{ChangeKind, Oid};
+                    let tip = Oid::from_hex(&t)?;
+                    let changes = r.changes_between(Oid::from_hex(&b).as_ref(), &tip).ok()?;
+                    Some(
+                        changes
+                            .into_iter()
+                            .filter(|c| c.kind == ChangeKind::Added)
+                            .map(|c| c.path)
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .await
+                .ok()
+                .flatten()
+                .unwrap_or_default()
+            }
+            None => Vec::new(),
+        };
+        for warning in push_warnings(&upstream, &state.outgoing, &added) {
+            let l = note(&format!("⚠︎ {warning}"));
+            l.remove_css_class("dim-label");
+            l.add_css_class("warning");
+            sheet.add(&l);
+        }
+        if state.outgoing.count > 0 || lost.count > 0 {
+            sheet.wide(1100, 720);
+            sheet.add(&push_preview(&repo, &state.outgoing, &lost, range));
+        }
         let replace = force || diverged;
         sheet.buttons(
             if replace { "Force Push" } else { "Push" },

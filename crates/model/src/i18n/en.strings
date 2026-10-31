@@ -36,3 +36,4 @@
 "{count} files have conflicts ({without} without markers). Resolve them in Working Copy, then Continue." = "{count} file has conflicts ({without} without markers). Resolve it in Working Copy, then Continue.";
 "{count} files have conflicts at {subject} ({without} without markers). Resolve them in Working Copy, then Continue." = "{count} file has conflicts at {subject} ({without} without markers). Resolve it in Working Copy, then Continue.";
 "{count} days ago" = "{count} day ago";
+"{count} commits look unfinished (fixup!, squash! or WIP)." = "{count} commit looks unfinished (fixup!, squash! or WIP).";
