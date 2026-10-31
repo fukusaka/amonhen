@@ -1504,3 +1504,15 @@
 "Show avatars" = "アバターを表示する";
 "Fetched from Gravatar (sends a hash of the email address to gravatar.com)." = "Gravatar から取る（メールアドレスのハッシュを gravatar.com に送る）。";
 "Committer" = "コミッター";
+
+/* GTK4 の FE: GitHub: サイドバーの Pull Requests、ブランチのプルリクエスト */
+"(draft)" = "（下書き）";
+"Pull Request" = "プルリクエスト";
+"Open Pull Request #{number}" = "プルリクエスト #{number} を開く";
+"Approved" = "承認済み";
+"Changes requested" = "変更の依頼あり";
+"Review required" = "レビュー待ち";
+"Can’t read pull requests: {error}" = "プルリクエストを読めない: {error}";
+"Copy URL" = "URL をコピー";
+"Checkout #{number}?" = "#{number} を Checkout しますか？";
+"“{title}” is checked out as a local branch." = "「{title}」をローカルブランチとして Checkout します。";

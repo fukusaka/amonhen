@@ -189,6 +189,127 @@ impl Ci {
     }
 }
 
+/// プルリクエストの `statusCheckRollup` の 1 つ。CheckRun なら status・conclusion、StatusContext なら state。
+#[derive(Clone, Debug, PartialEq)]
+struct RollupCheck {
+    status: Option<String>,
+    conclusion: Option<String>,
+    state: Option<String>,
+}
+
+/// プルリクエスト（`gh pr list --json`）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct PullRequest {
+    pub number: u64,
+    pub title: String,
+    pub url: String,
+    pub head_ref_name: String,
+    pub base_ref_name: String,
+    pub is_draft: bool,
+    pub author: String,
+    pub review_decision: Option<String>,
+    checks: Option<Vec<RollupCheck>>,
+    /// head のコミット ID（CI の吹き出しで、そのコミットのチェックを読む）。
+    pub head_ref_oid: Option<String>,
+}
+
+impl PullRequest {
+    fn from(v: &Value) -> Option<Self> {
+        let s = |key: &str| v[key].as_str().map(str::to_owned);
+        let checks = v["statusCheckRollup"].as_array().map(|list| {
+            list.iter()
+                .map(|c| {
+                    let f = |key: &str| c[key].as_str().map(str::to_owned);
+                    RollupCheck {
+                        status: f("status"),
+                        conclusion: f("conclusion"),
+                        state: f("state"),
+                    }
+                })
+                .collect()
+        });
+        Some(Self {
+            number: v["number"].as_u64()?,
+            title: s("title")?,
+            url: s("url").unwrap_or_default(),
+            head_ref_name: s("headRefName").unwrap_or_default(),
+            base_ref_name: s("baseRefName").unwrap_or_default(),
+            is_draft: v["isDraft"].as_bool().unwrap_or(false),
+            author: v["author"]["login"].as_str().unwrap_or_default().to_owned(),
+            review_decision: s("reviewDecision").filter(|r| !r.is_empty()),
+            checks,
+            head_ref_oid: s("headRefOid"),
+        })
+    }
+
+    /// CI の状態: 1 つでも失敗なら失敗、走っているものがあれば途中、すべて成功なら成功。
+    pub fn ci(&self) -> Ci {
+        let Some(checks) = self.checks.as_ref().filter(|c| !c.is_empty()) else {
+            return Ci::None;
+        };
+        let results: Vec<String> = checks
+            .iter()
+            .map(|c| {
+                c.conclusion
+                    .as_deref()
+                    .or(c.state.as_deref())
+                    .unwrap_or_default()
+                    .to_uppercase()
+            })
+            .collect();
+        if results.iter().any(|r| {
+            matches!(
+                r.as_str(),
+                "FAILURE" | "ERROR" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED"
+            )
+        }) {
+            return Ci::Failing;
+        }
+        if checks.iter().any(|c| {
+            c.status.as_deref().unwrap_or_default().to_uppercase() != "COMPLETED"
+                && c.state.is_none()
+        }) || results
+            .iter()
+            .any(|r| matches!(r.as_str(), "PENDING" | "EXPECTED" | ""))
+        {
+            return Ci::Pending;
+        }
+        Ci::Passing
+    }
+
+    pub fn ci_mark(&self) -> &'static str {
+        match self.ci() {
+            Ci::Passing => "✓",
+            Ci::Failing => "✗",
+            Ci::Pending => "●",
+            Ci::None => "",
+        }
+    }
+
+    /// サイドバーの行のツールチップ（番号と題、作者とブランチ、CI とレビュー）。
+    pub fn tooltip(&self) -> String {
+        let review = match self.review_decision.as_deref() {
+            Some("APPROVED") => tr!("Approved"),
+            Some("CHANGES_REQUESTED") => tr!("Changes requested"),
+            Some("REVIEW_REQUIRED") => tr!("Review required"),
+            _ => String::new(),
+        };
+        let state: Vec<String> = [self.ci().label(), review]
+            .into_iter()
+            .filter(|s| !s.is_empty())
+            .collect();
+        format!(
+            "#{} {}\n{} · {} → {}\n{}",
+            self.number,
+            self.title,
+            self.author,
+            self.head_ref_name,
+            self.base_ref_name,
+            state.join(" · ")
+        )
+    }
+}
+
 /// 1 つのコミットのチェック 1 つ（GitHub Actions のジョブ、または外部の status）。
 #[derive(Clone, Debug, PartialEq)]
 pub struct CommitCheck {
@@ -262,6 +383,32 @@ impl CommitCheck {
             other => other.to_owned(),
         }
     }
+}
+
+/// 開いているプルリクエスト（新しい順、最大 50 件）。
+pub async fn pull_requests(repo: &GitHubRepository) -> Result<Vec<PullRequest>, String> {
+    let args = [
+        "pr",
+        "list",
+        "-R",
+        &repo.slug(),
+        "--state",
+        "open",
+        "--limit",
+        "50",
+        "--json",
+        "number,title,url,headRefName,baseRefName,isDraft,author,reviewDecision,statusCheckRollup,headRefOid",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    let out = gh_async(args, None).await?;
+    let list: Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+    Ok(list
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(PullRequest::from)
+        .collect())
 }
 
 /// 既定のブランチ（プルリクエストの base の初期値）。
@@ -438,6 +585,7 @@ thread_local! {
 pub struct Loader {
     actions: Rc<Actions>,
     view: glib::WeakRef<crate::history::HistoryView>,
+    sidebar: std::rc::Weak<crate::sidebar::Sidebar>,
     github: RefCell<Option<GitHubRepository>>,
     loaded_at: Cell<Option<Instant>>,
     default_branch: RefCell<Option<String>>,
@@ -455,10 +603,15 @@ const SETTING_KEYS: [&str; 5] = [
 ];
 
 impl Loader {
-    pub fn new(actions: &Rc<Actions>, view: &crate::history::HistoryView) -> Rc<Self> {
+    pub fn new(
+        actions: &Rc<Actions>,
+        view: &crate::history::HistoryView,
+        sidebar: &Rc<crate::sidebar::Sidebar>,
+    ) -> Rc<Self> {
         let loader = Rc::new(Self {
             actions: actions.clone(),
             view: view.downgrade(),
+            sidebar: Rc::downgrade(sidebar),
             github: RefCell::default(),
             loaded_at: Cell::new(None),
             default_branch: RefCell::default(),
@@ -519,10 +672,28 @@ impl Loader {
         glib::spawn_future_local(async move {
             let github = of(&repo).await;
             this.github.replace(github.clone());
+            let sidebar = this.sidebar.upgrade();
+            if let Some(s) = &sidebar {
+                s.set_can_create_pull_request(github.is_some());
+            }
             let Some(github) = github else {
+                if let Some(s) = &sidebar {
+                    s.show_pull_requests(Vec::new());
+                }
                 return;
             };
             let name = repo_name(&repo);
+            match pull_requests(&github).await {
+                Ok(list) => {
+                    if let Some(s) = this.sidebar.upgrade() {
+                        s.show_pull_requests(list);
+                    }
+                }
+                Err(e) => crate::activity::event(
+                    &name,
+                    tr!("Can’t read pull requests: {error}", error = e),
+                ),
+            }
             this.load_statuses(&github, &name).await;
         });
     }
@@ -586,6 +757,11 @@ fn loader_of(actions: &Rc<Actions>) -> Option<Rc<Loader>> {
     })
 }
 
+/// `actions` の窓の GitHub のリポジトリ（読んでいれば）。
+pub fn github_of(actions: &Rc<Actions>) -> Option<GitHubRepository> {
+    loader_of(actions).and_then(|l| l.github())
+}
+
 fn repo_name(repo: &Repository) -> String {
     repo.paths()
         .workdir
@@ -593,6 +769,65 @@ fn repo_name(repo: &Repository) -> String {
         .and_then(|p| p.file_name())
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default()
+}
+
+/// サイドバーの Pull Requests の行の右クリック（macOS 版と同じ項目）。
+pub fn pull_request_menu(actions: &Rc<Actions>, pr: &PullRequest) -> Vec<crate::menu::Item> {
+    let (a, p) = (actions.clone(), pr.clone());
+    let url = pr.url.clone();
+    let copied = pr.url.clone();
+    let w = actions.window();
+    vec![
+        crate::menu::action(format!("Checkout #{}…", pr.number), move || {
+            checkout_pull_request(&a, &p)
+        }),
+        crate::menu::action(tr!("Open in Browser"), move || {
+            open_uri(w.as_ref().map(|w| w.upcast_ref()), &url)
+        }),
+        crate::menu::action(tr!("Copy URL"), move || {
+            if let Some(display) = gtk::gdk::Display::default() {
+                display.clipboard().set_text(&copied);
+            }
+        }),
+    ]
+}
+
+/// プルリクエストのブランチをチェックアウトする（gh pr checkout。なければ作る）。手元のリポジトリだけ。
+pub fn checkout_pull_request(actions: &Rc<Actions>, pr: &PullRequest) {
+    let actions = actions.clone();
+    let pr = pr.clone();
+    glib::spawn_future_local(async move {
+        let window = crate::sheets::parent(&actions);
+        let github = github_of(&actions);
+        let dir = actions
+            .repo()
+            .filter(|r| r.connection_state().is_none())
+            .and_then(|r| r.paths().workdir);
+        let (Some(github), Some(dir)) = (github, dir) else {
+            if let Some(w) = &window {
+                w.error_bell();
+            }
+            return;
+        };
+        let sheet = Sheet::new(
+            window.as_ref(),
+            &tr!("Checkout #{number}?", number = pr.number),
+            &tr!(
+                "“{title}” is checked out as a local branch.",
+                title = pr.title
+            ),
+        );
+        sheet.buttons("Checkout", false, None);
+        if sheet.run().await != Response::Ok {
+            return;
+        }
+        let (number, slug) = (pr.number.to_string(), github.slug());
+        actions.perform_work(move |_| {
+            gh(&["pr", "checkout", &number, "-R", &slug], Some(&dir))
+                .map(|_| ())
+                .map_err(Into::into)
+        });
+    });
 }
 
 /// Repository > Create Pull Request…: `branch` からプルリクエストを作る。まだ push していない（上流がない・先行

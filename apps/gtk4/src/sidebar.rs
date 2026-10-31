@@ -1,4 +1,4 @@
-//! サイドバー: Workspace（Working Copy・History・あるときだけ Stashes・開いている間だけ Range Diff、最後に Reflog と Settings）/ Branches / Remotes / Tags / Stashes / Submodules。
+//! サイドバー: Workspace（Working Copy・History・あるときだけ Stashes・開いている間だけ Range Diff、最後に Reflog と Settings）/ Branches / あるときだけ Pull Requests / Remotes / Tags / Stashes / Submodules。
 //!
 //! `GtkListView` と `GtkTreeListModel` の木（項目が多くても、見えている行の部品しか作らない）。
 //! `feature/x` のような名前はフォルダにまとめる。ref を選ぶと、指すコミットを History で選ぶ。
@@ -22,6 +22,7 @@ use gtk::{gio, glib};
 use serde_json::json;
 
 use crate::actions::Actions;
+use crate::github::{Ci, PullRequest};
 use crate::icon::{self, Icon};
 use crate::menu;
 use crate::reffacts::{self, BranchGroups, TagRemotes};
@@ -50,6 +51,8 @@ pub enum Item {
     Ref(RefEntry),
     /// Working Copy の下の worktree（選ぶと書き込む先にする）。
     Worktree(crate::worktrees::Info),
+    /// Pull Requests の下のプルリクエストと、そのブランチ（手元にあれば）が指すコミット。
+    PullRequest(Box<PullRequest>, Option<Oid>),
 }
 
 /// 行の右端のアイコン（取り込み済み・gone など）。意味はツールチップの先頭に出す。
@@ -82,6 +85,8 @@ pub struct Data {
     pub mark_click: bool,
     /// アイコンと右端の文字を緑にする（追加した worktree が checkout しているブランチ）。
     pub green: bool,
+    /// 右端の文字の色の CSS のクラス（プルリクエストの CI の `success`・`error`）。
+    pub badge_css: Option<&'static str>,
 }
 
 mod node_imp {
@@ -228,6 +233,25 @@ pub struct Known {
     pub tags: Option<TagRemotes>,
     /// リモートブランチのあるリモートの名前（タグの様子をまだ読んでいないときの、タグの送り先）。
     pub branch_remotes: Vec<String>,
+    /// 開いているプルリクエスト（GitHub から読んだもの）。
+    pub pull_requests: Vec<PullRequest>,
+    /// プルリクエストを作れる（GitHub のリポジトリで gh が使える）。
+    pub can_create_pull_request: bool,
+}
+
+impl Known {
+    /// `branch` から開いているプルリクエスト。
+    pub fn pull_request(&self, branch: &str) -> Option<&PullRequest> {
+        self.pull_requests
+            .iter()
+            .find(|p| p.head_ref_name == branch)
+    }
+
+    /// `branch` からプルリクエストを作れるか（既定のブランチからは作らない）。
+    pub fn can_create_pull_request_from(&self, branch: &str) -> bool {
+        let base = self.groups.as_ref().map_or("main", |g| g.base_name());
+        self.can_create_pull_request && branch != base && !base.ends_with(&format!("/{branch}"))
+    }
 }
 
 impl Known {
@@ -310,6 +334,11 @@ struct Inner {
     worktrees: RefCell<crate::worktrees::View>,
     /// Working Copy の下に worktree を並べている（並べ始めたら Working Copy を開く）。
     working_children: Cell<bool>,
+    /// 開いているプルリクエスト（あれば Pull Requests の見出しを出す）。
+    pull_requests: RefCell<Vec<PullRequest>>,
+    can_create_pull_request: Cell<bool>,
+    /// Pull Requests の見出しをまだ出していない（初めて出すときは開いておく）。
+    pull_requests_first: Cell<bool>,
 }
 
 /// 確認用: 分け方を読んだら、この行のメニューか印の吹き出しを出す。
@@ -397,6 +426,9 @@ impl Sidebar {
             unfiltered: RefCell::default(),
             worktrees: RefCell::default(),
             working_children: Cell::new(false),
+            pull_requests: RefCell::default(),
+            can_create_pull_request: Cell::new(false),
+            pull_requests_first: Cell::new(true),
         });
         inner.anchor.borrow().set(Some(scrolled.upcast_ref()));
         owner.replace(Rc::downgrade(&inner));
@@ -518,6 +550,24 @@ impl Sidebar {
         self.inner.refs.replace(Some(refs.refs.clone()));
         self.inner.rebuild(first);
         self.inner.load_facts();
+    }
+
+    /// 開いているプルリクエストを出す（なければ Pull Requests の見出しを出さない）。前と同じなら何もしない。
+    pub fn show_pull_requests(&self, list: Vec<PullRequest>) {
+        if *self.inner.pull_requests.borrow() == list {
+            return;
+        }
+        self.inner.pull_requests.replace(list);
+        self.inner.rebuild(false);
+        // 確認用のメニュー・吹き出しが、プルリクエストの行を待っていれば。
+        if self.inner.groups.borrow().is_some() {
+            self.inner.run_debug();
+        }
+    }
+
+    /// プルリクエストを作れるか（ブランチのメニューと吹き出しに出す）。
+    pub fn set_can_create_pull_request(&self, yes: bool) {
+        self.inner.can_create_pull_request.set(yes);
     }
 
     /// Working Copy の変更の数を出す。
@@ -800,6 +850,16 @@ fn bind_row(item: &gtk::ListItem) {
     marks.set_visible(!data.marks.is_empty());
     badge.set_text(&data.badge);
     badge.set_visible(!data.badge.is_empty());
+    for css in ["success", "error"] {
+        badge.remove_css_class(css);
+    }
+    match data.badge_css {
+        Some(css) => {
+            badge.remove_css_class("dim-label");
+            badge.add_css_class(css);
+        }
+        None => badge.add_css_class("dim-label"),
+    }
     trail.set_visible(!data.marks.is_empty() || !data.badge.is_empty());
     line.set_tooltip_text(data.tooltip.as_deref());
 }
@@ -816,6 +876,8 @@ impl Inner {
                 .borrow()
                 .as_ref()
                 .map_or_else(Vec::new, branch_remotes),
+            pull_requests: self.pull_requests.borrow().clone(),
+            can_create_pull_request: self.can_create_pull_request.get(),
         }
     }
 
@@ -862,11 +924,25 @@ impl Inner {
             selected: self.selected_refs(data),
             ..self.known()
         };
-        let items = match self.on_menu.borrow().as_ref() {
-            Some(f) => f(data, &known),
-            None => return,
-        };
-        menu::popup(widget, x, y, items);
+        let items = self.menu_items(data, &known);
+        if !items.is_empty() {
+            menu::popup(widget, x, y, items);
+        }
+    }
+
+    /// `data` の行の右クリックのメニューの項目。
+    fn menu_items(&self, data: &Data, known: &Known) -> Vec<menu::Item> {
+        // プルリクエストの行は、ここで作る（Checkout・ブラウザで開く・URL のコピー）。
+        if let Item::PullRequest(pr, _) = &data.item {
+            return match self.actions.borrow().as_ref() {
+                Some(actions) => crate::github::pull_request_menu(actions, pr),
+                None => Vec::new(),
+            };
+        }
+        match self.on_menu.borrow().as_ref() {
+            Some(f) => f(data, known),
+            None => Vec::new(),
+        }
     }
 
     /// 絞り込みの語を変える（変わったら作り直す）。
@@ -890,6 +966,14 @@ impl Inner {
             }
             Item::Ref(entry) if entry.kind == RefKind::Tag => {
                 crate::refmarks::tag(&actions, entry, &self.known(), anchor);
+            }
+            // CI の印（History の行の印と同じ吹き出し）。
+            Item::PullRequest(pr, _) => {
+                if let (Some(sha), Some(github)) =
+                    (&pr.head_ref_oid, crate::github::github_of(&actions))
+                {
+                    crate::cipopover::show(anchor, None, pr.ci(), sha, github);
+                }
             }
             _ => {}
         }
@@ -965,9 +1049,15 @@ impl Inner {
             .as_deref()
             .or(debug.mark.as_deref())
             .unwrap_or_default();
-        if self.worktrees.borrow().list.is_empty()
-            && spec.split(',').any(|s| self.find(s).is_none())
-        {
+        let worktree_waiting = self.worktrees.borrow().list.is_empty()
+            && spec.split(',').any(|s| self.find(s).is_none());
+        // プルリクエストの行（`pr/<番号>`）は、GitHub から読むまで待つ。
+        let waiting = worktree_waiting
+            || [&debug.menu, &debug.mark]
+                .into_iter()
+                .flatten()
+                .any(|s| s.starts_with("pr/") && self.find(s).is_none());
+        if waiting {
             self.debug.replace(Some(debug));
             return;
         }
@@ -1006,10 +1096,7 @@ impl Inner {
                         },
                         ..self.known()
                     };
-                    let items = match self.on_menu.borrow().as_ref() {
-                        Some(f) => f(&data, &known),
-                        None => Vec::new(),
-                    };
+                    let items = self.menu_items(&data, &known);
                     eprintln!("{}", menu::titles(&items).join("\n"));
                     match &debug.item {
                         Some(path) => {
@@ -1221,6 +1308,25 @@ impl Inner {
                 mark_worktree_branches(store, &worktrees);
             }
         }
+        // Pull Requests は Branches の後に（開いているものがあるときだけ）。
+        let pull_requests = self.pull_requests.borrow();
+        let pr_shown = !filtering && !pull_requests.is_empty();
+        if pr_shown {
+            let at = groups
+                .iter()
+                .position(|(t, _)| *t == "Branches")
+                .map_or(1, |i| i + 1);
+            groups.insert(
+                at,
+                (
+                    "Pull Requests",
+                    pull_request_rows(&pull_requests, refs.as_ref()),
+                ),
+            );
+        }
+        drop(pull_requests);
+        // 初めて出すときは開いておく。
+        let open_pull_requests = pr_shown && self.pull_requests_first.replace(false);
         let nodes: Vec<Node> = groups
             .into_iter()
             .map(|(title, children)| {
@@ -1249,7 +1355,12 @@ impl Inner {
                 let group = matches!(data.item, Item::Group)
                     && (filtering || node.children().is_some_and(|c| c.n_items() <= MANY));
                 let stack = matches!(data.item, Item::Ref(_)) && !folded.contains(&data.key);
-                if ((first || filtering) && group) || expanded.contains(&data.key) || stack {
+                let new_prs = open_pull_requests && data.key == "group/Pull Requests";
+                if ((first || filtering) && group)
+                    || expanded.contains(&data.key)
+                    || stack
+                    || new_prs
+                {
                     row.set_expanded(true);
                 }
             }
@@ -1880,6 +1991,52 @@ fn finish_tag(data: &mut Data, tags: Option<&TagRemotes>, remotes: &[String]) {
 pub fn target(data: &Data) -> Option<Oid> {
     match &data.item {
         Item::Ref(e) => e.target,
+        // プルリクエストのブランチが手元にあれば、その先頭。
+        Item::PullRequest(_, target) => *target,
         _ => None,
     }
+}
+
+/// Pull Requests の見出しの中身（macOS 版と同じ: `#番号 題`、右端に draft と CI の印）。
+fn pull_request_rows(list: &[PullRequest], refs: Option<&Refs>) -> gio::ListStore {
+    let store = gio::ListStore::new::<Node>();
+    for pr in list {
+        // ブランチが手元にあれば（リモートブランチ、なければローカルブランチ）、選ぶとその先頭へ。
+        let entries = refs.map_or(&[][..], |r| &r.entries[..]);
+        let target = entries
+            .iter()
+            .find(|e| {
+                e.kind == RefKind::Remote && e.name.ends_with(&format!("/{}", pr.head_ref_name))
+            })
+            .or_else(|| {
+                entries
+                    .iter()
+                    .find(|e| e.kind == RefKind::Local && e.name == pr.head_ref_name)
+            })
+            .and_then(|e| e.target);
+        let ci = pr.ci();
+        let badge: Vec<&str> = [pr.is_draft.then_some("draft"), Some(pr.ci_mark())]
+            .into_iter()
+            .flatten()
+            .filter(|s| !s.is_empty())
+            .collect();
+        let data = Data {
+            title: format!("#{} {}", pr.number, pr.title),
+            key: format!("pr/{}", pr.number),
+            icon: icon::Kind::Rebase,
+            badge: badge.join(" "),
+            tooltip: Some(pr.tooltip()),
+            // CI の印は押せる（History の行の印と同じ吹き出し）。
+            mark_click: ci != Ci::None && pr.head_ref_oid.is_some(),
+            badge_css: match ci {
+                Ci::Failing => Some("error"),
+                Ci::Passing => Some("success"),
+                _ => None,
+            },
+            item: Item::PullRequest(Box::new(pr.clone()), target),
+            ..Data::default()
+        };
+        store.append(&Node::new(data, None));
+    }
+    store
 }

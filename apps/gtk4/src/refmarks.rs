@@ -322,6 +322,20 @@ pub fn branch(
             Some("dim-label"),
         )
     });
+    let pull_request = known.pull_request(&item.name);
+    if let Some(pr) = pull_request {
+        let draft = if pr.is_draft {
+            format!(" {}", tr!("(draft)"))
+        } else {
+            String::new()
+        };
+        p.row(
+            &tr!("Pull Request"),
+            &format!("#{} {}{draft}", pr.number, pr.title),
+            false,
+            None,
+        );
+    }
     // 次にできること。消すのは merged のときだけ（git の -d と同じく、取り込んでいないものは消さない）。
     if !is_head {
         if merged {
@@ -338,6 +352,25 @@ pub fn branch(
                 }))
             });
         }
+    }
+    // プルリクエスト: 開いていればそれを開く。なければ、push 済み（上流があり先行コミットがない）で未マージのときに
+    // 作る（push 起因の CI を見てから作る流れ）。
+    if let Some(pr) = pull_request {
+        let (url, w) = (pr.url.clone(), actions.window());
+        p.button(
+            &tr!("Open Pull Request #{number}", number = pr.number),
+            move || crate::github::open_uri(w.as_ref().map(|w| w.upcast_ref()), &url),
+        );
+    } else if known.can_create_pull_request_from(&item.name)
+        && !merged
+        && item.detail.is_some()
+        && !item.gone
+        && item.ahead == 0
+    {
+        let (a, name) = (actions.clone(), item.name.clone());
+        p.button(&tr!("Create Pull Request…"), move || {
+            crate::github::create_pull_request(&a, name.clone(), false)
+        });
     }
     let popover = p.popup();
     if let (Some(label), Some(repo)) = (forecast, actions.repo()) {

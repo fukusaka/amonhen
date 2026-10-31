@@ -113,6 +113,7 @@ pub fn menu(
                     sheets::delete_branches(&a, vec![n.clone()])
                 }));
             }
+            items.extend(pull_request_items(actions, &name, known));
         }
         RefKind::Remote => {
             let (a, n) = (actions.clone(), name.clone());
@@ -234,6 +235,30 @@ fn sync_items(actions: &Rc<Actions>, entry: &amonhen_model::RefEntry, is_head: b
 }
 
 /// `text` をクリップボードに入れる項目。
+/// ブランチのプルリクエストの項目（macOS 版と同じ）: 既定のブランチ以外から。開いているものがあれば作らずに
+/// それを開く。
+fn pull_request_items(actions: &Rc<Actions>, name: &str, known: &Known) -> Vec<Item> {
+    if !known.can_create_pull_request_from(name) {
+        return Vec::new();
+    }
+    let item = match known.pull_request(name) {
+        Some(pr) => {
+            let (url, w) = (pr.url.clone(), actions.window());
+            menu::action(
+                tr!("Open Pull Request #{number}", number = pr.number),
+                move || crate::github::open_uri(w.as_ref().map(|w| w.upcast_ref()), &url),
+            )
+        }
+        None => {
+            let (a, n) = (actions.clone(), name.to_owned());
+            menu::action(tr!("Create Pull Request…"), move || {
+                crate::github::create_pull_request(&a, n.clone(), false)
+            })
+        }
+    };
+    vec![Item::Separator, item]
+}
+
 fn copy(title: String, text: String) -> Item {
     menu::action(title, move || {
         if let Some(display) = gtk::gdk::Display::default() {

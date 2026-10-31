@@ -1056,7 +1056,7 @@ fn build_window(app: &gtk::Application, args: Args) {
     });
     window.add_action(&edit_action);
     // GitHub（プルリクエスト・CI の状態・アバター）。ref を読むたびに読み直す（30 秒は空ける）。
-    let github_loader = github::Loader::new(&actions, &view);
+    let github_loader = github::Loader::new(&actions, &view, &sidebar);
     let mut github_started = false;
     search.install(&window, app);
     header.pack_end(&search.toggle);
