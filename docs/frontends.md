@@ -338,7 +338,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Create Pull Request (base, draft) | ✓ | ✓ | — | — | macOS: The base is typed (the default branch at first).<br>GTK4: The base is typed (the default branch at first). |
 | Branch status popover (CI, pull request) | ✓ | ✓ | — | — |  |
 | Open on GitHub | ✓ | ✓ | — | — |  |
-| `#123` links in messages | ✓ | — | — | — |  |
+| `#123` links in messages | ✓ | ✓ | — | — |  |
 | GitHub avatars | ✓ | △ | — | — | GTK4: Kept in memory only. |
 
 ## 13. Language

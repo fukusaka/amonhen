@@ -333,7 +333,8 @@ impl Details {
         let (subject, body) = message.split_once('\n').unwrap_or((message, ""));
         self.subject.set_text(subject.trim_end());
         let body = body.trim();
-        self.body.set_text(body);
+        // URL はリンクにする（`#123` は、リモートの場所を読んでから）。
+        self.body.set_markup(&linked(body, None));
         self.body.set_visible(!body.is_empty());
 
         // 上の帯: 作者と（違う人なら）コミッター。
@@ -393,6 +394,13 @@ impl Details {
             return;
         }
         self.build_table(Some(extras));
+        // 本文の `#123` を、リモートのリポジトリの issue・pull request へのリンクにする（macOS 版と同じ）。
+        if let Some(info) = self.info.borrow().as_ref() {
+            let message = str_of(info, "message");
+            let body = message.split_once('\n').map_or("", |(_, b)| b).trim();
+            let web = web_url(str_of(extras, "originUrl"));
+            self.body.set_markup(&linked(body, web.as_deref()));
+        }
         let notes = str_of(extras, "notes").trim();
         self.notes.set_text(notes);
         self.notes.set_visible(!notes.is_empty());
@@ -626,6 +634,89 @@ fn signature_label(
     })
 }
 
+/// `git@github.com:a/b.git`・`ssh://git@host/a/b`・`https://host/a/b.git` を、ブラウザで開ける URL にする（macOS 版の
+/// `CommitHeaderRenderer.webURL`）。
+fn web_url(remote: &str) -> Option<String> {
+    let mut s = remote.trim();
+    if s.is_empty() {
+        return None;
+    }
+    s = s.strip_suffix(".git").unwrap_or(s);
+    if s.starts_with("http://") || s.starts_with("https://") {
+        return Some(s.to_owned());
+    }
+    let host_of = |h: &str| {
+        let h = h.rsplit('@').next().unwrap_or(h);
+        h.split(':').next().unwrap_or(h).to_owned()
+    };
+    if let Some(rest) = s.strip_prefix("ssh://") {
+        let (host, path) = rest.split_at(rest.find('/')?);
+        return Some(format!("https://{}{path}", host_of(host)));
+    }
+    // scp の形（user@host:path）。
+    if s.contains("://") {
+        return None;
+    }
+    let (host, path) = s.split_once(':')?;
+    Some(format!(
+        "https://{}/{}",
+        host_of(host),
+        path.trim_matches('/')
+    ))
+}
+
+/// 本文を、URL と（`web` があれば）`#123` をリンクにした Pango のマークアップにする。`#123` は `web` の issue
+/// （GitLab なら `-/issues`）へ。GitHub は pull request の番号でも開ける。
+fn linked(text: &str, web: Option<&str>) -> String {
+    let e = |s: &str| glib::markup_escape_text(s).to_string();
+    let link = |href: &str, label: &str| format!("<a href=\"{}\">{}</a>", e(href), e(label));
+    let issues = web.map(|w| {
+        let gitlab = w.to_lowercase().contains("gitlab");
+        format!("{w}/{}", if gitlab { "-/issues" } else { "issues" })
+    });
+    let bytes = text.as_bytes();
+    let mut out = String::new();
+    let (mut i, mut plain) = (0, 0);
+    while i < text.len() {
+        let rest = &text[i..];
+        // URL（空白まで。末尾の句読点と閉じ括弧は含めない）。
+        if rest.starts_with("https://") || rest.starts_with("http://") {
+            let mut end = rest
+                .find(|c: char| c.is_whitespace() || c == '<' || c == '>' || c == '"')
+                .unwrap_or(rest.len());
+            while end > 0 && rest[..end].ends_with(['.', ',', ';', ':', '!', '?', ')', '\'']) {
+                end -= 1;
+            }
+            out.push_str(&e(&text[plain..i]));
+            out.push_str(&link(&rest[..end], &rest[..end]));
+            i += end;
+            plain = i;
+            continue;
+        }
+        // `#123`（前が英数字や `&` でなく、後ろが単語の終わり）。
+        if let Some(issues) = &issues
+            && bytes[i] == b'#'
+            && (i == 0 || !(bytes[i - 1].is_ascii_alphanumeric() || bytes[i - 1] == b'&'))
+        {
+            let digits = rest[1..]
+                .find(|c: char| !c.is_ascii_digit())
+                .unwrap_or(rest.len() - 1);
+            let after = rest[1 + digits..].chars().next();
+            if digits > 0 && !after.is_some_and(|c| c.is_alphanumeric() || c == '_') {
+                let number = &rest[1..1 + digits];
+                out.push_str(&e(&text[plain..i]));
+                out.push_str(&link(&format!("{issues}/{number}"), &rest[..1 + digits]));
+                i += 1 + digits;
+                plain = i;
+                continue;
+            }
+        }
+        i += rest.chars().next().map_or(1, char::len_utf8);
+    }
+    out.push_str(&e(&text[plain..]));
+    out
+}
+
 fn str_of<'a>(v: &'a Value, key: &str) -> &'a str {
     v[key].as_str().unwrap_or_default()
 }
@@ -643,4 +734,46 @@ fn date(time: i64) -> String {
         .and_then(|d| d.format("%Y-%m-%d %H:%M:%S"))
         .map(|s| s.to_string())
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn remotes_become_web_urls() {
+        assert_eq!(
+            web_url("git@github.com:a/b.git").as_deref(),
+            Some("https://github.com/a/b")
+        );
+        assert_eq!(
+            web_url("ssh://git@gitlab.example.com:2222/a/b").as_deref(),
+            Some("https://gitlab.example.com/a/b")
+        );
+        assert_eq!(
+            web_url("https://github.com/a/b.git").as_deref(),
+            Some("https://github.com/a/b")
+        );
+        assert_eq!(web_url(""), None);
+    }
+
+    #[test]
+    fn issue_numbers_and_urls_become_links() {
+        let web = Some("https://github.com/a/b");
+        assert_eq!(
+            linked("Fixes #12, see https://x.org/p.", web),
+            "Fixes <a href=\"https://github.com/a/b/issues/12\">#12</a>, see \
+             <a href=\"https://x.org/p\">https://x.org/p</a>."
+        );
+        // 単語の途中・`&#` の後ろ・数字でないものはリンクにしない。リモートがなければ `#12` もそのまま。
+        assert_eq!(
+            linked("a#1 &#38; #x <b>", web),
+            "a#1 &amp;#38; #x &lt;b&gt;"
+        );
+        assert_eq!(linked("#7", None), "#7");
+        assert_eq!(
+            linked("#7", Some("https://gitlab.com/a/b")),
+            "<a href=\"https://gitlab.com/a/b/-/issues/7\">#7</a>"
+        );
+    }
 }
