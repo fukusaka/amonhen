@@ -622,7 +622,9 @@ the sidebar is wider.
 - Partial clone: the sidebar's History row has a small cloud mark with the filter in its tooltip. Diffs fetch the
   contents they need in one go. A History search with `contents:` needs every content not fetched yet, so a sheet
   asks first ("This search fetches all contents not fetched yet", Search / Cancel); they are then fetched in one go
-  before searching (git alone would fetch them one at a time).
+  before searching (git alone would fetch them one at a time). Fetching in one go needs git 2.29, to fetch them
+  without telling the server what is already here (servers such as GitHub send nothing otherwise); with older git,
+  git fetches them one at a time as it reads them.
 - Sparse checkout: the sidebar's Working Copy row has a small folder mark, and Working Copy says "Only some folders
   are checked out (2)" above the list of changes; clicking it opens Fetching and Folders. In a commit's diff, a file
   in a folder that isn't checked out has Show in Finder and Open with Default App disabled, with "This folder isn’t

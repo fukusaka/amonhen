@@ -20,7 +20,7 @@ becomes the GitHub Release notes.
   clone (git 2.36), and choose the folders of a sparse checkout from HEAD's tree (git 2.25). The git line, the
   sidebar and Working Copy show when a repository is shallow, partial, sparse or registered for maintenance.
 - In a partial clone, a History search with `contents:` asks first, then fetches every content not fetched yet in
-  one go. `amonhen status` notes shallow, partial and sparse repositories.
+  one go (git 2.29). `amonhen status` notes shallow, partial and sparse repositories.
 - Fetching and Folders has a switch to keep the repository maintained in the background (`git maintenance start`,
   git 2.31); the app then leaves writing the commit-graph to it. Turning it off lets git's automatic maintenance
   run again.
