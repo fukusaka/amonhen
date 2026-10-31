@@ -24,7 +24,9 @@ mod merge;
 mod mergeseveral;
 mod patches;
 mod rangediff;
+mod reffacts;
 mod reflog;
+mod refmarks;
 mod refops;
 mod repopages;
 mod repos;
@@ -134,6 +136,10 @@ struct Args {
     edit_plan: Option<String>,
     edit_move: Option<(usize, usize)>,
     edit_apply: bool,
+    /// サイドバーのこの行（ref・リモート・見出しの名前）の右クリックのメニューを出す（確認用。`--menu-item` で
+    /// 項目を選ぶ）・右端の印の吹き出しを出す。
+    sidebar_menu: Option<String>,
+    sidebar_mark: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -161,6 +167,8 @@ fn parse_args() -> Result<Args, String> {
             }
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
             "--menu-ref" => args.menu_ref = Some(it.next().ok_or("--menu-ref <name>")?),
+            "--sidebar-menu" => args.sidebar_menu = Some(it.next().ok_or("--sidebar-menu <name>")?),
+            "--sidebar-mark" => args.sidebar_mark = Some(it.next().ok_or("--sidebar-mark <name>")?),
             "--select-rows" => {
                 let rows = it.next().ok_or("--select-rows <row,row,...>")?;
                 args.select_rows = rows
@@ -456,6 +464,12 @@ fn build_window(app: &gtk::Application, args: Args) {
         }
     });
     connect_sidebar(&sidebar, &pages, &view, &stashes);
+    sidebar.debug_once(
+        args.sidebar_menu.clone(),
+        args.sidebar_mark.clone(),
+        args.menu_item.clone(),
+        pending.clone(),
+    );
     if args.working_copy {
         pages.set_visible_child_name("working");
         sidebar.select_page(Page::WorkingCopy);
@@ -752,12 +766,10 @@ fn build_window(app: &gtk::Application, args: Args) {
     };
     let (a, h, o) = (actions.clone(), head.clone(), open_submodule.clone());
     let (rd, rdo) = (Rc::downgrade(&range_diff), range_diff_opener.clone());
-    sidebar.connect_menu(move |data, widget, x, y| {
-        let items = match (&data.item, rd.upgrade()) {
-            (sidebar::Item::Page(Page::RangeDiff), Some(range_diff)) => range_diff.sidebar_menu(),
-            _ => refops::menu(&a, data, h().as_deref(), &o, &rdo),
-        };
-        menu::popup(widget, x, y, items);
+    sidebar.set_actions(actions.clone());
+    sidebar.connect_menu(move |data, known| match (&data.item, rd.upgrade()) {
+        (sidebar::Item::Page(Page::RangeDiff), Some(range_diff)) => range_diff.sidebar_menu(),
+        _ => refops::menu(&a, data, known, h().as_deref(), &o, &rdo),
     });
     let (a, h) = (actions.clone(), head.clone());
     sidebar.connect_drop(move |dragged, data, widget, x, y| {
@@ -1147,6 +1159,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                             let items = refops::menu(
                                 &actions,
                                 &data,
+                                &sidebar.known(),
                                 refs.refs.head_branch.as_deref(),
                                 &open_submodule,
                                 &range_diff_opener,

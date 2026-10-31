@@ -57,6 +57,12 @@ pub enum Kind {
     Sliders,
     /// location（Go to HEAD）
     Location,
+    /// star.fill（お気に入りのブランチ）
+    Star,
+    /// arrow.turn.down.right（ほかのブランチの上に積んだブランチ）
+    Stacked,
+    /// icloud.slash（上流がリモートで消えた）
+    CloudSlash,
 }
 
 mod imp {
@@ -121,6 +127,16 @@ impl Icon {
         self.set_visible(kind != Kind::None);
         self.queue_draw();
     }
+}
+
+/// 雲の輪郭（icloud）。
+fn cloud(p: &gsk::PathBuilder) {
+    p.move_to(4.5, 12.5);
+    p.line_to(11.8, 12.5);
+    p.svg_arc_to(2.4, 2.4, 0.0, false, false, 12.2, 7.7);
+    p.svg_arc_to(3.6, 3.6, 0.0, false, false, 5.3, 7.0);
+    p.svg_arc_to(2.8, 2.8, 0.0, false, false, 4.5, 12.5);
+    p.close();
 }
 
 /// 16×16 の中に描く。
@@ -357,6 +373,41 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(8.0, 8.0);
             p.line_to(8.7, 13.5);
             p.close();
+        }
+        Kind::Star => {
+            // 塗った五つの角の星。
+            let star = gsk::PathBuilder::new();
+            for i in 0..10 {
+                let r = if i % 2 == 0 { 6.3 } else { 2.7 };
+                let a = std::f32::consts::PI * (i as f32 / 5.0 - 0.5);
+                let (x, y) = (8.0 + r * a.cos(), 8.4 + r * a.sin());
+                if i == 0 {
+                    star.move_to(x, y);
+                } else {
+                    star.line_to(x, y);
+                }
+            }
+            star.close();
+            // to_path で空になるので、作ったパスを輪郭と塗りの両方に入れる。
+            let star = star.to_path();
+            p.add_path(&star);
+            let solid = gsk::PathBuilder::new();
+            solid.add_path(&star);
+            fill = Some(solid);
+        }
+        Kind::Stacked => {
+            // 下に折れて右へ向かう矢印。
+            p.move_to(4.0, 2.5);
+            p.line_to(4.0, 9.5);
+            p.line_to(12.5, 9.5);
+            p.move_to(10.0, 7.0);
+            p.line_to(12.5, 9.5);
+            p.line_to(10.0, 12.0);
+        }
+        Kind::CloudSlash => {
+            cloud(&p);
+            p.move_to(2.5, 2.5);
+            p.line_to(13.5, 13.5);
         }
         Kind::Filter => {
             p.move_to(2.5, 4.5);

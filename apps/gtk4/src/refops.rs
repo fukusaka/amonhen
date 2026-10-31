@@ -9,7 +9,7 @@ use serde_json::json;
 
 use crate::actions::Actions;
 use crate::menu::{self, Item};
-use crate::sidebar::{self, Data};
+use crate::sidebar::{self, Data, Known};
 use crate::{sheets, titles};
 
 /// サブモジュールを新しい窓で開く（作業ツリーからのパス）。
@@ -19,6 +19,7 @@ pub type OpenSubmodule = Rc<dyn Fn(&str)>;
 pub fn menu(
     actions: &Rc<Actions>,
     data: &Data,
+    known: &Known,
     head: Option<&str>,
     open_submodule: &OpenSubmodule,
     range_diff: &crate::rangediff::Opener,
@@ -57,6 +58,7 @@ pub fn menu(
                 rebase(&mut items);
                 items.push(Item::Separator);
             }
+            items.extend(favorite_items(actions, &name, known));
             items.push(new_branch(actions, &name));
             items.push(new_tag(actions, &name));
             let (r, n) = (range_diff.clone(), name.clone());
@@ -113,6 +115,77 @@ pub fn menu(
         }
     }
     items
+}
+
+/// お気に入りの順を書く（`branch.<name>.amonhenPinned` に 1 から順に）命令。
+fn pinned_order(names: &[String]) -> Vec<serde_json::Value> {
+    names
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            json!({ "op": "configSet", "key": format!("branch.{name}.amonhenPinned"), "value": (i + 1).to_string() })
+        })
+        .collect()
+}
+
+/// `names` をお気に入りから外す・入れる命令（外すときは残りの順を詰める）。
+pub fn favorite_commands(names: &[String], known: &Known, remove: bool) -> Vec<serde_json::Value> {
+    if remove {
+        let rest: Vec<String> = known
+            .pinned
+            .iter()
+            .filter(|n| !names.contains(n))
+            .cloned()
+            .collect();
+        let mut commands = pinned_order(&rest);
+        commands.extend(names.iter().map(|name| {
+            json!({ "op": "configSet", "key": format!("branch.{name}.amonhenPinned"), "value": null })
+        }));
+        commands
+    } else {
+        let mut order = known.pinned.clone();
+        order.extend(names.iter().filter(|n| !known.pinned.contains(n)).cloned());
+        pinned_order(&order)
+    }
+}
+
+/// `names` をアーカイブする・戻す命令。
+pub fn archive_commands(names: &[String], unarchive: bool) -> Vec<serde_json::Value> {
+    names
+        .iter()
+        .map(|name| {
+            let value = if unarchive { json!(null) } else { json!("true") };
+            json!({ "op": "configSet", "key": format!("branch.{name}.amonhenArchived"), "value": value })
+        })
+        .collect()
+}
+
+/// お気に入りとアーカイブ（git の設定に書く。ブランチを消せば一緒に消え、名前を変えればついていく）。
+fn favorite_items(actions: &Rc<Actions>, name: &str, known: &Known) -> Vec<Item> {
+    let names = vec![name.to_owned()];
+    let pinned = known.pinned.iter().any(|n| n == name);
+    let commands = favorite_commands(&names, known, pinned);
+    let a = actions.clone();
+    let favorite = menu::action(
+        if pinned {
+            tr!("Remove from Favorites")
+        } else {
+            tr!("Add to Favorites")
+        },
+        move || a.perform_sequence(commands.clone()),
+    );
+    let archived = known.groups.as_ref().is_some_and(|g| g.is_archived(name));
+    let commands = archive_commands(&names, archived);
+    let a = actions.clone();
+    let archive = menu::action(
+        if archived {
+            tr!("Unarchive")
+        } else {
+            tr!("Archive")
+        },
+        move || a.perform_sequence(commands.clone()),
+    );
+    vec![favorite, archive]
 }
 
 /// `start` から新しいブランチを作って切り替える。

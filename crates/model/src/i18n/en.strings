@@ -42,3 +42,5 @@
 "Show {count} Merged Commits" = "Show {count} Merged Commit";
 "{count} messages" = "{count} message";
 "Edit {count} Commits" = "Edit {count} Commit";
+"{count} commits here are not on the upstream yet. Push sends them." = "{count} commit here is not on the upstream yet. Push sends it.";
+"{count} commits on the upstream are not here yet. Pull brings them in." = "{count} commit on the upstream is not here yet. Pull brings it in.";
