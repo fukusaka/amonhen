@@ -1,6 +1,7 @@
 //! リポジトリを開く周り: 最近開いたもの（File > Open Recent）と、File > Clone…（macOS 版の `Clone.swift`）。
-//! 最後に開いた日時（Repositories の一覧の Opened）も覚える。
+//! 最後に開いた日時（Repositories の一覧の Opened）と、開いている窓（次の起動で開き直す）も覚える。
 
+use std::cell::RefCell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
@@ -75,6 +76,56 @@ pub fn forget(location: &str) {
     if opened.remove(location).is_some() {
         crate::settings::set_string(OPENED, &serde_json::Value::Object(opened).to_string());
     }
+}
+
+/// 開いている窓（次の起動で開き直す。macOS 版の `openWindows` と同じく窓ごとの並びで、この FE にはタブが
+/// ないので 1 つずつ）。
+const OPEN_WINDOWS: &str = "openWindows";
+
+thread_local! {
+    static OPEN: RefCell<Vec<(glib::WeakRef<gtk::ApplicationWindow>, String)>> = RefCell::default();
+}
+
+fn save_open() {
+    let groups: Vec<Vec<String>> =
+        OPEN.with(|o| o.borrow().iter().map(|(_, l)| vec![l.clone()]).collect());
+    crate::settings::set_string(OPEN_WINDOWS, &serde_json::json!(groups).to_string());
+}
+
+/// 開いた窓を覚える。閉じたら外す（アプリを終えるときに閉じる窓は外さない: 終了では閉じる知らせが来ない）。
+pub fn track(window: &gtk::ApplicationWindow, location: &Path) {
+    OPEN.with(|o| {
+        o.borrow_mut()
+            .push((window.downgrade(), normalize(location)))
+    });
+    save_open();
+    window.connect_close_request(|w| {
+        OPEN.with(|o| {
+            o.borrow_mut()
+                .retain(|(x, _)| x.upgrade().is_some_and(|x| &x != w))
+        });
+        save_open();
+        glib::Propagation::Proceed
+    });
+}
+
+/// 前回の終わりに開いていた窓の場所（フォルダがなくなったものは除く）。
+pub fn restorable() -> Vec<String> {
+    let groups: Vec<Vec<String>> = crate::settings::string(OPEN_WINDOWS)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default();
+    let mut seen = std::collections::HashSet::new();
+    groups
+        .into_iter()
+        .flatten()
+        .filter(|l| crate::bookmarks::is_repository(l))
+        .filter(|l| seen.insert(l.clone()))
+        .collect()
+}
+
+/// `dir` がリポジトリの中か（`.git` を上に辿る。git は起動しない）。
+pub fn inside_repository(dir: &Path) -> bool {
+    dir.ancestors().any(|d| d.join(".git").exists())
 }
 
 /// File > Open Recent の中身（`win.open-recent` に場所を渡す）。最近のものが変わったら作り直す。

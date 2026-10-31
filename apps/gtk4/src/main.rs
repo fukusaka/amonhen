@@ -380,14 +380,38 @@ fn opener(app: &gtk::Application) -> Rc<dyn Fn(PathBuf)> {
     })
 }
 
-/// 起動したとき: 引数のリポジトリ、なければ今のフォルダのリポジトリを開く。
+/// 起動したとき: 引数のリポジトリ、なければ今のフォルダのリポジトリを開く。今のフォルダがリポジトリでなければ、
+/// 前回の終わりに開いていた窓を開き直し（macOS 版と同じ）、それもなければ Repositories の窓を出す。
 fn launch(app: &gtk::Application, args: &Args) {
+    let check = args.snapshot.is_some() || args.measure_scroll;
     let window = if args.repositories {
         Some(repobrowser::show(app, opener(app)).upcast::<gtk::Window>())
     } else if let Some(query) = &args.quick_open {
         let window = quickopen::show_with(None, opener(app), query);
         window.set_application(Some(app));
         Some(window)
+    } else if args.path.is_none()
+        && !repos::inside_repository(&std::env::current_dir().unwrap_or_default())
+    {
+        let restore = if check {
+            Vec::new()
+        } else {
+            repos::restorable()
+        };
+        if restore.is_empty() {
+            Some(repobrowser::show(app, opener(app)).upcast::<gtk::Window>())
+        } else {
+            for location in restore {
+                build_window(
+                    app,
+                    Args {
+                        path: Some(location.into()),
+                        ..Args::default()
+                    },
+                );
+            }
+            None
+        }
     } else {
         build_window(app, args.clone());
         None
@@ -571,6 +595,10 @@ fn build_window(app: &gtk::Application, args: Args) {
     historydisplay::install_actions(&window);
     window.present();
     view.grab_focus();
+    // 次の起動で開き直す（確認用の撮影では覚えない）。
+    if args.snapshot.is_none() && !args.measure_scroll {
+        repos::track(&window, &path);
+    }
 
     let (tx, rx) = async_channel::unbounded::<Event>();
     // 操作は裏で実行し、終わったら History・ref・status を読み直す（ファイルの変化の知らせも来るが、
