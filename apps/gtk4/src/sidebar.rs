@@ -24,6 +24,8 @@ pub enum Page {
     WorkingCopy,
     /// stash の画面（stash があるときだけ出す）。
     Stashes,
+    /// 開いている間だけ出す。
+    RangeDiff,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -181,6 +183,9 @@ struct Inner {
     model: gtk::TreeListModel,
     selection: gtk::SingleSelection,
     working: Node,
+    /// Range Diff の行（開いている間だけ Workspace の最後に出す）。
+    range_diff: Node,
+    range_diff_shown: std::cell::Cell<bool>,
     generation: RefCell<Option<u64>>,
     on_select: RefCell<Option<SelectCallback>>,
     on_menu: Rc<RefCell<Option<MenuCallback>>>,
@@ -329,11 +334,23 @@ impl Sidebar {
             },
             None,
         );
+        let range_diff = Node::new(
+            Data {
+                title: "Range Diff".into(),
+                key: "page/range-diff".into(),
+                item: Item::Page(Page::RangeDiff),
+                icon: icon::Kind::RangeDiff,
+                ..Data::default()
+            },
+            None,
+        );
         let inner = Rc::new(Inner {
             root,
             model,
             selection,
             working,
+            range_diff,
+            range_diff_shown: std::cell::Cell::new(false),
             generation: RefCell::default(),
             on_select: RefCell::default(),
             on_menu,
@@ -412,9 +429,28 @@ impl Sidebar {
             Page::WorkingCopy => "page/working",
             Page::History => "page/history",
             Page::Stashes => "page/stashes",
+            Page::RangeDiff => "page/range-diff",
         };
         self.inner.rebuilding.set(true);
         self.inner.select_key(key);
+        self.inner.rebuilding.set(false);
+    }
+
+    /// Range Diff の行を出す・消す（知らせは出さない）。
+    pub fn set_range_diff_shown(&self, shown: bool) {
+        if self.inner.range_diff_shown.replace(shown) == shown {
+            return;
+        }
+        let workspace = self.inner.root.item(0).and_downcast::<Node>();
+        let Some(store) = workspace.and_then(|w| w.children()) else {
+            return;
+        };
+        self.inner.rebuilding.set(true);
+        if shown {
+            store.append(&self.inner.range_diff);
+        } else if let Some(at) = store.find(&self.inner.range_diff) {
+            store.remove(at);
+        }
         self.inner.rebuilding.set(false);
     }
 }
@@ -472,6 +508,9 @@ impl Inner {
                 },
                 None,
             ));
+        }
+        if self.range_diff_shown.get() {
+            workspace.append(&self.range_diff);
         }
         let mut groups = vec![("Workspace", workspace)];
         if let Some(refs) = refs {

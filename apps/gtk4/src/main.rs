@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]]`
 
 mod actions;
 mod activity;
@@ -16,6 +16,7 @@ mod icon;
 mod measure;
 mod menu;
 mod merge;
+mod rangediff;
 mod refops;
 mod search;
 mod settings;
@@ -100,6 +101,12 @@ struct Args {
     /// `--stashes` で、選んだ stash の帯のボタン（`apply`・`pop`・`drop`・`branch`）を一度押す（確認用。
     /// `--snapshot` は開いたシートを撮る）。
     stash_button: Option<usize>,
+    /// Range Diff を開いておく（確認用）。`Some(None)` は今のブランチを書き換える前の版と、`Some(Some(範囲))` は
+    /// その範囲（空白で区切る）で比べる。
+    range_diff: Option<Option<String>>,
+    /// Range Diff でこの組を選んでおく・この組の右クリックのメニューを出す（確認用）。
+    select_pair: Option<u32>,
+    menu_pair: Option<u32>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -163,6 +170,18 @@ fn parse_args() -> Result<Args, String> {
             "--scroll-to" => {
                 let row = it.next().ok_or("--scroll-to <row>")?;
                 args.scroll_to = Some(row.parse().map_err(|_| "--scroll-to <row>")?);
+            }
+            "--range-diff" => args.range_diff = Some(None),
+            _ if a.starts_with("--range-diff=") => {
+                args.range_diff = Some(Some(a["--range-diff=".len()..].to_owned()));
+            }
+            "--select-pair" => {
+                let row = it.next().ok_or("--select-pair <n>")?;
+                args.select_pair = Some(row.parse().map_err(|_| "--select-pair <n>")?);
+            }
+            "--menu-pair" => {
+                let row = it.next().ok_or("--menu-pair <n>")?;
+                args.menu_pair = Some(row.parse().map_err(|_| "--menu-pair <n>")?);
             }
             _ if a.starts_with('-') => return Err(tr!("Unknown option: {option}", option = a)),
             _ => args.path = Some(a.into()),
@@ -359,7 +378,13 @@ fn build_window(app: &gtk::Application, args: Args) {
     // Stashes の画面（stash の一覧と、選んだ stash の中身）。
     let stashes = Rc::new(Stashes::new(pending.clone()));
     pages.add_named(&stashes.root, Some("stashes"));
+    // Range Diff（開いている間だけサイドバーに出す）。
+    let range_diff = rangediff::RangeDiff::new(&view, pending.clone());
+    pages.add_named(&range_diff.root, Some(rangediff::PAGE));
     let sidebar = Rc::new(Sidebar::new());
+    let range_diff_opener = rangediff::Opener::new(&range_diff, &pages, &sidebar);
+    let o = range_diff_opener.clone();
+    range_diff.connect_close(move || o.close());
     let weak_sidebar = Rc::downgrade(&sidebar);
     working.connect_count(move |count| {
         if let Some(sidebar) = weak_sidebar.upgrade() {
@@ -492,14 +517,18 @@ fn build_window(app: &gtk::Application, args: Args) {
         }
         items
     });
+    range_diff.connect_show_in_history({
+        let on_commit = on_commit.clone();
+        move |id| on_commit(id)
+    });
     // History のコミットの右クリック。
-    let (a, v) = (actions.clone(), view.downgrade());
+    let (a, v, rd) = (actions.clone(), view.downgrade(), range_diff_opener.clone());
     view.connect_menu(move |row, x, y| {
         let Some(view) = v.upgrade() else { return };
         if let Some((_, history)) = view.current() {
             let rows = view.selection();
             let items = if rows.len() > 1 && rows.contains(&row) {
-                commitops::menu_many(&a, &history, &rows, view.upcast_ref())
+                commitops::menu_many(&a, &history, &rows, view.upcast_ref(), &rd)
             } else {
                 commitops::menu(&a, &history, row, view.upcast_ref())
             };
@@ -593,8 +622,13 @@ fn build_window(app: &gtk::Application, args: Args) {
         })
     };
     let (a, h, o) = (actions.clone(), head.clone(), open_submodule.clone());
+    let (rd, rdo) = (Rc::downgrade(&range_diff), range_diff_opener.clone());
     sidebar.connect_menu(move |data, widget, x, y| {
-        menu::popup(widget, x, y, refops::menu(&a, data, h().as_deref(), &o));
+        let items = match (&data.item, rd.upgrade()) {
+            (sidebar::Item::Page(Page::RangeDiff), Some(range_diff)) => range_diff.sidebar_menu(),
+            _ => refops::menu(&a, data, h().as_deref(), &o, &rdo),
+        };
+        menu::popup(widget, x, y, items);
     });
     let (a, h) = (actions.clone(), head.clone());
     sidebar.connect_drop(move |dragged, data, widget, x, y| {
@@ -623,6 +657,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         reload,
         open,
         go_to,
+        range_diff: range_diff_opener.clone(),
     });
     let latest_refs = refs;
     search.install(&window, app);
@@ -781,6 +816,14 @@ fn build_window(app: &gtk::Application, args: Args) {
                             if let Some(row) = args.scroll_to {
                                 view.select(row);
                             }
+                            if let Some(ranges) = &args.range_diff {
+                                range_diff.debug_once(args.select_pair, args.menu_pair);
+                                match ranges {
+                                    Some(r) => range_diff_opener
+                                        .ranges(r.split_whitespace().map(str::to_owned).collect()),
+                                    None => range_diff_opener.previous(None),
+                                }
+                            }
                             after_first_show(&window, &view, &pending, &args);
                         }
                     }
@@ -833,6 +876,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 &data,
                                 refs.refs.head_branch.as_deref(),
                                 &open_submodule,
+                                &range_diff_opener,
                             );
                             eprintln!("{}", menu::titles(&items).join("\n"));
                             menu::popup(&sidebar.root, 24.0, 120.0, items);
@@ -958,6 +1002,7 @@ fn connect_sidebar(
                 }
                 return;
             }
+            sidebar::Item::Page(Page::RangeDiff) => pages.set_visible_child_name(rangediff::PAGE),
             _ => {}
         }
         if let Some(target) = sidebar::target(data) {

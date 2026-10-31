@@ -21,6 +21,7 @@ pub fn menu(
     data: &Data,
     head: Option<&str>,
     open_submodule: &OpenSubmodule,
+    range_diff: &crate::rangediff::Opener,
 ) -> Vec<Item> {
     let sidebar::Item::Ref(entry) = &data.item else {
         return Vec::new();
@@ -58,6 +59,11 @@ pub fn menu(
             }
             items.push(new_branch(actions, &name));
             items.push(new_tag(actions, &name));
+            let (r, n) = (range_diff.clone(), name.clone());
+            items.push(menu::action(
+                tr!("Compare with Previous Version"),
+                move || r.previous(Some(n.clone())),
+            ));
             let (a, from) = (actions.clone(), name.clone());
             items.push(menu::action(format!("Rename {name}…"), move || {
                 let (a, from) = (a.clone(), from.clone());

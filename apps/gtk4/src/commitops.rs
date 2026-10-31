@@ -107,6 +107,7 @@ pub fn menu_many(
     history: &HistorySnapshot,
     rows: &[u32],
     widget: &gtk::Widget,
+    range_diff: &crate::rangediff::Opener,
 ) -> Vec<Item> {
     let commits: Vec<(String, bool)> = rows
         .iter()
@@ -142,6 +143,14 @@ pub fn menu_many(
         items.push(menu::action(format!("Squash {n} Commits…"), move || {
             a.squash_range(oids.clone());
         }));
+    }
+    // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
+    if let [(newer, _), (older, _)] = &commits[..] {
+        let (r, ranges) = (range_diff.clone(), vec![format!("{older}...{newer}")]);
+        items.push(menu::action(
+            tr!("Compare as Two Versions (Range Diff)"),
+            move || r.ranges(ranges.clone()),
+        ));
     }
     items.push(Item::Separator);
     let (w, ids) = (

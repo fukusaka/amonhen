@@ -40,6 +40,8 @@ pub struct Parts {
     pub open: Rc<dyn Fn(PathBuf)>,
     /// History でそのコミットを選ぶ。
     pub go_to: Rc<dyn Fn(Oid)>,
+    /// Range Diff を開く。
+    pub range_diff: crate::rangediff::Opener,
 }
 
 /// 見出しのメニューとツールバーのボタン（`--open-menu` で開く、ref を読んだら数を出す）。
@@ -158,7 +160,6 @@ pub const PENDING: &[&str] = &[
     "open-on-github",
     "new-worktree",
     "prune-worktrees",
-    "compare-with-previous",
     "apply-patch",
     "save-patch",
     "show-reflog",
@@ -249,6 +250,10 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ),
         ("merge", Box::new(|p| merge_or_rebase(p, false))),
         ("rebase", Box::new(|p| merge_or_rebase(p, true))),
+        (
+            "compare-with-previous",
+            Box::new(|p| p.range_diff.previous(head_branch(p))),
+        ),
         ("continue", run(json!({ "op": "continue" }))),
         ("skip", run(json!({ "op": "skip" }))),
         ("abort", run(json!({ "op": "abort" }))),
@@ -513,6 +518,7 @@ fn show_page(p: &Parts, page: Page) {
         Page::WorkingCopy => "working",
         Page::History => "history",
         Page::Stashes => "stashes",
+        Page::RangeDiff => crate::rangediff::PAGE,
     });
     p.sidebar.select_page(page);
 }

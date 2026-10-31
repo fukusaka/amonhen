@@ -49,6 +49,8 @@ pub enum Kind {
     Tree,
     /// doc.text
     Doc,
+    /// arrow.left.arrow.right（Range Diff）
+    RangeDiff,
 }
 
 mod imp {
@@ -306,6 +308,19 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.line_to(10.5, 8.0);
             p.move_to(6.0, 10.5);
             p.line_to(10.5, 10.5);
+        }
+        Kind::RangeDiff => {
+            // 右向きの矢印（上）と左向きの矢印（下）。
+            p.move_to(2.5, 5.5);
+            p.line_to(13.0, 5.5);
+            p.move_to(10.5, 3.0);
+            p.line_to(13.0, 5.5);
+            p.line_to(10.5, 8.0);
+            p.move_to(13.5, 10.5);
+            p.line_to(3.0, 10.5);
+            p.move_to(5.5, 8.0);
+            p.line_to(3.0, 10.5);
+            p.line_to(5.5, 13.0);
         }
         Kind::Filter => {
             p.move_to(2.5, 4.5);
