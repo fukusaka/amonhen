@@ -19,6 +19,7 @@ mod merge;
 mod rangediff;
 mod reflog;
 mod refops;
+mod repos;
 mod rewritedraw;
 mod search;
 mod settings;
@@ -301,6 +302,10 @@ fn build_window(app: &gtk::Application, args: Args) {
         .path
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    // File > Open Recent に出す（確認用の撮影では覚えない）。
+    if args.snapshot.is_none() && !args.measure_scroll {
+        repos::record(&path);
+    }
     // 窓の名前: リポジトリのフォルダーの名前（daemon・SSH 越しなら、場所の最後の部分と接続先）。
     let text = path.to_string_lossy().into_owned();
     let name = if amonhen_remote::location::is_remote(&text) {

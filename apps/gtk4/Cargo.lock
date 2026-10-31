@@ -62,6 +62,7 @@ dependencies = [
 name = "amonhen-gtk"
 version = "0.1.0"
 dependencies = [
+ "amonhen-backend-cli",
  "amonhen-backend-gix",
  "amonhen-commands",
  "amonhen-core",

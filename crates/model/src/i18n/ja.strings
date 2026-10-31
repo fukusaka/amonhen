@@ -891,3 +891,18 @@
 /* GTK4 の FE: つながりが切れた */
 "Lost connection to {host}" = "{host} との接続が切れました";
 "Reconnect" = "つなぎ直す";
+
+/* GTK4 の FE: Clone と Open Recent */
+"Open Recent" = "最近使った項目を開く";
+"https://github.com/owner/repo.git or git@host:owner/repo.git" = "https://github.com/owner/repo.git や git@host:owner/repo.git";
+"Choose…" = "選ぶ…";
+"Taken from the URL" = "URL から決める";
+"Choose from My GitHub Repositories" = "自分の GitHub のリポジトリから選ぶ";
+"None found" = "見つかりません";
+"Location:" = "置き場所:";
+"Folder Name:" = "フォルダの名前:";
+"Clone Location" = "Clone する場所";
+"{path} already exists" = "{path} はもうあります";
+"Choose a different name or location." = "別の名前か置き場所にしてください。";
+"Cloning {url}…" = "{url} を clone しています…";
+"Couldn’t clone" = "clone できませんでした";

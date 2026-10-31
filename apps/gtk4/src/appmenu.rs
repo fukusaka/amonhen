@@ -149,6 +149,7 @@ type Handler = Box<dyn Fn(&Rc<Parts>)>;
 const FE_ACCELS: &[(&str, &str)] = &[
     ("win.new-window", "<Control>n"),
     ("win.open", "<Control>o"),
+    ("win.clone", "<Control><Alt>c"),
     ("win.close", "<Control>w"),
     ("app.quit", "<Control>q"),
     ("win.shortcuts", "<Control>question"),
@@ -211,6 +212,10 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             }),
         ),
         ("open", Box::new(open_folder)),
+        (
+            "clone",
+            Box::new(|p| crate::repos::clone(p.window.upcast_ref(), p.open.clone())),
+        ),
         ("add-remote", Box::new(add_remote)),
         ("close", Box::new(|p| p.window.close())),
         // View
@@ -310,6 +315,15 @@ fn handlers() -> Vec<(&'static str, Handler)> {
 pub fn install(parts: Parts) -> Buttons {
     let parts = Rc::new(parts);
     let window = &parts.window;
+    // File > Open Recent（場所を渡す）。
+    let recent = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
+    let p = parts.clone();
+    recent.connect_activate(move |_, value| {
+        if let Some(location) = value.and_then(|v| v.get::<String>()) {
+            (p.open)(PathBuf::from(location));
+        }
+    });
+    window.add_action(&recent);
     for (name, f) in handlers() {
         let action = gio::SimpleAction::new(name, None);
         let p = parts.clone();
@@ -475,9 +489,13 @@ fn primary_menu() -> gio::Menu {
     let file = menu_of(&[
         Some((&tr!("New Window"), "win.new-window")),
         Some((&tr!("Open…"), "win.open")),
+        Some(("Clone…", "win.clone")),
         None,
         Some((&tr!("Close"), "win.close")),
     ]);
+    if let Some(first) = file.item_link(0, gio::MENU_LINK_SECTION).and_downcast::<gio::Menu>() {
+        first.append_submenu(Some(&tr!("Open Recent")), &crate::repos::recent_menu());
+    }
     let quick_open = table_sections(Menu::File);
     if quick_open.n_items() > 0 {
         file.insert_section(1, None, &quick_open);
