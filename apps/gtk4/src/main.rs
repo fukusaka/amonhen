@@ -33,6 +33,7 @@ mod measure;
 mod menu;
 mod merge;
 mod mergeseveral;
+mod messagefind;
 mod patches;
 mod programs;
 mod quickopen;
@@ -235,6 +236,7 @@ fn parse_args() -> Result<Args, String> {
             "--ai-allow" => assist::allow_without_asking(),
             "--keys" => workcopy::press_keys_once(&it.next().ok_or("--keys <place:key,...>")?),
             "--find-diff" => commitfiles::find_once(&it.next().ok_or("--find-diff <text>")?),
+            "--find-message" => messagefind::find_once(&it.next().ok_or("--find-message <text>")?),
             "--toggle-viewed" => {
                 let file = it.next().ok_or("--toggle-viewed <n>")?;
                 commitfiles::toggle_viewed_once(file.parse().map_err(|_| "--toggle-viewed <n>")?);

@@ -68,7 +68,10 @@ impl Person {
 }
 
 pub struct Details {
-    pub root: gtk::ScrolledWindow,
+    /// 上に検索の帯（Ctrl+F）、下にスクロールする詳細。
+    pub root: gtk::Box,
+    /// 件名・本文・notes を探す帯（macOS 版のメッセージの欄の検索の帯）。
+    find: Rc<crate::messagefind::MessageFind>,
     column: gtk::Box,
     /// 上の帯: 作者とコミッターを左右に。
     people: gtk::Box,
@@ -196,12 +199,37 @@ impl Details {
         column.append(&body);
         column.append(&notes);
         column.append(&ai);
-        let root = gtk::ScrolledWindow::builder()
+        let scrolled = gtk::ScrolledWindow::builder()
             .child(&column)
             .hscrollbar_policy(gtk::PolicyType::Never)
+            .vexpand(true)
             .build();
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        // 探すのは、macOS 版のメッセージの欄と同じく見出し・表・件名・本文・notes（作者の帯は除く）。
+        let searched = {
+            let fixed = [selection_title.clone(), selection_note.clone()];
+            let (lines, table) = (selection_lines.clone(), table.clone());
+            let message = [subject.clone(), body.clone(), notes.clone()];
+            move || {
+                let mut labels: Vec<gtk::Label> = fixed.to_vec();
+                labels.push(lines.clone());
+                let mut child = table.first_child();
+                while let Some(c) = child {
+                    child = c.next_sibling();
+                    if let Ok(label) = c.downcast::<gtk::Label>() {
+                        labels.push(label);
+                    }
+                }
+                labels.extend(message.iter().cloned());
+                labels
+            }
+        };
+        let find = crate::messagefind::MessageFind::new(&root, &scrolled, searched);
+        root.append(&find.bar);
+        root.append(&scrolled);
         let details = Self {
             root,
+            find,
             column,
             people,
             author,
@@ -245,6 +273,7 @@ impl Details {
             l.set_text("");
             l.set_visible(false);
         }
+        self.find.refresh();
     }
 
     /// コミットではないもの（Push のシートの「送る変更すべて」など）: 件名と本文だけを出す。
@@ -253,6 +282,7 @@ impl Details {
         self.subject.set_text(subject);
         self.body.set_text(body);
         self.body.set_visible(!body.is_empty());
+        self.find.refresh();
     }
 
     fn clear_table(&self) {
@@ -324,6 +354,7 @@ impl Details {
             .map(|(id, subject, author)| format!("{id}  {subject}  — {author}"))
             .collect();
         self.selection_lines.set_text(&text.join("\n"));
+        self.find.refresh();
     }
 
     /// すぐ読める分を出す（時間のかかる分は、届いたら `show_extras`）。
@@ -385,6 +416,7 @@ impl Details {
             Some(extras) => self.show_extras(&extras),
             None => self.build_table(None),
         }
+        self.find.refresh();
     }
 
     /// 時間のかかる分（`commit_extras` の答え）を足す。`info` と同じコミットのものであること。
@@ -404,6 +436,7 @@ impl Details {
         let notes = str_of(extras, "notes").trim();
         self.notes.set_text(notes);
         self.notes.set_visible(!notes.is_empty());
+        self.find.refresh();
     }
 
     fn build_table(&self, extras: Option<&Value>) {

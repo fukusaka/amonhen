@@ -1711,3 +1711,6 @@
 /* GTK4: 複数のブランチ・タグの History */
 "All Branches" = "すべてのブランチ";
 "{count} branches" = "{count} 本のブランチ";
+
+/* GTK4: 詳細の中を探す */
+"Search" = "検索";

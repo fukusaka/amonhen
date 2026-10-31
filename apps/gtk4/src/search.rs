@@ -141,7 +141,8 @@ impl Search {
         find.connect_activate(move |_, _| {
             // フォーカスが History の差分にあれば、その差分の中を探す（macOS 版と同じ）。
             if let Some(w) = bar.root().and_downcast::<gtk::Window>()
-                && crate::commitfiles::find_in_focused(&w)
+                && (crate::messagefind::find_in_focused(&w)
+                    || crate::commitfiles::find_in_focused(&w))
             {
                 return;
             }
@@ -155,7 +156,8 @@ impl Search {
             action.connect_activate(move |_, _| {
                 // 差分の中を探しているなら、その一致へ。
                 if let Some(w) = bar.root().and_downcast::<gtk::Window>()
-                    && crate::commitfiles::find_next_in_focused(&w, step)
+                    && (crate::messagefind::find_next_in_focused(&w, step)
+                        || crate::commitfiles::find_next_in_focused(&w, step))
                 {
                     return;
                 }
