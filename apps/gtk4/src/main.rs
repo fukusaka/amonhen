@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
 
 mod actions;
 mod activity;
@@ -82,6 +82,8 @@ struct Args {
     open_menu: Option<String>,
     /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
     perform: Option<String>,
+    /// Working Copy のこのファイルの右クリックのメニューを、文字で書き出す（確認用）。
+    print_file_menu: Option<String>,
     /// 最初に History を出したら、この窓のアクション（`win.<id>`）を一度実行する（確認用。`--snapshot` は
     /// 開いたシートを撮る）。
     action: Option<String>,
@@ -128,6 +130,9 @@ fn parse_args() -> Result<Args, String> {
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
             "--action" => args.action = Some(it.next().ok_or("--action <id>")?),
+            "--print-file-menu" => {
+                args.print_file_menu = Some(it.next().ok_or("--print-file-menu <path>")?)
+            }
             "--layout" => args.layout = Some(it.next().ok_or("--layout list|tree|flat")?),
             "--toggle-row" => {
                 let row = it.next().ok_or("--toggle-row <row>")?;
@@ -437,12 +442,12 @@ fn build_window(app: &gtk::Application, args: Args) {
         menu::popup(&view, x, y, items);
     });
     let (v, w, oc) = (view.downgrade(), window.downgrade(), on_commit.clone());
-    working.connect_file_menu(move |path, can_blame, can_history, widget, x, y| {
+    working.connect_file_menu(move |path, can_blame, can_history| {
         let (Some(view), Some(window)) = (v.upgrade(), w.upgrade()) else {
-            return;
+            return Vec::new();
         };
         let Some((repo, _)) = view.current() else {
-            return;
+            return Vec::new();
         };
         let mut items = Vec::new();
         if can_blame {
@@ -458,7 +463,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                 filetools::file_history(&window, repo.clone(), &path, oc.clone());
             }));
         }
-        menu::popup(widget, x, y, items);
+        items
     });
     // History のコミットの右クリック。
     let (a, v) = (actions.clone(), view.downgrade());
@@ -783,6 +788,11 @@ fn build_window(app: &gtk::Application, args: Args) {
                             });
                         }
                         working.show(snapshot);
+                        if let Some(path) = &args.print_file_menu
+                            && let Some(titles) = working.file_menu_titles(path)
+                        {
+                            println!("{}", titles.join("\n"));
+                        }
                         // Working Copy の操作（破棄・コミット）も Undo の記録を書く。
                         actions.refresh_undo();
                         if waiting_status {

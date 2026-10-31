@@ -112,11 +112,11 @@ struct Inner {
     toggle_once: Cell<Option<u32>>,
     /// 変更のあるファイルの数が変わったときに呼ぶ。
     on_count: RefCell<Option<CountCallback>>,
-    /// ファイルの行を右クリックしたときに呼ぶ（パス、Blame できるか、File History を出せるか、行、x、y）。
+    /// ファイルの行の右クリックのメニューに足す項目（パス、Blame できるか、File History を出せるか）。
     on_file_menu: RefCell<Option<FileMenuCallback>>,
 }
 
-type FileMenuCallback = Box<dyn Fn(&str, bool, bool, &gtk::Widget, f64, f64)>;
+type FileMenuCallback = Box<dyn Fn(&str, bool, bool) -> Vec<crate::menu::Item>>;
 
 impl WorkingCopy {
     pub fn new(pending: Rc<Cell<u32>>) -> Self {
@@ -401,6 +401,18 @@ impl WorkingCopy {
         self.inner.selected.replace(Some(path.to_owned()));
     }
 
+    /// `path` の行の右クリックのメニューの項目の名前（確認用。区切りは `---`）。
+    pub fn file_menu_titles(&self, path: &str) -> Option<Vec<String>> {
+        let entry = self
+            .inner
+            .all_entries
+            .borrow()
+            .iter()
+            .find(|e| e.path == path)
+            .cloned()?;
+        Some(crate::menu::titles(&Inner::file_menu(&self.inner, &entry)))
+    }
+
     /// Commit メニューの Commit（コミットできるときだけ）。`then` はコミットできた後に呼ぶ。
     pub fn commit_from_menu(&self, then: Option<Box<dyn FnOnce()>>) {
         if self.inner.commit.is_sensitive() {
@@ -432,10 +444,11 @@ impl WorkingCopy {
         });
     }
 
-    /// ファイルの行を右クリックしたら `f(パス, Blame できるか, File History を出せるか, 行, x, y)` を呼ぶ。
+    /// ファイルの行の右クリックのメニューに、`f(パス, Blame できるか, File History を出せるか)` の項目
+    /// （Blame・File History）を足す。
     pub fn connect_file_menu(
         &self,
-        f: impl Fn(&str, bool, bool, &gtk::Widget, f64, f64) + 'static,
+        f: impl Fn(&str, bool, bool) -> Vec<crate::menu::Item> + 'static,
     ) {
         self.inner.on_file_menu.replace(Some(Box::new(f)));
     }
@@ -884,26 +897,17 @@ impl Inner {
         }
         let row = gtk::ListBoxRow::new();
         row.set_child(Some(&line));
-        // 右クリック: Blame（消したファイルにはない）と File History（untracked にはまだ履歴がない）。
+        // 右クリック（macOS 版と同じ）: 含める・外す・捨てる、.gitignore に足す（untracked）、Blame（消した
+        // ファイルにはない）と File History（untracked にはまだ履歴がない）、パスのコピー、ファイルで開く。
         let menu = gtk::GestureClick::new();
         menu.set_button(gtk::gdk::BUTTON_SECONDARY);
-        let (weak, path, r) = (Rc::downgrade(this), entry.path.clone(), row.downgrade());
-        let untracked = entry.kind == StatusKind::Untracked;
-        let deleted = entry.worktree == b'D';
+        let (weak, e, r) = (Rc::downgrade(this), entry.clone(), row.downgrade());
         menu.connect_pressed(move |_, _, x, y| {
             let (Some(this), Some(row)) = (weak.upgrade(), r.upgrade()) else {
                 return;
             };
-            if let Some(f) = this.on_file_menu.borrow().as_ref() {
-                f(
-                    &path,
-                    !untracked && !deleted,
-                    !untracked,
-                    row.upcast_ref(),
-                    x,
-                    y,
-                );
-            }
+            let items = Inner::file_menu(&this, &e);
+            crate::menu::popup(row.upcast_ref::<gtk::Widget>(), x, y, items);
         });
         row.add_controller(menu);
         row
@@ -1067,32 +1071,157 @@ impl Inner {
         let (Some(actions), path) = (this.actions.borrow().clone(), entry.path.clone()) else {
             return;
         };
+        if entry.kind == StatusKind::Untracked {
+            crate::sheets::confirm_then(
+                &actions,
+                tr!("Delete {path}?", path = path),
+                format!("{} {}", tr!("It’s untracked."), crate::sheets::cant_undo()),
+                tr!("Delete"),
+                true,
+                vec![json!({ "op": "deleteUntracked", "paths": [path] })],
+            );
+        } else {
+            crate::sheets::confirm_then(
+                &actions,
+                tr!("Discard changes to {path}?", path = path),
+                tr!(
+                    "This discards the working tree changes and returns to the content of the next commit (the index). You can Undo this."
+                ),
+                "Discard".to_owned(),
+                false,
+                vec![json!({ "op": "discard", "paths": [path] })],
+            );
+        }
+    }
+
+    /// ファイルの行の右クリックのメニュー。
+    fn file_menu(this: &Rc<Self>, entry: &StatusEntry) -> Vec<crate::menu::Item> {
+        use crate::menu::{Item, action};
+        let mut items = Vec::new();
+        let path = entry.path.clone();
         let untracked = entry.kind == StatusKind::Untracked;
-        glib::spawn_future_local(async move {
-            let (title, message, ok, command) = if untracked {
-                (
-                    tr!("Delete {path}?", path = path),
-                    format!(
-                        "{} {}",
-                        tr!("It’s untracked."),
-                        tr!("This can’t be undone.")
-                    ),
-                    tr!("Delete"),
-                    json!({ "op": "deleteUntracked", "paths": [path] }),
-                )
-            } else {
-                (
-                    tr!("Discard changes to {path}?", path = path),
-                    tr!(
-                        "This discards the working tree changes and returns to the content of the next commit (the index). You can Undo this."
-                    ),
-                    tr!("Discard"),
-                    json!({ "op": "discard", "paths": [path] }),
-                )
-            };
-            if actions.confirm(&title, &message, &ok).await {
-                actions.perform(command);
+        let conflict = entry.kind == StatusKind::Unmerged;
+        let name = path.rsplit('/').next().unwrap_or(&path).to_owned();
+        if !conflict {
+            let fully = entry.is_staged() && !entry.is_unstaged();
+            let (w, p) = (Rc::downgrade(this), path.clone());
+            items.push(action(if fully { "Unstage" } else { "Stage" }, move || {
+                let Some(this) = w.upgrade() else { return };
+                let p = p.clone();
+                Inner::run(&this, move |repo| {
+                    if fully {
+                        repo.unstage(&[&p])
+                    } else {
+                        repo.stage(&[&p])
+                    }
+                });
+            }));
+            if untracked || entry.is_unstaged() {
+                let (w, e) = (Rc::downgrade(this), entry.clone());
+                let title = if untracked {
+                    tr!("Delete {name}…", name = name)
+                } else {
+                    "Discard…".to_owned()
+                };
+                items.push(action(title, move || {
+                    if let Some(this) = w.upgrade() {
+                        Inner::discard_file(&this, &e);
+                    }
+                }));
             }
+            items.push(Item::Separator);
+        }
+        // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
+        if untracked {
+            let mut patterns = vec![path.clone()];
+            if let Some((_, ext)) = name.rsplit_once('.')
+                && !ext.is_empty()
+            {
+                patterns.push(format!("*.{ext}"));
+            }
+            for pattern in patterns {
+                let w = Rc::downgrade(this);
+                items.push(action(
+                    tr!("Add “{pattern}” to .gitignore", pattern = pattern),
+                    move || {
+                        if let Some(this) = w.upgrade() {
+                            Inner::add_to_gitignore(&this, &pattern);
+                        }
+                    },
+                ));
+            }
+        } else if let Some(f) = this.on_file_menu.borrow().as_ref() {
+            items.extend(f(&path, entry.worktree != b'D', true));
+        }
+        items.push(Item::Separator);
+        let (w, p) = (this.list.downgrade(), path.clone());
+        items.push(action(tr!("Copy Path"), move || {
+            if let Some(w) = w.upgrade() {
+                w.clipboard().set_text(&p);
+            }
+        }));
+        // 手元のリポジトリなら、ファイルマネージャーとほかのアプリで開ける（daemon・SSH 越しのファイルは開けない）。
+        let local = this
+            .repo()
+            .filter(|r| r.connection_state().is_none())
+            .and_then(|r| r.paths().workdir);
+        if let Some(workdir) = local
+            && entry.worktree != b'D'
+        {
+            let file = gio::File::for_path(workdir.join(&path));
+            let (w, f) = (this.list.downgrade(), file.clone());
+            items.push(action(tr!("Show in Files"), move || {
+                let window = w
+                    .upgrade()
+                    .and_then(|w| w.root())
+                    .and_downcast::<gtk::Window>();
+                gtk::FileLauncher::new(Some(&f)).open_containing_folder(
+                    window.as_ref(),
+                    gio::Cancellable::NONE,
+                    |_| {},
+                );
+            }));
+            let w = this.list.downgrade();
+            items.push(action(tr!("Open with Default App"), move || {
+                let window = w
+                    .upgrade()
+                    .and_then(|w| w.root())
+                    .and_downcast::<gtk::Window>();
+                gtk::FileLauncher::new(Some(&file)).launch(
+                    window.as_ref(),
+                    gio::Cancellable::NONE,
+                    |_| {},
+                );
+            }));
+        }
+        items
+    }
+
+    /// `pattern` を作業ツリーの直下の .gitignore の最後に足す（コアで読み書きするので、SSH 先でも同じ）。
+    fn add_to_gitignore(this: &Rc<Self>, pattern: &str) {
+        let (Some(repo), Some(actions)) = (this.repo(), this.actions.borrow().clone()) else {
+            return;
+        };
+        let pattern = pattern.to_owned();
+        glib::spawn_future_local(async move {
+            let files = crate::sheets::run(&repo, json!({ "op": "ignoreFiles" })).await;
+            let mut gitignore = files["info"]["gitignore"]
+                .as_str()
+                .unwrap_or_default()
+                .to_owned();
+            if gitignore.lines().any(|l| l.trim() == pattern) {
+                return;
+            }
+            if !gitignore.is_empty() && !gitignore.ends_with('\n') {
+                gitignore.push('\n');
+            }
+            gitignore.push_str(&pattern);
+            gitignore.push('\n');
+            actions.perform(json!({
+                "op": "saveIgnoreFiles",
+                "gitignore": gitignore,
+                "exclude": files["info"]["exclude"].as_str().unwrap_or_default(),
+            }));
         });
     }
 

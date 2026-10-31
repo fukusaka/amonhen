@@ -777,3 +777,8 @@
 /* GTK4 の FE: 詳細のタグと mailmap */
 " (lightweight tag)" = "（軽量タグ）";
 "Recorded: {identity}" = "記録: {identity}";
+
+/* GTK4 の FE: Working Copy のファイルのメニュー */
+"Add “{pattern}” to .gitignore" = "“{pattern}” を .gitignore に追加";
+"Copy Path" = "パスをコピー";
+"Open with Default App" = "既定のアプリで開く";
