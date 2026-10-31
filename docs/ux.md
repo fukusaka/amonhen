@@ -4,6 +4,8 @@
 
 A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday operations as easy as in SourceTree, Fork, Tower and JetBrains (the IDE's Git), or easier. The speed policy (never wait on git on the UI thread, stay within one frame) does not change.
 
+Which of these features each front end (macOS, GTK4, VSCode, CLI) has is in [Front-end features](frontends.md).
+
 ## Principles
 
 | Principle | Details |

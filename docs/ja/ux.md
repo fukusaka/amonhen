@@ -4,6 +4,8 @@
 
 `docs/design.md` の「画面構成」を土台に、日常の操作を SourceTree・Fork・Tower・JetBrains（IDE の Git）と同じかそれ以上に楽にするための見直し。速度の方針（UI スレッドで git を待たない、1 フレーム以内）は変えない。
 
+ここの機能がどの FE（macOS・GTK4・VSCode・CLI）にあるかは [FE ごとの機能](frontends.md) にある。
+
 ## 原則
 
 | 原則 | 内容 |
