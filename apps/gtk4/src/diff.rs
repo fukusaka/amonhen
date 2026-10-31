@@ -792,7 +792,7 @@ fn rgb_attr((r, g, b): (f32, f32, f32)) -> pango::AttrColor {
 }
 
 /// 構文の種類ごとの色（macOS 版の `SyntaxColors` と同じ割り当て）。`None` は本文の色のまま。
-fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> {
+pub(crate) fn syntax_color(kind: u8, fg: &gdk::RGBA) -> Option<(f32, f32, f32)> {
     let dark = fg.red() > 0.5;
     let pick =
         |light: (f32, f32, f32), dark_: (f32, f32, f32)| Some(if dark { dark_ } else { light });

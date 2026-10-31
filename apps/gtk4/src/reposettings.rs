@@ -489,7 +489,7 @@ impl Picker {
         group.add_action(&special);
         let label = gtk::Label::new(None);
         label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_max_width_chars(36);
+        label.set_max_width_chars(28);
         label.set_xalign(0.0);
         let button = gtk::MenuButton::new();
         button.set_child(Some(&label));
@@ -661,10 +661,12 @@ impl RepoSettings {
         for name in pages(level) {
             let child: gtk::Widget = match name {
                 "author" => this.author_page().upcast(),
+                "commits" => crate::repopages::commits_page(&this).upcast(),
                 "operations" => this.operations_page().upcast(),
                 "branches" => this.branches_page().upcast(),
                 "workingCopy" => this.working_copy_page().upcast(),
                 "remotes" => crate::repopages::remotes_page(&this).upcast(),
+                "hooks" => crate::repopages::hooks_page(&this).upcast(),
                 _ => continue,
             };
             stack.add_titled(&child, Some(name), &page_title(name));
@@ -2118,14 +2120,18 @@ impl RepoSettings {
             return;
         }
         if let Some(id) = step.strip_prefix("select:") {
-            // 出しているページの最初の表で、その行を選ぶ。
-            if let Some(view) = self
-                .stack
-                .visible_child()
-                .and_then(|p| find_widget::<gtk::ColumnView>(&p, &|_| true))
-                && let Some(selection) = view.model().and_downcast::<gtk::SingleSelection>()
-                && let Some(list) = selection.model()
-            {
+            // 出しているページの表で、その行を選ぶ。
+            let mut views = Vec::new();
+            if let Some(page) = self.stack.visible_child() {
+                collect_widgets::<gtk::ColumnView>(&page, &mut views);
+            }
+            for view in views {
+                let Some(selection) = view.model().and_downcast::<gtk::SingleSelection>() else {
+                    continue;
+                };
+                let Some(list) = selection.model() else {
+                    continue;
+                };
                 for i in 0..list.n_items() {
                     if list
                         .item(i)
@@ -2135,6 +2141,17 @@ impl RepoSettings {
                         selection.set_selected(i);
                     }
                 }
+            }
+            return;
+        }
+        if let Some((name, value)) = step.strip_prefix("switch:").and_then(|r| r.split_once('=')) {
+            // 出しているページの表の、その行のスイッチ。
+            if let Some(switch) = self
+                .stack
+                .visible_child()
+                .and_then(|p| find_widget::<gtk::Switch>(&p, &|s| s.widget_name() == name))
+            {
+                switch.set_active(value == "on");
             }
             return;
         }
