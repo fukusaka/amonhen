@@ -427,7 +427,7 @@ pub fn install(parts: Parts) -> Buttons {
     parts.header.pack_start(&repository);
 
     // ツールバー（macOS 版の既定の並び: Branch・Fetch・Pull・Push、Merge・Rebase、Stash・Pop、
-    // 右に Refresh・Undo）。Activity と検索は、まだ機能がないので出さない。
+    // 右に Activity・Refresh・Undo）。
     let branch = gtk::Label::new(Some("…"));
     let branch_icon = icon::Icon::default();
     branch_icon.set(icon::Kind::Branch, false);
@@ -497,6 +497,8 @@ pub fn install(parts: Parts) -> Buttons {
         "win.refresh",
         &tr!("Reload History, branches and Working Copy (Ctrl+R)"),
     ));
+    // Refresh の左に Activity（操作の間は回る。macOS 版の並びと同じ）。
+    parts.header.pack_end(&crate::activity::toolbar_button());
     Buttons {
         repository,
         primary,

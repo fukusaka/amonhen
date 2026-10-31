@@ -168,6 +168,7 @@ impl Actions {
             return;
         };
         let this = self.clone();
+        crate::activity::begin();
         glib::spawn_future_local(async move {
             let (result, last_command) = gio::spawn_blocking(move || {
                 let mut last = Value::Null;
@@ -187,6 +188,7 @@ impl Actions {
             })
             .await
             .unwrap_or_default();
+            crate::activity::end();
             // 失敗はステータスバーに（作業を止めない）。コンフリクトや途中で止まったことは、読み直したときに
             // ステータスバーの途中の操作の行が知らせる。
             if result["error"].is_string() {
@@ -251,8 +253,10 @@ impl Actions {
             return;
         };
         let this = self.clone();
+        crate::activity::begin();
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || work(&repo).map_err(|e| e.to_string())).await;
+            crate::activity::end();
             if let Ok(Err(e)) = result {
                 this.alert(&tr!("The operation failed"), &e).await;
             }

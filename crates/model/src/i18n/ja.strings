@@ -1608,3 +1608,7 @@
 
 /* GTK4: サイドバーの Conflicts */
 "Conflicts" = "コンフリクト";
+
+/* GTK4: 見出しの Activity */
+"{count} operations running (click for Activity)" = "実行中の操作 {count} 個（押すと Activity）";
+"Git and commands run, the operation log, and UI speed (Ctrl+Alt+A)" = "実行した git とコマンド、操作ログ、画面の速さ（Ctrl+Alt+A）";

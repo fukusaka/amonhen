@@ -73,6 +73,8 @@ pub enum Kind {
     Gear,
     /// exclamationmark.triangle（コンフリクト）
     Warning,
+    /// waveform.path.ecg（Activity）
+    Activity,
 }
 
 mod imp {
@@ -464,6 +466,16 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(5.2, 8.2);
             p.line_to(7.2, 10.2);
             p.line_to(10.9, 6.0);
+        }
+        Kind::Activity => {
+            // 心電図の波形。
+            p.move_to(1.5, 8.5);
+            p.line_to(4.5, 8.5);
+            p.line_to(6.0, 4.0);
+            p.line_to(8.5, 13.0);
+            p.line_to(10.5, 6.0);
+            p.line_to(11.5, 8.5);
+            p.line_to(14.5, 8.5);
         }
         Kind::Warning => {
             // 角を丸めない三角と、中の「!」。

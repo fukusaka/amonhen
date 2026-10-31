@@ -143,7 +143,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Stash (message, include untracked) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Stash: staged only, selected files only | — | — | — | — |  |
 | Pop the latest stash (asks first) | ✓ | ✓ | — | △ | VSCode: Pop per stash row, without asking.<br>CLI: Via `amonhen run`. |
-| Activity spinner and count | ✓ | — | △ | n/a | VSCode: VSCode's progress notifications. |
+| Activity spinner and count | ✓ | ✓ | △ | n/a | VSCode: VSCode's progress notifications. |
 | Refresh and Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh only.<br>CLI: `log --rebuild`, `daemon rebuild`. |
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | △ | ✓ | VSCode: Undoes without asking.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | — | ✓ | GTK4: Scopes come from the query syntax.<br>CLI: `log <query>`. |

@@ -226,6 +226,8 @@ fn parse_args() -> Result<Args, String> {
             }
             "--reflog" => args.reflog = true,
             "--conflicts" => args.conflicts = true,
+            // 操作を 1 つ実行しているふりをする（見出しの Activity が回る。確認用）。
+            "--busy" => activity::begin(),
             "--repositories" => args.repositories = true,
             "--tab" => args.tabs.push(it.next().ok_or("--tab <location>")?.into()),
             "--quick-open" => args.quick_open = Some(it.next().ok_or("--quick-open <query>")?),

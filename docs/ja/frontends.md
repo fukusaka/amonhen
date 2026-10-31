@@ -143,7 +143,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Stash（メッセージ・未追跡を含める） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | Stash: ステージしたものだけ・選んだファイルだけ | — | — | — | — |  |
 | 最新の stash を Pop（先に尋ねる） | ✓ | ✓ | — | △ | VSCode: stash の行ごとに Pop し、尋ねない。<br>CLI: `amonhen run` から。 |
-| Activity のくるくると数 | ✓ | — | △ | n/a | VSCode: VSCode の進み具合の知らせ。 |
+| Activity のくるくると数 | ✓ | ✓ | △ | n/a | VSCode: VSCode の進み具合の知らせ。 |
 | Refresh と Rebuild History | ✓ | ✓ | △ | △ | VSCode: Refresh だけ。<br>CLI: `log --rebuild`・`daemon rebuild`。 |
 | 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | △ | ✓ | VSCode: 尋ねずに戻す。<br>CLI: `undo`（先に見るなら `--peek`）。 |
 | 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | — | ✓ | GTK4: 範囲は検索の書き方で決める。<br>CLI: `log <query>`。 |

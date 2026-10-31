@@ -17,6 +17,9 @@ use crate::actions::Actions;
 
 const KEEP: usize = 500;
 
+/// 実行している操作の数の知らせ先（false を返したら外す）。
+type RunningListener = Box<dyn Fn(u32) -> bool>;
+
 thread_local! {
     /// 画面の速さの記録（項目ごとの直近の値、ms）。
     static PERFORMANCE: RefCell<HashMap<String, VecDeque<f64>>> = RefCell::default();
@@ -24,6 +27,71 @@ thread_local! {
     static EVENTS: RefCell<VecDeque<(i64, String, String)>> = RefCell::default();
     /// 開いている Activity の窓（元の窓ごとに 1 つ）。
     static OPEN: RefCell<Vec<(glib::WeakRef<gtk::ApplicationWindow>, Activity)>> = RefCell::default();
+    /// 実行している操作の数（見出しの Activity に出す。macOS 版の `RunningOperations`）。
+    static RUNNING: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
+    /// 数が変わったら知らせる先（false を返したものは外す）。
+    static ON_RUNNING: RefCell<Vec<RunningListener>> = RefCell::default();
+}
+
+/// 操作を始めた（終わったら [`end`]）。
+pub fn begin() {
+    set_running(RUNNING.with(|r| r.get()) + 1);
+}
+
+/// 操作が終わった。
+pub fn end() {
+    set_running(RUNNING.with(|r| r.get()).saturating_sub(1));
+}
+
+fn set_running(count: u32) {
+    RUNNING.with(|r| r.set(count));
+    // 知らせる間に足されてもよいように、いったん取り出す。
+    let mut listeners = ON_RUNNING.with(|l| l.take());
+    listeners.retain(|f| f(count));
+    ON_RUNNING.with(|l| {
+        let mut l = l.borrow_mut();
+        listeners.append(&mut l);
+        *l = listeners;
+    });
+}
+
+/// 実行している操作の数が変わったら `f(数)` を呼ぶ（今の数でもすぐ呼ぶ）。`f` が false を返したら外す。
+pub fn connect_running(f: impl Fn(u32) -> bool + 'static) {
+    if f(RUNNING.with(|r| r.get())) {
+        ON_RUNNING.with(|l| l.borrow_mut().push(Box::new(f)));
+    }
+}
+
+/// 見出しの Activity のボタン: 操作を実行している間は回り、押すと Activity の窓（macOS 版のツールバーと同じ）。
+pub fn toolbar_button() -> gtk::Button {
+    let spinner = gtk::Spinner::new();
+    spinner.set_visible(false);
+    let icon = crate::icon::Icon::default();
+    icon.set(crate::icon::Kind::Activity, false);
+    let inner = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    inner.append(&spinner);
+    inner.append(&icon);
+    let button = gtk::Button::new();
+    button.set_child(Some(&inner));
+    button.set_action_name(Some("win.activity"));
+    let b = button.downgrade();
+    connect_running(move |count| {
+        let Some(button) = b.upgrade() else {
+            return false;
+        };
+        spinner.set_visible(count > 0);
+        spinner.set_spinning(count > 0);
+        button.set_tooltip_text(Some(&if count > 0 {
+            tr!(
+                "{count} operations running (click for Activity)",
+                count = count
+            )
+        } else {
+            tr!("Git and commands run, the operation log, and UI speed (Ctrl+Alt+A)")
+        }));
+        true
+    });
+    button
 }
 
 /// 画面の速さを 1 つ記録する（メインスレッドから）。
