@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use amonhen_commands::{COMMANDS, Command, Menu};
 use amonhen_core::RefsSnapshot;
-use amonhen_model::{Oid, RefKind};
+use amonhen_model::{Oid, RefKind, tr};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 use serde_json::json;
@@ -60,9 +60,9 @@ impl Buttons {
     pub fn show_refs(&self, refs: &RefsSnapshot) {
         let head = refs.refs.head_branch.as_deref();
         self.branch.set_text(head.unwrap_or("detached"));
-        self.branch_button.set_tooltip_text(Some(&format!(
-            "{} — 押すとブランチを切り替える（Ctrl+Shift+B）",
-            head.unwrap_or("detached HEAD")
+        self.branch_button.set_tooltip_text(Some(&tr!(
+            "{branch} — click to switch branch (Ctrl+Shift+B)",
+            branch = head.unwrap_or("detached HEAD")
         )));
         let entry = refs
             .refs
@@ -77,14 +77,20 @@ impl Buttons {
         count(&self.pull_count, behind, "↓");
         count(&self.push_count, ahead, "↑");
         self.pull.set_tooltip_text(Some(&if behind > 0 {
-            format!("上流より {behind} コミット後ろにあります（Ctrl+Alt+L）")
+            tr!(
+                "{count} commits behind upstream (Ctrl+Alt+L)",
+                count = behind
+            )
         } else {
-            "Pull（Ctrl+Alt+L）".to_owned()
+            tr!("Pull (Ctrl+Alt+L)")
         }));
         self.push.set_tooltip_text(Some(&if ahead > 0 {
-            format!("上流より {ahead} コミット先にあります（Ctrl+Alt+P）")
+            tr!(
+                "{count} commits ahead of upstream (Ctrl+Alt+P)",
+                count = ahead
+            )
         } else {
-            "Push（Ctrl+Alt+P）".to_owned()
+            tr!("Push (Ctrl+Alt+P)")
         }));
         let has_stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
         if let Some(action) = self
@@ -364,17 +370,17 @@ pub fn install(parts: Parts) -> Buttons {
         .child(&branch_inner)
         .always_show_arrow(true)
         .menu_model(&menu_of(&[
-            Some(("Switch Branch…", "win.switch-branch")),
+            Some((&tr!("Switch Branch…"), "win.switch-branch")),
             Some(("New Branch…", "win.new-branch")),
-            Some(("Rename Branch…", "win.rename-branch")),
-            Some(("Set Upstream…", "win.set-upstream")),
+            Some((&tr!("Rename Branch…"), "win.rename-branch")),
+            Some((&tr!("Set Upstream…"), "win.set-upstream")),
         ]))
         .build();
     parts.header.pack_start(&branch_button);
     parts.header.pack_start(&icon_button(
         icon::Kind::Fetch,
         "win.fetch",
-        "すべてのリモートを fetch（Ctrl+Alt+F）",
+        &tr!("Fetch all remotes (Ctrl+Alt+F)"),
     ));
     let (pull_group, pull, pull_count) = split_button(
         icon::Kind::Pull,
@@ -399,23 +405,23 @@ pub fn install(parts: Parts) -> Buttons {
     parts.header.pack_start(&icon_button(
         icon::Kind::Merge,
         "win.merge",
-        "ブランチ・タグ・選んだコミットを今のブランチへ merge（Ctrl+Alt+M）",
+        &tr!("Merge a branch, tag or the selected commit into the current branch (Ctrl+Alt+M)"),
     ));
     parts.header.pack_start(&icon_button(
         icon::Kind::Rebase,
         "win.rebase",
-        "今のブランチを、ブランチ・タグ・選んだコミットの上へ rebase（Ctrl+Alt+R）",
+        &tr!("Rebase the current branch onto a branch, tag or the selected commit (Ctrl+Alt+R)"),
     ));
     parts.header.pack_start(&space());
     parts.header.pack_start(&icon_button(
         icon::Kind::StashPush,
         "win.stash",
-        "作業中の変更を退避（Ctrl+Alt+S）",
+        &tr!("Stash your uncommitted changes (Ctrl+Alt+S)"),
     ));
     parts.header.pack_start(&icon_button(
         icon::Kind::StashPop,
         "win.pop-stash",
-        "最新の stash を戻して消す（Ctrl+Alt+Shift+S）",
+        &tr!("Apply the latest stash and remove it (Ctrl+Alt+Shift+S)"),
     ));
 
     let primary = gtk::MenuButton::builder()
@@ -430,7 +436,7 @@ pub fn install(parts: Parts) -> Buttons {
     parts.header.pack_end(&icon_button(
         icon::Kind::Refresh,
         "win.refresh",
-        "History・ブランチ・Working Copy を読み直す（Ctrl+R）",
+        &tr!("Reload History, branches and Working Copy (Ctrl+R)"),
     ));
     Buttons {
         repository,
@@ -488,7 +494,6 @@ fn table_sections(menu: Menu) -> gio::Menu {
 }
 
 fn primary_menu() -> gio::Menu {
-    use amonhen_model::tr;
     let menu = gio::Menu::new();
     let submenus = gio::Menu::new();
     let file = menu_of(&[
@@ -575,9 +580,9 @@ fn rename_branch(p: &Rc<Parts>) {
     };
     let actions = p.actions.clone();
     glib::spawn_future_local(async move {
-        let message = format!("{branch} の新しい名前");
+        let message = tr!("New name for {branch}", branch = branch);
         if let Some(to) = actions
-            .ask("Rename Branch", &message, &branch, "変更")
+            .ask("Rename Branch", &message, &branch, &tr!("Change"))
             .await
             && to != branch
         {
@@ -613,14 +618,14 @@ fn set_upstream(p: &Rc<Parts>) {
         .unwrap_or(0);
     let actions = p.actions.clone();
     glib::spawn_future_local(async move {
-        let title = format!("{branch} の上流");
+        let title = tr!("Upstream of {branch}", branch = branch);
         let Some(upstream) = actions
             .choose(
                 &title,
-                "pull で取り込み、push で送るリモートのブランチ",
+                &tr!("The remote branch that Pull brings in from and Push sends to."),
                 &remotes,
                 same,
-                "設定",
+                &tr!("Set"),
             )
             .await
         else {
@@ -646,7 +651,7 @@ fn revision_choices(p: &Parts) -> Vec<(String, String)> {
         && Some(id) != head
     {
         let hex = id.to_string();
-        choices.push((format!("選んでいるコミット {}", &hex[..8]), hex));
+        choices.push((tr!("Selected Commit {id}", id = &hex[..8]), hex));
     }
     if let Some(r) = refs.as_ref() {
         for kind in [RefKind::Local, RefKind::Remote, RefKind::Tag] {
@@ -670,18 +675,18 @@ fn merge_or_rebase(p: &Rc<Parts>, rebase: bool) {
     glib::spawn_future_local(async move {
         let (title, message, ok) = if rebase {
             (
-                format!("{current} を rebase する"),
-                "上に載せる先のブランチ・タグ・コミット",
-                "Rebase",
+                tr!("Rebase {branch}", branch = current),
+                tr!("The branch, tag or commit to rebase onto"),
+                tr!("Rebase"),
             )
         } else {
             (
-                format!("{current} に merge する"),
-                "取り込むブランチ・タグ・コミット",
-                "Merge",
+                tr!("Merge into {branch}", branch = current),
+                tr!("The branch, tag or commit to merge in"),
+                tr!("Merge"),
             )
         };
-        if let Some(rev) = actions.choose(&title, message, &choices, 0, ok).await {
+        if let Some(rev) = actions.choose(&title, &message, &choices, 0, &ok).await {
             actions.perform(if rebase {
                 json!({ "op": "rebase", "onto": rev })
             } else {
@@ -715,10 +720,10 @@ fn switch_branch(p: &Rc<Parts>) {
         let Some(choice) = actions
             .choose(
                 "Switch Branch",
-                "切り替えるブランチ",
+                &tr!("Branch to switch to"),
                 &choices,
                 0,
-                "切り替え",
+                &tr!("Switch"),
             )
             .await
         else {
@@ -839,10 +844,10 @@ fn add_remote(p: &Rc<Parts>) {
     glib::spawn_future_local(async move {
         if let Some(location) = actions
             .ask(
-                "Add Remote",
-                "ssh://[user@]host[:port]/path（SSH 先の daemon）か daemon:/path（手元の共有の daemon）",
+                &tr!("Add Remote"),
+                &tr!("ssh://[user@]host[:port]/path (a daemon on an SSH host) or daemon:/path (the local shared daemon)"),
                 "ssh://",
-                "開く",
+                &tr!("Open"),
             )
             .await
             && amonhen_remote::location::is_remote(&location)
@@ -853,7 +858,10 @@ fn add_remote(p: &Rc<Parts>) {
 }
 
 fn open_folder(p: &Rc<Parts>) {
-    let dialog = gtk::FileDialog::builder().title("Open").modal(true).build();
+    let dialog = gtk::FileDialog::builder()
+        .title(tr!("Open"))
+        .modal(true)
+        .build();
     let (window, open) = (p.window.clone(), p.open.clone());
     glib::spawn_future_local(async move {
         if let Ok(folder) = dialog.select_folder_future(Some(&window)).await
@@ -866,7 +874,6 @@ fn open_folder(p: &Rc<Parts>) {
 
 /// ショートカットの一覧（メニューごと。表の操作は表から）。
 fn show_shortcuts(p: &Rc<Parts>) {
-    use amonhen_model::tr;
     let accels = accels();
     let group = |title: &str, items: &[(String, String)]| {
         let group = gtk::ShortcutsGroup::builder().title(title).build();

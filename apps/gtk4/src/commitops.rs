@@ -4,6 +4,7 @@ use std::rc::Rc;
 
 use amonhen_core::HistorySnapshot;
 use amonhen_layout::Node;
+use amonhen_model::tr;
 use gtk::glib;
 use gtk::prelude::*;
 use serde_json::json;
@@ -38,9 +39,12 @@ pub fn menu(
         },
     ));
     let (a, h) = (actions.clone(), hex.clone());
-    items.push(menu::action(format!("New Tag at {short}…"), move || {
-        refops::ask_new_tag(&a, &h);
-    }));
+    items.push(menu::action(
+        tr!("New Tag at {name}…", name = short),
+        move || {
+            refops::ask_new_tag(&a, &h);
+        },
+    ));
     let (a, h) = (actions.clone(), hex.clone());
     items.push(menu::action(
         format!("Checkout {short} (Detached)"),
@@ -51,7 +55,7 @@ pub fn menu(
     items.push(Item::Separator);
     if !is_merge {
         let (a, h) = (actions.clone(), hex.clone());
-        items.push(menu::action("Edit Message…", move || a.reword(&h)));
+        items.push(menu::action(tr!("Edit Message…"), move || a.reword(&h)));
         let (a, h) = (actions.clone(), hex.clone());
         items.push(menu::action("Squash into Parent…", move || a.squash(&h)));
         for (title, kind, label) in [
@@ -69,9 +73,9 @@ pub fn menu(
             let (a, h, s) = (a.clone(), h.clone(), s.clone());
             glib::spawn_future_local(async move {
                 if a.confirm(
-                    &format!("{s} を取り除きますか？"),
-                    "Undo で戻せます。",
-                    "取り除く",
+                    &tr!("Drop {commit}?", commit = s),
+                    &tr!("You can Undo this."),
+                    &tr!("Drop"),
                 )
                 .await
                 {
@@ -91,7 +95,7 @@ pub fn menu(
     }));
     items.push(Item::Separator);
     let (w, h) = (widget.clone(), hex);
-    items.push(menu::action("Copy Commit ID", move || {
+    items.push(menu::action(tr!("Copy Commit ID"), move || {
         w.clipboard().set_text(&h);
     }));
     items
@@ -120,7 +124,7 @@ pub fn menu_many(
     let mut items = Vec::new();
     let (a, c) = (actions.clone(), commits.clone());
     items.push(menu::action(
-        format!("Cherry-pick {n} Commits（古い順）"),
+        tr!("Cherry-pick {count} Commits (oldest first)", count = n),
         move || {
             let sequence = c
                 .iter()
@@ -132,7 +136,7 @@ pub fn menu_many(
     ));
     let (a, c) = (actions.clone(), commits.clone());
     items.push(menu::action(
-        format!("Revert {n} Commits（新しい順）"),
+        tr!("Revert {count} Commits (newest first)", count = n),
         move || {
             let sequence = c
                 .iter()
@@ -157,7 +161,7 @@ pub fn menu_many(
         widget.clone(),
         commits.iter().map(|(o, _)| o.clone()).collect::<Vec<_>>(),
     );
-    items.push(menu::action("Copy Commit IDs", move || {
+    items.push(menu::action(tr!("Copy Commit IDs"), move || {
         w.clipboard().set_text(&ids.join("\n"));
     }));
     let (w, ids) = (
@@ -167,7 +171,7 @@ pub fn menu_many(
             .map(|(o, _)| o[..10].to_owned())
             .collect::<Vec<_>>(),
     );
-    items.push(menu::action("Copy Short IDs", move || {
+    items.push(menu::action(tr!("Copy Short IDs"), move || {
         w.clipboard().set_text(&ids.join(" "));
     }));
     items

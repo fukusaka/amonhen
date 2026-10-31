@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository};
-use amonhen_model::{Oid, RefKind};
+use amonhen_model::{Oid, RefKind, tr};
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use gtk::glib::Properties;
 use gtk::prelude::*;
@@ -732,7 +732,7 @@ impl HistoryView {
         if let Some(&hidden) = history.folded.get(row as usize)
             && hidden > 0
         {
-            meta.push_str(&format!("  ·  ⊕ {hidden} 件を折りたたみ"));
+            meta.push_str(&format!("  ·  ⊕ {}", tr!("{count} folded", count = hidden)));
         }
         let meta = self.layout(&meta, &fonts.meta);
         let attrs = pango::AttrList::new();

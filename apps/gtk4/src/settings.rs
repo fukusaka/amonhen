@@ -6,6 +6,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use amonhen_model::tr;
 use gtk::glib;
 use gtk::prelude::*;
 
@@ -163,7 +164,7 @@ pub fn show(parent: &gtk::ApplicationWindow) {
         }
     });
     let pull_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let l = gtk::Label::new(Some("Pull の既定"));
+    let l = gtk::Label::new(Some(&tr!("Default Pull")));
     l.set_hexpand(true);
     l.set_xalign(0.0);
     pull_row.append(&l);
@@ -174,15 +175,15 @@ pub fn show(parent: &gtk::ApplicationWindow) {
                 None,
                 &[
                     pull_row.upcast(),
-                    note("ツールバーの Pull と Ctrl+Alt+L で使う。Pull ボタンの ▾ や Repository > Pull With でその都度も選べる。")
+                    note(&tr!("Used by Pull in the toolbar and Ctrl+Alt+L. You can also choose each time with the ▾ on the Pull button or Repository > Pull With."))
                         .upcast(),
                 ],
             ),
             section(
-                Some("マージ"),
+                Some(&tr!("Merging")),
                 &[
-                    check(AUTO_MAGIC_MERGE, "マージエディタを開いたときに、間違えようのないコンフリクトを解く").upcast(),
-                    note("両側が同じ・片側だけが変えた、のどちらかに当たるコンフリクト。Ctrl+Z で戻せる。残りは ✨ Magic Merge で。")
+                    check(AUTO_MAGIC_MERGE, &tr!("Resolve unambiguous conflicts when the merge editor opens")).upcast(),
+                    note(&tr!("Conflicts where both sides are the same, or only one side changed. Ctrl+Z undoes it. Use ✨ Magic Merge for the rest."))
                         .upcast(),
                 ],
             ),
@@ -194,11 +195,15 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     // Appearance
     stack.add_titled(
         &page(&[section(
-            Some("コミットの詳細"),
-            &[check(MONOSPACED_COMMIT_MESSAGE, "本文を等幅の字体で表示する").upcast()],
+            Some(&tr!("Commit Details")),
+            &[check(
+                MONOSPACED_COMMIT_MESSAGE,
+                &tr!("Show the message in a monospaced font"),
+            )
+            .upcast()],
         )]),
         Some("appearance"),
-        "Appearance",
+        &tr!("Appearance"),
     );
 
     // Performance
@@ -206,34 +211,34 @@ pub fn show(parent: &gtk::ApplicationWindow) {
         &page(&[section(
             None,
             &[
-                check(WRITE_COMMIT_GRAPH, "commit-graph を自動で書き出す").upcast(),
-                note("commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable --changed-paths を実行する（.git に書き込む）。履歴の読み込みと path: での検索が速くなる。")
+                check(WRITE_COMMIT_GRAPH, &tr!("Write commit-graph automatically")).upcast(),
+                note(&tr!("When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster."))
                     .upcast(),
             ],
         )]),
         Some("performance"),
-        "Performance",
+        &tr!("Performance"),
     );
 
     // Advanced
     stack.add_titled(
         &page(&[section(
-            Some("共有の daemon"),
+            Some(&tr!("Shared daemon")),
             &[
-                check(OPEN_THROUGH_DAEMON, "リポジトリを共有の daemon 越しに開く（SSH 先も）").upcast(),
-                note("History・検索の索引・操作の記録と SSH のつながりを、アプリ・CLI（amonhen -C daemon:… や -C ssh://…）・VSCode 拡張と共有する。これから開くリポジトリから効く。daemon の様子は Activity の Daemon。")
+                check(OPEN_THROUGH_DAEMON, &tr!("Open repositories through the shared daemon (SSH hosts too)")).upcast(),
+                note(&tr!("Shares History, the search index, the operation log and SSH connections among the app, the CLI (amonhen -C daemon:… or -C ssh://…) and the VSCode extension. Applies to repositories opened from now on. See Daemon in Activity for its status."))
                     .upcast(),
             ],
         )]),
         Some("advanced"),
-        "Advanced",
+        &tr!("Advanced"),
     );
 
     let switcher = gtk::StackSwitcher::builder().stack(&stack).build();
     let header = gtk::HeaderBar::new();
     header.set_title_widget(Some(&switcher));
     let window = gtk::Window::builder()
-        .title("Settings")
+        .title(tr!("Settings"))
         .default_width(660)
         .child(&stack)
         .transient_for(parent)

@@ -9,6 +9,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use amonhen_core::{HistorySnapshot, Repository};
+use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use std::sync::Arc;
@@ -40,7 +41,7 @@ struct Inner {
 impl Search {
     pub fn new(view: &HistoryView) -> Self {
         let entry = gtk::SearchEntry::builder()
-            .placeholder_text("History を検索")
+            .placeholder_text(tr!("Search History"))
             .hexpand(true)
             .build();
         let count = gtk::Label::new(None);
@@ -52,8 +53,8 @@ impl Search {
             previous.set_label("∧");
             next.set_label("∨");
         }
-        previous.set_tooltip_text(Some("前の一致（Shift+Enter・Ctrl+Shift+G）"));
-        next.set_tooltip_text(Some("次の一致（Enter・Ctrl+G）"));
+        previous.set_tooltip_text(Some(&tr!("Previous Match (Shift+Enter, Ctrl+Shift+G)")));
+        next.set_tooltip_text(Some(&tr!("Next Match (Enter, Ctrl+G)")));
         let steps = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         steps.add_css_class("linked");
         steps.append(&previous);
@@ -62,7 +63,7 @@ impl Search {
         let filter_icon = crate::icon::Icon::default();
         filter_icon.set(crate::icon::Kind::Filter, false);
         only.set_child(Some(&filter_icon));
-        only.set_tooltip_text(Some("一致したコミットだけを出す"));
+        only.set_tooltip_text(Some(&tr!("Show Only Matching Commits")));
         only.set_sensitive(false);
         steps.append(&only);
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -78,7 +79,7 @@ impl Search {
         let icon = crate::icon::Icon::default();
         icon.set(crate::icon::Kind::Search, false);
         toggle.set_child(Some(&icon));
-        toggle.set_tooltip_text(Some("History を検索（Ctrl+F）"));
+        toggle.set_tooltip_text(Some(&tr!("Search History (Ctrl+F)")));
         bar.bind_property("search-mode-enabled", &toggle, "active")
             .bidirectional()
             .sync_create()
@@ -266,7 +267,7 @@ impl Inner {
         };
         let generation = this.generation.get() + 1;
         this.generation.set(generation);
-        this.count.set_text("検索中…");
+        this.count.set_text(&tr!("Searching…"));
         let snapshot_generation = history.generation;
         let q = query.clone();
         let weak = Rc::downgrade(this);
@@ -352,7 +353,7 @@ impl Inner {
         if self.only.is_active() {
             let text = match self.view.selected() {
                 Some(r) => format!("{} / {total}", r + 1),
-                None => format!("{total} 件"),
+                None => tr!("{count} matches", count = total),
             };
             self.count.set_text(&text);
             return;
@@ -363,8 +364,8 @@ impl Inner {
             .and_then(|r| matches.binary_search(&r).ok())
         {
             Some(i) => format!("{} / {total}", i + 1),
-            None if total == 0 => "一致なし".to_owned(),
-            None => format!("{total} 件"),
+            None if total == 0 => tr!("No matches"),
+            None => tr!("{count} matches", count = total),
         };
         self.count.set_text(&text);
     }

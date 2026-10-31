@@ -3,7 +3,7 @@
 
 use std::rc::Rc;
 
-use amonhen_model::RefKind;
+use amonhen_model::{RefKind, tr};
 use gtk::glib;
 use serde_json::json;
 
@@ -61,14 +61,14 @@ pub fn menu(
             items.push(menu::action(format!("Rename {name}…"), move || {
                 let (a, from) = (a.clone(), from.clone());
                 glib::spawn_future_local(async move {
-                    if let Some(to) = a.ask("Rename Branch", "", &from, "変更").await {
+                    if let Some(to) = a.ask("Rename Branch", "", &from, &tr!("Change")).await {
                         a.perform(json!({ "op": "renameBranch", "from": from, "to": to }));
                     }
                 });
             }));
             if !is_head {
                 items.push(menu::action(
-                    format!("Delete {name}"),
+                    tr!("Delete {name}", name = name),
                     run(json!({ "op": "deleteBranch", "name": name, "force": false })),
                 ));
             }
@@ -119,7 +119,7 @@ pub fn menu(
 /// `start` から新しいブランチを作って切り替える。
 pub fn new_branch(actions: &Rc<Actions>, start: &str) -> Item {
     let (a, start) = (actions.clone(), start.to_owned());
-    menu::action(format!("New Branch from {start}…"), move || {
+    menu::action(tr!("New Branch from {name}…", name = start), move || {
         ask_new_branch(&a, &start);
     })
 }
@@ -127,8 +127,11 @@ pub fn new_branch(actions: &Rc<Actions>, start: &str) -> Item {
 pub fn ask_new_branch(actions: &Rc<Actions>, start: &str) {
     let (a, start) = (actions.clone(), start.to_owned());
     glib::spawn_future_local(async move {
-        let message = format!("{start} から作るブランチの名前");
-        if let Some(name) = a.ask("New Branch", &message, "", "作成して切り替え").await {
+        let message = tr!("Name of the branch to create from {start}", start = start);
+        if let Some(name) = a
+            .ask("New Branch", &message, "", &tr!("Create and Switch"))
+            .await
+        {
             a.perform(
                 json!({ "op": "createBranch", "name": name, "start": start, "checkout": true }),
             );
@@ -139,7 +142,7 @@ pub fn ask_new_branch(actions: &Rc<Actions>, start: &str) {
 /// `target` に新しいタグを付ける。
 pub fn new_tag(actions: &Rc<Actions>, target: &str) -> Item {
     let (a, target) = (actions.clone(), target.to_owned());
-    menu::action(format!("New Tag at {target}…"), move || {
+    menu::action(tr!("New Tag at {name}…", name = target), move || {
         ask_new_tag(&a, &target);
     })
 }
@@ -147,8 +150,8 @@ pub fn new_tag(actions: &Rc<Actions>, target: &str) -> Item {
 pub fn ask_new_tag(actions: &Rc<Actions>, target: &str) {
     let (a, target) = (actions.clone(), target.to_owned());
     glib::spawn_future_local(async move {
-        let message = format!("{target} に付けるタグの名前");
-        if let Some(name) = a.ask("New Tag", &message, "", "作成").await {
+        let message = tr!("Name of the tag for {target}", target = target);
+        if let Some(name) = a.ask("New Tag", &message, "", &tr!("Create")).await {
             a.perform(
                 json!({ "op": "createTag", "name": name, "target": target, "message": null }),
             );

@@ -10,7 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use amonhen_core::Repository;
-use amonhen_model::Oid;
+use amonhen_model::{Oid, tr};
 use amonhen_projection::FrontendProfile;
 use gtk::prelude::*;
 use gtk::{gio, glib};
@@ -52,7 +52,7 @@ fn new_window(parent: &gtk::ApplicationWindow, title: &str, child: &impl IsA<gtk
 /// 失敗を知らせる。
 fn fail(parent: &gtk::ApplicationWindow, e: &str) {
     gtk::AlertDialog::builder()
-        .message("ファイルの情報を読めません")
+        .message(tr!("Can’t read the file’s information"))
         .detail(e)
         .modal(true)
         .build()
@@ -181,7 +181,7 @@ fn show_blame(parent: &gtk::ApplicationWindow, title: &str, info: &Value, on_com
         let committed = oid.bytes().any(|b| b != b'0');
         // まとまりの 1 行目に ID・作者・日時、2 行目に件名。
         let text = match (committed, row.offset) {
-            (false, 0) => "まだコミットしていない".to_owned(),
+            (false, 0) => tr!("Not committed yet"),
             (true, 0) => format!("{}  {author}  {}", &oid[..8], date(*time)),
             (true, 1) => summary.clone(),
             _ => String::new(),
@@ -190,7 +190,12 @@ fn show_blame(parent: &gtk::ApplicationWindow, title: &str, info: &Value, on_com
         info.set_opacity(if row.offset == 0 { 0.75 } else { 0.5 });
         line.set_tooltip_text(
             committed
-                .then(|| format!("{summary}\n{oid}\nダブルクリックで History に表示"))
+                .then(|| {
+                    format!(
+                        "{summary}\n{oid}\n{}",
+                        tr!("Double-click to show in History.")
+                    )
+                })
                 .as_deref(),
         );
         number.set_text(&format!("{:>digits$}", index + 1));
@@ -293,7 +298,11 @@ fn show_file_history(
         })
         .collect();
     let entries = Rc::new(entries);
-    let title = format!("History — {path}（{} コミット）", entries.len());
+    let title = tr!(
+        "History — {path} ({count} commits)",
+        path = path,
+        count = entries.len()
+    );
 
     let model = gtk::StringList::new(&[]);
     for i in 0..entries.len() {
@@ -394,7 +403,7 @@ fn show_file_history(
                 let change = changes
                     .iter()
                     .find(|c| c.path == path || c.old_path.as_deref() == Some(path.as_str()))
-                    .ok_or("このコミットでの変更が見つかりません")?;
+                    .ok_or_else(|| tr!("This commit has no changes to the file"))?;
                 let view = repo
                     .file_diff(change, &FrontendProfile::GTK)
                     .map_err(|e| e.to_string())?;

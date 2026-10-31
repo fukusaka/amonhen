@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use amonhen_core::Repository;
+use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 use serde_json::{Value, json};
@@ -212,13 +213,14 @@ impl Activity {
         // Operations: git の起動とコアの命令。
         let ops = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&ops);
-        let kinds = gtk::DropDown::from_strings(&["すべて", "git", "コマンド"]);
-        let failures = gtk::CheckButton::with_label("失敗だけ");
+        let kinds =
+            gtk::DropDown::from_strings(&[tr!("All").as_str(), "git", tr!("Commands").as_str()]);
+        let failures = gtk::CheckButton::with_label(&tr!("Failures Only"));
         let filter = gtk::SearchEntry::builder()
-            .placeholder_text("絞り込む")
+            .placeholder_text(tr!("Filter"))
             .hexpand(true)
             .build();
-        let export = gtk::Button::with_label("JSON に書き出す…");
+        let export = gtk::Button::with_label(&tr!("Export JSON…"));
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         bar.append(&kinds);
         bar.append(&failures);
@@ -228,10 +230,10 @@ impl Activity {
         ops.append(&bar);
         ops.append(&scrolled);
         ops.append(&label(
-            "git の起動とコアの命令を、新しい順に最大 1000 件（daemon 越しのリポジトリは daemon で起動した git も）。● は実行中で、fetch・pull・push・clone は進み具合を出し、取り消せる。",
+            &tr!("git runs and core commands, newest first, up to 1,000 (for repositories through the daemon, also the git it starts). ● means running; fetch, pull, push and clone show their progress and can be canceled."),
             &["dim-label", "caption"],
         ));
-        stack.add_titled(&ops, Some("operations"), "Operations");
+        stack.add_titled(&ops, Some("operations"), &tr!("Operations"));
         let remote = repo
             .as_ref()
             .is_some_and(|r| r.connection_state().is_some());
@@ -325,7 +327,7 @@ impl Activity {
                     };
                     let name = repo_path.rsplit('/').next().unwrap_or_default();
                     let name = if r["remote"].as_bool() == Some(true) {
-                        format!("{name}（daemon）")
+                        tr!("{name} (daemon)", name = name)
                     } else {
                         name.to_owned()
                     };
@@ -354,7 +356,7 @@ impl Activity {
                     line.set_tooltip_text(Some(&tip));
                     // 走っていて取り消せる操作には「取り消す」。
                     if ok.is_none() && r["cancellable"].as_bool() == Some(true) {
-                        let cancel = gtk::Button::with_label("取り消す");
+                        let cancel = gtk::Button::with_label(&tr!("Cancel Operation"));
                         cancel.add_css_class("flat");
                         let seq = r["seq"].as_u64().unwrap_or(0);
                         let is_remote = r["remote"].as_bool() == Some(true);
@@ -388,7 +390,7 @@ impl Activity {
         export.connect_clicked(move |_| {
             let Some(window) = w.upgrade() else { return };
             let dialog = gtk::FileDialog::builder()
-                .title("JSON に書き出す")
+                .title(tr!("Export JSON"))
                 .initial_name("amonhen-activity.json")
                 .modal(true)
                 .build();
@@ -418,7 +420,7 @@ impl Activity {
         let (scrolled, undo_list) = list();
         history.append(&scrolled);
         history.append(&label(
-            "Undo できる操作（新しい順）。ほかのツールで ref が動いていると、そこで止まります。",
+            &tr!("Operations you can Undo (newest first). It stops where another tool has moved a ref."),
             &["dim-label", "caption"],
         ));
         stack.add_titled(&history, Some("history"), "History");
@@ -448,18 +450,18 @@ impl Activity {
                             ),
                             (e["label"].as_str().unwrap_or_default(), 0, &[]),
                         ]);
-                        let button = gtk::Button::with_label(if i == 0 {
-                            "Undo"
+                        let button = gtk::Button::with_label(&if i == 0 {
+                            "Undo".to_owned()
                         } else {
-                            "ここまで戻す"
+                            tr!("Undo to Here")
                         });
                         button.add_css_class("flat");
                         button.set_tooltip_text(Some(&if i == 0 {
-                            "この操作を戻す".to_owned()
+                            tr!("Undo this operation.")
                         } else {
-                            format!(
-                                "この操作を含め、これより新しい {} 個の操作を順に戻す",
-                                i + 1
+                            tr!(
+                                "Undo the {count} latest operations, down to and including this one.",
+                                count = i + 1
                             )
                         }));
                         let a = actions.clone();
@@ -480,10 +482,10 @@ impl Activity {
         let (scrolled, perf_list) = list();
         perf.append(&scrolled);
         perf.append(&label(
-            "項目ごとに直近 500 回。p95 が 16.7 ms（60 Hz の 1 フレーム）を超えたら色を変える。",
+            &tr!("The last 500 of each item. The color changes when p95 exceeds 16.7 ms (one frame at 60 Hz)."),
             &["dim-label", "caption"],
         ));
-        stack.add_titled(&perf, Some("performance"), "Performance");
+        stack.add_titled(&perf, Some("performance"), &tr!("Performance"));
         let refresh_perf = {
             let perf_list = perf_list.clone();
             let last = std::cell::Cell::new(0);
@@ -500,12 +502,12 @@ impl Activity {
                 let mut metrics = metrics;
                 perf_list.remove_all();
                 perf_list.append(&row(&[
-                    ("項目", 0, &["dim-label"]),
-                    ("回数", 6, &["dim-label"]),
+                    (&tr!("Item"), 0, &["dim-label"]),
+                    (&tr!("Count"), 6, &["dim-label"]),
                     ("p50 ms", 7, &["dim-label"]),
                     ("p95 ms", 7, &["dim-label"]),
-                    ("最大 ms", 7, &["dim-label"]),
-                    ("直近 ms", 7, &["dim-label"]),
+                    (&tr!("Max ms"), 7, &["dim-label"]),
+                    (&tr!("Last ms"), 7, &["dim-label"]),
                 ]));
                 metrics.sort_by(|a, b| a.0.cmp(&b.0));
                 for (name, values) in metrics {
@@ -537,7 +539,7 @@ impl Activity {
         margin(&events);
         let (scrolled, event_list) = list();
         events.append(&scrolled);
-        stack.add_titled(&events, Some("events"), "Events");
+        stack.add_titled(&events, Some("events"), &tr!("Events"));
         let refresh_events = {
             let event_list = event_list.clone();
             let last = std::cell::Cell::new(0);
@@ -562,10 +564,10 @@ impl Activity {
         // Daemon: 共有の daemon の様子と、起動・停止。
         let daemon = gtk::Box::new(gtk::Orientation::Vertical, 8);
         margin(&daemon);
-        let state = label("調べています…", &["heading"]);
+        let state = label(&tr!("Checking…"), &["heading"]);
         let detail = label("", &["caption", "numeric"]);
         detail.set_selectable(true);
-        let toggle = gtk::Button::with_label("起動");
+        let toggle = gtk::Button::with_label(&tr!("Start"));
         let top = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         let texts = gtk::Box::new(gtk::Orientation::Vertical, 2);
         texts.set_hexpand(true);
@@ -575,7 +577,7 @@ impl Activity {
         top.append(&toggle);
         let (scrolled, repo_list) = list();
         daemon.append(&top);
-        daemon.append(&label("開いているリポジトリ", &["heading"]));
+        daemon.append(&label(&tr!("Open Repositories"), &["heading"]));
         daemon.append(&scrolled);
         stack.add_titled(&daemon, Some("daemon"), "Daemon");
         let running = Rc::new(std::cell::Cell::new(false));
@@ -608,46 +610,46 @@ impl Activity {
                     repo_list.remove_all();
                     running.set(status.is_some());
                     let Some(d) = status else {
-                        state.set_text("共有の daemon は動いていません");
-                        detail.set_text("daemon 越しにリポジトリを開くと（File > Add Remote… の daemon:/path）、自動で起動します。");
-                        toggle.set_label("起動");
+                        state.set_text(&tr!("The shared daemon isn’t running"));
+                        detail.set_text(&tr!("It starts automatically when you open a repository through the daemon (daemon:/path in File > Add Remote…)."));
+                        toggle.set_label(&tr!("Start"));
                         return;
                     };
-                    state.set_text("共有の daemon は動いています");
+                    state.set_text(&tr!("The shared daemon is running"));
                     let uptime = d["uptimeMs"].as_u64().unwrap_or(0) / 1000;
-                    detail.set_text(&format!(
-                        "pid {} · 版 {}（通信の形 {}） · 動いて {} 分 {} 秒 · つながり {}\n{}",
-                        d["pid"],
-                        d["version"].as_str().unwrap_or_default(),
-                        d["protocol"],
-                        uptime / 60,
-                        uptime % 60,
-                        d["connections"],
-                        d["socket"].as_str().unwrap_or_default(),
+                    detail.set_text(&tr!(
+                        "pid {pid} · version {version} (protocol {protocol}) · up {minutes} min {seconds} s · connections {connections}\n{socket}",
+                        pid = d["pid"],
+                        version = d["version"].as_str().unwrap_or_default(),
+                        protocol = d["protocol"],
+                        minutes = uptime / 60,
+                        seconds = uptime % 60,
+                        connections = d["connections"],
+                        socket = d["socket"].as_str().unwrap_or_default(),
                     ));
-                    toggle.set_label("止める");
+                    toggle.set_label(&tr!("Stop"));
                     for r in d["repos"].as_array().into_iter().flatten() {
                         let yes = |key: &str| {
                             if r[key].as_bool() == Some(true) {
-                                "あり"
+                                tr!("Yes")
                             } else {
-                                "—"
+                                "—".to_owned()
                             }
                         };
                         let clients = r["clients"].as_u64().unwrap_or(0);
                         let clients = if clients > 0 {
-                            format!("つながり {clients}")
+                            tr!("{clients} connections", clients = clients)
                         } else {
-                            format!(
-                                "つながりなし（{} 秒前から）",
-                                r["idleMs"].as_u64().unwrap_or(0) / 1000
+                            tr!(
+                                "No connections (for {seconds} s)",
+                                seconds = r["idleMs"].as_u64().unwrap_or(0) / 1000
                             )
                         };
                         repo_list.append(&row(&[
                             (r["path"].as_str().unwrap_or_default(), 0, &[]),
                             (&clients, 18, &["numeric"]),
                             (&format!("History {}", yes("history")), 10, &[]),
-                            (&format!("監視 {}", yes("watching")), 8, &[]),
+                            (&tr!("Watching {state}", state = yes("watching")), 8, &[]),
                         ]));
                     }
                 });

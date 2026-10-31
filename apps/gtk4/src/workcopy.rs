@@ -15,7 +15,7 @@ use std::sync::Arc;
 use amonhen_core::diff::{self, DiffView};
 use amonhen_core::{Repository, StatusSnapshot, WorkingDiff};
 use amonhen_layout::DiffRow;
-use amonhen_model::{StatusEntry, StatusKind};
+use amonhen_model::{StatusEntry, StatusKind, tr};
 use amonhen_projection::FrontendProfile;
 use gtk::prelude::*;
 use gtk::{gio, glib};
@@ -138,9 +138,9 @@ impl WorkingCopy {
         let amend = gtk::CheckButton::with_label("Amend");
         let commit = gtk::Button::with_label("Commit");
         commit.add_css_class("suggested-action");
-        commit.set_tooltip_text(Some("チェックしたファイルをコミット（Ctrl+Return）"));
+        commit.set_tooltip_text(Some(&tr!("Commit the checked files (Ctrl+Return)")));
         let commit_menu = gtk::MenuButton::builder()
-            .tooltip_text("Commit and Push（Ctrl+Shift+Return）、Amend")
+            .tooltip_text(tr!("Commit and Push (Ctrl+Shift+Return), Amend"))
             .build();
         commit_menu.add_css_class("suggested-action");
         let menu = gio::Menu::new();
@@ -163,14 +163,16 @@ impl WorkingCopy {
         message.set_visible(false);
 
         // 左の下: 変更のあるファイルの一覧。
-        let all = gtk::CheckButton::with_label("Changes");
-        all.set_tooltip_text(Some("一覧のファイルをすべて次のコミットに含める・外す"));
+        let all = gtk::CheckButton::with_label(&tr!("Changes"));
+        all.set_tooltip_text(Some(&tr!(
+            "Include or exclude all listed files in the next commit"
+        )));
         let count = gtk::Label::new(None);
         count.set_hexpand(true);
         count.set_xalign(1.0);
         count.add_css_class("dim-label");
         count.add_css_class("numeric");
-        count.set_tooltip_text(Some("次のコミットに含めるファイル / 変更のあるファイル"));
+        count.set_tooltip_text(Some(&tr!("Files in the next commit / changed files")));
         let list_header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         list_header.append(&all);
         list_header.append(&count);
@@ -181,17 +183,17 @@ impl WorkingCopy {
         for (kind, tip, layout) in [
             (
                 crate::icon::Kind::List,
-                "ファイルをパスの一覧で表示",
+                "Show files as a list of paths",
                 Layout::List,
             ),
             (
                 crate::icon::Kind::Tree,
-                "ファイルをディレクトリの木で表示",
+                "Show files as a directory tree",
                 Layout::Tree,
             ),
             (
                 crate::icon::Kind::Doc,
-                "ファイル名を先に、親のディレクトリを薄く表示",
+                "Show the file name first and the parent directory dimmed",
                 Layout::Flat,
             ),
         ] {
@@ -199,7 +201,7 @@ impl WorkingCopy {
             icon.set(kind, false);
             let button = gtk::ToggleButton::new();
             button.set_child(Some(&icon));
-            button.set_tooltip_text(Some(tip));
+            button.set_tooltip_text(Some(&amonhen_model::i18n::translate(tip)));
             if let Some(first) = layout_buttons.first() {
                 button.set_group(Some(&first.0));
             }
@@ -209,7 +211,7 @@ impl WorkingCopy {
         layout_buttons[0].0.set_active(true);
         list_header.append(&layouts);
         let filter = gtk::SearchEntry::builder()
-            .placeholder_text("パスで絞り込む")
+            .placeholder_text(tr!("Filter by path"))
             .build();
         let list = gtk::ListBox::new();
         list.set_selection_mode(gtk::SelectionMode::Single);
@@ -240,11 +242,15 @@ impl WorkingCopy {
         path.add_css_class("heading");
         let lines = gtk::Button::with_label("Stage Lines");
         let discard = gtk::Button::with_label("Discard File");
-        discard.set_tooltip_text(Some("作業ツリーの変更を捨てる（index の内容に戻す）"));
+        discard.set_tooltip_text(Some(&tr!(
+            "Discard the working tree changes (return to the content of the index)"
+        )));
         let worktree_side = gtk::ToggleButton::with_label("Unstaged");
-        worktree_side.set_tooltip_text(Some("stage していない（作業ツリーの）変更"));
+        worktree_side.set_tooltip_text(Some(&tr!(
+            "Changes in the working tree that are not staged yet"
+        )));
         let staged_side = gtk::ToggleButton::with_label("Staged");
-        staged_side.set_tooltip_text(Some("stage 済み（次のコミットに含める）の変更"));
+        staged_side.set_tooltip_text(Some(&tr!("Staged changes (included in the next commit)")));
         staged_side.set_group(Some(&worktree_side));
         worktree_side.set_active(true);
         let sides = gtk::Box::new(gtk::Orientation::Horizontal, 0);
@@ -525,7 +531,7 @@ impl Inner {
             }
         });
         for (title, ours) in [("Take Current File", true), ("Take Incoming File", false)] {
-            let button = gtk::Button::with_label(title);
+            let button = gtk::Button::with_label(&amonhen_model::i18n::translate(title));
             let weak = Rc::downgrade(this);
             button.connect_clicked(move |_| {
                 let Some(this) = weak.upgrade() else { return };
@@ -541,9 +547,9 @@ impl Inner {
         }
         // マージエディタ（別の窓）で、コンフリクトを 1 つずつ解く。
         let editor = gtk::Button::with_label("Open Merge Editor");
-        editor.set_tooltip_text(Some(
-            "Current・Result・Incoming を並べて、コンフリクトを 1 つずつ解く",
-        ));
+        editor.set_tooltip_text(Some(&tr!(
+            "Resolve the conflicts one at a time with Current, Result and Incoming side by side"
+        )));
         let weak = Rc::downgrade(this);
         editor.connect_clicked(move |b| {
             if let Some(this) = weak.upgrade() {
@@ -551,7 +557,7 @@ impl Inner {
             }
         });
         this.conflict_buttons.append(&editor);
-        let resolved = gtk::Button::with_label("Mark Resolved");
+        let resolved = gtk::Button::with_label(&tr!("Mark Resolved"));
         let weak = Rc::downgrade(this);
         resolved.connect_clicked(move |_| {
             if let Some(this) = weak.upgrade() {
@@ -858,7 +864,9 @@ impl Inner {
             icon.set(crate::icon::Kind::Undo, false);
             discard.set_child(Some(&icon));
             discard.add_css_class("flat");
-            discard.set_tooltip_text(Some("作業ツリーの変更を捨てる（index の内容に戻す）"));
+            discard.set_tooltip_text(Some(&tr!(
+                "Discard the working tree changes (return to the content of the index)"
+            )));
             discard.set_opacity(0.0);
             let (weak, e) = (Rc::downgrade(this), entry.clone());
             discard.connect_clicked(move |_| {
@@ -982,7 +990,7 @@ impl Inner {
                         Inner::set_rows(&this, vec![row as usize], None);
                     }
                 }
-                Ok(Err(e)) => this.show_error(&format!("差分を読めない: {e}")),
+                Ok(Err(e)) => this.show_error(&tr!("Can’t read the diff: {e}", e = e)),
                 Err(_) => {}
             }
             this.update_buttons();
@@ -1035,9 +1043,13 @@ impl Inner {
             glib::spawn_future_local(async move {
                 if actions
                     .confirm(
-                        &format!("{path} を削除しますか？"),
-                        "untracked のファイルなので、Undo では戻せません。",
-                        "削除",
+                        &tr!("Delete {path}?", path = path),
+                        &format!(
+                            "{} {}",
+                            tr!("It’s untracked."),
+                            tr!("This can’t be undone.")
+                        ),
+                        &tr!("Delete"),
                     )
                     .await
                 {
@@ -1059,20 +1071,26 @@ impl Inner {
         glib::spawn_future_local(async move {
             let (title, message, ok, command) = if untracked {
                 (
-                    format!("{path} を削除しますか？"),
-                    "untracked のファイルなので、Undo では戻せません。",
-                    "削除",
+                    tr!("Delete {path}?", path = path),
+                    format!(
+                        "{} {}",
+                        tr!("It’s untracked."),
+                        tr!("This can’t be undone.")
+                    ),
+                    tr!("Delete"),
                     json!({ "op": "deleteUntracked", "paths": [path] }),
                 )
             } else {
                 (
-                    format!("{path} の変更を捨てますか？"),
-                    "作業ツリーの変更を捨て、次のコミットに含める内容（index）に戻します。Undo で戻せます。",
-                    "捨てる",
+                    tr!("Discard changes to {path}?", path = path),
+                    tr!(
+                        "This discards the working tree changes and returns to the content of the next commit (the index). You can Undo this."
+                    ),
+                    tr!("Discard"),
                     json!({ "op": "discard", "paths": [path] }),
                 )
             };
-            if actions.confirm(&title, message, ok).await {
+            if actions.confirm(&title, &message, &ok).await {
                 actions.perform(command);
             }
         });
@@ -1113,9 +1131,13 @@ impl Inner {
             if remaining > 0
                 && !actions
                     .confirm(
-                        &format!("{path} にコンフリクトが {remaining} 個残っています"),
-                        "このまま解決済みにしますか？",
-                        "解決済みにする",
+                        &tr!(
+                            "Mark {path} as resolved with {count} conflicts left?",
+                            path = path,
+                            count = remaining
+                        ),
+                        &tr!("The conflict markers stay in the file."),
+                        &tr!("Mark Resolved"),
                     )
                     .await
             {

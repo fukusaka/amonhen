@@ -7,6 +7,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use amonhen_core::PairMode;
+use amonhen_model::tr;
 
 use gtk::glib;
 use gtk::prelude::*;
@@ -31,11 +32,11 @@ pub struct Details {
     selection_lines: gtk::Label,
 }
 
-/// 2 つ選んだときの差分の取り方の切り替え（macOS 版と同じ言葉）。
+/// 2 つ選んだときの差分の取り方の切り替え（macOS 版と同じ言葉。訳の鍵）。
 const PAIRS: [(PairMode, &str); 3] = [
     (PairMode::Forward, "A..B"),
-    (PairMode::Reverse, "向きを入れ替える"),
-    (PairMode::MergeBase, "merge-base から（A...B）"),
+    (PairMode::Reverse, "Reverse"),
+    (PairMode::MergeBase, "From the merge-base (A...B)"),
 ];
 
 impl Details {
@@ -160,26 +161,26 @@ impl Details {
         self.clear();
         self.set_selection_mode(true);
         self.selection_title
-            .set_text(&format!("{count} コミットを選んでいます"));
+            .set_text(&tr!("{count} commits selected", count = count));
         let note = match (kind, pair) {
-            (Some("range"), _) => {
-                "続いているので、一番古いものの親から一番新しいものまでの差分（まとめて 1 つにしたのと同じ）"
-            }
-            (Some("pair"), PairMode::Forward) => {
-                "続いていない 2 つなので、古いほうから新しいほうまでの差分（A..B）"
-            }
-            (Some("pair"), PairMode::Reverse) => {
-                "続いていない 2 つの、新しいほうから古いほうまでの差分（向きを入れ替えた）"
-            }
-            (Some("pair"), PairMode::MergeBase) => {
-                "続いていない 2 つの、共通の祖先から新しいほうまでの差分（A...B。新しいほうの側の変更だけ）"
-            }
-            (Some(_), _) => {
-                "とびとびなので、コミットごとの差分をファイルごとに並べています（見出しはパスと短い ID）"
-            }
-            (None, _) => "差分を読んでいます…",
+            (Some("range"), _) => tr!(
+                "They are consecutive, so this is the diff from the parent of the oldest to the newest (the same as squashing them into one)."
+            ),
+            (Some("pair"), PairMode::Forward) => tr!(
+                "Two non-consecutive commits, so this is the diff from the older to the newer (A..B)."
+            ),
+            (Some("pair"), PairMode::Reverse) => tr!(
+                "The diff of the two non-consecutive commits from the newer to the older (reversed)."
+            ),
+            (Some("pair"), PairMode::MergeBase) => tr!(
+                "The diff of the two non-consecutive commits from their common ancestor to the newer (A...B: only the changes on the newer side)."
+            ),
+            (Some(_), _) => tr!(
+                "They are not contiguous, so each commit’s diff is listed file by file (headed by the path and short ID)."
+            ),
+            (None, _) => tr!("Loading the diff…"),
         };
-        self.selection_note.set_text(note);
+        self.selection_note.set_text(&note);
         while let Some(child) = self.pairs.first_child() {
             self.pairs.remove(&child);
         }
@@ -189,7 +190,7 @@ impl Details {
                 if mode == pair {
                     continue;
                 }
-                let button = gtk::Button::with_label(title);
+                let button = gtk::Button::with_label(&amonhen_model::i18n::translate(title));
                 button.add_css_class("flat");
                 button.add_css_class("caption");
                 let f = on_pair.clone();
@@ -299,7 +300,7 @@ impl Details {
                 let tags = strings(&extras["tags"]);
                 let shown = tags.iter().take(12).cloned().collect::<Vec<_>>().join(", ");
                 let more = if count > 12 {
-                    format!(" ほか {} 個", count - 12)
+                    format!(" {}", tr!("and {count} more tags", count = count - 12))
                 } else {
                     String::new()
                 };
@@ -311,7 +312,7 @@ impl Details {
             if !extras["originUrl"].is_null() {
                 let remote = strings(&extras["remoteBranches"]);
                 let pushed = if remote.is_empty() {
-                    "未 push（どのリモートブランチにも含まれない）".to_owned()
+                    tr!("Not pushed (not on any remote branch)")
                 } else {
                     remote.join(", ")
                 };
@@ -319,7 +320,7 @@ impl Details {
             }
             let merged = extras["mergedCount"].as_u64().unwrap_or(0);
             if merged > 0 {
-                let mut text = format!("{merged} コミット");
+                let mut text = tr!("{count} commits", count = merged);
                 for commit in extras["merged"].as_array().into_iter().flatten().take(20) {
                     let oid = str_of(commit, "oid");
                     text.push_str(&format!(
@@ -329,7 +330,8 @@ impl Details {
                     ));
                 }
                 if merged > 20 {
-                    text.push_str(&format!("\nほか {} 件", merged - 20));
+                    text.push('\n');
+                    text.push_str(&tr!("and {count} more", count = merged - 20));
                 }
                 rows.push(("Merged".into(), text));
             }

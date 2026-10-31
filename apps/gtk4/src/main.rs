@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use amonhen_backend_gix::GixBackend;
 use amonhen_core::{PairMode, Repository, cache};
+use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::{gio, glib, graphene};
 
@@ -132,7 +133,7 @@ fn parse_args() -> Result<Args, String> {
                 let row = it.next().ok_or("--scroll-to <row>")?;
                 args.scroll_to = Some(row.parse().map_err(|_| "--scroll-to <row>")?);
             }
-            _ if a.starts_with('-') => return Err(format!("知らないオプション: {a}")),
+            _ if a.starts_with('-') => return Err(tr!("Unknown option: {option}", option = a)),
             _ => args.path = Some(a.into()),
         }
     }
@@ -278,7 +279,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build();
-    let status = gtk::Label::new(Some("History を読み込んでいます…"));
+    let status = gtk::Label::new(Some(&tr!("Loading History…")));
     status.add_css_class("dim-label");
     let overlay = gtk::Overlay::new();
     overlay.set_child(Some(&scrolled));
@@ -409,9 +410,12 @@ fn build_window(app: &gtk::Application, args: Args) {
             let hex = id.to_string();
             let (repo, window, path, oc) =
                 (repo.clone(), window.clone(), path.to_owned(), oc.clone());
-            items.push(menu::action(format!("Blame at {}", &hex[..8]), move || {
-                filetools::blame(&window, repo.clone(), &path, Some(&hex), oc.clone());
-            }));
+            items.push(menu::action(
+                tr!("Blame at {commit}", commit = &hex[..8]),
+                move || {
+                    filetools::blame(&window, repo.clone(), &path, Some(&hex), oc.clone());
+                },
+            ));
         }
         let (window, path, oc) = (window.clone(), path.to_owned(), oc.clone());
         items.push(menu::action("File History", move || {
@@ -724,7 +728,9 @@ fn build_window(app: &gtk::Application, args: Args) {
                         }
                     }
                     Event::Note(repo, text) => activity::event(&repo, text),
-                    Event::Timing(metric, ms) => activity::record(metric, ms),
+                    Event::Timing(metric, ms) => {
+                        activity::record(&amonhen_model::i18n::translate(metric), ms)
+                    }
                     Event::Failed(e) => {
                         status.set_text(&e);
                         status.set_visible(true);
@@ -996,7 +1002,7 @@ impl Loader {
             }
             match result {
                 Ok(Ok((kind, source, view))) => {
-                    activity::record("差分の読み込み", started.elapsed().as_secs_f64() * 1000.0);
+                    activity::record(&tr!("Load diff"), started.elapsed().as_secs_f64() * 1000.0);
                     if let Some(diff) = this.diff.upgrade() {
                         diff.show(source, view);
                     }
@@ -1040,7 +1046,7 @@ fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
     let started = std::time::Instant::now();
     let loaded = repo.load_history();
     let _ = tx.send_blocking(Event::Timing(
-        "History の読み直し",
+        "Reload History",
         started.elapsed().as_secs_f64() * 1000.0,
     ));
     match loaded {
@@ -1048,7 +1054,7 @@ fn reload_history(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
             let _ = tx.send_blocking(Event::History(repo.clone(), history));
         }
         Err(e) => {
-            let _ = tx.send_blocking(Event::Failed(format!("History を読めない: {e}")));
+            let _ = tx.send_blocking(Event::Failed(tr!("Can’t read History: {e}", e = e)));
         }
     }
     if let Ok(refs) = repo.load_refs() {
@@ -1061,7 +1067,7 @@ fn reload_status(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
     let started = std::time::Instant::now();
     let loaded = repo.load_status();
     let _ = tx.send_blocking(Event::Timing(
-        "status の読み直し",
+        "Reload status",
         started.elapsed().as_secs_f64() * 1000.0,
     ));
     match loaded {
@@ -1077,7 +1083,7 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
     let repo = match open(&path) {
         Ok(repo) => Arc::new(repo),
         Err(e) => {
-            let _ = tx.send_blocking(Event::Failed(format!("リポジトリを開けない: {e}")));
+            let _ = tx.send_blocking(Event::Failed(tr!("Can’t open the repository: {e}", e = e)));
             return;
         }
     };
@@ -1131,16 +1137,16 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
         let changes = Changes(bits);
         let mut what = Vec::new();
         for (bit, name) in [
-            (Changes::REFS, "ref"),
-            (Changes::INDEX, "index"),
-            (Changes::WORKTREE, "作業ツリー"),
+            (Changes::REFS, "ref".to_owned()),
+            (Changes::INDEX, "index".to_owned()),
+            (Changes::WORKTREE, tr!("working tree")),
         ] {
             if changes.contains(bit) {
                 what.push(name);
             }
         }
         if !what.is_empty() {
-            let text = format!("{} が変わった（読み直す）", what.join("・"));
+            let text = tr!("{what} changed (reloading)", what = what.join(&tr!(", ")));
             let _ = tx.send_blocking(Event::Note(repo_name(&repo), text));
         }
         if changes.contains(Changes::REFS) {

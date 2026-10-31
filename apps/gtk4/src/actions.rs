@@ -6,6 +6,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use amonhen_core::Repository;
+use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 use serde_json::{Value, json};
@@ -126,20 +127,20 @@ impl Actions {
             .await
             .unwrap_or_default();
             if let Some(error) = result["error"].as_str() {
-                this.alert("操作に失敗しました", error).await;
+                this.alert(&tr!("The operation failed"), error).await;
             } else {
                 match result["outcome"].as_str() {
                     Some("conflict") => {
                         this.alert(
-                            "コンフリクトがあります",
-                            "Working Copy で解決してから Continue するか、Abort してください。",
+                            &tr!("There are conflicts"),
+                            &tr!("Resolve them in Working Copy, then Continue or Abort."),
                         )
                         .await;
                     }
                     Some("stopped") => {
                         this.alert(
-                            "途中で止まりました",
-                            "Working Copy で確かめてから Continue してください。",
+                            &tr!("Stopped partway"),
+                            &tr!("Check Working Copy, then Continue."),
                         )
                         .await;
                     }
@@ -171,7 +172,7 @@ impl Actions {
                 .ok()
                 .flatten();
             let Some(branch) = status.as_ref().and_then(|s| s.status.branch.clone()) else {
-                this.alert("push できません", "ブランチをチェックアウトしていません。")
+                this.alert(&tr!("Can’t Push"), &tr!("No branch is checked out."))
                     .await;
                 return;
             };
@@ -184,8 +185,8 @@ impl Actions {
             if force
                 && !this
                     .confirm(
-                        &format!("{branch} を force push しますか？"),
-                        "上流のブランチを手元の内容で置き換えます（--force-with-lease。ほかの人が先に push していたら失敗します）。",
+                        &tr!("Force push {branch}?", branch = branch),
+                        &tr!("This replaces the upstream branch with your local one (--force-with-lease: it fails if someone else pushed first)."),
                         "Force Push",
                     )
                     .await
@@ -206,10 +207,10 @@ impl Actions {
             let Some((message, untracked)) = this
                 .ask_with(
                     "Stash Changes",
-                    "メッセージ（空でもよい）",
+                    &tr!("Message (optional)"),
                     "",
                     "Stash",
-                    Some("untracked のファイルも含める"),
+                    Some(tr!("Include untracked files").as_str()),
                 )
                 .await
             else {
@@ -231,7 +232,7 @@ impl Actions {
         .await
         .unwrap_or_default();
         if let Some(error) = reply["error"].as_str() {
-            self.alert("操作に失敗しました", error).await;
+            self.alert(&tr!("The operation failed"), error).await;
             return None;
         }
         reply["text"].as_str().map(str::to_owned)
@@ -252,7 +253,10 @@ impl Actions {
             else {
                 return;
             };
-            if let Some(edited) = this.edit_message("Edit Message", &message, "変更").await {
+            if let Some(edited) = this
+                .edit_message(&tr!("Edit Message"), &message, &tr!("Change"))
+                .await
+            {
                 let label = format!("Reword {}", &oid[..8]);
                 this.rewrite(
                     &label,
@@ -273,7 +277,7 @@ impl Actions {
                 return;
             };
             if let Some(edited) = this
-                .edit_message("Squash into Parent", &message, "まとめる")
+                .edit_message("Squash into Parent", &message, &tr!("Combine"))
                 .await
             {
                 let label = format!("Squash {}", &oid[..8]);
@@ -300,13 +304,14 @@ impl Actions {
             .await
             .unwrap_or_default();
             if let Some(error) = reply["error"].as_str() {
-                this.alert("まとめられません", error).await;
+                this.alert(&tr!("Can’t Merge Them in One Commit"), error)
+                    .await;
                 return;
             }
             let info = &reply["info"];
             let title = format!("Squash {count} Commits");
             let initial = info["message"].as_str().unwrap_or_default();
-            if let Some(edited) = this.edit_message(&title, initial, "まとめる").await {
+            if let Some(edited) = this.edit_message(&title, initial, &tr!("Combine")).await {
                 this.rewrite(
                     &title,
                     json!({
@@ -330,7 +335,7 @@ impl Actions {
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || work(&repo).map_err(|e| e.to_string())).await;
             if let Ok(Err(e)) = result {
-                this.alert("操作に失敗しました", &e).await;
+                this.alert(&tr!("The operation failed"), &e).await;
             }
             if let Some(f) = this.on_change.borrow().clone() {
                 f();
@@ -365,8 +370,8 @@ impl Actions {
                 action.set_enabled(label.is_some());
             }
             let tip = match label {
-                Some(l) => format!("Undo: {l}（Ctrl+Z）"),
-                None => "Undo できる操作はありません".to_owned(),
+                Some(l) => tr!("Undo: {label} (Ctrl+Z)", label = l),
+                None => tr!("Nothing to Undo"),
             };
             button.set_tooltip_text(Some(&tip));
         });
@@ -387,7 +392,7 @@ impl Actions {
         let dialog = gtk::AlertDialog::builder()
             .message(title)
             .detail(message)
-            .buttons(["キャンセル", ok])
+            .buttons([tr!("Cancel").as_str(), ok])
             .cancel_button(0)
             .default_button(1)
             .modal(true)
@@ -535,7 +540,7 @@ impl Actions {
             column.append(&detail);
         }
         column.append(content);
-        let cancel = gtk::Button::with_label("キャンセル");
+        let cancel = gtk::Button::with_label(&tr!("Cancel"));
         let accept = gtk::Button::with_label(ok);
         accept.add_css_class("suggested-action");
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);

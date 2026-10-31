@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use amonhen_core::diff::{DiffView, StackedDiff};
 use amonhen_layout::{DiffRow, SyntaxSpan};
+use amonhen_model::tr;
 use amonhen_projection::FrontendProfile;
 use gtk::glib::Properties;
 use gtk::prelude::*;
@@ -575,7 +576,7 @@ impl DiffWidget {
             };
             let path = view.text(row);
             let counts = if row.flags & DiffRow::BINARY != 0 {
-                "バイナリ".to_owned()
+                tr!("Binary")
             } else {
                 format!("+{}  −{}", row.new_no, row.old_no)
             };

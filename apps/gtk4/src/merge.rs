@@ -13,6 +13,7 @@ use std::sync::Arc;
 
 use amonhen_core::Repository;
 use amonhen_core::conflict::{self, Choice, MagicRules};
+use amonhen_model::tr;
 use gtk::prelude::*;
 use gtk::{gdk, gio, glib};
 use serde_json::{Value, json};
@@ -269,7 +270,7 @@ pub fn open(
         .unwrap_or_default();
         if let Some(error) = reply["error"].as_str() {
             let dialog = gtk::AlertDialog::builder()
-                .message("マージエディタを開けません")
+                .message(tr!("Can’t open the merge editor"))
                 .detail(error)
                 .modal(true)
                 .build();
@@ -313,22 +314,22 @@ impl Editor {
         result: String,
         on_resolved: Box<dyn Fn()>,
     ) -> Rc<Self> {
-        let current = Pane::new("Current（今のブランチ）", false, "#3584e4");
-        let result_pane = Pane::new("Result（結果、編集できる）", true, "#e01b24");
-        let incoming = Pane::new("Incoming（取り込む側）", false, "#2ec27e");
-        let base = Pane::new("Base（共通の祖先）", false, "#9a9996");
+        let current = Pane::new(&tr!("Current (your branch)"), false, "#3584e4");
+        let result_pane = Pane::new(&tr!("Result (editable)"), true, "#e01b24");
+        let incoming = Pane::new(&tr!("Incoming (being merged in)"), false, "#2ec27e");
+        let base = Pane::new(&tr!("Base (common ancestor)"), false, "#9a9996");
         let has_base = sides[2].is_some();
 
         let position = gtk::Label::new(None);
         position.add_css_class("numeric");
         let previous = gtk::Button::from_icon_name("go-up-symbolic");
-        previous.set_tooltip_text(Some("前のコンフリクト（Ctrl+Alt+↑）"));
+        previous.set_tooltip_text(Some(&tr!("Previous Conflict (Ctrl+Alt+↑)")));
         let next = gtk::Button::from_icon_name("go-down-symbolic");
-        next.set_tooltip_text(Some("次のコンフリクト（Ctrl+Alt+↓）"));
+        next.set_tooltip_text(Some(&tr!("Next Conflict (Ctrl+Alt+↓)")));
         let magic = gtk::Button::with_label("✨ Magic Merge");
-        magic.set_tooltip_text(Some(
-            "決まった規則で解けるコンフリクトをまとめて解く: 両側が同じ、片側だけが変えた（diff3）、空白だけが違う、同じ行の別々の単語を変えた（diff3）。Undo で戻せる",
-        ));
+        magic.set_tooltip_text(Some(&tr!(
+            "Resolve all conflicts that fixed rules can solve: both sides are the same, only one side changed (diff3), only whitespace differs, or different words on the same line changed (diff3). You can Undo it."
+        )));
         let note = gtk::Label::new(None);
         note.add_css_class("dim-label");
         note.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -344,16 +345,21 @@ impl Editor {
         }
         let accept_buttons: Vec<(gtk::Button, Choice)> = accepts
             .into_iter()
-            .map(|(title, choice)| (gtk::Button::with_label(title), choice))
+            .map(|(title, choice)| {
+                (
+                    gtk::Button::with_label(&amonhen_model::i18n::translate(title)),
+                    choice,
+                )
+            })
             .collect();
         let base_toggle = gtk::CheckButton::with_label("Base");
-        base_toggle.set_tooltip_text(Some("共通の祖先を左端に出す"));
+        base_toggle.set_tooltip_text(Some(&tr!("Show the common ancestor on the left.")));
         base_toggle.set_visible(has_base);
-        let save = gtk::Button::with_label("Save");
-        save.set_tooltip_text(Some("保存する（Ctrl+S）"));
-        let resolve = gtk::Button::with_label("Save & Mark Resolved");
+        let save = gtk::Button::with_label(&tr!("Save"));
+        save.set_tooltip_text(Some(&tr!("Save (Ctrl+S)")));
+        let resolve = gtk::Button::with_label(&tr!("Save & Mark Resolved"));
         resolve.add_css_class("suggested-action");
-        resolve.set_tooltip_text(Some("保存して解決済みにする（Ctrl+Return）"));
+        resolve.set_tooltip_text(Some(&tr!("Save and mark as resolved (Ctrl+Return).")));
 
         let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         bar.set_margin_top(6);
@@ -549,9 +555,9 @@ impl Editor {
             let window = window.clone();
             glib::spawn_future_local(async move {
                 let dialog = gtk::AlertDialog::builder()
-                    .message("保存していない変更があります")
-                    .detail("Result の変更を捨てて閉じますか？")
-                    .buttons(["キャンセル", "捨てて閉じる"])
+                    .message(tr!("Close without saving?"))
+                    .detail(tr!("Your changes to Result are lost."))
+                    .buttons([tr!("Cancel"), tr!("Close Without Saving")])
                     .cancel_button(0)
                     .default_button(0)
                     .modal(true)
@@ -580,8 +586,9 @@ impl Editor {
         if crate::settings::bool(crate::settings::AUTO_MAGIC_MERGE) {
             let solved = this.apply_magic(MagicRules::Safe);
             if solved > 0 {
-                this.note.set_text(&format!(
-                    "開いたときに {solved} 個を解きました（Ctrl+Z で戻せる）"
+                this.note.set_text(&tr!(
+                    "Resolved {count} when opened (Ctrl+Z to undo).",
+                    count = solved
                 ));
             }
         }
@@ -624,9 +631,13 @@ impl Editor {
         let original_of = self.original_of.borrow();
         let selected = self.selected.get();
         self.position.set_text(&if conflicts.is_empty() {
-            "コンフリクトなし".to_owned()
+            tr!("No conflicts")
         } else {
-            format!("Conflict {} / {}", selected + 1, conflicts.len())
+            tr!(
+                "Conflict {index} of {count}",
+                index = selected + 1,
+                count = conflicts.len()
+            )
         });
         for b in &self.buttons {
             b.set_sensitive(!conflicts.is_empty());
@@ -815,9 +826,12 @@ impl Editor {
     fn magic_merge(this: &Rc<Self>) {
         let solved = this.apply_magic(MagicRules::All);
         this.note.set_text(&if solved == 0 {
-            "解けるものはありません".to_owned()
+            tr!("Nothing to resolve")
         } else {
-            format!("{solved} 個を解きました（Ctrl+Z で 1 つずつ戻せる）")
+            tr!(
+                "Resolved {count} (Ctrl+Z undoes them one at a time).",
+                count = solved
+            )
         });
         if solved > 0 {
             this.reveal();
@@ -852,9 +866,12 @@ impl Editor {
         let this = this.clone();
         glib::spawn_future_local(async move {
             let dialog = gtk::AlertDialog::builder()
-                .message(format!("コンフリクトが {remaining} 個残っています"))
-                .detail("マーカーを残したまま解決済みにしますか？")
-                .buttons(["キャンセル", "解決済みにする"])
+                .message(tr!(
+                    "Mark as resolved with {count} conflicts left?",
+                    count = remaining
+                ))
+                .detail(tr!("The conflict markers stay in the file."))
+                .buttons([tr!("Cancel"), tr!("Mark Resolved")])
                 .cancel_button(0)
                 .default_button(1)
                 .modal(true)
@@ -876,7 +893,7 @@ impl Editor {
                 return;
             }
             this.saved.replace(text);
-            this.note.set_text("保存しました");
+            this.note.set_text(&tr!("Saved"));
             if stage {
                 (this.on_resolved)();
                 this.window.destroy();
