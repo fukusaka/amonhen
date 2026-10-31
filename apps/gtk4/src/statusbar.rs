@@ -15,6 +15,7 @@ use serde_json::Value;
 pub enum Row {
     Sequence,
     Failure,
+    Connection,
     Message,
 }
 
@@ -450,6 +451,7 @@ fn install_css() {
     provider.load_from_string(
         ".status-sequence { background-color: alpha(@warning_color, 0.14); } \
          .status-failure { background-color: alpha(@error_color, 0.08); } \
+         .status-connection { background-color: alpha(@warning_color, 0.10); } \
          label.warning { color: @warning_color; } \
          label.error { color: @error_color; } \
          label.success { color: @success_color; }",
@@ -569,6 +571,38 @@ impl StatusBar {
                 }
             });
         }
+    }
+
+    /// daemon・SSH 越しのつながりが切れたことと、「つなぎ直す」を出す（出していれば何もしない）。
+    pub fn show_disconnected(&self, host: &str, reason: &str, reconnect: impl Fn() + 'static) {
+        if self
+            .rows
+            .borrow()
+            .iter()
+            .any(|(r, _)| *r == Row::Connection)
+        {
+            return;
+        }
+        let icon = gtk::Label::new(Some("⚡"));
+        icon.add_css_class("warning");
+        let title = gtk::Label::new(Some(&tr!("Lost connection to {host}", host = host)));
+        title.add_css_class("heading");
+        let detail = gtk::Label::new(Some(reason));
+        detail.add_css_class("caption");
+        detail.add_css_class("dim-label");
+        detail.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        detail.set_xalign(0.0);
+        detail.set_hexpand(true);
+        detail.set_tooltip_text(Some(reason));
+        let b = button(&tr!("Reconnect"), true);
+        b.connect_clicked(move |_| reconnect());
+        self.show(
+            Row::Connection,
+            &line(
+                &[icon.upcast(), title.upcast(), detail.upcast(), b.upcast()],
+                Some("status-connection"),
+            ),
+        );
     }
 
     /// merge・rebase・cherry-pick・revert・am の途中なら、色の付いた行を出す。1 行目に何をどこへしている途中か

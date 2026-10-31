@@ -887,3 +887,7 @@
 "Now" = "今";
 "After the rebase" = "rebase の後";
 "For this rebase only (git’s --update-refs). Starts from rebase.updateRefs." = "この rebase だけの指定です（git の --update-refs）。最初は rebase.updateRefs のとおり。";
+
+/* GTK4 の FE: つながりが切れた */
+"Lost connection to {host}" = "{host} との接続が切れました";
+"Reconnect" = "つなぎ直す";

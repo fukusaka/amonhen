@@ -583,6 +583,47 @@ fn build_window(app: &gtk::Application, args: Args) {
             bar.flash(&text);
         }
     });
+    // daemon・SSH 越しのつながりが切れたら、ステータスバーで知らせ、同じ場所につなぎ直せるようにする
+    // （新しい窓で開き直し、この窓を閉じる）。
+    if let Some(location) = args.path.clone() {
+        let (v, bar, w, app) = (
+            view.downgrade(),
+            statusbar.clone(),
+            window.downgrade(),
+            app.clone(),
+        );
+        glib::timeout_add_seconds_local(3, move || {
+            let (Some(view), Some(window)) = (v.upgrade(), w.upgrade()) else {
+                return glib::ControlFlow::Break;
+            };
+            let closed = view
+                .current()
+                .and_then(|(repo, _)| repo.connection_state())
+                .and_then(|c| c.closed);
+            if let Some(reason) = closed {
+                let text = location.to_string_lossy().into_owned();
+                let host = text
+                    .trim_start_matches("daemon:")
+                    .strip_prefix("ssh://")
+                    .and_then(|rest| rest.split('/').next())
+                    .map_or_else(|| "daemon".to_owned(), str::to_owned);
+                let (app, location, window) = (app.clone(), location.clone(), window.downgrade());
+                bar.show_disconnected(&host, &reason, move || {
+                    build_window(
+                        &app,
+                        Args {
+                            path: Some(location.clone()),
+                            ..Args::default()
+                        },
+                    );
+                    if let Some(w) = window.upgrade() {
+                        w.close();
+                    }
+                });
+            }
+            glib::ControlFlow::Continue
+        });
+    }
     // 自動の fetch（Settings > General で決めた間隔。聞かずにすべてのリモートから。失敗はステータスバーに）。
     let elapsed = Rc::new(Cell::new(0u32));
     let (v, bar, a, o, r) = (
@@ -781,7 +822,8 @@ fn build_window(app: &gtk::Application, args: Args) {
                             if let Some(id) = args.action.clone() {
                                 // ref を読むまで待ってから（Merge・Rebase・Pop などは ref から候補を作る）。
                                 pending.set(pending.get() + 1);
-                                let (p, w, r) = (pending.clone(), window.downgrade(), latest_refs.clone());
+                                let (p, w, r) =
+                                    (pending.clone(), window.downgrade(), latest_refs.clone());
                                 glib::timeout_add_local(
                                     std::time::Duration::from_millis(100),
                                     move || {
