@@ -24,7 +24,7 @@ use serde_json::json;
 use crate::actions::Actions;
 use crate::icon::{self, Icon};
 use crate::menu;
-use crate::reffacts::BranchGroups;
+use crate::reffacts::{self, BranchGroups, TagRemotes};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Page {
@@ -218,6 +218,20 @@ pub struct Known {
     pub pinned: Vec<String>,
     /// 右クリックした行を含めて、ブランチ・タグを 2 つ以上選んでいれば、その ref（上から順）。
     pub selected: Vec<RefEntry>,
+    /// タグがどのリモートにあるか（fetch のときにコアが読んで覚えたもの。まだ読んでいなければ None）。
+    pub tags: Option<TagRemotes>,
+    /// リモートブランチのあるリモートの名前（タグの様子をまだ読んでいないときの、タグの送り先）。
+    pub branch_remotes: Vec<String>,
+}
+
+impl Known {
+    /// タグの push・削除の送り先（すべてのリモート）。
+    pub fn remote_names(&self) -> Vec<String> {
+        match &self.tags {
+            Some(t) => t.remotes.iter().map(|(n, _)| n.clone()).collect(),
+            None => self.branch_remotes.clone(),
+        }
+    }
 }
 
 /// ドラッグで運ぶ文字列（ローカルブランチの名前にも `/` は入りうるので、種類も付ける）。
@@ -265,6 +279,7 @@ struct Inner {
     /// 最後に出した ref（分け方が届いたら作り直す）。
     refs: RefCell<Option<Refs>>,
     groups: RefCell<Option<BranchGroups>>,
+    tags: RefCell<Option<TagRemotes>>,
     /// お気に入りのブランチ（上から順。作り直すたびに求める）。
     pinned: RefCell<Vec<String>>,
     /// 畳んだ、積んだブランチのあるブランチ（初めはすべて開いておく）。
@@ -357,6 +372,7 @@ impl Sidebar {
             generation: RefCell::default(),
             refs: RefCell::default(),
             groups: RefCell::default(),
+            tags: RefCell::default(),
             pinned: RefCell::default(),
             folded: RefCell::default(),
             actions: RefCell::default(),
@@ -721,6 +737,12 @@ impl Inner {
             groups: self.groups.borrow().clone(),
             pinned: self.pinned.borrow().clone(),
             selected: Vec::new(),
+            tags: self.tags.borrow().clone(),
+            branch_remotes: self
+                .refs
+                .borrow()
+                .as_ref()
+                .map_or_else(Vec::new, branch_remotes),
         }
     }
 
@@ -789,10 +811,14 @@ impl Inner {
         let Some(actions) = self.actions.borrow().clone() else {
             return;
         };
-        if let Item::Ref(entry) = &data.item
-            && entry.kind == RefKind::Local
-        {
-            crate::refmarks::branch(&actions, entry, &self.known(), data.head, anchor);
+        match &data.item {
+            Item::Ref(entry) if entry.kind == RefKind::Local => {
+                crate::refmarks::branch(&actions, entry, &self.known(), data.head, anchor);
+            }
+            Item::Ref(entry) if entry.kind == RefKind::Tag => {
+                crate::refmarks::tag(&actions, entry, &self.known(), anchor);
+            }
+            _ => {}
         }
     }
 
@@ -811,8 +837,22 @@ impl Inner {
                 return;
             }
             let groups = BranchGroups::from(&reply["info"]);
+            let mut changed = false;
             if groups.is_some() && groups != *inner.groups.borrow() {
                 inner.groups.replace(groups);
+                changed = true;
+            }
+            // タグがどのリモートにあるか（変わるのはタグの行の印とツールチップだけ）。
+            let reply = crate::sheets::run(&repo, json!({ "op": "tagRemotes" })).await;
+            if inner.loading.get() != token {
+                return;
+            }
+            let tags = TagRemotes::from(&reply["info"]);
+            if tags.is_some() && tags != *inner.tags.borrow() {
+                inner.tags.replace(tags);
+                changed = true;
+            }
+            if changed {
                 inner.rebuild(false);
             }
             inner.run_debug();
@@ -1033,11 +1073,12 @@ impl Inner {
         }
         let mut groups = vec![("Workspace", workspace)];
         if let Some(refs) = &refs {
+            let tags = self.tags.borrow();
             if filtering {
-                groups.extend(filtered_groups(refs, &self.filter.borrow()));
+                groups.extend(filtered_groups(refs, &self.filter.borrow(), tags.as_ref()));
             } else {
                 let branch_groups = self.groups.borrow();
-                let (built, pinned) = groups_of(refs, branch_groups.as_ref());
+                let (built, pinned) = groups_of(refs, branch_groups.as_ref(), tags.as_ref());
                 self.pinned.replace(pinned);
                 groups.extend(built);
             }
@@ -1421,7 +1462,12 @@ fn branch_rows(
 fn groups_of(
     refs: &Refs,
     branch_groups: Option<&BranchGroups>,
+    tags: Option<&TagRemotes>,
 ) -> (Vec<(&'static str, gio::ListStore)>, Vec<String>) {
+    let tag_remotes = tags.map_or_else(
+        || branch_remotes(refs),
+        |t| t.remotes.iter().map(|(n, _)| n.clone()).collect(),
+    );
     let of = |kind: RefKind| refs.entries.iter().filter(move |e| e.kind == kind);
     let head = refs.head_branch.as_deref();
     let mut groups = Vec::new();
@@ -1463,6 +1509,9 @@ fn groups_of(
                 d.title = message.clone();
                 d.tooltip = Some(e.name.clone());
             }
+            if kind == RefKind::Tag {
+                finish_tag(&mut d, tags, &tag_remotes);
+            }
             store.append(&Node::new(d, None));
         }
         if store.n_items() > 0 {
@@ -1477,8 +1526,16 @@ fn groups_of(
 
 /// 絞り込み中の見出し: 名前が `words` をすべて含むブランチ・リモートブランチ・タグを、名前のまま平らに
 /// （フォルダや積み重ねにはしない）。
-fn filtered_groups(refs: &Refs, words: &[String]) -> Vec<(&'static str, gio::ListStore)> {
+fn filtered_groups(
+    refs: &Refs,
+    words: &[String],
+    tags: Option<&TagRemotes>,
+) -> Vec<(&'static str, gio::ListStore)> {
     let head = refs.head_branch.as_deref();
+    let remotes = tags.map_or_else(
+        || branch_remotes(refs),
+        |t| t.remotes.iter().map(|(n, _)| n.clone()).collect(),
+    );
     let mut groups = Vec::new();
     for (title, kind, icon) in [
         ("Branches", RefKind::Local, icon::Kind::Branch),
@@ -1500,11 +1557,47 @@ fn filtered_groups(refs: &Refs, words: &[String]) -> Vec<(&'static str, gio::Lis
         matched.sort_by(|a, b| a.name.cmp(&b.name));
         let store = gio::ListStore::new::<Node>();
         for e in matched {
-            store.append(&Node::new(ref_data(e, &e.name, icon, head, None), None));
+            let mut d = ref_data(e, &e.name, icon, head, None);
+            if kind == RefKind::Tag {
+                finish_tag(&mut d, tags, &remotes);
+            }
+            store.append(&Node::new(d, None));
         }
         groups.push((title, store));
     }
     groups
+}
+
+/// リモートブランチのあるリモートの名前（名前順）。
+fn branch_remotes(refs: &Refs) -> Vec<String> {
+    let mut names: Vec<String> = refs
+        .entries
+        .iter()
+        .filter(|e| e.kind == RefKind::Remote)
+        .filter_map(|e| e.name.split_once('/').map(|(r, _)| r.to_owned()))
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// タグの行: どの（読んだ）リモートにもない・別のタグがあるリモートがあれば右端に印を出し、押すと吹き出し。
+/// ツールチップには、すべてのリモートでの様子。
+fn finish_tag(data: &mut Data, tags: Option<&TagRemotes>, remotes: &[String]) {
+    let mark = tags.and_then(|t| t.mark(&data.title));
+    let mut lines: Vec<String> = mark.iter().map(|(_, text, _)| text.clone()).collect();
+    lines.extend(
+        remotes
+            .iter()
+            .map(|r| reffacts::tag_state_text(tags, &data.title, r)),
+    );
+    if let Some((icon, tooltip, css)) = mark {
+        data.marks.push(Mark { icon, tooltip, css });
+        data.mark_click = true;
+    }
+    if !lines.is_empty() {
+        data.tooltip = Some(lines.join("\n"));
+    }
 }
 
 /// ref が指すコミット（History で選ぶ）。

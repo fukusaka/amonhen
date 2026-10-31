@@ -10,6 +10,7 @@ use serde_json::json;
 
 use crate::actions::Actions;
 use crate::menu::{self, Item};
+use crate::reffacts::TagState;
 use crate::sidebar::{self, Data, Known};
 use crate::{sheets, titles};
 
@@ -110,6 +111,8 @@ pub fn menu(
         RefKind::Tag => {
             merge(&mut items);
             items.push(new_branch(actions, &name));
+            items.push(Item::Separator);
+            items.extend(tag_items(actions, std::slice::from_ref(&name), known));
         }
         // Stashes の画面の一覧の行と同じメニュー。
         RefKind::Stash => items.extend(crate::stashes::menu(
@@ -190,7 +193,208 @@ fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item
             ));
         }
     }
+    let tags: Vec<String> = selected
+        .iter()
+        .filter(|e| e.kind == RefKind::Tag)
+        .map(|e| e.name.clone())
+        .collect();
+    if tags.len() == selected.len() {
+        items.push(Item::Separator);
+        items.extend(tag_items(actions, &tags, known));
+    }
     items
+}
+
+/// タグの push と削除。fetch のときに読んだリモートの様子に合わせて、まだないリモートにだけ Push、同じ名前の別の
+/// タグがあるリモートには Replace（置き換え）、あるリモートにだけ「… から削除」を出す。まだ読んでいないリモートには
+/// 全部出し、そう断る。手元の削除は Undo できる。リモートでの置き換え・削除は戻せない（もう一度 push する
+/// しかない）ので、名前を並べて確かめる（赤いボタン）。
+fn tag_items(actions: &Rc<Actions>, names: &[String], known: &Known) -> Vec<Item> {
+    let tags = known.tags.as_ref();
+    let list = |names: &[String]| format!("{}\n\n", names.join("\n"));
+    let (mut pushes, mut replaces, mut deletes) = (Vec::new(), Vec::new(), Vec::new());
+    for remote in known.remote_names() {
+        let checked = tags.is_some_and(|t| t.checked(&remote).is_some());
+        let state = |name: &String| tags.and_then(|t| t.state(name, &remote));
+        let pick = |want: fn(Option<TagState>) -> bool| -> Vec<String> {
+            names.iter().filter(|n| want(state(n))).cloned().collect()
+        };
+        let to_push = if checked {
+            pick(|s| s == Some(TagState::Missing))
+        } else {
+            names.to_vec()
+        };
+        let to_replace = if checked {
+            pick(|s| s == Some(TagState::Different))
+        } else {
+            Vec::new()
+        };
+        let on_remote = if checked {
+            pick(|s| s != Some(TagState::Missing))
+        } else {
+            names.to_vec()
+        };
+        if !to_push.is_empty() {
+            pushes.push((remote.clone(), to_push));
+        }
+        if !to_replace.is_empty() {
+            replaces.push((remote.clone(), to_replace));
+        }
+        if !on_remote.is_empty() {
+            deletes.push((remote.clone(), on_remote, !checked));
+        }
+    }
+    let mut items = Vec::new();
+    for (remote, tags) in &pushes {
+        let title = if tags.len() == 1 {
+            format!("Push {} to {remote}", tags[0])
+        } else {
+            tr!(
+                "Push {count} Tags to {remote}",
+                count = tags.len(),
+                remote = remote
+            )
+        };
+        let command = json!({ "op": "pushTags", "remote": remote, "names": tags });
+        let a = actions.clone();
+        items.push(menu::action(title, move || a.perform(command.clone())));
+    }
+    for (remote, tags) in &replaces {
+        let title = if tags.len() == 1 {
+            tr!("Replace {tag} on {remote}…", tag = tags[0], remote = remote)
+        } else {
+            tr!(
+                "Replace {count} Tags on {remote}…",
+                count = tags.len(),
+                remote = remote
+            )
+        };
+        let (a, t, r) = (actions.clone(), tags.clone(), remote.clone());
+        items.push(menu::action(title, move || confirm_replace(&a, &t, &r)));
+    }
+    if !pushes.is_empty() || !replaces.is_empty() {
+        items.push(Item::Separator);
+    }
+    let (title, question) = if names.len() == 1 {
+        (
+            titles::delete(&names[0]),
+            tr!("Delete tag {name}?", name = names[0]),
+        )
+    } else {
+        (
+            tr!("Delete {count} Tags…", count = names.len()),
+            tr!("Delete {count} tags?", count = names.len()),
+        )
+    };
+    let message = format!(
+        "{}{} {}",
+        list(names),
+        tr!("The remotes keep theirs."),
+        sheets::can_undo()
+    );
+    let commands: Vec<serde_json::Value> = names
+        .iter()
+        .map(|n| json!({ "op": "deleteTag", "name": n }))
+        .collect();
+    let a = actions.clone();
+    items.push(menu::action(title, move || {
+        sheets::confirm_then(
+            &a,
+            question.clone(),
+            message.clone(),
+            tr!("Delete"),
+            false,
+            commands.clone(),
+        )
+    }));
+    for (remote, tags, unchecked) in deletes {
+        let (title, question) = if tags.len() == 1 {
+            (
+                tr!(
+                    "Delete {tag} from {remote}…",
+                    tag = tags[0],
+                    remote = remote
+                ),
+                tr!(
+                    "Delete {tag} from {remote}?",
+                    tag = tags[0],
+                    remote = remote
+                ),
+            )
+        } else {
+            (
+                tr!(
+                    "Delete {count} Tags from {remote}…",
+                    count = tags.len(),
+                    remote = remote
+                ),
+                tr!(
+                    "Delete {count} tags from {remote}?",
+                    count = tags.len(),
+                    remote = remote
+                ),
+            )
+        };
+        let mut message = format!(
+            "{}{} {}",
+            list(&tags),
+            tr!(
+                "Everyone who fetches from {remote} loses them; yours stay.",
+                remote = remote
+            ),
+            sheets::cant_undo()
+        );
+        if unchecked {
+            message.push(' ');
+            message.push_str(&tr!(
+                "Whether {remote} has them hasn’t been checked yet (Fetch reads it).",
+                remote = remote
+            ));
+        }
+        let command = json!({ "op": "pushTags", "remote": remote, "names": tags, "delete": true });
+        let a = actions.clone();
+        items.push(menu::action(title, move || {
+            sheets::confirm_then(
+                &a,
+                question.clone(),
+                message.clone(),
+                tr!("Delete"),
+                true,
+                vec![command.clone()],
+            )
+        }));
+    }
+    items
+}
+
+/// リモートにある同じ名前の別のタグを、手元のもので置き換える前に確かめる（戻せないので赤いボタン）。
+pub fn confirm_replace(actions: &Rc<Actions>, tags: &[String], remote: &str) {
+    let title = if tags.len() == 1 {
+        tr!("Replace {tag} on {remote}?", tag = tags[0], remote = remote)
+    } else {
+        tr!(
+            "Replace {count} tags on {remote}?",
+            count = tags.len(),
+            remote = remote
+        )
+    };
+    let message = format!(
+        "{}\n{} {}",
+        tags.join("\n"),
+        tr!(
+            "{remote} has a different tag with this name; yours replaces it for everyone who fetches.",
+            remote = remote
+        ),
+        sheets::cant_undo()
+    );
+    sheets::confirm_then(
+        actions,
+        title,
+        message,
+        tr!("Replace"),
+        true,
+        vec![json!({ "op": "pushTags", "remote": remote, "names": tags, "force": true })],
+    );
 }
 
 /// お気に入りの順を書く（`branch.<name>.amonhenPinned` に 1 から順に）命令。

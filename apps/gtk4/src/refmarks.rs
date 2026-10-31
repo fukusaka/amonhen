@@ -1,5 +1,6 @@
-//! サイドバーの行の右端の印を押したときの吹き出し（macOS 版の `BranchStatusPopover`）。何を意味するか、どこから
-//! 分かったか、そのブランチの状態（上流・土台・最後のコミット）と、次にできること（消す・アーカイブ）。
+//! サイドバーの行の右端の印を押したときの吹き出し（macOS 版の `BranchStatusPopover`・`TagStatusPopover`）。何を
+//! 意味するか、どこから分かったか、そのブランチの状態（上流・土台・最後のコミット）やタグのリモートごとの様子と、
+//! 次にできること（消す・アーカイブ、タグの push・置き換え）。
 
 use std::rc::Rc;
 
@@ -10,6 +11,7 @@ use serde_json::json;
 
 use crate::actions::Actions;
 use crate::icon::{self, Icon};
+use crate::reffacts::TagState;
 use crate::sheets;
 use crate::sidebar::Known;
 
@@ -125,6 +127,67 @@ impl Popover {
         self.popover.popup();
         self.popover
     }
+}
+
+/// タグの印（どのリモートにもない・同じ名前の別のタグがあるリモートがある）の詳細。タグはブランチと違って手元に
+/// リモートの写しがないので、どこから分かったか（fetch のときに読んだ）と、リモートごとの様子を出す。
+pub fn tag(actions: &Rc<Actions>, item: &RefEntry, known: &Known, anchor: &gtk::Widget) {
+    let Some(tags) = &known.tags else { return };
+    let Some((kind, title, css)) = tags.mark(&item.name) else {
+        return;
+    };
+    let remotes = known.remote_names();
+    let different = remotes
+        .iter()
+        .any(|r| tags.state(&item.name, r) == Some(TagState::Different));
+    let text = if different {
+        tr!(
+            "There, a tag with the same name is a different tag: it points to another commit, or it is another annotated tag on the same commit. Fetch doesn’t overwrite your tag and Push is refused, so the two stay apart until one of them is replaced."
+        )
+    } else {
+        tr!(
+            "Tags have no remote copies here the way branches do, so this was read from each remote at the last Fetch. Push doesn’t send tags; push this one to share it."
+        )
+    };
+    let mut p = Popover::new(anchor, kind, css, &title, &text);
+    p.row(&tr!("Tag"), &item.name, false, None);
+    if let Some(target) = item.target {
+        let hex = target.to_string();
+        p.row(&tr!("Commit"), &hex[..hex.len().min(12)], true, None);
+    }
+    for remote in &remotes {
+        let (text, css) = match tags.state(&item.name, remote) {
+            Some(TagState::Same) => (tr!("Has it"), None),
+            Some(TagState::Different) => {
+                (tr!("Has a different tag with this name"), Some("warning"))
+            }
+            Some(TagState::Missing) => (tr!("Doesn’t have it"), Some("dim-label")),
+            None => (tr!("Not checked yet (Fetch reads it)"), Some("dim-label")),
+        };
+        let when = tags
+            .checked(remote)
+            .map(|ms| format!(" · {}", tr!("read {time}", time = date(ms / 1000))))
+            .unwrap_or_default();
+        p.row(remote, &format!("{text}{when}"), false, css);
+    }
+    // 次にできること: ないリモートへ push、別のタグがあるリモートは置き換え（確かめてから）。
+    for remote in &remotes {
+        if tags.state(&item.name, remote) == Some(TagState::Missing) {
+            let (a, name, r) = (actions.clone(), item.name.clone(), remote.clone());
+            p.button(&format!("Push to {remote}"), move || {
+                a.perform(json!({ "op": "pushTags", "remote": r, "names": [name] }))
+            });
+        }
+    }
+    for remote in &remotes {
+        if tags.state(&item.name, remote) == Some(TagState::Different) {
+            let (a, name, r) = (actions.clone(), item.name.clone(), remote.clone());
+            p.button(&tr!("Replace on {remote}…", remote = remote), move || {
+                crate::refops::confirm_replace(&a, std::slice::from_ref(&name), &r)
+            });
+        }
+    }
+    p.popup();
 }
 
 fn date(t: i64) -> String {

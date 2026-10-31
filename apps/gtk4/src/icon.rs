@@ -63,6 +63,8 @@ pub enum Kind {
     Stacked,
     /// icloud.slash（上流がリモートで消えた）
     CloudSlash,
+    /// exclamationmark.icloud（リモートに同じ名前の別のタグがある）
+    CloudAlert,
 }
 
 mod imp {
@@ -98,8 +100,14 @@ mod imp {
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let fg = self.obj().color();
+            let obj = self.obj();
             let color = if self.accent.get() {
                 gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
+            } else if obj.has_css_class("warning") {
+                // 注意（オレンジ）と、済んだこと（緑）。テーマの色はラベルにしか付かないので、ここで決める。
+                gdk::RGBA::new(0.96, 0.47, 0.0, 1.0)
+            } else if obj.has_css_class("success") {
+                gdk::RGBA::new(0.15, 0.64, 0.25, 1.0)
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.7)
             };
@@ -403,6 +411,13 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(10.0, 7.0);
             p.line_to(12.5, 9.5);
             p.line_to(10.0, 12.0);
+        }
+        Kind::CloudAlert => {
+            cloud(&p);
+            p.move_to(8.0, 7.6);
+            p.line_to(8.0, 9.6);
+            p.move_to(8.0, 11.2);
+            p.line_to(8.0, 11.3);
         }
         Kind::CloudSlash => {
             cloud(&p);
