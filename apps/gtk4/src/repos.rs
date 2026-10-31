@@ -42,6 +42,18 @@ pub fn main_of_worktree(location: &Path) -> Option<PathBuf> {
     Some(PathBuf::from(main))
 }
 
+/// 手元のリポジトリの中のフォルダーなら、その作業ツリーの一番上（`.git` のあるフォルダー）。git と同じく上へ
+/// たどる。見つからない・daemon・SSH 越しの場所はそのまま。
+pub fn top_of(location: &Path) -> PathBuf {
+    if amonhen_remote::location::is_remote(&location.to_string_lossy()) {
+        return location.to_owned();
+    }
+    let full = std::fs::canonicalize(location).unwrap_or_else(|_| location.to_owned());
+    full.ancestors()
+        .find(|d| d.join(".git").exists())
+        .map_or(full.clone(), Path::to_path_buf)
+}
+
 /// 場所を、比べられる形にする（手元のパスは正規の形に）。
 pub fn normalize(location: &Path) -> String {
     let text = location.to_string_lossy().into_owned();
@@ -351,6 +363,9 @@ mod tests {
         let gitdir = main.join(".git/worktrees/wt");
         std::fs::write(wt.join(".git"), format!("gitdir: {}\n", gitdir.display())).unwrap();
         assert_eq!(main_of_worktree(&wt), Some(main.clone()));
+        let inner = wt.join("src");
+        std::fs::create_dir_all(&inner).unwrap();
+        assert_eq!(super::top_of(&inner), std::fs::canonicalize(&wt).unwrap());
         // メインの作業ツリーと、`.git` のないフォルダーは worktree ではない。
         assert_eq!(main_of_worktree(&plain), None);
         assert_eq!(main_of_worktree(&dir), None);

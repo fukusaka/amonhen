@@ -532,6 +532,9 @@ fn build_tab(
         .path
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    // リポジトリの中のフォルダーは、その一番上として開く（覚えるのも一番上）。
+    path = repos::top_of(&path);
+    args.path = Some(path.clone());
     // 追加した worktree のフォルダーは、メインのリポジトリを開いて、その worktree を書き込む先にする（別の
     // リポジトリにしない。macOS 版と同じく docs/ux.md の「Worktrees」）。
     if args.edit_worktree.is_none()
