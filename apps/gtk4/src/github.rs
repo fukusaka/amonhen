@@ -757,6 +757,13 @@ fn loader_of(actions: &Rc<Actions>) -> Option<Rc<Loader>> {
     })
 }
 
+/// View > Refresh: `actions` の窓のプルリクエスト・CI の状態を、間を空けずに読み直す（macOS 版と同じ）。
+pub fn reload(actions: &Rc<Actions>) {
+    if let Some(loader) = loader_of(actions) {
+        loader.load(true);
+    }
+}
+
 /// `actions` の窓の GitHub のリポジトリ（読んでいれば）。
 pub fn github_of(actions: &Rc<Actions>) -> Option<GitHubRepository> {
     loader_of(actions).and_then(|l| l.github())

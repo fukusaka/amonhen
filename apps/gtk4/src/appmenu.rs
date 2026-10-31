@@ -276,7 +276,13 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ),
         ("show-stashes", Box::new(show_stashes)),
         ("show-reflog", Box::new(|p| show_page(p, Page::Reflog))),
-        ("refresh", Box::new(|p| (p.reload)())),
+        (
+            "refresh",
+            Box::new(|p| {
+                (p.reload)();
+                crate::github::reload(&p.actions);
+            }),
+        ),
         // Navigate
         ("switch-branch", Box::new(switch_branch)),
         ("filter-branches", Box::new(|p| p.sidebar.focus_filter())),
