@@ -383,3 +383,17 @@
 "Open in Terminal" = "ターミナルで開く";
 "Show in Finder" = "Finder に表示";
 "Settings…" = "設定…";
+
+/* GTK4 の FE のメニュー */
+"New Window" = "新規ウインドウ";
+"Open…" = "開く…";
+"Close" = "閉じる";
+"File" = "ファイル";
+"Edit" = "編集";
+"View" = "表示";
+"Navigate" = "移動";
+"Keyboard Shortcuts" = "キーボードショートカット";
+"About Amon Hen" = "Amon Hen について";
+"Quit" = "終了";
+"Window" = "ウインドウ";
+"Show in Files" = "ファイルで表示";

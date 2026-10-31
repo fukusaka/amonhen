@@ -132,6 +132,9 @@ jobs:
         working-directory: apps/gtk4
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: apps/gtk4
+      # 操作の表（amonhen-commands）のどの操作にも、処理があるか PENDING にあるか。画面は要らない。
+      - run: cargo test
+        working-directory: apps/gtk4
       # 配る形（tar.gz）にまとめられるか。エンジンは入れない（リリースでは scripts/build-engine.sh の分を入れる）。
       - run: scripts/package-gtk4.sh
 

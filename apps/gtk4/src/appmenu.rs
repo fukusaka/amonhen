@@ -1,16 +1,15 @@
-//! 窓のメニュー。項目の名前・並び・区切りは macOS 版（`MainMenu.swift`）と同じにし、置き場所は GNOME の
-//! 決まり（HIG）に合わせる: 見出しの左の「Repository」は macOS の Repository メニュー、右端の主メニュー（≡）
-//! には File・View・Navigate・Commit を同じ名前のサブメニューで入れ、アプリのこと（Keyboard Shortcuts・
-//! About）を最後に置く。項目は窓のアクション（`win.*`）で、ショートカットは ⌘ を Ctrl に、⌃・⌥ を Alt に
-//! 読み替える（Ubuntu が全体で使うもの、たとえば Ctrl+Alt+T は外す）。
-//!
-//! macOS 版にあって、ここにないもの: まだ機能のない項目（Edit・検索・表示の切り替え・設定・GitHub・タブ）。
+//! 窓のメニュー。操作の名前・ショートカット・メニューの区切りは、macOS 版と共通の操作の表（`amonhen-commands`）
+//! から作り、置き場所は GNOME の決まり（HIG）に合わせる: 見出しの左の「Repository」は表の Repository の区切り、
+//! 右端の主メニュー（≡）には File・Edit・View・Navigate・Commit を同じ名前のサブメニューで入れ、Settings・
+//! Activity・Keyboard Shortcuts・About を最後に置く。項目は窓のアクション（`win.<id>`）。表にあってこの FE に
+//! まだ機能のない操作は [`PENDING`] に並べ、メニューに出さない。
 
 use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use amonhen_commands::{COMMANDS, Command, Menu};
 use amonhen_core::RefsSnapshot;
 use amonhen_model::{Oid, RefKind};
 use gtk::prelude::*;
@@ -144,68 +143,182 @@ fn space() -> gtk::Box {
 /// メニューの項目を選んだときの処理。
 type Handler = Box<dyn Fn(&Rc<Parts>)>;
 
-/// (アクションの名前, ショートカット)。macOS 版のキーを読み替えたもの。
-const ACCELS: &[(&str, &str)] = &[
+/// この FE だけの操作のショートカット（表の操作のものは表から）。
+const FE_ACCELS: &[(&str, &str)] = &[
     ("win.new-window", "<Control>n"),
     ("win.open", "<Control>o"),
     ("win.close", "<Control>w"),
     ("app.quit", "<Control>q"),
-    ("win.show-working-copy", "<Control>1"),
-    ("win.show-history", "<Control>2"),
-    ("win.refresh", "<Control>r"),
-    ("win.show-sidebar", "F9"),
-    ("win.switch-branch", "<Control><Shift>b"),
-    ("win.go-to-head", "<Control><Shift>h"),
-    ("win.go-to-parent", "<Alt>Down"),
-    ("win.go-to-child", "<Alt>Up"),
-    ("win.fetch", "<Control><Alt>f"),
-    ("win.pull", "<Control><Alt>l"),
-    ("win.push", "<Control><Alt>p"),
-    ("win.new-branch", "<Control><Alt>b"),
-    ("win.merge", "<Control><Alt>m"),
-    ("win.rebase", "<Control><Alt>r"),
-    ("win.stash", "<Control><Alt>s"),
-    ("win.pop-stash", "<Control><Alt><Shift>s"),
-    ("win.undo", "<Control><Alt>z"),
-    ("win.commit", "<Control>Return"),
-    ("win.commit-and-push", "<Control><Shift>Return"),
-    ("win.activity", "<Control><Alt>a"),
-    ("win.settings", "<Control>comma"),
     ("win.shortcuts", "<Control>question"),
 ];
+
+/// 表にあって、この FE にまだ機能のない操作（メニューに出さない）。
+pub const PENDING: &[&str] = &[
+    "create-pull-request",
+    "open-on-github",
+    "new-worktree",
+    "prune-worktrees",
+    "compare-with-previous",
+    "apply-patch",
+    "save-patch",
+    "show-stashes",
+    "show-reflog",
+    "filter-branches",
+    "find-in-history",
+    "repository-settings",
+    "quick-open",
+    "repositories",
+];
+
+/// 状態を持つので [`handlers`] とは別に登録する操作。
+#[cfg(test)]
+const STATEFUL: &[&str] = &["show-sidebar"];
+
+/// アクションのショートカット（`win.<id>` と、それに付けるキー）。
+fn accels() -> Vec<(String, String)> {
+    let table = COMMANDS
+        .iter()
+        .filter(|c| !PENDING.contains(&c.id))
+        .filter_map(|c| Some((format!("win.{}", c.id), c.gtk_accel()?)));
+    FE_ACCELS
+        .iter()
+        .map(|(a, k)| (a.to_string(), k.to_string()))
+        .chain(table)
+        .collect()
+}
+
+/// 表の操作の、この FE での名前（訳す。Finder は GTK では Files）。
+pub fn title(c: &Command) -> String {
+    match c.id {
+        "reveal-in-files" => amonhen_model::tr!("Show in Files"),
+        _ if c.localized => amonhen_model::i18n::translate(c.title).into_owned(),
+        _ => c.title.to_owned(),
+    }
+}
+
+/// 窓のアクションの処理（`win.<id>`）。表の操作と、この FE だけの操作。
+fn handlers() -> Vec<(&'static str, Handler)> {
+    let run = |command: serde_json::Value| -> Handler {
+        Box::new(move |p| p.actions.perform(command.clone()))
+    };
+    vec![
+        // File
+        (
+            "new-window",
+            Box::new(|p| {
+                if let Some(dir) = workdir(p) {
+                    (p.open)(dir);
+                }
+            }),
+        ),
+        ("open", Box::new(open_folder)),
+        ("add-remote", Box::new(add_remote)),
+        ("close", Box::new(|p| p.window.close())),
+        // View
+        (
+            "show-working-copy",
+            Box::new(|p| show_page(p, Page::WorkingCopy)),
+        ),
+        ("show-history", Box::new(|p| show_page(p, Page::History))),
+        ("refresh", Box::new(|p| (p.reload)())),
+        // Navigate
+        ("switch-branch", Box::new(switch_branch)),
+        ("go-to-head", Box::new(go_to_head)),
+        ("go-to-parent", Box::new(|p| go_to_relative(p, true))),
+        ("go-to-child", Box::new(|p| go_to_relative(p, false))),
+        // Repository
+        ("fetch", run(json!({ "op": "fetch" }))),
+        (
+            "pull",
+            Box::new(|p| {
+                p.actions
+                    .perform(json!({ "op": "pull", "mode": crate::settings::pull_mode() }))
+            }),
+        ),
+        ("pull-merge", run(json!({ "op": "pull", "mode": "merge" }))),
+        (
+            "pull-rebase",
+            run(json!({ "op": "pull", "mode": "rebase" })),
+        ),
+        (
+            "pull-ff-only",
+            run(json!({ "op": "pull", "mode": "fastForwardOnly" })),
+        ),
+        ("push", Box::new(|p| p.actions.push(false))),
+        ("force-push", Box::new(|p| p.actions.push(true))),
+        (
+            "new-branch",
+            Box::new(|p| refops::ask_new_branch(&p.actions, &start_point(p))),
+        ),
+        ("rename-branch", Box::new(rename_branch)),
+        ("set-upstream", Box::new(set_upstream)),
+        (
+            "new-tag",
+            Box::new(|p| refops::ask_new_tag(&p.actions, &start_point(p))),
+        ),
+        ("merge", Box::new(|p| merge_or_rebase(p, false))),
+        ("rebase", Box::new(|p| merge_or_rebase(p, true))),
+        ("continue", run(json!({ "op": "continue" }))),
+        ("skip", run(json!({ "op": "skip" }))),
+        ("abort", run(json!({ "op": "abort" }))),
+        ("stash", Box::new(|p| p.actions.stash())),
+        ("pop-stash", Box::new(pop_stash)),
+        ("undo", run(json!({ "op": "undo" }))),
+        (
+            "rebuild-history",
+            Box::new(|p| {
+                p.actions
+                    .perform_work(|repo| repo.rebuild_history().map(|_| ()));
+            }),
+        ),
+        ("open-in-terminal", Box::new(open_in_terminal)),
+        ("reveal-in-files", Box::new(reveal_in_files)),
+        // Commit
+        ("commit", Box::new(|p| p.working.commit_from_menu(None))),
+        (
+            "commit-and-push",
+            Box::new(|p| {
+                let actions = p.actions.clone();
+                p.working
+                    .commit_from_menu(Some(Box::new(move || actions.push(false))));
+            }),
+        ),
+        ("stage-all", Box::new(|p| p.working.stage_all())),
+        (
+            "amend-last-commit",
+            Box::new(|p| {
+                show_page(p, Page::WorkingCopy);
+                p.working.amend_last_commit();
+            }),
+        ),
+        // アプリ
+        ("settings", Box::new(|p| crate::settings::show(&p.window))),
+        (
+            "activity",
+            Box::new(|p| {
+                let repo = p.view.current().map(|(r, _)| r);
+                crate::activity::Activity::show(
+                    &p.window,
+                    repo,
+                    p.actions.clone(),
+                    crate::engine(),
+                );
+            }),
+        ),
+        ("shortcuts", Box::new(show_shortcuts)),
+        ("about", Box::new(show_about)),
+    ]
+}
 
 pub fn install(parts: Parts) -> Buttons {
     let parts = Rc::new(parts);
     let window = &parts.window;
-    let add = |name: &str, f: Handler| {
+    for (name, f) in handlers() {
         let action = gio::SimpleAction::new(name, None);
         let p = parts.clone();
         action.connect_activate(move |_, _| f(&p));
         window.add_action(&action);
-    };
-    let run = |command: serde_json::Value| -> Handler {
-        Box::new(move |p| p.actions.perform(command.clone()))
-    };
-
-    // File
-    add(
-        "new-window",
-        Box::new(|p| {
-            if let Some(dir) = workdir(p) {
-                (p.open)(dir);
-            }
-        }),
-    );
-    add("open", Box::new(open_folder));
-    add("add-remote", Box::new(add_remote));
-    add("close", Box::new(|p| p.window.close()));
-    // View
-    add(
-        "show-working-copy",
-        Box::new(|p| show_page(p, Page::WorkingCopy)),
-    );
-    add("show-history", Box::new(|p| show_page(p, Page::History)));
-    add("refresh", Box::new(|p| (p.reload)()));
+    }
     let sidebar = gio::SimpleAction::new_stateful("show-sidebar", None, &true.to_variant());
     let p = parts.clone();
     sidebar.connect_activate(move |action, _| {
@@ -214,87 +327,6 @@ pub fn install(parts: Parts) -> Buttons {
         p.sidebar.root.set_visible(shown);
     });
     window.add_action(&sidebar);
-    // Navigate
-    add("switch-branch", Box::new(switch_branch));
-    add("go-to-head", Box::new(go_to_head));
-    add("go-to-parent", Box::new(|p| go_to_relative(p, true)));
-    add("go-to-child", Box::new(|p| go_to_relative(p, false)));
-    // Repository
-    add("fetch", run(json!({ "op": "fetch" })));
-    add(
-        "pull",
-        Box::new(|p| {
-            p.actions
-                .perform(json!({ "op": "pull", "mode": crate::settings::pull_mode() }))
-        }),
-    );
-    add("pull-merge", run(json!({ "op": "pull", "mode": "merge" })));
-    add(
-        "pull-rebase",
-        run(json!({ "op": "pull", "mode": "rebase" })),
-    );
-    add(
-        "pull-ff-only",
-        run(json!({ "op": "pull", "mode": "fastForwardOnly" })),
-    );
-    add("push", Box::new(|p| p.actions.push(false)));
-    add("force-push", Box::new(|p| p.actions.push(true)));
-    add(
-        "new-branch",
-        Box::new(|p| refops::ask_new_branch(&p.actions, &start_point(p))),
-    );
-    add("rename-branch", Box::new(rename_branch));
-    add("set-upstream", Box::new(set_upstream));
-    add(
-        "new-tag",
-        Box::new(|p| refops::ask_new_tag(&p.actions, &start_point(p))),
-    );
-    add("merge", Box::new(|p| merge_or_rebase(p, false)));
-    add("rebase", Box::new(|p| merge_or_rebase(p, true)));
-    add("continue", run(json!({ "op": "continue" })));
-    add("skip", run(json!({ "op": "skip" })));
-    add("abort", run(json!({ "op": "abort" })));
-    add("stash", Box::new(|p| p.actions.stash()));
-    add("pop-stash", Box::new(pop_stash));
-    add("undo", run(json!({ "op": "undo" })));
-    add(
-        "rebuild-history",
-        Box::new(|p| {
-            p.actions
-                .perform_work(|repo| repo.rebuild_history().map(|_| ()));
-        }),
-    );
-    add("open-in-terminal", Box::new(open_in_terminal));
-    add("reveal-in-files", Box::new(reveal_in_files));
-    // Commit
-    add("commit", Box::new(|p| p.working.commit_from_menu(None)));
-    add(
-        "commit-and-push",
-        Box::new(|p| {
-            let actions = p.actions.clone();
-            p.working
-                .commit_from_menu(Some(Box::new(move || actions.push(false))));
-        }),
-    );
-    add("stage-all", Box::new(|p| p.working.stage_all()));
-    add(
-        "amend-last-commit",
-        Box::new(|p| {
-            show_page(p, Page::WorkingCopy);
-            p.working.amend_last_commit();
-        }),
-    );
-    // アプリ
-    add("settings", Box::new(|p| crate::settings::show(&p.window)));
-    add(
-        "activity",
-        Box::new(|p| {
-            let repo = p.view.current().map(|(r, _)| r);
-            crate::activity::Activity::show(&p.window, repo, p.actions.clone(), crate::engine());
-        }),
-    );
-    add("shortcuts", Box::new(show_shortcuts));
-    add("about", Box::new(show_about));
 
     if parts.app.lookup_action("quit").is_none() {
         let quit = gio::SimpleAction::new("quit", None);
@@ -306,8 +338,8 @@ pub fn install(parts: Parts) -> Buttons {
         });
         parts.app.add_action(&quit);
     }
-    for (action, accel) in ACCELS {
-        parts.app.set_accels_for_action(action, &[accel]);
+    for (action, accel) in accels() {
+        parts.app.set_accels_for_action(&action, &[accel.as_str()]);
     }
 
     let repository = gtk::MenuButton::builder()
@@ -440,104 +472,64 @@ fn menu_of(items: &[Option<(&str, &str)>]) -> gio::Menu {
     menu
 }
 
+/// 表の `menu` の区切りのうち、この FE に機能のある操作（区切りごと）。
+fn table_sections(menu: Menu) -> gio::Menu {
+    let out = gio::Menu::new();
+    for section in amonhen_commands::menu(menu) {
+        let items = gio::Menu::new();
+        for c in section.iter().filter(|c| !PENDING.contains(&c.id)) {
+            items.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
+        }
+        if items.n_items() > 0 {
+            out.append_section(None, &items);
+        }
+    }
+    out
+}
+
 fn primary_menu() -> gio::Menu {
+    use amonhen_model::tr;
     let menu = gio::Menu::new();
     let submenus = gio::Menu::new();
-    submenus.append_submenu(
-        Some("File"),
-        &menu_of(&[
-            Some(("New Window", "win.new-window")),
-            Some(("Open…", "win.open")),
-            Some(("Add Remote…", "win.add-remote")),
-            None,
-            Some(("Close", "win.close")),
-        ]),
-    );
-    submenus.append_submenu(
-        Some("View"),
-        &menu_of(&[
-            Some(("Working Copy", "win.show-working-copy")),
-            Some(("History", "win.show-history")),
-            None,
-            Some(("Refresh", "win.refresh")),
-            None,
-            Some(("Show Sidebar", "win.show-sidebar")),
-        ]),
-    );
-    submenus.append_submenu(
-        Some("Navigate"),
-        &menu_of(&[
-            Some(("Switch Branch…", "win.switch-branch")),
-            Some(("Go to HEAD", "win.go-to-head")),
-            Some(("Go to Parent", "win.go-to-parent")),
-            Some(("Go to Child", "win.go-to-child")),
-        ]),
-    );
-    submenus.append_submenu(
-        Some("Commit"),
-        &menu_of(&[
-            Some(("Commit", "win.commit")),
-            Some(("Commit and Push", "win.commit-and-push")),
-            Some(("Stage All", "win.stage-all")),
-        ]),
-    );
-    menu.append_section(None, &submenus);
-    menu.append_section(
+    let file = menu_of(&[
+        Some((&tr!("New Window"), "win.new-window")),
+        Some((&tr!("Open…"), "win.open")),
         None,
-        &menu_of(&[
-            Some(("Settings", "win.settings")),
-            Some(("Activity", "win.activity")),
-            Some(("Keyboard Shortcuts", "win.shortcuts")),
-            Some(("About Amon Hen", "win.about")),
-        ]),
-    );
+        Some((&tr!("Close"), "win.close")),
+    ]);
+    let quick_open = table_sections(Menu::File);
+    if quick_open.n_items() > 0 {
+        file.insert_section(1, None, &quick_open);
+    }
+    submenus.append_submenu(Some(&tr!("File")), &file);
+    for (name, part) in [
+        (tr!("Edit"), Menu::Edit),
+        (tr!("View"), Menu::View),
+        (tr!("Navigate"), Menu::Navigate),
+        ("Commit".to_owned(), Menu::Commit),
+    ] {
+        let items = table_sections(part);
+        if items.n_items() > 0 {
+            submenus.append_submenu(Some(&name), &items);
+        }
+    }
+    menu.append_section(None, &submenus);
+    let app = gio::Menu::new();
+    for part in [Menu::App, Menu::Window] {
+        for c in amonhen_commands::menu(part).into_iter().flatten() {
+            if !PENDING.contains(&c.id) {
+                app.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
+            }
+        }
+    }
+    app.append(Some(&tr!("Keyboard Shortcuts")), Some("win.shortcuts"));
+    app.append(Some(&tr!("About Amon Hen")), Some("win.about"));
+    menu.append_section(None, &app);
     menu
 }
 
 fn repository_menu() -> gio::Menu {
-    let menu = gio::Menu::new();
-    let sync = gio::Menu::new();
-    sync.append(Some("Fetch"), Some("win.fetch"));
-    sync.append(Some("Pull"), Some("win.pull"));
-    sync.append_submenu(
-        Some("Pull With"),
-        &menu_of(&[
-            Some(("Merge", "win.pull-merge")),
-            Some(("Rebase", "win.pull-rebase")),
-            Some(("Fast-Forward Only", "win.pull-ff-only")),
-        ]),
-    );
-    sync.append(Some("Push"), Some("win.push"));
-    sync.append(Some("Force Push (with Lease)…"), Some("win.force-push"));
-    menu.append_section(None, &sync);
-    let rest = menu_of(&[
-        Some(("New Branch…", "win.new-branch")),
-        Some(("Rename Branch…", "win.rename-branch")),
-        Some(("Set Upstream…", "win.set-upstream")),
-        Some(("New Tag…", "win.new-tag")),
-        Some(("Merge…", "win.merge")),
-        Some(("Rebase…", "win.rebase")),
-        None,
-        Some(("Continue", "win.continue")),
-        Some(("Skip", "win.skip")),
-        Some(("Abort", "win.abort")),
-        None,
-        Some(("Stash…", "win.stash")),
-        Some(("Pop Stash", "win.pop-stash")),
-        None,
-        Some(("Undo", "win.undo")),
-        None,
-        Some(("Rebuild History", "win.rebuild-history")),
-        None,
-        Some(("Open in Terminal", "win.open-in-terminal")),
-        Some(("Reveal in Files", "win.reveal-in-files")),
-    ]);
-    for i in 0..rest.n_items() {
-        if let Some(section) = rest.item_link(i, gio::MENU_LINK_SECTION) {
-            menu.append_section(None, &section);
-        }
-    }
-    menu
+    table_sections(Menu::Repository)
 }
 
 fn show_page(p: &Parts, page: Page) {
@@ -872,77 +864,57 @@ fn open_folder(p: &Rc<Parts>) {
     });
 }
 
+/// ショートカットの一覧（メニューごと。表の操作は表から）。
 fn show_shortcuts(p: &Rc<Parts>) {
-    let group = |title: &str, items: &[(&str, &str)]| {
+    use amonhen_model::tr;
+    let accels = accels();
+    let group = |title: &str, items: &[(String, String)]| {
         let group = gtk::ShortcutsGroup::builder().title(title).build();
         for (action, label) in items {
-            let accel = ACCELS
-                .iter()
-                .find(|(a, _)| a == action)
-                .map_or(*action, |(_, k)| *k);
-            let shortcut = gtk::ShortcutsShortcut::builder()
-                .accelerator(accel)
-                .title(*label)
-                .build();
-            group.add_shortcut(&shortcut);
+            if let Some((_, accel)) = accels.iter().find(|(a, _)| a == action) {
+                let shortcut = gtk::ShortcutsShortcut::builder()
+                    .accelerator(accel.as_str())
+                    .title(label.as_str())
+                    .build();
+                group.add_shortcut(&shortcut);
+            }
         }
         group
+    };
+    let table = |menu: Menu| -> Vec<(String, String)> {
+        amonhen_commands::menu(menu)
+            .into_iter()
+            .flatten()
+            .filter(|c| !PENDING.contains(&c.id))
+            .map(|c| (format!("win.{}", c.id), title(c)))
+            .collect()
     };
     let section = gtk::ShortcutsSection::builder()
         .section_name("main")
         .build();
-    section.add_group(&group(
-        "File",
-        &[
-            ("win.new-window", "New Window"),
-            ("win.open", "Open…"),
-            ("win.close", "Close"),
-            ("app.quit", "Quit"),
-        ],
-    ));
-    section.add_group(&group(
-        "View",
-        &[
-            ("win.show-working-copy", "Working Copy"),
-            ("win.show-history", "History"),
-            ("win.refresh", "Refresh"),
-            ("win.show-sidebar", "Show Sidebar"),
-        ],
-    ));
-    section.add_group(&group(
-        "Navigate",
-        &[
-            ("win.switch-branch", "Switch Branch…"),
-            ("win.go-to-head", "Go to HEAD"),
-            ("win.go-to-parent", "Go to Parent"),
-            ("win.go-to-child", "Go to Child"),
-        ],
-    ));
-    section.add_group(&group(
-        "Repository",
-        &[
-            ("win.fetch", "Fetch"),
-            ("win.pull", "Pull"),
-            ("win.push", "Push"),
-            ("win.new-branch", "New Branch…"),
-            ("win.merge", "Merge…"),
-            ("win.rebase", "Rebase…"),
-            ("win.stash", "Stash…"),
-            ("win.pop-stash", "Pop Stash"),
-            ("win.undo", "Undo"),
-        ],
-    ));
-    section.add_group(&group(
-        "Commit",
-        &[
-            ("win.commit", "Commit"),
-            ("win.commit-and-push", "Commit and Push"),
-        ],
-    ));
-    section.add_group(&group(
-        "Window",
-        &[("win.settings", "Settings"), ("win.activity", "Activity")],
-    ));
+    let mut file = vec![
+        ("win.new-window".to_owned(), tr!("New Window")),
+        ("win.open".to_owned(), tr!("Open…")),
+        ("win.close".to_owned(), tr!("Close")),
+        ("app.quit".to_owned(), tr!("Quit")),
+    ];
+    file.extend(table(Menu::File));
+    section.add_group(&group(&tr!("File"), &file));
+    for (name, menu) in [
+        (tr!("Edit"), Menu::Edit),
+        (tr!("View"), Menu::View),
+        (tr!("Navigate"), Menu::Navigate),
+        ("Repository".to_owned(), Menu::Repository),
+        ("Commit".to_owned(), Menu::Commit),
+    ] {
+        let items = table(menu);
+        if !items.is_empty() {
+            section.add_group(&group(&name, &items));
+        }
+    }
+    let mut window = table(Menu::App);
+    window.extend(table(Menu::Window));
+    section.add_group(&group(&tr!("Window"), &window));
     let window = gtk::ShortcutsWindow::builder()
         .transient_for(&p.window)
         .modal(true)
@@ -963,4 +935,41 @@ fn show_about(p: &Rc<Parts>) {
         .authors(["Shoichi Fukusaka"])
         .build()
         .present();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_command_in_the_table_has_an_action_or_is_pending() {
+        let handled: Vec<&str> = handlers()
+            .iter()
+            .map(|(id, _)| *id)
+            .chain(STATEFUL.iter().copied())
+            .collect();
+        for c in COMMANDS {
+            let has = handled.contains(&c.id);
+            let pending = PENDING.contains(&c.id);
+            assert!(
+                has != pending,
+                "{}: 処理があるか PENDING のどちらか一方",
+                c.id
+            );
+        }
+        for id in PENDING {
+            assert!(amonhen_commands::find(id).is_some(), "表にない: {id}");
+        }
+    }
+
+    #[test]
+    fn shortcuts_are_unique() {
+        let accels = accels();
+        for (i, (a, k)) in accels.iter().enumerate() {
+            assert!(
+                !accels[i + 1..].iter().any(|(_, other)| other == k),
+                "{a} のキー {k} がぶつかる"
+            );
+        }
+    }
 }
