@@ -188,6 +188,23 @@ pub fn auto(name: &str, ready: impl Fn() -> bool + 'static, f: impl FnOnce() + '
     });
 }
 
+/// `button` を押すよう頼まれていれば（`--ai`）、見えて押せるようになったところで押す。
+pub fn auto_click(button: &gtk::Button, name: &str) {
+    let (b, c) = (button.downgrade(), button.downgrade());
+    auto(
+        name,
+        move || {
+            b.upgrade()
+                .is_some_and(|b| b.is_mapped() && b.is_sensitive())
+        },
+        move || {
+            if let Some(b) = c.upgrade() {
+                b.emit_clicked();
+            }
+        },
+    );
+}
+
 fn busy(by: i32) {
     BUSY.with(|b| b.set((b.get() as i32 + by).max(0) as u32));
 }

@@ -10,6 +10,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use amonhen_core::Repository;
 use amonhen_core::conflict::{self, Choice, MagicRules};
@@ -220,6 +221,12 @@ struct Editor {
     note: gtk::Label,
     buttons: Vec<gtk::Button>,
     accept_base: Option<gtk::Button>,
+    /// AI の解消・解説のボタン（コンフリクトがあり、AI を使えるときだけ押せる）。
+    ai_buttons: Vec<gtk::Button>,
+    /// AI の解消の提案の帯と、出している提案（そのときのコンフリクトと、提案）。
+    band: Band,
+    proposal: RefCell<Option<(Region, amonhen_assist::Proposal)>>,
+    ai_cancel: RefCell<Arc<AtomicBool>>,
     on_resolved: Box<dyn Fn()>,
 }
 
@@ -228,6 +235,8 @@ thread_local! {
     static OPEN: RefCell<Vec<(String, glib::WeakRef<gtk::Window>)>> = RefCell::default();
     /// 次に開いたとき、最初のコンフリクトをこれで解く（`--accept`。確認用）。
     static ACCEPT_ONCE: Cell<Option<Choice>> = const { Cell::new(None) };
+    /// 開いているマージエディタ（窓を閉じたら外す）。
+    static KEEP: RefCell<Vec<Rc<Editor>>> = RefCell::default();
 }
 
 /// 次に開いたとき、最初のコンフリクトを `choice`（`ours`・`theirs`・`both`・`base`）で解く（確認用）。
@@ -297,6 +306,15 @@ pub fn open(
             o.retain(|(_, w)| w.upgrade().is_some());
             o.push((path, editor.window.downgrade()));
         });
+        // 窓がある間は持っておく（ボタンなどは弱い参照で呼ぶので、持たなければ開いた直後に消える）。
+        KEEP.with(|k| k.borrow_mut().push(editor.clone()));
+        let weak = Rc::downgrade(&editor);
+        editor.window.connect_destroy(move |_| {
+            KEEP.with(|k| {
+                k.borrow_mut()
+                    .retain(|e| !std::ptr::eq(Rc::as_ptr(e), weak.as_ptr()))
+            });
+        });
         editor.window.present();
         Editor::opened(&editor);
         if let Some(choice) = ACCEPT_ONCE.with(|a| a.take()) {
@@ -330,6 +348,18 @@ impl Editor {
         magic.set_tooltip_text(Some(&tr!(
             "Resolve all conflicts that fixed rules can solve: both sides are the same, only one side changed (diff3), only whitespace differs, or different words on the same line changed (diff3). You can Undo it."
         )));
+        let ai_resolve = gtk::Button::with_label(&tr!("Resolve with AI"));
+        let ai_explain = gtk::Button::with_label(&tr!("Explain with AI"));
+        crate::assist::track(
+            &ai_resolve,
+            tr!(
+                "AI: Suggest a resolution for the selected conflict (Result doesn’t change until you accept it)."
+            ),
+        );
+        crate::assist::track(
+            &ai_explain,
+            tr!("AI: Explain what each side of the selected conflict is trying to do."),
+        );
         let note = gtk::Label::new(None);
         note.add_css_class("dim-label");
         note.set_ellipsize(gtk::pango::EllipsizeMode::End);
@@ -370,6 +400,8 @@ impl Editor {
         bar.append(&previous);
         bar.append(&next);
         bar.append(&magic);
+        bar.append(&ai_resolve);
+        bar.append(&ai_explain);
         bar.append(&note);
         for (b, _) in &accept_buttons {
             bar.append(b);
@@ -387,8 +419,10 @@ impl Editor {
         for p in [&base, &current, &result_pane, &incoming] {
             columns.append(&p.root);
         }
+        let band = Band::new();
         let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
         content.append(&bar);
+        content.append(&band.root);
         content.append(&columns);
         let window = gtk::Window::builder()
             .title(format!("Merge — {path}"))
@@ -446,6 +480,10 @@ impl Editor {
             note,
             buttons,
             accept_base,
+            ai_buttons: vec![ai_resolve.clone(), ai_explain.clone()],
+            band,
+            proposal: RefCell::default(),
+            ai_cancel: RefCell::new(Arc::new(AtomicBool::new(false))),
             on_resolved,
         });
         this.update_conflicts();
@@ -465,6 +503,19 @@ impl Editor {
         next.connect_clicked(move |_| f());
         let f = with(Self::magic_merge);
         magic.connect_clicked(move |_| f());
+        let f = with(Self::ai_resolve);
+        ai_resolve.connect_clicked(move |_| f());
+        let f = with(Self::ai_explain);
+        ai_explain.connect_clicked(move |_| f());
+        let f = with(|t| t.accept_proposal(false));
+        this.band.accept.connect_clicked(move |_| f());
+        let f = with(|t| t.accept_proposal(true));
+        this.band.edit.connect_clicked(move |_| f());
+        let f = with(|t| t.reject_proposal());
+        this.band.reject.connect_clicked(move |_| f());
+        crate::assist::auto_click(&ai_resolve, "resolve");
+        crate::assist::auto_click(&ai_explain, "explain-conflict");
+        crate::assist::auto_click(&this.band.accept, "accept");
         for (button, choice) in accept_buttons {
             let weak = Rc::downgrade(&this);
             button.connect_clicked(move |_| {
@@ -641,6 +692,9 @@ impl Editor {
         });
         for b in &self.buttons {
             b.set_sensitive(!conflicts.is_empty());
+        }
+        for b in &self.ai_buttons {
+            b.set_sensitive(!conflicts.is_empty() && crate::assist::is_ready());
         }
         // 共通の祖先は、対応のわかるコンフリクトでだけ選べる。
         if let Some(b) = &self.accept_base {
@@ -899,5 +953,299 @@ impl Editor {
                 this.window.destroy();
             }
         });
+    }
+}
+
+/// AI の解消の提案を見せる帯（紫の帯と理由。採用するまで Result は変わらない）。
+struct Band {
+    root: gtk::Box,
+    spinner: gtk::Spinner,
+    status: gtk::Label,
+    reason: gtk::Label,
+    text: gtk::Label,
+    accept: gtk::Button,
+    edit: gtk::Button,
+    reject: gtk::Button,
+}
+
+impl Band {
+    fn new() -> Self {
+        crate::assist::install_css();
+        let spinner = gtk::Spinner::new();
+        let status = gtk::Label::new(None);
+        status.add_css_class("heading");
+        status.set_xalign(0.0);
+        status.set_hexpand(true);
+        status.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let accept = gtk::Button::with_label(&tr!("Accept"));
+        accept.add_css_class("suggested-action");
+        let edit = gtk::Button::with_label(&tr!("Edit and Accept"));
+        let reject = gtk::Button::with_label(&tr!("Reject"));
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        for w in [
+            spinner.upcast_ref::<gtk::Widget>(),
+            status.upcast_ref(),
+            reject.upcast_ref(),
+            edit.upcast_ref(),
+            accept.upcast_ref(),
+        ] {
+            head.append(w);
+        }
+        let reason = gtk::Label::new(None);
+        reason.set_xalign(0.0);
+        reason.set_wrap(true);
+        reason.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        reason.set_selectable(true);
+        let text = gtk::Label::new(None);
+        text.set_xalign(0.0);
+        text.set_yalign(0.0);
+        text.set_selectable(true);
+        text.add_css_class("monospace");
+        let scrolled = gtk::ScrolledWindow::builder()
+            .child(&text)
+            .propagate_natural_height(true)
+            .max_content_height(180)
+            .build();
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 6);
+        root.add_css_class("ai-suggestion");
+        root.set_margin_start(6);
+        root.set_margin_end(6);
+        root.set_margin_bottom(6);
+        root.append(&head);
+        root.append(&reason);
+        root.append(&scrolled);
+        root.set_visible(false);
+        Self {
+            root,
+            spinner,
+            status,
+            reason,
+            text,
+            accept,
+            edit,
+            reject,
+        }
+    }
+
+    /// 問い合わせ中（`status`）か、提案（理由と中身）を見せる。
+    fn show(&self, status: &str, proposal: Option<&amonhen_assist::Proposal>, error: Option<&str>) {
+        self.root.set_visible(true);
+        self.status.set_text(status);
+        let waiting = proposal.is_none() && error.is_none();
+        self.spinner.set_visible(waiting);
+        if waiting {
+            self.spinner.start();
+        } else {
+            self.spinner.stop();
+        }
+        for b in [&self.accept, &self.edit] {
+            b.set_visible(proposal.is_some());
+        }
+        self.reject.set_label(&if proposal.is_some() {
+            tr!("Reject")
+        } else {
+            tr!("Close")
+        });
+        let reason = match (proposal, error) {
+            (Some(p), _) => tr!(
+                "Reason: {reason}",
+                reason = p.reason.clone().unwrap_or_else(|| tr!("(none)"))
+            ),
+            (None, Some(e)) => e.to_owned(),
+            (None, None) => String::new(),
+        };
+        self.reason.set_text(&reason);
+        self.reason.set_visible(!reason.is_empty());
+        let text = proposal.map(|p| p.text.as_str()).unwrap_or_default();
+        self.text.set_text(text);
+        self.text.set_visible(!text.is_empty());
+    }
+}
+
+// AI: 選んだコンフリクトの解消の提案（帯で見せ、採用したら Result に入れる）と、両側の意図の解説（窓で）。
+impl Editor {
+    /// 選んだコンフリクトの両側と、共通の祖先の中身（と、その時の Result のコンフリクト）。
+    fn selected_texts(&self) -> Option<(Region, String)> {
+        let conflicts = self.conflicts.borrow();
+        let index = self.selected.get();
+        let c = conflicts.get(index)?.clone();
+        let mut base = String::new();
+        if let (Some(Some(j)), Some(side)) = (self.original_of.borrow().get(index), &self.sides[2])
+            && let Some(&(start, end)) = side.regions.get(*j)
+        {
+            let lines: Vec<&str> = side.text.split('\n').collect();
+            let (start, end) = (start.min(lines.len()), end.min(lines.len()));
+            base = lines[start..end].join("\n");
+        }
+        Some((c, base))
+    }
+
+    fn workdir(&self) -> Option<std::path::PathBuf> {
+        self.actions.repo().and_then(|r| r.paths().workdir)
+    }
+
+    fn ai_variables(&self, c: &Region, base: String) -> amonhen_assist::Variables {
+        crate::assist::variables([
+            ("path", self.path.clone()),
+            ("ours", c.current.clone()),
+            ("theirs", c.incoming.clone()),
+            ("base", base),
+        ])
+    }
+
+    /// 両側が何をしようとしているかを解説する（窓で）。
+    fn ai_explain(this: &Rc<Self>) {
+        let Some((c, base)) = this.selected_texts() else {
+            this.window.error_bell();
+            return;
+        };
+        let vars = this.ai_variables(&c, base);
+        let (workdir, path) = (this.workdir(), this.path.clone());
+        let parent: gtk::Window = this.window.clone();
+        glib::spawn_future_local(async move {
+            let key = crate::assist::repository_key(workdir.as_deref());
+            let summary = tr!("One conflict in {path}", path = path);
+            if !crate::assist::confirm(Some(&parent), &key, &summary).await {
+                return;
+            }
+            let p = Some(parent.clone());
+            crate::assist::panel(
+                Some(&parent),
+                &tr!("Conflict Explanation"),
+                None,
+                None,
+                crate::assist::work(move |run: crate::assist::Run| {
+                    crate::assist::run_with(
+                        p.clone(),
+                        amonhen_assist::Purpose::ExplainConflict,
+                        vars.clone(),
+                        workdir.clone(),
+                        run,
+                    )
+                }),
+            );
+        });
+    }
+
+    /// 解消の提案を頼み、帯で見せる。形の違う返事・マーカーの残る提案は失敗として見せる。
+    fn ai_resolve(this: &Rc<Self>) {
+        let Some((c, base)) = this.selected_texts() else {
+            this.window.error_bell();
+            return;
+        };
+        let vars = this.ai_variables(&c, base);
+        let workdir = this.workdir();
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let Some(this) = weak.upgrade() else { return };
+            let key = crate::assist::repository_key(workdir.as_deref());
+            let summary = tr!("One conflict in {path}", path = this.path);
+            if !crate::assist::confirm(Some(&this.window), &key, &summary).await {
+                return;
+            }
+            this.ai_cancel.borrow().store(true, Ordering::Relaxed);
+            let cancel = Arc::new(AtomicBool::new(false));
+            this.ai_cancel.replace(cancel.clone());
+            this.proposal.replace(None);
+            this.band.show(&tr!("Waiting…"), None, None);
+            let w = Rc::downgrade(&this);
+            let on_text: crate::assist::OnText = Rc::new(move |_| {
+                if let Some(this) = w.upgrade() {
+                    this.band.status.set_text(&tr!("Receiving…"));
+                }
+            });
+            let parent = Some(this.window.clone());
+            drop(this);
+            let result = crate::assist::run(
+                parent,
+                amonhen_assist::Purpose::ResolveConflict,
+                vars,
+                workdir,
+                true,
+                cancel.clone(),
+                on_text,
+            )
+            .await;
+            let Some(this) = weak.upgrade() else { return };
+            if cancel.load(Ordering::Relaxed) {
+                return;
+            }
+            let failed = tr!("Failed");
+            match result.and_then(|raw| {
+                let proposal = amonhen_assist::Proposal::parse(&raw).ok_or_else(|| {
+                    format!(
+                        "{}\n\n{raw}",
+                        tr!("Couldn’t read the reply (not JSON in the expected shape):")
+                    )
+                })?;
+                if proposal.has_markers() {
+                    return Err(format!(
+                        "{}\n\n{}",
+                        tr!("The suggestion still has conflict markers. Try again."),
+                        proposal.text
+                    ));
+                }
+                Ok(proposal)
+            }) {
+                Ok(proposal) => {
+                    this.band.show(&tr!("AI Suggestion"), Some(&proposal), None);
+                    this.proposal.replace(Some((c, proposal)));
+                }
+                Err(e) => this.band.show(&failed, None, Some(&e)),
+            }
+        });
+    }
+
+    /// 提案で、そのコンフリクト（マーカーを含む行）を置き換える（Undo で戻せる）。コンフリクトが動いていれば
+    /// 中身で探し直す。`edit` なら、入れた所を選んで書き換えられるようにする。
+    fn accept_proposal(&self, edit: bool) {
+        let Some((original, proposal)) = self.proposal.take() else {
+            return;
+        };
+        self.band.root.set_visible(false);
+        let found = {
+            let conflicts = self.conflicts.borrow();
+            conflicts
+                .iter()
+                .find(|c| c.current == original.current && c.incoming == original.incoming)
+                .or_else(|| conflicts.iter().find(|c| c.lines == original.lines))
+                .map(|c| c.lines)
+        };
+        let Some((start, end)) = found else {
+            self.window.error_bell();
+            return;
+        };
+        let old = self.result.text();
+        let mut lines: Vec<&str> = old.split('\n').collect();
+        let (start, end) = (start.min(lines.len()), end.min(lines.len()));
+        let mut replacement: Vec<&str> = proposal.text.split('\n').collect();
+        if replacement.last() == Some(&"") {
+            replacement.pop();
+        }
+        let count = replacement.len();
+        lines.splice(start..end, replacement);
+        self.replace(&lines.join("\n"));
+        self.update_conflicts();
+        self.note
+            .set_text(&tr!("Put in the AI’s suggestion (Ctrl+Z to undo)."));
+        if edit {
+            let buffer = self.result.view.buffer();
+            let from = self.result.line_iter(start);
+            let mut to = self.result.line_iter(start + count);
+            if count > 0 && start + count < lines.len() {
+                to.backward_char();
+            }
+            buffer.select_range(&from, &to);
+            self.result.view.grab_focus();
+            self.result
+                .view
+                .scroll_to_iter(&mut from.clone(), 0.1, false, 0.0, 0.0);
+        }
+    }
+
+    fn reject_proposal(&self) {
+        self.ai_cancel.borrow().store(true, Ordering::Relaxed);
+        self.proposal.replace(None);
+        self.band.root.set_visible(false);
     }
 }
