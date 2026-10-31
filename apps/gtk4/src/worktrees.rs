@@ -831,8 +831,9 @@ pub fn menu(
             }));
         }
     }
-    // メインの worktree と、開いたリポジトリの worktree は消せない。
-    if !info.main && !info.current {
+    // メインの worktree は消せないので出さない。開いたリポジトリの worktree には出し、選ぶと消さずに音を鳴らす
+    // （macOS 版と同じ。`remove`）。
+    if !info.main {
         items.push(Item::Separator);
         if info.prunable.is_some() {
             let a = actions.clone();

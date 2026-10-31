@@ -354,7 +354,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Worktrees with change counts | ✓ | ✓ | — | ✓ | CLI: `worktree list --changes`. |
 | The edited worktree (✎) and switching it | ✓ | ✓ | — | n/a | CLI: Works on the worktree it runs in. |
 | New Worktree… (from a branch or commit) | ✓ | ✓ | — | ✓ |  |
-| Remove Worktree (asks, `--force` with changes) | ✓ | △ | — | ✓ | GTK4: Hidden for the main worktree and the opened one. |
+| Remove Worktree (asks, `--force` with changes) | ✓ | ✓ | — | ✓ |  |
 | Prune worktrees | ✓ | ✓ | — | ✓ |  |
 | A worktree's folder opens its repository with it edited | ✓ | ✓ | — | n/a |  |
 

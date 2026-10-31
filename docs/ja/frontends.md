@@ -354,7 +354,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | worktree と変更の数 | ✓ | ✓ | — | ✓ | CLI: `worktree list --changes`。 |
 | 書き込む先の worktree（✎）と切り替え | ✓ | ✓ | — | n/a | CLI: 動かした worktree で働く。 |
 | New Worktree…（ブランチ・コミットから） | ✓ | ✓ | — | ✓ |  |
-| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | △ | — | ✓ | GTK4: main と開いたものでは出さない。 |
+| Remove Worktree（尋ね、変更があれば `--force`） | ✓ | ✓ | — | ✓ |  |
 | worktree の Prune | ✓ | ✓ | — | ✓ |  |
 | worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | — | n/a |  |
 
