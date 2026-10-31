@@ -493,7 +493,10 @@ fn primary_menu() -> gio::Menu {
         None,
         Some((&tr!("Close"), "win.close")),
     ]);
-    if let Some(first) = file.item_link(0, gio::MENU_LINK_SECTION).and_downcast::<gio::Menu>() {
+    if let Some(first) = file
+        .item_link(0, gio::MENU_LINK_SECTION)
+        .and_downcast::<gio::Menu>()
+    {
         first.append_submenu(Some(&tr!("Open Recent")), &crate::repos::recent_menu());
     }
     let quick_open = table_sections(Menu::File);

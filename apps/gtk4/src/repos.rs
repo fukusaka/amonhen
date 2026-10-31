@@ -27,8 +27,7 @@ pub fn record(location: &Path) {
     let text = if amonhen_remote::location::is_remote(&text) {
         text
     } else {
-        std::fs::canonicalize(location)
-            .map_or(text, |p| p.to_string_lossy().into_owned())
+        std::fs::canonicalize(location).map_or(text, |p| p.to_string_lossy().into_owned())
     };
     let mut list = recent();
     list.retain(|l| *l != text);
@@ -109,7 +108,14 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
             glib::spawn_future_local(async move {
                 let repos = gio::spawn_blocking(|| {
                     let out = amonhen_model::process::command("gh")
-                        .args(["repo", "list", "--json", "nameWithOwner,url", "--limit", "200"])
+                        .args([
+                            "repo",
+                            "list",
+                            "--json",
+                            "nameWithOwner,url",
+                            "--limit",
+                            "200",
+                        ])
                         .output()
                         .ok()?;
                     let list: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).ok()?;
