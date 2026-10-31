@@ -157,8 +157,6 @@ const FE_ACCELS: &[(&str, &str)] = &[
 
 /// 表にあって、この FE にまだ機能のない操作（メニューに出さない）。
 pub const PENDING: &[&str] = &[
-    "create-pull-request",
-    "open-on-github",
     "new-worktree",
     "prune-worktrees",
     "filter-branches",
@@ -272,6 +270,17 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             }),
         ),
         ("open-in-terminal", Box::new(open_in_terminal)),
+        (
+            "open-on-github",
+            Box::new(|p| crate::github::open_on_github(&p.actions, head_branch(p))),
+        ),
+        (
+            "create-pull-request",
+            Box::new(|p| match head_branch(p) {
+                Some(branch) => crate::github::create_pull_request(&p.actions, branch, false),
+                None => p.window.error_bell(),
+            }),
+        ),
         ("reveal-in-files", Box::new(reveal_in_files)),
         // Commit
         ("commit", Box::new(|p| p.working.commit_from_menu(None))),

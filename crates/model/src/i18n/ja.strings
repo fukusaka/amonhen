@@ -942,3 +942,13 @@
 "Message: {message}" = "メッセージ: {message}";
 "Can’t Merge Them in One Commit" = "1 つのコミットにまとめられません";
 "git stopped because one of them conflicts before the last, and nothing was changed. Merge them one by one instead? Each makes its own merge commit, and you resolve conflicts as they come. Undo puts them all back." = "最後より前のものがコンフリクトしたので git は止まりました。何も変わっていません。代わりに 1 つずつ merge しますか？ それぞれが merge のコミットになり、コンフリクトはその都度解きます。Undo ですべて戻せます。";
+
+/* GTK4 の FE: GitHub */
+"From {branch}" = "{branch} から";
+"Create" = "作成";
+"Create as Draft" = "Draft として作る";
+"Title:" = "タイトル:";
+"Body:" = "本文:";
+"Open in Browser" = "ブラウザで開く";
+"Pull Request Created" = "プルリクエストを作りました";
+"Couldn’t create the pull request" = "プルリクエストを作れませんでした";

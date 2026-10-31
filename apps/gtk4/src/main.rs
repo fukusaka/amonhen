@@ -11,6 +11,7 @@ mod commitops;
 mod details;
 mod diff;
 mod filetools;
+mod github;
 mod graph;
 mod history;
 mod icon;
