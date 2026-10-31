@@ -594,9 +594,14 @@ fn build_tab(
     // リポジトリの worktree（サイドバーの Working Copy の下に、変更の数と並べる）。
     let worktrees = worktrees::Worktrees::new(&text, pending.clone());
     let (weak_sidebar, w) = (Rc::downgrade(&sidebar), Rc::downgrade(&worktrees));
+    let t = Rc::downgrade(&tab);
     working.connect_count(move |count| {
         if let Some(sidebar) = weak_sidebar.upgrade() {
             sidebar.set_working_count(count);
+        }
+        // タブの名前の ●。
+        if let Some(tab) = t.upgrade() {
+            tab.set_changes(count as u32);
         }
         if let Some(worktrees) = w.upgrade() {
             worktrees.set_editing_count(count);
@@ -1096,6 +1101,7 @@ fn build_tab(
             let _ = stop.send(STOP);
         });
     }
+    let tab_weak = Rc::downgrade(&tab);
     std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
@@ -1476,6 +1482,20 @@ fn build_tab(
                         // 今のブランチと HEAD は、書き込む先の worktree のもの。
                         raw_refs.replace(Some(refs.clone()));
                         let refs = worktrees.adjust(&refs);
+                        // タブの名前の ↑↓（今のブランチの上流との差）。
+                        if let Some(tab) = tab_weak.upgrade() {
+                            let head = refs.refs.head_branch.as_deref();
+                            let (ahead, behind) = refs
+                                .refs
+                                .entries
+                                .iter()
+                                .find(|e| {
+                                    e.kind == amonhen_model::RefKind::Local
+                                        && Some(e.name.as_str()) == head
+                                })
+                                .map_or((0, 0), |e| (e.ahead, e.behind));
+                            tab.set_tracking(ahead, behind);
+                        }
                         match &refs.refs.head_branch {
                             Some(branch) => subtitle.set_text(branch),
                             None => subtitle.set_text("detached HEAD"),

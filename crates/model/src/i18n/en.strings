@@ -48,3 +48,6 @@
 "{name} ({count} places)" = "{name} ({count} place)";
 "{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays." = "{path} has uncommitted changes in {count} file. They are lost with the folder. The branch stays.";
 "{count} checks" = "{count} check";
+"{count} changed files" = "{count} changed file";
+"{count} commits ahead of upstream" = "{count} commit ahead of upstream";
+"{count} commits behind upstream" = "{count} commit behind upstream";

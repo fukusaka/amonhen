@@ -1601,4 +1601,7 @@
 "Show Previous Tab" = "前のタブを表示";
 "Move Tab to New Window" = "タブを新規ウインドウに移動";
 "Merge All Windows" = "すべてのウインドウを結合";
+"{count} changed files" = "変更のあるファイル {count} 個";
+"{count} commits ahead of upstream" = "上流より {count} コミット先";
+"{count} commits behind upstream" = "上流より {count} コミット後ろ";
 "Enter Open in Tab   Ctrl+Enter Open in New Window   Esc Close" = "Enter タブで開く　Ctrl+Enter 新しいウィンドウで開く　Esc 閉じる";

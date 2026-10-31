@@ -37,7 +37,10 @@ pub struct Tab {
     pub location: String,
     /// 裏で読んでいる数（`--snapshot` は窓のすべてのタブでなくなるまで待つ）。
     pub pending: Rc<Cell<u32>>,
+    label: gtk::Label,
     handle: gtk::Box,
+    /// 未コミットの変更の数と、上流との差（↑ 先・↓ 後ろ）。
+    marks: Cell<(u32, u32, u32)>,
     closed: Cell<bool>,
     on_close: RefCell<Vec<Box<dyn FnOnce()>>>,
     on_front: RefCell<Vec<FrontCallback>>,
@@ -77,7 +80,9 @@ impl Tab {
             name: name.to_owned(),
             location: location.to_owned(),
             pending,
+            label,
             handle,
+            marks: Cell::new((0, 0, 0)),
             closed: Cell::new(false),
             on_close: RefCell::default(),
             on_front: RefCell::default(),
@@ -137,6 +142,43 @@ impl Tab {
         for f in callbacks {
             f();
         }
+    }
+
+    /// 未コミットの変更の数（タブの名前に ● を添える）。
+    pub fn set_changes(&self, count: u32) {
+        let (_, ahead, behind) = self.marks.get();
+        self.marks.set((count, ahead, behind));
+        self.show_marks();
+    }
+
+    /// 上流との差（タブの名前に ↑↓ を添える）。
+    pub fn set_tracking(&self, ahead: u32, behind: u32) {
+        let (count, _, _) = self.marks.get();
+        self.marks.set((count, ahead, behind));
+        self.show_marks();
+    }
+
+    /// タブの名前に、未コミットの変更（●）と上流との差（↑↓）を添える（macOS 版と同じ）。窓の名前は変えない。
+    fn show_marks(&self) {
+        let (count, ahead, behind) = self.marks.get();
+        let mut title = self.name.clone();
+        let mut tips = Vec::new();
+        if count > 0 {
+            title.push_str(" ●");
+            tips.push(tr!("{count} changed files", count = count));
+        }
+        if ahead > 0 {
+            title.push_str(&format!(" ↑{ahead}"));
+            tips.push(tr!("{count} commits ahead of upstream", count = ahead));
+        }
+        if behind > 0 {
+            title.push_str(&format!(" ↓{behind}"));
+            tips.push(tr!("{count} commits behind upstream", count = behind));
+        }
+        self.label.set_text(&title);
+        let tip = tips.join(&tr!(", "));
+        self.label
+            .set_tooltip_text((!tip.is_empty()).then_some(tip.as_str()));
     }
 
     /// 書き込む先の worktree の名前（確認のシートに出す）。
