@@ -118,8 +118,8 @@ extension Actions {
     private func merge(_ revs: [String], oneByOne: Bool) {
         var command: [String: Any] = ["op": "merge", "rev": revs]
         if oneByOne { command["oneByOne"] = true }
-        perform(command, recover: oneByOne ? nil : { [weak self] failure in
-            guard let self, failure.kind == "octopus" else { return false }
+        perform(command, recover: { [weak self] failure in
+            guard let self, !oneByOne, failure.kind == "octopus" else { return false }
             let alert = makeAlert(
                 L("Can’t Merge Them in One Commit"),
                 L("git stopped because one of them conflicts before the last, and nothing was changed. Merge them one by one instead? Each makes its own merge commit, and you resolve conflicts as they come. Undo puts them all back."))

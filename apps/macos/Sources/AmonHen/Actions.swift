@@ -29,9 +29,9 @@ final class Actions {
     }
 
     /// `command` を実行する（`crates/core/src/command.rs` の `Command`）。失敗したら、`recover` が引き受けなければ
-    /// （false を返したら）知らせる。
+    /// （false を返したら）知らせる。`recover` は画面を触るので、メインスレッドで呼ぶ。
     func perform(_ command: [String: Any], completion: ((CommandResult) -> Void)? = nil,
-                 recover: ((OperationFailure) async -> Bool)? = nil) {
+                 recover: (@MainActor (OperationFailure) async -> Bool)? = nil) {
         let repository = self.repository
         RunningOperations.begin()
         Task {

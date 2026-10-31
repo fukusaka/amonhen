@@ -6,7 +6,7 @@ final class ShallowHistoryBand: NSView {
     static let height: CGFloat = 44
 
     /// 取り足す命令（`deepen`・`unshallow`）を実行する。終わったら（失敗しても）`done` を呼んでもらう。
-    var onFetch: (([String: Any], _ done: @escaping () -> Void) -> Void)?
+    var onFetch: (([String: Any], _ done: @escaping @MainActor () -> Void) -> Void)?
     /// 「この日付まで…」の初期値（境界のコミットの日時。分からなければ nil）。
     var boundaryDate: (() -> Date?)?
 
