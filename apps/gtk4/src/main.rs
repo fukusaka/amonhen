@@ -1362,7 +1362,18 @@ fn build_tab(
                                             glib::timeout_add_local_once(
                                                 std::time::Duration::from_millis(700 * i as u64),
                                                 move || {
-                                                    if let Some(window) = w.upgrade() {
+                                                    // タブの操作は前のタブの root にある（窓の win にはない）。
+                                                    let front = w
+                                                        .upgrade()
+                                                        .and_then(|w| tabs::host_of(&w))
+                                                        .and_then(|h| h.current());
+                                                    if let Some(tab) = front {
+                                                        let _ = WidgetExt::activate_action(
+                                                            &tab.root,
+                                                            &format!("win.{id}"),
+                                                            None,
+                                                        );
+                                                    } else if let Some(window) = w.upgrade() {
                                                         let _ = WidgetExt::activate_action(
                                                             &window,
                                                             &format!("win.{id}"),
@@ -1405,11 +1416,14 @@ fn build_tab(
                                 );
                             }
                             if let Some(page) = &args.repository_settings {
-                                let _ = WidgetExt::activate_action(
-                                    &window,
-                                    "win.repository-settings",
-                                    None,
-                                );
+                                // タブの操作は前のタブの root にある（窓の win にはない）。
+                                if let Some(tab) = tab_weak.upgrade() {
+                                    let _ = WidgetExt::activate_action(
+                                        &tab.root,
+                                        "win.repository-settings",
+                                        None,
+                                    );
+                                }
                                 reposettings::select(&settings_slot, page);
                                 pending.set(pending.get() + 1);
                                 let p = pending.clone();
