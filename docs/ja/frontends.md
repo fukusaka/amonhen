@@ -148,7 +148,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 直前の操作の Undo（尋ね、何を戻すか示す） | ✓ | ✓ | △ | ✓ | VSCode: 尋ねずに戻す。<br>CLI: `undo`（先に見るなら `--peek`）。 |
 | 範囲付きの History の検索（件名・作者・ID・パス・中身） | ✓ | ✓ | — | ✓ | GTK4: 範囲は検索の書き方で決める。<br>CLI: `log <query>`。 |
 | ahead/behind のバッジ | ✓ | ✓ | △ | △ | VSCode: サイドバーのブランチの行に出る。<br>CLI: `status` に出る。 |
-| ツールバーのカスタマイズ | ✓ | — | n/a | n/a |  |
+| ツールバーのカスタマイズ | ✓ | △ | n/a | n/a | GTK4: View > Customize Toolbar… の一覧で、見出しの左と右に出すボタンと順番を決める。Repository のメニュー・検索・主メニューは動かない。 |
 | 120 秒黙った network の git を止める | ✓ | ✓ | — | ✓ | VSCode: 拡張自身の git 実行層にはない。 |
 
 ## 5a. Stashes

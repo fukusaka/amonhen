@@ -60,6 +60,7 @@ mod tabs;
 mod tagsign;
 mod templates;
 mod titles;
+mod toolbar;
 mod workcopy;
 mod worktrees;
 

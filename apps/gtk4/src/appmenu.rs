@@ -152,17 +152,6 @@ impl Buttons {
     }
 }
 
-/// アイコンのボタン（`action` を実行する）。
-fn icon_button(kind: icon::Kind, action: &str, tip: &str) -> gtk::Button {
-    let icon = icon::Icon::default();
-    icon.set(kind, false);
-    let button = gtk::Button::new();
-    button.set_child(Some(&icon));
-    button.set_action_name(Some(action));
-    button.set_tooltip_text(Some(tip));
-    button
-}
-
 /// ▾ 付きのボタン（押すと `action`、▾ で `menu`）。アイコンの横に数を出せる。
 /// 数の付くボタン（Pull・Push。▾ のメニューは付けない: 押すと必ずシートで確かめる。docs/ux.md の「Toolbar」）。
 fn count_button(kind: icon::Kind, action: &str) -> (gtk::Button, gtk::Label) {
@@ -178,13 +167,6 @@ fn count_button(kind: icon::Kind, action: &str) -> (gtk::Button, gtk::Label) {
     button.set_child(Some(&inner));
     button.set_action_name(Some(action));
     (button, count)
-}
-
-/// ボタンの群れの間の空き（macOS のツールバーの space）。
-fn space() -> gtk::Box {
-    let b = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    b.set_width_request(8);
-    b
 }
 
 /// メニューの項目を選んだときの処理。
@@ -480,38 +462,26 @@ pub fn install(parts: Parts) -> Buttons {
         .action_name("win.switch-branch")
         .tooltip_text(tr!("Switch Branch (Ctrl+Shift+B)"))
         .build();
-    parts.header.pack_start(&branch_button);
-    parts.header.pack_start(&icon_button(
-        icon::Kind::Fetch,
-        "win.fetch",
-        &tr!("Fetch all remotes (Ctrl+Alt+F)"),
-    ));
     let (pull, pull_count) = count_button(icon::Kind::Pull, "win.pull");
-    parts.header.pack_start(&pull);
     let (push, push_count) = count_button(icon::Kind::Push, "win.push");
-    parts.header.pack_start(&push);
-    parts.header.pack_start(&space());
-    parts.header.pack_start(&icon_button(
-        icon::Kind::Merge,
-        "win.merge",
-        &tr!("Merge a branch, tag or the selected commit into the current branch (Ctrl+Alt+M)"),
-    ));
-    parts.header.pack_start(&icon_button(
-        icon::Kind::Rebase,
-        "win.rebase",
-        &tr!("Rebase the current branch onto a branch, tag or the selected commit (Ctrl+Alt+R)"),
-    ));
-    parts.header.pack_start(&space());
-    parts.header.pack_start(&icon_button(
-        icon::Kind::StashPush,
-        "win.stash",
-        &tr!("Stash your uncommitted changes (Ctrl+Alt+S)"),
-    ));
-    parts.header.pack_start(&icon_button(
-        icon::Kind::StashPop,
-        "win.pop-stash",
-        &tr!("Apply the latest stash and remove it (Ctrl+Alt+Shift+S)"),
-    ));
+    // ボタンの並びは View > Customize Toolbar… で変えられる（`toolbar.rs`）。左はここ、右は主メニューの左。
+    let toolbar_start = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    let toolbar_end = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    parts.header.pack_start(&toolbar_start);
+    crate::toolbar::install(
+        &toolbar_start,
+        &toolbar_end,
+        crate::toolbar::Given {
+            branch: branch_button.clone(),
+            pull: pull.clone(),
+            push: push.clone(),
+            undo: parts.actions.undo.clone(),
+        },
+    );
+    let customize = gio::SimpleAction::new("customize-toolbar", None);
+    let p = parts.clone();
+    customize.connect_activate(move |_, _| crate::toolbar::customize(p.window().upcast_ref()));
+    window.add_action(&customize);
 
     let primary = gtk::MenuButton::builder()
         .menu_model(&primary_menu())
@@ -519,16 +489,9 @@ pub fn install(parts: Parts) -> Buttons {
         .primary(true)
         .build();
     set_icon(&primary, "open-menu-symbolic", "≡");
-    // 右端から: 主メニュー、Undo、Refresh。
+    // 右端から: 主メニュー、ツールバーの右の並び（既定は Activity・Refresh・Undo）。
     parts.header.pack_end(&primary);
-    parts.header.pack_end(&parts.actions.undo);
-    parts.header.pack_end(&icon_button(
-        icon::Kind::Refresh,
-        "win.refresh",
-        &tr!("Reload History, branches and Working Copy (Ctrl+R)"),
-    ));
-    // Refresh の左に Activity（操作の間は回る。macOS 版の並びと同じ）。
-    parts.header.pack_end(&crate::activity::toolbar_button());
+    parts.header.pack_end(&toolbar_end);
     Buttons {
         repository,
         primary,
@@ -618,6 +581,11 @@ fn primary_menu() -> gio::Menu {
         // View は History の表示のメニューも兼ねる（docs/ux.md の 11）。
         if part == Menu::View {
             crate::historydisplay::append_sections(&items);
+            // ツールバーの並び（macOS 版の View > Customize Toolbar…）。
+            items.append_section(
+                None,
+                &menu_of(&[Some((&tr!("Customize Toolbar…"), "win.customize-toolbar"))]),
+            );
         }
         if items.n_items() > 0 {
             submenus.append_submenu(Some(&name), &items);

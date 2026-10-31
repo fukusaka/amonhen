@@ -148,7 +148,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Undo the last operation (asks, names what it puts back) | ✓ | ✓ | △ | ✓ | VSCode: Undoes without asking.<br>CLI: `undo` (`--peek` to see it first). |
 | History search with scopes (subject, author, ID, path, contents) | ✓ | ✓ | — | ✓ | GTK4: Scopes come from the query syntax.<br>CLI: `log <query>`. |
 | Ahead/behind badges | ✓ | ✓ | △ | △ | VSCode: On the sidebar's branch rows.<br>CLI: In `status`. |
-| Toolbar customization | ✓ | — | n/a | n/a |  |
+| Toolbar customization | ✓ | △ | n/a | n/a | GTK4: View > Customize Toolbar… lists the buttons to show and their order on the left and right of the header bar; the Repository menu, search and the main menu stay put. |
 | Network git stopped after 120 s of silence | ✓ | ✓ | — | ✓ | VSCode: Not in the extension's own git layer. |
 
 ## 5a. Stashes
