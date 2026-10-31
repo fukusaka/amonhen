@@ -26,6 +26,19 @@ use crate::diff::{DiffWidget, View};
 
 type CountCallback = Box<dyn Fn(usize)>;
 
+thread_local! {
+    /// 確認用に押したことにするキー（`--keys`）。
+    static KEYS: RefCell<std::collections::VecDeque<String>> = RefCell::default();
+}
+
+/// 確認用（`--keys list:space,diff:j,…`）: Working Copy で差分を出すたびに、キーを 1 つずつ押したことにする。
+pub fn press_keys_once(keys: &str) {
+    KEYS.with(|k| {
+        k.borrow_mut()
+            .extend(keys.split(',').map(|s| s.trim().to_owned()));
+    });
+}
+
 /// 一覧の見せ方（macOS 版と同じ 3 つ）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Layout {
@@ -572,6 +585,42 @@ impl Inner {
             let Some(this) = weak.upgrade() else { return };
             Inner::set_rows(&this, vec![row as usize], None);
         });
+        // 一覧のキー（macOS 版と同じ）: Space・Enter で選んだファイルを含める・外す、⌫・Delete で捨てる（確かめて）。
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(this);
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
+            let Some(this) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if modifiers.intersects(
+                gtk::gdk::ModifierType::CONTROL_MASK
+                    | gtk::gdk::ModifierType::ALT_MASK
+                    | gtk::gdk::ModifierType::SUPER_MASK,
+            ) || this.filter.has_focus()
+            {
+                return glib::Propagation::Proceed;
+            }
+            if Inner::list_key(&this, key) {
+                glib::Propagation::Stop
+            } else {
+                glib::Propagation::Proceed
+            }
+        });
+        this.list.add_controller(keys);
+        // 差分のキー: Space で選んだ行を含める・外す、⌥J・⌥K で次・前のファイル。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_toggle_rows(move |rows| {
+            let Some(this) = weak.upgrade() else { return };
+            let (staged, total) = this.diff.selected_staged();
+            Inner::set_rows(&this, rows, Some(staged < total));
+        });
+        let weak = Rc::downgrade(this);
+        this.diff.connect_move_file(move |step| {
+            if let Some(this) = weak.upgrade() {
+                Inner::move_file(&this, step);
+            }
+        });
         let weak = Rc::downgrade(this);
         this.diff.connect_selection(move || {
             if let Some(this) = weak.upgrade() {
@@ -997,22 +1046,13 @@ impl Inner {
         check.set_active(entry.is_staged() && !entry.is_unstaged());
         check.set_inconsistent(entry.is_staged() && entry.is_unstaged());
         check.set_sensitive(!conflict);
-        let path = entry.path.clone();
-        let fully = entry.is_staged() && !entry.is_unstaged();
-        let weak = Rc::downgrade(this);
+        let (weak, e) = (Rc::downgrade(this), entry.clone());
         check.connect_toggled(move |_| {
             let Some(this) = weak.upgrade() else { return };
             if this.rebuilding.get() {
                 return;
             }
-            let path = path.clone();
-            Inner::run(&this, move |repo| {
-                if fully {
-                    repo.unstage(&[&path])
-                } else {
-                    repo.stage(&[&path])
-                }
-            });
+            Inner::toggle_entry(&this, &e);
         });
         let (letter, css) = state_letter(entry);
         let state = gtk::Label::new(Some(letter));
@@ -1102,6 +1142,91 @@ impl Inner {
         });
         row.add_controller(menu);
         row
+    }
+
+    /// 確認用（`--keys`）: 差分を出すたびに、残っているキーを 1 つ押したことにする。`list:space`・`list:delete`
+    /// は一覧、`diff:space`・`diff:j`・`diff:k`・`diff:alt+j`・`diff:alt+k` は差分のキー。
+    fn press_next_key(this: &Rc<Self>) {
+        let Some(key) = KEYS.with(|k| k.borrow_mut().pop_front()) else {
+            return;
+        };
+        let this = this.clone();
+        this.pending.set(this.pending.get() + 1);
+        // 差分を出し終えてから（選び直しの後に）押す。
+        glib::idle_add_local_once(move || {
+            use gtk::gdk::{Key, ModifierType};
+            let (place, name) = key.split_once(':').unwrap_or(("diff", key.as_str()));
+            let (modifiers, name) = match name.strip_prefix("alt+") {
+                Some(n) => (ModifierType::ALT_MASK, n),
+                None => (ModifierType::empty(), name),
+            };
+            let key = Key::from_name(name).unwrap_or(Key::VoidSymbol);
+            if place == "list" {
+                Inner::list_key(&this, key);
+            } else {
+                this.diff.key_pressed(key, modifiers);
+                // 次のキーは、差分を出し直さなくても押す（J・K はスクロールと選択だけ）。
+                if !matches!(key, Key::space) {
+                    Inner::press_next_key(&this);
+                }
+            }
+            this.pending.set(this.pending.get() - 1);
+        });
+    }
+
+    /// 一覧のキー: Space・Enter で選んだファイルを含める・外す、⌫・Delete で捨てる（確かめて）。扱ったら true。
+    fn list_key(this: &Rc<Self>, key: gtk::gdk::Key) -> bool {
+        use gtk::gdk::Key;
+        let Some(entry) = this.selected_entry() else {
+            return false;
+        };
+        match key {
+            Key::space | Key::Return | Key::KP_Enter => {
+                if entry.kind != StatusKind::Unmerged {
+                    Inner::toggle_entry(this, &entry);
+                }
+            }
+            Key::BackSpace | Key::Delete | Key::KP_Delete => {
+                if entry.kind != StatusKind::Unmerged && entry.is_unstaged() {
+                    Inner::discard_file(this, &entry);
+                } else {
+                    this.list.error_bell();
+                }
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// ファイルを次のコミットに含める・外す（すべて含めていれば外し、そうでなければ含める）。
+    fn toggle_entry(this: &Rc<Self>, entry: &StatusEntry) {
+        let path = entry.path.clone();
+        let fully = entry.is_staged() && !entry.is_unstaged();
+        Inner::run(this, move |repo| {
+            if fully {
+                repo.unstage(&[&path])
+            } else {
+                repo.stage(&[&path])
+            }
+        });
+    }
+
+    /// ⌥J・⌥K: 一覧で次・前のファイルを選ぶ（ディレクトリの行は飛ばす）。
+    fn move_file(this: &Rc<Self>, step: i32) {
+        let rows = this.row_entries.borrow().clone();
+        let current = this.list.selected_row().map_or(-1, |r| r.index());
+        let mut i = current + step;
+        while i >= 0 && (i as usize) < rows.len() {
+            if rows[i as usize].is_some() {
+                if let Some(row) = this.list.row_at_index(i) {
+                    this.list.select_row(Some(&row));
+                    this.diff.grab_focus();
+                }
+                return;
+            }
+            i += step;
+        }
+        this.list.error_bell();
     }
 
     fn selected_entry(&self) -> Option<StatusEntry> {
@@ -1205,6 +1330,7 @@ impl Inner {
                     if let Some(row) = this.toggle_once.take() {
                         Inner::set_rows(&this, vec![row as usize], None);
                     }
+                    Inner::press_next_key(&this);
                 }
                 Ok(Err(e)) => this.show_error(&tr!("Can’t read the diff: {e}", e = e)),
                 Err(_) => {}

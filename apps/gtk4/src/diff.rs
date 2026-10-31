@@ -141,6 +141,14 @@ pub struct State {
     on_file_menu: Option<FileMenuCallback>,
     /// 見出しのない差分（Working Copy の 1 ファイル）の行を右クリックしたときに呼ぶ（行、x、y）。
     on_row_menu: Option<RowMenuCallback>,
+    /// Space で、選んだ変更の行を含める・外すときに呼ぶ（行）。
+    on_toggle_rows: Option<Rc<dyn Fn(Vec<usize>)>>,
+    /// ⌥J・⌥K で、全ファイルを並べていない差分の次・前のファイルへ移るときに呼ぶ（+1・−1）。
+    on_move_file: Option<Rc<dyn Fn(i32)>>,
+    /// J・K で最後に移った hunk（選べない差分で、次に J・K を押したときの起点）。
+    hunk_cursor: Option<usize>,
+    /// 表示し直した後に選ぶ hunk の番号（含める・外すの後に次の hunk へ進むため）。
+    hunk_after: Option<usize>,
 }
 
 /// ファイルの見出しを右クリックしたときに呼ぶ（パス、x、y）。
@@ -219,6 +227,16 @@ mod imp {
                 }
             });
             view.add_controller(menu);
+            // Space（選んだ行を含める・外す）、J・K（次・前の hunk）、⌥J・⌥K（次・前のファイル）。
+            let keys = gtk::EventControllerKey::new();
+            let weak = view.downgrade();
+            keys.connect_key_pressed(move |_, key, _, modifiers| {
+                let Some(view) = weak.upgrade() else {
+                    return glib::Propagation::Proceed;
+                };
+                view.key_pressed(key, modifiers)
+            });
+            view.add_controller(keys);
         }
     }
 
@@ -283,6 +301,7 @@ impl DiffWidget {
             st.rows.clear();
             st.selection.clear();
             st.anchor = None;
+            st.hunk_cursor = None;
         }
         self.configure_adjustments();
         self.queue_draw();
@@ -300,6 +319,7 @@ impl DiffWidget {
             st.marks = false;
             st.selection.clear();
             st.anchor = None;
+            st.hunk_cursor = None;
         }
         if let Some(adj) = self.vadjustment() {
             adj.set_value(0.0);
@@ -325,12 +345,19 @@ impl DiffWidget {
             } else {
                 st.selection.clear();
                 st.anchor = None;
+                st.hunk_after = None;
             }
+            st.hunk_cursor = None;
         }
         if !keep && let Some(adj) = self.vadjustment() {
             adj.set_value(0.0);
         }
         self.configure_adjustments();
+        // 含める・外すの後は、次の hunk を選ぶ（macOS 版と同じ）。
+        let after = self.state().hunk_after.take();
+        if let Some(index) = after {
+            self.select_hunk(index);
+        }
         self.queue_draw();
         self.selection_changed();
     }
@@ -346,6 +373,7 @@ impl DiffWidget {
             st.marks = false;
             st.selection.clear();
             st.anchor = None;
+            st.hunk_cursor = None;
         }
         if let Some(adj) = self.vadjustment() {
             adj.set_value(0.0);
@@ -481,6 +509,191 @@ impl DiffWidget {
         let text = view.text(header);
         let path = text.split(" — ").next().unwrap_or(text);
         f(path, x, y);
+    }
+
+    /// Space で、選んだ変更の行を含める・外すときに `f(行)` を呼ぶ（Working Copy）。
+    pub fn connect_toggle_rows(&self, f: impl Fn(Vec<usize>) + 'static) {
+        self.state().on_toggle_rows = Some(Rc::new(f));
+    }
+
+    /// ⌥J・⌥K で、全ファイルを並べていない差分の次・前のファイルへ移るときに `f(+1・−1)` を呼ぶ。
+    pub fn connect_move_file(&self, f: impl Fn(i32) + 'static) {
+        self.state().on_move_file = Some(Rc::new(f));
+    }
+
+    /// キーの操作（macOS 版の差分と同じ）。扱ったら Stop。
+    pub fn key_pressed(&self, key: gdk::Key, modifiers: gdk::ModifierType) -> glib::Propagation {
+        let modifiers = modifiers
+            & (gdk::ModifierType::CONTROL_MASK
+                | gdk::ModifierType::ALT_MASK
+                | gdk::ModifierType::SHIFT_MASK
+                | gdk::ModifierType::SUPER_MASK);
+        let plain = modifiers.is_empty();
+        let alt = modifiers == gdk::ModifierType::ALT_MASK;
+        match key.to_lower() {
+            gdk::Key::space if plain => {
+                let (marks, rows, f) = {
+                    let st = self.state();
+                    (
+                        st.marks,
+                        st.selection.iter().map(|&r| r as usize).collect::<Vec<_>>(),
+                        st.on_toggle_rows.clone(),
+                    )
+                };
+                let Some(f) = f.filter(|_| marks && !rows.is_empty()) else {
+                    return glib::Propagation::Proceed;
+                };
+                // 切り替えた後は、次の hunk へ進む。
+                let hunks = self.hunk_rows();
+                if let Some(&last) = rows.iter().max()
+                    && let Some(i) = hunks.iter().rposition(|&h| h as usize <= last)
+                {
+                    self.state().hunk_after = Some((i + 1).min(hunks.len() - 1));
+                }
+                f(rows);
+            }
+            gdk::Key::j if plain => self.move_hunk(1),
+            gdk::Key::k if plain => self.move_hunk(-1),
+            gdk::Key::j if alt => self.move_file(1),
+            gdk::Key::k if alt => self.move_file(-1),
+            _ => return glib::Propagation::Proceed,
+        }
+        glib::Propagation::Stop
+    }
+
+    /// hunk の見出しの行。
+    fn hunk_rows(&self) -> Vec<u32> {
+        self.rows_of(DiffRow::HUNK)
+    }
+
+    /// ファイルの見出しの行。
+    fn file_rows(&self) -> Vec<u32> {
+        self.rows_of(DiffRow::FILE)
+    }
+
+    fn rows_of(&self, kind: u8) -> Vec<u32> {
+        let st = self.state();
+        let Some(view) = &st.view else {
+            return Vec::new();
+        };
+        view.view
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.kind == kind)
+            .map(|(i, _)| i as u32)
+            .collect()
+    }
+
+    /// 見えている一番上の行。
+    fn top_row(&self) -> u32 {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        (scroll / self.row_height()).floor().max(0.0) as u32
+    }
+
+    /// J・K: 次・前の hunk を選んで（選べる差分なら）、上から 3 分の 1 あたりに出す。
+    fn move_hunk(&self, step: i32) {
+        let hunks = self.hunk_rows();
+        if hunks.is_empty() {
+            return self.error_bell();
+        }
+        let (first_selected, cursor) = {
+            let st = self.state();
+            (st.selection.first().copied(), st.hunk_cursor)
+        };
+        let current = first_selected
+            .and_then(|row| hunks.iter().rposition(|&h| h <= row))
+            .or(cursor);
+        let target = match current {
+            Some(c) => c as i64 + step as i64,
+            None => {
+                // 選んでいなければ、見えている一番上から: J はそこ以降の最初、K はそれより前の最後。
+                let top = self.top_row();
+                if step > 0 {
+                    hunks
+                        .iter()
+                        .position(|&h| h >= top)
+                        .map_or(hunks.len() as i64, |i| i as i64)
+                } else {
+                    hunks
+                        .iter()
+                        .rposition(|&h| h < top)
+                        .map_or(-1, |i| i as i64)
+                }
+            }
+        };
+        if target < 0 || target as usize >= hunks.len() {
+            return self.error_bell();
+        }
+        self.select_hunk(target as usize);
+    }
+
+    /// `index` 番目の hunk を選び（選べる差分なら、その変更の行）、見えるところへスクロールする。
+    pub fn select_hunk(&self, index: usize) {
+        let hunks = self.hunk_rows();
+        let Some(&start) = hunks.get(index) else {
+            return;
+        };
+        let end = hunks.get(index + 1).copied().unwrap_or(self.row_count());
+        {
+            let mut st = self.state();
+            st.hunk_cursor = Some(index);
+            if st.marks
+                && let Some(view) = st.view.clone()
+            {
+                st.selection = (start..end)
+                    .filter(|&r| Self::is_change(&view.view.rows[r as usize]))
+                    .collect();
+                st.anchor = Some(start);
+            }
+        }
+        self.reveal_rows(start, end);
+        self.queue_draw();
+        self.selection_changed();
+    }
+
+    /// `start..end` の行が見えていなければ、`start` が上から 3 分の 1 あたりに来るようにスクロールする。
+    fn reveal_rows(&self, start: u32, end: u32) {
+        let Some(adj) = self.vadjustment() else {
+            return;
+        };
+        let rh = self.row_height() as f64;
+        let (top, bottom) = (start as f64 * rh, end as f64 * rh);
+        let (value, page) = (adj.value(), adj.page_size());
+        if top < value || bottom > value + page {
+            let y = (top - page / 3.0).clamp(0.0, (adj.upper() - page).max(0.0));
+            adj.set_value(y);
+        }
+    }
+
+    /// ⌥J・⌥K: 全ファイルを並べた差分なら次・前の見出しへ、そうでなければ持ち主に頼む。
+    fn move_file(&self, step: i32) {
+        let files = self.file_rows();
+        if files.is_empty() {
+            let f = self.state().on_move_file.clone();
+            match f {
+                Some(f) => f(step),
+                None => self.error_bell(),
+            }
+            return;
+        }
+        let top = self.top_row();
+        let current = files.iter().rposition(|&r| r <= top).unwrap_or(0) as i64;
+        let target = current + step as i64;
+        if target < 0 || target as usize >= files.len() {
+            return self.error_bell();
+        }
+        self.scroll_to_file(target as usize);
+    }
+
+    /// `index` 番目のファイルの見出しが一番上に来るようにスクロールする。
+    pub fn scroll_to_file(&self, index: usize) {
+        let files = self.file_rows();
+        let (Some(&row), Some(adj)) = (files.get(index), self.vadjustment()) else {
+            return;
+        };
+        let y = row as f64 * self.row_height() as f64;
+        adj.set_value(y.min((adj.upper() - adj.page_size()).max(0.0)));
     }
 
     pub fn connect_mark(&self, f: impl Fn(u32) + 'static) {

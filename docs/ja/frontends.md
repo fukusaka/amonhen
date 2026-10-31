@@ -189,7 +189,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | List / Tree / Flat | ✓ | ✓ | — | n/a |  |
 | パスで絞り込む | ✓ | ✓ | — | n/a |  |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | △ | △ | VSCode: 行の数はない。<br>CLI: `diff --stat`。 |
-| Space で切り替え、⌫ で捨てる | ✓ | — | △ | n/a | VSCode: Space で切り替えるが、⌫ はない。 |
+| Space で切り替え、⌫ で捨てる | ✓ | ✓ | △ | n/a | VSCode: Space で切り替えるが、⌫ はない。 |
 | 上のコミットの欄、50/72 の数と本文の目安の線 | ✓ | △ | △ | n/a | GTK4: 数も目安の線もない。<br>VSCode: 数も目安の線もない。 |
 | リポジトリごとの下書き、テンプレートから始める | ✓ | ✓ | — | n/a |  |
 | 最近のメッセージ（⌥↑ / ⌥↓・一覧） | ✓ | ✓ | — | n/a |  |
@@ -200,7 +200,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | hooks の出力のシート | ✓ | — | — | n/a |  |
 | Commit が押せない理由を出す | — | — | △ | n/a | VSCode: コミットできないときに注意を出す。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | △ | ✓ | VSCode: 別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
-| 行の範囲の選択、J/K・⌥J/⌥K | ✓ | △ | △ | n/a | GTK4: J/K のキーはない。<br>VSCode: J/K のキーはない。 |
+| 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | △ | n/a | VSCode: J/K のキーはない。 |
 | 重ねられないファイルの Unstaged / Staged の切り替え | ✓ | ✓ | n/a | ✓ | VSCode: いつも別々に出す。<br>CLI: `diff --staged`。 |
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | n/a |  |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。 |

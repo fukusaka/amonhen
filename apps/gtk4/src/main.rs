@@ -227,6 +227,7 @@ fn parse_args() -> Result<Args, String> {
             "--accept" => merge::accept_once(&it.next().ok_or("--accept ours|theirs|both|base")?),
             "--ai" => assist::set_auto(&it.next().ok_or("--ai <button,...>")?),
             "--ai-allow" => assist::allow_without_asking(),
+            "--keys" => workcopy::press_keys_once(&it.next().ok_or("--keys <place:key,...>")?),
             "--file-history" => args.file_history = Some(it.next().ok_or("--file-history <path>")?),
             "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {

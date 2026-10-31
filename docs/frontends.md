@@ -189,7 +189,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | List / Tree / Flat | ✓ | ✓ | — | n/a |  |
 | Filter on paths | ✓ | ✓ | — | n/a |  |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | △ | △ | VSCode: No line counts.<br>CLI: `diff --stat`. |
-| Space toggles, ⌫ discards | ✓ | — | △ | n/a | VSCode: Space toggles; no ⌫. |
+| Space toggles, ⌫ discards | ✓ | ✓ | △ | n/a | VSCode: Space toggles; no ⌫. |
 | Commit box on top with 50/72 counter and body guide | ✓ | △ | △ | n/a | GTK4: No counter or guide.<br>VSCode: No counter or guide. |
 | Draft per repository, starting from the template | ✓ | ✓ | — | n/a |  |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | — | n/a |  |
@@ -200,7 +200,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Hooks output sheet | ✓ | — | — | n/a |  |
 | Reason shown when Commit is disabled | — | — | △ | n/a | VSCode: A warning when committing is blocked. |
 | Combined HEAD → working tree diff with line and hunk checks | ✓ | ✓ | △ | ✓ | VSCode: Line staging on separate unstaged and staged diffs.<br>CLI: `diff --combined`, `stage --rows`. |
-| Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | △ | △ | n/a | GTK4: No J/K keys.<br>VSCode: No J/K keys. |
+| Range selection in the gutter, J/K and ⌥J/⌥K | ✓ | ✓ | △ | n/a | VSCode: No J/K keys. |
 | Unstaged / Staged switch for files that can't be overlaid | ✓ | ✓ | n/a | ✓ | VSCode: Always shown separately.<br>CLI: `diff --staged`. |
 | Diff options (unified/split, whitespace, context, wrap) | — | — | — | n/a |  |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`. |
