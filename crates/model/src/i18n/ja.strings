@@ -1370,3 +1370,20 @@
 "The CLI, the shared daemon and the VSCode extension on this machine use it too." = "この機械の CLI・共有の daemon・VSCode 拡張も、これに従います。";
 "AMONHEN_GIT in the app’s environment overrides it: {program}" = "アプリの環境の AMONHEN_GIT が優先されています: {program}";
 "AMONHEN_GIT in the engine’s environment overrides it: {program}" = "エンジンの環境の AMONHEN_GIT が優先されています: {program}";
+
+/* GTK4 の FE: Settings > Git > Environment Variables */
+"Environment Variables" = "環境変数";
+"git and ssh always get this" = "git と ssh にいつも渡します";
+"Select a variable to see its whole value." = "変数を選ぶと、値の全体が出ます。";
+"{name} ({count} places)" = "{name}（{count} か所）";
+"Show" = "表示";
+"git is the one chosen in Settings > Git: {git}" = "git は 設定 > Git で選んだものを使います: {git}";
+"git is the one chosen in Programs: {git}" = "git はプログラムで選んだものを使います: {git}";
+"git used from here" = "ここの git を使う";
+"doesn’t exist" = "ない";
+"already above" = "上と同じ";
+"Pass" = "渡す";
+"Search by name or value" = "名前か値で探す";
+"Passed" = "渡すもの";
+"Checked variables go to the git and ssh this app runs, through the shared daemon too, but not to SSH hosts. Always passed, when the shell sets them: {names}." = "チェックした変数を、このアプリが動かす git と ssh に渡します（共有の daemon 越しも。SSH 先には渡りません）。シェルにあればいつも渡すもの（外せません）: {names}。";
+"The engine’s environment, which git on {host} gets" = "エンジンの環境（{host} の git にそのまま渡ります）";

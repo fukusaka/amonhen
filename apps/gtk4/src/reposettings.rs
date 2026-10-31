@@ -146,11 +146,12 @@ pub(crate) fn page_title(page: &str) -> String {
         "hooks" => "Hooks · LFS".into(),
         "config" => tr!("Keys and Values"),
         "programs" => tr!("Programs"),
+        "environment" => tr!("Environment Variables"),
         _ => page.into(),
     }
 }
 
-/// その段にあるページ。リポジトリにしかないものは、このリポジトリの段だけ。プログラムは、すべてのリポジトリの段
+/// その段にあるページ。リポジトリにしかないものは、このリポジトリの段だけ。プログラムと環境変数は、すべてのリポジトリの段
 /// （Settings > Git と SSH 先。その機械のもの）だけ。
 pub(crate) fn pages(level: Level) -> Vec<&'static str> {
     match level {
@@ -161,6 +162,7 @@ pub(crate) fn pages(level: Level) -> Vec<&'static str> {
             "operations",
             "workingCopy",
             "programs",
+            "environment",
             "config",
         ],
     }
@@ -681,6 +683,7 @@ impl RepoSettings {
                 "hooks" => crate::repopages::hooks_page(&this).upcast(),
                 "config" => crate::configtable::page(&this).upcast(),
                 "programs" => crate::programs::page(&this).upcast(),
+                "environment" => crate::environment::page(&this),
                 _ => continue,
             };
             stack.add_titled(&child, Some(name), &page_title(name));
@@ -2184,6 +2187,13 @@ impl RepoSettings {
                 .and_then(|p| find_widget::<gtk::Switch>(&p, &|s| s.widget_name() == name))
             {
                 switch.set_active(value == "on");
+            } else if let Some(check) = self
+                .stack
+                .visible_child()
+                .and_then(|p| find_widget::<gtk::CheckButton>(&p, &|c| c.widget_name() == name))
+            {
+                // 環境変数の表の「渡す」。
+                check.set_active(value == "on");
             }
             return;
         }

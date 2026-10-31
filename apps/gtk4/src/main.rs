@@ -12,6 +12,7 @@ mod commitops;
 mod configtable;
 mod details;
 mod diff;
+mod environment;
 mod filetools;
 mod github;
 mod graph;
@@ -271,6 +272,8 @@ fn main() -> glib::ExitCode {
     }
     // 資格情報を尋ねる先を決める（git・daemon を動かす前に）。
     askpass::install();
+    // Settings > Git > Environment Variables で足した名前を、git・ssh・共有の daemon に渡す。
+    environment::apply_added_names();
     // コアが作る文（エラーなど）の言語。Linux の慣習どおり LC_ALL・LC_MESSAGES・LANG から。
     amonhen_model::i18n::set_default(amonhen_model::i18n::Lang::from_env());
     let args = match parse_args() {
