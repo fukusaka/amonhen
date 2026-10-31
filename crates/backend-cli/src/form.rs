@@ -178,36 +178,30 @@ impl Git {
     }
 
     /// partial clone の手元にないオブジェクト `ids` を、`remote` から 1 回の fetch でまとめて取る（git の差分が足りない
-    /// blob を取るときと同じ形。`cat-file` や `log -G` は 1 つずつ取りに行く）。FETCH_HEAD は書き換えない（git 2.29
-    /// から。それより古い git は書き換え、ID を引数に並べるので 500 個ずつに分ける）。
+    /// blob を取るときと同じ形。`cat-file` や `log -G` は 1 つずつ取りに行く）。
+    ///
+    /// 手元のコミットを「持っている」と伝えると、サーバーはそこから辿れる blob も持っているとみなして送らない
+    /// （GitHub）ので、git 自身が足りないものを取るときと同じく何も伝えない（`fetch.negotiationAlgorithm=noop`）。
+    /// それができるのは git 2.29 から（FETCH_HEAD を書き換えない `--no-write-fetch-head` も）。それより古い git では
+    /// 取らずに戻り、git が要るときに 1 つずつ取るのに任せる（遅いが、取れないことはない）。
     pub fn fetch_missing(&self, remote: &str, ids: &[String]) -> Result<()> {
-        // 手元のコミットを「持っている」と伝えると、サーバーはそこから辿れる blob も持っているとみなして送らない
-        // （GitHub）。git 自身が足りないものを取るときと同じく、何も伝えない。
-        let mut args = vec![
+        if !crate::git_at_least(2, 29) {
+            return Ok(());
+        }
+        let args = [
             "-c",
             "fetch.negotiationAlgorithm=noop",
             "fetch",
             "--quiet",
             "--no-tags",
             "--recurse-submodules=no",
+            "--no-write-fetch-head",
+            "--filter=blob:none",
+            "--stdin",
+            remote,
         ];
-        if crate::git_at_least(2, 29) {
-            args.extend([
-                "--no-write-fetch-head",
-                "--filter=blob:none",
-                "--stdin",
-                remote,
-            ]);
-            let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
-            return self.write_with_input(&args, input.as_bytes()).map(drop);
-        }
-        args.extend(["--filter=blob:none", remote]);
-        for chunk in ids.chunks(500) {
-            let mut args = args.clone();
-            args.extend(chunk.iter().map(String::as_str));
-            self.write(&args)?;
-        }
-        Ok(())
+        let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
+        self.write_with_input(&args, input.as_bytes()).map(drop)
     }
 
     /// partial clone なら、`tips` から辿れる範囲（`path` があればその下）の手元にない中身をまとめて取る。内容で探す

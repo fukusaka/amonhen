@@ -183,7 +183,8 @@ impl GixBackend {
         let Some(blob) = blob else {
             return Err(error);
         };
-        self.prefetch_blobs(&[blob])?;
+        // 足りなければ git に読ませる（取ってくる）。どの版の git でも 1 つなら取れる。
+        self.blob(&blob)?;
         read(&self.repo.to_thread_local())
     }
 

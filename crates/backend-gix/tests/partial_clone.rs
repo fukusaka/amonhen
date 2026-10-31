@@ -103,14 +103,16 @@ fn reads_blobs_missing_from_a_partial_clone() {
         .collect();
     let before = packs(&dir);
     backend.prefetch_blobs(&ids).unwrap();
-    assert_eq!(packs(&dir), before + 1);
+    // git 2.29 より古ければまとめては取らず、読むときに git が 1 つずつ取る。
+    let batched = usize::from(!git_older_than_2_29());
+    assert_eq!(packs(&dir), before + batched);
     backend.prefetch_blobs(&ids).unwrap();
-    assert_eq!(packs(&dir), before + 1, "揃っていれば取りに行かない");
+    assert_eq!(packs(&dir), before + batched, "揃っていれば取りに行かない");
     for c in &changes {
         let new = backend.blob(&c.new_id.unwrap()).unwrap();
         assert!(String::from_utf8_lossy(&new).ends_with(" two\n"));
     }
-    assert!(!dir.join(".git/FETCH_HEAD").exists() || git_older_than_2_29());
+    assert!(!dir.join(".git/FETCH_HEAD").exists());
 
     // 先に取っていなくても、1 つずつなら git に読ませる。
     let changes = backend
@@ -136,7 +138,9 @@ fn fetches_missing_contents_at_once_before_searching_them() {
     let found: Vec<String> = found.iter().map(Oid::to_string).collect();
     // 足したコミットと、消したコミット（`-G` は消えた行も数える）。
     assert_eq!(found, [commits[2].clone(), commits[1].clone()]);
-    assert_eq!(packs(&dir), before + 1);
+    if !git_older_than_2_29() {
+        assert_eq!(packs(&dir), before + 1);
+    }
 }
 
 #[test]
