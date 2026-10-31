@@ -485,11 +485,14 @@ async function editFlow(label: string): Promise<void> {
   const mark = spawned.length;
   try {
     await withWindow(stubs, async () => {
-      // やめれば何も変わらない
+      // やめれば何も変わらない。書いたメッセージのまま、編集欄を開き直す
       answer = undefined;
       const count = asked.length;
+      const reopen = posted.length;
       await panel.history.handle({ type: 'saveMessage', oid: c, kind: 'reword', message: 'never' });
       await until('確認', () => asked.length > count);
+      const again = await waitPosted('editMessage', reopen);
+      assert.deepEqual([again.oid, again.kind, again.title, again.message], [c, 'reword', 'Reword', 'never']);
       assert.equal(rev(work), top);
 
       answer = 'Reword';
