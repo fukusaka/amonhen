@@ -165,6 +165,13 @@ impl WorkingCopy {
         commit_row.append(&amend);
         commit_row.append(&aids.history);
         commit_row.append(&aids.insert);
+        // AI: stage 済みの変更からメッセージを提案する。
+        let suggest = gtk::Button::with_label(&tr!("Suggest"));
+        crate::assist::track(
+            &suggest,
+            tr!("AI: suggest a commit message from the staged changes"),
+        );
+        commit_row.append(&suggest);
         commit_row.append(&commit_group);
         let message = gtk::Label::new(None);
         message.set_xalign(0.0);
@@ -349,6 +356,29 @@ impl WorkingCopy {
             on_file_menu: RefCell::default(),
         });
         Inner::connect(&inner);
+        let weak = Rc::downgrade(&inner);
+        suggest.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::suggest_message(&this);
+            }
+        });
+        // 確認用（`--ai suggest`）: 状態を読んでから押す。
+        let (b, w) = (suggest.downgrade(), Rc::downgrade(&inner));
+        crate::assist::auto(
+            "suggest",
+            move || {
+                b.upgrade().is_some_and(|b| b.is_mapped())
+                    && w.upgrade().is_some_and(|w| w.status.borrow().is_some())
+            },
+            {
+                let b = suggest.downgrade();
+                move || {
+                    if let Some(b) = b.upgrade() {
+                        b.emit_clicked();
+                    }
+                }
+            },
+        );
         let layouts = layout_buttons.clone();
         let remember = Rc::new(Cell::new(true));
         for (button, layout) in layout_buttons {
@@ -548,6 +578,34 @@ impl Inner {
                 this.update_buttons();
             }
         });
+        // 差分の行の右クリック: AI でこの hunk を解説。
+        let weak = Rc::downgrade(this);
+        this.diff.connect_row_menu(move |row, x, y| {
+            let Some(this) = weak.upgrade() else { return };
+            if let Some(item) = this.hunk_item(row) {
+                crate::menu::popup(&this.diff, x, y, vec![item]);
+            }
+        });
+        let (a, b) = (Rc::downgrade(this), Rc::downgrade(this));
+        crate::assist::auto(
+            "working-hunk",
+            move || {
+                a.upgrade()
+                    .is_some_and(|t| t.diff.is_mapped() && t.diff.first_hunk().is_some())
+            },
+            move || {
+                let Some(this) = b.upgrade() else { return };
+                if let Some((_, hunk)) = this.diff.first_hunk() {
+                    crate::assist::explain_hunk(
+                        this.diff.root().and_downcast(),
+                        this.repo().and_then(|r| r.paths().workdir),
+                        this.selected.borrow().clone().unwrap_or_default(),
+                        hunk,
+                        String::new(),
+                    );
+                }
+            },
+        );
         let weak = Rc::downgrade(this);
         this.lines.connect_clicked(move |_| {
             let Some(this) = weak.upgrade() else { return };
@@ -637,6 +695,112 @@ impl Inner {
 
     fn repo(&self) -> Option<Arc<Repository>> {
         self.repo.borrow().clone()
+    }
+
+    /// 差分の `row` 行目を含む hunk の「AI でこの hunk を解説」（hunk の外か、AI を使えなければ None）。
+    fn hunk_item(&self, row: usize) -> Option<crate::menu::Item> {
+        let (_, hunk) = self.diff.hunk_text(row)?;
+        crate::assist::hunk_item(
+            self.diff.root().and_downcast(),
+            self.repo().and_then(|r| r.paths().workdir),
+            self.selected.borrow().clone().unwrap_or_default(),
+            hunk,
+            String::new(),
+        )
+    }
+
+    /// AI: stage 済みの変更からメッセージを提案し、「メッセージに入れる」で Summary と Description に入れる。
+    fn suggest_message(this: &Rc<Self>) {
+        let (Some(repo), Some(status)) = (this.repo(), this.status.borrow().clone()) else {
+            return;
+        };
+        let staged: Vec<StatusEntry> = status
+            .status
+            .entries
+            .iter()
+            .filter(|e| e.is_staged() && e.kind != StatusKind::Unmerged)
+            .cloned()
+            .collect();
+        if staged.is_empty() {
+            this.subject.error_bell();
+            return;
+        }
+        let parent = this.list.root().and_downcast::<gtk::Window>();
+        // 書き方の手本: 最近のコミットのメッセージ（まだ読めていなければ直前のもの）。
+        let examples = this.aids.recent_messages(10).join("\n---\n");
+        let weak = Rc::downgrade(this);
+        glib::spawn_future_local(async move {
+            let workdir = repo.paths().workdir;
+            let key = crate::assist::repository_key(workdir.as_deref());
+            let summary = tr!("The diff of {count} staged files", count = staged.len());
+            if !crate::assist::confirm(parent.as_ref(), &key, &summary).await {
+                return;
+            }
+            let on_use: Rc<dyn Fn(&str)> = Rc::new(move |text: &str| {
+                let Some(this) = weak.upgrade() else { return };
+                let text = text.trim();
+                let (subject, body) = text.split_once('\n').unwrap_or((text, ""));
+                this.subject.set_text(subject.trim());
+                this.body.buffer().set_text(body.trim());
+                this.update_buttons();
+            });
+            let p = parent.clone();
+            crate::assist::panel(
+                parent.as_ref(),
+                &tr!("Suggested Commit Message"),
+                Some(&tr!("Use Message")),
+                Some(on_use),
+                crate::assist::work(move |run: crate::assist::Run| {
+                    let (repo, staged, examples, workdir, p) = (
+                        repo.clone(),
+                        staged.clone(),
+                        examples.clone(),
+                        workdir.clone(),
+                        p.clone(),
+                    );
+                    async move {
+                        let files: Vec<String> = staged.iter().map(|e| e.path.clone()).collect();
+                        // 差分の文字は裏で作る（大きければ切る）。
+                        let (diff, recent) = gio::spawn_blocking(move || {
+                            let mut out = amonhen_assist::DiffText::new();
+                            for e in &staged {
+                                if out.is_full() {
+                                    break;
+                                }
+                                if let Ok(d) = repo.working_diff(e, true, &FrontendProfile::GTK) {
+                                    crate::diff::ai_text(&d.view, Some(&e.path), &mut out);
+                                }
+                            }
+                            let recent = if examples.is_empty() {
+                                let reply: Value = serde_json::from_str(
+                                    &repo.run_json(r#"{"op":"commitMessage","oid":"HEAD"}"#),
+                                )
+                                .unwrap_or_default();
+                                reply["text"].as_str().unwrap_or_default().to_owned()
+                            } else {
+                                examples
+                            };
+                            (out.finish(), recent)
+                        })
+                        .await
+                        .unwrap_or_default();
+                        let vars = crate::assist::variables([
+                            ("diff", diff),
+                            ("files", files.join("\n")),
+                            ("recent_messages", recent),
+                        ]);
+                        crate::assist::run_with(
+                            p,
+                            amonhen_assist::Purpose::SuggestMessage,
+                            vars,
+                            workdir,
+                            run,
+                        )
+                        .await
+                    }
+                }),
+            );
+        });
     }
 
     fn show(this: &Rc<Self>, status: Arc<StatusSnapshot>) {

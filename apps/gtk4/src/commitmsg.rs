@@ -179,6 +179,16 @@ impl MessageAids {
         }
     }
 
+    /// 最近のコミットのメッセージ（新しい順に `n` 個まで。AI のメッセージの提案の手本）。
+    pub fn recent_messages(&self, n: usize) -> Vec<String> {
+        self.recent
+            .borrow()
+            .iter()
+            .take(n)
+            .map(|(m, _, _)| m.clone())
+            .collect()
+    }
+
     /// コミットした: 下書きを消す。
     pub fn clear_draft(&self) {
         if let Some(key) = self.draft_key() {

@@ -572,6 +572,8 @@ pub fn panel(
         })
     });
     let view = ResultView::new(use_title, on_use, work);
+    // 開いたときに文の欄に入力の印を出さない（マウスでは選べる）。
+    view.body.set_focusable(false);
     view.body.set_margin_top(10);
     view.body.set_margin_bottom(10);
     view.body.set_margin_start(12);
@@ -600,6 +602,20 @@ pub fn panel(
     });
     window.present();
     view.start(true);
+    // 確認用（`--ai use`）: 返事が来たら「使う」を押す。
+    let (a, b) = (view.use_button.downgrade(), view.use_button.downgrade());
+    auto(
+        "use",
+        move || {
+            a.upgrade()
+                .is_some_and(|u| u.is_visible() && u.is_sensitive())
+        },
+        move || {
+            if let Some(u) = b.upgrade() {
+                u.emit_clicked();
+            }
+        },
+    );
     view
 }
 
