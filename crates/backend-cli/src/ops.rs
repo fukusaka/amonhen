@@ -316,6 +316,12 @@ impl Operations for Git {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Oid>> {
         use std::io::{BufRead, Write};
+        if contents.is_some() {
+            self.fetch_missing_reachable(tips, path)?;
+            if cancelled() {
+                return Err(amonhen_model::i18n::cancelled().into());
+            }
+        }
         let pattern = contents.map(|c| format!("-G{}", literal_regex(c)));
         let mut args = vec!["log", "--format=%H", "--stdin"];
         if let Some(p) = &pattern {

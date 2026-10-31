@@ -329,11 +329,11 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
     let network = subcommand
         .as_deref()
         .is_some_and(|a| ["fetch", "pull", "push", "clone", "ls-remote"].contains(&a));
-    if network && input.is_none() && !cmd.get_args().any(|a| a == "--") {
+    if network && !cmd.get_args().any(|a| a == "--") {
         // ls-remote は進み具合を出さない（`--progress` を受け付けない）。
         let progress = subcommand.as_deref() != Some("ls-remote");
         return amonhen_model::activity::track_with("git", &repo, label, |seq| {
-            spawn_streaming(cmd, seq, progress)
+            spawn_streaming(cmd, input, seq, progress)
         })
         .map_err(explain_old_git);
     }
@@ -489,19 +489,33 @@ fn network_silence() -> Duration {
 
 /// `--progress` を付けて実行し、標準エラーの進み具合（\r で上書きされる行）を Activity に書く。取り消しを
 /// 頼まれたら git を止める。
-fn spawn_streaming(mut cmd: Command, seq: u64, progress: bool) -> Result<Vec<u8>> {
+fn spawn_streaming(
+    mut cmd: Command,
+    input: Option<&[u8]>,
+    seq: u64,
+    progress: bool,
+) -> Result<Vec<u8>> {
     use amonhen_model::activity;
-    use std::io::Read;
+    use std::io::{Read, Write};
     if progress {
         cmd.arg("--progress");
     }
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .stdin(Stdio::null());
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
     // 取り消すときに git が起動した ssh なども止められるよう、別のプロセスグループにする。
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd.spawn()?;
+    // 標準入力は別のスレッドで書く（大きくても、git が読みながら出力を詰まらせないように）。
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        let input = input.to_vec();
+        std::thread::spawn(move || stdin.write_all(&input));
+    }
     activity::set_cancellable(seq);
     // 最後に標準エラーに何か出た時刻（始めてからのミリ秒）。認証の入力待ちなどで黙ったままのときに止める。
     let started = Instant::now();

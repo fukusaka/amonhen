@@ -605,20 +605,7 @@ impl GitBackend for GixBackend {
         if missing.is_empty() {
             return Ok(());
         }
-        // git の差分が足りない blob を取るときと同じく、ID を並べて 1 回の fetch で取る（`cat-file` は 1 つずつ取る）。
-        // FETCH_HEAD は書き換えない（git 2.29 から。それより古い git は書き換える）。
-        let mut args = vec!["fetch", "--quiet", "--no-tags", "--recurse-submodules=no"];
-        if amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 29)) {
-            args.push("--no-write-fetch-head");
-        }
-        args.extend(["--filter=blob:none", &remote]);
-        let git = self.git()?;
-        for chunk in missing.chunks(500) {
-            let mut args = args.clone();
-            args.extend(chunk.iter().map(String::as_str));
-            git.write(&args)?;
-        }
-        Ok(())
+        self.git()?.fetch_missing(&remote, &missing)
     }
 
     fn operations(&self) -> Result<&dyn amonhen_model::Operations> {

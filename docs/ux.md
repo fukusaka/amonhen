@@ -620,8 +620,9 @@ the sidebar is wider.
   clone (git's warning stays in Activity's output). `amonhen clone` takes `--filter=<spec>`, `--depth <n>` and
   `--sparse`.
 - Partial clone: the sidebar's History row has a small cloud mark with the filter in its tooltip. Diffs fetch the
-  contents they need in one go. A History search with `contents:` makes git fetch every content not fetched yet, so a
-  sheet asks first ("This search fetches all contents not fetched yet", Search / Cancel).
+  contents they need in one go. A History search with `contents:` needs every content not fetched yet, so a sheet
+  asks first ("This search fetches all contents not fetched yet", Search / Cancel); they are then fetched in one go
+  before searching (git alone would fetch them one at a time).
 - Sparse checkout: the sidebar's Working Copy row has a small folder mark, and Working Copy says "Only some folders
   are checked out (2)" above the list of changes; clicking it opens Fetching and Folders. In a commit's diff, a file
   in a folder that isn't checked out has Show in Finder and Open with Default App disabled, with "This folder isn’t
