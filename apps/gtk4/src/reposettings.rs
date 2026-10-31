@@ -135,7 +135,7 @@ pub const PAGES: &[&str] = &[
     "config",
 ];
 
-fn page_title(page: &str) -> String {
+pub(crate) fn page_title(page: &str) -> String {
     match page {
         "author" => tr!("Author and Signing"),
         "commits" => tr!("Commits"),
@@ -145,15 +145,24 @@ fn page_title(page: &str) -> String {
         "remotes" => tr!("Remotes"),
         "hooks" => "Hooks · LFS".into(),
         "config" => tr!("Keys and Values"),
+        "programs" => tr!("Programs"),
         _ => page.into(),
     }
 }
 
-/// その段にあるページ。リポジトリにしかないものは、このリポジトリの段だけ。
-fn pages(level: Level) -> Vec<&'static str> {
+/// その段にあるページ。リポジトリにしかないものは、このリポジトリの段だけ。プログラムは、すべてのリポジトリの段
+/// （Settings > Git と SSH 先。その機械のもの）だけ。
+pub(crate) fn pages(level: Level) -> Vec<&'static str> {
     match level {
         Level::Repository => PAGES.to_vec(),
-        Level::AllRepositories => vec!["author", "commits", "operations", "workingCopy", "config"],
+        Level::AllRepositories => vec![
+            "author",
+            "commits",
+            "operations",
+            "workingCopy",
+            "programs",
+            "config",
+        ],
     }
 }
 
@@ -671,6 +680,7 @@ impl RepoSettings {
                 "remotes" => crate::repopages::remotes_page(&this).upcast(),
                 "hooks" => crate::repopages::hooks_page(&this).upcast(),
                 "config" => crate::configtable::page(&this).upcast(),
+                "programs" => crate::programs::page(&this).upcast(),
                 _ => continue,
             };
             stack.add_titled(&child, Some(name), &page_title(name));
@@ -723,7 +733,7 @@ impl RepoSettings {
         self.quiet.get()
     }
 
-    fn refresh(self: &Rc<Self>) {
+    pub(crate) fn refresh(self: &Rc<Self>) {
         let refreshers: Vec<Refresher> = self.refreshers.borrow().clone();
         self.quiet.set(true);
         for f in refreshers {
@@ -985,6 +995,18 @@ impl RepoSettings {
             return;
         };
         self.apply_changes(group, None, Record::Redo);
+    }
+
+    /// 自分で作った行（git の設定でないもの）の欄と ↩︎ を、確認用の手順から使えるようにする。
+    pub(crate) fn register_control(
+        &self,
+        question: &str,
+        control: &gtk::Box,
+        revert: &gtk::Button,
+    ) {
+        self.controls
+            .borrow_mut()
+            .push((question.to_owned(), control.clone(), revert.clone()));
     }
 
     /// 書けた書き換えの数。

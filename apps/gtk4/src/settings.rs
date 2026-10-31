@@ -19,6 +19,8 @@ thread_local! {
     static FILE: glib::KeyFile = load();
     static WATCHERS: RefCell<Vec<Watcher>> = RefCell::default();
     static WINDOW: RefCell<glib::WeakRef<gtk::Window>> = RefCell::default();
+    /// Git のタブで、読み終えたら開くページ（`--settings git/programs`）。
+    static GIT_PAGE: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 /// 鍵の名前（macOS 版の UserDefaults と同じ）。
@@ -366,6 +368,13 @@ pub fn show(parent: &gtk::ApplicationWindow) {
                     crate::reposettings::Level::AllRepositories,
                 );
                 settings.widget.set_vexpand(true);
+                if let Some(page) = GIT_PAGE.with(|p| p.take()) {
+                    settings.select(&page);
+                    // 確認用の手順（`--settings git/<page>` と一緒に）。
+                    if let Ok(script) = std::env::var("AMONHEN_SETTINGS_SCRIPT") {
+                        settings.run_script(&script);
+                    }
+                }
                 git.append(&settings.widget);
                 // 窓を閉じるまで持っておく。
                 unsafe { git.set_data("settings", settings) };
@@ -466,8 +475,12 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     window.present();
 }
 
-/// 開いている設定の窓のタブ（`git` など）を選ぶ（確認用）。
+/// 開いている設定の窓のタブ（`git` など）を選ぶ（確認用）。`git/programs` なら Git のタブのそのページ。
 pub fn select(tab: &str) {
+    let (tab, page) = tab.split_once('/').unwrap_or((tab, ""));
+    if tab == "git" && !page.is_empty() {
+        GIT_PAGE.with(|p| p.replace(Some(page.to_owned())));
+    }
     if let Some(stack) = WINDOW
         .with(|w| w.borrow().upgrade())
         .and_then(|w| w.child())

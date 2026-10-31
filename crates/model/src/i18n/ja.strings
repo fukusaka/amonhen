@@ -1357,3 +1357,16 @@
 /* GTK4: Quick Open */
 "Open a repository (fuzzy search by name or path)" = "リポジトリを開く（名前・パスであいまいに探す）";
 "Enter Open in New Window   Esc Close" = "Enter 新しいウィンドウで開く　Esc 閉じる";
+/* GTK4 の FE: Settings > Git > Programs */
+"Programs" = "プログラム";
+"Automatic ({label})" = "自動（{label}）";
+"Automatic" = "自動";
+"Program" = "プログラム";
+"Choose the program on this computer." = "このコンピューターのプログラムを選びます。";
+"Program on {host}" = "{host} のプログラム";
+"Choose the program on the host." = "SSH 先のプログラムを選びます。";
+"No git chosen: the first git on the PATH" = "git を選んでいません: PATH で最初に見つかる git";
+"The engine, the CLI and the VSCode extension on {host} use it too." = "{host} のエンジン・CLI・VSCode 拡張も、これに従います。";
+"The CLI, the shared daemon and the VSCode extension on this machine use it too." = "この機械の CLI・共有の daemon・VSCode 拡張も、これに従います。";
+"AMONHEN_GIT in the app’s environment overrides it: {program}" = "アプリの環境の AMONHEN_GIT が優先されています: {program}";
+"AMONHEN_GIT in the engine’s environment overrides it: {program}" = "エンジンの環境の AMONHEN_GIT が優先されています: {program}";

@@ -24,6 +24,7 @@ mod menu;
 mod merge;
 mod mergeseveral;
 mod patches;
+mod programs;
 mod quickopen;
 mod rangediff;
 mod reffacts;
@@ -1024,7 +1025,9 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 pending.set(pending.get() + 1);
                                 let p = pending.clone();
                                 glib::timeout_add_local_once(
-                                    std::time::Duration::from_millis(500),
+                                    std::time::Duration::from_millis(
+                                        2000 + reposettings::script_millis(),
+                                    ),
                                     move || p.set(p.get() - 1),
                                 );
                             }
