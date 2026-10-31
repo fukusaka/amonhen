@@ -81,12 +81,16 @@ export async function mergeSeveral(
   return result;
 }
 
-/** target（`refs/heads/...`）を onto（任意の ref）の上に rebase する */
+/**
+ * target（`refs/heads/...`）を onto（任意の ref）の上に rebase する。updateRefs は積み重ねたブランチを一緒に動かすかの、
+ * この操作だけの指定（なければ git の `rebase.updateRefs`）
+ */
 export async function rebaseOnto(
   backend: RepositoryBackend,
   undo: UndoLog,
   target: string,
   onto: string,
+  updateRefs?: boolean,
 ): Promise<OperationResult> {
   const plan = await planUpdate(backend, onto, target);
   if (plan.kind === 'up-to-date') {
@@ -100,7 +104,7 @@ export async function rebaseOnto(
     `Rebase ${shortName(target)} onto ${shortName(onto)}`,
     [target],
     'keep',
-    () => backend.rebase(onto, plan.checkedOut ? undefined : shortName(target)),
+    () => backend.rebase(onto, plan.checkedOut ? undefined : shortName(target), updateRefs),
     { skip: (r) => r === 'conflict' },
   );
 }

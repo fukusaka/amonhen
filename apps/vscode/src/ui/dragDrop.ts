@@ -9,6 +9,7 @@ import { mergeInto, rebaseOnto, shortName, type OperationResult } from '../state
 import type { RepositoryManager } from '../state/manager.ts';
 import type { Repository } from '../state/repository.ts';
 import type { DragSource, DropTarget } from '../view/protocol.ts';
+import { confirmRewrite } from './rewriteConfirm.ts';
 import { sequenceRowName, type Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 
@@ -64,6 +65,33 @@ export interface Action {
   run: () => Promise<OperationResult | 'pushed' | undefined>;
   /** コンフリクトで止まったときの知らせに書き添えること（実行の後に読む） */
   conflictNote?: () => string | undefined;
+  /** 実行の前に確かめる。false なら実行しない */
+  confirm?: () => Promise<boolean>;
+}
+
+/**
+ * target（`refs/heads/...`）を onto の上に rebase する操作。書き換える前に、見通しを添えて確かめる（今のブランチなら
+ * 一緒に動くブランチとコンフリクトの見込み。docs/design.md の「Rewriting operations and stacked branches」）
+ */
+export function rebaseAction(repo: Repository, target: string, onto: string): Action {
+  const tgt = shortName(target);
+  const src = shortName(onto);
+  let updateRefs: boolean | undefined;
+  return {
+    label: `$(git-pull-request) Rebase ${tgt} onto ${src}`,
+    confirm: async () => {
+      const current = (await repo.backend.head()).branch === target;
+      const choice = await confirmRewrite(
+        repo,
+        `${tgt} を ${src} の上に Rebase しますか？`,
+        'Rebase',
+        current ? { onto } : undefined,
+      );
+      updateRefs = choice?.updateRefs;
+      return choice !== undefined;
+    },
+    run: () => rebaseOnto(repo.backend, repo.undo, target, onto, updateRefs),
+  };
 }
 
 /** ドロップしたときの操作を選ばせて実行する */
@@ -92,10 +120,7 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
     const tgt = shortName(targetRef);
     return [
       { label: `$(git-merge) Merge ${src} into ${tgt}`, run: () => mergeInto(backend, undo, sourceRef, targetRef) },
-      {
-        label: `$(git-pull-request) Rebase ${tgt} onto ${src}`,
-        run: () => rebaseOnto(backend, undo, targetRef, sourceRef),
-      },
+      rebaseAction(repo, targetRef, sourceRef),
     ];
   }
 
@@ -126,6 +151,9 @@ function dropActions(repo: Repository, source: DragSource, target: DropTarget): 
 /** 操作を進捗付きで実行し、結果（最新・コンフリクト・完了）に合わせて知らせる */
 export async function runAction(repo: Repository, action: Action): Promise<void> {
   const title = action.label.replace(/^\$\([\w-]+\) /, '');
+  if (action.confirm && !(await action.confirm())) {
+    return;
+  }
   let result: OperationResult | 'pushed' | undefined;
   try {
     result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title }, () =>

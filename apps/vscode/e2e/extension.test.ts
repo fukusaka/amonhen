@@ -442,6 +442,109 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
 }
 
 /**
+ * Rebase と History の編集の前の確認。daemon なら見通し（積み重ねたブランチ・コンフリクトの見込み）を出し、今回だけ
+ * 積み重ねたブランチも動かすボタンを選べば、そのブランチも一緒に動く（git 2.38 から）。Undo で全部戻る。
+ * git 実行層では見通しなしで確かめる
+ */
+async function rewriteFlow(label: string): Promise<void> {
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const name = (b: string) => `rw-${b}-${label}`;
+  const rev = (r: string) => git('rev-parse', r).trim();
+  const commit = (file: string, subject: string) => {
+    writeFileSync(join(root, file), `${subject}\n`);
+    git('add', file);
+    git('commit', '-q', '-m', subject);
+  };
+  git('switch', '-q', '-c', name('onto'), branch);
+  commit(`rw-onto-${label}.txt`, name('onto'));
+  git('switch', '-q', '-c', name('top'), branch);
+  commit(`rw-one-${label}.txt`, name('one'));
+  // 積み重ねたブランチ（top の書き換えるコミットに先頭がある）
+  git('branch', name('mid'));
+  commit(`rw-two-${label}.txt`, name('two'));
+  await vscode.commands.executeCommand('amonhen.refresh');
+  const before = { top: rev(name('top')), mid: rev(name('mid')) };
+
+  const asked: { message: string; detail: string; buttons: string[] }[] = [];
+  let answer: (buttons: string[]) => string | undefined = () => undefined;
+  const stubs = {
+    showWarningMessage: async (message: string, ...rest: unknown[]) => {
+      const options = rest[0] as { modal?: boolean; detail?: string } | undefined;
+      if (!options?.modal) return undefined;
+      const items = rest.slice(1) as vscode.MessageItem[];
+      asked.push({ message, detail: options.detail ?? '', buttons: items.map((i) => i.title) });
+      const pick = answer(items.map((i) => i.title));
+      return items.find((i) => i.title === pick);
+    },
+    showInformationMessage: async () => undefined,
+  };
+  // 今回だけ積み重ねたブランチも動かす。git が古くてできなければ、そのまま
+  const moveStacked = (ok: string) => (buttons: string[]) => buttons.find((b) => b.includes('も動かす')) ?? ok;
+  // mid は「設定がオフ」か「git が古い」で動かない、と見通しに出る
+  const stays = new RegExp(`${name('mid')} は動きません（(rebase\\.updateRefs がオフ|動かすには git 2\\.38 が要ります)）`);
+  try {
+    await withWindow(stubs, async () => {
+      // 右クリックの Rebase。やめれば何も変わらない
+      const node = { kind: 'branch', ref: { name: `refs/heads/${name('onto')}` } };
+      await vscode.commands.executeCommand('amonhen.nav.rebase', node);
+      const first = asked.at(-1)!;
+      assert.equal(first.message, `${name('top')} を ${name('onto')} の上に Rebase しますか？`);
+      assert.equal(rev(name('top')), before.top);
+      if (label === 'daemon') {
+        assert.match(first.detail, stays);
+        // git 2.38 からは、今回だけ動かすこともできる
+        if (first.detail.includes('がオフ')) {
+          assert.deepEqual(first.buttons, ['Rebase', 'Rebase（積み重ねたブランチも動かす）']);
+        }
+        // コンフリクトの見込みは git 2.40 から
+        assert.doesNotMatch(first.detail, /コンフリクトする見込み/);
+      } else {
+        assert.equal(first.detail, 'Undo で戻せます。');
+        assert.deepEqual(first.buttons, ['Rebase']);
+      }
+
+      // 今回だけ積み重ねたブランチも動かして rebase する
+      answer = moveStacked('Rebase');
+      await vscode.commands.executeCommand('amonhen.nav.rebase', node);
+      await until('rebase', () => rev(`${name('top')}~2`) === rev(name('onto')) && rev(name('top')));
+      const moved = asked.at(-1)!.buttons.length > 1;
+      assert.equal(moved, label === 'daemon' && asked.at(-1)!.buttons.includes('Rebase（積み重ねたブランチも動かす）'));
+      assert.equal(rev(name('mid')) === rev(`${name('top')}~1`), moved, moved ? 'mid も動く' : 'mid は残る');
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('rebase の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid);
+
+      // History の編集（Drop）。mid の先頭のコミットを取り除く
+      await showView('amonhen.showHistory');
+      const one = rev(`${name('top')}~1`);
+      answer = moveStacked('Drop');
+      await vscode.commands.executeCommand('amonhen.history.drop', { oid: one });
+      const drop = asked.at(-1)!;
+      assert.match(drop.message, /を Drop しますか？$/);
+      assert.ok(drop.detail.startsWith('履歴から取り除きます。'), drop.detail);
+      if (label === 'daemon') {
+        assert.match(drop.detail, stays);
+      } else {
+        assert.deepEqual(drop.buttons, ['Drop']);
+      }
+      await until('drop', () => git('log', '-1', '--format=%s', `${name('top')}~1`).trim() === branchSubject(branch) && rev(name('top')));
+      const dropMoved = drop.buttons.length > 1;
+      assert.equal(rev(name('mid')) !== before.mid, dropMoved, dropMoved ? 'mid も動く' : 'mid は残る');
+      await vscode.commands.executeCommand('amonhen.undo');
+      await until('drop の Undo', () => rev(name('top')) === before.top && rev(name('mid')) === before.mid);
+    });
+  } finally {
+    git('switch', '-q', branch);
+    git('branch', '-q', '-D', name('onto'), name('top'), name('mid'));
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/** ブランチの先頭のコミットの件名 */
+function branchSubject(branch: string): string {
+  return git('log', '-1', '--format=%s', branch).trim();
+}
+
+/**
  * Merge Branches… でいくつものブランチを 1 つのコミットにまとめて merge し、Undo で戻す。最後より前のものが
  * コンフリクトして git が断ったら、勧めに従って 1 つずつ merge し、止まったところで中止して Undo で戻す
  */
@@ -606,6 +709,10 @@ suite('Amon Hen in VSCode', () => {
     await mergeBranchesFlow('daemon');
   });
 
+  test('previews a rebase and a History edit through the daemon', async () => {
+    await rewriteFlow('daemon');
+  });
+
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const path = join(root, FILE);
@@ -660,6 +767,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('merges several branches in one commit on the git execution layer', async () => {
     await mergeBranchesFlow('git');
+  });
+
+  test('confirms a rebase and a History edit on the git execution layer', async () => {
+    await rewriteFlow('git');
   });
 
   test('shows names from the mailmap on the git execution layer', async () => {

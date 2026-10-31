@@ -8,6 +8,7 @@ import type { Repository } from '../state/repository.ts';
 import { HistoryController } from './historyController.ts';
 import { MainPanel } from './mainPanel.ts';
 import { runAction } from './dragDrop.ts';
+import { confirmRewrite } from './rewriteConfirm.ts';
 import { sequenceRowName } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 
@@ -40,16 +41,9 @@ export function registerHistoryCommands(): vscode.Disposable {
     command('amonhen.history.fixup', (panel, repo, oid) =>
       run(panel, repo, `Fixup ${short(panel, oid)}`, { kind: 'fixup', oid }),
     ),
-    command('amonhen.history.drop', async (panel, repo, oid) => {
-      const choice = await vscode.window.showWarningMessage(
-        `${short(panel, oid)} を履歴から取り除きますか？（Undo で戻せます）`,
-        { modal: true },
-        'Drop',
-      );
-      if (choice === 'Drop') {
-        await run(panel, repo, `Drop ${short(panel, oid)}`, { kind: 'drop', oid });
-      }
-    }),
+    command('amonhen.history.drop', (panel, repo, oid) =>
+      run(panel, repo, `Drop ${short(panel, oid)}`, { kind: 'drop', oid }),
+    ),
     command('amonhen.history.edit', (panel, repo, oid) =>
       run(panel, repo, `Edit ${short(panel, oid)}`, { kind: 'edit', oid }),
     ),
@@ -120,12 +114,31 @@ async function fullMessage(repo: Repository, oid: string): Promise<string> {
   return obj ? parseCommitObject(obj.data.toString('utf8')).message : '';
 }
 
+/** 編集ごとの確認の題と、書き添えること */
+const KINDS: Record<HistoryEdit['kind'], { name: string; note?: string }> = {
+  reword: { name: 'Reword' },
+  squash: { name: 'Squash', note: '親のコミットにまとめます。' },
+  fixup: { name: 'Fixup', note: '親のコミットにまとめ、親のメッセージを残します。' },
+  drop: { name: 'Drop', note: '履歴から取り除きます。' },
+  edit: { name: 'Edit', note: 'このコミットで止まります。変更して amend してから Continue で続けます。' },
+  split: { name: 'Split', note: 'このコミットを取り消して、変更を Working Copy に戻したところで止まります。' },
+  move: { name: 'Move' },
+};
+
 async function run(panel: HistoryController, repo: Repository, label: string, edit: HistoryEdit): Promise<void> {
+  // コミットを書き換えるので、見通し（一緒に動くブランチ・コンフリクトの見込み）を添えて確かめる
+  const kind = KINDS[edit.kind];
+  const choice = await confirmRewrite(repo, `${short(panel, edit.oid)} を ${kind.name} しますか？`, kind.name, { edit }, kind.note);
+  if (!choice) {
+    // Webview で並べ替えた行・閉じた編集の欄を、元の並びに戻す
+    await repo.refresh();
+    return;
+  }
   let result: RebaseResult | undefined;
   panel.post({ type: 'busy', busy: true });
   try {
     result = await vscode.window.withProgress({ location: vscode.ProgressLocation.Window, title: label }, () =>
-      rewriteHistory(repo.backend, repo.undo, label, edit),
+      rewriteHistory(repo.backend, repo.undo, label, edit, choice.updateRefs),
     );
   } catch (err) {
     showError(err);

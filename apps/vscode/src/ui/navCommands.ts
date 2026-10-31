@@ -2,9 +2,9 @@
 import * as vscode from 'vscode';
 import { GitError } from '../git/exec.ts';
 import type { RepositoryManager } from '../state/manager.ts';
-import { fastForwardBranch, mergeInto, pushTarget, rebaseOnto, shortName } from '../state/operations.ts';
+import { fastForwardBranch, mergeInto, pushTarget, shortName } from '../state/operations.ts';
 import type { Repository } from '../state/repository.ts';
-import { runAction } from './dragDrop.ts';
+import { rebaseAction, runAction } from './dragDrop.ts';
 import type { Node } from './sidebar.ts';
 import { showError } from './stageCommands.ts';
 import { publish } from './syncCommands.ts';
@@ -35,10 +35,7 @@ export function registerNavCommands(manager: RepositoryManager): vscode.Disposab
     }),
     command('amonhen.nav.rebase', async (repo, ref, head) => {
       if (!head) return;
-      await runAction(repo, {
-        label: `$(git-pull-request) Rebase ${shortName(head)} onto ${shortName(ref)}`,
-        run: () => rebaseOnto(repo.backend, repo.undo, head, ref),
-      });
+      await runAction(repo, rebaseAction(repo, head, ref));
     }),
     command('amonhen.nav.delete', (repo, ref) => deleteBranch(repo, ref)),
     // チェックアウトしていないブランチを upstream と合わせる（最後の Fetch の時点）

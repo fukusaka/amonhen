@@ -23,6 +23,8 @@ import {
   type Stash,
   type SubmoduleConfig,
 } from './refs.ts';
+import type { HistoryEdit } from '../history/rebasePlan.ts';
+import type { PreviewTarget, RewritePreview } from '../history/rewritePreview.ts';
 import type { GitDirs } from './stamp.ts';
 import { conflictSides, parseStatus, STATUS_ARGS, type StatusResult } from './status.ts';
 
@@ -176,8 +178,21 @@ export interface RepositoryBackend {
    * git が古くて調べられなければ undefined
    */
   predictMerge(revs: readonly string[]): Promise<string[][] | undefined>;
-  /** branch（省略時は現在のブランチ）を onto の上に rebase する。branch を指定すると checkout される */
-  rebase(onto: string, branch?: string): Promise<MergeResult>;
+  /**
+   * branch（省略時は現在のブランチ）を onto の上に rebase する。branch を指定すると checkout される。updateRefs は
+   * 積み重ねたブランチを一緒に動かすかの、この操作だけの指定（なければ git の `rebase.updateRefs`）
+   */
+  rebase(onto: string, branch?: string, updateRefs?: boolean): Promise<MergeResult>;
+  /**
+   * 書き換える前の見通し（動くブランチ・残るブランチ・コンフリクトの見込み）。共有の daemon のコアが調べる。
+   * daemon を使わないときは undefined
+   */
+  rewritePreview(target: PreviewTarget, updateRefs?: boolean): Promise<RewritePreview | undefined>;
+  /**
+   * History の編集を共有の daemon のコアで行う（コアが Undo を記録する）。daemon を使わないときは undefined を返し、
+   * 呼び出し側が git 実行層で行う
+   */
+  rewrite(label: string, edit: HistoryEdit, updateRefs?: boolean): Promise<RebaseResult | undefined>;
   sequenceInProgress(): Promise<Sequence | undefined>;
   abort(sequence: Sequence): Promise<void>;
   /** コンフリクトの解決や break のあとで続ける */
@@ -647,8 +662,19 @@ export class CliBackend implements RepositoryBackend {
     }
   }
 
-  rebase(onto: string, branch?: string): Promise<MergeResult> {
-    return this.sequence(branch ? ['rebase', onto, branch] : ['rebase', onto]);
+  rebase(onto: string, branch?: string, updateRefs?: boolean): Promise<MergeResult> {
+    // 指定があるのは見通しを出せたとき（git 2.38 以降）だけ
+    const flag = updateRefs === undefined ? [] : [updateRefs ? '--update-refs' : '--no-update-refs'];
+    return this.sequence(['rebase', ...flag, onto, ...(branch ? [branch] : [])]);
+  }
+
+  // 見通しとコアでの書き換えは、共有の daemon のコアが行う（`src/daemon/writes.ts`）
+  async rewritePreview(_target: PreviewTarget, _updateRefs?: boolean): Promise<RewritePreview | undefined> {
+    return undefined;
+  }
+
+  async rewrite(_label: string, _edit: HistoryEdit, _updateRefs?: boolean): Promise<RebaseResult | undefined> {
+    return undefined;
   }
 
   /** 失敗したとき、途中で止まっていればコンフリクトとして扱う */

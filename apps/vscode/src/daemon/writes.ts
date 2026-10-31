@@ -13,6 +13,8 @@ import type {
   RepositoryBackend,
   Sequence,
 } from '../git/backend.ts';
+import type { HistoryEdit } from '../history/rebasePlan.ts';
+import type { PreviewTarget, RewritePreview } from '../history/rewritePreview.ts';
 import type { DaemonClient, Json } from './client.ts';
 import { markRecorded } from './delegation.ts';
 
@@ -75,14 +77,22 @@ export function withDaemonWrites(
       const steps = (reply['info'] as Json | undefined)?.['steps'] as { conflicts: string[] }[] | null | undefined;
       return steps ? steps.map((s) => s.conflicts) : undefined;
     }),
-    rebase: async (onto: string, branch?: string): Promise<MergeResult> => {
+    rebase: async (onto: string, branch?: string, updateRefs?: boolean): Promise<MergeResult> => {
       const c = await client();
       // ほかのブランチの rebase（checkout してから）は git 実行層で
       if (!c || branch) {
-        return inner.rebase(onto, branch);
+        return inner.rebase(onto, branch, updateRefs);
       }
-      return outcome(await run(c, { op: 'rebase', onto }, true)) as MergeResult;
+      return outcome(await run(c, { op: 'rebase', onto, updateRefs: updateRefs ?? null }, true)) as MergeResult;
     },
+    rewritePreview: via('rewritePreview', async (c, target: PreviewTarget, updateRefs?: boolean) => {
+      const reply = await run(c, { op: 'rewritePreview', ...target, updateRefs: updateRefs ?? null } as Json, false);
+      return (reply['info'] as RewritePreview | undefined) ?? undefined;
+    }),
+    // History の編集は、コアが積み重ねたブランチ（rebase.updateRefs）も git と同じに扱い、Undo を記録する
+    rewrite: via('rewrite', async (c, label: string, edit: HistoryEdit, updateRefs?: boolean) =>
+      outcome(await run(c, { op: 'rewrite', label, edit, updateRefs: updateRefs ?? null } as Json, true)),
+    ),
     updateSubmodules: via('updateSubmodules', async (c, paths: readonly string[]) =>
       void (await run(c, { op: 'updateSubmodules', paths }, false)),
     ),
