@@ -609,7 +609,8 @@ pub trait Operations: Send + Sync {
         Err(crate::tr!("Can’t read the tree here").into())
     }
     /// `on` なら `git maintenance start`（ユーザー全体の `maintenance.repo` に登録し、OS の予定がなければ作る）、
-    /// でなければ `git maintenance unregister`（予定はほかのリポジトリも使うので残す）。git 2.31 から。
+    /// でなければ `git maintenance unregister`（予定はほかのリポジトリも使うので残す）と、start が書いた
+    /// `maintenance.auto=false` を外す。git 2.31 から。
     fn maintenance(&self, on: bool) -> Result<()> {
         let _ = on;
         Err(crate::tr!("Can’t change git maintenance here").into())

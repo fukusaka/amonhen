@@ -455,7 +455,8 @@ mod tests {
         assert_eq!(form["info"]["maintenance"], true, "{form}");
     }
 
-    /// `git maintenance start` で登録し（このリポジトリの設定と OS の予定も書く）、`unregister` で登録だけを外す。
+    /// `git maintenance start` で登録し（このリポジトリの設定と OS の予定も書く）、`unregister` で登録を外して、
+    /// 自動の手入れを止める `maintenance.auto=false` も外す。
     /// git 2.31 より古ければ、版を言って断る。
     ///
     /// ユーザー全体の設定と予定は、このテストだけのホームに書く（ほかのテストのホームの `.gitconfig` と書き合わない
@@ -558,10 +559,18 @@ mod tests {
                 run(&repo, r#"{"op":"repositoryForm"}"#)["info"]["maintenance"],
                 false
             );
-            // 予定とこのリポジトリの設定は残す（予定はほかのリポジトリも回る）。
+            // 予定は残す（ほかのリポジトリも回る）。自動の手入れを止める `maintenance.auto=false` は外して、git の
+            // 既定に戻す。
             assert_eq!(
-                git(&dir, &["config", "--local", "maintenance.auto"]),
-                "false"
+                git(
+                    &dir,
+                    &["config", "--local", "--default=", "maintenance.auto"]
+                ),
+                ""
+            );
+            assert_eq!(
+                git(&dir, &["config", "--local", "maintenance.strategy"]),
+                "incremental"
             );
             if cfg!(target_os = "macos") {
                 assert_eq!(agents().len(), 3);

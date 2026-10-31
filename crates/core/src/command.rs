@@ -482,8 +482,8 @@ pub enum Command {
     },
     /// `on` なら、このリポジトリを git maintenance に登録して裏で手入れさせる（`git maintenance start`: ユーザー全体の
     /// `maintenance.repo` に足し、OS の予定がなければ作る）。でなければ登録を外す（`git maintenance unregister`。
-    /// 予定はほかのリポジトリも使うので残す）。git を動かす機械（SSH 先ならそこ）の設定に書く。git 2.31 から。
-    /// Undo には記録しない。
+    /// 予定はほかのリポジトリも使うので残し、自動の手入れを止める `maintenance.auto=false` は外す）。git を動かす機械
+    /// （SSH 先ならそこ）の設定に書く。git 2.31 から。Undo には記録しない。
     Maintenance {
         on: bool,
     },
