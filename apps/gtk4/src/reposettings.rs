@@ -179,6 +179,8 @@ pub struct RepoSettings {
     /// 読み込みの世代（古い読み込みの答えは捨てる）。
     generation: Cell<u64>,
     signing_loaded: Cell<bool>,
+    /// 書けた書き換えの数（Keys and Values が、最後の削除のあとに書き換えがあったかを見る）。
+    writes: Cell<u64>,
     /// 行の質問と、その欄・↩︎（確認用の `AMONHEN_SETTINGS_SCRIPT` が使う）。
     controls: RefCell<Vec<(String, gtk::Box, gtk::Button)>>,
 }
@@ -604,6 +606,7 @@ impl RepoSettings {
             generation: Cell::new(0),
             signing_loaded: Cell::new(false),
             controls: RefCell::default(),
+            writes: Cell::new(0),
         });
 
         // 左: ページの一覧と、その下にこのリポジトリを動かしている git。
@@ -667,6 +670,7 @@ impl RepoSettings {
                 "workingCopy" => this.working_copy_page().upcast(),
                 "remotes" => crate::repopages::remotes_page(&this).upcast(),
                 "hooks" => crate::repopages::hooks_page(&this).upcast(),
+                "config" => crate::configtable::page(&this).upcast(),
                 _ => continue,
             };
             stack.add_titled(&child, Some(name), &page_title(name));
@@ -943,6 +947,7 @@ impl RepoSettings {
             let Some(s) = weak.upgrade() else { return };
             match &result {
                 Ok(()) => {
+                    s.writes.set(s.writes.get() + 1);
                     // 記録は書けたものだけ（失敗した書き換えを Undo に残さない）。Undo で書いたものは、元に
                     // 戻した向き（もとの書き換え）をやり直しに積む。
                     match record {
@@ -980,6 +985,11 @@ impl RepoSettings {
             return;
         };
         self.apply_changes(group, None, Record::Redo);
+    }
+
+    /// 書けた書き換えの数。
+    pub(crate) fn writes(&self) -> u64 {
+        self.writes.get()
     }
 
     /// 窓に知らせる（History などを読み直す）。
@@ -2126,19 +2136,19 @@ impl RepoSettings {
                 collect_widgets::<gtk::ColumnView>(&page, &mut views);
             }
             for view in views {
-                let Some(selection) = view.model().and_downcast::<gtk::SingleSelection>() else {
+                let Some(selection) = view.model() else {
                     continue;
                 };
-                let Some(list) = selection.model() else {
-                    continue;
-                };
-                for i in 0..list.n_items() {
-                    if list
-                        .item(i)
-                        .and_downcast::<gtk::StringObject>()
-                        .is_some_and(|o| o.string() == id)
-                    {
-                        selection.set_selected(i);
+                for i in 0..selection.n_items() {
+                    let Some(item) = selection.item(i) else {
+                        continue;
+                    };
+                    let key = item
+                        .downcast_ref::<gtk::StringObject>()
+                        .map(|o| o.string().to_string())
+                        .or_else(|| crate::configtable::row_key(&item));
+                    if key.as_deref() == Some(id) {
+                        selection.select_item(i, true);
                     }
                 }
             }
@@ -2170,6 +2180,31 @@ impl RepoSettings {
                 if let Some(e) = n.parse::<usize>().ok().and_then(|n| entries.get(n)) {
                     e.set_text(text);
                 }
+            }
+            return;
+        }
+        if let Some(text) = step.strip_prefix("toggle:") {
+            // 出しているページの切り替え（Basic など）。
+            if let Some(t) = self.stack.visible_child().and_then(|p| {
+                find_widget::<gtk::ToggleButton>(&p, &|t| t.label().as_deref() == Some(text))
+            }) {
+                t.set_active(true);
+            }
+            return;
+        }
+        if let Some(text) = step.strip_prefix("type:") {
+            // 設定の窓で今入力している欄に入れて Return。
+            let entry = self
+                .window()
+                .and_then(|w| gtk::prelude::GtkWindowExt::focus(&w))
+                .and_then(|f| {
+                    f.downcast_ref::<gtk::Entry>()
+                        .cloned()
+                        .or_else(|| f.parent().and_downcast::<gtk::Entry>())
+                });
+            if let Some(entry) = entry {
+                entry.set_text(text);
+                entry.emit_activate();
             }
             return;
         }
@@ -2307,7 +2342,7 @@ pub fn show(
     let header = gtk::HeaderBar::new();
     let window = gtk::Window::builder()
         .title(tr!("Repository Settings"))
-        .default_width(920)
+        .default_width(1000)
         .default_height(660)
         .child(&settings.widget)
         .transient_for(parent)

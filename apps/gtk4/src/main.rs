@@ -8,6 +8,7 @@ mod appmenu;
 mod askpass;
 mod commitmsg;
 mod commitops;
+mod configtable;
 mod details;
 mod diff;
 mod filetools;
