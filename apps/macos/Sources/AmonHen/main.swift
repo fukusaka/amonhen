@@ -161,6 +161,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         buildMenu()
+        // --print-menus: メニューバーの中身（名前・ショートカット・id・説明・呼び先）を出して終わる（操作の表を作り直す
+        // 前と後で比べる用）。
+        if CommandLine.arguments.contains("--print-menus") {
+            printMenus()
+            exit(0)
+        }
         // swift build のまま起動したとき（.app でないのでアイコンがない）は、ソースの横のアイコンを Dock に出す。
         if Bundle.main.object(forInfoDictionaryKey: "CFBundleIconFile") == nil {
             let icon = URL(fileURLWithPath: #filePath)

@@ -23,6 +23,28 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
         NSApp.helpMenu = help
     }
 
+    /// メニューバーの中身を 1 項目 1 行で出す（`--print-menus`）。
+    func printMenus() {
+        func walk(_ menu: NSMenu, _ path: String) {
+            for item in menu.items {
+                if item.isSeparatorItem {
+                    print("\(path) | ---")
+                    continue
+                }
+                if let sub = item.submenu {
+                    walk(sub, path.isEmpty ? item.title : "\(path) > \(item.title)")
+                    continue
+                }
+                let mods = item.keyEquivalent.isEmpty ? "" : item.keyEquivalentModifierMask.intersection([.command, .control, .option, .shift])
+                    .rawValue.description
+                let key = item.keyEquivalent.unicodeScalars.map { String(format: "%04X", $0.value) }.joined()
+                print("\(path) | \(item.title) | \(key) \(mods) | \(item.identifier?.rawValue ?? "") | \(item.toolTip ?? "") | "
+                    + "\(item.action.map(NSStringFromSelector) ?? "") | \(item.target.map { String(describing: type(of: $0)) } ?? "")")
+            }
+        }
+        if let main = NSApp.mainMenu { walk(main, "") }
+    }
+
     private func submenu(_ menu: NSMenu) -> NSMenuItem {
         let item = NSMenuItem(title: menu.title, action: nil, keyEquivalent: "")
         item.submenu = menu
