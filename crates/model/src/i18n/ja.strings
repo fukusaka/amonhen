@@ -1111,3 +1111,4 @@
 "Add a key for all repositories" = "すべてのリポジトリにキーを足す";
 "Remove the selected keys from this repository (Delete)" = "選んだキーをこのリポジトリから消す（Delete）";
 "Remove the selected keys from all repositories (Delete)" = "選んだキーをすべてのリポジトリから消す（Delete）";
+"Couldn’t prepare the settings repository" = "設定のためのリポジトリを用意できませんでした";

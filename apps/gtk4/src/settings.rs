@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use amonhen_model::tr;
-use gtk::glib;
 use gtk::prelude::*;
+use gtk::{gio, glib};
 
 const GROUP: &str = "settings";
 
@@ -195,6 +195,49 @@ pub fn show(parent: &gtk::ApplicationWindow) {
         Some("general"),
         &tr!("General"),
     );
+
+    // Git: すべてのリポジトリの段（`--global`）の、Repository Settings と同じページ。git の設定は手元の空の
+    // リポジトリ（settings-repo）から読み書きする（macOS 版の `MachineSettings` と同じ）。
+    let git = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    git.set_size_request(860, 560);
+    stack.add_titled(&git, Some("git"), "Git");
+    let g = git.downgrade();
+    glib::spawn_future_local(async move {
+        let result =
+            gio::spawn_blocking(|| -> Result<(amonhen_core::Repository, String), String> {
+                let dir = glib::user_data_dir().join("amonhen").join("settings-repo");
+                if !dir.join(".git").exists() {
+                    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+                    let ok = amonhen_model::process::command("git")
+                        .args(["init", "-q"])
+                        .current_dir(&dir)
+                        .status()
+                        .is_ok_and(|s| s.success());
+                    if !ok {
+                        return Err(tr!("Couldn’t prepare the settings repository"));
+                    }
+                }
+                let repo = crate::open(&dir)?;
+                Ok((repo, dir.to_string_lossy().into_owned()))
+            })
+            .await
+            .unwrap_or_else(|_| Err(String::new()));
+        let Some(git) = g.upgrade() else { return };
+        match result {
+            Ok((repo, location)) => {
+                let settings = crate::reposettings::RepoSettings::new(
+                    std::sync::Arc::new(repo),
+                    &location,
+                    crate::reposettings::Level::AllRepositories,
+                );
+                settings.widget.set_vexpand(true);
+                git.append(&settings.widget);
+                // 窓を閉じるまで持っておく。
+                unsafe { git.set_data("settings", settings) };
+            }
+            Err(e) => git.append(&note(&e)),
+        }
+    });
 
     // Appearance
     stack.add_titled(
