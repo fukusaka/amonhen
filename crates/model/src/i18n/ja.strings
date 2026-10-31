@@ -1252,3 +1252,6 @@
 "Replace {count} tags on {remote}?" = "{remote} の {count} 個のタグを置き換えますか？";
 "{remote} has a different tag with this name; yours replaces it for everyone who fetches." = "{remote} には同じ名前の別のタグがあります。Fetch する全員にとって、手元のタグに置き換わります。";
 "Replace" = "置き換える";
+
+/* GTK4: サイドバーのブランチの同期（Fast-Forward・Push・Publish） */
+"Fast-forward {branch} to {upstream}?" = "{branch} を {upstream} まで進めますか？";

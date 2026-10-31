@@ -74,6 +74,7 @@ pub fn menu(
                 rebase(&mut items);
                 items.push(Item::Separator);
             }
+            items.extend(sync_items(actions, entry, is_head));
             items.extend(favorite_items(actions, &name, known));
             items.push(new_branch(actions, &name));
             items.push(new_tag(actions, &name));
@@ -132,6 +133,55 @@ pub fn menu(
             ));
         }
     }
+    items
+}
+
+/// 上流と合わせる（最後の Fetch の時点）。上流がなければ Publish、遅れているだけなら Fast-Forward（チェックアウト
+/// しないで進める）、先にあるだけなら Push。チェックアウト中のブランチはツールバーの Pull・Push で。分かれていれば
+/// チェックアウトして merge か rebase をする（上の Checkout）。
+fn sync_items(actions: &Rc<Actions>, entry: &amonhen_model::RefEntry, is_head: bool) -> Vec<Item> {
+    let name = entry.name.clone();
+    let mut items = Vec::new();
+    match &entry.detail {
+        Some(upstream) if !entry.gone => {
+            if is_head || (entry.ahead == 0) == (entry.behind == 0) {
+                return items;
+            }
+            let a = actions.clone();
+            if entry.ahead > 0 {
+                items.push(menu::action(titles::push(&name, upstream), move || {
+                    sheets::push(&a, Some(name.clone()), false, None)
+                }));
+            } else {
+                let title = tr!(
+                    "Fast-forward {branch} to {upstream}?",
+                    branch = name,
+                    upstream = upstream
+                );
+                let command = json!({ "op": "fastForward", "branch": name });
+                items.push(menu::action(
+                    format!("Fast-Forward {name} to {upstream}…"),
+                    move || {
+                        sheets::confirm_then(
+                            &a,
+                            title.clone(),
+                            sheets::can_undo(),
+                            "Fast-Forward".to_owned(),
+                            false,
+                            vec![command.clone()],
+                        )
+                    },
+                ));
+            }
+        }
+        _ => {
+            let a = actions.clone();
+            items.push(menu::action(format!("Publish {name}…"), move || {
+                sheets::publish(&a, &name, None)
+            }));
+        }
+    }
+    items.push(Item::Separator);
     items
 }
 
