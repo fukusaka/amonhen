@@ -66,6 +66,10 @@ struct Label {
     name: String,
     kind: RefKind,
     head: bool,
+    /// worktree の HEAD の札（緑。`head` なら書き込む先）。
+    worktree: bool,
+    /// ほかの worktree が checkout しているブランチ（worktree の札と同じ緑）。
+    elsewhere: bool,
 }
 
 struct Fonts {
@@ -159,7 +163,12 @@ pub struct State {
     chunks: HashMap<u32, Rc<Chunk>>,
     loading: HashSet<u32>,
     rows: HashMap<u32, RowText>,
+    /// 行に出す札（worktree の HEAD の札、ref の札の順）。
     labels: HashMap<Oid, Vec<Label>>,
+    ref_labels: HashMap<Oid, Vec<Label>>,
+    worktree_labels: HashMap<Oid, Vec<Label>>,
+    /// ほかの worktree（メインのものを除く）が checkout しているブランチ。
+    elsewhere: HashSet<String>,
     label_layouts: HashMap<String, pango::Layout>,
     fonts: Option<Fonts>,
     /// 選んでいる行（複数選んでいるときは、最後に選んだ行）。
@@ -546,14 +555,53 @@ impl HistoryView {
                 kind: e.kind,
                 head: e.kind == RefKind::Local
                     && Some(e.name.as_str()) == refs.refs.head_branch.as_deref(),
+                worktree: false,
+                elsewhere: false,
             });
         }
         // 今のブランチ、ローカル、リモート、タグの順。
         for list in labels.values_mut() {
             list.sort_by_key(|l| (!l.head, l.kind, l.name.clone()));
         }
-        self.state().labels = labels;
+        let mut st = self.state();
+        st.ref_labels = labels;
+        Self::merge_labels(&mut st);
+        drop(st);
         self.queue_draw();
+    }
+
+    /// 各 worktree の HEAD の札（コミット、札の文字、書き込む先か）と、ほかの worktree が checkout している
+    /// ブランチ（緑の札にする）。worktree が 1 つなら空で呼ぶ。
+    pub fn set_worktrees(&self, heads: Vec<(Oid, String, bool)>, elsewhere: HashSet<String>) {
+        let mut labels: HashMap<Oid, Vec<Label>> = HashMap::new();
+        for (head, name, editing) in heads {
+            labels.entry(head).or_default().push(Label {
+                name,
+                kind: RefKind::Local,
+                head: editing,
+                worktree: true,
+                elsewhere: false,
+            });
+        }
+        let mut st = self.state();
+        st.worktree_labels = labels;
+        st.elsewhere = elsewhere;
+        Self::merge_labels(&mut st);
+        drop(st);
+        self.queue_draw();
+    }
+
+    /// worktree の札を先に、ref の札を後に並べる（ほかの worktree のブランチに印を付ける）。
+    fn merge_labels(st: &mut State) {
+        let mut merged = st.worktree_labels.clone();
+        for (id, list) in &st.ref_labels {
+            let entry = merged.entry(*id).or_default();
+            entry.extend(list.iter().map(|l| Label {
+                elsewhere: l.kind == RefKind::Local && st.elsewhere.contains(&l.name),
+                ..l.clone()
+            }));
+        }
+        st.labels = merged;
     }
 
     /// 見えている行の件名などがすべて読めている（`--snapshot` で撮るのを待つ）。
@@ -1169,6 +1217,16 @@ fn label_colors(
 ) -> (gdk::RGBA, gdk::RGBA) {
     if !named {
         return (gdk::RGBA::new(0.5, 0.5, 0.5, 0.25), *fg);
+    }
+    let ink = if selected { gdk::RGBA::WHITE } else { *fg };
+    // worktree の HEAD の札と、ほかの worktree が checkout しているブランチは緑。
+    let (r, g, b) = (0.20, 0.66, 0.30);
+    if label.worktree && label.head {
+        return (gdk::RGBA::new(r, g, b, 0.85), gdk::RGBA::WHITE);
+    }
+    if label.worktree || label.elsewhere {
+        let alpha = if selected { 0.45 } else { 0.25 };
+        return (gdk::RGBA::new(r, g, b, alpha), ink);
     }
     let (r, g, b) = match label.kind {
         RefKind::Local => (0.21, 0.52, 0.89),

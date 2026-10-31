@@ -1508,6 +1508,13 @@ pub enum CheckoutTarget {
 
 /// Checkout の前に、何が起きるか（作業中の変更はそのまま持って行く、追跡ブランチを作る、detached になる）を見せる。
 pub fn checkout(actions: &Rc<Actions>, target: CheckoutTarget) {
+    // ほかの worktree が checkout しているブランチは、git と同じく押し通さず（--ignore-other-worktrees は
+    // 使わない）、その worktree を書き込む先にする。
+    if let CheckoutTarget::Branch(name) = &target
+        && let Some((_, path)) = actions.worktree_using(name)
+    {
+        return actions.edit_worktree(&path);
+    }
     let actions = actions.clone();
     glib::spawn_future_local(async move {
         let Some(repo) = actions.repo() else { return };

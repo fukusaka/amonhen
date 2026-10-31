@@ -65,11 +65,25 @@ pub fn menu(
     match entry.kind {
         RefKind::Local => {
             let is_head = Some(name.as_str()) == head;
+            let elsewhere = actions.worktree_using(&name);
             if !is_head {
-                let (a, n) = (actions.clone(), name.clone());
-                items.push(menu::action(titles::checkout(&name), move || {
-                    sheets::checkout(&a, sheets::CheckoutTarget::Branch(n.clone()))
-                }));
+                match &elsewhere {
+                    // ほかの worktree が checkout しているブランチは checkout できない（git が断る）。その
+                    // worktree を書き込む先にする。
+                    Some((worktree, path)) => {
+                        let (a, p) = (actions.clone(), path.clone());
+                        items.push(menu::action(
+                            tr!("Open Worktree {name}", name = worktree),
+                            move || a.edit_worktree(&p),
+                        ));
+                    }
+                    None => {
+                        let (a, n) = (actions.clone(), name.clone());
+                        items.push(menu::action(titles::checkout(&name), move || {
+                            sheets::checkout(&a, sheets::CheckoutTarget::Branch(n.clone()))
+                        }));
+                    }
+                }
                 merge(&mut items);
                 rebase(&mut items);
                 items.push(Item::Separator);
@@ -92,7 +106,8 @@ pub fn menu(
                     }
                 });
             }));
-            if !is_head {
+            // ほかの worktree が checkout しているブランチは消せない（git が断る）。
+            if !is_head && elsewhere.is_none() {
                 let (a, n) = (actions.clone(), name.clone());
                 items.push(menu::action(titles::delete(&name), move || {
                     sheets::delete_branches(&a, vec![n.clone()])

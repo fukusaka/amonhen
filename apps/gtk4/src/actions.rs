@@ -32,6 +32,8 @@ pub struct Actions {
     head: RefCell<Option<String>>,
     /// merge・rebase・cherry-pick・revert の途中か（途中なら Reset を出さない）。
     in_sequence: Cell<bool>,
+    /// ほかの worktree が checkout しているブランチ → その worktree（名前、パス）。
+    worktree_branches: RefCell<std::collections::HashMap<String, (String, String)>>,
 }
 
 impl Actions {
@@ -52,6 +54,7 @@ impl Actions {
             on_done: RefCell::default(),
             head: RefCell::default(),
             in_sequence: Cell::new(false),
+            worktree_branches: RefCell::default(),
         });
         // git の Undo は確かめてから（Ctrl+Z は入力欄の取り消しに残す。docs/ux.md の「Menus」）。
         let weak = Rc::downgrade(&actions);
@@ -82,6 +85,24 @@ impl Actions {
 
     pub fn head(&self) -> Option<String> {
         self.head.borrow().clone()
+    }
+
+    /// ほかの worktree が checkout しているブランチ（worktree の一覧を読むたびに入れる）。
+    pub fn set_worktree_branches(&self, map: std::collections::HashMap<String, (String, String)>) {
+        self.worktree_branches.replace(map);
+    }
+
+    /// `branch` を checkout している、書き込む先でない worktree（名前、パス）。
+    pub fn worktree_using(&self, branch: &str) -> Option<(String, String)> {
+        self.worktree_branches.borrow().get(branch).cloned()
+    }
+
+    /// `path` の worktree を書き込む先にする（窓の `win.edit-worktree`）。
+    pub fn edit_worktree(&self, path: &str) {
+        if let Some(window) = self.window() {
+            let _ =
+                WidgetExt::activate_action(&window, "win.edit-worktree", Some(&path.to_variant()));
+        }
     }
 
     /// merge・rebase などの途中か（status を読むたびに入れる）。

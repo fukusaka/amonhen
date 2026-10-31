@@ -762,7 +762,16 @@ fn switch_branch(p: &Rc<Parts>) {
         for e in &r.refs.entries {
             match e.kind {
                 RefKind::Local if Some(&e.name) != r.refs.head_branch.as_ref() => {
-                    choices.push((e.name.clone(), format!("local:{}", e.name)));
+                    // ほかの worktree が checkout しているものは、選ぶとその worktree に移る。
+                    let title = match p.actions.worktree_using(&e.name) {
+                        Some((worktree, _)) => format!(
+                            "{}{}",
+                            e.name,
+                            tr!("  · in the worktree {name}", name = worktree)
+                        ),
+                        None => e.name.clone(),
+                    };
+                    choices.push((title, format!("local:{}", e.name)));
                 }
                 RefKind::Remote if !e.name.ends_with("/HEAD") => {
                     choices.push((e.name.clone(), format!("remote:{}", e.name)));

@@ -560,11 +560,26 @@ fn build_window(app: &gtk::Application, args: Args) {
         }
     });
     for list in [true, false] {
-        let (s, w) = (Rc::downgrade(&sidebar), Rc::downgrade(&worktrees));
+        let (s, w, v) = (
+            Rc::downgrade(&sidebar),
+            Rc::downgrade(&worktrees),
+            view.downgrade(),
+        );
         let show = move || {
-            if let (Some(sidebar), Some(worktrees)) = (s.upgrade(), w.upgrade()) {
-                sidebar.set_worktrees(worktrees.view());
-            }
+            let (Some(sidebar), Some(worktrees), Some(view)) =
+                (s.upgrade(), w.upgrade(), v.upgrade())
+            else {
+                return;
+            };
+            sidebar.set_worktrees(worktrees.view());
+            // History に各 worktree の HEAD の札と、追加した worktree が checkout しているブランチの緑。
+            let elsewhere = worktrees
+                .branches_elsewhere()
+                .into_iter()
+                .filter(|(_, w)| !w.main)
+                .map(|(b, _)| b)
+                .collect();
+            view.set_worktrees(worktrees.heads(), elsewhere);
         };
         if list {
             worktrees.connect_list(show);
@@ -972,8 +987,9 @@ fn build_window(app: &gtk::Application, args: Args) {
     };
     // 最後に読んだ、開いたリポジトリの ref（書き込む先を変えたら、その worktree から見たものに出し直す）。
     let raw_refs: Rc<std::cell::RefCell<Option<Arc<amonhen_core::RefsSnapshot>>>> = Rc::default();
-    let (w, b, win, r, refs_tx) = (
+    let (w, a, b, win, r, refs_tx) = (
         Rc::downgrade(&worktrees),
+        actions.clone(),
         buttons.clone(),
         window.downgrade(),
         raw_refs.clone(),
@@ -984,6 +1000,13 @@ fn build_window(app: &gtk::Application, args: Args) {
             return;
         };
         b.set_worktree(worktrees.toolbar_name().as_deref());
+        a.set_worktree_branches(
+            worktrees
+                .branches_elsewhere()
+                .into_iter()
+                .map(|(b, w)| (b, (w.name, w.path)))
+                .collect(),
+        );
         sheets::set_worktree_name(window.upcast_ref(), worktrees.editing_name());
         if let Some(refs) = r.borrow().clone() {
             let _ = refs_tx.try_send(Event::Refs(refs));

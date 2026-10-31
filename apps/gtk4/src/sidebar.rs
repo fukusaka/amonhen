@@ -78,6 +78,8 @@ pub struct Data {
     pub marks: Vec<Mark>,
     /// 右端の印・数を押すと吹き出しを出す。
     pub mark_click: bool,
+    /// アイコンと右端の文字を緑にする（追加した worktree が checkout しているブランチ）。
+    pub green: bool,
 }
 
 mod node_imp {
@@ -740,6 +742,19 @@ fn bind_row(item: &gtk::ListItem) {
     let group = matches!(data.item, Item::Group);
     item.set_selectable(!group);
     icon.set(data.icon, data.head);
+    for w in [icon.upcast_ref::<gtk::Widget>(), badge.upcast_ref()] {
+        if data.green {
+            w.add_css_class("success");
+        } else {
+            w.remove_css_class("success");
+        }
+    }
+    // 緑の印は薄くしない。
+    if data.green {
+        badge.remove_css_class("dim-label");
+    } else {
+        badge.add_css_class("dim-label");
+    }
     title.set_text(&data.title);
     for css in ["heading", "dim-label"] {
         if group {
@@ -1169,6 +1184,12 @@ impl Inner {
                 groups.extend(built);
             }
         }
+        // ほかの worktree が checkout しているブランチと、書き込む先のブランチに印を付ける。
+        if worktrees.list.len() > 1 {
+            for (_, store) in &groups {
+                mark_worktree_branches(store, &worktrees);
+            }
+        }
         let nodes: Vec<Node> = groups
             .into_iter()
             .map(|(title, children)| {
@@ -1272,6 +1293,48 @@ impl Inner {
                 self.selection.select_item(i, true);
                 return;
             }
+        }
+    }
+}
+
+/// ブランチの行の worktree の印: ほかの worktree が checkout しているもの（git はここでは checkout させない）は、
+/// 右端に ⌂（メインの作業ツリー）か ⑂（追加した worktree。アイコンと一緒に緑）を出し、worktree の名前は
+/// ツールチップに（ブランチ名を隠さない）。今のブランチ（書き込む先のもの）には ✎ を添える。
+fn mark_worktree_branches(store: &gio::ListStore, view: &crate::worktrees::View) {
+    for i in 0..store.n_items() {
+        let Some(node) = store.item(i).and_downcast::<Node>() else {
+            continue;
+        };
+        if let Some(children) = node.children() {
+            mark_worktree_branches(&children, view);
+        }
+        let mut data = node.imp().data.borrow_mut();
+        let Item::Ref(entry) = &data.item else {
+            continue;
+        };
+        if entry.kind != RefKind::Local {
+            continue;
+        }
+        let other = view
+            .list
+            .iter()
+            .find(|w| w.key != view.editing && w.branch.as_deref() == Some(entry.name.as_str()));
+        if let Some(w) = other {
+            data.tooltip = Some(tr!(
+                "Checked out in the worktree “{name}” ({path})",
+                name = &w.name,
+                path = &w.path
+            ));
+            data.badge = w.mark(false).to_owned();
+            data.marks.clear();
+            data.mark_click = false;
+            data.green = !w.main;
+        } else if data.head {
+            data.badge = if data.badge.is_empty() {
+                "✎".to_owned()
+            } else {
+                format!("✎ {}", data.badge)
+            };
         }
     }
 }

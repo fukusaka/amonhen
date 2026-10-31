@@ -465,6 +465,51 @@ impl Worktrees {
         (self.editing.borrow().is_some() || !info.main).then(|| info.name.clone())
     }
 
+    /// History の、各 worktree の HEAD の札（コミット、札の文字、書き込む先か）。札は印と名前と、変更のある
+    /// ファイルの数。worktree が 1 つなら空。
+    pub fn heads(&self) -> Vec<(amonhen_model::Oid, String, bool)> {
+        let list = self.list.borrow();
+        if list.len() < 2 {
+            return Vec::new();
+        }
+        let editing = self.editing_key();
+        // 同じコミットにいくつもあれば、書き込む先、メイン、名前の順（札は 3 つまでしか出さない）。
+        let mut ordered: Vec<&Info> = list.iter().collect();
+        ordered.sort_by(|a, b| {
+            (b.key == editing)
+                .cmp(&(a.key == editing))
+                .then(b.main.cmp(&a.main))
+                .then_with(|| natural_cmp(&a.name, &b.name))
+        });
+        ordered
+            .into_iter()
+            .filter_map(|w| {
+                let head = amonhen_model::Oid::from_hex(w.head.as_deref()?)?;
+                let is_editing = w.key == editing;
+                let changes = self.counts.borrow().get(&w.key).copied().unwrap_or(0);
+                let mut name = format!("{} {}", w.mark(is_editing), w.name);
+                if changes > 0 {
+                    name.push_str(&format!(" · {changes}"));
+                }
+                Some((head, name, is_editing))
+            })
+            .collect()
+    }
+
+    /// 書き込む先でない worktree が checkout しているブランチ → その worktree（名前、パス）。git はこれらを
+    /// ここでは checkout させない。
+    pub fn branches_elsewhere(&self) -> HashMap<String, Info> {
+        let list = self.list.borrow();
+        if list.len() < 2 {
+            return HashMap::new();
+        }
+        let editing = self.editing_key();
+        list.iter()
+            .filter(|w| w.key != editing)
+            .filter_map(|w| Some((w.branch.clone()?, w.clone())))
+            .collect()
+    }
+
     /// `key` の worktree。
     pub fn info(&self, key: &str) -> Option<Info> {
         self.list.borrow().iter().find(|w| w.key == key).cloned()
