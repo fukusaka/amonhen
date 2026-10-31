@@ -22,7 +22,8 @@ becomes the GitHub Release notes.
 - In a partial clone, a History search with `contents:` asks first, then fetches every content not fetched yet in
   one go. `amonhen status` notes shallow, partial and sparse repositories.
 - Fetching and Folders has a switch to keep the repository maintained in the background (`git maintenance start`,
-  git 2.31); the app then leaves writing the commit-graph to it.
+  git 2.31); the app then leaves writing the commit-graph to it. Turning it off lets git's automatic maintenance
+  run again.
 - The Clone sheet chooses what to download (everything, file contents when needed, or recent history only) and can
   check out only some folders, picked right after the clone (git 2.25). `amonhen clone` takes `--filter`, `--depth`
   and `--sparse`.
