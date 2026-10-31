@@ -26,7 +26,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Stashes row with a count only when there are stashes | ✓ | ✓ | △ | n/a | VSCode: The Stashes section is always shown. |
 | Range Diff row while a range diff is open | ✓ | ✓ | — | n/a | GTK4: Closed with Close Range Diff, not ×. |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | — | n/a |  |
-| Several branches or tags selected at once | ✓ | △ | — | n/a | GTK4: Bulk actions only; History does not follow the selection. |
+| Several branches or tags selected at once | ✓ | ✓ | — | n/a |  |
 | Pull Requests and Worktrees shown only when not empty | ✓ | ✓ | — | n/a | VSCode: Neither group exists. |
 
 ## Sidebar
@@ -222,7 +222,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Go to HEAD, Parent, Child | ✓ | ✓ | △ | n/a | VSCode: Parent links in the details only. |
 | Go to Ref | — | — | — | n/a |  |
 | Several commits selected (range, two, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>` for two. |
-| History of several selected refs | ✓ | — | — | ✓ | CLI: `log --branch` repeated. |
+| History of several selected refs | ✓ | ✓ | — | ✓ | CLI: `log --branch` repeated. |
 | Commit menu: checkout, new branch or tag, cherry-pick, revert, copy ID | ✓ | ✓ | △ | △ | VSCode: No checkout of a commit.<br>CLI: Via `amonhen run`. |
 | Edit mode (keep, reword, squash, fixup, drop, edit; drag to reorder) | ✓ | ✓ | △ | △ | VSCode: One commit at a time, no plan of several steps.<br>CLI: Via `amonhen run`. |
 | Rewrite preview (stacked and pushed branches, expected conflicts) | ✓ | ✓ | △ | ✓ | VSCode: Through the daemon and for the current branch only.<br>CLI: `rewrite-preview`. |

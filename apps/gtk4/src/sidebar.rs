@@ -219,6 +219,7 @@ impl Tree {
 /// 右クリックのメニューを作る（項目、サイドバーが知っていること）。
 type MenuCallback = Box<dyn Fn(&Data, &Known) -> Vec<menu::Item>>;
 type SelectCallback = Box<dyn Fn(&Data)>;
+type SelectManyCallback = Box<dyn Fn(&[RefEntry])>;
 /// 落としたもの（`local:<名前>` か `other:<名前>`）、落とした先の項目、メニューを出す場所。
 type DropCallback = Box<dyn Fn(&str, &Data, &gtk::Widget, f64, f64)>;
 
@@ -322,6 +323,8 @@ struct Inner {
     /// 分け方を読む番号（古い答えは使わない）。
     loading: Cell<u64>,
     on_select: RefCell<Option<SelectCallback>>,
+    /// ブランチ・タグを 2 つ以上選んだら呼ぶ（macOS 版の `onSelectMany`）。
+    on_select_many: RefCell<Option<SelectManyCallback>>,
     on_menu: Rc<RefCell<Option<MenuCallback>>>,
     on_drop: Rc<RefCell<Option<DropCallback>>>,
     /// 作り直している間は、選択の変化を知らせない。
@@ -457,6 +460,7 @@ impl Sidebar {
             actions: RefCell::default(),
             loading: Cell::new(0),
             on_select: RefCell::default(),
+            on_select_many: RefCell::default(),
             on_menu,
             on_drop,
             rebuilding: Cell::new(false),
@@ -484,8 +488,32 @@ impl Sidebar {
             if inner.rebuilding.get() {
                 return;
             }
+            let nodes = inner.selected_nodes();
+            // ブランチ・タグを 2 つ以上選んだら、それぞれから辿れる履歴をまとめて出す（macOS 版と同じ）。
+            if nodes.len() > 1 {
+                let refs: Vec<RefEntry> = nodes
+                    .iter()
+                    .filter_map(|n| match n.data().item {
+                        Item::Ref(e)
+                            if matches!(
+                                e.kind,
+                                RefKind::Local | RefKind::Remote | RefKind::Tag
+                            ) && e.target.is_some() =>
+                        {
+                            Some(e)
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if refs.len() > 1
+                    && let Some(f) = inner.on_select_many.borrow().as_ref()
+                {
+                    f(&refs);
+                }
+                return;
+            }
             // 1 つだけ選んだときに知らせる（複数選んだら、右クリックでまとめて扱う）。
-            if let [node] = &inner.selected_nodes()[..]
+            if let [node] = &nodes[..]
                 && let Some(f) = inner.on_select.borrow().as_ref()
             {
                 f(&node.data());
@@ -544,6 +572,11 @@ impl Sidebar {
     /// 項目を選んだら `f(項目)` を呼ぶ。
     pub fn connect_select(&self, f: impl Fn(&Data) + 'static) {
         self.inner.on_select.replace(Some(Box::new(f)));
+    }
+
+    /// ブランチ・タグを 2 つ以上選んだら `f(選んだもの)` を呼ぶ。
+    pub fn connect_select_many(&self, f: impl Fn(&[RefEntry]) + 'static) {
+        self.inner.on_select_many.replace(Some(Box::new(f)));
     }
 
     /// 右クリックしたら `f(項目, 知っていること)` でメニューの項目を求めて出す。
@@ -710,6 +743,22 @@ impl Sidebar {
             store.remove(at);
         }
         self.inner.rebuilding.set(false);
+    }
+
+    /// 名前が `names` のブランチ・タグの行（見えているもの）を選ぶ（選んだことを知らせる。確認用）。
+    pub fn select_refs(&self, names: &[String]) {
+        let inner = &self.inner;
+        let mut first = true;
+        for i in 0..inner.model.n_items() {
+            if let Some(row) = inner.model.row(i)
+                && let Some(node) = row.item().and_downcast::<Node>()
+                && let Item::Ref(e) = &node.data().item
+                && names.contains(&e.name)
+            {
+                inner.selection.select_item(i, first);
+                first = false;
+            }
+        }
     }
 
     /// Conflicts の行を選ぶ（選んだことを知らせる。確認用）。

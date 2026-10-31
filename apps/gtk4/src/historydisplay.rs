@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use amonhen_core::{HistorySnapshot, Repository};
-use amonhen_model::{HistoryOrder, Oid, tr};
+use amonhen_model::{HistoryOrder, Oid, RefKind, Refs, tr};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 
@@ -228,15 +228,35 @@ pub struct Shaper {
     full: RefCell<Option<(Arc<Repository>, Arc<HistorySnapshot>)>>,
     /// 折りたたんだ History で開いた merge。
     expanded: RefCell<HashSet<Oid>>,
-    /// 最後に出した形（全体の History の世代と、開いた merge）。同じなら作り直さない。
-    shaped: RefCell<Option<(u64, Vec<Oid>)>>,
+    /// 最後に出した形。同じなら作り直さない。
+    shaped: RefCell<Option<Shape>>,
     /// 頼んだ回数（古い結果を捨てるため）。
     request: Rc<Cell<u64>>,
+    /// サイドバーで複数選んだブランチ・タグ。空なら全ブランチ（macOS 版の `Scope.refs`）。
+    scope: RefCell<Vec<ScopeRef>>,
+    /// 絞り込んでいる間だけ History のバーの左に出す、ブランチの数と All Branches のボタン。
+    pub scope_bar: gtk::Box,
+    scope_label: gtk::Label,
 }
+
+/// 作った History の形（全体の History の世代、開いた merge、絞り込む起点、折りたたむか）。
+type Shape = (u64, Vec<Oid>, Vec<Oid>, bool);
+
+/// 絞り込む ref の 1 つ（種類, 名前, コミット）。ref が動いたら、コミットを付け替える。
+pub type ScopeRef = (RefKind, String, Oid);
 
 impl Shaper {
     pub fn new(view: &HistoryView, search: Rc<Search>, pending: Rc<Cell<u32>>) -> Rc<Self> {
         view.set_display(display());
+        let scope_bar = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+        let scope_label = gtk::Label::new(None);
+        scope_label.add_css_class("dim-label");
+        scope_label.set_margin_start(4);
+        let all = gtk::Button::with_label(&tr!("All Branches"));
+        all.add_css_class("flat");
+        scope_bar.append(&scope_label);
+        scope_bar.append(&all);
+        scope_bar.set_visible(false);
         let shaper = Rc::new(Self {
             view: view.clone(),
             search,
@@ -245,6 +265,15 @@ impl Shaper {
             expanded: RefCell::default(),
             shaped: RefCell::default(),
             request: Rc::default(),
+            scope: RefCell::default(),
+            scope_bar,
+            scope_label,
+        });
+        let weak = Rc::downgrade(&shaper);
+        all.connect_clicked(move |_| {
+            if let Some(s) = weak.upgrade() {
+                s.set_scope(Vec::new(), None);
+            }
         });
         let weak = Rc::downgrade(&shaper);
         settings::connect_changed(move |key| {
@@ -270,26 +299,69 @@ impl Shaper {
         self.reshape(None);
     }
 
+    /// 複数選んだブランチ・タグから辿れる History にする（空なら全ブランチに戻す）。変えたら true。`select` は
+    /// 作り直したら選ぶコミット。
+    pub fn set_scope(&self, refs: Vec<ScopeRef>, select: Option<Oid>) -> bool {
+        if *self.scope.borrow() == refs {
+            return false;
+        }
+        self.scope_label
+            .set_text(&tr!("{count} branches", count = refs.len()));
+        self.scope_bar.set_visible(!refs.is_empty());
+        self.scope.replace(refs);
+        self.reshape(select);
+        true
+    }
+
+    /// ref の一覧が変わった。絞り込んだ ref がほかのプログラムで動いた（rebase・commit・fetch）なら、新しい
+    /// コミットに付け替えて絞り込み直す（前のコミットのままだと、消えたコミットから辿ることになる）。
+    pub fn show_refs(&self, refs: &Refs) {
+        let moved: Vec<ScopeRef> = self
+            .scope
+            .borrow()
+            .iter()
+            .map(|(kind, name, target)| {
+                let now = refs
+                    .entries
+                    .iter()
+                    .find(|e| e.kind == *kind && e.name == *name)
+                    .and_then(|e| e.target)
+                    .unwrap_or(*target);
+                (*kind, name.clone(), now)
+            })
+            .collect();
+        if moved != *self.scope.borrow() {
+            self.scope.replace(moved);
+            self.reshape(None);
+        }
+    }
+
     fn reshape(&self, select: Option<Oid>) {
         let Some((repo, full)) = self.full.borrow().clone() else {
             return;
         };
-        if !settings::bool(settings::FOLD_MERGED_BRANCHES) {
-            // 作っている途中の折りたたみは捨てる。
+        let fold = settings::bool(settings::FOLD_MERGED_BRANCHES);
+        let tips: Vec<Oid> = self.scope.borrow().iter().map(|(_, _, t)| *t).collect();
+        if !fold && tips.is_empty() {
+            // 作っている途中の折りたたみ・絞り込みは捨てる。
             self.request.set(self.request.get() + 1);
             self.shaped.replace(None);
             self.search.show_history(repo, full);
             return;
         }
-        let mut expanded: Vec<Oid> = self.expanded.borrow().iter().copied().collect();
+        let mut expanded: Vec<Oid> = if fold {
+            self.expanded.borrow().iter().copied().collect()
+        } else {
+            Vec::new()
+        };
         expanded.sort_unstable();
-        let key = (full.generation, expanded.clone());
+        let key = (full.generation, expanded.clone(), tips.clone(), fold);
         // 同じ History を同じ形で作っている・作ったなら、そのまま（読み直すたびに同じ History が来る）。
         if select.is_none() && self.shaped.borrow().as_ref() == Some(&key) {
             return;
         }
         self.shaped.replace(Some(key));
-        // まだ何も出していなければ、折りたたむまでは全体を出しておく（macOS 版も前回の History をすぐ出す）。
+        // まだ何も出していなければ、作り終えるまでは全体を出しておく（macOS 版も前回の History をすぐ出す）。
         if self.view.current().is_none() {
             self.search.show_history(repo.clone(), full.clone());
         }
@@ -300,24 +372,34 @@ impl Shaper {
         pending.set(pending.get() + 1);
         let r = repo.clone();
         let current = self.request.clone();
+        let whole = full.graph.len();
         glib::spawn_future_local(async move {
-            let folded = gio::spawn_blocking(move || {
-                r.history_folded(None, &expanded).map_err(|e| e.to_string())
+            let shaped = gio::spawn_blocking(move || {
+                let some = (!tips.is_empty()).then_some(&tips[..]);
+                if fold {
+                    r.history_folded(some, &expanded)
+                } else {
+                    r.history_filtered(&tips)
+                }
+                .map_err(|e| e.to_string())
             })
             .await;
             pending.set(pending.get() - 1);
             if current.get() != request {
                 return;
             }
-            match folded {
-                Ok(Ok(folded)) => {
-                    let row = select.and_then(|id| folded.row_of(&id));
-                    search.show_history(repo, folded);
+            match shaped {
+                // 起点がもう History にない（ほかのプログラムの rebase で消えたコミットを、ref を読み直す前に
+                // 使った）と空になる。空にはせず今の表示を残し、ref を読み直して付け替えたときに出し直す。
+                Ok(Ok(shaped)) if shaped.graph.is_empty() && whole > 0 => {}
+                Ok(Ok(shaped)) => {
+                    let row = select.and_then(|id| shaped.row_of(&id));
+                    search.show_history(repo, shaped);
                     if let Some(row) = row {
                         view.select(row);
                     }
                 }
-                Ok(Err(e)) => eprintln!("折りたたんだ History を作れない: {e}"),
+                Ok(Err(e)) => eprintln!("History を作れない: {e}"),
                 Err(_) => {}
             }
         });
@@ -384,4 +466,25 @@ impl Shaper {
         }
         self.reshape(Some(id));
     }
+}
+
+/// サイドバーでブランチ・タグを 2 つ以上選んだら、History に切り替えて、それぞれから辿れる履歴をまとめて出す
+/// （macOS 版の `onSelectMany`）。
+pub fn connect_select_many(
+    shaper: &Rc<Shaper>,
+    sidebar: &crate::sidebar::Sidebar,
+    pages: &gtk::Stack,
+) {
+    let (shaper, pages) = (Rc::downgrade(shaper), pages.downgrade());
+    sidebar.connect_select_many(move |refs| {
+        let (Some(shaper), Some(pages)) = (shaper.upgrade(), pages.upgrade()) else {
+            return;
+        };
+        pages.set_visible_child_name("history");
+        let scope = refs
+            .iter()
+            .filter_map(|e| Some((e.kind, e.name.clone(), e.target?)))
+            .collect();
+        shaper.set_scope(scope, None);
+    });
 }

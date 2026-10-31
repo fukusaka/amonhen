@@ -26,7 +26,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | △ | n/a | VSCode: Stashes の節はいつも出る。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | n/a | GTK4: × ではなく Close Range Diff で閉じる。 |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | — | n/a |  |
-| ブランチ・タグをいくつも選ぶ | ✓ | △ | — | n/a | GTK4: まとめての操作だけで、History は選んだものを出さない。 |
+| ブランチ・タグをいくつも選ぶ | ✓ | ✓ | — | n/a |  |
 | Pull Requests・Worktrees は中身があるときだけ出す | ✓ | ✓ | — | n/a | VSCode: どちらのグループもない。 |
 
 ## サイドバー
@@ -222,7 +222,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | Go to HEAD・Parent・Child | ✓ | ✓ | △ | n/a | VSCode: 詳細の親へのリンクだけ。 |
 | Go to Ref | — | — | — | n/a |  |
 | いくつものコミットを選ぶ（範囲・2 つ・飛び飛び） | ✓ | ✓ | — | △ | CLI: 2 つは `diff <rev> <rev>`。 |
-| 選んだいくつもの ref の History | ✓ | — | — | ✓ | CLI: `log --branch` を重ねる。 |
+| 選んだいくつもの ref の History | ✓ | ✓ | — | ✓ | CLI: `log --branch` を重ねる。 |
 | コミットのメニュー: checkout・新しいブランチやタグ・cherry-pick・revert・ID のコピー | ✓ | ✓ | △ | △ | VSCode: コミットの checkout はない。<br>CLI: `amonhen run` から。 |
 | 編集モード（keep・reword・squash・fixup・drop・edit、ドラッグで並べ替え） | ✓ | ✓ | △ | △ | VSCode: 1 つずつで、いくつもの段の計画はない。<br>CLI: `amonhen run` から。 |
 | 書き換えの見込み（積み重ね・push 済みのブランチ、コンフリクトの見込み） | ✓ | ✓ | △ | ✓ | VSCode: daemon 越しで、今のブランチだけ。<br>CLI: `rewrite-preview`。 |

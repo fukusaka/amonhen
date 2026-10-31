@@ -99,6 +99,8 @@ struct Args {
     select_path: Option<String>,
     /// 最初に ref を読んだら、この名前の ref をサイドバーで選んだことにする（確認用）。
     select_ref: Option<String>,
+    /// 確認用: サイドバーでこのブランチ・タグ（`,` 区切り）を選ぶ。
+    select_refs: Option<String>,
     /// 最初に ref を読んだら、この名前の ref の右クリックのメニューを出す（確認用）。
     menu_ref: Option<String>,
     /// History でこれらの行を選んでおく（確認用。`1,3` のように）。
@@ -204,6 +206,9 @@ fn parse_args() -> Result<Args, String> {
                 );
             }
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
+            "--select-refs" => {
+                args.select_refs = Some(it.next().ok_or("--select-refs <name,name,...>")?)
+            }
             "--menu-ref" => args.menu_ref = Some(it.next().ok_or("--menu-ref <name>")?),
             "--sidebar-menu" => args.sidebar_menu = Some(it.next().ok_or("--sidebar-menu <name>")?),
             "--filter-sidebar" => {
@@ -718,7 +723,17 @@ fn build_tab(
             }
         })
     };
-    connect_sidebar(&sidebar, &pages, &view, &stashes, &worktrees, open_conflict);
+    connect_sidebar(
+        &sidebar,
+        &pages,
+        &view,
+        &stashes,
+        &worktrees,
+        open_conflict,
+        &shaper,
+    );
+    historydisplay::connect_select_many(&shaper, &sidebar, &pages);
+    history_bar.prepend(&shaper.scope_bar);
     if let Some(words) = &args.filter_sidebar {
         sidebar.filter(words);
     }
@@ -790,6 +805,7 @@ fn build_tab(
     pending.set(pending.get() + 1);
     let mut waiting_status = true;
     let mut select_ref = args.select_ref.clone();
+    let mut select_refs = args.select_refs.clone();
     let mut menu_ref = args.menu_ref.clone();
     let mut perform = args.perform.clone();
     if perform.is_some() {
@@ -1702,6 +1718,7 @@ fn build_tab(
                         }
                         subtitle.set_visible(true);
                         view.show_refs(&refs);
+                        shaper.show_refs(&refs.refs);
                         sidebar.show(&refs);
                         // worktree を足した・消した・ブランチを変えたかもしれない。
                         worktrees.reload_list();
@@ -1763,6 +1780,11 @@ fn build_tab(
                             menu::popup(&sidebar.root, 24.0, 120.0, items);
                         }
                         actions.refresh_undo();
+                        if let Some(names) = select_refs.take() {
+                            let names: Vec<String> =
+                                names.split(',').map(|n| n.trim().to_string()).collect();
+                            sidebar.select_refs(&names);
+                        }
                         if let Some(name) = select_ref.take() {
                             pending.set(pending.get() - 1);
                             // stash は Stashes の画面で選ぶ。
@@ -1918,8 +1940,10 @@ fn connect_sidebar(
     stashes: &Rc<Stashes>,
     worktrees: &Rc<worktrees::Worktrees>,
     open_conflict: Rc<dyn Fn()>,
+    shaper: &Rc<historydisplay::Shaper>,
 ) {
     let (pages, view, stashes) = (pages.downgrade(), view.downgrade(), Rc::downgrade(stashes));
+    let shaper = Rc::downgrade(shaper);
     let worktrees = Rc::downgrade(worktrees);
     sidebar.connect_select(move |data| {
         let (Some(pages), Some(view)) = (pages.upgrade(), view.upgrade()) else {
@@ -1959,6 +1983,10 @@ fn connect_sidebar(
             _ => {}
         }
         if let Some(target) = sidebar::target(data) {
+            // 複数のブランチ・タグで絞り込んでいたら、全ブランチに戻す。
+            if let Some(shaper) = shaper.upgrade() {
+                shaper.set_scope(Vec::new(), Some(target));
+            }
             jump_to(&pages, &view, target, &Rc::new(Cell::new(0)));
         }
     });
