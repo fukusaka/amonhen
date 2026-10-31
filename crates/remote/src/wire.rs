@@ -244,7 +244,10 @@ pub enum Op {
     },
     Resolve(String),
     Merge(Vec<String>),
-    Rebase(String),
+    Rebase {
+        onto: String,
+        update_refs: Option<bool>,
+    },
     CherryPick {
         oid: Oid,
         is_merge: bool,
@@ -258,6 +261,7 @@ pub enum Op {
         todo: PathBuf,
         message: Option<PathBuf>,
         rebase_merges: bool,
+        update_refs: Option<bool>,
     },
     SequenceInProgress,
     RebaseProgress,

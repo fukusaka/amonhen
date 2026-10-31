@@ -834,8 +834,11 @@ impl Operations for RemoteOperations {
         self.op(Op::Merge(revs.to_vec()))
     }
 
-    fn rebase(&self, onto: &str) -> Result<Outcome> {
-        self.op(Op::Rebase(onto.to_owned()))
+    fn rebase(&self, onto: &str, update_refs: Option<bool>) -> Result<Outcome> {
+        self.op(Op::Rebase {
+            onto: onto.to_owned(),
+            update_refs,
+        })
     }
 
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
@@ -859,12 +862,14 @@ impl Operations for RemoteOperations {
         todo: &Path,
         message: Option<&Path>,
         rebase_merges: bool,
+        update_refs: Option<bool>,
     ) -> Result<Outcome> {
         self.op(Op::RebaseTodo {
             base: base.copied(),
             todo: todo.to_owned(),
             message: message.map(Path::to_owned),
             rebase_merges,
+            update_refs,
         })
     }
 

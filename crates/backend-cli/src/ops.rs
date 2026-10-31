@@ -7,6 +7,15 @@ use amonhen_model::{
 
 use crate::Git;
 
+/// 積み重ねたブランチを一緒に動かすかのこの操作だけの指定（git 2.38 から。古い git には渡さない）。
+fn update_refs_flag(update_refs: Option<bool>) -> Option<&'static str> {
+    match update_refs {
+        Some(true) if crate::git_at_least(2, 38) => Some("--update-refs"),
+        Some(false) if crate::git_at_least(2, 38) => Some("--no-update-refs"),
+        _ => None,
+    }
+}
+
 fn hex(oid: &Oid) -> String {
     oid.to_string()
 }
@@ -682,9 +691,12 @@ impl Operations for Git {
         }
     }
 
-    fn rebase(&self, onto: &str) -> Result<Outcome> {
-        // 積み重ねたブランチも一緒に動かすかは、git の `rebase.updateRefs` に任せる（git の既定はオフ）。
-        self.stoppable(&["rebase", onto], &[])
+    fn rebase(&self, onto: &str, update_refs: Option<bool>) -> Result<Outcome> {
+        // 積み重ねたブランチも一緒に動かすかは、指定がなければ git の `rebase.updateRefs` に任せる（git の既定はオフ）。
+        let mut args = vec!["rebase"];
+        args.extend(update_refs_flag(update_refs));
+        args.push(onto);
+        self.stoppable(&args, &[])
     }
 
     fn cherry_pick(&self, oid: &Oid, is_merge: bool) -> Result<Outcome> {
@@ -711,10 +723,16 @@ impl Operations for Git {
         todo: &std::path::Path,
         message: Option<&std::path::Path>,
         rebase_merges: bool,
+        update_refs: Option<bool>,
     ) -> Result<Outcome> {
-        // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は、`rebase.updateRefs` が true で、git が
-        // 2.38 以降のときだけ残す（git の rebase と同じ条件）。merge を作り直すときは git が todo を作る。
-        if !rebase_merges && !self.updates_refs_in_rebase() {
+        // todo の `update-ref`（積み重ねたブランチを一緒に動かす）は、この操作の指定か、なければ
+        // `rebase.updateRefs` が true で、git が 2.38 以降のときだけ残す（git の rebase と同じ条件）。merge を
+        // 作り直すときは git が todo を作るので、git にそのまま伝える。
+        let keep = match update_refs {
+            Some(on) => on && crate::git_at_least(2, 38),
+            None => self.updates_refs_in_rebase(),
+        };
+        if !rebase_merges && !keep {
             let text = std::fs::read_to_string(todo)?;
             if text.lines().any(|l| l.starts_with("update-ref ")) {
                 let kept: String = text
@@ -777,6 +795,7 @@ impl Operations for Git {
         args.extend(["rebase", "--interactive", "--autostash", "--no-autosquash"]);
         if rebase_merges {
             args.push("--rebase-merges");
+            args.extend(update_refs_flag(update_refs));
         }
         args.push(base.as_deref().unwrap_or("--root"));
         let env: Vec<(&str, &str)> = env.iter().map(|(k, v)| (*k, v.as_str())).collect();

@@ -109,6 +109,9 @@ pub enum Command {
     /// 今のブランチを `onto` の上に rebase する。
     Rebase {
         onto: String,
+        /// 積み重ねたブランチを一緒に動かすかの、この操作だけの指定（なければ git の `rebase.updateRefs`）。
+        #[serde(default)]
+        update_refs: Option<bool>,
     },
     CherryPick {
         oid: String,
@@ -240,6 +243,9 @@ pub enum Command {
     Rewrite {
         label: String,
         edit: HistoryEdit,
+        /// 積み重ねたブランチを一緒に動かすかの、この操作だけの指定（なければ git の `rebase.updateRefs`）。
+        #[serde(default)]
+        update_refs: Option<bool>,
     },
     /// 書き換える前の見通し（docs/design.md の「Rewriting operations and stacked branches」）。`edit` は History の
     /// 編集、`onto` は今のブランチをそこへ rebase すること（どちらか一方）。作業ツリー・index・ref には触らない。
@@ -253,6 +259,9 @@ pub enum Command {
         edit: Option<HistoryEdit>,
         #[serde(default)]
         onto: Option<String>,
+        /// この操作だけの指定（`Rebase`・`Rewrite` の `update_refs` と同じ）。false なら残るブランチの理由は `off`。
+        #[serde(default)]
+        update_refs: Option<bool>,
     },
     /// コミットのメッセージ全文（`text`）。
     CommitMessage {
@@ -1804,6 +1813,7 @@ impl Repository {
         ops: &dyn amonhen_model::Operations,
         edit: Option<&HistoryEdit>,
         onto: Option<&str>,
+        update_refs: Option<bool>,
     ) -> Result<serde_json::Value> {
         let head = ops.head_state()?.oid.ok_or_else(|| tr!("No commits yet"))?;
         // 載せ直す土台、載せ直す順のコミット（予測に使う）、書き換わるコミット（ブランチを見る）。
@@ -1811,6 +1821,9 @@ impl Repository {
         let mut picks: Vec<Oid> = Vec::new();
         let mut rewritten: std::collections::HashSet<Oid> = Default::default();
         let mut forecast = true;
+        // rebase のとき、確認のシートで前と後を描くための、載せ先で進んだコミット（新しい順）と、分かれたところ。
+        let mut onto_commits: Vec<Oid> = Vec::new();
+        let mut fork: Option<Oid> = None;
         match (edit, onto) {
             (Some(edit), _) => {
                 self.load_history()?;
@@ -1872,7 +1885,17 @@ impl Repository {
                     .map(|c| c.id)
                     .collect();
                 linear.reverse();
+                fork = linear
+                    .first()
+                    .and_then(|first| commits.iter().find(|c| c.id == *first))
+                    .and_then(|c| c.parents.first().copied());
                 picks = linear;
+                onto_commits = self
+                    .backend()
+                    .commits_since(&[b], &[head])?
+                    .into_iter()
+                    .map(|c| c.id)
+                    .collect();
             }
             (None, None) => return Err(tr!("Nothing to preview").into()),
         }
@@ -1912,12 +1935,13 @@ impl Repository {
             })
             .unwrap_or_default();
         let git_ok = ops.git_version()?.is_none_or(|(a, b, _)| (a, b) >= (2, 38));
-        let setting = ops
+        let configured = ops
             .config_list()?
             .iter()
             .rev()
             .find(|e| e.key.eq_ignore_ascii_case("rebase.updateRefs"))
             .is_some_and(|e| e.value.eq_ignore_ascii_case("true"));
+        let setting = update_refs.unwrap_or(configured);
         let mut moving = Vec::new();
         let mut staying = Vec::new();
         for entry in refs
@@ -1940,6 +1964,8 @@ impl Repository {
                 Some("checkedOut")
             } else if !git_ok {
                 Some("git")
+            } else if update_refs == Some(false) {
+                Some("off")
             } else if !setting {
                 Some("setting")
             } else {
@@ -1952,12 +1978,54 @@ impl Repository {
                 })),
             }
         }
+        // 前と後を描く材料（rebase のとき）: 載せ直すコミット（古い順）、載せ先で進んだコミット（新しい順、先頭の
+        // いくつか）、分かれたところ、それぞれに付いているブランチ。
+        let mut drawing = serde_json::Value::Null;
+        if onto.is_some() && !picks.is_empty() {
+            const SHOWN: usize = 6;
+            let shown_onto: Vec<Oid> = onto_commits.iter().take(SHOWN).copied().collect();
+            let mut ids: Vec<Oid> = picks.clone();
+            ids.extend(&shown_onto);
+            ids.extend(fork);
+            let texts = self.commit_texts(&ids)?;
+            let subject = |id: &Oid| {
+                ids.iter()
+                    .position(|i| i == id)
+                    .and_then(|i| texts.get(i))
+                    .map(|t| String::from_utf8_lossy(t.subject()).into_owned())
+                    .unwrap_or_default()
+            };
+            let commit =
+                |id: &Oid| serde_json::json!({ "oid": id.to_string(), "subject": subject(id) });
+            let labels: Vec<serde_json::Value> = refs
+                .refs
+                .entries
+                .iter()
+                .filter(|e| matches!(e.kind, RefKind::Local | RefKind::Remote))
+                .filter_map(|e| {
+                    let t = e.target.filter(|t| ids.contains(t))?;
+                    Some(serde_json::json!({
+                        "oid": t.to_string(), "name": e.name,
+                        "kind": if e.kind == RefKind::Local { "local" } else { "remote" },
+                    }))
+                })
+                .collect();
+            drawing = serde_json::json!({
+                "picks": picks.iter().map(commit).collect::<Vec<_>>(),
+                "onto": shown_onto.iter().map(commit).collect::<Vec<_>>(),
+                "ontoMore": onto_commits.len().saturating_sub(SHOWN),
+                "base": fork.map(|b| commit(&b)),
+                "labels": labels,
+            });
+        }
         Ok(serde_json::json!({
             "moving": moving,
             "staying": staying,
             "current": current,
             "currentUpstream": current.as_deref().and_then(upstream_of),
             "conflicts": conflicts,
+            "updateRefs": { "configured": configured, "available": git_ok },
+            "drawing": drawing,
         }))
     }
 
@@ -1968,6 +2036,7 @@ impl Repository {
         ops: &dyn amonhen_model::Operations,
         label: &str,
         steps: &[rewrite::PlanStep],
+        update_refs: Option<bool>,
     ) -> Result<Outcome> {
         let not_editable = || {
             tr!(
@@ -2022,7 +2091,15 @@ impl Repository {
             ops,
             label,
             &[],
-            || ops.rebase_todo(base.as_ref(), &program, message.as_deref(), true),
+            || {
+                ops.rebase_todo(
+                    base.as_ref(),
+                    &program,
+                    message.as_deref(),
+                    true,
+                    update_refs,
+                )
+            },
             |o| *o == Outcome::Conflict,
             |o| *o == Outcome::Stopped,
         )
@@ -2030,6 +2107,16 @@ impl Repository {
 
     /// コミットを編集する。非対話の rebase で行い、Undo できるように記録する。
     pub fn rewrite(&self, label: &str, edit: &HistoryEdit) -> Result<Outcome> {
+        self.rewrite_with(label, edit, None)
+    }
+
+    /// `rewrite` に、積み重ねたブランチを一緒に動かすかのこの操作だけの指定を添えたもの。
+    pub fn rewrite_with(
+        &self,
+        label: &str,
+        edit: &HistoryEdit,
+        update_refs: Option<bool>,
+    ) -> Result<Outcome> {
         let ops = self.backend().operations()?;
         if ops.sequence_in_progress()?.is_some() {
             return Err(tr!("A merge or rebase is in progress. Finish or abort it first").into());
@@ -2043,7 +2130,7 @@ impl Repository {
                 .iter()
                 .any(|s| Oid::from_hex(&s.oid).is_none_or(|o| !chain.iter().any(|c| c.oid == o)))
         {
-            return self.rewrite_through_merges(ops, label, steps);
+            return self.rewrite_through_merges(ops, label, steps, update_refs);
         }
         // メッセージと todo は `.git/amonhen` に書く。git に渡すのはリポジトリ側の絶対パス。
         let dir = self.backend().paths().git_dir.join("amonhen");
@@ -2060,8 +2147,13 @@ impl Repository {
             label,
             &names,
             || {
-                let outcome =
-                    ops.rebase_todo(plan.base.as_ref(), &todo, message.as_deref(), false)?;
+                let outcome = ops.rebase_todo(
+                    plan.base.as_ref(),
+                    &todo,
+                    message.as_deref(),
+                    false,
+                    update_refs,
+                )?;
                 // split: `edit` で止めたコミットを取り消し、変更を作業ツリーに戻す。
                 if plan.reset_on_stop && outcome == Outcome::Stopped {
                     let parent = ops.resolve("HEAD^")?;
@@ -2322,7 +2414,7 @@ impl Repository {
                 let label = format!("Merge {} into {target}", names_label(&revs));
                 self.merge_revs(ops, undo, &label, &revs, one_by_one)
             }
-            Command::Rebase { onto } => {
+            Command::Rebase { onto, update_refs } => {
                 // 載せ直すコミット（onto..HEAD）に先頭があるブランチは、`rebase.updateRefs` が true なら git が
                 // 一緒に動かす。動きうるので Undo に記録する。
                 let stacked = match (ops.head_state()?.oid, ops.resolve(&onto)) {
@@ -2344,7 +2436,7 @@ impl Repository {
                     &format!("Rebase onto {onto}"),
                     &names,
                     false,
-                    || ops.rebase(&onto),
+                    || ops.rebase(&onto, update_refs),
                     not_done,
                 )?;
                 let moved = Self::moved_branches(ops, &before)?;
@@ -2705,7 +2797,11 @@ impl Repository {
                     ..Default::default()
                 })
             }
-            Command::Rewrite { label, edit } => done(self.rewrite(&label, &edit)?),
+            Command::Rewrite {
+                label,
+                edit,
+                update_refs,
+            } => done(self.rewrite_with(&label, &edit, update_refs)?),
             Command::CommitMessage { oid: o } => {
                 // "HEAD" なら今のコミット（Amend の初期値）。
                 let id = if o == "HEAD" {
@@ -2726,9 +2822,18 @@ impl Repository {
                 info: Some(self.branch_groups()?),
                 ..Default::default()
             }),
-            Command::RewritePreview { edit, onto } => Ok(Response {
+            Command::RewritePreview {
+                edit,
+                onto,
+                update_refs,
+            } => Ok(Response {
                 ok: true,
-                info: Some(self.rewrite_preview(ops, edit.as_ref(), onto.as_deref())?),
+                info: Some(self.rewrite_preview(
+                    ops,
+                    edit.as_ref(),
+                    onto.as_deref(),
+                    update_refs,
+                )?),
                 ..Default::default()
             }),
             Command::EditableCommits { through_merges } => {
@@ -4449,8 +4554,60 @@ mod tests {
             "checkedOut",
             "{busy}"
         );
+        // rebase の見通し: この操作だけ動かさないと、理由は off。前と後を描く材料も返す。
+        let first = git(dir, &["rev-parse", "HEAD~2"]);
+        let onto = run(
+            &repo,
+            &serde_json::json!({"op": "rewritePreview", "onto": first, "updateRefs": false})
+                .to_string(),
+        )["info"]
+            .clone();
+        assert_eq!(
+            find(&onto, "staying", "main").unwrap()["reason"],
+            "off",
+            "{onto}"
+        );
+        assert_eq!(
+            onto["drawing"]["picks"].as_array().unwrap().len(),
+            2,
+            "{onto}"
+        );
+        assert_eq!(onto["drawing"]["picks"][1]["subject"], "c");
+        assert_eq!(onto["updateRefs"]["configured"], true);
         // 何も触っていない。
         assert_eq!(git(dir, &["rev-parse", "HEAD"]), c);
+    }
+
+    #[test]
+    fn a_rebase_can_move_stacked_branches_this_once() {
+        let (major, minor) = git_version();
+        if (major, minor) < (2, 38) {
+            return;
+        }
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        let commit = |name: &str| {
+            std::fs::write(dir.join(format!("{name}.txt")), name).unwrap();
+            git(dir, &["add", "."]);
+            git(dir, &["commit", "-q", "-m", name]);
+            git(dir, &["rev-parse", "HEAD"])
+        };
+        git(dir, &["switch", "-q", "-c", "one"]);
+        let one = commit("one");
+        git(dir, &["switch", "-q", "-c", "two"]);
+        commit("two");
+        git(dir, &["switch", "-q", "main"]);
+        commit("main moves");
+        git(dir, &["switch", "-q", "two"]);
+        git(dir, &["config", "rebase.updateRefs", "false"]);
+        let out = run(&repo, r#"{"op":"rebase","onto":"main","updateRefs":true}"#);
+        assert!(out["error"].is_null(), "{out}");
+        // 設定はオフでも、この操作では one も一緒に動いた。
+        assert_ne!(git(dir, &["rev-parse", "one"]), one);
+        assert_eq!(
+            git(dir, &["rev-parse", "two~1"]),
+            git(dir, &["rev-parse", "one"])
+        );
     }
 
     /// テストを動かしている git の版（major, minor）。
