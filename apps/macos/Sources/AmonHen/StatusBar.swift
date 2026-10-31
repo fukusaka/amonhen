@@ -1,5 +1,10 @@
 import AppKit
 
+extension Notification.Name {
+    /// ステータスバーの行の中身（高さ）が変わった。
+    static let statusBarContentChanged = Notification.Name("io.github.fukusaka.amonhen.statusBarContentChanged")
+}
+
 /// ウィンドウの下のステータスバー（docs/ux.md の「Status bar」）。「今どうなっているか」を 1 か所に集める:
 /// merge・rebase の途中（Continue・Skip・Abort）、失敗（原因と次の一手）、接続が切れた、終わった操作の一言。
 /// 行は上から重要な順に積み、何もなければ高さ 0 で隠れる。GTK4 の FE では `GtkActionBar` が同じ役。
@@ -27,6 +32,10 @@ final class StatusBarController: NSViewController {
         stack.spacing = 0
         view.addSubview(content.view)
         view.addSubview(stack)
+        // 行の中身の高さが変わった（編集モードの見通しが届いた、など）。割り振り直す。
+        NotificationCenter.default.addObserver(forName: .statusBarContentChanged, object: nil, queue: .main) { [weak view] _ in
+            MainActor.assumeIsolated { view?.needsLayout = true }
+        }
         content.view.autoresizingMask = []
         stack.autoresizingMask = []
         self.view = view

@@ -39,6 +39,72 @@ nonisolated struct MergeForecast: Decodable, Sendable {
     }
 }
 
+/// `rewritePreview` の答え: 書き換えで一緒に動くブランチと残るブランチ、push 済みのもの、コンフリクトの見込み。
+nonisolated struct RewritePreview: Decodable, Sendable {
+    struct Branch: Decodable, Sendable {
+        let name: String
+        let upstream: String?
+        let reason: String?
+        let worktree: String?
+    }
+
+    struct Conflict: Decodable, Sendable {
+        let oid: String
+        let files: [String]
+    }
+
+    let moving: [Branch]
+    let staying: [Branch]
+    let current: String?
+    let currentUpstream: String?
+    /// 調べられなければ nil。
+    let conflicts: [Conflict]?
+
+    /// 確認とステータスバーに出す行（ブランチ、push 済み、コンフリクト）。
+    func lines() -> [String] {
+        let names = { (list: [Branch]) in ListFormatter.localizedString(byJoining: list.map(\.name)) }
+        var out: [String] = []
+        if !moving.isEmpty { out.append(L("Also moves %@.", names(moving))) }
+        let stay = { (reason: String) in staying.filter { $0.reason == reason } }
+        if !stay("setting").isEmpty { out.append(L("%@ stays where it is (rebase.updateRefs is off).", names(stay("setting")))) }
+        if !stay("git").isEmpty { out.append(L("%@ stays where it is (moving it needs git 2.38).", names(stay("git")))) }
+        if !stay("checkedOut").isEmpty { out.append(L("%@ stays where it is (checked out in another worktree).", names(stay("checkedOut")))) }
+        let pushed = ([currentUpstream.map { _ in current ?? "" }].compactMap { $0 } + moving.filter { $0.upstream != nil }.map(\.name))
+            .filter { !$0.isEmpty }
+        if !pushed.isEmpty {
+            let list = ListFormatter.localizedString(byJoining: pushed)
+            out.append(pushed.count == 1 ? L("%@ is pushed, so pushing afterwards needs Force Push.", list)
+                : L("%@ are pushed, so pushing afterwards needs Force Push.", list))
+        }
+        if let conflicts {
+            if let first = conflicts.first {
+                let files = first.files.prefix(3).joined(separator: ", ") + (first.files.count > 3 ? ", …" : "")
+                out.append(conflicts.count == 1
+                    ? L("⚠︎ Conflicts expected at %@: %@", String(first.oid.prefix(Titles.shortIDLength)), files)
+                    : L("⚠︎ Conflicts expected at %ld commits, first at %@: %@", conflicts.count,
+                        String(first.oid.prefix(Titles.shortIDLength)), files))
+            } else {
+                out.append(L("No conflicts expected."))
+            }
+        }
+        return out
+    }
+
+    var hasConflicts: Bool { conflicts?.isEmpty == false }
+}
+
+extension Actions {
+    /// 書き換える前の見通しを読む（`edit` は History の編集、`onto` は rebase の先）。読めなければ nil。
+    func rewritePreview(edit: [String: Any]? = nil, onto: String? = nil) async -> RewritePreview? {
+        var command: [String: Any] = ["op": "rewritePreview"]
+        if let edit { command["edit"] = edit }
+        if let onto { command["onto"] = onto }
+        let repository = self.repository
+        guard let json = try? Repository.json(command) else { return nil }
+        return await Task.detached { try? repository.info(json: json, as: RewritePreview.self) }.value
+    }
+}
+
 /// Push・Pull・Pop・Undo の前の確認。ボタンを押しただけで、外に出たり履歴が変わったりしないように、何が起きるか
 /// （送る・取り込むコミット、分岐、作業中の変更）をシートで見せてから実行する。↩ で実行できる。
 extension Actions {
@@ -275,6 +341,11 @@ extension Actions {
             label.frame.size = label.fittingSize
             alert.accessoryView = label
             Task { @MainActor in
+                // 今のブランチの rebase なら、積み重ねたブランチが動くか残るかと、コミットごとの見込みを出す。
+                if estimate, ours == "HEAD", let rev = theirs.first, let preview = await rewritePreview(onto: rev) {
+                    Self.show(preview, in: label)
+                    return
+                }
                 Self.show(await predictMerge(ours: ours, theirs: theirs), estimate: estimate || theirs.count > 1, in: label)
             }
             guard await present(alert) == .alertFirstButtonReturn else { return }
@@ -453,6 +524,14 @@ extension Actions {
         label.heightAnchor.constraint(equalToConstant: label.fittingSize.height).isActive = true
         label.stringValue = L("Checking for conflicts…")
         return label
+    }
+
+    /// 見込みの行に、書き換えの見通し（動く・残るブランチ、push 済み、コンフリクト）を書く。
+    @MainActor
+    static func show(_ preview: RewritePreview, in label: NSTextField) {
+        label.stringValue = preview.lines().joined(separator: "\n")
+        label.toolTip = label.stringValue
+        label.textColor = preview.hasConflicts ? .systemOrange : .secondaryLabelColor
     }
 
     /// 見込みの行に答えを書く（調べられなかったら空にする）。

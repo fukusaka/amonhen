@@ -722,5 +722,21 @@
 			<string>%ld Commits</string>
 		</dict>
 	</dict>
+	<key>⚠︎ Conflicts expected at %ld commits, first at %@: %@</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>⚠︎ Conflicts expected at %#@n0@, first at %@: %@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld commit</string>
+			<key>other</key>
+			<string>%ld commits</string>
+		</dict>
+	</dict>
 </dict>
 </plist>

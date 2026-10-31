@@ -2023,19 +2023,30 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         var target: ClosureTarget?
         if let forecast {
             let label = Actions.forecastLabel(width: popup.frame.width)
-            final class Answers { var known: [String: MergeForecast?] = [:]; var shown = "" }
+            final class Answers {
+                var known: [String: MergeForecast?] = [:]
+                /// rebase の見通し（動く・残るブランチとコミットごとの見込み）。
+                var previews: [String: RewritePreview] = [:]
+                var shown = ""
+            }
             let answers = Answers()
             let actions = self.actions
             let update = {
                 guard let item = popup.selectedItem else { return }
                 let rev = choices[item.tag].rev
                 answers.shown = rev
+                if let preview = answers.previews[rev] { return Actions.show(preview, in: label) }
                 if let known = answers.known[rev] {
                     return Actions.show(known, estimate: forecast == .rebase, in: label)
                 }
                 label.stringValue = L("Checking for conflicts…")
                 label.textColor = .secondaryLabelColor
                 Task { @MainActor in
+                    if forecast == .rebase, let preview = await actions.rewritePreview(onto: rev) {
+                        answers.previews[rev] = preview
+                        if answers.shown == rev { Actions.show(preview, in: label) }
+                        return
+                    }
                     let answer = await actions.predictMerge(theirs: rev)
                     answers.known[rev] = answer
                     if answers.shown == rev { Actions.show(answer, estimate: forecast == .rebase, in: label) }
