@@ -1758,3 +1758,7 @@
 "Click a folder to open it, and choose a repository (green)." = "フォルダをクリックして開き、リポジトリ（緑）を選びます。";
 "Choose a repository to add to the list (green)." = "一覧に加えるリポジトリ（緑）を選びます。";
 "Choose a folder to search for repositories (up to 3 levels deep)." = "リポジトリを探すフォルダを選んでください（3 段下まで探します）";
+/* GTK4: SSH Hosts > Connection の探すフォルダ */
+"Folders to Scan" = "探すフォルダ";
+"{count} levels" = "{count} 段まで";
+"The same list as under the host in Places." = "Repositories の Places の、この SSH 先の下と同じ一覧です。";

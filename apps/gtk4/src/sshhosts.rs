@@ -898,6 +898,7 @@ impl SshHosts {
                     )),
                 ],
             ),
+            scan_folders(session),
         ])
     }
 
@@ -999,6 +1000,123 @@ impl SshHosts {
             s.reload();
         });
     }
+}
+
+/// 「探すフォルダ」: この SSH 先でスキャンするフォルダ（Repositories の Places の、この SSH 先の下と同じ設定）。
+/// 深さを選べ、− で外し、＋ で SSH 先のフォルダを列で見て加える。
+fn scan_folders(session: &Rc<HostSession>) -> gtk::Box {
+    let b = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    b.append(&label(&tr!("Folders to Scan"), &["heading"]));
+    let list = gtk::ListBox::new();
+    list.set_selection_mode(gtk::SelectionMode::None);
+    list.set_show_separators(true);
+    list.add_css_class("settings-list");
+    let frame = gtk::Frame::new(None);
+    frame.set_child(Some(&list));
+    b.append(&frame);
+    fill_scan_folders(&list, session);
+    b
+}
+
+/// 探すフォルダの行を作り直す（最後の行は ＋ と説明）。
+fn fill_scan_folders(list: &gtk::ListBox, session: &Rc<HostSession>) {
+    list.remove_all();
+    let host = session.host.clone();
+    let roots: Vec<crate::bookmarks::ScanRoot> = crate::bookmarks::data()
+        .scan_roots
+        .into_iter()
+        .filter(|r| crate::bookmarks::ssh_host(&r.path).as_deref() == Some(host.as_str()))
+        .collect();
+    let row = |child: &gtk::Box| {
+        child.set_margin_top(4);
+        child.set_margin_bottom(4);
+        child.set_margin_start(4);
+        child.set_margin_end(4);
+        let row = gtk::ListBoxRow::new();
+        row.set_activatable(false);
+        row.set_child(Some(child));
+        list.append(&row);
+    };
+    let titles: Vec<String> = (1..=6u32)
+        .map(|d| tr!("{count} levels", count = d))
+        .collect();
+    for root in roots {
+        let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let path = label(
+            &crate::repobrowser::remote_title(&crate::bookmarks::path_part(&root.path)),
+            &["monospace"],
+        );
+        path.set_hexpand(true);
+        path.set_selectable(true);
+        line.append(&path);
+        let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+        let depth = gtk::DropDown::from_strings(&refs);
+        depth.set_selected(root.depth.clamp(1, 6) - 1);
+        let p = root.path.clone();
+        depth.connect_selected_notify(move |d| {
+            crate::bookmarks::set_depth(&p, d.selected() + 1);
+        });
+        line.append(&depth);
+        let remove = gtk::Button::from_icon_name("list-remove-symbolic");
+        remove.set_tooltip_text(Some(&tr!("Stop Scanning")));
+        remove.add_css_class("flat");
+        let (p, l, s) = (root.path.clone(), list.downgrade(), Rc::downgrade(session));
+        remove.connect_clicked(move |_| {
+            crate::bookmarks::remove_scan_root(&p);
+            if let (Some(l), Some(s)) = (l.upgrade(), s.upgrade()) {
+                fill_scan_folders(&l, &s);
+            }
+        });
+        line.append(&remove);
+        row(&line);
+    }
+    let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let add = gtk::Button::from_icon_name("list-add-symbolic");
+    add.set_tooltip_text(Some(&tr!("Add a Folder to Scan on {host}", host = host)));
+    add.add_css_class("flat");
+    let (l, s) = (list.downgrade(), Rc::downgrade(session));
+    add.connect_clicked(move |button| {
+        let (Some(l), Some(s)) = (l.upgrade(), s.upgrade()) else {
+            return;
+        };
+        let Some(parent) = button.root().and_downcast::<gtk::Window>() else {
+            return;
+        };
+        let repo = s.settings().map(|settings| settings.repo.clone());
+        glib::spawn_future_local(async move {
+            if let Some(location) =
+                crate::repobrowser::choose_remote_scan_folder(&parent, Some(s.host.clone()), repo)
+                    .await
+            {
+                crate::bookmarks::add_scan_root(&location);
+                fill_scan_folders(&l, &s);
+            }
+        });
+    });
+    line.append(&add);
+    // 確認用: `AMONHEN_SCAN_ADD` なら、窓に出ている ＋ を一度だけ押す（つなぎ終えて作り直したものを）。
+    thread_local! {
+        static ADD_PRESSED: Cell<bool> = const { Cell::new(false) };
+    }
+    if std::env::var_os("AMONHEN_SCAN_ADD").is_some() && !ADD_PRESSED.with(Cell::get) {
+        let a = add.downgrade();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+            if let Some(a) = a.upgrade().filter(|a| a.root().is_some())
+                && !ADD_PRESSED.with(|p| p.replace(true))
+            {
+                a.emit_clicked();
+            }
+        });
+    }
+    let note = label(
+        &tr!("The same list as under the host in Places."),
+        &["dim-label", "caption"],
+    );
+    note.set_wrap(true);
+    note.set_hexpand(true);
+    note.set_xalign(0.0);
+    line.append(&note);
+    row(&line);
 }
 
 /// 「名前: 部品」の行（名前は左、部品は右）。

@@ -67,7 +67,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | All・Favorites・Places・グループのあるリポジトリのページ | ✓ | ✓ | n/a | n/a | GTK4: ページの見出しの帯は、リポジトリのツールバーではなく短いメニューだけ。 |
 | 手元・SSH のリポジトリを足す | ✓ | ✓ | n/a | n/a |  |
 | この機械の探すフォルダー（深さ・見張り） | △ | △ | n/a | n/a | macOS: 除くものは決まった一覧。<br>GTK4: 除くものは決まった一覧で、フォルダーを見張らない。 |
-| SSH 先の探すフォルダー | ✓ | △ | n/a | △ | GTK4: Repositories で足す。SSH Hosts のページにはない。<br>CLI: `find-repositories` がアプリのために探す。 |
+| SSH 先の探すフォルダー | ✓ | ✓ | n/a | △ | CLI: `find-repositories` がアプリのために探す。 |
 | 場所の下のリポジトリのフォルダーの木 | ✓ | ✓ | n/a | n/a |  |
 | 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: ドラッグはない。 |
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え | ✓ | ✓ | n/a | n/a |  |
@@ -96,7 +96,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | SSH Hosts: + / − の付いたホスト、届かないものは薄く | ✓ | ✓ | n/a | n/a | VSCode: Remote-SSH が受け持つ。 |
 | SSH Hosts > Connection: 状態・Check Connection・エンジン | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts > Connection: 署名の確かめ方 | ✓ | ✓ | n/a | n/a |  |
-| SSH Hosts > Connection: 探すフォルダー | ✓ | — | n/a | n/a |  |
+| SSH Hosts > Connection: 探すフォルダー | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストのすべてのリポジトリの git のページ | ✓ | ✓ | n/a | n/a |  |
 | SSH Hosts: ホストの Environment Variables（ログインシェルの切り替え） | ✓ | ✓ | n/a | n/a |  |
 | ホスト・この機械の列で選ぶパスのシート | ✓ | ✓ | n/a | n/a | GTK4: リポジトリを加えるときは 1 つずつ。clone の置き場所と外部のエディタは GTK のファイルのダイアログ。 |
