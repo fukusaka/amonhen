@@ -4571,9 +4571,15 @@ mod tests {
                 .to_string(),
         )["info"]
             .clone();
+        // git 2.38 より古ければ、この操作の指定にかかわらず git の版が理由になる。
+        let not_this_time = if (major, minor) >= (2, 38) {
+            "off"
+        } else {
+            "git"
+        };
         assert_eq!(
             find(&onto, "staying", "main").unwrap()["reason"],
-            "off",
+            not_this_time,
             "{onto}"
         );
         assert_eq!(
