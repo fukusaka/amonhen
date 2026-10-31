@@ -655,5 +655,8 @@ Extensions:
   repository levels (the repository's Settings page, which writes only `--local` and shows in a badge when the user's
   `--global` is in effect; `{"op":"gitVersion"}` and `configSet` with `"scope":"global"`), disabled below git 2.38
   with the version found; Repository Settings moved from a sheet into a Settings page in the sidebar's Workspace and
-  redone from the person using it (ux.md chapter 4, U20). Planned, in this order: the `rewritePreview` command and the CLI; the confirmation sheet with the
-  before and after drawn like History and the checkbox for this operation; the same in the VSCode extension.
+  redone from the person using it (ux.md chapter 4, U20); the `rewritePreview` command (the branches that move or stay
+  and why, their upstreams, and a per-commit conflict forecast replaying each commit with `merge-tree --merge-base`,
+  git 2.40), shown as text in History's edit mode and the Rebase sheets. Planned, in this order: `rewritePreview` in
+  the CLI; the confirmation sheet with the before and after drawn like History and the checkbox for this operation;
+  the same in the VSCode extension.

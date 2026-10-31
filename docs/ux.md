@@ -569,6 +569,9 @@ anything does.
 - **Apply.** The status bar shows a summary ("Changes: reordered, 1 combined, 1 dropped") with Cancel and Apply
   Changes. Nothing changes until Apply Changes, which runs one rebase from the core's `plan` (every commit in its new
   order with its action, the messages fed to git's editor in the order git opens it). One Undo puts it all back.
+  Under the summary, the core's `rewritePreview` says which stacked branches move with it or stay and why, which
+  branches are already pushed (and will need Force Push), and which commits are expected to conflict; those rows get a
+  warning mark. The Rebase sheets show the same for the current branch.
 - **Merges.** The mode lists the first-parent line past merges too. When the range has a merge, the rebase uses git's
   `--rebase-merges`: git writes the todo with its merges, and only the commands of the edited commits are changed, so
   merges and the commits they brought in are recreated as they were. A merge's row can only be kept, rows can't be
