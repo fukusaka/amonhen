@@ -141,7 +141,7 @@ fn merge_check_lists_the_files_that_would_conflict() {
     if amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 38)) {
         assert_eq!(conflicts_code, 1, "{conflicts}");
         assert!(
-            conflicts.contains("Merging other into HEAD would conflict in 1 files:\n  m.txt"),
+            conflicts.contains("Merging other into HEAD would conflict in 1 file:\n  m.txt"),
             "{conflicts}"
         );
         assert_eq!(
@@ -182,7 +182,7 @@ fn merge_check_follows_each_branch_of_an_octopus() {
     if amonhen_backend_cli::git_version().is_none_or(|(a, b, _)| (a, b) >= (2, 38)) {
         assert_eq!(code, 1, "{out}");
         assert!(
-            out.contains("Merging a, x, b into HEAD would conflict in 1 files:\n  x:\n    m.txt"),
+            out.contains("Merging a, x, b into HEAD would conflict in 1 file:\n  x:\n    m.txt"),
             "{out}"
         );
         assert!(out.contains("put the one that conflicts last"), "{out}");

@@ -1,0 +1,37 @@
+/* 英語の単数形。鍵は英語の文（`tr!("…")`）で、`{count}` が 1 のときだけ値を使う（ほかの数はもとの文のまま）。
+   形はアプリの apps/macos/Localization/en.lproj/Localizable.stringsdict の one と同じ。 */
+
+"Cherry-pick {count} Commits…" = "Cherry-pick {count} Commit…";
+"Mark as resolved with {count} conflicts left?" = "Mark as resolved with {count} conflict left?";
+"Mark {path} as resolved with {count} conflicts left?" = "Mark {path} as resolved with {count} conflict left?";
+"Pull {count} commits from {upstream}?" = "Pull {count} commit from {upstream}?";
+"Push {count} commits to {upstream}?" = "Push {count} commit to {upstream}?";
+"Revert {count} Commits…" = "Revert {count} Commit…";
+"You have {count} local commits, so this makes a merge commit." = "You have {count} local commit, so this makes a merge commit.";
+"Your {count} local commits are replayed on top (their IDs change)." = "Your {count} local commit is replayed on top (its ID changes).";
+"and {count} more tags" = "and {count} more tag";
+"{count} commits" = "{count} commit";
+"{count} commits selected" = "{count} commit selected";
+"{count} files have conflicts at {subject}. Resolve them in Working Copy, then Continue." = "{count} file has conflicts at {subject}. Resolve them in Working Copy, then Continue.";
+"{count} files have conflicts. Resolve them in Working Copy, then Continue." = "{count} file has conflicts. Resolve them in Working Copy, then Continue.";
+"{count} files have uncommitted changes. Pull stops if the incoming changes touch them." = "{count} file has uncommitted changes. Pull stops if the incoming changes touch it.";
+"{count} files with uncommitted changes come along." = "{count} file with uncommitted changes comes along.";
+"{upstream} has {count} commits you don’t have" = "{upstream} has {count} commit you don’t have";
+"{upstream} loses {count} commits. This can’t be undone." = "{upstream} loses {count} commit. This can’t be undone.";
+"⚠︎ Conflicts expected at {count} commits, first at {commit}: {files}" = "⚠︎ Conflicts expected at {count} commit, first at {commit}: {files}";
+"⚠︎ Conflicts expected in {count} files: {names}" = "⚠︎ Conflicts expected in {count} file: {names}";
+"⚠︎ Fast-Forward Only can’t pull these: you have {count} local commits. Choose Merge or Rebase." = "⚠︎ Fast-Forward Only can’t pull these: you have a local commit. Choose Merge or Rebase.";
+"This pushes {count} commits to it and makes it the upstream." = "This pushes {count} commit to it and makes it the upstream.";
+"It has {count} commits that {branch} doesn’t (as of the last Fetch), so pushing would be refused. Make it the upstream and Pull first." = "It has {count} commit that {branch} doesn’t (as of the last Fetch), so pushing would be refused. Make it the upstream and Pull first.";
+"{count} matches" = "{count} match";
+"Staged {count} files" = "Staged {count} file";
+"Unstaged {count} files" = "Unstaged {count} file";
+"{count} commits ahead of upstream (Ctrl+Alt+P)" = "{count} commit ahead of upstream (Ctrl+Alt+P)";
+"{count} commits behind upstream (Ctrl+Alt+L)" = "{count} commit behind upstream (Ctrl+Alt+L)";
+"{count} connections" = "{count} connection";
+"History — {path} ({count} commits)" = "History — {path} ({count} commit)";
+"Discarded the changes in {count} files (amonhen undo brings them back)" = "Discarded the changes in {count} file (amonhen undo brings them back)";
+"Merging {rev} into {ours} would conflict in {count} files:" = "Merging {rev} into {ours} would conflict in {count} file:";
+"Conflicts expected at {count} commits:" = "Conflicts expected at {count} commit:";
+"{count} files have conflicts ({without} without markers). Resolve them in Working Copy, then Continue." = "{count} file has conflicts ({without} without markers). Resolve it in Working Copy, then Continue.";
+"{count} files have conflicts at {subject} ({without} without markers). Resolve them in Working Copy, then Continue." = "{count} file has conflicts at {subject} ({without} without markers). Resolve it in Working Copy, then Continue.";
