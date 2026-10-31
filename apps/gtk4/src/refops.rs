@@ -10,6 +10,7 @@ use serde_json::json;
 use crate::actions::Actions;
 use crate::menu::{self, Item};
 use crate::sidebar::{self, Data};
+use crate::{sheets, titles};
 
 /// サブモジュールを新しい窓で開く（作業ツリーからのパス）。
 pub type OpenSubmodule = Rc<dyn Fn(&str)>;
@@ -32,25 +33,25 @@ pub fn menu(
         move || actions.perform(command.clone())
     };
     let merge = |items: &mut Vec<Item>| {
-        items.push(menu::action(
-            format!("Merge {name} into {current}"),
-            run(json!({ "op": "merge", "rev": name })),
-        ));
+        let (a, n, c) = (actions.clone(), name.clone(), current.clone());
+        items.push(menu::action(titles::merge(&name, &current), move || {
+            sheets::integrate(&a, &n, &c, false)
+        }));
     };
     let rebase = |items: &mut Vec<Item>| {
-        items.push(menu::action(
-            format!("Rebase {current} onto {name}"),
-            run(json!({ "op": "rebase", "onto": name })),
-        ));
+        let (a, n, c) = (actions.clone(), name.clone(), current.clone());
+        items.push(menu::action(titles::rebase(&current, &name), move || {
+            sheets::integrate(&a, &n, &c, true)
+        }));
     };
     match entry.kind {
         RefKind::Local => {
             let is_head = Some(name.as_str()) == head;
             if !is_head {
-                items.push(menu::action(
-                    format!("Checkout {name}"),
-                    run(json!({ "op": "checkout", "branch": name })),
-                ));
+                let (a, n) = (actions.clone(), name.clone());
+                items.push(menu::action(titles::checkout(&name), move || {
+                    sheets::checkout(&a, sheets::CheckoutTarget::Branch(n.clone()))
+                }));
                 merge(&mut items);
                 rebase(&mut items);
                 items.push(Item::Separator);
@@ -67,17 +68,17 @@ pub fn menu(
                 });
             }));
             if !is_head {
-                items.push(menu::action(
-                    tr!("Delete {name}", name = name),
-                    run(json!({ "op": "deleteBranch", "name": name, "force": false })),
-                ));
+                let (a, n) = (actions.clone(), name.clone());
+                items.push(menu::action(titles::delete(&name), move || {
+                    sheets::delete_branches(&a, vec![n.clone()])
+                }));
             }
         }
         RefKind::Remote => {
-            items.push(menu::action(
-                format!("Checkout {name} as Local Branch"),
-                run(json!({ "op": "track", "remoteBranch": name })),
-            ));
+            let (a, n) = (actions.clone(), name.clone());
+            items.push(menu::action(titles::checkout_as_local(&name), move || {
+                sheets::checkout(&a, sheets::CheckoutTarget::Track(n.clone()))
+            }));
             merge(&mut items);
             rebase(&mut items);
             items.push(Item::Separator);
@@ -88,17 +89,31 @@ pub fn menu(
             items.push(new_branch(actions, &name));
         }
         RefKind::Stash => {
+            let message = entry.detail.clone();
+            for pop in [false, true] {
+                let (a, n, m) = (actions.clone(), name.clone(), message.clone());
+                let title = if pop {
+                    titles::pop(&name)
+                } else {
+                    titles::apply(&name)
+                };
+                items.push(menu::action(title, move || {
+                    sheets::pop(&a, &n, m.as_deref(), pop)
+                }));
+            }
+            let (a, n) = (actions.clone(), name.clone());
             items.push(menu::action(
-                format!("Apply {name}"),
-                run(json!({ "op": "stashApply", "name": name, "pop": false })),
-            ));
-            items.push(menu::action(
-                format!("Pop {name}"),
-                run(json!({ "op": "stashApply", "name": name, "pop": true })),
-            ));
-            items.push(menu::action(
-                format!("Drop {name}"),
-                run(json!({ "op": "stashDrop", "name": name })),
+                tr!("Drop {name}…", name = name),
+                move || {
+                    sheets::confirm_then(
+                        &a,
+                        tr!("Drop {name}?", name = n),
+                        sheets::can_undo(),
+                        tr!("Drop"),
+                        false,
+                        vec![json!({ "op": "stashDrop", "name": n })],
+                    )
+                },
             ));
         }
         RefKind::Submodule => {
@@ -178,25 +193,41 @@ pub fn drop_menu(
             let a = actions.clone();
             let (d, t) = (dragged.clone(), to.clone());
             // checkout していなくても、fast-forward で済むならブランチだけ進める。
-            items.push(menu::action(
-                format!("Merge {dragged} into {to}"),
-                move || {
-                    a.perform(json!({ "op": "mergeInto", "target": t, "rev": d }));
-                },
-            ));
+            items.push(menu::action(titles::merge(&dragged, &to), move || {
+                sheets::confirm_then(
+                    &a,
+                    tr!("Merge {rev} into {target}?", rev = d, target = t),
+                    sheets::can_undo(),
+                    "Merge".to_owned(),
+                    false,
+                    vec![json!({ "op": "mergeInto", "target": t, "rev": d })],
+                );
+            }));
             // 落とした先が今のブランチでなければ、先にチェックアウトする。
             let mut sequence = Vec::new();
             if Some(to.as_str()) != head {
                 sequence.push(json!({ "op": "checkout", "branch": to }));
             }
             sequence.push(json!({ "op": "rebase", "onto": dragged }));
-            let a = actions.clone();
-            items.push(menu::action(
-                format!("Rebase {to} onto {dragged}"),
-                move || {
-                    a.perform_sequence(sequence.clone());
-                },
-            ));
+            let (a, d, t) = (actions.clone(), dragged.clone(), to.clone());
+            items.push(menu::action(titles::rebase(&to, &dragged), move || {
+                if sequence.len() == 1 {
+                    sheets::integrate(&a, &d, &t, true);
+                } else {
+                    sheets::confirm_then(
+                        &a,
+                        tr!("Rebase {target} onto {rev}?", target = t, rev = d),
+                        format!(
+                            "{} {}",
+                            tr!("Checks out {branch} first.", branch = t),
+                            sheets::can_undo()
+                        ),
+                        "Rebase".to_owned(),
+                        false,
+                        sequence.clone(),
+                    );
+                }
+            }));
         }
         // push できるのはローカルブランチだけ。リモートの見出し（フォルダ）か、リモートブランチの上。
         item if local => {
@@ -216,12 +247,16 @@ pub fn drop_menu(
                         "op": "push", "remote": remote, "branch": dragged, "remoteBranch": branch,
                         "force": force, "setUpstream": set_upstream && !force,
                     });
-                    let title = if force { "Force Push" } else { "Push" };
-                    let a = actions.clone();
-                    items.push(menu::action(
-                        format!("{title} {dragged} to {remote}/{branch}"),
-                        move || a.perform(command.clone()),
-                    ));
+                    let target = format!("{remote}/{branch}");
+                    let title = if force {
+                        titles::force_push(&dragged, &target)
+                    } else {
+                        titles::push(&dragged, &target)
+                    };
+                    let (a, d) = (actions.clone(), dragged.clone());
+                    items.push(menu::action(title, move || {
+                        sheets::push_to(&a, &d, &target, command.clone(), force)
+                    }));
                 }
             }
         }

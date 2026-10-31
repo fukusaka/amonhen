@@ -47,9 +47,9 @@ pub fn menu(
     ));
     let (a, h) = (actions.clone(), hex.clone());
     items.push(menu::action(
-        format!("Checkout {short} (Detached)"),
+        crate::titles::checkout_detached(&hex),
         move || {
-            a.perform(json!({ "op": "detach", "oid": h }));
+            crate::sheets::checkout(&a, crate::sheets::CheckoutTarget::Detach(h.clone()));
         },
     ));
     items.push(Item::Separator);
@@ -86,12 +86,12 @@ pub fn menu(
         items.push(Item::Separator);
     }
     let (a, h) = (actions.clone(), hex.clone());
-    items.push(menu::action(format!("Cherry-pick {short}"), move || {
-        a.perform(json!({ "op": "cherryPick", "oid": h, "isMerge": is_merge }));
+    items.push(menu::action(crate::titles::cherry_pick(&hex), move || {
+        crate::sheets::pick(&a, false, vec![(h.clone(), is_merge)]);
     }));
     let (a, h) = (actions.clone(), hex.clone());
-    items.push(menu::action(format!("Revert {short}"), move || {
-        a.perform(json!({ "op": "revert", "oid": h, "isMerge": is_merge }));
+    items.push(menu::action(crate::titles::revert(&hex), move || {
+        crate::sheets::pick(&a, true, vec![(h.clone(), is_merge)]);
     }));
     items.push(Item::Separator);
     let (w, h) = (widget.clone(), hex);
@@ -124,26 +124,13 @@ pub fn menu_many(
     let mut items = Vec::new();
     let (a, c) = (actions.clone(), commits.clone());
     items.push(menu::action(
-        tr!("Cherry-pick {count} Commits (oldest first)", count = n),
-        move || {
-            let sequence = c
-                .iter()
-                .rev()
-                .map(|(oid, merge)| json!({ "op": "cherryPick", "oid": oid, "isMerge": merge }))
-                .collect();
-            a.perform_sequence(sequence);
-        },
+        tr!("Cherry-pick {count} Commits…", count = n),
+        move || crate::sheets::pick(&a, false, c.iter().rev().cloned().collect()),
     ));
     let (a, c) = (actions.clone(), commits.clone());
     items.push(menu::action(
-        tr!("Revert {count} Commits (newest first)", count = n),
-        move || {
-            let sequence = c
-                .iter()
-                .map(|(oid, merge)| json!({ "op": "revert", "oid": oid, "isMerge": merge }))
-                .collect();
-            a.perform_sequence(sequence);
-        },
+        tr!("Revert {count} Commits…", count = n),
+        move || crate::sheets::pick(&a, true, c.clone()),
     ));
     // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる。
     let consecutive = rows.windows(2).all(|w| w[1] == w[0] + 1);

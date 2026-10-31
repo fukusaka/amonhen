@@ -12,6 +12,10 @@ use gtk::{gio, glib};
 use serde_json::{Value, json};
 
 type Callback = Rc<dyn Fn()>;
+/// 失敗を知らせる（ステータスバー）。
+type FailureCallback = Rc<dyn Fn(crate::statusbar::Failure)>;
+/// 操作が終わった（ステータスバーの一言）。
+type DoneCallback = Rc<dyn Fn(&Value)>;
 
 pub struct Actions {
     repo: RefCell<Option<Arc<Repository>>>,
@@ -22,6 +26,8 @@ pub struct Actions {
     on_change: RefCell<Option<Callback>>,
     /// 操作の後に呼ぶ（Activity の History など）。
     on_after: RefCell<Vec<Callback>>,
+    on_failure: RefCell<Option<FailureCallback>>,
+    on_done: RefCell<Option<DoneCallback>>,
 }
 
 impl Actions {
@@ -38,31 +44,16 @@ impl Actions {
             undo,
             on_change: RefCell::default(),
             on_after: RefCell::default(),
+            on_failure: RefCell::default(),
+            on_done: RefCell::default(),
         });
+        // git の Undo は確かめてから（Ctrl+Z は入力欄の取り消しに残す。docs/ux.md の「Menus」）。
         let weak = Rc::downgrade(&actions);
         actions.undo.connect_clicked(move |_| {
             if let Some(actions) = weak.upgrade() {
-                actions.perform(json!({ "op": "undo" }));
+                crate::sheets::undo(&actions);
             }
         });
-        // Ctrl+Z: 入力欄が自分の Undo に使わなかったときだけ（窓で最後に受ける）。
-        let keys = gtk::EventControllerKey::new();
-        keys.set_propagation_phase(gtk::PropagationPhase::Bubble);
-        let weak = Rc::downgrade(&actions);
-        keys.connect_key_pressed(move |_, key, _, state| {
-            let Some(actions) = weak.upgrade() else {
-                return glib::Propagation::Proceed;
-            };
-            if key == gtk::gdk::Key::z
-                && state == gtk::gdk::ModifierType::CONTROL_MASK
-                && actions.undo.is_sensitive()
-            {
-                actions.perform(json!({ "op": "undo" }));
-                return glib::Propagation::Stop;
-            }
-            glib::Propagation::Proceed
-        });
-        window.add_controller(keys);
         actions
     }
 
@@ -72,6 +63,24 @@ impl Actions {
         if first {
             self.refresh_undo();
         }
+    }
+
+    pub fn repo(&self) -> Option<Arc<Repository>> {
+        self.repo.borrow().clone()
+    }
+
+    pub fn window(&self) -> Option<gtk::ApplicationWindow> {
+        self.window.upgrade()
+    }
+
+    /// 失敗したら `f` で知らせる（なければ窓で知らせる）。
+    pub fn connect_failure(&self, f: impl Fn(crate::statusbar::Failure) + 'static) {
+        self.on_failure.replace(Some(Rc::new(f)));
+    }
+
+    /// 操作が終わったら `f(命令)` を呼ぶ（失敗・コンフリクトでは呼ばない）。
+    pub fn connect_done(&self, f: impl Fn(&Value) + 'static) {
+        self.on_done.replace(Some(Rc::new(f)));
     }
 
     pub fn connect_change(&self, f: impl Fn() + 'static) {
@@ -110,42 +119,38 @@ impl Actions {
         };
         let this = self.clone();
         glib::spawn_future_local(async move {
-            let result = gio::spawn_blocking(move || {
+            let (result, last_command) = gio::spawn_blocking(move || {
                 let mut last = Value::Null;
+                let mut last_command = Value::Null;
                 for command in commands {
                     let reply: Value = serde_json::from_str(&repo.run_json(&command.to_string()))
                         .unwrap_or_default();
                     let done = reply["ok"].as_bool() == Some(true)
                         && reply["outcome"].as_str().is_none_or(|o| o == "done");
                     last = reply;
+                    last_command = command;
                     if !done {
                         break;
                     }
                 }
-                last
+                (last, last_command)
             })
             .await
             .unwrap_or_default();
-            if let Some(error) = result["error"].as_str() {
-                this.alert(&tr!("The operation failed"), error).await;
-            } else {
-                match result["outcome"].as_str() {
-                    Some("conflict") => {
-                        this.alert(
-                            &tr!("There are conflicts"),
-                            &tr!("Resolve them in Working Copy, then Continue or Abort."),
-                        )
-                        .await;
-                    }
-                    Some("stopped") => {
-                        this.alert(
-                            &tr!("Stopped partway"),
-                            &tr!("Check Working Copy, then Continue."),
-                        )
-                        .await;
-                    }
-                    _ => {}
+            // 失敗はステータスバーに（作業を止めない）。コンフリクトや途中で止まったことは、読み直したときに
+            // ステータスバーの途中の操作の行が知らせる。
+            if result["error"].is_string() {
+                let failure =
+                    crate::statusbar::Failure::from_reply(&result, Some(last_command.clone()));
+                let on_failure = this.on_failure.borrow().clone();
+                match on_failure {
+                    Some(f) => f(failure),
+                    None => this.alert(&failure.title(), &failure.message).await,
                 }
+            } else if result["outcome"].as_str().is_none_or(|o| o == "done")
+                && let Some(f) = this.on_done.borrow().clone()
+            {
+                f(&last_command);
             }
             if let Some(f) = this.on_change.borrow().clone() {
                 f();
@@ -156,47 +161,6 @@ impl Actions {
                 f();
             }
             done(&result);
-        });
-    }
-
-    /// 今のブランチを上流へ push する。上流がなければ origin の同じ名前へ push して上流にする。
-    /// `force` なら `--force-with-lease`（確かめてから）。
-    pub fn push(self: &Rc<Self>, force: bool) {
-        let Some(repo) = self.repo.borrow().clone() else {
-            return;
-        };
-        let this = self.clone();
-        glib::spawn_future_local(async move {
-            let status = gio::spawn_blocking(move || repo.load_status().ok())
-                .await
-                .ok()
-                .flatten();
-            let Some(branch) = status.as_ref().and_then(|s| s.status.branch.clone()) else {
-                this.alert(&tr!("Can’t Push"), &tr!("No branch is checked out."))
-                    .await;
-                return;
-            };
-            let upstream = status.and_then(|s| s.status.upstream.clone());
-            let (remote, remote_branch, set_upstream) =
-                match upstream.as_deref().and_then(|u| u.split_once('/')) {
-                    Some((r, b)) => (r.to_owned(), b.to_owned(), false),
-                    None => ("origin".to_owned(), branch.clone(), true),
-                };
-            if force
-                && !this
-                    .confirm(
-                        &tr!("Force push {branch}?", branch = branch),
-                        &tr!("This replaces the upstream branch with your local one (--force-with-lease: it fails if someone else pushed first)."),
-                        "Force Push",
-                    )
-                    .await
-            {
-                return;
-            }
-            this.perform(json!({
-                "op": "push", "remote": remote, "branch": branch, "remoteBranch": remote_branch,
-                "force": force, "setUpstream": set_upstream && !force,
-            }));
         });
     }
 

@@ -22,7 +22,6 @@ thread_local! {
 }
 
 /// 鍵の名前（macOS 版の UserDefaults と同じ）。
-pub const PULL_MODE: &str = "pullMode";
 pub const MONOSPACED_COMMIT_MESSAGE: &str = "monospacedCommitMessage";
 pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
 pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
@@ -86,15 +85,6 @@ pub fn connect_changed(f: impl Fn(&str) + 'static) {
     WATCHERS.with(|w| w.borrow_mut().push(Rc::new(f)));
 }
 
-/// Pull の既定（コアの `pull` の `mode`）。
-pub fn pull_mode() -> &'static str {
-    match string(PULL_MODE).as_deref() {
-        Some("rebase") => "rebase",
-        Some("fastForwardOnly") => "fastForwardOnly",
-        _ => "merge",
-    }
-}
-
 /// 項目の下に添える説明。
 fn note(text: &str) -> gtk::Label {
     let l = gtk::Label::new(Some(text));
@@ -151,34 +141,8 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     let stack = gtk::Stack::new();
 
     // Git
-    let modes = [
-        ("merge", "Merge"),
-        ("rebase", "Rebase"),
-        ("fastForwardOnly", "Fast-Forward Only"),
-    ];
-    let pull = gtk::DropDown::from_strings(&modes.map(|m| m.1));
-    pull.set_selected(modes.iter().position(|m| m.0 == pull_mode()).unwrap_or(0) as u32);
-    pull.connect_selected_notify(move |d| {
-        if let Some(m) = modes.get(d.selected() as usize) {
-            set_string(PULL_MODE, m.0);
-        }
-    });
-    let pull_row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    let l = gtk::Label::new(Some(&tr!("Default Pull")));
-    l.set_hexpand(true);
-    l.set_xalign(0.0);
-    pull_row.append(&l);
-    pull_row.append(&pull);
     stack.add_titled(
         &page(&[
-            section(
-                None,
-                &[
-                    pull_row.upcast(),
-                    note(&tr!("Used by Pull in the toolbar and Ctrl+Alt+L. You can also choose each time with the ▾ on the Pull button or Repository > Pull With."))
-                        .upcast(),
-                ],
-            ),
             section(
                 Some(&tr!("Merging")),
                 &[

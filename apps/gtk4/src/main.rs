@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--perform <json>] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]]`
 
 mod actions;
 mod activity;
@@ -18,7 +18,10 @@ mod merge;
 mod refops;
 mod search;
 mod settings;
+mod sheets;
 mod sidebar;
+mod statusbar;
+mod titles;
 mod workcopy;
 
 use std::cell::Cell;
@@ -79,6 +82,9 @@ struct Args {
     open_menu: Option<String>,
     /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
     perform: Option<String>,
+    /// 最初に History を出したら、この窓のアクション（`win.<id>`）を一度実行する（確認用。`--snapshot` は
+    /// 開いたシートを撮る）。
+    action: Option<String>,
     /// Working Copy の一覧の見せ方（`list`・`tree`・`flat`。確認用）。
     layout: Option<String>,
     /// Working Copy の差分で、この行の印を一度クリックしたことにする（確認用）。
@@ -121,6 +127,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
+            "--action" => args.action = Some(it.next().ok_or("--action <id>")?),
             "--layout" => args.layout = Some(it.next().ok_or("--layout list|tree|flat")?),
             "--toggle-row" => {
                 let row = it.next().ok_or("--toggle-row <row>")?;
@@ -343,6 +350,12 @@ fn build_window(app: &gtk::Application, args: Args) {
     body.set_resize_start_child(false);
     body.set_shrink_start_child(false);
     body.set_position(200);
+    // 窓の下のステータスバー（途中の操作・失敗・終わった操作の一言）。
+    let statusbar = statusbar::StatusBar::new();
+    body.set_vexpand(true);
+    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    content.append(&body);
+    content.append(&statusbar.root);
     // 最初の status が届くまでは、撮るのを待つ。
     pending.set(pending.get() + 1);
     let mut waiting_status = true;
@@ -361,7 +374,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         .title(format!("{name} — Amon Hen"))
         .default_width(1280)
         .default_height(760)
-        .child(&body)
+        .child(&content)
         .build();
     window.set_titlebar(Some(&header));
     window.present();
@@ -482,6 +495,16 @@ fn build_window(app: &gtk::Application, args: Args) {
             },
         );
     });
+    // 失敗はステータスバーに、終わった操作の一言も（前の失敗は消す）。
+    let (bar, a, o) = (statusbar.clone(), actions.clone(), open.clone());
+    actions.connect_failure(move |failure| bar.show_failure(failure, &a, o.clone()));
+    let (bar, h) = (statusbar.clone(), head.clone());
+    actions.connect_done(move |command| {
+        bar.hide(statusbar::Row::Failure);
+        if let Some(text) = statusbar::done_text(command, h().as_deref()) {
+            bar.flash(&text);
+        }
+    });
     // サブモジュールは、作業ツリーからのパスで開く。
     let open_submodule: refops::OpenSubmodule = {
         let (open, view) = (open.clone(), view.downgrade());
@@ -594,6 +617,16 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 let p = pending.clone();
                                 glib::timeout_add_local_once(
                                     std::time::Duration::from_millis(1500),
+                                    move || p.set(p.get() - 1),
+                                );
+                            }
+                            if let Some(id) = &args.action {
+                                let _ =
+                                    WidgetExt::activate_action(&window, &format!("win.{id}"), None);
+                                pending.set(pending.get() + 1);
+                                let p = pending.clone();
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(2000),
                                     move || p.set(p.get() - 1),
                                 );
                             }
@@ -719,6 +752,36 @@ fn build_window(app: &gtk::Application, args: Args) {
                         }
                     }
                     Event::Status(snapshot) => {
+                        // merge・rebase などの途中なら、ステータスバーに行を出す。
+                        let conflicts = snapshot
+                            .status
+                            .entries
+                            .iter()
+                            .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                            .count();
+                        if let Some((repo, _)) = view.current() {
+                            let (bar, a) = (statusbar.clone(), actions.clone());
+                            glib::spawn_future_local(async move {
+                                let sequence =
+                                    sheets::run(&repo, serde_json::json!({ "op": "sequence" }))
+                                        .await;
+                                let without = if conflicts > 0 {
+                                    sheets::run(&repo, serde_json::json!({ "op": "conflictFiles" }))
+                                        .await["info"]["files"]
+                                        .as_array()
+                                        .into_iter()
+                                        .flatten()
+                                        .filter(|f| f["markers"].as_u64() == Some(0))
+                                        .filter_map(|f| f["path"].as_str().map(str::to_owned))
+                                        .collect()
+                                } else {
+                                    Vec::new()
+                                };
+                                let info =
+                                    sequence["info"].is_object().then_some(&sequence["info"]);
+                                bar.show_sequence(info, conflicts, without, &a);
+                            });
+                        }
                         working.show(snapshot);
                         // Working Copy の操作（破棄・コミット）も Undo の記録を書く。
                         actions.refresh_undo();

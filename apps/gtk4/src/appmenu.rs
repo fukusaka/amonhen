@@ -115,11 +115,8 @@ fn icon_button(kind: icon::Kind, action: &str, tip: &str) -> gtk::Button {
 }
 
 /// ▾ 付きのボタン（押すと `action`、▾ で `menu`）。アイコンの横に数を出せる。
-fn split_button(
-    kind: icon::Kind,
-    action: &str,
-    menu: &gio::Menu,
-) -> (gtk::Box, gtk::Button, gtk::Label) {
+/// 数の付くボタン（Pull・Push。▾ のメニューは付けない: 押すと必ずシートで確かめる。docs/ux.md の「Toolbar」）。
+fn count_button(kind: icon::Kind, action: &str) -> (gtk::Button, gtk::Label) {
     let icon = icon::Icon::default();
     icon.set(kind, false);
     let count = gtk::Label::new(None);
@@ -131,12 +128,7 @@ fn split_button(
     let button = gtk::Button::new();
     button.set_child(Some(&inner));
     button.set_action_name(Some(action));
-    let more = gtk::MenuButton::builder().menu_model(menu).build();
-    let group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    group.add_css_class("linked");
-    group.append(&button);
-    group.append(&more);
-    (group, button, count)
+    (button, count)
 }
 
 /// ボタンの群れの間の空き（macOS のツールバーの space）。
@@ -233,25 +225,16 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("go-to-parent", Box::new(|p| go_to_relative(p, true))),
         ("go-to-child", Box::new(|p| go_to_relative(p, false))),
         // Repository
-        ("fetch", run(json!({ "op": "fetch" }))),
+        ("fetch", Box::new(|p| crate::sheets::fetch(&p.actions))),
+        ("pull", Box::new(|p| crate::sheets::pull(&p.actions, "git"))),
         (
-            "pull",
-            Box::new(|p| {
-                p.actions
-                    .perform(json!({ "op": "pull", "mode": crate::settings::pull_mode() }))
-            }),
-        ),
-        ("pull-merge", run(json!({ "op": "pull", "mode": "merge" }))),
-        (
-            "pull-rebase",
-            run(json!({ "op": "pull", "mode": "rebase" })),
+            "push",
+            Box::new(|p| crate::sheets::push(&p.actions, None, false, None)),
         ),
         (
-            "pull-ff-only",
-            run(json!({ "op": "pull", "mode": "fastForwardOnly" })),
+            "force-push",
+            Box::new(|p| crate::sheets::push(&p.actions, None, true, None)),
         ),
-        ("push", Box::new(|p| p.actions.push(false))),
-        ("force-push", Box::new(|p| p.actions.push(true))),
         (
             "new-branch",
             Box::new(|p| refops::ask_new_branch(&p.actions, &start_point(p))),
@@ -269,7 +252,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("abort", run(json!({ "op": "abort" }))),
         ("stash", Box::new(|p| p.actions.stash())),
         ("pop-stash", Box::new(pop_stash)),
-        ("undo", run(json!({ "op": "undo" }))),
+        ("undo", Box::new(|p| crate::sheets::undo(&p.actions))),
         (
             "rebuild-history",
             Box::new(|p| {
@@ -285,8 +268,9 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "commit-and-push",
             Box::new(|p| {
                 let actions = p.actions.clone();
-                p.working
-                    .commit_from_menu(Some(Box::new(move || actions.push(false))));
+                p.working.commit_from_menu(Some(Box::new(move || {
+                    crate::sheets::push_after_commit(&actions)
+                })));
             }),
         ),
         ("stage-all", Box::new(|p| p.working.stage_all())),
@@ -382,25 +366,10 @@ pub fn install(parts: Parts) -> Buttons {
         "win.fetch",
         &tr!("Fetch all remotes (Ctrl+Alt+F)"),
     ));
-    let (pull_group, pull, pull_count) = split_button(
-        icon::Kind::Pull,
-        "win.pull",
-        &menu_of(&[
-            Some(("Pull with Merge", "win.pull-merge")),
-            Some(("Pull with Rebase", "win.pull-rebase")),
-            Some(("Pull Fast-Forward Only", "win.pull-ff-only")),
-        ]),
-    );
-    parts.header.pack_start(&pull_group);
-    let (push_group, push, push_count) = split_button(
-        icon::Kind::Push,
-        "win.push",
-        &menu_of(&[
-            Some(("Push", "win.push")),
-            Some(("Force Push (with Lease)…", "win.force-push")),
-        ]),
-    );
-    parts.header.pack_start(&push_group);
+    let (pull, pull_count) = count_button(icon::Kind::Pull, "win.pull");
+    parts.header.pack_start(&pull);
+    let (push, push_count) = count_button(icon::Kind::Push, "win.push");
+    parts.header.pack_start(&push);
     parts.header.pack_start(&space());
     parts.header.pack_start(&icon_button(
         icon::Kind::Merge,
@@ -671,29 +640,7 @@ fn merge_or_rebase(p: &Rc<Parts>, rebase: bool) {
         return p.window.error_bell();
     }
     let current = head_branch(p).unwrap_or_else(|| "HEAD".into());
-    let actions = p.actions.clone();
-    glib::spawn_future_local(async move {
-        let (title, message, ok) = if rebase {
-            (
-                tr!("Rebase {branch}", branch = current),
-                tr!("The branch, tag or commit to rebase onto"),
-                tr!("Rebase"),
-            )
-        } else {
-            (
-                tr!("Merge into {branch}", branch = current),
-                tr!("The branch, tag or commit to merge in"),
-                tr!("Merge"),
-            )
-        };
-        if let Some(rev) = actions.choose(&title, &message, &choices, 0, &ok).await {
-            actions.perform(if rebase {
-                json!({ "op": "rebase", "onto": rev })
-            } else {
-                json!({ "op": "merge", "rev": rev })
-            });
-        }
-    });
+    crate::sheets::integrate_choosing(&p.actions, choices, &current, rebase);
 }
 
 /// ブランチを選んで切り替える（リモートブランチなら、追跡するローカルブランチを作る）。
@@ -729,9 +676,10 @@ fn switch_branch(p: &Rc<Parts>) {
         else {
             return;
         };
+        use crate::sheets::{CheckoutTarget, checkout};
         match choice.split_once(':') {
-            Some(("local", name)) => actions.perform(json!({ "op": "checkout", "branch": name })),
-            Some((_, name)) => actions.perform(json!({ "op": "track", "remoteBranch": name })),
+            Some(("local", name)) => checkout(&actions, CheckoutTarget::Branch(name.to_owned())),
+            Some((_, name)) => checkout(&actions, CheckoutTarget::Track(name.to_owned())),
             None => {}
         }
     });
@@ -775,12 +723,10 @@ fn pop_stash(p: &Rc<Parts>) {
             .entries
             .iter()
             .find(|e| e.kind == RefKind::Stash)
-            .map(|e| e.name.clone())
+            .map(|e| (e.name.clone(), e.detail.clone()))
     });
     match latest {
-        Some(name) => p
-            .actions
-            .perform(json!({ "op": "stashApply", "name": name, "pop": true })),
+        Some((name, message)) => crate::sheets::pop(&p.actions, &name, message.as_deref(), true),
         None => p.window.error_bell(),
     }
 }
@@ -967,6 +913,49 @@ mod tests {
         for id in PENDING {
             assert!(amonhen_commands::find(id).is_some(), "表にない: {id}");
         }
+    }
+
+    /// 画面の文（`tr!` の鍵）に、どれも日本語の訳があるか（鍵はソースの書き方のまま比べる）。
+    #[test]
+    fn every_text_has_a_japanese_translation() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let strings =
+            std::fs::read_to_string(dir.join("../../crates/model/src/i18n/ja.strings")).unwrap();
+        let mut missing = Vec::new();
+        for entry in std::fs::read_dir(dir.join("src")).unwrap() {
+            let path = entry.unwrap().path();
+            let source = std::fs::read_to_string(&path).unwrap();
+            for marker in ["tr!(", "translate("] {
+                for (i, _) in source.match_indices(marker) {
+                    // この検査の中の "tr!(" などは飛ばす。
+                    if source[..i].ends_with('"') {
+                        continue;
+                    }
+                    let rest = source[i + marker.len()..].trim_start();
+                    let Some(rest) = rest.strip_prefix('"') else {
+                        continue;
+                    };
+                    // 閉じる引用符（\" は飛ばす）。
+                    let mut end = None;
+                    let mut escaped = false;
+                    for (j, c) in rest.char_indices() {
+                        match c {
+                            '\\' if !escaped => escaped = true,
+                            '"' if !escaped => {
+                                end = Some(j);
+                                break;
+                            }
+                            _ => escaped = false,
+                        }
+                    }
+                    let key = &rest[..end.unwrap()];
+                    if !strings.contains(&format!("\"{key}\" = ")) {
+                        missing.push(format!("{}: {key}", path.display()));
+                    }
+                }
+            }
+        }
+        assert!(missing.is_empty(), "訳がない:\n{}", missing.join("\n"));
     }
 
     #[test]
