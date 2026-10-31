@@ -205,7 +205,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 差分の表示の選択（unified/split・空白・前後の行・折り返し） | — | — | — | n/a |  |
 | 行・hunk・ファイルを捨てる（Undo できる） | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`。 |
 | Add to .gitignore | ✓ | ✓ | — | n/a |  |
-| コンフリクトのファイルからマージエディターを開く | ✓ | △ | △ | n/a | GTK4: 別の窓で開く。<br>VSCode: VSCode のマージエディターを開く。 |
+| コンフリクトのファイルからマージエディターを開く | ✓ | ✓ | △ | n/a | VSCode: VSCode のマージエディターを開く。 |
 
 ## History
 
@@ -266,7 +266,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 帯でつないだ 3 つの列（Current / Result / Incoming） | ✓ | △ | n/a | n/a | GTK4: 埋め込みではなく別の窓。<br>VSCode: VSCode 自身の 3-way のマージエディター。 |
+| 帯でつないだ 3 つの列（Current / Result / Incoming） | ✓ | ✓ | n/a | n/a | VSCode: VSCode 自身の 3-way のマージエディター。 |
 | Show Base | ✓ | ✓ | n/a | n/a |  |
 | Magic Merge（ファイルを開いたときの確かな規則も） | ✓ | ✓ | — | ✓ | CLI: `merge-file`（git の mergetool にも）。 |
 | 直せる Result とコンフリクトごとの Undo | ✓ | ✓ | n/a | n/a |  |

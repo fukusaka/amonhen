@@ -1714,3 +1714,7 @@
 
 /* GTK4: 詳細の中を探す */
 "Search" = "検索";
+/* GTK4: Working Copy に埋め込むマージエディタ */
+"Open in a Separate Window" = "別ウィンドウで開く";
+"The merge editor is open in a separate window" = "マージエディタを別ウィンドウで開いています";
+"Can’t read: {error}" = "読めません: {error}";

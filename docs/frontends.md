@@ -205,7 +205,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Diff options (unified/split, whitespace, context, wrap) | — | — | — | n/a |  |
 | Discard lines, hunks and files (undoable) | ✓ | ✓ | ✓ | ✓ | CLI: `discard --rows`. |
 | Add to .gitignore | ✓ | ✓ | — | n/a |  |
-| Conflicted files open the merge editor | ✓ | △ | △ | n/a | GTK4: Opens it in a separate window.<br>VSCode: Opens VSCode's merge editor. |
+| Conflicted files open the merge editor | ✓ | ✓ | △ | n/a | VSCode: Opens VSCode's merge editor. |
 
 ## History
 
@@ -266,7 +266,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Three columns with bands (Current / Result / Incoming) | ✓ | △ | n/a | n/a | GTK4: In a separate window, not embedded.<br>VSCode: VSCode's own 3-way merge editor. |
+| Three columns with bands (Current / Result / Incoming) | ✓ | ✓ | n/a | n/a | VSCode: VSCode's own 3-way merge editor. |
 | Show Base | ✓ | ✓ | n/a | n/a |  |
 | Magic Merge (and the safe rules when a file opens) | ✓ | ✓ | — | ✓ | CLI: `merge-file` (also as git's mergetool). |
 | Editable Result with undo per conflict | ✓ | ✓ | n/a | n/a |  |

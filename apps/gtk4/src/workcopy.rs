@@ -5,7 +5,7 @@
 //! チェックは index の状態そのもので、FE だけの選択状態は持たない（ターミナルで `git add` しても揃う）。
 //! 差分は、できれば HEAD と作業ツリーの 1 本の差分に行ごとの印を付けて見せ（`working_diff_combined`）、
 //! それで表せないファイルは、作業ツリーの側（Unstaged）か stage 済みの側（Staged）の差分を見せる。
-//! コンフリクトのファイルは、マーカー付きの中身（`conflict_view`）と、ファイルごとの解決のボタンを出す。
+//! コンフリクトのファイルは、差分の代わりにマージエディタ（`merge.rs`）を埋め込み、上にファイルごとの解決のボタンを出す。
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -116,8 +116,12 @@ struct Inner {
     staged_side: gtk::ToggleButton,
     /// コンフリクトのファイルの解決のボタン。
     conflict_buttons: gtk::Box,
-    /// コンフリクトのファイルにマーカーが残っていないときの案内（rerere やほかのエディタが解いた）。
-    conflict_note: gtk::Label,
+    /// 差分（`diff`）か、コンフリクトのファイルのマージエディタ（`merge`）。
+    right_stack: gtk::Stack,
+    merge_holder: gtk::Box,
+    /// 作ったマージエディタ（パスごと。ファイルを選び直しても、編集中の Result を保つ）と、埋め込んでいるもの。
+    editors: RefCell<HashMap<String, Rc<crate::merge::Editor>>>,
+    embedded: RefCell<Option<Rc<crate::merge::Editor>>>,
     /// 改行を変換している・改行が混ざっているファイルの印（普段のファイルでは出さない）。
     line_endings: gtk::Label,
     /// 選んでいるファイル。
@@ -326,17 +330,14 @@ impl WorkingCopy {
             .build();
         let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
         right.append(&bar);
-        let conflict_note = gtk::Label::new(None);
-        conflict_note.set_xalign(0.0);
-        conflict_note.set_wrap(true);
-        conflict_note.add_css_class("dim-label");
-        conflict_note.set_margin_start(10);
-        conflict_note.set_margin_end(10);
-        conflict_note.set_margin_bottom(6);
-        conflict_note.set_visible(false);
-        right.append(&conflict_note);
         right.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        right.append(&diff_scrolled);
+        // コンフリクトのファイルは、差分の代わりにマージエディタを出す（macOS 版と同じ）。
+        let merge_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let right_stack = gtk::Stack::new();
+        right_stack.set_vexpand(true);
+        right_stack.add_named(&diff_scrolled, Some("diff"));
+        right_stack.add_named(&merge_holder, Some("merge"));
+        right.append(&right_stack);
 
         let root = gtk::Paned::new(gtk::Orientation::Horizontal);
         root.set_start_child(Some(&left));
@@ -372,7 +373,10 @@ impl WorkingCopy {
             sides,
             staged_side,
             conflict_buttons,
-            conflict_note,
+            right_stack,
+            merge_holder,
+            editors: RefCell::default(),
+            embedded: RefCell::default(),
             line_endings,
             selected: RefCell::default(),
             current: RefCell::default(),
@@ -707,18 +711,6 @@ impl Inner {
             });
             this.conflict_buttons.append(&button);
         }
-        // マージエディタ（別の窓）で、コンフリクトを 1 つずつ解く。
-        let editor = gtk::Button::with_label("Open Merge Editor");
-        editor.set_tooltip_text(Some(&tr!(
-            "Resolve the conflicts one at a time with Current, Result and Incoming side by side"
-        )));
-        let weak = Rc::downgrade(this);
-        editor.connect_clicked(move |b| {
-            if let Some(this) = weak.upgrade() {
-                Inner::open_merge_editor(&this, b.upcast_ref());
-            }
-        });
-        this.conflict_buttons.append(&editor);
         let resolved = gtk::Button::with_label(&tr!("Mark Resolved"));
         let weak = Rc::downgrade(this);
         resolved.connect_clicked(move |_| {
@@ -885,6 +877,7 @@ impl Inner {
         this.status.replace(Some(status));
         let count = entries.len();
         this.all_entries.replace(entries);
+        this.prune_editors();
         Inner::rebuild_list(this);
         Inner::load_stats(this);
         if let Some(f) = this.on_count.borrow().as_ref() {
@@ -1313,37 +1306,16 @@ impl Inner {
         let generation = this.generation.get() + 1;
         this.generation.set(generation);
         this.path.set_text(&entry.path);
+        if entry.kind == StatusKind::Unmerged {
+            Inner::show_conflict(this, &entry.path, generation);
+            return;
+        }
+        this.unembed();
         this.pending.set(this.pending.get() + 1);
-        let conflict = entry.kind == StatusKind::Unmerged;
         let weak = Rc::downgrade(this);
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || {
                 let profile = FrontendProfile::GTK;
-                if conflict {
-                    // コンフリクト: マーカー付きの中身（Current・Incoming・Base の行に分ける）。マーカーが
-                    // 残っていなければ（rerere やほかのエディタが解いた）、そう案内する。
-                    let view = repo.conflict_view(&entry.path, &profile)?;
-                    let files: Value =
-                        serde_json::from_str(&repo.run_json(r#"{"op":"conflictFiles"}"#))
-                            .unwrap_or_default();
-                    let file = files["info"]["files"]
-                        .as_array()
-                        .into_iter()
-                        .flatten()
-                        .find(|f| f["path"].as_str() == Some(entry.path.as_str()));
-                    let note = file.filter(|f| f["markers"].as_u64() == Some(0)).map(|f| {
-                        if f["rerere"].as_bool() == Some(true) {
-                            tr!("git rerere applied the earlier resolution. Check the result, then Mark Resolved.")
-                        } else {
-                            tr!("No conflict markers are left. Check the result, then Mark Resolved.")
-                        }
-                    });
-                    return Ok::<_, amonhen_model::Error>((
-                        Arc::new(Working(None)),
-                        View::new(view),
-                        note,
-                    ));
-                }
                 // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側）。
                 let mut working = match repo.working_diff_combined(&entry, &profile)? {
                     Some(d) => d,
@@ -1368,7 +1340,7 @@ impl Inner {
                         }
                     }
                 }
-                Ok((Arc::new(Working(Some(working))), View::new(view), None))
+                Ok::<_, amonhen_model::Error>((Arc::new(Working(Some(working))), View::new(view)))
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
@@ -1377,23 +1349,15 @@ impl Inner {
                 return;
             }
             match result {
-                Ok(Ok((working, view, note))) => {
-                    this.conflict_note
-                        .set_text(note.as_deref().unwrap_or_default());
-                    this.conflict_note.set_visible(note.is_some());
+                Ok(Ok((working, view))) => {
                     let w = working.0.as_ref();
                     this.show_line_endings(w.and_then(|w| w.line_endings.as_ref()));
                     this.sides.set_visible(w.is_some_and(|w| {
                         w.combined.is_none() && w.entry.is_staged() && w.entry.is_unstaged()
                     }));
-                    this.conflict_buttons.set_visible(w.is_none());
-                    let marks = w.is_some();
+                    this.conflict_buttons.set_visible(false);
                     this.current.replace(Some(working));
-                    if marks {
-                        this.diff.show_working(view, same);
-                    } else {
-                        this.diff.show_plain(view);
-                    }
+                    this.diff.show_working(view, same);
                     if let Some(row) = this.toggle_once.take() {
                         Inner::set_rows(&this, vec![row as usize], None);
                     }
@@ -1630,17 +1594,139 @@ impl Inner {
         });
     }
 
-    /// 選んでいるコンフリクトのファイルを、マージエディタで開く。
-    fn open_merge_editor(this: &Rc<Self>, widget: &gtk::Widget) {
-        let (Some(path), Some(actions), Some(repo), Some(window)) = (
-            this.selected.borrow().clone(),
-            this.actions.borrow().clone(),
-            this.repo(),
-            widget.root().and_downcast::<gtk::Window>(),
-        ) else {
+    /// コンフリクトのファイルを選んだ: 差分の代わりに、そのファイルのマージエディタを埋め込む（作ったものが
+    /// あれば編集中のまま、なければ裏で読んで作る）。別の窓で開いていれば、そう案内する。
+    fn show_conflict(this: &Rc<Self>, path: &str, generation: u64) {
+        this.current.replace(Some(Arc::new(Working(None))));
+        this.show_line_endings(None);
+        this.sides.set_visible(false);
+        this.conflict_buttons.set_visible(true);
+        this.update_buttons();
+        if crate::merge::open_window(path).is_some() {
+            this.embed_message(&tr!("The merge editor is open in a separate window"));
+            return;
+        }
+        let existing = this.editors.borrow().get(path).cloned();
+        if let Some(editor) = existing {
+            Inner::embed(this, &editor);
+            return;
+        }
+        let (Some(repo), Some(actions)) = (this.repo(), this.actions.borrow().clone()) else {
             return;
         };
-        crate::merge::open(&window, repo, actions, &path, || {});
+        this.pending.set(this.pending.get() + 1);
+        let (weak, path) = (Rc::downgrade(this), path.to_owned());
+        glib::spawn_future_local(async move {
+            let loaded = crate::merge::load(repo, actions, &path).await;
+            let Some(this) = weak.upgrade() else { return };
+            this.pending.set(this.pending.get() - 1);
+            if this.generation.get() != generation {
+                return;
+            }
+            match loaded {
+                Ok(editor) => {
+                    this.editors.borrow_mut().insert(path, editor.clone());
+                    Inner::embed(&this, &editor);
+                    crate::merge::Editor::opened(&editor);
+                }
+                Err(e) => this.embed_message(&tr!("Can’t read: {error}", error = e)),
+            }
+        });
+    }
+
+    /// 右の欄の差分の代わりに、マージエディタを出す。
+    fn embed(this: &Rc<Self>, editor: &Rc<crate::merge::Editor>) {
+        let same = this
+            .embedded
+            .borrow()
+            .as_ref()
+            .is_some_and(|e| Rc::ptr_eq(e, editor));
+        if !same {
+            this.clear_holder();
+            this.merge_holder.append(editor.widget());
+            editor.widget().set_vexpand(true);
+            this.embedded.replace(Some(editor.clone()));
+        }
+        this.right_stack.set_visible_child_name("merge");
+        // 別の窓に移す（編集中の内容のまま）。
+        let weak = Rc::downgrade(this);
+        let e = Rc::downgrade(editor);
+        editor.set_on_pop_out(Some(Rc::new(move || {
+            let (Some(this), Some(editor)) = (weak.upgrade(), e.upgrade()) else {
+                return;
+            };
+            let Some(window) = this.merge_holder.root().and_downcast::<gtk::Window>() else {
+                return;
+            };
+            this.unembed();
+            this.editors.borrow_mut().remove(editor.path());
+            crate::merge::show_in_window(&editor, &window);
+            this.embed_message(&tr!("The merge editor is open in a separate window"));
+        })));
+        // 保存して解決済みにしたら外す（status を読み直すと、普段の差分になる）。
+        let weak = Rc::downgrade(this);
+        let e = Rc::downgrade(editor);
+        editor.set_on_resolved(move || {
+            let (Some(this), Some(editor)) = (weak.upgrade(), e.upgrade()) else {
+                return;
+            };
+            if this
+                .embedded
+                .borrow()
+                .as_ref()
+                .is_some_and(|x| Rc::ptr_eq(x, &editor))
+            {
+                this.unembed();
+            }
+            this.editors.borrow_mut().remove(editor.path());
+        });
+    }
+
+    /// マージエディタを外して、差分に戻す。
+    fn unembed(&self) {
+        self.clear_holder();
+        self.embedded.replace(None);
+        self.right_stack.set_visible_child_name("diff");
+    }
+
+    fn clear_holder(&self) {
+        while let Some(child) = self.merge_holder.first_child() {
+            self.merge_holder.remove(&child);
+        }
+    }
+
+    /// マージエディタの場所に、案内（別の窓で開いている・読めない）を出す。
+    fn embed_message(&self, text: &str) {
+        self.unembed();
+        let label = gtk::Label::new(Some(text));
+        label.add_css_class("dim-label");
+        label.set_wrap(true);
+        label.set_vexpand(true);
+        label.set_valign(gtk::Align::Center);
+        self.merge_holder.append(&label);
+        self.right_stack.set_visible_child_name("merge");
+    }
+
+    /// コンフリクトでなくなったファイルのマージエディタを捨てる（埋め込んでいれば外す）。
+    fn prune_editors(&self) {
+        let conflicted: std::collections::HashSet<String> = self
+            .all_entries
+            .borrow()
+            .iter()
+            .filter(|e| e.kind == StatusKind::Unmerged)
+            .map(|e| e.path.clone())
+            .collect();
+        self.editors
+            .borrow_mut()
+            .retain(|path, _| conflicted.contains(path));
+        let stale = self
+            .embedded
+            .borrow()
+            .as_ref()
+            .is_some_and(|e| !conflicted.contains(e.path()));
+        if stale {
+            self.unembed();
+        }
     }
 
     /// Mark Resolved: 残っているコンフリクトがあれば確かめてから、解決済みにする（index に入れる）。
