@@ -13,10 +13,65 @@ use gtk::glib;
 use gtk::prelude::*;
 use serde_json::Value;
 
+/// 作者かコミッターの 1 人分（macOS 版の `PersonView`）: 左にアバター、右に名前（と役割）、メール、日時。名前と
+/// メールは mailmap で置き換えたもので、記録と違えば記録されたものを下に小さく添える。
+struct Person {
+    root: gtk::Box,
+    avatar: Rc<crate::avatars::Avatar>,
+    text: gtk::Label,
+    role: String,
+}
+
+impl Person {
+    fn new(role: String) -> Self {
+        let avatar = crate::avatars::Avatar::new(32);
+        let text = gtk::Label::new(None);
+        text.set_xalign(0.0);
+        text.set_yalign(0.0);
+        text.set_wrap(true);
+        text.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        text.set_selectable(true);
+        text.set_hexpand(true);
+        text.add_css_class("caption");
+        let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        root.append(&avatar.root);
+        root.append(&text);
+        Self {
+            root,
+            avatar,
+            text,
+            role,
+        }
+    }
+
+    fn show(&self, name: &str, email: &str, time: &str, recorded: Option<String>) {
+        let e = |s: &str| glib::markup_escape_text(s).to_string();
+        let mut markup = format!(
+            "<b>{}</b>  <span size=\"small\" alpha=\"55%\">{}</span>\n<span alpha=\"70%\">{}\n{}</span>",
+            e(name),
+            e(&self.role),
+            e(email),
+            e(time)
+        );
+        if let Some(r) = recorded {
+            markup.push_str(&format!(
+                "\n<span size=\"small\" alpha=\"55%\">{}</span>",
+                e(&r)
+            ));
+        }
+        self.text.set_markup(&markup);
+        self.avatar.show(name, email);
+        self.root.set_visible(true);
+    }
+}
+
 pub struct Details {
     pub root: gtk::ScrolledWindow,
     column: gtk::Box,
-    people: gtk::Label,
+    /// 上の帯: 作者とコミッターを左右に。
+    people: gtk::Box,
+    author: Person,
+    committer: Person,
     table: gtk::Grid,
     subject: gtk::Label,
     body: gtk::Label,
@@ -52,7 +107,12 @@ impl Details {
             }
             l
         };
-        let people = label(&["caption"]);
+        let author = Person::new(tr!("Author"));
+        let committer = Person::new(tr!("Committer"));
+        let people = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+        people.set_homogeneous(true);
+        people.append(&author.root);
+        people.append(&committer.root);
         let table = gtk::Grid::builder()
             .column_spacing(10)
             .row_spacing(2)
@@ -105,6 +165,8 @@ impl Details {
             root,
             column,
             people,
+            author,
+            committer,
             table,
             subject,
             body,
@@ -125,7 +187,8 @@ impl Details {
         self.set_selection_mode(false);
         self.info.replace(None);
         self.extras.replace(None);
-        self.people.set_text("");
+        self.author.root.set_visible(false);
+        self.committer.root.set_visible(false);
         self.clear_table();
         self.subject.set_text("");
         for l in [&self.body, &self.notes] {
@@ -223,8 +286,7 @@ impl Details {
         self.body.set_text(body);
         self.body.set_visible(!body.is_empty());
 
-        // 上の帯: 作者と（違えば）コミッター。
-        let who = |name: &str, email: &str, time: i64| format!("{name} <{email}>  {}", date(time));
+        // 上の帯: 作者と（違う人なら）コミッター。
         // mailmap で置き換えたなら、記録の名前とメールを下に添える。
         let recorded = |key: &str| {
             info[key].is_object().then(|| {
@@ -238,33 +300,35 @@ impl Details {
                 )
             })
         };
-        let mut people = format!(
-            "Author  {}",
-            who(
-                str_of(info, "author"),
-                str_of(info, "authorEmail"),
-                info["authorTime"].as_i64().unwrap_or_default(),
-            )
-        );
-        if let Some(r) = recorded("recordedAuthor") {
-            people.push_str(&format!("\n        {r}"));
-        }
-        if info["committer"] != info["author"] || info["committerTime"] != info["authorTime"] {
-            people.push_str(&format!(
-                "\nCommitter  {}",
-                who(
-                    str_of(info, "committer"),
-                    str_of(info, "committerEmail"),
-                    info["committerTime"].as_i64().unwrap_or_default(),
-                )
-            ));
-            if info["recordedCommitter"] != info["recordedAuthor"]
-                && let Some(r) = recorded("recordedCommitter")
-            {
-                people.push_str(&format!("\n        {r}"));
+        let when = |time: &str, tz: &str| {
+            let d = date(info[time].as_i64().unwrap_or_default());
+            match str_of(info, tz) {
+                "" => d,
+                tz => format!("{d} ({tz})"),
             }
+        };
+        self.author.show(
+            str_of(info, "author"),
+            str_of(info, "authorEmail"),
+            &when("authorTime", "authorTz"),
+            recorded("recordedAuthor"),
+        );
+        // 作者とコミッターが同じ人（名前とメールが同じ、記録も同じ）なら、作者だけを出す。
+        let same = info["committer"] == info["author"]
+            && str_of(info, "committerEmail").to_lowercase()
+                == str_of(info, "authorEmail").to_lowercase()
+            && info["recordedCommitter"] == info["recordedAuthor"];
+        if same {
+            self.committer.root.set_visible(false);
+        } else {
+            self.committer.show(
+                str_of(info, "committer"),
+                str_of(info, "committerEmail"),
+                &when("committerTime", "committerTz"),
+                recorded("recordedCommitter"),
+            );
         }
-        self.people.set_text(&people);
+        self.people.set_homogeneous(!same);
         let extras = self.extras.borrow().clone();
         match extras {
             Some(extras) => self.show_extras(&extras),

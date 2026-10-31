@@ -555,11 +555,18 @@ pub fn show(parent: &gtk::ApplicationWindow) {
             ),
             section(
                 Some(&tr!("Commit Details")),
-                &[check(
-                    MONOSPACED_COMMIT_MESSAGE,
-                    &tr!("Show the message in a monospaced font"),
-                )
-                .upcast()],
+                &[
+                    check(
+                        MONOSPACED_COMMIT_MESSAGE,
+                        &tr!("Show the message in a monospaced font"),
+                    )
+                    .upcast(),
+                    check(SHOW_AVATARS, &tr!("Show avatars")).upcast(),
+                    note(&tr!(
+                        "Fetched from Gravatar (sends a hash of the email address to gravatar.com)."
+                    ))
+                    .upcast(),
+                ],
             ),
         ]),
         Some("appearance"),

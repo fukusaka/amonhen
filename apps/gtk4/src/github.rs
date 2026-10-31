@@ -476,6 +476,7 @@ impl Loader {
                 return;
             }
             if !crate::settings::bool(crate::settings::GITHUB_AVATARS) {
+                crate::avatars::forget_github();
                 loader.avatars_loaded.set(false);
             }
             loader.load(true);
@@ -564,7 +565,7 @@ impl Loader {
                     view.set_ci(statuses);
                 }
                 if authors {
-                    let _ = avatars;
+                    crate::avatars::use_github(avatars);
                     self.avatars_loaded.set(true);
                 }
             }

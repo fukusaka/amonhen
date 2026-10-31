@@ -6,6 +6,7 @@ mod actions;
 mod activity;
 mod appmenu;
 mod askpass;
+mod avatars;
 mod bookmarks;
 mod cipopover;
 mod commitmsg;

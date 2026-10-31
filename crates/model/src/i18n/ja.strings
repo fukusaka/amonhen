@@ -1499,3 +1499,8 @@
 "Read avatar URLs only once per window" = "アバターの URL はウィンドウを開いて最初の 1 回だけ読む";
 "Accounts" = "アカウント";
 "CI Status" = "CI の状態";
+
+/* GTK4 の FE: GitHub: コミットの詳細のアバター */
+"Show avatars" = "アバターを表示する";
+"Fetched from Gravatar (sends a hash of the email address to gravatar.com)." = "Gravatar から取る（メールアドレスのハッシュを gravatar.com に送る）。";
+"Committer" = "コミッター";
