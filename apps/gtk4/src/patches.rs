@@ -187,7 +187,7 @@ pub fn choose_and_apply(actions: &Rc<Actions>) {
 }
 
 /// 窓にパッチのファイルを落としたら当てる（すべてがパッチの拡張子のときだけ受け取る）。
-pub fn install_drop(window: &gtk::ApplicationWindow, actions: &Rc<Actions>) {
+pub fn install_drop(widget: &impl IsA<gtk::Widget>, actions: &Rc<Actions>) {
     let target = gtk::DropTarget::new(gdk::FileList::static_type(), gdk::DragAction::COPY);
     let a = Rc::downgrade(actions);
     target.connect_drop(move |_, value, _, _| {
@@ -201,7 +201,7 @@ pub fn install_drop(window: &gtk::ApplicationWindow, actions: &Rc<Actions>) {
         apply(&actions, paths);
         true
     });
-    window.add_controller(target);
+    widget.add_controller(target);
 }
 
 /// パッチのファイルを読んで、何を変えるかと当たるかを見せてから当てる。名前の順につなぐ（0001-… から）。

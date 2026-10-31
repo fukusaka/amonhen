@@ -1591,3 +1591,14 @@
 "Couldn’t read the reply (not JSON in the expected shape):" = "返事を読めませんでした（決めた形の JSON ではない）:";
 "The suggestion still has conflict markers. Try again." = "提案にコンフリクトのマーカーが残っています。作り直してください。";
 "Put in the AI’s suggestion (Ctrl+Z to undo)." = "AI の提案を入れました（Ctrl+Z で戻せる）";
+
+/* GTK4 の FE: タブ（1 つの窓で複数のリポジトリ） */
+"Close Tab" = "タブを閉じる";
+"New Tab" = "新規タブ";
+"New Tab (Ctrl+T)" = "新規タブ（Ctrl+T）";
+"Close Window" = "ウインドウを閉じる";
+"Show Next Tab" = "次のタブを表示";
+"Show Previous Tab" = "前のタブを表示";
+"Move Tab to New Window" = "タブを新規ウインドウに移動";
+"Merge All Windows" = "すべてのウインドウを結合";
+"Enter Open in Tab   Ctrl+Enter Open in New Window   Esc Close" = "Enter タブで開く　Ctrl+Enter 新しいウィンドウで開く　Esc 閉じる";

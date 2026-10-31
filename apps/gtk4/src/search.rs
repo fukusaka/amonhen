@@ -134,20 +134,20 @@ impl Search {
         Self { bar, toggle, inner }
     }
 
-    /// 窓のアクション（`win.find`・`win.find-next`・`win.find-previous`）を足す。
-    pub fn install(&self, window: &gtk::ApplicationWindow, app: &gtk::Application) {
+    /// タブのアクション（`win.find`・`win.find-next`・`win.find-previous`）を足す。
+    pub fn install(&self, group: &gio::SimpleActionGroup, app: &gtk::Application) {
         let find = gio::SimpleAction::new("find", None);
         let (bar, entry) = (self.bar.clone(), self.inner.entry.clone());
         find.connect_activate(move |_, _| {
             bar.set_search_mode(true);
             entry.grab_focus();
         });
-        window.add_action(&find);
+        group.add_action(&find);
         for (name, step) in [("find-next", 1), ("find-previous", -1)] {
             let action = gio::SimpleAction::new(name, None);
             let i = self.inner.clone();
             action.connect_activate(move |_, _| Inner::submit(&i, step));
-            window.add_action(&action);
+            group.add_action(&action);
         }
         app.set_accels_for_action("win.find", &["<Control>f"]);
         app.set_accels_for_action("win.find-next", &["<Control>g"]);

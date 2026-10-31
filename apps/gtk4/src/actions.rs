@@ -19,7 +19,10 @@ type DoneCallback = Rc<dyn Fn(&Value)>;
 
 pub struct Actions {
     repo: RefCell<Option<Arc<Repository>>>,
-    window: glib::WeakRef<gtk::ApplicationWindow>,
+    /// タブの中身（今どの窓にあるかは、ここから辿る。タブは窓を移れる）。
+    anchor: glib::WeakRef<gtk::Widget>,
+    /// タブのアクション（`win.undo` などの使えるかどうかを、前にないタブでもそのタブのものに入れる）。
+    group: glib::WeakRef<gio::SimpleActionGroup>,
     /// 見出しの「取り消す」。次に取り消す操作の名前を説明に出す。
     pub undo: gtk::Button,
     /// 操作の後に、History・サイドバー・Working Copy を読み直す。
@@ -37,7 +40,8 @@ pub struct Actions {
 }
 
 impl Actions {
-    pub fn new(window: &gtk::ApplicationWindow) -> Rc<Self> {
+    /// `anchor` はタブの中身、`group` はタブのアクション。
+    pub fn new(anchor: &impl IsA<gtk::Widget>, group: &gio::SimpleActionGroup) -> Rc<Self> {
         // 見出しの Undo（メニューの Undo と同じアクション。使えるかはアクションで決まる）。
         let undo = gtk::Button::new();
         let icon = crate::icon::Icon::default();
@@ -46,7 +50,8 @@ impl Actions {
         undo.set_action_name(Some("win.undo"));
         let actions = Rc::new(Self {
             repo: RefCell::default(),
-            window: window.downgrade(),
+            anchor: anchor.upcast_ref::<gtk::Widget>().downgrade(),
+            group: group.downgrade(),
             undo,
             on_change: RefCell::default(),
             on_after: RefCell::default(),
@@ -99,9 +104,8 @@ impl Actions {
 
     /// `path` の worktree を書き込む先にする（窓の `win.edit-worktree`）。
     pub fn edit_worktree(&self, path: &str) {
-        if let Some(window) = self.window() {
-            let _ =
-                WidgetExt::activate_action(&window, "win.edit-worktree", Some(&path.to_variant()));
+        if let Some(group) = self.group.upgrade() {
+            group.activate_action("edit-worktree", Some(&path.to_variant()));
         }
     }
 
@@ -114,8 +118,9 @@ impl Actions {
         self.in_sequence.get()
     }
 
+    /// タブのある窓。
     pub fn window(&self) -> Option<gtk::ApplicationWindow> {
-        self.window.upgrade()
+        self.anchor.upgrade()?.root().and_downcast()
     }
 
     /// 失敗したら `f` で知らせる（なければ窓で知らせる）。
@@ -264,6 +269,7 @@ impl Actions {
             return;
         };
         let button = self.undo.downgrade();
+        let group = self.group.clone();
         glib::spawn_future_local(async move {
             let reply = gio::spawn_blocking(move || {
                 serde_json::from_str::<Value>(&repo.run_json(r#"{"op":"undoPeek"}"#))
@@ -275,10 +281,9 @@ impl Actions {
                 return;
             };
             let label = reply["label"].as_str();
-            if let Some(action) = button
-                .root()
-                .and_downcast::<gtk::ApplicationWindow>()
-                .and_then(|w| w.lookup_action("undo"))
+            if let Some(action) = group
+                .upgrade()
+                .and_then(|g| g.lookup_action("undo"))
                 .and_downcast::<gio::SimpleAction>()
             {
                 action.set_enabled(label.is_some());
@@ -297,7 +302,7 @@ impl Actions {
             .detail(message)
             .modal(true)
             .build();
-        let window = self.window.upgrade();
+        let window = self.window();
         let _ = dialog.choose_future(window.as_ref()).await;
     }
 
@@ -311,7 +316,7 @@ impl Actions {
             .default_button(1)
             .modal(true)
             .build();
-        let window = self.window.upgrade();
+        let window = self.window();
         dialog.choose_future(window.as_ref()).await == Ok(1)
     }
 
@@ -429,7 +434,7 @@ impl Actions {
         focus: &gtk::Widget,
         ok: &str,
     ) -> bool {
-        let parent = self.window.upgrade();
+        let parent = self.window();
         let dialog = gtk::Window::builder()
             .title(title)
             .modal(true)

@@ -18,7 +18,8 @@ use crate::menu::{self, Item};
 use crate::sheets::{Response, Sheet};
 
 /// リポジトリを新しい窓で開く。
-pub type Open = Rc<dyn Fn(PathBuf)>;
+/// リポジトリを開く（場所と、開く先: 前の窓のタブか新しい窓か）。
+pub type Open = Rc<dyn Fn(PathBuf, crate::tabs::Place)>;
 
 /// 左の分類。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -933,7 +934,8 @@ impl Browser {
 
     // 開く
 
-    /// 開く。`close` なら、この窓を閉じる（macOS 版のページがそのリポジトリになるのと同じ）。
+    /// 開く。`close` なら前のリポジトリの窓のタブに開いてこの窓を閉じ（macOS 版のページがそのリポジトリになるのと
+    /// 同じ）、でなければ新しい窓に開く。
     fn open_row(self: &Rc<Self>, row: u32, close: bool) {
         if let Some(location) = self.location(row) {
             self.open_location(&location, close);
@@ -961,7 +963,12 @@ impl Browser {
             });
             return;
         }
-        (self.open)(PathBuf::from(location));
+        let place = if close {
+            crate::tabs::Place::Tab
+        } else {
+            crate::tabs::Place::NewWindow
+        };
+        (self.open)(PathBuf::from(location), place);
         if close {
             self.window.close();
         }
@@ -1323,7 +1330,7 @@ impl Browser {
     fn clone_repository(self: &Rc<Self>) {
         let b = self.clone();
         // clone したものはブックマークにも入れて開く（macOS 版と同じ）。
-        let open: Open = Rc::new(move |path: PathBuf| {
+        let open: Rc<dyn Fn(PathBuf)> = Rc::new(move |path: PathBuf| {
             bookmarks::add(&path.to_string_lossy(), b.selected_group().as_deref());
             b.open_location(&path.to_string_lossy(), true);
         });

@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--edit-worktree <path>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories | --quick-open <query>] [--tab <location>]...`
 
 mod actions;
 mod activity;
@@ -50,6 +50,7 @@ mod sidebar;
 mod sshhosts;
 mod stashes;
 mod statusbar;
+mod tabs;
 mod titles;
 mod workcopy;
 mod worktrees;
@@ -78,6 +79,8 @@ const APP_ID: &str = "io.github.fukusaka.amonhen";
 #[derive(Clone, Default)]
 struct Args {
     path: Option<PathBuf>,
+    /// 同じ窓に、後ろのタブとして開いておく場所（確認用。`--tab` を重ねる。ほかの確認用の引数は最初のタブのもの）。
+    tabs: Vec<PathBuf>,
     /// 見えている行がすべて読めたら、窓を PNG にして終わる。
     snapshot: Option<PathBuf>,
     /// 自動でスクロールして、1 フレームの時間を測って終わる。
@@ -123,7 +126,7 @@ struct Args {
     /// Working Copy のこのファイルの右クリックのメニューを、文字で書き出す（確認用）。
     print_file_menu: Option<String>,
     /// 最初に History を出したら、この窓のアクション（`win.<id>`）を一度実行する（確認用。`--snapshot` は
-    /// 開いたシートを撮る）。
+    /// 開いたシートを撮る）。`,` で区切れば順に（前のタブのアクションが効く）。
     action: Option<String>,
     /// Working Copy の一覧の見せ方（`list`・`tree`・`flat`。確認用）。
     layout: Option<String>,
@@ -221,6 +224,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--reflog" => args.reflog = true,
             "--repositories" => args.repositories = true,
+            "--tab" => args.tabs.push(it.next().ok_or("--tab <location>")?.into()),
             "--quick-open" => args.quick_open = Some(it.next().ok_or("--quick-open <query>")?),
             "--edit-worktree" => {
                 args.edit_worktree = Some(it.next().ok_or("--edit-worktree <path>")?)
@@ -392,24 +396,19 @@ fn engine() -> PathBuf {
     PathBuf::from("amonhen")
 }
 
-/// リポジトリを新しい窓で開く。
-fn opener(app: &gtk::Application) -> Rc<dyn Fn(PathBuf)> {
+/// Repositories・Quick Open からリポジトリを開く（前の窓のタブか、新しい窓に）。
+fn opener(app: &gtk::Application) -> repobrowser::Open {
     let app = app.clone();
-    Rc::new(move |path| {
-        build_window(
-            &app,
-            Args {
-                path: Some(path),
-                ..Args::default()
-            },
-        )
-    })
+    Rc::new(move |path, place| tabs::open(&app, path, place))
 }
 
 /// 起動したとき: 引数のリポジトリ、なければ今のフォルダのリポジトリを開く。今のフォルダがリポジトリでなければ、
-/// 前回の終わりに開いていた窓を開き直し（macOS 版と同じ）、それもなければ Repositories の窓を出す。
+/// 前回の終わりに開いていた窓とタブを同じ並びで開き直し（macOS 版と同じ）、それもなければ Repositories の窓を出す。
 fn launch(app: &gtk::Application, args: &Args) {
     let check = args.snapshot.is_some() || args.measure_scroll;
+    if check {
+        tabs::set_check_run();
+    }
     let window = if args.repositories {
         Some(repobrowser::show(app, opener(app)).upcast::<gtk::Window>())
     } else if let Some(query) = &args.quick_open {
@@ -427,15 +426,7 @@ fn launch(app: &gtk::Application, args: &Args) {
         if restore.is_empty() {
             Some(repobrowser::show(app, opener(app)).upcast::<gtk::Window>())
         } else {
-            for location in restore {
-                build_window(
-                    app,
-                    Args {
-                        path: Some(location.into()),
-                        ..Args::default()
-                    },
-                );
-            }
+            tabs::restore(app, restore);
             None
         }
     } else {
@@ -455,13 +446,31 @@ fn launch(app: &gtk::Application, args: &Args) {
     }
 }
 
+/// 窓を作り、`args` のリポジトリを開いたタブ（と `--tab` のタブ）を置く。
 fn build_window(app: &gtk::Application, args: Args) {
+    let host = tabs::RepoWindow::new(app);
+    let extra = args.tabs.clone();
+    build_tab(app, &host, args, true, None);
+    for location in extra {
+        tabs::add_background(app, &host, location);
+    }
+    host.window.present();
+}
+
+/// `host` の窓に、リポジトリを開いたタブを足す（`position` がなければ前のタブの右。`select` なら前に出す）。
+fn build_tab(
+    app: &gtk::Application,
+    host: &Rc<tabs::RepoWindow>,
+    args: Args,
+    select: bool,
+    position: Option<u32>,
+) -> Rc<tabs::Tab> {
     let path = args
         .path
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    // File > Open Recent に出す（確認用の撮影では覚えない）。
-    if args.snapshot.is_none() && !args.measure_scroll {
+    // File > Open Recent に出す（確認用の起動では、`--tab` のタブも覚えない）。
+    if !tabs::is_check_run() {
         repos::record(&path);
     }
     // 窓の名前: リポジトリのフォルダーの名前（daemon・SSH 越しなら、場所の最後の部分と接続先）。
@@ -492,8 +501,16 @@ fn build_window(app: &gtk::Application, args: Args) {
     titles.set_valign(gtk::Align::Center);
     titles.append(&title);
     titles.append(&subtitle);
-    let header = gtk::HeaderBar::new();
+    // 裏で読んでいる詳細と差分の数（`--snapshot` はなくなるまで待つ）。
+    let pending = Rc::new(Cell::new(0u32));
+    let tab = tabs::Tab::new(&name, &repos::normalize(&path), pending.clone());
+    let header = tab.header.clone();
     header.set_title_widget(Some(&titles));
+    // タブのある窓（タブは窓を移れるので、使うときに辿る）。
+    let win_of = {
+        let t = Rc::downgrade(&tab);
+        move || t.upgrade().and_then(|t| t.window())
+    };
 
     let view = HistoryView::default();
     let scrolled = gtk::ScrolledWindow::builder()
@@ -530,8 +547,6 @@ fn build_window(app: &gtk::Application, args: Args) {
     columns.set_start_child(Some(&history_column));
     columns.set_end_child(Some(&right));
     columns.set_position(560);
-    // 裏で読んでいる詳細と差分の数（`--snapshot` はなくなるまで待つ）。
-    let pending = Rc::new(Cell::new(0u32));
     connect_selection(&view, &details, &diff, &right, &pending);
     // AI の翻訳・解説（詳細の右上）。
     let current_repo: aiactions::CurrentRepo = {
@@ -638,9 +653,8 @@ fn build_window(app: &gtk::Application, args: Args) {
     // 窓の下のステータスバー（途中の操作・失敗・終わった操作の一言）。
     let statusbar = statusbar::StatusBar::new();
     body.set_vexpand(true);
-    let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    content.append(&body);
-    content.append(&statusbar.root);
+    tab.root.append(&body);
+    tab.root.append(&statusbar.root);
     // 最初の status が届くまでは、撮るのを待つ。
     pending.set(pending.get() + 1);
     let mut waiting_status = true;
@@ -658,31 +672,21 @@ fn build_window(app: &gtk::Application, args: Args) {
         pending.set(pending.get() + 1);
     }
 
-    let window = gtk::ApplicationWindow::builder()
-        .application(app)
-        .title(format!("{name} — Amon Hen"))
-        .default_width(1280)
-        .default_height(760)
-        .child(&content)
-        .build();
-    window.set_titlebar(Some(&header));
-    historydisplay::install_actions(&window);
-    worktrees.install_timer(&window);
-    window.present();
-    view.grab_focus();
-    // 次の起動で開き直す（確認用の撮影では覚えない）。
-    if args.snapshot.is_none() && !args.measure_scroll {
-        repos::track(&window, &path);
+    historydisplay::install_actions(&tab.group);
+    tabs::add(host, &tab, select, position);
+    worktrees.install_timer(&tab);
+    if select {
+        view.grab_focus();
     }
 
     let (tx, rx) = async_channel::unbounded::<Event>();
     // 操作は裏で実行し、終わったら History・ref・status を読み直す（ファイルの変化の知らせも来るが、
     // 待たずに出す）。
-    let actions = Actions::new(&window);
+    let actions = Actions::new(&tab.root, &tab.group);
     // Reflog の画面（後で作る。書き込む先を変えたらその worktree の HEAD の reflog にする）。
     let reflog_slot: Rc<std::cell::RefCell<Option<Rc<reflog::ReflogView>>>> = Rc::default();
     // パッチのファイルを窓に落としたら当てる。
-    patches::install_drop(&window, &actions);
+    patches::install_drop(&tab.root, &actions);
     working.set_actions(actions.clone());
     stashes.set_actions(actions.clone());
     let reload_tx = tx.clone();
@@ -748,13 +752,14 @@ fn build_window(app: &gtk::Application, args: Args) {
         on_commit.clone(),
     ));
     pages.add_named(&reflog.root, Some("reflog"));
-    pages.add_named(&reposettings::page_slot(&window), Some("settings"));
+    let settings_slot = reposettings::page_slot();
+    pages.add_named(&settings_slot, Some("settings"));
     reflog_slot.replace(Some(reflog.clone()));
     reflog.set_range_diff(range_diff_opener.clone());
-    let (v, w, oc) = (view.downgrade(), window.downgrade(), on_commit.clone());
+    let (v, w, oc) = (view.downgrade(), win_of.clone(), on_commit.clone());
     let (dw, dt) = (diff.downgrade(), details.clone());
     diff.connect_file_menu(move |path, x, y| {
-        let (Some(view), Some(window)) = (v.upgrade(), w.upgrade()) else {
+        let (Some(view), Some(window)) = (v.upgrade(), w()) else {
             return;
         };
         let Some((repo, history)) = view.current() else {
@@ -789,13 +794,12 @@ fn build_window(app: &gtk::Application, args: Args) {
         }));
         menu::popup(&view, x, y, items);
     });
-    let (a, w, oc) = (
-        Rc::downgrade(&actions),
-        window.downgrade(),
-        on_commit.clone(),
-    );
+    let (a, oc) = (Rc::downgrade(&actions), on_commit.clone());
     working.connect_file_menu(move |path, can_blame, can_history| {
-        let (Some(actions), Some(window)) = (a.upgrade(), w.upgrade()) else {
+        let Some(actions) = a.upgrade() else {
+            return Vec::new();
+        };
+        let Some(window) = actions.window() else {
             return Vec::new();
         };
         // 作業ツリーのファイルは、書き込む先の worktree のもの。
@@ -859,17 +863,14 @@ fn build_window(app: &gtk::Application, args: Args) {
                 .and_then(|r| r.refs.head_branch.clone())
         }
     };
-    // 別のリポジトリを新しい窓で開く。
+    // 別のリポジトリを開く（ふつうはこの窓のタブに。macOS 版と同じ）。
     let app_for_open = app.clone();
-    let open: Rc<dyn Fn(PathBuf)> = Rc::new(move |path| {
-        build_window(
-            &app_for_open,
-            Args {
-                path: Some(path),
-                ..Args::default()
-            },
-        );
-    });
+    let open_at: repobrowser::Open =
+        Rc::new(move |path, place| tabs::open(&app_for_open, path, place));
+    let open: Rc<dyn Fn(PathBuf)> = {
+        let o = open_at.clone();
+        Rc::new(move |path| o(path, tabs::Place::Tab))
+    };
     // 失敗はステータスバーに、終わった操作の一言も（前の失敗は消す）。
     let (bar, a) = (statusbar.clone(), actions.clone());
     actions.connect_failure(move |failure| bar.show_failure(failure, &a));
@@ -881,18 +882,16 @@ fn build_window(app: &gtk::Application, args: Args) {
         }
     });
     // daemon・SSH 越しのつながりが切れたら、ステータスバーで知らせ、同じ場所につなぎ直せるようにする
-    // （新しい窓で開き直し、この窓を閉じる）。
+    // （同じ場所のタブで開き直し、このタブを閉じる）。
     if let Some(location) = args.path.clone() {
-        let (v, bar, w, app) = (
-            view.downgrade(),
-            statusbar.clone(),
-            window.downgrade(),
-            app.clone(),
-        );
+        let (v, bar, t) = (view.downgrade(), statusbar.clone(), Rc::downgrade(&tab));
         glib::timeout_add_seconds_local(3, move || {
-            let (Some(view), Some(window)) = (v.upgrade(), w.upgrade()) else {
+            let (Some(view), Some(tab)) = (v.upgrade(), t.upgrade()) else {
                 return glib::ControlFlow::Break;
             };
+            if tab.closed() {
+                return glib::ControlFlow::Break;
+            }
             let closed = view
                 .current()
                 .and_then(|(repo, _)| repo.connection_state())
@@ -904,17 +903,10 @@ fn build_window(app: &gtk::Application, args: Args) {
                     .strip_prefix("ssh://")
                     .and_then(|rest| rest.split('/').next())
                     .map_or_else(|| "daemon".to_owned(), str::to_owned);
-                let (app, location, window) = (app.clone(), location.clone(), window.downgrade());
+                let (location, t) = (location.clone(), Rc::downgrade(&tab));
                 bar.show_disconnected(&host, &reason, move || {
-                    build_window(
-                        &app,
-                        Args {
-                            path: Some(location.clone()),
-                            ..Args::default()
-                        },
-                    );
-                    if let Some(w) = window.upgrade() {
-                        w.close();
+                    if let Some(tab) = t.upgrade() {
+                        tabs::reopen(&tab, location.clone());
                     }
                 });
             }
@@ -923,16 +915,20 @@ fn build_window(app: &gtk::Application, args: Args) {
     }
     // 自動の fetch（Settings > General で決めた間隔。聞かずにすべてのリモートから。失敗はステータスバーに）。
     let elapsed = Rc::new(Cell::new(0u32));
-    let (v, bar, a, r) = (
+    let (v, bar, a, r, t) = (
         view.downgrade(),
         statusbar.clone(),
-        actions.clone(),
+        Rc::downgrade(&actions),
         reload.clone(),
+        Rc::downgrade(&tab),
     );
     glib::timeout_add_seconds_local(60, move || {
-        let Some(view) = v.upgrade() else {
+        let (Some(view), Some(a), Some(tab)) = (v.upgrade(), a.upgrade(), t.upgrade()) else {
             return glib::ControlFlow::Break;
         };
+        if tab.closed() {
+            return glib::ControlFlow::Break;
+        }
         let minutes = settings::auto_fetch_minutes();
         elapsed.set(elapsed.get() + 1);
         if minutes == 0 || elapsed.get() < minutes {
@@ -1003,7 +999,8 @@ fn build_window(app: &gtk::Application, args: Args) {
     };
     let buttons = appmenu::install(appmenu::Parts {
         app: app.clone(),
-        window: window.clone(),
+        anchor: tab.root.clone(),
+        group: tab.group.clone(),
         header: header.clone(),
         actions: actions.clone(),
         pages: pages.clone(),
@@ -1012,7 +1009,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         view: view.clone(),
         refs: refs.clone(),
         reload: reload.clone(),
-        open,
+        open: open_at,
         go_to,
         range_diff: range_diff_opener.clone(),
         location: text.clone(),
@@ -1031,17 +1028,17 @@ fn build_window(app: &gtk::Application, args: Args) {
     };
     // 最後に読んだ、開いたリポジトリの ref（書き込む先を変えたら、その worktree から見たものに出し直す）。
     let raw_refs: Rc<std::cell::RefCell<Option<Arc<amonhen_core::RefsSnapshot>>>> = Rc::default();
-    let (w, a, b, win, r, refs_tx) = (
+    let (w, a, b, t, r, refs_tx) = (
         Rc::downgrade(&worktrees),
         actions.clone(),
         buttons.clone(),
-        window.downgrade(),
+        Rc::downgrade(&tab),
         raw_refs.clone(),
         tx.clone(),
     );
     let (st, rl) = (Rc::downgrade(&stashes), reflog_slot.clone());
     worktrees.connect_list(move || {
-        let (Some(worktrees), Some(window)) = (w.upgrade(), win.upgrade()) else {
+        let (Some(worktrees), Some(tab)) = (w.upgrade(), t.upgrade()) else {
             return;
         };
         b.set_worktree(worktrees.toolbar_name().as_deref());
@@ -1052,7 +1049,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                 .map(|(b, w)| (b, (w.name, w.path)))
                 .collect(),
         );
-        sheets::set_worktree_name(window.upcast_ref(), worktrees.editing_name());
+        tab.set_worktree_name(worktrees.editing_name());
         let name = worktrees.editing_name();
         if let Some(stashes) = st.upgrade() {
             stashes.set_worktree(name.as_deref());
@@ -1083,19 +1080,26 @@ fn build_window(app: &gtk::Application, args: Args) {
         pages.set_visible_child_name("working");
         s.select_page(Page::WorkingCopy);
     });
-    window.add_action(&edit_action);
+    tab.group.add_action(&edit_action);
     // GitHub（プルリクエスト・CI の状態・アバター）。ref を読むたびに読み直す（30 秒は空ける）。
     let github_loader = github::Loader::new(&actions, &view, &sidebar);
     let mut github_started = false;
-    search.install(&window, app);
+    search.install(&tab.group, app);
     header.pack_end(&search.toggle);
     let order = settings::history_order();
-    std::thread::spawn(move || load(path, order, tx));
+    // 見張りからの変化の知らせ（裏の糸が受ける）。タブを閉じたら、知らせを受ける糸と下の受け手を止める。
+    let (changed_tx, changed_rx) = std::sync::mpsc::channel();
+    {
+        let (stop, rx) = (changed_tx.clone(), rx.clone());
+        tab.connect_close(move || {
+            rx.close();
+            let _ = stop.send(STOP);
+        });
+    }
+    std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
         view,
-        #[weak]
-        window,
         #[weak]
         status,
         #[weak]
@@ -1154,6 +1158,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                         }
                         if first {
                             first = false;
+                            let Some(window) = win_of() else { continue };
                             // 窓が出てから開く（出る前に開くと、出ないことがある）。
                             let button = match args.open_menu.as_deref() {
                                 Some("repository") => Some(buttons.repository.clone()),
@@ -1231,14 +1236,30 @@ fn build_window(app: &gtk::Application, args: Args) {
                                         if r.borrow().is_none() || !ready() {
                                             return glib::ControlFlow::Continue;
                                         }
-                                        let _ = WidgetExt::activate_action(
-                                            &window,
-                                            &format!("win.{id}"),
-                                            None,
-                                        );
+                                        // `,` で区切って続けて（`next-tab,stage-all` なら前に出したタブで）。
+                                        let ids: Vec<String> =
+                                            id.split(',').map(str::to_owned).collect();
+                                        let count = ids.len() as u64;
+                                        for (i, id) in ids.into_iter().enumerate() {
+                                            let w = window.downgrade();
+                                            glib::timeout_add_local_once(
+                                                std::time::Duration::from_millis(700 * i as u64),
+                                                move || {
+                                                    if let Some(window) = w.upgrade() {
+                                                        let _ = WidgetExt::activate_action(
+                                                            &window,
+                                                            &format!("win.{id}"),
+                                                            None,
+                                                        );
+                                                    }
+                                                },
+                                            );
+                                        }
                                         let p = p.clone();
                                         glib::timeout_add_local_once(
-                                            std::time::Duration::from_millis(2000),
+                                            std::time::Duration::from_millis(
+                                                2000 + 700 * (count - 1),
+                                            ),
                                             move || p.set(p.get() - 1),
                                         );
                                         glib::ControlFlow::Break
@@ -1272,7 +1293,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                                     "win.repository-settings",
                                     None,
                                 );
-                                reposettings::select(&window, page);
+                                reposettings::select(&settings_slot, page);
                                 pending.set(pending.get() + 1);
                                 let p = pending.clone();
                                 glib::timeout_add_local_once(
@@ -1600,7 +1621,9 @@ fn build_window(app: &gtk::Application, args: Args) {
                     Event::Failed(e) => {
                         status.set_text(&e);
                         status.set_visible(true);
-                        if args.snapshot.is_some() || args.measure_scroll {
+                        if (args.snapshot.is_some() || args.measure_scroll)
+                            && let Some(window) = win_of()
+                        {
                             eprintln!("{e}");
                             window.close();
                         }
@@ -1609,7 +1632,11 @@ fn build_window(app: &gtk::Application, args: Args) {
             }
         }
     ));
+    tab
 }
+
+/// 見張りの知らせの糸を止める知らせ（タブを閉じたとき）。
+const STOP: u32 = u32::MAX;
 
 /// 詳細の欄をメッセージの高さに合わせる（右の列の半分まで。残りは欄の中でスクロール）。
 /// 窓が開いた直後は大きさがまだ決まっていないので、決まったフレームで合わせる。
@@ -1976,8 +2003,14 @@ fn reload_status(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
     }
 }
 
-/// 裏のスレッドで開いて読み、変化を見張って読み直す。
-fn load(path: PathBuf, order: amonhen_model::HistoryOrder, tx: async_channel::Sender<Event>) {
+/// 裏のスレッドで開いて読み、変化を見張って読み直す。`changed` は見張りの知らせ（[`STOP`] で終わる）。
+fn load(
+    path: PathBuf,
+    order: amonhen_model::HistoryOrder,
+    tx: async_channel::Sender<Event>,
+    changed_tx: std::sync::mpsc::Sender<u32>,
+    changed_rx: std::sync::mpsc::Receiver<u32>,
+) {
     let repo = match open(&path) {
         Ok(repo) => Arc::new(repo),
         Err(e) => {
@@ -2011,7 +2044,6 @@ fn load(path: PathBuf, order: amonhen_model::HistoryOrder, tx: async_channel::Se
 
     // ref が変わったら History を、index か作業ツリーが変わったら status を読み直す。知らせは監視の
     // スレッド（daemon 越しなら daemon の知らせ）から来るので、このスレッドで受けて読む。
-    let (changed_tx, changed_rx) = std::sync::mpsc::channel();
     let remote_tx = changed_tx.clone();
     let remote = repo.subscribe_changes(Box::new(move |bits| {
         let _ = remote_tx.send(bits);
@@ -2035,7 +2067,7 @@ fn load(path: PathBuf, order: amonhen_model::HistoryOrder, tx: async_channel::Se
         while let Ok(more) = changed_rx.try_recv() {
             bits |= more;
         }
-        if tx.is_closed() {
+        if bits & STOP == STOP || tx.is_closed() {
             return;
         }
         let changes = Changes(bits);
@@ -2084,9 +2116,11 @@ fn after_first_show(
                 #[upgrade_or]
                 glib::ControlFlow::Break,
                 move || {
+                    // 後ろのタブ（`--tab`）も読み終えるまで待つ（タブの名前の ●↑↓）。
                     if (view.is_mapped() && !view.is_settled())
                         || pending.get() > 0
                         || assist::is_busy()
+                        || tabs::host_of(&window).is_some_and(|h| !h.idle())
                     {
                         return glib::ControlFlow::Continue;
                     }

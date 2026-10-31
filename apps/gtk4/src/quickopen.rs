@@ -178,7 +178,9 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build();
-    let hint = gtk::Label::new(Some(&tr!("Enter Open in New Window   Esc Close")));
+    let hint = gtk::Label::new(Some(&tr!(
+        "Enter Open in Tab   Ctrl+Enter Open in New Window   Esc Close"
+    )));
     hint.set_xalign(0.0);
     hint.add_css_class("caption");
     hint.add_css_class("dim-label");
@@ -255,7 +257,7 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
 
     let go = {
         let (w, selection, open) = (window.downgrade(), selection.clone(), open.clone());
-        Rc::new(move |row: u32| {
+        Rc::new(move |row: u32, place: crate::tabs::Place| {
             let Some(location) = selection
                 .item(row)
                 .and_downcast::<gtk::StringObject>()
@@ -266,17 +268,17 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
             if let Some(w) = w.upgrade() {
                 w.close();
             }
-            open(PathBuf::from(location));
+            open(PathBuf::from(location), place);
         })
     };
     let (g, s) = (go.clone(), selection.clone());
     field.connect_activate(move |_| {
         if s.selected() != gtk::INVALID_LIST_POSITION {
-            g(s.selected());
+            g(s.selected(), crate::tabs::Place::Tab);
         }
     });
     let g = go.clone();
-    list.connect_activate(move |_, row| g(row));
+    list.connect_activate(move |_, row| g(row, crate::tabs::Place::Tab));
     let w = window.downgrade();
     field.connect_stop_search(move |_| {
         if let Some(w) = w.upgrade() {
@@ -284,12 +286,22 @@ pub fn show_with(parent: Option<&gtk::Window>, open: Open, query: &str) -> gtk::
         }
     });
     // 欄にいたまま ↑↓ で選ぶ。
+    // Ctrl+Enter は新しい窓に（欄の Enter より先に受ける）。
     let keys = gtk::EventControllerKey::new();
-    let (s, l) = (selection.clone(), list.downgrade());
-    keys.connect_key_pressed(move |_, key, _, _| {
+    keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+    let (s, l, g) = (selection.clone(), list.downgrade(), go.clone());
+    keys.connect_key_pressed(move |_, key, _, modifiers| {
         let step: i64 = match key {
             gtk::gdk::Key::Down => 1,
             gtk::gdk::Key::Up => -1,
+            gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter
+                if modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK) =>
+            {
+                if s.selected() != gtk::INVALID_LIST_POSITION {
+                    g(s.selected(), crate::tabs::Place::NewWindow);
+                }
+                return glib::Propagation::Stop;
+            }
             _ => return glib::Propagation::Proceed,
         };
         let n = s.n_items() as i64;

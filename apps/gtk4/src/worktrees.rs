@@ -770,25 +770,25 @@ impl Worktrees {
         });
     }
 
-    /// 窓が前にある間は 10 秒ごとに数を頼み、5 分ごとに全部を数え直す。前に戻ってきたら少し待って数え直す
-    /// （ほかの worktree の変化は知らせが来ない）。
-    pub fn install_timer(self: &Rc<Self>, window: &gtk::ApplicationWindow) {
-        let (this, w) = (Rc::downgrade(self), window.downgrade());
+    /// タブが前にある間（窓も前にある）は 10 秒ごとに数を頼み、5 分ごとに全部を数え直す。前に戻ってきたら少し
+    /// 待って数え直す（ほかの worktree の変化は知らせが来ない）。タブを閉じたら止める。
+    pub fn install_timer(self: &Rc<Self>, tab: &Rc<crate::tabs::Tab>) {
+        let (this, t) = (Rc::downgrade(self), Rc::downgrade(tab));
         glib::timeout_add_local(POLL, move || {
-            let (Some(this), Some(window)) = (this.upgrade(), w.upgrade()) else {
+            let (Some(this), Some(tab)) = (this.upgrade(), t.upgrade()) else {
                 return glib::ControlFlow::Break;
             };
-            if window.is_active() {
+            if tab.closed() {
+                return glib::ControlFlow::Break;
+            }
+            if tab.is_front() {
                 let fresh = this.last_fresh.get().is_none_or(|t| t.elapsed() >= FRESH);
                 this.read_counts(fresh);
             }
             glib::ControlFlow::Continue
         });
         let this = Rc::downgrade(self);
-        window.connect_is_active_notify(move |window| {
-            if !window.is_active() {
-                return;
-            }
+        tab.connect_front(move || {
             let this = this.clone();
             glib::timeout_add_local_once(Duration::from_millis(500), move || {
                 if let Some(this) = this.upgrade() {

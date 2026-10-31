@@ -2315,60 +2315,52 @@ fn format_name(format: &str) -> &str {
     }
 }
 
-/// 窓ごとのページ: 窓、置き場所（main.rs の `pages` の "settings"）、中身（初めて開いたときに作る）。
-type Open = (
-    glib::WeakRef<gtk::ApplicationWindow>,
-    gtk::Box,
-    RefCell<Option<Rc<RepoSettings>>>,
-);
+/// タブごとのページ: 置き場所（main.rs の `pages` の "settings"）、中身（初めて開いたときに作る）。
+type Open = (glib::WeakRef<gtk::Box>, RefCell<Option<Rc<RepoSettings>>>);
 
 thread_local! {
-    /// 窓ごとのリポジトリの設定のページ。
+    /// タブごとのリポジトリの設定のページ。
     static OPEN: RefCell<Vec<Rc<Open>>> = RefCell::default();
 }
 
-/// 窓のページの置き場所を作る（macOS 版と同じく、サイドバーの Workspace の最後の Settings で出す）。
-pub fn page_slot(window: &gtk::ApplicationWindow) -> gtk::Box {
+/// タブのページの置き場所を作る（macOS 版と同じく、サイドバーの Workspace の最後の Settings で出す）。
+pub fn page_slot() -> gtk::Box {
     let slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
     OPEN.with(|o| {
         let mut o = o.borrow_mut();
         o.retain(|e| e.0.upgrade().is_some());
-        o.push(Rc::new((
-            window.downgrade(),
-            slot.clone(),
-            RefCell::new(None),
-        )));
+        o.push(Rc::new((slot.downgrade(), RefCell::new(None))));
     });
     slot
 }
 
-fn open_of(window: &gtk::ApplicationWindow) -> Option<Rc<Open>> {
+fn open_of(slot: &gtk::Box) -> Option<Rc<Open>> {
     OPEN.with(|o| {
         o.borrow()
             .iter()
-            .find(|e| e.0.upgrade().as_ref() == Some(window))
+            .find(|e| e.0.upgrade().as_ref() == Some(slot))
             .cloned()
     })
 }
 
-/// 窓のリポジトリの設定のページのページ（`author` など）を選ぶ（確認用）。
-pub fn select(parent: &gtk::ApplicationWindow, page: &str) {
-    if let Some(settings) = open_of(parent).and_then(|e| e.2.borrow().clone()) {
+/// タブのリポジトリの設定のページのページ（`author` など）を選ぶ（確認用）。
+pub fn select(slot: &gtk::Box, page: &str) {
+    if let Some(settings) = open_of(slot).and_then(|e| e.1.borrow().clone()) {
         settings.select(page);
     }
 }
 
-/// `parent` のリポジトリの設定のページを用意する（あれば読み直す。編集する worktree が替わっていれば作り直す）。
-/// ページへの切り替えは呼ぶ側。`page` を選ぶ。
+/// `slot`（[`page_slot`]）のリポジトリの設定のページを用意する（あれば読み直す。編集する worktree が替わって
+/// いれば作り直す）。ページへの切り替えは呼ぶ側。`page` を選ぶ。
 pub fn show(
-    parent: &gtk::ApplicationWindow,
+    slot: &gtk::Box,
     repo: Arc<Repository>,
     location: &str,
     on_change: Rc<dyn Fn()>,
     page: Option<&str>,
 ) {
-    let Some(open) = open_of(parent) else { return };
-    let current = open.2.borrow().clone();
+    let Some(open) = open_of(slot) else { return };
+    let current = open.1.borrow().clone();
     if let Some(settings) = current.filter(|s| Arc::ptr_eq(&s.repo, &repo)) {
         settings.load();
         if let Some(page) = page {
@@ -2384,10 +2376,9 @@ pub fn show(
     if let Ok(script) = std::env::var("AMONHEN_SETTINGS_SCRIPT") {
         settings.run_script(&script);
     }
-    let slot = &open.1;
     while let Some(child) = slot.first_child() {
         slot.remove(&child);
     }
     slot.append(&settings.widget);
-    open.2.replace(Some(settings));
+    open.1.replace(Some(settings));
 }

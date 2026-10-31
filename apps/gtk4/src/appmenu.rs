@@ -23,10 +23,13 @@ use crate::refops;
 use crate::sidebar::{Page, Sidebar};
 use crate::workcopy::WorkingCopy;
 
-/// メニューの項目が使う、窓の部品。
+/// メニューの項目が使う、タブの部品。
 pub struct Parts {
     pub app: gtk::Application,
-    pub window: gtk::ApplicationWindow,
+    /// タブの中身（今どの窓にあるかは、ここから辿る）。
+    pub anchor: gtk::Box,
+    /// タブのアクション（`win.*`）。
+    pub group: gio::SimpleActionGroup,
     pub header: gtk::HeaderBar,
     pub actions: Rc<Actions>,
     pub pages: gtk::Stack,
@@ -36,8 +39,8 @@ pub struct Parts {
     pub refs: Rc<RefCell<Option<Arc<RefsSnapshot>>>>,
     /// History・ref・status を読み直す。
     pub reload: Rc<dyn Fn()>,
-    /// リポジトリを新しい窓で開く。
-    pub open: Rc<dyn Fn(PathBuf)>,
+    /// リポジトリを開く（この窓のタブか、新しい窓に）。
+    pub open: crate::repobrowser::Open,
     /// History でそのコミットを選ぶ。
     pub go_to: Rc<dyn Fn(Oid)>,
     /// Range Diff を開く。
@@ -61,7 +64,7 @@ pub struct Buttons {
     pull_count: gtk::Label,
     push: gtk::Button,
     push_count: gtk::Label,
-    window: gtk::ApplicationWindow,
+    group: gio::SimpleActionGroup,
 }
 
 impl Buttons {
@@ -111,7 +114,7 @@ impl Buttons {
         let has_stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
         for name in ["pop-stash", "show-stashes"] {
             if let Some(action) = self
-                .window
+                .group
                 .lookup_action(name)
                 .and_downcast::<gio::SimpleAction>()
             {
@@ -161,10 +164,14 @@ type Handler = Box<dyn Fn(&Rc<Parts>)>;
 
 /// この FE だけの操作のショートカット（表の操作のものは表から）。
 const FE_ACCELS: &[(&str, &str)] = &[
+    ("win.new-tab", "<Control>t"),
     ("win.new-window", "<Control>n"),
     ("win.open", "<Control>o"),
     ("win.clone", "<Control><Alt>c"),
     ("win.close", "<Control>w"),
+    ("win.close-window", "<Control><Shift>w"),
+    ("win.next-tab", "<Control>Page_Down"),
+    ("win.previous-tab", "<Control>Page_Up"),
     ("app.quit", "<Control>q"),
     ("win.shortcuts", "<Control>question"),
 ];
@@ -209,17 +216,22 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "new-window",
             Box::new(|p| {
                 if let Some(dir) = workdir(p) {
-                    (p.open)(dir);
+                    (p.open)(dir, crate::tabs::Place::NewWindow);
                 }
             }),
         ),
         ("open", Box::new(open_folder)),
         (
             "clone",
-            Box::new(|p| crate::repos::clone(p.window.upcast_ref(), p.open.clone())),
+            Box::new(|p| {
+                let open = p.open.clone();
+                crate::repos::clone(
+                    p.window().upcast_ref(),
+                    Rc::new(move |path| open(path, crate::tabs::Place::Tab)),
+                )
+            }),
         ),
         ("add-remote", Box::new(add_remote)),
-        ("close", Box::new(|p| p.window.close())),
         // View
         (
             "show-working-copy",
@@ -231,7 +243,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             Box::new(|p| {
                 // History に移って、その検索欄へ（macOS 版と同じ）。
                 show_page(p, Page::History);
-                WidgetExt::activate_action(&p.window, "win.find", None).ok();
+                p.group.activate_action("find", None);
             }),
         ),
         ("show-stashes", Box::new(show_stashes)),
@@ -299,7 +311,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "create-pull-request",
             Box::new(|p| match head_branch(p) {
                 Some(branch) => crate::github::create_pull_request(&p.actions, branch, false),
-                None => p.window.error_bell(),
+                None => p.window().error_bell(),
             }),
         ),
         ("reveal-in-files", Box::new(reveal_in_files)),
@@ -324,13 +336,13 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             }),
         ),
         // アプリ
-        ("settings", Box::new(|p| crate::settings::show(&p.window))),
+        ("settings", Box::new(|p| crate::settings::show(&p.window()))),
         (
             "activity",
             Box::new(|p| {
                 let repo = p.view.current().map(|(r, _)| r);
                 crate::activity::Activity::show(
-                    &p.window,
+                    &p.window(),
                     repo,
                     p.actions.clone(),
                     crate::engine(),
@@ -346,7 +358,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         (
             "quick-open",
             Box::new(|p| {
-                crate::quickopen::show(Some(p.window.upcast_ref()), p.open.clone());
+                crate::quickopen::show(Some(p.window().upcast_ref()), p.open.clone());
             }),
         ),
         ("shortcuts", Box::new(show_shortcuts)),
@@ -354,15 +366,22 @@ fn handlers() -> Vec<(&'static str, Handler)> {
     ]
 }
 
+impl Parts {
+    /// タブのある窓（項目はタブが窓にある間にしか選べない）。
+    fn window(&self) -> gtk::ApplicationWindow {
+        self.anchor.root().and_downcast().expect("タブが窓にない")
+    }
+}
+
 pub fn install(parts: Parts) -> Buttons {
     let parts = Rc::new(parts);
-    let window = &parts.window;
+    let window = &parts.group;
     // File > Open Recent（場所を渡す）。
     let recent = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
     let p = parts.clone();
     recent.connect_activate(move |_, value| {
         if let Some(location) = value.and_then(|v| v.get::<String>()) {
-            (p.open)(PathBuf::from(location));
+            (p.open)(PathBuf::from(location), crate::tabs::Place::Tab);
         }
     });
     window.add_action(&recent);
@@ -394,6 +413,8 @@ pub fn install(parts: Parts) -> Buttons {
     for (action, accel) in accels() {
         parts.app.set_accels_for_action(&action, &[accel.as_str()]);
     }
+    // タブの操作は、ほかのキーでも（Ctrl+Tab など）。
+    crate::tabs::install_accels(&parts.app);
 
     let repository = gtk::MenuButton::builder()
         .label("Repository")
@@ -486,7 +507,7 @@ pub fn install(parts: Parts) -> Buttons {
         pull_count,
         push,
         push_count,
-        window: parts.window.clone(),
+        group: parts.group.clone(),
     }
 }
 
@@ -536,11 +557,13 @@ fn primary_menu() -> gio::Menu {
     let menu = gio::Menu::new();
     let submenus = gio::Menu::new();
     let file = menu_of(&[
+        Some((&tr!("New Tab"), "win.new-tab")),
         Some((&tr!("New Window"), "win.new-window")),
         Some((&tr!("Open…"), "win.open")),
         Some(("Clone…", "win.clone")),
         None,
         Some((&tr!("Close"), "win.close")),
+        Some((&tr!("Close Window"), "win.close-window")),
     ]);
     if let Some(first) = file
         .item_link(0, gio::MENU_LINK_SECTION)
@@ -568,6 +591,17 @@ fn primary_menu() -> gio::Menu {
             submenus.append_submenu(Some(&name), &items);
         }
     }
+    // Window: タブ（複数のリポジトリを 1 つの窓で扱う。macOS 版の Window のメニューと同じ項目）。
+    submenus.append_submenu(
+        Some(&tr!("Window")),
+        &menu_of(&[
+            Some((&tr!("Show Next Tab"), "win.next-tab")),
+            Some((&tr!("Show Previous Tab"), "win.previous-tab")),
+            None,
+            Some((&tr!("Move Tab to New Window"), "win.move-tab-to-new-window")),
+            Some((&tr!("Merge All Windows"), "win.merge-all-windows")),
+        ]),
+    );
     menu.append_section(None, &submenus);
     let app = gio::Menu::new();
     for part in [Menu::App, Menu::Window] {
@@ -651,21 +685,21 @@ fn save_patch(p: &Rc<Parts>) {
     })();
     match oids {
         Some(oids) => crate::patches::save(&p.actions, oids),
-        None => p.window.error_bell(),
+        None => p.window().error_bell(),
     }
 }
 
 /// Repository › Apply Patch…（merge などの途中なら鳴らす）。
 fn apply_patch(p: &Rc<Parts>) {
     if p.actions.in_sequence() {
-        return p.window.error_bell();
+        return p.window().error_bell();
     }
     crate::patches::choose_and_apply(&p.actions);
 }
 
 fn rename_branch(p: &Rc<Parts>) {
     let Some(branch) = head_branch(p) else {
-        return p.window.error_bell();
+        return p.window().error_bell();
     };
     let actions = p.actions.clone();
     glib::spawn_future_local(async move {
@@ -683,7 +717,7 @@ fn rename_branch(p: &Rc<Parts>) {
 /// 今のブランチの上流（pull・push の相手）を、リモートのブランチから選ぶ。
 fn set_upstream(p: &Rc<Parts>) {
     let Some(branch) = head_branch(p) else {
-        return p.window.error_bell();
+        return p.window().error_bell();
     };
     let remotes: Vec<(String, String)> = p
         .refs
@@ -699,7 +733,7 @@ fn set_upstream(p: &Rc<Parts>) {
         })
         .unwrap_or_default();
     if remotes.is_empty() {
-        return p.window.error_bell();
+        return p.window().error_bell();
     }
     let same = remotes
         .iter()
@@ -757,7 +791,7 @@ fn revision_choices(p: &Parts) -> Vec<(String, String)> {
 fn merge_or_rebase(p: &Rc<Parts>, rebase: bool) {
     let choices = revision_choices(p);
     if choices.is_empty() {
-        return p.window.error_bell();
+        return p.window().error_bell();
     }
     let current = head_branch(p).unwrap_or_else(|| "HEAD".into());
     crate::sheets::integrate_choosing(&p.actions, choices, &current, rebase);
@@ -789,7 +823,7 @@ fn switch_branch(p: &Rc<Parts>) {
         }
     }
     if choices.is_empty() {
-        return p.window.error_bell();
+        return p.window().error_bell();
     }
     let actions = p.actions.clone();
     glib::spawn_future_local(async move {
@@ -821,14 +855,14 @@ fn go_to_head(p: &Rc<Parts>) {
             show_page(p, Page::History);
             (p.go_to)(id);
         }
-        None => p.window.error_bell(),
+        None => p.window().error_bell(),
     }
 }
 
 /// 選んでいるコミットの最初の親（`parent`）か、子のうち最も近いもの。
 fn go_to_relative(p: &Rc<Parts>, parent: bool) {
     let (Some(row), Some((_, history))) = (p.view.selected(), p.view.current()) else {
-        return p.window.error_bell();
+        return p.window().error_bell();
     };
     let graph = &history.graph;
     let target = if parent {
@@ -841,7 +875,7 @@ fn go_to_relative(p: &Rc<Parts>, parent: bool) {
     };
     match target {
         Some(r) => p.view.select(r),
-        None => p.window.error_bell(),
+        None => p.window().error_bell(),
     }
 }
 
@@ -855,7 +889,7 @@ fn show_stashes(p: &Rc<Parts>) {
     if has_stash {
         show_page(p, Page::Stashes);
     } else {
-        p.window.error_bell();
+        p.window().error_bell();
     }
 }
 
@@ -870,7 +904,7 @@ fn pop_stash(p: &Rc<Parts>) {
     });
     match latest {
         Some((name, message)) => crate::sheets::pop(&p.actions, &name, message.as_deref(), true),
-        None => p.window.error_bell(),
+        None => p.window().error_bell(),
     }
 }
 
@@ -879,10 +913,10 @@ fn pop_stash(p: &Rc<Parts>) {
 #[allow(clippy::disallowed_methods)]
 fn open_in_terminal(p: &Rc<Parts>) {
     let Some(dir) = workdir(p) else {
-        return p.window.error_bell();
+        return p.window().error_bell();
     };
     if !terminal_at(&dir) {
-        p.window.error_bell();
+        p.window().error_bell();
     }
 }
 
@@ -919,9 +953,9 @@ pub fn terminal_at(dir: &std::path::Path) -> bool {
 /// 作業ツリーを、ファイルマネージャーで（親のフォルダの中で選んだ状態で）見せる。
 fn reveal_in_files(p: &Rc<Parts>) {
     let Some(dir) = workdir(p) else {
-        return p.window.error_bell();
+        return p.window().error_bell();
     };
-    reveal(p.window.upcast_ref(), &dir);
+    reveal(p.window().upcast_ref(), &dir);
 }
 
 /// `dir` を、ファイルマネージャーで（親のフォルダの中で選んだ状態で）見せる（Repositories の一覧からも使う）。
@@ -939,7 +973,7 @@ pub fn reveal(window: &gtk::Window, dir: &std::path::Path) {
     });
 }
 
-/// daemon・SSH 越しのリポジトリを、新しい窓で開く。
+/// daemon・SSH 越しのリポジトリを、この窓のタブで開く。
 fn add_remote(p: &Rc<Parts>) {
     let (actions, open) = (p.actions.clone(), p.open.clone());
     glib::spawn_future_local(async move {
@@ -953,7 +987,7 @@ fn add_remote(p: &Rc<Parts>) {
             .await
             && amonhen_remote::location::is_remote(&location)
         {
-            open(PathBuf::from(location));
+            open(PathBuf::from(location), crate::tabs::Place::Tab);
         }
     });
 }
@@ -964,7 +998,10 @@ fn repository_settings(p: &Rc<Parts>) {
     let Some(repo) = p.actions.repo() else {
         return;
     };
-    crate::reposettings::show(&p.window, repo, &p.location, p.reload.clone(), None);
+    let Some(slot) = p.pages.child_by_name("settings").and_downcast::<gtk::Box>() else {
+        return;
+    };
+    crate::reposettings::show(&slot, repo, &p.location, p.reload.clone(), None);
     show_page(p, Page::Settings);
 }
 
@@ -973,12 +1010,12 @@ fn open_folder(p: &Rc<Parts>) {
         .title(tr!("Open"))
         .modal(true)
         .build();
-    let (window, open) = (p.window.clone(), p.open.clone());
+    let (window, open) = (p.window().clone(), p.open.clone());
     glib::spawn_future_local(async move {
         if let Ok(folder) = dialog.select_folder_future(Some(&window)).await
             && let Some(path) = folder.path()
         {
-            open(path);
+            open(path, crate::tabs::Place::Tab);
         }
     });
 }
@@ -1011,9 +1048,11 @@ fn show_shortcuts(p: &Rc<Parts>) {
         .section_name("main")
         .build();
     let mut file = vec![
+        ("win.new-tab".to_owned(), tr!("New Tab")),
         ("win.new-window".to_owned(), tr!("New Window")),
         ("win.open".to_owned(), tr!("Open…")),
         ("win.close".to_owned(), tr!("Close")),
+        ("win.close-window".to_owned(), tr!("Close Window")),
         ("app.quit".to_owned(), tr!("Quit")),
     ];
     file.extend(table(Menu::File));
@@ -1030,11 +1069,15 @@ fn show_shortcuts(p: &Rc<Parts>) {
             section.add_group(&group(&name, &items));
         }
     }
-    let mut window = table(Menu::App);
+    let mut window = vec![
+        ("win.next-tab".to_owned(), tr!("Show Next Tab")),
+        ("win.previous-tab".to_owned(), tr!("Show Previous Tab")),
+    ];
+    window.extend(table(Menu::App));
     window.extend(table(Menu::Window));
     section.add_group(&group(&tr!("Window"), &window));
     let window = gtk::ShortcutsWindow::builder()
-        .transient_for(&p.window)
+        .transient_for(&p.window())
         .modal(true)
         .build();
     window.add_section(&section);
@@ -1043,7 +1086,7 @@ fn show_shortcuts(p: &Rc<Parts>) {
 
 fn show_about(p: &Rc<Parts>) {
     gtk::AboutDialog::builder()
-        .transient_for(&p.window)
+        .transient_for(&p.window())
         .modal(true)
         .program_name("Amon Hen")
         // 配るときは scripts/package-gtk4.sh が版を埋め込む。

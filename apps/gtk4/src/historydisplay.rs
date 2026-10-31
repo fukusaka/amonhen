@@ -102,8 +102,8 @@ pub fn append_sections(menu: &gio::Menu) {
     }
 }
 
-/// 窓のアクションを足す。設定が変わったら（Settings の窓で変えても）状態を合わせる。
-pub fn install_actions(window: &gtk::ApplicationWindow) {
+/// タブのアクション（`win.*`）を足す。設定が変わったら（Settings の窓で変えても）状態を合わせる。
+pub fn install_actions(group: &gio::SimpleActionGroup) {
     let order = gio::SimpleAction::new_stateful(
         "history-order",
         Some(glib::VariantTy::STRING),
@@ -117,7 +117,7 @@ pub fn install_actions(window: &gtk::ApplicationWindow) {
             settings::set_string(settings::HISTORY_ORDER, &name);
         }
     });
-    window.add_action(&order);
+    group.add_action(&order);
     for (name, bit, _) in item_entries() {
         let action = gio::SimpleAction::new_stateful(
             name,
@@ -127,18 +127,18 @@ pub fn install_actions(window: &gtk::ApplicationWindow) {
         action.connect_activate(move |_, _| {
             settings::set_history_items(settings::history_items() ^ bit);
         });
-        window.add_action(&action);
+        group.add_action(&action);
     }
     for (name, key) in TOGGLES {
         let action = gio::SimpleAction::new_stateful(name, None, &settings::bool(key).to_variant());
         action.connect_activate(move |_, _| settings::set_bool(key, !settings::bool(key)));
-        window.add_action(&action);
+        group.add_action(&action);
     }
-    let weak = window.downgrade();
+    let weak = group.downgrade();
     settings::connect_changed(move |key| {
-        let Some(window) = weak.upgrade() else { return };
+        let Some(group) = weak.upgrade() else { return };
         let set = |name: &str, state: glib::Variant| {
-            if let Some(a) = window
+            if let Some(a) = group
                 .lookup_action(name)
                 .and_downcast::<gio::SimpleAction>()
             {
