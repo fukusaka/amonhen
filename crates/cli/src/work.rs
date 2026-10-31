@@ -127,6 +127,9 @@ pub fn status(args: &[String]) -> Result<ExitCode> {
         }
         if let Some(sparse) = form["sparse"].as_object() {
             items.push(match sparse["folders"].as_array() {
+                Some(folders) if sparse["cone"] == true && folders.is_empty() => {
+                    tr!("sparse checkout (top-level files only)")
+                }
                 Some(folders) if sparse["cone"] == true && folders.len() == 1 => {
                     tr!("sparse checkout (1 folder)")
                 }
