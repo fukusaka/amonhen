@@ -53,6 +53,7 @@ mod sshhosts;
 mod stashes;
 mod statusbar;
 mod tabs;
+mod templates;
 mod titles;
 mod workcopy;
 mod worktrees;

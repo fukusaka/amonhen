@@ -89,7 +89,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | General: 外のエディター | ✓ | — | n/a | n/a |  |
 | General: 端末と diff のツール | — | — | n/a | n/a |  |
 | Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| Git > Commits: 共有のメッセージのテンプレート | ✓ | — | — | — |  |
+| Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | — | — |  |
 | Git > Programs: git・gpg・ssh-keygen・gpgsm | ✓ | ✓ | — | △ | CLI: `amonhen run`（`programs`・`setMachineGit`）から。 |
 | Git > この機械の Environment Variables（渡す・秘密を隠す） | ✓ | ✓ | — | n/a |  |
 | Environment Variables: ログインシェルのものを使う（Read Again・SSH agent） | ✓ | — | — | n/a | GTK4: 外した。Linux のセッションはすでに持っている。 |
@@ -118,7 +118,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | --- | :-: | :-: | :-: | :-: | --- |
 | 設定のページ（ページの一覧・git の行・行ごとの出どころ・↩︎・ⓘ） | ✓ | ✓ | — | n/a |  |
 | Author and Signing（署名の選択・集めた鍵・mailmap） | ✓ | ✓ | — | △ | CLI: `amonhen run`（`signingKeys`・`configSet`）から。 |
-| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | △ | — | △ | GTK4: 共有のテンプレートはない。<br>CLI: `amonhen run` から。 |
+| Commits: メッセージのテンプレート（なし・共有・独自・ファイル） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Branches: 既定のブランチを選ぶ | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Operations: pull・fetch.prune・autostash・updateRefs・コンフリクトの書き方・rerere | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Working Copy: 改行・実行ビット・`.git/info/exclude` の編集 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |

@@ -89,7 +89,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | General: external editor | ✓ | — | n/a | n/a |  |
 | General: terminal and diff tool | — | — | n/a | n/a |  |
 | Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Git > Commits: shared message template library | ✓ | — | — | — |  |
+| Git > Commits: shared message template library | ✓ | ✓ | — | — |  |
 | Git > Programs: git, gpg, ssh-keygen, gpgsm | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`programs`, `setMachineGit`). |
 | Git > Environment Variables of this machine (pass, masked secrets) | ✓ | ✓ | — | n/a |  |
 | Environment Variables: use the login shell's (Read Again, SSH agent) | ✓ | — | — | n/a | GTK4: Left out: Linux sessions already carry it. |
@@ -118,7 +118,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | Settings page (pages, git line, source / ↩︎ / ⓘ per row) | ✓ | ✓ | — | n/a |  |
 | Author and Signing (signing choice, collected keys, mailmap) | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`signingKeys`, `configSet`). |
-| Commits: message template (none, shared, own, file) | ✓ | △ | — | △ | GTK4: No shared templates.<br>CLI: Via `amonhen run`. |
+| Commits: message template (none, shared, own, file) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Branches: default branch override | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Operations: pull, fetch.prune, autostash, updateRefs, conflict style, rerere | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Working Copy: line endings, file mode, `.git/info/exclude` editor | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |

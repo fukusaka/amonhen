@@ -235,8 +235,10 @@ impl MessageAids {
         });
     }
 
-    /// 下書きがあればそれを、なければテンプレートを入れる: `commit.template`（このリポジトリ専用のものはコアから
-    /// 読むので daemon・SSH 越しでも入る。ほかのファイルは手元のリポジトリだけ）。どれも # の行は除く。
+    /// 下書きがあればそれを、なければテンプレートを入れる: リポジトリが Settings > Git > Commits の共有の一覧から
+    /// 選んだもの（`amonhen.commitTemplate`）、なければ `commit.template`（このリポジトリ専用のものはコアから
+    /// 読むので daemon・SSH 越しでも入る。ほかのファイルは手元のリポジトリだけ）。ファイルのほうがリポジトリに近い段で
+    /// 決まっていればファイル（設定のページと同じ決め方）。どれも # の行は除く。
     fn restore_draft_or_template(self: &Rc<Self>) {
         if let Some(key) = self.draft_key()
             && let Some(draft) = crate::settings::string(&key)
@@ -255,36 +257,36 @@ impl MessageAids {
         let w = Rc::downgrade(self);
         glib::spawn_future_local(async move {
             let config = crate::sheets::run(&repo, json!({ "op": "configList" })).await;
-            let path = config["info"]["entries"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .rev()
-                .find(|e| {
-                    e["key"]
-                        .as_str()
-                        .is_some_and(|k| k.eq_ignore_ascii_case("commit.template"))
-                })
-                .and_then(|e| e["value"].as_str().map(str::to_owned));
-            let Some(path) = path.filter(|p| !p.is_empty()) else {
-                return;
+            let entry = |key: &str| {
+                config["info"]["entries"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .rev()
+                    .find(|e| {
+                        e["key"]
+                            .as_str()
+                            .is_some_and(|k| k.eq_ignore_ascii_case(key))
+                    })
+                    .map(|e| {
+                        (
+                            e["scope"].as_str().unwrap_or_default().to_owned(),
+                            e["value"].as_str().unwrap_or_default().to_owned(),
+                        )
+                    })
             };
-            let text = if path.ends_with("/amonhen/commit-template") {
-                crate::sheets::run(&repo, json!({ "op": "commitTemplate" })).await["info"]["text"]
-                    .as_str()
-                    .map(str::to_owned)
+            let file = entry("commit.template").filter(|(_, v)| !v.is_empty());
+            let shared = entry("amonhen.commitTemplate")
+                .filter(|(scope, _)| {
+                    !crate::repopages::shared_yields(scope, file.as_ref().map(|(s, _)| s.as_str()))
+                })
+                .and_then(|(_, name)| crate::templates::text_of(&name));
+            let text = if let Some(text) = shared {
+                Some(text)
+            } else if let Some((_, path)) = file {
+                Self::file_template(&repo, path).await
             } else {
-                let workdir = repo.paths().workdir;
-                let home = glib::home_dir();
-                let file = match path.strip_prefix("~/") {
-                    Some(rest) => home.join(rest),
-                    None if path.starts_with('/') => path.into(),
-                    None => match workdir {
-                        Some(w) => w.join(&path),
-                        None => return,
-                    },
-                };
-                std::fs::read_to_string(file).ok()
+                return;
             };
             let (Some(this), Some(text)) = (w.upgrade(), text) else {
                 return;
@@ -299,6 +301,21 @@ impl MessageAids {
             let (s, b) = text.split_once('\n').unwrap_or((text, ""));
             this.set_texts(s, b.trim_matches('\n'));
         });
+    }
+
+    /// `commit.template` のファイルの中身（このリポジトリ専用のものはコアから。ほかは手元で読む）。
+    async fn file_template(repo: &Arc<Repository>, path: String) -> Option<String> {
+        if path.ends_with("/amonhen/commit-template") {
+            return crate::sheets::run(repo, json!({ "op": "commitTemplate" })).await["info"]["text"]
+                .as_str()
+                .map(str::to_owned);
+        }
+        let file = match path.strip_prefix("~/") {
+            Some(rest) => glib::home_dir().join(rest),
+            None if path.starts_with('/') => path.into(),
+            None => repo.paths().workdir?.join(&path),
+        };
+        std::fs::read_to_string(file).ok()
     }
 
     fn use_message(&self, text: &str) {

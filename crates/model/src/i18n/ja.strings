@@ -1628,3 +1628,10 @@
 "Publish — choose the remote to create this branch on first (Ctrl+Alt+P)" = "Publish — ブランチを作るリモートを先に選びます（Ctrl+Alt+P）";
 "Nothing to push. Pull the {count} new commits first." = "送るコミットはありません。先に新しい {count} コミットを Pull してください。";
 "Nothing to push" = "送るコミットはありません";
+/* GTK4: 共有のコミットのメッセージのテンプレート */
+"Shared" = "共有";
+"Done" = "完了";
+"Untitled" = "名前なし";
+"Shared Templates" = "共有のテンプレート";
+"Edit Shared Template…" = "共有のテンプレートを編集…";
+"Edit for This Repository" = "このリポジトリ用に編集";

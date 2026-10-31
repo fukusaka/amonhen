@@ -618,13 +618,32 @@ const LIBRARY_KEY: &str = "amonhen.commitTemplate";
 /// git の `commit.template`（ファイル）。
 const FILE_KEY: &str = "commit.template";
 
-/// メッセージのテンプレートの今の選び。共有のテンプレートの一覧は GTK4 の FE にまだないので、選べるのは
-/// なし／このリポジトリ専用／ファイル。
+/// メッセージのテンプレートの今の選び。
 #[derive(Clone, PartialEq, Eq)]
 enum Choice {
     None,
+    /// Settings > Git > Commits の共有のテンプレート（その名前）。
+    Shared(String),
     Own,
     File(String),
+}
+
+/// 設定の段の近さ（リポジトリに近いほど大きい。macOS 版の `ConfigEntry.rank`）。
+fn rank(scope: &str) -> u8 {
+    match scope {
+        "global" => 1,
+        "local" => 2,
+        "worktree" => 3,
+        _ => 0,
+    }
+}
+
+/// 共有のテンプレート（`amonhen.commitTemplate`）が `commit.template` のファイルに譲るか: ファイルのほうが
+/// リポジトリに近い段で決まっていれば（すべてのリポジトリで共有のものを選び、このリポジトリでファイルを選んだなど）。
+/// 同じ段なら共有のもの。`shared`・`file` はそれぞれが決まっている段（`file` はなければ None。macOS 版の
+/// `MessageTemplate.sharedYields`）。コミット欄も同じ決め方。
+pub(crate) fn shared_yields(shared: &str, file: Option<&str>) -> bool {
+    file.is_some_and(|f| rank(f) > rank(shared))
 }
 
 /// `path` がこのリポジトリ専用のテンプレートのファイルか。
@@ -638,7 +657,14 @@ fn is_own(s: &RepoSettings, path: &str) -> bool {
 }
 
 fn template_choice(s: &RepoSettings) -> Choice {
-    match s.effective(FILE_KEY).filter(|e| !e.value.is_empty()) {
+    let file = s.effective(FILE_KEY).filter(|e| !e.value.is_empty());
+    if let Some(shared) = s.effective(LIBRARY_KEY)
+        && crate::templates::names().contains(&shared.value)
+        && !shared_yields(&shared.scope, file.as_ref().map(|f| f.scope.as_str()))
+    {
+        return Choice::Shared(shared.value);
+    }
+    match file {
         None => Choice::None,
         Some(f) if is_own(s, &f.value) => Choice::Own,
         Some(f) => Choice::File(f.value),
@@ -648,18 +674,23 @@ fn template_choice(s: &RepoSettings) -> Choice {
 fn choice_value(c: &Choice) -> String {
     match c {
         Choice::None => String::new(),
+        Choice::Shared(name) => format!("lib:{name}"),
         Choice::Own => "own".into(),
         Choice::File(f) => format!("file:{f}"),
     }
 }
 
-/// メッセージのテンプレートのページ: なし／このリポジトリ専用（`<git dir>/amonhen/commit-template` に置き、git の
+/// メッセージのテンプレートのページ: なし／Settings > Git > Commits の共有のテンプレート（`amonhen.commitTemplate` に
+/// 名前。Amon Hen のコミット欄だけが使う）／このリポジトリ専用（`<git dir>/amonhen/commit-template` に置き、git の
 /// `commit.template` を向ける。端末の git も使う）／ファイル…（`commit.template`）。専用のものはその下で書き、
-/// ファイルは中身を見せる。
+/// 共有のもの・ファイルは中身を見せる。すべてのリポジトリの段（Settings > Git）では、共有のテンプレートの一覧も。
 pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     let label_of = |s: &RepoSettings, value: &str| -> String {
         if value == "own" {
             return tr!("This repository’s own");
+        }
+        if let Some(name) = value.strip_prefix("lib:") {
+            return name.to_owned();
         }
         match value.strip_prefix("file:").filter(|p| !p.is_empty()) {
             Some(path) if is_own(s, path) => tr!("This repository’s own"),
@@ -667,13 +698,13 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
             None => tr!("None"),
         }
     };
-    // 設定元を出すキー: 共有のテンプレートを空にして打ち消した「なし」なら `amonhen.commitTemplate`。
-    let keys: crate::reposettings::Keys = Rc::new(|s| {
-        if template_choice(s) == Choice::None && s.local(LIBRARY_KEY).as_deref() == Some("") {
+    // 設定元を出すキー: 共有のテンプレートか、それを空にして打ち消した「なし」なら `amonhen.commitTemplate`。
+    let keys: crate::reposettings::Keys = Rc::new(|s| match template_choice(s) {
+        Choice::Shared(_) => vec![LIBRARY_KEY.into(), FILE_KEY.into()],
+        Choice::None if s.local(LIBRARY_KEY).as_deref() == Some("") => {
             vec![LIBRARY_KEY.into(), FILE_KEY.into()]
-        } else {
-            vec![FILE_KEY.into(), LIBRARY_KEY.into()]
         }
+        _ => vec![FILE_KEY.into(), LIBRARY_KEY.into()],
     });
     let row = s.row(
         &tr!("Message template"),
@@ -682,6 +713,8 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
         Rc::new(|s, v| {
             if v.is_empty() {
                 tr!("None")
+            } else if crate::templates::names().iter().any(|n| n == v) {
+                v.to_owned()
             } else if is_own(s, v) {
                 tr!("This repository’s own")
             } else {
@@ -739,6 +772,13 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
                         }
                     },
                 );
+            }
+            v if v.starts_with("lib:") => {
+                let mut changes = vec![(LIBRARY_KEY.to_owned(), Some(v[4..].to_owned()))];
+                if s.local(FILE_KEY).is_some() {
+                    changes.push((FILE_KEY.to_owned(), None));
+                }
+                s.write(changes, Some(&e));
             }
             v if v.starts_with("file:") => {
                 if let Some(c) = drop_library(&s) {
@@ -798,6 +838,49 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     preview.set_valign(gtk::Align::Start);
     preview.set_margin_start(8);
 
+    // 共有のテンプレート: 中身と、Settings > Git > Commits で直す・このリポジトリ専用にして直す（この段がリポジトリのときだけ）。
+    let shared_text = label("", &["monospace", "dim-label"]);
+    shared_text.set_selectable(true);
+    shared_text.set_wrap(true);
+    shared_text.set_lines(12);
+    shared_text.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    shared_text.set_margin_start(8);
+    let edit_shared = gtk::Button::with_label(&tr!("Edit Shared Template…"));
+    edit_shared.connect_clicked(|b| {
+        // 共有のテンプレートを直すのは Settings > Git > Commits。
+        if let Some(parent) = b
+            .root()
+            .and_downcast::<gtk::Window>()
+            .and_then(|w| w.transient_for())
+            .and_downcast::<gtk::ApplicationWindow>()
+        {
+            crate::settings::select("git/commits");
+            crate::settings::show(&parent);
+            crate::settings::select("git/commits");
+        }
+    });
+    let make_own = gtk::Button::with_label(&tr!("Edit for This Repository"));
+    let (w, e) = (s.weak(), row.error.clone());
+    make_own.connect_clicked(move |_| {
+        let Some(s) = w.upgrade() else { return };
+        let Choice::Shared(name) = template_choice(&s) else {
+            return;
+        };
+        let text = crate::templates::text_of(&name).unwrap_or_default();
+        let e = e.clone();
+        s.perform(
+            vec![json!({"op": "saveCommitTemplate", "text": text})],
+            move |s| s.write(vec![(LIBRARY_KEY.to_owned(), None)], Some(&e)),
+        );
+    });
+    let shared_buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    shared_buttons.set_halign(gtk::Align::End);
+    shared_buttons.append(&edit_shared);
+    shared_buttons.append(&make_own);
+    let shared = gtk::Box::new(gtk::Orientation::Vertical, 6);
+    shared.append(&shared_text);
+    shared.append(&shared_buttons);
+
     let saved = Rc::new(std::cell::RefCell::new(String::new()));
     let buffer = editor.buffer();
     let dirty = {
@@ -839,21 +922,51 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     let (s2, b2) = (saved.clone(), buffer.clone());
     revert.connect_clicked(move |_| b2.set_text(&s2.borrow()));
 
-    let (o, p) = (own.clone(), preview.clone());
+    let (o, p, sh, st) = (
+        own.clone(),
+        preview.clone(),
+        shared.clone(),
+        shared_text.clone(),
+    );
     s.on_refresh(move |s| {
         let choice = template_choice(s);
-        let mut items = vec![(String::new(), tr!("None"))];
-        if s.level == crate::reposettings::Level::Repository {
-            items.push(("own".into(), tr!("This repository’s own")));
+        let repository = s.level == crate::reposettings::Level::Repository;
+        let mut options: crate::reposettings::Options =
+            vec![(None, vec![(String::new(), tr!("None"))])];
+        let names = crate::templates::names();
+        if !names.is_empty() {
+            options.push((
+                Some(tr!("Shared")),
+                names
+                    .iter()
+                    .map(|n| (format!("lib:{n}"), n.clone()))
+                    .collect(),
+            ));
+        }
+        let mut rest = Vec::new();
+        if repository {
+            rest.push(("own".into(), tr!("This repository’s own")));
         }
         if let Choice::File(f) = &choice {
-            items.push((choice_value(&choice), label_of(s, &format!("file:{f}"))));
+            rest.push((choice_value(&choice), label_of(s, &format!("file:{f}"))));
+        }
+        if !rest.is_empty() {
+            options.push((None, rest));
         }
         picker.set(
-            &vec![(None, items)],
+            &options,
             &[("file".into(), tr!("A file…"))],
             &choice_value(&choice),
         );
+        // 共有のテンプレートの中身（リポジトリの段だけ。Settings > Git では下に一覧がある）。
+        match &choice {
+            Choice::Shared(name) if repository => {
+                let text = crate::templates::text_of(name).unwrap_or_default();
+                st.set_text(text.trim());
+                sh.set_visible(true);
+            }
+            _ => sh.set_visible(false),
+        }
         // 専用のテンプレート: 書きかけでなければ、読んだ中身に入れ替える。
         let text = s
             .state
@@ -883,8 +996,25 @@ pub(crate) fn commits_page(s: &Rc<RepoSettings>) -> gtk::Box {
     column.append(&label(&tr!("Message"), &["heading"]));
     column.append(&crate::reposettings::section(None, &[row.widget.upcast()]));
     column.append(&preview);
+    column.append(&shared);
     column.append(&own);
-    table_page(&[column.upcast_ref()])
+    let library = (s.level == crate::reposettings::Level::AllRepositories).then(|| {
+        let (section, group) = crate::templates::section();
+        column.append(&section);
+        group
+    });
+    // 共有のテンプレートの一覧が変わったら（Settings > Git > Commits で）、選びと中身を出し直す。
+    let w = s.weak();
+    crate::settings::connect_changed(move |key| {
+        if key == crate::templates::KEY
+            && let Some(s) = w.upgrade()
+        {
+            s.refresh();
+        }
+    });
+    let page = table_page(&[column.upcast_ref()]);
+    page.insert_action_group("templates", library.as_ref());
+    page
 }
 
 /// ファイルのテンプレートの中身（`~` はホーム、相対パスは作業ツリーから）。
