@@ -473,7 +473,11 @@ extension Actions {
                 popup.menu?.addItem(.separator())
                 popup.addItems(withTitles: remotes)
                 let chosen = { popup.indexOfSelectedItem == 0 ? remotes : [popup.titleOfSelectedItem ?? ""] }
-                target = ClosureTarget { [weak alert] in alert?.informativeText = pruneLine(chosen()) }
+                target = ClosureTarget { [weak alert] in
+                    // 文の行数が変わったら sheet の高さも合わせ直す。
+                    alert?.informativeText = pruneLine(chosen())
+                    alert?.layout()
+                }
                 popup.target = target
                 popup.action = #selector(ClosureTarget.fire)
                 let row = NSStackView(views: [NSTextField(labelWithString: L("From:")), popup])
