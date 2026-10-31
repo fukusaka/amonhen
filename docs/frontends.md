@@ -190,7 +190,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Filter on paths | ✓ | ✓ | — | n/a |  |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | △ | △ | VSCode: No line counts.<br>CLI: `diff --stat`. |
 | Space toggles, ⌫ discards | ✓ | ✓ | △ | n/a | VSCode: Space toggles; no ⌫. |
-| Commit box on top with 50/72 counter and body guide | ✓ | △ | △ | n/a | GTK4: No counter or guide.<br>VSCode: No counter or guide. |
+| Commit box on top with 50/72 counter and body guide | ✓ | ✓ | △ | n/a | VSCode: No counter or guide. |
 | Draft per repository, starting from the template | ✓ | ✓ | — | n/a |  |
 | Recent messages (⌥↑ / ⌥↓, list) | ✓ | ✓ | — | n/a |  |
 | Insert Conventional types, Co-authored-by, Signed-off-by | ✓ | ✓ | — | n/a |  |

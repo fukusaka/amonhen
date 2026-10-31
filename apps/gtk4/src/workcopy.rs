@@ -104,6 +104,8 @@ struct Inner {
     aids: Rc<crate::commitmsg::MessageAids>,
     amend: gtk::CheckButton,
     commit: gtk::Button,
+    /// 件名の文字数。
+    summary_count: gtk::Label,
     message: gtk::Label,
     diff: DiffWidget,
     path: gtk::Label,
@@ -154,6 +156,10 @@ impl WorkingCopy {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .has_frame(true)
             .build();
+        // 本文の 72 桁の目安の縦線（72 桁で改行する慣習。macOS 版と同じ）。
+        let body_box = gtk::Overlay::new();
+        body_box.set_child(Some(&body_scrolled));
+        body_box.add_overlay(&body_guide(&body));
         let amend = gtk::CheckButton::with_label("Amend");
         let commit = gtk::Button::with_label("Commit");
         commit.add_css_class("suggested-action");
@@ -172,12 +178,20 @@ impl WorkingCopy {
         commit_group.add_css_class("linked");
         commit_group.append(&commit);
         commit_group.append(&commit_menu);
-        commit_group.set_hexpand(true);
-        commit_group.set_halign(gtk::Align::End);
         let commit_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         commit_row.append(&amend);
         commit_row.append(&aids.history);
         commit_row.append(&aids.insert);
+        // 件名の文字数（50 を超えたら黄、72 を超えたら橙。git の慣習）。
+        let summary_count = gtk::Label::new(None);
+        summary_count.set_hexpand(true);
+        summary_count.set_xalign(1.0);
+        summary_count.add_css_class("numeric");
+        summary_count.add_css_class("caption");
+        summary_count.set_tooltip_text(Some(&tr!(
+            "Length of the summary (yellow over 50, orange over 72)"
+        )));
+        commit_row.append(&summary_count);
         // AI: stage 済みの変更からメッセージを提案する。
         let suggest = gtk::Button::with_label(&tr!("Suggest"));
         crate::assist::track(
@@ -257,7 +271,7 @@ impl WorkingCopy {
         left.set_margin_start(10);
         left.set_margin_end(10);
         left.append(&subject);
-        left.append(&body_scrolled);
+        left.append(&body_box);
         left.append(&commit_row);
         left.append(&message);
         left.append(&list_header);
@@ -349,6 +363,7 @@ impl WorkingCopy {
             aids,
             amend,
             commit,
+            summary_count,
             message,
             diff,
             path,
@@ -1764,6 +1779,24 @@ impl Inner {
         self.commit.set_sensitive(has_subject && (staged || amend));
         self.commit
             .set_label(if amend { "Amend Commit" } else { "Commit" });
+        // 件名の文字数（空なら出さない）。
+        let length = self.subject.text().chars().count();
+        let color = if length > 72 {
+            Some("#e66100")
+        } else if length > 50 {
+            Some("#c49000")
+        } else {
+            None
+        };
+        match (length, color) {
+            (0, _) => self.summary_count.set_text(""),
+            (n, Some(c)) => self.summary_count.set_markup(&format!(
+                "<span foreground=\"{c}\" weight=\"bold\">{n}</span>"
+            )),
+            (n, None) => self
+                .summary_count
+                .set_markup(&format!("<span alpha=\"45%\">{n}</span>")),
+        }
 
         let current = self.current.borrow();
         let working = current.as_ref().and_then(|c| c.0.as_ref());
@@ -1794,6 +1827,27 @@ impl Inner {
             working.is_some_and(|w| !w.staged && w.entry.is_unstaged()) && selected_staged == 0,
         );
     }
+}
+
+/// 本文の欄に重ねる、72 桁の目安の縦線（`body` の字の「0」の幅から位置を決める）。
+fn body_guide(body: &gtk::TextView) -> gtk::DrawingArea {
+    let guide = gtk::DrawingArea::new();
+    guide.set_can_target(false);
+    let weak = body.downgrade();
+    guide.set_draw_func(move |area, cr, _, height| {
+        let Some(body) = weak.upgrade() else { return };
+        let zero = body.create_pango_layout(Some("0")).pixel_size().0 as f64;
+        // 欄の枠（1 px）と左の余白の後ろから数える。
+        let x = 1.0 + body.left_margin() as f64 + zero * 72.0;
+        if x >= area.width() as f64 - 2.0 {
+            return;
+        }
+        let fg = area.color();
+        cr.set_source_rgba(fg.red() as f64, fg.green() as f64, fg.blue() as f64, 0.15);
+        cr.rectangle(x.round(), 1.0, 1.0, height as f64 - 2.0);
+        let _ = cr.fill();
+    });
+    guide
 }
 
 /// 一覧に出す状態の文字と、その色の CSS のクラス。
