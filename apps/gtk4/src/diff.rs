@@ -87,6 +87,31 @@ pub struct Source(pub StackedDiff);
 unsafe impl Send for Source {}
 unsafe impl Sync for Source {}
 
+/// 差分の行の種類を、AI に渡す文字の行の種類にする。
+fn ai_line(kind: u8) -> amonhen_assist::Line {
+    use amonhen_assist::Line;
+    match kind {
+        DiffRow::FILE => Line::File,
+        DiffRow::HUNK => Line::Hunk,
+        DiffRow::ADDED => Line::Added,
+        DiffRow::REMOVED => Line::Removed,
+        _ => Line::Context,
+    }
+}
+
+/// `view` の行を、AI に渡す差分の文字に足す（上限に届いたら止める）。`path` は見出しのない差分のパス。
+pub fn ai_text(view: &DiffView, path: Option<&str>, out: &mut amonhen_assist::DiffText) {
+    if let Some(path) = path {
+        out.path(path);
+    }
+    for row in &view.rows {
+        let text = std::str::from_utf8(view.strings.bytes(row.text)).unwrap_or("");
+        if !out.push(ai_line(row.kind), text) {
+            break;
+        }
+    }
+}
+
 struct RowText {
     gutter: Option<pango::Layout>,
     text: pango::Layout,
@@ -114,10 +139,15 @@ pub struct State {
     on_selection: Option<Rc<dyn Fn()>>,
     /// ファイルの見出しを右クリックしたときに呼ぶ（パス、x、y）。
     on_file_menu: Option<FileMenuCallback>,
+    /// 見出しのない差分（Working Copy の 1 ファイル）の行を右クリックしたときに呼ぶ（行、x、y）。
+    on_row_menu: Option<RowMenuCallback>,
 }
 
 /// ファイルの見出しを右クリックしたときに呼ぶ（パス、x、y）。
 type FileMenuCallback = Rc<dyn Fn(&str, f64, f64)>;
+
+/// 見出しのない差分の行を右クリックしたときに呼ぶ（行、x、y）。
+type RowMenuCallback = Rc<dyn Fn(usize, f64, f64)>;
 
 mod imp {
     use super::*;
@@ -347,17 +377,94 @@ impl DiffWidget {
         self.state().on_file_menu = Some(Rc::new(f));
     }
 
+    /// 見出しのない差分の行を右クリックしたら `f(行, x, y)` を呼ぶ。
+    pub fn connect_row_menu(&self, f: impl Fn(usize, f64, f64) + 'static) {
+        self.state().on_row_menu = Some(Rc::new(f));
+    }
+
+    /// `y`（部品の中の位置）の行の番号。
+    pub fn row_at(&self, y: f64) -> Option<usize> {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let index = ((y as f32 + scroll) / self.row_height()).floor();
+        (index >= 0.0 && (index as u32) < self.row_count()).then_some(index as usize)
+    }
+
+    /// 出している差分の元（コミットの差分。Working Copy の差分では None）。
+    pub fn source(&self) -> Option<Arc<Source>> {
+        self.state().source.clone()
+    }
+
+    /// AI に渡す、`row` 行目を含む hunk の差分の文字（見出しから次の hunk・ファイルの手前まで）と、そのファイルの
+    /// パス（見出しのない差分では None）。hunk の中でなければ None。
+    pub fn hunk_text(&self, row: usize) -> Option<(Option<String>, String)> {
+        let view = self.state().view.clone()?;
+        let rows = &view.view.rows;
+        let upto = rows.get(..=row)?;
+        let start = upto.iter().rposition(|r| r.kind == DiffRow::HUNK)?;
+        // 見出しより後ろにファイルの見出しがあれば、その hunk は別のファイル。
+        if upto[start..].iter().any(|r| r.kind == DiffRow::FILE) {
+            return None;
+        }
+        let path = upto[..start]
+            .iter()
+            .rev()
+            .find(|r| r.kind == DiffRow::FILE)
+            .map(|r| {
+                let text = view.text(r);
+                text.split(" — ").next().unwrap_or(text).to_owned()
+            });
+        let mut out = amonhen_assist::DiffText::new();
+        if let Some(path) = &path {
+            out.path(path);
+        }
+        for (i, r) in rows[start..].iter().enumerate() {
+            if i > 0 && matches!(r.kind, DiffRow::HUNK | DiffRow::FILE) {
+                break;
+            }
+            if !out.push(ai_line(r.kind), view.text(r)) {
+                break;
+            }
+        }
+        Some((path, out.finish()))
+    }
+
+    /// 最初の hunk（確認用）。
+    pub fn first_hunk(&self) -> Option<(Option<String>, String)> {
+        let row = {
+            let st = self.state();
+            st.view
+                .as_ref()?
+                .view
+                .rows
+                .iter()
+                .position(|r| r.kind == DiffRow::HUNK)?
+        };
+        self.hunk_text(row)
+    }
+
     fn file_menu(&self, x: f64, y: f64) {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let rh = self.row_height();
-        let (view, f) = {
+        let (view, f, rows_f) = {
             let st = self.state();
-            (st.view.clone(), st.on_file_menu.clone())
+            (
+                st.view.clone(),
+                st.on_file_menu.clone(),
+                st.on_row_menu.clone(),
+            )
         };
+        let index = ((y as f32 + scroll) / rh).floor();
+        if let (Some(view), Some(rows_f)) = (&view, rows_f)
+            && index >= 0.0
+            && (index as usize) < view.view.rows.len()
+            && !view.view.rows.iter().any(|r| r.kind == DiffRow::FILE)
+        {
+            rows_f(index as usize, x, y);
+            return;
+        }
         let (Some(view), Some(f)) = (view, f) else {
             return;
         };
-        let index = ((y as f32 + scroll) / rh).floor();
         if index < 0.0 {
             return;
         }

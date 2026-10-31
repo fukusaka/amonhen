@@ -4,8 +4,11 @@
 
 mod actions;
 mod activity;
+mod aiactions;
+mod aisettings;
 mod appmenu;
 mod askpass;
+mod assist;
 mod avatars;
 mod bookmarks;
 mod cipopover;
@@ -208,6 +211,8 @@ fn parse_args() -> Result<Args, String> {
             }
             "--merge-editor" => args.merge_editor = Some(it.next().ok_or("--merge-editor <path>")?),
             "--accept" => merge::accept_once(&it.next().ok_or("--accept ours|theirs|both|base")?),
+            "--ai" => assist::set_auto(&it.next().ok_or("--ai <button,...>")?),
+            "--ai-allow" => assist::allow_without_asking(),
             "--file-history" => args.file_history = Some(it.next().ok_or("--file-history <path>")?),
             "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {
@@ -528,6 +533,21 @@ fn build_window(app: &gtk::Application, args: Args) {
     // 裏で読んでいる詳細と差分の数（`--snapshot` はなくなるまで待つ）。
     let pending = Rc::new(Cell::new(0u32));
     connect_selection(&view, &details, &diff, &right, &pending);
+    // AI の翻訳・解説（詳細の右上）。
+    let current_repo: aiactions::CurrentRepo = {
+        let v = view.downgrade();
+        Rc::new(move || v.upgrade().and_then(|v| v.current()).map(|(r, _)| r))
+    };
+    let fit: Rc<dyn Fn()> = {
+        let (r, d) = (right.downgrade(), details.clone());
+        Rc::new(move || {
+            if let Some(r) = r.upgrade() {
+                fit_details(&r, d.clone());
+            }
+        })
+    };
+    aiactions::details(&details, &diff, current_repo.clone(), fit);
+    aiactions::auto_history_hunk(&diff, &details, current_repo);
     // 並び順・折りたたみ（View の History の表示）に合わせて History を作る。
     let shaper = historydisplay::Shaper::new(&view, search.clone(), pending.clone());
 
@@ -732,6 +752,7 @@ fn build_window(app: &gtk::Application, args: Args) {
     reflog_slot.replace(Some(reflog.clone()));
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), window.downgrade(), on_commit.clone());
+    let (dw, dt) = (diff.downgrade(), details.clone());
     diff.connect_file_menu(move |path, x, y| {
         let (Some(view), Some(window)) = (v.upgrade(), w.upgrade()) else {
             return;
@@ -740,6 +761,14 @@ fn build_window(app: &gtk::Application, args: Args) {
             return;
         };
         let mut items = Vec::new();
+        // AI でこの hunk を解説（hunk の中を右クリックしたとき）。
+        if let Some(item) = dw
+            .upgrade()
+            .and_then(|d| aiactions::history_hunk_item(&d, &dt, &repo, y))
+        {
+            items.push(item);
+            items.push(menu::Item::Separator);
+        }
         // 1 つのコミットを選んでいるときだけ、そのコミットでの blame。
         if let [row] = view.selection()[..]
             && let Some(id) = history.graph.ids().get(row as usize)
@@ -2055,7 +2084,10 @@ fn after_first_show(
                 #[upgrade_or]
                 glib::ControlFlow::Break,
                 move || {
-                    if (view.is_mapped() && !view.is_settled()) || pending.get() > 0 {
+                    if (view.is_mapped() && !view.is_settled())
+                        || pending.get() > 0
+                        || assist::is_busy()
+                    {
                         return glib::ControlFlow::Continue;
                     }
                     // 別の窓（Blame など）を開いていれば、そちらを撮る。

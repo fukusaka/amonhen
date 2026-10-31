@@ -85,6 +85,10 @@ pub struct Details {
     selection_note: gtk::Label,
     pairs: gtk::Box,
     selection_lines: gtk::Label,
+    /// 右上のボタン（AI の翻訳・解説）を置く所。
+    pub tools: gtk::Box,
+    /// メッセージの下に出す AI の返事（コミットを選び直したら消す）。
+    pub ai: gtk::Box,
 }
 
 /// 2 つ選んだときの差分の取り方の切り替え（macOS 版と同じ言葉。訳の鍵）。
@@ -146,17 +150,28 @@ impl Details {
         selection.append(&selection_note);
         selection.append(&pairs);
         selection.append(&selection_lines);
+        // 上の帯: 作者（複数選んだときは選び方の見出し）と、右上のボタン。
+        let tools = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        tools.set_valign(gtk::Align::Start);
+        let lead = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        lead.set_hexpand(true);
+        lead.append(&selection);
+        lead.append(&people);
+        let head = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        head.append(&lead);
+        head.append(&tools);
+        let ai = gtk::Box::new(gtk::Orientation::Vertical, 8);
         let column = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        column.append(&selection);
         column.set_margin_top(10);
         column.set_margin_bottom(10);
         column.set_margin_start(12);
         column.set_margin_end(12);
-        column.append(&people);
+        column.append(&head);
         column.append(&table);
         column.append(&subject);
         column.append(&body);
         column.append(&notes);
+        column.append(&ai);
         let root = gtk::ScrolledWindow::builder()
             .child(&column)
             .hscrollbar_policy(gtk::PolicyType::Never)
@@ -178,6 +193,8 @@ impl Details {
             selection_note,
             pairs,
             selection_lines,
+            tools,
+            ai,
         };
         details.clear();
         details
@@ -191,6 +208,9 @@ impl Details {
         self.committer.root.set_visible(false);
         self.clear_table();
         self.subject.set_text("");
+        while let Some(child) = self.ai.first_child() {
+            self.ai.remove(&child);
+        }
         for l in [&self.body, &self.notes] {
             l.set_text("");
             l.set_visible(false);
@@ -495,6 +515,22 @@ impl Details {
             }
             self.table.attach(&head, 0, i as i32, 1, 1);
             self.table.attach(&cell, 1, i as i32, 1, 1);
+        }
+    }
+
+    /// 出しているメッセージ（複数のコミットを選んでいれば、各コミットの 1 行の一覧）。
+    pub fn message(&self) -> String {
+        match self.info.borrow().as_ref() {
+            Some(info) => str_of(info, "message").to_owned(),
+            None if self.selection.is_visible() => self.selection_lines.text().into(),
+            None => {
+                let (subject, body) = (self.subject.text(), self.body.text());
+                if body.is_empty() {
+                    subject.into()
+                } else {
+                    format!("{subject}\n\n{body}")
+                }
+            }
         }
     }
 

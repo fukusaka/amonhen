@@ -587,6 +587,9 @@ pub fn show(parent: &gtk::ApplicationWindow) {
         &tr!("Diff & Merge"),
     );
 
+    // AI（`aisettings.rs`）。
+    stack.add_titled(&crate::aisettings::page(), Some("ai"), "AI");
+
     // Performance
     stack.add_titled(
         &page(&[
