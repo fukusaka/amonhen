@@ -215,7 +215,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Huge histories in chunks with the persistent cache | ✓ | ✓ | ✓ | ✓ |  |
 | Search with match count, next / previous, matching only | ✓ | ✓ | — | △ | CLI: `log <query>` lists the matches. |
 | Display: order, one line, row items, fold merged, highlight ancestors | ✓ | ✓ | △ | △ | VSCode: Only the scope (current, all, a ref).<br>CLI: `--topo-order`, `--fold`. |
-| Avatars | ✓ | △ | — | n/a | GTK4: In the details only, kept in memory. |
+| Avatars | ✓ | ✓ | — | n/a |  |
 | Signature marks on commits | ✓ | ✓ | — | △ | CLI: In `show`. |
 | CI status per commit with a checks popover | ✓ | ✓ | — | — |  |
 | Worktree HEAD labels (✎ ⌂ ⑂, change counts) | ✓ | ✓ | — | — |  |
@@ -339,7 +339,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Branch status popover (CI, pull request) | ✓ | ✓ | — | — |  |
 | Open on GitHub | ✓ | ✓ | — | — |  |
 | `#123` links in messages | ✓ | ✓ | — | — |  |
-| GitHub avatars | ✓ | △ | — | — | GTK4: Kept in memory only. |
+| GitHub avatars | ✓ | ✓ | — | — |  |
 
 ## 13. Language
 
