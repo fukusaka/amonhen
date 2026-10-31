@@ -2,7 +2,7 @@
 
 use std::path::Path;
 
-use amonhen_model::{PartialClone, RepositoryForm, Result, SparseCheckout, tr};
+use amonhen_model::{Oid, PartialClone, RepositoryForm, Result, SparseCheckout, tr};
 
 use crate::Git;
 
@@ -175,6 +175,52 @@ impl Git {
             sparse,
             maintenance,
         })
+    }
+
+    /// partial clone の手元にないオブジェクト `ids` を、`remote` から 1 回の fetch でまとめて取る（git の差分が足りない
+    /// blob を取るときと同じ形。`cat-file` や `log -G` は 1 つずつ取りに行く）。FETCH_HEAD は書き換えない（git 2.29
+    /// から。それより古い git は書き換え、ID を引数に並べるので 500 個ずつに分ける）。
+    pub fn fetch_missing(&self, remote: &str, ids: &[String]) -> Result<()> {
+        let mut args = vec!["fetch", "--quiet", "--no-tags", "--recurse-submodules=no"];
+        if crate::git_at_least(2, 29) {
+            args.extend([
+                "--no-write-fetch-head",
+                "--filter=blob:none",
+                "--stdin",
+                remote,
+            ]);
+            let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
+            return self.write_with_input(&args, input.as_bytes()).map(drop);
+        }
+        args.extend(["--filter=blob:none", remote]);
+        for chunk in ids.chunks(500) {
+            let mut args = args.clone();
+            args.extend(chunk.iter().map(String::as_str));
+            self.write(&args)?;
+        }
+        Ok(())
+    }
+
+    /// partial clone なら、`tips` から辿れる範囲（`path` があればその下）の手元にない中身をまとめて取る。内容で探す
+    /// （`log -G`）前に呼ぶ。git は足りない blob を 1 つずつ取りに行くので、大きなリポジトリでは終わらない。
+    pub(crate) fn fetch_missing_reachable(&self, tips: &[Oid], path: Option<&str>) -> Result<()> {
+        let Some(partial) = self.repository_form()?.partial else {
+            return Ok(());
+        };
+        // `--missing=print` は足りないものを取りに行かず、`?<ID>` の行で知らせる。
+        let mut args = vec!["rev-list", "--objects", "--missing=print", "--stdin", "--"];
+        args.extend(path);
+        let revs: String = tips.iter().map(|t| format!("{t}\n")).collect();
+        let out = self.read_with_input(&args, revs.as_bytes())?;
+        let missing: Vec<String> = String::from_utf8_lossy(&out)
+            .lines()
+            .filter_map(|line| line.strip_prefix('?'))
+            .map(|id| id.trim().to_owned())
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        self.fetch_missing(&partial.remote, &missing)
     }
 
     pub(crate) fn fetch_all_contents(&self, remote: &str) -> Result<()> {

@@ -49,10 +49,10 @@ fn packs(dir: &Path) -> usize {
         .count()
 }
 
-#[test]
-fn reads_blobs_missing_from_a_partial_clone() {
-    let tmp = tempfile::tempdir().unwrap();
-    let src = tmp.path().join("src");
+/// 古いコミットにだけ中身があるファイルを 3 つ持つリポジトリを作り、`--filter=blob:none` で clone する。clone
+/// した場所と、作ったコミット（古い順に 4 つ。最後はファイルを消したもの）を返す。
+fn partial_clone(tmp: &Path) -> (std::path::PathBuf, Vec<String>) {
+    let src = tmp.join("src");
     std::fs::create_dir(&src).unwrap();
     git(&src, &["init", "-q"]);
     git(&src, &["symbolic-ref", "HEAD", "refs/heads/main"]);
@@ -68,9 +68,10 @@ fn reads_blobs_missing_from_a_partial_clone() {
     git(&src, &["commit", "-q", "-m", "remove"]);
     git(&src, &["config", "uploadpack.allowFilter", "true"]);
     git(&src, &["config", "uploadpack.allowAnySHA1InWant", "true"]);
-    let first = git(&src, &["rev-parse", "HEAD~3"]);
-    let second = git(&src, &["rev-parse", "HEAD~2"]);
-    let third = git(&src, &["rev-parse", "HEAD~1"]);
+    let commits = (0..4)
+        .rev()
+        .map(|n| git(&src, &["rev-parse", &format!("HEAD~{n}")]))
+        .collect();
 
     let path = src.to_str().unwrap().replace('\\', "/");
     let url = if path.starts_with('/') {
@@ -78,17 +79,21 @@ fn reads_blobs_missing_from_a_partial_clone() {
     } else {
         format!("file:///{path}")
     };
-    git(
-        tmp.path(),
-        &["clone", "-q", "--filter=blob:none", &url, "partial"],
-    );
-    let dir = tmp.path().join("partial");
+    git(tmp, &["clone", "-q", "--filter=blob:none", &url, "partial"]);
+    (tmp.join("partial"), commits)
+}
+
+#[test]
+fn reads_blobs_missing_from_a_partial_clone() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (dir, commits) = partial_clone(tmp.path());
+    let [first, second, third] = [&commits[0], &commits[1], &commits[2]];
     let backend = GixBackend::open(&dir).unwrap();
     let oid = |hex: &str| Oid::from_hex(hex).unwrap();
 
     // 差分に要る blob を、1 回の fetch でまとめて取る。
     let changes = backend
-        .changes_between(Some(&oid(&first)), &oid(&second))
+        .changes_between(Some(&oid(first)), &oid(second))
         .unwrap();
     assert_eq!(changes.len(), 3);
     let ids: Vec<Oid> = changes
@@ -109,10 +114,29 @@ fn reads_blobs_missing_from_a_partial_clone() {
 
     // 先に取っていなくても、1 つずつなら git に読ませる。
     let changes = backend
-        .changes_between(Some(&oid(&second)), &oid(&third))
+        .changes_between(Some(&oid(second)), &oid(third))
         .unwrap();
     let new = backend.blob(&changes[0].new_id.unwrap()).unwrap();
     assert_eq!(&**new, b"a.txt three\n");
+}
+
+#[test]
+fn fetches_missing_contents_at_once_before_searching_them() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (dir, commits) = partial_clone(tmp.path());
+    let backend = GixBackend::open(&dir).unwrap();
+    let tip = Oid::from_hex(&commits[3]).unwrap();
+    let before = packs(&dir);
+    // `log -G` は足りない blob を 1 つずつ取りに行く（6 個なら 6 回）。先にまとめて 1 回で取る。
+    let found = backend
+        .operations()
+        .unwrap()
+        .log_matching(&[tip], None, Some("b.txt two"), &|| false)
+        .unwrap();
+    let found: Vec<String> = found.iter().map(Oid::to_string).collect();
+    // 足したコミットと、消したコミット（`-G` は消えた行も数える）。
+    assert_eq!(found, [commits[2].clone(), commits[1].clone()]);
+    assert_eq!(packs(&dir), before + 1);
 }
 
 fn git_older_than_2_29() -> bool {
