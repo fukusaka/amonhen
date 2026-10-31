@@ -759,6 +759,126 @@ pub fn commit(args: &[String]) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+// MARK: - rewrite-preview
+
+/// 書き換える前の見通し: 今のブランチを `<onto>` へ rebase したら（`--edit` なら History の編集をしたら）、一緒に
+/// 動くブランチと残るブランチ、push 済みのもの、コンフリクトしそうなコミット。何にも触らない。終了コードは
+/// コンフリクトの見込みがなければ 0、あれば 1、git が古くてわからなければ 2。
+pub fn rewrite_preview(args: &[String]) -> Result<ExitCode> {
+    let (c, seen) = common(
+        args,
+        &["--edit", "--update-refs", "--no-update-refs"],
+        &["--edit"],
+    )?;
+    let mut request = json!({"op": "rewritePreview"});
+    match (value(&seen, "--edit"), c.rest.as_slice()) {
+        (Some(edit), []) => {
+            request["edit"] =
+                serde_json::from_str(edit).map_err(|e| tr!("Can’t read the edit: {e}", e = e))?;
+        }
+        (None, [onto]) => request["onto"] = json!(onto),
+        _ => {
+            return Err(format!(
+                "{}
+
+{}",
+                tr!("Give the commit to rebase onto, or --edit"),
+                usage()
+            )
+            .into());
+        }
+    }
+    if flag(&seen, "--update-refs") {
+        request["updateRefs"] = json!(true);
+    } else if flag(&seen, "--no-update-refs") {
+        request["updateRefs"] = json!(false);
+    }
+    let front = open_repository(&c.dir)?;
+    let response = command(&*front, request)?;
+    let info = &response["info"];
+    let conflicts = &info["conflicts"];
+    if c.json {
+        print_json(info);
+    } else {
+        let names = |list: &serde_json::Value| -> Vec<String> {
+            list.as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|b| b["name"].as_str().map(str::to_owned))
+                .collect()
+        };
+        let mut out = String::new();
+        let moving = names(&info["moving"]);
+        if !moving.is_empty() {
+            out.push_str(&tr!("Moves with it: {names}", names = moving.join(", ")));
+            out.push('\n');
+        }
+        for branch in info["staying"].as_array().into_iter().flatten() {
+            let name = branch["name"].as_str().unwrap_or("");
+            let why = match branch["reason"].as_str() {
+                Some("checkedOut") => tr!("checked out in another worktree"),
+                Some("git") => tr!("moving it needs git 2.38"),
+                Some("off") => tr!("not this time (--no-update-refs)"),
+                _ => tr!("rebase.updateRefs is off"),
+            };
+            out.push_str(&tr!("Stays: {name} ({why})", name = name, why = why));
+            out.push('\n');
+        }
+        let mut pushed: Vec<String> = info["currentUpstream"]
+            .as_str()
+            .and(info["current"].as_str())
+            .map(str::to_owned)
+            .into_iter()
+            .collect();
+        pushed.extend(
+            info["moving"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter(|b| !b["upstream"].is_null())
+                .filter_map(|b| b["name"].as_str().map(str::to_owned)),
+        );
+        if !pushed.is_empty() {
+            out.push_str(&tr!(
+                "Pushed already (pushing afterwards needs a force push): {names}",
+                names = pushed.join(", ")
+            ));
+            out.push('\n');
+        }
+        match conflicts.as_array() {
+            None => out.push_str(&tr!("Conflicts: can’t tell without git 2.40 or newer")),
+            Some(list) if list.is_empty() => out.push_str(&tr!("No conflicts expected")),
+            Some(list) => {
+                out.push_str(&tr!(
+                    "Conflicts expected at {count} commits:",
+                    count = list.len()
+                ));
+                for step in list {
+                    let oid = step["oid"].as_str().unwrap_or("");
+                    let files: Vec<&str> = step["files"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|f| f.as_str())
+                        .collect();
+                    out.push_str(&format!(
+                        "\n  {}  {}",
+                        &oid[..oid.len().min(8)],
+                        files.join(", ")
+                    ));
+                }
+            }
+        }
+        out.push('\n');
+        term::write(&out);
+    }
+    Ok(match conflicts.as_array() {
+        None => ExitCode::from(2),
+        Some(list) if list.is_empty() => ExitCode::SUCCESS,
+        Some(_) => ExitCode::from(1),
+    })
+}
+
 // MARK: - merge-check
 
 /// `rev` を HEAD（`--into` ならそのブランチ）にマージしたらコンフリクトするファイル。いくつも渡せば、1 つの

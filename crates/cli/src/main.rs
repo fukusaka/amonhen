@@ -12,6 +12,7 @@
 //!   amonhen worktree [list|add|remove|prune]  worktree（`git worktree` と同じ並び）
 //!   amonhen merge-file [--all] <file>…  コンフリクトのあるファイルに Magic Merge をかける
 //!   amonhen merge-check <rev>…          マージしたらコンフリクトするファイル（作業ツリーには触らない）
+//!   amonhen rewrite-preview <onto>      rebase・History の編集で動くブランチとコンフリクトの見込み
 //!   amonhen clone <url> [<dir>]
 //!   amonhen install / engine           エンジンの置き場所（`install.rs`）
 //!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon
@@ -50,6 +51,7 @@ usage: amonhen [<path>]
        amonhen worktree [list [--changes] [--json] | add <path> [<start>] [-b <branch>] | remove [--force] <path> | prune]
        amonhen merge-file [--all] [--check] <file>…
        amonhen merge-check [--into <branch>] [--json] <rev>…
+       amonhen rewrite-preview [--update-refs | --no-update-refs] [--json] (<onto> | --edit <json>)
        amonhen range-diff [--creation-factor <n>] [--json] (<old>...<new> | <base> <old> <new> | <old-range> <new-range> | --previous [<branch>])
        amonhen format-patch [-o <dir> | --mbox <file> | --stdout] [--cover-letter] [-v <n>] [-<n>] [<rev> | <from>..<to>]
        amonhen am [--3way | --no-3way] [--check] <file>… | --continue | --skip | --abort | --retry-3way
@@ -80,6 +82,11 @@ code is 1, so it also works as git's mergetool:
 merge-check lists the files that merging <rev> into HEAD (or --into <branch>) would conflict in, without touching the
 worktree. With several revs it checks merging them all in one commit (an octopus merge), each on top of the ones before.
 The exit code is 1 if there are conflicts, and 2 if it can't tell (git older than 2.38).
+rewrite-preview tells, without touching anything, what rebasing the current branch onto <onto> (or a History edit given
+as --edit with the core's JSON, like {\"kind\":\"drop\",\"oid\":\"…\"}) would do: the stacked branches that move with
+it or stay and why, the branches already pushed, and the commits expected to conflict (git 2.40 or newer).
+--update-refs and --no-update-refs decide for this one operation instead of rebase.updateRefs. The exit code is 1 if
+conflicts are expected, and 2 if it can't tell.
 range-diff compares two versions of a series of commits with git range-diff (merge commits are left out, as in git).
 --previous compares a branch (the current one by default) with its version before it was last rewritten (a rebase,
 History edit, amend or reset), found in its reflog.
@@ -117,6 +124,7 @@ fn main() -> ExitCode {
         Some("worktree") => worktree(&args[1..]),
         Some("merge-file") => merge_file(&args[1..]),
         Some("merge-check") => work::merge_check(&args[1..]),
+        Some("rewrite-preview") => work::rewrite_preview(&args[1..]),
         Some("range-diff") => work::range_diff(&args[1..]),
         Some("format-patch") => patch::format_patch(&args[1..]),
         Some("am") => patch::am(&args[1..]),

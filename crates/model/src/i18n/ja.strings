@@ -342,3 +342,16 @@
 "It doesn’t apply. amonhen am --retry-3way merges it with conflicts to resolve; or apply it by hand, then amonhen am --continue (or --skip, --abort)" = "当たりません。amonhen am --retry-3way で、解決するコンフリクトつきのマージにできます。手で当ててから amonhen am --continue でも（--skip・--abort も）";
 "Resolve the conflicts and stage the files, then amonhen am --continue (or --skip, --abort)" = "コンフリクトを解決して stage してから amonhen am --continue（--skip・--abort も）";
 "Stopped applying the patches and went back to where it started" = "パッチを当てるのをやめて、始める前に戻しました";
+"Give the commit to rebase onto, or --edit" = "rebase の先のコミットか、--edit を指定してください";
+"Can’t read the edit: {e}" = "編集を読めません: {e}";
+"Moves with it: {names}" = "一緒に動く: {names}";
+"checked out in another worktree" = "ほかの worktree で checkout 中";
+"moving it needs git 2.38" = "動かすには git 2.38 が要る";
+"not this time (--no-update-refs)" = "今回は動かさない（--no-update-refs）";
+"rebase.updateRefs is off" = "rebase.updateRefs がオフ";
+"Stays: {name} ({why})" = "動かない: {name}（{why}）";
+"Pushed already (pushing afterwards needs a force push): {names}" = "push 済み（あとの push には force push が要る）: {names}";
+"Conflicts: can’t tell without git 2.40 or newer" = "コンフリクト: git 2.40 より古いので調べられません";
+"No conflicts expected" = "コンフリクトしない見込みです";
+"Conflicts expected at {count} commits:" = "{count} コミットでコンフリクトする見込みです:";
+"Nothing to preview" = "見通す操作がありません";
