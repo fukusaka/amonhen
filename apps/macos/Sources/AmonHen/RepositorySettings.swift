@@ -82,7 +82,7 @@ final class RepositorySettingsModel {
     private(set) var form: RepositoryForm?
     /// 取り足す・取り直す・取り出すフォルダを変える命令を、ウィンドウの操作として動かす（Fetch と同じく、進み具合は
     /// ツールバーと Activity、失敗はウィンドウの帯）。終わったら（失敗しても）`done` を呼んでもらう。
-    var performOperation: (([String: Any], _ done: @escaping () -> Void) -> Void)?
+    var performOperation: (([String: Any], _ done: @escaping @MainActor () -> Void) -> Void)?
     /// その命令が走っている（ページのボタンを止める）。
     private(set) var operationRunning = false
     /// 外から開くように頼まれたページ（`show(_:)`）と、頼まれた回数（同じページを続けて頼まれても開く）。
@@ -99,7 +99,7 @@ final class RepositorySettingsModel {
     func runOperation(_ command: [String: Any]) {
         guard !operationRunning else { return }
         operationRunning = true
-        let finish = { [weak self] in
+        let finish: @MainActor () -> Void = { [weak self] in
             guard let self else { return }
             operationRunning = false
             load()
