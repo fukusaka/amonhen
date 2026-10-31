@@ -139,14 +139,28 @@ impl Search {
         let find = gio::SimpleAction::new("find", None);
         let (bar, entry) = (self.bar.clone(), self.inner.entry.clone());
         find.connect_activate(move |_, _| {
+            // フォーカスが History の差分にあれば、その差分の中を探す（macOS 版と同じ）。
+            if let Some(w) = bar.root().and_downcast::<gtk::Window>()
+                && crate::commitfiles::find_in_focused(&w)
+            {
+                return;
+            }
             bar.set_search_mode(true);
             entry.grab_focus();
         });
         group.add_action(&find);
         for (name, step) in [("find-next", 1), ("find-previous", -1)] {
             let action = gio::SimpleAction::new(name, None);
-            let i = self.inner.clone();
-            action.connect_activate(move |_, _| Inner::submit(&i, step));
+            let (i, bar) = (self.inner.clone(), self.bar.clone());
+            action.connect_activate(move |_, _| {
+                // 差分の中を探しているなら、その一致へ。
+                if let Some(w) = bar.root().and_downcast::<gtk::Window>()
+                    && crate::commitfiles::find_next_in_focused(&w, step)
+                {
+                    return;
+                }
+                Inner::submit(&i, step)
+            });
             group.add_action(&action);
         }
         app.set_accels_for_action("win.find", &["<Control>f"]);

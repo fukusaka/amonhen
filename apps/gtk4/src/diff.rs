@@ -166,6 +166,10 @@ pub struct State {
     /// 一番上に見えているファイルが変わったときに呼ぶ（ファイルの番号）。
     on_top_file: Option<Rc<dyn Fn(usize)>>,
     top_file: Option<usize>,
+    /// 差分の中を探している語と、一致（行、バイト位置の始めと終わり）、今の一致。
+    find: String,
+    matches: Vec<(u32, u32, u32)>,
+    current_match: Option<usize>,
 }
 
 /// ファイルの見出し・差分の行を右クリックしたときに呼ぶ（見出しの上ならファイルの番号、パス、x、y）。
@@ -356,6 +360,7 @@ impl DiffWidget {
             adj.set_value(0.0);
         }
         self.configure_adjustments();
+        self.refresh_matches();
         self.queue_draw();
         self.selection_changed();
     }
@@ -384,6 +389,7 @@ impl DiffWidget {
             adj.set_value(0.0);
         }
         self.configure_adjustments();
+        self.refresh_matches();
         // 含める・外すの後は、次の hunk を選ぶ（macOS 版と同じ）。
         let after = self.state().hunk_after.take();
         if let Some(index) = after {
@@ -410,6 +416,7 @@ impl DiffWidget {
             adj.set_value(0.0);
         }
         self.configure_adjustments();
+        self.refresh_matches();
         self.queue_draw();
         self.selection_changed();
     }
@@ -965,8 +972,95 @@ impl DiffWidget {
                     adj.set_value(top);
                 }
             }
+            widget.refresh_matches();
             widget.queue_draw();
         });
+    }
+
+    /// 差分の中を `query` で探す（大文字・小文字は区別しない）。今の一致は、見えている位置より後の最初のもの。
+    /// （今の一致の番号、一致の数）を返す。
+    pub fn find(&self, query: &str) -> (Option<usize>, usize) {
+        self.state().find = query.to_owned();
+        self.refresh_matches();
+        let top = self.top_row();
+        let current = {
+            let mut st = self.state();
+            let current = (!st.matches.is_empty())
+                .then(|| st.matches.iter().position(|m| m.0 >= top).unwrap_or(0));
+            st.current_match = current;
+            current
+        };
+        self.reveal_match();
+        self.queue_draw();
+        (current, self.state().matches.len())
+    }
+
+    /// 次・前の一致へ（端からは反対の端へ）。（今の一致の番号、一致の数）を返す。
+    pub fn find_move(&self, step: i32) -> (Option<usize>, usize) {
+        let (current, count) = {
+            let mut st = self.state();
+            let n = st.matches.len() as i64;
+            if n == 0 {
+                drop(st);
+                self.error_bell();
+                return (None, 0);
+            }
+            let next = match st.current_match {
+                Some(c) => (c as i64 + step as i64).rem_euclid(n),
+                None if step > 0 => 0,
+                None => n - 1,
+            } as usize;
+            st.current_match = Some(next);
+            (Some(next), n as usize)
+        };
+        self.reveal_match();
+        self.queue_draw();
+        (current, count)
+    }
+
+    /// 探すのをやめる（強調を消す）。
+    pub fn clear_find(&self) {
+        {
+            let mut st = self.state();
+            st.find.clear();
+            st.matches.clear();
+            st.current_match = None;
+        }
+        self.queue_draw();
+    }
+
+    /// 表示を作り直したので、一致を探し直す（今の一致は、同じ行にあれば保つ）。
+    fn refresh_matches(&self) {
+        let mut st = self.state();
+        let previous = st.current_match.and_then(|c| st.matches.get(c).copied());
+        st.matches.clear();
+        st.current_match = None;
+        let (Some(view), false) = (st.view.clone(), st.find.is_empty()) else {
+            return;
+        };
+        let query = st.find.clone();
+        for (i, row) in view.view.rows.iter().enumerate() {
+            if row.kind == DiffRow::FILE {
+                continue;
+            }
+            for (start, end) in find_all(view.text(row), &query) {
+                st.matches.push((i as u32, start as u32, end as u32));
+            }
+        }
+        st.current_match = previous.and_then(|p| st.matches.iter().position(|m| *m == p));
+    }
+
+    /// 今の一致が見える位置までスクロールする。
+    fn reveal_match(&self) {
+        let row = {
+            let st = self.state();
+            st.current_match
+                .and_then(|c| st.matches.get(c))
+                .map(|m| m.0)
+        };
+        if let Some(row) = row {
+            self.reveal_rows(row, row + 1);
+        }
     }
 
     fn row_text(&self, st: &State, view: &View, index: u32) -> RowText {
@@ -1081,6 +1175,8 @@ impl DiffWidget {
         } else {
             TEXT_INSET
         };
+        // 一致の行の範囲（一致は行の順に並んでいる）。
+        let match_from = st.matches.partition_point(|m| m.0 < first);
         for index in first..last {
             if !st.rows.contains_key(&index) {
                 let text = self.row_text(st, &view, index);
@@ -1126,6 +1222,25 @@ impl DiffWidget {
                 );
             }
             let text_x = left + gutter_width + GUTTER_GAP;
+            // 探している語の一致（今の一致は濃く）。
+            for (i, m) in st.matches[match_from..]
+                .iter()
+                .enumerate()
+                .skip_while(|(_, m)| m.0 < index)
+                .take_while(|(_, m)| m.0 == index)
+            {
+                let x0 = line.text.index_to_pos(m.1 as i32).x() as f32 / pango::SCALE as f32;
+                let x1 = line.text.index_to_pos(m.2 as i32).x() as f32 / pango::SCALE as f32;
+                let color = if st.current_match == Some(match_from + i) {
+                    gdk::RGBA::new(1.0, 0.6, 0.0, 0.75)
+                } else {
+                    gdk::RGBA::new(1.0, 0.85, 0.0, 0.45)
+                };
+                snapshot.append_color(
+                    &color,
+                    &graphene::Rect::new(text_x + x0, top + 1.0, (x1 - x0).max(2.0), rh - 2.0),
+                );
+            }
             if let Some(gutter) = &line.gutter {
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(left, y));
@@ -1301,6 +1416,31 @@ impl DiffWidget {
             snapshot.restore();
         }
     }
+}
+
+/// `text` の中の `query` の位置（バイト）。大文字・小文字は区別しない（小文字にして長さが変わる文字があれば、
+/// 区別して探す）。
+fn find_all(text: &str, query: &str) -> Vec<(usize, usize)> {
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let (hay, needle) = (text.to_lowercase(), query.to_lowercase());
+    let (hay, needle) = if hay.len() == text.len() && needle.len() == query.len() {
+        (hay, needle)
+    } else {
+        (text.to_owned(), query.to_owned())
+    };
+    let mut out = Vec::new();
+    let mut from = 0;
+    while let Some(i) = hay[from..].find(&needle) {
+        let start = from + i;
+        out.push((start, start + needle.len()));
+        from = start + needle.len().max(1);
+        if from >= hay.len() {
+            break;
+        }
+    }
+    out
 }
 
 /// 次のコミットに含めるかの印（含めていれば塗りつぶしにチェック、外していれば枠だけ）。

@@ -228,6 +228,7 @@ fn parse_args() -> Result<Args, String> {
             "--ai" => assist::set_auto(&it.next().ok_or("--ai <button,...>")?),
             "--ai-allow" => assist::allow_without_asking(),
             "--keys" => workcopy::press_keys_once(&it.next().ok_or("--keys <place:key,...>")?),
+            "--find-diff" => commitfiles::find_once(&it.next().ok_or("--find-diff <text>")?),
             "--toggle-viewed" => {
                 let file = it.next().ok_or("--toggle-viewed <n>")?;
                 commitfiles::toggle_viewed_once(file.parse().map_err(|_| "--toggle-viewed <n>")?);
@@ -613,6 +614,7 @@ fn build_tab(
         })
     };
     aiactions::details(&details, &diff, current_repo.clone(), fit);
+    details.tools.append(&commit_diff.find_button());
     aiactions::auto_history_hunk(&diff, &details, current_repo);
     // 並び順・折りたたみ（View の History の表示）に合わせて History を作る。
     let shaper = historydisplay::Shaper::new(&view, search.clone(), pending.clone());

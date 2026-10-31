@@ -262,6 +262,7 @@ pub struct CommitDiff {
 }
 
 struct Inner {
+    root: gtk::Box,
     diff: DiffWidget,
     /// 差分（の枠）。
     diff_column: gtk::Box,
@@ -286,12 +287,29 @@ struct Inner {
     pending: Rc<Cell<u32>>,
     current_repo: CurrentRepo,
     file_items: RefCell<Option<FileItems>>,
+    find: FindBar,
+}
+
+/// 差分の中を探す帯（差分と一覧の下）。
+struct FindBar {
+    bar: gtk::Box,
+    entry: gtk::SearchEntry,
+    count: gtk::Label,
 }
 
 thread_local! {
-    /// 確認用: 最初に差分を出したら Viewed にするファイル（`--toggle-viewed`）と、メニューを出すファイル。
+    /// 確認用: 最初に差分を出したら探す語（`--find-diff`）、Viewed にするファイル（`--toggle-viewed`）、メニューを
+    /// 出すファイル（`--diff-file-menu`）。
+    static FIND_ONCE: RefCell<Option<String>> = const { RefCell::new(None) };
     static VIEWED_ONCE: Cell<Option<usize>> = const { Cell::new(None) };
     static MENU_ONCE: Cell<Option<usize>> = const { Cell::new(None) };
+    /// 開いている差分の列（Ctrl+F を、フォーカスのある差分の検索の帯に回すため）。
+    static OPEN: RefCell<Vec<std::rc::Weak<Inner>>> = RefCell::default();
+}
+
+/// 確認用（`--find-diff <語>`）: 最初に差分を出したら、検索の帯を開いてこの語を探す。
+pub fn find_once(query: &str) {
+    FIND_ONCE.with(|f| f.replace(Some(query.to_owned())));
 }
 
 /// 確認用（`--toggle-viewed <n>`）: 最初に差分を出したら、n 番目のファイルを Viewed にする。
@@ -304,6 +322,42 @@ pub fn file_menu_once(file: usize) {
     MENU_ONCE.with(|v| v.set(Some(file)));
 }
 
+/// `window` でフォーカスのある差分の列があれば、その検索の帯を開く（Ctrl+F。開いたら true）。
+pub fn find_in_focused(window: &gtk::Window) -> bool {
+    match focused(window) {
+        Some(inner) => {
+            Inner::show_find(&inner);
+            true
+        }
+        None => false,
+    }
+}
+
+/// `window` でフォーカスのある差分の列の検索の帯が開いていれば、次・前の一致へ（Ctrl+G。移ったら true）。
+pub fn find_next_in_focused(window: &gtk::Window, step: i32) -> bool {
+    match focused(window).filter(|inner| inner.find.bar.is_visible()) {
+        Some(inner) => {
+            Inner::move_match(&inner, step);
+            true
+        }
+        None => false,
+    }
+}
+
+/// `window` で、フォーカスが中にある差分の列。
+fn focused(window: &gtk::Window) -> Option<Rc<Inner>> {
+    let focus = gtk::prelude::GtkWindowExt::focus(window)?;
+    OPEN.with(|open| {
+        let mut open = open.borrow_mut();
+        open.retain(|w| w.strong_count() > 0);
+        open.iter().filter_map(|w| w.upgrade()).find(|inner| {
+            inner.root.is_mapped()
+                && (focus == *inner.root.upcast_ref::<gtk::Widget>()
+                    || focus.is_ancestor(&inner.root))
+        })
+    })
+}
+
 impl CommitDiff {
     pub fn new(pending: Rc<Cell<u32>>, current_repo: CurrentRepo) -> Self {
         let diff = DiffWidget::default();
@@ -312,6 +366,38 @@ impl CommitDiff {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .build();
+        // 検索の帯。
+        let entry = gtk::SearchEntry::builder()
+            .placeholder_text(tr!("Search Diff"))
+            .hexpand(true)
+            .build();
+        let count = gtk::Label::new(None);
+        count.add_css_class("dim-label");
+        count.add_css_class("caption");
+        count.add_css_class("numeric");
+        let previous = gtk::Button::from_icon_name("go-up-symbolic");
+        let next = gtk::Button::from_icon_name("go-down-symbolic");
+        if !gtk::IconTheme::for_display(&diff.display()).has_icon("go-up-symbolic") {
+            previous.set_label("∧");
+            next.set_label("∨");
+        }
+        previous.set_tooltip_text(Some(&tr!("Previous")));
+        next.set_tooltip_text(Some(&tr!("Next")));
+        let done = gtk::Button::with_label(&tr!("Done"));
+        for b in [&previous, &next, &done] {
+            b.add_css_class("flat");
+        }
+        let bar = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+        bar.set_margin_top(4);
+        bar.set_margin_bottom(4);
+        bar.set_margin_start(8);
+        bar.set_margin_end(8);
+        bar.append(&entry);
+        bar.append(&count);
+        bar.append(&previous);
+        bar.append(&next);
+        bar.append(&done);
+        bar.set_visible(false);
         let diff_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
         diff_column.append(&diff_scrolled);
 
@@ -330,7 +416,9 @@ impl CommitDiff {
         holder.set_vexpand(true);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&holder);
+        root.append(&bar);
         let inner = Rc::new(Inner {
+            root: root.clone(),
             diff,
             diff_column,
             files,
@@ -348,9 +436,11 @@ impl CommitDiff {
             pending,
             current_repo,
             file_items: RefCell::default(),
+            find: FindBar { bar, entry, count },
         });
+        OPEN.with(|open| open.borrow_mut().push(Rc::downgrade(&inner)));
         Inner::setup_factory(&inner, &factory);
-        Inner::connect(&inner);
+        Inner::connect(&inner, &previous, &next, &done);
         Inner::arrange(&inner);
         Self { root, inner }
     }
@@ -380,6 +470,24 @@ impl CommitDiff {
     /// 変更ファイルの右クリックのメニューに足す項目（Blame・File History など）を作る `f(パス, 差分の中の y)`。
     pub fn connect_file_items(&self, f: impl Fn(&str, Option<f64>) -> Vec<Item> + 'static) {
         self.inner.file_items.replace(Some(Rc::new(f)));
+    }
+
+    /// 差分の中を探す帯を開くボタン（詳細の右上に置く。メニューバーを使わずに届くように）。
+    pub fn find_button(&self) -> gtk::Button {
+        let icon = crate::icon::Icon::default();
+        icon.set(crate::icon::Kind::Search, false);
+        let button = gtk::Button::new();
+        button.set_child(Some(&icon));
+        button.add_css_class("flat");
+        button.set_valign(gtk::Align::Start);
+        button.set_tooltip_text(Some(&tr!("Find in the diff (Ctrl+F)")));
+        let weak = Rc::downgrade(&self.inner);
+        button.connect_clicked(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                Inner::show_find(&inner);
+            }
+        });
+        button
     }
 }
 
@@ -487,7 +595,7 @@ impl Inner {
         });
     }
 
-    fn connect(this: &Rc<Self>) {
+    fn connect(this: &Rc<Self>, previous: &gtk::Button, next: &gtk::Button, done: &gtk::Button) {
         // 一覧で選んだファイル: 全ファイルを並べているなら、その見出しまでスクロールし、そうでなければそのファイルの
         // 差分を出す。
         let weak = Rc::downgrade(this);
@@ -556,6 +664,56 @@ impl Inner {
                     .unwrap_or_default(),
             };
             menu::popup(&this.diff, x, y, items);
+        });
+        // 検索の帯。
+        let weak = Rc::downgrade(this);
+        this.find.entry.connect_search_changed(move |entry| {
+            if let Some(this) = weak.upgrade() {
+                let (current, count) = this.diff.find(&entry.text());
+                this.show_count(current, count);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        this.find.entry.connect_activate(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::move_match(&this, 1);
+            }
+        });
+        let weak = Rc::downgrade(this);
+        this.find.entry.connect_stop_search(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::hide_find(&this);
+            }
+        });
+        // Shift+Enter: 前の一致。
+        let keys = gtk::EventControllerKey::new();
+        let weak = Rc::downgrade(this);
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
+            let Some(this) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if matches!(key, gtk::gdk::Key::Return | gtk::gdk::Key::KP_Enter)
+                && modifiers.contains(gtk::gdk::ModifierType::SHIFT_MASK)
+            {
+                Inner::move_match(&this, -1);
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        this.find.entry.add_controller(keys);
+        for (button, step) in [(previous, -1), (next, 1)] {
+            let weak = Rc::downgrade(this);
+            button.connect_clicked(move |_| {
+                if let Some(this) = weak.upgrade() {
+                    Inner::move_match(&this, step);
+                }
+            });
+        }
+        let weak = Rc::downgrade(this);
+        done.connect_clicked(move |_| {
+            if let Some(this) = weak.upgrade() {
+                Inner::hide_find(&this);
+            }
         });
         // 一覧の置き方と、全ファイルを並べるかを変えたら、置き直す・読み直す。
         let weak = Rc::downgrade(this);
@@ -627,7 +785,14 @@ impl Inner {
             Some(_) => this.diff.show(source, view),
             None => this.diff.show_files(source, view, collapsed, viewed_files),
         }
-        // 確認用（`--toggle-viewed`・`--diff-file-menu`）。
+        // 確認用（`--find-diff`・`--toggle-viewed`）。
+        if let Some(query) = FIND_ONCE.with(|f| f.take()) {
+            Inner::show_find(this);
+            this.find.entry.set_text(&query);
+        } else if this.find.bar.is_visible() {
+            let (current, count) = this.diff.find(&this.find.entry.text());
+            this.show_count(current, count);
+        }
         if let Some(file) = VIEWED_ONCE.with(|v| v.take()) {
             Inner::toggle_viewed(this, file);
         }
@@ -692,6 +857,10 @@ impl Inner {
             }
             if let Ok(view) = view {
                 this.diff.show(source, view);
+                if this.find.bar.is_visible() {
+                    let (current, count) = this.diff.find(&this.find.entry.text());
+                    this.show_count(current, count);
+                }
             }
         });
     }
@@ -854,5 +1023,38 @@ impl Inner {
             }));
         }
         items
+    }
+
+    fn show_find(this: &Rc<Self>) {
+        this.find.bar.set_visible(true);
+        this.find.entry.grab_focus();
+        this.find.entry.select_region(0, -1);
+        let (current, count) = this.diff.find(&this.find.entry.text());
+        this.show_count(current, count);
+    }
+
+    fn hide_find(this: &Rc<Self>) {
+        this.find.bar.set_visible(false);
+        this.diff.clear_find();
+        this.diff.grab_focus();
+    }
+
+    fn move_match(this: &Rc<Self>, step: i32) {
+        if !this.find.bar.is_visible() {
+            Inner::show_find(this);
+        }
+        let (current, count) = this.diff.find_move(step);
+        this.show_count(current, count);
+    }
+
+    fn show_count(&self, current: Option<usize>, count: usize) {
+        let text = if self.find.entry.text().is_empty() {
+            String::new()
+        } else if let Some(c) = current {
+            format!("{} / {count}", c + 1)
+        } else {
+            tr!("Not found")
+        };
+        self.find.count.set_text(&text);
     }
 }
