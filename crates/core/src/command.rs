@@ -4426,10 +4426,19 @@ mod tests {
                 .find(|b| b["name"] == name)
                 .cloned()
         };
-        assert_eq!(find(&off, "staying", "one").unwrap()["reason"], "setting");
+        // git 2.38 より古ければ、設定にかかわらず git の版が理由になる。
+        let (major, minor) = git_version();
+        let stays_because = if (major, minor) >= (2, 38) {
+            "setting"
+        } else {
+            "git"
+        };
+        assert_eq!(
+            find(&off, "staying", "one").unwrap()["reason"],
+            stays_because
+        );
         assert!(off["moving"].as_array().unwrap().is_empty());
         let on = preview("true");
-        let (major, minor) = git_version();
         if (major, minor) >= (2, 38) {
             assert!(find(&on, "moving", "one").is_some(), "{on}");
         }
