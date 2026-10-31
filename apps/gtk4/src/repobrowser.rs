@@ -33,6 +33,12 @@ enum Category {
     Group(String),
     /// スキャンするフォルダ。
     Scan(String),
+    /// この機械のフォルダの下（スキャンするフォルダの外のリポジトリ。場所の木）。
+    Folder(String),
+    /// SSH のホストのフォルダの下（ホストと、ホストの上のパス）。
+    HostFolder(String, String),
+    /// スキャンするフォルダの中のフォルダの下（スキャンするフォルダと、その中のパス）。
+    ScanFolder(String, String),
 }
 
 impl Category {
@@ -45,6 +51,9 @@ impl Category {
             Self::Host(h) => format!("host:{h}"),
             Self::Group(g) => format!("group:{g}"),
             Self::Scan(p) => format!("scan:{p}"),
+            Self::Folder(p) => format!("folder:{p}"),
+            Self::HostFolder(h, p) => format!("hostfolder:{h}\n{p}"),
+            Self::ScanFolder(r, p) => format!("scanfolder:{r}\n{p}"),
         }
     }
 
@@ -59,6 +68,15 @@ impl Category {
                     "host" => Self::Host(rest.into()),
                     "group" => Self::Group(rest.into()),
                     "scan" => Self::Scan(rest.into()),
+                    "folder" => Self::Folder(rest.into()),
+                    "hostfolder" => {
+                        let (h, p) = rest.split_once('\n')?;
+                        Self::HostFolder(h.into(), p.into())
+                    }
+                    "scanfolder" => {
+                        let (r, p) = rest.split_once('\n')?;
+                        Self::ScanFolder(r.into(), p.into())
+                    }
                     _ => return None,
                 }
             }
@@ -67,6 +85,20 @@ impl Category {
 }
 
 const CATEGORY_KEY: &str = "repositoryPageCategory";
+/// 開いている左の節（鍵を改行で区切る）。
+const EXPANDED_KEY: &str = "repositoryPageExpanded";
+
+/// 覚えている、開いている左の節（初めは、このコンピュータだけ。macOS 版と同じ）。
+fn saved_expanded() -> std::collections::HashSet<String> {
+    match crate::settings::string(EXPANDED_KEY) {
+        Some(s) => s
+            .split('\n')
+            .filter(|k| !k.is_empty())
+            .map(str::to_owned)
+            .collect(),
+        None => [Category::Local.key()].into_iter().collect(),
+    }
+}
 
 /// 左の行: 見出し（場所・グループ）か分類。
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -85,9 +117,33 @@ impl Side {
     }
 }
 
+/// 左に並べる 1 行（開いた節の中だけ）。
+struct SideRow {
+    side: Side,
+    title: String,
+    /// 木の深さ（字下げ）。
+    depth: i32,
+    tip: Option<String>,
+    /// 子のある節か（開く・閉じるの印を出す）。
+    parent: bool,
+}
+
 /// 分類の中のリポジトリ（絞り込み・並べ替えの前）。
 fn paths_in(category: &Category) -> Vec<String> {
     let data = bookmarks::data();
+    // 場所の下のフォルダは、スキャンするフォルダの外のものだけ（左の木と同じ。スキャンした分は 🔍 の下に出す）。
+    let outside_under = |host: Option<&str>, prefix: &str| -> Vec<String> {
+        let roots = Roots::new(&data);
+        let under = format!("{prefix}/");
+        bookmarks::all_locations()
+            .into_iter()
+            .filter(|l| {
+                bookmarks::ssh_host(l).as_deref() == host
+                    && !roots.contains(l)
+                    && bookmarks::path_part(l).starts_with(&under)
+            })
+            .collect()
+    };
     match category {
         Category::All => bookmarks::all_locations(),
         Category::Local => bookmarks::all_locations()
@@ -111,7 +167,172 @@ fn paths_in(category: &Category) -> Vec<String> {
             .map(|b| b.path.clone())
             .collect(),
         Category::Scan(root) => bookmarks::scanned(root),
+        Category::Folder(prefix) => outside_under(None, prefix),
+        Category::HostFolder(host, prefix) => outside_under(Some(host), prefix),
+        Category::ScanFolder(root, prefix) => {
+            let under = format!("{prefix}/");
+            bookmarks::scanned(root)
+                .into_iter()
+                .filter(|l| bookmarks::path_part(l).starts_with(&under))
+                .collect()
+        }
     }
+}
+
+/// スキャンするフォルダ（どれかの下にあるか、を引く）。
+struct Roots {
+    /// (ホスト, フォルダのパス, 見つけたもの)。
+    roots: Vec<(Option<String>, String, std::collections::HashSet<String>)>,
+}
+
+impl Roots {
+    fn new(data: &bookmarks::Data) -> Self {
+        Self {
+            roots: data
+                .scan_roots
+                .iter()
+                .map(|r| {
+                    (
+                        bookmarks::ssh_host(&r.path),
+                        root_base(&r.path),
+                        bookmarks::scanned(&r.path).into_iter().collect(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    /// `location` がスキャンするフォルダの下にあるか（見つけたもの、またはパスがその下のもの）。
+    fn contains(&self, location: &str) -> bool {
+        let host = bookmarks::ssh_host(location);
+        let path = bookmarks::path_part(location);
+        self.roots.iter().any(|(h, base, found)| {
+            found.contains(location)
+                || (*h == host && (path == *base || path.starts_with(&format!("{base}/"))))
+        })
+    }
+}
+
+/// スキャンするフォルダのパス（手元なら `~` を広げる。比べるため）。
+fn root_base(root: &str) -> String {
+    match bookmarks::ssh_host(root) {
+        Some(_) => bookmarks::path_part(root).trim_end_matches('/').to_owned(),
+        None => bookmarks::expand(&bookmarks::path_part(root))
+            .to_string_lossy()
+            .trim_end_matches('/')
+            .to_owned(),
+    }
+}
+
+/// SSH 先のパスの見せ方（`/~/prj` は `~/prj`、Windows の SSH 先の `/C:/src` は `C:/src`）。
+fn remote_title(path: &str) -> String {
+    let rest = &path[path.len().min(1)..];
+    let b = rest.as_bytes();
+    if path.starts_with("/~") || (b.len() >= 2 && b[0].is_ascii_alphabetic() && b[1] == b':') {
+        rest.to_owned()
+    } else {
+        path.to_owned()
+    }
+}
+
+/// 左の木の節（分類と、その下の節）。
+struct Node {
+    title: String,
+    category: Category,
+    /// 短くした名前なら、元のパス（ツールチップ）。
+    tip: Option<String>,
+    children: Vec<Node>,
+}
+
+/// リポジトリのあるフォルダの階層（macOS 版の `folderTree`）。`repositories` はリポジトリのパス（`base` の下）。
+/// リポジトリの入っているフォルダとその上のフォルダを節にし、枝分かれもリポジトリもない途中のフォルダは 1 つに
+/// まとめる（`a/b`）。一番上の節の名前は `title`（フルパスから）、その下はひとつ上からの相対。
+fn folder_tree(
+    repositories: &[String],
+    base: &str,
+    category: &dyn Fn(String) -> Category,
+    title: &dyn Fn(&str) -> String,
+) -> Vec<Node> {
+    #[derive(Default)]
+    struct Trie {
+        children: std::collections::BTreeMap<String, Trie>,
+        repositories: usize,
+    }
+    let mut root = Trie::default();
+    for path in repositories {
+        let Some(i) = path.rfind('/') else { continue };
+        let parent = &path[..i];
+        if !(base.is_empty() || parent == base || parent.starts_with(&format!("{base}/"))) {
+            continue;
+        }
+        let mut node = &mut root;
+        for part in parent[base.len()..].split('/').filter(|p| !p.is_empty()) {
+            node = node.children.entry(part.to_owned()).or_default();
+        }
+        node.repositories += 1;
+    }
+    /// 枝分かれもリポジトリもない途中のフォルダを降りる。
+    fn only_child(node: &Trie) -> Option<(&String, &Trie)> {
+        (node.repositories == 0 && node.children.len() == 1)
+            .then(|| node.children.iter().next())
+            .flatten()
+    }
+    fn make(
+        node: &Trie,
+        prefix: &str,
+        top: bool,
+        category: &dyn Fn(String) -> Category,
+        title: &dyn Fn(&str) -> String,
+    ) -> Vec<Node> {
+        let mut names: Vec<&String> = node.children.keys().collect();
+        names.sort_by_key(|n| n.to_lowercase());
+        names
+            .into_iter()
+            .map(|name| {
+                let mut child = &node.children[name];
+                let mut path = format!("{prefix}/{name}");
+                let mut label = name.clone();
+                while let Some((next, grand)) = only_child(child) {
+                    path.push('/');
+                    path.push_str(next);
+                    label.push('/');
+                    label.push_str(next);
+                    child = grand;
+                }
+                let full = title(&path);
+                Node {
+                    title: if top { full.clone() } else { label },
+                    category: category(path.clone()),
+                    tip: Some(full),
+                    children: make(child, &path, false, category, title),
+                }
+            })
+            .collect()
+    }
+    // 一番上（`base` の直下）は、枝分かれがなければそのまま下の節に降りる。
+    let mut start = &root;
+    let mut prefix = base.to_owned();
+    while let Some((next, child)) = only_child(start) {
+        prefix.push('/');
+        prefix.push_str(next);
+        start = child;
+    }
+    if prefix == base {
+        return make(start, base, base.is_empty(), category, title);
+    }
+    // まとめた途中のフォルダを 1 つの節にする（リポジトリが散っていれば、その下を枝に）。
+    let full = title(&prefix);
+    let label = if base.is_empty() {
+        full.clone()
+    } else {
+        prefix[base.len() + 1..].to_owned()
+    };
+    vec![Node {
+        title: label,
+        category: category(prefix.clone()),
+        tip: Some(full),
+        children: make(start, &prefix, false, category, title),
+    }]
 }
 
 // 行の中身（Quick Open と共通）
@@ -328,6 +549,8 @@ struct Browser {
     side: gtk::ListBox,
     /// 左の行ごとの分類と見出し。
     side_rows: RefCell<Vec<Side>>,
+    /// 開いている節の鍵。
+    expanded: RefCell<std::collections::HashSet<String>>,
     rebuilding: Cell<bool>,
     filter: gtk::SearchEntry,
     model: gtk::StringList,
@@ -485,6 +708,7 @@ impl Browser {
             category: RefCell::new(saved),
             side,
             side_rows: RefCell::default(),
+            expanded: RefCell::new(saved_expanded()),
             rebuilding: Cell::new(false),
             filter,
             model,
@@ -742,7 +966,7 @@ impl Browser {
 
     // 作り直す
 
-    fn bookmarks_changed(&self) {
+    fn bookmarks_changed(self: &Rc<Self>) {
         self.scanning.set_visible(bookmarks::is_scanning());
         self.scanning.set_spinning(bookmarks::is_scanning());
         self.reload();
@@ -757,39 +981,77 @@ impl Browser {
         }
     }
 
-    fn reload(&self) {
+    fn reload(self: &Rc<Self>) {
         self.reload_sidebar();
         self.reload_table();
     }
 
-    /// 左: すべて・お気に入り、場所（このコンピュータ・SSH のホストごと。その下にスキャンするフォルダ）、グループ。
-    fn reload_sidebar(&self) {
+    /// 左の木: すべて・お気に入り、場所（このコンピュータ・SSH のホストごと。その下にスキャンするフォルダ（🔍。その下は
+    /// フォルダの階層）と、それ以外のリポジトリ（開いた・手で入れたもの）のあるフォルダの木）、グループ。
+    fn side_tree(&self) -> Vec<(Side, Vec<Node>)> {
         let data = bookmarks::data();
         let all = bookmarks::all_locations();
-        let mut rows: Vec<(Side, String, u32)> = vec![
-            (Side::Category(Category::All), tr!("All"), 0),
-            (Side::Category(Category::Favorites), tr!("Favorites"), 0),
-            (Side::Places, tr!("Places"), 0),
-            (Side::Category(Category::Local), tr!("This Computer"), 0),
-        ];
-        let scans = |host: Option<&str>, rows: &mut Vec<(Side, String, u32)>| {
-            for root in data
-                .scan_roots
+        let roots = Roots::new(&data);
+        let node = |title: String, category: Category, children: Vec<Node>| Node {
+            title,
+            category,
+            tip: None,
+            children,
+        };
+        // スキャンするフォルダ（🔍）と、その中のフォルダの木。
+        let scan_nodes = |host: Option<&str>| -> Vec<Node> {
+            data.scan_roots
                 .iter()
                 .filter(|r| bookmarks::ssh_host(&r.path).as_deref() == host)
-            {
-                let title = match host {
-                    Some(_) => bookmarks::path_part(&root.path),
-                    None => bookmarks::tilde(&root.path),
-                };
-                rows.push((
-                    Side::Category(Category::Scan(root.path.clone())),
-                    format!("🔍 {title}"),
-                    1,
-                ));
-            }
+                .map(|root| {
+                    let base = root_base(&root.path);
+                    let found: Vec<String> = bookmarks::scanned(&root.path)
+                        .iter()
+                        .map(|l| bookmarks::path_part(l))
+                        .collect();
+                    // SSH 先は `~` のまま探すので、見つけたものが絶対パスで返ることがある。そのときは根から木にする。
+                    let inside = format!("{base}/");
+                    let under = found.iter().all(|p| p.starts_with(&inside));
+                    let r = root.path.clone();
+                    let children = folder_tree(
+                        &found,
+                        if under { &base } else { "" },
+                        &|p| Category::ScanFolder(r.clone(), p),
+                        &|p| match host {
+                            Some(_) => remote_title(p),
+                            None => bookmarks::tilde(p),
+                        },
+                    );
+                    let title = match host {
+                        Some(_) => remote_title(&bookmarks::path_part(&root.path)),
+                        None => bookmarks::tilde(&base),
+                    };
+                    Node {
+                        tip: Some(tr!(
+                            "Searches {path}",
+                            path = host.map(|h| format!("{h}:")).unwrap_or_default() + &title
+                        )),
+                        title: format!("🔍 {title}"),
+                        category: Category::Scan(root.path.clone()),
+                        children,
+                    }
+                })
+                .collect()
         };
-        scans(None, &mut rows);
+        let outside = |host: Option<&str>| -> Vec<String> {
+            all.iter()
+                .filter(|l| bookmarks::ssh_host(l).as_deref() == host && !roots.contains(l))
+                .map(|l| bookmarks::path_part(l))
+                .collect()
+        };
+        let mut local = scan_nodes(None);
+        local.extend(folder_tree(
+            &outside(None),
+            "",
+            &Category::Folder,
+            &bookmarks::tilde,
+        ));
+        let mut places = vec![node(tr!("This Computer"), Category::Local, local)];
         let mut hosts: Vec<String> = all
             .iter()
             .filter_map(|l| bookmarks::ssh_host(l))
@@ -802,41 +1064,116 @@ impl Browser {
         hosts.sort();
         hosts.dedup();
         for host in hosts {
-            rows.push((
-                Side::Category(Category::Host(host.clone())),
-                host.clone(),
-                0,
+            let mut children = scan_nodes(Some(&host));
+            let h = host.clone();
+            children.extend(folder_tree(
+                &outside(Some(&host)),
+                "",
+                &move |p| Category::HostFolder(h.clone(), p),
+                &remote_title,
             ));
-            scans(Some(&host), &mut rows);
+            places.push(node(host.clone(), Category::Host(host), children));
         }
+        let mut tree = vec![
+            (
+                Side::Category(Category::All),
+                vec![node(tr!("All"), Category::All, Vec::new())],
+            ),
+            (
+                Side::Category(Category::Favorites),
+                vec![node(tr!("Favorites"), Category::Favorites, Vec::new())],
+            ),
+            (Side::Places, places),
+        ];
+        // グループは作ってから出す（空の見出しを並べない）。
         if !data.groups.is_empty() {
-            rows.push((Side::Groups, tr!("Groups"), 0));
-            for g in &data.groups {
-                rows.push((Side::Category(Category::Group(g.clone())), g.clone(), 0));
+            tree.push((
+                Side::Groups,
+                data.groups
+                    .iter()
+                    .map(|g| node(g.clone(), Category::Group(g.clone()), Vec::new()))
+                    .collect(),
+            ));
+        }
+        tree
+    }
+
+    /// 左: [`Self::side_tree`] を、開いた節の中だけ並べる（選んでいる分類が閉じた節の中なら、そこまで開く）。
+    fn reload_sidebar(self: &Rc<Self>) {
+        let tree = self.side_tree();
+        /// `category` の節までの道の、上の節の鍵。
+        fn path_to(category: &Category, nodes: &[Node]) -> Option<Vec<String>> {
+            for n in nodes {
+                if n.category == *category {
+                    return Some(Vec::new());
+                }
+                if let Some(mut rest) = path_to(category, &n.children) {
+                    rest.insert(0, n.category.key());
+                    return Some(rest);
+                }
+            }
+            None
+        }
+        let found = tree
+            .iter()
+            .find_map(|(_, nodes)| path_to(&self.category.borrow(), nodes));
+        match found {
+            Some(ancestors) => self.expanded.borrow_mut().extend(ancestors),
+            // 消えたグループ・フォルダを選んでいたら、すべてに戻す。
+            None => *self.category.borrow_mut() = Category::All,
+        }
+        let mut rows: Vec<SideRow> = Vec::new();
+        fn flatten(
+            nodes: &[Node],
+            depth: i32,
+            expanded: &std::collections::HashSet<String>,
+            rows: &mut Vec<SideRow>,
+        ) {
+            for n in nodes {
+                rows.push(SideRow {
+                    side: Side::Category(n.category.clone()),
+                    title: n.title.clone(),
+                    depth,
+                    tip: n.tip.clone(),
+                    parent: !n.children.is_empty(),
+                });
+                if expanded.contains(&n.category.key()) {
+                    flatten(&n.children, depth + 1, expanded, rows);
+                }
             }
         }
-        // 消えたグループ・フォルダを選んでいたら、すべてに戻す。
-        if !rows
-            .iter()
-            .any(|r| r.0.category() == Some(&*self.category.borrow()))
-        {
-            *self.category.borrow_mut() = Category::All;
+        for (side, nodes) in &tree {
+            let title = match side {
+                Side::Places => Some(tr!("Places")),
+                Side::Groups => Some(tr!("Groups")),
+                Side::Category(_) => None,
+            };
+            if let Some(title) = title {
+                rows.push(SideRow {
+                    side: side.clone(),
+                    title,
+                    depth: 0,
+                    tip: None,
+                    parent: false,
+                });
+            }
+            flatten(nodes, 0, &self.expanded.borrow(), &mut rows);
         }
         self.rebuilding.set(true);
         self.side.remove_all();
         let current = self.category.borrow().clone();
         let mut selected = None;
-        for (category, title, indent) in &rows {
+        for r in &rows {
             let row = gtk::ListBoxRow::new();
-            let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-            let label = gtk::Label::new(Some(title));
+            let line = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+            let label = gtk::Label::new(Some(&r.title));
             label.set_xalign(0.0);
             label.set_hexpand(true);
             label.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-            line.append(&label);
-            match category.category() {
+            match r.side.category() {
                 None => {
                     // 見出し。
+                    line.append(&label);
                     label.add_css_class("caption-heading");
                     label.add_css_class("dim-label");
                     line.set_margin_top(8);
@@ -844,35 +1181,61 @@ impl Browser {
                     row.set_activatable(false);
                 }
                 Some(c) => {
-                    line.set_margin_start(*indent as i32 * 14);
+                    line.set_margin_start(r.depth * 14);
+                    // 開く・閉じる（子のない節は、同じ幅を空ける）。
+                    let open = self.expanded.borrow().contains(&c.key());
+                    let disclosure = gtk::Image::from_icon_name(if open {
+                        "pan-down-symbolic"
+                    } else {
+                        "pan-end-symbolic"
+                    });
+                    disclosure.add_css_class("dim-label");
+                    disclosure.set_size_request(16, -1);
+                    if r.parent {
+                        let click = gtk::GestureClick::new();
+                        let (w, key) = (Rc::downgrade(self), c.key());
+                        click.connect_released(move |gesture, _, _, _| {
+                            gesture.set_state(gtk::EventSequenceState::Claimed);
+                            if let Some(b) = w.upgrade() {
+                                b.toggle_expanded(&key);
+                            }
+                        });
+                        disclosure.add_controller(click);
+                    } else {
+                        disclosure.set_opacity(0.0);
+                    }
+                    line.append(&disclosure);
+                    line.append(&label);
                     let count = gtk::Label::new(Some(&self.count_text(c)));
                     count.add_css_class("dim-label");
                     count.add_css_class("caption");
                     line.append(&count);
-                    row.set_tooltip_text(
-                        match c {
-                            Category::Scan(root) => Some(tr!(
-                                "Searches {path}",
-                                path = bookmarks::ssh_host(root)
-                                    .map(|h| format!("{h}:"))
-                                    .unwrap_or_default()
-                                    + &bookmarks::tilde(&bookmarks::path_part(root))
-                            )),
-                            _ => None,
-                        }
-                        .as_deref(),
-                    );
+                    row.set_tooltip_text(r.tip.as_deref());
                 }
             }
             row.set_child(Some(&line));
             self.side.append(&row);
-            if category.category() == Some(&current) {
+            if r.side.category() == Some(&current) {
                 selected = Some(row);
             }
         }
         self.side.select_row(selected.as_ref());
-        *self.side_rows.borrow_mut() = rows.into_iter().map(|r| r.0).collect();
+        *self.side_rows.borrow_mut() = rows.into_iter().map(|r| r.side).collect();
         self.rebuilding.set(false);
+    }
+
+    /// 節を開く・閉じる（覚えておく）。
+    fn toggle_expanded(self: &Rc<Self>, key: &str) {
+        {
+            let mut expanded = self.expanded.borrow_mut();
+            if !expanded.remove(key) {
+                expanded.insert(key.to_owned());
+            }
+            let mut keys: Vec<&str> = expanded.iter().map(String::as_str).collect();
+            keys.sort();
+            crate::settings::set_string(EXPANDED_KEY, &keys.join("\n"));
+        }
+        self.reload_sidebar();
     }
 
     fn count_text(&self, category: &Category) -> String {
@@ -1109,10 +1472,14 @@ impl Browser {
         }
         let category = self.category.borrow().clone();
         let remove = match category {
-            Category::All | Category::Local | Category::Host(_) => Some(tr!("Remove from List")),
+            Category::All
+            | Category::Local
+            | Category::Host(_)
+            | Category::Folder(_)
+            | Category::HostFolder(..) => Some(tr!("Remove from List")),
             Category::Favorites => Some(tr!("Remove from Favorites")),
             Category::Group(_) => Some(tr!("Remove from Group")),
-            Category::Scan(_) => None,
+            Category::Scan(_) | Category::ScanFolder(..) => None,
         };
         if let Some(title) = remove {
             items.push(Item::Separator);
@@ -1124,17 +1491,21 @@ impl Browser {
 
     /// 今の分類から外す: すべて・場所なら一覧から（ブックマークと開いた記録を消す）、お気に入りなら印を外す、
     /// グループならグループから出す。スキャンで見つけたものは外せない（フォルダを外す）。
-    fn remove(&self, paths: &[String]) {
+    fn remove(self: &Rc<Self>, paths: &[String]) {
         let category = self.category.borrow().clone();
         for path in paths {
             match &category {
-                Category::All | Category::Local | Category::Host(_) => {
+                Category::All
+                | Category::Local
+                | Category::Host(_)
+                | Category::Folder(_)
+                | Category::HostFolder(..) => {
                     crate::repos::forget(path);
                     bookmarks::remove(path);
                 }
                 Category::Favorites => bookmarks::set_favorite(path, false),
                 Category::Group(_) => bookmarks::move_to(path, None),
-                Category::Scan(_) => self.window.error_bell(),
+                Category::Scan(_) | Category::ScanFolder(..) => self.window.error_bell(),
             }
         }
         self.reload();
@@ -1238,7 +1609,11 @@ impl Browser {
                     bookmarks::remove_scan_root(&p)
                 }));
             }
-            Category::All | Category::Favorites => {}
+            Category::All
+            | Category::Favorites
+            | Category::Folder(_)
+            | Category::HostFolder(..)
+            | Category::ScanFolder(..) => {}
         }
         items
     }

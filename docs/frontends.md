@@ -68,7 +68,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Add a local or an SSH repository | ✓ | ✓ | n/a | n/a |  |
 | Folders to scan on this machine (depth, watched) | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list and folders are not watched. |
 | Folders to scan on SSH hosts | ✓ | △ | n/a | △ | GTK4: Added in Repositories; not on the SSH Hosts page.<br>CLI: `find-repositories` does the scan for the apps. |
-| Folder tree of the repositories under a place | ✓ | — | n/a | n/a |  |
+| Folder tree of the repositories under a place | ✓ | ✓ | n/a | n/a |  |
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: No dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable | ✓ | ✓ | n/a | n/a |  |
 | Favorites, display name, color label | ✓ | ✓ | n/a | n/a |  |
