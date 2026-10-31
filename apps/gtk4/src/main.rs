@@ -15,6 +15,7 @@ mod filetools;
 mod github;
 mod graph;
 mod history;
+mod historydisplay;
 mod icon;
 mod measure;
 mod menu;
@@ -376,6 +377,8 @@ fn build_window(app: &gtk::Application, args: Args) {
     // History の検索の欄（History の上に出す）。
     let search = Rc::new(search::Search::new(&view));
     let history_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let (history_bar, display_button) = historydisplay::bar();
+    history_column.append(&history_bar);
     history_column.append(&search.bar);
     history_column.append(&overlay);
 
@@ -398,6 +401,8 @@ fn build_window(app: &gtk::Application, args: Args) {
     // 裏で読んでいる詳細と差分の数（`--snapshot` はなくなるまで待つ）。
     let pending = Rc::new(Cell::new(0u32));
     connect_selection(&view, &details, &diff, &right, &pending);
+    // 並び順・折りたたみ（View の History の表示）に合わせて History を作る。
+    let shaper = historydisplay::Shaper::new(&view, search.clone(), pending.clone());
 
     // History と Working Copy は、サイドバーで行き来する。
     let working = Rc::new(WorkingCopy::new(pending.clone()));
@@ -472,6 +477,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         .child(&content)
         .build();
     window.set_titlebar(Some(&header));
+    historydisplay::install_actions(&window);
     window.present();
     view.grab_focus();
 
@@ -572,6 +578,7 @@ fn build_window(app: &gtk::Application, args: Args) {
     });
     // History のコミットの右クリック。
     let (a, v, rd) = (actions.clone(), view.downgrade(), range_diff_opener.clone());
+    let sh = shaper.clone();
     view.connect_menu(move |row, x, y| {
         let Some(view) = v.upgrade() else { return };
         if let Some((_, history)) = view.current() {
@@ -579,7 +586,10 @@ fn build_window(app: &gtk::Application, args: Args) {
             let items = if rows.len() > 1 && rows.contains(&row) {
                 commitops::menu_many(&a, &history, &rows, view.upcast_ref(), &rd)
             } else {
-                commitops::menu(&a, &history, row, view.upcast_ref())
+                // 折りたたんだ merge なら、取り込んだ側を開く・たたむ項目を先に。
+                let mut items = sh.merge_items(&history, row);
+                items.extend(commitops::menu(&a, &history, row, view.upcast_ref()));
+                items
             };
             menu::popup(&view, x, y, items);
         }
@@ -753,7 +763,8 @@ fn build_window(app: &gtk::Application, args: Args) {
     let latest_refs = refs;
     search.install(&window, app);
     header.pack_end(&search.toggle);
-    std::thread::spawn(move || load(path, tx));
+    let order = settings::history_order();
+    std::thread::spawn(move || load(path, order, tx));
     glib::spawn_future_local(glib::clone!(
         #[weak]
         view,
@@ -773,7 +784,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                         stashes.set_repo(repo.clone());
                         reflog.set_repo(repo.clone());
                         actions.set_repo(repo.clone());
-                        search.show_history(repo, history);
+                        shaper.present(repo, history);
                         if let Some(command) = perform.take() {
                             match serde_json::from_str(&command) {
                                 Ok(command) => {
@@ -798,6 +809,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                             let button = match args.open_menu.as_deref() {
                                 Some("repository") => Some(buttons.repository.clone()),
                                 Some("primary") => Some(buttons.primary.clone()),
+                                Some("history-display") => Some(display_button.clone()),
                                 _ => None,
                             };
                             if args.reflog {
@@ -959,13 +971,15 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 let rd = range_diff_opener.clone();
                                 pending.set(pending.get() + 1);
                                 let (p, v, a) = (pending.clone(), view.clone(), actions.clone());
+                                let sh = shaper.clone();
                                 let item = args.menu_item.clone();
                                 glib::timeout_add_local_once(
                                     std::time::Duration::from_millis(300),
                                     move || {
                                         if let Some((_, history)) = v.current() {
                                             let y = (row as f32 + 0.5) * v.row_height();
-                                            let items = if many {
+                                            let mut items = sh.merge_items(&history, row);
+                                            items.extend(if many {
                                                 let rows = v.selection();
                                                 commitops::menu_many(
                                                     &a,
@@ -976,7 +990,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                                                 )
                                             } else {
                                                 commitops::menu(&a, &history, row, v.upcast_ref())
-                                            };
+                                            });
                                             eprintln!("{}", menu::titles(&items).join("\n"));
                                             match &item {
                                                 Some(path) => {
@@ -1513,7 +1527,7 @@ fn reload_status(repo: &Arc<Repository>, tx: &async_channel::Sender<Event>) {
 }
 
 /// 裏のスレッドで開いて読み、変化を見張って読み直す。
-fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
+fn load(path: PathBuf, order: amonhen_model::HistoryOrder, tx: async_channel::Sender<Event>) {
     let repo = match open(&path) {
         Ok(repo) => Arc::new(repo),
         Err(e) => {
@@ -1529,6 +1543,12 @@ fn load(path: PathBuf, tx: async_channel::Sender<Event>) {
             Ok(false) => {}
             Err(e) => eprintln!("commit-graph を書き出せない: {e}"),
         });
+    }
+    // 並び順は読む前にコアへ（既定の日付順なら何もしない）。
+    if order != amonhen_model::HistoryOrder::Date
+        && let Err(e) = repo.set_history_order(order)
+    {
+        eprintln!("History の並び順を変えられない: {e}");
     }
     // 前回の History をすぐ出してから、最新にする。
     if let Some(cached) = repo.load_cached_history() {

@@ -1120,3 +1120,25 @@
 "Show Merge Commits" = "マージのコミットを表示";
 "No commits changed this file." = "このファイルを変えたコミットはありません";
 "Blame at {id}" = "{id} の時点で Blame";
+/* GTK4: History の表示（並び順・表示項目・1 行表示・折りたたみ・祖先の強調） */
+"Date Order" = "日付順";
+"Topological Order" = "トポロジー順";
+"Order" = "並び順";
+"Items" = "表示項目";
+"Topological order keeps a branch’s commits together under the merge that brought them in." = "トポロジー順は、枝のコミットを取り込んだ merge の下にまとめます。";
+"Show each commit on one line" = "1 コミットを 1 行で表示する";
+"Highlight the selected commit’s ancestors" = "選んだコミットの祖先を強調する";
+"Branches and Tags" = "ブランチとタグ";
+"Author" = "作者";
+"Date" = "日時";
+"Commit ID" = "コミット ID";
+"Signature" = "署名";
+"What each commit’s row shows besides the subject." = "コミットの行に、件名のほかに出すもの。";
+"One Line per Commit" = "コミットを 1 行で表示";
+"Fold Merged Branches" = "merge したブランチを畳む";
+"Highlight Ancestors" = "祖先を強調";
+"Monospaced Commit Message" = "コミットメッセージを等幅で表示";
+"Go to HEAD (Ctrl+Shift+H)" = "HEAD へ移動（Ctrl+Shift+H）";
+"History Display: order, items, one line per commit" = "History の表示: 並び順・表示項目・1 行表示";
+"Show {count} Merged Commits" = "取り込んだ {count} コミットを表示";
+"Fold Merged Commits" = "取り込んだコミットをたたむ";

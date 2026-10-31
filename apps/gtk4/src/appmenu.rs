@@ -522,6 +522,10 @@ fn primary_menu() -> gio::Menu {
         ("Commit".to_owned(), Menu::Commit),
     ] {
         let items = table_sections(part);
+        // View は History の表示のメニューも兼ねる（docs/ux.md の 11）。
+        if part == Menu::View {
+            crate::historydisplay::append_sections(&items);
+        }
         if items.n_items() > 0 {
             submenus.append_submenu(Some(&name), &items);
         }

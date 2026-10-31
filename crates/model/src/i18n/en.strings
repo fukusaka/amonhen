@@ -39,3 +39,4 @@
 "{count} commits look unfinished (fixup!, squash! or WIP)." = "{count} commit looks unfinished (fixup!, squash! or WIP).";
 "Installed. {count} files are in LFS." = "Installed. {count} file is in LFS.";
 "File History — {path} ({count} commits)" = "File History — {path} ({count} commit)";
+"Show {count} Merged Commits" = "Show {count} Merged Commit";

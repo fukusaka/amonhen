@@ -10,6 +10,7 @@ use std::time::Instant;
 
 use amonhen_core::HistorySnapshot;
 use amonhen_core::lanes::{LaneMetrics, lane_positions};
+use amonhen_core::lineage::{Lineage, NOT_LIT};
 use amonhen_layout::Edge;
 use gtk::prelude::*;
 use gtk::{gdk, graphene, gsk};
@@ -175,7 +176,11 @@ impl Style {
     }
 }
 
-/// `rows` 行の点と線を `snapshot` に描く。y は `scroll_y` だけずらす。
+/// 祖先を強調するときの、ほかの点と線の不透明度（macOS 版と同じ）。
+const DIMMED_ALPHA: f32 = 0.18;
+
+/// `rows` 行の点と線を `snapshot` に描く。y は `scroll_y` だけずらす。`lineage` があれば、祖先の点と
+/// それをつなぐ線のほかは薄く描く。
 pub fn draw(
     snapshot: &gtk::Snapshot,
     history: &HistorySnapshot,
@@ -183,6 +188,7 @@ pub fn draw(
     rows: Range<u32>,
     scroll_y: f32,
     m: &Metrics,
+    lineage: Option<&Lineage>,
 ) {
     let row_y = |row: u32| (row as f32 + 0.5) * m.row_height - scroll_y;
     let mut strokes: HashMap<Style, gsk::PathBuilder> = HashMap::new();
@@ -205,6 +211,24 @@ pub fn draw(
             width = width.min((spacing * 0.8).max(0.6));
             alpha = 0.45;
         }
+        // 祖先を強調するときは、光らない線（や縦線の光らない上の部分）を薄くする。
+        let from = lineage.map_or(e.row_start, |l| l.edge_from[i as usize]);
+        if from == NOT_LIT {
+            alpha *= DIMMED_ALPHA;
+        } else if from > e.row_start && e.lane_start == e.lane_end {
+            let my = row_y(from);
+            let dim = strokes
+                .entry(Style::new(e.color, width, alpha * DIMMED_ALPHA))
+                .or_default();
+            dim.move_to(ax, ay);
+            dim.line_to(ax, my);
+            let lit = strokes
+                .entry(Style::new(e.color, width, alpha))
+                .or_default();
+            lit.move_to(ax, my);
+            lit.line_to(bx, by);
+            continue;
+        }
         let path = strokes
             .entry(Style::new(e.color, width, alpha))
             .or_default();
@@ -226,16 +250,18 @@ pub fn draw(
         );
     }
 
-    let mut fills: HashMap<u16, gsk::PathBuilder> = HashMap::new();
+    let mut fills: HashMap<(u16, bool), gsk::PathBuilder> = HashMap::new();
     let nodes = history.layout.nodes();
     for n in &nodes[rows.start as usize..rows.end as usize] {
         let p = graphene::Point::new(lanes.x(n.lane, m), row_y(n.row));
+        let dimmed = lineage.is_some_and(|l| !l.contains(n.row));
         fills
-            .entry(n.color % PALETTE.len() as u16)
+            .entry((n.color % PALETTE.len() as u16, dimmed))
             .or_default()
             .add_circle(&p, m.node_radius);
     }
-    for (c, path) in fills {
-        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color(c, 1.0));
+    for ((c, dimmed), path) in fills {
+        let alpha = if dimmed { DIMMED_ALPHA } else { 1.0 };
+        snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color(c, alpha));
     }
 }

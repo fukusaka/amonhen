@@ -53,6 +53,10 @@ pub enum Kind {
     Doc,
     /// arrow.left.arrow.right（Range Diff）
     RangeDiff,
+    /// slider.horizontal.3（History の表示のメニュー）
+    Sliders,
+    /// location（Go to HEAD）
+    Location,
 }
 
 mod imp {
@@ -334,6 +338,25 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(5.5, 8.0);
             p.line_to(3.0, 10.5);
             p.line_to(5.5, 13.0);
+        }
+        Kind::Sliders => {
+            // 3 本の横線と、それぞれのつまみ。
+            for (y, knob) in [(4.0f32, 10.5f32), (8.0, 5.5), (12.0, 9.0)] {
+                p.move_to(2.5, y);
+                p.line_to(13.5, y);
+                let dot = gsk::PathBuilder::new();
+                dot.add_circle(&point(knob, y), 1.6);
+                fill.get_or_insert_with(gsk::PathBuilder::new)
+                    .add_path(&dot.to_path());
+            }
+        }
+        Kind::Location => {
+            // 右上を指す矢じり（位置を示す矢印）。
+            p.move_to(13.5, 2.5);
+            p.line_to(2.5, 7.3);
+            p.line_to(8.0, 8.0);
+            p.line_to(8.7, 13.5);
+            p.close();
         }
         Kind::Filter => {
             p.move_to(2.5, 4.5);

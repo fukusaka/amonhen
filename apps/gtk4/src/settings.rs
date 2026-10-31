@@ -31,6 +31,51 @@ pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 /// 開いている間、何分ごとに fetch するか（0 はしない）。
 pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
+/// History の並び順（`date`・`topo`。既定は日付順）。
+pub const HISTORY_ORDER: &str = "historyOrder";
+/// History の行に出す項目（[`items`] のビット。既定はすべて）。
+pub const HISTORY_ITEMS: &str = "historyItems";
+/// History の行を 1 行にするか（既定は件名と作者・日時の 2 行）。
+pub const COMPACT_HISTORY_ROWS: &str = "compactHistoryRows";
+/// History でマージ済みブランチを折りたたむか（既定は折りたたまない）。
+pub const FOLD_MERGED_BRANCHES: &str = "foldMergedBranches";
+/// 選んだコミットの祖先を強調するか（既定はする）。
+pub const HIGHLIGHT_ANCESTORS: &str = "highlightAncestors";
+
+/// History の行に出す項目のビット（macOS 版の `HistoryItems` と同じ値）。件名はいつも出す。
+pub mod items {
+    /// ブランチ・タグのラベル。
+    pub const REFS: u32 = 1;
+    pub const AUTHOR: u32 = 2;
+    pub const DATE: u32 = 4;
+    /// 短いコミット ID。
+    pub const ID: u32 = 8;
+    /// 署名の検証結果の印。
+    pub const SIGNATURE: u32 = 16;
+    /// GitHub の CI の状態（GTK4 版にはまだない。macOS 版と同じ値を残すため）。
+    pub const CI: u32 = 32;
+    pub const ALL: u32 = REFS | AUTHOR | DATE | ID | SIGNATURE | CI;
+    /// 作者・日時の行に出すもの。
+    pub const META: u32 = AUTHOR | DATE | ID;
+}
+
+/// History の行に出す項目（[`items`] のビット）。
+pub fn history_items() -> u32 {
+    string(HISTORY_ITEMS)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(items::ALL)
+}
+
+pub fn set_history_items(value: u32) {
+    set_string(HISTORY_ITEMS, &value.to_string());
+}
+
+/// History の並び順。
+pub fn history_order() -> amonhen_model::HistoryOrder {
+    string(HISTORY_ORDER)
+        .and_then(|s| amonhen_model::HistoryOrder::from_name(&s))
+        .unwrap_or_default()
+}
 
 /// 自動の fetch の間隔（分。0 はしない）。
 pub fn auto_fetch_minutes() -> u32 {
@@ -67,8 +112,10 @@ fn changed(key: &str) {
 }
 
 pub fn bool(key: &str) -> bool {
-    FILE.with(|f| f.boolean(GROUP, key))
-        .unwrap_or(matches!(key, MONOSPACED_COMMIT_MESSAGE | AUTO_MAGIC_MERGE))
+    FILE.with(|f| f.boolean(GROUP, key)).unwrap_or(matches!(
+        key,
+        MONOSPACED_COMMIT_MESSAGE | AUTO_MAGIC_MERGE | HIGHLIGHT_ANCESTORS
+    ))
 }
 
 pub fn set_bool(key: &str, value: bool) {
@@ -113,8 +160,87 @@ fn note(text: &str) -> gtk::Label {
 fn check(key: &'static str, title: &str) -> gtk::CheckButton {
     let c = gtk::CheckButton::with_label(title);
     c.set_active(bool(key));
-    c.connect_toggled(move |c| set_bool(key, c.is_active()));
+    c.connect_toggled(move |c| {
+        if c.is_active() != bool(key) {
+            set_bool(key, c.is_active());
+        }
+    });
+    // History の表示のメニューなど、ほかの所で変えたら合わせる。
+    let weak = c.downgrade();
+    connect_changed(move |changed| {
+        if changed == key
+            && let Some(c) = weak.upgrade()
+        {
+            c.set_active(bool(key));
+        }
+    });
     c
+}
+
+/// History の行に出す項目の 1 つ（`bit`）を出すか。
+fn item_check(bit: u32, title: &str) -> gtk::CheckButton {
+    let c = gtk::CheckButton::with_label(title);
+    c.set_active(history_items() & bit != 0);
+    c.connect_toggled(move |c| {
+        let items = history_items();
+        let next = if c.is_active() {
+            items | bit
+        } else {
+            items & !bit
+        };
+        if next != items {
+            set_history_items(next);
+        }
+    });
+    let weak = c.downgrade();
+    connect_changed(move |changed| {
+        if changed == HISTORY_ITEMS
+            && let Some(c) = weak.upgrade()
+        {
+            c.set_active(history_items() & bit != 0);
+        }
+    });
+    c
+}
+
+/// History の並び順を選ぶ行と、その説明（Settings > Appearance）。
+fn order_row() -> gtk::Box {
+    use amonhen_model::HistoryOrder;
+    const ORDERS: [HistoryOrder; 2] = [HistoryOrder::Date, HistoryOrder::Topo];
+    let titles = [tr!("Date Order"), tr!("Topological Order")];
+    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let choice = gtk::DropDown::from_strings(&refs);
+    let index = |o: HistoryOrder| ORDERS.iter().position(|&x| x == o).unwrap_or(0) as u32;
+    choice.set_selected(index(history_order()));
+    choice.connect_selected_notify(move |d| {
+        let order = ORDERS[d.selected() as usize];
+        if order != history_order() {
+            set_string(HISTORY_ORDER, order.name());
+        }
+    });
+    let weak = choice.downgrade();
+    connect_changed(move |changed| {
+        if changed == HISTORY_ORDER
+            && let Some(d) = weak.upgrade()
+        {
+            d.set_selected(index(history_order()));
+        }
+    });
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let l = gtk::Label::new(Some(&tr!("Order")));
+    l.set_hexpand(true);
+    l.set_xalign(0.0);
+    row.append(&l);
+    row.append(&choice);
+    // 説明は見出しの下にそろえる（ほかの説明はチェックボックスの文字にそろえる）。
+    let n = note(&tr!(
+        "Topological order keeps a branch’s commits together under the merge that brought them in."
+    ));
+    n.set_margin_start(0);
+    let b = gtk::Box::new(gtk::Orientation::Vertical, 4);
+    b.append(&row);
+    b.append(&n);
+    b
 }
 
 fn section(title: Option<&str>, items: &[gtk::Widget]) -> gtk::Box {
@@ -243,14 +369,39 @@ pub fn show(parent: &gtk::ApplicationWindow) {
 
     // Appearance
     stack.add_titled(
-        &page(&[section(
-            Some(&tr!("Commit Details")),
-            &[check(
-                MONOSPACED_COMMIT_MESSAGE,
-                &tr!("Show the message in a monospaced font"),
-            )
-            .upcast()],
-        )]),
+        &page(&[
+            section(
+                Some("History"),
+                &[
+                    order_row().upcast(),
+                    check(COMPACT_HISTORY_ROWS, &tr!("Show each commit on one line")).upcast(),
+                    check(
+                        HIGHLIGHT_ANCESTORS,
+                        &tr!("Highlight the selected commit’s ancestors"),
+                    )
+                    .upcast(),
+                ],
+            ),
+            section(
+                Some(&tr!("Items")),
+                &[
+                    item_check(items::REFS, &tr!("Branches and Tags")).upcast(),
+                    item_check(items::AUTHOR, &tr!("Author")).upcast(),
+                    item_check(items::DATE, &tr!("Date")).upcast(),
+                    item_check(items::ID, &tr!("Commit ID")).upcast(),
+                    item_check(items::SIGNATURE, &tr!("Signature")).upcast(),
+                    note(&tr!("What each commit’s row shows besides the subject.")).upcast(),
+                ],
+            ),
+            section(
+                Some(&tr!("Commit Details")),
+                &[check(
+                    MONOSPACED_COMMIT_MESSAGE,
+                    &tr!("Show the message in a monospaced font"),
+                )
+                .upcast()],
+            ),
+        ]),
         Some("appearance"),
         &tr!("Appearance"),
     );
