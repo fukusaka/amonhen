@@ -8,7 +8,7 @@
 //! 次のコミットに含めるか（index に入っているか）を見せる。印のクリックでその行を含める・外す。
 
 use std::cell::{Cell, RefCell};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -36,6 +36,8 @@ pub struct View {
     syntax: HashMap<u32, Vec<(u32, u32, u8)>>,
     /// 行番号の最大の桁数。
     digits: usize,
+    /// ファイルの見出しの行（全ファイルを並べた差分。そうでなければ空）。
+    file_rows: Vec<u32>,
 }
 
 // SAFETY: `DiffView` のポインタは、自分が持つバッファの先頭を指すだけ。
@@ -67,10 +69,18 @@ impl View {
             .map(|r| r.old_no.max(r.new_no))
             .max()
             .unwrap_or(0);
+        let file_rows = view
+            .rows
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.kind == DiffRow::FILE)
+            .map(|(i, _)| i as u32)
+            .collect();
         Self {
             highlights,
             syntax,
             digits: max.to_string().len().max(3),
+            file_rows,
             view,
         }
     }
@@ -137,7 +147,7 @@ pub struct State {
     on_mark: Option<Rc<dyn Fn(u32)>>,
     /// 選んだ行が変わったときに呼ぶ。
     on_selection: Option<Rc<dyn Fn()>>,
-    /// ファイルの見出しを右クリックしたときに呼ぶ（パス、x、y）。
+    /// ファイルの見出し・差分の行を右クリックしたときに呼ぶ。
     on_file_menu: Option<FileMenuCallback>,
     /// 見出しのない差分（Working Copy の 1 ファイル）の行を右クリックしたときに呼ぶ（行、x、y）。
     on_row_menu: Option<RowMenuCallback>,
@@ -149,10 +159,17 @@ pub struct State {
     hunk_cursor: Option<usize>,
     /// 表示し直した後に選ぶ hunk の番号（含める・外すの後に次の hunk へ進むため）。
     hunk_after: Option<usize>,
+    /// Viewed にしたファイル（番号）。
+    viewed: HashSet<usize>,
+    /// 見出しの Viewed を押したときに呼ぶ（ファイルの番号）。None なら Viewed を出さない。
+    on_toggle_viewed: Option<Rc<dyn Fn(usize)>>,
+    /// 一番上に見えているファイルが変わったときに呼ぶ（ファイルの番号）。
+    on_top_file: Option<Rc<dyn Fn(usize)>>,
+    top_file: Option<usize>,
 }
 
-/// ファイルの見出しを右クリックしたときに呼ぶ（パス、x、y）。
-type FileMenuCallback = Rc<dyn Fn(&str, f64, f64)>;
+/// ファイルの見出し・差分の行を右クリックしたときに呼ぶ（見出しの上ならファイルの番号、パス、x、y）。
+type FileMenuCallback = Rc<dyn Fn(Option<usize>, &str, f64, f64)>;
 
 /// 見出しのない差分の行を右クリックしたときに呼ぶ（行、x、y）。
 type RowMenuCallback = Rc<dyn Fn(usize, f64, f64)>;
@@ -309,10 +326,24 @@ impl DiffWidget {
 
     /// 新しい差分を出す（先頭から）。
     pub fn show(&self, source: Arc<Source>, view: View) {
+        let collapsed = vec![false; source.0.files.len()];
+        self.show_files(source, view, collapsed, HashSet::new());
+    }
+
+    /// 新しい差分を、`collapsed` のファイルを畳み（`view` はそれで作ったもの）、`viewed` を Viewed にして出す。
+    pub fn show_files(
+        &self,
+        source: Arc<Source>,
+        view: View,
+        collapsed: Vec<bool>,
+        viewed: HashSet<usize>,
+    ) {
         {
             let mut st = self.state();
             st.generation += 1;
-            st.collapsed = vec![false; source.0.files.len()];
+            st.collapsed = collapsed;
+            st.viewed = viewed;
+            st.top_file = None;
             st.source = Some(source);
             st.view = Some(Arc::new(view));
             st.rows.clear();
@@ -400,8 +431,8 @@ impl DiffWidget {
         (staged, st.selection.len())
     }
 
-    /// ファイルの見出しを右クリックしたら `f(パス, x, y)` を呼ぶ。
-    pub fn connect_file_menu(&self, f: impl Fn(&str, f64, f64) + 'static) {
+    /// ファイルの見出しか差分の行を右クリックしたら `f(見出しの上ならファイルの番号, パス, x, y)` を呼ぶ。
+    pub fn connect_file_menu(&self, f: impl Fn(Option<usize>, &str, f64, f64) + 'static) {
         self.state().on_file_menu = Some(Rc::new(f));
     }
 
@@ -485,7 +516,7 @@ impl DiffWidget {
         if let (Some(view), Some(rows_f)) = (&view, rows_f)
             && index >= 0.0
             && (index as usize) < view.view.rows.len()
-            && !view.view.rows.iter().any(|r| r.kind == DiffRow::FILE)
+            && view.file_rows.is_empty()
         {
             rows_f(index as usize, x, y);
             return;
@@ -496,19 +527,79 @@ impl DiffWidget {
         if index < 0.0 {
             return;
         }
-        // 見出しより下の行なら、その行のファイルの見出しを探す。
-        let rows = &view.view.rows;
-        let Some(header) = rows[..rows.len().min(index as usize + 1)]
-            .iter()
-            .rev()
-            .find(|r| r.kind == DiffRow::FILE)
-        else {
-            return;
-        };
+        // 見出し（上に張り付いたものを含む）の上ならそのファイル、下の行ならその行のファイル。
+        let header = self.header_at(y as f32);
+        let file = header.or_else(|| {
+            view.file_rows
+                .iter()
+                .rposition(|&r| r as f32 <= index)
+                .filter(|_| (index as usize) < view.view.rows.len())
+        });
+        let Some(file) = file else { return };
         // とびとびに選んだときの見出しは「パス — 短い ID」。
-        let text = view.text(header);
+        let text = view.text(&view.view.rows[view.file_rows[file] as usize]);
         let path = text.split(" — ").next().unwrap_or(text);
-        f(path, x, y);
+        f(header, path, x, y);
+    }
+
+    /// 見出しの Viewed を押したら `f(ファイルの番号)` を呼ぶ（呼ぶ先があるときだけ Viewed を出す）。
+    pub fn connect_toggle_viewed(&self, f: impl Fn(usize) + 'static) {
+        self.state().on_toggle_viewed = Some(Rc::new(f));
+        self.queue_draw();
+    }
+
+    /// 一番上に見えているファイルが変わったら `f(ファイルの番号)` を呼ぶ。
+    pub fn connect_top_file(&self, f: impl Fn(usize) + 'static) {
+        self.state().on_top_file = Some(Rc::new(f));
+    }
+
+    /// Viewed にしたファイルを替える。
+    pub fn set_viewed(&self, viewed: HashSet<usize>) {
+        self.state().viewed = viewed;
+        self.queue_draw();
+    }
+
+    /// ファイル `file` を畳んでいるか。
+    pub fn file_collapsed(&self, file: usize) -> bool {
+        self.state().collapsed.get(file).copied().unwrap_or(false)
+    }
+
+    /// 上に張り付かせる見出し（ファイルの番号と、見えている範囲の上端からの位置）。見出しの行が見えている範囲より
+    /// 上にあるファイルのものを出し、次のファイルの見出しが近づいたら押し上げる（macOS 版と同じ）。
+    fn sticky(view: &View, scroll: f32, rh: f32) -> Option<(usize, f32)> {
+        let first = (scroll / rh).floor().max(0.0) as u32;
+        let file = view.file_rows.iter().rposition(|&r| r <= first)?;
+        if view.file_rows[file] as f32 * rh >= scroll {
+            return None;
+        }
+        let top = view
+            .file_rows
+            .get(file + 1)
+            .map_or(0.0, |&next| (next as f32 * rh - scroll - rh).min(0.0));
+        Some((file, top))
+    }
+
+    /// `y`（部品の中の位置）が、ファイルの見出し（上に張り付いたものを含む）なら、そのファイルの番号。
+    fn header_at(&self, y: f32) -> Option<usize> {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let rh = self.row_height();
+        let view = self.state().view.clone()?;
+        if let Some((file, top)) = Self::sticky(&view, scroll, rh)
+            && y >= top
+            && y < top + rh
+        {
+            return Some(file);
+        }
+        let row = ((y + scroll) / rh).floor();
+        if row < 0.0 {
+            return None;
+        }
+        view.file_rows.iter().position(|&r| r == row as u32)
+    }
+
+    /// 見出しの Viewed のチェックボックスの左端。
+    fn viewed_x(&self) -> f32 {
+        self.width() as f32 - 76.0
     }
 
     /// Space で、選んだ変更の行を含める・外すときに `f(行)` を呼ぶ（Working Copy）。
@@ -568,7 +659,10 @@ impl DiffWidget {
 
     /// ファイルの見出しの行。
     fn file_rows(&self) -> Vec<u32> {
-        self.rows_of(DiffRow::FILE)
+        self.state()
+            .view
+            .as_ref()
+            .map_or_else(Vec::new, |v| v.file_rows.clone())
     }
 
     fn rows_of(&self, kind: u8) -> Vec<u32> {
@@ -781,7 +875,14 @@ impl DiffWidget {
             self.select_rows(&view, index, shift, ctrl);
             return;
         }
-        self.toggle_file(y);
+        let Some(file) = self.header_at(y) else {
+            return;
+        };
+        let on_viewed = self.state().on_toggle_viewed.clone();
+        match on_viewed {
+            Some(f) if x >= self.viewed_x() - 4.0 => f(file),
+            _ => self.set_file_collapsed(file, !self.file_collapsed(file)),
+        }
     }
 
     /// 行を選ぶ。hunk の見出しなら、その hunk の変更の行をすべて。
@@ -826,53 +927,44 @@ impl DiffWidget {
         self.selection_changed();
     }
 
-    /// ファイルの見出しをクリックしたら、そのファイルを畳む・開く。
-    fn toggle_file(&self, y: f32) {
-        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
-        let rh = self.row_height();
-        let (source, collapsed, generation) = {
+    /// ファイル `file` を畳む・開く（表示を裏で作り直す。スクロールの位置は保ち、畳んだファイルの見出しが上に
+    /// 隠れていたら、見出しが見えるところまで戻す）。
+    pub fn set_file_collapsed(&self, file: usize, collapsed: bool) {
+        let (source, all, generation) = {
             let mut st = self.state();
-            let Some(view) = st.view.clone() else { return };
-            let row = ((y + scroll) / rh).floor();
-            if row < 0.0 {
-                return;
-            }
-            let Some(target) = view.view.rows.get(row as usize) else {
-                return;
-            };
-            if target.kind != DiffRow::FILE {
-                return;
-            }
-            // 何番目のファイルか（見出しの行を数える）。
-            let index = view.view.rows[..row as usize]
-                .iter()
-                .filter(|r| r.kind == DiffRow::FILE)
-                .count();
             let Some(source) = st.source.clone() else {
                 return;
             };
-            if let Some(c) = st.collapsed.get_mut(index) {
-                *c = !*c;
+            match st.collapsed.get_mut(file) {
+                Some(c) if *c != collapsed => *c = collapsed,
+                _ => return,
             }
             st.generation += 1;
             (source, st.collapsed.clone(), st.generation)
         };
         let weak = self.downgrade();
         glib::spawn_future_local(async move {
-            let Ok(view) = gio::spawn_blocking(move || View::build(&source.0, &collapsed)).await
-            else {
+            let Ok(view) = gio::spawn_blocking(move || View::build(&source.0, &all)).await else {
                 return;
             };
             let Some(widget) = weak.upgrade() else { return };
-            {
+            let row = {
                 let mut st = widget.state();
                 if st.generation != generation {
                     return;
                 }
+                let row = view.file_rows.get(file).copied();
                 st.view = Some(Arc::new(view));
                 st.rows.clear();
-            }
+                row
+            };
             widget.configure_adjustments();
+            if let (Some(row), Some(adj)) = (row, widget.vadjustment()) {
+                let top = row as f64 * widget.row_height() as f64;
+                if top < adj.value() {
+                    adj.set_value(top);
+                }
+            }
             widget.queue_draw();
         });
     }
@@ -888,37 +980,20 @@ impl DiffWidget {
         };
         let fg = self.color();
         if row.kind == DiffRow::FILE {
-            // 見出し: 開閉の印、パス、行数。
+            // 見出し: 開閉の印とパス（行数と Viewed は `draw_header` で右に描く）。
             let mark = if row.flags & DiffRow::COLLAPSED != 0 {
                 "▸"
             } else {
                 "▾"
             };
             let path = view.text(row);
-            let counts = if row.flags & DiffRow::BINARY != 0 {
-                tr!("Binary")
-            } else {
-                format!("+{}  −{}", row.new_no, row.old_no)
-            };
-            let text = format!("{mark} {path}   {counts}");
+            let text = format!("{mark} {path}");
             let l = layout(&text);
             let attrs = pango::AttrList::new();
             let mut bold = pango::AttrInt::new_weight(pango::Weight::Bold);
-            bold.set_start_index(0);
-            bold.set_end_index((mark.len() + 1 + path.len()) as u32);
+            bold.set_start_index((mark.len() + 1) as u32);
+            bold.set_end_index(text.len() as u32);
             attrs.insert(bold);
-            let counts_at = (text.len() - counts.len()) as u32;
-            if row.flags & DiffRow::BINARY == 0 {
-                let plus_end = counts_at + format!("+{}", row.new_no).len() as u32;
-                let mut green = rgb_attr((0.2, 0.6, 0.3));
-                green.set_start_index(counts_at);
-                green.set_end_index(plus_end);
-                attrs.insert(green);
-                let mut red = rgb_attr((0.85, 0.25, 0.25));
-                red.set_start_index(plus_end + 2);
-                red.set_end_index(text.len() as u32);
-                attrs.insert(red);
-            }
             l.set_attributes(Some(&attrs));
             return RowText {
                 gutter: None,
@@ -980,6 +1055,7 @@ impl DiffWidget {
         let (width, height) = (self.width() as f32, self.height() as f32);
         let scroll_y = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let fg = self.color();
+        let viewed_x = self.viewed_x();
         let mut st = self.state();
         let st = &mut *st;
         self.ensure_font(st);
@@ -1000,6 +1076,11 @@ impl DiffWidget {
             probe.set_font_description(st.font.as_ref());
             probe.pixel_size().0 as f32
         };
+        let left = if st.marks {
+            TEXT_INSET + MARK_WIDTH
+        } else {
+            TEXT_INSET
+        };
         for index in first..last {
             if !st.rows.contains_key(&index) {
                 let text = self.row_text(st, &view, index);
@@ -1007,6 +1088,10 @@ impl DiffWidget {
             }
             let row = &view.view.rows[index as usize];
             let top = index as f32 * rh - scroll_y;
+            if row.kind == DiffRow::FILE {
+                self.draw_header(snapshot, st, &view, index, top, width, viewed_x, false);
+                continue;
+            }
             let background = match row.kind {
                 DiffRow::ADDED => Some(gdk::RGBA::new(0.2, 0.7, 0.3, 0.16)),
                 DiffRow::REMOVED => Some(gdk::RGBA::new(0.9, 0.25, 0.25, 0.16)),
@@ -1016,7 +1101,6 @@ impl DiffWidget {
                 DiffRow::THEIRS => Some(gdk::RGBA::new(0.6, 0.4, 0.85, 0.16)),
                 DiffRow::BASE => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.10)),
                 DiffRow::MARKER => Some(gdk::RGBA::new(0.5, 0.5, 0.5, 0.22)),
-                DiffRow::FILE => Some(gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.08)),
                 _ => None,
             };
             if let Some(bg) = background {
@@ -1031,11 +1115,6 @@ impl DiffWidget {
                     &graphene::Rect::new(0.0, top, width, rh),
                 );
             }
-            let left = if st.marks {
-                TEXT_INSET + MARK_WIDTH
-            } else {
-                TEXT_INSET
-            };
             if st.marks && Self::is_change(row) {
                 draw_mark(
                     snapshot,
@@ -1046,11 +1125,7 @@ impl DiffWidget {
                     &fg,
                 );
             }
-            let text_x = if row.kind == DiffRow::FILE {
-                left
-            } else {
-                left + gutter_width + GUTTER_GAP
-            };
+            let text_x = left + gutter_width + GUTTER_GAP;
             if let Some(gutter) = &line.gutter {
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(left, y));
@@ -1072,6 +1147,157 @@ impl DiffWidget {
             snapshot.translate(&graphene::Point::new(text_x, y));
             snapshot.append_layout(&line.text, color);
             snapshot.pop();
+            snapshot.restore();
+        }
+        // 見出しの行が上に隠れたファイルは、見出しを上に張り付かせる。
+        if let Some((file, top)) = Self::sticky(&view, scroll_y, rh) {
+            let index = view.file_rows[file];
+            if !st.rows.contains_key(&index) {
+                let text = self.row_text(st, &view, index);
+                st.rows.insert(index, text);
+            }
+            self.draw_header(snapshot, st, &view, index, top, width, viewed_x, true);
+        }
+        // 一番上に見えているファイル（一覧の選択を合わせる）。
+        if !view.file_rows.is_empty() {
+            let file = view
+                .file_rows
+                .iter()
+                .rposition(|&r| r as f32 * rh <= scroll_y + rh / 2.0)
+                .unwrap_or(0);
+            if st.top_file != Some(file) {
+                st.top_file = Some(file);
+                if let Some(f) = st.on_top_file.clone() {
+                    glib::idle_add_local_once(move || f(file));
+                }
+            }
+        }
+    }
+
+    /// ファイルの見出しの行: 開閉の印とパス、右に追加・削除の行数と Viewed のチェックボックス（Viewed を扱う
+    /// ときだけ）。`opaque` なら下の行を隠す（上に張り付かせるとき）。
+    #[allow(clippy::too_many_arguments)]
+    fn draw_header(
+        &self,
+        snapshot: &gtk::Snapshot,
+        st: &State,
+        view: &View,
+        index: u32,
+        top: f32,
+        width: f32,
+        viewed_x: f32,
+        opaque: bool,
+    ) {
+        let rh = st.row_height;
+        let fg = self.color();
+        let dark = fg.red() > 0.5;
+        if opaque {
+            let base = if dark {
+                gdk::RGBA::new(0.14, 0.14, 0.15, 1.0)
+            } else {
+                gdk::RGBA::WHITE
+            };
+            snapshot.append_color(&base, &graphene::Rect::new(0.0, top, width, rh));
+        }
+        snapshot.append_color(
+            &gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.08),
+            &graphene::Rect::new(0.0, top, width, rh),
+        );
+        snapshot.append_color(
+            &gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.15),
+            &graphene::Rect::new(0.0, top + rh - 1.0, width, 1.0),
+        );
+        let row = &view.view.rows[index as usize];
+        let file = view.file_rows.iter().position(|&r| r == index).unwrap_or(0);
+        let layout = |text: &str| {
+            let l = self.create_pango_layout(Some(text));
+            l.set_font_description(st.font.as_ref());
+            l
+        };
+        // 右から: Viewed、行数。
+        let show_viewed = st.on_toggle_viewed.is_some();
+        let right = if show_viewed { viewed_x } else { width - 4.0 };
+        let counts: Vec<(pango::Layout, gdk::RGBA)> = if row.flags & DiffRow::BINARY != 0 {
+            vec![(layout(&tr!("Binary")), fg)]
+        } else {
+            let (green, red) = if dark {
+                (
+                    gdk::RGBA::new(0.4, 0.8, 0.5, 1.0),
+                    gdk::RGBA::new(1.0, 0.45, 0.45, 1.0),
+                )
+            } else {
+                (
+                    gdk::RGBA::new(0.2, 0.6, 0.3, 1.0),
+                    gdk::RGBA::new(0.85, 0.25, 0.25, 1.0),
+                )
+            };
+            vec![
+                (layout(&format!("+{}", row.new_no)), green),
+                (layout(&format!("−{}", row.old_no)), red),
+            ]
+        };
+        let counts_width: f32 = counts
+            .iter()
+            .map(|(l, _)| l.pixel_size().0 as f32)
+            .sum::<f32>()
+            + 8.0 * (counts.len() as f32 - 1.0);
+        let counts_x = right - 14.0 - counts_width;
+        let line = &st.rows[&index];
+        let (_, h) = line.text.pixel_size();
+        let y = top + ((rh - h as f32) / 2.0).round();
+        let left = if st.marks {
+            TEXT_INSET + MARK_WIDTH
+        } else {
+            TEXT_INSET
+        };
+        // パスは行数の手前までに収める。
+        snapshot.save();
+        snapshot.push_clip(&graphene::Rect::new(
+            left,
+            top,
+            (counts_x - 8.0 - left).max(0.0),
+            rh,
+        ));
+        snapshot.translate(&graphene::Point::new(left, y));
+        snapshot.append_layout(&line.text, &fg);
+        snapshot.pop();
+        snapshot.restore();
+        let mut x = counts_x;
+        for (l, color) in &counts {
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(x, y));
+            snapshot.append_layout(l, color);
+            snapshot.restore();
+            x += l.pixel_size().0 as f32 + 8.0;
+        }
+        if show_viewed {
+            let size = 12.0;
+            let rect = graphene::Rect::new(viewed_x, top + (rh - size) / 2.0, size, size);
+            let path = gsk::PathBuilder::new();
+            path.add_rounded_rect(&gsk::RoundedRect::from_rect(rect, 3.0));
+            let path = path.to_path();
+            if st.viewed.contains(&file) {
+                snapshot.append_fill(
+                    &path,
+                    gsk::FillRule::Winding,
+                    &gdk::RGBA::new(0.21, 0.52, 0.89, 1.0),
+                );
+                let check = gsk::PathBuilder::new();
+                check.move_to(rect.x() + size * 0.22, rect.y() + size * 0.52);
+                check.line_to(rect.x() + size * 0.42, rect.y() + size * 0.72);
+                check.line_to(rect.x() + size * 0.78, rect.y() + size * 0.3);
+                let stroke = gsk::Stroke::new(1.6);
+                stroke.set_line_cap(gsk::LineCap::Round);
+                snapshot.append_stroke(&check.to_path(), &stroke, &gdk::RGBA::WHITE);
+            } else {
+                let color = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.5);
+                snapshot.append_stroke(&path, &gsk::Stroke::new(1.0), &color);
+            }
+            let label = layout("Viewed");
+            let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.6);
+            snapshot.save();
+            snapshot.translate(&graphene::Point::new(viewed_x + size + 5.0, y));
+            snapshot.append_layout(&label, &secondary);
             snapshot.restore();
         }
     }

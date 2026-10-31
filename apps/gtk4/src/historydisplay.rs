@@ -31,7 +31,7 @@ fn item_entries() -> [(&'static str, u32, String); 6] {
 }
 
 /// 切り替えの項目（アクションの名前、設定の鍵）。
-const TOGGLES: [(&str, &str); 4] = [
+const TOGGLES: [(&str, &str); 6] = [
     ("one-line-history", settings::COMPACT_HISTORY_ROWS),
     ("fold-merged-branches", settings::FOLD_MERGED_BRANCHES),
     ("highlight-ancestors", settings::HIGHLIGHT_ANCESTORS),
@@ -39,7 +39,18 @@ const TOGGLES: [(&str, &str); 4] = [
         "monospaced-commit-message",
         settings::MONOSPACED_COMMIT_MESSAGE,
     ),
+    ("all-files-in-one-diff", crate::commitfiles::STACKED),
+    ("changed-files-as-tree", crate::commitfiles::FILE_TREE),
 ];
+
+/// 切り替えの今の値（全ファイルを 1 つの差分に並べるかは、既定が入）。
+fn toggle_value(key: &str) -> bool {
+    if key == crate::commitfiles::STACKED {
+        crate::commitfiles::stacked()
+    } else {
+        settings::bool(key)
+    }
+}
 
 /// 設定から作る行の見せ方。
 pub fn display() -> Display {
@@ -87,6 +98,14 @@ pub fn sections() -> Vec<(Option<String>, gio::Menu)> {
         Some(&tr!("Monospaced Commit Message")),
         Some("win.monospaced-commit-message"),
     );
+    details.append(
+        Some(&tr!("All Files in One Diff")),
+        Some("win.all-files-in-one-diff"),
+    );
+    details.append(
+        Some(&tr!("Changed Files as Tree")),
+        Some("win.changed-files-as-tree"),
+    );
     vec![
         (Some(tr!("Order")), order),
         (Some(tr!("Items")), shown),
@@ -130,8 +149,8 @@ pub fn install_actions(group: &gio::SimpleActionGroup) {
         group.add_action(&action);
     }
     for (name, key) in TOGGLES {
-        let action = gio::SimpleAction::new_stateful(name, None, &settings::bool(key).to_variant());
-        action.connect_activate(move |_, _| settings::set_bool(key, !settings::bool(key)));
+        let action = gio::SimpleAction::new_stateful(name, None, &toggle_value(key).to_variant());
+        action.connect_activate(move |_, _| settings::set_bool(key, !toggle_value(key)));
         group.add_action(&action);
     }
     let weak = group.downgrade();
@@ -158,7 +177,7 @@ pub fn install_actions(group: &gio::SimpleActionGroup) {
             _ => {
                 for (name, k) in TOGGLES {
                     if k == key {
-                        set(name, settings::bool(k).to_variant());
+                        set(name, toggle_value(k).to_variant());
                     }
                 }
             }

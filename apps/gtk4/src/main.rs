@@ -13,6 +13,7 @@ mod avatars;
 mod bookmarks;
 mod branchswitcher;
 mod cipopover;
+mod commitfiles;
 mod commitmsg;
 mod commitops;
 mod configtable;
@@ -73,7 +74,6 @@ use gtk::{gio, glib, graphene};
 
 use crate::actions::Actions;
 use crate::details::Details;
-use crate::diff::DiffWidget;
 use crate::history::HistoryView;
 use crate::sidebar::{Page, Sidebar};
 use crate::stashes::Stashes;
@@ -228,6 +228,14 @@ fn parse_args() -> Result<Args, String> {
             "--ai" => assist::set_auto(&it.next().ok_or("--ai <button,...>")?),
             "--ai-allow" => assist::allow_without_asking(),
             "--keys" => workcopy::press_keys_once(&it.next().ok_or("--keys <place:key,...>")?),
+            "--toggle-viewed" => {
+                let file = it.next().ok_or("--toggle-viewed <n>")?;
+                commitfiles::toggle_viewed_once(file.parse().map_err(|_| "--toggle-viewed <n>")?);
+            }
+            "--diff-file-menu" => {
+                let file = it.next().ok_or("--diff-file-menu <n>")?;
+                commitfiles::file_menu_once(file.parse().map_err(|_| "--diff-file-menu <n>")?);
+            }
             "--file-history" => args.file_history = Some(it.next().ok_or("--file-history <path>")?),
             "--search" => args.search = Some(it.next().ok_or("--search <query>")?),
             "--menu-row" => {
@@ -563,21 +571,25 @@ fn build_tab(
 
     // 右の列: 選んだコミットの詳細と差分。
     let details = Rc::new(Details::new());
-    let diff = DiffWidget::default();
-    let diff_scrolled = gtk::ScrolledWindow::builder()
-        .child(&diff)
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .build();
+    // 変更ファイルの一覧と差分（macOS 版の詳細の下の部分）。
+    let commit_diff = {
+        let v = view.downgrade();
+        Rc::new(commitfiles::CommitDiff::new(
+            pending.clone(),
+            Rc::new(move || v.upgrade().and_then(|v| v.current()).map(|(r, _)| r)),
+        ))
+    };
+    let diff = commit_diff.diff().clone();
     let right = gtk::Paned::new(gtk::Orientation::Vertical);
     right.set_start_child(Some(&details.root));
-    right.set_end_child(Some(&diff_scrolled));
+    right.set_end_child(Some(&commit_diff.root));
     right.set_resize_start_child(false);
     right.set_position(170);
     let columns = gtk::Paned::new(gtk::Orientation::Horizontal);
     columns.set_start_child(Some(&history_column));
     columns.set_end_child(Some(&right));
     columns.set_position(560);
-    connect_selection(&view, &details, &diff, &right, &pending);
+    connect_selection(&view, &details, &commit_diff, &right, &pending);
     // 詳細の作者・コミッターの名前を押す: History をその人のコミットで探す（macOS 版と同じ）。
     let (s, p) = (search.clone(), pending.clone());
     details.connect_person(move |name| {
@@ -871,18 +883,19 @@ fn build_tab(
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), win_of.clone(), on_commit.clone());
     let (dw, dt) = (diff.downgrade(), details.clone());
-    diff.connect_file_menu(move |path, x, y| {
+    commit_diff.connect_file_items(move |path, y| {
         let (Some(view), Some(window)) = (v.upgrade(), w()) else {
-            return;
+            return Vec::new();
         };
         let Some((repo, history)) = view.current() else {
-            return;
+            return Vec::new();
         };
         let mut items = Vec::new();
         // AI でこの hunk を解説（hunk の中を右クリックしたとき）。
-        if let Some(item) = dw
-            .upgrade()
-            .and_then(|d| aiactions::history_hunk_item(&d, &dt, &repo, y))
+        if let Some(y) = y
+            && let Some(item) = dw
+                .upgrade()
+                .and_then(|d| aiactions::history_hunk_item(&d, &dt, &repo, y))
         {
             items.push(item);
             items.push(menu::Item::Separator);
@@ -905,7 +918,7 @@ fn build_tab(
         items.push(menu::action("File History", move || {
             filetools::file_history(&window, repo.clone(), &path, oc.clone());
         }));
-        menu::popup(&view, x, y, items);
+        items
     });
     let (a, oc) = (Rc::downgrade(&actions), on_commit.clone());
     working.connect_file_menu(move |path, can_blame, can_history| {
@@ -1978,13 +1991,13 @@ fn jump_to(
 fn connect_selection(
     view: &HistoryView,
     details: &Rc<Details>,
-    diff: &DiffWidget,
+    files: &Rc<commitfiles::CommitDiff>,
     right: &gtk::Paned,
     pending: &Rc<Cell<u32>>,
 ) {
     let loader = Rc::new(Loader {
         details: details.clone(),
-        diff: diff.downgrade(),
+        files: files.clone(),
         right: right.downgrade(),
         pending: pending.clone(),
         generation: Cell::new(0),
@@ -2008,7 +2021,8 @@ fn connect_selection(
 /// 選んだコミットの詳細と差分を読む。
 struct Loader {
     details: Rc<Details>,
-    diff: glib::WeakRef<DiffWidget>,
+    /// 変更ファイルの一覧と差分。
+    files: Rc<commitfiles::CommitDiff>,
     right: glib::WeakRef<gtk::Paned>,
     /// 裏で読んでいる数（`--snapshot` はなくなるまで待つ）。
     pending: Rc<Cell<u32>>,
@@ -2021,9 +2035,7 @@ impl Loader {
         let g = self.generation.get() + 1;
         self.generation.set(g);
         self.details.clear();
-        if let Some(diff) = self.diff.upgrade() {
-            diff.clear();
-        }
+        self.files.clear();
         g
     }
 
@@ -2150,6 +2162,17 @@ impl Loader {
     ) {
         self.pending.set(self.pending.get() + 1);
         let this = self.clone();
+        // Viewed を覚える鍵（コミット ID。複数なら ID を並べ、2 つなら取り方も）。
+        let mut key = rows
+            .iter()
+            .filter_map(|&r| history.graph.ids().get(r as usize).map(|id| id.to_string()))
+            .collect::<Vec<_>>()
+            .join(",");
+        if rows.len() == 2 {
+            key.push_str(&format!("|{pair:?}"));
+        }
+        let viewed = commitfiles::viewed_paths(&key);
+        let all = commitfiles::stacked();
         glib::spawn_future_local(async move {
             let started = std::time::Instant::now();
             let result = gio::spawn_blocking(move || {
@@ -2161,8 +2184,7 @@ impl Loader {
                     amonhen_core::Selection::Pair { .. } => "pair",
                     amonhen_core::Selection::Each(_) => "each",
                 };
-                let view = diff::View::build(&stacked, &[]);
-                Ok::<_, String>((kind, Arc::new(diff::Source(stacked)), view))
+                Ok::<_, String>((kind, commitfiles::Prepared::new(stacked, &viewed, all)))
             })
             .await;
             this.pending.set(this.pending.get() - 1);
@@ -2170,11 +2192,9 @@ impl Loader {
                 return;
             }
             match result {
-                Ok(Ok((kind, source, view))) => {
+                Ok(Ok((kind, prepared))) => {
                     activity::record(&tr!("Load diff"), started.elapsed().as_secs_f64() * 1000.0);
-                    if let Some(diff) = this.diff.upgrade() {
-                        diff.show(source, view);
-                    }
+                    this.files.show(prepared, key);
                     then(kind);
                 }
                 Ok(Err(e)) => eprintln!("差分を読めない: {e}"),

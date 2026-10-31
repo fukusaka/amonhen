@@ -236,10 +236,10 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | Full message, draggable panes, ⤢ to expand | ✓ | △ | △ | n/a | GTK4: No ⤢.<br>VSCode: No ⤢. |
 | Find inside the details | ✓ | — | — | n/a |  |
-| All files stacked (sticky headers, collapse, Viewed) | ✓ | △ | △ | ✓ | GTK4: Collapse only; no sticky headers or Viewed.<br>VSCode: Stacked, loaded as they scroll; no collapse or Viewed.<br>CLI: `show`. |
-| Changed files as a tree beside the diff | ✓ | — | △ | n/a | VSCode: A flat list above the diffs. |
-| File header menu (Blame, File History, copy path, open) | ✓ | △ | △ | n/a | GTK4: Blame, File History and AI only.<br>VSCode: Open in VSCode's diff editor only. |
-| Switch to the single-file diff | ✓ | — | — | n/a |  |
+| All files stacked (sticky headers, collapse, Viewed) | ✓ | ✓ | △ | ✓ | VSCode: Stacked, loaded as they scroll; no collapse or Viewed.<br>CLI: `show`. |
+| Changed files as a tree beside the diff | ✓ | ✓ | △ | n/a | VSCode: A flat list above the diffs. |
+| File header menu (Blame, File History, copy path, open) | ✓ | ✓ | △ | n/a | VSCode: Open in VSCode's diff editor only. |
+| Switch to the single-file diff | ✓ | ✓ | — | n/a |  |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Signature popover | ✓ | — | — | n/a | GTK4: A text row in the details. |
