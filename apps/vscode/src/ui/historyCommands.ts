@@ -30,13 +30,13 @@ export function registerHistoryCommands(): vscode.Disposable {
   return vscode.Disposable.from(
     command('amonhen.history.reword', async (panel, repo, oid) => {
       const message = await fullMessage(repo, oid);
-      panel.post({ type: 'editMessage', oid, kind: 'reword', title: 'Reword', message });
+      panel.post({ type: 'editMessage', oid, kind: 'reword', title: EDIT_TITLES.reword, message });
     }),
     command('amonhen.history.squash', async (panel, repo, oid) => {
       const parent = panel.commit(oid)?.parents[0];
       if (!parent) return;
       const message = `${(await fullMessage(repo, parent)).trimEnd()}\n\n${await fullMessage(repo, oid)}`;
-      panel.post({ type: 'editMessage', oid, kind: 'squash', title: 'Squash into Parent', message });
+      panel.post({ type: 'editMessage', oid, kind: 'squash', title: EDIT_TITLES.squash, message });
     }),
     command('amonhen.history.fixup', (panel, repo, oid) =>
       run(panel, repo, `Fixup ${short(panel, oid)}`, { kind: 'fixup', oid }),
@@ -114,6 +114,9 @@ async function fullMessage(repo: Repository, oid: string): Promise<string> {
   return obj ? parseCommitObject(obj.data.toString('utf8')).message : '';
 }
 
+/** メッセージの編集欄の題 */
+const EDIT_TITLES = { reword: 'Reword', squash: 'Squash into Parent' } as const;
+
 /** 編集ごとの確認の題と、書き添えること */
 const KINDS: Record<HistoryEdit['kind'], { name: string; note?: string }> = {
   reword: { name: 'Reword' },
@@ -130,8 +133,10 @@ async function run(panel: HistoryController, repo: Repository, label: string, ed
   const kind = KINDS[edit.kind];
   const choice = await confirmRewrite(repo, `${short(panel, edit.oid)} を ${kind.name} しますか？`, kind.name, { edit }, kind.note);
   if (!choice) {
-    // Webview で並べ替えた行・閉じた編集の欄を、元の並びに戻す
-    await repo.refresh();
+    // 書いたメッセージを失わないように、書いたままの編集欄を開き直す（Webview は Save で欄を閉じている）
+    if (edit.kind === 'reword' || edit.kind === 'squash') {
+      panel.post({ type: 'editMessage', oid: edit.oid, kind: edit.kind, title: EDIT_TITLES[edit.kind], message: edit.message });
+    }
     return;
   }
   let result: RebaseResult | undefined;
