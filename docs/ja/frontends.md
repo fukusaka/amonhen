@@ -335,7 +335,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | --- | :-: | :-: | :-: | :-: | --- |
 | `gh` を通す GitHub | ✓ | ✓ | — | — |  |
 | Pull Requests（CI・draft・レビュー、checkout・開く・URL のコピー） | ✓ | ✓ | — | — |  |
-| Create Pull Request（base・draft） | ✓ | △ | — | — | GTK4: base は打ち込む。 |
+| Create Pull Request（base・draft） | ✓ | ✓ | — | — | macOS: base は打ち込む（最初は既定のブランチ）。<br>GTK4: base は打ち込む（最初は既定のブランチ）。 |
 | ブランチの状態のポップオーバー（CI・プルリクエスト） | ✓ | ✓ | — | — |  |
 | Open on GitHub | ✓ | ✓ | — | — |  |
 | メッセージの `#123` のリンク | ✓ | — | — | — |  |

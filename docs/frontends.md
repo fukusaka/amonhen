@@ -335,7 +335,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | GitHub through `gh` | ✓ | ✓ | — | — |  |
 | Pull Requests (CI, draft, review; check out, open, copy URL) | ✓ | ✓ | — | — |  |
-| Create Pull Request (base, draft) | ✓ | △ | — | — | GTK4: The base is typed. |
+| Create Pull Request (base, draft) | ✓ | ✓ | — | — | macOS: The base is typed (the default branch at first).<br>GTK4: The base is typed (the default branch at first). |
 | Branch status popover (CI, pull request) | ✓ | ✓ | — | — |  |
 | Open on GitHub | ✓ | ✓ | — | — |  |
 | `#123` links in messages | ✓ | — | — | — |  |
