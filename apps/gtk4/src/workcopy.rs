@@ -911,8 +911,9 @@ impl Inner {
                     match item {
                         TreeItem::Dir { name, path, depth } => {
                             let collapsed = this.collapsed.borrow().contains(&path);
-                            this.list
-                                .append(&Inner::dir_row(this, &name, &path, depth, collapsed));
+                            this.list.append(&Inner::dir_row(
+                                this, &entries, &name, &path, depth, collapsed,
+                            ));
                             row_entries.push(None);
                         }
                         TreeItem::File { index, depth } => {
@@ -1013,9 +1014,11 @@ impl Inner {
             .any(|dir| path.starts_with(dir.as_str()) && path[dir.len()..].starts_with('/'))
     }
 
-    /// 木のディレクトリの行（クリックで畳む・開く）。
+    /// 木のディレクトリの行（クリックで畳む・開く）。チェックは中のファイル（`entries` のうちコンフリクト以外）を
+    /// まとめて含める・外す: すべて含めていれば ☑、一部なら ▣（macOS 版と同じ）。
     fn dir_row(
         this: &Rc<Self>,
+        entries: &[StatusEntry],
         name: &str,
         path: &str,
         depth: usize,
@@ -1023,6 +1026,41 @@ impl Inner {
     ) -> gtk::ListBoxRow {
         let arrow = gtk::Label::new(Some(if collapsed { "▸" } else { "▾" }));
         arrow.add_css_class("dim-label");
+        let inside: Vec<&StatusEntry> = entries
+            .iter()
+            .filter(|e| {
+                e.kind != StatusKind::Unmerged
+                    && e.path.starts_with(path)
+                    && e.path[path.len()..].starts_with('/')
+            })
+            .collect();
+        let fully = inside
+            .iter()
+            .filter(|e| e.is_staged() && !e.is_unstaged())
+            .count();
+        let some = inside.iter().any(|e| e.is_staged());
+        let all = !inside.is_empty() && fully == inside.len();
+        let check = gtk::CheckButton::new();
+        check.set_active(all);
+        check.set_inconsistent(some && !all);
+        check.set_sensitive(!inside.is_empty());
+        let paths: Vec<String> = inside.iter().map(|e| e.path.clone()).collect();
+        let weak = Rc::downgrade(this);
+        check.connect_toggled(move |_| {
+            let Some(this) = weak.upgrade() else { return };
+            if this.rebuilding.get() {
+                return;
+            }
+            let paths = paths.clone();
+            Inner::run(&this, move |repo| {
+                let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
+                if all {
+                    repo.unstage(&paths)
+                } else {
+                    repo.stage(&paths)
+                }
+            });
+        });
         let icon = crate::icon::Icon::default();
         icon.set(crate::icon::Kind::Folder, false);
         let label = gtk::Label::new(Some(name));
@@ -1032,6 +1070,7 @@ impl Inner {
         let line = gtk::Box::new(gtk::Orientation::Horizontal, 6);
         line.set_margin_start((depth * 16) as i32);
         line.append(&arrow);
+        line.append(&check);
         line.append(&icon);
         line.append(&label);
         let row = gtk::ListBoxRow::new();
@@ -1039,8 +1078,17 @@ impl Inner {
         row.set_selectable(false);
         let click = gtk::GestureClick::new();
         let (weak, path) = (Rc::downgrade(this), path.to_owned());
-        click.connect_released(move |_, _, _, _| {
+        let (r, c) = (row.downgrade(), check.downgrade());
+        click.connect_released(move |_, _, x, y| {
             let Some(this) = weak.upgrade() else { return };
+            // チェックの上なら、畳まない。
+            if let (Some(row), Some(check)) = (r.upgrade(), c.upgrade())
+                && row
+                    .pick(x, y, gtk::PickFlags::DEFAULT)
+                    .is_some_and(|w| w == check || w.is_ancestor(&check))
+            {
+                return;
+            }
             {
                 let mut collapsed = this.collapsed.borrow_mut();
                 if !collapsed.remove(&path) {

@@ -185,7 +185,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | △ | △ | n/a | GTK4: フォルダーの行にチェックボックスはない。<br>VSCode: Staged と Changes が別のグループ。 |
+| 1 つのチェックボックスの一覧（☑ ▣ ☐、見出し・フォルダーのチェック） | ✓ | ✓ | △ | n/a | VSCode: Staged と Changes が別のグループ。 |
 | List / Tree / Flat | ✓ | ✓ | — | n/a |  |
 | パスで絞り込む | ✓ | ✓ | — | n/a |  |
 | 行ごとの +/− の数と、ホバーで Discard | ✓ | ✓ | △ | △ | VSCode: 行の数はない。<br>CLI: `diff --stat`。 |

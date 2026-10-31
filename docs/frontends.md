@@ -185,7 +185,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | △ | △ | n/a | GTK4: Folder rows have no checkbox.<br>VSCode: Separate Staged and Changes groups. |
+| One checkbox list (☑ ▣ ☐, header and folder checks) | ✓ | ✓ | △ | n/a | VSCode: Separate Staged and Changes groups. |
 | List / Tree / Flat | ✓ | ✓ | — | n/a |  |
 | Filter on paths | ✓ | ✓ | — | n/a |  |
 | Per-row +/− counts and Discard on hover | ✓ | ✓ | △ | △ | VSCode: No line counts.<br>CLI: `diff --stat`. |
