@@ -61,7 +61,7 @@ The commit list and graph are on the left, and the details of the selected commi
 - The details show the full message, branches and tags, author and date, commit ID, parent commits (click to move to that commit), the changed files, and the diff of each file. Diffs are loaded for the files that come into view. A merge commit shows the diff against its first parent.
 - Each file's Open, Open All, and double-click / Enter in the list also open it in the standard diff editor.
 
-Commits reachable from HEAD by first-parent (up to just before the first merge commit) can be edited by right-clicking. Each is done with a non-interactive rebase and can be reverted with Undo. Working changes are stashed and restored automatically.
+Commits reachable from HEAD by first-parent (up to just before the first merge commit) can be edited by right-clicking. Each is done with a non-interactive rebase and can be reverted with Undo. Working changes are stashed and restored automatically. Each edit, like a rebase, asks first; with the engine the question says which stacked branches (branches whose tip is among the rewritten commits) move or stay, which pushed branches will need Force Push, and which commits are expected to conflict, and a second button moves or keeps the stacked branches this time only.
 
 | Menu | Description |
 | --- | --- |

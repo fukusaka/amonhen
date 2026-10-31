@@ -666,6 +666,9 @@ First release.
 
 #### Changed
 
+- A rebase and every History edit ask first. With the engine, the question says which stacked branches move or stay,
+  which pushed branches will need Force Push and which commits are expected to conflict, and a second button moves or
+  keeps the stacked branches for that operation only. History edits then run in the engine, as in the app.
 - Reword and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and Reword runs
   the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 - The conflict notice names the sidebar row whose Continue and Abort to use, since VSCode moves the notice to the

@@ -80,10 +80,12 @@ Webview はローカルで描画され、拡張ホストとの通信だけが SS
 - `TreeDragAndDropController` で実装する。ブランチをブランチにドロップしたら「Merge A into B」「Rebase B onto A」を QuickPick で選ばせる。リモートにドロップしたら push。
 - ドロップ先が現在のブランチでなければ checkout してから実行する。fast-forward で済む場合は checkout せず `update-ref` だけで処理する。
 - 制約: TreeView と Webview の間ではドラッグ＆ドロップできない。History 内の並べ替えは Webview の中で完結させる。
+- rebase（ドロップ、またはブランチの右クリックから）と History の編集は、コミットを書き換えるので、いつも先に確かめる（docs/design.md の「書き換える操作と、積み重ねたブランチ」）。共有の daemon では、modal の詳しい欄にコアの `rewritePreview` を出す: 一緒に動く・残る積み重ねたブランチとその理由、あとの push に Force Push が要る push 済みのブランチ、コンフリクトの見込み（git 2.40 以降）。積み重ねたブランチに関わり、git が 2.38 以降なら、2 つ目のボタンでその操作だけ `rebase.updateRefs` と逆に動かす・動かさないを選べる（コアの `rebase`・`rewrite` の `updateRefs`）。見通しは今のブランチについてだけで、ほかのブランチの rebase と git 実行層では見通しなしで確かめる。
 - コマンドパレットの Merge Branches… で、いくつものブランチ・リモートブランチ・タグを `git merge a b c` と同じく 1 つのコミットで今のブランチに merge する（octopus）。1 つ目の QuickPick で一覧の順に選び、2 つ目の QuickPick に、前のものまでの結果に重ねて調べたそれぞれのコンフリクトの見込み（`predictMerge`。git 2.38 以降）を出して、1 つのコミットにまとめる・最後より前でぶつかるものを最後に回す・1 つずつ merge する、から選ばせる。最後より前のものがコンフリクトすると git はコンフリクトを残さずに止まるので、git が断ったら改めて 1 つずつを勧める。1 つずつはコンフリクトで止まり、残りを知らせる。どちらも Undo 1 回で全部戻る。共有の daemon ではコアが記録し（配列を渡す `merge`、`oneByOne`）、git 実行層では拡張が記録する。git 2.37 より前が途中まで合わせた変更を残したときは、`reset --merge` で戻す。
 
 ### コミットの柔軟な編集
 
+- 共有の daemon では、History の編集はコアの `rewrite` で行う。積み重ねたブランチを動かすときは git の `update-ref` の行を残し、Undo もコアが記録する。この節の残りは git 実行層のこと。
 - reword / squash / fixup / drop / reorder / edit / split はすべて非対話の rebase で実現する。todo はこちらで丸ごと作り（`src/history/rebasePlan.ts`）、`GIT_SEQUENCE_EDITOR="cp <todo>"` で git の todo に上書きする。
   - メッセージの書き換えは git の `reword`・`squash` そのもので行い、git が開くエディタに `GIT_EDITOR="cp <file>"` でメッセージを書かせる。todo に入るのは 1 つだけで、git がエディタを開くのも 1 回（`squash` では最後の 1 つ）なので、どのコミットのメッセージかをエディタの側で判別しなくて済む。notes は git が設定のとおりに写し（`notes.rewriteRef`・`notes.rewrite.*`）、フックも git と同じく走る（`reword` では pre-commit と commit-msg）。`commit.cleanup` を設定していなければ `commit.cleanup=whitespace` で rebase し、`git commit -F` と同じく `#` で始まる行を残す。
   - squash は親の `pick` ＋ `squash`、fixup は `fixup` だけ、edit は git の `edit`（Continue のとき、stage した変更はそのコミットに amend され、git がそのコミットの notes を最後のコミットへ写す。`notes.rewriteRef`）。
