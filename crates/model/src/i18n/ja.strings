@@ -906,3 +906,27 @@
 "Choose a different name or location." = "別の名前か置き場所にしてください。";
 "Cloning {url}…" = "{url} を clone しています…";
 "Couldn’t clone" = "clone できませんでした";
+/* GTK4: パッチ（Save as Patch・Apply Patch） */
+"Save {count} Commits as Patches…" = "{count} 個のコミットをパッチとして保存…";
+"Save as Patch" = "パッチとして保存";
+"Save {count} Commits as Patches" = "{count} 個のコミットをパッチとして保存";
+"Numbering, recipients and sign-offs follow git’s format.* settings." = "番号の付け方・宛先・Signed-off-by は git の format.* の設定に従います。";
+"One file per commit" = "1 コミット 1 ファイル";
+"One mbox file" = "1 つの mbox ファイル";
+"Format:" = "形:";
+"Cover letter" = "送り状（cover letter）";
+"Version (-v):" = "版（-v）:";
+"Save…" = "保存…";
+"Choose the folder for the patches. Files with the same names are replaced." = "パッチを書き出すフォルダを選んでください。同じ名前のファイルは置き換えます。";
+"Choose patch files (.patch, .diff, .mbox, .eml)." = "パッチのファイル（.patch・.diff・.mbox・.eml）を選んでください。";
+"There are no changes in the patch." = "パッチに変更がありません。";
+"Can’t Read the Patch" = "パッチを読めません";
+"Apply “{subject}”?" = "「{subject}」を当てますか？";
+"Apply {count} Patches?" = "{count} 個のパッチを当てますか？";
+"Each patch becomes a commit on {branch} (git am)." = "パッチごとに {branch} のコミットになります（git am）。";
+"The changes go into the working tree (git apply)." = "変更を作業ツリーに入れます（git apply）。";
+"Applies cleanly." = "そのまま当たります。";
+"Doesn’t apply cleanly: {reason}" = "そのままでは当たりません: {reason}";
+"3-way merge where it doesn’t apply" = "当たらないところは 3-way merge にする";
+"Leaves conflicts to resolve in Working Copy instead of stopping (--3way)." = "止まる代わりに、Working Copy で解決するコンフリクトを残します（--3way）。";
+"Stage the changes too (--index)" = "stage もする（--index）";

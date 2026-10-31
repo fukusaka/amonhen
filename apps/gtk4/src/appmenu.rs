@@ -161,8 +161,6 @@ pub const PENDING: &[&str] = &[
     "open-on-github",
     "new-worktree",
     "prune-worktrees",
-    "apply-patch",
-    "save-patch",
     "filter-branches",
     "find-in-history",
     "repository-settings",
@@ -259,6 +257,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             "compare-with-previous",
             Box::new(|p| p.range_diff.previous(head_branch(p))),
         ),
+        ("apply-patch", Box::new(apply_patch)),
         ("continue", run(json!({ "op": "continue" }))),
         ("skip", run(json!({ "op": "skip" }))),
         ("abort", run(json!({ "op": "abort" }))),
@@ -276,6 +275,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("reveal-in-files", Box::new(reveal_in_files)),
         // Commit
         ("commit", Box::new(|p| p.working.commit_from_menu(None))),
+        ("save-patch", Box::new(save_patch)),
         (
             "commit-and-push",
             Box::new(|p| {
@@ -572,6 +572,40 @@ fn start_point(p: &Parts) -> String {
         Some(id) => id.to_string()[..12].to_owned(),
         None => head_branch(p).unwrap_or_else(|| "HEAD".into()),
     }
+}
+
+/// Commit › Save as Patch…: History で選んだコミットを古い順に（マージを含む・選んでいなければ鳴らす）。
+fn save_patch(p: &Rc<Parts>) {
+    let oids = (|| {
+        if p.pages.visible_child_name().as_deref() != Some("history") {
+            return None;
+        }
+        let (_, history) = p.view.current()?;
+        let nodes = history.layout.nodes();
+        let mut oids = Vec::new();
+        for row in p.view.selection().into_iter().rev() {
+            let merge = nodes
+                .get(row as usize)
+                .is_some_and(|n| n.flags & amonhen_layout::Node::MERGE != 0);
+            if merge {
+                return None;
+            }
+            oids.push(history.graph.ids().get(row as usize)?.to_string());
+        }
+        (!oids.is_empty()).then_some(oids)
+    })();
+    match oids {
+        Some(oids) => crate::patches::save(&p.actions, oids),
+        None => p.window.error_bell(),
+    }
+}
+
+/// Repository › Apply Patch…（merge などの途中なら鳴らす）。
+fn apply_patch(p: &Rc<Parts>) {
+    if p.actions.in_sequence() {
+        return p.window.error_bell();
+    }
+    crate::patches::choose_and_apply(&p.actions);
 }
 
 fn rename_branch(p: &Rc<Parts>) {

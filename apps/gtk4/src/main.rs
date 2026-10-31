@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]]`
 
 mod actions;
 mod activity;
@@ -17,6 +17,7 @@ mod icon;
 mod measure;
 mod menu;
 mod merge;
+mod patches;
 mod rangediff;
 mod reflog;
 mod refops;
@@ -116,6 +117,8 @@ struct Args {
     /// Range Diff でこの組を選んでおく・この組の右クリックのメニューを出す（確認用）。
     select_pair: Option<u32>,
     menu_pair: Option<u32>,
+    /// これらのパッチのファイル（`,` で区切る）を当てる前の確認を出す（確認用）。
+    apply_patch: Vec<PathBuf>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -163,6 +166,10 @@ fn parse_args() -> Result<Args, String> {
                 args.menu_row = Some(row.parse().map_err(|_| "--menu-row <row>")?);
             }
             "--reflog" => args.reflog = true,
+            "--apply-patch" => {
+                let paths = it.next().ok_or("--apply-patch <path,...>")?;
+                args.apply_patch = paths.split(',').map(PathBuf::from).collect();
+            }
             "--menu-item" => args.menu_item = Some(it.next().ok_or("--menu-item <title>")?),
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
@@ -462,6 +469,8 @@ fn build_window(app: &gtk::Application, args: Args) {
     // 操作は裏で実行し、終わったら History・ref・status を読み直す（ファイルの変化の知らせも来るが、
     // 待たずに出す）。
     let actions = Actions::new(&window);
+    // パッチのファイルを窓に落としたら当てる。
+    patches::install_drop(&window, &actions);
     working.set_actions(actions.clone());
     stashes.set_actions(actions.clone());
     let reload_tx = tx.clone();
@@ -867,6 +876,15 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 let p = pending.clone();
                                 glib::timeout_add_local_once(
                                     std::time::Duration::from_millis(500),
+                                    move || p.set(p.get() - 1),
+                                );
+                            }
+                            if !args.apply_patch.is_empty() {
+                                patches::apply(&actions, args.apply_patch.clone());
+                                pending.set(pending.get() + 1);
+                                let p = pending.clone();
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(1500),
                                     move || p.set(p.get() - 1),
                                 );
                             }

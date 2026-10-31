@@ -94,6 +94,13 @@ pub fn menu(
     items.push(menu::action(crate::titles::revert(&hex), move || {
         crate::sheets::pick(&a, true, vec![(h.clone(), is_merge)]);
     }));
+    // マージはパッチにできない（git format-patch は飛ばす）。
+    if !is_merge {
+        let (a, h) = (actions.clone(), hex.clone());
+        items.push(menu::action(tr!("Save as Patch…"), move || {
+            crate::patches::save(&a, vec![h.clone()]);
+        }));
+    }
     items.push(Item::Separator);
     let (w, h) = (widget.clone(), hex);
     items.push(menu::action(tr!("Copy Commit ID"), move || {
@@ -183,6 +190,21 @@ pub fn menu_many(
         tr!("Revert {count} Commits…", count = n),
         move || crate::sheets::pick(&a, true, c.clone()),
     ));
+    // マージはパッチにできない（git format-patch は飛ばす）。古い順に。
+    if !commits.iter().any(|(_, merge)| *merge) {
+        let (a, oids) = (
+            actions.clone(),
+            commits
+                .iter()
+                .rev()
+                .map(|(o, _)| o.clone())
+                .collect::<Vec<_>>(),
+        );
+        items.push(menu::action(
+            tr!("Save {count} Commits as Patches…", count = n),
+            move || crate::patches::save(&a, oids.clone()),
+        ));
+    }
     // 連続した行（first-parent で続いているかはコアで確かめる）なら、1 つにまとめられる。
     let consecutive = rows.windows(2).all(|w| w[1] == w[0] + 1);
     if n >= 2 && consecutive && !commits.iter().any(|(_, merge)| *merge) {
