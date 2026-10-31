@@ -1002,6 +1002,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         raw_refs.clone(),
         tx.clone(),
     );
+    let (st, rl) = (Rc::downgrade(&stashes), reflog_slot.clone());
     worktrees.connect_list(move || {
         let (Some(worktrees), Some(window)) = (w.upgrade(), win.upgrade()) else {
             return;
@@ -1015,6 +1016,13 @@ fn build_window(app: &gtk::Application, args: Args) {
                 .collect(),
         );
         sheets::set_worktree_name(window.upcast_ref(), worktrees.editing_name());
+        let name = worktrees.editing_name();
+        if let Some(stashes) = st.upgrade() {
+            stashes.set_worktree(name.as_deref());
+        }
+        if let Some(reflog) = rl.borrow().as_ref() {
+            reflog.set_worktree(name.as_deref());
+        }
         if let Some(refs) = r.borrow().clone() {
             let _ = refs_tx.try_send(Event::Refs(refs));
         }

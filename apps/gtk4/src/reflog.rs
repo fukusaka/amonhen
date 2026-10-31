@@ -45,6 +45,7 @@ pub type OnShowInHistory = Rc<dyn Fn(Oid)>;
 pub struct ReflogView {
     pub root: gtk::Paned,
     inner: Rc<Inner>,
+    target: gtk::Label,
 }
 
 struct Inner {
@@ -111,6 +112,13 @@ impl ReflogView {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .vexpand(true)
             .build();
+        // worktree が 2 つ以上なら、どの worktree に効くかを右端に出す（macOS 版と同じ）。
+        let target = gtk::Label::new(None);
+        target.set_hexpand(true);
+        target.set_xalign(1.0);
+        target.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        target.add_css_class("dim-label");
+        bar.append(&target);
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
         left.append(&bar);
         left.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -194,7 +202,20 @@ impl ReflogView {
                 inner.reload();
             }
         });
-        Self { root, inner }
+        Self {
+            root,
+            inner,
+            target,
+        }
+    }
+
+    /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。どの HEAD の reflog かを帯に出す。
+    pub fn set_worktree(&self, name: Option<&str>) {
+        self.target.set_text(
+            &name
+                .map(|n| tr!("HEAD of ✎ {name}", name = n))
+                .unwrap_or_default(),
+        );
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {

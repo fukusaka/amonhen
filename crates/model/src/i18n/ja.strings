@@ -1463,3 +1463,7 @@
 "Remove the worktree “{name}”?" = "worktree「{name}」を消しますか？";
 "{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays." = "{path} には、コミットしていない変更が {count} ファイルあります。フォルダと一緒に失われます。ブランチは残ります。";
 "Removes the folder {path}. The branch stays." = "フォルダ {path} を消します。ブランチは残ります。";
+
+/* GTK4: Stashes・Reflog の worktree の帯 */
+"Applies to ✎ {name}" = "戻す先: ✎ {name}";
+"HEAD of ✎ {name}" = "✎ {name} の HEAD";

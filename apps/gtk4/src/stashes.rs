@@ -86,6 +86,7 @@ struct Base {
 pub struct Stashes {
     pub root: gtk::Paned,
     inner: Rc<Inner>,
+    target: gtk::Label,
 }
 
 struct Inner {
@@ -158,6 +159,13 @@ impl Stashes {
             bar.append(&button);
             buttons.push(button);
         }
+        // worktree が 2 つ以上なら、どの worktree に効くかを右端に出す（macOS 版と同じ）。
+        let target = gtk::Label::new(None);
+        target.set_hexpand(true);
+        target.set_xalign(1.0);
+        target.set_ellipsize(gtk::pango::EllipsizeMode::Start);
+        target.add_css_class("dim-label");
+        bar.append(&target);
         let left = gtk::Box::new(gtk::Orientation::Vertical, 0);
         left.append(&bar);
         left.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
@@ -229,11 +237,24 @@ impl Stashes {
             });
         }
         inner.update_buttons();
-        Self { root, inner }
+        Self {
+            root,
+            inner,
+            target,
+        }
     }
 
     pub fn set_actions(&self, actions: Rc<Actions>) {
         self.inner.actions.replace(Some(actions));
+    }
+
+    /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。戻す先として帯に出す。
+    pub fn set_worktree(&self, name: Option<&str>) {
+        self.target.set_text(
+            &name
+                .map(|n| tr!("Applies to ✎ {name}", name = n))
+                .unwrap_or_default(),
+        );
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
