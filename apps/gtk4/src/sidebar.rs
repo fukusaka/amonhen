@@ -19,7 +19,7 @@ use amonhen_model::{Oid, RefEntry, RefKind, Refs, tr};
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gio, glib};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::actions::Actions;
 use crate::github::{Ci, PullRequest};
@@ -87,6 +87,8 @@ pub struct Data {
     pub green: bool,
     /// 右端の文字の色の CSS のクラス（プルリクエストの CI の `success`・`error`）。
     pub badge_css: Option<&'static str>,
+    /// タグの署名の印（右端の印の先頭。見えている行を出すときに、確かめた結果から入れる）。
+    pub signature: Option<Mark>,
 }
 
 mod node_imp {
@@ -341,7 +343,20 @@ struct Inner {
     can_create_pull_request: Cell<bool>,
     /// Pull Requests の見出しをまだ出していない（初めて出すときは開いておく）。
     pull_requests_first: Cell<bool>,
+    /// タグの署名の検証の結果（名前 → 状態と、吹き出しに出す中身と、確かめたときの refs の番号）。refs が
+    /// 変わったら（タグを付け直したかもしれない）、見えている行から確かめ直す（コアが ID で覚えているので速い）。
+    tag_signatures: RefCell<HashMap<String, TagSignature>>,
+    tag_epoch: Cell<u64>,
+    /// 確かめる予定のタグと、確かめている途中のタグ。
+    tags_to_verify: RefCell<HashSet<String>>,
+    verifying_tags: RefCell<HashSet<String>>,
+    verify_timer: RefCell<Option<glib::SourceId>>,
+    /// 確認用（`--sidebar-mark signature:<タグ>`）: 確かめ終えたら署名の吹き出しを出すタグ。
+    debug_signature: RefCell<Option<String>>,
 }
+
+/// タグの署名を確かめた結果（状態、コアの `tagSignatures` の 1 件、確かめたときの refs の番号）。
+type TagSignature = (Option<crate::tagsign::Status>, Value, u64);
 
 /// 確認用: 分け方を読んだら、この行のメニューか印の吹き出しを出す。
 struct Debug {
@@ -371,8 +386,19 @@ impl Sidebar {
             let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
             setup_row(item, &o, &drop_cb);
         });
-        factory.connect_bind(|_, item| {
+        let o = owner.clone();
+        factory.connect_bind(move |_, item| {
             let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+            // タグの行は、署名の印を入れてから（見えている行だけが来るので、見えているタグだけを確かめる）。
+            if let (Some(inner), Some(node)) = (
+                o.borrow().upgrade(),
+                item.item()
+                    .and_downcast::<gtk::TreeListRow>()
+                    .and_then(|r| r.item())
+                    .and_downcast::<Node>(),
+            ) {
+                inner.decorate_tag(&node);
+            }
             bind_row(item);
         });
         let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
@@ -443,6 +469,12 @@ impl Sidebar {
             pull_requests: RefCell::default(),
             can_create_pull_request: Cell::new(false),
             pull_requests_first: Cell::new(true),
+            tag_signatures: RefCell::default(),
+            tag_epoch: Cell::new(0),
+            tags_to_verify: RefCell::default(),
+            verifying_tags: RefCell::default(),
+            verify_timer: RefCell::default(),
+            debug_signature: RefCell::default(),
         });
         inner.anchor.borrow().set(Some(scrolled.upcast_ref()));
         owner.replace(Rc::downgrade(&inner));
@@ -562,6 +594,7 @@ impl Sidebar {
             .replace(Some(refs.generation))
             .is_none();
         self.inner.refs.replace(Some(refs.refs.clone()));
+        self.inner.tag_epoch.set(self.inner.tag_epoch.get() + 1);
         self.inner.rebuild(first);
         self.inner.load_facts();
     }
@@ -755,7 +788,7 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
     let press = gtk::GestureClick::new();
     press.set_button(gtk::gdk::BUTTON_PRIMARY);
     let (weak, owner) = (expander.downgrade(), inner.clone());
-    press.connect_pressed(move |gesture, _, _, _| {
+    press.connect_pressed(move |gesture, _, x, y| {
         let (Some(expander), Some(inner)) = (weak.upgrade(), owner.borrow().upgrade()) else {
             return;
         };
@@ -763,7 +796,7 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
             return;
         };
         let data = node.data();
-        if !data.mark_click {
+        if !data.mark_click && data.signature.is_none() {
             return;
         }
         gesture.set_state(gtk::EventSequenceState::Claimed);
@@ -772,7 +805,18 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
             .and_then(|l| l.last_child())
             .and_downcast::<gtk::Box>()
         {
-            inner.show_marks(&data, trail.upcast_ref());
+            // 署名の印（左）を押すと署名の吹き出し、ほかの印はその吹き出し。
+            let first_mark = trail.first_child().and_then(|m| m.first_child());
+            let picked = trail.pick(x, y, gtk::PickFlags::DEFAULT);
+            let on_signature = data.signature.is_some()
+                && picked
+                    .zip(first_mark)
+                    .is_some_and(|(p, m)| p == m || p.is_ancestor(&m));
+            if on_signature || !data.mark_click {
+                inner.show_tag_signature(&data, trail.upcast_ref());
+            } else {
+                inner.show_marks(&data, trail.upcast_ref());
+            }
         }
     });
     trail.add_controller(press);
@@ -888,10 +932,10 @@ fn bind_row(item: &gtk::ListItem) {
         let Ok(mark_icon) = w.downcast::<Icon>() else {
             continue;
         };
-        for css in ["warning", "success"] {
+        for css in ["warning", "success", "error", "caution"] {
             mark_icon.remove_css_class(css);
         }
-        match data.marks.get(i) {
+        match data.signature.iter().chain(&data.marks).nth(i) {
             Some(mark) => {
                 mark_icon.set(mark.icon, false);
                 if let Some(css) = mark.css {
@@ -902,7 +946,8 @@ fn bind_row(item: &gtk::ListItem) {
         }
         i += 1;
     }
-    marks.set_visible(!data.marks.is_empty());
+    let has_marks = !data.marks.is_empty() || data.signature.is_some();
+    marks.set_visible(has_marks);
     badge.set_text(&data.badge);
     badge.set_visible(!data.badge.is_empty());
     for css in ["success", "error"] {
@@ -915,8 +960,14 @@ fn bind_row(item: &gtk::ListItem) {
         }
         None => badge.add_css_class("dim-label"),
     }
-    trail.set_visible(!data.marks.is_empty() || !data.badge.is_empty());
-    line.set_tooltip_text(data.tooltip.as_deref());
+    trail.set_visible(has_marks || !data.badge.is_empty());
+    // 署名の印の意味は、ツールチップの先頭に。
+    let tooltip = match (&data.signature, &data.tooltip) {
+        (Some(s), Some(t)) => Some(format!("{}\n{t}", s.tooltip)),
+        (Some(s), None) => Some(s.tooltip.clone()),
+        (None, t) => t.clone(),
+    };
+    line.set_tooltip_text(tooltip.as_deref());
 }
 
 impl Inner {
@@ -1008,6 +1059,125 @@ impl Inner {
         }
         self.filter.replace(words);
         self.rebuild(false);
+    }
+
+    /// タグの行の署名の印を入れる。結果がない（古い）ときは、確かめる予定に入れる。
+    fn decorate_tag(self: &Rc<Self>, node: &Node) {
+        let name = match &node.imp().data.borrow().item {
+            Item::Ref(e) if e.kind == RefKind::Tag => e.name.clone(),
+            _ => return,
+        };
+        let known = self.tag_signatures.borrow().get(&name).cloned();
+        if known.as_ref().map(|k| k.2) != Some(self.tag_epoch.get()) {
+            self.verify_tags_soon(name);
+        }
+        node.imp().data.borrow_mut().signature =
+            known.and_then(|(status, _, _)| status).map(|s| s.mark());
+    }
+
+    /// 少し待ってから、予定に入れたタグの署名を 8 件ずつ裏で確かめ、終わった分から印を出す（タグごとに検証の
+    /// プログラムを起動するので 1 件 25 ms ほど。History の署名の印と同じ）。
+    fn verify_tags_soon(self: &Rc<Self>, name: String) {
+        if self.verifying_tags.borrow().contains(&name) {
+            return;
+        }
+        self.tags_to_verify.borrow_mut().insert(name);
+        if let Some(timer) = self.verify_timer.take() {
+            timer.remove();
+        }
+        let weak = Rc::downgrade(self);
+        let timer =
+            glib::timeout_add_local_once(std::time::Duration::from_millis(150), move || {
+                let Some(inner) = weak.upgrade() else { return };
+                inner.verify_timer.take();
+                let Some(repo) = inner.actions.borrow().as_ref().and_then(|a| a.repo()) else {
+                    return;
+                };
+                let mut pending: Vec<String> = inner.tags_to_verify.take().into_iter().collect();
+                pending.sort();
+                inner
+                    .verifying_tags
+                    .borrow_mut()
+                    .extend(pending.iter().cloned());
+                let (epoch, weak) = (inner.tag_epoch.get(), Rc::downgrade(&inner));
+                glib::spawn_future_local(async move {
+                    for batch in pending.chunks(8) {
+                        let reply = crate::sheets::run(
+                            &repo,
+                            json!({ "op": "tagSignatures", "names": batch }),
+                        )
+                        .await;
+                        let Some(inner) = weak.upgrade() else { return };
+                        {
+                            let mut known = inner.tag_signatures.borrow_mut();
+                            for tag in reply["info"]["tags"].as_array().into_iter().flatten() {
+                                if let Some(name) = tag["name"].as_str() {
+                                    known.insert(
+                                        name.to_owned(),
+                                        (crate::tagsign::Status::of(tag), tag.clone(), epoch),
+                                    );
+                                }
+                            }
+                            let mut verifying = inner.verifying_tags.borrow_mut();
+                            for name in batch {
+                                verifying.remove(name);
+                                // 答えがなかった（確かめられなかった）ものも、この番号では確かめ直さない。
+                                known
+                                    .entry(name.clone())
+                                    .or_insert((None, Value::Null, epoch));
+                            }
+                        }
+                        inner.reload_tag_rows(batch);
+                        let shown = inner.debug_signature.borrow().clone();
+                        if let Some(name) = shown.filter(|n| batch.contains(n)) {
+                            inner.debug_signature.take();
+                            inner.show_debug_signature(&name);
+                        }
+                    }
+                });
+            });
+        self.verify_timer.replace(Some(timer));
+    }
+
+    /// `names` のタグの行を描き直す（印を入れ直す）。
+    fn reload_tag_rows(&self, names: &[String]) {
+        let mut stores = vec![self.root.clone()];
+        while let Some(store) = stores.pop() {
+            for i in 0..store.n_items() {
+                let Some(node) = store.item(i).and_downcast::<Node>() else {
+                    continue;
+                };
+                if let Some(children) = node.children() {
+                    stores.push(children);
+                }
+                let hit = matches!(&node.imp().data.borrow().item,
+                    Item::Ref(e) if e.kind == RefKind::Tag && names.contains(&e.name));
+                if hit {
+                    self.replace_keeping(&store, i, &node);
+                }
+            }
+        }
+    }
+
+    /// 確認用: `name` のタグの行の署名の吹き出しを出す。
+    fn show_debug_signature(&self, name: &str) {
+        let Some(data) = self.find(name) else {
+            eprintln!("サイドバーの行がない: {name}");
+            return;
+        };
+        let anchor = self.row_trail(&data.key).or_else(|| self.root_widget());
+        if let Some(anchor) = anchor {
+            self.show_tag_signature(&data, &anchor);
+        }
+    }
+
+    /// タグの行の署名の印を押した: 署名の吹き出し。
+    fn show_tag_signature(&self, data: &Data, anchor: &gtk::Widget) {
+        let Item::Ref(entry) = &data.item else { return };
+        let known = self.tag_signatures.borrow().get(&entry.name).cloned();
+        if let Some((Some(status), tag, _)) = known {
+            crate::tagsign::popover(anchor, &entry.name, status, &tag);
+        }
     }
 
     /// 行の右端の印を押した: 詳しいことの吹き出し。
@@ -1166,7 +1336,24 @@ impl Inner {
                 None => eprintln!("サイドバーの行がない: {spec}"),
             }
         }
-        if let Some(spec) = &debug.mark {
+        if let Some(name) = debug
+            .mark
+            .as_deref()
+            .and_then(|s| s.strip_prefix("signature:"))
+        {
+            // タグの署名の吹き出し（確かめ終えてから）。
+            if self
+                .tag_signatures
+                .borrow()
+                .get(name)
+                .is_some_and(|k| k.2 == self.tag_epoch.get())
+            {
+                self.show_debug_signature(name);
+            } else {
+                self.debug_signature.replace(Some(name.to_owned()));
+            }
+            wait = 3000;
+        } else if let Some(spec) = &debug.mark {
             match self.find(spec) {
                 Some(data) => {
                     let trail = self.row_trail(&data.key).unwrap_or(anchor);

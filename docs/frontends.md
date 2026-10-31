@@ -41,7 +41,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Sync a branch that is not checked out (Fast-Forward, Push, Publish) | ✓ | ✓ | ✓ | △ | CLI: Via `amonhen run`. |
 | Tags listed | ✓ | ✓ | ✓ | ✓ |  |
 | Tag marks for remotes (missing, different) with a popover | ✓ | ✓ | — | △ | CLI: Via `amonhen run` (`tagRemotes`). |
-| Tag signature marks | ✓ | — | — | ✓ | GTK4: Shown only in History's details.<br>CLI: `refs --verify`. |
+| Tag signature marks | ✓ | ✓ | — | ✓ | CLI: `refs --verify`. |
 | Tag menu: Push to, Replace on, Delete, Delete from a remote | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Remotes with their branches | ✓ | ✓ | ✓ | ✓ |  |
 | Remote menu: Add, Rename, Edit URL, Remove, Prune | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |

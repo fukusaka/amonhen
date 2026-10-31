@@ -77,6 +77,12 @@ pub enum Kind {
     Activity,
     /// plus.circle（ブランチの切り替えで、新しいブランチを作る行）
     PlusCircle,
+    /// checkmark.seal（署名を確かめた。署名の印）
+    Seal,
+    /// xmark.seal（不正な署名・失効した鍵）
+    SealCross,
+    /// questionmark.circle（鍵がない・確かめられない・署名者が違う）
+    Question,
 }
 
 mod imp {
@@ -120,6 +126,11 @@ mod imp {
                 gdk::RGBA::new(0.96, 0.47, 0.0, 1.0)
             } else if obj.has_css_class("success") {
                 gdk::RGBA::new(0.15, 0.64, 0.25, 1.0)
+            } else if obj.has_css_class("error") {
+                gdk::RGBA::new(0.90, 0.25, 0.25, 1.0)
+            } else if obj.has_css_class("caution") {
+                // 黄色（署名は正しいが、鍵の信用度が決まっていないなど）。
+                gdk::RGBA::new(0.85, 0.68, 0.0, 1.0)
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.7)
             };
@@ -507,6 +518,38 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
                 p.move_to(8.0 + 4.6 * c, 8.0 + 4.6 * s);
                 p.line_to(8.0 + 6.6 * c, 8.0 + 6.6 * s);
             }
+        }
+        Kind::Seal | Kind::SealCross => {
+            // 縁がぎざぎざの丸（12 の山）と、中にチェックか ×。
+            for i in 0..=24 {
+                let a = std::f32::consts::PI * i as f32 / 12.0;
+                let r = if i % 2 == 0 { 6.6 } else { 5.5 };
+                let (x, y) = (8.0 + r * a.cos(), 8.0 + r * a.sin());
+                if i == 0 {
+                    p.move_to(x, y);
+                } else {
+                    p.line_to(x, y);
+                }
+            }
+            if kind == Kind::Seal {
+                p.move_to(5.4, 8.1);
+                p.line_to(7.2, 9.9);
+                p.line_to(10.6, 6.2);
+            } else {
+                p.move_to(6.0, 6.0);
+                p.line_to(10.0, 10.0);
+                p.move_to(10.0, 6.0);
+                p.line_to(6.0, 10.0);
+            }
+        }
+        Kind::Question => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(6.0, 6.4);
+            p.svg_arc_to(2.0, 2.0, 0.0, true, true, 8.6, 8.3);
+            p.line_to(8.0, 9.4);
+            let dot = gsk::PathBuilder::new();
+            dot.add_circle(&point(8.0, 11.6), 0.8);
+            fill = Some(dot);
         }
         Kind::Undo => {
             p.add_circle(&point(8.0, 8.0), 6.3);

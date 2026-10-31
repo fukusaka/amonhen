@@ -41,7 +41,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | checkout していないブランチの同期（Fast-Forward・Push・Publish） | ✓ | ✓ | ✓ | △ | CLI: `amonhen run` から。 |
 | タグの一覧 | ✓ | ✓ | ✓ | ✓ |  |
 | タグのリモートの印（ない・違う）とポップオーバー | ✓ | ✓ | — | △ | CLI: `amonhen run`（`tagRemotes`）から。 |
-| タグの署名の印 | ✓ | — | — | ✓ | GTK4: History の詳細にだけ出る。<br>CLI: `refs --verify`。 |
+| タグの署名の印 | ✓ | ✓ | — | ✓ | CLI: `refs --verify`。 |
 | タグのメニュー: Push to・Replace on・削除・リモートから削除 | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | リモートとそのブランチ | ✓ | ✓ | ✓ | ✓ |  |
 | リモートのメニュー: 追加・名前の変更・URL の変更・削除・Prune | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
