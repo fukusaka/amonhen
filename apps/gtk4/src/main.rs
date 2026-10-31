@@ -47,6 +47,7 @@ mod stashes;
 mod statusbar;
 mod titles;
 mod workcopy;
+mod worktrees;
 
 use std::cell::Cell;
 use std::path::{Path, PathBuf};
@@ -542,12 +543,31 @@ fn build_window(app: &gtk::Application, args: Args) {
     let range_diff_opener = rangediff::Opener::new(&range_diff, &pages, &sidebar);
     let o = range_diff_opener.clone();
     range_diff.connect_close(move || o.close());
-    let weak_sidebar = Rc::downgrade(&sidebar);
+    // リポジトリの worktree（サイドバーの Working Copy の下に、変更の数と並べる）。
+    let worktrees =
+        worktrees::Worktrees::new(amonhen_remote::location::is_remote(&text), pending.clone());
+    let (weak_sidebar, w) = (Rc::downgrade(&sidebar), Rc::downgrade(&worktrees));
     working.connect_count(move |count| {
         if let Some(sidebar) = weak_sidebar.upgrade() {
             sidebar.set_working_count(count);
         }
+        if let Some(worktrees) = w.upgrade() {
+            worktrees.set_editing_count(count);
+        }
     });
+    for list in [true, false] {
+        let (s, w) = (Rc::downgrade(&sidebar), Rc::downgrade(&worktrees));
+        let show = move || {
+            if let (Some(sidebar), Some(worktrees)) = (s.upgrade(), w.upgrade()) {
+                sidebar.set_worktrees(worktrees.view());
+            }
+        };
+        if list {
+            worktrees.connect_list(show);
+        } else {
+            worktrees.connect_counts(show);
+        }
+    }
     connect_sidebar(&sidebar, &pages, &view, &stashes);
     if let Some(words) = &args.filter_sidebar {
         sidebar.filter(words);
@@ -600,6 +620,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         .build();
     window.set_titlebar(Some(&header));
     historydisplay::install_actions(&window);
+    worktrees.install_timer(&window);
     window.present();
     view.grab_focus();
     // 次の起動で開き直す（確認用の撮影では覚えない）。
@@ -917,6 +938,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                         stashes.set_repo(repo.clone());
                         reflog.set_repo(repo.clone());
                         actions.set_repo(repo.clone());
+                        worktrees.set_opened(repo.clone());
                         shaper.present(repo, history);
                         if let Some(command) = perform.take() {
                             match serde_json::from_str(&command) {
@@ -1211,6 +1233,8 @@ fn build_window(app: &gtk::Application, args: Args) {
                         subtitle.set_visible(true);
                         view.show_refs(&refs);
                         sidebar.show(&refs);
+                        // worktree を足した・消した・ブランチを変えたかもしれない。
+                        worktrees.reload_list();
                         stashes.show(&refs);
                         // 最後の stash を戻した・消したら、空の Stashes の画面から History に移る。
                         if stashes.is_empty()

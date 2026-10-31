@@ -46,6 +46,8 @@ pub enum Item {
     Page(Page),
     Folder,
     Ref(RefEntry),
+    /// Working Copy の下の worktree（選ぶと書き込む先にする）。
+    Worktree(crate::worktrees::Info),
 }
 
 /// 行の右端のアイコン（取り込み済み・gone など）。意味はツールチップの先頭に出す。
@@ -300,6 +302,10 @@ struct Inner {
     filter: RefCell<Vec<String>>,
     /// 絞り込む前に開いていた項目（絞り込みをやめたら戻す）。絞り込んでいる間だけ Some。
     unfiltered: RefCell<Option<HashSet<String>>>,
+    /// リポジトリの worktree（2 つ以上あるときだけ Working Copy の下に並べる）。
+    worktrees: RefCell<crate::worktrees::View>,
+    /// Working Copy の下に worktree を並べている（並べ始めたら Working Copy を開く）。
+    working_children: Cell<bool>,
 }
 
 /// 確認用: 分け方を読んだら、この行のメニューか印の吹き出しを出す。
@@ -385,6 +391,8 @@ impl Sidebar {
             anchor: RefCell::default(),
             filter: RefCell::default(),
             unfiltered: RefCell::default(),
+            worktrees: RefCell::default(),
+            working_children: Cell::new(false),
         });
         inner.anchor.borrow().set(Some(scrolled.upcast_ref()));
         owner.replace(Rc::downgrade(&inner));
@@ -516,10 +524,52 @@ impl Sidebar {
         } else {
             String::new()
         };
-        // 行を描き直させる（同じ項目を入れ替える）。
+        // 行を描き直させる（同じ項目を入れ替える。下の worktree の開き方と選んだ行は戻す）。
         let workspace = self.inner.root.item(0).and_downcast::<Node>();
         if let Some(store) = workspace.and_then(|w| w.children()) {
-            store.splice(0, 1, std::slice::from_ref(node));
+            self.inner.replace_keeping(&store, 0, node);
+        }
+    }
+
+    /// リポジトリの worktree と変更の数を出す。並びが変われば作り直し、数だけなら行を描き直す。
+    pub fn set_worktrees(&self, view: crate::worktrees::View) {
+        let before = self.inner.worktrees.replace(view.clone());
+        if before == view {
+            return;
+        }
+        let keys =
+            |l: &[crate::worktrees::Info]| l.iter().map(|w| w.key.clone()).collect::<Vec<_>>();
+        let (a, b) = (before.layout(), view.layout());
+        if before.list != view.list
+            || before.editing != view.editing
+            || keys(&a.0) != keys(&b.0)
+            || keys(&a.1) != keys(&b.1)
+        {
+            self.inner.rebuild(false);
+            return;
+        }
+        // 数だけ変わった: worktree の行を描き直す。
+        let Some(store) = self.inner.working.children() else {
+            return;
+        };
+        let clean = store
+            .item(store.n_items().saturating_sub(1))
+            .and_downcast::<Node>()
+            .and_then(|n| n.children());
+        for store in [Some(store), clean].into_iter().flatten() {
+            for i in 0..store.n_items() {
+                let Some(node) = store.item(i).and_downcast::<Node>() else {
+                    continue;
+                };
+                let Item::Worktree(w) = node.data().item else {
+                    continue;
+                };
+                let data = worktree_data(&w, &view);
+                if data.badge != node.data().badge {
+                    node.imp().data.replace(data);
+                    self.inner.replace_keeping(&store, i, &node);
+                }
+            }
         }
     }
 
@@ -868,7 +918,8 @@ impl Inner {
                 let hit = data.key == spec
                     || data.remote.as_deref() == Some(spec)
                     || (matches!(data.item, Item::Group) && data.title == spec)
-                    || matches!(&data.item, Item::Ref(e) if e.name == spec);
+                    || matches!(&data.item, Item::Ref(e) if e.name == spec)
+                    || matches!(&data.item, Item::Worktree(w) if w.name == spec);
                 if hit {
                     return Some(data);
                 }
@@ -1044,6 +1095,41 @@ impl Inner {
             },
             None,
         );
+        // worktree が 2 つ以上なら、Working Copy の下に並べる（並べ始めたら開いておく）。
+        let worktrees = self.worktrees.borrow().clone();
+        let (shown, clean) = worktrees.layout();
+        let mut expanded = expanded;
+        if shown.is_empty() {
+            self.working.imp().children.replace(None);
+            self.working_children.set(false);
+        } else {
+            let store = gio::ListStore::new::<Node>();
+            for w in &shown {
+                store.append(&Node::new(worktree_data(w, &worktrees), None));
+            }
+            if !clean.is_empty() {
+                let folded = gio::ListStore::new::<Node>();
+                for w in &clean {
+                    folded.append(&Node::new(worktree_data(w, &worktrees), None));
+                }
+                store.append(&Node::new(
+                    Data {
+                        title: tr!("No changes"),
+                        key: "worktrees/clean".into(),
+                        item: Item::Folder,
+                        icon: icon::Kind::CheckCircle,
+                        badge: clean.len().to_string(),
+                        tooltip: Some(tr!("Worktrees with no changes (click to show)")),
+                        ..Data::default()
+                    },
+                    Some(folded),
+                ));
+            }
+            self.working.imp().children.replace(Some(store));
+            if !self.working_children.replace(true) {
+                expanded.insert("page/working".to_owned());
+            }
+        }
         let workspace = gio::ListStore::new::<Node>();
         workspace.append(&self.working);
         workspace.append(&history);
@@ -1138,6 +1224,45 @@ impl Inner {
         self.rebuilding.set(false);
     }
 
+    /// `store` の `at` の項目を `node` に入れ替える。入れ替えた行の下の開き方と、選んでいた行は戻す。
+    fn replace_keeping(&self, store: &gio::ListStore, at: u32, node: &Node) {
+        let mut expanded = HashSet::new();
+        for i in 0..self.model.n_items() {
+            if let Some(row) = self.model.row(i)
+                && row.is_expanded()
+                && let Some(n) = row.item().and_downcast::<Node>()
+            {
+                expanded.insert(n.data().key);
+            }
+        }
+        let selected: Vec<String> = self.selected_nodes().iter().map(|n| n.data().key).collect();
+        self.rebuilding.set(true);
+        store.splice(at, 1, std::slice::from_ref(node));
+        let mut i = 0;
+        while i < self.model.n_items() {
+            if let Some(row) = self.model.row(i)
+                && !row.is_expanded()
+                && let Some(n) = row.item().and_downcast::<Node>()
+                && expanded.contains(&n.data().key)
+            {
+                row.set_expanded(true);
+            }
+            i += 1;
+        }
+        for i in 0..self.model.n_items() {
+            if let Some(n) = self
+                .model
+                .row(i)
+                .and_then(|r| r.item().and_downcast::<Node>())
+                && selected.contains(&n.data().key)
+                && !self.selection.is_selected(i)
+            {
+                self.selection.select_item(i, false);
+            }
+        }
+        self.rebuilding.set(false);
+    }
+
     fn select_key(&self, key: &str) {
         for i in 0..self.model.n_items() {
             if let Some(row) = self.model.row(i)
@@ -1148,6 +1273,63 @@ impl Inner {
                 return;
             }
         }
+    }
+}
+
+/// worktree の行: 名前、印のアイコン（✎ 書き込む先・⌂ メイン・⑂ 追加したもの）、右端に変更の数（フォルダが
+/// ない・ロック中ならそのこと）。ツールチップにパスとブランチ。
+fn worktree_data(w: &crate::worktrees::Info, view: &crate::worktrees::View) -> Data {
+    let editing = w.key == view.editing;
+    let count = view.counts.get(&w.key).copied().unwrap_or(0);
+    let badge = if w.prunable.is_some() {
+        tr!("missing")
+    } else if w.locked.is_some() {
+        tr!("locked")
+    } else if count > 0 {
+        count.to_string()
+    } else {
+        String::new()
+    };
+    let lines = [
+        Some(w.path.clone()),
+        Some(match &w.branch {
+            Some(b) => tr!("Branch: {name}", name = b),
+            None => tr!("detached HEAD"),
+        }),
+        Some(if editing {
+            tr!("Editing this worktree")
+        } else {
+            tr!("Click to edit this worktree")
+        }),
+        w.locked.as_ref().map(|l| {
+            if l.is_empty() {
+                tr!("Locked")
+            } else {
+                tr!("Locked: {reason}", reason = l)
+            }
+        }),
+        w.prunable.as_ref().map(|p| {
+            tr!(
+                "Its folder is gone (Prune removes it): {reason}",
+                reason = p
+            )
+        }),
+    ];
+    Data {
+        title: w.name.clone(),
+        key: format!("worktree/{}", w.key),
+        item: Item::Worktree(w.clone()),
+        icon: if editing {
+            icon::Kind::WorkingCopy
+        } else if w.main {
+            icon::Kind::House
+        } else {
+            icon::Kind::Branch
+        },
+        head: editing,
+        badge,
+        tooltip: Some(lines.into_iter().flatten().collect::<Vec<_>>().join("\n")),
+        ..Data::default()
     }
 }
 

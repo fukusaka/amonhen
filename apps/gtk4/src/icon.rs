@@ -65,6 +65,10 @@ pub enum Kind {
     CloudSlash,
     /// exclamationmark.icloud（リモートに同じ名前の別のタグがある）
     CloudAlert,
+    /// house（メインの worktree）
+    House,
+    /// checkmark.circle（変更のない worktree をまとめた行）
+    CheckCircle,
 }
 
 mod imp {
@@ -436,6 +440,26 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.add_circle(&point(6.8, 6.8), 4.3);
             p.move_to(10.0, 10.0);
             p.line_to(13.8, 13.8);
+        }
+        Kind::House => {
+            // 屋根と壁、戸口。
+            p.move_to(2.0, 8.0);
+            p.line_to(8.0, 2.5);
+            p.line_to(14.0, 8.0);
+            p.move_to(4.0, 6.5);
+            p.line_to(4.0, 13.5);
+            p.line_to(12.0, 13.5);
+            p.line_to(12.0, 6.5);
+            p.move_to(6.8, 13.5);
+            p.line_to(6.8, 10.0);
+            p.line_to(9.2, 10.0);
+            p.line_to(9.2, 13.5);
+        }
+        Kind::CheckCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(5.2, 8.2);
+            p.line_to(7.2, 10.2);
+            p.line_to(10.9, 6.0);
         }
         Kind::Undo => {
             p.add_circle(&point(8.0, 8.0), 6.3);

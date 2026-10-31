@@ -1431,3 +1431,14 @@
 "Use the git on the PATH" = "PATH の git に戻す";
 "Use the login shell’s environment variables" = "ログインシェルの環境変数を使う";
 "Starts the engine on {host} through its login shell, so it and git get the PATH and GIT_* set in ~/.profile and the like, which a command run over ssh lacks. Changing it reconnects." = "{host} のエンジンをログインシェル経由で起動し、ssh で動かすコマンドにはない、~/.profile などで設定した PATH や GIT_* をエンジンと git に渡します。変えるとつなぎ直します。";
+
+/* GTK4: Worktrees（サイドバーの Working Copy の下） */
+"missing" = "なし";
+"Branch: {name}" = "ブランチ: {name}";
+"detached HEAD" = "detached HEAD";
+"Editing this worktree" = "この worktree を編集中";
+"Click to edit this worktree" = "押すと、この worktree を編集する";
+"Locked" = "ロック中";
+"Locked: {reason}" = "ロック中: {reason}";
+"Its folder is gone (Prune removes it): {reason}" = "フォルダがありません（Prune で片付けられます）: {reason}";
+"Worktrees with no changes (click to show)" = "変更のない worktree（クリックで表示）";
