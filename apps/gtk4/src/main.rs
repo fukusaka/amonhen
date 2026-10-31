@@ -7,6 +7,7 @@ mod activity;
 mod appmenu;
 mod askpass;
 mod bookmarks;
+mod cipopover;
 mod commitmsg;
 mod commitops;
 mod configtable;
@@ -156,6 +157,8 @@ struct Args {
     quick_open: Option<String>,
     /// 最初に History を出したら、この worktree を書き込む先にする（確認用）。
     edit_worktree: Option<String>,
+    /// GitHub の CI の状態を読んだら、History のこの行の CI の印を押したことにする（確認用）。
+    ci_row: Option<u32>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -215,6 +218,10 @@ fn parse_args() -> Result<Args, String> {
             "--quick-open" => args.quick_open = Some(it.next().ok_or("--quick-open <query>")?),
             "--edit-worktree" => {
                 args.edit_worktree = Some(it.next().ok_or("--edit-worktree <path>")?)
+            }
+            "--ci-row" => {
+                let row = it.next().ok_or("--ci-row <row>")?;
+                args.ci_row = Some(row.parse().map_err(|_| "--ci-row <row>")?);
             }
             "--apply-patch" => {
                 let paths = it.next().ok_or("--apply-patch <path,...>")?;
@@ -1047,6 +1054,9 @@ fn build_window(app: &gtk::Application, args: Args) {
         s.select_page(Page::WorkingCopy);
     });
     window.add_action(&edit_action);
+    // GitHub（プルリクエスト・CI の状態・アバター）。ref を読むたびに読み直す（30 秒は空ける）。
+    let github_loader = github::Loader::new(&actions, &view);
+    let mut github_started = false;
     search.install(&window, app);
     header.pack_end(&search.toggle);
     let order = settings::history_order();
@@ -1073,6 +1083,11 @@ fn build_window(app: &gtk::Application, args: Args) {
                         stashes.set_repo(editing.clone());
                         reflog.set_repo(editing.clone());
                         actions.set_repo(editing);
+                        // ref を先に読んでいたら、ここで GitHub から読み始める。
+                        if !github_started && latest_refs.borrow().is_some() {
+                            github_started = true;
+                            github_loader.load(true);
+                        }
                         shaper.present(repo, history);
                         if first && let Some(path) = &args.edit_worktree {
                             worktrees.edit(path);
@@ -1375,6 +1390,34 @@ fn build_window(app: &gtk::Application, args: Args) {
                                     None => range_diff_opener.previous(None),
                                 }
                             }
+                            if let Some(row) = args.ci_row {
+                                // CI の状態が届くまで待ってから印を押し、チェックを読み終えるまで待つ。
+                                pending.set(pending.get() + 1);
+                                let (p, v) = (pending.clone(), view.downgrade());
+                                let tries = Cell::new(0u32);
+                                glib::timeout_add_local(
+                                    std::time::Duration::from_millis(200),
+                                    move || {
+                                        let Some(view) = v.upgrade() else {
+                                            return glib::ControlFlow::Break;
+                                        };
+                                        tries.set(tries.get() + 1);
+                                        let clicked = view.click_ci_row(row);
+                                        if !clicked && tries.get() < 100 {
+                                            return glib::ControlFlow::Continue;
+                                        }
+                                        if !clicked {
+                                            eprintln!("CI の印がない: {row}");
+                                        }
+                                        let p = p.clone();
+                                        glib::timeout_add_local_once(
+                                            std::time::Duration::from_millis(4000),
+                                            move || p.set(p.get() - 1),
+                                        );
+                                        glib::ControlFlow::Break
+                                    },
+                                );
+                            }
                             after_first_show(&window, &view, &pending, &args);
                         }
                     }
@@ -1419,6 +1462,13 @@ fn build_window(app: &gtk::Application, args: Args) {
                         }
                         latest_refs.replace(Some(refs.clone()));
                         actions.set_head(refs.refs.head_branch.clone());
+                        // push・fetch の後はプルリクエストや CI も変わりうる（読みすぎないよう、間を空ける）。
+                        if github_started {
+                            github_loader.load(false);
+                        } else if actions.repo().is_some() {
+                            github_started = true;
+                            github_loader.load(true);
+                        }
                         // HEAD が動いたら Reflog も読み直す（見えていなければ、次に出すときに）。
                         reflog.reload();
                         buttons.show_refs(&refs);

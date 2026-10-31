@@ -1467,3 +1467,35 @@
 /* GTK4: Stashes・Reflog の worktree の帯 */
 "Applies to ✎ {name}" = "戻す先: ✎ {name}";
 "HEAD of ✎ {name}" = "✎ {name} の HEAD";
+/* GTK4 の FE: GitHub: CI の印と吹き出し、Settings > Accounts */
+"Loading the checks…" = "チェックを読んでいます…";
+"Couldn’t read the checks: {error}" = "チェックを読めません: {error}";
+"No checks on this commit." = "このコミットにチェックはありません。";
+"{count} checks" = "{count} 件のチェック";
+"gh (GitHub CLI) wasn’t found. Install it with brew install gh, then sign in with gh auth login." = "gh（GitHub CLI）が見つかりません。brew install gh で入れ、gh auth login でログインしてください";
+"gh {args} failed." = "gh {args} が失敗しました";
+"CI: passed" = "CI: 成功";
+"CI: failed" = "CI: 失敗";
+"CI: running" = "CI: 実行中";
+"No CI" = "CI なし";
+"passed" = "成功";
+"failed" = "失敗";
+"cancelled" = "取り消し";
+"timed out" = "時間切れ";
+"skipped" = "スキップ";
+"neutral" = "どちらでもない";
+"action required" = "対応が必要";
+"stale" = "古い";
+"queued" = "待ち";
+"running" = "実行中";
+"Can’t read the CI status: {error}" = "CI の状態を読めない: {error}";
+"Show each commit’s CI status in History" = "History にコミットごとの CI の状態を出す";
+"Use commit authors’ GitHub avatars" = "コミットの作者の GitHub のアバターを使う";
+"Branches to read CI for" = "CI を読むブランチ";
+"Current and default branch" = "今のブランチと既定のブランチ";
+"Current branch only" = "今のブランチだけ";
+"Commits to read per branch" = "ブランチごとに読むコミット";
+"Last {count}" = "直近 {count} 個";
+"Read avatar URLs only once per window" = "アバターの URL はウィンドウを開いて最初の 1 回だけ読む";
+"Accounts" = "アカウント";
+"CI Status" = "CI の状態";

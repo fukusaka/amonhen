@@ -18,14 +18,15 @@ use crate::menu::{self, Item};
 use crate::search::Search;
 use crate::settings::{self, items};
 
-/// 行に出す項目（アクションの名前、ビット、見出し）。CI Status は GTK4 版にまだない（GitHub とつないでいない）。
-fn item_entries() -> [(&'static str, u32, String); 5] {
+/// 行に出す項目（アクションの名前、ビット、見出し）。
+fn item_entries() -> [(&'static str, u32, String); 6] {
     [
         ("history-item-refs", items::REFS, tr!("Branches and Tags")),
         ("history-item-author", items::AUTHOR, tr!("Author")),
         ("history-item-date", items::DATE, tr!("Date")),
         ("history-item-id", items::ID, tr!("Commit ID")),
         ("history-item-signature", items::SIGNATURE, tr!("Signature")),
+        ("history-item-ci", items::CI, tr!("CI Status")),
     ]
 }
 

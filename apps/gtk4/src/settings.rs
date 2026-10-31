@@ -45,6 +45,18 @@ pub const COMPACT_HISTORY_ROWS: &str = "compactHistoryRows";
 pub const FOLD_MERGED_BRANCHES: &str = "foldMergedBranches";
 /// 選んだコミットの祖先を強調するか（既定はする）。
 pub const HIGHLIGHT_ANCESTORS: &str = "highlightAncestors";
+/// コミットの詳細に作者・コミッターのアバターを出すか（既定は出す。Gravatar にメールアドレスのハッシュを送る）。
+pub const SHOW_AVATARS: &str = "showAvatars";
+/// GitHub（gh で読む。Settings > Accounts）: History のコミットごとに CI の状態を出すか（既定は出す）。
+pub const GITHUB_CI_STATUS: &str = "gitHubCIStatus";
+/// コミットの作者の GitHub のアバターを使うか（既定は使う。使わなければ Gravatar だけ）。
+pub const GITHUB_AVATARS: &str = "gitHubAvatars";
+/// CI を読むブランチに、既定のブランチも含めるか（既定は含める。外すと今のブランチだけ）。
+pub const GITHUB_CI_DEFAULT_BRANCH: &str = "gitHubCIDefaultBranch";
+/// ブランチごとに読む直近のコミットの数（30・50・100。既定は 100）。
+pub const GITHUB_CI_COMMITS: &str = "gitHubCICommits";
+/// アバターの URL は、窓を開いて最初の 1 回だけ読むか（既定はそうする）。
+pub const GITHUB_AVATARS_ONCE: &str = "gitHubAvatarsOnce";
 
 /// History の行に出す項目のビット（macOS 版の `HistoryItems` と同じ値）。件名はいつも出す。
 pub mod items {
@@ -56,7 +68,7 @@ pub mod items {
     pub const ID: u32 = 8;
     /// 署名の検証結果の印。
     pub const SIGNATURE: u32 = 16;
-    /// GitHub の CI の状態（GTK4 版にはまだない。macOS 版と同じ値を残すため）。
+    /// GitHub の CI の状態。
     pub const CI: u32 = 32;
     pub const ALL: u32 = REFS | AUTHOR | DATE | ID | SIGNATURE | CI;
     /// 作者・日時の行に出すもの。
@@ -79,6 +91,14 @@ pub fn history_order() -> amonhen_model::HistoryOrder {
     string(HISTORY_ORDER)
         .and_then(|s| amonhen_model::HistoryOrder::from_name(&s))
         .unwrap_or_default()
+}
+
+/// GitHub で、ブランチごとに読む直近のコミットの数。
+pub fn github_ci_commits() -> u32 {
+    string(GITHUB_CI_COMMITS)
+        .and_then(|s| s.parse().ok())
+        .filter(|n| [30, 50, 100].contains(n))
+        .unwrap_or(100)
 }
 
 /// 自動の fetch の間隔（分。0 はしない）。
@@ -118,7 +138,15 @@ fn changed(key: &str) {
 pub fn bool(key: &str) -> bool {
     FILE.with(|f| f.boolean(GROUP, key)).unwrap_or(matches!(
         key,
-        MONOSPACED_COMMIT_MESSAGE | AUTO_MAGIC_MERGE | HIGHLIGHT_ANCESTORS | AUTO_BOOKMARK
+        MONOSPACED_COMMIT_MESSAGE
+            | AUTO_MAGIC_MERGE
+            | HIGHLIGHT_ANCESTORS
+            | AUTO_BOOKMARK
+            | SHOW_AVATARS
+            | GITHUB_CI_STATUS
+            | GITHUB_AVATARS
+            | GITHUB_CI_DEFAULT_BRANCH
+            | GITHUB_AVATARS_ONCE
     ))
 }
 
@@ -245,6 +273,103 @@ fn order_row() -> gtk::Box {
     b.append(&row);
     b.append(&n);
     b
+}
+
+/// 選ぶ行（名前と、`titles` から選ぶ欄）。`get`・`set` で `key` の設定を読み書きする。
+fn choice_row(
+    title: &str,
+    titles: &[String],
+    get: fn() -> usize,
+    set: impl Fn(usize) + 'static,
+    key: &'static str,
+) -> gtk::Box {
+    let refs: Vec<&str> = titles.iter().map(String::as_str).collect();
+    let choice = gtk::DropDown::from_strings(&refs);
+    choice.set_selected(get() as u32);
+    choice.connect_selected_notify(move |d| {
+        if d.selected() as usize != get() {
+            set(d.selected() as usize);
+        }
+    });
+    let weak = choice.downgrade();
+    connect_changed(move |changed| {
+        if changed == key
+            && let Some(d) = weak.upgrade()
+        {
+            d.set_selected(get() as u32);
+        }
+    });
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 12);
+    let l = gtk::Label::new(Some(title));
+    l.set_hexpand(true);
+    l.set_xalign(0.0);
+    row.append(&l);
+    row.append(&choice);
+    row
+}
+
+/// Settings > Accounts（macOS 版の `AccountsSettings`）: GitHub から History に読むもの。
+fn accounts() -> gtk::Box {
+    const COMMITS: [u32; 3] = [100, 50, 30];
+    let ci = check(
+        GITHUB_CI_STATUS,
+        &tr!("Show each commit’s CI status in History"),
+    );
+    let avatars = check(GITHUB_AVATARS, &tr!("Use commit authors’ GitHub avatars"));
+    let branches = choice_row(
+        &tr!("Branches to read CI for"),
+        &[
+            tr!("Current and default branch"),
+            tr!("Current branch only"),
+        ],
+        || usize::from(!bool(GITHUB_CI_DEFAULT_BRANCH)),
+        |i| set_bool(GITHUB_CI_DEFAULT_BRANCH, i == 0),
+        GITHUB_CI_DEFAULT_BRANCH,
+    );
+    let commits = choice_row(
+        &tr!("Commits to read per branch"),
+        &COMMITS.map(|n| tr!("Last {count}", count = n)),
+        || {
+            COMMITS
+                .iter()
+                .position(|&n| n == github_ci_commits())
+                .unwrap_or(0)
+        },
+        |i| set_string(GITHUB_CI_COMMITS, &COMMITS[i].to_string()),
+        GITHUB_CI_COMMITS,
+    );
+    let once = check(
+        GITHUB_AVATARS_ONCE,
+        &tr!("Read avatar URLs only once per window"),
+    );
+    // どちらも読まないなら、ブランチと数は選べない。アバターを使わないなら、1 回だけかも選べない。
+    let enable = {
+        let (b, c, o) = (branches.downgrade(), commits.downgrade(), once.downgrade());
+        move || {
+            let any = bool(GITHUB_CI_STATUS) || bool(GITHUB_AVATARS);
+            if let (Some(b), Some(c), Some(o)) = (b.upgrade(), c.upgrade(), o.upgrade()) {
+                b.set_sensitive(any);
+                c.set_sensitive(any);
+                o.set_sensitive(bool(GITHUB_AVATARS));
+            }
+        }
+    };
+    enable();
+    connect_changed(move |key| {
+        if key == GITHUB_CI_STATUS || key == GITHUB_AVATARS {
+            enable();
+        }
+    });
+    page(&[section(
+        Some("GitHub"),
+        &[
+            ci.upcast(),
+            avatars.upcast(),
+            branches.upcast(),
+            commits.upcast(),
+            once.upcast(),
+        ],
+    )])
 }
 
 fn section(title: Option<&str>, items: &[gtk::Widget]) -> gtk::Box {
@@ -398,6 +523,9 @@ pub fn show(parent: &gtk::ApplicationWindow) {
         }
     });
 
+    // Accounts: 外部サービス。今は GitHub の表示だけ（macOS 版と同じ）。
+    stack.add_titled(&accounts(), Some("accounts"), &tr!("Accounts"));
+
     // Appearance
     stack.add_titled(
         &page(&[
@@ -421,6 +549,7 @@ pub fn show(parent: &gtk::ApplicationWindow) {
                     item_check(items::DATE, &tr!("Date")).upcast(),
                     item_check(items::ID, &tr!("Commit ID")).upcast(),
                     item_check(items::SIGNATURE, &tr!("Signature")).upcast(),
+                    item_check(items::CI, &tr!("CI Status")).upcast(),
                     note(&tr!("What each commit’s row shows besides the subject.")).upcast(),
                 ],
             ),

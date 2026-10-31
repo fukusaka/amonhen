@@ -1,14 +1,20 @@
 //! GitHub（macOS 版の `GitHub.swift`）: リモートの URL から GitHub のリポジトリを見分け、Repository > Open on GitHub
-//! と Create Pull Request…（`gh` で作る）。CI の印・アバター・プルリクエストの一覧はまだない。
+//! と Create Pull Request…（`gh` で作る）、開いているプルリクエスト（サイドバーの Pull Requests）、History の行の
+//! CI の状態とコミットの作者のアバターの URL（GraphQL で 1 回に読む）、CI の吹き出しのチェック。手元の `gh`
+//! （GitHub CLI）を起動して読み書きし、ログインとトークンは gh に任せる（アプリはトークンに触れない）。gh がなければ
+//! 連携の機能を出さない。
 
+use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use amonhen_core::Repository;
-use amonhen_model::tr;
+use amonhen_model::{Oid, tr};
 use gtk::prelude::*;
 use gtk::{gio, glib};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::actions::Actions;
 use crate::sheets::{Response, Sheet, row};
@@ -83,7 +89,7 @@ pub async fn of(repo: &Arc<Repository>) -> Option<GitHubRepository> {
     GitHubRepository::parse(remote["fetchUrl"].as_str()?)
 }
 
-fn open_uri(window: Option<&gtk::Window>, uri: &str) {
+pub fn open_uri(window: Option<&gtk::Window>, uri: &str) {
     gtk::UriLauncher::new(uri).launch(window, gio::Cancellable::NONE, |_| {});
 }
 
@@ -107,10 +113,17 @@ pub fn open_on_github(actions: &Rc<Actions>, branch: Option<String>) {
     });
 }
 
-/// `gh` を `dir` で動かし、標準出力を返す。失敗したら標準エラー。
+/// `gh` を `dir` で動かし、標準出力を返す。失敗したら標準エラー（空なら「gh … が失敗しました」）。裏の糸で呼ぶ。
 fn gh(args: &[&str], dir: Option<&std::path::Path>) -> Result<String, String> {
+    if !available() {
+        return Err(tr!(
+            "gh (GitHub CLI) wasn’t found. Install it with brew install gh, then sign in with gh auth login."
+        ));
+    }
     let mut command = amonhen_model::process::command("gh");
     command.args(args);
+    // 尋ねてこないように、色を付けないように。
+    command.env("GH_PROMPT_DISABLED", "1").env("NO_COLOR", "1");
     if let Some(d) = dir {
         command.current_dir(d);
     }
@@ -118,8 +131,467 @@ fn gh(args: &[&str], dir: Option<&std::path::Path>) -> Result<String, String> {
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+        let message = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+        Err(if message.is_empty() {
+            tr!("gh {args} failed.", args = args.join(" "))
+        } else {
+            message
+        })
     }
+}
+
+/// [`gh`] を裏の糸で動かし始める（呼んだときに始まる）。
+fn gh_spawn(
+    args: Vec<String>,
+    dir: Option<std::path::PathBuf>,
+) -> gio::JoinHandle<Result<String, String>> {
+    gio::spawn_blocking(move || {
+        let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        gh(&refs, dir.as_deref())
+    })
+}
+
+/// [`gh`] を裏の糸で動かす。
+async fn gh_async(args: Vec<String>, dir: Option<std::path::PathBuf>) -> Result<String, String> {
+    gh_spawn(args, dir)
+        .await
+        .unwrap_or_else(|_| Err(String::new()))
+}
+
+/// CI の状態。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Ci {
+    Passing,
+    Failing,
+    Pending,
+    None,
+}
+
+impl Ci {
+    /// 吹き出しやツールチップの文（macOS 版の `CIPopover.look`）。
+    pub fn label(self) -> String {
+        match self {
+            Self::Passing => tr!("CI: passed"),
+            Self::Failing => tr!("CI: failed"),
+            Self::Pending => tr!("CI: running"),
+            Self::None => tr!("No CI"),
+        }
+    }
+
+    /// 印の文字と色の CSS のクラス（GTK の部品で出すとき）。
+    pub fn symbol(self) -> (&'static str, &'static str) {
+        match self {
+            Self::Passing => ("✓", "success"),
+            Self::Failing => ("✗", "error"),
+            Self::Pending => ("●", "warning"),
+            Self::None => ("○", "dim-label"),
+        }
+    }
+}
+
+/// 1 つのコミットのチェック 1 つ（GitHub Actions のジョブ、または外部の status）。
+#[derive(Clone, Debug, PartialEq)]
+pub struct CommitCheck {
+    pub name: String,
+    /// CheckRun なら conclusion（走っている途中は status）、status context なら state。小文字。
+    pub result: String,
+    pub url: Option<String>,
+    /// かかった時間（秒。終わっていなければ None）。
+    pub seconds: Option<i64>,
+}
+
+impl CommitCheck {
+    /// 吹き出しの行の見た目に使う状態。取り消しは失敗ではない（やり直す前の run や、上書きされた run）。
+    pub fn ci(&self) -> Ci {
+        match self.result.as_str() {
+            "success" => Ci::Passing,
+            "failure" | "error" | "timed_out" | "action_required" | "startup_failure" | "stale" => {
+                Ci::Failing
+            }
+            "queued" | "in_progress" | "pending" | "waiting" | "requested" | "expected" => {
+                Ci::Pending
+            }
+            _ => Ci::None,
+        }
+    }
+
+    pub fn is_cancelled(&self) -> bool {
+        self.result == "cancelled"
+    }
+
+    /// 同じ名前のチェック（やり直しや上書きで run が増えたもの）を 1 つにまとめる。成功があれば成功 1 つ、なければ
+    /// 失敗、走っている途中、取り消し、その他の順で代表を選ぶ。順は読んだ順（新しい run が先）。
+    pub fn collapsed(checks: &[CommitCheck]) -> Vec<CommitCheck> {
+        let rank = |c: &CommitCheck| match c.ci() {
+            Ci::Passing => 0,
+            Ci::Failing => 1,
+            Ci::Pending => 2,
+            Ci::None if c.is_cancelled() => 3,
+            Ci::None => 4,
+        };
+        let mut names: Vec<&str> = Vec::new();
+        let mut best: HashMap<&str, &CommitCheck> = HashMap::new();
+        for check in checks {
+            match best.get(check.name.as_str()) {
+                None => {
+                    names.push(&check.name);
+                    best.insert(&check.name, check);
+                }
+                // 同じ順位なら先のもの（新しい run）を残す。
+                Some(b) if rank(check) < rank(b) => {
+                    best.insert(&check.name, check);
+                }
+                Some(_) => {}
+            }
+        }
+        names.iter().map(|n| best[n].clone()).collect()
+    }
+
+    pub fn result_label(&self) -> String {
+        match self.result.as_str() {
+            "success" => tr!("passed"),
+            "failure" | "error" | "startup_failure" => tr!("failed"),
+            "cancelled" => tr!("cancelled"),
+            "timed_out" => tr!("timed out"),
+            "skipped" => tr!("skipped"),
+            "neutral" => tr!("neutral"),
+            "action_required" => tr!("action required"),
+            "stale" => tr!("stale"),
+            "queued" | "waiting" | "requested" | "expected" => tr!("queued"),
+            "in_progress" | "pending" => tr!("running"),
+            other => other.to_owned(),
+        }
+    }
+}
+
+/// 既定のブランチ（プルリクエストの base の初期値）。
+pub async fn default_branch(repo: &GitHubRepository) -> Option<String> {
+    let args = [
+        "repo",
+        "view",
+        &repo.slug(),
+        "--json",
+        "defaultBranchRef",
+        "-q",
+        ".defaultBranchRef.name",
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    gh_async(args, None).await.ok().filter(|b| !b.is_empty())
+}
+
+/// ブランチの直近のコミット（それぞれ `count` 個まで）の CI の状態（`ci` のとき）と、作者の GitHub のアバターの
+/// URL（`authors` のとき。メールアドレスの小文字 → URL）。GraphQL で 1 回に読む。GitHub にないブランチは飛ばす。
+pub async fn commit_statuses(
+    repo: &GitHubRepository,
+    branches: &[String],
+    count: u32,
+    ci: bool,
+    authors: bool,
+) -> Result<(HashMap<Oid, Ci>, HashMap<String, String>), String> {
+    if branches.is_empty() || !(ci || authors) {
+        return Ok(Default::default());
+    }
+    // 要るものだけを頼む（量を減らす）。
+    let wanted = [
+        Some("oid"),
+        authors.then_some("author { email avatarUrl(size: 96) }"),
+        ci.then_some("statusCheckRollup { state }"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>()
+    .join(" ");
+    // ブランチごとに別名を付けて並べる（b0・b1 …）。
+    let fields = (0..branches.len())
+        .map(|i| {
+            format!(
+                "b{i}: ref(qualifiedName: $r{i}) {{ target {{ ... on Commit {{ history(first: {count}) {{ nodes {{\n  {wanted} }} }} }} }} }}"
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let variables = (0..branches.len())
+        .map(|i| format!("$r{i}: String!"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let query = format!(
+        "query($owner: String!, $name: String!, {variables}) {{ repository(owner: $owner, name: $name) {{ {fields} }} }}"
+    );
+    let mut args: Vec<String> = vec![
+        "api".into(),
+        "graphql".into(),
+        "-f".into(),
+        format!("query={query}"),
+        "-f".into(),
+        format!("owner={}", repo.owner),
+        "-f".into(),
+        format!("name={}", repo.name),
+    ];
+    if repo.host != "github.com" {
+        args.extend(["--hostname".into(), repo.host.clone()]);
+    }
+    for (i, branch) in branches.iter().enumerate() {
+        args.extend(["-f".into(), format!("r{i}=refs/heads/{branch}")]);
+    }
+    let out = gh_async(args, None).await?;
+    let response: Value = serde_json::from_str(&out).map_err(|e| e.to_string())?;
+    let mut statuses = HashMap::new();
+    let mut avatars = HashMap::new();
+    for r in response["data"]["repository"]
+        .as_object()
+        .into_iter()
+        .flat_map(|o| o.values())
+    {
+        for node in r["target"]["history"]["nodes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+        {
+            let Some(oid) = node["oid"].as_str().and_then(Oid::from_hex) else {
+                continue;
+            };
+            if let Some(state) = node["statusCheckRollup"]["state"].as_str() {
+                statuses.insert(
+                    oid,
+                    match state {
+                        "SUCCESS" => Ci::Passing,
+                        "FAILURE" | "ERROR" => Ci::Failing,
+                        _ => Ci::Pending,
+                    },
+                );
+            }
+            let email = node["author"]["email"].as_str().unwrap_or_default();
+            if let Some(url) = node["author"]["avatarUrl"].as_str()
+                && !email.is_empty()
+            {
+                avatars.insert(email.to_lowercase(), url.to_owned());
+            }
+        }
+    }
+    Ok((statuses, avatars))
+}
+
+/// `sha` のコミットのチェック（Actions の check run と、外部の status）。印を押したときに読む。
+pub async fn commit_checks(repo: &GitHubRepository, sha: &str) -> Result<Vec<CommitCheck>, String> {
+    let host: Vec<String> = if repo.host == "github.com" {
+        Vec::new()
+    } else {
+        vec!["--hostname".into(), repo.host.clone()]
+    };
+    let base = format!("repos/{}/{}/commits/{sha}", repo.owner, repo.name);
+    let runs_args = [
+        vec!["api".into(), format!("{base}/check-runs?per_page=100")],
+        host.clone(),
+    ]
+    .concat();
+    let status_args = [vec!["api".into(), format!("{base}/status")], host].concat();
+    // 2 つを並べて読む。
+    let runs = gh_spawn(runs_args, None);
+    let status = gh_spawn(status_args, None);
+    let failed = |_| Err(String::new());
+    let runs = runs.await.unwrap_or_else(failed)?;
+    let status = status.await.unwrap_or_else(failed)?;
+    let runs: Value = serde_json::from_str(&runs).map_err(|e| e.to_string())?;
+    let status: Value = serde_json::from_str(&status).map_err(|e| e.to_string())?;
+    let time = |v: &Value| {
+        v.as_str()
+            .and_then(|s| glib::DateTime::from_iso8601(s, None).ok())
+            .map(|d| d.to_unix())
+    };
+    let mut out = Vec::new();
+    for run in runs["check_runs"].as_array().into_iter().flatten() {
+        let result = run["conclusion"]
+            .as_str()
+            .or(run["status"].as_str())
+            .unwrap_or_default()
+            .to_lowercase();
+        let seconds = time(&run["started_at"])
+            .zip(time(&run["completed_at"]))
+            .map(|(s, e)| e - s);
+        out.push(CommitCheck {
+            name: run["name"].as_str().unwrap_or_default().to_owned(),
+            result,
+            url: run["html_url"].as_str().map(str::to_owned),
+            seconds,
+        });
+    }
+    for context in status["statuses"].as_array().into_iter().flatten() {
+        out.push(CommitCheck {
+            name: context["context"].as_str().unwrap_or_default().to_owned(),
+            result: context["state"].as_str().unwrap_or_default().to_lowercase(),
+            url: context["target_url"].as_str().map(str::to_owned),
+            seconds: None,
+        });
+    }
+    Ok(out)
+}
+
+thread_local! {
+    /// 窓ごとの読み手（プルリクエストを作ったら、その窓の分を読み直す）。
+    static LOADERS: RefCell<Vec<std::rc::Weak<Loader>>> = RefCell::default();
+}
+
+/// 窓ごとに GitHub から読むもの（macOS 版の `RepositoryWindow.loadGitHub`）: 開いているプルリクエスト（サイドバー）、
+/// 今のブランチと既定のブランチの直近のコミットの CI の状態（History の行の印）と作者のアバターの URL。読むものと
+/// 量は Settings > Accounts で決める。gh がなければ何もしない。
+pub struct Loader {
+    actions: Rc<Actions>,
+    view: glib::WeakRef<crate::history::HistoryView>,
+    github: RefCell<Option<GitHubRepository>>,
+    loaded_at: Cell<Option<Instant>>,
+    default_branch: RefCell<Option<String>>,
+    /// この窓で GitHub のアバターの URL を読んだか。
+    avatars_loaded: Cell<bool>,
+}
+
+/// GitHub の連携の設定（変わったら読み直す）。
+const SETTING_KEYS: [&str; 5] = [
+    crate::settings::GITHUB_CI_STATUS,
+    crate::settings::GITHUB_AVATARS,
+    crate::settings::GITHUB_CI_DEFAULT_BRANCH,
+    crate::settings::GITHUB_CI_COMMITS,
+    crate::settings::GITHUB_AVATARS_ONCE,
+];
+
+impl Loader {
+    pub fn new(actions: &Rc<Actions>, view: &crate::history::HistoryView) -> Rc<Self> {
+        let loader = Rc::new(Self {
+            actions: actions.clone(),
+            view: view.downgrade(),
+            github: RefCell::default(),
+            loaded_at: Cell::new(None),
+            default_branch: RefCell::default(),
+            avatars_loaded: Cell::new(false),
+        });
+        LOADERS.with(|l| {
+            let mut l = l.borrow_mut();
+            l.retain(|w| w.strong_count() > 0);
+            l.push(Rc::downgrade(&loader));
+        });
+        let weak = Rc::downgrade(&loader);
+        crate::settings::connect_changed(move |key| {
+            let Some(loader) = weak.upgrade() else { return };
+            if !SETTING_KEYS.contains(&key) {
+                return;
+            }
+            if !crate::settings::bool(crate::settings::GITHUB_AVATARS) {
+                loader.avatars_loaded.set(false);
+            }
+            loader.load(true);
+        });
+        // History の行の CI の印を押したら、そのコミットのチェックの吹き出し。
+        let weak = Rc::downgrade(&loader);
+        view.connect_ci(move |id, ci, rect| {
+            let Some(loader) = weak.upgrade() else { return };
+            if let (Some(view), Some(github)) = (loader.view.upgrade(), loader.github()) {
+                crate::cipopover::show(view.upcast_ref(), Some(rect), ci, &id.to_string(), github);
+            }
+        });
+        loader
+    }
+
+    /// origin（なければ最初のリモート）が GitHub なら、そのリポジトリ（まだ読んでいなければ None）。
+    pub fn github(&self) -> Option<GitHubRepository> {
+        self.github.borrow().clone()
+    }
+
+    /// GitHub のリポジトリを判定し、開いているプルリクエストを読んでサイドバーに出し、CI の状態とアバターを読む。
+    /// `force` でなければ、前に読んでから 30 秒は読まない。
+    pub fn load(self: &Rc<Self>, force: bool) {
+        if !available() {
+            return;
+        }
+        if !force
+            && self
+                .loaded_at
+                .get()
+                .is_some_and(|at| at.elapsed() < Duration::from_secs(30))
+        {
+            return;
+        }
+        let Some(repo) = self.actions.repo() else {
+            return;
+        };
+        self.loaded_at.set(Some(Instant::now()));
+        let this = self.clone();
+        glib::spawn_future_local(async move {
+            let github = of(&repo).await;
+            this.github.replace(github.clone());
+            let Some(github) = github else {
+                return;
+            };
+            let name = repo_name(&repo);
+            this.load_statuses(&github, &name).await;
+        });
+    }
+
+    /// 今のブランチと既定のブランチの、直近のコミットの CI の状態（History の行の印）と作者のアバター。
+    async fn load_statuses(&self, github: &GitHubRepository, name: &str) {
+        use crate::settings::{
+            self, GITHUB_AVATARS, GITHUB_AVATARS_ONCE, GITHUB_CI_DEFAULT_BRANCH,
+        };
+        let ci = settings::bool(settings::GITHUB_CI_STATUS);
+        // アバターの URL は、1 回だけにするなら、読めた後は頼まない。
+        let authors = settings::bool(GITHUB_AVATARS)
+            && !(settings::bool(GITHUB_AVATARS_ONCE) && self.avatars_loaded.get());
+        if !ci && let Some(view) = self.view.upgrade() {
+            view.set_ci(HashMap::new());
+        }
+        if !ci && !authors {
+            return;
+        }
+        let with_default = settings::bool(GITHUB_CI_DEFAULT_BRANCH);
+        if with_default && self.default_branch.borrow().is_none() {
+            let branch = default_branch(github).await;
+            self.default_branch.replace(branch);
+        }
+        let mut branches: Vec<String> = [
+            self.actions.head(),
+            with_default
+                .then(|| self.default_branch.borrow().clone())
+                .flatten(),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        branches.sort();
+        branches.dedup();
+        let count = settings::github_ci_commits();
+        match commit_statuses(github, &branches, count, ci, authors).await {
+            Ok((statuses, avatars)) => {
+                if ci && let Some(view) = self.view.upgrade() {
+                    view.set_ci(statuses);
+                }
+                if authors {
+                    let _ = avatars;
+                    self.avatars_loaded.set(true);
+                }
+            }
+            Err(e) => {
+                crate::activity::event(name, tr!("Can’t read the CI status: {error}", error = e))
+            }
+        }
+    }
+}
+
+/// `actions` の窓の読み手。
+fn loader_of(actions: &Rc<Actions>) -> Option<Rc<Loader>> {
+    LOADERS.with(|l| {
+        l.borrow()
+            .iter()
+            .filter_map(std::rc::Weak::upgrade)
+            .find(|l| Rc::ptr_eq(&l.actions, actions))
+    })
+}
+
+fn repo_name(repo: &Repository) -> String {
+    repo.paths()
+        .workdir
+        .as_deref()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 /// Repository > Create Pull Request…: `branch` からプルリクエストを作る。まだ push していない（上流がない・先行
@@ -188,27 +660,9 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
             body.trim().to_owned(),
         );
         let slug = github.slug();
-        let s = slug.clone();
-        let base = gio::spawn_blocking(move || {
-            gh(
-                &[
-                    "repo",
-                    "view",
-                    &s,
-                    "--json",
-                    "defaultBranchRef",
-                    "-q",
-                    ".defaultBranchRef.name",
-                ],
-                None,
-            )
-            .ok()
-        })
-        .await
-        .ok()
-        .flatten()
-        .filter(|b| !b.is_empty())
-        .unwrap_or_else(|| "main".to_owned());
+        let base = default_branch(&github)
+            .await
+            .unwrap_or_else(|| "main".to_owned());
 
         let sheet = Sheet::new(
             window.as_ref(),
@@ -261,6 +715,9 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
         .unwrap_or_else(|_| Err(String::new()));
         match result {
             Ok(url) => {
+                if let Some(loader) = loader_of(&actions) {
+                    loader.load(true);
+                }
                 let sheet = Sheet::new(window.as_ref(), &tr!("Pull Request Created"), &url);
                 sheet.buttons(&tr!("Open in Browser"), false, None);
                 if sheet.run().await == Response::Ok {

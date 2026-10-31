@@ -19,6 +19,7 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, gio, glib, graphene, gsk, pango};
 
+use crate::github::Ci;
 use crate::graph::{self, Lanes, Metrics};
 use crate::settings::items;
 
@@ -26,6 +27,10 @@ use crate::settings::items;
 type MenuCallback = Rc<dyn Fn(u32, f64, f64)>;
 /// 選んだ行が変わったときに呼ぶ（選んでいる行、昇順）。
 type SelectCallback = Rc<dyn Fn(&[u32])>;
+/// 行の右端の CI の印を押したときに呼ぶ（コミット、状態、印の位置）。
+type CiCallback = Rc<dyn Fn(Oid, Ci, gdk::Rectangle)>;
+/// CI の印に空ける幅（行の右端から）。
+const CI_SPACE: f32 = 18.0;
 
 const CHUNK_ROWS: u32 = 256;
 /// 持っておくチャンクの数（見えている所に近いものから）。
@@ -195,6 +200,10 @@ pub struct State {
     /// 描いたときに見つけた、まだ検証していない署名（少し待ってから検証する）。
     unverified: Vec<Oid>,
     verify_soon: Option<glib::SourceId>,
+    /// GitHub の CI の状態（コミットごと）。窓の側が gh で読んで渡す。
+    ci: HashMap<Oid, Ci>,
+    /// 行の右端の CI の印を押したときに呼ぶ。
+    on_ci: Option<CiCallback>,
     tick: Option<gtk::TickCallbackId>,
     /// 大きさが決まる前に見えるようにと頼まれた行（決まったらスクロールする）。
     pending_scroll: Option<u32>,
@@ -253,9 +262,13 @@ mod imp {
 
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
-            click.connect_pressed(move |gesture, _, _, y| {
+            click.connect_pressed(move |gesture, _, x, y| {
                 if let Some(view) = weak.upgrade() {
                     view.grab_focus();
+                    // 行の右端の CI の印なら、行を選ばずに詳細の吹き出し。
+                    if view.click_ci(x as f32, y as f32) {
+                        return;
+                    }
                     if let Some(row) = view.row_at(y as f32) {
                         // Ctrl で 1 行ずつ足す・外す、Shift で範囲（macOS の ⌘・⇧ と同じ）。
                         let state = gesture.current_event_state();
@@ -309,6 +322,14 @@ mod imp {
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             self.parent_size_allocate(width, height, baseline);
             self.obj().configure_adjustments();
+            // 吹き出し（CI の印のもの）は子なので、自分で置く。
+            let mut child = self.obj().first_child();
+            while let Some(c) = child {
+                if let Some(p) = c.downcast_ref::<gtk::Popover>() {
+                    p.present();
+                }
+                child = c.next_sibling();
+            }
         }
 
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
@@ -710,6 +731,73 @@ impl HistoryView {
     }
 
     /// 選んだ行が変わったら `f(選んでいる行、昇順)` を呼ぶ。
+    /// GitHub の CI の状態（コミットごと）を替える。変わったら描き直す。
+    pub fn set_ci(&self, ci: HashMap<Oid, Ci>) {
+        {
+            let mut st = self.state();
+            if st.ci == ci {
+                return;
+            }
+            st.ci = ci;
+        }
+        self.queue_draw();
+    }
+
+    /// 行の右端の CI の印を押したら `f(コミット, 状態, 印の位置)` を呼ぶ。
+    pub fn connect_ci(&self, f: impl Fn(Oid, Ci, gdk::Rectangle) + 'static) {
+        self.state().on_ci = Some(Rc::new(f));
+    }
+
+    /// `row` の行の CI の印（出していなければ None）: コミット、状態、印の位置。
+    pub fn ci_mark(&self, row: u32) -> Option<(Oid, Ci, gdk::Rectangle)> {
+        let rh = self.row_height();
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let st = self.state();
+        if st.display.items & items::CI == 0 {
+            return None;
+        }
+        let id = *st.history.as_ref()?.graph.ids().get(row as usize)?;
+        let ci = *st.ci.get(&id)?;
+        // 描くのと同じ位置（文字の列の右端から 9 の所を中心に 14 の四角）。
+        let end = self.width() as f32 - TEXT_INSET;
+        let cy = row as f32 * rh - scroll + rh / 2.0;
+        let rect = gdk::Rectangle::new((end - 16.0) as i32, (cy - 7.0) as i32, 14, 14);
+        Some((id, ci, rect))
+    }
+
+    /// (x, y) が CI の印の上なら、知らせて true。
+    fn click_ci(&self, x: f32, y: f32) -> bool {
+        let Some(f) = self.state().on_ci.clone() else {
+            return false;
+        };
+        let Some(row) = self.row_at(y) else {
+            return false;
+        };
+        let end = self.width() as f32 - TEXT_INSET;
+        if x < end - CI_SPACE || x > end + 2.0 {
+            return false;
+        }
+        let Some((id, ci, rect)) = self.ci_mark(row) else {
+            return false;
+        };
+        f(id, ci, rect);
+        true
+    }
+
+    /// 確認用: `row` の行の CI の印を押したことにする。
+    pub fn click_ci_row(&self, row: u32) -> bool {
+        let Some(f) = self.state().on_ci.clone() else {
+            return false;
+        };
+        match self.ci_mark(row) {
+            Some((id, ci, rect)) => {
+                f(id, ci, rect);
+                true
+            }
+            None => false,
+        }
+    }
+
     pub fn connect_selected(&self, f: impl Fn(&[u32]) + 'static) {
         self.state().on_select = Some(Rc::new(f));
     }
@@ -923,7 +1011,7 @@ impl HistoryView {
 
             // 文字。
             let text_x = graph_width + TEXT_INSET;
-            let text_end = width - TEXT_INSET;
+            let row_end = width - TEXT_INSET;
             let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
             let white = gdk::RGBA::WHITE;
             if st.rows.len() > 4096 {
@@ -957,6 +1045,21 @@ impl HistoryView {
                     text_top
                 };
                 let id = history.graph.ids()[row as usize];
+                // GitHub の CI の状態（知っていれば）。行の右端に置き、署名の印とは離す。
+                let ci = if st.display.items & items::CI != 0 {
+                    st.ci.get(&id).copied()
+                } else {
+                    None
+                };
+                let text_end = if ci.is_some() {
+                    row_end - CI_SPACE
+                } else {
+                    row_end
+                };
+                if let Some(ci) = ci {
+                    let color = if selected { white } else { ci_color(ci, &fg) };
+                    draw_ci(snapshot, ci, row_end - 9.0, top + rh / 2.0, &color);
+                }
                 if st.display.items & items::REFS != 0
                     && let Some(labels) = st.labels.get(&id).cloned()
                 {
@@ -1205,6 +1308,47 @@ impl HistoryView {
             st.chunks.remove(&i);
             let rows = i * CHUNK_ROWS..(i + 1) * CHUNK_ROWS;
             st.rows.retain(|r, _| !rows.contains(r));
+        }
+    }
+}
+
+/// CI の印の色（macOS 版と同じく、成功は緑・失敗は赤・途中は橙）。
+fn ci_color(ci: Ci, fg: &gdk::RGBA) -> gdk::RGBA {
+    match ci {
+        Ci::Passing => gdk::RGBA::new(0.20, 0.70, 0.30, 1.0),
+        Ci::Failing => gdk::RGBA::new(0.90, 0.25, 0.25, 1.0),
+        Ci::Pending => gdk::RGBA::new(0.95, 0.55, 0.15, 1.0),
+        Ci::None => gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.55),
+    }
+}
+
+/// CI の印を (cx, cy) を中心に描く: 枠のないチェック・バツ・点（署名の丸と形で見分ける）。
+fn draw_ci(snapshot: &gtk::Snapshot, ci: Ci, cx: f32, cy: f32, color: &gdk::RGBA) {
+    let path = gsk::PathBuilder::new();
+    let stroke = gsk::Stroke::new(1.6);
+    stroke.set_line_cap(gsk::LineCap::Round);
+    stroke.set_line_join(gsk::LineJoin::Round);
+    match ci {
+        Ci::Passing => {
+            path.move_to(cx - 3.8, cy + 0.2);
+            path.line_to(cx - 1.2, cy + 2.9);
+            path.line_to(cx + 4.0, cy - 3.2);
+            snapshot.append_stroke(&path.to_path(), &stroke, color);
+        }
+        Ci::Failing => {
+            path.move_to(cx - 3.2, cy - 3.2);
+            path.line_to(cx + 3.2, cy + 3.2);
+            path.move_to(cx + 3.2, cy - 3.2);
+            path.line_to(cx - 3.2, cy + 3.2);
+            snapshot.append_stroke(&path.to_path(), &stroke, color);
+        }
+        Ci::Pending => {
+            path.add_circle(&graphene::Point::new(cx, cy), 3.0);
+            snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, color);
+        }
+        Ci::None => {
+            path.add_circle(&graphene::Point::new(cx, cy), 3.0);
+            snapshot.append_stroke(&path.to_path(), &gsk::Stroke::new(1.0), color);
         }
     }
 }

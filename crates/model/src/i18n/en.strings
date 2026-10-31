@@ -47,3 +47,4 @@
 "{count} files with changes (untracked files aren’t counted)" = "{count} file with changes (untracked files aren’t counted)";
 "{name} ({count} places)" = "{name} ({count} place)";
 "{path} has uncommitted changes in {count} files. They are lost with the folder. The branch stays." = "{path} has uncommitted changes in {count} file. They are lost with the folder. The branch stays.";
+"{count} checks" = "{count} check";
