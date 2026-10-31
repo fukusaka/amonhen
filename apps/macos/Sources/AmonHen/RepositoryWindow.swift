@@ -307,6 +307,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         reflog.actions = actions
         // git の設定・リモートを変えたら、読み直す。
         settings.model.onRepositoryChange = { [weak self] in self?.refreshRepository(nil) }
+        // 取得とフォルダのページの操作（取り足す・取り直す・取り出すフォルダを変える）は、Fetch と同じくウィンドウの操作で。
+        settings.model.performOperation = { [weak self] command, done in
+            guard let actions = self?.actions else { return done() }
+            actions.perform(command, completion: { _ in done() }, recover: { _ in
+                done()
+                return false
+            })
+        }
+        loadForm()
         window.toolbar = toolbar.toolbar
         toolbar.setRepository(window.title)
     }
@@ -331,6 +340,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.workingCopy.onBlame = { [weak self, weak slot] path in self?.openBlame(path: path, rev: nil, in: slot?.repository) }
         slot.workingCopy.issueCandidates = { [weak self] in await self?.issueCandidates() ?? [] }
         slot.workingCopy.onFileHistory = { [weak self, weak slot] path in self?.openFileHistory(path: path, in: slot?.repository) }
+        slot.workingCopy.onShowFolders = { [weak self] in self?.showFetchingSettings() }
         slot.actions.window = window
         slot.actions.onFailure = { [weak self] failure in self?.showFailure(failure) }
         slot.actions.onSuccess = { [weak self] command in self?.operationSucceeded(command) }
@@ -569,6 +579,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     private func activate(_ slot: WorktreeSlot) {
         editing = slot
+        defer { loadForm() }
         if slot !== opened {
             let key = WorktreeInfo.canonical(slot.path)
             slotOrder.removeAll { $0 == key }
@@ -1350,6 +1361,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         checkMailmap()
         if !changes.intersection([.refs, .config]).isEmpty {
             refsChanged()
+            // shallow の境界は fetch で、partial clone と sparse checkout は設定で変わる。
+            loadForm()
             // push・fetch の後はプルリクエストも変わりうる（読みすぎないよう、間を空ける）。
             loadGitHub(force: false)
         }
@@ -1363,6 +1376,35 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// 最後に見た mailmap の指紋。
+    /// リポジトリの形（書き込む先の worktree の。sparse checkout は worktree ごと）。
+    private var form: RepositoryForm?
+    private var formRequest = 0
+
+    /// リポジトリの形を読み、サイドバーの印・Working Copy の見出し・History の検索・詳細のメニューに渡す。
+    private func loadForm() {
+        formRequest += 1
+        let request = formRequest
+        let slot = editing
+        let repository = slot.repository
+        Task {
+            let form = try? await Task.detached(priority: .utility) {
+                try repository.info(["op": "repositoryForm"], as: RepositoryForm.self)
+            }.value
+            guard request == formRequest, let form else { return }
+            self.form = form
+            sidebar.setRepositoryForm(form)
+            slot.workingCopy.setSparse(form.sparse)
+            history.isPartialClone = form.partial != nil
+            detail.sparse = form.sparse
+        }
+    }
+
+    /// Repository Settings の取得とフォルダのページを開く。
+    private func showFetchingSettings() {
+        settings.model.show(.fetching)
+        sidebar.select(page: .settings)
+    }
+
     private var mailmapFingerprint: UInt64?
 
     /// mailmap が変わっていたら、作者名を出し直す（History は作り直さず、行と詳細を読み直す）。

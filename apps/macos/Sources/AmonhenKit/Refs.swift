@@ -106,6 +106,20 @@ extension History {
         return (0..<Int(n)).map { (out[$0 * 2], out[$0 * 2 + 1]) }
     }
 
+    /// shallow clone の History か（境界より古いコミットを取得していない）。
+    public var isShallow: Bool { amonhen_history_is_shallow(raw) }
+
+    /// shallow clone の境界のコミット（親を取得していない）の行（昇順）。全行を見るので、大きな History では裏で呼ぶ。
+    public func boundaryRows() -> [Int] {
+        guard isShallow else { return [] }
+        var rows = [UInt32](repeating: 0, count: 16)
+        while true {
+            let total = rows.withUnsafeMutableBufferPointer { amonhen_history_boundary_rows(raw, $0.baseAddress, UInt32($0.count)) }
+            if Int(total) <= rows.count { return rows.prefix(Int(total)).map(Int.init) }
+            rows = [UInt32](repeating: 0, count: Int(total))
+        }
+    }
+
     /// `commit`（20 バイト）の行。
     public func row(of commit: Data) -> Int? {
         let row = commit.withUnsafeBytes { amonhen_history_row_of(raw, $0.baseAddress!.assumingMemoryBound(to: UInt8.self)) }

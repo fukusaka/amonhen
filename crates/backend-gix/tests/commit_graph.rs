@@ -458,4 +458,19 @@ fn stops_at_the_boundary_of_a_shallow_clone() {
         .collect();
     paths.sort();
     assert_eq!(paths, ["a.txt", "b.txt"]);
+    assert_eq!(
+        backend.shallow().unwrap(),
+        [amonhen_model::Oid::from_hex(&second).unwrap()]
+    );
+
+    // 根まで取ると、git は根のコミットを境界に残す。取得していない親はないので、境界に数えない。
+    git(&dir, &["fetch", "-q", "--deepen", "1"]);
+    assert!(dir.join(".git/shallow").exists());
+    assert!(
+        GixBackend::open(&dir)
+            .unwrap()
+            .shallow()
+            .unwrap()
+            .is_empty()
+    );
 }

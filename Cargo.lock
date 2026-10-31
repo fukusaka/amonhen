@@ -173,6 +173,7 @@ dependencies = [
 name = "amonhen-remote"
 version = "0.2.8"
 dependencies = [
+ "amonhen-backend-cli",
  "amonhen-backend-gix",
  "amonhen-core",
  "amonhen-layout",

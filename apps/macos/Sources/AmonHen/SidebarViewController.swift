@@ -853,6 +853,49 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if outline.isItemExpanded(node) { outline.animator().collapseItem(node) } else { outline.animator().expandItem(node) }
     }
 
+    /// リポジトリの形（History の行に shallow clone・partial clone、Working Copy の行に sparse checkout の印）。
+    private var form: RepositoryForm?
+
+    func setRepositoryForm(_ form: RepositoryForm) {
+        guard form != self.form else { return }
+        self.form = form
+        outline.reloadItem(historyNode)
+        outline.reloadItem(workingCopyNode)
+    }
+
+    /// 行の右端に出す、リポジトリの形の印（SF Symbols の名前, ツールチップ, 色）。
+    private func formMarks(_ node: Node) -> [(String, String, NSColor)] {
+        guard let form else { return [] }
+        if node === historyNode {
+            return [form.shallow ? ("scissors", L("Shallow clone: older history isn’t fetched"), .tertiaryLabelColor) : nil,
+                    form.partial.map { ("icloud.and.arrow.down", L("Partial clone: file contents are fetched when needed (%@)", $0.filter ?? "?"), .tertiaryLabelColor) }]
+                .compactMap { $0 }
+        }
+        if node === workingCopyNode, let sparse = form.sparse {
+            return [("folder.badge.minus", RepositoryForm.sparseHelp(sparse), .tertiaryLabelColor)]
+        }
+        return []
+    }
+
+    /// 右端の、アイコンの後に数などの文字を続けたもの（アイコンは文字に添付して並べる。間だけを空ける）。
+    private func badgeText(_ marks: [(String, String, NSColor)], _ badge: String, font: NSFont?) -> NSAttributedString {
+        let text = NSMutableAttributedString()
+        for (index, (symbol, _, color)) in marks.enumerated() {
+            let attachment = NSTextAttachment()
+            attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
+                .withSymbolConfiguration(.init(pointSize: NSFont.smallSystemFontSize, weight: .regular))
+            let icon = NSMutableAttributedString(attachment: attachment)
+            icon.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: icon.length))
+            text.append(icon)
+            if index < marks.count - 1 || !badge.isEmpty { text.append(NSAttributedString(string: " ")) }
+        }
+        text.append(NSAttributedString(string: badge, attributes: [
+            .font: font ?? .systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.secondaryLabelColor,
+        ]))
+        return text
+    }
+
     /// Working Copy の変更の数を表示する。
     func setWorkingCopyCount(_ count: Int) {
         workingCopyNode.badge = count > 0 ? "\(count)" : nil
@@ -914,7 +957,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             // 行には印だけを出し、worktree の名前はツールチップに（ブランチ名を隠さない）。メインの作業ツリーは ⌂、
             // 追加した worktree は ⑂（緑）。
             cell.toolTip = L("Checked out in the worktree “%@” (%@)", other.name, other.path)
-            cell.badge.stringValue = other.main ? "⌂" : "⑂"
+            cell.setBadge(full: nil, compact: nil, plain: other.main ? "⌂" : "⑂")
             cell.badge.textColor = other.main ? .secondaryLabelColor : .systemGreen
             if !other.main { cell.imageView?.contentTintColor = .systemGreen }
             cell.onBadgeClick = { [weak self, weak cell] in
@@ -949,32 +992,19 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         if let item = node.item, item.kind == .tag {
             marks = [tagSignatureMark(item.name), tagRemoteMark].compactMap { $0 }
         }
+        // リポジトリの形の印は添え物なので、名前が切れるほど狭ければ出さない（ツールチップには残す）。
+        let optionalMarks = formMarks(node)
+        let requiredMarks = marks
+        marks += optionalMarks
         if node === cleanWorktreesNode { badge = "\(node.children.count)" }
         if let w = node.worktree {
             badge = w.prunable != nil ? L("missing") : w.locked != nil ? L("locked")
                 : (worktreeChanges[WorktreeInfo.canonical(w.path)]).flatMap { $0 > 0 ? "\($0)" : nil } ?? ""
         }
         cell.badge.textColor = .secondaryLabelColor
-        if marks.isEmpty {
-            cell.badge.stringValue = badge
-        } else {
-            // アイコンは文字に添付して並べる（アイコンの後に、数などの文字）。
-            let text = NSMutableAttributedString()
-            for (symbol, _, color) in marks {
-                let attachment = NSTextAttachment()
-                attachment.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)?
-                    .withSymbolConfiguration(.init(pointSize: NSFont.smallSystemFontSize, weight: .regular))
-                let icon = NSMutableAttributedString(attachment: attachment)
-                icon.addAttribute(.foregroundColor, value: color, range: NSRange(location: 0, length: icon.length))
-                text.append(icon)
-                text.append(NSAttributedString(string: " "))
-            }
-            text.append(NSAttributedString(string: badge, attributes: [
-                .font: cell.badge.font ?? .systemFont(ofSize: NSFont.smallSystemFontSize),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ]))
-            cell.badge.attributedStringValue = text
-        }
+        cell.setBadge(full: marks.isEmpty ? nil : badgeText(marks, badge, font: cell.badge.font),
+                      compact: optionalMarks.isEmpty ? nil : badgeText(requiredMarks, badge, font: cell.badge.font),
+                      plain: badge)
         cell.toolTip = node === cleanWorktreesNode ? L("Worktrees with no changes (click to show)")
             : node.branchGroup.flatMap(Self.branchGroupHelp)
             ?? node.stackedOn.map { L("Built on %@ (its commits are on top of that branch)", $0) }
@@ -998,7 +1028,9 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 .joined(separator: "\n")
             // 署名の印（左）を押すとコミットの署名と同じ吹き出し、リモートの印（右）を押すとリモートの様子。
             if tagSignatures[item.name]?.status != nil {
-                let icon = cell.badge.attributedStringValue.attributedSubstring(from: NSRange(location: 0, length: 2))
+                // 印が 1 つだけなら、後ろの空白はない。
+                let shown = cell.badge.attributedStringValue
+                let icon = shown.attributedSubstring(from: NSRange(location: 0, length: min(2, shown.length)))
                 cell.leadingMarkWidth = icon.size().width
                 cell.onLeadingMarkClick = { [weak self, weak cell] in
                     guard let self, let cell else { return }
@@ -1566,6 +1598,11 @@ final class SidebarCell: NSTableCellView {
     /// 右端の先頭のアイコン（幅 `leadingMarkWidth`）だけ別の吹き出しを出すとき（タグの署名の印）。
     var onLeadingMarkClick: (() -> Void)?
     var leadingMarkWidth: CGFloat = 0
+    /// 右端の全部（`full`）と、名前が切れるときに出す、添え物の印を除いたもの（`compact`）。`compact` がなければ、
+    /// いつも `full`。
+    private var fullBadge: NSAttributedString?
+    private var compactBadge: NSAttributedString?
+    private var showingCompact = false
 
     init(identifier: NSUserInterfaceItemIdentifier, hasIcon: Bool) {
         super.init(frame: .zero)
@@ -1605,6 +1642,26 @@ final class SidebarCell: NSTableCellView {
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    /// 右端を決める。`full` が nil なら `plain` の文字だけ。`compact` があれば、幅に合わせて `layout` で選ぶ。
+    func setBadge(full: NSAttributedString?, compact: NSAttributedString?, plain: String) {
+        fullBadge = full
+        compactBadge = compact
+        showingCompact = false
+        if let full { badge.attributedStringValue = full } else { badge.stringValue = plain }
+        if compact != nil { needsLayout = true }
+    }
+
+    /// 添え物の印まで出すと名前が切れるなら、印を除いた形にする（名前の幅は、切らない文字の幅で測る）。
+    override func layout() {
+        super.layout()
+        guard let full = fullBadge, let compact = compactBadge, let field = textField else { return }
+        let room = bounds.width - field.frame.minX - 6 - 6
+        let tight = field.intrinsicContentSize.width + full.size().width > room
+        guard tight != showingCompact else { return }
+        showingCompact = tight
+        badge.attributedStringValue = tight ? compact : full
+    }
 
     /// `point`（セルの座標）が右端のアイコンの上か。小さなアイコンなので、少し広めに当てる。
     func hitsBadge(_ point: NSPoint) -> Bool {

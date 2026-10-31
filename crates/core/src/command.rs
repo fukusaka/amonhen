@@ -166,6 +166,19 @@ pub enum Command {
         #[serde(default)]
         remote: Option<String>,
     },
+    /// shallow clone の履歴を取り足す。`commits` ならさらにその数だけ古いコミットまで（`git fetch --deepen`）、
+    /// `since` ならその日付（`YYYY-MM-DD` など git が読む形）より新しいコミットをすべて（`--shallow-since`）。
+    /// 履歴を足すだけなので Undo には記録しない。shallow clone でなければ断る。
+    Deepen {
+        commits: Option<u32>,
+        since: Option<String>,
+    },
+    /// shallow clone の履歴をすべて取る（`git fetch --unshallow`）。
+    Unshallow,
+    /// partial clone で取らずにおいた中身をすべて取る（promisor の remote の filter の設定を消して
+    /// `git fetch --refetch <remote>`。git 2.36 から）。Fetch と同じく動かし、Undo には記録しない。取れなければ
+    /// filter の設定を戻す。partial clone でなければ断る。
+    FetchAllContents,
     /// 今のブランチに上流を取り込む（Undo できる）。
     Pull {
         #[serde(default)]
@@ -303,7 +316,8 @@ pub enum Command {
         choice: crate::conflict::Choice,
     },
     /// コミットの詳細（`info`: message・author・authorEmail・authorTime・authorTz・committer・committerEmail・
-    /// committerTime・committerTz・parents・refs・signed・mergetag・trailers）。すぐ返せる分だけ。名前とメールは
+    /// committerTime・committerTz・parents・parentsNotFetched（shallow clone の境界で、親を取得していない）・refs・
+    /// signed・mergetag・trailers）。すぐ返せる分だけ。名前とメールは
     /// mailmap で置き換えたもので、記録と違えば recordedAuthor・recordedCommitter（name・email）に記録のものを添える。
     CommitInfo {
         oid: String,
@@ -449,6 +463,30 @@ pub enum Command {
     /// 一緒に動かせるか（`info.updateRefs`。git 2.38 から。版が読めなければ true）、`rr-cache` があるか
     /// （`info.rerereCache`。git は `rerere.enabled` が書かれていなければ、これがあるとき rerere を使う）。
     GitVersion,
+    /// リポジトリの形（`info`: shallow・partial（remote・filter。なければ null）・sparse（cone・folders。cone mode
+    /// なら取り出しているフォルダ、そうでなければパターン。なければ null）・maintenance（`git maintenance register`
+    /// で登録してある）・workingTree・gitVersion・canFetchAllContents（git 2.36 から）・canSparseCheckout（git 2.25
+    /// から）・canMaintain（git 2.31 から））。
+    RepositoryForm,
+    /// cone mode の sparse checkout で、取り出すフォルダを `folders`（根からの相対パス）にする。sparse checkout で
+    /// なければ始める（git 2.25 から）。外れるフォルダに commit していない変更があれば断る。
+    SparseCheckout {
+        folders: Vec<String>,
+    },
+    /// sparse checkout をやめて、すべてのフォルダを取り出す（`git sparse-checkout disable`）。
+    DisableSparseCheckout,
+    /// HEAD の木の `path`（`/crates` のように `/` から。`/` は根）にあるフォルダ（`info`: `listDirectory` と同じ
+    /// 形。path・home（null）・entries（kind は folder））。sparse checkout で取り出すフォルダを選ぶのに使う。
+    TreeFolders {
+        path: String,
+    },
+    /// `on` なら、このリポジトリを git maintenance に登録して裏で手入れさせる（`git maintenance start`: ユーザー全体の
+    /// `maintenance.repo` に足し、OS の予定がなければ作る）。でなければ登録を外す（`git maintenance unregister`。
+    /// 予定はほかのリポジトリも使うので残し、自動の手入れを止める `maintenance.auto=false` は外す）。git を動かす機械
+    /// （SSH 先ならそこ）の設定に書く。git 2.31 から。Undo には記録しない。
+    Maintenance {
+        on: bool,
+    },
     /// git の設定から決まる、pull と fetch のふるまい（`info.pull`: `merge`・`rebase`・`fastForwardOnly`、
     /// `info.prune`）。Pull のシートが「git の設定に従う」の中身を見せるのに使う。
     SyncDefaults,
@@ -564,6 +602,19 @@ impl Repository {
 }
 
 impl Repository {
+    /// shallow clone の履歴を取り足す（`Command::Deepen`・`Command::Unshallow`）。shallow clone でなければ、git の
+    /// 分かりにくいエラー（`--unshallow on a complete repository`）の前に断る。
+    fn deepen(
+        &self,
+        ops: &dyn amonhen_model::Operations,
+        how: &amonhen_model::Deepen,
+    ) -> Result<()> {
+        if self.backend().shallow()?.is_empty() {
+            return Err(tr!("This repository has all of its history (not a shallow clone)").into());
+        }
+        ops.deepen(how)
+    }
+
     /// `Command::PreviousVersion` の答え（なければ `None`）。
     fn previous_version(
         &self,
@@ -1231,6 +1282,13 @@ impl Repository {
             })
             .map(|e| e.name.clone())
             .collect();
+        // shallow clone の境界のコミットは、親を名指ししていてもその親を取得していない。境界は読み込んだ History の
+        // ものを使う（SSH 先では読むたびに往復するので）。まだなければ git dir から読む。
+        let parents_not_fetched = !parents.is_empty()
+            && match self.history() {
+                Some(history) => history.shallow.contains(commit),
+                None => self.backend().shallow()?.contains(commit),
+            };
         Ok(serde_json::json!({
             "oid": commit.to_string(),
             "message": message,
@@ -1245,6 +1303,7 @@ impl Repository {
             "recordedAuthor": recorded_author,
             "recordedCommitter": recorded_committer,
             "parents": parents,
+            "parentsNotFetched": parents_not_fetched,
             "refs": refs,
             "signed": signed,
             "mergetag": mergetag,
@@ -2632,6 +2691,25 @@ impl Repository {
                 let _ = crate::remote_tags::refresh(ops, &*self.backend().files());
                 ok()
             }
+            Command::Deepen { commits, since } => {
+                let how = match (commits, since) {
+                    (Some(n), None) if n > 0 => amonhen_model::Deepen::Commits(n),
+                    (None, Some(date)) if !date.trim().is_empty() => {
+                        amonhen_model::Deepen::Since(date.trim().to_owned())
+                    }
+                    _ => return Err(tr!("Give either commits (1 or more) or since").into()),
+                };
+                self.deepen(ops, &how)?;
+                ok()
+            }
+            Command::Unshallow => {
+                self.deepen(ops, &amonhen_model::Deepen::All)?;
+                ok()
+            }
+            Command::FetchAllContents => {
+                self.fetch_all_contents(ops)?;
+                ok()
+            }
             Command::Pull { mode } => {
                 done(undo.record(ops, "Pull", &[], false, || ops.pull(mode), not_done)?)
             }
@@ -3359,6 +3437,28 @@ impl Repository {
                     })),
                     ..Default::default()
                 })
+            }
+            Command::RepositoryForm => Ok(Response {
+                ok: true,
+                info: Some(self.repository_form(ops)?),
+                ..Default::default()
+            }),
+            Command::SparseCheckout { folders } => {
+                self.set_sparse_folders(ops, &folders)?;
+                ok()
+            }
+            Command::DisableSparseCheckout => {
+                self.disable_sparse_checkout(ops)?;
+                ok()
+            }
+            Command::TreeFolders { path } => Ok(Response {
+                ok: true,
+                info: Some(self.tree_folders(ops, &path)?),
+                ..Default::default()
+            }),
+            Command::Maintenance { on } => {
+                self.set_maintenance(ops, on)?;
+                ok()
             }
             Command::IgnoreMatches { text } => {
                 let lines: Vec<(usize, String)> = text
@@ -7142,5 +7242,86 @@ mod tests {
         assert_eq!((attr.worktree, attr.checkout), (Eol::Crlf, Eol::Lf));
         assert_eq!(attr.rule, "eol=lf");
         assert!(attr.warning());
+    }
+
+    /// shallow clone の履歴を、数・日付・すべての 3 通りで取り足す。境界のコミットの詳細は、親を取得していないと
+    /// 言う。shallow clone でなければ断る。
+    #[test]
+    fn fetches_more_of_a_shallow_clone() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        git(&src, &["init", "-q"]);
+        git(&src, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        // --shallow-since はコミッターの日時で切るので、1 年ずつ離す。
+        for year in 2020..2025 {
+            let out = Process::new("git")
+                .args(["commit", "--allow-empty", "-q", "-m", &year.to_string()])
+                .current_dir(&src)
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_AUTHOR_DATE", format!("{year}-01-01T00:00:00Z"))
+                .env("GIT_COMMITTER_DATE", format!("{year}-01-01T00:00:00Z"))
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+        }
+        // --depth はパスの clone では効かないので file:// にする（Windows は file:///C:/…）。
+        let path = src.to_str().unwrap().replace('\\', "/");
+        let url = if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        };
+        git(
+            tmp.path(),
+            &["clone", "-q", "--depth", "1", &url, "shallow"],
+        );
+        let dir = tmp.path().join("shallow");
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+        let rows = |repo: &Repository| repo.load_history().unwrap().graph.len();
+        assert_eq!(rows(&repo), 1);
+        let boundary = git(&dir, &["rev-parse", "HEAD"]);
+        let info = run(
+            &repo,
+            &format!(r#"{{"op":"commitInfo","oid":"{boundary}"}}"#),
+        );
+        assert_eq!(info["info"]["parentsNotFetched"], true, "{info}");
+        assert_eq!(info["info"]["parents"].as_array().unwrap().len(), 1);
+
+        // 数も日付もない・0 個は断る。
+        for bad in [
+            r#"{"op":"deepen"}"#,
+            r#"{"op":"deepen","commits":0}"#,
+            r#"{"op":"deepen","commits":1,"since":"2021-01-01"}"#,
+        ] {
+            assert_eq!(run(&repo, bad)["ok"], false, "{bad}");
+        }
+
+        let r = run(&repo, r#"{"op":"deepen","commits":1}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(rows(&repo), 2);
+        // 2021-06-01 より新しいもの（2022・2023・2024）。
+        let r = run(&repo, r#"{"op":"deepen","since":"2021-06-01"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        assert_eq!(rows(&repo), 3);
+        let info = run(
+            &repo,
+            &format!(r#"{{"op":"commitInfo","oid":"{boundary}"}}"#),
+        );
+        assert_eq!(info["info"]["parentsNotFetched"], false, "{info}");
+
+        let r = run(&repo, r#"{"op":"unshallow"}"#);
+        assert_eq!(r["ok"], true, "{r}");
+        let history = repo.load_history().unwrap();
+        assert_eq!(history.graph.len(), 5);
+        assert!(history.shallow.is_empty());
+        // 根のコミットには親がない（取得していないのではない）。
+        let root = git(&dir, &["rev-list", "--max-parents=0", "HEAD"]);
+        let info = run(&repo, &format!(r#"{{"op":"commitInfo","oid":"{root}"}}"#));
+        assert_eq!(info["info"]["parentsNotFetched"], false, "{info}");
+
+        let r = run(&repo, r#"{"op":"unshallow"}"#);
+        assert_eq!(r["ok"], false, "{r}");
+        assert_eq!(run(&repo, r#"{"op":"deepen","commits":10}"#)["ok"], false);
     }
 }

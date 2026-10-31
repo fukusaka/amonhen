@@ -1,8 +1,8 @@
 use amonhen_model::tr;
 use amonhen_model::{
-    ApplyPatch, ConfigEntry, FormatPatch, HeadState, Oid, Operations, Outcome, PatchFile, PullMode,
-    RangePair, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry, ResetMode, Result, Sequence,
-    SigningKey, WorktreeChange, WorktreeChanges,
+    ApplyPatch, ConfigEntry, Deepen, FormatPatch, HeadState, Oid, Operations, Outcome, PatchFile,
+    PullMode, RangePair, RefUpdate, RemoteChange, RemoteCheck, RemoteEntry, ResetMode, Result,
+    Sequence, SigningKey, WorktreeChange, WorktreeChanges,
 };
 
 use crate::Git;
@@ -316,6 +316,12 @@ impl Operations for Git {
         cancelled: &dyn Fn() -> bool,
     ) -> Result<Vec<Oid>> {
         use std::io::{BufRead, Write};
+        if contents.is_some() {
+            self.fetch_missing_reachable(tips, path)?;
+            if cancelled() {
+                return Err(amonhen_model::i18n::cancelled().into());
+            }
+        }
         let pattern = contents.map(|c| format!("-G{}", literal_regex(c)));
         let mut args = vec!["log", "--format=%H", "--stdin"];
         if let Some(p) = &pattern {
@@ -991,6 +997,20 @@ impl Operations for Git {
         }
     }
 
+    fn deepen(&self, how: &Deepen) -> Result<()> {
+        // 端末の `git fetch --deepen` と同じく、既定のリモート（今のブランチの上流のリモート、なければ origin）から。
+        let arg = match how {
+            Deepen::Commits(n) => format!("--deepen={n}"),
+            Deepen::Since(date) => format!("--shallow-since={date}"),
+            Deepen::All => "--unshallow".to_owned(),
+        };
+        self.write(&["fetch", &arg]).map(drop)
+    }
+
+    fn fetch_all_contents(&self, remote: &str) -> Result<()> {
+        Git::fetch_all_contents(self, remote)
+    }
+
     fn pull(&self, mode: PullMode) -> Result<Outcome> {
         let how = match mode {
             // git の設定（pull.rebase・pull.ff）に任せる。
@@ -1210,6 +1230,22 @@ impl Operations for Git {
 
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
         Ok(crate::git_version())
+    }
+
+    fn repository_form(&self) -> Result<amonhen_model::RepositoryForm> {
+        Git::repository_form(self)
+    }
+
+    fn sparse_checkout(&self, folders: Option<&[String]>) -> Result<()> {
+        Git::sparse_checkout(self, folders)
+    }
+
+    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
+        Git::tree_folders(self, path)
+    }
+
+    fn maintenance(&self, on: bool) -> Result<()> {
+        Git::maintenance(self, on)
     }
 
     fn machine_git(&self) -> Result<amonhen_model::MachineGit> {

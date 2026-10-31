@@ -13,7 +13,7 @@
 //!   amonhen merge-file [--all] <file>…  コンフリクトのあるファイルに Magic Merge をかける
 //!   amonhen merge-check <rev>…          マージしたらコンフリクトするファイル（作業ツリーには触らない）
 //!   amonhen rewrite-preview <onto>      rebase・History の編集で動くブランチとコンフリクトの見込み
-//!   amonhen clone <url> [<dir>]
+//!   amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] <url> [<dir>]
 //!   amonhen install / engine           エンジンの置き場所（`install.rs`）
 //!   amonhen daemon [status|start|stop|rebuild]  手元の共有の daemon
 
@@ -56,7 +56,7 @@ usage: amonhen [<path>]
        amonhen format-patch [-o <dir> | --mbox <file> | --stdout] [--cover-letter] [-v <n>] [-<n>] [<rev> | <from>..<to>]
        amonhen am [--3way | --no-3way] [--check] <file>… | --continue | --skip | --abort | --retry-3way
        amonhen apply [--index] [--3way] [--check] <file>…
-       amonhen clone <url> [<dir>]
+       amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] <url> [<dir>]
        amonhen daemon [status [--json] | start | stop | rebuild [<path> | ssh://host/path]]
        amonhen install [--quiet] [--no-link] [--force]   (puts the engine in ~/.local/share/amonhen and links ~/.local/bin/amonhen)
        amonhen engine   (the engine to start as the shared daemon)
@@ -94,7 +94,10 @@ format-patch saves commits as patches, one file per commit named by git (--mbox 
 first parents: <rev> alone means <rev>..HEAD, and -<n> the last n commits. am applies mail patches as commits, and apply
 applies a diff to the worktree (--index stages it too); both can be undone with undo. --check shows what the patches
 change and whether they apply. When am stops at a patch that doesn't apply, --retry-3way merges it with conflicts to
-resolve.")
+resolve.
+clone --filter=blob:none fetches file contents only when they're needed (a partial clone), --depth <n> only the latest
+n commits (a shallow clone), and --sparse checks out only the top-level files (git 2.25 or later; choose folders with
+run '{\"op\":\"sparseCheckout\",\"folders\":[\"<dir>\"]}').")
 }
 
 fn main() -> ExitCode {
@@ -542,7 +545,16 @@ fn log(args: &[String]) -> Result<ExitCode> {
         color,
         width: term::width(),
     };
-    term::write(&graph::render(&rows, &refs, show_graph, &style));
+    let mut out = graph::render(&rows, &refs, show_graph, &style);
+    // shallow clone で最後の行まで出したら、その先を取得していないことを添える（git log は黙って終わる）。
+    if history["shallow"] == true && query.is_empty() && count >= total as usize {
+        let note = tr!(
+            "Older history isn’t fetched (shallow clone): git fetch --deepen=<n> or --unshallow"
+        );
+        graph::paint(&mut out, &note, Some(244), color);
+        out.push('\n');
+    }
+    term::write(&out);
     Ok(ExitCode::SUCCESS)
 }
 

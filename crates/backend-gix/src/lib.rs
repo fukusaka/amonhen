@@ -123,6 +123,19 @@ fn read_commit_object(
     })
 }
 
+/// partial clone なら、足りないオブジェクトを取ってくる remote（git 2.24 からの `remote.<name>.promisor`、
+/// それより古い git が書く `extensions.partialClone`）。
+fn promisor_remote(repo: &gix::Repository) -> Option<String> {
+    let config = repo.config_snapshot();
+    if let Some(name) = config.string("extensions.partialClone") {
+        return Some(name.to_string());
+    }
+    repo.remote_names()
+        .into_iter()
+        .map(|name| name.to_string())
+        .find(|name| config.boolean(&format!("remote.{name}.promisor")) == Some(true))
+}
+
 fn to_oid(id: &gix::oid) -> Result<Oid> {
     let bytes: [u8; 20] = id
         .as_bytes()
@@ -132,6 +145,49 @@ fn to_oid(id: &gix::oid) -> Result<Oid> {
 }
 
 impl GixBackend {
+    /// `.gitmodules` のサブモジュールの行（パスの順）。gix は作業ツリーになければ index か HEAD のツリーの blob を
+    /// 読むので、partial clone で取り出していない（`--no-checkout` など）と中身が手元になく、ref の一覧ごと失敗する。
+    /// そのときはその blob だけを取ってから読み直す。
+    fn submodule_entries(&self, repo: &gix::Repository) -> Result<Vec<RefEntry>> {
+        let read = |repo: &gix::Repository| -> Result<Vec<RefEntry>> {
+            let mut subs = Vec::new();
+            for sm in repo.submodules()?.into_iter().flatten() {
+                let target = sm
+                    .index_id()
+                    .ok()
+                    .flatten()
+                    .map(|id| to_oid(id.as_ref()))
+                    .transpose()?;
+                subs.push(RefEntry {
+                    kind: RefKind::Submodule,
+                    name: sm.path()?.to_string(),
+                    target,
+                    detail: None,
+                    ahead: 0,
+                    behind: 0,
+                    gone: false,
+                });
+            }
+            subs.sort_by(|a, b| a.name.cmp(&b.name));
+            Ok(subs)
+        };
+        let error = match read(repo) {
+            Ok(subs) => return Ok(subs),
+            Err(e) => e,
+        };
+        let blob = promisor_remote(repo).and_then(|_| {
+            let tree = repo.head_tree().ok()?;
+            let entry = tree.lookup_entry_by_path(".gitmodules").ok()??;
+            to_oid(entry.oid()).ok()
+        });
+        let Some(blob) = blob else {
+            return Err(error);
+        };
+        // 足りなければ git に読ませる（取ってくる）。どの版の git でも 1 つなら取れる。
+        self.blob(&blob)?;
+        read(&self.repo.to_thread_local())
+    }
+
     /// 改行の変換などの pipeline を使う（index が変わっていれば作り直す）。
     fn with_filters<T>(
         &self,
@@ -223,10 +279,20 @@ impl GitBackend for GixBackend {
     }
 
     fn shallow(&self) -> Result<Vec<Oid>> {
-        match self.repo.to_thread_local().shallow_commits()? {
-            Some(commits) => commits.iter().map(|id| to_oid(id)).collect(),
-            None => Ok(Vec::new()),
-        }
+        let repo = self.repo.to_thread_local();
+        let Some(commits) = repo.shallow_commits()? else {
+            return Ok(Vec::new());
+        };
+        // `git fetch --deepen` で根に届くと、git は根のコミットを境界として `shallow` に残す。親のないコミットは
+        // 取得していないものがないので、境界に数えない（読めなければ境界のままにする）。
+        commits
+            .iter()
+            .filter(|id| {
+                repo.find_commit(**id)
+                    .map_or(true, |c| c.parent_ids().next().is_some())
+            })
+            .map(|id| to_oid(id))
+            .collect()
     }
 
     fn read_commits(
@@ -363,28 +429,7 @@ impl GitBackend for GixBackend {
             }
         }
 
-        if let Some(submodules) = repo.submodules()? {
-            let mut subs = Vec::new();
-            for sm in submodules {
-                let target = sm
-                    .index_id()
-                    .ok()
-                    .flatten()
-                    .map(|id| to_oid(id.as_ref()))
-                    .transpose()?;
-                subs.push(RefEntry {
-                    kind: RefKind::Submodule,
-                    name: sm.path()?.to_string(),
-                    target,
-                    detail: None,
-                    ahead: 0,
-                    behind: 0,
-                    gone: false,
-                });
-            }
-            subs.sort_by(|a, b| a.name.cmp(&b.name));
-            entries.extend(subs);
-        }
+        entries.extend(self.submodule_entries(&repo)?);
 
         // 上流との差は git に数えさせる（gix で数えるより速く、git と同じ結果になる）。
         if let Some(git) = &self.git
@@ -546,14 +591,43 @@ impl GitBackend for GixBackend {
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
         let repo = self.repo.to_thread_local();
         let mut buf = Vec::new();
-        let len = repo
+        let Some(data) = repo
             .objects
             .try_find(&gix::ObjectId::from_bytes_or_panic(&id.0), &mut buf)?
-            .ok_or_else(|| tr!("Blob {id} not found", id = id))?
-            .data
-            .len();
+        else {
+            // partial clone で手元にない blob は、git に読ませる（git が promisor の remote から取ってくる）。
+            if promisor_remote(&repo).is_some()
+                && let Ok(git) = self.git()
+            {
+                return Ok(Arc::new(git.write(&[
+                    "cat-file",
+                    "blob",
+                    &id.to_string(),
+                ])?));
+            }
+            return Err(tr!("Blob {id} not found", id = id).into());
+        };
+        let len = data.data.len();
         buf.truncate(len);
         Ok(Arc::new(buf))
+    }
+
+    fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
+        let repo = self.repo.to_thread_local();
+        let Some(remote) = promisor_remote(&repo) else {
+            return Ok(());
+        };
+        let missing: Vec<String> = ids
+            .iter()
+            .filter(|id| !repo.has_object(gix::ObjectId::from_bytes_or_panic(&id.0)))
+            .map(Oid::to_string)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        if missing.is_empty() {
+            return Ok(());
+        }
+        self.git()?.fetch_missing(&remote, &missing)
     }
 
     fn operations(&self) -> Result<&dyn amonhen_model::Operations> {

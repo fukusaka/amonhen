@@ -196,6 +196,30 @@ impl HistorySnapshot {
         self.rows().get(id).copied()
     }
 
+    /// shallow clone の境界のコミット（親を取得していない）の行（昇順）。shallow clone でなければ空。索引は
+    /// 作らずに全行を見る（境界はたいてい数個なので、150 万コミットでも数 ms）。
+    pub fn boundary_rows(&self) -> Vec<u32> {
+        if self.shallow.is_empty() {
+            return Vec::new();
+        }
+        if let Some(rows) = self.rows.get() {
+            let mut found: Vec<u32> = self
+                .shallow
+                .iter()
+                .filter_map(|id| rows.get(id).copied())
+                .collect();
+            found.sort_unstable();
+            return found;
+        }
+        self.graph
+            .ids()
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| self.shallow.contains(id))
+            .map(|(r, _)| r as u32)
+            .collect()
+    }
+
     fn rows(&self) -> &OidMap<u32> {
         self.rows.get_or_init(|| {
             self.graph
@@ -802,6 +826,14 @@ impl Repository {
             let files = changes.iter().map(|c| c.path.clone()).zip(diffs).collect();
             return Ok(diff::StackedDiff { files });
         }
+        // partial clone では、足りない blob を先にまとめて取ってくる（1 つずつ取りに行かない）。
+        let ids: Vec<Oid> = changes
+            .iter()
+            .filter(|c| !c.submodule)
+            .flat_map(|c| [c.old_id, c.new_id])
+            .flatten()
+            .collect();
+        self.backend.prefetch_blobs(&ids)?;
         let one = |c: &FileChange| Ok((c.path.clone(), self.change_diff(c)?));
         // ファイルごとの差分は独立しているので、多ければ分けて並列に取る（コミットを選んでから表示までの時間）。
         let threads = std::thread::available_parallelism()
@@ -1260,8 +1292,13 @@ impl Repository {
     /// commit-graph を最新にする。なければ全体を書き出して true を、あれば後から増えたコミットだけを
     /// 書き足して false を返す（増えていなければ git は何も書かない）。開いたときと fetch の後に呼ぶ。
     /// リポジトリの `.git` に書き込むので、利用者が設定で選んだときだけ呼ぶ。大きなリポジトリでは
-    /// 全体の書き出しに数十秒〜数分かかるので、裏のスレッドで呼ぶこと。
+    /// 全体の書き出しに数十秒〜数分かかるので、裏のスレッドで呼ぶこと。git maintenance に登録してあれば、
+    /// 毎時そちらが書くので、何もせずに false を返す。
     pub fn update_commit_graph(&self) -> Result<bool> {
+        let registered = self.backend.operations()?.repository_form();
+        if registered.is_ok_and(|form| form.maintenance) {
+            return Ok(false);
+        }
         let missing = !self.backend.has_commit_graph()?;
         self.backend.write_commit_graph(!missing)?;
         Ok(missing)
@@ -1701,7 +1738,9 @@ mod tests {
         let cache = tmp.path().join("cache/history.bin");
 
         let repo = Repository::with_cache(GixBackend::open(&dir).unwrap(), cache.clone());
-        assert_eq!(repo.load_history().unwrap().graph.len(), 1);
+        let history = repo.load_history().unwrap();
+        assert_eq!(history.graph.len(), 1);
+        assert_eq!(history.boundary_rows(), [0]);
         // 起点（ブランチ）は変わらないが、境界のコミットに親ができる。
         git(&dir, &["fetch", "-q", "--deepen", "1"]);
         assert_eq!(repo.load_history().unwrap().graph.len(), 2);
@@ -1713,6 +1752,7 @@ mod tests {
         let history = repo.load_history().unwrap();
         assert_eq!(history.graph.len(), 3);
         assert!(history.shallow.is_empty());
+        assert!(history.boundary_rows().is_empty());
     }
 
     #[test]

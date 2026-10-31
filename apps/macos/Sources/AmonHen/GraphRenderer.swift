@@ -53,6 +53,9 @@ final class GraphRenderer {
     private var instances: [Instance] = []
     /// 強調する祖先。描く History と同じものから求めたときだけ使う。
     var lineage: Lineage?
+    /// shallow clone の境界のコミットの行と、それを求めた History（History が替われば求め直す）。
+    private weak var boundaryHistory: History?
+    private var boundaryRows: Set<Int> = []
     /// 祖先でない点と線の不透明度。
     private let dimmedAlpha: Float = 0.18
     var metrics = Metrics()
@@ -347,6 +350,10 @@ final class GraphRenderer {
                 appendEdge(e, a, b, alpha: dimmed ? dimmedAlpha : 1)
             }
         }
+        if boundaryHistory !== history {
+            boundaryHistory = history
+            boundaryRows = Set(history.boundaryRows())
+        }
         history.withNodes { nodes in
             for n in nodes[rows] {
                 let p = SIMD2(laneX(n.lane), rowY(n.row, scrollY: scrollY))
@@ -355,7 +362,19 @@ final class GraphRenderer {
                 let alpha: Float = lineage.map { $0.contains(row: Int(n.row)) ? 1 : dimmedAlpha } ?? 1
                 instances.append(Instance(
                     a: p, b: p, width: m.nodeRadius, color: UInt32(n.color), kind: Instance.circle, alpha: alpha))
+                if boundaryRows.contains(Int(n.row)) { appendUnfetchedStub(below: p, color: UInt32(n.color), alpha: alpha) }
             }
+        }
+    }
+
+    /// shallow clone の境界のコミットの点から下へ、短い点線を描く（親はあるが取得していない）。行の下半分に収める。
+    private func appendUnfetchedStub(below p: SIMD2<Float>, color: UInt32, alpha: Float) {
+        let m = metrics
+        var y = m.nodeRadius + 3.5
+        while y <= m.rowHeight / 2 + 1 {
+            instances.append(Instance(
+                a: [p.x, p.y + y], b: [p.x, p.y + y], width: 1.1, color: color, kind: Instance.circle, alpha: alpha * 0.8))
+            y += 4
         }
     }
 

@@ -107,6 +107,46 @@ final class FocusTableView: NSTableView {
     }
 
     @objc private func keyChanged() { onFocusChange?() }
+
+    /// 最後の行の下に置くビュー（shallow clone の帯）。表をその高さの分だけ伸ばし、スクロールで一緒に動かす。
+    var footer: NSView? {
+        didSet {
+            guard footer !== oldValue else { return }
+            oldValue?.removeFromSuperview()
+            if let footer { addSubview(footer) }
+            tile()
+        }
+    }
+
+    private var rowsHeight: CGFloat { CGFloat(numberOfRows) * (rowHeight + intercellSpacing.height) }
+
+    // 表は行の分の高さに自分で合わせるので、そのたびに帯の分を足す（足した高さから求め直さないよう、行から求める）。
+    override func setFrameSize(_ newSize: NSSize) {
+        var size = newSize
+        if let footer { size.height = max(size.height, rowsHeight + footer.frame.height) }
+        super.setFrameSize(size)
+        placeFooter()
+    }
+
+    override func tile() {
+        super.tile()
+        placeFooter()
+    }
+
+    private func placeFooter() {
+        guard let footer else { return }
+        footer.frame = NSRect(x: 0, y: rowsHeight, width: bounds.width, height: footer.frame.height)
+    }
+}
+
+/// History の表を入れるスクロールビュー。表のアクセシビリティは子に行と列のほかを置けない（置くと子を返せなくなる）
+/// ので、表の下の帯はここの子として出す。
+private final class HistoryScrollView: NSScrollView {
+    override func accessibilityChildren() -> [Any]? {
+        let children = super.accessibilityChildren()
+        guard let footer = (documentView as? FocusTableView)?.footer else { return children }
+        return (children ?? []) + [footer]
+    }
 }
 
 final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate,
@@ -115,7 +155,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let repository: Repository
     private var history: History?
     private let renderer: GraphRenderer
-    private let scrollView = NSScrollView()
+    private let scrollView: NSScrollView = HistoryScrollView()
     private let tableView = FocusTableView()
     private let graphView = GraphView()
     /// 件名などを描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。
@@ -234,6 +274,21 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let scopePopup = NSPopUpButton()
     /// 折りたたんだ History で開いた merge（コミット ID）。
     private var expandedMerges: Set<Data> = []
+    /// partial clone か（中身の検索は、取っていない中身をすべて取るので、先に確かめる）。
+    var isPartialClone = false
+    /// shallow clone の History の最後の行の下に置く帯（取得していない古い履歴を取り足す）。
+    private lazy var shallowBand: ShallowHistoryBand = {
+        let band = ShallowHistoryBand(frame: NSRect(x: 0, y: 0, width: 400, height: ShallowHistoryBand.height))
+        band.onFetch = { [weak self] command, done in
+            guard let actions = self?.actions else { return done() }
+            actions.perform(command, completion: { _ in done() }, recover: { _ in
+                done()
+                return false
+            })
+        }
+        band.boundaryDate = { [weak self] in self?.oldestBoundaryDate() }
+        return band
+    }()
     /// 右端の密度の帯（コミットの頻度とブランチの活動量。押すとそこへ飛ぶ）。
     private let densityView = DensityStripView()
     private var densityRequest = 0
@@ -748,9 +803,25 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             tableView.selectRowIndexes([0], byExtendingSelection: false)
         }
         updateLineage()
+        updateShallowBand()
         // History が替わるとレーンの数も替わる。列の幅を合わせてから描く。
         layoutGraphView()
         updateDensity()
+    }
+
+    /// shallow clone の History なら、最後の行の下に帯を出す（一致したコミットだけを出しているときは出さない。
+    /// その終わりは History の終わりではない）。
+    private func updateShallowBand() {
+        tableView.footer = history?.isShallow == true && baseHistory == nil ? shallowBand : nil
+    }
+
+    /// 境界のコミットのうち、いちばん古いものの作者の日時（読み込んであるチャンクにあれば）。
+    private func oldestBoundaryDate() -> Date? {
+        guard let history else { return nil }
+        // 境界の行は表の終わりのほうにあり、まだ読んでいないことが多い。読んでいなければその行だけ読む。
+        return history.boundaryRows().compactMap { row in
+            (chunks[row / Self.chunkRows] ?? (try? history.chunk(rows: row..<row + 1)))?.authorTime(row: row)
+        }.min()
     }
 
     /// 密度の帯を、今の History で描き直す（裏で求める。linux で数 ms）。
@@ -1241,7 +1312,24 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             moveSearch(by: 1)
             return
         }
-        runSearch(query, in: base)
+        guard isPartialClone, Self.searchesContents(query), let window = view.window else {
+            return runSearch(query, in: base)
+        }
+        // partial clone では、中身の検索（git log -S）が取っていない中身をすべて取る。
+        let alert = NSAlert()
+        alert.messageText = L("Search the Contents?")
+        alert.informativeText = L("This search fetches all contents not fetched yet. In a large repository this can take long and use a lot of disk.")
+        alert.addButton(withTitle: L("Search"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn, (baseHistory ?? history) === base else { return }
+            runSearch(query, in: base)
+        }
+    }
+
+    /// 問い合わせに `contents:`（`content:`）があるか（引用の中の語も数えるが、尋ねすぎるだけ）。
+    static func searchesContents(_ query: String) -> Bool {
+        query.range(of: #"(^|[\s(])contents?:\S"#, options: [.regularExpression, .caseInsensitive]) != nil
     }
 
     /// `base` で探す。一致だけを出す切り替えが入っていれば、一致したコミットだけの History にして出す。

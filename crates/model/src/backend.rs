@@ -28,6 +28,7 @@ pub trait GitBackend: Send + Sync {
 
     /// shallow clone の境界のコミット（親が手元にない。`read_commits` は親のないコミットとして返す）。shallow
     /// clone でなければ空。`git fetch --deepen` などで変わると、前回の History の境界のコミットに親ができる。
+    /// 根まで取ると git は根のコミットを境界に残すが、取得していない親はないので含めない。
     fn shallow(&self) -> Result<Vec<Oid>> {
         Ok(Vec::new())
     }
@@ -90,6 +91,13 @@ pub trait GitBackend: Send + Sync {
 
     /// blob の中身。展開したバッファをそのまま返し、差分の各行はここを直接指す。
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>>;
+
+    /// これから読む blob のうち手元にないものを、まとめて取ってくる（partial clone。`blob` は 1 つずつ取るので、
+    /// 差分のようにいくつも読む前に呼ぶ）。partial clone でなければ何もしない。
+    fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
+        let _ = ids;
+        Ok(())
+    }
 
     /// 書き込み系の操作。対応しない実装（作業ツリーがない・モバイル）はエラー。
     fn operations(&self) -> Result<&dyn Operations>;

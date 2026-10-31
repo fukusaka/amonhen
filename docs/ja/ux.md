@@ -129,7 +129,7 @@ Settings… に置くのは、Amon Hen 自身が決めることと、機械ご�
 | Diff & Merge | unified / split の既定、空白の無視、前後の行数、折り返し、タブ幅、マージエディタの既定の並び（後述）、diff3、マージエディタを開いたときに間違えようのないコンフリクトを解く（済み） |
 | Commit | 件名の文字数の目安（50 / 72）、Sign-off を付ける、Conventional Commits の補完、コミット後に push。行ができるまでは出さない。テンプレートの一覧は Git > コミットにある |
 | AI | 使う AI（なし / Apple Intelligence（端末内）/ Claude Code / Codex。既定は、端末内のモデルが使えればそれ、なければ「なし」）、選んだ CLI の場所・版・ログインの状態（見つからなければ入れ方を案内）、モデル、翻訳先の言語、リポジトリごとに送らない設定。詳細で用途ごとのプロンプト（9 章） |
-| Performance | commit-graph の自動書き出し、fsmonitor、共有の daemon で開く、永続キャッシュの場所と大きさ・消去、裏のタブの扱い |
+| Performance | commit-graph の自動書き出し（git maintenance に登録したリポジトリには書かない。そちらが毎時書く）、fsmonitor、共有の daemon で開く、永続キャッシュの場所と大きさ・消去、裏のタブの扱い |
 
 「詳細」タブはない。その項目は Performance（daemon）と Git（シェルの環境変数）と SSH Hosts（署名の検証。SSH 先ごと）にある。最初の Git タブにあった 2 行は移さずになくす。pull の既定（Pull のシートは常に「git の設定に従う」を最初に選ぶ。取り込み方は git の設定で、リポジトリの「操作」のページで、このリポジトリかすべてのリポジトリに）と、ユーザー全体の `rebase.updateRefs`（「操作」の同じ行を、すべてのリポジトリに設定する）。
 
@@ -263,7 +263,7 @@ SSH 先のリポジトリでは、「すべてのリポジトリ」は SSH 先�
 
 ### 4.5 ページ
 
-左に一覧、右に選んだページ（システム設定と同じ形）。一覧に組はない。よく変えるページを先に、たまに見る 2 つを最後に並べ、一覧の下に小さな 1 行で、このリポジトリを動かしている git を出す（`git 2.54.0 · この Mac`、`git 2.34 · build-1`）。押すと Settings… > Git がその機械を選んだ状態で開く（3 章）。ページの名前は中身で付ける。「〜について」「すべての〜」という名前は付けない。ここにあるものはどれも、このリポジトリの設定だから。
+左に一覧、右に選んだページ（システム設定と同じ形）。一覧に組はない。よく変えるページを先に、たまに見る 2 つを最後に並べ、一覧の下に小さな 1 行で、このリポジトリを動かしている git を出す（`git 2.54.0 · この Mac`、`git 2.34 · build-1`）。押すと Settings… > Git がその機械を選んだ状態で開く（3 章）。その下に、ふつうの clone でないリポジトリなら、その形を短い項目で並べる。どれも押すと「取得とフォルダ」を開く: shallow clone、partial clone なら「中身は必要なときに取得（blob:none）」、sparse checkout なら「一部のフォルダだけ」、`git maintenance` に登録してあれば（パスがユーザーの `maintenance.repo` にある）maintenance。ページの名前は中身で付ける。「〜について」「すべての〜」という名前は付けない。ここにあるものはどれも、このリポジトリの設定だから。
 
 | ページ | 行 |
 | --- | --- |
@@ -272,6 +272,7 @@ SSH 先のリポジトリでは、「すべてのリポジトリ」は SSH 先�
 | ブランチ | **既定のブランチ**: 判定したもの（`origin/HEAD`、なければ `main`・`master`）か、それがないリポジトリのためにここで選ぶローカルブランチ。Amon Hen 独自のキー `amonhen.defaultBranch` を `.git/config` に書くので、CLI と拡張からも見える。Branches の「取り込み済み」と幹の判定に使う。何も選んでいない間、設定元は「自動で判定」。 |
 | 操作 | **Pull**: pull のとき、どう取り込むか（マージする／rebase する／fast-forward。`pull.rebase`。最後のものは `pull.ff=only` と `pull.rebase=false` を両方書く）。**Fetch**: リモートで消えたブランチを片づける（`fetch.prune`。Amon Hen の Fetch も、端末の `git fetch` と同じく、オンのときだけ `--prune` を付ける。だから説明は要らない）。**Rebase**: rebase の前に変更を退避する（`rebase.autoStash`。History の編集はいつも退避する）、rebase と History の編集で、積み重ねたブランチも一緒に動かす（`rebase.updateRefs`。git 2.38 未満では見つかった版を添えて選べなくする）。**Merge**: コンフリクトをファイルにどう書くか（両側／両側と元／両側と元（共通の部分を省く）。`merge.conflictStyle`。説明に、マージエディタは 3 つとも扱え、元があれば片側だけの変更と単語単位のコンフリクトを自分で解けるので、Amon Hen のおすすめは zdiff3 と書く）、前に解いたコンフリクトの解き方を使い回す（`rerere.enabled`。書かれていなくても `rr-cache` があれば git は rerere を使うので、そのときはオンと出す）、そうして解けたファイルを stage する（`rerere.autoUpdate`）。Push の行は置かない: Amon Hen の Push は、シートで決めた先へ refspec と `--set-upstream` を明示して送るので、`push.default` と `push.autoSetupRemote` は端末にしか効かない（「すべての設定」に）。Publish は git と同じく `branch.<name>.pushRemote`・`remote.pushDefault` から選ぶ。 |
 | Working Copy | **改行**（`core.autocrlf`: コミットのまま／作業ツリーは CRLF でコミットは LF／コミットは LF）。**実行の権限の変化を追う**（`core.fileMode`）。**このリポジトリだけで無視する**: `.git/info/exclude` のエディタ（窓の高さいっぱいに広がる）。`status.showUntrackedFiles` は置かない（Amon Hen の status は untracked をいつもすべて出す）。`.gitignore` も置かない。リポジトリのファイルだから（4.7）。 |
+| 取得とフォルダ | そのリポジトリに要る節だけを出す。**History**（shallow clone）: 古い履歴を取得していないことと、History の終わりの帯（7b）と同じ「さらに取る」「すべて取る」。**中身**（partial clone）: ファイルの中身は必要なときに取ることと、その filter（`blob:none`）、「中身をすべて取る…」。大きくなりうるので先に確かめ、filter の設定（`remote.<name>.partialclonefilter`）を消して `git fetch --refetch <remote>` を Fetch と同じく動かす。失敗したら filter を戻す。git 2.36 未満では選べない。**フォルダ**（作業ツリーのあるリポジトリ）: sparse checkout（cone mode）なら、取り出しているフォルダと、それぞれの −、1 つ足す +、「すべてのフォルダを取り出す…」（`git sparse-checkout disable`。先に確かめる）。そうでなければ「一部のフォルダだけを取り出す…」。フォルダは HEAD のツリーから（取り出していないフォルダも）、パスを選ぶときと同じ列の選び方で選び、パスを打ち込んでもよい。変えるのは `git sparse-checkout set --cone`（git 2.35 未満は先に `init --cone`）。git 2.25 未満では選べない。commit していない変更のあるフォルダが外れるなら、そのパスを添えて断る。cone mode でないパターンは並べるだけで変えない（git 2.37 から非推奨）。**手入れ**（いつも。最後）: 「このリポジトリをバックグラウンドで手入れする」のスイッチ 1 つ。説明は、git が毎時 prefetch と commit-graph の書き出しをすることと、git のユーザー全体の設定と launchd（SSH 先ならそこの予定）に書くこと。入れると `git maintenance start`（リポジトリを登録し、予定がなければ作る）、切ると `git maintenance unregister`（予定は、登録したほかのリポジトリのために残す）と、`maintenance.auto=false` を外して commit などの後の git の自動の手入れを戻す。git 2.31 未満では選べない。 |
 | リモート | リモートの表（名前、fetch の URL、違うときだけ push の URL、GitHub などに紐づくか）。追加・編集・削除は 1 つのシートで: 名前、fetch の URL、push の URL（空なら同じ）、URL が指すもの（GitHub、GitLab、パス、SSH 先）、保存する前の接続の確認（`git ls-remote`）。prune はリモートごと。同じ操作をサイドバーにも置く: Remotes の見出しの右クリックに「リモートを追加…」、各リモートの右クリックに「名前を変える」「URL を編集…」「削除」「prune」。 Repository > リモートを追加… も同じシートで、削除はどこから始めても同じ確認。 |
 | Hooks・LFS | **Hooks**: 表。hook の名前、git がいつ動かすか（コミットの前、push の前、…）、有効かのスイッチ（実行権限）。選んだフックのスクリプトを表の下に構文の色つきで出し（言語は 1 行目の `#!` から、差分と同じ色）、<エディタ> で編集（Settings > General の外部エディタ）とほかの入っているエディタのメニュー、行のコンテキストメニューにも同じものと Finder で表示。フックを作成… で git が知るフックのうちまだないものを選んで `#!/bin/sh` だけの雛形を置く。`core.hooksPath` のときはその場所。**LFS**: git-lfs が入っているか（なければ入れ方）、`.gitattributes` の追跡するパターンの表と「パターンを追加…」（`git lfs track`）と削除、LFS にあるファイルの数。名前は中身のまま。両方を 1 語で括れる名前はなく、worktree はサイドバーの Working Copy の下にすでに並んでいる。 |
 | キーと値 | ほかのページが尋ねない git の設定を、キーと値で。Xcode の Build Settings のような表。列はキー、効いている値、そして設定元ごと（システム全体・すべてのリポジトリ・このリポジトリ・この worktree）の列にその値。効いている値は太字。行は Xcode が分類ごとにまとめるのと同じく、キーのドットで組にする: section（`core`・`remote` など）とその下の subsection（`remote.origin`）。どちらも太字の見出しに開閉の三角で、初めはすべて開いている。キーは組からの相対の名前で出し、完全なキーはツールチップ。キーの綴りは git の文書のとおり（`core.fileMode`）。書ける列（このリポジトリ。Settings… > Git ではすべてのリポジトリ。Combined では効いている値）は普段は文字だけで、マウスを載せたとき（と、その行だけを選んでいるとき）に入力欄の枠が出る。1 回のクリックで編集でき、空にするとそこから消える。ほかの列は読むだけ。「+」でキーと値の行を足す（そろわないまま離れたら行は消える）。「−」と ⌫ で選んだキーを消す。表からの書き換え（編集・追加・削除）は、ページを開いている間、⌘Z／⇧⌘Z で何段でも戻せる・やり直せる。最後の削除は表の下の 1 行にも出て、その「戻す」は 1 段の ⌘Z と同じ。キーか値で検索、どの列でも並べ替え、⌘C で選んだ行を `key = value` の形でコピー。表の上に Xcode と同じ 2 つの切り替え（語も Xcode のままで訳さない。選びはアプリ全体で覚え、初めは Customized と Levels）: 行は Basic（ここのページが尋ねるキー。未設定でも出す）／Customized（この段で設定したキー）／All（git が知るすべての変数。`git help --config-for-completion` から。どこにも設定がなければ値は空欄で設定元は「git の既定」。`remote.<name>.…` の形は含まない）、列は Combined（効いている値とその設定元）／Levels（設定元ごとの列）。 |
@@ -545,6 +546,55 @@ Staged / Unstaged の 2 群をやめ、変更のあるファイルを 1 つの�
 - **行**。コミットごとにすることを選ぶ: そのまま、メッセージを直す、古い方とまとめる（squash: メッセージは両方をつないだものから直せる）、古い方とまとめる（古い方のメッセージ。fixup）、Drop（取り消し線）、止めてファイルを直す（edit）。git の名前はツールチップに出す。行はドラッグで並べ替え、ダブルクリックでメッセージを直す。
 - **実行**。ステータスバーに要約（「変更: 並べ替え、まとめる 1、Drop 1」）とキャンセル・「変更を実行」を出す。「変更を実行」を押すまで何も変わらず、押すとコアの `plan`（新しい並びのすべてのコミットとすること。メッセージは git がエディタを開く順に渡す）で 1 回の rebase を行う。Undo 1 回で全部戻る。要約の下には、コアの `rewritePreview` で、積み重ねたブランチが一緒に動くか残るか（とその理由）、push 済みのブランチ（Force Push が要る）、コンフリクトしそうなコミットを出し、その行に警告の印を付ける。「積み重ねたブランチも一緒に動かす」（積み重ねたブランチがあるときだけ出す）で、この編集だけ動かすかを選ぶ（最初は `rebase.updateRefs` のとおり）。Rebase のシートは、今と rebase の後のブランチを History と同じ描き方で並べ（載せ直すコミットは A′、一緒に動く札は緑、残る札は元のコミットに）、同じチェックボックスを持つ。切り替えると絵も変わる。`amonhen rewrite-preview` も同じものを出す。
 - **merge**。merge の先の first-parent のコミットも並べる。範囲に merge があれば、git の `--rebase-merges` で rebase する: git が merge を含む todo を作り、編集するコミットの命令だけを替えるので、merge と取り込んだ側のコミットはそのまま作り直される。merge の行は「そのまま」だけ、merge をまたいだ並べ替えと、merge のすぐ上のコミットを merge とまとめることはできない。Split は右クリックの別の項目のまま（止めて、分けてコミットできるようにする）。
+
+## 7b. shallow clone
+
+`--depth` や `--shallow-since` で作った clone（Clone のシートでは「最近の履歴だけ」、7c）は、履歴の新しい部分だけを
+持つ。以下は shallow clone のときだけ出す。
+
+- History の最後の行の下に、「これより古い履歴は取得していません」という帯と、「さらに取る」（100・1,000・10,000
+  コミットと、好きな数を尋ねる「その他…」（`git fetch --deepen=<n>`）と、日付を尋ねてその後のコミットを取る「この日付まで…」（`--shallow-since`）を
+  選ぶ引き下げ）・「すべて取る」（`--unshallow`）のボタンを出す。Fetch と同じく動かす: 進み具合はツールバーと
+  Activity に、帯には回る印を出し、失敗はステータスバーに出す。終わったら History が古いコミットを読む。履歴を
+  足すだけなので Undo には記録しない。検索に一致したコミットだけを出している間は、帯を出さない。
+- グラフでは、境界のコミットの線の下に短い点線を描く（親はあるが、取得していない）。
+- 右の欄では、そのコミットの Parent の行に親の ID を薄く出し（選べない）、「（取得していません）」と添える。Go to
+  Parent は移る先がない。
+- `amonhen log` は最後に古い履歴を取得していないと書く。コアの `deepen`（`commits` か `since`）・`unshallow` の
+  命令は `amonhen run` で使える。
+- サイドバーの History の行に小さな ✂ の印を出す（ツールチップは、古い履歴を取得していないこと）。Repository
+  Settings の「取得とフォルダ」にも、同じ「さらに取る」「すべて取る」がある（4.5）。
+
+## 7c. partial clone と sparse checkout
+
+大きなリポジトリは、ファイルの中身を取らずに clone したり（partial clone、`--filter=blob:none`）、一部のフォルダだけを
+取り出したり（sparse checkout）する。どちらも File > Clone… で作れる（下の Clone）。ほかの項目は、そのリポジトリの
+ときだけ出す。変えるのは Repository Settings の「取得とフォルダ」（4.5）。サイドバーのその印は、行の名前が切れるなら
+出さず（ツールチップには残す）、サイドバーを広げると出す。
+
+- Clone: File > Clone… の「取得する範囲」で、「すべて」（既定。ふつうの `git clone`）・「ファイルの中身は必要なときに
+  取る」（`--filter=blob:none`。大きなリポジトリ向けで、中身は差分やファイルを見るときに取る）・「最近の履歴だけ」
+  （`--depth`。横で 1・100・1,000・10,000 コミットか、好きな数を入れる「その他…」を選ぶ。古い履歴は後から取れる、7b）を選ぶ。それぞれに 1 文の説明を
+  添える。treeless clone（`--filter=tree:0`）は出さない。「一部のフォルダだけ取り出す」は `--sparse` で clone し
+  （最上位のファイルだけ）、clone の直後に「取得とフォルダ」と同じシートで HEAD の木からフォルダを選んでもらう。
+  取り消せば最上位のファイルだけのままで、フォルダは後から「取得とフォルダ」で足せる。git 2.25 より古ければ、⚠ と
+  見つけた版を添えて選べなくする。filter に対応していないサーバーなら、ふつうの clone になる（git の警告は Activity の
+  出力に残る）。`amonhen clone` は `--filter=<spec>`・`--depth <n>`・`--sparse` を受け付ける。
+- partial clone: サイドバーの History の行に小さな雲の印を出す（ツールチップに filter）。差分は要る中身をまとめて
+  取る。History の `contents:` の検索は、まだ取っていない中身がすべて要るので、先にシートで確かめる（「この
+  検索は、まだ取っていない中身をすべて取ります」、検索／キャンセル）。そのうえで、探す前にまとめて取る（git に
+  任せると 1 つずつ取りに行く）。まとめて取るのは git 2.29 から（手元にあるものをサーバーに伝えずに取るため。
+  伝えると GitHub などは何も送らない）。それより古い git では、git が読むときに 1 つずつ取る。
+- sparse checkout: サイドバーの Working Copy の行に小さなフォルダの印を出し、Working Copy の変更の一覧の上に
+  「一部のフォルダだけ取り出し中（2）」と出す。押すと「取得とフォルダ」を開く。コミットの差分では、取り出していない
+  フォルダのファイルの「Finder に表示」「既定のアプリで開く」を、「取り出していないフォルダです」と添えて選べなくする。
+- git maintenance: 「取得とフォルダ」のスイッチで、リポジトリを登録する（`git maintenance start`）か外す。git は
+  毎時 prefetch（`refs/prefetch/` に取る。History には出さない）と commit-graph の書き出しをするので、アプリの
+  commit-graph の書き出し（Settings > Performance）は、登録したリポジトリには書かない。外すときは、start が書いた
+  `maintenance.auto=false` も外し、commit などの後の git の自動の手入れが動くように戻す。
+- `amonhen status` はそれらを 1 行で添える（`shallow clone · partial clone（blob:none） · sparse checkout（2
+  フォルダ） · git maintenance`）。コアの `repositoryForm`・`fetchAllContents`・`sparseCheckout`・
+  `disableSparseCheckout`・`treeFolders`・`maintenance`（`on`）の命令は `amonhen run` で使える。
 
 ## 8. コンフリクトの解決（埋め込みのマージエディタ）
 

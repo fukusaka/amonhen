@@ -28,6 +28,7 @@ widestring = "1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_Console", "Win32_System_Threading"] }
 
 [dev-dependencies]
+amonhen-backend-cli.workspace = true
 amonhen-backend-gix.workspace = true
 amonhen-core.workspace = true
 tempfile = "3.27.0"

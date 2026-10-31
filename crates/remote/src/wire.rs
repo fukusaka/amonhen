@@ -7,7 +7,7 @@ use std::sync::Arc;
 use amonhen_layout::{Pod, Slab};
 use amonhen_model::search::TextTerm;
 use amonhen_model::{
-    ApplyPatch, CommitGraph, CommitText, FormatPatch, HeadState, Oid, PullMode, RefUpdate,
+    ApplyPatch, CommitGraph, CommitText, Deepen, FormatPatch, HeadState, Oid, PullMode, RefUpdate,
     RemoteChange, ResetMode, Result, Root, Sequence, WorktreeChange,
 };
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,8 @@ pub enum Request {
     ChangesBetween(Option<Oid>, Oid),
     /// → `Bytes`
     Blob(Oid),
+    /// → `()`（手元にない blob をまとめて取ってくる）
+    PrefetchBlobs(Vec<Oid>),
     /// → `Status`
     Status,
     /// → `Bytes`
@@ -288,6 +290,8 @@ pub enum Op {
     /// → `[Option<Oid>; 3]`
     ConflictStages(String),
     Fetch(Option<String>),
+    Deepen(Deepen),
+    FetchAllContents(String),
     Pull(PullMode),
     BranchTracking,
     Push {
@@ -326,6 +330,14 @@ pub enum Op {
     ConfigSet(String, Option<String>),
     ConfigSetGlobal(String, Option<String>),
     GitVersion,
+    /// → `RepositoryForm`
+    RepositoryForm,
+    /// → `()`（None なら sparse checkout をやめる）
+    SparseCheckout(Option<Vec<String>>),
+    /// → `Vec<String>`（HEAD の木のそのパスにあるフォルダ）
+    TreeFolders(String),
+    /// → `()`（true なら `git maintenance start`、false なら `unregister`）
+    Maintenance(bool),
     Remotes,
     CheckRemote(String),
     SigningKeys(String),

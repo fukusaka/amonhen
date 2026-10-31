@@ -137,7 +137,7 @@ Settings… holds what Amon Hen itself decides, and the git settings of each mac
 | Diff & Merge | Default unified / split, ignore whitespace, context lines, wrapping, tab width, default layout of the merge editor (see below), diff3, resolving unambiguous conflicts when the merge editor opens (done) |
 | Commit | Subject length guide (50 / 72), add Sign-off, Conventional Commits completion, push after commit. Not shown until it has rows; the message template library is on Git > Commits |
 | AI | The AI to use (none / Apple Intelligence on-device / Claude Code / Codex; by default the on-device model where it is available, otherwise none), the chosen CLI's location, version and login state (with install guidance if not found), model, target language for translation, per-repository opt-out. Per-purpose prompts under the advanced section (chapter 9) |
-| Performance | Automatic commit-graph writing, fsmonitor, opening through the shared daemon, location, size and clearing of the persistent cache, handling of background tabs |
+| Performance | Automatic commit-graph writing (not in repositories registered with git maintenance, which writes it every hour), fsmonitor, opening through the shared daemon, location, size and clearing of the persistent cache, handling of background tabs |
 
 There is no Advanced tab: its items are in Performance (the daemon) and Git (the shell's environment variables) and SSH Hosts (signature verification, per host). Two rows of the first Git tab go rather than move: the pull default (the Pull sheet always preselects Follow git's settings; how to pull is git's setting on the repository's Operations page, for this repository or for all) and the user-wide `rebase.updateRefs` (the same row on Operations, set for all repositories).
 
@@ -271,7 +271,7 @@ For a repository on an SSH host, "all repositories" means those of the user on t
 
 ### 4.5 Pages
 
-A list on the left and the chosen page on the right, like System Settings. The list has no groups: the pages people change often come first, the two they look at now and then last, and under the list one small line says which git runs this repository (`git 2.54.0 · This Mac`, or `git 2.34 · build-1`); clicking it opens Settings… > Git with that machine selected (chapter 3). Pages are named by their contents; no page is called "about" or "all", because every page here is a setting of this repository.
+A list on the left and the chosen page on the right, like System Settings. The list has no groups: the pages people change often come first, the two they look at now and then last, and under the list one small line says which git runs this repository (`git 2.54.0 · This Mac`, or `git 2.34 · build-1`); clicking it opens Settings… > Git with that machine selected (chapter 3). Under it, a repository that isn't an ordinary clone lists what it is in short items, each opening Fetching and Folders: shallow clone, Contents fetched when needed (blob:none) for a partial clone, Some folders only for a sparse checkout, and maintenance when it is registered with `git maintenance` (its path is in the user's `maintenance.repo`). Pages are named by their contents; no page is called "about" or "all", because every page here is a setting of this repository.
 
 | Page | Rows |
 | --- | --- |
@@ -280,6 +280,7 @@ A list on the left and the chosen page on the right, like System Settings. The l
 | Branches | **Default branch**: the one detected (`origin/HEAD`, then `main`, `master`), or a local branch chosen here for repositories without one. Amon Hen's own key, `amonhen.defaultBranch` in `.git/config`, so the CLI and the extension see it too; it decides "merged" and the trunk in Branches. The source reads "detected" while nothing is chosen. |
 | Operations | **Pull**: When pulling, how are the changes brought in? (Merge / Rebase / Fast-forward; `pull.rebase`, and `pull.ff=only` with `pull.rebase=false` for the last). **Fetch**: Remove remote-tracking branches deleted on the remote (`fetch.prune`; Amon Hen's Fetch passes `--prune` only when it is on, as `git fetch` does, so the switch needs no explanation). **Rebase**: Stash changes before rebasing (`rebase.autoStash`; History edits always stash); Move stacked branches along when rebasing or editing History (`rebase.updateRefs`; disabled below git 2.38 with the version found). **Merge**: How conflicts are written in files (Both sides / Both sides and the base / Both sides and the base, shortened; `merge.conflictStyle`; the help says the merge editor works with all three, and that with the base it resolves one-sided and word-level conflicts by itself, so zdiff3 is what Amon Hen recommends); Reuse how conflicts were resolved before (`rerere.enabled`; unset, it shows on when the repository has `rr-cache`, as git then uses rerere); Stage files resolved that way (`rerere.autoUpdate`). No Push rows: Amon Hen's Push sends the branch to the target chosen in its sheet with an explicit refspec and `--set-upstream`, so `push.default` and `push.autoSetupRemote` only affect a terminal (All settings); Publish starts from `branch.<name>.pushRemote` and `remote.pushDefault`, as git does. |
 | Working Copy | **Line endings** (`core.autocrlf`: Keep as committed / CRLF in the working tree, LF in commits / LF in commits). **Track changes to the executable bit** (`core.fileMode`). **Ignore in this repository only**: an editor for `.git/info/exclude` that fills the window's height. Not `status.showUntrackedFiles` (Amon Hen's status always lists every untracked file) and not `.gitignore`, which is a file of the repository (4.7). |
+| Fetching and Folders | Only the sections the repository needs. **History** (a shallow clone): older history isn't fetched, with the same Fetch More and Fetch All as the band at the end of History (7b). **Contents** (a partial clone): file contents are fetched when needed, with the filter (`blob:none`), and Fetch All Contents…, which asks first since it can be large, removes the filter (`remote.<name>.partialclonefilter`) and runs `git fetch --refetch <remote>` like Fetch, putting the filter back if that fails; disabled below git 2.36. **Folders** (a repository with a working tree): in a sparse checkout (cone mode), the folders checked out, − on each, + to add one, and Check Out All Folders… (`git sparse-checkout disable`, asked first); otherwise Check Out Only Some Folders…. Folders are picked from HEAD's tree (folders not checked out are there too) with the column picker used for paths, where a path can also be typed; the change is `git sparse-checkout set --cone` (`init --cone` first below git 2.35); disabled below git 2.25. A change that would leave out a folder with uncommitted changes is refused with their paths. Patterns not in cone mode are listed but not changed (deprecated since git 2.37). **Maintenance** (always, last): one switch, Keep this repository maintained in the background, whose help says that git then prefetches and writes the commit-graph every hour and that it is set in the global git config and launchd (on an SSH host, its scheduler). On runs `git maintenance start` (registering the repository and making the schedule if there is none), off runs `git maintenance unregister` (the schedule stays for other registered repositories) and removes `maintenance.auto=false`, so git's automatic maintenance after commands runs again; disabled below git 2.31. |
 | Remotes | A table of the remotes (name, fetch URL, push URL when different, whether it is on GitHub or similar). Add, Edit and Remove open one sheet: name, fetch URL, push URL (empty means the same), what the URL points to (GitHub, GitLab, a path, an SSH host) and a connection check (`git ls-remote`) before saving. Prune per remote. The same actions are in the sidebar: Add Remote… on the Remotes group's context menu; Rename, Edit URL…, Remove and Prune on a remote's. Repository > Add Remote… opens the same sheet, and removing a remote asks the same question wherever it starts. |
 | Hooks · LFS | **Hooks**: a table with each hook's name, when git runs it (before a commit, before a push, …), and an Enabled switch (the executable bit); the selected hook's script is shown under the table with syntax colors (the language from its `#!` line, the diff's colors), with Edit in <editor> (the external editor from Settings > General) and a menu of the other installed editors, and the same on the row's context menu with Reveal in Finder; Create Hook… picks one of the hooks git knows that isn't there yet and puts a `#!/bin/sh` skeleton in place; where they live when `core.hooksPath` is set. **LFS**: whether git-lfs is installed (with how to install it if not), the tracked patterns from `.gitattributes` with Track Pattern… (`git lfs track`) and Remove, and how many files are in LFS. Named by its contents: no single word covers both, and the worktrees are already listed under Working Copy in the sidebar. |
 | Keys and Values | git's settings as keys and values, for what the other pages don't ask about. A table like Xcode's Build Settings: Key, Value in effect, then one column per source (system-wide, all repositories, this repository, this worktree) with the value set there. The value in effect is bold. Rows are grouped by the key's dots as Xcode groups build settings: a section (`core`, `remote`, …) and, under it, a subsection (`remote.origin`), each a bold header with a disclosure triangle, every group open at first; a key reads as its last part under its group, and the full key is in its tooltip. Keys are spelled as git documents them (`core.fileMode`). The column that can be written (this repository; all repositories in Settings… > Git; the value in effect in Combined) shows plain text with a field outline on hover (and for the one selected row), and one click on it edits; emptying it removes the key there; the other columns are read-only. "+" adds a row for a key and its value (left without both, the row goes away); "−" and ⌫ remove the selected keys. Every change made from the table (edit, add, remove) can be undone and redone with ⌘Z / ⇧⌘Z, any number of steps while the page is open; the last removal also shows in a line under the table with Restore, which is one ⌘Z. Search by key or value, sorting by any column, ⌘C copies the selected rows as `key = value`. Above the table, Xcode's two switches with Xcode's words, not translated, remembered app-wide, Customized and Levels at first: the rows (Basic: the keys the pages here ask about, set or not; Customized: the keys set at this level; All: every variable git knows, from `git help --config-for-completion`, a blank value and "git's default" for one set nowhere, without the `remote.<name>.…` forms) and the columns (Combined: the value in effect and its source; Levels: a column per source). |
@@ -580,6 +581,62 @@ anything does.
   merges and the commits they brought in are recreated as they were. A merge's row can only be kept, rows can't be
   dragged across a merge, and the commit right above a merge can't be combined with it. Split stays a separate item
   on the context menu (it stops so the changes can be committed in parts).
+
+## 7b. Shallow clones
+
+A clone made with `--depth` or `--shallow-since` (in the Clone sheet, Recent history only, 7c) has only the newest
+part of the history. Only shallow clones show any of the following.
+
+- After History's last row, a band says "Older history isn’t fetched (shallow clone)" with Fetch More, a pull-down
+  of 100, 1,000 or 10,000 more commits and Other…, which asks for any number (`git fetch --deepen=<n>`), and Up to a Date…, which asks for a date and fetches
+  the commits made after it (`--shallow-since`), and Fetch All (`--unshallow`). They run like Fetch: progress in the
+  toolbar and Activity, a spinner in the band, failures in the status bar. History then reads the older
+  commits. Nothing is recorded for Undo: they only add history. The band is hidden while only the commits matching a
+  search are shown.
+- In the graph, a commit at the boundary ends with a short dotted line going down: it has parents that aren't
+  fetched.
+- In the right column, such a commit's Parent row shows the parents' IDs dimmed (they can't be selected) with "(not
+  fetched)", and Go to Parent has nowhere to go.
+- `amonhen log` ends with a line saying older history isn't fetched, and the core's `deepen` (`commits` or `since`)
+  and `unshallow` commands are there for `amonhen run`.
+- The sidebar's History row has a small ✂ mark (its tooltip says older history isn't fetched), and Repository
+  Settings > Fetching and Folders has the same Fetch More and Fetch All (4.5).
+
+## 7c. Partial clones and sparse checkouts
+
+A large repository may be cloned without file contents (a partial clone, `--filter=blob:none`) or have only some
+folders checked out (a sparse checkout); File > Clone… can make both (the Clone item below). Only such repositories
+show the rest of the following; changing them is on Repository Settings > Fetching and Folders (4.5). The sidebar's
+marks for them are left out of a row whose title they would truncate (they stay in its tooltip), and come back when
+the sidebar is wider.
+
+- Clone: File > Clone… has Download: Everything (the default, a plain `git clone`), File contents when needed
+  (`--filter=blob:none`; good for large repositories, contents are fetched when a diff or file needs them) or Recent
+  history only (`--depth`, with 1, 100, 1,000 or 10,000 commits beside it, or Other… for any number; older history can be fetched later, 7b), each
+  with one sentence of help. Treeless clones (`--filter=tree:0`) aren't offered. Check out only some folders clones
+  with `--sparse` (only the top-level files) and right after the clone asks for a folder from HEAD's tree with the
+  picker of Fetching and Folders; canceling leaves only the top-level files, and folders can be added there later. It
+  is disabled with ⚠ and the version found below git 2.25. A server that doesn't support filters makes an ordinary
+  clone (git's warning stays in Activity's output). `amonhen clone` takes `--filter=<spec>`, `--depth <n>` and
+  `--sparse`.
+- Partial clone: the sidebar's History row has a small cloud mark with the filter in its tooltip. Diffs fetch the
+  contents they need in one go. A History search with `contents:` needs every content not fetched yet, so a sheet
+  asks first ("This search fetches all contents not fetched yet", Search / Cancel); they are then fetched in one go
+  before searching (git alone would fetch them one at a time). Fetching in one go needs git 2.29, to fetch them
+  without telling the server what is already here (servers such as GitHub send nothing otherwise); with older git,
+  git fetches them one at a time as it reads them.
+- Sparse checkout: the sidebar's Working Copy row has a small folder mark, and Working Copy says "Only some folders
+  are checked out (2)" above the list of changes; clicking it opens Fetching and Folders. In a commit's diff, a file
+  in a folder that isn't checked out has Show in Finder and Open with Default App disabled, with "This folder isn’t
+  checked out".
+- git maintenance: Fetching and Folders' switch registers the repository (`git maintenance start`) or unregisters it.
+  git then prefetches (into `refs/prefetch/`, which History doesn't show) and writes the commit-graph every hour, so
+  the app's own commit-graph writing (Settings > Performance) leaves a registered repository alone. Unregistering
+  also removes the `maintenance.auto=false` that start wrote, so git's automatic maintenance after commands runs
+  again.
+- `amonhen status` adds one line for them (`shallow clone · partial clone (blob:none) · sparse checkout (2
+  folders) · git maintenance`), and the core's `repositoryForm`, `fetchAllContents`, `sparseCheckout`,
+  `disableSparseCheckout`, `treeFolders` and `maintenance` (`on`) commands are there for `amonhen run`.
 
 ## 8. Resolving conflicts (the embedded merge editor)
 

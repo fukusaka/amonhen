@@ -14,6 +14,19 @@ becomes the GitHub Release notes.
 - Several branches, tags or commits selected in the sidebar or History merge in one commit, as `git merge a b c` does,
   from a sheet showing their order and the conflicts expected for each; it offers to merge them one by one when git
   couldn't. `amonhen merge-check a b c` checks the same.
+- In a shallow clone, History ends with a band to fetch any number of older commits, up to a date, or all of it, and
+  boundary commits are marked as having parents not fetched. `amonhen log` notes where the history stops.
+- Repository Settings has a Fetching and Folders page: fetch more of a shallow clone, fetch all contents of a partial
+  clone (git 2.36), and choose the folders of a sparse checkout from HEAD's tree (git 2.25). The git line, the
+  sidebar and Working Copy show when a repository is shallow, partial, sparse or registered for maintenance.
+- In a partial clone, a History search with `contents:` asks first, then fetches every content not fetched yet in
+  one go (git 2.29). `amonhen status` notes shallow, partial and sparse repositories.
+- Fetching and Folders has a switch to keep the repository maintained in the background (`git maintenance start`,
+  git 2.31); the app then leaves writing the commit-graph to it. Turning it off lets git's automatic maintenance
+  run again.
+- The Clone sheet chooses what to download (everything, file contents when needed, or recent history only) and can
+  check out only some folders, picked right after the clone (git 2.25). `amonhen clone` takes `--filter`, `--depth`
+  and `--sparse`.
 
 #### Changed
 

@@ -37,6 +37,73 @@ pub enum PullMode {
     FastForwardOnly,
 }
 
+/// shallow clone の履歴をどこまで取り足すか（`Operations::deepen`）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub enum Deepen {
+    /// 今の境界からさらにこれだけ古いコミットまで（`git fetch --deepen=<n>`）。
+    Commits(u32),
+    /// この日時より新しいコミットをすべて（`git fetch --shallow-since=<date>`。日付は git が読む形）。
+    Since(String),
+    /// すべて（`git fetch --unshallow`）。
+    All,
+}
+
+/// リポジトリの形のうち、git の設定とファイルから読むもの（`Operations::repository_form`）。shallow clone かは
+/// `GitBackend::shallow` で分かるので入れない。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct RepositoryForm {
+    /// partial clone なら、その様子。
+    pub partial: Option<PartialClone>,
+    /// sparse checkout（`core.sparseCheckout`）なら、その様子。
+    pub sparse: Option<SparseCheckout>,
+    /// `git maintenance register` で登録してある（ユーザー全体の `maintenance.repo` にこのリポジトリがある）。
+    pub maintenance: bool,
+}
+
+/// partial clone の様子。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct PartialClone {
+    /// 足りないオブジェクトを取ってくる remote（`extensions.partialClone`、なければ `remote.<name>.promisor` か
+    /// `partialclonefilter` のある remote）。
+    pub remote: String,
+    /// 取らずにおいたもの（`blob:none` など）。`remote.<name>.partialclonefilter`（git 2.23 は
+    /// `core.partialclonefilter`）。書いていなければ `None`。
+    pub filter: Option<String>,
+}
+
+/// sparse checkout の様子。
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+pub struct SparseCheckout {
+    /// cone mode（`core.sparseCheckoutCone`。フォルダで選ぶ）。
+    pub cone: bool,
+    /// cone mode なら取り出しているフォルダ（根からの相対パス。最上位のファイルはいつも取り出す）、そうでなければ
+    /// `info/sparse-checkout` のパターン。
+    pub folders: Vec<String>,
+}
+
+impl SparseCheckout {
+    /// `path`（ファイルの、根からの相対パス）を取り出しているか。cone mode は、取り出すフォルダの下すべてと、
+    /// 根とその途中のフォルダの直下のファイル。cone mode でなければパターンを読まないので、取り出しているとみなす。
+    pub fn contains(&self, path: &str) -> bool {
+        if !self.cone {
+            return true;
+        }
+        let Some((parent, _)) = path.rsplit_once('/') else {
+            return true;
+        };
+        self.folders.iter().any(|f| {
+            let f = f.trim_matches('/');
+            parent == f
+                || parent.strip_prefix(f).is_some_and(|r| r.starts_with('/'))
+                || f.strip_prefix(parent).is_some_and(|r| r.starts_with('/'))
+        })
+    }
+}
+
 /// git の設定の 1 項目（`git config --list --show-origin --show-scope`）。
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -414,6 +481,14 @@ pub trait Operations: Send + Sync {
     /// `remote` から取ってくる（`None` ならすべてのリモート、`git fetch --all`）。消えたブランチを片づけるかは
     /// git の `fetch.prune` のとおり。
     fn fetch(&self, remote: Option<&str>) -> Result<()>;
+    /// shallow clone の履歴を取り足す（既定のリモートから）。
+    fn deepen(&self, how: &Deepen) -> Result<()>;
+    /// partial clone で取らずにおいた中身をすべて取る: `remote` の filter の設定を消してから
+    /// `git fetch --refetch <remote>`（git 2.36 から）。取れなければ filter の設定を戻す。
+    fn fetch_all_contents(&self, remote: &str) -> Result<()> {
+        let _ = remote;
+        Err(crate::tr!("Can’t fetch contents here").into())
+    }
     /// 今のブランチに上流を取り込む（`git pull`）。
     fn pull(&self, mode: PullMode) -> Result<Outcome>;
     /// ローカルブランチごとの、上流との差（名前, ahead, behind, gone）。
@@ -517,6 +592,28 @@ pub trait Operations: Send + Sync {
     /// LFS にあるファイルの数（`git lfs ls-files`）。git-lfs がなければ `None`。
     fn lfs_file_count(&self) -> Result<Option<usize>> {
         Ok(None)
+    }
+    /// partial clone・sparse checkout・maintenance の登録（`RepositoryForm`）。
+    fn repository_form(&self) -> Result<RepositoryForm> {
+        Ok(RepositoryForm::default())
+    }
+    /// cone mode の sparse checkout で、取り出すフォルダを `folders` にする（`git sparse-checkout set`。sparse
+    /// checkout でなければ始める）。`None` ならやめて、すべてを取り出す（`git sparse-checkout disable`）。
+    fn sparse_checkout(&self, folders: Option<&[String]>) -> Result<()> {
+        let _ = folders;
+        Err(crate::tr!("Can’t change the sparse checkout here").into())
+    }
+    /// HEAD の木の `path`（根からの相対パス。空なら根）にあるフォルダの名前（名前の順）。
+    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
+        let _ = path;
+        Err(crate::tr!("Can’t read the tree here").into())
+    }
+    /// `on` なら `git maintenance start`（ユーザー全体の `maintenance.repo` に登録し、OS の予定がなければ作る）、
+    /// でなければ `git maintenance unregister`（予定はほかのリポジトリも使うので残す）と、start が書いた
+    /// `maintenance.auto=false` を外す。git 2.31 から。
+    fn maintenance(&self, on: bool) -> Result<()> {
+        let _ = on;
+        Err(crate::tr!("Can’t change git maintenance here").into())
     }
     /// worktree の一覧。`git worktree list --porcelain -z` の出力。
     fn worktree_list(&self) -> Result<Vec<u8>> {

@@ -182,9 +182,37 @@ fn now() -> i64 {
         .map_or(0, |d| d.as_secs() as i64)
 }
 
-/// `amonhen clone <url> [<dir>]`
+/// `amonhen clone [--filter=<spec>] [--depth <n>] [--sparse] <url> [<dir>]`
 pub fn clone(args: &[String]) -> Result<ExitCode> {
-    let (url, dest) = match args {
+    let mut options = amonhen_backend_cli::CloneOptions::default();
+    let mut rest: Vec<&String> = Vec::new();
+    let mut iter = args.iter();
+    let bad = || {
+        format!(
+            "{}\n\n{}",
+            tr!("clone takes a URL and, optionally, a destination"),
+            usage()
+        )
+    };
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--sparse" => options.sparse = true,
+            "--depth" => {
+                let n = iter.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
+                options.depth = Some(n);
+            }
+            "--filter" => options.filter = Some(iter.next().ok_or_else(bad)?.clone()),
+            a if a.starts_with("--depth=") => {
+                options.depth = Some(a["--depth=".len()..].parse().map_err(|_| bad())?);
+            }
+            a if a.starts_with("--filter=") => {
+                options.filter = Some(a["--filter=".len()..].to_owned());
+            }
+            a if a.starts_with('-') && a.len() > 1 => return Err(bad().into()),
+            _ => rest.push(arg),
+        }
+    }
+    let (url, dest) = match rest[..] {
         [url] => {
             let name = url
                 .trim_end_matches('/')
@@ -197,21 +225,14 @@ pub fn clone(args: &[String]) -> Result<ExitCode> {
             )
         }
         [url, dir] => (url, PathBuf::from(dir)),
-        _ => {
-            return Err(format!(
-                "{}\n\n{}",
-                tr!("clone takes a URL and, optionally, a destination"),
-                usage()
-            )
-            .into());
-        }
+        _ => return Err(bad().into()),
     };
     let dest = if dest.is_absolute() {
         dest
     } else {
         std::env::current_dir()?.join(dest)
     };
-    amonhen_backend_cli::clone(url, Path::new(&dest))?;
+    amonhen_backend_cli::clone(url, Path::new(&dest), &options)?;
     println!("{}", tr!("Cloned: {path}", path = dest.display()));
     Ok(ExitCode::SUCCESS)
 }

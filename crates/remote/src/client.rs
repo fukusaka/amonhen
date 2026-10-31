@@ -12,10 +12,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use amonhen_model::{
-    ApplyPatch, CommitGraph, CommitText, ConfigEntry, ConnectionState, FileChange, FormatPatch,
-    GitBackend, HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RawCommit, RefUpdate,
-    Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode, Result, Root,
-    Sequence, SigningKey, Status, WorktreeChange,
+    ApplyPatch, CommitGraph, CommitText, ConfigEntry, ConnectionState, Deepen, FileChange,
+    FormatPatch, GitBackend, HeadState, Oid, Operations, Outcome, PatchFile, PullMode, RawCommit,
+    RefUpdate, Refs, RemoteChange, RemoteCheck, RemoteEntry, RepoFiles, RepoPaths, ResetMode,
+    Result, Root, Sequence, SigningKey, Status, WorktreeChange,
 };
 use serde::de::DeserializeOwned;
 
@@ -428,6 +428,10 @@ impl GitBackend for RemoteBackend {
     fn blob(&self, id: &Oid) -> Result<Arc<Vec<u8>>> {
         let bytes: Bytes = self.conn.call(&Request::Blob(*id))?;
         Ok(Arc::new(bytes.0))
+    }
+
+    fn prefetch_blobs(&self, ids: &[Oid]) -> Result<()> {
+        self.conn.call(&Request::PrefetchBlobs(ids.to_vec()))
     }
 
     fn operations(&self) -> Result<&dyn Operations> {
@@ -933,6 +937,14 @@ impl Operations for RemoteOperations {
         self.op(Op::Fetch(remote.map(str::to_owned)))
     }
 
+    fn deepen(&self, how: &Deepen) -> Result<()> {
+        self.op(Op::Deepen(how.clone()))
+    }
+
+    fn fetch_all_contents(&self, remote: &str) -> Result<()> {
+        self.op(Op::FetchAllContents(remote.to_owned()))
+    }
+
     fn pull(&self, mode: PullMode) -> Result<Outcome> {
         self.op(Op::Pull(mode))
     }
@@ -1028,6 +1040,22 @@ impl Operations for RemoteOperations {
 
     fn git_version(&self) -> Result<Option<(u32, u32, u32)>> {
         self.op(Op::GitVersion)
+    }
+
+    fn repository_form(&self) -> Result<amonhen_model::RepositoryForm> {
+        self.op(Op::RepositoryForm)
+    }
+
+    fn sparse_checkout(&self, folders: Option<&[String]>) -> Result<()> {
+        self.op(Op::SparseCheckout(folders.map(<[String]>::to_vec)))
+    }
+
+    fn tree_folders(&self, path: &str) -> Result<Vec<String>> {
+        self.op(Op::TreeFolders(path.to_owned()))
+    }
+
+    fn maintenance(&self, on: bool) -> Result<()> {
+        self.op(Op::Maintenance(on))
     }
 
     fn remotes(&self) -> Result<Vec<RemoteEntry>> {

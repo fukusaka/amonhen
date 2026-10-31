@@ -3,6 +3,7 @@
 
 mod directory;
 mod extras;
+mod form;
 mod ops;
 mod programs;
 mod signing;
@@ -106,8 +107,37 @@ fn prepare_settings_repository(dir: &std::path::Path) -> Result<()> {
     Ok(())
 }
 
+/// clone で取得する範囲と、取り出すもの（`clone`）。既定は git の既定（すべて取得し、すべて取り出す）。
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CloneOptions {
+    /// partial clone の `--filter`（`blob:none` なら、ファイルの中身は必要なときに取る）。サーバーが対応して
+    /// いなければ、git はそう書いてふつうの clone をする（Activity の出力に残る）。
+    pub filter: Option<String>,
+    /// shallow clone の `--depth`（最近のこの数のコミットだけ取る。`file://` でない手元のパスでは git が無視する）。
+    pub depth: Option<u32>,
+    /// `--sparse`: 根のファイルだけを取り出す sparse checkout（cone mode）で始める（git 2.25 から）。
+    pub sparse: bool,
+}
+
+/// sparse checkout で始める clone（`git clone --sparse`）が使える git の版。
+const CLONE_SPARSE: (u32, u32) = (2, 25);
+
 /// `url` を `dest`（まだないフォルダ）に clone する。`dest` の親で git を起動する（Activity に残る）。
-pub fn clone(url: &str, dest: &std::path::Path) -> Result<()> {
+pub fn clone(url: &str, dest: &std::path::Path, options: &CloneOptions) -> Result<()> {
+    if options.sparse
+        && let Some((a, b, c)) = git_version()
+        && (a, b) < CLONE_SPARSE
+    {
+        return Err(tr!(
+            "Needs git {needed} or later. This machine’s git is {version}.",
+            needed = format!("{}.{}", CLONE_SPARSE.0, CLONE_SPARSE.1),
+            version = format!("{a}.{b}.{c}"),
+        )
+        .into());
+    }
+    if options.depth == Some(0) {
+        return Err(tr!("The number of commits to fetch must be 1 or more").into());
+    }
     let parent = dest
         .parent()
         .ok_or_else(|| tr!("The clone destination folder is invalid"))?;
@@ -116,9 +146,29 @@ pub fn clone(url: &str, dest: &std::path::Path) -> Result<()> {
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| tr!("The clone destination folder’s name is invalid"))?;
-    Git::new(parent)
-        .write(&["clone", "--", url, name])
-        .map(drop)
+    let filter = options.filter.as_ref().map(|f| format!("--filter={f}"));
+    let depth = options.depth.map(|n| n.to_string());
+    let mut args = vec!["clone"];
+    if let Some(filter) = &filter {
+        args.push(filter);
+    }
+    if let Some(depth) = &depth {
+        args.extend(["--depth", depth]);
+    }
+    if options.sparse {
+        args.push("--sparse");
+    }
+    args.extend(["--", url, name]);
+    Git::new(parent).write(&args)?;
+    if options.sparse {
+        // git 2.36 までの `clone --sparse` は cone mode でないパターン（根のファイルだけ）で始める。フォルダで
+        // 選べるよう（`sparse_checkout`）、同じ中身のまま cone mode にする。
+        let git = Git::new(dest);
+        if git.repository_form()?.sparse.is_some_and(|s| !s.cone) {
+            git.write(&["sparse-checkout", "init", "--cone"])?;
+        }
+    }
+    Ok(())
 }
 
 /// リポジトリの一覧に出す軽い状態（`Git::peek`）。
@@ -279,11 +329,11 @@ fn run(cmd: Command, input: Option<&[u8]>) -> Result<Vec<u8>> {
     let network = subcommand
         .as_deref()
         .is_some_and(|a| ["fetch", "pull", "push", "clone", "ls-remote"].contains(&a));
-    if network && input.is_none() && !cmd.get_args().any(|a| a == "--") {
+    if network && !cmd.get_args().any(|a| a == "--") {
         // ls-remote は進み具合を出さない（`--progress` を受け付けない）。
         let progress = subcommand.as_deref() != Some("ls-remote");
         return amonhen_model::activity::track_with("git", &repo, label, |seq| {
-            spawn_streaming(cmd, seq, progress)
+            spawn_streaming(cmd, input, seq, progress)
         })
         .map_err(explain_old_git);
     }
@@ -439,19 +489,33 @@ fn network_silence() -> Duration {
 
 /// `--progress` を付けて実行し、標準エラーの進み具合（\r で上書きされる行）を Activity に書く。取り消しを
 /// 頼まれたら git を止める。
-fn spawn_streaming(mut cmd: Command, seq: u64, progress: bool) -> Result<Vec<u8>> {
+fn spawn_streaming(
+    mut cmd: Command,
+    input: Option<&[u8]>,
+    seq: u64,
+    progress: bool,
+) -> Result<Vec<u8>> {
     use amonhen_model::activity;
-    use std::io::Read;
+    use std::io::{Read, Write};
     if progress {
         cmd.arg("--progress");
     }
     cmd.stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .stdin(Stdio::null());
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
     // 取り消すときに git が起動した ssh なども止められるよう、別のプロセスグループにする。
     #[cfg(unix)]
     std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
     let mut child = cmd.spawn()?;
+    // 標準入力は別のスレッドで書く（大きくても、git が読みながら出力を詰まらせないように）。
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        let input = input.to_vec();
+        std::thread::spawn(move || stdin.write_all(&input));
+    }
     activity::set_cancellable(seq);
     // 最後に標準エラーに何か出た時刻（始めてからのミリ秒）。認証の入力待ちなどで黙ったままのときに止める。
     let started = Instant::now();
@@ -772,7 +836,8 @@ mod tests {
         git.commit("first", false).unwrap();
         let out = tempfile::tempdir().unwrap();
         let dest = out.path().join("deep/copy");
-        clone(tmp.path().to_str().unwrap(), &dest).unwrap();
+        let plain = CloneOptions::default();
+        clone(tmp.path().to_str().unwrap(), &dest, &plain).unwrap();
         // Windows の CI では、clone の取り出しで改行が \r\n になる（全体の autocrlf）。
         assert_eq!(
             std::fs::read_to_string(dest.join("a.txt"))
@@ -781,7 +846,93 @@ mod tests {
             "1\n"
         );
         // もうあるフォルダには clone できない。
-        assert!(clone(tmp.path().to_str().unwrap(), &dest).is_err());
+        assert!(clone(tmp.path().to_str().unwrap(), &dest, &plain).is_err());
+    }
+
+    /// 取得する範囲（`--filter`・`--depth`）と、根のファイルだけの取り出し（`--sparse`）で clone する。
+    #[test]
+    fn clones_part_of_a_repository() {
+        let (tmp, git) = repo();
+        for (n, text) in ["one", "two", "three"].iter().enumerate() {
+            std::fs::create_dir_all(tmp.path().join("sub/deep")).unwrap();
+            std::fs::write(tmp.path().join("top.txt"), format!("{text}\n")).unwrap();
+            std::fs::write(tmp.path().join("sub/deep/a.txt"), format!("{text}\n")).unwrap();
+            git.stage(&["top.txt", "sub/deep/a.txt"]).unwrap();
+            git.commit(&format!("commit {n}"), false).unwrap();
+        }
+        git.write(&["config", "uploadpack.allowFilter", "true"])
+            .unwrap();
+        git.write(&["config", "uploadpack.allowAnySHA1InWant", "true"])
+            .unwrap();
+        // `--depth` と `--filter` は手元のパスでは効かないので、`file://` の URL にする（Windows は `file:///C:/…`）。
+        let path = tmp.path().to_str().unwrap().replace('\\', "/");
+        let url = if path.starts_with('/') {
+            format!("file://{path}")
+        } else {
+            format!("file:///{path}")
+        };
+        let out = tempfile::tempdir().unwrap();
+        let config = |dir: &Path, key: &str| {
+            Git::new(dir)
+                .read(&["config", "--get", key])
+                .map(|out| String::from_utf8_lossy(&out).trim().to_owned())
+                .ok()
+        };
+
+        let shallow = out.path().join("shallow");
+        let options = CloneOptions {
+            depth: Some(2),
+            ..Default::default()
+        };
+        clone(&url, &shallow, &options).unwrap();
+        assert!(shallow.join(".git/shallow").exists());
+        let count = Git::new(&shallow)
+            .read(&["rev-list", "--count", "HEAD"])
+            .unwrap();
+        assert_eq!(String::from_utf8_lossy(&count).trim(), "2");
+        let zero = CloneOptions {
+            depth: Some(0),
+            ..Default::default()
+        };
+        assert!(clone(&url, &out.path().join("zero"), &zero).is_err());
+
+        let partial = out.path().join("partial");
+        let options = CloneOptions {
+            filter: Some("blob:none".to_owned()),
+            ..Default::default()
+        };
+        clone(&url, &partial, &options).unwrap();
+        // git 2.23 は core.partialclonefilter、新しい git は remote.origin.partialclonefilter に書く。
+        assert_eq!(
+            config(&partial, "remote.origin.partialclonefilter")
+                .or_else(|| config(&partial, "core.partialclonefilter"))
+                .as_deref(),
+            Some("blob:none")
+        );
+        assert!(!partial.join(".git/shallow").exists());
+
+        let sparse = out.path().join("sparse");
+        let options = CloneOptions {
+            sparse: true,
+            ..Default::default()
+        };
+        if !git_at_least(2, 25) {
+            // 古い git では、git を起動する前に版を言って断る（フォルダも作らない）。
+            let error = clone(&url, &sparse, &options).unwrap_err().to_string();
+            assert!(error.contains("2.25"), "{error}");
+            assert!(!sparse.exists());
+            return;
+        }
+        clone(&url, &sparse, &options).unwrap();
+        assert_eq!(
+            config(&sparse, "core.sparseCheckout").as_deref(),
+            Some("true")
+        );
+        let form = Git::new(&sparse).repository_form().unwrap().sparse.unwrap();
+        assert!(form.cone);
+        assert!(form.folders.is_empty());
+        assert!(sparse.join("top.txt").exists());
+        assert!(!sparse.join("sub").exists());
     }
 
     #[test]
