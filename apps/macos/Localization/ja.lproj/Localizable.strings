@@ -49,6 +49,9 @@
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
+"Fetch?" = "Fetch しますか？";
+"All Remotes (%@)" = "すべてのリモート（%@）";
+"Remote branches deleted on %@ are removed here too (fetch.prune)." = "%@ で消えたブランチは、手元でも片づけます（fetch.prune）。";
 "Also move the stacked branches" = "積み重ねたブランチも一緒に動かす";
 "For this edit only (git’s update-ref). Starts from rebase.updateRefs." = "この編集だけの指定です（git の update-ref）。最初は rebase.updateRefs のとおり。";
 "Now" = "今";

@@ -445,12 +445,38 @@ extension Actions {
                  (try? repository.info(["op": "configList"], as: Entries.self))?.entries ?? [])
             }.value
             guard !remotes.isEmpty else { return NSSound.beep() }
-            let prune = entries.last { $0.key.lowercased() == "fetch.prune" }?.value.lowercased() == "true"
-            let alert = makeAlert(L("Fetch from %@?", ListFormatter.localizedString(byJoining: remotes)),
-                                  prune ? L("Remote branches deleted there are removed here too (fetch.prune).") : "")
+            let value = { (key: String) in entries.last { $0.key.lowercased() == key.lowercased() }?.value.lowercased() }
+            // 片づけるかは git と同じく、リモートの remote.<name>.prune、なければ fetch.prune。
+            let prunes = { (remote: String) in (value("remote.\(remote).prune") ?? value("fetch.prune")) == "true" }
+            let pruneLine = { (chosen: [String]) -> String in
+                let names = chosen.filter(prunes)
+                guard !names.isEmpty else { return "" }
+                return names.count == chosen.count ? L("Remote branches deleted there are removed here too (fetch.prune).")
+                    : L("Remote branches deleted on %@ are removed here too (fetch.prune).", ListFormatter.localizedString(byJoining: names))
+            }
+            let alert = makeAlert(remotes.count == 1 ? L("Fetch from %@?", remotes[0]) : L("Fetch?"), pruneLine(remotes))
             alert.addButton(withTitle: "Fetch")
             alert.addButton(withTitle: L("Cancel"))
-            if await present(alert) == .alertFirstButtonReturn { fetch() }
+            // リモートがいくつもあれば、どこから取るかを選ぶ（最初はすべて。git fetch --all と同じ）。
+            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+            var target: ClosureTarget?
+            if remotes.count > 1 {
+                popup.addItem(withTitle: L("All Remotes (%@)", ListFormatter.localizedString(byJoining: remotes)))
+                popup.menu?.addItem(.separator())
+                popup.addItems(withTitles: remotes)
+                let chosen = { popup.indexOfSelectedItem == 0 ? remotes : [popup.titleOfSelectedItem ?? ""] }
+                target = ClosureTarget { [weak alert] in alert?.informativeText = pruneLine(chosen()) }
+                popup.target = target
+                popup.action = #selector(ClosureTarget.fire)
+                let row = NSStackView(views: [NSTextField(labelWithString: L("From:")), popup])
+                row.spacing = 6
+                row.frame.size = row.fittingSize
+                alert.accessoryView = row
+            }
+            let response = await present(alert)
+            withExtendedLifetime(target) {}
+            guard response == .alertFirstButtonReturn else { return }
+            fetch(remote: remotes.count > 1 && popup.indexOfSelectedItem > 0 ? popup.titleOfSelectedItem : nil)
         }
     }
 

@@ -252,8 +252,11 @@ final class Actions {
         }
     }
 
-    func fetch() {
-        perform(["op": "fetch"])
+    /// `remote` から取ってくる（nil ならすべてのリモート）。
+    func fetch(remote: String? = nil) {
+        var command: [String: Any] = ["op": "fetch"]
+        if let remote { command["remote"] = remote }
+        perform(command)
     }
 
     /// 今のブランチ（detached HEAD なら HEAD）を `target` に動かす。動かし方（soft・mixed・hard）は確認のシートで選ぶ。
