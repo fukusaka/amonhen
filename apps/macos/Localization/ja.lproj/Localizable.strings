@@ -49,6 +49,13 @@
 "Moves %@ forward (fast-forward)." = "%@ を進めます（fast-forward）。";
 "⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase." = "⚠︎ 手元にも %ld コミットあるので、Fast-Forward Only では取り込めません。Merge か Rebase を選んでください。";
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
+"Also move the stacked branches" = "積み重ねたブランチも一緒に動かす";
+"For this edit only (git’s update-ref). Starts from rebase.updateRefs." = "この編集だけの指定です（git の update-ref）。最初は rebase.updateRefs のとおり。";
+"Now" = "今";
+"After the rebase" = "rebase の後";
+"For this rebase only (git’s --update-refs). Starts from rebase.updateRefs." = "この rebase だけの指定です（git の --update-refs）。最初は rebase.updateRefs のとおり。";
+"Moving stacked branches needs git 2.38 or newer." = "積み重ねたブランチを動かすには、git 2.38 以降が要ります。";
+"%@ stays where it is (not moved this time)." = "%@ は動きません（今回は動かさない）。";
 "Conflicts expected" = "コンフリクトの見込み";
 "Conflicts expected in %@" = "%@ でコンフリクトする見込みです";
 "Also moves %@." = "%@ も一緒に動きます。";

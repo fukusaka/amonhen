@@ -53,12 +53,44 @@ nonisolated struct RewritePreview: Decodable, Sendable {
         let files: [String]
     }
 
+    /// 前と後を描く材料（rebase のとき）。
+    struct Drawing: Decodable, Sendable {
+        struct Commit: Decodable, Sendable {
+            let oid: String
+            let subject: String
+        }
+
+        struct Label: Decodable, Sendable {
+            let oid: String
+            let name: String
+            /// `local`・`remote`。
+            let kind: String
+        }
+
+        /// 載せ直すコミット（古い順）。
+        let picks: [Commit]
+        /// 載せ先で進んだコミット（新しい順、先頭のいくつか）と、ほかにいくつあるか。
+        let onto: [Commit]
+        let ontoMore: Int
+        /// 分かれたところ。
+        let base: Commit?
+        let labels: [Label]
+    }
+
+    /// 積み重ねたブランチを動かす git の設定（`configured`）と、git がそれをできるか（`available`、2.38 から）。
+    struct UpdateRefs: Decodable, Sendable {
+        let configured: Bool
+        let available: Bool
+    }
+
     let moving: [Branch]
     let staying: [Branch]
     let current: String?
     let currentUpstream: String?
     /// 調べられなければ nil。
     let conflicts: [Conflict]?
+    let updateRefs: UpdateRefs?
+    let drawing: Drawing?
 
     /// 確認とステータスバーに出す行（ブランチ、push 済み、コンフリクト）。
     func lines() -> [String] {
@@ -69,6 +101,7 @@ nonisolated struct RewritePreview: Decodable, Sendable {
         if !stay("setting").isEmpty { out.append(L("%@ stays where it is (rebase.updateRefs is off).", names(stay("setting")))) }
         if !stay("git").isEmpty { out.append(L("%@ stays where it is (moving it needs git 2.38).", names(stay("git")))) }
         if !stay("checkedOut").isEmpty { out.append(L("%@ stays where it is (checked out in another worktree).", names(stay("checkedOut")))) }
+        if !stay("off").isEmpty { out.append(L("%@ stays where it is (not moved this time).", names(stay("off")))) }
         let pushed = ([currentUpstream.map { _ in current ?? "" }].compactMap { $0 } + moving.filter { $0.upstream != nil }.map(\.name))
             .filter { !$0.isEmpty }
         if !pushed.isEmpty {
@@ -95,10 +128,11 @@ nonisolated struct RewritePreview: Decodable, Sendable {
 
 extension Actions {
     /// 書き換える前の見通しを読む（`edit` は History の編集、`onto` は rebase の先）。読めなければ nil。
-    func rewritePreview(edit: [String: Any]? = nil, onto: String? = nil) async -> RewritePreview? {
+    func rewritePreview(edit: [String: Any]? = nil, onto: String? = nil, updateRefs: Bool? = nil) async -> RewritePreview? {
         var command: [String: Any] = ["op": "rewritePreview"]
         if let edit { command["edit"] = edit }
         if let onto { command["onto"] = onto }
+        if let updateRefs { command["updateRefs"] = updateRefs }
         let repository = self.repository
         guard let json = try? Repository.json(command) else { return nil }
         return await Task.detached { try? repository.info(json: json, as: RewritePreview.self) }.value
@@ -337,18 +371,29 @@ extension Actions {
             let alert = makeAlert(title, Self.canUndo)
             alert.addButton(withTitle: ok)
             alert.addButton(withTitle: L("Cancel"))
-            let label = Self.forecastLabel()
-            label.frame.size = label.fittingSize
-            alert.accessoryView = label
-            Task { @MainActor in
-                // 今のブランチの rebase なら、積み重ねたブランチが動くか残るかと、コミットごとの見込みを出す。
-                if estimate, ours == "HEAD", let rev = theirs.first, let preview = await rewritePreview(onto: rev) {
-                    Self.show(preview, in: label)
-                    return
+            // 今のブランチの rebase なら、前と後の絵、積み重ねたブランチ、コミットごとの見込みと、この操作だけ
+            // 積み重ねたブランチを動かすかを出す。
+            var panel: RewritePreviewPanel?
+            if estimate, ours == "HEAD", let rev = theirs.first {
+                let p = RewritePreviewPanel(actions: self)
+                p.onUpdate = { [weak alert] in alert?.layout() }
+                p.frame.size = p.fittingSize
+                alert.accessoryView = p
+                p.load(onto: rev)
+                panel = p
+            } else {
+                let label = Self.forecastLabel()
+                label.frame.size = label.fittingSize
+                alert.accessoryView = label
+                Task { @MainActor in
+                    Self.show(await predictMerge(ours: ours, theirs: theirs), estimate: estimate || theirs.count > 1, in: label)
                 }
-                Self.show(await predictMerge(ours: ours, theirs: theirs), estimate: estimate || theirs.count > 1, in: label)
             }
             guard await present(alert) == .alertFirstButtonReturn else { return }
+            var commands = commands
+            if let updateRefs = panel?.updateRefs, let i = commands.lastIndex(where: { $0["op"] as? String == "rebase" }) {
+                commands[i]["updateRefs"] = updateRefs
+            }
             perform(sequence: commands)
         }
     }
