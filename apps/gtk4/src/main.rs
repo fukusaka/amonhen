@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]]`
 
 mod actions;
 mod activity;
@@ -17,6 +17,7 @@ mod measure;
 mod menu;
 mod merge;
 mod rangediff;
+mod reflog;
 mod refops;
 mod search;
 mod settings;
@@ -85,6 +86,8 @@ struct Args {
     /// `--menu-row`・`--reflog-row` のメニューを出す代わりに、この項目を選ぶ（確認用。下に開くメニューの中は
     /// `Reset main to 1a2b3c4d > Hard…` のように ` > ` でつなぐ）。
     menu_item: Option<String>,
+    /// Reflog の画面を開いておく（確認用）。`--select-rows`・`--menu-row` は Reflog の行のこと。
+    reflog: bool,
     /// 見出しのメニュー（`repository` か `primary`）を開いておく（確認用）。
     open_menu: Option<String>,
     /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
@@ -156,6 +159,7 @@ fn parse_args() -> Result<Args, String> {
                 let row = it.next().ok_or("--menu-row <row>")?;
                 args.menu_row = Some(row.parse().map_err(|_| "--menu-row <row>")?);
             }
+            "--reflog" => args.reflog = true,
             "--menu-item" => args.menu_item = Some(it.next().ok_or("--menu-item <title>")?),
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
@@ -468,6 +472,14 @@ fn build_window(app: &gtk::Application, args: Args) {
             jump_to(&pages, &view, id, &Rc::new(Cell::new(0)));
         })
     };
+    // Reflog の画面（HEAD の reflog と、選んだ行のコミットの中身）。
+    let reflog = Rc::new(reflog::ReflogView::new(
+        actions.clone(),
+        pending.clone(),
+        on_commit.clone(),
+    ));
+    pages.add_named(&reflog.root, Some("reflog"));
+    reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), window.downgrade(), on_commit.clone());
     diff.connect_file_menu(move |path, x, y| {
         let (Some(view), Some(window)) = (v.upgrade(), w.upgrade()) else {
@@ -684,6 +696,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                         status.set_visible(false);
                         working.set_repo(repo.clone());
                         stashes.set_repo(repo.clone());
+                        reflog.set_repo(repo.clone());
                         actions.set_repo(repo.clone());
                         search.show_history(repo, history);
                         if let Some(command) = perform.take() {
@@ -712,7 +725,37 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 Some("primary") => Some(buttons.primary.clone()),
                                 _ => None,
                             };
-                            if let Some((&first, rest)) = args.select_rows.split_first() {
+                            if args.reflog {
+                                // 読み終えてから行を選ぶ・メニューを出す。
+                                pending.set(pending.get() + 1);
+                                let (r, p) = (reflog.clone(), pending.clone());
+                                let (select, menu_row, item) = (
+                                    args.select_rows.first().copied(),
+                                    args.menu_row,
+                                    args.menu_item.clone(),
+                                );
+                                reflog.after_load(move || {
+                                    if let Some(row) = select.or(menu_row) {
+                                        r.select(row);
+                                    }
+                                    if let Some(row) = menu_row {
+                                        let items = r.menu(row);
+                                        eprintln!("{}", menu::titles(&items).join("\n"));
+                                        match &item {
+                                            Some(path) => {
+                                                if !menu::activate(&items, path) {
+                                                    eprintln!("メニューの項目がない: {path}");
+                                                }
+                                            }
+                                            None => r.popup_menu(row),
+                                        }
+                                    }
+                                    // 選んだ行の詳細と差分を読み始めてから減らす。
+                                    glib::idle_add_local_once(move || p.set(p.get() - 1));
+                                });
+                                sidebar.select_page(Page::Reflog);
+                                pages.set_visible_child_name("reflog");
+                            } else if let Some((&first, rest)) = args.select_rows.split_first() {
                                 view.select(first);
                                 for &row in rest {
                                     view.select_with(row, false, true);
@@ -788,7 +831,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                             if let Some(query) = &args.search {
                                 search.search(query, args.only_matching, pending.clone());
                             }
-                            if let Some(row) = args.menu_row {
+                            if let Some(row) = args.menu_row.filter(|_| !args.reflog) {
                                 view.select(row);
                                 pending.set(pending.get() + 1);
                                 let (p, v, a) = (pending.clone(), view.clone(), actions.clone());
@@ -875,6 +918,8 @@ fn build_window(app: &gtk::Application, args: Args) {
                         }
                         latest_refs.replace(Some(refs.clone()));
                         actions.set_head(refs.refs.head_branch.clone());
+                        // HEAD が動いたら Reflog も読み直す（見えていなければ、次に出すときに）。
+                        reflog.reload();
                         buttons.show_refs(&refs);
                         if let Some(name) = menu_ref.take()
                             && let Some(entry) = refs.refs.entries.iter().find(|e| e.name == name)
@@ -1017,6 +1062,7 @@ fn connect_sidebar(
                 return;
             }
             sidebar::Item::Page(Page::RangeDiff) => pages.set_visible_child_name(rangediff::PAGE),
+            sidebar::Item::Page(Page::Reflog) => pages.set_visible_child_name("reflog"),
             _ => {}
         }
         if let Some(target) = sidebar::target(data) {

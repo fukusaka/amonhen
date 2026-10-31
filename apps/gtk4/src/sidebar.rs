@@ -1,4 +1,4 @@
-//! サイドバー: Workspace（Working Copy・History・あるときだけ Stashes）/ Branches / Remotes / Tags / Stashes / Submodules。
+//! サイドバー: Workspace（Working Copy・History・あるときだけ Stashes・Reflog・開いている間だけ Range Diff）/ Branches / Remotes / Tags / Stashes / Submodules。
 //!
 //! `GtkListView` と `GtkTreeListModel` の木（項目が多くても、見えている行の部品しか作らない）。
 //! `feature/x` のような名前はフォルダにまとめる。ref を選ぶと、指すコミットを History で選ぶ。
@@ -26,6 +26,7 @@ pub enum Page {
     Stashes,
     /// 開いている間だけ出す。
     RangeDiff,
+    Reflog,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -430,6 +431,7 @@ impl Sidebar {
             Page::History => "page/history",
             Page::Stashes => "page/stashes",
             Page::RangeDiff => "page/range-diff",
+            Page::Reflog => "page/reflog",
         };
         self.inner.rebuilding.set(true);
         self.inner.select_key(key);
@@ -485,6 +487,17 @@ impl Inner {
             },
             None,
         );
+        // いつも Workspace の最後に出す。選ぶと Reflog の画面を開く。
+        let reflog = Node::new(
+            Data {
+                title: "Reflog".into(),
+                key: "page/reflog".into(),
+                item: Item::Page(Page::Reflog),
+                icon: icon::Kind::Reflog,
+                ..Data::default()
+            },
+            None,
+        );
         let workspace = gio::ListStore::new::<Node>();
         workspace.append(&self.working);
         workspace.append(&history);
@@ -509,6 +522,7 @@ impl Inner {
                 None,
             ));
         }
+        workspace.append(&reflog);
         if self.range_diff_shown.get() {
             workspace.append(&self.range_diff);
         }

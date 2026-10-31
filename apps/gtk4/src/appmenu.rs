@@ -162,7 +162,6 @@ pub const PENDING: &[&str] = &[
     "prune-worktrees",
     "apply-patch",
     "save-patch",
-    "show-reflog",
     "filter-branches",
     "find-in-history",
     "repository-settings",
@@ -221,6 +220,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ),
         ("show-history", Box::new(|p| show_page(p, Page::History))),
         ("show-stashes", Box::new(show_stashes)),
+        ("show-reflog", Box::new(|p| show_page(p, Page::Reflog))),
         ("refresh", Box::new(|p| (p.reload)())),
         // Navigate
         ("switch-branch", Box::new(switch_branch)),
@@ -519,6 +519,7 @@ fn show_page(p: &Parts, page: Page) {
         Page::History => "history",
         Page::Stashes => "stashes",
         Page::RangeDiff => crate::rangediff::PAGE,
+        Page::Reflog => "reflog",
     });
     p.sidebar.select_page(page);
 }

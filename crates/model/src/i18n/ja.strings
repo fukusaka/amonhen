@@ -873,3 +873,11 @@
 "Mixed: keep the changes in the working tree" = "Mixed: 変更は作業ツリーに残す";
 "Hard: match the commit (uncommitted changes are stashed first)" = "Hard: コミットに合わせる（作業中の変更は先に stash する）";
 "Commits taken off stay in Reflog." = "外れたコミットは Reflog に残ります。";
+
+/* GTK4: Reflog の画面 */
+"Create a branch at this commit and switch to it" = "このコミットにブランチを作って切り替える";
+"Check out this commit as a detached HEAD" = "このコミットを detached HEAD でチェックアウトする";
+"not on any branch" = "どのブランチにもない";
+"Show in History" = "History で見る";
+"Copy Name" = "名前をコピー";
+"Compare with Current HEAD (Range Diff)" = "今の HEAD と比べる（Range Diff）";

@@ -15,6 +15,8 @@ pub enum Kind {
     None,
     WorkingCopy,
     History,
+    /// clock.arrow.circlepath
+    Reflog,
     Branch,
     Remote,
     Tag,
@@ -141,6 +143,17 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(8.0, 4.8);
             p.line_to(8.0, 8.0);
             p.line_to(10.5, 9.5);
+        }
+        Kind::Reflog => {
+            // 左上を開けた円と、その端の矢じり（左回り）、中に時計の針。
+            p.move_to(3.0, 8.0);
+            p.svg_arc_to(5.0, 5.0, 0.0, true, false, 6.5, 3.2);
+            p.move_to(7.0, 1.2);
+            p.line_to(4.8, 3.4);
+            p.line_to(7.2, 5.4);
+            p.move_to(8.0, 5.5);
+            p.line_to(8.0, 8.0);
+            p.line_to(10.0, 9.3);
         }
         Kind::Branch => {
             // 幹と、合流してくる枝。
