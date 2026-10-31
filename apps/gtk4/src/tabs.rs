@@ -88,6 +88,19 @@ impl Tab {
             on_front: RefCell::default(),
             worktree_name: RefCell::default(),
         });
+        // 前に出した後で足したアクション（メニューの操作は、タブを窓に置いてから入れる）も窓に入れる。
+        let weak = Rc::downgrade(&tab);
+        tab.group.connect_action_added(None, move |group, name| {
+            let Some(tab) = weak.upgrade() else { return };
+            let Some(host) = tab.host() else { return };
+            let shown = host.shown.borrow().upgrade();
+            if shown.is_some_and(|t| Rc::ptr_eq(&t, &tab))
+                && let Some(action) = group.lookup_action(name)
+            {
+                host.window.add_action(&action);
+                host.installed.borrow_mut().push(name.to_owned());
+            }
+        });
         let weak = Rc::downgrade(&tab);
         close.connect_clicked(move |_| {
             if let Some(tab) = weak.upgrade() {
