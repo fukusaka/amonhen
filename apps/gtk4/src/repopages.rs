@@ -1108,30 +1108,46 @@ fn hooks_directory(s: &RepoSettings) -> Option<std::path::PathBuf> {
     }
 }
 
-/// フックのファイルを開く（`ask` ならアプリを選んでもらう）か、ファイルの場所を開く。
+/// フックのファイルをエディタで開く（`how` が `edit` なら Settings > General で選んだもの、`edit:<アプリ>` ならそのアプリ。
+/// macOS 版と同じ）か、`reveal` ならファイルの場所を開く。
 fn open_hook(s: &RepoSettings, name: &str, how: &str) {
     let Some(file) = hooks_directory(s).map(|d| d.join(name)) else {
         return;
     };
-    let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(file)));
     let window = s.window();
-    let (w, how) = (s.widget.downgrade(), how.to_owned());
+    if how != "reveal" {
+        let app = how.strip_prefix("edit:").and_then(crate::editor::app_of);
+        crate::editor::open(&[file], app, window.as_ref());
+        return;
+    }
+    let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(file)));
+    let w = s.widget.downgrade();
     glib::spawn_future_local(async move {
-        let result = match how.as_str() {
-            "reveal" => {
-                launcher
-                    .open_containing_folder_future(window.as_ref())
-                    .await
-            }
-            _ => {
-                launcher.set_always_ask(how == "ask");
-                launcher.launch_future(window.as_ref()).await
-            }
-        };
+        let result = launcher
+            .open_containing_folder_future(window.as_ref())
+            .await;
         if let (Err(e), Some(_)) = (result, w.upgrade()) {
             eprintln!("フックを開けない: {e}");
         }
     });
+}
+
+/// フックをエディタで開くメニュー: 選んだエディタで編集・Edit With（入っているもの）・ファイルの場所。
+fn hook_open_menu() -> gio::Menu {
+    let menu = gio::Menu::new();
+    menu.append(
+        Some(&tr!("Edit in {app}", app = crate::editor::chosen_name())),
+        Some("hooks.edit"),
+    );
+    let with = gio::Menu::new();
+    for app in crate::editor::installed() {
+        let item = gio::MenuItem::new(Some(&app.name), None);
+        item.set_action_and_target_value(Some("hooks.edit-with"), Some(&app.id.to_variant()));
+        with.append_item(&item);
+    }
+    menu.append_submenu(Some(&tr!("Edit With")), &with);
+    menu.append(Some(&tr!("Show in Files")), Some("hooks.reveal"));
+    menu
 }
 
 /// フックのスクリプトに構文の色を付ける（言語は 1 行目の `#!` から。差分と同じ色）。
@@ -1223,7 +1239,7 @@ fn create_hook(s: &Rc<RepoSettings>, table: Rc<Table>) {
             glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
                 if let Some(s) = w.upgrade() {
                     table.select(&name);
-                    open_hook(&s, &name, "open");
+                    open_hook(&s, &name, "edit");
                 }
             });
         });
@@ -1296,7 +1312,7 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
 
     let group = gio::SimpleActionGroup::new();
     let local = s.host.is_none();
-    for (action, how) in [("open", "open"), ("open-with", "ask"), ("reveal", "reveal")] {
+    for (action, how) in [("edit", "edit"), ("reveal", "reveal")] {
         let a = gio::SimpleAction::new(action, None);
         let (w, t) = (s.weak(), table.clone());
         a.connect_activate(move |_, _| {
@@ -1307,6 +1323,17 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
         a.set_enabled(local);
         group.add_action(&a);
     }
+    let with = gio::SimpleAction::new("edit-with", Some(glib::VariantTy::STRING));
+    let (w, t) = (s.weak(), table.clone());
+    with.connect_activate(move |_, v| {
+        if let (Some(s), Some(name), Some(app)) =
+            (w.upgrade(), t.selected(), v.and_then(|v| v.get::<String>()))
+        {
+            open_hook(&s, &name, &format!("edit:{app}"));
+        }
+    });
+    with.set_enabled(local);
+    group.add_action(&with);
     let create = gio::SimpleAction::new("create", None);
     let (w, t) = (s.weak(), table.clone());
     create.connect_activate(move |_, _| {
@@ -1315,18 +1342,27 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
         }
     });
     group.add_action(&create);
+    // 右クリックのメニュー（エディタの名前は Settings > General で変わるので、そのたびに作り直す）。
     let menu = gio::Menu::new();
-    if local {
-        menu.append(Some(&tr!("Open")), Some("hooks.open"));
-        menu.append(Some(&tr!("Open With…")), Some("hooks.open-with"));
-        menu.append(Some(&tr!("Show in Files")), Some("hooks.reveal"));
-    }
-    let more = gio::Menu::new();
-    more.append(Some(&tr!("Create Hook…")), Some("hooks.create"));
-    menu.append_section(None, &more);
     table.context_menu(&menu);
+    let fill_menu = {
+        let menu = menu.clone();
+        move || {
+            menu.remove_all();
+            if local {
+                let open = hook_open_menu();
+                for i in 0..open.n_items() {
+                    menu.append_item(&gio::MenuItem::from_model(&open, i));
+                }
+            }
+            let more = gio::Menu::new();
+            more.append(Some(&tr!("Create Hook…")), Some("hooks.create"));
+            menu.append_section(None, &more);
+        }
+    };
+    fill_menu();
     table.view.connect_activate(|view, _| {
-        let _ = view.activate_action("hooks.open", None);
+        let _ = view.activate_action("hooks.edit", None);
     });
 
     let empty = label("", &["dim-label"]);
@@ -1343,14 +1379,28 @@ pub(crate) fn hooks_page(s: &Rc<RepoSettings>) -> gtk::ScrolledWindow {
     // 選んだフックの中身。
     let script_name = label("", &["monospace", "heading"]);
     script_name.set_hexpand(true);
-    let open_button = gtk::MenuButton::new();
-    open_button.set_label(&tr!("Open"));
-    let open_menu = gio::Menu::new();
-    open_menu.append(Some(&tr!("Open")), Some("hooks.open"));
-    open_menu.append(Some(&tr!("Open With…")), Some("hooks.open-with"));
-    open_menu.append(Some(&tr!("Show in Files")), Some("hooks.reveal"));
-    open_button.set_menu_model(Some(&open_menu));
+    // 選んだエディタで編集するボタンと、ほかのアプリ・ファイルの場所のメニュー（macOS 版の Menu の primaryAction）。
+    let edit_button =
+        gtk::Button::with_label(&tr!("Edit in {app}", app = crate::editor::chosen_name()));
+    edit_button.set_action_name(Some("hooks.edit"));
+    let more_button = gtk::MenuButton::new();
+    more_button.set_menu_model(Some(&hook_open_menu()));
+    let open_button = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    open_button.add_css_class("linked");
+    open_button.append(&edit_button);
+    open_button.append(&more_button);
     open_button.set_visible(local);
+    let (eb, mb) = (edit_button.downgrade(), more_button.downgrade());
+    crate::settings::connect_changed(move |key| {
+        if key != crate::editor::KEY {
+            return;
+        }
+        fill_menu();
+        if let (Some(eb), Some(mb)) = (eb.upgrade(), mb.upgrade()) {
+            eb.set_label(&tr!("Edit in {app}", app = crate::editor::chosen_name()));
+            mb.set_menu_model(Some(&hook_open_menu()));
+        }
+    });
     let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     header.set_margin_top(8);
     header.append(&script_name);

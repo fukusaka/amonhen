@@ -86,7 +86,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | General: 開いたリポジトリをブックマークする | ✓ | ✓ | n/a | n/a |  |
 | General: 起動時に開き直す・既定はタブか窓か | — | — | n/a | n/a | macOS: いつも開き直し、切り替えはない。<br>GTK4: いつも開き直し、切り替えはない。 |
 | General: 自動で fetch | ✓ | ✓ | — | n/a |  |
-| General: 外のエディター | ✓ | — | n/a | n/a |  |
+| General: 外のエディター | ✓ | ✓ | n/a | n/a | GTK4: コードエディターは desktop のエントリーで探す。Other… ではプログラムを選ぶ。 |
 | General: 端末と diff のツール | — | — | n/a | n/a |  |
 | Git: 機械全体のページ（Author and Signing・Commits・Operations・Working Copy・Keys and Values） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
 | Git > Commits: 共有のメッセージのテンプレート | ✓ | ✓ | — | — |  |

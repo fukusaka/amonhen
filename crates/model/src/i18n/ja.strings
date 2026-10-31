@@ -1635,3 +1635,10 @@
 "Shared Templates" = "共有のテンプレート";
 "Edit Shared Template…" = "共有のテンプレートを編集…";
 "Edit for This Repository" = "このリポジトリ用に編集";
+
+/* GTK4: 外部のエディタ（Settings > General、フックの編集） */
+"Editor" = "エディタ";
+"External Editor" = "外部エディタ";
+"Choose the app to open files in." = "ファイルを開くアプリを選びます。";
+"Edit in {app}" = "{app} で編集";
+"Edit With" = "編集";

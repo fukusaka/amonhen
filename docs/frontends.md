@@ -86,7 +86,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | General: bookmark opened repositories | ✓ | ✓ | n/a | n/a |  |
 | General: reopen at launch, tab or window by default | — | — | n/a | n/a | macOS: Always reopens; no switch.<br>GTK4: Always reopens; no switch. |
 | General: fetch automatically | ✓ | ✓ | — | n/a |  |
-| General: external editor | ✓ | — | n/a | n/a |  |
+| General: external editor | ✓ | ✓ | n/a | n/a | GTK4: Code editors are found by their desktop entries; Other… takes a program. |
 | General: terminal and diff tool | — | — | n/a | n/a |  |
 | Git: machine-wide pages (Author and Signing, Commits, Operations, Working Copy, Keys and Values) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
 | Git > Commits: shared message template library | ✓ | ✓ | — | — |  |

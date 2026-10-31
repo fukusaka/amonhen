@@ -19,6 +19,7 @@ mod configtable;
 mod connecting;
 mod details;
 mod diff;
+mod editor;
 mod environment;
 mod filetools;
 mod github;

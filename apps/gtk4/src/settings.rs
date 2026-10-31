@@ -439,21 +439,24 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     fetch_row.append(&l);
     fetch_row.append(&fetch);
     stack.add_titled(
-        &page(&[section(
-            None,
-            &[
-                check(AUTO_BOOKMARK, &tr!("Bookmark repositories you open")).upcast(),
-                note(&tr!(
-                    "Repositories already found in folders to scan aren’t added."
-                ))
-                .upcast(),
-                fetch_row.upcast(),
-                note(&tr!(
-                    "Fetches all remotes of each open repository without asking."
-                ))
-                .upcast(),
-            ],
-        )]),
+        &page(&[
+            section(
+                None,
+                &[
+                    check(AUTO_BOOKMARK, &tr!("Bookmark repositories you open")).upcast(),
+                    note(&tr!(
+                        "Repositories already found in folders to scan aren’t added."
+                    ))
+                    .upcast(),
+                    fetch_row.upcast(),
+                    note(&tr!(
+                        "Fetches all remotes of each open repository without asking."
+                    ))
+                    .upcast(),
+                ],
+            ),
+            section(None, &[crate::editor::settings_row().upcast()]),
+        ]),
         Some("general"),
         &tr!("General"),
     );
