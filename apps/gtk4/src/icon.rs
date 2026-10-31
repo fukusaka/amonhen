@@ -69,6 +69,8 @@ pub enum Kind {
     House,
     /// checkmark.circle（変更のない worktree をまとめた行）
     CheckCircle,
+    /// gearshape（リポジトリの設定）
+    Gear,
 }
 
 mod imp {
@@ -460,6 +462,17 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(5.2, 8.2);
             p.line_to(7.2, 10.2);
             p.line_to(10.9, 6.0);
+        }
+        Kind::Gear => {
+            // 歯車: 中の穴と、外周の 8 つの歯（それぞれ短い線）。
+            p.add_circle(&point(8.0, 8.0), 2.0);
+            p.add_circle(&point(8.0, 8.0), 4.6);
+            for i in 0..8 {
+                let a = std::f32::consts::PI * i as f32 / 4.0;
+                let (c, s) = (a.cos(), a.sin());
+                p.move_to(8.0 + 4.6 * c, 8.0 + 4.6 * s);
+                p.line_to(8.0 + 6.6 * c, 8.0 + 6.6 * s);
+            }
         }
         Kind::Undo => {
             p.add_circle(&point(8.0, 8.0), 6.3);

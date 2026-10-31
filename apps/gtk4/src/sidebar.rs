@@ -1,4 +1,4 @@
-//! サイドバー: Workspace（Working Copy・History・あるときだけ Stashes・Reflog・開いている間だけ Range Diff）/ Branches / Remotes / Tags / Stashes / Submodules。
+//! サイドバー: Workspace（Working Copy・History・あるときだけ Stashes・開いている間だけ Range Diff、最後に Reflog と Settings）/ Branches / Remotes / Tags / Stashes / Submodules。
 //!
 //! `GtkListView` と `GtkTreeListModel` の木（項目が多くても、見えている行の部品しか作らない）。
 //! `feature/x` のような名前はフォルダにまとめる。ref を選ぶと、指すコミットを History で選ぶ。
@@ -36,6 +36,8 @@ pub enum Page {
     /// 開いている間だけ出す。
     RangeDiff,
     Reflog,
+    /// リポジトリの設定（いつも Workspace の最後）。
+    Settings,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -588,6 +590,7 @@ impl Sidebar {
             Page::Stashes => "page/stashes",
             Page::RangeDiff => "page/range-diff",
             Page::Reflog => "page/reflog",
+            Page::Settings => "page/settings",
         };
         self.inner.rebuilding.set(true);
         self.inner.select_key(key);
@@ -1127,6 +1130,16 @@ impl Inner {
             },
             None,
         );
+        let settings = Node::new(
+            Data {
+                title: "Settings".into(),
+                key: "page/settings".into(),
+                item: Item::Page(Page::Settings),
+                icon: icon::Kind::Gear,
+                ..Data::default()
+            },
+            None,
+        );
         // worktree が 2 つ以上なら、Working Copy の下に並べる（並べ始めたら開いておく）。
         let worktrees = self.worktrees.borrow().clone();
         let (shown, clean) = worktrees.layout();
@@ -1185,10 +1198,11 @@ impl Inner {
                 None,
             ));
         }
-        workspace.append(&reflog);
         if self.range_diff_shown.get() {
             workspace.append(&self.range_diff);
         }
+        workspace.append(&reflog);
+        workspace.append(&settings);
         let mut groups = vec![("Workspace", workspace)];
         if let Some(refs) = &refs {
             let tags = self.tags.borrow();

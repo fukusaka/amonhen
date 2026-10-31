@@ -2315,32 +2315,51 @@ fn format_name(format: &str) -> &str {
     }
 }
 
-/// 開いている窓: 親の窓、設定の窓、中身。
+/// 窓ごとのページ: 窓、置き場所（main.rs の `pages` の "settings"）、中身（初めて開いたときに作る）。
 type Open = (
     glib::WeakRef<gtk::ApplicationWindow>,
-    glib::WeakRef<gtk::Window>,
-    Rc<RepoSettings>,
+    gtk::Box,
+    RefCell<Option<Rc<RepoSettings>>>,
 );
 
 thread_local! {
-    /// 開いているリポジトリの設定の窓（親の窓ごとに 1 つ）。
-    static OPEN: RefCell<Vec<Open>> = RefCell::default();
+    /// 窓ごとのリポジトリの設定のページ。
+    static OPEN: RefCell<Vec<Rc<Open>>> = RefCell::default();
 }
 
-/// 開いているリポジトリの設定の窓のページ（`author` など）を選ぶ（確認用）。
-pub fn select(parent: &gtk::ApplicationWindow, page: &str) {
+/// 窓のページの置き場所を作る（macOS 版と同じく、サイドバーの Workspace の最後の Settings で出す）。
+pub fn page_slot(window: &gtk::ApplicationWindow) -> gtk::Box {
+    let slot = gtk::Box::new(gtk::Orientation::Vertical, 0);
     OPEN.with(|o| {
-        if let Some((_, _, s)) = o
-            .borrow()
-            .iter()
-            .find(|(p, _, _)| p.upgrade().as_ref() == Some(parent))
-        {
-            s.select(page);
-        }
+        let mut o = o.borrow_mut();
+        o.retain(|e| e.0.upgrade().is_some());
+        o.push(Rc::new((
+            window.downgrade(),
+            slot.clone(),
+            RefCell::new(None),
+        )));
     });
+    slot
 }
 
-/// `parent` のリポジトリの設定の窓を開く（開いていれば前に出して読み直す）。`page` を選ぶ。
+fn open_of(window: &gtk::ApplicationWindow) -> Option<Rc<Open>> {
+    OPEN.with(|o| {
+        o.borrow()
+            .iter()
+            .find(|e| e.0.upgrade().as_ref() == Some(window))
+            .cloned()
+    })
+}
+
+/// 窓のリポジトリの設定のページのページ（`author` など）を選ぶ（確認用）。
+pub fn select(parent: &gtk::ApplicationWindow, page: &str) {
+    if let Some(settings) = open_of(parent).and_then(|e| e.2.borrow().clone()) {
+        settings.select(page);
+    }
+}
+
+/// `parent` のリポジトリの設定のページを用意する（あれば読み直す。編集する worktree が替わっていれば作り直す）。
+/// ページへの切り替えは呼ぶ側。`page` を選ぶ。
 pub fn show(
     parent: &gtk::ApplicationWindow,
     repo: Arc<Repository>,
@@ -2348,19 +2367,13 @@ pub fn show(
     on_change: Rc<dyn Fn()>,
     page: Option<&str>,
 ) {
-    let found = OPEN.with(|o| {
-        let mut o = o.borrow_mut();
-        o.retain(|(p, w, _)| p.upgrade().is_some() && w.upgrade().is_some());
-        o.iter()
-            .find(|(p, _, _)| p.upgrade().as_ref() == Some(parent))
-            .and_then(|(_, w, s)| Some((w.upgrade()?, s.clone())))
-    });
-    if let Some((window, settings)) = found {
+    let Some(open) = open_of(parent) else { return };
+    let current = open.2.borrow().clone();
+    if let Some(settings) = current.filter(|s| Arc::ptr_eq(&s.repo, &repo)) {
         settings.load();
         if let Some(page) = page {
             settings.select(page);
         }
-        window.present();
         return;
     }
     let settings = RepoSettings::new(repo, location, Level::Repository);
@@ -2371,27 +2384,10 @@ pub fn show(
     if let Ok(script) = std::env::var("AMONHEN_SETTINGS_SCRIPT") {
         settings.run_script(&script);
     }
-    let header = gtk::HeaderBar::new();
-    let window = gtk::Window::builder()
-        .title(tr!("Repository Settings"))
-        .default_width(1000)
-        .default_height(660)
-        .child(&settings.widget)
-        .transient_for(parent)
-        .destroy_with_parent(true)
-        .build();
-    window.set_titlebar(Some(&header));
-    OPEN.with(|o| {
-        o.borrow_mut()
-            .push((parent.downgrade(), window.downgrade(), settings.clone()))
-    });
-    let w = window.downgrade();
-    window.connect_close_request(move |_| {
-        OPEN.with(|o| {
-            o.borrow_mut()
-                .retain(|(_, win, _)| win.upgrade().is_some() && win.upgrade() != w.upgrade())
-        });
-        glib::Propagation::Proceed
-    });
-    window.present();
+    let slot = &open.1;
+    while let Some(child) = slot.first_child() {
+        slot.remove(&child);
+    }
+    slot.append(&settings.widget);
+    open.2.replace(Some(settings));
 }

@@ -720,6 +720,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         on_commit.clone(),
     ));
     pages.add_named(&reflog.root, Some("reflog"));
+    pages.add_named(&reposettings::page_slot(&window), Some("settings"));
     reflog_slot.replace(Some(reflog.clone()));
     reflog.set_range_diff(range_diff_opener.clone());
     let (v, w, oc) = (view.downgrade(), window.downgrade(), on_commit.clone());
@@ -1563,6 +1564,10 @@ fn connect_sidebar(
             }
             sidebar::Item::Page(Page::RangeDiff) => pages.set_visible_child_name(rangediff::PAGE),
             sidebar::Item::Page(Page::Reflog) => pages.set_visible_child_name("reflog"),
+            // 中身は Repository > Repository Settings と同じく作る（読み直してから出す）。
+            sidebar::Item::Page(Page::Settings) => {
+                let _ = WidgetExt::activate_action(&pages, "win.repository-settings", None);
+            }
             // 選んだ worktree を書き込む先にして、その変更を見せる（フォルダがなければ何もしない）。
             sidebar::Item::Worktree(w) if w.prunable.is_none() => {
                 pages.set_visible_child_name("working");

@@ -594,6 +594,7 @@ fn show_page(p: &Parts, page: Page) {
         Page::Stashes => "stashes",
         Page::RangeDiff => crate::rangediff::PAGE,
         Page::Reflog => "reflog",
+        Page::Settings => "settings",
     });
     p.sidebar.select_page(page);
 }
@@ -958,11 +959,13 @@ fn add_remote(p: &Rc<Parts>) {
 }
 
 /// リポジトリの設定の窓（Repository > Repository Settings、Ctrl+;）。
+/// Repository > Repository Settings: サイドバーの Settings のページ（編集する worktree のリポジトリ）。
 fn repository_settings(p: &Rc<Parts>) {
-    let Some((repo, _)) = p.view.current() else {
+    let Some(repo) = p.actions.repo() else {
         return;
     };
     crate::reposettings::show(&p.window, repo, &p.location, p.reload.clone(), None);
+    show_page(p, Page::Settings);
 }
 
 fn open_folder(p: &Rc<Parts>) {
