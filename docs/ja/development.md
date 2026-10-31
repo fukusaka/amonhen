@@ -34,7 +34,15 @@ README の画面は、`--snapshot`（ツールバーが空のまま写る）で�
 `defaults write AmonHen showAvatars -bool NO`（デバッグ版の設定のドメイン）を書き、撮ったら消す。ウィンドウの大きさは同じ
 ドメインの `NSWindow Frame Repository <パス>` で決まる（README は 1200×720: `"1300 500 1200 720 0 0 <画面の幅> <画面の高さ> "`）。
 
-GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png [--scroll-to N | --select-rows N,N,... | --select-ref NAME] [--menu-ref NAME | --menu-row N] [--search QUERY [--only-matching]] [--blame PATH | --file-history PATH | --activity operations|history|performance|events|daemon | --settings git|appearance|performance|advanced | --merge-editor PATH [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--perform JSON] [--working-copy [--select-path PATH] [--toggle-row N] [--layout list|tree|flat] | --stashes [--stash-button apply|pop|drop|branch]]`（`--menu-ref` はその ref の右クリックのメニューを開く、`--select-ref stash@{N}` は Stashes でその stash を選ぶ、`--stash-button` は Stashes の一覧の上のそのボタンを一度押す、`--perform` はコアの命令を 1 つメニューと同じ経路で実行する、`--toggle-row` はその差分の行の印を一度クリックしたことにする）（見えている行を読んだら窓を PNG に書き出して終了）、`--measure-scroll [--scroll-rows N]`（History を 1 フレームに 40 行（か N 行）ずつ 600 フレームスクロールし、1 フレームのメインスレッドの時間・History の snapshot の時間・落としたフレーム・フレームの始まりから画面に出るまでの時間を表示。描画器は `GSK_RENDERER=cairo|gl|vulkan` で選ぶ）。
+GTK4 のアプリ（`apps/gtk4`）: `amonhen-gtk <repo> --snapshot out.png` は、見えている行を読んだら窓を PNG に書き出して終了する（macOS で真っ白になるときは `GSK_RENDERER=cairo`）。写すものは次のフラグで用意する。
+
+- History: `--scroll-to N`、`--select-rows N,N,...`、`--select-ref NAME`、`--search QUERY [--only-matching]`、`--menu-ref NAME` か `--menu-row N`（その ref・行の右クリックのメニュー。`--menu-item TITLE` で項目を選ぶ。サブメニューは ` > ` でつなぐ）、`--open-menu repository|primary|history-display`、`--ci-row N`（CI の状態を読んだら、その行の CI の印を押す）、`--edit-commits ID [--edit-plan pick,squash,drop,...] [--edit-move FROM:ABOVE] [--edit-apply]`（History の編集モード）。
+- サイドバー: `--sidebar-menu SPEC`（ref・リモート・見出し・worktree・`pr/<番号>`。`a,b` は複数選択。`--menu-item` も使える）、`--sidebar-mark SPEC`（その行の印の吹き出し）、`--filter-sidebar WORDS`。
+- ページ: `--working-copy [--select-path PATH] [--toggle-row N] [--layout list|tree|flat]`（`--toggle-row` はその差分の行の印を一度クリックしたことにする）、`--stashes [--stash-button apply|pop|drop|branch]`、`--reflog`、`--range-diff[=RANGES] [--select-pair N] [--menu-pair N]`、`--repository-settings PAGE`、`--edit-worktree PATH`（その worktree を書き込む先にする）。
+- 窓: `--blame PATH`、`--file-history PATH`、`--activity operations|history|performance|events|daemon`、`--settings general|git[/PAGE]|ssh-hosts[/HOST/PAGE]|accounts|appearance|diff-merge|ai|performance`、`--merge-editor PATH [--accept ours|theirs|both|base]`、`--apply-patch PATH,...`、`--repositories [--menu-row N [--menu-item TITLE]]`、`--quick-open QUERY`。
+- 動かす: `--perform JSON`（コアの命令を 1 つメニューと同じ経路で実行）、`--action ID`（コマンドの表の操作）、`--print-file-menu PATH`（Working Copy のファイルのメニューを出力）、`--ai translate,explain,hunk,working-hunk,suggest,use,resolve,explain-conflict,accept [--ai-allow]`（その AI のボタンを押せるようになったら押す。`--ai-allow` はリポジトリごとの確認を飛ばす。`gtk.ini` の `assistantPath.<cli>` で CLI の場所を指せる。試し用の偽の CLI など）。`AMONHEN_SETTINGS_SCRIPT` は設定のページ（`--settings git/PAGE`・`--repository-settings`・SSH 先のページ）で手順を動かす: `switch:NAME=on|off`、`git=PATH`、`revert:git` ほか（`reposettings.rs`）。
+
+`--measure-scroll [--scroll-rows N]` は History を 1 フレームに 40 行（か N 行）ずつ 600 フレームスクロールし、1 フレームのメインスレッドの時間・History の snapshot の時間・落としたフレーム・フレームの始まりから画面に出るまでの時間を表示する。描画器は `GSK_RENDERER=cairo|gl|vulkan` で選ぶ。
 
 ## VSCode 拡張
 
