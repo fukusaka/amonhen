@@ -24,6 +24,7 @@ mod rangediff;
 mod reflog;
 mod refops;
 mod repos;
+mod repopages;
 mod reposettings;
 mod rewritedraw;
 mod search;
@@ -907,7 +908,9 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 pending.set(pending.get() + 1);
                                 let p = pending.clone();
                                 glib::timeout_add_local_once(
-                                    std::time::Duration::from_millis(1500),
+                                    std::time::Duration::from_millis(
+                                        1500 + reposettings::script_millis(),
+                                    ),
                                     move || p.set(p.get() - 1),
                                 );
                             }
@@ -1614,11 +1617,17 @@ fn after_first_show(
                         return glib::ControlFlow::Continue;
                     }
                     // 別の窓（Blame など）を開いていれば、そちらを撮る。
-                    let target = gtk::Window::list_toplevels()
-                        .into_iter()
-                        .filter_map(|w| w.downcast::<gtk::Window>().ok())
-                        .find(|w| w.transient_for().as_ref() == Some(window.upcast_ref()))
-                        .unwrap_or_else(|| window.clone().upcast());
+                    // その窓にさらにシートが付いていれば、いちばん前のものを撮る。
+                    let on = |parent: &gtk::Window| {
+                        gtk::Window::list_toplevels()
+                            .into_iter()
+                            .filter_map(|w| w.downcast::<gtk::Window>().ok())
+                            .find(|w| w.is_visible() && w.transient_for().as_ref() == Some(parent))
+                    };
+                    let mut target: gtk::Window = window.clone().upcast();
+                    while let Some(front) = on(&target) {
+                        target = front;
+                    }
                     match snapshot(&target, &png) {
                         Ok(()) => eprintln!("{}", png.display()),
                         Err(e) => eprintln!("撮れない: {e}"),

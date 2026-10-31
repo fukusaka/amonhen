@@ -664,6 +664,7 @@ impl RepoSettings {
                 "operations" => this.operations_page().upcast(),
                 "branches" => this.branches_page().upcast(),
                 "workingCopy" => this.working_copy_page().upcast(),
+                "remotes" => crate::repopages::remotes_page(&this).upcast(),
                 _ => continue,
             };
             stack.add_titled(&child, Some(name), &page_title(name));
@@ -995,6 +996,26 @@ impl RepoSettings {
         if row.is_some() && message.is_none() {
             self.error.set_visible(false);
         }
+    }
+
+    /// 命令を順に実行し（リモート・フックなど、設定の書き換えでないもの。Undo には積まない）、読み直す。
+    /// 失敗したらページの下に出す。できたら `then`。
+    pub(crate) fn perform(
+        self: &Rc<Self>,
+        commands: Vec<Value>,
+        then: impl FnOnce(&Rc<RepoSettings>) + 'static,
+    ) {
+        let (repo, weak) = (self.repo.clone(), self.weak());
+        glib::spawn_future_local(async move {
+            let result = run_all(&repo, commands).await;
+            let Some(s) = weak.upgrade() else { return };
+            s.show_error(None, result.as_ref().err().map(String::as_str));
+            s.load();
+            s.changed();
+            if result.is_ok() {
+                then(&s);
+            }
+        });
     }
 
     /// 部品の窓（シートの親）。
@@ -2050,6 +2071,13 @@ impl RepoSettings {
     }
 }
 
+/// 確認用の手順（`AMONHEN_SETTINGS_SCRIPT`）を終えるまでの時間（`--snapshot` はそれを待つ）。
+pub fn script_millis() -> u64 {
+    std::env::var("AMONHEN_SETTINGS_SCRIPT")
+        .map(|s| 800 * (s.split(';').filter(|s| !s.trim().is_empty()).count() as u64 + 1))
+        .unwrap_or(0)
+}
+
 impl RepoSettings {
     /// 確認用: `;` で区切った手順を、間を空けて順に行う。`<質問>=<値>`（選ぶ欄は値を選ぶ。`!` で始めれば
     /// 「その他…」などの項目。スイッチは on・off。文字の欄は入れて Return）、`revert:<質問>`（↩︎）、`undo`、
@@ -2082,6 +2110,59 @@ impl RepoSettings {
         }
         if let Some(page) = step.strip_prefix("page:") {
             return self.select(page);
+        }
+        if let Some(name) = step.strip_prefix("action:") {
+            if let Some(page) = self.stack.visible_child() {
+                let _ = page.activate_action(name, None);
+            }
+            return;
+        }
+        if let Some(id) = step.strip_prefix("select:") {
+            // 出しているページの最初の表で、その行を選ぶ。
+            if let Some(view) = self
+                .stack
+                .visible_child()
+                .and_then(|p| find_widget::<gtk::ColumnView>(&p, &|_| true))
+                && let Some(selection) = view.model().and_downcast::<gtk::SingleSelection>()
+                && let Some(list) = selection.model()
+            {
+                for i in 0..list.n_items() {
+                    if list
+                        .item(i)
+                        .and_downcast::<gtk::StringObject>()
+                        .is_some_and(|o| o.string() == id)
+                    {
+                        selection.set_selected(i);
+                    }
+                }
+            }
+            return;
+        }
+        // 前に出ているシート（設定の窓に付いた窓）の欄・ボタン。
+        let sheet = || {
+            let parent = self.window()?;
+            gtk::Window::list_toplevels()
+                .into_iter()
+                .filter_map(|w| w.downcast::<gtk::Window>().ok())
+                .find(|w| w.is_visible() && w.transient_for().as_ref() == Some(&parent))
+        };
+        if let Some(rest) = step.strip_prefix("fill:") {
+            if let (Some(sheet), Some((n, text))) = (sheet(), rest.split_once('=')) {
+                let mut entries = Vec::new();
+                collect_widgets::<gtk::Entry>(sheet.upcast_ref(), &mut entries);
+                if let Some(e) = n.parse::<usize>().ok().and_then(|n| entries.get(n)) {
+                    e.set_text(text);
+                }
+            }
+            return;
+        }
+        if let Some(text) = step.strip_prefix("click:") {
+            if let Some(button) = sheet().and_then(|w| {
+                find_widget::<gtk::Button>(w.upcast_ref(), &|b| b.label().as_deref() == Some(text))
+            }) {
+                button.emit_clicked();
+            }
+            return;
         }
         let find = |q: &str| {
             self.controls
@@ -2116,6 +2197,25 @@ impl RepoSettings {
         } else {
             let _ = child.activate_action("picker.pick", Some(&value.to_variant()));
         }
+    }
+}
+
+/// `root` の下で、`pred` に合う最初の `W`。
+fn find_widget<W: IsA<gtk::Widget>>(root: &gtk::Widget, pred: &dyn Fn(&W) -> bool) -> Option<W> {
+    let mut all = Vec::new();
+    collect_widgets::<W>(root, &mut all);
+    all.into_iter().find(|w| pred(w))
+}
+
+/// `root` の下の `W` をすべて（`root` も含む）。
+fn collect_widgets<W: IsA<gtk::Widget>>(root: &gtk::Widget, out: &mut Vec<W>) {
+    if let Some(w) = root.downcast_ref::<W>() {
+        out.push(w.clone());
+    }
+    let mut child = root.first_child();
+    while let Some(c) = child {
+        collect_widgets(&c, out);
+        child = c.next_sibling();
     }
 }
 
