@@ -52,3 +52,4 @@
 "{count} commits ahead of upstream" = "{count} commit ahead of upstream";
 "{count} commits behind upstream" = "{count} commit behind upstream";
 "{count} operations running (click for Activity)" = "{count} operation running (click for Activity)";
+"Nothing to push. Pull the {count} new commits first." = "Nothing to push. Pull the {count} new commit first.";

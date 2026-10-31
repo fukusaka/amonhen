@@ -110,14 +110,35 @@ impl Buttons {
         } else {
             tr!("Pull (Ctrl+Alt+L)")
         }));
-        self.push.set_tooltip_text(Some(&if ahead > 0 {
+        // 上流があって、そのリモートブランチもある（Push で送れる）。なければ Push は Publish（送り先を選ぶ）。
+        let published = entry.is_none_or(|e| e.detail.is_some() && !e.gone);
+        // 送るものがなければ押せない。理由はツールチップに（macOS 版と同じ）。
+        self.push.set_tooltip_text(Some(&if !published {
+            tr!("Publish — choose the remote to create this branch on first (Ctrl+Alt+P)")
+        } else if ahead > 0 {
             tr!(
                 "{count} commits ahead of upstream (Ctrl+Alt+P)",
                 count = ahead
             )
+        } else if behind > 0 {
+            tr!(
+                "Nothing to push. Pull the {count} new commits first.",
+                count = behind
+            )
         } else {
-            tr!("Push (Ctrl+Alt+P)")
+            tr!("Nothing to push")
         }));
+        let enable = |name: &str, yes: bool| {
+            if let Some(action) = self
+                .group
+                .lookup_action(name)
+                .and_downcast::<gio::SimpleAction>()
+            {
+                action.set_enabled(yes);
+            }
+        };
+        enable("push", entry.is_some() && (!published || ahead > 0));
+        enable("force-push", entry.is_some() && published);
         let has_stash = refs.refs.entries.iter().any(|e| e.kind == RefKind::Stash);
         for name in ["pop-stash", "show-stashes"] {
             if let Some(action) = self

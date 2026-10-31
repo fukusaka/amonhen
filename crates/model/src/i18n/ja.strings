@@ -1623,3 +1623,8 @@
 
 /* GTK4: つないでいる間・開けなかったタブ */
 "Couldn’t open {name}" = "{name} を開けませんでした";
+
+/* GTK4: 押せない Push の理由 */
+"Publish — choose the remote to create this branch on first (Ctrl+Alt+P)" = "Publish — ブランチを作るリモートを先に選びます（Ctrl+Alt+P）";
+"Nothing to push. Pull the {count} new commits first." = "送るコミットはありません。先に新しい {count} コミットを Pull してください。";
+"Nothing to push" = "送るコミットはありません";
