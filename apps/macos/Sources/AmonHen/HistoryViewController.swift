@@ -139,13 +139,23 @@ final class FocusTableView: NSTableView {
     }
 }
 
+/// History の表を入れるスクロールビュー。表のアクセシビリティは子に行と列のほかを置けない（置くと子を返せなくなる）
+/// ので、表の下の帯はここの子として出す。
+private final class HistoryScrollView: NSScrollView {
+    override func accessibilityChildren() -> [Any]? {
+        let children = super.accessibilityChildren()
+        guard let footer = (documentView as? FocusTableView)?.footer else { return children }
+        return (children ?? []) + [footer]
+    }
+}
+
 final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate,
     NSSearchFieldDelegate
 {
     private let repository: Repository
     private var history: History?
     private let renderer: GraphRenderer
-    private let scrollView = NSScrollView()
+    private let scrollView: NSScrollView = HistoryScrollView()
     private let tableView = FocusTableView()
     private let graphView = GraphView()
     /// 件名などを描く。表のセルに文字を描かせると、速いスクロールでは CPU で描く分が間に合わない。

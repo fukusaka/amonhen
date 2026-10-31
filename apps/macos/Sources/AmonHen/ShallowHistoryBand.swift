@@ -54,6 +54,9 @@ final class ShallowHistoryBand: NSView {
         stack.setCustomSpacing(14, after: label)
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.group)
+        setAccessibilityLabel(label.stringValue)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: leadingAnchor),
             stack.trailingAnchor.constraint(lessThanOrEqualTo: trailingAnchor),
@@ -64,6 +67,9 @@ final class ShallowHistoryBand: NSView {
     required init?(coder: NSCoder) { fatalError() }
 
     override var isFlipped: Bool { true }
+
+    // アクセシビリティでは表ではなくスクロールビューの子（`HistoryScrollView`）。
+    override func accessibilityParent() -> Any? { enclosingScrollView ?? super.accessibilityParent() }
 
     // 表の空いた所と同じく、押しても行の選択を変えない（下の表に通さない）。
     override func mouseDown(with event: NSEvent) {}
