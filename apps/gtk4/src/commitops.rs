@@ -216,6 +216,22 @@ pub fn menu_many(
             a.squash_range(oids.clone());
         }));
     }
+    // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus）。
+    let sources = crate::mergeseveral::sources(actions, history, rows);
+    if sources.len() > 1 {
+        let branch = actions.head();
+        let (a, title) = (
+            actions.clone(),
+            tr!(
+                "Merge {count} into {branch}…",
+                count = sources.len(),
+                branch = branch.as_deref().unwrap_or("HEAD")
+            ),
+        );
+        items.push(menu::action(title, move || {
+            crate::mergeseveral::confirm(&a, sources.clone(), branch.clone());
+        }));
+    }
     // 2 つなら、それぞれを先端とする 2 つの版として比べられる（rebase の前と後など）。
     if let [(newer, _), (older, _)] = &commits[..] {
         let (r, ranges) = (range_diff.clone(), vec![format!("{older}...{newer}")]);

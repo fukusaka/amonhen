@@ -17,6 +17,7 @@ mod icon;
 mod measure;
 mod menu;
 mod merge;
+mod mergeseveral;
 mod patches;
 mod rangediff;
 mod reflog;
@@ -923,7 +924,13 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 search.search(query, args.only_matching, pending.clone());
                             }
                             if let Some(row) = args.menu_row.filter(|_| !args.reflog) {
-                                view.select(row);
+                                // 複数選んだ行の上なら、選んだまま（まとめての操作のメニュー）。
+                                let many =
+                                    args.select_rows.len() > 1 && args.select_rows.contains(&row);
+                                if !many {
+                                    view.select(row);
+                                }
+                                let rd = range_diff_opener.clone();
                                 pending.set(pending.get() + 1);
                                 let (p, v, a) = (pending.clone(), view.clone(), actions.clone());
                                 let item = args.menu_item.clone();
@@ -932,8 +939,18 @@ fn build_window(app: &gtk::Application, args: Args) {
                                     move || {
                                         if let Some((_, history)) = v.current() {
                                             let y = (row as f32 + 0.5) * v.row_height();
-                                            let items =
-                                                commitops::menu(&a, &history, row, v.upcast_ref());
+                                            let items = if many {
+                                                let rows = v.selection();
+                                                commitops::menu_many(
+                                                    &a,
+                                                    &history,
+                                                    &rows,
+                                                    v.upcast_ref(),
+                                                    &rd,
+                                                )
+                                            } else {
+                                                commitops::menu(&a, &history, row, v.upcast_ref())
+                                            };
                                             eprintln!("{}", menu::titles(&items).join("\n"));
                                             match &item {
                                                 Some(path) => {
@@ -944,7 +961,12 @@ fn build_window(app: &gtk::Application, args: Args) {
                                                 None => menu::popup(&v, 380.0, y as f64, items),
                                             }
                                         }
-                                        p.set(p.get() - 1);
+                                        // 項目が開いたシートが出て、中身を調べ終えるまで待つ。
+                                        let wait = if item.is_some() { 1500 } else { 0 };
+                                        glib::timeout_add_local_once(
+                                            std::time::Duration::from_millis(wait),
+                                            move || p.set(p.get() - 1),
+                                        );
                                     },
                                 );
                             }
