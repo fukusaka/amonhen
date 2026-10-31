@@ -1101,6 +1101,28 @@ fn build_tab(
             let _ = stop.send(STOP);
         });
     }
+    // 後ろのタブは、作業ツリーが変わっても status を読み直さず、前に出たときに読む（docs/ux.md の 1）。
+    let stale = Rc::new(Cell::new(false));
+    let status_tx = tx.clone();
+    {
+        let (s, v, w, tx) = (
+            stale.clone(),
+            view.downgrade(),
+            Rc::downgrade(&worktrees),
+            tx.clone(),
+        );
+        tab.connect_front(move || {
+            if !s.replace(false) {
+                return;
+            }
+            let Some((repo, _)) = v.upgrade().and_then(|v| v.current()) else {
+                return;
+            };
+            let repo = w.upgrade().and_then(|w| w.editing_repo()).unwrap_or(repo);
+            let tx = tx.clone();
+            std::thread::spawn(move || reload_status(&repo, &tx));
+        });
+    }
     let tab_weak = Rc::downgrade(&tab);
     std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(
@@ -1638,6 +1660,15 @@ fn build_tab(
                         activity::record(&amonhen_model::i18n::translate(metric), ms)
                     }
                     Event::Reload => reload(),
+                    Event::StatusDirty(repo) => {
+                        // 後ろのタブなら、前に出たときに読む。
+                        if tab_weak.upgrade().is_some_and(|t| t.is_shown()) {
+                            let tx = status_tx.clone();
+                            std::thread::spawn(move || reload_status(&repo, &tx));
+                        } else {
+                            stale.set(true);
+                        }
+                    }
                     Event::Failed(e) => {
                         status.set_text(&e);
                         status.set_visible(true);
@@ -1970,6 +2001,8 @@ enum Event {
     Status(Arc<Repository>, Arc<amonhen_core::StatusSnapshot>),
     /// 書き込む先の worktree で ref か HEAD が動いた（History・ref・status を読み直す）。
     Reload,
+    /// 開いたリポジトリの index か作業ツリーが変わった（前のタブなら status を読み直す）。
+    StatusDirty(Arc<Repository>),
     /// Activity の Events に出す出来事（リポジトリの名前、内容）。
     Note(String, String),
     /// Activity の Performance に出す時間（項目、ms）。
@@ -2112,7 +2145,7 @@ fn load(
             || changes.contains(Changes::INDEX)
             || changes.contains(Changes::WORKTREE)
         {
-            status(&repo);
+            let _ = tx.send_blocking(Event::StatusDirty(repo.clone()));
         }
     }
 }
