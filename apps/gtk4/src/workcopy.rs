@@ -99,6 +99,8 @@ struct Inner {
     staged_side: gtk::ToggleButton,
     /// コンフリクトのファイルの解決のボタン。
     conflict_buttons: gtk::Box,
+    /// コンフリクトのファイルにマーカーが残っていないときの案内（rerere やほかのエディタが解いた）。
+    conflict_note: gtk::Label,
     /// 選んでいるファイル。
     selected: RefCell<Option<String>>,
     /// 出している差分。
@@ -278,6 +280,15 @@ impl WorkingCopy {
             .build();
         let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
         right.append(&bar);
+        let conflict_note = gtk::Label::new(None);
+        conflict_note.set_xalign(0.0);
+        conflict_note.set_wrap(true);
+        conflict_note.add_css_class("dim-label");
+        conflict_note.set_margin_start(10);
+        conflict_note.set_margin_end(10);
+        conflict_note.set_margin_bottom(6);
+        conflict_note.set_visible(false);
+        right.append(&conflict_note);
         right.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
         right.append(&diff_scrolled);
 
@@ -313,6 +324,7 @@ impl WorkingCopy {
             sides,
             staged_side,
             conflict_buttons,
+            conflict_note,
             selected: RefCell::default(),
             current: RefCell::default(),
             generation: Cell::new(0),
@@ -937,11 +949,28 @@ impl Inner {
             let result = gio::spawn_blocking(move || {
                 let profile = FrontendProfile::GTK;
                 if conflict {
-                    // コンフリクト: マーカー付きの中身（Current・Incoming・Base の行に分ける）。
+                    // コンフリクト: マーカー付きの中身（Current・Incoming・Base の行に分ける）。マーカーが
+                    // 残っていなければ（rerere やほかのエディタが解いた）、そう案内する。
                     let view = repo.conflict_view(&entry.path, &profile)?;
+                    let files: Value =
+                        serde_json::from_str(&repo.run_json(r#"{"op":"conflictFiles"}"#))
+                            .unwrap_or_default();
+                    let file = files["info"]["files"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .find(|f| f["path"].as_str() == Some(entry.path.as_str()));
+                    let note = file.filter(|f| f["markers"].as_u64() == Some(0)).map(|f| {
+                        if f["rerere"].as_bool() == Some(true) {
+                            tr!("git rerere applied the earlier resolution. Check the result, then Mark Resolved.")
+                        } else {
+                            tr!("No conflict markers are left. Check the result, then Mark Resolved.")
+                        }
+                    });
                     return Ok::<_, amonhen_model::Error>((
                         Arc::new(Working(None)),
                         View::new(view),
+                        note,
                     ));
                 }
                 // 1 本の差分で表せなければ、選んだ側（片側にしか変更がなければその側）。
@@ -968,7 +997,7 @@ impl Inner {
                         }
                     }
                 }
-                Ok((Arc::new(Working(Some(working))), View::new(view)))
+                Ok((Arc::new(Working(Some(working))), View::new(view), None))
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
@@ -977,7 +1006,10 @@ impl Inner {
                 return;
             }
             match result {
-                Ok(Ok((working, view))) => {
+                Ok(Ok((working, view, note))) => {
+                    this.conflict_note
+                        .set_text(note.as_deref().unwrap_or_default());
+                    this.conflict_note.set_visible(note.is_some());
                     let w = working.0.as_ref();
                     this.sides.set_visible(w.is_some_and(|w| {
                         w.combined.is_none() && w.entry.is_staged() && w.entry.is_unstaged()

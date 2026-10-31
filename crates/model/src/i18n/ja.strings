@@ -782,3 +782,5 @@
 "Add “{pattern}” to .gitignore" = "“{pattern}” を .gitignore に追加";
 "Copy Path" = "パスをコピー";
 "Open with Default App" = "既定のアプリで開く";
+"git rerere applied the earlier resolution. Check the result, then Mark Resolved." = "git の rerere が前の解決を適用しました。結果を確かめて「解決済みにする」を押してください。";
+"No conflict markers are left. Check the result, then Mark Resolved." = "コンフリクトのマーカーは残っていません。結果を確かめて「解決済みにする」を押してください。";
