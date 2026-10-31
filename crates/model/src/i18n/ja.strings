@@ -881,3 +881,9 @@
 "Show in History" = "History で見る";
 "Copy Name" = "名前をコピー";
 "Compare with Current HEAD (Range Diff)" = "今の HEAD と比べる（Range Diff）";
+
+/* GTK4 の FE: rebase の前と後の絵 */
+"Also move the stacked branches" = "積み重ねたブランチも一緒に動かす";
+"Now" = "今";
+"After the rebase" = "rebase の後";
+"For this rebase only (git’s --update-refs). Starts from rebase.updateRefs." = "この rebase だけの指定です（git の --update-refs）。最初は rebase.updateRefs のとおり。";

@@ -1678,9 +1678,17 @@ pub fn integrate_choosing(
                 &picker,
             ));
         }
+        // rebase なら、前と後の絵（今のブランチの rebase のとき）。
+        let (drawing, set_drawing) = crate::rewritedraw::new();
+        if rebase {
+            sheet.add(&drawing);
+        }
         let forecast = forecast_label();
         sheet.add(&forecast);
-        let update_refs = gtk::CheckButton::with_label(&tr!("Move stacked branches too"));
+        let update_refs = gtk::CheckButton::with_label(&tr!("Also move the stacked branches"));
+        update_refs.set_tooltip_text(Some(&tr!(
+            "For this rebase only (git’s --update-refs). Starts from rebase.updateRefs."
+        )));
         update_refs.set_visible(false);
         if rebase {
             sheet.add(&update_refs);
@@ -1693,21 +1701,23 @@ pub fn integrate_choosing(
         // 見込みを読む（相手や、積み重ねたブランチを動かすかを変えたら読み直す。古い答えは捨てる）。
         let generation = Rc::new(std::cell::Cell::new(0u32));
         let load = {
-            let (repo, forecast, update_refs, chosen, generation) = (
+            let (repo, forecast, update_refs, chosen, generation, set_drawing) = (
                 repo.clone(),
                 forecast.clone(),
                 update_refs.clone(),
                 chosen.clone(),
                 generation.clone(),
+                set_drawing.clone(),
             );
             Rc::new(move |choice: Option<bool>| {
                 let g = generation.get() + 1;
                 generation.set(g);
-                let (repo, forecast, update_refs, generation) = (
+                let (repo, forecast, update_refs, generation, set_drawing) = (
                     repo.clone(),
                     forecast.clone(),
                     update_refs.clone(),
                     generation.clone(),
+                    set_drawing.clone(),
                 );
                 let rev = chosen().1;
                 forecast.set_text(&tr!("Checking for conflicts…"));
@@ -1728,6 +1738,7 @@ pub fn integrate_choosing(
                     if generation.get() != g {
                         return;
                     }
+                    set_drawing(&info);
                     let (lines, conflicts) = rewrite_lines(&info);
                     forecast.set_text(&lines.join("\n"));
                     if conflicts {

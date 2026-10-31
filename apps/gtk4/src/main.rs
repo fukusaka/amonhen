@@ -19,6 +19,7 @@ mod merge;
 mod rangediff;
 mod reflog;
 mod refops;
+mod rewritedraw;
 mod search;
 mod settings;
 mod sheets;
@@ -777,14 +778,31 @@ fn build_window(app: &gtk::Application, args: Args) {
                                     move || p.set(p.get() - 1),
                                 );
                             }
-                            if let Some(id) = &args.action {
-                                let _ =
-                                    WidgetExt::activate_action(&window, &format!("win.{id}"), None);
+                            if let Some(id) = args.action.clone() {
+                                // ref を読むまで待ってから（Merge・Rebase・Pop などは ref から候補を作る）。
                                 pending.set(pending.get() + 1);
-                                let p = pending.clone();
-                                glib::timeout_add_local_once(
-                                    std::time::Duration::from_millis(2000),
-                                    move || p.set(p.get() - 1),
+                                let (p, w, r) = (pending.clone(), window.downgrade(), latest_refs.clone());
+                                glib::timeout_add_local(
+                                    std::time::Duration::from_millis(100),
+                                    move || {
+                                        let Some(window) = w.upgrade() else {
+                                            return glib::ControlFlow::Break;
+                                        };
+                                        if r.borrow().is_none() {
+                                            return glib::ControlFlow::Continue;
+                                        }
+                                        let _ = WidgetExt::activate_action(
+                                            &window,
+                                            &format!("win.{id}"),
+                                            None,
+                                        );
+                                        let p = p.clone();
+                                        glib::timeout_add_local_once(
+                                            std::time::Duration::from_millis(2000),
+                                            move || p.set(p.get() - 1),
+                                        );
+                                        glib::ControlFlow::Break
+                                    },
                                 );
                             }
                             if let Some(tab) = &args.settings {
