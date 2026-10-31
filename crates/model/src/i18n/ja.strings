@@ -1206,3 +1206,14 @@
 "Built on {branch} (its commits are on top of that branch)" = "{branch} の上に積んだブランチ（コミットはそのブランチの先に続きます）";
 "Remove from Favorites" = "お気に入りから外す";
 "Add to Favorites" = "お気に入りに入れる";
+
+/* GTK4: サイドバーの絞り込みと、複数選んだブランチ・タグのメニュー */
+"Filter branches" = "ブランチを絞り込む";
+"Copy Branch Name" = "ブランチ名をコピー";
+"Copy Tag Name" = "タグ名をコピー";
+"Copy {count} Names" = "{count} 個の名前をコピー";
+"Remove {count} from Favorites" = "{count} 本をお気に入りから外す";
+"Add {count} to Favorites" = "{count} 本をお気に入りに入れる";
+"Unarchive {count} Branches" = "{count} 本のブランチをアーカイブから戻す";
+"Archive {count} Branches" = "{count} 本のブランチをアーカイブ";
+"Delete {count} Branches…" = "{count} 本のブランチを削除…";

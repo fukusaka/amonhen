@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use amonhen_model::{RefKind, tr};
 use gtk::glib;
+use gtk::prelude::*;
 use serde_json::json;
 
 use crate::actions::Actions;
@@ -27,9 +28,23 @@ pub fn menu(
     let sidebar::Item::Ref(entry) = &data.item else {
         return Vec::new();
     };
+    // 複数選んだ行の上で開いたら、選んだものをまとめて扱う。
+    if known.selected.len() > 1 {
+        return several(actions, known, head);
+    }
     let name = entry.name.clone();
     let current = head.unwrap_or("HEAD").to_owned();
     let mut items = Vec::new();
+    // 名前をコピー（ターミナルや PR に貼るため。リモートブランチは origin/ を付けたまま）。
+    if entry.kind != RefKind::Stash {
+        let title = match entry.kind {
+            RefKind::Local | RefKind::Remote => tr!("Copy Branch Name"),
+            RefKind::Tag => tr!("Copy Tag Name"),
+            _ => tr!("Copy Name"),
+        };
+        items.push(copy(title, name.clone()));
+        items.push(Item::Separator);
+    }
     let run = |command: serde_json::Value| {
         let actions = actions.clone();
         move || actions.perform(command.clone())
@@ -111,6 +126,67 @@ pub fn menu(
             items.push(menu::action(
                 format!("Open {name} in New Window"),
                 move || open(&path),
+            ));
+        }
+    }
+    items
+}
+
+/// `text` をクリップボードに入れる項目。
+fn copy(title: String, text: String) -> Item {
+    menu::action(title, move || {
+        if let Some(display) = gtk::gdk::Display::default() {
+            display.clipboard().set_text(&text);
+        }
+    })
+}
+
+/// 複数選んだブランチ・タグのメニュー: 名前をコピー、ローカルブランチだけならまとめてお気に入り・アーカイブ・削除。
+fn several(actions: &Rc<Actions>, known: &Known, head: Option<&str>) -> Vec<Item> {
+    let selected = &known.selected;
+    let names: Vec<String> = selected.iter().map(|e| e.name.clone()).collect();
+    let mut items = vec![copy(
+        tr!("Copy {count} Names", count = names.len()),
+        names.join("\n"),
+    )];
+    let locals: Vec<String> = selected
+        .iter()
+        .filter(|e| e.kind == RefKind::Local)
+        .map(|e| e.name.clone())
+        .collect();
+    if locals.len() == selected.len() {
+        items.push(Item::Separator);
+        // お気に入りは、全部入っていれば外す、そうでなければ（まだのものを）入れる。
+        let all_pinned = locals.iter().all(|n| known.pinned.contains(n));
+        let commands = favorite_commands(&locals, known, all_pinned);
+        let a = actions.clone();
+        items.push(menu::action(
+            if all_pinned {
+                tr!("Remove {count} from Favorites", count = locals.len())
+            } else {
+                tr!("Add {count} to Favorites", count = locals.len())
+            },
+            move || a.perform_sequence(commands.clone()),
+        ));
+        let all_archived = locals
+            .iter()
+            .all(|n| known.groups.as_ref().is_some_and(|g| g.is_archived(n)));
+        let commands = archive_commands(&locals, all_archived);
+        let a = actions.clone();
+        items.push(menu::action(
+            if all_archived {
+                tr!("Unarchive {count} Branches", count = locals.len())
+            } else {
+                tr!("Archive {count} Branches", count = locals.len())
+            },
+            move || a.perform_sequence(commands.clone()),
+        ));
+        // 今のブランチは消せない（git が断る）。
+        if locals.iter().all(|n| Some(n.as_str()) != head) {
+            let a = actions.clone();
+            items.push(menu::action(
+                tr!("Delete {count} Branches…", count = locals.len()),
+                move || sheets::delete_branches(&a, locals.clone()),
             ));
         }
     }

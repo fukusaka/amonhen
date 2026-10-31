@@ -216,6 +216,8 @@ pub struct Known {
     pub groups: Option<BranchGroups>,
     /// お気に入りのブランチ（上から順）。
     pub pinned: Vec<String>,
+    /// 右クリックした行を含めて、ブランチ・タグを 2 つ以上選んでいれば、その ref（上から順）。
+    pub selected: Vec<RefEntry>,
 }
 
 /// ドラッグで運ぶ文字列（ローカルブランチの名前にも `/` は入りうるので、種類も付ける）。
@@ -244,14 +246,17 @@ const MANY: u32 = 30;
 const STALE_DAYS: i64 = 90;
 
 pub struct Sidebar {
-    pub root: gtk::ScrolledWindow,
+    /// 絞り込みの欄と、項目の一覧。
+    pub root: gtk::Box,
+    filter: gtk::SearchEntry,
     inner: Rc<Inner>,
 }
 
 struct Inner {
     root: gio::ListStore,
     model: gtk::TreeListModel,
-    selection: gtk::SingleSelection,
+    /// ブランチ・タグは複数選べる（まとめて消す・アーカイブする）。
+    selection: gtk::MultiSelection,
     working: Node,
     /// Range Diff の行（開いている間だけ Workspace の最後に出す）。
     range_diff: Node,
@@ -276,6 +281,10 @@ struct Inner {
     debug: RefCell<Option<Debug>>,
     /// サイドバーの部品（確認用のメニューと吹き出しを出す先）。
     anchor: RefCell<glib::WeakRef<gtk::Widget>>,
+    /// 絞り込みの語（空白で区切る。小文字。名前がすべてを含む行だけ出す）。空なら絞り込まない。
+    filter: RefCell<Vec<String>>,
+    /// 絞り込む前に開いていた項目（絞り込みをやめたら戻す）。絞り込んでいる間だけ Some。
+    unfiltered: RefCell<Option<HashSet<String>>>,
 }
 
 /// 確認用: 分け方を読んだら、この行のメニューか印の吹き出しを出す。
@@ -294,9 +303,7 @@ impl Sidebar {
                 .and_then(Node::children)
                 .map(|s| s.upcast())
         });
-        let selection = gtk::SingleSelection::new(Some(model.clone()));
-        selection.set_autoselect(false);
-        selection.set_can_unselect(true);
+        let selection = gtk::MultiSelection::new(Some(model.clone()));
 
         let on_menu: Rc<RefCell<Option<MenuCallback>>> = Rc::default();
         let on_drop: Rc<RefCell<Option<DropCallback>>> = Rc::default();
@@ -360,30 +367,60 @@ impl Sidebar {
             rebuilding: Cell::new(false),
             debug: RefCell::default(),
             anchor: RefCell::default(),
+            filter: RefCell::default(),
+            unfiltered: RefCell::default(),
         });
         inner.anchor.borrow().set(Some(scrolled.upcast_ref()));
         owner.replace(Rc::downgrade(&inner));
         let weak = Rc::downgrade(&inner);
-        inner
-            .selection
-            .connect_selected_item_notify(move |selection| {
-                let Some(inner) = weak.upgrade() else { return };
-                if inner.rebuilding.get() {
-                    return;
-                }
-                let node = selection
-                    .selected_item()
-                    .and_downcast::<gtk::TreeListRow>()
-                    .and_then(|r| r.item().and_downcast::<Node>());
-                if let (Some(node), Some(f)) = (node, inner.on_select.borrow().as_ref()) {
-                    f(&node.data());
-                }
-            });
+        inner.selection.connect_selection_changed(move |_, _, _| {
+            let Some(inner) = weak.upgrade() else { return };
+            if inner.rebuilding.get() {
+                return;
+            }
+            // 1 つだけ選んだときに知らせる（複数選んだら、右クリックでまとめて扱う）。
+            if let [node] = &inner.selected_nodes()[..]
+                && let Some(f) = inner.on_select.borrow().as_ref()
+            {
+                f(&node.data());
+            }
+        });
         inner.rebuild(true);
+
+        // 絞り込みの欄は一覧の上に。打つたびに絞り込む（Esc で消す）。
+        let filter = gtk::SearchEntry::new();
+        filter.set_placeholder_text(Some(&tr!("Filter branches")));
+        filter.set_margin_top(6);
+        filter.set_margin_bottom(4);
+        filter.set_margin_start(8);
+        filter.set_margin_end(8);
+        let weak = Rc::downgrade(&inner);
+        filter.connect_search_changed(move |entry| {
+            if let Some(inner) = weak.upgrade() {
+                inner.set_filter(&entry.text());
+            }
+        });
+        filter.connect_stop_search(|entry| entry.set_text(""));
+        scrolled.set_vexpand(true);
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.append(&filter);
+        root.append(&scrolled);
         Self {
-            root: scrolled,
+            root,
+            filter,
             inner,
         }
+    }
+
+    /// Navigate > Filter Branches…: 絞り込みの欄にカーソルを移す。
+    pub fn focus_filter(&self) {
+        self.filter.grab_focus();
+    }
+
+    /// 絞り込みの語を入れる（`--filter-sidebar` の確認用）。
+    pub fn filter(&self, text: &str) {
+        self.filter.set_text(text);
+        self.inner.set_filter(text);
     }
 
     /// 操作に使う（ブランチの分け方を読む、吹き出しのボタン）。操作の後には分け方を読み直す（お気に入り・
@@ -683,16 +720,68 @@ impl Inner {
         Known {
             groups: self.groups.borrow().clone(),
             pinned: self.pinned.borrow().clone(),
+            selected: Vec::new(),
         }
+    }
+
+    /// 選んでいる行の項目（上から順）。
+    fn selected_nodes(&self) -> Vec<Node> {
+        let set = self.selection.selection();
+        let mut out = Vec::new();
+        for i in 0..set.size() {
+            let at = set.nth(i as u32);
+            if let Some(node) = self
+                .model
+                .row(at)
+                .and_then(|r| r.item().and_downcast::<Node>())
+            {
+                out.push(node);
+            }
+        }
+        out
+    }
+
+    /// `data` の行で開くメニューが扱う ref: 選んだ行の上で開いたら選んだブランチ・タグ（2 つ以上のときだけ）。
+    fn selected_refs(&self, data: &Data) -> Vec<RefEntry> {
+        let nodes = self.selected_nodes();
+        if !nodes.iter().any(|n| n.data().key == data.key) {
+            return Vec::new();
+        }
+        let refs: Vec<RefEntry> = nodes
+            .iter()
+            .filter_map(|n| match n.data().item {
+                Item::Ref(e)
+                    if matches!(e.kind, RefKind::Local | RefKind::Remote | RefKind::Tag) =>
+                {
+                    Some(e)
+                }
+                _ => None,
+            })
+            .collect();
+        if refs.len() > 1 { refs } else { Vec::new() }
     }
 
     /// 右クリックのメニューを出す。
     fn popup_menu(&self, data: &Data, widget: &gtk::Widget, x: f64, y: f64) {
+        let known = Known {
+            selected: self.selected_refs(data),
+            ..self.known()
+        };
         let items = match self.on_menu.borrow().as_ref() {
-            Some(f) => f(data, &self.known()),
+            Some(f) => f(data, &known),
             None => return,
         };
         menu::popup(widget, x, y, items);
+    }
+
+    /// 絞り込みの語を変える（変わったら作り直す）。
+    fn set_filter(&self, text: &str) {
+        let words: Vec<String> = text.split_whitespace().map(str::to_lowercase).collect();
+        if words == *self.filter.borrow() {
+            return;
+        }
+        self.filter.replace(words);
+        self.rebuild(false);
     }
 
     /// 行の右端の印を押した: 詳しいことの吹き出し。
@@ -761,10 +850,38 @@ impl Inner {
             .unwrap_or_else(|| gtk::Label::new(None).upcast());
         let mut wait = 300;
         if let Some(spec) = &debug.menu {
-            match self.find(spec) {
+            // `a,b` は、選んだ 2 つの上で開いたメニュー。
+            let found: Vec<Data> = spec.split(',').filter_map(|s| self.find(s)).collect();
+            let selected: Vec<RefEntry> = found
+                .iter()
+                .filter_map(|d| match &d.item {
+                    Item::Ref(e) => Some(e.clone()),
+                    _ => None,
+                })
+                .collect();
+            // 見えている行なら、選んだ状態にしておく。
+            for i in 0..self.model.n_items() {
+                if let Some(node) = self
+                    .model
+                    .row(i)
+                    .and_then(|r| r.item().and_downcast::<Node>())
+                    && found.iter().any(|d| d.key == node.data().key)
+                {
+                    self.selection.select_item(i, false);
+                }
+            }
+            match found.into_iter().next() {
                 Some(data) => {
+                    let known = Known {
+                        selected: if selected.len() > 1 {
+                            selected
+                        } else {
+                            Vec::new()
+                        },
+                        ..self.known()
+                    };
                     let items = match self.on_menu.borrow().as_ref() {
-                        Some(f) => f(&data, &self.known()),
+                        Some(f) => f(&data, &known),
                         None => Vec::new(),
                     };
                     eprintln!("{}", menu::titles(&items).join("\n"));
@@ -849,12 +966,21 @@ impl Inner {
                 }
             }
         }
-        let selected = self
-            .selection
-            .selected_item()
-            .and_downcast::<gtk::TreeListRow>()
-            .and_then(|r| r.item().and_downcast::<Node>())
-            .map(|n| n.data().key);
+        let selected: Vec<String> = self.selected_nodes().iter().map(|n| n.data().key).collect();
+        // 絞り込んでいる間に開いた見出しは覚えない（絞り込みをやめたら、前の開き方に戻す）。
+        let filtering = !self.filter.borrow().is_empty();
+        let expanded = match (self.unfiltered.take(), filtering) {
+            (Some(before), true) => {
+                self.unfiltered.replace(Some(before.clone()));
+                before
+            }
+            (Some(before), false) => before,
+            (None, true) => {
+                self.unfiltered.replace(Some(expanded.clone()));
+                expanded
+            }
+            (None, false) => expanded,
+        };
 
         let refs = self.refs.borrow().clone();
         let history = Node::new(
@@ -907,10 +1033,14 @@ impl Inner {
         }
         let mut groups = vec![("Workspace", workspace)];
         if let Some(refs) = &refs {
-            let branch_groups = self.groups.borrow();
-            let (built, pinned) = groups_of(refs, branch_groups.as_ref());
-            self.pinned.replace(pinned);
-            groups.extend(built);
+            if filtering {
+                groups.extend(filtered_groups(refs, &self.filter.borrow()));
+            } else {
+                let branch_groups = self.groups.borrow();
+                let (built, pinned) = groups_of(refs, branch_groups.as_ref());
+                self.pinned.replace(pinned);
+                groups.extend(built);
+            }
         }
         let nodes: Vec<Node> = groups
             .into_iter()
@@ -936,17 +1066,34 @@ impl Inner {
                 && let Some(node) = row.item().and_downcast::<Node>()
             {
                 let data = node.data();
+                // 絞り込み中は、見出しを開いて出す。
                 let group = matches!(data.item, Item::Group)
-                    && node.children().is_some_and(|c| c.n_items() <= MANY);
+                    && (filtering || node.children().is_some_and(|c| c.n_items() <= MANY));
                 let stack = matches!(data.item, Item::Ref(_)) && !folded.contains(&data.key);
-                if (first && group) || expanded.contains(&data.key) || stack {
+                if ((first || filtering) && group) || expanded.contains(&data.key) || stack {
                     row.set_expanded(true);
                 }
             }
             i += 1;
         }
         drop(folded);
-        self.select_key(selected.as_deref().unwrap_or("page/history"));
+        // 作り直す前に選んでいた行を選び直す（なければ History）。
+        self.selection.unselect_all();
+        let mut found = false;
+        for i in 0..self.model.n_items() {
+            if let Some(node) = self
+                .model
+                .row(i)
+                .and_then(|r| r.item().and_downcast::<Node>())
+                && selected.contains(&node.data().key)
+            {
+                self.selection.select_item(i, false);
+                found = true;
+            }
+        }
+        if !found {
+            self.select_key("page/history");
+        }
         self.rebuilding.set(false);
     }
 
@@ -956,7 +1103,7 @@ impl Inner {
                 && let Some(node) = row.item().and_downcast::<Node>()
                 && node.data().key == key
             {
-                self.selection.set_selected(i);
+                self.selection.select_item(i, true);
                 return;
             }
         }
@@ -1326,6 +1473,38 @@ fn groups_of(
     simple("Stashes", RefKind::Stash, icon::Kind::Stash);
     simple("Submodules", RefKind::Submodule, icon::Kind::Submodule);
     (groups, pinned)
+}
+
+/// 絞り込み中の見出し: 名前が `words` をすべて含むブランチ・リモートブランチ・タグを、名前のまま平らに
+/// （フォルダや積み重ねにはしない）。
+fn filtered_groups(refs: &Refs, words: &[String]) -> Vec<(&'static str, gio::ListStore)> {
+    let head = refs.head_branch.as_deref();
+    let mut groups = Vec::new();
+    for (title, kind, icon) in [
+        ("Branches", RefKind::Local, icon::Kind::Branch),
+        ("Remotes", RefKind::Remote, icon::Kind::Branch),
+        ("Tags", RefKind::Tag, icon::Kind::Tag),
+    ] {
+        let mut matched: Vec<&RefEntry> = refs
+            .entries
+            .iter()
+            .filter(|e| e.kind == kind)
+            .filter(|e| {
+                let name = e.name.to_lowercase();
+                words.iter().all(|w| name.contains(w.as_str()))
+            })
+            .collect();
+        if matched.is_empty() {
+            continue;
+        }
+        matched.sort_by(|a, b| a.name.cmp(&b.name));
+        let store = gio::ListStore::new::<Node>();
+        for e in matched {
+            store.append(&Node::new(ref_data(e, &e.name, icon, head, None), None));
+        }
+        groups.push((title, store));
+    }
+    groups
 }
 
 /// ref が指すコミット（History で選ぶ）。

@@ -161,7 +161,6 @@ const FE_ACCELS: &[(&str, &str)] = &[
 pub const PENDING: &[&str] = &[
     "new-worktree",
     "prune-worktrees",
-    "filter-branches",
     "find-in-history",
     "quick-open",
     "repositories",
@@ -226,6 +225,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ("refresh", Box::new(|p| (p.reload)())),
         // Navigate
         ("switch-branch", Box::new(switch_branch)),
+        ("filter-branches", Box::new(|p| p.sidebar.focus_filter())),
         ("go-to-head", Box::new(go_to_head)),
         ("go-to-parent", Box::new(|p| go_to_relative(p, true))),
         ("go-to-child", Box::new(|p| go_to_relative(p, false))),

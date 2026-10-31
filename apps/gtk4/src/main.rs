@@ -140,6 +140,8 @@ struct Args {
     /// 項目を選ぶ）・右端の印の吹き出しを出す。
     sidebar_menu: Option<String>,
     sidebar_mark: Option<String>,
+    /// サイドバーをこの語で絞り込んでおく（確認用）。
+    filter_sidebar: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -168,6 +170,9 @@ fn parse_args() -> Result<Args, String> {
             "--select-ref" => args.select_ref = Some(it.next().ok_or("--select-ref <name>")?),
             "--menu-ref" => args.menu_ref = Some(it.next().ok_or("--menu-ref <name>")?),
             "--sidebar-menu" => args.sidebar_menu = Some(it.next().ok_or("--sidebar-menu <name>")?),
+            "--filter-sidebar" => {
+                args.filter_sidebar = Some(it.next().ok_or("--filter-sidebar <words>")?)
+            }
             "--sidebar-mark" => args.sidebar_mark = Some(it.next().ok_or("--sidebar-mark <name>")?),
             "--select-rows" => {
                 let rows = it.next().ok_or("--select-rows <row,row,...>")?;
@@ -464,6 +469,9 @@ fn build_window(app: &gtk::Application, args: Args) {
         }
     });
     connect_sidebar(&sidebar, &pages, &view, &stashes);
+    if let Some(words) = &args.filter_sidebar {
+        sidebar.filter(words);
+    }
     sidebar.debug_once(
         args.sidebar_menu.clone(),
         args.sidebar_mark.clone(),
