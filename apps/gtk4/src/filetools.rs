@@ -73,14 +73,78 @@ pub fn blame(
     }
     let command = json!({ "op": "blame", "path": path, "rev": rev });
     let parent = parent.clone();
+    let path = path.to_owned();
     glib::spawn_future_local(async move {
-        let info = gio::spawn_blocking(move || run(&repo, command)).await;
+        // 構文の色も、読むのと同じく裏で。
+        let info = gio::spawn_blocking(move || {
+            run(&repo, command).map(|info| {
+                let spans = blame_syntax(&path, &info);
+                (info, spans)
+            })
+        })
+        .await;
         match info {
-            Ok(Ok(info)) => show_blame(&parent, &title, &info, on_commit),
+            Ok(Ok((info, spans))) => show_blame(&parent, &title, &info, spans, on_commit),
             Ok(Err(e)) => fail(&parent, &e),
             Err(_) => {}
         }
     });
+}
+
+/// Blame の各行の構文の色（行の中のバイト位置と種類。macOS 版と同じく、ファイル全体で色を付けて行に分ける）。
+type LineSpans = Vec<Vec<(u32, u32, u8)>>;
+
+fn blame_syntax(path: &str, info: &Value) -> LineSpans {
+    let lines: Vec<&str> = info["lines"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|l| l["t"].as_str().unwrap_or_default())
+        .collect();
+    let spans = amonhen_core::diff::text_syntax(path, lines.join("\n").as_bytes());
+    line_spans(&lines, &spans)
+}
+
+/// テキスト全体の UTF-16 の位置の色を、行ごとのバイト位置に分ける（複数行にまたがるものは行ごとに切る）。
+fn line_spans(lines: &[&str], spans: &[amonhen_layout::SyntaxSpan]) -> LineSpans {
+    let mut out = vec![Vec::new(); lines.len()];
+    if spans.is_empty() {
+        return out;
+    }
+    let lens: Vec<u32> = lines
+        .iter()
+        .map(|l| l.encode_utf16().count() as u32)
+        .collect();
+    let mut starts = Vec::with_capacity(lines.len());
+    let mut unit = 0u32;
+    for len in &lens {
+        starts.push(unit);
+        unit += len + 1;
+    }
+    let byte_at = |line: &str, unit: u32| {
+        let mut u = 0u32;
+        for (b, c) in line.char_indices() {
+            if u >= unit {
+                return b as u32;
+            }
+            u += c.len_utf16() as u32;
+        }
+        line.len() as u32
+    };
+    for span in spans {
+        let mut i = starts
+            .partition_point(|&s| s <= span.start)
+            .saturating_sub(1);
+        while i < lines.len() && starts[i] < span.end {
+            let a = span.start.saturating_sub(starts[i]).min(lens[i]);
+            let b = (span.end - starts[i]).min(lens[i]);
+            if a < b {
+                out[i].push((byte_at(lines[i], a), byte_at(lines[i], b), span.kind));
+            }
+            i += 1;
+        }
+    }
+    out
 }
 
 /// 1 行分の中身。
@@ -92,7 +156,13 @@ struct BlameRow {
     text: String,
 }
 
-fn show_blame(parent: &gtk::ApplicationWindow, title: &str, info: &Value, on_commit: OnCommit) {
+fn show_blame(
+    parent: &gtk::ApplicationWindow,
+    title: &str,
+    info: &Value,
+    spans: LineSpans,
+    on_commit: OnCommit,
+) {
     let commits: Vec<(String, String, i64, String)> = info["commits"]
         .as_array()
         .into_iter()
@@ -128,6 +198,7 @@ fn show_blame(parent: &gtk::ApplicationWindow, title: &str, info: &Value, on_com
     }
     let rows = Rc::new(rows);
     let commits = Rc::new(commits);
+    let spans = Rc::new(spans);
     let digits = rows.len().to_string().len();
 
     let model = gtk::StringList::new(&[]);
@@ -157,7 +228,7 @@ fn show_blame(parent: &gtk::ApplicationWindow, title: &str, info: &Value, on_com
         line.append(&code);
         item.set_child(Some(&line));
     });
-    let (r, c) = (rows.clone(), commits.clone());
+    let (r, c, s) = (rows.clone(), commits.clone(), spans.clone());
     factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
         let index = item.position() as usize;
@@ -200,6 +271,21 @@ fn show_blame(parent: &gtk::ApplicationWindow, title: &str, info: &Value, on_com
         );
         number.set_text(&format!("{:>digits$}", index + 1));
         code.set_text(&row.text);
+        let attrs = gtk::pango::AttrList::new();
+        let fg = code.color();
+        for &(start, end, kind) in s.get(index).into_iter().flatten() {
+            if let Some((r, g, b)) = crate::diff::syntax_color(kind, &fg) {
+                let mut attr = gtk::pango::AttrColor::new_foreground(
+                    (r * 65535.0) as u16,
+                    (g * 65535.0) as u16,
+                    (b * 65535.0) as u16,
+                );
+                attr.set_start_index(start);
+                attr.set_end_index(end);
+                attrs.insert(attr);
+            }
+        }
+        code.set_attributes(Some(&attrs));
         // まとまりごとに背景を交互に変える。
         if let Some(cell) = line.parent() {
             if row.block % 2 == 1 {
@@ -597,5 +683,31 @@ fn show_file_history(
         window.set_child(Some(&note));
     } else {
         window.set_child(Some(&split));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn span(start: u32, end: u32, kind: u8) -> amonhen_layout::SyntaxSpan {
+        amonhen_layout::SyntaxSpan {
+            row: 0,
+            start,
+            end,
+            kind,
+            _pad: [0; 3],
+        }
+    }
+
+    #[test]
+    fn splits_syntax_into_lines() {
+        // "aé b" / "/* c" / "d */": é は UTF-16 で 1、UTF-8 で 2 バイト。
+        let lines = ["aé b", "/* c", "d */"];
+        let spans = [span(3, 4, 1), span(5, 14, 2)];
+        assert_eq!(
+            line_spans(&lines, &spans),
+            vec![vec![(4, 5, 1)], vec![(0, 4, 2)], vec![(0, 4, 2)]]
+        );
     }
 }
