@@ -28,6 +28,7 @@ mod reffacts;
 mod reflog;
 mod refmarks;
 mod refops;
+mod remotesheet;
 mod repopages;
 mod repos;
 mod reposettings;

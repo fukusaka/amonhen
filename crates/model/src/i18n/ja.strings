@@ -1255,3 +1255,23 @@
 
 /* GTK4: サイドバーのブランチの同期（Fast-Forward・Push・Publish） */
 "Fast-forward {branch} to {upstream}?" = "{branch} を {upstream} まで進めますか？";
+
+/* GTK4: リモートの追加・編集のシートと、サイドバーのリモートの操作 */
+"Remove…" = "削除…";
+"Rename…" = "名前を変更…";
+"Edit URL…" = "URL を編集…";
+"Remove {name}?" = "{name} を消しますか？";
+"This removes the remote’s settings and its remote-tracking branches ({name}/…). The remote repository isn’t touched." = "リモートの設定と、追跡しているリモートブランチ（{name}/…）が消えます。リモートのリポジトリには触れません。";
+"A path" = "パス";
+"SSH host {host}" = "SSH 先 {host}";
+"Other" = "その他";
+"Edit Remote" = "リモートを編集";
+"Same as the fetch URL" = "fetch と同じ";
+"Name" = "名前";
+"Fetch URL" = "fetch の URL";
+"Push URL" = "push の URL";
+"Points to" = "接続先";
+"Check Connection" = "接続を確認";
+"Connecting…" = "つないでいます…";
+"Reachable: {branches} branches, {tags} tags" = "つながりました: ブランチ {branches}、タグ {tags}";
+", HEAD at {head}" = "、HEAD は {head}";

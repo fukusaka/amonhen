@@ -27,7 +27,7 @@ pub fn menu(
     range_diff: &crate::rangediff::Opener,
 ) -> Vec<Item> {
     let sidebar::Item::Ref(entry) = &data.item else {
-        return Vec::new();
+        return remote_menu(actions, data);
     };
     // 複数選んだ行の上で開いたら、選んだものをまとめて扱う。
     if known.selected.len() > 1 {
@@ -134,6 +134,39 @@ pub fn menu(
         }
     }
     items
+}
+
+/// Remotes の見出しとその下のリモート（docs/ux.md の 4.5 のリモート: リポジトリの設定のページと同じ操作）。
+/// 見出しは Add Remote…、リモートは Rename…・Edit URL…（どちらも同じシート）・Prune・Remove…。
+fn remote_menu(actions: &Rc<Actions>, data: &Data) -> Vec<Item> {
+    if let Some(remote) = &data.remote {
+        let edit = |title: String| {
+            let (a, r) = (actions.clone(), remote.clone());
+            menu::action(title, move || crate::remotesheet::edit(&a, &r))
+        };
+        let (a, r) = (actions.clone(), remote.clone());
+        let prune = menu::action("Prune", move || {
+            a.perform(json!({ "op": "changeRemote", "change": { "kind": "prune", "name": r } }))
+        });
+        let (a, r) = (actions.clone(), remote.clone());
+        let remove = menu::action(tr!("Remove…"), move || {
+            crate::remotesheet::confirm_remove(&a, &r)
+        });
+        return vec![
+            edit(tr!("Rename…")),
+            edit(tr!("Edit URL…")),
+            prune,
+            Item::Separator,
+            remove,
+        ];
+    }
+    if matches!(data.item, sidebar::Item::Group) && data.title == "Remotes" {
+        let a = actions.clone();
+        return vec![menu::action(tr!("Add Remote…"), move || {
+            crate::remotesheet::add(&a)
+        })];
+    }
+    Vec::new()
 }
 
 /// 上流と合わせる（最後の Fetch の時点）。上流がなければ Publish、遅れているだけなら Fast-Forward（チェックアウト
