@@ -71,6 +71,8 @@ pub enum Kind {
     CheckCircle,
     /// gearshape（リポジトリの設定）
     Gear,
+    /// exclamationmark.triangle（コンフリクト）
+    Warning,
 }
 
 mod imp {
@@ -462,6 +464,17 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(5.2, 8.2);
             p.line_to(7.2, 10.2);
             p.line_to(10.9, 6.0);
+        }
+        Kind::Warning => {
+            // 角を丸めない三角と、中の「!」。
+            p.move_to(8.0, 2.2);
+            p.line_to(14.2, 13.3);
+            p.line_to(1.8, 13.3);
+            p.close();
+            p.move_to(8.0, 6.3);
+            p.line_to(8.0, 9.6);
+            p.move_to(8.0, 11.3);
+            p.line_to(8.0, 11.4);
         }
         Kind::Gear => {
             // 歯車: 中の穴と、外周の 8 つの歯（それぞれ短い線）。

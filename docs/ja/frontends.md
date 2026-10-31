@@ -21,8 +21,8 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | △ | △ | n/a | GTK4: Conflicts の行はない。<br>VSCode: Working Copy・History・Stashes だけで、Reflog・Conflicts はない。 |
-| コンフリクトがあるあいだ Conflicts の行と数 | ✓ | — | △ | n/a | GTK4: コンフリクトのファイルは Working Copy で扱う。<br>VSCode: Working Copy の中の Conflicts のグループ。 |
+| Workspace の行でメインの表示を切り替える（Working Copy・History・Stashes・Reflog…） | ✓ | ✓ | △ | n/a | VSCode: Working Copy・History・Stashes だけで、Reflog・Conflicts はない。 |
+| コンフリクトがあるあいだ Conflicts の行と数 | ✓ | ✓ | △ | n/a | VSCode: Working Copy の中の Conflicts のグループ。 |
 | stash があるときだけ Stashes の行と数 | ✓ | ✓ | △ | n/a | VSCode: Stashes の節はいつも出る。 |
 | Range Diff を開いているあいだの Range Diff の行 | ✓ | ✓ | — | n/a | GTK4: × ではなく Close Range Diff で閉じる。 |
 | Branches・Remotes・Tags を絞り込む欄 | ✓ | ✓ | — | n/a |  |

@@ -1,4 +1,4 @@
-//! サイドバー: Workspace（Working Copy・History・あるときだけ Stashes・開いている間だけ Range Diff、最後に Reflog と Settings）/ Branches / あるときだけ Pull Requests / Remotes / Tags / Stashes / Submodules。
+//! サイドバー: Workspace（Working Copy・History・あるときだけ Conflicts と Stashes・開いている間だけ Range Diff、最後に Reflog と Settings）/ Branches / あるときだけ Pull Requests / Remotes / Tags / Stashes / Submodules。
 //!
 //! `GtkListView` と `GtkTreeListModel` の木（項目が多くても、見えている行の部品しか作らない）。
 //! `feature/x` のような名前はフォルダにまとめる。ref を選ぶと、指すコミットを History で選ぶ。
@@ -305,6 +305,8 @@ struct Inner {
     /// Range Diff の行（開いている間だけ Workspace の最後に出す）。
     range_diff: Node,
     range_diff_shown: Cell<bool>,
+    /// Conflicts の行（コンフリクトのファイルがあるときだけ、History の下に数を添えて出す）。
+    conflicts: Node,
     generation: RefCell<Option<u64>>,
     /// 最後に出した ref（分け方が届いたら作り直す）。
     refs: RefCell<Option<Refs>>,
@@ -401,6 +403,17 @@ impl Sidebar {
             },
             None,
         );
+        // 選ぶと Working Copy で最初のコンフリクトのファイルを開く（macOS 版と同じく Working Copy の項目の 1 つ）。
+        let conflicts = Node::new(
+            Data {
+                title: tr!("Conflicts"),
+                key: CONFLICTS_KEY.into(),
+                item: Item::Page(Page::WorkingCopy),
+                icon: icon::Kind::Warning,
+                ..Data::default()
+            },
+            None,
+        );
         let inner = Rc::new(Inner {
             root,
             model,
@@ -408,6 +421,7 @@ impl Sidebar {
             working,
             range_diff,
             range_diff_shown: Cell::new(false),
+            conflicts,
             generation: RefCell::default(),
             refs: RefCell::default(),
             groups: RefCell::default(),
@@ -664,7 +678,48 @@ impl Sidebar {
         }
         self.inner.rebuilding.set(false);
     }
+
+    /// Conflicts の行を選ぶ（選んだことを知らせる。確認用）。
+    pub fn select_conflicts(&self) {
+        self.inner.select_key(CONFLICTS_KEY);
+    }
+
+    /// コンフリクトのファイルの数（0 なら Conflicts の行を出さない。知らせは出さない）。
+    pub fn set_conflict_count(&self, count: usize) {
+        let inner = &self.inner;
+        let badge = if count > 0 {
+            count.to_string()
+        } else {
+            String::new()
+        };
+        if inner.conflicts.data().badge == badge {
+            return;
+        }
+        inner.conflicts.imp().data.borrow_mut().badge = badge;
+        let workspace = inner.root.item(0).and_downcast::<Node>();
+        let Some(store) = workspace.and_then(|w| w.children()) else {
+            return;
+        };
+        match (store.find(&inner.conflicts), count > 0) {
+            // 数だけ変わった: 行を描き直す。
+            (Some(at), true) => inner.replace_keeping(&store, at, &inner.conflicts),
+            (Some(at), false) => {
+                inner.rebuilding.set(true);
+                store.remove(at);
+                inner.rebuilding.set(false);
+            }
+            (None, true) => {
+                inner.rebuilding.set(true);
+                store.insert(2.min(store.n_items()), &inner.conflicts);
+                inner.rebuilding.set(false);
+            }
+            (None, false) => {}
+        }
+    }
 }
+
+/// Conflicts の行の鍵（選んだら最初のコンフリクトのファイルを開く）。
+pub const CONFLICTS_KEY: &str = "page/conflicts";
 
 /// 行の部品から届く Inner。
 type Owner = Rc<RefCell<std::rc::Weak<Inner>>>;
@@ -1265,6 +1320,9 @@ impl Inner {
         let workspace = gio::ListStore::new::<Node>();
         workspace.append(&self.working);
         workspace.append(&history);
+        if !self.conflicts.data().badge.is_empty() {
+            workspace.append(&self.conflicts);
+        }
         // stash があるときだけ、数を添えて出す（macOS 版と同じ）。
         let stashes = refs.as_ref().map_or(0, |r| {
             r.entries

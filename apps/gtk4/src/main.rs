@@ -119,6 +119,8 @@ struct Args {
     menu_item: Option<String>,
     /// Reflog の画面を開いておく（確認用）。`--select-rows`・`--menu-row` は Reflog の行のこと。
     reflog: bool,
+    /// 最初に status を読んだら、サイドバーの Conflicts を選ぶ（確認用）。
+    conflicts: bool,
     /// 見出しのメニュー（`repository` か `primary`）を開いておく（確認用）。
     open_menu: Option<String>,
     /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
@@ -223,6 +225,7 @@ fn parse_args() -> Result<Args, String> {
                 args.menu_row = Some(row.parse().map_err(|_| "--menu-row <row>")?);
             }
             "--reflog" => args.reflog = true,
+            "--conflicts" => args.conflicts = true,
             "--repositories" => args.repositories = true,
             "--tab" => args.tabs.push(it.next().ok_or("--tab <location>")?.into()),
             "--quick-open" => args.quick_open = Some(it.next().ok_or("--quick-open <query>")?),
@@ -635,7 +638,33 @@ fn build_tab(
             worktrees.connect_counts(show);
         }
     }
-    connect_sidebar(&sidebar, &pages, &view, &stashes, &worktrees);
+    // 最後に届いた status（Conflicts を選んだら、そこから最初のコンフリクトのファイルを選ぶ）。
+    let last_status: Rc<std::cell::RefCell<Option<Arc<amonhen_core::StatusSnapshot>>>> =
+        Rc::default();
+    let open_conflict: Rc<dyn Fn()> = {
+        let (w, l) = (Rc::downgrade(&working), last_status.clone());
+        Rc::new(move || {
+            let (Some(working), Some(status)) = (w.upgrade(), l.borrow().clone()) else {
+                return;
+            };
+            let first = status
+                .status
+                .entries
+                .iter()
+                .filter(|e| e.kind == amonhen_model::StatusKind::Unmerged)
+                .map(|e| e.path.clone())
+                .min();
+            if let Some(path) = first {
+                // 同じ中身を別のスナップショットとして渡し直すと、選んだファイルを選び直す。
+                working.select_path(&path);
+                working.show(Arc::new(amonhen_core::StatusSnapshot {
+                    generation: status.generation,
+                    status: status.status.clone(),
+                }));
+            }
+        })
+    };
+    connect_sidebar(&sidebar, &pages, &view, &stashes, &worktrees, open_conflict);
     if let Some(words) = &args.filter_sidebar {
         sidebar.filter(words);
     }
@@ -1642,6 +1671,8 @@ fn build_tab(
                                 bar.show_sequence(info, conflicts, without, &a);
                             });
                         }
+                        sidebar.set_conflict_count(conflicts);
+                        last_status.replace(Some(snapshot.clone()));
                         working.show(snapshot);
                         if let Some(path) = &args.print_file_menu
                             && let Some(titles) = working.file_menu_titles(path)
@@ -1652,6 +1683,9 @@ fn build_tab(
                         actions.refresh_undo();
                         if waiting_status {
                             waiting_status = false;
+                            if args.conflicts {
+                                sidebar.select_conflicts();
+                            }
                             pending.set(pending.get() - 1);
                         }
                     }
@@ -1709,6 +1743,7 @@ fn connect_sidebar(
     view: &HistoryView,
     stashes: &Rc<Stashes>,
     worktrees: &Rc<worktrees::Worktrees>,
+    open_conflict: Rc<dyn Fn()>,
 ) {
     let (pages, view, stashes) = (pages.downgrade(), view.downgrade(), Rc::downgrade(stashes));
     let worktrees = Rc::downgrade(worktrees);
@@ -1716,6 +1751,12 @@ fn connect_sidebar(
         let (Some(pages), Some(view)) = (pages.upgrade(), view.upgrade()) else {
             return;
         };
+        // Conflicts: Working Copy で最初のコンフリクトのファイルを開く（macOS 版と同じ）。
+        if data.key == sidebar::CONFLICTS_KEY {
+            pages.set_visible_child_name("working");
+            open_conflict();
+            return;
+        }
         match &data.item {
             sidebar::Item::Page(Page::WorkingCopy) => pages.set_visible_child_name("working"),
             sidebar::Item::Page(Page::History) => pages.set_visible_child_name("history"),

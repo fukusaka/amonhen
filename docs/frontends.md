@@ -21,8 +21,8 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | △ | △ | n/a | GTK4: No Conflicts row.<br>VSCode: Working Copy, History and Stashes only; no Reflog or Conflicts. |
-| Conflicts row with a count while there are conflicts | ✓ | — | △ | n/a | GTK4: Conflicted files are handled in Working Copy.<br>VSCode: A Conflicts group inside the Working Copy view. |
+| Workspace rows switch the main view (Working Copy, History, Stashes, Reflog…) | ✓ | ✓ | △ | n/a | VSCode: Working Copy, History and Stashes only; no Reflog or Conflicts. |
+| Conflicts row with a count while there are conflicts | ✓ | ✓ | △ | n/a | VSCode: A Conflicts group inside the Working Copy view. |
 | Stashes row with a count only when there are stashes | ✓ | ✓ | △ | n/a | VSCode: The Stashes section is always shown. |
 | Range Diff row while a range diff is open | ✓ | ✓ | — | n/a | GTK4: Closed with Close Range Diff, not ×. |
 | Filter field over Branches, Remotes and Tags | ✓ | ✓ | — | n/a |  |
