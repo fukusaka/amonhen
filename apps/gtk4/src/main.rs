@@ -24,6 +24,7 @@ mod rangediff;
 mod reflog;
 mod refops;
 mod repos;
+mod reposettings;
 mod rewritedraw;
 mod search;
 mod settings;
@@ -84,6 +85,8 @@ struct Args {
     activity: Option<String>,
     /// 設定の窓をこのタブで開いておく（確認用）。
     settings: Option<String>,
+    /// リポジトリの設定の窓をこのページで開いておく（確認用）。
+    repository_settings: Option<String>,
     /// このファイルのマージエディタを開いておく（確認用）。
     merge_editor: Option<String>,
     file_history: Option<String>,
@@ -159,6 +162,9 @@ fn parse_args() -> Result<Args, String> {
             "--blame" => args.blame = Some(it.next().ok_or("--blame <path>")?),
             "--activity" => args.activity = Some(it.next().ok_or("--activity <tab>")?),
             "--settings" => args.settings = Some(it.next().ok_or("--settings <tab>")?),
+            "--repository-settings" => {
+                args.repository_settings = Some(it.next().ok_or("--repository-settings <page>")?)
+            }
             "--merge-editor" => args.merge_editor = Some(it.next().ok_or("--merge-editor <path>")?),
             "--accept" => merge::accept_once(&it.next().ok_or("--accept ours|theirs|both|base")?),
             "--file-history" => args.file_history = Some(it.next().ok_or("--file-history <path>")?),
@@ -740,6 +746,7 @@ fn build_window(app: &gtk::Application, args: Args) {
         open,
         go_to,
         range_diff: range_diff_opener.clone(),
+        location: text.clone(),
     });
     let latest_refs = refs;
     search.install(&window, app);
@@ -883,6 +890,20 @@ fn build_window(app: &gtk::Application, args: Args) {
                             }
                             if !args.apply_patch.is_empty() {
                                 patches::apply(&actions, args.apply_patch.clone());
+                                pending.set(pending.get() + 1);
+                                let p = pending.clone();
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(1500),
+                                    move || p.set(p.get() - 1),
+                                );
+                            }
+                            if let Some(page) = &args.repository_settings {
+                                let _ = WidgetExt::activate_action(
+                                    &window,
+                                    "win.repository-settings",
+                                    None,
+                                );
+                                reposettings::select(&window, page);
                                 pending.set(pending.get() + 1);
                                 let p = pending.clone();
                                 glib::timeout_add_local_once(

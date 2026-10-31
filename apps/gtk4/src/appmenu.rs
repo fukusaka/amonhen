@@ -42,6 +42,8 @@ pub struct Parts {
     pub go_to: Rc<dyn Fn(Oid)>,
     /// Range Diff を開く。
     pub range_diff: crate::rangediff::Opener,
+    /// リポジトリの場所（手元のパス、`daemon:…`、`ssh://…`）。
+    pub location: String,
 }
 
 /// 見出しのメニューとツールバーのボタン（`--open-menu` で開く、ref を読んだら数を出す）。
@@ -161,7 +163,6 @@ pub const PENDING: &[&str] = &[
     "prune-worktrees",
     "filter-branches",
     "find-in-history",
-    "repository-settings",
     "quick-open",
     "repositories",
 ];
@@ -269,6 +270,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                     .perform_work(|repo| repo.rebuild_history().map(|_| ()));
             }),
         ),
+        ("repository-settings", Box::new(repository_settings)),
         ("open-in-terminal", Box::new(open_in_terminal)),
         (
             "open-on-github",
@@ -889,6 +891,14 @@ fn add_remote(p: &Rc<Parts>) {
             open(PathBuf::from(location));
         }
     });
+}
+
+/// リポジトリの設定の窓（Repository > Repository Settings、Ctrl+;）。
+fn repository_settings(p: &Rc<Parts>) {
+    let Some((repo, _)) = p.view.current() else {
+        return;
+    };
+    crate::reposettings::show(&p.window, repo, &p.location, p.reload.clone(), None);
 }
 
 fn open_folder(p: &Rc<Parts>) {
