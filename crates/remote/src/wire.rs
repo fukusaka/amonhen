@@ -287,7 +287,7 @@ pub enum Op {
     },
     /// → `[Option<Oid>; 3]`
     ConflictStages(String),
-    Fetch,
+    Fetch(Option<String>),
     Pull(PullMode),
     BranchTracking,
     Push {

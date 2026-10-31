@@ -929,8 +929,8 @@ impl Operations for RemoteOperations {
         self.op(Op::ConflictStages(path.to_owned()))
     }
 
-    fn fetch(&self) -> Result<()> {
-        self.op(Op::Fetch)
+    fn fetch(&self, remote: Option<&str>) -> Result<()> {
+        self.op(Op::Fetch(remote.map(str::to_owned)))
     }
 
     fn pull(&self, mode: PullMode) -> Result<Outcome> {
