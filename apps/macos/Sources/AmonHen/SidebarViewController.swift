@@ -1126,22 +1126,25 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 add(L("Open the Worktree of %@ to Merge or Rebase", target)) { [weak self] in self?.onSelectWorktree?(other.path) }
             } else {
                 // checkout していなくても、fast-forward で済むならブランチだけ進める。
-                add("Merge \(dragged) into \(target)") {
-                    actions.perform(["op": "mergeInto", "target": target, "rev": dragged])
+                add(Titles.merge(dragged, into: target)) {
+                    actions.integrateWithConfirmation(L("Merge %@ into %@?", dragged, target), ok: "Merge", ours: target,
+                                                      theirs: [dragged], commands: [["op": "mergeInto", "target": target, "rev": dragged]])
                 }
-                add("Rebase \(target) onto \(dragged)") {
-                    actions.perform(sequence: checkout + [["op": "rebase", "onto": dragged]])
+                add(Titles.rebase(target, onto: dragged)) {
+                    actions.integrateWithConfirmation(L("Rebase %@ onto %@?", target, dragged), ok: "Rebase", ours: target,
+                                                      theirs: [dragged], estimate: true,
+                                                      commands: checkout + [["op": "rebase", "onto": dragged]])
                 }
             }
         } else if isLocal, let remote = node.remote ?? node.item.map({ String($0.name.split(separator: "/")[0]) }) {
             let remoteBranch = node.item.map { String($0.name.dropFirst(remote.count + 1)) } ?? dragged
-            add("Push \(dragged) to \(remote)/\(remoteBranch)") {
-                actions.perform(["op": "push", "remote": remote, "branch": dragged, "remoteBranch": remoteBranch,
-                                 "force": false, "setUpstream": node.item == nil])
+            add(Titles.push(dragged, to: "\(remote)/\(remoteBranch)")) {
+                actions.pushWithConfirmation(branch: dragged, remote: remote, remoteBranch: remoteBranch, force: false,
+                                             setUpstream: node.item == nil)
             }
-            add("Force Push \(dragged) to \(remote)/\(remoteBranch)") {
-                actions.perform(["op": "push", "remote": remote, "branch": dragged, "remoteBranch": remoteBranch,
-                                 "force": true, "setUpstream": false])
+            add(Titles.forcePush(dragged, to: "\(remote)/\(remoteBranch)")) {
+                actions.pushWithConfirmation(branch: dragged, remote: remote, remoteBranch: remoteBranch, force: true,
+                                             setUpstream: false)
             }
         }
         guard !menu.items.isEmpty else { return false }
@@ -1180,7 +1183,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             return
         }
         if let pr = (outline.item(atRow: outline.clickedRow) as? Node)?.pullRequest {
-            menu.addItem(ClosureMenuItem(title: "Checkout #\(pr.number)") { [weak self] in self?.onCheckoutPullRequest?(pr) })
+            menu.addItem(ClosureMenuItem(title: "Checkout #\(pr.number)…") { [weak self] in self?.onCheckoutPullRequest?(pr) })
             menu.addItem(ClosureMenuItem(title: L("Open in Browser")) {
                 if let url = URL(string: pr.url) { NSWorkspace.shared.open(url) }
             })
@@ -1258,7 +1261,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 }
                 // 今のブランチと、ほかの worktree が checkout しているブランチは消せない（git が断る）。
                 if locals.allSatisfy({ $0 != headBranch && otherWorktree(using: $0) == nil }) {
-                    add(L("Delete %ld Branches…", locals.count)) { [weak self] in self?.confirmDelete(locals) }
+                    add(L("Delete %ld Branches…", locals.count)) { actions.deleteBranchesWithConfirmation(locals) }
                 }
             }
             let tags = selected.filter { $0.kind == .tag }.map(\.name)
@@ -1271,8 +1274,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         let current = headBranch ?? "HEAD"
         // 名前をコピー（ターミナルや PR に貼るため。リモートブランチは origin/ を付けたまま）。
         let copyTitle = switch item.kind {
-        case .local, .remote: L("Copy Branch Name")
-        case .tag: L("Copy Tag Name")
+        case .local, .remote: Titles.copyBranchName
+        case .tag: Titles.copyTagName
         default: L("Copy Name")
         }
         add(copyTitle) {
@@ -1287,10 +1290,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                     // ほかの worktree が checkout しているブランチは checkout できない（git が断る）。その worktree を開く。
                     add(L("Open Worktree %@", other.name)) { [weak self] in self?.onSelectWorktree?(other.path) }
                 } else {
-                    add("Checkout \(name)") { actions.perform(["op": "checkout", "branch": name]) }
+                    add(Titles.checkout(name)) { actions.checkoutWithConfirmation(.branch(name)) }
                 }
-                add("Merge \(name) into \(current)") { actions.perform(["op": "merge", "rev": name]) }
-                add("Rebase \(current) onto \(name)") { actions.perform(["op": "rebase", "onto": name]) }
+                add(Titles.merge(name, into: current)) { actions.mergeWithConfirmation(name, into: current) }
+                add(Titles.rebase(current, onto: name)) { actions.rebaseWithConfirmation(current, onto: name) }
                 menu.addItem(.separator())
             }
             // 上流と合わせる（最後の Fetch の時点）。チェックアウト中のブランチはツールバーの Pull・Push で。分かれていれば
@@ -1300,10 +1303,16 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 menu.addItem(.separator())
             } else if name != headBranch, let upstream = item.detail, (item.ahead == 0) != (item.behind == 0) {
                 if item.ahead > 0 {
-                    add("Push \(name) to \(upstream)…") { actions.pushWithConfirmation(branch: name) }
+                    add(Titles.push(name, to: upstream)) { actions.pushWithConfirmation(branch: name) }
                 } else if otherWorktree(using: name) == nil {
                     // ほかの worktree でチェックアウト中なら動かせない（その作業ツリーとずれる）。上の Open Worktree から。
-                    add("Fast-Forward \(name) to \(upstream)") { actions.perform(["op": "fastForward", "branch": name]) }
+                    add("Fast-Forward \(name) to \(upstream)…") {
+                        Task { @MainActor in
+                            guard await actions.confirm(L("Fast-forward %@ to %@?", name, upstream), message: Actions.canUndo,
+                                                        ok: "Fast-Forward") else { return }
+                            actions.perform(["op": "fastForward", "branch": name])
+                        }
+                    }
                 }
                 menu.addItem(.separator())
             }
@@ -1319,13 +1328,10 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 actions.perform(["op": "configSet", "key": "branch.\(name).amonhenArchived",
                                  "value": archived ? NSNull() : "true"])
             }
-            add("New Branch from \(name)…") { actions.newBranch(at: name) }
-            add("New Tag at \(name)…") { actions.newTag(at: name) }
+            add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
+            add(Titles.newTag(at: name)) { actions.newTag(at: name) }
             add(L("Compare with Previous Version")) { [weak self] in self?.onCompareWithPrevious?(name) }
-            add(L("Rename %@…", name)) {
-                guard let to = actions.ask(L("Rename Branch"), initial: name, ok: L("Change")) else { return }
-                actions.perform(["op": "renameBranch", "from": name, "to": to])
-            }
+            add(L("Rename…")) { actions.renameBranch(name) }
             if name != headBranch {
                 add(L("Delete %@…", name)) { actions.deleteBranchWithConfirmation(item) }
             }
@@ -1339,14 +1345,14 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
                 }
             }
         case .remote:
-            add("Checkout \(name) as Local Branch") { actions.perform(["op": "track", "remoteBranch": name]) }
-            add("Merge \(name) into \(current)") { actions.perform(["op": "merge", "rev": name]) }
-            add("Rebase \(current) onto \(name)") { actions.perform(["op": "rebase", "onto": name]) }
+            add(Titles.checkoutAsLocal(name)) { actions.checkoutWithConfirmation(.track(name)) }
+            add(Titles.merge(name, into: current)) { actions.mergeWithConfirmation(name, into: current) }
+            add(Titles.rebase(current, onto: name)) { actions.rebaseWithConfirmation(current, onto: name) }
             menu.addItem(.separator())
-            add("New Branch from \(name)…") { actions.newBranch(at: name) }
+            add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
         case .tag:
-            add("Merge \(name) into \(current)") { actions.perform(["op": "merge", "rev": name]) }
-            add("New Branch from \(name)…") { actions.newBranch(at: name) }
+            add(Titles.merge(name, into: current)) { actions.mergeWithConfirmation(name, into: current) }
+            add(Titles.newBranch(from: name)) { actions.newBranch(at: name) }
             menu.addItem(.separator())
             addTagItems([name], to: menu, actions: actions)
         case .stash:
@@ -1354,7 +1360,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             break
         case .submodule:
             add("Update \(name)") { actions.perform(["op": "updateSubmodules", "paths": [name]]) }
-            add(L("Open %@ in New Window", name)) { [weak self] in self?.onOpenSubmodule?(name) }
+            add(L("Open in New Window")) { [weak self] in self?.onOpenSubmodule?(name) }
         }
     }
 
@@ -1394,7 +1400,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         add(names.count == 1 ? L("Delete %@…", names[0]) : L("Delete %ld Tags…", names.count)) { [weak self] in
             self?.confirmDestructive(
                 names.count == 1 ? L("Delete tag %@?", names[0]) : L("Delete %ld tags?", names.count),
-                message: list(names) + L("Only your own copy is deleted; the remotes keep theirs.") + " " + L("You can Undo it afterwards (⌥⌘Z).")
+                message: list(names) + L("The remotes keep theirs.") + " " + Actions.canUndo, destructive: false
             ) {
                 actions.perform(sequence: names.map { ["op": "deleteTag", "name": $0] })
             }
@@ -1404,8 +1410,7 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
             add(tags.count == 1 ? L("Delete %@ from %@…", tags[0], remote) : L("Delete %ld Tags from %@…", tags.count, remote)) { [weak self] in
                 self?.confirmDestructive(
                     tags.count == 1 ? L("Delete %@ from %@?", tags[0], remote) : L("Delete %ld tags from %@?", tags.count, remote),
-                    message: list(tags)
-                        + L("Everyone who fetches from %@ loses them. This can’t be undone; push them again to bring them back. Your own tags are kept.", remote)
+                    message: list(tags) + L("Everyone who fetches from %@ loses them; yours stay.", remote) + " " + Actions.cantUndo
                         + (unchecked ? " " + L("Whether %@ has them hasn’t been checked yet (Fetch reads it).", remote) : "")
                 ) {
                     actions.perform(["op": "pushTags", "remote": remote, "names": tags, "delete": true])
@@ -1418,8 +1423,8 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
     private func confirmReplace(_ tags: [String], on remote: String, actions: Actions) {
         confirmDestructive(
             tags.count == 1 ? L("Replace %@ on %@?", tags[0], remote) : L("Replace %ld tags on %@?", tags.count, remote),
-            message: tags.joined(separator: "\n") + "\n\n"
-                + L("On %@, a tag with this name is a different tag (another commit, or another annotated tag). Replacing it puts yours there for everyone who fetches from %@ (their own copies stay until they fetch with --force). This can’t be undone.", remote, remote),
+            message: tags.joined(separator: "\n") + "\n"
+                + L("%@ has a different tag with this name; yours replaces it for everyone who fetches.", remote) + " " + Actions.cantUndo,
             ok: L("Replace")
         ) {
             actions.perform(["op": "pushTags", "remote": remote, "names": tags, "force": true])
@@ -1504,35 +1509,12 @@ final class SidebarViewController: NSViewController, NSOutlineViewDataSource, NS
         statusShown = key
     }
 
-    /// 消す・置き換える操作の前に、シートで確かめる（ボタンは赤）。
-    private func confirmDestructive(_ title: String, message: String, ok: String = L("Delete"), then perform: @escaping () -> Void) {
-        guard let window = view.window else { return }
-        let alert = NSAlert()
-        alert.messageText = title
-        alert.informativeText = message
-        let button = alert.addButton(withTitle: ok)
-        button.hasDestructiveAction = true
-        alert.addButton(withTitle: L("Cancel"))
-        alert.beginSheetModal(for: window) { response in
-            if response == .alertFirstButtonReturn { perform() }
-        }
-    }
-
-    /// 選んだブランチをまとめて消す前に、名前を並べて確かめる。消すのは 1 つずつ（git が断ったらそこで止まり、
-    /// 帯に出る）。
-    private func confirmDelete(_ names: [String]) {
-        guard let actions, let window = view.window else { return }
-        let alert = NSAlert()
-        alert.messageText = L("Delete %ld branches?", names.count)
-        alert.informativeText = names.joined(separator: "\n") + "\n\n"
-            + L("A branch with commits that are merged nowhere is kept (git refuses).") + " "
-            + L("You can Undo it afterwards (⌥⌘Z).")
-        let button = alert.addButton(withTitle: L("Delete"))
-        button.hasDestructiveAction = true
-        alert.addButton(withTitle: L("Cancel"))
-        alert.beginSheetModal(for: window) { response in
-            guard response == .alertFirstButtonReturn else { return }
-            actions.perform(sequence: names.map { ["op": "deleteBranch", "name": $0, "force": false] })
+    /// 消す・置き換える操作の前に、シートで確かめる（元に戻せないものはボタンが赤く、↩ では押せない）。
+    private func confirmDestructive(_ title: String, message: String, ok: String = L("Delete"), destructive: Bool = true,
+                                    then perform: @escaping () -> Void) {
+        guard let actions else { return }
+        Task { @MainActor in
+            if await actions.confirm(title, message: message, ok: ok, destructive: destructive) { perform() }
         }
     }
 

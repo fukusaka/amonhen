@@ -2,22 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>%@ has %ld commits you don’t have (as of the last Fetch). Pull them first, then push.</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%@ has %#@n0@, then push.</string>
-		<key>n0</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>ld</string>
-			<key>one</key>
-			<string>%ld commit you don’t have (as of the last Fetch). Pull it first</string>
-			<key>other</key>
-			<string>%ld commits you don’t have (as of the last Fetch). Pull them first</string>
-		</dict>
-	</dict>
 	<key>%@ has uncommitted changes in %ld files. They are lost with the folder. The branch stays.</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -48,22 +32,6 @@
 			<string>%ld file</string>
 			<key>other</key>
 			<string>%ld files</string>
-		</dict>
-	</dict>
-	<key>%@ still has %ld conflicts</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%@ still has %#@n0@</string>
-		<key>n0</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>ld</string>
-			<key>one</key>
-			<string>%ld conflict</string>
-			<key>other</key>
-			<string>%ld conflicts</string>
 		</dict>
 	</dict>
 	<key>%ld changed files</key>
@@ -176,22 +144,6 @@
 			<string>%ld commit</string>
 			<key>other</key>
 			<string>%ld commits</string>
-		</dict>
-	</dict>
-	<key>%ld conflicts remain</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>%#@n0@</string>
-		<key>n0</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>ld</string>
-			<key>one</key>
-			<string>%ld conflict remains</string>
-			<key>other</key>
-			<string>%ld conflicts remain</string>
 		</dict>
 	</dict>
 	<key>⚠︎ Conflicts expected in %ld files: %@</key>
@@ -530,22 +482,6 @@
 			<string>%ld more tags</string>
 		</dict>
 	</dict>
-	<key>⚠︎ You have %ld local commits too, so Fast-Forward Only can’t pull these.</key>
-	<dict>
-		<key>NSStringLocalizedFormatKey</key>
-		<string>⚠︎ You have %#@n0@.</string>
-		<key>n0</key>
-		<dict>
-			<key>NSStringFormatSpecTypeKey</key>
-			<string>NSStringPluralRuleType</string>
-			<key>NSStringFormatValueTypeKey</key>
-			<string>ld</string>
-			<key>one</key>
-			<string>%ld local commit too, so Fast-Forward Only can’t pull it</string>
-			<key>other</key>
-			<string>%ld local commits too, so Fast-Forward Only can’t pull these</string>
-		</dict>
-	</dict>
 	<key>%ld files have conflicts at %@. Resolve them in Working Copy, then Continue.</key>
 	<dict>
 		<key>NSStringLocalizedFormatKey</key>
@@ -576,6 +512,214 @@
 			<string>%ld file has conflicts</string>
 			<key>other</key>
 			<string>%ld files have conflicts</string>
+		</dict>
+	</dict>
+	<key>%@ has %ld commits you don’t have</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%@ has %#@n0@ you don’t have</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld commit</string>
+			<key>other</key>
+			<string>%ld commits</string>
+		</dict>
+	</dict>
+	<key>%@ loses %ld commits. This can’t be undone.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%@ loses %#@n0@. This can’t be undone.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld commit</string>
+			<key>other</key>
+			<string>%ld commits</string>
+		</dict>
+	</dict>
+	<key>Nothing to push. Pull the %ld new commits first.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Nothing to push. Pull the %#@n0@ first.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>new commit</string>
+			<key>other</key>
+			<string>%ld new commits</string>
+		</dict>
+	</dict>
+	<key>⚠︎ Fast-Forward Only can’t pull these: you have %ld local commits. Choose Merge or Rebase.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>⚠︎ Fast-Forward Only can’t pull these: you have %#@n0@. Choose Merge or Rebase.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>a local commit</string>
+			<key>other</key>
+			<string>%ld local commits</string>
+		</dict>
+	</dict>
+	<key>Mark as resolved with %ld conflicts left?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Mark as resolved with %#@n0@ left?</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld conflict</string>
+			<key>other</key>
+			<string>%ld conflicts</string>
+		</dict>
+	</dict>
+	<key>Mark %@ as resolved with %ld conflicts left?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Mark %@ as resolved with %#@n0@ left?</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld conflict</string>
+			<key>other</key>
+			<string>%ld conflicts</string>
+		</dict>
+	</dict>
+	<key>Undo the last %ld operations?</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Undo the last %#@n0@?</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>operation</string>
+			<key>other</key>
+			<string>%ld operations</string>
+		</dict>
+	</dict>
+	<key>Cherry-pick %ld Commits…</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Cherry-pick %#@n0@…</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld Commit</string>
+			<key>other</key>
+			<string>%ld Commits</string>
+		</dict>
+	</dict>
+	<key>Revert %ld Commits…</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Revert %#@n0@…</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld Commit</string>
+			<key>other</key>
+			<string>%ld Commits</string>
+		</dict>
+	</dict>
+	<key>%ld files with uncommitted changes come along.</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@ along.</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld file with uncommitted changes comes</string>
+			<key>other</key>
+			<string>%ld files with uncommitted changes come</string>
+		</dict>
+	</dict>
+	<key>%ld messages</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>%#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld message</string>
+			<key>other</key>
+			<string>%ld messages</string>
+		</dict>
+	</dict>
+	<key>Edit %ld Commits</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Edit %#@n0@</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld Commit</string>
+			<key>other</key>
+			<string>%ld Commits</string>
+		</dict>
+	</dict>
+	<key>Combine %ld Commits…</key>
+	<dict>
+		<key>NSStringLocalizedFormatKey</key>
+		<string>Combine %#@n0@…</string>
+		<key>n0</key>
+		<dict>
+			<key>NSStringFormatSpecTypeKey</key>
+			<string>NSStringPluralRuleType</string>
+			<key>NSStringFormatValueTypeKey</key>
+			<string>ld</string>
+			<key>one</key>
+			<string>%ld Commit</string>
+			<key>other</key>
+			<string>%ld Commits</string>
 		</dict>
 	</dict>
 </dict>

@@ -299,8 +299,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         titleLabel.lineBreakMode = .byTruncatingMiddle
         discardButton.target = self
         discardButton.action = #selector(discard)
-        // 捨てる操作は目立たせず、消える操作だと分かる色にする。
-        discardButton.hasDestructiveAction = true
+        // 行を捨てるのは Undo で戻せるので、赤くしない（赤は元に戻せないものだけ）。
         // コンフリクトのファイルは、下にマージエディタを出す。帯にはファイル全体の操作を置く。
         let conflictActions: [(String, Selector)] = [
             (L("Take Current File"), #selector(takeOursFile)), (L("Take Incoming File"), #selector(takeTheirsFile)),
@@ -407,19 +406,32 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
     }
 
     /// 1 ファイルの変更を捨てる（行のホバーのボタン）。作業ツリーを index の内容に戻すので、含めている分は残る。
+    /// untracked のファイルを消す前に確かめる（Undo では戻せない）。
+    private func confirmDeleteUntracked(_ path: String, actions: Actions) {
+        Task { @MainActor in
+            guard await actions.confirm(L("Delete %@?", path), message: L("It’s untracked.") + " " + Actions.cantUndo,
+                                        ok: L("Delete"), destructive: true) else { return }
+            // ファイルの操作はコアに任せる（SSH 越しのリポジトリでも同じに動く）。
+            actions.perform(["op": "deleteUntracked", "paths": [path]])
+        }
+    }
+
+    /// ファイルの変更を捨てる前に確かめる（Undo で戻せる）。
+    private func confirmDiscard(_ path: String, actions: Actions) {
+        Task { @MainActor in
+            guard await actions.confirm(L("Discard changes to %@?", path), message: Actions.canUndo, ok: "Discard") else { return }
+            actions.perform(["op": "discard", "paths": [path]])
+        }
+    }
+
     /// untracked のファイルは消す（Undo では戻せないので確かめる）。
     private func discardFile(_ entry: Entry) {
         guard let actions, !entry.isConflict else { return }
         let path = entry.item.path
         if entry.item.kind == .untracked {
-            guard actions.confirm(L("Delete %@?", path), message: L("It’s an untracked file, so Undo can’t bring it back."), ok: L("Delete"))
-            else { return }
-            actions.perform(["op": "deleteUntracked", "paths": [path]])
+            confirmDeleteUntracked(path, actions: actions)
         } else if entry.item.isUnstaged {
-            guard actions.confirm(
-                L("Discard the changes to %@?", path), message: L("This discards the working tree changes and returns to the content of the next commit (the index). You can Undo it."),
-                ok: "Discard") else { return }
-            actions.perform(["op": "discard", "paths": [path]])
+            confirmDiscard(path, actions: actions)
         } else {
             NSSound.beep()
         }
@@ -437,6 +449,17 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         }
         notifySequence()
         rebuildList()
+        if wantsFirstConflict {
+            wantsFirstConflict = false
+            selectFirstConflict()
+        }
+    }
+
+    /// 操作がコンフリクトで止まった。読み直したら最初のコンフリクトのファイルを選ぶ（右にマージエディタが出る）。
+    private var wantsFirstConflict = false
+
+    func openFirstConflict() {
+        wantsFirstConflict = true
     }
 
     /// 内容のコンフリクトのファイルに残っているマーカーの数と、rerere が解決を当てたか（パスごと）。
@@ -879,16 +902,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         if let current, !rows.isEmpty {
             actions.perform { try current.discard(rows: rows) }
         } else if current?.item.kind == .untracked {
-            guard actions.confirm(
-                L("Delete %@?", key.path), message: L("It’s an untracked file, so Undo can’t bring it back."), ok: L("Delete")) else { return }
-            // ファイルの操作はコアに任せる（SSH 越しのリポジトリでも同じに動く）。
-            actions.perform(["op": "deleteUntracked", "paths": [key.path]])
+            confirmDeleteUntracked(key.path, actions: actions)
         } else {
             // ファイル全体を一度に捨てるときは確かめる（行の単位は選んで押すので、そのまま）。
-            guard actions.confirm(
-                L("Discard the changes to %@?", key.path), message: L("This discards the working tree changes and returns to the content of the next commit (the index). You can Undo it."),
-                ok: "Discard") else { return }
-            actions.perform(["op": "discard", "paths": [key.path]])
+            confirmDiscard(key.path, actions: actions)
         }
     }
 
@@ -946,10 +963,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         // マーカーが残っていなければ、解決した内容（rerere・ほかのエディタ）を片側で上書きしてしまう。
         if conflictStates[key.path]?.markers == 0 {
             let title = ours ? L("Take Current File") : L("Take Incoming File")
-            guard actions.confirm(
-                L("Replace the resolved content of %@?", key.path),
-                message: L("No conflict markers are left in it, so it may already be resolved. This replaces it with one side’s whole file."),
-                ok: title) else { return }
+            Task { @MainActor in
+                guard await actions.confirm(
+                    L("Replace the resolved content of %@?", key.path),
+                    message: L("No conflict markers are left, so it may already be resolved. It becomes one side’s whole file."),
+                    ok: title) else { return }
+                actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
+            }
+            return
         }
         actions.perform(["op": "takeSide", "path": key.path, "ours": ours])
     }
@@ -966,13 +987,14 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         guard let key = selectedKey else { return }
         struct Count: Decodable { let count: Int }
         let remaining = (try? repository.info(["op": "conflictCount", "path": key.path], as: Count.self))?.count ?? 0
-        if remaining > 0,
-           actions?.confirm(L("%@ still has %ld conflicts", key.path, remaining), message: L("Mark it as resolved anyway?"), ok: L("Mark Resolved")) != true {
-            return
-        }
         let repository = self.repository
         let path = key.path
-        actions?.perform { try repository.stage(paths: [path]) }
+        guard remaining > 0, let actions else { return self.actions?.perform { try repository.stage(paths: [path]) } ?? () }
+        Task { @MainActor in
+            guard await actions.confirm(L("Mark %@ as resolved with %ld conflicts left?", path, remaining),
+                                        message: L("The conflict markers stay in the file."), ok: L("Mark Resolved")) else { return }
+            actions.perform { try repository.stage(paths: [path]) }
+        }
     }
 
     @objc private func toggleAmend() {
@@ -1091,7 +1113,7 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
                 amend.state = .off
                 clearDraft()
                 loadRecentCommits()
-                if thenPush { actions?.push() }
+                if thenPush { actions?.pushWithoutAsking() }
             } catch {
                 // hooks で止まったときは出力が長いので、読めるシートで出す。
                 if let window = view.window {
@@ -1395,19 +1417,41 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
         menu.removeAllItems()
         guard let entry = files.item(atRow: files.clickedRow) as? Entry else { return }
         let path = entry.item.path
+        func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
+        // 含める・外す・捨てる（チェックとホバーのボタンと同じ操作を、右クリックからも）。
+        if !entry.isConflict {
+            add(entry.check == .on ? "Unstage" : "Stage") { [weak self] in self?.toggle([entry]) }
+            if entry.item.kind == .untracked {
+                add(L("Delete %@…", (path as NSString).lastPathComponent)) { [weak self] in self?.discardFile(entry) }
+            } else if entry.item.isUnstaged {
+                add("Discard…") { [weak self] in self?.discardFile(entry) }
+            }
+            menu.addItem(.separator())
+        }
         // untracked のファイルにはまだ履歴がない。代わりに .gitignore に足せる（そのパスか、拡張子のパターン）。
-        guard entry.item.kind != .untracked else {
-            menu.addItem(ClosureMenuItem(title: L("Add “%@” to .gitignore", path)) { [weak self] in self?.addToGitignore(path) })
+        if entry.item.kind == .untracked {
+            add(L("Add “%@” to .gitignore", path)) { [weak self] in self?.addToGitignore(path) }
             let ext = (path as NSString).pathExtension
             if !ext.isEmpty {
-                menu.addItem(ClosureMenuItem(title: L("Add “%@” to .gitignore", "*." + ext)) { [weak self] in self?.addToGitignore("*." + ext) })
+                add(L("Add “%@” to .gitignore", "*." + ext)) { [weak self] in self?.addToGitignore("*." + ext) }
             }
-            return
+        } else {
+            if entry.item.worktreeState != "D" {
+                add(Titles.blame(at: nil)) { [weak self] in self?.onBlame?(path) }
+            }
+            add(Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) }
         }
-        if entry.item.worktreeState != "D" {
-            menu.addItem(ClosureMenuItem(title: "Blame") { [weak self] in self?.onBlame?(path) })
+        menu.addItem(.separator())
+        add(Titles.copyPath) {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(path, forType: .string)
         }
-        menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
+        // 手元のリポジトリなら、Finder とほかのアプリで開ける（SSH 先のファイルは開けない）。
+        if let workdir = repository.workdir, entry.item.worktreeState != "D" {
+            let url = URL(fileURLWithPath: workdir).appendingPathComponent(path)
+            add(Titles.showInFinder) { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            add(L("Open with Default App")) { NSWorkspace.shared.open(url) }
+        }
     }
 
     /// `pattern` を作業ツリーの直下の .gitignore の最後に足す（コアで読み書きするので、SSH 先でも同じ）。

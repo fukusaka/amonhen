@@ -263,6 +263,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     private let matchOnlyButton = NSButton()
     /// 並び順・項目・1 行表示のメニューを出すボタン（バーの右端）。
     private let displayButton = NSButton()
+    /// HEAD のコミットへ（Go to HEAD、⌘⇧H。メニューバーを使わずに届くように）。
+    private let headButton = NSButton()
     /// 一致したコミットだけを出しているときの、元の History（出していなければ nil）。
     private var baseHistory: History?
     /// HEAD のコミット（Current Branch で使う）。
@@ -271,6 +273,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         didSet { if head != oldValue, scope == .current, history != nil { scheduleReloadScope() } }
     }
     /// 選んだコミット（20 バイト）。選択がなくなれば nil。
+    /// History の編集モードに入る（そのコミットから HEAD まで、最初の変更つき）。
+    var onEditCommits: ((String, HistoryEditController.Preset?) -> Void)?
     var onSelectCommit: ((Data?) -> Void)?
     /// 複数の行を選んだ（⇧・⌘ クリック）。まとめた差分を見せる。
     var onSelectRows: (([Int], History) -> Void)?
@@ -387,6 +391,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             (nextMatchButton, "chevron.down", L("Next Match (↩, ⌘G)"), #selector(nextMatchClicked)),
             (matchOnlyButton, "line.3.horizontal.decrease.circle", L("Show Only Matching Commits"), #selector(matchOnlyClicked)),
             (displayButton, "slider.horizontal.3", L("History Display: order, items, one line per commit"), #selector(displayClicked)),
+            (headButton, "location", L("Go to HEAD (⌘⇧H)"), #selector(RepositoryWindow.goToHead(_:))),
         ] {
             button.bezelStyle = .accessoryBarAction
             button.isBordered = false
@@ -400,6 +405,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         }
         matchOnlyButton.setButtonType(.pushOnPushOff)
         displayButton.isEnabled = true
+        // Go to HEAD はウィンドウ（レスポンダチェーン）が受ける。
+        headButton.target = nil
+        headButton.isEnabled = true
         container.addSubview(searchField)
         container.addSubview(searchCount)
         container.addSubview(searchSpinner)
@@ -444,8 +452,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let barY = view.bounds.height - barHeight + 2
         scopePopup.frame = NSRect(x: 6, y: barY, width: 180, height: barHeight - 4)
         let countWidth: CGFloat = 96
-        // 右から、表示のメニュー・絞り込み・次・前・件数。
-        let buttons: CGFloat = 4 * 22
+        // 右から、表示のメニュー・HEAD へ・絞り込み・次・前・件数。
+        let buttons: CGFloat = 5 * 22
         let ownField = toolbarSearchShown?() != true
         searchField.isHidden = !ownField
         searchField.frame = NSRect(
@@ -454,7 +462,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         searchSpinner.frame = NSRect(x: (ownField ? searchField.frame.maxX : 186) + 6, y: barY + 3, width: 16, height: 16)
         let countX = view.bounds.width - countWidth - buttons - 6
         searchCount.frame = NSRect(x: countX, y: barY + 2, width: countWidth, height: 16)
-        for (i, button) in [previousMatchButton, nextMatchButton, matchOnlyButton, displayButton].enumerated() {
+        for (i, button) in [previousMatchButton, nextMatchButton, matchOnlyButton, headButton, displayButton].enumerated() {
             button.frame = NSRect(x: countX + countWidth + CGFloat(i) * 22, y: barY, width: 22, height: barHeight - 4)
         }
         // 右端に密度の帯（スクロールバーの左）。
@@ -1525,12 +1533,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             return (id.map { String(format: "%02x", $0) }.joined(), isMerge)
         }
         func add(_ title: String, _ action: @escaping () -> Void) { menu.addItem(ClosureMenuItem(title: title, action: action)) }
-        add(L("Cherry-pick %ld Commits (Oldest First)", commits.count)) {
-            actions.perform(sequence: commits.reversed().map { ["op": "cherryPick", "oid": $0.hex, "isMerge": $0.isMerge] })
-        }
-        add(L("Revert %ld Commits (Newest First)", commits.count)) {
-            actions.perform(sequence: commits.map { ["op": "revert", "oid": $0.hex, "isMerge": $0.isMerge] })
-        }
+        add(L("Cherry-pick %ld Commits…", commits.count)) { actions.pickWithConfirmation(revert: false, commits.reversed()) }
+        add(L("Revert %ld Commits…", commits.count)) { actions.pickWithConfirmation(revert: true, commits) }
         // マージはパッチにできない（git format-patch は飛ばす）。
         if commits.contains(where: \.isMerge) {
             menu.addItem(NSMenuItem(title: L("Save %ld Commits as Patches…", commits.count), action: nil, keyEquivalent: ""))
@@ -1541,7 +1545,9 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let sorted = rows.sorted()
         if sorted.count >= 2, zip(sorted, sorted.dropFirst()).allSatisfy({ $1 == $0 + 1 }),
            !commits.contains(where: \.isMerge) {
-            add("Squash \(commits.count) Commits…") { actions.squash(range: commits.map(\.hex)) }
+            add(L("Combine %ld Commits…", commits.count)) { [weak self] in
+                self?.onEditCommits?(commits.last!.hex, .combine(commits.map(\.hex)))
+            }
         }
         // 今のコミット以外を、上の行から順に 1 つのコミットで merge する（octopus）。ブランチ・タグがあればその名前で
         // （merge のメッセージが git と同じになる）。
@@ -1569,13 +1575,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             }
         }
         menu.addItem(.separator())
-        add(L("Copy Commit IDs")) {
+        add(Titles.copyCommitIDs) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(commits.map(\.hex).joined(separator: "\n"), forType: .string)
         }
-        add(L("Copy Short IDs")) {
+        add(Titles.copyShortIDs) {
             NSPasteboard.general.clearContents()
-            NSPasteboard.general.setString(commits.map { String($0.hex.prefix(10)) }.joined(separator: " "), forType: .string)
+            NSPasteboard.general.setString(commits.map { String($0.hex.prefix(Titles.shortIDLength)) }.joined(separator: " "), forType: .string)
         }
     }
 
@@ -1615,32 +1621,38 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             add(hidden > 0 ? L("Show %ld Merged Commits", hidden) : L("Fold Merged Commits")) { [weak self] in self?.toggleMerge(id) }
             menu.addItem(.separator())
         }
-        add("New Branch at \(short)…") { actions.newBranch(at: hex) }
-        add("New Tag at \(short)…") { actions.newTag(at: hex) }
-        add("Checkout \(short) (Detached)") { actions.perform(["op": "detach", "oid": hex]) }
+        add(Titles.newBranch(from: short)) { actions.newBranch(at: hex) }
+        add(Titles.newTag(at: short)) { actions.newTag(at: hex) }
+        add(Titles.checkoutDetached(short)) { actions.checkoutWithConfirmation(.detach(hex)) }
         menu.addItem(actions.resetMenuItem(to: hex))
         menu.addItem(.separator())
         if !isMerge {
-            add(L("Edit Message…")) { actions.reword(hex) }
-            add("Squash into Parent…") { actions.squash(hex) }
-            add("Fixup into Parent") { actions.rewrite("Fixup \(short)", ["kind": "fixup", "oid": hex]) }
-            add(L("Edit (Stop Here)")) { actions.rewrite("Edit \(short)", ["kind": "edit", "oid": hex]) }
-            add(L("Split…")) { actions.rewrite("Split \(short)", ["kind": "split", "oid": hex]) }
-            add("Drop") {
-                guard actions.confirm(L("Drop %@?", short), message: L("You can Undo this."), ok: "Drop") else { return }
-                actions.rewrite("Drop \(short)", ["kind": "drop", "oid": hex])
+            // コミットの編集は、History の編集モードで（変更を積んで Apply）。ここにあるのは、最初の変更を入れて
+            // 編集モードを開く近道。
+            add(L("Edit Message…")) { [weak self] in self?.onEditCommits?(hex, .reword(hex)) }
+            add(L("Combine with Older Commit…")) { [weak self] in self?.onEditCommits?(hex, .combine([hex])) }
+            add("Drop…") { [weak self] in self?.onEditCommits?(hex, .drop(hex)) }
+            add(L("Edit Commits from Here…")) { [weak self] in self?.onEditCommits?(hex, nil) }
+            // 分ける（止めてから Working Copy で分けてコミットする）は、編集モードの外の操作。
+            add("Split…") {
+                Task { @MainActor in
+                    guard await actions.confirm(L("Split %@?", short),
+                                                message: L("Its changes go back to the working tree; commit them in parts, then Continue.") + " "
+                                                    + Actions.canUndo, ok: "Split") else { return }
+                    actions.rewrite("Split \(short)", ["kind": "split", "oid": hex])
+                }
             }
             menu.addItem(.separator())
         }
-        add("Cherry-pick \(short)") { actions.perform(["op": "cherryPick", "oid": hex, "isMerge": isMerge]) }
-        add("Revert \(short)") { actions.perform(["op": "revert", "oid": hex, "isMerge": isMerge]) }
+        add(Titles.cherryPick(short)) { actions.pickWithConfirmation(revert: false, [(hex, isMerge)]) }
+        add(Titles.revert(short)) { actions.pickWithConfirmation(revert: true, [(hex, isMerge)]) }
         if isMerge {
             menu.addItem(NSMenuItem(title: L("Save as Patch…"), action: nil, keyEquivalent: ""))
         } else {
             add(L("Save as Patch…")) { actions.savePatches([hex]) }
         }
         menu.addItem(.separator())
-        add(L("Copy Commit ID")) {
+        add(Titles.copyCommitID) {
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(hex, forType: .string)
         }
@@ -1677,6 +1689,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     // MARK: - ドラッグで並べ替え
 
+    /// ドラッグの間だけ覚えておく、編集できるコミット（HEAD から最初の merge まで、新しい順の 16 進）。落とせる所を
+    /// その場で決める（落としてから「ここには動かせない」と言わない）。
+    private var dragChain: [String]?
+
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, willBeginAt screenPoint: NSPoint, forRowIndexes rowIndexes: IndexSet) {
+        dragChain = nil
+        guard let actions else { return }
+        Task { @MainActor in dragChain = await actions.editableCommits() }
+    }
+
+    func tableView(_ tableView: NSTableView, draggingSession session: NSDraggingSession, endedAt screenPoint: NSPoint, operation: NSDragOperation) {
+        dragChain = nil
+    }
+
     func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
         guard let id = history?.commitID(row: row) else { return nil }
         let item = NSPasteboardItem()
@@ -1688,7 +1714,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         _ tableView: NSTableView, validateDrop info: any NSDraggingInfo, proposedRow row: Int,
         proposedDropOperation op: NSTableView.DropOperation
     ) -> NSDragOperation {
-        guard info.draggingSource as? NSTableView === tableView else { return [] }
+        guard info.draggingSource as? NSTableView === tableView, let history else { return [] }
+        // 編集できる並びの外（最初の merge より下、HEAD でない枝）には落とせない。並びを読み終えるまでは許す。
+        if let chain = dragChain {
+            let hex = { (r: Int) in history.commitID(row: r).map { $0.map { String(format: "%02x", $0) }.joined() } }
+            let dragged = info.draggingPasteboard.string(forType: .commitID)
+            let below = hex(min(row, history.rowCount - 1))
+            let above = row > 0 ? hex(row - 1) : nil
+            guard let dragged, chain.contains(dragged),
+                  below.map(chain.contains) == true || above.map(chain.contains) == true else { return [] }
+        }
         tableView.setDropRow(row, dropOperation: .above)
         return .move
     }
@@ -1701,18 +1736,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let below = history.commitID(row: min(row, history.rowCount - 1)).map { $0.map { String(format: "%02x", $0) }.joined() }
         Task {
             let chain = await actions.editableCommits()
-            guard let from = chain.firstIndex(of: oid), let below, var to = chain.firstIndex(of: below) else {
-                await MainActor.run {
-                    let alert = NSAlert()
-                    alert.messageText = L("Can’t Move Here")
-                    alert.informativeText = L("Commits can only be reordered between HEAD and the first merge.")
-                    alert.runModal()
-                }
-                return
-            }
+            guard let from = chain.firstIndex(of: oid), let below, var to = chain.firstIndex(of: below) else { return NSSound.beep() }
             if row >= history.rowCount { to = chain.count - 1 } else if from < to { to -= 1 }
             if from == to { return }
-            actions.rewrite("Move \(oid.prefix(8))", ["kind": "move", "oid": oid, "to": to])
+            // 並べ替えも編集モードで（並びを見て Apply）。範囲は、動かす 2 か所の古い方から HEAD まで。
+            await MainActor.run { self.onEditCommits?(chain[max(from, to)], .move(oid, to)) }
         }
         return true
     }

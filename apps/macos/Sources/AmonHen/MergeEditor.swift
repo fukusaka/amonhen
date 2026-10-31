@@ -684,11 +684,13 @@ final class MergeEditorViewController: NSViewController, NSTextViewDelegate {
     }
 
     @objc private func saveAndResolve() {
-        if !conflicts.isEmpty, !actions.confirm(
-            L("%ld conflicts remain", conflicts.count), message: L("Mark as resolved with the markers left in?"), ok: L("Mark Resolved")) {
-            return
+        guard !conflicts.isEmpty else { return save(stage: true) }
+        Task { @MainActor in
+            guard await actions.confirm(
+                L("Mark as resolved with %ld conflicts left?", conflicts.count), message: L("The conflict markers stay in the file."),
+                ok: L("Mark Resolved"), in: view.window) else { return }
+            save(stage: true)
         }
-        save(stage: true)
     }
 
     private func save(stage: Bool) {
@@ -863,9 +865,19 @@ final class MergeEditorWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError() }
 
+    /// 保存していない変更があれば、捨てて閉じてよいかをシートで確かめる（確かめたら閉じ直す）。
+    private var discardConfirmed = false
+
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        !editor.hasUnsavedChanges || actions.confirm(
-            L("You have unsaved changes"), message: L("Closing discards the changes to Result."), ok: L("Close Without Saving"))
+        guard editor.hasUnsavedChanges, !discardConfirmed else { return true }
+        Task { @MainActor in
+            guard await actions.confirm(
+                L("Close without saving?"), message: L("Your changes to Result are lost."), ok: L("Close Without Saving"),
+                destructive: true, in: sender) else { return }
+            discardConfirmed = true
+            sender.performClose(nil)
+        }
+        return false
     }
 
     func windowWillClose(_ notification: Notification) {

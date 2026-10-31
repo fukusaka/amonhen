@@ -851,11 +851,13 @@ impl Operations for RemoteOperations {
         base: Option<&Oid>,
         todo: &Path,
         message: Option<&Path>,
+        rebase_merges: bool,
     ) -> Result<Outcome> {
         self.op(Op::RebaseTodo {
             base: base.copied(),
             todo: todo.to_owned(),
             message: message.map(Path::to_owned),
+            rebase_merges,
         })
     }
 
@@ -933,6 +935,7 @@ impl Operations for RemoteOperations {
         branch: &str,
         remote_branch: &str,
         force: bool,
+        expect: Option<&Oid>,
         set_upstream: bool,
     ) -> Result<()> {
         self.op(Op::Push {
@@ -940,6 +943,7 @@ impl Operations for RemoteOperations {
             branch: branch.to_owned(),
             remote_branch: remote_branch.to_owned(),
             force,
+            expect: expect.copied(),
             set_upstream,
         })
     }

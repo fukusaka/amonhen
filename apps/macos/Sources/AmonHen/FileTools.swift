@@ -553,11 +553,11 @@ final class FileHistoryViewController: FileToolViewController, NSTableViewDataSo
         if let entry = entry(at: table.clickedRow) {
             let short = String(entry.oid.prefix(8))
             add(L("Show in History"), key: "\r") { [weak self] in self?.showInHistory(entry) }
-            add("Blame at \(short)") { [weak self] in self?.onBlame(entry.path, entry.oid) }
+            add(Titles.blame(at: short)) { [weak self] in self?.onBlame(entry.path, entry.oid) }
             menu.addItem(.separator())
-            add(L("Copy Commit ID"), key: "c") { [weak self] in self?.copy(entry.oid) }
-            add(L("Copy Short ID")) { [weak self] in self?.copy(short) }
-            add(L("Copy Path")) { [weak self] in self?.copy(entry.path) }
+            add(Titles.copyCommitID, key: "c") { [weak self] in self?.copy(entry.oid) }
+            add(Titles.copyShortID) { [weak self] in self?.copy(short) }
+            add(Titles.copyPath) { [weak self] in self?.copy(entry.path) }
             menu.addItem(.separator())
         }
         // 既定（Settings）も変え、開いているほかの File History も読み直す。

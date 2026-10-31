@@ -29,19 +29,24 @@ struct OperationFailure {
     /// 帯の見出し。何の操作が失敗したか。
     var title: String {
         switch op {
-        case "checkout", "track", "detach": L("Couldn’t Switch")
-        case "pull": L("Pull Failed")
-        case "push": L("Push Failed")
-        case "fetch": L("Fetch Failed")
-        case "merge": L("Merge Failed")
-        case "rebase": L("Rebase Failed")
-        case "cherryPick": L("Cherry-Pick Failed")
-        case "revert": L("Revert Failed")
+        case "checkout", "track", "detach": L("Couldn’t Checkout")
+        case "pull": L("Couldn’t Pull")
+        case "push", "pushTags": L("Couldn’t Push")
+        case "fetch": L("Couldn’t Fetch")
+        case "merge", "mergeInto": L("Couldn’t Merge")
+        case "rebase": L("Couldn’t Rebase")
+        case "cherryPick": L("Couldn’t Cherry-pick")
+        case "revert": L("Couldn’t Revert")
         case "formatPatch": L("Couldn’t Save the Patches")
         case "am", "amThreeWay", "applyPatch": L("Couldn’t Apply the Patch")
-        case "commit": L("Commit Failed")
+        case "commit": L("Couldn’t Commit")
         case "continue": L("Couldn’t Continue")
-        default: L("Operation Failed")
+        case "deleteBranch": L("Couldn’t Delete the Branch")
+        case "stashPush": L("Couldn’t Stash")
+        case "stashApply": L("Couldn’t Apply the Stash")
+        case "discard", "deleteUntracked": L("Couldn’t Discard")
+        case "undo": L("Couldn’t Undo")
+        default: L("Couldn’t Finish")
         }
     }
 

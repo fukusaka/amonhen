@@ -1111,6 +1111,10 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
     private let repository: Repository
     private let files = NSTableView()
     private let diffView: DiffViewController
+    /// 差分の中を探す（⌘F の検索の帯を開く。メニューバーを使わずに届くように）。
+    private let findButton = NSButton()
+
+    @objc private func findInDiff() { diffView.showFindBar() }
     private var changes: CommitChanges?
     private var request = 0
     private var headerRequest = 0
@@ -1249,6 +1253,7 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         headerContainer.addSubview(expandButton)
         var right = expandButton.frame.minX
         for (button, symbol, tip, action) in [
+            (findButton, "magnifyingglass", L("Find in the diff (⌘F)"), #selector(findInDiff)),
             (explainButton, "sparkles", L("AI: Explain this commit (or the combined diff of the selected commits)."), #selector(explainCommit)),
             (translateButton, "character.bubble", L("AI: Translate the message."), #selector(translateMessage)),
         ] {
@@ -1330,8 +1335,8 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let message = info.message.trimmingCharacters(in: .whitespacesAndNewlines)
         let subject = message.components(separatedBy: "\n").first ?? message
         let items: [(String, String)] = [
-            (L("Copy ID"), info.oid),
-            (L("Copy Short ID"), String(info.oid.prefix(10))),
+            (Titles.copyCommitID, info.oid),
+            (Titles.copyShortID, String(info.oid.prefix(Titles.shortIDLength))),
             (L("Copy Subject"), subject),
             (L("Copy Message"), message),
             (L("Copy git show Command"), "git show \(info.oid)"),
@@ -1461,17 +1466,22 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         let message = text.string.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return NSSound.beep() }
         guard message != info.message.trimmingCharacters(in: .whitespacesAndNewlines) else { return endReword() }
-        if extras.map({ !$0.remoteBranches.isEmpty }) ?? false {
-            let alert = NSAlert()
-            alert.messageText = L("Edit a commit that has been pushed?")
-            alert.informativeText = L("This commit is in %@. Editing it makes your branch differ from the remote, and pushing then needs force.", extras?.remoteBranches.joined(separator: ", ") ?? "")
-            alert.addButton(withTitle: L("Rewrite"))
-            alert.addButton(withTitle: L("Cancel"))
-            guard alert.runModal() == .alertFirstButtonReturn else { return }
-        }
         let oid = info.oid
-        endReword()
-        onReword?(oid, message)
+        guard let remotes = extras?.remoteBranches, !remotes.isEmpty, let window = view.window else {
+            endReword()
+            onReword?(oid, message)
+            return
+        }
+        let alert = NSAlert()
+        alert.messageText = L("Edit a pushed commit?")
+        alert.informativeText = L("It is in %@, so pushing afterwards needs Force Push.", remotes.joined(separator: ", "))
+        alert.addButton(withTitle: L("Edit Message"))
+        alert.addButton(withTitle: L("Cancel"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard response == .alertFirstButtonReturn else { return }
+            self?.endReword()
+            self?.onReword?(oid, message)
+        }
     }
 
     @objc private func cancelReword() { endReword() }
@@ -1783,9 +1793,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         menu.addItem(ClosureMenuItem(title: L("Toggle Viewed")) { [weak self] in self?.toggleViewed(file) })
         menu.addItem(.separator())
         if let commit = commitHex {
-            menu.addItem(ClosureMenuItem(title: "Blame at \(commit.prefix(8))") { [weak self] in self?.onBlame?(path, commit) })
+            menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
-        menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
+        menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
         menu.addItem(.separator())
         menu.addItem(ClosureMenuItem(title: L("Copy Path")) {
             NSPasteboard.general.clearContents()
@@ -2186,9 +2196,9 @@ final class CommitDetailViewController: NSSplitViewController, NSTableViewDataSo
         guard let index = fileIndex(row: files.clickedRow), let item = changes?.items[index] else { return }
         let path = item.path
         if let commit = commitHex, item.kind != .deleted {
-            menu.addItem(ClosureMenuItem(title: "Blame at \(commit.prefix(8))") { [weak self] in self?.onBlame?(path, commit) })
+            menu.addItem(ClosureMenuItem(title: Titles.blame(at: String(commit.prefix(Titles.shortIDLength)))) { [weak self] in self?.onBlame?(path, commit) })
         }
-        menu.addItem(ClosureMenuItem(title: "File History") { [weak self] in self?.onFileHistory?(path) })
+        menu.addItem(ClosureMenuItem(title: Titles.fileHistory) { [weak self] in self?.onFileHistory?(path) })
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {

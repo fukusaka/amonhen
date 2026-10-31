@@ -154,11 +154,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let detailItem = NSSplitViewItem(viewController: detail)
         detailItem.minimumThickness = 420
         content.addSplitViewItem(detailItem)
+        historyPage = content
         let pages = PageViewController(pages: [.history: content, .workingCopy: workingCopy, .stashes: stashes, .reflog: reflog, .rangeDiff: rangeDiff, .settings: settings])
         self.pages = pages
-        split.addSplitViewItem(NSSplitViewItem(viewController: pages))
+        // 右側（ページ）の下にステータスバー。サイドバーの切り替えが効くよう、分割ビューはウィンドウの中身のまま。
+        let status = StatusBarController(content: pages)
+        statusBar = status
+        split.addSplitViewItem(NSSplitViewItem(viewController: status))
         window.contentViewController = split
 
+        history.onEditCommits = { [weak self] start, preset in self?.editCommits(from: start, preset: preset) }
         history.onSelectCommit = { [weak self] commit in
             self?.selectedCommit = commit
             self?.detail.show(commit: commit)
@@ -328,6 +333,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         slot.workingCopy.onFileHistory = { [weak self, weak slot] path in self?.openFileHistory(path: path, in: slot?.repository) }
         slot.actions.window = window
         slot.actions.onFailure = { [weak self] failure in self?.showFailure(failure) }
+        slot.actions.onSuccess = { [weak self] command in self?.operationSucceeded(command) }
+        slot.actions.onStop = { [weak self, weak slot] in
+            self?.showWorkingCopy(nil)
+            slot?.workingCopy.openFirstConflict()
+        }
         // Push のシートは、右の欄と同じ詳細の表示を読み取り専用で埋め込む（同じ描画器で）。
         slot.actions.makeDetailView = { [weak self, weak slot] in
             guard let self, let slot else { return nil }
@@ -598,6 +608,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         editing.actions.currentBranch = branch
         let current = latestRefs?.items.first { $0.kind == .local && $0.name == branch }
         toolbar.setTracking(ahead: current?.ahead ?? 0, behind: current?.behind ?? 0, published: current.map(Self.isPublished) ?? true)
+        pushState = current.map { (Self.isPublished($0), $0.ahead) }
         workingCopy.publishesBranch = !(current.map(Self.isPublished) ?? true)
         if editing === opened, let head = latestRefs?.head { history.head = head }
     }
@@ -701,10 +712,16 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         alert.messageText = L("Remove the worktree “%@”?", info.name)
         alert.informativeText = changes > 0
             ? L("%@ has uncommitted changes in %ld files. They are lost with the folder. The branch stays.", info.path, changes)
+                + " " + Actions.cantUndo
             : L("Removes the folder %@. The branch stays.", info.path)
         let button = alert.addButton(withTitle: L("Remove Worktree"))
-        button.hasDestructiveAction = true
-        alert.addButton(withTitle: L("Cancel"))
+        let cancel = alert.addButton(withTitle: L("Cancel"))
+        // 作業中の変更があれば、消えたら戻せない（赤く、↩ では押せない）。
+        if changes > 0 {
+            button.hasDestructiveAction = true
+            button.keyEquivalent = ""
+            cancel.keyEquivalent = "\r"
+        }
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self, response == .alertFirstButtonReturn else { return }
             if info.isSame(editing.path) { activate(opened) }
@@ -837,6 +854,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     private var changeCount = 0
     private var tracking = (ahead: 0, behind: 0)
+    /// 書き込む先のブランチが上流を持つか（Publish でないか）と、送るコミットの数。ブランチがなければ nil。
+    private var pushState: (published: Bool, ahead: Int)?
 
     /// タブの名前に、未コミットの変更（●）と上流との差（↑↓）を添える。ウィンドウのタイトルは変えない。
     private func updateTabTitle() {
@@ -854,7 +873,39 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     // MARK: - merge・rebase の途中の帯
 
-    private var sequenceBanner: NSTitlebarAccessoryViewController?
+    /// History の画面（編集モードの間は差し替える）と、編集モード。
+    private var historyPage: NSViewController?
+    private var commitEditor: HistoryEditController?
+
+    /// History の編集モードに入る（`start` から HEAD まで）。`preset` は最初の変更（右クリックの近道・ドラッグから）。
+    func editCommits(from start: String, preset: HistoryEditController.Preset? = nil) {
+        guard workingCopy.sequence == nil, commitEditor == nil else { return NSSound.beep() }
+        var includingOlder = false
+        if case let .combine(oids) = preset, oids.count == 1 { includingOlder = true }
+        Task { @MainActor in
+            guard let editor = await HistoryEditController.load(actions: actions, from: start, includingOlder: includingOlder) else {
+                statusBar?.flash(L("Only commits on HEAD’s first-parent line can be edited."), symbol: "exclamationmark.triangle")
+                return
+            }
+            commitEditor = editor
+            editor.onFinish = { [weak self] _ in self?.endEditingCommits() }
+            pages?.replace(.history, with: editor)
+            sidebar.select(page: .history)
+            statusBar?.show(.editing, editor.barRow)
+            if let preset { editor.apply(preset) }
+        }
+    }
+
+    private func endEditingCommits() {
+        if let historyPage { pages?.replace(.history, with: historyPage) }
+        statusBar?.hide(.editing)
+        commitEditor = nil
+    }
+
+    /// ウィンドウの下のステータスバー（途中の操作・失敗・接続・終わった操作の一言）。
+    private var statusBar: StatusBarController!
+    /// 途中の操作の行を作ったか（ボタンとラベルは作り直さず、中身だけ書き換える）。
+    private var sequenceRowShown = false
     private let sequenceLabel = NSTextField(labelWithString: "")
     private let sequenceDetail = NSTextField(labelWithString: "")
     private let skipButton = NSButton(title: "Skip", target: nil, action: nil)
@@ -868,11 +919,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// Working Copy へのリンク、なければ Continue を強調する。
     private func showSequenceBanner(_ sequence: SequenceInfo?, conflicts: Int, withoutMarkers: Int = 0) {
         guard let sequence else {
-            if let banner = sequenceBanner,
-               let index = window.titlebarAccessoryViewControllers.firstIndex(of: banner) {
-                window.removeTitlebarAccessoryViewController(at: index)
-            }
-            sequenceBanner = nil
+            statusBar?.hide(.sequence)
+            sequenceRowShown = false
             return
         }
         sequenceLabel.stringValue = Self.sequenceTitle(sequence)
@@ -883,7 +931,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         skipButton.isHidden = !["rebase", "cherry-pick", "am"].contains(sequence.kind)
         retryButton.isHidden = !Self.canRetryThreeWay(sequence, conflicts: conflicts)
         continueButton.keyEquivalent = conflicts == 0 && retryButton.isHidden ? "\r" : ""
-        guard sequenceBanner == nil else { return }
+        guard !sequenceRowShown, let statusBar else { return }
         let icon = NSImageView(image: NSImage(systemSymbolName: "arrow.triangle.merge", accessibilityDescription: nil) ?? NSImage())
         icon.contentTintColor = .systemOrange
         icon.symbolConfiguration = .init(pointSize: 18, weight: .regular)
@@ -909,18 +957,11 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         markResolvedButton.target = self
         markResolvedButton.action = #selector(markResolvedWithoutMarkers(_:))
         markResolvedButton.toolTip = L("Mark the conflicted files that have no conflict markers left as resolved (rerere or another editor resolved them).")
-        let stack = NSStackView(views: [icon, texts, NSView(), markResolvedButton, show, retryButton, continueButton, skipButton, abort])
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 6, left: 12, bottom: 6, right: 12)
-        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 46)
-        // 細い帯だと気づきにくいので、色を敷く（作業の途中であることを、どの画面でも見落とさないように）。
-        stack.wantsLayer = true
-        stack.layer?.backgroundColor = NSColor.systemOrange.withAlphaComponent(0.14).cgColor
-        let bar = NSTitlebarAccessoryViewController()
-        bar.view = stack
-        bar.layoutAttribute = .bottom
-        window.addTitlebarAccessoryViewController(bar)
-        sequenceBanner = bar
+        // 色を敷く（作業の途中であることを、どの画面でも見落とさないように）。
+        statusBar.show(.sequence, StatusBarController.row(
+            [icon, texts, NSView(), markResolvedButton, show, retryButton, continueButton, skipButton, abort],
+            height: 46, tint: NSColor.systemOrange.withAlphaComponent(0.14)))
+        sequenceRowShown = true
     }
 
     /// 帯の 1 行目: 何をどこへしている途中か。
@@ -978,7 +1019,6 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     // MARK: - 失敗の帯
 
-    private var failureBanner: NSTitlebarAccessoryViewController?
     private var failure: OperationFailure?
 
     /// 操作の失敗を、ツールバーの下の帯で知らせる（作業を止めない）。閉じるか、次の失敗で置き換えるまで出す。
@@ -1015,27 +1055,41 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         let close = NSButton(title: L("Close"), target: self, action: #selector(hideFailure))
         more.isHidden = cancelled
         for b in remedies + [more, activity, close] { b.controlSize = .small }
-        let stack = NSStackView(views: [icon, label, detail, NSView()] + remedies + [more, activity, close])
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
-        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
-        let bar = NSTitlebarAccessoryViewController()
-        bar.view = stack
-        bar.layoutAttribute = .bottom
-        window.addTitlebarAccessoryViewController(bar)
-        failureBanner = bar
+        let row = StatusBarController.row([icon, label, detail, NSView()] + remedies + [more, activity, close], height: 30,
+                                          tint: cancelled ? nil : NSColor.systemRed.withAlphaComponent(0.08))
+        statusBar?.show(.failure, row)
         // 取り消したことは、しばらくしたら消す。
         if cancelled {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak bar] in
-                if let bar, self?.failureBanner === bar { self?.hideFailure() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self, weak row] in
+                if row?.window != nil { self?.hideFailure() }
             }
         }
     }
 
+    /// 操作が終わった: 前の失敗はもう古いので消し、何をしたかを一言出す（知らせる値打ちのある操作だけ）。
+    private func operationSucceeded(_ command: [String: Any]) {
+        hideFailure()
+        let s = { (key: String) in command[key] as? String ?? "" }
+        let text: String? = switch s("op") {
+        case "fetch": L("Fetched")
+        case "pull": L("Pulled into %@", latestRefs?.headBranch ?? "HEAD")
+        case "push": L("Pushed %@ to %@", s("branch"), "\(s("remote"))/\(s("remoteBranch"))")
+        case "merge": L("Merged into %@", latestRefs?.headBranch ?? "HEAD")
+        case "mergeInto": L("Merged %@ into %@", s("rev"), s("target"))
+        case "rebase": L("Rebased onto %@", s("onto"))
+        case "checkout": L("Checked out %@", s("branch"))
+        case "track": L("Checked out %@", s("remoteBranch"))
+        case "stashPush": L("Stashed the changes")
+        case "stashApply": L("Applied %@", s("name"))
+        case "deleteBranch": L("Deleted %@", s("name"))
+        case "undo": L("Undone")
+        default: nil
+        }
+        if let text { statusBar?.flash(text) }
+    }
+
     @objc private func hideFailure() {
-        guard let banner = failureBanner, let index = window.titlebarAccessoryViewControllers.firstIndex(of: banner) else { return }
-        window.removeTitlebarAccessoryViewController(at: index)
-        failureBanner = nil
+        statusBar?.hide(.failure)
     }
 
     @objc private func runRemedy(_ sender: NSButton) {
@@ -1076,14 +1130,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         detail.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let button = NSButton(title: L("Reconnect"), target: self, action: #selector(reconnect))
         button.controlSize = .small
-        let stack = NSStackView(views: [icon, label, detail, NSView(), button])
-        stack.spacing = 8
-        stack.edgeInsets = NSEdgeInsets(top: 4, left: 12, bottom: 4, right: 12)
-        stack.frame = NSRect(x: 0, y: 0, width: 600, height: 30)
-        let bar = NSTitlebarAccessoryViewController()
-        bar.view = stack
-        bar.layoutAttribute = .bottom
-        window.addTitlebarAccessoryViewController(bar)
+        statusBar?.show(.connection, StatusBarController.row([icon, label, detail, NSView(), button], height: 30,
+                                                          tint: NSColor.systemOrange.withAlphaComponent(0.10)))
     }
 
     @objc private func reconnect() {
@@ -1194,11 +1242,22 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                     actions.mergeSeveralWithConfirmation(sources, into: latestRefs?.headBranch)
                 }
             }
+            // --sync-sheet push|force|pull で、Push・Force Push・Pull の確認のシートを開いて撮る。
+            let syncSheet = AppDelegate.option("--sync-sheet")
+            if let syncSheet {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [self] in
+                    switch syncSheet {
+                    case "pull": actions.pullWithConfirmation(mode: .git)
+                    case "force": actions.pushWithConfirmation(force: true)
+                    default: actions.pushWithConfirmation()
+                    }
+                }
+            }
             // --snapshot-after SECONDS で待ちを決める（SSH 先につながるのを待つなど）。
             let delay = AppDelegate.option("--snapshot-after").flatMap(Double.init)
-                ?? (query != nil ? 3.5 : mergeSheet != nil ? 2.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5)
+                ?? (query != nil ? 3.5 : mergeSheet != nil || syncSheet != nil ? 2.5 : wait || mergePath != nil || appSettings ? 1.5 : 0.5)
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [self] in
-                let sheetView = mergeSheet != nil ? window.attachedSheet?.contentView : nil
+                let sheetView = mergeSheet != nil || syncSheet != nil ? window.attachedSheet?.contentView : nil
                 let rep = appSettings ? SettingsWindowController.shared.snapshot()
                     : mergePath != nil
                     ? MergeEditorWindowController.snapshot()
@@ -1476,15 +1535,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         }
     }
 
-    @objc func fetch(_ sender: Any?) { actions.fetch() }
-    @objc func pull(_ sender: Any?) { pull(mode: .git) }
-    @objc func pullGit(_ sender: Any?) { pull(mode: .git) }
-    @objc func pullMerge(_ sender: Any?) { pull(mode: .merge) }
-    @objc func pullRebase(_ sender: Any?) { pull(mode: .rebase) }
-    @objc func pullFastForward(_ sender: Any?) { pull(mode: .fastForwardOnly) }
-
-    /// Pull・Push・Pop は、すぐには実行しないで何が起きるかをシートで見せる（`SyncSheets.swift`）。
-    private func pull(mode: PullMode) { actions.pullWithConfirmation(mode: mode) }
+    @objc func fetch(_ sender: Any?) { actions.fetchWithConfirmation() }
+    /// Pull・Push・Pop は、すぐには実行しないで何が起きるかをシートで見せる（`SyncSheets.swift`）。取り込み方はシートで
+    /// 選ぶ（最初は git の設定に従う）。
+    @objc func pull(_ sender: Any?) { actions.pullWithConfirmation(mode: .git) }
 
     @objc func push(_ sender: Any?) { actions.pushWithConfirmation() }
     @objc func forcePush(_ sender: Any?) { actions.pushWithConfirmation(force: true) }
@@ -1640,10 +1694,8 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
 
     /// Repository > Rename Branch…: 今のブランチの名前を変える。
     @objc func renameBranch(_ sender: Any?) {
-        guard let branch = latestRefs?.headBranch,
-              let to = actions.ask("Rename Branch", message: L("New name for %@", branch), initial: branch, ok: L("Rename")),
-              to != branch else { return }
-        actions.perform(["op": "renameBranch", "from": branch, "to": to])
+        guard let branch = latestRefs?.headBranch else { return NSSound.beep() }
+        actions.renameBranch(branch)
     }
 
     /// Repository > Set Upstream…: 今のブランチの上流（pull・push の相手）を、リモートのブランチから選ぶ。
@@ -1660,13 +1712,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         alert.addButton(withTitle: L("Set"))
         alert.addButton(withTitle: L("Cancel"))
         alert.accessoryView = popup
-        guard alert.runModal() == .alertFirstButtonReturn, let upstream = popup.titleOfSelectedItem,
-              let slash = upstream.firstIndex(of: "/") else { return }
-        let remote = String(upstream[..<slash]), remoteBranch = String(upstream[upstream.index(after: slash)...])
-        actions.perform(sequence: [
-            ["op": "configSet", "key": "branch.\(branch).remote", "value": remote],
-            ["op": "configSet", "key": "branch.\(branch).merge", "value": "refs/heads/\(remoteBranch)"],
-        ])
+        Task { @MainActor in
+            guard await actions.present(alert) == .alertFirstButtonReturn, let upstream = popup.titleOfSelectedItem,
+                  let slash = upstream.firstIndex(of: "/") else { return }
+            let remote = String(upstream[..<slash]), remoteBranch = String(upstream[upstream.index(after: slash)...])
+            actions.perform(sequence: [
+                ["op": "configSet", "key": "branch.\(branch).remote", "value": remote],
+                ["op": "configSet", "key": "branch.\(branch).merge", "value": "refs/heads/\(remoteBranch)"],
+            ])
+        }
     }
 
     @objc func goToHead(_ sender: Any?) {
@@ -1771,8 +1825,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     /// プルリクエストのブランチをチェックアウトする（gh pr checkout）。手元のリポジトリだけ。
     private func checkout(_ pr: PullRequest) {
         guard let gitHub, isLocal, let dir = repository.workdir else { return NSSound.beep() }
-        RunningOperations.begin()
-        Task {
+        Task { @MainActor in
+            guard await actions.confirm(L("Checkout #%ld?", pr.number), message: L("“%@” is checked out as a local branch.", pr.title),
+                                        ok: "Checkout") else { return }
+            RunningOperations.begin()
             defer { RunningOperations.end() }
             do {
                 try await GitHub.checkout(pr.number, in: dir, repo: gitHub)
@@ -1798,16 +1854,15 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
     }
 
     /// `branch` からプルリクエストを作る（メニュー、サイドバーの右クリック、ブランチの印の吹き出しから）。まだ push して
-    /// いない（上流がない・先行コミットがある）なら、まず push の確認の窓を出してそこで終わる。CI を見てから、
-    /// 吹き出しなどからもう一度作ってもらう。
-    func createPullRequest(from branch: String) {
+    /// いない（上流がない・先行コミットがある）なら、まず push の確認のシートを出し、送り終えたらそのまま作る。
+    func createPullRequest(from branch: String, pushed: Bool = false) {
         guard let gitHub, let dir = repository.workdir else { return NSSound.beep() }
         let repository = self.repository
         Task {
             let refs = (try? await Task.detached { try repository.loadRefs() }.value) ?? latestRefs
             let item = refs?.items.first { $0.kind == .local && $0.name == branch }
-            if item?.detail == nil || item?.gone == true || (item?.ahead ?? 0) > 0 {
-                actions.pushWithConfirmation(branch: branch)
+            if !pushed, item?.detail == nil || item?.gone == true || (item?.ahead ?? 0) > 0 {
+                actions.pushWithConfirmation(branch: branch) { self.createPullRequest(from: branch, pushed: true) }
                 return
             }
             // タイトルと本文は、ブランチの先頭のコミットのメッセージから（命令はコミット ID を取る）。
@@ -1909,7 +1964,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
                 updateCommitGraph()
             } catch {
                 EventLog.add(repo: name, L("Automatic fetch failed: %@", "\(error)"))
-                showFailure(OperationFailure(error, command: ["op": "fetch"]), title: L("Automatic Fetch Failed"))
+                showFailure(OperationFailure(error, command: ["op": "fetch"]), title: L("Couldn’t Fetch Automatically"))
             }
         }
     }
@@ -2031,9 +2086,10 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
         case #selector(skipSequence(_:)): return sequence.map { $0.hasPrefix("rebase") || $0 == "cherry-pick" || $0 == "am" } ?? false
         case #selector(savePatch(_:)): return pages?.page == .history && history.selectedCommitsForPatch != nil
         case #selector(applyPatch(_:)): return sequence == nil
-        case #selector(push(_:)), #selector(forcePush(_:)): return latestRefs?.headBranch != nil
-        case #selector(pull(_:)), #selector(pullMerge(_:)), #selector(pullRebase(_:)), #selector(pullFastForward(_:)):
-            return latestRefs?.headBranch != nil && sequence == nil
+        // 送るものがなければ押せない（理由はツールバーのツールチップ）。上流のないブランチは Publish。
+        case #selector(push(_:)): return pushState.map { !$0.published || $0.ahead > 0 } ?? false
+        case #selector(forcePush(_:)): return pushState?.published ?? false
+        case #selector(pull(_:)): return latestRefs?.headBranch != nil && sequence == nil
         case #selector(mergeIntoCurrent(_:)), #selector(rebaseCurrent(_:)): return latestRefs != nil && sequence == nil
         case #selector(popStash(_:)), #selector(showStashes(_:)): return latestStash != nil
         case #selector(undoOperation(_:)): return undoLabel != nil
@@ -2098,9 +2154,9 @@ extension RepositoryWindow {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
         case #selector(undoOperation(_:)):
-            item.title = undoLabel.map { "Undo \($0)" } ?? "Undo"
+            item.title = undoLabel.map { "Undo \($0)…" } ?? Commands.undo.title
         case #selector(push(_:)):
-            item.title = publishesCurrent ? "Publish…" : "Push"
+            item.title = publishesCurrent ? "Publish…" : Commands.push.title
         case #selector(commitAndPush(_:)):
             item.title = publishesCurrent ? "Commit and Publish…" : "Commit and Push"
         case #selector(showWorkingCopy(_:)):

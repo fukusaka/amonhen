@@ -47,6 +47,24 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
             entry.toolTip = tip
             menu.addItem(entry)
         }
+        // コミットの詳細の見せ方（Settings > Appearance と同じもの。ウィンドウからも変えられるように）。
+        menu.addItem(.separator())
+        menu.addItem(.sectionHeader(title: L("Commit Details")))
+        for (title, action, tip) in [
+            (L("Monospaced Commit Message"), #selector(toggleMonospaced(_:)),
+             L("Show commit messages in a monospaced font (keeps bodies wrapped at 72 columns aligned)")),
+            (L("Show Avatars"), #selector(toggleAvatars(_:)),
+             L("Show Gravatar avatars in commit details (sends a hash of the email address to gravatar.com)")),
+            (L("All Files in One Diff"), #selector(toggleStacked(_:)),
+             L("Stack every file in a commit’s diff (when off, only the selected file)")),
+            (L("Changed Files as Tree"), #selector(toggleTree(_:)),
+             L("Show a commit’s changed files as a tree to the left of the diff (when off, as a list between the message and the diff)")),
+        ] as [(String, Selector, String)] {
+            let entry = NSMenuItem(title: title, action: action, keyEquivalent: "")
+            entry.target = self
+            entry.toolTip = tip
+            menu.addItem(entry)
+        }
         return menu
     }
 
@@ -81,6 +99,10 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
     @objc private func toggleOneLine(_ sender: NSMenuItem) { Settings.compactHistoryRows.toggle() }
     @objc private func toggleFold(_ sender: NSMenuItem) { Settings.foldMergedBranches.toggle() }
     @objc private func toggleAncestors(_ sender: NSMenuItem) { Settings.highlightAncestors.toggle() }
+    @objc private func toggleMonospaced(_ sender: NSMenuItem) { Settings.monospacedCommitMessage.toggle() }
+    @objc private func toggleAvatars(_ sender: NSMenuItem) { Settings.showAvatars.toggle() }
+    @objc private func toggleStacked(_ sender: NSMenuItem) { Settings.stackedCommitDiff.toggle() }
+    @objc private func toggleTree(_ sender: NSMenuItem) { Settings.historyFileTree.toggle() }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         let on = switch item.action {
@@ -89,6 +111,10 @@ final class HistoryDisplayMenu: NSObject, NSMenuItemValidation {
         case #selector(toggleOneLine(_:)): Settings.compactHistoryRows
         case #selector(toggleFold(_:)): Settings.foldMergedBranches
         case #selector(toggleAncestors(_:)): Settings.highlightAncestors
+        case #selector(toggleMonospaced(_:)): Settings.monospacedCommitMessage
+        case #selector(toggleAvatars(_:)): Settings.showAvatars
+        case #selector(toggleStacked(_:)): Settings.stackedCommitDiff
+        case #selector(toggleTree(_:)): Settings.historyFileTree
         default: false
         }
         item.state = on ? .on : .off

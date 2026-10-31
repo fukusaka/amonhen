@@ -16,7 +16,7 @@ extension Actions {
         Task {
             let subject = await Task.detached { (try? repository.commitInfo(oid: first))?.message }.value?
                 .split(separator: "\n").first.map(String.init)
-            guard let options = askPatchOptions(count: oids.count) else { return }
+            guard let options = await askPatchOptions(count: oids.count) else { return }
             var command: [String: Any] = ["op": "formatPatch", "oids": oids, "coverLetter": options.coverLetter]
             if let version = options.version { command["reroll"] = version }
             if options.single {
@@ -59,7 +59,8 @@ extension Actions {
     }
 
     /// 書き出しの形を選んでもらう。前の選び方（形と送り状）を覚えておく。キャンセルなら nil。
-    private func askPatchOptions(count: Int) -> PatchOptions? {
+    @MainActor
+    private func askPatchOptions(count: Int) async -> PatchOptions? {
         let defaults = UserDefaults.standard
         let alert = NSAlert()
         alert.messageText = count == 1 ? L("Save as Patch") : L("Save %ld Commits as Patches", count)
@@ -82,7 +83,7 @@ extension Actions {
         stack.spacing = 8
         stack.frame = NSRect(x: 0, y: 0, width: 300, height: 92)
         alert.accessoryView = stack
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let single = format.indexOfSelectedItem == 1
         defaults.set(single, forKey: "patchSingleFile")
         defaults.set(cover.state == .on, forKey: "patchCoverLetter")
@@ -133,14 +134,15 @@ extension Actions {
                 if summary.patches.allSatisfy(\.files.isEmpty) {
                     await alert(L("Can’t Read the Patch"), L("There are no changes in the patch."))
                 } else {
-                    confirmApply(summary, paths: paths)
+                    await confirmApply(summary, paths: paths)
                 }
             }
         }
     }
 
     /// 当てる前の確認: パッチごとの件名・作者・ファイル、当たるか、当て方の選び方。
-    private func confirmApply(_ summary: PatchSummary, paths: [String]) {
+    @MainActor
+    private func confirmApply(_ summary: PatchSummary, paths: [String]) async {
         let alert = NSAlert()
         let names = paths.map { ($0 as NSString).lastPathComponent }
         let branch = currentBranch ?? "HEAD"
@@ -148,10 +150,10 @@ extension Actions {
             alert.messageText = summary.patches.count == 1
                 ? L("Apply “%@”?", summary.patches[0].subject)
                 : L("Apply %ld Patches?", summary.patches.count)
-            alert.informativeText = L("Each patch becomes a commit on %@ (git am). You can Undo it.", branch)
+            alert.informativeText = L("Each patch becomes a commit on %@ (git am).", branch) + " " + Self.canUndo
         } else {
             alert.messageText = names.count == 1 ? L("Apply %@?", names[0]) : L("Apply %ld Patches?", names.count)
-            alert.informativeText = L("The changes go into the working tree (git apply). You can Undo it.")
+            alert.informativeText = L("The changes go into the working tree (git apply).") + " " + Self.canUndo
         }
         alert.addButton(withTitle: L("Apply"))
         alert.addButton(withTitle: L("Cancel"))
@@ -195,7 +197,7 @@ extension Actions {
         stack.spacing = 8
         stack.frame = NSRect(x: 0, y: 0, width: width, height: stack.fittingSize.height)
         alert.accessoryView = stack
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard await present(alert) == .alertFirstButtonReturn else { return }
         if summary.isMailbox {
             perform(["op": "am", "paths": paths, "threeWay": threeWay.state == .on])
         } else {

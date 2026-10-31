@@ -372,11 +372,14 @@ pub trait Operations: Send + Sync {
     fn revert(&self, oid: &Oid, is_merge: bool) -> Result<Outcome>;
     /// 用意した todo で非対話の rebase を行う（コミットの編集）。`base` が `None` なら `--root`。`message` は、
     /// todo の `reword`・`squash` で git が開くエディタに書かせるメッセージのファイル。
+    /// 対話的な rebase を、用意した todo で行う。`rebase_merges` なら `--rebase-merges` で merge を作り直し、
+    /// `todo` は todo そのものではなく、git が作った todo を書き換える awk のプログラム。
     fn rebase_todo(
         &self,
         base: Option<&Oid>,
         todo: &std::path::Path,
         message: Option<&std::path::Path>,
+        rebase_merges: bool,
     ) -> Result<Outcome>;
     fn sequence_in_progress(&self) -> Result<Option<Sequence>>;
     /// rebase・am の途中なら、何番目か（今, 全体）。
@@ -406,12 +409,15 @@ pub trait Operations: Send + Sync {
     fn pull(&self, mode: PullMode) -> Result<Outcome>;
     /// ローカルブランチごとの、上流との差（名前, ahead, behind, gone）。
     fn branch_tracking(&self) -> Result<Vec<(String, u32, u32, bool)>>;
+    /// `force` なら `--force-with-lease`。`expect` があれば、リモートのブランチがそのコミットのときだけ置き換える
+    /// （確認で見せた上流。自動の Fetch で追跡ブランチが進んでいても、見ていないコミットは消さない）。
     fn push(
         &self,
         remote: &str,
         branch: &str,
         remote_branch: &str,
         force: bool,
+        expect: Option<&Oid>,
         set_upstream: bool,
     ) -> Result<()>;
 

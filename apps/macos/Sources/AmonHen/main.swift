@@ -465,7 +465,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// 引数で渡されたリポジトリ。
     private func repositoryPath() -> String? {
         var args = Array(CommandLine.arguments.dropFirst())
-        for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search", "--blame", "--file-history", "--measure-select", "--app-settings-tab", "--filter-sidebar", "--merge-sheet"] {
+        for option in ["--snapshot", "--scroll-rows", "--find", "--select-row", "--merge-editor", "--search", "--blame", "--file-history", "--measure-select", "--app-settings-tab", "--filter-sidebar", "--merge-sheet", "--sync-sheet"] {
             if let i = args.firstIndex(of: option) { args.removeSubrange(i...min(i + 1, args.count - 1)) }
         }
         args.removeAll { ["--measure-scroll", "--select-first", "--working-copy", "--stashes", "--reflog", "--log-scroll", "--show-latency", "--ssh-sheet"].contains($0) }
@@ -500,7 +500,7 @@ app.run()
 
 extension Data {
     /// 16 進数の文字列から。
-    init?(hex: String) {
+    nonisolated init?(hex: String) {
         var bytes = [UInt8]()
         var index = hex.startIndex
         while index < hex.endIndex {

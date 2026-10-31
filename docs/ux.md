@@ -34,7 +34,7 @@ A review, built on "Screen layout" in `docs/design.md`, aimed at making everyday
 │ SUBMODULES │                                                                              │
 │ WORKTREES  │                                                                              │
 └────────────┴──────────────────────────────────────────────────────────────────────────────┘
- During a merge, rebase or cherry-pick, a bar under the toolbar: "Rebase 3/7 · 2 conflicts  [Continue] [Skip] [Abort]"
+ During a merge, rebase or cherry-pick, a row in the status bar at the bottom of the window: "Rebase 3/7 · 2 conflicts  [Continue] [Skip] [Abort]"
 ```
 
 - Conflicts appears in the sidebar only when there are conflicts, with a count.
@@ -323,8 +323,8 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 | --- | --- | --- | --- |
 | Location | Branch (in the title position) | Branch switcher panel (fuzzy search, recent branches on top) | — (rename and upstream are in the Repository menu) |
 | Sync | Fetch | Fetch the default remote | All remotes, with prune, tags too |
-| | Pull | Confirmation sheet: the commits to bring in and the local-only ones, how to integrate (merge / rebase / ff-only, the default from settings) with what that does (a merge commit, rewritten IDs, ff-only fails), a warning about uncommitted changes | — |
-| | Push | Confirmation window (modal, movable and resizable): where it goes, warnings worth a look (straight to the default branch, fixup!/WIP commits, files that may hold secrets, binaries added), the commits to send on the left and, on the right, the same message, files and diff as the detail column for the selected commit or for all changes together (read-only). ↩ pushes. If upstream has commits we lack, suggest Pull (Force Push… only from there, listing the commits upstream would lose); if there is no upstream, the button is Publish instead (see below) | — |
+| | Pull | Confirmation sheet: the commits to bring in and the local-only ones, how to integrate (merge / rebase / ff-only, starting from git's settings; what each way does is its tooltip) with one line on what it does here (a merge commit, rewritten IDs), a warning about uncommitted changes. Pull is disabled when ff-only can't bring the commits in. With no upstream, the same sheet asks for the remote branch to pull from and makes it the upstream | — |
+| | Push | Confirmation sheet (attached to the window, resizable): where it goes, warnings worth a look (straight to the default branch, fixup!/WIP commits, files that may hold secrets, binaries added), the commits to send on the left and, on the right, the same message, files and diff as the detail column for the selected commit or for all changes together (read-only). ↩ pushes. If upstream has commits we lack, the same sheet lists the commits it would lose and offers Pull… or Force Push. Force Push replaces the remote branch only if it is still at the commit the sheet showed (`--force-with-lease=<ref>:<commit>`). Disabled, with the reason in its tooltip, when there is nothing to send; if there is no upstream, the button is Publish instead (see below) | — |
 | Integrate | Merge | Merge the selected commit or branch into the current branch (choose no-ff or squash in the confirmation sheet). Several selected in the sidebar or History merge in one commit (octopus), from a sheet with their order and the conflicts expected for each | List of recent branches |
 | | Rebase | Rebase the current branch onto the selection | interactive (enters History's edit mode), onto |
 | Stash | Stash | Stash (with a message field; ⌥-click stashes immediately) | Include untracked, staged only, selected files only |
@@ -340,9 +340,10 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 - Set `allowsUserCustomization = true` so that Branch, Merge, Rebase, Cherry-pick, Terminal, Finder, Open on GitHub and so on can be added and removed.
 - Show ahead/behind both as badges on Push and Pull (macOS 26 and later) and next to the branch name.
 - When unavailable, disable the item and give the reason in the tooltip ("No upstream", "Resolving conflicts").
-- Deleting a branch and dropping a stash ask first (both can be undone). A branch with commits that are in
-  neither the current branch nor its upstream lists them in the sheet and needs Delete Anyway (git's `-D`).
-- No ▾ menus on Pull, Push and Branch: one click on an icon must never send or rewrite anything. Operations that leave the machine or move branches (Pull, Push, Pop, Undo) open a sheet that says what will happen; ↩ runs it, so the keyboard costs one extra key. Fetch and Refresh run at once (they change nothing of ours). The menu shortcuts (⌃⌘L, ⌃⌘P) open the same sheets; Commit and Push does not ask again.
+- Deleting branches and dropping a stash ask first (both can be undone). Branches with commits that are in
+  neither the current branch nor their upstream list them in the sheet and need Delete Anyway (git's `-D`), one
+  branch or several.
+- No ▾ menus on Pull, Push and Branch: one click on an icon must never send or rewrite anything. Operations that talk to a remote or move HEAD, a branch or the working tree (Fetch, Pull, Push, Checkout, Merge, Rebase, Cherry-pick, Revert, Pop, Undo) open a sheet that says what will happen; ↩ runs it, so the keyboard costs one extra key. Refresh and automatic fetching run at once. The menu shortcuts (⌃⌘L, ⌃⌘P) open the same sheets; Commit and Push does not ask again, unless there is no upstream or the upstream has moved on. One operation shows one sheet: what used to be a second dialog (Pull from a diverged Push, the upstream for a Pull, the pull request after its push) happens in or right after that sheet.
 - One name in one place: while the toolbar shows the search field, History hides its own (the match count, previous,
   next and "matching only" stay in History); while it shows Branch, the window subtitle leaves the branch out.
 - Network git that prints nothing for 120 seconds (usually a credential prompt nobody sees) is stopped with an error saying so. It can also be cancelled from Activity.
@@ -546,17 +547,39 @@ In addition to today's "choose a file to show only its diff", offer a view that 
   each patch's subject, author and files with their line counts, whether it applies as is, and the options: for mail,
   3-way merge (starting from `am.threeWay`, off as in git); for a plain diff, staging (`--index`) and 3-way merge.
   Mail becomes commits on the current branch (`git am`); a diff goes into the working tree (`git apply`).
-- When am stops, the bar under the toolbar shows "Applying patches to main · step 1 of 3", the patch's subject and
+- When am stops, the status bar shows "Applying patches to main · step 1 of 3", the patch's subject and
   why: it doesn't apply (with Retry with 3-Way Merge when 3-way wasn't tried), it has no changes (a cover letter:
   Skip it), or it has conflicts (resolve them in Working Copy, then Continue). Skip and Abort work as in a rebase.
 - Undo: applying mail is one operation, recorded once it finishes; a diff is undone by putting back the files it
   changed.
 
+### History's edit mode
+
+Editing commits happens in one mode instead of one menu item per git command, so what will change is visible before
+anything does.
+
+- **Entry.** "Edit Commits from Here…" on a commit's context menu opens the mode in place of History, listing every
+  commit from that one up to HEAD (newest on top, as in History). The shortcuts Edit Message…, Combine with Older
+  Commit…, Drop… and Combine N Commits… (several selected) open it with that change already made, and dragging a
+  commit in History opens it with the commit moved.
+- **Rows.** Each row has what to do with the commit: Keep, Edit Message, Combine with Older (squash: the message can
+  be edited, starting from both messages), Combine with Older, Keep Its Message (fixup), Drop (struck through), Stop
+  to Change Files (edit). git's own names are in the tooltips. Rows are dragged into a new order; double-click edits
+  a message.
+- **Apply.** The status bar shows a summary ("Changes: reordered, 1 combined, 1 dropped") with Cancel and Apply
+  Changes. Nothing changes until Apply Changes, which runs one rebase from the core's `plan` (every commit in its new
+  order with its action, the messages fed to git's editor in the order git opens it). One Undo puts it all back.
+- **Merges.** The mode lists the first-parent line past merges too. When the range has a merge, the rebase uses git's
+  `--rebase-merges`: git writes the todo with its merges, and only the commands of the edited commits are changed, so
+  merges and the commits they brought in are recreated as they were. A merge's row can only be kept, rows can't be
+  dragged across a merge, and the commit right above a merge can't be combined with it. Split stays a separate item
+  on the context menu (it stops so the changes can be committed in parts).
+
 ## 8. Resolving conflicts (the embedded merge editor)
 
 ### Flow
 
-1. When a merge, rebase, cherry-pick or stash pop produces conflicts, show a bar under the toolbar and select Conflicts in the sidebar.
+1. When a merge, rebase, cherry-pick or stash pop produces conflicts, show the row in the status bar, switch to Working Copy and select the first conflicted file, which opens the merge editor. No alert.
 2. The Conflicts screen is "left: the list of conflicted files (unresolved / resolved)" and "right: the merge editor". Not a separate window; it can only be popped out with ⤢.
 3. When everything is resolved, Continue on the bar is highlighted. For a rebase, Continue moves on to the next commit, and if there are new conflicts it goes straight on to open the next file.
 4. Abort from the bar at any time (it stays in the oplog, so Undo can also revert it).
@@ -679,9 +702,42 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 | Window | Standard (minimize, tabs, merge all windows), Repositories ⌘⇧R, Activity ⌥⌘A |
 | Help | List of shortcuts, open the log location |
 
-- Context menus show the same operations under the same names as the menu bar (one name to remember).
+- Context menus show the same operations under the same names as the menu bar (one name to remember). Every
+  command is defined once (`apps/macos/Sources/AmonHen/Commands.swift`: title, shortcut, tooltip) with an id that is
+  also the GTK4 front end's action name (`win.<id>`); the menu bar is built from that table, and context menus take
+  their titles with a target from the same file ("New Branch from …", "Copy Short ID" with 8 characters everywhere).
+- The View menu is History's display menu (order, items, one line, fold, ancestors, and the commit details: monospaced
+  message, avatars, all files in one diff, files as a tree); History's bar button and header show the same menu.
 - Unavailable items are disabled, not removed (so their place can be remembered).
+- **Status bar.** One bar at the bottom of the window, under the page, holds what is going on: a merge, rebase or
+  cherry-pick in progress (Continue, Skip, Abort), a failure (the cause, the next step, Details), a lost connection,
+  and for a few seconds what a finished operation did ("Pushed main to origin/main"). A failure goes away once a later
+  operation succeeds. GTK4 uses an action bar for the same.
+- Everything the menu bar has can also be reached inside the window, so the GTK4 front end can have the same
+  window without a menu bar: the toolbar's sidebar toggle, ≡ (More: Quick Open, New Worktree, Prune Worktrees,
+  Create Pull Request, Open on GitHub, Open in Terminal, Show in Finder, Rebuild History, Repository Settings,
+  Activity, Settings; the same list as GTK4's primary menu), Refresh ▾ (Rebuild History), History's bar (Go to
+  HEAD, the display menu) and the find button above a commit's diff.
 - Undo for git operations lives in Repository > Undo (⌥⌘Z), separate from Edit's ⌘Z (undoing text). So that ⌘Z never unexpectedly reverts a git operation.
+
+### Confirmations and wording
+
+- **What asks first** is a judgement of experience, not of whether it can be undone: anything that talks to a remote
+  (Fetch, Push, tags on a remote), moves HEAD, a branch or the working tree (Checkout, Pull, Merge, Rebase, Reset,
+  Cherry-pick, Revert, Apply, Pop, Undo, Fast-Forward), or deletes (branches, tags, stashes, commits, file changes, a
+  worktree). Staying inside the window (Refresh, Stage, Unstage, discarding selected lines, Favorites, Archive) does
+  not ask.
+- **The same operation asks the same way** from the toolbar, the menu bar, a context menu, a drag or a page's own
+  button. A sidebar Merge or Rebase shows the same sheet as the toolbar's, without the choice of what to merge.
+- **One sheet per operation**, attached to the window; never an app-modal alert. Anything to choose before running
+  (the upstream, Soft / Mixed / Hard, the message) is in that sheet. "Nothing to push" and "No branch is checked
+  out" are not dialogs: the control is disabled and its tooltip says why.
+- **Words.** The title is one question starting with the verb and naming the target ("Delete feature?"). The
+  message is at most two sentences and ends with either "You can Undo this (⌥⌘Z)." or "This can't be undone.". The
+  button repeats the title's verb, never "OK". A failure is titled "Couldn't <operation>".
+- **Red** is only for what can't be undone (Force Push, deleting or replacing tags on a remote, deleting an
+  untracked file, removing a worktree with uncommitted changes, closing the merge editor without saving); Return
+  doesn't press it. "…" is only on items that open a sheet.
 
 ## 12. Integration with GitHub and others
 

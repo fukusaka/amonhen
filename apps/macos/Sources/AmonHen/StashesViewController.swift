@@ -210,22 +210,27 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
     private func branch(from stash: Stash) {
         guard let actions else { return }
         let name = stash.item.name
-        guard let branch = actions.ask(
-            L("New Branch from %@", name),
-            message: L("Creates the branch at the commit %@ was made on, switches to it and applies the stash there. The stash is removed once it applies.", name),
-            ok: L("Create")) else { return }
-        actions.perform(["op": "stashBranch", "name": name, "branch": branch])
+        Task { @MainActor in
+            guard let branch = await actions.ask(
+                L("New Branch from %@", name),
+                message: L("Created where the stash was made, checked out, and the stash applied there (then dropped)."),
+                ok: L("Create")) else { return }
+            actions.perform(["op": "stashBranch", "name": name, "branch": branch])
+        }
     }
 
     private func apply(_ stash: Stash, pop: Bool) {
-        actions?.perform(["op": "stashApply", "name": stash.item.name, "pop": pop])
+        actions?.popWithConfirmation(name: stash.item.name, message: stash.item.detail, pop: pop)
     }
 
     private func drop(_ stash: Stash) {
         guard let actions else { return }
         let name = stash.item.name
-        guard actions.confirm(L("Drop %@?", name), message: (stash.item.detail.map { $0 + "\n" } ?? "") + L("You can Undo it afterwards (⌥⌘Z)."), ok: L("Drop")) else { return }
-        actions.perform(["op": "stashDrop", "name": name])
+        Task { @MainActor in
+            guard await actions.confirm(L("Drop %@?", name), message: (stash.item.detail.map { "“\($0)”\n" } ?? "") + Actions.canUndo,
+                                        ok: "Drop") else { return }
+            actions.perform(["op": "stashDrop", "name": name])
+        }
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {
@@ -237,10 +242,10 @@ final class StashesViewController: NSSplitViewController, NSTableViewDataSource,
         func add(_ title: String, _ handler: @escaping () -> Void) {
             menu.addItem(ClosureMenuItem(title: title, action: handler))
         }
-        add("Apply \(name)") { [weak self] in self?.apply(stash, pop: false) }
-        add("Pop \(name)") { [weak self] in self?.apply(stash, pop: true) }
+        add(Titles.apply(name)) { [weak self] in self?.apply(stash, pop: false) }
+        add(Titles.pop(name)) { [weak self] in self?.apply(stash, pop: true) }
         add(L("Drop %@…", name)) { [weak self] in self?.drop(stash) }
-        add(L("New Branch from %@…", name)) { [weak self] in self?.branch(from: stash) }
+        add(Titles.newBranch(from: name)) { [weak self] in self?.branch(from: stash) }
         menu.addItem(.separator())
         add(L("Copy Name")) {
             NSPasteboard.general.clearContents()

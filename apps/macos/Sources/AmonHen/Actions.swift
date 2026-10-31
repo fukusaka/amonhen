@@ -11,6 +11,10 @@ final class Actions {
     var onFetch: (() -> Void)?
     /// 次に Undo される操作の名前が変わった。
     var onUndoChange: ((String?) -> Void)?
+    /// 操作が最後まで終わった（ステータスバーに一言出し、前の失敗の行を消す）。
+    var onSuccess: (([String: Any]) -> Void)?
+    /// 操作がコンフリクトか途中で止まった（Working Copy を開いて最初のコンフリクトを選ぶ）。なければ警告のシートを出す。
+    var onStop: (() -> Void)?
     /// 操作が失敗した（ウィンドウの帯で知らせる）。なければ警告のシートを出す。
     var onFailure: ((OperationFailure) -> Void)?
     /// 書き込む先の worktree の名前（worktree が 2 つ以上あるときだけ）。確認のシートに出す。
@@ -36,6 +40,14 @@ final class Actions {
                 let json = try Repository.json(command)
                 let result = try await Task.detached(priority: .userInitiated) { try repository.run(json: json) }.value
                 switch result.outcome {
+                case .conflict where onStop != nil && !result.remaining.isEmpty:
+                    // 1 つずつの merge が途中で止まった。まだ merge していないものは、ここでしか言えない。
+                    onStop?()
+                    await alert(L("Not merged yet: %@", ListFormatter.localizedString(byJoining: result.remaining)),
+                                L("Merge them again after resolving these conflicts."))
+                case .conflict where onStop != nil, .stopped where onStop != nil:
+                    // どこで止まったか・次に何をするかはウィンドウの帯に出る。Working Copy でコンフリクトを開く。
+                    onStop?()
                 case .conflict where (command["op"] as? String) == "am":
                     // 当たらずに止まったのか、3-way でコンフリクトを残したのかは、帯に出す。
                     await alert(L("Stopped at a Patch"), L("The bar under the toolbar says why and what you can do next."))
@@ -50,6 +62,7 @@ final class Actions {
                 default:
                     break
                 }
+                if result.outcome == nil || result.outcome == .done { onSuccess?(command) }
                 completion?(result)
                 if let op = command["op"] as? String, op == "fetch" || op == "pull" { onFetch?() }
             } catch {
@@ -120,8 +133,13 @@ final class Actions {
         }
     }
 
-    /// 名前を入れてもらう。キャンセルなら nil。
-    func ask(_ title: String, message: String = "", initial: String = "", ok: String = "OK") -> String? {
+    /// 確認の文の終わりに置く定型（docs/ux.md の「Confirmations and wording」）。この 2 つ以外の言い方はしない。
+    static let canUndo = L("You can Undo this (⌥⌘Z).")
+    static let cantUndo = L("This can’t be undone.")
+
+    /// 名前を入れてもらう（ウィンドウのシートで）。キャンセルなら nil。
+    @MainActor
+    func ask(_ title: String, message: String = "", initial: String = "", ok: String) async -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
@@ -131,23 +149,31 @@ final class Actions {
         field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
         alert.accessoryView = field
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespaces)
         return value.isEmpty ? nil : value
     }
 
-    /// 取り消せない操作の前に確かめる。
-    func confirm(_ title: String, message: String, ok: String) -> Bool {
+    /// 実行の前に確かめる（ウィンドウのシートで）。`destructive` は元に戻せないもの（ボタンを赤く、↩ では押せない）。
+    @MainActor
+    func confirm(_ title: String, message: String, ok: String, destructive: Bool = false, in host: NSWindow? = nil) async -> Bool {
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = message
-        alert.addButton(withTitle: ok)
+        let button = alert.addButton(withTitle: ok)
+        button.hasDestructiveAction = destructive
         alert.addButton(withTitle: L("Cancel"))
-        return alert.runModal() == .alertFirstButtonReturn
+        if destructive {
+            button.keyEquivalent = ""
+            alert.buttons[1].keyEquivalent = "\r"
+        }
+        if let host { return await alert.beginSheetModal(for: host) == .alertFirstButtonReturn }
+        return await present(alert) == .alertFirstButtonReturn
     }
 
-    /// 複数行のメッセージを編集してもらう。キャンセルなら nil。
-    func editMessage(_ title: String, initial: String, ok: String) -> String? {
+    /// 複数行のメッセージを編集してもらう（ウィンドウのシートで）。キャンセルなら nil。
+    @MainActor
+    func editMessage(_ title: String, initial: String, ok: String) async -> String? {
         let alert = NSAlert()
         alert.messageText = title
         alert.addButton(withTitle: ok)
@@ -164,7 +190,7 @@ final class Actions {
         scroll.documentView = text
         alert.accessoryView = scroll
         alert.window.initialFirstResponder = text
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        guard await present(alert) == .alertFirstButtonReturn else { return nil }
         let value = text.string.trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
     }
@@ -185,96 +211,92 @@ final class Actions {
         perform(["op": "rewrite", "label": label, "edit": edit])
     }
 
-    func reword(_ oid: String) {
-        Task {
-            guard let message = await text(["op": "commitMessage", "oid": oid]),
-                  let edited = editMessage(L("Edit Message"), initial: message, ok: L("Change")) else { return }
-            rewrite("Reword \(oid.prefix(8))", ["kind": "reword", "oid": oid, "message": edited])
-        }
-    }
-
-    func squash(_ oid: String) {
-        Task {
-            guard let message = await text(["op": "squashMessage", "oid": oid]),
-                  let edited = editMessage("Squash into Parent", initial: message, ok: "Squash") else { return }
-            rewrite("Squash \(oid.prefix(8))", ["kind": "squash", "oid": oid, "message": edited])
-        }
-    }
-
-    /// 選んだ連続したコミットを 1 つにまとめる。メッセージは古い順に並べたものを初期値に編集してもらう。
-    func squash(range oids: [String]) {
-        let repository = self.repository
-        Task {
-            let result: Result<SquashRangeInfo, Error>
-            do {
-                let json = try Repository.json(["op": "squashRangeMessage", "oids": oids])
-                result = await Task.detached { Result { try repository.info(json: json, as: SquashRangeInfo.self) } }.value
-            } catch {
-                result = .failure(error)
-            }
-            switch result {
-            case let .failure(error):
-                await alert(L("Can’t Squash"), "\(error)")
-            case let .success(info):
-                let title = "Squash \(oids.count) Commits"
-                guard let edited = editMessage(title, initial: info.message, ok: "Squash") else { return }
-                rewrite(title, ["kind": "squashRange", "oid": info.oldest, "last": info.newest, "message": edited])
-            }
-        }
-    }
-
     /// 編集できるコミット（新しい順）。
     func editableCommits() async -> [String] {
         await text(["op": "editableCommits"])?.split(separator: "\n").map(String.init) ?? []
     }
 
+    /// HEAD から first-parent で辿ったコミット（新しい順、merge を越えて）と、merge かどうか（History の編集モード）。
+    func firstParentCommits() async -> [(oid: String, merge: Bool)] {
+        (await text(["op": "editableCommits", "throughMerges": true])?.split(separator: "\n") ?? []).map { line in
+            let parts = line.split(separator: " ")
+            return (String(parts[0]), parts.count > 1)
+        }
+    }
+
     // MARK: - よく使う操作
 
     func newBranch(at start: String) {
-        guard let name = ask("New Branch", message: L("Name of the branch to create from %@", start), ok: L("Create and Switch")) else { return }
-        perform(["op": "createBranch", "name": name, "start": start, "checkout": true])
+        Task { @MainActor in
+            guard let name = await ask(L("New Branch from %@", start), message: L("Name of the branch. It is checked out."),
+                                       ok: L("Create")) else { return }
+            perform(["op": "createBranch", "name": name, "start": start, "checkout": true])
+        }
+    }
+
+    func renameBranch(_ name: String) {
+        Task { @MainActor in
+            guard let to = await ask(L("Rename %@", name), message: L("New name of the branch."), initial: name, ok: "Rename"),
+                  to != name else { return }
+            perform(["op": "renameBranch", "from": name, "to": to])
+        }
     }
 
     func newTag(at target: String) {
-        guard let name = ask("New Tag", message: L("Name of the tag for %@", target), ok: L("Create")) else { return }
-        perform(["op": "createTag", "name": name, "target": target])
+        Task { @MainActor in
+            guard let name = await ask(L("New Tag at %@", target), message: L("Name of the tag."), ok: L("Create")) else { return }
+            perform(["op": "createTag", "name": name, "target": target])
+        }
     }
 
     func fetch() {
         perform(["op": "fetch"])
     }
 
-    /// 今のブランチ（detached HEAD なら HEAD）を `target` に動かす（`mode`: soft・mixed・hard）。先に確かめる。
-    func reset(to target: String, mode: String) {
-        let short = String(target.prefix(8))
-        let name = currentBranch ?? "HEAD"
-        let what = switch mode {
-        case "soft": L("Moves %@ to %@. The changes of the commits taken off stay staged.", name, short)
-        case "mixed": L("Moves %@ to %@. The changes of the commits taken off stay in the working tree, unstaged.", name, short)
-        default: L("Moves %@ to %@ and makes the working tree match it. Uncommitted changes, if any, are kept as a stash first.", name, short)
+    /// 今のブランチ（detached HEAD なら HEAD）を `target` に動かす。動かし方（soft・mixed・hard）は確認のシートで選ぶ。
+    func reset(to target: String) {
+        Task { @MainActor in
+            let short = String(target.prefix(8))
+            let name = currentBranch ?? "HEAD"
+            let alert = NSAlert()
+            alert.messageText = L("Reset %@ to %@?", name, short)
+            alert.informativeText = L("Commits taken off stay in Reflog.") + " " + Self.canUndo
+            alert.addButton(withTitle: "Reset")
+            alert.addButton(withTitle: L("Cancel"))
+            let modes: [(String, String)] = [
+                ("soft", L("Soft: keep the changes staged")),
+                ("mixed", L("Mixed: keep the changes in the working tree")),
+                ("hard", L("Hard: match the commit (uncommitted changes are stashed first)")),
+            ]
+            let target_ = ClosureTarget {}
+            let radios = modes.map { NSButton(radioButtonWithTitle: $0.1, target: target_, action: #selector(ClosureTarget.fire)) }
+            radios[1].state = .on
+            let stack = NSStackView(views: radios)
+            stack.orientation = .vertical
+            stack.alignment = .leading
+            stack.spacing = 4
+            stack.frame.size = stack.fittingSize
+            alert.accessoryView = stack
+            let response = await present(alert)
+            withExtendedLifetime(target_) {}
+            guard response == .alertFirstButtonReturn,
+                  let mode = zip(radios, modes).first(where: { $0.0.state == .on })?.1.0 else { return }
+            perform(["op": "reset", "oid": target, "mode": mode])
         }
-        let message = what + "\n" + L("Commits taken off can still be found in Reflog. You can Undo it afterwards (⌥⌘Z).")
-        guard confirm(L("Reset %@ to %@?", name, short), message: message, ok: "Reset") else { return }
-        perform(["op": "reset", "oid": target, "mode": mode])
     }
 
-    /// 右クリックの「Reset … to …」（Soft・Mixed・Hard を選ぶ小メニュー）。History と Reflog で使う。
+    /// 右クリックの「Reset … to …」。History と Reflog で使う。
     func resetMenuItem(to target: String) -> NSMenuItem {
-        let item = NSMenuItem(title: "Reset \(currentBranch ?? "HEAD") to \(target.prefix(8))", action: nil, keyEquivalent: "")
-        let menu = NSMenu()
-        for (title, mode) in [
-            (L("Soft (Keep Changes Staged)…"), "soft"),
-            (L("Mixed (Keep Changes Unstaged)…"), "mixed"),
-            (L("Hard (Match the Commit)…"), "hard"),
-        ] {
-            menu.addItem(ClosureMenuItem(title: title) { [weak self] in self?.reset(to: target, mode: mode) })
-        }
-        item.submenu = menu
-        return item
+        ClosureMenuItem(title: Titles.reset(currentBranch ?? "HEAD", to: String(target.prefix(Titles.shortIDLength)))) { [weak self] in self?.reset(to: target) }
     }
 
     /// 作業中の変更を stash する。untracked のファイルを含めるかを選べる。
     func stash() {
+        Task { @MainActor in await stashSheet() }
+    }
+
+    @MainActor
+    private func stashSheet() async {
         let alert = NSAlert()
         alert.messageText = "Stash Changes"
         alert.informativeText = L("Message (optional)")
@@ -288,44 +310,50 @@ final class Actions {
         box.addSubview(untracked)
         alert.accessoryView = box
         alert.window.initialFirstResponder = field
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard await present(alert) == .alertFirstButtonReturn else { return }
         var command: [String: Any] = ["op": "stashPush", "includeUntracked": untracked.state == .on]
         let message = field.stringValue.trimmingCharacters(in: .whitespaces)
         if !message.isEmpty { command["message"] = message }
         perform(command)
     }
 
-    /// ブランチ（nil なら今のブランチ）を上流に push する。上流がなければ、送り先を選ぶ Publish のシートを出す。
-    func push(branch: String? = nil, force: Bool = false) {
+    /// ブランチ（nil なら今のブランチ）を上流に push する（確認は済んでいる）。`expect` は Force Push で置き換えてよい
+    /// リモートのコミット。送り終えたら `then`。
+    func push(branch: String, force: Bool, expect: String?, then: (() -> Void)? = nil) {
         let repository = self.repository
         Task {
-            let (branch, upstream): (String?, String?) = await Task.detached {
-                if let branch {
-                    let item = (try? repository.loadRefs())?.items.first { $0.kind == .local && $0.name == branch }
-                    return (branch, item.flatMap { $0.gone ? nil : $0.detail })
+            let upstream: String? = await Task.detached {
+                if let item = (try? repository.loadRefs())?.items.first(where: { $0.kind == .local && $0.name == branch }) {
+                    return item.gone ? nil : item.detail
                 }
-                let status = try? repository.loadStatus()
-                return (status?.branch, status?.upstream)
+                return nil
             }.value
-            guard let branch else {
-                await alert(L("Can’t Push"), L("No branch is checked out."))
-                return
+            guard let upstream, let slash = upstream.firstIndex(of: "/") else {
+                return publishWithConfirmation(branch: branch, then: then)
             }
-            if let upstream, let slash = upstream.firstIndex(of: "/") {
-                let remote = String(upstream[..<slash])
-                let remoteBranch = String(upstream[upstream.index(after: slash)...])
-                perform(["op": "push", "remote": remote, "branch": branch, "remoteBranch": remoteBranch,
-                         "force": force, "setUpstream": false])
-            } else {
-                publishWithConfirmation(branch: branch)
-            }
+            var command: [String: Any] = [
+                "op": "push", "remote": String(upstream[..<slash]), "branch": branch,
+                "remoteBranch": String(upstream[upstream.index(after: slash)...]), "force": force, "setUpstream": false,
+            ]
+            if force, let expect { command["expect"] = expect }
+            perform(command) { _ in then?() }
+        }
+    }
+
+    /// Commit and Push の push。聞かずに送るが、上流がない・上流が先に進んでいるときは、Push のシートを出す（失敗の帯で
+    /// 知らせるより、そこで選べるほうがよい）。
+    func pushWithoutAsking() {
+        let repository = self.repository
+        Task {
+            let status = try? await Task.detached { try repository.loadStatus() }.value
+            guard let branch = status?.branch else { return NSSound.beep() }
+            guard let upstream = status?.upstream else { return publishWithConfirmation(branch: branch) }
+            let behind = await Task.detached {
+                (try? repository.info(["op": "between", "base": "HEAD", "tip": upstream, "limit": 1], as: CommitRange.self))?.count ?? 0
+            }.value
+            if behind > 0 { return pushWithConfirmation() }
+            push(branch: branch, force: false, expect: nil)
         }
     }
 }
 
-/// `squashRangeMessage` の結果: まとめる範囲の両端と、メッセージの初期値。
-nonisolated struct SquashRangeInfo: Decodable, Sendable {
-    let oldest: String
-    let newest: String
-    let message: String
-}

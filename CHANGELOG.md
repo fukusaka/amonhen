@@ -17,6 +17,27 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- Push and Pull each confirm in one sheet: a diverged Push offers Pull… or Force Push there, and Pull with no upstream
+  picks the remote branch there. Repository > Pull With is gone, and Create Pull Request goes on after its push.
+- Force Push replaces the remote branch only if it is still at the commit the sheet showed, so commits fetched in the
+  background are not lost unseen.
+- Push is disabled when there is nothing to send, and a conflict opens Working Copy at the first conflicted file
+  instead of an alert.
+- Every confirmation is a sheet on the window, and an operation asks the same way from the toolbar, a context menu
+  or a drag. Fetch, Checkout, Cherry-pick, Revert, Apply and a sidebar Merge or Rebase now ask first; Reset picks
+  Soft, Mixed or Hard in its sheet.
+- The menu bar and context menus use one name per operation (New Branch from, 8-character short IDs, translated
+  Checkout, Merge and Push items). The View menu is History's display menu, now with the commit detail toggles.
+- Everything in the menu bar is also in the window: a sidebar toggle and a More menu (≡) in the toolbar, Rebuild
+  History under Refresh, Go to HEAD in History's bar and a find button above the diff.
+- Commits are edited in History's edit mode: choose Keep, Edit Message, Combine with Older, Drop or Stop to Change
+  Files for each commit and drag them into order, then Apply Changes runs it all as one rebase with one Undo. It also
+  reaches past merges, which are recreated as they were (git's `--rebase-merges`).
+- The in-progress, failure and connection bars moved to a status bar at the bottom of the window, which also says what
+  a finished operation did. A failure clears once a later operation succeeds.
+- Working Copy's file context menu stages, discards, copies the path and opens the file.
+- Deleting several branches offers Delete Anyway for those with commits nowhere else. Only what can't be undone has a
+  red button, and failures read "Couldn't …".
 - Edit Message and Squash use git's own `reword` and `squash`, so notes follow `notes.rewrite.*` as in git, and
   Edit Message runs the pre-commit and commit-msg hooks as git does. Lines starting with `#` are still kept.
 
