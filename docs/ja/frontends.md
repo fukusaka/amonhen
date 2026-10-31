@@ -75,7 +75,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | タブ・窓で開く、Finder（ファイル）・Terminal | △ | △ | n/a | n/a | macOS: Open in Editor はない。<br>GTK4: Open in Editor はない。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | n/a | n/a |  |
 | Quick Open（あいまい検索） | ✓ | ✓ | n/a | n/a | GTK4: 新しい窓で開く。 |
-| ツールバーのリポジトリ名で切り替える | ✓ | — | △ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
+| ツールバーのリポジトリ名で切り替える | ✓ | ✓ | △ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
 | Clone（自分の GitHub のリポジトリから選ぶ） | ✓ | ✓ | n/a | △ | VSCode: VSCode 自身の Git: Clone。<br>CLI: `clone <url>` だけ。 |
 | 新しいリポジトリの Init | — | — | n/a | — | macOS: docs/ux.md の File メニューにあるが、作っていない。 |
 

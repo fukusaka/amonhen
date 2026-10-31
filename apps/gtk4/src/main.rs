@@ -44,6 +44,7 @@ mod refmarks;
 mod refops;
 mod remotesheet;
 mod repobrowser;
+mod repolist;
 mod repopages;
 mod repos;
 mod reposettings;
@@ -576,7 +577,24 @@ fn build_tab(
     let pending = Rc::new(Cell::new(0u32));
     let tab = tabs::Tab::new(&name, &repos::normalize(&path), pending.clone());
     let header = tab.header.clone();
-    header.set_title_widget(Some(&titles));
+    // リポジトリ名: 押すとリポジトリの一覧を出し、選んだものにこのタブを切り替える。
+    let repository_name = {
+        let (t, a) = (Rc::downgrade(&tab), app.clone());
+        let open: repobrowser::Open = Rc::new(move |location, place| match (place, t.upgrade()) {
+            (tabs::Place::Tab, Some(tab)) => tabs::switch(&tab, location),
+            _ => tabs::open(&a, location, place),
+        });
+        let (t, a) = (Rc::downgrade(&tab), app.clone());
+        let show_all: Rc<dyn Fn()> = Rc::new(move || {
+            let host = t
+                .upgrade()
+                .and_then(|t| t.window())
+                .and_then(|w| tabs::host_of(&w));
+            tabs::show_home(&a, host);
+        });
+        repolist::button(&titles, &name, open, show_all)
+    };
+    header.set_title_widget(Some(&repository_name));
     // タブのある窓（タブは窓を移れるので、使うときに辿る）。
     let win_of = {
         let t = Rc::downgrade(&tab);
@@ -1371,6 +1389,7 @@ fn build_tab(
                                 Some("repository") => Some(buttons.repository.clone()),
                                 Some("primary") => Some(buttons.primary.clone()),
                                 Some("history-display") => Some(display_button.clone()),
+                                Some("repository-name") => Some(repository_name.clone()),
                                 _ => None,
                             };
                             if args.reflog {

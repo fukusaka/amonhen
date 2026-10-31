@@ -633,6 +633,30 @@ pub fn reopen(tab: &Rc<Tab>, location: PathBuf) {
     close_tab(tab);
 }
 
+/// ツールバーのリポジトリ名から: `tab` を `location` のリポジトリに切り替える（同じ場所に開き直して、`tab` を閉じる）。
+/// もうどこかのタブで開いていれば、そのタブを前に出す（`tab` は残す。macOS 版と同じ）。
+pub fn switch(tab: &Rc<Tab>, location: PathBuf) {
+    let key = crate::repos::normalize(&location);
+    let existing = WINDOWS.with(|w| {
+        w.borrow().iter().find_map(|h| {
+            h.tabs
+                .borrow()
+                .iter()
+                .find(|t| t.location == key)
+                .map(|t| (h.clone(), t.clone()))
+        })
+    });
+    match existing {
+        Some((host, t)) => {
+            if let Some(n) = host.notebook.page_num(&t.root) {
+                host.notebook.set_current_page(Some(n));
+            }
+            host.window.present();
+        }
+        None => reopen(tab, location),
+    }
+}
+
 /// 最後に前にあったリポジトリの窓（なければ最初の窓）。
 pub fn front_window() -> Option<Rc<RepoWindow>> {
     let last = LAST.with(|l| l.borrow().upgrade());

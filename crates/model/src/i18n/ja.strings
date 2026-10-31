@@ -1740,3 +1740,7 @@
 
 /* GTK4: 押せない「積み重ねたブランチも動かす」の理由 */
 "Moving stacked branches needs git 2.38 or newer." = "積み重ねたブランチを動かすには、git 2.38 以降が要ります。";
+/* GTK4: ツールバーのリポジトリ名の一覧 */
+"All Repositories…" = "すべてのリポジトリ…";
+"Open the repository page (Ctrl+Shift+R)" = "リポジトリのページを開く（Ctrl+Shift+R）";
+"{name} — click to switch repository" = "{name} — 押すとリポジトリを切り替える";

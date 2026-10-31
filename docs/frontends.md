@@ -75,7 +75,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Open in a tab or window; Finder / Files, Terminal | △ | △ | n/a | n/a | macOS: No Open in Editor.<br>GTK4: No Open in Editor. |
 | Fetch the selected repositories | ✓ | ✓ | n/a | n/a |  |
 | Quick Open (fuzzy search) | ✓ | ✓ | n/a | n/a | GTK4: Opens in a new window. |
-| Repository name in the toolbar switches the repository | ✓ | — | △ | n/a | VSCode: Select Repository picks among workspace repositories. |
+| Repository name in the toolbar switches the repository | ✓ | ✓ | △ | n/a | VSCode: Select Repository picks among workspace repositories. |
 | Clone (choosing from your own GitHub repositories) | ✓ | ✓ | n/a | △ | VSCode: VSCode's own Git: Clone.<br>CLI: `clone <url>` only. |
 | Init a new repository | — | — | n/a | — | macOS: Listed in docs/ux.md's File menu but not built. |
 
