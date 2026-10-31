@@ -53,11 +53,11 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Repository tabs in a window | ✓ | — | n/a | n/a | GTK4: In progress. |
+| Repository tabs in a window | ✓ | △ | n/a | n/a | GTK4: Tabs are moved between windows with menu items (Move Tab to New Window, Merge All Windows), not by dragging. |
 | Separate windows (New Window) | ✓ | ✓ | n/a | n/a |  |
-| Open windows and tabs restored at launch | ✓ | △ | n/a | n/a | GTK4: Windows only (no tabs). |
+| Open windows and tabs restored at launch | ✓ | ✓ | n/a | n/a |  |
 | Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | — | n/a | n/a | GTK4: A loading overlay and an error message only. |
-| Title shows uncommitted ● and ahead/behind | ✓ | △ | n/a | n/a | GTK4: Ahead/behind is on the Pull and Push buttons instead. |
+| Title shows uncommitted ● and ahead/behind | ✓ | ✓ | n/a | n/a | GTK4: On the tab names. |
 | App keeps running after its last window closes | ✓ | — | n/a | n/a | GTK4: Quits, as GNOME apps do. |
 
 ## 2. Bookmarks (the repository list)
@@ -72,7 +72,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Manual groups; rows dragged onto Favorites or a group | △ | △ | n/a | n/a | macOS: Groups themselves can't be reordered by dragging.<br>GTK4: No dragging. |
 | Status columns (branch, changes, ahead/behind, last commit, opened), sortable | ✓ | ✓ | n/a | n/a |  |
 | Favorites, display name, color label | ✓ | ✓ | n/a | n/a |  |
-| Open in a tab or window; Finder / Files, Terminal | △ | △ | n/a | n/a | macOS: No Open in Editor.<br>GTK4: No Open in Editor, no tabs. |
+| Open in a tab or window; Finder / Files, Terminal | △ | △ | n/a | n/a | macOS: No Open in Editor.<br>GTK4: No Open in Editor. |
 | Fetch the selected repositories | ✓ | ✓ | n/a | n/a |  |
 | Quick Open (fuzzy search) | ✓ | ✓ | n/a | n/a | GTK4: Opens in a new window. |
 | Repository name in the toolbar switches the repository | ✓ | — | △ | n/a | VSCode: Select Repository picks among workspace repositories. |

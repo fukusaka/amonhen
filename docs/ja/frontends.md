@@ -53,11 +53,11 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 
 | 機能 | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| 窓の中のリポジトリのタブ | ✓ | — | n/a | n/a | GTK4: 作業中。 |
+| 窓の中のリポジトリのタブ | ✓ | △ | n/a | n/a | GTK4: 窓の間の移動はメニュー（Move Tab to New Window・Merge All Windows）で、ドラッグではできない。 |
 | 別の窓（New Window） | ✓ | ✓ | n/a | n/a |  |
-| 起動時に窓とタブを戻す | ✓ | △ | n/a | n/a | GTK4: 窓だけ（タブがない）。 |
+| 起動時に窓とタブを戻す | ✓ | ✓ | n/a | n/a |  |
 | SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | — | n/a | n/a | GTK4: 読み込み中の表示とエラーの文だけ。 |
-| 題に未コミットの ● と ahead/behind | ✓ | △ | n/a | n/a | GTK4: ahead/behind は Pull・Push のボタンに出る。 |
+| 題に未コミットの ● と ahead/behind | ✓ | ✓ | n/a | n/a | GTK4: タブの名前に出る。 |
 | 最後の窓を閉じてもアプリは終わらない | ✓ | — | n/a | n/a | GTK4: GNOME のアプリと同じく終わる。 |
 
 ## 2. ブックマーク（リポジトリの一覧）
@@ -72,7 +72,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 手で作るグループ・行を Favorites やグループへドラッグ | △ | △ | n/a | n/a | macOS: グループそのものはドラッグで並べ替えられない。<br>GTK4: ドラッグはない。 |
 | 状態の列（ブランチ・変更・ahead/behind・最後のコミット・開いた時）、並べ替え | ✓ | ✓ | n/a | n/a |  |
 | お気に入り・表示名・色のラベル | ✓ | ✓ | n/a | n/a |  |
-| タブ・窓で開く、Finder（ファイル）・Terminal | △ | △ | n/a | n/a | macOS: Open in Editor はない。<br>GTK4: Open in Editor もタブもない。 |
+| タブ・窓で開く、Finder（ファイル）・Terminal | △ | △ | n/a | n/a | macOS: Open in Editor はない。<br>GTK4: Open in Editor はない。 |
 | 選んだリポジトリを Fetch | ✓ | ✓ | n/a | n/a |  |
 | Quick Open（あいまい検索） | ✓ | ✓ | n/a | n/a | GTK4: 新しい窓で開く。 |
 | ツールバーのリポジトリ名で切り替える | ✓ | — | △ | n/a | VSCode: Select Repository でワークスペースのリポジトリから選ぶ。 |
