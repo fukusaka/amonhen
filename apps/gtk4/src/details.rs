@@ -46,8 +46,10 @@ impl Person {
 
     fn show(&self, name: &str, email: &str, time: &str, recorded: Option<String>) {
         let e = |s: &str| glib::markup_escape_text(s).to_string();
+        // 名前を押すと、History をその人のコミットで絞り込む（[`Details::connect_person`]）。
         let mut markup = format!(
-            "<b>{}</b>  <span size=\"small\" alpha=\"55%\">{}</span>\n<span alpha=\"70%\">{}\n{}</span>",
+            "<a href=\"person:{}\"><b>{}</b></a>  <span size=\"small\" alpha=\"55%\">{}</span>\n<span alpha=\"70%\">{}\n{}</span>",
+            e(&glib::Uri::escape_string(name, None, false)),
             e(name),
             e(&self.role),
             e(email),
@@ -99,6 +101,26 @@ const PAIRS: [(PairMode, &str); 3] = [
 ];
 
 impl Details {
+    /// 作者・コミッターの名前を押したら `f(名前)` を呼ぶ（macOS 版と同じく History をその人で絞り込む）。
+    pub fn connect_person(&self, f: impl Fn(&str) + 'static) {
+        let f = Rc::new(f);
+        for person in [&self.author, &self.committer] {
+            let f = f.clone();
+            person.text.connect_activate_link(move |_, uri| {
+                match uri
+                    .strip_prefix("person:")
+                    .map(|n| glib::Uri::unescape_string(n, None::<&str>))
+                {
+                    Some(Some(name)) => {
+                        f(&name);
+                        glib::Propagation::Stop
+                    }
+                    _ => glib::Propagation::Proceed,
+                }
+            });
+        }
+    }
+
     pub fn new() -> Self {
         let label = |css: &[&str]| {
             let l = gtk::Label::new(None);

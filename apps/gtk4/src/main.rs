@@ -577,6 +577,15 @@ fn build_tab(
     columns.set_end_child(Some(&right));
     columns.set_position(560);
     connect_selection(&view, &details, &diff, &right, &pending);
+    // 詳細の作者・コミッターの名前を押す: History をその人のコミットで探す（macOS 版と同じ）。
+    let (s, p) = (search.clone(), pending.clone());
+    details.connect_person(move |name| {
+        s.search(
+            &format!("author:\"{}\"", name.replace('"', "")),
+            false,
+            p.clone(),
+        );
+    });
     // AI の翻訳・解説（詳細の右上）。
     let current_repo: aiactions::CurrentRepo = {
         let v = view.downgrade();
