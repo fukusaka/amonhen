@@ -161,7 +161,6 @@ const FE_ACCELS: &[(&str, &str)] = &[
 pub const PENDING: &[&str] = &[
     "new-worktree",
     "prune-worktrees",
-    "find-in-history",
 ];
 
 /// 状態を持つので [`handlers`] とは別に登録する操作。
@@ -218,6 +217,14 @@ fn handlers() -> Vec<(&'static str, Handler)> {
             Box::new(|p| show_page(p, Page::WorkingCopy)),
         ),
         ("show-history", Box::new(|p| show_page(p, Page::History))),
+        (
+            "find-in-history",
+            Box::new(|p| {
+                // History に移って、その検索欄へ（macOS 版と同じ）。
+                show_page(p, Page::History);
+                WidgetExt::activate_action(&p.window, "win.find", None).ok();
+            }),
+        ),
         ("show-stashes", Box::new(show_stashes)),
         ("show-reflog", Box::new(|p| show_page(p, Page::Reflog))),
         ("refresh", Box::new(|p| (p.reload)())),
