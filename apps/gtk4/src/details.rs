@@ -91,6 +91,8 @@ pub struct Details {
     pub tools: gtk::Box,
     /// メッセージの下に出す AI の返事（コミットを選び直したら消す）。
     pub ai: gtk::Box,
+    /// 署名を検証した場所（Signature の吹き出しに出す）。
+    place: RefCell<crate::signature::Place>,
 }
 
 /// 2 つ選んだときの差分の取り方の切り替え（macOS 版と同じ言葉。訳の鍵）。
@@ -217,9 +219,15 @@ impl Details {
             selection_lines,
             tools,
             ai,
+            place: RefCell::default(),
         };
         details.clear();
         details
+    }
+
+    /// 開いたリポジトリの場所（署名を検証した場所を、Signature の吹き出しに出すため）。
+    pub fn set_location(&self, location: &str) {
+        self.place.replace(crate::signature::Place::of(location));
     }
 
     pub fn clear(&self) {
@@ -418,8 +426,9 @@ impl Details {
                 rows.push(("Rev".into(), rev.into()));
             }
         }
-        if let Some(signature) = signature_text(info, extras) {
-            rows.push(("Signature".into(), signature));
+        let signature = signature_text(info, extras);
+        if let Some(signature) = &signature {
+            rows.push(("Signature".into(), signature.clone()));
         }
         let refs = strings(&info["refs"]);
         if !refs.is_empty() {
@@ -444,7 +453,7 @@ impl Details {
                         text.push_str(&format!(" — {}", str_of(tag, "subject")));
                     }
                     let check = (!tag["signature"].is_null()).then_some(&tag["signature"]);
-                    if let Some(sig) = signature_label(tag["signed"].as_str(), check, true) {
+                    if let Some(sig) = signature_label(tag["signed"].as_str(), check, true, "") {
                         text.push_str(&format!("  {sig}"));
                     }
                 }
@@ -468,7 +477,8 @@ impl Details {
             let check = extras
                 .map(|e| &e["mergedTagSignatures"][i])
                 .filter(|s| !s.is_null());
-            if let Some(sig) = signature_label(tag["signed"].as_str(), check, extras.is_some()) {
+            if let Some(sig) = signature_label(tag["signed"].as_str(), check, extras.is_some(), "")
+            {
                 text.push_str(&format!("  {sig}"));
             }
             rows.push(("Merged Tag".into(), text));
@@ -525,6 +535,22 @@ impl Details {
             head.set_yalign(0.0);
             head.add_css_class("dim-label");
             head.add_css_class("caption");
+            // 署名の行は、押すと吹き出しで詳細を出す（macOS 版と同じ）。
+            if title == "Signature" {
+                let check = extras
+                    .map(|e| e["signature"].clone())
+                    .filter(|s| !s.is_null());
+                let cell = crate::signature::row(
+                    &value,
+                    check,
+                    info["signed"].as_str().unwrap_or("gpg").to_owned(),
+                    str_of(info, "committerEmail").to_owned(),
+                    self.place.borrow().clone(),
+                );
+                self.table.attach(&head, 0, i as i32, 1, 1);
+                self.table.attach(&cell, 1, i as i32, 1, 1);
+                continue;
+            }
             let cell = gtk::Label::new(Some(&value));
             cell.set_xalign(0.0);
             cell.set_wrap(true);
@@ -566,27 +592,30 @@ impl Details {
 /// 署名の行（macOS 版と同じ短い言葉と、種類・署名者）。署名がなければ None。
 fn signature_text(info: &Value, extras: Option<&Value>) -> Option<String> {
     let check = extras.map(|e| &e["signature"]).filter(|s| !s.is_null());
-    signature_label(info["signed"].as_str(), check, extras.is_some())
+    signature_label(
+        info["signed"].as_str(),
+        check,
+        extras.is_some(),
+        str_of(info, "committerEmail"),
+    )
 }
 
-/// 署名の状態の文（署名の種類 `kind`、検証の結果 `check`、時間のかかる分を読んだか `loaded`）。署名がなければ
-/// None。
-fn signature_label(kind: Option<&str>, check: Option<&Value>, loaded: bool) -> Option<String> {
+/// 署名の状態の文（署名の種類 `kind`、検証の結果 `check`、時間のかかる分を読んだか `loaded`、署名者と比べる
+/// メールアドレス `committer`）。署名がなければ None。
+fn signature_label(
+    kind: Option<&str>,
+    check: Option<&Value>,
+    loaded: bool,
+    committer: &str,
+) -> Option<String> {
+    use crate::signature::Status;
     if kind.is_none() && check.is_none() {
         return None;
     }
     let label = match check {
-        None if !loaded => "Checking…",
-        None => "No key",
-        Some(s) => match str_of(s, "status") {
-            "G" if matches!(str_of(s, "trust"), "ultimate" | "full" | "") => "Verified",
-            "G" | "U" => "Untrusted key",
-            "X" | "Y" => "Expired",
-            "R" => "Revoked key",
-            "B" => "Bad signature",
-            "V" => "Can’t verify",
-            _ => "No key",
-        },
+        None if !loaded => Status::Pending.label(),
+        None => Status::NoKey.label(),
+        Some(_) => Status::new(check, committer, kind).label(),
     };
     let signer = check.map(|s| str_of(s, "signer")).unwrap_or_default();
     let kind = kind.unwrap_or("gpg").to_uppercase();

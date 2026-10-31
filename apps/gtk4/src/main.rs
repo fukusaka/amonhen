@@ -51,6 +51,7 @@ mod search;
 mod settings;
 mod sheets;
 mod sidebar;
+mod signature;
 mod sshhosts;
 mod stashes;
 mod statusbar;
@@ -233,6 +234,7 @@ fn parse_args() -> Result<Args, String> {
                 let file = it.next().ok_or("--toggle-viewed <n>")?;
                 commitfiles::toggle_viewed_once(file.parse().map_err(|_| "--toggle-viewed <n>")?);
             }
+            "--signature-popover" => signature::popover_once(),
             "--diff-file-menu" => {
                 let file = it.next().ok_or("--diff-file-menu <n>")?;
                 commitfiles::file_menu_once(file.parse().map_err(|_| "--diff-file-menu <n>")?);
@@ -572,6 +574,7 @@ fn build_tab(
 
     // 右の列: 選んだコミットの詳細と差分。
     let details = Rc::new(Details::new());
+    details.set_location(&text);
     // 変更ファイルの一覧と差分（macOS 版の詳細の下の部分）。
     let commit_diff = {
         let v = view.downgrade();

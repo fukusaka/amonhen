@@ -242,7 +242,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Switch to the single-file diff | ✓ | ✓ | — | n/a |  |
 | Diff of a selection (range squashed, A..B / A...B, scattered) | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`. |
 | Actions on a selection (cherry-pick, revert, squash, copy IDs) | ✓ | ✓ | — | △ | CLI: Via `amonhen run`. |
-| Signature popover | ✓ | — | — | n/a | GTK4: A text row in the details. |
+| Signature popover | ✓ | ✓ | — | n/a |  |
 | Word highlights and syntax colors | ✓ | ✓ | △ | n/a | VSCode: Words only. |
 
 ## Blame / File History

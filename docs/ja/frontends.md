@@ -242,7 +242,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 1 ファイルずつの差分に切り替える | ✓ | ✓ | — | n/a |  |
 | 選んだものの差分（範囲をまとめる・A..B / A...B・飛び飛び） | ✓ | ✓ | — | △ | CLI: `diff <rev> <rev>`。 |
 | 選んだものの操作（cherry-pick・revert・squash・ID のコピー） | ✓ | ✓ | — | △ | CLI: `amonhen run` から。 |
-| 署名のポップオーバー | ✓ | — | — | n/a | GTK4: 詳細の文の行。 |
+| 署名のポップオーバー | ✓ | ✓ | — | n/a |  |
 | 単語の強調と構文の色 | ✓ | ✓ | △ | n/a | VSCode: 単語だけ。 |
 
 ## Blame・File History
