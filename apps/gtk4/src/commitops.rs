@@ -52,6 +52,7 @@ pub fn menu(
             crate::sheets::checkout(&a, crate::sheets::CheckoutTarget::Detach(h.clone()));
         },
     ));
+    items.extend(reset(actions, &hex));
     items.push(Item::Separator);
     if !is_merge {
         let (a, h) = (actions.clone(), hex.clone());
@@ -99,6 +100,55 @@ pub fn menu(
         w.clipboard().set_text(&h);
     }));
     items
+}
+
+/// 「Reset <今のブランチ> to <コミット> ▸」と、その下の Soft・Mixed・Hard（History と Reflog の右クリック。
+/// docs/ux.md の「5c. Reset」）。Soft などは git の言葉のまま。merge・rebase などの途中なら出さない（コアも断る）。
+pub fn reset(actions: &Rc<Actions>, hex: &str) -> Option<Item> {
+    if actions.in_sequence() {
+        return None;
+    }
+    let branch = actions.head().unwrap_or_else(|| "HEAD".to_owned());
+    let modes = [
+        ("Soft…", "soft", tr!("Soft: keep the changes staged")),
+        (
+            "Mixed…",
+            "mixed",
+            tr!("Mixed: keep the changes in the working tree"),
+        ),
+        (
+            "Hard…",
+            "hard",
+            tr!("Hard: match the commit (uncommitted changes are stashed first)"),
+        ),
+    ];
+    let children = modes
+        .into_iter()
+        .map(|(title, mode, what)| {
+            let (a, h, b) = (actions.clone(), hex.to_owned(), branch.clone());
+            menu::action(title, move || {
+                // 動かし方と、外れたコミットの行き先（Reflog）と、戻せること。
+                let message = format!(
+                    "{what}\n{} {}",
+                    tr!("Commits taken off stay in Reflog."),
+                    crate::sheets::can_undo()
+                );
+                crate::sheets::confirm_then(
+                    &a,
+                    tr!(
+                        "Reset {branch} to {id}?",
+                        branch = b,
+                        id = crate::titles::short(&h)
+                    ),
+                    message,
+                    "Reset".to_owned(),
+                    false,
+                    vec![json!({ "op": "reset", "oid": h, "mode": mode })],
+                );
+            })
+        })
+        .collect();
+    Some(Item::Submenu(crate::titles::reset(&branch, hex), children))
 }
 
 /// 複数選んだ行の上のメニュー（macOS 版の `buildMultipleMenu` と同じ）。`rows` は昇順（新しい順）。

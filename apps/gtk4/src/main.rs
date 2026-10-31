@@ -1,6 +1,6 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row>] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]]`
 
 mod actions;
 mod activity;
@@ -82,6 +82,9 @@ struct Args {
     file_history: Option<String>,
     /// History のこの行の右クリックのメニューを開いておく（確認用）。
     menu_row: Option<u32>,
+    /// `--menu-row`・`--reflog-row` のメニューを出す代わりに、この項目を選ぶ（確認用。下に開くメニューの中は
+    /// `Reset main to 1a2b3c4d > Hard…` のように ` > ` でつなぐ）。
+    menu_item: Option<String>,
     /// 見出しのメニュー（`repository` か `primary`）を開いておく（確認用）。
     open_menu: Option<String>,
     /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
@@ -153,6 +156,7 @@ fn parse_args() -> Result<Args, String> {
                 let row = it.next().ok_or("--menu-row <row>")?;
                 args.menu_row = Some(row.parse().map_err(|_| "--menu-row <row>")?);
             }
+            "--menu-item" => args.menu_item = Some(it.next().ok_or("--menu-item <title>")?),
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
             "--action" => args.action = Some(it.next().ok_or("--action <id>")?),
@@ -788,6 +792,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 view.select(row);
                                 pending.set(pending.get() + 1);
                                 let (p, v, a) = (pending.clone(), view.clone(), actions.clone());
+                                let item = args.menu_item.clone();
                                 glib::timeout_add_local_once(
                                     std::time::Duration::from_millis(300),
                                     move || {
@@ -796,7 +801,14 @@ fn build_window(app: &gtk::Application, args: Args) {
                                             let items =
                                                 commitops::menu(&a, &history, row, v.upcast_ref());
                                             eprintln!("{}", menu::titles(&items).join("\n"));
-                                            menu::popup(&v, 380.0, y as f64, items);
+                                            match &item {
+                                                Some(path) => {
+                                                    if !menu::activate(&items, path) {
+                                                        eprintln!("メニューの項目がない: {path}");
+                                                    }
+                                                }
+                                                None => menu::popup(&v, 380.0, y as f64, items),
+                                            }
                                         }
                                         p.set(p.get() - 1);
                                     },
@@ -862,6 +874,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                             pending.set(pending.get() - 1);
                         }
                         latest_refs.replace(Some(refs.clone()));
+                        actions.set_head(refs.refs.head_branch.clone());
                         buttons.show_refs(&refs);
                         if let Some(name) = menu_ref.take()
                             && let Some(entry) = refs.refs.entries.iter().find(|e| e.name == name)
@@ -931,6 +944,7 @@ fn build_window(app: &gtk::Application, args: Args) {
                                 };
                                 let info =
                                     sequence["info"].is_object().then_some(&sequence["info"]);
+                                a.set_in_sequence(info.is_some());
                                 bar.show_sequence(info, conflicts, without, &a);
                             });
                         }

@@ -1,7 +1,7 @@
 //! 操作の実行。コアの命令（`crates/core/src/command.rs` の `Command`、JSON）を裏で実行し、失敗や
 //! コンフリクトを知らせ、終わったら画面を読み直す。Undo の記録はコアが書く。
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -28,6 +28,10 @@ pub struct Actions {
     on_after: RefCell<Vec<Callback>>,
     on_failure: RefCell<Option<FailureCallback>>,
     on_done: RefCell<Option<DoneCallback>>,
+    /// 今のブランチ（detached HEAD なら None）。Reset の名前と確認に出す。
+    head: RefCell<Option<String>>,
+    /// merge・rebase・cherry-pick・revert の途中か（途中なら Reset を出さない）。
+    in_sequence: Cell<bool>,
 }
 
 impl Actions {
@@ -46,6 +50,8 @@ impl Actions {
             on_after: RefCell::default(),
             on_failure: RefCell::default(),
             on_done: RefCell::default(),
+            head: RefCell::default(),
+            in_sequence: Cell::new(false),
         });
         // git の Undo は確かめてから（Ctrl+Z は入力欄の取り消しに残す。docs/ux.md の「Menus」）。
         let weak = Rc::downgrade(&actions);
@@ -67,6 +73,24 @@ impl Actions {
 
     pub fn repo(&self) -> Option<Arc<Repository>> {
         self.repo.borrow().clone()
+    }
+
+    /// 今のブランチ（ref を読むたびに入れる）。
+    pub fn set_head(&self, branch: Option<String>) {
+        self.head.replace(branch);
+    }
+
+    pub fn head(&self) -> Option<String> {
+        self.head.borrow().clone()
+    }
+
+    /// merge・rebase などの途中か（status を読むたびに入れる）。
+    pub fn set_in_sequence(&self, yes: bool) {
+        self.in_sequence.set(yes);
+    }
+
+    pub fn in_sequence(&self) -> bool {
+        self.in_sequence.get()
     }
 
     pub fn window(&self) -> Option<gtk::ApplicationWindow> {

@@ -866,3 +866,10 @@
 "removed" = "消えた";
 "added" = "足された";
 "Compare as Two Versions (Range Diff)" = "2 つの版として比べる（Range Diff）";
+/* GTK4: Reset（History と Reflog の右クリック） */
+"Reset {branch} to {id}" = "{branch} を {id} に Reset";
+"Reset {branch} to {id}?" = "{branch} を {id} に reset しますか？";
+"Soft: keep the changes staged" = "Soft: 変更は stage したまま残す";
+"Mixed: keep the changes in the working tree" = "Mixed: 変更は作業ツリーに残す";
+"Hard: match the commit (uncommitted changes are stashed first)" = "Hard: コミットに合わせる（作業中の変更は先に stash する）";
+"Commits taken off stay in Reflog." = "外れたコミットは Reflog に残ります。";
