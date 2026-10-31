@@ -11,6 +11,7 @@ mod askpass;
 mod assist;
 mod avatars;
 mod bookmarks;
+mod branchswitcher;
 mod cipopover;
 mod commitmsg;
 mod commitops;
@@ -226,6 +227,11 @@ fn parse_args() -> Result<Args, String> {
             }
             "--reflog" => args.reflog = true,
             "--conflicts" => args.conflicts = true,
+            // 次に開くブランチの切り替えに、この問い合わせを入れておく（確認用。`--action switch-branch` と）。
+            "--switch-enter" => branchswitcher::enter_once(),
+            "--switch-query" => {
+                appmenu::set_switcher_query(it.next().ok_or("--switch-query <text>")?)
+            }
             // 操作を 1 つ実行しているふりをする（見出しの Activity が回る。確認用）。
             "--busy" => activity::begin(),
             "--repositories" => args.repositories = true,
@@ -1548,6 +1554,10 @@ fn build_tab(
                                 })
                                 .map_or((0, 0), |e| (e.ahead, e.behind));
                             tab.set_tracking(ahead, behind);
+                            // ブランチの切り替えで上に出す（最近切り替えたもの）。
+                            if let Some(branch) = &refs.refs.head_branch {
+                                branchswitcher::remember(&tab.location, branch);
+                            }
                         }
                         match &refs.refs.head_branch {
                             Some(branch) => subtitle.set_text(branch),

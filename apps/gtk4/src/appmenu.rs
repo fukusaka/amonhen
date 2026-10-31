@@ -59,7 +59,7 @@ pub struct Buttons {
     branch: gtk::Label,
     /// 書き込む先の worktree（✎ 名前。開いたものでないときだけ）。
     worktree: gtk::Label,
-    branch_button: gtk::MenuButton,
+    branch_button: gtk::Button,
     pull: gtk::Button,
     pull_count: gtk::Label,
     push: gtk::Button,
@@ -440,15 +440,11 @@ pub fn install(parts: Parts) -> Buttons {
     worktree.set_max_width_chars(24);
     worktree.set_visible(false);
     branch_inner.append(&worktree);
-    let branch_button = gtk::MenuButton::builder()
+    // 押すとブランチの切り替え（macOS 版のツールバーの Branch と同じ）。
+    let branch_button = gtk::Button::builder()
         .child(&branch_inner)
-        .always_show_arrow(true)
-        .menu_model(&menu_of(&[
-            Some((&tr!("Switch Branch…"), "win.switch-branch")),
-            Some(("New Branch…", "win.new-branch")),
-            Some((&tr!("Rename Branch…"), "win.rename-branch")),
-            Some((&tr!("Set Upstream…"), "win.set-upstream")),
-        ]))
+        .action_name("win.switch-branch")
+        .tooltip_text(tr!("Switch Branch (Ctrl+Shift+B)"))
         .build();
     parts.header.pack_start(&branch_button);
     parts.header.pack_start(&icon_button(
@@ -799,55 +795,25 @@ fn merge_or_rebase(p: &Rc<Parts>, rebase: bool) {
     crate::sheets::integrate_choosing(&p.actions, choices, &current, rebase);
 }
 
-/// ブランチを選んで切り替える（リモートブランチなら、追跡するローカルブランチを作る）。
+/// ブランチの切り替え（あいまい検索・最近切り替えたもの・追跡ブランチ・新しいブランチ。macOS 版と同じ）。
 fn switch_branch(p: &Rc<Parts>) {
-    let mut choices = Vec::new();
-    if let Some(r) = p.refs.borrow().as_ref() {
-        for e in &r.refs.entries {
-            match e.kind {
-                RefKind::Local if Some(&e.name) != r.refs.head_branch.as_ref() => {
-                    // ほかの worktree が checkout しているものは、選ぶとその worktree に移る。
-                    let title = match p.actions.worktree_using(&e.name) {
-                        Some((worktree, _)) => format!(
-                            "{}{}",
-                            e.name,
-                            tr!("  · in the worktree {name}", name = worktree)
-                        ),
-                        None => e.name.clone(),
-                    };
-                    choices.push((title, format!("local:{}", e.name)));
-                }
-                RefKind::Remote if !e.name.ends_with("/HEAD") => {
-                    choices.push((e.name.clone(), format!("remote:{}", e.name)));
-                }
-                _ => {}
-            }
-        }
-    }
-    if choices.is_empty() {
+    let Some(refs) = p.refs.borrow().as_ref().map(|r| r.refs.clone()) else {
         return p.window().error_bell();
-    }
-    let actions = p.actions.clone();
-    glib::spawn_future_local(async move {
-        let Some(choice) = actions
-            .choose(
-                "Switch Branch",
-                &tr!("Branch to switch to"),
-                &choices,
-                0,
-                &tr!("Switch"),
-            )
-            .await
-        else {
-            return;
-        };
-        use crate::sheets::{CheckoutTarget, checkout};
-        match choice.split_once(':') {
-            Some(("local", name)) => checkout(&actions, CheckoutTarget::Branch(name.to_owned())),
-            Some((_, name)) => checkout(&actions, CheckoutTarget::Track(name.to_owned())),
-            None => {}
-        }
-    });
+    };
+    let location = crate::repos::normalize(std::path::Path::new(&p.location));
+    let recent = crate::branchswitcher::recent(&location);
+    let query = SWITCHER_QUERY.with(|q| q.take()).unwrap_or_default();
+    crate::branchswitcher::show(&p.window(), refs, recent, p.actions.clone(), &query);
+}
+
+thread_local! {
+    /// 確認用: ブランチの切り替えに最初から入れておく問い合わせ（`--switch-branch`）。
+    static SWITCHER_QUERY: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// 確認用: 次に開くブランチの切り替えに、`query` を入れておく。
+pub fn set_switcher_query(query: String) {
+    SWITCHER_QUERY.with(|q| q.replace(Some(query)));
 }
 
 fn go_to_head(p: &Rc<Parts>) {

@@ -75,6 +75,8 @@ pub enum Kind {
     Warning,
     /// waveform.path.ecg（Activity）
     Activity,
+    /// plus.circle（ブランチの切り替えで、新しいブランチを作る行）
+    PlusCircle,
 }
 
 mod imp {
@@ -466,6 +468,13 @@ fn draw(snapshot: &gtk::Snapshot, kind: Kind, color: &gdk::RGBA) {
             p.move_to(5.2, 8.2);
             p.line_to(7.2, 10.2);
             p.line_to(10.9, 6.0);
+        }
+        Kind::PlusCircle => {
+            p.add_circle(&point(8.0, 8.0), 6.3);
+            p.move_to(8.0, 5.0);
+            p.line_to(8.0, 11.0);
+            p.move_to(5.0, 8.0);
+            p.line_to(11.0, 8.0);
         }
         Kind::Activity => {
             // 心電図の波形。

@@ -132,7 +132,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Branch switcher (fuzzy search, recent, tracking or new branch) | ✓ | △ | △ | △ | GTK4: A plain chooser without search or recents.<br>VSCode: Checkout from the sidebar and New Branch… only.<br>CLI: Via `amonhen run`. |
+| Branch switcher (fuzzy search, recent, tracking or new branch) | ✓ | ✓ | △ | △ | VSCode: Checkout from the sidebar and New Branch… only.<br>CLI: Via `amonhen run`. |
 | Fetch sheet (all or one remote, prune shown) | ✓ | ✓ | △ | △ | VSCode: Fetches all with prune at once, without a sheet.<br>CLI: Via `amonhen run`. |
 | Pull sheet (commits, merge / rebase / ff-only, upstream when missing) | ✓ | ✓ | △ | △ | VSCode: Merges the upstream without a sheet or choice.<br>CLI: Via `amonhen run`. |
 | Push sheet (warnings, commits and diff, Force Push with lease) | ✓ | ✓ | △ | △ | VSCode: No sheet; Force Push asks separately.<br>CLI: Via `amonhen run`. |

@@ -1612,3 +1612,11 @@
 /* GTK4: 見出しの Activity */
 "{count} operations running (click for Activity)" = "実行中の操作 {count} 個（押すと Activity）";
 "Git and commands run, the operation log, and UI speed (Ctrl+Alt+A)" = "実行した git とコマンド、操作ログ、画面の速さ（Ctrl+Alt+A）";
+
+/* GTK4: ブランチの切り替え */
+"Switch Branch (Ctrl+Shift+B)" = "ブランチを切り替える（Ctrl+Shift+B）";
+"Find a branch or type a new name" = "ブランチを探す・新しい名前を打つ";
+"Enter Switch   Esc Close   (a remote branch gets a tracking branch)" = "Enter 切り替える　Esc 閉じる　（リモートのブランチは追跡ブランチを作る）";
+"  · recent" = "　· 最近";
+"  · creates a tracking branch" = "　· 追跡ブランチを作る";
+"Create branch {name} and switch to it" = "新しいブランチ {name} を作って切り替える";
