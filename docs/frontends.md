@@ -64,7 +64,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 
 | Feature | macOS | GTK4 | VSCode | CLI | Notes |
 | --- | :-: | :-: | :-: | :-: | --- |
-| Repository page with All, Favorites, Places and groups | ✓ | △ | n/a | n/a | GTK4: A separate Repositories window instead of a tab page. |
+| Repository page with All, Favorites, Places and groups | ✓ | ✓ | n/a | n/a | GTK4: The page's header bar has its own short menu instead of the repository toolbar. |
 | Add a local or an SSH repository | ✓ | ✓ | n/a | n/a |  |
 | Folders to scan on this machine (depth, watched) | △ | △ | n/a | n/a | macOS: Excludes are a fixed list.<br>GTK4: Excludes are a fixed list and folders are not watched. |
 | Folders to scan on SSH hosts | ✓ | △ | n/a | △ | GTK4: Added in Repositories; not on the SSH Hosts page.<br>CLI: `find-repositories` does the scan for the apps. |

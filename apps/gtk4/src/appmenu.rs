@@ -368,7 +368,7 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         (
             "repositories",
             Box::new(|p| {
-                crate::repobrowser::show(&p.app, p.open.clone());
+                crate::tabs::show_home(&p.app, crate::tabs::host_of(&p.window()));
             }),
         ),
         (

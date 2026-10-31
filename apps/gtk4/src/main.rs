@@ -174,7 +174,7 @@ struct Args {
     sidebar_mark: Option<String>,
     /// サイドバーをこの語で絞り込んでおく（確認用）。
     filter_sidebar: Option<String>,
-    /// リポジトリの窓の代わりに Repositories の窓を出す（確認用。`--snapshot` はその窓を撮る）。
+    /// リポジトリの代わりにリポジトリのページ（Repositories）のタブを出す（確認用。`--snapshot` はその窓を撮る）。
     repositories: bool,
     /// Quick Open を、この問い合わせを入れて出す（確認用。`--snapshot` はその窓を撮る）。
     quick_open: Option<String>,
@@ -453,14 +453,19 @@ fn opener(app: &gtk::Application) -> repobrowser::Open {
 }
 
 /// 起動したとき: 引数のリポジトリ、なければ今のフォルダのリポジトリを開く。今のフォルダがリポジトリでなければ、
-/// 前回の終わりに開いていた窓とタブを同じ並びで開き直し（macOS 版と同じ）、それもなければ Repositories の窓を出す。
+/// 前回の終わりに開いていた窓とタブを同じ並びで開き直し（macOS 版と同じ）、それもなければリポジトリのページを出す。
 fn launch(app: &gtk::Application, args: &Args) {
     let check = args.snapshot.is_some() || args.measure_scroll;
     if check {
         tabs::set_check_run();
     }
     let window = if args.repositories {
-        Some(repobrowser::show(app, opener(app)).upcast::<gtk::Window>())
+        Some(
+            tabs::show_home(app, None)
+                .window
+                .clone()
+                .upcast::<gtk::Window>(),
+        )
     } else if let Some(query) = &args.quick_open {
         let window = quickopen::show_with(None, opener(app), query);
         window.set_application(Some(app));
@@ -474,7 +479,12 @@ fn launch(app: &gtk::Application, args: &Args) {
             repos::restorable()
         };
         if restore.is_empty() {
-            Some(repobrowser::show(app, opener(app)).upcast::<gtk::Window>())
+            Some(
+                tabs::show_home(app, None)
+                    .window
+                    .clone()
+                    .upcast::<gtk::Window>(),
+            )
         } else {
             tabs::restore(app, restore);
             None

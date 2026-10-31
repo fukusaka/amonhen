@@ -140,6 +140,11 @@ impl Tab {
         self.closed.get()
     }
 
+    /// リポジトリのページ（リポジトリを開いていないタブ）か。
+    pub fn is_home(&self) -> bool {
+        self.location.is_empty()
+    }
+
     /// タブを閉じたら `f` を呼ぶ（裏の糸や見張りを止める）。
     pub fn connect_close(&self, f: impl FnOnce() + 'static) {
         self.on_close.borrow_mut().push(Box::new(f));
@@ -504,6 +509,103 @@ pub fn add_background(app: &gtk::Application, host: &Rc<RepoWindow>, location: P
     );
 }
 
+/// リポジトリのページ（リポジトリを開いていないタブ。macOS 版の `RepositoryHome.swift`）を出す。`host` の窓に
+/// もうあれば、それを前に出す。`host` がなければ新しい窓に出す。
+pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<RepoWindow> {
+    if let Some(host) = &host
+        && let Some(home) = host.tabs().into_iter().find(|t| t.is_home())
+    {
+        if let Some(n) = host.notebook.page_num(&home.root) {
+            host.notebook.set_current_page(Some(n));
+        }
+        host.window.present();
+        home.front();
+        return host.clone();
+    }
+    let host = host.unwrap_or_else(|| RepoWindow::new(app));
+    let tab = Tab::new("Repositories", "", Rc::default());
+    let title = gtk::Label::new(Some("Repositories"));
+    title.add_css_class("title");
+    let subtitle = gtk::Label::new(Some(&tr!("Choose a repository to open")));
+    subtitle.add_css_class("subtitle");
+    let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    titles.set_valign(gtk::Align::Center);
+    titles.append(&title);
+    titles.append(&subtitle);
+    tab.header.set_title_widget(Some(&titles));
+    // 主メニュー（リポジトリへの操作はないので、開く・設定・閉じるだけ）。
+    let menu = gio::Menu::new();
+    let open = gio::Menu::new();
+    open.append(Some("Quick Open…"), Some("win.quick-open"));
+    open.append(Some("Clone…"), Some("win.clone"));
+    open.append_submenu(Some(&tr!("Open Recent")), &crate::repos::recent_menu());
+    menu.append_section(None, &open);
+    let rest = gio::Menu::new();
+    rest.append(Some(&tr!("Settings…")), Some("win.settings"));
+    rest.append(Some(&tr!("Close")), Some("win.close"));
+    menu.append_section(None, &rest);
+    let primary = gtk::MenuButton::builder()
+        .menu_model(&menu)
+        .tooltip_text("Main Menu")
+        .primary(true)
+        .build();
+    if gtk::IconTheme::for_display(&primary.display()).has_icon("open-menu-symbolic") {
+        primary.set_icon_name("open-menu-symbolic");
+    } else {
+        primary.set_label("≡");
+    }
+    tab.header.pack_end(&primary);
+    // 開いたリポジトリは、このタブの場所に置いて、このタブを閉じる（ページがそのリポジトリになる）。
+    let (a, t) = (app.clone(), Rc::downgrade(&tab));
+    let open: crate::repobrowser::Open = Rc::new(move |location, place| {
+        let (Some(tab), Place::Tab) = (t.upgrade(), place) else {
+            return self::open(&a, location, place);
+        };
+        let Some(host) = tab.host() else {
+            return self::open(&a, location, place);
+        };
+        let key = crate::repos::normalize(&location);
+        match host.tabs().into_iter().find(|t| t.location == key) {
+            Some(existing) => {
+                if let Some(n) = host.notebook.page_num(&existing.root) {
+                    host.notebook.set_current_page(Some(n));
+                }
+            }
+            None => {
+                let position = host.notebook.page_num(&tab.root);
+                open_in(&a, &host, location, position);
+            }
+        }
+        close_tab(&tab);
+        host.window.present();
+    });
+    // Open Recent の項目。
+    let recent = gio::SimpleAction::new("open-recent", Some(glib::VariantTy::STRING));
+    let o = open.clone();
+    recent.connect_activate(move |_, value| {
+        if let Some(location) = value.and_then(|v| v.get::<String>()) {
+            o(PathBuf::from(location), Place::Tab);
+        }
+    });
+    tab.group.add_action(&recent);
+    let browser = crate::repobrowser::page(app, open, &tab.group);
+    tab.root.append(&browser.root);
+    let b = Rc::downgrade(&browser);
+    tab.connect_front(move || {
+        if let Some(b) = b.upgrade() {
+            b.focus_filter();
+        }
+    });
+    // タブを閉じるまでページを持つ。
+    let keep = RefCell::new(Some(browser));
+    tab.connect_close(move || {
+        keep.borrow_mut().take();
+    });
+    add(&host, &tab, true, None);
+    host.window.present();
+    host
+}
+
 /// 前回の窓を開き直す: 窓ごとに、最初の場所で窓を作り、残りをタブで足す（前のタブは最初のもの）。
 pub fn restore(app: &gtk::Application, groups: Vec<Vec<String>>) {
     set_restoring(true);
@@ -620,32 +722,15 @@ fn install_actions(tab: &Rc<Tab>) {
         });
         tab.group.add_action(&action);
     };
-    // File > New Tab: 開くリポジトリを選んで、この窓の新しいタブに（Ctrl+Enter なら新しい窓に）。
+    // File > New Tab（Ctrl+T）・タブの帯の「+」: この窓に、リポジトリのページのタブを出す（あればそれを前に。
+    // macOS 版と同じ）。
     add("new-tab", |tab| {
         let (Some(window), Some(host)) = (tab.window(), tab.host()) else {
             return;
         };
-        let Some(app) = window.application() else {
-            return;
-        };
-        let weak = Rc::downgrade(&host);
-        let open: crate::repobrowser::Open =
-            Rc::new(move |location, place| match (place, weak.upgrade()) {
-                (Place::Tab, Some(host)) => {
-                    let key = crate::repos::normalize(&location);
-                    match host.tabs().into_iter().find(|t| t.location == key) {
-                        Some(t) => {
-                            if let Some(n) = host.notebook.page_num(&t.root) {
-                                host.notebook.set_current_page(Some(n));
-                            }
-                        }
-                        None => open_in(&app, &host, location, None),
-                    }
-                    host.window.present();
-                }
-                _ => open(&app, location, place),
-            });
-        crate::quickopen::show(Some(window.upcast_ref()), open);
+        if let Some(app) = window.application() {
+            show_home(&app, Some(host));
+        }
     });
     // File > Close（Ctrl+W）: タブを閉じる（最後のタブなら窓を閉じる。macOS 版と同じ）。
     add("close", close_tab);
@@ -714,6 +799,8 @@ fn save() {
                 h.tabs()
                     .iter()
                     .map(|t| t.location.clone())
+                    // リポジトリのページは覚えない。
+                    .filter(|l| !l.is_empty())
                     .collect::<Vec<_>>()
             })
             .filter(|g| !g.is_empty())

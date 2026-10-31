@@ -1,9 +1,10 @@
 //! Repositories（Ctrl+Shift+R。macOS 版の `RepositoryBrowser.swift` のページと `RepositoryHome.swift`）: ブックマーク・
-//! 最近開いたもの・スキャンで見つけたものを見渡して開く窓。左に分類（すべて・お気に入り・場所（このコンピュータと
-//! SSH のホストごと。その下にスキャンするフォルダ）・手で作ったグループ）と件数、右にその中のリポジトリを列（名前と
-//! パス・ブランチ・状態・最後のコミット・開いた日時）で並べる。この FE にはタブがないので、macOS 版のページの
-//! 代わりに 1 つの窓にする。開く（ダブルクリック・Enter）と、選んだリポジトリの窓を出してこの窓を閉じる（ページが
-//! そのリポジトリになるのと同じ）。
+//! 最近開いたもの・スキャンで見つけたものを見渡して開くページ。左に分類（すべて・お気に入り・場所（このコンピュータと
+//! SSH のホストごと。その下にスキャンするフォルダとフォルダの木）・手で作ったグループ）と件数、右にその中のリポジトリを
+//! 列（名前とパス・ブランチ・状態・最後のコミット・開いた日時）で並べる。リポジトリを開いていないタブ
+//! （`tabs::show_home`）の中身で、開く（ダブルクリック・Enter）とそのタブが選んだリポジトリになる。
+//!
+//! ツールバーのリポジトリ名から出す小さな一覧（[`compact`]）も、ここで作る。
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -542,8 +543,9 @@ impl CellView {
     }
 }
 
-struct Browser {
-    window: gtk::ApplicationWindow,
+pub struct Browser {
+    /// ページの中身（タブに入れる）。
+    pub root: gtk::Paned,
     open: Open,
     category: RefCell<Category>,
     side: gtk::ListBox,
@@ -562,7 +564,7 @@ struct Browser {
 }
 
 thread_local! {
-    static WINDOW: RefCell<glib::WeakRef<gtk::ApplicationWindow>> = RefCell::default();
+    /// 最後に作ったページ（確認用の `--menu-row`）。
     static BROWSER: RefCell<std::rc::Weak<Browser>> = RefCell::default();
 }
 
@@ -584,23 +586,17 @@ pub fn debug_menu(row: u32, item: Option<String>) {
     }
 }
 
-/// Repositories の窓を出す（開いていれば前に出す）。
-pub fn show(app: &gtk::Application, open: Open) -> gtk::ApplicationWindow {
-    if let Some(w) = WINDOW.with(|w| w.borrow().upgrade()) {
-        w.present();
-        return w;
-    }
-    let browser = Browser::new(app, open);
-    WINDOW.with(|w| w.borrow().set(Some(&browser.window)));
+/// リポジトリのページの中身を作る。`group` にページのアクション（Quick Open・Clone）を入れる。返したものは
+/// ページを閉じるまで持っておく（ブックマークの知らせは、それを手放すと止まる）。
+pub fn page(app: &gtk::Application, open: Open, group: &gio::SimpleActionGroup) -> Rc<Browser> {
+    let browser = Browser::new(open);
     BROWSER.with(|w| *w.borrow_mut() = Rc::downgrade(&browser));
-    let window = browser.window.clone();
+    browser.install_actions(app, group);
     bookmarks::refresh();
     bookmarks::forget_peeks();
     bookmarks::rescan();
     browser.reload();
-    window.present();
-    browser.filter.grab_focus();
-    // 窓を閉じるまで知らせを受ける。
+    // ページを閉じるまで知らせを受ける。
     let weak = Rc::downgrade(&browser);
     bookmarks::connect(move |path| {
         let Some(b) = weak.upgrade() else {
@@ -612,27 +608,11 @@ pub fn show(app: &gtk::Application, open: Open) -> gtk::ApplicationWindow {
         }
         true
     });
-    // 窓が持つ（閉じたら手放す）。
-    let keep = RefCell::new(Some(browser));
-    window.connect_destroy(move |_| {
-        keep.borrow_mut().take();
-    });
-    window
+    browser
 }
 
 impl Browser {
-    fn new(app: &gtk::Application, open: Open) -> Rc<Self> {
-        let title = gtk::Label::new(Some("Repositories"));
-        title.add_css_class("title");
-        let subtitle = gtk::Label::new(Some(&tr!("Choose a repository to open")));
-        subtitle.add_css_class("subtitle");
-        let titles = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        titles.set_valign(gtk::Align::Center);
-        titles.append(&title);
-        titles.append(&subtitle);
-        let header = gtk::HeaderBar::new();
-        header.set_title_widget(Some(&titles));
-
+    fn new(open: Open) -> Rc<Self> {
         // 左: 分類と、下の ＋。
         let side = gtk::ListBox::new();
         side.add_css_class("navigation-sidebar");
@@ -690,20 +670,11 @@ impl Browser {
         paned.set_shrink_start_child(false);
         paned.set_position(240);
 
-        let window = gtk::ApplicationWindow::builder()
-            .application(app)
-            .title("Repositories — Amon Hen")
-            .default_width(1100)
-            .default_height(700)
-            .child(&paned)
-            .build();
-        window.set_titlebar(Some(&header));
-
         let saved = crate::settings::string(CATEGORY_KEY)
             .and_then(|k| Category::from_key(&k))
             .unwrap_or(Category::All);
         let browser = Rc::new(Self {
-            window,
+            root: paned,
             open,
             category: RefCell::new(saved),
             side,
@@ -720,8 +691,17 @@ impl Browser {
         });
         browser.build_columns();
         browser.connect();
-        browser.install_actions(app);
         browser
+    }
+
+    /// ページのある窓（ページは窓にある間にしか操作できない）。
+    fn window(&self) -> gtk::Window {
+        self.root.root().and_downcast().expect("ページが窓にない")
+    }
+
+    /// 絞り込みの欄に入る（ページを前に出したとき）。
+    pub fn focus_filter(&self) {
+        self.filter.grab_focus();
     }
 
     /// 列（名前とパス・ブランチ・状態・最後のコミット・開いた日時）。見出しを押すと並べ替える（既定は開いた順）。
@@ -926,24 +906,16 @@ impl Browser {
         });
     }
 
-    /// この窓のアクション（Quick Open と閉じる）。リポジトリの窓のメニューから来るショートカットは、この窓にも効く。
-    fn install_actions(self: &Rc<Self>, app: &gtk::Application) {
+    /// ページのアクション（Quick Open・Clone）。窓のメニューから来るショートカットは、このページにも効く。
+    fn install_actions(self: &Rc<Self>, app: &gtk::Application, group: &gio::SimpleActionGroup) {
         let quick = gio::SimpleAction::new("quick-open", None);
         let weak = Rc::downgrade(self);
         quick.connect_activate(move |_, _| {
             if let Some(b) = weak.upgrade() {
-                crate::quickopen::show(Some(b.window.upcast_ref()), b.open.clone());
+                crate::quickopen::show(Some(&b.window()), b.open.clone());
             }
         });
-        self.window.add_action(&quick);
-        let close = gio::SimpleAction::new("close", None);
-        let w = self.window.downgrade();
-        close.connect_activate(move |_, _| {
-            if let Some(w) = w.upgrade() {
-                w.close();
-            }
-        });
-        self.window.add_action(&close);
+        group.add_action(&quick);
         let clone = gio::SimpleAction::new("clone", None);
         let weak = Rc::downgrade(self);
         clone.connect_activate(move |_, _| {
@@ -951,12 +923,30 @@ impl Browser {
                 b.clone_repository();
             }
         });
-        self.window.add_action(&clone);
-        // 起動したときにこの窓しかなければ、ショートカットはまだ登録されていない。
+        group.add_action(&clone);
+        // Ctrl+Shift+R: このページにいれば、絞り込みの欄へ。
+        let repositories = gio::SimpleAction::new("repositories", None);
+        let weak = Rc::downgrade(self);
+        repositories.connect_activate(move |_, _| {
+            if let Some(b) = weak.upgrade() {
+                b.focus_filter();
+            }
+        });
+        group.add_action(&repositories);
+        let settings = gio::SimpleAction::new("settings", None);
+        let weak = Rc::downgrade(self);
+        settings.connect_activate(move |_, _| {
+            if let Some(w) = weak.upgrade().and_then(|b| b.window().downcast().ok()) {
+                crate::settings::show(&w);
+            }
+        });
+        group.add_action(&settings);
+        // 起動したときにこのページしかなければ、ショートカットはまだ登録されていない。
         for (action, accel) in [
             ("win.quick-open", "<Control><Shift>o"),
-            ("win.close", "<Control>w"),
             ("win.clone", "<Control><Alt>c"),
+            ("win.repositories", "<Control><Shift>r"),
+            ("win.settings", "<Control>comma"),
         ] {
             if app.accels_for_action(action).is_empty() {
                 app.set_accels_for_action(action, &[accel]);
@@ -1297,8 +1287,7 @@ impl Browser {
 
     // 開く
 
-    /// 開く。`close` なら前のリポジトリの窓のタブに開いてこの窓を閉じ（macOS 版のページがそのリポジトリになるのと
-    /// 同じ）、でなければ新しい窓に開く。
+    /// 開く。`close` ならこのタブがそのリポジトリになり（macOS 版と同じ）、でなければ新しい窓に開く。
     fn open_row(self: &Rc<Self>, row: u32, close: bool) {
         if let Some(location) = self.location(row) {
             self.open_location(&location, close);
@@ -1310,7 +1299,7 @@ impl Browser {
             let (b, location) = (self.clone(), location.to_owned());
             glib::spawn_future_local(async move {
                 let sheet = Sheet::new(
-                    Some(b.window.upcast_ref()),
+                    Some(&b.window()),
                     &tr!(
                         "{name} not found",
                         name = bookmarks::display_name(&location)
@@ -1332,9 +1321,6 @@ impl Browser {
             crate::tabs::Place::NewWindow
         };
         (self.open)(PathBuf::from(location), place);
-        if close {
-            self.window.close();
-        }
     }
 
     // メニュー
@@ -1461,12 +1447,12 @@ impl Browser {
             items.push(Item::Separator);
             let (b, p) = (self.clone(), path.clone());
             items.push(menu::action(tr!("Show in Files"), move || {
-                crate::appmenu::reveal(b.window.upcast_ref(), std::path::Path::new(&p))
+                crate::appmenu::reveal(&b.window(), std::path::Path::new(&p))
             }));
             let (b, p) = (self.clone(), path.clone());
             items.push(menu::action(tr!("Open in Terminal"), move || {
                 if !crate::appmenu::terminal_at(std::path::Path::new(&p)) {
-                    b.window.error_bell();
+                    b.root.error_bell();
                 }
             }));
         }
@@ -1505,7 +1491,7 @@ impl Browser {
                 }
                 Category::Favorites => bookmarks::set_favorite(path, false),
                 Category::Group(_) => bookmarks::move_to(path, None),
-                Category::Scan(_) | Category::ScanFolder(..) => self.window.error_bell(),
+                Category::Scan(_) | Category::ScanFolder(..) => self.root.error_bell(),
             }
         }
         self.reload();
@@ -1601,7 +1587,7 @@ impl Browser {
                 if bookmarks::ssh_host(path).is_none() {
                     let (b, p) = (self.clone(), path.clone());
                     items.push(menu::action(tr!("Show in Files"), move || {
-                        crate::appmenu::reveal(b.window.upcast_ref(), &bookmarks::expand(&p))
+                        crate::appmenu::reveal(&b.window(), &bookmarks::expand(&p))
                     }));
                 }
                 let p = path.clone();
@@ -1685,7 +1671,10 @@ impl Browser {
             .build();
         let b = self.clone();
         glib::spawn_future_local(async move {
-            let Ok(files) = dialog.select_multiple_folders_future(Some(&b.window)).await else {
+            let Ok(files) = dialog
+                .select_multiple_folders_future(Some(&b.window()))
+                .await
+            else {
                 return;
             };
             let group = b.selected_group();
@@ -1695,7 +1684,7 @@ impl Browser {
                     if bookmarks::is_repository(&text) {
                         bookmarks::add(&text, group.as_deref());
                     } else {
-                        b.window.error_bell();
+                        b.root.error_bell();
                     }
                 }
             }
@@ -1709,7 +1698,7 @@ impl Browser {
             bookmarks::add(&path.to_string_lossy(), b.selected_group().as_deref());
             b.open_location(&path.to_string_lossy(), true);
         });
-        crate::repos::clone(self.window.upcast_ref(), open);
+        crate::repos::clone(&self.window(), open);
     }
 
     fn add_scan_folder(self: &Rc<Self>) {
@@ -1720,7 +1709,7 @@ impl Browser {
         dialog.set_initial_folder(Some(&gio::File::for_path(glib::home_dir())));
         let b = self.clone();
         glib::spawn_future_local(async move {
-            if let Ok(folder) = dialog.select_folder_future(Some(&b.window)).await
+            if let Ok(folder) = dialog.select_folder_future(Some(&b.window())).await
                 && let Some(path) = folder.path()
             {
                 bookmarks::add_scan_root(&path.to_string_lossy());
@@ -1744,7 +1733,7 @@ impl Browser {
                 return;
             };
             if !amonhen_remote::location::is_remote(&location) {
-                b.window.error_bell();
+                b.root.error_bell();
                 return;
             }
             bookmarks::add(&location, b.selected_group().as_deref());
@@ -1772,7 +1761,7 @@ impl Browser {
                 return;
             };
             if !location.starts_with("ssh://") || bookmarks::path_part(&location).len() < 2 {
-                b.window.error_bell();
+                b.root.error_bell();
                 return;
             }
             bookmarks::add_scan_root(&location);
@@ -1807,7 +1796,7 @@ impl Browser {
                 .filter(|p| bookmarks::ssh_host(p).as_ref() == Some(&name))
                 .collect();
             let sheet = Sheet::new(
-                Some(b.window.upcast_ref()),
+                Some(&b.window()),
                 &tr!("Remove {host}?", host = name),
                 &tr!(
                     "This removes its {repositories} repositories and {folders} folders to scan from the list. Nothing on the host is touched.",
@@ -1844,7 +1833,7 @@ impl Browser {
         message: &str,
         initial: &str,
     ) -> Option<String> {
-        let sheet = Sheet::new(Some(self.window.upcast_ref()), title, message);
+        let sheet = Sheet::new(Some(&self.window()), title, message);
         let entry = gtk::Entry::builder()
             .text(initial)
             .activates_default(true)
