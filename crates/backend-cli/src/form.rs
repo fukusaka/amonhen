@@ -181,7 +181,16 @@ impl Git {
     /// blob を取るときと同じ形。`cat-file` や `log -G` は 1 つずつ取りに行く）。FETCH_HEAD は書き換えない（git 2.29
     /// から。それより古い git は書き換え、ID を引数に並べるので 500 個ずつに分ける）。
     pub fn fetch_missing(&self, remote: &str, ids: &[String]) -> Result<()> {
-        let mut args = vec!["fetch", "--quiet", "--no-tags", "--recurse-submodules=no"];
+        // 手元のコミットを「持っている」と伝えると、サーバーはそこから辿れる blob も持っているとみなして送らない
+        // （GitHub）。git 自身が足りないものを取るときと同じく、何も伝えない。
+        let mut args = vec![
+            "-c",
+            "fetch.negotiationAlgorithm=noop",
+            "fetch",
+            "--quiet",
+            "--no-tags",
+            "--recurse-submodules=no",
+        ];
         if crate::git_at_least(2, 29) {
             args.extend([
                 "--no-write-fetch-head",
