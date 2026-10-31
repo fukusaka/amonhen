@@ -447,12 +447,20 @@ extension Actions {
             guard !remotes.isEmpty else { return NSSound.beep() }
             let value = { (key: String) in entries.last { $0.key.lowercased() == key.lowercased() }?.value.lowercased() }
             // 片づけるかは git と同じく、リモートの remote.<name>.prune、なければ fetch.prune。
-            let prunes = { (remote: String) in (value("remote.\(remote).prune") ?? value("fetch.prune")) == "true" }
+            // 効いている設定の名前（片づけないなら nil）。
+            let pruneKey = { (remote: String) -> String? in
+                let key = value("remote.\(remote).prune") != nil ? "remote.\(remote).prune" : "fetch.prune"
+                return value(key) == "true" ? key : nil
+            }
             let pruneLine = { (chosen: [String]) -> String in
-                let names = chosen.filter(prunes)
+                let names = chosen.filter { pruneKey($0) != nil }
                 guard !names.isEmpty else { return "" }
-                return names.count == chosen.count ? L("Remote branches deleted there are removed here too (fetch.prune).")
-                    : L("Remote branches deleted on %@ are removed here too (fetch.prune).", ListFormatter.localizedString(byJoining: names))
+                var keys: [String] = []
+                for key in names.compactMap(pruneKey) where !keys.contains(key) { keys.append(key) }
+                let settings = ListFormatter.localizedString(byJoining: keys)
+                return names.count == chosen.count ? L("Remote branches deleted there are removed here too (%@).", settings)
+                    : L("Remote branches deleted on %1$@ are removed here too (%2$@).",
+                        ListFormatter.localizedString(byJoining: names), settings)
             }
             let alert = makeAlert(remotes.count == 1 ? L("Fetch from %@?", remotes[0]) : L("Fetch?"), pruneLine(remotes))
             alert.addButton(withTitle: "Fetch")

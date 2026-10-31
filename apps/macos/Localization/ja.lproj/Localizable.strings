@@ -51,7 +51,7 @@
 "You can Undo this (⌥⌘Z)." = "Undo（⌥⌘Z）で戻せます。";
 "Fetch?" = "Fetch しますか？";
 "All Remotes (%@)" = "すべてのリモート（%@）";
-"Remote branches deleted on %@ are removed here too (fetch.prune)." = "%@ で消えたブランチは、手元でも片づけます（fetch.prune）。";
+"Remote branches deleted on %1$@ are removed here too (%2$@)." = "%1$@ で消えたブランチは、手元でも片づけます（%2$@）。";
 "Also move the stacked branches" = "積み重ねたブランチも一緒に動かす";
 "For this edit only (git’s update-ref). Starts from rebase.updateRefs." = "この編集だけの指定です（git の update-ref）。最初は rebase.updateRefs のとおり。";
 "Now" = "今";
@@ -165,7 +165,7 @@
 "%@ loses the commits %@ doesn’t have." = "%2$@ にないコミットが %1$@ から消えます。";
 "Creates %@." = "%@ を作ります。";
 "Fetch from %@?" = "%@ から Fetch しますか？";
-"Remote branches deleted there are removed here too (fetch.prune)." = "リモートで消えたブランチは、手元でも片づけます（fetch.prune）。";
+"Remote branches deleted there are removed here too (%@)." = "リモートで消えたブランチは、手元でも片づけます（%@）。";
 "Checkout %@?" = "%@ を Checkout しますか？";
 "Creates %@ tracking %@." = "%2$@ を追跡する %1$@ を作ります。";
 "HEAD is detached (on no branch)." = "HEAD はどのブランチにも載らない状態（detached）になります。";
