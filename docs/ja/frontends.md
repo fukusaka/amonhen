@@ -56,7 +56,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | 窓の中のリポジトリのタブ | ✓ | △ | n/a | n/a | GTK4: 窓の間の移動はメニュー（Move Tab to New Window・Merge All Windows）で、ドラッグではできない。 |
 | 別の窓（New Window） | ✓ | ✓ | n/a | n/a |  |
 | 起動時に窓とタブを戻す | ✓ | ✓ | n/a | n/a |  |
-| SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | — | n/a | n/a | GTK4: 読み込み中の表示とエラーの文だけ。 |
+| SSH・daemon のリポジトリのつなぎ中のタブ（Cancel・Try Again） | ✓ | ✓ | n/a | n/a |  |
 | 題に未コミットの ● と ahead/behind | ✓ | ✓ | n/a | n/a | GTK4: タブの名前に出る。 |
 | 最後の窓を閉じてもアプリは終わらない | ✓ | — | n/a | n/a | GTK4: GNOME のアプリと同じく終わる。 |
 

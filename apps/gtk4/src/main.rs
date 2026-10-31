@@ -16,6 +16,7 @@ mod cipopover;
 mod commitmsg;
 mod commitops;
 mod configtable;
+mod connecting;
 mod details;
 mod diff;
 mod environment;
@@ -122,6 +123,8 @@ struct Args {
     reflog: bool,
     /// 最初に status を読んだら、サイドバーの Conflicts を選ぶ（確認用）。
     conflicts: bool,
+    /// つないでいる間のタブを、1.5 秒後に撮る（確認用。`--snapshot` と）。
+    connecting: bool,
     /// 見出しのメニュー（`repository` か `primary`）を開いておく（確認用）。
     open_menu: Option<String>,
     /// 最初に History を出したら、この命令（JSON）を一度実行する（確認用）。
@@ -227,6 +230,7 @@ fn parse_args() -> Result<Args, String> {
             }
             "--reflog" => args.reflog = true,
             "--conflicts" => args.conflicts = true,
+            "--connecting" => args.connecting = true,
             // 次に開くブランチの切り替えに、この問い合わせを入れておく（確認用。`--action switch-branch` と）。
             "--switch-enter" => branchswitcher::enter_once(),
             "--switch-query" => {
@@ -497,10 +501,11 @@ fn build_tab(
             None => last.to_owned(),
         }
     } else {
+        // フォルダーがなければ（開けないタブ）、パスの最後の部分。
         std::fs::canonicalize(&path)
-            .ok()
-            .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| text.clone())
+            .unwrap_or_else(|_| path.clone())
+            .file_name()
+            .map_or_else(|| text.clone(), |n| n.to_string_lossy().into_owned())
     };
 
     let title = gtk::Label::new(Some(&name));
@@ -695,8 +700,51 @@ fn build_tab(
     // 窓の下のステータスバー（途中の操作・失敗・終わった操作の一言）。
     let statusbar = statusbar::StatusBar::new();
     body.set_vexpand(true);
-    tab.root.append(&body);
+    // daemon 越し・SSH 先は、つながるまで「つないでいます」を出す（開けなかったら、エラーと Try Again）。
+    let content = gtk::Stack::new();
+    content.set_vexpand(true);
+    content.add_named(&body, Some("repository"));
+    let connecting = {
+        let (t, location) = (Rc::downgrade(&tab), path.clone());
+        let t2 = t.clone();
+        Rc::new(connecting::Connecting::new(
+            &text,
+            &name,
+            move || {
+                if let Some(tab) = t.upgrade() {
+                    tabs::close_tab(&tab);
+                }
+            },
+            move || {
+                if let Some(tab) = t2.upgrade() {
+                    tabs::reopen(&tab, location.clone());
+                }
+            },
+        ))
+    };
+    content.add_named(&connecting.root, Some("connecting"));
+    if amonhen_remote::location::is_remote(&text) {
+        connecting.show_connecting();
+        content.set_visible_child_name("connecting");
+    } else {
+        content.set_visible_child_name("repository");
+    }
+    tab.root.append(&content);
     tab.root.append(&statusbar.root);
+    if args.connecting
+        && let Some(png) = args.snapshot.clone()
+    {
+        let w = win_of.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(1500), move || {
+            if let Some(window) = w() {
+                match snapshot(window.upcast_ref(), &png) {
+                    Ok(()) => eprintln!("{}", png.display()),
+                    Err(e) => eprintln!("撮れない: {e}"),
+                }
+                window.close();
+            }
+        });
+    }
     // 最初の status が届くまでは、撮るのを待つ。
     pending.set(pending.get() + 1);
     let mut waiting_status = true;
@@ -1057,6 +1105,10 @@ fn build_tab(
         location: text.clone(),
         worktrees: worktrees.clone(),
     });
+    // つながるまでは、ブランチを「—」にして押せなくする（macOS 版と同じ）。
+    if amonhen_remote::location::is_remote(&text) {
+        buttons.show_unopened();
+    }
     let latest_refs = refs;
     // `--edit-worktree` の worktree を書き込む先にし終えたか（`--perform`・`--action` はそれから）。
     let edited: Rc<dyn Fn() -> bool> = {
@@ -1715,6 +1767,31 @@ fn build_tab(
                             stale.set(true);
                         }
                     }
+                    Event::Opened => content.set_visible_child_name("repository"),
+                    Event::OpenFailed(e) => {
+                        buttons.show_unopened();
+                        connecting.show_error(&e);
+                        content.set_visible_child_name("connecting");
+                        // 確認用の起動では、エラーの画面を撮ってから閉じる。
+                        if (args.snapshot.is_some() || args.measure_scroll)
+                            && let Some(window) = win_of()
+                        {
+                            eprintln!("{e}");
+                            let png = args.snapshot.clone();
+                            glib::timeout_add_local_once(
+                                std::time::Duration::from_millis(500),
+                                move || {
+                                    if let Some(png) = png {
+                                        match snapshot(window.upcast_ref(), &png) {
+                                            Ok(()) => eprintln!("{}", png.display()),
+                                            Err(e) => eprintln!("撮れない: {e}"),
+                                        }
+                                    }
+                                    window.close();
+                                },
+                            );
+                        }
+                    }
                     Event::Failed(e) => {
                         status.set_text(&e);
                         status.set_visible(true);
@@ -2061,6 +2138,10 @@ enum Event {
     /// Activity の Performance に出す時間（項目、ms）。
     Timing(&'static str, f64),
     Failed(String),
+    /// リポジトリを開けた（つながった）。
+    Opened,
+    /// リポジトリを開けなかった（つなげなかった）。
+    OpenFailed(String),
 }
 
 fn repo_name(repo: &Repository) -> String {
@@ -2120,10 +2201,11 @@ fn load(
     let repo = match open(&path) {
         Ok(repo) => Arc::new(repo),
         Err(e) => {
-            let _ = tx.send_blocking(Event::Failed(tr!("Can’t open the repository: {e}", e = e)));
+            let _ = tx.send_blocking(Event::OpenFailed(e));
             return;
         }
     };
+    let _ = tx.send_blocking(Event::Opened);
     // Settings > Performance: commit-graph がなければ書き出し、あれば増えた分を書き足す（手元のリポジトリだけ）。
     if settings::bool(settings::WRITE_COMMIT_GRAPH) && repo.connection_state().is_none() {
         let repo = repo.clone();

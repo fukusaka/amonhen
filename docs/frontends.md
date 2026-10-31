@@ -56,7 +56,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | Repository tabs in a window | ✓ | △ | n/a | n/a | GTK4: Tabs are moved between windows with menu items (Move Tab to New Window, Merge All Windows), not by dragging. |
 | Separate windows (New Window) | ✓ | ✓ | n/a | n/a |  |
 | Open windows and tabs restored at launch | ✓ | ✓ | n/a | n/a |  |
-| Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | — | n/a | n/a | GTK4: A loading overlay and an error message only. |
+| Connecting tab for SSH and daemon repositories (Cancel, Try Again) | ✓ | ✓ | n/a | n/a |  |
 | Title shows uncommitted ● and ahead/behind | ✓ | ✓ | n/a | n/a | GTK4: On the tab names. |
 | App keeps running after its last window closes | ✓ | — | n/a | n/a | GTK4: Quits, as GNOME apps do. |
 

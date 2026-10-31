@@ -1620,3 +1620,6 @@
 "  · recent" = "　· 最近";
 "  · creates a tracking branch" = "　· 追跡ブランチを作る";
 "Create branch {name} and switch to it" = "新しいブランチ {name} を作って切り替える";
+
+/* GTK4: つないでいる間・開けなかったタブ */
+"Couldn’t open {name}" = "{name} を開けませんでした";
