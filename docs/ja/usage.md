@@ -18,6 +18,7 @@
 - History の検索の構文: 語は件名・作者・ID から探す。空白で区切ると AND、`or` で OR、括弧でまとめる。`author:` `subject:` `commit:` `path:` `contents:"..."`（例: `path:fs/ (author:linus or author:greg)`）。作者は、mailmap で置き換えた名前とコミットに記録された名前のどちらでも合う。
 - 人はリポジトリの mailmap（`.mailmap`・`mailmap.file`）の名前とメールで出す（`git log` と同じ）。記録と違えば、詳細では記録された名前とメールを下に添える。切るのは git の `log.mailmap` で、リポジトリの設定の「作者と署名」（すべてのリポジトリなら Settings > Git）に mailmap のファイルと一緒にある。どちらを変えても、History を作り直さずに名前を出し直す。Blame は git と同じく、いつも mailmap で置き換える。
 - ファイルの右クリック（Working Copy・History の変更ファイル）で Blame と File History（名前の変更も追う）。どちらもリポジトリの隣のタブで開き、同じツールバーが付く（ボタンを押すと、リポジトリのタブに戻ってそこで操作する）。タブを引き出せば別のウィンドウになり、Window > Move Tab to Window ▸ でリポジトリのタブに戻せる（前のタブを選んだ窓のタブに移す。リポジトリの窓が先頭に出る。タブをタブバーに落としてもよい。タブが 1 つのウィンドウでは View > Show Tab Bar、⇧⌘T でタブバーを出す）。同じものを開き直すと、そのタブを読み直したものに入れ替える。マージのコミットは、Show Merge Commits（一覧の右クリック、または Settings > 表示 > File History）を入れたときだけ出す。行やコミットをダブルクリックすると History で選ぶ。File History はすぐに開いて新しい方の 100 コミットを出し、残りは読めたら足す。名前を変えていれば、名前ごとにその時点の名前の見出しをコミットの上に出す。コミットの右クリックで History で見る・そのコミットでの Blame・ID やパスのコピー（Return で History に出し、⌘C で ID をコピーする）。
+- 大きなリポジトリ: clone のとき、「取得する範囲」で「すべて」「ファイルの中身は必要なときに取る」（partial clone、`--filter=blob:none`）「最近の履歴だけ」（1・100・1,000・10,000 か好きな数のコミットの shallow clone）を選び、「一部のフォルダだけ取り出す」で sparse checkout にできる。shallow clone の History の終わりには、古いコミットを取り足す帯が出る。Repository Settings の「取得とフォルダ」で、リポジトリが持っているものを見て変えられる: 履歴やファイルの中身をさらに取る、取り出すフォルダを選ぶ、git maintenance のオン・オフ。そうしたリポジトリでは、サイドバーの History と Working Copy に印が付く。
 - View > One Line per Commit で History の行を 1 行にする。終了したときに開いていたリポジトリは、次の起動で開き直す。
 
 ## SSH 先のリポジトリ
