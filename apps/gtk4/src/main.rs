@@ -161,6 +161,8 @@ struct Args {
     edit_plan: Option<String>,
     edit_move: Option<(usize, usize)>,
     edit_apply: bool,
+    /// History の `from` 行目のコミットを運び、`to` 行目の上に落とす（確認用。`--edit-apply` で Apply Changes も）。
+    drop_commit: Option<(u32, u32)>,
     /// サイドバーのこの行（ref・リモート・見出しの名前）の右クリックのメニューを出す（確認用。`--menu-item` で
     /// 項目を選ぶ）・右端の印の吹き出しを出す。
     sidebar_menu: Option<String>,
@@ -268,6 +270,14 @@ fn parse_args() -> Result<Args, String> {
                 ));
             }
             "--edit-apply" => args.edit_apply = true,
+            "--drop-commit" => {
+                let spec = it.next().ok_or("--drop-commit <from>:<to>")?;
+                let (a, b) = spec.split_once(':').ok_or("--drop-commit <from>:<to>")?;
+                args.drop_commit = Some((
+                    a.parse().map_err(|_| "--drop-commit <from>:<to>")?,
+                    b.parse().map_err(|_| "--drop-commit <from>:<to>")?,
+                ));
+            }
             "--menu-item" => args.menu_item = Some(it.next().ok_or("--menu-item <title>")?),
             "--open-menu" => args.open_menu = Some(it.next().ok_or("--open-menu <name>")?),
             "--perform" => args.perform = Some(it.next().ok_or("--perform <json>")?),
@@ -928,6 +938,13 @@ fn build_tab(
         statusbar.clone(),
         pending.clone(),
     );
+    // History でコミットを運んで落とす: 編集モードで並べ替える（macOS 版と同じ）。
+    let (a, v, eo) = (actions.clone(), view.downgrade(), edit_opener.clone());
+    view.connect_drop_commit(move |id, row| {
+        if let Some(view) = v.upgrade() {
+            commitops::move_by_drop(&a, &view, &eo, id, row);
+        }
+    });
     // History のコミットの右クリック。
     let (a, v, rd) = (actions.clone(), view.downgrade(), range_diff_opener.clone());
     let (sh, eo) = (shaper.clone(), edit_opener.clone());
@@ -1546,6 +1563,28 @@ fn build_tab(
                                             eo.apply();
                                         }
                                         // 見通し（rewritePreview）が届くのを待ってから撮る。
+                                        glib::timeout_add_local_once(
+                                            std::time::Duration::from_millis(1500),
+                                            move || p.set(p.get() - 1),
+                                        );
+                                    },
+                                );
+                            }
+                            if let Some((from, to)) = args.drop_commit
+                                && let Some(id) = view
+                                    .current()
+                                    .and_then(|(_, h)| h.graph.ids().get(from as usize).copied())
+                            {
+                                commitops::move_by_drop(&actions, &view, &edit_opener, id, to);
+                                pending.set(pending.get() + 1);
+                                let (p, eo, apply) =
+                                    (pending.clone(), edit_opener.clone(), args.edit_apply);
+                                glib::timeout_add_local_once(
+                                    std::time::Duration::from_millis(3000),
+                                    move || {
+                                        if apply {
+                                            eo.apply();
+                                        }
                                         glib::timeout_add_local_once(
                                             std::time::Duration::from_millis(1500),
                                             move || p.set(p.get() - 1),

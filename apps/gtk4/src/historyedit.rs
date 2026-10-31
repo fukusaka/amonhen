@@ -119,6 +119,8 @@ pub enum Preset {
     /// 選んだもののうちいちばん古いものに、ほかをまとめる（1 つなら、そのひとつ古いコミットに）。
     Combine(Vec<String>),
     Drop(String),
+    /// コミットを、並び（新しい順）の `to` 番目へ動かす（History でコミットを運んで落としたとき）。
+    Move(String, usize),
 }
 
 /// 行で選べること。いちばん古い行と merge のすぐ上の行は、まとめる相手がない。merge の行は作り直すだけ。
@@ -586,6 +588,13 @@ impl Mode {
             Preset::Drop(oid) => {
                 if let Some(i) = index(&oid) {
                     self.set(Action::Drop, i);
+                }
+            }
+            Preset::Move(oid, to) => {
+                if let Some(from) = index(&oid)
+                    && to < self.rows.borrow().len()
+                {
+                    self.move_row(from, if from < to { to + 1 } else { to });
                 }
             }
         }

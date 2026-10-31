@@ -854,6 +854,10 @@ fn setup_row(item: &gtk::ListItem, inner: &Owner, drop_cb: &Rc<RefCell<Option<Dr
         let (Some(expander), Ok(dragged)) = (weak.upgrade(), value.get::<String>()) else {
             return false;
         };
+        // History から運んだコミットは受けない（History の中で並べ替えるもの）。
+        if dragged.starts_with(crate::history::DRAG_PREFIX) {
+            return false;
+        }
         match (node_of(&expander), cb.borrow().as_ref()) {
             (Some(node), Some(f)) => {
                 f(&dragged, &node.data(), expander.upcast_ref(), x, y);

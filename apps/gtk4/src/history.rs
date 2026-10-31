@@ -211,7 +211,17 @@ pub struct State {
     complete: bool,
     /// `--measure-scroll` の記録（1 回の `snapshot` にかかった時間）。
     snapshot_times: Option<Vec<f64>>,
+    /// コミットを運んで落としたときに呼ぶ（運んだコミット、落とした所の下の行。最後の行より下なら行の数）。
+    on_drop: Option<DropCallback>,
+    /// 運んでいる間の、落とす所（その行の上に線を引く）。
+    drop_row: Option<u32>,
 }
+
+/// コミットを落としたときに呼ぶもの。
+type DropCallback = Rc<dyn Fn(Oid, u32)>;
+
+/// History の行を運ぶときの中身の頭（サイドバーのブランチ・タグの `local:`・`other:` と分ける）。
+pub const DRAG_PREFIX: &str = "commit:";
 
 mod imp {
     use super::*;
@@ -302,6 +312,83 @@ mod imp {
             });
             view.add_controller(menu);
 
+            // コミットを運ぶ（History の中で落として並べ替える。macOS 版と同じ）。
+            let drag = gtk::DragSource::new();
+            drag.set_actions(gdk::DragAction::MOVE);
+            let subject = Rc::new(RefCell::new(String::new()));
+            let (weak, sub) = (view.downgrade(), subject.clone());
+            drag.connect_prepare(move |_, _, y| {
+                let view = weak.upgrade()?;
+                let row = view.row_at(y as f32)?;
+                let (repo, history) = view.current()?;
+                let id = *history.graph.ids().get(row as usize)?;
+                // 運んでいる間は、件名を札にして出す。
+                sub.replace(
+                    repo.commit_message(&id)
+                        .ok()
+                        .and_then(|m| m.lines().next().map(str::to_owned))
+                        .unwrap_or_else(|| id.to_string()[..8].to_owned()),
+                );
+                let value = format!("{DRAG_PREFIX}{id}");
+                Some(gdk::ContentProvider::for_value(&value.to_value()))
+            });
+            drag.connect_drag_begin(move |_, drag| {
+                let label = gtk::Label::new(Some(&subject.borrow()));
+                label.set_max_width_chars(48);
+                label.set_ellipsize(pango::EllipsizeMode::End);
+                label.add_css_class("osd");
+                label.add_css_class("card");
+                label.set_margin_start(6);
+                label.set_margin_end(6);
+                gtk::DragIcon::for_drag(drag).set_child(Some(&label));
+            });
+            view.add_controller(drag);
+            let target = gtk::DropTarget::new(glib::Type::STRING, gdk::DragAction::MOVE);
+            let weak = view.downgrade();
+            target.connect_motion(move |_, _, y| {
+                let Some(view) = weak.upgrade() else {
+                    return gdk::DragAction::empty();
+                };
+                let row = view.drop_row_at(y as f32);
+                if view.state().drop_row != Some(row) {
+                    view.state().drop_row = Some(row);
+                    view.queue_draw();
+                }
+                gdk::DragAction::MOVE
+            });
+            let weak = view.downgrade();
+            target.connect_leave(move |_| {
+                if let Some(view) = weak.upgrade() {
+                    view.state().drop_row = None;
+                    view.queue_draw();
+                }
+            });
+            let weak = view.downgrade();
+            target.connect_drop(move |_, value, _, y| {
+                let Some(view) = weak.upgrade() else {
+                    return false;
+                };
+                view.state().drop_row = None;
+                view.queue_draw();
+                let Some(id) = value
+                    .get::<String>()
+                    .ok()
+                    .and_then(|v| v.strip_prefix(DRAG_PREFIX).and_then(Oid::from_hex))
+                else {
+                    return false;
+                };
+                let row = view.drop_row_at(y as f32);
+                let f = view.state().on_drop.clone();
+                match f {
+                    Some(f) => {
+                        f(id, row);
+                        true
+                    }
+                    None => false,
+                }
+            });
+            view.add_controller(target);
+
             let keys = gtk::EventControllerKey::new();
             let weak = view.downgrade();
             keys.connect_key_pressed(move |_, key, _, state| {
@@ -335,6 +422,7 @@ mod imp {
         fn snapshot(&self, snapshot: &gtk::Snapshot) {
             let started = Instant::now();
             self.obj().draw(snapshot);
+            self.obj().draw_drop(snapshot);
             if let Some(times) = self.state.borrow_mut().snapshot_times.as_mut() {
                 times.push(started.elapsed().as_secs_f64() * 1000.0);
             }
@@ -824,6 +912,31 @@ impl HistoryView {
         } else if top + h > adj.value() + adj.page_size() {
             adj.set_value(top + h - adj.page_size());
         }
+    }
+
+    /// コミットを運んで落としたら `f(運んだコミット, 落とした所の下の行)` を呼ぶ。
+    pub fn connect_drop_commit(&self, f: impl Fn(Oid, u32) + 'static) {
+        self.state().on_drop = Some(Rc::new(f));
+    }
+
+    /// 落とす所: `y` にいちばん近い行の境目（その下の行。いちばん下なら行の数）。
+    fn drop_row_at(&self, y: f32) -> u32 {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let row = ((y + scroll) / self.row_height() + 0.5).floor().max(0.0) as u32;
+        row.min(self.row_count())
+    }
+
+    /// 運んでいる間、落とす所に線を引く。
+    fn draw_drop(&self, snapshot: &gtk::Snapshot) {
+        let Some(row) = self.state().drop_row else {
+            return;
+        };
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let y = row as f32 * self.row_height() - scroll;
+        snapshot.append_color(
+            &gdk::RGBA::new(0.21, 0.52, 0.89, 1.0),
+            &graphene::Rect::new(4.0, y - 1.0, self.width() as f32 - 8.0, 2.0),
+        );
     }
 
     fn row_at(&self, y: f32) -> Option<u32> {

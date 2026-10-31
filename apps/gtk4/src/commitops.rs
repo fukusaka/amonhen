@@ -267,3 +267,51 @@ pub fn menu_many(
     }));
     items
 }
+
+/// History でコミット `id` を運び、`row` 行目の上（行の数なら最後の行の下）に落とした: 編集できる並び（HEAD から
+/// 最初の merge まで）の中なら、編集モードを開いて動かしておく（並びを見て Apply。範囲は、動かす 2 か所の古い方
+/// から HEAD まで。macOS 版と同じ）。並びの外ならベルを鳴らす。
+pub fn move_by_drop(
+    actions: &Rc<Actions>,
+    view: &crate::history::HistoryView,
+    edit: &Opener,
+    id: amonhen_model::Oid,
+    row: u32,
+) {
+    let Some((repo, history)) = view.current() else {
+        return;
+    };
+    let ids = history.graph.ids();
+    let count = ids.len() as u32;
+    let Some(below) = ids.get(row.min(count.saturating_sub(1)) as usize) else {
+        return;
+    };
+    let (oid, below) = (id.to_string(), below.to_string());
+    let (actions, edit) = (actions.clone(), edit.clone());
+    glib::spawn_future_local(async move {
+        let reply = crate::sheets::run(&repo, json!({ "op": "editableCommits" })).await;
+        let chain: Vec<String> = reply["text"]
+            .as_str()
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| l.split(' ').next().map(str::to_owned))
+            .filter(|o| !o.is_empty())
+            .collect();
+        let at = |o: &str| chain.iter().position(|c| c == o);
+        let (Some(from), Some(mut to)) = (at(&oid), at(&below)) else {
+            if let Some(w) = actions.window() {
+                w.error_bell();
+            }
+            return;
+        };
+        if row >= count {
+            to = chain.len() - 1;
+        } else if from < to {
+            to -= 1;
+        }
+        if from == to {
+            return;
+        }
+        edit.open(&chain[from.max(to)], Some(Preset::Move(oid, to)));
+    });
+}
