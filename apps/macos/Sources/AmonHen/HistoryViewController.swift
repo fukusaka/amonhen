@@ -808,7 +808,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     /// 境界のコミットのうち、いちばん古いものの作者の日時（読み込んであるチャンクにあれば）。
     private func oldestBoundaryDate() -> Date? {
         guard let history else { return nil }
-        return history.boundaryRows().compactMap { row in chunks[row / Self.chunkRows]?.authorTime(row: row) }.min()
+        // 境界の行は表の終わりのほうにあり、まだ読んでいないことが多い。読んでいなければその行だけ読む。
+        return history.boundaryRows().compactMap { row in
+            (chunks[row / Self.chunkRows] ?? (try? history.chunk(rows: row..<row + 1)))?.authorTime(row: row)
+        }.min()
     }
 
     /// 密度の帯を、今の History で描き直す（裏で求める。linux で数 ms）。
