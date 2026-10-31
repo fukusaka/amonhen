@@ -207,8 +207,11 @@ final class Actions {
         }
     }
 
-    func rewrite(_ label: String, _ edit: [String: Any]) {
-        perform(["op": "rewrite", "label": label, "edit": edit])
+    /// `updateRefs` は、積み重ねたブランチを一緒に動かすかのこの操作だけの指定（nil なら git の設定のとおり）。
+    func rewrite(_ label: String, _ edit: [String: Any], updateRefs: Bool? = nil) {
+        var command: [String: Any] = ["op": "rewrite", "label": label, "edit": edit]
+        if let updateRefs { command["updateRefs"] = updateRefs }
+        perform(command)
     }
 
     /// 編集できるコミット（新しい順）。
