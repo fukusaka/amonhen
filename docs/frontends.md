@@ -356,7 +356,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | New Worktree… (from a branch or commit) | ✓ | ✓ | — | ✓ |  |
 | Remove Worktree (asks, `--force` with changes) | ✓ | △ | — | ✓ | GTK4: Hidden for the main worktree and the opened one. |
 | Prune worktrees | ✓ | ✓ | — | ✓ |  |
-| A worktree's folder opens its repository with it edited | ✓ | — | — | n/a | GTK4: Opens it as a repository of its own. |
+| A worktree's folder opens its repository with it edited | ✓ | ✓ | — | n/a |  |
 
 ## SSH hosts, shared daemon, askpass
 

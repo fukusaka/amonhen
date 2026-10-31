@@ -356,7 +356,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | New Worktree…（ブランチ・コミットから） | ✓ | ✓ | — | ✓ |  |
 | Remove Worktree（尋ね、変更があれば `--force`） | ✓ | △ | — | ✓ | GTK4: main と開いたものでは出さない。 |
 | worktree の Prune | ✓ | ✓ | — | ✓ |  |
-| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | — | — | n/a | GTK4: 別のリポジトリとして開く。 |
+| worktree のフォルダーを開くと、そのリポジトリでそれを書き込む先にする | ✓ | ✓ | — | n/a |  |
 
 ## SSH 先・共有の daemon・askpass
 

@@ -434,7 +434,10 @@ pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
         new_window_with(app, location);
         return;
     }
-    let key = crate::repos::normalize(&location);
+    // 追加した worktree のフォルダー: メインのリポジトリのタブがあれば、それを前に出してその worktree を書き込む
+    // 先にする（なければ、開くときにメインのリポジトリに替える。`build_tab`）。
+    let worktree = crate::repos::main_of_worktree(&location);
+    let key = crate::repos::normalize(worktree.as_deref().unwrap_or(&location));
     let existing = WINDOWS.with(|w| {
         w.borrow().iter().find_map(|h| {
             h.tabs
@@ -449,6 +452,11 @@ pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
             host.notebook.set_current_page(Some(n));
         }
         host.window.present();
+        if worktree.is_some() {
+            let path = location.to_string_lossy().into_owned();
+            tab.group
+                .activate_action("edit-worktree", Some(&path.to_variant()));
+        }
         return;
     }
     match (place, front_window()) {

@@ -512,10 +512,20 @@ fn build_tab(
     select: bool,
     position: Option<u32>,
 ) -> Rc<tabs::Tab> {
-    let path = args
+    let mut args = args;
+    let mut path = args
         .path
         .clone()
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+    // 追加した worktree のフォルダーは、メインのリポジトリを開いて、その worktree を書き込む先にする（別の
+    // リポジトリにしない。macOS 版と同じく docs/ux.md の「Worktrees」）。
+    if args.edit_worktree.is_none()
+        && let Some(main) = repos::main_of_worktree(&path)
+    {
+        args.edit_worktree = Some(path.to_string_lossy().into_owned());
+        path = main;
+        args.path = Some(path.clone());
+    }
     // File > Open Recent に出す（確認用の起動では、`--tab` のタブも覚えない）。
     if !tabs::is_check_run() {
         repos::record(&path);

@@ -23,6 +23,25 @@ pub fn recent() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// 追加した worktree のフォルダーなら、そのメインのリポジトリのフォルダー（macOS 版の
+/// `RepositoryList.mainRepository(ofWorktree:)`）。`.git` の `gitdir:` が `<main>/.git/worktrees/<名前>` を
+/// 指すものだけ。git は起動しない。daemon・SSH 越しの場所は None。
+pub fn main_of_worktree(location: &Path) -> Option<PathBuf> {
+    if amonhen_remote::location::is_remote(&location.to_string_lossy()) {
+        return None;
+    }
+    let dot_git = location.join(".git");
+    if !dot_git.is_file() {
+        return None;
+    }
+    let text = std::fs::read_to_string(&dot_git).ok()?;
+    let target = Path::new(text.strip_prefix("gitdir:")?.trim());
+    let git_dir = location.join(target);
+    let git_dir = git_dir.to_string_lossy();
+    let (main, _) = git_dir.split_once("/.git/worktrees/")?;
+    Some(PathBuf::from(main))
+}
+
 /// 場所を、比べられる形にする（手元のパスは正規の形に）。
 pub fn normalize(location: &Path) -> String {
     let text = location.to_string_lossy().into_owned();
@@ -315,5 +334,29 @@ async fn run(parent: &gtk::Window, url: String, dest: PathBuf, open: Rc<dyn Fn(P
         Err(e) => {
             crate::sheets::inform(Some(parent), &tr!("Couldn’t clone"), &e).await;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::main_of_worktree;
+
+    #[test]
+    fn finds_the_main_repository_of_a_worktree() {
+        let dir = std::env::temp_dir().join(format!("amonhen-gtk-wt-{}", std::process::id()));
+        let (main, wt, plain) = (dir.join("main"), dir.join("wt"), dir.join("plain"));
+        std::fs::create_dir_all(main.join(".git/worktrees/wt")).unwrap();
+        std::fs::create_dir_all(&wt).unwrap();
+        std::fs::create_dir_all(plain.join(".git")).unwrap();
+        let gitdir = main.join(".git/worktrees/wt");
+        std::fs::write(wt.join(".git"), format!("gitdir: {}\n", gitdir.display())).unwrap();
+        assert_eq!(main_of_worktree(&wt), Some(main.clone()));
+        // メインの作業ツリーと、`.git` のないフォルダーは worktree ではない。
+        assert_eq!(main_of_worktree(&plain), None);
+        assert_eq!(main_of_worktree(&dir), None);
+        // サブモジュール（`.git/modules/…` を指す）も worktree ではない。
+        std::fs::write(wt.join(".git"), "gitdir: ../main/.git/modules/wt\n").unwrap();
+        assert_eq!(main_of_worktree(&wt), None);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
