@@ -158,10 +158,7 @@ const FE_ACCELS: &[(&str, &str)] = &[
 ];
 
 /// 表にあって、この FE にまだ機能のない操作（メニューに出さない）。
-pub const PENDING: &[&str] = &[
-    "new-worktree",
-    "prune-worktrees",
-];
+pub const PENDING: &[&str] = &["new-worktree", "prune-worktrees"];
 
 /// 状態を持つので [`handlers`] とは別に登録する操作。
 #[cfg(test)]
