@@ -327,7 +327,7 @@ This table is kept by hand. Update it in the same change that adds, removes or c
 | --- | :-: | :-: | :-: | :-: | --- |
 | A sheet before remote, HEAD-moving and deleting operations | ✓ | ✓ | △ | n/a | VSCode: Deleting and rewriting only; not Fetch, Pull, Push, Merge or Checkout. |
 | Undo of git operations (`undo.json`) | ✓ | ✓ | ✓ | ✓ |  |
-| Disabled controls say why in their tooltip | ✓ | △ | — | n/a | GTK4: The toolbar's Push and Undo, and settings rows that need a newer git; other places not yet. |
+| Disabled controls say why in their tooltip | ✓ | ✓ | — | n/a |  |
 
 ## 12. GitHub
 

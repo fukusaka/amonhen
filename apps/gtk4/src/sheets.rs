@@ -1806,7 +1806,14 @@ pub fn integrate_choosing(
                         update_refs
                             .set_active(info["updateRefs"]["configured"].as_bool() == Some(true));
                     }
-                    update_refs.set_visible(stacked && available);
+                    // git が古くて動かせなければ、押せなくして理由を出す（macOS 版と同じ）。
+                    update_refs.set_visible(stacked);
+                    update_refs.set_sensitive(available);
+                    if !available {
+                        update_refs.set_tooltip_text(Some(&tr!(
+                            "Moving stacked branches needs git 2.38 or newer."
+                        )));
+                    }
                 });
             })
         };

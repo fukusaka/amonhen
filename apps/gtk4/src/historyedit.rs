@@ -739,8 +739,14 @@ impl Mode {
             self.syncing_update_refs.set(true);
             self.move_stacked.set_active(configured);
             self.syncing_update_refs.set(false);
-            self.move_stacked
-                .set_sensitive(info["updateRefs"]["available"].as_bool() == Some(true));
+            let available = info["updateRefs"]["available"].as_bool() == Some(true);
+            self.move_stacked.set_sensitive(available);
+            // 押せないときは理由を出す（Rebase のシートと同じ）。
+            if !available {
+                self.move_stacked.set_tooltip_text(Some(&tr!(
+                    "Moving stacked branches needs git 2.38 or newer."
+                )));
+            }
         }
         // 積み重ねたブランチがあるときだけ選ばせる。
         let stacked = info["moving"].as_array().is_some_and(|m| !m.is_empty())

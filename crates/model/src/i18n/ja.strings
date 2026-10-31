@@ -1737,3 +1737,6 @@
 "New branch from HEAD (Ctrl+Alt+B)" = "HEAD から新しいブランチ（Ctrl+Alt+B）";
 "Show the Repositories page (Ctrl+Shift+R)" = "リポジトリのページに切り替える（Ctrl+Shift+R）";
 "Terminal" = "ターミナル";
+
+/* GTK4: 押せない「積み重ねたブランチも動かす」の理由 */
+"Moving stacked branches needs git 2.38 or newer." = "積み重ねたブランチを動かすには、git 2.38 以降が要ります。";
