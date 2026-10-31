@@ -5,6 +5,7 @@
 mod actions;
 mod activity;
 mod appmenu;
+mod commitmsg;
 mod commitops;
 mod details;
 mod diff;

@@ -791,3 +791,9 @@
 "Line endings: working tree {worktree}, git {git}, checkout {checkout}" = "改行: 作業ツリー {worktree}、git {git}、checkout {checkout}";
 "Conversion: {rule}" = "変換: {rule}";
 "The next commit or checkout may change the line endings of the whole file" = "次の commit や checkout で、ファイル全体の改行が変わることがあります";
+
+/* GTK4 の FE: コミットのメッセージの入力の補助 */
+"Insert the message of a recent commit (Alt+Up and Alt+Down in the Summary field also work)" = "最近のコミットのメッセージを入れる（件名の欄で Alt+↑・Alt+↓ でも呼び出せる）";
+"Insert a Conventional Commits type, Co-authored-by or Signed-off-by" = "Conventional Commits の型、Co-authored-by、Signed-off-by を入れる";
+"Not loaded yet" = "まだ読めていません";
+"Signed-off-by (Me)" = "Signed-off-by（自分）";

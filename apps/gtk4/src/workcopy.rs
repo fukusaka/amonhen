@@ -87,6 +87,8 @@ struct Inner {
     filter: gtk::SearchEntry,
     subject: gtk::Entry,
     body: gtk::TextView,
+    /// メッセージの入力の補助（下書き・最近のメッセージ・型とトレーラー・fixup!）。
+    aids: Rc<crate::commitmsg::MessageAids>,
     amend: gtk::CheckButton,
     commit: gtk::Button,
     message: gtk::Label,
@@ -151,6 +153,8 @@ impl WorkingCopy {
         menu.append(Some("Commit and Push"), Some("win.commit-and-push"));
         menu.append(Some("Amend Last Commit"), Some("win.amend-last-commit"));
         commit_menu.set_menu_model(Some(&menu));
+        let aids = crate::commitmsg::MessageAids::new(&subject, &body, &amend);
+        aids.install_fixups(&commit_menu, menu);
         let commit_group = gtk::Box::new(gtk::Orientation::Horizontal, 0);
         commit_group.add_css_class("linked");
         commit_group.append(&commit);
@@ -159,6 +163,8 @@ impl WorkingCopy {
         commit_group.set_halign(gtk::Align::End);
         let commit_row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         commit_row.append(&amend);
+        commit_row.append(&aids.history);
+        commit_row.append(&aids.insert);
         commit_row.append(&commit_group);
         let message = gtk::Label::new(None);
         message.set_xalign(0.0);
@@ -320,6 +326,7 @@ impl WorkingCopy {
             filter,
             subject,
             body,
+            aids,
             amend,
             commit,
             message,
@@ -383,7 +390,8 @@ impl WorkingCopy {
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
-        self.inner.repo.replace(Some(repo));
+        self.inner.repo.replace(Some(repo.clone()));
+        self.inner.aids.set_repo(repo);
     }
 
     /// 確かめる窓や、知らせに使う。
@@ -1372,6 +1380,7 @@ impl Inner {
             let Some(this) = weak.upgrade() else { return };
             match result {
                 Ok(Ok(status)) => {
+                    this.aids.clear_draft();
                     this.subject.set_text("");
                     this.body.buffer().set_text("");
                     this.amend.set_active(false);
