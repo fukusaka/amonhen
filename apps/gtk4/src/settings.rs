@@ -27,6 +27,8 @@ pub const WRITE_COMMIT_GRAPH: &str = "writeCommitGraph";
 pub const OPEN_THROUGH_DAEMON: &str = "openThroughDaemon";
 pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
+/// File History に merge のコミットも出すか。
+pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
 /// 開いている間、何分ごとに fetch するか（0 はしない）。
 pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
 

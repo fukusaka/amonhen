@@ -249,20 +249,40 @@ fn install_css() {
     }
 }
 
-/// `path` を変えたコミットと、それぞれでの差分の窓を開く。
+/// `path` を変えたコミットと、それぞれでの差分の窓を開く。merge のコミットを出すかは Settings の
+/// `fileHistoryMerges`（右クリックの Show Merge Commits で切り替え、開いている窓も読み直す）。
 pub fn file_history(
     parent: &gtk::ApplicationWindow,
     repo: Arc<Repository>,
     path: &str,
     on_commit: OnCommit,
 ) {
-    let command = json!({ "op": "fileHistory", "path": path });
-    let (parent, path) = (parent.clone(), path.to_owned());
+    let window = gtk::Window::builder()
+        .title(format!("File History — {path}"))
+        .default_width(1100)
+        .default_height(760)
+        .build();
+    window.set_transient_for(Some(parent));
+    window.set_destroy_with_parent(true);
+    window.present();
+    load_file_history(&window, parent, repo, path.to_owned(), on_commit);
+}
+
+fn load_file_history(
+    window: &gtk::Window,
+    parent: &gtk::ApplicationWindow,
+    repo: Arc<Repository>,
+    path: String,
+    on_commit: OnCommit,
+) {
+    let merges = crate::settings::bool(crate::settings::FILE_HISTORY_MERGES);
+    let command = json!({ "op": "fileHistory", "path": path, "merges": merges });
+    let (window, parent) = (window.clone(), parent.clone());
     let r = repo.clone();
     glib::spawn_future_local(async move {
         let info = gio::spawn_blocking(move || run(&r, command)).await;
         match info {
-            Ok(Ok(info)) => show_file_history(&parent, repo, &path, &info, on_commit),
+            Ok(Ok(info)) => show_file_history(&window, &parent, repo, &path, &info, on_commit),
             Ok(Err(e)) => fail(&parent, &e),
             Err(_) => {}
         }
@@ -270,6 +290,7 @@ pub fn file_history(
 }
 
 /// File History の 1 行（コミット、件名、作者、日時、その時点のパス）。
+#[derive(Clone)]
 struct Entry {
     oid: String,
     subject: String,
@@ -278,7 +299,28 @@ struct Entry {
     path: String,
 }
 
+/// 一覧の行: 名前が変わったところの見出し（パス、その下の最初の行）か、コミット。
+#[derive(Clone)]
+enum HistoryRow {
+    Path(String, usize),
+    Entry(usize),
+}
+
+/// 各コミットの時点のパスから、一覧の行を作る。名前が 1 つだけなら見出しは入れない（窓の題にある）。
+fn history_rows(entries: &[Entry]) -> Vec<HistoryRow> {
+    let mut rows = Vec::new();
+    let renamed = entries.iter().any(|e| e.path != entries[0].path);
+    for (i, e) in entries.iter().enumerate() {
+        if renamed && (i == 0 || entries[i - 1].path != e.path) {
+            rows.push(HistoryRow::Path(e.path.clone(), i));
+        }
+        rows.push(HistoryRow::Entry(i));
+    }
+    rows
+}
+
 fn show_file_history(
+    window: &gtk::Window,
     parent: &gtk::ApplicationWindow,
     repo: Arc<Repository>,
     path: &str,
@@ -297,15 +339,16 @@ fn show_file_history(
             path: e["path"].as_str().unwrap_or_default().to_owned(),
         })
         .collect();
-    let entries = Rc::new(entries);
-    let title = tr!(
-        "History — {path} ({count} commits)",
+    window.set_title(Some(&tr!(
+        "File History — {path} ({count} commits)",
         path = path,
         count = entries.len()
-    );
+    )));
+    let rows = Rc::new(history_rows(&entries));
+    let entries = Rc::new(entries);
 
     let model = gtk::StringList::new(&[]);
-    for i in 0..entries.len() {
+    for i in 0..rows.len() {
         model.append(&i.to_string());
     }
     let factory = gtk::SignalListItemFactory::new();
@@ -326,15 +369,17 @@ fn show_file_history(
         column.append(&meta);
         item.set_child(Some(&column));
     });
-    let e = entries.clone();
+    let (e, r) = (entries.clone(), rows.clone());
     factory.connect_bind(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
-        let (Some(entry), Some(column)) = (
-            e.get(item.position() as usize),
+        let (Some(row), Some(column)) = (
+            r.get(item.position() as usize),
             item.child().and_downcast::<gtk::Box>(),
         ) else {
             return;
         };
+        // 右クリックで、どの行かを分かるようにする。
+        column.set_widget_name(&format!("row:{}", item.position()));
         let subject = column
             .first_child()
             .and_downcast::<gtk::Label>()
@@ -343,27 +388,143 @@ fn show_file_history(
             .next_sibling()
             .and_downcast::<gtk::Label>()
             .expect("meta");
-        subject.set_text(&entry.subject);
-        meta.set_text(&format!(
-            "{}  ·  {}  ·  {}",
-            entry.author,
-            date(entry.time),
-            &entry.oid[..8.min(entry.oid.len())]
-        ));
+        match row {
+            // ファイル名を先に（狭くても切れない）、ディレクトリを薄く後ろに。説明に、名前が変わったコミット。
+            HistoryRow::Path(path, index) => {
+                let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+                subject.set_markup(&format!(
+                    "<b>{}</b>  <span alpha=\"60%\">{}</span>",
+                    glib::markup_escape_text(name),
+                    glib::markup_escape_text(dir)
+                ));
+                meta.set_visible(false);
+                item.set_selectable(false);
+                item.set_activatable(false);
+                let tip = match index.checked_sub(1).and_then(|i| e.get(i)) {
+                    Some(newer) => format!(
+                        "{path}\n{}",
+                        tr!(
+                            "Renamed or copied to {path} in {commit}",
+                            path = newer.path,
+                            commit = &newer.oid[..8.min(newer.oid.len())]
+                        )
+                    ),
+                    None => path.clone(),
+                };
+                column.set_tooltip_text(Some(&tip));
+            }
+            HistoryRow::Entry(i) => {
+                let entry = &e[*i];
+                subject.set_text(&entry.subject);
+                meta.set_visible(true);
+                meta.set_text(&format!(
+                    "{}  ·  {}  ·  {}",
+                    entry.author,
+                    date(entry.time),
+                    &entry.oid[..8.min(entry.oid.len())]
+                ));
+                item.set_selectable(true);
+                item.set_activatable(true);
+                column.set_tooltip_text(Some(&entry.path));
+            }
+        }
     });
     let selection = gtk::SingleSelection::new(Some(model));
     let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
     list.add_css_class("navigation-sidebar");
-    let e = entries.clone();
+    let entry_at = {
+        let (e, r) = (entries.clone(), rows.clone());
+        move |position: u32| -> Option<Entry> {
+            match r.get(position as usize)? {
+                HistoryRow::Entry(i) => e.get(*i).cloned(),
+                HistoryRow::Path(..) => None,
+            }
+        }
+    };
     let open = on_commit.clone();
+    let at = entry_at.clone();
     list.connect_activate(move |_, position| {
-        if let Some(id) = e
-            .get(position as usize)
-            .and_then(|entry| Oid::from_hex(&entry.oid))
-        {
+        if let Some(id) = at(position).and_then(|entry| Oid::from_hex(&entry.oid)) {
             open(id);
         }
     });
+    // 右クリック: Show in History、Blame at、コピー、Show Merge Commits（既定も変え、この窓を読み直す）。
+    let menu_click = gtk::GestureClick::new();
+    menu_click.set_button(gtk::gdk::BUTTON_SECONDARY);
+    let (l, at, sel) = (list.downgrade(), entry_at.clone(), selection.clone());
+    let (w, p, r, pa, oc) = (
+        window.downgrade(),
+        parent.downgrade(),
+        repo.clone(),
+        path.to_owned(),
+        on_commit.clone(),
+    );
+    menu_click.connect_pressed(move |_, _, x, y| {
+        let Some(list) = l.upgrade() else { return };
+        let mut items = Vec::new();
+        // 押した行（ListView の中の行の部品から位置を探す）。
+        let picked = list.pick(x, y, gtk::PickFlags::DEFAULT).and_then(|w| {
+            let mut cur = Some(w);
+            while let Some(c) = cur {
+                if let Some(pos) = c.widget_name().strip_prefix("row:") {
+                    return pos.parse().ok();
+                }
+                cur = c.parent();
+            }
+            None
+        });
+        if let Some(position) = picked
+            && let Some(entry) = at(position)
+        {
+            sel.set_selected(position);
+            let short = entry.oid[..8.min(entry.oid.len())].to_owned();
+            if let Some(id) = Oid::from_hex(&entry.oid) {
+                let open = oc.clone();
+                items.push(crate::menu::action(tr!("Show in History"), move || {
+                    open(id)
+                }));
+            }
+            if let Some(parent) = p.upgrade() {
+                let (repo, path, oid, oc) =
+                    (r.clone(), entry.path.clone(), entry.oid.clone(), oc.clone());
+                items.push(crate::menu::action(
+                    tr!("Blame at {id}", id = short),
+                    move || blame(&parent, repo.clone(), &path, Some(&oid), oc.clone()),
+                ));
+            }
+            items.push(crate::menu::Item::Separator);
+            for (title, text) in [
+                (tr!("Copy Commit ID"), entry.oid.clone()),
+                (tr!("Copy Short ID"), short.clone()),
+                (tr!("Copy Path"), entry.path.clone()),
+            ] {
+                let l = list.downgrade();
+                items.push(crate::menu::action(title, move || {
+                    if let Some(l) = l.upgrade() {
+                        l.clipboard().set_text(&text);
+                    }
+                }));
+            }
+            items.push(crate::menu::Item::Separator);
+        }
+        let merges = crate::settings::bool(crate::settings::FILE_HISTORY_MERGES);
+        let (w, p, r, pa, oc) = (w.clone(), p.clone(), r.clone(), pa.clone(), oc.clone());
+        items.push(crate::menu::action(
+            format!(
+                "{}{}",
+                if merges { "✓ " } else { "" },
+                tr!("Show Merge Commits")
+            ),
+            move || {
+                crate::settings::set_bool(crate::settings::FILE_HISTORY_MERGES, !merges);
+                if let (Some(w), Some(p)) = (w.upgrade(), p.upgrade()) {
+                    load_file_history(&w, &p, r.clone(), pa.clone(), oc.clone());
+                }
+            },
+        ));
+        crate::menu::popup(list.upcast_ref::<gtk::Widget>(), x, y, items);
+    });
+    list.add_controller(menu_click);
     let left = gtk::ScrolledWindow::builder()
         .child(&list)
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -381,9 +542,10 @@ fn show_file_history(
 
     // 選んだコミットでの、このファイルの差分。
     let generation = Rc::new(std::cell::Cell::new(0u64));
-    let (e, d) = (entries.clone(), diff.downgrade());
+    let d = diff.downgrade();
+    let at = entry_at.clone();
     let show = move |position: u32| {
-        let Some(entry) = e.get(position as usize) else {
+        let Some(entry) = at(position) else {
             return;
         };
         let Some(id) = Oid::from_hex(&entry.oid) else {
@@ -421,9 +583,19 @@ fn show_file_history(
             }
         });
     };
-    if !entries.is_empty() {
-        show(0);
-    }
+    // 最初は一番上のコミット（見出しなら、その下）。
+    let first = rows
+        .iter()
+        .position(|r| matches!(r, HistoryRow::Entry(_)))
+        .unwrap_or(0) as u32;
+    selection.set_selected(first);
+    show(first);
     selection.connect_selected_notify(move |s| show(s.selected()));
-    new_window(parent, &title, &split);
+    if entries.is_empty() {
+        let note = gtk::Label::new(Some(&tr!("No commits changed this file.")));
+        note.add_css_class("dim-label");
+        window.set_child(Some(&note));
+    } else {
+        window.set_child(Some(&split));
+    }
 }

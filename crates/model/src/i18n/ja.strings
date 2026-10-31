@@ -1112,3 +1112,11 @@
 "Remove the selected keys from this repository (Delete)" = "選んだキーをこのリポジトリから消す（Delete）";
 "Remove the selected keys from all repositories (Delete)" = "選んだキーをすべてのリポジトリから消す（Delete）";
 "Couldn’t prepare the settings repository" = "設定のためのリポジトリを用意できませんでした";
+
+/* GTK4 の FE: File History */
+"File History — {path} ({count} commits)" = "File History — {path}（{count} コミット）";
+"Renamed or copied to {path} in {commit}" = "{commit} で {path} に名前を変えた（またはコピーした）";
+"Copy Short ID" = "短い ID をコピー";
+"Show Merge Commits" = "マージのコミットを表示";
+"No commits changed this file." = "このファイルを変えたコミットはありません";
+"Blame at {id}" = "{id} の時点で Blame";
