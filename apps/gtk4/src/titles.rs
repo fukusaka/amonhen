@@ -74,3 +74,18 @@ pub fn delete(name: &str) -> String {
 pub fn reset(branch: &str, oid: &str) -> String {
     tr!("Reset {branch} to {id}", branch = branch, id = short(oid))
 }
+
+/// Repositories の左の分類: 「すべて Fetch（3）」。
+pub fn fetch_all(count: usize) -> String {
+    tr!("Fetch All ({count})", count = count)
+}
+
+/// Repositories の行（いくつも選んだとき）: 「Fetch（3）」。
+pub fn fetch_several(count: usize) -> String {
+    tr!("Fetch ({count})", count = count)
+}
+
+/// Repositories の SSH のホスト: 「host を一覧から外す…」。
+pub fn remove_from_list(name: &str) -> String {
+    tr!("Remove {name} from List…", name = name)
+}

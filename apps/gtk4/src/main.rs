@@ -1,11 +1,12 @@
 //! Amon Hen の GTK4 の FE。Linux・BSD が本命で、GTK の動く Windows・macOS でも動く。
 //!
-//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]]`
+//! `amonhen-gtk [<path>] [--snapshot <png>] [--measure-scroll [--scroll-rows <n>]] [--scroll-to <row> | --select-rows <row,...> | --select-ref <name>] [--menu-ref <name> | --menu-row <row> [--menu-item <title>]] [--search <query> [--only-matching]] [--blame <path> | --file-history <path> | --activity <tab> | --settings <tab> | --merge-editor <path> [--accept ours|theirs|both|base]] [--reflog] [--apply-patch <path,...>] [--open-menu repository|primary] [--action <id>] [--print-file-menu <path>] [--perform <json>] [--stashes [--stash-button apply|pop|drop|branch]] [--working-copy [--select-path <path>] [--toggle-row <row>] [--layout list|tree|flat]] [--range-diff[=<ranges>] [--select-pair <n>] [--menu-pair <n>]] [--repositories]`
 
 mod actions;
 mod activity;
 mod appmenu;
 mod askpass;
+mod bookmarks;
 mod commitmsg;
 mod commitops;
 mod configtable;
@@ -29,6 +30,7 @@ mod reflog;
 mod refmarks;
 mod refops;
 mod remotesheet;
+mod repobrowser;
 mod repopages;
 mod repos;
 mod reposettings;
@@ -143,6 +145,8 @@ struct Args {
     sidebar_mark: Option<String>,
     /// サイドバーをこの語で絞り込んでおく（確認用）。
     filter_sidebar: Option<String>,
+    /// リポジトリの窓の代わりに Repositories の窓を出す（確認用。`--snapshot` はその窓を撮る）。
+    repositories: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -198,6 +202,7 @@ fn parse_args() -> Result<Args, String> {
                 args.menu_row = Some(row.parse().map_err(|_| "--menu-row <row>")?);
             }
             "--reflog" => args.reflog = true,
+            "--repositories" => args.repositories = true,
             "--apply-patch" => {
                 let paths = it.next().ok_or("--apply-patch <path,...>")?;
                 args.apply_patch = paths.split(',').map(PathBuf::from).collect();
@@ -276,7 +281,7 @@ fn main() -> glib::ExitCode {
         .build();
     // 窓のアイコン（配るときに hicolor のテーマに置く。.desktop の Icon と同じ名前）。GTK を初期化した後に。
     app.connect_startup(|_| gtk::Window::set_default_icon_name(APP_ID));
-    app.connect_activate(move |app| build_window(app, args.clone()));
+    app.connect_activate(move |app| launch(app, &args));
     // 引数は自分で読んだので、GTK には渡さない。
     app.run_with_args::<&str>(&[])
 }
@@ -355,6 +360,41 @@ fn engine() -> PathBuf {
         return current;
     }
     PathBuf::from("amonhen")
+}
+
+/// リポジトリを新しい窓で開く。
+fn opener(app: &gtk::Application) -> Rc<dyn Fn(PathBuf)> {
+    let app = app.clone();
+    Rc::new(move |path| {
+        build_window(
+            &app,
+            Args {
+                path: Some(path),
+                ..Args::default()
+            },
+        )
+    })
+}
+
+/// 起動したとき: 引数のリポジトリ、なければ今のフォルダのリポジトリを開く。
+fn launch(app: &gtk::Application, args: &Args) {
+    let window = if args.repositories {
+        Some(repobrowser::show(app, opener(app)).upcast::<gtk::Window>())
+    } else {
+        build_window(app, args.clone());
+        None
+    };
+    if args.repositories
+        && let Some(row) = args.menu_row
+    {
+        let item = args.menu_item.clone();
+        glib::timeout_add_local_once(std::time::Duration::from_millis(500), move || {
+            repobrowser::debug_menu(row, item)
+        });
+    }
+    if let (Some(window), Some(png)) = (window, args.snapshot.clone()) {
+        repobrowser::snapshot_when_ready(&window, png);
+    }
 }
 
 fn build_window(app: &gtk::Application, args: Args) {

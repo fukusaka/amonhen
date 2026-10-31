@@ -609,7 +609,7 @@ fn info_of(info: &Value) -> Info {
 }
 
 /// どのくらい前か（macOS 版の RelativeDateTimeFormatter の短い形）。
-fn ago(time: i64) -> String {
+pub fn ago(time: i64) -> String {
     let now = glib::real_time() / 1_000_000;
     let s = (now - time).max(0);
     const MIN: i64 = 60;

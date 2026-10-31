@@ -163,7 +163,6 @@ pub const PENDING: &[&str] = &[
     "prune-worktrees",
     "find-in-history",
     "quick-open",
-    "repositories",
 ];
 
 /// 状態を持つので [`handlers`] とは別に登録する操作。
@@ -316,6 +315,12 @@ fn handlers() -> Vec<(&'static str, Handler)> {
                     p.actions.clone(),
                     crate::engine(),
                 );
+            }),
+        ),
+        (
+            "repositories",
+            Box::new(|p| {
+                crate::repobrowser::show(&p.app, p.open.clone());
             }),
         ),
         ("shortcuts", Box::new(show_shortcuts)),
@@ -832,6 +837,13 @@ fn open_in_terminal(p: &Rc<Parts>) {
     let Some(dir) = workdir(p) else {
         return p.window.error_bell();
     };
+    if !terminal_at(&dir) {
+        p.window.error_bell();
+    }
+}
+
+/// `dir` で端末を開く（Repositories の一覧からも使う）。開けなければ false。
+pub fn terminal_at(dir: &std::path::Path) -> bool {
     let dir_arg = dir.display().to_string();
     let candidates: Vec<(&str, Vec<String>)> = if cfg!(target_os = "macos") {
         vec![("open", vec!["-a".into(), "Terminal".into(), dir_arg])]
@@ -849,15 +861,15 @@ fn open_in_terminal(p: &Rc<Parts>) {
         ]
     };
     for (program, args) in candidates {
-        let started = std::process::Command::new(program)
+        let started = amonhen_model::process::command(program)
             .args(&args)
-            .current_dir(&dir)
+            .current_dir(dir)
             .spawn();
         if started.is_ok() {
-            return;
+            return true;
         }
     }
-    p.window.error_bell();
+    false
 }
 
 /// 作業ツリーを、ファイルマネージャーで（親のフォルダの中で選んだ状態で）見せる。
@@ -865,8 +877,13 @@ fn reveal_in_files(p: &Rc<Parts>) {
     let Some(dir) = workdir(p) else {
         return p.window.error_bell();
     };
+    reveal(p.window.upcast_ref(), &dir);
+}
+
+/// `dir` を、ファイルマネージャーで（親のフォルダの中で選んだ状態で）見せる（Repositories の一覧からも使う）。
+pub fn reveal(window: &gtk::Window, dir: &std::path::Path) {
     let launcher = gtk::FileLauncher::new(Some(&gio::File::for_path(dir)));
-    let window = p.window.clone();
+    let window = window.clone();
     glib::spawn_future_local(async move {
         if launcher
             .open_containing_folder_future(Some(&window))

@@ -1,4 +1,5 @@
 //! リポジトリを開く周り: 最近開いたもの（File > Open Recent）と、File > Clone…（macOS 版の `Clone.swift`）。
+//! 最後に開いた日時（Repositories の一覧の Opened）も覚える。
 
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
@@ -12,6 +13,8 @@ use crate::sheets::{Response, Sheet, row};
 const RECENT: &str = "recentRepositories";
 const CLONE_FOLDER: &str = "cloneFolder";
 const KEEP: usize = 10;
+/// 最後に開いた日時（場所 → UNIX 時間。macOS 版の `repositoryOpenedAt`）。
+const OPENED: &str = "repositoryOpenedAt";
 
 /// 最近開いたリポジトリ（新しい順。手元のパス・`daemon:`・`ssh://` の場所）。
 pub fn recent() -> Vec<String> {
@@ -20,20 +23,58 @@ pub fn recent() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// 開いたことを覚える（先頭に）。
-pub fn record(location: &Path) {
+/// 場所を、比べられる形にする（手元のパスは正規の形に）。
+fn normalize(location: &Path) -> String {
     let text = location.to_string_lossy().into_owned();
-    // 手元のパスは、比べられるよう正規の形にする。
-    let text = if amonhen_remote::location::is_remote(&text) {
+    if amonhen_remote::location::is_remote(&text) {
         text
     } else {
         std::fs::canonicalize(location).map_or(text, |p| p.to_string_lossy().into_owned())
-    };
+    }
+}
+
+/// 開いたことを覚える（先頭に）。開いた日時も覚え、Settings > General で選んでいればブックマークにも入れる。
+pub fn record(location: &Path) {
+    let text = normalize(location);
     let mut list = recent();
     list.retain(|l| *l != text);
-    list.insert(0, text);
+    list.insert(0, text.clone());
     list.truncate(KEEP);
     crate::settings::set_string(RECENT, &serde_json::json!(list).to_string());
+    let mut opened = opened_all();
+    opened.insert(
+        text.clone(),
+        serde_json::json!(glib::real_time() / 1_000_000),
+    );
+    crate::settings::set_string(OPENED, &serde_json::Value::Object(opened).to_string());
+    if crate::settings::bool(crate::settings::AUTO_BOOKMARK) {
+        crate::bookmarks::register(&text);
+    }
+}
+
+fn opened_all() -> serde_json::Map<String, serde_json::Value> {
+    crate::settings::string(OPENED)
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
+/// 最後に開いた日時（UNIX 時間）。覚える前に開いたものは None。
+pub fn opened_at(location: &str) -> Option<i64> {
+    opened_all()
+        .get(location)
+        .and_then(|v| v.as_f64())
+        .map(|t| t as i64)
+}
+
+/// 最近開いたもの・開いた日時から外す（Repositories の「一覧から外す」）。
+pub fn forget(location: &str) {
+    let mut list = recent();
+    list.retain(|l| l != location);
+    crate::settings::set_string(RECENT, &serde_json::json!(list).to_string());
+    let mut opened = opened_all();
+    if opened.remove(location).is_some() {
+        crate::settings::set_string(OPENED, &serde_json::Value::Object(opened).to_string());
+    }
 }
 
 /// File > Open Recent の中身（`win.open-recent` に場所を渡す）。最近のものが変わったら作り直す。

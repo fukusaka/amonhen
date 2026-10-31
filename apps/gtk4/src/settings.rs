@@ -29,6 +29,8 @@ pub const WORKING_COPY_LAYOUT: &str = "workingCopyLayout";
 pub const AUTO_MAGIC_MERGE: &str = "autoMagicMerge";
 /// File History に merge のコミットも出すか。
 pub const FILE_HISTORY_MERGES: &str = "fileHistoryMerges";
+/// 開いたリポジトリをブックマークに入れる（Repositories の一覧）。
+pub const AUTO_BOOKMARK: &str = "autoBookmark";
 /// 開いている間、何分ごとに fetch するか（0 はしない）。
 pub const AUTO_FETCH_MINUTES: &str = "autoFetchMinutes";
 /// History の並び順（`date`・`topo`。既定は日付順）。
@@ -114,7 +116,7 @@ fn changed(key: &str) {
 pub fn bool(key: &str) -> bool {
     FILE.with(|f| f.boolean(GROUP, key)).unwrap_or(matches!(
         key,
-        MONOSPACED_COMMIT_MESSAGE | AUTO_MAGIC_MERGE | HIGHLIGHT_ANCESTORS
+        MONOSPACED_COMMIT_MESSAGE | AUTO_MAGIC_MERGE | HIGHLIGHT_ANCESTORS | AUTO_BOOKMARK
     ))
 }
 
@@ -313,6 +315,11 @@ pub fn show(parent: &gtk::ApplicationWindow) {
         &page(&[section(
             None,
             &[
+                check(AUTO_BOOKMARK, &tr!("Bookmark repositories you open")).upcast(),
+                note(&tr!(
+                    "Repositories already found in folders to scan aren’t added."
+                ))
+                .upcast(),
                 fetch_row.upcast(),
                 note(&tr!(
                     "Fetches all remotes of each open repository without asking."
