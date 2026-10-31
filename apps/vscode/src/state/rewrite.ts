@@ -8,11 +8,16 @@ import type { UndoLog } from './undo.ts';
 /** 編集できる範囲を調べるときに辿るコミットの数 */
 const CHAIN_LIMIT = 500;
 
+/**
+ * updateRefs は、積み重ねたブランチを一緒に動かすかの、この操作だけの指定（なければ git の `rebase.updateRefs`）。
+ * 共有の daemon を使えればコアが行い（積み重ねたブランチもコアが git と同じに扱う）、使えなければ git 実行層で行う
+ */
 export async function rewriteHistory(
   backend: RepositoryBackend,
   undo: UndoLog,
   label: string,
   edit: HistoryEdit,
+  updateRefs?: boolean,
 ): Promise<RebaseResult> {
   const head = await backend.head();
   if (!head.oid) {
@@ -21,7 +26,16 @@ export async function rewriteHistory(
   if (await backend.sequenceInProgress()) {
     throw new Error('merge や rebase の途中です。先に終わらせるか中止してください');
   }
-  // HEAD から first-parent で辿り、最初の merge の手前まで
+  const refs = head.branch ? [head.branch] : [];
+  const opts = { skip: (r: RebaseResult) => r === 'conflict', pending: (r: RebaseResult) => r === 'stopped' };
+  const viaCore = await undo.record(label, refs, 'keep', () => backend.rewrite(label, edit, updateRefs), {
+    skip: () => true,
+  });
+  if (viaCore !== undefined) {
+    return viaCore;
+  }
+
+  // git 実行層: HEAD から first-parent で辿り、最初の merge の手前まで
   const log = await backend.log(['--first-parent', 'HEAD'], 0, CHAIN_LIMIT);
   const end = log.findIndex((c) => c.parents.length > 1);
   const chain = end < 0 ? log : log.slice(0, end);
@@ -45,8 +59,5 @@ export async function rewriteHistory(
     }
     return result;
   };
-  return undo.record(label, head.branch ? [head.branch] : [], 'keep', run, {
-    skip: (r) => r === 'conflict',
-    pending: (r) => r === 'stopped',
-  });
+  return undo.record(label, refs, 'keep', run, opts);
 }
