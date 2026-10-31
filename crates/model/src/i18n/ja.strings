@@ -1516,3 +1516,12 @@
 "Copy URL" = "URL をコピー";
 "Checkout #{number}?" = "#{number} を Checkout しますか？";
 "“{title}” is checked out as a local branch." = "「{title}」をローカルブランチとして Checkout します。";
+/* AI（amonhen-assist） */
+"Translate Commit Message" = "コミットメッセージの翻訳";
+"Explain Commit" = "コミットの解説";
+"Explain Hunk" = "hunk の解説";
+"Suggest Commit Message" = "コミットメッセージの提案";
+"Resolve Conflict" = "コンフリクトの解消";
+"Explain Conflict" = "コンフリクトの解説";
+"The prompt variable {{{name}}} can’t be used for “{purpose}” (available: {available})" = "プロンプトの変数 {{{name}}} は「{purpose}」では使えません（使えるもの: {available}）";
+"{cli} failed (exit code {code})." = "{cli} が失敗しました（終了コード {code}）";

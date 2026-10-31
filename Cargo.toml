@@ -24,6 +24,7 @@ amonhen-remote = { path = "crates/remote" }
 amonhen-daemon = { path = "crates/daemon" }
 amonhen-front = { path = "crates/front" }
 amonhen-commands = { path = "crates/commands" }
+amonhen-assist = { path = "crates/assist" }
 gix = { version = "0.89", default-features = false, features = ["sha1", "max-performance-safe", "revision", "attributes", "blob-diff", "mailmap"] }
 
 [profile.release]
