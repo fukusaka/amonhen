@@ -355,3 +355,4 @@
 "No conflicts expected" = "コンフリクトしない見込みです";
 "Conflicts expected at {count} commits:" = "{count} コミットでコンフリクトする見込みです:";
 "Nothing to preview" = "見通す操作がありません";
+"Not a remote: {remote}" = "リモートの名前ではありません: {remote}";

@@ -161,7 +161,11 @@ pub enum Command {
     Abort,
     Continue,
     Skip,
-    Fetch,
+    /// `remote` から取ってくる（なければすべてのリモート）。
+    Fetch {
+        #[serde(default)]
+        remote: Option<String>,
+    },
     /// 今のブランチに上流を取り込む（Undo できる）。
     Pull {
         #[serde(default)]
@@ -2622,8 +2626,8 @@ impl Repository {
                 undo.settle_pending(ops)?;
                 done(outcome)
             }
-            Command::Fetch => {
-                ops.fetch()?;
+            Command::Fetch { remote } => {
+                ops.fetch(remote.as_deref())?;
                 // リモートのタグは手元の ref からは分からないので、ついでに読んでおく（読めなくても fetch は成功）。
                 let _ = crate::remote_tags::refresh(ops, &*self.backend().files());
                 ok()
@@ -4722,6 +4726,55 @@ mod tests {
         // Undo で元に戻る。
         run(&repo, r#"{"op":"undo"}"#);
         assert_eq!(git(dir, &["rev-parse", "HEAD"]), *e);
+    }
+
+    #[test]
+    fn fetch_takes_one_remote_or_all_of_them() {
+        let (tmp, repo) = setup();
+        let dir = tmp.path();
+        // 2 つのリモートに、それぞれ手元にないコミットを置く。
+        for name in ["origin", "backup"] {
+            let bare = dir.join(format!("{name}.git"));
+            git(dir, &["init", "-q", "--bare", bare.to_str().unwrap()]);
+            git(dir, &["remote", "add", name, bare.to_str().unwrap()]);
+            git(dir, &["push", "-q", name, "main"]);
+            let other = dir.join(format!("{name}-clone"));
+            git(
+                dir,
+                &[
+                    "clone",
+                    "-q",
+                    "-b",
+                    "main",
+                    bare.to_str().unwrap(),
+                    other.to_str().unwrap(),
+                ],
+            );
+            git(
+                &other,
+                &[
+                    "-c",
+                    "user.name=b",
+                    "-c",
+                    "user.email=b@example.com",
+                    "commit",
+                    "-q",
+                    "--allow-empty",
+                    "-m",
+                    name,
+                ],
+            );
+            git(&other, &["push", "-q", "origin", "main"]);
+        }
+        let subject = |r: &str| git(dir, &["log", "-1", "--format=%s", r]);
+        let out = run(&repo, r#"{"op":"fetch","remote":"backup"}"#);
+        assert!(out["error"].is_null(), "{out}");
+        assert_eq!(subject("backup/main"), "backup");
+        assert_eq!(subject("origin/main"), "first");
+        run(&repo, r#"{"op":"fetch"}"#);
+        assert_eq!(subject("origin/main"), "origin");
+        // オプションに見えるものは断る。
+        assert!(run(&repo, r#"{"op":"fetch","remote":"--upload-pack=x"}"#)["error"].is_string());
     }
 
     #[test]

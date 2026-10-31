@@ -17,6 +17,8 @@ becomes the GitHub Release notes.
 
 #### Changed
 
+- The Fetch sheet chooses the remote: all of them, as before, or one. The core's `fetch` takes the remote too.
+
 - History's edit mode and the Rebase sheets say which stacked branches move with the rewrite or stay and why, which
   are pushed and will need Force Push, and which commits are expected to conflict (git 2.40 for the forecast). The
   Rebase sheets draw the branch before and after, and "Also move the stacked branches" decides for that rebase or

@@ -411,7 +411,9 @@ pub trait Operations: Send + Sync {
     /// コンフリクトしたファイルの index の blob（共通の祖先・Current・Incoming の順。その側になければ `None`）。
     fn conflict_stages(&self, path: &str) -> Result<[Option<Oid>; 3]>;
 
-    fn fetch(&self) -> Result<()>;
+    /// `remote` から取ってくる（`None` ならすべてのリモート、`git fetch --all`）。消えたブランチを片づけるかは
+    /// git の `fetch.prune` のとおり。
+    fn fetch(&self, remote: Option<&str>) -> Result<()>;
     /// 今のブランチに上流を取り込む（`git pull`）。
     fn pull(&self, mode: PullMode) -> Result<Outcome>;
     /// ローカルブランチごとの、上流との差（名前, ahead, behind, gone）。

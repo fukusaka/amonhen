@@ -979,9 +979,16 @@ impl Operations for Git {
         Ok(stages)
     }
 
-    fn fetch(&self) -> Result<()> {
-        // リモートで消えたブランチを片づけるかは、端末の `git fetch` と同じく `fetch.prune` に任せる。
-        self.write(&["fetch", "--all"]).map(drop)
+    fn fetch(&self, remote: Option<&str>) -> Result<()> {
+        // リモートで消えたブランチを片づけるかは、端末の `git fetch` と同じく `fetch.prune` に任せる。リモートの名前を
+        // オプションと取り違えないように、`-` で始まるものは断る。
+        match remote {
+            Some(r) if r.is_empty() || r.starts_with('-') => {
+                Err(tr!("Not a remote: {remote}", remote = r).into())
+            }
+            Some(r) => self.write(&["fetch", r]).map(drop),
+            None => self.write(&["fetch", "--all"]).map(drop),
+        }
     }
 
     fn pull(&self, mode: PullMode) -> Result<Outcome> {
