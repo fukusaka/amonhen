@@ -39,10 +39,8 @@ impl Repository {
     /// `Command::RepositoryForm` の答え。
     pub(crate) fn repository_form(&self, ops: &dyn Operations) -> Result<serde_json::Value> {
         let form = ops.repository_form()?;
-        let shallow = match self.history() {
-            Some(history) => !history.shallow.is_empty(),
-            None => !self.backend().shallow()?.is_empty(),
-        };
+        // 読み込み済みの History ではなく `.git/shallow` を読む（deepen の直後は History がまだ作り直されていない）。
+        let shallow = !self.backend().shallow()?.is_empty();
         let version = ops.git_version()?;
         let at_least = |needed: (u32, u32)| version.is_none_or(|(a, b, _)| (a, b) >= needed);
         Ok(serde_json::json!({
@@ -226,6 +224,34 @@ mod tests {
         let file = dir.join(path);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(file, text).unwrap();
+    }
+
+    /// History を読み込んだあとで履歴をすべて取っても、shallow clone とは答えない。
+    #[test]
+    fn knows_a_shallow_clone_got_all_of_its_history() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src");
+        std::fs::create_dir(&src).unwrap();
+        git(&src, &["init", "-q"]);
+        for message in ["root", "second", "third"] {
+            git(&src, &["commit", "--allow-empty", "-q", "-m", message]);
+        }
+        git(
+            tmp.path(),
+            &["clone", "-q", "--depth", "1", &file_url(&src), "shallow"],
+        );
+        let dir = tmp.path().join("shallow");
+        let repo = Repository::new(GixBackend::open(&dir).unwrap());
+        repo.load_history().unwrap();
+        assert_eq!(
+            run(&repo, r#"{"op":"repositoryForm"}"#)["info"]["shallow"],
+            true
+        );
+        git(&dir, &["fetch", "-q", "--unshallow"]);
+        assert_eq!(
+            run(&repo, r#"{"op":"repositoryForm"}"#)["info"]["shallow"],
+            false
+        );
     }
 
     /// HEAD の木のフォルダを読み、sparse checkout で取り出すフォルダを変え、やめる。外れるフォルダに変更が
