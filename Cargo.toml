@@ -23,6 +23,7 @@ amonhen-syntax = { path = "crates/syntax" }
 amonhen-remote = { path = "crates/remote" }
 amonhen-daemon = { path = "crates/daemon" }
 amonhen-front = { path = "crates/front" }
+amonhen-commands = { path = "crates/commands" }
 gix = { version = "0.89", default-features = false, features = ["sha1", "max-performance-safe", "revision", "attributes", "blob-diff", "mailmap"] }
 
 [profile.release]

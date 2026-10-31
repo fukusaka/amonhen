@@ -112,8 +112,7 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
     private func viewMenu() -> NSMenu {
         let menu = NSMenu(title: L("View"))
         menu.delegate = self
-        add([Commands.showWorkingCopy, Commands.showHistory, Commands.showStashes, Commands.showReflog, nil,
-             Commands.refresh, Commands.rebuildHistory, nil, Commands.showSidebar], to: menu)
+        add(Commands.menu(CommandTable.viewMenu), to: menu)
         // タブが 1 つの窓でもタブバーを出す（タブをつかんで、ほかの窓のタブバーに落とせる）。出していれば、題は
         // メニューを開くときに Hide にする（AppKit は替えない）。
         menu.addItem(item(L("Show Tab Bar"), #selector(NSWindow.toggleTabBar(_:)), "t", [.command, .shift]))
@@ -128,30 +127,19 @@ extension AppDelegate: NSMenuItemValidation, NSMenuDelegate {
 
     private func navigateMenu() -> NSMenu {
         let menu = NSMenu(title: L("Navigate"))
-        add([Commands.switchBranch, Commands.filterBranches, Commands.goToHead, Commands.goToParent, Commands.goToChild], to: menu)
+        add(Commands.menu(CommandTable.navigateMenu), to: menu)
         return menu
     }
 
     private func repositoryMenu() -> NSMenu {
         let menu = NSMenu(title: "Repository")
-        add([
-            Commands.fetch, Commands.pull, Commands.push, Commands.forcePush, nil,
-            Commands.newBranch, Commands.renameBranch, Commands.setUpstream, Commands.newTag, nil,
-            Commands.newWorktree, Commands.pruneWorktrees, Commands.addRemote, nil,
-            Commands.merge, Commands.rebase, Commands.compareWithPrevious, Commands.applyPatch, nil,
-            Commands.continueSequence, Commands.skipSequence, Commands.abortSequence, nil,
-            Commands.stash, Commands.popStash, nil,
-            Commands.undo, nil,
-            Commands.repositorySettings, nil,
-            Commands.createPullRequest, Commands.openOnGitHub, nil,
-            Commands.openInTerminal, Commands.revealInFinder,
-        ], to: menu)
+        add(Commands.menu(CommandTable.repositoryMenu), to: menu)
         return menu
     }
 
     private func commitMenu() -> NSMenu {
         let menu = NSMenu(title: "Commit")
-        add([Commands.commit, Commands.commitAndPush, Commands.stageAll, nil, Commands.savePatch], to: menu)
+        add(Commands.menu(CommandTable.commitMenu), to: menu)
         return menu
     }
 

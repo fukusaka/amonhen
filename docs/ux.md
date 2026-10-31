@@ -709,9 +709,14 @@ Make every operation available from the menus. Shortcuts do not follow other cli
 | Help | List of shortcuts, open the log location |
 
 - Context menus show the same operations under the same names as the menu bar (one name to remember). Every
-  command is defined once (`apps/macos/Sources/AmonHen/Commands.swift`: title, shortcut, tooltip) with an id that is
-  also the GTK4 front end's action name (`win.<id>`); the menu bar is built from that table, and context menus take
-  their titles with a target from the same file ("New Branch from …", "Copy Short ID" with 8 characters everywhere).
+  command is defined once, for every front end, in `crates/commands` (amonhen-commands): its id, English title (also
+  the translation key), tooltip, a platform-neutral shortcut (`Primary+Shift+B`: ⌘ on macOS, Ctrl elsewhere) and the
+  menu section it belongs to. Tests check that ids are unique, shortcuts don't collide on either platform and every
+  translated title has both translations. The id is also the GTK4 front end's action name (`win.<id>`), and GTK4 uses
+  the crate directly; macOS gets a generated `CommandTable.swift` (committed, kept in step by a test) and binds only
+  the selectors in `Commands.swift`. Each front end decides where the sections go (the macOS menu bar; on GTK4 the
+  Repository button and the primary menu) and which commands are enabled. Context menus take their titles with a
+  target from `Commands.swift` ("New Branch from …", "Copy Short ID" with 8 characters everywhere).
 - The View menu is History's display menu (order, items, one line, fold, ancestors, and the commit details: monospaced
   message, avatars, all files in one diff, files as a tree); History's bar button and header show the same menu.
 - Unavailable items are disabled, not removed (so their place can be remembered).

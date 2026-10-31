@@ -356,3 +356,30 @@
 "Conflicts expected at {count} commits:" = "{count} コミットでコンフリクトする見込みです:";
 "Nothing to preview" = "見通す操作がありません";
 "Not a remote: {remote}" = "リモートの名前ではありません: {remote}";
+
+/* amonhen-commands（操作の表。GTK4 の FE が使う。macOS の Localizable.strings と同じ訳） */
+"Set Upstream…" = "上流を設定…";
+"Add Remote…" = "リモートを追加…";
+"Create Pull Request…" = "プルリクエストを作成…";
+"Open on GitHub" = "GitHub で開く";
+"Switch Branch…" = "ブランチを切り替える…";
+"Rename Branch…" = "ブランチの名前を変える…";
+"Prune Worktrees" = "Prune Worktrees";
+"Compare with Previous Version" = "前の版と比べる";
+"Compare the current branch with its version before it was last rewritten (a rebase, History edit, amend or reset), like git range-diff" = "今のブランチを、最後に書き換える（rebase・コミットの編集・amend・reset）前の版と比べます（git range-diff と同じ）";
+"Apply Patch…" = "パッチを当てる…";
+"Save as Patch…" = "パッチとして保存…";
+"Refresh" = "再読み込み";
+"Reload History, branches and Working Copy (they normally reload on their own when something changes)" = "History・ブランチ・Working Copy を読み直す（ふだんは変化を検知して自動で読み直す）";
+"Rebuild History" = "History を作り直す";
+"Discard the History cache and rebuild it from scratch (over the shared daemon, the daemon’s too)" = "History のキャッシュを捨てて最初から作り直す（共有の daemon 越しなら daemon の分も）";
+"Show Sidebar" = "サイドバーを表示";
+"Filter Branches…" = "ブランチを絞り込む…";
+"Go to HEAD" = "HEAD へ移動";
+"Go to Parent" = "親へ移動";
+"Go to Child" = "子へ移動";
+"Find in History…" = "History を検索…";
+"Repository Settings" = "リポジトリの設定";
+"Open in Terminal" = "ターミナルで開く";
+"Show in Finder" = "Finder に表示";
+"Settings…" = "設定…";

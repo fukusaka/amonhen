@@ -67,6 +67,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "amonhen-commands"
+version = "0.2.8"
+
+[[package]]
 name = "amonhen-core"
 version = "0.2.8"
 dependencies = [
