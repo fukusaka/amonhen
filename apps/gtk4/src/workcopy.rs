@@ -1208,7 +1208,7 @@ impl Inner {
     }
 
     /// 確認用（`--keys`）: 差分を出すたびに、残っているキーを 1 つ押したことにする。`list:space`・`list:delete`
-    /// は一覧、`diff:space`・`diff:j`・`diff:k`・`diff:alt+j`・`diff:alt+k` は差分のキー。
+    /// は一覧、`diff:space`・`diff:j`・`diff:k`・`diff:alt+j`・`diff:alt+k` は差分のキー、`commit` は Commit。
     fn press_next_key(this: &Rc<Self>) {
         let Some(key) = KEYS.with(|k| k.borrow_mut().pop_front()) else {
             return;
@@ -1224,7 +1224,11 @@ impl Inner {
                 None => (ModifierType::empty(), name),
             };
             let key = Key::from_name(name).unwrap_or(Key::VoidSymbol);
-            if place == "list" {
+            if name == "commit" {
+                if this.commit.is_sensitive() {
+                    Inner::commit(&this, None);
+                }
+            } else if place == "list" {
                 Inner::list_key(&this, key);
             } else {
                 this.diff.key_pressed(key, modifiers);
@@ -1723,6 +1727,11 @@ impl Inner {
         this.commit.set_sensitive(false);
         let Some(repo) = this.repo() else { return };
         this.message.set_visible(false);
+        // hooks の出力を探すため、始めた時刻（Activity の記録と同じ UNIX 時刻のミリ秒）を覚えておく。
+        let started = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        this.pending.set(this.pending.get() + 1);
         glib::spawn_future_local(async move {
             let result = gio::spawn_blocking(move || {
                 repo.commit(&message, amend)
@@ -1731,8 +1740,24 @@ impl Inner {
             })
             .await;
             let Some(this) = weak.upgrade() else { return };
+            let parent = this.list.root().and_downcast::<gtk::Window>();
             match result {
                 Ok(Ok(status)) => {
+                    // hooks（pre-commit・commit-msg など）が何か書いていれば見せる（macOS 版と同じ）。
+                    let output = amonhen_model::activity::records()
+                        .into_iter()
+                        .rev()
+                        .find(|r| {
+                            r.kind == "git"
+                                && r.label.starts_with("git commit")
+                                && r.started >= started
+                                && r.ok == Some(true)
+                        })
+                        .and_then(|r| r.output)
+                        .filter(|o| !o.trim().is_empty());
+                    if let Some(output) = output {
+                        hooks_sheet(parent.as_ref(), &tr!("Committed (hooks output)"), &output);
+                    }
                     this.aids.clear_draft();
                     this.subject.set_text("");
                     this.body.buffer().set_text("");
@@ -1742,10 +1767,16 @@ impl Inner {
                         then();
                     }
                 }
-                Ok(Err(e)) => this.show_error(&e),
+                // hooks で止まったときは出力が長いので、読めるシートで出す。
+                Ok(Err(e)) => hooks_sheet(parent.as_ref(), &tr!("Couldn’t Commit"), &e),
                 Err(_) => {}
             }
             this.update_buttons();
+            // 出したシートが描かれるまで（`--snapshot` が撮れるように）少し待ってから終えたことにする。
+            let pending = this.pending.clone();
+            glib::timeout_add_local_once(std::time::Duration::from_millis(300), move || {
+                pending.set(pending.get() - 1);
+            });
         });
     }
 
@@ -1875,6 +1906,35 @@ impl Inner {
             working.is_some_and(|w| !w.staged && w.entry.is_unstaged()) && selected_staged == 0,
         );
     }
+}
+
+/// hooks の出力（git が標準エラーに書いたもの）を等幅の字体で読めるシート（macOS 版の `HookOutputSheet`）。
+fn hooks_sheet(parent: Option<&gtk::Window>, title: &str, text: &str) {
+    let sheet = crate::sheets::Sheet::unnamed(parent, title, "");
+    let view = gtk::TextView::builder()
+        .editable(false)
+        .cursor_visible(false)
+        .monospace(true)
+        .wrap_mode(gtk::WrapMode::WordChar)
+        .top_margin(6)
+        .bottom_margin(6)
+        .left_margin(6)
+        .right_margin(6)
+        .build();
+    view.buffer().set_text(text.trim_end());
+    let scrolled = gtk::ScrolledWindow::builder()
+        .child(&view)
+        .min_content_width(560)
+        .min_content_height(260)
+        .has_frame(true)
+        .build();
+    sheet.add(&scrolled);
+    sheet.button(
+        "OK",
+        crate::sheets::Response::Ok,
+        Some(crate::sheets::Style::Suggested),
+    );
+    glib::spawn_future_local(sheet.run());
 }
 
 /// 本文の欄に重ねる、72 桁の目安の縦線（`body` の字の「0」の幅から位置を決める）。

@@ -197,7 +197,7 @@ CLI の △「`amonhen run` から」は、コアの命令はあるが、CLI か
 | `#issue` の補完 | — | — | — | n/a |  |
 | Commit and Push・Amend | ✓ | ✓ | △ | △ | VSCode: Amend だけ。<br>CLI: `commit -m … --amend`。 |
 | Fixup / Squash Commit For | ✓ | ✓ | — | n/a |  |
-| hooks の出力のシート | ✓ | — | — | n/a |  |
+| hooks の出力のシート | ✓ | ✓ | — | n/a |  |
 | Commit が押せない理由を出す | — | — | △ | n/a | VSCode: コミットできないときに注意を出す。 |
 | HEAD → 作業ツリーの 1 つの差分と、行・hunk のチェック | ✓ | ✓ | △ | ✓ | VSCode: 別々の未ステージ・ステージ済みの差分で行をステージ。<br>CLI: `diff --combined`・`stage --rows`。 |
 | 行の範囲の選択、J/K・⌥J/⌥K | ✓ | ✓ | △ | n/a | VSCode: J/K のキーはない。 |

@@ -1658,3 +1658,4 @@
 "Trust" = "信用";
 /* GTK4 の FE: Working Copy と History の詳細の不足分 */
 "Length of the summary (yellow over 50, orange over 72)" = "件名の文字数（50 を超えると黄、72 を超えると橙）";
+"Committed (hooks output)" = "コミットしました（hooks の出力）";
