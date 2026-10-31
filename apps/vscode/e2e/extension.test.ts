@@ -442,6 +442,132 @@ async function conflictsWithoutMarkersFlow(): Promise<void> {
 }
 
 /**
+ * History の編集（Reword・Squash・Fixup・並べ替え・Edit・Split）を、確かめてから行い、Undo で戻す。daemon ならコアの
+ * `rewrite` で、git 実行層なら拡張の todo で行う。確認でやめれば何も変わらない。Edit と Split は止まったところから
+ * サイドバーの Continue で続け、Undo 1 回で編集の前に戻る
+ */
+async function editFlow(label: string): Promise<void> {
+  const branch = git('symbolic-ref', '--short', 'HEAD').trim();
+  const work = `ed-${label}`;
+  const rev = (r: string) => git('rev-parse', r).trim();
+  const subjects = (n: number) => git('log', `-${n}`, '--format=%s', work).trim().split('\n');
+  const name = (c: string) => `ed-${c}-${label}`;
+  git('switch', '-q', '-c', work, branch);
+  for (const c of ['a', 'b', 'c', 'd']) {
+    writeFileSync(join(root, `${name(c)}.txt`), `${c}\n`);
+    git('add', `${name(c)}.txt`);
+    git('commit', '-q', '-m', name(c));
+  }
+  await vscode.commands.executeCommand('amonhen.refresh');
+  const panel = await showView('amonhen.showHistory');
+  const top = rev(work);
+  const [d, c, b] = [rev(`${work}`), rev(`${work}~1`), rev(`${work}~2`)];
+  const asked: string[] = [];
+  let answer: string | undefined;
+  const stubs = {
+    showWarningMessage: async (message: string, ...rest: unknown[]) => {
+      if (!(rest[0] as { modal?: boolean } | undefined)?.modal) return undefined;
+      asked.push(message);
+      return (rest.slice(1) as vscode.MessageItem[]).find((i) => i.title === answer);
+    },
+    showInformationMessage: async () => undefined,
+  };
+  // Webview からの編集は、受け取ったところで返る。終わり（busy が解ける）まで待つ
+  const fromWebview = async (message: Parameters<typeof panel.history.handle>[0]) => {
+    const mark = posted.length;
+    await panel.history.handle(message);
+    await waitPosted('busy', mark, (m) => !m.busy);
+  };
+  const undo = async (what: string) => {
+    await vscode.commands.executeCommand('amonhen.undo');
+    await until(`${what} の Undo`, () => rev(work) === top);
+  };
+  const mark = spawned.length;
+  try {
+    await withWindow(stubs, async () => {
+      // やめれば何も変わらない
+      answer = undefined;
+      const count = asked.length;
+      await panel.history.handle({ type: 'saveMessage', oid: c, kind: 'reword', message: 'never' });
+      await until('確認', () => asked.length > count);
+      assert.equal(rev(work), top);
+
+      answer = 'Reword';
+      await fromWebview({ type: 'saveMessage', oid: c, kind: 'reword', message: 'C2\n\nbody' });
+      await until('reword', () => git('log', '-1', '--format=%B', `${work}~1`).trim() === 'C2\n\nbody');
+      assert.deepEqual(subjects(3), [name('d'), 'C2', name('b')]);
+      await undo('reword');
+
+      answer = 'Squash';
+      await fromWebview({ type: 'saveMessage', oid: c, kind: 'squash', message: 'B and C' });
+      await until('squash', () => subjects(2).join() === [name('d'), 'B and C'].join());
+      assert.equal(rev(`${work}~2`), rev(`${b}~1`));
+      await undo('squash');
+
+      answer = 'Fixup';
+      await vscode.commands.executeCommand('amonhen.history.fixup', { oid: d });
+      await until('fixup', () => subjects(1)[0] === name('c') && rev(work) !== top);
+      assert.ok(existsSync(join(root, `${name('d')}.txt`)), 'd の変更は c に入る');
+      await undo('fixup');
+
+      // Webview での並べ替え: d を 2 つ古い側へ
+      answer = 'Move';
+      await fromWebview({ type: 'move', oid: d, to: 2 });
+      await until('move', () => subjects(3).join() === [name('c'), name('b'), name('d')].join());
+      await undo('move');
+
+      // Edit: b で止まり、変えて amend されるように stage してから Continue
+      answer = 'Edit';
+      await vscode.commands.executeCommand('amonhen.history.edit', { oid: b });
+      await until('edit で止まる', async () => (await api.manager.current!.backend.sequenceInProgress()) === 'rebase');
+      writeFileSync(join(root, `${name('b')}.txt`), 'b edited\n');
+      git('add', `${name('b')}.txt`);
+      await vscode.commands.executeCommand('amonhen.refresh');
+      await vscode.commands.executeCommand('amonhen.continueSequence');
+      await until('edit の続き', async () => (await api.manager.current!.backend.sequenceInProgress()) === undefined && rev(work) !== top);
+      assert.equal(git('show', `${work}~2:${name('b')}.txt`), 'b edited\n');
+      assert.deepEqual(subjects(3), [name('d'), name('c'), name('b')]);
+      await undo('edit');
+
+      // Split: c を取り消して変更を作業ツリーに戻したところで止まる。2 つに分けてコミットしてから Continue
+      answer = 'Split';
+      await vscode.commands.executeCommand('amonhen.history.split', { oid: c });
+      await until('split で止まる', async () => (await api.manager.current!.backend.sequenceInProgress()) === 'rebase');
+      assert.equal(rev('HEAD'), b, 'c を取り消した');
+      writeFileSync(join(root, `${name('c')}-2.txt`), 'more\n');
+      git('add', `${name('c')}.txt`);
+      git('commit', '-q', '-m', 'C part 1');
+      git('add', `${name('c')}-2.txt`);
+      git('commit', '-q', '-m', 'C part 2');
+      await vscode.commands.executeCommand('amonhen.refresh');
+      await vscode.commands.executeCommand('amonhen.continueSequence');
+      await until('split の続き', async () => (await api.manager.current!.backend.sequenceInProgress()) === undefined && subjects(1)[0] === name('d'));
+      assert.deepEqual(subjects(4), [name('d'), 'C part 2', 'C part 1', name('b')]);
+      await undo('split');
+      assert.ok(!existsSync(join(root, `${name('c')}-2.txt`)));
+    });
+    assert.deepEqual(
+      asked.map((m) => m.replace(/^.* を /, '')),
+      ['Reword しますか？', 'Reword しますか？', 'Squash しますか？', 'Fixup しますか？', 'Move しますか？', 'Edit しますか？', 'Split しますか？'],
+    );
+    // daemon ならコアが rebase する（拡張は git の rebase を起動しない）
+    assert.equal(
+      spawned.slice(mark).some((p) => p.args.includes('rebase')),
+      label === 'git',
+      label === 'git' ? '拡張が git の rebase をする' : 'コアが rebase する',
+    );
+  } finally {
+    if (git('status', '--porcelain', '--untracked-files=no').trim() || existsSync(join(root, '.git', 'rebase-merge'))) {
+      try { git('rebase', '--abort'); } catch { /* 止まっていない */ }
+    }
+    git('switch', '-q', '-f', branch);
+    git('branch', '-q', '-D', work);
+    rmSync(join(root, `${name('c')}-2.txt`), { force: true });
+    await vscode.commands.executeCommand('amonhen.refresh');
+  }
+}
+
+/**
  * Rebase と History の編集の前の確認。daemon なら見通し（積み重ねたブランチ・コンフリクトの見込み）を出し、今回だけ
  * 積み重ねたブランチも動かすボタンを選べば、そのブランチも一緒に動く（git 2.38 から）。Undo で全部戻る。
  * git 実行層では見通しなしで確かめる
@@ -713,6 +839,10 @@ suite('Amon Hen in VSCode', () => {
     await rewriteFlow('daemon');
   });
 
+  test('edits History through the daemon', async () => {
+    await editFlow('daemon');
+  });
+
   test('drops the selection of a file whose changes went away before its diff is read', async () => {
     const panel = await showView('amonhen.showWorkingCopy');
     const path = join(root, FILE);
@@ -771,6 +901,10 @@ suite('Amon Hen in VSCode', () => {
 
   test('confirms a rebase and a History edit on the git execution layer', async () => {
     await rewriteFlow('git');
+  });
+
+  test('edits History on the git execution layer', async () => {
+    await editFlow('git');
   });
 
   test('shows names from the mailmap on the git execution layer', async () => {
