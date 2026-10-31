@@ -65,8 +65,12 @@ nonisolated struct RepositoryForm: Decodable, Equatable, Sendable {
     }
 
     static func sparseHelp(_ sparse: Sparse) -> String {
-        sparse.cone ? L("Sparse checkout: only %ld folders are checked out.", sparse.folders.count)
-            : L("Sparse checkout: only the files matching its patterns are checked out.")
+        guard sparse.cone else { return L("Sparse checkout: only the files matching its patterns are checked out.") }
+        switch sparse.folders.count {
+        case 0: return L("Sparse checkout: only the files at the top are checked out.")
+        case 1: return L("Sparse checkout: only 1 folder is checked out.")
+        default: return L("Sparse checkout: only %ld folders are checked out.", sparse.folders.count)
+        }
     }
 
     /// git が古くて使えないときの理由。
@@ -206,8 +210,10 @@ struct FetchingPage: View {
         let tooOld = form.canSparseCheckout ? nil : RepositoryForm.tooOld("2.25", model: model)
         Section(L("Folders")) {
             if let sparse = form.sparse, sparse.cone {
-                ActionRow(title: L("Only these folders are checked out"),
-                          help: L("Files at the top, and directly in the folders above these, are checked out too."),
+                // `git clone --sparse` の直後は、最上位のファイルだけでフォルダはない。
+                ActionRow(title: sparse.folders.isEmpty ? L("Only the files at the top are checked out") : L("Only these folders are checked out"),
+                          help: sparse.folders.isEmpty ? L("Add the folders to check out with +.")
+                              : L("Files at the top, and directly in the folders above these, are checked out too."),
                           disabledReason: tooOld) {
                     Button(L("Check Out All Folders…")) { checkOutAll() }
                 }

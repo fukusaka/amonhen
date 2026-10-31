@@ -1658,6 +1658,8 @@
 "Contents fetched when needed (%@)" = "中身は必要なときに取得（%@）";
 "Contents fetched when needed" = "中身は必要なときに取得";
 "Sparse checkout: only %ld folders are checked out." = "sparse checkout: %ld 個のフォルダだけを取り出しています。";
+"Sparse checkout: only 1 folder is checked out." = "sparse checkout: 1 個のフォルダだけを取り出しています。";
+"Sparse checkout: only the files at the top are checked out." = "sparse checkout: 最上位のファイルだけを取り出しています。";
 "Sparse checkout: only the files matching its patterns are checked out." = "sparse checkout: パターンに合うファイルだけを取り出しています。";
 "Needs git %@ or later. This repository’s git is %@%@." = "git %1$@ 以降が必要です。このリポジトリの git は %2$@%3$@ です。";
 "This repository has all of its history and contents." = "このリポジトリは、履歴も中身もすべて持っています。";
@@ -1670,6 +1672,8 @@
 "Fetch All Contents" = "中身をすべて取る";
 "Folders" = "フォルダ";
 "Only these folders are checked out" = "このフォルダだけを取り出しています";
+"Only the files at the top are checked out" = "最上位のファイルだけを取り出しています";
+"Add the folders to check out with +." = "取り出すフォルダは + で足せます。";
 "Files at the top, and directly in the folders above these, are checked out too." = "最上位のファイルと、これらの上のフォルダの直下のファイルも取り出します。";
 "Check Out All Folders…" = "すべてのフォルダを取り出す…";
 "Stop checking out this folder" = "このフォルダを取り出すのをやめます";
