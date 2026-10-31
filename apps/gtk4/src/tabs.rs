@@ -496,6 +496,18 @@ fn open_in(
 
 /// 確認用（`--tab`）: `host` の窓に、後ろのタブとして足す。
 pub fn add_background(app: &gtk::Application, host: &Rc<RepoWindow>, location: PathBuf) {
+    // 追加した worktree のフォルダーはメインのリポジトリとして開くので、そのタブがもうあれば足さない（前の窓を
+    // 戻すとき、worktree とメインの両方が記録されていることがある）。
+    let worktree = crate::repos::main_of_worktree(&location);
+    let key = crate::repos::normalize(worktree.as_deref().unwrap_or(&location));
+    let open = WINDOWS.with(|w| {
+        w.borrow()
+            .iter()
+            .any(|h| h.tabs.borrow().iter().any(|t| t.location == key))
+    });
+    if open {
+        return;
+    }
     let position = Some(host.notebook.n_pages());
     crate::build_tab(
         app,
