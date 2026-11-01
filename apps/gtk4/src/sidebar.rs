@@ -673,7 +673,14 @@ impl Sidebar {
         }
         if before.list.is_empty() && self.inner.debug.borrow().is_some() {
             self.inner.rebuild(false);
-            self.inner.run_debug();
+            // 確認用の手順は、ほかの一覧の受け手（ほかの worktree が checkout しているブランチをアクションに
+            // 渡すもの）が済んでから。同じ知らせの中で動くと、メニューや印が一覧を知らないまま作られる。
+            let inner = Rc::downgrade(&self.inner);
+            glib::idle_add_local_once(move || {
+                if let Some(inner) = inner.upgrade() {
+                    inner.run_debug();
+                }
+            });
             return;
         }
         let keys =
