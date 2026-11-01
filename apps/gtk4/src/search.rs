@@ -459,6 +459,11 @@ impl Inner {
 
     /// 「何番目 / 全体」。
     fn update_count(&self) {
+        // 探す前・結果を捨てた後（History を読み直したとき）は何も出さない（「一致なし」ではない）。
+        if self.searched.borrow().is_none() {
+            self.count.set_text("");
+            return;
+        }
         let matches = self.matches.borrow();
         let total = matches.len();
         if self.only.is_active() {
