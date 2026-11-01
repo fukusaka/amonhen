@@ -803,6 +803,21 @@ impl Sidebar {
 /// Conflicts の行の鍵（選んだら最初のコンフリクトのファイルを開く）。
 pub const CONFLICTS_KEY: &str = "page/conflicts";
 
+/// 行（鍵が `key`）を選んだときに出す画面の行の鍵（`main.rs` の `connect_select` と同じ対応）。
+fn page_of_key(key: &str) -> &'static str {
+    if key.starts_with("worktree/") || key == CONFLICTS_KEY || key == "page/working" {
+        "page/working"
+    } else if key.starts_with("Stash/") || key == "page/stashes" {
+        "page/stashes"
+    } else if key == "page/reflog" {
+        "page/reflog"
+    } else if key == "page/settings" {
+        "page/settings"
+    } else {
+        "page/history"
+    }
+}
+
 /// 行の部品から届く Inner。
 type Owner = Rc<RefCell<std::rc::Weak<Inner>>>;
 
@@ -975,7 +990,8 @@ fn bind_row(item: &gtk::ListItem) {
         .expect("badge");
     let data = node.data();
     let group = matches!(data.item, Item::Group);
-    item.set_selectable(!group);
+    // 見出しと名前のフォルダ（No changes も）は選べない。選ぶと、出している画面の行の選択が外れる。
+    item.set_selectable(!matches!(data.item, Item::Group | Item::Folder));
     icon.set(data.icon, data.head);
     for w in [icon.upcast_ref::<gtk::Widget>(), badge.upcast_ref()] {
         if data.green {
@@ -1724,7 +1740,8 @@ impl Inner {
             i += 1;
         }
         drop(folded);
-        // 作り直す前に選んでいた行を選び直す（なければ History）。
+        // 作り直す前に選んでいた行を選び直す。なくなっていれば（消した worktree・stash など）、その行で出していた
+        // 画面の行を選ぶ（画面は替わらないので、ほかの行を選んで見せない）。
         self.selection.unselect_all();
         let mut found = false;
         for i in 0..self.model.n_items() {
@@ -1739,7 +1756,8 @@ impl Inner {
             }
         }
         if !found {
-            self.select_key("page/history");
+            let page = selected.first().map_or("page/history", |k| page_of_key(k));
+            self.select_key(page);
         }
         self.rebuilding.set(false);
     }
