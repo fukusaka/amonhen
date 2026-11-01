@@ -131,7 +131,6 @@
 "Not a daemon location: {location}" = "daemon 越しの場所ではありません: {location}";
 "Connect to ssh:// locations with ssh::connect (to send the daemon there)" = "ssh:// の場所は ssh::connect でつなぐ（daemon を送り込むため）";
 "Not an ssh:// location" = "ssh:// で始まる場所ではありません";
-"Write it as ssh://host/path" = "ssh://host/path の形で書いてください";
 "No SSH destination" = "SSH の接続先がありません";
 "No engine (amonhen) for the SSH host ({platform}) in {dir}, and the SSH host has none of this build" = "{dir} に SSH 先（{platform}）に合うエンジン（amonhen）がなく、SSH 先にもこのビルドのものがありません";
 "Error on the SSH host ({host}): {message}" = "SSH 先（{host}）でエラー: {message}";
@@ -148,7 +147,6 @@
 "The received History is corrupt" = "受け取った History が壊れている";
 
 /* amonhen-daemon */
-"Usage: amonhen --stdio <repository path> | amonhen --serve [<socket>] | amonhen --socket" = "使い方: amonhen --stdio <リポジトリのパス> | amonhen --serve [<ソケット>] | amonhen --socket";
 "amonhen: Can’t watch the repository: {e}" = "amonhen: リポジトリを監視できない: {e}";
 "Unknown command: {command}" = "知らない指示: {command}";
 "Can’t open {path}: {e}" = "{path} を開けない: {e}";
@@ -423,14 +421,12 @@
 "Reload History" = "History の読み直し";
 "Can’t read History: {e}" = "History を読めない: {e}";
 "Reload status" = "status の読み直し";
-"Can’t open the repository: {e}" = "リポジトリを開けない: {e}";
 "working tree" = "作業ツリー";
 "{what} changed (reloading)" = "{what} が変わった（読み直す）";
 "{branch} — click to switch branch (Ctrl+Shift+B)" = "{branch} — 押すとブランチを切り替える（Ctrl+Shift+B）";
 "{count} commits behind upstream (Ctrl+Alt+L)" = "上流より {count} コミット後ろにあります（Ctrl+Alt+L）";
 "Pull (Ctrl+Alt+L)" = "Pull（Ctrl+Alt+L）";
 "{count} commits ahead of upstream (Ctrl+Alt+P)" = "上流より {count} コミット先にあります（Ctrl+Alt+P）";
-"Push (Ctrl+Alt+P)" = "Push（Ctrl+Alt+P）";
 "Fetch all remotes (Ctrl+Alt+F)" = "すべてのリモートを fetch（Ctrl+Alt+F）";
 "Merge a branch, tag or the selected commit into the current branch (Ctrl+Alt+M)" = "ブランチ・タグ・選んだコミットを今のブランチへ merge（Ctrl+Alt+M）";
 "Rebase the current branch onto a branch, tag or the selected commit (Ctrl+Alt+R)" = "今のブランチを、ブランチ・タグ・選んだコミットの上へ rebase（Ctrl+Alt+R）";
@@ -442,30 +438,15 @@
 "The remote branch that Pull brings in from and Push sends to." = "pull で取り込み、push で送るリモートのブランチ";
 "Set" = "設定";
 "Selected Commit {id}" = "選んでいるコミット {id}";
-"Rebase {branch}" = "{branch} を rebase する";
-"The branch, tag or commit to rebase onto" = "上に載せる先のブランチ・タグ・コミット";
 "Rebase" = "rebase する";
-"Merge into {branch}" = "{branch} に merge する";
-"The branch, tag or commit to merge in" = "取り込むブランチ・タグ・コミット";
 "Merge" = "マージする";
-"Branch to switch to" = "切り替えるブランチ";
-"Switch" = "切り替え";
 "Add Remote" = "リモートを追加";
-"ssh://[user@]host[:port]/path (a daemon on an SSH host) or daemon:/path (the local shared daemon)" = "ssh://[user@]host[:port]/path（SSH 先の daemon）か daemon:/path（手元の共有の daemon）";
 "Open" = "開く";
 "The operation failed" = "操作に失敗しました";
-"There are conflicts" = "コンフリクトがあります";
-"Resolve them in Working Copy, then Continue or Abort." = "Working Copy で解決してから Continue するか、Abort してください。";
-"Stopped partway" = "途中で止まりました";
-"Check Working Copy, then Continue." = "Working Copy で確かめてから Continue してください。";
-"Can’t Push" = "push できません";
-"No branch is checked out." = "ブランチをチェックアウトしていません。";
 "Force push {branch}?" = "{branch} を force push しますか？";
-"This replaces the upstream branch with your local one (--force-with-lease: it fails if someone else pushed first)." = "上流のブランチを手元の内容で置き換えます（--force-with-lease。ほかの人が先に push していたら失敗します）。";
 "Message (optional)" = "メッセージ（空でもよい）";
 "Include untracked files" = "untracked のファイルも含める";
 "Edit Message" = "メッセージを編集";
-"Combine" = "まとめる";
 "Can’t Merge Them in One Commit" = "1 つのコミットにまとめられません";
 "Not merged yet: {names}" = "まだ merge していないもの: {names}";
 "Merge them again after resolving these conflicts." = "このコンフリクトを解決してから、もう一度 merge してください。";
@@ -475,18 +456,12 @@
 "New Tag at {name}…" = "{name} にタグを付ける…";
 "Edit Message…" = "メッセージを編集…";
 "Drop" = "取り除く";
-"Drop {commit}?" = "{commit} を取り除きますか？";
-"You can Undo this." = "Undo で戻せます。";
 "Copy Commit ID" = "コミット ID をコピー";
 "Copy Branch Name “{name}”" = "ブランチ名「{name}」をコピー";
 "Copy Tag Name “{name}”" = "タグ名「{name}」をコピー";
-"Cherry-pick {count} Commits (oldest first)" = "Cherry-pick {count} Commits（古い順）";
-"Revert {count} Commits (newest first)" = "Revert {count} Commits（新しい順）";
 "Copy Commit IDs" = "コミット ID をコピー";
 "Copy Short IDs" = "短い ID をコピー";
-"Delete {name}" = "{name} を削除";
 "New Branch from {name}…" = "{name} から新しいブランチ…";
-"Name of the tag for {target}" = "{target} に付けるタグの名前";
 "Name of the branch. It is checked out." = "ブランチの名前。作ったブランチに切り替えます。";
 "New Tag at {name}" = "{name} にタグを付ける";
 "Name of the tag." = "タグの名前。";
@@ -508,7 +483,6 @@
 "Checking…" = "調べています…";
 "Binary" = "バイナリ";
 "{count} folded" = "{count} 件を折りたたみ";
-"Search History" = "History を検索";
 "Search (author:, path:, contents: also work)" = "検索（author: path: contents: も使える）";
 "Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)" = "語は件名・作者・ID から探す。空白で区切ると AND、or で OR、括弧でまとめる。\nauthor:名前  subject:件名  commit:ID  path:パス  contents:\"差分の文字列\"\n例: path:fs/ (author:linus or author:greg)";
 "Previous Match (Shift+Enter, Ctrl+Shift+G)" = "前の一致（Shift+Enter・Ctrl+Shift+G）";
@@ -521,7 +495,6 @@
 "Can’t read the file’s information" = "ファイルの情報を読めません";
 "Not committed yet" = "まだコミットしていない";
 "Double-click to show in History." = "ダブルクリックで History に表示";
-"History — {path} ({count} commits)" = "History — {path}（{count} コミット）";
 "This commit has no changes to the file" = "このコミットでの変更が見つかりません";
 "Commit the checked files (Ctrl+Return)" = "チェックしたファイルをコミット（Ctrl+Return）";
 "Commit and Push (Ctrl+Shift+Return), Amend" = "Commit and Push（Ctrl+Shift+Return）、Amend";
@@ -537,7 +510,6 @@
 "Staged changes (included in the next commit)" = "stage 済み（次のコミットに含める）の変更";
 "Take Current File" = "手元のファイルを使う";
 "Take Incoming File" = "取り込む側のファイルを使う";
-"Resolve the conflicts one at a time with Current, Result and Incoming side by side" = "Current・Result・Incoming を並べて、コンフリクトを 1 つずつ解く";
 "Mark Resolved" = "解決済みにする";
 "Can’t read the diff: {e}" = "差分を読めない: {e}";
 "Delete {path}?" = "{path} を削除しますか？";
@@ -624,21 +596,14 @@
 "The daemon exits after {duration} with no connections. From a terminal, run amonhen daemon status to see it." = "daemon はだれもつながらなくなって {duration}たつと終わる。端末からは amonhen daemon status で見られる。";
 "Couldn’t start the shared daemon" = "共有の daemon を起動できませんでした";
 "Yes" = "あり";
-"Default Pull" = "Pull の既定";
-"Used by Pull in the toolbar and Ctrl+Alt+L. You can also choose each time with the ▾ on the Pull button or Repository > Pull With." = "ツールバーの Pull と Ctrl+Alt+L で使う。Pull ボタンの ▾ や Repository > Pull With でその都度も選べる。";
-"Merging" = "マージ";
 "Resolve unambiguous conflicts when the merge editor opens" = "マージエディタを開いたときに、間違えようのないコンフリクトを解く";
-"Conflicts where both sides are the same, or only one side changed. Ctrl+Z undoes it. Use ✨ Magic Merge for the rest." = "両側が同じ・片側だけが変えた、のどちらかに当たるコンフリクト。Ctrl+Z で戻せる。残りは ✨ Magic Merge で。";
 "Commit Details" = "コミットの詳細";
 "Show the message in a monospaced font" = "本文を等幅の字体で表示する";
 "Appearance" = "表示";
 "Write commit-graph automatically" = "commit-graph を自動で書き出す";
 "Writes to .git." = ".git に書きます。";
-"When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster." = "commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable --changed-paths を実行する（.git に書き込む）。履歴の読み込みと path: での検索が速くなる。";
 "Shared daemon" = "共有の daemon";
 "Open repositories through the shared daemon (SSH hosts too)" = "リポジトリを共有の daemon 越しに開く（SSH 先も）";
-"Shares History, the search index, the operation log and SSH connections among the app, the CLI (amonhen -C daemon:… or -C ssh://…) and the VSCode extension. Applies to repositories opened from now on. See Daemon in Activity for its status." = "History・検索の索引・操作の記録と SSH のつながりを、アプリ・CLI（amonhen -C daemon:… や -C ssh://…）・VSCode 拡張と共有する。これから開くリポジトリから効く。daemon の様子は Activity の Daemon。";
-"Advanced" = "詳細";
 "Settings" = "設定";
 
 /* GTK4 の FE: 操作の前の確認とステータスバー */
@@ -691,8 +656,6 @@
 "{upstream} loses {count} commits. This can’t be undone." = "{upstream} から {count} コミットが消えます。元に戻せません。";
 "It fails if {upstream} has moved since you last fetched." = "最後の Fetch のあとに {upstream} が動いていれば、失敗します。";
 "Push {count} commits to {upstream}?" = "{count} コミットを {upstream} に push しますか？";
-"Commits to send" = "送るコミット";
-"Commits {upstream} will lose" = "{upstream} から消えるコミット";
 "Can’t Publish" = "Publish できません";
 "This repository has no remotes. Add one in Repository > Add Remote…." = "このリポジトリにはリモートがありません。Repository > リモートを追加… で足してください。";
 "Publish {branch}?" = "{branch} を Publish しますか？";
@@ -726,7 +689,6 @@
 "Merge {rev} into {target}?" = "{rev} を {target} に Merge しますか？";
 "Onto:" = "載せ先:";
 "Merge:" = "取り込むもの:";
-"Move stacked branches too" = "積み重ねたブランチも一緒に動かす";
 "Delete {name}?" = "{name} を削除しますか？";
 "Delete {count} branches?" = "{count} 本のブランチを削除しますか？";
 "Some commits are on no other branch; they go with the branch." = "どのブランチにもないコミットがあります。ブランチと一緒に消えます。";
@@ -814,7 +776,6 @@
 "Retry with 3-Way Merge" = "3-way merge で当て直す";
 "Drop {name}…" = "{name} を drop…";
 "Drop {name}?" = "{name} を取り除きますか？";
-"Checks out {branch} first." = "先に {branch} を Checkout します。";
 "Cherry-pick {count} Commits…" = "{count} コミットを Cherry-pick…";
 "Revert {count} Commits…" = "{count} コミットを Revert…";
 
@@ -852,7 +813,6 @@
 "Fetch automatically" = "自動で fetch";
 "Never" = "しない";
 "Every {count} minutes" = "{count} 分ごと";
-"Fetches all remotes of each open repository without asking." = "開いているリポジトリごとに、聞かずにすべてのリモートから fetch します。";
 "Diff & Merge" = "差分とマージ";
 "Merge Editor" = "マージエディタ";
 "Automatic fetch" = "自動の fetch";
@@ -1083,7 +1043,6 @@
 "Read after the repository’s .mailmap." = "リポジトリの .mailmap の後に読みます。";
 "Choose a mailmap file" = "mailmap のファイルを選ぶ";
 "A file…" = "ファイル…";
-"{message} (a path on {host})" = "{message}（{host} のパス）";
 "Choose" = "選ぶ";
 "A path" = "パス";
 "SSH host {host}" = "SSH 先 {host}";
@@ -1129,7 +1088,6 @@
 "Runs" = "動くとき";
 "Enabled" = "有効";
 "The executable bit. git runs only executable hooks." = "実行の許可です。git は実行できるフックだけを動かします。";
-"Open With…" = "ほかのアプリで開く…";
 "Create Hook…" = "フックを作成…";
 "No LFS patterns in .gitattributes." = ".gitattributes に LFS で扱うパターンはない";
 "Pattern" = "パターン";
@@ -1425,7 +1383,6 @@
 "Rename" = "名前を変更";
 "Rename…" = "名前を変更…";
 "Rename Group" = "グループの名前を変える";
-"Repositories already found in folders to scan aren’t added." = "スキャンするフォルダで見つかっているものは入れない。";
 "Search Again" = "探し直す";
 "Search Depth" = "探す深さ";
 "Searches {path}" = "{path} を探す";
@@ -1446,7 +1403,6 @@
 
 /* GTK4: Quick Open */
 "Open a repository (fuzzy search by name or path)" = "リポジトリを開く（名前・パスであいまいに探す）";
-"Enter Open in New Window   Esc Close" = "Enter 新しいウィンドウで開く　Esc 閉じる";
 /* GTK4 の FE: Settings > Git > Programs */
 "Programs" = "プログラム";
 "Automatic ({label})" = "自動（{label}）";
@@ -1644,10 +1600,8 @@
 "Try" = "試す";
 "{purpose} (Try with Sample)" = "{purpose}（見本で試す）";
 "Send the current prompt with a sample diff and message, and see the reply." = "見本の差分・メッセージで、今のプロンプトを実際に送って返事を見る";
-"Stored in {dir}/<purpose>.md. A repository’s .amonhen/prompts/<purpose>.md takes precedence (you’re asked to check it the first time). The app appends the reply format (the JSON for resolving conflicts)." = "{dir}/<用途>.md に置く。リポジトリの .amonhen/prompts/<用途>.md があればそちらを優先する（初めて使うときに中身を確かめる）。返事の形（コンフリクトの解消の JSON）はアプリが末尾に足す。";
 "Forget Per-Repository Permissions" = "リポジトリごとの許可を消す";
 "Stored in {dir}." = "{dir} に置きます。";
-"Forgets the answers to “Use AI in this repository?” and asks again next time." = "「このリポジトリで AI を使うか」の答えを忘れ、次に使うときにもう一度確かめる。";
 "Use AI in this repository?" = "このリポジトリで AI を使いますか？";
 "Sends to {cli}: {summary}\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "{cli} に送ります: {summary}\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで 設定 > AI の「リポジトリごとの許可を消す」で選び直せます。";
 "Use" = "使う";
@@ -1662,8 +1616,6 @@
 "Done ({model})" = "できました（{model}）";
 "Collapse" = "畳む";
 "Expand" = "広げる";
-"Translate" = "翻訳";
-"Explain" = "解説";
 "AI: Translate the message." = "AI: メッセージを翻訳する";
 "AI: Explain this commit (or the combined diff of the selected commits)." = "AI: このコミット（複数選んでいればまとめた差分）を解説する";
 "The message ({count} characters)" = "メッセージ {count} 文字";

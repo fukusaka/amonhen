@@ -29,7 +29,6 @@
 "{count} commits ahead of upstream (Ctrl+Alt+P)" = "{count} commit ahead of upstream (Ctrl+Alt+P)";
 "{count} commits behind upstream (Ctrl+Alt+L)" = "{count} commit behind upstream (Ctrl+Alt+L)";
 "{count} connections" = "{count} connection";
-"History — {path} ({count} commits)" = "History — {path} ({count} commit)";
 "Discarded the changes in {count} files (amonhen undo brings them back)" = "Discarded the changes in {count} file (amonhen undo brings them back)";
 "Merging {rev} into {ours} would conflict in {count} files:" = "Merging {rev} into {ours} would conflict in {count} file:";
 "Conflicts expected at {count} commits:" = "Conflicts expected at {count} commit:";
