@@ -1019,6 +1019,52 @@ fn pull_mode_title(mode: &str) -> String {
     }
 }
 
+/// 取り込み方が何をするか（選ぶ一覧のツールチップ。macOS 版と同じ）。
+fn pull_mode_tooltip(mode: &str) -> String {
+    match mode {
+        "rebase" => tr!(
+            "Puts your local commits on top of the upstream commits, keeping the History in one line."
+        ),
+        "fastForwardOnly" => tr!(
+            "Only moves the branch forward. Stops without changing anything if you have local commits too."
+        ),
+        "git" => tr!(
+            "Uses this repository’s pull.rebase and pull.ff, as git pull in a terminal does."
+        ),
+        _ => tr!(
+            "Brings the upstream commits in. When both sides have new commits, a merge commit joins them."
+        ),
+    }
+}
+
+/// 取り込み方の一覧の行（[`PULL_MODES`] の順。それぞれにツールチップ）。
+fn pull_mode_factory() -> gtk::SignalListItemFactory {
+    let factory = gtk::SignalListItemFactory::new();
+    factory.connect_setup(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let label = gtk::Label::new(None);
+        label.set_xalign(0.0);
+        item.set_child(Some(&label));
+    });
+    factory.connect_bind(|_, item| {
+        let Some(item) = item.downcast_ref::<gtk::ListItem>() else {
+            return;
+        };
+        let (Some(label), Some(text)) = (
+            item.child().and_downcast::<gtk::Label>(),
+            item.item().and_downcast::<gtk::StringObject>(),
+        ) else {
+            return;
+        };
+        label.set_text(&text.string());
+        let mode = PULL_MODES.get(item.position() as usize).copied().unwrap_or("merge");
+        label.set_tooltip_text(Some(&pull_mode_tooltip(mode)));
+    });
+    factory
+}
+
 /// Pull の前に、取り込むコミットと取り込み方を見せる。上流がなければ、取り込み元のリモートのブランチを選び、それを
 /// 上流にして取り込む。
 pub fn pull(actions: &Rc<Actions>, mode: &str) {
@@ -1092,6 +1138,7 @@ pub fn pull(actions: &Rc<Actions>, mode: &str) {
             .collect();
         let mode_refs: Vec<&str> = mode_titles.iter().map(String::as_str).collect();
         let modes = gtk::DropDown::from_strings(&mode_refs);
+        modes.set_list_factory(Some(&pull_mode_factory()));
         modes.set_selected(PULL_MODES.iter().position(|m| *m == mode).unwrap_or(0) as u32);
         sheet.add(&row(&tr!("Integrate with:"), &modes));
         let explain = note("");

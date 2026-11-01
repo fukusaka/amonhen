@@ -845,6 +845,10 @@
 "Adds files that may hold secrets: {files}" = "秘密を含みそうなファイルを追加しています: {files}";
 "Can’t read the status" = "状態を読めません";
 "Couldn’t check the branches" = "ブランチを調べられませんでした";
+"Brings the upstream commits in. When both sides have new commits, a merge commit joins them." = "上流のコミットを取り込みます。両方に新しいコミットがあれば、マージコミットでつなぎます。";
+"Puts your local commits on top of the upstream commits, keeping the History in one line." = "手元のコミットを上流のコミットの上に載せ直し、History を 1 本に保ちます。";
+"Only moves the branch forward. Stops without changing anything if you have local commits too." = "ブランチを進めるだけです。手元にもコミットがあれば、何も変えずに止まります。";
+"Uses this repository’s pull.rebase and pull.ff, as git pull in a terminal does." = "端末の git pull と同じく、このリポジトリの pull.rebase・pull.ff に従います。";
 "Adds {count} binary files." = "バイナリのファイルを {count} 個追加しています。";
 "All changes to send ({count})" = "送る変更すべて（{count}）";
 "From upstream to HEAD, all files" = "上流から HEAD まで、全ファイル";
