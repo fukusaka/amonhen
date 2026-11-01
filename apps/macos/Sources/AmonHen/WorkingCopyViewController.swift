@@ -832,6 +832,10 @@ final class WorkingCopyViewController: NSSplitViewController, NSOutlineViewDataS
             } catch {
                 _ = await NSAlert(error: error).beginSheetModal(for: view.window!)
             }
+            // 押したチェックは AppKit が先に進めている。何も変わらなかったとき（失敗・断られた）は status が同じで
+            // 一覧を作り直さないので、今の状態から付け直す。
+            files.reloadData(forRowIndexes: IndexSet(integersIn: 0..<files.numberOfRows), columnIndexes: [0])
+            updateHeader()
             refresh()
         }
     }
