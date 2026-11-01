@@ -166,7 +166,10 @@ pub fn tag(actions: &Rc<Actions>, item: &RefEntry, known: &Known, anchor: &gtk::
         };
         let when = tags
             .checked(remote)
-            .map(|ms| format!(" · {}", tr!("read {time}", time = date(ms / 1000))))
+            .map(|ms| {
+                let time = crate::stashes::ago(ms / 1000);
+                format!(" · {}", tr!("read {time}", time = time))
+            })
             .unwrap_or_default();
         p.row(remote, &format!("{text}{when}"), false, css);
     }
