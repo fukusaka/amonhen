@@ -316,7 +316,7 @@ fn location_kind(location: &str) -> String {
 
 #[derive(Clone)]
 pub struct Activity {
-    window: gtk::Window,
+    window: gtk::ApplicationWindow,
     stack: gtk::Stack,
     /// History のタブで、このリポジトリを選ぶ（一覧にあれば）。
     choose: Choose,
@@ -360,13 +360,26 @@ impl Activity {
         let switcher = gtk::StackSwitcher::builder().stack(&stack).build();
         let header = gtk::HeaderBar::new();
         header.set_title_widget(Some(&switcher));
-        let window = gtk::Window::builder()
+        // アプリの窓にする: Ctrl+Q が効き、リポジトリの窓を閉じても開いている間はアプリが続く（macOS 版と同じ）。
+        let mut builder = gtk::ApplicationWindow::builder()
             .title("Activity")
             .default_width(980)
             .default_height(640)
-            .child(&stack)
-            .build();
+            .child(&stack);
+        if let Some(app) = parent.application() {
+            builder = builder.application(&app);
+        }
+        let window = builder.build();
         window.set_titlebar(Some(&header));
+        // Ctrl+W（`win.close`）で閉じる（macOS 版の ⌘W）。
+        let close = gio::SimpleAction::new("close", None);
+        let weak = window.downgrade();
+        close.connect_activate(move |_, _| {
+            if let Some(w) = weak.upgrade() {
+                w.close();
+            }
+        });
+        window.add_action(&close);
         // どの窓のものでもない（アプリに 1 つ。macOS 版と同じ）。最初は開いた窓の画面に出す。
         window.set_display(&WidgetExt::display(parent));
         // 大きさは覚えておく（macOS 版は位置も。GTK では窓の位置はウィンドウマネージャーが決める）。
@@ -841,7 +854,7 @@ impl Activity {
                             let (a, w, title) = (a.clone(), w.clone(), title.clone());
                             glib::spawn_future_local(async move {
                                 let sheet = crate::sheets::Sheet::new(
-                                    w.upgrade().as_ref(),
+                                    w.upgrade().map(|w| w.upcast::<gtk::Window>()).as_ref(),
                                     &title,
                                     &tr!("Returns HEAD and the branches to where they were."),
                                 );
