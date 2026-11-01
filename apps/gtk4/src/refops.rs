@@ -201,7 +201,9 @@ fn sync_items(actions: &Rc<Actions>, entry: &amonhen_model::RefEntry, is_head: b
                 items.push(menu::action(titles::push(&name, upstream), move || {
                     sheets::push(&a, Some(name.clone()), false, None)
                 }));
-            } else {
+            } else if actions.worktree_using(&name).is_none() {
+                // ほかの worktree が checkout しているなら動かせない（その作業ツリーとずれる）。上の Open Worktree
+                // から（macOS 版と同じ）。
                 let title = tr!(
                     "Fast-forward {branch} to {upstream}?",
                     branch = name,
