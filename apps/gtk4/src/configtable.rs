@@ -1274,7 +1274,7 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
 
     // 消せるのは、選んだ行のどれかにこの段の値があるとき。
     let enable = {
-        let (t, remove, edit) = (table.clone(), remove.clone(), edit.clone());
+        let (t, remove, edit, copy) = (table.clone(), remove.clone(), edit.clone(), copy.clone());
         move || {
             let keys = t.selected_keys();
             let has = t
@@ -1282,8 +1282,12 @@ pub(crate) fn page(s: &Rc<RepoSettings>) -> gtk::Box {
                 .is_some_and(|s| keys.iter().any(|k| s.local(k).is_some()));
             remove.set_enabled(has);
             edit.set_enabled(keys.len() == 1);
+            copy.set_enabled(!keys.is_empty());
         }
     };
+    // 足している途中は + を押せない（macOS 版と同じ）。
+    let a = add.clone();
+    adding.connect_visible_notify(move |w| a.set_enabled(!w.is_visible()));
     enable();
     let en = enable.clone();
     selection.connect_selection_changed(move |_, _, _| en());
