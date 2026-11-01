@@ -195,7 +195,8 @@ pub fn install_drop(widget: &impl IsA<gtk::Widget>, actions: &Rc<Actions>) {
             return false;
         };
         let paths: Vec<PathBuf> = list.files().iter().filter_map(|f| f.path()).collect();
-        if paths.is_empty() || !paths.iter().all(|p| is_patch(p)) {
+        // merge などの途中では当てない（Apply Patch… と同じ。macOS 版と同じ）。
+        if paths.is_empty() || !paths.iter().all(|p| is_patch(p)) || actions.in_sequence() {
             return false;
         }
         apply(&actions, paths);
