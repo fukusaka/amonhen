@@ -579,6 +579,8 @@ pub struct Browser {
     /// ページの中身（タブに入れる）。
     pub root: gtk::Paned,
     open: Open,
+    /// このページを置き換えずに開く（Quick Open・Clone は、ページの隣の新しいタブに開く。macOS 版と同じ）。
+    beside: Open,
     category: RefCell<Category>,
     side: gtk::ListBox,
     /// 左の行ごとの分類と見出し。
@@ -623,7 +625,9 @@ pub fn debug_menu(row: u32, item: Option<String>) {
 /// リポジトリのページの中身を作る。`group` にページのアクション（Quick Open・Clone）を入れる。返したものは
 /// ページを閉じるまで持っておく（ブックマークの知らせは、それを手放すと止まる）。
 pub fn page(app: &gtk::Application, open: Open, group: &gio::SimpleActionGroup) -> Rc<Browser> {
-    let browser = Browser::new(open);
+    let a = app.clone();
+    let beside: Open = Rc::new(move |location, place| crate::tabs::open(&a, location, place));
+    let browser = Browser::new(open, beside);
     BROWSER.with(|w| *w.borrow_mut() = Rc::downgrade(&browser));
     browser.install_actions(app, group);
     bookmarks::refresh();
@@ -646,7 +650,7 @@ pub fn page(app: &gtk::Application, open: Open, group: &gio::SimpleActionGroup) 
 }
 
 impl Browser {
-    fn new(open: Open) -> Rc<Self> {
+    fn new(open: Open, beside: Open) -> Rc<Self> {
         // 左: 分類と、下の ＋。
         let side = gtk::ListBox::new();
         side.add_css_class("navigation-sidebar");
@@ -710,6 +714,7 @@ impl Browser {
         let browser = Rc::new(Self {
             root: paned,
             open,
+            beside,
             category: RefCell::new(saved),
             side,
             side_rows: RefCell::default(),
@@ -951,7 +956,7 @@ impl Browser {
         let weak = Rc::downgrade(self);
         quick.connect_activate(move |_, _| {
             if let Some(b) = weak.upgrade() {
-                crate::quickopen::show(Some(&b.window()), b.open.clone());
+                crate::quickopen::show(Some(&b.window()), b.beside.clone());
             }
         });
         group.add_action(&quick);
@@ -1758,7 +1763,7 @@ impl Browser {
         // clone したものはブックマークにも入れて開く（macOS 版と同じ）。
         let open: Rc<dyn Fn(PathBuf)> = Rc::new(move |path: PathBuf| {
             bookmarks::add(&path.to_string_lossy(), b.selected_group().as_deref());
-            b.open_location(&path.to_string_lossy(), true);
+            (b.beside)(path, crate::tabs::Place::Tab);
         });
         crate::repos::clone(&self.window(), open);
     }
