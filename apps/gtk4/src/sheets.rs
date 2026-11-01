@@ -1478,9 +1478,20 @@ pub fn push(
             l.add_css_class("warning");
             sheet.add(&l);
         }
-        if state.outgoing.count > 0 || lost.count > 0 {
+        // 送る範囲があれば、送るコミットとその中身を見せる広いシート。なければ（送るコミットがなく、上流だけが
+        // 進んでいる Force Push など）一覧だけの小さなシート（macOS 版と同じ）。
+        if range.is_some() {
             sheet.wide(1100, 720);
             sheet.add(&push_preview(&repo, &state.outgoing, &lost, range));
+        } else {
+            sheet.add(&commit_lists(&[
+                (tr!("Commits to send"), &state.outgoing, false),
+                (
+                    tr!("Commits {upstream} will lose", upstream = upstream),
+                    &lost,
+                    true,
+                ),
+            ]));
         }
         let replace = force || diverged;
         if diverged {

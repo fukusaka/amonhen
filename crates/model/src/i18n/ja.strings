@@ -855,6 +855,8 @@
 "All changes to send ({count})" = "送る変更すべて（{count}）";
 "From upstream to HEAD, all files" = "上流から HEAD まで、全ファイル";
 "Commits upstream will lose ({count})" = "上流から消えるコミット（{count}）";
+"Commits to send" = "送るコミット";
+"Commits {upstream} will lose" = "{upstream} から消えるコミット";
 "All changes to send" = "送る変更すべて";
 "You can Undo this (Ctrl+Alt+Z)." = "Undo（Ctrl+Alt+Z）で戻せます。";
 /* GTK4: Range Diff */
