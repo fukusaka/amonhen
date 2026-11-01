@@ -193,7 +193,8 @@ impl Search {
         app.set_accels_for_action("win.find-previous", &["<Control><Shift>g"]);
     }
 
-    /// 新しく読んだ History を出す。一致したコミットだけを出しているなら、探し直してから絞る。
+    /// 新しく読んだ History を出す。行が変わるので、検索の結果は捨てる（問い合わせは欄に残し、Enter で探し直せる。
+    /// macOS 版と同じ）。一致したコミットだけを出していたなら、元の History に戻す。
     pub fn show_history(&self, repo: Arc<Repository>, history: Arc<HistorySnapshot>) {
         let same = self
             .inner
@@ -204,28 +205,12 @@ impl Search {
         self.inner
             .base
             .replace(Some((repo.clone(), history.clone())));
-        if self.inner.only.is_active() {
-            if !same {
-                self.history_changed();
-            }
-        } else {
+        if !self.inner.only.is_active() {
             self.inner.view.show(repo, history);
-            self.history_changed();
         }
-    }
-
-    /// History が新しくなったら、同じ問い合わせで探し直す（行の番号が変わるため）。
-    fn history_changed(&self) {
-        let current = self.inner.base.borrow().as_ref().map(|(_, h)| h.generation);
-        let query = self
-            .inner
-            .searched
-            .borrow()
-            .as_ref()
-            .filter(|(_, g)| Some(*g) != current)
-            .map(|(q, _)| q.clone());
-        if let Some(query) = query {
-            Inner::run(&self.inner, query, 0);
+        if !same && self.inner.searched.borrow().is_some() {
+            // 絞り込みをやめると、元の History（今読んだもの）を出す。
+            self.inner.clear();
         }
     }
 
