@@ -1473,12 +1473,13 @@ fn build_tab(
     });
     // 自動の fetch（Settings > General で決めた間隔。聞かずにすべてのリモートから。失敗はステータスバーに）。
     let elapsed = Rc::new(Cell::new(0u32));
-    let (v, bar, a, r, t) = (
+    let (v, bar, a, r, t, sb) = (
         view.downgrade(),
         statusbar.clone(),
         Rc::downgrade(&actions),
         reload.clone(),
         Rc::downgrade(&tab),
+        Rc::downgrade(&sidebar),
     );
     glib::timeout_add_seconds_local(60, move || {
         let (Some(view), Some(a), Some(tab)) = (v.upgrade(), a.upgrade(), t.upgrade()) else {
@@ -1496,7 +1497,13 @@ fn build_tab(
         let Some((repo, _)) = view.current() else {
             return glib::ControlFlow::Continue;
         };
-        let (bar, a, r, cg) = (bar.clone(), a.clone(), r.clone(), commit_graph.clone());
+        let (bar, a, r, cg, sb) = (
+            bar.clone(),
+            a.clone(),
+            r.clone(),
+            commit_graph.clone(),
+            sb.clone(),
+        );
         let name = repo_name(&repo);
         glib::spawn_future_local(async move {
             let command = serde_json::json!({ "op": "fetch" });
@@ -1511,6 +1518,10 @@ fn build_tab(
                 bar.show_failure(failure, &a);
             } else {
                 activity::event(&name, amonhen_model::tr!("Automatic fetch"));
+                // ref が変わらなくても、リモートのタグは読み直している（macOS 版と同じ）。
+                if let Some(sidebar) = sb.upgrade() {
+                    sidebar.reload_tag_remotes();
+                }
                 cg.update(repo.clone());
             }
             r();
