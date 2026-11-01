@@ -1029,8 +1029,12 @@ fn pump() {
                 }
                 Job::Fetch(path) => {
                     let p = path.clone();
+                    // この場で（daemon を通さず、History のキャッシュも持たずに）開く。fetch するだけなので
+                    // （macOS 版の `Repository(path:)` と同じ）。
                     let error = gio::spawn_blocking(move || {
-                        let repo = crate::open(Path::new(&p))?;
+                        let backend = amonhen_backend_gix::GixBackend::open(Path::new(&p))
+                            .map_err(|e| e.to_string())?;
+                        let repo = amonhen_core::Repository::new(backend);
                         let reply: Value =
                             serde_json::from_str(&repo.run_json(r#"{"op":"fetch"}"#))
                                 .unwrap_or_default();
