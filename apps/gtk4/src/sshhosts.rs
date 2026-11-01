@@ -29,7 +29,7 @@ const SSH_HOSTS: &str = "sshHosts";
 /// SSH 先ごとの選択（SSH 先 → `HostOptions` の JSON の、JSON の対応）。
 const HOST_OPTIONS: &str = "sshHostOptions";
 /// SSH 先ごとの、署名を手元の鍵で検証するか（SSH 先 → bool の JSON）。
-const SIGNATURE_BY_HOST: &str = "checkRemoteSignaturesLocallyByHost";
+pub const SIGNATURE_BY_HOST: &str = "checkRemoteSignaturesLocallyByHost";
 /// 「その他…」の項目の値。
 const OTHER: &str = "\u{1}other";
 

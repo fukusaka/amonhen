@@ -731,6 +731,50 @@ fn build_tab(
     pages.add_named(&range_diff.root, Some(rangediff::PAGE));
     let sidebar = Rc::new(Sidebar::new());
     sidebar.set_location(&text);
+    // 署名を検証する側（Settings > SSH Hosts）が変わった: コアと画面が覚えていた結果を捨て、見えているものを
+    // 検証し直す（macOS 版の `signatureCheckChanged`）。
+    {
+        let (v, d, s, location) = (
+            view.downgrade(),
+            Rc::downgrade(&details),
+            Rc::downgrade(&sidebar),
+            text.clone(),
+        );
+        settings::connect_changed(move |key| {
+            if key != sshhosts::SIGNATURE_BY_HOST {
+                return;
+            }
+            let (v, d, s, location) = (v.clone(), d.clone(), s.clone(), location.clone());
+            // 写し（`sshhosts::load`）は設定を書いた後に作り直すので、それを待つ。
+            glib::idle_add_local_once(move || {
+                let (Some(view), Some(details), Some(sidebar)) =
+                    (v.upgrade(), d.upgrade(), s.upgrade())
+                else {
+                    return;
+                };
+                let Some((repo, _)) = view.current() else {
+                    return;
+                };
+                sshhosts::apply_signature_check(&repo, &location);
+                details.set_location(&location);
+                view.forget_signatures();
+                sidebar.forget_signatures();
+                // 詳細の署名は、時間のかかる分を読み直して出し直す。
+                let Some(oid) = details.oid() else { return };
+                let Some(id) = amonhen_model::Oid::from_hex(&oid) else {
+                    return;
+                };
+                glib::spawn_future_local(async move {
+                    let extras = gio::spawn_blocking(move || repo.commit_extras(&id)).await;
+                    if let Ok(Ok(extras)) = extras
+                        && details.oid().as_deref() == Some(oid.as_str())
+                    {
+                        details.show_extras(&extras);
+                    }
+                });
+            });
+        });
+    }
     let range_diff_opener = rangediff::Opener::new(&range_diff, &pages, &sidebar);
     let o = range_diff_opener.clone();
     range_diff.connect_close(move || o.close());

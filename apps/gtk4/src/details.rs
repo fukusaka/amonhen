@@ -707,6 +707,14 @@ impl Details {
         }
     }
 
+    /// 出しているコミットの ID（1 つのコミットを出していなければ None）。
+    pub fn oid(&self) -> Option<String> {
+        self.info
+            .borrow()
+            .as_ref()
+            .map(|i| str_of(i, "oid").to_owned())
+    }
+
     /// 開いたリポジトリの場所（署名を検証した場所を、Signature の吹き出しに出すため）。
     pub fn set_location(&self, location: &str) {
         self.place.replace(crate::signature::Place::of(location));

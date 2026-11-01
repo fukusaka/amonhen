@@ -655,6 +655,13 @@ impl Sidebar {
         self.inner.load_facts();
     }
 
+    /// 署名を検証する側が変わった: タグの署名の結果を捨て、確かめ直す（macOS 版の `forgetSignatures`）。
+    pub fn forget_signatures(&self) {
+        self.inner.tag_signatures.borrow_mut().clear();
+        self.inner.tag_epoch.set(self.inner.tag_epoch.get() + 1);
+        self.inner.rebuild(false);
+    }
+
     /// 開いているプルリクエストを出す（なければ Pull Requests の見出しを出さない）。前と同じなら何もしない。
     pub fn show_pull_requests(&self, list: Vec<PullRequest>) {
         if *self.inner.pull_requests.borrow() == list {

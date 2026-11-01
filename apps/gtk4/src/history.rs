@@ -179,6 +179,8 @@ pub struct State {
     /// 描いたときに見つけた、まだ検証していない署名（少し待ってから検証する）。
     unverified: Vec<Oid>,
     verify_soon: Option<glib::SourceId>,
+    /// 検証する側を変えた回数。変える前に始めた検証の結果は捨てる（macOS 版の `signatureGeneration`）。
+    signature_generation: u64,
     /// GitHub の CI の状態（コミットごと）。窓の側が gh で読んで渡す。
     ci: HashMap<Oid, Ci>,
     /// 行の右端の CI の印を押したときに呼ぶ。
@@ -621,7 +623,7 @@ impl HistoryView {
             std::time::Duration::from_millis(150),
             move || {
                 let Some(view) = weak.upgrade() else { return };
-                let (repo, pending) = {
+                let (repo, pending, generation) = {
                     let mut st = view.state();
                     st.verify_soon = None;
                     let ids = std::mem::take(&mut st.unverified);
@@ -631,7 +633,7 @@ impl HistoryView {
                             pending.push(id);
                         }
                     }
-                    (st.repo.clone(), pending)
+                    (st.repo.clone(), pending, st.signature_generation)
                 };
                 let Some(repo) = repo else { return };
                 glib::spawn_future_local(async move {
@@ -654,6 +656,9 @@ impl HistoryView {
                         let Some(view) = weak.upgrade() else { return };
                         {
                             let mut st = view.state();
+                            if st.signature_generation != generation {
+                                return;
+                            }
                             for (id, status) in batch.iter().zip(checks) {
                                 st.signatures.insert(*id, status);
                             }
@@ -666,6 +671,22 @@ impl HistoryView {
                 });
             },
         ));
+    }
+
+    /// 署名を検証する側が変わった: 覚えていた結果を捨て、見えている行を検証し直す（macOS 版の
+    /// `forgetSignatures`）。
+    pub fn forget_signatures(&self) {
+        {
+            let mut st = self.state();
+            st.signature_generation += 1;
+            if let Some(id) = st.verify_soon.take() {
+                id.remove();
+            }
+            st.signatures.clear();
+            st.verifying.clear();
+            st.unverified.clear();
+        }
+        self.queue_draw();
     }
 
     /// ブランチ・タグの名前を、指すコミットの行に出す。
