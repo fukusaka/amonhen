@@ -1460,7 +1460,8 @@ impl Inner {
         let check = gtk::CheckButton::new();
         check.set_active(entry.is_staged() && !entry.is_unstaged());
         check.set_inconsistent(entry.is_staged() && entry.is_unstaged());
-        check.set_sensitive(!conflict);
+        // コンフリクトのファイルにはチェックを出さない（index は両方の側で「一部」に見える。macOS 版と同じ）。
+        check.set_visible(!conflict);
         if !conflict {
             check.set_tooltip_text(Some(&check_tip(
                 entry.is_staged() && !entry.is_unstaged(),
