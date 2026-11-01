@@ -89,6 +89,11 @@ struct Inner {
     entries: RefCell<Vec<StatusEntry>>,
     /// 一覧の行ごとの、`entries` の番号（ディレクトリの行は None）。
     row_entries: RefCell<Vec<Option<usize>>>,
+    /// 作った行（ファイルはパス、ディレクトリは `\0` + パスごと）と、作ったときの中身。中身が変わらなければ
+    /// 作り直さずに使う（変更が何千もあっても、status が届くたびや絞り込みのたびに作り直さない）。
+    row_cache: RefCell<HashMap<String, (RowKey, gtk::ListBoxRow)>>,
+    /// 一覧に今入れている行（並びのまま）。
+    shown_rows: RefCell<Vec<gtk::ListBoxRow>>,
     layout: Cell<Layout>,
     /// 木で畳んでいるディレクトリ。
     collapsed: RefCell<std::collections::HashSet<String>>,
@@ -416,6 +421,8 @@ impl WorkingCopy {
             status: RefCell::default(),
             entries: RefCell::default(),
             row_entries: RefCell::default(),
+            row_cache: RefCell::default(),
+            shown_rows: RefCell::default(),
             layout: Cell::new(Layout::List),
             collapsed: RefCell::default(),
             all_entries: RefCell::default(),
@@ -1110,29 +1117,51 @@ impl Inner {
             &f == this.list.upcast_ref::<gtk::Widget>() || f.is_ancestor(&this.list)
         });
         this.rebuilding.set(true);
-        this.count_boxes.borrow_mut().clear();
-        this.conflict_marks.borrow_mut().clear();
-        this.list.remove_all();
-        // remove_all は placeholder も外すので、付け直す。
-        this.list.set_placeholder(Some(&this.empty));
+        // 前に作った行のうち、中身が同じものはそのまま使う。
+        let mut cache = this.row_cache.take();
+        let mut rows = Vec::new();
         let mut row_entries = Vec::new();
+        let mut used = std::collections::HashSet::new();
         match this.layout.get() {
             Layout::Tree => {
+                // 畳んだディレクトリの中（それより深い行）は飛ばす。
+                let mut folded_at: Option<usize> = None;
                 for item in tree(&entries) {
+                    let depth = item.depth();
+                    if folded_at.is_some_and(|d| depth > d) {
+                        continue;
+                    }
+                    folded_at = None;
                     match item {
-                        TreeItem::Dir { name, path, depth } => {
+                        TreeItem::Dir {
+                            name,
+                            path,
+                            depth,
+                            check,
+                        } => {
                             let collapsed = this.collapsed.borrow().contains(&path);
-                            this.list.append(&Inner::dir_row(
-                                this, &entries, &name, &path, depth, collapsed,
-                            ));
+                            if collapsed {
+                                folded_at = Some(depth);
+                            }
+                            let id = format!("\0{path}");
+                            let key = RowKey::Dir(name.clone(), depth, collapsed, check);
+                            let row = match cache.get(&id) {
+                                Some((k, row)) if *k == key => row.clone(),
+                                _ => {
+                                    let row =
+                                        Inner::dir_row(this, &name, &path, depth, collapsed, check);
+                                    cache.insert(id.clone(), (key, row.clone()));
+                                    row
+                                }
+                            };
+                            used.insert(id);
+                            rows.push(row);
                             row_entries.push(None);
                         }
                         TreeItem::File { index, depth } => {
-                            if this.is_hidden(&entries[index].path) {
-                                continue;
-                            }
-                            this.list.append(&Inner::row(
+                            rows.push(Inner::cached_row(
                                 this,
+                                &mut cache,
                                 &entries[index],
                                 Layout::Tree,
                                 depth,
@@ -1144,11 +1173,42 @@ impl Inner {
             }
             layout => {
                 for (i, entry) in entries.iter().enumerate() {
-                    this.list.append(&Inner::row(this, entry, layout, 0));
+                    rows.push(Inner::cached_row(this, &mut cache, entry, layout, 0));
                     row_entries.push(Some(i));
                 }
             }
         }
+        // 変更のなくなったファイルと、出していないディレクトリの行は捨てる（絞り込みで隠したファイルの行は、
+        // 戻したときのために残す）。
+        {
+            let all = this.all_entries.borrow();
+            let paths: std::collections::HashSet<&str> =
+                all.iter().map(|e| e.path.as_str()).collect();
+            let mut gone = Vec::new();
+            cache.retain(|id, _| {
+                let keep = match id.strip_prefix('\0') {
+                    Some(_) => used.contains(id),
+                    None => paths.contains(id.as_str()),
+                };
+                if !keep && !id.starts_with('\0') {
+                    gone.push(id.clone());
+                }
+                keep
+            });
+            let (mut counts, mut marks) = (
+                this.count_boxes.borrow_mut(),
+                this.conflict_marks.borrow_mut(),
+            );
+            for path in gone {
+                counts.remove(&path);
+                marks.remove(&path);
+            }
+        }
+        this.row_cache.replace(cache);
+        // 選び直すので、使い回した行の選択も外す（作り直していたときと同じ）。
+        this.list.unselect_all();
+        sync_rows(&this.list, &this.shown_rows.borrow(), &rows);
+        this.shown_rows.replace(rows);
         this.row_entries.replace(row_entries);
         // 空のときの文（macOS 版と同じ）。
         this.empty
@@ -1357,53 +1417,66 @@ impl Inner {
         }
     }
 
-    /// 木で、畳んだディレクトリの中のファイルか。
-    fn is_hidden(&self, path: &str) -> bool {
-        let collapsed = self.collapsed.borrow();
-        collapsed
-            .iter()
-            .any(|dir| path.starts_with(dir.as_str()) && path[dir.len()..].starts_with('/'))
+    /// ファイルの行。作ったときと中身が同じなら、前の行を使う。
+    fn cached_row(
+        this: &Rc<Self>,
+        cache: &mut HashMap<String, (RowKey, gtk::ListBoxRow)>,
+        entry: &StatusEntry,
+        layout: Layout,
+        depth: usize,
+    ) -> gtk::ListBoxRow {
+        let key = RowKey::File(entry.clone(), layout, depth);
+        if let Some((k, row)) = cache.get(&entry.path)
+            && *k == key
+        {
+            return row.clone();
+        }
+        // 作り直す行の、前の行の印は外しておく（コンフリクトでなくなった行に残さない）。
+        this.conflict_marks.borrow_mut().remove(&entry.path);
+        let row = Inner::row(this, entry, layout, depth);
+        cache.insert(entry.path.clone(), (key, row.clone()));
+        row
     }
 
-    /// 木のディレクトリの行（クリックで畳む・開く）。チェックは中のファイル（`entries` のうちコンフリクト以外）を
-    /// まとめて含める・外す: すべて含めていれば ☑、一部なら ▣（macOS 版と同じ）。
+    /// 木のディレクトリの行（クリックで畳む・開く）。チェックは中のファイル（一覧に出しているもののうち
+    /// コンフリクト以外）をまとめて含める・外す: すべて含めていれば ☑、一部なら ▣（macOS 版と同じ）。
     fn dir_row(
         this: &Rc<Self>,
-        entries: &[StatusEntry],
         name: &str,
         path: &str,
         depth: usize,
         collapsed: bool,
+        state: DirCheck,
     ) -> gtk::ListBoxRow {
         let arrow = gtk::Label::new(Some(if collapsed { "▸" } else { "▾" }));
         arrow.add_css_class("dim-label");
-        let inside: Vec<&StatusEntry> = entries
-            .iter()
-            .filter(|e| {
-                e.kind != StatusKind::Unmerged
-                    && e.path.starts_with(path)
-                    && e.path[path.len()..].starts_with('/')
-            })
-            .collect();
-        let fully = inside
-            .iter()
-            .filter(|e| e.is_staged() && !e.is_unstaged())
-            .count();
-        let some = inside.iter().any(|e| e.is_staged());
-        let all = !inside.is_empty() && fully == inside.len();
+        let (all, mixed) = (state.all(), state.mixed());
         let check = gtk::CheckButton::new();
         check.set_active(all);
-        check.set_inconsistent(some && !all);
-        check.set_sensitive(!inside.is_empty());
-        check.set_tooltip_text(Some(&check_tip(all, some && !all)));
-        let paths: Vec<String> = inside.iter().map(|e| e.path.clone()).collect();
-        let weak = Rc::downgrade(this);
+        check.set_inconsistent(mixed);
+        check.set_sensitive(state.files > 0);
+        check.set_tooltip_text(Some(&check_tip(all, mixed)));
+        let (weak, dir) = (Rc::downgrade(this), path.to_owned());
         check.connect_toggled(move |_| {
             let Some(this) = weak.upgrade() else { return };
             if this.rebuilding.get() {
                 return;
             }
-            let paths = paths.clone();
+            // 中のファイルは押したときに集める（行を使い回すので、作ったときのものは古いかもしれない）。
+            let paths: Vec<String> = this
+                .entries
+                .borrow()
+                .iter()
+                .filter(|e| {
+                    e.kind != StatusKind::Unmerged
+                        && e.path.starts_with(dir.as_str())
+                        && e.path[dir.len()..].starts_with('/')
+                })
+                .map(|e| e.path.clone())
+                .collect();
+            if paths.is_empty() {
+                return;
+            }
             Inner::run(&this, move |repo| {
                 let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
                 if all {
@@ -2665,11 +2738,75 @@ enum TreeItem {
         name: String,
         path: String,
         depth: usize,
+        check: DirCheck,
     },
     File {
         index: usize,
         depth: usize,
     },
+}
+
+impl TreeItem {
+    fn depth(&self) -> usize {
+        match self {
+            TreeItem::Dir { depth, .. } | TreeItem::File { depth, .. } => *depth,
+        }
+    }
+}
+
+/// ディレクトリのチェックの元: 中の（コンフリクト以外の）ファイルの数、すべて含めている数、一部でも含めている数。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct DirCheck {
+    files: usize,
+    fully: usize,
+    some: usize,
+}
+
+impl DirCheck {
+    fn add(&mut self, other: DirCheck) {
+        self.files += other.files;
+        self.fully += other.fully;
+        self.some += other.some;
+    }
+
+    fn all(self) -> bool {
+        self.files > 0 && self.fully == self.files
+    }
+
+    fn mixed(self) -> bool {
+        self.some > 0 && !self.all()
+    }
+}
+
+/// 一覧の行を作ったときの中身（同じなら行を使い回す）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum RowKey {
+    File(StatusEntry, Layout, usize),
+    Dir(String, usize, bool, DirCheck),
+}
+
+/// `list` の行の並びを `old` から `new` にする。そのまま残る行は触らない（外して入れ直すと、何千行でも
+/// 作り直すのと同じだけ重い）。
+fn sync_rows(list: &gtk::ListBox, old: &[gtk::ListBoxRow], new: &[gtk::ListBoxRow]) {
+    if old == new {
+        return;
+    }
+    let keep: std::collections::HashSet<&gtk::ListBoxRow> = new.iter().collect();
+    for row in old {
+        if !keep.contains(row) {
+            list.remove(row);
+        }
+    }
+    for (i, row) in new.iter().enumerate() {
+        let at = i as i32;
+        if list.row_at_index(at).as_ref() == Some(row) {
+            continue;
+        }
+        if row.parent().is_some() {
+            list.remove(row);
+        }
+        list.insert(row, at);
+    }
 }
 
 /// ファイルをディレクトリの木の順に並べる（macOS 版と同じく、ファイルを持たず子が 1 つだけのディレクトリは
@@ -2689,13 +2826,15 @@ fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
         }
         dir.files.push(i);
     }
+    /// `dir` の行を `out` に足し、中のファイルのチェックの元を返す（ファイルは 1 回ずつしか見ない）。
     fn walk(
         dir: &Dir,
         prefix: &str,
         depth: usize,
         entries: &[StatusEntry],
         out: &mut Vec<TreeItem>,
-    ) {
+    ) -> DirCheck {
+        let mut total = DirCheck::default();
         for (name, child) in &dir.dirs {
             // 子が 1 つのディレクトリだけなら、名前をつなぐ。
             let (mut name, mut child) = (name.clone(), child);
@@ -2709,18 +2848,33 @@ fn tree(entries: &[StatusEntry]) -> Vec<TreeItem> {
             } else {
                 format!("{prefix}/{name}")
             };
+            let at = out.len();
             out.push(TreeItem::Dir {
                 name,
                 path: path.clone(),
                 depth,
+                check: DirCheck::default(),
             });
-            walk(child, &path, depth + 1, entries, out);
+            let inside = walk(child, &path, depth + 1, entries, out);
+            if let TreeItem::Dir { check, .. } = &mut out[at] {
+                *check = inside;
+            }
+            total.add(inside);
         }
         let mut files = dir.files.clone();
         files.sort_by(|&a, &b| entries[a].path.cmp(&entries[b].path));
         for index in files {
+            let e = &entries[index];
+            if e.kind != StatusKind::Unmerged {
+                total.add(DirCheck {
+                    files: 1,
+                    fully: usize::from(e.is_staged() && !e.is_unstaged()),
+                    some: usize::from(e.is_staged()),
+                });
+            }
             out.push(TreeItem::File { index, depth });
         }
+        total
     }
     let mut out = Vec::new();
     walk(&root, "", 0, entries, &mut out);
@@ -2743,6 +2897,48 @@ mod tests {
             index_mode: 0,
             submodule: false,
         }
+    }
+
+    /// 木のディレクトリのチェックは、中の（コンフリクト以外の）ファイルを数える。子が 1 つのディレクトリは
+    /// つなぎ、ディレクトリはファイルより先。
+    #[test]
+    fn tree_counts_files_inside_each_directory() {
+        let entries = [
+            entry(StatusKind::Changed, "src/a.rs", b'M', b'.'),
+            entry(StatusKind::Changed, "src/b.rs", b'M', b'M'),
+            entry(StatusKind::Unmerged, "src/c.rs", b'U', b'U'),
+            entry(StatusKind::Changed, "src/deep/x/y.rs", b'.', b'M'),
+            entry(StatusKind::Changed, "top.txt", b'M', b'.'),
+        ];
+        let items = tree(&entries);
+        let shape: Vec<String> = items
+            .iter()
+            .map(|item| match item {
+                TreeItem::Dir {
+                    path, depth, check, ..
+                } => format!(
+                    "{depth} {path}/ {}:{}:{}",
+                    check.files, check.fully, check.some
+                ),
+                TreeItem::File { index, depth } => format!("{depth} {}", entries[*index].path),
+            })
+            .collect();
+        assert_eq!(
+            shape,
+            [
+                "0 src/ 3:1:2",
+                "1 src/deep/x/ 1:0:0",
+                "2 src/deep/x/y.rs",
+                "1 src/a.rs",
+                "1 src/b.rs",
+                "1 src/c.rs",
+                "0 top.txt",
+            ]
+        );
+        let TreeItem::Dir { check, .. } = &items[0] else {
+            panic!("dir")
+        };
+        assert!(check.mixed() && !check.all());
     }
 
     /// コンフリクトのファイル（index が U）は、次のコミットに含める数に入れない。
