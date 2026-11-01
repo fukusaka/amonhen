@@ -48,8 +48,12 @@ struct Inner {
 
 impl Search {
     pub fn new(view: &HistoryView) -> Self {
+        // 書き方が分かるように、欄の中と吹き出しに説明を出す（macOS 版と同じ）。
         let entry = gtk::SearchEntry::builder()
-            .placeholder_text(tr!("Search History"))
+            .placeholder_text(tr!("Search (author:, path:, contents: also work)"))
+            .tooltip_text(tr!(
+                "Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)"
+            ))
             .hexpand(true)
             .build();
         let count = gtk::Label::new(None);

@@ -492,6 +492,8 @@
 "Binary" = "バイナリ";
 "{count} folded" = "{count} 件を折りたたみ";
 "Search History" = "History を検索";
+"Search (author:, path:, contents: also work)" = "検索（author: path: contents: も使える）";
+"Words match the subject, author and ID. Spaces mean AND, “or” means OR, and parentheses group.\nauthor:name  subject:text  commit:ID  path:path  contents:\"diff text\"\nExample: path:fs/ (author:linus or author:greg)" = "語は件名・作者・ID から探す。空白で区切ると AND、or で OR、括弧でまとめる。\nauthor:名前  subject:件名  commit:ID  path:パス  contents:\"差分の文字列\"\n例: path:fs/ (author:linus or author:greg)";
 "Previous Match (Shift+Enter, Ctrl+Shift+G)" = "前の一致（Shift+Enter・Ctrl+Shift+G）";
 "Next Match (Enter, Ctrl+G)" = "次の一致（Enter・Ctrl+G）";
 "Show Only Matching Commits" = "一致したコミットだけを出す";
