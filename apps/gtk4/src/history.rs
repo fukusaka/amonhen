@@ -220,12 +220,37 @@ pub struct State {
     last_node: Option<gsk::RenderNode>,
     /// 溶かしている途中の前の表示と、始めた時刻。
     fade: Option<(gsk::RenderNode, Instant)>,
+    /// テーマの選択の色（背景と、その上の文字）を読むための、見えない子（macOS 版は表の選択でアクセントカラー）。
+    accent: Option<(gtk::Label, gtk::Label)>,
     /// 次に出す History は溶かして入れ替える（ほかのプログラムの変化で読み直した。[`HistoryView::fade_next`]）。
     fade_requested: Option<Instant>,
 }
 
 /// 読み直したときに、前の表示を新しい表示へ溶かす時間（macOS 版の 0.15 秒）。
 const FADE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// 選択の色を読む見えない子の色（テーマの選択の背景と文字。GTK の既定のテーマも libadwaita も、アクセント
+/// カラーに合わせる）。
+fn install_accent_css() {
+    thread_local! {
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".history-accent-bg { color: @theme_selected_bg_color; } \
+         .history-accent-fg { color: @theme_selected_fg_color; }",
+    );
+    if let Some(display) = gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
 
 /// コミットを落としたときに呼ぶもの。
 type DropCallback = Rc<dyn Fn(Oid, u32)>;
@@ -272,6 +297,13 @@ mod imp {
 
     #[glib::derived_properties]
     impl ObjectImpl for HistoryView {
+        fn dispose(&self) {
+            if let Some((bg, fg)) = self.state.borrow_mut().accent.take() {
+                bg.unparent();
+                fg.unparent();
+            }
+        }
+
         fn constructed(&self) {
             self.parent_constructed();
             let view = self.obj();
@@ -279,6 +311,16 @@ mod imp {
             view.set_overflow(gtk::Overflow::Hidden);
             // テーマの一覧の背景（暗いテーマでも文字と合う）。
             view.add_css_class("view");
+            // 選択の色はテーマ（アクセントカラー）から読む。
+            install_accent_css();
+            let probes = (gtk::Label::new(None), gtk::Label::new(None));
+            probes.0.add_css_class("history-accent-bg");
+            probes.1.add_css_class("history-accent-fg");
+            for p in [&probes.0, &probes.1] {
+                p.set_visible(false);
+                p.set_parent(&*view);
+            }
+            self.state.borrow_mut().accent = Some(probes);
 
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
@@ -566,6 +608,15 @@ impl HistoryView {
         } else {
             st.snapshot_times.take().unwrap_or_default()
         }
+    }
+
+    /// 選択の背景と、その上の文字の色（テーマのアクセントカラー）。
+    fn accent(&self) -> (gdk::RGBA, gdk::RGBA) {
+        let probes = self.state().accent.clone();
+        probes.map_or(
+            (gdk::RGBA::new(0.21, 0.52, 0.89, 1.0), gdk::RGBA::WHITE),
+            |(bg, fg)| (bg.color(), fg.color()),
+        )
     }
 
     pub fn row_height(&self) -> f32 {
@@ -1239,7 +1290,7 @@ impl HistoryView {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let y = row as f32 * self.row_height() - scroll;
         snapshot.append_color(
-            &gdk::RGBA::new(0.21, 0.52, 0.89, 1.0),
+            &self.accent().0,
             &graphene::Rect::new(4.0, y - 1.0, self.width() as f32 - 8.0, 2.0),
         );
     }
@@ -1343,6 +1394,7 @@ impl HistoryView {
         let scroll_y = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let focused = self.has_focus();
         let fg = self.color();
+        let (accent, on_accent) = self.accent();
         let mut wanted = Vec::new();
         {
             let mut st = self.state();
@@ -1374,7 +1426,7 @@ impl HistoryView {
             }
             // 選んでいる行の背景。
             let color = if focused {
-                gdk::RGBA::new(0.21, 0.52, 0.89, 1.0)
+                accent
             } else {
                 gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.12)
             };
@@ -1434,7 +1486,8 @@ impl HistoryView {
             };
             let row_end = width - TEXT_INSET;
             let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
-            let white = gdk::RGBA::WHITE;
+            // 選んだ行の文字は、選択の色の上の文字の色（macOS 版の alternateSelectedControlTextColor）。
+            let white = on_accent;
             if st.rows.len() > 4096 {
                 st.rows.clear();
             }
@@ -1544,7 +1597,12 @@ impl HistoryView {
                 snapshot.save();
                 snapshot.translate(&graphene::Point::new(meta_x, meta_y));
                 let meta_color = if selected {
-                    gdk::RGBA::new(1.0, 1.0, 1.0, 0.8)
+                    gdk::RGBA::new(
+                        white.red(),
+                        white.green(),
+                        white.blue(),
+                        white.alpha() * 0.8,
+                    )
                 } else {
                     secondary
                 };
@@ -1660,7 +1718,12 @@ impl HistoryView {
                 break;
             }
             let y = (top + (line_height - height) / 2.0).round();
-            let (fill, ink) = label_colors(i < 3, label, selected, &fg);
+            // 選んだ行の文字の色（テーマの選択の上の文字）。st を借りているので、子から直接読む。
+            let on_accent = st
+                .accent
+                .as_ref()
+                .map_or(gdk::RGBA::WHITE, |(_, f)| f.color());
+            let (fill, ink) = label_colors(i < 3, label, selected, &fg, &on_accent);
             let rect = gsk::RoundedRect::from_rect(graphene::Rect::new(x, y, width, height), 4.0);
             let path = gsk::PathBuilder::new();
             path.add_rounded_rect(&rect);
@@ -1783,11 +1846,12 @@ fn label_colors(
     label: &Label,
     selected: bool,
     fg: &gdk::RGBA,
+    on_accent: &gdk::RGBA,
 ) -> (gdk::RGBA, gdk::RGBA) {
     if !named {
         return (gdk::RGBA::new(0.5, 0.5, 0.5, 0.25), *fg);
     }
-    let ink = if selected { gdk::RGBA::WHITE } else { *fg };
+    let ink = if selected { *on_accent } else { *fg };
     // worktree の HEAD の札と、ほかの worktree が checkout しているブランチは緑。
     let (r, g, b) = (0.20, 0.66, 0.30);
     if label.worktree && label.head {
@@ -1805,7 +1869,7 @@ fn label_colors(
     if label.head {
         return (gdk::RGBA::new(r, g, b, 0.85), gdk::RGBA::WHITE);
     }
-    let ink = if selected { gdk::RGBA::WHITE } else { *fg };
+    let ink = if selected { *on_accent } else { *fg };
     (
         gdk::RGBA::new(r, g, b, if selected { 0.45 } else { 0.22 }),
         ink,
