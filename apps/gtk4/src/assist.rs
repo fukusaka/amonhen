@@ -64,9 +64,8 @@ pub fn set_model(cli: Cli, model: &str) {
 
 /// 翻訳と解説の言語。
 pub fn language() -> String {
-    settings::string(LANGUAGE)
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "日本語".to_owned())
+    // 空にしたら空のまま（macOS 版と同じ。既定は設定がないときだけ）。
+    settings::string(LANGUAGE).unwrap_or_else(|| "日本語".to_owned())
 }
 
 fn home() -> PathBuf {
