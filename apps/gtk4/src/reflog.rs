@@ -321,7 +321,10 @@ impl Inner {
                     esc(&tr!("not on any branch"))
                 ));
             }
-            parts.push(format!("<span fgalpha=\"60%\">{}</span>", date(entry.time)));
+            parts.push(format!(
+                "<span fgalpha=\"60%\">{}</span>",
+                esc(&crate::stashes::ago(entry.time))
+            ));
             parts.push(format!(
                 "<span fgalpha=\"60%\">{}</span>",
                 esc(&entry.new[..entry.new.len().min(7)])
@@ -497,13 +500,6 @@ fn entries_of(info: &Value) -> Vec<Entry> {
             reachable: e["reachable"].as_bool().unwrap_or(true),
         })
         .collect()
-}
-
-fn date(time: i64) -> String {
-    glib::DateTime::from_unix_local(time)
-        .and_then(|d| d.format("%Y-%m-%d %H:%M"))
-        .map(|s| s.to_string())
-        .unwrap_or_default()
 }
 
 #[cfg(test)]
