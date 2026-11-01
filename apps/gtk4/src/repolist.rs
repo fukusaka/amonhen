@@ -1,6 +1,7 @@
 //! ツールバーのリポジトリ名（macOS 版の `RepositoryBrowser` の `compact` と `RepositoryWindow.showRepositoryList`）:
 //! 押すとリポジトリの一覧を小さく出し、選んだものにこのタブを切り替える（Ctrl+Enter なら新しい窓）。お気に入り、
-//! そのあと最後に開いた順に、名前と状態だけを出す。下の「すべてのリポジトリ…」はリポジトリのページを出す。
+//! そのあと最後に開いた順に、名前・パス・ブランチ・状態を出す（ダブルクリックか Enter で開く）。下の「すべての
+//! リポジトリ…」はリポジトリのページを出す。
 
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
@@ -14,9 +15,11 @@ use crate::bookmarks;
 use crate::repobrowser::{self, Open};
 use crate::tabs::Place;
 
-/// 一覧の 1 行（名前と状態）。
+/// 一覧の 1 行（名前・パス・ブランチ・状態。macOS 版の `RepositoryCell` の小さい形）。
 struct Row {
     name: gtk::Label,
+    path: gtk::Label,
+    branch: gtk::Label,
     state: gtk::Label,
     location: RefCell<String>,
 }
@@ -25,8 +28,10 @@ impl Row {
     fn render(&self) {
         let location = self.location.borrow().clone();
         self.name.set_markup(&repobrowser::name_markup(&location));
-        self.name
-            .set_tooltip_text(Some(&repobrowser::path_text(&location)));
+        let path = repobrowser::path_text(&location);
+        self.path.set_text(&path);
+        self.path.set_tooltip_text(Some(&path));
+        self.branch.set_text(&repobrowser::branch_text(&location));
         let (markup, tip) = repobrowser::state_markup(&location, false);
         self.state.set_markup(&markup);
         self.state.set_tooltip_text(tip.as_deref());
@@ -75,7 +80,7 @@ pub fn button(
 ) -> gtk::MenuButton {
     let popover = gtk::Popover::new();
     let filter = gtk::SearchEntry::new();
-    filter.set_placeholder_text(Some(&tr!("Filter by name or path")));
+    filter.set_placeholder_text(Some(&tr!("Switch repository")));
     let model = gtk::StringList::new(&[]);
     let selection = gtk::SingleSelection::new(Some(model.clone()));
     let factory = gtk::SignalListItemFactory::new();
@@ -83,25 +88,42 @@ pub fn button(
     let r = rows.clone();
     factory.connect_setup(move |_, item| {
         let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
+        // 左に名前と、その下にパス。右にブランチと、その下に状態（macOS 版と同じ）。
         let name = gtk::Label::new(None);
         name.set_xalign(0.0);
         name.set_hexpand(true);
         name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        let path = gtk::Label::new(None);
+        path.set_xalign(0.0);
+        path.set_hexpand(true);
+        path.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+        path.add_css_class("dim-label");
+        path.add_css_class("caption");
+        let branch = gtk::Label::new(None);
+        branch.set_xalign(1.0);
+        branch.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        branch.set_max_width_chars(24);
+        branch.add_css_class("dim-label");
         let state = gtk::Label::new(None);
         state.set_xalign(1.0);
         state.add_css_class("caption");
-        let line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+        let line = gtk::Grid::new();
+        line.set_column_spacing(8);
         line.set_margin_top(2);
         line.set_margin_bottom(2);
         line.set_margin_start(2);
         line.set_margin_end(2);
-        line.append(&name);
-        line.append(&state);
+        line.attach(&name, 0, 0, 1, 1);
+        line.attach(&path, 0, 1, 1, 1);
+        line.attach(&branch, 1, 0, 1, 1);
+        line.attach(&state, 1, 1, 1, 1);
         item.set_child(Some(&line));
         let mut rows = r.borrow_mut();
         rows.retain(|row| row.name.parent().is_some());
         rows.push(Rc::new(Row {
             name,
+            path,
+            branch,
             state,
             location: RefCell::default(),
         }));
@@ -128,7 +150,8 @@ pub fn button(
     });
     let list = gtk::ListView::new(Some(selection.clone()), Some(factory));
     list.add_css_class("navigation-sidebar");
-    list.set_single_click_activate(true);
+    // クリックで選び、ダブルクリック（か Enter）で開く（macOS 版と同じ）。
+    list.set_single_click_activate(false);
     let scrolled = gtk::ScrolledWindow::builder()
         .child(&list)
         .hscrollbar_policy(gtk::PolicyType::Never)
@@ -178,10 +201,10 @@ pub fn button(
         shows.set(shows.get() + 1);
         let (shows, show) = (shows.clone(), shows.get());
         f.set_text("");
+        // 出すたびに、行の状態を読み直し、スキャンするフォルダーを探し直す（macOS 版の `prepare`）。
         bookmarks::refresh();
-        if !bookmarks::has_scanned() && !bookmarks::data().scan_roots.is_empty() {
-            bookmarks::rescan();
-        }
+        bookmarks::forget_peeks();
+        bookmarks::rescan();
         u();
         f.grab_focus();
         let (u, sc, r, p) = (u.clone(), sc.clone(), r.clone(), p.clone());
