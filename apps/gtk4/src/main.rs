@@ -1699,7 +1699,7 @@ fn build_tab(
     // GitHub（プルリクエスト・CI の状態・アバター）。ref を読むたびに読み直す（30 秒は空ける）。
     let github_loader = github::Loader::new(&actions, &view, &sidebar);
     let mut github_started = false;
-    search.install(&tab.group, app);
+    search.install(&tab.group);
     // 足した検索のアクションにも、使えるか（開けていないタブでは使えない）を入れる。
     actions.update_facts(|_| {});
     header.pack_end(&search.toggle);

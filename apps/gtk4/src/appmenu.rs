@@ -186,6 +186,9 @@ const FE_ACCELS: &[(&str, &str)] = &[
     ("win.clone", "<Control><Alt>c"),
     ("win.close", "<Control>w"),
     ("win.close-window", "<Control><Shift>w"),
+    ("win.find", "<Control>f"),
+    ("win.find-next", "<Control>g"),
+    ("win.find-previous", "<Control><Shift>g"),
     ("win.next-tab", "<Control>Page_Down"),
     ("win.previous-tab", "<Control>Page_Up"),
     ("app.quit", "<Control>q"),
@@ -630,31 +633,53 @@ fn table_sections(menu: Menu) -> gio::Menu {
     out
 }
 
-fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
+pub fn primary_menu(anchor: &gtk::Box) -> gio::Menu {
     let menu = gio::Menu::new();
     let submenus = gio::Menu::new();
-    let file = menu_of(&[
+    // File: New Tab・New Window・Open…・Quick Open…・Clone…・Open Recent ▸ | Close・Close Window（macOS 版と同じ
+    // 並び。Close Window は GNOME の分）。
+    let file = gio::Menu::new();
+    let first = menu_of(&[
         Some((&tr!("New Tab"), "win.new-tab")),
         Some((&tr!("New Window"), "win.new-window")),
         Some((&tr!("Open…"), "win.open")),
-        Some(("Clone…", "win.clone")),
-        None,
-        Some((&tr!("Close"), "win.close")),
-        Some((&tr!("Close Window"), "win.close-window")),
     ]);
-    if let Some(first) = file
+    if let Some(first) = first
         .item_link(0, gio::MENU_LINK_SECTION)
         .and_downcast::<gio::Menu>()
     {
+        if let Some(c) = amonhen_commands::find("quick-open") {
+            first.append(Some(&title(c)), Some("win.quick-open"));
+        }
+        first.append(Some("Clone…"), Some("win.clone"));
         first.append_submenu(Some(&tr!("Open Recent")), &crate::repos::recent_menu());
+        file.append_section(None, &first);
     }
-    let quick_open = table_sections(Menu::File);
-    if quick_open.n_items() > 0 {
-        file.insert_section(1, None, &quick_open);
-    }
+    file.append_section(
+        None,
+        &menu_of(&[
+            Some((&tr!("Close"), "win.close")),
+            Some((&tr!("Close Window"), "win.close-window")),
+        ]),
+    );
     submenus.append_submenu(Some(&tr!("File")), &file);
+    // Edit: Find…・Find Next・Find Previous（History の検索か、フォーカスのある差分の中）と、表の Find in
+    // History…（macOS 版と同じ。Undo・Cut などは GTK の部品のもの）。
+    let edit = menu_of(&[
+        Some((&tr!("Find…"), "win.find")),
+        Some((&tr!("Find Next"), "win.find-next")),
+        Some((&tr!("Find Previous"), "win.find-previous")),
+    ]);
+    if let Some(first) = edit
+        .item_link(0, gio::MENU_LINK_SECTION)
+        .and_downcast::<gio::Menu>()
+    {
+        for c in amonhen_commands::menu(Menu::Edit).into_iter().flatten() {
+            first.append(Some(&title(c)), Some(&format!("win.{}", c.id)));
+        }
+    }
+    submenus.append_submenu(Some(&tr!("Edit")), &edit);
     for (name, part) in [
-        (tr!("Edit"), Menu::Edit),
         (tr!("View"), Menu::View),
         (tr!("Navigate"), Menu::Navigate),
         ("Commit".to_owned(), Menu::Commit),
@@ -1157,8 +1182,14 @@ pub fn show_shortcuts(parent: &gtk::ApplicationWindow) {
     ];
     file.extend(table(Menu::File));
     section.add_group(&group(&tr!("File"), &file));
+    let mut edit = vec![
+        ("win.find".to_owned(), tr!("Find…")),
+        ("win.find-next".to_owned(), tr!("Find Next")),
+        ("win.find-previous".to_owned(), tr!("Find Previous")),
+    ];
+    edit.extend(table(Menu::Edit));
+    section.add_group(&group(&tr!("Edit"), &edit));
     for (name, menu) in [
-        (tr!("Edit"), Menu::Edit),
         (tr!("View"), Menu::View),
         (tr!("Navigate"), Menu::Navigate),
         ("Repository".to_owned(), Menu::Repository),

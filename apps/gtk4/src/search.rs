@@ -172,8 +172,9 @@ impl Search {
         Self { bar, toggle, inner }
     }
 
-    /// タブのアクション（`win.find`・`win.find-next`・`win.find-previous`）を足す。
-    pub fn install(&self, group: &gio::SimpleActionGroup, app: &gtk::Application) {
+    /// タブのアクション（`win.find`・`win.find-next`・`win.find-previous`）を足す（ショートカットは
+    /// `crate::appmenu` が入れる）。
+    pub fn install(&self, group: &gio::SimpleActionGroup) {
         let find = gio::SimpleAction::new("find", None);
         let (bar, entry) = (self.bar.clone(), self.inner.entry.clone());
         find.connect_activate(move |_, _| {
@@ -211,9 +212,6 @@ impl Search {
             });
             group.add_action(&action);
         }
-        app.set_accels_for_action("win.find", &["<Control>f"]);
-        app.set_accels_for_action("win.find-next", &["<Control>g"]);
-        app.set_accels_for_action("win.find-previous", &["<Control><Shift>g"]);
     }
 
     /// 新しく読んだ History を出す。行が変わるので、検索の結果は捨てる（問い合わせは欄に残し、Enter で探し直せる。
