@@ -139,26 +139,53 @@ fn paths_in(category: &Category) -> Vec<String> {
     Sources::read().paths_in(category)
 }
 
+/// `all` のうち、隠す追加した worktree（メインのリポジトリも一覧にあるもの。メインのリポジトリのタブの Worktrees
+/// から使う。macOS 版の `LocationIndex.hidden`、docs/ux.md の「Worktrees」）。手元のものだけ（`.git` を読む）。
+pub fn hidden_worktrees(all: &[String]) -> std::collections::HashSet<String> {
+    let local = |l: &str| l.strip_prefix("daemon:").unwrap_or(l).to_owned();
+    let listed: std::collections::HashSet<String> = all.iter().map(|l| local(l)).collect();
+    all.iter()
+        .filter(|l| !l.contains("ssh://"))
+        .filter(|l| {
+            crate::repos::main_of_worktree(std::path::Path::new(&local(l))).is_some_and(|main| {
+                let main = main.to_string_lossy().into_owned();
+                listed.contains(&main) || listed.contains(&crate::repos::normalize(main.as_ref()))
+            })
+        })
+        .cloned()
+        .collect()
+}
+
 /// 分類の中身を引くもと（ブックマーク・すべての場所・スキャンするフォルダ）。左の行ごとの数を出すときは、一度
 /// 読んだものを使い回す（行ごとに読み直すと、数百のリポジトリで目に見えて遅い）。
 struct Sources {
     data: bookmarks::Data,
     all: Vec<String>,
     roots: Roots,
+    /// 隠す追加した worktree（`hidden_worktrees`）。
+    hidden: std::collections::HashSet<String>,
 }
 
 impl Sources {
     fn read() -> Self {
         let data = bookmarks::data();
         let roots = Roots::new(&data);
+        let all = bookmarks::all_locations();
         Self {
+            hidden: hidden_worktrees(&all),
             data,
-            all: bookmarks::all_locations(),
+            all,
             roots,
         }
     }
 
     fn paths_in(&self, category: &Category) -> Vec<String> {
+        let mut paths = self.paths_with_worktrees(category);
+        paths.retain(|l| !self.hidden.contains(l));
+        paths
+    }
+
+    fn paths_with_worktrees(&self, category: &Category) -> Vec<String> {
         let data = &self.data;
         let all = || self.all.iter().cloned();
         // 場所の下のフォルダは、スキャンするフォルダの外のものだけ（左の木と同じ。スキャンした分は 🔍 の下に出す）。

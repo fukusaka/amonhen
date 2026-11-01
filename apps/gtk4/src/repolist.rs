@@ -50,8 +50,12 @@ fn ordered(query: &str) -> Vec<String> {
         .map(|b| b.path.clone())
         .collect();
     let query = query.trim().to_lowercase();
-    let mut list: Vec<String> = bookmarks::all_locations()
+    // 追加した worktree は、メインのリポジトリも一覧にあれば出さない（リポジトリのページと同じ）。
+    let all = bookmarks::all_locations();
+    let hidden = repobrowser::hidden_worktrees(&all);
+    let mut list: Vec<String> = all
         .into_iter()
+        .filter(|l| !hidden.contains(l))
         .filter(|l| {
             query.is_empty()
                 || bookmarks::display_name_in(&data, l)
