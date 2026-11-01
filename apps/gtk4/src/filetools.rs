@@ -677,6 +677,23 @@ impl FileHistoryView {
             }
         });
         this.list.add_controller(menu_click);
+        // Ctrl+C: 選んだコミットの ID をコピーする（macOS 版と同じ）。
+        let keys = gtk::EventControllerKey::new();
+        let weak = Rc::downgrade(this);
+        keys.connect_key_pressed(move |_, key, _, modifiers| {
+            let Some(this) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if key.to_lower() == gtk::gdk::Key::c
+                && modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK)
+                && let Some(oid) = this.selected_oid()
+            {
+                this.list.clipboard().set_text(&oid);
+                return glib::Propagation::Stop;
+            }
+            glib::Propagation::Proceed
+        });
+        this.list.add_controller(keys);
         // Show Merge Commits を変えたら（どの窓からでも）、読み直す（macOS 版と同じ）。
         if let Some(window) = this.window.upgrade() {
             let weak = Rc::downgrade(this);
