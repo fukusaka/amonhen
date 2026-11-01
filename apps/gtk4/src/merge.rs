@@ -11,6 +11,7 @@
 //! 扱うので、daemon 越しのリポジトリでも手元で計算する）、読むのは `mergeSides`、書くのは `saveMerge`。
 
 use std::cell::{Cell, RefCell};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -213,6 +214,8 @@ pub struct Editor {
     bands: [gtk::DrawingArea; 2],
     arrows: [RefCell<Vec<Arrow>>; 2],
     actions: Rc<Actions>,
+    /// コンフリクトのある worktree の作業ツリー（同じパスでも、worktree が違えば別のエディタ）。
+    workdir: Option<PathBuf>,
     path: String,
     current: Pane,
     result: Pane,
@@ -251,7 +254,7 @@ pub struct Editor {
 
 thread_local! {
     /// 開いているマージエディタ（パスごとに 1 つ）。
-    static OPEN: RefCell<Vec<(String, glib::WeakRef<gtk::Window>)>> = RefCell::default();
+    static OPEN: RefCell<Vec<(WindowKey, glib::WeakRef<gtk::Window>)>> = RefCell::default();
     /// 次に開いたとき、最初のコンフリクトをこれで解く（`--accept`。確認用）。
     static ACCEPT_ONCE: Cell<Option<Choice>> = const { Cell::new(None) };
     /// 開いているマージエディタ（窓を閉じたら外す）。
@@ -277,7 +280,7 @@ pub fn open(
     path: &str,
     on_resolved: impl Fn() + 'static,
 ) {
-    if let Some(w) = open_window(path) {
+    if let Some(w) = open_window(repo.paths().workdir.as_deref(), path) {
         w.present();
         return;
     }
@@ -301,12 +304,15 @@ pub fn open(
     });
 }
 
-/// `path` のマージエディタを開いている別の窓（なければ None）。
-pub fn open_window(path: &str) -> Option<gtk::Window> {
+/// 別の窓で開いているマージエディタの鍵（worktree の作業ツリーとパス）。
+type WindowKey = (Option<PathBuf>, String);
+
+/// `workdir` の worktree の `path` のマージエディタを開いている別の窓（なければ None）。
+pub fn open_window(workdir: Option<&Path>, path: &str) -> Option<gtk::Window> {
     OPEN.with(|o| {
         o.borrow()
             .iter()
-            .find(|(p, _)| p == path)
+            .find(|((w, p), _)| w.as_deref() == workdir && p == path)
             .and_then(|(_, w)| w.upgrade())
     })
 }
@@ -318,6 +324,7 @@ pub async fn load(
     path: &str,
 ) -> Result<Rc<Editor>, String> {
     let p = path.to_owned();
+    let workdir = repo.paths().workdir;
     let reply: Value = gio::spawn_blocking(move || {
         let command = json!({ "op": "mergeSides", "path": p });
         serde_json::from_str(&repo.run_json(&command.to_string())).unwrap_or_default()
@@ -342,7 +349,14 @@ pub async fn load(
             tr!("No conflict markers are left. Check the result, then Mark Resolved.")
         }
     });
-    Ok(Editor::new(actions, path, sides, result, without_markers))
+    Ok(Editor::new(
+        actions,
+        workdir,
+        path,
+        sides,
+        result,
+        without_markers,
+    ))
 }
 
 /// エディタを（編集中の内容のまま）別の窓に入れて出す。埋め込んでいた側は、先に外しておく。
@@ -360,7 +374,10 @@ pub fn show_in_window(editor: &Rc<Editor>, parent: &gtk::Window) {
     OPEN.with(|o| {
         let mut o = o.borrow_mut();
         o.retain(|(_, w)| w.upgrade().is_some());
-        o.push((editor.path.clone(), window.downgrade()));
+        o.push((
+            (editor.workdir.clone(), editor.path.clone()),
+            window.downgrade(),
+        ));
     });
     // 窓がある間は持っておく（ボタンなどは弱い参照で呼ぶので、持たなければ開いた直後に消える）。
     KEEP.with(|k| k.borrow_mut().push(editor.clone()));
@@ -443,6 +460,7 @@ impl Editor {
 impl Editor {
     fn new(
         actions: Rc<Actions>,
+        workdir: Option<PathBuf>,
         path: &str,
         sides: [Option<Side>; 3],
         result: String,
@@ -616,6 +634,7 @@ impl Editor {
             bands,
             arrows: Default::default(),
             actions,
+            workdir,
             path: path.to_owned(),
             current,
             result: result_pane,

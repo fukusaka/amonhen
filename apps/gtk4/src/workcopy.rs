@@ -1610,7 +1610,8 @@ impl Inner {
         this.sides.set_visible(false);
         this.conflict_buttons.set_visible(true);
         this.update_buttons();
-        if crate::merge::open_window(path).is_some() {
+        let workdir = this.repo().and_then(|r| r.paths().workdir);
+        if crate::merge::open_window(workdir.as_deref(), path).is_some() {
             this.embed_message(&tr!("The merge editor is open in a separate window"));
             return;
         }
