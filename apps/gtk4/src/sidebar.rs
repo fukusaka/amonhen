@@ -289,8 +289,6 @@ fn node_of(expander: &gtk::TreeExpander) -> Option<Node> {
     expander.list_row()?.item().and_downcast::<Node>()
 }
 
-/// 最初に開いておく見出しの、項目の数の上限。
-const MANY: u32 = 30;
 /// Inactive とみなす日数（最後のコミットからこれだけ経ったブランチ）。
 const STALE_DAYS: i64 = 90;
 
@@ -1788,7 +1786,7 @@ impl Inner {
             .collect();
         self.root.splice(0, self.root.n_items(), &nodes);
 
-        // 見出しは最初は開いておく（項目の多い Tags は閉じておく）。あとは前に開いていたものを開く
+        // 見出しは、最初は Workspace と Branches だけを開いておく（macOS 版と同じ）。あとは前に開いていたものを開く
         // （開くと子の行が後ろに増える）。積んだブランチのある行は、畳んだもののほかは開く。
         let folded = self.folded.borrow();
         let mut i = 0;
@@ -1799,7 +1797,7 @@ impl Inner {
                 let data = node.data();
                 // 絞り込み中は、見出しを開いて出す。
                 let group = matches!(data.item, Item::Group)
-                    && (filtering || node.children().is_some_and(|c| c.n_items() <= MANY));
+                    && (filtering || data.key == "group/Workspace" || data.key == "group/Branches");
                 let stack = matches!(data.item, Item::Ref(_)) && !folded.contains(&data.key);
                 let new_prs = open_pull_requests && data.key == "group/Pull Requests";
                 if ((first || filtering) && group)
