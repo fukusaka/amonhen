@@ -21,6 +21,9 @@ thread_local! {
     static WINDOW: RefCell<glib::WeakRef<gtk::Window>> = RefCell::default();
     /// Git のタブで、読み終えたら開くページ（`--settings git/programs`）。
     static GIT_PAGE: RefCell<Option<String>> = const { RefCell::new(None) };
+    /// Git のタブの中身（読み終えて作ったら。窓が開いている間に `select("git/<page>")` されたらそのページへ）。
+    static GIT_SETTINGS: RefCell<std::rc::Weak<crate::reposettings::RepoSettings>> =
+        RefCell::default();
 }
 
 /// 鍵の名前（macOS 版の UserDefaults と同じ）。
@@ -512,6 +515,7 @@ pub fn show(parent: &gtk::ApplicationWindow) {
                     crate::reposettings::Level::AllRepositories,
                 );
                 settings.widget.set_vexpand(true);
+                GIT_SETTINGS.with(|s| s.replace(Rc::downgrade(&settings)));
                 if let Some(page) = GIT_PAGE.with(|p| p.take()) {
                     settings.select(&page);
                     // 確認用の手順（`--settings git/<page>` と一緒に）。
@@ -673,7 +677,13 @@ pub fn main_window_of(widget: &impl IsA<gtk::Widget>) -> Option<gtk::Application
 pub fn select(tab: &str) {
     let (tab, page) = tab.split_once('/').unwrap_or((tab, ""));
     if tab == "git" && !page.is_empty() {
-        GIT_PAGE.with(|p| p.replace(Some(page.to_owned())));
+        // もう作ってあればそのページへ。まだなら、作ったときに開く。
+        match GIT_SETTINGS.with(|s| s.borrow().upgrade()) {
+            Some(settings) => settings.select(page),
+            None => {
+                GIT_PAGE.with(|p| p.replace(Some(page.to_owned())));
+            }
+        }
     }
     if tab == "ssh-hosts" && !page.is_empty() {
         let (host, page) = page.split_once('/').unwrap_or((page, ""));
