@@ -485,8 +485,49 @@ pub fn branch_text(location: &str) -> String {
     }
 }
 
-/// 状態の列（マークアップ）と、その説明（ツールチップ）。`check` は変更も差もないときの ✓（一覧の列だけ）。
-pub fn state_markup(location: &str, check: bool) -> (String, Option<String>) {
+/// 状態の文字の色（CSS のクラス）。選んだ行の上ではテーマの選択の文字の色にする（強調色の地の上でも読める。
+/// macOS 版の強調した行と同じ）。
+const STATE_CLASSES: [&str; 3] = ["repo-state-error", "repo-state-changed", "dim-label"];
+
+/// 状態の列を `label` に出す（文字・色・説明）。`check` は変更も差もないときの ✓（一覧の列だけ）。
+pub fn show_state(label: &gtk::Label, location: &str, check: bool) {
+    install_state_css();
+    let (text, class, tip) = state_text(location, check);
+    label.set_text(&text);
+    for c in STATE_CLASSES {
+        if c == class {
+            label.add_css_class(c);
+        } else {
+            label.remove_css_class(c);
+        }
+    }
+    label.set_tooltip_text(tip.as_deref());
+}
+
+fn install_state_css() {
+    thread_local! {
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".repo-state-error { color: #e01b24; } \
+         .repo-state-changed { color: #e66100; } \
+         row:selected .repo-state-error, row:selected .repo-state-changed { color: inherit; }",
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+/// 状態の列の文字・色のクラス・説明（ツールチップ）。
+fn state_text(location: &str, check: bool) -> (String, &'static str, Option<String>) {
     if amonhen_remote::location::is_remote(location) {
         // SSH 先・daemon 越しは、開くまで状態を読まない。
         let text = if bookmarks::ssh_host(location).is_some() {
@@ -495,18 +536,13 @@ pub fn state_markup(location: &str, check: bool) -> (String, Option<String>) {
             "daemon"
         };
         return (
-            format!("<span fgalpha=\"60%\">{text}</span>"),
+            text.to_owned(),
+            "dim-label",
             Some(tr!("The status isn’t read until you open it")),
         );
     }
     if !bookmarks::is_repository(location) {
-        return (
-            format!(
-                "<span foreground=\"#e01b24\">{}</span>",
-                esc(&tr!("Not found"))
-            ),
-            None,
-        );
+        return (tr!("Not found"), "repo-state-error", None);
     }
     let peek = bookmarks::peek(location);
     let mut parts = Vec::new();
@@ -531,18 +567,14 @@ pub fn state_markup(location: &str, check: bool) -> (String, Option<String>) {
             parts.push("✓".into());
         }
     }
-    let color = if fetch_error.is_some() {
-        Some("#e01b24")
+    let class = if fetch_error.is_some() {
+        "repo-state-error"
     } else if peek.as_ref().is_some_and(|p| p.changed > 0) {
-        Some("#e66100")
+        "repo-state-changed"
     } else {
-        None
+        "dim-label"
     };
-    let text = esc(&parts.join("  "));
-    let markup = match color {
-        Some(c) => format!("<span foreground=\"{c}\">{text}</span>"),
-        None => format!("<span fgalpha=\"60%\">{text}</span>"),
-    };
+    let text = parts.join("  ");
     let mut tip = peek.map(|p| {
         [
             if p.changed > 0 {
@@ -572,7 +604,7 @@ pub fn state_markup(location: &str, check: bool) -> (String, Option<String>) {
             None => head,
         });
     }
-    (markup, tip)
+    (text, class, tip)
 }
 
 /// 最後のコミットの列（いつ — 件名）とツールチップ（件名と日時）。
@@ -629,9 +661,7 @@ impl CellView {
             }
             Column::Branch => self.title.set_text(&branch_text(&location)),
             Column::Status => {
-                let (markup, tip) = state_markup(&location, true);
-                self.title.set_markup(&markup);
-                self.title.set_tooltip_text(tip.as_deref());
+                show_state(&self.title, &location, true);
             }
             Column::Commit => {
                 let (text, tip) = commit_text(&location);

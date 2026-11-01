@@ -77,9 +77,7 @@ impl Row {
         self.name.set_markup(&repobrowser::name_markup(&location));
         self.path.set_text(&repobrowser::path_text(&location));
         self.branch.set_text(&repobrowser::branch_text(&location));
-        let (markup, tip) = repobrowser::state_markup(&location, false);
-        self.state.set_markup(&markup);
-        self.state.set_tooltip_text(tip.as_deref());
+        repobrowser::show_state(&self.state, &location, false);
     }
 }
 

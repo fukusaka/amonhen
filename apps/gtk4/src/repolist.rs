@@ -33,9 +33,7 @@ impl Row {
         self.path.set_text(&path);
         self.path.set_tooltip_text(Some(&path));
         self.branch.set_text(&repobrowser::branch_text(&location));
-        let (markup, tip) = repobrowser::state_markup(&location, false);
-        self.state.set_markup(&markup);
-        self.state.set_tooltip_text(tip.as_deref());
+        repobrowser::show_state(&self.state, &location, false);
     }
 }
 
