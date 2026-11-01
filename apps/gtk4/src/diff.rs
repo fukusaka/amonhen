@@ -547,20 +547,34 @@ impl DiffWidget {
     }
 
     /// 選んだ変更の行（表示の行の番号。Working Copy の差分では、コアの差分の行の番号と同じ）。
+    /// 選んだ行のうち、変更の行（含める・外す・捨てるのはこの行。選ぶだけなら前後の行や hunk の見出しも選べる）。
     pub fn selected_rows(&self) -> Vec<usize> {
-        self.state().selection.iter().map(|&r| r as usize).collect()
+        let st = self.state();
+        let Some(view) = &st.view else {
+            return Vec::new();
+        };
+        st.selection
+            .iter()
+            .map(|&r| r as usize)
+            .filter(|&r| view.view.rows.get(r).is_some_and(Self::is_change))
+            .collect()
     }
 
     /// 選んだ行のうち、次のコミットに含めているものの数と、全体の数。
     pub fn selected_staged(&self) -> (usize, usize) {
         let st = self.state();
         let Some(view) = &st.view else { return (0, 0) };
-        let staged = st
+        let changes: Vec<&DiffRow> = st
             .selection
             .iter()
-            .filter(|&&r| view.view.rows[r as usize].flags & DiffRow::STAGED != 0)
+            .filter_map(|&r| view.view.rows.get(r as usize))
+            .filter(|r| Self::is_change(r))
+            .collect();
+        let staged = changes
+            .iter()
+            .filter(|r| r.flags & DiffRow::STAGED != 0)
             .count();
-        (staged, st.selection.len())
+        (staged, changes.len())
     }
 
     /// ファイルの見出しか差分の行を右クリックしたら `f(見出しの上ならファイルの番号, パス, x, y)` を呼ぶ。
@@ -777,7 +791,13 @@ impl DiffWidget {
                     let st = self.state();
                     (
                         st.checks,
-                        st.selection.iter().map(|&r| r as usize).collect::<Vec<_>>(),
+                        st.view.as_ref().map_or_else(Vec::new, |view| {
+                            st.selection
+                                .iter()
+                                .map(|&r| r as usize)
+                                .filter(|&r| view.view.rows.get(r).is_some_and(Self::is_change))
+                                .collect::<Vec<_>>()
+                        }),
                         st.on_toggle_rows.clone(),
                     )
                 };
@@ -1309,35 +1329,33 @@ impl DiffWidget {
             .map(|(i, _)| i)
     }
 
-    /// 行を選ぶ。hunk の見出しなら、その hunk の変更の行をすべて。
+    /// 行を選ぶ（macOS 版と同じく、前後の行も選べる）。hunk の見出しなら、その hunk の行をすべて。Shift で
+    /// 起点からの続いた行、Ctrl で足す・外す（すべて選んでいれば外す）。
     fn select_rows(&self, view: &View, index: u32, shift: bool, ctrl: bool) {
         let rows = &view.view.rows;
         let picked: Vec<u32> = if rows[index as usize].kind == DiffRow::HUNK {
-            (index + 1..rows.len() as u32)
-                .take_while(|&r| rows[r as usize].kind != DiffRow::HUNK)
-                .filter(|&r| Self::is_change(&rows[r as usize]))
+            std::iter::once(index)
+                .chain((index + 1..rows.len() as u32).take_while(|&r| {
+                    !matches!(rows[r as usize].kind, DiffRow::HUNK | DiffRow::FILE)
+                }))
                 .collect()
-        } else if Self::is_change(&rows[index as usize]) {
-            vec![index]
         } else {
-            Vec::new()
+            vec![index]
         };
         {
             let mut st = self.state();
             match (shift, st.anchor) {
                 (true, Some(anchor)) => {
                     let (a, b) = (anchor.min(index), anchor.max(index));
-                    if !ctrl {
-                        st.selection.clear();
-                    }
-                    st.selection
-                        .extend((a..=b).filter(|&r| Self::is_change(&rows[r as usize])));
+                    st.selection = (a..=b).collect();
                 }
                 _ if ctrl => {
-                    for r in &picked {
-                        if !st.selection.remove(r) {
-                            st.selection.insert(*r);
+                    if picked.iter().all(|r| st.selection.contains(r)) {
+                        for r in &picked {
+                            st.selection.remove(r);
                         }
+                    } else {
+                        st.selection.extend(picked.iter().copied());
                     }
                     st.anchor = Some(index);
                 }
