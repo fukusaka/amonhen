@@ -340,8 +340,49 @@ impl Activity {
         bar.append(&filter);
         bar.append(&export);
         let (scrolled, op_list) = list();
+        // 選んだ記録の、リポジトリ・内容・エラーを選んでコピーできる字で（macOS 版と同じ）。
+        op_list.set_selection_mode(gtk::SelectionMode::Single);
+        let op_detail = label("", &["caption", "monospace"]);
+        op_detail.set_selectable(true);
+        op_detail.set_wrap(true);
+        op_detail.set_wrap_mode(gtk::pango::WrapMode::WordChar);
+        op_detail.set_valign(gtk::Align::Start);
+        let op_detail_scrolled = gtk::ScrolledWindow::builder()
+            .child(&op_detail)
+            .min_content_height(90)
+            .max_content_height(90)
+            .hscrollbar_policy(gtk::PolicyType::Never)
+            .has_frame(true)
+            .visible(false)
+            .build();
+        // 一覧を作り直しても選び直せるよう、選んだ記録の印（daemon のものか、番号）を覚えておく。
+        let op_selected: Rc<RefCell<Option<String>>> = Rc::default();
+        let op_rebuilding = Rc::new(std::cell::Cell::new(false));
+        {
+            let (detail, scrolled, selected, rebuilding) = (
+                op_detail.clone(),
+                op_detail_scrolled.clone(),
+                op_selected.clone(),
+                op_rebuilding.clone(),
+            );
+            op_list.connect_row_selected(move |_, row| {
+                if rebuilding.get() {
+                    return;
+                }
+                let text = row.and_then(|r| r.child()).and_then(|c| unsafe {
+                    c.data::<String>("detail").map(|d| d.as_ref().clone())
+                });
+                selected.replace(
+                    row.and_then(|r| r.child())
+                        .map(|c| c.widget_name().to_string()),
+                );
+                scrolled.set_visible(text.is_some());
+                detail.set_text(text.as_deref().unwrap_or_default());
+            });
+        }
         ops.append(&bar);
         ops.append(&scrolled);
+        ops.append(&op_detail_scrolled);
         ops.append(&label(
             &tr!("git runs and core commands, newest first, up to 1,000 (for repositories through the daemon, also the git it starts). ● means running; fetch, pull, push and clone show their progress and can be canceled."),
             &["dim-label", "caption"],
@@ -350,6 +391,12 @@ impl Activity {
         // daemon の記録（裏で 2 秒ごとに読む。付け替えたら捨てる）。
         let remote_records: Rc<RefCell<Vec<Value>>> = Rc::default();
         let refresh_ops = {
+            let (op_selected, op_rebuilding, op_detail, op_detail_scrolled) = (
+                op_selected.clone(),
+                op_rebuilding.clone(),
+                op_detail.clone(),
+                op_detail_scrolled.clone(),
+            );
             let (op_list, kinds, failures, filter, target, remote_records) = (
                 op_list.clone(),
                 kinds.clone(),
@@ -430,7 +477,9 @@ impl Activity {
                 if unchanged(&last, key) {
                     return;
                 }
+                op_rebuilding.set(true);
                 op_list.remove_all();
+                let wanted = op_selected.borrow().clone();
                 // すべての記録から絞り込み、合うものを新しい順に 1,000 件まで（macOS 版と同じ）。
                 let shown = records.iter().filter(|r| {
                     let label_text = r["label"].as_str().unwrap_or_default();
@@ -479,6 +528,15 @@ impl Activity {
                         tip.push_str(&format!("\n\n{e}"));
                     }
                     line.set_tooltip_text(Some(&tip));
+                    let key = format!(
+                        "{}:{}",
+                        r["remote"].as_bool() == Some(true),
+                        r["seq"].as_u64().unwrap_or(0)
+                    );
+                    line.set_widget_name(&key);
+                    // SAFETY: 鍵 "detail" には、いつも String を入れて String で読む。
+                    unsafe { line.set_data("detail", tip.clone()) };
+                    let reselect = wanted.as_deref() == Some(key.as_str());
                     // 走っていて取り消せる操作には「取り消す」。
                     if ok.is_none() && r["cancellable"].as_bool() == Some(true) {
                         let cancel = gtk::Button::with_label(&tr!("Cancel Operation"));
@@ -502,6 +560,19 @@ impl Activity {
                         line.append(&cancel);
                     }
                     op_list.append(&line);
+                    if reselect
+                        && let Some(row) = op_list.last_child().and_downcast::<gtk::ListBoxRow>()
+                    {
+                        op_list.select_row(Some(&row));
+                        op_detail.set_text(&tip);
+                    }
+                }
+                op_rebuilding.set(false);
+                // 選んでいた記録が絞り込みで消えたら、詳細も消す。
+                if op_list.selected_row().is_none() && op_selected.borrow().is_some() {
+                    op_selected.replace(None);
+                    op_detail.set_text("");
+                    op_detail_scrolled.set_visible(false);
                 }
             }
         };
