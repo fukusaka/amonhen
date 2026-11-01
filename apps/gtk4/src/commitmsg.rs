@@ -413,8 +413,8 @@ impl MessageAids {
         items
     }
 
-    /// + のメニュー: Conventional Commits の型と Co-authored-by は下のメニューに、Signed-off-by はそのまま
-    /// （macOS 版と同じ）。
+    /// 「+」のメニュー（macOS 版と同じ）: Conventional Commits の型と Co-authored-by は下のメニューに、
+    /// Signed-off-by はそのまま。
     fn insert_menu(self: &Rc<Self>) -> Vec<Item> {
         let mut types = Vec::new();
         for t in TYPES {
