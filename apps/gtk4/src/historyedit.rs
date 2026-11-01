@@ -123,6 +123,17 @@ pub enum Preset {
     Move(String, usize),
 }
 
+/// 行に落とす所の印を付ける（`Some(true)` なら下、`Some(false)` なら上、None なら消す）。
+fn set_drop_mark(row: &gtk::Widget, below: Option<bool>) {
+    row.remove_css_class("drop-above");
+    row.remove_css_class("drop-below");
+    match below {
+        Some(true) => row.add_css_class("drop-below"),
+        Some(false) => row.add_css_class("drop-above"),
+        None => {}
+    }
+}
+
 /// 行で選べること。いちばん古い行と merge のすぐ上の行は、まとめる相手がない。merge の行は作り直すだけ。
 fn choices(rows: &[Row], i: usize) -> Vec<Action> {
     if rows[i].merge {
@@ -604,10 +615,33 @@ impl Mode {
                 }
                 Some(gdk::ContentProvider::for_value(&item.position().to_value()))
             });
+            // 運んでいる間は、行の絵を札にする（macOS 版の一覧と同じ）。
+            let r = row.downgrade();
+            source.connect_drag_begin(move |source, _| {
+                if let Some(row) = r.upgrade() {
+                    source.set_icon(Some(&gtk::WidgetPaintable::new(Some(&row))), 0, 0);
+                }
+            });
             row.add_controller(source);
             let target = gtk::DropTarget::new(u32::static_type(), gdk::DragAction::MOVE);
+            // 落とす所の印: 行の上半分なら上に、下半分なら下に線を引く（macOS 版の `.gap` の代わり）。
+            target.connect_motion(|target, _, y| {
+                if let Some(w) = target.widget() {
+                    let below = y >= f64::from(w.height()) / 2.0;
+                    set_drop_mark(&w, Some(below));
+                }
+                gdk::DragAction::MOVE
+            });
+            target.connect_leave(|target| {
+                if let Some(w) = target.widget() {
+                    set_drop_mark(&w, None);
+                }
+            });
             let (w, it) = (Rc::downgrade(&mode), item.downgrade());
             target.connect_drop(move |target, value, _, y| {
+                if let Some(w) = target.widget() {
+                    set_drop_mark(&w, None);
+                }
                 let (Some(mode), Some(item)) = (w.upgrade(), it.upgrade()) else {
                     return false;
                 };

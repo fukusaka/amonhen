@@ -243,7 +243,9 @@ pub fn install_css() {
          popover.menu button.choice-row label { color: @theme_fg_color; opacity: 1; } \
          popover.menu button.hint-row { padding: 0 12px; min-height: 30px; font-weight: normal; } \
          popover.menu button.hint-row label { color: @theme_fg_color; opacity: 1; } \
-         entry.monospace text placeholder { font-family: sans-serif; }",
+         entry.monospace text placeholder { font-family: sans-serif; } \
+         .drop-above { box-shadow: inset 0 2px @accent_color; } \
+         .drop-below { box-shadow: inset 0 -2px @accent_color; }",
     );
     if let Some(display) = gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
