@@ -1561,6 +1561,7 @@
 "Show Avatars" = "アバターを表示";
 "Stack the diffs of all files" = "全ファイルの差分を縦に並べる";
 "Show changed files as a tree left of the diff" = "変更ファイルを差分の左に木で表示する";
+"Show merge commits" = "マージのコミットも出す";
 "Fetched from Gravatar (sends a hash of the email address to gravatar.com)." = "Gravatar から取る（メールアドレスのハッシュを gravatar.com に送る）。";
 "Committer" = "コミッター";
 

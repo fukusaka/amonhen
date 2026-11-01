@@ -615,6 +615,10 @@ pub fn show(parent: &gtk::ApplicationWindow) {
                     .upcast(),
                 ],
             ),
+            section(
+                Some("File History"),
+                &[check(FILE_HISTORY_MERGES, &tr!("Show merge commits")).upcast()],
+            ),
         ]),
         Some("appearance"),
         &tr!("Appearance"),
