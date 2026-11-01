@@ -112,6 +112,8 @@ impl Buttons {
         }));
         // 上流があって、そのリモートブランチもある（Push で送れる）。なければ Push は Publish（送り先を選ぶ）。
         let published = entry.is_none_or(|e| e.detail.is_some() && !e.gone);
+        // メニューの Push・Commit and Push は Publish…・Commit and Publish… になる（macOS 版と同じ）。
+        self.actions.set_publishes(!published);
         // 送るものがなければ押せない。理由はツールチップに（macOS 版と同じ）。
         self.push.set_tooltip_text(Some(&if !published {
             tr!("Publish — choose the remote to create this branch on first (Ctrl+Alt+P)")
@@ -506,6 +508,10 @@ pub fn install(parts: Parts) -> Buttons {
     set_icon(&primary, "open-menu-symbolic", "≡");
     // 右端から: 主メニュー、ツールバーの右の並び（既定は Activity・Refresh・Undo）。
     parts.header.pack_end(&primary);
+    // 開くときに、状態で変わる項目の名前（Publish…・Undo <操作>…）を合わせる。
+    for button in [&repository, &primary] {
+        retitle_on_show(button, &parts.actions);
+    }
     parts.header.pack_end(&toolbar_end);
     Buttons {
         repository,
@@ -519,6 +525,19 @@ pub fn install(parts: Parts) -> Buttons {
         push_count,
         actions: parts.actions.clone(),
     }
+}
+
+/// `button` のメニューを開くたびに、項目の名前を今の状態に合わせる（[`Actions::retitle`]）。
+pub fn retitle_on_show(button: &gtk::MenuButton, actions: &Rc<Actions>) {
+    let (Some(popover), Some(model)) = (button.popover(), button.menu_model()) else {
+        return;
+    };
+    let actions = Rc::downgrade(actions);
+    popover.connect_show(move |_| {
+        if let Some(actions) = actions.upgrade() {
+            actions.retitle(&model);
+        }
+    });
 }
 
 /// テーマにアイコンがあればアイコン、なければ文字（macOS の GTK などは GNOME のアイコンを持たない）。

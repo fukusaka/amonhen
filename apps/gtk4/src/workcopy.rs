@@ -82,6 +82,8 @@ pub struct WorkingCopy {
 struct Inner {
     repo: RefCell<Option<Arc<Repository>>>,
     actions: RefCell<Option<Rc<Actions>>>,
+    /// Commit の横の ▾（Commit and Push・Amend Last Commit）。
+    commit_menu: gtk::MenuButton,
     status: RefCell<Option<Arc<StatusSnapshot>>>,
     /// 一覧に出しているファイル（絞り込み済み）。
     entries: RefCell<Vec<StatusEntry>>,
@@ -355,6 +357,7 @@ impl WorkingCopy {
         let inner = Rc::new(Inner {
             repo: RefCell::default(),
             actions: RefCell::default(),
+            commit_menu: commit_menu.clone(),
             status: RefCell::default(),
             entries: RefCell::default(),
             row_entries: RefCell::default(),
@@ -470,6 +473,7 @@ impl WorkingCopy {
 
     /// 確かめる窓や、知らせに使う。
     pub fn set_actions(&self, actions: Rc<Actions>) {
+        crate::appmenu::retitle_on_show(&self.inner.commit_menu, &actions);
         self.inner.actions.replace(Some(actions));
         self.inner.update_buttons();
     }

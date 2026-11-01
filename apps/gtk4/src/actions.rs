@@ -43,6 +43,10 @@ pub struct Actions {
     worktree_branches: RefCell<std::collections::HashMap<String, (String, String)>>,
     /// そのうち、メインの worktree が checkout しているブランチ（印のアイコンを家にする）。
     main_worktree_branch: RefCell<Option<String>>,
+    /// 次に取り消せる操作の名前（メニューの「Undo <名前>…」）。
+    undo_label: Rc<RefCell<Option<String>>>,
+    /// 今のブランチを送るのが Publish か（まだリモートにない。メニューの「Publish…」）。
+    publishes: std::cell::Cell<bool>,
 }
 
 impl Actions {
@@ -69,6 +73,8 @@ impl Actions {
             facts: Rc::default(),
             worktree_branches: RefCell::default(),
             main_worktree_branch: RefCell::default(),
+            undo_label: Rc::default(),
+            publishes: std::cell::Cell::default(),
         });
         // git の Undo は確かめてから（Ctrl+Z は入力欄の取り消しに残す。docs/ux.md の「Menus」）。
         let weak = Rc::downgrade(&actions);
@@ -339,6 +345,33 @@ impl Actions {
         });
     }
 
+    /// 今のブランチを送るのが Publish か（ref を読んだときに決める）。
+    pub fn set_publishes(&self, publishes: bool) {
+        self.publishes.set(publishes);
+    }
+
+    /// 状態で変わるメニューの項目の名前（macOS 版の `validateMenuItem` と同じ）。`action` は `win.push` など。
+    /// 変わらない項目は None。
+    pub fn menu_title(&self, action: &str) -> Option<String> {
+        let publishes = self.publishes.get();
+        Some(match action {
+            "win.push" if publishes => "Publish…".to_owned(),
+            "win.push" => "Push…".to_owned(),
+            "win.commit-and-push" if publishes => "Commit and Publish…".to_owned(),
+            "win.commit-and-push" => "Commit and Push".to_owned(),
+            "win.undo" => match self.undo_label.borrow().as_deref() {
+                Some(label) => format!("Undo {label}…"),
+                None => "Undo…".to_owned(),
+            },
+            _ => return None,
+        })
+    }
+
+    /// `menu` の項目の名前を、今の状態に合わせる（開くときに呼ぶ）。
+    pub fn retitle(&self, menu: &gio::MenuModel) {
+        crate::menu::retitle(menu, &|action| self.menu_title(action));
+    }
+
     /// 次に取り消せる操作の名前を読み、「取り消す」に出す。
     pub fn refresh_undo(&self) {
         let Some(repo) = self.repo.borrow().clone() else {
@@ -346,6 +379,7 @@ impl Actions {
         };
         let button = self.undo.downgrade();
         let (group, facts) = (self.group.clone(), self.facts.clone());
+        let undo_label = self.undo_label.clone();
         glib::spawn_future_local(async move {
             let reply = gio::spawn_blocking(move || {
                 serde_json::from_str::<Value>(&repo.run_json(r#"{"op":"undoPeek"}"#))
@@ -357,6 +391,7 @@ impl Actions {
                 return;
             };
             let label = reply["label"].as_str();
+            undo_label.replace(label.map(str::to_owned));
             facts.borrow_mut().undo = label.is_some();
             apply_facts(&group, &facts.borrow());
             let tip = match label {

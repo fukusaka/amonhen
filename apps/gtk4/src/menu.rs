@@ -189,6 +189,34 @@ pub fn install_css() {
     }
 }
 
+/// `menu`（区切りと下のメニューの中も）の項目の名前を `title(アクションの名前)` に替える（None なら替えない）。
+pub fn retitle(menu: &gio::MenuModel, title: &dyn Fn(&str) -> Option<String>) {
+    for i in 0..menu.n_items() {
+        for link in [gio::MENU_LINK_SECTION, gio::MENU_LINK_SUBMENU] {
+            if let Some(child) = menu.item_link(i, link) {
+                retitle(&child, title);
+            }
+        }
+        let Some(menu) = menu.downcast_ref::<gio::Menu>() else {
+            continue;
+        };
+        let action = menu
+            .item_attribute_value(i, gio::MENU_ATTRIBUTE_ACTION, Some(glib::VariantTy::STRING))
+            .and_then(|v| v.get::<String>());
+        let label = menu
+            .item_attribute_value(i, gio::MENU_ATTRIBUTE_LABEL, Some(glib::VariantTy::STRING))
+            .and_then(|v| v.get::<String>());
+        if let Some(new) = action.as_deref().and_then(title)
+            && label.as_deref() != Some(new.as_str())
+        {
+            let item = gio::MenuItem::from_model(menu, i);
+            item.set_label(Some(&new));
+            menu.remove(i);
+            menu.insert_item(i, &item);
+        }
+    }
+}
+
 /// `parent` の `(x, y)` に `items` のメニューを出す。
 pub fn popup(parent: &impl IsA<gtk::Widget>, x: f64, y: f64, items: Vec<Item>) {
     if items.is_empty() {
