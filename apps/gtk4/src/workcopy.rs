@@ -723,7 +723,7 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.amend.connect_toggled(move |amend| {
             let Some(this) = weak.upgrade() else { return };
-            if amend.is_active() && this.subject.text().is_empty() {
+            if amend.is_active() && this.message_is_empty() {
                 Inner::fill_head_message(&this);
             }
             this.update_buttons();
@@ -1886,7 +1886,13 @@ impl Inner {
         });
     }
 
+    /// Summary も Description も空か（書きかけのメッセージを直前のコミットのもので上書きしない）。
+    fn message_is_empty(&self) -> bool {
+        self.subject.text().is_empty() && self.body.buffer().char_count() == 0
+    }
+
     /// 直前のコミットを直すとき、そのメッセージを入れておく（1 行目を Summary、空行の後を本文に）。
+    /// Summary と Description のどちらかに書いてあれば入れない（macOS 版と同じ）。
     fn fill_head_message(this: &Rc<Self>) {
         let Some(repo) = this.repo() else { return };
         let weak = Rc::downgrade(this);
@@ -1898,7 +1904,7 @@ impl Inner {
             .await
             .unwrap_or_default();
             let Some(this) = weak.upgrade() else { return };
-            if !this.subject.text().is_empty() || !this.amend.is_active() {
+            if !this.message_is_empty() || !this.amend.is_active() {
                 return;
             }
             let message = reply["text"].as_str().unwrap_or_default().trim();
