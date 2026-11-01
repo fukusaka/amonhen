@@ -658,6 +658,16 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     window.present();
 }
 
+/// `widget` のある窓の、もとの窓（Settings を出す先）。リポジトリの窓の中のページならその窓、別の窓（Settings
+/// など）ならその親。
+pub fn main_window_of(widget: &impl IsA<gtk::Widget>) -> Option<gtk::ApplicationWindow> {
+    let root = widget.root().and_downcast::<gtk::Window>()?;
+    root.clone()
+        .downcast::<gtk::ApplicationWindow>()
+        .ok()
+        .or_else(|| root.transient_for().and_downcast())
+}
+
 /// 開いている設定の窓のタブ（`git` など）を選ぶ（確認用）。`git/programs` なら Git のタブのそのページ、
 /// `ssh-hosts/<SSH 先>/<ページ>` なら SSH Hosts のタブでその SSH 先（なければ加える）のページ。
 pub fn select(tab: &str) {

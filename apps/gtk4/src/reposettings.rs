@@ -645,12 +645,7 @@ impl RepoSettings {
             }));
             git.connect_clicked(|b| {
                 // その機械（この機械）の git を選ぶのは Settings > Git。
-                if let Some(parent) = b
-                    .root()
-                    .and_downcast::<gtk::Window>()
-                    .and_then(|w| w.transient_for())
-                    .and_downcast::<gtk::ApplicationWindow>()
-                {
+                if let Some(parent) = crate::settings::main_window_of(b) {
                     crate::settings::show(&parent);
                     crate::settings::select("git");
                 }
