@@ -888,6 +888,10 @@ impl Inner {
             .filter(|e| filter.is_empty() || e.path.to_lowercase().contains(&filter))
             .cloned()
             .collect();
+        // 一覧にフォーカスがあれば、作り直した後も選んだ行に戻す（Space・Enter で続けて含める・外せるように）。
+        let focused = this.list.root().and_then(|r| r.focus()).is_some_and(|f| {
+            &f == this.list.upcast_ref::<gtk::Widget>() || f.is_ancestor(&this.list)
+        });
         this.rebuilding.set(true);
         this.count_boxes.borrow_mut().clear();
         this.list.remove_all();
@@ -966,6 +970,9 @@ impl Inner {
             .unwrap_or(index);
         if let Some(row) = row_index.and_then(|r| this.list.row_at_index(r as i32)) {
             this.list.select_row(Some(&row));
+            if focused {
+                row.grab_focus();
+            }
             this.rebuilding.set(false);
             // 選び直しでは `row-selected` を扱わないので、差分は自分で読み直す。
             let entry = this.entries.borrow()[index].clone();
