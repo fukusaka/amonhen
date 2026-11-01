@@ -346,6 +346,15 @@ pub async fn run(
     }
     let started = std::time::Instant::now();
     busy(1);
+    // ツールバーの Activity の印も回す（macOS 版と同じく、走っている操作に数える。途中で捨てられても戻す）。
+    crate::activity::begin();
+    struct Running;
+    impl Drop for Running {
+        fn drop(&mut self) {
+            crate::activity::end();
+        }
+    }
+    let running = Running;
     let (tx, rx) = async_channel::unbounded::<String>();
     let task = gio::spawn_blocking(move || {
         amonhen_assist::stream(cli, &executable, &model, &prompt, &cancel, |text| {
@@ -362,6 +371,7 @@ pub async fn run(
     }
     let result = task.await.unwrap_or_else(|_| Err(tr!("Failed")));
     busy(-1);
+    drop(running);
     let result = result?;
     crate::activity::record(
         &format!("AI: {}", purpose.title()),
