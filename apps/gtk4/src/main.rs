@@ -2866,6 +2866,12 @@ fn load(
         }
         if changes.contains(Changes::REFS) {
             reload(&repo);
+        } else if changes.contains(Changes::CONFIG)
+            && let Ok(refs) = repo.load_refs()
+        {
+            // 設定が変わった（外での `git remote add`・上流の付け替えなど）: ref を読み直す（リモートと上流、
+            // GitHub も。macOS 版と同じ）。
+            let _ = tx.send_blocking(Event::Refs(refs));
         }
         if changes.contains(Changes::REFS)
             || changes.contains(Changes::INDEX)
