@@ -949,11 +949,31 @@ impl Browser {
             glib::Propagation::Stop
         });
         self.filter.add_controller(keys);
-        // ダブルクリック・Enter で開く。
+        // ダブルクリック・Enter で開く。Ctrl を押しながらなら新しい窓に（macOS 版の ⌘ と同じ）。開くときの
+        // 知らせには押していたキーがないので、押したときに覚えておく。
+        let ctrl = Rc::new(Cell::new(false));
+        let click = gtk::GestureClick::new();
+        click.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let c = ctrl.clone();
+        click.connect_pressed(move |g, _, _, _| {
+            c.set(
+                g.current_event_state()
+                    .contains(gtk::gdk::ModifierType::CONTROL_MASK),
+            );
+        });
+        self.view.add_controller(click);
+        let keys = gtk::EventControllerKey::new();
+        keys.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let c = ctrl.clone();
+        keys.connect_key_pressed(move |_, _, _, modifiers| {
+            c.set(modifiers.contains(gtk::gdk::ModifierType::CONTROL_MASK));
+            glib::Propagation::Proceed
+        });
+        self.view.add_controller(keys);
         let weak = Rc::downgrade(self);
         self.view.connect_activate(move |_, row| {
             if let Some(b) = weak.upgrade() {
-                b.open_row(row, true);
+                b.open_row(row, !ctrl.get());
             }
         });
     }
