@@ -1133,9 +1133,21 @@ impl Inner {
             .as_ref()
             .is_some_and(|s| Arc::ptr_eq(s, &status))
         {
-            // status は同じでも、作業ツリーのファイルが変わった知らせ（ほかのエディタでマーカーを消した）なので、
-            // コンフリクトの中身は読み直す。
+            // status は同じでも、作業ツリーのファイルが変わった知らせ（ほかのエディタでマーカーを消した、
+            // 変更のあるファイルをさらに書き換えた）なので、コンフリクトの中身・行数・出している差分は読み直す
+            // （macOS 版は読み直すたびに一覧を作り直し、差分を位置を保って読み直す）。
             Inner::load_conflict_states(this);
+            Inner::load_stats(this);
+            let shown = this.selected.borrow().as_ref().and_then(|p| {
+                this.entries
+                    .borrow()
+                    .iter()
+                    .find(|e| &e.path == p && e.kind != StatusKind::Unmerged)
+                    .cloned()
+            });
+            if let Some(entry) = shown {
+                Inner::load_diff(this, entry, true);
+            }
             return;
         }
         // コンフリクトを先に、あとはパスの順。
