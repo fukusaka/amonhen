@@ -1399,6 +1399,15 @@ impl Browser {
         let mut items = Vec::new();
         let (b, p) = (self.clone(), path.clone());
         items.push(menu::action(tr!("Open"), move || b.open_location(&p, true)));
+        // ページを残して、隣の新しいタブに開く（macOS 版と同じ）。
+        let (b, p) = (self.clone(), path.clone());
+        items.push(menu::action(tr!("Open in New Tab"), move || {
+            if bookmarks::is_repository(&p) {
+                (b.beside)(PathBuf::from(&p), crate::tabs::Place::Tab);
+            } else {
+                b.open_location(&p, true);
+            }
+        }));
         let (b, p) = (self.clone(), path.clone());
         items.push(menu::action(tr!("Open in New Window"), move || {
             b.open_location(&p, false)
