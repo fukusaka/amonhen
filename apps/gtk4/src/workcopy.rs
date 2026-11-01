@@ -89,6 +89,8 @@ struct Inner {
     entries: RefCell<Vec<StatusEntry>>,
     /// 一覧の行ごとの、`entries` の番号（ディレクトリの行は None）。
     row_entries: RefCell<Vec<Option<usize>>>,
+    /// 一覧の行ごとの、木の深さと、ディレクトリの行ならそのパス（← で親に移る・畳むのに使う）。
+    row_tree: RefCell<Vec<(usize, Option<String>)>>,
     /// 作った行（ファイルはパス、ディレクトリは `\0` + パスごと）と、作ったときの中身。中身が変わらなければ
     /// 作り直さずに使う（変更が何千もあっても、status が届くたびや絞り込みのたびに作り直さない）。
     row_cache: RefCell<HashMap<String, (RowKey, gtk::ListBoxRow)>>,
@@ -423,6 +425,7 @@ impl WorkingCopy {
             status: RefCell::default(),
             entries: RefCell::default(),
             row_entries: RefCell::default(),
+            row_tree: RefCell::default(),
             row_cache: RefCell::default(),
             shown_rows: RefCell::default(),
             layout: Cell::new(Layout::List),
@@ -1161,11 +1164,24 @@ impl Inner {
         let focused = this.list.root().and_then(|r| r.focus()).is_some_and(|f| {
             &f == this.list.upcast_ref::<gtk::Widget>() || f.is_ancestor(&this.list)
         });
+        // ディレクトリの行を選んでいたら、作り直した後もその行に戻す（畳む・開く、Space で含める）。
+        let kept_dir = this
+            .list
+            .focus_child()
+            .and_downcast::<gtk::ListBoxRow>()
+            .filter(|r| r.is_selected())
+            .and_then(|r| {
+                this.row_tree
+                    .borrow()
+                    .get(r.index() as usize)
+                    .and_then(|(_, d)| d.clone())
+            });
         this.rebuilding.set(true);
         // 前に作った行のうち、中身が同じものはそのまま使う。
         let mut cache = this.row_cache.take();
         let mut rows = Vec::new();
         let mut row_entries = Vec::new();
+        let mut row_tree = Vec::new();
         let mut used = std::collections::HashSet::new();
         match this.layout.get() {
             Layout::Tree => {
@@ -1202,6 +1218,7 @@ impl Inner {
                             used.insert(id);
                             rows.push(row);
                             row_entries.push(None);
+                            row_tree.push((depth, Some(path)));
                         }
                         TreeItem::File { index, depth } => {
                             rows.push(Inner::cached_row(
@@ -1212,6 +1229,7 @@ impl Inner {
                                 depth,
                             ));
                             row_entries.push(Some(index));
+                            row_tree.push((depth, None));
                         }
                     }
                 }
@@ -1220,6 +1238,7 @@ impl Inner {
                 for (i, entry) in entries.iter().enumerate() {
                     rows.push(Inner::cached_row(this, &mut cache, entry, layout, 0));
                     row_entries.push(Some(i));
+                    row_tree.push((0, None));
                 }
             }
         }
@@ -1255,6 +1274,7 @@ impl Inner {
         sync_rows(&this.list, &this.shown_rows.borrow(), &rows);
         this.shown_rows.replace(rows);
         this.row_entries.replace(row_entries);
+        this.row_tree.replace(row_tree);
         // 空のときの文（macOS 版と同じ）。
         this.empty
             .set_text(&if this.all_entries.borrow().is_empty() {
@@ -1322,6 +1342,24 @@ impl Inner {
             } else {
                 this.diff.clear();
             }
+        }
+        // 選んでいたディレクトリの行があれば、そこを選び直す（差分は選んでいたファイルのまま）。
+        let dir_row = kept_dir
+            .and_then(|dir| {
+                this.row_tree
+                    .borrow()
+                    .iter()
+                    .position(|(_, d)| d.as_deref() == Some(dir.as_str()))
+            })
+            .and_then(|r| this.list.row_at_index(r as i32));
+        if let Some(row) = dir_row {
+            this.rebuilding.set(true);
+            this.list.unselect_all();
+            this.list.select_row(Some(&row));
+            if focused {
+                row.grab_focus();
+            }
+            this.rebuilding.set(false);
         }
         this.update_buttons();
     }
@@ -1543,32 +1581,75 @@ impl Inner {
         line.append(&check);
         line.append(&icon);
         line.append(&label);
+        // 行は選べる（Space で中のファイルを含める・外す、←・→ で畳む・開く）。畳む・開くのは ▸・▾ のクリック
+        // （macOS 版の NSOutlineView の三角と同じ）。
         let row = gtk::ListBoxRow::new();
         row.set_child(Some(&line));
-        row.set_selectable(false);
         let click = gtk::GestureClick::new();
         let (weak, path) = (Rc::downgrade(this), path.to_owned());
-        let (r, c) = (row.downgrade(), check.downgrade());
-        click.connect_released(move |_, _, x, y| {
-            let Some(this) = weak.upgrade() else { return };
-            // チェックの上なら、畳まない。
-            if let (Some(row), Some(check)) = (r.upgrade(), c.upgrade())
-                && row
-                    .pick(x, y, gtk::PickFlags::DEFAULT)
-                    .is_some_and(|w| w == check || w.is_ancestor(&check))
-            {
-                return;
+        click.connect_released(move |gesture, _, _, _| {
+            gesture.set_state(gtk::EventSequenceState::Claimed);
+            if let Some(this) = weak.upgrade() {
+                Inner::set_collapsed(&this, &path, !collapsed);
             }
-            {
-                let mut collapsed = this.collapsed.borrow_mut();
-                if !collapsed.remove(&path) {
-                    collapsed.insert(path.clone());
-                }
-            }
-            Inner::rebuild_list(&this);
         });
-        row.add_controller(click);
+        arrow.add_controller(click);
         row
+    }
+
+    /// 木のディレクトリ `path` を畳む・開く。
+    fn set_collapsed(this: &Rc<Self>, path: &str, collapsed: bool) {
+        let changed = if collapsed {
+            this.collapsed.borrow_mut().insert(path.to_owned())
+        } else {
+            this.collapsed.borrow_mut().remove(path)
+        };
+        if changed {
+            Inner::rebuild_list(this);
+        }
+    }
+
+    /// 木の ←・→（macOS 版の NSOutlineView と同じ）: ← は開いたディレクトリを畳み、そうでなければ親の
+    /// ディレクトリの行に移る。→ は畳んだディレクトリを開く。扱ったら true。
+    fn tree_key(this: &Rc<Self>, key: gtk::gdk::Key) -> bool {
+        use gtk::gdk::Key;
+        if this.layout.get() != Layout::Tree {
+            return false;
+        }
+        let Some(row) = this.list.focus_child().and_downcast::<gtk::ListBoxRow>() else {
+            return false;
+        };
+        let at = row.index() as usize;
+        let Some((depth, dir)) = this.row_tree.borrow().get(at).cloned() else {
+            return false;
+        };
+        let folded = dir
+            .as_ref()
+            .is_some_and(|d| this.collapsed.borrow().contains(d));
+        match key {
+            Key::Left | Key::KP_Left => match dir {
+                Some(dir) if !folded => Inner::set_collapsed(this, &dir, true),
+                _ => {
+                    let parent = this.row_tree.borrow()[..at]
+                        .iter()
+                        .rposition(|(d, p)| p.is_some() && *d < depth);
+                    match parent.and_then(|p| this.list.row_at_index(p as i32)) {
+                        Some(parent) => {
+                            this.list.unselect_all();
+                            this.list.select_row(Some(&parent));
+                            parent.grab_focus();
+                        }
+                        None => this.list.error_bell(),
+                    }
+                }
+            },
+            Key::Right | Key::KP_Right => match dir {
+                Some(dir) if folded => Inner::set_collapsed(this, &dir, false),
+                _ => return false,
+            },
+            _ => return false,
+        }
+        true
     }
 
     /// 一覧の 1 行: チェック（次のコミットに含めるか）、状態の文字、パス、行数、変更を捨てるボタン。
@@ -1744,11 +1825,21 @@ impl Inner {
     /// 一覧のキー: Space・Enter で選んだファイルを含める・外す、⌫・Delete で捨てる（確かめて）。扱ったら true。
     fn list_key(this: &Rc<Self>, key: gtk::gdk::Key) -> bool {
         use gtk::gdk::Key;
+        if Inner::tree_key(this, key) {
+            return true;
+        }
+        if matches!(key, Key::space | Key::Return | Key::KP_Enter) {
+            // ディレクトリの行だけを選んでいても、その中のファイルを含める・外す。
+            if this.list.selected_rows().is_empty() {
+                return false;
+            }
+            Inner::toggle_selected(this);
+            return true;
+        }
         let Some(entry) = this.selected_entry() else {
             return false;
         };
         match key {
-            Key::space | Key::Return | Key::KP_Enter => Inner::toggle_selected(this),
             Key::BackSpace | Key::Delete | Key::KP_Delete => {
                 if entry.kind != StatusKind::Unmerged && entry.is_unstaged() {
                     Inner::discard_file(this, &entry);
@@ -1766,11 +1857,26 @@ impl Inner {
     fn toggle_selected(this: &Rc<Self>) {
         let targets: Vec<StatusEntry> = {
             let rows = this.row_entries.borrow();
+            let tree = this.row_tree.borrow();
             let entries = this.entries.borrow();
-            this.list
-                .selected_rows()
-                .iter()
-                .filter_map(|row| rows.get(row.index() as usize).copied().flatten())
+            let mut indices = Vec::new();
+            for row in this.list.selected_rows() {
+                let at = row.index() as usize;
+                if let Some(i) = rows.get(at).copied().flatten() {
+                    indices.push(i);
+                } else if let Some((_, Some(dir))) = tree.get(at) {
+                    // ディレクトリの行: 中のファイル（畳んで見えていないものも。macOS 版と同じ）。
+                    indices.extend(entries.iter().enumerate().filter_map(|(i, e)| {
+                        (e.path.starts_with(dir.as_str()) && e.path[dir.len()..].starts_with('/'))
+                            .then_some(i)
+                    }));
+                }
+            }
+            // ディレクトリとその中のファイルを一緒に選んでいても、1 回ずつにする。
+            indices.sort_unstable();
+            indices.dedup();
+            indices
+                .into_iter()
                 .filter_map(|i| entries.get(i).cloned())
                 .filter(|e| e.kind != StatusKind::Unmerged)
                 .collect()
