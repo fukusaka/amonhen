@@ -189,6 +189,7 @@ impl WorkingCopy {
         let body_scrolled = gtk::ScrolledWindow::builder()
             .child(&body)
             .min_content_height(80)
+            .vexpand(true)
             .hscrollbar_policy(gtk::PolicyType::Never)
             .has_frame(true)
             .build();
@@ -306,17 +307,30 @@ impl WorkingCopy {
             .hscrollbar_policy(gtk::PolicyType::Never)
             .build();
 
-        let left = gtk::Box::new(gtk::Orientation::Vertical, 8);
-        left.set_margin_top(10);
+        // 左の列は上下 2 段: 上にコミットの入力、下にファイルの一覧。間の仕切りをドラッグするとメッセージの欄の
+        // 高さが変わり、位置は覚えておく。窓の高さが変わったときは、ファイルの一覧の側が伸び縮みする（macOS 版と同じ）。
+        let message_part = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        message_part.set_margin_top(10);
+        message_part.set_margin_bottom(6);
+        message_part.append(&subject);
+        message_part.append(&body_box);
+        message_part.append(&commit_row);
+        message_part.append(&message);
+        let files_part = gtk::Box::new(gtk::Orientation::Vertical, 8);
+        files_part.set_margin_top(6);
+        list_scrolled.set_min_content_height(100);
+        files_part.append(&list_header);
+        files_part.append(&filter);
+        files_part.append(&list_scrolled);
+        let left = gtk::Paned::new(gtk::Orientation::Vertical);
         left.set_margin_start(10);
         left.set_margin_end(10);
-        left.append(&subject);
-        left.append(&body_box);
-        left.append(&commit_row);
-        left.append(&message);
-        left.append(&list_header);
-        left.append(&filter);
-        left.append(&list_scrolled);
+        left.set_start_child(Some(&message_part));
+        left.set_end_child(Some(&files_part));
+        left.set_resize_start_child(false);
+        left.set_shrink_start_child(false);
+        left.set_shrink_end_child(false);
+        remember_message_height(&left);
 
         // 右: 操作のボタンと差分。
         let path = gtk::Label::new(None);
@@ -2280,6 +2294,34 @@ impl Inner {
             working.is_some_and(|w| !w.staged && w.entry.is_unstaged()) && selected_staged == 0,
         );
     }
+}
+
+/// コミットの入力とファイルの一覧の間の仕切りの位置（上の段の高さ）を覚える設定の鍵。
+const MESSAGE_HEIGHT: &str = "workingCopyMessageHeight";
+
+/// 仕切りを覚えた位置に置き、動かしたら覚える（ドラッグの間は書かず、止まってから）。
+fn remember_message_height(paned: &gtk::Paned) {
+    if let Some(height) = crate::settings::string(MESSAGE_HEIGHT).and_then(|s| s.parse().ok()) {
+        paned.set_position(height);
+    }
+    let pending: Rc<RefCell<Option<glib::SourceId>>> = Rc::default();
+    paned.connect_position_notify(move |paned| {
+        // 自分で置いたとき・まだ大きさが決まっていないときは覚えない。
+        if !paned.is_mapped() {
+            return;
+        }
+        if let Some(id) = pending.borrow_mut().take() {
+            id.remove();
+        }
+        let (weak, slot) = (paned.downgrade(), pending.clone());
+        let id = glib::timeout_add_local_once(std::time::Duration::from_millis(400), move || {
+            slot.borrow_mut().take();
+            if let Some(paned) = weak.upgrade() {
+                crate::settings::set_string(MESSAGE_HEIGHT, &paned.position().to_string());
+            }
+        });
+        pending.borrow_mut().replace(id);
+    });
 }
 
 /// hooks の出力（git が標準エラーに書いたもの）を等幅の字体で読めるシート（macOS 版の `HookOutputSheet`）。
