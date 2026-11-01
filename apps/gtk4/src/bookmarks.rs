@@ -180,6 +180,8 @@ struct State {
     scan_errors: HashMap<String, String>,
     /// 行の状態（読めなかったものは None）。
     peeks: HashMap<String, Option<Peek>>,
+    /// 読めなかった時刻（描くたび・並べ替えで比べるたびに読み直し続けないよう、少し間を置いてから読み直す）。
+    failed: HashMap<String, std::time::Instant>,
     queued: HashSet<String>,
     queue: VecDeque<Job>,
     running: usize,
@@ -700,6 +702,12 @@ pub fn peek(location: &str) -> Option<Peek> {
     }
     let queued = STATE.with(|s| {
         let mut s = s.borrow_mut();
+        if s.failed
+            .get(location)
+            .is_some_and(|t| t.elapsed() < PEEK_RETRY)
+        {
+            return false;
+        }
         let new = s.queued.insert(location.to_owned());
         if new {
             s.queue.push_back(Job::Peek(location.to_owned()));
@@ -712,9 +720,16 @@ pub fn peek(location: &str) -> Option<Peek> {
     None
 }
 
+/// 読めなかった行を読み直すまでの間。
+const PEEK_RETRY: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// 一覧を開き直したら、状態を読み直す。
 pub fn forget_peeks() {
-    STATE.with(|s| s.borrow_mut().peeks.clear());
+    STATE.with(|s| {
+        let mut s = s.borrow_mut();
+        s.peeks.clear();
+        s.failed.clear();
+    });
 }
 
 /// 裏で読んでいる・待っているものがない（`--snapshot` で撮る前に待つ）。
@@ -777,14 +792,18 @@ fn pump() {
                             .await
                             .ok()
                             .flatten();
-                    // 読めなかったものは覚えず、次に描くときに読み直す（macOS 版と同じ）。知らせると、すぐ描き直して
-                    // 読み直し続けるので、知らせない（行は読む前と同じに見える）。
+                    // 読めなかったものは覚えず、次に描くときに読み直す（macOS 版と同じ）。ただし描くたび・比べるたびに
+                    // 読み直し続けないよう、少し間を置く（[`PEEK_RETRY`]）。知らせると、すぐ描き直して読み直し続ける
+                    // ので、知らせない（行は読む前と同じに見える）。
                     let read = peek.is_some();
                     STATE.with(|s| {
                         let mut s = s.borrow_mut();
                         s.queued.remove(&path);
                         if read {
                             s.peeks.insert(path.clone(), peek);
+                            s.failed.remove(&path);
+                        } else {
+                            s.failed.insert(path.clone(), std::time::Instant::now());
                         }
                         s.running -= 1;
                     });
@@ -814,6 +833,7 @@ fn pump() {
                             s.fetch_errors.insert(path.clone(), e);
                         }
                         s.peeks.remove(&path);
+                        s.failed.remove(&path);
                         s.running -= 1;
                     });
                     notify(Some(&path));
