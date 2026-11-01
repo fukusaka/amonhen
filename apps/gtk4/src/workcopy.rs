@@ -147,7 +147,9 @@ impl WorkingCopy {
     pub fn new(pending: Rc<Cell<u32>>) -> Self {
         // 左の上: コミットの入力。
         let subject = gtk::Entry::builder().placeholder_text("Summary").build();
+        // 本文は等幅（macOS 版と同じ。72 桁の目安の縦線が 72 桁に合うように）。
         let body = gtk::TextView::builder()
+            .monospace(true)
             .wrap_mode(gtk::WrapMode::WordChar)
             .top_margin(6)
             .bottom_margin(6)
