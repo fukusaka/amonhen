@@ -300,7 +300,11 @@ impl RepoWindow {
                     teardown(&tab);
                 }
                 WINDOWS.with(|w| w.borrow_mut().retain(|w| !Rc::ptr_eq(w, &this)));
-                save();
+                // 最後の窓を閉じるのはアプリを終えること（GNOME のふつうの終え方）。開いていた並びは消さずに残す
+                // （macOS 版も終えるときは記録を消さない）。
+                if WINDOWS.with(|w| !w.borrow().is_empty()) {
+                    save();
+                }
             }
             glib::Propagation::Proceed
         });
