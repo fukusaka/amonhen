@@ -41,6 +41,9 @@ struct Inner {
     base: RefCell<Option<(Arc<Repository>, Arc<HistorySnapshot>)>>,
     /// 一致したコミットだけを出す。
     only: gtk::ToggleButton,
+    /// 前・次の一致へ（一致があるときだけ押せる。macOS 版と同じ）。
+    previous: gtk::Button,
+    next: gtk::Button,
 }
 
 impl Search {
@@ -102,7 +105,10 @@ impl Search {
             pending: RefCell::default(),
             base: RefCell::default(),
             only: only.clone(),
+            previous: previous.clone(),
+            next: next.clone(),
         });
+        inner.set_matches(Rc::default());
         let i = inner.clone();
         only.connect_toggled(move |_| Inner::apply_filter(&i));
         let i = inner.clone();
@@ -230,13 +236,21 @@ impl Search {
 }
 
 impl Inner {
+    /// 一致した行を入れ、前・次のボタンを一致があるときだけ押せるようにする。
+    fn set_matches(&self, rows: Rc<Vec<u32>>) {
+        let any = !rows.is_empty();
+        self.matches.replace(rows);
+        self.previous.set_sensitive(any);
+        self.next.set_sensitive(any);
+    }
+
     fn clear(&self) {
         self.generation.set(self.generation.get() + 1);
         // 走っている検索をやめさせる（`contents:` などは、次の検索を始めるまで裏で読み続けてしまう）。
         if let Some((repo, _)) = self.base.borrow().as_ref() {
             repo.cancel_search();
         }
-        self.matches.replace(Rc::default());
+        self.set_matches(Rc::default());
         self.searched.replace(None);
         self.count.set_text("");
         self.view.set_matches(Rc::default());
@@ -341,7 +355,7 @@ impl Inner {
                 Ok(Ok(rows)) => {
                     let rows = Rc::new(rows);
                     this.searched.replace(Some((query, snapshot_generation)));
-                    this.matches.replace(rows.clone());
+                    this.set_matches(rows.clone());
                     this.only.set_sensitive(true);
                     if this.only.is_active() {
                         // 絞った History を出し終えてから `pending` を減らす。
