@@ -1339,6 +1339,17 @@ fn build_tab(
             std::thread::spawn(move || reload_status(&repo, &tx));
         });
     }
+    // 開いている Activity は、前に出たタブのリポジトリに付け替える（Undo の先を取り違えない）。
+    {
+        let (t, v, a) = (Rc::downgrade(&tab), view.downgrade(), actions.clone());
+        tab.connect_front(move || {
+            let Some(window) = t.upgrade().and_then(|t| t.window()) else {
+                return;
+            };
+            let repo = v.upgrade().and_then(|v| v.current()).map(|(r, _)| r);
+            activity::Activity::follow(&window, repo, a.clone());
+        });
+    }
     let tab_weak = Rc::downgrade(&tab);
     std::thread::spawn(move || load(path, order, tx, changed_tx, changed_rx));
     glib::spawn_future_local(glib::clone!(

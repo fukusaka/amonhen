@@ -206,10 +206,21 @@ fn row(cells: &[(&str, i32, &[&str])]) -> gtk::Box {
     line
 }
 
+/// Activity が見ているリポジトリ（元の窓の前のタブのもの。タブを替えたら付け替える）。
+struct Target {
+    /// 開いたリポジトリ（daemon 越しなら、その記録を読む）。
+    repo: Option<Arc<Repository>>,
+    /// History の Undo の先（書き込む先の worktree。Undo の記録もここから読む）。
+    actions: Rc<Actions>,
+}
+
 #[derive(Clone)]
 pub struct Activity {
     window: gtk::Window,
     stack: gtk::Stack,
+    target: Rc<RefCell<Target>>,
+    /// 付け替えたときに読み直す。
+    retargeted: Rc<dyn Fn()>,
 }
 
 impl Activity {
@@ -221,6 +232,7 @@ impl Activity {
         engine: std::path::PathBuf,
     ) {
         if let Some(a) = Self::find(parent) {
+            a.retarget(repo, actions);
             a.window.present();
             return;
         }
@@ -231,6 +243,33 @@ impl Activity {
             o.push((parent.downgrade(), activity.clone()));
         });
         activity.window.present();
+    }
+
+    /// `parent` の Activity が開いていれば、`repo` のもの（前に出たタブ）に付け替える。
+    pub fn follow(
+        parent: &gtk::ApplicationWindow,
+        repo: Option<Arc<Repository>>,
+        actions: Rc<Actions>,
+    ) {
+        if let Some(a) = Self::find(parent) {
+            a.retarget(repo, actions);
+        }
+    }
+
+    fn retarget(&self, repo: Option<Arc<Repository>>, actions: Rc<Actions>) {
+        {
+            let t = self.target.borrow();
+            let same_repo = match (&t.repo, &repo) {
+                (Some(a), Some(b)) => Arc::ptr_eq(a, b),
+                (None, None) => true,
+                _ => false,
+            };
+            if same_repo && Rc::ptr_eq(&t.actions, &actions) {
+                return;
+            }
+        }
+        self.target.replace(Target { repo, actions });
+        (self.retargeted)();
     }
 
     /// 開いている Activity のタブ（`operations` など）を選ぶ。
@@ -270,6 +309,7 @@ impl Activity {
         window.set_transient_for(Some(parent));
         window.set_destroy_with_parent(true);
 
+        let target = Rc::new(RefCell::new(Target { repo, actions }));
         let mut refreshers: Vec<Box<dyn Fn()>> = Vec::new();
         let margin = |w: &gtk::Box| {
             w.set_margin_top(10);
@@ -302,38 +342,52 @@ impl Activity {
             &["dim-label", "caption"],
         ));
         stack.add_titled(&ops, Some("operations"), &tr!("Operations"));
-        let remote = repo
-            .as_ref()
-            .is_some_and(|r| r.connection_state().is_some());
+        // daemon の記録（裏で 2 秒ごとに読む。付け替えたら捨てる）。
+        let remote_records: Rc<RefCell<Vec<Value>>> = Rc::default();
         let refresh_ops = {
-            let (op_list, kinds, failures, filter, repo) = (
+            let (op_list, kinds, failures, filter, target, remote_records) = (
                 op_list.clone(),
                 kinds.clone(),
                 failures.clone(),
                 filter.clone(),
-                repo.clone(),
+                target.clone(),
+                remote_records.clone(),
             );
-            // daemon の記録（裏で 2 秒ごとに読む）。
-            let remote_records: Rc<RefCell<Vec<Value>>> = Rc::default();
             let loading = Rc::new(std::cell::Cell::new(false));
             let tick = std::cell::Cell::new(0u32);
             let last = std::cell::Cell::new(0);
             move || {
                 tick.set(tick.get() + 1);
+                let repo = target.borrow().repo.clone();
+                let remote = repo
+                    .as_ref()
+                    .is_some_and(|r| r.connection_state().is_some());
                 if remote
                     && !loading.get()
                     && tick.get() % 2 == 1
                     && let Some(repo) = repo.clone()
                 {
                     loading.set(true);
-                    let (remote_records, loading) = (remote_records.clone(), loading.clone());
+                    let (remote_records, loading, target) =
+                        (remote_records.clone(), loading.clone(), target.clone());
                     glib::spawn_future_local(async move {
+                        let asked = repo.clone();
                         let reply: Value = gio::spawn_blocking(move || {
-                            serde_json::from_str(&repo.run_json(r#"{"op":"remoteActivity"}"#))
+                            serde_json::from_str(&asked.run_json(r#"{"op":"remoteActivity"}"#))
                                 .unwrap_or_default()
                         })
                         .await
                         .unwrap_or_default();
+                        loading.set(false);
+                        // 読んでいる間に付け替えたら捨てる。
+                        if !target
+                            .borrow()
+                            .repo
+                            .as_ref()
+                            .is_some_and(|r| Arc::ptr_eq(r, &repo))
+                        {
+                            return;
+                        }
                         let mut records = reply["info"]["records"]
                             .as_array()
                             .cloned()
@@ -342,7 +396,6 @@ impl Activity {
                             r["remote"] = json!(true);
                         }
                         remote_records.replace(records);
-                        loading.set(false);
                     });
                 }
                 let mut records: Vec<Value> = amonhen_model::activity::entries()
@@ -496,15 +549,15 @@ impl Activity {
         ));
         stack.add_titled(&history, Some("history"), "History");
         let refresh_undo: Rc<dyn Fn()> = {
-            let (undo_list, repo, actions, w) = (
-                undo_list.clone(),
-                repo.clone(),
-                actions.clone(),
-                window.downgrade(),
-            );
+            let (undo_list, target, w) = (undo_list.clone(), target.clone(), window.downgrade());
             Rc::new(move || {
-                let Some(repo) = repo.clone() else { return };
-                let (undo_list, actions, w) = (undo_list.clone(), actions.clone(), w.clone());
+                // Undo する先（書き込む先の worktree）の記録を出す（一覧と Undo の先を取り違えない）。
+                let actions = target.borrow().actions.clone();
+                let Some(repo) = actions.repo().or_else(|| target.borrow().repo.clone()) else {
+                    undo_list.remove_all();
+                    return;
+                };
+                let (undo_list, target, w) = (undo_list.clone(), target.clone(), w.clone());
                 glib::spawn_future_local(async move {
                     let reply: Value = gio::spawn_blocking(move || {
                         serde_json::from_str(&repo.run_json(r#"{"op":"undoLog"}"#))
@@ -512,6 +565,10 @@ impl Activity {
                     })
                     .await
                     .unwrap_or_default();
+                    // 読んでいる間に付け替えたら捨てる（付け替えたほうで読み直す）。
+                    if !Rc::ptr_eq(&target.borrow().actions, &actions) {
+                        return;
+                    }
                     undo_list.remove_all();
                     let entries = reply["info"]["entries"]
                         .as_array()
@@ -790,8 +847,37 @@ impl Activity {
                 r();
             }
         });
-        let r = refresh_undo;
-        actions.connect_after(move || r());
-        Self { window, stack }
+        // 操作の後に読み直す（付け替えた先の操作でも。同じものには 1 度だけつなぐ）。
+        let connected: Rc<RefCell<Vec<std::rc::Weak<Actions>>>> = Rc::default();
+        let connect_after = {
+            let r = refresh_undo.clone();
+            move |actions: &Rc<Actions>| {
+                let mut c = connected.borrow_mut();
+                c.retain(|w| w.strong_count() > 0);
+                if c.iter().any(|w| w.as_ptr() == Rc::as_ptr(actions)) {
+                    return;
+                }
+                c.push(Rc::downgrade(actions));
+                let r = r.clone();
+                actions.connect_after(move || r());
+            }
+        };
+        let first = target.borrow().actions.clone();
+        connect_after(&first);
+        let retargeted: Rc<dyn Fn()> = {
+            let (target, r) = (target.clone(), refresh_undo);
+            Rc::new(move || {
+                remote_records.borrow_mut().clear();
+                let actions = target.borrow().actions.clone();
+                connect_after(&actions);
+                r();
+            })
+        };
+        Self {
+            window,
+            stack,
+            target,
+            retargeted,
+        }
     }
 }
