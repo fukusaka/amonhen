@@ -40,6 +40,8 @@ const KEPT_CHUNKS: usize = 24;
 const GRAPH_WIDTH: f32 = 160.0;
 /// 文字の列の左右の余白。
 const TEXT_INSET: f32 = 8.0;
+/// 行ごとのグラフの右端と、件名などの間（macOS 版の `graphGap`）。
+const GRAPH_GAP: f32 = 10.0;
 
 /// 裏のスレッドから受け取るチャンク。文字列置き場は自分のバッファ（`Blob`）を持っているので、
 /// どのスレッドに渡してもよい。
@@ -1299,17 +1301,14 @@ impl HistoryView {
                 snapshot.append_color(&color, &graphene::Rect::new(0.0, y, width, rh));
             }
 
-            // グラフ。
-            // レーンが少なければ狭く（History 全体のレーンの数で決め、スクロールで変えない）。
-            let m = &st.metrics;
-            let lanes = history.layout.lane_count() as f32;
-            let graph_width = (m.left_inset + lanes * m.lane_width)
-                .clamp(40.0, GRAPH_WIDTH)
-                .min(width * 0.4);
+            // グラフ。列は見えているレーンの分だけ取り、スクロールで見えるレーンが変われば伸び縮みする（macOS 版と
+            // 同じ）。使えるのは上限まで（狭い窓では幅の 4 割まで）。
+            let max_graph = GRAPH_WIDTH.min(width * 0.4).max(40.0);
             st.lanes
-                .update(&history, first..last, graph_width, &st.metrics, true);
-            snapshot.push_clip(&graphene::Rect::new(0.0, 0.0, graph_width, height));
-            graph::draw(
+                .update(&history, first..last, max_graph, &st.metrics, true);
+            let graph_width = st.lanes.width();
+            snapshot.push_clip(&graphene::Rect::new(0.0, 0.0, max_graph, height));
+            let extents = graph::draw(
                 snapshot,
                 &history,
                 &st.lanes,
@@ -1339,8 +1338,12 @@ impl HistoryView {
                 }));
             }
 
-            // 文字。
-            let text_x = graph_width + TEXT_INSET;
+            // 文字。行ごとに、その行のグラフの右端のすぐ右から始める（macOS 版と同じ）。
+            let text_x_of = |row: u32| {
+                extents
+                    .get((row - first) as usize)
+                    .map_or(graph_width + TEXT_INSET, |x| (x + GRAPH_GAP).round())
+            };
             let row_end = width - TEXT_INSET;
             let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), fg.alpha() * 0.6);
             let white = gdk::RGBA::WHITE;
@@ -1362,6 +1365,7 @@ impl HistoryView {
                 }
                 let selected = focused && (st.selected == Some(row) || st.extra.contains(&row));
                 let top = row as f32 * rh - scroll_y;
+                let text_x = text_x_of(row);
                 let mut x = text_x;
                 let line = &st.rows[&row];
                 let (_, subject_h) = line.subject.pixel_size();
