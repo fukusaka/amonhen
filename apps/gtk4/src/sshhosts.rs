@@ -432,6 +432,13 @@ pub fn select_pending(host: &str, page: &str) {
     }
 }
 
+/// 出してあるタブの SSH 先の一覧を読み直す（Settings の窓を出し直したとき。macOS 版と同じ）。
+pub fn reload_shown() {
+    if let Some(current) = CURRENT.with(|c| c.borrow().upgrade()) {
+        current.reload();
+    }
+}
+
 impl SshHosts {
     pub fn new() -> Rc<Self> {
         let widget = gtk::Box::new(gtk::Orientation::Horizontal, 0);

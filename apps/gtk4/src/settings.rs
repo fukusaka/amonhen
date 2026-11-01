@@ -434,6 +434,11 @@ fn page(sections: &[gtk::Box]) -> gtk::Box {
 /// 設定の窓を開く（開いていれば前に出す）。
 pub fn show(parent: &gtk::ApplicationWindow) {
     if let Some(w) = WINDOW.with(|w| w.borrow().upgrade()) {
+        // 出し直すたびに読み直す（端末やほかの窓で変えた git の設定・新しい SSH 先。macOS 版と同じ）。
+        if let Some(settings) = GIT_SETTINGS.with(|s| s.borrow().upgrade()) {
+            settings.load();
+        }
+        crate::sshhosts::reload_shown();
         w.present();
         return;
     }
@@ -549,6 +554,16 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     let hosts = gtk::Box::new(gtk::Orientation::Vertical, 0);
     stack.add_titled(&hosts, Some("ssh-hosts"), &tr!("SSH Hosts"));
     stack.connect_visible_child_name_notify(move |stack| {
+        // タブを出し直したら読み直す（macOS 版と同じ）。
+        match stack.visible_child_name().as_deref() {
+            Some("git") => {
+                if let Some(settings) = GIT_SETTINGS.with(|s| s.borrow().upgrade()) {
+                    settings.load();
+                }
+            }
+            Some("ssh-hosts") if hosts.first_child().is_some() => crate::sshhosts::reload_shown(),
+            _ => {}
+        }
         if stack.visible_child_name().as_deref() == Some("ssh-hosts")
             && hosts.first_child().is_none()
         {
