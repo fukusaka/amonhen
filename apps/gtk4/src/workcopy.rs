@@ -659,12 +659,14 @@ impl Inner {
                 this.update_buttons();
             }
         });
-        // 差分の行の右クリック: AI でこの hunk を解説。
+        // 差分の行の右クリック: 選んだ行のコピー、AI でこの hunk を解説。
         let weak = Rc::downgrade(this);
         this.diff.connect_row_menu(move |row, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            if let Some(item) = this.hunk_item(row) {
-                crate::menu::popup(&this.diff, x, y, vec![item]);
+            let mut items = this.diff.copy_items();
+            items.extend(this.hunk_item(row));
+            if !items.is_empty() {
+                crate::menu::popup(&this.diff, x, y, items);
             }
         });
         let (a, b) = (Rc::downgrade(this), Rc::downgrade(this));

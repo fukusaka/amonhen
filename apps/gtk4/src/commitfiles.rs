@@ -676,7 +676,9 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.diff.connect_file_menu(move |file, path, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            let items = match file {
+            // 文字を選んでいれば、先頭に Copy。
+            let mut items = this.diff.copy_items();
+            items.extend(match file {
                 // 見出しの上: 畳む・Viewed・Blame・パスのコピーなど。
                 Some(file) => Inner::menu_items(&this, Some(file), Some(y)),
                 // 差分の行の上: AI でこの hunk を解説・Blame・File History（持ち主が作る）。
@@ -686,7 +688,7 @@ impl Inner {
                     .clone()
                     .map(|f| f(path, Some(y)))
                     .unwrap_or_default(),
-            };
+            });
             menu::popup(&this.diff, x, y, items);
         });
         // 1 ファイルずつ見せているときは、差分にファイルの見出しがない。差分の行の右クリックは、全ファイルを
@@ -694,15 +696,16 @@ impl Inner {
         let weak = Rc::downgrade(this);
         this.diff.connect_row_menu(move |_, x, y| {
             let Some(this) = weak.upgrade() else { return };
-            let Some(path) = this.single_path() else {
-                return;
-            };
-            let items = this
-                .file_items
-                .borrow()
-                .clone()
-                .map(|f| f(&path, Some(y)))
-                .unwrap_or_default();
+            let mut items = this.diff.copy_items();
+            if let Some(path) = this.single_path() {
+                items.extend(
+                    this.file_items
+                        .borrow()
+                        .clone()
+                        .map(|f| f(&path, Some(y)))
+                        .unwrap_or_default(),
+                );
+            }
             if !items.is_empty() {
                 menu::popup(&this.diff, x, y, items);
             }

@@ -7,6 +7,10 @@
 //!
 //! Working Copy では、変更の行をクリック（Shift で範囲、Ctrl で追加）して選び、行の左の印で
 //! 次のコミットに含めるか（index に入っているか）を見せる。印のクリックでその行を含める・外す。
+//!
+//! 行を選ばない差分（History など）では、文字を選べる（ドラッグ、ダブルクリックで単語、トリプルクリックで行、
+//! Shift で広げる、Ctrl+A ですべて、Esc でやめる）。Ctrl+C か右クリックの Copy で、選んだ文字（Working Copy では
+//! 選んだ行の文字）をコピーする。+・− の印は付けない（macOS 版と同じ）。
 
 use std::cell::{Cell, RefCell};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -27,6 +31,9 @@ const GUTTER_GAP: f32 = 12.0;
 const TEXT_INSET: f32 = 8.0;
 /// 行ごとの stage の印の列の幅。
 const MARK_WIDTH: f32 = 20.0;
+
+/// 文字の位置（表示の行と、その行の文字のバイト位置）。
+type TextPos = (u32, u32);
 
 /// 裏のスレッドで作った表示。文字列置き場は自分のバッファを持っているので、どのスレッドに渡してもよい。
 pub struct View {
@@ -156,6 +163,12 @@ pub struct State {
     selection: BTreeSet<u32>,
     /// Shift で範囲を選ぶときの起点。
     anchor: Option<u32>,
+    /// 選んだ文字（行を選ばない表示。起点と今の位置）。
+    text_selection: Option<(TextPos, TextPos)>,
+    /// 単語・行の単位で選び始めたときの最初の範囲（ドラッグでその単位のまま広げる）と、クリックの回数。
+    selection_unit: Option<((TextPos, TextPos), i32)>,
+    /// 本文を押して、文字を選びながらドラッグしているか。
+    dragging: bool,
     /// 印をクリックしたときに呼ぶ（行）。
     on_mark: Option<Rc<dyn Fn(u32)>>,
     /// 選んだ行が変わったときに呼ぶ。
@@ -238,7 +251,7 @@ mod imp {
             view.add_css_class("view");
             let click = gtk::GestureClick::new();
             let weak = view.downgrade();
-            click.connect_pressed(move |gesture, _, x, y| {
+            click.connect_pressed(move |gesture, clicks, x, y| {
                 if let Some(view) = weak.upgrade() {
                     view.grab_focus();
                     let state = gesture.current_event_state();
@@ -247,10 +260,36 @@ mod imp {
                         y as f32,
                         state.contains(gdk::ModifierType::SHIFT_MASK),
                         state.contains(gdk::ModifierType::CONTROL_MASK),
+                        clicks,
                     );
                 }
             });
             view.add_controller(click);
+            // ドラッグで文字を選ぶ（行を選ばない表示）。
+            let drag = gtk::GestureDrag::new();
+            let weak = view.downgrade();
+            drag.connect_drag_update(move |gesture, dx, dy| {
+                if let (Some(view), Some((x, y))) = (weak.upgrade(), gesture.start_point()) {
+                    view.drag_to((x + dx) as f32, (y + dy) as f32);
+                }
+            });
+            view.add_controller(drag);
+            // 選んだ文字の色は、フォーカスがあるかで変える。
+            let focus = gtk::EventControllerFocus::new();
+            for enter in [true, false] {
+                let weak = view.downgrade();
+                let redraw = move |_: &gtk::EventControllerFocus| {
+                    if let Some(view) = weak.upgrade() {
+                        view.queue_draw();
+                    }
+                };
+                if enter {
+                    focus.connect_enter(redraw);
+                } else {
+                    focus.connect_leave(redraw);
+                }
+            }
+            view.add_controller(focus);
             // ファイルの見出しの右クリック（Blame・File History）。
             let menu = gtk::GestureClick::new();
             menu.set_button(gdk::BUTTON_SECONDARY);
@@ -261,7 +300,8 @@ mod imp {
                 }
             });
             view.add_controller(menu);
-            // Space（選んだ行を含める・外す）、J・K（次・前の hunk）、⌥J・⌥K（次・前のファイル）。
+            // Space（選んだ行を含める・外す）、J・K（次・前の hunk）、⌥J・⌥K（次・前のファイル）、Ctrl+C・
+            // Ctrl+A・Esc（コピー・すべて選ぶ・選ぶのをやめる）。
             let keys = gtk::EventControllerKey::new();
             let weak = view.downgrade();
             keys.connect_key_pressed(move |_, key, _, modifiers| {
@@ -343,6 +383,7 @@ impl DiffWidget {
             st.rows.clear();
             st.selection.clear();
             st.anchor = None;
+            st.text_selection = None;
             st.hunk_cursor = None;
         }
         self.configure_adjustments();
@@ -375,6 +416,7 @@ impl DiffWidget {
             st.marks = false;
             st.selection.clear();
             st.anchor = None;
+            st.text_selection = None;
             st.hunk_cursor = None;
         }
         self.scroll_to_start();
@@ -397,6 +439,7 @@ impl DiffWidget {
             st.marks = true;
             st.selection.clear();
             st.anchor = None;
+            st.text_selection = None;
             if !keep {
                 st.hunk_after = None;
             }
@@ -427,6 +470,7 @@ impl DiffWidget {
             st.marks = false;
             st.selection.clear();
             st.anchor = None;
+            st.text_selection = None;
             st.hunk_cursor = None;
         }
         self.scroll_to_start();
@@ -554,6 +598,12 @@ impl DiffWidget {
             return;
         }
         let (Some(view), Some(f)) = (view, f) else {
+            // 右クリックのメニューを持ち主が作らない差分では、Copy だけ。
+            let mut items = self.copy_items();
+            if !items.is_empty() {
+                items.pop();
+                crate::menu::popup(self, x, y, items);
+            }
             return;
         };
         if index < 0.0 {
@@ -653,7 +703,19 @@ impl DiffWidget {
                 | gdk::ModifierType::SUPER_MASK);
         let plain = modifiers.is_empty();
         let alt = modifiers == gdk::ModifierType::ALT_MASK;
+        let ctrl = modifiers == gdk::ModifierType::CONTROL_MASK;
         match key.to_lower() {
+            gdk::Key::c if ctrl => {
+                if !self.copy_selection() {
+                    return glib::Propagation::Proceed;
+                }
+            }
+            gdk::Key::a if ctrl => self.select_all(),
+            gdk::Key::Escape if plain => {
+                if !self.clear_text_selection() {
+                    return glib::Propagation::Proceed;
+                }
+            }
             gdk::Key::space if plain => {
                 let (marks, rows, f) = {
                     let st = self.state();
@@ -910,40 +972,260 @@ impl DiffWidget {
         }
     }
 
-    /// ファイルの見出しなら畳む・開く。Working Copy では印なら含める・外す、ほかは行を選ぶ。
-    fn clicked(&self, x: f32, y: f32, shift: bool, ctrl: bool) {
+    /// ファイルの見出しなら畳む・開く。Working Copy では印なら含める・外す、ほかは行を選ぶ。行を選ばない表示では、
+    /// 文字を選び始める（`clicks` が 2 なら単語、3 以上なら行）。
+    fn clicked(&self, x: f32, y: f32, shift: bool, ctrl: bool, clicks: i32) {
         let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
         let rh = self.row_height();
         let index = ((y + scroll) / rh).floor();
         let (marks, view) = {
-            let st = self.state();
+            let mut st = self.state();
+            st.dragging = false;
             (st.marks, st.view.clone())
         };
         let Some(view) = view else { return };
+        if !marks {
+            let Some(file) = self.header_at(y) else {
+                self.begin_text_selection(x, y, shift, clicks);
+                return;
+            };
+            let on_viewed = self.state().on_toggle_viewed.clone();
+            match on_viewed {
+                Some(f) if x >= self.viewed_x() - 4.0 => f(file),
+                _ => self.set_file_collapsed(file, !self.file_collapsed(file)),
+            }
+            return;
+        }
         if index < 0.0 || index as usize >= view.view.rows.len() {
             return;
         }
         let index = index as u32;
         let row = view.view.rows[index as usize];
-        if marks {
-            if Self::is_change(&row) && x < TEXT_INSET + MARK_WIDTH {
-                let f = self.state().on_mark.clone();
-                if let Some(f) = f {
-                    f(index);
-                }
-                return;
+        if Self::is_change(&row) && x < TEXT_INSET + MARK_WIDTH {
+            let f = self.state().on_mark.clone();
+            if let Some(f) = f {
+                f(index);
             }
-            self.select_rows(&view, index, shift, ctrl);
             return;
         }
-        let Some(file) = self.header_at(y) else {
+        self.select_rows(&view, index, shift, ctrl);
+    }
+
+    /// `(x, y)`（部品の中の位置）の文字の位置。上にはみ出せば先頭、下にはみ出せば末尾。
+    fn text_position(&self, x: f32, y: f32) -> Option<TextPos> {
+        let scroll = self.vadjustment().map_or(0.0, |a| a.value()) as f32;
+        let rh = self.row_height();
+        let (view, left) = {
+            let st = self.state();
+            let view = st.view.clone()?;
+            let left = Self::text_left(&st, &view);
+            (view, left)
+        };
+        let rows = &view.view.rows;
+        let last = rows.len().checked_sub(1)?;
+        if y + scroll < 0.0 {
+            return Some((0, 0));
+        }
+        let row = ((y + scroll) / rh).floor() as usize;
+        if row > last {
+            return Some((last as u32, view.text(&rows[last]).len() as u32));
+        }
+        if rows[row].kind == DiffRow::FILE {
+            return Some((row as u32, 0));
+        }
+        let layout = self.layout_of(row as u32)?;
+        let offset = x - left + self.scroll_x();
+        if offset <= 0.0 {
+            return Some((row as u32, 0));
+        }
+        let (_, index, trailing) = layout.xy_to_index((offset * pango::SCALE as f32) as i32, 0);
+        let text = view.text(&rows[row]);
+        let mut index = (index.max(0) as usize).min(text.len());
+        // 文字の後ろ半分なら、その文字の後ろ。
+        for _ in 0..trailing {
+            index += text[index..].chars().next().map_or(0, char::len_utf8);
+        }
+        Some((row as u32, index as u32))
+    }
+
+    /// `p` を含む、クリックの回数の単位の範囲（2 なら単語、3 以上なら行、ほかは `p` そのもの）。
+    fn unit_range(&self, p: TextPos, clicks: i32) -> (TextPos, TextPos) {
+        if clicks < 2 {
+            return (p, p);
+        }
+        let text = {
+            let st = self.state();
+            st.view
+                .as_ref()
+                .and_then(|v| v.view.rows.get(p.0 as usize).map(|r| v.text(r).to_owned()))
+                .unwrap_or_default()
+        };
+        let (start, end) = if clicks == 2 {
+            word_range(&text, p.1 as usize)
+        } else {
+            (0, text.len())
+        };
+        ((p.0, start as u32), (p.0, end as u32))
+    }
+
+    fn begin_text_selection(&self, x: f32, y: f32, shift: bool, clicks: i32) {
+        let Some(p) = self.text_position(x, y) else {
             return;
         };
-        let on_viewed = self.state().on_toggle_viewed.clone();
-        match on_viewed {
-            Some(f) if x >= self.viewed_x() - 4.0 => f(file),
-            _ => self.set_file_collapsed(file, !self.file_collapsed(file)),
+        let unit = self.unit_range(p, clicks);
+        {
+            let mut st = self.state();
+            st.dragging = true;
+            match st.text_selection {
+                Some((anchor, _)) if shift => st.text_selection = Some((anchor, p)),
+                _ => {
+                    st.selection_unit = (clicks > 1).then_some((unit, clicks));
+                    st.text_selection = Some(unit);
+                }
+            }
         }
+        self.queue_draw();
+    }
+
+    /// ドラッグした: 選ぶ文字を `(x, y)` まで広げる（上下にはみ出せば、その向きにスクロールする）。
+    fn drag_to(&self, x: f32, y: f32) {
+        let (dragging, current, unit) = {
+            let st = self.state();
+            (
+                st.dragging && !st.marks,
+                st.text_selection,
+                st.selection_unit,
+            )
+        };
+        let (true, Some(current)) = (dragging, current) else {
+            return;
+        };
+        if let Some(adj) = self.vadjustment() {
+            let step = self.row_height() as f64;
+            let max = (adj.upper() - adj.page_size()).max(0.0);
+            if y < 0.0 {
+                adj.set_value((adj.value() - step).clamp(0.0, max));
+            } else if y > self.height() as f32 {
+                adj.set_value((adj.value() + step).clamp(0.0, max));
+            }
+        }
+        let Some(p) = self.text_position(x, y) else {
+            return;
+        };
+        let selection = match unit {
+            // 単語・行の単位で選び始めたら、その単位のまま広げる。
+            Some(((start, end), clicks)) => {
+                let extended = self.unit_range(p, clicks);
+                if p < start {
+                    (end, extended.0)
+                } else {
+                    (start, end.max(extended.1))
+                }
+            }
+            None => (current.0, p),
+        };
+        self.state().text_selection = Some(selection);
+        self.queue_draw();
+    }
+
+    /// 選んだ文字（Working Copy の行を選ぶ表示では、選んだ行の文字）。行は改行でつなぐ。
+    pub fn selected_text(&self) -> Option<String> {
+        let st = self.state();
+        let view = st.view.clone()?;
+        let rows = &view.view.rows;
+        if st.marks {
+            if st.selection.is_empty() {
+                return None;
+            }
+            let lines: Vec<&str> = st
+                .selection
+                .iter()
+                .filter_map(|&r| rows.get(r as usize).map(|row| view.text(row)))
+                .collect();
+            return Some(lines.join("\n"));
+        }
+        let (a, b) = st.text_selection?;
+        let (start, end) = if a <= b { (a, b) } else { (b, a) };
+        if start == end || end.0 as usize >= rows.len() {
+            return None;
+        }
+        let lines: Vec<&str> = (start.0..=end.0)
+            .map(|r| {
+                let text = view.text(&rows[r as usize]);
+                let from = if r == start.0 { start.1 as usize } else { 0 }.min(text.len());
+                let to = if r == end.0 {
+                    end.1 as usize
+                } else {
+                    text.len()
+                }
+                .min(text.len());
+                text.get(from..to.max(from)).unwrap_or("")
+            })
+            .collect();
+        Some(lines.join("\n"))
+    }
+
+    /// 選んだ文字をコピーする。選んでいなければ false。
+    pub fn copy_selection(&self) -> bool {
+        match self.selected_text() {
+            Some(text) => {
+                self.clipboard().set_text(&text);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// 右クリックのメニューの先頭に置く Copy（文字か行を選んでいるときだけ）。
+    pub fn copy_items(&self) -> Vec<crate::menu::Item> {
+        if self.selected_text().is_none() {
+            return Vec::new();
+        }
+        let weak = self.downgrade();
+        vec![
+            crate::menu::action(tr!("Copy"), move || {
+                if let Some(view) = weak.upgrade() {
+                    view.copy_selection();
+                }
+            }),
+            crate::menu::Item::Separator,
+        ]
+    }
+
+    /// Ctrl+A: すべての文字を選ぶ（Working Copy の行を選ぶ表示では、すべての変更の行）。
+    fn select_all(&self) {
+        let marks = {
+            let mut st = self.state();
+            let Some(view) = st.view.clone() else { return };
+            let rows = &view.view.rows;
+            let Some(last) = rows.len().checked_sub(1) else {
+                return;
+            };
+            if st.marks {
+                st.selection = (0..rows.len() as u32)
+                    .filter(|&r| Self::is_change(&rows[r as usize]))
+                    .collect();
+                st.anchor = None;
+            } else {
+                let end = view.text(&rows[last]).len() as u32;
+                st.text_selection = Some(((0, 0), (last as u32, end)));
+                st.selection_unit = None;
+            }
+            st.marks
+        };
+        self.queue_draw();
+        if marks {
+            self.selection_changed();
+        }
+    }
+
+    /// Esc: 文字を選ぶのをやめる。選んでいなければ false。
+    fn clear_text_selection(&self) -> bool {
+        let had = self.state().text_selection.take().is_some();
+        if had {
+            self.queue_draw();
+        }
+        had
     }
 
     /// 行を選ぶ。hunk の見出しなら、その hunk の変更の行をすべて。
@@ -1017,6 +1299,7 @@ impl DiffWidget {
                 let row = view.file_rows.get(file).copied();
                 st.view = Some(Arc::new(view));
                 st.rows.clear();
+                st.text_selection = None;
                 row
             };
             widget.configure_adjustments();
@@ -1104,13 +1387,18 @@ impl DiffWidget {
         st.current_match = previous.and_then(|p| st.matches.iter().position(|m| *m == p));
     }
 
-    /// 今の一致が見える位置までスクロールする。
+    /// 今の一致を選び（行を選ばない表示なら。Ctrl+C でコピーできるように）、見える位置までスクロールする。
     fn reveal_match(&self) {
         let row = {
-            let st = self.state();
-            st.current_match
-                .and_then(|c| st.matches.get(c))
-                .map(|m| m.0)
+            let mut st = self.state();
+            let m = st.current_match.and_then(|c| st.matches.get(c)).copied();
+            if let Some((row, start, end)) = m
+                && !st.marks
+            {
+                st.text_selection = Some(((row, start), (row, end)));
+                st.selection_unit = None;
+            }
+            m.map(|m| m.0)
         };
         if let Some(row) = row {
             self.reveal_rows(row, row + 1);
@@ -1271,6 +1559,17 @@ impl DiffWidget {
         let origin = text_x - scroll_x;
         // 一致の行の範囲（一致は行の順に並んでいる）。
         let match_from = st.matches.partition_point(|m| m.0 < first);
+        // 選んだ文字（フォーカスがなければ薄く）。
+        let text_range = st
+            .text_selection
+            .filter(|_| !st.marks)
+            .map(|(a, b)| if a <= b { (a, b) } else { (b, a) })
+            .filter(|(a, b)| a != b);
+        let selected_color = if self.has_focus() {
+            gdk::RGBA::new(0.21, 0.52, 0.89, 0.40)
+        } else {
+            gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.18)
+        };
         for index in first..last {
             if !st.rows.contains_key(&index) {
                 let text = self.row_text(st, &view, index);
@@ -1327,6 +1626,25 @@ impl DiffWidget {
                 (width - text_x).max(0.0),
                 rh,
             ));
+            if let Some((start, end)) = text_range
+                && start.0 <= index
+                && index <= end.0
+            {
+                let x = |i: u32| line.text.index_to_pos(i as i32).x() as f32 / pango::SCALE as f32;
+                let x0 = if index == start.0 { x(start.1) } else { 0.0 };
+                // 次の行に続くときは、改行の分として少し右まで塗る。
+                let x1 = if index == end.0 {
+                    x(end.1)
+                } else {
+                    line.text.pixel_size().0 as f32 + 6.0
+                };
+                if x1 > x0 {
+                    snapshot.append_color(
+                        &selected_color,
+                        &graphene::Rect::new(origin + x0, top, x1 - x0, rh),
+                    );
+                }
+            }
             // 探している語の一致（今の一致は濃く）。
             for (i, m) in st.matches[match_from..]
                 .iter()
@@ -1511,6 +1829,45 @@ impl DiffWidget {
     }
 }
 
+/// `text` の `index`（バイト位置）の文字を含む単語の範囲（ダブルクリック）。英数字と `_` の並び、空白の並び、
+/// それ以外は 1 文字。
+fn word_range(text: &str, index: usize) -> (usize, usize) {
+    let index = index.min(text.len());
+    // 行末なら、その前の文字。
+    let at = if index < text.len() {
+        index
+    } else {
+        text[..index].char_indices().last().map_or(0, |(i, _)| i)
+    };
+    let Some(c) = text[at..].chars().next() else {
+        return (index, index);
+    };
+    let class = |c: char| {
+        if c.is_alphanumeric() || c == '_' {
+            0
+        } else if c.is_whitespace() {
+            1
+        } else {
+            2
+        }
+    };
+    let kind = class(c);
+    if kind == 2 {
+        return (at, at + c.len_utf8());
+    }
+    let start = text[..at]
+        .char_indices()
+        .rev()
+        .take_while(|(_, c)| class(*c) == kind)
+        .last()
+        .map_or(at, |(i, _)| i);
+    let end = text[at..]
+        .char_indices()
+        .find(|(_, c)| class(*c) != kind)
+        .map_or(text.len(), |(i, _)| at + i);
+    (start, end)
+}
+
 /// `text` を等幅で並べたときの桁数（タブは 8 桁ごと。全角など幅の広い文字は 2 桁として、多めに見積もる）。
 fn columns(text: &str) -> usize {
     text.chars().fold(0, |n, c| match c {
@@ -1618,5 +1975,17 @@ mod tests {
         assert_eq!(columns("\tx"), 9);
         assert_eq!(columns("ab\tx"), 9);
         assert_eq!(columns("日本"), 4);
+    }
+
+    #[test]
+    fn word_range_picks_words_spaces_and_symbols() {
+        let text = "let foo_bar = 日本語;";
+        assert_eq!(word_range(text, 5), (4, 11));
+        assert_eq!(word_range(text, 4), (4, 11));
+        assert_eq!(word_range(text, 3), (3, 4));
+        assert_eq!(word_range(text, 12), (12, 13));
+        assert_eq!(word_range(text, 14), (14, 23));
+        assert_eq!(word_range(text, text.len()), (23, 24));
+        assert_eq!(word_range("", 0), (0, 0));
     }
 }
