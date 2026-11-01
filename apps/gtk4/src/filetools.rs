@@ -373,6 +373,15 @@ fn load_file_history(
         let info = gio::spawn_blocking(move || run(&r, command)).await;
         match info {
             Ok(Ok(info)) => show_file_history(&window, &parent, repo, &path, &info, on_commit),
+            // 初めて読むときに読めなければ、空の窓のままにせず、窓に理由を出す（macOS 版と同じ）。
+            // 読み直し（Show Merge Commits）なら、出している履歴は残して知らせる。
+            Ok(Err(e)) if window.child().is_none() => {
+                let note = gtk::Label::new(Some(&e));
+                note.add_css_class("dim-label");
+                note.set_wrap(true);
+                note.set_selectable(true);
+                window.set_child(Some(&note));
+            }
             Ok(Err(e)) => fail(&parent, &e),
             Err(_) => {}
         }
