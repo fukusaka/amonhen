@@ -2276,7 +2276,7 @@ impl Browser {
                 .map(|r| r.path)
                 .filter(|p| bookmarks::ssh_host(p).as_ref() == Some(&name))
                 .collect();
-            let sheet = Sheet::new(
+            let sheet = Sheet::unnamed(
                 Some(&b.window()),
                 &tr!("Remove {host}?", host = name),
                 &tr!(
@@ -2477,7 +2477,7 @@ async fn ask_allowing_empty(
     message: &str,
     initial: &str,
 ) -> Option<String> {
-    let sheet = Sheet::new(Some(window), title, message);
+    let sheet = Sheet::unnamed(Some(window), title, message);
     let entry = gtk::Entry::builder()
         .text(initial)
         .activates_default(true)
@@ -2545,7 +2545,7 @@ pub fn found_or_offer_removal(
     }
     let (parent, location) = (parent.clone(), location.to_owned());
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(
+        let sheet = Sheet::unnamed(
             Some(&parent),
             &tr!(
                 "{name} not found",
@@ -2570,7 +2570,7 @@ async fn ssh_connection_sheet(
     parent: &gtk::Window,
     fixed: Option<String>,
 ) -> Option<(String, String)> {
-    let sheet = Sheet::new(
+    let sheet = Sheet::unnamed(
         Some(parent),
         &match &fixed {
             Some(h) => tr!("Add a Repository on {host}", host = h),

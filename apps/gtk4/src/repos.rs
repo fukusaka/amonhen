@@ -243,7 +243,7 @@ fn name_from_url(url: &str) -> String {
 pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
     let parent = parent.clone();
     glib::spawn_future_local(async move {
-        let sheet = Sheet::new(Some(&parent), "Clone Repository", "");
+        let sheet = Sheet::unnamed(Some(&parent), "Clone Repository", "");
         let url = gtk::Entry::builder()
             .placeholder_text(tr!(
                 "https://github.com/owner/repo.git or git@host:owner/repo.git"
