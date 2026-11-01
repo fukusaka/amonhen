@@ -518,11 +518,11 @@ impl FileHistoryView {
             .child(&diff)
             .vexpand(true)
             .build();
-        // 差分の下に検索の帯（Ctrl+F。macOS 版と同じく、どの差分でも探せる）。
+        // 差分の上に検索の帯（Ctrl+F。macOS 版と同じく、どの差分でも探せる）。
         let right = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        right.append(&scrolled);
         let (find, find_bar) = crate::difffind::DiffFind::new(&diff, &right);
         right.append(&find_bar);
+        right.append(&scrolled);
         let split = gtk::Paned::new(gtk::Orientation::Horizontal);
         split.set_start_child(Some(&left));
         split.set_end_child(Some(&right));

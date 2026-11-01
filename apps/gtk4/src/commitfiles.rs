@@ -528,7 +528,9 @@ impl CommitDiff {
         bar.append(&next);
         bar.append(&done);
         bar.set_visible(false);
+        // 検索の帯は差分の上（macOS 版と同じ）。
         let diff_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        diff_column.append(&bar);
         diff_column.append(&diff_scrolled);
 
         // 変更ファイルの一覧（見えている行だけに部品を作る）。
@@ -546,7 +548,6 @@ impl CommitDiff {
         holder.set_vexpand(true);
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.append(&holder);
-        root.append(&bar);
         let inner = Rc::new(Inner {
             root: root.clone(),
             diff,

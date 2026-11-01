@@ -392,11 +392,11 @@ impl WorkingCopy {
         let merge_holder = gtk::Box::new(gtk::Orientation::Vertical, 0);
         let right_stack = gtk::Stack::new();
         right_stack.set_vexpand(true);
-        // 差分の下に検索の帯（macOS 版と同じく、どの差分でも Ctrl+F で探せる）。
+        // 差分の上に検索の帯（macOS 版と同じく、どの差分でも Ctrl+F で探せる）。
         let diff_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        diff_area.append(&diff_scrolled);
         let (find, find_bar) = crate::difffind::DiffFind::new(&diff, &diff_area);
         diff_area.append(&find_bar);
+        diff_area.append(&diff_scrolled);
         right_stack.add_named(&diff_area, Some("diff"));
         right_stack.add_named(&merge_holder, Some("merge"));
         right.append(&right_stack);
