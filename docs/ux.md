@@ -335,7 +335,7 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 | Status | Activity | Number of running operations and a spinner. Click to open Activity | — |
 | | Refresh | Reload status, refs and History (⌘R) | Reload the whole working tree (without the fsmonitor and status caches), discard the persistent cache and rebuild History |
 | | Undo | Confirm, naming the operation and what it puts back (HEAD and branches, files, a stash or a branch name), then revert it | — (the operation log in Activity) |
-| Search | Search field (`NSSearchToolbarItem`) | ⌘F searches History, ⌘⇧F with a scope | Switch between subject and body / author / ID / path / contents (pickaxe) |
+| Search | Search field (`NSSearchToolbarItem`) | ⌘F searches History, ⌘⇧F with a scope | Switch between subject and body / author / ID / path / contents (pickaxe) / date (`after:`, `before:`) |
 
 - When the current branch has no upstream (or its remote branch is gone), Push reads Publish (in the toolbar, the Repository menu and Commit and Publish) and asks for the remote, starting from `branch.<name>.pushRemote`, `remote.pushDefault`, the only remote, then origin, and the name there; what it sends becomes the upstream. If that remote branch already exists, it says so and makes it the upstream instead, asking to Pull first when it has commits the branch lacks.
 - A local branch that is not checked out is synced from its context menu, as of the last Fetch: Fast-Forward when it is only behind its upstream (moved without a checkout, recorded for Undo; not for one checked out in another worktree, which offers to open that worktree), Push when it is only ahead, and Publish when it has no upstream. A branch that has diverged is checked out to merge or rebase. Fetch never fast-forwards branches by itself.
@@ -349,6 +349,12 @@ Reference: Fork (the Fetch, Pull, Push, Stash, Pop row), Tower (buttons with a m
 - No ▾ menus on Pull, Push and Branch: one click on an icon must never send or rewrite anything. Operations that talk to a remote or move HEAD, a branch or the working tree (Fetch, Pull, Push, Checkout, Merge, Rebase, Cherry-pick, Revert, Pop, Undo) open a sheet that says what will happen; ↩ runs it, so the keyboard costs one extra key. Refresh and automatic fetching run at once. The menu shortcuts (⌃⌘L, ⌃⌘P) open the same sheets; Commit and Push does not ask again, unless there is no upstream or the upstream has moved on. One operation shows one sheet: what used to be a second dialog (Pull from a diverged Push, the upstream for a Pull, the pull request after its push) happens in or right after that sheet.
 - One name in one place: while the toolbar shows the search field, History hides its own (the match count, previous,
   next and "matching only" stay in History); while it shows Branch, the window subtitle leaves the branch out.
+- The History search: `after:` and `before:` keep the commits made after or before a date (git's `--after` and
+  `--before`: a date such as `2025-01-01`, or `"1 year ago"`). `contents:` with `path:` in the same AND looks only at
+  that path's changes (`git log -G<text> -- <path>`), so only that part of the history is read. A `contents:` search
+  goes through the commits newest first a few thousand at a time, coloring the matches found so far and showing how
+  many and how far it has got (`12 found · 34%`): searching all of linux's history takes about ten minutes even with
+  every content at hand, so the results that come first are worth seeing.
 - Network git that prints nothing for 120 seconds (usually a credential prompt nobody sees) is stopped with an error saying so. It can also be cancelled from Activity.
 
 ## 5a. Stashes
@@ -623,11 +629,17 @@ the sidebar is wider.
   clone (git's warning stays in Activity's output). `amonhen clone` takes `--filter=<spec>`, `--depth <n>` and
   `--sparse`.
 - Partial clone: the sidebar's History row has a small cloud mark with the filter in its tooltip. Diffs fetch the
-  contents they need in one go. A History search with `contents:` needs every content not fetched yet, so a sheet
-  asks first ("This search fetches all contents not fetched yet", Search / Cancel); they are then fetched in one go
-  before searching (git alone would fetch them one at a time). Fetching in one go needs git 2.29, to fetch them
+  contents they need in one go. Before a History search with `contents:`, the app counts the contents it needs that
+  aren't fetched yet (the files each commit within the search's `path:` and dates changed, before and after; only
+  trees are read), and a sheet asks first with that number ("This search fetches 8,249 file contents not fetched
+  yet", Search / Cancel); they are then fetched in one go (git alone would fetch them one at a time). Past 50,000 it
+  stops counting and fetches nothing: the sheet asks to narrow the search with `path:`, `after:` or `before:`, or to
+  fetch all contents (Open Fetching and Folders / Cancel). Fetching that many by ID doesn't finish: git's own
+  handling of the list grows with its square (on linux, 640,000 took 128 seconds before anything was sent), while
+  Fetch All Contents fetched all of linux again in 204 seconds. Fetching in one go needs git 2.29, to fetch them
   without telling the server what is already here (servers such as GitHub send nothing otherwise); with older git,
-  git fetches them one at a time as it reads them.
+  git fetches them one at a time as it reads them. Once all contents are fetched (the filter removed), nothing is
+  counted, and fetching a content later doesn't write the filter back.
 - Sparse checkout: the sidebar's Working Copy row has a small folder mark, and Working Copy says "Only some folders
   are checked out (2)" above the list of changes; clicking it opens Fetching and Folders. In a commit's diff, a file
   in a folder that isn't checked out has Show in Finder and Open with Default App disabled, with "This folder isn’t

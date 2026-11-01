@@ -24,8 +24,11 @@ becomes the GitHub Release notes.
 - Repository Settings has a Fetching and Folders page: fetch more of a shallow clone, fetch all contents of a partial
   clone (git 2.36), and choose the folders of a sparse checkout from HEAD's tree (git 2.25). The git line, the
   sidebar and Working Copy show when a repository is shallow, partial, sparse or registered for maintenance.
-- In a partial clone, a History search with `contents:` asks first, then fetches every content not fetched yet in
-  one go (git 2.29). `amonhen status` notes shallow, partial and sparse repositories.
+- In a partial clone, a History search with `contents:` says how many contents it will fetch and fetches them in one
+  go (git 2.29); past 50,000 it asks to narrow the search or fetch all contents. `amonhen status` notes shallow,
+  partial and sparse repositories.
+- The History search takes `after:` and `before:` (a date or `"1 year ago"`), and `contents:` with `path:` looks
+  only at that path's changes. A `contents:` search shows the matches and its progress as it goes.
 - Fetching and Folders has a switch to keep the repository maintained in the background (`git maintenance start`,
   git 2.31); the app then leaves writing the commit-graph to it. Turning it off lets git's automatic maintenance
   run again.

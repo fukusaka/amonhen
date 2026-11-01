@@ -896,6 +896,8 @@
 "Search by Author (author:)" = "作者で探す（author:）";
 "Search by Path (path:)" = "パスで探す（path:）";
 "Search by Contents (contents:)" = "内容で探す（contents:）";
+"Committed After (after:)" = "この日時より後（after:）";
+"Committed Before (before:)" = "この日時より前（before:）";
 "%@ — click to switch repository" = "%@ — 押すとリポジトリを切り替える";
 "Choose a Repository" = "リポジトリを選ぶ";
 "%@ — click to switch branch (⌘⇧B)" = "%@ — 押すとブランチを切り替える（⌘⇧B）";
@@ -1697,7 +1699,11 @@
 "Click to change them in Settings > Fetching and Folders." = "押すと、Settings の「取得とフォルダ」で変えられます。";
 "This folder isn’t checked out" = "取り出していないフォルダです";
 "Search the Contents?" = "中身を検索しますか？";
-"This search fetches all contents not fetched yet. In a large repository this can take long and use a lot of disk." = "この検索は、まだ取っていない中身をすべて取ります。大きなリポジトリでは時間がかかり、ディスクも多く使います。";
+"This search fetches %@ file contents not fetched yet." = "この検索は、まだ取っていない中身を %@ 個取ります。";
+"Too Many Contents to Fetch" = "取る中身が多すぎます";
+"This search needs more than %@ file contents not fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Fetching and Folders." = "この検索には、まだ取っていない中身が %@ 個より多く要ります。path:・after:・before: で絞るか、「取得とフォルダ」で中身をすべて取ってください。";
+"Open Fetching and Folders" = "「取得とフォルダ」を開く";
+"%d found · %d%%" = "%d 件 · %d%%";
 "Couldn’t Change the Folders" = "取り出すフォルダを変えられませんでした";
 "Maintenance" = "手入れ";
 "Keep this repository maintained in the background" = "このリポジトリをバックグラウンドで手入れする";

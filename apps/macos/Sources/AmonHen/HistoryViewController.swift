@@ -308,6 +308,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
     /// 検索の問い合わせが決まった・消えたとき（詳細の欄で一致を強調する）。
     var onSearchChanged: ((String?) -> Void)?
+    /// Repository Settings の取得とフォルダのページを開く（中身の検索に要る中身が多すぎるとき）。
+    var onShowFetchingSettings: (() -> Void)?
     private var searchRows: [Int] = []
     private var searchRowSet: Set<Int> = []
     private var searchIndex: Int?
@@ -1315,10 +1317,42 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         guard isPartialClone, Self.searchesContents(query), let window = view.window else {
             return runSearch(query, in: base)
         }
-        // partial clone では、中身の検索（git log -S）が取っていない中身をすべて取る。
+        // partial clone では、中身の検索（git log -G）の前に、要る中身のうち手元にないものを数えて断る。
+        searchTask?.cancel()
+        searchSpinner.startAnimation(nil)
+        searchCount.stringValue = ""
+        searchTask = Task {
+            let result = await Task.detached(priority: .userInitiated) { Result { try base.contentsToFetch(query) } }.value
+            guard !Task.isCancelled, (self.baseHistory ?? self.history) === base else { return }
+            self.searchSpinner.stopAnimation(nil)
+            switch result {
+            case .success(nil):
+                self.runSearch(query, in: base)
+            case let .success(need?):
+                self.confirmContentsSearch(query, in: base, need: need, window: window)
+            case let .failure(error):
+                self.searchCount.stringValue = "\(error)"
+                self.searchCount.toolTip = "\(error)"
+            }
+        }
+    }
+
+    /// partial clone で中身を探す前に、取る中身の数を出して断る。上限を超えるなら探さず、絞るか中身をすべて取るよう頼む。
+    private func confirmContentsSearch(_ query: String, in base: History, need: (count: Int, more: Bool), window: NSWindow) {
+        let count = NumberFormatter.localizedString(from: NSNumber(value: need.count), number: .decimal)
         let alert = NSAlert()
+        if need.more {
+            alert.messageText = L("Too Many Contents to Fetch")
+            alert.informativeText = L("This search needs more than %@ file contents not fetched yet. Narrow it with path:, after: or before:, or fetch all contents in Fetching and Folders.", count)
+            alert.addButton(withTitle: L("Open Fetching and Folders"))
+            alert.addButton(withTitle: L("Cancel"))
+            alert.beginSheetModal(for: window) { [weak self] response in
+                if response == .alertFirstButtonReturn { self?.onShowFetchingSettings?() }
+            }
+            return
+        }
         alert.messageText = L("Search the Contents?")
-        alert.informativeText = L("This search fetches all contents not fetched yet. In a large repository this can take long and use a lot of disk.")
+        alert.informativeText = L("This search fetches %@ file contents not fetched yet.", count)
         alert.addButton(withTitle: L("Search"))
         alert.addButton(withTitle: L("Cancel"))
         alert.beginSheetModal(for: window) { [weak self] response in
@@ -1340,7 +1374,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let repository = self.repository
         let matchOnly = matchOnlyButton.state == .on
         searchTask = Task {
+            // 内容の検索は大きな履歴では数分かかるので、分かった分から色を付け、件数と進み具合を出す。
+            let partial = Task { [weak self] in
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .milliseconds(300))
+                    guard let self, !Task.isCancelled else { return }
+                    showPartialSearch(repository.searchPartial())
+                }
+            }
             let result = await Task.detached(priority: .userInitiated) { Result { try base.search(query) } }.value
+            partial.cancel()
             guard !Task.isCancelled, (self.baseHistory ?? self.history) === base else { return }
             let rows: [Int]
             switch result {
@@ -1436,6 +1479,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             searchCount.stringValue = searchQuery == nil ? "" : L("No Matches")
         }
         updateMatchButtons()
+        redrawText()
+    }
+
+    /// 走っている検索の、そこまでに分かった行に色を付け、件数と探し終えた割合を出す（選んでいる行は動かさない）。
+    private func showPartialSearch(_ partial: (rows: [Int], done: Float)) {
+        guard partial.done > 0 || !partial.rows.isEmpty else { return }
+        searchRowSet = Set(partial.rows)
+        searchCount.stringValue = L("%d found · %d%%", partial.rows.count, Int(partial.done * 100))
         redrawText()
     }
 

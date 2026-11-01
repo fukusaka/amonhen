@@ -361,6 +361,20 @@ extension Repository {
         amonhen_search_cancel(raw)
     }
 
+    /// 走っている History の検索の、そこまでに分かった行（昇順）と探し終えた割合（0〜1）。どのスレッドから呼んでもよい。
+    public func searchPartial() -> (rows: [Int], done: Float) {
+        var done: Float = 0
+        let rows = amonhen_search_partial(raw, &done)!
+        return (Repository.takeRows(rows), done)
+    }
+
+    /// コアが返した行の列を読み、解放する。
+    static func takeRows(_ rows: OpaquePointer) -> [Int] {
+        defer { amonhen_rows_free(rows) }
+        let view = amonhen_rows_view(rows)
+        return UnsafeBufferPointer(start: view.rows, count: Int(view.count)).map(Int.init)
+    }
+
     /// 命令を実行し、結果の `info` を `T` として読む。裏のスレッドで呼ぶ。
     public func info<T: Decodable>(_ command: [String: Any], as type: T.Type = T.self) throws -> T {
         try info(json: try Repository.json(command), as: type)

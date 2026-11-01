@@ -178,6 +178,7 @@ final class RepositoryWindow: NSObject, NSWindowDelegate, NSMenuItemValidation, 
             let sha = id.map { String(format: "%02x", $0) }.joined()
             ciPopovers.toggle(key: sha, status: ci, sha: sha, repo: gitHub, relativeTo: rect, of: view)
         }
+        history.onShowFetchingSettings = { [weak self] in self?.showFetchingSettings() }
         history.onSearchChanged = { [weak self] query in
             self?.detail.searchQuery = query
             self?.toolbar.setSearch(query)
