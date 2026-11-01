@@ -633,6 +633,7 @@
 "Show the message in a monospaced font" = "本文を等幅の字体で表示する";
 "Appearance" = "表示";
 "Write commit-graph automatically" = "commit-graph を自動で書き出す";
+"Writes to .git." = ".git に書きます。";
 "When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster." = "commit-graph がないリポジトリを開いたとき、裏で git commit-graph write --reachable --changed-paths を実行する（.git に書き込む）。履歴の読み込みと path: での検索が速くなる。";
 "Shared daemon" = "共有の daemon";
 "Open repositories through the shared daemon (SSH hosts too)" = "リポジトリを共有の daemon 越しに開く（SSH 先も）";
@@ -1645,6 +1646,7 @@
 "Send the current prompt with a sample diff and message, and see the reply." = "見本の差分・メッセージで、今のプロンプトを実際に送って返事を見る";
 "Stored in {dir}/<purpose>.md. A repository’s .amonhen/prompts/<purpose>.md takes precedence (you’re asked to check it the first time). The app appends the reply format (the JSON for resolving conflicts)." = "{dir}/<用途>.md に置く。リポジトリの .amonhen/prompts/<用途>.md があればそちらを優先する（初めて使うときに中身を確かめる）。返事の形（コンフリクトの解消の JSON）はアプリが末尾に足す。";
 "Forget Per-Repository Permissions" = "リポジトリごとの許可を消す";
+"Stored in {dir}." = "{dir} に置きます。";
 "Forgets the answers to “Use AI in this repository?” and asks again next time." = "「このリポジトリで AI を使うか」の答えを忘れ、次に使うときにもう一度確かめる。";
 "Use AI in this repository?" = "このリポジトリで AI を使いますか？";
 "Sends to {cli}: {summary}\nThis repository’s content (messages and diffs) goes to an external service through the CLI.\nYou can change this later with “Forget Per-Repository Permissions” in Settings > AI." = "{cli} に送ります: {summary}\nこのリポジトリの内容（メッセージ・差分）が、CLI を通じて外部のサービスに送られます。\nあとで 設定 > AI の「リポジトリごとの許可を消す」で選び直せます。";

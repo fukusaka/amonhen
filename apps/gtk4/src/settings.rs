@@ -481,16 +481,9 @@ pub fn show(parent: &gtk::ApplicationWindow) {
             section(
                 None,
                 &[
+                    // 説明は付けない（macOS 版と同じ）。
                     check(AUTO_BOOKMARK, &tr!("Bookmark repositories you open")).upcast(),
-                    note(&tr!(
-                        "Repositories already found in folders to scan aren’t added."
-                    ))
-                    .upcast(),
                     fetch_row.upcast(),
-                    note(&tr!(
-                        "Fetches all remotes of each open repository without asking."
-                    ))
-                    .upcast(),
                 ],
             ),
             section(None, &[crate::editor::settings_row().upcast()]),
@@ -661,11 +654,11 @@ pub fn show(parent: &gtk::ApplicationWindow) {
     stack.add_titled(
         &page(&[section(
             Some(&tr!("Merge Editor")),
-            &[
-                check(AUTO_MAGIC_MERGE, &tr!("Resolve unambiguous conflicts when the merge editor opens")).upcast(),
-                note(&tr!("Conflicts where both sides are the same, or only one side changed. Ctrl+Z undoes it. Use ✨ Magic Merge for the rest."))
-                    .upcast(),
-            ],
+            &[check(
+                AUTO_MAGIC_MERGE,
+                &tr!("Resolve unambiguous conflicts when the merge editor opens"),
+            )
+            .upcast()],
         )]),
         Some("diff-merge"),
         &tr!("Diff & Merge"),
@@ -689,19 +682,18 @@ pub fn show(parent: &gtk::ApplicationWindow) {
                 None,
                 &[
                     check(WRITE_COMMIT_GRAPH, &tr!("Write commit-graph automatically")).upcast(),
-                    note(&tr!("When you open a repository without a commit-graph, runs git commit-graph write --reachable --changed-paths in the background (writes to .git). Loading history and searching with path: get faster."))
-                        .upcast(),
+                    note(&tr!("Writes to .git.")).upcast(),
                     fsmonitor.upcast(),
                     note(&tr!("A git fsmonitor--daemon runs for each repository.")).upcast(),
                 ],
             ),
             section(
                 Some(&tr!("Shared daemon")),
-                &[
-                    check(OPEN_THROUGH_DAEMON, &tr!("Open repositories through the shared daemon (SSH hosts too)")).upcast(),
-                    note(&tr!("Shares History, the search index, the operation log and SSH connections among the app, the CLI (amonhen -C daemon:… or -C ssh://…) and the VSCode extension. Applies to repositories opened from now on. See Daemon in Activity for its status."))
-                        .upcast(),
-                ],
+                &[check(
+                    OPEN_THROUGH_DAEMON,
+                    &tr!("Open repositories through the shared daemon (SSH hosts too)"),
+                )
+                .upcast()],
             ),
         ]),
         Some("performance"),

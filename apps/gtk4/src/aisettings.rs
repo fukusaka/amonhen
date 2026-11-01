@@ -78,12 +78,8 @@ pub fn page() -> gtk::Widget {
     let forget = gtk::Button::with_label(&tr!("Forget Per-Repository Permissions"));
     forget.set_halign(gtk::Align::Start);
     forget.connect_clicked(|_| assist::forget_repository_decisions());
-    let bottom = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    bottom.append(&forget);
-    bottom.append(&note(&tr!(
-        "Forgets the answers to “Use AI in this repository?” and asks again next time."
-    )));
-    column.append(&bottom);
+    // 説明は付けない（macOS 版と同じ）。
+    column.append(&forget);
 
     let refresh = {
         let (details, prompts) = (details.downgrade(), prompts.downgrade());
@@ -307,8 +303,9 @@ fn fill_prompts(b: &gtk::Box) {
         }
         b.append(&line);
     }
+    // macOS 版と同じ文（置き場所はこの FE のもの）。
     b.append(&note(&tr!(
-        "Stored in {dir}/<purpose>.md. A repository’s .amonhen/prompts/<purpose>.md takes precedence (you’re asked to check it the first time). The app appends the reply format (the JSON for resolving conflicts).",
+        "Stored in {dir}.",
         dir = home_relative(&store.dir)
     )));
 }
