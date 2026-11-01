@@ -121,8 +121,9 @@ struct Inner {
     /// 差分（`diff`）か、コンフリクトのファイルのマージエディタ（`merge`）。
     right_stack: gtk::Stack,
     merge_holder: gtk::Box,
-    /// 作ったマージエディタ（パスごと。ファイルを選び直しても、編集中の Result を保つ）と、埋め込んでいるもの。
-    editors: RefCell<HashMap<String, Rc<crate::merge::Editor>>>,
+    /// 作ったマージエディタ（worktree とパスごと。ファイルを選び直しても、書き込む先の worktree を切り替えて
+    /// 戻っても、編集中の Result を保つ）と、埋め込んでいるもの。
+    editors: RefCell<HashMap<EditorKey, Rc<crate::merge::Editor>>>,
     embedded: RefCell<Option<Rc<crate::merge::Editor>>>,
     /// 改行を変換している・改行が混ざっているファイルの印（普段のファイルでは出さない）。
     line_endings: gtk::Label,
@@ -142,6 +143,9 @@ struct Inner {
     /// ファイルの行の右クリックのメニューに足す項目（パス、Blame できるか、File History を出せるか）。
     on_file_menu: RefCell<Option<FileMenuCallback>>,
 }
+
+/// マージエディタの鍵: worktree（作業ツリーの場所）とパス。
+type EditorKey = (Option<std::path::PathBuf>, String);
 
 type FileMenuCallback = Box<dyn Fn(&str, bool, bool) -> Vec<crate::menu::Item>>;
 
@@ -457,7 +461,11 @@ impl WorkingCopy {
     }
 
     pub fn set_repo(&self, repo: Arc<Repository>) {
-        self.inner.repo.replace(Some(repo.clone()));
+        let old = self.inner.repo.replace(Some(repo.clone()));
+        // 書き込む先の worktree を切り替えた: 前の worktree のマージエディタを外す（作ったものは戻ったときに使う）。
+        if old.is_some_and(|old| old.paths().workdir != repo.paths().workdir) {
+            self.inner.unembed();
+        }
         self.inner.aids.set_repo(repo);
     }
 
@@ -1606,7 +1614,7 @@ impl Inner {
             this.embed_message(&tr!("The merge editor is open in a separate window"));
             return;
         }
-        let existing = this.editors.borrow().get(path).cloned();
+        let existing = this.editors.borrow().get(&this.editor_key(path)).cloned();
         if let Some(editor) = existing {
             Inner::embed(this, &editor);
             return;
@@ -1615,7 +1623,7 @@ impl Inner {
             return;
         };
         this.pending.set(this.pending.get() + 1);
-        let (weak, path) = (Rc::downgrade(this), path.to_owned());
+        let (weak, path, key) = (Rc::downgrade(this), path.to_owned(), this.editor_key(path));
         glib::spawn_future_local(async move {
             let loaded = crate::merge::load(repo, actions, &path).await;
             let Some(this) = weak.upgrade() else { return };
@@ -1625,7 +1633,7 @@ impl Inner {
             }
             match loaded {
                 Ok(editor) => {
-                    this.editors.borrow_mut().insert(path, editor.clone());
+                    this.editors.borrow_mut().insert(key, editor.clone());
                     Inner::embed(&this, &editor);
                     crate::merge::Editor::opened(&editor);
                 }
@@ -1648,8 +1656,10 @@ impl Inner {
             this.embedded.replace(Some(editor.clone()));
         }
         this.right_stack.set_visible_child_name("merge");
+        // 埋め込むのは、今の worktree のエディタだけ（後で切り替えても、このエディタの鍵はこれ）。
+        let key = this.editor_key(editor.path());
         // 別の窓に移す（編集中の内容のまま）。
-        let weak = Rc::downgrade(this);
+        let (weak, k) = (Rc::downgrade(this), key.clone());
         let e = Rc::downgrade(editor);
         editor.set_on_pop_out(Some(Rc::new(move || {
             let (Some(this), Some(editor)) = (weak.upgrade(), e.upgrade()) else {
@@ -1659,7 +1669,7 @@ impl Inner {
                 return;
             };
             this.unembed();
-            this.editors.borrow_mut().remove(editor.path());
+            this.editors.borrow_mut().remove(&k);
             crate::merge::show_in_window(&editor, &window);
             this.embed_message(&tr!("The merge editor is open in a separate window"));
         })));
@@ -1678,7 +1688,7 @@ impl Inner {
             {
                 this.unembed();
             }
-            this.editors.borrow_mut().remove(editor.path());
+            this.editors.borrow_mut().remove(&key);
         });
     }
 
@@ -1707,7 +1717,13 @@ impl Inner {
         self.right_stack.set_visible_child_name("merge");
     }
 
-    /// コンフリクトでなくなったファイルのマージエディタを捨てる（埋め込んでいれば外す）。
+    /// 今の worktree の `path` のマージエディタの鍵。
+    fn editor_key(&self, path: &str) -> EditorKey {
+        (self.repo().and_then(|r| r.paths().workdir), path.to_owned())
+    }
+
+    /// 今の worktree で、コンフリクトでなくなったファイルのマージエディタを捨てる（埋め込んでいれば外す）。
+    /// ほかの worktree のものは、その worktree の status が届くまで残す。
     fn prune_editors(&self) {
         let conflicted: std::collections::HashSet<String> = self
             .all_entries
@@ -1716,9 +1732,10 @@ impl Inner {
             .filter(|e| e.kind == StatusKind::Unmerged)
             .map(|e| e.path.clone())
             .collect();
+        let workdir = self.repo().and_then(|r| r.paths().workdir);
         self.editors
             .borrow_mut()
-            .retain(|path, _| conflicted.contains(path));
+            .retain(|(w, path), _| *w != workdir || conflicted.contains(path));
         let stale = self
             .embedded
             .borrow()
