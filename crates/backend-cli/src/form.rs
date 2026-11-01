@@ -200,8 +200,16 @@ impl Git {
             "--stdin",
             remote,
         ];
+        // `--filter` を付けた fetch は、その filter を `remote.<name>.partialclonefilter` に書き戻す。中身をすべて
+        // 取り直して filter を外したリポジトリでは、外したままにする（残せば、また partial clone として扱われる）。
+        let key = format!("remote.{remote}.partialclonefilter");
+        let had_filter = self.read(&["config", "--get", &key]).is_ok();
         let input: String = ids.iter().map(|id| format!("{id}\n")).collect();
-        self.write_with_input(&args, input.as_bytes()).map(drop)
+        let fetched = self.write_with_input(&args, input.as_bytes()).map(drop);
+        if !had_filter {
+            let _ = self.write(&["config", "--unset-all", &key]);
+        }
+        fetched
     }
 
     /// partial clone なら、`tips` から辿れる範囲（`path` があればその下）の手元にない中身をまとめて取る。内容で探す

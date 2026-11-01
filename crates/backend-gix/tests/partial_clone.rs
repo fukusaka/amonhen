@@ -108,11 +108,39 @@ fn reads_blobs_missing_from_a_partial_clone() {
     assert_eq!(packs(&dir), before + batched);
     backend.prefetch_blobs(&ids).unwrap();
     assert_eq!(packs(&dir), before + batched, "揃っていれば取りに行かない");
+    assert_eq!(
+        git(
+            &dir,
+            &["config", "--get", "remote.origin.partialclonefilter"]
+        ),
+        "blob:none"
+    );
     for c in &changes {
         let new = backend.blob(&c.new_id.unwrap()).unwrap();
         assert!(String::from_utf8_lossy(&new).ends_with(" two\n"));
     }
     assert!(!dir.join(".git/FETCH_HEAD").exists());
+
+    // 中身をすべて取り直して filter を外したあとに取っても、filter を書き戻さない。
+    git(
+        &dir,
+        &["config", "--unset", "remote.origin.partialclonefilter"],
+    );
+    let changes = backend
+        .changes_between(Some(&oid(second)), &oid(third))
+        .unwrap();
+    let ids: Vec<Oid> = changes.iter().flat_map(|c| c.new_id).collect();
+    backend.prefetch_blobs(&ids).unwrap();
+    let filter = Command::new("git")
+        .args(["config", "--get", "remote.origin.partialclonefilter"])
+        .current_dir(&dir)
+        .output()
+        .unwrap();
+    assert!(!filter.status.success(), "filter が戻った");
+    git(
+        &dir,
+        &["config", "remote.origin.partialclonefilter", "blob:none"],
+    );
 
     // 先に取っていなくても、1 つずつなら git に読ませる。
     let changes = backend
