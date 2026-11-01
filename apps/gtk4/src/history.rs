@@ -320,13 +320,12 @@ mod imp {
             drag.connect_prepare(move |_, _, y| {
                 let view = weak.upgrade()?;
                 let row = view.row_at(y as f32)?;
-                let (repo, history) = view.current()?;
+                let (_, history) = view.current()?;
                 let id = *history.graph.ids().get(row as usize)?;
-                // 運んでいる間は、件名を札にして出す。
+                // 運んでいる間は、件名を札にして出す。件名は読んである行のものを使う（ここで読むと、daemon・
+                // SSH 先では 1 往復ぶん画面が止まる。macOS 版と同じ）。
                 sub.replace(
-                    repo.commit_message(&id)
-                        .ok()
-                        .and_then(|m| m.lines().next().map(str::to_owned))
+                    view.loaded_subject(row)
                         .unwrap_or_else(|| id.to_string()[..8].to_owned()),
                 );
                 let value = format!("{DRAG_PREFIX}{id}");
@@ -721,6 +720,14 @@ impl HistoryView {
             && !st.lanes.animating
             && st.verifying.is_empty()
             && st.unverified.is_empty()
+    }
+
+    /// 読んである行の件名（まだ読んでいなければ `None`）。
+    fn loaded_subject(&self, row: u32) -> Option<String> {
+        let st = self.state();
+        let chunk = st.chunks.get(&(row / CHUNK_ROWS))?;
+        let i = chunk.index(row);
+        Some(chunk.text(chunk.0.subjects[i]).to_owned())
     }
 
     pub fn selected(&self) -> Option<u32> {
