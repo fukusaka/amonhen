@@ -154,6 +154,17 @@ impl Status {
         }
     }
 
+    /// 吹き出しの見出しのアイコン（macOS 版の `symbol` に近い形）。
+    fn icon(self) -> crate::icon::Kind {
+        use crate::icon::Kind;
+        match self {
+            Self::Verified(_) | Self::Untrusted | Self::Pending => Kind::Seal,
+            Self::SignerMismatch | Self::NoKey | Self::Unsupported => Kind::Question,
+            Self::Expired => Kind::History,
+            Self::Revoked | Self::Bad => Kind::SealCross,
+        }
+    }
+
     /// 信用度の目盛りの段数（0〜3。macOS 版の `trustBars`）。信用度に意味がない状態は None。
     pub fn trust_bars(self) -> Option<u8> {
         match self {
@@ -349,6 +360,28 @@ pub fn row(
     mark.upcast()
 }
 
+/// 吹き出しの札の見た目（状態の色の文字に、同じ色の薄い地。macOS 版と同じ）。
+fn install_css() {
+    thread_local! {
+        static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".signature-badge { border-radius: 4px; padding: 1px 5px; font-weight: 500; \
+         background-color: alpha(currentColor, 0.15); }",
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
 /// 信用度の 3 段の目盛り（`bars` 段を状態の色で塗る。macOS 版の `trustMeter`）。
 fn trust_meter(bars: u8, css: Option<&'static str>) -> gtk::DrawingArea {
     let (width, height, gap) = (4.0, 10.0, 2.0);
@@ -425,17 +458,27 @@ fn show(
     place: &Place,
     tag: Option<&Tag>,
 ) {
+    install_css();
+    // 見出し: 状態の色のアイコンと言葉、右に検証した場所の札（状態の色の文字と薄い地。macOS 版と同じ）。
+    let icon = crate::icon::Icon::default();
+    icon.set(status.icon(), false);
     let title = gtk::Label::new(Some(status.label()));
     title.add_css_class("heading");
     if let Some(css) = status.css() {
+        icon.add_css_class(css);
         title.add_css_class(css);
     }
     let badge = gtk::Label::new(Some(&tr!("Checked on {place}", place = place.name())));
     badge.add_css_class("caption");
-    badge.add_css_class("dim-label");
-    badge.set_hexpand(true);
-    badge.set_xalign(1.0);
-    let header = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    badge.add_css_class("signature-badge");
+    if let Some(css) = status.css() {
+        badge.add_css_class(css);
+    }
+    badge.set_valign(gtk::Align::Center);
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    let header = gtk::Box::new(gtk::Orientation::Horizontal, 6);
+    header.append(&icon);
     header.append(&title);
     if let Some(tag) = tag {
         let name = gtk::Label::new(Some(&tr!("Tag {name}", name = tag.name)));
@@ -443,6 +486,7 @@ fn show(
         name.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
         header.append(&name);
     }
+    header.append(&spacer);
     header.append(&badge);
     let explanation = gtk::Label::new(Some(&status.explanation_for(tag.is_some())));
     explanation.set_wrap(true);
