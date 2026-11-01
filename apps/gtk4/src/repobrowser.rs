@@ -97,7 +97,8 @@ const CATEGORY_KEY: &str = "repositoryPageCategory";
 /// 手元のリポジトリを選んだ、前のフォルダ。
 const LAST_LOCAL_FOLDER_KEY: &str = "lastLocalRepositoryFolder";
 /// SSH 先でスキャンするフォルダを加えた、前のホスト。
-const LAST_HOST_KEY: &str = "lastScanHost";
+/// 前回入れた接続先（SSH 接続を加えるシートと SSH 先のスキャンするフォルダで共通。macOS 版と同じ鍵）。
+const LAST_HOST_KEY: &str = "lastRemoteHost";
 /// 開いている左の節（鍵を改行で区切る）。
 const EXPANDED_KEY: &str = "repositoryPageExpanded";
 
@@ -2013,81 +2014,25 @@ impl Browser {
     /// SSH 先のリポジトリを加えて開く。`host` があれば、そのホストの場所を最初に入れておく。Choose… で、
     /// そのホストのフォルダを列で見て選べる。
     fn add_remote(self: &Rc<Self>, host: Option<&str>) {
-        let mut initial = host.map_or_else(|| "ssh://".to_owned(), |h| format!("ssh://{h}/"));
+        // ホストの行から（右クリック・ホストを選んでいるときの ＋）なら、接続先は決まっている（macOS 版と同じ）。
+        let fixed = host.map(str::to_owned).or_else(|| match &*self.category.borrow() {
+            Category::Host(h) | Category::HostFolder(h, _) => Some(h.clone()),
+            _ => None,
+        });
         let b = self.clone();
         glib::spawn_future_local(async move {
-            loop {
-                let sheet = Sheet::new(
-                    Some(&b.window()),
-                    &tr!("Add SSH Connection"),
-                    &tr!(
-                        "ssh://[user@]host[:port]/path (a daemon on an SSH host) or daemon:/path (the local shared daemon)"
-                    ),
-                );
-                let entry = gtk::Entry::builder()
-                    .text(&initial)
-                    .activates_default(true)
-                    .hexpand(true)
-                    .build();
-                sheet.add(&entry);
-                let ok = sheet.buttons("OK", false, Some(&tr!("Choose…")));
-                // ホストとパスがそろうまで OK を押せない（macOS 版と同じ）。
-                let check = move |e: &gtk::Entry| {
-                    ok.set_sensitive(bookmarks::is_connection(e.text().trim()));
-                };
-                check(&entry);
-                entry.connect_changed(check);
-                entry.grab_focus();
-                let response = sheet.run().await;
-                let location = entry.text().trim().to_owned();
-                match response {
-                    Response::Cancel => return,
-                    Response::Other => {
-                        // ホストのフォルダを見て選ぶ（選んだら、欄に入れて聞き直す）。
-                        let Some(host) = bookmarks::ssh_host(&location).filter(|h| !h.is_empty())
-                        else {
-                            b.root.error_bell();
-                            initial = location;
-                            continue;
-                        };
-                        let path = bookmarks::path_part(&location);
-                        let path = path
-                            .strip_prefix('/')
-                            .filter(|p| p.starts_with('~'))
-                            .map_or(path.clone(), str::to_owned);
-                        let request = Request {
-                            title: tr!("Choose a Repository on {host}", host = host),
-                            message: tr!(
-                                "Click a folder to open it, and choose a repository (green)."
-                            ),
-                            kind: Kind::Folder,
-                            initial: if path.is_empty() { "~".into() } else { path },
-                            places: Vec::new(),
-                        };
-                        initial = match filepicker::choose(
-                            Some(&b.window()),
-                            request,
-                            Source::Host(host),
-                        )
-                        .await
-                        {
-                            Some(chosen) => chosen.ssh_location(),
-                            None => location,
-                        };
-                    }
-                    Response::Ok => {
-                        // Enter は押せない OK でも届くので、ここでも確かめる（書いたものは残して聞き直す）。
-                        if !bookmarks::is_connection(&location) {
-                            b.root.error_bell();
-                            initial = location;
-                            continue;
-                        }
-                        bookmarks::add(&location, b.selected_group().as_deref());
-                        b.open_location(&location, true);
-                        return;
-                    }
-                }
+            let Some((host, path)) = ssh_connection_sheet(&b.window(), fixed).await else {
+                return;
+            };
+            let location = filepicker::Chosen {
+                host: host.clone(),
+                path: path.clone(),
+                shown: path,
             }
+            .ssh_location();
+            crate::settings::set_string(LAST_HOST_KEY, &host);
+            bookmarks::add(&location, b.selected_group().as_deref());
+            b.open_location(&location, true);
         });
     }
 
@@ -2209,6 +2154,266 @@ pub async fn choose_remote_scan_folder(
     }
     crate::settings::set_string(LAST_HOST_KEY, &chosen.host);
     Some(chosen.ssh_location())
+}
+
+/// SSH 接続（SSH 先のリポジトリ）を加えるシート（macOS 版の `SSHConnectionSheet`）: 接続先（~/.ssh/config の名前か
+/// user@host:port。▾ で候補から）、リポジトリのパス（Choose… でホストの中を見て選ぶ）、接続の確認（BatchMode の
+/// ssh で git とエンジンの有無を読む）、Add and Open。`fixed` なら接続先は変えられない。選んだ接続先とパスを返す。
+async fn ssh_connection_sheet(parent: &gtk::Window, fixed: Option<String>) -> Option<(String, String)> {
+    let sheet = Sheet::new(
+        Some(parent),
+        &match &fixed {
+            Some(h) => tr!("Add a Repository on {host}", host = h),
+            None => tr!("Add SSH Connection"),
+        },
+        &tr!("Connects over SSH. Use a host you can log in to without a password (with a key or ssh-agent)."),
+    );
+    let host = gtk::Entry::builder()
+        .text(
+            fixed
+                .clone()
+                .or_else(|| crate::settings::string(LAST_HOST_KEY))
+                .unwrap_or_default(),
+        )
+        .placeholder_text(tr!("user@host:port (or a name in ~/.ssh/config)"))
+        .hexpand(true)
+        .activates_default(true)
+        .sensitive(fixed.is_none())
+        .build();
+    let host_line = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    host_line.append(&host);
+    if fixed.is_none() {
+        // 候補: 一覧にあるホスト、~/.ssh/config・known_hosts のホスト。
+        let mut candidates: Vec<String> = bookmarks::all_locations()
+            .iter()
+            .filter_map(|l| bookmarks::ssh_host(l))
+            .filter(|h| !h.is_empty())
+            .collect();
+        candidates.extend(crate::sshhosts::candidates());
+        let mut seen = std::collections::HashSet::new();
+        candidates.retain(|h| seen.insert(h.clone()));
+        if !candidates.is_empty() {
+            let list = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            let popover = gtk::Popover::new();
+            for h in candidates {
+                let item = gtk::Button::with_label(&h);
+                item.add_css_class("flat");
+                if let Some(l) = item.child().and_downcast::<gtk::Label>() {
+                    l.set_xalign(0.0);
+                }
+                let (e, p) = (host.downgrade(), popover.downgrade());
+                item.connect_clicked(move |_| {
+                    if let Some(e) = e.upgrade() {
+                        e.set_text(&h);
+                    }
+                    if let Some(p) = p.upgrade() {
+                        p.popdown();
+                    }
+                });
+                list.append(&item);
+            }
+            popover.set_child(Some(
+                &gtk::ScrolledWindow::builder()
+                    .child(&list)
+                    .hscrollbar_policy(gtk::PolicyType::Never)
+                    .max_content_height(320)
+                    .propagate_natural_height(true)
+                    .build(),
+            ));
+            let more = gtk::MenuButton::builder()
+                .popover(&popover)
+                .tooltip_text(tr!("Hosts in ~/.ssh/config and ones already in the list"))
+                .build();
+            host_line.append(&more);
+        }
+    }
+    let path = gtk::Entry::builder()
+        .text("~")
+        .placeholder_text(tr!("Folder of the repository on the host"))
+        .hexpand(true)
+        .activates_default(true)
+        .build();
+    let choose = gtk::Button::with_label(&tr!("Choose…"));
+    let path_line = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    path_line.append(&path);
+    path_line.append(&choose);
+    sheet.add(&crate::sheets::row(&tr!("Host"), &host_line));
+    sheet.add(&crate::sheets::row(&tr!("Path"), &path_line));
+    // 接続の確認。
+    let check = gtk::Button::with_label(&tr!("Check Connection"));
+    let spinner = gtk::Spinner::new();
+    let result = gtk::Label::new(None);
+    result.set_wrap(true);
+    result.set_xalign(0.0);
+    result.set_hexpand(true);
+    result.set_lines(3);
+    result.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    result.set_selectable(true);
+    let check_line = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    check_line.append(&check);
+    check_line.append(&spinner);
+    check_line.append(&result);
+    sheet.add(&check_line);
+    let ok = sheet.buttons(&tr!("Add and Open"), false, None);
+    let checking = Rc::new(Cell::new(false));
+    // 接続先とパスがそろい、確かめている途中でなければ加えられる（macOS 版の `canAdd`）。
+    let valid = |h: &str, p: &str| {
+        let h = h.trim();
+        !h.is_empty() && !p.trim().is_empty() && !h.contains(char::is_whitespace) && !h.contains('/')
+    };
+    let update = {
+        let (host, path, ok, choose, check, checking) = (
+            host.downgrade(),
+            path.downgrade(),
+            ok.clone(),
+            choose.clone(),
+            check.clone(),
+            checking.clone(),
+        );
+        Rc::new(move || {
+            let (Some(host), Some(path)) = (host.upgrade(), path.upgrade()) else {
+                return;
+            };
+            let h = host.text();
+            let has_host = !h.trim().is_empty();
+            ok.set_sensitive(valid(&h, &path.text()) && !checking.get());
+            choose.set_sensitive(has_host);
+            check.set_sensitive(has_host && !checking.get());
+        })
+    };
+    update();
+    let u = update.clone();
+    host.connect_changed(move |_| u());
+    let u = update.clone();
+    path.connect_changed(move |_| u());
+    let (h, sp, r, c, u) = (
+        host.downgrade(),
+        spinner.clone(),
+        result.clone(),
+        checking.clone(),
+        update.clone(),
+    );
+    check.connect_clicked(move |_| {
+        let Some(name) = h.upgrade().map(|e| e.text().trim().to_owned()) else {
+            return;
+        };
+        if name.is_empty() {
+            return;
+        }
+        c.set(true);
+        u();
+        sp.set_spinning(true);
+        r.remove_css_class("error");
+        r.remove_css_class("success");
+        r.set_text(&tr!("Connecting…"));
+        let (sp, r, c, u) = (sp.clone(), r.clone(), c.clone(), u.clone());
+        glib::spawn_future_local(async move {
+            let (text, ok) = gio::spawn_blocking(move || check_ssh_host(&name))
+                .await
+                .unwrap_or_else(|_| (tr!("Couldn’t run ssh"), false));
+            sp.set_spinning(false);
+            r.set_text(&text);
+            r.add_css_class(if ok { "success" } else { "error" });
+            c.set(false);
+            u();
+        });
+    });
+    let (h, p, w) = (host.downgrade(), path.downgrade(), sheet.window.downgrade());
+    choose.connect_clicked(move |_| {
+        let (Some(h), Some(p), Some(w)) = (h.upgrade(), p.upgrade(), w.upgrade()) else {
+            return;
+        };
+        let name = h.text().trim().to_owned();
+        if name.is_empty() {
+            return;
+        }
+        let request = Request {
+            title: tr!("Choose a Repository on {host}", host = name),
+            message: tr!("Click a folder to open it, and choose a repository (green)."),
+            kind: Kind::Folder,
+            initial: p.text().trim().to_owned(),
+            places: Vec::new(),
+        };
+        glib::spawn_future_local(async move {
+            if let Some(chosen) = filepicker::choose(Some(&w), request, Source::Host(name)).await {
+                h.set_text(&chosen.host);
+                p.set_text(&chosen.shown);
+            }
+        });
+    });
+    if fixed.is_none() {
+        host.grab_focus();
+    } else {
+        path.grab_focus();
+    }
+    let window = sheet.window.clone();
+    let response = sheet.run().await;
+    let (h, p) = (host.text().trim().to_owned(), path.text().trim().to_owned());
+    window.destroy();
+    // Enter は押せない Add and Open でも届くので、ここでも確かめる。
+    (response == Response::Ok && valid(&h, &p) && !checking.get()).then_some((h, p))
+}
+
+/// `host` に BatchMode の ssh でつなぎ、git の版とエンジン（`amonhen`）の有無を読む（パスワードを聞くホストには
+/// つながない）。sh で読めなければ（つながったのに sh が動かなければ）、Windows とみて PowerShell で読む。macOS 版の
+/// `SSHConnectionSheet.check`。返すのは、出す文と、使えそうか。
+fn check_ssh_host(host: &str) -> (String, bool) {
+    let program = std::env::var("AMONHEN_SSH").unwrap_or_else(|_| "ssh".into());
+    let run = |command: &str| {
+        amonhen_model::process::command(&program)
+            .args(["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", host, command])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .ok()
+    };
+    let Some(mut out) =
+        run("git --version 2>/dev/null; command -v amonhen >/dev/null 2>&1 && echo engine; true")
+    else {
+        return (tr!("Couldn’t run ssh"), false);
+    };
+    // ssh そのものの失敗は 255。
+    let code = out.status.code().unwrap_or(-1);
+    if code != 0 && code != 255 {
+        let script = "git --version; if (Get-Command amonhen -CommandType Application -ErrorAction SilentlyContinue) { 'engine' }";
+        // `-EncodedCommand` は UTF-16LE の base64（cmd.exe・pwsh・Windows PowerShell のどれでも同じ意味に）。
+        let bytes: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let encoded = glib::base64_encode(&bytes);
+        if let Some(windows) = run(&format!(
+            "powershell -NoProfile -NonInteractive -EncodedCommand {encoded}"
+        )) && windows.status.success()
+        {
+            out = windows;
+        }
+    }
+    if !out.status.success() {
+        let message = String::from_utf8_lossy(&out.stderr).trim().to_owned();
+        return (
+            if message.is_empty() {
+                tr!(
+                    "Couldn’t connect (exit {code})",
+                    code = out.status.code().unwrap_or(-1)
+                )
+            } else {
+                message
+            },
+            false,
+        );
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    let git = text
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("git version ").map(str::to_owned));
+    let engine = text.lines().any(|l| l.trim() == "engine");
+    let mut shown = match &git {
+        Some(v) => tr!("Reachable: git {version}", version = v),
+        None => tr!("Reachable, but git wasn’t found on the host"),
+    };
+    shown += &if engine {
+        tr!(", engine found")
+    } else {
+        tr!(", engine not installed (Amon Hen sends one)")
+    };
+    (shown, git.is_some())
 }
 
 /// 並べ替えとセルの描画に使う、行ごとの名前（小文字）と開いた日時、読んだブックマーク。一覧を作り直すたびに

@@ -458,21 +458,6 @@ pub fn path_part(location: &str) -> String {
     }
 }
 
-/// SSH 先・daemon 越しのリポジトリとして加えられる場所か（ホストとパスがあり、ホストに空白がない）。macOS 版の
-/// Add SSH Connection が Add を押せるときと同じ。
-pub fn is_connection(location: &str) -> bool {
-    if !amonhen_remote::location::is_remote(location) {
-        return false;
-    }
-    if let Some(host) = ssh_host(location)
-        && (host.is_empty() || host.contains(char::is_whitespace))
-    {
-        return false;
-    }
-    let path = path_part(location);
-    !path.trim_matches('/').trim().is_empty()
-}
-
 /// ホームの下を `~` で短くする（手元のパスだけ）。
 pub fn tilde(path: &str) -> String {
     let home = glib::home_dir();
@@ -870,21 +855,6 @@ fn pump() {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn connection_needs_host_and_path() {
-        assert!(super::is_connection("ssh://host/repo"));
-        assert!(super::is_connection("ssh://user@host:22/~/repo"));
-        assert!(super::is_connection("daemon:/repo"));
-        assert!(super::is_connection("daemon:ssh://host/repo"));
-        assert!(!super::is_connection("ssh://"));
-        assert!(!super::is_connection("ssh:///repo"));
-        assert!(!super::is_connection("ssh://host"));
-        assert!(!super::is_connection("ssh://host/"));
-        assert!(!super::is_connection("ssh://ho st/repo"));
-        assert!(!super::is_connection("daemon:"));
-        assert!(!super::is_connection("/local/repo"));
-    }
-
     use super::*;
 
     #[test]
