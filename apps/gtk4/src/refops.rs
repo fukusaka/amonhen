@@ -752,20 +752,17 @@ pub fn drop_menu(
             sequence.push(json!({ "op": "rebase", "onto": dragged }));
             let (a, d, t) = (actions.clone(), dragged.clone(), to.clone());
             items.push(menu::action(titles::rebase(&to, &dragged), move || {
-                if sequence.len() == 1 {
-                    sheets::integrate(&a, &d, &t, true);
-                } else {
-                    // 落とした先のブランチに取り込む見込み（rebase のときはコミットごと。macOS 版と同じ）。
-                    sheets::confirm_integrate(
-                        &a,
-                        tr!("Rebase {target} onto {rev}?", target = t, rev = d),
-                        "Rebase",
-                        t.clone(),
-                        vec![d.clone()],
-                        true,
-                        sequence.clone(),
-                    );
-                }
+                // 落とした先のブランチに取り込む見込み（rebase のときはコミットごと）。落とした先が今のブランチでも
+                // 同じ確認（macOS 版と同じ）。
+                sheets::confirm_integrate(
+                    &a,
+                    tr!("Rebase {target} onto {rev}?", target = t, rev = d),
+                    "Rebase",
+                    t.clone(),
+                    vec![d.clone()],
+                    true,
+                    sequence.clone(),
+                );
             }));
         }
         // push できるのはローカルブランチだけ。リモートの見出し（フォルダ）か、リモートブランチの上。
