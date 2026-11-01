@@ -1073,16 +1073,20 @@ fn build_tab(
     // 詳細の親・子・取り込んだコミット・メッセージの中の ID は、そのコミットを選ぶ（今の範囲になければ全ブランチ
     // にして）。ref の名前は、その ref の履歴に絞り込む（macOS 版の `onSelectCommit`・`selectRef(named:)`）。
     {
-        let v = view.downgrade();
+        let (v, focus) = (view.downgrade(), view.downgrade());
         let (pages, view, sh) = (pages.clone(), view.clone(), Rc::downgrade(&shaper));
         let s = Rc::downgrade(&shaper);
         details.connect_links(
             Rc::new(move || v.upgrade().and_then(|v| v.current()).map(|(r, _)| r)),
             Rc::new(move |id| jump_to(&pages, &view, id, &Rc::new(Cell::new(0)), &sh)),
             Some(Rc::new(move |name: &str| {
-                if !s.upgrade().is_some_and(|s| s.scope_to_ref_named(name))
-                    && let Some(display) = gtk::gdk::Display::default()
-                {
+                if s.upgrade().is_some_and(|s| s.scope_to_ref_named(name)) {
+                    // 押したリンクは詳細の作り直しで消えるので、History に移す（そのままだと詳細の最初の
+                    // 文字が選ばれた状態でフォーカスを受ける）。
+                    if let Some(view) = focus.upgrade() {
+                        view.grab_focus();
+                    }
+                } else if let Some(display) = gtk::gdk::Display::default() {
                     display.beep();
                 }
             })),
