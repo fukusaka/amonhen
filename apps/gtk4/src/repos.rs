@@ -286,21 +286,26 @@ pub fn clone(parent: &gtk::Window, open: Rc<dyn Fn(PathBuf)>) {
         }
         sheet.add(&row(&tr!("Location:"), &location));
         sheet.add(&row(&tr!("Folder Name:"), &name));
+        // 置き場所はアプリの列で選ぶシートで（フォルダを作れる。macOS 版の `chooseLocation`）。
         let (f, w) = (folder.downgrade(), sheet.window.downgrade());
         choose.connect_clicked(move |_| {
             let (Some(f), Some(w)) = (f.upgrade(), w.upgrade()) else {
                 return;
             };
-            let dialog = gtk::FileDialog::builder()
-                .title(tr!("Clone Location"))
-                .modal(true)
-                .build();
-            dialog.set_initial_folder(Some(&gio::File::for_path(expand_tilde(f.text().as_str()))));
+            let request = crate::filepicker::Request {
+                title: tr!("Clone Location"),
+                message: tr!("Choose the folder to clone into."),
+                kind: crate::filepicker::Kind::Folder,
+                initial: f.text().to_string(),
+                new_folder: true,
+                ..Default::default()
+            };
             glib::spawn_future_local(async move {
-                if let Ok(picked) = dialog.select_folder_future(Some(&w)).await
-                    && let Some(path) = picked.path()
+                if let Some(picked) =
+                    crate::filepicker::choose(Some(&w), request, crate::filepicker::Source::Local)
+                        .await
                 {
-                    f.set_text(&crate::bookmarks::tilde(&path.to_string_lossy()));
+                    f.set_text(&crate::bookmarks::tilde(&picked.path));
                 }
             });
         });

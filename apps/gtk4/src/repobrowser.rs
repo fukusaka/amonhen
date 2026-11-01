@@ -1957,7 +1957,8 @@ impl Browser {
         }
     }
 
-    /// 手元のリポジトリを選んで加える（列で選ぶシート。すぐ行ける所はスキャンするフォルダ）。
+    /// 手元のリポジトリを選んで加える（列で選ぶシート。Ctrl+クリックでいくつでも。すぐ行ける所はスキャンする
+    /// フォルダ。macOS 版と同じ）。
     fn add_repository(self: &Rc<Self>) {
         let places = bookmarks::data()
             .scan_roots
@@ -1967,24 +1968,31 @@ impl Browser {
             .collect();
         let request = Request {
             title: tr!("Add Repositories"),
-            message: tr!("Choose a repository to add to the list (green)."),
+            message: tr!(
+                "Choose the repositories to add to the list (green). Ctrl-click to choose more than one."
+            ),
             kind: Kind::Repository,
             initial: crate::settings::string(LAST_LOCAL_FOLDER_KEY).unwrap_or_else(|| "~".into()),
             places,
+            multiple: true,
+            ..Default::default()
         };
         let b = self.clone();
         glib::spawn_future_local(async move {
-            let Some(chosen) = filepicker::choose(Some(&b.window()), request, Source::Local).await
+            let Some(chosen) =
+                filepicker::choose_several(Some(&b.window()), request, Source::Local).await
             else {
                 return;
             };
-            if let Some(parent) = std::path::Path::new(&chosen.path).parent() {
+            if let Some(parent) = chosen
+                .first()
+                .and_then(|c| std::path::Path::new(&c.path).parent())
+            {
                 crate::settings::set_string(LAST_LOCAL_FOLDER_KEY, &parent.to_string_lossy());
             }
-            if bookmarks::is_repository(&chosen.path) {
-                bookmarks::add(&chosen.path, b.selected_group().as_deref());
-            } else {
-                b.root.error_bell();
+            let group = b.selected_group();
+            for c in chosen.iter().filter(|c| bookmarks::is_repository(&c.path)) {
+                bookmarks::add(&c.path, group.as_deref());
             }
         });
     }
@@ -2006,6 +2014,7 @@ impl Browser {
             kind: Kind::Folder,
             initial: "~".into(),
             places: Vec::new(),
+            ..Default::default()
         };
         let b = self.clone();
         glib::spawn_future_local(async move {
@@ -2312,6 +2321,7 @@ pub async fn choose_remote_scan_folder(
         kind: Kind::Folder,
         initial: "~/prj".into(),
         places: Vec::new(),
+        ..Default::default()
     };
     let source = match (host, repo) {
         (Some(h), Some(repo)) => Source::Connected(h, repo),
@@ -2511,6 +2521,7 @@ async fn ssh_connection_sheet(
             kind: Kind::Folder,
             initial: p.text().trim().to_owned(),
             places: Vec::new(),
+            ..Default::default()
         };
         glib::spawn_future_local(async move {
             if let Some(chosen) = filepicker::choose(Some(&w), request, Source::Host(name)).await {

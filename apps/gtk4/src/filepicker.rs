@@ -70,6 +70,24 @@ pub struct Request {
     pub initial: String,
     /// すぐ行けるフォルダ（`/usr/local/bin` など、ふだん見えない所）。
     pub places: Vec<String>,
+    /// Ctrl+クリックでいくつも選べる（最後の列の、選べるファイル・リポジトリ。[`choose_several`] で受ける）。
+    pub multiple: bool,
+    /// 開いているフォルダの中にフォルダを作れる（New Folder…・Ctrl+Shift+N。この機械だけ）。
+    pub new_folder: bool,
+}
+
+impl Default for Request {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            message: String::new(),
+            kind: Kind::Folder,
+            initial: String::new(),
+            places: Vec::new(),
+            multiple: false,
+            new_folder: false,
+        }
+    }
 }
 
 /// SSH 先でプログラムがふだんある所。
@@ -271,6 +289,8 @@ struct Column {
     entries: Option<Vec<Entry>>,
     error: Option<String>,
     selected: Option<String>,
+    /// Ctrl+クリックで足したもの（`selected` のほかに。いくつも選べるとき）。
+    marked: Vec<String>,
 }
 
 impl Column {
@@ -280,7 +300,12 @@ impl Column {
             entries: None,
             error: None,
             selected: None,
+            marked: Vec::new(),
         }
+    }
+
+    fn is_selected(&self, name: &str) -> bool {
+        self.selected.as_deref() == Some(name) || self.marked.iter().any(|m| m == name)
     }
 }
 
@@ -297,6 +322,9 @@ struct ColumnView {
 
 struct Picker {
     kind: Kind,
+    multiple: bool,
+    /// New Folder…（作れないときはなし）。
+    new_folder: Option<gtk::Button>,
     window: gtk::Window,
     host_entry: Option<gtk::Entry>,
     field: gtk::Entry,
@@ -328,7 +356,7 @@ struct Picker {
     filling: Cell<bool>,
     /// → で入ったが、まだ読んでいる列のパス（読めたら最初のものを選ぶ）。
     entering: RefCell<Option<String>>,
-    tx: async_channel::Sender<Option<Chosen>>,
+    tx: async_channel::Sender<Option<Vec<Chosen>>>,
 }
 
 /// シートを出して、選んだものを返す（取り消したら None）。
@@ -337,6 +365,18 @@ pub async fn choose(
     request: Request,
     source: Source,
 ) -> Option<Chosen> {
+    choose_several(parent, request, source)
+        .await
+        .and_then(|c| c.into_iter().next())
+}
+
+/// [`choose`] の、いくつも選べる形（`request.multiple` なら Ctrl+クリックで。並びは列の順）。
+pub async fn choose_several(
+    parent: Option<&gtk::Window>,
+    request: Request,
+    source: Source,
+) -> Option<Vec<Chosen>> {
+    install_css();
     let (tx, rx) = async_channel::bounded(1);
     let picker = Picker::new(parent, &request, &source, tx);
     match source {
@@ -354,12 +394,33 @@ pub async fn choose(
     result
 }
 
+/// Ctrl+クリックで足した行の見た目（選んだ行に近い色。一度だけ入れる）。
+fn install_css() {
+    thread_local! {
+        static DONE: Cell<bool> = const { Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(
+        ".picker-marked { background: alpha(@theme_selected_bg_color, 0.45); border-radius: 4px; }",
+    );
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
 impl Picker {
     fn new(
         parent: Option<&gtk::Window>,
         request: &Request,
         source: &Source,
-        tx: async_channel::Sender<Option<Chosen>>,
+        tx: async_channel::Sender<Option<Vec<Chosen>>>,
     ) -> Rc<Self> {
         let heading = gtk::Label::new(Some(&request.title));
         heading.add_css_class("title-3");
@@ -458,12 +519,21 @@ impl Picker {
         content.append(&retry);
 
         let hidden = gtk::CheckButton::with_label(&tr!("Show hidden files"));
-        hidden.set_hexpand(true);
         let cancel = gtk::Button::with_label(&tr!("Cancel"));
         let choose = gtk::Button::with_label(&tr!("Choose"));
         choose.add_css_class("suggested-action");
         let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         buttons.append(&hidden);
+        // 隠しファイルの切り替えの隣に（macOS 版と同じ）。
+        let new_folder = request.new_folder.then(|| {
+            let b = gtk::Button::with_label(&tr!("New Folder…"));
+            b.set_tooltip_text(Some("Ctrl+Shift+N"));
+            buttons.append(&b);
+            b
+        });
+        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        spacer.set_hexpand(true);
+        buttons.append(&spacer);
         buttons.append(&cancel);
         buttons.append(&choose);
         content.append(&buttons);
@@ -489,6 +559,8 @@ impl Picker {
         field.set_text(&initial);
         let picker = Rc::new(Self {
             kind: request.kind,
+            multiple: request.multiple,
+            new_folder,
             window,
             host_entry,
             field,
@@ -598,6 +670,14 @@ impl Picker {
                 p.finish();
             }
         });
+        if let Some(b) = &self.new_folder {
+            let w = Rc::downgrade(self);
+            b.connect_clicked(move |_| {
+                if let Some(p) = w.upgrade() {
+                    p.ask_new_folder();
+                }
+            });
+        }
         let tx = self.tx.clone();
         self.window.connect_close_request(move |_| {
             let _ = tx.try_send(None);
@@ -620,6 +700,14 @@ impl Picker {
                 && matches!(key, gtk::gdk::Key::period | gtk::gdk::Key::greater)
             {
                 p.hidden.set_active(!p.hidden.is_active());
+                return glib::Propagation::Stop;
+            }
+            // Ctrl+Shift+N でフォルダを作る（macOS 版の ⌘⇧N）。
+            if modifiers.contains(ctrl_shift)
+                && matches!(key, gtk::gdk::Key::n | gtk::gdk::Key::N)
+                && p.new_folder.as_ref().is_some_and(|b| b.is_sensitive())
+            {
+                p.ask_new_folder();
                 return glib::Propagation::Stop;
             }
             glib::Propagation::Proceed
@@ -866,6 +954,7 @@ impl Picker {
             }
             columns.truncate(index + 1);
             columns[index].selected = name.clone();
+            columns[index].marked.clear();
             name.and_then(|n| {
                 columns[index]
                     .entries
@@ -1013,7 +1102,8 @@ impl Picker {
         selection.set_autoselect(false);
         selection.set_can_unselect(true);
         let factory = gtk::SignalListItemFactory::new();
-        factory.connect_setup(|_, item| {
+        let w = Rc::downgrade(self);
+        factory.connect_setup(move |_, item| {
             let item = item.downcast_ref::<gtk::ListItem>().expect("ListItem");
             let name = gtk::Label::new(None);
             name.set_xalign(0.0);
@@ -1025,6 +1115,23 @@ impl Picker {
             line.append(&name);
             line.append(&mark);
             item.set_child(Some(&line));
+            // いくつも選べるなら、Ctrl+クリックで選んだものに足す・外す（macOS 版の ⌘ クリック）。行の選びより先に受ける。
+            if w.upgrade().is_some_and(|p| p.multiple) {
+                let click = gtk::GestureClick::new();
+                let (w, item) = (w.clone(), item.downgrade());
+                click.connect_pressed(move |gesture, _, _, _| {
+                    let ctrl = gesture
+                        .current_event_state()
+                        .contains(gtk::gdk::ModifierType::CONTROL_MASK);
+                    let (Some(p), Some(item)) = (w.upgrade(), item.upgrade()) else {
+                        return;
+                    };
+                    if ctrl && p.toggle_mark(index, item.position() as usize) {
+                        gesture.set_state(gtk::EventSequenceState::Claimed);
+                    }
+                });
+                line.add_controller(click);
+            }
         });
         let (s, w) = (shown.clone(), Rc::downgrade(self));
         factory.connect_bind(move |_, item| {
@@ -1042,6 +1149,17 @@ impl Picker {
             };
             let text = glib::markup_escape_text(&e.name);
             let usable = p.selectable(&e) || p.opens(&e);
+            // Ctrl+クリックで足したもの（選んだ行と同じように見せる）。
+            let marked = p
+                .columns
+                .borrow()
+                .get(index)
+                .is_some_and(|c| c.marked.contains(&e.name));
+            if marked {
+                line.add_css_class("picker-marked");
+            } else {
+                line.remove_css_class("picker-marked");
+            }
             name.set_markup(&if e.repository {
                 format!("<span foreground=\"#26a269\">{text}</span>")
             } else if !usable {
@@ -1173,9 +1291,7 @@ impl Picker {
             .clone()
             .unwrap_or_default()
             .into_iter()
-            .filter(|e| {
-                hidden || !e.name.starts_with('.') || column.selected.as_deref() == Some(&e.name)
-            })
+            .filter(|e| hidden || !e.name.starts_with('.') || column.is_selected(&e.name))
             .collect();
         let names: Vec<&str> = entries.iter().map(|e| e.name.as_str()).collect();
         let position = column
@@ -1207,42 +1323,151 @@ impl Picker {
 
     /// 選んだもの（決めるボタンで返すパス）。選べなければ None。つながらなければ、打ち込んだパス。
     fn chosen(&self) -> Option<String> {
+        self.chosen_all().into_iter().next()
+    }
+
+    /// 選んだものすべて（並びは列の順。Ctrl+クリックで足したものも。macOS 版の `chosen`）。
+    fn chosen_all(&self) -> Vec<String> {
         if self.connection_error.borrow().is_some() {
             let typed = self.field.text().trim().to_owned();
-            return match self.kind {
-                Kind::Folder => (!typed.is_empty()).then_some(typed),
-                _ => is_absolute(&typed).then_some(typed),
+            let ok = match self.kind {
+                Kind::Folder => !typed.is_empty(),
+                _ => is_absolute(&typed),
             };
+            return if ok { vec![typed] } else { Vec::new() };
         }
         let columns = self.columns.borrow();
-        let last = columns.last()?;
+        let Some(last) = columns.last() else {
+            return Vec::new();
+        };
         match self.kind {
-            Kind::Folder => last.error.is_none().then(|| last.path.clone()),
-            _ => {
-                let name = last.selected.as_ref()?;
-                let e = last.entries.as_ref()?.iter().find(|e| &e.name == name)?;
-                self.selectable(e).then(|| join(&last.path, name))
-            }
+            Kind::Folder if last.error.is_none() => vec![last.path.clone()],
+            Kind::Folder => Vec::new(),
+            _ => last
+                .entries
+                .iter()
+                .flatten()
+                .filter(|e| last.is_selected(&e.name) && self.selectable(e))
+                .map(|e| join(&last.path, &e.name))
+                .collect(),
         }
     }
 
     fn finish(&self) {
-        let Some(path) = self.chosen() else {
+        let paths = self.chosen_all();
+        if paths.is_empty() {
+            self.window.error_bell();
+            return;
+        }
+        let home = self.home.borrow().clone();
+        let chosen = paths
+            .into_iter()
+            .map(|path| Chosen {
+                host: self.host.borrow().clone(),
+                shown: if path.starts_with('~') {
+                    path.clone()
+                } else {
+                    shown(&path, home.as_deref())
+                },
+                path,
+            })
+            .collect();
+        let _ = self.tx.try_send(Some(chosen));
+        self.window.destroy();
+    }
+
+    /// 列 `index` の `row` 行目を、選んだものに足す（選んであれば外す）。足せるのは、いくつも選べるときの、最後の列の
+    /// 選べて開かないものだけ（macOS 版の `select(extend:)`）。足し外ししたら true。
+    fn toggle_mark(&self, index: usize, row: usize) -> bool {
+        let Some(view) = self.views.borrow().get(index).cloned() else {
+            return false;
+        };
+        let Some(entry) = view.shown.borrow().get(row).cloned() else {
+            return false;
+        };
+        {
+            let mut columns = self.columns.borrow_mut();
+            let last = columns.len().saturating_sub(1);
+            if !self.multiple || index != last || !self.selectable(&entry) || self.opens(&entry) {
+                return false;
+            }
+            let column = &mut columns[index];
+            if column.is_selected(&entry.name) {
+                column.marked.retain(|m| *m != entry.name);
+                if column.selected.as_deref() == Some(entry.name.as_str()) {
+                    column.selected = (!column.marked.is_empty()).then(|| column.marked.remove(0));
+                }
+            } else {
+                let selected_usable = column.selected.as_ref().is_some_and(|s| {
+                    column
+                        .entries
+                        .iter()
+                        .flatten()
+                        .any(|e| &e.name == s && self.selectable(e))
+                });
+                if selected_usable && let Some(s) = column.selected.take() {
+                    column.marked.push(s);
+                }
+                column.selected = Some(entry.name.clone());
+            }
+        }
+        self.fill(index);
+        self.update_field();
+        true
+    }
+
+    /// 開いているフォルダ（最後の列。読めていて、エラーがないもの）。
+    fn open_folder(&self) -> Option<String> {
+        let columns = self.columns.borrow();
+        let last = columns.last()?;
+        (last.error.is_none() && last.entries.is_some()).then(|| last.path.clone())
+    }
+
+    /// New Folder…: 名前を聞いて、開いているフォルダの中に作り、そこへ行く（この機械だけ。macOS 版の `createFolder`）。
+    fn ask_new_folder(self: &Rc<Self>) {
+        let local = matches!(*self.reader.borrow(), Some(Reader::Local));
+        let Some(folder) = self.open_folder().filter(|_| local) else {
             self.window.error_bell();
             return;
         };
-        let home = self.home.borrow().clone();
-        let chosen = Chosen {
-            host: self.host.borrow().clone(),
-            shown: if path.starts_with('~') {
-                path.clone()
-            } else {
-                shown(&path, home.as_deref())
-            },
-            path,
-        };
-        let _ = self.tx.try_send(Some(chosen));
-        self.window.destroy();
+        let w = Rc::downgrade(self);
+        let parent = self.window.clone();
+        glib::spawn_future_local(async move {
+            let shown_folder = w
+                .upgrade()
+                .map(|p| shown(&folder, p.home.borrow().as_deref()))
+                .unwrap_or_else(|| folder.clone());
+            let sheet = crate::sheets::Sheet::new(
+                Some(&parent),
+                &tr!("New Folder"),
+                &tr!("In {path}", path = shown_folder),
+            );
+            let entry = gtk::Entry::builder()
+                .placeholder_text(tr!("Folder name"))
+                .activates_default(true)
+                .hexpand(true)
+                .build();
+            sheet.add(&entry);
+            sheet.buttons(&tr!("Create"), false, None);
+            entry.grab_focus();
+            if sheet.run().await != crate::sheets::Response::Ok {
+                return;
+            }
+            let Some(p) = w.upgrade() else { return };
+            let name = entry.text().trim().to_owned();
+            if name.is_empty() {
+                return;
+            }
+            if name.contains(['/', '\\']) || name == "." || name == ".." {
+                p.set_status(Some(tr!("A folder name can’t contain “/”.")), true);
+                return;
+            }
+            let path = join(&folder, &name);
+            match std::fs::create_dir(&path) {
+                Ok(()) => p.go(&path, false),
+                Err(e) => p.set_status(Some(e.to_string()), true),
+            }
+        });
     }
 
     /// 欄に、選んだもの（なければ最後のフォルダ）を出す。
@@ -1264,6 +1489,10 @@ impl Picker {
     fn update_buttons(&self) {
         let usable = self.reader.borrow().is_some();
         self.choose.set_sensitive(self.chosen().is_some());
+        if let Some(b) = &self.new_folder {
+            let local = matches!(*self.reader.borrow(), Some(Reader::Local));
+            b.set_sensitive(local && self.open_folder().is_some());
+        }
         self.home_button.set_sensitive(usable);
         if let Some(b) = &self.places_button {
             b.set_sensitive(usable);

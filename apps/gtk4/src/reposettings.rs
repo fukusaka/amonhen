@@ -2108,6 +2108,7 @@ impl RepoSettings {
             kind,
             initial,
             places,
+            ..Default::default()
         };
         let source = match &self.host {
             Some(host) => Source::Connected(host.clone(), self.repo.clone()),

@@ -1239,6 +1239,7 @@ fn engine_choice(session: &Rc<HostSession>) -> Vec<gtk::Widget> {
                 kind: crate::filepicker::Kind::Executable,
                 initial: current,
                 places: crate::filepicker::host_program_places(),
+                ..Default::default()
             };
             let parent = a
                 .borrow()
