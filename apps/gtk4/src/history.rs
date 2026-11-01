@@ -12,7 +12,7 @@ use std::time::Instant;
 
 use amonhen_core::lineage::Lineage;
 use amonhen_core::{HistorySnapshot, RefsSnapshot, Repository};
-use amonhen_model::{Oid, RefKind, SignatureCheck, tr};
+use amonhen_model::{Oid, RefKind, tr};
 use amonhen_projection::{FrontendProfile, HistoryChunk};
 use gtk::glib::Properties;
 use gtk::prelude::*;
@@ -22,6 +22,7 @@ use gtk::{gdk, gio, glib, graphene, gsk, pango};
 use crate::github::Ci;
 use crate::graph::{self, Lanes, Metrics};
 use crate::settings::items;
+use crate::signature::Status;
 
 /// 行を右クリックしたときに呼ぶ（行、x、y）。
 type MenuCallback = Rc<dyn Fn(u32, f64, f64)>;
@@ -111,54 +112,32 @@ impl Display {
     }
 }
 
-/// 署名の検証の結果の見せ方（macOS 版の `SignatureStatus` の色）。
-#[derive(Clone, Copy)]
-enum SignatureMark {
-    Verified,
-    /// 信用度が決まっていない鍵。
-    Untrusted,
-    /// 期限切れ。
-    Expired,
-    /// 失効した鍵・不正な署名。
-    Bad,
-    /// 鍵がないなどで検証できない。
-    Unknown,
+/// 署名の検証の結果の色（macOS 版の `SignatureStatus` の色）。状態は詳細の Signature の行と同じ
+/// `signature::Status` で決める（行と詳細で食い違わないように）。`None` はまだ検証していない。
+fn signature_color(status: Option<Status>, fg: &gdk::RGBA) -> gdk::RGBA {
+    match status {
+        Some(Status::Verified(_)) => gdk::RGBA::new(0.20, 0.70, 0.30, 1.0),
+        Some(Status::Untrusted | Status::SignerMismatch) => gdk::RGBA::new(0.90, 0.75, 0.10, 1.0),
+        Some(Status::Expired) => gdk::RGBA::new(0.95, 0.55, 0.15, 1.0),
+        Some(Status::Revoked | Status::Bad) => gdk::RGBA::new(0.90, 0.25, 0.25, 1.0),
+        Some(Status::NoKey | Status::Unsupported) => {
+            gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.55)
+        }
+        Some(Status::Pending) | None => gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.25),
+    }
 }
 
-impl SignatureMark {
-    fn of(check: &SignatureCheck) -> Self {
-        match check.status {
-            'G' | 'U' => {
-                // SSH の署名は allowed signers に載っていれば G なので、信用しているものとする。
-                let ssh = !check.signer.contains('<') && check.key.starts_with("SHA256:");
-                let trusted = ssh
-                    || matches!(
-                        check.trust.to_lowercase().as_str(),
-                        "ultimate" | "full" | "fully" | "marginal"
-                    );
-                if check.status == 'U' || !trusted {
-                    Self::Untrusted
-                } else {
-                    Self::Verified
-                }
-            }
-            'X' | 'Y' => Self::Expired,
-            'R' | 'B' => Self::Bad,
-            _ => Self::Unknown,
-        }
-    }
-
-    fn color(mark: Option<Self>, fg: &gdk::RGBA) -> gdk::RGBA {
-        match mark {
-            Some(Self::Verified) => gdk::RGBA::new(0.20, 0.70, 0.30, 1.0),
-            Some(Self::Untrusted) => gdk::RGBA::new(0.90, 0.75, 0.10, 1.0),
-            Some(Self::Expired) => gdk::RGBA::new(0.95, 0.55, 0.15, 1.0),
-            Some(Self::Bad) => gdk::RGBA::new(0.90, 0.25, 0.25, 1.0),
-            Some(Self::Unknown) => gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.55),
-            // まだ検証していない。
-            None => gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.25),
-        }
-    }
+/// `verifySignatures` の答えの 1 件から状態を決める（コアがコミッターのメールを添える。macOS 版と同じ）。
+fn signature_status(check: &serde_json::Value) -> Status {
+    let signer = check["signer"].as_str().unwrap_or_default();
+    let key = check["key"].as_str().unwrap_or_default();
+    let kind = if !signer.contains('<') && key.starts_with("SHA256:") {
+        "ssh"
+    } else {
+        "gpg"
+    };
+    let committer = check["committerEmail"].as_str().unwrap_or_default();
+    Status::new(Some(check), committer, Some(kind))
 }
 
 #[derive(Default)]
@@ -195,7 +174,7 @@ pub struct State {
     lineage: Option<(u64, u32, Rc<Lineage>)>,
     lineage_request: u64,
     /// 署名の検証の結果（コミットごと）と、検証している途中のもの。
-    signatures: HashMap<Oid, SignatureMark>,
+    signatures: HashMap<Oid, Status>,
     verifying: HashSet<Oid>,
     /// 描いたときに見つけた、まだ検証していない署名（少し待ってから検証する）。
     unverified: Vec<Oid>,
@@ -518,7 +497,8 @@ impl HistoryView {
             st.selected = selected.and_then(|id| history.row_of(&id));
             st.extra = extra.iter().filter_map(|id| history.row_of(id)).collect();
             st.anchor = anchor.and_then(|id| history.row_of(&id));
-            let changed = st.selected.is_none() != selected.is_none() || st.extra.len() != extra.len();
+            let changed =
+                st.selected.is_none() != selected.is_none() || st.extra.len() != extra.len();
             // 最後に選んだコミットが消えたら（ほかのプログラムが rebase・amend した）、残りのうち最後のものに
             // する。何も残らなければ先頭（いちばん新しいコミット）を選ぶ（macOS 版と同じ。表示の位置は動かさない）。
             if selected.is_some() && st.selected.is_none() {
@@ -645,15 +625,24 @@ impl HistoryView {
                     for batch in pending.chunks(8) {
                         let (r, ids) = (repo.clone(), batch.to_vec());
                         let checks = gio::spawn_blocking(move || {
-                            r.verify_signatures(&ids).unwrap_or_default()
+                            let oids: Vec<String> = ids.iter().map(Oid::to_string).collect();
+                            let command =
+                                serde_json::json!({ "op": "verifySignatures", "oids": oids });
+                            let reply: serde_json::Value =
+                                serde_json::from_str(&r.run_json(&command.to_string()))
+                                    .unwrap_or_default();
+                            reply["info"]["checks"]
+                                .as_array()
+                                .map(|c| c.iter().map(signature_status).collect::<Vec<_>>())
+                                .unwrap_or_default()
                         })
                         .await
                         .unwrap_or_default();
                         let Some(view) = weak.upgrade() else { return };
                         {
                             let mut st = view.state();
-                            for (id, check) in batch.iter().zip(&checks) {
-                                st.signatures.insert(*id, SignatureMark::of(check));
+                            for (id, status) in batch.iter().zip(checks) {
+                                st.signatures.insert(*id, status);
                             }
                             for id in batch {
                                 st.verifying.remove(id);
@@ -1276,7 +1265,7 @@ impl HistoryView {
                     let color = if selected {
                         white
                     } else {
-                        SignatureMark::color(mark, &fg)
+                        signature_color(mark, &fg)
                     };
                     snapshot.append_fill(&path.to_path(), gsk::FillRule::Winding, &color);
                 }
@@ -1521,4 +1510,35 @@ fn label_colors(
         gdk::RGBA::new(r, g, b, if selected { 0.45 } else { 0.22 }),
         ink,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn signature_status_matches_the_details() {
+        let check = |status: &str, email: &str, committer: &str| {
+            json!({
+                "status": status, "signer": "A <a@x>", "key": "ABCD", "fingerprint": "",
+                "trust": "full", "emails": [{ "email": email, "validity": "u" }],
+                "committerEmail": committer,
+            })
+        };
+        assert_eq!(
+            signature_status(&check("G", "a@x", "a@x")),
+            Status::Verified(3)
+        );
+        // 署名した鍵のメールがコミッターと違う（行では緑にしない）。
+        assert_eq!(
+            signature_status(&check("G", "a@x", "b@x")),
+            Status::SignerMismatch
+        );
+        assert_eq!(
+            signature_status(&check("V", "a@x", "")),
+            Status::Unsupported
+        );
+        assert_eq!(signature_status(&check("R", "a@x", "")), Status::Revoked);
+    }
 }
