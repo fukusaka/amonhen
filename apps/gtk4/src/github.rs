@@ -981,6 +981,8 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
         let body = b.text(&b.start_iter(), &b.end_iter(), false).to_string();
         let draft = draft.is_active();
         let head = branch.clone();
+        // 作っている間は、ツールバーの Activity の印を回す（macOS 版と同じ）。
+        crate::activity::begin();
         let result = gio::spawn_blocking(move || {
             let mut args = vec![
                 "pr", "create", "-R", &slug, "--head", &head, "--title", &title, "--body", &body,
@@ -993,11 +995,13 @@ pub fn create_pull_request(actions: &Rc<Actions>, branch: String, pushed: bool) 
         })
         .await
         .unwrap_or_else(|_| Err(String::new()));
+        crate::activity::end();
+        // できてもできなくても、GitHub の様子を読み直す（macOS 版と同じ）。
+        if let Some(loader) = loader_of(&actions) {
+            loader.load(true);
+        }
         match result {
             Ok(url) => {
-                if let Some(loader) = loader_of(&actions) {
-                    loader.load(true);
-                }
                 let sheet = Sheet::new(window.as_ref(), &tr!("Pull Request Created"), &url);
                 sheet.buttons(&tr!("Open in Browser"), false, None);
                 if sheet.run().await == Response::Ok {
