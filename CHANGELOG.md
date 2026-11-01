@@ -24,6 +24,9 @@ becomes the GitHub Release notes.
 
 - On Linux, `amonhen open` (and `amonhen <path>`) opens the repository in the GTK4 app, as a tab of the running app.
 
+- The GTK4 app now needs libadwaita (`libadwaita-1-0` on Ubuntu). Its tabs can be dragged out into a new window on
+  Wayland too, and it follows the system's light or dark style.
+
 - The Fetch sheet chooses the remote: all of them, as before, or one. The core's `fetch` takes the remote too.
 
 - History's edit mode and the Rebase sheets say which stacked branches move with the rewrite or stay and why, which

@@ -1,4 +1,5 @@
-//! タブ: 1 つの窓で複数のリポジトリを扱う（macOS 版の窓のタブ、docs/ux.md の 1）。窓は `gtk::Notebook` を持ち、
+//! タブ: 1 つの窓で複数のリポジトリを扱う（macOS 版の窓のタブ、docs/ux.md の 1）。窓は libadwaita の `TabView`
+//! と `TabBar` を持ち（GtkNotebook は Wayland で窓の外に落としたタブを窓にできない）、
 //! タブごとにリポジトリの画面のすべて（サイドバー・ページ・ステータスバー）と見出しの帯を持つ。見出しの帯は前にある
 //! タブのものを窓に付け替え、窓のアクション（`win.*`）も前にあるタブのものを窓に入れる（ショートカットとメニューは
 //! 前のタブに効く）。タブの中の部品は、自分のタブのアクションを引く（後ろのタブでも取り違えない）。
@@ -25,7 +26,7 @@ type FrontCallback = Rc<dyn Fn()>;
 
 /// 1 つのリポジトリのタブ。
 pub struct Tab {
-    /// タブの中身（窓の Notebook のページ）。
+    /// タブの中身（窓の TabView のページ）。
     pub root: gtk::Box,
     /// このタブの見出しの帯（前にあるときだけ窓に付ける）。
     pub header: gtk::HeaderBar,
@@ -37,8 +38,8 @@ pub struct Tab {
     pub location: String,
     /// 裏で読んでいる数（`--snapshot` は窓のすべてのタブでなくなるまで待つ）。
     pub pending: Rc<Cell<u32>>,
-    label: gtk::Label,
-    handle: gtk::Box,
+    /// タブの見出しと、その説明（印を添えたもの。ページに置く）。
+    title: RefCell<(String, Option<String>)>,
     /// 未コミットの変更の数と、上流との差（↑ 先・↓ 後ろ）。
     marks: Cell<(u32, u32, u32)>,
     closed: Cell<bool>,
@@ -59,22 +60,6 @@ impl Tab {
         let group = gio::SimpleActionGroup::new();
         root.insert_action_group("win", Some(&group));
         header.insert_action_group("win", Some(&group));
-        let label = gtk::Label::new(Some(name));
-        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
-        label.set_hexpand(true);
-        let close = gtk::Button::new();
-        close.add_css_class("flat");
-        close.add_css_class("circular");
-        close.set_tooltip_text(Some(&tr!("Close Tab")));
-        close.set_focus_on_click(false);
-        if gtk::IconTheme::for_display(&close.display()).has_icon("window-close-symbolic") {
-            close.set_icon_name("window-close-symbolic");
-        } else {
-            close.set_label("×");
-        }
-        let handle = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-        handle.append(&label);
-        handle.append(&close);
         let tab = Rc::new(Self {
             root,
             header,
@@ -82,8 +67,7 @@ impl Tab {
             name: name.to_owned(),
             location: location.to_owned(),
             pending,
-            label,
-            handle,
+            title: RefCell::new((name.to_owned(), None)),
             marks: Cell::new((0, 0, 0)),
             closed: Cell::new(false),
             on_close: RefCell::default(),
@@ -102,12 +86,6 @@ impl Tab {
             {
                 host.window.add_action(&action);
                 host.installed.borrow_mut().push(name.to_owned());
-            }
-        });
-        let weak = Rc::downgrade(&tab);
-        close.connect_clicked(move |_| {
-            if let Some(tab) = weak.upgrade() {
-                close_tab(&tab);
             }
         });
         install_actions(&tab);
@@ -137,6 +115,21 @@ impl Tab {
     /// 前のタブで、窓も前にあるか（後ろのタブ・窓は数え直しや読み直しを後回しにする）。
     pub fn is_front(&self) -> bool {
         self.is_shown() && self.window().is_some_and(|w| w.is_active())
+    }
+
+    /// 窓の TabView の中の、このタブのページ。
+    fn page(&self) -> Option<adw::TabPage> {
+        let host = self.host()?;
+        page_of(&host.view, &self.root)
+    }
+
+    /// 見出しと説明をページに置く。
+    fn apply_title(&self) {
+        if let Some(page) = self.page() {
+            let (title, tip) = &*self.title.borrow();
+            page.set_title(title);
+            page.set_tooltip(tip.as_deref().unwrap_or(""));
+        }
     }
 
     pub fn closed(&self) -> bool {
@@ -213,10 +206,10 @@ impl Tab {
             title.push_str(&format!(" ↓{behind}"));
             tips.push(tr!("{count} commits behind upstream", count = behind));
         }
-        self.label.set_text(&title);
         let tip = tips.join(&tr!(", "));
-        self.label
-            .set_tooltip_text((!tip.is_empty()).then_some(tip.as_str()));
+        self.title
+            .replace((title, (!tip.is_empty()).then_some(tip)));
+        self.apply_title();
     }
 
     /// 書き込む先の worktree の名前（確認のシートに出す）。
@@ -235,7 +228,10 @@ pub struct RepoWindow {
     pub window: gtk::ApplicationWindow,
     /// 窓の番号（Window > Move Tab to Window の移す先を指す）。
     id: u32,
-    notebook: gtk::Notebook,
+    view: adw::TabView,
+    bar: adw::TabBar,
+    /// 閉じるのを認めたページ（`close-page` で、こちらから閉じたものは止めない）。
+    closing: RefCell<Option<adw::TabPage>>,
     tabs: RefCell<Vec<Rc<Tab>>>,
     /// 今、窓に入れているアクションの名前（前のタブを替えたら外す）。
     installed: RefCell<Vec<String>>,
@@ -285,10 +281,15 @@ pub fn set_restoring(yes: bool) {
 impl RepoWindow {
     /// 空の窓を作る（タブは [`add`] で足す）。
     pub fn new(app: &gtk::Application) -> Rc<Self> {
-        let notebook = gtk::Notebook::new();
-        notebook.set_show_border(false);
-        notebook.set_scrollable(true);
-        notebook.set_show_tabs(false);
+        let view = adw::TabView::new();
+        view.set_vexpand(true);
+        let bar = adw::TabBar::new();
+        bar.set_view(Some(&view));
+        // タブが 1 つなら帯を隠す（View > Show Tab Bar で出す）。
+        bar.set_autohide(true);
+        let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        body.append(&bar);
+        body.append(&view);
         // タブの帯の「+」（macOS 版と同じく、開くリポジトリを選んで新しいタブに）。
         let plus = gtk::Button::new();
         plus.add_css_class("flat");
@@ -299,21 +300,23 @@ impl RepoWindow {
             plus.set_label("+");
         }
         plus.set_action_name(Some("win.new-tab"));
-        notebook.set_action_widget(&plus, gtk::PackType::End);
-        // タブはつかんでほかの窓の帯に落とせる。窓の外に落とすと新しい窓になる（macOS 版のタブと同じ）。
-        notebook.set_group_name(Some(TAB_GROUP));
+        bar.set_end_action_widget(Some(&plus));
+        // タブはつかんでほかの窓の帯に落とせる。窓の外に落とすと新しい窓になる（macOS 版のタブと同じ。TabView は
+        // どの窓のものとも運び合える）。
         let window = gtk::ApplicationWindow::builder()
             .application(app)
             .title("Amon Hen")
             .default_width(1280)
             .default_height(760)
-            .child(&notebook)
+            .child(&body)
             .build();
         let id = NEXT_ID.with(|n| n.replace(n.get() + 1));
         let this = Rc::new(Self {
             window: window.clone(),
             id,
-            notebook: notebook.clone(),
+            view: view.clone(),
+            bar: bar.clone(),
+            closing: RefCell::default(),
             tabs: RefCell::default(),
             installed: RefCell::default(),
             shown: RefCell::default(),
@@ -342,30 +345,46 @@ impl RepoWindow {
         window.connect_default_width_notify(move |w| r(w));
         window.connect_default_height_notify(move |w| remember(w));
         let weak = Rc::downgrade(&this);
-        notebook.connect_switch_page(move |_, page, _| {
+        view.connect_selected_page_notify(move |view| {
             if let Some(this) = weak.upgrade()
-                && let Some(tab) = this.tab_of(page)
+                && let Some(page) = view.selected_page()
+                && let Some(tab) = this.tab_of(&page.child())
             {
                 this.show(&tab);
             }
         });
-        notebook.connect_page_reordered(|_, _, _| save());
+        view.connect_page_reordered(|_, _, _| save());
         // ほかの窓からタブを落とされた（つかんで運ばれた）: そのタブを、元の窓からこの窓のものにする。
         let weak = Rc::downgrade(&this);
-        notebook.connect_page_added(move |_, page, _| {
+        view.connect_page_attached(move |_, page, _| {
             if let Some(this) = weak.upgrade() {
-                this.adopt(page);
+                this.adopt(&page.child());
             }
         });
+        // 帯の × と Ctrl+W: こちらの閉じ方で閉じる（最後のタブなら窓を閉じる・リポジトリのページを出す）。
+        let weak = Rc::downgrade(&this);
+        view.connect_close_page(move |view, page| {
+            let Some(this) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if this.closing.borrow().as_ref() == Some(page) {
+                return glib::Propagation::Proceed;
+            }
+            view.close_page_finish(page, false);
+            if let Some(tab) = this.tab_of(&page.child()) {
+                glib::idle_add_local_once(move || close_tab(&tab));
+            }
+            glib::Propagation::Stop
+        });
         // 窓の外に落とされた: 新しい窓を作り、そこに入れる。
-        notebook.connect_create_window(|notebook, _| {
-            let app = notebook
+        view.connect_create_window(|view| {
+            let app = view
                 .root()
                 .and_downcast::<gtk::ApplicationWindow>()
                 .and_then(|w| w.application())?;
             let target = RepoWindow::new(&app);
             target.window.present();
-            Some(target.notebook.clone())
+            Some(target.view.clone())
         });
         let weak = Rc::downgrade(&this);
         window.connect_close_request(move |_| {
@@ -429,16 +448,27 @@ impl RepoWindow {
 
     /// 前のタブ。
     pub fn current(&self) -> Option<Rc<Tab>> {
-        let page = self.notebook.nth_page(self.notebook.current_page())?;
-        self.tab_of(&page)
+        let page = self.view.selected_page()?;
+        self.tab_of(&page.child())
     }
 
-    /// タブの並び（Notebook の順）。
+    /// タブの並び（TabView の順）。
     pub fn tabs(&self) -> Vec<Rc<Tab>> {
-        (0..self.notebook.n_pages())
-            .filter_map(|i| self.notebook.nth_page(Some(i)))
-            .filter_map(|page| self.tab_of(&page))
+        (0..self.view.n_pages())
+            .filter_map(|i| self.tab_of(&self.view.nth_page(i).child()))
             .collect()
+    }
+
+    /// `tab` を前のタブにする。
+    fn select(&self, tab: &Tab) {
+        if let Some(page) = page_of(&self.view, &tab.root) {
+            self.view.set_selected_page(&page);
+        }
+    }
+
+    /// `tab` の位置。
+    fn position(&self, tab: &Tab) -> Option<i32> {
+        page_of(&self.view, &tab.root).map(|p| self.view.page_position(&p))
     }
 
     /// `tab` を前のタブとして窓に出す: 見出しの帯・窓の名前・アクションを、そのタブのものにする。
@@ -500,8 +530,8 @@ impl RepoWindow {
     /// タブの帯は、タブが 2 つ以上のときか、View > Show Tab Bar で出したときだけ出す（macOS 版と同じ）。帯を
     /// 隠せるのはタブが 1 つのときだけ。
     fn update_tabs_bar(&self) {
-        let alone = self.notebook.n_pages() <= 1;
-        self.notebook.set_show_tabs(!alone || self.tab_bar.get());
+        let alone = self.view.n_pages() <= 1;
+        self.bar.set_autohide(!self.tab_bar.get());
         for tab in self.tabs.borrow().iter() {
             if let Some(action) = tab
                 .group
@@ -540,12 +570,8 @@ impl RepoWindow {
         }
         source.update_tabs_bar();
         self.tabs.borrow_mut().push(tab.clone());
-        self.notebook.set_tab_reorderable(&tab.root, true);
-        self.notebook.set_tab_detachable(&tab.root, true);
-        self.notebook.page(&tab.root).set_tab_expand(true);
-        if let Some(n) = self.notebook.page_num(&tab.root) {
-            self.notebook.set_current_page(Some(n));
-        }
+        tab.apply_title();
+        self.select(&tab);
         self.show(&tab);
         self.update_tabs_bar();
         self.window.present();
@@ -563,19 +589,22 @@ impl RepoWindow {
 
 /// `tab` を `host` の窓に足す。`position` がなければ前のタブの右に。`select` なら前に出す。
 pub fn add(host: &Rc<RepoWindow>, tab: &Rc<Tab>, select: bool, position: Option<u32>) {
-    let position = position.or_else(|| host.notebook.current_page().map(|p| p + 1));
+    let position = position
+        .map(|p| p as i32)
+        .or_else(|| {
+            host.view
+                .selected_page()
+                .map(|p| host.view.page_position(&p) + 1)
+        })
+        .unwrap_or(host.view.n_pages())
+        .min(host.view.n_pages());
     host.tabs.borrow_mut().push(tab.clone());
-    let index = host
-        .notebook
-        .insert_page(&tab.root, Some(&tab.handle), position);
-    host.notebook.set_tab_reorderable(&tab.root, true);
-    host.notebook.set_tab_detachable(&tab.root, true);
-    // タブは帯の幅を分け合う（macOS 版・GNOME のタブと同じ）。
-    host.notebook.page(&tab.root).set_tab_expand(true);
+    let page = host.view.insert(&tab.root, position);
+    tab.apply_title();
     host.update_tabs_bar();
-    if select || host.notebook.n_pages() == 1 {
-        host.notebook.set_current_page(Some(index));
-        // 最初のページは switch-page が来ないことがある。
+    if select || host.view.n_pages() == 1 {
+        host.view.set_selected_page(&page);
+        // 最初のページは選んだ知らせが来ないことがある。
         host.show(tab);
     }
     save();
@@ -641,12 +670,9 @@ fn refresh_move_menus() {
     }
 }
 
-/// タブを運び合える Notebook の組の名前（どの窓も同じ）。
-const TAB_GROUP: &str = "amonhen-tabs";
-
 /// View > Show Tab Bar の今の名前（帯を出していれば Hide Tab Bar。macOS 版と同じく、メニューを開くときに合わせる）。
 pub fn tab_bar_title(window: &gtk::ApplicationWindow) -> String {
-    let shown = host_of(window).is_some_and(|h| h.notebook.shows_tabs());
+    let shown = host_of(window).is_some_and(|h| h.bar.is_tabs_revealed());
     if shown {
         tr!("Hide Tab Bar")
     } else {
@@ -716,9 +742,7 @@ pub fn open(app: &gtk::Application, location: PathBuf, place: Place) {
     // 先にする（なければ、開くときにメインのリポジトリに替える。`build_tab`）。
     let worktree = crate::repos::main_of_worktree(&location);
     if let Some((host, tab)) = find_open(&location) {
-        if let Some(n) = host.notebook.page_num(&tab.root) {
-            host.notebook.set_current_page(Some(n));
-        }
+        host.select(&tab);
         host.window.present();
         if worktree.is_some() {
             let path = location.to_string_lossy().into_owned();
@@ -771,7 +795,7 @@ pub fn add_background(app: &gtk::Application, host: &Rc<RepoWindow>, location: P
     if open {
         return;
     }
-    let position = Some(host.notebook.n_pages());
+    let position = Some(host.view.n_pages() as u32);
     crate::build_tab(
         app,
         host,
@@ -790,9 +814,7 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
     if let Some(host) = &host
         && let Some(home) = host.tabs().into_iter().find(|t| t.is_home())
     {
-        if let Some(n) = host.notebook.page_num(&home.root) {
-            host.notebook.set_current_page(Some(n));
-        }
+        host.select(&home);
         host.window.present();
         home.front();
         return host.clone();
@@ -844,7 +866,7 @@ pub fn show_home(app: &gtk::Application, host: Option<Rc<RepoWindow>>) -> Rc<Rep
         if find_open(&location).is_some() {
             return self::open(&a, location, place);
         }
-        let position = host.notebook.page_num(&tab.root);
+        let position = host.position(&tab).map(|p| p as u32);
         open_in(&a, &host, location, position);
         close_tab(&tab);
         host.window.present();
@@ -925,9 +947,9 @@ pub fn restore(app: &gtk::Application, groups: Vec<Vec<String>>) {
             add_background(app, &host, location.into());
         }
         // 前に出すのは最後のタブ（macOS 版はタブを順に開いて前に出していくので、最後のものが残る）。
-        let n = host.notebook.n_pages();
+        let n = host.view.n_pages();
         if n > 1 {
-            host.notebook.set_current_page(Some(n - 1));
+            host.view.set_selected_page(&host.view.nth_page(n - 1));
         }
     }
     set_restoring(false);
@@ -941,7 +963,7 @@ pub fn reopen(tab: &Rc<Tab>, location: PathBuf) {
     let Some(app) = window.application() else {
         return;
     };
-    let position = host.notebook.page_num(&tab.root).map(|n| n + 1);
+    let position = host.position(tab).map(|n| n as u32 + 1);
     open_in(&app, &host, location, position);
     close_tab(tab);
 }
@@ -961,9 +983,7 @@ pub fn switch(tab: &Rc<Tab>, location: PathBuf) {
     });
     match existing {
         Some((host, t)) => {
-            if let Some(n) = host.notebook.page_num(&t.root) {
-                host.notebook.set_current_page(Some(n));
-            }
+            host.select(&t);
             host.window.present();
         }
         None => reopen(tab, location),
@@ -1025,8 +1045,10 @@ pub fn close_tab(tab: &Rc<Tab>) {
 /// `tab` を `host` の窓から外す（閉じない）。
 fn detach(host: &Rc<RepoWindow>, tab: &Rc<Tab>) {
     host.tabs.borrow_mut().retain(|t| !Rc::ptr_eq(t, tab));
-    if let Some(n) = host.notebook.page_num(&tab.root) {
-        host.notebook.remove_page(Some(n));
+    if let Some(page) = page_of(&host.view, &tab.root) {
+        host.closing.replace(Some(page.clone()));
+        host.view.close_page(&page);
+        host.closing.replace(None);
     }
     if host
         .shown
@@ -1048,9 +1070,17 @@ fn move_tab(tab: &Rc<Tab>, target: &Rc<RepoWindow>, select: bool) {
     if Rc::ptr_eq(&source, target) {
         return;
     }
-    detach(&source, tab);
-    let position = Some(target.notebook.n_pages());
-    add(target, tab, select, position);
+    // ページを運ぶ（中身を作り直さない）。運ばれた先の窓が、`page-attached` で自分のタブにする。
+    let Some(page) = page_of(&source.view, &tab.root) else {
+        return;
+    };
+    source
+        .view
+        .transfer_page(&page, &target.view, target.view.n_pages());
+    if select {
+        target.select(tab);
+        target.show(tab);
+    }
     if source.tabs.borrow().is_empty() {
         source.window.close();
     }
@@ -1089,7 +1119,7 @@ fn install_actions(tab: &Rc<Tab>) {
     // View > Show Tab Bar（Ctrl+Shift+T）: タブが 1 つでも帯を出す・隠す。
     add("toggle-tab-bar", |tab| {
         let Some(host) = tab.host() else { return };
-        if host.notebook.n_pages() > 1 {
+        if host.view.n_pages() > 1 {
             return;
         }
         host.tab_bar.set(!host.tab_bar.get());
@@ -1136,10 +1166,15 @@ fn install_actions(tab: &Rc<Tab>) {
                 .cloned()
                 .collect()
         });
+        // 運んだタブは前に出るので、前にあったタブに戻す。
+        let current = host.current();
         for other in others {
             for t in other.tabs() {
                 move_tab(&t, &host, false);
             }
+        }
+        if let Some(current) = current {
+            host.select(&current);
         }
         host.window.present();
         save();
@@ -1149,13 +1184,24 @@ fn install_actions(tab: &Rc<Tab>) {
 /// 前のタブを `delta` だけ隣に（端からは反対の端へ）。
 fn step(tab: &Rc<Tab>, delta: i32) {
     let Some(host) = tab.host() else { return };
-    let n = host.notebook.n_pages() as i32;
+    let n = host.view.n_pages();
     if n <= 1 {
         return;
     }
-    let current = host.notebook.current_page().unwrap_or(0) as i32;
-    let next = (current + delta).rem_euclid(n) as u32;
-    host.notebook.set_current_page(Some(next));
+    let current = host
+        .view
+        .selected_page()
+        .map_or(0, |p| host.view.page_position(&p));
+    let next = (current + delta).rem_euclid(n);
+    host.view.set_selected_page(&host.view.nth_page(next));
+}
+
+/// `view` の中の、中身が `child` のページ。
+fn page_of(view: &adw::TabView, child: &impl IsA<gtk::Widget>) -> Option<adw::TabPage> {
+    let child = child.upcast_ref::<gtk::Widget>();
+    (0..view.n_pages())
+        .map(|i| view.nth_page(i))
+        .find(|p| p.child() == *child)
 }
 
 /// 開いている窓とタブの並びを覚える（次の起動で開き直す）。

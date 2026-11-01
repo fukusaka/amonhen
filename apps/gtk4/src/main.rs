@@ -402,6 +402,10 @@ fn main() -> glib::ExitCode {
         // 開発用: メインスレッドが止まった瞬間を記録する（`AMONHEN_HANG_LOG`）。
         hangwatch::start_if_requested();
         gtk::Window::set_default_icon_name(APP_ID);
+        // libadwaita（タブの帯と、その見た目）。
+        if let Err(e) = adw::init() {
+            eprintln!("libadwaita を初期化できない: {e}");
+        }
         // ショートカットと Quit は、リポジトリのページしかない起動でも効くように最初に。
         appmenu::install_app(app);
         menu::install_css();

@@ -17,7 +17,7 @@ scripts/third-party-notices.sh   # dist/THIRD-PARTY-NOTICES.md（cargo install -
 cargo deny check licenses        # 依存が deny.toml で許したライセンスだけか（cargo install --locked cargo-deny）
 cargo build -p amonhen-cli && (cd apps/vscode && npm ci && npm test)   # VSCode 拡張
 (cd apps/vscode && npm run test:e2e)   # 実際の VSCode での VSCode 拡張（上の行のあとで）
-(cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 のアプリ（GTK 4.14 以降が要る。libgtk-4-dev か brew install gtk4 pkgconf）
+(cd apps/gtk4 && cargo clippy --all-targets -- -D warnings && cargo run --release -- <repo>)   # GTK4 のアプリ（GTK 4.14 以降と libadwaita が要る。libgtk-4-dev libadwaita-1-dev か brew install gtk4 libadwaita pkgconf）
 scripts/package-gtk4.sh          # GTK4 のアプリを dist/amonhen-gtk-<版>-linux-<arch>.tar.gz に（Linux で。dist/engine の Linux のエンジンがあれば入れる）
 ```
 
