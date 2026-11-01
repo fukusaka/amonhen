@@ -360,6 +360,16 @@ fn folder_tree(
     }]
 }
 
+/// `nodes` とその下の節のツールチップの前に `host:` を付ける。
+fn prefix_tips(nodes: &mut [Node], host: &str) {
+    for n in nodes {
+        if let Some(tip) = &n.tip {
+            n.tip = Some(format!("{host}:{tip}"));
+        }
+        prefix_tips(&mut n.children, host);
+    }
+}
+
 // 行の中身（Quick Open と共通）
 
 fn esc(s: &str) -> String {
@@ -1134,6 +1144,14 @@ impl Browser {
                 &move |p| Category::HostFolder(h.clone(), p),
                 &remote_title,
             ));
+            // SSH 先の下のフォルダーは、ツールチップを `host:パス` に（macOS 版と同じ。探すフォルダーの節は
+            // 「Searches host:…」のまま、その下のフォルダーに付ける）。
+            for child in &mut children {
+                match child.category {
+                    Category::Scan(_) => prefix_tips(&mut child.children, &host),
+                    _ => prefix_tips(std::slice::from_mut(child), &host),
+                }
+            }
             places.push(node(host.clone(), Category::Host(host), children));
         }
         let mut tree = vec![
