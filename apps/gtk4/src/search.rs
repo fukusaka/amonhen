@@ -225,6 +225,10 @@ impl Search {
 impl Inner {
     fn clear(&self) {
         self.generation.set(self.generation.get() + 1);
+        // 走っている検索をやめさせる（`contents:` などは、次の検索を始めるまで裏で読み続けてしまう）。
+        if let Some((repo, _)) = self.base.borrow().as_ref() {
+            repo.cancel_search();
+        }
         self.matches.replace(Rc::default());
         self.searched.replace(None);
         self.count.set_text("");
