@@ -1755,7 +1755,10 @@ impl DiffWidget {
             }
             if let Some(gutter) = &line.gutter {
                 snapshot.save();
-                snapshot.translate(&graphene::Point::new(left, y));
+                snapshot.translate(&graphene::Point::new(
+                    left,
+                    on_baseline(y, &line.text, gutter),
+                ));
                 snapshot.append_layout(gutter, &secondary);
                 snapshot.restore();
             }
@@ -1949,7 +1952,7 @@ impl DiffWidget {
         let mut x = counts_x;
         for (l, color) in &counts {
             snapshot.save();
-            snapshot.translate(&graphene::Point::new(x, y));
+            snapshot.translate(&graphene::Point::new(x, on_baseline(y, &line.text, l)));
             snapshot.append_layout(l, color);
             snapshot.restore();
             x += l.pixel_size().0 as f32 + 8.0;
@@ -1980,11 +1983,19 @@ impl DiffWidget {
             let label = layout("Viewed");
             let secondary = gdk::RGBA::new(fg.red(), fg.green(), fg.blue(), 0.6);
             snapshot.save();
-            snapshot.translate(&graphene::Point::new(viewed_x + size + 5.0, y));
+            snapshot.translate(&graphene::Point::new(
+                viewed_x + size + 5.0,
+                on_baseline(y, &line.text, &label),
+            ));
             snapshot.append_layout(&label, &secondary);
             snapshot.restore();
         }
     }
+}
+
+/// `main` を `y` に置いた行で、`other` を置く高さ（文字の下端の線を `main` に揃える。字の違いで上下にずれない）。
+fn on_baseline(y: f32, main: &pango::Layout, other: &pango::Layout) -> f32 {
+    y + (main.baseline() - other.baseline()) as f32 / pango::SCALE as f32
 }
 
 /// `text` の `index`（バイト位置）の文字を含む単語の範囲（ダブルクリック）。英数字と `_` の並び、空白の並び、
