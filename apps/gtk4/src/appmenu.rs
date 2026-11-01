@@ -271,7 +271,22 @@ fn handlers() -> Vec<(&'static str, Handler)> {
         ),
         // Navigate
         ("switch-branch", Box::new(switch_branch)),
-        ("filter-branches", Box::new(|p| p.sidebar.focus_filter())),
+        (
+            "filter-branches",
+            Box::new(|p| {
+                // 隠したサイドバーは先に出す（macOS 版と同じ）。
+                let hidden = p
+                    .group
+                    .lookup_action("show-sidebar")
+                    .and_then(|a| a.state())
+                    .and_then(|s| s.get::<bool>())
+                    == Some(false);
+                if hidden {
+                    p.group.activate_action("show-sidebar", None);
+                }
+                p.sidebar.focus_filter();
+            }),
+        ),
         ("go-to-head", Box::new(go_to_head)),
         ("go-to-parent", Box::new(|p| go_to_relative(p, true))),
         ("go-to-child", Box::new(|p| go_to_relative(p, false))),
