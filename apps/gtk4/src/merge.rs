@@ -241,6 +241,9 @@ pub struct Editor {
     band: Band,
     proposal: RefCell<Option<(Region, amonhen_assist::Proposal)>>,
     ai_cancel: RefCell<Arc<AtomicBool>>,
+    /// 前の AI の返事が使えなかった（読めない・マーカーが残る）。次はキャッシュを使わずに聞き直す（同じ返事を
+    /// 出し続けないように。macOS 版の Regenerate にあたる）。
+    ai_failed: Cell<bool>,
     on_resolved: RefCell<Rc<dyn Fn()>>,
     /// 別の窓で開く（埋め込んだ側が決める）。
     on_pop_out: RefCell<Option<Rc<dyn Fn()>>>,
@@ -634,6 +637,7 @@ impl Editor {
             band,
             proposal: RefCell::default(),
             ai_cancel: RefCell::new(Arc::new(AtomicBool::new(false))),
+            ai_failed: Cell::new(false),
             on_resolved: RefCell::new(Rc::new(|| {})),
             on_pop_out: RefCell::default(),
         });
@@ -1504,13 +1508,14 @@ impl Editor {
                 }
             });
             let parent = this.parent_window();
+            let use_cache = !this.ai_failed.get();
             drop(this);
             let result = crate::assist::run(
                 parent,
                 amonhen_assist::Purpose::ResolveConflict,
                 vars,
                 workdir,
-                true,
+                use_cache,
                 cancel.clone(),
                 on_text,
             )
@@ -1537,10 +1542,14 @@ impl Editor {
                 Ok(proposal)
             }) {
                 Ok(proposal) => {
+                    this.ai_failed.set(false);
                     this.band.show(&tr!("AI Suggestion"), Some(&proposal), None);
                     this.proposal.replace(Some((c, proposal)));
                 }
-                Err(e) => this.band.show(&failed, None, Some(&e)),
+                Err(e) => {
+                    this.ai_failed.set(true);
+                    this.band.show(&failed, None, Some(&e));
+                }
             }
         });
     }
