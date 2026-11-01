@@ -211,12 +211,18 @@ impl Search {
                 {
                     return;
                 }
-                // まだ探していなければ、欄を開く（macOS 版と同じ）。
+                // まだ探していないとき: History を見ていれば欄を開き、ほかの所にいれば鳴らす。探していれば
+                // History に移って次の一致へ（macOS 版の History の moveSearch と、窓の findNext と同じ）。
                 if i.searched.borrow().is_none() {
-                    bar.set_search_mode(true);
-                    i.entry.grab_focus();
+                    if bar.is_mapped() {
+                        bar.set_search_mode(true);
+                        i.entry.grab_focus();
+                    } else if let Some(w) = bar.root().and_downcast::<gtk::Window>() {
+                        w.error_bell();
+                    }
                     return;
                 }
+                let _ = WidgetExt::activate_action(&bar, "win.show-history", None);
                 Inner::submit(&i, step)
             });
             group.add_action(&action);
