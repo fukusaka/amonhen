@@ -21,7 +21,8 @@ struct Cache {
     loading: HashSet<String>,
     /// 取れなかったもの（ネットワークがないなど）。
     failed: HashSet<String>,
-    watchers: Vec<Watcher>,
+    /// 読み終えたことを聞く所（持ち主がなくなったら外す）。
+    watchers: Vec<(glib::WeakRef<glib::Object>, Watcher)>,
 }
 
 thread_local! {
@@ -32,13 +33,18 @@ fn key_of(email: &str) -> String {
     email.trim().to_lowercase()
 }
 
-/// 画像を読み終えたら `f(メールアドレス)` を呼ぶ。
-pub fn connect_loaded(f: impl Fn(&str) + 'static) {
-    CACHE.with(|c| c.borrow_mut().watchers.push(Rc::new(f)));
+/// 画像を読み終えたら `f(メールアドレス)` を呼ぶ（`owner` がある間だけ。なくなったら外す）。
+fn connect_loaded_while(owner: &impl IsA<glib::Object>, f: impl Fn(&str) + 'static) {
+    let owner = owner.upcast_ref::<glib::Object>().downgrade();
+    CACHE.with(|c| c.borrow_mut().watchers.push((owner, Rc::new(f))));
 }
 
 fn notify(keys: &[String]) {
-    let watchers: Vec<Watcher> = CACHE.with(|c| c.borrow().watchers.clone());
+    let watchers: Vec<Watcher> = CACHE.with(|c| {
+        let mut c = c.borrow_mut();
+        c.watchers.retain(|(owner, _)| owner.upgrade().is_some());
+        c.watchers.iter().map(|(_, f)| f.clone()).collect()
+    });
     for key in keys {
         for f in &watchers {
             f(key);
@@ -212,7 +218,7 @@ impl Avatar {
         });
         // 読み終えたら、出している人なら描き直す。
         let weak = Rc::downgrade(&avatar);
-        connect_loaded(move |key| {
+        connect_loaded_while(&avatar.root, move |key| {
             if let Some(a) = weak.upgrade()
                 && key_of(&a.person.borrow().1) == key
             {
@@ -220,7 +226,7 @@ impl Avatar {
             }
         });
         let weak = Rc::downgrade(&avatar);
-        crate::settings::connect_changed(move |key| {
+        crate::settings::connect_changed_while(&avatar.root, move |key| {
             if key == crate::settings::SHOW_AVATARS
                 && let Some(a) = weak.upgrade()
             {

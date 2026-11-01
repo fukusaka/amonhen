@@ -355,7 +355,7 @@ impl Shaper {
             });
         });
         let weak = Rc::downgrade(&shaper);
-        settings::connect_changed(move |key| {
+        settings::connect_changed_while(view, move |key| {
             let Some(s) = weak.upgrade() else { return };
             match key {
                 settings::COMPACT_HISTORY_ROWS

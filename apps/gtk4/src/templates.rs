@@ -90,7 +90,7 @@ pub fn section() -> (gtk::Box, gio::SimpleActionGroup) {
         }
     };
     fill();
-    crate::settings::connect_changed(move |key| {
+    crate::settings::connect_changed_while(&table.view, move |key| {
         if key == KEY {
             fill();
         }

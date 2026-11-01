@@ -922,7 +922,7 @@ impl Inner {
         });
         // 一覧の置き方と、全ファイルを並べるかを変えたら、置き直す・読み直す。
         let weak = Rc::downgrade(this);
-        crate::settings::connect_changed(move |key| {
+        crate::settings::connect_changed_while(&this.root, move |key| {
             let Some(this) = weak.upgrade() else { return };
             match key {
                 FILE_TREE => {

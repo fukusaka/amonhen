@@ -426,7 +426,7 @@ impl Details {
         };
         monospace(&body);
         let weak = body.downgrade();
-        crate::settings::connect_changed(move |key| {
+        crate::settings::connect_changed_while(&body, move |key| {
             if key == crate::settings::MONOSPACED_COMMIT_MESSAGE
                 && let Some(body) = weak.upgrade()
             {

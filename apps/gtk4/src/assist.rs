@@ -136,7 +136,7 @@ pub fn track(widget: &impl IsA<gtk::Widget>, tooltip: String) {
         }
     };
     update();
-    settings::connect_changed(move |key| {
+    settings::connect_changed_while(widget.upcast_ref::<gtk::Widget>(), move |key| {
         if key == ASSISTANT || key.starts_with("assistantPath.") {
             update();
         }

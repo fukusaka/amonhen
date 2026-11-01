@@ -658,7 +658,7 @@ impl Loader {
             l.push(Rc::downgrade(&loader));
         });
         let weak = Rc::downgrade(&loader);
-        crate::settings::connect_changed(move |key| {
+        crate::settings::connect_changed_while(view, move |key| {
             let Some(loader) = weak.upgrade() else { return };
             if !SETTING_KEYS.contains(&key) {
                 return;
