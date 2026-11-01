@@ -777,6 +777,12 @@ impl Sidebar {
     /// 名前が `names` のブランチ・タグの行（見えているもの）を選ぶ（選んだことを知らせる。確認用）。
     pub fn select_refs(&self, names: &[String]) {
         let inner = &self.inner;
+        // 畳んだ見出し（Tags・Remotes は初めは畳んである）やフォルダの中なら、開いてから。
+        inner.rebuilding.set(true);
+        for name in names {
+            inner.reveal(name);
+        }
+        inner.rebuilding.set(false);
         let mut first = true;
         for i in 0..inner.model.n_items() {
             if let Some(row) = inner.model.row(i)
@@ -1610,7 +1616,7 @@ impl Inner {
         });
     }
 
-    /// 確認用: 名前が `name` の ref の行が出るように、その上の見出しとフォルダを開く。
+    /// 名前が `name` の ref の行が出るように、その上の見出しとフォルダを開く（確認用）。
     fn reveal(&self, name: &str) {
         fn contains(store: &gio::ListStore, name: &str) -> bool {
             (0..store.n_items())
